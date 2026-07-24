@@ -219,3 +219,44 @@ cadastro/finalizado/cancelado/estornado) é **derivada na leitura** (`situacaoDo
 e trazer o retorno) — sem endpoint nativo; alvo = pasta de rede + VAN Nexxera. Gate: contrato Nexxera
 cobrir pagamento (Ricardo→Nexxera). A escrita reusará o gating de Permutas (`CONEXOS_WRITE_ENABLED` +
 `CONEXOS_DRY_RUN`, homologação-first). Riscos O4 (scheduler) e O7 (config Nexxera) abertos.
+
+## FRENTE IV (Recebimentos) — superfícies NOVAS (SKELETON, ADR-0022)
+
+> **SKELETON (Fase 0).** A Frente IV (Conciliação de Recebimentos) adiciona ao Conexos **duas
+> superfícies novas**: (1) **leitura** dos recebíveis em aberto (`DocumentoAReceber`) e (2) **escrita**
+> — a **baixa/quitação do recebível** (write O3) + a **emissão da NDe** (Nota de Débito Eletrônica). O
+> import do extrato bancário **NÃO** passa por aqui — é direto do Nexxera (ver `integrations/nexxera.md`).
+> Contratos concretos confirmados nas Fases 2/5. Ver ADR-0022.
+
+### LEITURA — recebíveis em aberto (`DocumentoAReceber`, Fase 2)
+
+- Read-model de **contas a receber** (documento/título, cliente/`pesCod`, valor, saldo em aberto,
+  vencimento, nº documento, `priCod`). **Fonte exata no ERP a confirmar na Fase 2** (o plano assume o
+  caminho de leitura financeira do Conexos, a parametrizar — espelha a leitura SISPAG `ConexosSispagClient`
+  READ-only). Ver `entities/documento-a-receber.md`.
+
+### ESCRITA — baixa/quitação do recebível (write O3, Fase 5)
+
+- **Decisão O3 (interview):** **assume o módulo `fin010`** e **parametriza** o write. Os campos
+  hoje **específicos de Permuta** — `borVldTipo`, códigos de conta, o flag de adiantamento — viram
+  **parâmetros** (recebível vs permuta). A **maquinaria reusável** do handshake `fin010` de Permutas
+  **carrega** (write-ahead ledger, escrita single-attempt, anti-drift, dry-run gate); o **shape do
+  payload/endpoint** do lado recebível é **confirmado durante o build** (capturar uma baixa real de
+  recebível se a aposta parametrizada não fechar).
+- **Reúso da infra:** mesma cadeia `ConexosBaixaClient`/`postGeneric → authenticatedPost` (sid +
+  `cnx-filcod` + `cnx-usncod` + retry-em-401), mesmo `RetryExecutor`, mesmo `ConexosError`. Mesmo
+  gating: `CONEXOS_WRITE_ENABLED` + `CONEXOS_DRY_RUN` (default dry-run), **homologação-first**.
+- Contrato de escrita completo: `business-rules/fin010-write-contract.md` (Permutas) é o **template**;
+  a variante parametrizada de recebível é fatia própria da Fase 5. Idempotência em
+  `business-rules/idempotencia-quitacao-nde.md`.
+
+### ESCRITA — emissão da NDe (Fase 5)
+
+- A **Nota de Débito Eletrônica é emitida pelo Conexos ERP** (decisão Yuri, 2026-07-24) — **não** é
+  sistema fiscal separado nem auto-gerada. Precisa do **endpoint/trigger de emissão** no Conexos
+  (confirmar **junto do O3**, Fase 5). A emissão é **idempotente** (uma NDe por `Recebimento`, via
+  `idempotencyKey`) e o registro local existe só para idempotência/auditoria (fonte da verdade = ERP).
+  Ver `entities/nota-debito-eletronica.md` e `business-rules/idempotencia-quitacao-nde.md`.
+- **Alternativa considerada e rejeitada (Fase 0):** um `integrations/nde-conexos.md` separado. A NDe é
+  emitida **pelo mesmo ERP** (Conexos) — modelá-la como superfície de escrita do Conexos (como a baixa
+  `fin010`) mantém a convenção de "uma integração por sistema externo". Registrado na ADR-0022.
