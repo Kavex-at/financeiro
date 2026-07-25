@@ -39,6 +39,18 @@ export default class EnvironmentProvider {
         return environment !== 'production';
     };
 
+    /**
+     * Resolve a flag da Frente IV (Recebimentos): `RECEBIMENTOS_ENABLED=true|false`
+     * força; sem a env, fica habilitado FORA de produção e bloqueado EM produção
+     * (fail-safe — espelha o SISPAG).
+     */
+    private resolveRecebimentosEnabled = (environment: string): boolean => {
+        const flag = this.readEnv('RECEBIMENTOS_ENABLED');
+        if (flag === 'true') return true;
+        if (flag === 'false') return false;
+        return environment !== 'production';
+    };
+
     private parseSSMCredentials = async (
         envVar: string | undefined,
     ): Promise<Record<string, any>> => {
@@ -82,6 +94,9 @@ export default class EnvironmentProvider {
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
             conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment', 'local')),
+            recebimentosEnabled: this.resolveRecebimentosEnabled(
+                this.readEnv('environment', 'local'),
+            ),
         });
     };
 
@@ -114,6 +129,7 @@ export default class EnvironmentProvider {
                 this.readEnv('CONEXOS_CRED_ENC_KEY') ||
                 undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment')),
+            recebimentosEnabled: this.resolveRecebimentosEnabled(this.readEnv('environment')),
         });
     };
 

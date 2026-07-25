@@ -18,6 +18,12 @@ export interface AuthUser {
     sub: string;
     email?: string;
     role?: string;
+    /**
+     * Per-filial allow-list (Regis security-1) — the filiais this user may act on for money-moving
+     * routes. OPTIONAL: only present when the token carries a `filiais`/`permissions.filiais` claim.
+     * Absent today (Supabase tokens carry only sub/email/role) — the seam is ready for the real claim.
+     */
+    filiais?: number[];
 }
 
 declare global {
@@ -60,7 +66,23 @@ const toAuthUser = (payload: JWTPayload): AuthUser => {
         sub: String(payload.sub),
         email: typeof payload.email === 'string' ? payload.email : undefined,
         role: typeof payload.role === 'string' ? payload.role : undefined,
+        ...(filiaisFromClaims(payload) !== undefined
+            ? { filiais: filiaisFromClaims(payload) }
+            : {}),
     };
+};
+
+/**
+ * Extracts the per-filial allow-list from `filiais` or `permissions.filiais` (Regis security-1).
+ * Returns `undefined` when the claim is absent — the guard treats that as "not provisioned yet".
+ */
+const filiaisFromClaims = (payload: JWTPayload): number[] | undefined => {
+    const direct = (payload as { filiais?: unknown }).filiais;
+    const nested = (payload as { permissions?: { filiais?: unknown } }).permissions?.filiais;
+    const raw = Array.isArray(direct) ? direct : Array.isArray(nested) ? nested : undefined;
+    if (raw === undefined) return undefined;
+    const nums = raw.map((v) => Number(v)).filter((n): n is number => Number.isInteger(n) && n > 0);
+    return nums;
 };
 
 /** `true` for HMAC algorithms (HS256/384/512) — verified with a shared secret. */

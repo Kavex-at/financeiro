@@ -32,6 +32,12 @@ services:
       # navegáveis; geração de remessa (fin015) e retorno (fin052) seguem dormentes/gated.
       - key: SISPAG_ENABLED
         value: 'true'
+      # Frente IV (Recebimentos) — feature-gate. Fail-safe: sem a env, fica BLOQUEADA em produção
+      # (só habilita fora de prod). `sync: false` para o operador ver a chave e ligar/desligar pelo
+      # dashboard sem o blueprint sobrescrever a cada deploy. Base scaffold hoje = dormente.
+      # Ver DEPLOY.md (fail-safe).
+      - key: RECEBIMENTOS_ENABLED
+        sync: false
       # Fase 3 (ADR-0013) — ESCRITA no fin010. FONTE ÚNICA = dashboard do Render (sync:false), para
       # NÃO ter o blueprint sobrescrevendo o dashboard a cada deploy (Regis P0 deployability — yaml
       # brigando com dashboard). Produção hoje: WRITE_ENABLED=true, DRY_RUN=false, BASE_URL=prd.

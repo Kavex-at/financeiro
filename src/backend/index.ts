@@ -5,6 +5,7 @@ import cors from 'cors';
 import { buildAuthMiddleware } from './http/auth.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
+import { recebimentosGate } from './http/recebimentosGate.js';
 import { sispagGate } from './http/sispagGate.js';
 import { buildCorsOptions } from './http/cors.js';
 import { errorMiddleware } from './http/errorMiddleware.js';
@@ -15,6 +16,7 @@ import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
 import permutasRouter from './routes/permutas.js';
 import meRouter from './routes/me.js';
+import recebimentosRouter from './routes/recebimentos.js';
 import sispagRouter from './routes/sispag.js';
 import usuariosRouter from './routes/usuarios.js';
 
@@ -105,6 +107,11 @@ app.use('/permutas', permutasRouter);
 // de pagamentos); nenhuma escrita/execução. Fica no `globalLimiter` como as
 // leituras de Permutas. Ver ontology/_inbox/sispag-*.md.
 app.use('/sispag', sispagGate, sispagRouter);
+
+// Recebimentos Frente IV — SKELETON (base scaffold). Atrás do `recebimentosGate` (403 quando
+// desabilitado, como o SISPAG). Coordinator stubbed; nenhuma escrita real no ERP. Ver
+// ontology/_inbox/frente-iv-*.md.
+app.use('/recebimentos', recebimentosGate, recebimentosRouter);
 
 // Gestão de usuários da plataforma — só `admin` (guard no próprio router). Fica
 // no `globalLimiter`; substitui o cadastro manual de usuários @kavex no banco.

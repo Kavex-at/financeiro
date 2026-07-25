@@ -44,6 +44,14 @@ export default class EnvironmentVars {
     public sispagEnabled: boolean;
 
     /**
+     * Feature flag da Frente IV (Recebimentos). Quando `false`, as rotas
+     * `/recebimentos/*` respondem 403 (bloqueio via URL). `RECEBIMENTOS_ENABLED=true|false`
+     * força; sem a env, fica habilitado FORA de produção e bloqueado EM produção
+     * (fail-safe — espelha o SISPAG).
+     */
+    public recebimentosEnabled: boolean;
+
+    /**
      * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
      * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
      * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
@@ -69,6 +77,7 @@ export default class EnvironmentVars {
         conexosDryRun,
         conexosCredEncKey,
         sispagEnabled,
+        recebimentosEnabled,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -86,6 +95,7 @@ export default class EnvironmentVars {
         conexosDryRun: boolean;
         conexosCredEncKey?: string;
         sispagEnabled: boolean;
+        recebimentosEnabled: boolean;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -103,5 +113,6 @@ export default class EnvironmentVars {
         this.conexosDryRun = conexosDryRun;
         this.conexosCredEncKey = conexosCredEncKey;
         this.sispagEnabled = sispagEnabled;
+        this.recebimentosEnabled = recebimentosEnabled;
     }
 }
