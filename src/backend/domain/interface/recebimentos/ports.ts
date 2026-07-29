@@ -1,6 +1,7 @@
 import type { MatchClassificacao, ParcelaFinalidade } from './constants.js';
 import type { CreditoCliente } from './CreditoCliente.js';
 import type { DocumentoAReceber } from './DocumentoAReceber.js';
+import type { Processo } from './GerDocProcesso.js';
 import type { NotaDebitoEletronica } from './NotaDebitoEletronica.js';
 import type { RateioRecebimento } from './RateioRecebimento.js';
 import type { Recebimento } from './Recebimento.js';
@@ -216,6 +217,24 @@ export interface MetricsPortInterface {
     withCorrelationId: <T>(correlationId: string, fn: () => T) => T;
 }
 
+/**
+ * Provedor de PROCESSOS candidatos para uma `TransacaoBancaria` (Frente IV — "Alocar" no painel).
+ *
+ * O modal de "Alocar" lista os processos de importação candidatos para o operador ESCOLHER qual
+ * processar. Nesta iteração é um STUB in-memory (fixtures) atrás deste port — sem matching-engine,
+ * sem DB/SQL. Filtra por `filCod` da transação e, de forma frouxa, pela contraparte. Módulo 2/2b
+ * troca o token pela fonte real (Conexos / matching) sem tocar rota/serviço.
+ */
+export interface ProcessoProviderInterface {
+    listCandidatosParaTransacao: (input: ListCandidatosInput) => Promise<Processo[]>;
+}
+
+/** Filtro dos candidatos — `filCod` obrigatório (multi-filial), contraparte opcional (frouxa). */
+export interface ListCandidatosInput {
+    filCod: number;
+    contraparte?: string;
+}
+
 // ─────────────────────────────────────────────────────────── Repository ports (the spine)
 
 /** Persists/loads `TransacaoBancaria` (Módulo 1). */
@@ -329,6 +348,7 @@ export const RECEBIMENTO_REPOSITORY_TOKEN = Symbol('RecebimentoRepositoryInterfa
 export const RECEBIMENTO_EXECUCAO_REPOSITORY_TOKEN = Symbol(
     'RecebimentoExecucaoRepositoryInterface',
 );
+export const PROCESSO_PROVIDER_TOKEN = Symbol('ProcessoProviderInterface');
 export const CREDITO_CLIENTE_REPOSITORY_TOKEN = Symbol('CreditoClienteRepositoryInterface');
 export const REGRA_RECEBIMENTO_REPOSITORY_TOKEN = Symbol('RegraRecebimentoRepositoryInterface');
 export const NDE_REPOSITORY_TOKEN = Symbol('NdeRepositoryInterface');

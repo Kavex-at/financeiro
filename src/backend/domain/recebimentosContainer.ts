@@ -8,6 +8,7 @@ import {
     NDE_EMITTER_TOKEN,
     NDE_REPOSITORY_TOKEN,
     NEXXERA_GATEWAY_TOKEN,
+    PROCESSO_PROVIDER_TOKEN,
     RATEIO_ENGINE_TOKEN,
     RECEBIMENTO_EXECUCAO_REPOSITORY_TOKEN,
     RECEBIMENTO_REPOSITORY_TOKEN,
@@ -27,6 +28,7 @@ import MatchingEngineStub from './service/recebimentos/stubs/MatchingEngineStub.
 import MetricsPortStub from './service/recebimentos/stubs/MetricsPortStub.js';
 import NdeEmitterStub from './service/recebimentos/stubs/NdeEmitterStub.js';
 import NexxeraGatewayStub from './service/recebimentos/stubs/NexxeraGatewayStub.js';
+import ProcessoProviderStub from './service/recebimentos/stubs/ProcessoProviderStub.js';
 import RateioEngineStub from './service/recebimentos/stubs/RateioEngineStub.js';
 import RegrasEngineStub from './service/recebimentos/stubs/RegrasEngineStub.js';
 
@@ -49,6 +51,8 @@ export const registerRecebimentosPorts = (): void => {
     container.register(ERP_RECEIVABLES_GATEWAY_TOKEN, { useClass: ErpReceivablesGatewayStub });
     container.register(NDE_EMITTER_TOKEN, { useClass: NdeEmitterStub });
     container.register(METRICS_PORT_TOKEN, { useClass: MetricsPortStub });
+    // Provedor de processos candidatos ("Alocar") → STUB in-memory (Módulo 2/2b troca o token).
+    container.register(PROCESSO_PROVIDER_TOKEN, { useClass: ProcessoProviderStub });
 
     // Repositories → real-but-thin classes (the spine must persist for the coordinator to be runnable).
     container.register(TRANSACAO_REPOSITORY_TOKEN, { useClass: TransacaoRepository });

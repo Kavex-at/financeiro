@@ -10,7 +10,13 @@ import {
 import type { Recebimento } from '../domain/interface/recebimentos/Recebimento.js';
 import type { TransacaoBancaria } from '../domain/interface/recebimentos/TransacaoBancaria.js';
 import { TRANSACAO_TIPO } from '../domain/interface/recebimentos/constants.js';
+import type {
+    ListCandidatosInput,
+    ProcessoProviderInterface,
+} from '../domain/interface/recebimentos/ports.js';
+import { PROCESSO_PROVIDER_TOKEN } from '../domain/interface/recebimentos/ports.js';
 import RecebimentoPipelineService from '../domain/service/recebimentos/RecebimentoPipelineService.js';
+import SolicitacaoNumerarioService from '../domain/service/recebimentos/SolicitacaoNumerarioService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
 import { FilialForbiddenError, assertUserCanActOnFilial } from '../http/filialAuthz.js';
@@ -128,6 +134,105 @@ router.post(
             ator,
         });
         res.json({ recebimento: result });
+    }),
+);
+
+// ─────────────────────────────────────────────── "Alocar" — processos candidatos + Solicitação de
+// Numerário (encomenda) via com299/gerDocProcesso (DRY-RUN-ONLY).
+
+const listCandidatosQuerySchema = z.object({
+    filCod: z.coerce.number().int().positive(),
+    contraparte: z.string().min(1).optional(),
+});
+
+/**
+ * GET /recebimentos/transacoes/:txnId/processos — lista os PROCESSOS candidatos para a transação
+ * (modal "Alocar"). READ-only (sem admin), mas mantém a authz por-filial: o `filCod` vem da query e
+ * é validado contra a filial-permitida do usuário. Backed por um STUB in-memory (fixtures).
+ */
+router.get(
+    '/transacoes/:txnId/processos',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = listCandidatosQuerySchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
+            return;
+        }
+        try {
+            assertUserCanActOnFilial(req.user, parsed.data.filCod);
+        } catch (err) {
+            if (err instanceof FilialForbiddenError) {
+                res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
+                return;
+            }
+            throw err;
+        }
+        const provider = container.resolve<ProcessoProviderInterface>(PROCESSO_PROVIDER_TOKEN);
+        const input: ListCandidatosInput = {
+            filCod: parsed.data.filCod,
+            contraparte: parsed.data.contraparte,
+        };
+        const processos = await provider.listCandidatosParaTransacao(input);
+        res.json({ transacaoId: req.params.txnId, processos });
+    }),
+);
+
+const gerarSolicitacaoNumerarioSchema = z.object({
+    filCod: z.coerce.number().int().positive(),
+    priCod: z.coerce.number().int().positive(),
+    priEspRefcliente: z.string().min(1),
+    pesCod: z.coerce.number().int().positive(),
+    dpeNomPessoa: z.string().min(1),
+    moeCod: z.coerce.number().int().positive(),
+    /** Base da SN — valor cru da transação (regra de % da encomenda é não-resolvida). */
+    valorTransacao: z.number(),
+});
+
+/**
+ * POST /recebimentos/transacoes/:txnId/solicitacao-numerario — "Processar" um processo → CONSTRÓI o
+ * payload `GerDocProcessoSelectionDTOCab` da Solicitação de Numerário (encomenda) e o DEVOLVE em
+ * DRY-RUN. NUNCA envia ao Conexos (não há caminho de escrita alcançável nesta iteração). Write-ish →
+ * `requireRole('admin')` + `heavyRouteLimiter` + authz por-filial (mesmo padrão do pipeline/run),
+ * embora seja apenas simulação.
+ */
+router.post(
+    '/transacoes/:txnId/solicitacao-numerario',
+    heavyRouteLimiter,
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = gerarSolicitacaoNumerarioSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'Payload inválido', details: parsed.error.flatten() });
+            return;
+        }
+        try {
+            assertUserCanActOnFilial(req.user, parsed.data.filCod);
+        } catch (err) {
+            if (err instanceof FilialForbiddenError) {
+                res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
+                return;
+            }
+            throw err;
+        }
+        const ator = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const service = container.resolve(SolicitacaoNumerarioService);
+        // DRY-RUN: só constrói e devolve o payload — nenhum POST no ERP.
+        const result = service.gerar({
+            processo: {
+                priCod: parsed.data.priCod,
+                priEspRefcliente: parsed.data.priEspRefcliente,
+                filCod: parsed.data.filCod,
+                pesCod: parsed.data.pesCod,
+                dpeNomPessoa: parsed.data.dpeNomPessoa,
+                moeCod: parsed.data.moeCod,
+            },
+            valorTransacao: parsed.data.valorTransacao,
+            dataReferencia: new Date(),
+            ator,
+        });
+        res.json({ transacaoId: req.params.txnId, ...result });
     }),
 );
 

@@ -303,6 +303,194 @@ interface PainelResponseRaw {
   kpis?: Partial<RecebimentosKpis>
 }
 
+// ─────────────────────────────────────────────── Alocar / Solicitação de Numerário (dry-run)
+// Espelham `backend/domain/interface/recebimentos/GerDocProcesso.ts`. O "Processar" gera uma
+// Solicitação de Numerário (encomenda) via com299/gerDocProcesso em DRY-RUN — nada vai ao ERP.
+
+/** Processo de importação candidato para uma transação — espelho de `Processo`. */
+export interface Processo {
+  priCod: number
+  priEspRefcliente: string
+  filCod: number
+  pesCod: number
+  dpeNomPessoa: string
+  moeCod: number
+  valor?: number
+  contraparte?: string
+}
+
+/** Item de rateio da SN (`TmpCom068DTOItem`) — espelho do wire com299. */
+export interface TmpCom068DTOItem {
+  prjCod: number
+  ctpCod: number
+  tmpMnyValor: number
+  ctpDesNome: string
+  tpcCod: number
+  cfoEspCod: number
+  total: number
+}
+
+/** Cabeçalho do payload com299 (`GerDocProcessoSelectionDTOCab`). */
+export interface GerDocProcessoSelectionDTOCab {
+  filCod: number
+  docTip: string
+  docVldTipo: string
+  priCod: number
+  priEspRefcliente: string
+  pesCod: number
+  dpeNomPessoa: string
+  gcdCod: number
+  gcdDesNome: string
+  docDtaEmissao: string
+  dtaVencimento: string
+  valor: number
+  moeCod: number
+  items: TmpCom068DTOItem[]
+}
+
+/** Config de documento (`gcd`) devolvida no preview. */
+export interface DocConfig {
+  gcdCod: number
+  gcdDesNome: string
+}
+
+/** Resultado do "Processar" — SEMPRE dry-run (constrói o payload, não envia ao ERP). */
+export interface SolicitacaoNumerarioDryRun {
+  dryRun: true
+  docConfig: DocConfig
+  payload: GerDocProcessoSelectionDTOCab
+}
+
+/** Config canônica da SN encomenda (fixture de fallback + rótulo). */
+export const SOLICITACAO_NUMERARIO_GCD_DES_NOME = 'Solicitação de Numerário - Encomenda'
+
+/** Seed de candidatos (rede de segurança do fixture) — espelha o stub do backend. */
+const fixtureProcessos: Processo[] = [
+  {
+    priCod: 90001,
+    priEspRefcliente: 'REF-CLI-0001',
+    filCod: 4,
+    pesCod: 555,
+    dpeNomPessoa: 'CLIENTE EXEMPLO LTDA',
+    moeCod: 790,
+    valor: 15000,
+    contraparte: 'CLIENTE EXEMPLO LTDA',
+  },
+  {
+    priCod: 90002,
+    priEspRefcliente: 'REF-CLI-0002',
+    filCod: 4,
+    pesCod: 556,
+    dpeNomPessoa: 'IMPORTADORA ATLAS S.A.',
+    moeCod: 790,
+    valor: 32500.5,
+    contraparte: 'IMPORTADORA ATLAS S.A.',
+  },
+]
+
+/** Constrói o payload dry-run localmente (fallback quando o backend não responde). */
+function buildDryRunFallback(
+  processo: Processo,
+  valorTransacao: number,
+): SolicitacaoNumerarioDryRun {
+  const dataIso = new Date().toISOString()
+  const docConfig: DocConfig = { gcdCod: 0, gcdDesNome: SOLICITACAO_NUMERARIO_GCD_DES_NOME }
+  return {
+    dryRun: true,
+    docConfig,
+    payload: {
+      filCod: processo.filCod,
+      docTip: 'SN',
+      docVldTipo: 'SN',
+      priCod: processo.priCod,
+      priEspRefcliente: processo.priEspRefcliente,
+      pesCod: processo.pesCod,
+      dpeNomPessoa: processo.dpeNomPessoa,
+      gcdCod: docConfig.gcdCod,
+      gcdDesNome: docConfig.gcdDesNome,
+      docDtaEmissao: dataIso,
+      dtaVencimento: dataIso,
+      valor: valorTransacao,
+      moeCod: processo.moeCod || 790,
+      items: [
+        {
+          prjCod: 0,
+          ctpCod: 0,
+          tmpMnyValor: valorTransacao,
+          ctpDesNome: docConfig.gcdDesNome,
+          tpcCod: 0,
+          cfoEspCod: 0,
+          total: valorTransacao,
+        },
+      ],
+    },
+  }
+}
+
+/**
+ * Lista os PROCESSOS candidatos para uma transação (modal "Alocar") — tenta o backend
+ * (`GET /recebimentos/transacoes/:txnId/processos?filCod=…`) e cai no fixture quando o backend
+ * não responde/erra, filtrando o seed por `filCod` (rede de segurança do demo).
+ */
+export async function fetchProcessosParaTransacao(
+  txnId: string,
+  filCod: number,
+  contraparte?: string,
+): Promise<Processo[]> {
+  const qs = new URLSearchParams({ filCod: String(filCod) })
+  if (contraparte) qs.set('contraparte', contraparte)
+  try {
+    const res = await apiFetch(
+      `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/processos?${qs.toString()}`,
+      { headers: await withAuthHeaders() },
+    )
+    if (!res.ok) throw new Error(`API ${res.status}`)
+    const json = (await res.json()) as { processos?: Processo[] }
+    return json.processos ?? []
+  } catch {
+    return fixtureProcessos.filter((p) => p.filCod === filCod)
+  }
+}
+
+/**
+ * "Processar" um processo → gera a Solicitação de Numerário (encomenda) em DRY-RUN
+ * (`POST /recebimentos/transacoes/:txnId/solicitacao-numerario`). NUNCA envia ao ERP: o backend só
+ * CONSTRÓI e devolve o payload. Cai num payload dry-run construído localmente se o backend falhar
+ * (rede de segurança do demo) — ainda dry-run, ainda sem tocar o ERP.
+ */
+export async function processarSolicitacaoNumerario(
+  txnId: string,
+  processo: Processo,
+  valorTransacao: number,
+): Promise<SolicitacaoNumerarioDryRun> {
+  try {
+    const res = await apiFetch(
+      `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/solicitacao-numerario`,
+      {
+        method: 'POST',
+        headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify({
+          filCod: processo.filCod,
+          priCod: processo.priCod,
+          priEspRefcliente: processo.priEspRefcliente,
+          pesCod: processo.pesCod,
+          dpeNomPessoa: processo.dpeNomPessoa,
+          moeCod: processo.moeCod,
+          valorTransacao,
+        }),
+      },
+    )
+    if (!res.ok) throw new Error(`API ${res.status}`)
+    const json = (await res.json()) as Partial<SolicitacaoNumerarioDryRun>
+    if (json?.payload && json?.docConfig) {
+      return { dryRun: true, docConfig: json.docConfig, payload: json.payload }
+    }
+    return buildDryRunFallback(processo, valorTransacao)
+  } catch {
+    return buildDryRunFallback(processo, valorTransacao)
+  }
+}
+
 /**
  * Busca o painel de Recebimentos — tenta o backend (`GET /recebimentos/painel`) e
  * cai no fixture quando o backend não responde, erra ou devolve o stub vazio. Esse

@@ -10,6 +10,8 @@ jest.mock('../domain/appContainer.js', () => ({
 }));
 
 import { RECEBIMENTO_STATUS } from '../domain/interface/recebimentos/constants.js';
+import { PROCESSO_PROVIDER_TOKEN } from '../domain/interface/recebimentos/ports.js';
+import type { Processo } from '../domain/interface/recebimentos/GerDocProcesso.js';
 import RecebimentoPipelineService from '../domain/service/recebimentos/RecebimentoPipelineService.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import type { FilialScopedUser } from '../http/filialAuthz.js';
@@ -54,6 +56,8 @@ const post = (url: string, body: unknown, headers: Record<string, string> = {}) 
         headers: { 'content-type': 'application/json', ...headers },
         body: JSON.stringify(body),
     });
+
+const get = (url: string) => fetch(url, { method: 'GET' });
 
 const basePayload = (over: Record<string, unknown> = {}) => ({
     correlationId: CORR,
@@ -147,6 +151,135 @@ describe('POST /recebimentos/pipeline/run — authz por-filial + idempotency nam
             const input = run.mock.calls[0][0];
             // The recebimento id (= idempotency key) is prefixed with the acting user's sub.
             expect(String(input.recebimento.id)).toContain('receb:user-xyz:');
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+const snPayload = (over: Record<string, unknown> = {}) => ({
+    filCod: 4,
+    priCod: 90001,
+    priEspRefcliente: 'REF-CLI-0001',
+    pesCod: 555,
+    dpeNomPessoa: 'CLIENTE EXEMPLO LTDA',
+    moeCod: 790,
+    valorTransacao: 15000,
+    ...over,
+});
+
+describe('GET /recebimentos/transacoes/:txnId/processos — candidate processos (filial authz)', () => {
+    afterEach(() => {
+        container.clearInstances();
+        jest.restoreAllMocks();
+    });
+
+    const registerProviderStub = (processos: Processo[]): jest.Mock => {
+        const listCandidatosParaTransacao = jest.fn(async () => processos);
+        container.registerInstance(PROCESSO_PROVIDER_TOKEN, {
+            listCandidatosParaTransacao,
+        } as never);
+        return listCandidatosParaTransacao;
+    };
+
+    it('200 returns the processos list for an authorized filial', async () => {
+        const fn = registerProviderStub([
+            {
+                priCod: 90001,
+                priEspRefcliente: 'R',
+                filCod: 4,
+                pesCod: 555,
+                dpeNomPessoa: 'X',
+                moeCod: 790,
+            },
+        ]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [4] }));
+        try {
+            const res = await get(`${server.url}/recebimentos/transacoes/txn-1/processos?filCod=4`);
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.transacaoId).toBe('txn-1');
+            expect(body.processos).toHaveLength(1);
+            expect(fn).toHaveBeenCalledTimes(1);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('403 when the user may NOT act on the query filCod (cross-filial)', async () => {
+        registerProviderStub([]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [1, 2] }));
+        try {
+            const res = await get(`${server.url}/recebimentos/transacoes/txn-1/processos?filCod=9`);
+            const body = await readJson(res);
+            expect(res.status).toBe(403);
+            expect(body.code).toBe('FILIAL_NAO_AUTORIZADA');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('400 when filCod is missing/invalid', async () => {
+        registerProviderStub([]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [4] }));
+        try {
+            const res = await get(`${server.url}/recebimentos/transacoes/txn-1/processos`);
+            expect(res.status).toBe(400);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('POST /recebimentos/transacoes/:txnId/solicitacao-numerario — dry-run SN (no ERP write)', () => {
+    afterEach(() => {
+        container.clearInstances();
+        jest.restoreAllMocks();
+    });
+
+    it('200 returns dryRun payload with the encomenda gcd config', async () => {
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload(),
+            );
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.dryRun).toBe(true);
+            expect(body.transacaoId).toBe('txn-1');
+            expect(body.docConfig.gcdDesNome).toBe('Solicitação de Numerário - Encomenda');
+            expect(body.payload.filCod).toBe(4);
+            expect(body.payload.priCod).toBe(90001);
+            expect(body.payload.valor).toBe(15000);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('403 when the user may NOT act on the body filCod (cross-filial)', async () => {
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [1, 2] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload({ filCod: 9 }),
+            );
+            const body = await readJson(res);
+            expect(res.status).toBe(403);
+            expect(body.code).toBe('FILIAL_NAO_AUTORIZADA');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('400 on a malformed payload (Zod boundary)', async () => {
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload({ priCod: 'nope', valorTransacao: undefined }),
+            );
+            expect(res.status).toBe(400);
         } finally {
             await server.close();
         }

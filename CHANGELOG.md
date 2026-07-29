@@ -1,5 +1,25 @@
 # Columbia Financeiro — Changelog
 
+## v0.18.0 (2026-07-29) — Frente IV (Recebimentos + NDe): scaffold + painel + Solicitação de Numerário (dry-run)
+
+- **feat(recebimentos):** ação **`gerarSolicitacaoNumerario` (SN)** — no painel `/recebimentos`, o botão
+  **"Alocar"** de uma `TransacaoBancaria` abre um modal com os **processos** candidatos; **"Processar"**
+  monta a **Solicitação de Numerário (encomenda)** via com299 `gerDocProcesso`. **DRY-RUN-only:** apenas
+  CONSTRÓI e devolve o payload (`dryRun:true`) — **nenhum caminho de escrita ao Conexos é alcançável** (o
+  seam `enviarAoErp` lança `NotImplementedError`; `gcdCod=0` placeholder). Processos candidatos vêm de um
+  **stub in-memory** atrás de um port/DI token (`PROCESSO_PROVIDER_TOKEN`), swappable por Conexos/matching.
+  Rota write-ish com `requireRole('admin')` + `heavyRouteLimiter` + authz por-filial. Regra de
+  **percentuais da encomenda** permanece **NÃO-RESOLVIDA** (`TODO(encomenda-percentuais)`, usa valor cru).
+- **feat(recebimentos):** Frente IV **frontend Phase 1** — read shell do painel `/recebimentos` (7 KPIs,
+  tabs, tabela de transações, chips de status, aba NDe) contra fixtures, espelhando o painel SISPAG.
+- **feat(recebimentos):** Frente IV **base scaffold** (contracts-first, stubbed) — ports + DI tokens +
+  coordinator + write-ahead ledger + migrations, com remediação do Regis-Review.
+- **docs(ontology):** bootstrap da Frente IV — Conciliação de Recebimentos + NDe (ADR-0022); nova ação
+  `gerar-solicitacao-numerario.md` + integração `conexos-com299-gerdoc.md`.
+- **Regis-Review gate** (`2026-07-29-0243-recebimentos-sn`): 8/8 QAs verdes, score 7.8/10, **zero P0**.
+  Backlog de 47 follow-ups (14 P1 · 24 P2 · 9 P3) em `ontology/_inbox/recebimentos-alocar-sn-regis-followups.md`,
+  incluindo o bloco **must-fix-before-wire-real** que trava qualquer PR que remova o `NotImplementedError`.
+
 ## v0.17.6 (2026-07-18) — SISPAG: paginação na aba de retorno (.RET)
 
 - **fix(sispag):** a aba **"Retorno Lote (RET) - Conexos"** agora tem paginação + filtro (filial e busca

@@ -171,49 +171,63 @@
    "file": "entities/transacao-bancaria.md",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (Conciliação de Recebimentos, SKELETON Fase 0): movimento bancário importado do Nexxera (crédito/débito/estorno/tarifa/juros) — raw payload + forma normalizada, correlation id desde o nascimento, deduplicado por chave natural. Espelho inbound do TituloAPagar (SISPAG outbound). State-machine transacao-bancaria (importada→conciliada/parcial/manual/erro). Wire/formato/canal do extrato a confirmar na Fase 1 (spike O7, integrations/nexxera). planned. READ-ONLY no Nexxera (só importa) — escrita LOCAL."
   },
   "DocumentoAReceber": {
    "file": "entities/documento-a-receber.md",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): read-model de recebível em aberto (conta a receber) lido do Conexos — o alvo da baixa de um Recebimento. Espelho inbound do TituloAPagar. Fonte exata no ERP (módulo/endpoint) a confirmar na Fase 2. NÃO confundir com CreditoCliente (recebível maturado × adiantamento do cliente). planned. READ no ERP."
   },
   "Recebimento": {
    "file": "entities/recebimento.md",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): agregado de conciliação — liga TransacaoBancaria (crédito) a N DocumentoAReceber, carrega classificacaoMatch (unica|multiplas|parcial|nenhuma), rateio, regras aplicadas + rationale, resultado de execução + NDe. Agregado LOCAL persistido, revisável (espelha LotePagamento). Ciclo rascunho→aprovado→executado→estornado (state-machines/recebimento). Invariantes: human-in-the-loop, invariante-rateio (I-Receb-1), idempotencia-quitacao-nde (I-Receb-2), correlation id ponta-a-ponta. planned."
   },
   "RateioRecebimento": {
    "file": "entities/rateio-recebimento.md",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): parcela de alocação (rascunho revisável) distribuindo o valor recebido por documento/processo/componente — membro do agregado Recebimento. ESPELHA permuta_alocacao (rascunho local editável). Invariante-rateio (Σ≤recebido; toda parcela com finalidade). Motor de distribuição + enum de componentes na Fase 3/4. planned."
   },
   "CreditoCliente": {
    "file": "entities/credito-cliente.md",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022 (D3 — entidade NOVA, distinta do Adiantamento)"],
+   "resolved_by": [
+    "ADR-0022 (D3 — entidade NOVA, distinta do Adiantamento)"
+   ],
    "note": "Frente IV (SKELETON Fase 0): adiantamento DE cliente — cliente paga a trading ANTES de o recebível existir/maturar (crédito a aplicar em recebíveis futuros). Entidade NOVA, EXPLICITAMENTE DISTINTA do Adiantamento (Frente I): direção oposta (cliente→trading inbound × trading→exportador outbound), contraparte, documento e ciclo diferentes — cross-link em ambos os arquivos. Pode nascer da diferença não alocada de um Recebimento. Critério de identificação + ciclo detalhados na Fase 4 (business-rules/adiantamento-cliente). planned."
   },
   "NotaDebitoEletronica": {
    "file": "entities/nota-debito-eletronica.md",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022 (D1 — emitida pelo Conexos ERP)"],
+   "resolved_by": [
+    "ADR-0022 (D1 — emitida pelo Conexos ERP)"
+   ],
    "note": "Frente IV (SKELETON Fase 0): artefato terminal de um Recebimento executado — EMITIDA pelo Conexos ERP (não sistema fiscal separado, não auto-gerada). Modelada como (1) ação disparada no ERP dentro de executarRecebimento + (2) registro local só para idempotência ('já emitida') + auditoria (fonte da verdade = ERP). Contrato de emissão (endpoint/trigger) a confirmar na Fase 5, junto do write O3 (integrations/conexos superfície NDe). idempotencyKey UNIQUE → uma NDe por recebimento (idempotencia-quitacao-nde). planned."
   },
   "RegraRecebimento": {
    "file": "entities/regra-recebimento.md",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0 — só a FORMA; semântica DEFERIDA à Fase 4): regra de conciliação configurável + versionada + explicável (encomenda / adiantamento-cliente / multa-juros). Estrutura na ontologia (tipo/versão/vigência/parâmetros/explicação); VALORES (alíquotas, contas, critérios) = config do cliente. Aplicada em aplicarRegrasRecebimento com rationale por decisão. As 3 regras concretas têm OfficeHours próprio na Fase 4 (business-rules/encomenda-percentuais, adiantamento-cliente, separacao-multa-juros). planned."
   }
  },
@@ -444,7 +458,9 @@
    "entity": "TransacaoBancaria",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV Módulo 1 (SKELETON Fase 0, impl Fase 1 gated por O7): importa o extrato do Nexxera (DIRETO), guarda raw+normalizado, deduplica por chave natural, correlation id, run de auditoria. Espelho inbound de ingerirPagamentos (cron+manual, advisory-lock, idempotência, anti-fantasma). Port channel-agnostic (API/SFTP/CNAB pluggable, O7). planned. READ-ONLY no Nexxera — escrita LOCAL."
   },
   "atribuirBaixa": {
@@ -452,7 +468,9 @@
    "entity": "Recebimento",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV Módulo 2 (SKELETON Fase 0, impl Fase 2): matching crédito↔recebíveis (cliente/CNPJ/valor/nº doc/ref bancária/nº processo/vencimento/descrição/id Pix). Classifica unica|multiplas|parcial|nenhuma; incerto→fila manual (NUNCA auto-baixa, sem baixa incorreta). Cria Recebimento rascunho. Fórmula de score na Fase 2. planned. Nenhuma escrita no ERP."
   },
   "ratearRecebimento": {
@@ -460,7 +478,9 @@
    "entity": "Recebimento",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV Módulo 3 (SKELETON Fase 0, impl Fase 3): distribui o valor recebido por documentos/processos/componentes em parcelas RateioRecebimento (rascunho revisável, espelha permuta_alocacao). Enforça invariante-rateio (I-Receb-1: Σ≤recebido; toda parcela com finalidade; diferença registrada). Motor de distribuição na Fase 3. planned. Nenhuma escrita no ERP."
   },
   "aplicarRegrasRecebimento": {
@@ -468,7 +488,9 @@
    "entity": "Recebimento",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV Módulo 4 (SKELETON Fase 0, impl Fase 4 — OfficeHours por regra): aplica RegraRecebimento (encomenda %, adiantamento-cliente, multa/juros) sobre o rateio; cada decisão com rationale + versão da regra (explicável+auditável). Semântica das 3 regras DEFERIDA à Fase 4 (stubs em business-rules/). planned. Nenhuma escrita no ERP."
   },
   "executarRecebimento": {
@@ -476,8 +498,27 @@
    "entity": "Recebimento",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV Módulo 5 (SKELETON Fase 0, impl Fase 5 — MAIOR RISCO, homologação-first, gated): borderô + quitação (write O3 = assume fin010 + parametriza, reúsa handshake ConexosBaixaClient/write-ahead/anti-drift/dry-run) + EMITE NDe via Conexos. Idempotente (idempotencia-quitacao-nde, I-Receb-2: retry nunca 2 quitações/2 NDe) + reversível (estorno controlado). Só executa Recebimento aprovado (human-in-the-loop). Contratos O3+NDe confirmados no build (Fase 5). planned."
+  },
+  "gerarSolicitacaoNumerario": {
+   "file": "actions/recebimentos/gerar-solicitacao-numerario.md",
+   "entity": "Recebimento",
+   "status": "partial",
+   "impl_files": [
+    "src/backend/domain/service/recebimentos/SolicitacaoNumerarioService.ts",
+    "src/backend/domain/interface/recebimentos/GerDocProcesso.ts",
+    "src/backend/domain/service/recebimentos/stubs/ProcessoProviderStub.ts",
+    "src/backend/routes/recebimentos.ts",
+    "src/frontend/app/recebimentos/components/AlocarProcessosDialog.tsx",
+    "src/frontend/lib/recebimentos.ts"
+   ],
+   "resolved_by": [
+    "feature-tweak recebimentos-alocar-sn (DRY-RUN)"
+   ],
+   "note": "Frente IV — 'Alocar' (transacao) -> modal de processos candidatos -> 'Processar' gera Solicitacao de Numerario (encomenda) via com299/gerDocProcesso. DRY-RUN-ONLY: SolicitacaoNumerarioService.gerar() CONSTROI e devolve o payload GerDocProcessoSelectionDTOCab ({dryRun:true, docConfig, payload}) SEM nenhum POST no Conexos; o seam enviarAoErp lanca NotImplementedError (nenhum caminho de escrita ao ERP alcancavel). Processos candidatos via STUB in-memory atras de ProcessoProviderInterface/PROCESSO_PROVIDER_TOKEN (sem matching-engine, sem DB). Valor da SN = valor CRU da transacao (regra de % da encomenda NAO-RESOLVIDA -> business-rules/encomenda-percentuais + _inbox/frente-iv-recebimentos-nde-plan.md §7 Q4). gcdCod PLACEHOLDER (confirmar HML/HAR). Rotas: GET /recebimentos/transacoes/:txnId/processos (read, filial-authz) + POST /recebimentos/transacoes/:txnId/solicitacao-numerario (write-ish dry-run, requireRole admin + heavyRouteLimiter + filial-authz). partial."
   }
  },
  "business_rules": {
@@ -663,7 +704,9 @@
    "status": "planned",
    "has_canonical_test": false,
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — spec Fase 4/OfficeHours próprio): percentuais de encomenda (0,1%/0,9%) — base de cálculo, significado, contas de destino, arredondamento a DEFINIR. Instância de RegraRecebimento (config do cliente). Aplicada em aplicarRegrasRecebimento. planned."
   },
   "adiantamento-cliente": {
@@ -671,7 +714,9 @@
    "status": "planned",
    "has_canonical_test": false,
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — spec Fase 4/OfficeHours próprio): identificação do adiantamento de cliente + ciclo do CreditoCliente (entidade NOVA, distinta do Adiantamento). Critério de identificação e consumo a DEFINIR. Aplicada em aplicarRegrasRecebimento. planned."
   },
   "separacao-multa-juros": {
@@ -679,7 +724,9 @@
    "status": "planned",
    "has_canonical_test": false,
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — spec Fase 4/OfficeHours próprio): separar principal/multa/juros — informado × calculado, destino por parcela, divergência esperado×pago a DEFINIR. Componentes viram RateioRecebimento.componente. Aplicada em aplicarRegrasRecebimento. planned."
   },
   "invariante-rateio": {
@@ -688,7 +735,9 @@
    "status": "planned",
    "has_canonical_test": false,
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — invariante travado, enforcement Fase 3): balanço do rateio — Σ RateioRecebimento.valorAlocado ≤ Recebimento.valorRecebido; toda parcela com finalidade; diferença não alocada registrada (pode virar CreditoCliente). Espelha o anti-super-pagamento de Permutas. Teste canônico no TDD da Fase 3. planned."
   },
   "idempotencia-quitacao-nde": {
@@ -697,7 +746,9 @@
    "status": "planned",
    "has_canonical_test": false,
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — invariante travado, contrato Fase 5): execução idempotente + reversível — retry/clique-duplo/falha parcial NUNCA produz 2 quitações nem 2 NDe (idempotency_key por Recebimento + write-ahead ledger recebimento_execucao, espelha permuta_alocacao_execucao; NDe.idempotencyKey UNIQUE). Reversível (estorno controlado: estorno bancário/erro operacional/conciliação incorreta). Teste canônico no TDD da Fase 5. planned."
   }
  },
@@ -748,7 +799,9 @@
    "entity": "TransacaoBancaria",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): estado da conciliação de um movimento bancário — importada|conciliada|parcial|manual|erro (estado LOCAL). Transições TB1 importarTransacoesNexxera / TB2-TB4 atribuirBaixa (conciliada/parcial/manual, incerto→manual, sem baixa incorreta) / TB5 erro (reprocessável). Regras detalhadas na Fase 2. planned."
   },
   "recebimento": {
@@ -756,7 +809,9 @@
    "entity": "Recebimento",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): ciclo do agregado de conciliação — rascunho|aprovado|executado|estornado (estado LOCAL, espelha lote-pagamento). Transições R1 atribuir+ratear+aplicarRegras / R2 aprovarRecebimento (GATE human-in-the-loop) / R3 reabrirRecebimento (reversível enquanto não executado) / R4 executarRecebimento (baixa+NDe, idempotente, gated) / R5 estornarRecebimento (undo controlado, terminal). Sub-estados de execução (executando/pending do write-ahead) = detalhe de impl da Fase 5. planned."
   }
  },
@@ -790,9 +845,33 @@
    "direction": "read (import de extrato bancário — DIRETO; canal UNKNOWN, spike O7)",
    "status": "planned",
    "impl_files": [],
-   "resolved_by": ["ADR-0022 (D4 — Nexxera direto, canal desconhecido → spike O7)"],
-   "open_gap": ["O7 — canal (API vs SFTP/CNAB), formato do extrato (CNAB240/OFX/JSON), auth, sandbox — BLOQUEIA o Módulo 1"],
+   "resolved_by": [
+    "ADR-0022 (D4 — Nexxera direto, canal desconhecido → spike O7)"
+   ],
+   "open_gap": [
+    "O7 — canal (API vs SFTP/CNAB), formato do extrato (CNAB240/OFX/JSON), auth, sandbox — BLOQUEIA o Módulo 1"
+   ],
    "note": "Frente IV (SKELETON Fase 0): import de extrato bancário DIRETO do Nexxera (novo NexxeraClient, não via Conexos). Canal DESCONHECIDO (API JSON vs SFTP/CNAB240 vs OFX) → spike O7 na Fase 0; port de ingestão channel-agnostic (adaptador pluggable) para isolar a escolha. READ only (não escreve no Nexxera nesta frente). Alimenta importarTransacoesNexxera → TransacaoBancaria. Credenciais/contas/layout = config do tenant (SSM/EnvironmentProvider). planned."
+  },
+  "conexos-com299-gerdoc": {
+   "file": "integrations/conexos-com299-gerdoc.md",
+   "direction": "write (DRY-RUN-only — nenhum POST alcancavel ate HML/HAR)",
+   "status": "partial",
+   "impl_files": [
+    "src/backend/domain/service/recebimentos/SolicitacaoNumerarioService.ts",
+    "src/backend/domain/interface/recebimentos/GerDocProcesso.ts",
+    "src/backend/domain/interface/recebimentos/constants.ts",
+    "src/backend/routes/recebimentos.ts"
+   ],
+   "resolved_by": [
+    "feature-tweak recebimentos-alocar-sn (DRY-RUN)"
+   ],
+   "open_gap": [
+    "gcdCod-solicitacao-numerario-encomenda (P0 p/ HML) — confirmar o gcdCod EXATO da config 'Solicitacao de Numerario - Encomenda' via HML/HAR (hoje PLACEHOLDER gcdCod=0)",
+    "encomenda-percentuais (P1, §7 Q4) — regra de % da encomenda NAO-RESOLVIDA; SN usa valor cru por ora",
+    "gerdoc-payload-fields (P1) — items[] (prj/ctp/tpc/cfo) + docTip/docVldTipo confirmar no HAR"
+   ],
+   "note": "Superficie de ESCRITA com299/gerDocProcesso (Solicitacao de Numerario encomenda), DESABILITADA nesta iteracao: payload construido e devolvido em DRY-RUN, nenhum POST. enviarAoErp lanca NotImplementedError (homologacao-first, espelha o gating dry-run de Permutas/executarRecebimento). Habilitar so com HML creds + HAR confirmando gcdCod + campos do payload. partial."
   }
  },
  "ui_flows": {},

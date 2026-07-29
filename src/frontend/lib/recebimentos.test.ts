@@ -1,8 +1,12 @@
 import {
   computeKpis,
   fetchPainelRecebimentos,
+  fetchProcessosParaTransacao,
+  processarSolicitacaoNumerario,
   recebimentosPainelFixture,
+  SOLICITACAO_NUMERARIO_GCD_DES_NOME,
   type NotaDebitoEletronica,
+  type Processo,
   type Recebimento,
   type TransacaoBancaria,
 } from '@/lib/recebimentos'
@@ -92,5 +96,67 @@ describe('fixture', () => {
   it('exercita todos os status de transação (para a review ver cada chip)', () => {
     const statuses = new Set(recebimentosPainelFixture.transacoes.map((t) => t.status))
     expect(statuses).toEqual(new Set(['importada', 'conciliada', 'parcial', 'manual', 'erro']))
+  })
+})
+
+const processoSample: Processo = {
+  priCod: 90001,
+  priEspRefcliente: 'REF-CLI-0001',
+  filCod: 4,
+  pesCod: 555,
+  dpeNomPessoa: 'CLIENTE EXEMPLO LTDA',
+  moeCod: 790,
+  valor: 15000,
+  contraparte: 'CLIENTE EXEMPLO LTDA',
+}
+
+describe('fetchProcessosParaTransacao — fixture fallback', () => {
+  afterEach(() => jest.clearAllMocks())
+
+  it('usa o backend quando responde com processos', async () => {
+    mockApiFetch.mockResolvedValue(okJson({ processos: [processoSample] }))
+    const out = await fetchProcessosParaTransacao('txn-1', 4)
+    expect(out).toHaveLength(1)
+    expect(out[0].priCod).toBe(90001)
+  })
+
+  it('cai no fixture (filtrado por filCod) quando o backend erra', async () => {
+    mockApiFetch.mockRejectedValue(new Error('network'))
+    const out = await fetchProcessosParaTransacao('txn-1', 4)
+    expect(out.length).toBeGreaterThan(0)
+    expect(out.every((p) => p.filCod === 4)).toBe(true)
+  })
+
+  it('devolve [] no fallback quando a filial não tem candidatos no fixture', async () => {
+    mockApiFetch.mockRejectedValue(new Error('network'))
+    const out = await fetchProcessosParaTransacao('txn-1', 999)
+    expect(out).toEqual([])
+  })
+})
+
+describe('processarSolicitacaoNumerario — dry-run (nunca envia ao ERP)', () => {
+  afterEach(() => jest.clearAllMocks())
+
+  it('usa o payload do backend quando disponível', async () => {
+    const backendPayload = {
+      dryRun: true,
+      docConfig: { gcdCod: 42, gcdDesNome: SOLICITACAO_NUMERARIO_GCD_DES_NOME },
+      payload: { filCod: 4, priCod: 90001, valor: 15000, gcdDesNome: SOLICITACAO_NUMERARIO_GCD_DES_NOME },
+    }
+    mockApiFetch.mockResolvedValue(okJson(backendPayload))
+    const out = await processarSolicitacaoNumerario('txn-1', processoSample, 15000)
+    expect(out.dryRun).toBe(true)
+    expect(out.docConfig.gcdCod).toBe(42)
+    expect(out.payload.valor).toBe(15000)
+  })
+
+  it('cai no payload dry-run local quando o backend erra (ainda sem tocar o ERP)', async () => {
+    mockApiFetch.mockRejectedValue(new Error('network'))
+    const out = await processarSolicitacaoNumerario('txn-1', processoSample, 27890.55)
+    expect(out.dryRun).toBe(true)
+    expect(out.docConfig.gcdDesNome).toBe(SOLICITACAO_NUMERARIO_GCD_DES_NOME)
+    // SN amount = valor cru da transação (regra de % da encomenda não-resolvida).
+    expect(out.payload.valor).toBe(27890.55)
+    expect(out.payload.items[0].total).toBe(27890.55)
   })
 })

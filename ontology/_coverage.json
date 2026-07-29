@@ -16,9 +16,9 @@
   "entities_planned": 8,
   "entities_planned_migration": 0,
   "entities_coverage_pct": 47,
-  "actions_total": 21,
+  "actions_total": 22,
   "actions_implemented": 13,
-  "actions_partial": 1,
+  "actions_partial": 2,
   "actions_planned": 7,
   "actions_coverage_pct": 64,
   "business_rules_total": 16,
@@ -30,11 +30,12 @@
   "state_machines_partial": 1,
   "state_machines_implemented": 1,
   "state_machines_planned": 3,
-  "integrations_total": 2,
+  "integrations_total": 3,
   "integrations_implemented": 1,
   "integrations_planned": 1,
   "ui_flows_total": 0,
-  "workflows_total": 0
+  "workflows_total": 0,
+  "integrations_partial": 1
  },
  "by_entity": {
   "Adiantamento": {
@@ -147,51 +148,78 @@
   },
   "TransacaoBancaria": {
    "status": "planned",
-   "actions": ["importarTransacoesNexxera"],
+   "actions": [
+    "importarTransacoesNexxera"
+   ],
    "impl_pct": 0,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): movimento bancário Nexxera (raw+normalizado, correlation id, deduped). State-machine transacao-bancaria. Wire/canal/formato na Fase 1 (spike O7). planned."
   },
   "DocumentoAReceber": {
    "status": "planned",
    "actions": [],
    "impl_pct": 0,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): read-model de recebível em aberto (alvo da baixa). Fonte ERP a confirmar na Fase 2. planned."
   },
   "Recebimento": {
    "status": "planned",
-   "actions": ["atribuirBaixa", "ratearRecebimento", "aplicarRegrasRecebimento", "executarRecebimento"],
+   "actions": [
+    "atribuirBaixa",
+    "ratearRecebimento",
+    "aplicarRegrasRecebimento",
+    "executarRecebimento"
+   ],
    "impl_pct": 0,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): agregado de conciliação (rascunho→aprovado→executado→estornado, espelha LotePagamento). Invariantes: human-in-the-loop, invariante-rateio (I-Receb-1), idempotencia-quitacao-nde (I-Receb-2). planned."
   },
   "RateioRecebimento": {
    "status": "planned",
-   "actions": ["ratearRecebimento"],
+   "actions": [
+    "ratearRecebimento"
+   ],
    "impl_pct": 0,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0): parcela de alocação revisável (espelha permuta_alocacao). Motor de distribuição + enum de componentes na Fase 3/4. planned."
   },
   "CreditoCliente": {
    "status": "planned",
    "actions": [],
    "impl_pct": 0,
-   "resolved_by": ["ADR-0022 (D3 — entidade NOVA, distinta do Adiantamento)"],
+   "resolved_by": [
+    "ADR-0022 (D3 — entidade NOVA, distinta do Adiantamento)"
+   ],
    "note": "Frente IV (SKELETON Fase 0): adiantamento DE cliente (inbound) — ENTIDADE NOVA, distinta do Adiantamento (outbound, Frente I). Critério de identificação + ciclo na Fase 4 (business-rules/adiantamento-cliente). planned."
   },
   "NotaDebitoEletronica": {
    "status": "planned",
-   "actions": ["executarRecebimento"],
+   "actions": [
+    "executarRecebimento"
+   ],
    "impl_pct": 0,
-   "resolved_by": ["ADR-0022 (D1 — emitida pelo Conexos ERP)"],
+   "resolved_by": [
+    "ADR-0022 (D1 — emitida pelo Conexos ERP)"
+   ],
    "note": "Frente IV (SKELETON Fase 0): artefato terminal EMITIDO pelo Conexos ERP; registro local só p/ idempotência. Contrato de emissão na Fase 5 (junto do O3). planned."
   },
   "RegraRecebimento": {
    "status": "planned",
-   "actions": ["aplicarRegrasRecebimento"],
+   "actions": [
+    "aplicarRegrasRecebimento"
+   ],
    "impl_pct": 0,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (SKELETON Fase 0 — só a forma): regra configurável+versionada+explicável. Semântica das 3 regras (encomenda/adiantamento-cliente/multa-juros) DEFERIDA à Fase 4. planned."
   }
  },
@@ -310,33 +338,43 @@
   "encomenda-percentuais": {
    "status": "planned",
    "has_test": false,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — spec Fase 4/OfficeHours próprio): encomenda 0,1%/0,9% (base, significado, contas, arredondamento a DEFINIR). Instância de RegraRecebimento. planned."
   },
   "adiantamento-cliente": {
    "status": "planned",
    "has_test": false,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — spec Fase 4): identificação do adiantamento de cliente + ciclo do CreditoCliente (entidade nova). planned."
   },
   "separacao-multa-juros": {
    "status": "planned",
    "has_test": false,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — spec Fase 4): separar principal/multa/juros (informado × calculado, destino, divergência a DEFINIR). planned."
   },
   "invariante-rateio": {
    "invariant": "I-Receb-1",
    "status": "planned",
    "has_test": false,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — invariante travado, enforcement Fase 3): Σ alocado ≤ recebido; toda parcela com finalidade; diferença registrada. Espelha anti-super-pagamento de Permutas. planned."
   },
   "idempotencia-quitacao-nde": {
    "invariant": "I-Receb-2",
    "status": "planned",
    "has_test": false,
-   "resolved_by": ["ADR-0022"],
+   "resolved_by": [
+    "ADR-0022"
+   ],
    "note": "Frente IV (STUB Fase 0 — invariante travado, contrato Fase 5): retry nunca gera 2 quitações/2 NDe (idempotency_key + write-ahead ledger, espelha permuta_alocacao_execucao); reversível (estorno controlado). planned."
   }
  },

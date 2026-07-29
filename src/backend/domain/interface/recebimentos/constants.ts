@@ -115,3 +115,26 @@ export const FANOUT_LIMIT_RECEBIMENTOS = 4;
  * `PAGAMENTO_INGEST_LOCK_KEY` do SISPAG). Contrato de exclusão cross-processo para o Módulo 1.
  */
 export const RECEBIMENTO_INGEST_LOCK_KEY = 726354820;
+
+// ─────────────────────────────────────────────────────────── Solicitação de Numerário (com299)
+
+/**
+ * Configuração de Documento (`gcd`) do com299 usada ao processar um processo → gerar uma
+ * **Solicitação de Numerário — Encomenda** (`gerDocProcesso`).
+ *
+ * `gcdCod` é o código da configuração no ERP. **PLACEHOLDER (dry-run):** o valor real precisa de
+ * confirmação HML/HAR (ver `ontology/integrations/conexos-com299-gerdoc.md`). O `gcdDesNome` é o
+ * rótulo humano ("Cód. Configuração de Documento"). Como a geração é **DRY-RUN-ONLY** nesta iteração,
+ * nenhum POST usa esse código ainda — ele só entra no payload previsto.
+ */
+export const SOLICITACAO_NUMERARIO_DOC_CONFIG = {
+    /** PLACEHOLDER — confirmar o `gcdCod` real via HML/HAR antes de qualquer envio ao ERP. */
+    gcdCod: 0,
+    gcdDesNome: 'Solicitação de Numerário - Encomenda',
+} as const;
+
+/** Tipo/validação do documento com299 (defaults do swagger — confirmar no build). */
+export const SOLICITACAO_NUMERARIO_DOC_TIP = 'SN';
+export const SOLICITACAO_NUMERARIO_DOC_VLD_TIPO = 'SN';
+/** Moeda default da SN (BRL) — parametrizável quando a fonte real existir. */
+export const SOLICITACAO_NUMERARIO_MOE_COD = 790;

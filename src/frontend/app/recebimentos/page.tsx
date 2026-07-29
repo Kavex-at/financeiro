@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Banknote,
   Copy,
+  Coins,
   Landmark,
   ListChecks,
   Lock,
@@ -40,6 +41,7 @@ import {
   TransacaoStatusBadge,
 } from './components/status-badges'
 import { NdeTable } from './components/NdeTable'
+import { AlocarProcessosDialog } from './components/AlocarProcessosDialog'
 
 /** Formata uma data ISO (ou undefined) para pt-BR curta (UTC — dia estável). */
 const fmtData = (iso?: string) =>
@@ -92,6 +94,7 @@ function RecebimentosPanel() {
   const [error, setError] = React.useState<string | null>(null)
   const [statusFiltro, setStatusFiltro] = React.useState<StatusFiltro>('todas')
   const [aba, setAba] = React.useState('transacoes')
+  const [alocarTxn, setAlocarTxn] = React.useState<TransacaoBancaria | null>(null)
 
   const carregar = React.useCallback(async () => {
     setLoading(true)
@@ -299,6 +302,7 @@ function RecebimentosPanel() {
                         <TableHead>Status</TableHead>
                         <TableHead>Match</TableHead>
                         <TableHead>correlationId</TableHead>
+                        <TableHead className="text-right">Ações</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -339,6 +343,16 @@ function RecebimentosPanel() {
                                 <Copy className="size-3" aria-hidden />
                               </Button>
                             </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setAlocarTxn(t)}
+                              aria-label={`Alocar processos para a transação ${t.contraparte ?? t.id}`}
+                            >
+                              <Coins className="size-4" aria-hidden /> Alocar
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -383,6 +397,14 @@ function RecebimentosPanel() {
           </Tabs>
         </>
       ) : null}
+
+      <AlocarProcessosDialog
+        transacao={alocarTxn}
+        open={alocarTxn !== null}
+        onOpenChange={(o) => {
+          if (!o) setAlocarTxn(null)
+        }}
+      />
     </div>
   )
 }
