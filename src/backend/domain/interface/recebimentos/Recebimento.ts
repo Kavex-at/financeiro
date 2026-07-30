@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { MATCH_CLASSIFICACAO, RECEBIMENTO_STATUS } from './constants.js';
 import type { MatchClassificacao, RecebimentoStatus } from './constants.js';
+import { emissaoNdeSchema } from './HomologacaoNde.js';
+import type { EmissaoNde } from './HomologacaoNde.js';
 import { rateioRecebimentoSchema } from './RateioRecebimento.js';
 import type { RateioRecebimento } from './RateioRecebimento.js';
 import { regraRecebimentoSchema } from './RegraRecebimento.js';
@@ -38,6 +40,12 @@ export interface Recebimento {
     resultadoExecucao?: unknown;
     /** A NDe emitida na execução (quando aplicável) — `null` até executar. */
     ndeId?: string;
+    /**
+     * Carrier da leg de GERAÇÃO com297 (o `docCod` + `vldTpNf` do documento a homologar). Ausente
+     * enquanto a leg de geração não existir — `ConexosNdeEmitter` cai no fallback `pendente`. Ver
+     * `HomologacaoNde.ts` / `integrations/conexos-com297-homologacao.md`.
+     */
+    emissaoNde?: EmissaoNde;
     /** Controle otimista de concorrência (espelha o I6 do lote). */
     versao: number;
     criadoPor: string;
@@ -72,6 +80,7 @@ export const recebimentoSchema = z.object({
     rateios: z.array(rateioRecebimentoSchema),
     resultadoExecucao: z.unknown(),
     ndeId: z.string().optional(),
+    emissaoNde: emissaoNdeSchema.optional(),
     versao: z.number().int().nonnegative(),
     criadoPor: z.string().min(1),
     aprovadoPor: z.string().optional(),

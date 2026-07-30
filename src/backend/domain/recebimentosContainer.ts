@@ -52,6 +52,13 @@ export const registerRecebimentosPorts = (): void => {
     container.register(RATEIO_ENGINE_TOKEN, { useClass: RateioEngineStub });
     container.register(REGRAS_ENGINE_TOKEN, { useClass: RegrasEngineStub });
     container.register(ERP_RECEIVABLES_GATEWAY_TOKEN, { useClass: ErpReceivablesGatewayStub });
+    // NDe (Módulo 5) → STUB por ora. O seam FISCAL live-capable existe e é testado
+    // (`ConexosNdeEmitter` → `ConexosNdeClient.homologar` no com297); o swap
+    // `{ useClass: ConexosNdeEmitter }` é o passo de GO-LIVE, gated por: (a) escrita ligada
+    // (`conexosWriteEnabled && !conexosDryRun`), (b) `Recebimento.emissaoNde` fluindo da leg de
+    // geração com297 (info-gap — mints o `docCod`), (c) allowlist `NDE_NORMAL_TP_NF_CONHECIDOS`
+    // seedada, e (d) os testes do pipeline registrando `LEGACY_CONEXOS_TOKEN` (o emitter resolve
+    // `ConexosBaseClient`). Ver `integrations/conexos-com297-homologacao.md`.
     container.register(NDE_EMITTER_TOKEN, { useClass: NdeEmitterStub });
     container.register(METRICS_PORT_TOKEN, { useClass: MetricsPortStub });
     // Provedor de processos candidatos ("Alocar") → STUB in-memory (Módulo 2/2b troca o token).

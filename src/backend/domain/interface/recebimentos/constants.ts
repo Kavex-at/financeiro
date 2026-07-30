@@ -180,3 +180,81 @@ export const RECEBIMENTO_INGEST_DIAS_PADRAO = 90;
  * volume, e dá granularidade de retomada quando uma fatia falha.
  */
 export const RECEBIMENTO_INGEST_BLOCO_DIAS = 30;
+// ─────────────────────────────────────────────────────────── NDe fiscal (com297) — homologação
+
+/**
+ * Nota de Débito Eletrônica (NDe) — leg FISCAL. A NDe *eletrônica* é um documento fiscal de SAÍDA
+ * gerado no `com297` (Fiscais de Saída) e HOMOLOGADO (autorização SEFAZ). Este módulo modela apenas
+ * o passo TERMINAL — a **homologação** (contrato completo). A GERAÇÃO do documento com297
+ * (produto/número/tipo-de-débito/observações) é uma leg anterior ainda NÃO contratada (só passos de
+ * UI no docx — info-gap em `_inbox/recebimentos-nde-com297-gap.md`). NÃO confundir com o com299
+ * (`SOLICITACAO_NUMERARIO_*` acima), que é a leg FINANCEIRA (Solicitação de Numerário).
+ * Ver `ontology/integrations/conexos-com297-homologacao.md`.
+ */
+
+/** Os dois verbos de homologação do com297. Path = `com297/{verbo}/{docCod}`, body `{}`. */
+export const NDE_HOMOLOGACAO_VERB = {
+    NORMAL: 'homologaNfe',
+    CONTINGENCIA: 'homologaNfeContingencia',
+} as const;
+
+export type NdeHomologacaoVerb = (typeof NDE_HOMOLOGACAO_VERB)[keyof typeof NDE_HOMOLOGACAO_VERB];
+
+/**
+ * Whitelist de `vldTpNf` que roteiam p/ CONTINGÊNCIA (`homologaNfeContingencia`). Fonte: o predicado
+ * client-side `finDocIsContingenciaHomologacao` = `["11","12"].indexOf(o.finDoc.vldTpNf) !== -1`.
+ * Comparação ESTRITA por string — um `11` numérico vindo de payload REST NÃO casa; normalize no
+ * boundary (`normalizeVldTpNf`). `"11"` → aviso DPEC (legado EPEC); `"12"` → aviso SCAN (legado SVC).
+ */
+export const NDE_CONTINGENCIA_TP_NF = ['11', '12'] as const;
+
+/** Texto de aviso do dialog por `vldTpNf` de contingência (só afeta a mensagem, NÃO a rota). */
+export const NDE_CONTINGENCIA_AVISO: Readonly<Record<string, 'DPEC' | 'SCAN'>> = {
+    '11': 'DPEC',
+    '12': 'SCAN',
+};
+
+/**
+ * Whitelist de `vldTpNf` NORMAIS conhecidos (→ `homologaNfe`). **VAZIO de propósito (assertion, não
+ * assumption).** Invertemos o predicado fail-open do UI (que roteia QUALQUER valor não-{11,12} p/
+ * normal): aqui um `vldTpNf` fora de {contingência ∪ normais-conhecidos} é RECUSADO (fail-loud), não
+ * assumido normal. Precisa ser SEED a partir da distribuição real de `vldTpNf` nos documentos NDe da
+ * Columbia ANTES de ligar a escrita — P0 gate-before-live em `_inbox/recebimentos-nde-com297-gap.md`.
+ * Enquanto vazio, a homologação (gated OFF por default) recusa docs normais — intencional.
+ */
+export const NDE_NORMAL_TP_NF_CONHECIDOS: readonly string[] = [];
+
+/**
+ * Ações ACL (`checkActions view=com297`) exigidas p/ homologar — a conta de serviço da automação
+ * precisa da ação correspondente à rota; a contingência exige uma ação SEPARADA. Se o servidor
+ * re-checa, sem a ação vem 403; se não re-checa, estaríamos furando um controle do UI — conceda
+ * propriamente. Ver `integrations/conexos-com297-homologacao.md`.
+ */
+export const NDE_HOMOLOGACAO_ACTION = {
+    NORMAL: 'HOMOLOGAR DOCUMENTO',
+    CONTINGENCIA: 'HOMOLOGAR DOCUMENTO CONTINGENCIA',
+} as const;
+
+/**
+ * `docVldComvalidacoes` no retorno da homologação — **HTTP 200 ≠ sucesso**. Branch OBRIGATÓRIO
+ * (`customizedSuccess: true` no UI suprime o toast default justamente p/ isto):
+ *   - `1` → sucesso limpo (emitida)
+ *   - `2` → homologada, mas com validações pendentes (aviso com194 — emitida COM aviso, NÃO sucesso)
+ *   - default → falha (com194 + erro) — RECUSA (nunca marcar um 200 como sucesso).
+ */
+export const NDE_DOC_VLD_COM_VALIDACOES = {
+    SUCESSO: 1,
+    AVISO_VALIDACOES_PENDENTES: 2,
+} as const;
+
+/**
+ * Constantes da GERAÇÃO do documento com297 (leg ANTERIOR, fora do escopo desta fatia — só a
+ * homologação é contratada). PLACEHOLDERS documentados do docx p/ quando a leg de geração for cabeada:
+ * produto SEMPRE `41978`, número SEMPRE `"0"`, tipo de nota de débito = `"Pagamento antecipado"`.
+ * Confirmar via HAR/HML — `_inbox/recebimentos-nde-com297-gap.md`.
+ */
+export const NDE_GERACAO_DEFAULTS = {
+    produtoCod: 41978,
+    numero: '0',
+    tipoNotaDebito: 'Pagamento antecipado',
+} as const;
