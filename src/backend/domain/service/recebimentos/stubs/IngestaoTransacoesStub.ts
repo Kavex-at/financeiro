@@ -50,7 +50,7 @@ export default class IngestaoTransacoesStub implements IngestaoTransacoesInterfa
             FANOUT_LIMIT_RECEBIMENTOS,
         );
         const importadas = settled.flatMap((s) =>
-            s.status === 'fulfilled' ? s.value.importadas : [],
+            s.status === 'fulfilled' ? (s.value.importadas ?? []) : [],
         );
         const total = settled.reduce(
             (n, s) => n + (s.status === 'fulfilled' ? s.value.total : 0),

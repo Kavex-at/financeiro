@@ -67,5 +67,3 @@ mesma doutrina já validada em Permutas; os códigos/contas/endpoints são confi
 
 - Shape exato do payload/endpoint do write de recebível (O3) e do trigger de emissão NDe: **Fase 5**
   (confirmar no build). Observabilidade transversal (Módulo 6) é consolidada na Fase 6.
-</content>
-</invoke>

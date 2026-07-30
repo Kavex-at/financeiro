@@ -33,6 +33,20 @@ export interface TransacaoBancaria {
     status: TransacaoBancariaStatus;
     importRunId?: string;
     importadoEm: Date;
+    /**
+     * Conta financeira de origem (`gerNum` do `fin133`). É a **"Conta Financeira de
+     * Baixa"** que o `fin014` exige ao registrar a quitação (Fase 5) — por isso é
+     * coluna própria e não um campo dentro de `normalized`.
+     */
+    gerNum?: number;
+    /**
+     * Categoria do lançamento no extrato (`exiEspCategoria` do `fin095`).
+     * Discriminador do RUÍDO DE TESOURARIA: em produção, ~15% dos créditos são
+     * RESGATE DE APLICAÇÃO / AÇÕES / TRANSFERÊNCIA ENTRE CONTAS, que não são
+     * recebimento de cliente. O painel filtra por aqui; a ingestão não descarta.
+     */
+    categoria?: string;
+    categoriaDesc?: string;
 }
 
 /** Boundary validation (Zod at boundaries) — one schema per entity. */
@@ -64,4 +78,7 @@ export const transacaoBancariaSchema = z.object({
     ]),
     importRunId: z.string().optional(),
     importadoEm: z.date(),
+    gerNum: z.number().int().positive().optional(),
+    categoria: z.string().optional(),
+    categoriaDesc: z.string().optional(),
 });

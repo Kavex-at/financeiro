@@ -65,5 +65,3 @@ recalibra.
 Universal: importar o extrato bancário de um provedor (VAN/banco) é a fonte de qualquer conciliação de
 recebimentos. A estrutura (import direto + port channel-agnostic + dedup + correlation id) é do
 domínio; o **canal/formato/credenciais** são config/contrato do tenant (o que o O7 resolve).
-</content>
-</invoke>

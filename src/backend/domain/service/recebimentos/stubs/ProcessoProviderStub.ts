@@ -2,6 +2,7 @@ import { injectable } from 'tsyringe';
 import { processoCandidatosSeed } from '../../../interface/recebimentos/__fixtures__/processo.fixture.js';
 import type { Processo } from '../../../interface/recebimentos/GerDocProcesso.js';
 import type {
+    ClienteProcesso,
     ListCandidatosInput,
     ProcessoProviderInterface,
 } from '../../../interface/recebimentos/ports.js';
@@ -22,10 +23,29 @@ export default class ProcessoProviderStub implements ProcessoProviderInterface {
         const contraparte = input.contraparte?.trim().toLowerCase();
         return this.candidatos.filter((p) => {
             if (p.filCod !== input.filCod) return false;
+            if (input.pesCod !== undefined) return p.pesCod === input.pesCod;
             if (!contraparte) return true;
             // Frouxo: bate se a contraparte da transação aparece na do processo (ou vice-versa).
             const alvo = (p.contraparte ?? p.dpeNomPessoa).toLowerCase();
             return alvo.includes(contraparte) || contraparte.includes(alvo);
         });
+    };
+
+    public listClientes = async (input: { filCod: number }): Promise<ClienteProcesso[]> => {
+        const porCliente = new Map<number, ClienteProcesso>();
+        for (const p of this.candidatos) {
+            if (p.filCod !== input.filCod) continue;
+            const atual = porCliente.get(p.pesCod);
+            if (atual) atual.processosAbertos += 1;
+            else
+                porCliente.set(p.pesCod, {
+                    pesCod: p.pesCod,
+                    dpeNomPessoa: p.dpeNomPessoa,
+                    processosAbertos: 1,
+                });
+        }
+        return [...porCliente.values()].sort((a, b) =>
+            a.dpeNomPessoa.localeCompare(b.dpeNomPessoa, 'pt-BR'),
+        );
     };
 }

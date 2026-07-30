@@ -67,5 +67,3 @@ são **config do cliente** (Columbia) e serão fixados na Fase 4. Ver os stubs:
 - **Toda a semântica das 3 regras** (encomenda %, adiantamento de cliente, multa/juros): **Fase 4**,
   um OfficeHours por regra. Este arquivo modela apenas que existe uma entidade de regra
   **configurável + versionada + explicável**; nenhuma alíquota, conta ou critério é fixado aqui.
-</content>
-</invoke>

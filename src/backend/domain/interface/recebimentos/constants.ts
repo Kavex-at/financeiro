@@ -138,3 +138,45 @@ export const SOLICITACAO_NUMERARIO_DOC_TIP = 'SN';
 export const SOLICITACAO_NUMERARIO_DOC_VLD_TIPO = 'SN';
 /** Moeda default da SN (BRL) — parametrizável quando a fonte real existir. */
 export const SOLICITACAO_NUMERARIO_MOE_COD = 790;
+
+// ─────────────────────────────────────────────────────────── Extrato bancário (fin095 / fin133)
+
+/**
+ * Moeda dos lançamentos de extrato. O `fin095` não traz campo de moeda — as contas
+ * do `fin133` são todas bancos brasileiros. Constante nomeada em vez de literal
+ * solto para que o dia em que houver conta em outra moeda seja um grep, não uma
+ * caçada.
+ */
+export const EXTRATO_MOEDA_PADRAO = 'BRL';
+
+/**
+ * Categorias do extrato (`exiEspCategoria` do fin095) que NÃO são recebimento de
+ * cliente — são movimento de tesouraria da própria Columbia.
+ *
+ * Medido em produção (filial 1, 90 dias, 1.759 créditos): 239 RESGATE DE
+ * APLICAÇÃO, 18 AÇÕES, 14 TRANSFERÊNCIA ENTRE CONTAS. Jogar isso na fila do
+ * analista afoga a tela sem nenhum ganho.
+ *
+ * ⚠️ É filtro de APRESENTAÇÃO. A ingestão persiste tudo — o extrato é fonte da
+ * verdade e uma exclusão gravada no banco não teria volta. O painel esconde por
+ * default e o analista pode pedir para ver.
+ */
+export const CATEGORIAS_TESOURARIA = [
+    '206', // RESGATE DE APLICAÇÃO
+    '210', // AÇÕES
+    '213', // TRANSFERÊNCIA ENTRE CONTAS
+    '207', // EMPRÉSTIMO / FINANCIAMENTO
+] as const;
+
+/** Teto de linhas devolvidas pelo painel (espelha o `TITULOS_CAP` do SISPAG). */
+export const PAINEL_TRANSACOES_CAP = 500;
+
+/** Janela default da ingestão de extratos, em dias. */
+export const RECEBIMENTO_INGEST_DIAS_PADRAO = 90;
+
+/**
+ * Fatia máxima de dias por chamada ao `fin095`. Mantém cada `paginate` bem abaixo
+ * do teto de páginas (`MAX_PAGES × PAGE_SIZE` = 25.000) mesmo numa conta de alto
+ * volume, e dá granularidade de retomada quando uma fatia falha.
+ */
+export const RECEBIMENTO_INGEST_BLOCO_DIAS = 30;

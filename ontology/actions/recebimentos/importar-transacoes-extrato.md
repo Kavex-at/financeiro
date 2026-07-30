@@ -66,5 +66,3 @@ valores (canal, formato, horário do cron, contas) são config do tenant / decis
 ## Fora de escopo (Fase 0 — SKELETON)
 
 - Canal/formato/auth do Nexxera (O7), wire do extrato, fórmula da chave natural: **Fase 1**.
-</content>
-</invoke>

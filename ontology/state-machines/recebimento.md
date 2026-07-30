@@ -66,5 +66,3 @@ Cada transição é uma **ação nomeada** com regra explícita e registro de vi
 Espelha a máquina do `LotePagamento` (SISPAG): estado local, gate humano, reversibilidade condicionada
 ao downstream, concorrência otimista. Direção oposta (conciliar crédito recebido × montar lote a
 pagar). Ver `state-machines/lote-pagamento.md`.
-</content>
-</invoke>

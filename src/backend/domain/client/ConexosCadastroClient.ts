@@ -95,8 +95,15 @@ export default class ConexosCadastroClient {
     public listProcessos = async (params: {
         filCod: number;
         priCods?: string[];
+        /**
+         * Filtra pelos processos de um ou mais CLIENTES (`pesCod`). É como a
+         * Frente IV lista "os processos atrelados a este crédito" depois que o
+         * analista escolhe o cliente. Confirmado em produção: `pesCod#IN`
+         * funciona (filial 1 tem 237 processos abertos; `pesCod=696` tem 66).
+         */
+        pesCods?: string[];
     }): Promise<ProcessoListItem[]> => {
-        const { filCod, priCods } = params;
+        const { filCod, priCods, pesCods } = params;
 
         // Conexos returns `priCod` as a number; downstream methods (and the
         // financial-doc list endpoints) treat it as string. We normalise here
@@ -147,6 +154,29 @@ export default class ConexosCadastroClient {
             'priDtaAbertura',
             'filCod',
         ];
+
+        // Filtro por CLIENTE: caminho da Frente IV (processos de um cliente
+        // escolhido pelo analista). Mesmo chunking do caminho por `priCods`.
+        if (pesCods && pesCods.length > 0) {
+            const chunksPes = chunked(pesCods);
+            const resultsPes = await Promise.all(
+                chunksPes.map((batch) =>
+                    this.base.paginate<Record<string, unknown>>({
+                        endpoint: 'imp021/list',
+                        bodyBase: {
+                            fieldList: FIELD_LIST,
+                            filterList: { 'pesCod#IN': batch, 'priVldStatus#IN': ['1'] },
+                            serviceName: 'imp021',
+                            orderList: {
+                                orderList: [{ propertyName: 'priCod', order: 'asc' }],
+                            },
+                        },
+                        opts: { filCod },
+                    }),
+                ),
+            );
+            return normalise(resultsPes.flat());
+        }
 
         if (!priCods || priCods.length === 0) {
             const rows = await this.base.paginate<Record<string, unknown>>({

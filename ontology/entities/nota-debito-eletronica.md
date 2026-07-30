@@ -72,5 +72,3 @@ re-execução do `Recebimento` (retry) **não** pode emitir uma segunda NDe — 
   junto do write O3). Ver `integrations/conexos.md` (superfície de escrita NDe).
 - A emissão idempotente e reversível é modelada na regra `business-rules/idempotencia-quitacao-nde.md`
   (skeleton) — spec completa na Fase 5.
-</content>
-</invoke>

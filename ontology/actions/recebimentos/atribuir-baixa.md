@@ -57,5 +57,3 @@ incerto) é do domínio; os pesos/limiares do score são config/calibração do 
 ## Fora de escopo (Fase 0 — SKELETON)
 
 - Fórmula de score, limiares de confiança, fonte exata dos recebíveis no ERP: **Fase 2**.
-</content>
-</invoke>

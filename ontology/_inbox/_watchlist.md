@@ -29,5 +29,3 @@
   state-machine skeleton de propósito.
 - **Scheduler (O4, herdado do SISPAG):** sem runtime de job/cron nativo (Express). Cadência do Módulo 1
   começa manual-trigger + cron probe (como a ingestão SISPAG); EventBridge é o alvo.
-</content>
-</invoke>

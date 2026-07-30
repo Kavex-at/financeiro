@@ -52,6 +52,18 @@ export default class EnvironmentVars {
     public recebimentosEnabled: boolean;
 
     /**
+     * Janela default (em dias) da ingestão de extratos da Frente IV.
+     * `RECEBIMENTO_INGEST_DIAS`; default 90.
+     */
+    public recebimentoIngestDias: number;
+
+    /**
+     * Filiais a ingerir (`RECEBIMENTO_INGEST_FIL_CODS`, CSV). Vazio = todas as
+     * filiais que o ERP devolver.
+     */
+    public recebimentoIngestFilCods: number[];
+
+    /**
      * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
      * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
      * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
@@ -78,6 +90,8 @@ export default class EnvironmentVars {
         conexosCredEncKey,
         sispagEnabled,
         recebimentosEnabled,
+        recebimentoIngestDias,
+        recebimentoIngestFilCods,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -96,6 +110,8 @@ export default class EnvironmentVars {
         conexosCredEncKey?: string;
         sispagEnabled: boolean;
         recebimentosEnabled: boolean;
+        recebimentoIngestDias: number;
+        recebimentoIngestFilCods: number[];
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -114,5 +130,7 @@ export default class EnvironmentVars {
         this.conexosCredEncKey = conexosCredEncKey;
         this.sispagEnabled = sispagEnabled;
         this.recebimentosEnabled = recebimentosEnabled;
+        this.recebimentoIngestDias = recebimentoIngestDias;
+        this.recebimentoIngestFilCods = recebimentoIngestFilCods;
     }
 }

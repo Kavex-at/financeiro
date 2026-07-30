@@ -104,5 +104,3 @@ auditoria, concorrência otimista) mas correm em direções opostas. Ver `entiti
 
 - Motor de matching (Fase 2), motor de rateio (Fase 3), motor de regras (Fase 4), execução/baixa + NDe
   (Fase 5). Este arquivo modela a **forma** do agregado; as regras profundas são fatias próprias.
-</content>
-</invoke>

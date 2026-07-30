@@ -55,5 +55,3 @@ has_canonical_test: false
 Universal: uma escrita financeira irreversível-por-nós (quitação + emissão de documento) precisa ser
 idempotente e reversível — invariante de qualquer contas-a-receber automatizado. É a mesma doutrina
 (write-ahead + idempotency key + dry-run gate) já validada em Permutas; independe do tenant.
-</content>
-</invoke>

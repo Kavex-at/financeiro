@@ -54,5 +54,3 @@ A conciliação em si é o agregado `Recebimento` (`state-machines/recebimento.m
 `rascunho → aprovado → executado → estornado`). Esta máquina é o **estado do movimento** (o insumo);
 a do `Recebimento` é o **estado da conciliação** (o processo). Um crédito `conciliada`/`parcial`
 tipicamente tem um `Recebimento` associado.
-</content>
-</invoke>

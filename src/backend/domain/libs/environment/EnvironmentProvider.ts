@@ -2,6 +2,7 @@ import path from 'node:path';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import dotenv from 'dotenv';
 import { injectable, singleton } from 'tsyringe';
+import { RECEBIMENTO_INGEST_DIAS_PADRAO } from '../../interface/recebimentos/constants.js';
 import EnvironmentVars from './model/EnvironmentVars.js';
 
 @singleton()
@@ -51,6 +52,23 @@ export default class EnvironmentProvider {
         return environment !== 'production';
     };
 
+    /**
+     * Janela default da ingestão de extratos (`RECEBIMENTO_INGEST_DIAS`).
+     * Valor inválido ou ausente cai no padrão — nunca zero (uma janela de zero
+     * dias faria a ingestão rodar e não trazer nada, silenciosamente).
+     */
+    private resolveIngestDias = (): number => {
+        const n = Number(this.readEnv('RECEBIMENTO_INGEST_DIAS'));
+        return Number.isInteger(n) && n > 0 ? n : RECEBIMENTO_INGEST_DIAS_PADRAO;
+    };
+
+    /** Filiais da ingestão (`RECEBIMENTO_INGEST_FIL_CODS`, CSV). Vazio = todas. */
+    private resolveIngestFilCods = (): number[] =>
+        this.readEnv('RECEBIMENTO_INGEST_FIL_CODS', '')
+            .split(',')
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isInteger(n) && n > 0);
+
     private parseSSMCredentials = async (
         envVar: string | undefined,
     ): Promise<Record<string, any>> => {
@@ -97,6 +115,8 @@ export default class EnvironmentProvider {
             recebimentosEnabled: this.resolveRecebimentosEnabled(
                 this.readEnv('environment', 'local'),
             ),
+            recebimentoIngestDias: this.resolveIngestDias(),
+            recebimentoIngestFilCods: this.resolveIngestFilCods(),
         });
     };
 
@@ -130,6 +150,8 @@ export default class EnvironmentProvider {
                 undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment')),
             recebimentosEnabled: this.resolveRecebimentosEnabled(this.readEnv('environment')),
+            recebimentoIngestDias: this.resolveIngestDias(),
+            recebimentoIngestFilCods: this.resolveIngestFilCods(),
         });
     };
 

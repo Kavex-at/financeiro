@@ -67,6 +67,9 @@ const DialogContent = React.forwardRef<
             data-slot="dialog-content"
             className={cn(
                 'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 gap-4 border bg-card text-card-foreground p-6 shadow-lg duration-200 rounded-lg',
+                // Nenhum diálogo pode passar da viewport: sem o teto, uma lista
+                // longa empurra o cabeçalho (e os controles) para fora da tela.
+                'flex max-h-[85vh] flex-col',
                 'data-[state=open]:animate-in data-[state=closed]:animate-out',
                 'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
                 'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
@@ -92,14 +95,24 @@ DialogContent.displayName = DialogPrimitive.Content.displayName
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
     <div
         data-slot="dialog-header"
-        className={cn('flex flex-col space-y-1.5 text-left', className)}
+        className={cn('flex shrink-0 flex-col space-y-1.5 text-left', className)}
         {...props}
     />
 )
 DialogHeader.displayName = 'DialogHeader'
 
+/**
+ * Corpo do diálogo. Rola sozinho quando o conteúdo excede a altura do
+ * `DialogContent` (`min-h-0` é o que permite o flex-child encolher).
+ * Telas que precisam manter um controle fixo no topo passam
+ * `className="overflow-hidden"` e rolam só a região interna.
+ */
 const DialogBody = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-    <div data-slot="dialog-body" className={cn('py-4', className)} {...props} />
+    <div
+        data-slot="dialog-body"
+        className={cn('min-h-0 flex-1 overflow-y-auto py-4', className)}
+        {...props}
+    />
 )
 DialogBody.displayName = 'DialogBody'
 

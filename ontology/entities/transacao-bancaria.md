@@ -1,11 +1,16 @@
 ---
 name: TransacaoBancaria
 type: entity
-ontology_version: "0.11"
-implementation_status: planned
+ontology_version: "0.12"
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/migrations/0032_transacao_bancaria.sql
+  - src/backend/migrations/0040_recebimento_ingestao.sql
+  - src/backend/domain/interface/recebimentos/TransacaoBancaria.ts
+  - src/backend/domain/repository/recebimentos/TransacaoRepository.ts
+  - src/backend/domain/service/recebimentos/normalizarLancamento.ts
 properties:
   - id
   - correlationId
@@ -42,7 +47,8 @@ universality_evidence:
 > o **payload cru original** (`rawPayload`) + uma **forma normalizada** interna (`normalized`),
 > carrega um **correlation id** desde o nascimento (observabilidade ponta-a-ponta, Módulo 6) e é
 > **deduplicado** por chave natural. A modelagem profunda (mapeamento wire, formato do extrato) é
-> **Fase 1** (Módulo 1) — depende do spike **O7** (Nexxera direto: API vs SFTP/CNAB). Ver
+> **Fase 1 (Módulo 1) — IMPLEMENTADA.** O spike **O7 foi encerrado**: a fonte é o Conexos
+> (`fin133` → `fin095`), não a Nexxera direto. Ver ADR-0023. Referência original: ver
 > `integrations/nexxera.md`.
 
 ## Definição de domínio
@@ -68,7 +74,9 @@ Nexxera** (não o ERP). É **READ-ONLY no Nexxera** (só importa) e a única esc
 | `moeda` | string | extrato → `moeda` | Moeda (doméstico esperado; confirmar na Fase 1). |
 | `contraparte` | string? | extrato → pagador/CNPJ/nome | Quem pagou (insumo do matching por cliente/CNPJ, Módulo 2). |
 | `referenciaBancaria` | string? | extrato → ref/histórico/id Pix | Referência livre do banco (insumo do matching). |
-| `naturalKey` | string | derivado (dedup) | **Chave natural de deduplicação** — combinação estável (ex.: `filCod:conta:data:valor:ref`) que impede reimportar o mesmo movimento. Fórmula exata na Fase 1. |
+| `naturalKey` | string | derivado (dedup) | **Chave natural de deduplicação** — `fin095:{filCod}:{gerNum}:{extCod}:{exiCodSeq}` (ADR-0023). NUNCA inclui campo mutável (`vldConciliado`, `dtaConc`, valor): o ERP os atualiza ao conciliar e a mesma linha reingeriria como nova. |
+| `gerNum` | number? | `fin133`/parâmetro | Conta financeira de origem. É a **"Conta Financeira de Baixa"** que o `fin014` exigirá na Fase 5 — por isso é coluna, não JSONB. |
+| `categoria` / `categoriaDesc` | string? | `exiEspCategoria` | Discriminador do RUÍDO DE TESOURARIA (resgate de aplicação, ações, transferência entre contas). Filtro de exibição; a ingestão persiste tudo. |
 | `rawPayload` | json | `transacao_bancaria.raw_payload` | **Payload cru original** do Nexxera (auditoria + reprocessamento sem re-fetch). |
 | `normalized` | json | `transacao_bancaria.normalized` | Forma **normalizada** interna (independe do canal API/SFTP/CNAB — port channel-agnostic, O7). |
 | `status` | enum | `transacao_bancaria.status` | Ciclo de vida da conciliação — ver `state-machines/transacao-bancaria.md` (`importada → conciliada/parcial/manual/erro`). |
@@ -87,5 +95,3 @@ receivables* da Frente II (*outbound / payments*). Ver `entities/titulo-a-pagar.
   1**, gated pelo spike **O7** (`integrations/nexxera.md`).
 - A importação real (`importarTransacoesNexxera`) é modelada como ação (skeleton) mas implementada na
   Fase 1.
-</content>
-</invoke>

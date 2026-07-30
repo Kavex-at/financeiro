@@ -96,13 +96,21 @@ export interface RecebimentosKpis {
 }
 
 export interface RecebimentosPainel {
-  /** Origem dos dados — `banco` (backend) ou `fixture` (rede de segurança do demo). */
+  /**
+   * Origem dos dados. `fixture` sobrevive só para os testes e para o fixture
+   * exportado — nenhum caminho de produção produz esse valor desde que os
+   * fallbacks silenciosos saíram.
+   */
   fonte: 'banco' | 'fixture'
   geradoEm: string
   kpis: RecebimentosKpis
   transacoes: TransacaoBancaria[]
   recebimentos: Recebimento[]
   ndes: NotaDebitoEletronica[]
+  /** Fim da última ingestão bem-sucedida — exibido como "carteira de". */
+  ultimaIngestao?: string
+  /** `true` quando o backend capou a lista. */
+  truncado?: boolean
 }
 
 // ─────────────────────────────────────────────────────────── Fixture (rede de segurança)
@@ -294,9 +302,20 @@ export const recebimentosPainelFixture: RecebimentosPainel = {
 
 // ─────────────────────────────────────────────────────────── Fetch (backend → fixture)
 
-/** Shape parcial que o backend pode devolver hoje (stub) ou no futuro (reads reais). */
+/** Cliente com processo aberto na filial (seletor do modal "Alocar"). */
+export interface ClienteProcesso {
+  pesCod: number
+  dpeNomPessoa: string
+  processosAbertos: number
+}
+
+/** Shape que o backend devolve. */
 interface PainelResponseRaw {
   geradoEm?: string
+  /** Fim da última ingestão bem-sucedida — o painel exibe "carteira de". */
+  ultimaIngestao?: string
+  /** `true` quando a lista bateu no teto do backend. */
+  truncado?: boolean
   transacoes?: TransacaoBancaria[]
   recebimentos?: Recebimento[]
   ndes?: NotaDebitoEletronica[]
@@ -310,11 +329,18 @@ interface PainelResponseRaw {
 /** Processo de importação candidato para uma transação — espelho de `Processo`. */
 export interface Processo {
   priCod: number
-  priEspRefcliente: string
+  /** Opcional: o `imp021` não preenche em todo processo. */
+  priEspRefcliente?: string
   filCod: number
   pesCod: number
   dpeNomPessoa: string
   moeCod: number
+  /**
+   * `true` quando a moeda NÃO veio do ERP e foi assumida (BRL/790) — o `imp021`
+   * só expõe `moeCodConv` (conversão) e `moeCodSeg` (seguro). A UI avisa; assumir
+   * calado num payload financeiro vira bug no dia em que deixar de ser dry-run.
+   */
+  moeCodAssumido?: boolean
   valor?: number
   contraparte?: string
 }
@@ -365,7 +391,8 @@ export interface SolicitacaoNumerarioDryRun {
 export const SOLICITACAO_NUMERARIO_GCD_DES_NOME = 'Solicitação de Numerário - Encomenda'
 
 /** Seed de candidatos (rede de segurança do fixture) — espelha o stub do backend. */
-const fixtureProcessos: Processo[] = [
+/** @deprecated Só para testes — nenhum caminho de produção cai em fixture. */
+export const fixtureProcessos: Processo[] = [
   {
     priCod: 90001,
     priEspRefcliente: 'REF-CLI-0001',
@@ -389,7 +416,8 @@ const fixtureProcessos: Processo[] = [
 ]
 
 /** Constrói o payload dry-run localmente (fallback quando o backend não responde). */
-function buildDryRunFallback(
+/** @deprecated Só para testes — o payload dry-run vem do backend. */
+export function buildDryRunFallback(
   processo: Processo,
   valorTransacao: number,
 ): SolicitacaoNumerarioDryRun {
@@ -403,7 +431,7 @@ function buildDryRunFallback(
       docTip: 'SN',
       docVldTipo: 'SN',
       priCod: processo.priCod,
-      priEspRefcliente: processo.priEspRefcliente,
+      priEspRefcliente: processo.priEspRefcliente ?? '',
       pesCod: processo.pesCod,
       dpeNomPessoa: processo.dpeNomPessoa,
       gcdCod: docConfig.gcdCod,
@@ -428,43 +456,56 @@ function buildDryRunFallback(
 }
 
 /**
- * Lista os PROCESSOS candidatos para uma transação (modal "Alocar") — tenta o backend
- * (`GET /recebimentos/transacoes/:txnId/processos?filCod=…`) e cai no fixture quando o backend
- * não responde/erra, filtrando o seed por `filCod` (rede de segurança do demo).
+ * Lista os PROCESSOS do cliente escolhido pelo analista (modal "Alocar").
+ *
+ * Sem `pesCod` o backend devolve `[]` de propósito: o extrato não carrega cliente,
+ * então listar processos "da filial" seria despejar centenas de linhas sem critério.
+ *
+ * NÃO tem fallback de fixture. Um backend fora do ar precisa aparecer como erro —
+ * um analista olhando dados de demonstração achando que são reais é pior que uma
+ * tela vazia.
  */
 export async function fetchProcessosParaTransacao(
   txnId: string,
   filCod: number,
-  contraparte?: string,
+  pesCod?: number,
 ): Promise<Processo[]> {
   const qs = new URLSearchParams({ filCod: String(filCod) })
-  if (contraparte) qs.set('contraparte', contraparte)
-  try {
-    const res = await apiFetch(
-      `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/processos?${qs.toString()}`,
-      { headers: await withAuthHeaders() },
-    )
-    if (!res.ok) throw new Error(`API ${res.status}`)
-    const json = (await res.json()) as { processos?: Processo[] }
-    return json.processos ?? []
-  } catch {
-    return fixtureProcessos.filter((p) => p.filCod === filCod)
-  }
+  if (pesCod !== undefined) qs.set('pesCod', String(pesCod))
+  const res = await apiFetch(
+    `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/processos?${qs.toString()}`,
+    { headers: await withAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as { processos?: Processo[] }
+  return json.processos ?? []
+}
+
+/** Clientes com processo aberto na filial — alimenta o seletor do modal "Alocar". */
+export async function fetchClientesDaFilial(filCod: number): Promise<ClienteProcesso[]> {
+  const res = await apiFetch(`${API}/recebimentos/clientes?filCod=${filCod}`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as { clientes?: ClienteProcesso[] }
+  return json.clientes ?? []
 }
 
 /**
  * "Processar" um processo → gera a Solicitação de Numerário (encomenda) em DRY-RUN
  * (`POST /recebimentos/transacoes/:txnId/solicitacao-numerario`). NUNCA envia ao ERP: o backend só
- * CONSTRÓI e devolve o payload. Cai num payload dry-run construído localmente se o backend falhar
- * (rede de segurança do demo) — ainda dry-run, ainda sem tocar o ERP.
+ * CONSTRÓI e devolve o payload.
+ *
+ * NÃO tem fallback local. Montar o payload no navegador quando o backend cai
+ * mostrava um documento INVENTADO com um toast verde de sucesso — pior que um
+ * erro, porque não corresponde ao que o backend faria.
  */
 export async function processarSolicitacaoNumerario(
   txnId: string,
   processo: Processo,
   valorTransacao: number,
 ): Promise<SolicitacaoNumerarioDryRun> {
-  try {
-    const res = await apiFetch(
+  const res = await apiFetch(
       `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/solicitacao-numerario`,
       {
         method: 'POST',
@@ -482,43 +523,39 @@ export async function processarSolicitacaoNumerario(
     )
     if (!res.ok) throw new Error(`API ${res.status}`)
     const json = (await res.json()) as Partial<SolicitacaoNumerarioDryRun>
-    if (json?.payload && json?.docConfig) {
-      return { dryRun: true, docConfig: json.docConfig, payload: json.payload }
-    }
-    return buildDryRunFallback(processo, valorTransacao)
-  } catch {
-    return buildDryRunFallback(processo, valorTransacao)
+  if (!json?.payload || !json?.docConfig) {
+    throw new Error('Resposta do backend sem payload/docConfig')
   }
+  return { dryRun: true, docConfig: json.docConfig, payload: json.payload }
 }
 
 /**
- * Busca o painel de Recebimentos — tenta o backend (`GET /recebimentos/painel`) e
- * cai no fixture quando o backend não responde, erra ou devolve o stub vazio. Esse
- * fallback é a REDE DE SEGURANÇA do demo: a tela nunca quebra na review, mesmo com o
- * backend devolvendo `{ recebimentos: [], kpis: {} }`. Quando os reads reais existirem
- * (Fases 2+), o backend assume e o fixture só entra como contingência.
+ * Busca o painel de Recebimentos (`GET /recebimentos/painel`).
+ *
+ * NÃO cai mais em fixture. O early-return de "lista vazia → dados de demonstração"
+ * sequestrava qualquer resposta legítima: um banco vazio de verdade virava demo, e
+ * a tela nunca conseguia mostrar dado real. Erro propaga — a página já tem estado
+ * de erro com botão de tentar de novo.
  */
 export async function fetchPainelRecebimentos(): Promise<RecebimentosPainel> {
-  try {
-    const res = await apiFetch(`${API}/recebimentos/painel`, {
-      headers: await withAuthHeaders(),
-    })
-    if (!res.ok) throw new Error(`API ${res.status}`)
-    const json = (await res.json()) as PainelResponseRaw
-    const transacoes = json.transacoes ?? []
-    const recebimentos = json.recebimentos ?? []
-    const ndes = json.ndes ?? []
-    // Stub vazio (sem transações) → usa o fixture para a tela renderizar na review.
-    if (transacoes.length === 0) return recebimentosPainelFixture
-    return {
-      fonte: 'banco',
-      geradoEm: json.geradoEm ?? new Date().toISOString(),
-      kpis: { ...computeKpis(transacoes, recebimentos, ndes), ...(json.kpis ?? {}) },
-      transacoes,
-      recebimentos,
-      ndes,
-    }
-  } catch {
-    return recebimentosPainelFixture
+  const res = await apiFetch(`${API}/recebimentos/painel`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as PainelResponseRaw
+  const transacoes = json.transacoes ?? []
+  const recebimentos = json.recebimentos ?? []
+  const ndes = json.ndes ?? []
+  return {
+    fonte: 'banco',
+    geradoEm: json.geradoEm ?? new Date().toISOString(),
+    // Os KPIs do backend vêm de COUNT(*) sobre a janela inteira e têm precedência
+    // sobre os derivados da página (que contariam só as linhas exibidas).
+    kpis: { ...computeKpis(transacoes, recebimentos, ndes), ...(json.kpis ?? {}) },
+    transacoes,
+    recebimentos,
+    ndes,
+    ultimaIngestao: json.ultimaIngestao,
+    truncado: json.truncado ?? false,
   }
 }

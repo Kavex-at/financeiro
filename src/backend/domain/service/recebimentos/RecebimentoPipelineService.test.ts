@@ -5,6 +5,7 @@ import type { TransactionClient } from '../../client/database/PostgreeDatabaseCl
 import { RECEBIMENTO_STATUS } from '../../interface/recebimentos/constants.js';
 import {
     ERP_RECEIVABLES_GATEWAY_TOKEN,
+    INGESTAO_TRANSACOES_TOKEN,
     METRICS_PORT_TOKEN,
     NDE_EMITTER_TOKEN,
 } from '../../interface/recebimentos/ports.js';
@@ -14,6 +15,7 @@ import type {
     NdeEmitterInterface,
 } from '../../interface/recebimentos/ports.js';
 import { registerRecebimentosPorts } from '../../recebimentosContainer.js';
+import IngestaoTransacoesStub from './stubs/IngestaoTransacoesStub.js';
 import { buildDocumentoAReceber } from '../../interface/recebimentos/__fixtures__/documentoAReceber.fixture.js';
 import { buildRecebimento } from '../../interface/recebimentos/__fixtures__/recebimento.fixture.js';
 import { buildTransacaoBancaria } from '../../interface/recebimentos/__fixtures__/transacaoBancaria.fixture.js';
@@ -47,6 +49,17 @@ const buildDbStub = (selectFirstImpl?: jest.Mock) =>
         ),
     }) as unknown as PostgreeDatabaseClient;
 
+/**
+ * Registra as portas e RECOLOCA o stub de ingestão. Desde a Fase 1 o container de
+ * produção aponta `INGESTAO_TRANSACOES_TOKEN` para o serviço real, que fala com o
+ * Conexos — este teste é do coordinator, não da ingestão, e não deve arrastar a
+ * cadeia de clients do ERP para dentro do DI.
+ */
+const registerPorts = (): void => {
+    registerRecebimentosPorts();
+    container.register(INGESTAO_TRANSACOES_TOKEN, { useClass: IngestaoTransacoesStub });
+};
+
 const buildInput = (overrides: Partial<RunPipelineInput> = {}): RunPipelineInput => ({
     recebimento: buildRecebimento({ status: RECEBIMENTO_STATUS.RASCUNHO }),
     transacao: buildTransacaoBancaria(),
@@ -68,7 +81,7 @@ describe('RecebimentoPipelineService — the stubbed coordinator', () => {
     beforeEach(() => {
         container.reset();
         container.registerInstance(PostgreeDatabaseClient, buildDbStub());
-        registerRecebimentosPorts();
+        registerPorts();
     });
 
     afterEach(() => {
@@ -109,7 +122,7 @@ describe('RecebimentoPipelineService — the stubbed coordinator', () => {
         container.reset();
         const settledDb = buildDbStub(jest.fn().mockResolvedValue({ status: 'settled' }));
         container.registerInstance(PostgreeDatabaseClient, settledDb);
-        registerRecebimentosPorts();
+        registerPorts();
 
         const service = container.resolve(RecebimentoPipelineService);
         const result = await service.run(buildInput());
@@ -216,7 +229,7 @@ describe('RecebimentoPipelineService — the stubbed coordinator', () => {
             container.reset();
             const db = buildDbStub();
             container.registerInstance(PostgreeDatabaseClient, db);
-            registerRecebimentosPorts();
+            registerPorts();
             // Swap the ERP TOKEN for a rejecting mock instance (coordinator injects the same object).
             const erp: ErpReceivablesGatewayInterface = {
                 criarBordero: jest
@@ -251,7 +264,7 @@ describe('RecebimentoPipelineService — the stubbed coordinator', () => {
             container.reset();
             const db = buildDbStub();
             container.registerInstance(PostgreeDatabaseClient, db);
-            registerRecebimentosPorts();
+            registerPorts();
             const nde: NdeEmitterInterface = {
                 emitir: jest
                     .fn()

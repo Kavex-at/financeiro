@@ -23,12 +23,12 @@ import RecebimentoRepository from './repository/recebimentos/RecebimentoReposito
 import RegraRecebimentoRepository from './repository/recebimentos/RegraRecebimentoRepository.js';
 import TransacaoRepository from './repository/recebimentos/TransacaoRepository.js';
 import ErpReceivablesGatewayStub from './service/recebimentos/stubs/ErpReceivablesGatewayStub.js';
-import IngestaoTransacoesStub from './service/recebimentos/stubs/IngestaoTransacoesStub.js';
+import IngestaoTransacoesService from './service/recebimentos/IngestaoTransacoesService.js';
 import MatchingEngineStub from './service/recebimentos/stubs/MatchingEngineStub.js';
 import MetricsPortStub from './service/recebimentos/stubs/MetricsPortStub.js';
 import NdeEmitterStub from './service/recebimentos/stubs/NdeEmitterStub.js';
 import NexxeraGatewayStub from './service/recebimentos/stubs/NexxeraGatewayStub.js';
-import ProcessoProviderStub from './service/recebimentos/stubs/ProcessoProviderStub.js';
+import ProcessoProviderConexos from './service/recebimentos/ProcessoProviderConexos.js';
 import RateioEngineStub from './service/recebimentos/stubs/RateioEngineStub.js';
 import RegrasEngineStub from './service/recebimentos/stubs/RegrasEngineStub.js';
 
@@ -44,7 +44,10 @@ export const registerRecebimentosPorts = (): void => {
 
     // Engines + gateways + metrics → stubs (swap to real per Módulo).
     container.register(NEXXERA_GATEWAY_TOKEN, { useClass: NexxeraGatewayStub });
-    container.register(INGESTAO_TRANSACOES_TOKEN, { useClass: IngestaoTransacoesStub });
+    // Módulo 1 REAL (Fase 1): lê o extrato do Conexos (fin133 → fin095), normaliza,
+    // deduplica por chave natural e persiste. O stub segue no repo como referência
+    // de contrato e continua coberto por teste próprio.
+    container.register(INGESTAO_TRANSACOES_TOKEN, { useClass: IngestaoTransacoesService });
     container.register(MATCHING_ENGINE_TOKEN, { useClass: MatchingEngineStub });
     container.register(RATEIO_ENGINE_TOKEN, { useClass: RateioEngineStub });
     container.register(REGRAS_ENGINE_TOKEN, { useClass: RegrasEngineStub });
@@ -52,7 +55,8 @@ export const registerRecebimentosPorts = (): void => {
     container.register(NDE_EMITTER_TOKEN, { useClass: NdeEmitterStub });
     container.register(METRICS_PORT_TOKEN, { useClass: MetricsPortStub });
     // Provedor de processos candidatos ("Alocar") → STUB in-memory (Módulo 2/2b troca o token).
-    container.register(PROCESSO_PROVIDER_TOKEN, { useClass: ProcessoProviderStub });
+    // Fonte REAL dos processos/clientes (imp021), no lugar das 4 fixtures.
+    container.register(PROCESSO_PROVIDER_TOKEN, { useClass: ProcessoProviderConexos });
 
     // Repositories → real-but-thin classes (the spine must persist for the coordinator to be runnable).
     container.register(TRANSACAO_REPOSITORY_TOKEN, { useClass: TransacaoRepository });

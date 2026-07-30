@@ -82,5 +82,3 @@ Pode nascer também da **diferença não alocada** de um `Recebimento` (o `valor
 - Critério de identificação (quando um crédito é adiantamento × excedente × erro), ciclo de vida
   detalhado e o consumo contra recebíveis futuros: **Fase 4** (OfficeHours próprio, regra
   `adiantamento-cliente`).
-</content>
-</invoke>

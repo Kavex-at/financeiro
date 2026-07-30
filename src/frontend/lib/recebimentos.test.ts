@@ -56,17 +56,33 @@ describe('computeKpis', () => {
 describe('fetchPainelRecebimentos', () => {
   afterEach(() => jest.clearAllMocks())
 
-  it('cai no fixture quando o backend devolve o stub vazio', async () => {
-    mockApiFetch.mockResolvedValue(okJson({ geradoEm: 'x', recebimentos: [], kpis: {} }))
+  it('lista vazia é lista vazia — não vira demonstração', async () => {
+    // O early-return "vazio → fixture" sequestrava qualquer resposta legítima:
+    // um banco de verdade sem créditos aparecia como dados de demonstração.
+    mockApiFetch.mockResolvedValue(okJson({ geradoEm: 'x', transacoes: [], kpis: {} }))
     const painel = await fetchPainelRecebimentos()
-    expect(painel.fonte).toBe('fixture')
-    expect(painel.transacoes.length).toBe(recebimentosPainelFixture.transacoes.length)
+    expect(painel.fonte).toBe('banco')
+    expect(painel.transacoes).toEqual([])
   })
 
-  it('cai no fixture quando o backend erra (rede/HTTP)', async () => {
+  it('erro do backend PROPAGA — a página tem estado de erro para isso', async () => {
     mockApiFetch.mockRejectedValue(new Error('network'))
+    await expect(fetchPainelRecebimentos()).rejects.toThrow('network')
+  })
+
+  it('propaga o ultimaIngestao e o truncado do backend', async () => {
+    mockApiFetch.mockResolvedValue(
+      okJson({
+        geradoEm: 'x',
+        transacoes: [],
+        kpis: {},
+        ultimaIngestao: '2026-07-30T12:00:00.000Z',
+        truncado: true,
+      }),
+    )
     const painel = await fetchPainelRecebimentos()
-    expect(painel.fonte).toBe('fixture')
+    expect(painel.ultimaIngestao).toBe('2026-07-30T12:00:00.000Z')
+    expect(painel.truncado).toBe(true)
   })
 
   it('usa o backend quando há transações reais', async () => {
@@ -120,17 +136,17 @@ describe('fetchProcessosParaTransacao — fixture fallback', () => {
     expect(out[0].priCod).toBe(90001)
   })
 
-  it('cai no fixture (filtrado por filCod) quando o backend erra', async () => {
+  it('erro PROPAGA — backend fora do ar não pode virar lista de demonstração', async () => {
     mockApiFetch.mockRejectedValue(new Error('network'))
-    const out = await fetchProcessosParaTransacao('txn-1', 4)
-    expect(out.length).toBeGreaterThan(0)
-    expect(out.every((p) => p.filCod === 4)).toBe(true)
+    await expect(fetchProcessosParaTransacao('txn-1', 4)).rejects.toThrow('network')
   })
 
-  it('devolve [] no fallback quando a filial não tem candidatos no fixture', async () => {
-    mockApiFetch.mockRejectedValue(new Error('network'))
-    const out = await fetchProcessosParaTransacao('txn-1', 999)
-    expect(out).toEqual([])
+  it('manda o pesCod na query quando o cliente foi escolhido', async () => {
+    mockApiFetch.mockResolvedValue(okJson({ processos: [] }))
+    await fetchProcessosParaTransacao('txn-1', 4, 676)
+    const [url] = mockApiFetch.mock.calls[0]
+    expect(String(url)).toContain('filCod=4')
+    expect(String(url)).toContain('pesCod=676')
   })
 })
 
@@ -150,13 +166,19 @@ describe('processarSolicitacaoNumerario — dry-run (nunca envia ao ERP)', () =>
     expect(out.payload.valor).toBe(15000)
   })
 
-  it('cai no payload dry-run local quando o backend erra (ainda sem tocar o ERP)', async () => {
+  it('erro PROPAGA — nada de payload inventado no navegador', async () => {
+    // O fallback local mostrava um documento que o backend NUNCA teria montado,
+    // com toast verde de sucesso. Pior que um erro.
     mockApiFetch.mockRejectedValue(new Error('network'))
-    const out = await processarSolicitacaoNumerario('txn-1', processoSample, 27890.55)
-    expect(out.dryRun).toBe(true)
-    expect(out.docConfig.gcdDesNome).toBe(SOLICITACAO_NUMERARIO_GCD_DES_NOME)
-    // SN amount = valor cru da transação (regra de % da encomenda não-resolvida).
-    expect(out.payload.valor).toBe(27890.55)
-    expect(out.payload.items[0].total).toBe(27890.55)
+    await expect(
+      processarSolicitacaoNumerario('txn-1', processoSample, 27890.55),
+    ).rejects.toThrow('network')
+  })
+
+  it('resposta incompleta do backend também falha', async () => {
+    mockApiFetch.mockResolvedValue(okJson({ dryRun: true }))
+    await expect(
+      processarSolicitacaoNumerario('txn-1', processoSample, 27890.55),
+    ).rejects.toThrow(/payload/i)
   })
 })

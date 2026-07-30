@@ -34,5 +34,3 @@ Aplicada em `aplicarRegrasRecebimento` (Módulo 4); os componentes viram `compon
 Separar principal/multa/juros de um recebimento é universal em contas-a-receber. A estrutura
 (componentes na parcela + regra versionada) é do domínio; a política (informado × calculado, contas de
 destino, tolerância de divergência) é config/decisão da Columbia, a confirmar na Fase 4.
-</content>
-</invoke>

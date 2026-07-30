@@ -72,7 +72,9 @@ export default class SolicitacaoNumerarioService {
             docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
             docVldTipo: SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
             priCod: processo.priCod,
-            priEspRefcliente: processo.priEspRefcliente,
+            // `priEspRefcliente` é opcional no imp021 — aqui a semântica é
+            // "campo vazio no ERP", não "não sei".
+            priEspRefcliente: processo.priEspRefcliente ?? '',
             pesCod: processo.pesCod,
             dpeNomPessoa: processo.dpeNomPessoa,
             gcdCod: docConfig.gcdCod,

@@ -35,5 +35,3 @@ decisão carrega rationale + versão da regra. Ver `entities/regra-recebimento.m
 Percentuais de encomenda/serviço sobre valores recebidos são comuns em contas-a-receber de trading; a
 **estrutura** (regra versionada + rationale) é do domínio, os **valores** (0,1% / 0,9%, base, contas)
 são config do cliente Columbia — a confirmar na Fase 4.
-</content>
-</invoke>

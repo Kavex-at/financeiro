@@ -50,5 +50,3 @@ aprova antes de executar. O balanço é a rede que impede uma execução desbala
 
 Universal: um valor recebido só pode ser distribuído até o seu montante, com destino identificado e a
 sobra registrada — invariante de qualquer contas-a-receber. A estrutura é do domínio; independe do tenant.
-</content>
-</invoke>

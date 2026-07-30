@@ -79,5 +79,3 @@ Nesta frente a entidade **lê** o recebível; a **baixa** (escrita no ERP) é o 
 
 - Fonte exata no ERP (módulo/endpoint), wire e chave natural: **Fase 2** (Módulo 2).
 - O motor de matching (`atribuirBaixa`) é modelado como ação (skeleton); regras de score na Fase 2.
-</content>
-</invoke>

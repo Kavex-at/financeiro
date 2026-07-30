@@ -30,9 +30,12 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { formatBRL } from '@/lib/utils'
+import { Combobox } from '@/components/ui/combobox'
 import {
+  fetchClientesDaFilial,
   fetchProcessosParaTransacao,
   processarSolicitacaoNumerario,
+  type ClienteProcesso,
   type Processo,
   type SolicitacaoNumerarioDryRun,
   type TransacaoBancaria,
@@ -44,28 +47,114 @@ interface AlocarProcessosDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+/** Normaliza para comparar nomes: sem acento, sem pontuação, caixa alta. */
+const normalizar = (s: string): string =>
+  s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase()
+
+/**
+ * Sugere o cliente a partir do histórico do extrato.
+ *
+ * O banco trunca o histórico em ~24 caracteres — `"TED 745.0001.BROWN-FORMA"`
+ * para BROWN-FORMAN, `"SISPAG BELLIZ INDUSTRIA"` para BELLIZ INDUSTRIA, COMERCIO,
+ * IMPORTA… Por isso o casamento é por PREFIXO nos dois sentidos, e o resultado é
+ * só uma pré-seleção visível: quem confirma é o analista.
+ */
+export const sugerirCliente = (
+  clientes: ClienteProcesso[],
+  contraparte?: string,
+): number | null => {
+  const alvo = normalizar(contraparte ?? '')
+  if (alvo.length < 4) return null
+
+  let melhor: { pesCod: number; score: number } | null = null
+  for (const c of clientes) {
+    const nome = normalizar(c.dpeNomPessoa)
+    if (nome.length < 4) continue
+    // Prefixo comum: o truncamento corta o FIM, então o começo é o que sobrevive.
+    let i = 0
+    while (i < nome.length && i < alvo.length && nome[i] === alvo[i]) i++
+    if (i < 4) continue
+    if (!melhor || i > melhor.score) melhor = { pesCod: c.pesCod, score: i }
+  }
+  return melhor?.pesCod ?? null
+}
+
 /** Preview colapsável do payload dry-run (JSON monoespaçado). */
-function PayloadPreview({ resultado }: { resultado: SolicitacaoNumerarioDryRun }) {
-  const [aberto, setAberto] = React.useState(true)
+function PayloadPreview({
+  resultado,
+  processo,
+}: {
+  resultado: SolicitacaoNumerarioDryRun
+  processo: Processo
+}) {
+  // FECHADO por padrão: o JSON cru é ferramenta de quem valida o contrato com o
+  // ERP, não informação para o analista. O que ele precisa saber vai no resumo.
+  const [aberto, setAberto] = React.useState(false)
+
+  // Placeholders que ainda NÃO foram confirmados contra o ERP. Enquanto a
+  // geração é dry-run isso é inofensivo; no dia em que virar POST real, cada um
+  // destes é um documento errado. Melhor o analista ver agora.
+  const pendencias: string[] = []
+  if (resultado.docConfig.gcdCod === 0) {
+    pendencias.push('código da configuração de documento (gcdCod) ainda não confirmado no ERP')
+  }
+  if (processo.moeCodAssumido) {
+    pendencias.push('moeda assumida como BRL — o imp021 não informa a moeda do processo')
+  }
+  pendencias.push('valor = valor cheio do crédito; o percentual da encomenda não está definido')
+
   return (
-    <Collapsible open={aberto} onOpenChange={setAberto} className="mt-2">
-      <CollapsibleTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs">
-          <ChevronRight
-            className={`size-3 transition-transform ${aberto ? 'rotate-90' : ''}`}
-            aria-hidden
-          />
-          Payload da simulação ({resultado.docConfig.gcdDesNome})
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <pre className="mt-1 max-h-56 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-xs leading-relaxed">
-          {JSON.stringify(resultado.payload, null, 2)}
-        </pre>
-      </CollapsibleContent>
-    </Collapsible>
+    <div className="mt-2 space-y-2">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+        <dt className="text-muted-foreground">Documento</dt>
+        <dd className="font-medium">{resultado.docConfig.gcdDesNome}</dd>
+        <dt className="text-muted-foreground">Processo</dt>
+        <dd>
+          {resultado.payload.priCod}
+          {resultado.payload.priEspRefcliente ? ` · ${resultado.payload.priEspRefcliente}` : ''}
+        </dd>
+        <dt className="text-muted-foreground">Valor</dt>
+        <dd>{formatBRL(resultado.payload.valor)}</dd>
+      </dl>
+
+      <div className="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs">
+        <span className="font-medium">Ainda não é um documento válido.</span>
+        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+          {pendencias.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      </div>
+
+      <Collapsible open={aberto} onOpenChange={setAberto}>
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs">
+            <ChevronRight
+              className={`size-3 transition-transform ${aberto ? 'rotate-90' : ''}`}
+              aria-hidden
+            />
+            {aberto ? 'Ocultar' : 'Ver'} payload técnico
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <pre
+            tabIndex={0}
+            className="mt-1 max-h-56 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-xs leading-relaxed"
+          >
+            {JSON.stringify(resultado.payload, null, 2)}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
   )
 }
+
 
 /**
  * AlocarProcessosDialog — modal aberto pelo botão "Alocar" de uma transação. Lista os PROCESSOS
@@ -79,18 +168,51 @@ export function AlocarProcessosDialog({
   onOpenChange,
 }: AlocarProcessosDialogProps) {
   const [loading, setLoading] = React.useState(false)
+  const [carregandoClientes, setCarregandoClientes] = React.useState(false)
   const [erro, setErro] = React.useState<string | null>(null)
+  const [clientes, setClientes] = React.useState<ClienteProcesso[]>([])
+  const [pesCod, setPesCod] = React.useState<number | null>(null)
   const [processos, setProcessos] = React.useState<Processo[]>([])
   const [processandoPri, setProcessandoPri] = React.useState<number | null>(null)
   const [resultados, setResultados] = React.useState<Record<number, SolicitacaoNumerarioDryRun>>({})
 
+  // Ao abrir: carrega os clientes da filial e PRÉ-SELECIONA o melhor palpite pelo
+  // histórico do extrato. Pré-seleção é sugestão visível e trocável — nunca filtro
+  // invisível (o invariante do ADR-0022 é que o humano confirma).
   React.useEffect(() => {
     if (!open || !transacao) return
+    let cancelado = false
+    setCarregandoClientes(true)
+    setErro(null)
+    setResultados({})
+    setProcessos([])
+    setPesCod(null)
+
+    fetchClientesDaFilial(transacao.filCod)
+      .then((lista) => {
+        if (cancelado) return
+        setClientes(lista)
+        setPesCod(sugerirCliente(lista, transacao.contraparte))
+      })
+      .catch((e) => {
+        if (!cancelado) setErro(e instanceof Error ? e.message : 'Falha ao carregar clientes.')
+      })
+      .finally(() => {
+        if (!cancelado) setCarregandoClientes(false)
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [open, transacao])
+
+  // Busca os processos SÓ depois que há cliente escolhido.
+  React.useEffect(() => {
+    if (!open || !transacao || pesCod === null) return
     let cancelado = false
     setLoading(true)
     setErro(null)
     setResultados({})
-    fetchProcessosParaTransacao(transacao.id, transacao.filCod, transacao.contraparte)
+    fetchProcessosParaTransacao(transacao.id, transacao.filCod, pesCod)
       .then((lista) => {
         if (!cancelado) setProcessos(lista)
       })
@@ -103,7 +225,7 @@ export function AlocarProcessosDialog({
     return () => {
       cancelado = true
     }
-  }, [open, transacao])
+  }, [open, transacao, pesCod])
 
   const processar = async (processo: Processo) => {
     if (!transacao) return
@@ -118,8 +240,12 @@ export function AlocarProcessosDialog({
       toast.success('Solicitação de Numerário (encomenda) — simulação gerada (dry-run).', {
         description: 'Nada foi enviado ao ERP.',
       })
-    } catch {
-      toast.error('Não foi possível gerar a simulação.')
+    } catch (e) {
+      // Sem fallback local: se o backend caiu, o analista PRECISA ver o erro —
+      // um payload inventado no navegador com toast verde é pior que uma falha.
+      toast.error('Não foi possível gerar a simulação.', {
+        description: e instanceof Error ? e.message : undefined,
+      })
     } finally {
       setProcessandoPri(null)
     }
@@ -142,8 +268,8 @@ export function AlocarProcessosDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <DialogBody>
-          <div className="mb-3 flex items-start gap-2 rounded-lg border border-info/40 bg-info/5 p-3 text-sm">
+        <DialogBody className="flex flex-col overflow-hidden">
+          <div className="mb-3 flex shrink-0 items-start gap-2 rounded-lg border border-info/40 bg-info/5 p-3 text-sm">
             <Landmark className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
             <div>
               <span className="font-medium">Dry-run.</span> &ldquo;Processar&rdquo; apenas constrói o
@@ -152,28 +278,75 @@ export function AlocarProcessosDialog({
             </div>
           </div>
 
-          {loading ? (
-            <div className="space-y-2" aria-busy="true" aria-label="Carregando processos">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-            </div>
-          ) : erro ? (
+          {/* Seletor de cliente: fica FORA da árvore de estados abaixo, senão o
+              usuário não consegue corrigir a escolha quando a lista está vazia. */}
+          <div className="mb-4 shrink-0 space-y-1.5">
+            <label htmlFor="cliente-alocar" className="text-sm font-medium">
+              Cliente
+            </label>
+            {carregandoClientes ? (
+              <Skeleton className="h-10 w-full" />
+            ) : (
+              <Combobox
+                id="cliente-alocar"
+                aria-label="Cliente do recebimento"
+                options={clientes.map((c) => ({
+                  value: String(c.pesCod),
+                  label: c.dpeNomPessoa,
+                  hint: `${c.processosAbertos} processo${c.processosAbertos === 1 ? '' : 's'}`,
+                }))}
+                value={pesCod === null ? null : String(pesCod)}
+                onChange={(v) => setPesCod(v === null ? null : Number(v))}
+                placeholder="Escolha o cliente…"
+                searchPlaceholder="Buscar cliente…"
+                emptyMessage="Nenhum cliente com processo aberto nesta filial."
+              />
+            )}
+            {processos.length > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                {processos.length} processo{processos.length === 1 ? '' : 's'} aberto
+                {processos.length === 1 ? '' : 's'} para este cliente.
+              </p>
+            ) : null}
+            {transacao?.contraparte ? (
+              <p className="text-xs text-muted-foreground">
+                Histórico do banco:{' '}
+                <code className="rounded bg-muted px-1 py-0.5">{transacao.contraparte}</code> — o
+                banco trunca o texto, confira o cliente.
+              </p>
+            ) : null}
+          </div>
+
+          {erro ? (
             <EmptyState
               icon={<Boxes className="size-6" aria-hidden />}
               title="Não foi possível carregar"
               description={erro}
             />
+          ) : pesCod === null ? (
+            <EmptyState
+              icon={<Boxes className="size-6" aria-hidden />}
+              title="Escolha o cliente"
+              description="O extrato bancário não identifica o pagador — selecione o cliente acima para ver os processos dele."
+            />
+          ) : loading ? (
+            <div className="space-y-2" aria-busy="true" aria-label="Carregando processos">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+            </div>
           ) : processos.length === 0 ? (
             <EmptyState
               icon={<Boxes className="size-6" aria-hidden />}
-              title="Nenhum processo candidato"
-              description="Não há processos candidatos para esta transação (filial/contraparte). Ajuste a conciliação manualmente."
+              title="Nenhum processo aberto"
+              description="Este cliente não tem processo aberto nesta filial. Escolha outro cliente ou trate a conciliação manualmente."
             />
           ) : (
-            <div className="overflow-x-auto rounded-lg border">
+            <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
               <Table>
-                <TableHeader>
+                {/* Sticky: com dezenas de processos, perder o cabeçalho ao rolar
+                    deixa o usuário sem saber qual coluna é qual. */}
+                <TableHeader className="sticky top-0 z-10 bg-card">
                   <TableRow>
                     <TableHead>Processo</TableHead>
                     <TableHead>Ref. cliente</TableHead>
@@ -222,7 +395,7 @@ export function AlocarProcessosDialog({
                         {resultado ? (
                           <TableRow>
                             <TableCell colSpan={5} className="bg-muted/20">
-                              <PayloadPreview resultado={resultado} />
+                              <PayloadPreview resultado={resultado} processo={p} />
                             </TableCell>
                           </TableRow>
                         ) : null}

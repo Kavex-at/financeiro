@@ -76,5 +76,3 @@ recebíveis. Ver a entidade `Permuta` (`entities/permuta.md`) para a doutrina de
 
 - Motor de distribuição (greedy? por saldo? por vencimento?), enum de componentes e a interação com as
   regras (multa/juros/encomenda) são **Fase 3/4**. Aqui só a **forma** da parcela.
-</content>
-</invoke>

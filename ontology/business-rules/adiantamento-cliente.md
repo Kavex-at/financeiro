@@ -41,5 +41,3 @@ originar um `CreditoCliente` (ver `business-rules/invariante-rateio.md`).
 Um cliente que paga adiantado gera crédito a aplicar — universal em contas-a-receber. A estrutura
 (entidade de crédito + regra de identificação/consumo) é do domínio; os critérios concretos são
 config/decisão da Columbia, a confirmar na Fase 4.
-</content>
-</invoke>

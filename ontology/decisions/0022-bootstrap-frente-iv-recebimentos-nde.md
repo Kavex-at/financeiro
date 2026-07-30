@@ -137,5 +137,3 @@ Estende ADR-0002 (4ª frente). Herda como **template** o handshake `fin010` (ADR
 `fin010-write-contract.md`), a idempotência write-ahead (`idempotencia-reconciliacao.md`), a alocação
 rascunho (`permuta_alocacao`, ADR-0008) e a doutrina de ingestão + agregado local + gate humano do
 SISPAG (ADR-0015/0016/0018/0019). Não reinventa — **espelha** o outbound para o inbound.
-</content>
-</invoke>

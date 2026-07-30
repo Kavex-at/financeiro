@@ -59,7 +59,13 @@ export interface IngestaoTransacoesInput {
 /** Result of an ingest run (persists `TransacaoBancaria[]`). */
 export interface IngestaoTransacoesResult {
     runId: string;
-    importadas: TransacaoBancaria[];
+    /**
+     * OPCIONAL de propósito. A ingestão real NÃO materializa as transações: uma
+     * run de 90 dias traz milhares de linhas, e devolvê-las na resposta HTTP do
+     * trigger manual seria um payload de dezenas de MB para nenhum consumidor.
+     * Quem precisa das linhas lê do banco. O stub segue populando (é barato lá).
+     */
+    importadas?: TransacaoBancaria[];
     total: number;
     deduplicadas: number;
 }
@@ -227,11 +233,35 @@ export interface MetricsPortInterface {
  */
 export interface ProcessoProviderInterface {
     listCandidatosParaTransacao: (input: ListCandidatosInput) => Promise<Processo[]>;
+    /**
+     * Clientes com processo aberto na filial — alimenta o seletor do modal
+     * "Alocar". O extrato bancário NÃO carrega `pesCod` nem CNPJ (só um histórico
+     * truncado pelo banco), então quem liga crédito↔cliente é o analista. Esta é
+     * a lista que ele escolhe.
+     */
+    listClientes: (input: { filCod: number }) => Promise<ClienteProcesso[]>;
 }
 
-/** Filtro dos candidatos — `filCod` obrigatório (multi-filial), contraparte opcional (frouxa). */
+/** Cliente derivado dos processos abertos do `imp021`. */
+export interface ClienteProcesso {
+    pesCod: number;
+    dpeNomPessoa: string;
+    /** Nº de processos abertos — exibido junto ao nome para desambiguar homônimos. */
+    processosAbertos: number;
+}
+
+/** Filtro dos candidatos — `filCod` obrigatório (multi-filial). */
 export interface ListCandidatosInput {
     filCod: number;
+    /**
+     * Cliente escolhido pelo analista. É o filtro FORTE e o caminho principal.
+     */
+    pesCod?: number;
+    /**
+     * Dica de contraparte vinda do histórico do extrato — match FROUXO por nome,
+     * mantido só por compatibilidade. Não é chave: o banco trunca o histórico em
+     * ~24 caracteres e não há CNPJ.
+     */
     contraparte?: string;
 }
 

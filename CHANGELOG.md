@@ -1,5 +1,46 @@
 # Columbia Financeiro — Changelog
 
+## v0.19.0 (2026-07-30) — Frente IV: extrato REAL (Conexos fin095) + processos reais (imp021)
+
+- **feat(recebimentos):** **Módulo 1 implementado** — a carteira de créditos deixa de ser fixture. O
+  extrato bancário vem do **Conexos** (`fin133` contas → `fin095` lançamentos), **não da Nexxera direto**:
+  supersede a **D4 do ADR-0022** e **ENCERRA o spike O7**, que bloqueava a Fase 1 (ADR-0023). Novo
+  `ConexosExtratoClient` (READ-only, Zod no boundary, `onCapHit` → `ExtratoTruncadoError`) e
+  `IngestaoTransacoesService` real: advisory lock tomado **uma vez no topo**, fan-out **achatado**
+  (filial × conta) num único `BoundedConcurrency`, janela fatiada em blocos de 30d, run de auditoria
+  (`recebimento_ingestao_run`, migration 0040) com status **`partial`** quando alguma conta falha.
+  Job `job:ingest-extratos` + rotas `POST /recebimentos/ingestao` (409 no lock, `Idempotency-Key`) e
+  `GET /recebimentos/ingestao/runs`. Medido em produção: **1.759 créditos** na filial 1 em 90 dias,
+  7 contas com movimento, reingestão **100% deduplicada**.
+- **fix(recebimentos):** `TransacaoRepository` ganha `upsertMany` com guard
+  `WHERE status = 'importada'`. O `save` unitário fazia `status = EXCLUDED.status`, então **a reingestão
+  diária devolvia para `importada` qualquer transação que o analista já tivesse movido** para
+  `conciliada`/`parcial`/`manual` — perda silenciosa de trabalho. `id` e `correlationId` passam a ser
+  **determinísticos** (derivados da `naturalKey`), corrigindo o id-fantasma que o `ON CONFLICT` deixava.
+- **feat(recebimentos):** `ProcessoProviderConexos` substitui o stub de 4 fixtures — `imp021` filtrado por
+  **`pesCod`** + lista de clientes com processo aberto (cache TTL 10 min). Novo `GET /recebimentos/clientes`.
+- **feat(recebimentos):** painel lê do **banco**. `GET /recebimentos/painel` reescrito com authz por-filial,
+  KPIs vindos de `COUNT(*) GROUP BY status` (**não** da página, que mentiria com o cap de 500),
+  `ultimaIngestao` (só runs `success`) e flag `truncado`.
+- **fix(recebimentos):** o frontend **perde os três fallbacks silenciosos de fixture**. O pior deles montava
+  um payload de SN **no navegador** quando o backend caía e mostrava toast verde de sucesso — um documento
+  que o backend nunca teria gerado. Erro agora é erro.
+- **feat(ui):** novo átomo **`Combobox`** (single-select com busca; o `Select` do Radix não tem busca). O
+  modal "Alocar" passa a exigir a escolha do **cliente**: o extrato não traz `pesCod` nem CNPJ, e o
+  histórico vem **truncado pelo banco** (~21 chars de média — `"TED 001.3344.MC Q I E E"`). O sistema
+  pré-seleciona por prefixo, **visível e trocável**; quem confirma é o analista (invariante *match incerto
+  nunca auto-baixa*, ADR-0022).
+- **fix(ui):** `DialogContent` ganha `max-h-[85vh]` + corpo rolável — nenhum diálogo do app passa mais da
+  viewport (antes, uma lista longa empurrava os controles para fora da tela). No modal "Alocar", o seletor
+  de cliente fica fixo e só a tabela rola, com cabeçalho sticky.
+- **fix(ui):** o payload técnico da SN nasce **fechado**, com resumo legível e um aviso explícito de que
+  **ainda não é um documento válido** (`gcdCod` placeholder, moeda assumida, percentual da encomenda
+  indefinido). Antes o JSON abria por padrão e o `"gcdCod": 0` parecia um dado normal.
+- **chore:** ruído de tesouraria (RESGATE DE APLICAÇÃO, AÇÕES, TRANSFERÊNCIA ENTRE CONTAS — ~15% dos
+  créditos) é **escondido na exibição, nunca descartado na ingestão**. O extrato é fonte da verdade.
+- **NENHUMA escrita no ERP.** `enviarAoErp` segue lançando `NotImplementedError`; os 8 cards
+  *must-fix-before-wire-real* do Regis continuam valendo. Ontologia em **v0.12.0**.
+
 ## v0.18.0 (2026-07-29) — Frente IV (Recebimentos + NDe): scaffold + painel + Solicitação de Numerário (dry-run)
 
 - **feat(recebimentos):** ação **`gerarSolicitacaoNumerario` (SN)** — no painel `/recebimentos`, o botão

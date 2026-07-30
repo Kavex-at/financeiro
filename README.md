@@ -1,8 +1,8 @@
 # Columbia Trading — Financeiro
 
-Automação assistida da **área Financeira da Columbia Trading**. O projeto cobre três frentes onde o
+Automação assistida da **área Financeira da Columbia Trading**. O projeto cobre quatro frentes onde o
 processo manual hoje gera exposição — **dado que não fecha, pagamento que não sai, documento que não
-destrava** — mantendo o analista no controle das decisões de julgamento e transferindo à solução o
+destrava, crédito que não concilia** — mantendo o analista no controle das decisões de julgamento e transferindo à solução o
 trabalho mecânico. Todas as frentes integram com o ERP **Conexos** (mesmo tenant do
 `fechamento-processos` — hoje **só o lado leitura**; a escrita no ERP será desenhada via `/feature-new`),
 operam multi-filial e registram trilha de auditoria completa.
@@ -11,13 +11,14 @@ operam multi-filial e registram trilha de auditoria completa.
 > **Domínio:** [`03_ontologia_financeiro.md`](./docs-contexto/03_ontologia_financeiro.md) ·
 > **Entrega:** Kavex (*created by Clonex*).
 
-## As três frentes
+## As quatro frentes
 
 | Frente | Em uma frase | Integra |
 |---|---|---|
 | **I. Permutas** (Adiantamentos ↔ Invoices) | Reconciliar PROFORMA × INVOICE na baixa; auto 1:1, assistido N:M; backlog → 0 | Conexos `fin010` |
 | **II. SISPAG** (Pagamentos) | Montar lote diário, gerar remessa, enviar ao banco, conciliar retorno; zero pagamento perdido | Conexos `com298` + Nexxera |
 | **III. Popula GED** (NC/ND) | Casar PDF do SharePoint com a NC/ND e subir no GED para destravar a baixa | SharePoint + GED |
+| **IV. Conciliação de Recebimentos** (NDe) | Importar movimentações da Nexxera, casar cada crédito com os recebíveis em aberto, ratear, aplicar regras e efetivar a baixa — culminando na emissão da **Nota de Débito Eletrônica**. Contrapartida de entrada da Frente II | Nexxera + Conexos (`com299`/`gerDoc`) |
 
 **Requisitos transversais:** auth corporativa + RBAC · multi-filial · auditoria completa · integração
 Conexos resiliente (sessão/retry/rate-limit) · observabilidade · padronização (portal único futuro).
@@ -68,7 +69,7 @@ Dev sem Supabase: `.env` (gitignored) já com `DEV_AUTH_BYPASS=true` / `environm
 ├── CLAUDE.md                   Configuração do pipeline
 ├── docs-contexto/              Seeds de ontologia (herdados, contexto):
 │   ├── 03_ontologia.md             plataforma (read-only)
-│   └── 03_ontologia_financeiro.md  domínio (3 frentes) ← propósito
+│   └── 03_ontologia_financeiro.md  domínio (4 frentes) ← propósito
 ├── docs/proposta/              Proposta Kavex × Columbia (fonte canônica, CONFIDENCIAL)
 ├── ontology/                   Source of truth do domínio (a modelar via /feature-new)
 └── src/{backend,frontend}/     App (Express + Next.js)

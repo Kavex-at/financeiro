@@ -19,8 +19,15 @@ import { z } from 'zod';
 export interface Processo {
     /** Nº do processo de importação (`priCod`, "Processo" no com299). */
     priCod: number;
-    /** Referência externa/cliente (`priEspRefcliente`, "Referência Externa"). */
-    priEspRefcliente: string;
+    /**
+     * Referência externa/cliente (`priEspRefcliente`, "Referência Externa").
+     *
+     * OPCIONAL: o `imp021` não a preenche em todo processo. Coalescer para um
+     * placeholder aqui poluiria o payload do com299 com um valor inventado — o
+     * `SolicitacaoNumerarioService` coalesce para `''` na hora de montar o
+     * documento, onde a semântica é "campo vazio no ERP".
+     */
+    priEspRefcliente?: string;
     /** Invariante multi-filial — nunca `null`. */
     filCod: number;
     /** Código da pessoa (cliente) no ERP. */
@@ -29,6 +36,15 @@ export interface Processo {
     dpeNomPessoa: string;
     /** Moeda do processo. */
     moeCod: number;
+    /**
+     * `true` quando `moeCod` NÃO veio do ERP e foi assumido (BRL/790).
+     *
+     * O `imp021` não expõe moeda do processo — só `moeCodConv` (conversão) e
+     * `moeCodSeg` (seguro), verificado em produção. A UI exibe o aviso; assumir em
+     * silêncio num payload financeiro é como o dry-run vira bug no dia em que
+     * deixar de ser dry-run.
+     */
+    moeCodAssumido?: boolean;
     /** Saldo/valor de referência do processo (base informativa do rateio). */
     valor?: number;
     /** Contraparte solta usada no filtro (espelha `TransacaoBancaria.contraparte`). */
@@ -38,11 +54,12 @@ export interface Processo {
 /** Boundary validation (Zod at boundaries). */
 export const processoSchema = z.object({
     priCod: z.number().int().positive(),
-    priEspRefcliente: z.string().min(1),
+    priEspRefcliente: z.string().optional(),
     filCod: z.number().int().positive(),
     pesCod: z.number().int().positive(),
     dpeNomPessoa: z.string().min(1),
     moeCod: z.number().int().positive(),
+    moeCodAssumido: z.boolean().optional(),
     valor: z.number().optional(),
     contraparte: z.string().optional(),
 });

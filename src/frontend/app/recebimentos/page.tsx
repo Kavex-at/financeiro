@@ -144,7 +144,13 @@ function RecebimentosPanel() {
     <div className="space-y-6">
       <PageHeader
         title="Recebimentos"
-        subtitle="Conciliação de créditos bancários (Frente IV)."
+        subtitle={
+          painel?.ultimaIngestao
+            ? `Conciliação de créditos bancários (Frente IV) · carteira de ${new Date(
+                painel.ultimaIngestao,
+              ).toLocaleString('pt-BR')}`
+            : 'Conciliação de créditos bancários (Frente IV).'
+        }
         actions={
           <Button
             variant="outline"
@@ -172,12 +178,13 @@ function RecebimentosPanel() {
         />
       ) : painel ? (
         <>
-          {painel.fonte === 'fixture' ? (
+          {painel.truncado ? (
             <div className="flex items-start gap-2 rounded-lg border border-info/40 bg-info/5 p-3 text-sm">
               <Landmark className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
               <div>
-                <span className="font-medium">Dados de demonstração.</span> O backend ainda não
-                devolve leituras reais — o painel está exibindo o fixture da Frente IV. Read-only.
+                <span className="font-medium">Lista parcial.</span> Há mais créditos na janela do que
+                cabem nesta página — os mais recentes vêm primeiro. Os KPIs acima contam a janela
+                inteira, não só o que está listado.
               </div>
             </div>
           ) : null}

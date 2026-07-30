@@ -47,5 +47,3 @@ heurística de distribuição é calibração.
 ## Fora de escopo (Fase 0 — SKELETON)
 
 - Motor de distribuição, enum de componentes, interação com regras (multa/juros/encomenda): **Fase 3/4**.
-</content>
-</invoke>

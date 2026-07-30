@@ -50,5 +50,3 @@ são config do cliente (Fase 4).
 ## Fora de escopo (Fase 0 — SKELETON)
 
 - **Toda a semântica das 3 regras** (alíquotas, contas de destino, critérios): **Fase 4**.
-</content>
-</invoke>
