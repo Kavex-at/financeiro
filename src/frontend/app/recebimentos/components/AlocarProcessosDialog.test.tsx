@@ -16,19 +16,19 @@ jest.mock('@/lib/recebimentos', () => {
   const actual = jest.requireActual('@/lib/recebimentos')
   return {
     ...actual,
-    fetchClientesDaFilial: jest.fn(),
+    fetchClientes: jest.fn(),
     fetchProcessosParaTransacao: jest.fn(),
     processarSolicitacaoNumerario: jest.fn(),
   }
 })
 
 import {
-  fetchClientesDaFilial,
+  fetchClientes,
   fetchProcessosParaTransacao,
   processarSolicitacaoNumerario,
 } from '@/lib/recebimentos'
 
-const mockClientes = fetchClientesDaFilial as jest.MockedFunction<typeof fetchClientesDaFilial>
+const mockClientes = fetchClientes as jest.MockedFunction<typeof fetchClientes>
 const mockFetch = fetchProcessosParaTransacao as jest.MockedFunction<
   typeof fetchProcessosParaTransacao
 >
@@ -66,8 +66,9 @@ const dryRunResult: SolicitacaoNumerarioDryRun = {
   docConfig: { gcdCod: 0, gcdDesNome: 'Solicitação de Numerário - Encomenda' },
   payload: {
     filCod: 4,
-    docTip: 'SN',
-    docVldTipo: 'SN',
+    docTip: 1,
+    docVldTipo: 9,
+    docVldTipoAdto: 1,
     priCod: 90001,
     priEspRefcliente: 'REF-CLI-0001',
     pesCod: 555,
@@ -77,7 +78,7 @@ const dryRunResult: SolicitacaoNumerarioDryRun = {
     docDtaEmissao: '2026-07-28T12:00:00.000Z',
     dtaVencimento: '2026-07-28T12:00:00.000Z',
     valor: 15000,
-    moeCod: 790,
+    moeCod: null,
     items: [
       {
         prjCod: 0,
@@ -109,7 +110,7 @@ describe('AlocarProcessosDialog', () => {
 
     // "CLIENTE EXEMPLO LTDA" bate por prefixo com o histórico da transação.
     await waitFor(() =>
-      expect(mockFetch).toHaveBeenCalledWith('txn-0001', 4, 555),
+      expect(mockFetch).toHaveBeenCalledWith('txn-0001', 555),
     )
     expect(await screen.findByText('90001')).toBeInTheDocument()
   })
@@ -141,7 +142,7 @@ describe('AlocarProcessosDialog', () => {
     await user.click(await screen.findByLabelText('Cliente do recebimento'))
     await user.click(await screen.findByText('BELLIZ INDUSTRIA'))
 
-    await waitFor(() => expect(mockFetch).toHaveBeenCalledWith('txn-0001', 4, 676))
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledWith('txn-0001', 676))
   })
 
   it('Processar gera a simulação dry-run e marca a linha', async () => {

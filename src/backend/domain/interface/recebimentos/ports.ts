@@ -248,6 +248,13 @@ export interface ClienteProcesso {
     dpeNomPessoa: string;
     /** Nº de processos abertos — exibido junto ao nome para desambiguar homônimos. */
     processosAbertos: number;
+    /**
+     * Filiais em que o cliente tem processo aberto. Populado ao agregar a lista
+     * multi-filial na rota (o provider é por-filial): o seletor do modal "Alocar"
+     * varre TODAS as filiais acessíveis, não só a da transação (um crédito cai numa
+     * filial mas a encomenda do cliente pode estar em outra). Ausente = single-filial.
+     */
+    filiais?: number[];
 }
 
 /** Filtro dos candidatos — `filCod` obrigatório (multi-filial). */
@@ -347,6 +354,64 @@ export interface RecebimentoExecucaoErrorData {
     borCod?: number;
 }
 
+/**
+ * Write-ahead ledger da Solicitação de Numerário (com299) — parity com o `RecebimentoExecucao`, mas o
+ * handle de reconciliação é o `docCod` (o com299 é multi-call: cabeçalho → rateio → líquido → finaliza).
+ * `setDocCod` persiste o `docCod` ASSIM QUE o cabeçalho é criado, ANTES do próximo POST (Regis
+ * fault-tolerance-2): se a sequência morrer no meio, a trilha aponta o documento órfão a conciliar.
+ */
+export interface SolicitacaoNumerarioExecucaoRepositoryInterface {
+    findByIdempotencyKey: (key: string) => Promise<SolicitacaoNumerarioExecucaoRow | null>;
+    beginExecution: (
+        input: BeginSolicitacaoNumerarioExecucaoInput,
+    ) => Promise<BeginSolicitacaoNumerarioExecucaoResult>;
+    setDocCod: (key: string, docCod: number) => Promise<void>;
+    setRequestPayload: (key: string, payload: unknown) => Promise<void>;
+    markSettled: (key: string, data: SolicitacaoNumerarioExecucaoSettleData) => Promise<void>;
+    markError: (key: string, data: SolicitacaoNumerarioExecucaoErrorData) => Promise<void>;
+}
+
+export interface SolicitacaoNumerarioExecucaoRow {
+    idempotencyKey: string;
+    correlationId?: string;
+    filCod: number;
+    priCod: number;
+    status: RecebimentoExecucaoStatus;
+    dryRun: boolean;
+    docCod?: number;
+    erpResponse?: unknown;
+    erroMensagem?: string;
+    executadoPor?: string;
+    criadoEm: Date;
+    atualizadoEm: Date;
+}
+
+export interface BeginSolicitacaoNumerarioExecucaoInput {
+    idempotencyKey: string;
+    correlationId?: string;
+    filCod: number;
+    priCod: number;
+    dryRun: boolean;
+    executadoPor: string;
+}
+
+export interface BeginSolicitacaoNumerarioExecucaoResult {
+    status: RecebimentoExecucaoStatus;
+    /** TRUE when the row was already `settled` (idempotency short-circuit). */
+    alreadySettled: boolean;
+}
+
+export interface SolicitacaoNumerarioExecucaoSettleData {
+    docCod?: number;
+    erpResponse?: unknown;
+}
+
+export interface SolicitacaoNumerarioExecucaoErrorData {
+    erroMensagem: string;
+    erpResponse?: unknown;
+    docCod?: number;
+}
+
 /** Thin repositories for the added entity tables (Fase 4/5 seams). */
 export interface CreditoClienteRepositoryInterface {
     save: (credito: CreditoCliente) => Promise<CreditoCliente>;
@@ -377,6 +442,9 @@ export const TRANSACAO_REPOSITORY_TOKEN = Symbol('TransacaoRepositoryInterface')
 export const RECEBIMENTO_REPOSITORY_TOKEN = Symbol('RecebimentoRepositoryInterface');
 export const RECEBIMENTO_EXECUCAO_REPOSITORY_TOKEN = Symbol(
     'RecebimentoExecucaoRepositoryInterface',
+);
+export const SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN = Symbol(
+    'SolicitacaoNumerarioExecucaoRepositoryInterface',
 );
 export const PROCESSO_PROVIDER_TOKEN = Symbol('ProcessoProviderInterface');
 export const CREDITO_CLIENTE_REPOSITORY_TOKEN = Symbol('CreditoClienteRepositoryInterface');

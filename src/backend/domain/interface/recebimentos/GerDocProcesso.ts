@@ -66,7 +66,11 @@ export const processoSchema = z.object({
 
 // ─────────────────────────────────────────────── GerDocProcessoSelectionDTOCab (com299 swagger)
 
-/** Item de rateio da SN (`TmpCom068DTOItem`) — espelha o wire do com299. */
+/**
+ * Item de rateio de PREVIEW da SN (`TmpCom068DTOItem`) — resumo humano exibido no dry-run. NÃO é o
+ * wire real da linha de rateio: o com299 persiste o rateio via `POST com299/comDocProdutos` com o shape
+ * `ComDocProdutosLine` (abaixo). Mantido só como conveniência de preview.
+ */
 export interface TmpCom068DTOItem {
     prjCod: number;
     ctpCod: number;
@@ -78,13 +82,36 @@ export interface TmpCom068DTOItem {
 }
 
 /**
- * Payload cabeçalho do `POST /api/com299/gerDocProcesso` (`GerDocProcessoSelectionDTOCab`).
- * Nomes de campo em português espelham o wire do ERP (permitido por CLAUDE.md).
+ * Linha de rateio REAL do com299 (`POST com299/comDocProdutos`) — HAR-confirmada (doc 18202). Os
+ * códigos são PROCESSO-derivados (variam por doc; fonte provável = `comDocProdutos/initialValues`, gap
+ * G1). `dprPreTotalLiquido` é o líquido que o servidor soma no `calculaValorLiquidoDocumento`. Nomes de
+ * wire em português espelham o ERP (permitido por CLAUDE.md).
+ */
+export interface ComDocProdutosLine {
+    prjCod: number;
+    ctpCod: number;
+    /** Conta contábil espelho do `ctpCod` (ex.: 330037 p/ ctpCod 690). */
+    ctpEspConta?: string;
+    tpcCod: number;
+    cfoEspCod: string;
+    ccuCod: number;
+    prdCod: number;
+    undCod: number;
+    ungCod: number;
+    dprPreTotalLiquido: number;
+}
+
+/**
+ * Payload cabeçalho do `POST /api/com299` (`GerDocProcessoSelectionDTOCab`). Nomes de campo do wire em
+ * português espelham o ERP (permitido por CLAUDE.md). `docTip`/`docVldTipo`/`docVldTipoAdto` são
+ * NUMÉRICOS (HAR-confirmado); `moeCod` é `null` neste tipo de doc (BRL implícito).
  */
 export interface GerDocProcessoSelectionDTOCab {
     filCod: number;
-    docTip: string;
-    docVldTipo: string;
+    docTip: number;
+    docVldTipo: number;
+    /** Marca o doc como adiantamento (`docVldTipoAdto = 1`). */
+    docVldTipoAdto: number;
     /** Nº do processo ("Processo"). */
     priCod: number;
     /** Referência externa ("Referência Externa"). */
@@ -99,11 +126,12 @@ export interface GerDocProcessoSelectionDTOCab {
     docDtaEmissao: string;
     dtaVencimento: string;
     valor: number;
-    moeCod: number;
+    /** Moeda — `null` na SN Encomenda (BRL implícito; a suposição 790 era errada). */
+    moeCod: number | null;
     items: TmpCom068DTOItem[];
 }
 
-/** Boundary validation do item de rateio. */
+/** Boundary validation do item de rateio de PREVIEW. */
 export const tmpCom068DTOItemSchema = z.object({
     prjCod: z.number().int(),
     ctpCod: z.number().int(),
@@ -114,11 +142,26 @@ export const tmpCom068DTOItemSchema = z.object({
     total: z.number(),
 });
 
+/** Boundary validation da linha de rateio REAL (`comDocProdutos`). */
+export const comDocProdutosLineSchema = z.object({
+    prjCod: z.number().int(),
+    ctpCod: z.number().int(),
+    ctpEspConta: z.string().optional(),
+    tpcCod: z.number().int(),
+    cfoEspCod: z.string().min(1),
+    ccuCod: z.number().int(),
+    prdCod: z.number().int(),
+    undCod: z.number().int(),
+    ungCod: z.number().int(),
+    dprPreTotalLiquido: z.number(),
+});
+
 /** Boundary validation do cabeçalho do payload com299. */
 export const gerDocProcessoSelectionDTOCabSchema = z.object({
     filCod: z.number().int().positive(),
-    docTip: z.string().min(1),
-    docVldTipo: z.string().min(1),
+    docTip: z.number().int(),
+    docVldTipo: z.number().int(),
+    docVldTipoAdto: z.number().int(),
     priCod: z.number().int().positive(),
     priEspRefcliente: z.string(),
     pesCod: z.number().int(),
@@ -128,7 +171,7 @@ export const gerDocProcessoSelectionDTOCabSchema = z.object({
     docDtaEmissao: z.string().min(1),
     dtaVencimento: z.string().min(1),
     valor: z.number(),
-    moeCod: z.number().int(),
+    moeCod: z.number().int().nullable(),
     items: z.array(tmpCom068DTOItemSchema),
 });
 

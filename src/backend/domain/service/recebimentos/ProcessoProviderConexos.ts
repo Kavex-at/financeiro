@@ -3,7 +3,7 @@ import ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
 import type { ProcessoListItem } from '../../client/ConexosCadastroClient.js';
 import type { Processo } from '../../interface/recebimentos/GerDocProcesso.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
-import { SOLICITACAO_NUMERARIO_MOE_COD } from '../../interface/recebimentos/constants.js';
+import { PROCESSO_MOEDA_ASSUMIDA_BRL } from '../../interface/recebimentos/constants.js';
 import type {
     ClienteProcesso,
     ListCandidatosInput,
@@ -74,7 +74,7 @@ export default class ProcessoProviderConexos implements ProcessoProviderInterfac
             filCod,
             priEspRefcliente: r.priEspRefcliente ?? '',
             dpeNomPessoa: nome && nome.length > 0 ? nome : `(sem nome) — cliente ${pesCod}`,
-            moeCod: SOLICITACAO_NUMERARIO_MOE_COD,
+            moeCod: PROCESSO_MOEDA_ASSUMIDA_BRL,
             moeCodAssumido: true,
             contraparte: nome,
         };

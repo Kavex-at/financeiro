@@ -119,25 +119,46 @@ export const RECEBIMENTO_INGEST_LOCK_KEY = 726354820;
 // ─────────────────────────────────────────────────────────── Solicitação de Numerário (com299)
 
 /**
- * Configuração de Documento (`gcd`) do com299 usada ao processar um processo → gerar uma
- * **Solicitação de Numerário — Encomenda** (`gerDocProcesso`).
+ * Configuração de Documento (`gcd`) do com299 da **Solicitação de Numerário — Encomenda**.
  *
- * `gcdCod` é o código da configuração no ERP. **PLACEHOLDER (dry-run):** o valor real precisa de
- * confirmação HML/HAR (ver `ontology/integrations/conexos-com299-gerdoc.md`). O `gcdDesNome` é o
- * rótulo humano ("Cód. Configuração de Documento"). Como a geração é **DRY-RUN-ONLY** nesta iteração,
- * nenhum POST usa esse código ainda — ele só entra no payload previsto.
+ * O `gcdCod` NÃO vive mais aqui — é lido de `EnvironmentProvider.solicitacaoNumerarioGcdCod`
+ * (`SN_GCD_COD`), com sentinela 0 = "não confirmado" que trava a escrita real. Valor HAR-confirmado
+ * (prod, filial 2) = **150** (`SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA`). Aqui fica só o rótulo humano.
  */
 export const SOLICITACAO_NUMERARIO_DOC_CONFIG = {
-    /** PLACEHOLDER — confirmar o `gcdCod` real via HML/HAR antes de qualquer envio ao ERP. */
-    gcdCod: 0,
     gcdDesNome: 'Solicitação de Numerário - Encomenda',
 } as const;
 
-/** Tipo/validação do documento com299 (defaults do swagger — confirmar no build). */
-export const SOLICITACAO_NUMERARIO_DOC_TIP = 'SN';
-export const SOLICITACAO_NUMERARIO_DOC_VLD_TIPO = 'SN';
-/** Moeda default da SN (BRL) — parametrizável quando a fonte real existir. */
-export const SOLICITACAO_NUMERARIO_MOE_COD = 790;
+/**
+ * Guard da FONTE dos códigos de rateio (`prjCod/ctpCod/tpcCod/cfoEspCod/ccuCod`) da linha
+ * `comDocProdutos`. **`false` de propósito** (assertion, não assumption — espelha
+ * `NDE_NORMAL_TP_NF_CONHECIDOS`).
+ *
+ * O HAR (prod, doc 18202) provou que NÃO há regra de % client-side: o `valor` da SN é o valor CRU da
+ * transação e o **servidor** totaliza o líquido do rateio (`GET com299/calculaValorLiquidoDocumento`).
+ * O gap real não é o cálculo — é a ORIGEM dos códigos de rateio, que são PROCESSO-derivados (variam por
+ * doc) e provavelmente vêm de `POST com299/comDocProdutos/initialValues` (gap G1). Enquanto essa fonte
+ * não for confirmada por HAR, hardcodar os códigos da amostra 18202 num payload financeiro seria escrever
+ * dado errado no ERP — então uma ESCRITA REAL deve LANÇAR. Ver `EncomendaValorCalculator` e
+ * `ontology/integrations/conexos-com299-gerdoc.md` (gaps G1/G2).
+ */
+export const ENCOMENDA_PERCENTUAIS_RESOLVED = false;
+
+/**
+ * Tipo/validação do documento com299 — **numéricos, HAR-confirmados** (prod filial 2, doc 18202; a
+ * suposição `"SN"`/`"SN"` era errada). `docVldTipoAdto = 1` marca o doc como adiantamento.
+ */
+export const SOLICITACAO_NUMERARIO_DOC_TIP = 1;
+export const SOLICITACAO_NUMERARIO_DOC_VLD_TIPO = 9;
+export const SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO = 1;
+
+/**
+ * Moeda ASSUMIDA do PROCESSO (BRL/790) — concern SEPARADO do `moeCod` do doc SN (que é `null`). O
+ * `imp021` não expõe a moeda do processo (só `moeCodConv`/`moeCodSeg`); o `ProcessoProviderConexos`
+ * assume BRL e marca `moeCodAssumido: true` p/ a UI avisar. Named constant (não o `SOLICITACAO_*`
+ * removido) para deixar claro que é a moeda do PROCESSO, não do documento.
+ */
+export const PROCESSO_MOEDA_ASSUMIDA_BRL = 790;
 
 // ─────────────────────────────────────────────────────────── Extrato bancário (fin095 / fin133)
 

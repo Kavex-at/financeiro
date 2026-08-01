@@ -302,11 +302,13 @@ export const recebimentosPainelFixture: RecebimentosPainel = {
 
 // ─────────────────────────────────────────────────────────── Fetch (backend → fixture)
 
-/** Cliente com processo aberto na filial (seletor do modal "Alocar"). */
+/** Cliente com processo aberto (seletor do modal "Alocar"). */
 export interface ClienteProcesso {
   pesCod: number
   dpeNomPessoa: string
   processosAbertos: number
+  /** Filiais em que o cliente tem processo aberto (a busca é multi-filial). */
+  filiais?: number[]
 }
 
 /** Shape que o backend devolve. */
@@ -356,11 +358,15 @@ export interface TmpCom068DTOItem {
   total: number
 }
 
-/** Cabeçalho do payload com299 (`GerDocProcessoSelectionDTOCab`). */
+/**
+ * Cabeçalho do payload com299 (`GerDocProcessoSelectionDTOCab`). `docTip`/`docVldTipo`/`docVldTipoAdto`
+ * são NUMÉRICOS (HAR-confirmado, doc 18202); `moeCod` é `null` na SN Encomenda (BRL implícito).
+ */
 export interface GerDocProcessoSelectionDTOCab {
   filCod: number
-  docTip: string
-  docVldTipo: string
+  docTip: number
+  docVldTipo: number
+  docVldTipoAdto: number
   priCod: number
   priEspRefcliente: string
   pesCod: number
@@ -370,7 +376,7 @@ export interface GerDocProcessoSelectionDTOCab {
   docDtaEmissao: string
   dtaVencimento: string
   valor: number
-  moeCod: number
+  moeCod: number | null
   items: TmpCom068DTOItem[]
 }
 
@@ -390,76 +396,18 @@ export interface SolicitacaoNumerarioDryRun {
 /** Config canônica da SN encomenda (fixture de fallback + rótulo). */
 export const SOLICITACAO_NUMERARIO_GCD_DES_NOME = 'Solicitação de Numerário - Encomenda'
 
-/** Seed de candidatos (rede de segurança do fixture) — espelha o stub do backend. */
-/** @deprecated Só para testes — nenhum caminho de produção cai em fixture. */
-export const fixtureProcessos: Processo[] = [
-  {
-    priCod: 90001,
-    priEspRefcliente: 'REF-CLI-0001',
-    filCod: 4,
-    pesCod: 555,
-    dpeNomPessoa: 'CLIENTE EXEMPLO LTDA',
-    moeCod: 790,
-    valor: 15000,
-    contraparte: 'CLIENTE EXEMPLO LTDA',
-  },
-  {
-    priCod: 90002,
-    priEspRefcliente: 'REF-CLI-0002',
-    filCod: 4,
-    pesCod: 556,
-    dpeNomPessoa: 'IMPORTADORA ATLAS S.A.',
-    moeCod: 790,
-    valor: 32500.5,
-    contraparte: 'IMPORTADORA ATLAS S.A.',
-  },
-]
-
-/** Constrói o payload dry-run localmente (fallback quando o backend não responde). */
-/** @deprecated Só para testes — o payload dry-run vem do backend. */
-export function buildDryRunFallback(
-  processo: Processo,
-  valorTransacao: number,
-): SolicitacaoNumerarioDryRun {
-  const dataIso = new Date().toISOString()
-  const docConfig: DocConfig = { gcdCod: 0, gcdDesNome: SOLICITACAO_NUMERARIO_GCD_DES_NOME }
-  return {
-    dryRun: true,
-    docConfig,
-    payload: {
-      filCod: processo.filCod,
-      docTip: 'SN',
-      docVldTipo: 'SN',
-      priCod: processo.priCod,
-      priEspRefcliente: processo.priEspRefcliente ?? '',
-      pesCod: processo.pesCod,
-      dpeNomPessoa: processo.dpeNomPessoa,
-      gcdCod: docConfig.gcdCod,
-      gcdDesNome: docConfig.gcdDesNome,
-      docDtaEmissao: dataIso,
-      dtaVencimento: dataIso,
-      valor: valorTransacao,
-      moeCod: processo.moeCod || 790,
-      items: [
-        {
-          prjCod: 0,
-          ctpCod: 0,
-          tmpMnyValor: valorTransacao,
-          ctpDesNome: docConfig.gcdDesNome,
-          tpcCod: 0,
-          cfoEspCod: 0,
-          total: valorTransacao,
-        },
-      ],
-    },
-  }
-}
+// `buildDryRunFallback` foi REMOVIDO (A2): o payload dry-run vem SEMPRE do backend
+// (`processarSolicitacaoNumerario` propaga erro em vez de inventar documento no navegador), e o
+// `gcdCod` é fonte única do env → `docConfig` do backend — nada de duplicata hardcoded no FE.
 
 /**
  * Lista os PROCESSOS do cliente escolhido pelo analista (modal "Alocar").
  *
- * Sem `pesCod` o backend devolve `[]` de propósito: o extrato não carrega cliente,
- * então listar processos "da filial" seria despejar centenas de linhas sem critério.
+ * Multi-filial: o backend varre TODAS as filiais acessíveis (não só a da
+ * transação) e cada `Processo` carrega o próprio `filCod` — a SN gerada herda a
+ * filial do processo. Sem `pesCod` o backend devolve `[]` de propósito: o extrato
+ * não carrega cliente, então listar processos "da filial" seria despejar centenas
+ * de linhas sem critério.
  *
  * NÃO tem fallback de fixture. Um backend fora do ar precisa aparecer como erro —
  * um analista olhando dados de demonstração achando que são reais é pior que uma
@@ -467,13 +415,13 @@ export function buildDryRunFallback(
  */
 export async function fetchProcessosParaTransacao(
   txnId: string,
-  filCod: number,
   pesCod?: number,
 ): Promise<Processo[]> {
-  const qs = new URLSearchParams({ filCod: String(filCod) })
+  const qs = new URLSearchParams()
   if (pesCod !== undefined) qs.set('pesCod', String(pesCod))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const res = await apiFetch(
-    `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/processos?${qs.toString()}`,
+    `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/processos${suffix}`,
     { headers: await withAuthHeaders() },
   )
   if (!res.ok) throw new Error(`API ${res.status}`)
@@ -481,9 +429,15 @@ export async function fetchProcessosParaTransacao(
   return json.processos ?? []
 }
 
-/** Clientes com processo aberto na filial — alimenta o seletor do modal "Alocar". */
-export async function fetchClientesDaFilial(filCod: number): Promise<ClienteProcesso[]> {
-  const res = await apiFetch(`${API}/recebimentos/clientes?filCod=${filCod}`, {
+/**
+ * Clientes com processo aberto — alimenta o seletor do modal "Alocar".
+ *
+ * Multi-filial de propósito: um crédito cai numa filial, mas a encomenda do
+ * cliente pode estar em outra. O backend agrega por cliente sobre todas as
+ * filiais acessíveis, então o analista sempre encontra o pagador.
+ */
+export async function fetchClientes(): Promise<ClienteProcesso[]> {
+  const res = await apiFetch(`${API}/recebimentos/clientes`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) throw new Error(`API ${res.status}`)

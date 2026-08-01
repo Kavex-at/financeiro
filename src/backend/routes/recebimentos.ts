@@ -9,6 +9,7 @@ import {
     PAINEL_TRANSACOES_CAP,
     RECEBIMENTO_STATUS,
 } from '../domain/interface/recebimentos/constants.js';
+import type { Processo } from '../domain/interface/recebimentos/GerDocProcesso.js';
 import type { Recebimento } from '../domain/interface/recebimentos/Recebimento.js';
 import type { TransacaoBancaria } from '../domain/interface/recebimentos/TransacaoBancaria.js';
 import { TRANSACAO_TIPO } from '../domain/interface/recebimentos/constants.js';
@@ -16,7 +17,9 @@ import type {
     ListCandidatosInput,
     ProcessoProviderInterface,
 } from '../domain/interface/recebimentos/ports.js';
+import type { ClienteProcesso } from '../domain/interface/recebimentos/ports.js';
 import { PROCESSO_PROVIDER_TOKEN } from '../domain/interface/recebimentos/ports.js';
+import ConexosCadastroClient from '../domain/client/ConexosCadastroClient.js';
 import RecebimentoIngestaoRunRepository from '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
 import IngestaoTransacoesService from '../domain/service/recebimentos/IngestaoTransacoesService.js';
@@ -26,6 +29,7 @@ import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
 import {
     FilialForbiddenError,
+    type FilialScopedUser,
     assertUserCanActOnFilial,
     filiaisPermitidas,
 } from '../http/filialAuthz.js';
@@ -39,6 +43,38 @@ import { respondHandlerError } from '../http/respondHandlerError.js';
  * (403 quando desabilitado). Espelha `routes/sispag.ts`.
  */
 const router = Router();
+
+/**
+ * Filiais que o usuário PODE varrer. Allow-list do token quando provisionada;
+ * senão, todas as do ERP (`imp021`/login) — espelha `RecebimentosPainelService.resolverFilCods`.
+ *
+ * É o que torna o seletor de cliente do modal "Alocar" multi-filial: um crédito
+ * cai numa filial, mas a encomenda do cliente pode estar em outra. Sem isto o
+ * analista não acha o cliente e não consegue alocar.
+ */
+const resolverFilCodsAcessiveis = async (user: FilialScopedUser | undefined): Promise<number[]> => {
+    const permitidas = filiaisPermitidas(user);
+    if (permitidas && permitidas.length > 0) return permitidas;
+    const cadastro = container.resolve(ConexosCadastroClient);
+    const filiais = await cadastro.listFiliais();
+    return filiais.map((f) => Number(f.filCod)).filter((n) => Number.isInteger(n) && n > 0);
+};
+
+/**
+ * Resolve as filiais-alvo de uma rota "Alocar": um `filCod` explícito (autorizado)
+ * limita a busca a ele; a ausência varre TODAS as filiais acessíveis. Lança
+ * `FilialForbiddenError` quando o `filCod` pedido está fora da allow-list.
+ */
+const resolverFilCodsAlvo = async (
+    user: FilialScopedUser | undefined,
+    filCod?: number,
+): Promise<number[]> => {
+    if (filCod !== undefined) {
+        assertUserCanActOnFilial(user, filCod);
+        return [filCod];
+    }
+    return resolverFilCodsAcessiveis(user);
+};
 
 const painelQuerySchema = z.object({
     filCod: z.coerce.number().int().positive().optional(),
@@ -196,7 +232,8 @@ router.post(
 // Numerário (encomenda) via com299/gerDocProcesso (DRY-RUN-ONLY).
 
 const listCandidatosQuerySchema = z.object({
-    filCod: z.coerce.number().int().positive(),
+    /** Opcional: ausente = varre TODAS as filiais acessíveis (multi-filial). */
+    filCod: z.coerce.number().int().positive().optional(),
     /** Cliente escolhido pelo analista — filtro FORTE, caminho principal. */
     pesCod: z.coerce.number().int().positive().optional(),
     /** Dica do histórico do extrato — match frouxo, compatibilidade. */
@@ -204,14 +241,20 @@ const listCandidatosQuerySchema = z.object({
 });
 
 const listClientesQuerySchema = z.object({
-    filCod: z.coerce.number().int().positive(),
+    /** Opcional: ausente = clientes com processo em QUALQUER filial acessível. */
+    filCod: z.coerce.number().int().positive().optional(),
 });
 
 /**
- * GET /recebimentos/clientes — clientes com processo aberto na filial (`imp021`).
+ * GET /recebimentos/clientes — clientes com processo aberto (`imp021`).
  *
  * Alimenta o seletor do modal "Alocar". Existe porque o extrato bancário não
  * carrega `pesCod` nem CNPJ: quem liga crédito↔cliente é o analista.
+ *
+ * Multi-filial: sem `filCod` varre TODAS as filiais acessíveis e agrega por
+ * cliente (o provider é por-filial). O crédito cai numa filial, mas a encomenda
+ * do cliente pode estar em outra — restringir à filial da transação escondia
+ * clientes válidos do analista.
  */
 router.get(
     '/clientes',
@@ -222,8 +265,9 @@ router.get(
             res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
             return;
         }
+        let filCods: number[];
         try {
-            assertUserCanActOnFilial(req.user, parsed.data.filCod);
+            filCods = await resolverFilCodsAlvo(req.user, parsed.data.filCod);
         } catch (err) {
             if (err instanceof FilialForbiddenError) {
                 res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
@@ -232,14 +276,34 @@ router.get(
             throw err;
         }
         const provider = container.resolve<ProcessoProviderInterface>(PROCESSO_PROVIDER_TOKEN);
-        res.json({ clientes: await provider.listClientes({ filCod: parsed.data.filCod }) });
+        // Agrega por `pesCod` sobre as filiais acessíveis. Sequencial de propósito:
+        // o provider varre o `imp021` por filial (cacheado por TTL) e um fan-out
+        // paralelo recria o burst de sessões que a Frente II já mitigou.
+        const porCliente = new Map<number, ClienteProcesso>();
+        for (const filCod of filCods) {
+            for (const c of await provider.listClientes({ filCod })) {
+                const atual = porCliente.get(c.pesCod);
+                if (atual) {
+                    atual.processosAbertos += c.processosAbertos;
+                    if (!atual.filiais?.includes(filCod)) atual.filiais?.push(filCod);
+                } else {
+                    porCliente.set(c.pesCod, { ...c, filiais: [filCod] });
+                }
+            }
+        }
+        const clientes = [...porCliente.values()].sort((a, b) =>
+            a.dpeNomPessoa.localeCompare(b.dpeNomPessoa, 'pt-BR'),
+        );
+        res.json({ clientes });
     }),
 );
 
 /**
  * GET /recebimentos/transacoes/:txnId/processos — lista os PROCESSOS candidatos para a transação
- * (modal "Alocar"). READ-only (sem admin), mas mantém a authz por-filial: o `filCod` vem da query e
- * é validado contra a filial-permitida do usuário. Fonte real: `imp021` filtrado por `pesCod`.
+ * (modal "Alocar"). READ-only (sem admin), mas mantém a authz por-filial: um `filCod` explícito é
+ * validado contra a allow-list; a ausência varre TODAS as filiais acessíveis (multi-filial, para
+ * casar com o seletor de clientes). Cada `Processo` carrega o próprio `filCod` — a SN gerada herda a
+ * filial DO PROCESSO, não a da transação. Fonte real: `imp021` filtrado por `pesCod`.
  */
 router.get(
     '/transacoes/:txnId/processos',
@@ -250,8 +314,9 @@ router.get(
             res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
             return;
         }
+        let filCods: number[];
         try {
-            assertUserCanActOnFilial(req.user, parsed.data.filCod);
+            filCods = await resolverFilCodsAlvo(req.user, parsed.data.filCod);
         } catch (err) {
             if (err instanceof FilialForbiddenError) {
                 res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
@@ -260,12 +325,17 @@ router.get(
             throw err;
         }
         const provider = container.resolve<ProcessoProviderInterface>(PROCESSO_PROVIDER_TOKEN);
-        const input: ListCandidatosInput = {
-            filCod: parsed.data.filCod,
-            pesCod: parsed.data.pesCod,
-            contraparte: parsed.data.contraparte,
-        };
-        const processos = await provider.listCandidatosParaTransacao(input);
+        // Sequencial: o provider varre o `imp021` por filial (cache TTL). Cada linha
+        // já traz seu `filCod`, então concatenar preserva a filial de cada processo.
+        const processos: Processo[] = [];
+        for (const filCod of filCods) {
+            const input: ListCandidatosInput = {
+                filCod,
+                pesCod: parsed.data.pesCod,
+                contraparte: parsed.data.contraparte,
+            };
+            processos.push(...(await provider.listCandidatosParaTransacao(input)));
+        }
         res.json({ transacaoId: req.params.txnId, processos });
     }),
 );
@@ -276,9 +346,12 @@ const gerarSolicitacaoNumerarioSchema = z.object({
     priEspRefcliente: z.string().optional(),
     pesCod: z.coerce.number().int().positive(),
     dpeNomPessoa: z.string().min(1),
+    /** Moeda do PROCESSO (BRL/790 assumida) — NÃO é o `moeCod` do doc SN, que é `null`. */
     moeCod: z.coerce.number().int().positive(),
-    /** Base da SN — valor cru da transação (regra de % da encomenda é não-resolvida). */
+    /** Base da SN — valor cru da transação (o servidor totaliza o rateio líquido no com299). */
     valorTransacao: z.number(),
+    /** Chave de correlação estável por "Processar" — semente do idempotencyKey (write-ahead B2). */
+    correlationId: z.string().uuid().optional(),
 });
 
 /**
@@ -309,9 +382,15 @@ router.post(
             throw err;
         }
         const ator = req.user?.sub ?? req.user?.email ?? 'unknown';
+        // Idempotency-key namespaced pelo ator (Regis security-2), semente = header `Idempotency-Key`
+        // ou o `correlationId` do corpo (estável por "Processar"). Aqui é DRY-RUN: a chave é derivada e
+        // ECOADA (sem escrita no ledger) — o write-ahead `beginExecution` vive no orquestrador live
+        // (B2), quando a migração 0041 estiver aplicada. Ver ontology/integrations/conexos-com299-gerdoc.md.
+        const headerKey = req.header('Idempotency-Key');
+        const idempotencyKey = `sn:${ator}:${headerKey ?? parsed.data.correlationId ?? randomUUID()}`;
         const service = container.resolve(SolicitacaoNumerarioService);
         // DRY-RUN: só constrói e devolve o payload — nenhum POST no ERP.
-        const result = service.gerar({
+        const result = await service.gerar({
             processo: {
                 priCod: parsed.data.priCod,
                 priEspRefcliente: parsed.data.priEspRefcliente,
@@ -324,7 +403,7 @@ router.post(
             dataReferencia: new Date(),
             ator,
         });
-        res.json({ transacaoId: req.params.txnId, ...result });
+        res.json({ transacaoId: req.params.txnId, idempotencyKey, ...result });
     }),
 );
 

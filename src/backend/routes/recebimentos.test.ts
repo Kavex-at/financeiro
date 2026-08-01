@@ -219,11 +219,38 @@ describe('GET /recebimentos/transacoes/:txnId/processos — candidate processos 
         }
     });
 
-    it('400 when filCod is missing/invalid', async () => {
-        registerProviderStub([]);
+    it('sem filCod varre as filiais acessíveis do usuário (multi-filial)', async () => {
+        const fn = registerProviderStub([
+            {
+                priCod: 90001,
+                priEspRefcliente: 'R',
+                filCod: 4,
+                pesCod: 555,
+                dpeNomPessoa: 'X',
+                moeCod: 790,
+            },
+        ]);
         const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [4] }));
         try {
             const res = await get(`${server.url}/recebimentos/transacoes/txn-1/processos`);
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.processos).toHaveLength(1);
+            // Uma varredura por filial acessível (aqui só a 4).
+            expect(fn).toHaveBeenCalledTimes(1);
+            expect(fn).toHaveBeenCalledWith(expect.objectContaining({ filCod: 4 }));
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('400 when filCod is invalid (não-positivo)', async () => {
+        registerProviderStub([]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [4] }));
+        try {
+            const res = await get(
+                `${server.url}/recebimentos/transacoes/txn-1/processos?filCod=-1`,
+            );
             expect(res.status).toBe(400);
         } finally {
             await server.close();

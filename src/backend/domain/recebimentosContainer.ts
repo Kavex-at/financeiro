@@ -14,12 +14,14 @@ import {
     RECEBIMENTO_REPOSITORY_TOKEN,
     REGRA_RECEBIMENTO_REPOSITORY_TOKEN,
     REGRAS_ENGINE_TOKEN,
+    SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
     TRANSACAO_REPOSITORY_TOKEN,
 } from './interface/recebimentos/ports.js';
 import CreditoClienteRepository from './repository/recebimentos/CreditoClienteRepository.js';
 import NdeRepository from './repository/recebimentos/NdeRepository.js';
 import RecebimentoExecucaoRepository from './repository/recebimentos/RecebimentoExecucaoRepository.js';
 import RecebimentoRepository from './repository/recebimentos/RecebimentoRepository.js';
+import SolicitacaoNumerarioExecucaoRepository from './repository/recebimentos/SolicitacaoNumerarioExecucaoRepository.js';
 import RegraRecebimentoRepository from './repository/recebimentos/RegraRecebimentoRepository.js';
 import TransacaoRepository from './repository/recebimentos/TransacaoRepository.js';
 import ErpReceivablesGatewayStub from './service/recebimentos/stubs/ErpReceivablesGatewayStub.js';
@@ -70,6 +72,11 @@ export const registerRecebimentosPorts = (): void => {
     container.register(RECEBIMENTO_REPOSITORY_TOKEN, { useClass: RecebimentoRepository });
     container.register(RECEBIMENTO_EXECUCAO_REPOSITORY_TOKEN, {
         useClass: RecebimentoExecucaoRepository,
+    });
+    // SN write-ahead ledger (0041) — registrado e pronto para o orquestrador live (B2). O caminho
+    // de escrita real (com299 multi-call) ainda não o consome; o gate segue fechado.
+    container.register(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN, {
+        useClass: SolicitacaoNumerarioExecucaoRepository,
     });
     container.register(CREDITO_CLIENTE_REPOSITORY_TOKEN, { useClass: CreditoClienteRepository });
     container.register(REGRA_RECEBIMENTO_REPOSITORY_TOKEN, {

@@ -72,6 +72,16 @@ export default class EnvironmentVars {
     public conexosWriteEnabled: boolean;
     public conexosDryRun: boolean;
 
+    /**
+     * SN (Solicitação de Numerário, com299) — gates de go-live da escrita, INDEPENDENTES do
+     * global `conexosWriteEnabled`. `snLiveWriteEnabled` (`SN_LIVE_WRITE_ENABLED`, default false)
+     * é o kill-switch dedicado da SN. `solicitacaoNumerarioGcdCod` (`SN_GCD_COD`) é a Configuração
+     * de Documento (`gcd`) da "SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA" (HAR-confirmada = 150); o
+     * default 0 é sentinela "não confirmado" que TRAVA a escrita real.
+     */
+    public snLiveWriteEnabled: boolean;
+    public solicitacaoNumerarioGcdCod: number;
+
     constructor({
         databaseConnectionString,
         conexosLogin,
@@ -87,6 +97,8 @@ export default class EnvironmentVars {
         awsRegion,
         conexosWriteEnabled,
         conexosDryRun,
+        snLiveWriteEnabled,
+        solicitacaoNumerarioGcdCod,
         conexosCredEncKey,
         sispagEnabled,
         recebimentosEnabled,
@@ -107,6 +119,8 @@ export default class EnvironmentVars {
         awsRegion: string;
         conexosWriteEnabled: boolean;
         conexosDryRun: boolean;
+        snLiveWriteEnabled: boolean;
+        solicitacaoNumerarioGcdCod: number;
         conexosCredEncKey?: string;
         sispagEnabled: boolean;
         recebimentosEnabled: boolean;
@@ -127,6 +141,8 @@ export default class EnvironmentVars {
         this.awsRegion = awsRegion;
         this.conexosWriteEnabled = conexosWriteEnabled;
         this.conexosDryRun = conexosDryRun;
+        this.snLiveWriteEnabled = snLiveWriteEnabled;
+        this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.conexosCredEncKey = conexosCredEncKey;
         this.sispagEnabled = sispagEnabled;
         this.recebimentosEnabled = recebimentosEnabled;

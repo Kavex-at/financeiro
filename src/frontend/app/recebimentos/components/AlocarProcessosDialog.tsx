@@ -32,7 +32,7 @@ import {
 import { formatBRL } from '@/lib/utils'
 import { Combobox } from '@/components/ui/combobox'
 import {
-  fetchClientesDaFilial,
+  fetchClientes,
   fetchProcessosParaTransacao,
   processarSolicitacaoNumerario,
   type ClienteProcesso,
@@ -176,9 +176,9 @@ export function AlocarProcessosDialog({
   const [processandoPri, setProcessandoPri] = React.useState<number | null>(null)
   const [resultados, setResultados] = React.useState<Record<number, SolicitacaoNumerarioDryRun>>({})
 
-  // Ao abrir: carrega os clientes da filial e PRÉ-SELECIONA o melhor palpite pelo
-  // histórico do extrato. Pré-seleção é sugestão visível e trocável — nunca filtro
-  // invisível (o invariante do ADR-0022 é que o humano confirma).
+  // Ao abrir: carrega os clientes (multi-filial) e PRÉ-SELECIONA o melhor palpite
+  // pelo histórico do extrato. Pré-seleção é sugestão visível e trocável — nunca
+  // filtro invisível (o invariante do ADR-0022 é que o humano confirma).
   React.useEffect(() => {
     if (!open || !transacao) return
     let cancelado = false
@@ -188,7 +188,7 @@ export function AlocarProcessosDialog({
     setProcessos([])
     setPesCod(null)
 
-    fetchClientesDaFilial(transacao.filCod)
+    fetchClientes()
       .then((lista) => {
         if (cancelado) return
         setClientes(lista)
@@ -212,7 +212,7 @@ export function AlocarProcessosDialog({
     setLoading(true)
     setErro(null)
     setResultados({})
-    fetchProcessosParaTransacao(transacao.id, transacao.filCod, pesCod)
+    fetchProcessosParaTransacao(transacao.id, pesCod)
       .then((lista) => {
         if (!cancelado) setProcessos(lista)
       })
@@ -290,16 +290,25 @@ export function AlocarProcessosDialog({
               <Combobox
                 id="cliente-alocar"
                 aria-label="Cliente do recebimento"
-                options={clientes.map((c) => ({
-                  value: String(c.pesCod),
-                  label: c.dpeNomPessoa,
-                  hint: `${c.processosAbertos} processo${c.processosAbertos === 1 ? '' : 's'}`,
-                }))}
+                options={clientes.map((c) => {
+                  const filiais = c.filiais ?? []
+                  const filHint =
+                    filiais.length === 1
+                      ? ` · fil ${filiais[0]}`
+                      : filiais.length > 1
+                        ? ` · ${filiais.length} filiais`
+                        : ''
+                  return {
+                    value: String(c.pesCod),
+                    label: c.dpeNomPessoa,
+                    hint: `${c.processosAbertos} processo${c.processosAbertos === 1 ? '' : 's'}${filHint}`,
+                  }
+                })}
                 value={pesCod === null ? null : String(pesCod)}
                 onChange={(v) => setPesCod(v === null ? null : Number(v))}
                 placeholder="Escolha o cliente…"
                 searchPlaceholder="Buscar cliente…"
-                emptyMessage="Nenhum cliente com processo aberto nesta filial."
+                emptyMessage="Nenhum cliente com processo aberto em nenhuma filial acessível."
               />
             )}
             {processos.length > 0 ? (
@@ -339,7 +348,7 @@ export function AlocarProcessosDialog({
             <EmptyState
               icon={<Boxes className="size-6" aria-hidden />}
               title="Nenhum processo aberto"
-              description="Este cliente não tem processo aberto nesta filial. Escolha outro cliente ou trate a conciliação manualmente."
+              description="Este cliente não tem processo aberto em nenhuma filial acessível. Escolha outro cliente ou trate a conciliação manualmente."
             />
           ) : (
             <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
@@ -349,6 +358,7 @@ export function AlocarProcessosDialog({
                 <TableHeader className="sticky top-0 z-10 bg-card">
                   <TableRow>
                     <TableHead>Processo</TableHead>
+                    <TableHead>Filial</TableHead>
                     <TableHead>Ref. cliente</TableHead>
                     <TableHead>Cliente</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
@@ -363,6 +373,7 @@ export function AlocarProcessosDialog({
                       <React.Fragment key={p.priCod}>
                         <TableRow>
                           <TableCell className="font-mono text-xs">{p.priCod}</TableCell>
+                          <TableCell className="tabular-nums text-xs">{p.filCod}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             {p.priEspRefcliente}
                           </TableCell>
@@ -394,7 +405,7 @@ export function AlocarProcessosDialog({
                         </TableRow>
                         {resultado ? (
                           <TableRow>
-                            <TableCell colSpan={5} className="bg-muted/20">
+                            <TableCell colSpan={6} className="bg-muted/20">
                               <PayloadPreview resultado={resultado} processo={p} />
                             </TableCell>
                           </TableRow>

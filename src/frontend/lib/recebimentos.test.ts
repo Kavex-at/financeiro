@@ -131,21 +131,22 @@ describe('fetchProcessosParaTransacao — fixture fallback', () => {
 
   it('usa o backend quando responde com processos', async () => {
     mockApiFetch.mockResolvedValue(okJson({ processos: [processoSample] }))
-    const out = await fetchProcessosParaTransacao('txn-1', 4)
+    const out = await fetchProcessosParaTransacao('txn-1', 555)
     expect(out).toHaveLength(1)
     expect(out[0].priCod).toBe(90001)
   })
 
   it('erro PROPAGA — backend fora do ar não pode virar lista de demonstração', async () => {
     mockApiFetch.mockRejectedValue(new Error('network'))
-    await expect(fetchProcessosParaTransacao('txn-1', 4)).rejects.toThrow('network')
+    await expect(fetchProcessosParaTransacao('txn-1', 555)).rejects.toThrow('network')
   })
 
-  it('manda o pesCod na query quando o cliente foi escolhido', async () => {
+  it('manda o pesCod na query quando o cliente foi escolhido — sem filCod (multi-filial)', async () => {
     mockApiFetch.mockResolvedValue(okJson({ processos: [] }))
-    await fetchProcessosParaTransacao('txn-1', 4, 676)
+    await fetchProcessosParaTransacao('txn-1', 676)
     const [url] = mockApiFetch.mock.calls[0]
-    expect(String(url)).toContain('filCod=4')
+    // Multi-filial: a rota resolve as filiais acessíveis no backend, o FE não manda filCod.
+    expect(String(url)).not.toContain('filCod')
     expect(String(url)).toContain('pesCod=676')
   })
 })

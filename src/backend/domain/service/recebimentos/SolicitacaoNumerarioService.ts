@@ -1,11 +1,12 @@
 import 'reflect-metadata';
 import { inject, injectable } from 'tsyringe';
 import NotImplementedError from '../../errors/NotImplementedError.js';
+import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import {
     SOLICITACAO_NUMERARIO_DOC_CONFIG,
     SOLICITACAO_NUMERARIO_DOC_TIP,
     SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
-    SOLICITACAO_NUMERARIO_MOE_COD,
+    SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO,
 } from '../../interface/recebimentos/constants.js';
 import type {
     GerDocProcessoSelectionDTOCab,
@@ -13,6 +14,7 @@ import type {
     SolicitacaoNumerarioDryRun,
 } from '../../interface/recebimentos/GerDocProcesso.js';
 import LogService from '../LogService.js';
+import EncomendaValorCalculator from './EncomendaValorCalculator.js';
 
 /** Input do `gerar` — o processo escolhido + o valor da transação (base da SN) + o ator. */
 export interface GerarSolicitacaoNumerarioInput {
@@ -45,6 +47,10 @@ export default class SolicitacaoNumerarioService {
     constructor(
         @inject(LogService)
         private logService: LogService,
+        @inject(EnvironmentProvider)
+        private environmentProvider: EnvironmentProvider,
+        @inject(EncomendaValorCalculator)
+        private encomendaValorCalculator: EncomendaValorCalculator,
     ) {}
 
     /**
@@ -55,15 +61,18 @@ export default class SolicitacaoNumerarioService {
      * `TmpCom068DTOItem` do swagger; os códigos de rateio (prj/ctp/tpc/cfo) ficam 0 (placeholder) até
      * o HAR confirmar a origem — o preview deixa isso explícito.
      */
-    public gerar = (input: GerarSolicitacaoNumerarioInput): SolicitacaoNumerarioDryRun => {
+    public gerar = async (
+        input: GerarSolicitacaoNumerarioInput,
+    ): Promise<SolicitacaoNumerarioDryRun> => {
         const { processo, valorTransacao, dataReferencia, ator } = input;
-        // TODO(encomenda-percentuais): regra não-resolvida — usa o valor cru da transação como o
-        // montante da SN. Ver ontology/_inbox/frente-iv-recebimentos-nde-plan.md §7 Q4.
-        const valorSn = valorTransacao;
+        // Regra de % da encomenda isolada no calculator (não-resolvida hoje → valor cru).
+        const { valorSn } = this.encomendaValorCalculator.calcular({ valorTransacao });
         const dataIso = dataReferencia.toISOString();
 
+        // `gcdCod` vem do ambiente (`SN_GCD_COD`) — sentinela 0 = "não confirmado". Ver EnvironmentVars.
+        const env = await this.environmentProvider.getEnvironmentVars();
         const docConfig = {
-            gcdCod: SOLICITACAO_NUMERARIO_DOC_CONFIG.gcdCod,
+            gcdCod: env.solicitacaoNumerarioGcdCod,
             gcdDesNome: SOLICITACAO_NUMERARIO_DOC_CONFIG.gcdDesNome,
         };
 
@@ -71,6 +80,7 @@ export default class SolicitacaoNumerarioService {
             filCod: processo.filCod,
             docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
             docVldTipo: SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
+            docVldTipoAdto: SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO,
             priCod: processo.priCod,
             // `priEspRefcliente` é opcional no imp021 — aqui a semântica é
             // "campo vazio no ERP", não "não sei".
@@ -82,7 +92,9 @@ export default class SolicitacaoNumerarioService {
             docDtaEmissao: dataIso,
             dtaVencimento: dataIso,
             valor: valorSn,
-            moeCod: processo.moeCod || SOLICITACAO_NUMERARIO_MOE_COD,
+            // `null` de propósito: a SN Encomenda não carrega moeda (BRL implícito) — HAR-confirmado
+            // (doc 18202). A moeda do processo NÃO vai no doc; a suposição 790 era errada.
+            moeCod: null,
             items: [
                 {
                     prjCod: 0,

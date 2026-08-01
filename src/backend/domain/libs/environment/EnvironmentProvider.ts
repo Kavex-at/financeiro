@@ -110,6 +110,11 @@ export default class EnvironmentProvider {
             // Fase 3 (ADR-0013): escrita fin010 desligada por padrão; dry-run ligado por padrão.
             conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
+            // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
+            snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
+            solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
+                ? Number(this.readEnv('SN_GCD_COD'))
+                : 0,
             conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment', 'local')),
             recebimentosEnabled: this.resolveRecebimentosEnabled(
@@ -144,6 +149,11 @@ export default class EnvironmentProvider {
             // Fase 3 (ADR-0013): toggles de deploy (env), não segredos por-tenant.
             conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
+            // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
+            snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
+            solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
+                ? Number(this.readEnv('SN_GCD_COD'))
+                : 0,
             conexosCredEncKey:
                 this.readCred(conexos, 'credEncKey') ||
                 this.readEnv('CONEXOS_CRED_ENC_KEY') ||

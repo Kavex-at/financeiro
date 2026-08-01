@@ -20,6 +20,43 @@ open-gap:
   - "gerdoc-payload-fields (P1) — campos de rateio (items[] TmpCom068DTOItem: prjCod/ctpCod/tpcCod/cfoEspCod) e docTip/docVldTipo precisam de confirmação no HAR real."
 ---
 
+> ## ⚠️ CORREÇÃO DE CONTRATO (HAR-confirmado 2026-07-30 — prod filial 2, doc 18202; `/home/inteli/com299/`)
+>
+> **`gerDocProcesso` NÃO EXISTE nesta versão do Conexos.** com299 é **REST CRUD genérico** — a criação de
+> uma SN é **multi-call**, não um único save-handler. Este doc (endpoints_write acima) está OBSOLETO; a
+> sequência real é:
+>
+> 1. `POST /api/com299` — cria o **cabeçalho** (finDoc). ACL `checkInsert(view:"com299")`. Retorna `docCod`.
+> 2. `POST /api/com299/comDocProdutos` — cria a(s) **linha(s) de rateio** (o rateio vive na LINHA, não no
+>    cabeçalho). PUT/DELETE por `.../{docCod}/{prdCod}/{dprCodSeq}`.
+> 3. `GET /api/com299/calculaValorLiquidoDocumento/{docCod}` — o **servidor** soma o líquido das linhas e
+>    sobrescreve `docMnyValor` (`finDocOverwrite`). Não há % de encomenda client-side.
+> 4. `POST /api/com299/finalizaDocumento/{docCod}` — finaliza. ACL action `FINALIZAR DOCUMENTO`.
+>
+> **Valores reais (era placeholder):** `gcdCod=150` ("SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA"); `docTip=1`;
+> `docVldTipo=9` (`docVldTipoAdto=1`); `moeCod=null` (BRL implícito — a suposição 790 não vale); `tpdCod=3`,
+> `gerNum=210`, `pgtCod=1`, `espSerie="SN"`, `vldTpNf="00"`.
+>
+> **Rateio (linha `comDocProdutos`, PROCESSO-derivado — varia por doc):** `prjCod`, `ctpCod`(+`ctpEspConta`),
+> `tpcCod`, `cfoEspCod`, `ccuCod`, `prdCod`, `undCod`, `ungCod`. Amostra 18202: `prjCod=1, ctpCod=690
+> (ADIANTAMENTO DE CLIENTE ENCOMENDA / 330037), tpcCod=107, cfoEspCod=9999A2, ccuCod=30, prdCod=2, undCod=3,
+> ungCod=4`. Header `docMnyValor == Σ dprPreTotalLiquido` (linha única 100%).
+>
+> **Sucesso ≠ HTTP 200:** validações in-band via `docVldComvalidacoes` (1=ok, 2=aviso, else=erro). Handle de
+> reconciliação = **`docCod`** (create redireciona `cadastro/{docCod}`).
+>
+> **Validações prévias (todas `.../validate/...`):** `processo`, `data`, `pessoa`, `gerNum`,
+> `endDocFederal`; `comDocProdutos/validaCfopProduto`; `validaDocFederalAmazonas`. Pickers: psq018/psq027.
+>
+> **ACL (view `com299`):** `checkInsert`/`checkUpdate`/`checkDelete` + actions `FINALIZAR DOCUMENTO` /
+> `ESTORNAR DOCUMENTO`. A conta-robô precisa de **create + edit** (e finalizar/estornar p/ fechar docs).
+>
+> **Gaps que restam:** (a) FONTE dos códigos de rateio por-processo (são process-derived — de onde vêm?);
+> (b) serialização exata do create body (interceptor do runbook, passo 7). Ver `FINDINGS.md`.
+>
+> **% da encomenda RESOLVE-SE** a "lançar as linhas de rateio, servidor totaliza" — não é cálculo client-side.
+> O guard `ENCOMENDA_PERCENTUAIS_RESOLVED` deve ser reenquadrado como "fonte dos códigos de rateio confirmada".
+
 # Integração: Conexos com299 — gerDocProcesso (Solicitação de Numerário) — DRY-RUN
 
 > **Superfície de ESCRITA planejada, DESABILITADA nesta iteração.** O painel `/recebimentos`
