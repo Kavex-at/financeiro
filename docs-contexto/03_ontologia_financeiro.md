@@ -124,6 +124,11 @@ baixa/quitação — culminando na emissão da **Nota de Débito Eletrônica**.
   referência bancária, nº do processo, vencimento, descrição ou id Pix (calibra a meta de match).
 - **Integração:** **Nexxera** (extrato/movimentações — canal **a confirmar**: API ou SFTP/CNAB) +
   **Conexos** (baixa em `fin010`, parametrizada, e emissão da NDe pelo próprio ERP).
+- **Solicitação de Numerário (SN) — reutilizar × criar (ADR-0027):** ao alocar um crédito a um processo,
+  a analista pode **selecionar uma SN já existente** do processo (o sistema **lista** as SNs abertas) em
+  vez de **criar uma nova** — nesse caso a baixa (`fin014`) e a NDe (`com297`) correm contra a SN
+  escolhida, sem duplicar o documento. "Processar" é **confirmado pela analista** (seleção). O valor
+  alocado respeita o **saldo do título** da SN.
 - **Fora de escopo (por ora):** a definição fina das regras de negócio (percentuais de encomenda,
   separação de multa/juros) — modelada em fase própria com entrevista dedicada.
 

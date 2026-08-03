@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { AlertTriangle, Boxes, CheckCircle2, Landmark } from 'lucide-react'
+import { AlertTriangle, Boxes, CheckCircle2, FileText, Landmark } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -11,30 +11,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { Skeleton } from '@/components/ui/skeleton'
 import { MoneyInput } from '@/components/ui/money-input'
-import { formatBRL } from '@/lib/utils'
+import { formatBRL, formatDate } from '@/lib/utils'
 import { numToMask, parseBrl } from '@/lib/brl'
 import { Combobox } from '@/components/ui/combobox'
 import {
   fetchClientes,
   fetchProcessosParaTransacao,
+  fetchSNsDoProcesso,
   processarSolicitacaoNumerario,
   type AlocacaoResultado,
   type ClienteProcesso,
   type Processo,
+  type SolicitacaoNumerarioListItem,
   type TransacaoBancaria,
 } from '@/lib/recebimentos'
 
@@ -43,6 +37,9 @@ interface AlocarProcessosDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
+
+/** Valor sentinela do radio "Criar novo SN" (default) — distinto de qualquer `docCod` real. */
+const CRIAR_NOVO_SN = 'novo'
 
 /** Normaliza para comparar nomes: sem acento, sem pontuação, caixa alta. */
 const normalizar = (s: string): string =>
@@ -86,7 +83,7 @@ export const sugerirCliente = (
 const SALDO_TOL = 0.005
 
 /**
- * Resultado REAL de uma alocação renderizado na linha. O status carrega o desfecho
+ * Resultado REAL de uma alocação renderizado no painel. O status carrega o desfecho
  * — `settled` (quitado), `error` (falhou numa etapa), `dry-run` (simulação do backend).
  * Badges usam tokens semânticos do DS (`-subtle`/`-foreground`), não uma variante nova.
  */
@@ -158,12 +155,35 @@ function ResultadoAlocacao({ resultado }: { resultado: AlocacaoResultado }) {
   )
 }
 
+/** Chip do status de uma SN (best-effort do backend), sem cor sozinha (ícone + texto). */
+function SnStatusBadge({ statusLabel }: { statusLabel: string }) {
+  const finalizada = /finaliz/i.test(statusLabel)
+  return (
+    <Badge
+      variant="outline"
+      className={
+        finalizada ? 'border-success/40 text-success' : 'border-muted-foreground/40 text-muted-foreground'
+      }
+      title={`Status da SN: ${statusLabel}`}
+    >
+      {finalizada ? (
+        <CheckCircle2 className="size-3" aria-hidden />
+      ) : (
+        <FileText className="size-3" aria-hidden />
+      )}
+      {statusLabel}
+    </Badge>
+  )
+}
+
 /**
- * AlocarProcessosDialog — modal aberto pelo botão "Alocar" de uma transação. Lista os PROCESSOS
- * candidatos; cada linha tem um valor EDITÁVEL (fatia do saldo do pagamento) e um botão "Processar"
- * que roda a automação REAL do Conexos (SN → baixa → nota de débito). Pagamentos podem ser
- * DIVIDIDOS entre processos: o `saldoRestante` diminui a cada alocação quitada. Feature code
- * domain-aware (NÃO é um átomo do DS).
+ * AlocarProcessosDialog — modal aberto pelo botão "Alocar" de uma transação. Layout de DOIS PAINÉIS
+ * (ADR-0027): à ESQUERDA a lista de PROCESSOS candidatos (seleção por rádio); ao selecionar um
+ * processo, à DIREITA surge o painel de SN, que lista as Solicitações de Numerário JÁ EXISTENTES do
+ * processo + a opção "Criar novo SN" (default). "Processar" vive no painel direito e roda a automação
+ * REAL do Conexos: SN existente → baixa + nota de débito contra o `docCod` escolhido; "Criar novo SN"
+ * → fluxo completo (gera a SN). Pagamentos podem ser DIVIDIDOS entre processos (`saldoRestante` cai a
+ * cada alocação quitada). Feature code domain-aware (NÃO é um átomo do DS).
  */
 export function AlocarProcessosDialog({
   transacao,
@@ -176,10 +196,18 @@ export function AlocarProcessosDialog({
   const [clientes, setClientes] = React.useState<ClienteProcesso[]>([])
   const [pesCod, setPesCod] = React.useState<number | null>(null)
   const [processos, setProcessos] = React.useState<Processo[]>([])
+  const [selectedPriCod, setSelectedPriCod] = React.useState<number | null>(null)
   const [processandoPri, setProcessandoPri] = React.useState<number | null>(null)
   const [resultados, setResultados] = React.useState<Record<number, AlocacaoResultado>>({})
-  // Valor editável por linha (string mascarada pt-BR). Vazio = ainda não tocado (usa o default).
+  // Valor editável por processo (string mascarada pt-BR). Vazio = ainda não tocado (usa o default).
   const [valores, setValores] = React.useState<Record<number, string>>({})
+
+  // SN por processo: lista carregada + estados + a opção escolhida (docCod ou "novo").
+  const [sns, setSns] = React.useState<Record<number, SolicitacaoNumerarioListItem[]>>({})
+  const [carregandoSns, setCarregandoSns] = React.useState(false)
+  const [erroSns, setErroSns] = React.useState<string | null>(null)
+  // Escolha do painel direito: "novo" (default) ou o docCod (string) de uma SN existente.
+  const [snEscolhida, setSnEscolhida] = React.useState<string>(CRIAR_NOVO_SN)
 
   const gerNum = transacao?.gerNum
   const contaAusente = gerNum === undefined || gerNum === null
@@ -195,18 +223,22 @@ export function AlocarProcessosDialog({
     return Math.max(0, transacao.valor - consumido)
   }, [transacao, resultados, valores])
 
-  // Valor efetivo (número) de uma linha: o digitado, ou o default = min(saldo, valor do processo).
+  // Valor efetivo (número) de um processo: o digitado, ou o default = min(saldo, valor do processo).
   const valorDefault = (p: Processo): number =>
     Math.min(saldoRestante, p.valor ?? saldoRestante)
 
-  // `undefined` = linha nunca tocada → usa o default; qualquer string (inclusive "")
-  // = o analista digitou → respeita o que está no campo (vazio conta como 0, o que
-  // desabilita o Processar). Isso torna o input limpável.
-  const valorLinha = (p: Processo): number => {
+  // `undefined` = processo nunca tocado → usa o default; qualquer string (inclusive "")
+  // = o analista digitou → respeita o campo (vazio conta como 0, o que desabilita o Processar).
+  const valorProcesso = (p: Processo): number => {
     const bruto = valores[p.priCod]
     if (bruto === undefined) return valorDefault(p)
     return parseBrl(bruto) || 0
   }
+
+  const processoSelecionado = React.useMemo(
+    () => processos.find((p) => p.priCod === selectedPriCod) ?? null,
+    [processos, selectedPriCod],
+  )
 
   // Ao abrir: carrega os clientes (multi-filial) e PRÉ-SELECIONA o melhor palpite
   // pelo histórico do extrato. Pré-seleção é sugestão visível e trocável — nunca
@@ -219,6 +251,9 @@ export function AlocarProcessosDialog({
     setResultados({})
     setValores({})
     setProcessos([])
+    setSelectedPriCod(null)
+    setSns({})
+    setSnEscolhida(CRIAR_NOVO_SN)
     setPesCod(null)
 
     fetchClientes()
@@ -246,6 +281,10 @@ export function AlocarProcessosDialog({
     setErro(null)
     setResultados({})
     setValores({})
+    setProcessos([])
+    setSelectedPriCod(null)
+    setSns({})
+    setSnEscolhida(CRIAR_NOVO_SN)
     fetchProcessosParaTransacao(transacao.id, pesCod)
       .then((lista) => {
         if (!cancelado) setProcessos(lista)
@@ -261,9 +300,36 @@ export function AlocarProcessosDialog({
     }
   }, [open, transacao, pesCod])
 
+  // Ao selecionar um processo à esquerda: reseta a escolha p/ "Criar novo SN" e busca as SN
+  // existentes do processo (cacheadas por priCod para não re-buscar ao voltar num processo).
+  React.useEffect(() => {
+    if (processoSelecionado === null) return
+    setSnEscolhida(CRIAR_NOVO_SN)
+    setErroSns(null)
+    if (sns[processoSelecionado.priCod] !== undefined) return
+    let cancelado = false
+    setCarregandoSns(true)
+    fetchSNsDoProcesso(processoSelecionado.priCod, processoSelecionado.filCod)
+      .then((lista) => {
+        if (!cancelado) setSns((prev) => ({ ...prev, [processoSelecionado.priCod]: lista }))
+      })
+      .catch((e) => {
+        if (!cancelado) setErroSns(e instanceof Error ? e.message : 'Falha ao carregar as SN.')
+      })
+      .finally(() => {
+        if (!cancelado) setCarregandoSns(false)
+      })
+    return () => {
+      cancelado = true
+    }
+    // Só reage à troca do processo selecionado (não ao objeto `sns` recém-preenchido).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processoSelecionado?.priCod, processoSelecionado?.filCod])
+
   const processar = async (processo: Processo) => {
     if (!transacao) return
-    const valor = valorLinha(processo)
+    const valor = valorProcesso(processo)
+    const snDocCod = snEscolhida === CRIAR_NOVO_SN ? undefined : Number(snEscolhida)
     setProcessandoPri(processo.priCod)
     try {
       const resultado = await processarSolicitacaoNumerario(transacao.id, {
@@ -275,8 +341,10 @@ export function AlocarProcessosDialog({
         pesCod: processo.pesCod,
         dpeNomPessoa: processo.dpeNomPessoa,
         moeCod: processo.moeCod,
+        // SN existente escolhida (ADR-0027); omitida em "Criar novo SN".
+        ...(snDocCod !== undefined ? { snDocCod } : {}),
       })
-      // Congela o valor efetivamente processado nesta linha para o cálculo do saldo.
+      // Congela o valor efetivamente processado neste processo para o cálculo do saldo.
       setValores((prev) => ({ ...prev, [processo.priCod]: numToMask(valor) }))
       setResultados((prev) => ({ ...prev, [processo.priCod]: resultado }))
 
@@ -288,7 +356,10 @@ export function AlocarProcessosDialog({
         toast.success('Simulação gerada (dry-run).', { description: 'Nada foi enviado ao ERP.' })
       } else {
         toast.success('Alocação processada no Conexos.', {
-          description: 'SN, baixa e nota de débito gerados.',
+          description:
+            snDocCod !== undefined
+              ? 'Baixa e nota de débito gerados na SN existente.'
+              : 'SN, baixa e nota de débito gerados.',
         })
       }
     } catch (e) {
@@ -301,6 +372,29 @@ export function AlocarProcessosDialog({
       setProcessandoPri(null)
     }
   }
+
+  const resultadoSelecionado =
+    processoSelecionado !== null ? resultados[processoSelecionado.priCod] : undefined
+  const processadoSelecionado =
+    Boolean(resultadoSelecionado) && resultadoSelecionado?.status !== 'error'
+  const valorSelecionado = processoSelecionado ? valorProcesso(processoSelecionado) : 0
+  const excedeSaldo = valorSelecionado > saldoRestante + SALDO_TOL
+  const emAndamento =
+    processoSelecionado !== null && processandoPri === processoSelecionado.priCod
+  // Processar exige: um processo E uma opção de SN escolhida (existente OU "Criar novo SN"), valor
+  // válido, conta presente, e não estar em andamento. `snEscolhida` nunca é vazio (default "novo").
+  const processarDesabilitado =
+    processoSelecionado === null ||
+    emAndamento ||
+    valorSelecionado <= 0 ||
+    excedeSaldo ||
+    contaAusente
+  const valorMascaradoSelecionado =
+    processoSelecionado === null
+      ? ''
+      : valores[processoSelecionado.priCod] !== undefined
+        ? valores[processoSelecionado.priCod]
+        : numToMask(valorDefault(processoSelecionado))
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -318,7 +412,8 @@ export function AlocarProcessosDialog({
                     · conta financeira <strong>{gerNum}</strong>
                   </>
                 ) : null}
-                . Escolha um processo, confira o valor e clique em <strong>Processar</strong>.
+                . Escolha um processo à esquerda e uma SN à direita, depois clique em{' '}
+                <strong>Processar</strong>.
               </>
             ) : null}
           </DialogDescription>
@@ -426,99 +521,209 @@ export function AlocarProcessosDialog({
               description="Este cliente não tem processo aberto em nenhuma filial acessível. Escolha outro cliente ou trate a conciliação manualmente."
             />
           ) : (
-            <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
-              <Table>
-                {/* Sticky: com dezenas de processos, perder o cabeçalho ao rolar
-                    deixa o usuário sem saber qual coluna é qual. */}
-                <TableHeader className="sticky top-0 z-10 bg-card">
-                  <TableRow>
-                    <TableHead>Processo</TableHead>
-                    <TableHead>Filial</TableHead>
-                    <TableHead>Ref. cliente</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead className="text-right">Valor a alocar</TableHead>
-                    <TableHead className="text-right">Ação</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden md:grid-cols-2">
+              {/* ── Painel ESQUERDO: lista de processos (seleção por rádio) ── */}
+              <div
+                className="min-h-0 overflow-auto rounded-lg border"
+                role="radiogroup"
+                aria-label="Processos candidatos"
+              >
+                <ul className="divide-y">
                   {processos.map((p) => {
-                    const resultado = resultados[p.priCod]
-                    const processado = Boolean(resultado) && resultado.status !== 'error'
-                    const valor = valorLinha(p)
-                    const excedeSaldo = valor > saldoRestante + SALDO_TOL
-                    const invalido = valor <= 0 || excedeSaldo || contaAusente
-                    const emAndamento = processandoPri === p.priCod
-                    const valorMascarado =
-                      valores[p.priCod] !== undefined
-                        ? valores[p.priCod]
-                        : numToMask(valorDefault(p))
+                    const r = resultados[p.priCod]
+                    const processado = Boolean(r) && r.status !== 'error'
+                    const selecionado = selectedPriCod === p.priCod
                     return (
-                      <React.Fragment key={p.priCod}>
-                        <TableRow>
-                          <TableCell className="font-mono text-xs">{p.priCod}</TableCell>
-                          <TableCell className="tabular-nums text-xs">{p.filCod}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {p.priEspRefcliente}
-                          </TableCell>
-                          <TableCell className="max-w-[16rem] truncate font-medium">
-                            {p.dpeNomPessoa}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {processado ? (
-                              <span className="tabular-nums">{formatBRL(valor)}</span>
-                            ) : (
-                              <MoneyInput
-                                value={valorMascarado}
-                                onChange={(masked) =>
-                                  setValores((prev) => ({ ...prev, [p.priCod]: masked }))
-                                }
-                                max={saldoRestante}
-                                aria-label={`Valor a alocar no processo ${p.priCod}`}
-                                aria-invalid={excedeSaldo || undefined}
-                                className="w-32"
-                              />
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {processado ? (
-                              <Badge className="gap-1 border-transparent bg-success-subtle text-success-foreground">
-                                <CheckCircle2 className="size-3" aria-hidden />
-                                Processado
-                              </Badge>
-                            ) : (
-                              <Button
-                                size="sm"
-                                onClick={() => void processar(p)}
-                                disabled={emAndamento || invalido}
-                                aria-busy={emAndamento || undefined}
-                                title={
-                                  contaAusente
-                                    ? 'Pagamento sem conta financeira (gerNum)'
-                                    : excedeSaldo
-                                      ? 'Valor acima do saldo disponível'
-                                      : valor <= 0
-                                        ? 'Informe um valor maior que zero'
-                                        : undefined
-                                }
-                              >
-                                {emAndamento ? <Spinner className="size-4" /> : null}
-                                Processar
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                        {resultado ? (
-                          <TableRow>
-                            <TableCell colSpan={6} className="bg-muted/20">
-                              <ResultadoAlocacao resultado={resultado} />
-                            </TableCell>
-                          </TableRow>
-                        ) : null}
-                      </React.Fragment>
+                      <li key={p.priCod}>
+                        <label
+                          className={`flex cursor-pointer items-start gap-3 p-3 text-sm ${
+                            selecionado ? 'bg-accent' : 'hover:bg-muted/50'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="processo-alocar"
+                            className="mt-1 accent-primary"
+                            checked={selecionado}
+                            onChange={() => setSelectedPriCod(p.priCod)}
+                            aria-label={`Processo ${p.priCod} — ${p.dpeNomPessoa}`}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs">{p.priCod}</span>
+                              <span className="text-xs text-muted-foreground">
+                                filial {p.filCod}
+                              </span>
+                              {processado ? (
+                                <Badge className="gap-1 border-transparent bg-success-subtle text-success-foreground">
+                                  <CheckCircle2 className="size-3" aria-hidden />
+                                  Processado
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <div className="truncate font-medium">{p.dpeNomPessoa}</div>
+                            {p.priEspRefcliente ? (
+                              <div className="truncate text-xs text-muted-foreground">
+                                {p.priEspRefcliente}
+                              </div>
+                            ) : null}
+                          </div>
+                        </label>
+                      </li>
                     )
                   })}
-                </TableBody>
-              </Table>
+                </ul>
+              </div>
+
+              {/* ── Painel DIREITO: SN do processo selecionado + Processar ── */}
+              <div className="min-h-0 overflow-auto rounded-lg border p-4">
+                {processoSelecionado === null ? (
+                  <EmptyState
+                    icon={<FileText className="size-6" aria-hidden />}
+                    title="Selecione um processo"
+                    description="Escolha um processo à esquerda para ver as Solicitações de Numerário existentes e processar a alocação."
+                  />
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-medium">
+                        Solicitação de Numerário — processo {processoSelecionado.priCod}
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Escolha uma SN existente ou crie uma nova.
+                      </p>
+                    </div>
+
+                    <div
+                      role="radiogroup"
+                      aria-label="Solicitação de Numerário"
+                      aria-busy={carregandoSns || undefined}
+                      className="space-y-2"
+                    >
+                      {/* "Criar novo SN" é sempre a 1ª opção e o default. */}
+                      <label
+                        className={`flex cursor-pointer items-center gap-3 rounded-md border p-3 text-sm ${
+                          snEscolhida === CRIAR_NOVO_SN ? 'border-primary bg-accent' : ''
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="sn-escolha"
+                          className="accent-primary"
+                          value={CRIAR_NOVO_SN}
+                          checked={snEscolhida === CRIAR_NOVO_SN}
+                          onChange={() => setSnEscolhida(CRIAR_NOVO_SN)}
+                          aria-label="Criar novo SN"
+                        />
+                        <span className="font-medium">Criar novo SN</span>
+                      </label>
+
+                      {carregandoSns ? (
+                        <div aria-busy="true" aria-label="Carregando SN" className="space-y-2">
+                          <Skeleton className="h-14 w-full" />
+                          <Skeleton className="h-14 w-full" />
+                        </div>
+                      ) : erroSns ? (
+                        <EmptyState
+                          icon={<AlertTriangle className="size-6" aria-hidden />}
+                          title="Não foi possível carregar as SN"
+                          description={erroSns}
+                        />
+                      ) : (sns[processoSelecionado.priCod]?.length ?? 0) === 0 ? (
+                        <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                          Este processo ainda não tem Solicitação de Numerário. Use &ldquo;Criar novo
+                          SN&rdquo;.
+                        </p>
+                      ) : (
+                        sns[processoSelecionado.priCod]?.map((sn) => (
+                          <label
+                            key={sn.docCod}
+                            className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${
+                              snEscolhida === String(sn.docCod) ? 'border-primary bg-accent' : ''
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="sn-escolha"
+                              className="mt-1 accent-primary"
+                              value={String(sn.docCod)}
+                              checked={snEscolhida === String(sn.docCod)}
+                              onChange={() => setSnEscolhida(String(sn.docCod))}
+                              aria-label={`SN ${sn.numero} — ${sn.descricao}`}
+                            />
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono text-xs">{sn.numero}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatDate(sn.data)}
+                                </span>
+                                <SnStatusBadge statusLabel={sn.statusLabel} />
+                              </div>
+                              <div className="truncate text-xs">{sn.descricao}</div>
+                              <dl className="grid grid-cols-[auto_1fr] gap-x-3 text-xs text-muted-foreground">
+                                <dt>Solicitado</dt>
+                                <dd className="tabular-nums">{formatBRL(sn.solicitado)}</dd>
+                                <dt>Valor</dt>
+                                <dd className="tabular-nums">{formatBRL(sn.valor)}</dd>
+                              </dl>
+                            </div>
+                          </label>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Valor + Processar (ou o resultado, quando já processado). */}
+                    {processadoSelecionado && resultadoSelecionado ? (
+                      <ResultadoAlocacao resultado={resultadoSelecionado} />
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <label
+                            htmlFor={`valor-alocar-${processoSelecionado.priCod}`}
+                            className="text-sm font-medium"
+                          >
+                            Valor a alocar
+                          </label>
+                          <MoneyInput
+                            id={`valor-alocar-${processoSelecionado.priCod}`}
+                            value={valorMascaradoSelecionado}
+                            onChange={(masked) =>
+                              setValores((prev) => ({
+                                ...prev,
+                                [processoSelecionado.priCod]: masked,
+                              }))
+                            }
+                            max={saldoRestante}
+                            aria-label={`Valor a alocar no processo ${processoSelecionado.priCod}`}
+                            aria-invalid={excedeSaldo || undefined}
+                            className="w-40"
+                          />
+                        </div>
+                        <Button
+                          onClick={() => void processar(processoSelecionado)}
+                          disabled={processarDesabilitado}
+                          aria-busy={emAndamento || undefined}
+                          title={
+                            contaAusente
+                              ? 'Pagamento sem conta financeira (gerNum)'
+                              : excedeSaldo
+                                ? 'Valor acima do saldo disponível'
+                                : valorSelecionado <= 0
+                                  ? 'Informe um valor maior que zero'
+                                  : undefined
+                          }
+                        >
+                          {emAndamento ? <Spinner className="size-4" /> : null}
+                          Processar
+                        </Button>
+                        {resultadoSelecionado?.status === 'error' ? (
+                          <ResultadoAlocacao resultado={resultadoSelecionado} />
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </DialogBody>

@@ -3,6 +3,42 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.14.0 — Frente IV: alocar contra uma SN existente (2026-08-03, ADR-0027)
+
+Feature: `alocar-sn-select` (branch `fix/alocar-sn-select`, base `fix/erp-4xx-nao-retentavel`). O botão
+**"Processar"** (modal "Alocar processos" em `/recebimentos`) deixa de **sempre mintar uma SN nova**: as
+Solicitações de Numerário **já existentes** do processo passam a ser **listáveis/selecionáveis**, e
+"Processar" fica **gated na seleção**.
+
+- **NEW action READ `listarSolicitacoesNumerario`** (entity `SolicitacaoNumerario`, `planned`): lista as
+  SNs de um processo. Contrato **HAR-confirmado (2026-08-03)**: `POST /api/com299/list`,
+  `filterList = { priCod#EQ, docVldTipo#EQ:9, docVldTipoAdto#EQ:1, vldStatus#IN:['1','3'] }`, ordenado
+  `docCod` desc, paginado; envelope `{ count, pageNumber, rows[] }`. **Discriminador SN:** `docVldTipo=9`
+  **E** `docVldTipoAdto=1` (uma NC/ND é `docVldTipoAdto=0` → excluída). Projeção: `docCod` (handle),
+  `docEspNumero` (numero), `docDtaEmissao` (data), `tpdDesNome`/`gcdDesNome` (descricao), `vldStatus`
+  (status), `mnyBruto` (solicitado), `docMnyValor` (valor do doc). READ-only. → **actions 22 → 23**.
+- **`gerarSolicitacaoNumerario` ganha um ramo "SN existente":** quando um `docCod` é selecionado, **pula**
+  `com299/gerDocProcesso` **e** `completarSnAdiantamento` e roda direto `fin014` + `com297` contra o
+  `docCod`. "Criar novo SN" segue o fluxo completo, inalterado. Mesma ação (contagem inalterada).
+- **NEW business-rule `alocacao-sn-existente` (I-Receb-3, `planned`):** **(a)** valor alocado ≤ **saldo do
+  TÍTULO** da SN; **(b)** sem duplicata (com299 pulado); **(c)** humano confirma a seleção. **Distinto de
+  I-Receb-1** (`invariante-rateio`: Σ das alocações ≤ `transacao.valor`). → **business_rules 16 → 17**.
+- **⚠️ Saldo NÃO vem da lista (document-level):** `com299/list` devolve `mnyBruto`/`docMnyValor` (valor do
+  documento), **não** o saldo remanescente por-título — o "Saldo" do mockup e o teto do I-Receb-3 vêm do
+  título (`lov/TituloBorderoReceber`) que a **baixa `fin014` já lê**. O **enforcement** do teto ≤ saldo é a
+  **baixa/título**, não a lista. Open-gap `sn-list-saldo-document-level` (P1) na integração.
+- **Integração `conexos-com299-gerdoc`:** `direction` write → **read-write** (NEW `endpoints_read`
+  `com299/list`). Total de integrações inalterado (5).
+- **State-machine `recebimento`:** transição **R1** anotada (a alocação pode gerar SN nova OU alvo uma SN
+  existente — **ramo do settle, não estado novo**).
+- **Sem entidade nova:** a `SolicitacaoNumerario` já é first-class; ganha a **projeção de leitura** + a
+  relação **N—1 `Recebimento`** (settle contra existente).
+- **Rejeitados (ADR-0027):** novo estado na máquina (é ramo de R1); duas ações de settle separadas (basta
+  um branch); usar `docMnyValor` da lista como saldo (document-level); modelar "Processar após seleção"
+  como estado de UI (é precondição); valores de exibição/`gcdCod` (config do tenant).
+
+Emenda ADR-0022/0024/0025; não supersede nenhum.
+
 ## v0.3.0 — Fase 3: write-back `fin010` (baixa/permuta efetiva no ERP) (2026-06-23, ADR-0013)
 
 Feature: `permutas-reconciliacao` (branch `feat/permutas-reconciliacao`, verde). A **primeira ESCRITA** do
