@@ -820,10 +820,12 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
             expect(body.docVldComvalidacoes).toBe(2);
             expect(body.ndeAutorizado).toBe(true);
 
-            // O com194 FOI consultado depois da homologação (log de requests do ERP).
+            // O com194 FOI consultado depois da homologação (log de requests do ERP). O `lastIndexOf` é
+            // proposital: a etapa da SN também consulta a com194 (para saber se o ERP exige a condição de
+            // pagamento do cadastro), então o PRIMEIRO com194 do log é anterior à homologação.
             const paths = pathsDesde(mark);
             const idxHomolog = paths.findIndex((p) => p.includes('POST /api/com297/homologaNfe/'));
-            const idxCom194 = paths.indexOf('POST /api/com194/documento/list');
+            const idxCom194 = paths.lastIndexOf('POST /api/com194/documento/list');
             expect(idxHomolog).toBeGreaterThan(-1);
             expect(idxCom194).toBeGreaterThan(idxHomolog);
 

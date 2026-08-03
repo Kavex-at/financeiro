@@ -51,6 +51,16 @@ const END_COD_FIS_DEFAULT = 1;
 /** Moeda da NDe (registro local) — o fluxo de numerário assume BRL (mesmo default do processo). */
 const NDE_MOEDA_PADRAO = 'BRL';
 
+/** `fdvVldErr` da com194 que BLOQUEIA o documento (1 = aviso, não bloqueia). */
+const VALIDACAO_BLOQUEANTE = 2;
+
+/**
+ * Reconhece a pendência de condição de pagamento na mensagem da com194 — "CONDIÇÃO DE PAGAMENTO ...
+ * DIFERENTE DA SUGERIDA NO CADASTRO DE PESSOA" (medida em produção no doc 18342, pessoa 194). Casada
+ * sem acentos, porque o ERP varia a acentuação entre telas.
+ */
+const CONDICAO_PAGAMENTO_REGEX = /CONDICAO DE PAGAMENTO/;
+
 /** Arredonda para 2 casas — obrigatório em todo valor monetário do ERP (CnxValidatorMny). */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -422,18 +432,42 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
-     * Completa o adiantamento SN recém-gerado até ficar FINALIZÁVEL (HAR 2026-08-02 17-31, doc 18342):
-     *   (1) condição de pagamento = a do cadastro da pessoa (`lov/CondPgtoPessoa` → PUT com299) — sem isso a
-     *       com194 dá ERRO "CONDIÇÃO DE PAGAMENTO DIFERENTE DA SUGERIDA" e a finalização trava;
-     *   (2) linha de item (`comDocProdutos`) com o valor alocado — é ela que materializa o `docMnyValor` e,
-     *       na finalização, o título a receber que o fin014 baixa.
+     * Completa o adiantamento SN recém-gerado até ficar FINALIZÁVEL:
+     *   (1) linha de item (`comDocProdutos`) com o valor alocado — PRESERVA o título que o ERP criou na
+     *       geração e materializa o `mnyBruto`;
+     *   (2) condição de pagamento — SÓ quando a com194 acusa validação BLOQUEANTE de condição, porque o
+     *       PUT que troca o `pgtCod` DESTRÓI as parcelas do documento.
+     *
+     * A ordem e a condicionalidade vêm de medição no ERP de homologação (2026-08-03,
+     * `docs/e2e/gap-titulos-diagnostico.md`): o título nasce na GERAÇÃO com o valor do header; a linha de
+     * item o preserva; o PUT da condição o zera e NÃO o regenera (nem reaplicando a mesma condição). Sem o
+     * PUT a cadeia fecha — docs 736/737 finalizaram (`docVldFinalizado:1`) com o título visível no
+     * `lov/TituloBorderoReceber`, que é o que a `etapaFin014` consulta.
+     *
+     * O passo (2) não pôde ser removido de vez: a exigência da condição "sugestiva" é POR-PESSOA (a pessoa
+     * 194 em produção a exige; o SKYJACK no HML não tem nenhuma e a com194 devolve `count:0`). Quem decide
+     * é o ERP, não uma premissa nossa — e o efeito é VERIFICADO logo depois.
      */
     private completarSnAdiantamento = async (ctx: EscritaCtx, snDocCod: number): Promise<void> => {
-        const { filCod, valor, snPayloadInput } = ctx;
+        await this.addLineItem(ctx, snDocCod);
+        await this.applyPaymentConditionIfRequired(ctx, snDocCod);
+    };
+
+    /**
+     * (2) Condição de pagamento do PRÓPRIO cliente — aplicada apenas sob pendência da com194, e sempre
+     * verificada. Fail-closed em dois pontos: sem condição do cliente não grava a de terceiro (gravar a de
+     * outra pessoa é adulterar dado financeiro de um documento real), e se o PUT destruir as parcelas a
+     * etapa falha em vez de mandar finalizar um documento que o ERP vai recusar.
+     */
+    private applyPaymentConditionIfRequired = async (
+        ctx: EscritaCtx,
+        snDocCod: number,
+    ): Promise<void> => {
+        const { filCod, snPayloadInput } = ctx;
         const { processo } = snPayloadInput;
 
-        // (1) Condição de pagamento DO PRÓPRIO CLIENTE do documento. Fail-closed se não existir: gravar a
-        // condição de outra pessoa é adulterar dado financeiro de um documento real (ver `escolherCondicaoPagamento`).
+        if (!(await this.requiresRegisteredPaymentCondition(ctx, snDocCod))) return;
+
         const condicoes = await this.gerDocClient.listCondPgtoPessoa({
             filCod,
             pesCod: processo.pesCod,
@@ -463,9 +497,81 @@ export default class RecebimentoNumerarioService {
             },
         });
 
-        // (2) Linha de item — a conta de rateio ACOMPANHA a variante da SN do processo (Encomenda/Terceiros/…).
-        // Deriva a conta-alvo do NOME da config resolvida no pré-flight; fail-closed se não achar (não chuta
-        // conta contábil num doc financeiro real).
+        // Discriminador do passo: o documento tem que continuar coerente (título == valor). Se o PUT
+        // destruiu as parcelas, a finalização seria recusada com "O TOTAL DOS TÍTULOS ... NÃO CONFERE"
+        // — melhor parar aqui, com a causa nomeada, do que na etapa seguinte.
+        const depois = await this.gerDocClient.getDocumento({
+            tela: 'com299',
+            filCod,
+            docCod: snDocCod,
+        });
+        const titulo = round2(Number(depois.mnyTitValor ?? 0));
+        const valorDoc = round2(Number(depois.docMnyValor ?? 0));
+        if (!(titulo > 0) || titulo !== valorDoc) {
+            throw new Error(
+                `A condição de pagamento "${cond.pgtDesNome}" (pgtCod ${cond.pgtCod}) foi gravada na SN ` +
+                    `${snDocCod}, mas o ERP DESTRUIU os títulos do documento: mnyTitValor=${titulo} ` +
+                    `contra docMnyValor=${valorDoc}. Sem título a finalização é recusada e o fin014 não ` +
+                    'acha o que baixar. Gere as parcelas na tela Financeiro (com032) do documento e ' +
+                    'reprocesse a alocação.',
+            );
+        }
+    };
+
+    /**
+     * A com194 acusa pendência BLOQUEANTE de condição de pagamento neste documento? Leitura best-effort:
+     * se o validador não responder, seguimos SEM o PUT — a hipótese conservadora é não mexer no que está
+     * íntegro, e a finalização (`docVldFinalizado===1`) continua sendo o discriminador seguinte.
+     */
+    private requiresRegisteredPaymentCondition = async (
+        ctx: EscritaCtx,
+        snDocCod: number,
+    ): Promise<boolean> => {
+        try {
+            const validacoes = await this.fiscalClient.listValidacoes({
+                filCod: ctx.filCod,
+                docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
+                docCod: snDocCod,
+            });
+            return validacoes.some(
+                (v) =>
+                    v.fdvVldErr === VALIDACAO_BLOQUEANTE &&
+                    CONDICAO_PAGAMENTO_REGEX.test(
+                        this.stripAccents(`${v.fdvEspErr ?? ''} ${v.fdvEspObs ?? ''}`),
+                    ),
+            );
+        } catch (cause) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'com194 unavailable while checking the SN payment condition — proceeding WITHOUT ' +
+                    'touching it (never disturb an intact document); finalization is the next discriminator',
+                data: {
+                    txnId: ctx.txnId,
+                    docCod: snDocCod,
+                    erro: cause instanceof Error ? cause.message : String(cause),
+                },
+            });
+            return false;
+        }
+    };
+
+    /** UPPERCASE sem acentos — as mensagens do ERP variam em acentuação entre telas. */
+    private stripAccents = (texto: string): string =>
+        texto
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toUpperCase();
+
+    /**
+     * (1) Linha de item — é ela que materializa o `mnyBruto` do documento, e ela PRESERVA o título criado
+     * na geração (medido no HML: doc 735). A conta de rateio ACOMPANHA a variante da SN do processo
+     * (Encomenda/Terceiros/…): deriva a conta-alvo do NOME da config resolvida no pré-flight; fail-closed
+     * se não achar (não chuta conta contábil num doc financeiro real).
+     */
+    private addLineItem = async (ctx: EscritaCtx, snDocCod: number): Promise<void> => {
+        const { filCod, valor, snPayloadInput } = ctx;
+        const { processo } = snPayloadInput;
         const configNome = ctx.preflight?.gcdDesNome ?? SN_CONTA_ADIANTAMENTO_ENCOMENDA;
         const variante = this.extrairVarianteSn(configNome);
         const contaAlvo = `${SN_CONTA_ADIANTAMENTO_PREFIXO} ${variante}`;

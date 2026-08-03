@@ -100,7 +100,11 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
                 ctpEspConta: '304001',
             },
         ]),
-        getDocumento: jest.fn().mockResolvedValue({ docCod: 0, docMnyValor: 0, pgtCod: 1 }),
+        // Documento COERENTE: o título que o ERP cria na geração bate com o valor do documento. É o
+        // estado que a etapa tem que PRESERVAR (HML 2026-08-03, docs 736/737).
+        getDocumento: jest
+            .fn()
+            .mockResolvedValue({ docCod: 0, docMnyValor: 15000, mnyTitValor: 15000, pgtCod: 1 }),
         atualizarDocumento: jest.fn().mockResolvedValue({}),
         comDocProdutosInitialValues: jest
             .fn()
@@ -328,36 +332,128 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
         expect(typeof snGerPayload.docDtaEmissao).toBe('number');
     });
 
-    it('completa o adiantamento SN antes de finalizar: condição DUPLICATA + linha de item com o valor', async () => {
+    it('completa o adiantamento SN antes de finalizar: linha de item com o valor, sem tocar na condição', async () => {
         const m = buildMocks();
         wireDocCods(m);
         await buildService(m).processarAlocacao(baseInput());
 
-        // (1) escolheu a condição DUPLICATA DO PRÓPRIO CLIENTE do documento (não "A VISTA", e nem a
-        // "BONDUELLE - DUPLICATA" que vem ANTES na lista global do LOV) e PUTou o doc.
-        expect(m.gerDoc.listCondPgtoPessoa).toHaveBeenCalledWith(
-            expect.objectContaining({ pesCod: 555 }),
-        );
-        const putArgs = (m.gerDoc.atualizarDocumento as jest.Mock).mock.calls[0][0];
-        expect(putArgs.payload).toEqual(
-            expect.objectContaining({
-                pgtCod: 109,
-                pgtDesNome: 'CLIENTE EXEMPLO - DUPLICATA',
-                vldRwCondpgt: 1,
-            }),
-        );
-
-        // (2) resolveu a conta "ADIANTAMENTO DE CLIENTE ENCOMENDA" e criou a linha de item com o valor.
+        // Resolveu a conta "ADIANTAMENTO DE CLIENTE ENCOMENDA" e criou a linha de item com o valor.
         const itemArgs = (m.gerDoc.adicionarComDocProduto as jest.Mock).mock.calls[0][0];
         expect(itemArgs.payload).toEqual(
             expect.objectContaining({ dprPreValorun: 15000, prjCod: 1, ctpCod: 690, prdCod: 2 }),
         );
+
+        // Sem validação pendente da com194, a condição de pagamento NÃO é tocada — o PUT destruiria o
+        // título que o ERP já criou (medido no HML: docs 734/735).
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
 
         // A linha de item é criada ANTES da finalização (senão a com194 trava por "sem valor/itens").
         const itemOrder = (m.gerDoc.adicionarComDocProduto as jest.Mock).mock
             .invocationCallOrder[0];
         const finalOrder = (m.gerDoc.finalizarDocumento as jest.Mock).mock.invocationCallOrder[0];
         expect(itemOrder).toBeLessThan(finalOrder);
+    });
+});
+
+/**
+ * O PUT do com299 que troca o `pgtCod` DESTRÓI as parcelas do documento e não as regenera — medido no
+ * Conexos de homologação em 2026-08-03 (`docs/e2e/gap-titulos-diagnostico.md`):
+ *   - doc 735: geração → título 123,45 · linha de item → título 123,45 · PUT da condição → título 0
+ *   - docs 736/737: SEM o PUT a cadeia fecha (`docVldFinalizado:1` e o título aparece no
+ *     `lov/TituloBorderoReceber`, que é o que a `etapaFin014` consulta)
+ * O `vldRwCondpgt` NÃO é gatilho de regeneração: já vem `1` no GET, ao lado de `right:"RW"`.
+ *
+ * Por isso a condição virou passo CONDICIONAL: só quando a com194 acusa validação BLOQUEANTE de
+ * condição de pagamento (o caso da pessoa 194 em produção, cujo cadastro sugere "L-FOUNDERS -
+ * DUPLICATA"). E, aplicada, o resultado é VERIFICADO — título tem que continuar batendo com o
+ * documento, senão a etapa falha em vez de finalizar um documento com as parcelas destruídas.
+ */
+describe('RecebimentoNumerarioService — condição de pagamento só quando a com194 exige', () => {
+    /** Validação bloqueante de condição de pagamento, como o ERP a devolve (`fdvVldErr:2`). */
+    const VALIDACAO_CONDICAO = {
+        fdvCodSeq: 2,
+        fdvVldErr: 2,
+        fdvEspErr:
+            'CONDIÇÃO DE PAGAMENTO DO DOCUMENTO DIFERENTE DA SUGERIDA NO CADASTRO DE PESSOA. ' +
+            'PESSOA:555, SUGESTIVA: CLIENTE EXEMPLO - DUPLICATA',
+    };
+
+    const comValidacao = (validacoes: unknown[]): Mocks => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.fiscal.listValidacoes as jest.Mock).mockResolvedValue(validacoes);
+        return m;
+    };
+
+    it('aplica a condição do cliente quando a com194 acusa a validação bloqueante', async () => {
+        const m = comValidacao([VALIDACAO_CONDICAO]);
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(m.gerDoc.listCondPgtoPessoa).toHaveBeenCalledWith(
+            expect.objectContaining({ pesCod: 555 }),
+        );
+        const putArgs = (m.gerDoc.atualizarDocumento as jest.Mock).mock.calls[0][0];
+        expect(putArgs.payload).toEqual(
+            expect.objectContaining({ pgtCod: 109, pgtDesNome: 'CLIENTE EXEMPLO - DUPLICATA' }),
+        );
+    });
+
+    it('a linha de item vem ANTES da leitura das validações e do PUT (o item preserva o título)', async () => {
+        const m = comValidacao([VALIDACAO_CONDICAO]);
+        await buildService(m).processarAlocacao(baseInput());
+
+        const itemOrder = (m.gerDoc.adicionarComDocProduto as jest.Mock).mock
+            .invocationCallOrder[0];
+        const validacoesOrder = (m.fiscal.listValidacoes as jest.Mock).mock.invocationCallOrder[0];
+        const putOrder = (m.gerDoc.atualizarDocumento as jest.Mock).mock.invocationCallOrder[0];
+        expect(itemOrder).toBeLessThan(validacoesOrder);
+        expect(validacoesOrder).toBeLessThan(putOrder);
+    });
+
+    it('NÃO toca na condição quando a validação bloqueante é de outro assunto', async () => {
+        const m = comValidacao([
+            { fdvCodSeq: 9, fdvVldErr: 2, fdvEspErr: 'PRODUTO 41978 SEM GTIN CADASTRADO' },
+        ]);
+        await buildService(m).processarAlocacao(baseInput());
+
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
+        expect(m.gerDoc.listCondPgtoPessoa).not.toHaveBeenCalled();
+    });
+
+    it('NÃO toca na condição quando a pendência de condição é só AVISO (fdvVldErr:1)', async () => {
+        const m = comValidacao([{ ...VALIDACAO_CONDICAO, fdvVldErr: 1 }]);
+        await buildService(m).processarAlocacao(baseInput());
+
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
+    });
+
+    it('FAIL-CLOSED: se o PUT destruir o título, para na etapa sn e NÃO finaliza', async () => {
+        const m = comValidacao([VALIDACAO_CONDICAO]);
+        // Releituras: (1) montar o item, (2) montar o PUT, (3) VERIFICAR o efeito do PUT — nesta o
+        // ERP mostra o título destruído, exatamente como no doc 735 do HML.
+        (m.gerDoc.getDocumento as jest.Mock)
+            .mockResolvedValueOnce({ docCod: 18200, docMnyValor: 15000, mnyTitValor: 15000 })
+            .mockResolvedValueOnce({ docCod: 18200, docMnyValor: 15000, mnyTitValor: 15000 })
+            .mockResolvedValue({ docCod: 18200, docMnyValor: 15000, mnyTitValor: 0 });
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('error');
+        expect(out.etapa).toBe('sn');
+        expect(out.erro).toMatch(/t[íi]tulo/i);
+        expect(out.erro).toContain('18200');
+        expect(m.gerDoc.finalizarDocumento).not.toHaveBeenCalled();
+        expect(m.repo.markError).toHaveBeenCalled();
+    });
+
+    it('a com194 indisponível não bloqueia: segue sem PUT (a finalização é o discriminador seguinte)', async () => {
+        const m = comValidacao([]);
+        (m.fiscal.listValidacoes as jest.Mock).mockRejectedValue(new Error('com194 fora do ar'));
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
+        expect(m.gerDoc.finalizarDocumento).toHaveBeenCalled();
     });
 });
 
@@ -369,10 +465,22 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
  * GLOBAL paginada, ordenada por nome). Condição de pagamento é DADO FINANCEIRO: não se chuta.
  */
 describe('RecebimentoNumerarioService — condição de pagamento é a DO CLIENTE do documento', () => {
-    /** O caso real: cliente SKYJACK, lista global com a DUPLICATA da BONDUELLE vindo antes. */
+    /**
+     * O caso real: cliente SKYJACK, lista global com a DUPLICATA da BONDUELLE vindo antes. A com194
+     * devolve a validação bloqueante de condição de pagamento — é ela que ATIVA o passo da condição
+     * (sem pendência o serviço não toca no `pgtCod`, para não destruir o título).
+     */
     const skyjackMocks = (condicoes: Array<{ pgtCod: number; pgtDesNome: string }>): Mocks => {
         const m = buildMocks();
         (m.gerDoc.listCondPgtoPessoa as jest.Mock).mockResolvedValue(condicoes);
+        (m.fiscal.listValidacoes as jest.Mock).mockResolvedValue([
+            {
+                fdvCodSeq: 2,
+                fdvVldErr: 2,
+                fdvEspErr:
+                    'CONDIÇÃO DE PAGAMENTO DIFERENTE DA SUGERIDA NO CADASTRO DE PESSOA. PESSOA:232',
+            },
+        ]);
         wireDocCods(m);
         return m;
     };
@@ -441,9 +549,9 @@ describe('RecebimentoNumerarioService — condição de pagamento é a DO CLIENT
         expect(out.etapa).toBe('sn');
         expect(out.erro).toContain('SKYJACK');
         expect(out.erro).toMatch(/condi[çc][ãa]o de pagamento/i);
-        // NÃO gravou condição nenhuma, não montou o item e não tentou finalizar um doc inconsistente.
+        // NÃO gravou condição nenhuma e não finalizou um documento que o ERP recusaria. A linha de item
+        // JÁ existe (é o primeiro passo agora) — e é inofensiva: o título segue íntegro no documento.
         expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
-        expect(m.gerDoc.adicionarComDocProduto).not.toHaveBeenCalled();
         expect(m.gerDoc.finalizarDocumento).not.toHaveBeenCalled();
         expect(m.repo.markError).toHaveBeenCalled();
     });
