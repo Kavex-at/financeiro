@@ -29,3 +29,19 @@
   state-machine skeleton de propósito.
 - **Scheduler (O4, herdado do SISPAG):** sem runtime de job/cron nativo (Express). Cadência do Módulo 1
   começa manual-trigger + cron probe (como a ingestão SISPAG); EventBridge é o alvo.
+
+## SN — condição de pagamento / título (curadoria 2026-08-03, ADR-0025)
+
+- **"Documento financeiro finalizável ⟺ título == valor do documento" como business-rule própria:** NÃO
+  criada agora. É um **discriminador de etapa** do contrato Conexos (mesma doutrina de
+  `conexos-nde-fiscal.md`: 200 ≠ sucesso), medido em **um** ERP. Promover a regra de negócio só se
+  aparecer num 2º ERP/cliente — aí o invariante deixa de ser contrato de integração e vira domínio.
+- **Divergência HML × produção no efeito do `PUT` que troca `pgtCod`:** em produção (SN 18345) as parcelas
+  sobreviveram; no HML são destruídas. Hipótese (não confirmada): a condição de produção tem regra de
+  parcelamento, a `101` do HML não. Revisitar se um cliente real cair no caso **bloqueante** — é o único
+  cenário em que o `PUT` volta a rodar de verdade.
+- **Regeneração das parcelas via tela `com032` ("Financeiro"):** HAR não capturado, caminho deliberadamente
+  não implementado (ADR-0025). Só vale o esforço se o caso acima ocorrer em produção.
+- **Máquina de estados do documento com299 no ERP** (gerado → com item → com condição → finalizado → com
+  título): NÃO modelada — é ciclo de vida **do ERP**, não do nosso agregado (o nosso é `etapa` na trilha de
+  execução). Revisitar só se um 2º ERP exibir o mesmo ciclo.

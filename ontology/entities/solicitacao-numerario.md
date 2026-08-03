@@ -44,7 +44,7 @@ relationships:
   - "SolicitacaoNumerario 1—1 documento ERP com299 (docCod retornado pelo gerDocProcesso)"
   - "SolicitacaoNumerario 1—N item de rateio (contasProj: prjCod × ctpCod × tpcCod × cfoEspCod)"
   - "SolicitacaoNumerario 1—1 NotaDebitoEletronica (recebimento: NDe com297 terminal, docCod=ndDocCod, homologada+autorizada na SEFAZ)"
-last_review: 2026-08-01
+last_review: 2026-08-03
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md — Frente I (adiantamento ↔ invoice) + Frente IV (recebimentos)"
   - "Tela Conexos com068 'GERAÇÃO DE DOCUMENTOS' → documento gcdDesNome='SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA'"
@@ -115,6 +115,25 @@ doutrina da baixa `fin010`.
 - `com299/gerDocProcesso` (`postGenericOnce`, tentativa única) → `docCod`. **POST-once**: header + `itens[]` num só body.
 - `200 ≠ sucesso`: validações de negócio chegam em `messages` (AVISO = gerado com aviso, ERRO = falha).
 
+## Materialização do título a receber (medido no ERP — 2026-08-03, ADR-0025)
+
+> Vigente na trilha **recebimentos** (Frente IV), onde a SN é completada antes de finalizar. A trilha
+> permuta (Frente I) ainda gera+finaliza sem completação — herda estas regras quando/se for promovida.
+
+O **título a receber da SN não é criado por nós**: nasce na própria **geração** do com299, com o valor do
+header. A linha de item (`comDocProdutos`) o **preserva**; o `PUT com299` que troca a **condição de
+pagamento** (`pgtCod`) **destrói as parcelas e não as regenera**. Consequências travadas:
+
+1. A **linha de item vem antes** de qualquer ajuste de condição de pagamento.
+2. O ajuste da condição é **condicional**: só quando a `com194` acusa validação **bloqueante**
+   (`fdvVldErr === 2`) mencionando condição de pagamento — quem exige é o **cadastro da pessoa**
+   (por-pessoa, dado do tenant), não o tipo de documento.
+3. Se aplicado, o efeito é **verificado** (`mnyTitValor === docMnyValor`, `> 0`); divergência ⇒ a etapa
+   **falha fechada** em vez de finalizar um documento sem título (o `fin014` não teria o que baixar).
+
+Detalhe do contrato, medições e riscos (HML × produção) em
+`integrations/conexos-com299-gerdoc.md` (banner "CICLO DE VIDA DO TÍTULO") e `docs/e2e/gap-titulos-diagnostico.md`.
+
 ## Fluxo de 3 telas — trilha PERMUTA (Frente I, guia "telas Conexos")
 
 > A trilha **recebimento** (Frente IV) roda o MESMO encadeamento com a cauda fiscal já REAL —
@@ -127,6 +146,11 @@ write-ahead + retomada anti-duplicação):
 
 1. **Tela 1 — com299 (SN):** gera a SN (`gerDocProcesso`, datas/`docEspNumero`=data do dia) +
    **finaliza** (`validate/finalizacaoDocumento` → `finalizaDocumento`). **CONFIRMADO.**
+   > A **completação** do documento antes de finalizar (linha de item → condição de pagamento
+   > condicional → verificação do título) só existe hoje na trilha **recebimentos**
+   > (`RecebimentoNumerarioService.completarSnAdiantamento`). A trilha permuta gera e finaliza direto —
+   > se ela vier a materializar título/parcelas, herda as mesmas regras (ver "Materialização do título a
+   > receber" abaixo e ADR-0025).
 2. **Tela 2 — fin014 (recebimento do crédito):** borderô (`POST /api/fin014`, `gerNum`=conta FIN_134) →
    validar título (`baixas/validacao/tituloBaixa` com o `docCod` da SN) → gravar baixa
    (`POST /api/fin014/baixas`, `postGenericOnce`) → finalizar (`finalizar/{borCod}`). **REAL** (espelha

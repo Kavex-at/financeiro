@@ -18,7 +18,7 @@ related_files:
   - src/backend/routes/recebimentos.ts
   - src/frontend/app/recebimentos/components/AlocarProcessosDialog.tsx
   - src/frontend/lib/recebimentos.ts
-last_review: 2026-08-01
+last_review: 2026-08-03
 preconditions:
   - "TransacaoBancaria (crédito) presente no painel de Recebimentos, com conta bancária conhecida (transacao.gerNum). Rota devolve 422 se gerNum ausente."
   - "Operador aciona 'Alocar' na transação e distribui o valor por 1..N processos candidatos (human-in-the-loop); cada linha tem um 'Processar' próprio."
@@ -28,6 +28,8 @@ preconditions:
 postconditions:
   - "dry-run → monta e loga os 4 payloads (com299/fin014/com297/fiscal), NENHUM POST, retorna preview (dryRun:true)."
   - "real → Solicitação de Numerário (com299) gerada E finalizada; docCod = messages[0].vars.docCod."
+  - "real → SN completada ANTES de finalizar, nesta ordem: (1) linha de item (comDocProdutos) com o valor alocado — preserva o título que o ERP criou na geração; (2) condição de pagamento SÓ se a com194 acusar validação BLOQUEANTE (fdvVldErr===2) de condição de pagamento."
+  - "real → se a condição foi aplicada, o efeito é VERIFICADO: mnyTitValor === docMnyValor (>0) na releitura; divergência ⇒ a etapa FALHA com a causa nomeada (o PUT destruiu as parcelas), nunca finaliza documento sem título."
   - "real → baixa fin014 do crédito: borderô → validar título (docCod da SN) → gravar baixa → finalizar, com conta financeira = a conta do PRÓPRIO pagamento (transacao.gerNum), NÃO um env var fixo."
   - "real → nota de débito com297 gerada + produto 41978; depois a cauda fiscal na ordem OBRIGATÓRIA fiscal → observações → homologar."
   - "real → fiscal com300 (read-modify-write): fisVldTipoNfDebito=6 (Pagamento antecipado); sucesso ⟺ resp.fisVldTipoNfDebito===6."
@@ -57,7 +59,18 @@ orquestra, **por alocação** (uma linha do split):
 
 1. **com299 (SN):** monta o payload via `SnPayloadBuilder` (builder compartilhado com a rota dry-run;
    o antigo seam `SolicitacaoNumerarioService.enviarAoErp` que lançava `NotImplementedError` foi
-   **RETIRADO**), gera a SN + **finaliza**. Sucesso ⟺ `messages[0].valid==='SUCESSO'`, `docCod` em `vars.docCod`.
+   **RETIRADO**), gera a SN, **completa** e **finaliza**. Sucesso ⟺ `messages[0].valid==='SUCESSO'`,
+   `docCod` em `vars.docCod`; finalização ⟺ `docVldFinalizado === 1` na releitura.
+   - **(a) linha de item** (`comDocProdutos`, conta de rateio derivada da variante da SN) — **primeiro**:
+     ela PRESERVA o título que o ERP criou na geração e materializa o `mnyBruto`.
+   - **(b) condição de pagamento — CONDICIONAL** (vigência 2026-08-03, ADR-0025): só quando a `com194`
+     acusa validação **bloqueante** (`fdvVldErr === 2`) mencionando condição de pagamento (leitura
+     best-effort: com194 fora do ar ⇒ segue sem o PUT). Escolhe a condição do **próprio** cliente
+     (`lov/CondPgtoPessoa`, paginado por `count`, casada contra `dpeNomPessoa`) — sem ela, **fail-closed**.
+   - **(c) discriminador do passo (b):** relê o documento e exige `mnyTitValor === docMnyValor` (`> 0`).
+     O `PUT` que troca `pgtCod` **destrói as parcelas e não as regenera** — se destruiu, a etapa falha
+     aqui com a causa nomeada, em vez de finalizar um documento sem título. Ver
+     `integrations/conexos-com299-gerdoc.md` (banner "CICLO DE VIDA DO TÍTULO").
 2. **fin014 (baixa do crédito):** borderô → validar título (docCod da SN) → gravar baixa → finalizar,
    com **`gerNum = transacao.gerNum`** (a conta em que o pagamento entrou — derivada, não escolhida;
    `FIN014_CONTA_FINANCEIRA` deixou de ser usado nesta trilha).
@@ -123,3 +136,7 @@ Cauda fiscal confirmada por HAR real (produção, doc 18337, filial 2, 2026-08-0
   alocado. Ver `business-rules/encomenda-percentuais.md`.
 - Divergência `prdCod` (item `2` × com194 reclama `41978`) e `docMnyValor→0` pós-homologação —
   gates fiscais/operacionais do spec (PENDÊNCIAS), tratados por log + `revisao_humana`, não modelados.
+- **Regeneração das parcelas destruídas pelo PUT da condição** (tela `com032` "Financeiro") — **NÃO
+  implementada** por decisão (ADR-0025): caminho mais longo, HAR não capturado, e só necessário se um
+  cliente real cair no caso bloqueante COM PUT destrutivo. Hoje a etapa falha fechada e instrui o
+  analista a gerar as parcelas na com032 e reprocessar.

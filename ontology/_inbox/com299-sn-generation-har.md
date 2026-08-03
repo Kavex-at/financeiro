@@ -205,6 +205,17 @@ finalizadas = nº do PROCESSO (18319→3360), NÃO a data DDMMYYYY — revisar n
 
 ## IMPLEMENTADO 2026-08-02 (worktree receb-numerario-real, NÃO commitado — 954 testes verdes)
 
+> **⛔ SUPERSEDIDO EM PARTE (2026-08-03, ADR-0025).** A ordem abaixo — condição de pagamento (1) e linha de
+> item (2) — está **invertida** em relação ao vigente, e a menção a `vldRwCondpgt:1` como se reescrevesse a
+> condição está **ERRADA**: o campo já vem `1` no GET (flag de PERMISSÃO, ao lado de `vldRwPlanfin:1` /
+> `right:"RW"`), não é gatilho de regeneração das parcelas. Medido no HML: o título **nasce na geração** do
+> com299, a **linha de item o preserva** e o **PUT que troca o `pgtCod` o destrói sem regenerar**. Vigente:
+> item primeiro; condição **só** sob validação bloqueante da com194 (`fdvVldErr===2`) e com verificação
+> obrigatória `mnyTitValor === docMnyValor`. Ver `docs/e2e/gap-titulos-diagnostico.md`,
+> `integrations/conexos-com299-gerdoc.md` (banner "CICLO DE VIDA DO TÍTULO") e `decisions/0025-*`.
+> (Os passos 5/6 da receita "FLUXO SN COMPLETO" acima descrevem o mesmo PUT — leia-os sob a mesma ressalva:
+> ele limpa o ERRO da com194, mas ao custo das parcelas; por isso hoje só roda quando o ERRO existe.)
+
 - **SN completion** (`RecebimentoNumerarioService.completarSnAdiantamento`, chamado no `etapaSn` após gerar,
   antes de finalizar): (1) `listCondPgtoPessoa(pesCod)` → escolhe a "&lt;pessoa&gt; - DUPLICATA" → GET doc +
   `atualizarDocumento` (PUT com299, `vldRwCondpgt:1`); (2) `listContasProjetoCtb(prjCod:1, priCod, tpdCod:3)`
