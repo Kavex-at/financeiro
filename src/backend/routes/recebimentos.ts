@@ -24,7 +24,10 @@ import RecebimentoIngestaoRunRepository from '../domain/repository/recebimentos/
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
 import IngestaoTransacoesService from '../domain/service/recebimentos/IngestaoTransacoesService.js';
 import RecebimentoPipelineService from '../domain/service/recebimentos/RecebimentoPipelineService.js';
-import SolicitacaoNumerarioService from '../domain/service/recebimentos/SolicitacaoNumerarioService.js';
+import NumerarioAclChecker from '../domain/service/recebimentos/NumerarioAclChecker.js';
+import RecebimentoNumerarioService from '../domain/service/recebimentos/RecebimentoNumerarioService.js';
+import TransacaoRepository from '../domain/repository/recebimentos/TransacaoRepository.js';
+import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
 import {
@@ -340,26 +343,44 @@ router.get(
     }),
 );
 
-const gerarSolicitacaoNumerarioSchema = z.object({
-    filCod: z.coerce.number().int().positive(),
+const solicitacaoNumerarioSchema = z.object({
+    /** Nº do processo de importação (imp021) que recebe a alocação. */
     priCod: z.coerce.number().int().positive(),
+    /** Valor alocado a ESTE processo (split-capable — uma alocação por chamada). */
+    valor: z.number().positive(),
+    /**
+     * Filial DO PROCESSO escolhido (imp021) — pode diferir da filial do pagamento. TODO o fluxo
+     * Conexos (com299 SN → fin014 → com297 + cauda fiscal → homologar → poll) roda NESTA filial;
+     * o pagamento é só a fonte de `gerNum`/`valor`. A conta financeira (`gerNum`) é global (fin133
+     * devolve os mesmos gerNums entre filiais), então continua válida aqui, sem baixa cross-filial.
+     */
+    filCod: z.coerce.number().int().positive(),
     priEspRefcliente: z.string().optional(),
     pesCod: z.coerce.number().int().positive(),
     dpeNomPessoa: z.string().min(1),
     /** Moeda do PROCESSO (BRL/790 assumida) — NÃO é o `moeCod` do doc SN, que é `null`. */
     moeCod: z.coerce.number().int().positive(),
-    /** Base da SN — valor cru da transação (o servidor totaliza o rateio líquido no com299). */
-    valorTransacao: z.number(),
-    /** Chave de correlação estável por "Processar" — semente do idempotencyKey (write-ahead B2). */
-    correlationId: z.string().uuid().optional(),
+    /**
+     * CNPJ da pessoa (`pdcDocFederal`) e endereço fiscal (`endCodFis`) do com299 — OPCIONAIS: o imp021
+     * não os expõe (GAP de fonte). Quando o front os tiver, envia aqui; senão o payload os OMITE.
+     */
+    pdcDocFederal: z.string().optional(),
+    endCodFis: z.coerce.number().int().positive().optional(),
+    /** Força dry-run mesmo com a escrita ligada (preview sob demanda). */
+    dryRun: z.boolean().optional(),
 });
 
 /**
- * POST /recebimentos/transacoes/:txnId/solicitacao-numerario — "Processar" um processo → CONSTRÓI o
- * payload `GerDocProcessoSelectionDTOCab` da Solicitação de Numerário (encomenda) e o DEVOLVE em
- * DRY-RUN. NUNCA envia ao Conexos (não há caminho de escrita alcançável nesta iteração). Write-ish →
- * `requireRole('admin')` + `heavyRouteLimiter` + authz por-filial (mesmo padrão do pipeline/run),
- * embora seja apenas simulação.
+ * POST /recebimentos/transacoes/:txnId/solicitacao-numerario — "Processar" UMA alocação (pagamento ×
+ * processo): roda o fluxo REAL do numerário (com299 SN → fin014 baixa na conta DO PAGAMENTO → com297
+ * NDe → leg fiscal → homologar → poll SEFAZ) via `RecebimentoNumerarioService`. Split-capable: cada
+ * chamada aloca um `valor` a um `priCod`.
+ *
+ * Carrega a transação (`TransacaoRepository.findById`) → `gerNum`/`valor`; **422 se `gerNum` ausente**
+ * (o pagamento sem conta financeira não pode baixar). Authz: `heavyRouteLimiter` + `requireRole('admin')`
+ * + `assertUserCanActOnFilial` (filial DO PROCESSO). Antes de qualquer escrita (não-dry-run), pré-flight
+ * de ACL da conta de serviço (fail-closed, gated por `NDE_ACL_PREFLIGHT`). HTTP 200 mesmo em erro de
+ * etapa (o `status` carrega o resultado); um re-POST com o mesmo corpo RETOMA (idempotência por alocação).
  */
 router.post(
     '/transacoes/:txnId/solicitacao-numerario',
@@ -367,13 +388,35 @@ router.post(
     requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const parsed = gerarSolicitacaoNumerarioSchema.safeParse(req.body);
+        const parsed = solicitacaoNumerarioSchema.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({ error: 'Payload inválido', details: parsed.error.flatten() });
             return;
         }
+        const txnId = String(req.params.txnId);
+
+        // Carrega a transação (pagamento): fonte da conta financeira (gerNum) e da filial.
+        const transacaoRepo = container.resolve(TransacaoRepository);
+        const transacao = await transacaoRepo.findById(txnId);
+        if (!transacao) {
+            res.status(404).json({ error: 'Transação não encontrada', txnId });
+            return;
+        }
+        if (transacao.gerNum === undefined) {
+            res.status(422).json({
+                error: 'Transação sem conta financeira (gerNum) — não é possível baixar o recebimento',
+                txnId,
+            });
+            return;
+        }
+
+        // Authz por-filial: a SN/baixa/NDe herdam a filial DO PROCESSO (não a da transação). O
+        // processo pode viver numa filial diferente do pagamento — o front envia o `filCod` do
+        // processo escolhido no modal "Alocar". Sem isto, `validaProcessoPessoa` procurava o
+        // ImpProcesso na filial do pagamento e devolvia RECORDNOTFOUND (500).
+        const processoFilCod = parsed.data.filCod;
         try {
-            assertUserCanActOnFilial(req.user, parsed.data.filCod);
+            assertUserCanActOnFilial(req.user, processoFilCod);
         } catch (err) {
             if (err instanceof FilialForbiddenError) {
                 res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
@@ -381,29 +424,56 @@ router.post(
             }
             throw err;
         }
+
         const ator = req.user?.sub ?? req.user?.email ?? 'unknown';
-        // Idempotency-key namespaced pelo ator (Regis security-2), semente = header `Idempotency-Key`
-        // ou o `correlationId` do corpo (estável por "Processar"). Aqui é DRY-RUN: a chave é derivada e
-        // ECOADA (sem escrita no ledger) — o write-ahead `beginExecution` vive no orquestrador live
-        // (B2), quando a migração 0041 estiver aplicada. Ver ontology/integrations/conexos-com299-gerdoc.md.
-        const headerKey = req.header('Idempotency-Key');
-        const idempotencyKey = `sn:${ator}:${headerKey ?? parsed.data.correlationId ?? randomUUID()}`;
-        const service = container.resolve(SolicitacaoNumerarioService);
-        // DRY-RUN: só constrói e devolve o payload — nenhum POST no ERP.
-        const result = await service.gerar({
-            processo: {
-                priCod: parsed.data.priCod,
-                priEspRefcliente: parsed.data.priEspRefcliente,
-                filCod: parsed.data.filCod,
+        const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
+        const dryRun = parsed.data.dryRun === true || !env.conexosWriteEnabled || env.conexosDryRun;
+
+        // Pré-flight de ACL ANTES de qualquer escrita (só na execução REAL). Fail-closed; gated por env.
+        if (!dryRun && env.ndeAclPreflight) {
+            const acl = await container
+                .resolve(NumerarioAclChecker)
+                .verificar({ filCod: processoFilCod });
+            if (!acl.ok) {
+                res.status(403).json({
+                    error: 'Forbidden: conta de serviço sem permissões (com300/com131/com297/com194)',
+                    code: 'NDE_ACL_INSUFICIENTE',
+                    ...(acl.motivo !== undefined ? { motivo: acl.motivo } : {}),
+                });
+                return;
+            }
+        }
+
+        const service = container.resolve(RecebimentoNumerarioService);
+        const result = await service.processarAlocacao({
+            txnId,
+            transacao: {
+                gerNum: transacao.gerNum,
+                filCod: transacao.filCod,
+                valor: transacao.valor,
+            },
+            priCod: parsed.data.priCod,
+            valor: parsed.data.valor,
+            processoFields: {
+                filCod: processoFilCod,
+                ...(parsed.data.priEspRefcliente !== undefined
+                    ? { priEspRefcliente: parsed.data.priEspRefcliente }
+                    : {}),
                 pesCod: parsed.data.pesCod,
                 dpeNomPessoa: parsed.data.dpeNomPessoa,
                 moeCod: parsed.data.moeCod,
+                ...(parsed.data.pdcDocFederal !== undefined
+                    ? { pdcDocFederal: parsed.data.pdcDocFederal }
+                    : {}),
+                ...(parsed.data.endCodFis !== undefined
+                    ? { endCodFis: parsed.data.endCodFis }
+                    : {}),
             },
-            valorTransacao: parsed.data.valorTransacao,
-            dataReferencia: new Date(),
             ator,
+            ...(parsed.data.dryRun === true ? { dryRunOverride: true } : {}),
         });
-        res.json({ transacaoId: req.params.txnId, idempotencyKey, ...result });
+        // HTTP 200 mesmo em erro de etapa — o `status` carrega o desfecho (settled/skipped/error/dry-run).
+        res.json({ transacaoId: txnId, ...result });
     }),
 );
 

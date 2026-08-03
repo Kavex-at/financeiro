@@ -1,20 +1,13 @@
 import 'reflect-metadata';
 import { inject, injectable } from 'tsyringe';
-import NotImplementedError from '../../errors/NotImplementedError.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
-import {
-    SOLICITACAO_NUMERARIO_DOC_CONFIG,
-    SOLICITACAO_NUMERARIO_DOC_TIP,
-    SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
-    SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO,
-} from '../../interface/recebimentos/constants.js';
 import type {
-    GerDocProcessoSelectionDTOCab,
     Processo,
     SolicitacaoNumerarioDryRun,
 } from '../../interface/recebimentos/GerDocProcesso.js';
 import LogService from '../LogService.js';
 import EncomendaValorCalculator from './EncomendaValorCalculator.js';
+import SnPayloadBuilder from './SnPayloadBuilder.js';
 
 /** Input do `gerar` — o processo escolhido + o valor da transação (base da SN) + o ator. */
 export interface GerarSolicitacaoNumerarioInput {
@@ -32,14 +25,13 @@ export interface GerarSolicitacaoNumerarioInput {
 }
 
 /**
- * SolicitacaoNumerarioService — "Processar" um processo → gerar uma **Solicitação de Numerário
- * (encomenda)** via com299 `gerDocProcesso`.
+ * SolicitacaoNumerarioService — "Processar" um processo → CONSTRÓI o payload da **Solicitação de
+ * Numerário (encomenda)** (com299 `gerDocProcesso`) em DRY-RUN.
  *
- * **DRY-RUN-ONLY.** `gerar()` CONSTRÓI o payload `GerDocProcessoSelectionDTOCab` exato (config `gcd`
- * "Solicitação de Numerário - Encomenda", `filCod`/`priCod`/`valor` mapeados) e o DEVOLVE com
- * `dryRun: true` — SEM nenhuma chamada ao Conexos. O envio real vive só no seam `enviarAoErp`, que
- * lança `NotImplementedError`: não há caminho de escrita no ERP alcançável nesta iteração. Ver
- * `ontology/actions/gerar-solicitacao-numerario.md` e
+ * `gerar()` monta o `GerDocProcessoSelectionDTOCab` exato (via `SnPayloadBuilder` — a MESMA fonte que o
+ * orquestrador REAL `RecebimentoNumerarioService` usa) e o DEVOLVE com `dryRun: true`, SEM nenhuma
+ * chamada ao Conexos. O envio real vive no orquestrador (gated por `conexosWriteEnabled`/`conexosDryRun`);
+ * esta rota preserva o preview. Ver `ontology/actions/recebimentos/gerar-solicitacao-numerario.md` e
  * `ontology/integrations/conexos-com299-gerdoc.md`.
  */
 @injectable()
@@ -51,15 +43,16 @@ export default class SolicitacaoNumerarioService {
         private environmentProvider: EnvironmentProvider,
         @inject(EncomendaValorCalculator)
         private encomendaValorCalculator: EncomendaValorCalculator,
+        @inject(SnPayloadBuilder)
+        private snPayloadBuilder: SnPayloadBuilder,
     ) {}
 
     /**
      * Constrói e devolve o payload da SN (dry-run). NUNCA envia ao ERP.
      *
      * O `valor` da SN = valor CRU da transação (a regra de % da encomenda é não-resolvida — ver o
-     * TODO no input). O `items[]` (rateio) carrega uma única parcela com o total, espelhando o
-     * `TmpCom068DTOItem` do swagger; os códigos de rateio (prj/ctp/tpc/cfo) ficam 0 (placeholder) até
-     * o HAR confirmar a origem — o preview deixa isso explícito.
+     * TODO no input). O `items[]` (rateio) carrega uma única parcela com o total; os códigos de rateio
+     * (prj/ctp/tpc/cfo) ficam 0 (placeholder) até o HAR confirmar a origem — o preview deixa explícito.
      */
     public gerar = async (
         input: GerarSolicitacaoNumerarioInput,
@@ -67,46 +60,13 @@ export default class SolicitacaoNumerarioService {
         const { processo, valorTransacao, dataReferencia, ator } = input;
         // Regra de % da encomenda isolada no calculator (não-resolvida hoje → valor cru).
         const { valorSn } = this.encomendaValorCalculator.calcular({ valorTransacao });
-        const dataIso = dataReferencia.toISOString();
 
-        // `gcdCod` vem do ambiente (`SN_GCD_COD`) — sentinela 0 = "não confirmado". Ver EnvironmentVars.
+        // `gcdCod` vem do ambiente (`SN_GCD_COD`) — sentinela 0 = "não confirmado".
         const env = await this.environmentProvider.getEnvironmentVars();
-        const docConfig = {
-            gcdCod: env.solicitacaoNumerarioGcdCod,
-            gcdDesNome: SOLICITACAO_NUMERARIO_DOC_CONFIG.gcdDesNome,
-        };
+        const gcdCod = env.solicitacaoNumerarioGcdCod;
 
-        const payload: GerDocProcessoSelectionDTOCab = {
-            filCod: processo.filCod,
-            docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
-            docVldTipo: SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
-            docVldTipoAdto: SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO,
-            priCod: processo.priCod,
-            // `priEspRefcliente` é opcional no imp021 — aqui a semântica é
-            // "campo vazio no ERP", não "não sei".
-            priEspRefcliente: processo.priEspRefcliente ?? '',
-            pesCod: processo.pesCod,
-            dpeNomPessoa: processo.dpeNomPessoa,
-            gcdCod: docConfig.gcdCod,
-            gcdDesNome: docConfig.gcdDesNome,
-            docDtaEmissao: dataIso,
-            dtaVencimento: dataIso,
-            valor: valorSn,
-            // `null` de propósito: a SN Encomenda não carrega moeda (BRL implícito) — HAR-confirmado
-            // (doc 18202). A moeda do processo NÃO vai no doc; a suposição 790 era errada.
-            moeCod: null,
-            items: [
-                {
-                    prjCod: 0,
-                    ctpCod: 0,
-                    tmpMnyValor: valorSn,
-                    ctpDesNome: docConfig.gcdDesNome,
-                    tpcCod: 0,
-                    cfoEspCod: 0,
-                    total: valorSn,
-                },
-            ],
-        };
+        const docConfig = this.snPayloadBuilder.docConfig(gcdCod);
+        const payload = this.snPayloadBuilder.build({ processo, valorSn, dataReferencia, gcdCod });
 
         void this.logService.info({
             type: 'BUSINESS_INFO',
@@ -121,16 +81,5 @@ export default class SolicitacaoNumerarioService {
         });
 
         return { dryRun: true, docConfig, payload };
-    };
-
-    /**
-     * SEAM do envio REAL ao Conexos (`POST /api/com299/gerDocProcesso`). **NÃO IMPLEMENTADO** de
-     * propósito — lança `NotImplementedError` para garantir que NÃO há caminho de escrita no ERP
-     * alcançável nesta iteração. Será cabeado quando HML/HAR confirmarem o `gcdCod` e o shape exatos.
-     */
-    public enviarAoErp = async (_payload: GerDocProcessoSelectionDTOCab): Promise<never> => {
-        throw new NotImplementedError(
-            'com299/gerDocProcesso live POST is disabled — dry-run only until HML/HAR confirm gcdCod + payload',
-        );
     };
 }

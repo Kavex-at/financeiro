@@ -75,8 +75,12 @@ describe('ContingenciaDecider (DI wrapper over the module default sets)', () => 
         expect(decider.decidir('12').aviso).toBe('SCAN');
     });
 
-    it('REFUSES any non-contingency code today — the normal allowlist is empty by design (assertion)', () => {
-        // Empty NDE_NORMAL_TP_NF_CONHECIDOS → nothing routes to homologaNfe until seeded from real data.
+    it('routes the HAR-confirmed normal code "10" to homologaNfe', () => {
+        // NDE_NORMAL_TP_NF_CONHECIDOS seeded with "10" (doc 18337, HAR 2026-08-01).
+        expect(decider.decidir('10').verbo).toBe('homologaNfe');
+    });
+
+    it('REFUSES any code outside {contingência ∪ normais-conhecidos} (fail-loud, not fail-open)', () => {
         expect(() => decider.decidir('1')).toThrow(VldTpNfDesconhecidoError);
         expect(() => decider.decidir('55')).toThrow(VldTpNfDesconhecidoError);
     });

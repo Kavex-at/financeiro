@@ -1,6 +1,11 @@
 import type { ProcessamentoStatus, StatusElegibilidade } from '@/lib/types'
 import { formatNumber } from '@/lib/utils'
 
+// Máscara/parse/format de valores pt-BR promovidos para `@/lib/brl` (fonte única
+// compartilhada com Recebimentos). Re-exportados aqui para não quebrar os imports
+// existentes de `./format`.
+export { maskBrl, numToMask, parseBrl } from '@/lib/brl'
+
 /**
  * Processamento (baixa/lançamento da permuta). LIGADO desde a Fase 3 (write-back no `fin010` vivo):
  * a baixa real é feita pelo fluxo "Baixar" (reconciliação adto→invoice no borderô). Esta flag
@@ -104,27 +109,6 @@ export const fmtData = (iso?: string) =>
 /** Taxa de câmbio (pt-BR, até 4 casas — preserva a precisão p/ conferência). */
 export const fmtTaxa = (t: number) =>
   t.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
-
-/** Parse de valor digitado em pt-BR ("5.557,42" → 5557.42). Ponto = milhar,
- * vírgula = decimal. Sem vírgula, aceita o número como veio (ex.: "5000"). */
-export const parseBrl = (s: string): number => {
-  const t = s.trim()
-  return t.includes(',') ? Number(t.replace(/\./g, '').replace(',', '.')) : Number(t)
-}
-
-/** Máscara monetária pt-BR no estilo "centavos": os dígitos digitados são lidos como
- * centavos e formatados com milhar (.) + decimais (,). Ex.: "4336604" → "43.366,04". */
-export const maskBrl = (raw: string): string => {
-  const digits = raw.replace(/\D/g, '').replace(/^0+(?=\d)/, '')
-  if (digits === '') return ''
-  return (Number(digits) / 100).toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-}
-
-/** Converte um número (ex.: saldo) para a string mascarada pt-BR ("43.366,04"). */
-export const numToMask = (n: number): string => maskBrl(String(Math.round(n * 100)))
 
 /** Total por moeda negociada (um item = `valorMoedaNegociada` na sua `moeda`). */
 export type MoedaTotal = { moeda: string; total: number }

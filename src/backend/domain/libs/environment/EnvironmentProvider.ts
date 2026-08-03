@@ -62,6 +62,15 @@ export default class EnvironmentProvider {
         return Number.isInteger(n) && n > 0 ? n : RECEBIMENTO_INGEST_DIAS_PADRAO;
     };
 
+    /**
+     * Lê um inteiro positivo de env (poll SEFAZ da NDe) com default. Valor inválido/ausente cai no
+     * default — nunca zero (um teto de zero faria o poll não rodar; um intervalo de zero seria busy-loop).
+     */
+    private resolvePositiveInt = (key: string, fallback: number): number => {
+        const n = Number(this.readEnv(key));
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+    };
+
     /** Filiais da ingestão (`RECEBIMENTO_INGEST_FIL_CODS`, CSV). Vazio = todas. */
     private resolveIngestFilCods = (): number[] =>
         this.readEnv('RECEBIMENTO_INGEST_FIL_CODS', '')
@@ -122,6 +131,19 @@ export default class EnvironmentProvider {
             ),
             recebimentoIngestDias: this.resolveIngestDias(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
+            fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
+                ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
+                : undefined,
+            com297GcdNotaDebitoNome: this.readEnv(
+                'COM297_GCD_NOTA_DEBITO_NOME',
+                'NOTA DE DÉBITO ELETRÔNICA',
+            ),
+            com297GcdNotaDebito: this.readEnv('COM297_GCD_NOTA_DEBITO')
+                ? Number(this.readEnv('COM297_GCD_NOTA_DEBITO'))
+                : undefined,
+            ndePollTimeoutMs: this.resolvePositiveInt('NDE_POLL_TIMEOUT_MS', 300_000),
+            ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
+            ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
         });
     };
 
@@ -162,6 +184,19 @@ export default class EnvironmentProvider {
             recebimentosEnabled: this.resolveRecebimentosEnabled(this.readEnv('environment')),
             recebimentoIngestDias: this.resolveIngestDias(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
+            fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
+                ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
+                : undefined,
+            com297GcdNotaDebitoNome: this.readEnv(
+                'COM297_GCD_NOTA_DEBITO_NOME',
+                'NOTA DE DÉBITO ELETRÔNICA',
+            ),
+            com297GcdNotaDebito: this.readEnv('COM297_GCD_NOTA_DEBITO')
+                ? Number(this.readEnv('COM297_GCD_NOTA_DEBITO'))
+                : undefined,
+            ndePollTimeoutMs: this.resolvePositiveInt('NDE_POLL_TIMEOUT_MS', 300_000),
+            ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
+            ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
         });
     };
 

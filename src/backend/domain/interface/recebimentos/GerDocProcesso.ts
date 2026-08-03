@@ -49,6 +49,22 @@ export interface Processo {
     valor?: number;
     /** Contraparte solta usada no filtro (espelha `TransacaoBancaria.contraparte`). */
     contraparte?: string;
+    /**
+     * CNPJ da pessoa/pagador (`pdcDocFederal`, ex. "37032037000101") do payload com299.
+     *
+     * OPCIONAL — GAP de fonte: o `imp021` (lista de processos) NÃO expõe o documento federal da
+     * pessoa nem o endereço fiscal. O HAR (doc 18339) mostra a UI enviando ambos, mas eles vêm do
+     * detalhe da pessoa/processo (não cabeado ainda). Quando ausente, o payload OMITE a chave — a
+     * `validaConfigDoc` já aceita `pdcDocFederal?`, e o servidor resolveu a config sem ela nos testes.
+     * TODO(frente-iv): sourcing por lookup de pessoa (detalhe com/imp021) quando o endpoint for
+     * confirmado por HAR; até lá o front pode preenchê-lo no corpo da rota.
+     */
+    pdcDocFederal?: string;
+    /**
+     * Endereço fiscal da pessoa (`endCodFis`) do payload com299. OPCIONAL pelo MESMO gap de fonte
+     * acima (o HAR usou `2`; permutas defaultava `1` — NÃO hardcodar). Omitido quando desconhecido.
+     */
+    endCodFis?: number;
 }
 
 /** Boundary validation (Zod at boundaries). */
@@ -62,6 +78,8 @@ export const processoSchema = z.object({
     moeCodAssumido: z.boolean().optional(),
     valor: z.number().optional(),
     contraparte: z.string().optional(),
+    pdcDocFederal: z.string().optional(),
+    endCodFis: z.number().int().optional(),
 });
 
 // ─────────────────────────────────────────────── GerDocProcessoSelectionDTOCab (com299 swagger)

@@ -13,6 +13,7 @@ const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     getGeneric: jest.fn().mockResolvedValue({ rows: [] }),
     postGeneric: jest.fn().mockResolvedValue({}),
     postGenericOnce: jest.fn().mockResolvedValue({}),
+    putGenericOnce: jest.fn().mockResolvedValue({}),
     postMultipartOnce: jest.fn().mockResolvedValue({}),
     deleteGeneric: jest.fn().mockResolvedValue(undefined),
     getFiliais: jest.fn().mockResolvedValue([]),

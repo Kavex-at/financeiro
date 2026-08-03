@@ -402,6 +402,25 @@ export class ConexosService {
     }
 
     /**
+     * Single-attempt authenticated PUT — NO 401 re-login/retry, mirroring
+     * `authenticatedPostOnce`. Used by the com300 fiscal read-modify-write
+     * (`PUT /api/com300`, no id in the URL): the RMW rewrites the whole
+     * `finDocFiscal`, so a silent re-PUT on 401 could clobber concurrently-changed
+     * state. A 401 propagates to the caller (fail-closed) for manual review.
+     */
+    async authenticatedPutOnce<T = unknown>(
+        path: string,
+        body: unknown,
+        opts: { filCod?: number } = {},
+    ): Promise<T> {
+        await this.ensureSid();
+        const url = path.startsWith('/') ? path : `/${path}`;
+        const headers = this.defaultHeaders(opts.filCod);
+        const resp = await this.client.put<T>(url, body, { headers });
+        return resp.data;
+    }
+
+    /**
      * Authenticated MULTIPART upload (`multipart/form-data`) — para o `carregar`
      * de arquivo de retorno do SISPAG (`fin052/arquivosRetorno/carregar`, o `.RET`).
      * O stack é JSON-only; este é o único caminho de upload de arquivo.

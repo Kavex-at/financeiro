@@ -43,6 +43,12 @@ export interface TransacaoBancaria {
   referenciaBancaria?: string
   naturalKey: string
   status: TransacaoBancariaStatus
+  /**
+   * Conta financeira (Conexos `ger_num`) em que o pagamento caiu. É ela que a baixa
+   * (fin014) usa — o pagamento já carrega a conta. Sem `gerNum` a alocação real não
+   * pode rodar (o backend devolve 422); a UI bloqueia o Processar e avisa.
+   */
+  gerNum?: number
   /** Classificação do match (quando já houve `atribuirBaixa`). Fase 2 popula de verdade. */
   classificacaoMatch?: MatchClassificacao
   importRunId?: string
@@ -393,6 +399,60 @@ export interface SolicitacaoNumerarioDryRun {
   payload: GerDocProcessoSelectionDTOCab
 }
 
+// ─────────────────────────────────────────── Alocação REAL (payment-driven, split)
+// A partir da automação real do Conexos: "Processar" numa linha roda a automação
+// completa (com299 SN → fin014 baixa na conta do pagamento → com297 NDe + cauda
+// fiscal + homologação + poll SEFAZ) para UMA alocação. Split: cada processo
+// consome parte do `saldoRestante`. Espelha o contrato do backend um-a-um.
+
+/** Status terminal de uma alocação real. */
+export type AlocacaoStatus = 'settled' | 'skipped' | 'error' | 'dry-run'
+
+/** Corpo enviado ao backend para processar UMA alocação. */
+export interface AlocacaoRequest {
+  priCod: number
+  valor: number
+  /**
+   * Filial DO PROCESSO escolhido (não a do pagamento). Todo o fluxo Conexos
+   * (com299 SN → fin014 → com297 + cauda fiscal) roda nesta filial: o processo de
+   * importação pode viver numa filial diferente da transação. A conta financeira
+   * (`gerNum`) é global, então continua válida aqui.
+   */
+  filCod: number
+  priEspRefcliente?: string
+  pesCod: number
+  dpeNomPessoa: string
+  moeCod: number
+}
+
+/**
+ * Resultado de UMA alocação real — espelho do que o backend devolve em
+ * `POST /recebimentos/transacoes/:txnId/solicitacao-numerario`.
+ */
+export interface AlocacaoResultado {
+  status: AlocacaoStatus
+  /** Etapa em que parou (ou onde falhou, quando `status === 'error'`). */
+  etapa?: string
+  /** docCod da Solicitação de Numerário (com299). */
+  snDocCod?: number
+  /** nº do borderô da baixa (fin014). */
+  borCod?: number
+  /** docCod da Nota de Débito (com297). */
+  ndDocCod?: number
+  /** Homologou com validações pendentes (`docVldComvalidacoes===2`) → revisão humana. */
+  revisaoHumana?: boolean
+  /** Autorização SEFAZ concluída (poll `vldAutorizado`). */
+  ndeAutorizado?: boolean
+  /** Resultado de `docVldComvalidacoes` da homologação (1 ok / 2 → revisão). */
+  docVldComvalidacoes?: number
+  /** `vldAutorizado` da NDe: `0` = ainda aguardando SEFAZ (não é falha). */
+  vldAutorizado?: number
+  /** Mensagem de erro quando `status === 'error'`. */
+  erro?: string
+  /** `true` quando o backend rodou em modo simulação (nada foi ao ERP). */
+  dryRun: boolean
+}
+
 /** Config canônica da SN encomenda (fixture de fallback + rótulo). */
 export const SOLICITACAO_NUMERARIO_GCD_DES_NOME = 'Solicitação de Numerário - Encomenda'
 
@@ -446,41 +506,56 @@ export async function fetchClientes(): Promise<ClienteProcesso[]> {
 }
 
 /**
- * "Processar" um processo → gera a Solicitação de Numerário (encomenda) em DRY-RUN
- * (`POST /recebimentos/transacoes/:txnId/solicitacao-numerario`). NUNCA envia ao ERP: o backend só
- * CONSTRÓI e devolve o payload.
+ * "Processar" uma alocação → roda a automação REAL do Conexos para UM processo
+ * (`POST /recebimentos/transacoes/:txnId/solicitacao-numerario`): com299 (SN) → fin014
+ * (baixa na conta do pagamento) → com297 (NDe) + cauda fiscal + homologação + poll SEFAZ.
+ * NÃO é simulação — gera documentos no ERP. O modo dry-run é decidido pelo backend
+ * (`resposta.dryRun`).
  *
- * NÃO tem fallback local. Montar o payload no navegador quando o backend cai
- * mostrava um documento INVENTADO com um toast verde de sucesso — pior que um
- * erro, porque não corresponde ao que o backend faria.
+ * Split: `valor` é a fatia deste processo do saldo do pagamento (o modal controla o
+ * `saldoRestante`); o `moeCod`/`pesCod`/`dpeNomPessoa` vêm do processo escolhido.
+ *
+ * NÃO tem fallback local. Um erro do backend PRECISA aparecer como erro — inventar
+ * um sucesso no navegador seria pior, pois não corresponde ao estado do ERP.
  */
 export async function processarSolicitacaoNumerario(
   txnId: string,
-  processo: Processo,
-  valorTransacao: number,
-): Promise<SolicitacaoNumerarioDryRun> {
+  allocation: AlocacaoRequest,
+): Promise<AlocacaoResultado> {
   const res = await apiFetch(
-      `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/solicitacao-numerario`,
-      {
-        method: 'POST',
-        headers: await withAuthHeaders({ 'content-type': 'application/json' }),
-        body: JSON.stringify({
-          filCod: processo.filCod,
-          priCod: processo.priCod,
-          priEspRefcliente: processo.priEspRefcliente,
-          pesCod: processo.pesCod,
-          dpeNomPessoa: processo.dpeNomPessoa,
-          moeCod: processo.moeCod,
-          valorTransacao,
-        }),
-      },
-    )
-    if (!res.ok) throw new Error(`API ${res.status}`)
-    const json = (await res.json()) as Partial<SolicitacaoNumerarioDryRun>
-  if (!json?.payload || !json?.docConfig) {
-    throw new Error('Resposta do backend sem payload/docConfig')
+    `${API}/recebimentos/transacoes/${encodeURIComponent(txnId)}/solicitacao-numerario`,
+    {
+      method: 'POST',
+      headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        priCod: allocation.priCod,
+        valor: allocation.valor,
+        filCod: allocation.filCod,
+        priEspRefcliente: allocation.priEspRefcliente,
+        pesCod: allocation.pesCod,
+        dpeNomPessoa: allocation.dpeNomPessoa,
+        moeCod: allocation.moeCod,
+      }),
+    },
+  )
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as Partial<AlocacaoResultado>
+  if (!json?.status) {
+    throw new Error('Resposta do backend sem status da alocação')
   }
-  return { dryRun: true, docConfig: json.docConfig, payload: json.payload }
+  return {
+    status: json.status,
+    etapa: json.etapa,
+    snDocCod: json.snDocCod,
+    borCod: json.borCod,
+    ndDocCod: json.ndDocCod,
+    revisaoHumana: json.revisaoHumana,
+    ndeAutorizado: json.ndeAutorizado,
+    docVldComvalidacoes: json.docVldComvalidacoes,
+    vldAutorizado: json.vldAutorizado,
+    erro: json.erro,
+    dryRun: json.dryRun ?? false,
+  }
 }
 
 /**

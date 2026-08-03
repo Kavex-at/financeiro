@@ -82,6 +82,33 @@ export default class EnvironmentVars {
     public snLiveWriteEnabled: boolean;
     public solicitacaoNumerarioGcdCod: number;
 
+    /**
+     * Numerário (fluxo de 3 telas do guia "telas Conexos"): conta financeira do recebimento fin014
+     * (`gerNum`, a MESMA da FIN_134) e a Configuração da nota de débito com297. `fin014ContaFinanceira`
+     * é fail-closed se ausente (não adivinhamos conta). O gcd da nota de débito é resolvido em runtime
+     * pelo NOME (`com297GcdNotaDebitoNome`); o numérico é um override opcional.
+     */
+    public fin014ContaFinanceira?: number;
+    public com297GcdNotaDebitoNome: string;
+    public com297GcdNotaDebito?: number;
+
+    /**
+     * Poll de autorização SEFAZ pós-homologação da NDe (`NDE_POLL_TIMEOUT_MS`/`NDE_POLL_INTERVAL_MS`).
+     * `vldAutorizado` continua `0` logo após homologar (SEFAZ é assíncrono) — o orquestrador faz
+     * polling até mudar, com teto de tempo. TIMEOUT não é erro: a etapa fica em `homologado` e retomar
+     * a alocação retoma o poll. Defaults conservadores (5 min de teto, 5 s de intervalo).
+     */
+    public ndePollTimeoutMs: number;
+    public ndePollIntervalMs: number;
+
+    /**
+     * Liga o pré-flight de ACL da conta de serviço antes de qualquer escrita do numerário REAL
+     * (`GET /api/permissoes/new/com297`: com300 UPDATE, com131 GERAR OBS, com297 HOMOLOGAR/CONTINGENCIA,
+     * com194 SELECT). `NDE_ACL_PREFLIGHT=false` desliga (default TRUE — fail-safe). O pré-flight é
+     * fail-closed: 401/403 na consulta → 403 na rota.
+     */
+    public ndeAclPreflight: boolean;
+
     constructor({
         databaseConnectionString,
         conexosLogin,
@@ -104,6 +131,12 @@ export default class EnvironmentVars {
         recebimentosEnabled,
         recebimentoIngestDias,
         recebimentoIngestFilCods,
+        fin014ContaFinanceira,
+        com297GcdNotaDebitoNome,
+        com297GcdNotaDebito,
+        ndePollTimeoutMs,
+        ndePollIntervalMs,
+        ndeAclPreflight,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -126,6 +159,12 @@ export default class EnvironmentVars {
         recebimentosEnabled: boolean;
         recebimentoIngestDias: number;
         recebimentoIngestFilCods: number[];
+        fin014ContaFinanceira?: number;
+        com297GcdNotaDebitoNome: string;
+        com297GcdNotaDebito?: number;
+        ndePollTimeoutMs: number;
+        ndePollIntervalMs: number;
+        ndeAclPreflight: boolean;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -148,5 +187,11 @@ export default class EnvironmentVars {
         this.recebimentosEnabled = recebimentosEnabled;
         this.recebimentoIngestDias = recebimentoIngestDias;
         this.recebimentoIngestFilCods = recebimentoIngestFilCods;
+        this.fin014ContaFinanceira = fin014ContaFinanceira;
+        this.com297GcdNotaDebitoNome = com297GcdNotaDebitoNome;
+        this.com297GcdNotaDebito = com297GcdNotaDebito;
+        this.ndePollTimeoutMs = ndePollTimeoutMs;
+        this.ndePollIntervalMs = ndePollIntervalMs;
+        this.ndeAclPreflight = ndeAclPreflight;
     }
 }

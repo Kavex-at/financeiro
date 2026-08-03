@@ -24,6 +24,8 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
             correlationId: 'corr-1',
             filCod: 2,
             priCod: 90001,
+            txnId: 'txn-1',
+            valor: 15000,
             dryRun: false,
             executadoPor: 'yuri',
         });
@@ -34,11 +36,15 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
         // O CASE WHEN status='settled' garante que retry NUNCA regride/duplica a SN.
         expect(sql).toContain("solicitacao_numerario_execucao.status = 'settled'");
         expect(sql).toContain('$newStatus');
+        expect(sql).toContain('$txnId');
+        expect(sql).toContain('$valor');
         expect(sql).not.toMatch(/'\s*\+|\$\{/); // sem interpolação
         expect(paramsOf(db.selectFirst as jest.Mock)).toMatchObject({
             key: 'sn:u:1',
             correlationId: 'corr-1',
             priCod: 90001,
+            txnId: 'txn-1',
+            valor: 15000,
             newStatus: 'reconciling',
             dryRun: false,
         });
@@ -62,15 +68,58 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
             newStatus: 'pending',
             dryRun: true,
             correlationId: null,
+            txnId: null,
+            valor: null,
         });
         expect(out).toEqual({ status: 'settled', alreadySettled: true });
     });
 
-    it('setDocCod: UPDATE parametrizado do doc_cod (rastreabilidade de órfão)', async () => {
+    it('setDocCod: UPDATE parametrizado do doc_cod (rastreabilidade de órfão) + etapa sn', async () => {
         const db = buildDb();
         await new SolicitacaoNumerarioExecucaoRepository(db).setDocCod('sn:u:1', 18202);
-        expect(sqlOf(db.update as jest.Mock)).toContain('SET doc_cod = $docCod');
+        const sql = sqlOf(db.update as jest.Mock);
+        expect(sql).toContain('SET doc_cod = $docCod');
+        expect(sql).toContain("etapa = 'sn'");
         expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', docCod: 18202 });
+    });
+
+    it('setFin014BorCod: UPDATE parametrizado do borderô + etapa fin014-done', async () => {
+        const db = buildDb();
+        await new SolicitacaoNumerarioExecucaoRepository(db).setFin014BorCod('sn:u:1', 77);
+        const sql = sqlOf(db.update as jest.Mock);
+        expect(sql).toContain('fin014_bor_cod = $borCod');
+        expect(sql).toContain("etapa = 'fin014-done'");
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', borCod: 77 });
+    });
+
+    it('setNdDocCod: UPDATE parametrizado da nota de débito + etapa nota-debito', async () => {
+        const db = buildDb();
+        await new SolicitacaoNumerarioExecucaoRepository(db).setNdDocCod('sn:u:1', 18337);
+        const sql = sqlOf(db.update as jest.Mock);
+        expect(sql).toContain('nd_doc_cod = $docCod');
+        expect(sql).toContain("etapa = 'nota-debito'");
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', docCod: 18337 });
+    });
+
+    it('setEtapa: UPDATE parametrizado da etapa (leg fiscal)', async () => {
+        const db = buildDb();
+        await new SolicitacaoNumerarioExecucaoRepository(db).setEtapa('sn:u:1', 'fiscal-done');
+        expect(sqlOf(db.update as jest.Mock)).toContain('SET etapa = $etapa');
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', etapa: 'fiscal-done' });
+    });
+
+    it('setRevisaoHumana: UPDATE parametrizado do flag de revisão', async () => {
+        const db = buildDb();
+        await new SolicitacaoNumerarioExecucaoRepository(db).setRevisaoHumana('sn:u:1', true);
+        expect(sqlOf(db.update as jest.Mock)).toContain('revisao_humana = $revisao');
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', revisao: true });
+    });
+
+    it('setNdeAutorizado: UPDATE parametrizado do flag de autorização SEFAZ', async () => {
+        const db = buildDb();
+        await new SolicitacaoNumerarioExecucaoRepository(db).setNdeAutorizado('sn:u:1', true);
+        expect(sqlOf(db.update as jest.Mock)).toContain('nde_autorizado = $autorizado');
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', autorizado: true });
     });
 
     it('setRequestPayload: UPDATE jsonb parametrizado', async () => {
@@ -91,6 +140,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
         });
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain("status = 'settled'");
+        expect(sql).toContain("etapa = 'concluido'");
         expect(sql).toContain('erro_mensagem = NULL');
         expect(sql).toContain('$erpResponse::jsonb');
         expect(sql).not.toMatch(/'\s*\+|\$\{/);
@@ -120,9 +170,16 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
             correlation_id: 'corr-1',
             fil_cod: 2,
             pri_cod: 90001,
+            txn_id: 'txn-1',
+            valor: '15000.00',
             status: 'settled',
             dry_run: false,
             doc_cod: 18202,
+            fin014_bor_cod: 77,
+            nd_doc_cod: 18337,
+            etapa: 'concluido',
+            revisao_humana: false,
+            nde_autorizado: true,
             criado_em: '2026-07-01T00:00:00Z',
             atualizado_em: '2026-07-01T00:00:00Z',
         });
@@ -133,9 +190,16 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
             correlationId: 'corr-1',
             filCod: 2,
             priCod: 90001,
+            txnId: 'txn-1',
+            valor: 15000,
             status: 'settled',
             dryRun: false,
             docCod: 18202,
+            fin014BorCod: 77,
+            ndDocCod: 18337,
+            etapa: 'concluido',
+            revisaoHumana: false,
+            ndeAutorizado: true,
         });
 
         const db2 = buildDb();

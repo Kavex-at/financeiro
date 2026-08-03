@@ -153,6 +153,25 @@ export const SOLICITACAO_NUMERARIO_DOC_VLD_TIPO = 9;
 export const SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO = 1;
 
 /**
+ * Completar o adiantamento SN até finalizável (HAR 2026-08-02 17-31, doc 18342). A geração cria um SHELL
+ * (docMnyValor:0); para virar adiantamento BAIXÁVEL faltam a condição de pagamento do cadastro e a linha de
+ * item com o valor.
+ * - `SN_TPD_COD = 3` — tipo de documento "SOLICITAÇÃO DE NUMERÁRIO" (`tpdCod`), usado no filtro do rateio.
+ * - `SN_ADIANTAMENTO_PRJ_COD = 1` — projeto usado na linha de item (default do fluxo SN Encomenda).
+ * - `SN_CONTA_ADIANTAMENTO_ENCOMENDA` — NOME da conta de projeto (`ctpDesNome`) da SN Encomenda; o `ctpCod`
+ *   numérico é resolvido em runtime pelo `lov/ContasProjetoCtb` (varia por processo/tenant).
+ */
+export const SN_TPD_COD = 3;
+export const SN_ADIANTAMENTO_PRJ_COD = 1;
+/**
+ * Conta de projeto (rateio) da linha de item — PREFIXO + a VARIANTE da SN do processo. A config de SN varia
+ * por processo (Encomenda/Terceiros/…) e a conta acompanha: "ADIANTAMENTO DE CLIENTE ENCOMENDA",
+ * "ADIANTAMENTO DE CLIENTE TERCEIROS", etc. Resolvida em runtime no `lov/ContasProjetoCtb` pelo nome derivado.
+ */
+export const SN_CONTA_ADIANTAMENTO_PREFIXO = 'ADIANTAMENTO DE CLIENTE';
+export const SN_CONTA_ADIANTAMENTO_ENCOMENDA = 'ADIANTAMENTO DE CLIENTE ENCOMENDA';
+
+/**
  * Moeda ASSUMIDA do PROCESSO (BRL/790) — concern SEPARADO do `moeCod` do doc SN (que é `null`). O
  * `imp021` não expõe a moeda do processo (só `moeCodConv`/`moeCodSeg`); o `ProcessoProviderConexos`
  * assume BRL e marca `moeCodAssumido: true` p/ a UI avisar. Named constant (não o `SOLICITACAO_*`
@@ -236,14 +255,14 @@ export const NDE_CONTINGENCIA_AVISO: Readonly<Record<string, 'DPEC' | 'SCAN'>> =
 };
 
 /**
- * Whitelist de `vldTpNf` NORMAIS conhecidos (→ `homologaNfe`). **VAZIO de propósito (assertion, não
- * assumption).** Invertemos o predicado fail-open do UI (que roteia QUALQUER valor não-{11,12} p/
- * normal): aqui um `vldTpNf` fora de {contingência ∪ normais-conhecidos} é RECUSADO (fail-loud), não
- * assumido normal. Precisa ser SEED a partir da distribuição real de `vldTpNf` nos documentos NDe da
- * Columbia ANTES de ligar a escrita — P0 gate-before-live em `_inbox/recebimentos-nde-com297-gap.md`.
- * Enquanto vazio, a homologação (gated OFF por default) recusa docs normais — intencional.
+ * Whitelist de `vldTpNf` NORMAIS conhecidos (→ `homologaNfe`). Invertemos o predicado fail-open do UI
+ * (que roteia QUALQUER valor não-{11,12} p/ normal): aqui um `vldTpNf` fora de {contingência ∪
+ * normais-conhecidos} é RECUSADO (fail-loud), não assumido normal.
+ * SEED `"10"` — HAR-confirmado (doc 18337, filial 2, produção, 2026-08-01): NDe normal emite com
+ * `vldTpNf="10"` e roteia p/ `homologaNfe`. Ver `_inbox/recebimentos-numerario-real-fiscal-spec.md`.
+ * Novos tipos observados devem ser adicionados aqui (fail-loud força a decisão explícita).
  */
-export const NDE_NORMAL_TP_NF_CONHECIDOS: readonly string[] = [];
+export const NDE_NORMAL_TP_NF_CONHECIDOS: readonly string[] = ['10'];
 
 /**
  * Ações ACL (`checkActions view=com297`) exigidas p/ homologar — a conta de serviço da automação
@@ -279,3 +298,18 @@ export const NDE_GERACAO_DEFAULTS = {
     numero: '0',
     tipoNotaDebito: 'Pagamento antecipado',
 } as const;
+
+/**
+ * com300 `fisVldTipoNfDebito` — tipo de nota de débito FISCAL (inteiro, NÃO string). `6` = PAGAMENTO
+ * ANTECIPADO (HAR-confirmado, doc 18337, 2026-08-01). Setado no read-modify-write do com300; sucesso
+ * do PUT ⟺ o eco devolve `fisVldTipoNfDebito === 6`. `fisVldTipoNfCredito` é intocado.
+ * Ver `_inbox/recebimentos-numerario-real-fiscal-spec.md` §(a).
+ */
+export const NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO = 6;
+
+/**
+ * Marcador da observação SINIEF que o com131 `geraObs` grava em `fisEspObs`. Guard de idempotência:
+ * se `fisEspObs` já o contém, NÃO re-chamar `geraObs` (o texto termina em ` /` e pode ACRESCENTAR).
+ * Torna a etapa de observações retomável. Ver spec §(b).
+ */
+export const NDE_OBS_SINIEF_MARKER = 'AJUSTE SINIEF';

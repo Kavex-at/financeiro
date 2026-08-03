@@ -1,7 +1,7 @@
 import 'reflect-metadata';
-import NotImplementedError from '../../errors/NotImplementedError.js';
 import { processoFixture } from '../../interface/recebimentos/__fixtures__/processo.fixture.js';
 import EncomendaValorCalculator from './EncomendaValorCalculator.js';
+import SnPayloadBuilder from './SnPayloadBuilder.js';
 import SolicitacaoNumerarioService from './SolicitacaoNumerarioService.js';
 
 const logStub = { info: jest.fn(), error: jest.fn(), warn: jest.fn() } as never;
@@ -11,7 +11,12 @@ const buildService = (gcdCod = 0): SolicitacaoNumerarioService => {
     const envStub = {
         getEnvironmentVars: jest.fn().mockResolvedValue({ solicitacaoNumerarioGcdCod: gcdCod }),
     } as never;
-    return new SolicitacaoNumerarioService(logStub, envStub, new EncomendaValorCalculator());
+    return new SolicitacaoNumerarioService(
+        logStub,
+        envStub,
+        new EncomendaValorCalculator(),
+        new SnPayloadBuilder(),
+    );
 };
 
 const DATA = new Date('2026-07-28T12:00:00.000Z');
@@ -104,15 +109,16 @@ describe('SolicitacaoNumerarioService.gerar — dry-run payload build (com299)',
     });
 });
 
-describe('SolicitacaoNumerarioService — NO reachable live ERP write path', () => {
-    it('enviarAoErp throws NotImplementedError (dry-run only)', async () => {
-        const service = buildService();
+describe('SolicitacaoNumerarioService — dry-run stays a preview (no ERP write from this service)', () => {
+    it('devolve o payload em dry-run sem tocar o ERP (o envio real vive no orquestrador)', async () => {
+        const service = buildService(150);
         const out = await service.gerar({
             processo: processoFixture,
             valorTransacao: 15000,
             dataReferencia: DATA,
             ator: 'analista',
         });
-        await expect(service.enviarAoErp(out.payload)).rejects.toBeInstanceOf(NotImplementedError);
+        expect(out.dryRun).toBe(true);
+        expect(out.payload.gcdCod).toBe(150);
     });
 });

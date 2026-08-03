@@ -4,7 +4,6 @@ import {
   fetchProcessosParaTransacao,
   processarSolicitacaoNumerario,
   recebimentosPainelFixture,
-  SOLICITACAO_NUMERARIO_GCD_DES_NOME,
   type NotaDebitoEletronica,
   type Processo,
   type Recebimento,
@@ -151,35 +150,56 @@ describe('fetchProcessosParaTransacao — fixture fallback', () => {
   })
 })
 
-describe('processarSolicitacaoNumerario — dry-run (nunca envia ao ERP)', () => {
+describe('processarSolicitacaoNumerario — alocação REAL', () => {
   afterEach(() => jest.clearAllMocks())
 
-  it('usa o payload do backend quando disponível', async () => {
-    const backendPayload = {
-      dryRun: true,
-      docConfig: { gcdCod: 42, gcdDesNome: SOLICITACAO_NUMERARIO_GCD_DES_NOME },
-      payload: { filCod: 4, priCod: 90001, valor: 15000, gcdDesNome: SOLICITACAO_NUMERARIO_GCD_DES_NOME },
-    }
-    mockApiFetch.mockResolvedValue(okJson(backendPayload))
-    const out = await processarSolicitacaoNumerario('txn-1', processoSample, 15000)
-    expect(out.dryRun).toBe(true)
-    expect(out.docConfig.gcdCod).toBe(42)
-    expect(out.payload.valor).toBe(15000)
+  const allocation = {
+    priCod: 90001,
+    valor: 15000,
+    filCod: 7,
+    priEspRefcliente: 'REF-CLI-0001',
+    pesCod: 555,
+    dpeNomPessoa: 'CLIENTE EXEMPLO LTDA',
+    moeCod: 790,
+  }
+
+  it('envia só os campos da alocação e devolve o resultado do backend', async () => {
+    mockApiFetch.mockResolvedValue(
+      okJson({ status: 'settled', snDocCod: 18202, borCod: 771, ndDocCod: 18337, dryRun: false }),
+    )
+    const out = await processarSolicitacaoNumerario('txn-1', allocation)
+    expect(out.status).toBe('settled')
+    expect(out.snDocCod).toBe(18202)
+    expect(out.dryRun).toBe(false)
+    const [, init] = mockApiFetch.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body).toEqual({
+      priCod: 90001,
+      valor: 15000,
+      filCod: 7,
+      priEspRefcliente: 'REF-CLI-0001',
+      pesCod: 555,
+      dpeNomPessoa: 'CLIENTE EXEMPLO LTDA',
+      moeCod: 790,
+    })
   })
 
-  it('erro PROPAGA — nada de payload inventado no navegador', async () => {
-    // O fallback local mostrava um documento que o backend NUNCA teria montado,
-    // com toast verde de sucesso. Pior que um erro.
+  it('propaga o status de erro do backend (HTTP 200 carrega o desfecho)', async () => {
+    mockApiFetch.mockResolvedValue(
+      okJson({ status: 'error', etapa: 'fin014', erro: 'baixa recusada', dryRun: false }),
+    )
+    const out = await processarSolicitacaoNumerario('txn-1', allocation)
+    expect(out.status).toBe('error')
+    expect(out.etapa).toBe('fin014')
+  })
+
+  it('erro de rede PROPAGA — nada de sucesso inventado no navegador', async () => {
     mockApiFetch.mockRejectedValue(new Error('network'))
-    await expect(
-      processarSolicitacaoNumerario('txn-1', processoSample, 27890.55),
-    ).rejects.toThrow('network')
+    await expect(processarSolicitacaoNumerario('txn-1', allocation)).rejects.toThrow('network')
   })
 
-  it('resposta incompleta do backend também falha', async () => {
-    mockApiFetch.mockResolvedValue(okJson({ dryRun: true }))
-    await expect(
-      processarSolicitacaoNumerario('txn-1', processoSample, 27890.55),
-    ).rejects.toThrow(/payload/i)
+  it('resposta sem status também falha', async () => {
+    mockApiFetch.mockResolvedValue(okJson({ dryRun: false }))
+    await expect(processarSolicitacaoNumerario('txn-1', allocation)).rejects.toThrow(/status/i)
   })
 })

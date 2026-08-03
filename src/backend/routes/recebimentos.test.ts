@@ -13,6 +13,10 @@ import { RECEBIMENTO_STATUS } from '../domain/interface/recebimentos/constants.j
 import { PROCESSO_PROVIDER_TOKEN } from '../domain/interface/recebimentos/ports.js';
 import type { Processo } from '../domain/interface/recebimentos/GerDocProcesso.js';
 import RecebimentoPipelineService from '../domain/service/recebimentos/RecebimentoPipelineService.js';
+import RecebimentoNumerarioService from '../domain/service/recebimentos/RecebimentoNumerarioService.js';
+import NumerarioAclChecker from '../domain/service/recebimentos/NumerarioAclChecker.js';
+import TransacaoRepository from '../domain/repository/recebimentos/TransacaoRepository.js';
+import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import type { FilialScopedUser } from '../http/filialAuthz.js';
 import recebimentosRouter from './recebimentos.js';
@@ -158,13 +162,15 @@ describe('POST /recebimentos/pipeline/run — authz por-filial + idempotency nam
 });
 
 const snPayload = (over: Record<string, unknown> = {}) => ({
-    filCod: 4,
     priCod: 90001,
+    valor: 15000,
+    // Filial DO PROCESSO (não a do pagamento). O pagamento é filial 4 no fixture; o processo
+    // escolhido vive na 4 aqui, mas o teste cross-filial abaixo prova que é o body que manda.
+    filCod: 4,
     priEspRefcliente: 'REF-CLI-0001',
     pesCod: 555,
     dpeNomPessoa: 'CLIENTE EXEMPLO LTDA',
     moeCod: 790,
-    valorTransacao: 15000,
     ...over,
 });
 
@@ -258,13 +264,50 @@ describe('GET /recebimentos/transacoes/:txnId/processos — candidate processos 
     });
 });
 
-describe('POST /recebimentos/transacoes/:txnId/solicitacao-numerario — dry-run SN (no ERP write)', () => {
+describe('POST /recebimentos/transacoes/:txnId/solicitacao-numerario — real allocation orchestration', () => {
     afterEach(() => {
         container.clearInstances();
+        container.reset();
         jest.restoreAllMocks();
     });
 
-    it('200 returns dryRun payload with the encomenda gcd config', async () => {
+    /** Registra os stubs que a rota resolve: transação, env (dry-run), orquestrador, ACL. */
+    const registerStubs = (
+        over: {
+            transacao?: unknown;
+            envOver?: Record<string, unknown>;
+            processarResult?: Record<string, unknown>;
+            aclOk?: boolean;
+        } = {},
+    ): { processar: jest.Mock; aclVerificar: jest.Mock } => {
+        const transacao =
+            over.transacao === undefined
+                ? { id: 'txn-1', filCod: 4, valor: 15000, gerNum: 55795 }
+                : over.transacao;
+        container.registerInstance(TransacaoRepository, {
+            findById: jest.fn(async () => transacao),
+        } as never);
+        container.registerInstance(EnvironmentProvider, {
+            getEnvironmentVars: jest.fn(async () => ({
+                conexosWriteEnabled: false,
+                conexosDryRun: true,
+                ndeAclPreflight: true,
+                ...over.envOver,
+            })),
+        } as never);
+        const processar = jest.fn(
+            async () => over.processarResult ?? { status: 'dry-run', dryRun: true },
+        );
+        container.registerInstance(RecebimentoNumerarioService, {
+            processarAlocacao: processar,
+        } as never);
+        const aclVerificar = jest.fn(async () => ({ ok: over.aclOk ?? true }));
+        container.registerInstance(NumerarioAclChecker, { verificar: aclVerificar } as never);
+        return { processar, aclVerificar };
+    };
+
+    it('200 delega ao orquestrador e ecoa o resultado (dry-run gate fechado)', async () => {
+        const { processar } = registerStubs();
         const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
         try {
             const res = await post(
@@ -273,18 +316,73 @@ describe('POST /recebimentos/transacoes/:txnId/solicitacao-numerario — dry-run
             );
             const body = await readJson(res);
             expect(res.status).toBe(200);
-            expect(body.dryRun).toBe(true);
             expect(body.transacaoId).toBe('txn-1');
-            expect(body.docConfig.gcdDesNome).toBe('Solicitação de Numerário - Encomenda');
-            expect(body.payload.filCod).toBe(4);
-            expect(body.payload.priCod).toBe(90001);
-            expect(body.payload.valor).toBe(15000);
+            expect(body.dryRun).toBe(true);
+            expect(processar).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    txnId: 'txn-1',
+                    priCod: 90001,
+                    valor: 15000,
+                    transacao: expect.objectContaining({ gerNum: 55795 }),
+                }),
+            );
         } finally {
             await server.close();
         }
     });
 
-    it('403 when the user may NOT act on the body filCod (cross-filial)', async () => {
+    it('200 mesmo em erro de etapa (status carrega o desfecho)', async () => {
+        registerStubs({
+            envOver: { conexosWriteEnabled: true, conexosDryRun: false, ndeAclPreflight: false },
+            processarResult: { status: 'error', etapa: 'fin014', erro: 'ERP 500', dryRun: false },
+        });
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload(),
+            );
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.status).toBe('error');
+            expect(body.etapa).toBe('fin014');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('404 quando a transação não existe', async () => {
+        registerStubs({ transacao: null });
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-x/solicitacao-numerario`,
+                snPayload(),
+            );
+            expect(res.status).toBe(404);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('422 quando a transação não tem gerNum (conta financeira ausente)', async () => {
+        registerStubs({ transacao: { id: 'txn-1', filCod: 4, valor: 15000 } });
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload(),
+            );
+            expect(res.status).toBe(422);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('403 when the user may NOT act on the PROCESS filial (cross-filial, body-driven)', async () => {
+        // Pagamento na filial 1 (autorizada), mas o processo escolhido está na filial 9 (proibida).
+        // A authz roda contra a filial DO PROCESSO (body.filCod), não a do pagamento.
+        registerStubs({ transacao: { id: 'txn-1', filCod: 1, valor: 15000, gerNum: 55795 } });
         const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [1, 2] }));
         try {
             const res = await post(
@@ -299,12 +397,63 @@ describe('POST /recebimentos/transacoes/:txnId/solicitacao-numerario — dry-run
         }
     });
 
-    it('400 on a malformed payload (Zod boundary)', async () => {
+    it('roda o fluxo na filial DO PROCESSO (body.filCod), não na do pagamento', async () => {
+        // Pagamento na filial 1; processo escolhido na filial 2. O orquestrador (e o pré-flight de
+        // ACL) devem receber a filial 2 — mas a conta financeira segue sendo a gerNum do pagamento.
+        const { processar, aclVerificar } = registerStubs({
+            transacao: { id: 'txn-1', filCod: 1, valor: 15000, gerNum: 55795 },
+            envOver: { conexosWriteEnabled: true, conexosDryRun: false, ndeAclPreflight: true },
+            processarResult: { status: 'settled', dryRun: false },
+        });
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [1, 2] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload({ filCod: 2 }),
+            );
+            expect(res.status).toBe(200);
+            // Pré-flight de ACL na filial DO PROCESSO.
+            expect(aclVerificar).toHaveBeenCalledWith(expect.objectContaining({ filCod: 2 }));
+            // Orquestrador recebe a filial do processo em processoFields; gerNum é o do pagamento.
+            expect(processar).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    processoFields: expect.objectContaining({ filCod: 2 }),
+                    transacao: expect.objectContaining({ gerNum: 55795 }),
+                }),
+            );
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('403 quando o pré-flight de ACL nega (escrita real, fail-closed)', async () => {
+        const { processar } = registerStubs({
+            envOver: { conexosWriteEnabled: true, conexosDryRun: false, ndeAclPreflight: true },
+            aclOk: false,
+        });
         const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
         try {
             const res = await post(
                 `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
-                snPayload({ priCod: 'nope', valorTransacao: undefined }),
+                snPayload(),
+            );
+            const body = await readJson(res);
+            expect(res.status).toBe(403);
+            expect(body.code).toBe('NDE_ACL_INSUFICIENTE');
+            // Bloqueou ANTES de qualquer escrita.
+            expect(processar).not.toHaveBeenCalled();
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('400 on a malformed payload (Zod boundary)', async () => {
+        registerStubs();
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload({ priCod: 'nope', valor: undefined }),
             );
             expect(res.status).toBe(400);
         } finally {

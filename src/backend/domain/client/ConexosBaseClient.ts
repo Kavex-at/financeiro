@@ -74,6 +74,16 @@ export interface LegacyConexosShape {
         opts?: { filCod?: number },
     ) => Promise<T>;
     /**
+     * Single-attempt PUT (NO 401-retry) for the com300 fiscal read-modify-write
+     * (`PUT com300`). The RMW rewrites the whole `finDocFiscal`; a silent re-PUT
+     * on 401 could clobber state, so the 401 surfaces (fail-closed).
+     */
+    putGenericOnce: <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ) => Promise<T>;
+    /**
      * Single-attempt MULTIPART upload (NO 401-retry) — para o `carregar` do `.RET`
      * no `fin052` (`arquivosRetorno/carregar`). O `FormData` carrega o arquivo; o
      * re-POST silencioso criaria um arquivo de retorno duplicado (por isso once).
@@ -170,6 +180,13 @@ export default class ConexosBaseClient {
         body: Record<string, unknown>,
         opts?: { filCod?: number },
     ): Promise<T> => this.legacy.postGenericOnce<T>(path, body, opts);
+
+    /** Single-attempt PUT (no 401 retry) — com300 fiscal RMW. See `LegacyConexosShape`. */
+    public putGenericOnce = <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ): Promise<T> => this.legacy.putGenericOnce<T>(path, body, opts);
 
     /**
      * Single-attempt multipart upload (no 401-retry) — para o `carregar` do `.RET`

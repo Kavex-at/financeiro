@@ -367,9 +367,36 @@ export interface SolicitacaoNumerarioExecucaoRepositoryInterface {
     ) => Promise<BeginSolicitacaoNumerarioExecucaoResult>;
     setDocCod: (key: string, docCod: number) => Promise<void>;
     setRequestPayload: (key: string, payload: unknown) => Promise<void>;
+    /** Tela 2 (fin014): grava o borderô do recebimento + avança a etapa (retomada anti-duplicação). */
+    setFin014BorCod: (key: string, borCod: number) => Promise<void>;
+    /** Tela 3 (com297): grava o docCod da nota de débito + avança a etapa (retomada anti-duplicação). */
+    setNdDocCod: (key: string, docCod: number) => Promise<void>;
+    /** Avança a etapa alcançada (leg fiscal: fiscal-done / obs-done / homologado / concluido). */
+    setEtapa: (key: string, etapa: SolicitacaoNumerarioEtapa) => Promise<void>;
+    /** Marca que a homologação voltou com validações pendentes (com194 — revisão humana). */
+    setRevisaoHumana: (key: string, revisao: boolean) => Promise<void>;
+    /** Marca que a SEFAZ autorizou a NDe no poll (`vldAutorizado != 0`). */
+    setNdeAutorizado: (key: string, autorizado: boolean) => Promise<void>;
     markSettled: (key: string, data: SolicitacaoNumerarioExecucaoSettleData) => Promise<void>;
     markError: (key: string, data: SolicitacaoNumerarioExecucaoErrorData) => Promise<void>;
 }
+
+/**
+ * Onde a orquestração do numerário REAL parou (retomada/diagnóstico). Espelha o `NumerarioEtapa` dos
+ * permutas + as etapas da leg FISCAL confirmadas por HAR (fiscal-done → obs-done → homologado →
+ * concluido).
+ */
+export type SolicitacaoNumerarioEtapa =
+    | 'sn'
+    | 'sn-finalizar'
+    | 'fin014'
+    | 'fin014-done'
+    | 'nota-debito'
+    | 'fiscal-done'
+    | 'obs-done'
+    | 'homologado'
+    | 'concluido'
+    | 'error';
 
 export interface SolicitacaoNumerarioExecucaoRow {
     idempotencyKey: string;
@@ -379,6 +406,19 @@ export interface SolicitacaoNumerarioExecucaoRow {
     status: RecebimentoExecucaoStatus;
     dryRun: boolean;
     docCod?: number;
+    /** Handle da transação bancária (pagamento) que originou a alocação. */
+    txnId?: string;
+    /** Valor alocado ao processo (base da SN). */
+    valor?: number;
+    /** Borderô do recebimento fin014 (Tela 2). */
+    fin014BorCod?: number;
+    /** docCod da nota de débito com297 (Tela 3). */
+    ndDocCod?: number;
+    etapa?: SolicitacaoNumerarioEtapa;
+    /** Homologação com validações pendentes (com194) — precisa de revisão humana. */
+    revisaoHumana?: boolean;
+    /** SEFAZ autorizou a NDe (poll `vldAutorizado != 0`). */
+    ndeAutorizado?: boolean;
     erpResponse?: unknown;
     erroMensagem?: string;
     executadoPor?: string;
@@ -391,6 +431,10 @@ export interface BeginSolicitacaoNumerarioExecucaoInput {
     correlationId?: string;
     filCod: number;
     priCod: number;
+    /** Handle da transação bancária (pagamento) que originou a alocação. */
+    txnId?: string;
+    /** Valor alocado ao processo (base da SN). */
+    valor?: number;
     dryRun: boolean;
     executadoPor: string;
 }
@@ -403,6 +447,8 @@ export interface BeginSolicitacaoNumerarioExecucaoResult {
 
 export interface SolicitacaoNumerarioExecucaoSettleData {
     docCod?: number;
+    /** docCod da nota de débito com297 (preservado no settle). */
+    ndDocCod?: number;
     erpResponse?: unknown;
 }
 
@@ -410,6 +456,7 @@ export interface SolicitacaoNumerarioExecucaoErrorData {
     erroMensagem: string;
     erpResponse?: unknown;
     docCod?: number;
+    etapa?: SolicitacaoNumerarioEtapa;
 }
 
 /** Thin repositories for the added entity tables (Fase 4/5 seams). */

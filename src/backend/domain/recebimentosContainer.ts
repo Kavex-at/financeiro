@@ -17,6 +17,7 @@ import {
     SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
     TRANSACAO_REPOSITORY_TOKEN,
 } from './interface/recebimentos/ports.js';
+import ConexosNdeFiscalClient from './client/ConexosNdeFiscalClient.js';
 import CreditoClienteRepository from './repository/recebimentos/CreditoClienteRepository.js';
 import NdeRepository from './repository/recebimentos/NdeRepository.js';
 import RecebimentoExecucaoRepository from './repository/recebimentos/RecebimentoExecucaoRepository.js';
@@ -31,6 +32,7 @@ import MetricsPortStub from './service/recebimentos/stubs/MetricsPortStub.js';
 import NdeEmitterStub from './service/recebimentos/stubs/NdeEmitterStub.js';
 import NexxeraGatewayStub from './service/recebimentos/stubs/NexxeraGatewayStub.js';
 import ProcessoProviderConexos from './service/recebimentos/ProcessoProviderConexos.js';
+import RecebimentoNumerarioService from './service/recebimentos/RecebimentoNumerarioService.js';
 import RateioEngineStub from './service/recebimentos/stubs/RateioEngineStub.js';
 import RegrasEngineStub from './service/recebimentos/stubs/RegrasEngineStub.js';
 
@@ -83,4 +85,11 @@ export const registerRecebimentosPorts = (): void => {
         useClass: RegraRecebimentoRepository,
     });
     container.register(NDE_REPOSITORY_TOKEN, { useClass: NdeRepository });
+
+    // Numerário REAL payment-driven — o orquestrador live (com299 → fin014 → com297 → fiscal) e o
+    // client fiscal (com300/com131/com194/poll com297). São `@injectable`/`@singleton` concretos
+    // (tsyringe auto-resolve por classe), registrados explicitamente para clareza do wiring; o gate de
+    // escrita segue `conexosWriteEnabled && !conexosDryRun` dentro do serviço.
+    container.register(ConexosNdeFiscalClient, { useClass: ConexosNdeFiscalClient });
+    container.register(RecebimentoNumerarioService, { useClass: RecebimentoNumerarioService });
 };

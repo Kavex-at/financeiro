@@ -1,19 +1,21 @@
 ---
 name: conexos-com299-gerdoc
 type: integration
-direction: write (DRY-RUN-only — nenhum POST alcançável até HML/HAR)
-ontology_version: "0.11"
-implementation_status: partial
-status: draft
+direction: write (REAL na trilha recebimentos — gated CONEXOS_WRITE_ENABLED + CONEXOS_DRY_RUN, default dry-run)
+ontology_version: "0.12"
+implementation_status: implemented
+status: stable
 owners: [yuri]
 related_files:
-  - src/backend/domain/service/recebimentos/SolicitacaoNumerarioService.ts
+  - src/backend/domain/service/recebimentos/RecebimentoNumerarioService.ts
+  - src/backend/domain/service/recebimentos/SnPayloadBuilder.ts
   - src/backend/domain/interface/recebimentos/GerDocProcesso.ts
   - src/backend/domain/interface/recebimentos/constants.ts
   - src/backend/routes/recebimentos.ts
 endpoints_write:
-  - "com299/gerDocProcesso (POST /api/com299/gerDocProcesso — Solicitação de Numerário; DRY-RUN, não enviado)"
-last_review: 2026-07-28
+  - "com299 (POST /api/com299 + comDocProdutos + calculaValorLiquidoDocumento + finalizaDocumento — Solicitação de Numerário; REAL gated)"
+  - "fin014 (POST /api/fin014 borderô + baixas/validacao/tituloBaixa + baixas + finalizar/{borCod} — baixa do crédito; conta = transacao.gerNum)"
+last_review: 2026-08-01
 open-gap:
   - "gcdCod-solicitacao-numerario-encomenda (P0 p/ HML) — o código EXATO da Configuração de Documento 'Solicitação de Numerário - Encomenda' precisa ser confirmado via HML/HAR; hoje é PLACEHOLDER (gcdCod=0)."
   - "encomenda-percentuais (P1, §7 Q4) — a regra de % da encomenda (0,1%/0,9%) é NÃO-RESOLVIDA; a SN usa o valor cru da transação por ora."
@@ -57,14 +59,30 @@ open-gap:
 > **% da encomenda RESOLVE-SE** a "lançar as linhas de rateio, servidor totaliza" — não é cálculo client-side.
 > O guard `ENCOMENDA_PERCENTUAIS_RESOLVED` deve ser reenquadrado como "fonte dos códigos de rateio confirmada".
 
-# Integração: Conexos com299 — gerDocProcesso (Solicitação de Numerário) — DRY-RUN
+# Integração: Conexos com299 — Solicitação de Numerário (+ baixa fin014)
 
-> **Superfície de ESCRITA planejada, DESABILITADA nesta iteração.** O painel `/recebimentos`
-> ("Alocar" → "Processar") gera uma **Solicitação de Numerário (encomenda)** montando o payload do
-> `POST /api/com299/gerDocProcesso`, mas **NÃO envia** ao Conexos: o service devolve
-> `{ dryRun: true, docConfig, payload }` e o seam de envio real lança `NotImplementedError`. Não há
-> caminho de escrita ao ERP alcançável até a confirmação HML/HAR. Ver
-> `actions/recebimentos/gerar-solicitacao-numerario.md`.
+> ## ✅ ESCRITA REAL (v0.12, 2026-08-01) — a trilha recebimentos saiu do DRY-RUN
+>
+> O painel `/recebimentos` ("Alocar processos" → "Processar") **executa a escrita REAL** (gated
+> `CONEXOS_WRITE_ENABLED` + `CONEXOS_DRY_RUN`, default dry-run) via `RecebimentoNumerarioService`:
+> gera a SN (com299) + **finaliza**, dá a **baixa `fin014`** (conta = `transacao.gerNum`, a conta
+> do próprio pagamento), emite a nota de débito (com297 + produto 41978) e conclui a **cauda fiscal**
+> (com300 → com131 → com297-homologar → poll SEFAZ — ver `integrations/conexos-nde-fiscal.md`).
+> O antigo seam `SolicitacaoNumerarioService.enviarAoErp` (`NotImplementedError`) foi **RETIRADO**;
+> o builder do payload é compartilhado (`SnPayloadBuilder`) entre a rota dry-run e o orquestrador.
+> **Split-safe:** um pagamento gera 1..N SNs (uma por processo), Σ valor ≤ `transacao.valor`;
+> idempotência `sn-real:{txnId}:{priCod}:{valor}`. Ver `actions/recebimentos/gerar-solicitacao-numerario.md`.
+>
+> A seção abaixo (redigida na iteração DRY-RUN) permanece como registro do contrato com299 e dos
+> gaps de rateio; o gcdCod/rateio por-processo continuam instância/config do tenant.
+
+## Baixa fin014 (nova superfície — REAL)
+
+Após a SN finalizada, a trilha recebimentos executa a baixa do crédito no `fin014`:
+`POST /api/fin014` (borderô) → `baixas/validacao/tituloBaixa` (com o `docCod` da SN) → `POST
+/api/fin014/baixas` (`postGenericOnce`) → `finalizar/{borCod}`. **Conta financeira = `transacao.gerNum`**
+(a conta em que o pagamento entrou — derivada, não escolhida; `FIN014_CONTA_FINANCEIRA` NÃO é usado
+nesta trilha). Progresso gravado na trilha estendida (`fin014_bor_cod`, etapa `fin014`/`fin014-done`).
 
 ## Endpoint (write — dry-run)
 

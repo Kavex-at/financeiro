@@ -86,6 +86,19 @@ export const buildLegacyConexosAdapter = (
     };
 
     /**
+     * Single-attempt PUT passthrough (NO 401-retry) — for the com300 fiscal
+     * read-modify-write (`PUT com300`). See `authenticatedPutOnce`.
+     */
+    const putGenericOnce = async <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ): Promise<T> => {
+        const svc = await resolveService();
+        return svc.authenticatedPutOnce<T>(`/${path}`, body, opts);
+    };
+
+    /**
      * Single-attempt multipart upload passthrough (NO 401-retry) — para o
      * `carregar` do `.RET` no `fin052`. Delegates to `authenticatedPostMultipart`.
      */
@@ -114,6 +127,7 @@ export const buildLegacyConexosAdapter = (
         getGeneric,
         postGeneric,
         postGenericOnce,
+        putGenericOnce,
         postMultipartOnce,
         deleteGeneric,
         getFiliais: async (): Promise<Filial[]> => {

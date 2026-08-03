@@ -47,6 +47,20 @@ export default class ErpErrorInterpreter {
             'O ERP recusou esta operação para o borderô (estado incompatível com a ação).',
     };
 
+    /**
+     * Itens de validação (`item`) com tradução PT-BR dedicada — surfacados a partir do envelope
+     * `SELECTION_ERROR`/`VALIDATION` do `gerDocProcesso` (que o `{messages}` genérico NÃO cobre).
+     */
+    private readonly ptByItem: Record<string, (atributo: string) => string> = {
+        gcdDesNomeProc: (a) =>
+            `Este processo NÃO aceita a configuração de documento "${a}" — ou seja, não é elegível para ` +
+            'esta Solicitação de Numerário. Escolha um processo que aceite essa configuração.',
+        endCod: () =>
+            'Endereço fiscal do processo inválido/ausente — regularize o cadastro da pessoa no Conexos.',
+        pgtCod: () =>
+            'Condição de pagamento incompatível com o cadastro da pessoa — ajuste antes de gerar.',
+    };
+
     public interpret = (err: unknown): ErpErrorInterpretation => {
         const resp = this.extractResponse(err);
         const data = resp?.data as { messages?: ErpMessage[] } | undefined;
@@ -54,13 +68,53 @@ export default class ErpErrorInterpreter {
         const key = picked?.message;
         const reason = this.extractReason(picked);
         const fallback = err instanceof Error ? err.message : 'erro ao executar a ação no Conexos';
+        // Envelope de VALIDAÇÃO por-item (SELECTION_ERROR/VALIDATION) — mais específico que o `{messages}`.
+        const itemFriendly = this.interpretItemMessages(resp?.data);
         return {
             ...(resp?.status !== undefined ? { status: resp.status } : {}),
             ...(data !== undefined ? { data } : {}),
             ...(key !== undefined ? { key } : {}),
             ...(reason !== undefined ? { reason } : {}),
-            friendly: this.friendlyFor(key, reason, fallback),
+            friendly: itemFriendly ?? this.friendlyFor(key, reason, fallback),
         };
+    };
+
+    /**
+     * Extrai a 1ª mensagem de VALIDAÇÃO POR-ITEM dos envelopes do `gerDocProcesso`:
+     *   `{type:"SELECTION_ERROR", validation:{main:{itemMessages:[{item, messages:[{message, vars:{atributo}}]}]}}}`
+     *   `{type:"VALIDATION", itemMessages:[{item, messages:[{message, constraint}]}]}`
+     * Vira um texto humano ("Campo X inválido: Y"), com tradução dedicada p/ itens conhecidos
+     * (ex.: `gcdDesNomeProc` = processo inelegível). NUNCA lança — é um error-handler.
+     */
+    private interpretItemMessages = (data: unknown): string | undefined => {
+        const d = data as
+            | { validation?: { main?: { itemMessages?: unknown } }; itemMessages?: unknown }
+            | undefined;
+        const list = d?.validation?.main?.itemMessages ?? d?.itemMessages;
+        if (!Array.isArray(list) || list.length === 0) return undefined;
+        const first = list[0] as
+            | {
+                  item?: string;
+                  messages?: Array<{
+                      message?: string;
+                      vars?: { atributo?: unknown };
+                      constraint?: string;
+                  }>;
+              }
+            | undefined;
+        const item = typeof first?.item === 'string' ? first.item : undefined;
+        const msg = Array.isArray(first?.messages) ? first?.messages[0] : undefined;
+        const atributoRaw = msg?.vars?.atributo;
+        const atributo = typeof atributoRaw === 'string' ? atributoRaw : String(atributoRaw ?? '');
+        const detalhe = msg?.constraint ?? msg?.message ?? '';
+        if (item !== undefined && this.ptByItem[item] !== undefined) {
+            return this.ptByItem[item](atributo);
+        }
+        if (item !== undefined) {
+            const suffix = atributo || detalhe;
+            return `Campo "${item}" inválido no documento${suffix ? `: ${suffix}` : ''} — o ERP recusou a geração.`;
+        }
+        return undefined;
     };
 
     public describeMessage = (msg: ErpMessage): string => {
