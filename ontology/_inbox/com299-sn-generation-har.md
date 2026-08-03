@@ -254,3 +254,95 @@ do nome ("... - TERCEIROS" → "TERCEIROS"), procura `ADIANTAMENTO DE CLIENTE <V
 (match exato → senão contém "ADIANTAMENTO"+variante). FAIL-CLOSED se não achar (não chuta conta contábil).
 `SN_CONTA_ADIANTAMENTO_PREFIXO='ADIANTAMENTO DE CLIENTE'`. 960 testes. Só falta HAR real de uma baixa/geração
 TERCEIROS p/ confirmar o nome da conta (o match por sufixo é a hipótese; fail-closed protege).
+
+## TERCEIROS live 2026-08-03: falta o "Tipo de Operação" (tpcCod) — não auto-resolvível
+
+Após o fix do cfoEspCod, a geração de 3478 (gcd 151 TERCEIROS) foi a `POST com299/gerDocProcesso` (tpcCod:null)
+→ 400 VALIDATION_LIST "NÃO FOI POSSÍVEL FAZER O PREENCHIMENTO DO TIPO DE OPERAÇÃO !!!". ENCOMENDA (gcd 150)
+gera com tpcCod:null (servidor auto-preenche); TERCEIROS NÃO. Probe read-only: `validaConfigDoc` devolve
+tpcCod=null (3478) / undefined (3254) — NÃO é fonte do tpcCod. Logo o "Tipo de Operação" da TERCEIROS é
+SELEÇÃO do analista (o dropdown vazio da com068), não auto-resolvido. PENDENTE p/ automatizar TERCEIROS: HAR
+de UMA geração manual TERCEIROS completa (mostra o tpcCod escolhido + o LOV do Tipo de Operação + a conta da
+variante). ENCOMENDA segue 100% (proven 18342).
+
+## MILESTONE 2026-08-03: SN+baixa PROVADOS live; NDe (com297) = gap G2 (geração nunca capturada)
+
+L-FOUNDERS 3254 rodou a cadeia INTEIRA ao vivo: SN 18345 gerada+completada(cond.pgto DUPLICATA+item valor
+100)+FINALIZADA → título materializado (titCod 4) → fin014 baixa GRAVADA (R$100, borderô 7261) → finalizada.
+TUDO que foi construído funciona. Fixes ao longo do caminho: cfoEspCod nullish; NDe payload com pdcDocFederal
++ endCodFis reais (com297 exige, senão "pdcDocFederalFilter;").
+
+**NDe (com297) BLOQUEADA — gap G2 documentado (recebimentos-nde-com297-gap.md):** a leg de GERAÇÃO com297
+foi INFERIDA (sem HAR). Eu confundi o Tipo FISCAL "Pagamento antecipado" (com300, pós-geração,
+fisVldTipoNfDebito=6) com o NOME da Configuração com297. gcd 248 "NOTA DE DEBITO PAGAMENTO ANTECIPADO" é
+rejeitado `gcdDesNomeProc NOT_VALID` p/ o processo 3254; nenhum docTip/globalDocVldTipo em ConfigDocProcesso
+surfaca uma config de débito p/ 3254. Revertido o guess do nome. **PENDENTE: 1 HAR de uma geração com297 real
+(Tela 3: Processo→Pessoa→Configuração→Número 0→Produto 41978→Valor→Gerar; depois Mais Ações→Fiscal→"Pagamento
+antecipado"→Observações)** — mostra o gcd/nome da Configuração + os payloads reais. Aí a leg NDe fecha.
+
+## NDe (com297) RESOLVIDO 2026-08-03 — o bug era globalDocVldTipo (0, não 9)
+
+HAR 23-27 (doc 18347 SUCESSO): a NDe com297 usa **globalDocVldTipo=0** (o SN usa 9). Foi o 9 que fazia o
+processo REJEITAR a config 248 (`gcdDesNomeProc NOT_VALID`) e o ConfigDocProcesso não surfaçar débito. gcd
+248 "NOTA DE DEBITO PAGAMENTO ANTECIPADO" estava CERTO — só o discriminador estava errado. Payload real da
+NDe (header-only, SEM items): globalDocVldTipo 0, gcd 248, gcdVldTela 5, gcdVldPropria 1, gcdVldFormaRateio 1,
+tpcCod 120, tpcDesNome "NOTAS DE DEBITO E CREDITO", cfoEspCod "6949ND", fisEspSerie "NFE1", prdCod 41978,
+prdDesNome "PAGAMENTO ANTECIPADO", docEspNumero 0 (número), endCodFis+pdcDocFederal reais. Fixes: constante
+NDE_GLOBAL_DOC_VLD_TIPO=0 + NDE_CONFIG_NOME; validaConfigDoc/gerarDoc do com297 com gvt 0; validaConfigDoc
+schema parseia tpcDesNome; payload com prdDesNome/série/número corretos. Sequência fiscal seguinte
+(com300 PUT fiscal → com131 geraObs → com297/homologaNfe) já mapeada no HAR e implementada. GAP G2 fechado.
+
+## NDe geração OK (doc 18348); produto vai no HEADER, não via comDocProdutos (2026-08-03)
+
+globalDocVldTipo=0 destravou a geração com297 (doc 18348 SUCESSO). Próximo erro: `com297/comDocProdutos` →
+400 `docVldTipo required`. HAR 23-27 NÃO faz esse POST — o produto (41978) já vai no HEADER do gerDocProcesso
+(prdCod/prdDesNome). Removido o `adicionarProduto` do etapaNotaDebito. initialValues do com297 mostra
+docVldTipo:7/qualifier:FISCAL_SAIDA (caso um dia precise), mas o fluxo real não adiciona produto. Segue p/
+com300 fiscal → com131 obs → com297/homologaNfe (já mapeados no HAR + implementados).
+
+## HOMOLOGAÇÃO NDe — bloqueada por dados FISCAIS (não é bug de automação) 2026-08-03
+
+Chain INTEIRA roda ao vivo até a homologação: SN→completar→finalizar→título→fin014 baixa→NDe geração
+(gvt 0)→com300 fiscal (fisVldTipoNfDebito 6)→com131 geraObs→com297/homologaNfe (200). Mas a NDe NÃO
+homologa: `GET com297/18348 → docVldNfehom=0`, docVldComvalidacoes=0. com194 do 18348 = 3 validações
+BLOQUEANTES (fdvVldErr=2): (1) condição de pagamento ≠ cadastro (pgtCod 8, sugestiva DUPLICATA 109);
+(2) tipo de frete ≠ "SEM TRANSPORTE" (transportadora obrigatória); (3) produto 41978 SEM GTIN.
+**CHAVE: o doc MANUAL 18347 (que "homologou" no HAR, resp docVldComvalidacoes:2/docVldNfehom:1) HOJE está
+docVldNfehom=0 com as MESMAS 3 bloqueantes.** Ou seja, nem o fluxo manual persiste a homologação — a NDe
+precisa dos dados fiscais resolvidos primeiro. Dá p/ automatizar (1) condição de pagamento (PUT com297 =
+DUPLICATA, como no SN) e talvez (2) tipo de frete SEM TRANSPORTE. Mas (3) GTIN do produto 41978 é CADASTRO
+(fora do doc) — bloqueio fiscal/stakeholder. PENDENTE: decisão do Yuri/fiscal sobre GTIN + frete + cond.pgto
+da NDe. O resto da automação está PROVADO.
+
+## CORREÇÃO 2026-08-03 (Yuri): docVldComvalidacoes=0 é homologada-com-aviso, NÃO rejeição
+
+O Yuri confirmou que na plataforma as 3 validações (cond. pagamento/frete/GTIN) NÃO bloqueiam — a
+homologação ACONTECE (como no HAR, docVldComvalidacoes:2). Nosso código rejeitava o valor `0` (não estava no
+enum — gap G3 só conhecia 1 e 2). Corrigido: `NDE_DOC_VLD_COM_VALIDACOES.HOMOLOGADA_VALIDACOES_NAO_BLOQUEANTES
+= 0`; o ConexosNdeClient trata 0 igual a 2 (emitida + avisoValidacoesPendentes → revisão humana + com194).
+Valores DESCONHECIDOS (ex. 3) ainda RECUSAM (fail-closed). Com isso a chain FECHA: homologa (com revisão
+humana pelas validações) → poll SEFAZ. 961 testes.
+
+## FLUXO COMPLETO 2026-08-03: NDe HOMOLOGADA; poll SEFAZ não bloqueia mais o Processar
+
+Run com o fix do docVldComvalidacoes: homologaNfe → docVldComvalidacoes:2 → EMITIDA + revisão humana
+(com194: cond.pgto/frete/GTIN). A NDe (18348) FOI HOMOLOGADA. O "Processar" girava porque o etapaPoll fazia
+loop de até 5 min (ndePollTimeoutMs) segurando o HTTP, esperando vldAutorizado (SEFAZ é ASSÍNCRONO — não vem
+na janela do request). Fix: etapaPoll agora faz UMA leitura best-effort; se autorizado→settle+concluído,
+senão devolve homologado (status geral já é `settled`, ndeAutorizado:false) e a autorização reconcilia depois.
+etapaHomologar tem guard (não re-homologa no resume). Cadeia INTEIRA fecha: SN→completar→finalizar→título→
+fin014 baixa→NDe(gvt0)→com300 fiscal→com131 obs→homologa(revisão humana)→settled. 961 testes.
+
+## AUDITORIA/PERSISTÊNCIA 2026-08-03 — fixes 1/2/3 (965 testes)
+
+1. **NDe como entidade** — `RecebimentoNumerarioService` agora injeta `NdeRepository` e grava um
+   `nota_debito_eletronica` na homologação (statusEmissao='emitida', numero_nde, valor, erp_response com o
+   docCod, emitida_em/por; idempotente por idempotency_key). Alimenta a aba NDe do painel + auditoria.
+2. **markSettled na homologação** — o ledger vira `settled` logo após homologar (trabalho feito); a
+   autorização SEFAZ (assíncrona) é só o flag `nde_autorizado`. Antes ficava `reconciling` até o poll. O
+   `etapaPoll` virou leitura única (não bloqueia mais o Processar).
+3. **Endpoint de auditoria** — `GET /recebimentos/execucoes?txnId=<id>` (todas as alocações da transação)
+   ou `?status=error|reconciling|settled|pending&limit=N` (admin). Devolve status/etapa/doc_cod/nd_doc_cod/
+   erro_mensagem/erp_response/revisao_humana/nde_autorizado. `listByTxnId`/`listByStatus` no repo.
+
+Tabelas nota_debito_eletronica + solicitacao_numerario_execucao CONFIRMADAS na Supabase compartilhada.

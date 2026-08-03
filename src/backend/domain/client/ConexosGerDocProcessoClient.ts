@@ -23,6 +23,10 @@ const VALIDA_CONFIG_DOC_SCHEMA = z.object({
     responseData: z
         .object({
             tpcCod: z.coerce.number().int().optional(),
+            tpcDesNome: z
+                .string()
+                .nullish()
+                .transform((v) => v ?? undefined),
             // null → undefined: o ERP devolve `cfoEspCod: null` p/ variantes de SN (ex. gcd 151 TERCEIROS) — o
             // `.optional()` LANÇAVA no null (ZodError, live 2026-08-03, proc 3478). O payload da SN força
             // `cfoEspCod: null` mesmo, então normalizar aqui é seguro.

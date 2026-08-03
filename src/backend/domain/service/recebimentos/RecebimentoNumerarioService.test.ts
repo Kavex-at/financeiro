@@ -30,6 +30,7 @@ interface Mocks {
     fiscal: jest.Mocked<ConexosNdeFiscalClient>;
     nde: jest.Mocked<ConexosNdeClient>;
     repo: jest.Mocked<SolicitacaoNumerarioExecucaoRepositoryInterface>;
+    ndeRepo: { save: jest.Mock; findByRecebimentoId: jest.Mock };
     env: jest.Mocked<EnvironmentProvider>;
 }
 
@@ -157,6 +158,10 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
         markSettled: jest.fn().mockResolvedValue(undefined),
         markError: jest.fn().mockResolvedValue(undefined),
     } as never,
+    ndeRepo: {
+        save: jest.fn().mockImplementation((nde: unknown) => Promise.resolve(nde)),
+        findByRecebimentoId: jest.fn().mockResolvedValue(null),
+    },
     env: buildEnv(),
     ...over,
 });
@@ -171,6 +176,7 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         m.env,
         new SnPayloadBuilder(),
         m.repo,
+        m.ndeRepo as never,
         logService,
         new ErpErrorInterpreter(),
     );
@@ -256,7 +262,6 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
         expectFilCod7(m.gerDoc.gerarDocProcesso as jest.Mock);
         expectFilCod7(m.gerDoc.finalizarDocumento as jest.Mock);
         expectFilCod7(m.gerDoc.resolveGcdCodByName as jest.Mock);
-        expectFilCod7(m.gerDoc.adicionarProduto as jest.Mock);
         // fin014: borderô / validar / baixa / finalizar — filial do processo.
         expectFilCod7(m.fin014.criarBordero as jest.Mock);
         expectFilCod7(m.fin014.validarTituloBaixa as jest.Mock);
@@ -463,16 +468,18 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
         expect(m.repo.markError).toHaveBeenCalled();
     });
 
-    it('gera a nota de débito com o produto 41978 (com297 comDocProdutos)', async () => {
+    it('gera a nota de débito com o produto 41978 no HEADER (NÃO via com297/comDocProdutos)', async () => {
         const m = buildMocks();
         wireDocCods(m);
         await buildService(m).processarAlocacao(baseInput());
-        expect(m.gerDoc.adicionarProduto).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tela: 'com297',
-                payload: expect.objectContaining({ prdCod: 41978, docCod: 18337 }),
-            }),
+        // O produto vai no HEADER do gerDocProcesso com297 (HAR 23-27 não faz comDocProdutos p/ a NDe).
+        const ndCall = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls.find(
+            (c) => c[0].tela === 'com297',
         );
+        expect(ndCall[0].payload.prdCod).toBe(41978);
+        expect(ndCall[0].payload.prdDesNome).toBe('PAGAMENTO ANTECIPADO');
+        // NÃO adiciona produto via com297/comDocProdutos (falhava `docVldTipo required`).
+        expect(m.gerDoc.adicionarProduto).not.toHaveBeenCalled();
     });
 });
 
@@ -766,6 +773,43 @@ describe('RecebimentoNumerarioService — docVldComvalidacoes===2 (revisão huma
         expect(out.docVldComvalidacoes).toBe(2);
         expect(m.fiscal.listValidacoes).toHaveBeenCalled();
         expect(m.repo.setRevisaoHumana).toHaveBeenCalledWith(expect.any(String), true);
+    });
+
+    it('registra a NDe como entidade auditável (ndeRepository.save) na homologação', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.nde.homologar as jest.Mock).mockResolvedValue({
+            docVldComvalidacoes: 2,
+            avisoValidacoesPendentes: true,
+            numeroNde: '12345',
+            erpResponse: { docCod: 18200 },
+        });
+        await buildService(m).processarAlocacao(baseInput());
+        expect(m.ndeRepo.save).toHaveBeenCalledWith(
+            expect.objectContaining({
+                recebimentoId: 'txn-1',
+                valor: 15000,
+                statusEmissao: 'emitida',
+                numeroNde: '12345',
+                emitidaPor: 'yuri',
+                erpResponse: { docCod: 18200 },
+            }),
+        );
+    });
+
+    it('marca settled LOGO após homologar (não depende da autorização SEFAZ assíncrona)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        // SEFAZ ainda não autorizou (poll devolve 0) — mas o settle acontece na homologação.
+        (m.fiscal.lerDocParaPolling as jest.Mock).mockResolvedValue({
+            vldTpNf: '10',
+            vldAutorizado: 0,
+            docMnyValor: 15000,
+        });
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(m.repo.markSettled).toHaveBeenCalled();
+        expect(out.status).toBe('settled');
+        expect(out.ndeAutorizado).toBe(false);
     });
 });
 

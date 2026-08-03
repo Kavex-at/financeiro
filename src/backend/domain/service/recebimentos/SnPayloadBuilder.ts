@@ -1,5 +1,7 @@
 import { injectable } from 'tsyringe';
 import {
+    NDE_GERACAO_DEFAULTS,
+    NDE_GLOBAL_DOC_VLD_TIPO,
     SOLICITACAO_NUMERARIO_DOC_CONFIG,
     SOLICITACAO_NUMERARIO_DOC_TIP,
     SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
@@ -232,19 +234,25 @@ export default class SnPayloadBuilder {
         gcdDesNome: string,
         config: ValidaConfigDocResult,
         produtoCod: number,
-        docEspNumero: string,
+        docEspNumero: string | number,
+        pessoa: { endCodFis: number; pdcDocFederal?: string },
     ): GerDocProcessoPayload => {
         const { processo, valorSn, dataReferencia } = input;
         const docDta = utcMidnightEpochMs(dataReferencia);
         return {
             docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
-            globalDocVldTipo: GLOBAL_DOC_VLD_TIPO_SN,
+            // NDe usa globalDocVldTipo=0 (NÃO o 9 do SN) — foi o 9 que fazia o processo rejeitar a config
+            // (`gcdDesNomeProc NOT_VALID`). HAR 2026-08-02 23-27 (doc 18347 SUCESSO).
+            globalDocVldTipo: NDE_GLOBAL_DOC_VLD_TIPO,
             frontModelName: 'gerDocProcesso',
             priCod: processo.priCod,
             ...(processo.priEspRefcliente !== undefined
                 ? { priEspRefcliente: processo.priEspRefcliente }
                 : {}),
-            endCodFis: END_COD_FIS_DEFAULT,
+            // endCodFis + pdcDocFederal REAIS (validaProcessoPessoa) — o com297 os exige igual ao com299
+            // (live 2026-08-03: sem pdcDocFederal → 400 "pdcDocFederalFilter;"). Não usar o default 1.
+            endCodFis: pessoa.endCodFis,
+            ...(pessoa.pdcDocFederal !== undefined ? { pdcDocFederal: pessoa.pdcDocFederal } : {}),
             pesCod: processo.pesCod,
             dpeNomPessoa: processo.dpeNomPessoa,
             gcdCod,
@@ -254,15 +262,17 @@ export default class SnPayloadBuilder {
             ...(config.gcdVldFormaRateio !== undefined
                 ? { gcdVldFormaRateio: config.gcdVldFormaRateio }
                 : {}),
-            ...(config.fisEspSerie !== undefined ? { fisEspSerie: config.fisEspSerie } : {}),
+            // Série NFE1 (default da NDe) quando a config não devolve uma própria.
+            fisEspSerie: config.fisEspSerie ?? NDE_GERACAO_DEFAULTS.serie,
             ...(config.tpcCod !== undefined ? { tpcCod: config.tpcCod } : {}),
+            ...(config.tpcDesNome !== undefined ? { tpcDesNome: config.tpcDesNome } : {}),
             ...(config.cfoEspCod !== undefined ? { cfoEspCod: config.cfoEspCod } : {}),
             prdCod: produtoCod,
+            prdDesNome: NDE_GERACAO_DEFAULTS.produtoNome,
             docEspNumero,
             valor: valorSn,
             docDtaEmissao: docDta,
             docDtaMovimento: docDta,
-            items: [],
         };
     };
 }

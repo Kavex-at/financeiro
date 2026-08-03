@@ -9,16 +9,21 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO,
     NDE_GERACAO_DEFAULTS,
+    NDE_GLOBAL_DOC_VLD_TIPO,
     NDE_OBS_SINIEF_MARKER,
+    NDE_STATUS_EMISSAO,
     SN_ADIANTAMENTO_PRJ_COD,
     SN_CONTA_ADIANTAMENTO_ENCOMENDA,
     SN_CONTA_ADIANTAMENTO_PREFIXO,
     SN_TPD_COD,
     SOLICITACAO_NUMERARIO_DOC_TIP,
 } from '../../interface/recebimentos/constants.js';
+import { randomUUID } from 'node:crypto';
 import type { Processo } from '../../interface/recebimentos/GerDocProcesso.js';
 import type { DocFiscal } from '../../interface/recebimentos/NdeFiscal.js';
 import {
+    NDE_REPOSITORY_TOKEN,
+    type NdeRepositoryInterface,
     SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
     type SolicitacaoNumerarioEtapa,
     type SolicitacaoNumerarioExecucaoRepositoryInterface,
@@ -42,6 +47,9 @@ const FIS_COD_DEFAULT = 1;
 
 /** endCodFis default do validaConfigDoc/rateio/payload (permutas usa 1). */
 const END_COD_FIS_DEFAULT = 1;
+
+/** Moeda da NDe (registro local) — o fluxo de numerário assume BRL (mesmo default do processo). */
+const NDE_MOEDA_PADRAO = 'BRL';
 
 /** Arredonda para 2 casas — obrigatório em todo valor monetário do ERP (CnxValidatorMny). */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -178,6 +186,7 @@ export default class RecebimentoNumerarioService {
         @inject(SnPayloadBuilder) private snPayloadBuilder: SnPayloadBuilder,
         @inject(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN)
         private execucaoRepository: SolicitacaoNumerarioExecucaoRepositoryInterface,
+        @inject(NDE_REPOSITORY_TOKEN) private ndeRepository: NdeRepositoryInterface,
         @inject(LogService) private logService: LogService,
         @inject(ErpErrorInterpreter) private erpErrorInterpreter: ErpErrorInterpreter,
     ) {}
@@ -340,6 +349,13 @@ export default class RecebimentoNumerarioService {
             docVldComvalidacoes = homolog.docVldComvalidacoes;
             revisaoHumana = homolog.revisaoHumana;
             etapa = 'homologado';
+            // O trabalho do numerário está FEITO após homologar (SN + baixa + NDe emitida). Marca settled
+            // AQUI — a autorização SEFAZ (assíncrona) é um flag à parte (`nde_autorizado`), não gate do settle.
+            await this.execucaoRepository.markSettled(key, {
+                ...(snDocCod !== undefined ? { docCod: snDocCod } : {}),
+                ...(ndDocCod !== undefined ? { ndDocCod } : {}),
+                ...(homolog.erpResponse !== undefined ? { erpResponse: homolog.erpResponse } : {}),
+            });
             const poll = await this.etapaPoll(ctx, ndDocCod);
             vldAutorizado = poll.vldAutorizado;
             ndeAutorizado = poll.autorizado;
@@ -838,7 +854,7 @@ export default class RecebimentoNumerarioService {
     ): Promise<number> => {
         if (existente?.ndDocCod !== undefined) return existente.ndDocCod; // já gerada
         if (ndDocCodIn !== undefined) return ndDocCodIn;
-        const { key, filCod, valor, snPayloadInput } = ctx;
+        const { key, filCod, snPayloadInput } = ctx;
         const { processo } = snPayloadInput;
         const env = await this.environmentProvider.getEnvironmentVars();
         // gcd do com297 = env override ?? resolve pelo NOME (nunca o gcdCod=150 da SN). Fail-closed se ausente.
@@ -855,14 +871,20 @@ export default class RecebimentoNumerarioService {
                 message: `com297 Configuracao "${env.com297GcdNotaDebitoNome}" not found — set COM297_GCD_NOTA_DEBITO`,
             });
         }
+        // endCodFis + pdcDocFederal REAIS do pré-flight (validaProcessoPessoa) — o com297 os exige igual ao
+        // com299 (sem pdcDocFederal → 400 "pdcDocFederalFilter;", live 2026-08-03). Fallback ao default 1.
+        const endCodFis = ctx.preflight?.endCodFis ?? END_COD_FIS_DEFAULT;
+        const pdcDocFederal = ctx.preflight?.pdcDocFederal;
         const ndConfig = await this.gerDocClient.validaConfigDoc({
             tela: 'com297',
             filCod,
             docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
-            globalDocVldTipo: GLOBAL_DOC_VLD_TIPO_SN,
+            // NDe = globalDocVldTipo 0 (não o 9 do SN) — HAR 23-27. Com 9 o processo rejeita a config 248.
+            globalDocVldTipo: NDE_GLOBAL_DOC_VLD_TIPO,
             priCod: processo.priCod,
             pesCod: processo.pesCod,
-            endCodFis: END_COD_FIS_DEFAULT,
+            ...(pdcDocFederal !== undefined ? { pdcDocFederal } : {}),
+            endCodFis,
             gcdCod: ndGcdCod,
         });
         const ndPayload: GerDocProcessoPayload = this.snPayloadBuilder.buildNotaDebitoRealPayload(
@@ -872,6 +894,7 @@ export default class RecebimentoNumerarioService {
             ndConfig,
             NDE_GERACAO_DEFAULTS.produtoCod,
             NDE_GERACAO_DEFAULTS.numero,
+            { endCodFis, ...(pdcDocFederal !== undefined ? { pdcDocFederal } : {}) },
         );
         const gen = await this.gerDocClient.gerarDocProcesso({
             tela: 'com297',
@@ -881,18 +904,8 @@ export default class RecebimentoNumerarioService {
         this.assertNoErpError(gen.messages, 'com297 gerDocProcesso');
         const ndDocCod = gen.docCod;
         await this.execucaoRepository.setNdDocCod(key, ndDocCod);
-        const prodMsgs = await this.gerDocClient.adicionarProduto({
-            tela: 'com297',
-            filCod,
-            payload: {
-                docCod: ndDocCod,
-                docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
-                fisCod: FIS_COD_DEFAULT,
-                prdCod: NDE_GERACAO_DEFAULTS.produtoCod,
-                valor,
-            },
-        });
-        this.assertNoErpError(prodMsgs, 'com297 comDocProdutos');
+        // NÃO adicionar produto via com297/comDocProdutos: o produto (41978) já vai no HEADER do
+        // gerDocProcesso (HAR 23-27 NÃO faz esse POST — falhava `docVldTipo required`). Segue p/ o fiscal.
         return ndDocCod;
     };
 
@@ -950,7 +963,7 @@ export default class RecebimentoNumerarioService {
         ctx: EscritaCtx,
         existente: SolicitacaoNumerarioExecucaoRow | null,
         ndDocCod: number,
-    ): Promise<{ docVldComvalidacoes?: number; revisaoHumana: boolean }> => {
+    ): Promise<{ docVldComvalidacoes?: number; revisaoHumana: boolean; erpResponse?: unknown }> => {
         if (this.etapaAtingida(existente, 'homologado')) {
             return { revisaoHumana: existente?.revisaoHumana ?? false };
         }
@@ -1004,53 +1017,61 @@ export default class RecebimentoNumerarioService {
             await this.execucaoRepository.setRevisaoHumana(key, true);
         }
         await this.execucaoRepository.setEtapa(key, 'homologado');
-        return { docVldComvalidacoes: homolog.docVldComvalidacoes, revisaoHumana };
+
+        // Registra a NDe como ENTIDADE de 1ª classe (auditoria + aba NDe do painel): a emissão vira um
+        // `nota_debito_eletronica` (idempotente por `idempotency_key`). O docCod Conexos vai no erp_response
+        // (a tabela não tem coluna própria); o numero_nde é o número SEFAZ. `emitida` mesmo com revisão humana.
+        await this.ndeRepository.save({
+            id: randomUUID(),
+            recebimentoId: ctx.txnId,
+            filCod,
+            correlationId: key,
+            ...(homolog.numeroNde !== undefined ? { numeroNde: homolog.numeroNde } : {}),
+            valor: ctx.valor,
+            moeda: NDE_MOEDA_PADRAO,
+            statusEmissao: NDE_STATUS_EMISSAO.EMITIDA,
+            idempotencyKey: key,
+            erpResponse: homolog.erpResponse,
+            emitidaEm: new Date(),
+            emitidaPor: ctx.ator,
+        });
+
+        return {
+            docVldComvalidacoes: homolog.docVldComvalidacoes,
+            revisaoHumana,
+            erpResponse: homolog.erpResponse,
+        };
     };
 
     /**
-     * Etapa 7 (poll SEFAZ): `lerDocParaPolling` em loop até `vldAutorizado !== 0`, com timeout/intervalo
-     * de env. TIMEOUT NÃO É ERRO — deixa a etapa em `homologado`, loga alerta; autorizado → settle.
+     * Etapa 7 (autorização SEFAZ): a autorização da NF-e é ASSÍNCRONA (o SEFAZ leva de segundos a horas) —
+     * NÃO pode bloquear o "Processar". Faz UMA leitura best-effort de `vldAutorizado`: se já autorizou,
+     * settle+concluído; senão devolve `homologado` (o status geral já é `settled`, `ndeAutorizado:false`) e a
+     * autorização é reconciliada depois (uma re-alocação/refresh retoma a leitura a partir de `homologado`).
+     * Antes: loop de até 5 min segurando o request HTTP → "Processar" girava eternamente.
      */
     private etapaPoll = async (
         ctx: EscritaCtx,
         ndDocCod: number,
     ): Promise<{ autorizado: boolean; vldAutorizado?: number }> => {
         const { key, filCod } = ctx;
-        const env = await this.environmentProvider.getEnvironmentVars();
-        const deadline = Date.now() + env.ndePollTimeoutMs;
-        let vldAutorizado: number | undefined;
-        // Primeira leitura imediata + re-leituras espaçadas (o `lerDocParaPolling` re-ensureSid).
-        for (;;) {
-            const status = await this.fiscalClient.lerDocParaPolling({ filCod, docCod: ndDocCod });
-            vldAutorizado = status.vldAutorizado;
-            if (vldAutorizado !== undefined && vldAutorizado !== 0) {
-                await this.execucaoRepository.setNdeAutorizado(key, true);
-                await this.execucaoRepository.markSettled(key, {
-                    ...(ctx.snDocCod !== undefined ? { docCod: ctx.snDocCod } : {}),
-                    ndDocCod,
-                });
-                return {
-                    autorizado: true,
-                    ...(vldAutorizado !== undefined ? { vldAutorizado } : {}),
-                };
-            }
-            if (Date.now() >= deadline) break;
-            await this.sleep(env.ndePollIntervalMs);
+        const status = await this.fiscalClient.lerDocParaPolling({ filCod, docCod: ndDocCod });
+        const vldAutorizado = status.vldAutorizado;
+        // `markSettled` NÃO acontece mais aqui — o `rodarEtapas` marca settled logo após homologar (o
+        // trabalho do numerário está feito). Aqui só registramos SE o SEFAZ já autorizou (flag separado).
+        if (vldAutorizado !== undefined && vldAutorizado !== 0) {
+            await this.execucaoRepository.setNdeAutorizado(key, true);
+            return { autorizado: true, vldAutorizado };
         }
         await this.logService.warn({
             type: LOG_TYPE.BUSINESS_WARN,
             message:
-                'NDe homologada mas SEFAZ ainda NÃO autorizou (poll timeout) — não é erro; ' +
-                'retomar a alocação depois retoma o poll a partir de homologado',
+                'NDe homologada; SEFAZ ainda não autorizou (assíncrono) — não bloqueia o Processar; ' +
+                'reconcilia depois (retoma a leitura a partir de homologado)',
             data: { txnId: ctx.txnId, ndDocCod, priCod: ctx.priCod },
         });
         return { autorizado: false, ...(vldAutorizado !== undefined ? { vldAutorizado } : {}) };
     };
-
-    private sleep = (ms: number): Promise<void> =>
-        new Promise((resolve) => {
-            setTimeout(resolve, ms);
-        });
 
     /** `true` se a etapa já foi atingida (ordem monotônica das etapas fiscais). */
     private etapaAtingida = (

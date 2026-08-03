@@ -362,6 +362,10 @@ export interface RecebimentoExecucaoErrorData {
  */
 export interface SolicitacaoNumerarioExecucaoRepositoryInterface {
     findByIdempotencyKey: (key: string) => Promise<SolicitacaoNumerarioExecucaoRow | null>;
+    /** Auditoria: execuções (alocações) de uma transação bancária. */
+    listByTxnId: (txnId: string) => Promise<SolicitacaoNumerarioExecucaoRow[]>;
+    /** Auditoria: execuções por status (`error`/`reconciling`/`settled`/`pending`), com teto. */
+    listByStatus: (status: string, limit: number) => Promise<SolicitacaoNumerarioExecucaoRow[]>;
     beginExecution: (
         input: BeginSolicitacaoNumerarioExecucaoInput,
     ) => Promise<BeginSolicitacaoNumerarioExecucaoResult>;

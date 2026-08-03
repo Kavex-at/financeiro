@@ -17,8 +17,14 @@ import type {
     ListCandidatosInput,
     ProcessoProviderInterface,
 } from '../domain/interface/recebimentos/ports.js';
-import type { ClienteProcesso } from '../domain/interface/recebimentos/ports.js';
-import { PROCESSO_PROVIDER_TOKEN } from '../domain/interface/recebimentos/ports.js';
+import type {
+    ClienteProcesso,
+    SolicitacaoNumerarioExecucaoRepositoryInterface,
+} from '../domain/interface/recebimentos/ports.js';
+import {
+    PROCESSO_PROVIDER_TOKEN,
+    SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
+} from '../domain/interface/recebimentos/ports.js';
 import ConexosCadastroClient from '../domain/client/ConexosCadastroClient.js';
 import RecebimentoIngestaoRunRepository from '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
@@ -474,6 +480,49 @@ router.post(
         });
         // HTTP 200 mesmo em erro de etapa — o `status` carrega o desfecho (settled/skipped/error/dry-run).
         res.json({ transacaoId: txnId, ...result });
+    }),
+);
+
+/**
+ * GET /recebimentos/execucoes — AUDITORIA do ledger de execução da SN (por transação ou por status).
+ * `?txnId=` → todas as alocações daquela transação; `?status=error|reconciling|settled|pending` → as N
+ * mais recentes. Cada linha traz status, etapa, doc_cod (SN), nd_doc_cod (NDe), erro_mensagem, erp_response,
+ * revisao_humana, nde_autorizado — a trilha completa p/ auditar um sucesso ou uma falha sem SQL.
+ */
+const execucoesQuerySchema = z
+    .object({
+        txnId: z.string().min(1).optional(),
+        status: z.enum(['pending', 'reconciling', 'settled', 'error']).optional(),
+        limit: z.coerce.number().int().positive().max(200).optional(),
+    })
+    .refine((q) => q.txnId !== undefined || q.status !== undefined, {
+        message: 'Informe txnId ou status',
+    });
+
+router.get(
+    '/execucoes',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = execucoesQuerySchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
+            return;
+        }
+        const repo = container.resolve<SolicitacaoNumerarioExecucaoRepositoryInterface>(
+            SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
+        );
+        if (parsed.data.txnId !== undefined) {
+            res.json({ execucoes: await repo.listByTxnId(parsed.data.txnId) });
+            return;
+        }
+        if (parsed.data.status !== undefined) {
+            res.json({
+                execucoes: await repo.listByStatus(parsed.data.status, parsed.data.limit ?? 50),
+            });
+            return;
+        }
+        res.status(400).json({ error: 'Informe txnId ou status' });
     }),
 );
 

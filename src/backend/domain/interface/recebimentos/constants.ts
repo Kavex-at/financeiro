@@ -276,28 +276,40 @@ export const NDE_HOMOLOGACAO_ACTION = {
 } as const;
 
 /**
- * `docVldComvalidacoes` no retorno da homologação — **HTTP 200 ≠ sucesso**. Branch OBRIGATÓRIO
- * (`customizedSuccess: true` no UI suprime o toast default justamente p/ isto):
- *   - `1` → sucesso limpo (emitida)
- *   - `2` → homologada, mas com validações pendentes (aviso com194 — emitida COM aviso, NÃO sucesso)
- *   - default → falha (com194 + erro) — RECUSA (nunca marcar um 200 como sucesso).
+ * `docVldComvalidacoes` no retorno da homologação — **HTTP 200 ≠ sucesso** (branch obrigatório):
+ *   - `1` → sucesso limpo (emitida, sem validações pendentes).
+ *   - `2` → homologada COM validações pendentes (aviso com194) — emitida, marca revisão humana.
+ *   - `0` → homologada COM validações pendentes NÃO bloqueantes (ex.: cond. pagamento, tipo de frete, GTIN
+ *          do produto). Confirmado pelo Yuri (2026-08-03): na plataforma essas validações NÃO bloqueiam a
+ *          homologação — ela ACONTECE (igual ao HAR). Tratado como `2`: emitida + revisão humana (com194).
+ *   - default → falha (com194 + erro) — RECUSA (nunca marcar um 200 desconhecido como sucesso).
  */
 export const NDE_DOC_VLD_COM_VALIDACOES = {
     SUCESSO: 1,
     AVISO_VALIDACOES_PENDENTES: 2,
+    HOMOLOGADA_VALIDACOES_NAO_BLOQUEANTES: 0,
 } as const;
 
 /**
- * Constantes da GERAÇÃO do documento com297 (leg ANTERIOR, fora do escopo desta fatia — só a
- * homologação é contratada). PLACEHOLDERS documentados do docx p/ quando a leg de geração for cabeada:
- * produto SEMPRE `41978`, número SEMPRE `"0"`, tipo de nota de débito = `"Pagamento antecipado"`.
- * Confirmar via HAR/HML — `_inbox/recebimentos-nde-com297-gap.md`.
+ * Constantes da GERAÇÃO do documento com297 (HAR-confirmadas 2026-08-02 23-27, doc 18347 → SUCESSO):
+ * produto SEMPRE `41978` ("PAGAMENTO ANTECIPADO"), número SEMPRE `0`, série `NFE1`. A Configuração é a
+ * "NOTA DE DEBITO PAGAMENTO ANTECIPADO" (gcd 248 neste tenant, resolvida por nome).
  */
 export const NDE_GERACAO_DEFAULTS = {
     produtoCod: 41978,
-    numero: '0',
+    produtoNome: 'PAGAMENTO ANTECIPADO',
+    numero: 0,
+    serie: 'NFE1',
     tipoNotaDebito: 'Pagamento antecipado',
 } as const;
+
+/**
+ * `globalDocVldTipo` do com297 (NDe) = **0** — DIFERENTE do com299/SN (que é 9). Foi o `9` no com297 que
+ * fazia o processo rejeitar a config 248 (`gcdDesNomeProc NOT_VALID`, live 2026-08-03) e o ConfigDocProcesso
+ * não surfaçar nenhuma config de débito. Com `0`, o processo 3254 aceita a gcd 248 (HAR 23-27).
+ */
+export const NDE_GLOBAL_DOC_VLD_TIPO = 0;
+export const NDE_CONFIG_NOME = 'NOTA DE DEBITO PAGAMENTO ANTECIPADO';
 
 /**
  * com300 `fisVldTipoNfDebito` — tipo de nota de débito FISCAL (inteiro, NÃO string). `6` = PAGAMENTO

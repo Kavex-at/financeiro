@@ -136,7 +136,10 @@ export default class EnvironmentProvider {
                 : undefined,
             com297GcdNotaDebitoNome: this.readEnv(
                 'COM297_GCD_NOTA_DEBITO_NOME',
-                'NOTA DE DÉBITO ELETRÔNICA',
+                // Config REAL da NDe (HAR 2026-08-02 23-27, doc 18347 SUCESSO): "NOTA DE DEBITO PAGAMENTO
+                // ANTECIPADO" (gcd 248). O bug era o `globalDocVldTipo` (o com297 usa 0, não o 9 do SN) — com
+                // 0 o processo aceita a 248. Ver `NDE_GLOBAL_DOC_VLD_TIPO`.
+                'NOTA DE DEBITO PAGAMENTO ANTECIPADO',
             ),
             com297GcdNotaDebito: this.readEnv('COM297_GCD_NOTA_DEBITO')
                 ? Number(this.readEnv('COM297_GCD_NOTA_DEBITO'))
@@ -189,7 +192,10 @@ export default class EnvironmentProvider {
                 : undefined,
             com297GcdNotaDebitoNome: this.readEnv(
                 'COM297_GCD_NOTA_DEBITO_NOME',
-                'NOTA DE DÉBITO ELETRÔNICA',
+                // Config REAL da NDe (HAR 2026-08-02 23-27, doc 18347 SUCESSO): "NOTA DE DEBITO PAGAMENTO
+                // ANTECIPADO" (gcd 248). O bug era o `globalDocVldTipo` (o com297 usa 0, não o 9 do SN) — com
+                // 0 o processo aceita a 248. Ver `NDE_GLOBAL_DOC_VLD_TIPO`.
+                'NOTA DE DEBITO PAGAMENTO ANTECIPADO',
             ),
             com297GcdNotaDebito: this.readEnv('COM297_GCD_NOTA_DEBITO')
                 ? Number(this.readEnv('COM297_GCD_NOTA_DEBITO'))
