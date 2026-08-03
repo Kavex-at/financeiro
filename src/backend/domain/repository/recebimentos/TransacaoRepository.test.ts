@@ -131,6 +131,37 @@ describe('TransacaoRepository.upsertMany', () => {
         expect(r).toEqual({ inseridas: 0, deduplicadas: 0 });
         expect(db.withTransaction).not.toHaveBeenCalled();
     });
+
+    it('grava o canal de origem (upload manual x fin095)', async () => {
+        const { db, tx } = buildDbComTx([{ inserida: true }]);
+        await new TransacaoRepository(db).upsertMany(
+            [buildTransacao({ canal: 'xlsx_bradesco' })],
+            'run-1',
+        );
+        const [sql, params] = tx.selectMany.mock.calls[0];
+        expect(sql).toContain('canal');
+        expect(params.cl0).toBe('xlsx_bradesco');
+    });
+});
+
+describe('TransacaoRepository.existingNaturalKeys', () => {
+    it('lista vazia não consulta o banco', async () => {
+        const db = buildDb();
+        const set = await new TransacaoRepository(db).existingNaturalKeys([]);
+        expect(set.size).toBe(0);
+        expect(db.selectMany).not.toHaveBeenCalled();
+    });
+
+    it('devolve só as chaves presentes, parametrizado por ANY', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([{ natural_key: 'nk-a' }]);
+        const set = await new TransacaoRepository(db).existingNaturalKeys(['nk-a', 'nk-b']);
+        expect(set.has('nk-a')).toBe(true);
+        expect(set.has('nk-b')).toBe(false);
+        const [sql, params] = (db.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toContain('natural_key = ANY($naturalKeys)');
+        expect(params).toEqual({ naturalKeys: ['nk-a', 'nk-b'] });
+    });
 });
 
 describe('TransacaoRepository — leitura para o painel', () => {

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
-import { Router } from 'express';
+import { type RequestHandler, Router } from 'express';
+import multer from 'multer';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
@@ -29,6 +30,7 @@ import ConexosCadastroClient from '../domain/client/ConexosCadastroClient.js';
 import RecebimentoIngestaoRunRepository from '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
 import IngestaoTransacoesService from '../domain/service/recebimentos/IngestaoTransacoesService.js';
+import ImportacaoExtratoArquivoService from '../domain/service/recebimentos/ImportacaoExtratoArquivoService.js';
 import RecebimentoPipelineService from '../domain/service/recebimentos/RecebimentoPipelineService.js';
 import NumerarioAclChecker from '../domain/service/recebimentos/NumerarioAclChecker.js';
 import RecebimentoNumerarioService from '../domain/service/recebimentos/RecebimentoNumerarioService.js';
@@ -618,6 +620,142 @@ router.get(
         }
         const runRepo = container.resolve(RecebimentoIngestaoRunRepository);
         res.json({ runs: await runRepo.listRecentRuns(parsed.data.limit) });
+    }),
+);
+
+// ───────────────────────────────── Ingestão por UPLOAD manual (.xlsx) — canal alternativo
+
+/** Teto do upload: extratos são pequenos (KBs). 10MB cobre folga sem virar vetor de DoS de memória. */
+const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
+const uploadExtrato = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: UPLOAD_MAX_BYTES, files: 1 },
+    fileFilter: (_req, file, cb) => {
+        if (!/\.xlsx$/i.test(file.originalname)) {
+            cb(new Error('Apenas arquivos .xlsx são aceitos.'));
+            return;
+        }
+        cb(null, true);
+    },
+}).single('file');
+
+/** Roda o multer e converte erros (arquivo grande, extensão inválida) em 400 — não em 500. */
+const comUploadExtrato: RequestHandler = (req, res, next) => {
+    uploadExtrato(req, res, (err: unknown) => {
+        if (err) {
+            const message =
+                err instanceof multer.MulterError
+                    ? `Upload inválido: ${err.code}`
+                    : err instanceof Error
+                      ? err.message
+                      : 'Upload inválido';
+            res.status(400).json({ error: message });
+            return;
+        }
+        next();
+    });
+};
+
+/** `filCod` chega como campo de formulário (string) ao lado do arquivo. */
+const uploadFilCodSchema = z.object({
+    filCod: z.coerce.number().int().positive(),
+});
+
+/**
+ * A confirmação aceita também `excluirLinhas` — o `linhaIndice` dos créditos que o analista
+ * desmarcou no preview. Chega como JSON stringificado (FormData só carrega string/Blob).
+ */
+const uploadImportSchema = uploadFilCodSchema.extend({
+    excluirLinhas: z.preprocess((v) => {
+        if (v === undefined || v === '') return undefined;
+        if (typeof v !== 'string') return v;
+        try {
+            return JSON.parse(v);
+        } catch {
+            return v; // deixa o zod rejeitar como array inválido
+        }
+    }, z.array(z.number().int().nonnegative()).optional()),
+});
+
+/**
+ * Valida presença + extensão do arquivo e o corpo (via `schema`), com authz por filial. Devolve o
+ * contexto pronto, ou `undefined` após já ter respondido o erro.
+ */
+const resolverUpload = <TSchema extends z.ZodType<{ filCod: number }>>(
+    req: Parameters<RequestHandler>[0],
+    res: Parameters<RequestHandler>[1],
+    schema: TSchema,
+): ({ buffer: Buffer; arquivoNome: string } & z.infer<TSchema>) | undefined => {
+    const file = req.file;
+    if (!file) {
+        res.status(400).json({ error: 'Arquivo .xlsx obrigatório (campo "file").' });
+        return undefined;
+    }
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+        res.status(400).json({ error: 'Parâmetros inválidos', details: parsed.error.flatten() });
+        return undefined;
+    }
+    try {
+        assertUserCanActOnFilial(req.user, parsed.data.filCod);
+    } catch (err) {
+        if (err instanceof FilialForbiddenError) {
+            res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
+            return undefined;
+        }
+        throw err;
+    }
+    return { buffer: file.buffer, arquivoNome: file.originalname, ...parsed.data };
+};
+
+/**
+ * POST /recebimentos/ingestao/upload/preview — dry-run do upload: parseia o extrato, classifica
+ * novos × já importados e devolve uma amostra. NÃO escreve nada (confirm-before-commit).
+ */
+router.post(
+    '/ingestao/upload/preview',
+    heavyRouteLimiter,
+    requireRole('admin'),
+    comUploadExtrato,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const ctx = resolverUpload(req, res, uploadFilCodSchema);
+        if (!ctx) return;
+        const service = container.resolve(ImportacaoExtratoArquivoService);
+        res.json(await service.preview(ctx));
+    }),
+);
+
+/**
+ * POST /recebimentos/ingestao/upload — importa efetivamente os créditos do extrato .xlsx.
+ *
+ * Canal MANUAL, alternativo ao fin095 automático — alimenta a MESMA `transacao_bancaria`.
+ * Idempotente por hash do arquivo (`Idempotency-Key` opcional). Concorrência protegida pelo MESMO
+ * advisory lock do canal automático → **409** (`IngestLockBusyError`) se houver ingestão rodando.
+ */
+router.post(
+    '/ingestao/upload',
+    heavyRouteLimiter,
+    requireRole('admin'),
+    comUploadExtrato,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const ctx = resolverUpload(req, res, uploadImportSchema);
+        if (!ctx) return;
+        const service = container.resolve(ImportacaoExtratoArquivoService);
+        const idempotencyKey = req.header('Idempotency-Key') ?? undefined;
+        try {
+            const result = await service.importar({
+                ...ctx,
+                triggeredBy: req.user?.email ?? req.user?.sub ?? 'manual',
+                ...(idempotencyKey ? { idempotencyKey } : {}),
+            });
+            res.json(result);
+        } catch (err) {
+            if (respondHandlerError(req, res, err)) return;
+            throw err;
+        }
     }),
 );
 

@@ -10,6 +10,7 @@ import {
   ListChecks,
   Lock,
   RefreshCcw,
+  Upload,
   UserSearch,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -42,6 +43,7 @@ import {
 } from './components/status-badges'
 import { NdeTable } from './components/NdeTable'
 import { AlocarProcessosDialog } from './components/AlocarProcessosDialog'
+import { ImportarExtratoDialog } from './components/ImportarExtratoDialog'
 
 /** Formata uma data ISO (ou undefined) para pt-BR curta (UTC — dia estável). */
 const fmtData = (iso?: string) =>
@@ -95,6 +97,7 @@ function RecebimentosPanel() {
   const [statusFiltro, setStatusFiltro] = React.useState<StatusFiltro>('todas')
   const [aba, setAba] = React.useState('transacoes')
   const [alocarTxn, setAlocarTxn] = React.useState<TransacaoBancaria | null>(null)
+  const [importOpen, setImportOpen] = React.useState(false)
 
   const carregar = React.useCallback(async () => {
     setLoading(true)
@@ -152,14 +155,19 @@ function RecebimentosPanel() {
             : 'Conciliação de créditos bancários (Frente IV).'
         }
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void carregar()}
-            disabled={loading}
-          >
-            <RefreshCcw className="size-4" aria-hidden /> Recarregar
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload className="size-4" aria-hidden /> Importar extrato
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void carregar()}
+              disabled={loading}
+            >
+              <RefreshCcw className="size-4" aria-hidden /> Recarregar
+            </Button>
+          </div>
         }
       />
 
@@ -411,6 +419,12 @@ function RecebimentosPanel() {
         onOpenChange={(o) => {
           if (!o) setAlocarTxn(null)
         }}
+      />
+
+      <ImportarExtratoDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={() => void carregar()}
       />
     </div>
   )
