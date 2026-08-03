@@ -355,10 +355,15 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
             state.proximoSnDocCod += 1;
             docCod = state.proximoSnDocCod;
         }
+        // A NDe (com297) nasce JÁ com o produto (`prdCod` 41978) e o valor no HEADER do
+        // gerDocProcesso — não há mais POST em `com297/comDocProdutos`. A SN (com299) continua
+        // ganhando valor pela linha de item (`comDocProdutos`), como no HAR real.
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const valorHeader = tela === 'com297' ? Number(body.valor ?? 0) : 0;
         state.docs.set(`${tela}:${docCod}`, {
-            ...((req.body ?? {}) as Record<string, unknown>),
+            ...body,
             docCod,
-            docMnyValor: 0,
+            docMnyValor: valorHeader > 0 ? valorHeader : 0,
             docVldFinalizado: 0,
         });
         res.json({
@@ -596,6 +601,25 @@ const buildFakeSnLedger = (): { ledger: AnyRecord; rows: Map<string, AnyRecord> 
     return { ledger, rows };
 };
 
+/**
+ * Repositório in-memory da NDe (`nota_debito_eletronica`): logo após homologar, o service registra a
+ * NDe emitida como entidade de 1ª classe (auditoria + aba NDe do painel). Sem este fake o token
+ * resolveria o repositório REAL (Postgres) e a etapa `homologado` estouraria. `saves` guarda cada
+ * chamada — só o cenário que chega a homologar deve gravar alguma coisa.
+ */
+const buildFakeNdeRepo = (): { repo: AnyRecord; saves: AnyRecord[] } => {
+    const saves: AnyRecord[] = [];
+    const repo: AnyRecord = {
+        save: async (nde: AnyRecord): Promise<AnyRecord> => {
+            saves.push(nde);
+            return nde;
+        },
+        findByRecebimentoId: async (recebimentoId: string): Promise<AnyRecord | null> =>
+            [...saves].reverse().find((n) => n.recebimentoId === recebimentoId) ?? null,
+    };
+    return { repo, saves };
+};
+
 // ─────────────────────────────────────────────────────────────────────────── harness
 
 interface TestServer {
@@ -626,6 +650,7 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
     let erpServer: TestServer;
     let appServer: TestServer;
     let snLedgerRows: Map<string, AnyRecord>;
+    let ndeSaves: AnyRecord[];
     // Snapshot do env: o worker do Jest reusa o processo entre arquivos — restaurar no afterAll
     // impede que CONEXOS_WRITE_ENABLED=true / CONEXOS_DRY_RUN=false vazem para outra suíte.
     const envSnapshot = new Map<string, string | undefined>();
@@ -668,9 +693,8 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
         const { default: RecebimentoIngestaoRunRepository } = await import(
             '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js'
         );
-        const { SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } = await import(
-            '../domain/interface/recebimentos/ports.js'
-        );
+        const { NDE_REPOSITORY_TOKEN, SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } =
+            await import('../domain/interface/recebimentos/ports.js');
 
         container.registerInstance(PostgreeDatabaseClient, buildFakeDb() as never);
         const { repo: fakeTransacaoRepo } = buildFakeTransacaoRepo();
@@ -678,7 +702,7 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
         container.registerInstance(RecebimentoIngestaoRunRepository, buildFakeRunRepo() as never);
 
         // 4) Wiring REAL do bootstrap (sem migrations): adapter Conexos legado (login/sid via
-        // HTTP contra o ERP fake) + ports Frente IV; depois o override do ledger SN.
+        // HTTP contra o ERP fake) + ports Frente IV; depois o override do ledger SN e do repo NDe.
         const { buildLegacyConexosAdapter } = await import(
             '../domain/client/legacyConexosAdapter.js'
         );
@@ -700,6 +724,9 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
         container.register(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN, {
             useValue: fakeLedger.ledger,
         });
+        const fakeNde = buildFakeNdeRepo();
+        ndeSaves = fakeNde.saves;
+        container.register(NDE_REPOSITORY_TOKEN, { useValue: fakeNde.repo });
 
         // 5) App Express real (router de recebimentos + errorMiddleware), user admin injetado.
         const { default: recebimentosRouter } = await import('./recebimentos.js');
@@ -804,6 +831,13 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
             const row = snLedgerRows.get(`sn-real:${txnId}:${PRI_COD}:${VALOR}`);
             expect(row?.status).toBe('settled');
             expect(row?.revisaoHumana).toBe(true);
+
+            // A NDe foi registrada como EMITIDA mesmo com validações pendentes (a revisão humana é
+            // um flag da execução, não um bloqueio da emissão).
+            const nde = ndeSaves.find((n) => n.recebimentoId === txnId);
+            expect(nde).toBeDefined();
+            expect(nde?.statusEmissao).toBe('emitida');
+            expect(nde?.valor).toBe(VALOR);
         });
     });
 
@@ -837,6 +871,8 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
             const row = snLedgerRows.get(`sn-real:${txnId}:${PRI_COD}:${VALOR}`);
             expect(row?.status).toBe('error');
             expect(row?.ndeAutorizado).not.toBe(true);
+            // E NENHUMA NDe foi registrada para esta transação — a rejeição aborta antes do save.
+            expect(ndeSaves.some((n) => n.recebimentoId === txnId)).toBe(false);
         });
     });
 

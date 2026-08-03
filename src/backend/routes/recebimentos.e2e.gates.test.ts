@@ -17,8 +17,9 @@ import type { DependencyContainer } from 'tsyringe';
  *   2. RT-007 (GAP auditado) — NDe homologada com `docMnyValor=0` NÃO bloqueia: o fluxo autoriza a
  *      NDe de valor ZERO (warn, não gate). Comportamento ATUAL pinado; ver
  *      `docs/reforma-tributaria/02_auditoria_gap_report.md`.
- *   3. SEFAZ NUNCA AUTORIZA — poll timeout NÃO é erro: `status:'settled'` com `etapa:'homologado'`,
- *      `ndeAutorizado:false`, ledger SEM `markError` (retomável depois).
+ *   3. SEFAZ NUNCA AUTORIZA — a leitura ÚNICA do poll NÃO é erro: `status:'settled'` (o numerário
+ *      terminou na homologação) com `etapa:'homologado'`, `ndeAutorizado:false` e ledger SEM
+ *      `markError` — a autorização assíncrona é reconciliada depois.
  *
  * CUIDADO de harness: o `EnvironmentProvider` é `@singleton` com cache interno (`environmentVars`).
  * O env MUDA entre describes, então cada describe reseta o cache do singleton (campo privado zerado
@@ -269,11 +270,16 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
     });
     app.post('/api/:tela/gerDocProcesso', (req, res) => {
         const tela = String(req.params.tela);
+        const body = (req.body ?? {}) as Record<string, unknown>;
         const docCod = tela === 'com297' ? state.ndDocCod : state.snDocCod;
+        // A NDe (com297) nasce JÁ com o produto (`prdCod` 41978) e o valor no HEADER do
+        // gerDocProcesso — não há mais POST em `com297/comDocProdutos`. Sem isso o cenário RT-007
+        // (docMnyValor=0 pós-homologação) seria vácuo: TODA NDe nasceria com valor zero.
+        const valorHeader = tela === 'com297' ? Number(body.valor ?? 0) : 0;
         state.docs.set(`${tela}:${docCod}`, {
-            ...((req.body ?? {}) as Record<string, unknown>),
+            ...body,
             docCod,
-            docMnyValor: 0,
+            docMnyValor: valorHeader > 0 ? valorHeader : 0,
             docVldFinalizado: 0,
         });
         res.json({
@@ -466,6 +472,24 @@ const buildFakeSnLedger = (): FakeSnLedger => {
     return { ledger, rows, markErrorCalls };
 };
 
+/**
+ * Repositório in-memory da NDe (`nota_debito_eletronica`): logo após homologar, o service registra a
+ * NDe emitida como entidade de 1ª classe (auditoria + aba NDe do painel). Sem este fake o token
+ * resolveria o repositório REAL (Postgres) e a etapa `homologado` estouraria.
+ */
+const buildFakeNdeRepo = (): { repo: AnyRecord; saves: AnyRecord[] } => {
+    const saves: AnyRecord[] = [];
+    const repo: AnyRecord = {
+        save: async (nde: AnyRecord): Promise<AnyRecord> => {
+            saves.push(nde);
+            return nde;
+        },
+        findByRecebimentoId: async (recebimentoId: string): Promise<AnyRecord | null> =>
+            [...saves].reverse().find((n) => n.recebimentoId === recebimentoId) ?? null,
+    };
+    return { repo, saves };
+};
+
 // ─────────────────────────────────────────────────────────────────────────── harness
 
 interface TestServer {
@@ -501,6 +525,7 @@ let erpServer: TestServer;
 let appServer: TestServer;
 let transacaoStore: Map<string, AnyRecord>;
 let fakeLedger: FakeSnLedger;
+let ndeSaves: AnyRecord[];
 let containerRef: DependencyContainer;
 let environmentProviderCtor: unknown;
 
@@ -591,7 +616,7 @@ beforeAll(async () => {
     const { default: RecebimentoIngestaoRunRepository } = await import(
         '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js'
     );
-    const { SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } = await import(
+    const { NDE_REPOSITORY_TOKEN, SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } = await import(
         '../domain/interface/recebimentos/ports.js'
     );
 
@@ -602,7 +627,7 @@ beforeAll(async () => {
     container.registerInstance(RecebimentoIngestaoRunRepository, buildFakeRunRepo() as never);
 
     // 4) Wiring REAL do bootstrap (sem migrations): adapter Conexos legado (login/sid via HTTP
-    // contra o ERP fake) + ports Frente IV; depois o override do ledger SN in-memory.
+    // contra o ERP fake) + ports Frente IV; depois o override do ledger SN e do repo NDe in-memory.
     const { buildLegacyConexosAdapter } = await import('../domain/client/legacyConexosAdapter.js');
     const { default: ConexosBaseClient, LEGACY_CONEXOS_TOKEN } = await import(
         '../domain/client/ConexosBaseClient.js'
@@ -621,6 +646,9 @@ beforeAll(async () => {
     container.register(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN, {
         useValue: fakeLedger.ledger,
     });
+    const fakeNde = buildFakeNdeRepo();
+    ndeSaves = fakeNde.saves;
+    container.register(NDE_REPOSITORY_TOKEN, { useValue: fakeNde.repo });
 
     // 5) App Express real (router de recebimentos + errorMiddleware), user admin injetado.
     const { default: recebimentosRouter } = await import('./recebimentos.js');
@@ -683,6 +711,8 @@ describe('GATE 1 — dry-run é o DEFAULT (escrita fechada sem env explícita)',
     it('o ledger SN não abriu execução nenhuma (dry-run não passa pelo write-ahead)', () => {
         expect(fakeLedger.rows.size).toBe(0);
         expect(fakeLedger.markErrorCalls).toHaveLength(0);
+        // E nenhuma NDe foi registrada — o dry-run nem chega à homologação.
+        expect(ndeSaves).toHaveLength(0);
     });
 });
 
@@ -733,17 +763,24 @@ describe('GATE 2 — RT-007: docMnyValor=0 pós-homologação NÃO bloqueia (GAP
         expect(row?.etapa).toBe('concluido');
         expect(row?.ndeAutorizado).toBe(true);
         expect(fakeLedger.markErrorCalls).toHaveLength(0);
+        // A NDe de valor zero foi registrada como EMITIDA mesmo assim (o gap não barra nada).
+        expect(ndeSaves).toHaveLength(1);
+        expect(ndeSaves[0]?.statusEmissao).toBe('emitida');
     });
 });
 
 // ────────────────────────────────────────────────────────────────────────── cenário 3
 
-describe('GATE 3 — SEFAZ nunca autoriza: poll timeout NÃO é erro (fluxo retomável)', () => {
+describe('GATE 3 — SEFAZ nunca autoriza: leitura ÚNICA do poll NÃO é erro (autorização reconciliada depois)', () => {
     const TXN_ID = 'txn-gate-sefaz-muda';
+    /** Contagem de leituras de status do com297 no describe (o log é compartilhado no arquivo). */
+    let marcoRequests = 0;
 
     beforeAll(() => {
         // Escrita segue ligada (herdada do describe 2 via process.env); SEFAZ em silêncio absoluto
-        // (vldAutorizado sempre 0) e poll CURTO para o timeout acontecer em ~300ms.
+        // (vldAutorizado sempre 0). As envs de poll continuam setadas porque o EnvironmentProvider
+        // ainda as expõe, mas NÃO afetam mais o fluxo: a `etapaPoll` faz UMA leitura best-effort —
+        // não existe mais loop de até 5 min segurando o request do "Processar".
         setEnv('NDE_POLL_TIMEOUT_MS', '300');
         setEnv('NDE_POLL_INTERVAL_MS', '50');
         resetEnvironmentCache();
@@ -752,28 +789,47 @@ describe('GATE 3 — SEFAZ nunca autoriza: poll timeout NÃO é erro (fluxo reto
         erp.state.homologado = false;
         erp.state.pollsPosHomolog = 0;
         erp.state.obsGerada = false;
+        marcoRequests = erp.state.requests.length;
         seedTransacao(TXN_ID);
     });
 
-    it('timeout do poll devolve settled/homologado com ndeAutorizado=false (não é erro)', async () => {
+    it('SEFAZ em silêncio devolve settled/homologado com ndeAutorizado=false (não é erro)', async () => {
         const res = await postAlocacao(TXN_ID);
         const body = (await res.json()) as AnyRecord;
         expect(res.status).toBe(200);
+        // O trabalho do numerário (SN + baixa + NDe homologada) está FEITO → status geral settled...
         expect(body.status).toBe('settled');
-        expect(body.etapa).toBe('homologado'); // parou ANTES de 'concluido' — SEFAZ não autorizou
+        // ...mas a etapa para em 'homologado': quem promove a 'concluido' é a autorização SEFAZ.
+        expect(body.etapa).toBe('homologado');
         expect(body.ndeAutorizado).toBe(false);
         expect(body.vldAutorizado).toBe(0);
         expect(body.dryRun).toBe(false);
     });
 
-    it('o ledger NÃO registrou erro: a execução fica em homologado, retomável depois', () => {
+    it('o poll faz UMA leitura só, sem loop até timeout (2 GETs de status pós-homologação)', () => {
+        const paths = erp.state.requests.slice(marcoRequests).map((r) => `${r.method} ${r.path}`);
+        const idxHomolog = paths.indexOf(`POST /api/com297/homologaNfe/${erp.state.ndDocCod}`);
+        expect(idxHomolog).toBeGreaterThan(-1);
+        const leiturasPosHomolog = paths
+            .slice(idxHomolog + 1)
+            .filter((p) => p === `GET /api/com297/${erp.state.ndDocCod}`);
+        // Exatamente 2: a leitura do docMnyValor (dentro da `etapaHomologar`) + a leitura ÚNICA da
+        // `etapaPoll`. Antes o poll varria `vldAutorizado` em loop (intervalo × timeout) e o
+        // "Processar" ficava girando; agora a autorização assíncrona é reconciliada depois.
+        expect(leiturasPosHomolog).toHaveLength(2);
+    });
+
+    it('o ledger NÃO registrou erro: settled com nde_autorizado=false, retomável depois', () => {
         expect(fakeLedger.markErrorCalls).toHaveLength(0);
         const row = fakeLedger.rows.get(`sn-real:${TXN_ID}:${PRI_COD}:${VALOR_EXTRATO}`);
         expect(row).toBeDefined();
-        // Sem autorização não há markSettled: a linha permanece 'reconciling' na etapa
-        // 'homologado' — um re-POST futuro retoma o poll a partir daqui (idempotência).
-        expect(row?.status).toBe('reconciling');
-        expect(row?.etapa).toBe('homologado');
+        // O `markSettled` acontece logo após homologar (o numerário terminou) — a falta de
+        // autorização NÃO é erro nem segura o settle; ela vive no flag `nde_autorizado`, que um
+        // refresh/re-alocação futuro reconcilia a partir de 'homologado'.
+        expect(row?.status).toBe('settled');
         expect(row?.ndeAutorizado).not.toBe(true);
+        // A NDe emitida ficou registrada mesmo sem autorização (é o que destrava a reconciliação).
+        expect(ndeSaves).toHaveLength(2);
+        expect(ndeSaves[1]?.recebimentoId).toBe(TXN_ID);
     });
 });

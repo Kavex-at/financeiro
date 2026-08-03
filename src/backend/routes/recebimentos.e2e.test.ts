@@ -314,11 +314,16 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
     });
     app.post('/api/:tela/gerDocProcesso', (req, res) => {
         const tela = String(req.params.tela);
+        const body = (req.body ?? {}) as Record<string, unknown>;
         const docCod = tela === 'com297' ? state.ndDocCod : state.snDocCod;
+        // A NDe (com297) nasce JÁ com o produto (`prdCod` 41978) e o valor no HEADER do
+        // gerDocProcesso — não há mais POST em `com297/comDocProdutos`. A SN (com299) continua
+        // ganhando valor pela linha de item (`comDocProdutos`), como no HAR real.
+        const valorHeader = tela === 'com297' ? Number(body.valor ?? 0) : 0;
         state.docs.set(`${tela}:${docCod}`, {
-            ...((req.body ?? {}) as Record<string, unknown>),
+            ...body,
             docCod,
-            docMnyValor: 0,
+            docMnyValor: valorHeader > 0 ? valorHeader : 0,
             docVldFinalizado: 0,
         });
         res.json({
@@ -556,6 +561,25 @@ const buildFakeSnLedger = (): { ledger: AnyRecord; rows: Map<string, AnyRecord> 
     return { ledger, rows };
 };
 
+/**
+ * Repositório in-memory da NDe (`nota_debito_eletronica`): logo após homologar, o service registra a
+ * NDe emitida como entidade de 1ª classe (auditoria + aba NDe do painel). Sem este fake o token
+ * resolveria o repositório REAL (Postgres) e a etapa `homologado` estouraria. `saves` guarda cada
+ * chamada — é a prova de que a NDe foi gravada UMA vez (idempotência por `idempotencyKey`).
+ */
+const buildFakeNdeRepo = (): { repo: AnyRecord; saves: AnyRecord[] } => {
+    const saves: AnyRecord[] = [];
+    const repo: AnyRecord = {
+        save: async (nde: AnyRecord): Promise<AnyRecord> => {
+            saves.push(nde);
+            return nde;
+        },
+        findByRecebimentoId: async (recebimentoId: string): Promise<AnyRecord | null> =>
+            [...saves].reverse().find((n) => n.recebimentoId === recebimentoId) ?? null,
+    };
+    return { repo, saves };
+};
+
 // ─────────────────────────────────────────────────────────────────────────── harness
 
 interface TestServer {
@@ -586,6 +610,7 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
     let erpServer: TestServer;
     let appServer: TestServer;
     let snLedgerRows: Map<string, AnyRecord>;
+    let ndeSaves: AnyRecord[];
     let txnId = '';
     let processo: AnyRecord = {};
     // Snapshot do env: o worker do Jest reusa o processo entre arquivos — restaurar no afterAll
@@ -630,9 +655,8 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
         const { default: RecebimentoIngestaoRunRepository } = await import(
             '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js'
         );
-        const { SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } = await import(
-            '../domain/interface/recebimentos/ports.js'
-        );
+        const { NDE_REPOSITORY_TOKEN, SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } =
+            await import('../domain/interface/recebimentos/ports.js');
 
         container.registerInstance(PostgreeDatabaseClient, buildFakeDb() as never);
         const { repo: fakeTransacaoRepo } = buildFakeTransacaoRepo();
@@ -640,7 +664,7 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
         container.registerInstance(RecebimentoIngestaoRunRepository, buildFakeRunRepo() as never);
 
         // 4) Wiring REAL do bootstrap (sem migrations): adapter Conexos legado (login/sid via
-        // HTTP contra o ERP fake) + ports Frente IV; depois o override do ledger SN.
+        // HTTP contra o ERP fake) + ports Frente IV; depois o override do ledger SN e do repo NDe.
         const { buildLegacyConexosAdapter } = await import(
             '../domain/client/legacyConexosAdapter.js'
         );
@@ -662,6 +686,9 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
         container.register(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN, {
             useValue: fakeLedger.ledger,
         });
+        const fakeNde = buildFakeNdeRepo();
+        ndeSaves = fakeNde.saves;
+        container.register(NDE_REPOSITORY_TOKEN, { useValue: fakeNde.repo });
 
         // 5) App Express real (router de recebimentos + errorMiddleware), user admin injetado.
         const { default: recebimentosRouter } = await import('./recebimentos.js');
@@ -758,6 +785,14 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
         expect(row?.etapa).toBe('concluido');
         expect(row?.ndeAutorizado).toBe(true);
 
+        // A NDe emitida virou entidade de 1ª classe (auditoria + aba NDe): UM registro, amarrado à
+        // transação e à mesma idempotency key da alocação.
+        expect(ndeSaves).toHaveLength(1);
+        expect(ndeSaves[0]?.recebimentoId).toBe(txnId);
+        expect(ndeSaves[0]?.idempotencyKey).toBe(`sn-real:${txnId}:${PRI_COD}:${VALOR_EXTRATO}`);
+        expect(ndeSaves[0]?.valor).toBe(VALOR_EXTRATO);
+        expect(ndeSaves[0]?.statusEmissao).toBe('emitida');
+
         // Ordem macro no ERP: SN gerada antes do borderô; borderô antes da NDe; NDe antes da
         // homologação (o write-path inteiro aconteceu de verdade, via HTTP, na ordem certa).
         const paths = erp.state.requests.map((r) => `${r.method} ${r.path}`);
@@ -792,6 +827,8 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
             .slice(antes)
             .filter((r) => r.method !== 'GET' && !r.path.endsWith('/login'));
         expect(novasEscritas).toHaveLength(0);
+        // E nenhuma NDe nova foi registrada — o `skipped` para antes da homologação.
+        expect(ndeSaves).toHaveLength(1);
     });
 
     it('6. re-ingestão do mesmo extrato deduplica (nenhuma transação nova)', async () => {
@@ -861,13 +898,19 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
                 r.path === '/api/com299/comDocProdutos' &&
                 r.body.dprPreValorun !== undefined,
         );
-        const itemNde = erp.state.requests.find(
-            (r) =>
-                r.method === 'POST' &&
-                r.path === '/api/com297/comDocProdutos' &&
-                r.body.valor !== undefined,
+        // O produto da NDe viaja no HEADER do `com297/gerDocProcesso` (`prdCod`/`prdDesNome`) — o POST
+        // separado de item (`com297/comDocProdutos`) não existe mais no produto (ao vivo devolvia 400
+        // `docVldTipo required`). O fato auditado é o MESMO: os dois documentos saem com produtos
+        // diferentes, sem ninguém classificar nada.
+        const geracaoNde = erp.state.requests.find(
+            (r) => r.method === 'POST' && r.path === '/api/com297/gerDocProcesso',
         );
         expect(itemSn?.body.prdCod).toBe(2);
-        expect(itemNde?.body.prdCod).toBe(41978);
+        expect(geracaoNde?.body.prdCod).toBe(41978);
+        expect(geracaoNde?.body.prdDesNome).toBe('PAGAMENTO ANTECIPADO');
+        const itensNde = erp.state.requests.filter(
+            (r) => r.method === 'POST' && r.path === '/api/com297/comDocProdutos',
+        );
+        expect(itensNde).toHaveLength(0);
     });
 });

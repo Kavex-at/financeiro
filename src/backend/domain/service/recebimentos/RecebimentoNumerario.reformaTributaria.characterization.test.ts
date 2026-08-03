@@ -40,6 +40,7 @@ interface Mocks {
     fiscal: jest.Mocked<ConexosNdeFiscalClient>;
     nde: jest.Mocked<ConexosNdeClient>;
     repo: jest.Mocked<SolicitacaoNumerarioExecucaoRepositoryInterface>;
+    ndeRepo: { save: jest.Mock; findByRecebimentoId: jest.Mock };
     env: jest.Mocked<EnvironmentProvider>;
 }
 
@@ -169,6 +170,10 @@ const buildMocks = (): Mocks => ({
         markSettled: jest.fn().mockResolvedValue(undefined),
         markError: jest.fn().mockResolvedValue(undefined),
     } as never,
+    ndeRepo: {
+        save: jest.fn().mockImplementation((nde: unknown) => Promise.resolve(nde)),
+        findByRecebimentoId: jest.fn().mockResolvedValue(null),
+    },
     env: buildEnv(),
 });
 
@@ -182,6 +187,7 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         m.env,
         new SnPayloadBuilder(),
         m.repo,
+        m.ndeRepo as never,
         logService,
         new ErpErrorInterpreter(),
     );

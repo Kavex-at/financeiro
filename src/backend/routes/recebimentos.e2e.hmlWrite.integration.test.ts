@@ -138,6 +138,29 @@ const buildFakeSnLedger = (): { ledger: AnyRecord; rows: Map<string, AnyRecord> 
     return { ledger, rows };
 };
 
+/**
+ * Repositório in-memory da NDe emitida. O `registerRecebimentosPorts` registra o `NdeRepository`
+ * de Postgres, mas aqui não há banco (o fake `insert` lança) — e a homologação passou a gravar um
+ * `nota_debito_eletronica` (merge 2026-08-03). Sem este fake a etapa `homologado` quebraria por
+ * falta de banco, não por comportamento do ERP.
+ */
+const buildFakeNdeRepo = (): { repo: AnyRecord; rows: AnyRecord[] } => {
+    const rows: AnyRecord[] = [];
+    const repo: AnyRecord = {
+        save: async (nde: AnyRecord): Promise<AnyRecord> => {
+            rows.push(nde);
+            // eslint-disable-next-line no-console
+            console.log(
+                `[NDE] salva numero=${String(nde.numeroNde)} valor=${String(nde.valor)} status=${String(nde.statusEmissao)}`,
+            );
+            return nde;
+        },
+        findByRecebimentoId: async (recebimentoId: string): Promise<AnyRecord | null> =>
+            rows.find((r) => r.recebimentoId === recebimentoId) ?? null,
+    };
+    return { repo, rows };
+};
+
 interface TestServer {
     url: string;
     close: () => Promise<void>;
@@ -214,9 +237,8 @@ describe('FASE B — E2E ESCRITA REAL no Conexos HML (SN → fin014 → NDe → 
         const { default: RecebimentoIngestaoRunRepository } = await import(
             '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js'
         );
-        const { SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } = await import(
-            '../domain/interface/recebimentos/ports.js'
-        );
+        const { SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN, NDE_REPOSITORY_TOKEN } =
+            await import('../domain/interface/recebimentos/ports.js');
 
         container.registerInstance(PostgreeDatabaseClient, buildFakeDb() as never);
         // Transação semeada: o crédito que o analista alocaria. gerNum 38 = conta Itaú do HML.
@@ -259,6 +281,7 @@ describe('FASE B — E2E ESCRITA REAL no Conexos HML (SN → fin014 → NDe → 
         container.register(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN, {
             useValue: fakeLedger.ledger,
         });
+        container.register(NDE_REPOSITORY_TOKEN, { useValue: buildFakeNdeRepo().repo });
 
         const { default: recebimentosRouter } = await import('./recebimentos.js');
         const { errorMiddleware } = await import('../http/errorMiddleware.js');

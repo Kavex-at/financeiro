@@ -321,11 +321,16 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
     });
     app.post('/api/:tela/gerDocProcesso', (req, res) => {
         const tela = String(req.params.tela);
+        const body = (req.body ?? {}) as Record<string, unknown>;
         const docCod = tela === 'com297' ? state.ndDocCod : state.snDocCod;
+        // A NDe (com297) nasce JÁ com o produto (`prdCod` 41978) e o valor no HEADER do
+        // gerDocProcesso — não há mais POST em `com297/comDocProdutos`. A SN (com299) continua
+        // ganhando valor pela linha de item (`comDocProdutos`), como no HAR real.
+        const valorHeader = tela === 'com297' ? Number(body.valor ?? 0) : 0;
         state.docs.set(`${tela}:${docCod}`, {
-            ...((req.body ?? {}) as Record<string, unknown>),
+            ...body,
             docCod,
-            docMnyValor: 0,
+            docMnyValor: valorHeader > 0 ? valorHeader : 0,
             docVldFinalizado: 0,
         });
         res.json({
@@ -563,6 +568,25 @@ const buildFakeSnLedger = (): { ledger: AnyRecord; rows: Map<string, AnyRecord> 
     return { ledger, rows };
 };
 
+/**
+ * Repositório in-memory da NDe (`nota_debito_eletronica`): logo após homologar, o service registra a
+ * NDe emitida como entidade de 1ª classe (auditoria + aba NDe do painel). Sem este fake o token
+ * resolveria o repositório REAL (Postgres) e a etapa `homologado` estouraria. `saves` guarda cada
+ * chamada — na retomada é mais uma prova de que a NDe não foi emitida/gravada duas vezes.
+ */
+const buildFakeNdeRepo = (): { repo: AnyRecord; saves: AnyRecord[] } => {
+    const saves: AnyRecord[] = [];
+    const repo: AnyRecord = {
+        save: async (nde: AnyRecord): Promise<AnyRecord> => {
+            saves.push(nde);
+            return nde;
+        },
+        findByRecebimentoId: async (recebimentoId: string): Promise<AnyRecord | null> =>
+            [...saves].reverse().find((n) => n.recebimentoId === recebimentoId) ?? null,
+    };
+    return { repo, saves };
+};
+
 // ─────────────────────────────────────────────────────────────────────────── harness
 
 interface TestServer {
@@ -593,6 +617,7 @@ describe('E2E Recebimentos — RETOMADA anti-duplicação após falha parcial do
     let erpServer: TestServer;
     let appServer: TestServer;
     let snLedgerRows: Map<string, AnyRecord>;
+    let ndeSaves: AnyRecord[];
     let txnId = '';
     let processo: AnyRecord = {};
     // Snapshot do env: o worker do Jest reusa o processo entre arquivos — restaurar no afterAll
@@ -652,9 +677,8 @@ describe('E2E Recebimentos — RETOMADA anti-duplicação após falha parcial do
         const { default: RecebimentoIngestaoRunRepository } = await import(
             '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js'
         );
-        const { SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } = await import(
-            '../domain/interface/recebimentos/ports.js'
-        );
+        const { NDE_REPOSITORY_TOKEN, SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN } =
+            await import('../domain/interface/recebimentos/ports.js');
 
         container.registerInstance(PostgreeDatabaseClient, buildFakeDb() as never);
         const { repo: fakeTransacaoRepo } = buildFakeTransacaoRepo();
@@ -662,7 +686,7 @@ describe('E2E Recebimentos — RETOMADA anti-duplicação após falha parcial do
         container.registerInstance(RecebimentoIngestaoRunRepository, buildFakeRunRepo() as never);
 
         // 4) Wiring REAL do bootstrap (sem migrations): adapter Conexos legado (login/sid via
-        // HTTP contra o ERP fake) + ports Frente IV; depois o override do ledger SN.
+        // HTTP contra o ERP fake) + ports Frente IV; depois o override do ledger SN e do repo NDe.
         const { buildLegacyConexosAdapter } = await import(
             '../domain/client/legacyConexosAdapter.js'
         );
@@ -684,6 +708,9 @@ describe('E2E Recebimentos — RETOMADA anti-duplicação após falha parcial do
         container.register(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN, {
             useValue: fakeLedger.ledger,
         });
+        const fakeNde = buildFakeNdeRepo();
+        ndeSaves = fakeNde.saves;
+        container.register(NDE_REPOSITORY_TOKEN, { useValue: fakeNde.repo });
 
         // 5) App Express real (router de recebimentos + errorMiddleware), user admin injetado.
         const { default: recebimentosRouter } = await import('./recebimentos.js');
@@ -827,11 +854,21 @@ describe('E2E Recebimentos — RETOMADA anti-duplicação após falha parcial do
         expect(countReq('POST', (p) => p.startsWith('/api/com297/homologaNfeContingencia'))).toBe(
             0,
         );
-        // Cauda da NDe também sem repetição: geração, item, fiscal RMW e observações 1x cada.
+        // Cauda da NDe também sem repetição: geração, fiscal RMW e observações 1x cada.
         expect(countReq('POST', (p) => p === '/api/com297/gerDocProcesso')).toBe(1);
-        expect(countReq('POST', (p) => p === '/api/com297/comDocProdutos')).toBe(1);
+        // O produto da NDe (41978) viaja no HEADER dessa geração — o POST separado de item
+        // (`com297/comDocProdutos`) não existe mais no produto (ao vivo: 400 `docVldTipo required`).
+        // A anti-duplicação do item é, portanto, a própria geração única acima.
+        expect(countReq('POST', (p) => p === '/api/com297/comDocProdutos')).toBe(0);
+        const geracoesNde = erp.state.requests.filter(
+            (r) => r.method === 'POST' && r.path === '/api/com297/gerDocProcesso',
+        );
+        expect(geracoesNde.map((r) => r.body.prdCod)).toEqual([41978]);
         expect(countReq('PUT', (p) => p === '/api/com300')).toBe(1);
         expect(countReq('POST', (p) => p === '/api/com131/geraObs')).toBe(1);
+        // E a NDe foi registrada como entidade exatamente 1x nas duas tentativas (sem duplicar).
+        expect(ndeSaves).toHaveLength(1);
+        expect(ndeSaves[0]?.idempotencyKey).toBe(`sn-real:${txnId}:${PRI_COD}:${VALOR_EXTRATO}`);
         // E o borderô finalizado só na retomada (a 1ª tentativa nem chegou a criar um).
         expect(countReq('POST', (p) => p.startsWith('/api/fin014/finalizar/'))).toBe(1);
     });
