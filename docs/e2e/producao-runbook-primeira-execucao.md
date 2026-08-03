@@ -62,10 +62,45 @@ Quatro respostas, e o que fazer com cada uma:
 | **condição de pagamento no cadastro** | `count: 0` → **verde** | tem condição → prefira outro cliente |
 | config da NDe resolvida pelo NOME | gcd encontrado | **pare** — a etapa `nota-debito` falharia |
 
-## 4. Configuração da execução
+## 4. A execução
 
-O fluxo real roda pela **UI** (`/recebimentos` → *Alocar processos* → **Processar**), que é o caminho do
-analista, não por jest. O backend precisa de:
+`src/backend/routes/recebimentos.e2e.prodWrite.integration.test.ts` executa **a rota real do produto**
+(`POST /recebimentos/transacoes/:txnId/solicitacao-numerario`) — mesmo serviço, mesmos clients, mesmo
+caminho que a UI dispara. A diferença é que os parâmetros são fixos e o trace fica no console, etapa por
+etapa. O artefato que o cliente valida é a **NDe no ERP**.
+
+```bash
+cd C:/tmp/erp4xx-wt/src/backend
+CONEXOS_PROD_BASE_URL=https://<producao>/api \
+CONEXOS_PROD_USERNAME=... CONEXOS_PROD_PASSWORD=... \
+PROD_WRITE_CONFIRM=EXECUTAR-EM-PRODUCAO \
+PROD_FIL_COD=2 PROD_PRI_COD=<processo> PROD_PES_COD=<cliente> \
+PROD_DPE_NOME="<NOME DO CLIENTE>" PROD_GER_NUM=<conta> PROD_VALOR=<valor do crédito> \
+npx jest recebimentos.e2e.prodWrite --testPathIgnorePatterns "/node_modules/"
+```
+
+Quatro travas, e a razão de cada uma:
+
+1. **Guarda invertida** — aborta se a URL for de homologação. As outras sondas abortam se *não* for; esta
+   é a única que exige produção, e o engano contrário é o perigoso.
+2. **`PROD_WRITE_CONFIRM`** tem que valer exatamente `EXECUTAR-EM-PRODUCAO`. Nenhum `npx jest` genérico
+   alcança este arquivo por acidente.
+3. **O dinheiro tem que existir.** O crédito é procurado no extrato REAL (`fin095`) da conta informada, e
+   o teste exige **exatamente um** casamento por valor. Zero ou dois, ele para. Emitir uma SN contra um
+   pagamento que não entrou — ou escolher entre homônimos no escuro — é pior que qualquer bug. Ao
+   contrário do teste de homologação, aqui **não existe transação fabricada**.
+4. **Ledger em arquivo** (`C:/tmp/prod-sn-ledger.json`), não em memória. A decisão foi não depender de
+   Postgres nesta rodada; um ledger em memória, porém, nasce vazio a cada `npx jest`, e uma quebra no
+   meio seguida de reprocessamento criaria uma **segunda SN** em produção. Em arquivo, o reprocessamento
+   **retoma** da etapa alcançada. **Não apague esse arquivo antes de conferir o ERP.**
+
+Ao final, o console imprime o bloco `===== PARA CONFERIR NO ERP =====` com o `docCod` da SN, o `borCod` do
+borderô e o `docCod` da NDe.
+
+### Configuração do ambiente
+
+Os defaults do repositório são seguros — `CONEXOS_WRITE_ENABLED` é `false` e `CONEXOS_DRY_RUN` é `true`
+até que alguém os ligue. O teste os liga por conta própria, junto do resto:
 
 | Variável | Valor | Por quê |
 |---|---|---|
@@ -75,10 +110,7 @@ analista, não por jest. O backend precisa de:
 | `CONEXOS_DRY_RUN` | `false` | default é `true` |
 | `SN_GCD_COD` | `150` | já é o valor de produção (filiais 2–7) |
 | `COM297_GCD_NOTA_DEBITO` | **não setar** | o código é por-ambiente (`186` é do HML); sem a env o com297 resolve pelo NOME |
-| `databaseConnectionString` | Postgres real | o ledger e a `nota_debito_eletronica` são gravados de verdade — é a camada nunca exercitada |
-
-> Os defaults de `CONEXOS_WRITE_ENABLED` e `CONEXOS_DRY_RUN` são seguros: quem não faz nada, não escreve.
-> Ambos precisam ser ligados **conscientemente**.
+| `databaseConnectionString` | **não setar** | nesta rodada o ledger é o arquivo JSON; a persistência Postgres fica para a versão final |
 
 Código: worktree `C:/tmp/erp4xx-wt`, branch `fix/erp-4xx-nao-retentavel` (contém toda a pilha).
 
