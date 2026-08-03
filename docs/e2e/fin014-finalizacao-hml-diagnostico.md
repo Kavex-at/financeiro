@@ -248,7 +248,38 @@ Fica de follow-up, e **só quando a perna voltar a rodar**, alinhar `bxaVldCcorr
 validação nos devolveu `0` no borderô 135. O borderô 137 usou os valores da UI e falhou igual, então isso
 está descartado como causa — mas a divergência é real e não deve ser resolvida no escuro.
 
-### 12.3 — Item 2 (filial 1): instrumento pronto, **falta o Yuri disparar**
+### 12.3 — Item 2 (filial 1): **executado — o defeito é do ambiente inteiro**
+
+Rodado em 2026-08-03. **A filial 1 falha idêntico.** O HML está encerrado como fonte de informação para
+esta perna; o chamado com a Conexos é o único caminho lá.
+
+| | |
+|---|---|
+| Controle (filial 2, borderô 135, mesma sessão) | `CODIGO_IDENTIFICADOR_REGISTRO_EXISTENTE` — defeito ainda vivo |
+| Filial 1 | borderô **26** criado, `validacao/tituloBaixa` **200**, baixa gravada (`bxaCodSeq 1`, R$ 83,24) |
+| `POST fin014/validacoes/26` | `400 CODIGO_IDENTIFICADOR_REGISTRO_EXISTENTE` |
+| Limpeza | baixa excluída, borderô excluído, `RECORDNOTFOUND` confirmado |
+
+Título usado: ORANGE BUSINESS SERVICES, doc 105 / `titCod` 4 / `titEspNumero` `100253` — de terceiro,
+preexistente, alheio ao projeto. Conta financeira `gerNum 38` (BANCO ITAÚ ag. 0641 c/c 55.795-4).
+
+**O que este resultado acrescenta ao diagnóstico.** O borderô da filial 1 é o **nº 26**; o da filial 2, o
+**135**. Números completamente diferentes, mesma colisão. Isso elimina a última leitura de que o
+identificador em conflito derive do borderô, da filial ou dos dados do título. O que colide é uma
+sequência **global do ambiente** — a do registro de resultado de validação —, coerente com banco
+restaurado de produção sem reposicionar a sequência. É exatamente o argumento a levar no chamado.
+
+Dois achados laterais que valem registro:
+
+- A `validacao/tituloBaixa` devolveu `bxaVldCcorrente: 1` aqui, contra `0` no borderô 135. A divergência
+  com a UI (§6) é **dependente de dado**, não bug nosso — some da lista de suspeitas.
+- Ela também trouxe `AVISO FIN_014.PESSOA_POSSUI_ADIANTAMENTO` (`docCods: "9"`) junto de `SUCESSO`. O
+  `assertNoErpError` corretamente não barra em aviso. Reforça o §12.2: essa chamada é guarda, não enfeite.
+
+Instrumento: `src/backend/routes/recebimentos.e2e.hmlFilial1Bordero.integration.test.ts` — segue válido
+para reconferir o ambiente depois que a Conexos mexer nele.
+
+### 12.3.1 — o instrumento (como ele se protege)
 
 `src/backend/routes/recebimentos.e2e.hmlFilial1Bordero.integration.test.ts` monta na filial 1 o mínimo
 que discrimina — borderô + baixa sobre um título de terceiro já aberto — chama `validacoes` e **desfaz
