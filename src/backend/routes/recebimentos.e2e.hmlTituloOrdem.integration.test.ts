@@ -3,29 +3,35 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * EXPERIMENTO DO ZERO (HML) — em QUE passo o título da SN nasce, e em qual ele morre?
+ * EXPERIMENTO DA ORDEM INVERTIDA (HML) — item ANTES da condição de pagamento resolve o título?
  *
- * Gera uma SN NOVA no HML e mede `mnyTitValor` DEPOIS DE CADA PASSO, na mesma ordem e com as mesmas
- * chamadas que o `RecebimentoNumerarioService.etapaSn`/`completarSnAdiantamento` fazem — só que com
- * uma releitura do documento entre um passo e outro. Isso transforma "o doc 733 terminou sem título"
- * (observação de fim de linha) em "o passo X zerou o título" (causa).
+ * Continuação de `recebimentos.e2e.hmlTituloZero.integration.test.ts`, que mediu passo a passo o doc
+ * 734 e mostrou o seguinte (ordem ATUAL do produto: condição → item):
+ *   0. geração                    → `docMnyValor` 123,45 · `mnyTitValor` **123,45** (o título NASCE aqui)
+ *   1. PUT da condição (1 → 101)  → `docMnyValor` **0** · `mnyTitValor` **0**   ← zera tudo
+ *   2. linha de item              → `mnyBruto` 123,45 · `docMnyValor` 0 · título 0
+ *   3. reaplicar a condição       → `docMnyValor` 123,45 (recalculou do item) · título ainda 0
  *
- * Passos medidos:
- *   0. geração (`gerDocProcesso`)          → o título já nasce aqui? (o doc 732 sugere que SIM)
- *   1. PUT com299 da condição de pagamento (`vldRwCondpgt:1`)
- *   2. linha de item (`comDocProdutos`)     → materializa `docMnyValor`
- *   3. reaplicação da condição DEPOIS do item (só se o título tiver sumido) → regenera?
- *   4. finalização — SÓ se `mnyTitValor === docMnyValor`; senão o ERP recusa e o teste registra isso
- *      como desfecho esperado, sem falhar.
+ * Leitura: o PUT do com299 RECALCULA o `docMnyValor` a partir das linhas de item. No passo 1 não havia
+ * item, então o valor foi a zero e as parcelas foram reescritas sobre um documento de valor zero. No
+ * passo 3 o valor voltou (já havia item), mas as parcelas não — a condição não MUDOU (101 → 101), e é a
+ * mudança que dispara o `vldRwCondpgt:1`.
  *
- * ESCRITA REAL, restrita ao HML: cria UM documento com299 novo (R$ 123,45, SKYJACK pri 186, filial 2)
- * — mesmo custo dos resíduos 731/732/733 que já existem lá. Aborta se `CONEXOS_BASE_URL` não for
- * homologação. NÃO toca em fin014, NDe ou qualquer documento pré-existente.
+ * Hipótese deste experimento: com a ordem INVERTIDA — item primeiro, condição depois — o único PUT do
+ * fluxo acontece com o documento já valorizado E com a condição mudando de fato (1 A VISTA → 101 do
+ * cliente), que são exatamente as duas condições que nunca coexistiram. Se o título sobreviver, a
+ * correção no produto é trocar a ordem dentro de `completarSnAdiantamento`.
+ *
+ * Mede: geração → item → condição → finalização (só se `mnyTitValor === docMnyValor`) → e, se finalizar,
+ * confere se o título aparece no `lov/TituloBorderoReceber`, que é o que a `etapaFin014` consulta.
+ *
+ * ESCRITA REAL, restrita ao HML: cria UM documento com299 novo (R$ 123,45, SKYJACK pri 186, filial 2).
+ * Aborta se `CONEXOS_BASE_URL` não for homologação. NÃO toca em documento pré-existente nem na NDe.
  *
  * Rodar explicitamente:
- *   npx jest recebimentos.e2e.hmlTituloZero --testPathIgnorePatterns "/node_modules/"
+ *   npx jest recebimentos.e2e.hmlTituloOrdem --testPathIgnorePatterns "/node_modules/"
  *
- * Saída: console + `C:/tmp/exp-titulo-zero-hml.json`.
+ * Saída: console + `C:/tmp/exp-titulo-ordem-hml.json`.
  */
 
 jest.setTimeout(900_000);
@@ -39,7 +45,7 @@ const PRI_COD = 186;
 const SKYJACK_PES_COD = 232;
 const MOE_COD = 790;
 const VALOR = 123.45;
-const RELATORIO = 'C:/tmp/exp-titulo-zero-hml.json';
+const RELATORIO = 'C:/tmp/exp-titulo-ordem-hml.json';
 
 type AnyRecord = Record<string, unknown>;
 
@@ -82,7 +88,7 @@ const estadoDo = (doc: AnyRecord): AnyRecord => {
     return out;
 };
 
-describe('EXPERIMENTO DO ZERO (HML) — em que passo o título da SN nasce e morre', () => {
+describe('EXPERIMENTO DA ORDEM (HML) — item antes da condição preserva o título da SN?', () => {
     const relatorio: AnyRecord = { valor: VALOR, priCod: PRI_COD, passos: [] as AnyRecord[] };
     let gerDoc: AnyRecord;
     let service: AnyRecord;
@@ -92,7 +98,7 @@ describe('EXPERIMENTO DO ZERO (HML) — em que passo o título da SN nasce e mor
     const registrar = (passo: string, dados: AnyRecord): void => {
         (relatorio.passos as AnyRecord[]).push({ passo, ...dados });
         // eslint-disable-next-line no-console
-        console.log(`[ZERO] ${passo}: ${JSON.stringify(dados)}`);
+        console.log(`[ORDEM] ${passo}: ${JSON.stringify(dados)}`);
     };
 
     const lerDoc = async (): Promise<AnyRecord> =>
@@ -194,10 +200,10 @@ describe('EXPERIMENTO DO ZERO (HML) — em que passo o título da SN nasce e mor
         relatorio.docCod = docCod ?? null;
         writeFileSync(RELATORIO, JSON.stringify(relatorio, null, 2), 'utf8');
         // eslint-disable-next-line no-console
-        console.log(`[ZERO] relatório em ${RELATORIO} (doc criado: ${String(docCod)})`);
+        console.log(`[ORDEM] relatório em ${RELATORIO} (doc criado: ${String(docCod)})`);
     });
 
-    it('gera uma SN nova e mede o título após CADA passo', async () => {
+    it('gera uma SN nova com a ordem INVERTIDA (item → condição) e mede o título', async () => {
         const processo = {
             priCod: PRI_COD,
             filCod: FIL_COD,
@@ -267,34 +273,15 @@ describe('EXPERIMENTO DO ZERO (HML) — em que passo o título da SN nasce e mor
         registrar('0. documento GERADO', { docCod });
         const tituloNaGeracao = await medir('0. estado após a geração');
 
-        // ── PASSO 1 — condição de pagamento do próprio cliente (PUT com299 `vldRwCondpgt:1`).
-        const condicoes = (await (
-            gerDoc.listCondPgtoPessoa as (p: AnyRecord) => Promise<Array<AnyRecord>>
-        )({ filCod: FIL_COD, pesCod: SKYJACK_PES_COD })) as Array<AnyRecord>;
-        const cond = condicoes.find((c) => /^SKYJACK/.test(String(c.pgtDesNome).toUpperCase()));
-        registrar('1. condição escolhida', { cond: cond ?? null, total: condicoes.length });
-        expect(cond).toBeDefined();
-        const docParaPut = await lerDoc();
-        await (gerDoc.atualizarDocumento as (p: AnyRecord) => Promise<unknown>)({
-            tela: 'com299',
-            filCod: FIL_COD,
-            payload: {
-                ...docParaPut,
-                pgtCod: cond?.pgtCod,
-                pgtDesNome: cond?.pgtDesNome,
-                vldRwCondpgt: 1,
-            },
-        });
-        const tituloAposCondicao = await medir('1. estado após a CONDIÇÃO de pagamento');
-
-        // ── PASSO 2 — linha de item (é ela que materializa o `docMnyValor`).
+        // ── PASSO 1 (INVERTIDO) — linha de item ANTES da condição. Assim o único PUT do fluxo acontece
+        // com o documento já valorizado, e não sobre um doc de valor zero.
         const contas = (await (
             gerDoc.listContasProjetoCtb as (p: AnyRecord) => Promise<Array<AnyRecord>>
         )({ filCod: FIL_COD, prjCod: 1, priCod: PRI_COD, tpdCod: 3 })) as Array<AnyRecord>;
         const conta = contas.find((c) =>
             String(c.ctpDesNome).toUpperCase().includes('ADIANTAMENTO DE CLIENTE ENCOMENDA'),
         );
-        registrar('2. conta de rateio', { conta: conta ?? null, total: contas.length });
+        registrar('1. conta de rateio', { conta: conta ?? null, total: contas.length });
         expect(conta).toBeDefined();
         const docParaItem = await lerDoc();
         const template = await (
@@ -315,62 +302,75 @@ describe('EXPERIMENTO DO ZERO (HML) — em que passo o título da SN nasce e mor
                 ctpDesNome: conta?.ctpDesNome,
             },
         });
-        const tituloAposItem = await medir('2. estado após a LINHA DE ITEM');
+        const tituloAposItem = await medir('1. estado após a LINHA DE ITEM');
 
-        // ── PASSO 3 — só se o título sumiu: reaplicar a condição AGORA (com o valor já no doc).
-        let tituloAposReaplicar: number | undefined;
-        if (tituloAposItem === 0) {
-            const docParaReput = await lerDoc();
-            await (gerDoc.atualizarDocumento as (p: AnyRecord) => Promise<unknown>)({
-                tela: 'com299',
-                filCod: FIL_COD,
-                payload: {
-                    ...docParaReput,
-                    pgtCod: cond?.pgtCod,
-                    pgtDesNome: cond?.pgtDesNome,
-                    vldRwCondpgt: 1,
-                },
-            });
-            tituloAposReaplicar = await medir('3. estado após REAPLICAR a condição');
-        }
+        // ── PASSO 2 (INVERTIDO) — condição de pagamento por último. Aqui a condição REALMENTE muda
+        // (1 A VISTA → 101 do cliente) com item já lançado: é a combinação que o run anterior nunca teve.
+        const condicoes = (await (
+            gerDoc.listCondPgtoPessoa as (p: AnyRecord) => Promise<Array<AnyRecord>>
+        )({ filCod: FIL_COD, pesCod: SKYJACK_PES_COD })) as Array<AnyRecord>;
+        const cond = condicoes.find((c) => /^SKYJACK/.test(String(c.pgtDesNome).toUpperCase()));
+        registrar('2. condição escolhida', { cond: cond ?? null, total: condicoes.length });
+        expect(cond).toBeDefined();
+        const docParaPut = await lerDoc();
+        await (gerDoc.atualizarDocumento as (p: AnyRecord) => Promise<unknown>)({
+            tela: 'com299',
+            filCod: FIL_COD,
+            payload: {
+                ...docParaPut,
+                pgtCod: cond?.pgtCod,
+                pgtDesNome: cond?.pgtDesNome,
+                vldRwCondpgt: 1,
+            },
+        });
+        const tituloAposCondicao = await medir('2. estado após a CONDIÇÃO de pagamento');
 
-        // ── PASSO 4 — finalizar SÓ se os totais batem; senão o ERP recusa e isso já é o resultado.
-        const docFinal = await lerDoc();
-        const valorDoc = Number(docFinal.docMnyValor ?? 0);
-        const tituloFinal = Number(docFinal.mnyTitValor ?? 0);
-        if (tituloFinal > 0 && tituloFinal === valorDoc) {
+        // ── PASSO 3 — finalizar SÓ se os totais batem (é o que o ERP exige: título == documento).
+        const docAntesFinal = await lerDoc();
+        const valorDoc = Number(docAntesFinal.docMnyValor ?? 0);
+        const tituloAntesFinal = Number(docAntesFinal.mnyTitValor ?? 0);
+        let finalizado = false;
+        if (tituloAntesFinal > 0 && tituloAntesFinal === valorDoc) {
             try {
                 await (gerDoc.finalizarDocumento as (p: AnyRecord) => Promise<unknown>)({
                     tela: 'com299',
                     filCod: FIL_COD,
                     docCod,
                 });
-                await medir('4. estado após FINALIZAR');
+                const doc = await lerDoc();
+                registrar('3. estado após FINALIZAR', estadoDo(doc));
+                finalizado = Number(doc.docVldFinalizado ?? 0) === 1;
             } catch (cause) {
-                registrar('4. finalização FALHOU', {
+                registrar('3. finalização FALHOU', {
                     erro: cause instanceof Error ? cause.message : String(cause),
                 });
             }
         } else {
-            registrar('4. finalização NÃO tentada', { valorDoc, tituloFinal });
+            registrar('3. finalização NÃO tentada', { valorDoc, tituloAntesFinal });
         }
 
-        // Veredito: qual passo destrói o título — é isso que decide a correção no produto.
+        // ── PASSO 4 — o teste que importa para a leg seguinte: o título aparece no LOV que o fin014 usa?
+        // Sem isto, `etapaFin014` não acha o que baixar, mesmo com o documento finalizado.
+        if (finalizado) {
+            const { default: ConexosFin014Client } = await import(
+                '../domain/client/ConexosFin014Client.js'
+            );
+            const { container } = await import('tsyringe');
+            const fin014 = container.resolve(ConexosFin014Client) as unknown as AnyRecord;
+            const titulos = (await (
+                fin014.listTitulosBorderoReceber as (p: AnyRecord) => Promise<Array<AnyRecord>>
+            )({ filCod: FIL_COD, docCod })) as Array<AnyRecord>;
+            registrar('4. títulos visíveis ao fin014', { titulos });
+        }
+
         const veredito =
-            tituloNaGeracao === 0
-                ? 'o-titulo-nunca-nasce (gap real: geração é passo separado)'
-                : tituloAposCondicao === 0
-                  ? 'a-CONDICAO-de-pagamento-zera-o-titulo'
-                  : tituloAposItem === 0
-                    ? 'a-LINHA-DE-ITEM-zera-o-titulo'
-                    : 'o-titulo-sobrevive-a-cadeia-inteira';
+            tituloAposCondicao > 0 && tituloAposCondicao === Number(docAntesFinal.docMnyValor ?? -1)
+                ? 'ORDEM-INVERTIDA-RESOLVE (item antes da condição)'
+                : tituloAposItem > 0
+                  ? 'o-item-preserva-o-titulo-mas-a-condicao-ainda-zera'
+                  : 'ordem-invertida-NAO-resolve';
         relatorio.veredito = veredito;
-        relatorio.medidas = {
-            tituloNaGeracao,
-            tituloAposCondicao,
-            tituloAposItem,
-            ...(tituloAposReaplicar !== undefined ? { tituloAposReaplicar } : {}),
-        };
+        relatorio.medidas = { tituloNaGeracao, tituloAposItem, tituloAposCondicao, finalizado };
         registrar('VEREDITO', { veredito, medidas: relatorio.medidas as AnyRecord });
         expect(typeof relatorio.veredito).toBe('string');
     });
