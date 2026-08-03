@@ -84,9 +84,13 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
         finalizarDocumento: jest.fn().mockResolvedValue([]),
         adicionarProduto: jest.fn().mockResolvedValue([]),
         // Completar o adiantamento SN (condição de pagamento + linha de item) antes de finalizar.
+        // O LOV vem com a "DUPLICATA" de OUTRO cliente ANTES da do cliente do documento — é assim que o
+        // ERP responde de verdade (HML 2026-08-03: `lov/CondPgtoPessoa` ignora o filtro `pesCod` e devolve
+        // a lista GLOBAL ordenada por nome). O serviço tem que casar pelo nome do cliente, não pela ordem.
         listCondPgtoPessoa: jest.fn().mockResolvedValue([
             { pgtCod: 1, pgtDesNome: 'A VISTA' },
-            { pgtCod: 109, pgtDesNome: 'L-FOUNDERS - DUPLICATA' },
+            { pgtCod: 103, pgtDesNome: 'BONDUELLE - DUPLICATA' },
+            { pgtCod: 109, pgtDesNome: 'CLIENTE EXEMPLO - DUPLICATA' },
         ]),
         listContasProjetoCtb: jest.fn().mockResolvedValue([
             {
@@ -324,7 +328,8 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
         wireDocCods(m);
         await buildService(m).processarAlocacao(baseInput());
 
-        // (1) escolheu a condição de pagamento DUPLICATA do cadastro (não "A VISTA") e PUTou o doc.
+        // (1) escolheu a condição DUPLICATA DO PRÓPRIO CLIENTE do documento (não "A VISTA", e nem a
+        // "BONDUELLE - DUPLICATA" que vem ANTES na lista global do LOV) e PUTou o doc.
         expect(m.gerDoc.listCondPgtoPessoa).toHaveBeenCalledWith(
             expect.objectContaining({ pesCod: 555 }),
         );
@@ -332,7 +337,7 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
         expect(putArgs.payload).toEqual(
             expect.objectContaining({
                 pgtCod: 109,
-                pgtDesNome: 'L-FOUNDERS - DUPLICATA',
+                pgtDesNome: 'CLIENTE EXEMPLO - DUPLICATA',
                 vldRwCondpgt: 1,
             }),
         );
@@ -349,7 +354,105 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
         const finalOrder = (m.gerDoc.finalizarDocumento as jest.Mock).mock.invocationCallOrder[0];
         expect(itemOrder).toBeLessThan(finalOrder);
     });
+});
 
+/**
+ * Regressão do bug REAL medido no Conexos de homologação (2026-08-03, SN com299 nº 731 —
+ * `docs/e2e/fase-b-resultado-hml.md`): a SN do SKYJACK (pesCod 232) foi gravada com a condição
+ * `pgtCod 103 "BONDUELLE - DUPLICATA"`, de outro cliente, porque o código pegava a PRIMEIRA
+ * "DUPLICATA" da lista e o `lov/CondPgtoPessoa` do ERP ignora o filtro `pesCod` (devolve a lista
+ * GLOBAL paginada, ordenada por nome). Condição de pagamento é DADO FINANCEIRO: não se chuta.
+ */
+describe('RecebimentoNumerarioService — condição de pagamento é a DO CLIENTE do documento', () => {
+    /** O caso real: cliente SKYJACK, lista global com a DUPLICATA da BONDUELLE vindo antes. */
+    const skyjackMocks = (condicoes: Array<{ pgtCod: number; pgtDesNome: string }>): Mocks => {
+        const m = buildMocks();
+        (m.gerDoc.listCondPgtoPessoa as jest.Mock).mockResolvedValue(condicoes);
+        wireDocCods(m);
+        return m;
+    };
+
+    const skyjackInput = (): ProcessarAlocacaoInput =>
+        baseInput({
+            processoFields: {
+                filCod: PROCESSO_FIL_COD,
+                pesCod: 232,
+                // Nome como o imp021 devolve: ABREVIADO/truncado pelo ERP.
+                dpeNomPessoa: 'SKYJACK BRASIL IMPORTACAO E COMERCI',
+                moeCod: 790,
+            },
+        });
+
+    it('escolhe a condição do cliente mesmo com outra "DUPLICATA" ANTES na lista (BONDUELLE × SKYJACK)', async () => {
+        const m = skyjackMocks([
+            { pgtCod: 1, pgtDesNome: 'A VISTA' },
+            { pgtCod: 103, pgtDesNome: 'BONDUELLE - DUPLICATA' },
+            { pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' },
+        ]);
+        const out = await buildService(m).processarAlocacao(skyjackInput());
+
+        expect(out.status).toBe('settled');
+        const putArgs = (m.gerDoc.atualizarDocumento as jest.Mock).mock.calls[0][0];
+        expect(putArgs.payload).toEqual(
+            expect.objectContaining({ pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' }),
+        );
+    });
+
+    it('casa mesmo quando o ERP abrevia o nome do cliente e não o da condição (prefixo bidirecional)', async () => {
+        // O doc trazia "SKYJACK BRASIL IMPORTACAO E COMERCI" (truncado) e a condição pode vir com o nome
+        // COMPLETO — o casamento é por prefixo de tokens nos dois sentidos, não igualdade.
+        const m = skyjackMocks([
+            { pgtCod: 103, pgtDesNome: 'BONDUELLE - DUPLICATA' },
+            { pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL IMPORTAÇÃO E COMÉRCIO LTDA - DUPLICATA' },
+        ]);
+        await buildService(m).processarAlocacao(skyjackInput());
+
+        const putArgs = (m.gerDoc.atualizarDocumento as jest.Mock).mock.calls[0][0];
+        expect(putArgs.payload).toMatchObject({ pgtCod: 101 });
+    });
+
+    it('prefere a condição MAIS específica quando duas do mesmo cliente casam', async () => {
+        const m = skyjackMocks([
+            { pgtCod: 99, pgtDesNome: 'SKYJACK - DUPLICATA' },
+            { pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' },
+        ]);
+        await buildService(m).processarAlocacao(skyjackInput());
+
+        const putArgs = (m.gerDoc.atualizarDocumento as jest.Mock).mock.calls[0][0];
+        expect(putArgs.payload).toMatchObject({ pgtCod: 101 });
+    });
+
+    it('FAIL-CLOSED: sem condição do próprio cliente NÃO grava a de terceiro — erra na etapa sn', async () => {
+        // Doutrina do `SN_CONTA_ADIANTAMENTO`: não se chuta dado financeiro. Antes, `cond === undefined`
+        // apenas pulava o PUT e seguia; com a lista GLOBAL do ERP isso virou "grava a do primeiro cliente
+        // alfabético" (o bug do doc 731). Agora a alocação para aqui, com a SN ainda incompleta no ERP.
+        const m = skyjackMocks([
+            { pgtCod: 1, pgtDesNome: 'A VISTA' },
+            { pgtCod: 103, pgtDesNome: 'BONDUELLE - DUPLICATA' },
+        ]);
+        const out = await buildService(m).processarAlocacao(skyjackInput());
+
+        expect(out.status).toBe('error');
+        expect(out.etapa).toBe('sn');
+        expect(out.erro).toContain('SKYJACK');
+        expect(out.erro).toMatch(/condi[çc][ãa]o de pagamento/i);
+        // NÃO gravou condição nenhuma, não montou o item e não tentou finalizar um doc inconsistente.
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
+        expect(m.gerDoc.adicionarComDocProduto).not.toHaveBeenCalled();
+        expect(m.gerDoc.finalizarDocumento).not.toHaveBeenCalled();
+        expect(m.repo.markError).toHaveBeenCalled();
+    });
+
+    it('FAIL-CLOSED também quando a única "DUPLICATA" é genérica (sem nome de cliente)', async () => {
+        const m = skyjackMocks([{ pgtCod: 7, pgtDesNome: 'DUPLICATA' }]);
+        const out = await buildService(m).processarAlocacao(skyjackInput());
+
+        expect(out.status).toBe('error');
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
+    });
+});
+
+describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stage, cont.)', () => {
     it('chama validaProcessoPessoa PRIMEIRO e threada endCodFis/pdcDocFederal (fonte da SN)', async () => {
         const m = buildMocks();
         wireDocCods(m);

@@ -416,29 +416,36 @@ export default class RecebimentoNumerarioService {
         const { filCod, valor, snPayloadInput } = ctx;
         const { processo } = snPayloadInput;
 
-        // (1) Condição de pagamento do cadastro da pessoa.
+        // (1) Condição de pagamento DO PRÓPRIO CLIENTE do documento. Fail-closed se não existir: gravar a
+        // condição de outra pessoa é adulterar dado financeiro de um documento real (ver `escolherCondicaoPagamento`).
         const condicoes = await this.gerDocClient.listCondPgtoPessoa({
             filCod,
             pesCod: processo.pesCod,
         });
-        const cond = this.escolherCondicaoPagamento(condicoes);
-        if (cond !== undefined) {
-            const doc = await this.gerDocClient.getDocumento({
-                tela: 'com299',
-                filCod,
-                docCod: snDocCod,
-            });
-            await this.gerDocClient.atualizarDocumento({
-                tela: 'com299',
-                filCod,
-                payload: {
-                    ...doc,
-                    pgtCod: cond.pgtCod,
-                    pgtDesNome: cond.pgtDesNome,
-                    vldRwCondpgt: 1,
-                },
-            });
+        const cond = this.escolherCondicaoPagamento(condicoes, processo.dpeNomPessoa);
+        if (cond === undefined) {
+            throw new Error(
+                `Condição de pagamento do cliente "${processo.dpeNomPessoa}" (pesCod ${processo.pesCod}) não ` +
+                    `encontrada no cadastro (lov/CondPgtoPessoa devolveu ${condicoes.length} condições, nenhuma ` +
+                    `do cliente) — a SN ${snDocCod} NÃO foi completada. Cadastre a condição ` +
+                    `"<CLIENTE> - DUPLICATA" desta pessoa no Conexos e reprocesse a alocação.`,
+            );
         }
+        const doc = await this.gerDocClient.getDocumento({
+            tela: 'com299',
+            filCod,
+            docCod: snDocCod,
+        });
+        await this.gerDocClient.atualizarDocumento({
+            tela: 'com299',
+            filCod,
+            payload: {
+                ...doc,
+                pgtCod: cond.pgtCod,
+                pgtDesNome: cond.pgtDesNome,
+                vldRwCondpgt: 1,
+            },
+        });
 
         // (2) Linha de item — a conta de rateio ACOMPANHA a variante da SN do processo (Encomenda/Terceiros/…).
         // Deriva a conta-alvo do NOME da config resolvida no pré-flight; fail-closed se não achar (não chuta
@@ -503,14 +510,94 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
-     * Regra de seleção da condição de pagamento: a do cadastro da pessoa é a "&lt;PESSOA&gt; - DUPLICATA"
-     * (a com194 exige a "SUGESTIVA"). NUNCA "A VISTA"/"NÃO FINANCEIRO". `undefined` se a pessoa não tem uma
-     * DUPLICATA — nesse caso o doc segue com o default e a finalização dirá se trava (fail-loud, não-silencioso).
+     * Regra de seleção da condição de pagamento: a do cadastro da pessoa é a "&lt;CLIENTE&gt; - DUPLICATA"
+     * (a com194 exige a "SUGESTIVA"). NUNCA "A VISTA"/"NÃO FINANCEIRO" — e NUNCA a de OUTRO cliente.
+     *
+     * Antes bastava a primeira `pgtDesNome` que contivesse "DUPLICATA". Isso ERROU em execução real
+     * (HML 2026-08-03, SN com299 nº 731): o `lov/CondPgtoPessoa` IGNORA o filtro `pesCod` e devolve a lista
+     * GLOBAL ordenada por nome, então o documento do SKYJACK (pesCod 232) foi gravado com
+     * `pgtCod 103 "BONDUELLE - DUPLICATA"` — condição de terceiro num documento financeiro real, e provável
+     * causa da finalização não efetivada ("CONDIÇÃO DE PAGAMENTO DIFERENTE DA SUGERIDA" na com194).
+     *
+     * Agora casa o nome da condição contra o nome do cliente DO DOCUMENTO (`dpeNomPessoa`), em dois passes:
+     *   1. ESTRITO — a parte da condição ANTES do token "DUPLICATA" é prefixo do nome do cliente em fronteira
+     *      de token, ou vice-versa ("SKYJACK BRASIL" ⊑ "SKYJACK BRASIL IMPORTACAO E COMERCI"). Empate resolve
+     *      pela mais específica (prefixo mais longo).
+     *   2. TRUNCADO — só se o pass 1 não achou nada: o ERP corta o `dpeNomPessoa` no meio da palavra
+     *      ("... E COMERCI"), então aceita-se o último token do CLIENTE como prefixo parcial do token
+     *      correspondente da condição. Aceito APENAS quando UMA única condição casa assim — ambiguidade aqui
+     *      é chute, e chutar condição de pagamento foi exatamente o bug.
+     * `undefined` = não existe condição DESTE cliente; o caller falha-fechado (não grava a de ninguém).
      */
     private escolherCondicaoPagamento = (
         condicoes: Array<{ pgtCod: number; pgtDesNome: string }>,
-    ): { pgtCod: number; pgtDesNome: string } | undefined =>
-        condicoes.find((c) => c.pgtDesNome.toUpperCase().includes('DUPLICATA'));
+        nomeCliente: string,
+    ): { pgtCod: number; pgtDesNome: string } | undefined => {
+        const cliente = this.normalizarNomePessoa(nomeCliente);
+        if (cliente === '') return undefined;
+        const candidatas: Array<{ cond: { pgtCod: number; pgtDesNome: string }; pessoa: string }> =
+            [];
+        for (const cond of condicoes) {
+            const pessoa = this.pessoaDaCondicaoDuplicata(cond.pgtDesNome);
+            if (pessoa !== undefined) candidatas.push({ cond, pessoa });
+        }
+        const estritas = candidatas.filter(
+            (c) =>
+                this.prefixoDeTokens(cliente, c.pessoa) || this.prefixoDeTokens(c.pessoa, cliente),
+        );
+        if (estritas.length > 0) {
+            return estritas.reduce((a, b) => (b.pessoa.length > a.pessoa.length ? b : a)).cond;
+        }
+        const truncadas = candidatas.filter((c) => this.prefixoTruncado(c.pessoa, cliente));
+        return truncadas.length === 1 ? truncadas[0]?.cond : undefined;
+    };
+
+    /**
+     * Nome do cliente embutido numa condição "&lt;CLIENTE&gt; - DUPLICATA", normalizado
+     * ("SKYJACK BRASIL - DUPLICATA" → "SKYJACK BRASIL"). `undefined` se a condição não é DUPLICATA ou se é
+     * uma "DUPLICATA" genérica sem cliente — que não prova titularidade de ninguém.
+     */
+    private pessoaDaCondicaoDuplicata = (pgtDesNome: string): string | undefined => {
+        const nome = this.normalizarNomePessoa(pgtDesNome);
+        const marcador = /(?:^| )DUPLICATA(?: |$)/.exec(nome);
+        if (marcador === null) return undefined;
+        const pessoa = nome.slice(0, marcador.index).trim();
+        return pessoa === '' ? undefined : pessoa;
+    };
+
+    /** UPPERCASE, sem acentos, pontuação → espaço, espaços colapsados. Comparação de nomes do ERP. */
+    private normalizarNomePessoa = (nome: string): string =>
+        nome
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toUpperCase()
+            .replace(/[^A-Z0-9]+/g, ' ')
+            .trim();
+
+    /**
+     * `true` se `prefixo` inicia `nome` em fronteira de TOKEN ("SKYJACK BRASIL" ⊑ "SKYJACK BRASIL IMPORTACAO",
+     * mas "SKY" ⋢ "SKYJACK"). Evita casar cliente errado por coincidência de radical.
+     */
+    private prefixoDeTokens = (nome: string, prefixo: string): boolean =>
+        nome === prefixo || (nome.startsWith(prefixo) && nome.charAt(prefixo.length) === ' ');
+
+    /**
+     * Como `prefixoDeTokens`, mas tolera o ÚLTIMO token de `prefixo` cortado no meio — o `dpeNomPessoa` vem
+     * truncado do ERP ("SKYJACK BRASIL IMPORTACAO E COMERCI", doc 731 do HML). Todos os tokens anteriores
+     * têm que bater EXATAMENTE; o último precisa de ao menos 3 caracteres para não casar por acidente.
+     */
+    private prefixoTruncado = (nome: string, prefixo: string): boolean => {
+        const tokensNome = nome.split(' ');
+        const tokensPrefixo = prefixo.split(' ');
+        if (tokensPrefixo.length > tokensNome.length) return false;
+        const ultimo = tokensPrefixo.length - 1;
+        for (let i = 0; i < ultimo; i++) {
+            if (tokensPrefixo[i] !== tokensNome[i]) return false;
+        }
+        const cauda = tokensPrefixo[ultimo] ?? '';
+        const alvo = tokensNome[ultimo] ?? '';
+        return cauda.length >= 3 && alvo.startsWith(cauda);
+    };
 
     /**
      * Monta o payload REAL do com299. PRIMEIRO chama `validaProcessoPessoa` (HAR doc 18339): a fonte de

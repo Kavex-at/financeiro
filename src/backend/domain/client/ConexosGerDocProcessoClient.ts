@@ -65,12 +65,48 @@ const CONFIG_DOC_PROCESSO_SCHEMA = z.object({
         .default([]),
 });
 
-/** LOV `CondPgtoPessoa` — condições de pagamento válidas p/ a pessoa (fonte do `pgtCod` do cadastro). */
+/**
+ * LOV `CondPgtoPessoa` — condições de pagamento (fonte do `pgtCod` do cadastro). `count` é o total do
+ * envelope, usado para saber quando a paginação esgotou (ver `listCondPgtoPessoa`).
+ */
 const LOV_COND_PGTO_SCHEMA = z.object({
+    count: z.coerce
+        .number()
+        .int()
+        .nullish()
+        .transform((v) => v ?? undefined),
     rows: z
         .array(z.object({ pgtCod: z.coerce.number().int(), pgtDesNome: z.string() }).passthrough())
         .default([]),
 });
+
+/**
+ * `pageSize` do `lov/CondPgtoPessoa`. SEM ele o ERP pagina em 50 — e como o LOV IGNORA o filtro
+ * `pesCod` (devolve a lista GLOBAL ordenada por nome; HML 2026-08-03, 50 de 86 linhas na 1ª página),
+ * a condição do cliente do documento pode simplesmente não estar na primeira página.
+ */
+const COND_PGTO_PAGE_SIZE = 500;
+
+/** Teto de páginas do LOV de condições (500 × 20 = 10k linhas) — evita loop infinito se o ERP mentir. */
+const COND_PGTO_MAX_PAGES = 20;
+
+/**
+ * Discriminador de sucesso da FINALIZAÇÃO (`finalizarDocumento`): `docVldFinalizado === 1` na releitura
+ * do documento. HTTP 200 não serve — HML 2026-08-03, SN nº 731: os dois POSTs voltaram 200 e o doc
+ * ficou `docVldFinalizado: 0` (sem título, `mnyTitValor: 0`).
+ */
+const DOC_FINALIZADO_SCHEMA = z
+    .object({
+        docVldFinalizado: z.coerce
+            .number()
+            .int()
+            .nullish()
+            .transform((v) => v ?? undefined),
+    })
+    .passthrough();
+
+/** Valor de `docVldFinalizado` que o ERP grava quando o documento REALMENTE finalizou. */
+const DOC_FINALIZADO_OK = 1;
 
 /** LOV `ContasProjetoCtb` — contas de projeto (rateio); a SN Encomenda usa a "ADIANTAMENTO DE CLIENTE ENCOMENDA". */
 const LOV_CONTAS_PROJETO_SCHEMA = z.object({
@@ -662,9 +698,16 @@ export default class ConexosGerDocProcessoClient {
 
     /**
      * FINALIZA o documento gerado (Tela 1/3 do guia: "depois do documento gerado, finalizar").
-     * `POST {tela}/validate/finalizacaoDocumento/{docCod}` (pré-cheque) → `POST {tela}/finalizaDocumento/{docCod}`.
-     * Endpoints confirmados no bundle com299 (view); com297 assumido na mesma família. Escrita
-     * IRREVERSÍVEL → `postGenericOnce`, tentativa única. Aborta em `valid==='ERRO'` na validação.
+     * `POST {tela}/validate/finalizacaoDocumento/{docCod}` (pré-cheque) → `POST {tela}/finalizaDocumento/{docCod}`
+     * → **releitura do documento** (`GET {tela}/{docCod}`). Endpoints confirmados no bundle com299 (view);
+     * com297 assumido na mesma família. Escrita IRREVERSÍVEL → `postGenericOnce`, tentativa única. Aborta em
+     * `valid==='ERRO'` na validação.
+     *
+     * **Sucesso ⟺ `docVldFinalizado === 1` na releitura** — HTTP 200 NÃO é o discriminador: na execução real
+     * do HML (2026-08-03, SN nº 731) os dois POSTs voltaram 200 e o documento ficou `docVldFinalizado: 0`,
+     * sem título (`mnyTitValor: 0`); o fluxo só quebrou uma etapa depois (fin014), com uma mensagem que
+     * apontava para o lugar errado. Mesma doutrina da leg fiscal (`fisVldTipoNfDebito===6`, `fisEspObs`
+     * preenchido): cada etapa relê o SEU discriminador e falha-fechado na própria etapa.
      */
     public finalizarDocumento = async (params: {
         tela?: GerDocTela;
@@ -679,13 +722,48 @@ export default class ConexosGerDocProcessoClient {
             await this.base.ensureSid();
             const validaRaw = await this.base.postGeneric<unknown>(validatePath, {}, { filCod });
             const validaMsgs = this.extractMessages(validaRaw);
+            // ERRO no pré-cheque: o caller (assertNoErpError) decide — nada foi finalizado, nada a reler.
             if (validaMsgs.some((m) => m.valid === 'ERRO')) return validaMsgs;
             await this.base.ensureSid();
             const raw = await this.base.postGenericOnce<unknown>(finalizePath, {}, { filCod });
-            return this.extractMessages(raw);
+            const messages = this.extractMessages(raw);
+            await this.assertDocumentoFinalizado({ tela, filCod, docCod, messages });
+            return messages;
         } catch (cause) {
+            // Um ConexosError já carrega a mensagem certa (fail-closed da finalização / falha do GET).
+            if (cause instanceof ConexosError) throw cause;
             throw new ConexosError({ endpoint: finalizePath, cause });
         }
+    };
+
+    /**
+     * Relê o documento e EXIGE `docVldFinalizado === 1`. Fail-closed com o `docCod` na mensagem: a SN
+     * existe no ERP (não finalizada) e o analista precisa saber qual documento ficou pendurado e em QUE
+     * etapa parou — sem isso o erro só aparece no fin014 ("a SN não ficou finalizável"), longe da causa.
+     */
+    private assertDocumentoFinalizado = async (p: {
+        tela: GerDocTela;
+        filCod: number;
+        docCod: number;
+        messages: GerDocProcessoMessage[];
+    }): Promise<void> => {
+        const { tela, filCod, docCod, messages } = p;
+        const doc = await this.getDocumento({ tela, filCod, docCod });
+        const parsed = DOC_FINALIZADO_SCHEMA.safeParse(doc);
+        const finalizado = parsed.success ? parsed.data.docVldFinalizado : undefined;
+        if (finalizado === DOC_FINALIZADO_OK) return;
+        const detalhe = messages
+            .map((m) => m.message)
+            .filter((m): m is string => typeof m === 'string' && m.trim() !== '')
+            .join('; ');
+        throw new ConexosError({
+            endpoint: `${tela}/finalizaDocumento/${docCod}`,
+            message:
+                `Finalização do documento ${docCod} (${tela}) NÃO efetivada: o ERP respondeu HTTP 200 mas a ` +
+                `releitura traz docVldFinalizado=${String(finalizado ?? 'ausente')} (esperado ${DOC_FINALIZADO_OK}). ` +
+                'Sem finalização o documento não gera título a receber — verifique valor/itens e a condição de ' +
+                `pagamento do documento no Conexos antes de reprocessar.${detalhe !== '' ? ` ERP: ${detalhe}` : ''}`,
+        });
     };
 
     // ───────────────────────── SN adiantamento: completar o doc até ficar finalizável ─────────────────────
@@ -735,7 +813,13 @@ export default class ConexosGerDocProcessoClient {
         }
     };
 
-    /** LOV das condições de pagamento válidas p/ a pessoa (`fdocTipPgto:1` = a receber). Leitura idempotente. */
+    /**
+     * LOV das condições de pagamento (`fdocTipPgto:1` = a receber). Leitura idempotente, PAGINADA até
+     * esgotar: o `pesCod` vai no `filterList` mas o ERP de homologação o IGNORA e devolve a lista GLOBAL
+     * (2026-08-03: 50 linhas na 1ª página, 86 no total, ordenada por nome) — quem filtra pelo cliente é o
+     * caller, e para isso ele precisa da lista INTEIRA, não da primeira página. Para quando a página vem
+     * menor que o `pageSize`, quando o acumulado alcança o `count` do envelope, ou no teto de páginas.
+     */
     public listCondPgtoPessoa = async (params: {
         filCod: number;
         pesCod: number;
@@ -744,18 +828,26 @@ export default class ConexosGerDocProcessoClient {
         try {
             return await this.base.runWithRetry(async () => {
                 await this.base.ensureSid();
-                const raw = await this.base.postGeneric<unknown>(
-                    'lov/CondPgtoPessoa',
-                    {
-                        fieldList: ['pgtCod', 'pgtDesNome'],
-                        filterList: { pesCod, fdocTipPgto: 1 },
-                        pageNumber: 1,
-                        orderBy: 'asc',
-                        sortBy: 'pgtDesNome',
-                    },
-                    { filCod },
-                );
-                return LOV_COND_PGTO_SCHEMA.parse(raw).rows;
+                const acumulado: Array<{ pgtCod: number; pgtDesNome: string }> = [];
+                for (let pageNumber = 1; pageNumber <= COND_PGTO_MAX_PAGES; pageNumber++) {
+                    const raw = await this.base.postGeneric<unknown>(
+                        'lov/CondPgtoPessoa',
+                        {
+                            fieldList: ['pgtCod', 'pgtDesNome'],
+                            filterList: { pesCod, fdocTipPgto: 1 },
+                            pageNumber,
+                            pageSize: COND_PGTO_PAGE_SIZE,
+                            orderBy: 'asc',
+                            sortBy: 'pgtDesNome',
+                        },
+                        { filCod },
+                    );
+                    const page = LOV_COND_PGTO_SCHEMA.parse(raw);
+                    acumulado.push(...page.rows);
+                    if (page.rows.length < COND_PGTO_PAGE_SIZE) break;
+                    if (page.count !== undefined && acumulado.length >= page.count) break;
+                }
+                return acumulado;
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: 'lov/CondPgtoPessoa', cause });

@@ -87,9 +87,11 @@ const buildMocks = (): Mocks => ({
         gerarDocProcesso: jest.fn().mockResolvedValue({ docCod: 0, messages: [] }),
         finalizarDocumento: jest.fn().mockResolvedValue([]),
         adicionarProduto: jest.fn().mockResolvedValue([]),
+        // A condição TEM que ser a do cliente do documento (`dpeNomPessoa` do `baseInput`) — o serviço
+        // recusa gravar a de terceiro desde o fix do doc 731 do HML (2026-08-03).
         listCondPgtoPessoa: jest
             .fn()
-            .mockResolvedValue([{ pgtCod: 109, pgtDesNome: 'L-FOUNDERS - DUPLICATA' }]),
+            .mockResolvedValue([{ pgtCod: 109, pgtDesNome: 'CLIENTE EXEMPLO - DUPLICATA' }]),
         listContasProjetoCtb: jest.fn().mockResolvedValue([
             {
                 ctpCod: 690,

@@ -457,8 +457,37 @@ describe('ConexosGerDocProcessoClient', () => {
         const r = await client.listCondPgtoPessoa({ filCod: 2, pesCod: 194 });
         expect(postGeneric.mock.calls[0][0]).toBe('lov/CondPgtoPessoa');
         expect(postGeneric.mock.calls[0][1].filterList).toEqual({ pesCod: 194, fdocTipPgto: 1 });
+        // pageSize EXPLÍCITO: sem ele o ERP pagina em 50 (HML 2026-08-03) e a condição do cliente pode
+        // simplesmente não estar na 1ª página. Página curta (2 < pageSize) ⟹ acabou: uma chamada só.
+        expect(postGeneric.mock.calls[0][1]).toMatchObject({ pageNumber: 1, pageSize: 500 });
+        expect(postGeneric).toHaveBeenCalledTimes(1);
         expect(r).toHaveLength(2);
         expect(r[1]).toMatchObject({ pgtCod: 109, pgtDesNome: 'L-FOUNDERS - DUPLICATA' });
+    });
+
+    it('listCondPgtoPessoa PAGINA até esgotar (a condição do cliente pode cair na 2ª página)', async () => {
+        // Evidência real (HML 2026-08-03): `lov/CondPgtoPessoa` IGNORA o filtro `pesCod` e devolve a lista
+        // GLOBAL paginada (50 linhas na 1ª página, 86 no total). A condição do SKYJACK (pgtCod 101) nem
+        // aparecia na 1ª página — por isso o cliente precisa esgotar as páginas, não só ler a primeira.
+        const paginaCheia = Array.from({ length: 500 }, (_, i) => ({
+            pgtCod: 1000 + i,
+            pgtDesNome: `CLIENTE ${i} - DUPLICATA`,
+        }));
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValueOnce({ count: 501, rows: paginaCheia })
+            .mockResolvedValueOnce({
+                count: 501,
+                rows: [{ pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' }],
+            });
+        const client = new ConexosGerDocProcessoClient(buildBase({ postGeneric }), buildLog());
+        const r = await client.listCondPgtoPessoa({ filCod: 2, pesCod: 232 });
+
+        expect(postGeneric).toHaveBeenCalledTimes(2);
+        expect(postGeneric.mock.calls[0][1]).toMatchObject({ pageNumber: 1, pageSize: 500 });
+        expect(postGeneric.mock.calls[1][1]).toMatchObject({ pageNumber: 2, pageSize: 500 });
+        expect(r).toHaveLength(501);
+        expect(r[500]).toMatchObject({ pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' });
     });
 
     it('listContasProjetoCtb filtra por prjCod/priCod/tpdCod e devolve ctpCod/ctpDesNome', async () => {
@@ -544,5 +573,77 @@ describe('ConexosGerDocProcessoClient', () => {
         });
         expect(rows).toHaveLength(1);
         expect(rows[0].cfoEspCod).toBe('2353A8');
+    });
+
+    // ── finalizarDocumento: HTTP 200 NÃO é o discriminador de sucesso ────────────────────────────
+    // Evidência real (HML 2026-08-03, SN com299 nº 731): `validate/finalizacaoDocumento` e
+    // `finalizaDocumento` voltaram AMBOS 200 e o documento continuou `docVldFinalizado: 0`
+    // (sem título, `mnyTitValor: 0`). O fluxo só quebrou uma etapa depois, no fin014, com uma mensagem
+    // que apontava para o lugar errado. Doutrina da leg fiscal: cada etapa relê seu próprio
+    // discriminador (`fisVldTipoNfDebito===6`, `fisEspObs` preenchido, …) — aqui é `docVldFinalizado===1`.
+
+    it('finalizarDocumento relê o documento e SEGUE quando docVldFinalizado===1', async () => {
+        const postGeneric = jest.fn().mockResolvedValue({ messages: [{ valid: 'SUCESSO' }] });
+        const postGenericOnce = jest.fn().mockResolvedValue({ messages: [{ valid: 'SUCESSO' }] });
+        const getGeneric = jest.fn().mockResolvedValue({ docCod: 731, docVldFinalizado: 1 });
+        const client = new ConexosGerDocProcessoClient(
+            buildBase({ postGeneric, postGenericOnce, getGeneric }),
+            buildLog(),
+        );
+
+        const msgs = await client.finalizarDocumento({ filCod: 2, docCod: 731 });
+
+        expect(postGeneric.mock.calls[0][0]).toBe('com299/validate/finalizacaoDocumento/731');
+        expect(postGenericOnce.mock.calls[0][0]).toBe('com299/finalizaDocumento/731');
+        // A releitura é do MESMO documento, na MESMA filial (getDocumento → `com299/731`).
+        expect(getGeneric).toHaveBeenCalledWith('com299/731', { filCod: 2 });
+        expect(msgs[0].valid).toBe('SUCESSO');
+    });
+
+    it('finalizarDocumento LANÇA quando o POST volta 200 mas docVldFinalizado continua 0', async () => {
+        const postGeneric = jest.fn().mockResolvedValue({ messages: [] });
+        const postGenericOnce = jest.fn().mockResolvedValue({ messages: [] });
+        const getGeneric = jest
+            .fn()
+            .mockResolvedValue({ docCod: 731, docVldFinalizado: 0, mnyTitValor: 0 });
+        const client = new ConexosGerDocProcessoClient(
+            buildBase({ postGeneric, postGenericOnce, getGeneric }),
+            buildLog(),
+        );
+
+        // Fail-closed COM o docCod na mensagem: o analista precisa saber QUAL documento ficou pendurado
+        // no ERP (a SN existe, só não finalizou) — e a etapa apontada tem que ser a finalização do com299.
+        await expect(client.finalizarDocumento({ filCod: 2, docCod: 731 })).rejects.toThrow(/731/);
+        await expect(client.finalizarDocumento({ filCod: 2, docCod: 731 })).rejects.toThrow(
+            /docVldFinalizado/i,
+        );
+    });
+
+    it('finalizarDocumento LANÇA quando a releitura não traz docVldFinalizado (sem chutar sucesso)', async () => {
+        const postGeneric = jest.fn().mockResolvedValue({ messages: [] });
+        const postGenericOnce = jest.fn().mockResolvedValue({ messages: [] });
+        const getGeneric = jest.fn().mockResolvedValue({ docCod: 731 });
+        const client = new ConexosGerDocProcessoClient(
+            buildBase({ postGeneric, postGenericOnce, getGeneric }),
+            buildLog(),
+        );
+        await expect(client.finalizarDocumento({ filCod: 2, docCod: 731 })).rejects.toThrow(/731/);
+    });
+
+    it('finalizarDocumento devolve as messages de ERRO da validação SEM finalizar nem reler', async () => {
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValue({ messages: [{ valid: 'ERRO', message: 'COM_194.CONDICAO' }] });
+        const postGenericOnce = jest.fn();
+        const getGeneric = jest.fn();
+        const client = new ConexosGerDocProcessoClient(
+            buildBase({ postGeneric, postGenericOnce, getGeneric }),
+            buildLog(),
+        );
+
+        const msgs = await client.finalizarDocumento({ filCod: 2, docCod: 731 });
+        expect(msgs[0].valid).toBe('ERRO');
+        expect(postGenericOnce).not.toHaveBeenCalled();
+        expect(getGeneric).not.toHaveBeenCalled();
     });
 });

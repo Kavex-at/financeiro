@@ -15,7 +15,7 @@ related_files:
 endpoints_write:
   - "com299 (POST /api/com299 + comDocProdutos + calculaValorLiquidoDocumento + finalizaDocumento — Solicitação de Numerário; REAL gated)"
   - "fin014 (POST /api/fin014 borderô + baixas/validacao/tituloBaixa + baixas + finalizar/{borCod} — baixa do crédito; conta = transacao.gerNum)"
-last_review: 2026-08-01
+last_review: 2026-08-03
 open-gap:
   - "gcdCod-solicitacao-numerario-encomenda (P0 p/ HML) — o código EXATO da Configuração de Documento 'Solicitação de Numerário - Encomenda' precisa ser confirmado via HML/HAR; hoje é PLACEHOLDER (gcdCod=0)."
   - "encomenda-percentuais (P1, §7 Q4) — a regra de % da encomenda (0,1%/0,9%) é NÃO-RESOLVIDA; a SN usa o valor cru da transação por ora."
@@ -75,6 +75,24 @@ open-gap:
 >
 > A seção abaixo (redigida na iteração DRY-RUN) permanece como registro do contrato com299 e dos
 > gaps de rateio; o gcdCod/rateio por-processo continuam instância/config do tenant.
+
+> ## ⚠️ CORREÇÃO DE CONTRATO (execução REAL no HML, 2026-08-03 — SN nº 731, `docs/e2e/fase-b-resultado-hml.md`)
+>
+> Dois fatos do ERP medidos numa escrita real, ambos com HTTP 200 enganoso:
+>
+> 1. **`lov/CondPgtoPessoa` IGNORA o filtro `pesCod`** — devolve a lista **GLOBAL** de condições,
+>    **paginada** (50 linhas na 1ª página, 86 no total, `sortBy: pgtDesNome asc`). Consequência: "a
+>    primeira `pgtDesNome` que contenha DUPLICATA" é a condição de **outro cliente** (o doc 731 do
+>    SKYJACK recebeu `pgtCod 103 "BONDUELLE - DUPLICATA"`). O cliente pagina com `pageSize` explícito
+>    até esgotar e o serviço casa `pgtDesNome` contra o `dpeNomPessoa` **do documento** (prefixo em
+>    fronteira de token, os dois nomes vêm abreviados/truncados do ERP). Sem condição do próprio
+>    cliente → **fail-closed** (não se grava a de terceiro num documento financeiro).
+> 2. **Finalização: sucesso ⟺ `docVldFinalizado === 1` na RELEITURA.** `validate/finalizacaoDocumento`
+>    e `finalizaDocumento` voltaram **200** e o documento ficou `docVldFinalizado: 0`, sem título
+>    (`mnyTitValor: 0`) — o erro só apareceu uma etapa depois, no fin014, apontando para o lugar
+>    errado. O `finalizarDocumento` relê o doc (`GET {tela}/{docCod}`) e falha-fechado na própria
+>    etapa, com o `docCod` na mensagem — mesma doutrina de discriminador por-etapa da leg fiscal
+>    (`integrations/conexos-nde-fiscal.md`).
 
 ## Baixa fin014 (nova superfície — REAL)
 
