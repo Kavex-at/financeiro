@@ -55,6 +55,12 @@ const NDE_MOEDA_PADRAO = 'BRL';
 const VALIDACAO_BLOQUEANTE = 2;
 
 /**
+ * Gate 0 (transporte × domínio): status HTTP que denunciam rota/permissão erradas em QUALQUER validador.
+ * Nunca são resposta de domínio — quem os recebe PARA, em vez de inventar "não há pendência".
+ */
+const STATUS_TRANSPORTE = [401, 403, 404, 405];
+
+/**
  * Reconhece a pendência de condição de pagamento na mensagem da com194 — "CONDIÇÃO DE PAGAMENTO ...
  * DIFERENTE DA SUGERIDA NO CADASTRO DE PESSOA" (medida em produção no doc 18342, pessoa 194). Casada
  * sem acentos, porque o ERP varia a acentuação entre telas.
@@ -468,6 +474,32 @@ export default class RecebimentoNumerarioService {
 
         if (!(await this.requiresRegisteredPaymentCondition(ctx, snDocCod))) return;
 
+        // Este ramo NÃO é exercitável em homologação (o cliente de teste do HML não tem condição sugerida
+        // no cadastro, então o ERP nunca acusa a pendência lá) — a primeira execução real dele acontece em
+        // PRODUÇÃO. Por isso ele é anunciado com tipo próprio ANTES de escrever: a primeira ocorrência tem
+        // que ser visível no log, não descoberta por chamado do analista. `SN_COND_PGTO_AUTOAJUSTE=false`
+        // desliga o ajuste sem desligar a frente.
+        const env = await this.environmentProvider.getEnvironmentVars();
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: `sn-cond-pgto-exigida-pelo-erp: com194 exige a condição do cadastro na SN ${snDocCod}`,
+            data: {
+                txnId: ctx.txnId,
+                idempotencyKey: ctx.key,
+                docCod: snDocCod,
+                pesCod: processo.pesCod,
+                priCod: ctx.priCod,
+                autoajusteHabilitado: env.snCondPgtoAutoajuste,
+            },
+        });
+        if (!env.snCondPgtoAutoajuste) {
+            throw new Error(
+                `A com194 exige a condição de pagamento do cadastro na SN ${snDocCod}, mas o ajuste ` +
+                    'automático está DESLIGADO (`SN_COND_PGTO_AUTOAJUSTE=false`). O documento está íntegro ' +
+                    '(com item e título) — ajuste a condição na tela do Conexos e reprocesse a alocação.',
+            );
+        }
+
         const condicoes = await this.gerDocClient.listCondPgtoPessoa({
             filCod,
             pesCod: processo.pesCod,
@@ -519,9 +551,15 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
-     * A com194 acusa pendência BLOQUEANTE de condição de pagamento neste documento? Leitura best-effort:
-     * se o validador não responder, seguimos SEM o PUT — a hipótese conservadora é não mexer no que está
-     * íntegro, e a finalização (`docVldFinalizado===1`) continua sendo o discriminador seguinte.
+     * A com194 acusa pendência BLOQUEANTE de condição de pagamento neste documento?
+     *
+     * Segue o gate 0 do pré-flight (transporte × domínio, `classifyValidatorError`): **404/401/403/405 é
+     * bug de rota/permissão, NÃO "não há pendência"** — nesses casos a etapa PARA, porque responder
+     * "seguir sem ajustar" a partir de um validador que sequer respondeu é inventar resposta de domínio.
+     * Foi exatamente esse mascaramento que escondeu três bugs nas sondagens do com299.
+     * Indisponibilidade retryable (timeout/5xx) é tratada como best-effort: segue SEM o PUT — não mexer no
+     * documento íntegro é a hipótese conservadora, e a finalização (`docVldFinalizado===1`, verificada no
+     * `ConexosGerDocProcessoClient`) continua sendo o discriminador seguinte.
      */
     private requiresRegisteredPaymentCondition = async (
         ctx: EscritaCtx,
@@ -541,6 +579,15 @@ export default class RecebimentoNumerarioService {
                     ),
             );
         } catch (cause) {
+            const status = this.extractHttpStatus(cause);
+            if (status !== undefined && STATUS_TRANSPORTE.includes(status)) {
+                throw new Error(
+                    `com194 respondeu HTTP ${status} ao validar a SN ${snDocCod} — isso é falha de ` +
+                        'ROTA ou PERMISSÃO do validador, não ausência de pendência. A etapa para aqui: sem ' +
+                        'saber se o ERP exige a condição de pagamento do cadastro, seguir seria chutar. ' +
+                        'Verifique as permissões da conta de serviço (com194 SELECT) e reprocesse.',
+                );
+            }
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message:
@@ -548,7 +595,9 @@ export default class RecebimentoNumerarioService {
                     'touching it (never disturb an intact document); finalization is the next discriminator',
                 data: {
                     txnId: ctx.txnId,
+                    idempotencyKey: ctx.key,
                     docCod: snDocCod,
+                    status,
                     erro: cause instanceof Error ? cause.message : String(cause),
                 },
             });
@@ -808,7 +857,7 @@ export default class RecebimentoNumerarioService {
         extra?: Partial<PreflightResult>,
     ): PreflightResult => {
         const status = this.extractHttpStatus(err);
-        if (status === 405 || status === 404 || status === 401 || status === 403) {
+        if (status !== undefined && STATUS_TRANSPORTE.includes(status)) {
             return {
                 classificacao: PREFLIGHT_CLASSIFICACAO.TRANSPORT_ERROR,
                 ...extra,

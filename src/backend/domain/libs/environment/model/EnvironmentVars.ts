@@ -109,6 +109,18 @@ export default class EnvironmentVars {
      */
     public ndeAclPreflight: boolean;
 
+    /**
+     * Liga o ajuste automático da condição de pagamento da SN quando a com194 acusa validação
+     * BLOQUEANTE de condição (`SN_COND_PGTO_AUTOAJUSTE=false` desliga; default TRUE).
+     *
+     * Existe porque esse ramo NÃO é exercitável em homologação — o cliente de teste do HML não tem
+     * condição sugerida no cadastro, então o ERP nunca acusa a pendência lá (ver
+     * `docs/e2e/gap-titulos-diagnostico.md`). Em produção ele dispara para clientes cujo cadastro a
+     * exige. Desligar mantém o fluxo conservador: sem o PUT, a finalização é recusada pelo próprio ERP
+     * com a mensagem dele, e o analista resolve na tela — nunca um documento com o título destruído.
+     */
+    public snCondPgtoAutoajuste: boolean;
+
     constructor({
         databaseConnectionString,
         conexosLogin,
@@ -137,6 +149,7 @@ export default class EnvironmentVars {
         ndePollTimeoutMs,
         ndePollIntervalMs,
         ndeAclPreflight,
+        snCondPgtoAutoajuste,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -165,6 +178,7 @@ export default class EnvironmentVars {
         ndePollTimeoutMs: number;
         ndePollIntervalMs: number;
         ndeAclPreflight: boolean;
+        snCondPgtoAutoajuste: boolean;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -193,5 +207,6 @@ export default class EnvironmentVars {
         this.ndePollTimeoutMs = ndePollTimeoutMs;
         this.ndePollIntervalMs = ndePollIntervalMs;
         this.ndeAclPreflight = ndeAclPreflight;
+        this.snCondPgtoAutoajuste = snCondPgtoAutoajuste;
     }
 }

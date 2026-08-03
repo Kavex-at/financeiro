@@ -44,6 +44,8 @@ const buildEnv = (over: Record<string, unknown> = {}): jest.Mocked<EnvironmentPr
             com297GcdNotaDebito: undefined,
             ndePollTimeoutMs: 30,
             ndePollIntervalMs: 1,
+            // Default de produção: o ajuste da condição de pagamento está LIGADO (o freio é opt-out).
+            snCondPgtoAutoajuste: true,
             ...over,
         }),
     }) as never;
@@ -454,6 +456,66 @@ describe('RecebimentoNumerarioService — condição de pagamento só quando a c
         expect(out.status).toBe('settled');
         expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
         expect(m.gerDoc.finalizarDocumento).toHaveBeenCalled();
+    });
+
+    /**
+     * Gate 0 (transporte × domínio): 401/403/404/405 do validador é bug de rota/permissão, NUNCA a
+     * resposta "não há pendência". Tratá-los como domínio foi o que mascarou três bugs nas sondagens do
+     * com299 — aqui a etapa tem que PARAR, não seguir com um palpite.
+     */
+    it.each([
+        401, 403, 404, 405,
+    ])('HTTP %i da com194 é falha de TRANSPORTE: para a etapa em vez de assumir "sem pendência"', async (status) => {
+        const m = comValidacao([]);
+        const erro = Object.assign(new Error('com194 recusou'), {
+            response: { status },
+        });
+        (m.fiscal.listValidacoes as jest.Mock).mockRejectedValue(erro);
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('error');
+        expect(out.etapa).toBe('sn');
+        expect(out.erro).toContain(String(status));
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
+        expect(m.gerDoc.finalizarDocumento).not.toHaveBeenCalled();
+    });
+
+    it('5xx do validador segue sendo best-effort (indisponibilidade, não bug de rota)', async () => {
+        const m = comValidacao([]);
+        const erro = Object.assign(new Error('com194 instável'), { response: { status: 503 } });
+        (m.fiscal.listValidacoes as jest.Mock).mockRejectedValue(erro);
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(m.gerDoc.finalizarDocumento).toHaveBeenCalled();
+    });
+
+    /**
+     * O ramo condicional NÃO é exercitável em homologação (o cliente de teste do HML não tem condição
+     * sugerida no cadastro) — sua primeira execução real é em produção. `SN_COND_PGTO_AUTOAJUSTE=false`
+     * é o freio operacional: o documento fica íntegro (com item e título) e o analista ajusta na tela.
+     */
+    it('com o autoajuste DESLIGADO, anuncia a exigência e para sem tocar no documento', async () => {
+        const m = comValidacao([VALIDACAO_CONDICAO]);
+        m.env = buildEnv({ snCondPgtoAutoajuste: false });
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('error');
+        expect(out.erro).toContain('SN_COND_PGTO_AUTOAJUSTE');
+        expect(m.gerDoc.atualizarDocumento).not.toHaveBeenCalled();
+        expect(m.gerDoc.finalizarDocumento).not.toHaveBeenCalled();
+    });
+
+    it('anuncia com tipo próprio quando o ERP exige a condição (primeira ocorrência tem que ser visível)', async () => {
+        const m = comValidacao([VALIDACAO_CONDICAO]);
+        await buildService(m).processarAlocacao(baseInput());
+
+        expect(logStub.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringContaining('sn-cond-pgto-exigida-pelo-erp'),
+                data: expect.objectContaining({ docCod: 18200, pesCod: 555 }),
+            }),
+        );
     });
 });
 

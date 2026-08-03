@@ -820,14 +820,20 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
             expect(body.docVldComvalidacoes).toBe(2);
             expect(body.ndeAutorizado).toBe(true);
 
-            // O com194 FOI consultado depois da homologação (log de requests do ERP). O `lastIndexOf` é
-            // proposital: a etapa da SN também consulta a com194 (para saber se o ERP exige a condição de
-            // pagamento do cadastro), então o PRIMEIRO com194 do log é anterior à homologação.
+            // DUAS consultas ao com194, uma em cada etapa — e o teste exige as duas, não "alguma".
+            // (a) na etapa da SN, ANTES de homologar: decide se o ERP exige a condição do cadastro;
+            // (b) depois da homologação com `docVldComvalidacoes=2`: lê as validações pendentes.
+            // Asseverar só a segunda deixaria um refactor remover a primeira em silêncio — e é ela que
+            // impede o PUT que destrói o título (doc 735 do HML).
             const paths = pathsDesde(mark);
             const idxHomolog = paths.findIndex((p) => p.includes('POST /api/com297/homologaNfe/'));
-            const idxCom194 = paths.lastIndexOf('POST /api/com194/documento/list');
+            const com194 = paths.reduce<number[]>(
+                (idxs, p, i) => (p === 'POST /api/com194/documento/list' ? [...idxs, i] : idxs),
+                [],
+            );
             expect(idxHomolog).toBeGreaterThan(-1);
-            expect(idxCom194).toBeGreaterThan(idxHomolog);
+            expect(com194.filter((i) => i < idxHomolog)).toHaveLength(1);
+            expect(com194.filter((i) => i > idxHomolog)).toHaveLength(1);
 
             // Ledger write-ahead: settla, mas com a revisão humana gravada.
             const row = snLedgerRows.get(`sn-real:${txnId}:${PRI_COD}:${VALOR}`);

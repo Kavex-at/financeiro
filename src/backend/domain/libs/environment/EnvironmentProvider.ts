@@ -147,6 +147,7 @@ export default class EnvironmentProvider {
             ndePollTimeoutMs: this.resolvePositiveInt('NDE_POLL_TIMEOUT_MS', 300_000),
             ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
             ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
+            snCondPgtoAutoajuste: this.readEnv('SN_COND_PGTO_AUTOAJUSTE') !== 'false',
         });
     };
 
@@ -203,6 +204,7 @@ export default class EnvironmentProvider {
             ndePollTimeoutMs: this.resolvePositiveInt('NDE_POLL_TIMEOUT_MS', 300_000),
             ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
             ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
+            snCondPgtoAutoajuste: this.readEnv('SN_COND_PGTO_AUTOAJUSTE') !== 'false',
         });
     };
 
