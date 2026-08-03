@@ -2,12 +2,12 @@
 name: recebimento
 type: state-machine
 entity: Recebimento
-ontology_version: "0.11"
+ontology_version: "0.13"
 implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-07-24
+last_review: 2026-08-03
 states: [rascunho, aprovado, executado, estornado]
 out_of_scope_states: []
 ---
@@ -39,7 +39,7 @@ Cada transição é uma **ação nomeada** com regra explícita e registro de vi
 
 | # | De → Para | Ação (gatilho) | Regra (SKELETON) | Vigência |
 |---|-----------|----------------|------------------|----------|
-| R1 | `(novo) → rascunho` | `atribuirBaixa` → `ratearRecebimento` → `aplicarRegrasRecebimento` | Conciliação montada (match confiável + rateio balanceado + regras aplicadas). | 2026-07-24 |
+| R1 | `(novo) → rascunho` | `atribuirBaixa` → `ratearRecebimento` → `aplicarRegrasRecebimento` | Conciliação montada (match confiável + rateio balanceado + regras aplicadas). A alocação pode GERAR uma SN nova OU alvo uma SN EXISTENTE do processo (docCod, listarSolicitacoesNumerario) — é um RAMO do settle, **NÃO** um estado novo (ADR-0027, invariante I-Receb-3). | 2026-08-03 |
 | R2 | `rascunho → aprovado` | `aprovarRecebimento` **(GATE human-in-the-loop)** | Rateio balanceado (invariante-rateio) + itens válidos. Registra `aprovadoPor`. | 2026-07-24 |
 | R3 | `aprovado → rascunho` | `reabrirRecebimento` | Reversão do gate — enquanto **não executado** (espelha `reabrirLote` do SISPAG). | 2026-07-24 |
 | R4 | `aprovado → executado` | `executarRecebimento` | Baixa/quitação no ERP + emissão NDe. **Idempotente** (write-ahead ledger; retry nunca duplica). Gated (dry-run/homologação-first). | 2026-07-24 |

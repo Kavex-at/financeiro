@@ -573,6 +573,120 @@ describe('ConexosGerDocProcessoClient', () => {
         expect(putGenericOnce.mock.calls[0][1]).toMatchObject({ pgtCod: 109 });
     });
 
+    it('listSNsByProcesso filtra por priCod/docVldTipo/docVldTipoAdto e projeta a linha (epoch→ISO, statusLabel)', async () => {
+        const listGenericPaginated = jest.fn().mockResolvedValue({
+            count: 1,
+            pageNumber: 1,
+            rows: [
+                {
+                    docCod: 18342,
+                    docEspNumero: '731',
+                    // 2026-08-03T00:00:00.000Z em epoch ms.
+                    docDtaEmissao: Date.UTC(2026, 7, 3),
+                    docVldTipo: 9,
+                    docVldTipoAdto: 1,
+                    tpdDesNome: 'SOLICITAÇÃO DE NUMERÁRIO',
+                    gcdDesNome: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA',
+                    gerDes: 'BANCO BRASIL',
+                    vldStatus: 3,
+                    mnyBruto: 15000,
+                    docMnyValor: 15000,
+                },
+            ],
+        });
+        const client = new ConexosGerDocProcessoClient(
+            buildBase({ listGenericPaginated }),
+            buildLog(),
+        );
+        const sns = await client.listSNsByProcesso({ filCod: 2, priCod: 3254 });
+
+        // Endpoint + filtro exatos do HAR. A URL é `com299/list` (o 1º arg vira `/${serviceName}` no
+        // adapter); passar só `'com299'` POSTaria no documento, não na lista. O `serviceName` do BODY é `com299`.
+        expect(listGenericPaginated.mock.calls[0][0]).toBe('com299/list');
+        const body = listGenericPaginated.mock.calls[0][1];
+        expect(body.filterList).toMatchObject({
+            'priCod#EQ': 3254,
+            'docVldTipo#EQ': 9,
+            'docVldTipoAdto#EQ': 1,
+            'vldStatus#IN': ['1', '3'],
+        });
+        expect(body.serviceName).toBe('com299');
+        expect(listGenericPaginated.mock.calls[0][2]).toEqual({ filCod: 2 });
+
+        expect(sns).toHaveLength(1);
+        expect(sns[0]).toMatchObject({
+            docCod: 18342,
+            numero: '731',
+            data: '2026-08-03T00:00:00.000Z',
+            // Prefere gcdDesNome.
+            descricao: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA',
+            status: 3,
+            statusLabel: 'Finalizada',
+            solicitado: 15000,
+            valor: 15000,
+        });
+    });
+
+    it('listSNsByProcesso EXCLUI defensivamente uma NC/ND (docVldTipoAdto===0) que escape do filtro do servidor', async () => {
+        const listGenericPaginated = jest.fn().mockResolvedValue({
+            count: 2,
+            pageNumber: 1,
+            rows: [
+                {
+                    docCod: 18342,
+                    docEspNumero: '731',
+                    docDtaEmissao: Date.UTC(2026, 7, 3),
+                    docVldTipo: 9,
+                    docVldTipoAdto: 1,
+                    vldStatus: 3,
+                    mnyBruto: 100,
+                    docMnyValor: 100,
+                },
+                {
+                    // NC/ND no mesmo processo: docVldTipoAdto=0 → NUNCA vaza para o analista.
+                    docCod: 18400,
+                    docEspNumero: '900',
+                    docDtaEmissao: Date.UTC(2026, 7, 4),
+                    docVldTipo: 9,
+                    docVldTipoAdto: 0,
+                    vldStatus: 3,
+                    mnyBruto: 50,
+                    docMnyValor: 50,
+                },
+            ],
+        });
+        const client = new ConexosGerDocProcessoClient(
+            buildBase({ listGenericPaginated }),
+            buildLog(),
+        );
+        const sns = await client.listSNsByProcesso({ filCod: 2, priCod: 3254 });
+        expect(sns).toHaveLength(1);
+        expect(sns[0].docCod).toBe(18342);
+    });
+
+    it('listSNsByProcesso: statusLabel cai no fallback "SN <n>" para vldStatus não mapeado', async () => {
+        const listGenericPaginated = jest.fn().mockResolvedValue({
+            rows: [
+                {
+                    docCod: 1,
+                    docEspNumero: '1',
+                    docDtaEmissao: Date.UTC(2026, 7, 3),
+                    docVldTipo: 9,
+                    docVldTipoAdto: 1,
+                    vldStatus: 7,
+                    mnyBruto: 1,
+                    docMnyValor: 1,
+                },
+            ],
+        });
+        const client = new ConexosGerDocProcessoClient(
+            buildBase({ listGenericPaginated }),
+            buildLog(),
+        );
+        const sns = await client.listSNsByProcesso({ filCod: 2, priCod: 3254 });
+        expect(sns[0].statusLabel).toBe('SN 7');
+    });
+
     it('listContasProjeto parseia as linhas de rateio do envelope paginado', async () => {
         const base = buildBase({
             listGenericPaginated: jest.fn().mockResolvedValue({
