@@ -47,6 +47,12 @@ export interface TransacaoBancaria {
      */
     categoria?: string;
     categoriaDesc?: string;
+    /**
+     * Canal de origem da transação (`'xlsx_bradesco'` para upload manual; `null`/ausente = fin095
+     * automático, legado). Distingue a fonte no painel e na auditoria — o dedup por `naturalKey` já
+     * é namespaced por canal, então esta coluna é rótulo, não chave.
+     */
+    canal?: string;
 }
 
 /** Boundary validation (Zod at boundaries) — one schema per entity. */
@@ -81,4 +87,5 @@ export const transacaoBancariaSchema = z.object({
     gerNum: z.number().int().positive().optional(),
     categoria: z.string().optional(),
     categoriaDesc: z.string().optional(),
+    canal: z.string().optional(),
 });
