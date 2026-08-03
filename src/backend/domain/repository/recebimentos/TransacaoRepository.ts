@@ -16,7 +16,7 @@ const UPSERT_CHUNK = 200;
 
 const COLUNAS = `id, correlation_id, fil_cod, data_movimento, tipo, valor, moeda,
                  contraparte, referencia_bancaria, natural_key, raw_payload, normalized,
-                 status, import_run_id, importado_em, ger_num, categoria, categoria_desc`;
+                 status, import_run_id, importado_em, ger_num, categoria, categoria_desc, canal`;
 
 /**
  * TransacaoRepository — CRUD sobre `transacao_bancaria` (0032 + 0040). SQL 100%
@@ -103,7 +103,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                     tuples.push(
                         `($id${n}, $co${n}, $fi${n}, $dm${n}, $ti${n}, $va${n}, $mo${n}, ` +
                             `$cp${n}, $rb${n}, $nk${n}, $rp${n}::jsonb, $no${n}::jsonb, ` +
-                            `$st${n}, $runId::text, $ie${n}, $gn${n}, $ca${n}, $cd${n}, ` +
+                            `$st${n}, $runId::text, $ie${n}, $gn${n}, $ca${n}, $cd${n}, $cl${n}, ` +
                             `$runId::uuid, now())`,
                     );
                     params[`id${n}`] = t.id;
@@ -123,13 +123,14 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                     params[`gn${n}`] = t.gerNum ?? null;
                     params[`ca${n}`] = t.categoria ?? null;
                     params[`cd${n}`] = t.categoriaDesc ?? null;
+                    params[`cl${n}`] = t.canal ?? null;
                 });
 
                 const rows = (await tx.selectMany(
                     `INSERT INTO transacao_bancaria (
                         id, correlation_id, fil_cod, data_movimento, tipo, valor, moeda,
                         contraparte, referencia_bancaria, natural_key, raw_payload, normalized,
-                        status, import_run_id, importado_em, ger_num, categoria, categoria_desc,
+                        status, import_run_id, importado_em, ger_num, categoria, categoria_desc, canal,
                         visto_em_run_id, atualizado_em
                      ) VALUES ${tuples.join(', ')}
                      ON CONFLICT (natural_key) DO UPDATE SET
@@ -286,5 +287,19 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         ...(r.ger_num != null ? { gerNum: Number(r.ger_num) } : {}),
         ...(r.categoria != null ? { categoria: String(r.categoria) } : {}),
         ...(r.categoria_desc != null ? { categoriaDesc: String(r.categoria_desc) } : {}),
+        ...(r.canal != null ? { canal: String(r.canal) } : {}),
     });
+
+    /**
+     * Quais das `naturalKeys` já existem na carteira. READ-ONLY — alimenta o PREVIEW do upload
+     * manual (novos × já importados) sem escrever nada. Parametrizado via `ANY($naturalKeys)`.
+     */
+    public existingNaturalKeys = async (naturalKeys: string[]): Promise<Set<string>> => {
+        if (naturalKeys.length === 0) return new Set();
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT natural_key FROM transacao_bancaria WHERE natural_key = ANY($naturalKeys)`,
+            { naturalKeys },
+        )) as Array<{ natural_key: string }>;
+        return new Set(rows.map((r) => String(r.natural_key)));
+    };
 }

@@ -588,3 +588,96 @@ export async function fetchPainelRecebimentos(): Promise<RecebimentosPainel> {
     truncado: json.truncado ?? false,
   }
 }
+
+// ─────────────────────────────────────────────── Importação MANUAL de extrato (.xlsx) — canal alternativo
+
+/** Uma linha (crédito) da amostra do preview, com o veredito de dedup. */
+export interface ImportExtratoPreviewLinha {
+  /** Número da linha na planilha original — identifica a linha para seleção na confirmação. */
+  linhaIndice: number
+  data: string
+  descricao: string
+  contraparteNome: string | null
+  contraparteDoc: string | null
+  valor: number
+  /** `false` = já existe na carteira (será deduplicada na confirmação). */
+  novo: boolean
+}
+
+/** Dry-run do upload (`POST /recebimentos/ingestao/upload/preview`) — nenhuma escrita. */
+export interface ImportExtratoPreview {
+  cabecalho: {
+    banco: string
+    agencia?: string
+    conta?: string
+    periodoDe?: string
+    periodoAte?: string
+  }
+  totalLinhas: number
+  totalCreditos: number
+  totalIgnorados: number
+  novos: number
+  jaImportados: number
+  jaImportadoArquivo: boolean
+  amostra: ImportExtratoPreviewLinha[]
+}
+
+/** Resultado da importação efetiva (`POST /recebimentos/ingestao/upload`). */
+export interface ImportExtratoResult {
+  runId: string
+  reaproveitada: boolean
+  totalCreditos: number
+  inseridas: number
+  deduplicadas: number
+}
+
+/** Extrai a mensagem de erro do backend (campo `error`) — ou cai no status HTTP. */
+async function erroUpload(res: Response): Promise<string> {
+  try {
+    const j = await res.json()
+    if (j?.error) return String(j.error)
+  } catch {}
+  return `API ${res.status}`
+}
+
+/** Monta o multipart do upload (arquivo + filial). NÃO seta content-type — o browser põe o boundary. */
+function formExtrato(file: File, filCod: number, excluirLinhas?: number[]): FormData {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('filCod', String(filCod))
+  if (excluirLinhas && excluirLinhas.length > 0) {
+    form.append('excluirLinhas', JSON.stringify(excluirLinhas))
+  }
+  return form
+}
+
+/** Preview do upload de extrato: parseia no servidor e classifica novos × já importados, sem gravar. */
+export async function previewImportExtrato(file: File, filCod: number): Promise<ImportExtratoPreview> {
+  const res = await apiFetch(`${API}/recebimentos/ingestao/upload/preview`, {
+    method: 'POST',
+    headers: await withAuthHeaders(),
+    body: formExtrato(file, filCod),
+  })
+  if (!res.ok) throw new Error(await erroUpload(res))
+  return res.json()
+}
+
+/**
+ * Importa efetivamente os créditos do extrato .xlsx. `excluirLinhas` são os `linhaIndice`
+ * desmarcados no preview — ficam de fora desta importação. A idempotência é por hash do
+ * arquivo + seleção no backend (mesma combinação reaproveita a run), então o FE não precisa
+ * gerar Idempotency-Key.
+ */
+export async function importExtrato(
+  file: File,
+  filCod: number,
+  excluirLinhas?: number[],
+): Promise<ImportExtratoResult> {
+  const res = await apiFetch(`${API}/recebimentos/ingestao/upload`, {
+    method: 'POST',
+    headers: await withAuthHeaders(),
+    body: formExtrato(file, filCod, excluirLinhas),
+  })
+  if (!res.ok) throw new Error(await erroUpload(res))
+  return res.json()
+}
