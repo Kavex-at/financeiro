@@ -166,6 +166,33 @@ razão real (`vars.msg` do Generic) → tradução PT curada por key → key cru
 `error`/`erpDetail`; o envelope cru continua logado (`erpData`). O `vars.msg` é texto operacional do ERP —
 sid/token vivem no header `Cookie`, não em `response.data`, então surface é seguro.
 
+### Classificação da falha — RECUSA × INDISPONIBILIDADE (ADR-0026, v0.13.0)
+
+Ler a razão não basta: é preciso decidir **se retentar**. O status do upstream separa as duas naturezas,
+e a separação é feita num ponto único — `ErpResponseReader`
+(`src/backend/domain/errors/ErpResponseReader.ts`), usado pelo `ConexosError` **e** pelo
+`ErpErrorInterpreter`, para que classificação e tradução nunca discordem sobre o mesmo payload.
+
+| Resposta do ERP | Natureza | `code` do `ConexosError` | `retryable` | HTTP para fora |
+|---|---|---|---|---|
+| sem resposta (rede/parse/socket) | indisponibilidade | `CONEXOS_UPSTREAM_ERROR` | `true` | 504 |
+| 5xx | indisponibilidade | `CONEXOS_UPSTREAM_ERROR` | `true` | 504 |
+| 408 · 429 | indisponibilidade | `CONEXOS_UPSTREAM_ERROR` | `true` | 504 |
+| demais 4xx | **recusa determinística** | `CONEXOS_UPSTREAM_REJECTED` | **`false`** | **502** |
+| timeout declarado pelo caller | indisponibilidade | `CONEXOS_UPSTREAM_TIMEOUT` | `true` | 504 |
+
+Uma **recusa** é veredito do ERP sobre o conteúdo do pedido: repetir devolve a mesma resposta, palavra
+por palavra. Por isso ela (a) não é retentada — nem pelo `RetryExecutor` do `ConexosBaseClient`, nem pela
+política central do `RecebimentoPipelineService` —, e (b) chega ao analista com a **razão crua do ERP**
+(`vars.msg`, senão a key) em vez de "tente novamente em alguns minutos", que seria o conselho errado.
+
+O caso que estabeleceu a regra: `POST /api/fin014/finalizar/{borCod}` devolvendo
+`400 CODIGO_IDENTIFICADOR_REGISTRO_EXISTENTE` no HML — defeito de ambiente do lado da Conexos,
+determinístico, medido em `docs/e2e/fin014-finalizacao-hml-diagnostico.md`.
+
+**Não confundir com idempotência:** uma escrita irreversível continua sendo tentativa única
+(`postGenericOnce`), retentável ou não.
+
 ## Cache local de borderôs — `permuta_bordero` (ADR-0014, v0.7.0)
 
 Para a aba Borderôs não bater no ERP a cada abertura, os borderôs de permuta (`fin010` `borVldTipo=2`)

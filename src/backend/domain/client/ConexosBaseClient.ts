@@ -1,5 +1,6 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import ConexosError from '../errors/ConexosError.js';
+import ErpResponseReader from '../errors/ErpResponseReader.js';
 import RetryExecutor from '../libs/executor/RetryExecutor.js';
 
 export const LEGACY_CONEXOS_TOKEN = Symbol('LegacyConexosShape');
@@ -155,6 +156,10 @@ export default class ConexosBaseClient {
             delayMs: 500,
             shouldLog: true,
             jitterMs: 200,
+            // Uma recusa do ERP (4xx que não seja 408/429) é veredito sobre o pedido, não
+            // indisponibilidade: a 2ª tentativa devolve a mesma resposta. Sem este gate, cada 400 de
+            // leitura custava duas chamadas ao ERP e o dobro do tempo até o analista ver o motivo.
+            shouldRetry: (error: unknown) => !ErpResponseReader.isDeterministicRefusal(error),
         });
     }
 

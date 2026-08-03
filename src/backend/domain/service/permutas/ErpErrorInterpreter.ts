@@ -1,11 +1,10 @@
 import { injectable, singleton } from 'tsyringe';
+import ErpResponseReader from '../../errors/ErpResponseReader.js';
+import type { ErpMessage } from '../../errors/ErpResponseReader.js';
 
-/** Uma mensagem do envelope `{ messages: [...] }` das validações do `fin010`. */
-export interface ErpMessage {
-    valid?: string;
-    message?: string;
-    vars?: Record<string, unknown>;
-}
+// `ErpMessage` mudou de casa (agora nasce no `ErpResponseReader`, junto da leitura crua que a produz);
+// o re-export mantém os importadores existentes deste módulo funcionando.
+export type { ErpMessage } from '../../errors/ErpResponseReader.js';
 
 /** Leitura normalizada de um erro do ERP (Conexos `fin010`/`fin014`). */
 export interface ErpErrorInterpretation {
@@ -130,30 +129,18 @@ export default class ErpErrorInterpreter {
         return reason ?? key ?? fallback;
     };
 
-    /** `vars.msg` só conta se for string não-vazia (o ERP às vezes manda outros tipos ou vazio). */
-    private extractReason = (msg?: ErpMessage): string | undefined => {
-        const raw = msg?.vars?.msg;
-        if (typeof raw !== 'string') return undefined;
-        const trimmed = raw.trim();
-        return trimmed.length > 0 ? trimmed : undefined;
-    };
+    // As três leituras cruas abaixo delegam ao `ErpResponseReader` — o MESMO ponto que o
+    // `ConexosError` usa para decidir se a falha é recusa ou indisponibilidade. Tê-las duplicadas
+    // aqui foi como a classificação e a tradução chegaram a discordar sobre o mesmo payload.
 
-    /**
-     * Prefere a 1ª mensagem `valid==='ERRO'`; senão a 1ª mensagem do envelope. Robusto a envelope
-     * malformado (não-array / itens null): este é um error-handler — NUNCA pode lançar (senão vira 500
-     * genérico sem requestId, justo no caso que o surfacing existe pra tratar).
-     */
-    private pickMessage = (messages?: ErpMessage[]): ErpMessage | undefined => {
-        if (!Array.isArray(messages)) return undefined;
-        return messages.find((m) => m?.valid === 'ERRO') ?? messages[0];
-    };
+    /** `vars.msg` só conta se for string não-vazia (o ERP às vezes manda outros tipos ou vazio). */
+    private extractReason = (msg?: ErpMessage): string | undefined => ErpResponseReader.reasonOf(msg);
+
+    /** Prefere a 1ª mensagem `valid==='ERRO'`; senão a 1ª do envelope. Robusto a envelope malformado. */
+    private pickMessage = (messages?: ErpMessage[]): ErpMessage | undefined =>
+        ErpResponseReader.pickMessage(messages);
 
     /** O erro do ERP pode vir direto (`err.response`) ou aninhado no `cause` (ConexosError). */
-    private extractResponse = (err: unknown): { status?: number; data?: unknown } | undefined => {
-        const e = err as {
-            response?: { status?: number; data?: unknown };
-            cause?: { response?: { status?: number; data?: unknown } };
-        };
-        return e?.response ?? e?.cause?.response;
-    };
+    private extractResponse = (err: unknown): { status?: number; data?: unknown } | undefined =>
+        ErpResponseReader.responseOf(err);
 }

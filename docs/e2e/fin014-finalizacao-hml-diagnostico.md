@@ -209,3 +209,53 @@ v0.3.0), mais a escolha do próximo passo entre chamado, teste na filial 1, ou o
 | `C:/tmp/probe-bordero-hml.json` | saída completa daquela sonda |
 | `docs/e2e/HANDOFF-proxima-sessao.md` | estado geral do trabalho — **continua sendo a leitura principal** |
 | `ontology/_inbox/com299-sn-generation-har.md` | HAR de produção da SN 18345, onde o `fin014/finalizar` deu OK |
+
+---
+
+## 12. Encaminhamento dos §9 (sessão de 2026-08-03, tarde)
+
+### 12.1 — Item 3 (erro não-retentável): **feito**, ADR-0026
+
+Virou `/feature-tweak` próprio, na branch `fix/erp-4xx-nao-retentavel` (worktree `C:/tmp/erp4xx-wt`). O
+defeito tinha **duas** manifestações, não uma:
+
+| Onde | Antes | Depois |
+|---|---|---|
+| `ConexosError` | `retryable = true` e `statusCode = 504` sempre | derivados do status do upstream |
+| `ConexosBaseClient` (`RetryExecutor`) | sem `shouldRetry` → default `() => true` | não retenta recusa determinística |
+
+Recusa (4xx exceto 408/429) → `CONEXOS_UPSTREAM_REJECTED`, `retryable: false`, HTTP **502**, e a mensagem
+do analista passa a carregar a **razão crua do ERP** em vez de "tente novamente em alguns minutos".
+Indisponibilidade (sem resposta, 5xx, 408, 429, timeout declarado) segue retentável em 504.
+
+A regra já **existia** — a política central do `RecebimentoPipelineService` dizia "um 4xx do ERP não é
+retryable" — mas nada nunca marcava `retryable: false`. Era comentário, não comportamento.
+
+Detalhe e alternativas recusadas: `ontology/decisions/0026-recusa-deterministica-do-erp.md`.
+
+### 12.2 — Item 4 (`fin014/baixas/validacao/tituloBaixa`): **mantida**, com motivo
+
+A chamada fica. A UI não a faz, mas ela não é redundância:
+
+- é a **única validação do título antes da baixa** — o `assertNoErpError` sobre as `messages` dela é o
+  que impede gravar uma escrita irreversível sobre um título que o ERP já tem ressalva;
+- devolve o **em-aberto vivo** (`bxaMnyValor`), que é o valor que a baixa grava. O `titMnyAberto` do LOV
+  é o mesmo número uma chamada antes — mas uma leitura antes, e é dinheiro;
+- é o caminho **provado em produção** (SN 18345). Removê-lo para economizar um GET trocaria uma guarda
+  por um round-trip, num passo que movimenta valor.
+
+Fica de follow-up, e **só quando a perna voltar a rodar**, alinhar `bxaVldCcorrente`: a UI grava `1`, a
+validação nos devolveu `0` no borderô 135. O borderô 137 usou os valores da UI e falhou igual, então isso
+está descartado como causa — mas a divergência é real e não deve ser resolvida no escuro.
+
+### 12.3 — Item 2 (filial 1): instrumento pronto, **falta o Yuri disparar**
+
+`src/backend/routes/recebimentos.e2e.hmlFilial1Bordero.integration.test.ts` monta na filial 1 o mínimo
+que discrimina — borderô + baixa sobre um título de terceiro já aberto — chama `validacoes` e **desfaz
+tudo**. Nunca chama `finalizar` (escreveria lançamentos contábeis sobre título alheio, irreversível pela
+API). Traz um braço de **controle** que remede o borderô 135 na filial 2 na mesma sessão, para que um
+verde na filial 1 não seja confundido com "a Conexos consertou o ambiente".
+
+### 12.4 — Itens 1 e 5: seguem com o Yuri
+
+Abrir o chamado com a Conexos/NTT e fechar o pipe (bump, PR) são ações para fora.
