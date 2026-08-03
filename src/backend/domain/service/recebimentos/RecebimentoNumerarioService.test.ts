@@ -112,6 +112,20 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
             .fn()
             .mockResolvedValue({ prdCod: 2, tpcCod: 33, cfoEspCod: '9999A2', undCod: 3 }),
         adicionarComDocProduto: jest.fn().mockResolvedValue({ dprCodSeq: 1 }),
+        // ADR-0027: lista das SN do processo — fonte da validação de POSSE do `snSelecionadaDocCod`.
+        // Por padrão traz a SN 18202 (a que os testes de "SN existente" selecionam).
+        listSNsByProcesso: jest.fn().mockResolvedValue([
+            {
+                docCod: 18202,
+                numero: '731',
+                data: '2026-08-03T00:00:00.000Z',
+                descricao: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA',
+                status: 3,
+                statusLabel: 'Finalizada',
+                solicitado: 15000,
+                valor: 15000,
+            },
+        ]),
     } as never,
     fin014: {
         criarBordero: jest
@@ -250,6 +264,80 @@ describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stag
                 finDocFiscal: expect.objectContaining({ fisVldTipoNfDebito: 6 }),
             }),
         );
+    });
+
+    it('SN existente selecionada (snSelecionadaDocCod): NÃO gera nem finaliza a SN; baixa fin014 + NDe com297 contra o docCod escolhido', async () => {
+        const m = buildMocks();
+        // A NDe (com297) ainda é gerada — só a SN (com299) é pulada. Programa o gerarDocProcesso p/
+        // devolver o docCod da NDe (não haverá a chamada da SN, então é a 1ª e única geração).
+        (m.gerDoc.gerarDocProcesso as jest.Mock).mockResolvedValue({ docCod: 18337, messages: [] });
+        const SN_EXISTENTE = 18202;
+
+        const out = await buildService(m).processarAlocacao(
+            baseInput({ snSelecionadaDocCod: SN_EXISTENTE }),
+        );
+
+        expect(out.status).toBe('settled');
+        expect(out.snDocCod).toBe(SN_EXISTENTE);
+
+        // NÃO cria SN nova (nunca valida/gera com299) nem re-finaliza a SN existente (invariante I-Receb-3).
+        expect(m.gerDoc.validarGeracao).not.toHaveBeenCalled();
+        expect(m.gerDoc.finalizarDocumento).not.toHaveBeenCalled();
+        // gerarDocProcesso é chamado UMA vez — a NDe (com297), nunca a SN (com299).
+        expect(m.gerDoc.gerarDocProcesso).toHaveBeenCalledTimes(1);
+        expect((m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0].tela).toBe('com297');
+
+        // fin014 baixa roda contra o título da SR SELECIONADA (docCod=18202 via listTitulosBorderoReceber).
+        expect(m.fin014.listTitulosBorderoReceber).toHaveBeenCalledWith(
+            expect.objectContaining({ docCod: SN_EXISTENTE }),
+        );
+        expect(m.fin014.gravarBaixa).toHaveBeenCalled();
+        // com297 NDe emitida (homologa).
+        expect(m.nde.homologar).toHaveBeenCalled();
+
+        // POSSE validada contra a lista de SN DO processo (filial do processo, priCod do processo).
+        expect(m.gerDoc.listSNsByProcesso).toHaveBeenCalledWith(
+            expect.objectContaining({ filCod: PROCESSO_FIL_COD, priCod: 90001 }),
+        );
+    });
+
+    it('SN existente que NÃO pertence ao processo é RECUSADA antes de qualquer escrita (security P0)', async () => {
+        const m = buildMocks();
+        // A lista do processo NÃO contém a SN 99999 (é de outro processo/cliente).
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([
+            {
+                docCod: 18202,
+                numero: '731',
+                data: '2026-08-03T00:00:00.000Z',
+                descricao: 'x',
+                status: 3,
+                statusLabel: 'Finalizada',
+                solicitado: 1,
+                valor: 1,
+            },
+        ]);
+        const out = await buildService(m).processarAlocacao(
+            baseInput({ snSelecionadaDocCod: 99999 }),
+        );
+
+        expect(out.status).toBe('blocked');
+        expect(out.motivo).toMatch(/não pertence ao processo/i);
+        // Nada foi escrito: nem ledger, nem fin014, nem com297.
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+        expect(m.fin014.criarBordero).not.toHaveBeenCalled();
+        expect(m.gerDoc.gerarDocProcesso).not.toHaveBeenCalled();
+        expect(m.nde.homologar).not.toHaveBeenCalled();
+    });
+
+    it('FAIL-CLOSED: se a leitura da lista de SN falhar, a alocação é bloqueada (não escreve às cegas)', async () => {
+        const m = buildMocks();
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockRejectedValue(new Error('com299/list 504'));
+        const out = await buildService(m).processarAlocacao(
+            baseInput({ snSelecionadaDocCod: 18202 }),
+        );
+        expect(out.status).toBe('blocked');
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+        expect(m.fin014.criarBordero).not.toHaveBeenCalled();
     });
 
     it('roda TODA chamada Conexos na filial DO PROCESSO (7), nunca na do pagamento (1)', async () => {

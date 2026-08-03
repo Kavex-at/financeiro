@@ -423,6 +423,32 @@ export interface AlocacaoRequest {
   pesCod: number
   dpeNomPessoa: string
   moeCod: number
+  /**
+   * SN EXISTENTE escolhida pelo analista (ADR-0027) — `docCod` da SN já finalizada. Quando
+   * presente, o backend PULA a criação da SN e roda fin014 baixa + com297 NDe contra este
+   * `docCod`. Ausente = "Criar novo SN" (fluxo completo, inalterado).
+   */
+  snDocCod?: number
+}
+
+/** Uma Solicitação de Numerário já existente do processo — espelho do DTO do backend. */
+export interface SolicitacaoNumerarioListItem {
+  /** `docCod` da SN — o handle que a baixa fin014 + NDe com297 usam. */
+  docCod: number
+  /** Número do documento (`docEspNumero`). */
+  numero: string
+  /** Emissão em ISO. */
+  data: string
+  /** Descrição derivada (gcd/tpd/ger). */
+  descricao: string
+  /** `vldStatus` cru do ERP. */
+  status: number
+  /** Rótulo humano do status (best-effort). */
+  statusLabel: string
+  /** Valor solicitado (`mnyBruto`). */
+  solicitado: number
+  /** Valor do documento (`docMnyValor`). */
+  valor: number
 }
 
 /**
@@ -490,6 +516,29 @@ export async function fetchProcessosParaTransacao(
 }
 
 /**
+ * Lista as Solicitações de Numerário (SN) já EXISTENTES de um processo (ADR-0027) —
+ * `GET /recebimentos/processos/:priCod/sns?filCod=`. Alimenta o painel de seleção de SN do modal
+ * "Alocar": o analista escolhe uma SN existente (baixa contra o `docCod` dela) ou "Criar novo SN".
+ *
+ * `filCod` é o da filial DO PROCESSO. Sem fallback de fixture: um backend fora do ar precisa
+ * aparecer como erro, não como uma lista inventada de documentos financeiros.
+ */
+export async function fetchSNsDoProcesso(
+  priCod: number,
+  filCod: number,
+): Promise<SolicitacaoNumerarioListItem[]> {
+  const res = await apiFetch(
+    `${API}/recebimentos/processos/${encodeURIComponent(String(priCod))}/sns?filCod=${encodeURIComponent(
+      String(filCod),
+    )}`,
+    { headers: await withAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as { sns?: SolicitacaoNumerarioListItem[] }
+  return json.sns ?? []
+}
+
+/**
  * Clientes com processo aberto — alimenta o seletor do modal "Alocar".
  *
  * Multi-filial de propósito: um crédito cai numa filial, mas a encomenda do
@@ -535,6 +584,8 @@ export async function processarSolicitacaoNumerario(
         pesCod: allocation.pesCod,
         dpeNomPessoa: allocation.dpeNomPessoa,
         moeCod: allocation.moeCod,
+        // SN existente escolhida (ADR-0027) — só vai no corpo quando definida ("Criar novo SN" omite).
+        ...(allocation.snDocCod !== undefined ? { snDocCod: allocation.snDocCod } : {}),
       }),
     },
   )

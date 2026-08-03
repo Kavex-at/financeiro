@@ -27,6 +27,7 @@ import {
     SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
 } from '../domain/interface/recebimentos/ports.js';
 import ConexosCadastroClient from '../domain/client/ConexosCadastroClient.js';
+import ConexosGerDocProcessoClient from '../domain/client/ConexosGerDocProcessoClient.js';
 import RecebimentoIngestaoRunRepository from '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
 import IngestaoTransacoesService from '../domain/service/recebimentos/IngestaoTransacoesService.js';
@@ -351,6 +352,49 @@ router.get(
     }),
 );
 
+const listSNsQuerySchema = z.object({
+    /** Filial DO PROCESSO — obrigatória (o `com299/list` é por filial). */
+    filCod: z.coerce.number().int().positive(),
+});
+
+/**
+ * GET /recebimentos/processos/:priCod/sns?filCod=<n> — lista as Solicitações de Numerário (SN) já
+ * EXISTENTES do processo (modal "Alocar", painel de seleção de SN — ADR-0027). READ-only (sem admin),
+ * espelhando `/transacoes/:txnId/processos`: `filCod` obrigatório + `assertUserCanActOnFilial`
+ * (403 quando fora da allow-list). Fonte real: `POST /api/com299/list` filtrado por
+ * `priCod`/`docVldTipo=9`/`docVldTipoAdto=1`/`vldStatus∈{1,3}` (SN de adiantamento, excluindo NC/ND).
+ * A lista é document-level; o teto de valor (≤ saldo real) é imposto na baixa (fin014), não aqui.
+ */
+router.get(
+    '/processos/:priCod/sns',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const priCod = z.coerce.number().int().positive().safeParse(req.params.priCod);
+        if (!priCod.success) {
+            res.status(400).json({ error: 'priCod inválido' });
+            return;
+        }
+        const parsed = listSNsQuerySchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
+            return;
+        }
+        const filCod = parsed.data.filCod;
+        try {
+            assertUserCanActOnFilial(req.user, filCod);
+        } catch (err) {
+            if (err instanceof FilialForbiddenError) {
+                res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
+                return;
+            }
+            throw err;
+        }
+        const client = container.resolve(ConexosGerDocProcessoClient);
+        const sns = await client.listSNsByProcesso({ filCod, priCod: priCod.data });
+        res.json({ priCod: priCod.data, sns });
+    }),
+);
+
 const solicitacaoNumerarioSchema = z.object({
     /** Nº do processo de importação (imp021) que recebe a alocação. */
     priCod: z.coerce.number().int().positive(),
@@ -374,6 +418,12 @@ const solicitacaoNumerarioSchema = z.object({
      */
     pdcDocFederal: z.string().optional(),
     endCodFis: z.coerce.number().int().positive().optional(),
+    /**
+     * SN EXISTENTE escolhida pelo analista (ADR-0027) — `docCod` da SN já finalizada. Quando presente,
+     * o serviço PULA a criação da SN (com299) e roda fin014 baixa + com297 NDe contra este `docCod`.
+     * Ausente = "Criar novo SN" (fluxo completo, inalterado).
+     */
+    snDocCod: z.coerce.number().int().positive().optional(),
     /** Força dry-run mesmo com a escrita ligada (preview sob demanda). */
     dryRun: z.boolean().optional(),
 });
@@ -478,6 +528,9 @@ router.post(
                     : {}),
             },
             ator,
+            ...(parsed.data.snDocCod !== undefined
+                ? { snSelecionadaDocCod: parsed.data.snDocCod }
+                : {}),
             ...(parsed.data.dryRun === true ? { dryRunOverride: true } : {}),
         });
         // HTTP 200 mesmo em erro de etapa — o `status` carrega o desfecho (settled/skipped/error/dry-run).

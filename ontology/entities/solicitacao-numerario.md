@@ -1,7 +1,7 @@
 ---
 name: SolicitacaoNumerario
 type: entity
-ontology_version: "0.12"
+ontology_version: "0.13"
 implementation_status: partial
 status: draft
 owners: [yuri]
@@ -44,6 +44,7 @@ relationships:
   - "SolicitacaoNumerario 1—1 documento ERP com299 (docCod retornado pelo gerDocProcesso)"
   - "SolicitacaoNumerario 1—N item de rateio (contasProj: prjCod × ctpCod × tpcCod × cfoEspCod)"
   - "SolicitacaoNumerario 1—1 NotaDebitoEletronica (recebimento: NDe com297 terminal, docCod=ndDocCod, homologada+autorizada na SEFAZ)"
+  - "SolicitacaoNumerario N—1 Recebimento (recebimento: uma alocação pode SELECIONAR uma SN JÁ EXISTENTE do processo — reutiliza docCod em vez de gerar; a baixa fin014 + NDe correm contra ela; ADR-0027)"
 last_review: 2026-08-03
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md — Frente I (adiantamento ↔ invoice) + Frente IV (recebimentos)"
@@ -51,6 +52,7 @@ universality_evidence:
   - "Engenharia reversa do bundle com068 + probes read-only (validaConfigDoc/contasProj) no tenant Columbia (2026-07-31, filCod=2/priCod=2768/pesCod=5010) — captura do body gerDocProcesso via interceptor bloqueante (nenhum documento criado)"
   - "HAR REAL de produção (Columbia, doc 18337, filCod=2, 2026-08-01) confirmando a cauda fiscal terminal (com300 fisVldTipoNfDebito=6 → com131 SINIEF → com297 homologar → poll SEFAZ vldAutorizado) — ver integrations/recebimentos-numerario-real-fiscal-spec.md"
   - "Conceito universal de comex: requisição de numerário vinculada a um processo de importação, gerada TANTO de um adiantamento (permuta) QUANTO de um pagamento de cliente alocado (recebimento)"
+  - "HAR REAL (Columbia, 2026-08-03) da listagem de SNs por processo: POST /api/com299/list, filterList priCod#EQ + docVldTipo#EQ:9 + docVldTipoAdto#EQ:1 + vldStatus#IN:['1','3'], ordenado docCod desc — confirma que a SN de um processo é LISTÁVEL/SELECIONÁVEL, não só escrita (ADR-0027)"
 ---
 
 # SolicitacaoNumerario (SN — ENCOMENDA)
@@ -67,6 +69,44 @@ Uma `SolicitacaoNumerario` é o documento "SOLICITAÇÃO DE NUMERÁRIO - ENCOMEN
 (`gcdCod=150`, `docTip=1`, `globalDocVldTipo=9`) criado no Conexos para um processo de
 importação (`priCod`) e uma pessoa (`pesCod`). O rateio (`itens`) é servido pelo próprio
 ERP (`contasProj/list`), não é constante.
+
+## SN existente × nova (afordância de LEITURA — v0.13, ADR-0027)
+
+Uma `SolicitacaoNumerario` deixa de ser um documento que o sistema só **escreve**: as SNs
+**já existentes** de um processo são **listáveis** e **selecionáveis** pela analista. Ao alocar
+um pagamento a um processo há duas rotas:
+
+- **Criar novo SN** — fluxo completo inalterado (com299 gera + completa + finaliza → fin014 → com297).
+- **Selecionar SN existente** — **NÃO** gera com299 nem completa o documento; referencia o `docCod`
+  da SN escolhida e corre **apenas** a baixa `fin014` + a NDe `com297` contra ela. Ver o ramo em
+  `actions/recebimentos/gerar-solicitacao-numerario.md` e o invariante em
+  `business-rules/alocacao-sn-existente.md` (I-Receb-3).
+
+### Projeção de leitura (por SN do processo — HAR-confirmado 2026-08-03)
+
+`POST /api/com299/list` (mesma família/host do com299 de escrita), `filterList = { "priCod#EQ": priCod,
+"docVldTipo#EQ": 9, "docVldTipoAdto#EQ": 1, "vldStatus#IN": ["1","3"] }`, ordenado por `docCod` desc,
+paginado. **Discriminador SN:** `docVldTipo=9` **E** `docVldTipoAdto=1` — uma NC/ND no mesmo processo
+é `docVldTipoAdto=0` e por isso **excluída**. Envelope `{ count, pageNumber, rows: [...] }`.
+
+| Campo (UI) | Papel | Origem (wire) |
+|------------|-------|---------------|
+| `docCod` | chave interna do documento (handle da seleção) | `rows[].docCod` |
+| `numero` | nº humano da SN (ex.: "26.0141") | `rows[].docEspNumero` |
+| `data` | data de emissão | `rows[].docDtaEmissao` (epoch ms) |
+| `descricao` | descrição (ex.: "Frete internacional") | `rows[].tpdDesNome` / `rows[].gcdDesNome` |
+| `status` | Aberta / Parcial (/ quitada) | derivado de `rows[].vldStatus` (1/3) |
+| `solicitado` | valor solicitado da SN | `rows[].mnyBruto` |
+| (valor do doc) | valor do documento | `rows[].docMnyValor` |
+
+> **⚠️ `com299/list` é DOCUMENT-level.** O **saldo remanescente por-título** — o "Saldo" do mockup e o
+> **teto do I-Receb-3** — **NÃO** vem nesta resposta: ele vem da leitura do título no `fin014`
+> (`lov/TituloBorderoReceber`) que a **própria baixa já executa**. A listagem mostra o **valor do
+> documento** (`mnyBruto`/`docMnyValor`); o **ponto de enforcement** do teto ≤ saldo é a
+> baixa/título, não o valor da lista. Ver `business-rules/alocacao-sn-existente.md`.
+>
+> **Valores** (rótulos de status, formato do `numero`, códigos `gcdCod`/tenant) são **instância/config
+> do tenant** — só os campos abstratos entram na ontologia.
 
 **Duas origens (`origem`):**
 - **`adiantamento` (Frente I / permuta):** `valor` = `valorASerUsado` do adiantamento (moeda
@@ -166,8 +206,9 @@ das 3 telas para preview.
 
 ## Fora de escopo
 
-- Não reconcilia a permuta (fin010) — Processar agora gera a SN em vez da baixa. O
-  endpoint `/reconciliar` permanece no backend, apenas desligado da UI.
+- Não reconcilia a permuta (fin010) — Processar gera a SN (caminho novo) OU baixa contra
+  uma SN existente selecionada (ADR-0027). O endpoint `/reconciliar` permanece no backend,
+  apenas desligado da UI.
 - Currency handling: a SN captada tinha `valor` em BRL (`moeCod=null`); usamos a moeda
   negociada por decisão — se o ERP recusar, revisitar `moeCod` (gap aberto).
 - Telas 2 (fin014) e 3 (com297) **na trilha permutas**: estrutura + payloads previstos existem, mas

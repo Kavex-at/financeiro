@@ -1,8 +1,8 @@
 ---
 name: conexos-com299-gerdoc
 type: integration
-direction: write (REAL na trilha recebimentos — gated CONEXOS_WRITE_ENABLED + CONEXOS_DRY_RUN, default dry-run)
-ontology_version: "0.12"
+direction: read-write (READ: listagem de SNs por processo, com299/list — HAR-confirmado; WRITE REAL na trilha recebimentos — gated CONEXOS_WRITE_ENABLED + CONEXOS_DRY_RUN, default dry-run)
+ontology_version: "0.13"
 implementation_status: implemented
 status: stable
 owners: [yuri]
@@ -14,6 +14,8 @@ related_files:
   - src/backend/domain/interface/recebimentos/GerDocProcesso.ts
   - src/backend/domain/interface/recebimentos/constants.ts
   - src/backend/routes/recebimentos.ts
+endpoints_read:
+  - "com299/list (POST /api/com299/list — LISTAR as SNs de um processo; filterList={priCod#EQ, docVldTipo#EQ:9, docVldTipoAdto#EQ:1, vldStatus#IN:['1','3']}, ordenado docCod desc, paginado; envelope {count,pageNumber,rows[]}; rows[].docCod/docEspNumero/docDtaEmissao/tpdDesNome|gcdDesNome/vldStatus/mnyBruto/docMnyValor. Discriminador SN = docVldTipo=9 AND docVldTipoAdto=1 (NC/ND é docVldTipoAdto=0 → excluída). Alimenta o ramo 'SN existente' de gerarSolicitacaoNumerario. HAR-confirmado 2026-08-03; ADR-0027)"
 endpoints_write:
   - "com299 (POST /api/com299 + comDocProdutos + calculaValorLiquidoDocumento + finalizaDocumento — Solicitação de Numerário; REAL gated)"
   - "com299 PUT (condição de pagamento do cadastro da pessoa) — CONDICIONAL: só sob validação BLOQUEANTE da com194 (fdvVldErr===2) e sempre verificado (mnyTitValor === docMnyValor). Ver banner 'CICLO DE VIDA DO TÍTULO' + ADR-0025."
@@ -21,6 +23,7 @@ endpoints_write:
 last_review: 2026-08-03
 open-gap:
   - "gcdCod-solicitacao-numerario-encomenda (P0 p/ HML) — o código EXATO da Configuração de Documento 'Solicitação de Numerário - Encomenda' precisa ser confirmado via HML/HAR; hoje é PLACEHOLDER (gcdCod=0)."
+  - "sn-list-saldo-document-level (P1, ADR-0027) — com299/list é DOCUMENT-level: devolve mnyBruto (solicitado) e docMnyValor (valor do doc), mas NÃO o saldo REMANESCENTE por-título. O 'Saldo' do mockup e o TETO do I-Receb-3 vêm da leitura do título (lov/TituloBorderoReceber) que a baixa fin014 já executa — o enforcement do teto ≤ saldo é a baixa/título, não o valor da lista. A lista NÃO deve ser usada como fonte do saldo."
   - "encomenda-percentuais (P1, §7 Q4) — a regra de % da encomenda (0,1%/0,9%) é NÃO-RESOLVIDA; a SN usa o valor cru da transação por ora."
   - "gerdoc-payload-fields (P1) — campos de rateio (items[] TmpCom068DTOItem: prjCod/ctpCod/tpcCod/cfoEspCod) e docTip/docVldTipo precisam de confirmação no HAR real."
   - "regeneracao-parcelas-com032 (P2, ADR-0025) — se algum cliente real cair no caso BLOQUEANTE e o PUT da condição destruir as parcelas, a etapa falha fechada; regenerar as parcelas exigiria a tela com032 ('Financeiro'), cujo HAR NÃO foi capturado. Deliberadamente não implementado."
@@ -163,6 +166,33 @@ open-gap:
 > provável: a condição de pagamento envolvida (a de produção tem regra de parcelamento; a `101` do HML,
 > aparentemente não) — **não confirmado**. A correção não assume nenhum dos dois comportamentos: verifica o
 > resultado e falha fechado.
+
+## Listagem de SNs por processo — `com299/list` (READ, HAR-confirmado 2026-08-03, ADR-0027)
+
+Antes de "Processar", a analista pode **reutilizar** uma SN **já existente** do processo em vez de mintar
+uma nova (ação `listarSolicitacoesNumerario`). A leitura:
+
+`POST /api/com299/list`, corpo `filterList = { "priCod#EQ": priCod, "docVldTipo#EQ": 9,
+"docVldTipoAdto#EQ": 1, "vldStatus#IN": ["1","3"] }`, ordenado `docCod` desc, **paginado**. Envelope
+`{ count, pageNumber, rows: [...] }`.
+
+| Campo (UI) | `rows[]` | Papel |
+|------------|----------|-------|
+| `docCod` | `docCod` | handle da seleção (referência da SN escolhida na baixa) |
+| `numero` | `docEspNumero` | nº humano (ex.: "26.0141") |
+| `data` | `docDtaEmissao` | data de emissão (epoch ms) |
+| `descricao` | `tpdDesNome` / `gcdDesNome` | descrição (ex.: "Frete internacional") |
+| `status` | `vldStatus` (1/3) | rótulo Aberta / Parcial |
+| `solicitado` | `mnyBruto` | valor solicitado da SN |
+| (valor do doc) | `docMnyValor` | valor do documento |
+
+- **Discriminador SN:** `docVldTipo=9` **E** `docVldTipoAdto=1`. Uma **NC/ND** no mesmo processo é
+  `docVldTipoAdto=0` e por isso **excluída** — a analista só baixa contra uma SN, nunca contra uma nota.
+- **⚠️ SALDO não vem daqui (document-level).** `com299/list` devolve o **valor do documento**
+  (`mnyBruto`/`docMnyValor`), **não** o saldo remanescente por-título. O "Saldo" do mockup e o **teto do
+  I-Receb-3** vêm da leitura do título (`lov/TituloBorderoReceber`) que a **baixa `fin014` já executa** —
+  o **enforcement** do teto ≤ saldo é a baixa/título, não a lista. Ver
+  `business-rules/alocacao-sn-existente.md`.
 
 ## Baixa fin014 (nova superfície — REAL)
 

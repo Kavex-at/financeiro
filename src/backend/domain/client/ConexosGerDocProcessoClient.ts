@@ -9,6 +9,16 @@ import type {
     ValidaConfigDocPessoaResult,
     ValidaConfigDocResult,
 } from '../interface/permutas/SolicitacaoNumerario.js';
+import {
+    SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
+    SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO,
+} from '../interface/recebimentos/constants.js';
+import {
+    SOLICITACAO_NUMERARIO_LIST_ENVELOPE_SCHEMA,
+    type SolicitacaoNumerarioListItem,
+    type SolicitacaoNumerarioRow,
+    solicitacaoNumerarioStatusLabel,
+} from '../interface/recebimentos/SolicitacaoNumerarioListItem.js';
 import LogService from '../service/LogService.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
@@ -1023,6 +1033,110 @@ export default class ConexosGerDocProcessoClient {
             throw new ConexosError({ endpoint: `${tela}/list`, cause });
         }
     };
+
+    /**
+     * Lista as **Solicitações de Numerário (SN)** já existentes de um processo (`POST /api/com299/list`,
+     * HAR-confirmado). Alimenta o painel "selecionar SN existente" do modal Alocar (ADR-0027): o analista
+     * escolhe uma SN existente (baixa fin014 + NDe com297 contra o `docCod` dela) OU cria uma nova.
+     *
+     * O servidor filtra a família SN via `docVldTipo#EQ:9` + `docVldTipoAdto#EQ:1` (reusa as constantes
+     * `SOLICITACAO_NUMERARIO_DOC_VLD_TIPO`/`_ADTO` — nunca hardcodar 9/1) e `vldStatus#IN:["1","3"]`; e
+     * `priCod#EQ` amarra ao processo. Uma NC/ND do mesmo processo é `docVldTipoAdto===0` — o servidor já
+     * a exclui, mas o filtro DEFENSIVO abaixo garante que uma linha fora do discriminador nunca vaze para
+     * o analista. Leitura idempotente → `runWithRetry` + `ensureSid` (paridade EXATA com `listContasProjeto`
+     * / `resolveGcdCodByName`: `listGenericPaginated` NÃO embrulha retry/ensureSid — só o `paginate` faz);
+     * falha vira `ConexosError` como os métodos irmãos. Zod no boundary (`.passthrough()`); projeta ao DTO.
+     */
+    public listSNsByProcesso = async (params: {
+        filCod: number;
+        priCod: number;
+        pageSize?: number;
+    }): Promise<SolicitacaoNumerarioListItem[]> => {
+        const { filCod, priCod } = params;
+        const pageSize = params.pageSize ?? 50;
+        const path = 'com299/list';
+        try {
+            return await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                const page = await this.base.listGenericPaginated<Record<string, unknown>>(
+                    // URL path = `com299/list` (o 1º arg vira `/${serviceName}` no adapter). O sibling
+                    // `resolveGcdCodByName` faz igual (`${tela}/list`); passar só `'com299'` POSTaria em
+                    // `/com299` (documento, não a lista) — a lista viria vazia/4xx e a feature ficaria inerte.
+                    // O `serviceName: 'com299'` do BODY é o do envelope (contrato HAR), não a URL.
+                    'com299/list',
+                    {
+                        fieldList: [
+                            'docCod',
+                            'priCod',
+                            'priEspRefcliente',
+                            'docDtaEmissao',
+                            'docEspNumero',
+                            'docVldTipoAdto',
+                            'tpdDesNome',
+                            'pesCod',
+                            'dpeNomPessoa',
+                            'ufEspSigla',
+                            'mnyBruto',
+                            'docMnyValor',
+                            'vldStatus',
+                            'gerDes',
+                            'docVldTipo',
+                            'pdcDocFederal',
+                            'gcdCod',
+                            'gcdDesNome',
+                            'moeCod',
+                            'fisVldFundapDesc',
+                            'moeEspNome',
+                            'filCod',
+                            'docTip',
+                        ],
+                        filterList: {
+                            'priCod#EQ': priCod,
+                            'docVldTipo#EQ': SOLICITACAO_NUMERARIO_DOC_VLD_TIPO,
+                            'docVldTipoAdto#EQ': SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO,
+                            'vldStatus#IN': ['1', '3'],
+                        },
+                        pageNumber: 1,
+                        pageSize,
+                        serviceName: 'com299',
+                        orderList: { orderList: [{ propertyName: 'docCod', order: 'desc' }] },
+                    },
+                    { filCod },
+                );
+                const envelope = SOLICITACAO_NUMERARIO_LIST_ENVELOPE_SCHEMA.parse({
+                    ...page,
+                    rows: page.rows ?? [],
+                });
+                return (
+                    envelope.rows
+                        // Guard defensivo: a SN é docVldTipo===9 && docVldTipoAdto===1. Uma NC/ND (adto===0)
+                        // que escape do filtro do servidor NUNCA chega ao analista como se fosse SN.
+                        .filter(
+                            (r) =>
+                                r.docVldTipo === SOLICITACAO_NUMERARIO_DOC_VLD_TIPO &&
+                                r.docVldTipoAdto === SOLICITACAO_NUMERARIO_DOC_VLD_TIPO_ADTO,
+                        )
+                        .map((r) => this.toSolicitacaoNumerarioListItem(r))
+                );
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /** Projeta a linha crua do `com299/list` na projeção lógica devolvida à API (data ISO, descrição derivada). */
+    private toSolicitacaoNumerarioListItem = (
+        r: SolicitacaoNumerarioRow,
+    ): SolicitacaoNumerarioListItem => ({
+        docCod: r.docCod,
+        numero: r.docEspNumero,
+        data: new Date(r.docDtaEmissao).toISOString(),
+        descricao: r.gcdDesNome ?? r.tpdDesNome ?? r.gerDes ?? '',
+        status: r.vldStatus,
+        statusLabel: solicitacaoNumerarioStatusLabel(r.vldStatus),
+        solicitado: r.mnyBruto,
+        valor: r.docMnyValor,
+    });
 
     /**
      * Adiciona uma linha de produto ao documento (`{tela}/comDocProdutos`) — o Produto 41978 da nota de

@@ -15,6 +15,7 @@ import type { Processo } from '../domain/interface/recebimentos/GerDocProcesso.j
 import RecebimentoPipelineService from '../domain/service/recebimentos/RecebimentoPipelineService.js';
 import RecebimentoNumerarioService from '../domain/service/recebimentos/RecebimentoNumerarioService.js';
 import NumerarioAclChecker from '../domain/service/recebimentos/NumerarioAclChecker.js';
+import ConexosGerDocProcessoClient from '../domain/client/ConexosGerDocProcessoClient.js';
 import TransacaoRepository from '../domain/repository/recebimentos/TransacaoRepository.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
@@ -264,6 +265,81 @@ describe('GET /recebimentos/transacoes/:txnId/processos — candidate processos 
     });
 });
 
+describe('GET /recebimentos/processos/:priCod/sns — existing SNs of a process (filial authz)', () => {
+    afterEach(() => {
+        container.clearInstances();
+        jest.restoreAllMocks();
+    });
+
+    const registerClientStub = (sns: unknown[]): jest.Mock => {
+        const listSNsByProcesso = jest.fn(async () => sns);
+        container.registerInstance(ConexosGerDocProcessoClient, { listSNsByProcesso } as never);
+        return listSNsByProcesso;
+    };
+
+    it('200 returns { priCod, sns } for an authorized filial', async () => {
+        const fn = registerClientStub([
+            {
+                docCod: 18342,
+                numero: '731',
+                data: '2026-08-03T00:00:00.000Z',
+                descricao: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA',
+                status: 3,
+                statusLabel: 'Finalizada',
+                solicitado: 15000,
+                valor: 15000,
+            },
+        ]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [4] }));
+        try {
+            const res = await get(`${server.url}/recebimentos/processos/3254/sns?filCod=4`);
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.priCod).toBe(3254);
+            expect(body.sns).toHaveLength(1);
+            expect(body.sns[0]).toMatchObject({ docCod: 18342, statusLabel: 'Finalizada' });
+            expect(fn).toHaveBeenCalledWith(expect.objectContaining({ filCod: 4, priCod: 3254 }));
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('403 when the user may NOT act on the query filCod (cross-filial)', async () => {
+        registerClientStub([]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [1, 2] }));
+        try {
+            const res = await get(`${server.url}/recebimentos/processos/3254/sns?filCod=9`);
+            const body = await readJson(res);
+            expect(res.status).toBe(403);
+            expect(body.code).toBe('FILIAL_NAO_AUTORIZADA');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('400 when filCod is missing (query obrigatória)', async () => {
+        registerClientStub([]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [4] }));
+        try {
+            const res = await get(`${server.url}/recebimentos/processos/3254/sns`);
+            expect(res.status).toBe(400);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('400 when priCod is invalid (não-positivo)', async () => {
+        registerClientStub([]);
+        const server = await listen(buildApp({ sub: 'u', role: 'user', filiais: [4] }));
+        try {
+            const res = await get(`${server.url}/recebimentos/processos/-1/sns?filCod=4`);
+            expect(res.status).toBe(400);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
 describe('POST /recebimentos/transacoes/:txnId/solicitacao-numerario — real allocation orchestration', () => {
     afterEach(() => {
         container.clearInstances();
@@ -326,6 +402,38 @@ describe('POST /recebimentos/transacoes/:txnId/solicitacao-numerario — real al
                     transacao: expect.objectContaining({ gerNum: 55795 }),
                 }),
             );
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('encaminha snDocCod do body como snSelecionadaDocCod ao orquestrador (SN existente)', async () => {
+        const { processar } = registerStubs();
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            const res = await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload({ snDocCod: 18202 }),
+            );
+            expect(res.status).toBe(200);
+            expect(processar).toHaveBeenCalledWith(
+                expect.objectContaining({ snSelecionadaDocCod: 18202 }),
+            );
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('omite snSelecionadaDocCod quando o body não traz snDocCod ("Criar novo SN")', async () => {
+        const { processar } = registerStubs();
+        const server = await listen(buildApp({ sub: 'u', role: 'admin', filiais: [4] }));
+        try {
+            await post(
+                `${server.url}/recebimentos/transacoes/txn-1/solicitacao-numerario`,
+                snPayload(),
+            );
+            const arg = processar.mock.calls[0][0] as Record<string, unknown>;
+            expect('snSelecionadaDocCod' in arg).toBe(false);
         } finally {
             await server.close();
         }
