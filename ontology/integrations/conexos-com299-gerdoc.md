@@ -81,12 +81,16 @@ open-gap:
 > Dois fatos do ERP medidos numa escrita real, ambos com HTTP 200 enganoso:
 >
 > 1. **`lov/CondPgtoPessoa` IGNORA o filtro `pesCod`** — devolve a lista **GLOBAL** de condições,
->    **paginada** (50 linhas na 1ª página, 86 no total, `sortBy: pgtDesNome asc`). Consequência: "a
->    primeira `pgtDesNome` que contenha DUPLICATA" é a condição de **outro cliente** (o doc 731 do
->    SKYJACK recebeu `pgtCod 103 "BONDUELLE - DUPLICATA"`). O cliente pagina com `pageSize` explícito
->    até esgotar e o serviço casa `pgtDesNome` contra o `dpeNomPessoa` **do documento** (prefixo em
->    fronteira de token, os dois nomes vêm abreviados/truncados do ERP). Sem condição do próprio
->    cliente → **fail-closed** (não se grava a de terceiro num documento financeiro).
+>    **paginada** (`sortBy: pgtDesNome asc`). Consequência: "a primeira `pgtDesNome` que contenha
+>    DUPLICATA" é a condição de **outro cliente** (o doc 731 do SKYJACK recebeu
+>    `pgtCod 103 "BONDUELLE - DUPLICATA"`). O serviço casa `pgtDesNome` contra o `dpeNomPessoa` **do
+>    documento** (prefixo em fronteira de token, os dois nomes vêm abreviados/truncados do ERP). Sem
+>    condição do próprio cliente → **fail-closed** (não se grava a de terceiro num documento financeiro).
+> 1b. **O ERP IGNORA também o `pageSize` que pedimos** (2ª rodada HML, mesmo dia, pesCod 232): body com
+>    `pageSize: 500` → resposta `count: 86` com **50 linhas**. Ele impõe a própria página, então
+>    **a paginação se guia pelo `count` do envelope**, nunca por "página menor que o pedido ⟹ acabou" —
+>    esse critério parava na 1ª página e nunca chegava à 2ª, onde estava a
+>    `101 "SKYJACK BRASIL - DUPLICATA"`. Para em página VAZIA, ao alcançar o `count`, ou no teto de páginas.
 > 2. **Finalização: sucesso ⟺ `docVldFinalizado === 1` na RELEITURA.** `validate/finalizacaoDocumento`
 >    e `finalizaDocumento` voltaram **200** e o documento ficou `docVldFinalizado: 0`, sem título
 >    (`mnyTitValor: 0`) — o erro só apareceu uma etapa depois, no fin014, apontando para o lugar

@@ -448,6 +448,7 @@ describe('ConexosGerDocProcessoClient', () => {
 
     it('listCondPgtoPessoa POSTa lov/CondPgtoPessoa (pesCod + fdocTipPgto:1) e devolve as opções', async () => {
         const postGeneric = jest.fn().mockResolvedValue({
+            count: 2,
             rows: [
                 { pgtCod: 1, pgtDesNome: 'A VISTA' },
                 { pgtCod: 109, pgtDesNome: 'L-FOUNDERS - DUPLICATA' },
@@ -457,37 +458,60 @@ describe('ConexosGerDocProcessoClient', () => {
         const r = await client.listCondPgtoPessoa({ filCod: 2, pesCod: 194 });
         expect(postGeneric.mock.calls[0][0]).toBe('lov/CondPgtoPessoa');
         expect(postGeneric.mock.calls[0][1].filterList).toEqual({ pesCod: 194, fdocTipPgto: 1 });
-        // pageSize EXPLÍCITO: sem ele o ERP pagina em 50 (HML 2026-08-03) e a condição do cliente pode
-        // simplesmente não estar na 1ª página. Página curta (2 < pageSize) ⟹ acabou: uma chamada só.
         expect(postGeneric.mock.calls[0][1]).toMatchObject({ pageNumber: 1, pageSize: 500 });
+        // Acumulado (2) alcançou o `count` (2) ⟹ lista esgotada numa chamada só.
         expect(postGeneric).toHaveBeenCalledTimes(1);
         expect(r).toHaveLength(2);
         expect(r[1]).toMatchObject({ pgtCod: 109, pgtDesNome: 'L-FOUNDERS - DUPLICATA' });
     });
 
-    it('listCondPgtoPessoa PAGINA até esgotar (a condição do cliente pode cair na 2ª página)', async () => {
-        // Evidência real (HML 2026-08-03): `lov/CondPgtoPessoa` IGNORA o filtro `pesCod` e devolve a lista
-        // GLOBAL paginada (50 linhas na 1ª página, 86 no total). A condição do SKYJACK (pgtCod 101) nem
-        // aparecia na 1ª página — por isso o cliente precisa esgotar as páginas, não só ler a primeira.
-        const paginaCheia = Array.from({ length: 500 }, (_, i) => ({
+    it('listCondPgtoPessoa PAGINA pelo count mesmo quando o ERP IGNORA o pageSize pedido', async () => {
+        // Reprodução EXATA do que o HML respondeu (2026-08-03, pesCod 232): pedimos `pageSize: 500` e o ERP
+        // devolveu `count: 86` com apenas **50 linhas** — ele impõe a própria página. O critério antigo
+        // ("página menor que o pageSize pedido ⟹ acabou") parava aqui e nunca via a 2ª página, que é onde
+        // mora a `101 "SKYJACK BRASIL - DUPLICATA"` (lista global ordenada por nome: "S" cai depois das 50).
+        const pagina1 = Array.from({ length: 50 }, (_, i) => ({
             pgtCod: 1000 + i,
-            pgtDesNome: `CLIENTE ${i} - DUPLICATA`,
+            pgtDesNome: `CLIENTE ${String(i).padStart(2, '0')} - DUPLICATA`,
         }));
+        const pagina2 = [
+            { pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' },
+            ...Array.from({ length: 35 }, (_, i) => ({
+                pgtCod: 2000 + i,
+                pgtDesNome: `ZZ CLIENTE ${i} - DUPLICATA`,
+            })),
+        ];
         const postGeneric = jest
             .fn()
-            .mockResolvedValueOnce({ count: 501, rows: paginaCheia })
-            .mockResolvedValueOnce({
-                count: 501,
-                rows: [{ pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' }],
-            });
+            .mockResolvedValueOnce({ count: 86, rows: pagina1 })
+            .mockResolvedValueOnce({ count: 86, rows: pagina2 });
         const client = new ConexosGerDocProcessoClient(buildBase({ postGeneric }), buildLog());
         const r = await client.listCondPgtoPessoa({ filCod: 2, pesCod: 232 });
 
         expect(postGeneric).toHaveBeenCalledTimes(2);
         expect(postGeneric.mock.calls[0][1]).toMatchObject({ pageNumber: 1, pageSize: 500 });
         expect(postGeneric.mock.calls[1][1]).toMatchObject({ pageNumber: 2, pageSize: 500 });
-        expect(r).toHaveLength(501);
-        expect(r[500]).toMatchObject({ pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' });
+        // As 86 do `count` inteiras — incluindo a condição do cliente, que só existe na 2ª página.
+        expect(r).toHaveLength(86);
+        expect(r).toContainEqual(
+            expect.objectContaining({ pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' }),
+        );
+    });
+
+    it('listCondPgtoPessoa para na página VAZIA quando o envelope não traz count (sem loop infinito)', async () => {
+        // Sem `count` não dá para inferir o fim pelo tamanho da página (o ERP não honra o `pageSize`):
+        // o único sinal confiável é a página vazia. O teto de páginas protege o resto.
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValueOnce({
+                rows: [{ pgtCod: 101, pgtDesNome: 'SKYJACK BRASIL - DUPLICATA' }],
+            })
+            .mockResolvedValueOnce({ rows: [] });
+        const client = new ConexosGerDocProcessoClient(buildBase({ postGeneric }), buildLog());
+        const r = await client.listCondPgtoPessoa({ filCod: 2, pesCod: 232 });
+
+        expect(postGeneric).toHaveBeenCalledTimes(2);
+        expect(r).toHaveLength(1);
     });
 
     it('listContasProjetoCtb filtra por prjCod/priCod/tpdCod e devolve ctpCod/ctpDesNome', async () => {

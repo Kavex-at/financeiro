@@ -81,13 +81,13 @@ const LOV_COND_PGTO_SCHEMA = z.object({
 });
 
 /**
- * `pageSize` do `lov/CondPgtoPessoa`. SEM ele o ERP pagina em 50 — e como o LOV IGNORA o filtro
- * `pesCod` (devolve a lista GLOBAL ordenada por nome; HML 2026-08-03, 50 de 86 linhas na 1ª página),
- * a condição do cliente do documento pode simplesmente não estar na primeira página.
+ * `pageSize` PEDIDO ao `lov/CondPgtoPessoa` — o ERP **IGNORA** este valor (HML 2026-08-03: pedimos 500,
+ * ele devolveu 50 linhas com `count: 86`). Mandamos assim mesmo (custa nada e outros LOVs honram), mas
+ * NENHUM critério de parada pode depender dele — ver `listCondPgtoPessoa`.
  */
 const COND_PGTO_PAGE_SIZE = 500;
 
-/** Teto de páginas do LOV de condições (500 × 20 = 10k linhas) — evita loop infinito se o ERP mentir. */
+/** Teto de páginas do LOV de condições — evita loop infinito se o ERP não honrar `count`/`pageNumber`. */
 const COND_PGTO_MAX_PAGES = 20;
 
 /**
@@ -815,10 +815,16 @@ export default class ConexosGerDocProcessoClient {
 
     /**
      * LOV das condições de pagamento (`fdocTipPgto:1` = a receber). Leitura idempotente, PAGINADA até
-     * esgotar: o `pesCod` vai no `filterList` mas o ERP de homologação o IGNORA e devolve a lista GLOBAL
-     * (2026-08-03: 50 linhas na 1ª página, 86 no total, ordenada por nome) — quem filtra pelo cliente é o
-     * caller, e para isso ele precisa da lista INTEIRA, não da primeira página. Para quando a página vem
-     * menor que o `pageSize`, quando o acumulado alcança o `count` do envelope, ou no teto de páginas.
+     * esgotar: o `pesCod` vai no `filterList` mas o ERP o IGNORA e devolve a lista GLOBAL ordenada por
+     * nome — quem filtra pelo cliente é o caller, e para isso precisa da lista INTEIRA.
+     *
+     * **A parada é pelo `count` do envelope, NUNCA pelo `pageSize` que pedimos.** Medido no HML
+     * (2026-08-03, pesCod 232): pedimos `pageSize: 500` e o ERP respondeu `count: 86` com **50 linhas** —
+     * ele impõe a própria página. O critério antigo ("página menor que o pageSize pedido ⟹ acabou")
+     * disparava já na 1ª página e nunca buscava a 2ª, que era justamente onde estava a
+     * `101 "SKYJACK BRASIL - DUPLICATA"` (ordem alfabética). Agora: acumula enquanto houver linhas e
+     * `acumulado < count`; para em página VAZIA, ao alcançar o `count`, ou no teto de páginas. Sem `count`
+     * no envelope só a página vazia (ou o teto) encerra — nunca se infere fim por tamanho de página.
      */
     public listCondPgtoPessoa = async (params: {
         filCod: number;
@@ -829,6 +835,8 @@ export default class ConexosGerDocProcessoClient {
             return await this.base.runWithRetry(async () => {
                 await this.base.ensureSid();
                 const acumulado: Array<{ pgtCod: number; pgtDesNome: string }> = [];
+                // `count` do PRIMEIRO envelope — o total autoritativo da lista.
+                let total: number | undefined;
                 for (let pageNumber = 1; pageNumber <= COND_PGTO_MAX_PAGES; pageNumber++) {
                     const raw = await this.base.postGeneric<unknown>(
                         'lov/CondPgtoPessoa',
@@ -843,9 +851,11 @@ export default class ConexosGerDocProcessoClient {
                         { filCod },
                     );
                     const page = LOV_COND_PGTO_SCHEMA.parse(raw);
+                    // Página vazia é o ÚNICO sinal de fim independente do servidor honrar o que pedimos.
+                    if (page.rows.length === 0) break;
                     acumulado.push(...page.rows);
-                    if (page.rows.length < COND_PGTO_PAGE_SIZE) break;
-                    if (page.count !== undefined && acumulado.length >= page.count) break;
+                    if (total === undefined) total = page.count;
+                    if (total !== undefined && acumulado.length >= total) break;
                 }
                 return acumulado;
             });

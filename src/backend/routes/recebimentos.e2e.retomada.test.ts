@@ -195,13 +195,16 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
             rows: [{ gcdCod: 150, gcdDesNome: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA' }],
         });
     });
-    app.post('/api/lov/CondPgtoPessoa', (_req, res) => {
-        res.json({
-            rows: [
-                { pgtCod: 1, pgtDesNome: 'A VISTA' },
-                { pgtCod: 109, pgtDesNome: 'BELLIZ - DUPLICATA' },
-            ],
-        });
+    app.post('/api/lov/CondPgtoPessoa', (req, res) => {
+        // O LOV real traz `count` e pagina do SEU jeito (ignora o `pageSize` pedido) — o fake espelha
+        // isso: página 1 com as linhas, página 2 vazia. Ver docs/e2e/fase-b-resultado-hml.md.
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const pageNumber = Number(body.pageNumber ?? 1);
+        const rows = [
+            { pgtCod: 1, pgtDesNome: 'A VISTA' },
+            { pgtCod: 109, pgtDesNome: 'BELLIZ - DUPLICATA' },
+        ];
+        res.json({ count: rows.length, rows: pageNumber > 1 ? [] : rows });
     });
     app.post('/api/lov/ContasProjetoCtb', (_req, res) => {
         res.json({
