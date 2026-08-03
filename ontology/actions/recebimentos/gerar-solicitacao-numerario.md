@@ -2,7 +2,7 @@
 name: gerarSolicitacaoNumerario
 type: action
 entity: Recebimento
-ontology_version: "0.12"
+ontology_version: "0.13"
 implementation_status: implemented
 status: stable
 owners: [yuri]
@@ -22,12 +22,15 @@ last_review: 2026-08-03
 preconditions:
   - "TransacaoBancaria (crédito) presente no painel de Recebimentos, com conta bancária conhecida (transacao.gerNum). Rota devolve 422 se gerNum ausente."
   - "Operador aciona 'Alocar' na transação e distribui o valor por 1..N processos candidatos (human-in-the-loop); cada linha tem um 'Processar' próprio."
+  - "Uma SELEÇÃO existe: para cada processo a analista escolheu 'Criar novo SN' OU uma SN existente do processo (docCod, listada por listarSolicitacoesNumerario). 'Processar' é gated na seleção (human-in-the-loop, ADR-0002/0022/0027) — sem seleção, não executa."
   - "Papel admin (requireRole('admin')) + authz por-filial (assertUserCanActOnFilial, filial do processo)."
   - "ACL pré-flight da conta de serviço (com300 UPDATE, com131 GERAR OBS, com297 HOMOLOGAR/CONTINGENCIA, com194 SELECT) → 403 antes de qualquer escrita."
   - "Escrita irreversível gated: só executa o POST real com CONEXOS_WRITE_ENABLED=true E CONEXOS_DRY_RUN=false (default dry-run)."
 postconditions:
-  - "dry-run → monta e loga os 4 payloads (com299/fin014/com297/fiscal), NENHUM POST, retorna preview (dryRun:true)."
-  - "real → Solicitação de Numerário (com299) gerada E finalizada; docCod = messages[0].vars.docCod."
+  - "dry-run → monta e loga os payloads da rota escolhida (novo SN: com299/fin014/com297/fiscal; SN existente: fin014/com297/fiscal), NENHUM POST, retorna preview (dryRun:true)."
+  - "existing-SN → PULA com299 (geração/gerDocProcesso) E a completação (completarSnAdiantamento: linha de item / condição de pagamento / discriminador do título); referencia o docCod da SN selecionada; NÃO cria documento novo (invariante alocacao-sn-existente / I-Receb-3: sem SN duplicada). Entra direto na baixa fin014 + com297 contra o docCod selecionado."
+  - "existing-SN → o valor alocado ≤ SALDO da SN selecionada. O saldo é o do TÍTULO (lov/TituloBorderoReceber lido pela própria baixa fin014), NÃO o valor do documento da listagem com299/list — over-allocation contra o saldo do título falha na baixa (I-Receb-3)."
+  - "real (novo SN) → Solicitação de Numerário (com299) gerada E finalizada; docCod = messages[0].vars.docCod."
   - "real → SN completada ANTES de finalizar, nesta ordem: (1) linha de item (comDocProdutos) com o valor alocado — preserva o título que o ERP criou na geração; (2) condição de pagamento SÓ se a com194 acusar validação BLOQUEANTE (fdvVldErr===2) de condição de pagamento."
   - "real → se a condição foi aplicada, o efeito é VERIFICADO: mnyTitValor === docMnyValor (>0) na releitura; divergência ⇒ a etapa FALHA com a causa nomeada (o PUT destruiu as parcelas), nunca finaliza documento sem título."
   - "real → baixa fin014 do crédito: borderô → validar título (docCod da SN) → gravar baixa → finalizar, com conta financeira = a conta do PRÓPRIO pagamento (transacao.gerNum), NÃO um env var fixo."
@@ -88,6 +91,23 @@ orquestra, **por alocação** (uma linha do split):
 5. **Write-ahead + retomada:** cada etapa grava progresso na trilha estendida (etapa
    `sn|sn-finalizar|fin014|fin014-done|nota-debito|fiscal-done|obs-done|homologado|concluido|error`);
    documento já criado NÃO é recriado — a re-execução avança para a etapa pendente.
+
+## Ramo — SN existente (v0.13, ADR-0027)
+
+Quando a alocação referencia uma SN **já existente** (o `docCod` selecionado da listagem
+`listarSolicitacoesNumerario`), o passo **1 (com299: geração + `completarSnAdiantamento` — linha de
+item / condição de pagamento / discriminador do título)** é **PULADO**: o documento já existe e já tem
+título. A execução entra direto no passo **2 (fin014)** contra o `docCod` selecionado, seguida do passo
+**3 (com297 + cauda fiscal)**. O caminho **"Criar novo SN"** permanece o fluxo completo (1→2→3),
+inalterado.
+
+- **Teto ≤ saldo (I-Receb-3):** o valor alocado não pode exceder o **saldo do TÍTULO** da SN. Esse saldo
+  **não** está na listagem `com299/list` (document-level: `mnyBruto`/`docMnyValor`); ele vem da leitura
+  do título (`lov/TituloBorderoReceber`) que a **própria baixa `fin014` já executa** — o **ponto de
+  enforcement** é a baixa/título, não o valor da lista. Ver `business-rules/alocacao-sn-existente.md`.
+- **Sem duplicata:** o ramo existente **não** cria um segundo documento (com299 pulado). A idempotência
+  reusa `sn-real:{txnId}:{priCod}:{valor}`; o handle passa a ser o `docCod` **selecionado** em vez do
+  gerado — a re-execução nunca duplica nem a SN nem a baixa.
 
 ## Rota
 

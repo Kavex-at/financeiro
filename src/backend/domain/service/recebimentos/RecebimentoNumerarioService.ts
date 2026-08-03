@@ -112,6 +112,13 @@ export interface ProcessarAlocacaoInput {
     valor: number;
     processoFields: RecebimentoNumerarioProcessoFields;
     ator: string;
+    /**
+     * SN EXISTENTE escolhida pelo analista (ADR-0027 / v0.13): o `docCod` de uma SN já finalizada.
+     * Quando presente, o fluxo PULA a criação da SN (com299 gerDocProcesso + completarSnAdiantamento +
+     * finalização) e roda a baixa fin014 + a NDe com297 contra ESTE `docCod`. Ausente = "Criar novo SN"
+     * (fluxo completo, inalterado). Não cria SN duplicada (invariante I-Receb-3).
+     */
+    snSelecionadaDocCod?: number;
     /** Força dry-run mesmo com a escrita ligada (preview sob demanda). */
     dryRunOverride?: boolean;
 }
@@ -285,6 +292,9 @@ export default class RecebimentoNumerarioService {
             valor,
             snPayloadInput,
             ator,
+            ...(input.snSelecionadaDocCod !== undefined
+                ? { snSelecionadaDocCod: input.snSelecionadaDocCod }
+                : {}),
         };
 
         const bloqueio = await this.checarBloqueio(ctx);
@@ -321,6 +331,18 @@ export default class RecebimentoNumerarioService {
         }
         ctx.preflight = preflight;
 
+        // SN existente selecionada (ADR-0027): VALIDAR posse ANTES de qualquer escrita (Regis-Review
+        // security P0 F-security-1). Sem isto, um analista da filial autorizada poderia POSTar o `docCod`
+        // de uma SN de OUTRO processo/cliente da MESMA filial; o fin014 pegaria o título REAL da SN alheia
+        // e baixaria contra a `gerNum` do pagamento do atacante (adiantamento de um cliente consumido pela
+        // transação de outro). A rota já amarra a filial (`assertUserCanActOnFilial`); aqui amarramos o
+        // documento ao `priCod` — o `docCod` só é aceito se aparece na lista de SN DESTE processo (a MESMA
+        // fonte que o painel oferece). Também fecha F-fault-tolerance/availability-2 (docCod inexistente).
+        if (ctx.snSelecionadaDocCod !== undefined) {
+            const posse = await this.assertSnPertenceAoProcesso(ctx);
+            if (posse) return posse;
+        }
+
         const begin = await this.execucaoRepository.beginExecution({
             idempotencyKey: key,
             filCod: processoFields.filCod,
@@ -342,7 +364,9 @@ export default class RecebimentoNumerarioService {
         const { key } = ctx;
         const existente = await this.execucaoRepository.findByIdempotencyKey(key);
         let etapa: SolicitacaoNumerarioEtapa = existente?.etapa ?? 'sn';
-        let snDocCod = existente?.docCod;
+        // SN existente escolhida pelo analista (ADR-0027) tem precedência sobre o docCod do ledger:
+        // não geramos nem finalizamos uma SN já existente — só baixamos/emitimos a NDe contra ela.
+        let snDocCod = ctx.snSelecionadaDocCod ?? existente?.docCod;
         let borCod = existente?.fin014BorCod;
         let ndDocCod = existente?.ndDocCod;
         let revisaoHumana = existente?.revisaoHumana ?? false;
@@ -394,18 +418,28 @@ export default class RecebimentoNumerarioService {
         }
     };
 
-    /** Etapa 1 (com299): gera a SN + finaliza. Retoma se `doc_cod` já gravado (não recria). */
+    /**
+     * Etapa 1 (com299): gera a SN + finaliza. Retoma se `doc_cod` já gravado (não recria).
+     *
+     * ADR-0027 — SN EXISTENTE: quando o `snDocCod` veio de uma SELEÇÃO do analista (`snSelecionadaDocCod`),
+     * a SN já existe no ERP E JÁ ESTÁ FINALIZADA — seus títulos são o que a baixa fin014 consome. Neste
+     * caso a etapa é um NO-OP: pula validarGeracao/gerarDocProcesso/completarSnAdiantamento (já pulados,
+     * porque `snDocCodIn` está definido) E TAMBÉM pula finalizarDocumento (senão re-finalizaríamos um doc
+     * pronto). Não cria SN duplicada (invariante I-Receb-3).
+     */
     private etapaSn = async (
         ctx: EscritaCtx,
         existente: SolicitacaoNumerarioExecucaoRow | null,
         snDocCodIn?: number,
     ): Promise<number> => {
         const { key, filCod, snPayloadInput, preflight } = ctx;
-        const snPayload = await this.montarSnPayload(snPayloadInput, filCod, preflight);
-        // gcd por-processo resolvido no pré-flight (`validaConfigDocPessoa`); env/hardcoded 150 é só fallback.
-        const gcdCodParaValida = preflight?.gcdCod ?? snPayloadInput.gcdCod;
+        // SN escolhida pelo analista (não gerada por nós): não montar payload nem tocar na finalização.
+        const snSelecionada = ctx.snSelecionadaDocCod !== undefined;
         let snDocCod = snDocCodIn;
         if (snDocCod === undefined) {
+            const snPayload = await this.montarSnPayload(snPayloadInput, filCod, preflight);
+            // gcd por-processo resolvido no pré-flight (`validaConfigDocPessoa`); env/hardcoded 150 é só fallback.
+            const gcdCodParaValida = preflight?.gcdCod ?? snPayloadInput.gcdCod;
             await this.execucaoRepository.setRequestPayload(key, snPayload);
             const validaMsgs = await this.gerDocClient.validarGeracao({
                 tela: 'com299',
@@ -425,7 +459,9 @@ export default class RecebimentoNumerarioService {
             // + linha de item com o valor) ANTES de finalizar — senão a com194 trava a finalização.
             await this.completarSnAdiantamento(ctx, snDocCod);
         }
-        if (existente?.etapa === undefined || existente.etapa === 'sn') {
+        // Uma SN existente selecionada já está finalizada — não re-finalizar. Só finaliza a SN que NÓS
+        // acabamos de gerar (fluxo "Criar novo SN"), respeitando a retomada por etapa.
+        if (!snSelecionada && (existente?.etapa === undefined || existente.etapa === 'sn')) {
             const finMsgs = await this.gerDocClient.finalizarDocumento({
                 tela: 'com299',
                 filCod,
@@ -1390,6 +1426,52 @@ export default class RecebimentoNumerarioService {
         };
     };
 
+    /**
+     * Autorização de POSSE da SN selecionada (ADR-0027 — Regis-Review security P0). Confirma que o
+     * `snSelecionadaDocCod` pertence AO `priCod`/`filCod` desta alocação, listando as SN do processo (a
+     * MESMA fonte `com299/list` que o painel oferece). Retorna um `blocked` (não lança) quando o `docCod`
+     * NÃO está na lista — nunca deixa uma SN de outro processo/cliente ser baixada. Uma indisponibilidade
+     * da leitura vira `blocked` também (fail-CLOSED): não escrevemos um documento financeiro cujo dono não
+     * conseguimos confirmar. `null` = posse confirmada (segue o fluxo).
+     */
+    private assertSnPertenceAoProcesso = async (
+        ctx: EscritaCtx,
+    ): Promise<ProcessarAlocacaoResult | null> => {
+        const docCod = ctx.snSelecionadaDocCod;
+        if (docCod === undefined) return null;
+        let pertence: boolean;
+        try {
+            const sns = await this.gerDocClient.listSNsByProcesso({
+                filCod: ctx.filCod,
+                priCod: ctx.priCod,
+            });
+            pertence = sns.some((sn) => sn.docCod === docCod);
+        } catch (cause) {
+            const motivo =
+                `Não foi possível confirmar que a SN ${docCod} pertence ao processo ${ctx.priCod} ` +
+                `(com299/list indisponível): ${this.erpErrorInterpreter.interpret(cause).friendly}. ` +
+                'A alocação NÃO foi processada — tente novamente.';
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'processarAlocacao BLOQUEADA: não confirmou posse da SN selecionada (read falhou)',
+                data: { txnId: ctx.txnId, priCod: ctx.priCod, snDocCod: docCod },
+            });
+            return { status: 'blocked', etapa: 'sn', motivo, dryRun: false };
+        }
+        if (pertence) return null;
+        const motivo =
+            `A SN ${docCod} NÃO pertence ao processo ${ctx.priCod} (filial ${ctx.filCod}) — ` +
+            'seleção recusada. Escolha uma SN listada para este processo ou crie uma nova.';
+        await this.logService.warn({
+            type: LOG_TYPE.BUSINESS_WARN,
+            message:
+                'processarAlocacao RECUSADA: SN selecionada não pertence ao processo (cross-process tampering guard)',
+            data: { txnId: ctx.txnId, priCod: ctx.priCod, filCod: ctx.filCod, snDocCod: docCod },
+        });
+        return { status: 'blocked', etapa: 'sn', motivo, dryRun: false };
+    };
+
     /** Idempotência: fluxo já `settled` → skipped; `reconciling` órfão SEM SN → FAIL-CLOSED. */
     private checarBloqueio = async (ctx: EscritaCtx): Promise<ProcessarAlocacaoResult | null> => {
         const existente = await this.execucaoRepository.findByIdempotencyKey(ctx.key);
@@ -1444,6 +1526,11 @@ interface EscritaCtx {
     ator: string;
     /** Preenchido no fluxo (para o markSettled do poll). */
     snDocCod?: number;
+    /**
+     * SN EXISTENTE escolhida pelo analista (ADR-0027): quando definida, `etapaSn` NÃO gera nem finaliza —
+     * a SN já existe e já está finalizada; seus títulos são o que a baixa fin014 consome.
+     */
+    snSelecionadaDocCod?: number;
     /** Classificação READ-ONLY resolvida antes da escrita (gcd/endCodFis/pdcDocFederal por-processo). */
     preflight?: PreflightResult;
 }
