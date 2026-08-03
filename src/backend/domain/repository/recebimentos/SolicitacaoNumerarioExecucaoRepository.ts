@@ -46,6 +46,34 @@ export default class SolicitacaoNumerarioExecucaoRepository
         return row ? this.mapRow(row) : null;
     };
 
+    /** Auditoria: todas as execuções (alocações) de uma transação bancária, mais recentes primeiro. */
+    public listByTxnId = async (txnId: string): Promise<SolicitacaoNumerarioExecucaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT ${SELECT_COLS}
+             FROM solicitacao_numerario_execucao
+             WHERE txn_id = $txnId
+             ORDER BY atualizado_em DESC`,
+            { txnId },
+        );
+        return rows.map((r) => this.mapRow(r as Record<string, unknown>));
+    };
+
+    /** Auditoria: execuções por status (ex.: `error`, `reconciling`), mais recentes primeiro, com teto. */
+    public listByStatus = async (
+        status: string,
+        limit: number,
+    ): Promise<SolicitacaoNumerarioExecucaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT ${SELECT_COLS}
+             FROM solicitacao_numerario_execucao
+             WHERE status = $status
+             ORDER BY atualizado_em DESC
+             LIMIT $limit`,
+            { status, limit },
+        );
+        return rows.map((r) => this.mapRow(r as Record<string, unknown>));
+    };
+
     public beginExecution = async (
         input: BeginSolicitacaoNumerarioExecucaoInput,
     ): Promise<BeginSolicitacaoNumerarioExecucaoResult> => {

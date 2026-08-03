@@ -97,9 +97,17 @@ describe('ConexosNdeClient.homologar — com297 homologation', () => {
         expect(result.numeroNde).toBe('456');
     });
 
-    it('any other docVldComvalidacoes → HomologacaoRejeitadaError (200 is NOT success)', async () => {
+    it('docVldComvalidacoes=0 → emitida COM aviso (validações não-bloqueantes: cond.pgto/frete/GTIN)', async () => {
+        // Yuri 2026-08-03: essas validações NÃO bloqueiam a homologação na plataforma — ela acontece.
         const legacy = buildLegacy();
         legacy.postGenericOnce.mockResolvedValue({ docVldComvalidacoes: 0 });
+        const result = await buildClient(legacy).homologar({ ...INPUT, rota: ROTA_NORMAL });
+        expect(result.avisoValidacoesPendentes).toBe(true);
+    });
+
+    it('um docVldComvalidacoes DESCONHECIDO (ex. 3) → HomologacaoRejeitadaError (200 ≠ sucesso)', async () => {
+        const legacy = buildLegacy();
+        legacy.postGenericOnce.mockResolvedValue({ docVldComvalidacoes: 3 });
         await expect(
             buildClient(legacy).homologar({ ...INPUT, rota: ROTA_NORMAL }),
         ).rejects.toThrow(HomologacaoRejeitadaError);

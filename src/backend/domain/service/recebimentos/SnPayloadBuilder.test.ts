@@ -118,23 +118,32 @@ describe('SnPayloadBuilder.buildSnRealPayload', () => {
 });
 
 describe('SnPayloadBuilder.buildNotaDebitoRealPayload', () => {
-    it('usa o gcd do com297 (não o 150 da SN) + produto + docEspNumero + items vazios', () => {
+    it('monta o header REAL da NDe (HAR 23-27): globalDocVldTipo 0, gcd/produto/série NFE1, sem items', () => {
         const builder = new SnPayloadBuilder();
         const payload = builder.buildNotaDebitoRealPayload(
             input(),
-            300,
-            'NOTA DE DÉBITO ELETRÔNICA',
+            248,
+            'NOTA DE DEBITO PAGAMENTO ANTECIPADO',
             config,
             41978,
-            '0',
+            0,
+            { endCodFis: 2, pdcDocFederal: '37032037000101' },
         );
-        expect(payload.gcdCod).toBe(300);
+        expect(payload.gcdCod).toBe(248);
         expect(payload.gcdCod).not.toBe(150);
-        expect(payload.gcdDesNome).toBe('NOTA DE DÉBITO ELETRÔNICA');
+        expect(payload.gcdDesNome).toBe('NOTA DE DEBITO PAGAMENTO ANTECIPADO');
+        // NDe = globalDocVldTipo 0 (não o 9 do SN) — a raiz do gcdDesNomeProc NOT_VALID.
+        expect(payload.globalDocVldTipo).toBe(0);
         expect(payload.prdCod).toBe(41978);
-        expect(payload.docEspNumero).toBe('0');
-        expect(payload.items).toEqual([]);
+        expect(payload.prdDesNome).toBe('PAGAMENTO ANTECIPADO');
+        expect(payload.docEspNumero).toBe(0);
+        expect(payload.fisEspSerie).toBe('NFE1');
         expect(payload.tpcCod).toBe(700);
+        // header-only: a NDe real (HAR) não manda `items`.
+        expect('items' in payload).toBe(false);
+        // endCodFis + pdcDocFederal REAIS entram no header (o com297 os exige — "pdcDocFederalFilter;").
+        expect(payload.endCodFis).toBe(2);
+        expect(payload.pdcDocFederal).toBe('37032037000101');
     });
 });
 

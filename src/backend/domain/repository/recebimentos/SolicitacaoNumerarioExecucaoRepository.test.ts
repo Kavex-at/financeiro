@@ -234,3 +234,43 @@ describe('SolicitacaoNumerarioExecucaoRepository — preservação de settled (C
         expect(out.alreadySettled).toBe(already);
     });
 });
+
+describe('SolicitacaoNumerarioExecucaoRepository — auditoria (listByTxnId / listByStatus)', () => {
+    const row = {
+        idempotency_key: 'sn-real:txn-1:3254:100',
+        fil_cod: 2,
+        pri_cod: 3254,
+        txn_id: 'txn-1',
+        valor: 100,
+        status: 'error',
+        dry_run: false,
+        nd_doc_cod: 18348,
+        etapa: 'obs-done',
+        erro_mensagem: 'homologação rejeitada',
+        criado_em: '2026-08-03T00:00:00Z',
+        atualizado_em: '2026-08-03T01:00:00Z',
+    };
+
+    it('listByTxnId: WHERE txn_id, ordena por atualizado_em DESC, parametrizado, mapeia as linhas', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([row]);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        const out = await repo.listByTxnId('txn-1');
+        const sql = sqlOf(db.selectMany as jest.Mock);
+        expect(sql).toContain('WHERE txn_id = $txnId');
+        expect(sql).toContain('ORDER BY atualizado_em DESC');
+        expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ txnId: 'txn-1' });
+        expect(out[0]).toMatchObject({ txnId: 'txn-1', ndDocCod: 18348, status: 'error' });
+    });
+
+    it('listByStatus: WHERE status + LIMIT, parametrizado', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([row]);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        await repo.listByStatus('error', 50);
+        const sql = sqlOf(db.selectMany as jest.Mock);
+        expect(sql).toContain('WHERE status = $status');
+        expect(sql).toContain('LIMIT $limit');
+        expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ status: 'error', limit: 50 });
+    });
+});

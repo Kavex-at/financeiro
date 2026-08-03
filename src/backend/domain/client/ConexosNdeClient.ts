@@ -75,7 +75,14 @@ export default class ConexosNdeClient {
                 erpResponse: raw,
             };
         }
-        if (body.docVldComvalidacoes === NDE_DOC_VLD_COM_VALIDACOES.AVISO_VALIDACOES_PENDENTES) {
+        // `2` (validações pendentes) e `0` (validações não-bloqueantes: cond. pagamento/frete/GTIN) ambos
+        // = HOMOLOGADA com aviso. O Yuri confirmou (2026-08-03) que na plataforma essas validações NÃO
+        // bloqueiam — a homologação acontece; marcamos revisão humana + coletamos com194.
+        if (
+            body.docVldComvalidacoes === NDE_DOC_VLD_COM_VALIDACOES.AVISO_VALIDACOES_PENDENTES ||
+            body.docVldComvalidacoes ===
+                NDE_DOC_VLD_COM_VALIDACOES.HOMOLOGADA_VALIDACOES_NAO_BLOQUEANTES
+        ) {
             return {
                 docVldComvalidacoes: body.docVldComvalidacoes,
                 avisoValidacoesPendentes: true,

@@ -39,6 +39,7 @@ export interface GerarNumerarioInput {
 /** `responseData` de `com299/gerDoc/validaConfigDoc` (config do documento por gcd). */
 export interface ValidaConfigDocResult {
     tpcCod?: number;
+    tpcDesNome?: string;
     cfoEspCod?: string;
     /** Modo de rateio (1 plain, 2 byCentroCusto, 3 byCentroCustoCfop). */
     gcdVldFormaRateio?: number;
@@ -156,7 +157,7 @@ export interface GerDocProcessoPayload extends Record<string, unknown> {
     docDtaEmissao?: number;
     docDtaMovimento?: number;
     /** Número do documento (guia: "data do dia" na SN; "0" na nota de débito). */
-    docEspNumero?: string;
+    docEspNumero?: string | number;
     /** Produto — fixo 41978 na nota de débito (com297); ausente na SN. */
     prdCod?: number;
     /**
