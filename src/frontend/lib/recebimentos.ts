@@ -642,6 +642,27 @@ export async function fetchPainelRecebimentos(): Promise<RecebimentosPainel> {
 
 // ─────────────────────────────────────────────── Importação MANUAL de extrato (.xlsx) — canal alternativo
 
+/** Conta financeira Conexos (`fin133`) — a `gerNum` que o `fin014` usa como "Conta Financeira de Baixa". */
+export interface ContaFinanceira {
+  gerNum: number
+  /** Descrição legível: `"BANCO ITAÚ - AG. 0641 CONTA 55.795-4"`. */
+  gerDes?: string
+  bncDesNome?: string
+}
+
+/**
+ * Contas financeiras da filial (`GET /recebimentos/contas`). O `.xlsx` não carrega `gerNum` — o
+ * analista confirma explicitamente qual conta Conexos corresponde ao extrato que está subindo.
+ */
+export async function fetchContasFinanceiras(filCod: number): Promise<ContaFinanceira[]> {
+  const res = await apiFetch(`${API}/recebimentos/contas?filCod=${filCod}`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(await erroUpload(res))
+  const json = (await res.json()) as { contas?: ContaFinanceira[] }
+  return json.contas ?? []
+}
+
 /** Uma linha (crédito) da amostra do preview, com o veredito de dedup. */
 export interface ImportExtratoPreviewLinha {
   /** Número da linha na planilha original — identifica a linha para seleção na confirmação. */
@@ -691,11 +712,17 @@ async function erroUpload(res: Response): Promise<string> {
   return `API ${res.status}`
 }
 
-/** Monta o multipart do upload (arquivo + filial). NÃO seta content-type — o browser põe o boundary. */
-function formExtrato(file: File, filCod: number, excluirLinhas?: number[]): FormData {
+/** Monta o multipart do upload (arquivo + filial + conta). NÃO seta content-type — o browser põe o boundary. */
+function formExtrato(
+  file: File,
+  filCod: number,
+  gerNum: number,
+  excluirLinhas?: number[],
+): FormData {
   const form = new FormData()
   form.append('file', file)
   form.append('filCod', String(filCod))
+  form.append('gerNum', String(gerNum))
   if (excluirLinhas && excluirLinhas.length > 0) {
     form.append('excluirLinhas', JSON.stringify(excluirLinhas))
   }
@@ -703,31 +730,37 @@ function formExtrato(file: File, filCod: number, excluirLinhas?: number[]): Form
 }
 
 /** Preview do upload de extrato: parseia no servidor e classifica novos × já importados, sem gravar. */
-export async function previewImportExtrato(file: File, filCod: number): Promise<ImportExtratoPreview> {
+export async function previewImportExtrato(
+  file: File,
+  filCod: number,
+  gerNum: number,
+): Promise<ImportExtratoPreview> {
   const res = await apiFetch(`${API}/recebimentos/ingestao/upload/preview`, {
     method: 'POST',
     headers: await withAuthHeaders(),
-    body: formExtrato(file, filCod),
+    body: formExtrato(file, filCod, gerNum),
   })
   if (!res.ok) throw new Error(await erroUpload(res))
   return res.json()
 }
 
 /**
- * Importa efetivamente os créditos do extrato .xlsx. `excluirLinhas` são os `linhaIndice`
- * desmarcados no preview — ficam de fora desta importação. A idempotência é por hash do
- * arquivo + seleção no backend (mesma combinação reaproveita a run), então o FE não precisa
- * gerar Idempotency-Key.
+ * Importa efetivamente os créditos do extrato .xlsx. `gerNum` é a conta financeira Conexos
+ * confirmada pelo analista — estampada em toda transação desta importação, já que o `.xlsx` não a
+ * carrega. `excluirLinhas` são os `linhaIndice` desmarcados no preview — ficam de fora desta
+ * importação. A idempotência é por hash do arquivo + seleção no backend (mesma combinação
+ * reaproveita a run), então o FE não precisa gerar Idempotency-Key.
  */
 export async function importExtrato(
   file: File,
   filCod: number,
+  gerNum: number,
   excluirLinhas?: number[],
 ): Promise<ImportExtratoResult> {
   const res = await apiFetch(`${API}/recebimentos/ingestao/upload`, {
     method: 'POST',
     headers: await withAuthHeaders(),
-    body: formExtrato(file, filCod, excluirLinhas),
+    body: formExtrato(file, filCod, gerNum, excluirLinhas),
   })
   if (!res.ok) throw new Error(await erroUpload(res))
   return res.json()

@@ -17,6 +17,13 @@ export interface ImportarExtratoInput {
     buffer: Buffer;
     arquivoNome: string;
     filCod: number;
+    /**
+     * Conta financeira (Conexos `fin133`) confirmada pelo analista no upload — o `.xlsx` não a
+     * carrega (só agência/conta do banco), e sem ela a baixa (`fin014`) não sabe onde lançar.
+     * Estampada em toda `TransacaoBancaria` desta importação; NÃO entra na `naturalKey` (é
+     * enriquecimento, não identidade — o mesmo tratamento que `canal`/`contraparte`).
+     */
+    gerNum: number;
     triggeredBy: string;
     /** Chave de idempotência explícita; default = sha256 do arquivo (+ seleção, ver `hash`). */
     idempotencyKey?: string;
@@ -97,7 +104,7 @@ export default class ImportacaoExtratoArquivoService {
 
     /** Dry-run: parseia, classifica novos × já importados e NÃO escreve nada. */
     public preview = async (
-        input: Pick<ImportarExtratoInput, 'buffer' | 'arquivoNome' | 'filCod'>,
+        input: Pick<ImportarExtratoInput, 'buffer' | 'arquivoNome' | 'filCod' | 'gerNum'>,
     ): Promise<ImportarExtratoPreview> => {
         const { cabecalho, totalLinhas, creditos, totalIgnorados } = await this.parseECreditos(
             input.buffer,
@@ -105,6 +112,7 @@ export default class ImportacaoExtratoArquivoService {
 
         const transacoes = this.montarTransacoes(creditos, {
             filCod: input.filCod,
+            gerNum: input.gerNum,
             agencia: cabecalho.agencia,
             conta: cabecalho.conta,
             arquivoNome: input.arquivoNome,
@@ -196,6 +204,7 @@ export default class ImportacaoExtratoArquivoService {
                 creditos,
                 {
                     filCod: input.filCod,
+                    gerNum: input.gerNum,
                     agencia: cabecalho.agencia,
                     conta: cabecalho.conta,
                     arquivoNome: input.arquivoNome,
@@ -280,6 +289,7 @@ export default class ImportacaoExtratoArquivoService {
         creditos: LinhaExtratoArquivo[],
         ctx: {
             filCod: number;
+            gerNum: number;
             agencia?: string;
             conta?: string;
             arquivoNome: string;

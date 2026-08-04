@@ -84,6 +84,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer: await construirExtrato(),
             arquivoNome: 'extrato.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'ana@columbia',
         });
 
@@ -106,6 +107,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer,
             arquivoNome: 'a.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
         });
         const segunda = build();
@@ -113,6 +115,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer,
             arquivoNome: 'a.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
         });
 
@@ -132,6 +135,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer: await construirExtrato(doisIguais),
             arquivoNome: 'dup.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
         });
         const chaves = capturarTransacoes(mocks).map((t) => t.naturalKey);
@@ -152,6 +156,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer: await construirExtrato(),
             arquivoNome: 'extrato.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
         });
         expect(result).toEqual(
@@ -170,6 +175,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
                 buffer: await construirExtrato(),
                 arquivoNome: 'extrato.xlsx',
                 filCod: 1,
+                gerNum: 1000,
                 triggeredBy: 'x',
             }),
         ).rejects.toBeInstanceOf(IngestLockBusyError);
@@ -186,6 +192,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer: await construirExtrato(doisIguais),
             arquivoNome: 'dup.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
         });
         const chavesBaseline = capturarTransacoes(baseline.mocks).map((t) => t.naturalKey);
@@ -197,6 +204,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer: await construirExtrato(doisIguais),
             arquivoNome: 'dup.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
             excluirLinhas: [6],
         });
@@ -216,6 +224,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer,
             arquivoNome: 'a.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
         });
         expect(r1.reaproveitada).toBe(false);
@@ -225,6 +234,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
             buffer,
             arquivoNome: 'a.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
             excluirLinhas: [6],
         });
@@ -244,6 +254,7 @@ describe('ImportacaoExtratoArquivoService.importar', () => {
                 buffer: await construirExtrato(),
                 arquivoNome: 'extrato.xlsx',
                 filCod: 1,
+                gerNum: 1000,
                 triggeredBy: 'x',
             }),
         ).rejects.toThrow('db down');
@@ -262,6 +273,7 @@ describe('ImportacaoExtratoArquivoService.preview', () => {
             buffer,
             arquivoNome: 'x.xlsx',
             filCod: 1,
+            gerNum: 1000,
             triggeredBy: 'x',
         });
         const chaves = capturarTransacoes(capture.mocks).map((t) => t.naturalKey);
@@ -272,7 +284,12 @@ describe('ImportacaoExtratoArquivoService.preview', () => {
                 existingNaturalKeys: jest.fn().mockResolvedValue(new Set([chaves[0]])),
             },
         });
-        const preview = await service.preview({ buffer, arquivoNome: 'x.xlsx', filCod: 1 });
+        const preview = await service.preview({
+            buffer,
+            arquivoNome: 'x.xlsx',
+            filCod: 1,
+            gerNum: 1000,
+        });
 
         expect(preview.totalCreditos).toBe(3);
         expect(preview.totalIgnorados).toBe(2);
