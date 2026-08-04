@@ -14,9 +14,13 @@ import {
 /** Canal de origem gravado em `transacao_bancaria.canal` — distingue upload manual do fin095. */
 export const CANAL_XLSX_BRADESCO = 'xlsx_bradesco';
 
-/** Contexto de conta do arquivo (o `.xlsx` não carrega `filCod`; ele vem da filial escolhida no upload). */
+/**
+ * Contexto de conta do arquivo — `filCod` vem da filial escolhida no upload; `gerNum` (conta
+ * financeira Conexos) vem da confirmação do analista, já que o `.xlsx` não carrega nenhum dos dois.
+ */
 export interface ContextoArquivo {
     filCod: number;
+    gerNum: number;
     agencia?: string;
     conta?: string;
     arquivoNome: string;
@@ -116,6 +120,7 @@ export const normalizarLinhaXlsx = (
         id: buildTransacaoId(naturalKey),
         correlationId: buildCorrelationId(naturalKey),
         filCod: ctx.filCod,
+        gerNum: ctx.gerNum,
         dataMovimento: linha.data,
         tipo: TRANSACAO_TIPO.CREDITO,
         valor: linha.valor,

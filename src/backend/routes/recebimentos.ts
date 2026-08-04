@@ -27,6 +27,7 @@ import {
     SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
 } from '../domain/interface/recebimentos/ports.js';
 import ConexosCadastroClient from '../domain/client/ConexosCadastroClient.js';
+import ConexosExtratoClient from '../domain/client/ConexosExtratoClient.js';
 import ConexosGerDocProcessoClient from '../domain/client/ConexosGerDocProcessoClient.js';
 import RecebimentoIngestaoRunRepository from '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
@@ -676,6 +677,38 @@ router.get(
     }),
 );
 
+const contasQuerySchema = z.object({
+    filCod: z.coerce.number().int().positive(),
+});
+
+/**
+ * GET /recebimentos/contas — contas financeiras (Conexos `fin133`) da filial, para o analista
+ * escolher a `gerNum` correta no upload manual de extrato (o `.xlsx` não carrega essa referência —
+ * só o canal automático fin095 a herda, por vir de uma consulta já escopada por conta).
+ */
+router.get(
+    '/contas',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = contasQuerySchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
+            return;
+        }
+        try {
+            assertUserCanActOnFilial(req.user, parsed.data.filCod);
+        } catch (err) {
+            if (err instanceof FilialForbiddenError) {
+                res.status(403).json({ error: 'Forbidden: filial não autorizada', code: err.code });
+                return;
+            }
+            throw err;
+        }
+        const client = container.resolve(ConexosExtratoClient);
+        res.json({ contas: await client.listContas(parsed.data.filCod) });
+    }),
+);
+
 // ───────────────────────────────── Ingestão por UPLOAD manual (.xlsx) — canal alternativo
 
 /** Teto do upload: extratos são pequenos (KBs). 10MB cobre folga sem virar vetor de DoS de memória. */
@@ -710,9 +743,14 @@ const comUploadExtrato: RequestHandler = (req, res, next) => {
     });
 };
 
-/** `filCod` chega como campo de formulário (string) ao lado do arquivo. */
+/**
+ * `filCod` + `gerNum` chegam como campos de formulário (string) ao lado do arquivo. `gerNum` é a
+ * conta financeira (Conexos `fin133`) que o analista confirmou para este extrato — obrigatório
+ * porque o `.xlsx` não a carrega, e sem ela a baixa (`fin014`) não sabe onde lançar.
+ */
 const uploadFilCodSchema = z.object({
     filCod: z.coerce.number().int().positive(),
+    gerNum: z.coerce.number().int().positive(),
 });
 
 /**
