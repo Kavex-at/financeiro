@@ -38,7 +38,7 @@ Cada transição é uma **ação nomeada** com registro de vigência (auditoria)
 
 | # | De → Para | Ação (gatilho) | Regra (SKELETON) | Vigência |
 |---|-----------|----------------|------------------|----------|
-| TB1 | `(novo) → importada` | `importarTransacoesNexxera` | Movimento importado, normalizado, deduplicado, com correlation id. | 2026-07-24 |
+| TB1 | `(novo) → importada` | `importarTransacoesExtrato` | **Implementada** (ADR-0023/0028). Lançamento do `fin095` importado, normalizado, deduplicado por `natural_key`, com correlation id determinístico. Nasce **sempre** `importada` — o `vldConciliado` do ERP não é a nossa conciliação. | 2026-08-04 |
 | TB2 | `importada → conciliada` | `atribuirBaixa` (match confiável) | Crédito casa com recebível(is) e é resolvido — Módulo 2. | 2026-07-24 |
 | TB3 | `importada → parcial` | `atribuirBaixa` (match parcial) | Parte do valor casa; saldo/diferença registrado. | 2026-07-24 |
 | TB4 | `importada → manual` | `atribuirBaixa` (incerto/nenhum) | Match incerto/nenhuma → fila manual (nunca auto-baixa). | 2026-07-24 |

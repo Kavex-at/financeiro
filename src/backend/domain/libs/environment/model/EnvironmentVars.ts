@@ -44,18 +44,27 @@ export default class EnvironmentVars {
     public sispagEnabled: boolean;
 
     /**
-     * Feature flag da Frente IV (Recebimentos). Quando `false`, as rotas
-     * `/recebimentos/*` respondem 403 (bloqueio via URL). `RECEBIMENTOS_ENABLED=true|false`
-     * força; sem a env, fica habilitado FORA de produção e bloqueado EM produção
-     * (fail-safe — espelha o SISPAG).
+     * KILL-SWITCH da Frente IV (Recebimentos / Gestão de Adiantamentos). Quando
+     * `false`, as rotas `/recebimentos/*` respondem 403. Ao contrário do SISPAG,
+     * NÃO é fail-safe: a frente está liberada em produção (ADR-0028), então só
+     * `RECEBIMENTOS_ENABLED=false` desliga — ausência da env significa habilitado.
      */
     public recebimentosEnabled: boolean;
 
     /**
      * Janela default (em dias) da ingestão de extratos da Frente IV.
-     * `RECEBIMENTO_INGEST_DIAS`; default 90.
+     * `RECEBIMENTO_INGEST_DIAS`; default 90. Sempre recortada pelo
+     * `recebimentoIngestStartDate` — a janela efetiva é a INTERSEÇÃO das duas.
      */
     public recebimentoIngestDias: number;
+
+    /**
+     * PISO absoluto da janela de ingestão do extrato
+     * (`CONEXOS_EXTRATO_SYNC_START_DATE`, `YYYY-MM-DD`; default `2026-08-03`).
+     * Nenhum caminho de sincronização lê lançamento anterior a esta data, nem o
+     * backfill manual (ADR-0028).
+     */
+    public recebimentoIngestStartDate: Date;
 
     /**
      * Filiais a ingerir (`RECEBIMENTO_INGEST_FIL_CODS`, CSV). Vazio = todas as
@@ -142,6 +151,7 @@ export default class EnvironmentVars {
         sispagEnabled,
         recebimentosEnabled,
         recebimentoIngestDias,
+        recebimentoIngestStartDate,
         recebimentoIngestFilCods,
         fin014ContaFinanceira,
         com297GcdNotaDebitoNome,
@@ -171,6 +181,7 @@ export default class EnvironmentVars {
         sispagEnabled: boolean;
         recebimentosEnabled: boolean;
         recebimentoIngestDias: number;
+        recebimentoIngestStartDate: Date;
         recebimentoIngestFilCods: number[];
         fin014ContaFinanceira?: number;
         com297GcdNotaDebitoNome: string;
@@ -200,6 +211,7 @@ export default class EnvironmentVars {
         this.sispagEnabled = sispagEnabled;
         this.recebimentosEnabled = recebimentosEnabled;
         this.recebimentoIngestDias = recebimentoIngestDias;
+        this.recebimentoIngestStartDate = recebimentoIngestStartDate;
         this.recebimentoIngestFilCods = recebimentoIngestFilCods;
         this.fin014ContaFinanceira = fin014ContaFinanceira;
         this.com297GcdNotaDebitoNome = com297GcdNotaDebitoNome;

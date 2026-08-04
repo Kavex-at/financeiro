@@ -2,7 +2,10 @@ import path from 'node:path';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import dotenv from 'dotenv';
 import { injectable, singleton } from 'tsyringe';
-import { RECEBIMENTO_INGEST_DIAS_PADRAO } from '../../interface/recebimentos/constants.js';
+import {
+    RECEBIMENTO_INGEST_DIAS_PADRAO,
+    RECEBIMENTO_INGEST_START_DATE_PADRAO,
+} from '../../interface/recebimentos/constants.js';
 import EnvironmentVars from './model/EnvironmentVars.js';
 
 @singleton()
@@ -41,16 +44,17 @@ export default class EnvironmentProvider {
     };
 
     /**
-     * Resolve a flag da Frente IV (Recebimentos): `RECEBIMENTOS_ENABLED=true|false`
-     * força; sem a env, fica habilitado FORA de produção e bloqueado EM produção
-     * (fail-safe — espelha o SISPAG).
+     * Resolve a flag da Frente IV (Recebimentos). **NÃO é fail-safe como o SISPAG:**
+     * a frente está LIBERADA em produção (ADR-0028), então ausência da env significa
+     * HABILITADO. `RECEBIMENTOS_ENABLED=false` é o kill-switch de emergência —
+     * único caminho para desligar, e não depende de redeploy (o `sync:false` do
+     * `render.yaml` deixa o dashboard como fonte da verdade).
+     *
+     * ⚠️ Não "restaure" o `environment !== 'production'` daqui: era exatamente o que
+     * mantinha a frente invisível em prod.
      */
-    private resolveRecebimentosEnabled = (environment: string): boolean => {
-        const flag = this.readEnv('RECEBIMENTOS_ENABLED');
-        if (flag === 'true') return true;
-        if (flag === 'false') return false;
-        return environment !== 'production';
-    };
+    private resolveRecebimentosEnabled = (): boolean =>
+        this.readEnv('RECEBIMENTOS_ENABLED') !== 'false';
 
     /**
      * Janela default da ingestão de extratos (`RECEBIMENTO_INGEST_DIAS`).
@@ -60,6 +64,30 @@ export default class EnvironmentProvider {
     private resolveIngestDias = (): number => {
         const n = Number(this.readEnv('RECEBIMENTO_INGEST_DIAS'));
         return Number.isInteger(n) && n > 0 ? n : RECEBIMENTO_INGEST_DIAS_PADRAO;
+    };
+
+    /**
+     * Piso da janela de ingestão do extrato (`CONEXOS_EXTRATO_SYNC_START_DATE`,
+     * `YYYY-MM-DD`). Nenhuma sincronização — cron, backfill por `DIAS=` ou
+     * `POST /recebimentos/ingestao { dias }` — lê lançamento anterior a esta data.
+     *
+     * Parseado como MEIA-NOITE UTC: o `fin095` filtra `exiDtaLcto#GE` em epoch-ms e
+     * o ERP grava o dia-calendário BR em UTC 00:00 (o `parseDate` do
+     * `ConexosBaseClient` é que soma o shift de meio-dia na LEITURA). Um piso em
+     * UTC 00:00 portanto inclui o dia inteiro no fuso BR.
+     *
+     * Valor ausente/inválido cai no padrão — nunca `Invalid Date`, que envenenaria
+     * a comparação da janela e faria a ingestão trazer nada em silêncio.
+     */
+    private resolveIngestStartDate = (): Date => {
+        const raw = this.readEnv('CONEXOS_EXTRATO_SYNC_START_DATE').trim();
+        const candidato = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+            ? raw
+            : RECEBIMENTO_INGEST_START_DATE_PADRAO;
+        const data = new Date(`${candidato}T00:00:00.000Z`);
+        return Number.isNaN(data.getTime())
+            ? new Date(`${RECEBIMENTO_INGEST_START_DATE_PADRAO}T00:00:00.000Z`)
+            : data;
     };
 
     /**
@@ -126,10 +154,9 @@ export default class EnvironmentProvider {
                 : 0,
             conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment', 'local')),
-            recebimentosEnabled: this.resolveRecebimentosEnabled(
-                this.readEnv('environment', 'local'),
-            ),
+            recebimentosEnabled: this.resolveRecebimentosEnabled(),
             recebimentoIngestDias: this.resolveIngestDias(),
+            recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
             fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
                 ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
@@ -185,8 +212,9 @@ export default class EnvironmentProvider {
                 this.readEnv('CONEXOS_CRED_ENC_KEY') ||
                 undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment')),
-            recebimentosEnabled: this.resolveRecebimentosEnabled(this.readEnv('environment')),
+            recebimentosEnabled: this.resolveRecebimentosEnabled(),
             recebimentoIngestDias: this.resolveIngestDias(),
+            recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
             fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
                 ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))

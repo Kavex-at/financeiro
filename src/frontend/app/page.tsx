@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
 import { AdminHomeCard } from '@/components/home/AdminHomeCard'
-import { isRecebimentosEnabled, isSispagEnabled } from '@/lib/features'
+import { isSispagEnabled } from '@/lib/features'
 
 /**
  * Home (`/`) — landing do Financeiro. Autenticada pelo `RouteGate` em
@@ -14,7 +14,6 @@ import { isRecebimentosEnabled, isSispagEnabled } from '@/lib/features'
  */
 export default function HomePage() {
   const sispagOn = isSispagEnabled()
-  const recebimentosOn = isRecebimentosEnabled()
   return (
     <div className="space-y-6">
       <PageHeader
@@ -63,30 +62,19 @@ export default function HomePage() {
             )}
           </CardContent>
         </Card>
-        <Card className={recebimentosOn ? undefined : 'opacity-70'}>
+        <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Landmark className="size-4" aria-hidden /> Recebimentos
-              {recebimentosOn ? null : (
-                <Badge variant="secondary" className="ml-auto gap-1">
-                  <Lock className="size-3" aria-hidden /> Indisponível
-                </Badge>
-              )}
+              <Landmark className="size-4" aria-hidden /> Gestão de Adiantamentos
             </CardTitle>
             <CardDescription>
-              Conciliação de créditos bancários (Nexxera): importação, matching e baixa assistida com NDe (Frente IV).
+              Conciliação de créditos bancários (Conexos): importação, matching e baixa assistida com NDe (Frente IV).
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {recebimentosOn ? (
-              <Button asChild>
-                <Link href="/recebimentos">Abrir Painel de Recebimentos</Link>
-              </Button>
-            ) : (
-              <Button disabled aria-disabled>
-                <Lock className="size-4" aria-hidden /> Indisponível em produção
-              </Button>
-            )}
+            <Button asChild>
+              <Link href="/recebimentos">Abrir Gestão de Adiantamentos</Link>
+            </Button>
           </CardContent>
         </Card>
         <AdminHomeCard />

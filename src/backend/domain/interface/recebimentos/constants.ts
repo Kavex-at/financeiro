@@ -215,6 +215,17 @@ export const PAINEL_TRANSACOES_CAP = 500;
 export const RECEBIMENTO_INGEST_DIAS_PADRAO = 90;
 
 /**
+ * PISO da janela de ingestão do extrato (`YYYY-MM-DD`). Nenhum caminho de
+ * sincronização — cron horário, `DIAS=` ou `POST /recebimentos/ingestao { dias }` —
+ * lê lançamento anterior a esta data (ADR-0028).
+ *
+ * É o marco de go-live da Frente IV em produção: crédito anterior a ele pertence
+ * ao processo manual antigo e entraria na carteira do analista como pendência
+ * falsa. Sobrescrevível por `CONEXOS_EXTRATO_SYNC_START_DATE`.
+ */
+export const RECEBIMENTO_INGEST_START_DATE_PADRAO = '2026-08-03';
+
+/**
  * Fatia máxima de dias por chamada ao `fin095`. Mantém cada `paginate` bem abaixo
  * do teto de páginas (`MAX_PAGES × PAGE_SIZE` = 25.000) mesmo numa conta de alto
  * volume, e dá granularidade de retomada quando uma fatia falha.

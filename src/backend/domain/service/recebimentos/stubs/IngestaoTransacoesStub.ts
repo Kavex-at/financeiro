@@ -33,6 +33,7 @@ export default class IngestaoTransacoesStub implements IngestaoTransacoesInterfa
             importadas: [],
             total: 0,
             deduplicadas: 0,
+            inseridas: 0,
         };
     };
 
@@ -60,6 +61,16 @@ export default class IngestaoTransacoesStub implements IngestaoTransacoesInterfa
             (n, s) => n + (s.status === 'fulfilled' ? s.value.deduplicadas : 0),
             0,
         );
-        return { runId: `stub-run-many-${input.correlationId}`, importadas, total, deduplicadas };
+        const inseridas = settled.reduce(
+            (n, s) => n + (s.status === 'fulfilled' ? s.value.inseridas : 0),
+            0,
+        );
+        return {
+            runId: `stub-run-many-${input.correlationId}`,
+            importadas,
+            total,
+            deduplicadas,
+            inseridas,
+        };
     };
 }

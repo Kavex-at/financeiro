@@ -9,7 +9,7 @@ owners: [yuri]
 related_files: []
 last_review: 2026-07-24
 preconditions:
-  - "TransacaoBancaria (crédito) importada e normalizada (importarTransacoesNexxera)."
+  - "TransacaoBancaria (crédito) importada e normalizada (importarTransacoesExtrato)."
   - "Read-model de DocumentoAReceber (recebíveis em aberto) disponível (fonte ERP a confirmar, Fase 2)."
 postconditions:
   - "Recebimento rascunho criado com classificacaoMatch (unica | multiplas | parcial | nenhuma)."

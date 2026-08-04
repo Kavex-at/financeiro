@@ -32,12 +32,17 @@ services:
       # navegáveis; geração de remessa (fin015) e retorno (fin052) seguem dormentes/gated.
       - key: SISPAG_ENABLED
         value: 'true'
-      # Frente IV (Recebimentos) — feature-gate. Fail-safe: sem a env, fica BLOQUEADA em produção
-      # (só habilita fora de prod). `sync: false` para o operador ver a chave e ligar/desligar pelo
-      # dashboard sem o blueprint sobrescrever a cada deploy. Base scaffold hoje = dormente.
-      # Ver DEPLOY.md (fail-safe).
+      # Frente IV (Recebimentos / "Gestão de Adiantamentos") LIBERADA em produção (v0.20.0, ADR-0028).
+      # NÃO é mais fail-safe: ausência da env = HABILITADO. Isto virou o KILL-SWITCH de emergência —
+      # setar `false` no dashboard derruba `/recebimentos/*` para 403 SEM redeploy.
+      # `sync: false` mantém o dashboard como fonte da verdade (o blueprint não sobrescreve).
       - key: RECEBIMENTOS_ENABLED
         sync: false
+      # Frente IV — PISO da janela de ingestão do extrato (`YYYY-MM-DD`). Nenhuma sincronização lê
+      # lançamento anterior a esta data, nem o backfill manual. O código já tem o mesmo default;
+      # declarado aqui para o operador enxergar o marco de go-live. Ver ADR-0028.
+      - key: CONEXOS_EXTRATO_SYNC_START_DATE
+        value: '2026-08-03'
       # Fase 3 (ADR-0013) — ESCRITA no fin010. FONTE ÚNICA = dashboard do Render (sync:false), para
       # NÃO ter o blueprint sobrescrevendo o dashboard a cada deploy (Regis P0 deployability — yaml
       # brigando com dashboard). Produção hoje: WRITE_ENABLED=true, DRY_RUN=false, BASE_URL=prd.

@@ -176,7 +176,12 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
             if (contasFalhas > 0) await this.logService.warn(resumo);
             else await this.logService.info(resumo);
 
-            return { runId, total: totalLidas, deduplicadas: totalDeduplicadas };
+            return {
+                runId,
+                total: totalLidas,
+                deduplicadas: totalDeduplicadas,
+                inseridas: totalInseridas,
+            };
         } catch (err) {
             await this.runRepo.finishRun({
                 runId,
@@ -275,11 +280,25 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
         return filiais.map((f) => Number(f.filCod)).filter((n) => Number.isInteger(n) && n > 0);
     };
 
-    /** Janela default da ingestão (env `RECEBIMENTO_INGEST_DIAS`). */
+    /**
+     * Janela da ingestão: `RECEBIMENTO_INGEST_DIAS` (ou o override) RECORTADA pelo
+     * piso `CONEXOS_EXTRATO_SYNC_START_DATE` (default 2026-08-03, ADR-0028).
+     *
+     * O piso é DURO e vale para todos os caminhos — cron, `DIAS=` e
+     * `POST /recebimentos/ingestao { dias }`. Crédito anterior ao go-live pertence
+     * ao processo manual antigo: importá-lo encheria a carteira do analista de
+     * pendências falsas que ninguém vai conciliar. Ir mais atrás exige mexer na
+     * env — decisão consciente, não efeito colateral de um `dias` grande digitado
+     * no painel.
+     *
+     * Só encolhe, nunca alarga: janela que já começa depois do piso é preservada.
+     */
     public resolverPeriodo = async (diasOverride?: number): Promise<{ de: Date; ate: Date }> => {
         const env = await this.environmentProvider.getEnvironmentVars();
         const dias = diasOverride ?? env.recebimentoIngestDias;
         const ate = new Date();
-        return { de: new Date(ate.getTime() - dias * DAY_MS), ate };
+        const janela = new Date(ate.getTime() - dias * DAY_MS);
+        const piso = env.recebimentoIngestStartDate;
+        return { de: janela.getTime() < piso.getTime() ? new Date(piso.getTime()) : janela, ate };
     };
 }

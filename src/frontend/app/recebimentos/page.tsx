@@ -8,7 +8,6 @@ import {
   Coins,
   Landmark,
   ListChecks,
-  Lock,
   RefreshCcw,
   Upload,
   UserSearch,
@@ -28,7 +27,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
-import { isRecebimentosEnabled } from '@/lib/features'
 import { formatBRL } from '@/lib/utils'
 import {
   fetchPainelRecebimentos,
@@ -53,26 +51,12 @@ const fmtData = (iso?: string) =>
 type StatusFiltro = 'todas' | TransacaoBancariaStatus
 
 /**
- * Guard de acesso (bloqueio via URL): quando a Frente IV está desligada (produção,
- * por padrão), a rota `/recebimentos` mostra a tela de bloqueio em vez do painel. A
- * API também nega (`recebimentosGate` → 403), então esconder aqui é UX, não a barreira.
+ * Rota `/recebimentos` — liberada em produção desde a v0.20.0 (ADR-0028). Não há
+ * mais tela de bloqueio: o único freio é o kill-switch do backend
+ * (`RECEBIMENTOS_ENABLED=false` → `recebimentosGate` responde 403), que a UI
+ * mostra como erro de carregamento em vez de esconder a frente inteira.
  */
 export default function RecebimentosPage() {
-  if (!isRecebimentosEnabled()) {
-    return (
-      <div className="space-y-6">
-        <PageHeader
-          title="Recebimentos"
-          subtitle="Conciliação de créditos bancários (Frente IV)."
-        />
-        <EmptyState
-          icon={<Lock className="size-8" aria-hidden />}
-          title="Recebimentos indisponível"
-          description="Esta frente ainda não está liberada em produção. Fale com o time se precisar de acesso."
-        />
-      </div>
-    )
-  }
   return <RecebimentosPanel />
 }
 
@@ -146,7 +130,7 @@ function RecebimentosPanel() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Recebimentos"
+        title="Gestão de Adiantamentos"
         subtitle={
           painel?.ultimaIngestao
             ? `Conciliação de créditos bancários (Frente IV) · carteira de ${new Date(
