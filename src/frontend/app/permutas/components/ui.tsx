@@ -11,8 +11,11 @@ import type {
 import { cn, formatNumber } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { MoedaTotal, MOTIVO_LABEL, PROCESSAMENTO_LABEL, fmtMoeda, maskBrl, moedaCodigo, numToMask } from './format'
+import { MoedaTotal, MOTIVO_LABEL, PROCESSAMENTO_LABEL, fmtMoeda, moedaCodigo } from './format'
+
+// `MoneyInput` foi promovido para `@/components/ui/money-input` (compartilhado com
+// Recebimentos). Re-exportado aqui para não quebrar os imports de `./ui`.
+export { MoneyInput } from '@/components/ui/money-input'
 
 /** Badge de status de uma run no histórico do modal de ingestão. */
 export function RunStatusBadge({ status }: { status: PermutaRun['status'] }) {
@@ -137,47 +140,6 @@ export function Moeda({ valor, moeda }: { valor: number | null; moeda: string })
       {formatNumber(valor)}{' '}
       <span className="text-xs text-muted-foreground">{moedaCodigo(moeda)}</span>
     </span>
-  )
-}
-
-/**
- * Input de valor monetário com máscara pt-BR (milhar `.` / centavos `,`) e botão "Máx"
- * opcional que preenche o valor total disponível. `value`/`onChange` operam na string
- * mascarada (parse com `parseBrl`).
- */
-export function MoneyInput({
-  value,
-  onChange,
-  max,
-  className,
-}: {
-  value: string
-  onChange: (masked: string) => void
-  max?: number
-  className?: string
-}) {
-  const temMax = max != null && Number.isFinite(max) && max > 0
-  return (
-    <div className="flex items-center gap-1">
-      <Input
-        value={value}
-        inputMode="decimal"
-        onChange={(e) => onChange(maskBrl(e.target.value))}
-        placeholder="0,00"
-        className={cn('text-right tabular-nums', className)}
-      />
-      {temMax ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          title={`Preencher o máximo disponível (${numToMask(max)})`}
-          onClick={() => onChange(numToMask(max))}
-        >
-          Máx
-        </Button>
-      ) : null}
-    </div>
   )
 }
 

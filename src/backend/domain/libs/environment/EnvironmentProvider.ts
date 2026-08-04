@@ -2,6 +2,7 @@ import path from 'node:path';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import dotenv from 'dotenv';
 import { injectable, singleton } from 'tsyringe';
+import { RECEBIMENTO_INGEST_DIAS_PADRAO } from '../../interface/recebimentos/constants.js';
 import EnvironmentVars from './model/EnvironmentVars.js';
 
 @singleton()
@@ -38,6 +39,44 @@ export default class EnvironmentProvider {
         if (flag === 'false') return false;
         return environment !== 'production';
     };
+
+    /**
+     * Resolve a flag da Frente IV (Recebimentos): `RECEBIMENTOS_ENABLED=true|false`
+     * força; sem a env, fica habilitado FORA de produção e bloqueado EM produção
+     * (fail-safe — espelha o SISPAG).
+     */
+    private resolveRecebimentosEnabled = (environment: string): boolean => {
+        const flag = this.readEnv('RECEBIMENTOS_ENABLED');
+        if (flag === 'true') return true;
+        if (flag === 'false') return false;
+        return environment !== 'production';
+    };
+
+    /**
+     * Janela default da ingestão de extratos (`RECEBIMENTO_INGEST_DIAS`).
+     * Valor inválido ou ausente cai no padrão — nunca zero (uma janela de zero
+     * dias faria a ingestão rodar e não trazer nada, silenciosamente).
+     */
+    private resolveIngestDias = (): number => {
+        const n = Number(this.readEnv('RECEBIMENTO_INGEST_DIAS'));
+        return Number.isInteger(n) && n > 0 ? n : RECEBIMENTO_INGEST_DIAS_PADRAO;
+    };
+
+    /**
+     * Lê um inteiro positivo de env (poll SEFAZ da NDe) com default. Valor inválido/ausente cai no
+     * default — nunca zero (um teto de zero faria o poll não rodar; um intervalo de zero seria busy-loop).
+     */
+    private resolvePositiveInt = (key: string, fallback: number): number => {
+        const n = Number(this.readEnv(key));
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+    };
+
+    /** Filiais da ingestão (`RECEBIMENTO_INGEST_FIL_CODS`, CSV). Vazio = todas. */
+    private resolveIngestFilCods = (): number[] =>
+        this.readEnv('RECEBIMENTO_INGEST_FIL_CODS', '')
+            .split(',')
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isInteger(n) && n > 0);
 
     private parseSSMCredentials = async (
         envVar: string | undefined,
@@ -80,8 +119,35 @@ export default class EnvironmentProvider {
             // Fase 3 (ADR-0013): escrita fin010 desligada por padrão; dry-run ligado por padrão.
             conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
+            // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
+            snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
+            solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
+                ? Number(this.readEnv('SN_GCD_COD'))
+                : 0,
             conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment', 'local')),
+            recebimentosEnabled: this.resolveRecebimentosEnabled(
+                this.readEnv('environment', 'local'),
+            ),
+            recebimentoIngestDias: this.resolveIngestDias(),
+            recebimentoIngestFilCods: this.resolveIngestFilCods(),
+            fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
+                ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
+                : undefined,
+            com297GcdNotaDebitoNome: this.readEnv(
+                'COM297_GCD_NOTA_DEBITO_NOME',
+                // Config REAL da NDe (HAR 2026-08-02 23-27, doc 18347 SUCESSO): "NOTA DE DEBITO PAGAMENTO
+                // ANTECIPADO" (gcd 248). O bug era o `globalDocVldTipo` (o com297 usa 0, não o 9 do SN) — com
+                // 0 o processo aceita a 248. Ver `NDE_GLOBAL_DOC_VLD_TIPO`.
+                'NOTA DE DEBITO PAGAMENTO ANTECIPADO',
+            ),
+            com297GcdNotaDebito: this.readEnv('COM297_GCD_NOTA_DEBITO')
+                ? Number(this.readEnv('COM297_GCD_NOTA_DEBITO'))
+                : undefined,
+            ndePollTimeoutMs: this.resolvePositiveInt('NDE_POLL_TIMEOUT_MS', 300_000),
+            ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
+            ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
+            snCondPgtoAutoajuste: this.readEnv('SN_COND_PGTO_AUTOAJUSTE') !== 'false',
         });
     };
 
@@ -109,11 +175,36 @@ export default class EnvironmentProvider {
             // Fase 3 (ADR-0013): toggles de deploy (env), não segredos por-tenant.
             conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
+            // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
+            snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
+            solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
+                ? Number(this.readEnv('SN_GCD_COD'))
+                : 0,
             conexosCredEncKey:
                 this.readCred(conexos, 'credEncKey') ||
                 this.readEnv('CONEXOS_CRED_ENC_KEY') ||
                 undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment')),
+            recebimentosEnabled: this.resolveRecebimentosEnabled(this.readEnv('environment')),
+            recebimentoIngestDias: this.resolveIngestDias(),
+            recebimentoIngestFilCods: this.resolveIngestFilCods(),
+            fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
+                ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
+                : undefined,
+            com297GcdNotaDebitoNome: this.readEnv(
+                'COM297_GCD_NOTA_DEBITO_NOME',
+                // Config REAL da NDe (HAR 2026-08-02 23-27, doc 18347 SUCESSO): "NOTA DE DEBITO PAGAMENTO
+                // ANTECIPADO" (gcd 248). O bug era o `globalDocVldTipo` (o com297 usa 0, não o 9 do SN) — com
+                // 0 o processo aceita a 248. Ver `NDE_GLOBAL_DOC_VLD_TIPO`.
+                'NOTA DE DEBITO PAGAMENTO ANTECIPADO',
+            ),
+            com297GcdNotaDebito: this.readEnv('COM297_GCD_NOTA_DEBITO')
+                ? Number(this.readEnv('COM297_GCD_NOTA_DEBITO'))
+                : undefined,
+            ndePollTimeoutMs: this.resolvePositiveInt('NDE_POLL_TIMEOUT_MS', 300_000),
+            ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
+            ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
+            snCondPgtoAutoajuste: this.readEnv('SN_COND_PGTO_AUTOAJUSTE') !== 'false',
         });
     };
 

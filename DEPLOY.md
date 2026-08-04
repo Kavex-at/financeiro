@@ -48,6 +48,8 @@ Crie um **Web Service** apontando para o repositório.
 | `DEV_AUTH_BYPASS` | `false` |
 | `environment` | `production` |
 | `client_name` | `local` (faz o `EnvironmentProvider` ler do ENV, não do SSM/AWS) |
+| `SISPAG_ENABLED` | `true|false` — liga/desliga a Frente II (SISPAG). **Fail-safe:** sem a var, fica **bloqueada em produção** e habilitada fora de prod. |
+| `RECEBIMENTOS_ENABLED` | `true|false` — liga/desliga a Frente IV (Recebimentos). **Fail-safe:** sem a var, fica **bloqueada em produção** (só habilita fora de prod); esquecer de setar em prod NÃO expõe a frente. Base scaffold hoje = dormente; ligar só quando a Fase 1 aterrissar. |
 
 Gerar o `AUTH_JWT_SECRET`:
 

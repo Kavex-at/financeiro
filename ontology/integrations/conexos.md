@@ -166,6 +166,33 @@ razão real (`vars.msg` do Generic) → tradução PT curada por key → key cru
 `error`/`erpDetail`; o envelope cru continua logado (`erpData`). O `vars.msg` é texto operacional do ERP —
 sid/token vivem no header `Cookie`, não em `response.data`, então surface é seguro.
 
+### Classificação da falha — RECUSA × INDISPONIBILIDADE (ADR-0026, v0.13.0)
+
+Ler a razão não basta: é preciso decidir **se retentar**. O status do upstream separa as duas naturezas,
+e a separação é feita num ponto único — `ErpResponseReader`
+(`src/backend/domain/errors/ErpResponseReader.ts`), usado pelo `ConexosError` **e** pelo
+`ErpErrorInterpreter`, para que classificação e tradução nunca discordem sobre o mesmo payload.
+
+| Resposta do ERP | Natureza | `code` do `ConexosError` | `retryable` | HTTP para fora |
+|---|---|---|---|---|
+| sem resposta (rede/parse/socket) | indisponibilidade | `CONEXOS_UPSTREAM_ERROR` | `true` | 504 |
+| 5xx | indisponibilidade | `CONEXOS_UPSTREAM_ERROR` | `true` | 504 |
+| 408 · 429 | indisponibilidade | `CONEXOS_UPSTREAM_ERROR` | `true` | 504 |
+| demais 4xx | **recusa determinística** | `CONEXOS_UPSTREAM_REJECTED` | **`false`** | **502** |
+| timeout declarado pelo caller | indisponibilidade | `CONEXOS_UPSTREAM_TIMEOUT` | `true` | 504 |
+
+Uma **recusa** é veredito do ERP sobre o conteúdo do pedido: repetir devolve a mesma resposta, palavra
+por palavra. Por isso ela (a) não é retentada — nem pelo `RetryExecutor` do `ConexosBaseClient`, nem pela
+política central do `RecebimentoPipelineService` —, e (b) chega ao analista com a **razão crua do ERP**
+(`vars.msg`, senão a key) em vez de "tente novamente em alguns minutos", que seria o conselho errado.
+
+O caso que estabeleceu a regra: `POST /api/fin014/finalizar/{borCod}` devolvendo
+`400 CODIGO_IDENTIFICADOR_REGISTRO_EXISTENTE` no HML — defeito de ambiente do lado da Conexos,
+determinístico, medido em `docs/e2e/fin014-finalizacao-hml-diagnostico.md`.
+
+**Não confundir com idempotência:** uma escrita irreversível continua sendo tentativa única
+(`postGenericOnce`), retentável ou não.
+
 ## Cache local de borderôs — `permuta_bordero` (ADR-0014, v0.7.0)
 
 Para a aba Borderôs não bater no ERP a cada abertura, os borderôs de permuta (`fin010` `borVldTipo=2`)
@@ -219,3 +246,44 @@ cadastro/finalizado/cancelado/estornado) é **derivada na leitura** (`situacaoDo
 e trazer o retorno) — sem endpoint nativo; alvo = pasta de rede + VAN Nexxera. Gate: contrato Nexxera
 cobrir pagamento (Ricardo→Nexxera). A escrita reusará o gating de Permutas (`CONEXOS_WRITE_ENABLED` +
 `CONEXOS_DRY_RUN`, homologação-first). Riscos O4 (scheduler) e O7 (config Nexxera) abertos.
+
+## FRENTE IV (Recebimentos) — superfícies NOVAS (SKELETON, ADR-0022)
+
+> **SKELETON (Fase 0).** A Frente IV (Conciliação de Recebimentos) adiciona ao Conexos **duas
+> superfícies novas**: (1) **leitura** dos recebíveis em aberto (`DocumentoAReceber`) e (2) **escrita**
+> — a **baixa/quitação do recebível** (write O3) + a **emissão da NDe** (Nota de Débito Eletrônica). O
+> import do extrato bancário **NÃO** passa por aqui — é direto do Nexxera (ver `integrations/nexxera.md`).
+> Contratos concretos confirmados nas Fases 2/5. Ver ADR-0022.
+
+### LEITURA — recebíveis em aberto (`DocumentoAReceber`, Fase 2)
+
+- Read-model de **contas a receber** (documento/título, cliente/`pesCod`, valor, saldo em aberto,
+  vencimento, nº documento, `priCod`). **Fonte exata no ERP a confirmar na Fase 2** (o plano assume o
+  caminho de leitura financeira do Conexos, a parametrizar — espelha a leitura SISPAG `ConexosSispagClient`
+  READ-only). Ver `entities/documento-a-receber.md`.
+
+### ESCRITA — baixa/quitação do recebível (write O3, Fase 5)
+
+- **Decisão O3 (interview):** **assume o módulo `fin010`** e **parametriza** o write. Os campos
+  hoje **específicos de Permuta** — `borVldTipo`, códigos de conta, o flag de adiantamento — viram
+  **parâmetros** (recebível vs permuta). A **maquinaria reusável** do handshake `fin010` de Permutas
+  **carrega** (write-ahead ledger, escrita single-attempt, anti-drift, dry-run gate); o **shape do
+  payload/endpoint** do lado recebível é **confirmado durante o build** (capturar uma baixa real de
+  recebível se a aposta parametrizada não fechar).
+- **Reúso da infra:** mesma cadeia `ConexosBaixaClient`/`postGeneric → authenticatedPost` (sid +
+  `cnx-filcod` + `cnx-usncod` + retry-em-401), mesmo `RetryExecutor`, mesmo `ConexosError`. Mesmo
+  gating: `CONEXOS_WRITE_ENABLED` + `CONEXOS_DRY_RUN` (default dry-run), **homologação-first**.
+- Contrato de escrita completo: `business-rules/fin010-write-contract.md` (Permutas) é o **template**;
+  a variante parametrizada de recebível é fatia própria da Fase 5. Idempotência em
+  `business-rules/idempotencia-quitacao-nde.md`.
+
+### ESCRITA — emissão da NDe (Fase 5)
+
+- A **Nota de Débito Eletrônica é emitida pelo Conexos ERP** (decisão Yuri, 2026-07-24) — **não** é
+  sistema fiscal separado nem auto-gerada. Precisa do **endpoint/trigger de emissão** no Conexos
+  (confirmar **junto do O3**, Fase 5). A emissão é **idempotente** (uma NDe por `Recebimento`, via
+  `idempotencyKey`) e o registro local existe só para idempotência/auditoria (fonte da verdade = ERP).
+  Ver `entities/nota-debito-eletronica.md` e `business-rules/idempotencia-quitacao-nde.md`.
+- **Alternativa considerada e rejeitada (Fase 0):** um `integrations/nde-conexos.md` separado. A NDe é
+  emitida **pelo mesmo ERP** (Conexos) — modelá-la como superfície de escrita do Conexos (como a baixa
+  `fin010`) mantém a convenção de "uma integração por sistema externo". Registrado na ADR-0022.

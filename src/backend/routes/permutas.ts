@@ -23,6 +23,7 @@ import { isRelatorioTipo } from '../domain/interface/permutas/Relatorio.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
+import GerarSolicitacaoNumerarioService from '../domain/service/permutas/GerarSolicitacaoNumerarioService.js';
 import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
@@ -40,6 +41,16 @@ const reconciliarBodySchema = z.object({
     /** Data de movimento do borderô (epoch-ms). Default: meia-noite UTC de hoje. */
     dataMovto: z.number().int().positive().optional(),
     /** Força dry-run (preview sem POST), mesmo com escrita habilitada. */
+    dryRun: z.boolean().optional(),
+});
+
+/**
+ * Zod no boundary — corpo do POST /gerar-numerario (B1: gera a SN em vez da baixa).
+ * `valor` = `valorASerUsado` do modal (moeda negociada, sem conversão).
+ */
+const gerarNumerarioBodySchema = z.object({
+    valor: z.number().positive(),
+    /** Força dry-run (monta/loga o payload sem POST), mesmo com escrita habilitada. */
     dryRun: z.boolean().optional(),
 });
 
@@ -115,6 +126,14 @@ const respondActionError = async (
 const todayUtcMidnightMs = (): number => {
     const now = new Date();
     return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+};
+
+/** Número do documento SN = "data do dia" no formato DDMMYYYY (guia Tela 1). */
+const ddmmyyyy = (epochMs: number): string => {
+    const d = new Date(epochMs);
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    return `${dd}${mm}${d.getUTCFullYear()}`;
 };
 
 /** Quantas runs o modal de auditoria mostra por padrão / no máximo. */
@@ -485,6 +504,38 @@ router.post(
             adiantamentoDocCod: docCod,
             executadoPor,
             dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
+            ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
+        });
+        res.json(result);
+    }),
+);
+
+// POST /permutas/adiantamentos/:docCod/gerar-numerario — B1: GERA a SOLICITAÇÃO DE NUMERÁRIO no ERP
+// (com299/gerDocProcesso), substituindo a baixa fin010 como efeito do "Processar". Uma SN por
+// adiantamento; valor = valorASerUsado do modal (moeda negociada). heavyRouteLimiter (fan-out
+// Conexos) + admin. Escrita IRREVERSÍVEL gated no serviço (CONEXOS_WRITE_ENABLED/DRY_RUN; default
+// dry-run). Ver ontology/actions/permuta/gerar-solicitacao-numerario.md.
+router.post(
+    '/adiantamentos/:docCod/gerar-numerario',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = gerarNumerarioBodySchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const docCod = String(req.params.docCod);
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const service = container.resolve(GerarSolicitacaoNumerarioService);
+        const hoje = todayUtcMidnightMs();
+        const result = await service.gerarNumerario({
+            adiantamentoDocCod: docCod,
+            executadoPor,
+            valor: parsed.data.valor,
+            dataEmissao: hoje,
+            numeroDocumento: ddmmyyyy(hoje),
             ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
         });
         res.json(result);

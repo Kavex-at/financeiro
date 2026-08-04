@@ -101,6 +101,60 @@ describe('ErpErrorInterpreter', () => {
         );
     });
 
+    it('SELECTION_ERROR gcdDesNomeProc NOT_VALID → mensagem de processo INELEGÍVEL (não "call failed")', () => {
+        const err = Object.assign(new Error('Conexos call to com299/gerDocProcesso failed'), {
+            cause: {
+                response: {
+                    status: 400,
+                    data: {
+                        type: 'SELECTION_ERROR',
+                        validation: {
+                            main: {
+                                itemMessages: [
+                                    {
+                                        frontModelName: 'gerDocProcesso',
+                                        item: 'gcdDesNomeProc',
+                                        messages: [
+                                            {
+                                                message: 'Generic.NOT_VALID',
+                                                vars: {
+                                                    atributo:
+                                                        'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA',
+                                                },
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        const friendly = interpreter.interpret(err).friendly;
+        expect(friendly).toContain('SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA');
+        expect(friendly).toContain('não é elegível');
+        expect(friendly).not.toContain('call to com299');
+    });
+
+    it('VALIDATION itemMessages (item genérico) → "Campo X inválido" (não o fallback cru)', () => {
+        const err = Object.assign(new Error('failed'), {
+            response: {
+                status: 400,
+                data: {
+                    type: 'VALIDATION',
+                    itemMessages: [
+                        {
+                            item: 'borVldTipo',
+                            messages: [{ message: 'CnxValidatorVld', constraint: 'required' }],
+                        },
+                    ],
+                },
+            },
+        });
+        expect(interpreter.interpret(err).friendly).toContain('borVldTipo');
+    });
+
     it('envelope malformado (messages não-array ou com null) NÃO lança — cai no fallback', () => {
         // Error-handler não pode lançar: messages não-array.
         const naoArray = Object.assign(new Error('conexos'), {

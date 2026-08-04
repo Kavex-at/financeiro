@@ -18,6 +18,7 @@ import {
   AlocacaoExcedeSaldoError,
   buscarInvoicesPorProcesso,
   criarAlocacao,
+  gerarNumerario,
   reconciliarAdiantamento,
   reconciliarLoteAutomaticas,
   removerAlocacao,
@@ -145,9 +146,9 @@ export default function GestaoPermutasPage() {
   const [valorAloc, setValorAloc] = React.useState<string>('')
   const [salvandoAloc, setSalvandoAloc] = React.useState(false)
 
-  // Processa o casamento confirmado = BAIXA REAL no fin010 (cria borderô), igual aos manuais.
-  // Para cada adiantamento do grupo, chama o reconciliar (que AUTO-ALOCA a partir do casamento) →
-  // borderô em CADASTRO. Os já processados são ignorados. (Regra 2026-06-24: Automáticas baixam.)
+  // Processa o casamento confirmado = GERA a SOLICITAÇÃO DE NUMERÁRIO (B1) no ERP (com299/gerDocProcesso),
+  // substituindo a baixa fin010 (decisão 2026-07-31). Uma SN por adiantamento; valor = valorASerUsado do
+  // modal (moeda negociada, sem conversão). Os já processados são ignorados. Escrita gated (dry-run default).
   const confirmarProcessamento = React.useCallback(async () => {
     if (!confirmacao) return
     const c = confirmacao
@@ -155,33 +156,46 @@ export default function GestaoPermutasPage() {
     setConfirmacao(null)
     setProcessando(c.invoice.docCod)
     try {
-      let settled = 0
-      let erros = 0
+      let concluidas = 0 // fluxo completo (3 telas)
+      let parciais = 0 // SN gerada, mas etapa fin014/com297 ainda manual (GAP)
+      let erros = 0 // falhou antes de gerar a SN
       let dryRun = false
-      const borderos = new Set<number>()
+      const snDocs: number[] = []
       for (const adto of pendentes) {
-        const r = await reconciliarAdiantamento(adto.docCod, { dryRun: false })
-        if (r.dryRun) dryRun = true
-        settled += r.resultados.filter((x) => x.status === 'settled').length
-        erros += r.resultados.filter((x) => x.status === 'error').length
-        if (r.borCod !== undefined) borderos.add(r.borCod)
+        const r = await gerarNumerario(adto.docCod, { valor: adto.valorASerUsado })
+        if (r.dryRun) {
+          dryRun = true
+        } else if (r.status === 'settled') {
+          concluidas += 1
+          if (r.docCod !== undefined) snDocs.push(r.docCod)
+        } else if (r.status === 'error' && r.docCod !== undefined) {
+          // SN criada (Tela 1) mas o fluxo parou numa etapa ainda não automatizada.
+          parciais += 1
+          snDocs.push(r.docCod)
+        } else if (r.status === 'error') {
+          erros += 1
+        }
       }
       if (dryRun) {
-        toast.info('Escrita desabilitada no servidor (dry-run). Payload validado, sem baixa real.')
+        toast.info(
+          'Escrita desabilitada no servidor (dry-run). Payloads das 3 telas validados, sem gerar documento.',
+        )
       } else {
-        if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja a aba Borderôs.`)
-        if (settled > 0)
-          toast.success(
-            `Processo ${c.priCod}: ${settled} baixa(s) no fin010 (borderô${
-              borderos.size === 1 ? ` ${[...borderos][0]}` : 's'
-            }, EM CADASTRO). Revise e aprove em Borderôs.`,
+        if (erros > 0) toast.error(`${erros} Solicitação(ões) de Numerário falharam.`)
+        if (concluidas > 0)
+          toast.success(`Processo ${c.priCod}: ${concluidas} fluxo(s) de numerário concluído(s).`)
+        if (parciais > 0)
+          toast.info(
+            `Processo ${c.priCod}: ${parciais} numerário(s) processado(s)${
+              snDocs.length > 0 ? ` (SN doc ${snDocs.join(', ')})` : ''
+            } — falta só a parte fiscal da nota de débito (tipo "Pagamento antecipado", observações, homologar) no Conexos.`,
           )
       }
       await load()
     } catch (err) {
       if (isSessionExpiredError(err)) return
       toast.error(
-        `Falha ao processar o processo ${c.priCod}${err instanceof Error ? `: ${err.message}` : ''}`,
+        `Falha ao gerar a Solicitação de Numerário do processo ${c.priCod}${err instanceof Error ? `: ${err.message}` : ''}`,
       )
     } finally {
       setProcessando(null)

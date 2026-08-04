@@ -16,12 +16,12 @@
 
 ## 1. O que é "Automação Financeira" (Columbia Trading)
 
-A área Financeira da Columbia opera sobre três frentes onde o processo **manual** hoje gera o
-mesmo tipo de exposição: **dado que não fecha, pagamento que não sai e documento que não
-destrava**. Em cada uma, a perda não fica no operacional — chega à controladoria como relatório
-inconsistente, ao caixa como risco de multa e ao fechamento como trava.
+A área Financeira da Columbia opera sobre quatro frentes onde o processo **manual** hoje gera o
+mesmo tipo de exposição: **dado que não fecha, pagamento que não sai, documento que não
+destrava e recebimento que não concilia**. Em cada uma, a perda não fica no operacional — chega à
+controladoria como relatório inconsistente, ao caixa como risco de multa e ao fechamento como trava.
 
-O propósito do projeto é a **automação assistida** dessas três frentes: o **analista permanece no
+O propósito do projeto é a **automação assistida** dessas quatro frentes: o **analista permanece no
 controle das decisões que exigem julgamento** e a solução assume o trabalho **mecânico e
 repetitivo**. Todas as frentes integram com o ERP **Conexos** (mesmo tenant do
 `fechamento-processos`), operam **multi-filial** e registram **trilha de auditoria completa**.
@@ -32,7 +32,7 @@ aprova, ajusta e finaliza.
 
 ---
 
-## 2. As três frentes
+## 2. As quatro frentes
 
 ### Frente I — Automação de Permutas (Adiantamentos ↔ Invoices)
 
@@ -97,6 +97,35 @@ anexando ao GED o documento que as justifica.
 - **Integração:** **SharePoint** (origem) + **GED** (destino).
 - **Fora de escopo:** geração da NC/ND (segue no fluxo atual: planilha → rascunho) e a baixa
   contábil em si (a solução **destrava**, não executa a baixa).
+
+---
+
+### Frente IV — Conciliação de Recebimentos (Nexxera ↔ Baixa ↔ NDe)
+
+> **Status:** em modelagem (bootstrap via `/feature-new`, ADR-0022, 2026-07-24). É a **contrapartida
+> de entrada** (contas a receber) da Frente II (SISPAG, saída). Ainda não entregue — o skeleton de
+> ontologia está em `ontology/entities/{transacao-bancaria,documento-a-receber,recebimento,
+> rateio-recebimento,credito-cliente,nota-debito-eletronica,regra-recebimento}.md`.
+
+**Em uma frase:** importar as movimentações bancárias da Nexxera, atribuir cada crédito recebido aos
+documentos financeiros em aberto, ratear o valor, aplicar as regras da Columbia e efetivar a
+baixa/quitação — culminando na emissão da **Nota de Débito Eletrônica**.
+
+- **Problema:** os créditos que entram na conta (via Nexxera) são conciliados **manualmente** contra
+  os documentos em aberto. Sem uma cadência confiável, o recebimento fica sem baixa, o rateio entre
+  processos é refeito à mão e a NDe atrasa — virando relatório que não fecha e caixa sem visibilidade.
+- **Outcome:** cada crédito importado é atribuído com segurança (ou vai para a fila de exceções), o
+  rateio é revisável e auditável, a quitação é idempotente e reversível, e a NDe sai sem retrabalho.
+- **Divisão analista × solução:**
+  - *Analista:* aprova os casamentos incertos, define/revisa o rateio e resolve exceções.
+  - *Solução:* importa e deduplica as transações, propõe o casamento, calcula o rateio, aplica as
+    regras (encomenda, adiantamento de cliente, multa/juros), executa a baixa e emite a NDe. Audita.
+- **Chave de correspondência:** transação ↔ documento(s) — por cliente/CNPJ, valor, nº do documento,
+  referência bancária, nº do processo, vencimento, descrição ou id Pix (calibra a meta de match).
+- **Integração:** **Nexxera** (extrato/movimentações — canal **a confirmar**: API ou SFTP/CNAB) +
+  **Conexos** (baixa em `fin010`, parametrizada, e emissão da NDe pelo próprio ERP).
+- **Fora de escopo (por ora):** a definição fina das regras de negócio (percentuais de encomenda,
+  separação de multa/juros) — modelada em fase própria com entrevista dedicada.
 
 ---
 

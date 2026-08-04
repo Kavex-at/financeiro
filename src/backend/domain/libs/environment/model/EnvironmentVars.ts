@@ -44,6 +44,26 @@ export default class EnvironmentVars {
     public sispagEnabled: boolean;
 
     /**
+     * Feature flag da Frente IV (Recebimentos). Quando `false`, as rotas
+     * `/recebimentos/*` respondem 403 (bloqueio via URL). `RECEBIMENTOS_ENABLED=true|false`
+     * força; sem a env, fica habilitado FORA de produção e bloqueado EM produção
+     * (fail-safe — espelha o SISPAG).
+     */
+    public recebimentosEnabled: boolean;
+
+    /**
+     * Janela default (em dias) da ingestão de extratos da Frente IV.
+     * `RECEBIMENTO_INGEST_DIAS`; default 90.
+     */
+    public recebimentoIngestDias: number;
+
+    /**
+     * Filiais a ingerir (`RECEBIMENTO_INGEST_FIL_CODS`, CSV). Vazio = todas as
+     * filiais que o ERP devolver.
+     */
+    public recebimentoIngestFilCods: number[];
+
+    /**
      * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
      * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
      * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
@@ -51,6 +71,55 @@ export default class EnvironmentVars {
      */
     public conexosWriteEnabled: boolean;
     public conexosDryRun: boolean;
+
+    /**
+     * SN (Solicitação de Numerário, com299) — gates de go-live da escrita, INDEPENDENTES do
+     * global `conexosWriteEnabled`. `snLiveWriteEnabled` (`SN_LIVE_WRITE_ENABLED`, default false)
+     * é o kill-switch dedicado da SN. `solicitacaoNumerarioGcdCod` (`SN_GCD_COD`) é a Configuração
+     * de Documento (`gcd`) da "SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA" (HAR-confirmada = 150); o
+     * default 0 é sentinela "não confirmado" que TRAVA a escrita real.
+     */
+    public snLiveWriteEnabled: boolean;
+    public solicitacaoNumerarioGcdCod: number;
+
+    /**
+     * Numerário (fluxo de 3 telas do guia "telas Conexos"): conta financeira do recebimento fin014
+     * (`gerNum`, a MESMA da FIN_134) e a Configuração da nota de débito com297. `fin014ContaFinanceira`
+     * é fail-closed se ausente (não adivinhamos conta). O gcd da nota de débito é resolvido em runtime
+     * pelo NOME (`com297GcdNotaDebitoNome`); o numérico é um override opcional.
+     */
+    public fin014ContaFinanceira?: number;
+    public com297GcdNotaDebitoNome: string;
+    public com297GcdNotaDebito?: number;
+
+    /**
+     * Poll de autorização SEFAZ pós-homologação da NDe (`NDE_POLL_TIMEOUT_MS`/`NDE_POLL_INTERVAL_MS`).
+     * `vldAutorizado` continua `0` logo após homologar (SEFAZ é assíncrono) — o orquestrador faz
+     * polling até mudar, com teto de tempo. TIMEOUT não é erro: a etapa fica em `homologado` e retomar
+     * a alocação retoma o poll. Defaults conservadores (5 min de teto, 5 s de intervalo).
+     */
+    public ndePollTimeoutMs: number;
+    public ndePollIntervalMs: number;
+
+    /**
+     * Liga o pré-flight de ACL da conta de serviço antes de qualquer escrita do numerário REAL
+     * (`GET /api/permissoes/new/com297`: com300 UPDATE, com131 GERAR OBS, com297 HOMOLOGAR/CONTINGENCIA,
+     * com194 SELECT). `NDE_ACL_PREFLIGHT=false` desliga (default TRUE — fail-safe). O pré-flight é
+     * fail-closed: 401/403 na consulta → 403 na rota.
+     */
+    public ndeAclPreflight: boolean;
+
+    /**
+     * Liga o ajuste automático da condição de pagamento da SN quando a com194 acusa validação
+     * BLOQUEANTE de condição (`SN_COND_PGTO_AUTOAJUSTE=false` desliga; default TRUE).
+     *
+     * Existe porque esse ramo NÃO é exercitável em homologação — o cliente de teste do HML não tem
+     * condição sugerida no cadastro, então o ERP nunca acusa a pendência lá (ver
+     * `docs/e2e/gap-titulos-diagnostico.md`). Em produção ele dispara para clientes cujo cadastro a
+     * exige. Desligar mantém o fluxo conservador: sem o PUT, a finalização é recusada pelo próprio ERP
+     * com a mensagem dele, e o analista resolve na tela — nunca um documento com o título destruído.
+     */
+    public snCondPgtoAutoajuste: boolean;
 
     constructor({
         databaseConnectionString,
@@ -67,8 +136,20 @@ export default class EnvironmentVars {
         awsRegion,
         conexosWriteEnabled,
         conexosDryRun,
+        snLiveWriteEnabled,
+        solicitacaoNumerarioGcdCod,
         conexosCredEncKey,
         sispagEnabled,
+        recebimentosEnabled,
+        recebimentoIngestDias,
+        recebimentoIngestFilCods,
+        fin014ContaFinanceira,
+        com297GcdNotaDebitoNome,
+        com297GcdNotaDebito,
+        ndePollTimeoutMs,
+        ndePollIntervalMs,
+        ndeAclPreflight,
+        snCondPgtoAutoajuste,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -84,8 +165,20 @@ export default class EnvironmentVars {
         awsRegion: string;
         conexosWriteEnabled: boolean;
         conexosDryRun: boolean;
+        snLiveWriteEnabled: boolean;
+        solicitacaoNumerarioGcdCod: number;
         conexosCredEncKey?: string;
         sispagEnabled: boolean;
+        recebimentosEnabled: boolean;
+        recebimentoIngestDias: number;
+        recebimentoIngestFilCods: number[];
+        fin014ContaFinanceira?: number;
+        com297GcdNotaDebitoNome: string;
+        com297GcdNotaDebito?: number;
+        ndePollTimeoutMs: number;
+        ndePollIntervalMs: number;
+        ndeAclPreflight: boolean;
+        snCondPgtoAutoajuste: boolean;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -101,7 +194,19 @@ export default class EnvironmentVars {
         this.awsRegion = awsRegion;
         this.conexosWriteEnabled = conexosWriteEnabled;
         this.conexosDryRun = conexosDryRun;
+        this.snLiveWriteEnabled = snLiveWriteEnabled;
+        this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.conexosCredEncKey = conexosCredEncKey;
         this.sispagEnabled = sispagEnabled;
+        this.recebimentosEnabled = recebimentosEnabled;
+        this.recebimentoIngestDias = recebimentoIngestDias;
+        this.recebimentoIngestFilCods = recebimentoIngestFilCods;
+        this.fin014ContaFinanceira = fin014ContaFinanceira;
+        this.com297GcdNotaDebitoNome = com297GcdNotaDebitoNome;
+        this.com297GcdNotaDebito = com297GcdNotaDebito;
+        this.ndePollTimeoutMs = ndePollTimeoutMs;
+        this.ndePollIntervalMs = ndePollIntervalMs;
+        this.ndeAclPreflight = ndeAclPreflight;
+        this.snCondPgtoAutoajuste = snCondPgtoAutoajuste;
     }
 }

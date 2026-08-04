@@ -6,6 +6,7 @@ import ConexosBaseClient, { LEGACY_CONEXOS_TOKEN } from './client/ConexosBaseCli
 import ConexosSessionResolver from './client/ConexosSessionResolver.js';
 import PostgreeDatabaseClient from './client/database/PostgreeDatabaseClient.js';
 import EnvironmentProvider from './libs/environment/EnvironmentProvider.js';
+import { registerRecebimentosPorts } from './recebimentosContainer.js';
 
 let bootstrapped = false;
 
@@ -62,6 +63,9 @@ export const bootstrapAppContainer = async (): Promise<void> => {
 
     container.register(LEGACY_CONEXOS_TOKEN, { useValue: adapter });
     container.resolve(ConexosBaseClient); // eager warm (shared auth/HTTP/pagination)
+
+    // Frente IV — bind every port TOKEN to its stub/repo (idempotent, register-once).
+    registerRecebimentosPorts();
 
     await initDatabaseAndMigrate(env.environment === 'production');
 

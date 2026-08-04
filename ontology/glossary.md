@@ -1,6 +1,6 @@
 # Glossário do Domínio — Financeiro (Columbia Trading)
 
-Vocabulário das três frentes da Automação Financeira. Capturado da proposta
+Vocabulário das quatro frentes da Automação Financeira. Capturado da proposta
 ([`docs/proposta/`](../docs/proposta/)) e refinado pelas entrevistas do `OfficeHoursInterviewer`.
 Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem em
 [`../docs-contexto/03_ontologia.md`](../docs-contexto/03_ontologia.md).
@@ -41,12 +41,31 @@ Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem e
 
 | Termo | Definição |
 |-------|-----------|
-| **NC / ND** | Nota de Crédito / Nota de Débito. Nasce em planilha, sobe ao ERP como rascunho. |
+| **NC / ND** | Nota de Crédito / Nota de Débito. Nasce em planilha, sobe ao ERP como rascunho. **Não confundir com a NDe da Frente IV** — a Frente III não emite NC/ND, apenas anexa o documento justificativo que destrava a baixa. |
 | **Rascunho** | Estado da NC/ND no ERP enquanto falta o documento justificativo — não pode ser baixada. |
 | **GED** | Gestão Eletrônica de Documentos: repositório onde o documento justificativo é anexado para destravar a baixa. |
 | **SharePoint** | Diretório de origem onde o PDF justificativo é gerado. |
 | **Chave de correspondência** | Critério que liga o PDF à NC/ND — por nome de arquivo (nº da nota) ou por conteúdo (a confirmar). |
 | **Fila de exceções** | PDFs sem correspondência automática, roteados para supervisão do analista. |
+
+## Frente IV — Conciliação de Recebimentos (Nexxera ↔ Baixa ↔ NDe)
+
+Contrapartida de **entrada** (contas a receber) da Frente II. Pipeline de 6 módulos: importar → casar →
+ratear → aplicar regras → baixar/emitir NDe → observar. Ver [ADR-0022](decisions/0022-bootstrap-frente-iv-recebimentos-nde.md).
+
+| Termo | Definição |
+|-------|-----------|
+| **NDe** | **Nota de Débito Eletrônica.** Artefato **terminal** de um `Recebimento` executado (1—1). **Emitida pelo Conexos ERP** — nós apenas disparamos a emissão dentro de `executarRecebimento`; o registro local existe só para idempotência e auditoria. **Não é a "ND" da Frente III** (documento comercial preso em rascunho): o único elo é a palavra "débito". |
+| **TransacaoBancaria** | Movimento bancário único importado da Nexxera (crédito/débito/estorno/tarifa/juros). Onde o `correlationId` nasce; deduplicado por chave natural. |
+| **DocumentoAReceber** | Read-model do recebível em aberto lido do Conexos — o alvo da baixa. Sem tabela própria. |
+| **Recebimento** | **Agregado raiz** da conciliação: liga 1 `TransacaoBancaria` a N `DocumentoAReceber`. Ciclo `rascunho → aprovado → executado → estornado`. |
+| **RateioRecebimento** | Parcela de alocação dentro de um `Recebimento` (espelha `permuta_alocacao` da Frente I). Toda parcela tem finalidade identificada. |
+| **CreditoCliente** | Adiantamento **DE cliente** (inbound): o cliente paga antes de o recebível maturar. **Oposto direcional do `Adiantamento`/PROFORMA da Frente I** (que é adiantamento **A** um exportador). É saldo local consumível, **não é documento fiscal — não se "emite" um CreditoCliente**. |
+| **RegraRecebimento** | Regra configurável, versionada e explicável (encomenda %, adiantamento de cliente, multa/juros). Semântica deferida à Fase 4. |
+| **Classificação de match** | `única` \| `múltiplas` \| `parcial` \| `nenhuma`. Incerto **nunca** auto-baixa — vai para a fila manual. |
+| **Fila manual** | Créditos com match incerto ou ausente, roteados para decisão do analista. |
+| **Solicitação de Numerário (SN)** | Documento de **encomenda** gerado no Conexos via `com299/gerDocProcesso`. Hoje **dry-run**: o payload é montado e exibido, nenhuma escrita alcança o ERP. Não confundir com a NDe. |
+| **Write-ahead ledger** | Tabela `recebimento_execucao`: grava a intenção **antes** de chamar o ERP, garantindo que retry nunca produza dupla baixa nem NDe duplicada (invariante I-Receb-2). |
 
 ## Transversais
 

@@ -2,11 +2,11 @@
 
 **Versão atual:** 0.1.0  
 **Bootstrap:** 2026-06-10 (template a partir de `fechamento-processos` v0.10.2 — domínio **vazio**)  
-**Seeds:** [`/03_ontologia.md`](../docs-contexto/03_ontologia.md) (plataforma, herdado) · [`/03_ontologia_financeiro.md`](../docs-contexto/03_ontologia_financeiro.md) (domínio, seed das 3 frentes)
+**Seeds:** [`/03_ontologia.md`](../docs-contexto/03_ontologia.md) (plataforma, herdado) · [`/03_ontologia_financeiro.md`](../docs-contexto/03_ontologia_financeiro.md) (domínio, seed das 4 frentes)
 
 ## O que é esta pasta
 
-`/ontology/` é a **fonte de verdade do domínio** do produto Financeiro (Columbia Trading) — a **Automação Financeira** em três frentes (Permutas, SISPAG, Popula GED; ver [`../docs-contexto/03_ontologia_financeiro.md`](../docs-contexto/03_ontologia_financeiro.md)). Cada entidade, relacionamento, ação, regra de negócio e integração com sistemas externos tem representação aqui. As pastas de domínio **ainda estão vazias** — o domínio é modelado incrementalmente via `/feature-new`.
+`/ontology/` é a **fonte de verdade do domínio** do produto Financeiro (Columbia Trading) — a **Automação Financeira** em quatro frentes (Permutas, SISPAG, Popula GED, Conciliação de Recebimentos; ver [`../docs-contexto/03_ontologia_financeiro.md`](../docs-contexto/03_ontologia_financeiro.md)). Cada entidade, relacionamento, ação, regra de negócio e integração com sistemas externos tem representação aqui. As pastas de domínio **ainda estão vazias** — o domínio é modelado incrementalmente via `/feature-new`.
 
 O código TypeScript em `backend/` *implementa* a ontologia. A ontologia *define* o que deve existir. Discrepâncias são bugs — não na ontologia, no código.
 

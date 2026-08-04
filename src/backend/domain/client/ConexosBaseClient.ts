@@ -1,5 +1,6 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import ConexosError from '../errors/ConexosError.js';
+import ErpResponseReader from '../errors/ErpResponseReader.js';
 import RetryExecutor from '../libs/executor/RetryExecutor.js';
 
 export const LEGACY_CONEXOS_TOKEN = Symbol('LegacyConexosShape');
@@ -69,6 +70,16 @@ export interface LegacyConexosShape {
      * double the baixa; this surfaces the 401 so the reconciliation fails closed.
      */
     postGenericOnce: <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ) => Promise<T>;
+    /**
+     * Single-attempt PUT (NO 401-retry) for the com300 fiscal read-modify-write
+     * (`PUT com300`). The RMW rewrites the whole `finDocFiscal`; a silent re-PUT
+     * on 401 could clobber state, so the 401 surfaces (fail-closed).
+     */
+    putGenericOnce: <T>(
         path: string,
         body: Record<string, unknown>,
         opts?: { filCod?: number },
@@ -145,6 +156,10 @@ export default class ConexosBaseClient {
             delayMs: 500,
             shouldLog: true,
             jitterMs: 200,
+            // Uma recusa do ERP (4xx que não seja 408/429) é veredito sobre o pedido, não
+            // indisponibilidade: a 2ª tentativa devolve a mesma resposta. Sem este gate, cada 400 de
+            // leitura custava duas chamadas ao ERP e o dobro do tempo até o analista ver o motivo.
+            shouldRetry: (error: unknown) => !ErpResponseReader.isDeterministicRefusal(error),
         });
     }
 
@@ -170,6 +185,13 @@ export default class ConexosBaseClient {
         body: Record<string, unknown>,
         opts?: { filCod?: number },
     ): Promise<T> => this.legacy.postGenericOnce<T>(path, body, opts);
+
+    /** Single-attempt PUT (no 401 retry) — com300 fiscal RMW. See `LegacyConexosShape`. */
+    public putGenericOnce = <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ): Promise<T> => this.legacy.putGenericOnce<T>(path, body, opts);
 
     /**
      * Single-attempt multipart upload (no 401-retry) — para o `carregar` do `.RET`

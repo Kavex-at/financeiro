@@ -270,6 +270,53 @@ export async function reconciliarAdiantamento(
   return (await res.json()) as ReconciliarResult
 }
 
+/** Resultado da geração de UMA Solicitação de Numerário (B1 — fluxo de 3 telas). */
+export interface GerarNumerarioResult {
+  adiantamentoDocCod: string
+  dryRun: boolean
+  writeEnabled: boolean
+  status: 'dry-run' | 'settled' | 'skipped' | 'error'
+  valor: number
+  /** docCod da SN (Tela 1, com299). */
+  docCod?: number
+  /** docCod da nota de débito (Tela 3, com297). */
+  notaDebitoDocCod?: number
+  /** Etapa alcançada: sn | sn-finalizar | fin014 | nota-debito | concluido. */
+  etapa?: string
+  erro?: string
+}
+
+/**
+ * Gera a SOLICITAÇÃO DE NUMERÁRIO de um adiantamento (`POST /permutas/adiantamentos/:docCod/gerar-numerario`).
+ * Substitui a baixa fin010 no "Processar". `valor` = `valorASerUsado` do modal (moeda negociada,
+ * sem conversão). Escrita gated no servidor (dry-run por padrão).
+ */
+export async function gerarNumerario(
+  docCod: string,
+  opts: { valor: number; dryRun?: boolean },
+): Promise<GerarNumerarioResult> {
+  const res = await apiFetch(
+    `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/gerar-numerario`,
+    {
+      method: 'POST',
+      headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        valor: opts.valor,
+        ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
+      }),
+    },
+  )
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+  return (await res.json()) as GerarNumerarioResult
+}
+
 /**
  * Executa em LOTE a baixa de TODAS as automáticas (aba "Automáticas") num único request —
  * `POST /permutas/reconciliar-lote`. O backend itera server-side (continue-on-error) e devolve o

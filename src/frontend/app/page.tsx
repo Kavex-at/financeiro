@@ -1,11 +1,11 @@
 import Link from 'next/link'
-import { ArrowLeftRight, Banknote, Lock } from 'lucide-react'
+import { ArrowLeftRight, Banknote, Landmark, Lock } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
 import { AdminHomeCard } from '@/components/home/AdminHomeCard'
-import { isSispagEnabled } from '@/lib/features'
+import { isRecebimentosEnabled, isSispagEnabled } from '@/lib/features'
 
 /**
  * Home (`/`) — landing do Financeiro. Autenticada pelo `RouteGate` em
@@ -14,6 +14,7 @@ import { isSispagEnabled } from '@/lib/features'
  */
 export default function HomePage() {
   const sispagOn = isSispagEnabled()
+  const recebimentosOn = isRecebimentosEnabled()
   return (
     <div className="space-y-6">
       <PageHeader
@@ -54,6 +55,32 @@ export default function HomePage() {
             {sispagOn ? (
               <Button asChild>
                 <Link href="/sispag">Abrir Painel SISPAG</Link>
+              </Button>
+            ) : (
+              <Button disabled aria-disabled>
+                <Lock className="size-4" aria-hidden /> Indisponível em produção
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+        <Card className={recebimentosOn ? undefined : 'opacity-70'}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Landmark className="size-4" aria-hidden /> Recebimentos
+              {recebimentosOn ? null : (
+                <Badge variant="secondary" className="ml-auto gap-1">
+                  <Lock className="size-3" aria-hidden /> Indisponível
+                </Badge>
+              )}
+            </CardTitle>
+            <CardDescription>
+              Conciliação de créditos bancários (Nexxera): importação, matching e baixa assistida com NDe (Frente IV).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {recebimentosOn ? (
+              <Button asChild>
+                <Link href="/recebimentos">Abrir Painel de Recebimentos</Link>
               </Button>
             ) : (
               <Button disabled aria-disabled>
