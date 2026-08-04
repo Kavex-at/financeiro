@@ -2,7 +2,7 @@
 name: conexos-fin095-extrato
 type: integration
 system: Conexos ERP (Tesouraria — Extratos)
-ontology_version: "0.12"
+ontology_version: "0.15"
 implementation_status: implemented
 status: active
 owners: [yuri]
@@ -12,10 +12,11 @@ related_files:
   - src/backend/domain/service/recebimentos/IngestaoTransacoesService.ts
   - src/backend/domain/service/recebimentos/normalizarLancamento.ts
   - src/backend/jobs/ingest-extratos.ts
+  - .github/workflows/ingest-extratos.yml
 endpoints_read:
   - "fin133/list — contas financeiras da filial (gerNum, gerDes, saldos, qtde por lado)"
   - "fin095/list — lançamentos do extrato, filtrados por gerNum + tipo + janela de data"
-related_decisions: ["0022", "0023"]
+related_decisions: ["0022", "0023", "0028"]
 ---
 
 ## O que esta integração faz
@@ -85,9 +86,25 @@ incompleta **sem erro**. O `onCapHit` transforma isso em `ExtratoTruncadoError`.
 - **`fin014`** (baixa do recebível) é ESCRITA e vive fora deste client — Fase 5,
   gated.
 
+## Cadência e janela (ADR-0028)
+
+**De hora em hora**, via `.github/workflows/ingest-extratos.yml` (`20 * * * *`), com
+`workflow_dispatch` para execução manual e **até 3 tentativas** com backoff. O minuto
+`:20` evita a colisão de sessão com os crons que rodam no `:00` (Permutas `0 9,15,21`;
+SISPAG `0 10`).
+
+A janela lida é `RECEBIMENTO_INGEST_DIAS` (default 90) **recortada pelo piso**
+`CONEXOS_EXTRATO_SYNC_START_DATE` (default `2026-08-03`) — a efetiva é a interseção
+das duas. O piso é duro e vale inclusive no backfill manual: `exiDtaLcto#GE` nunca
+recebe epoch anterior a ele.
+
 ## Limitação operacional
 
 O Conexos limita **sessões simultâneas por usuário** (`LOGIN_ERROR_MAX_SESSIONS`).
 Cada processo Node faz login próprio, então o cron da ingestão compete por sessão
-com o app rodando e com qualquer job manual. Antes de agendar o cron, provisionar
-um usuário de robô dedicado.
+com o app rodando e com qualquer job manual.
+
+⚠️ **Débito ABERTO:** o usuário de robô dedicado **não** foi provisionado, e a cadência
+passou de "não agendada" para **horária** (ADR-0028) — a pressão sobre os slots subiu.
+O `:20` e o `BoundedConcurrency` (`FANOUT_LIMIT_RECEBIMENTOS`) mitigam; o usuário
+dedicado é a correção real. Ver `_inbox/frente-iv-fase1-followups.md` item 1 (P1).

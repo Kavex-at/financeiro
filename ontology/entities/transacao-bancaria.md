@@ -89,9 +89,11 @@ Nexxera** (não o ERP). É **READ-ONLY no Nexxera** (só importa) e a única esc
 **obrigação a pagar** (dinheiro que SAI). São frentes espelhadas: a Frente IV é o *inbound /
 receivables* da Frente II (*outbound / payments*). Ver `entities/titulo-a-pagar.md`.
 
-## Fora de escopo (Fase 0 — SKELETON)
+## Fora de escopo (Fase 0 — SKELETON) — resolvido
 
-- Mapeamento wire do extrato, formato (CNAB240 / OFX / JSON API), auth e canal (API vs SFTP): **Fase
-  1**, gated pelo spike **O7** (`integrations/nexxera.md`).
-- A importação real (`importarTransacoesNexxera`) é modelada como ação (skeleton) mas implementada na
-  Fase 1.
+- ~~Mapeamento wire do extrato, formato (CNAB240 / OFX / JSON API), auth e canal (API vs SFTP),
+  gated pelo spike **O7**~~ → **resolvido pelo ADR-0023**: a fonte é o **Conexos**
+  (`fin133` contas → `fin095` lançamentos), **não** a Nexxera. Ver
+  `integrations/conexos-fin095-extrato.md`.
+- A importação real é a ação **`importarTransacoesExtrato`** (`implemented`), com cadência **horária**
+  e piso de janela em **2026-08-03** (ADR-0028).

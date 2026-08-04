@@ -1,0 +1,88 @@
+name: Ingestão horária de Extratos (Frente IV)
+
+# Cron GRATUITO via GitHub Actions (Render Cron Job é pago). Roda a ingestão do
+# EXTRATO BANCÁRIO da Frente IV: Conexos `fin133` (contas) → `fin095` (lançamentos),
+# normaliza, deduplica por chave natural e grava em `transacao_bancaria`.
+# READ-ONLY no ERP — a única escrita é o Postgres próprio.
+#
+# Roda AQUI, num runner do GitHub, e não dentro do serviço web do Render: assim o
+# job existe UMA vez, e não uma por instância da aplicação.
+#
+# ⚠️ Minuto :20 é deliberado. O Conexos limita sessões simultâneas por usuário
+# (`LOGIN_ERROR_MAX_SESSIONS`, ~3 slots) e os outros crons disparam no minuto :00
+# (Permutas `0 9,15,21`, SISPAG `0 10`). Rodar de hora em hora no :00 colidiria com
+# eles duas vezes por dia — o :20 mantém a janela livre.
+#
+# ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main).
+# Enquanto este arquivo não estiver em `main`, use o "Run workflow" manual
+# (workflow_dispatch) na aba Actions.
+on:
+  schedule:
+    # De hora em hora, no minuto :20 (UTC).
+    - cron: '20 * * * *'
+  workflow_dispatch: {} # execução manual (dev, teste e recuperação de emergência)
+
+# Evita duas execuções simultâneas do pipeline de extratos. O advisory lock
+# (`RECEBIMENTO_INGEST_LOCK_KEY`) já protege o banco contra sobreposição — inclusive
+# contra o trigger manual e o upload .xlsx —, mas serializar aqui evita queimar um
+# runner só para receber 409.
+concurrency:
+  group: ingest-extratos
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    # 30min cobre as 3 tentativas + backoff (a ingestão em si roda em minutos).
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      # Nomes EXATOS lidos pelo EnvironmentProvider/Conexos (iguais aos outros crons).
+      databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      CONEXOS_BASE_URL: ${{ secrets.CONEXOS_BASE_URL }}
+      CONEXOS_USERNAME: ${{ secrets.CONEXOS_USERNAME }}
+      CONEXOS_PASSWORD: ${{ secrets.CONEXOS_PASSWORD }}
+      CONEXOS_FIL_COD: ${{ vars.CONEXOS_FIL_COD }}
+      # Piso da janela (ADR-0028). Ausente = default do código (2026-08-03).
+      CONEXOS_EXTRATO_SYNC_START_DATE: ${{ vars.CONEXOS_EXTRATO_SYNC_START_DATE }}
+      # Opcionais: janela em dias e filiais. Ausentes = 90 dias e todas as filiais.
+      RECEBIMENTO_INGEST_DIAS: ${{ vars.RECEBIMENTO_INGEST_DIAS }}
+      RECEBIMENTO_INGEST_FIL_CODS: ${{ vars.RECEBIMENTO_INGEST_FIL_CODS }}
+      environment: production
+      client_name: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependências (com devDeps p/ tsx)
+        run: npm ci --include=dev
+      - name: Aplicar migrations pendentes (idempotente)
+        run: npm run migrate
+      # Até 3 tentativas com backoff (60s, 120s). O Actions não tem retry nativo de
+      # job, daí o laço. Retentar é SEGURO porque o job é idempotente: a dedupe é por
+      # `natural_key`, então uma tentativa que morreu no meio não duplica nada na
+      # seguinte — reimporta as mesmas linhas e o `ON CONFLICT` as conta como
+      # deduplicadas. Também recupera o caso `IngestLockBusyError` (409), quando a
+      # execução da hora anterior ainda estava terminando.
+      - name: Ingestão de extratos (até 3 tentativas)
+        run: |
+          for tentativa in 1 2 3; do
+            echo "::group::tentativa $tentativa de 3"
+            if npm run job:ingest-extratos; then
+              echo "::endgroup::"
+              echo "ingestão concluída na tentativa $tentativa"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "tentativa $tentativa falhou"
+            if [ "$tentativa" -lt 3 ]; then
+              espera=$((tentativa * 60))
+              echo "aguardando ${espera}s antes da próxima tentativa"
+              sleep "$espera"
+            fi
+          done
+          echo "as 3 tentativas falharam — extrato NÃO ingerido nesta hora"
+          exit 1

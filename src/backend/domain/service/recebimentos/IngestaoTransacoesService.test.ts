@@ -47,7 +47,10 @@ const buildBounded = () => ({
     ),
 });
 
-const build = (o: { contas?: unknown[]; lockLivre?: boolean } = {}) => {
+/** Piso de ingestão do go-live da Frente IV (ADR-0028), em UTC 00:00. */
+const PISO_PADRAO = new Date('2026-08-03T00:00:00.000Z');
+
+const build = (o: { contas?: unknown[]; lockLivre?: boolean; startDate?: Date } = {}) => {
     const extrato = {
         listContas: jest
             .fn()
@@ -84,6 +87,7 @@ const build = (o: { contas?: unknown[]; lockLivre?: boolean } = {}) => {
         getEnvironmentVars: jest.fn().mockResolvedValue({
             recebimentoIngestDias: 90,
             recebimentoIngestFilCods: [],
+            recebimentoIngestStartDate: o.startDate ?? PISO_PADRAO,
         }),
     } as unknown as jest.Mocked<EnvironmentProvider>;
 
@@ -127,6 +131,50 @@ describe('IngestaoTransacoesService — advisory lock', () => {
         const { service, db } = build();
         await service.run({ filCod: 1, periodo, correlationId: 'c', triggeredBy: 'manual' });
         expect(db.withAdvisoryLock).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * Idempotência: rodar a sincronização duas vezes não pode duplicar transação.
+ * A garantia REAL é a `UNIQUE (natural_key)` + `ON CONFLICT` do banco (migration
+ * 0032); aqui se fixa a metade que vive no serviço — que ele propague honestamente
+ * o que o repositório reportou, em vez de contar toda releitura como novidade.
+ */
+describe('IngestaoTransacoesService — idempotência', () => {
+    it('segunda run da mesma janela reporta 0 inseridas e tudo deduplicado', async () => {
+        const { service, transacaoRepo } = build();
+
+        // 1ª run: toda linha é nova.
+        (transacaoRepo.upsertMany as jest.Mock).mockResolvedValue({
+            inseridas: 1,
+            deduplicadas: 0,
+        });
+        const primeira = await service.runMany(inputMany);
+
+        // 2ª run, mesma janela: o `ON CONFLICT (natural_key)` barra tudo.
+        (transacaoRepo.upsertMany as jest.Mock).mockResolvedValue({
+            inseridas: 0,
+            deduplicadas: 1,
+        });
+        const segunda = await service.runMany(inputMany);
+
+        expect(primeira.inseridas).toBe(primeira.total);
+        expect(segunda.total).toBe(primeira.total); // releu a mesma carteira…
+        expect(segunda.inseridas).toBe(0); // …e não gravou nada de novo.
+        expect(segunda.deduplicadas).toBe(segunda.total);
+    });
+
+    it('a run de auditoria registra as contagens que o job vai logar', async () => {
+        const { service, runRepo } = build();
+        const result = await service.runMany(inputMany);
+
+        const finish = (runRepo.finishRun as jest.Mock).mock.calls[0][0];
+        expect(finish).toMatchObject({
+            status: 'success',
+            totalLidas: result.total,
+            totalInseridas: result.inseridas,
+            totalDeduplicadas: result.deduplicadas,
+        });
     });
 });
 
@@ -239,13 +287,81 @@ describe('IngestaoTransacoesService — configuração', () => {
         expect(await service.resolverFilCods()).toEqual([3]);
     });
 
-    it('resolverPeriodo usa a janela da env e aceita override', async () => {
-        const { service } = build();
-        const p = await service.resolverPeriodo();
-        const dias = Math.round((p.ate.getTime() - p.de.getTime()) / 86400000);
-        expect(dias).toBe(90);
+    it('resolverPeriodo usa a janela da env e aceita override quando ela já começa depois do piso', async () => {
+        // Relógio bem depois do piso: 90 e 30 dias atrás continuam > 2026-08-03,
+        // então o recorte não morde e a janela é a pedida.
+        jest.useFakeTimers().setSystemTime(new Date('2027-06-01T12:00:00.000Z'));
+        try {
+            const { service } = build();
+            const p = await service.resolverPeriodo();
+            expect(Math.round((p.ate.getTime() - p.de.getTime()) / 86400000)).toBe(90);
 
-        const p30 = await service.resolverPeriodo(30);
-        expect(Math.round((p30.ate.getTime() - p30.de.getTime()) / 86400000)).toBe(30);
+            const p30 = await service.resolverPeriodo(30);
+            expect(Math.round((p30.ate.getTime() - p30.de.getTime()) / 86400000)).toBe(30);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+});
+
+/**
+ * Piso da janela de ingestão (ADR-0028). O extrato anterior ao go-live pertence ao
+ * processo manual antigo: importá-lo encheria a carteira do analista de pendências
+ * falsas. Estes testes fixam o relógio porque o recorte é relativo a "hoje".
+ */
+describe('IngestaoTransacoesService — piso de 2026-08-03', () => {
+    afterEach(() => jest.useRealTimers());
+
+    it('recorta a janela default: lançamento anterior ao piso NÃO é buscado', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
+        const { service } = build();
+
+        // 90 dias antes de 2026-08-10 seria 2026-05-12 — bem antes do piso.
+        const p = await service.resolverPeriodo();
+        expect(p.de.toISOString()).toBe('2026-08-03T00:00:00.000Z');
+    });
+
+    it('recorta TAMBÉM o backfill explícito — `dias` grande não fura o piso', async () => {
+        // O caminho que o operador usa no painel (`POST /recebimentos/ingestao { dias }`)
+        // e o `DIAS=` do job. Sem este recorte, um 365 digitado reabriria a carteira
+        // inteira de volta ao início do ano.
+        jest.useFakeTimers().setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
+        const { service } = build();
+
+        const p = await service.resolverPeriodo(365);
+        expect(p.de.toISOString()).toBe('2026-08-03T00:00:00.000Z');
+    });
+
+    it('NÃO é pegajoso: passado o tempo, a janela volta a ser a pedida', async () => {
+        // Garante que o piso é um MÍNIMO, não uma data de início fixa — senão a
+        // ingestão iria relendo 2026-08-03 em diante para sempre, crescendo sem fim.
+        jest.useFakeTimers().setSystemTime(new Date('2027-01-01T00:00:00.000Z'));
+        const { service } = build();
+
+        const p = await service.resolverPeriodo(30);
+        expect(p.de.toISOString()).toBe('2026-12-02T00:00:00.000Z');
+    });
+
+    it('respeita o piso vindo da env (CONEXOS_EXTRATO_SYNC_START_DATE)', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-09-30T12:00:00.000Z'));
+        const { service } = build({ startDate: new Date('2026-09-01T00:00:00.000Z') });
+
+        const p = await service.resolverPeriodo(90);
+        expect(p.de.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+    });
+
+    it('o piso é o `de` REAL enviado ao fin095, não só o retorno de resolverPeriodo', async () => {
+        // Fecha o ciclo: recortar a janela não serve de nada se a leitura usar outra.
+        jest.useFakeTimers().setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
+        const { service, extrato } = build();
+
+        const periodo = await service.resolverPeriodo(365);
+        await service.runMany({ ...inputMany, periodo });
+
+        const chamadas = (extrato.listLancamentos as jest.Mock).mock.calls;
+        expect(chamadas.length).toBeGreaterThan(0);
+        for (const [args] of chamadas) {
+            expect(args.de.getTime()).toBeGreaterThanOrEqual(PISO_PADRAO.getTime());
+        }
     });
 });

@@ -108,6 +108,47 @@ describe('EnvironmentProvider', () => {
             delete process.env.SISPAG_ENABLED;
         });
 
+        it('recebimentosEnabled: liberado em produção; só RECEBIMENTOS_ENABLED=false desliga', async () => {
+            // ADR-0028. Ao contrário do SISPAG acima, NÃO é fail-safe: a Frente IV
+            // está em produção, então ausência da env significa HABILITADO. Se este
+            // teste voltar a exigir `false` em produção sem env, o gate foi
+            // reintroduzido e a frente sumiu do ar.
+            const resolve = async () => {
+                const p = new EnvironmentProvider();
+                return (await p.getEnvironmentVars()).recebimentosEnabled;
+            };
+            // sem env + produção → HABILITADO (o oposto do SISPAG)
+            delete process.env.RECEBIMENTOS_ENABLED;
+            process.env.environment = 'production';
+            expect(await resolve()).toBe(true);
+            // kill-switch: só `false` desliga
+            process.env.RECEBIMENTOS_ENABLED = 'false';
+            expect(await resolve()).toBe(false);
+            // qualquer outro valor mantém ligado
+            process.env.RECEBIMENTOS_ENABLED = 'true';
+            expect(await resolve()).toBe(true);
+            delete process.env.RECEBIMENTOS_ENABLED;
+        });
+
+        it('recebimentoIngestStartDate: default 2026-08-03, override e valor inválido', async () => {
+            const resolve = async () => {
+                const p = new EnvironmentProvider();
+                return (await p.getEnvironmentVars()).recebimentoIngestStartDate;
+            };
+            // default do go-live (ADR-0028)
+            expect((await resolve()).toISOString()).toBe('2026-08-03T00:00:00.000Z');
+            // override válido
+            process.env.CONEXOS_EXTRATO_SYNC_START_DATE = '2026-09-15';
+            expect((await resolve()).toISOString()).toBe('2026-09-15T00:00:00.000Z');
+            // lixo cai no default em vez de virar Invalid Date — que envenenaria a
+            // comparação da janela e faria a ingestão trazer nada, em silêncio.
+            process.env.CONEXOS_EXTRATO_SYNC_START_DATE = 'ontem';
+            const fallback = await resolve();
+            expect(Number.isNaN(fallback.getTime())).toBe(false);
+            expect(fallback.toISOString()).toBe('2026-08-03T00:00:00.000Z');
+            delete process.env.CONEXOS_EXTRATO_SYNC_START_DATE;
+        });
+
         it('does not call SSM in local mode', async () => {
             const provider = new EnvironmentProvider();
             await provider.getEnvironmentVars();

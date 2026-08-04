@@ -114,6 +114,24 @@ describe('normalizarLancamento', () => {
         expect(t.id).toBe(buildTransacaoId(t.naturalKey));
     });
 
+    it('a MESMA linha em runs diferentes converge para a mesma identidade', () => {
+        // O cenário real do cron horário: cada execução tem `runId`/`importadoEm`
+        // novos. Se a identidade dependesse deles, o `ON CONFLICT (natural_key)`
+        // não bateria e a carteira duplicaria a cada hora — 24 cópias por dia.
+        const run1 = normalizarLancamento(lancamento(), {
+            runId: 'run-1',
+            importadoEm: new Date('2026-08-04T10:00:00Z'),
+        });
+        const run2 = normalizarLancamento(lancamento(), {
+            runId: 'run-2',
+            importadoEm: new Date('2026-08-04T11:00:00Z'),
+        });
+
+        expect(run2.naturalKey).toBe(run1.naturalKey);
+        expect(run2.id).toBe(run1.id);
+        expect(run2.correlationId).toBe(run1.correlationId);
+    });
+
     it('status é SEMPRE importada, mesmo quando o ERP já conciliou', () => {
         // A conciliação do fin095 é banco × sistema do ERP; a nossa é crédito ×
         // processo do cliente. Mapear uma na outra faria o painel declarar

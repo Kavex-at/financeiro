@@ -17,6 +17,14 @@ open-gap:
 
 # Integração: Nexxera (import de extrato bancário — DIRETO) — SKELETON
 
+> ⛔ **SUPERSEDIDO pelo ADR-0023 (D1/D2).** A Frente IV **não** lê o extrato da Nexxera: a fonte real é
+> o **Conexos** (`fin133` contas → `fin095` lançamentos) e o spike **O7 está ENCERRADO**. A integração
+> viva é `integrations/conexos-fin095-extrato.md`; a ação é
+> `actions/recebimentos/importar-transacoes-extrato.md`. Este arquivo permanece como registro
+> histórico da hipótese inicial — não o use como especificação.
+>
+> ---
+>
 > **SKELETON (Fase 0). Integração NOVA.** A Frente IV importa as movimentações bancárias
 > **diretamente do Nexxera** (decisão Yuri, 2026-07-24) — **não** via Conexos (o SISPAG assume que o
 > ERP fala com o Nexxera; aqui é um **client direto novo**). O **canal é DESCONHECIDO**: pode ser

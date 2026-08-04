@@ -68,6 +68,12 @@ export interface IngestaoTransacoesResult {
     importadas?: TransacaoBancaria[];
     total: number;
     deduplicadas: number;
+    /**
+     * Linhas efetivamente INSERIDAS (as demais já existiam). Vem do
+     * `RETURNING (xmax = 0)` do `upsertMany`. É o número que PROVA a idempotência:
+     * numa reingestão da mesma janela vem `0` — por isso o job o registra no log.
+     */
+    inseridas: number;
 }
 
 /** Result of the matching engine — Módulo 2. */

@@ -1,5 +1,54 @@
 # Columbia Financeiro — Changelog
 
+## v0.20.0 (2026-08-04) — Frente IV em PRODUÇÃO ("Gestão de Adiantamentos") + extrato de hora em hora
+
+- **feat(recebimentos):** a **Frente IV vai ao ar**. O gate do **frontend** sai por completo
+  (`isRecebimentosEnabled` deixa de existir): o card da home nasce habilitado e `/recebimentos` não tem
+  mais tela de bloqueio. O botão ficava apagado em produção porque a flag só ligava com
+  `NEXT_PUBLIC_ENV=local` — e **um build da Vercel nunca é `local`**. Deliberadamente **sem** espelho da
+  flag no frontend: uma `NEXT_PUBLIC_*` é assada no build, então o espelho só valeria no próximo deploy —
+  tarde demais para uma emergência. Ver **ADR-0028**.
+- **feat(recebimentos):** `RECEBIMENTOS_ENABLED` sobrevive como **kill-switch** com o fail-safe
+  **INVERTIDO** — ausência da env agora significa **habilitado**; só `false` desliga (403 via
+  `recebimentosGate`, **sem redeploy**, com o dashboard do Render como fonte da verdade). Assimétrico em
+  relação ao `SISPAG_ENABLED` (que segue fail-safe) de propósito: o SISPAG ainda tem legs dormentes, a
+  Frente IV não.
+- **feat(ui):** a frente passa a se chamar **"Gestão de Adiantamentos"** — H1 da página, card da home e
+  título da aba (novo `app/recebimentos/layout.tsx`; a página é `'use client'` e o Next ignora
+  `export const metadata` em client component). A **rota, as entidades e o vocabulário da ontologia
+  seguem "Recebimento"** — é rótulo de UI, registrado no ADR para a divergência ser lida como decisão e
+  não como drift.
+- **feat(recebimentos):** **piso DURO de ingestão do extrato em `2026-08-03`**
+  (`CONEXOS_EXTRATO_SYNC_START_DATE`). A janela efetiva é a **interseção** com `RECEBIMENTO_INGEST_DIAS`,
+  e o piso vale **inclusive no backfill manual** (`DIAS=` e `POST /recebimentos/ingestao { dias }`):
+  crédito anterior ao go-live pertence ao processo manual antigo e entraria na carteira do analista como
+  pendência falsa. É um **mínimo, não uma data fixa** — passado o tempo a janela volta a ser a pedida,
+  senão a ingestão releria 2026-08-03 em diante para sempre.
+- **feat(recebimentos):** o `job:ingest-extratos` sai de "não agendado" para **DE HORA EM HORA**, via
+  `.github/workflows/ingest-extratos.yml` (`20 * * * *`). Roda **num runner**, não dentro de cada
+  instância web. O minuto `:20` é deliberado: os outros crons disparam no `:00` (Permutas `0 9,15,21`,
+  SISPAG `0 10`) e o Conexos limita sessões simultâneas (`LOGIN_ERROR_MAX_SESSIONS`). **Até 3 tentativas**
+  com backoff — retentar é seguro **porque** a dedupe é por `natural_key`, e ainda recupera o 409 de lock
+  ocupado. Sobreposição barrada em duas camadas (`concurrency` do workflow + advisory lock).
+- **feat(recebimentos):** `inseridas` passa a sair no `IngestaoTransacoesResult` e o job loga
+  início/fim/duração + `lidas/inseridas/deduplicadas`. É o número que **prova** a idempotência: numa
+  reingestão da mesma janela vem `0`.
+- **chore:** **sem migration** — `UNIQUE (natural_key)` existe desde a `0032` e o `upsertMany` já usa
+  `ON CONFLICT … WHERE status = 'importada'`. A chave natural não muda, então a primeira execução da
+  sincronização atualizada **não duplica** o que já está gravado.
+- **docs:** `CONEXOS_EXTRATO_SYNC_START_DATE`, `RECEBIMENTO_INGEST_DIAS` e `RECEBIMENTO_INGEST_FIL_CODS`
+  documentados em `.env.example` e `DEPLOY.md` (as duas últimas não estavam em lugar nenhum).
+- **docs(ontology):** ação `importarTransacoesNexxera` **renomeada** para `importarTransacoesExtrato`
+  (a chave do `_index.json` apontava para um arquivo que não existe mais) e promovida de `planned` para
+  `implemented`; integração `conexos-fin095-extrato` **indexada** (estava fora do `_index`);
+  `integrations/nexxera.md` marcada como **supersedida** pelo ADR-0023. Inbox item 5 (cron) **resolvido**.
+- **⚠️ débito P1 AGRAVADO:** o **usuário-robô dedicado no Conexos** segue **aberto** e o cron passou a
+  rodar 24×/dia. O `:20` e o `BoundedConcurrency` mitigam; o usuário dedicado é a correção real.
+
+> Contém também as três entregas que já estavam em `main` sem entrada de changelog: **upload de extrato
+> `.xlsx`** (canal manual Bradesco, `39178de`), **alocar contra SN existente** (`com299/list` + ramo do
+> settle, `fccf332`) e a **conta financeira (`gerNum`) confirmada no upload** (`5d41cd1`).
+
 ## v0.19.0 (2026-07-30) — Frente IV: extrato REAL (Conexos fin095) + processos reais (imp021)
 
 - **feat(recebimentos):** **Módulo 1 implementado** — a carteira de créditos deixa de ser fixture. O
