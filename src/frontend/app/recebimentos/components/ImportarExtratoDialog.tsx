@@ -29,8 +29,10 @@ import { fetchFiliais } from '@/lib/api'
 import type { Filial } from '@/lib/types'
 import { formatBRL } from '@/lib/utils'
 import {
+  fetchContasFinanceiras,
   importExtrato,
   previewImportExtrato,
+  type ContaFinanceira,
   type ImportExtratoPreview,
 } from '@/lib/recebimentos'
 
@@ -51,12 +53,18 @@ const msgErro = (e: unknown) => (e instanceof Error ? e.message : 'Falha inesper
  * créditos para a MESMA carteira do canal automático (fin095). O parsing é no SERVIDOR (segue a doutrina
  * de raw-payload + dedup; difere do spec `design-system/excel-import-dialog.md`, que parseia no cliente).
  *
- * Fluxo confirm-before-commit: escolher filial → selecionar arquivo → PREVIEW (dry-run, sem escrita) →
- * Confirmar → importação. A filial é obrigatória porque o extrato só traz agência/conta, não o `filCod`.
+ * Fluxo confirm-before-commit: escolher filial → escolher conta financeira → selecionar arquivo →
+ * PREVIEW (dry-run, sem escrita) → Confirmar → importação. A filial é obrigatória porque o extrato
+ * só traz agência/conta, não o `filCod`. A conta financeira (`gerNum`) também é obrigatória pelo
+ * mesmo motivo — sem ela a baixa (`fin014`) não sabe em qual conta lançar (a UI de Alocar bloqueia
+ * "Processar" quando falta).
  */
 export function ImportarExtratoDialog({ open, onOpenChange, onImported }: ImportarExtratoDialogProps) {
   const [filiais, setFiliais] = React.useState<Filial[]>([])
   const [filCod, setFilCod] = React.useState<number | null>(null)
+  const [contas, setContas] = React.useState<ContaFinanceira[]>([])
+  const [gerNum, setGerNum] = React.useState<number | null>(null)
+  const [carregandoContas, setCarregandoContas] = React.useState(false)
   const [file, setFile] = React.useState<File | null>(null)
   const [preview, setPreview] = React.useState<ImportExtratoPreview | null>(null)
   const [validando, setValidando] = React.useState(false)
@@ -74,6 +82,8 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
   React.useEffect(() => {
     if (!open) {
       setFilCod(null)
+      setContas([])
+      setGerNum(null)
       setFile(null)
       setPreview(null)
       setErro(null)
@@ -96,13 +106,36 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
     }
   }, [open])
 
-  const rodarPreview = React.useCallback(async (f: File, fc: number) => {
+  // Recarrega as contas financeiras (fin133) sempre que a filial muda — a conta escolhida
+  // anteriormente pode não existir na nova filial, então `gerNum` sempre reseta junto.
+  React.useEffect(() => {
+    setGerNum(null)
+    setContas([])
+    if (filCod === null) return
+    let vivo = true
+    setCarregandoContas(true)
+    fetchContasFinanceiras(filCod)
+      .then((r) => {
+        if (vivo) setContas(r)
+      })
+      .catch(() => {
+        if (vivo) setErro('Não foi possível carregar as contas financeiras.')
+      })
+      .finally(() => {
+        if (vivo) setCarregandoContas(false)
+      })
+    return () => {
+      vivo = false
+    }
+  }, [filCod])
+
+  const rodarPreview = React.useCallback(async (f: File, fc: number, gn: number) => {
     setValidando(true)
     setErro(null)
     setPreview(null)
     setExcluidos(new Set())
     try {
-      setPreview(await previewImportExtrato(f, fc))
+      setPreview(await previewImportExtrato(f, fc, gn))
     } catch (e) {
       setErro(msgErro(e))
     } finally {
@@ -116,16 +149,26 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
     setPreview(null)
     setErro(null)
     setExcluidos(new Set())
-    if (f && filCod !== null) void rodarPreview(f, filCod)
+    if (f && filCod !== null && gerNum !== null) void rodarPreview(f, filCod, gerNum)
   }
 
   const aoEscolherFilial = (v: string | null) => {
     const fc = v === null ? null : Number(v)
     setFilCod(fc)
+    setFile(null)
     setPreview(null)
     setErro(null)
     setExcluidos(new Set())
-    if (file && fc !== null) void rodarPreview(file, fc)
+    if (inputRef.current) inputRef.current.value = ''
+  }
+
+  const aoEscolherConta = (v: string | null) => {
+    const gn = v === null ? null : Number(v)
+    setGerNum(gn)
+    setPreview(null)
+    setErro(null)
+    setExcluidos(new Set())
+    if (file && filCod !== null && gn !== null) void rodarPreview(file, filCod, gn)
   }
 
   const alternarLinha = (linhaIndice: number) => {
@@ -143,11 +186,11 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
   }
 
   const confirmar = async () => {
-    if (!file || filCod === null) return
+    if (!file || filCod === null || gerNum === null) return
     setImportando(true)
     setErro(null)
     try {
-      const r = await importExtrato(file, filCod, Array.from(excluidos))
+      const r = await importExtrato(file, filCod, gerNum, Array.from(excluidos))
       toast.success(
         r.reaproveitada
           ? 'Esta seleção já havia sido importada — nada foi duplicado.'
@@ -168,6 +211,12 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
     ...(f.ufEspSigla ? { hint: f.ufEspSigla } : {}),
   }))
 
+  const opcoesConta = contas.map((c) => ({
+    value: String(c.gerNum),
+    label: c.gerDes ?? `Conta ${c.gerNum}`,
+    ...(c.bncDesNome ? { hint: c.bncDesNome } : {}),
+  }))
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="xl">
@@ -180,7 +229,7 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
         </DialogHeader>
 
         <DialogBody className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <span className="text-sm font-medium">Filial</span>
               <Combobox
@@ -193,18 +242,33 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
               />
             </div>
             <div className="space-y-1">
+              <span className="text-sm font-medium">Conta financeira</span>
+              <Combobox
+                id="conta-import-extrato"
+                aria-label="Conta financeira do extrato"
+                options={opcoesConta}
+                value={gerNum === null ? null : String(gerNum)}
+                onChange={aoEscolherConta}
+                disabled={filCod === null || carregandoContas}
+                placeholder={carregandoContas ? 'Carregando…' : 'Escolha a conta…'}
+              />
+              {filCod === null ? (
+                <p className="text-xs text-muted-foreground">Escolha a filial antes da conta.</p>
+              ) : null}
+            </div>
+            <div className="space-y-1">
               <span className="text-sm font-medium">Arquivo</span>
               <input
                 ref={inputRef}
                 type="file"
                 accept=".xlsx"
                 onChange={aoEscolherArquivo}
-                disabled={filCod === null}
+                disabled={gerNum === null}
                 aria-label="Arquivo .xlsx do extrato"
                 className="block w-full text-sm file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-accent disabled:opacity-50"
               />
-              {filCod === null ? (
-                <p className="text-xs text-muted-foreground">Escolha a filial antes do arquivo.</p>
+              {gerNum === null ? (
+                <p className="text-xs text-muted-foreground">Escolha a conta antes do arquivo.</p>
               ) : null}
             </div>
           </div>
@@ -233,7 +297,7 @@ export function ImportarExtratoDialog({ open, onOpenChange, onImported }: Import
             <EmptyState
               icon={<FileSpreadsheet className="size-6" aria-hidden />}
               title="Nenhum arquivo selecionado"
-              description="Escolha a filial e selecione um .xlsx para ver a prévia dos créditos."
+              description="Escolha a filial, a conta financeira e um .xlsx para ver a prévia dos créditos."
             />
           ) : null}
 
