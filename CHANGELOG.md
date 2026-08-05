@@ -1,5 +1,28 @@
 # Columbia Financeiro — Changelog
 
+## v0.20.1 (2026-08-05) — Permutas: o "Processar" volta a ser a baixa fin010
+
+- **fix(permutas):** o botão **"Processar"** (aba Automáticas) volta a executar a **baixa `fin010`**
+  (`reconciliarAdiantamento` → `ReconciliacaoPermutaService`), revertendo a decisão de 2026-07-31 que o
+  fez **gerar a Solicitação de Numerário**. Em produção o fluxo quebrou — *"3 Solicitação(ões) de
+  Numerário falharam"*. Causa: a SN da **Frente I (Permutas)** e a SN da **Frente IV (Recebimentos)**
+  são **processos diferentes**, mas a semelhança entre `GerarSolicitacaoNumerarioService` e
+  `RecebimentoNumerarioService` fez as duas trilhas serem tratadas como uma só — todas as correções
+  medidas contra o ERP real (HAR doc 18339, runs de HML/produção) foram para o lado dos Recebimentos e
+  **nenhuma** para o lado das Permutas, que nunca rodou live. O payload de permutas ainda envia
+  `items[]` (**SELECTION_ERROR** na SN real), não manda `pdcDocFederal`/`endCodFis` reais e não completa
+  o documento antes de finalizar (`docVldFinalizado: 0` → fail-closed no `assertDocumentoFinalizado`).
+  Ver **ADR-0029**. A SN da Frente IV **não muda** — segue ativa em Recebimentos.
+- **fix(permutas):** `registrarFalha` passa a **reler a trilha** (`findByIdempotencyKey`) em vez de
+  confiar nas variáveis locais do `rodarTelas`, que só recebem valor no retorno de cada etapa. Uma falha
+  *depois* do `setSnDocCod` (p.ex. na finalização do com299) respondia **sem `docCod`**, e a UI
+  classificava o caso como "falhou antes de gerar a SN" — **escondendo do analista uma SN realmente
+  criada no ERP**. Regressão coberta por teste.
+- **chore:** `GerarSolicitacaoNumerarioService` e `POST /permutas/adiantamentos/:docCod/gerar-numerario`
+  ficam no repositório, **desligados da UI** e marcados como **não validados em produção** (só dry-run);
+  os quatro deltas que faltam para religá-los estão listados no docblock do serviço e no ADR-0029.
+- **chore(lint):** dois erros pré-existentes na `main` que travavam o gate (`ErpErrorInterpreter`
+  formatação; helper `medir` sem chamador no roteiro opt-in de HML) corrigidos mecanicamente.
 ## v0.20.0 (2026-08-04) — Frente IV em PRODUÇÃO ("Gestão de Adiantamentos") + extrato de hora em hora
 
 - **feat(recebimentos):** a **Frente IV vai ao ar**. O gate do **frontend** sai por completo
