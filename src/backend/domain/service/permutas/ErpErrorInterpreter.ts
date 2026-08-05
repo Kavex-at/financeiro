@@ -134,7 +134,8 @@ export default class ErpErrorInterpreter {
     // aqui foi como a classificação e a tradução chegaram a discordar sobre o mesmo payload.
 
     /** `vars.msg` só conta se for string não-vazia (o ERP às vezes manda outros tipos ou vazio). */
-    private extractReason = (msg?: ErpMessage): string | undefined => ErpResponseReader.reasonOf(msg);
+    private extractReason = (msg?: ErpMessage): string | undefined =>
+        ErpResponseReader.reasonOf(msg);
 
     /** Prefere a 1ª mensagem `valid==='ERRO'`; senão a 1ª do envelope. Robusto a envelope malformado. */
     private pickMessage = (messages?: ErpMessage[]): ErpMessage | undefined =>

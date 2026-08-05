@@ -37,8 +37,27 @@ const GCD_DES_NOME_ENCOMENDA = 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA';
 const END_COD_FIS_DEFAULT = 1;
 
 /**
- * GerarSolicitacaoNumerarioService — orquestra o fluxo de 3 TELAS do guia "telas Conexos", por
- * adiantamento, substituindo a baixa fin010 no "Processar" (decisão 2026-07-31):
+ * ⚠️ DESLIGADO DA UI — NÃO VALIDADO EM PRODUÇÃO (ADR-0028, 2026-08-05).
+ *
+ * O botão "Processar" da aba Automáticas VOLTOU a executar a baixa fin010 (`ReconciliacaoPermutaService`).
+ * Esta trilha continua no repositório, resolvível e coberta por testes, mas NENHUMA tela a chama — só a
+ * rota `POST /permutas/adiantamentos/:docCod/gerar-numerario`, mantida para experimentação em dry-run.
+ *
+ * Motivo da reversão: a SN da **Frente I (Permutas)** e a SN da **Frente IV (Recebimentos)** são
+ * processos DIFERENTES, e a semelhança entre este serviço e `RecebimentoNumerarioService` fez as duas
+ * trilhas serem tratadas como uma só. Todas as correções medidas contra o ERP real foram para o lado
+ * dos Recebimentos (`SnPayloadBuilder`/`RecebimentoNumerarioService`) e NUNCA para cá. Diferenças que
+ * fazem esta trilha falhar contra o Conexos real, e que precisam ser resolvidas antes de religá-la:
+ *   1. `buildSnPayload` ainda envia `items[]` — o HAR doc 18339 mostrou que o rateio NÃO alimenta a
+ *      geração e causa SELECTION_ERROR na SN real (ver `SnPayloadBuilder.buildSnRealPayload`).
+ *   2. `endCodFis` é o hardcoded `END_COD_FIS_DEFAULT` e `pdcDocFederal` nem é enviado — o servidor
+ *      exige os dois; a fonte real é `validaProcessoPessoa`, que esta trilha não chama.
+ *   3. `tpcCod`/`cfoEspCod` são herdados da config; no HAR são `null` para a SN Encomenda.
+ *   4. Falta o equivalente de `completarSnAdiantamento` (linha de item via `comDocProdutos`): o doc
+ *      nasce SHELL (`docMnyValor: 0`) e a finalização fica `docVldFinalizado: 0` — fail-closed no
+ *      `assertDocumentoFinalizado`.
+ *
+ * Orquestra o fluxo de 3 TELAS do guia "telas Conexos", por adiantamento:
  *   Tela 1 (com299): gera a SN (gerDocProcesso) + finaliza.                       [CONFIRMADO]
  *   Tela 2 (fin014): recebimento do crédito (borderô+baixa+finaliza) vinculado à SN.[REAL, bundle-derived]
  *   Tela 3 (com297): nota de débito — gera + produto 41978. Fiscal/observações/homologar = GAP.
@@ -392,7 +411,7 @@ export default class GerarSolicitacaoNumerarioService {
         ndDocCod?: number;
         err: unknown;
     }): Promise<GerarNumerarioResult> => {
-        const { key, adiantamentoDocCod, valor, writeEnabled, snDocCod, ndDocCod, err } = p;
+        const { key, adiantamentoDocCod, valor, writeEnabled, err } = p;
         const isGap = err instanceof NumerarioGapError;
         const etapa: NumerarioEtapa = isGap ? (err.etapa as NumerarioEtapa) : p.etapa;
         const mensagem = isGap ? err.message : this.erpErrorInterpreter.interpret(err).friendly;
@@ -401,6 +420,14 @@ export default class GerarSolicitacaoNumerarioService {
             erroMensagem: mensagem,
             erpResponse: this.extractErpData(err),
         });
+        // A TRILHA é a fonte da verdade sobre o que já existe no ERP — não as variáveis locais do
+        // `rodarTelas`. Elas só recebem valor no RETORNO de cada etapa, então uma exceção DEPOIS do
+        // `setSnDocCod`/`setNdDocCod` (ex.: a finalização do com299 falhando) as deixa `undefined` e a
+        // resposta diria "falhou antes de gerar a SN" sobre um documento que está DE PÉ no Conexos.
+        // `markError` preserva `doc_cod`/`nd_doc_cod`, então relemos a linha antes de responder.
+        const trilha = await this.execucaoRepository.findByIdempotencyKey(key);
+        const snDocCod = trilha?.docCod ?? p.snDocCod;
+        const ndDocCod = trilha?.ndDocCod ?? p.ndDocCod;
         await this.logService.error({
             type: LOG_TYPE.BUSINESS_WARN,
             message: isGap ? 'generate SN stopped at GAP step (fail-closed)' : 'generate SN FAILED',

@@ -46,8 +46,7 @@ export function ConfirmarProcessamentoDialog({
         <DialogHeader>
           <DialogTitle>Confirmar processamento</DialogTitle>
           <DialogDescription>
-            Ao processar, uma Solicitação de Numerário é gerada para cada adiantamento (valor =
-            &ldquo;Valor a ser usado&rdquo;). Revise antes de continuar.
+            Revise os adiantamentos que vão abater esta invoice antes de processar.
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -104,8 +103,8 @@ export function ConfirmarProcessamentoDialog({
                 </Table>
               </div>
               <p className="mt-3 text-xs text-muted-foreground">
-                Cada adiantamento pendente acima vira uma Solicitação de Numerário no processo{' '}
-                <strong>{confirmacao.priCod}</strong>. Os já processados são ignorados.
+                Os adiantamentos pendentes acima vão abater a invoice{' '}
+                <strong>{confirmacao.invoice.docCod}</strong>. Os já processados são ignorados.
               </p>
             </>
           ) : null}
