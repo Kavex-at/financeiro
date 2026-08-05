@@ -2,9 +2,9 @@
 name: gerarSolicitacaoNumerario
 type: action
 entity: SolicitacaoNumerario
-ontology_version: "0.11"
+ontology_version: "0.13"
 implementation_status: partial
-status: draft
+status: revogada-desligada-da-ui
 owners: [yuri]
 related_files:
   - src/backend/domain/service/permutas/GerarSolicitacaoNumerarioService.ts
@@ -13,8 +13,9 @@ related_files:
   - src/backend/routes/permutas.ts
   - src/frontend/app/permutas/page.tsx
   - src/frontend/app/permutas/components/ConfirmarProcessamentoDialog.tsx
-last_review: 2026-07-31
+last_review: 2026-08-05
 preconditions:
+  - "REVOGADA como efeito do Processar (ADR-0028): esta ação NÃO é mais disparada por nenhuma tela."
   - "Adiantamento EXISTE (findAdiantamento) com priCod/pesCod/filCod conhecidos."
   - "valor (= valorASerUsado do modal) > 0 e ≤ saldo do adiantamento."
   - "Requer papel admin (requireRole('admin'))."
@@ -26,15 +27,33 @@ postconditions:
 side_effects:
   - "Escrita irreversível no com299/gerDocProcesso (postGenericOnce, tentativa única)."
   - "Trilha write-ahead NumerarioExecucaoRepository (reconciling→settled/error), idempotência por adiantamento."
-  - "NÃO executa mais a baixa fin010 no fluxo Processar (substitui a reconciliação)."
+  - "NENHUM no fluxo Processar — o Processar voltou a executar a baixa fin010 (ADR-0028)."
 ---
 
-# gerarSolicitacaoNumerario — Processar gera a SN em vez da baixa
+# gerarSolicitacaoNumerario — REVOGADA como efeito do "Processar"
 
-> **Vigência:** v0.11 (2026-07-31). O botão **"Processar"** (aba Automáticas) passa a
-> **gerar uma Solicitação de Numerário** no ERP (`com299/gerDocProcesso`) em vez de
-> executar a baixa `fin010`. Uma SN por adiantamento; `valor` = `valorASerUsado` do modal
-> (moeda negociada, sem conversão).
+> ## ⛔ REVOGADA em 2026-08-05 (ADR-0028) — trilha DESLIGADA DA UI, NÃO validada em produção
+>
+> O botão **"Processar"** (aba Automáticas) **voltou a executar a baixa `fin010`**
+> (`reconciliarAdiantamento` → `ReconciliacaoPermutaService`), como era até 2026-07-30. A regra vigente
+> do Processar é a de 2026-06-24 ("Automáticas baixam") — ver `actions/permuta/reconciliar.md`.
+>
+> **Por que:** a SN da **Frente I (Permutas)** e a SN da **Frente IV (Recebimentos)** são **processos
+> DIFERENTES**. A semelhança entre `GerarSolicitacaoNumerarioService` e `RecebimentoNumerarioService`
+> fez as duas trilhas serem tratadas como uma só: todas as correções medidas contra o ERP real foram
+> para o lado dos Recebimentos e nenhuma para cá. Em produção o Processar quebrou — 3 SNs falharam,
+> porque este payload ainda envia `items[]` (SELECTION_ERROR, HAR doc 18339), não manda
+> `pdcDocFederal`/`endCodFis` reais e não completa o documento antes de finalizar.
+>
+> **Invariante I-Permuta-6:** trilha de Permuta e trilha de Recebimento são independentes. Uma
+> correção validada numa **não** vale na outra por semelhança de código.
+>
+> O serviço e a rota `POST /permutas/adiantamentos/:docCod/gerar-numerario` continuam no repositório,
+> só para experimentação em **dry-run**. Religá-los exige HAR próprio e validação própria. O texto
+> abaixo descreve a trilha **como implementada**, e permanece como ponto de partida — **não** como
+> regra vigente do Processar.
+>
+> **Vigência anterior (revogada):** v0.11 (2026-07-31) — o Processar gerava a SN em vez da baixa.
 
 ## Fluxo de 3 telas (guia "telas Conexos")
 

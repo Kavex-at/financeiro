@@ -190,6 +190,32 @@ describe('GerarSolicitacaoNumerarioService (3-tela flow)', () => {
         expect(r.etapa).toBe('nota-debito-fiscal');
     });
 
+    it('finalização falha DEPOIS de criar a SN: o docCod vem da TRILHA e não some do resultado', async () => {
+        const { service, gerDocClient, repo } = build({
+            writeEnabled: true,
+            dryRun: false,
+            conta: 330037,
+        });
+        // A finalização do com299 quebra DEPOIS do setSnDocCod: as variáveis locais do `rodarTelas` só
+        // recebem valor no RETORNO do `telaUmSn`, então ficam `undefined` — mas a SN 99001 está DE PÉ no
+        // ERP. Sem reler a trilha, a resposta dizia "falhou antes de gerar a SN" e a UI contava o caso
+        // como erro puro, escondendo um documento real do analista.
+        (gerDocClient.finalizarDocumento as jest.Mock).mockRejectedValue(
+            new Error('SN 99001 não finalizou (docVldFinalizado: 0)'),
+        );
+        (repo.findByIdempotencyKey as jest.Mock)
+            .mockResolvedValueOnce(null) // checarBloqueio
+            .mockResolvedValueOnce(null) // rodarTelas
+            .mockResolvedValue({ status: 'error', dryRun: false, docCod: 99001, etapa: 'sn' });
+
+        const r = await run(service);
+
+        expect(r.status).toBe('error');
+        expect(r.etapa).toBe('sn');
+        expect(repo.setSnDocCod).toHaveBeenCalledWith('numerario:18202:100', 99001);
+        expect(r.docCod).toBe(99001);
+    });
+
     it('idempotência: settled → skipped', async () => {
         const { service, fin014Client } = build({
             writeEnabled: true,

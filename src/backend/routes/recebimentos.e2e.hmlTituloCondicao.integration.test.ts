@@ -109,8 +109,12 @@ describe('EXPERIMENTO DA CONDIÇÃO (HML) — condição no header da geração 
             docCod,
         })) as AnyRecord;
 
-    /** Releitura + registro do estado após um passo. Devolve o `mnyTitValor` medido. */
-    const medir = async (passo: string): Promise<number> => {
+    /**
+     * Releitura + registro do estado após um passo. Devolve o `mnyTitValor` medido.
+     * Sem chamador hoje (sobra do diagnóstico de títulos de 2026-08-03) — mantido com `_` para quem
+     * retomar a medição passo-a-passo neste roteiro opt-in de HML.
+     */
+    const _medir = async (passo: string): Promise<number> => {
         const doc = await lerDoc();
         const estado = estadoDo(doc);
         registrar(passo, estado);

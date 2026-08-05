@@ -510,11 +510,16 @@ router.post(
     }),
 );
 
-// POST /permutas/adiantamentos/:docCod/gerar-numerario — B1: GERA a SOLICITAÇÃO DE NUMERÁRIO no ERP
-// (com299/gerDocProcesso), substituindo a baixa fin010 como efeito do "Processar". Uma SN por
-// adiantamento; valor = valorASerUsado do modal (moeda negociada). heavyRouteLimiter (fan-out
-// Conexos) + admin. Escrita IRREVERSÍVEL gated no serviço (CONEXOS_WRITE_ENABLED/DRY_RUN; default
-// dry-run). Ver ontology/actions/permuta/gerar-solicitacao-numerario.md.
+// POST /permutas/adiantamentos/:docCod/gerar-numerario — GERA a SOLICITAÇÃO DE NUMERÁRIO no ERP
+// (com299/gerDocProcesso). Uma SN por adiantamento; valor = valorASerUsado (moeda negociada).
+// heavyRouteLimiter (fan-out Conexos) + admin. Escrita IRREVERSÍVEL gated no serviço
+// (CONEXOS_WRITE_ENABLED/DRY_RUN; default dry-run).
+//
+// ⚠️ DESLIGADA DA UI — NÃO VALIDADA EM PRODUÇÃO (ADR-0028, 2026-08-05). O "Processar" voltou a
+// executar a baixa fin010 (/reconciliar). Esta rota fica só para experimentação em DRY-RUN: a trilha
+// permutas ainda carrega o payload pré-correção (items[], sem pdcDocFederal, sem completar o doc) que
+// falha contra o Conexos real — ver o docblock de GerarSolicitacaoNumerarioService.
+// Ver ontology/actions/permuta/gerar-solicitacao-numerario.md + ontology/decisions/0028-*.md.
 router.post(
     '/adiantamentos/:docCod/gerar-numerario',
     requireRole('admin'),
