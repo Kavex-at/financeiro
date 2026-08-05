@@ -149,7 +149,7 @@ export default function GestaoPermutasPage() {
   // Para cada adiantamento do grupo, chama o reconciliar (que AUTO-ALOCA a partir do casamento) →
   // borderô em CADASTRO. Os já processados são ignorados. (Regra 2026-06-24: Automáticas baixam.)
   //
-  // REVERSÃO 2026-08-05 (ADR-0028): entre 2026-07-31 e 2026-08-05 este botão gerou a Solicitação de
+  // REVERSÃO 2026-08-05 (ADR-0029): entre 2026-07-31 e 2026-08-05 este botão gerou a Solicitação de
   // Numerário (com299) em vez da baixa. A SN da Frente I (Permutas) e a SN da Frente IV (Recebimentos)
   // são processos DIFERENTES; a semelhança entre os serviços trocou os fios e o Processar quebrou em
   // produção. A SN dos Recebimentos segue viva na sua própria página.

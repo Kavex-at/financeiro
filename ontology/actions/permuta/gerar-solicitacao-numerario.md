@@ -15,7 +15,7 @@ related_files:
   - src/frontend/app/permutas/components/ConfirmarProcessamentoDialog.tsx
 last_review: 2026-08-05
 preconditions:
-  - "REVOGADA como efeito do Processar (ADR-0028): esta ação NÃO é mais disparada por nenhuma tela."
+  - "REVOGADA como efeito do Processar (ADR-0029): esta ação NÃO é mais disparada por nenhuma tela."
   - "Adiantamento EXISTE (findAdiantamento) com priCod/pesCod/filCod conhecidos."
   - "valor (= valorASerUsado do modal) > 0 e ≤ saldo do adiantamento."
   - "Requer papel admin (requireRole('admin'))."
@@ -27,12 +27,12 @@ postconditions:
 side_effects:
   - "Escrita irreversível no com299/gerDocProcesso (postGenericOnce, tentativa única)."
   - "Trilha write-ahead NumerarioExecucaoRepository (reconciling→settled/error), idempotência por adiantamento."
-  - "NENHUM no fluxo Processar — o Processar voltou a executar a baixa fin010 (ADR-0028)."
+  - "NENHUM no fluxo Processar — o Processar voltou a executar a baixa fin010 (ADR-0029)."
 ---
 
 # gerarSolicitacaoNumerario — REVOGADA como efeito do "Processar"
 
-> ## ⛔ REVOGADA em 2026-08-05 (ADR-0028) — trilha DESLIGADA DA UI, NÃO validada em produção
+> ## ⛔ REVOGADA em 2026-08-05 (ADR-0029) — trilha DESLIGADA DA UI, NÃO validada em produção
 >
 > O botão **"Processar"** (aba Automáticas) **voltou a executar a baixa `fin010`**
 > (`reconciliarAdiantamento` → `ReconciliacaoPermutaService`), como era até 2026-07-30. A regra vigente

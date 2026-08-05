@@ -1,4 +1,4 @@
-# ADR-0028 — O "Processar" da Permuta volta a ser a baixa fin010
+# ADR-0029 — O "Processar" da Permuta volta a ser a baixa fin010
 
 - **Status:** aceito
 - **Data:** 2026-08-05

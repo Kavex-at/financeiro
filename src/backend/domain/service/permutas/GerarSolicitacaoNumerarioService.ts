@@ -37,7 +37,7 @@ const GCD_DES_NOME_ENCOMENDA = 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA';
 const END_COD_FIS_DEFAULT = 1;
 
 /**
- * ⚠️ DESLIGADO DA UI — NÃO VALIDADO EM PRODUÇÃO (ADR-0028, 2026-08-05).
+ * ⚠️ DESLIGADO DA UI — NÃO VALIDADO EM PRODUÇÃO (ADR-0029, 2026-08-05).
  *
  * O botão "Processar" da aba Automáticas VOLTOU a executar a baixa fin010 (`ReconciliacaoPermutaService`).
  * Esta trilha continua no repositório, resolvível e coberta por testes, mas NENHUMA tela a chama — só a
