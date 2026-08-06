@@ -202,6 +202,7 @@ export default class BorderoGestaoService {
         executadoPor: string;
     }): Promise<{ borCod: number; finalizado: boolean }> => {
         const filCod = await this.guardAcaoBordero(params.borCod);
+        await this.assertBorderoTemItens(filCod, params.borCod);
         await this.conexosBaixaClient.finalizarBordero({ filCod, borCod: params.borCod });
         // Reflete no cache na hora (sem esperar o próximo refresh).
         await this.execucaoRepository.updateBorderoCacheSituacao(filCod, params.borCod, {
@@ -251,6 +252,23 @@ export default class BorderoGestaoService {
             data: { borCod: params.borCod, executadoPor: params.executadoPor },
         });
         return { borCod: params.borCod, estornado: true };
+    };
+
+    /**
+     * I-Write-7 — recusa APROVAR um borderô sem item. O ERP já rejeita ("ESTE BORDERÔ NÃO POSSUI
+     * ITENS"), mas só depois do POST e com um texto que não diz o que fazer; aqui o analista recebe
+     * a saída certa (excluir o casco) sem gastar a ida ao ERP. A contagem vem do ERP (`listBaixas`),
+     * NÃO da trilha: a trilha guarda também linhas `error` — que têm `bor_cod` mas nenhuma baixa no
+     * borderô — então contá-las daria o casco como "cheio" e o guard passaria batido (borderô 18538).
+     */
+    private assertBorderoTemItens = async (filCod: number, borCod: number): Promise<void> => {
+        const baixas = await this.conexosBaixaClient.listBaixas({ filCod, borCod });
+        if (baixas.length === 0) {
+            throw new Error(
+                `Borderô ${borCod} não possui baixas — não há o que aprovar. Ele ficou vazio porque ` +
+                    'a baixa falhou depois de criá-lo; use "Excluir" para removê-lo.',
+            );
+        }
     };
 
     /** Lança se a escrita no Conexos estiver desabilitada (gate de todas as ações). */

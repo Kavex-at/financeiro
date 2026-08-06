@@ -32,6 +32,13 @@ const GER_DES_DESCONTO = 'VARIAÇÃO CAMBIAL ATIVA REALIZADA';
  */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/**
+ * A alocação virou baixa REAL no borderô? Só `settled` conta — é o único estado com confirmação
+ * (`bxaCodSeq`) do ERP. `error`/`skipped`/`dry-run` NÃO põem item no borderô (`skipped` sequer chega
+ * ao handshake; a baixa dele vive em OUTRO borderô, anterior). Gate da limpeza do órfão (I-Write-7).
+ */
+const isBaixaConfirmada = (r: ResultadoAlocacao): boolean => r.status === 'settled';
+
 export interface ReconciliarInput {
     adiantamentoDocCod: string;
     executadoPor: string;
@@ -134,6 +141,9 @@ export default class ReconciliacaoPermutaService {
 
         const resultados: ResultadoAlocacao[] = [];
         let borCod: number | undefined;
+        // O borderô nasce NESTA chamada? Só então a limpeza do órfão (I-Write-7, abaixo) pode agir —
+        // nunca apagamos um borderô que já existia antes de entrarmos aqui.
+        let borderoCriadoAqui = false;
 
         for (const aloc of alocacoes) {
             // DRY-RUN: preview puro, SEM efeito no banco (I-Recon-4) — não cria linha de execução.
@@ -241,6 +251,7 @@ export default class ReconciliacaoPermutaService {
                         dataMovto,
                     });
                     borCod = bordero.borCod;
+                    borderoCriadoAqui = true;
                 }
                 const resultado = await this.executarBaixa({
                     key,
@@ -272,6 +283,15 @@ export default class ReconciliacaoPermutaService {
             }
         }
 
+        // I-Write-7 (anti-órfão): o borderô é criado ANTES da 1ª baixa (passo 1 do handshake). Se
+        // TODAS as baixas falharam, ele fica no ERP sem item nenhum — um casco que aparece no painel
+        // e cujo "Aprovar" o ERP recusa com "NÃO POSSUI ITENS" (borderô 18538, 2026-08-06). A limpeza
+        // roda no FIM do loop, não na 1ª falha: o `borCod` é compartilhado por todas as alocações
+        // (I-Write-3), então falha-depois-sucesso deixa o borderô COM item — e aí ele não é órfão.
+        if (borderoCriadoAqui && borCod !== undefined && !resultados.some(isBaixaConfirmada)) {
+            await this.removerBorderoOrfao({ filCod, borCod, adiantamentoDocCod });
+        }
+
         return {
             adiantamentoDocCod,
             dryRun,
@@ -279,6 +299,48 @@ export default class ReconciliacaoPermutaService {
             ...(borCod !== undefined ? { borCod } : {}),
             resultados,
         };
+    };
+
+    /**
+     * Apaga o borderô que ficou SEM baixa nenhuma (I-Write-7). **Best-effort e fail-safe**: a fonte da
+     * verdade é o ERP (`listBaixas`), não a nossa contagem — se o ERP disser que há item (ex.: uma
+     * baixa parcial entrou antes do erro), NÃO apaga. Qualquer falha daqui vira WARN e segue: a
+     * limpeza é higiene, jamais pode mascarar o erro real da baixa que o analista precisa ver.
+     */
+    private removerBorderoOrfao = async (params: {
+        filCod: number;
+        borCod: number;
+        adiantamentoDocCod: string;
+    }): Promise<void> => {
+        const { filCod, borCod, adiantamentoDocCod } = params;
+        try {
+            const baixas = await this.conexosBaixaClient.listBaixas({ filCod, borCod });
+            if (baixas.length > 0) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'borderô sem baixa confirmada MAS com item no ERP — não removido',
+                    data: { adiantamentoDocCod, borCod, itensNoErp: baixas.length },
+                });
+                return;
+            }
+            await this.conexosBaixaClient.excluirBordero({ filCod, borCod });
+            await this.execucaoRepository.deleteBorderoCache(filCod, borCod);
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'borderô órfão (vazio) removido após falha de todas as baixas',
+                data: { adiantamentoDocCod, borCod },
+            });
+        } catch (err) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'falha ao remover o borderô órfão (best-effort) — remover pelo painel',
+                data: {
+                    adiantamentoDocCod,
+                    borCod,
+                    erro: err instanceof Error ? err.message : String(err),
+                },
+            });
+        }
     };
 
     /**

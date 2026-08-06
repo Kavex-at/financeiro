@@ -360,6 +360,7 @@ describe('BorderoGestaoService', () => {
                 jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
             );
             execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14707, filCod: 2 })]);
+            conexosClient.listBaixas.mockResolvedValue([{ docCod: 18779, bxaCodSeq: 1 }]);
 
             const out = await service.finalizarBordero({ borCod: 14707, executadoPor: 'yuri' });
 
@@ -368,6 +369,38 @@ describe('BorderoGestaoService', () => {
                 borCod: 14707,
             });
             expect(out).toMatchObject({ finalizado: true });
+        });
+
+        // I-Write-7 — regressão do borderô 18538 (2026-08-06): casco vazio deixado por uma baixa que
+        // falhou depois de criar o borderô. O ERP recusava com "NÃO POSSUI ITENS" só APÓS o POST.
+        it('finalizarBordero: borderô SEM baixa no ERP → recusa antes de chamar o ERP', async () => {
+            const { service, conexosClient, execucaoRepository } = build(
+                jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
+            );
+            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 18538, filCod: 2 })]);
+            conexosClient.listBaixas.mockResolvedValue([]); // casco vazio
+
+            await expect(
+                service.finalizarBordero({ borCod: 18538, executadoPor: 'simone' }),
+            ).rejects.toThrow(/não possui baixas/i);
+            expect(conexosClient.finalizarBordero).not.toHaveBeenCalled();
+        });
+
+        // A trilha guarda linhas `error` COM bor_cod — contá-las daria o casco como "cheio". O guard
+        // lê o ERP, não a trilha: mesmo com trilha não-vazia, sem item no ERP não se aprova.
+        it('finalizarBordero: trilha com linha `error` não conta como item do borderô', async () => {
+            const { service, conexosClient, execucaoRepository } = build(
+                jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
+            );
+            execucaoRepository.listByBorCod.mockResolvedValue([
+                row({ borCod: 18538, filCod: 2, status: 'error', bxaCodSeq: undefined }),
+            ]);
+            conexosClient.listBaixas.mockResolvedValue([]);
+
+            await expect(
+                service.finalizarBordero({ borCod: 18538, executadoPor: 'simone' }),
+            ).rejects.toThrow(/não possui baixas/i);
+            expect(conexosClient.finalizarBordero).not.toHaveBeenCalled();
         });
 
         it('cancelarBordero: cancela no ERP quando em cadastro', async () => {

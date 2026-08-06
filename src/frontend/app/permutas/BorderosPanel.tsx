@@ -465,18 +465,24 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                         // (criados direto no ERP por outros usuários) ficam só p/ visualização.
                         const noso = b.daTrilha === true
                         const foraTip = 'Criado fora deste sistema — apenas visualização'
+                        // Casco vazio (I-Write-7): o borderô foi criado mas nenhuma baixa entrou
+                        // nele. Conta só `settled` — as linhas `error` da trilha também carregam o
+                        // bor_cod, então `baixas.length` sozinho daria o casco como cheio.
+                        const vazio = !b.baixas.some((x) => x.status === 'settled')
                         return (
                           <div className="flex justify-end gap-1">
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={!noso || b.situacao !== 'EM_CADASTRO'}
+                              disabled={!noso || b.situacao !== 'EM_CADASTRO' || vazio}
                               title={
                                 !noso
                                   ? foraTip
                                   : b.situacao !== 'EM_CADASTRO'
                                     ? 'Só dá para aprovar borderô em aberto'
-                                    : 'Finalizar/aprovar o borderô no fin010'
+                                    : vazio
+                                      ? 'Borderô sem baixa — não há o que aprovar. Use "Excluir".'
+                                      : 'Finalizar/aprovar o borderô no fin010'
                               }
                               onClick={() =>
                                 setConfirmaAcao({ tipo: 'finalizar', borCod: b.borCod, filCod: b.filCod })
