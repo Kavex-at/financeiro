@@ -102,6 +102,25 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
   **parcial** (N:M) e multi-título full-consume seguem rateando por taxa (saldo remanescente legítimo).
   Ver ADR-0020 e `ReconciliacaoPermutaService.ancorarVariacaoNoAdto`.
 
+- **I-Write-7 (anti-borderô-órfão / anti-aprovação-vazia):** o borderô nasce no **passo 1**, antes de
+  qualquer baixa — se as baixas falharem, sobra um **casco vazio** no ERP. Duas guardas:
+  1. **Limpeza (produtor):** ao fim de `reconciliar`, se o borderô foi criado **naquela chamada** e
+     **nenhuma** alocação terminou `settled`, o borderô é removido do ERP + do cache
+     (`ReconciliacaoPermutaService.removerBorderoOrfao`). A limpeza é no **fim do loop**, não na 1ª
+     falha: o `borCod` é compartilhado por todas as alocações (I-Write-3), então *falha-depois-sucesso*
+     deixa o borderô **com** item e ele **não** é órfão. É **best-effort e fail-safe** — a fonte da
+     verdade é o ERP (`listBaixas`): havendo item, não apaga; qualquer falha vira `BUSINESS_WARN` e
+     **nunca** mascara o erro real da baixa.
+  2. **Recusa (consumidor):** `finalizarBordero` rejeita borderô **sem item no ERP** antes do POST
+     (`assertBorderoTemItens`), com mensagem que aponta a saída ("use Excluir"). A contagem vem do
+     **ERP**, não da trilha — a trilha guarda linhas `error` **com** `bor_cod` (sem baixa nenhuma no
+     borderô), então contá-las daria o casco como "cheio". O front espelha a guarda desabilitando
+     "Aprovar" quando não há baixa `settled` (`BorderosPanel.tsx`).
+
+  > **Origem:** borderô **18538** (2026-08-06) — `POST /fin010/finalizar/18538` recusado com
+  > `"ESTE BORDERÔ NÃO POSSUI ITENS."`. Antes disto o ERP só reclamava **depois** do POST, com um texto
+  > que não dizia o que fazer. Ver ADR-0030.
+
 ## Adendo v0.7.0 (2026-06-24) — auto-alocação ANTES de gravar
 
 > **Vigência:** 2026-06-24 (v0.7.0, ADR-0014). O contrato de escrita acima (handshake de 5 chamadas,

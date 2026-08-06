@@ -343,11 +343,13 @@
       "impl_files": [
         "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts",
         "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+        "src/backend/domain/service/permutas/BorderoGestaoService.ts",
         "src/backend/domain/client/ConexosClient.ts",
         "src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts",
         "src/backend/migrations/0015_permuta_alocacao_execucao.sql",
         "src/backend/routes/permutas.ts",
-        "src/frontend/app/permutas/page.tsx"
+        "src/frontend/app/permutas/page.tsx",
+        "src/frontend/app/permutas/BorderosPanel.tsx"
       ],
       "open_gap": [
         "validação em produção do 1º caso real; baixa parcial (invoice N:M); finalização do borderô; caminho DESCONTO"

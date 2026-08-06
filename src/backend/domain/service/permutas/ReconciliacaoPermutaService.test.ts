@@ -50,6 +50,9 @@ const buildDeps = () => {
         getBordero: jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
         // Default: sem títulos → fallback p/ título 1 (compat). O teste multi-título sobrescreve.
         listTitulosAPagar: jest.fn().mockResolvedValue([]),
+        // Limpeza do borderô órfão (I-Write-7) — só exercitada quando NENHUMA baixa confirma.
+        listBaixas: jest.fn().mockResolvedValue([]),
+        excluirBordero: jest.fn().mockResolvedValue(undefined),
     };
     const alocacaoRepository = { listAtivas: jest.fn().mockResolvedValue([buildAloc()]) };
     const execucaoRepository = {
@@ -64,6 +67,7 @@ const buildDeps = () => {
         markSettled: jest.fn().mockResolvedValue(undefined),
         markError: jest.fn().mockResolvedValue(undefined),
         listByAdiantamento: jest.fn().mockResolvedValue([]),
+        deleteBorderoCache: jest.fn().mockResolvedValue(1),
     };
     const relationalRepository = {
         findAdiantamento: jest
@@ -491,6 +495,88 @@ describe('ReconciliacaoPermutaService', () => {
             expect.objectContaining({ erroMensagem: 'ERP 500' }),
         );
         expect(out.resultados[0].status).toBe('error');
+    });
+
+    // ── I-Write-7: borderô órfão (casco vazio) ──────────────────────────────────────────────────
+    // Regressão do borderô 18538 (2026-08-06): o passo 1 do handshake cria o borderô ANTES da baixa;
+    // se a baixa falha, o casco fica no ERP e o "Aprovar" dele é recusado com "NÃO POSSUI ITENS".
+
+    it('I-Write-7: todas as baixas falham → borderô criado aqui é removido do ERP', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, execucaoRepository } = buildDeps();
+        conexosClient.gravarBaixaPermuta.mockRejectedValue(new Error('ERP 500'));
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(out.resultados[0].status).toBe('error');
+        expect(conexosClient.excluirBordero).toHaveBeenCalledWith({ filCod: 4, borCod: 1999 });
+        expect(execucaoRepository.deleteBorderoCache).toHaveBeenCalledWith(4, 1999);
+    });
+
+    // O `borCod` é compartilhado por todas as alocações (I-Write-3). Apagar na PRIMEIRA falha
+    // destruiria o borderô que a alocação seguinte usa com sucesso — por isso a limpeza é no fim.
+    it('I-Write-7: falha seguida de sucesso → borderô TEM item, NÃO é removido', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, alocacaoRepository } = buildDeps();
+        alocacaoRepository.listAtivas.mockResolvedValue([
+            buildAloc({ invoiceDocCod: '5078' }),
+            buildAloc({ invoiceDocCod: '5079' }),
+        ]);
+        conexosClient.gravarBaixaPermuta
+            .mockRejectedValueOnce(new Error('ERP 500')) // 1ª alocação falha
+            .mockResolvedValue({ bxaCodSeq: 1, borCod: 1999 }); // 2ª entra no MESMO borderô
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(out.resultados.map((r) => r.status)).toEqual(['error', 'settled']);
+        expect(conexosClient.criarBordero).toHaveBeenCalledTimes(1);
+        expect(conexosClient.excluirBordero).not.toHaveBeenCalled();
+    });
+
+    // Fail-safe: a fonte da verdade é o ERP. Se ele disser que há item (baixa parcial que entrou
+    // antes do erro), o borderô NÃO é apagado — apagar levaria embora uma baixa real.
+    it('I-Write-7: ERP relata item no borderô → não remove, só avisa', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient } = buildDeps();
+        conexosClient.gravarBaixaPermuta.mockRejectedValue(new Error('ERP 500'));
+        conexosClient.listBaixas.mockResolvedValue([{ docCod: 5078, bxaCodSeq: 1 }]);
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(conexosClient.excluirBordero).not.toHaveBeenCalled();
+    });
+
+    // A limpeza é higiene: se ela falhar, o erro que o analista precisa ver continua de pé.
+    it('I-Write-7: falha ao excluir o órfão não derruba a reconciliação', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient } = buildDeps();
+        conexosClient.gravarBaixaPermuta.mockRejectedValue(new Error('ERP 500'));
+        conexosClient.excluirBordero.mockRejectedValue(new Error('período fechado'));
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(out.resultados[0].status).toBe('error');
+        expect(out.resultados[0].erro).toBe('ERP 500'); // o erro REAL sobrevive à limpeza
     });
 
     it('erro Generic.ERROR_MESSAGE → erroMensagem surface a razão real (vars.msg)', async () => {
