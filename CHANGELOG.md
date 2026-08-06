@@ -1,5 +1,33 @@
 # Columbia Financeiro — Changelog
 
+## v0.20.2 (2026-08-06) — Permutas: borderô órfão e aprovação vazia (I-Write-7)
+
+- **fix(permutas):** o borderô é criado no **passo 1** do handshake do `fin010`, **antes** de qualquer
+  baixa — se as baixas falhavam, sobrava um **casco vazio** no ERP. Ele aparecia no painel como
+  *em aberto*, com o "Aprovar" habilitado, e o ERP recusava a finalização com **"ESTE BORDERÔ NÃO POSSUI
+  ITENS"** (borderô **18538**, produção 2026-08-06). Agora, ao fim de `reconciliar`, se o borderô foi
+  criado **naquela chamada** e **nenhuma** alocação terminou `settled`, ele é removido do ERP e do cache
+  (`ReconciliacaoPermutaService.removerBorderoOrfao`). A limpeza é **best-effort e fail-safe**: a fonte da
+  verdade é o ERP (`listBaixas`) — havendo item, não apaga —, e qualquer falha dela vira `BUSINESS_WARN`
+  sem nunca mascarar o erro real da baixa que o analista precisa ver.
+- **fix(permutas):** `finalizarBordero` passa a **recusar borderô sem item antes do POST**
+  (`assertBorderoTemItens`), com mensagem que aponta a saída ("use Excluir") em vez do texto cru do ERP.
+  A contagem vem do **ERP**, não da trilha: a trilha guarda linhas `error` **com** `bor_cod` (o
+  `setBorCod` persiste o borCod *antes* do handshake, de propósito — I-Write-4), então contá-las daria o
+  casco como "cheio" e a guarda passaria batido justamente no caso 18538. O painel espelha a regra
+  desabilitando "Aprovar" quando não há baixa `settled`.
+- **Limpeza no FIM do loop, não na 1ª falha:** o `borCod` é **compartilhado** por todas as alocações da
+  mesma chamada (I-Write-3) — *falha-depois-sucesso* deixa o borderô **com** item e ele **não** é órfão.
+  Apagar na primeira falha destruiria um borderô que a alocação seguinte usaria. Regressão coberta por
+  teste do caso misto.
+- **Fora de escopo (decisão explícita):** órfãos que **já existem** em produção não são varridos — a
+  mudança previne novos e bloqueia a aprovação dos antigos; removê-los é pelo botão "Excluir" do painel,
+  que já funciona para borderô vazio.
+- **Não confundir com o borderô 15181** do mesmo episódio: aquele está em **período contábil fechado**
+  (`FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE`) — matéria da contabilidade, **sem correção em código**.
+- Ontologia: nova invariante **I-Write-7** em `business-rules/fin010-write-contract.md` + **ADR-0030**.
+  6 testes novos (4 no reconciliador, 2 no de gestão).
+
 ## v0.20.1 (2026-08-05) — Permutas: o "Processar" volta a ser a baixa fin010
 
 - **fix(permutas):** o botão **"Processar"** (aba Automáticas) volta a executar a **baixa `fin010`**
