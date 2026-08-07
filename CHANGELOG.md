@@ -1,5 +1,31 @@
 # Columbia Financeiro — Changelog
 
+## v0.21.1 (2026-08-07) — Permissão negada no ERP deixa de ser "Internal server error"
+
+- **fix(conexos):** o envelope **`ACCESS_DENIED`** (403) do Conexos passa a ser lido e virar uma frase
+  acionável: *"Seu usuário Conexos (X) não tem permissão de CONSULTA em `IMP_223` — DECLARAÇÃO ÚNICA DE
+  IMPORTAÇÃO (DUIMP). Peça liberação a: …"*. Em produção (2026-08-06) o **"Processar"** da aba
+  Automáticas morria em `API 500 — Internal server error` nos processos 2444 e 2074; a causa estava
+  inteira no corpo do 403 — usuário, tela, operação e quem libera — mas era descartada, porque esse
+  envelope não tem `messages[]` nem `itemMessages`, as duas únicas formas que o `ErpErrorInterpreter`
+  sabia ler. Novo `ErpAccessDenied` (parse + frase, nunca lança) é a fonte única, lida por
+  `ConexosError`, pelo `ErpErrorInterpreter` e pelo log. Ver **ADR-0032**.
+- **fix(conexos):** `ACCESS_DENIED` ganha classificação própria — `CONEXOS_ACCESS_DENIED`, **HTTP 403**,
+  não-retentável. Estende o ADR-0026: o 403 conta ao cliente que o problema é de **acesso**, não do dado
+  enviado (que é o que o 502 de recusa comum sugere). Um `403` **sem** o envelope segue como recusa
+  comum em 502.
+- **fix(http):** o `errorMiddleware` ganha uma exceção **curada** ao corpo genérico — erros que
+  implementam `HandlerError` respondem com o próprio `statusCode` + `userMessage` (o contrato já os
+  define como *"curated, safe to render in a banner"*). Tudo que **não** é typed continua genérico em
+  500: `err.message` cru e o corpo do ERP seguem sem cruzar (F-security-5 preservado). Antes, uma recusa
+  de permissão — que já vem com a instrução de como resolver — chegava ao analista como *"Internal
+  server error"*.
+- **fix(permutas):** `reconciliarAdiantamento` e `reconciliarLoteAutomaticas` passam a preferir a
+  mensagem curada do backend ao `API <status>`, mesmo critério já usado em `acaoBordero`.
+- **chore(ontology):** ADR-0032, seção do envelope `ACCESS_DENIED` em `integrations/conexos.md` e
+  follow-ups em `_inbox/conexos-access-denied-followups.md` (grants pendentes no ERP; leituras pelo robô
+  com escritas na sessão do analista; `catch {}` que engolem 403 sem rastro).
+
 ## v0.21.0 (2026-08-07) — Recebimentos: nota de débito só quando devida (conta e ordem de terceiros)
 
 - **feat(recebimentos):** processos **POR CONTA E ORDEM DE TERCEIROS** (`imp021.priVldTipo = 2`) deixam
