@@ -1,5 +1,37 @@
 # Columbia Financeiro — Changelog
 
+## v0.21.0 (2026-08-07) — Recebimentos: nota de débito só quando devida (conta e ordem de terceiros)
+
+- **feat(recebimentos):** processos **POR CONTA E ORDEM DE TERCEIROS** (`imp021.priVldTipo = 2`) deixam
+  de gerar **Nota de Débito Eletrônica**. Nessa modalidade a Columbia importa em nome próprio, mas a
+  documentação fiscal do repasse sai **em nome do terceiro** — a nota não é dela. O "Processar" roda a
+  **SN (com299)** e a **baixa (fin014)** por inteiro e **para**: nenhuma etapa `com297`/`com300`/`com131`
+  e nenhum poll SEFAZ. Antes a cadeia das sete etapas era **incondicional**, então todo recebimento
+  executado terminava com uma NDe homologada — e homologação com297 é **irreversível**. Ver **ADR-0031**
+  e `business-rules/nde-dispensada-conta-e-ordem.md` (**I-Receb-4**).
+- **feat(recebimentos):** a modalidade é lida **do `imp021`, no servidor** (gate 0.5 do pré-flight, via
+  `ConexosCadastroClient.listProcessos`), **nunca** do corpo do POST. O campo já vinha do ERP e não era
+  lido por ninguém. Trafegá-lo pelo browser seria mais barato, mas deixaria um analista suprimir — ou
+  forçar — a emissão de um documento fiscal irreversível pelo devtools.
+- **feat(recebimentos):** modalidade **indeterminável** (processo ausente no `imp021`, `priVldTipo` nulo
+  em processo legado, ou o read falhando) **bloqueia** a alocação com motivo nomeando o campo e o
+  `priCod`, **sem escrever nada** — o write-ahead nem abre. Fail-closed deliberado: errar para "emite"
+  produz uma nota indevida sem desfazimento; errar para "bloqueia" produz um cadastro a corrigir.
+- **feat(recebimentos):** terminal próprio no ledger — `etapa = 'quitado-sem-nde'` com `nd_doc_cod`
+  nulo **por regra**. É o par que permite à auditoria distinguir "não era devida" de "parou antes de
+  emitir". **Sem migration:** a coluna `etapa` é `TEXT` sem `CHECK`; o `markSettled` passou a aceitar
+  override (`COALESCE`), preservando `concluido` em todos os call sites existentes.
+- **fix(recebimentos):** o modal "Alocar" deixa de renderizar `status: 'blocked'` como **"Quitado"** —
+  bug pré-existente que só não incomodava porque `blocked` era raro. Agora aparece como "Não
+  processado" com o motivo, mantém o botão **Processar** (é reprocessável depois de corrigir o
+  cadastro) e **não consome saldo**. O texto de sucesso também parou de prometer "nota de débito
+  gerada" incondicionalmente.
+- **chore(ontology):** `NotaDebitoEletronica —— Recebimento` passa de **1—1** para **0..1**;
+  `quitado-sem-nde` entra no enum de `etapa`; ontologia em **v0.16.0**.
+- **⚠️ Dívida aberta (P1):** alocações de processos conta e ordem processadas **antes** desta mudança
+  têm NDe emitida e homologada. Não há teardown fiscal — é fato consumado, a levantar com o cliente.
+  Levantamento e perguntas em `ontology/_inbox/nde-indevidas-conta-e-ordem-diagnostico.md`.
+
 ## v0.20.2 (2026-08-06) — Permutas: borderô órfão e aprovação vazia (I-Write-7)
 
 - **fix(permutas):** o borderô é criado no **passo 1** do handshake do `fin010`, **antes** de qualquer

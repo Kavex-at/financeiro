@@ -83,8 +83,17 @@ export const sugerirCliente = (
 const SALDO_TOL = 0.005
 
 /**
+ * Desfechos que o analista pode TENTAR DE NOVO: `error` (falhou numa etapa do ERP) e `blocked` (o
+ * pré-flight barrou antes de escrever — some depois que o cadastro for corrigido). Nos dois casos a
+ * tela mantém o valor + o botão Processar e mostra o motivo embaixo; nenhum consome saldo.
+ */
+const isReprocessavel = (r?: AlocacaoResultado): boolean =>
+  r?.status === 'error' || r?.status === 'blocked'
+
+/**
  * Resultado REAL de uma alocação renderizado no painel. O status carrega o desfecho
- * — `settled` (quitado), `error` (falhou numa etapa), `dry-run` (simulação do backend).
+ * — `settled` (quitado), `error` (falhou numa etapa), `blocked` (barrado no pré-flight, nada foi ao
+ * ERP), `dry-run` (simulação do backend).
  * Badges usam tokens semânticos do DS (`-subtle`/`-foreground`), não uma variante nova.
  */
 function ResultadoAlocacao({ resultado }: { resultado: AlocacaoResultado }) {
@@ -103,10 +112,28 @@ function ResultadoAlocacao({ resultado }: { resultado: AlocacaoResultado }) {
 
   if (resultado.status === 'dry-run') {
     return (
-      <div className="mt-2">
+      <div className="mt-2 space-y-1 text-sm">
         <Badge className="border-transparent bg-info-subtle text-info-foreground">
           <Landmark aria-hidden /> Simulação (dry-run)
         </Badge>
+        {resultado.ndeDispensada === true && resultado.motivo ? (
+          <p className="text-xs text-muted-foreground">{resultado.motivo}</p>
+        ) : null}
+      </div>
+    )
+  }
+
+  // `blocked`: o pré-flight barrou ANTES de escrever — nada foi ao ERP. Tem de aparecer como
+  // pendência acionável (o `motivo` diz o que corrigir no cadastro), NUNCA como "Quitado".
+  if (resultado.status === 'blocked') {
+    return (
+      <div className="mt-2 space-y-1 text-sm">
+        <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
+          <AlertTriangle aria-hidden /> Não processado
+        </Badge>
+        {resultado.motivo ? (
+          <p className="text-xs text-muted-foreground">{resultado.motivo}</p>
+        ) : null}
       </div>
     )
   }
@@ -115,6 +142,7 @@ function ResultadoAlocacao({ resultado }: { resultado: AlocacaoResultado }) {
   const revisaoPendente =
     resultado.revisaoHumana === true || resultado.docVldComvalidacoes === 2
   const aguardandoSefaz = resultado.vldAutorizado === 0
+  const ndeDispensada = resultado.ndeDispensada === true
 
   return (
     <div className="mt-2 space-y-1 text-sm">
@@ -122,6 +150,11 @@ function ResultadoAlocacao({ resultado }: { resultado: AlocacaoResultado }) {
         <Badge className="border-transparent bg-success-subtle text-success-foreground">
           <CheckCircle2 aria-hidden /> Quitado
         </Badge>
+        {ndeDispensada ? (
+          <Badge className="border-transparent bg-info-subtle text-info-foreground">
+            <Landmark aria-hidden /> Sem nota de débito
+          </Badge>
+        ) : null}
         {revisaoPendente ? (
           <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
             <AlertTriangle aria-hidden /> Homologado — revisão pendente
@@ -148,6 +181,9 @@ function ResultadoAlocacao({ resultado }: { resultado: AlocacaoResultado }) {
           </>
         ) : null}
       </dl>
+      {ndeDispensada && resultado.motivo ? (
+        <p className="text-xs text-muted-foreground">{resultado.motivo}</p>
+      ) : null}
       {aguardandoSefaz ? (
         <p className="text-xs text-info-foreground">Aguardando autorização SEFAZ</p>
       ) : null}
@@ -354,6 +390,18 @@ export function AlocarProcessosDialog({
         })
       } else if (resultado.dryRun || resultado.status === 'dry-run') {
         toast.success('Simulação gerada (dry-run).', { description: 'Nada foi enviado ao ERP.' })
+      } else if (resultado.status === 'blocked') {
+        // Nada foi ao ERP: é pendência de cadastro/elegibilidade, não falha de execução.
+        toast.warning('A alocação não foi processada.', { description: resultado.motivo })
+      } else if (resultado.ndeDispensada === true) {
+        // Processo por conta e ordem de terceiros: a nota não é devida (ADR-0031). O texto tem de
+        // dizer isso — prometer uma nota de débito que nunca sairá manda o analista procurá-la.
+        toast.success('Alocação processada no Conexos.', {
+          description:
+            snDocCod !== undefined
+              ? 'Baixa gerada na SN existente. Sem nota de débito (conta e ordem de terceiros).'
+              : 'SN e baixa gerados. Sem nota de débito (conta e ordem de terceiros).',
+        })
       } else {
         toast.success('Alocação processada no Conexos.', {
           description:
@@ -376,7 +424,7 @@ export function AlocarProcessosDialog({
   const resultadoSelecionado =
     processoSelecionado !== null ? resultados[processoSelecionado.priCod] : undefined
   const processadoSelecionado =
-    Boolean(resultadoSelecionado) && resultadoSelecionado?.status !== 'error'
+    Boolean(resultadoSelecionado) && !isReprocessavel(resultadoSelecionado)
   const valorSelecionado = processoSelecionado ? valorProcesso(processoSelecionado) : 0
   const excedeSaldo = valorSelecionado > saldoRestante + SALDO_TOL
   const emAndamento =
@@ -531,7 +579,7 @@ export function AlocarProcessosDialog({
                 <ul className="divide-y">
                   {processos.map((p) => {
                     const r = resultados[p.priCod]
-                    const processado = Boolean(r) && r.status !== 'error'
+                    const processado = Boolean(r) && !isReprocessavel(r)
                     const selecionado = selectedPriCod === p.priCod
                     return (
                       <li key={p.priCod}>
@@ -716,7 +764,7 @@ export function AlocarProcessosDialog({
                           {emAndamento ? <Spinner className="size-4" /> : null}
                           Processar
                         </Button>
-                        {resultadoSelecionado?.status === 'error' ? (
+                        {isReprocessavel(resultadoSelecionado) && resultadoSelecionado ? (
                           <ResultadoAlocacao resultado={resultadoSelecionado} />
                         ) : null}
                       </div>

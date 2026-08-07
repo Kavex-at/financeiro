@@ -194,7 +194,7 @@ const buildFakeSnLedger = (): { ledger: AnyRecord; rows: Map<string, AnyRecord> 
         setNdeAutorizado: async (key: string, autorizado: boolean) =>
             touch(key, { ndeAutorizado: autorizado }),
         markSettled: async (key: string, data: AnyRecord) =>
-            touch(key, { ...data, status: 'settled', etapa: 'concluido' }),
+            touch(key, { ...data, status: 'settled', etapa: data.etapa ?? 'concluido' }),
         markError: async (key: string, data: AnyRecord) => touch(key, { ...data, status: 'error' }),
     };
     return { ledger, rows };

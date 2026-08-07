@@ -2,7 +2,7 @@
 name: gerarSolicitacaoNumerario
 type: action
 entity: Recebimento
-ontology_version: "0.13"
+ontology_version: "0.16"
 implementation_status: implemented
 status: stable
 owners: [yuri]
@@ -18,13 +18,14 @@ related_files:
   - src/backend/routes/recebimentos.ts
   - src/frontend/app/recebimentos/components/AlocarProcessosDialog.tsx
   - src/frontend/lib/recebimentos.ts
-last_review: 2026-08-03
+last_review: 2026-08-07
 preconditions:
   - "TransacaoBancaria (crédito) presente no painel de Recebimentos, com conta bancária conhecida (transacao.gerNum). Rota devolve 422 se gerNum ausente."
   - "Operador aciona 'Alocar' na transação e distribui o valor por 1..N processos candidatos (human-in-the-loop); cada linha tem um 'Processar' próprio."
   - "Uma SELEÇÃO existe: para cada processo a analista escolheu 'Criar novo SN' OU uma SN existente do processo (docCod, listada por listarSolicitacoesNumerario). 'Processar' é gated na seleção (human-in-the-loop, ADR-0002/0022/0027) — sem seleção, não executa."
   - "Papel admin (requireRole('admin')) + authz por-filial (assertUserCanActOnFilial, filial do processo)."
   - "ACL pré-flight da conta de serviço (com300 UPDATE, com131 GERAR OBS, com297 HOMOLOGAR/CONTINGENCIA, com194 SELECT) → 403 antes de qualquer escrita."
+  - "Modalidade do processo resolvida no servidor (gate 0.5: imp021.priVldTipo via ConexosCadastroClient.listProcessos). READY só com a modalidade conhecida — ela decide se a NDe é devida (ADR-0031)."
   - "Escrita irreversível gated: só executa o POST real com CONEXOS_WRITE_ENABLED=true E CONEXOS_DRY_RUN=false (default dry-run)."
 postconditions:
   - "dry-run → monta e loga os payloads da rota escolhida (novo SN: com299/fin014/com297/fiscal; SN existente: fin014/com297/fiscal), NENHUM POST, retorna preview (dryRun:true)."
@@ -38,6 +39,8 @@ postconditions:
   - "real → fiscal com300 (read-modify-write): fisVldTipoNfDebito=6 (Pagamento antecipado); sucesso ⟺ resp.fisVldTipoNfDebito===6."
   - "real → observações com131 (geraObs): AJUSTE SINIEF; sucesso ⟺ fisEspObs preenchido; guard idempotente (não reapenda se já contém o marcador)."
   - "real → homologação com297 (ContingenciaDecider roteia por vldTpNf; docVldComvalidacoes 1=ok / 2=aviso→com194+revisao_humana / else=falha) + poll SEFAZ vldAutorizado (timeout ≠ erro, retoma no poll)."
+  - "conta-e-ordem (imp021.priVldTipo=2) → roda com299 + fin014 e PARA: nenhuma etapa com297/com300/com131 e nenhum poll SEFAZ. Settla com etapa 'quitado-sem-nde', nd_doc_cod nulo POR REGRA (não é lacuna) e resultado ndeDispensada:true. Nenhum registro em nota_debito_eletronica. Ver ADR-0031 / I-Receb-4."
+  - "modalidade indeterminável (processo ausente no imp021 | priVldTipo nulo | read falhou) → status blocked com motivo nomeando o campo e o priCod, ANTES de qualquer escrita (o write-ahead nem abre). Falha de transporte vira TRANSPORT_ERROR, não veredito de domínio."
 side_effects:
   - "Escritas IRREVERSÍVEIS no Conexos (com299 gerDocProcesso, fin014 baixa, com297 nota de débito + fiscal + homologar) — cada uma tentativa única / postGenericOnce."
   - "Trilha write-ahead estendida (solicitacao_numerario_execucao + colunas 0042: txn_id, valor, fin014_bor_cod, nd_doc_cod, etapa, revisao_humana, nde_autorizado); retomada-safe por etapa."
@@ -108,6 +111,24 @@ inalterado.
 - **Sem duplicata:** o ramo existente **não** cria um segundo documento (com299 pulado). A idempotência
   reusa `sn-real:{txnId}:{priCod}:{valor}`; o handle passa a ser o `docCod` **selecionado** em vez do
   gerado — a re-execução nunca duplica nem a SN nem a baixa.
+
+## Ramo — POR CONTA E ORDEM DE TERCEIROS (v0.16, ADR-0031)
+
+Quando o processo é **por conta e ordem de terceiros** (`imp021.priVldTipo = 2`), a alocação roda os
+passos **1 (com299)** e **2 (fin014)** por inteiro e **PARA**: o passo **3 (com297 + cauda fiscal)**
+não acontece. A documentação fiscal do repasse sai em nome do terceiro — a Columbia não é quem emite.
+Terminal `quitado-sem-nde`, `nd_doc_cod` nulo por regra. Ver
+`business-rules/nde-dispensada-conta-e-ordem.md` (I-Receb-4).
+
+- **Fonte da modalidade:** `imp021` lido **no servidor** (gate 0.5 do pré-flight, antes do gate de
+  cadastro), nunca o payload do browser — é a chave que liga/desliga um documento fiscal
+  irreversível. Um read a mais por Processar é o custo aceito.
+- **Fail-closed:** processo ausente no `imp021`, `priVldTipo` nulo ou read com falha ⇒ `blocked` com
+  `motivo` nomeando campo e `priCod`, **sem abrir o write-ahead**. Não se adivinha modalidade.
+- **NÃO confundir com a variante da config de SN** (`"... - TERCEIROS"`, gcd 151), que só decide a
+  conta de rateio da linha de item: eixos independentes (ADR-0031 D3).
+- **Ortogonal ao ramo SN existente:** uma alocação conta e ordem contra SN existente pula o com299
+  (I-Receb-3) **e** para antes do com297 (I-Receb-4).
 
 ## Rota
 

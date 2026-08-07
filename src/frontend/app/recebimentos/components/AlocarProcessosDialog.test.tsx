@@ -334,6 +334,58 @@ describe('AlocarProcessosDialog', () => {
     expect(await screen.findByText(/revisão pendente/i)).toBeInTheDocument()
   })
 
+  it('ndeDispensada renderiza "Sem nota de débito" + motivo, sem a linha da nota (ADR-0031)', async () => {
+    const user = userEvent.setup()
+    const motivo =
+      'Processo POR CONTA E ORDEM DE TERCEIROS (imp021 Tipo = 2): a Nota de Débito Eletrônica ' +
+      'não é devida — a quitação fecha com a SN e a baixa fin014.'
+    mockProcessar.mockResolvedValue({
+      status: 'settled',
+      etapa: 'quitado-sem-nde',
+      snDocCod: 18202,
+      borCod: 771,
+      ndeDispensada: true,
+      motivo,
+      dryRun: false,
+    })
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+
+    await selecionarProcesso(user)
+    await user.click(await screen.findByRole('button', { name: /processar/i }))
+
+    // Continua sendo uma quitação (a leg financeira aconteceu), com o aviso da nota dispensada.
+    expect(await screen.findByText('Quitado')).toBeInTheDocument()
+    expect(screen.getByText(/Sem nota de débito/i)).toBeInTheDocument()
+    expect(screen.getByText(/POR CONTA E ORDEM DE TERCEIROS/i)).toBeInTheDocument()
+    expect(screen.getByText('18202')).toBeInTheDocument() // SN
+    expect(screen.getByText('771')).toBeInTheDocument() // borderô
+    // A linha "Nota de débito" não pode existir — não há nota a procurar no ERP.
+    expect(screen.queryByText('Nota de débito')).not.toBeInTheDocument()
+    // Nem a promessa de SEFAZ (não há documento a autorizar).
+    expect(screen.queryByText(/Aguardando autorização SEFAZ/i)).not.toBeInTheDocument()
+  })
+
+  it('status blocked NÃO vira "Quitado": mostra o motivo e deixa reprocessar', async () => {
+    const user = userEvent.setup()
+    mockProcessar.mockResolvedValue({
+      status: 'blocked',
+      motivo: 'Processo 90001 está sem o campo "Tipo" (priVldTipo) no imp021.',
+      dryRun: false,
+    })
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+
+    await selecionarProcesso(user)
+    await user.click(await screen.findByRole('button', { name: /processar/i }))
+
+    expect(await screen.findByText(/Não processado/i)).toBeInTheDocument()
+    expect(screen.getByText(/sem o campo "Tipo"/i)).toBeInTheDocument()
+    expect(screen.queryByText('Quitado')).not.toBeInTheDocument()
+    // Barrado antes de escrever: o analista corrige o cadastro e tenta de novo.
+    expect(screen.getByRole('button', { name: /processar/i })).toBeInTheDocument()
+    // E não consumiu saldo nenhum.
+    expect(await screen.findByText(/Saldo a alocar/i)).toHaveTextContent('15.000,00')
+  })
+
   it('vldAutorizado===0 renderiza "Aguardando autorização SEFAZ" (não é falha)', async () => {
     const user = userEvent.setup()
     mockProcessar.mockResolvedValue({ ...settledResult, ndeAutorizado: false, vldAutorizado: 0 })

@@ -2,7 +2,7 @@
 name: recebimento
 type: state-machine
 entity: Recebimento
-ontology_version: "0.13"
+ontology_version: "0.16"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -26,7 +26,7 @@ out_of_scope_states: []
 |-----------|-------|-------------|
 | `rascunho` | `rascunho` | Conciliação em montagem — match + rateio + regras revisáveis pela analista. Estado inicial. |
 | `aprovado` | `aprovado` | A analista **aprovou** (gate human-in-the-loop). Registra `aprovadoPor`. Pronto para executar. **Reversível** enquanto não executado (volta a `rascunho`). |
-| `executado` | `executado` | Baixa/quitação registrada no ERP **+ NDe emitida** (via Conexos). Idempotente. Registra `resultadoExecucao`/`ndeId`. |
+| `executado` | `executado` | Baixa/quitação registrada no ERP **+ NDe emitida quando devida** (via Conexos). Em processo POR CONTA E ORDEM DE TERCEIROS (`imp021.priVldTipo=2`) a execução é completa **sem** NDe — `ndeId` fica nulo por regra, não por lacuna (ADR-0031, I-Receb-4). Idempotente. Registra `resultadoExecucao`/`ndeId`. |
 | `estornado` | `estornado` | **Undo controlado** (estorno bancário / erro operacional / conciliação incorreta). Terminal. |
 
 Tipo: `RecebimentoStatus = 'rascunho' | 'aprovado' | 'executado' | 'estornado'`
@@ -42,7 +42,7 @@ Cada transição é uma **ação nomeada** com regra explícita e registro de vi
 | R1 | `(novo) → rascunho` | `atribuirBaixa` → `ratearRecebimento` → `aplicarRegrasRecebimento` | Conciliação montada (match confiável + rateio balanceado + regras aplicadas). A alocação pode GERAR uma SN nova OU alvo uma SN EXISTENTE do processo (docCod, listarSolicitacoesNumerario) — é um RAMO do settle, **NÃO** um estado novo (ADR-0027, invariante I-Receb-3). | 2026-08-03 |
 | R2 | `rascunho → aprovado` | `aprovarRecebimento` **(GATE human-in-the-loop)** | Rateio balanceado (invariante-rateio) + itens válidos. Registra `aprovadoPor`. | 2026-07-24 |
 | R3 | `aprovado → rascunho` | `reabrirRecebimento` | Reversão do gate — enquanto **não executado** (espelha `reabrirLote` do SISPAG). | 2026-07-24 |
-| R4 | `aprovado → executado` | `executarRecebimento` | Baixa/quitação no ERP + emissão NDe. **Idempotente** (write-ahead ledger; retry nunca duplica). Gated (dry-run/homologação-first). | 2026-07-24 |
+| R4 | `aprovado → executado` | `executarRecebimento` | Baixa/quitação no ERP + emissão NDe **quando devida**: `priVldTipo=2` (conta e ordem) quita com SN + baixa e para, terminal `quitado-sem-nde` — outro RAMO do settle, **NÃO** um estado novo (ADR-0031, I-Receb-4). Modalidade indeterminável ⇒ bloqueio fail-closed, sem escrita. **Idempotente** (write-ahead ledger; retry nunca duplica). Gated (dry-run/homologação-first). | 2026-08-07 |
 | R5 | `executado → estornado` | `estornarRecebimento` | **Undo controlado** (estorno bancário / erro operacional / conciliação incorreta). Terminal. | 2026-07-24 |
 
 ```

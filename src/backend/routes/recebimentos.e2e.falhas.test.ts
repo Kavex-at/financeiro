@@ -50,6 +50,11 @@ interface CenarioErp {
     com194Rows: Array<Record<string, unknown>>;
     /** Ações da ACL da conta de serviço (cenário 4 remove o com194). */
     aclAcoes: string[];
+    /**
+     * `imp021.priVldTipo` do processo — modalidade. `3` (POR ENCOMENDA) = trilha completa com NDe;
+     * `2` (POR CONTA E ORDEM DE TERCEIROS) dispensa a nota (cenário 5, ADR-0031).
+     */
+    priVldTipo: number;
 }
 
 interface ErpState {
@@ -108,6 +113,7 @@ const cenarioDefault = (): CenarioErp => ({
     homologDocVldComvalidacoes: 1,
     com194Rows: [],
     aclAcoes: [...ACL_COMPLETA],
+    priVldTipo: 3,
 });
 
 const buildErp = (): { app: express.Express; state: ErpState } => {
@@ -193,7 +199,7 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
                     pesCod: PES_COD,
                     dpeNomPessoa: 'BELLIZ INDUSTRIA E COMERCIO LTDA',
                     priEspRefcliente: 'REF-2026-001',
-                    priVldTipo: 3,
+                    priVldTipo: state.cenario.priVldTipo,
                     priDtaAbertura: Date.now() - 30 * 24 * 60 * 60 * 1000,
                     filCod: FIL_COD,
                 },
@@ -595,7 +601,7 @@ const buildFakeSnLedger = (): { ledger: AnyRecord; rows: Map<string, AnyRecord> 
         setNdeAutorizado: async (key: string, autorizado: boolean) =>
             touch(key, { ndeAutorizado: autorizado }),
         markSettled: async (key: string, data: AnyRecord) =>
-            touch(key, { ...data, status: 'settled', etapa: 'concluido' }),
+            touch(key, { ...data, status: 'settled', etapa: data.etapa ?? 'concluido' }),
         markError: async (key: string, data: AnyRecord) => touch(key, { ...data, status: 'error' }),
     };
     return { ledger, rows };
@@ -939,6 +945,51 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
 
             // Nada chegou ao ledger (o 403 acontece ANTES do service).
             expect(snLedgerRows.get(`sn-real:${txnId}:${PRI_COD}:${VALOR}`)).toBeUndefined();
+        });
+    });
+
+    // ─────────────── Cenário 5 — processo POR CONTA E ORDEM DE TERCEIROS (ADR-0031)
+
+    describe('Cenário 5 — imp021 priVldTipo=2 (POR CONTA E ORDEM DE TERCEIROS)', () => {
+        const VALOR = 5555.55;
+
+        it('quita com SN + baixa e NENHUM byte chega ao com297/com300/com131', async () => {
+            armarCenario({
+                extrato: { extCod: 205, exiCodSeq: 55, valor: VALOR },
+                priVldTipo: 2,
+            });
+            const txnId = await ingerirEEncontrarTxn(VALOR);
+            const mark = erp.state.requests.length;
+
+            const res = await alocar(txnId, VALOR);
+            const body = (await res.json()) as AnyRecord;
+            expect(res.status).toBe(200);
+            expect(body.status).toBe('settled');
+            expect(body.etapa).toBe('quitado-sem-nde');
+            expect(body.ndeDispensada).toBe(true);
+            expect(body.ndDocCod).toBeUndefined();
+
+            // A leg FINANCEIRA aconteceu de verdade, via HTTP: SN gerada + borderô/baixa fin014.
+            const paths = pathsDesde(mark);
+            expect(paths.some((p) => p.includes('POST /api/com299/gerDocProcesso'))).toBe(true);
+            expect(paths.some((p) => p.includes('POST /api/fin014'))).toBe(true);
+
+            // A leg FISCAL não existiu — nenhuma operação de DOCUMENTO nas telas da NDe, em nenhum
+            // verbo. O `GET /api/permissoes/new/com297` fica de fora de propósito: é o pré-flight de
+            // ACL da rota (leitura de permissões), roda antes do serviço e não toca documento algum.
+            const fiscais = paths.filter(
+                (p) =>
+                    !p.includes('/permissoes/') &&
+                    (p.includes('/com297') || p.includes('/com300') || p.includes('/com131')),
+            );
+            expect(fiscais).toEqual([]);
+
+            // Ledger: terminal próprio, sem nº de nota.
+            const row = snLedgerRows.get(`sn-real:${txnId}:${PRI_COD}:${VALOR}`);
+            expect(row).toBeDefined();
+            expect(row?.status).toBe('settled');
+            expect(row?.etapa).toBe('quitado-sem-nde');
+            expect(row?.ndDocCod).toBeUndefined();
         });
     });
 });

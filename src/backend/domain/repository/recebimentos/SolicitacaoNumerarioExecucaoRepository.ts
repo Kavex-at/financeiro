@@ -190,7 +190,7 @@ export default class SolicitacaoNumerarioExecucaoRepository
                 status = 'settled',
                 doc_cod = COALESCE($docCod, doc_cod),
                 nd_doc_cod = COALESCE($ndDocCod, nd_doc_cod),
-                etapa = 'concluido',
+                etapa = COALESCE($etapa, 'concluido'),
                 erp_response = $erpResponse::jsonb,
                 erro_mensagem = NULL,
                 atualizado_em = now()
@@ -199,6 +199,8 @@ export default class SolicitacaoNumerarioExecucaoRepository
                 key,
                 docCod: data.docCod ?? null,
                 ndDocCod: data.ndDocCod ?? null,
+                // Default histórico preservado: sem override, o settle continua gravando `concluido`.
+                etapa: data.etapa ?? null,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
             },
         );

@@ -145,6 +145,23 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
         });
     });
 
+    // ── imp021: modalidade do processo (gate 0.5 do pré-flight, ADR-0031) ──
+    // `priVldTipo: 3` (POR ENCOMENDA) = trilha COMPLETA com NDe, que é o que estes gates pinam.
+    app.post('/api/imp021/list', (_req, res) => {
+        res.json({
+            count: 1,
+            rows: [
+                {
+                    priCod: PRI_COD,
+                    pesCod: PES_COD,
+                    dpeNomPessoa: 'CLIENTE E2E LTDA',
+                    priVldTipo: 3,
+                    filCod: FIL_COD,
+                },
+            ],
+        });
+    });
+
     // ── LOVs ──
     app.post('/api/lov/ConfigDocProcesso', (_req, res) => {
         res.json({
@@ -463,7 +480,7 @@ const buildFakeSnLedger = (): FakeSnLedger => {
         setNdeAutorizado: async (key: string, autorizado: boolean) =>
             touch(key, { ndeAutorizado: autorizado }),
         markSettled: async (key: string, data: AnyRecord) =>
-            touch(key, { ...data, status: 'settled', etapa: 'concluido' }),
+            touch(key, { ...data, status: 'settled', etapa: data.etapa ?? 'concluido' }),
         markError: async (key: string, data: AnyRecord) => {
             markErrorCalls.push({ key, data });
             touch(key, { ...data, status: 'error' });
