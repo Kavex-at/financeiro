@@ -240,6 +240,26 @@ export async function criarAlocacao(
 }
 
 /**
+ * Texto de erro de uma resposta não-ok, na ordem em que ele é útil ao analista:
+ *
+ *   1. `message` — a frase CURADA do backend (`HandlerError.userMessage`), escrita para ser
+ *      lida: "Seu usuário Conexos (X) não tem permissão de CONSULTA em IMP_223…" (ADR-0032).
+ *   2. `error`   — o código/rótulo, quando não há frase.
+ *   3. `API <status>` — último recurso.
+ *
+ * O `API <status>` some quando existe frase: "API 403 — Seu usuário…" só rouba espaço da
+ * parte que o analista precisa ler. Mesmo critério já usado em `acaoBordero`.
+ */
+async function mensagemDeErro(res: Response): Promise<string> {
+  try {
+    const j = await res.json()
+    if (j?.message) return String(j.message)
+    if (j?.error) return String(j.error)
+  } catch {}
+  return `API ${res.status}`
+}
+
+/**
  * Reconcilia (baixa no ERP `fin010`) as alocações de um adiantamento — Fase 3 (ADR-0013).
  * `dryRun=true` força o preview (monta/loga o payload, sem POST). O backend é dry-run por
  * padrão (gated por CONEXOS_WRITE_ENABLED/DRY_RUN); a escrita real exige as flags ligadas.
@@ -259,14 +279,7 @@ export async function reconciliarAdiantamento(
       }),
     },
   )
-  if (!res.ok) {
-    let detail = ''
-    try {
-      const j = await res.json()
-      detail = j?.error ? ` — ${j.error}` : ''
-    } catch {}
-    throw new Error(`API ${res.status}${detail}`)
-  }
+  if (!res.ok) throw new Error(await mensagemDeErro(res))
   return (await res.json()) as ReconciliarResult
 }
 
@@ -336,14 +349,7 @@ export async function reconciliarLoteAutomaticas(
         : {}),
     }),
   })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      const j = await res.json()
-      detail = j?.error ? ` — ${j.error}` : ''
-    } catch {}
-    throw new Error(`API ${res.status}${detail}`)
-  }
+  if (!res.ok) throw new Error(await mensagemDeErro(res))
   return (await res.json()) as ReconciliarLoteResult
 }
 

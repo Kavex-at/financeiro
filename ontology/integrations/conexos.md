@@ -193,6 +193,41 @@ determinístico, medido em `docs/e2e/fin014-finalizacao-hml-diagnostico.md`.
 **Não confundir com idempotência:** uma escrita irreversível continua sendo tentativa única
 (`postGenericOnce`), retentável ou não.
 
+### Envelope `ACCESS_DENIED` — permissão de tela/ação (ADR-0032, v0.21.1)
+
+O Conexos tem um terceiro formato de erro, além do `{messages}` e do `{itemMessages}`: quando o usuário
+do ERP não tem permissão na tela, ele responde **403** com um envelope que já contém o diagnóstico e a
+solução — e **nenhum** `messages[]`, motivo pelo qual ele era invisível para o `ErpErrorInterpreter`.
+
+```jsonc
+{
+  "type": "ACCESS_DENIED",
+  "permRequest": {
+    "usnDesNomeRequest": "SIMONE_PEREIRA",               // usuário sob o qual a chamada correu
+    "cpoDesArquivo": "IMP_223",                           // tela — a chave que o admin do ERP usa
+    "cpoDesNome": "DECLARAÇÃO ÚNICA DE IMPORTAÇÃO (DUIMP)",
+    "caminho": "Despacho Aduaneiro / Pucomex",            // menu (vai ao log, não à frase)
+    "generatedBy": { "type": "SELECT" },                  // operação negada
+    "permissoesIniciais": { "permissoes": { "SELECT": false }, "acoes": {} },
+    "gerentesUsuario": [{ "usnDesNome": "CATIA_OLIVEIRA" }]   // quem pode conceder
+  }
+}
+```
+
+Lido por `domain/errors/ErpAccessDenied.ts` (parse + frase, nunca lança), que estende a tabela acima:
+
+| Resposta do ERP | Natureza | `code` do `ConexosError` | `retryable` | HTTP para fora |
+|---|---|---|---|---|
+| 4xx com envelope `ACCESS_DENIED` | recusa **de acesso** | `CONEXOS_ACCESS_DENIED` | `false` | **403** |
+
+Um `403` **sem** o envelope segue como recusa comum (`CONEXOS_UPSTREAM_REJECTED`, 502) — o status
+sozinho não caracteriza falta de permissão.
+
+A frase que chega ao analista nomeia usuário, ação, tela e quem libera; o `permRequest` cru fica no log.
+O envelope é **por-usuário**: com sessão por usuário (`ConexosSessionResolver`), a chamada dentro de
+request corre na credencial do analista logado e job/cron cai no robô — que costuma ter todos os grants.
+Daí o sintoma de "a lista carrega, mas a ação falha".
+
 ## Cache local de borderôs — `permuta_bordero` (ADR-0014, v0.7.0)
 
 Para a aba Borderôs não bater no ERP a cada abertura, os borderôs de permuta (`fin010` `borVldTipo=2`)

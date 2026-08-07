@@ -58,6 +58,51 @@ describe('errorMiddleware', () => {
         expect(logged).toMatch(/internal/);
     });
 
+    // ADR-0032: exceção CURADA ao genérico — só o que implementa `HandlerError` fala.
+    describe('typed HandlerError: responde com a mensagem curada', () => {
+        const conexosAccessDenied = Object.assign(new Error('Conexos call to imp223/list failed'), {
+            code: 'CONEXOS_ACCESS_DENIED',
+            userMessage:
+                'Seu usuário Conexos (SIMONE_PEREIRA) não tem permissão de CONSULTA em IMP_223.',
+            retryable: false,
+            statusCode: 403,
+            details: { endpoint: 'imp223/list' },
+            response: { status: 403, data: { permRequest: { usnCodRequest: 14 } } },
+        });
+
+        it('emite o statusCode e o userMessage do próprio erro', () => {
+            const res = buildRes();
+            errorMiddleware(conexosAccessDenied, req, res, next);
+            expect(res._status).toBe(403);
+            expect(res._json).toEqual({
+                error: 'CONEXOS_ACCESS_DENIED',
+                message:
+                    'Seu usuário Conexos (SIMONE_PEREIRA) não tem permissão de CONSULTA em IMP_223.',
+                retryable: false,
+                details: { endpoint: 'imp223/list' },
+            });
+        });
+
+        it('mesmo assim NÃO vaza o payload cru do ERP nem o `err.message` técnico', () => {
+            const res = buildRes();
+            errorMiddleware(conexosAccessDenied, req, res, next);
+            const body = JSON.stringify(res._json);
+            expect(body).not.toMatch(/permRequest|usnCodRequest/);
+            expect(body).not.toMatch(/Conexos call to/);
+        });
+
+        it('um erro só PARECIDO com typed (sem userMessage) continua genérico em 500', () => {
+            const res = buildRes();
+            const quaseTyped = Object.assign(new Error('boom'), {
+                code: 'ALGO',
+                statusCode: 418,
+            });
+            errorMiddleware(quaseTyped, req, res, next);
+            expect(res._status).toBe(500);
+            expect(res._json).toEqual({ error: 'Internal server error' });
+        });
+    });
+
     it('does not write a body when headers were already sent', () => {
         const res = buildRes();
         res.headersSent = true;

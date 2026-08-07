@@ -927,6 +927,8 @@
         "src/backend/domain/client/ConexosBaseClient.ts",
         "src/backend/domain/errors/ConexosError.ts",
         "src/backend/domain/errors/ErpResponseReader.ts",
+        "src/backend/domain/errors/ErpAccessDenied.ts",
+        "src/backend/http/errorMiddleware.ts",
         "src/backend/domain/service/permutas/ErpErrorInterpreter.ts",
         "src/backend/domain/client/permutas/conexosPermutasConstants.ts",
         "src/backend/domain/client/permutas/conexosPermutasSchemas.ts",

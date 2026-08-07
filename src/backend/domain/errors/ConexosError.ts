@@ -1,10 +1,12 @@
 import type { HandlerError } from '../libs/handler/HandlerError.js';
+import ErpAccessDenied from './ErpAccessDenied.js';
 import ErpResponseReader from './ErpResponseReader.js';
 
 export type ConexosErrorCode =
     | 'CONEXOS_UPSTREAM_TIMEOUT'
     | 'CONEXOS_UPSTREAM_ERROR'
-    | 'CONEXOS_UPSTREAM_REJECTED';
+    | 'CONEXOS_UPSTREAM_REJECTED'
+    | 'CONEXOS_ACCESS_DENIED';
 
 /**
  * Thrown by `ConexosClient` when an upstream Conexos call fails. Three flavours — the first two
@@ -56,12 +58,20 @@ export default class ConexosError extends Error implements HandlerError {
         const rejected =
             params.code !== 'CONEXOS_UPSTREAM_TIMEOUT' &&
             ErpResponseReader.isDeterministicRefusal(params.cause);
-        this.code = rejected
-            ? 'CONEXOS_UPSTREAM_REJECTED'
-            : (params.code ?? 'CONEXOS_UPSTREAM_ERROR');
+        // Permissão negada é uma recusa como as outras (repetir não muda nada), mas separá-la vale
+        // pelo desfecho: o envelope já diz qual tela falta e quem libera, e 403 conta ao cliente que
+        // o problema é de ACESSO — não do dado enviado, que é o que um 502 sugere.
+        const accessDenied = rejected ? ErpAccessDenied.parse(params.cause) : undefined;
+        this.code = accessDenied
+            ? 'CONEXOS_ACCESS_DENIED'
+            : rejected
+              ? 'CONEXOS_UPSTREAM_REJECTED'
+              : (params.code ?? 'CONEXOS_UPSTREAM_ERROR');
         this.retryable = !rejected;
-        this.statusCode = rejected ? 502 : 504;
-        this.userMessage = ConexosError.buildUserMessage(this.code, params.cause);
+        this.statusCode = accessDenied ? 403 : rejected ? 502 : 504;
+        this.userMessage = accessDenied
+            ? ErpAccessDenied.describe(accessDenied)
+            : ConexosError.buildUserMessage(this.code, params.cause);
         this.details = { endpoint: params.endpoint, priCod: params.priCod };
     }
 

@@ -1,4 +1,5 @@
 import { injectable, singleton } from 'tsyringe';
+import ErpAccessDenied from '../../errors/ErpAccessDenied.js';
 import ErpResponseReader from '../../errors/ErpResponseReader.js';
 import type { ErpMessage } from '../../errors/ErpResponseReader.js';
 
@@ -69,12 +70,16 @@ export default class ErpErrorInterpreter {
         const fallback = err instanceof Error ? err.message : 'erro ao executar a ação no Conexos';
         // Envelope de VALIDAÇÃO por-item (SELECTION_ERROR/VALIDATION) — mais específico que o `{messages}`.
         const itemFriendly = this.interpretItemMessages(resp?.data);
+        // Permissão negada vence tudo: o `ACCESS_DENIED` não traz `messages[]` nem `itemMessages`,
+        // então sem esta leitura ele caía no `fallback` (= `Conexos call to <endpoint> failed`) e o
+        // motivo real — qual tela falta, para quem — morria no payload.
+        const negado = ErpAccessDenied.describeIfDenied(err);
         return {
             ...(resp?.status !== undefined ? { status: resp.status } : {}),
             ...(data !== undefined ? { data } : {}),
             ...(key !== undefined ? { key } : {}),
             ...(reason !== undefined ? { reason } : {}),
-            friendly: itemFriendly ?? this.friendlyFor(key, reason, fallback),
+            friendly: negado ?? itemFriendly ?? this.friendlyFor(key, reason, fallback),
         };
     };
 

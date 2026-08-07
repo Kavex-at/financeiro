@@ -168,4 +168,29 @@ describe('ErpErrorInterpreter', () => {
         });
         expect(() => interpreter.interpret(comNull)).not.toThrow();
     });
+    // Regressão do 500 opaco de 2026-08-06: o `ACCESS_DENIED` não tem `messages[]` nem
+    // `itemMessages`, então caía no fallback `err.message` e o analista lia
+    // "Conexos call to imp223/list failed" — nada acionável.
+    it('ACCESS_DENIED vira a frase acionável, não o `err.message` cru', () => {
+        const err = Object.assign(new Error('Conexos call to imp223/list failed'), {
+            response: {
+                status: 403,
+                data: {
+                    type: 'ACCESS_DENIED',
+                    permRequest: {
+                        usnDesNomeRequest: 'SIMONE_PEREIRA',
+                        cpoDesArquivo: 'IMP_223',
+                        cpoDesNome: 'DECLARACAO UNICA DE IMPORTACAO (DUIMP)',
+                        generatedBy: { type: 'SELECT' },
+                        gerentesUsuario: [{ usnDesNome: 'CATIA_OLIVEIRA' }],
+                    },
+                },
+            },
+        });
+        const { friendly } = interpreter.interpret(err);
+        expect(friendly).toContain('SIMONE_PEREIRA');
+        expect(friendly).toContain('IMP_223');
+        expect(friendly).toContain('CATIA_OLIVEIRA');
+        expect(friendly).not.toContain('Conexos call to');
+    });
 });

@@ -17,6 +17,22 @@ const envelopeValidacao = (message: string): unknown => ({
     messages: [{ message }],
 });
 
+/** O envelope `ACCESS_DENIED` (403) — permissão de tela/ação negada ao usuário do ERP. */
+const envelopeAccessDenied = (form: string, acao = 'SELECT'): unknown => ({
+    type: 'ACCESS_DENIED',
+    permRequest: {
+        usnDesNomeRequest: 'SIMONE_PEREIRA',
+        cpoDesArquivo: form,
+        cpoDesNome: 'DECLARAÇÃO ÚNICA DE IMPORTAÇÃO (DUIMP)',
+        caminho: 'Despacho Aduaneiro / Pucomex',
+        generatedBy: { type: acao, name: acao },
+        gerentesUsuario: [
+            { usnCod: 1, usnDesNome: 'CONEXOS' },
+            { usnCod: 21, usnDesNome: 'CATIA_OLIVEIRA' },
+        ],
+    },
+});
+
 describe('ConexosError — recusa determinística × indisponibilidade', () => {
     describe('indisponibilidade (retentável): o retry pode mudar o resultado', () => {
         it('sem `cause` (falha de rede/parse, sem status) segue retentável em 504', () => {
@@ -116,6 +132,59 @@ describe('ConexosError — recusa determinística × indisponibilidade', () => {
                 cause: erroDoErp(400, envelopeValidacao('X')),
             });
             expect(e.details).toEqual({ endpoint: 'com299', priCod: '186' });
+        });
+    });
+
+    // Permissão negada é uma recusa como as outras (não retentável), mas com um desfecho que
+    // só ela tem: o próprio ERP diz qual tela falta e quem libera. Por isso ganha código e
+    // status próprios — o 403 diz ao front que o problema é de acesso, não do dado enviado.
+    describe('ACCESS_DENIED (403): a recusa que já vem com a solução', () => {
+        it('classifica como acesso negado, em 403 e não-retentável', () => {
+            const e = new ConexosError({
+                endpoint: 'imp223/list',
+                cause: erroDoErp(403, envelopeAccessDenied('IMP_223')),
+            });
+            expect(e.code).toBe('CONEXOS_ACCESS_DENIED');
+            expect(e.statusCode).toBe(403);
+            expect(e.retryable).toBe(false);
+        });
+
+        it('a mensagem nomeia usuário, ação, tela e quem libera', () => {
+            const e = new ConexosError({
+                endpoint: 'imp223/list',
+                cause: erroDoErp(403, envelopeAccessDenied('IMP_223')),
+            });
+            expect(e.userMessage).toContain('SIMONE_PEREIRA');
+            expect(e.userMessage).toContain('CONSULTA');
+            expect(e.userMessage).toContain('IMP_223');
+            expect(e.userMessage).toContain('CATIA_OLIVEIRA');
+            // Repetir não resolve permissão — o conselho errado de sempre.
+            expect(e.userMessage).not.toMatch(/tente novamente/i);
+        });
+
+        it('atravessa o `cause` aninhado sem perder a frase', () => {
+            const interno = new ConexosError({
+                endpoint: 'imp223/list',
+                cause: erroDoErp(403, envelopeAccessDenied('IMP_223')),
+            });
+            const externo = new ConexosError({ endpoint: 'permutas', cause: interno });
+            expect(externo.code).toBe('CONEXOS_ACCESS_DENIED');
+            expect(externo.statusCode).toBe(403);
+        });
+
+        it('um 403 SEM envelope de permissão continua sendo recusa comum (502)', () => {
+            const e = new ConexosError({ endpoint: 'fin010', cause: erroDoErp(403) });
+            expect(e.code).toBe('CONEXOS_UPSTREAM_REJECTED');
+            expect(e.statusCode).toBe(502);
+        });
+
+        it('o timeout declarado pelo caller ainda vence o envelope', () => {
+            const e = new ConexosError({
+                endpoint: 'imp223/list',
+                code: 'CONEXOS_UPSTREAM_TIMEOUT',
+                cause: erroDoErp(403, envelopeAccessDenied('IMP_223')),
+            });
+            expect(e.code).toBe('CONEXOS_UPSTREAM_TIMEOUT');
         });
     });
 });
