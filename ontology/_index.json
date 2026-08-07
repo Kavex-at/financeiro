@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-08-04",
-    "version": "0.15.0",
-    "note": "v0.15.0 (2026-08-04, ADR-0028, branch feat/recebimentos-ga-extrato-hourly): FRENTE IV LIBERADA EM PRODUCAO (\"Gestao de Adiantamentos\"). Gate do FRONTEND removido (isRecebimentosEnabled deixa de existir; a home renderiza o card habilitado e /recebimentos nao tem mais tela de bloqueio). RECEBIMENTOS_ENABLED sobrevive como KILL-SWITCH com o fail-safe INVERTIDO: ausencia = habilitado, so \"false\" desliga (403 via recebimentosGate, sem redeploy) — assimetrico em relacao ao SISPAG, de proposito. Acao importarTransacoesNexxera RENOMEADA para importarTransacoesExtrato (a chave antiga apontava para um arquivo inexistente) e promovida de planned para implemented; integracao conexos-fin095-extrato INDEXADA (estava fora do _index). Regra nova na janela de ingestao: piso DURO CONEXOS_EXTRATO_SYNC_START_DATE (default 2026-08-03) — a janela efetiva e a intersecao com RECEBIMENTO_INGEST_DIAS e vale inclusive no backfill manual; e um MINIMO, nao data fixa. Cadencia: de \"nao agendada\" para HORARIA via GitHub Actions (20 * * * *, concurrency + workflow_dispatch + ate 3 tentativas com backoff). SEM migration — UNIQUE (natural_key) ja existia desde a 0032. Debito P1 AGRAVADO: usuario-robo dedicado no Conexos segue aberto com o cron agora horario.",
+    "generated": "2026-08-07",
+    "version": "0.16.0",
+    "note": "v0.16.0 (2026-08-07, ADR-0031): NDe DISPENSADA em processos POR CONTA E ORDEM DE TERCEIROS. A cadeia do \"Processar\" da Frente IV deixa de ser incondicional: quando imp021.priVldTipo=2, a alocacao roda com299 (SN) + fin014 (baixa) e PARA — nenhuma etapa com297/com300/com131 e nenhum poll SEFAZ; settla na etapa terminal nova quitado-sem-nde com nd_doc_cod nulo POR REGRA (nao e lacuna) e devolve ndeDispensada:true. A modalidade e lida SEMPRE do imp021 no SERVIDOR (gate 0.5 do pre-flight, via ConexosCadastroClient.listProcessos ramo priCods), nunca do payload do browser: e a chave que liga/desliga um documento fiscal irreversivel. Modalidade indeterminavel (processo ausente | priVldTipo nulo | read falhou) = BLOCKED fail-closed, sem abrir o write-ahead. O gatilho e EXCLUSIVAMENTE priVldTipo=2 — NAO a variante \"- TERCEIROS\" da config de SN (gcd 151), que so decide a conta de rateio: eixos independentes. Relacao NotaDebitoEletronica—Recebimento passa de 1—1 para 0..1. markSettled do ledger aceita override de etapa (COALESCE) — SEM migration, a coluna etapa e TEXT sem CHECK. Frontend: status blocked deixa de renderizar como \"Quitado\" (bug pre-existente que a decisao fail-closed tornou frequente) e o texto de sucesso para de prometer nota de debito incondicionalmente. Divida aberta: alocacoes conta-e-ordem processadas ANTES desta mudanca tem NDe emitida e homologada — fato fiscal irreversivel, a levantar com o cliente.",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -554,11 +554,13 @@
         "src/backend/migrations/0042_solicitacao_numerario_execucao_fiscal.sql",
         "src/backend/routes/recebimentos.ts",
         "src/frontend/app/recebimentos/components/AlocarProcessosDialog.tsx",
-        "src/frontend/lib/recebimentos.ts"
+        "src/frontend/lib/recebimentos.ts",
+        "src/backend/domain/client/ConexosCadastroClient.ts"
       ],
       "resolved_by": [
         "feature-tweak recebimentos-alocar-sn (DRY-RUN)",
-        "recebimentos-numerario-real (v0.12 — DRY-RUN -> REAL, split, cauda fiscal)"
+        "recebimentos-numerario-real (v0.12 — DRY-RUN -> REAL, split, cauda fiscal)",
+        "ADR-0031"
       ],
       "note": "Frente IV — 'Alocar processos' (transacao) -> distribui o valor por 1..N processos -> 'Processar' por linha roda a automacao REAL no Conexos (gated CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN, default dry-run): com299 (SN + finaliza) -> fin014 (baixa do credito, conta financeira = a conta do PROPRIO pagamento transacao.gerNum, NAO um env var fixo) -> com297 (nota de debito + produto 41978) -> CAUDA FISCAL na ordem obrigatoria fiscal(com300 fisVldTipoNfDebito=6)->observacoes(com131 SINIEF, guard idempotente)->homologar(com297 docVldComvalidacoes; ContingenciaDecider por vldTpNf, 2->com194+revisao_humana)->poll SEFAZ vldAutorizado (timeout != erro). Orquestrador RecebimentoNumerarioService (nativo recebimentos; reusa clients Conexos, NAO chama permutas). SnPayloadBuilder compartilhado com a rota dry-run (o seam enviarAoErp/NotImplementedError foi RETIRADO). SPLIT: 1..N alocacoes por pagamento, Sigma valor <= transacao.valor; idempotencia sn-real:{txnId}:{priCod}:{valor} (split-safe). Retomada-safe via trilha estendida (0042: txn_id/valor/fin014_bor_cod/nd_doc_cod/etapa/revisao_humana/nde_autorizado). Rota POST /recebimentos/transacoes/:txnId/solicitacao-numerario (422 se gerNum ausente; ACL pre-flight com300/com131/com297/com194; requireRole admin + heavyRouteLimiter + filial-authz; HTTP 200 mesmo em erro de etapa, re-POST retoma). Fecha o GAP nota-debito-fiscal deixado pela trilha permutas. Spec: integrations/recebimentos-numerario-real-fiscal-spec.md + integrations/conexos-nde-fiscal.md. CORRECAO v0.12.1 (2026-08-03, ADR-0025): a etapa com299 completa a SN NESTA ordem — (a) linha de item comDocProdutos PRIMEIRO (preserva o titulo que o ERP cria na geracao) -> (b) condicao de pagamento SO sob validacao BLOQUEANTE da com194 (fdvVldErr===2 mencionando condicao de pagamento; leitura best-effort, com194 fora do ar = segue sem o PUT) -> (c) discriminador obrigatorio mnyTitValor === docMnyValor (>0) na releitura, senao a etapa FALHA (o PUT que troca pgtCod destroi as parcelas e NAO regenera). implemented."
     },
@@ -831,6 +833,24 @@
         "ADR-0027"
       ],
       "note": "Frente IV (ADR-0027): quando a alocacao baixa contra uma SN JA EXISTENTE do processo (docCod selecionado, em vez de gerar nova) — (a) valor alocado <= SALDO DO TITULO da SN; (b) o caminho existente NAO cria segundo documento (com299 pulado, sem duplicata); (c) selecao confirmada pelo humano (gate ADR-0002/0022). DISTINTO de I-Receb-1: I-Receb-1 = Sigma alocacoes <= transacao.valor (por pagamento); I-Receb-3 = UMA alocacao <= saldo do titulo da SN (por SN). O SALDO NAO vem de com299/list (document-level: mnyBruto/docMnyValor); vem do titulo (lov/TituloBorderoReceber) que a baixa fin014 ja le — enforcement na baixa/titulo, nao na lista. Teste canonico no TDD. planned."
+    },
+    "nde-dispensada-conta-e-ordem": {
+      "file": "business-rules/nde-dispensada-conta-e-ordem.md",
+      "invariant": "I-Receb-4",
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/service/recebimentos/RecebimentoNumerarioService.ts",
+        "src/backend/domain/interface/recebimentos/constants.ts",
+        "src/backend/domain/interface/recebimentos/ports.ts",
+        "src/backend/domain/repository/recebimentos/SolicitacaoNumerarioExecucaoRepository.ts",
+        "src/frontend/app/recebimentos/components/AlocarProcessosDialog.tsx",
+        "src/frontend/lib/recebimentos.ts"
+      ],
+      "resolved_by": [
+        "ADR-0031"
+      ],
+      "note": "NDe so quando devida: priVldTipo=2 (conta e ordem de terceiros) quita com SN + baixa e para em quitado-sem-nde. Modalidade lida do imp021 no servidor; indeterminavel = blocked fail-closed. NAO confundir com a variante \"- TERCEIROS\" da config de SN."
     }
   },
   "state_machines": {

@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import type ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
 import type ConexosFin014Client from '../../client/ConexosFin014Client.js';
 import type ConexosGerDocProcessoClient from '../../client/ConexosGerDocProcessoClient.js';
 import type ConexosNdeClient from '../../client/ConexosNdeClient.js';
@@ -29,10 +30,23 @@ interface Mocks {
     fin014: jest.Mocked<ConexosFin014Client>;
     fiscal: jest.Mocked<ConexosNdeFiscalClient>;
     nde: jest.Mocked<ConexosNdeClient>;
+    /** imp021 — fonte do `priVldTipo` (modalidade) no gate 0.5 do pré-flight (ADR-0031). */
+    cadastro: jest.Mocked<ConexosCadastroClient>;
     repo: jest.Mocked<SolicitacaoNumerarioExecucaoRepositoryInterface>;
     ndeRepo: { save: jest.Mock; findByRecebimentoId: jest.Mock };
     env: jest.Mocked<EnvironmentProvider>;
 }
+
+/**
+ * Linha do imp021 para o processo do `baseInput`. SEM default de propósito: `processoRow(undefined)`
+ * precisa significar "processo sem o campo Tipo" (o caso fail-closed), não cair num fallback.
+ */
+const processoRow = (priVldTipo?: number): Record<string, unknown> => ({
+    priCod: '90001',
+    pesCod: '555',
+    priEspRefcliente: 'REF-1',
+    ...(priVldTipo !== undefined ? { priVldTipo } : {}),
+});
 
 const buildEnv = (over: Record<string, unknown> = {}): jest.Mocked<EnvironmentProvider> =>
     ({
@@ -186,6 +200,10 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
         save: jest.fn().mockImplementation((nde: unknown) => Promise.resolve(nde)),
         findByRecebimentoId: jest.fn().mockResolvedValue(null),
     },
+    cadastro: {
+        // Default da suíte: POR ENCOMENDA (3) — a trilha COM NDe, que é o que os ~60 testes já pinam.
+        listProcessos: jest.fn().mockResolvedValue([processoRow(3)]),
+    } as never,
     env: buildEnv(),
     ...over,
 });
@@ -196,6 +214,7 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         m.fin014,
         m.fiscal,
         m.nde,
+        m.cadastro,
         new ContingenciaDecider(),
         m.env,
         new SnPayloadBuilder(),
@@ -234,6 +253,162 @@ const wireDocCods = (m: Mocks, snDocCod = 18200, ndDocCod = 18337): void => {
 };
 
 afterEach(() => jest.clearAllMocks());
+
+describe('RecebimentoNumerarioService.processarAlocacao — NDe dispensada (ADR-0031)', () => {
+    /** Só o gate 0.5 muda entre os cenários: o resto do andaime é o mesmo do happy path. */
+    const comModalidade = (priVldTipo: number | undefined): Mocks => {
+        const m = buildMocks();
+        (m.cadastro.listProcessos as jest.Mock).mockResolvedValue([processoRow(priVldTipo)]);
+        return m;
+    };
+
+    it('priVldTipo=2 (CONTA E ORDEM): roda SN + fin014 e PARA — nenhuma leg fiscal, nenhuma NDe', async () => {
+        const m = comModalidade(2);
+        // Uma geração só (a SN). Se o serviço tentasse a NDe, cairia neste mesmo mock e o
+        // `toHaveBeenCalledTimes(1)` lá embaixo denunciaria.
+        (m.gerDoc.gerarDocProcesso as jest.Mock).mockResolvedValue({ docCod: 18200, messages: [] });
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(out.etapa).toBe('quitado-sem-nde');
+        expect(out.ndeDispensada).toBe(true);
+        expect(out.motivo).toContain('POR CONTA E ORDEM DE TERCEIROS');
+        // O trabalho financeiro aconteceu por inteiro: SN gerada e baixa fin014 finalizada.
+        expect(out.snDocCod).toBe(18200);
+        expect(out.borCod).toBe(77);
+        expect(m.fin014.gravarBaixa).toHaveBeenCalled();
+        expect(m.fin014.finalizarBordero).toHaveBeenCalled();
+        // ...e a nota NÃO: nem docCod, nem flags fiscais.
+        expect(out.ndDocCod).toBeUndefined();
+        expect(out.ndeAutorizado).toBe(false);
+        expect(out.vldAutorizado).toBeUndefined();
+        expect(out.docVldComvalidacoes).toBeUndefined();
+
+        // NENHUMA das legs do com297/com300/com131 foi tocada — é o coração da regra.
+        expect(m.gerDoc.gerarDocProcesso).toHaveBeenCalledTimes(1);
+        expect((m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0].tela).toBe('com299');
+        expect(m.fiscal.lerDocFiscal).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDocFiscal).not.toHaveBeenCalled();
+        expect(m.fiscal.gerarObservacoes).not.toHaveBeenCalled();
+        expect(m.nde.homologar).not.toHaveBeenCalled();
+        // Nenhum registro local de NDe: a nota não existe (nem como rascunho).
+        expect(m.ndeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('priVldTipo=2: o ledger settla com a etapa própria e SEM nd_doc_cod', async () => {
+        const m = comModalidade(2);
+        (m.gerDoc.gerarDocProcesso as jest.Mock).mockResolvedValue({ docCod: 18200, messages: [] });
+
+        await buildService(m).processarAlocacao(baseInput());
+
+        expect(m.repo.markSettled).toHaveBeenCalledTimes(1);
+        const [key, data] = (m.repo.markSettled as jest.Mock).mock.calls[0];
+        expect(key).toBe('sn-real:txn-1:90001:15000');
+        expect(data).toEqual({ docCod: 18200, etapa: 'quitado-sem-nde' });
+        expect(data.ndDocCod).toBeUndefined();
+        expect(m.repo.markError).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [1, 'PRÓPRIA'],
+        [3, 'POR ENCOMENDA'],
+    ])('priVldTipo=%s (%s): trilha fiscal COMPLETA, sem regressão', async (tipo) => {
+        const m = comModalidade(tipo as number);
+        wireDocCods(m);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(out.etapa).toBe('concluido');
+        expect(out.ndeDispensada).toBeUndefined();
+        expect(out.ndDocCod).toBe(18337);
+        expect(m.nde.homologar).toHaveBeenCalled();
+    });
+
+    it('priVldTipo ausente no imp021: BLOQUEIA fail-closed, sem NENHUMA escrita', async () => {
+        const m = comModalidade(undefined);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('BLOCKED_CADASTRO');
+        expect(out.motivo).toContain('priVldTipo');
+        // Fail-closed de verdade: o write-ahead nem abriu — nada foi ao ERP.
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+        expect(m.gerDoc.gerarDocProcesso).not.toHaveBeenCalled();
+        expect(m.fin014.criarBordero).not.toHaveBeenCalled();
+    });
+
+    it('processo ausente no imp021: BLOQUEIA fail-closed (não assume modalidade)', async () => {
+        const m = buildMocks();
+        (m.cadastro.listProcessos as jest.Mock).mockResolvedValue([]);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('BLOCKED_CADASTRO');
+        expect(out.motivo).toContain('não encontrado');
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+    });
+
+    it('imp021 responde 403: vira TRANSPORT_ERROR (bug de integração), NUNCA "sem NDe"', async () => {
+        const m = buildMocks();
+        (m.cadastro.listProcessos as jest.Mock).mockRejectedValue(
+            Object.assign(new Error('Request failed with status code 403'), {
+                response: { status: 403 },
+            }),
+        );
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('TRANSPORT_ERROR');
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+    });
+
+    it('a modalidade é lida do imp021 na filial DO PROCESSO, não na do pagamento', async () => {
+        const m = comModalidade(2);
+        (m.gerDoc.gerarDocProcesso as jest.Mock).mockResolvedValue({ docCod: 18200, messages: [] });
+
+        await buildService(m).processarAlocacao(baseInput());
+
+        expect(m.cadastro.listProcessos).toHaveBeenCalledWith({
+            filCod: PROCESSO_FIL_COD,
+            priCods: ['90001'],
+        });
+    });
+
+    it('dry-run de processo conta e ordem: preview já avisa que a NDe não sai', async () => {
+        const m = comModalidade(2);
+        const out = await buildService(m).processarAlocacao(baseInput({ dryRunOverride: true }));
+
+        expect(out.status).toBe('dry-run');
+        expect(out.ndeDispensada).toBe(true);
+        expect(out.motivo).toContain('POR CONTA E ORDEM DE TERCEIROS');
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+    });
+
+    it('re-POST de alocação já quitada sem NDe: skipped preservando a explicação', async () => {
+        const m = comModalidade(2);
+        (m.repo.beginExecution as jest.Mock).mockResolvedValue({
+            status: 'settled',
+            alreadySettled: true,
+        });
+        (m.repo.findByIdempotencyKey as jest.Mock).mockResolvedValue({
+            etapa: 'quitado-sem-nde',
+            docCod: 18200,
+            fin014BorCod: 77,
+        });
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('skipped');
+        expect(out.etapa).toBe('quitado-sem-nde');
+        expect(out.ndeDispensada).toBe(true);
+        expect(out.ndDocCod).toBeUndefined();
+    });
+});
 
 describe('RecebimentoNumerarioService.processarAlocacao — happy path (per-stage)', () => {
     it('roda SN → fin014 (gerNum do pagamento) → NDe → fiscal → obs → homologa → poll → settled', async () => {

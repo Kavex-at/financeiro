@@ -405,8 +405,11 @@ export interface SolicitacaoNumerarioDryRun {
 // fiscal + homologação + poll SEFAZ) para UMA alocação. Split: cada processo
 // consome parte do `saldoRestante`. Espelha o contrato do backend um-a-um.
 
-/** Status terminal de uma alocação real. */
-export type AlocacaoStatus = 'settled' | 'skipped' | 'error' | 'dry-run'
+/**
+ * Status terminal de uma alocação real. `blocked` = o pré-flight barrou ANTES de qualquer escrita
+ * (cadastro/elegibilidade/modalidade indeterminável) — nada foi ao ERP, e o `motivo` explica o quê.
+ */
+export type AlocacaoStatus = 'settled' | 'skipped' | 'error' | 'dry-run' | 'blocked'
 
 /** Corpo enviado ao backend para processar UMA alocação. */
 export interface AlocacaoRequest {
@@ -475,6 +478,13 @@ export interface AlocacaoResultado {
   vldAutorizado?: number
   /** Mensagem de erro quando `status === 'error'`. */
   erro?: string
+  /**
+   * `true` quando a quitação fechou SEM nota de débito porque o processo é POR CONTA E ORDEM DE
+   * TERCEIROS (ADR-0031). É sucesso: a SN e a baixa aconteceram; a nota é que não era devida.
+   */
+  ndeDispensada?: boolean
+  /** Explicação legível de um `blocked` — ou da dispensa da NDe. Nunca um erro cru do ERP. */
+  motivo?: string
   /** `true` quando o backend rodou em modo simulação (nada foi ao ERP). */
   dryRun: boolean
 }
@@ -604,6 +614,8 @@ export async function processarSolicitacaoNumerario(
     ndeAutorizado: json.ndeAutorizado,
     docVldComvalidacoes: json.docVldComvalidacoes,
     vldAutorizado: json.vldAutorizado,
+    ndeDispensada: json.ndeDispensada,
+    motivo: json.motivo,
     erro: json.erro,
     dryRun: json.dryRun ?? false,
   }

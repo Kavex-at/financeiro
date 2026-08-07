@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import type ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
 import type ConexosFin014Client from '../../client/ConexosFin014Client.js';
 import type ConexosGerDocProcessoClient from '../../client/ConexosGerDocProcessoClient.js';
 import type ConexosNdeClient from '../../client/ConexosNdeClient.js';
@@ -39,6 +40,8 @@ interface Mocks {
     fin014: jest.Mocked<ConexosFin014Client>;
     fiscal: jest.Mocked<ConexosNdeFiscalClient>;
     nde: jest.Mocked<ConexosNdeClient>;
+    /** imp021 — `priVldTipo: 3` (POR ENCOMENDA) mantém a trilha fiscal completa destes testes. */
+    cadastro: jest.Mocked<ConexosCadastroClient>;
     repo: jest.Mocked<SolicitacaoNumerarioExecucaoRepositoryInterface>;
     ndeRepo: { save: jest.Mock; findByRecebimentoId: jest.Mock };
     env: jest.Mocked<EnvironmentProvider>;
@@ -174,6 +177,9 @@ const buildMocks = (): Mocks => ({
         save: jest.fn().mockImplementation((nde: unknown) => Promise.resolve(nde)),
         findByRecebimentoId: jest.fn().mockResolvedValue(null),
     },
+    cadastro: {
+        listProcessos: jest.fn().mockResolvedValue([{ priCod: '90001', priVldTipo: 3 }]),
+    } as never,
     env: buildEnv(),
 });
 
@@ -183,6 +189,7 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         m.fin014,
         m.fiscal,
         m.nde,
+        m.cadastro,
         new ContingenciaDecider(),
         m.env,
         new SnPayloadBuilder(),

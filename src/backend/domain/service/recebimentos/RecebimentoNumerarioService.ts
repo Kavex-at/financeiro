@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 import { inject, injectable } from 'tsyringe';
+import ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
+import type { ProcessoListItem } from '../../client/ConexosCadastroClient.js';
 import ConexosFin014Client from '../../client/ConexosFin014Client.js';
 import ConexosGerDocProcessoClient from '../../client/ConexosGerDocProcessoClient.js';
 import ConexosNdeClient from '../../client/ConexosNdeClient.js';
@@ -12,6 +14,7 @@ import {
     NDE_GLOBAL_DOC_VLD_TIPO,
     NDE_OBS_SINIEF_MARKER,
     NDE_STATUS_EMISSAO,
+    PRI_VLD_TIPO,
     SN_ADIANTAMENTO_PRJ_COD,
     SN_CONTA_ADIANTAMENTO_ENCOMENDA,
     SN_CONTA_ADIANTAMENTO_PREFIXO,
@@ -41,6 +44,14 @@ import {
     GLOBAL_DOC_VLD_TIPO_SN,
     type GerDocProcessoPayload,
 } from '../../interface/permutas/SolicitacaoNumerario.js';
+
+/**
+ * Motivo canônico da NDe dispensada (ADR-0031) — mesma frase no pré-flight, no dry-run, no log e no
+ * resultado da execução, para o analista ler sempre a mesma explicação.
+ */
+export const MOTIVO_NDE_DISPENSADA =
+    'Processo POR CONTA E ORDEM DE TERCEIROS (imp021 Tipo = 2): a Nota de Débito Eletrônica não é ' +
+    'devida — a quitação fecha com a SN e a baixa fin014.';
 
 /** fisCod default do com300 GET — HAR (doc 18337) usa fisCod=1 em todos os exemplos. */
 const FIS_COD_DEFAULT = 1;
@@ -158,6 +169,13 @@ export interface PreflightResult {
     gcdAlvoOk?: boolean;
     endCodFis?: number;
     pdcDocFederal?: string;
+    /** Modalidade do processo (`imp021.priVldTipo`) resolvida no gate 0.5 — ver `PRI_VLD_TIPO`. */
+    priVldTipo?: number;
+    /**
+     * TRUE quando o processo é POR CONTA E ORDEM DE TERCEIROS (`priVldTipo = 2`): o fluxo roda
+     * SN + baixa fin014 e PARA — a NDe não é devida (ADR-0031).
+     */
+    ndeDispensada?: boolean;
     motivo?: string;
 }
 
@@ -173,6 +191,12 @@ export interface ProcessarAlocacaoResult {
     docVldComvalidacoes?: number;
     vldAutorizado?: number;
     erro?: string;
+    /**
+     * TRUE quando a quitação fechou SEM Nota de Débito porque o processo é POR CONTA E ORDEM DE
+     * TERCEIROS (ADR-0031). Neste caso `ndDocCod` é sempre ausente e `etapa` é `quitado-sem-nde` —
+     * é um desfecho de SUCESSO, não uma falha antes da emissão.
+     */
+    ndeDispensada?: boolean;
     /** Classificação do pré-flight quando a alocação NÃO seguiu para geração (blocked/error). */
     classificacao?: PreflightClassificacao;
     /** Motivo legível do bloqueio/erro (frontend mostra ao analista) — nunca um 400 cru do ERP. */
@@ -204,6 +228,7 @@ export default class RecebimentoNumerarioService {
         @inject(ConexosFin014Client) private fin014Client: ConexosFin014Client,
         @inject(ConexosNdeFiscalClient) private fiscalClient: ConexosNdeFiscalClient,
         @inject(ConexosNdeClient) private ndeClient: ConexosNdeClient,
+        @inject(ConexosCadastroClient) private cadastroClient: ConexosCadastroClient,
         @inject(ContingenciaDecider) private contingenciaDecider: ContingenciaDecider,
         @inject(EnvironmentProvider) private environmentProvider: EnvironmentProvider,
         @inject(SnPayloadBuilder) private snPayloadBuilder: SnPayloadBuilder,
@@ -272,11 +297,19 @@ export default class RecebimentoNumerarioService {
                     classificacao: preflight.classificacao,
                     snPayloadPreview: this.snPayloadBuilder.build(snPayloadInput),
                     snGerDocPayload: this.snPayloadBuilder.toSnGerDocPayload(snPayloadInput),
-                    produtoNotaDebito: NDE_GERACAO_DEFAULTS.produtoCod,
+                    // No preview de um processo conta e ordem a NDe nem é cogitada (ADR-0031).
+                    priVldTipo: preflight.priVldTipo,
+                    ndeDispensada: preflight.ndeDispensada === true,
+                    ...(preflight.ndeDispensada === true
+                        ? {}
+                        : { produtoNotaDebito: NDE_GERACAO_DEFAULTS.produtoCod }),
                 },
             });
             return {
                 status: 'dry-run',
+                ...(preflight.ndeDispensada !== undefined
+                    ? { ndeDispensada: preflight.ndeDispensada }
+                    : {}),
                 classificacao: preflight.classificacao,
                 ...(preflight.motivo !== undefined ? { motivo: preflight.motivo } : {}),
                 dryRun: true,
@@ -379,6 +412,13 @@ export default class RecebimentoNumerarioService {
             etapa = 'fin014';
             borCod = await this.etapaFin014(ctx, existente, snDocCod, borCod);
             etapa = 'fin014-done';
+
+            // Ramo NDe DISPENSADA (ADR-0031): para aqui, com a quitação completa. Dentro do try de
+            // propósito — qualquer falha do settle continua caindo no `registrarFalha`.
+            if (ctx.preflight?.ndeDispensada === true) {
+                return await this.quitarSemNde(ctx, snDocCod, borCod);
+            }
+
             ndDocCod = await this.etapaNotaDebito(ctx, existente, ndDocCod);
             etapa = 'nota-debito';
             await this.etapaFiscal(ctx, existente, ndDocCod);
@@ -416,6 +456,50 @@ export default class RecebimentoNumerarioService {
         } catch (err) {
             return this.registrarFalha({ ctx, etapa, snDocCod, borCod, ndDocCod, err });
         }
+    };
+
+    /**
+     * Terminal do ramo SEM NDe (ADR-0031) — processo POR CONTA E ORDEM DE TERCEIROS.
+     *
+     * A documentação fiscal do repasse sai em nome do terceiro, então a Columbia não emite a Nota de
+     * Débito. Chamado logo após `fin014-done`: neste ponto a SN existe e a baixa está FINALIZADA, ou
+     * seja, o trabalho do numerário está completo — daí ser `settled` (sucesso), e não um bloqueio.
+     * Grava a etapa própria `quitado-sem-nde` para que a auditoria distinga "não era devida" de
+     * "parou antes de emitir", e nunca escreve `ndDocCod`.
+     */
+    private quitarSemNde = async (
+        ctx: EscritaCtx,
+        snDocCod?: number,
+        borCod?: number,
+    ): Promise<ProcessarAlocacaoResult> => {
+        const etapa: SolicitacaoNumerarioEtapa = 'quitado-sem-nde';
+        await this.execucaoRepository.markSettled(ctx.key, {
+            ...(snDocCod !== undefined ? { docCod: snDocCod } : {}),
+            etapa,
+        });
+        void this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'NDe DISPENSADA — processo POR CONTA E ORDEM DE TERCEIROS (ADR-0031)',
+            data: {
+                txnId: ctx.txnId,
+                priCod: ctx.priCod,
+                valor: ctx.valor,
+                priVldTipo: ctx.preflight?.priVldTipo,
+                snDocCod,
+                borCod,
+            },
+        });
+        return {
+            status: 'settled',
+            etapa,
+            ...(snDocCod !== undefined ? { snDocCod } : {}),
+            ...(borCod !== undefined ? { borCod } : {}),
+            ndeDispensada: true,
+            motivo: MOTIVO_NDE_DISPENSADA,
+            revisaoHumana: false,
+            ndeAutorizado: false,
+            dryRun: false,
+        };
     };
 
     /**
@@ -887,6 +971,62 @@ export default class RecebimentoNumerarioService {
      * `TRANSPORT_ERROR`, HALT) de indisponibilidade retryable (timeout/5xx/inesperado → `UNKNOWN`). NUNCA
      * deixa um erro de transporte se disfarçar de "(in)elegibilidade" — foi assim que o 405 escondeu o bug.
      */
+    /**
+     * Gate 0.5 — resolve a MODALIDADE do processo (`imp021.priVldTipo`) e decide se a NDe é devida.
+     *
+     * FONTE: `imp021` no servidor, sempre. O `priVldTipo` já vem no `FIELD_LIST` do
+     * `ConexosCadastroClient.listProcessos`; o ramo `priCods` não filtra `priVldStatus`, então serve
+     * como point-lookup e funciona até para processo já fechado.
+     *
+     * FAIL-CLOSED (ADR-0031, decisão D2): processo ausente na resposta ou `priVldTipo` nulo =>
+     * `BLOCKED_CADASTRO`. NÃO assumimos "provavelmente é encomenda": o erro nesse chute é emitir uma
+     * NDe homologada indevida, que é um fato fiscal IRREVERSÍVEL (não há teardown no com297). O
+     * `motivo` nomeia o campo e o `priCod` para o analista corrigir o cadastro sem abrir chamado.
+     */
+    private classificarModalidade = async (
+        priCod: number,
+        filCod: number,
+    ): Promise<PreflightResult> => {
+        const priCodWire = String(priCod);
+        let linha: ProcessoListItem | undefined;
+        try {
+            const processos = await this.cadastroClient.listProcessos({
+                filCod,
+                priCods: [priCodWire],
+            });
+            // `ProcessoListItem.priCod` é STRING no wire do imp021 — comparar como string (o filtro
+            // `priCod#IN` do ERP é prefix-tolerante, então confirmar a linha exata aqui importa).
+            linha = processos.find((p) => p.priCod === priCodWire);
+        } catch (err) {
+            return this.classifyValidatorError(err, 'imp021/listProcessos');
+        }
+        if (linha === undefined) {
+            return {
+                classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_CADASTRO,
+                motivo:
+                    `Processo ${priCod} não encontrado na filial ${filCod} (imp021) — sem ele não dá ` +
+                    'para saber se a Nota de Débito é devida. Confira o processo e a filial escolhidos.',
+            };
+        }
+        const priVldTipo = linha.priVldTipo;
+        if (priVldTipo === undefined) {
+            return {
+                classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_CADASTRO,
+                motivo:
+                    `Processo ${priCod} está sem o campo "Tipo" (priVldTipo) no imp021 — não dá para ` +
+                    'decidir se a Nota de Débito é devida (processos POR CONTA E ORDEM DE TERCEIROS não ' +
+                    'a geram). Preencha o Tipo no Conexos e processe de novo.',
+            };
+        }
+        const ndeDispensada = priVldTipo === PRI_VLD_TIPO.CONTA_E_ORDEM_TERCEIROS;
+        return {
+            classificacao: PREFLIGHT_CLASSIFICACAO.READY,
+            priVldTipo,
+            ndeDispensada,
+            ...(ndeDispensada ? { motivo: MOTIVO_NDE_DISPENSADA } : {}),
+        };
+    };
+
     private classifyValidatorError = (
         err: unknown,
         endpoint: string,
@@ -928,6 +1068,15 @@ export default class RecebimentoNumerarioService {
         const { processo, filCod } = params;
         const gcdAlvo = params.gcdCodFallback;
 
+        // ── gate 0.5: MODALIDADE do processo (ADR-0031) ──
+        // Decide se a NDe é devida. Lido SEMPRE do `imp021` no servidor (nunca do payload do
+        // browser): esta é a chave que liga/desliga a emissão de um documento fiscal IRREVERSÍVEL —
+        // aceitar o valor do cliente deixaria um analista suprimir (ou forçar) a NDe pelo devtools.
+        const modalidade = await this.classificarModalidade(processo.priCod, filCod);
+        if (modalidade.classificacao !== PREFLIGHT_CLASSIFICACAO.READY) return modalidade;
+        const { priVldTipo, ndeDispensada } = modalidade;
+        const modalidadeFields = { priVldTipo, ndeDispensada };
+
         // ── gate 1: cadastro ──
         let endCodFis: number | undefined;
         let pdcDocFederal: string | undefined;
@@ -945,7 +1094,7 @@ export default class RecebimentoNumerarioService {
             endCodFis = pessoa.endCodFis;
             pdcDocFederal = pessoa.pdcDocFederal;
         } catch (err) {
-            return this.classifyValidatorError(err, 'validaProcessoPessoa');
+            return this.classifyValidatorError(err, 'validaProcessoPessoa', modalidadeFields);
         }
         if (
             endCodFis === undefined ||
@@ -955,6 +1104,7 @@ export default class RecebimentoNumerarioService {
         ) {
             return {
                 classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_CADASTRO,
+                ...modalidadeFields,
                 ...(endCodFis !== undefined ? { endCodFis } : {}),
                 ...(pdcDocFederal !== undefined ? { pdcDocFederal } : {}),
                 motivo:
@@ -981,6 +1131,7 @@ export default class RecebimentoNumerarioService {
             gcdCodDefault = cfg.gcdCod;
         } catch (err) {
             return this.classifyValidatorError(err, 'validaConfigDocPessoa', {
+                ...modalidadeFields,
                 endCodFis,
                 pdcDocFederal,
             });
@@ -1004,6 +1155,7 @@ export default class RecebimentoNumerarioService {
             });
         } catch (err) {
             return this.classifyValidatorError(err, 'ConfigDocProcesso', {
+                ...modalidadeFields,
                 endCodFis,
                 pdcDocFederal,
                 ...notaDefault,
@@ -1020,25 +1172,32 @@ export default class RecebimentoNumerarioService {
             snConfigs.find((c) => /ENCOMENDA/i.test(c.gcdDesNome)) ??
             snConfigs[0];
         if (snConfig !== undefined) {
+            // Notas informativas do READY (não bloqueiam). A variante da config e a modalidade do
+            // processo são eixos INDEPENDENTES: um processo pode ser conta e ordem e ainda assim só
+            // oferecer a config "- ENCOMENDA". Por isso as duas notas convivem.
+            const notas: string[] = [];
+            if (!/ENCOMENDA/i.test(snConfig.gcdDesNome)) {
+                notas.push(
+                    `Processo sem "SN - Encomenda"; usando a variante do próprio processo: ` +
+                        `"${snConfig.gcdDesNome}" (gcd ${snConfig.gcdCod}).`,
+                );
+            }
+            if (ndeDispensada === true) notas.push(MOTIVO_NDE_DISPENSADA);
             return {
                 classificacao: PREFLIGHT_CLASSIFICACAO.READY,
+                ...modalidadeFields,
                 gcdCod: snConfig.gcdCod,
                 gcdDesNome: snConfig.gcdDesNome,
                 endCodFis,
                 pdcDocFederal,
                 gcdAlvoOk: true,
                 ...notaDefault,
-                ...(/ENCOMENDA/i.test(snConfig.gcdDesNome)
-                    ? {}
-                    : {
-                          motivo:
-                              `Processo sem "SN - Encomenda"; usando a variante do próprio processo: ` +
-                              `"${snConfig.gcdDesNome}" (gcd ${snConfig.gcdCod}).`,
-                      }),
+                ...(notas.length > 0 ? { motivo: notas.join(' ') } : {}),
             };
         }
         return {
             classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_ELEGIBILIDADE,
+            ...modalidadeFields,
             endCodFis,
             pdcDocFederal,
             gcdAlvoOk: false,
@@ -1371,6 +1530,9 @@ export default class RecebimentoNumerarioService {
             'obs-done': 6,
             homologado: 7,
             concluido: 8,
+            // Terminal do ramo sem NDe (ADR-0031): mesmo patamar de `concluido` — tudo o que era
+            // devido foi feito. Assim uma retomada nunca reabre as etapas fiscais puladas.
+            'quitado-sem-nde': 8,
             error: -1,
         };
         return ordem[etapa] ?? -1;
@@ -1384,6 +1546,11 @@ export default class RecebimentoNumerarioService {
         ...(existente?.docCod !== undefined ? { snDocCod: existente.docCod } : {}),
         ...(existente?.fin014BorCod !== undefined ? { borCod: existente.fin014BorCod } : {}),
         ...(existente?.ndDocCod !== undefined ? { ndDocCod: existente.ndDocCod } : {}),
+        // Re-POST de uma alocação já quitada SEM NDe: a etapa gravada é a fonte da verdade, para o
+        // analista reler a mesma explicação em vez de estranhar a ausência do nº da nota.
+        ...(existente?.etapa === 'quitado-sem-nde'
+            ? { ndeDispensada: true, motivo: MOTIVO_NDE_DISPENSADA }
+            : {}),
         revisaoHumana: existente?.revisaoHumana ?? false,
         ndeAutorizado: existente?.ndeAutorizado ?? false,
         dryRun: false,

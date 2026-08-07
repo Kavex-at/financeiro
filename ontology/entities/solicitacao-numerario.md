@@ -1,7 +1,7 @@
 ---
 name: SolicitacaoNumerario
 type: entity
-ontology_version: "0.13"
+ontology_version: "0.16"
 implementation_status: partial
 status: draft
 owners: [yuri]
@@ -45,7 +45,7 @@ relationships:
   - "SolicitacaoNumerario 1—N item de rateio (contasProj: prjCod × ctpCod × tpcCod × cfoEspCod)"
   - "SolicitacaoNumerario 1—1 NotaDebitoEletronica (recebimento: NDe com297 terminal, docCod=ndDocCod, homologada+autorizada na SEFAZ)"
   - "SolicitacaoNumerario N—1 Recebimento (recebimento: uma alocação pode SELECIONAR uma SN JÁ EXISTENTE do processo — reutiliza docCod em vez de gerar; a baixa fin014 + NDe correm contra ela; ADR-0027)"
-last_review: 2026-08-03
+last_review: 2026-08-07
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md — Frente I (adiantamento ↔ invoice) + Frente IV (recebimentos)"
   - "Tela Conexos com068 'GERAÇÃO DE DOCUMENTOS' → documento gcdDesNome='SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA'"
@@ -115,7 +115,9 @@ paginado. **Discriminador SN:** `docVldTipo=9` **E** `docVldTipoAdto=1` — uma 
   **Split-capable:** um pagamento gera **1..N** SNs (uma por processo), com **Σ valor ≤
   transacao.valor**. A conta da baixa `fin014` é a **conta do próprio pagamento**
   (`transacao.gerNum`), derivada — não escolhida. Idempotência `sn-real:{txnId}:{priCod}:{valor}`.
-  Trilha terminal com a **NDe fiscal** (com297 homologada + autorizada na SEFAZ).
+  Trilha terminal com a **NDe fiscal** (com297 homologada + autorizada na SEFAZ) **quando a nota é
+  devida**: em processo POR CONTA E ORDEM DE TERCEIROS (`imp021.priVldTipo=2`) a trilha termina na
+  baixa `fin014`, com etapa `quitado-sem-nde` e sem com297 (ADR-0031 / I-Receb-4).
 
 **Escrita irreversível:** o `POST com299/gerDocProcesso` cria um documento real e não é
 idempotente — a geração é gated (`CONEXOS_WRITE_ENABLED` + `CONEXOS_DRY_RUN`, default
@@ -139,7 +141,7 @@ doutrina da baixa `fin010`.
 | `docCod` | number? | não | resposta `data.messages[i].vars.docCod` | Handle do ERP da SN. Ausente até a geração real (dry-run/erro). |
 | `itens` | rateio[] | não | `com299/gerDoc/contasProj/list/{gcd}/{pes}/{end}` | Rateio server-supplied: `prjCod, ctpCod, tpcCod, cfoEspCod, total(%)`; `tmpMnyValor = round2(valor × total/100)`, Σ == valor. |
 | `ndDocCod` | number? | não | com297 (recebimento) | docCod da nota de débito eletrônica terminal. |
-| `etapa` | enum? | não | trilha (recebimento) | Progresso retomável: `sn\|sn-finalizar\|fin014\|fin014-done\|nota-debito\|fiscal-done\|obs-done\|homologado\|concluido\|error`. |
+| `etapa` | enum? | não | trilha (recebimento) | Progresso retomável: `sn\|sn-finalizar\|fin014\|fin014-done\|nota-debito\|fiscal-done\|obs-done\|homologado\|concluido\|quitado-sem-nde\|error`. `quitado-sem-nde` é o terminal do ramo por conta e ordem (ADR-0031): mesmo patamar de `concluido`, com `ndDocCod` nulo por regra. |
 | `revisaoHumana` | boolean | não | homologação com297 (`docVldComvalidacoes===2`) | Homologado COM validações pendentes → revisão humana (erros via com194). |
 | `ndeAutorizado` | boolean | não | poll SEFAZ com297 (`vldAutorizado`) | NDe autorizada pela SEFAZ (assíncrono; timeout ≠ erro). |
 

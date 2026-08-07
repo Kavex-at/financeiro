@@ -140,13 +140,34 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
         });
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain("status = 'settled'");
-        expect(sql).toContain("etapa = 'concluido'");
+        // Sem override, o settle continua gravando `concluido` (trilha completa, com NDe).
+        expect(sql).toContain("etapa = COALESCE($etapa, 'concluido')");
         expect(sql).toContain('erro_mensagem = NULL');
         expect(sql).toContain('$erpResponse::jsonb');
         expect(sql).not.toMatch(/'\s*\+|\$\{/);
         const params = paramsOf(db.update as jest.Mock);
-        expect(params).toMatchObject({ key: 'sn:u:1', docCod: 18202 });
+        expect(params).toMatchObject({ key: 'sn:u:1', docCod: 18202, etapa: null });
         expect(params.erpResponse).toBe(JSON.stringify({ docVldComvalidacoes: 1 }));
+    });
+
+    it('markSettled: etapa override grava o terminal do ramo sem NDe (ADR-0031)', async () => {
+        const db = buildDb();
+        await new SolicitacaoNumerarioExecucaoRepository(db).markSettled('sn:u:2', {
+            docCod: 18203,
+            etapa: 'quitado-sem-nde',
+        });
+        const sql = sqlOf(db.update as jest.Mock);
+        // Mesmo UPDATE parametrizado — o COALESCE é o único ponto de variação (nada interpolado).
+        expect(sql).toContain("etapa = COALESCE($etapa, 'concluido')");
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        const params = paramsOf(db.update as jest.Mock);
+        // `ndDocCod` fica null: neste ramo a nota nunca é emitida.
+        expect(params).toMatchObject({
+            key: 'sn:u:2',
+            docCod: 18203,
+            etapa: 'quitado-sem-nde',
+            ndDocCod: null,
+        });
     });
 
     it('markError: UPDATE para error, preserva doc_cod via COALESCE', async () => {

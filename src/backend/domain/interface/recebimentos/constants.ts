@@ -172,6 +172,21 @@ export const SN_CONTA_ADIANTAMENTO_PREFIXO = 'ADIANTAMENTO DE CLIENTE';
 export const SN_CONTA_ADIANTAMENTO_ENCOMENDA = 'ADIANTAMENTO DE CLIENTE ENCOMENDA';
 
 /**
+ * MODALIDADE do processo de importação — campo "Tipo" da `imp021` (`priVldTipo`). O mapa é o mesmo
+ * já documentado no `ConexosCadastroClient` (Addendum 2026-06-08 #2 do ADR-0021).
+ *
+ * `CONTA_E_ORDEM_TERCEIROS` é a modalidade em que a Columbia importa em nome próprio POR CONTA E
+ * ORDEM de um terceiro — a documentação fiscal do repasse sai em nome do terceiro, então a Columbia
+ * **NÃO** emite a Nota de Débito Eletrônica ao executar o recebimento (ADR-0031). Nunca comparar o
+ * literal `2` fora daqui.
+ */
+export const PRI_VLD_TIPO = {
+    PROPRIA: 1,
+    CONTA_E_ORDEM_TERCEIROS: 2,
+    POR_ENCOMENDA: 3,
+} as const;
+
+/**
  * Moeda ASSUMIDA do PROCESSO (BRL/790) — concern SEPARADO do `moeCod` do doc SN (que é `null`). O
  * `imp021` não expõe a moeda do processo (só `moeCodConv`/`moeCodSeg`); o `ProcessoProviderConexos`
  * assume BRL e marca `moeCodAssumido: true` p/ a UI avisar. Named constant (não o `SOLICITACAO_*`

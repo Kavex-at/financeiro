@@ -406,6 +406,13 @@ export type SolicitacaoNumerarioEtapa =
     | 'obs-done'
     | 'homologado'
     | 'concluido'
+    /**
+     * Terminal ALTERNATIVO (ADR-0031): SN + baixa fin014 concluídas e a NDe **dispensada** porque o
+     * processo é POR CONTA E ORDEM DE TERCEIROS (`imp021.priVldTipo = 2`). Distinto de `concluido`
+     * de propósito: na auditoria, `nd_doc_cod IS NULL` aqui significa "não era devida", nunca
+     * "parou antes de emitir".
+     */
+    | 'quitado-sem-nde'
     | 'error';
 
 export interface SolicitacaoNumerarioExecucaoRow {
@@ -460,6 +467,11 @@ export interface SolicitacaoNumerarioExecucaoSettleData {
     /** docCod da nota de débito com297 (preservado no settle). */
     ndDocCod?: number;
     erpResponse?: unknown;
+    /**
+     * Etapa terminal a gravar. Ausente = `concluido` (o settle da trilha completa, com NDe). O ramo
+     * da NDe dispensada (ADR-0031) passa `quitado-sem-nde` para não se confundir com ela.
+     */
+    etapa?: SolicitacaoNumerarioEtapa;
 }
 
 export interface SolicitacaoNumerarioExecucaoErrorData {

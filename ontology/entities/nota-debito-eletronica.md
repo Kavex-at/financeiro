@@ -1,7 +1,7 @@
 ---
 name: NotaDebitoEletronica
 type: entity
-ontology_version: "0.12"
+ontology_version: "0.16"
 implementation_status: partial
 status: draft
 owners: [yuri]
@@ -25,9 +25,9 @@ properties:
   - emitidaEm
   - emitidaPor
 relationships:
-  - "NotaDebitoEletronica 1—1 Recebimento (via recebimentoId — a NDe é o artefato terminal de uma conciliação executada)"
+  - "NotaDebitoEletronica 0..1—1 Recebimento (via recebimentoId — a NDe é o artefato terminal de uma conciliação executada QUANDO DEVIDA; processo por conta e ordem de terceiros (imp021.priVldTipo=2) executa sem NDe — ADR-0031 / I-Receb-4)"
   - "NotaDebitoEletronica N—1 Filial (via filCod)"
-last_review: 2026-07-24
+last_review: 2026-08-07
 universality_evidence:
   - "ontology/_inbox/frente-iv-recebimentos-interview.md — Eixo 1 + Decisão 1 (Yuri, 2026-07-24): NDe é EMITIDA pelo Conexos ERP (não sistema fiscal separado, não auto-gerada)"
   - "ontology/_inbox/frente-iv-recebimentos-nde-plan.md §1 / Fase 5 — a NDe é o output terminal do Módulo 5 (borderô + quitação + emitir NDe)"
@@ -35,6 +35,14 @@ universality_evidence:
 ---
 
 # NotaDebitoEletronica (NDe — artefato terminal da conciliação)
+
+> **⚠️ Atualização (2026-08-07, ADR-0031) — a NDe nem sempre é devida.** A relação com o
+> `Recebimento` é **0..1**, não 1—1: quando o processo é **POR CONTA E ORDEM DE TERCEIROS**
+> (`imp021.priVldTipo = 2`), a documentação fiscal do repasse sai em nome do terceiro e a Columbia
+> **não emite** a nota. A alocação quita com SN (com299) + baixa (fin014) e termina em
+> `quitado-sem-nde`, sem registro nesta entidade. `nd_doc_cod`/`ndeId` nulos ali significam **"não
+> era devida"**, nunca "faltou emitir". Ver `business-rules/nde-dispensada-conta-e-ordem.md`
+> (I-Receb-4).
 
 > **SKELETON (Fase 0).** A `NotaDebitoEletronica` (NDe) é o **artefato terminal** de um `Recebimento`
 > executado — **emitida pelo Conexos ERP** (decisão Yuri, 2026-07-24): **não** é um sistema fiscal
