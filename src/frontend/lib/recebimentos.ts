@@ -19,7 +19,14 @@ const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace
 
 export type RecebimentoStatus = 'rascunho' | 'aprovado' | 'executado' | 'estornado'
 
-export type TransacaoBancariaStatus = 'importada' | 'conciliada' | 'parcial' | 'manual' | 'erro'
+export type TransacaoBancariaStatus =
+  | 'importada'
+  | 'conciliada'
+  | 'parcial'
+  | 'manual'
+  | 'erro'
+  /** Terminal: alocação executada até o fim, com nota de débito ou sem ela (ADR-0033). */
+  | 'processada'
 
 export type TransacaoTipo = 'CREDITO' | 'DEBITO' | 'ESTORNO' | 'TARIFA' | 'JUROS'
 
@@ -40,6 +47,19 @@ export interface TransacaoBancaria {
    * operação só passa a existir na alocação, no `Recebimento`. O canal `xlsx_bradesco` traz.
    */
   filCod?: number
+  /**
+   * Modalidade do processo (ADR-0033). `previsao: true` = palpite pelos processos abertos do
+   * cliente; `false` = fato, do ledger da alocação executada. A tela PRECISA distinguir os dois.
+   */
+  modalidade?: {
+    priVldTipo: number
+    rotulo: string
+    previsao: boolean
+    ndeDispensada: boolean
+  }
+  /** Preenchido = crédito ARQUIVADO (fora da carteira e dos totais). */
+  arquivadaEm?: string
+  arquivadaPor?: string
   dataMovimento: string
   tipo: TransacaoTipo
   valor: number
@@ -634,8 +654,12 @@ export async function processarSolicitacaoNumerario(
  * a tela nunca conseguia mostrar dado real. Erro propaga — a página já tem estado
  * de erro com botão de tentar de novo.
  */
-export async function fetchPainelRecebimentos(): Promise<RecebimentosPainel> {
-  const res = await apiFetch(`${API}/recebimentos/painel`, {
+export async function fetchPainelRecebimentos(
+  opts: { arquivadas?: boolean } = {},
+): Promise<RecebimentosPainel> {
+  // `arquivadas=true` troca a carteira ativa pela lista de arquivadas — não soma as duas (ADR-0033).
+  const qs = opts.arquivadas ? '?arquivadas=true' : ''
+  const res = await apiFetch(`${API}/recebimentos/painel${qs}`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) throw new Error(`API ${res.status}`)
@@ -655,6 +679,30 @@ export async function fetchPainelRecebimentos(): Promise<RecebimentosPainel> {
     ultimaIngestao: json.ultimaIngestao,
     truncado: json.truncado ?? false,
   }
+}
+
+/**
+ * Arquiva ou desarquiva um crédito (ADR-0033).
+ *
+ * Arquivar tira da carteira E dos totais — é o gesto para o ruído de tesouraria. Reversível.
+ */
+export async function arquivarTransacao(
+  txnId: string,
+  arquivar: boolean,
+): Promise<{ txnId: string; arquivada: boolean }> {
+  const acao = arquivar ? 'arquivar' : 'desarquivar'
+  const res = await apiFetch(`${API}/recebimentos/transacoes/${txnId}/${acao}`, {
+    method: 'POST',
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) {
+    // 409 = já estava no estado pedido. Mensagem própria: "API 409" não diz nada ao analista.
+    if (res.status === 409) {
+      throw new Error(arquivar ? 'Este crédito já estava arquivado' : 'Este crédito não estava arquivado')
+    }
+    throw new Error(`API ${res.status}`)
+  }
+  return (await res.json()) as { txnId: string; arquivada: boolean }
 }
 
 // ─────────────────────────────────────────────── Importação MANUAL de extrato (.xlsx) — canal alternativo

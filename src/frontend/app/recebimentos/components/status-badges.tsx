@@ -3,10 +3,13 @@
 import * as React from 'react'
 import {
   AlertTriangle,
+  CheckCheck,
   CheckCircle2,
   Clock,
   Download,
+  FileCheck,
   FileEdit,
+  FileX,
   Landmark,
   PieChart,
   Undo2,
@@ -100,6 +103,48 @@ const TRANSACAO_SPECS: Record<TransacaoBancariaStatus, ChipSpec> = {
     className: 'border-danger/40 text-danger',
     tooltip: 'Falha reprocessável na conciliação.',
   },
+  processada: {
+    label: 'processada',
+    icon: CheckCheck,
+    className: 'border-success/40 text-success',
+    tooltip:
+      'Alocação executada até o fim — SN + baixa fin014, com nota de débito ou sem ela (só POR ENCOMENDA emite). Nada mais a fazer.',
+  },
+}
+
+/** Modalidade do processo (ADR-0033) — REAL (do ledger) ou PREVISÃO (pelos processos do cliente). */
+export function ModalidadeBadge({
+  modalidade,
+}: {
+  modalidade?: {
+    priVldTipo: number
+    rotulo: string
+    previsao: boolean
+    ndeDispensada: boolean
+  }
+}) {
+  if (!modalidade) return <span className="text-muted-foreground">—</span>
+  const { rotulo, previsao, ndeDispensada } = modalidade
+  return (
+    <DomainChip
+      spec={{
+        // O `~` marca o palpite. A modalidade decide se sai uma nota fiscal irreversível, então a
+        // tela nunca pode pintar previsão com a mesma cara de fato.
+        label: previsao ? `~ ${rotulo}` : rotulo,
+        icon: ndeDispensada ? FileX : FileCheck,
+        className: previsao
+          ? 'border-dashed border-muted-foreground/40 text-muted-foreground'
+          : ndeDispensada
+            ? 'border-muted text-muted-foreground'
+            : 'border-info/40 text-info',
+        tooltip: previsao
+          ? `PREVISÃO pelos processos abertos deste cliente — ainda não alocado, então a modalidade real só sai ao processar. ${ndeDispensada ? 'Nessa modalidade a nota de débito NÃO é emitida.' : 'Nessa modalidade a nota de débito é emitida.'}`
+          : ndeDispensada
+            ? 'Modalidade da alocação executada. A nota de débito NÃO era devida — a quitação fechou com a SN e a baixa.'
+            : 'Modalidade da alocação executada. A nota de débito foi emitida.',
+      }}
+    />
+  )
 }
 
 export function TransacaoStatusBadge({ status }: { status: TransacaoBancariaStatus }) {

@@ -31,6 +31,10 @@ export default class ProcessoProviderStub implements ProcessoProviderInterface {
         });
     };
 
+    /** Processos abertos da filial — insumo da previsão de modalidade do painel (ADR-0033). */
+    public listProcessosDaFilial = async (filCod: number): Promise<Processo[]> =>
+        this.candidatos.filter((p) => p.filCod === filCod);
+
     public listClientes = async (input: { filCod: number }): Promise<ClienteProcesso[]> => {
         const porCliente = new Map<number, ClienteProcesso>();
         for (const p of this.candidatos) {

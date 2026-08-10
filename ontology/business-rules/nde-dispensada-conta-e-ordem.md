@@ -2,7 +2,7 @@
 name: nde-dispensada-conta-e-ordem
 type: business-rule
 entity: NotaDebitoEletronica
-ontology_version: "0.16"
+ontology_version: "0.17"
 implementation_status: implemented
 status: stable
 owners: [yuri]
@@ -13,18 +13,28 @@ related_files:
   - src/backend/domain/interface/recebimentos/ports.ts
   - src/backend/domain/repository/recebimentos/SolicitacaoNumerarioExecucaoRepository.ts
   - src/frontend/app/recebimentos/components/AlocarProcessosDialog.tsx
-last_review: 2026-08-07
+  - src/backend/domain/service/recebimentos/preverModalidade.ts
+  - src/backend/migrations/0045_modalidade_processada_arquivamento.sql
+last_review: 2026-08-10
 has_canonical_test: true
 ---
 
 # Regra: nde-dispensada-conta-e-ordem (a NDe não é devida em conta e ordem) — I-Receb-4
 
-> **Invariante I-Receb-4 — NDe só quando devida.** Uma alocação de recebimento **NÃO** emite Nota de
-> Débito Eletrônica quando o processo de importação é **POR CONTA E ORDEM DE TERCEIROS**
-> (`imp021.priVldTipo = 2`): a documentação fiscal do repasse sai em nome do terceiro, não da
-> Columbia. A alocação quita com **SN (com299) + baixa (fin014)** e termina em `quitado-sem-nde`.
-> A modalidade é lida **do `imp021`, no servidor**; se não for determinável, a alocação é
-> **BLOQUEADA** (fail-closed) em vez de adivinhada. Introduzido pela ADR-0031.
+> **Invariante I-Receb-4 — NDe só quando devida.** Uma alocação de recebimento emite Nota de Débito
+> Eletrônica em **UMA única modalidade**: **POR ENCOMENDA** (`imp021.priVldTipo = 3`). Nas outras
+> duas ela **NÃO** é emitida — a alocação quita com **SN (com299) + baixa (fin014)** e termina em
+> `quitado-sem-nde`:
+>
+> - **CONTA E ORDEM DE TERCEIROS** (`2`): a documentação fiscal do repasse sai em nome do terceiro,
+>   não da Columbia (ADR-0031).
+> - **PRÓPRIA** (`1`): a Columbia importa para si — não há terceiro a quem debitar, e a nota seria
+>   contra si mesma. Medido: 43 processos, 31 deles da própria `COLUMBIA TRADING S/A` (ADR-0033).
+>
+> A modalidade é lida **do `imp021`, no servidor**. Se não for determinável — ausente, nula, **ou com
+> um código fora do mapa conhecido** — a alocação é **BLOQUEADA** (fail-closed) em vez de adivinhada.
+> A regra **não** é "tudo que não é encomenda dispensa": por negação, um código novo do ERP quitaria
+> em silêncio um caso que talvez devesse nota. Introduzido pela ADR-0031, ampliado pela ADR-0033.
 
 ## Enunciado
 

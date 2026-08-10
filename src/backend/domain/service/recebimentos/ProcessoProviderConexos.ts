@@ -77,6 +77,7 @@ export default class ProcessoProviderConexos implements ProcessoProviderInterfac
             moeCod: PROCESSO_MOEDA_ASSUMIDA_BRL,
             moeCodAssumido: true,
             contraparte: nome,
+            ...(r.priVldTipo !== undefined ? { priVldTipo: r.priVldTipo } : {}),
         };
     };
 
@@ -105,6 +106,15 @@ export default class ProcessoProviderConexos implements ProcessoProviderInterfac
         this.cache.set(filCod, { expiraEm: Date.now() + CACHE_TTL_MS, processos });
         return processos;
     };
+
+    /**
+     * Processos abertos da filial, do CACHE — insumo do índice de previsão de modalidade do painel.
+     *
+     * Reusa `carregarProcessos` de propósito: a previsão não pode custar uma varredura nova do
+     * `imp021` por request do painel (5.755 processos em 7 filiais).
+     */
+    public listProcessosDaFilial = async (filCod: number): Promise<Processo[]> =>
+        this.carregarProcessos(filCod);
 
     public listClientes = async (input: { filCod: number }): Promise<ClienteProcesso[]> => {
         const processos = await this.carregarProcessos(input.filCod);

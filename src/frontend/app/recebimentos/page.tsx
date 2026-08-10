@@ -3,6 +3,7 @@
 import * as React from 'react'
 import {
   AlertTriangle,
+  Archive,
   Banknote,
   Copy,
   Coins,
@@ -29,6 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { formatBRL } from '@/lib/utils'
 import {
+  arquivarTransacao,
   fetchPainelRecebimentos,
   type RecebimentosPainel,
   type TransacaoBancaria,
@@ -37,8 +39,10 @@ import {
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 import {
   MatchClassificacaoBadge,
+  ModalidadeBadge,
   TransacaoStatusBadge,
 } from './components/status-badges'
+import { AcoesLinhaMenu } from './components/AcoesLinhaMenu'
 import { NdeTable } from './components/NdeTable'
 import { AlocarProcessosDialog } from './components/AlocarProcessosDialog'
 import { ImportarExtratoDialog } from './components/ImportarExtratoDialog'
@@ -47,8 +51,14 @@ import { ImportarExtratoDialog } from './components/ImportarExtratoDialog'
 const fmtData = (iso?: string) =>
   iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '—'
 
-/** Filtro de status da tabela de transações — 'todas' + os status do enum. */
-type StatusFiltro = 'todas' | TransacaoBancariaStatus
+/**
+ * Filtro de status da tabela — `'pendentes'` (default), `'todas'`, ou um status do enum.
+ *
+ * `'pendentes'` = tudo que NÃO está `processada`. É o default porque a tela é uma fila de trabalho:
+ * o que o analista abre para ver é o que falta fazer, não o histórico. Ver `'todas'` continua a um
+ * clique (ADR-0033).
+ */
+type StatusFiltro = 'todas' | 'pendentes' | TransacaoBancariaStatus
 
 /**
  * Rota `/recebimentos` — liberada em produção desde a v0.20.0 (ADR-0028). Não há
@@ -78,7 +88,9 @@ function RecebimentosPanel() {
   const [painel, setPainel] = React.useState<RecebimentosPainel | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
-  const [statusFiltro, setStatusFiltro] = React.useState<StatusFiltro>('todas')
+  const [statusFiltro, setStatusFiltro] = React.useState<StatusFiltro>('pendentes')
+  const [verArquivadas, setVerArquivadas] = React.useState(false)
+  const [arquivando, setArquivando] = React.useState<string | null>(null)
   const [aba, setAba] = React.useState('transacoes')
   const [alocarTxn, setAlocarTxn] = React.useState<TransacaoBancaria | null>(null)
   const [importOpen, setImportOpen] = React.useState(false)
@@ -87,13 +99,13 @@ function RecebimentosPanel() {
     setLoading(true)
     setError(null)
     try {
-      setPainel(await fetchPainelRecebimentos())
+      setPainel(await fetchPainelRecebimentos({ arquivadas: verArquivadas }))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar o painel.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [verArquivadas])
 
   React.useEffect(() => {
     void carregar()
@@ -101,7 +113,12 @@ function RecebimentosPanel() {
 
   const transacoes = painel?.transacoes ?? []
   const transacoesFiltradas = React.useMemo(
-    () => (statusFiltro === 'todas' ? transacoes : transacoes.filter((t) => t.status === statusFiltro)),
+    () =>
+      statusFiltro === 'todas'
+        ? transacoes
+        : statusFiltro === 'pendentes'
+          ? transacoes.filter((t) => t.status !== 'processada')
+          : transacoes.filter((t) => t.status === statusFiltro),
     [transacoes, statusFiltro],
   )
 
@@ -111,6 +128,32 @@ function RecebimentosPanel() {
     (t) => t.filCod,
     (t) => `${t.contraparte ?? ''} ${t.referenciaBancaria ?? ''} ${t.correlationId} ${t.tipo}`,
   )
+
+  /**
+   * Arquiva/desarquiva e RECARREGA o painel.
+   *
+   * Recarrega em vez de mexer na lista em memória de propósito: arquivar muda os KPIs (o crédito sai
+   * do "a distribuir"), e atualizar a linha sem os totais deixaria a tela internamente inconsistente
+   * — a pior forma de erro num painel financeiro.
+   */
+  const alternarArquivo = async (t: TransacaoBancaria, arquivar: boolean) => {
+    setArquivando(t.id)
+    try {
+      await arquivarTransacao(t.id, arquivar)
+      toast.success(arquivar ? 'Crédito arquivado' : 'Crédito desarquivado', {
+        description: arquivar
+          ? 'Saiu da carteira e dos totais. Veja em "Arquivadas".'
+          : 'Voltou para a carteira e para os totais.',
+      })
+      await carregar()
+    } catch (e) {
+      toast.error('Não foi possível concluir', {
+        description: e instanceof Error ? e.message : 'Tente de novo.',
+      })
+    } finally {
+      setArquivando(null)
+    }
+  }
 
   const copiar = async (texto: string) => {
     try {
@@ -262,18 +305,36 @@ function RecebimentosPanel() {
                 buscaPlaceholder="Buscar por contraparte, referência ou correlationId…"
               />
               <div className="flex flex-wrap items-center gap-1">
-                {(['todas', 'importada', 'conciliada', 'parcial', 'manual', 'erro'] as const).map(
-                  (s) => (
-                    <Button
-                      key={s}
-                      size="sm"
-                      variant={statusFiltro === s ? 'default' : 'outline'}
-                      onClick={() => setStatusFiltro(s)}
-                    >
-                      {s === 'todas' ? 'Todas' : s}
-                    </Button>
-                  ),
-                )}
+                {(
+                  [
+                    'pendentes',
+                    'todas',
+                    'importada',
+                    'conciliada',
+                    'parcial',
+                    'manual',
+                    'processada',
+                    'erro',
+                  ] as const
+                ).map((s) => (
+                  <Button
+                    key={s}
+                    size="sm"
+                    variant={statusFiltro === s ? 'default' : 'outline'}
+                    onClick={() => setStatusFiltro(s)}
+                  >
+                    {s === 'todas' ? 'Todas' : s === 'pendentes' ? 'A processar' : s}
+                  </Button>
+                ))}
+                <Button
+                  size="sm"
+                  variant={verArquivadas ? 'default' : 'outline'}
+                  onClick={() => setVerArquivadas((v) => !v)}
+                  aria-pressed={verArquivadas}
+                >
+                  <Archive className="size-4" aria-hidden />
+                  {verArquivadas ? 'Vendo arquivadas' : 'Arquivadas'}
+                </Button>
               </div>
 
               {abaTransacoes.total === 0 ? (
@@ -299,6 +360,7 @@ function RecebimentosPanel() {
                         <TableHead>Tipo</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Modalidade</TableHead>
                         <TableHead>Match</TableHead>
                         <TableHead>correlationId</TableHead>
                         <TableHead className="text-right">Ações</TableHead>
@@ -324,6 +386,9 @@ function RecebimentosPanel() {
                             <TransacaoStatusBadge status={t.status} />
                           </TableCell>
                           <TableCell>
+                            <ModalidadeBadge modalidade={t.modalidade} />
+                          </TableCell>
+                          <TableCell>
                             <MatchClassificacaoBadge classificacao={t.classificacaoMatch} />
                           </TableCell>
                           <TableCell>
@@ -344,14 +409,26 @@ function RecebimentosPanel() {
                             </div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setAlocarTxn(t)}
-                              aria-label={`Alocar processos para a transação ${t.contraparte ?? t.id}`}
-                            >
-                              <Coins className="size-4" aria-hidden /> Alocar
-                            </Button>
+                            <div className="flex items-center justify-end gap-1">
+                              {/* Crédito já processado não se aloca de novo — o botão sai, o menu fica. */}
+                              {t.status !== 'processada' && !t.arquivadaEm ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setAlocarTxn(t)}
+                                  aria-label={`Alocar processos para a transação ${t.contraparte ?? t.id}`}
+                                >
+                                  <Coins className="size-4" aria-hidden /> Alocar
+                                </Button>
+                              ) : null}
+                              <AcoesLinhaMenu
+                                rotuloLinha={`a transação de ${t.contraparte ?? t.id}`}
+                                arquivada={Boolean(t.arquivadaEm)}
+                                emAndamento={arquivando === t.id}
+                                onArquivar={() => void alternarArquivo(t, true)}
+                                onDesarquivar={() => void alternarArquivo(t, false)}
+                              />
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}

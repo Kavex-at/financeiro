@@ -25,6 +25,16 @@ export const TRANSACAO_BANCARIA_STATUS = {
     PARCIAL: 'parcial',
     MANUAL: 'manual',
     ERRO: 'erro',
+    /**
+     * TERMINAL operacional (ADR-0033): a alocação foi executada até o fim — SN + baixa fin014, com
+     * NDe (`concluido`) ou sem ela (`quitado-sem-nde`). As duas contam como processada: a diferença
+     * entre elas é FISCAL, não operacional, e o analista não tem mais nada a fazer em nenhuma.
+     *
+     * Escrito pelo settle do ledger. Antes da ADR-0033 NADA tirava uma transação de `importada` — a
+     * máquina de estados existia e nunca era acionada, e a carteira mostrava centenas de `importada`
+     * com alocações já executadas por trás.
+     */
+    PROCESSADA: 'processada',
 } as const;
 
 export type TransacaoBancariaStatus =
@@ -175,16 +185,46 @@ export const SN_CONTA_ADIANTAMENTO_ENCOMENDA = 'ADIANTAMENTO DE CLIENTE ENCOMEND
  * MODALIDADE do processo de importação — campo "Tipo" da `imp021` (`priVldTipo`). O mapa é o mesmo
  * já documentado no `ConexosCadastroClient` (Addendum 2026-06-08 #2 do ADR-0021).
  *
- * `CONTA_E_ORDEM_TERCEIROS` é a modalidade em que a Columbia importa em nome próprio POR CONTA E
- * ORDEM de um terceiro — a documentação fiscal do repasse sai em nome do terceiro, então a Columbia
- * **NÃO** emite a Nota de Débito Eletrônica ao executar o recebimento (ADR-0031). Nunca comparar o
- * literal `2` fora daqui.
+ * Nunca comparar os literais `1`/`2`/`3` fora daqui.
  */
 export const PRI_VLD_TIPO = {
     PROPRIA: 1,
     CONTA_E_ORDEM_TERCEIROS: 2,
     POR_ENCOMENDA: 3,
 } as const;
+
+export type PriVldTipo = (typeof PRI_VLD_TIPO)[keyof typeof PRI_VLD_TIPO];
+
+/** Rótulo de exibição da modalidade — o mesmo texto no painel, no motivo e no log. */
+export const PRI_VLD_TIPO_ROTULO: Record<number, string> = {
+    [PRI_VLD_TIPO.PROPRIA]: 'PRÓPRIA',
+    [PRI_VLD_TIPO.CONTA_E_ORDEM_TERCEIROS]: 'CONTA E ORDEM',
+    [PRI_VLD_TIPO.POR_ENCOMENDA]: 'POR ENCOMENDA',
+};
+
+/**
+ * A NDe é devida em UMA única modalidade: **POR ENCOMENDA** (ADR-0033).
+ *
+ * Regra em um lugar só — quem decide emitir um documento fiscal irreversível não pode espalhar
+ * comparações de código pelo stack.
+ *
+ * - `POR_ENCOMENDA` (3): a Columbia importa para um encomendante e cobra dele → **emite**.
+ * - `CONTA_E_ORDEM_TERCEIROS` (2): a documentação do repasse sai em nome do terceiro (ADR-0031) →
+ *   não emite.
+ * - `PROPRIA` (1): a Columbia importa para si. Medido na carteira real: 43 processos, 31 deles da
+ *   própria `COLUMBIA TRADING S/A` — não há terceiro a quem debitar, e emitir aqui seria uma nota
+ *   contra si mesma. Passou a NÃO emitir na ADR-0033 (antes emitia, por omissão da ADR-0031).
+ *
+ * ⚠️ Código DESCONHECIDO (fora do mapa) **não** cai aqui como "dispensada": o chamador bloqueia
+ * fail-closed. Tratar o desconhecido como dispensa quitaria em silêncio um caso que talvez devesse
+ * nota — e o princípio da ADR-0031 é parar quando não se sabe, nunca adivinhar.
+ */
+export const ndeEDevida = (priVldTipo: number): boolean =>
+    priVldTipo === PRI_VLD_TIPO.POR_ENCOMENDA;
+
+/** O código veio do ERP dentro do domínio conhecido? Fora dele, a alocação é BLOQUEADA. */
+export const isPriVldTipoConhecido = (priVldTipo: number): boolean =>
+    Object.values(PRI_VLD_TIPO).some((v) => v === priVldTipo);
 
 /**
  * Moeda ASSUMIDA do PROCESSO (BRL/790) — concern SEPARADO do `moeCod` do doc SN (que é `null`). O

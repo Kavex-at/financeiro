@@ -75,11 +75,24 @@ const TRANSACAO_ALLOWED: Readonly<
         TRANSACAO_BANCARIA_STATUS.PARCIAL,
         TRANSACAO_BANCARIA_STATUS.MANUAL,
         TRANSACAO_BANCARIA_STATUS.ERRO,
+        // Caminho REAL da tela hoje: o analista aloca e a execução vai até o fim, sem passar por
+        // `conciliada` (que nada escreve). Ver ADR-0033.
+        TRANSACAO_BANCARIA_STATUS.PROCESSADA,
     ],
-    [TRANSACAO_BANCARIA_STATUS.PARCIAL]: [TRANSACAO_BANCARIA_STATUS.ERRO],
-    [TRANSACAO_BANCARIA_STATUS.MANUAL]: [TRANSACAO_BANCARIA_STATUS.ERRO],
-    [TRANSACAO_BANCARIA_STATUS.CONCILIADA]: [],
-    [TRANSACAO_BANCARIA_STATUS.ERRO]: [],
+    // Alocação parcial/manual que depois é executada até o fim também termina em `processada`.
+    [TRANSACAO_BANCARIA_STATUS.PARCIAL]: [
+        TRANSACAO_BANCARIA_STATUS.ERRO,
+        TRANSACAO_BANCARIA_STATUS.PROCESSADA,
+    ],
+    [TRANSACAO_BANCARIA_STATUS.MANUAL]: [
+        TRANSACAO_BANCARIA_STATUS.ERRO,
+        TRANSACAO_BANCARIA_STATUS.PROCESSADA,
+    ],
+    [TRANSACAO_BANCARIA_STATUS.CONCILIADA]: [TRANSACAO_BANCARIA_STATUS.PROCESSADA],
+    // `erro` é retomável: a re-execução que settla leva a transação ao terminal.
+    [TRANSACAO_BANCARIA_STATUS.ERRO]: [TRANSACAO_BANCARIA_STATUS.PROCESSADA],
+    /** TERMINAL de verdade — depois de processada, nada mais transiciona. */
+    [TRANSACAO_BANCARIA_STATUS.PROCESSADA]: [],
 };
 
 /** `importada→{conciliada,parcial,manual}` and `{importada,parcial,manual}→erro`. */
