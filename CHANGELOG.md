@@ -1,5 +1,32 @@
 # Columbia Financeiro — Changelog
 
+## v0.22.0 (2026-08-10) — Recebimentos: transferência entre contas da casa sai da carteira
+
+- **fix(recebimentos):** crédito que o analista **pagou** deixa de aparecer como **recebido**. As
+  linhas reportadas (R$ 830.000 e R$ 368.000 em 07/08, R$ 240.000 em 06/08) não eram inversão de
+  sinal: sondagem read-only no `fin095` de produção reconfirmou `exiVldTipo` 1 = débito / 2 = crédito
+  e as três são crédito de verdade — **transferência entre contas da própria casa**, denunciada pelo
+  `REM: COLUMBIA TRADING S/A` no `exiEspNrdocto`. Como a ingestão só puxa crédito, a perna de débito
+  nunca entrava para fechar o par. Agora essas linhas são marcadas e escondidas por default, pelo
+  mesmo botão do ruído de tesouraria. Ver `business-rules/transferencia-interna-nao-e-recebivel`.
+- **fix(recebimentos):** a coluna **Contraparte** parou de exibir o status do lançamento como se
+  fosse o pagador. `"PIX RECEBIDO"` virava a contraparte **"RECEBIDO"** e `"TED-CRED CONTA"` virava
+  **"—"**, porque a extração cortava o prefixo de canal e devolvia o resto. O remetente do
+  `exiEspNrdocto` passa a ter precedência sobre o histórico truncado, e resíduos de status devolvem
+  vazio em vez de virarem nome.
+- **feat(recebimentos):** a tabela de transações ganha a coluna **Conta** (`gerDes` do `fin133`) no
+  lugar da coluna **Tipo** — que era constante, já que o painel só devolve `CREDITO`. Era a causa do
+  report *"esses valores não estão no extrato"*: estavam, em **outra conta**. Desde o ADR-0032 a
+  carteira funde as ~20 contas numa lista só e não havia como saber de qual extrato cada linha veio.
+- **fix(recebimentos):** ⚠️ a categoria **209** (TRANSFERÊNCIA INTERBANCÁRIA) **não** foi adicionada
+  a `CATEGORIAS_TESOURARIA`. PIX/TED de cliente cai nela (medidos R$ 20k/50k/30k na conta 212 na mesma
+  semana); excluir a categoria inteira esconderia recebível. O discriminador é o remetente, por linha.
+  Crédito 209 **sem** remetente identificável continua na carteira — fail-open deliberado.
+- **chore(recebimentos):** `RECEBIMENTO_TITULARES_INTERNOS` (CSV, default `COLUMBIA TRADING`)
+  configura quem é "a própria casa"; string vazia desliga a detecção sem redeploy de código.
+  Migration `0045` adiciona `transferencia_interna` + `conta_descricao` e **backfilla** as linhas já
+  ingeridas a partir do `raw_payload`.
+
 ## v0.22.0 (2026-08-10) — Recebimentos: modalidade na carteira, status `processada` e arquivamento
 
 - **feat(recebimentos):** a **Nota de Débito Eletrônica** passa a ser devida em **UMA única

@@ -89,6 +89,20 @@ export const buildNaturalKeyXlsx = (p: CamposChaveXlsx & { ocorrencia: number })
     `${groupKeyXlsx(p)}:${p.ocorrencia}`;
 
 /**
+ * Descrição legível da conta do arquivo (`"BRADESCO - AG. 0641 CONTA 55795-4"`).
+ *
+ * O `.xlsx` não traz `gerNum`/`gerDes`, então a string é montada do cabeçalho. Sem
+ * agência nem conta no arquivo, devolve `undefined` — melhor coluna vazia que um
+ * rótulo inventado.
+ */
+const descreverConta = (ctx: ContextoArquivo): string | undefined => {
+    const partes: string[] = [];
+    if (ctx.agencia) partes.push(`AG. ${ctx.agencia}`);
+    if (ctx.conta) partes.push(`CONTA ${ctx.conta}`);
+    return partes.length > 0 ? `BRADESCO - ${partes.join(' ')}` : undefined;
+};
+
+/**
  * Normaliza UMA linha de crédito do arquivo para `TransacaoBancaria`, pronta para o mesmo
  * `upsertMany` do canal automático. `status` é SEMPRE `importada`; `id`/`correlationId` derivam da
  * chave natural (reuso de `buildTransacaoId`/`buildCorrelationId`), fazendo insert e re-upload
@@ -115,6 +129,9 @@ export const normalizarLinhaXlsx = (
 
     // Razão social é a melhor dica; sem ela, cai para a extração do histórico (mesma do fin095).
     const contraparte = linha.contraparteNome?.trim() || extrairContraparte(linha.descricao);
+    // Mesma coluna "Conta" que o canal fin095 preenche com o `gerDes` do fin133 —
+    // aqui montada do cabeçalho do arquivo, que é o que o .xlsx oferece.
+    const contaDescricao = descreverConta(ctx);
 
     return {
         id: buildTransacaoId(naturalKey),
@@ -145,5 +162,9 @@ export const normalizarLinhaXlsx = (
         importRunId: ctx.runId,
         importadoEm: ctx.importadoEm,
         canal: CANAL_XLSX_BRADESCO,
+        ...(contaDescricao !== undefined ? { contaDescricao } : {}),
+        // O arquivo não expõe remetente; sem ele a detecção de transferência interna
+        // não tem em que se apoiar (ver `ehTransferenciaInterna`).
+        transferenciaInterna: false,
     };
 };

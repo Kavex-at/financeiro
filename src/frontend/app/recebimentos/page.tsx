@@ -357,7 +357,10 @@ function RecebimentosPanel() {
                         <TableHead>Data</TableHead>
                         <TableHead>Contraparte</TableHead>
                         <TableHead>Ref. banc.</TableHead>
-                        <TableHead>Tipo</TableHead>
+                        {/* A antiga coluna "Tipo" era constante: o painel só devolve
+                            CRÉDITO, então ela nunca dizia nada. A conta é o que o
+                            analista precisa para bater a linha contra um extrato. */}
+                        <TableHead>Conta</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Modalidade</TableHead>
@@ -378,7 +381,9 @@ function RecebimentosPanel() {
                           <TableCell className="text-xs text-muted-foreground">
                             {t.referenciaBancaria ?? '—'}
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{t.tipo}</TableCell>
+                          <TableCell className="max-w-[14rem] truncate text-xs text-muted-foreground">
+                            {t.contaDescricao ?? (t.gerNum != null ? `Conta ${t.gerNum}` : '—')}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums">
                             {formatBRL(t.valor)}
                           </TableCell>

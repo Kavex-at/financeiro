@@ -158,6 +158,7 @@ export default class EnvironmentProvider {
             recebimentoIngestDias: this.resolveIngestDias(),
             recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
+            recebimentoTitularesInternos: this.resolveTitularesInternos(),
             fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
                 ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
                 : undefined,
@@ -176,6 +177,23 @@ export default class EnvironmentProvider {
             ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
             snCondPgtoAutoajuste: this.readEnv('SN_COND_PGTO_AUTOAJUSTE') !== 'false',
         });
+    };
+
+    /**
+     * Titulares internos (`RECEBIMENTO_TITULARES_INTERNOS`, CSV) — os nomes que, no
+     * remetente de um crédito, provam que o dinheiro veio de outra conta da própria
+     * casa. Default: o titular do tenant atual.
+     *
+     * Sobrescrever com string vazia DESLIGA a detecção (nada é escondido) — é o
+     * escape hatch para investigar a carteira crua sem redeploy.
+     */
+    private resolveTitularesInternos = (): string[] => {
+        const bruto = process.env.RECEBIMENTO_TITULARES_INTERNOS;
+        if (bruto === undefined) return ['COLUMBIA TRADING'];
+        return bruto
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s !== '');
     };
 
     private GetLambdaEnvironmentVars = async (): Promise<EnvironmentVars> => {
@@ -216,6 +234,7 @@ export default class EnvironmentProvider {
             recebimentoIngestDias: this.resolveIngestDias(),
             recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
+            recebimentoTitularesInternos: this.resolveTitularesInternos(),
             fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
                 ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
                 : undefined,
