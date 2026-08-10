@@ -1503,3 +1503,190 @@ describe('RecebimentoNumerarioService — idempotência (já settled)', () => {
         expect(m.repo.beginExecution).not.toHaveBeenCalled();
     });
 });
+
+/**
+ * Gate 3 — resolução da Configuração de Documento (`gcd`) da SN.
+ *
+ * Regressão do bloqueio medido em PRODUÇÃO (2026-08-10, processo 699 / filial 4 / pessoa 5407): das 29
+ * configs que o processo aceita, NENHUMA se chama "Solicitação de Numerário" — a SN daquela filial é a
+ * `gcd 185 "ADIANTAMENTO DE CLIENTES"`, com que as 7 SNs já existentes do processo foram geradas. O gate,
+ * que casava só por NOME, declarava inelegível um processo comprovadamente elegível.
+ */
+describe('RecebimentoNumerarioService — gate 3 resolve o gcd da SN (histórico → mapa de filial → nome)', () => {
+    /** As configs da filial 4 que importam: nenhuma com nome de SN, e a 150 é OUTRO documento. */
+    const CONFIGS_FILIAL_4 = [
+        { gcdCod: 185, gcdDesNome: 'ADIANTAMENTO DE CLIENTES' },
+        {
+            gcdCod: 150,
+            gcdDesNome: 'IMPLANTAÇÃO DE SALDO FINANCEIRO - CLIENTES NACIONAIS ENCOMENDA',
+        },
+        { gcdCod: 91, gcdDesNome: 'CONTAS A RECEBER ANTES DO CONEXOS - ENCOMENDA' },
+    ];
+
+    /** Uma SN histórica do processo, gerada com `gcdCod`. */
+    const snHistorica = (gcdCod?: number): Record<string, unknown> => ({
+        docCod: 18202,
+        numero: '699',
+        data: '2026-08-03T00:00:00.000Z',
+        descricao: 'ADIANTAMENTO DE CLIENTES',
+        status: 3,
+        statusLabel: 'Finalizada',
+        solicitado: 15000,
+        valor: 15000,
+        ...(gcdCod !== undefined ? { gcdCod } : {}),
+    });
+
+    it('REPRODUTOR (proc 699/filial 4): nenhuma config com nome de SN, mas o processo já tem SN com gcd 185 → READY e gera com 185', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.gerDoc.listConfigDocProcesso as jest.Mock).mockResolvedValue(CONFIGS_FILIAL_4);
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([snHistorica(185)]);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        const snGerPayload = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0].payload;
+        expect(snGerPayload.gcdCod).toBe(185);
+    });
+
+    it('o HISTÓRICO tem precedência sobre o nome: config "SN - ENCOMENDA" existe, mas o processo usa a 185', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.gerDoc.listConfigDocProcesso as jest.Mock).mockResolvedValue([
+            { gcdCod: 150, gcdDesNome: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA' },
+            { gcdCod: 185, gcdDesNome: 'ADIANTAMENTO DE CLIENTES' },
+        ]);
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([snHistorica(185)]);
+
+        await buildService(m).processarAlocacao(baseInput());
+
+        const snGerPayload = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0].payload;
+        expect(snGerPayload.gcdCod).toBe(185);
+    });
+
+    it('gcd do histórico AUSENTE da ConfigDocProcesso é descartado (geraria NOT_VALID) → cai para o nome', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        // O processo já usou a 999, mas o ERP não a oferece mais — o histórico não pode mandar sozinho.
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([snHistorica(999)]);
+
+        await buildService(m).processarAlocacao(baseInput());
+
+        const snGerPayload = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0].payload;
+        expect(snGerPayload.gcdCod).toBe(150);
+    });
+
+    it('sem histórico → usa o MAPA filial→gcd (SN_GCD_COD_BY_FIL) validado contra a ConfigDocProcesso', async () => {
+        const m = buildMocks({
+            env: buildEnv({ solicitacaoNumerarioGcdCodPorFilial: { [PROCESSO_FIL_COD]: 185 } }),
+        });
+        wireDocCods(m);
+        (m.gerDoc.listConfigDocProcesso as jest.Mock).mockResolvedValue(CONFIGS_FILIAL_4);
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([]);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        const snGerPayload = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0].payload;
+        expect(snGerPayload.gcdCod).toBe(185);
+    });
+
+    it('gcd do mapa de filial AUSENTE da ConfigDocProcesso é descartado → BLOCKED, não gera', async () => {
+        const m = buildMocks({
+            env: buildEnv({ solicitacaoNumerarioGcdCodPorFilial: { [PROCESSO_FIL_COD]: 777 } }),
+        });
+        wireDocCods(m);
+        (m.gerDoc.listConfigDocProcesso as jest.Mock).mockResolvedValue(CONFIGS_FILIAL_4);
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([]);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('BLOCKED_ELEGIBILIDADE');
+        expect(m.gerDoc.gerarDocProcesso).not.toHaveBeenCalled();
+    });
+
+    it('SEGURANÇA: sem histórico e sem mapa, NÃO cai no SN_GCD_COD global (150 é outro documento na filial 4) → BLOCKED', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        // A 150 está na lista e o nome dela até casa /ENCOMENDA/i — mas é "IMPLANTAÇÃO DE SALDO
+        // FINANCEIRO", não uma SN. Gerar com ela criaria um documento financeiro errado e irreversível.
+        (m.gerDoc.listConfigDocProcesso as jest.Mock).mockResolvedValue(CONFIGS_FILIAL_4);
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([]);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('BLOCKED_ELEGIBILIDADE');
+        expect(m.gerDoc.gerarDocProcesso).not.toHaveBeenCalled();
+    });
+
+    it('falha na leitura do histórico NÃO derruba o pré-flight — cai para as rotas seguintes', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockRejectedValue(new Error('ERP 500'));
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        const snGerPayload = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0].payload;
+        expect(snGerPayload.gcdCod).toBe(150);
+    });
+
+    it('config sem separador " - " ("ADIANTAMENTO DE CLIENTES") → conta de rateio ENCOMENDA, não uma conta inexistente', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.gerDoc.listConfigDocProcesso as jest.Mock).mockResolvedValue(CONFIGS_FILIAL_4);
+        (m.gerDoc.listSNsByProcesso as jest.Mock).mockResolvedValue([snHistorica(185)]);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        // Sem o fallback, a variante viraria "ADIANTAMENTO DE CLIENTES" e a conta-alvo "ADIANTAMENTO DE
+        // CLIENTE ADIANTAMENTO DE CLIENTES" — inexistente → falha DEPOIS da SN shell criada (doc órfão).
+        expect(out.status).toBe('settled');
+        const itemArgs = (m.gerDoc.adicionarComDocProduto as jest.Mock).mock.calls[0][0];
+        expect(itemArgs.payload).toEqual(expect.objectContaining({ ctpCod: 690 }));
+    });
+});
+
+/**
+ * Gate 3 é sobre CRIAR a SN. Quando a analista seleciona uma SN existente (ADR-0027) o fluxo nunca lê o
+ * `gcd` resolvido — rodá-lo assim mesmo transformava um veredito irrelevante em bloqueio da operação
+ * inteira (produção 2026-08-10: SN 4285 do processo 699 barrada por elegibilidade que não se aplicava).
+ */
+describe('RecebimentoNumerarioService — SN existente selecionada pula o gate 3', () => {
+    it('config sem nenhuma SN por nome + SN existente escolhida → NÃO bloqueia; roda fin014 + NDe', async () => {
+        const m = buildMocks();
+        (m.gerDoc.gerarDocProcesso as jest.Mock).mockResolvedValue({ docCod: 18337, messages: [] });
+        // Cenário que ANTES bloqueava: nenhuma config do processo se chama "Solicitação de Numerário".
+        (m.gerDoc.listConfigDocProcesso as jest.Mock).mockResolvedValue([
+            { gcdCod: 91, gcdDesNome: 'CONTAS A RECEBER ANTES DO CONEXOS - ENCOMENDA' },
+        ]);
+
+        const out = await buildService(m).processarAlocacao(
+            baseInput({ snSelecionadaDocCod: 18202 }),
+        );
+
+        expect(out.status).toBe('settled');
+        expect(out.snDocCod).toBe(18202);
+        // O gate 3 nem é consultado — não há SN a criar, então não há config a resolver.
+        expect(m.gerDoc.listConfigDocProcesso).not.toHaveBeenCalled();
+        // Continua sem criar/finalizar SN (I-Receb-3), e a baixa roda contra o docCod escolhido.
+        expect(m.gerDoc.validarGeracao).not.toHaveBeenCalled();
+        expect(m.gerDoc.finalizarDocumento).not.toHaveBeenCalled();
+        expect(m.fin014.gravarBaixa).toHaveBeenCalled();
+    });
+
+    it('gates 0.5 (modalidade) e 1 (cadastro) CONTINUAM valendo com SN existente', async () => {
+        const m = buildMocks();
+        (m.gerDoc.validaProcessoPessoa as jest.Mock).mockResolvedValue({ pesCod: 194 });
+
+        const out = await buildService(m).processarAlocacao(
+            baseInput({ snSelecionadaDocCod: 18202 }),
+        );
+
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('BLOCKED_CADASTRO');
+        expect(m.fin014.gravarBaixa).not.toHaveBeenCalled();
+    });
+});

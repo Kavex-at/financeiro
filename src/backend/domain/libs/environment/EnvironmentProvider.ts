@@ -100,6 +100,25 @@ export default class EnvironmentProvider {
     };
 
     /** Filiais da ingestão (`RECEBIMENTO_INGEST_FIL_CODS`, CSV). Vazio = todas. */
+    /**
+     * Parser do FALLBACK filial → `gcdCod` da SN (`SN_GCD_COD_BY_FIL`, formato `"1:150,4:185"`).
+     * Pares malformados são DESCARTADOS em silêncio (o gate 3 tem outros fallbacks e ainda valida o
+     * `gcdCod` contra o `lov/ConfigDocProcesso` — um env torto nunca vira geração de documento errado).
+     */
+    private resolveSnGcdCodPorFilial = (): Record<number, number> => {
+        const mapa: Record<number, number> = {};
+        for (const par of this.readEnv('SN_GCD_COD_BY_FIL', '').split(',')) {
+            const [filRaw, gcdRaw] = par.split(':');
+            if (filRaw === undefined || gcdRaw === undefined) continue;
+            const filCod = Number(filRaw.trim());
+            const gcdCod = Number(gcdRaw.trim());
+            if (!Number.isInteger(filCod) || filCod <= 0) continue;
+            if (!Number.isInteger(gcdCod) || gcdCod <= 0) continue;
+            mapa[filCod] = gcdCod;
+        }
+        return mapa;
+    };
+
     private resolveIngestFilCods = (): number[] =>
         this.readEnv('RECEBIMENTO_INGEST_FIL_CODS', '')
             .split(',')
@@ -152,6 +171,7 @@ export default class EnvironmentProvider {
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
+            solicitacaoNumerarioGcdCodPorFilial: this.resolveSnGcdCodPorFilial(),
             conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment', 'local')),
             recebimentosEnabled: this.resolveRecebimentosEnabled(),
@@ -228,6 +248,7 @@ export default class EnvironmentProvider {
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
+            solicitacaoNumerarioGcdCodPorFilial: this.resolveSnGcdCodPorFilial(),
             conexosCredEncKey:
                 this.readCred(conexos, 'credEncKey') ||
                 this.readEnv('CONEXOS_CRED_ENC_KEY') ||

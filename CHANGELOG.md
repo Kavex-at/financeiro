@@ -1,5 +1,29 @@
 # Columbia Financeiro — Changelog
 
+## v0.23.1 (2026-08-10) — Recebimentos: o `gcd` da SN sai do nome e passa a vir do histórico do processo
+
+- **fix(recebimentos):** o gate 3 do pré-flight deixa de resolver a **Configuração de Documento** da SN
+  por **nome** e passa a resolvê-la, nesta ordem, pelo **histórico de SNs do próprio processo**
+  (`com299/list` → `gcdCod`), pelo **mapa filial → gcd** (`SN_GCD_COD_BY_FIL`) e só então pelo nome —
+  cada rota validada contra o `lov/ConfigDocProcesso`. Em produção, a alocação do processo **699 /
+  filial 4** era barrada com *"NÃO aceita nenhuma Solicitação de Numerário (0 de 29 configurações)"*
+  sendo que o processo tem **7 SNs**, todas geradas com a `gcd 185 "ADIANTAMENTO DE CLIENTES"`: o nome
+  da config simplesmente não é uniforme entre filiais. Ver **ADR-0034**.
+- **fix(recebimentos):** o gate 3 **não roda mais quando a analista seleciona uma SN existente**. Ele
+  responde "com qual config a SN seria **CRIADA**", e nesse ramo nada é criado — o `gcd` resolvido nunca
+  era lido, mas um veredito irrelevante bloqueava a operação inteira. Cadastro (gate 1) e modalidade
+  (gate 0.5) continuam valendo: decidem a baixa e a NDe, que ainda rodam.
+- **fix(recebimentos):** a **variante** da config (que deriva a conta de rateio) passa a exigir o
+  separador `" - "`. Sem isso, `"ADIANTAMENTO DE CLIENTES"` virava a variante `ADIANTAMENTO DE CLIENTES`
+  e a conta-alvo `"ADIANTAMENTO DE CLIENTE ADIANTAMENTO DE CLIENTES"` — inexistente, com a falha
+  acontecendo **depois** de a SN shell já existir no ERP (documento órfão).
+- **fix(recebimentos):** o `SN_GCD_COD` global fica restrito a **desempate entre configs já
+  identificadas como SN**. Na filial 4 a `gcd 150` é `"IMPLANTAÇÃO DE SALDO FINANCEIRO - CLIENTES
+  NACIONAIS ENCOMENDA"` — outro documento, cujo nome ainda casa `/ENCOMENDA/i`. Aceitá-lo geraria o
+  documento errado, de forma irreversível; há teste dedicado fechando esse caminho.
+- **chore(recebimentos):** nova env `SN_GCD_COD_BY_FIL` (`"1:150,4:185"`), e a origem do `gcd`
+  (histórico / mapa / nome) passa a constar no `motivo` do `READY` para auditoria.
+
 ## v0.23.0 (2026-08-10) — Recebimentos: transferência entre contas da casa sai da carteira
 
 - **fix(recebimentos):** crédito que o analista **pagou** deixa de aparecer como **recebido**. As
