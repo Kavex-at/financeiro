@@ -182,14 +182,17 @@ export default class EnvironmentProvider {
     /**
      * Titulares internos (`RECEBIMENTO_TITULARES_INTERNOS`, CSV) — os nomes que, no
      * remetente de um crédito, provam que o dinheiro veio de outra conta da própria
-     * casa. Default: o titular do tenant atual.
+     * casa.
      *
-     * Sobrescrever com string vazia DESLIGA a detecção (nada é escondido) — é o
-     * escape hatch para investigar a carteira crua sem redeploy.
+     * **Default VAZIO = detecção desligada.** Não há razão social no código (Regra
+     * Inviolável #2): um literal de tenant aqui viraria, no segundo cliente, um filtro
+     * que esconde crédito alheio usando o nome do primeiro. Quem quer a detecção
+     * declara quem é a própria casa — e ausência de configuração nunca esconde
+     * dinheiro de ninguém.
      */
     private resolveTitularesInternos = (): string[] => {
         const bruto = process.env.RECEBIMENTO_TITULARES_INTERNOS;
-        if (bruto === undefined) return ['COLUMBIA TRADING'];
+        if (bruto === undefined) return [];
         return bruto
             .split(',')
             .map((s) => s.trim())

@@ -61,9 +61,14 @@ categoria != '209'                                                ⇒  FALSE
 titularesInternos vazio                                           ⇒  FALSE  # detecção desligada
 ```
 
-`titularesInternos` vem de `RECEBIMENTO_TITULARES_INTERNOS` (CSV; default `COLUMBIA TRADING`).
-Comparação é *case/acento-insensitive*, por `includes` — `REM: COLUMBIA TRADING S/A` casa com
-`COLUMBIA TRADING`.
+`titularesInternos` vem de `RECEBIMENTO_TITULARES_INTERNOS` (CSV). **Ausente/vazio = detecção
+desligada** — não há razão social no código (Regra Inviolável #2).
+
+A comparação é *case/acento-insensitive* e casa **palavra inteira**, não substring: `REM: COLUMBIA
+TRADING S/A` casa com `COLUMBIA TRADING`, mas `COLUMBIANA S/A` **não** casa com `COLUMBIA`. Titular
+com menos de 6 caracteres é ignorado — `S/A` casaria com toda sociedade anônima do país. Ambas as
+guardas vieram do Regis-Review: esconder crédito de cliente é o pior erro possível aqui, porque a
+linha some da carteira e o analista não tem como saber que ela existiu.
 
 ## Por que uma coluna, e não uma entrada em `CATEGORIAS_TESOURARIA`
 
@@ -96,8 +101,15 @@ informar remetente (ou até uma regra futura casar as duas pernas do movimento).
 `describe('normalizarLancamento — transferência entre contas da casa')`, construído sobre a linha
 real de R$ 368.000,00 da conta 213.
 
-## Backfill
+## Linhas já ingeridas — sem backfill SQL
 
-A migration `0045` reclassifica as linhas já ingeridas a partir do `raw_payload` persistido
-(`exiEspNrdocto ~* 'REM\s*:.*COLUMBIA\s+TRADING'`) — sem isso a carteira atual continuaria mostrando
-as transferências internas até que cada linha fosse reingerida.
+A migration `0046` cria as colunas e **não** reclassifica nada. A primeira versão trazia um `UPDATE`
+com o predicado reescrito em SQL, e ele já divergia do TypeScript (o SQL não normalizava acento nem
+lia a env). Duas implementações da mesma regra classificando subconjuntos diferentes, uma delas
+rodando uma única vez — o Regis-Review pegou isso em três frentes distintas.
+
+A reclassificação é do próprio caminho de ingestão: `upsertMany` grava
+`transferencia_interna = EXCLUDED.transferencia_interna` e o cron horário relê a janela inteira.
+Linhas ainda `importada` convergem na próxima run; linhas já trabalhadas pelo analista não são
+tocadas — o `WHERE status = 'importada'` do upsert as protege, e o que ele decidiu sobre elas é fato
+histórico.

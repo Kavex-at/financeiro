@@ -150,6 +150,31 @@ describe('ehTransferenciaInterna', () => {
     it('lista de titulares vazia desliga a detecção', () => {
         expect(ehTransferenciaInterna('209', 'COLUMBIA TRADING S/A', [])).toBe(false);
     });
+
+    // Regis-Review (qa-fault-tolerance F4): `includes` puro escondia recebível de
+    // empresa distinta cujo nome CONTÉM o titular. Esconder crédito de cliente é o
+    // pior erro possível aqui — o analista não tem como saber que a linha existiu.
+    it('NÃO casa titular como substring de outra razão social', () => {
+        expect(ehTransferenciaInterna('209', 'COLUMBIANA S/A', ['COLUMBIA'])).toBe(false);
+        expect(ehTransferenciaInterna('209', 'COLUMBIA IMPORTS LTDA', ['COLUMBIA TRADING'])).toBe(
+            false,
+        );
+    });
+
+    it('casa o titular como palavra inteira, com pontuação em volta', () => {
+        expect(ehTransferenciaInterna('209', 'COLUMBIA TRADING S/A', ['COLUMBIA TRADING'])).toBe(
+            true,
+        );
+        expect(ehTransferenciaInterna('209', 'PAGTO COLUMBIA TRADING.', ['COLUMBIA TRADING'])).toBe(
+            true,
+        );
+    });
+
+    it('ignora titular curto demais para ser filtro seguro', () => {
+        // 'S/A' casaria com toda sociedade anônima do país.
+        expect(ehTransferenciaInterna('209', 'ACME S/A', ['S/A'])).toBe(false);
+        expect(ehTransferenciaInterna('209', 'ACME LTDA', ['LTDA'])).toBe(false);
+    });
 });
 
 describe('normalizarLancamento', () => {

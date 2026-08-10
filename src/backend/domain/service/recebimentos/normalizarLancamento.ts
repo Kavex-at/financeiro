@@ -192,6 +192,29 @@ export const extrairContraparte = (historico?: string): string | undefined => {
 export const CATEGORIA_TRANSFERENCIA_INTERBANCARIA = '209';
 
 /**
+ * Piso de caracteres para um titular interno valer como filtro.
+ *
+ * Um token curto na env (`S/A`, ou `COLUMBIA` sem o `TRADING`) casaria com razão
+ * social de cliente e sumiria com recebível de verdade em bloco. Abaixo deste piso o
+ * titular é IGNORADO — configuração frouxa não deve custar dinheiro invisível.
+ */
+const TITULAR_MIN_CHARS = 6;
+
+/** Metacaracteres de regex no nome do titular (o `.` de `S.A.`, por exemplo). */
+const escaparRegex = (texto: string): string => texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Casa o titular como PALAVRA INTEIRA dentro do remetente, não como substring.
+ *
+ * `includes` puro fazia `COLUMBIA` casar com `COLUMBIANA S/A` — empresa real e
+ * distinta, cujo crédito sumiria da carteira sem deixar rastro para o analista.
+ */
+const casaTitular = (alvo: string, titular: string): boolean => {
+    if (titular.length < TITULAR_MIN_CHARS) return false;
+    return new RegExp(`(^|[^A-Z0-9])${escaparRegex(titular)}([^A-Z0-9]|$)`).test(alvo);
+};
+
+/**
  * Decide se um crédito é TRANSFERÊNCIA ENTRE CONTAS DA PRÓPRIA CASA.
  *
  * Regra (decidida com o analista, 2026-08-10): categoria `209` **e** remetente
@@ -211,10 +234,7 @@ export const ehTransferenciaInterna = (
     if (categoria !== CATEGORIA_TRANSFERENCIA_INTERBANCARIA) return false;
     if (!remetente) return false;
     const alvo = canonizar(remetente);
-    return titularesInternos.some((t) => {
-        const titular = canonizar(t);
-        return titular !== '' && alvo.includes(titular);
-    });
+    return titularesInternos.some((t) => casaTitular(alvo, canonizar(t)));
 };
 
 /**
