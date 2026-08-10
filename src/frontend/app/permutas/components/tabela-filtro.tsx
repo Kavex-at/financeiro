@@ -33,7 +33,7 @@ export interface TabelaFiltro<T> {
  */
 export function useTabelaFiltro<T>(
   items: T[],
-  getFilCod: (x: T) => number,
+  getFilCod: (x: T) => number | undefined,
   getBuscaTexto: (x: T) => string,
   pageSize = 20,
 ): TabelaFiltro<T> {
@@ -41,15 +41,22 @@ export function useTabelaFiltro<T>(
   const [busca, setBuscaState] = React.useState('')
   const [pagina, setPagina] = React.useState(1)
   const b = busca.trim().toLowerCase()
+  // `filCod` indefinido = item CORPORATIVO (crédito do fin095, ADR-0032): não pertence a nenhuma
+  // filial e por isso passa em QUALQUER seleção, em vez de sumir quando o analista escolhe a dele.
   const filtrados = items.filter(
     (x) =>
-      (filial === 'todas' || String(getFilCod(x)) === filial) &&
+      (filial === 'todas' ||
+        getFilCod(x) === undefined ||
+        String(getFilCod(x)) === filial) &&
       (b === '' || getBuscaTexto(x).toLowerCase().includes(b)),
   )
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / pageSize))
   const paginaAtual = Math.min(pagina, totalPaginas)
   const slice = filtrados.slice((paginaAtual - 1) * pageSize, paginaAtual * pageSize)
-  const filiais = [...new Set(items.map(getFilCod))].sort((a, c) => a - c)
+  // Corporativos não geram opção no dropdown — não há filial a oferecer.
+  const filiais = [
+    ...new Set(items.map(getFilCod).filter((f): f is number => f !== undefined)),
+  ].sort((a, c) => a - c)
   const setFilial = (v: string) => {
     setFilialState(v)
     setPagina(1)

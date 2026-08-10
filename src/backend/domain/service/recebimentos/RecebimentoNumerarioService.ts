@@ -92,7 +92,12 @@ const SN_CONFIG_NOME_RE = /SOLICITA[ÇC][ÃA]O\s+DE\s+NUMER[ÁA]RIO/i;
 export interface RecebimentoNumerarioTransacao {
     /** Conta financeira do PAGAMENTO (fin014 baixa cai NELA — não é uma env fixa). */
     gerNum: number;
-    filCod: number;
+    /**
+     * ⚠️ Sem `filCod` (ADR-0032). O crédito do `fin095` é CORPORATIVO — não tem filial. A filial de
+     * toda a operação (SN, borderô, baixa, NDe) é a do PROCESSO escolhido e chega em
+     * `processoFields.filCod` — era de lá que este serviço já a lia, sempre. O campo existia na
+     * interface sem nenhum leitor.
+     */
     valor: number;
 }
 

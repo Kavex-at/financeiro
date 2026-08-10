@@ -34,7 +34,12 @@ export type NdeStatusEmissao = 'pendente' | 'emitida' | 'erro'
 export interface TransacaoBancaria {
   id: string
   correlationId: string
-  filCod: number
+  /**
+   * Ausente = conta CORPORATIVA (ADR-0032). O canal automático (`fin095`) nunca traz filial — o
+   * extrato é escopado por conta e o mesmo crédito é visto de todas as filiais. A filial da
+   * operação só passa a existir na alocação, no `Recebimento`. O canal `xlsx_bradesco` traz.
+   */
+  filCod?: number
   dataMovimento: string
   tipo: TransacaoTipo
   valor: number

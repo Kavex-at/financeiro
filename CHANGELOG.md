@@ -1,5 +1,31 @@
 # Columbia Financeiro — Changelog
 
+## v0.21.1 (2026-08-10) — Recebimentos: fim da duplicação do extrato (o fin095 é por CONTA, não por filial)
+
+- **fix(recebimentos):** o mesmo crédito parava de aparecer **N vezes** na carteira — uma por filial
+  configurada. O `fin095/list` filtra por `gerNum` + janela e **ignora a filial** (que viaja só como
+  header de sessão), mas a chave natural era `fin095:{filCod}:{gerNum}:{extCod}:{exiCodSeq}` e a
+  ingestão fazia fan-out `(filial × conta)`. Medido em produção: **728 linhas para 104 lançamentos
+  reais** (624 excedentes, 86%) e o KPI "a distribuir" **7× inflado** (R$ 1,006 bi contra R$ 143,7 mi).
+  A chave natural passa a ser `fin095:{gerNum}:{extCod}:{exiCodSeq}`. Ver **ADR-0032**.
+- **fix(recebimentos):** o fan-out da ingestão deduplica os alvos por `gerNum` — uma conta é lida
+  **uma vez por run**. As chamadas ao Conexos caem de **42 para 6**, aliviando a mesma pressão de
+  sessão que causou o incidente `LOGIN_ERROR_MAX_SESSIONS` do SISPAG.
+- **feat(recebimentos):** `TransacaoBancaria.filCod` vira **opcional** — `null` = **conta
+  corporativa**. As contas com movimento (38, 138, 212, 213, 215, 246) são vistas de qualquer filial;
+  um crédito do canal automático só ganha filial quando o analista o **aloca a um processo**, e quem
+  a carrega é `recebimento.fil_cod`. O canal `xlsx_bradesco` **mantém** a filial (é escolha explícita
+  no upload). Carimbar a matriz foi rejeitado: sumiria da carteira de analistas de outras filiais.
+- **feat(recebimentos):** a filial deixa de filtrar a **listagem** e segue filtrando a **ação**. O
+  painel mostra o crédito corporativo a todo usuário autorizado; `pipeline/run`, `alocar` e a emissão
+  da NDe continuam validando `assertUserCanActOnFilial` contra a filial **do processo escolhido**.
+- **fix(recebimentos):** `RecebimentoNumerarioTransacao` perde o campo `filCod` — a interface o
+  declarava e **nenhum leitor o usava**; todo o fluxo Conexos já rodava na filial do processo.
+- **chore(db):** migration `0044` libera `fil_cod` para NULL e **colapsa as 624 duplicatas**,
+  preservando a linha mais antiga de cada grupo (com `importado_em`/`import_run_id` originais) e
+  reescrevendo `natural_key`/`id`/`correlation_id` para a chave nova. Idempotente e restrita a
+  `canal IS NULL`.
+
 ## v0.21.0 (2026-08-07) — Recebimentos: nota de débito só quando devida (conta e ordem de terceiros)
 
 - **feat(recebimentos):** processos **POR CONTA E ORDEM DE TERCEIROS** (`imp021.priVldTipo = 2`) deixam

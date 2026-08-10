@@ -138,15 +138,30 @@ describe('ConexosExtratoClient.listLancamentos', () => {
             extCod: '137',
             exiCodSeq: '128',
             gerNum: 38,
-            filCod: 1,
             tipo: 'CREDITO',
             valor: 791824.74,
             historico: 'SISPAG  BELLIZ INDUSTRIA',
             numeroDocumento: '20260115128',
             conciliadoNoErp: false,
         });
-        // `gerNum`/`filCod` vêm do PARÂMETRO — a linha do ERP traz nulo.
+        // `gerNum` vem do PARÂMETRO — a linha do ERP traz nulo.
         expect(l.raw).toEqual(linhaCredito());
+    });
+
+    it('NÃO devolve filCod: o fin095 ignora a filial do header (ADR-0032)', async () => {
+        // O `filCod` do parâmetro é contexto de sessão, não dado da linha. Expô-lo aqui foi o que
+        // pôs a filial na chave natural e gravou uma cópia do lançamento por filial.
+        const { legacy, client } = build();
+        legacy.listGenericPaginated.mockResolvedValue({ count: 1, rows: [linhaCredito()] });
+
+        const [l] = await client.listLancamentos({
+            filCod: 7,
+            gerNum: 38,
+            de: new Date(0),
+            ate: new Date(),
+        });
+
+        expect(l).not.toHaveProperty('filCod');
     });
 
     it('usa exiMnyLctoDeb no débito e devolve valor sempre positivo', async () => {

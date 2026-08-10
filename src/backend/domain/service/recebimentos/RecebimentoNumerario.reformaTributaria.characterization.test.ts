@@ -201,7 +201,7 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
 
 const baseInput = (over: Partial<ProcessarAlocacaoInput> = {}): ProcessarAlocacaoInput => ({
     txnId: 'txn-rt',
-    transacao: { gerNum: 55795, filCod: 1, valor: 15000 },
+    transacao: { gerNum: 55795, valor: 15000 },
     priCod: 90001,
     valor: 15000,
     processoFields: {

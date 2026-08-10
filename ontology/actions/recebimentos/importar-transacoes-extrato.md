@@ -87,9 +87,13 @@ conciliação.
 
 ## Idempotência / dedup
 
-- **Chave natural:** `fin095:{filCod}:{gerNum}:{extCod}:{exiCodSeq}`. **Nunca** inclui campo mutável
+- **Chave natural:** `fin095:{gerNum}:{extCod}:{exiCodSeq}`. **Nunca** inclui campo mutável
   (`vldConciliado`, `dtaConc`, valor): o ERP os atualiza ao conciliar e a mesma linha reingeriria
-  como transação nova.
+  como transação nova. **Nunca inclui `filCod`** (ADR-0032): o `fin095` é escopado por conta e
+  ignora a filial do header — o `filCod` na chave duplicava cada lançamento uma vez por filial
+  configurada (medido: 728 linhas para 104 lançamentos reais, 86% de excedente).
+- **Fan-out por CONTA, não por (filial × conta):** os alvos são deduplicados por `gerNum`; a filial
+  serve só como contexto de sessão do header. Uma conta é lida uma vez por run (6 leituras, não 42).
 - **Garantia no BANCO:** `UNIQUE (natural_key)` (migration 0032) + `ON CONFLICT (natural_key)`. Não é
   checagem em memória.
 - `id` e `correlationId` são **determinísticos** (derivados da chave natural), então insert e update

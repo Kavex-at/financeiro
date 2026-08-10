@@ -16,7 +16,6 @@ const lancamento = (over: Partial<LancamentoExtrato> = {}): LancamentoExtrato =>
     extCod: '137',
     exiCodSeq: '128',
     gerNum: 38,
-    filCod: 1,
     dataLancamento: new Date('2026-07-01T15:00:00Z'),
     tipo: 'CREDITO',
     valor: 1000,
@@ -179,18 +178,42 @@ describe('IngestaoTransacoesService — idempotência', () => {
 });
 
 describe('IngestaoTransacoesService — fan-out', () => {
-    it('achata (filial × conta) num único pool bounded, nunca aninhado', async () => {
+    it('lê cada CONTA uma vez só, num único pool bounded (ADR-0032)', async () => {
+        // Regressão do bug que inflou a carteira 7×: o `fin133` mostra as MESMAS contas
+        // a partir de qualquer filial e o `fin095` ignora a filial do header, então o
+        // fan-out (filial × conta) lia o mesmo extrato N vezes. A conta 38 aparece nas
+        // duas filiais e tem que virar UM alvo.
         const { service, bounded } = build();
         await service.runMany(inputMany);
 
-        // 1ª chamada: contas por filial. 2ª: os pares achatados.
+        // 1ª chamada: contas por filial. 2ª: as contas DISTINTAS.
         expect(bounded.run).toHaveBeenCalledTimes(2);
         const [alvos, , limite] = bounded.run.mock.calls[1];
         expect(limite).toBe(FANOUT_LIMIT_RECEBIMENTOS);
-        expect(alvos).toEqual([
-            { filCod: 1, gerNum: 38, gerDes: 'ITAÚ' },
-            { filCod: 2, gerNum: 38, gerDes: 'ITAÚ' },
-        ]);
+        expect(alvos).toEqual([{ gerNum: 38, gerDes: 'ITAÚ', filCodSessao: 1 }]);
+    });
+
+    it('a mesma conta vista por N filiais rende UMA leitura do fin095', async () => {
+        const { service, extrato } = build();
+        await service.runMany(inputMany);
+        // 2 filiais × 1 conta × 3 blocos de 30 dias = 3 leituras, não 6.
+        expect(extrato.listLancamentos).toHaveBeenCalledTimes(3);
+        expect(new Set(extrato.listLancamentos.mock.calls.map((c) => c[0].gerNum))).toEqual(
+            new Set([38]),
+        );
+    });
+
+    it('contas distintas continuam sendo lidas todas', async () => {
+        const { service, extrato } = build({
+            contas: [
+                { gerNum: 38, gerDes: 'ITAÚ', qtdeBanco: 27 },
+                { gerNum: 212, gerDes: 'BRADESCO', qtdeBanco: 4 },
+            ],
+        });
+        await service.runMany(inputMany);
+        expect(new Set(extrato.listLancamentos.mock.calls.map((c) => c[0].gerNum))).toEqual(
+            new Set([38, 212]),
+        );
     });
 
     it('pula contas sem movimento — não gasta chamada para receber vazio', async () => {

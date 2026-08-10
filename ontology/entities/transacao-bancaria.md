@@ -28,7 +28,7 @@ properties:
   - importRunId
   - importadoEm
 relationships:
-  - "TransacaoBancaria N—1 Filial (via filCod — a filial que originou o movimento)"
+  - "TransacaoBancaria N—0..1 Filial (via filCod; ausente no canal fin095 — conta corporativa, ADR-0032)"
   - "TransacaoBancaria 1—1 Recebimento (um crédito conciliável dá origem a no máximo um Recebimento vivo)"
   - "TransacaoBancaria N—1 ImportacaoTransacoesRun (via importRunId — a run Nexxera que gravou este movimento)"
 last_review: 2026-07-24
@@ -67,14 +67,14 @@ Nexxera** (não o ERP). É **READ-ONLY no Nexxera** (só importa) e a única esc
 |-------------|------|----------------------|-------|
 | `id` | string (uuid) | `transacao_bancaria.id` | Identidade interna. |
 | `correlationId` | string | `transacao_bancaria.correlation_id` | **Nasce aqui** — rastreia o movimento Nexxera → baixa → quitação → NDe (Módulo 6, observabilidade). Invariante de auditoria. |
-| `filCod` | number | `transacao_bancaria.fil_cod` | **Invariante multi-filial** — filial da conta. Nunca `null` (espelha I4 do SISPAG). |
+| `filCod` | number? | `transacao_bancaria.fil_cod` | **`null` = conta CORPORATIVA** (ADR-0032). O `fin095` é escopado por conta, não por filial: um crédito do canal automático não tem filial até ser alocado a um processo — quem carrega a filial da operação é `recebimento.fil_cod`. O canal `xlsx_bradesco` **mantém** preenchido (a filial é escolha do analista no upload). NÃO é mais a invariante I4 do SISPAG. |
 | `dataMovimento` | Date | extrato → `data_movimento` | Data do lançamento no extrato. |
 | `tipo` | enum | extrato → `tipo` | `CREDITO \| DEBITO \| ESTORNO \| TARIFA \| JUROS \| …` — constantes tipadas (enum exato na Fase 1). |
 | `valor` | number | extrato → `valor` | Valor do movimento. |
 | `moeda` | string | extrato → `moeda` | Moeda (doméstico esperado; confirmar na Fase 1). |
 | `contraparte` | string? | extrato → pagador/CNPJ/nome | Quem pagou (insumo do matching por cliente/CNPJ, Módulo 2). |
 | `referenciaBancaria` | string? | extrato → ref/histórico/id Pix | Referência livre do banco (insumo do matching). |
-| `naturalKey` | string | derivado (dedup) | **Chave natural de deduplicação** — `fin095:{filCod}:{gerNum}:{extCod}:{exiCodSeq}` (ADR-0023). NUNCA inclui campo mutável (`vldConciliado`, `dtaConc`, valor): o ERP os atualiza ao conciliar e a mesma linha reingeriria como nova. |
+| `naturalKey` | string | derivado (dedup) | **Chave natural de deduplicação** — `fin095:{gerNum}:{extCod}:{exiCodSeq}` (ADR-0023, corrigida pela ADR-0032: o `filCod` era contexto de leitura, não identidade, e duplicava cada lançamento uma vez por filial). NUNCA inclui campo mutável (`vldConciliado`, `dtaConc`, valor): o ERP os atualiza ao conciliar e a mesma linha reingeriria como nova. |
 | `gerNum` | number? | `fin133`/parâmetro | Conta financeira de origem. É a **"Conta Financeira de Baixa"** que o `fin014` exigirá na Fase 5 — por isso é coluna, não JSONB. |
 | `categoria` / `categoriaDesc` | string? | `exiEspCategoria` | Discriminador do RUÍDO DE TESOURARIA (resgate de aplicação, ações, transferência entre contas). Filtro de exibição; a ingestão persiste tudo. |
 | `rawPayload` | json | `transacao_bancaria.raw_payload` | **Payload cru original** do Nexxera (auditoria + reprocessamento sem re-fetch). |

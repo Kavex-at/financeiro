@@ -17,14 +17,20 @@ import type { TransacaoBancaria } from '../../interface/recebimentos/TransacaoBa
 
 /**
  * Chave natural de deduplicação. O par (`extCod`, `exiCodSeq`) identifica o
- * lançamento dentro do extrato; `filCod`+`gerNum` dão o escopo da conta.
+ * lançamento dentro do extrato; `gerNum` dá o escopo da conta.
  *
  * ⚠️ NUNCA inclua campos mutáveis (`vldConciliado`, `dtaConc`, valor): o ERP
  * atualiza esses ao conciliar, e a mesma linha reingeriria como transação nova,
  * duplicando a carteira do analista.
+ *
+ * ⚠️ NUNCA inclua `filCod` (ADR-0032). O `fin095` filtra por `gerNum` + janela e
+ * IGNORA a filial — ela viaja só como header de sessão. Com o `filCod` na chave,
+ * o fan-out por filial gravava o MESMO lançamento uma vez por filial: 728 linhas
+ * para 104 lançamentos reais em produção, e o KPI "a distribuir" 7× inflado.
+ * A filial de um crédito nasce na ALOCAÇÃO (`recebimento.fil_cod`), não aqui.
  */
 export const buildNaturalKey = (l: LancamentoExtrato): string =>
-    `fin095:${l.filCod}:${l.gerNum}:${l.extCod}:${l.exiCodSeq}`;
+    `fin095:${l.gerNum}:${l.extCod}:${l.exiCodSeq}`;
 
 /**
  * Id determinístico derivado da chave natural.
@@ -123,6 +129,10 @@ const mapTipo = (l: LancamentoExtrato) =>
 /**
  * Converte um lançamento do extrato numa `TransacaoBancaria` pronta para o upsert.
  *
+ * NÃO carrega `filCod`: a transação do canal automático nasce CORPORATIVA
+ * (ADR-0032). A conta do `fin133` é vista de qualquer filial e o `fin095` devolve
+ * os mesmos lançamentos para todas — não há filial a atribuir aqui sem inventá-la.
+ *
  * `status` é SEMPRE `importada`. É tentador mapear o `vldConciliado` do `fin095`
  * para `conciliada`, mas são conciliações diferentes: a do ERP é banco × extrato
  * de sistema; a nossa é crédito × processo do cliente. Confundir as duas faria o
@@ -139,7 +149,6 @@ export const normalizarLancamento = (
     return {
         id: buildTransacaoId(naturalKey),
         correlationId: buildCorrelationId(naturalKey),
-        filCod: l.filCod,
         dataMovimento: l.dataLancamento,
         tipo: mapTipo(l),
         valor: l.valor,

@@ -46,7 +46,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
             {
                 id: transacao.id,
                 correlationId: transacao.correlationId,
-                filCod: transacao.filCod,
+                filCod: transacao.filCod ?? null,
                 dataMovimento: transacao.dataMovimento,
                 tipo: transacao.tipo,
                 valor: transacao.valor,
@@ -108,7 +108,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                     );
                     params[`id${n}`] = t.id;
                     params[`co${n}`] = t.correlationId;
-                    params[`fi${n}`] = t.filCod;
+                    // `null` = conta CORPORATIVA (canal fin095, ADR-0032).
+                    params[`fi${n}`] = t.filCod ?? null;
                     params[`dm${n}`] = t.dataMovimento;
                     params[`ti${n}`] = t.tipo;
                     params[`va${n}`] = t.valor;
@@ -232,7 +233,13 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         categoriasExcluidas?: string[];
         desde?: Date;
     }): { where: string; params: Record<string, unknown> } => {
-        const clauses = ['fil_cod = ANY($filCods)'];
+        // `fil_cod IS NULL` = conta CORPORATIVA (canal fin095, ADR-0032): o crédito
+        // ainda não pertence a nenhuma filial e é visível a todo usuário autorizado,
+        // qualquer que seja a filial dele. A authz por filial NÃO é enfraquecida —
+        // ela vale onde move dinheiro (`pipeline/run`, `alocar`, emissão da NDe),
+        // contra a filial do PROCESSO escolhido. Excluir os corporativos aqui deixaria
+        // a carteira vazia e o dinheiro a conciliar invisível.
+        const clauses = ['(fil_cod IS NULL OR fil_cod = ANY($filCods))'];
         const params: Record<string, unknown> = { filCods: input.filCods };
 
         if (input.tipos && input.tipos.length > 0) {
@@ -269,7 +276,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
     private mapRow = (r: Record<string, unknown>): TransacaoBancaria => ({
         id: String(r.id),
         correlationId: String(r.correlation_id),
-        filCod: Number(r.fil_cod),
+        ...(r.fil_cod != null ? { filCod: Number(r.fil_cod) } : {}),
         dataMovimento: new Date(r.data_movimento as string | Date),
         tipo: (r.tipo as TransacaoTipo) ?? TRANSACAO_TIPO.CREDITO,
         valor: Number(r.valor),
