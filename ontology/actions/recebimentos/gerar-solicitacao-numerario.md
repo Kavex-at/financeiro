@@ -2,7 +2,7 @@
 name: gerarSolicitacaoNumerario
 type: action
 entity: Recebimento
-ontology_version: "0.16"
+ontology_version: "0.17"
 implementation_status: implemented
 status: stable
 owners: [yuri]
@@ -18,7 +18,7 @@ related_files:
   - src/backend/routes/recebimentos.ts
   - src/frontend/app/recebimentos/components/AlocarProcessosDialog.tsx
   - src/frontend/lib/recebimentos.ts
-last_review: 2026-08-07
+last_review: 2026-08-10
 preconditions:
   - "TransacaoBancaria (crédito) presente no painel de Recebimentos, com conta bancária conhecida (transacao.gerNum). Rota devolve 422 se gerNum ausente."
   - "Operador aciona 'Alocar' na transação e distribui o valor por 1..N processos candidatos (human-in-the-loop); cada linha tem um 'Processar' próprio."
@@ -26,6 +26,7 @@ preconditions:
   - "Papel admin (requireRole('admin')) + authz por-filial (assertUserCanActOnFilial, filial do processo)."
   - "ACL pré-flight da conta de serviço (com300 UPDATE, com131 GERAR OBS, com297 HOMOLOGAR/CONTINGENCIA, com194 SELECT) → 403 antes de qualquer escrita."
   - "Modalidade do processo resolvida no servidor (gate 0.5: imp021.priVldTipo via ConexosCadastroClient.listProcessos). READY só com a modalidade conhecida — ela decide se a NDe é devida (ADR-0031)."
+  - "Config de Documento (gcdCod) da SN resolvida no gate 3 por HISTÓRICO do processo (com299/list) → mapa filial SN_GCD_COD_BY_FIL → nome (SN_CONFIG_NOME_RE), toda rota validada contra lov/ConfigDocProcesso. Só se aplica ao ramo 'criar novo SN' — ver ADR-0034."
   - "Escrita irreversível gated: só executa o POST real com CONEXOS_WRITE_ENABLED=true E CONEXOS_DRY_RUN=false (default dry-run)."
 postconditions:
   - "dry-run → monta e loga os payloads da rota escolhida (novo SN: com299/fin014/com297/fiscal; SN existente: fin014/com297/fiscal), NENHUM POST, retorna preview (dryRun:true)."
@@ -95,12 +96,38 @@ orquestra, **por alocação** (uma linha do split):
    `sn|sn-finalizar|fin014|fin014-done|nota-debito|fiscal-done|obs-done|homologado|concluido|error`);
    documento já criado NÃO é recriado — a re-execução avança para a etapa pendente.
 
+## Gate 3 — qual Configuração de Documento (`gcd`) gera a SN (v0.17, ADR-0034)
+
+O gate 3 responde duas coisas sobre o ramo **"criar novo SN"**: se o processo aceita uma SN e **com qual
+`gcd`** ela seria gerada. A autoridade sobre o que o processo aceita continua sendo o
+`lov/ConfigDocProcesso`; o que mudou é **como se escolhe dentro dela**:
+
+1. **HISTÓRICO do próprio processo** — o `gcdCod` da SN mais recente (`com299/list`). É a evidência mais
+   forte que existe: aquele `gcd` já gerou SN aceita naquele processo/filial.
+2. **MAPA filial → gcd** (`SN_GCD_COD_BY_FIL`, ex. `"1:150,4:185"`) — para processo **sem** histórico.
+3. **NOME** (`SN_CONFIG_NOME_RE`, desempate `SN_GCD_COD` → ENCOMENDA → 1ª) — comportamento histórico.
+
+- **Toda rota é validada contra o `ConfigDocProcesso`** antes de virar decisão; um `gcd` ausente de lá
+  falharia a geração com `gcdDesNomeProc NOT_VALID` e por isso é descartado (cai para a rota seguinte).
+- **O nome da config NÃO é uniforme entre filiais.** Medido em produção (2026-08-10, processo 699 /
+  filial 4): das 29 configs aceitas, nenhuma se chama "Solicitação de Numerário" — a SN daquela filial é
+  `gcd 185 "ADIANTAMENTO DE CLIENTES"`, com que as 7 SNs existentes do processo foram geradas. Casar só
+  por nome declarava inelegível um processo comprovadamente elegível.
+- **O `SN_GCD_COD` global nunca decide sozinho** (só desempata dentro da rota 3): na filial 4 o `gcd 150`
+  é `"IMPLANTAÇÃO DE SALDO FINANCEIRO - CLIENTES NACIONAIS ENCOMENDA"`, outro documento. Aceitá-lo
+  geraria o documento errado, de forma irreversível.
+- **Variante exige o separador `" - "`**: sem ele a variante é `ENCOMENDA` (senão a conta-alvo do rateio
+  vira uma conta inexistente e `addLineItem` falha **depois** da SN shell existir — documento órfão).
+- A **origem** do `gcd` (histórico / mapa / nome) entra no `motivo` do READY — auditoria de documento real.
+
 ## Ramo — SN existente (v0.13, ADR-0027)
 
 Quando a alocação referencia uma SN **já existente** (o `docCod` selecionado da listagem
 `listarSolicitacoesNumerario`), o passo **1 (com299: geração + `completarSnAdiantamento` — linha de
 item / condição de pagamento / discriminador do título)** é **PULADO**: o documento já existe e já tem
-título. A execução entra direto no passo **2 (fin014)** contra o `docCod` selecionado, seguida do passo
+título. **O gate 3 também não roda** (ADR-0034 D5): ele responde "com qual config a SN seria CRIADA", e
+nada é criado aqui — `preflight.gcdCod`/`gcdDesNome` não são lidos neste ramo. Os gates **0.5
+(modalidade)** e **1 (cadastro)** continuam valendo, porque decidem a baixa e a NDe, que ainda rodam. A execução entra direto no passo **2 (fin014)** contra o `docCod` selecionado, seguida do passo
 **3 (com297 + cauda fiscal)**. O caminho **"Criar novo SN"** permanece o fluxo completo (1→2→3),
 inalterado.
 

@@ -32,6 +32,18 @@ export const SOLICITACAO_NUMERARIO_ROW_SCHEMA = z
             .string()
             .nullish()
             .transform((v) => v ?? undefined),
+        /**
+         * Configuração de Documento (`gcd`) com que ESTA SN foi gerada. É a fonte do resolvedor por
+         * HISTÓRICO do gate 3 (`resolverGcdPorHistorico`): o nome da config varia por filial
+         * ("SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA" na filial 1, "ADIANTAMENTO DE CLIENTES"/185 na 4),
+         * então o que o processo JÁ usou vale mais que qualquer regex de nome. Nullish → undefined:
+         * uma linha sem `gcdCod` simplesmente não vota.
+         */
+        gcdCod: z.coerce
+            .number()
+            .int()
+            .nullish()
+            .transform((v) => v ?? undefined),
         gerDes: z
             .string()
             .nullish()
@@ -102,6 +114,12 @@ export interface SolicitacaoNumerarioListItem {
     data: string;
     /** Descrição preferindo `gcdDesNome`, senão `tpdDesNome`, senão `gerDes`. */
     descricao: string;
+    /**
+     * `gcdCod` da Configuração de Documento com que a SN foi gerada — a evidência que o gate 3 usa
+     * para resolver o `gcd` do processo por HISTÓRICO (ver `resolverGcdPorHistorico`). Opcional: o
+     * ERP pode omitir em linhas antigas.
+     */
+    gcdCod?: number;
     /** `vldStatus` cru do ERP. */
     status: number;
     /** Rótulo humano do status (best-effort). */

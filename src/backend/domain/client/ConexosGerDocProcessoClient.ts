@@ -1132,6 +1132,7 @@ export default class ConexosGerDocProcessoClient {
         numero: r.docEspNumero,
         data: new Date(r.docDtaEmissao).toISOString(),
         descricao: r.gcdDesNome ?? r.tpdDesNome ?? r.gerDes ?? '',
+        ...(r.gcdCod !== undefined ? { gcdCod: r.gcdCod } : {}),
         status: r.vldStatus,
         statusLabel: solicitacaoNumerarioStatusLabel(r.vldStatus),
         solicitado: r.mnyBruto,

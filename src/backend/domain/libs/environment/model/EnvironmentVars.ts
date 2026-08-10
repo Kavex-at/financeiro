@@ -102,6 +102,16 @@ export default class EnvironmentVars {
     public solicitacaoNumerarioGcdCod: number;
 
     /**
+     * FALLBACK filial → `gcdCod` da SN (`SN_GCD_COD_BY_FIL`, formato `"1:150,4:185"`). O nome da
+     * Configuração de Documento NÃO é uniforme entre filiais — a 1 usa "SOLICITAÇÃO DE NUMERÁRIO -
+     * ENCOMENDA" (150) e a 4 usa "ADIANTAMENTO DE CLIENTES" (185, medido em produção no processo
+     * 699) — então o global `solicitacaoNumerarioGcdCod` é filial-1-cêntrico por construção.
+     * Consultado pelo gate 3 SÓ quando o processo não tem histórico de SN, e o valor ainda é
+     * validado contra o `lov/ConfigDocProcesso` antes de virar decisão. Vazio = sem fallback.
+     */
+    public solicitacaoNumerarioGcdCodPorFilial: Readonly<Record<number, number>>;
+
+    /**
      * Numerário (fluxo de 3 telas do guia "telas Conexos"): conta financeira do recebimento fin014
      * (`gerNum`, a MESMA da FIN_134) e a Configuração da nota de débito com297. `fin014ContaFinanceira`
      * é fail-closed se ausente (não adivinhamos conta). O gcd da nota de débito é resolvido em runtime
@@ -157,6 +167,7 @@ export default class EnvironmentVars {
         conexosDryRun,
         snLiveWriteEnabled,
         solicitacaoNumerarioGcdCod,
+        solicitacaoNumerarioGcdCodPorFilial,
         conexosCredEncKey,
         sispagEnabled,
         recebimentosEnabled,
@@ -188,6 +199,7 @@ export default class EnvironmentVars {
         conexosDryRun: boolean;
         snLiveWriteEnabled: boolean;
         solicitacaoNumerarioGcdCod: number;
+        solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
         conexosCredEncKey?: string;
         sispagEnabled: boolean;
         recebimentosEnabled: boolean;
@@ -219,6 +231,7 @@ export default class EnvironmentVars {
         this.conexosDryRun = conexosDryRun;
         this.snLiveWriteEnabled = snLiveWriteEnabled;
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
+        this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};
         this.conexosCredEncKey = conexosCredEncKey;
         this.sispagEnabled = sispagEnabled;
         this.recebimentosEnabled = recebimentosEnabled;

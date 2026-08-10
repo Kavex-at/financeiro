@@ -98,10 +98,29 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /**
  * Reconhece qualquer config "SOLICITAÇÃO DE NUMERÁRIO - *" na lista do `ConfigDocProcesso` (acento e
- * variação de grafia tolerados). Usado no gate 3 para achar a variante ENCOMENDA do processo — e para
- * detectar quando o processo só tem OUTRAS variantes (ex. TERCEIROS), que não auto-geramos ainda.
+ * variação de grafia tolerados). É o ÚLTIMO fallback do gate 3 — ver `resolverGcdDaSn`.
+ *
+ * ⚠️ Este nome NÃO é universal entre filiais. Medido em produção (2026-08-10, processo 699/filial 4):
+ * das 29 configs que o processo aceita, NENHUMA se chama "Solicitação de Numerário" — a SN daquela
+ * filial é `gcd 185 "ADIANTAMENTO DE CLIENTES"`, e as 7 SNs já existentes do processo foram todas
+ * geradas com ela. Casar por nome sozinho declarava inelegível um processo comprovadamente elegível.
+ * Por isso o gate 3 pergunta ANTES ao histórico do próprio processo.
  */
 const SN_CONFIG_NOME_RE = /SOLICITA[ÇC][ÃA]O\s+DE\s+NUMER[ÁA]RIO/i;
+
+/**
+ * Qual das três rotas do `resolverGcdDaSn` decidiu a Configuração de Documento da SN. Vai para o
+ * `motivo` do READY e para o log: quando um documento financeiro real é gerado, a auditoria precisa
+ * saber POR QUE aquele `gcd` foi escolhido, não só qual.
+ */
+type OrigemGcdSn = 'historico' | 'mapa-filial' | 'nome' | 'nenhuma';
+
+const ORIGEM_GCD_ROTULO: Readonly<Record<OrigemGcdSn, string>> = {
+    historico: 'histórico de SNs do processo',
+    'mapa-filial': 'mapa SN_GCD_COD_BY_FIL da filial',
+    nome: 'nome da configuração',
+    nenhuma: 'nenhuma rota',
+};
 
 /** A transação bancária (pagamento) que originou a alocação — carrega a conta financeira (gerNum). */
 export interface RecebimentoNumerarioTransacao {
@@ -306,6 +325,7 @@ export default class RecebimentoNumerarioService {
                 processo,
                 filCod: processoFields.filCod,
                 gcdCodFallback: env.solicitacaoNumerarioGcdCod,
+                snSelecionada: input.snSelecionadaDocCod !== undefined,
             });
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
@@ -361,6 +381,7 @@ export default class RecebimentoNumerarioService {
             processo,
             filCod: processoFields.filCod,
             gcdCodFallback: env.solicitacaoNumerarioGcdCod,
+            snSelecionada: ctx.snSelecionadaDocCod !== undefined,
         });
         if (preflight.classificacao !== PREFLIGHT_CLASSIFICACAO.READY) {
             await this.logService.warn({
@@ -856,9 +877,17 @@ export default class RecebimentoNumerarioService {
      * Extrai a VARIANTE da config de SN a partir do nome ("SOLICITAÇÃO DE NUMERÁRIO - TERCEIROS" → "TERCEIROS";
      * "... - ENCOMENDA" → "ENCOMENDA") — o segmento após o último " - ", UPPERCASE. Usada p/ derivar a conta
      * de rateio da variante. Fallback "ENCOMENDA" se o nome não tiver o separador.
+     *
+     * O separador é OBRIGATÓRIO para haver variante: sem ele o nome inteiro NÃO é uma variante. Nomes de
+     * config sem " - " existem em produção (filial 4: "ADIANTAMENTO DE CLIENTES", gcd 185) e antes viravam
+     * a "variante" `ADIANTAMENTO DE CLIENTES`, produzindo a conta-alvo inexistente "ADIANTAMENTO DE CLIENTE
+     * ADIANTAMENTO DE CLIENTES" — `addLineItem` falhava DEPOIS de a SN shell já existir no ERP, deixando
+     * documento órfão. Com o fallback correto a conta-alvo vira "ADIANTAMENTO DE CLIENTE ENCOMENDA",
+     * que a filial 4 tem (ctpCod 690, medido 2026-08-10).
      */
     private extrairVarianteSn = (configNome: string): string => {
         const partes = configNome.split(' - ');
+        if (partes.length < 2) return 'ENCOMENDA';
         const ultima = partes[partes.length - 1]?.trim().toUpperCase();
         return ultima !== undefined && ultima.length > 0 ? ultima : 'ENCOMENDA';
     };
@@ -1140,9 +1169,11 @@ export default class RecebimentoNumerarioService {
         processo: Processo;
         filCod: number;
         gcdCodFallback?: number;
+        snSelecionada?: boolean;
     }): Promise<PreflightResult> => {
         const { processo, filCod } = params;
         const gcdAlvo = params.gcdCodFallback;
+        const snSelecionada = params.snSelecionada === true;
 
         // ── gate 0.5: MODALIDADE do processo (ADR-0031) ──
         // Decide se a NDe é devida. Lido SEMPRE do `imp021` no servidor (nunca do payload do
@@ -1214,6 +1245,25 @@ export default class RecebimentoNumerarioService {
         }
         const notaDefault = gcdCodDefault !== undefined ? { gcdCodDefault } : {};
 
+        // ── SN EXISTENTE (ADR-0027): o gate 3 NÃO se aplica ──
+        // O gate 3 responde "com qual config a SN deste processo seria CRIADA". Quando a analista
+        // seleciona uma SN já existente, `etapaSn` pula geração/completação/finalização e o fluxo só
+        // roda baixa fin014 + NDe contra o `docCod` escolhido — `preflight.gcdCod`/`gcdDesNome` NUNCA
+        // são lidos nesse caminho. Rodar o gate assim mesmo transformava um veredito irrelevante em
+        // bloqueio da operação inteira (produção 2026-08-10: SN 4285 do processo 699 barrada porque
+        // nenhuma das 29 configs se chamava "Solicitação de Numerário"). Cadastro (gate 1) e
+        // modalidade (gate 0.5) continuam valendo — eles decidem a baixa e a NDe, que ainda vão rodar.
+        if (snSelecionada) {
+            return {
+                classificacao: PREFLIGHT_CLASSIFICACAO.READY,
+                ...modalidadeFields,
+                endCodFis,
+                pdcDocFederal,
+                ...notaDefault,
+                ...(ndeDispensada === true ? { motivo: motivoNdeDispensada(priVldTipo) } : {}),
+            };
+        }
+
         // ── gate 3: ELEGIBILIDADE AUTORITATIVA + resolução do gcd POR-PROCESSO ──
         // `lov/ConfigDocProcesso` é a lista REAL de configs que o processo aceita (popula o dropdown da
         // tela). A config de SN VARIA por processo/filial: 3254 → "... - ENCOMENDA" (150); 3478 →
@@ -1237,22 +1287,25 @@ export default class RecebimentoNumerarioService {
                 ...notaDefault,
             });
         }
-        const snConfigs = configs.filter((c) => SN_CONFIG_NOME_RE.test(c.gcdDesNome));
-        // Resolve a config de SN do processo: preferir a Encomenda (gcd env como desempate, senão por NOME),
-        // mas aceitar QUALQUER variante ("- TERCEIROS", etc.) — decisão do Yuri: tratar automaticamente. A
-        // conta de rateio da variante é derivada do nome na etapa de completar (fail-closed se não achar).
-        const snConfig =
-            (gcdAlvo !== undefined && gcdAlvo > 0
-                ? snConfigs.find((c) => c.gcdCod === gcdAlvo)
-                : undefined) ??
-            snConfigs.find((c) => /ENCOMENDA/i.test(c.gcdDesNome)) ??
-            snConfigs[0];
+        const { config: snConfig, origem } = await this.resolverGcdDaSn({
+            configs,
+            processo,
+            filCod,
+            gcdAlvo,
+        });
         if (snConfig !== undefined) {
             // Notas informativas do READY (não bloqueiam). A variante da config e a modalidade do
             // processo são eixos INDEPENDENTES: um processo pode ser conta e ordem e ainda assim só
             // oferecer a config "- ENCOMENDA". Por isso as duas notas convivem.
             const notas: string[] = [];
-            if (!/ENCOMENDA/i.test(snConfig.gcdDesNome)) {
+            if (origem !== 'nome') {
+                // Auditável: quando NÃO foi o nome que decidiu, o analista vê de onde veio o gcd que
+                // vai gerar um documento real (histórico do processo ou mapa de filial).
+                notas.push(
+                    `Config de SN resolvida por ${ORIGEM_GCD_ROTULO[origem]}: ` +
+                        `"${snConfig.gcdDesNome}" (gcd ${snConfig.gcdCod}).`,
+                );
+            } else if (!/ENCOMENDA/i.test(snConfig.gcdDesNome)) {
                 notas.push(
                     `Processo sem "SN - Encomenda"; usando a variante do próprio processo: ` +
                         `"${snConfig.gcdDesNome}" (gcd ${snConfig.gcdCod}).`,
@@ -1279,9 +1332,88 @@ export default class RecebimentoNumerarioService {
             gcdAlvoOk: false,
             ...notaDefault,
             motivo:
-                `Processo ${processo.priCod} NÃO aceita nenhuma "Solicitação de Numerário" ` +
-                `(0 de ${configs.length} configurações válidas do processo no Conexos) — inelegível. Escolha outro processo.`,
+                `Não foi possível resolver a Configuração de Documento da SN para o processo ` +
+                `${processo.priCod} (filial ${filCod}): o processo não tem SN anterior, não há mapa ` +
+                `SN_GCD_COD_BY_FIL para a filial, e nenhuma das ${configs.length} configurações que ele ` +
+                'aceita se chama "Solicitação de Numerário" — inelegível. Cadastre o gcd da filial ou ' +
+                'escolha outro processo.',
         };
+    };
+
+    /**
+     * Resolve a Configuração de Documento (`gcd`) com que a SN DESTE processo deve ser gerada, em três
+     * rotas, da mais específica para a mais genérica. Toda rota é validada contra o `lov/ConfigDocProcesso`
+     * (`configs`) — que é a lista AUTORITATIVA do que o processo aceita — antes de virar decisão: um
+     * `gcd` que não está lá falharia a geração com `gcdDesNomeProc NOT_VALID`.
+     *
+     *   1. **HISTÓRICO** — o `gcdCod` da SN mais recente do PRÓPRIO processo (`com299/list`). É a evidência
+     *      mais forte que existe: aquele `gcd` já gerou SN aceita naquele processo/filial. Resolve o caso
+     *      medido em produção (699/filial 4 → `gcd 185 "ADIANTAMENTO DE CLIENTES"`, invisível para o nome).
+     *   2. **MAPA filial → gcd** (`SN_GCD_COD_BY_FIL`) — para o processo SEM histórico numa filial cuja
+     *      config já conhecemos. Config de tenant, não constante de domínio.
+     *   3. **NOME** (`SN_CONFIG_NOME_RE`) — o comportamento histórico, preservado: entre as configs
+     *      "SOLICITAÇÃO DE NUMERÁRIO - *", desempata pelo `SN_GCD_COD` global, senão pela ENCOMENDA,
+     *      senão a primeira.
+     *
+     * ⚠️ O `SN_GCD_COD` global (hoje 150) só desempata DENTRO da rota 3, nunca sozinho: na filial 4 o
+     * `gcd 150` é "IMPLANTAÇÃO DE SALDO FINANCEIRO - CLIENTES NACIONAIS ENCOMENDA" — um documento
+     * completamente diferente. Aceitá-lo por estar presente no `ConfigDocProcesso` geraria o documento
+     * errado, de forma irreversível.
+     */
+    private resolverGcdDaSn = async (params: {
+        configs: Array<{ gcdCod: number; gcdDesNome: string }>;
+        processo: Processo;
+        filCod: number;
+        gcdAlvo?: number;
+    }): Promise<{ config?: { gcdCod: number; gcdDesNome: string }; origem: OrigemGcdSn }> => {
+        const { configs, processo, filCod, gcdAlvo } = params;
+        const aceita = (gcdCod?: number): { gcdCod: number; gcdDesNome: string } | undefined =>
+            gcdCod !== undefined && gcdCod > 0
+                ? configs.find((c) => c.gcdCod === gcdCod)
+                : undefined;
+
+        // ── rota 1: histórico de SNs do próprio processo ──
+        const porHistorico = aceita(await this.resolverGcdPorHistorico(processo.priCod, filCod));
+        if (porHistorico !== undefined) return { config: porHistorico, origem: 'historico' };
+
+        // ── rota 2: mapa filial → gcd (config de tenant) ──
+        const env = await this.environmentProvider.getEnvironmentVars();
+        const porFilial = aceita(env.solicitacaoNumerarioGcdCodPorFilial?.[filCod]);
+        if (porFilial !== undefined) return { config: porFilial, origem: 'mapa-filial' };
+
+        // ── rota 3: nome da config (comportamento histórico, inalterado) ──
+        const snConfigs = configs.filter((c) => SN_CONFIG_NOME_RE.test(c.gcdDesNome));
+        const porNome =
+            (gcdAlvo !== undefined && gcdAlvo > 0
+                ? snConfigs.find((c) => c.gcdCod === gcdAlvo)
+                : undefined) ??
+            snConfigs.find((c) => /ENCOMENDA/i.test(c.gcdDesNome)) ??
+            snConfigs[0];
+        return porNome !== undefined ? { config: porNome, origem: 'nome' } : { origem: 'nenhuma' };
+    };
+
+    /**
+     * `gcdCod` da SN mais RECENTE do processo (`com299/list` já vem ordenado por `docCod desc`), ou
+     * `undefined` se o processo nunca teve SN. Best-effort por construção: a leitura é só uma EVIDÊNCIA
+     * para escolher o `gcd`, então uma falha do ERP aqui cai para as rotas seguintes em vez de derrubar
+     * o pré-flight inteiro — quem decide inelegibilidade é o `ConfigDocProcesso` (gate 3), não esta leitura.
+     */
+    private resolverGcdPorHistorico = async (
+        priCod: number,
+        filCod: number,
+    ): Promise<number | undefined> => {
+        try {
+            const sns = await this.gerDocClient.listSNsByProcesso({ filCod, priCod });
+            return sns.find((s) => s.gcdCod !== undefined)?.gcdCod;
+        } catch (err) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'gate 3: leitura do histórico de SNs falhou — caindo para o mapa de filial/nome',
+                data: { priCod, filCod, erro: (err as Error)?.message },
+            });
+            return undefined;
+        }
     };
 
     /** Etapa 2 (fin014): borderô → validar título (SN docCod) → baixa (gerNum do pagamento) → finalizar. */

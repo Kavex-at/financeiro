@@ -15,14 +15,14 @@ related_files:
   - src/backend/domain/interface/recebimentos/constants.ts
   - src/backend/routes/recebimentos.ts
 endpoints_read:
-  - "com299/list (POST /api/com299/list — LISTAR as SNs de um processo; filterList={priCod#EQ, docVldTipo#EQ:9, docVldTipoAdto#EQ:1, vldStatus#IN:['1','3']}, ordenado docCod desc, paginado; envelope {count,pageNumber,rows[]}; rows[].docCod/docEspNumero/docDtaEmissao/tpdDesNome|gcdDesNome/vldStatus/mnyBruto/docMnyValor. Discriminador SN = docVldTipo=9 AND docVldTipoAdto=1 (NC/ND é docVldTipoAdto=0 → excluída). Alimenta o ramo 'SN existente' de gerarSolicitacaoNumerario. HAR-confirmado 2026-08-03; ADR-0027)"
+  - "com299/list (POST /api/com299/list — LISTAR as SNs de um processo; filterList={priCod#EQ, docVldTipo#EQ:9, docVldTipoAdto#EQ:1, vldStatus#IN:['1','3']}, ordenado docCod desc, paginado; envelope {count,pageNumber,rows[]}; rows[].docCod/docEspNumero/docDtaEmissao/tpdDesNome|gcdDesNome/gcdCod/vldStatus/mnyBruto/docMnyValor. Discriminador SN = docVldTipo=9 AND docVldTipoAdto=1 (NC/ND é docVldTipoAdto=0 → excluída). Alimenta o ramo 'SN existente' de gerarSolicitacaoNumerario (ADR-0027) E a 1ª rota de resolução do gcd no gate 3 — o gcdCod da SN mais recente do processo (ADR-0034). HAR-confirmado 2026-08-03; gcdCod confirmado 2026-08-10)"
 endpoints_write:
   - "com299 (POST /api/com299 + comDocProdutos + calculaValorLiquidoDocumento + finalizaDocumento — Solicitação de Numerário; REAL gated)"
   - "com299 PUT (condição de pagamento do cadastro da pessoa) — CONDICIONAL: só sob validação BLOQUEANTE da com194 (fdvVldErr===2) e sempre verificado (mnyTitValor === docMnyValor). Ver banner 'CICLO DE VIDA DO TÍTULO' + ADR-0025."
   - "fin014 (POST /api/fin014 borderô + baixas/validacao/tituloBaixa + baixas + finalizar/{borCod} — baixa do crédito; conta = transacao.gerNum)"
-last_review: 2026-08-03
+last_review: 2026-08-10
 open-gap:
-  - "gcdCod-solicitacao-numerario-encomenda (P0 p/ HML) — o código EXATO da Configuração de Documento 'Solicitação de Numerário - Encomenda' precisa ser confirmado via HML/HAR; hoje é PLACEHOLDER (gcdCod=0)."
+  - "gcdCod-por-filial-nao-mapeado (P1, ADR-0034) — o gcd da SN é resolvido em runtime (histórico do processo → SN_GCD_COD_BY_FIL → nome), então NÃO depende mais de um código fixo. Confirmados: filial 1/2 → 150 (ENCOMENDA) / 151 (TERCEIROS); filial 4 → 185 (ADIANTAMENTO DE CLIENTES). As demais filiais NÃO foram sondadas: um processo SEM histórico de SN numa filial sem entrada no mapa e sem config com nome de SN fica BLOCKED_ELEGIBILIDADE (fail-closed, por decisão). Sondar e cadastrar sob demanda."
   - "sn-list-saldo-document-level (P1, ADR-0027) — com299/list é DOCUMENT-level: devolve mnyBruto (solicitado) e docMnyValor (valor do doc), mas NÃO o saldo REMANESCENTE por-título. O 'Saldo' do mockup e o TETO do I-Receb-3 vêm da leitura do título (lov/TituloBorderoReceber) que a baixa fin014 já executa — o enforcement do teto ≤ saldo é a baixa/título, não o valor da lista. A lista NÃO deve ser usada como fonte do saldo."
   - "encomenda-percentuais (P1, §7 Q4) — a regra de % da encomenda (0,1%/0,9%) é NÃO-RESOLVIDA; a SN usa o valor cru da transação por ora."
   - "gerdoc-payload-fields (P1) — campos de rateio (items[] TmpCom068DTOItem: prjCod/ctpCod/tpcCod/cfoEspCod) e docTip/docVldTipo precisam de confirmação no HAR real."
@@ -210,10 +210,25 @@ nesta trilha). Progresso gravado na trilha estendida (`fin014_bor_cod`, etapa `f
 
 ## Configuração de Documento (gcd)
 
-- **`gcdDesNome = "Solicitação de Numerário - Encomenda"`** — o `gcd` (Configuração de Documento)
-  usado.
-- **`gcdCod` — PLACEHOLDER (`0`).** Precisa ser confirmado via **HML/HAR** antes de qualquer envio.
-  Constante: `SOLICITACAO_NUMERARIO_DOC_CONFIG` em `constants.ts`.
+> **O nome da config NÃO é contrato.** Ele varia por filial/tenant e **não pode** ser a chave de
+> resolução — ver **ADR-0034**. O `gcdCod` é resolvido em runtime, nesta ordem, sempre **dentro** da
+> lista `lov/ConfigDocProcesso` (a autoridade sobre o que o processo aceita):
+> **1)** histórico de SNs do próprio processo (`com299/list` → `gcdCod`); **2)** mapa filial → gcd
+> (`SN_GCD_COD_BY_FIL`); **3)** nome (`/SOLICITAÇÃO DE NUMERÁRIO/i`, desempate `SN_GCD_COD` → ENCOMENDA).
+
+| Filial | `gcdCod` | `gcdDesNome` | Evidência |
+|--------|----------|--------------|-----------|
+| 1 / 2 | `150` | `SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA` | HAR 2026-08-02 (proc 3254) |
+| 1 / 2 | `151` | `SOLICITAÇÃO DE NUMERÁRIO - TERCEIROS` | probe 2026-08-03 (proc 3478) |
+| **4** | **`185`** | **`ADIANTAMENTO DE CLIENTES`** | probe 2026-08-10 (proc 699; 7 SNs existentes) |
+
+- ⚠️ **`gcd 150` NÃO é universal.** Na **filial 4** o `150` é
+  `"IMPLANTAÇÃO DE SALDO FINANCEIRO - CLIENTES NACIONAIS ENCOMENDA"` — outro documento, e o nome dele
+  casa `/ENCOMENDA/i`. Por isso o `SN_GCD_COD` global só desempata **entre configs já filtradas por nome
+  de SN**, nunca sozinho: gerar com ele criaria o documento errado, de forma irreversível.
+- Na filial 4 nenhuma das **29** configs que o processo 699 aceita contém "Solicitação de Numerário" —
+  resolver por nome dava `0 de 29` e bloqueava um processo comprovadamente elegível.
+- O `SN_GCD_COD` (env, hoje `150`) mantém o default `0` como sentinela "não confirmado".
 
 ## Payload — `GerDocProcessoSelectionDTOCab` (swagger)
 
