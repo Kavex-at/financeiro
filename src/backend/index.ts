@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import 'dotenv/config';
+import { container } from 'tsyringe';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { buildAuthMiddleware } from './http/auth.js';
@@ -12,6 +13,9 @@ import { errorMiddleware } from './http/errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './http/rateLimit.js';
 import { redactBody } from './http/redact.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
+import BootMigrator from './migrations/BootMigrator.js';
+import { MIGRATION_RUNNER_TOKEN } from './migrations/migrationRunnerPort.js';
+import MigrationRunner from './migrations/runMigrations.js';
 import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
 import permutasRouter from './routes/permutas.js';
@@ -126,6 +130,33 @@ app.use('/me', meRouter);
 app.use(errorMiddleware);
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-    console.log(`Financeiro backend on port ${PORT}`);
+
+/**
+ * Boot: MIGRA e só então aceita tráfego.
+ *
+ * A ordem é o ponto. O `preDeployCommand` do `render.yaml` nunca rodou (serviço configurado pelo
+ * dashboard; pre-deploy é de plano pago), e em 2026-08-10 o código da ADR-0032 chegou a produção
+ * antes da `0044` — chave natural nova contra banco velho. Aqui o `listen` é inalcançável enquanto
+ * houver migração pendente. Ver `migrations/BootMigrator.ts`.
+ *
+ * Falha ao migrar = processo morre com código 1. O Render marca o deploy como falho e MANTÉM a
+ * versão anterior no ar, que é o desfecho certo: melhor a release não subir do que subir servindo
+ * contra um esquema que ninguém sabe qual é.
+ */
+const start = async (): Promise<void> => {
+    // O amarramento token → classe vive AQUI, e não no `BootMigrator`, para que `runMigrations.js`
+    // (que usa `import.meta`, incompatível com o Jest) fique fora do alcance dos testes do boot.
+    container.register(MIGRATION_RUNNER_TOKEN, { useClass: MigrationRunner });
+    await container.resolve(BootMigrator).run();
+    app.listen(PORT, () => {
+        console.log(`Financeiro backend on port ${PORT}`);
+    });
+};
+
+void start().catch((error: unknown) => {
+    console.error(
+        '[boot] FALHOU ao subir:',
+        error instanceof Error ? (error.stack ?? error.message) : String(error),
+    );
+    process.exit(1);
 });
