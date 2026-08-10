@@ -1,6 +1,6 @@
 # Columbia Financeiro — Changelog
 
-## v0.22.0 (2026-08-10) — Recebimentos: transferência entre contas da casa sai da carteira
+## v0.23.0 (2026-08-10) — Recebimentos: transferência entre contas da casa sai da carteira
 
 - **fix(recebimentos):** crédito que o analista **pagou** deixa de aparecer como **recebido**. As
   linhas reportadas (R$ 830.000 e R$ 368.000 em 07/08, R$ 240.000 em 06/08) não eram inversão de
@@ -22,10 +22,15 @@
   a `CATEGORIAS_TESOURARIA`. PIX/TED de cliente cai nela (medidos R$ 20k/50k/30k na conta 212 na mesma
   semana); excluir a categoria inteira esconderia recebível. O discriminador é o remetente, por linha.
   Crédito 209 **sem** remetente identificável continua na carteira — fail-open deliberado.
-- **chore(recebimentos):** `RECEBIMENTO_TITULARES_INTERNOS` (CSV, default `COLUMBIA TRADING`)
-  configura quem é "a própria casa"; string vazia desliga a detecção sem redeploy de código.
-  Migration `0045` adiciona `transferencia_interna` + `conta_descricao` e **backfilla** as linhas já
-  ingeridas a partir do `raw_payload`.
+- **fix(recebimentos):** o titular interno casa como **palavra inteira** e exige ≥ 6 caracteres. Com
+  `includes` puro, `COLUMBIA` esconderia `COLUMBIANA S/A` — empresa distinta e real — e um token
+  curto na env (`S/A`) sumiria com recebível em bloco. Esconder crédito de cliente é o pior erro
+  possível aqui: o analista não tem como saber que a linha existiu.
+- **chore(recebimentos):** `RECEBIMENTO_TITULARES_INTERNOS` (CSV) configura quem é "a própria casa".
+  **Ausente/vazio = detecção desligada** — não há razão social no código (Regra Inviolável #2), então
+  o ambiente precisa declarar. Migration `0046` adiciona `transferencia_interna` + `conta_descricao`,
+  **sem backfill SQL**: o `upsertMany` do cron horário reclassifica as linhas ainda `importada`, e as
+  que o analista já trabalhou ficam intactas (é fato histórico, não algo a recalcular).
 
 ## v0.22.0 (2026-08-10) — Recebimentos: modalidade na carteira, status `processada` e arquivamento
 

@@ -23,15 +23,21 @@ ALTER TABLE transacao_bancaria
 ALTER TABLE transacao_bancaria
     ADD COLUMN IF NOT EXISTS conta_descricao TEXT;
 
--- Backfill das linhas já ingeridas, a partir do payload cru já persistido — sem
--- isto a carteira atual continuaria mostrando as transferências internas até que
--- cada linha fosse reingerida. Mesma regra do código (`ehTransferenciaInterna`):
--- categoria 209 + remetente contendo o titular interno.
-UPDATE transacao_bancaria
-SET transferencia_interna = TRUE
-WHERE transferencia_interna = FALSE
-  AND categoria = '209'
-  AND raw_payload ->> 'exiEspNrdocto' ~* 'REM\s*:.*COLUMBIA\s+TRADING';
+-- ⚠️ SEM BACKFILL SQL — deliberado.
+--
+-- A primeira versão desta migration trazia um `UPDATE ... WHERE raw_payload ->>
+-- 'exiEspNrdocto' ~* 'REM\s*:.*COLUMBIA\s+TRADING'`. Foi removido: era uma SEGUNDA
+-- implementação da regra, em outra linguagem, e já divergia da primeira —
+-- `ehTransferenciaInterna` normaliza acento (NFD) e é dirigida por
+-- `RECEBIMENTO_TITULARES_INTERNOS`, enquanto o SQL só fazia `~*` sobre um literal do
+-- tenant. Duas fontes da mesma verdade classificando subconjuntos diferentes, com a
+-- do SQL rodando UMA vez e nunca mais.
+--
+-- As linhas já ingeridas se reclassificam sozinhas: o `upsertMany` da ingestão faz
+-- `transferencia_interna = EXCLUDED.transferencia_interna`, e o cron horário relê a
+-- janela inteira. Linhas ainda `importada` convergem na próxima run; linhas que o
+-- analista já trabalhou NÃO são remexidas — e é isso que se quer, porque o que ele
+-- decidiu sobre elas é fato histórico, não algo a recalcular com a regra de hoje.
 
 -- O painel filtra por status + tipo + categoria e agora também por esta coluna; o
 -- índice parcial mantém a varredura no subconjunto que a tela realmente lê.
