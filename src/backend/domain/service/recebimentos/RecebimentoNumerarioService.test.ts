@@ -224,14 +224,16 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         new ErpErrorInterpreter(),
     );
 
-// O pagamento vive na filial 1; o processo escolhido, na filial 7. TODO o fluxo Conexos roda na
-// filial DO PROCESSO (7); a conta financeira (gerNum) segue sendo a do pagamento — é global.
+// TODO o fluxo Conexos roda na filial DO PROCESSO (7); a conta financeira (gerNum) segue sendo a do
+// pagamento — é global. Desde a ADR-0032 a transação nem carrega filial (o crédito do fin095 é
+// corporativo), então `PAGAMENTO_FIL_COD` sobrevive só como a filial ERRADA que nenhuma chamada pode
+// usar — a sentinela do teste abaixo.
 const PROCESSO_FIL_COD = 7;
 const PAGAMENTO_FIL_COD = 1;
 
 const baseInput = (over: Partial<ProcessarAlocacaoInput> = {}): ProcessarAlocacaoInput => ({
     txnId: 'txn-1',
-    transacao: { gerNum: 55795, filCod: PAGAMENTO_FIL_COD, valor: 15000 },
+    transacao: { gerNum: 55795, valor: 15000 },
     priCod: 90001,
     valor: 15000,
     processoFields: {

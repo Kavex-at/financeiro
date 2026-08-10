@@ -416,7 +416,8 @@ const buildFakeDb = (): AnyRecord => ({
 interface FakeTransacao {
     id: string;
     naturalKey: string;
-    filCod: number;
+    /** Ausente = conta corporativa (fin095, ADR-0032). */
+    filCod?: number;
     tipo: string;
     status: string;
     valor: number;
@@ -436,7 +437,9 @@ const buildFakeTransacaoRepo = (): {
         const filCods = (input.filCods ?? []) as number[];
         const tipos = (input.tipos ?? []) as string[];
         const catEx = (input.categoriasExcluidas ?? []) as string[];
-        if (!filCods.includes(t.filCod)) return false;
+        // Espelha o `buildFiltro` real: `filCod` ausente = conta CORPORATIVA (fin095, ADR-0032)
+        // e passa em qualquer conjunto de filiais permitidas.
+        if (t.filCod !== undefined && !filCods.includes(t.filCod)) return false;
         if (tipos.length > 0 && !tipos.includes(t.tipo)) return false;
         if (catEx.length > 0 && t.categoria !== undefined && catEx.includes(t.categoria)) {
             return false;

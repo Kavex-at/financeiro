@@ -113,8 +113,13 @@ export interface LancamentoExtrato {
     exiCodSeq: string;
     /** Vem do PARÂMETRO da consulta: a linha traz `gerNum` nulo. */
     gerNum: number;
-    /** Vem do PARÂMETRO (contexto de sessão), não da linha. */
-    filCod: number;
+    /**
+     * ⚠️ NÃO existe `filCod` aqui — de propósito (ADR-0032). O `filCod` do
+     * `listLancamentos` é só o header de sessão; o `fin095` filtra por `gerNum` +
+     * janela e devolve o MESMO extrato para qualquer filial. Expor o parâmetro
+     * como se fosse dado da linha foi exatamente o que pôs a filial na chave
+     * natural e duplicou a carteira uma vez por filial.
+     */
     dataLancamento: Date;
     tipo: 'CREDITO' | 'DEBITO';
     /** SEMPRE positivo — o sinal vive em `tipo`. */
@@ -251,7 +256,7 @@ export default class ConexosExtratoClient {
                 descartadas += 1;
                 return [];
             }
-            const mapeado = this.mapLancamento(parsed.data, row, filCod, gerNum);
+            const mapeado = this.mapLancamento(parsed.data, row, gerNum);
             if (mapeado === null) {
                 descartadas += 1;
                 return [];
@@ -275,7 +280,6 @@ export default class ConexosExtratoClient {
     private mapLancamento = (
         r: LancamentoRow,
         raw: Record<string, unknown>,
-        filCod: number,
         gerNum: number,
     ): LancamentoExtrato | null => {
         const tipo = r.exiVldTipo === EXI_VLD_TIPO.CREDITO ? 'CREDITO' : 'DEBITO';
@@ -291,7 +295,6 @@ export default class ConexosExtratoClient {
             extCod: r.extCod,
             exiCodSeq: r.exiCodSeq,
             gerNum,
-            filCod,
             dataLancamento: this.base.parseDate(r.exiDtaLcto),
             tipo,
             valor,

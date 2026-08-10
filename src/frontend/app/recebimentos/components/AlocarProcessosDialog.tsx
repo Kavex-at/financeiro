@@ -452,8 +452,12 @@ export function AlocarProcessosDialog({
           <DialogDescription>
             {transacao ? (
               <>
-                Transação {transacao.contraparte ?? '—'} · {formatBRL(transacao.valor)} · filial{' '}
-                {transacao.filCod}
+                Transação {transacao.contraparte ?? '—'} · {formatBRL(transacao.valor)} ·{' '}
+                {/* Sem filial = conta corporativa (fin095, ADR-0032): a filial da operação nasce
+                    do processo escolhido aqui, não do crédito. */}
+                {transacao.filCod !== undefined
+                  ? `filial ${transacao.filCod}`
+                  : 'conta corporativa'}
                 {!contaAusente ? (
                   <>
                     {' '}

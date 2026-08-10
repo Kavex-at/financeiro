@@ -12,7 +12,6 @@ const lancamento = (over: Partial<LancamentoExtrato> = {}): LancamentoExtrato =>
     extCod: '137',
     exiCodSeq: '128',
     gerNum: 38,
-    filCod: 1,
     dataLancamento: new Date('2026-01-15T15:00:00Z'),
     tipo: 'CREDITO',
     valor: 791824.74,
@@ -30,7 +29,7 @@ const ctx = { runId: 'run-1', importadoEm: new Date('2026-07-30T12:00:00Z') };
 describe('buildNaturalKey', () => {
     it('é estável entre chamadas', () => {
         expect(buildNaturalKey(lancamento())).toBe(buildNaturalKey(lancamento()));
-        expect(buildNaturalKey(lancamento())).toBe('fin095:1:38:137:128');
+        expect(buildNaturalKey(lancamento())).toBe('fin095:38:137:128');
     });
 
     it('MUDA quando a identidade do lançamento muda', () => {
@@ -38,7 +37,6 @@ describe('buildNaturalKey', () => {
         expect(buildNaturalKey(lancamento({ exiCodSeq: '129' }))).not.toBe(base);
         expect(buildNaturalKey(lancamento({ extCod: '138' }))).not.toBe(base);
         expect(buildNaturalKey(lancamento({ gerNum: 212 }))).not.toBe(base);
-        expect(buildNaturalKey(lancamento({ filCod: 2 }))).not.toBe(base);
     });
 
     it('NÃO muda quando o ERP concilia ou o valor é corrigido', () => {
@@ -53,14 +51,14 @@ describe('buildNaturalKey', () => {
 
 describe('buildTransacaoId / buildCorrelationId', () => {
     it('id é determinístico e no formato UUID (sobrevive a path param)', () => {
-        const id = buildTransacaoId('fin095:1:38:137:128');
-        expect(id).toBe(buildTransacaoId('fin095:1:38:137:128'));
+        const id = buildTransacaoId('fin095:38:137:128');
+        expect(id).toBe(buildTransacaoId('fin095:38:137:128'));
         expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
         expect(id).not.toContain(':');
     });
 
     it('correlationId é determinístico e distinto do id da transação', () => {
-        const nk = 'fin095:1:38:137:128';
+        const nk = 'fin095:38:137:128';
         expect(buildCorrelationId(nk)).toBe(buildCorrelationId(nk));
         expect(buildCorrelationId(nk)).not.toBe(buildTransacaoId(nk));
     });
@@ -99,19 +97,25 @@ describe('normalizarLancamento', () => {
     it('mapeia um crédito real para TransacaoBancaria', () => {
         const t = normalizarLancamento(lancamento(), ctx);
         expect(t).toMatchObject({
-            filCod: 1,
             tipo: 'CREDITO',
             valor: 791824.74,
             moeda: 'BRL',
             contraparte: 'BELLIZ INDUSTRIA',
             referenciaBancaria: '20260115128',
-            naturalKey: 'fin095:1:38:137:128',
+            naturalKey: 'fin095:38:137:128',
             status: 'importada',
             importRunId: 'run-1',
             gerNum: 38,
             categoria: '299',
         });
         expect(t.id).toBe(buildTransacaoId(t.naturalKey));
+    });
+
+    it('nasce CORPORATIVA — sem filCod (ADR-0032)', () => {
+        // Regressão do bug que duplicou a carteira 7×: o `fin095` devolve o mesmo
+        // extrato para qualquer filial do header, então carimbar a filial da LEITURA
+        // na transação (e na chave natural) gravava uma cópia por filial.
+        expect(normalizarLancamento(lancamento(), ctx).filCod).toBeUndefined();
     });
 
     it('a MESMA linha em runs diferentes converge para a mesma identidade', () => {

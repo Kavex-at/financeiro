@@ -15,8 +15,18 @@ export interface TransacaoBancaria {
     id: string;
     /** Nasce aqui — rastreia Nexxera → baixa → quitação → NDe (Módulo 6). */
     correlationId: string;
-    /** Invariante multi-filial — nunca `null`. */
-    filCod: number;
+    /**
+     * Filial da transação — **ausente = conta CORPORATIVA** (ADR-0032).
+     *
+     * O canal automático (`fin095`) NUNCA preenche: aquela superfície é escopada
+     * por `gerNum` e devolve os mesmos lançamentos para qualquer filial do header,
+     * então não existe filial a atribuir na ingestão. A filial da operação nasce na
+     * ALOCAÇÃO, em `recebimento.filCod` (NOT NULL).
+     *
+     * O canal `xlsx_bradesco` PREENCHE — lá a filial é escolha explícita do
+     * analista no upload, não inferência.
+     */
+    filCod?: number;
     dataMovimento: Date;
     tipo: TransacaoTipo;
     valor: number;
@@ -59,7 +69,7 @@ export interface TransacaoBancaria {
 export const transacaoBancariaSchema = z.object({
     id: z.string().min(1),
     correlationId: z.string().min(1),
-    filCod: z.number().int().positive(),
+    filCod: z.number().int().positive().optional(),
     dataMovimento: z.date(),
     tipo: z.enum([
         TRANSACAO_TIPO.CREDITO,

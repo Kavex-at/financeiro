@@ -24,11 +24,18 @@ import { normalizarLancamento } from './normalizarLancamento.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Um par (filial, conta) a ler — a unidade de trabalho do fan-out ACHATADO. */
+/**
+ * Uma CONTA a ler — a unidade de trabalho do fan-out.
+ *
+ * Deliberadamente NÃO é o par (filial, conta): o `fin095` é escopado por `gerNum`
+ * e devolve o mesmo extrato para qualquer filial (ADR-0032). O `filCodSessao` é só
+ * o header que a chamada exige (ADR-0009) — nunca vira dado da transação.
+ */
 interface AlvoLeitura {
-    filCod: number;
     gerNum: number;
     gerDes?: string;
+    /** Filial usada como contexto de sessão da chamada. NÃO é a filial do crédito. */
+    filCodSessao: number;
 }
 
 /**
@@ -109,7 +116,7 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
             const alvos = await this.resolverAlvos(input.filCods);
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
-                message: `[RECEBIMENTOS] ingestão ${runId}: ${alvos.length} conta(s) com movimento em ${input.filCods.length} filial(is)`,
+                message: `[RECEBIMENTOS] ingestão ${runId}: ${alvos.length} conta(s) DISTINTA(s) com movimento, vistas a partir de ${input.filCods.length} filial(is)`,
                 data: { runId, correlationId: input.correlationId, contas: alvos.length },
             });
 
@@ -119,9 +126,9 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
             let totalDeduplicadas = 0;
             let contasFalhas = 0;
 
-            // Fan-out ACHATADO sobre (filial × conta) — um único bounded pool.
-            // Dois níveis aninhados dariam FANOUT² sessões Conexos simultâneas, que
-            // é literalmente o burst do incidente LOGIN_ERROR_MAX_SESSIONS do SISPAG.
+            // Fan-out sobre CONTAS DISTINTAS — um único bounded pool. Dois níveis
+            // aninhados dariam FANOUT² sessões Conexos simultâneas, que é literalmente
+            // o burst do incidente LOGIN_ERROR_MAX_SESSIONS do SISPAG.
             const resultados = await this.bounded.run(
                 alvos,
                 async (alvo) => this.ingerirConta(alvo, input.periodo, runId, importadoEm),
@@ -141,9 +148,13 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
                     const alvo = alvos[i];
                     await this.logService.warn({
                         type: LOG_TYPE.BUSINESS_WARN,
-                        message: `[RECEBIMENTOS] conta ${alvo?.gerNum} (filial ${alvo?.filCod}) falhou na ingestão ${runId}`,
+                        message: `[RECEBIMENTOS] conta ${alvo?.gerNum} falhou na ingestão ${runId}`,
                         error: r.reason,
-                        data: { runId, filCod: alvo?.filCod, gerNum: alvo?.gerNum },
+                        data: {
+                            runId,
+                            gerNum: alvo?.gerNum,
+                            filCodSessao: alvo?.filCodSessao,
+                        },
                     });
                 }
             }
@@ -198,9 +209,18 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
     };
 
     /**
-     * Contas a ler: só as que têm movimento. Uma conta zerada custa uma chamada ao
-     * `fin095` para devolver nada — em produção, 12 das 19 contas da filial 1 são
-     * assim.
+     * Contas a ler: só as que têm movimento, **cada uma UMA vez** (ADR-0032).
+     *
+     * Uma conta zerada custa uma chamada ao `fin095` para devolver nada — em
+     * produção, 12 das 19 contas da filial 1 são assim.
+     *
+     * ⚠️ A deduplicação por `gerNum` é o coração da correção. O `fin133` mostra as
+     * MESMAS contas com movimento a partir de qualquer filial (as seis contas com
+     * movimento aparecem nas 7 filiais), e o `fin095` ignora a filial do header.
+     * Sem o dedup, o fan-out (filial × conta) lia o mesmo extrato 7× — 42 chamadas
+     * ao ERP por run em vez de 6 — e, com o `filCod` na chave natural, gravava 7
+     * cópias de cada lançamento. A primeira filial que vê a conta vence; qual
+     * delas é irrelevante, já que o header não muda a resposta.
      */
     private resolverAlvos = async (filCods: number[]): Promise<AlvoLeitura[]> => {
         const porFilial = await this.bounded.run(
@@ -209,12 +229,19 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
                 const contas = await this.extrato.listContas(filCod);
                 return contas
                     .filter((c) => (c.qtdeBanco ?? 0) > 0 || (c.qtdeSistema ?? 0) > 0)
-                    .map((c) => ({ filCod, gerNum: c.gerNum, gerDes: c.gerDes }));
+                    .map((c) => ({ gerNum: c.gerNum, gerDes: c.gerDes, filCodSessao: filCod }));
             },
             FANOUT_LIMIT_RECEBIMENTOS,
         );
 
-        return porFilial.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+        const porConta = new Map<number, AlvoLeitura>();
+        for (const r of porFilial) {
+            if (r.status !== 'fulfilled') continue;
+            for (const alvo of r.value) {
+                if (!porConta.has(alvo.gerNum)) porConta.set(alvo.gerNum, alvo);
+            }
+        }
+        return [...porConta.values()];
     };
 
     /**
@@ -236,7 +263,7 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
 
         for (const bloco of this.fatiarPeriodo(periodo)) {
             const lancamentos = await this.extrato.listLancamentos({
-                filCod: alvo.filCod,
+                filCod: alvo.filCodSessao,
                 gerNum: alvo.gerNum,
                 de: bloco.de,
                 ate: bloco.ate,

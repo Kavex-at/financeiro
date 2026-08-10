@@ -508,7 +508,6 @@ router.post(
             txnId,
             transacao: {
                 gerNum: transacao.gerNum,
-                filCod: transacao.filCod,
                 valor: transacao.valor,
             },
             priCod: parsed.data.priCod,
