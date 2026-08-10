@@ -20,11 +20,26 @@ const build = (o: { transacoes?: unknown[]; kpis?: Record<string, number> } = {}
         getFiliais: jest.fn().mockResolvedValue([{ filCod: 1 }, { filCod: 2 }]),
     } as unknown as jest.Mocked<ConexosBaseClient>;
 
+    // A coluna de modalidade (ADR-0033) tem fontes próprias; estes testes são sobre KPIs/janela, e
+    // os stubs vazios deixam `enriquecerComModalidade` num no-op observável (nenhuma `modalidade`).
+    const processoProvider = {
+        listProcessosDaFilial: jest.fn().mockResolvedValue([]),
+    } as never;
+    const execucaoRepo = {
+        listModalidadePorTxnIds: jest.fn().mockResolvedValue(new Map()),
+    } as never;
+
     return {
         transacaoRepo,
         runRepo,
         base,
-        service: new RecebimentosPainelService(transacaoRepo, runRepo, base),
+        service: new RecebimentosPainelService(
+            transacaoRepo,
+            runRepo,
+            base,
+            processoProvider,
+            execucaoRepo,
+        ),
     };
 };
 

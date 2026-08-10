@@ -169,6 +169,26 @@ const buildFakeSnLedger = (): { ledger: AnyRecord; rows: Map<string, AnyRecord> 
     const ledger: AnyRecord = {
         findByIdempotencyKey: async (key: string): Promise<AnyRecord | null> =>
             rows.get(key) ?? null,
+        /**
+         * Espelha o repositório real (ADR-0033): modalidade por transação, da alocação mais recente.
+         * Só linhas com `priVldTipo` gravado entram — igual ao `pri_vld_tipo IS NOT NULL` do SQL.
+         */
+        listModalidadePorTxnIds: async (
+            txnIds: string[],
+        ): Promise<Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>> => {
+            const alvo = new Set(txnIds);
+            const out = new Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>();
+            for (const row of rows.values()) {
+                const txnId = row.txnId as string | undefined;
+                if (txnId === undefined || !alvo.has(txnId)) continue;
+                if (row.priVldTipo === undefined || row.priVldTipo === null) continue;
+                out.set(txnId, {
+                    priVldTipo: Number(row.priVldTipo),
+                    ndeDispensada: Boolean(row.ndeDispensada),
+                });
+            }
+            return out;
+        },
         beginExecution: async (
             input: AnyRecord,
         ): Promise<{ status: string; alreadySettled: boolean }> => {

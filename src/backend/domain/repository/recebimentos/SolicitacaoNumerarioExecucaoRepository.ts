@@ -14,6 +14,7 @@ import type {
 /** Colunas lidas — inclui a leg FISCAL (0042): txn_id/valor/fin014_bor_cod/nd_doc_cod/etapa/flags. */
 const SELECT_COLS = `idempotency_key, correlation_id, fil_cod, pri_cod, txn_id, valor, status, dry_run,
                      doc_cod, fin014_bor_cod, nd_doc_cod, etapa, revisao_humana, nde_autorizado,
+                     pri_vld_tipo, nde_dispensada,
                      erp_response, erro_mensagem, executado_por, criado_em, atualizado_em`;
 
 /**
@@ -81,10 +82,10 @@ export default class SolicitacaoNumerarioExecucaoRepository
         const row = await this.databaseClient.selectFirst<{ status: string }>(
             `INSERT INTO solicitacao_numerario_execucao (
                 idempotency_key, correlation_id, fil_cod, pri_cod, txn_id, valor, status, dry_run,
-                executado_por, atualizado_em
+                pri_vld_tipo, nde_dispensada, executado_por, atualizado_em
             ) VALUES (
                 $key, $correlationId, $filCod, $priCod, $txnId, $valor, $newStatus, $dryRun,
-                $executadoPor, now()
+                $priVldTipo, $ndeDispensada, $executadoPor, now()
             )
             ON CONFLICT (idempotency_key) DO UPDATE SET
                 status = CASE WHEN solicitacao_numerario_execucao.status = 'settled'
@@ -94,6 +95,14 @@ export default class SolicitacaoNumerarioExecucaoRepository
                 executado_por = CASE WHEN solicitacao_numerario_execucao.status = 'settled'
                                THEN solicitacao_numerario_execucao.executado_por
                                ELSE EXCLUDED.executado_por END,
+                -- A modalidade é fato da execução: uma linha já settled NUNCA a reescreve (mesma
+                -- guarda de status/dry_run/executado_por). Um retry só a preenche se faltava.
+                pri_vld_tipo = CASE WHEN solicitacao_numerario_execucao.status = 'settled'
+                               THEN solicitacao_numerario_execucao.pri_vld_tipo
+                               ELSE COALESCE(EXCLUDED.pri_vld_tipo, solicitacao_numerario_execucao.pri_vld_tipo) END,
+                nde_dispensada = CASE WHEN solicitacao_numerario_execucao.status = 'settled'
+                               THEN solicitacao_numerario_execucao.nde_dispensada
+                               ELSE COALESCE(EXCLUDED.nde_dispensada, solicitacao_numerario_execucao.nde_dispensada) END,
                 atualizado_em = now()
             RETURNING status`,
             {
@@ -105,6 +114,8 @@ export default class SolicitacaoNumerarioExecucaoRepository
                 valor: input.valor ?? null,
                 newStatus,
                 dryRun: input.dryRun,
+                priVldTipo: input.priVldTipo ?? null,
+                ndeDispensada: input.ndeDispensada ?? null,
                 executadoPor: input.executadoPor,
             },
         );
@@ -181,6 +192,36 @@ export default class SolicitacaoNumerarioExecucaoRepository
         );
     };
 
+    /**
+     * Modalidade REAL por transação, em lote (ADR-0033).
+     *
+     * `DISTINCT ON (txn_id) ... ORDER BY atualizado_em DESC` devolve a alocação MAIS RECENTE de cada
+     * crédito. Um crédito rateado pode ter várias, potencialmente de modalidades diferentes; a mais
+     * recente é a que o analista acabou de ver na tela. Só linhas com `pri_vld_tipo` preenchido
+     * entram — execução anterior à coluna não deve virar um rótulo inventado.
+     */
+    public listModalidadePorTxnIds = async (
+        txnIds: string[],
+    ): Promise<Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>> => {
+        if (txnIds.length === 0) return new Map();
+        const rows = await this.databaseClient.selectMany(
+            `SELECT DISTINCT ON (txn_id) txn_id, pri_vld_tipo, nde_dispensada
+               FROM solicitacao_numerario_execucao
+              WHERE txn_id = ANY($txnIds) AND pri_vld_tipo IS NOT NULL
+              ORDER BY txn_id, atualizado_em DESC`,
+            { txnIds },
+        );
+        const out = new Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>();
+        for (const raw of rows) {
+            const r = raw as Record<string, unknown>;
+            out.set(String(r.txn_id), {
+                ...(r.pri_vld_tipo != null ? { priVldTipo: Number(r.pri_vld_tipo) } : {}),
+                ...(r.nde_dispensada != null ? { ndeDispensada: Boolean(r.nde_dispensada) } : {}),
+            });
+        }
+        return out;
+    };
+
     public markSettled = async (
         key: string,
         data: SolicitacaoNumerarioExecucaoSettleData,
@@ -242,6 +283,8 @@ export default class SolicitacaoNumerarioExecucaoRepository
         ...(r.fin014_bor_cod != null ? { fin014BorCod: Number(r.fin014_bor_cod) } : {}),
         ...(r.nd_doc_cod != null ? { ndDocCod: Number(r.nd_doc_cod) } : {}),
         ...(r.etapa != null ? { etapa: r.etapa as SolicitacaoNumerarioEtapa } : {}),
+        ...(r.pri_vld_tipo != null ? { priVldTipo: Number(r.pri_vld_tipo) } : {}),
+        ...(r.nde_dispensada != null ? { ndeDispensada: Boolean(r.nde_dispensada) } : {}),
         ...(r.revisao_humana != null ? { revisaoHumana: Boolean(r.revisao_humana) } : {}),
         ...(r.nde_autorizado != null ? { ndeAutorizado: Boolean(r.nde_autorizado) } : {}),
         ...(r.erp_response != null ? { erpResponse: r.erp_response } : {}),

@@ -220,6 +220,10 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         new SnPayloadBuilder(),
         m.repo,
         m.ndeRepo as never,
+        // Stub do repo de transação: o serviço só o usa para levar a transação a `processada`
+        // (ADR-0033). Nenhum teste deste arquivo asserta sobre ele — o que importa é que a falha
+        // dele nunca derrube a alocação, coberto em teste próprio.
+        { marcarProcessada: jest.fn().mockResolvedValue(true) } as never,
         logService,
         new ErpErrorInterpreter(),
     );
@@ -256,7 +260,7 @@ const wireDocCods = (m: Mocks, snDocCod = 18200, ndDocCod = 18337): void => {
 
 afterEach(() => jest.clearAllMocks());
 
-describe('RecebimentoNumerarioService.processarAlocacao — NDe dispensada (ADR-0031)', () => {
+describe('RecebimentoNumerarioService.processarAlocacao — NDe dispensada (ADR-0031/0033)', () => {
     /** Só o gate 0.5 muda entre os cenários: o resto do andaime é o mesmo do happy path. */
     const comModalidade = (priVldTipo: number | undefined): Mocks => {
         const m = buildMocks();
@@ -275,7 +279,7 @@ describe('RecebimentoNumerarioService.processarAlocacao — NDe dispensada (ADR-
         expect(out.status).toBe('settled');
         expect(out.etapa).toBe('quitado-sem-nde');
         expect(out.ndeDispensada).toBe(true);
-        expect(out.motivo).toContain('POR CONTA E ORDEM DE TERCEIROS');
+        expect(out.motivo).toContain('CONTA E ORDEM');
         // O trabalho financeiro aconteceu por inteiro: SN gerada e baixa fin014 finalizada.
         expect(out.snDocCod).toBe(18200);
         expect(out.borCod).toBe(77);
@@ -312,11 +316,8 @@ describe('RecebimentoNumerarioService.processarAlocacao — NDe dispensada (ADR-
         expect(m.repo.markError).not.toHaveBeenCalled();
     });
 
-    it.each([
-        [1, 'PRÓPRIA'],
-        [3, 'POR ENCOMENDA'],
-    ])('priVldTipo=%s (%s): trilha fiscal COMPLETA, sem regressão', async (tipo) => {
-        const m = comModalidade(tipo as number);
+    it('priVldTipo=3 (POR ENCOMENDA): a ÚNICA modalidade com trilha fiscal COMPLETA', async () => {
+        const m = comModalidade(3);
         wireDocCods(m);
 
         const out = await buildService(m).processarAlocacao(baseInput());
@@ -326,6 +327,55 @@ describe('RecebimentoNumerarioService.processarAlocacao — NDe dispensada (ADR-
         expect(out.ndeDispensada).toBeUndefined();
         expect(out.ndDocCod).toBe(18337);
         expect(m.nde.homologar).toHaveBeenCalled();
+    });
+
+    it('priVldTipo=1 (PRÓPRIA): quita SEM NDe — a Columbia não emite nota contra si mesma', async () => {
+        // ADR-0033. Antes disso PRÓPRIA caía no ramo completo por OMISSÃO: a ADR-0031 só tratou o
+        // CONTA E ORDEM. Medido na carteira real: dos 43 processos PRÓPRIA, 31 são da própria
+        // COLUMBIA TRADING S/A — emitir ali seria uma nota contra si mesma, e a homologação com297
+        // é irreversível.
+        const m = comModalidade(1);
+        (m.gerDoc.gerarDocProcesso as jest.Mock).mockResolvedValue({ docCod: 18200, messages: [] });
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(out.etapa).toBe('quitado-sem-nde');
+        expect(out.ndeDispensada).toBe(true);
+        expect(out.motivo).toContain('PRÓPRIA');
+        // O numerário aconteceu por inteiro; só a nota não saiu.
+        expect(m.fin014.gravarBaixa).toHaveBeenCalled();
+        expect(m.fin014.finalizarBordero).toHaveBeenCalled();
+        expect(out.ndDocCod).toBeUndefined();
+        expect(m.nde.homologar).not.toHaveBeenCalled();
+        expect(m.ndeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('priVldTipo DESCONHECIDO (99): BLOQUEIA fail-closed — não vira "dispensada" calada', async () => {
+        // A armadilha que este teste fecha: implementar a regra como `!== POR_ENCOMENDA` faria um
+        // código novo do ERP quitar em silêncio um caso que talvez devesse nota. O princípio da
+        // ADR-0031 é parar quando não se sabe.
+        const m = comModalidade(99);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('BLOCKED_CADASTRO');
+        expect(out.motivo).toContain('99');
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+        expect(m.gerDoc.gerarDocProcesso).not.toHaveBeenCalled();
+    });
+
+    it('a modalidade resolvida é PERSISTIDA no ledger junto com a abertura da execução', async () => {
+        // ADR-0033 T1: sem isto, "por que este recebimento fechou sem nota?" só se responde
+        // reconsultando o imp021 — que pode ter mudado desde então.
+        const m = comModalidade(3);
+        wireDocCods(m);
+
+        await buildService(m).processarAlocacao(baseInput());
+
+        const [input] = (m.repo.beginExecution as jest.Mock).mock.calls[0];
+        expect(input).toMatchObject({ priVldTipo: 3, ndeDispensada: false });
     });
 
     it('priVldTipo ausente no imp021: BLOQUEIA fail-closed, sem NENHUMA escrita', async () => {
@@ -387,7 +437,7 @@ describe('RecebimentoNumerarioService.processarAlocacao — NDe dispensada (ADR-
 
         expect(out.status).toBe('dry-run');
         expect(out.ndeDispensada).toBe(true);
-        expect(out.motivo).toContain('POR CONTA E ORDEM DE TERCEIROS');
+        expect(out.motivo).toContain('CONTA E ORDEM');
         expect(m.repo.beginExecution).not.toHaveBeenCalled();
     });
 

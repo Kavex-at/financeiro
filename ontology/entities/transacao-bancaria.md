@@ -79,7 +79,8 @@ Nexxera** (não o ERP). É **READ-ONLY no Nexxera** (só importa) e a única esc
 | `categoria` / `categoriaDesc` | string? | `exiEspCategoria` | Discriminador do RUÍDO DE TESOURARIA (resgate de aplicação, ações, transferência entre contas). Filtro de exibição; a ingestão persiste tudo. |
 | `rawPayload` | json | `transacao_bancaria.raw_payload` | **Payload cru original** do Nexxera (auditoria + reprocessamento sem re-fetch). |
 | `normalized` | json | `transacao_bancaria.normalized` | Forma **normalizada** interna (independe do canal API/SFTP/CNAB — port channel-agnostic, O7). |
-| `status` | enum | `transacao_bancaria.status` | Ciclo de vida da conciliação — ver `state-machines/transacao-bancaria.md` (`importada → conciliada/parcial/manual/erro`). |
+| `status` | enum | `transacao_bancaria.status` | Ciclo de vida da conciliação — ver `state-machines/transacao-bancaria.md` (`importada → conciliada/parcial/manual/erro/processada`). `processada` é o terminal operacional escrito pelo settle da alocação (ADR-0033). |
+| `arquivadaEm` / `arquivadaPor` | Date? / string? | `transacao_bancaria.arquivada_em` / `arquivada_por` | **Arquivamento** (ADR-0033) — ortogonal ao status. Preenchido = fora da listagem **e dos KPIs**. Serve ao ruído de tesouraria que nunca será conciliado. Guarda quem e quando, não um boolean. Reversível. |
 | `importRunId` | string? (uuid) | FK → run de importação | A run Nexxera que gravou o movimento (auditoria de cadência). |
 | `importadoEm` | Date | `importado_em` | Quando foi importado. |
 

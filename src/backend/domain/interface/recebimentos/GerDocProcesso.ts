@@ -34,6 +34,14 @@ export interface Processo {
     pesCod: number;
     /** Nome do cliente/pessoa (`dpeNomPessoa`). */
     dpeNomPessoa: string;
+    /**
+     * MODALIDADE do processo (`imp021.priVldTipo`) — 1 PRÓPRIA, 2 CONTA E ORDEM, 3 POR ENCOMENDA.
+     *
+     * Aqui é insumo de EXIBIÇÃO (previsão da coluna do painel, `preverModalidade.ts`). A decisão de
+     * emitir a NDe NÃO sai daqui: ela é relida do `imp021` no gate 0.5 para o processo escolhido
+     * (ADR-0031 D3). Opcional porque processo legado pode não ter o campo preenchido.
+     */
+    priVldTipo?: number;
     /** Moeda do processo. */
     moeCod: number;
     /**

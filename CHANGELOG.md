@@ -1,5 +1,38 @@
 # Columbia Financeiro — Changelog
 
+## v0.22.0 (2026-08-10) — Recebimentos: modalidade na carteira, status `processada` e arquivamento
+
+- **feat(recebimentos):** a **Nota de Débito Eletrônica** passa a ser devida em **UMA única
+  modalidade** — **POR ENCOMENDA** (`imp021.priVldTipo = 3`). **PRÓPRIA** (`1`) deixa de emitir: a
+  Columbia importa para si, não há terceiro a quem debitar, e a nota sairia contra si mesma. Medido
+  na carteira real: dos 43 processos PRÓPRIA (0,7% de 5.755), **31 são da própria COLUMBIA TRADING
+  S/A**. Emenda a **ADR-0031**, que só tratara CONTA E ORDEM; ver **ADR-0033**.
+- **feat(recebimentos):** `priVldTipo` **fora do mapa conhecido** passa a **BLOQUEAR** fail-closed,
+  como o nulo já bloqueava. A regra NÃO é "tudo que não é encomenda dispensa": por negação, um código
+  novo do ERP quitaria em silêncio um caso que talvez devesse nota.
+- **feat(recebimentos):** a modalidade vira **campo persistido** (`pri_vld_tipo` + `nde_dispensada` em
+  `solicitacao_numerario_execucao`), gravada na **abertura** da execução. Antes ela era resolvida no
+  gate 0.5, decidia a nota e era descartada — "por que este recebimento fechou sem nota?" só se
+  respondia reconsultando o `imp021`. `nde_dispensada` é gravada junto, não derivada na leitura: é
+  fato histórico, e recalcular com a regra de hoje reescreveria o passado.
+- **feat(recebimentos):** coluna **Modalidade** na tabela, com duas fontes distinguíveis — **fato**
+  (do ledger, para o que já foi alocado) e **previsão** (pelos processos abertos do cliente, marcada
+  com `~` e borda tracejada). Cliente com mais de uma modalidade vira **"—"**, nunca a maioria:
+  PERNOD RICARD tem 204 processos POR ENCOMENDA e 2 PRÓPRIA, e errar o raro é errar o caso
+  fiscalmente delicado. A previsão **nunca** decide emissão — quem decide é o gate 0.5, no servidor.
+- **feat(recebimentos):** status **`processada`** — terminal escrito quando a alocação settla, nos
+  dois ramos (`concluido` e `quitado-sem-nde`). **Até aqui NADA tirava uma transação de `importada`**:
+  o repositório não tinha update de status e a máquina de estados nunca era acionada — por isso o
+  painel mostrava centenas de `importada` e zero conciliações com alocações já executadas.
+- **feat(recebimentos):** o filtro da tabela nasce em **"A processar"** (esconde as `processada`). A
+  tela é uma fila de trabalho: o que se abre para ver é o que falta fazer. "Todas" segue a um clique.
+- **feat(recebimentos):** **arquivar/desarquivar** por um menu de 3 pontinhos na linha. Arquivar tira
+  o crédito da listagem **e dos KPIs** — é o gesto para o ruído de tesouraria (resgate de aplicação,
+  transferência entre contas) que inflava o "a distribuir" com dinheiro que nunca será conciliado.
+  Guarda quem e quando, e é reversível por um filtro próprio.
+- **chore(db):** migration `0045` — colunas da modalidade no ledger, `CHECK` de status recriado com
+  `processada`, `arquivada_em`/`arquivada_por` e índice parcial da carteira ativa. Idempotente.
+
 ## v0.21.1 (2026-08-10) — Recebimentos: fim da duplicação do extrato (o fin095 é por CONTA, não por filial)
 
 - **fix(recebimentos):** o mesmo crédito parava de aparecer **N vezes** na carteira — uma por filial

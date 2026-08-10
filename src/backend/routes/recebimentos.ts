@@ -97,6 +97,11 @@ const painelQuerySchema = z.object({
         .enum(['true', 'false'])
         .optional()
         .transform((v) => v === 'true'),
+    /** `true` = lista as ARQUIVADAS em vez da carteira ativa (ADR-0033). */
+    arquivadas: z
+        .enum(['true', 'false'])
+        .optional()
+        .transform((v) => v === 'true'),
 });
 
 /**
@@ -138,6 +143,7 @@ router.get(
                 filCodsPermitidas,
                 limit: parsed.data.limit,
                 incluirTesouraria: parsed.data.incluirTesouraria,
+                arquivadas: parsed.data.arquivadas,
             }),
         );
     }),
@@ -848,5 +854,51 @@ router.post(
         }
     }),
 );
+
+/**
+ * POST /recebimentos/transacoes/:txnId/arquivar — tira o crédito da carteira (ADR-0033).
+ * POST /recebimentos/transacoes/:txnId/desarquivar — devolve.
+ *
+ * Serve para o RUÍDO DE TESOURARIA (resgate de aplicação, transferência entre contas): crédito que
+ * nunca será conciliado contra processo e que hoje infla o KPI "a distribuir".
+ *
+ * `requireRole('admin')` como o resto da tela. NÃO leva `heavyRouteLimiter`: não move dinheiro nem
+ * toca o ERP — é um UPDATE local, e limitar o gesto de limpeza puniria justamente quem está fazendo
+ * a faxina da carteira, que é um lote de cliques seguidos.
+ *
+ * Authz por filial NÃO se aplica: desde a ADR-0032 o crédito do fin095 é CORPORATIVO (`fil_cod`
+ * nulo), então não há filial contra a qual validar. Quem enxerga a carteira pode organizá-la.
+ *
+ * 404 quando a transação não existe; 409 quando já está no estado pedido (arquivar a arquivada) —
+ * o repositório devolve `false` sem escrever, e o 409 evita que a tela ache que mudou algo.
+ */
+const arquivarHandler = (arquivar: boolean) =>
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const txnId = String(req.params.txnId);
+        const repo = container.resolve(TransacaoRepository);
+
+        const transacao = await repo.findById(txnId);
+        if (!transacao) {
+            res.status(404).json({ error: 'Transação não encontrada', txnId });
+            return;
+        }
+
+        const ator = req.user?.email ?? req.user?.sub ?? 'unknown';
+        const mudou = arquivar ? await repo.arquivar(txnId, ator) : await repo.desarquivar(txnId);
+        if (!mudou) {
+            res.status(409).json({
+                error: arquivar
+                    ? 'Transação já estava arquivada'
+                    : 'Transação não estava arquivada',
+                txnId,
+            });
+            return;
+        }
+        res.json({ txnId, arquivada: arquivar, ator });
+    });
+
+router.post('/transacoes/:txnId/arquivar', requireRole('admin'), arquivarHandler(true));
+router.post('/transacoes/:txnId/desarquivar', requireRole('admin'), arquivarHandler(false));
 
 export default router;

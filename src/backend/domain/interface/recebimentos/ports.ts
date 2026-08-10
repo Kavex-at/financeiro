@@ -246,6 +246,8 @@ export interface ProcessoProviderInterface {
      * a lista que ele escolhe.
      */
     listClientes: (input: { filCod: number }) => Promise<ClienteProcesso[]>;
+    /** Processos abertos da filial (do cache) — insumo da previsão de modalidade do painel. */
+    listProcessosDaFilial: (filCod: number) => Promise<Processo[]>;
 }
 
 /** Cliente derivado dos processos abertos do `imp021`. */
@@ -387,6 +389,14 @@ export interface SolicitacaoNumerarioExecucaoRepositoryInterface {
     setRevisaoHumana: (key: string, revisao: boolean) => Promise<void>;
     /** Marca que a SEFAZ autorizou a NDe no poll (`vldAutorizado != 0`). */
     setNdeAutorizado: (key: string, autorizado: boolean) => Promise<void>;
+    /**
+     * Modalidade REAL por transação, em lote — alimenta a coluna do painel para o que já foi
+     * processado. Em lote porque o painel lista até 500 créditos: uma query por linha seria 500
+     * round-trips por abertura de tela.
+     */
+    listModalidadePorTxnIds: (
+        txnIds: string[],
+    ) => Promise<Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>>;
     markSettled: (key: string, data: SolicitacaoNumerarioExecucaoSettleData) => Promise<void>;
     markError: (key: string, data: SolicitacaoNumerarioExecucaoErrorData) => Promise<void>;
 }
@@ -431,6 +441,16 @@ export interface SolicitacaoNumerarioExecucaoRow {
     fin014BorCod?: number;
     /** docCod da nota de débito com297 (Tela 3). */
     ndDocCod?: number;
+    /**
+     * Modalidade do processo (`imp021.priVldTipo`) resolvida no gate 0.5 — ver `PRI_VLD_TIPO`.
+     * Persistida para responder "por que este recebimento fechou sem nota?" sem reconsultar o ERP.
+     */
+    priVldTipo?: number;
+    /**
+     * A NDe era dispensada NAQUELA execução. Gravada junto, NÃO derivada de `priVldTipo` na leitura:
+     * a regra de quem emite já mudou uma vez (ADR-0033) e recalcular reescreveria o passado.
+     */
+    ndeDispensada?: boolean;
     etapa?: SolicitacaoNumerarioEtapa;
     /** Homologação com validações pendentes (com194) — precisa de revisão humana. */
     revisaoHumana?: boolean;
@@ -452,6 +472,16 @@ export interface BeginSolicitacaoNumerarioExecucaoInput {
     txnId?: string;
     /** Valor alocado ao processo (base da SN). */
     valor?: number;
+    /**
+     * Modalidade do processo (`imp021.priVldTipo`) resolvida no gate 0.5 — ver `PRI_VLD_TIPO`.
+     * Persistida para responder "por que este recebimento fechou sem nota?" sem reconsultar o ERP.
+     */
+    priVldTipo?: number;
+    /**
+     * A NDe era dispensada NAQUELA execução. Gravada junto, NÃO derivada de `priVldTipo` na leitura:
+     * a regra de quem emite já mudou uma vez (ADR-0033) e recalcular reescreveria o passado.
+     */
+    ndeDispensada?: boolean;
     dryRun: boolean;
     executadoPor: string;
 }

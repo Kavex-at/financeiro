@@ -14,7 +14,9 @@ import {
     NDE_GLOBAL_DOC_VLD_TIPO,
     NDE_OBS_SINIEF_MARKER,
     NDE_STATUS_EMISSAO,
-    PRI_VLD_TIPO,
+    PRI_VLD_TIPO_ROTULO,
+    isPriVldTipoConhecido,
+    ndeEDevida,
     SN_ADIANTAMENTO_PRJ_COD,
     SN_CONTA_ADIANTAMENTO_ENCOMENDA,
     SN_CONTA_ADIANTAMENTO_PREFIXO,
@@ -22,6 +24,7 @@ import {
     SOLICITACAO_NUMERARIO_DOC_TIP,
 } from '../../interface/recebimentos/constants.js';
 import { randomUUID } from 'node:crypto';
+import TransacaoRepository from '../../repository/recebimentos/TransacaoRepository.js';
 import type { Processo } from '../../interface/recebimentos/GerDocProcesso.js';
 import type { DocFiscal } from '../../interface/recebimentos/NdeFiscal.js';
 import {
@@ -46,12 +49,24 @@ import {
 } from '../../interface/permutas/SolicitacaoNumerario.js';
 
 /**
- * Motivo canônico da NDe dispensada (ADR-0031) — mesma frase no pré-flight, no dry-run, no log e no
- * resultado da execução, para o analista ler sempre a mesma explicação.
+ * Motivo canônico da NDe dispensada (ADR-0031, ampliado pela ADR-0033) — mesma frase no pré-flight,
+ * no dry-run, no log e no resultado da execução, para o analista ler sempre a mesma explicação.
+ *
+ * A modalidade entra na frase porque agora são DUAS que dispensam, e o analista precisa saber qual
+ * delas fechou o caso sem nota.
  */
-export const MOTIVO_NDE_DISPENSADA =
-    'Processo POR CONTA E ORDEM DE TERCEIROS (imp021 Tipo = 2): a Nota de Débito Eletrônica não é ' +
-    'devida — a quitação fecha com a SN e a baixa fin014.';
+export const motivoNdeDispensada = (priVldTipo?: number): string => {
+    // Sem a modalidade em mãos (linha de ledger antiga, anterior à coluna `pri_vld_tipo`) a frase
+    // cai para a forma genérica em vez de mentir um rótulo.
+    const qual =
+        priVldTipo === undefined
+            ? 'que não é POR ENCOMENDA'
+            : `${PRI_VLD_TIPO_ROTULO[priVldTipo] ?? `de Tipo ${priVldTipo}`} (imp021 Tipo = ${priVldTipo})`;
+    return (
+        `Processo ${qual}: a Nota de Débito Eletrônica não é devida — a quitação fecha com a SN e ` +
+        'a baixa fin014.'
+    );
+};
 
 /** fisCod default do com300 GET — HAR (doc 18337) usa fisCod=1 em todos os exemplos. */
 const FIS_COD_DEFAULT = 1;
@@ -240,6 +255,7 @@ export default class RecebimentoNumerarioService {
         @inject(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN)
         private execucaoRepository: SolicitacaoNumerarioExecucaoRepositoryInterface,
         @inject(NDE_REPOSITORY_TOKEN) private ndeRepository: NdeRepositoryInterface,
+        @inject(TransacaoRepository) private transacaoRepository: TransacaoRepository,
         @inject(LogService) private logService: LogService,
         @inject(ErpErrorInterpreter) private erpErrorInterpreter: ErpErrorInterpreter,
     ) {}
@@ -387,6 +403,14 @@ export default class RecebimentoNumerarioService {
             priCod,
             txnId,
             valor,
+            // A modalidade entra no ledger no MESMO write que abre a execução — o gate 0.5 já a
+            // resolveu acima. Gravá-la só no settle abriria uma janela em que a linha existe sem
+            // registrar por que a nota (não) vai sair, que é justamente a pergunta da auditoria
+            // quando a execução morre no meio.
+            ...(preflight.priVldTipo !== undefined ? { priVldTipo: preflight.priVldTipo } : {}),
+            ...(preflight.ndeDispensada !== undefined
+                ? { ndeDispensada: preflight.ndeDispensada }
+                : {}),
             dryRun: false,
             executadoPor: ator,
         });
@@ -441,6 +465,7 @@ export default class RecebimentoNumerarioService {
                 ...(ndDocCod !== undefined ? { ndDocCod } : {}),
                 ...(homolog.erpResponse !== undefined ? { erpResponse: homolog.erpResponse } : {}),
             });
+            await this.marcarTransacaoProcessada(ctx);
             const poll = await this.etapaPoll(ctx, ndDocCod);
             vldAutorizado = poll.vldAutorizado;
             ndeAutorizado = poll.autorizado;
@@ -464,13 +489,41 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
-     * Terminal do ramo SEM NDe (ADR-0031) — processo POR CONTA E ORDEM DE TERCEIROS.
+     * Leva a TRANSAÇÃO ao terminal `processada` (ADR-0033) — chamado nos DOIS settles, com NDe
+     * (`concluido`) e sem (`quitado-sem-nde`): as duas são trabalho concluído do ponto de vista do
+     * analista, e a diferença entre elas é fiscal.
      *
-     * A documentação fiscal do repasse sai em nome do terceiro, então a Columbia não emite a Nota de
-     * Débito. Chamado logo após `fin014-done`: neste ponto a SN existe e a baixa está FINALIZADA, ou
-     * seja, o trabalho do numerário está completo — daí ser `settled` (sucesso), e não um bloqueio.
-     * Grava a etapa própria `quitado-sem-nde` para que a auditoria distinga "não era devida" de
-     * "parou antes de emitir", e nunca escreve `ndDocCod`.
+     * NÃO propaga falha. O dinheiro já se moveu no ERP quando esta linha roda; derrubar a resposta
+     * porque o status da tela não atualizou transformaria um sucesso em erro aparente e convidaria o
+     * analista a reprocessar uma baixa que já aconteceu. A divergência vira WARN e o ledger — que é
+     * a fonte da verdade da execução — segue correto.
+     */
+    private marcarTransacaoProcessada = async (ctx: EscritaCtx): Promise<void> => {
+        if (ctx.txnId === undefined) return;
+        try {
+            await this.transacaoRepository.marcarProcessada(ctx.txnId);
+        } catch (err) {
+            void this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    '[RECEBIMENTOS] alocação executada mas o status da transação não virou ' +
+                    '`processada` — o ledger está correto; a carteira pode mostrar a linha como ' +
+                    'pendente até a próxima execução',
+                error: err,
+                data: { txnId: ctx.txnId, priCod: ctx.priCod, key: ctx.key },
+            });
+        }
+    };
+
+    /**
+     * Terminal do ramo SEM NDe (ADR-0031, ampliado pela ADR-0033) — processo que NÃO é POR ENCOMENDA.
+     *
+     * Em CONTA E ORDEM a documentação fiscal do repasse sai em nome do terceiro; em PRÓPRIA não há
+     * terceiro nenhum a quem debitar (a Columbia importa para si). Nos dois casos a Columbia não
+     * emite a Nota de Débito. Chamado logo após `fin014-done`: neste ponto a SN existe e a baixa
+     * está FINALIZADA, ou seja, o trabalho do numerário está completo — daí ser `settled` (sucesso),
+     * e não um bloqueio. Grava a etapa própria `quitado-sem-nde` para que a auditoria distinga "não
+     * era devida" de "parou antes de emitir", e nunca escreve `ndDocCod`.
      */
     private quitarSemNde = async (
         ctx: EscritaCtx,
@@ -482,9 +535,14 @@ export default class RecebimentoNumerarioService {
             ...(snDocCod !== undefined ? { docCod: snDocCod } : {}),
             etapa,
         });
+        await this.marcarTransacaoProcessada(ctx);
         void this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
-            message: 'NDe DISPENSADA — processo POR CONTA E ORDEM DE TERCEIROS (ADR-0031)',
+            message: `NDe DISPENSADA — modalidade ${
+                ctx.preflight?.priVldTipo !== undefined
+                    ? (PRI_VLD_TIPO_ROTULO[ctx.preflight.priVldTipo] ?? ctx.preflight.priVldTipo)
+                    : 'indeterminada'
+            } (ADR-0033: só POR ENCOMENDA emite)`,
             data: {
                 txnId: ctx.txnId,
                 priCod: ctx.priCod,
@@ -500,7 +558,7 @@ export default class RecebimentoNumerarioService {
             ...(snDocCod !== undefined ? { snDocCod } : {}),
             ...(borCod !== undefined ? { borCod } : {}),
             ndeDispensada: true,
-            motivo: MOTIVO_NDE_DISPENSADA,
+            motivo: motivoNdeDispensada(ctx.preflight?.priVldTipo),
             revisaoHumana: false,
             ndeAutorizado: false,
             dryRun: false,
@@ -1019,16 +1077,29 @@ export default class RecebimentoNumerarioService {
                 classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_CADASTRO,
                 motivo:
                     `Processo ${priCod} está sem o campo "Tipo" (priVldTipo) no imp021 — não dá para ` +
-                    'decidir se a Nota de Débito é devida (processos POR CONTA E ORDEM DE TERCEIROS não ' +
-                    'a geram). Preencha o Tipo no Conexos e processe de novo.',
+                    'decidir se a Nota de Débito é devida (só processos POR ENCOMENDA a geram). ' +
+                    'Preencha o Tipo no Conexos e processe de novo.',
             };
         }
-        const ndeDispensada = priVldTipo === PRI_VLD_TIPO.CONTA_E_ORDEM_TERCEIROS;
+        // Código fora do domínio conhecido bloqueia pelo MESMO motivo que o nulo (ADR-0031 D2): não
+        // dá para decidir sobre um documento fiscal irreversível a partir de um valor que ninguém
+        // mapeou. Tratá-lo como "dispensada" quitaria em silêncio um caso que talvez devesse nota.
+        if (!isPriVldTipoConhecido(priVldTipo)) {
+            return {
+                classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_CADASTRO,
+                priVldTipo,
+                motivo:
+                    `Processo ${priCod} tem "Tipo" (priVldTipo) = ${priVldTipo} no imp021, fora dos ` +
+                    'valores conhecidos (1 PRÓPRIA, 2 CONTA E ORDEM, 3 POR ENCOMENDA) — não dá para ' +
+                    'decidir se a Nota de Débito é devida. Confira o cadastro do processo no Conexos.',
+            };
+        }
+        const ndeDispensada = !ndeEDevida(priVldTipo);
         return {
             classificacao: PREFLIGHT_CLASSIFICACAO.READY,
             priVldTipo,
             ndeDispensada,
-            ...(ndeDispensada ? { motivo: MOTIVO_NDE_DISPENSADA } : {}),
+            ...(ndeDispensada ? { motivo: motivoNdeDispensada(priVldTipo) } : {}),
         };
     };
 
@@ -1187,7 +1258,7 @@ export default class RecebimentoNumerarioService {
                         `"${snConfig.gcdDesNome}" (gcd ${snConfig.gcdCod}).`,
                 );
             }
-            if (ndeDispensada === true) notas.push(MOTIVO_NDE_DISPENSADA);
+            if (ndeDispensada === true) notas.push(motivoNdeDispensada(priVldTipo));
             return {
                 classificacao: PREFLIGHT_CLASSIFICACAO.READY,
                 ...modalidadeFields,
@@ -1554,7 +1625,7 @@ export default class RecebimentoNumerarioService {
         // Re-POST de uma alocação já quitada SEM NDe: a etapa gravada é a fonte da verdade, para o
         // analista reler a mesma explicação em vez de estranhar a ausência do nº da nota.
         ...(existente?.etapa === 'quitado-sem-nde'
-            ? { ndeDispensada: true, motivo: MOTIVO_NDE_DISPENSADA }
+            ? { ndeDispensada: true, motivo: motivoNdeDispensada(existente.priVldTipo) }
             : {}),
         revisaoHumana: existente?.revisaoHumana ?? false,
         ndeAutorizado: existente?.ndeAutorizado ?? false,

@@ -195,6 +195,10 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         new SnPayloadBuilder(),
         m.repo,
         m.ndeRepo as never,
+        // Stub do repo de transação: o serviço só o usa para levar a transação a `processada`
+        // (ADR-0033). Nenhum teste deste arquivo asserta sobre ele — o que importa é que a falha
+        // dele nunca derrube a alocação, coberto em teste próprio.
+        { marcarProcessada: jest.fn().mockResolvedValue(true) } as never,
         logService,
         new ErpErrorInterpreter(),
     );

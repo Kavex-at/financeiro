@@ -16,7 +16,8 @@ const UPSERT_CHUNK = 200;
 
 const COLUNAS = `id, correlation_id, fil_cod, data_movimento, tipo, valor, moeda,
                  contraparte, referencia_bancaria, natural_key, raw_payload, normalized,
-                 status, import_run_id, importado_em, ger_num, categoria, categoria_desc, canal`;
+                 status, import_run_id, importado_em, ger_num, categoria, categoria_desc, canal,
+                 arquivada_em, arquivada_por`;
 
 /**
  * TransacaoRepository — CRUD sobre `transacao_bancaria` (0032 + 0040). SQL 100%
@@ -169,6 +170,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         statuses?: TransacaoBancariaStatus[];
         categoriasExcluidas?: string[];
         desde?: Date;
+        /** `true` = a aba de revisão das arquivadas. Ausente = carteira ativa (default). */
+        arquivadas?: boolean;
         limit: number;
     }): Promise<TransacaoBancaria[]> => {
         if (input.filCods.length === 0) return [];
@@ -193,6 +196,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         tipos?: TransacaoTipo[];
         categoriasExcluidas?: string[];
         desde?: Date;
+        /** `true` = a aba de revisão das arquivadas. Ausente = carteira ativa (default). */
+        arquivadas?: boolean;
     }): Promise<Record<string, number>> => {
         if (input.filCods.length === 0) return {};
         const { where, params } = this.buildFiltro(input);
@@ -212,6 +217,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         tipos?: TransacaoTipo[];
         categoriasExcluidas?: string[];
         desde?: Date;
+        /** `true` = a aba de revisão das arquivadas. Ausente = carteira ativa (default). */
+        arquivadas?: boolean;
     }): Promise<Record<string, number>> => {
         if (input.filCods.length === 0) return {};
         const { where, params } = this.buildFiltro(input);
@@ -232,6 +239,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         statuses?: TransacaoBancariaStatus[];
         categoriasExcluidas?: string[];
         desde?: Date;
+        /** `false`/ausente = só ATIVAS (default). `true` = só as arquivadas (a aba de revisão). */
+        arquivadas?: boolean;
     }): { where: string; params: Record<string, unknown> } => {
         // `fil_cod IS NULL` = conta CORPORATIVA (canal fin095, ADR-0032): o crédito
         // ainda não pertence a nenhuma filial e é visível a todo usuário autorizado,
@@ -241,6 +250,14 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         // a carteira vazia e o dinheiro a conciliar invisível.
         const clauses = ['(fil_cod IS NULL OR fil_cod = ANY($filCods))'];
         const params: Record<string, unknown> = { filCods: input.filCods };
+
+        // Arquivadas ficam de fora por DEFAULT — de toda leitura, incluindo os KPIs (ADR-0033).
+        // A cláusula mora aqui, no filtro compartilhado por list/contar/somar, justamente para que
+        // ninguém consiga somar no "a distribuir" um crédito que o analista tirou da carteira: um
+        // KPI e uma tabela que discordam sobre o que existe é pior que qualquer um dos dois errado.
+        clauses.push(
+            input.arquivadas === true ? 'arquivada_em IS NOT NULL' : 'arquivada_em IS NULL',
+        );
 
         if (input.tipos && input.tipos.length > 0) {
             clauses.push('tipo = ANY($tipos)');
@@ -295,7 +312,61 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         ...(r.categoria != null ? { categoria: String(r.categoria) } : {}),
         ...(r.categoria_desc != null ? { categoriaDesc: String(r.categoria_desc) } : {}),
         ...(r.canal != null ? { canal: String(r.canal) } : {}),
+        ...(r.arquivada_em != null
+            ? { arquivadaEm: new Date(r.arquivada_em as string | Date) }
+            : {}),
+        ...(r.arquivada_por != null ? { arquivadaPor: String(r.arquivada_por) } : {}),
     });
+
+    /**
+     * Marca a transação como PROCESSADA (ADR-0033) — chamada quando o ledger da alocação settla.
+     *
+     * O `WHERE status <> 'processada'` torna a chamada idempotente e devolve `false` quando nada
+     * mudou, para o chamador não logar uma transição que não houve. Não usa
+     * `assertTransitionTransacao` porque o settle é a autoridade: se o ERP confirmou a baixa, a
+     * transação ESTÁ processada — recusar por causa do estado anterior deixaria a tela mentindo
+     * sobre trabalho que o Conexos já registrou.
+     */
+    public marcarProcessada = async (id: string): Promise<boolean> => {
+        const row = await this.databaseClient.selectFirst<{ id: string }>(
+            `UPDATE transacao_bancaria
+                SET status = $status, atualizado_em = now()
+              WHERE id = $id AND status <> $status
+              RETURNING id`,
+            { id, status: TRANSACAO_BANCARIA_STATUS.PROCESSADA },
+        );
+        return row != null;
+    };
+
+    /**
+     * Arquiva (ou desarquiva, com `por = null`) um crédito.
+     *
+     * Arquivar tira da listagem E dos KPIs — é o gesto para o RUÍDO DE TESOURARIA (resgate de
+     * aplicação, transferência entre contas) que infla o "a distribuir" com dinheiro que nunca será
+     * conciliado contra processo. Guarda quem e quando, não um boolean: quando um crédito arquivado
+     * se revela devido, a primeira pergunta é quem o tirou da carteira.
+     */
+    public arquivar = async (id: string, por: string): Promise<boolean> => {
+        const row = await this.databaseClient.selectFirst<{ id: string }>(
+            `UPDATE transacao_bancaria
+                SET arquivada_em = now(), arquivada_por = $por, atualizado_em = now()
+              WHERE id = $id AND arquivada_em IS NULL
+              RETURNING id`,
+            { id, por },
+        );
+        return row != null;
+    };
+
+    public desarquivar = async (id: string): Promise<boolean> => {
+        const row = await this.databaseClient.selectFirst<{ id: string }>(
+            `UPDATE transacao_bancaria
+                SET arquivada_em = NULL, arquivada_por = NULL, atualizado_em = now()
+              WHERE id = $id AND arquivada_em IS NOT NULL
+              RETURNING id`,
+            { id },
+        );
+        return row != null;
+    };
 
     /**
      * Quais das `naturalKeys` já existem na carteira. READ-ONLY — alimenta o PREVIEW do upload

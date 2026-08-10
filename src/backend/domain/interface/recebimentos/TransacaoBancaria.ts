@@ -63,6 +63,15 @@ export interface TransacaoBancaria {
      * é namespaced por canal, então esta coluna é rótulo, não chave.
      */
     canal?: string;
+    /**
+     * Quando o analista ARQUIVOU o crédito (ADR-0033). Ausente = ativa.
+     *
+     * Arquivada sai da listagem E dos KPIs — é o gesto para o ruído de tesouraria (resgate de
+     * aplicação, transferência entre contas) que nunca será conciliado contra processo.
+     */
+    arquivadaEm?: Date;
+    /** Quem arquivou. Guardado junto porque a primeira pergunta sobre um arquivo errado é "quem". */
+    arquivadaPor?: string;
 }
 
 /** Boundary validation (Zod at boundaries) — one schema per entity. */
@@ -98,4 +107,6 @@ export const transacaoBancariaSchema = z.object({
     categoria: z.string().optional(),
     categoriaDesc: z.string().optional(),
     canal: z.string().optional(),
+    arquivadaEm: z.date().optional(),
+    arquivadaPor: z.string().optional(),
 });
