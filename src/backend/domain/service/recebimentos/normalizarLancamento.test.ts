@@ -4,7 +4,9 @@ import {
     buildCorrelationId,
     buildNaturalKey,
     buildTransacaoId,
+    ehTransferenciaInterna,
     extrairContraparte,
+    extrairRemetente,
     normalizarLancamento,
 } from './normalizarLancamento.js';
 
@@ -90,6 +92,63 @@ describe('extrairContraparte', () => {
         expect(extrairContraparte('RESGATE COMPROMISSADA')).toBe('RESGATE COMPROMISSADA');
         expect(extrairContraparte('OPERACAO NDF')).toBe('OPERACAO NDF');
         expect(extrairContraparte('ESTORNO CAMBIO')).toBe('ESTORNO CAMBIO');
+    });
+
+    // Regressão do report do analista (2026-08-10): a tela mostrava "RECEBIDO" na
+    // coluna Contraparte, que o analista lê como se fosse o pagador.
+    it.each([
+        'PIX RECEBIDO',
+        'PIX - RECEBIDO',
+        'TED RECEBIDA',
+        'TED-CRED CONTA',
+        'DOC ENVIADO',
+    ])('não devolve o status do lançamento como contraparte (%s)', (historico) => {
+        expect(extrairContraparte(historico)).toBeUndefined();
+    });
+});
+
+describe('extrairRemetente', () => {
+    it('extrai o remetente do nrdocto e descarta a cauda de data truncada', () => {
+        // Linha real da conta 213 (Bradesco ag 2372), 07/08/2026.
+        expect(extrairRemetente('1224537REM: COLUMBIA TRADING S/A  07/0')).toBe(
+            'COLUMBIA TRADING S/A',
+        );
+    });
+
+    it('devolve undefined quando o nrdocto é só número de documento', () => {
+        expect(extrairRemetente('000000100463942')).toBeUndefined();
+        expect(extrairRemetente(undefined)).toBeUndefined();
+        expect(extrairRemetente('1224537REM:   ')).toBeUndefined();
+    });
+});
+
+describe('ehTransferenciaInterna', () => {
+    const titulares = ['COLUMBIA TRADING'];
+
+    it('marca crédito 209 cujo remetente é a própria casa', () => {
+        expect(ehTransferenciaInterna('209', 'COLUMBIA TRADING S/A', titulares)).toBe(true);
+    });
+
+    it('ignora acento e caixa ao comparar o titular', () => {
+        expect(ehTransferenciaInterna('209', 'colúmbia trading s/a', titulares)).toBe(true);
+    });
+
+    it('NÃO marca PIX/TED de cliente — 209 sozinha não é ruído', () => {
+        expect(ehTransferenciaInterna('209', 'ACME LTDA', titulares)).toBe(false);
+    });
+
+    it('NÃO marca quando o remetente não é identificável', () => {
+        // `TED-CRED CONTA` não diz quem enviou. Esconder às cegas esconderia recebível.
+        expect(ehTransferenciaInterna('209', undefined, titulares)).toBe(false);
+    });
+
+    it('NÃO marca fora da categoria 209', () => {
+        expect(ehTransferenciaInterna('299', 'COLUMBIA TRADING S/A', titulares)).toBe(false);
+        expect(ehTransferenciaInterna(undefined, 'COLUMBIA TRADING S/A', titulares)).toBe(false);
+    });
+
+    it('lista de titulares vazia desliga a detecção', () => {
+        expect(ehTransferenciaInterna('209', 'COLUMBIA TRADING S/A', [])).toBe(false);
     });
 });
 
@@ -180,5 +239,54 @@ describe('normalizarLancamento', () => {
         const b = normalizarLancamento(lancamento(), { runId: 'run-2', importadoEm: new Date() });
         expect(b.id).toBe(a.id);
         expect(b.correlationId).toBe(a.correlationId);
+    });
+});
+
+describe('normalizarLancamento — transferência entre contas da casa', () => {
+    // Linha REAL do fin095 (conta 213, Bradesco ag 2372, 07/08/2026, R$ 368.000,00)
+    // que o analista reportou como "paguei, mas aparece como recebido".
+    const interno = (): LancamentoExtrato =>
+        lancamento({
+            gerNum: 213,
+            historico: 'PIX RECEBIDO',
+            numeroDocumento: '1224537REM: COLUMBIA TRADING S/A  07/0',
+            valor: 368000,
+            categoria: '209',
+            categoriaDesc: 'TRANSFERÊNCIA INTERBANCÁRIA (DOC, TED)',
+        });
+    const ctxInterno = { ...ctx, titularesInternos: ['COLUMBIA TRADING'] };
+
+    it('marca a transação como transferência interna', () => {
+        expect(normalizarLancamento(interno(), ctxInterno).transferenciaInterna).toBe(true);
+    });
+
+    it('usa o remetente como contraparte em vez do resto do histórico', () => {
+        // Antes: "PIX RECEBIDO" virava a contraparte "RECEBIDO".
+        expect(normalizarLancamento(interno(), ctxInterno).contraparte).toBe(
+            'COLUMBIA TRADING S/A',
+        );
+    });
+
+    it('sem titulares configurados, nada é marcado como interno', () => {
+        expect(normalizarLancamento(interno(), ctx).transferenciaInterna).toBe(false);
+    });
+
+    it('crédito de cliente na mesma categoria continua na carteira', () => {
+        const cliente = lancamento({
+            historico: 'PIX RECEBIDO',
+            numeroDocumento: '0512345REM: ACME LTDA  07/0',
+            categoria: '209',
+        });
+        const t = normalizarLancamento(cliente, ctxInterno);
+        expect(t.transferenciaInterna).toBe(false);
+        expect(t.contraparte).toBe('ACME LTDA');
+    });
+
+    it('guarda a descrição da conta para a coluna Conta do painel', () => {
+        const t = normalizarLancamento(interno(), {
+            ...ctxInterno,
+            contaDescricao: 'BANCO BRADESCO - AG. 2372 CONTA 92.830-5',
+        });
+        expect(t.contaDescricao).toBe('BANCO BRADESCO - AG. 2372 CONTA 92.830-5');
     });
 });

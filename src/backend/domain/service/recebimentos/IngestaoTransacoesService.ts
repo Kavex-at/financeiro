@@ -260,6 +260,7 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
         let lidas = 0;
         let inseridas = 0;
         let deduplicadas = 0;
+        const env = await this.environmentProvider.getEnvironmentVars();
 
         for (const bloco of this.fatiarPeriodo(periodo)) {
             const lancamentos = await this.extrato.listLancamentos({
@@ -271,7 +272,12 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
             if (lancamentos.length === 0) continue;
 
             const transacoes = lancamentos.map((l) =>
-                normalizarLancamento(l, { runId, importadoEm }),
+                normalizarLancamento(l, {
+                    runId,
+                    importadoEm,
+                    titularesInternos: env.recebimentoTitularesInternos,
+                    ...(alvo.gerDes !== undefined ? { contaDescricao: alvo.gerDes } : {}),
+                }),
             );
             const r = await this.transacaoRepo.upsertMany(transacoes, runId);
 

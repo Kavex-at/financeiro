@@ -73,6 +73,16 @@ export default class EnvironmentVars {
     public recebimentoIngestFilCods: number[];
 
     /**
+     * Nomes que identificam a PRÓPRIA CASA no remetente de um crédito
+     * (`RECEBIMENTO_TITULARES_INTERNOS`, CSV). Um TED/PIX de categoria 209 cujo
+     * `REM:` casa com um destes é transferência entre contas do grupo, não
+     * recebimento de cliente — sai da carteira do analista.
+     *
+     * Vazio desliga a detecção (nada é escondido).
+     */
+    public recebimentoTitularesInternos: string[];
+
+    /**
      * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
      * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
      * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
@@ -153,6 +163,7 @@ export default class EnvironmentVars {
         recebimentoIngestDias,
         recebimentoIngestStartDate,
         recebimentoIngestFilCods,
+        recebimentoTitularesInternos,
         fin014ContaFinanceira,
         com297GcdNotaDebitoNome,
         com297GcdNotaDebito,
@@ -183,6 +194,7 @@ export default class EnvironmentVars {
         recebimentoIngestDias: number;
         recebimentoIngestStartDate: Date;
         recebimentoIngestFilCods: number[];
+        recebimentoTitularesInternos: string[];
         fin014ContaFinanceira?: number;
         com297GcdNotaDebitoNome: string;
         com297GcdNotaDebito?: number;
@@ -213,6 +225,7 @@ export default class EnvironmentVars {
         this.recebimentoIngestDias = recebimentoIngestDias;
         this.recebimentoIngestStartDate = recebimentoIngestStartDate;
         this.recebimentoIngestFilCods = recebimentoIngestFilCods;
+        this.recebimentoTitularesInternos = recebimentoTitularesInternos;
         this.fin014ContaFinanceira = fin014ContaFinanceira;
         this.com297GcdNotaDebitoNome = com297GcdNotaDebitoNome;
         this.com297GcdNotaDebito = com297GcdNotaDebito;

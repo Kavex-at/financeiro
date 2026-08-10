@@ -74,6 +74,14 @@ export interface TransacaoBancaria {
    * pode rodar (o backend devolve 422); a UI bloqueia o Processar e avisa.
    */
   gerNum?: number
+  /**
+   * Conta financeira por extenso (`"BANCO BRASIL - AG. 1913 CONTA 105773-1"`).
+   *
+   * A carteira funde TODAS as contas numa lista só (ADR-0032), então sem esta coluna
+   * o analista não consegue bater uma linha contra o extrato de onde ela veio.
+   * Ausente nas linhas ingeridas antes da 0045 — a UI cai para o `gerNum`.
+   */
+  contaDescricao?: string
   /** Classificação do match (quando já houve `atribuirBaixa`). Fase 2 popula de verdade. */
   classificacaoMatch?: MatchClassificacao
   importRunId?: string

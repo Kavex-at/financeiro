@@ -120,6 +120,10 @@ export default class RecebimentosPainelService {
             categoriasExcluidas,
             // Vai para list E para os KPIs — os dois têm que concordar sobre o que existe.
             ...(input.arquivadas === true ? { arquivadas: true } : {}),
+            // Transferência entre contas da casa segue o MESMO botão do ruído de
+            // tesouraria: é a mesma natureza de movimento, só que discriminada pelo
+            // remetente e não pela categoria.
+            incluirTransferenciasInternas: input.incluirTesouraria === true,
         };
 
         const [transacoes, porStatus, valorPorStatus, ultimaIngestao] = await Promise.all([

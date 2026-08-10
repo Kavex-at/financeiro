@@ -42,6 +42,18 @@ describe('RecebimentosPage — título', () => {
     expect(screen.queryByText(/Recebimentos indisponível/i)).not.toBeInTheDocument()
   })
 
+  // Report do analista (2026-08-10): "esses valores não estão no extrato" — estavam,
+  // só que em OUTRA conta. A carteira funde todas as contas (ADR-0032) e a tabela não
+  // dizia de qual extrato cada linha veio. A antiga coluna "Tipo" era constante
+  // ('CREDITO' para toda linha, porque o painel só devolve crédito) e cedeu o lugar.
+  it('a tabela de transações identifica a conta, não o tipo constante', async () => {
+    await renderPainel()
+
+    const cabecalhos = screen.getAllByRole('columnheader').map((c) => c.textContent)
+    expect(cabecalhos).toContain('Conta')
+    expect(cabecalhos).not.toContain('Tipo')
+  })
+
   it('o título da aba do browser acompanha o H1', () => {
     // Precisa morar no layout: `page.tsx` é 'use client' e o Next ignora
     // `export const metadata` em client component — sairia o título do layout raiz.

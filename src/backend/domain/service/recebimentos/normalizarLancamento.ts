@@ -87,6 +87,69 @@ const PREFIXOS_CANAL = [
 const BANCO_AGENCIA = /^\d{3}\.\d{4}\.?/;
 
 /**
+ * Resíduos que sobram após o corte do prefixo de canal e que NÃO são nome de
+ * contraparte — são o status/modalidade do próprio lançamento.
+ *
+ * Medido em produção (`fin095`, contas 212/213, ago/2026): `"PIX RECEBIDO"` perdia
+ * o `PIX` e virava a contraparte **"RECEBIDO"** na tela do analista, e
+ * `"TED-CRED CONTA"` virava `"CONTA"` quando o prefixo casava só o `TED`. Exibir
+ * isso é pior que exibir nada: o analista lê "RECEBIDO" como se fosse o pagador.
+ */
+const RUIDO_STATUS = new Set([
+    'RECEBIDO',
+    'RECEBIDA',
+    'ENVIADO',
+    'ENVIADA',
+    'CONTA',
+    'CRED CONTA',
+    'DEB CONTA',
+    'CREDITO',
+    'DEBITO',
+    'CRED',
+    'DEB',
+    'TRANSF',
+    'TRANSFERENCIA',
+    'MESM TIT',
+    'CR MESM TIT',
+]);
+
+/** Sem acento, espaços colapsados, caixa alta — forma canônica de comparação. */
+const canonizar = (texto: string): string =>
+    texto
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
+
+/**
+ * `REM:` dentro do `exiEspNrdocto` — o campo mistura número de documento e remetente
+ * (`"1224537REM: COLUMBIA TRADING S/A  07/0"`). A cauda `07/0` é fragmento de data
+ * truncado pelo banco, não parte do nome.
+ */
+const REMETENTE_NRDOC = /REM\s*:\s*(.+)$/i;
+const CAUDA_DATA = /[\s,]*\d{1,2}\/\d{0,2}\s*$/;
+
+/**
+ * Extrai o REMETENTE do `exiEspNrdocto` do `fin095`.
+ *
+ * Diferente do `historico` (truncado em ~24 chars e sem identificação), este campo
+ * carrega o nome de quem enviou o PIX/TED quando o banco o informa — é a MELHOR
+ * dica de contraparte disponível no canal automático, e é o que revela que um
+ * "crédito" é, na verdade, transferência entre contas da própria casa.
+ *
+ * Continua sendo DICA DE EXIBIÇÃO: não há CNPJ nem `pesCod`, e o banco trunca. Nunca
+ * usar como chave de junção com cliente ou processo.
+ */
+export const extrairRemetente = (numeroDocumento?: string): string | undefined => {
+    if (!numeroDocumento) return undefined;
+    const m = numeroDocumento.match(REMETENTE_NRDOC);
+    if (!m?.[1]) return undefined;
+    const nome = m[1].replace(CAUDA_DATA, '').replace(/\s+/g, ' ').trim();
+    return nome === '' ? undefined : nome;
+};
+
+/**
  * Extrai uma dica de contraparte do histórico do extrato.
  *
  * ⚠️ É DICA DE EXIBIÇÃO, não chave. O banco trunca o histórico em ~24 caracteres
@@ -112,7 +175,46 @@ export const extrairContraparte = (historico?: string): string | undefined => {
     texto = texto.replace(/^[-.\s]+/, '').trim();
     texto = texto.replace(BANCO_AGENCIA, '').trim();
 
-    return texto === '' ? undefined : texto;
+    if (texto === '') return undefined;
+    // O que sobrou é o status do lançamento, não um pagador — melhor não exibir nada.
+    if (RUIDO_STATUS.has(canonizar(texto))) return undefined;
+
+    return texto;
+};
+
+/**
+ * Categoria do `fin095` para TED/DOC/PIX entre bancos (`exiEspCategoria = '209'`).
+ *
+ * NÃO é ruído por si só: recebimento de cliente por PIX/TED cai aqui (medidos na
+ * conta 212, ago/2026: PIX de 20k/50k/30k). Só vira ruído quando o REMETENTE é a
+ * própria casa — ver `ehTransferenciaInterna`.
+ */
+export const CATEGORIA_TRANSFERENCIA_INTERBANCARIA = '209';
+
+/**
+ * Decide se um crédito é TRANSFERÊNCIA ENTRE CONTAS DA PRÓPRIA CASA.
+ *
+ * Regra (decidida com o analista, 2026-08-10): categoria `209` **e** remetente
+ * identificado como um dos titulares internos. O dinheiro sai de uma conta e entra
+ * em outra; o `fin095` só é ingerido no lado CRÉDITO, então a perna de débito nunca
+ * aparece para fechar o par e o analista lê como "recebi" algo que ele pagou.
+ *
+ * ⚠️ Sem remetente identificável, devolve `false` DE PROPÓSITO. `TED-CRED CONTA` não
+ * diz quem enviou, e esconder um crédito é esconder um recebível: o custo de errar
+ * para o lado de ocultar é maior que o de deixar ruído na fila do analista.
+ */
+export const ehTransferenciaInterna = (
+    categoria: string | undefined,
+    remetente: string | undefined,
+    titularesInternos: readonly string[],
+): boolean => {
+    if (categoria !== CATEGORIA_TRANSFERENCIA_INTERBANCARIA) return false;
+    if (!remetente) return false;
+    const alvo = canonizar(remetente);
+    return titularesInternos.some((t) => {
+        const titular = canonizar(t);
+        return titular !== '' && alvo.includes(titular);
+    });
 };
 
 /**
@@ -141,10 +243,25 @@ const mapTipo = (l: LancamentoExtrato) =>
  */
 export const normalizarLancamento = (
     l: LancamentoExtrato,
-    ctx: { runId: string; importadoEm: Date },
+    ctx: {
+        runId: string;
+        importadoEm: Date;
+        /** Nomes que identificam a própria casa — ver `ehTransferenciaInterna`. */
+        titularesInternos?: readonly string[];
+        /** `gerDes` do `fin133` (`"BANCO BRASIL - AG. 1913 CONTA 105773-1"`). */
+        contaDescricao?: string;
+    },
 ): TransacaoBancaria => {
     const naturalKey = buildNaturalKey(l);
-    const contraparte = extrairContraparte(l.historico);
+    // O remetente do `nrdocto` identifica de verdade; o histórico é só um resto de
+    // texto truncado. Quando os dois existem, o remetente ganha.
+    const remetente = extrairRemetente(l.numeroDocumento);
+    const contraparte = remetente ?? extrairContraparte(l.historico);
+    const transferenciaInterna = ehTransferenciaInterna(
+        l.categoria,
+        remetente,
+        ctx.titularesInternos ?? [],
+    );
 
     return {
         id: buildTransacaoId(naturalKey),
@@ -163,6 +280,8 @@ export const normalizarLancamento = (
             extCod: l.extCod,
             exiCodSeq: l.exiCodSeq,
             historicoBruto: l.historico ?? null,
+            remetente: remetente ?? null,
+            contaDescricao: ctx.contaDescricao ?? null,
             linhaBruta: l.linhaBruta ?? null,
             categoria: l.categoria ?? null,
             categoriaDesc: l.categoriaDesc ?? null,
@@ -173,7 +292,9 @@ export const normalizarLancamento = (
         importRunId: ctx.runId,
         importadoEm: ctx.importadoEm,
         gerNum: l.gerNum,
+        ...(ctx.contaDescricao !== undefined ? { contaDescricao: ctx.contaDescricao } : {}),
         ...(l.categoria !== undefined ? { categoria: l.categoria } : {}),
         ...(l.categoriaDesc !== undefined ? { categoriaDesc: l.categoriaDesc } : {}),
+        transferenciaInterna,
     };
 };

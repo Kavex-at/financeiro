@@ -17,7 +17,8 @@ const UPSERT_CHUNK = 200;
 const COLUNAS = `id, correlation_id, fil_cod, data_movimento, tipo, valor, moeda,
                  contraparte, referencia_bancaria, natural_key, raw_payload, normalized,
                  status, import_run_id, importado_em, ger_num, categoria, categoria_desc, canal,
-                 arquivada_em, arquivada_por`;
+                 arquivada_em, arquivada_por,
+                 conta_descricao, transferencia_interna`;
 
 /**
  * TransacaoRepository — CRUD sobre `transacao_bancaria` (0032 + 0040). SQL 100%
@@ -105,7 +106,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                         `($id${n}, $co${n}, $fi${n}, $dm${n}, $ti${n}, $va${n}, $mo${n}, ` +
                             `$cp${n}, $rb${n}, $nk${n}, $rp${n}::jsonb, $no${n}::jsonb, ` +
                             `$st${n}, $runId::text, $ie${n}, $gn${n}, $ca${n}, $cd${n}, $cl${n}, ` +
-                            `$runId::uuid, now())`,
+                            `$kd${n}, $tin${n}, $runId::uuid, now())`,
                     );
                     params[`id${n}`] = t.id;
                     params[`co${n}`] = t.correlationId;
@@ -126,6 +127,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                     params[`ca${n}`] = t.categoria ?? null;
                     params[`cd${n}`] = t.categoriaDesc ?? null;
                     params[`cl${n}`] = t.canal ?? null;
+                    params[`kd${n}`] = t.contaDescricao ?? null;
+                    params[`tin${n}`] = t.transferenciaInterna ?? false;
                 });
 
                 const rows = (await tx.selectMany(
@@ -133,6 +136,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                         id, correlation_id, fil_cod, data_movimento, tipo, valor, moeda,
                         contraparte, referencia_bancaria, natural_key, raw_payload, normalized,
                         status, import_run_id, importado_em, ger_num, categoria, categoria_desc, canal,
+                        conta_descricao, transferencia_interna,
                         visto_em_run_id, atualizado_em
                      ) VALUES ${tuples.join(', ')}
                      ON CONFLICT (natural_key) DO UPDATE SET
@@ -144,6 +148,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                         ger_num = EXCLUDED.ger_num,
                         categoria = EXCLUDED.categoria,
                         categoria_desc = EXCLUDED.categoria_desc,
+                        conta_descricao = EXCLUDED.conta_descricao,
+                        transferencia_interna = EXCLUDED.transferencia_interna,
                         visto_em_run_id = EXCLUDED.visto_em_run_id,
                         atualizado_em = now()
                      WHERE transacao_bancaria.status = $statusIntocado
@@ -169,6 +175,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         tipos?: TransacaoTipo[];
         statuses?: TransacaoBancariaStatus[];
         categoriasExcluidas?: string[];
+        /** Default `false` — transferência entre contas da casa fica fora da carteira. */
+        incluirTransferenciasInternas?: boolean;
         desde?: Date;
         /** `true` = a aba de revisão das arquivadas. Ausente = carteira ativa (default). */
         arquivadas?: boolean;
@@ -195,6 +203,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         filCods: number[];
         tipos?: TransacaoTipo[];
         categoriasExcluidas?: string[];
+        /** Default `false` — transferência entre contas da casa fica fora da carteira. */
+        incluirTransferenciasInternas?: boolean;
         desde?: Date;
         /** `true` = a aba de revisão das arquivadas. Ausente = carteira ativa (default). */
         arquivadas?: boolean;
@@ -216,6 +226,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         filCods: number[];
         tipos?: TransacaoTipo[];
         categoriasExcluidas?: string[];
+        /** Default `false` — transferência entre contas da casa fica fora da carteira. */
+        incluirTransferenciasInternas?: boolean;
         desde?: Date;
         /** `true` = a aba de revisão das arquivadas. Ausente = carteira ativa (default). */
         arquivadas?: boolean;
@@ -238,6 +250,8 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         tipos?: TransacaoTipo[];
         statuses?: TransacaoBancariaStatus[];
         categoriasExcluidas?: string[];
+        /** Default `false` — transferência entre contas da casa fica fora da carteira. */
+        incluirTransferenciasInternas?: boolean;
         desde?: Date;
         /** `false`/ausente = só ATIVAS (default). `true` = só as arquivadas (a aba de revisão). */
         arquivadas?: boolean;
@@ -272,6 +286,11 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
             // prova de ruído, e esconder o desconhecido é pior que mostrá-lo.
             clauses.push('(categoria IS NULL OR NOT (categoria = ANY($categoriasExcluidas)))');
             params.categoriasExcluidas = input.categoriasExcluidas;
+        }
+        if (!input.incluirTransferenciasInternas) {
+            // Transferência entre contas da própria casa não é recebível. Escondida,
+            // não apagada — mesma política do ruído de tesouraria.
+            clauses.push('transferencia_interna = FALSE');
         }
         if (input.desde) {
             clauses.push('data_movimento >= $desde');
@@ -309,6 +328,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         ...(r.import_run_id != null ? { importRunId: String(r.import_run_id) } : {}),
         importadoEm: new Date(r.importado_em as string | Date),
         ...(r.ger_num != null ? { gerNum: Number(r.ger_num) } : {}),
+        ...(r.conta_descricao != null ? { contaDescricao: String(r.conta_descricao) } : {}),
         ...(r.categoria != null ? { categoria: String(r.categoria) } : {}),
         ...(r.categoria_desc != null ? { categoriaDesc: String(r.categoria_desc) } : {}),
         ...(r.canal != null ? { canal: String(r.canal) } : {}),
@@ -316,6 +336,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
             ? { arquivadaEm: new Date(r.arquivada_em as string | Date) }
             : {}),
         ...(r.arquivada_por != null ? { arquivadaPor: String(r.arquivada_por) } : {}),
+        transferenciaInterna: r.transferencia_interna === true,
     });
 
     /**

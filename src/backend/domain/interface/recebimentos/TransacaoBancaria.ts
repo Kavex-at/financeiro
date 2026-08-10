@@ -50,6 +50,22 @@ export interface TransacaoBancaria {
      */
     gerNum?: number;
     /**
+     * Descrição legível da conta financeira (`gerDes` do `fin133`, ex.
+     * `"BANCO BRASIL - AG. 1913 CONTA 105773-1"`).
+     *
+     * Existe para a TELA: desde o ADR-0032 a transação nasce corporativa e o painel
+     * junta as ~20 contas numa lista só. Sem isso o analista não consegue bater a
+     * tabela contra um extrato — foi exatamente o que gerou o report de "esses
+     * valores não estão no extrato" (eram de outra conta).
+     */
+    contaDescricao?: string;
+    /**
+     * Crédito que é TRANSFERÊNCIA ENTRE CONTAS DA PRÓPRIA CASA (categoria `209` com
+     * remetente = titular interno). Escondido do painel por default, como o resto do
+     * ruído de tesouraria. Ver `ehTransferenciaInterna`.
+     */
+    transferenciaInterna?: boolean;
+    /**
      * Categoria do lançamento no extrato (`exiEspCategoria` do `fin095`).
      * Discriminador do RUÍDO DE TESOURARIA: em produção, ~15% dos créditos são
      * RESGATE DE APLICAÇÃO / AÇÕES / TRANSFERÊNCIA ENTRE CONTAS, que não são
@@ -104,6 +120,8 @@ export const transacaoBancariaSchema = z.object({
     importRunId: z.string().optional(),
     importadoEm: z.date(),
     gerNum: z.number().int().positive().optional(),
+    contaDescricao: z.string().optional(),
+    transferenciaInterna: z.boolean().optional(),
     categoria: z.string().optional(),
     categoriaDesc: z.string().optional(),
     canal: z.string().optional(),
