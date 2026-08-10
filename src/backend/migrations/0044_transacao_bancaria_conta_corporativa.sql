@@ -20,6 +20,14 @@
 -- IDEMPOTENTE: na segunda execução o DELETE não acha excedente e o UPDATE reescreve os mesmos
 -- valores (a derivação é determinística).
 
+-- ── Dependência: pgcrypto (digest) ───────────────────────────────────────────
+-- O bloco abaixo usa `digest(...,'sha256')` para reproduzir em SQL a derivação de
+-- `id`/`correlation_id` feita em `normalizarLancamento.ts`. Na Supabase a extensão já vinha
+-- instalada, então isto passou despercebido — mas num banco NOVO (dev local, tenant novo, restore)
+-- a migração falhava com `function digest(text, unknown) does not exist`, impedindo o esquema de
+-- subir do zero. Idempotente: no-op onde já existe.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ── `fil_cod` passa a aceitar NULL ───────────────────────────────────────────
 ALTER TABLE transacao_bancaria ALTER COLUMN fil_cod DROP NOT NULL;
 
