@@ -220,6 +220,79 @@ describe('ConexosGerDocProcessoClient', () => {
         });
     });
 
+    /**
+     * Wire shape MEDIDO em produção 2026-08-11 (`com191/endereco/list/699`, DYNAMIS): ARRAY cru, CNPJ
+     * como string, dois estabelecimentos. É a fonte do `endCod` do documento (ADR-0035) — se o parse
+     * cair ou vier vazio, o gate 1.5 acusa cadastro incompleto para quem tem cadastro completo.
+     */
+    it('listEnderecosPessoa lê o ARRAY cru de produção (endCod + CNPJ por estabelecimento)', async () => {
+        const postGeneric = jest.fn().mockResolvedValue([
+            {
+                pesCod: 699,
+                endCod: 1,
+                pdcDocFederal: '10384567000162',
+                pdcDocFederalFmt: '10.384.567/0001-62',
+                endVldDefault: 1,
+                tipo: 'FISCAL',
+                endereco: 'R PEDRO FERREIRA 333, 333 - CENTRO, ITAJAÍ - CEP: 88.301-030 - SC',
+            },
+            {
+                pesCod: 699,
+                endCod: 2,
+                pdcDocFederal: '10384567000405',
+                endVldDefault: 0,
+                tipo: 'FISCAL',
+            },
+        ]);
+        const client = new ConexosGerDocProcessoClient(buildBase({ postGeneric }), buildLog());
+
+        const r = await client.listEnderecosPessoa({ filCod: 2, pesCod: 699 });
+
+        expect(r).toHaveLength(2);
+        expect(r[0]).toMatchObject({
+            endCod: 1,
+            pdcDocFederal: '10384567000162',
+            endVldDefault: 1,
+        });
+        expect(r[1]).toMatchObject({ endCod: 2, pdcDocFederal: '10384567000405' });
+        // Passthrough do resto do cadastro (o `tipo` e o formatado seguem disponíveis p/ diagnóstico).
+        expect(r[0]?.pdcDocFederalFmt).toBe('10.384.567/0001-62');
+        expect(postGeneric.mock.calls[0][0]).toBe('com191/endereco/list/699');
+    });
+
+    it('listEnderecosPessoa aceita o envelope {rows} por paridade com os demais list', async () => {
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValue({ rows: [{ endCod: 3, pdcDocFederal: '10384567000405' }] });
+        const client = new ConexosGerDocProcessoClient(buildBase({ postGeneric }), buildLog());
+
+        const r = await client.listEnderecosPessoa({ filCod: 2, pesCod: 699 });
+        expect(r).toEqual([{ endCod: 3, pdcDocFederal: '10384567000405' }]);
+    });
+
+    it('listEnderecosPessoa coage um CNPJ serializado como NÚMERO (não derruba a página)', async () => {
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValue([{ endCod: 2, pdcDocFederal: 10384567000405 }]);
+        const client = new ConexosGerDocProcessoClient(buildBase({ postGeneric }), buildLog());
+
+        const r = await client.listEnderecosPessoa({ filCod: 2, pesCod: 699 });
+        expect(r[0]?.pdcDocFederal).toBe('10384567000405');
+    });
+
+    /**
+     * Fail-loud: um envelope que não reconhecemos NÃO pode virar "zero endereços" — isso mandaria a
+     * analista regularizar um cadastro que está correto. Vira `ConexosError` → pré-flight `UNKNOWN`.
+     */
+    it('listEnderecosPessoa LANÇA em envelope desconhecido (nunca devolve lista vazia em silêncio)', async () => {
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValue({ content: [{ endCod: 2, pdcDocFederal: '10384567000405' }] });
+        const client = new ConexosGerDocProcessoClient(buildBase({ postGeneric }), buildLog());
+
+        await expect(client.listEnderecosPessoa({ filCod: 2, pesCod: 699 })).rejects.toThrow();
+    });
+
     it('validaProcessoPessoa chama só com priCod quando priEspRefcliente ausente', async () => {
         const postGeneric = jest
             .fn()
