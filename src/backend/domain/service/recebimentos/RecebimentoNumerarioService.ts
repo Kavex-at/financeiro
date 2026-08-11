@@ -38,7 +38,10 @@ import {
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import ErpErrorInterpreter from '../permutas/ErpErrorInterpreter.js';
 import type { ErpMessage } from '../permutas/ErpErrorInterpreter.js';
-import type { GerDocProcessoMessage } from '../../client/ConexosGerDocProcessoClient.js';
+import type {
+    EnderecoPessoa,
+    GerDocProcessoMessage,
+} from '../../client/ConexosGerDocProcessoClient.js';
 import ContingenciaDecider from './ContingenciaDecider.js';
 import LogService from '../LogService.js';
 import SnPayloadBuilder from './SnPayloadBuilder.js';
@@ -71,8 +74,11 @@ export const motivoNdeDispensada = (priVldTipo?: number): string => {
 /** fisCod default do com300 GET — HAR (doc 18337) usa fisCod=1 em todos os exemplos. */
 const FIS_COD_DEFAULT = 1;
 
-/** endCodFis default do validaConfigDoc/rateio/payload (permutas usa 1). */
-const END_COD_FIS_DEFAULT = 1;
+/**
+ * Dígitos de um CNPJ/CPF — o ERP devolve ora cru (`10384567000405`), ora formatado
+ * (`10.384.567/0004-05`), e a comparação endereço ↔ processo tem de valer nos dois.
+ */
+const somenteDigitos = (valor: string): string => valor.replace(/\D/g, '');
 
 /** Moeda da NDe (registro local) — o fluxo de numerário assume BRL (mesmo default do processo). */
 const NDE_MOEDA_PADRAO = 'BRL';
@@ -177,7 +183,8 @@ export interface ProcessarAlocacaoInput {
  * Classificação READ-ONLY do pré-flight — decide se a alocação PODE gerar a SN, ANTES de qualquer escrita.
  * Roda apenas o encadeamento de validadores idempotentes (`validaProcessoPessoa` + `validaConfigDocPessoa`).
  * - `READY`: cadastro completo + config SN resolvida → pode gerar.
- * - `BLOCKED_CADASTRO`: `pdcDocFederal`/`endCodFis` ausentes/inválidos (cadastro da pessoa incompleto).
+ * - `BLOCKED_CADASTRO`: `pdcDocFederal` ausente, ou nenhum endereço da pessoa com esse CNPJ (cadastro
+ *   incompleto — sem endereço coerente o documento sairia no estabelecimento errado).
  * - `BLOCKED_ELEGIBILIDADE`: `validaConfigDocPessoa` não devolve `gcdCod` (processo sem config SN válida).
  * - `UNKNOWN`: um validador falhou num formato não reconhecido (não classificável).
  */
@@ -206,6 +213,11 @@ export interface PreflightResult {
     gcdCodDefault?: number;
     /** Resultado do gate 3 (`validaConfigDoc(gcd alvo)`): true = sem ERRO; false = ERRO (inelegível). */
     gcdAlvoOk?: boolean;
+    /**
+     * `endCod` do endereço RESOLVIDO no gate 1.5 — o do estabelecimento cujo CNPJ é o do processo. Vai
+     * para o campo `endCodFis` do payload (nome do contrato do ERP), mas NÃO é o `endCodFis` que o
+     * `validaProcessoPessoa` devolve — ver `resolverEndCodDaPessoa`.
+     */
     endCodFis?: number;
     pdcDocFederal?: string;
     /** Modalidade do processo (`imp021.priVldTipo`) resolvida no gate 0.5 — ver `PRI_VLD_TIPO`. */
@@ -1155,9 +1167,45 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
+     * Escolhe o ENDEREÇO (`endCod`) com que o documento é emitido: aquele cujo CNPJ/CPF é o do processo.
+     *
+     * Por que não usar o `endCodFis` do `validaProcessoPessoa`: ele é o endereço **padrão** da pessoa
+     * (`endVldDefault=1`), não o do documento. Quando a pessoa tem um só estabelecimento os dois
+     * coincidem e nada quebra; com dois, o validador devolve um par INCOERENTE — endereço de um
+     * estabelecimento com o CNPJ de outro — e o `com297/gerDocProcesso` recusa com
+     * `endCod Generic.NOT_VALID`, já depois da baixa fin014 estar finalizada.
+     *
+     * Medido em produção 2026-08-11 (DYNAMIS, pesCod 699, processo 3639, filial 2): validador devolveu
+     * `endCodFis: 1` + `pdcDocFederal: 10384567000405`; endereço 1 é o CNPJ `/0001-62` e o `/0004-05` é o
+     * endereço **2**. As 140 NDes já emitidas para a pessoa usam `endCod: 2`, e o processo 1408 — que tem
+     * NDes emitidas — recebe o mesmo `endCodFis: 1` do validador. Ou seja: o campo nunca foi o endereço
+     * do documento; só parecia, porque o primeiro cliente a rodar tinha um estabelecimento só.
+     *
+     * Compara por DÍGITOS (o ERP devolve o CNPJ ora cru, ora formatado). Empate — dois endereços com o
+     * MESMO CNPJ — cai no `endVldDefault`, e depois no menor `endCod`, para ser determinístico. Sem
+     * candidato o chamador BLOQUEIA: um documento fiscal no endereço errado não se desfaz.
+     */
+    private resolverEndCodDaPessoa = (
+        enderecos: EnderecoPessoa[],
+        pdcDocFederal: string,
+    ): EnderecoPessoa | undefined => {
+        const alvo = somenteDigitos(pdcDocFederal);
+        if (alvo === '') return undefined;
+        const candidatos = enderecos.filter((e) => somenteDigitos(e.pdcDocFederal ?? '') === alvo);
+        if (candidatos.length === 0) return undefined;
+        return [...candidatos].sort((a, b) => {
+            const defaultA = a.endVldDefault === 1 ? 0 : 1;
+            const defaultB = b.endVldDefault === 1 ? 0 : 1;
+            return defaultA !== defaultB ? defaultA - defaultB : a.endCod - b.endCod;
+        })[0];
+    };
+
+    /**
      * Pré-flight READ-ONLY (NUNCA gera nada). Quatro gates, do mais barato ao decisor:
      *   gate 0  transporte    405/404/401/403 em qualquer validador → `TRANSPORT_ERROR` (HALT; bug de rota)
-     *   gate 1  cadastro      `validaProcessoPessoa` → `endCodFis>0` && `pdcDocFederal` → senão BLOCKED_CADASTRO
+     *   gate 1  cadastro      `validaProcessoPessoa` → `pdcDocFederal` (CNPJ do processo) → senão BLOCKED_CADASTRO
+     *   gate 1.5 endereço     `com191/endereco/list` → o `endCod` cujo CNPJ é o do processo (NÃO o
+     *                          `endCodFis` do validador, que é o endereço padrão) → senão BLOCKED_CADASTRO
      *   gate 2  config default `validaConfigDocPessoa` → gcd default da pessoa (NOTA; não conclui — devolve null
      *                          para todos hoje, então é só diagnóstico)
      *   gate 3  config alvo   `validaConfigDoc(gcd alvo=SN_GCD_COD)` — DECISOR: `messages[].valid==='ERRO'`
@@ -1184,9 +1232,11 @@ export default class RecebimentoNumerarioService {
         const { priVldTipo, ndeDispensada } = modalidade;
         const modalidadeFields = { priVldTipo, ndeDispensada };
 
-        // ── gate 1: cadastro ──
-        let endCodFis: number | undefined;
+        // ── gate 1: cadastro — CNPJ do processo ──
+        let pesCodErp: number | undefined;
         let pdcDocFederal: string | undefined;
+        /** Só diagnóstico: o endereço PADRÃO que o validador sugere. Nunca alimenta o payload. */
+        let endCodFisSugeridoErp: number | undefined;
         try {
             const pessoa = await this.gerDocClient.validaProcessoPessoa({
                 tela: 'com299',
@@ -1198,31 +1248,74 @@ export default class RecebimentoNumerarioService {
                     ? { priEspRefcliente: processo.priEspRefcliente }
                     : {}),
             });
-            endCodFis = pessoa.endCodFis;
+            pesCodErp = pessoa.pesCod;
             pdcDocFederal = pessoa.pdcDocFederal;
+            // `pessoa.endCodFis` é lido DE PROPÓSITO como diagnóstico, nunca como o endereço do
+            // documento — ver `resolverEndCodDaPessoa`.
+            endCodFisSugeridoErp = pessoa.endCodFis;
         } catch (err) {
             return this.classifyValidatorError(err, 'validaProcessoPessoa', modalidadeFields);
         }
-        if (
-            endCodFis === undefined ||
-            endCodFis <= 0 ||
-            pdcDocFederal === undefined ||
-            pdcDocFederal.trim() === ''
-        ) {
+        if (pdcDocFederal === undefined || pdcDocFederal.trim() === '') {
             return {
                 classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_CADASTRO,
                 ...modalidadeFields,
-                ...(endCodFis !== undefined ? { endCodFis } : {}),
-                ...(pdcDocFederal !== undefined ? { pdcDocFederal } : {}),
                 motivo:
-                    'Cadastro da pessoa incompleto: ' +
-                    (pdcDocFederal === undefined || pdcDocFederal.trim() === ''
-                        ? 'CNPJ/CPF (pdcDocFederal) ausente'
-                        : 'endereço fiscal (endCodFis) ausente ou inválido') +
-                    ` — regularizar no Conexos antes de gerar a SN para o processo ${processo.priCod}.`,
+                    'Cadastro da pessoa incompleto: CNPJ/CPF (pdcDocFederal) ausente — ' +
+                    `regularizar no Conexos antes de gerar a SN para o processo ${processo.priCod}.`,
             };
         }
-        // endCodFis: number, pdcDocFederal: string (narrowed pelo early-return acima).
+
+        // ── gate 1.5: ENDEREÇO COERENTE com esse CNPJ ──
+        // O endereço do documento NÃO é o `endCodFis` do validador (é o endereço PADRÃO da pessoa); é o
+        // endereço cujo CNPJ é o do processo. Ver `resolverEndCodDaPessoa`.
+        const pesCod = pesCodErp ?? processo.pesCod;
+        let enderecos: EnderecoPessoa[];
+        try {
+            enderecos = await this.gerDocClient.listEnderecosPessoa({ filCod, pesCod });
+        } catch (err) {
+            return this.classifyValidatorError(err, 'com191/endereco/list', {
+                ...modalidadeFields,
+                pdcDocFederal,
+            });
+        }
+        const escolhido = this.resolverEndCodDaPessoa(enderecos, pdcDocFederal);
+        if (escolhido === undefined) {
+            const conhecidos = enderecos
+                .map((e) => `${e.endCod}=${e.pdcDocFederal ?? 'sem CNPJ'}`)
+                .join(', ');
+            return {
+                classificacao: PREFLIGHT_CLASSIFICACAO.BLOCKED_CADASTRO,
+                ...modalidadeFields,
+                pdcDocFederal,
+                motivo:
+                    `Nenhum endereço da pessoa ${pesCod} corresponde ao CNPJ/CPF ${pdcDocFederal} do ` +
+                    `processo ${processo.priCod}` +
+                    (conhecidos === ''
+                        ? ' (a pessoa não tem endereço cadastrado)'
+                        : ` (cadastrados: ${conhecidos})`) +
+                    ' — cadastre o endereço desse estabelecimento no Conexos antes de gerar a SN.',
+            };
+        }
+        const endCodFis = escolhido.endCod;
+        if (endCodFisSugeridoErp !== undefined && endCodFisSugeridoErp !== endCodFis) {
+            // Pessoa multi-estabelecimento: exatamente o caso que gerava `endCod NOT_VALID` no com297.
+            // Vale WARN — se um dia o validador passar a devolver o endereço do documento, este log seca.
+            void this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    '[RECEBIMENTOS] endereço do documento resolvido pelo CNPJ do processo diverge do ' +
+                    'endereço padrão sugerido pelo validaProcessoPessoa',
+                data: {
+                    priCod: processo.priCod,
+                    pesCod,
+                    pdcDocFederal,
+                    endCodUsado: endCodFis,
+                    endCodFisSugeridoErp,
+                    endereco: escolhido.endereco,
+                },
+            });
+        }
 
         // ── gate 2: config default (NOTA, não conclui) ──
         let gcdCodDefault: number | undefined;
@@ -1516,10 +1609,24 @@ export default class RecebimentoNumerarioService {
                 message: `com297 Configuracao "${env.com297GcdNotaDebitoNome}" not found — set COM297_GCD_NOTA_DEBITO`,
             });
         }
-        // endCodFis + pdcDocFederal REAIS do pré-flight (validaProcessoPessoa) — o com297 os exige igual ao
-        // com299 (sem pdcDocFederal → 400 "pdcDocFederalFilter;", live 2026-08-03). Fallback ao default 1.
-        const endCodFis = ctx.preflight?.endCodFis ?? END_COD_FIS_DEFAULT;
+        // endCodFis + pdcDocFederal REAIS do pré-flight — o com297 os exige igual ao com299 (sem
+        // pdcDocFederal → 400 "pdcDocFederalFilter;", live 2026-08-03), e exige que o par seja COERENTE
+        // (endereço do MESMO estabelecimento do CNPJ), senão `endCod Generic.NOT_VALID`.
+        //
+        // Sem fallback: o antigo `?? 1` produzia exatamente o valor errado — 1 é o endereço padrão da
+        // pessoa, e numa pessoa com dois estabelecimentos ele é justamente o que o ERP recusa. Chegar
+        // aqui sem pré-flight é bug de chamada; fail-closed ANTES do POST, que é irreversível.
+        const endCodFis = ctx.preflight?.endCodFis;
         const pdcDocFederal = ctx.preflight?.pdcDocFederal;
+        if (endCodFis === undefined || pdcDocFederal === undefined) {
+            throw new NumerarioGapError({
+                etapa: 'nota-debito',
+                message:
+                    `preflight did not resolve endCod/pdcDocFederal for processo ${processo.priCod} ` +
+                    `(endCod=${String(endCodFis)}, pdcDocFederal=${String(pdcDocFederal)}) — ` +
+                    'both are REQUIRED by com297 gerDocProcesso; refusing to emit the NDe without them',
+            });
+        }
         const ndConfig = await this.gerDocClient.validaConfigDoc({
             tela: 'com297',
             filCod,

@@ -161,6 +161,53 @@ export interface ValidaProcessoPessoaResult {
 }
 
 /**
+ * Zod no boundary de `com191/endereco/list/{pesCod}` — os ENDEREÇOS cadastrados da pessoa, cada um com
+ * seu `endCod` e o `pdcDocFederal` (CNPJ) do estabelecimento correspondente. Esta é a ÚNICA fonte que
+ * amarra endereço ↔ CNPJ; o `validaProcessoPessoa` NÃO amarra (ver `EnderecoPessoa`).
+ *
+ * `endVldDefault` é o desempate documentado do ERP ("endereço padrão da pessoa") — só usado quando dois
+ * endereços dividem o MESMO CNPJ.
+ */
+const ENDERECO_PESSOA_ROW_SCHEMA = z
+    .object({
+        endCod: z.coerce.number().int(),
+        pdcDocFederal: z
+            .string()
+            .nullish()
+            .transform((v) => v ?? undefined),
+        endVldDefault: z.coerce
+            .number()
+            .int()
+            .nullish()
+            .transform((v) => v ?? undefined),
+        endereco: z
+            .string()
+            .nullish()
+            .transform((v) => v ?? undefined),
+    })
+    .passthrough();
+
+const ENDERECO_PESSOA_LIST_SCHEMA = z.union([
+    z.array(ENDERECO_PESSOA_ROW_SCHEMA),
+    z.object({ rows: z.array(ENDERECO_PESSOA_ROW_SCHEMA).default([]) }),
+]);
+
+/** Página do `com191/endereco/list` — uma pessoa não tem centenas de endereços; 200 cobre com folga. */
+const ENDERECO_PESSOA_PAGE_SIZE = 200;
+
+/** Um endereço cadastrado da pessoa — o par (`endCod`, `pdcDocFederal`) é o que o documento exige coerente. */
+export interface EnderecoPessoa {
+    endCod: number;
+    /** CNPJ/CPF DO ESTABELECIMENTO deste endereço. É por ele que o endereço do documento é escolhido. */
+    pdcDocFederal?: string;
+    /** `1` = endereço padrão da pessoa. Desempate APENAS entre endereços de mesmo CNPJ. */
+    endVldDefault?: number;
+    /** Endereço formatado pelo ERP — só para log/motivo legível. */
+    endereco?: string;
+    [key: string]: unknown;
+}
+
+/**
  * Zod no boundary de `validaConfigDocPessoa` — a Configuração de Documento (`gcd`) que o ERP resolve
  * PARA ESTE processo/pessoa. `.passthrough()`: só `gcdCod`/`gcdDesNome` são tipados; o resto do
  * `responseData` passa livre. Lenient (`coerce`/`optional`) — a ausência de `gcdCod` NÃO é erro aqui, e sim
@@ -332,6 +379,41 @@ export default class ConexosGerDocProcessoClient {
                     if (question) return {};
                     throw httpErr;
                 }
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * `POST com191/endereco/list/{pesCod}` — os ENDEREÇOS cadastrados da pessoa, cada um com `endCod` e o
+     * `pdcDocFederal` do seu estabelecimento.
+     *
+     * Existe porque o `validaProcessoPessoa` **não** responde "qual endereço este documento usa": ele
+     * devolve o `pdcDocFederal` DO PROCESSO junto de um `endCodFis` que é o endereço PADRÃO da pessoa —
+     * um par incoerente quando a pessoa tem mais de um estabelecimento. Medido em produção 2026-08-11
+     * (pesCod 699, filial 2): `endCodFis: 1` + `pdcDocFederal: 10384567000405`, sendo que o endereço 1 é
+     * o CNPJ `/0001-62` e o `/0004-05` é o endereço **2**. As 140 NDes já emitidas para essa pessoa usam
+     * `endCod: 2`. Ver `resolverEndCodDaPessoa` no `RecebimentoNumerarioService`.
+     *
+     * Leitura idempotente → `runWithRetry`. Zod no boundary; aceita array cru ou envelope `{rows}`.
+     */
+    public listEnderecosPessoa = async (params: {
+        filCod: number;
+        pesCod: number;
+    }): Promise<EnderecoPessoa[]> => {
+        const { filCod, pesCod } = params;
+        const path = `com191/endereco/list/${pesCod}`;
+        try {
+            return await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                const raw = await this.base.postGeneric<unknown>(
+                    path,
+                    { pageNumber: 1, pageSize: ENDERECO_PESSOA_PAGE_SIZE },
+                    { filCod },
+                );
+                const parsed = ENDERECO_PESSOA_LIST_SCHEMA.parse(raw);
+                return Array.isArray(parsed) ? parsed : parsed.rows;
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: path, cause });
