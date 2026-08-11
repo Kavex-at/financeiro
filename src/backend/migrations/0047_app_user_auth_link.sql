@@ -1,4 +1,4 @@
--- 0044_app_user_auth_link — liga a linha `app_user` ao registro do GoTrue (Supabase Auth)
+-- 0047_app_user_auth_link — liga a linha `app_user` ao registro do GoTrue (Supabase Auth)
 -- e persiste a distinção "convidado" × "acesso revogado" (ADR-0030).
 --
 --   - `auth_user_id`: ponteiro para `auth.users.id` — é o `sub` do JWT. Chave INTERNA de

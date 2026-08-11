@@ -93,9 +93,15 @@ describe('GUARDA ANTI-REGRESSÃO — nenhum site de auditoria lê `sub` (I-Usuar
         //
         // O número que importa não é 19 nem 28: é que existe UMA doutrina. Antes eram três
         // (dois helpers locais + 17 expressões inline, 2 delas com os operandos invertidos).
+        //
+        // +1 NO REBASE (2026-08-11): a `main` ganhou `PATCH /transacoes/:id/arquivo` (arquivamento,
+        // commit 0c179ea) enquanto esta branch estava fora, e ele nasceu com o padrão ANTIGO
+        // (`req.user?.email ?? req.user?.sub ?? 'unknown'`) — persistido em `arquivado_por`. Foi
+        // ESTA guarda que o pegou no rebase; sem ela a trilha do arquivamento passaria a gravar
+        // UUID no dia do cutover, sem erro e sem teste vermelho. recebimentos.ts: 4 -> 5, total 29.
         const expected: Record<string, number> = {
             'permutas.ts': 13,
-            'recebimentos.ts': 4,
+            'recebimentos.ts': 5,
             'sispag.ts': 8,
             'usuarios.ts': 3,
         };

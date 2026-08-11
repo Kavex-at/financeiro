@@ -1,4 +1,4 @@
--- 0045_app_user_role_default — alinha o default de `role` com o least privilege (ADR-0030 §9).
+-- 0048_app_user_role_default — alinha o default de `role` com o least privilege (ADR-0030 §9).
 --
 -- `migrations/0007_app_user.sql` defaulta `role` a 'admin'; o boundary (`UserAdminService`)
 -- já defaulta a 'operador'. O drift era INÓCUO enquanto a autorização vinha do JWT — deixa de

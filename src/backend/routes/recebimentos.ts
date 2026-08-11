@@ -884,7 +884,7 @@ const arquivarHandler = (arquivar: boolean) =>
             return;
         }
 
-        const ator = req.user?.email ?? req.user?.sub ?? 'unknown';
+        const ator = auditActor(req);
         const mudou = arquivar ? await repo.arquivar(txnId, ator) : await repo.desarquivar(txnId);
         if (!mudou) {
             res.status(409).json({

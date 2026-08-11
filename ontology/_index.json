@@ -259,7 +259,7 @@
         "src/backend/migrations/0007_app_user.sql",
         "src/backend/migrations/0028_app_user_gestao.sql",
         "src/backend/migrations/0029_app_user_conexos_vinculo.sql",
-        "src/backend/migrations/0044_app_user_auth_link.sql",
+        "src/backend/migrations/0047_app_user_auth_link.sql",
         "src/backend/domain/repository/auth/UserRepository.ts",
         "src/backend/domain/service/auth/UserAdminService.ts",
         "src/backend/domain/client/SupabaseAdminClient.ts",
@@ -738,7 +738,7 @@
         "src/backend/jobs/migrate-users-to-supabase.ts",
         "src/backend/domain/repository/auth/UserRepository.ts",
         "src/backend/domain/client/SupabaseAdminClient.ts",
-        "src/backend/migrations/0044_app_user_auth_link.sql"
+        "src/backend/migrations/0047_app_user_auth_link.sql"
       ],
       "resolved_by": [
         "ADR-0030"
@@ -1134,7 +1134,7 @@
       "resolved_by": [
         "ADR-0030"
       ],
-      "note": "Ciclo de vida do ACESSO A PLATAFORMA (estado LOCAL app_user.ativo, nao do GoTrue): convidado|ativo|inativo. Transicoes U1 convidarUsuario (padrao, exige SMTP, atomico entre sistemas) / U2 aceite do convite (fora da nossa fronteira) / U3 cadastrarUsuarioComSenha (FALLBACK, nasce ativo, NAO exige SMTP) / U4 desativarUsuario (flag local PRIMEIRO + ban no GoTrue DEPOIS; falha no ban = sucesso PARCIAL auditado; autodesativacao proibida) / U5 ativarUsuario (unban; vinculo Conexos preservado). 'excluido' e out_of_scope POR DECISAO (hard-delete proibido, I-Usuario-3), nao por fatiamento. pendenteMigracao NAO e estado deste automato: e condicao derivada de authUserId IS NULL, ORTOGONAL — hoje todo app_user de producao e ativo E pendente ao mesmo tempo; modela-lo como estado afirmaria algo FALSO sobre a producao e criaria 'inativo+pendente', inalcancavel no diagrama mas alcancavel de verdade. Nota de impl: convidado e inativo sao ambos ativo=false hoje; persistir a distincao (se a UI precisar) e coluna nova na 0044 — decisao do TaskScoper."
+      "note": "Ciclo de vida do ACESSO A PLATAFORMA (estado LOCAL app_user.ativo, nao do GoTrue): convidado|ativo|inativo. Transicoes U1 convidarUsuario (padrao, exige SMTP, atomico entre sistemas) / U2 aceite do convite (fora da nossa fronteira) / U3 cadastrarUsuarioComSenha (FALLBACK, nasce ativo, NAO exige SMTP) / U4 desativarUsuario (flag local PRIMEIRO + ban no GoTrue DEPOIS; falha no ban = sucesso PARCIAL auditado; autodesativacao proibida) / U5 ativarUsuario (unban; vinculo Conexos preservado). 'excluido' e out_of_scope POR DECISAO (hard-delete proibido, I-Usuario-3), nao por fatiamento. pendenteMigracao NAO e estado deste automato: e condicao derivada de authUserId IS NULL, ORTOGONAL — hoje todo app_user de producao e ativo E pendente ao mesmo tempo; modela-lo como estado afirmaria algo FALSO sobre a producao e criaria 'inativo+pendente', inalcancavel no diagrama mas alcancavel de verdade. Nota de impl: convidado e inativo sao ambos ativo=false hoje; persistir a distincao (se a UI precisar) e coluna nova na 0047 — decisao do TaskScoper."
     }
   },
   "integrations": {

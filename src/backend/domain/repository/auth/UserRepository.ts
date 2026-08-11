@@ -6,7 +6,7 @@ export interface AppUser {
     id: number;
     username: string;
     /**
-     * `deprecated` — some na Fase 4 (ADR-0030 §6). OPCIONAL desde a migration `0044`:
+     * `deprecated` — some na Fase 4 (ADR-0030 §6). OPCIONAL desde a migration `0047`:
      * usuários criados pelo GoTrue não têm hash local, e o login legado deve tratar a
      * ausência como "credencial não confere" em vez de estourar.
      */
@@ -22,7 +22,7 @@ export interface AppUserPublic {
     role: string;
     ativo: boolean;
     /**
-     * Discriminador PERSISTIDO de `convidado` (ADR-0030 / migration `0044`). Junto com
+     * Discriminador PERSISTIDO de `convidado` (ADR-0030 / migration `0047`). Junto com
      * `ativo` deriva o `UsuarioStatus` — sem ele, "nunca entrou" e "acesso revogado" são a
      * mesma linha no banco (ambos `ativo = false`).
      */

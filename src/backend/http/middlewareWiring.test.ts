@@ -64,12 +64,12 @@ describe('index.ts — a ORDEM dos middlewares é o contrato (ADR-0030)', () => 
     });
 });
 
-describe('migrations 0044 / 0045 — idempotência e não-destrutividade', () => {
+describe('migrations 0047 / 0048 — idempotência e não-destrutividade', () => {
     const migration = (file: string): string =>
         readFileSync(path.join(BACKEND_ROOT, 'migrations', file), 'utf8');
 
-    it('0044: auth_user_id + índice ÚNICO + convite_pendente, tudo com guarda IF NOT EXISTS', () => {
-        const sql = migration('0044_app_user_auth_link.sql');
+    it('0047: auth_user_id + índice ÚNICO + convite_pendente, tudo com guarda IF NOT EXISTS', () => {
+        const sql = migration('0047_app_user_auth_link.sql');
         expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS auth_user_id UUID/);
         // UNIQUE: 1:1 com `auth.users`. No Postgres um índice único TOLERA múltiplos NULL —
         // o que importa porque HOJE todas as linhas de produção são NULL.
@@ -79,24 +79,24 @@ describe('migrations 0044 / 0045 — idempotência e não-destrutividade', () =>
         );
     });
 
-    it('0044: password_hash PERMANECE na tabela — é a fonte do import bcrypt até a Fase 4', () => {
-        const sql = migration('0044_app_user_auth_link.sql');
+    it('0047: password_hash PERMANECE na tabela — é a fonte do import bcrypt até a Fase 4', () => {
+        const sql = migration('0047_app_user_auth_link.sql');
         expect(sql).not.toMatch(/DROP COLUMN[\s\S]*password_hash/);
         // Só a obrigatoriedade sai: a custódia da credencial passou para o GoTrue.
         expect(sql).toMatch(/ALTER COLUMN password_hash DROP NOT NULL/);
     });
 
-    it('0045: muda SÓ o default de role — nenhuma linha existente é tocada', () => {
+    it('0048: muda SÓ o default de role — nenhuma linha existente é tocada', () => {
         // Rebaixar um admin em produção é ato administrativo explícito, não efeito colateral
         // de migration.
-        const sql = migration('0045_app_user_role_default.sql');
+        const sql = migration('0048_app_user_role_default.sql');
         expect(sql).toMatch(/ALTER COLUMN role SET DEFAULT 'operador'/);
         // O `not.toMatch(/UPDATE/)` só sobre o SQL executável vive no caso abaixo — aqui os
         // comentários explicam justamente por que não há UPDATE nenhum.
     });
 
     it('nenhuma das duas faz UPDATE, DELETE ou DROP TABLE', () => {
-        for (const file of ['0044_app_user_auth_link.sql', '0045_app_user_role_default.sql']) {
+        for (const file of ['0047_app_user_auth_link.sql', '0048_app_user_role_default.sql']) {
             const statements = migration(file)
                 .split('\n')
                 .filter((line) => !line.trimStart().startsWith('--'))

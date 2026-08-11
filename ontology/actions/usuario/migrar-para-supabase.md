@@ -10,7 +10,7 @@ related_files:
   - src/backend/jobs/migrate-users-to-supabase.ts
   - src/backend/domain/repository/auth/UserRepository.ts
   - src/backend/domain/client/SupabaseAdminClient.ts
-  - src/backend/migrations/0044_app_user_auth_link.sql
+  - src/backend/migrations/0047_app_user_auth_link.sql
 last_review: 2026-08-06
 preconditions:
   - "app_user com auth_user_id IS NULL"

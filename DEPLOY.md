@@ -56,9 +56,15 @@ Crie um **Web Service** apontando para o repositório.
 | Root Directory | `src/backend` |
 | Build Command | `npm ci && npm run build` |
 | Start Command | `npm start` |
-| Pre-Deploy Command | `npm run migrate && npm run seed:admin` |
 
-> O Pre-Deploy roda as migrations (cria `app_user` etc.) e semeia o admin ANTES de servir tráfego.
+> **As migrations rodam no BOOT**, dentro do próprio processo que vai servir tráfego, antes do
+> `listen()` (`migrations/BootMigrator.ts`). Não há passo de pre-deploy: o serviço do Render foi
+> configurado pelo dashboard, não pelo Blueprint, e `preDeployCommand` é recurso de plano pago —
+> **ele nunca rodou**. Migração que falha mata o boot com exit 1 e o Render mantém a versão
+> anterior no ar.
+>
+> ⚠️ **O `seed:admin` NÃO foi movido para o boot — ele é MANUAL**, pelo shell do Render
+> (`npm run seed:admin`). Ver a seção 4.
 
 ### Variáveis de ambiente (Render → Environment)
 
@@ -74,7 +80,7 @@ Crie um **Web Service** apontando para o repositório.
 | `AUTH_LEGACY_LOGIN_ENABLED` | `true` durante o rollout (default). `false` desliga `POST /auth/login` — **só depois** de `npm run job:migrate-users -- --execute` reportar zero pendentes |
 | `CONEXOS_CRED_ENC_KEY` | chave-mestra (base64, 32 bytes) do vínculo Conexos por usuário. **Gap pré-existente:** sem ela `SecretCipher` fica desabilitado e **tudo cai no usuário-robô** em produção |
 | `AUTH_JWT_SECRET` | **LEGADO DO ROLLOUT** — assina/valida os tokens HS256 do login antigo. Removível na Fase 4, junto com `AUTH_LEGACY_LOGIN_ENABLED` e `password_hash` |
-| `ADMIN_USERNAME` | `admin` (ou outro) |
+| `ADMIN_USERNAME` | **um e-mail real** (ex.: `financeiro@columbiatrading.com.br`). ⚠️ **NÃO use `admin`:** o `seed:admin` cria a conta no GoTrue com `email: ADMIN_USERNAME`, e o GoTrue **valida formato de e-mail** — qualquer valor sem `@` faz o job falhar. Ver seção 6 do runbook de cutover |
 | `ADMIN_PASSWORD` | **senha forte** — credencial inicial do admin |
 | `ALLOWED_ORIGINS` | `https://<app>.vercel.app` (domínio do frontend na Vercel) |
 | `DEV_AUTH_BYPASS` | `false` |
@@ -114,6 +120,18 @@ Importe o repositório como um projeto Vercel.
 | `NEXT_PUBLIC_API_URL` | `https://<backend>.onrender.com` (URL do serviço Render) |
 | `NEXT_PUBLIC_DEV_AUTH_BYPASS` | `false` |
 | `NEXT_PUBLIC_ENV` | `production` |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://<ref>.supabase.co`. Sem ela o app lança `MissingSupabaseEnvError` no primeiro login |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | chave `anon` do projeto. **Publicável por desenho** — o que protege é o RLS, não o segredo. **Nunca** a `service_role` aqui |
+| `NEXT_PUBLIC_AUTH_PROVIDER` | `legacy` **antes do merge**, `supabase` no flip da Fase 2. O default do código é `supabase` — ver o aviso abaixo |
+
+> ⚠️ **`NEXT_PUBLIC_AUTH_PROVIDER` é inlinada em BUILD TIME.** O Next substitui `process.env.NEXT_PUBLIC_*`
+> durante o build, então **mudar o valor no painel da Vercel não faz nada até um novo deploy**. O
+> rollback rápido da Fase 2 é o **instant rollback da Vercel** para o deployment anterior (aquele que
+> já tem `legacy` inlinado), não a troca da variável.
+>
+> ⚠️ **O default de `getAuthProvider()` é `supabase`.** Se o PR for mergeado sem esta variável setada
+> como `legacy`, a Vercel faz auto-deploy e **o cutover acontece sozinho**, com zero usuários migrados.
+> Setar ANTES de mergear.
 
 ---
 
@@ -128,15 +146,24 @@ Importe o repositório como um projeto Vercel.
 4. **Setar credenciais Conexos** (`CONEXOS_*`) no Render.
 5. Após o primeiro deploy do frontend, **copiar o domínio Vercel** e colocá-lo em
    `ALLOWED_ORIGINS` no Render; e **copiar a URL do Render** para `NEXT_PUBLIC_API_URL` na Vercel.
-6. Confirmar que o Pre-Deploy do Render rodou `migrate` + `seed:admin` (logs do deploy). O
-   `seed:admin` agora cria a conta **no GoTrue** e grava o `auth_user_id` na linha local.
-7. Acessar `https://<app>.vercel.app/login` e entrar com `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+6. Confirmar nos **logs do deploy** que as migrations aplicaram no boot — procurar
+   `[boot-migrate] aplicada(s) …` ou `[boot-migrate] esquema em dia`. **Não** existe passo de
+   pre-deploy (ver seção 2).
+7. **Rodar `npm run seed:admin` à mão**, pelo shell do Render. Ele cria a conta **no GoTrue** e
+   grava o `auth_user_id` na linha local. Exige `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` já
+   setadas, e um `ADMIN_USERNAME` em **formato de e-mail**. Idempotente; se imprimir
+   `ADMIN_ALREADY_IN_GOTRUE`, **pare e resolva à mão**.
+8. Acessar `https://<app>.vercel.app/login` e entrar com `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+
+> **Cutover de identidade:** o procedimento completo, faseado, com matriz de rollback e sinais de
+> problema, está em [`docs/runbooks/supabase-auth-cutover.md`](docs/runbooks/supabase-auth-cutover.md).
+> **A ordem dos passos é o conteúdo** — não improvise a partir só desta seção.
 
 ### Rollout da identidade (ADR-0030 §6)
 
 | Fase | Backend | Frontend | Rollback |
 |---|---|---|---|
-| 1 | migrations `0044`/`0045` + `appUserContext` + import dos hashes bcrypt | inalterado | reverter deploy |
+| 1 | migrations `0047`/`0048` + `appUserContext` + import dos hashes bcrypt | inalterado | reverter deploy |
 | 2 | aceita **ambos** os tokens (HS256 legado + ES256 Supabase) | `NEXT_PUBLIC_AUTH_PROVIDER=supabase` | voltar a flag para `legacy` |
 | 3 | `AUTH_LEGACY_LOGIN_ENABLED=false` | — | religar a flag |
 | 4 | remover HS256, `password_hash`, `AuthService` | — | — |

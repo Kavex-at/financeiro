@@ -55,9 +55,9 @@ a regra "exportar classes" governa `domain/`, e o desvio fica confinado ao bound
 `'manual'`, os outros 17 usam `'unknown'`. Passar o fallback mantém os dois valores como estão hoje em
 vez de unificar — unificar mudaria um valor persistido para resolver um problema estético.
 
-### D2 — `convidado` **precisa** de coluna nova na `0044`. É segurança, não UI.
+### D2 — `convidado` **precisa** de coluna nova na `0047`. É segurança, não UI.
 
-**Decisão: `convite_pendente BOOLEAN NOT NULL DEFAULT false` entra na `0044`.**
+**Decisão: `convite_pendente BOOLEAN NOT NULL DEFAULT false` entra na `0047`.**
 
 O discriminador que a state-machine sugere (`authUserId IS NULL` **e** convite pendente) **não funciona** —
 e a razão está na própria ontologia:
@@ -143,19 +143,19 @@ Critérios de aceite implícitos em cada uma — não repetidos abaixo:
 
 ## FASE A — Schema e repositório
 
-### Task 1: Migrations `0044` (link de identidade + convite) e `0045` (default de `role`)
+### Task 1: Migrations `0047` (link de identidade + convite) e `0048` (default de `role`)
 
 **Files to change:**
-- `src/backend/migrations/0044_app_user_auth_link.sql` _(novo)_
-- `src/backend/migrations/0045_app_user_role_default.sql` _(novo)_
+- `src/backend/migrations/0047_app_user_auth_link.sql` _(novo)_
+- `src/backend/migrations/0048_app_user_role_default.sql` _(novo)_
 
 **Acceptance criteria:**
-- [ ] `0044` adiciona, no estilo idempotente das existentes (`IF NOT EXISTS`, comentário-cabeçalho explicando o porquê):
+- [ ] `0047` adiciona, no estilo idempotente das existentes (`IF NOT EXISTS`, comentário-cabeçalho explicando o porquê):
       `auth_user_id UUID` + índice **único** `app_user_auth_user_id_key`, e `convite_pendente BOOLEAN NOT NULL DEFAULT false`
 - [ ] O índice de `auth_user_id` é **UNIQUE** e tolera múltiplos `NULL` (todas as linhas de produção hoje são `NULL`) — verificado por teste ou por aplicação repetida
-- [ ] `0045` executa `ALTER TABLE app_user ALTER COLUMN role SET DEFAULT 'operador'` — least privilege (ADR-0030 §9)
+- [ ] `0048` executa `ALTER TABLE app_user ALTER COLUMN role SET DEFAULT 'operador'` — least privilege (ADR-0030 §9)
 - [ ] `password_hash` **permanece** na tabela — é a fonte do import bcrypt até a Fase 4 (ADR-0030 §6)
-- [ ] Nenhuma das duas faz `UPDATE` de dados: `0045` muda só o default, linhas existentes ficam intactas
+- [ ] Nenhuma das duas faz `UPDATE` de dados: `0048` muda só o default, linhas existentes ficam intactas
 - [ ] Rodar `npm run migrate` **duas vezes** seguidas é no-op na segunda (idempotência do `MigrationRunner` + `IF NOT EXISTS`)
 
 **Dependencies:** nenhuma
