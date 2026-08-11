@@ -148,14 +148,36 @@ describe('POST /recebimentos/pipeline/run — authz por-filial + idempotency nam
         }
     });
 
-    it('namespaces the idempotency-key by the acting user sub (security-2)', async () => {
+    it('namespaces the idempotency-key by the acting user (security-2)', async () => {
         const run = registerServiceSpy();
-        const server = await listen(buildApp({ sub: 'user-xyz', role: 'admin', filiais: [4] }));
+        const server = await listen(
+            buildApp({ sub: 'user-xyz', username: 'user-xyz', role: 'admin', filiais: [4] }),
+        );
         try {
             await post(`${server.url}/recebimentos/pipeline/run`, basePayload());
             const input = run.mock.calls[0][0];
-            // The recebimento id (= idempotency key) is prefixed with the acting user's sub.
+            // The recebimento id (= idempotency key) is prefixed with the acting user.
             expect(String(input.recebimento.id)).toContain('receb:user-xyz:');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('REGRESSÃO: o namespace do ledger fica BYTE-IDÊNTICO ao de hoje (sub === username)', async () => {
+        // Em produção, HOJE, o `sub` do token legado É o e-mail — logo `sub === username`, e
+        // trocar `req.user?.sub` por `auditActor(req)` (I-Usuario-1) deixa a chave INALTERADA.
+        // Isso importa porque a chave é o dedo-duro da execução dupla numa rota que MOVE
+        // DINHEIRO: um namespace que mudasse em silêncio faria toda chave gravada antes do
+        // deploy deixar de casar, e a mesma alocação poderia rodar duas vezes.
+        const run = registerServiceSpy();
+        const email = 'marilyn.mutafci@kavex.com';
+        const server = await listen(
+            buildApp({ sub: email, username: email, email, role: 'admin', filiais: [4] }),
+        );
+        try {
+            await post(`${server.url}/recebimentos/pipeline/run`, basePayload());
+            const input = run.mock.calls[0][0];
+            expect(String(input.recebimento.id)).toBe(`receb:${email}:${CORR}`);
         } finally {
             await server.close();
         }

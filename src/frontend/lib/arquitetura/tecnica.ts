@@ -111,20 +111,23 @@ export const TECNICA_NODES: ArqNode[] = [
             subtitle: 'JWT em localStorage',
             frente: 'plataforma',
             camada: 'ui',
-            maturidade: 'parcial',
+            maturidade: 'implementado',
             estado: 'hoje',
             vista: 'tecnica',
             descricao:
-                'O token de acesso é guardado no armazenamento local do navegador e enviado como cabeçalho de autorização. A proteção de rotas é feita no cliente, por um componente que decide o que renderizar — não há verificação na borda antes da página chegar ao navegador.',
+                'A sessão é custodiada pelo provedor de identidade em cookies, com renovação automática e revogação real no logout. A proteção de rotas acontece na borda, antes de a página chegar ao navegador, e é reforçada no cliente como segunda barreira. O papel do usuário é lido do banco a cada requisição, não do próprio token.',
             arquivos: [
+                'src/frontend/middleware.ts',
+                'src/frontend/lib/supabase/middleware.ts',
+                'src/frontend/lib/supabase/client.ts',
                 'src/frontend/lib/auth/token.ts',
                 'src/frontend/components/auth/RouteGate.tsx',
             ],
             riscos: [
                 {
-                    nivel: 'alto',
+                    nivel: 'medio',
                     texto:
-                        'Token de doze horas guardado em armazenamento local, sem revogação no servidor. Um token vazado permanece válido até expirar naturalmente, e não há como invalidá-lo.',
+                        'Resolvido pela troca de provedor de identidade: a sessão passou a ter renovação, rotação e revogação. O risco residual é a latência declarada da revogação administrativa — até trinta segundos —, e ela só permanece um teto real enquanto o backend rodar em instância única.',
                     origem: 'Regis-Review — security',
                 },
             ],

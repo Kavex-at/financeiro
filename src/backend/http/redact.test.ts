@@ -45,4 +45,24 @@ describe('redactBody', () => {
         expect(out.cpf).toBe('[REDACTED]');
         expect(out.nome).toBe('x');
     });
+
+    // ── ADR-0030 §4 ──────────────────────────────────────────────────────────────────────
+    it('masks the GoTrue service-role key in every spelling that occurs in practice', () => {
+        // Ela IGNORA RLS e pode criar usuários — um `[REQ] body=` com ela no drain do Render
+        // é equivalente a vazar o banco inteiro. Até esta feature, `redactBody` NÃO a cobria.
+        const out = redactBody({
+            service_role: 'eyJhbGciOi.service.role',
+            serviceRoleKey: 'eyJhbGciOi.camel.case',
+            SUPABASE_SERVICE_ROLE_KEY: 'eyJhbGciOi.env.var',
+            supabase: { service_role_key: 'eyJhbGciOi.nested' },
+            url: 'https://ref.supabase.co',
+        }) as Record<string, unknown>;
+
+        expect(out.service_role).toBe('[REDACTED]');
+        expect(out.serviceRoleKey).toBe('[REDACTED]');
+        expect(out.SUPABASE_SERVICE_ROLE_KEY).toBe('[REDACTED]');
+        expect((out.supabase as Record<string, unknown>).service_role_key).toBe('[REDACTED]');
+        // A URL do projeto não é segredo — mascará-la só atrapalharia o diagnóstico.
+        expect(out.url).toBe('https://ref.supabase.co');
+    });
 });

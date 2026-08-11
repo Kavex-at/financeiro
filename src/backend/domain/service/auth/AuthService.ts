@@ -51,6 +51,10 @@ export default class AuthService {
         // Usuário desativado pela gestão (soft-disable): recusa o login como se a
         // credencial fosse inválida (não revela que a conta existe).
         if (!user.ativo) return null;
+        // Sem hash local (usuário nascido no GoTrue — ADR-0030 §7): este caminho legado não
+        // tem o que comparar. Recusa como credencial inválida; a resposta é indistinguível de
+        // "senha errada", e o titular entra pelo caminho do provedor.
+        if (!user.passwordHash) return null;
 
         const passwordMatches = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatches) return null;

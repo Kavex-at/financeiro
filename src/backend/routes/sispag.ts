@@ -11,7 +11,7 @@ import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagament
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { requireRole } from '../http/auth.js';
+import { auditActor, requireRole } from '../http/auth.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
 
 /**
@@ -61,8 +61,6 @@ router.get(
 
 // ===================================================== Fatia 2 — Lotes candidatos
 // Montagem assistida + gate. Estado LOCAL — NENHUMA escrita no Conexos (I1).
-
-const ator = (req: Request): string => req.user?.sub ?? req.user?.email ?? 'unknown';
 
 /** Mapeia um erro de domínio (HandlerError) para a resposta HTTP; senão devolve false. */
 const respondLoteError = (req: Request, res: Response, err: unknown): boolean => {
@@ -144,7 +142,7 @@ router.post(
             return;
         }
         const service = container.resolve(LotePagamentoService);
-        const lote = await service.criarLote({ ...parsed.data, ator: ator(req) });
+        const lote = await service.criarLote({ ...parsed.data, ator: auditActor(req) });
         res.status(201).json({ lote });
     }),
 );
@@ -165,7 +163,7 @@ router.post(
             const lote = await service.incluirTitulo({
                 loteId: String(req.params.id),
                 ...parsed.data,
-                ator: ator(req),
+                ator: auditActor(req),
             });
             res.json({ lote });
         } catch (err) {
@@ -192,7 +190,7 @@ router.delete(
                 filCod,
                 docCod: String(req.params.docCod),
                 titCod: String(req.params.titCod),
-                ator: ator(req),
+                ator: auditActor(req),
             });
             res.json({ lote });
         } catch (err) {
@@ -220,7 +218,7 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
             const input = {
                 loteId: String(req.params.id),
                 versao: parsed.data.versao,
-                ator: ator(req),
+                ator: auditActor(req),
             };
             try {
                 const lote =
@@ -268,7 +266,7 @@ router.post(
                 titCod: String(req.params.titCod),
                 modalidade: parsed.data.modalidade,
                 versao: parsed.data.versao,
-                ator: ator(req),
+                ator: auditActor(req),
             });
             res.json({ lote });
         } catch (err) {
@@ -298,7 +296,7 @@ router.post(
                 versao: parsed.data.versao,
                 banco: parsed.data.banco,
                 conta: parsed.data.conta,
-                ator: ator(req),
+                ator: auditActor(req),
             });
             res.json({ lote });
         } catch (err) {
@@ -321,7 +319,7 @@ router.post(
         const service = container.resolve(IngestaoPagamentosService);
         const idempotencyKey = req.header('Idempotency-Key') ?? undefined;
         try {
-            const result = await service.executar({ triggeredBy: ator(req), idempotencyKey });
+            const result = await service.executar({ triggeredBy: auditActor(req), idempotencyKey });
             res.json(result);
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
@@ -339,7 +337,7 @@ router.post(
         await bootstrapAppContainer();
         const service = container.resolve(FormacaoLotesService);
         try {
-            const result = await service.formar({ triggeredBy: ator(req) });
+            const result = await service.formar({ triggeredBy: auditActor(req) });
             res.json(result);
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;

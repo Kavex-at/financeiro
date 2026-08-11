@@ -34,6 +34,18 @@ const RawAuthEnvSchema = z.object({
     // no Supabase). Preferred over SUPABASE_JWT_SECRET when both are set. The
     // AuthService signs with it; the middleware verifies HS256 tokens with it.
     AUTH_JWT_SECRET: z.string().min(1).optional(),
+    // Service-role key da Admin API do GoTrue (convite, criação, ban, reset). Ela IGNORA RLS
+    // e pode criar usuários: vive SÓ no backend, NUNCA como `NEXT_PUBLIC_*` (ADR-0030 §4).
+    SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+    // Chave pública (anon) — publicável; aqui só para paridade de configuração.
+    SUPABASE_ANON_KEY: z.string().min(1).optional(),
+    // Botão de ROLLBACK da Fase 3 do cutover (ADR-0030 §6). Default `true` durante o rollout:
+    // desligar o login legado enquanto houver `app_user` com `auth_user_id IS NULL` deixa esse
+    // usuário SEM NENHUM caminho de login. O gate é `listPendingMigration()` vazio.
+    AUTH_LEGACY_LOGIN_ENABLED: z
+        .enum(['true', 'false'])
+        .optional()
+        .transform((v) => v !== 'false'),
     DEV_AUTH_BYPASS: z
         .enum(['true', 'false'])
         .optional()
@@ -63,6 +75,19 @@ export interface AuthEnv {
     supabaseUrl?: string;
     /** Legacy HS256 secret used to verify Supabase-issued JWTs. */
     jwtSecret?: string;
+    /**
+     * GoTrue Admin API key. Backend-only — it bypasses RLS and can create users, so it must
+     * never be exposed as `NEXT_PUBLIC_*` (ADR-0030 §4). `redactBody` masks it in logs.
+     */
+    serviceRoleKey?: string;
+    /** Public (anon) key. Publishable; kept here only for configuration parity. */
+    anonKey?: string;
+    /**
+     * Rollout Phase-3 rollback switch (ADR-0030 §6). `false` disables `POST /auth/login`.
+     * Defaults to **true** so an unset variable never locks anyone out mid-rollout; turning
+     * it off is gated on `listPendingMigration()` being empty.
+     */
+    legacyLoginEnabled: boolean;
     /** When true, JWT validation is skipped entirely (local dev only). */
     devBypass: boolean;
 }
@@ -77,6 +102,9 @@ export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
         SUPABASE_URL: env.SUPABASE_URL,
         SUPABASE_JWT_SECRET: env.SUPABASE_JWT_SECRET,
         AUTH_JWT_SECRET: env.AUTH_JWT_SECRET,
+        SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
+        SUPABASE_ANON_KEY: env.SUPABASE_ANON_KEY,
+        AUTH_LEGACY_LOGIN_ENABLED: env.AUTH_LEGACY_LOGIN_ENABLED,
         DEV_AUTH_BYPASS: env.DEV_AUTH_BYPASS,
         environment: env.environment,
     });
@@ -110,6 +138,9 @@ export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
     return {
         supabaseUrl: parsed.SUPABASE_URL,
         jwtSecret,
+        serviceRoleKey: parsed.SUPABASE_SERVICE_ROLE_KEY,
+        anonKey: parsed.SUPABASE_ANON_KEY,
+        legacyLoginEnabled: parsed.AUTH_LEGACY_LOGIN_ENABLED,
         devBypass: parsed.DEV_AUTH_BYPASS,
     };
 };

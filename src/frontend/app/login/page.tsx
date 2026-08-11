@@ -1,8 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
-import { Eye, EyeOff, Lock, LogIn, User } from 'lucide-react'
+import { Eye, EyeOff, Lock, LogIn, Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
@@ -10,11 +11,18 @@ import { useAuth } from '@/lib/auth/AuthProvider'
 import pkg from '../../package.json'
 
 /**
- * Sign-in page. Simple username/password form posted to the backend
- * (`POST /auth/login`). On success the token is stored and the user is sent to
- * the app root. Already-authenticated visitors (or dev-bypass) are bounced
- * straight to `/`. Public route (excluded from the `RouteGate` guard); the app
- * header is hidden here (see `AppShell`) for a clean full-screen experience.
+ * Sign-in page. `signIn` agora fala com o Supabase GoTrue (`signInWithPassword`) em vez de
+ * postar para `POST /auth/login` — mas a ASSINATURA não mudou, e por isso este formulário
+ * mudou o mínimo possível.
+ *
+ * **A migração para `react-hook-form` + `zod` foi deliberadamente ADIADA** (follow-up P2).
+ * Esta é a única porta de entrada durante um cutover cujo modo de falha declarado é lockout
+ * geral: reescrevê-la no mesmo PR que troca o provedor de identidade removeria justamente a
+ * peça que precisa continuar funcionando enquanto tudo em volta muda. (E as moléculas que
+ * `docs/design-system/forms.md` exige — `FormField`, `PasswordInput` — ainda não existem.)
+ *
+ * Já-autenticados (ou dev-bypass) são mandados para `/`. Rota pública (fora do `RouteGate`);
+ * o header da app fica escondido aqui (ver `AppShell`).
  */
 function LoginForm() {
   const { signIn, token, devBypass, loading } = useAuth()
@@ -81,10 +89,14 @@ function LoginForm() {
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <label htmlFor="username" className="text-sm font-medium">
-                Usuário
+                E-mail
               </label>
               <div className="relative">
-                <User
+                {/* O identificador SEMPRE foi o e-mail (`app_user.username`); o provedor de
+                    identidade agora torna isso explícito. O `type` continua `text` de
+                    propósito: introduzir validação nova de formato no meio de um cutover
+                    trocaria um problema de login por outro. */}
+                <Mail
                   className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
                   aria-hidden
                 />
@@ -94,7 +106,7 @@ function LoginForm() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   autoComplete="username"
-                  placeholder="seu usuário"
+                  placeholder="seu.email@columbia.com.br"
                   required
                   autoFocus
                   data-testid="login-username"
@@ -128,6 +140,7 @@ function LoginForm() {
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
                   aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                   tabIndex={-1}
+                  data-testid="login-password-toggle"
                 >
                   {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </button>
@@ -162,6 +175,16 @@ function LoginForm() {
               )}
             </Button>
           </form>
+
+          <p className="mt-4 text-center text-sm">
+            <Link
+              href="/auth/forgot-password"
+              className="text-muted-foreground transition-colors hover:text-foreground"
+              data-testid="login-forgot-password"
+            >
+              Esqueci minha senha
+            </Link>
+          </p>
         </div>
 
         <p className="mt-6 text-center text-xs text-muted-foreground">

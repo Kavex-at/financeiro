@@ -1,41 +1,67 @@
 'use client'
 
+import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { isDevAuthBypass } from './env'
-
-/** localStorage key holding the backend-issued JWT. */
-export const TOKEN_STORAGE_KEY = 'auth_token'
-/** localStorage key holding the signed-in username (for the header menu). */
-export const USERNAME_STORAGE_KEY = 'auth_username'
+import { readLegacySession } from './legacySession'
+import { isLegacyAuth } from './provider'
 
 /**
- * Returns the current access token from `localStorage`, or `undefined` when
- * there is none (or on the server, or when dev-bypass is on). Synchronous —
- * the token lives in `localStorage` (no async session lookup). Used by the API
- * client to attach `Authorization: Bearer <token>` to backend requests.
+ * Access token da sessão corrente — **do Supabase**, não do `localStorage`.
+ *
+ * ## Por que o token saiu do `localStorage`
+ *
+ * Ele vivia em `localStorage` sem refresh, sem rotação e **sem revogação**: um token vazado
+ * valia as 12 h inteiras, e não havia logout de verdade. Agora a sessão é custodiada pelo
+ * `@supabase/ssr` em cookies, com refresh automático e rotação — e `signOut()` revoga do lado
+ * do provedor.
+ *
+ * ## Por que virou `async`
+ *
+ * `supabase.auth.getSession()` é assíncrona (pode disparar um refresh). Isso não vaza para os
+ * chamadores: `withAuthHeaders` **já era** `async`, então os 52 call sites em `lib/api.ts`,
+ * `lib/recebimentos.ts`, `lib/sispag.ts` e `lib/usuarios.ts` seguem intocados.
  */
-export const getAccessToken = (): string | undefined => {
+export const getAccessToken = async (): Promise<string | undefined> => {
   if (isDevAuthBypass()) return undefined
   if (typeof window === 'undefined') return undefined
-  return window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? undefined
+  // Rollback da Fase 2 (ADR-0030 §6): sob a flag legada o token volta a vir do
+  // `localStorage`, porque é lá que `POST /auth/login` o deixou. O backend aceita os dois
+  // esquemas e resolve o `app_user` pelo lookup certo (`authScheme`).
+  if (isLegacyAuth()) return readLegacySession()?.token
+  try {
+    const {
+      data: { session },
+    } = await getSupabaseBrowserClient().auth.getSession()
+    return session?.access_token ?? undefined
+  } catch {
+    // Configuração ausente ou provedor fora: a request segue sem header e o backend
+    // responde 401 — que é o caminho já tratado. Um throw aqui quebraria 52 call sites.
+    return undefined
+  }
 }
 
 /**
  * Builds request headers with the bearer token attached when available.
- * Kept `async` so callers (`lib/api.ts`) need no change. Merges any
- * caller-supplied headers (caller values take precedence).
+ *
+ * **A assinatura não muda** — já era `async`. É a razão pela qual o cutover de identidade
+ * não tocou em nenhum dos 52 call sites da camada de API.
  */
 export const withAuthHeaders = async (
   base: Record<string, string> = {},
 ): Promise<Record<string, string>> => {
-  const token = getAccessToken()
+  const token = await getAccessToken()
   return token ? { Authorization: `Bearer ${token}`, ...base } : { ...base }
 }
 
 /**
  * Reads the `exp` claim (seconds since epoch) from a JWT WITHOUT verifying the
- * signature — the backend already verifies it on every request. Used only to
- * schedule the proactive session-expired modal. Returns `null` for any
+ * signature — the backend already verifies it on every request. Returns `null` for any
  * malformed token (missing/garbage payload, non-numeric `exp`).
+ *
+ * Sobrevive porque o `SessionExpiredModal` ainda usa o instante da expiração no texto. Já o
+ * `decodeJwtRole` foi **removido**: ler papel de uma claim não verificada era o bug, não o
+ * mecanismo — e depois do cutover a claim `role` do GoTrue é sempre `'authenticated'`, o que
+ * faria a UI de admin sumir para os próprios admins. O papel agora vem de `GET /me`.
  */
 export const decodeJwtExp = (token: string): number | null => {
   try {
@@ -44,24 +70,6 @@ export const decodeJwtExp = (token: string): number | null => {
     const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
     const json = JSON.parse(atob(base64)) as { exp?: unknown }
     return typeof json.exp === 'number' && Number.isFinite(json.exp) ? json.exp : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Reads the `role` claim from a JWT WITHOUT verifying the signature — the
- * backend already verifies it on every request. Used only to show/hide the
- * admin-only UI (the real authorization is server-side, `requireRole`).
- * Returns `null` for any malformed token.
- */
-export const decodeJwtRole = (token: string): string | null => {
-  try {
-    const payload = token.split('.')[1]
-    if (!payload) return null
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-    const json = JSON.parse(atob(base64)) as { role?: unknown }
-    return typeof json.role === 'string' ? json.role : null
   } catch {
     return null
   }

@@ -1,38 +1,54 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { type ConexosStatus, fetchConexosStatus } from '../usuarios'
+import { getSupabaseBrowserClient } from '@/lib/supabase/client'
+import { type ConexosStatus, fetchConexosStatus, fetchMe } from '../usuarios'
 import { assertAuthEnv, isDevAuthBypass } from './env'
+import { clearLegacySession, readLegacySession, writeLegacySession } from './legacySession'
+import { isLegacyAuth } from './provider'
 import { registerSessionExpiredHandler } from './session-events'
-import { decodeJwtExp, decodeJwtRole, TOKEN_STORAGE_KEY, USERNAME_STORAGE_KEY } from './token'
+
+const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '')
 
 // Fail-fast: crash on import if dev-bypass is on in a non-local build, instead
 // of silently rendering an unauthenticated app.
 assertAuthEnv()
 
-/** Backend API base URL (same default as `lib/api.ts`). */
-const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '')
-
 /**
- * Authentication context for the app. Holds a backend-issued JWT in
- * `localStorage` and exposes the current username, a loading flag, and
- * sign-in / sign-out actions.
+ * Authentication context for the app.
  *
- * When `NEXT_PUBLIC_DEV_AUTH_BYPASS=true` the provider reports a synthetic
- * authenticated state and never calls the backend, so local development works
- * without logging in.
+ * ## O que mudou no cutover (ADR-0030)
+ *
+ * A sessão deixou de ser um JWT em `localStorage` (sem refresh, sem rotação, **sem
+ * revogação**) e passou a ser custodiada pelo Supabase GoTrue em cookies, com refresh
+ * automático. Duas consequências que valem mais do que o mecanismo:
+ *
+ * 1. **O papel vem de `GET /me`, não do token.** O JWT do GoTrue traz `role: 'authenticated'`
+ *    para todo mundo — lê-lo faria `useIsAdmin()` retornar `false` para os próprios admins, e
+ *    a tela `/usuarios` e o card de admin **sumiriam sem erro, sem log e sem teste vermelho**.
+ * 2. **O `setTimeout` proativo de expiração morreu.** Com auto-refresh ligado ele dispararia o
+ *    modal de "sessão expirada" em cima de uma sessão perfeitamente válida. Quem decide agora
+ *    é `onAuthStateChange`.
+ *
+ * Em `NEXT_PUBLIC_DEV_AUTH_BYPASS=true` o provider reporta um estado sintético e nunca chama
+ * o backend, para o dev local rodar sem login.
  */
 export interface AuthContextValue {
   token: string | null
   username: string | null
+  /** Papel resolvido do BANCO via `GET /me` — nunca de uma claim do token. */
+  role: string | null
   loading: boolean
   /** True when bypass mode is active (no real token). */
   devBypass: boolean
-  /** True when the 12h JWT has expired — drives the blocking re-login modal. */
+  /**
+   * True quando o refresh REALMENTE falhou — não mais o fluxo normal de expiração.
+   * Com refresh automático, a sessão só morre quando o provedor a recusa.
+   */
   sessionExpired: boolean
-  /** Epoch ms of the token's `exp` (the moment it expired), for the modal copy. */
+  /** Epoch ms do momento em que a sessão morreu, para o texto do modal. */
   sessionExpiredAt: number | null
-  /** Flags the session as expired (called by the 401 bus and the proactive timer). */
+  /** Flags the session as expired (called by the 401 bus and by onAuthStateChange). */
   notifySessionExpired: () => void
   /** Clears the expired flag (called right before redirecting to /login). */
   clearSessionExpired: () => void
@@ -43,7 +59,7 @@ export interface AuthContextValue {
    */
   conexosStatus: ConexosStatus | null
   signIn: (username: string, password: string) => Promise<void>
-  signOut: () => void
+  signOut: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -52,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const devBypass = isDevAuthBypass()
   const [token, setToken] = useState<string | null>(null)
   const [username, setUsername] = useState<string | null>(null)
+  const [role, setRole] = useState<string | null>(null)
   const [loading, setLoading] = useState(!devBypass)
   const [sessionExpired, setSessionExpired] = useState(false)
   const [sessionExpiredAt, setSessionExpiredAt] = useState<number | null>(null)
@@ -70,25 +87,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [devBypass])
 
+  /**
+   * Resolve identidade e papel **do banco**. É o passo que impede a UI de admin de sumir
+   * silenciosamente no cutover (§D3): o token não sabe quem é admin, `app_user` sabe.
+   */
+  const refreshIdentity = useCallback(async () => {
+    if (devBypass) return
+    try {
+      const me = await fetchMe()
+      setUsername(me.username)
+      setRole(me.role)
+    } catch {
+      // 403 (sem linha em `app_user` / inativo) não é sessão expirada: o usuário está
+      // autenticado e sem autorização. Deixar `role` nulo esconde a UI de admin — que é o
+      // comportamento correto — sem derrubar a sessão.
+      setRole(null)
+    }
+  }, [devBypass])
+
+  // Sessão inicial + reação a login/logout/refresh vindos do provedor.
   useEffect(() => {
     if (devBypass) return
-    if (typeof window !== 'undefined') {
-      const stored = window.localStorage.getItem(TOKEN_STORAGE_KEY)
-      setToken(stored)
-      setUsername(window.localStorage.getItem(USERNAME_STORAGE_KEY))
-      if (stored) void refreshConexosStatus()
+
+    // ── Rollback da Fase 2 (ADR-0030 §6) ────────────────────────────────────────────────
+    // Sob a flag legada não há provedor com quem conversar: a sessão é o token no
+    // `localStorage`, sem refresh e sem `onAuthStateChange`. Instanciar o cliente Supabase
+    // aqui estouraria em `MissingSupabaseEnvError` justamente no cenário em que se acionou o
+    // rollback porque o Supabase é o problema.
+    if (isLegacyAuth()) {
+      const session = readLegacySession()
+      setToken(session?.token ?? null)
+      setLoading(false)
+      if (session) {
+        void refreshIdentity()
+        void refreshConexosStatus()
+      }
+      return
     }
-    setLoading(false)
-  }, [devBypass, refreshConexosStatus])
+
+    const supabase = getSupabaseBrowserClient()
+    let active = true
+
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!active) return
+      setToken(session?.access_token ?? null)
+      setLoading(false)
+      if (session) {
+        void refreshIdentity()
+        void refreshConexosStatus()
+      }
+    })
+
+    // Substitui o `setTimeout` proativo que existia aqui: com auto-refresh, agendar o modal
+    // para o `exp` do token o dispararia em cima de uma sessão viva. `TOKEN_REFRESHED` é
+    // justamente o evento que provava que a sessão continua boa.
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return
+      setToken(session?.access_token ?? null)
+      if (event === 'SIGNED_OUT') {
+        setUsername(null)
+        setRole(null)
+        setConexosStatus(null)
+        return
+      }
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        setSessionExpired(false)
+        setSessionExpiredAt(null)
+        void refreshIdentity()
+      }
+    })
+
+    return () => {
+      active = false
+      subscription.unsubscribe()
+    }
+  }, [devBypass, refreshIdentity, refreshConexosStatus])
 
   const notifySessionExpired = useCallback(() => {
     if (devBypass) return
-    // Capture the real expiry instant from the token's `exp` so the modal can
-    // tell the user EXACTLY when the session died (and that earlier work is safe).
-    const current =
-      typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null
-    const exp = current ? decodeJwtExp(current) : null
-    setSessionExpiredAt(exp != null ? exp * 1000 : Date.now())
+    setSessionExpiredAt(Date.now())
     setSessionExpired(true)
   }, [devBypass])
 
@@ -97,69 +176,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSessionExpiredAt(null)
   }, [])
 
-  // Bridge: let the non-React API layer (apiFetch → emitSessionExpired) reach
-  // this provider when a request comes back 401 (reactive path).
+  // Bridge: let the non-React API layer (apiFetch → emitSessionExpired) reach this provider
+  // when a request comes back 401. Depois do cutover isso é FALLBACK, não o fluxo normal:
+  // o 401 só sobrevive ao auto-refresh quando o refresh realmente falhou.
   useEffect(() => {
     if (devBypass) return
     return registerSessionExpiredHandler(notifySessionExpired)
   }, [devBypass, notifySessionExpired])
 
-  // Proactive path: fire the modal exactly at the token's `exp`, even if the
-  // user is idle (no failed request needed). Reset whenever the token changes.
-  useEffect(() => {
-    if (devBypass || !token) return
-    const exp = decodeJwtExp(token)
-    if (exp == null) return
-    const ms = exp * 1000 - Date.now()
-    const id = setTimeout(notifySessionExpired, Math.max(0, ms))
-    return () => clearTimeout(id)
-  }, [token, devBypass, notifySessionExpired])
-
   const signIn = useCallback(
     async (user: string, password: string) => {
       if (devBypass) return
-      const res = await fetch(`${API}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: user, password }),
+      if (isLegacyAuth()) {
+        // `POST /auth/login` continua vivo no backend enquanto `AUTH_LEGACY_LOGIN_ENABLED`
+        // for `true` (Fase 3 o desliga com **410**, não 404 — o recurso existiu e foi
+        // retirado). `apiFetch` está deliberadamente fora daqui: um 401 nesta chamada é
+        // "senha errada", não sessão expirada, e não pode abrir o modal.
+        const res = await fetch(`${API}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: user, password }),
+        })
+        if (!res.ok) {
+          throw new Error(
+            res.status === 410
+              ? 'O login por senha foi desativado. Use a tela de entrada padrão.'
+              : 'E-mail ou senha inválidos.',
+          )
+        }
+        const body = (await res.json()) as { token: string; username: string }
+        writeLegacySession({ token: body.token, username: body.username })
+        setToken(body.token)
+        // Sem `onAuthStateChange` neste modo: quem resolve identidade e papel é esta linha.
+        void refreshIdentity()
+        void refreshConexosStatus()
+        return
+      }
+      const { error } = await getSupabaseBrowserClient().auth.signInWithPassword({
+        email: user,
+        password,
       })
-      if (!res.ok) {
-        let message = 'Falha ao entrar.'
-        try {
-          const body = await res.json()
-          if (body?.error) message = body.error
-        } catch {}
-        throw new Error(message)
+      if (error) {
+        // Mensagem user-facing em PT-BR; a do provedor é em inglês e vaza detalhe interno.
+        throw new Error('E-mail ou senha inválidos.')
       }
-      const body = (await res.json()) as { token: string; username: string }
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(TOKEN_STORAGE_KEY, body.token)
-        window.localStorage.setItem(USERNAME_STORAGE_KEY, body.username)
-      }
-      setToken(body.token)
-      setUsername(body.username)
-      // Verifica o vínculo Conexos logo após o login (avisa se cai no robô).
+      // `onAuthStateChange` (SIGNED_IN) resolve identidade e papel; o vínculo Conexos é
+      // verificado aqui para avisar já no login quando a operação cai no robô.
       void refreshConexosStatus()
     },
-    [devBypass, refreshConexosStatus],
+    [devBypass, refreshIdentity, refreshConexosStatus],
   )
 
-  const signOut = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-      window.localStorage.removeItem(USERNAME_STORAGE_KEY)
+  const signOut = useCallback(async () => {
+    if (isLegacyAuth()) {
+      // Limpar o storage é TUDO o que o esquema legado consegue fazer: o token segue válido
+      // no servidor até o `exp`. Essa é a limitação que o cutover existe para remover — e
+      // ela volta junto com o modo de emergência, de propósito.
+      clearLegacySession()
+    }
+    // REVOGAÇÃO DE VERDADE do lado do provedor — antes era só limpar o localStorage, o que
+    // deixava o token vazado válido pelas 12 h restantes.
+    if (!devBypass && !isLegacyAuth()) {
+      try {
+        await getSupabaseBrowserClient().auth.signOut()
+      } catch {
+        // Mesmo com o provedor fora, o estado local é limpo abaixo: melhor sair da sessão
+        // localmente do que travar o usuário numa tela que ele quer deixar.
+      }
     }
     setToken(null)
     setUsername(null)
+    setRole(null)
     setSessionExpired(false)
     setSessionExpiredAt(null)
     setConexosStatus(null)
-  }, [])
+  }, [devBypass])
 
   const value = useMemo<AuthContextValue>(
     () => ({
       token,
       username,
+      role,
       loading,
       devBypass,
       sessionExpired,
@@ -173,6 +270,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [
       token,
       username,
+      role,
       loading,
       devBypass,
       sessionExpired,
@@ -199,7 +297,7 @@ export function useAuth(): AuthContextValue {
 
 /**
  * Returns whether the current visitor is allowed past the auth gate:
- * true when dev-bypass is on OR a token exists.
+ * true when dev-bypass is on OR a session exists.
  */
 export function useIsAuthenticated(): { authenticated: boolean; loading: boolean } {
   const { token, loading, devBypass } = useAuth()
@@ -208,14 +306,18 @@ export function useIsAuthenticated(): { authenticated: boolean; loading: boolean
 }
 
 /**
- * The current user's role, read from the JWT (`null` when unknown). In
- * dev-bypass there is no token, so it reports `'admin'` so local dev can see
- * the admin-only UI. This is a UI hint only — the real gate is server-side.
+ * O papel do usuário — **resolvido do banco** por `GET /me` (`null` enquanto desconhecido).
+ * Em dev-bypass reporta `'admin'` para o dev local enxergar a UI de admin.
+ *
+ * **Nunca leia isto de uma claim do token.** O `role` do GoTrue é sempre `'authenticated'`;
+ * ler a claim faria esta função devolver `false` para todos os admins, e a UI de gestão
+ * desapareceria sem produzir erro nenhum. Isto continua sendo uma DICA de UI — o gate real é
+ * `requireRole` no servidor.
  */
 export function useRole(): string | null {
-  const { token, devBypass } = useAuth()
+  const { role, devBypass } = useAuth()
   if (devBypass) return 'admin'
-  return token ? decodeJwtRole(token) : null
+  return role
 }
 
 /** True when the signed-in user may manage other users (role `admin`). */

@@ -48,7 +48,17 @@ const buildApp = (opts: { authenticated: boolean; role?: string }): express.Expr
             return;
         }
         // role 'admin' por padrão (rotas de mutação exigem requireRole('admin')).
-        req.user = { sub: 'user-abc', email: 'a@b.com', role: opts.role ?? 'admin' };
+        //
+        // `sub` e `username` são DIFERENTES de propósito: é isso que faz as asserções de
+        // `criadoPor` / `processadoPor` / `executadoPor` / `triggeredBy` abaixo PROVAREM que
+        // o ator gravado é o username (I-Usuario-1), e não o sub. Se alguém reintroduzir
+        // `req.user?.sub` num site de auditoria, estes testes ficam vermelhos.
+        req.user = {
+            sub: 'user-abc',
+            email: 'a@b.com',
+            username: 'a@b.com',
+            role: opts.role ?? 'admin',
+        };
         next();
     });
     app.use('/permutas', permutasRouter);
@@ -98,7 +108,7 @@ describe('POST /permutas/eleicao', () => {
                 status: 'success',
             });
             // triggered_by = authenticated user identity (audit O6).
-            expect(executar).toHaveBeenCalledWith({ triggeredBy: 'user-abc' });
+            expect(executar).toHaveBeenCalledWith({ triggeredBy: 'a@b.com' });
         } finally {
             await server.close();
         }
@@ -144,7 +154,7 @@ describe('POST /permutas/ingestao', () => {
                 totalCasamentos: 27,
             });
             // triggered_by = username autenticado (auditoria O6) — fonte server-side.
-            expect(executar).toHaveBeenCalledWith({ triggeredBy: 'user-abc' });
+            expect(executar).toHaveBeenCalledWith({ triggeredBy: 'a@b.com' });
         } finally {
             await server.close();
         }
@@ -358,7 +368,7 @@ describe('cliente-filtro CRUD', () => {
             expect(upsertClienteFiltro).toHaveBeenCalledWith({
                 pesCod: '191',
                 importador: 'INOX-TECH',
-                criadoPor: 'user-abc',
+                criadoPor: 'a@b.com',
             });
         } finally {
             await server.close();
@@ -461,7 +471,7 @@ describe('alocação manual (Fase 2)', () => {
                     invoiceDocCod: 'I7',
                     invoicePriCod: '510',
                     valorAlocado: 600,
-                    criadoPor: 'user-abc',
+                    criadoPor: 'a@b.com',
                 }),
             );
         } finally {
@@ -617,7 +627,7 @@ describe('POST /permutas/adiantamentos/:docCod/processar', () => {
             expect(upsertProcessamento).toHaveBeenCalledWith({
                 adiantamentoDocCod: 'A1',
                 status: 'processado',
-                processadoPor: 'user-abc',
+                processadoPor: 'a@b.com',
                 invoiceDocCod: 'I1',
                 observacao: 'casado',
             });
@@ -643,7 +653,7 @@ describe('POST /permutas/adiantamentos/:docCod/processar', () => {
             expect(upsertProcessamento).toHaveBeenCalledWith({
                 adiantamentoDocCod: 'A1',
                 status: 'processado',
-                processadoPor: 'user-abc',
+                processadoPor: 'a@b.com',
             });
         } finally {
             await server.close();
@@ -782,7 +792,7 @@ describe('POST /permutas/reconciliar-lote', () => {
             // executadoPor = identidade autenticada; dryRun + subconjunto passados adiante.
             expect(reconciliarLote).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    executadoPor: 'user-abc',
+                    executadoPor: 'a@b.com',
                     dryRunOverride: true,
                     adiantamentoDocCods: ['9026', '11821'],
                 }),

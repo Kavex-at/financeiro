@@ -25,7 +25,7 @@ handlers Lambda como presentes ao revisar mudanças.
 | Backend | Express puro (`src/backend/`, `routes/` + `http/`) | AWS Lambda + API Gateway (`src/lambda/`) |
 | Frontend | Next.js (deploy Vercel) | Next.js (igual) |
 | Infra/Deploy | Render (deploy hook via GitHub Actions); **sem `infra/` / Terraform** | Terraform multi-tenant, uma conta AWS por cliente |
-| Auth / DB | Supabase (JWT + Postgres) | SSO corporativo + RBAC; Postgres via SSM |
+| Auth / DB | **Supabase Auth (GoTrue, ES256/JWKS) + autorização resolvida de `app_user`** a cada request (ADR-0030); Postgres no mesmo projeto | SSO corporativo + RBAC; Postgres via SSM |
 | Scheduler/Jobs | nenhum (Express request/response) | EventBridge + Lambda `job/` |
 
 **Política de features:** código novo (via `/feature-new`) nasce **DDD/Lambda-ready** (tsyringe, Zod nos

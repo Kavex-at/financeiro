@@ -719,7 +719,12 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
         const app = express();
         app.use(express.json());
         app.use((req, _res, next) => {
-            req.user = { sub: 'e2e-auditor', role: 'admin', email: 'e2e@columbia.test' };
+            req.user = {
+                sub: 'e2e-auditor',
+                role: 'admin',
+                email: 'e2e@columbia.test',
+                username: 'e2e@columbia.test',
+            };
             next();
         });
         app.use('/recebimentos', recebimentosRouter);

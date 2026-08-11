@@ -6,12 +6,25 @@ const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace
 /** Papéis atribuíveis a um usuário da plataforma (espelha o backend). */
 export type UserRole = 'admin' | 'operador'
 
+/**
+ * Ciclo de vida do acesso — espelha `ontology/state-machines/usuario.md`.
+ *
+ * `convidado` e `inativo` são **ambos `ativo = false`** no banco. Distingui-los na UI não é
+ * cosmético: sem isso a tela ofereceria "reenviar convite" para quem foi DESLIGADO, e
+ * "acesso revogado" para quem simplesmente ainda não entrou.
+ */
+export type UsuarioStatus = 'convidado' | 'ativo' | 'inativo'
+
 /** Usuário da plataforma (sem senha) — o que a tela de gestão lista. */
 export interface AppUser {
   id: number
   username: string
   role: UserRole
   ativo: boolean
+  /** Derivado pelo backend a partir de `ativo` + `convite_pendente` (`GET /usuarios`). */
+  status: UsuarioStatus
+  /** `true` entre o convite e o aceite — "nunca entrou", não "acesso revogado". */
+  convitePendente?: boolean
   createdBy?: string
   createdAt: string
   /** Login Conexos vinculado (ex.: MARILYN_MUTAFCI). Ausente = sem vínculo (opera via robô). */
@@ -48,6 +61,25 @@ export async function fetchConexosStatus(): Promise<ConexosStatus> {
   if (!res.ok) throw await errorFrom(res)
   const body = (await res.json()) as { status: ConexosStatus }
   return body.status
+}
+
+/** Quem é o usuário logado, SEGUNDO O BANCO (`GET /me`). */
+export interface MeResponse {
+  username: string | null
+  role: string | null
+}
+
+/**
+ * `GET /me` — a **fonte do papel no frontend** (ADR-0030 / Task 10).
+ *
+ * O papel NÃO pode vir do JWT: o token do GoTrue traz `role: 'authenticated'` para todo
+ * mundo, então ler a claim faria `useIsAdmin()` retornar `false` para os PRÓPRIOS admins — e
+ * a tela `/usuarios` e o card de admin sumiriam, sem erro, sem log e sem teste vermelho.
+ */
+export async function fetchMe(): Promise<MeResponse> {
+  const res = await apiFetch(`${API}/me`, { headers: await withAuthHeaders() })
+  if (!res.ok) throw await errorFrom(res)
+  return (await res.json()) as MeResponse
 }
 
 /** GET /usuarios/meta — flags de configuração (ex.: vínculo Conexos disponível). */

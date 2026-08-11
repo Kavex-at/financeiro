@@ -27,7 +27,7 @@ import GerarSolicitacaoNumerarioService from '../domain/service/permutas/GerarSo
 import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { requireRole } from '../http/auth.js';
+import { auditActor, requireRole } from '../http/auth.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
 
 /** Zod no boundary — corpo do POST /processar (Rule: validar inputs externos). */
@@ -191,7 +191,7 @@ router.post(
         await bootstrapAppContainer();
         const service = container.resolve(EleicaoPermutasService);
         // `triggered_by` = identidade do usuário autenticado (auditoria O6).
-        const triggeredBy = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const triggeredBy = auditActor(req);
         // Idempotency-Key (P0-6) — duplo-clique/retry com a mesma key reaproveita
         // a run existente em vez de disparar outro fan-out Conexos.
         const rawKey = req.header('Idempotency-Key');
@@ -225,7 +225,7 @@ router.post(
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(IngestaoCoalescerService);
-        const triggeredBy = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const triggeredBy = auditActor(req);
         try {
             const result = await service.request({ triggeredBy });
             res.json({
@@ -290,7 +290,7 @@ router.post(
             res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
             return;
         }
-        const criadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const criadoPor = auditActor(req);
         const repository = container.resolve(ClienteFiltroRepository);
         await repository.upsertClienteFiltro({
             pesCod: parsed.data.pesCod,
@@ -360,7 +360,7 @@ router.post(
             res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
             return;
         }
-        const criadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const criadoPor = auditActor(req);
         const service = container.resolve(AlocacaoPermutasService);
         try {
             await service.alocar({
@@ -467,7 +467,7 @@ router.post(
             return;
         }
         const docCod = String(req.params.docCod);
-        const processadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const processadoPor = auditActor(req);
         const repository = container.resolve(PermutaProcessamentoRepository);
         await repository.upsertProcessamento({
             adiantamentoDocCod: docCod,
@@ -498,7 +498,7 @@ router.post(
             return;
         }
         const docCod = String(req.params.docCod);
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(ReconciliacaoPermutaService);
         const result = await service.reconciliar({
             adiantamentoDocCod: docCod,
@@ -532,7 +532,7 @@ router.post(
             return;
         }
         const docCod = String(req.params.docCod);
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(GerarSolicitacaoNumerarioService);
         const hoje = todayUtcMidnightMs();
         const result = await service.gerarNumerario({
@@ -562,7 +562,7 @@ router.post(
             res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
             return;
         }
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(ReconciliacaoLotePermutaService);
         const result = await service.reconciliarLote({
             executadoPor,
@@ -621,7 +621,7 @@ router.post(
             res.status(400).json({ error: 'borCod inválido' });
             return;
         }
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(await service.finalizarBordero({ borCod, executadoPor }));
@@ -648,7 +648,7 @@ router.post(
             res.status(400).json({ error: 'borCod inválido' });
             return;
         }
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(await service.cancelarBordero({ borCod, executadoPor }));
@@ -675,7 +675,7 @@ router.post(
             res.status(400).json({ error: 'borCod inválido' });
             return;
         }
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(await service.estornarBordero({ borCod, executadoPor }));
@@ -702,7 +702,7 @@ router.delete(
             res.status(400).json({ error: 'borCod inválido' });
             return;
         }
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(await service.excluirBordero({ borCod, executadoPor }));
@@ -731,7 +731,7 @@ router.delete(
             return;
         }
         const invoiceDocCod = String(req.params.invoiceDocCod);
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = auditActor(req);
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(await service.excluirBaixa({ borCod, invoiceDocCod, executadoPor }));

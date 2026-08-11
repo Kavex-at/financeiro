@@ -39,7 +39,7 @@ import RecebimentoNumerarioService from '../domain/service/recebimentos/Recebime
 import TransacaoRepository from '../domain/repository/recebimentos/TransacaoRepository.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { requireRole } from '../http/auth.js';
+import { auditActor, requireRole } from '../http/auth.js';
 import {
     FilialForbiddenError,
     type FilialScopedUser,
@@ -188,7 +188,7 @@ router.post(
             }
             throw err;
         }
-        const ator = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const ator = auditActor(req);
         // Idempotency-key namespaced pelo ator (Regis security-2): a colisão exige colisão de `sub`
         // também — impede denial-of-execution / carona no ledger money-moving de outro ator. Um
         // `Idempotency-Key` de header explícito também é namespaced pelo sub.
@@ -490,7 +490,7 @@ router.post(
             throw err;
         }
 
-        const ator = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const ator = auditActor(req);
         const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
         const dryRun = parsed.data.dryRun === true || !env.conexosWriteEnabled || env.conexosDryRun;
 
@@ -646,7 +646,7 @@ router.post(
                 filCods,
                 periodo,
                 correlationId: randomUUID(),
-                triggeredBy: req.user?.email ?? req.user?.sub ?? 'manual',
+                triggeredBy: auditActor(req, 'manual'),
             });
             if (idempotencyKey) await runRepo.recordIdempotencyKey(idempotencyKey, result.runId);
             res.json({
@@ -844,7 +844,7 @@ router.post(
         try {
             const result = await service.importar({
                 ...ctx,
-                triggeredBy: req.user?.email ?? req.user?.sub ?? 'manual',
+                triggeredBy: auditActor(req, 'manual'),
                 ...(idempotencyKey ? { idempotencyKey } : {}),
             });
             res.json(result);

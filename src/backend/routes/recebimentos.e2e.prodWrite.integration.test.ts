@@ -380,7 +380,12 @@ describe('PRODUÇÃO — uma execução real, do crédito à NDe', () => {
         const app = express();
         app.use(express.json());
         app.use((req, _res, next) => {
-            req.user = { sub: 'prod-e2e', role: 'admin', email: 'tech@kavex.at' };
+            req.user = {
+                sub: 'prod-e2e',
+                role: 'admin',
+                email: 'tech@kavex.at',
+                username: 'tech@kavex.at',
+            };
             next();
         });
         app.use('/recebimentos', recebimentosRouter);

@@ -5,12 +5,23 @@ const URL = 'https://uvfcziscjpapjzpzlzuk.supabase.co';
 describe('loadAuthEnv', () => {
     it('parses SUPABASE_URL (preferred, JWKS/ES256) with bypass off', () => {
         const env = loadAuthEnv({ SUPABASE_URL: URL } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: URL, jwtSecret: undefined, devBypass: false });
+        expect(env).toEqual({
+            supabaseUrl: URL,
+            jwtSecret: undefined,
+            serviceRoleKey: undefined,
+            anonKey: undefined,
+            legacyLoginEnabled: true,
+            devBypass: false,
+        });
     });
 
     it('parses AUTH_JWT_SECRET (app login HS256) with bypass off', () => {
         const env = loadAuthEnv({ AUTH_JWT_SECRET: 'app-secret' } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: 'app-secret', devBypass: false });
+        expect(env).toMatchObject({
+            supabaseUrl: undefined,
+            jwtSecret: 'app-secret',
+            devBypass: false,
+        });
     });
 
     it('prefers AUTH_JWT_SECRET over SUPABASE_JWT_SECRET', () => {
@@ -23,7 +34,7 @@ describe('loadAuthEnv', () => {
 
     it('parses a legacy HS256 secret with bypass off', () => {
         const env = loadAuthEnv({ SUPABASE_JWT_SECRET: 'shhh' } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: 'shhh', devBypass: false });
+        expect(env).toMatchObject({ supabaseUrl: undefined, jwtSecret: 'shhh', devBypass: false });
     });
 
     it('keeps both when SUPABASE_URL and SUPABASE_JWT_SECRET are set', () => {
@@ -31,12 +42,16 @@ describe('loadAuthEnv', () => {
             SUPABASE_URL: URL,
             SUPABASE_JWT_SECRET: 'shhh',
         } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: URL, jwtSecret: 'shhh', devBypass: false });
+        expect(env).toMatchObject({ supabaseUrl: URL, jwtSecret: 'shhh', devBypass: false });
     });
 
     it('allows missing url/secret when DEV_AUTH_BYPASS=true', () => {
         const env = loadAuthEnv({ DEV_AUTH_BYPASS: 'true' } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: undefined, devBypass: true });
+        expect(env).toMatchObject({
+            supabaseUrl: undefined,
+            jwtSecret: undefined,
+            devBypass: true,
+        });
     });
 
     it('throws when neither url nor secret and bypass off', () => {
@@ -61,6 +76,51 @@ describe('loadAuthEnv', () => {
             DEV_AUTH_BYPASS: 'false',
         } as NodeJS.ProcessEnv);
         expect(env.devBypass).toBe(false);
+    });
+
+    // ── Campos novos do cutover (ADR-0030) ────────────────────────────────────────────────
+    describe('supabase-auth rollout vars', () => {
+        it('parses the Admin API service-role key and the anon key', () => {
+            const env = loadAuthEnv({
+                SUPABASE_URL: URL,
+                SUPABASE_SERVICE_ROLE_KEY: 'sk-service-role',
+                SUPABASE_ANON_KEY: 'pk-anon',
+            } as NodeJS.ProcessEnv);
+            expect(env.serviceRoleKey).toBe('sk-service-role');
+            expect(env.anonKey).toBe('pk-anon');
+        });
+
+        it('AUTH_LEGACY_LOGIN_ENABLED defaults to TRUE when unset — never lock anyone out', () => {
+            // Default-on é deliberado (ADR-0030 §6): uma env var esquecida no Render não pode
+            // desligar o único caminho de login de quem ainda não foi migrado.
+            const env = loadAuthEnv({ SUPABASE_URL: URL } as NodeJS.ProcessEnv);
+            expect(env.legacyLoginEnabled).toBe(true);
+        });
+
+        it('AUTH_LEGACY_LOGIN_ENABLED=false is the Phase-3 switch (and "true" turns it back on)', () => {
+            expect(
+                loadAuthEnv({
+                    SUPABASE_URL: URL,
+                    AUTH_LEGACY_LOGIN_ENABLED: 'false',
+                } as NodeJS.ProcessEnv).legacyLoginEnabled,
+            ).toBe(false);
+            expect(
+                loadAuthEnv({
+                    SUPABASE_URL: URL,
+                    AUTH_LEGACY_LOGIN_ENABLED: 'true',
+                } as NodeJS.ProcessEnv).legacyLoginEnabled,
+            ).toBe(true);
+        });
+
+        it('throws when AUTH_LEGACY_LOGIN_ENABLED has an invalid value', () => {
+            // Fail-fast: um typo não pode ser lido como "false" e derrubar o login legado.
+            expect(() =>
+                loadAuthEnv({
+                    SUPABASE_URL: URL,
+                    AUTH_LEGACY_LOGIN_ENABLED: 'no',
+                } as NodeJS.ProcessEnv),
+            ).toThrow();
+        });
     });
 
     describe('DEV_AUTH_BYPASS × environment guard (security-1)', () => {

@@ -4,22 +4,32 @@ import { usePathname } from 'next/navigation'
 import { ConexosStatusBanner } from '@/components/auth/ConexosStatusBanner'
 import { RouteGate } from '@/components/auth/RouteGate'
 import { UserMenu } from '@/components/auth/UserMenu'
+import { isAuthScreen } from '@/lib/supabase/routes'
 
 /**
- * App chrome. On the public `/login` route the top header is hidden so the
- * sign-in screen is a clean full-screen experience; everywhere else it renders
- * the normal sticky header + padded main. Auth gating stays via `RouteGate`.
+ * App chrome. Nas rotas de AUTENTICAÇÃO (`/login` e `/auth/*`) o header é escondido, para
+ * que a entrada e a recuperação de senha sejam telas limpas de página inteira — e, mais
+ * importante, para que elas NÃO apareçam com a navegação da app autenticada em volta,
+ * oferecendo links que o visitante sem sessão não pode seguir.
+ *
+ * `/docs` é público mas NÃO é tela de auth: continua com o header normal.
+ *
+ * O gate de auth permanece no `RouteGate`.
  */
 export function AppShell({ version, children }: { version: string; children: React.ReactNode }) {
   const pathname = usePathname()
 
-  if (pathname === '/login') {
+  if (isAuthScreen(pathname)) {
     return <RouteGate>{children}</RouteGate>
   }
 
   return (
     <>
-      <header className="sticky top-0 z-50 bg-white border-b shadow-sm">
+      {/* `bg-card` em vez do antigo `bg-white`: token semântico com o MESMO valor
+          (`--card: oklch(1 0 0)`), então zero mudança visual — mas o header passa a
+          acompanhar o tema em vez de ficar preso ao branco literal. Migração proporcional
+          de dívida do template (CLAUDE.md § política de features). */}
+      <header className="sticky top-0 z-50 bg-card border-b shadow-sm">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-3">
           <div className="w-2 h-6 rounded-sm bg-primary" />
           <h1 className="text-lg font-bold text-foreground">Columbia Trading</h1>

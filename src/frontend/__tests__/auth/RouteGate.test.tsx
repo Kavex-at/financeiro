@@ -51,4 +51,33 @@ describe('RouteGate', () => {
     )
     expect(screen.getByTestId('auth-guard')).toBeInTheDocument()
   })
+
+  // ── /auth/* (ADR-0030) ──────────────────────────────────────────────────────────────
+  it.each(['/auth', '/auth/forgot-password', '/auth/reset-password'])(
+    'does not gate %s — a recuperação de senha precisa ser alcançável SEM sessão',
+    (pathname) => {
+      // Sem esta entrada em PUBLIC_ROUTES as telas novas nascem gateadas, e quem esqueceu a
+      // senha entra em loop: /auth/forgot-password → /login → "esqueci minha senha" →
+      // /auth/forgot-password. Nenhum erro é produzido — só um ciclo.
+      pathnameMock.mockReturnValue(pathname)
+      render(
+        <RouteGate>
+          <div>page</div>
+        </RouteGate>,
+      )
+      expect(screen.queryByTestId('auth-guard')).not.toBeInTheDocument()
+      expect(screen.getByText('page')).toBeInTheDocument()
+    },
+  )
+
+  it('uma rota que apenas COMEÇA com o mesmo texto continua gateada', () => {
+    // `/authorized` não é `/auth`. O match é por segmento, não por prefixo de string.
+    pathnameMock.mockReturnValue('/authorized')
+    render(
+      <RouteGate>
+        <div>page</div>
+      </RouteGate>,
+    )
+    expect(screen.getByTestId('auth-guard')).toBeInTheDocument()
+  })
 })

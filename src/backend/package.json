@@ -17,7 +17,8 @@
         "test:watch": "jest --watch",
         "lint": "npx biome check .",
         "lint:fix": "npx biome check --write .",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "job:migrate-users": "tsx jobs/migrate-users-to-supabase.ts"
     },
     "keywords": [],
     "author": "",
@@ -25,6 +26,7 @@
     "type": "module",
     "dependencies": {
         "@aws-sdk/client-ssm": "^3.1043.0",
+        "@supabase/supabase-js": "^2.112.2",
         "axios": "^1.13.2",
         "bcryptjs": "^2.4.3",
         "cors": "^2.8.5",

@@ -26,7 +26,8 @@ Conexos resiliente (sessão/retry/rate-limit) · observabilidade · padronizaç�
 ## Estado do repositório
 
 Fundação **rodável** (bootstrapped do template [`fechamento-processos`](../fechamento-processos)): backend
-Express/DDD com auth Supabase + cliente Conexos, frontend Next.js com Design System. O **domínio ainda
+Express/DDD com **auth Supabase (GoTrue) + autorização por `app_user`** e cliente Conexos, frontend
+Next.js com Design System. O **domínio ainda
 não foi modelado** em código/ontologia — nasce via o pipeline (`/feature-new`), guiado por
 `docs-contexto/03_ontologia_financeiro.md`.
 
@@ -59,7 +60,10 @@ cd src/frontend && npm ci && npm run dev
 ```
 
 Dev sem Supabase: `.env` (gitignored) já com `DEV_AUTH_BYPASS=true` / `environment=local` (backend) e
-`NEXT_PUBLIC_DEV_AUTH_BYPASS=true` / `NEXT_PUBLIC_ENV=local` (frontend).
+`NEXT_PUBLIC_DEV_AUTH_BYPASS=true` / `NEXT_PUBLIC_ENV=local` (frontend). O bypass injeta um usuário
+sintético (`dev-bypass@local`, papel `admin`) — antes ele deixava `req.user` indefinido e **toda
+mutação respondia 401 em dev**. O nome é inconfundível de propósito: ele vaza para `executado_por`,
+e lixo óbvio na trilha é melhor que um e-mail plausível atribuído a uma pessoa real.
 
 ## Estrutura
 

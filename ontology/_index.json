@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-08-07",
+    "generated": "2026-08-11",
     "version": "0.16.0",
-    "note": "v0.16.0 (2026-08-07, ADR-0031): NDe DISPENSADA em processos POR CONTA E ORDEM DE TERCEIROS. A cadeia do \"Processar\" da Frente IV deixa de ser incondicional: quando imp021.priVldTipo=2, a alocacao roda com299 (SN) + fin014 (baixa) e PARA — nenhuma etapa com297/com300/com131 e nenhum poll SEFAZ; settla na etapa terminal nova quitado-sem-nde com nd_doc_cod nulo POR REGRA (nao e lacuna) e devolve ndeDispensada:true. A modalidade e lida SEMPRE do imp021 no SERVIDOR (gate 0.5 do pre-flight, via ConexosCadastroClient.listProcessos ramo priCods), nunca do payload do browser: e a chave que liga/desliga um documento fiscal irreversivel. Modalidade indeterminavel (processo ausente | priVldTipo nulo | read falhou) = BLOCKED fail-closed, sem abrir o write-ahead. O gatilho e EXCLUSIVAMENTE priVldTipo=2 — NAO a variante \"- TERCEIROS\" da config de SN (gcd 151), que so decide a conta de rateio: eixos independentes. Relacao NotaDebitoEletronica—Recebimento passa de 1—1 para 0..1. markSettled do ledger aceita override de etapa (COALESCE) — SEM migration, a coluna etapa e TEXT sem CHECK. Frontend: status blocked deixa de renderizar como \"Quitado\" (bug pre-existente que a decisao fail-closed tornou frequente) e o texto de sucesso para de prometer nota de debito incondicionalmente. Divida aberta: alocacoes conta-e-ordem processadas ANTES desta mudanca tem NDe emitida e homologada — fato fiscal irreversivel, a levantar com o cliente.",
+    "note": "REBASE 2026-08-11 sobre a main (ADR-0031 NDe dispensada em conta e ordem, ADR-0032 chave natural do extrato): esta nota descreve a mudanca desta branch; a anterior segue registrada em decisions/0031 e no CHANGELOG. v0.16.0 (2026-08-06, ADR-0030, branch feat/supabase-auth): IDENTIDADE ENTRA NA ONTOLOGIA. NOVA entidade Usuario — a PRIMEIRA transversal (nao pertence a uma frente, atravessa as quatro). O Usuario e a linha app_user, NAO o registro em auth.users (que e apenas o custodiante da credencial, modelado em integrations/supabase-auth). Decisao central: o JWT prova IDENTIDADE; a AUTORIZACAO (role, ativo) e resolvida do banco a CADA request via appUserContext — a claim role do GoTrue e sempre 'authenticated' e e DESCARTADA; sem linha em app_user ou com ativo=false a request morre em 403 fail-closed (nunca 401 — 401 manda o front tentar refresh, 403 nao). AMENDA a ADR-0011 SS1, cujo texto dizia 'o role ja vem no JWT'; o gate requireRole('admin') fica IDENTICO, muda so a origem. INVARIANTE DE MAIOR RAIO (I-Usuario-1): o ator da trilha de auditoria e app_user.username (o e-mail), NUNCA o sub do provedor — 21 call sites verificados (permutas 13, recebimentos 4, sispag 1, usuarios 1, me 1, conexosIdentity 1) alimentando executado_por/criado_por/created_by; o padrao 'sub ?? email' NAO protege (com sub virando UUID ele continua presente e vence). Valores gravados ficam IDENTICOS aos existentes — sem migracao de dados, sem historico misto. Ciclo de vida convidado->ativo<->inativo (convite com fallback de senha; sem hard-delete). pendenteMigracao NAO e estado: e condicao derivada de authUserId IS NULL, ORTOGONAL a ativo (hoje todo app_user de producao e ativo E pendente ao mesmo tempo), vigencia 2026-08-06 -> Fase 4. NAO criadas: entidade Sessao (100% do GoTrue, zero linhas nossas — virou business-rule revogacao-de-acesso) e entidade Permissao (role e atributo enumerado de 2 valores; Usuario N-M Filial fora de escopo) — ambas em _watchlist. 3 business-rules novas (autorizacao-resolvida-do-banco I-Usuario-9, ator-da-trilha-de-auditoria I-Usuario-1, revogacao-de-acesso I-Usuario-8 com TTL 30s constante tipada + RESTRICAO DATADA de instancia unica do Render). 1 state-machine + 1 integracao (supabase-auth) + 9 acoes. CORRECAO DE DRIFT PRE-EXISTENTE: TransacaoBancaria estava 'planned' aqui enquanto o _coverage e a propria nota diziam IMPLEMENTADO (acao importarTransacoesExtrato implemented, medido em producao) — corrigido para 'implemented'. Drift remanescente (actions_total 23 x 24 chaves; actions/permuta/executar-automaticas-lote.md SEM chave no _index; 21 arquivos de business-rule x 18 chaves; 8 arquivos de integracao x 6 chaves) NAO tocado — vai para /retro-ontology.",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -169,7 +169,7 @@
     },
     "TransacaoBancaria": {
       "file": "entities/transacao-bancaria.md",
-      "status": "planned",
+      "status": "implemented",
       "impl_files": [],
       "resolved_by": [
         "ADR-0022"
@@ -251,6 +251,28 @@
         "src/backend/migrations/0042_solicitacao_numerario_execucao_fiscal.sql"
       ],
       "note": "v0.12 (2026-08-01): SN gerada de DUAS origens — (I) adiantamento de permuta (Frente I, trilha existente) e (II) pagamento de cliente alocado a um processo (Frente IV, recebimentos, split-capable). Trilha recebimentos REAL: com299 (SN+finaliza) → fin014 (baixa, conta = transacao.gerNum) → com297 (NDe + produto 41978) → cauda fiscal com300(fisVldTipoNfDebito=6)→com131(SINIEF)→com297-homologar→poll SEFAZ vldAutorizado, gated + retomada-safe (colunas 0042: txn_id/valor/fin014_bor_cod/nd_doc_cod/etapa/revisao_humana/nde_autorizado). Split: 1..N SNs por pagamento, Σ≤transacao.valor; idempotência sn-real:{txnId}:{priCod}:{valor}. Fecha o GAP nota-debito-fiscal (Frente I permanece fail-closed nessa cauda). Prévio v0.11 (2026-07-31, Frente I): fluxo de 3 TELAS do guia 'telas Conexos', disparado pelo botão Processar (substitui a baixa fin010; decisão 2026-07-31). Tela 1 (com299): gera a SN 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA' (gcdCod=150) via gerDocProcesso (form com068) com datas + docEspNumero(=data do dia) + FINALIZA (validate/finalizacaoDocumento→finalizaDocumento) — CONFIRMADO. Tela 2 (fin014): recebimento do crédito REAL — borderô (POST /api/fin014, gerNum=conta FIN014_CONTA_FINANCEIRA) → validacao/tituloBaixa (docCod da SN) → gravar baixa (postGenericOnce) → finalizar/{borCod}; espelha fin010/ConexosBaixaClient (ConexosFin014Client), corpos derivados do bundle fin014 + probes read-only. Tela 3 (com297): nota de débito PARCIAL — resolve gcd por nome 'NOTA DE DÉBITO ELETRÔNICA' (COM297_GCD_NOTA_DEBITO_NOME/override), gera (com297/gerDocProcesso) + Produto 41978 (com297/comDocProdutos); fiscal 'Pagamento antecipado' + observações + homologar (enviaConferencia/homologaNfe) = GAP fail-closed (submenus ausentes do bundle, 1 HAR fecha). valor = valorASerUsado (moeda negociada). Escritas IRREVERSÍVEIS (postGenericOnce), gated por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN (default dry-run) + trilha write-ahead per adiantamento com RETOMADA anti-duplicação (NumerarioExecucaoRepository: doc_cod/fin014_bor_cod/nd_doc_cod/etapa). Config FIN014_CONTA_FINANCEIRA (fail-closed se ausente). Engenharia reversa dos bundles com068/fin014/com297 (CDN, sem browser) + probes read-only 2026-07-31. CORREÇÃO v0.12.1 (2026-08-03, ADR-0025): na trilha RECEBIMENTOS a SN é completada antes de finalizar, na ordem linha-de-item → condição de pagamento CONDICIONAL (só sob validação bloqueante da com194) → verificação mnyTitValor === docMnyValor → finalizar (a trilha PERMUTA segue gerando+finalizando sem completação). O título a receber NASCE na geração do com299 (não precisa da tela com032); o PUT que troca pgtCod destrói as parcelas sem regenerar. Ver integrations/conexos-com299-gerdoc.md (banner CICLO DE VIDA DO TÍTULO). partial (Tela 1 completa + Tela 2 real + Tela 3 gera/produto; só fiscal/observações/homologar fail-closed até HAR)."
+    },
+    "Usuario": {
+      "file": "entities/usuario.md",
+      "status": "partial",
+      "impl_files": [
+        "src/backend/migrations/0007_app_user.sql",
+        "src/backend/migrations/0028_app_user_gestao.sql",
+        "src/backend/migrations/0029_app_user_conexos_vinculo.sql",
+        "src/backend/migrations/0044_app_user_auth_link.sql",
+        "src/backend/domain/repository/auth/UserRepository.ts",
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/http/auth.ts",
+        "src/backend/http/appUserContext.ts",
+        "src/backend/http/conexosIdentity.ts",
+        "src/backend/routes/usuarios.ts",
+        "src/backend/routes/me.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "PRIMEIRA entidade TRANSVERSAL da ontologia (nao pertence a uma frente). O Usuario E A LINHA app_user — NAO o registro em auth.users, que e o custodiante da credencial (integrations/supabase-auth). Isso e o que torna o 403 fail-closed uma CONSEQUENCIA LOGICA em vez de regra arbitraria: existir no GoTrue nao e existir na plataforma. Propriedades: id, username (IMUTAVEL — e-mail, chave 1:1 com auth.users.email + chave do vinculo Conexos + ator da trilha), authUserId (UUID, ponteiro para auth.users.id, chave INTERNA de juncao, NUNCA persistido como ator), role ('admin'|'operador', default 'operador' least-privilege, AUTORITATIVO sobre a claim do JWT), ativo, createdBy, createdAt, conexosUsername, conexosPasswordEnc (AES-256-GCM reversivel), passwordHash (DEPRECATED, drop_after cutover-fase-4 — sobrevive so como fonte do import bcrypt). Ciclo convidado->ativo<->inativo (state-machines/usuario); SEM excluido (hard-delete proibido, I-Usuario-3; deleteUser no GoTrue so como compensacao transacional do cadastro). Invariantes: I-Usuario-1 (ator = username, nunca o sub — 21 call sites), I-Usuario-2 (username imutavel), I-Usuario-3 (sem hard-delete), I-Usuario-4 (inativo nao opera nem leitura), I-Usuario-5 (vinculo Conexos so de ativo — INERTE EM PRODUCAO HOJE: CONEXOS_CRED_ENC_KEY ausente do render.yaml, SecretCipher desabilitado, tudo ja cai no robo), I-Usuario-6 (autodesativacao proibida; desativar OUTRO admin e permitido), I-Usuario-7 (toda mudanca de estado atribuida — GAP: hoje so o cadastro grava o autor). partial: app_user + role + ativo + vinculo Conexos ja implementados; o link GoTrue (auth_user_id), o appUserContext, o convite e o fail-closed sao esta feature."
     }
   },
   "actions": {
@@ -591,6 +613,137 @@
         "src/frontend/app/permutas/components/ConfirmarProcessamentoDialog.tsx"
       ],
       "note": "v0.11 (2026-07-31, Frente I): o botão Processar (aba Automáticas) passa a GERAR uma SolicitacaoNumerario no ERP (com299/gerDocProcesso) em vez de executar a baixa fin010 (decisão 2026-07-31). UMA SN por adiantamento; valor = valorASerUsado do modal (moeda negociada, sem conversão). Fluxo: findAdiantamento → resolve header → validaConfigDoc(gcdCod=150) → contasProj/list → itens (tmpMnyValor=round2(valor×total/100), Σ==valor) → gate dry-run → write-ahead begin → valida → gerDocProcesso (postGenericOnce) → markSettled(docCod). Rota POST /permutas/adiantamentos/:docCod/gerar-numerario (requireRole admin), body {valor>0, dryRun?}. Gated por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN (default dry-run). Idempotência por adiantamento (numerario:{docCod}:{valor}) anti-documento-duplicado; reconciling órfão = FAIL-CLOSED. NÃO executa mais a baixa fin010 no Processar (/reconciliar permanece no backend, desligado da UI). planned."
+    },
+    "convidarUsuario": {
+      "file": "actions/usuario/convidar-usuario.md",
+      "entity": "Usuario",
+      "status": "planned",
+      "impl_files": [
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/routes/usuarios.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Transicao U1 — caminho PADRAO de entrada. Nasce convidado (ativo=false), role default 'operador', created_by = ator. ATOMICIDADE ENTRE SISTEMAS: as duas pontas nascem juntas ou nenhuma nasce — falhar o passo local OBRIGA a compensacao no GoTrue, senao fica um orfao cujo e-mail fica QUEIMADO para cadastro futuro (auth.users.email e unico). Unica situacao em que deleteUser e permitido (I-Usuario-3), e ele NAO e exposto em rota. DEPENDE DE SMTP. Nao idempotente: mesmo e-mail => 409."
+    },
+    "cadastrarUsuarioComSenha": {
+      "file": "actions/usuario/cadastrar-usuario-com-senha.md",
+      "entity": "Usuario",
+      "status": "partial",
+      "impl_files": [
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/routes/usuarios.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Transicao U3 — FALLBACK do convite (admin define a senha inicial; usuario nasce ativo). NAO DEPENDE DE SMTP, e e isso que impede o pre-requisito humano de SMTP de virar bloqueio duro da operacao. Mesma atomicidade entre sistemas do convite. Custo reconhecido: neste caminho um humano alem do titular conhece a senha inicial — por isso e o caminho SECUNDARIO. partial: a rota POST /usuarios com senha ja existe; falta criar a ponta no GoTrue + rollback."
+    },
+    "resolverContextoUsuario": {
+      "file": "actions/usuario/resolver-contexto-usuario.md",
+      "entity": "Usuario",
+      "status": "planned",
+      "impl_files": [
+        "src/backend/http/appUserContext.ts",
+        "src/backend/http/auth.ts",
+        "src/backend/domain/repository/auth/UserRepository.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "A ACAO SILENCIOSA MAIS IMPORTANTE — sem rota, sem botao, e toda request autenticada passa por ela. SELECT id, username, role, ativo FROM app_user WHERE auth_user_id = $sub. Sem linha => 403; ativo=false => 403; NUNCA 401 nesses casos (401 manda o front tentar refresh, 403 nao). Sobrescreve req.user.role com app_user.role. Roda a CADA request (nao so no login) — e isso que faz a revogacao valer. Idempotente (leitura pura), cache por auth_user_id com TTL 30s constante tipada, invalidado sincronicamente por setAtivo. Fonte UNICA de req.user.username (I-Usuario-1). Sob DEV_AUTH_BYPASS injeta usuario sintetico INCONFUNDIVEL (dev-bypass@local) porque ele VAZA para executado_por."
+    },
+    "ativarUsuario": {
+      "file": "actions/usuario/ativar-desativar-usuario.md",
+      "entity": "Usuario",
+      "status": "partial",
+      "impl_files": [
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/routes/usuarios.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Transicao U5 — ativo=true + unban no GoTrue. O VINCULO CONEXOS E PRESERVADO durante a desativacao (as colunas nao sao limpas; getVinculoConexos ja filtra ativo=true) — fica INERTE, nao perdido, e reativar nao exige redigitar a senha do ERP. Idempotente."
+    },
+    "desativarUsuario": {
+      "file": "actions/usuario/ativar-desativar-usuario.md",
+      "entity": "Usuario",
+      "status": "partial",
+      "impl_files": [
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/http/appUserContext.ts",
+        "src/backend/routes/usuarios.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Transicao U4 — DEFESA EM PROFUNDIDADE E A ORDEM IMPORTA: (1) ativo=false local + invalidacao do cache = barreira imediata (<=30s, I-Usuario-4); (2) ban no GoTrue = impede RENOVAR o refresh. Falha no passo 1 ABORTA TUDO. Falha no passo 2 => SUCESSO PARCIAL AUDITADO, nao erro duro (o ativo=false ja revoga; retornar erro levaria o admin a crer que nao desativou ninguem quando desativou) — a resposta sinaliza a degradacao para a UI. Bloqueada por I-Usuario-6 se alvo == ator. Idempotente. GAP: PATCH /:id/ativo nao registra hoje quem fez (I-Usuario-7)."
+    },
+    "solicitarRedefinicaoSenha": {
+      "file": "actions/usuario/redefinir-senha.md",
+      "entity": "Usuario",
+      "status": "planned",
+      "impl_files": [
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/routes/usuarios.ts",
+        "src/frontend/app/auth/forgot-password/page.tsx",
+        "src/frontend/app/auth/reset-password/page.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Self-service, NAO exige autenticacao. ANTI-ENUMERACAO: a resposta HTTP e IDENTICA existindo ou nao o usuario — um endpoint publico que diferencia 'e-mail nao cadastrado' de 'enviamos o link' entrega a lista de funcionarios da Columbia a qualquer um. Usuario INATIVO nao recebe link (reset nao pode ser porta dos fundos para reativacao). A senha muda NO GOTRUE; app_user.password_hash NAO e escrito. solicitar e seguro repetir (rate-limit do GoTrue governa); redefinir consome o token (uso unico). DEPENDE DE SMTP."
+    },
+    "redefinirSenhaDeTerceiro": {
+      "file": "actions/usuario/redefinir-senha.md",
+      "entity": "Usuario",
+      "status": "planned",
+      "impl_files": [
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/routes/usuarios.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "MUDA DE NATUREZA, nao so de implementacao: hoje o admin GRAVA UM HASH (POST /usuarios/:id/reset-senha) e passa a senha por fora; passa a DISPARAR UM LINK DE RECUPERACAO. Depois desta feature NENHUM HUMANO ALEM DO TITULAR CONHECE A SENHA DE OUTRO — e isso que permite atribuir uma baixa fin010 a uma pessoa E SUSTENTAR a atribuicao. DEPENDENCIA DURA: deixa de funcionar sem SMTP, e aqui NAO ha fallback (gravar hash de novo reintroduziria o problema). GAP: nao registra hoje quem fez."
+    },
+    "vincularConexos": {
+      "file": "actions/usuario/vincular-conexos.md",
+      "entity": "Usuario",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/repository/auth/UserRepository.ts",
+        "src/backend/http/conexosIdentity.ts",
+        "src/backend/routes/usuarios.ts",
+        "src/backend/routes/me.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Move o usuario do USUARIO-ROBO para a identidade propria no ERP (app_user.username -> ALS -> getVinculoConexos -> sessao -> baixa fin010 no nome do humano). NAO valida a credencial na gravacao — a verificacao e GET /me/conexos-status (ok/falha/ausente); credencial invalida DEGRADA PARA O ROBO SILENCIOSAMENTE, por isso o status e exibido logo apos o login. Segredo REVERSIVEL (AES-256-GCM), nunca hash, nunca sai em resposta (AppUserPublic o omite). I-Usuario-5: so de usuario ativo. ATENCAO: INERTE EM PRODUCAO HOJE — CONEXOS_CRED_ENC_KEY ausente do render.yaml desabilita o SecretCipher e tudo ja cai no robo (gap pre-existente). GAP: nao registra quem fez (I-Usuario-7)."
+    },
+    "migrarUsuarioParaSupabase": {
+      "file": "actions/usuario/migrar-para-supabase.md",
+      "entity": "Usuario",
+      "status": "planned",
+      "impl_files": [
+        "src/backend/jobs/migrate-users-to-supabase.ts",
+        "src/backend/domain/repository/auth/UserRepository.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/migrations/0044_app_user_auth_link.sql"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Job one-shot da Fase 1, ACAO TRANSITORIA (vigencia 2026-08-06 -> Fase 4). Cria o usuario no GoTrue REAPROVEITANDO O HASH BCRYPT existente — e isso que evita o lockout geral: a senha atual continua valendo. Fallback: INSERT direto em auth.users (somos donos do Postgres). IDEMPOTENTE POR CONSTRUCAO (auth_user_id IS NULL e o proprio filtro), dry-run por padrao. NUNCA desativa, nunca muda role, nunca toca username — so preenche o ponteiro (faz UPDATE, nao INSERT, logo nao e afetado pelo default 'admin' da migration 0007). listPendingMigration() vazio e o GATE OPERACIONAL da Fase 3: desligar o login legado antes disso deixa o usuario pendente SEM NENHUM caminho de login (I13)."
     }
   },
   "business_rules": {
@@ -851,6 +1004,59 @@
         "ADR-0031"
       ],
       "note": "NDe so quando devida: priVldTipo=2 (conta e ordem de terceiros) quita com SN + baixa e para em quitado-sem-nde. Modalidade lida do imp021 no servidor; indeterminavel = blocked fail-closed. NAO confundir com a variante \"- TERCEIROS\" da config de SN."
+    },
+    "autorizacao-resolvida-do-banco": {
+      "file": "business-rules/autorizacao-resolvida-do-banco.md",
+      "invariant": "I-Usuario-9",
+      "status": "planned",
+      "has_canonical_test": false,
+      "impl_files": [
+        "src/backend/http/appUserContext.ts",
+        "src/backend/http/auth.ts",
+        "src/backend/domain/repository/auth/UserRepository.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "O token prova IDENTIDADE; a AUTORIZACAO vem do banco a cada request. A claim role do GoTrue e sempre 'authenticated' (role do Postgres) e e DESCARTADA; req.user.role e sobrescrito por app_user.role. FAIL-CLOSED: JWT valido sem linha em app_user => 403; ativo=false => 403; NUNCA 401 nesses casos (401 manda o front tentar refresh, 403 nao — a distincao importa para diagnostico). Necessario porque o MESMO projeto Supabase hospeda o Postgres e emite os tokens: com signup publico ligado, qualquer um obtem token com aud=authenticated. Desligar o signup e a 1a camada (passo humano); este 403 e a 2a e a UNICA que vive no codigo. AMENDA a ADR-0011 SS1. Blast radius TOTAL: 30+ rotas de mutacao. Custo: 1 SELECT/request, mitigado por cache TTL 30s (ver revogacao-de-acesso)."
+    },
+    "ator-da-trilha-de-auditoria": {
+      "file": "business-rules/ator-da-trilha-de-auditoria.md",
+      "invariant": "I-Usuario-1",
+      "status": "planned",
+      "has_canonical_test": false,
+      "impl_files": [
+        "src/backend/http/appUserContext.ts",
+        "src/backend/http/conexosIdentity.ts",
+        "src/backend/routes/permutas.ts",
+        "src/backend/routes/recebimentos.ts",
+        "src/backend/routes/sispag.ts",
+        "src/backend/routes/usuarios.ts",
+        "src/backend/routes/me.ts",
+        "src/frontend/app/permutas/BorderosPanel.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "A INVARIANTE DE MAIOR RAIO. O ator persistido e SEMPRE app_user.username (o e-mail), NUNCA o sub do provedor de identidade — e o que mantem a trilha CONTINUA atraves de qualquer troca de IdP (inclusive o SSO futuro, que emitira outro sub). 21 CALL SITES verificados 2026-08-06: permutas 13, recebimentos 4, sispag:65, usuarios:29, me:24, conexosIdentity:14 — alimentando executadoPor/criadoPor/processadoPor/triggeredBy, PERSISTIDOS em executado_por/criado_por/created_by. O '??' NAO PROTEGE: com sub virando UUID ele continua PRESENTE e vence o fallback (19 sites sao 'sub ?? email'; 2 em recebimentos:644/842 sao 'email ?? sub' e sobreviveriam por acidente da ordem — vao para username mesmo assim, para nao deixar duas doutrinas no mesmo arquivo). Consequencias VERIFICADAS e silenciosas: BorderoGestaoService:340 grava criadoPor, BorderosPanel:460 o renderiza CRU na tabela e :166 monta o dropdown 'filtrar por usuario' — a mesma pessoa viraria DUAS entradas e o filtro historico deixaria de achar o trabalho dela. Trocar agora mantem os valores IDENTICOS aos ja gravados (o sub do token legado JA e o e-mail): sem migracao de dados, sem historico misto. Depois do cutover e irrecuperavel. Corolario: o usuario sintetico do DEV_AUTH_BYPASS precisa de username inconfundivel (dev-bypass@local) porque VAZA para executado_por."
+    },
+    "revogacao-de-acesso": {
+      "file": "business-rules/revogacao-de-acesso.md",
+      "invariant": "I-Usuario-8",
+      "status": "planned",
+      "has_canonical_test": false,
+      "impl_files": [
+        "src/backend/http/appUserContext.ts",
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "open_gap": [
+        "invalidacao PROCESS-LOCAL — so suficiente enquanto o Render roda em instancia unica (plan: starter, render.yaml:10). Na 2a instancia a latencia real vira o TTL cheio, EM SILENCIO."
+      ],
+      "note": "SUBSTITUI a entidade Sessao (100% propriedade do GoTrue: zero linhas nossas, zero invariantes enforcaveis, nenhuma acao de dominio — seria entidade vazia). A regra: desativarUsuario produz efeito em <=30s, NAO instantaneamente — latencia DECLARADA. O TTL e CONSTANTE TIPADA (APP_USER_CONTEXT_TTL_MS = 30_000), NAO env var: um numero de seguranca que se muda por deploy e um numero que se muda SEM REVISAO. Duas condicoes: (1) invalidacao sincrona por setAtivo; (2) invalidacao local ao processo. RESTRICAO DATADA 2026-08-06: a (2) so basta porque o Render e instancia unica. <=30s e aceitavel PORQUE a 2a barreira (ban no GoTrue) impede RENOVAR a sessao — a janela permite terminar requests em voo, nao iniciar sessao nova."
     }
   },
   "state_machines": {
@@ -914,6 +1120,21 @@
         "ADR-0022"
       ],
       "note": "Frente IV (SKELETON Fase 0): ciclo do agregado de conciliação — rascunho|aprovado|executado|estornado (estado LOCAL, espelha lote-pagamento). Transições R1 atribuir+ratear+aplicarRegras / R2 aprovarRecebimento (GATE human-in-the-loop) / R3 reabrirRecebimento (reversível enquanto não executado) / R4 executarRecebimento (baixa+NDe, idempotente, gated) / R5 estornarRecebimento (undo controlado, terminal). Sub-estados de execução (executando/pending do write-ahead) = detalhe de impl da Fase 5. planned."
+    },
+    "usuario": {
+      "file": "state-machines/usuario.md",
+      "entity": "Usuario",
+      "status": "partial",
+      "impl_files": [
+        "src/backend/domain/service/auth/UserAdminService.ts",
+        "src/backend/domain/repository/auth/UserRepository.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/routes/usuarios.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "Ciclo de vida do ACESSO A PLATAFORMA (estado LOCAL app_user.ativo, nao do GoTrue): convidado|ativo|inativo. Transicoes U1 convidarUsuario (padrao, exige SMTP, atomico entre sistemas) / U2 aceite do convite (fora da nossa fronteira) / U3 cadastrarUsuarioComSenha (FALLBACK, nasce ativo, NAO exige SMTP) / U4 desativarUsuario (flag local PRIMEIRO + ban no GoTrue DEPOIS; falha no ban = sucesso PARCIAL auditado; autodesativacao proibida) / U5 ativarUsuario (unban; vinculo Conexos preservado). 'excluido' e out_of_scope POR DECISAO (hard-delete proibido, I-Usuario-3), nao por fatiamento. pendenteMigracao NAO e estado deste automato: e condicao derivada de authUserId IS NULL, ORTOGONAL — hoje todo app_user de producao e ativo E pendente ao mesmo tempo; modela-lo como estado afirmaria algo FALSO sobre a producao e criaria 'inativo+pendente', inalcancavel no diagrama mas alcancavel de verdade. Nota de impl: convidado e inativo sao ambos ativo=false hoje; persistir a distincao (se a UI precisar) e coluna nova na 0044 — decisao do TaskScoper."
     }
   },
   "integrations": {
@@ -1021,6 +1242,31 @@
         "ADR-0028"
       ],
       "note": "Superficie de EXTRATOS do Conexos (fin133/list contas + fin095/list lancamentos, exiDtaLcto#GE/#LE em epoch-ms). Fonte real do extrato — a Nexxera NAO esta no caminho. Cadencia horaria; janela com piso 2026-08-03. Limitacao: LOGIN_ERROR_MAX_SESSIONS (usuario-robo dedicado segue como debito P1)."
+    },
+    "supabase-auth": {
+      "file": "integrations/supabase-auth.md",
+      "direction": "read-write (verificacao de token por JWKS + Admin API para gestao de credencial)",
+      "status": "planned",
+      "impl_files": [
+        "src/backend/http/auth.ts",
+        "src/backend/http/authEnv.ts",
+        "src/backend/http/appUserContext.ts",
+        "src/backend/domain/client/SupabaseAdminClient.ts",
+        "src/backend/jobs/migrate-users-to-supabase.ts",
+        "src/frontend/lib/supabase/client.ts",
+        "src/frontend/lib/supabase/server.ts",
+        "src/frontend/lib/supabase/middleware.ts",
+        "src/frontend/middleware.ts"
+      ],
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "open_gap": [
+        "SMTP nao configurado — pre-requisito humano BLOQUEANTE do convite (convidarUsuario) e do reset de senha; o fallback cadastrarUsuarioComSenha e o que impede o bloqueio duro",
+        "signup publico deve ser DESLIGADO no painel (1a camada; o 403 fail-closed e a 2a e a unica que vive no codigo)",
+        "CONEXOS_CRED_ENC_KEY AUSENTE do render.yaml (pre-existente) — SecretCipher desabilitado, vinculo Conexos por usuario nao funciona em producao e tudo ja cai no robo; I-Usuario-5 esta INERTE"
+      ],
+      "note": "NOVO INTEGRANTE (ADR-0030): custodia de credencial, emissao/rotacao de token e e-mails de convite/recuperacao. NAO decide autorizacao (isso e app_user). Cadeia: GoTrue -> JWT ES256 (sub=uuid, aud=authenticated, iss) -> buildAuthMiddleware [IDENTIDADE] -> app_user WHERE auth_user_id=sub AND ativo [AUTORIZACAO] -> conexosIdentityMiddleware -> ALS{platformUsername} -> ConexosSessionResolver -> getVinculoConexos(username) -> baixa fin010 no nome do humano. MODO DE FALHA: a cadeia NAO LANCA ERRO — se platformUsername deixar de casar com app_user.username, getVinculoConexos retorna null e o sistema DEGRADA PARA O ROBO; as baixas continuam saindo, atribuidas a maquina. Por isso GET /me/conexos-status e o sinal de QA que importa, e chavear o ALS por username (nao por sub) e a decisao de MENOR RAIO (ConexosSessionResolver e getVinculoConexos ficam LITERALMENTE intocados). CONTRATO DE TOKEN POR CAMINHO: issuer EXIGIDO no JWKS/ES256 e NAO no HS256 legado — hoje baseOptions (auth.ts:133-136) carrega issuer e e espalhado nos DOIS; no instante em que SUPABASE_URL for setado o issuer passa a ser exigido do token legado, que NUNCA teve claim iss => derrubaria TODAS as sessoes vivas de uma vez. Teste de regressao NOMEADO. audience=authenticated exigido nos dois. Admin API: inviteByEmail/createUser/updateUserById/setBanned/deleteUser (deleteUser SO como compensacao transacional, nunca em rota). SUPABASE_SERVICE_ROLE_KEY so no backend, NUNCA NEXT_PUBLIC_* (ignora RLS); redactBody deve cobrir service_role. Reuso: createRemoteJWKSet + o verificador alg-aware (auth.ts:140-175) e o harness de teste com keyResolver injetado ja existem — codigo pronto, nunca exercitado em prod. Costura para SSO Azure AD pronta: ligar o provider nao muda uma linha do backend. Tenant unico, sem variacao."
     }
   },
   "ui_flows": {},

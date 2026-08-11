@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { container } from 'tsyringe';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+import { buildAppUserContextMiddleware } from './http/appUserContext.js';
 import { buildAuthMiddleware } from './http/auth.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
@@ -80,12 +81,28 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', version: APP_VERSION 
 // against `app_user` and returns a self-signed HS256 JWT.
 app.use('/auth', authRouter);
 
+// Env de auth validado (Zod) UMA vez — o mesmo objeto alimenta os dois middlewares
+// abaixo, para que não haja duas leituras divergentes do mesmo ambiente.
+const authEnv = loadAuthEnv();
+
+// ── IDENTIDADE ───────────────────────────────────────────────────────────────
 // JWT validation — applied after CORS/rate-limit, before every API route below.
-// Unauthenticated requests are rejected with HTTP 401. Validated env (Zod) at
-// boundary; `DEV_AUTH_BYPASS=true` skips it for local development. Tokens are
-// the app's own HS256 JWTs (signed by AuthService with AUTH_JWT_SECRET).
-// Arch-review cards security-1 / security-7.
-app.use(buildAuthMiddleware(loadAuthEnv()));
+// Unauthenticated requests are rejected with HTTP 401. `DEV_AUTH_BYPASS=true` skips
+// it for local development. Aceita os DOIS esquemas por `alg`: ES256/JWKS (GoTrue) e
+// HS256 (token legado do rollout). Arch-review cards security-1 / security-7.
+app.use(buildAuthMiddleware(authEnv));
+
+// ── AUTORIZAÇÃO ──────────────────────────────────────────────────────────────
+// A ORDEM DESTES TRÊS MIDDLEWARES É O CONTRATO: identidade → autorização →
+// identidade-no-ERP. `role`, `username` e `appUserId` vêm de `app_user` a cada request
+// (I-Usuario-9), sobrescrevendo a claim `role` do token — que no GoTrue é sempre
+// 'authenticated' e barraria todo mundo em `requireRole('admin')`. Sem linha em
+// `app_user`, ou com `ativo = false`: 403 (nunca 401). ADR-0030.
+//
+// Montado DEPOIS do auth (precisa do `sub`) e ANTES do conexosIdentity (que precisa do
+// `username` resolvido — se ele recebesse o `sub`/UUID, `getVinculoConexos` devolveria
+// null e a cadeia degradaria para o usuário-robô SEM erro, SEM log e SEM alarme).
+app.use(buildAppUserContextMiddleware(authEnv));
 
 // Identidade Conexos (Fatia B): coloca o usuário logado no contexto da request
 // (AsyncLocalStorage) para que as chamadas ao ERP usem a sessão dele (a baixa sai

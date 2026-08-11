@@ -1,38 +1,38 @@
 {
   "_meta": {
-    "generated": "2026-08-07",
+    "generated": "2026-08-11",
     "version": "0.16.0",
-    "note": "v0.16.0 (2026-08-07, ADR-0031): regra de negocio NOVA nde-dispensada-conta-e-ordem (I-Receb-4), implemented + teste canonico. Processos POR CONTA E ORDEM DE TERCEIROS (imp021.priVldTipo=2) nao geram Nota de Debito Eletronica: a alocacao quita com SN (com299) + baixa (fin014) e para na etapa terminal nova quitado-sem-nde. Modalidade lida do imp021 NO SERVIDOR (gate 0.5 do pre-flight); indeterminavel = blocked fail-closed, sem escrita. Relacao NotaDebitoEletronica—Recebimento vira 0..1. Sem migration (etapa e TEXT sem CHECK). Coverage: business_rules_total 17->18, implemented 8->9, with_tests 4->5.",
+    "note": "REBASE 2026-08-11 sobre a main (ADR-0031 NDe dispensada em conta e ordem, ADR-0032 chave natural do extrato): esta nota descreve a mudanca desta branch; a anterior segue registrada em decisions/0031 e no CHANGELOG. v0.16.0 (2026-08-06, ADR-0030, branch feat/supabase-auth): IDENTIDADE ENTRA NA ONTOLOGIA — nova entidade Usuario (a PRIMEIRA transversal), 1 state-machine, 3 business-rules, 1 integracao e 9 acoes. O Usuario e a linha app_user, NAO o registro em auth.users. Decisao central: o JWT prova IDENTIDADE, a AUTORIZACAO vem do banco a cada request (403 fail-closed sem linha ou com ativo=false; a claim role do GoTrue e descartada). AMENDA a ADR-0011 SS1. Invariante de maior raio I-Usuario-1: o ator da trilha e o username, nunca o sub — 21 call sites, valores identicos aos ja gravados (sem migracao de dados). RECONCILIACAO DE DRIFT PRE-EXISTENTE: (D1) entities_total dizia 16 contra 17 arquivos e 17 chaves no _index — faltava SolicitacaoNumerario em by_entity, agora incluida; com Usuario o total vai a 18. (D2) TransacaoBancaria estava 'planned' no _index enquanto aqui era 'implemented' — corrigido no _index. DRIFT REMANESCENTE, NAO TOCADO (vai para /retro-ontology): actions_total contava 23 contra 24 chaves no _index e o arquivo actions/permuta/executar-automaticas-lote.md nao tem chave nenhuma; business-rules tem 21 arquivos contra 18 chaves e 17 contadas; integrations tem 8 arquivos contra 6 chaves. Os numeros abaixo somam sobre a BASE ANTERIOR (nao absorvem esses off-by-N), para manter a aritmetica interna consistente. RECOMENDACAO estrutural: gerar este arquivo A PARTIR do _index.json + glob, em vez de mante-lo em paralelo a mao — a derivacao manual e a causa raiz dos 5 drifts.",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "nde-dispensada-conta-e-ordem"
+    "last_feature": "supabase-auth"
   },
   "summary": {
-    "entities_total": 16,
+    "entities_total": 18,
     "entities_imported": 0,
-    "entities_custom": 16,
+    "entities_custom": 18,
     "entities_core": 0,
     "entities_implemented": 9,
-    "entities_partial": 1,
+    "entities_partial": 3,
     "entities_planned": 6,
     "entities_planned_migration": 0,
-    "entities_coverage_pct": 56,
-    "actions_total": 23,
-    "actions_implemented": 16,
-    "actions_partial": 1,
-    "actions_planned": 6,
-    "actions_coverage_pct": 70,
-    "business_rules_total": 18,
+    "entities_coverage_pct": 50,
+    "actions_total": 32,
+    "actions_implemented": 17,
+    "actions_partial": 4,
+    "actions_planned": 11,
+    "actions_coverage_pct": 53,
+    "business_rules_total": 21,
     "business_rules_implemented": 9,
-    "business_rules_planned": 9,
+    "business_rules_planned": 12,
     "business_rules_with_tests": 5,
     "business_rules_retired": 1,
-    "state_machines_total": 5,
-    "state_machines_partial": 1,
+    "state_machines_total": 6,
+    "state_machines_partial": 2,
     "state_machines_implemented": 1,
     "state_machines_planned": 3,
-    "integrations_total": 5,
+    "integrations_total": 6,
     "integrations_implemented": 4,
-    "integrations_planned": 1,
+    "integrations_planned": 2,
     "ui_flows_total": 0,
     "workflows_total": 0,
     "integrations_partial": 0
@@ -228,6 +228,45 @@
         "ADR-0022"
       ],
       "note": "Frente IV (SKELETON Fase 0 — só a forma): regra configurável+versionada+explicável. Semântica das 3 regras (encomenda/adiantamento-cliente/multa-juros) DEFERIDA à Fase 4. planned."
+    },
+    "SolicitacaoNumerario": {
+      "status": "partial",
+      "actions": [
+        "gerarSolicitacaoNumerario",
+        "listarSolicitacoesNumerario",
+        "gerarSolicitacaoNumerarioPermuta"
+      ],
+      "impl_pct": 80,
+      "resolved_by": [
+        "ADR-0025",
+        "ADR-0027",
+        "ADR-0029"
+      ],
+      "note": "RECONCILIACAO DE DRIFT (2026-08-06): a entidade existia em entities/solicitacao-numerario.md e no _index desde a v0.12, mas NUNCA foi contada aqui — era a causa do entities_total 16 x 17 arquivos. Estado real (fonte: _index): SN gerada de duas origens (adiantamento de permuta / pagamento de cliente alocado a processo, split-capable). Trilha recebimentos REAL e gated (com299 -> fin014 -> com297 -> cauda fiscal com300/com131/homologar/poll SEFAZ). partial: so fiscal/observacoes/homologar fail-closed ate o HAR. ADR-0029: o 'Processar' da Permuta VOLTOU a ser a baixa fin010 — a trilha SN de permutas segue no backend, desligada da UI e NAO VALIDADA em producao."
+    },
+    "Usuario": {
+      "status": "partial",
+      "actions": [
+        "convidarUsuario",
+        "cadastrarUsuarioComSenha",
+        "resolverContextoUsuario",
+        "ativarUsuario",
+        "desativarUsuario",
+        "solicitarRedefinicaoSenha",
+        "redefinirSenhaDeTerceiro",
+        "vincularConexos",
+        "migrarUsuarioParaSupabase"
+      ],
+      "impl_pct": 40,
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "open_gap": [
+        "I-Usuario-5 INERTE em producao — CONEXOS_CRED_ENC_KEY ausente do render.yaml; a ontologia assevera uma invariante que o ambiente nao exerce (uma invariante inerte PARECE cumprida)",
+        "I-Usuario-7 parcial — desativar / reset de senha / vincular Conexos nao registram quem fez",
+        "escopo por filial segue FAIL-OPEN (filialAuthz.ts:48) — fora de escopo, carry-over aberto desde 2026-06-22 (6o Regis-Review consecutivo); com a autorizacao vindo do banco vira um JOIN"
+      ],
+      "note": "PRIMEIRA entidade TRANSVERSAL (atravessa as quatro frentes). E a linha app_user, nao o registro em auth.users. Ciclo convidado->ativo<->inativo, sem hard-delete. pendenteMigracao e condicao DERIVADA (authUserId IS NULL), ortogonal, vigencia 2026-08-06 -> Fase 4. NAO criadas: Sessao (100% do GoTrue => virou business-rule revogacao-de-acesso) e Permissao (role e atributo enumerado de 2 valores) — ambas em _watchlist. partial: app_user + role + ativo + vinculo Conexos ja implementados; link GoTrue, appUserContext, convite, reset self-service e fail-closed sao esta feature."
     }
   },
   "by_business_rule": {
@@ -401,6 +440,39 @@
         "ADR-0031"
       ],
       "note": "Frente IV (ADR-0031): a NDe so e emitida QUANDO DEVIDA. priVldTipo=2 (conta e ordem de terceiros) => com299 + fin014 e PARA (sem com297/com300/com131/poll SEFAZ), etapa terminal quitado-sem-nde, nd_doc_cod nulo POR REGRA. Modalidade lida do imp021 no SERVIDOR — nunca do payload do cliente, porque decide emissao de documento fiscal IRREVERSIVEL. Indeterminavel (processo ausente | campo nulo | read falhou) => blocked fail-closed, write-ahead nem abre. Gatilho e SO priVldTipo=2, NAO a variante \"- TERCEIROS\" da config de SN (gcd 151), que so decide a conta de rateio. Testes canonicos: RecebimentoNumerarioService.test.ts (describe ADR-0031), recebimentos.e2e.falhas.test.ts (Cenario 5, prova por HTTP que nada chega ao com297/com300/com131), SolicitacaoNumerarioExecucaoRepository.test.ts, AlocarProcessosDialog.test.tsx."
+    },
+    "autorizacao-resolvida-do-banco": {
+      "invariant": "I-Usuario-9",
+      "status": "planned",
+      "has_test": false,
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "note": "O token prova identidade; role/ativo vem do banco a cada request. Claim role do GoTrue ('authenticated') DESCARTADA. 403 fail-closed sem linha em app_user ou com ativo=false — nunca 401. AMENDA a ADR-0011 SS1. Blast radius total (30+ rotas de mutacao). planned."
+    },
+    "ator-da-trilha-de-auditoria": {
+      "invariant": "I-Usuario-1",
+      "status": "planned",
+      "has_test": false,
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "open_gap": [
+        "21 call sites a trocar de req.user?.sub para req.user.username — o '??' nao protege"
+      ],
+      "note": "O ator persistido e SEMPRE o username (e-mail), nunca o sub do provedor — mantem a trilha continua atraves de qualquer troca de IdP. 21 call sites verificados 2026-08-06. Valores ficam identicos aos ja gravados: sem migracao de dados, sem historico misto. Impacto visivel se violada: BorderosPanel:460 renderiza criadoPor cru e :166 monta o filtro por usuario a partir dele. Teste canonico no TDD. planned."
+    },
+    "revogacao-de-acesso": {
+      "invariant": "I-Usuario-8",
+      "status": "planned",
+      "has_test": false,
+      "resolved_by": [
+        "ADR-0030"
+      ],
+      "open_gap": [
+        "invalidacao PROCESS-LOCAL — degrada EM SILENCIO na 2a instancia do Render"
+      ],
+      "note": "SUBSTITUI a entidade Sessao. Revogacao com latencia DECLARADA (<=30s), TTL como constante tipada (nao env var). Restricao datada 2026-08-06: so vale com instancia unica (Render plan: starter). Ban no GoTrue e a 2a barreira (impede renovar); sua falha => sucesso parcial auditado. planned."
     }
   },
   "health_flags": {
@@ -444,7 +516,11 @@
       "FRENTE IV (ADR-0022, SKELETON Fase 0) spikes ABERTOS que gatilham as fases: O7 (Nexxera direto — canal API vs SFTP/CNAB, formato CNAB240/OFX/JSON, auth, sandbox) BLOQUEIA o Módulo 1 — spike na Fase 0, port channel-agnostic na Fase 1; O3 (write de recebível) = aposta 'assume fin010 + parametriza', CONFIRMAR shape do payload/endpoint no build (Fase 5) — capturar baixa real de recebível se não fechar; NDe — endpoint/trigger de emissão no Conexos a confirmar na Fase 5 (junto do O3); O4 (scheduler inexistente, herdado do SISPAG) — cadência do Módulo 1 começa manual+cron probe, EventBridge é o alvo.",
       "FRENTE IV regras de negócio DEFERIDAS à Fase 4 (stubs planned, semântica NÃO fixada — evita modelar antes da hora, uma OfficeHours por regra): encomenda-percentuais (0,1%/0,9% — base, significado, contas, arredondamento); adiantamento-cliente (critério de identificação + ciclo do CreditoCliente); separacao-multa-juros (informado × calculado, destino por parcela, divergência esperado×pago). Ver ontology/_inbox/_watchlist.md.",
       "FRENTE IV business-rules sem teste canônico (nascem planned): invariante-rateio (I-Receb-1) e idempotencia-quitacao-nde (I-Receb-2) — invariantes travados na Fase 0, teste canônico a fixar no TDD da Fase 3/5. Os 3 stubs de regra (encomenda/adiantamento-cliente/multa-juros) só ganham teste após a Fase 4.",
-      "FRENTE IV Módulo 6 (observabilidade) — transversal, NÃO é entidade/ação única: semeado em cada fase (correlation id nasce na TransacaoBancaria, run de auditoria, logs estruturados) e consolidado na Fase 6 (dashboards/métricas/alertas/tracing). Não modelar como entidade."
+      "FRENTE IV Módulo 6 (observabilidade) — transversal, NÃO é entidade/ação única: semeado em cada fase (correlation id nasce na TransacaoBancaria, run de auditoria, logs estruturados) e consolidado na Fase 6 (dashboards/métricas/alertas/tracing). Não modelar como entidade.",
+      "Identidade (ADR-0030, 2026-08-06) — entidades Sessao e Permissao NAO criadas: Sessao e 100% propriedade do GoTrue (zero linhas nossas, zero invariantes enforcaveis) e virou a business-rule revogacao-de-acesso; Permissao seria modelar o vazio (role e atributo enumerado de 2 valores, e a dimensao Usuario N-M Filial esta fora de escopo). Promover Permissao quando app_user_filial entrar em escopo — o fechamento do filialAuthz fail-OPEN e o gatilho natural.",
+      "Identidade / TTL de 30s x ESCALA HORIZONTAL (ADR-0030, 2026-08-06) — a invalidacao do cache de autorizacao e PROCESS-LOCAL e so e suficiente porque o Render roda em instancia unica (plan: starter, render.yaml:10). No dia da segunda instancia a latencia real de revogacao vira o TTL cheio, SEM ERRO, SEM LOG E SEM ALARME. Revisitar business-rules/revogacao-de-acesso.md ANTES de escalar.",
+      "Identidade / I-Usuario-5 INERTE em producao (2026-08-06) — CONEXOS_CRED_ENC_KEY ausente do render.yaml desabilita o SecretCipher: o vinculo Conexos por usuario nao funciona e TUDO JA CAI NO USUARIO-ROBO hoje. A ontologia assevera uma invariante que o ambiente nao exerce; registrado porque uma invariante inerte PARECE cumprida, e a diferenca so aparece quando alguem audita quem assinou uma baixa. Gap pre-existente.",
+      "Ontologia / DRIFT ESTRUTURAL de _coverage.json (curadoria 2026-08-06) — reconciliados D1 (SolicitacaoNumerario faltava em by_entity: 16 contado x 17 arquivos) e D2 (TransacaoBancaria 'planned' no _index x 'implemented' aqui). ABERTOS para /retro-ontology: actions_total 23 x 24 chaves no _index x actions/permuta/executar-automaticas-lote.md sem chave; business-rules 21 arquivos x 18 chaves x 17 contadas; integrations 8 arquivos x 6 chaves. CAUSA RAIZ: este arquivo e mantido A MAO em paralelo ao _index. CORRECAO DURAVEL: gera-lo A PARTIR do _index + glob."
     ]
   }
 }

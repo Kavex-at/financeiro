@@ -53,9 +53,30 @@ services:
         sync: false
       - key: CONEXOS_DRY_RUN
         sync: false
+      # ── Identidade (ADR-0030) ────────────────────────────────────────────────────────
+      # O GoTrue custodia a credencial; a AUTORIZAÇÃO é resolvida de `app_user` a cada
+      # request. `SUPABASE_URL` habilita a verificação ES256 por JWKS e o issuer.
+      - key: SUPABASE_URL
+        sync: false
+      # Admin API (convite, cadastro, ban, reset). IGNORA RLS e pode criar usuários:
+      # backend-only, NUNCA `NEXT_PUBLIC_*`. `redactBody` a mascara nos logs.
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Botão de ROLLBACK das fases 2-3. Default do código é `true` — só vire para `false`
+      # depois de `npm run job:migrate-users -- --execute` imprimir GATE OPEN, senão os
+      # usuários não migrados ficam sem NENHUM caminho de login.
+      - key: AUTH_LEGACY_LOGIN_ENABLED
+        sync: false
+      # ⚠️ GAP PRÉ-EXISTENTE, não causado por esta feature: sem esta chave o `SecretCipher`
+      # fica desabilitado, o vínculo Conexos por usuário NÃO funciona em produção e TODAS as
+      # baixas fin010 saem no nome do usuário-robô — sem erro, sem log e sem alarme. Enquanto
+      # ela faltar, a invariante I-Usuario-5 está INERTE (parece cumprida e não é).
+      - key: CONEXOS_CRED_ENC_KEY
+        sync: false
       # Secrets / per-deploy values — set in the Render dashboard.
       - key: databaseConnectionString
         sync: false
+      # LEGADO DO ROLLOUT — assina/valida os tokens HS256 do login antigo. Sai na Fase 4.
       - key: AUTH_JWT_SECRET
         sync: false
       - key: ADMIN_USERNAME

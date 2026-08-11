@@ -1,0 +1,12 @@
+-- 0045_app_user_role_default — alinha o default de `role` com o least privilege (ADR-0030 §9).
+--
+-- `migrations/0007_app_user.sql` defaulta `role` a 'admin'; o boundary (`UserAdminService`)
+-- já defaulta a 'operador'. O drift era INÓCUO enquanto a autorização vinha do JWT — deixa de
+-- ser agora que ela é resolvida do banco a cada request (I-Usuario-9): qualquer linha criada
+-- FORA do route (seed, INSERT manual, job) nasceria `admin`.
+--
+-- Muda SÓ o default da coluna. Linhas existentes ficam INTACTAS — nenhum UPDATE de dados:
+-- rebaixar um admin em produção é ato administrativo explícito, não efeito colateral de
+-- migration. `ALTER COLUMN ... SET DEFAULT` é idempotente por natureza (re-aplicar reescreve
+-- o mesmo default), então não precisa de guarda `IF NOT EXISTS`.
+ALTER TABLE app_user ALTER COLUMN role SET DEFAULT 'operador';

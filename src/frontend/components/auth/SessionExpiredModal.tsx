@@ -37,9 +37,10 @@ export function SessionExpiredModal() {
 
   const at = sessionExpiredAt ? format(new Date(sessionExpiredAt), 'dd/MM HH:mm') : null
 
-  const handleRelogin = () => {
+  const handleRelogin = async () => {
     const returnTo = pathname || '/'
-    signOut()
+    // Aguarda a revogação no provedor antes de sair da tela (ver `UserMenu`).
+    await signOut()
     clearSessionExpired()
     router.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`)
   }

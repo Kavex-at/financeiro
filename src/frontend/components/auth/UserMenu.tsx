@@ -18,8 +18,11 @@ export function UserMenu() {
     return null
   }
 
-  function handleSignOut() {
-    signOut()
+  // `signOut` virou async: ele REVOGA a sessão no provedor, não só limpa o estado local.
+  // Redirecionar antes de a revogação completar deixaria o refresh token vivo — um logout
+  // que não desloga.
+  async function handleSignOut() {
+    await signOut()
     router.replace('/login')
   }
 

@@ -73,5 +73,9 @@ ratear → aplicar regras → baixar/emitir NDe → observar. Ver [ADR-0022](dec
 |-------|-----------|
 | **Human-in-the-loop** | Princípio: a solução faz o mecânico e audita; o analista decide o que exige julgamento. |
 | **Trilha de auditoria** | Registro persistido de toda ação (quem, quando, o quê), de sistema e de usuário. |
+| **Usuario** | A linha `app_user` — **não** o registro em `auth.users`. É a entidade que decide *o que pode* (`role`, `ativo`) e *como se chama* (`username`); o registro no GoTrue é apenas o **custodiante da credencial**. Existir no provedor de identidade **não é** existir na plataforma (ADR-0030). |
+| **Ator (da trilha)** | Quem executou/criou uma ação, gravado em `executado_por` / `criado_por` / `created_by`. É **sempre o `username`** (o e-mail), **nunca** o `sub` do provedor de identidade — é o que mantém a trilha contínua através de qualquer troca de IdP (I-Usuario-1). |
+| **Usuário-robô** | Credencial genérica do Conexos usada quando o usuário logado **não tem vínculo próprio** com o ERP. Não é erro: é **degradação silenciosa** — as baixas continuam saindo, atribuídas à máquina em vez da pessoa. Por isso `GET /me/conexos-status` é exibido logo após o login. |
+| **Identidade × Autorização** | Duas camadas deliberadamente separadas. **Identidade** = *quem é* (JWT ES256 do GoTrue, `sub` = UUID). **Autorização** = *o que pode* (`role`/`ativo` lidos de `app_user` **a cada request**). A claim `role` do JWT é sempre `'authenticated'` e é **descartada** (ADR-0030, amenda a ADR-0011). |
 | **Multi-filial** | As soluções operam sobre todas as filiais, não apenas uma. |
 | **Diagnóstico / baseline** | Primeira semana de cada frente: confirma escopo e levanta métricas para apurar ROI. |

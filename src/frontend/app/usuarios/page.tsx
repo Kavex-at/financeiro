@@ -29,6 +29,33 @@ import { ResetSenhaDialog } from './ResetSenhaDialog'
 import { VinculoConexosDialog } from './VinculoConexosDialog'
 
 /**
+ * Rótulo do ciclo de vida do acesso.
+ *
+ * O `status` vem DERIVADO do backend (`GET /usuarios`, a partir de `ativo` +
+ * `convite_pendente`) — a UI não o recalcula, para que não existam duas regras de derivação
+ * que divergem. `convidado` usa o token `warning`: é um estado de espera, não um erro.
+ */
+function statusLabel(u: AppUser) {
+  const status = u.status ?? (u.ativo ? 'ativo' : 'inativo')
+  if (status === 'convidado') {
+    return (
+      <Badge
+        variant="outline"
+        className="border-warning/40 bg-warning-subtle text-warning-foreground"
+        data-testid={`usuario-status-convidado-${u.id}`}
+      >
+        Convite pendente
+      </Badge>
+    )
+  }
+  return (
+    <span className="text-sm text-muted-foreground" data-testid={`usuario-status-${u.id}`}>
+      {status === 'ativo' ? 'Ativo' : 'Inativo'}
+    </span>
+  )
+}
+
+/**
  * Gestão de usuários da plataforma (Fatia A) — só admin. Substitui o cadastro
  * manual de usuários @kavex no banco. A autorização real é server-side
  * (`requireRole('admin')`); este guard client-side é só UX.
@@ -145,9 +172,10 @@ export default function UsuariosPage() {
                           onCheckedChange={(v) => handleToggleAtivo(u, v)}
                           aria-label={`Acesso de ${u.username}`}
                         />
-                        <span className="text-sm text-muted-foreground">
-                          {u.ativo ? 'Ativo' : 'Inativo'}
-                        </span>
+                        {/* `convidado` e `inativo` são os dois `ativo = false`. Mostrá-los
+                            igual faria o admin oferecer "reenviar convite" a quem foi
+                            desligado — e ler "acesso revogado" em quem nunca entrou. */}
+                        {statusLabel(u)}
                       </div>
                     </TableCell>
                     {vinculoDisponivel ? (
