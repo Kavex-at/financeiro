@@ -1,5 +1,51 @@
 # Columbia Financeiro — Changelog
 
+## v0.24.0 (2026-08-11) — Identidade: o Supabase Auth custodia a credencial, o banco decide a autorização
+
+> **Cutover faseado.** Este release entrega a **Fase 1**: o backend passa a aceitar os dois tokens e a
+> resolver autorização do banco. **Ninguém é deslogado pelo deploy** e o login atual continua valendo.
+> O procedimento completo — com a ordem que não se negocia, matriz de rollback e sinais de problema —
+> está em [`docs/runbooks/supabase-auth-cutover.md`](docs/runbooks/supabase-auth-cutover.md).
+
+- **feat(auth):** o **Supabase Auth (GoTrue)** passa a custodiar a credencial e emitir o JWT (ES256 via
+  JWKS). A **autorização deixa de vir do token**: `role`, `ativo` e `username` são resolvidos de
+  `app_user` **a cada request** (`appUserContext`, cache TTL 30 s com invalidação síncrona). A claim
+  `role` do GoTrue é sempre `'authenticated'` e é **descartada** — usá-la quebraria
+  `requireRole('admin')` para todo mundo. Sem linha em `app_user`, com `ativo = false` ou com convite
+  não aceito, a request morre em **403 fail-closed — nunca 401** (401 dispararia refresh e o modal de
+  sessão expirada, que mentiriam sobre a causa). Ver **ADR-0030**.
+- **feat(auth):** convite por e-mail, cadastro com senha (fallback sem SMTP), ativar/desativar e
+  redefinição de senha, via `UserAdminService` + `SupabaseAdminClient` (fronteira validada com Zod,
+  service-role **backend-only**). A revogação invalida **as duas** chaves de cache — durante as Fases
+  2–3 a mesma pessoa pode portar token legado **ou** do provedor.
+- **feat(auth):** proteção de rota e refresh de sessão **server-side** no frontend (`middleware.ts` +
+  `@supabase/ssr`); antes era 100 % client-side, pós-hidratação. `useIsAdmin()` lê o papel de
+  `GET /me`, não de uma claim não verificada.
+- **fix(auth):** as opções de verificação do JWT passam a ser **separadas por caminho**. O HS256 legado
+  **nunca teve claim `iss`**, então compartilhar um único objeto de opções faria o mero ato de
+  configurar `SUPABASE_URL` **derrubar todas as sessões vivas de uma vez**. HS256 não exige `issuer`;
+  `audience: 'authenticated'` segue exigido nos dois caminhos.
+- **fix(auth):** o esquema do token é classificado pelo **`iss`, não pelo `alg`**. Um projeto Supabase
+  ainda em chaves simétricas emite HS256 com `sub` UUID — rotear por algoritmo trancaria **todos** os
+  usuários desse projeto para fora.
+- **fix(auth):** a trilha de auditoria grava **sempre `username`, nunca `sub`** (I-Usuario-1), via
+  `auditActor(req)` em 29 call sites. O padrão anterior (`sub ?? email`) **não protegia**: com `sub`
+  virando UUID ele continua presente e vence o `??`, e a trilha passaria a gravar UUIDs **sem erro e
+  sem teste vermelho** — partindo o filtro "por usuário" do painel de borderôs. Há teste-guarda que
+  varre os call sites; foi ele que pegou, no rebase, o site novo do arquivamento (`0c179ea`).
+- **chore(db):** migrations **`0047`** (`auth_user_id`, `convite_pendente`, `password_hash` deixa de
+  ser `NOT NULL`) e **`0048`** (default de `role` → `operador`, least privilege). Ambas idempotentes e
+  **sem `UPDATE` de dados**. Renumeradas de `0044`/`0045` no rebase — a `main` já havia ocupado esses
+  números, e nomes de arquivo distintos **não geram conflito de git**.
+- **chore(auth):** job `job:migrate-users` importa os **hashes bcrypt existentes** para o GoTrue —
+  é o que evita o lockout geral: ninguém precisa trocar de senha. **Dry-run por padrão.**
+  `listPendingMigration()` é o **gate da Fase 3**, não um relatório.
+- **docs(deploy):** `DEPLOY.md` corrigido em três pontos que induziam a erro — as migrations rodam no
+  **boot** (não há pre-deploy: ele nunca rodou), o `seed:admin` é **manual**, e `ADMIN_USERNAME`
+  **precisa ser um e-mail** (o GoTrue valida formato). A tabela da Vercel ganhou as três
+  `NEXT_PUBLIC_*` que faltavam, com o aviso de que `NEXT_PUBLIC_AUTH_PROVIDER` é **inlinada em build
+  time** — trocá-la no painel não faz nada sem um novo deploy.
+
 ## v0.23.1 (2026-08-10) — Recebimentos: o `gcd` da SN sai do nome e passa a vir do histórico do processo
 
 - **fix(recebimentos):** o gate 3 do pré-flight deixa de resolver a **Configuração de Documento** da SN
