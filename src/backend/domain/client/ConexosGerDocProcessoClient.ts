@@ -171,10 +171,13 @@ export interface ValidaProcessoPessoaResult {
 const ENDERECO_PESSOA_ROW_SCHEMA = z
     .object({
         endCod: z.coerce.number().int(),
+        // `string | number`: em produção vem como string (`"10384567000405"`), mas um CNPJ serializado
+        // como NÚMERO derrubaria o parse da PÁGINA INTEIRA — e, como este é o único campo que amarra
+        // endereço ↔ estabelecimento, isso pararia todo o fluxo de numerário. Coagir custa nada.
         pdcDocFederal: z
-            .string()
+            .union([z.string(), z.number()])
             .nullish()
-            .transform((v) => v ?? undefined),
+            .transform((v) => (v === null || v === undefined ? undefined : String(v))),
         endVldDefault: z.coerce
             .number()
             .int()
@@ -187,9 +190,17 @@ const ENDERECO_PESSOA_ROW_SCHEMA = z
     })
     .passthrough();
 
+/**
+ * Produção (2026-08-11) devolve um ARRAY cru; o envelope `{rows}` é aceito por paridade com os demais
+ * `list` do ERP. `rows` é OBRIGATÓRIO nesse ramo — de propósito. Com `.default([])`, qualquer envelope
+ * inesperado (`{content}`, `{responseData:{rows}}`, …) viraria "zero endereços" em silêncio, e o gate
+ * 1.5 acusaria "a pessoa não tem endereço cadastrado" para quem tem — mandando a analista corrigir um
+ * cadastro que está certo. Falhar o parse vira `ConexosError` → pré-flight `UNKNOWN` (retryable, alto),
+ * que é o desfecho honesto para "não sei ler a resposta".
+ */
 const ENDERECO_PESSOA_LIST_SCHEMA = z.union([
     z.array(ENDERECO_PESSOA_ROW_SCHEMA),
-    z.object({ rows: z.array(ENDERECO_PESSOA_ROW_SCHEMA).default([]) }),
+    z.object({ rows: z.array(ENDERECO_PESSOA_ROW_SCHEMA) }),
 ]);
 
 /** Página do `com191/endereco/list` — uma pessoa não tem centenas de endereços; 200 cobre com folga. */
