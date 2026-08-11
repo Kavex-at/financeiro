@@ -278,7 +278,12 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
 
     // ── com297: resolver do gcd da NDe pelo nome ──
     app.post('/api/com297/list', (_req, res) => {
-        res.json({ count: 1, rows: [{ gcdCod: 222, gcdDesNome: 'NOTA DE DÉBITO ELETRÔNICA' }] });
+        // Nome REAL da config da NDe em produção (gcd 248) — é por ele que `resolveGcdCodByName`
+        // procura, via o default de `COM297_GCD_NOTA_DEBITO_NOME`.
+        res.json({
+            count: 1,
+            rows: [{ gcdCod: 222, gcdDesNome: 'NOTA DE DEBITO PAGAMENTO ANTECIPADO' }],
+        });
     });
 
     // ── com194 (validações — o cenário 1 devolve 1 linha de erro) ──
@@ -332,6 +337,10 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
         res.json({
             responseData: { pesCod: PES_COD, endCodFis: 2, pdcDocFederal: '37032037000101' },
         });
+    });
+    // Gate 1.5: endereços da pessoa — o documento usa o endereço do CNPJ do processo.
+    app.post('/api/com191/endereco/list/:pesCod', (_req, res) => {
+        res.json([{ endCod: 2, pdcDocFederal: '37032037000101', endVldDefault: 1 }]);
     });
     app.post('/api/:tela/gerDoc/validaConfigDocPessoa', (_req, res) => {
         res.json({ responseData: { gcdCod: null, gcdDesNome: null } });

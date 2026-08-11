@@ -27,6 +27,7 @@ preconditions:
   - "ACL pré-flight da conta de serviço (com300 UPDATE, com131 GERAR OBS, com297 HOMOLOGAR/CONTINGENCIA, com194 SELECT) → 403 antes de qualquer escrita."
   - "Modalidade do processo resolvida no servidor (gate 0.5: imp021.priVldTipo via ConexosCadastroClient.listProcessos). READY só com a modalidade conhecida — ela decide se a NDe é devida (ADR-0031)."
   - "Config de Documento (gcdCod) da SN resolvida no gate 3 por HISTÓRICO do processo (com299/list) → mapa filial SN_GCD_COD_BY_FIL → nome (SN_CONFIG_NOME_RE), toda rota validada contra lov/ConfigDocProcesso. Só se aplica ao ramo 'criar novo SN' — ver ADR-0034."
+  - "Endereço do documento (endCod) resolvido no gate 1.5: o endereço da pessoa cujo pdcDocFederal é o do processo (com191/endereco/list, comparação por dígitos; empate por endVldDefault e depois menor endCod). NUNCA o endCodFis do validaProcessoPessoa — esse é o endereço PADRÃO da pessoa, e numa pessoa multi-estabelecimento o ERP recusa o par (endereço de um, CNPJ de outro) com endCod Generic.NOT_VALID. Sem endereço correspondente → BLOCKED_CADASTRO antes de qualquer escrita. Ver ADR-0035."
   - "Escrita irreversível gated: só executa o POST real com CONEXOS_WRITE_ENABLED=true E CONEXOS_DRY_RUN=false (default dry-run)."
 postconditions:
   - "dry-run → monta e loga os payloads da rota escolhida (novo SN: com299/fin014/com297/fiscal; SN existente: fin014/com297/fiscal), NENHUM POST, retorna preview (dryRun:true)."

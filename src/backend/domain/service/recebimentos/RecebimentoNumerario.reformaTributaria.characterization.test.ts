@@ -68,6 +68,10 @@ const buildMocks = (): Mocks => ({
             endCodFis: 2,
             pdcDocFederal: '37032037000101',
         }),
+        // Gate 1.5: o endereço do documento é o do CNPJ do processo (ver `resolverEndCodDaPessoa`).
+        listEnderecosPessoa: jest
+            .fn()
+            .mockResolvedValue([{ endCod: 2, pdcDocFederal: '37032037000101', endVldDefault: 1 }]),
         validaConfigDocPessoa: jest.fn().mockResolvedValue({
             gcdCod: 188,
             gcdDesNome: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA',

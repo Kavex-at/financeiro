@@ -68,9 +68,17 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
     gerDoc: {
         validaProcessoPessoa: jest.fn().mockResolvedValue({
             pesCod: 194,
-            endCodFis: 2,
+            // O endereço PADRÃO da pessoa (1), que é justamente o que NÃO deve ir no documento quando a
+            // pessoa tem mais de um estabelecimento — ver `resolverEndCodDaPessoa`.
+            endCodFis: 1,
             pdcDocFederal: '37032037000101',
         }),
+        // Gate 1.5: dois estabelecimentos, como a DYNAMIS em produção. O documento é emitido no endereço
+        // 2 — o do CNPJ do processo — e NÃO no 1 (padrão da pessoa) que o validador sugere.
+        listEnderecosPessoa: jest.fn().mockResolvedValue([
+            { endCod: 1, pdcDocFederal: '37032037000180', endVldDefault: 1 },
+            { endCod: 2, pdcDocFederal: '37.032.037/0001-01', endVldDefault: 0 },
+        ]),
         validaConfigDocPessoa: jest.fn().mockResolvedValue({
             gcdCod: 188,
             gcdDesNome: 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA',
@@ -1129,17 +1137,66 @@ describe('RecebimentoNumerarioService — pré-flight READ-ONLY classifica antes
         expect(m.repo.beginExecution).not.toHaveBeenCalled();
     });
 
-    it('BLOCKED_CADASTRO quando endCodFis=0 (endereço fiscal inválido)', async () => {
+    it('BLOCKED_CADASTRO quando NENHUM endereço da pessoa tem o CNPJ do processo', async () => {
         const m = buildMocks();
         wireDocCods(m);
-        (m.gerDoc.validaProcessoPessoa as jest.Mock).mockResolvedValue({
-            pesCod: 194,
-            endCodFis: 0,
-            pdcDocFederal: '37032037000101',
-        });
+        // A pessoa existe e tem endereços, mas nenhum é do estabelecimento do processo. Emitir assim
+        // colocaria a NDe no CNPJ errado — bloqueia ANTES de qualquer escrita.
+        (m.gerDoc.listEnderecosPessoa as jest.Mock).mockResolvedValue([
+            { endCod: 1, pdcDocFederal: '37032037000180', endVldDefault: 1 },
+        ]);
         const out = await buildService(m).processarAlocacao(baseInput());
         expect(out.status).toBe('blocked');
         expect(out.classificacao).toBe('BLOCKED_CADASTRO');
+        expect(out.motivo).toContain('37032037000101');
+        expect(m.gerDoc.gerarDocProcesso).not.toHaveBeenCalled();
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+    });
+
+    it('BLOCKED_CADASTRO quando a pessoa não tem endereço nenhum cadastrado', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.gerDoc.listEnderecosPessoa as jest.Mock).mockResolvedValue([]);
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('blocked');
+        expect(out.classificacao).toBe('BLOCKED_CADASTRO');
+        expect(out.motivo).toContain('não tem endereço cadastrado');
+        expect(m.gerDoc.gerarDocProcesso).not.toHaveBeenCalled();
+    });
+
+    /**
+     * O bug de 2026-08-11 (DYNAMIS): o validador devolve o endereço PADRÃO da pessoa (1) junto do CNPJ do
+     * processo (que é o endereço 2). Mandar esse par no `com297/gerDocProcesso` dá
+     * `endCod Generic.NOT_VALID` — e só DEPOIS da baixa fin014 já estar finalizada.
+     */
+    it('usa o endCod do CNPJ DO PROCESSO, não o endCodFis (padrão) do validaProcessoPessoa', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        await buildService(m).processarAlocacao(baseInput());
+        // O validador sugeriu 1 (ver `buildMocks`); o endereço do CNPJ 37032037000101 é o 2 — e é o 2
+        // que tem de aparecer em TODO payload, tanto na SN (com299) quanto na NDe (com297).
+        await expect(
+            (m.gerDoc.validaProcessoPessoa as jest.Mock).mock.results[0]?.value,
+        ).resolves.toMatchObject({ endCodFis: 1 });
+        for (const chamada of (m.gerDoc.validaConfigDoc as jest.Mock).mock.calls) {
+            expect(chamada[0]).toMatchObject({ endCodFis: 2 });
+        }
+        const snGer = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0];
+        expect(snGer.payload).toMatchObject({ endCodFis: 2 });
+        const ndGer = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[1][0];
+        expect(ndGer.payload).toMatchObject({ endCodFis: 2 });
+    });
+
+    it('empate de CNPJ entre endereços resolve pelo endVldDefault (determinístico)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.gerDoc.listEnderecosPessoa as jest.Mock).mockResolvedValue([
+            { endCod: 5, pdcDocFederal: '37032037000101', endVldDefault: 0 },
+            { endCod: 9, pdcDocFederal: '37032037000101', endVldDefault: 1 },
+        ]);
+        await buildService(m).processarAlocacao(baseInput());
+        const snGer = (m.gerDoc.gerarDocProcesso as jest.Mock).mock.calls[0][0];
+        expect(snGer.payload).toMatchObject({ endCodFis: 9 });
     });
 
     it('BLOCKED_ELEGIBILIDADE (nenhuma SN na ConfigDocProcesso do processo) → blocked, NÃO gera', async () => {

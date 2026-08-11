@@ -1,5 +1,29 @@
 # Columbia Financeiro — Changelog
 
+## v0.23.2 (2026-08-11) — Recebimentos: o endereço do documento sai do CNPJ do processo
+
+- **fix(recebimentos):** a emissão da NDe deixa de copiar o `endCodFis` do `validaProcessoPessoa` e
+  passa a **resolver** o endereço: o do estabelecimento cujo CNPJ é o do processo
+  (`com191/endereco/list`, comparação por dígitos). Em produção, a DYNAMIS (`pesCod 699`, processo
+  **3639**, R$ 174.036,61) falhava com `endCod Generic.NOT_VALID` no `com297/gerDocProcesso` — **depois
+  da baixa fin014 já ter finalizado**. O cliente tem dois estabelecimentos no mesmo logradouro
+  (`endCod 1` = `/0001-62`, `endCod 2` = `/0004-05`); o processo é do `/0004-05`, mas o validador
+  devolve `endCodFis: 1` (o endereço **padrão** da pessoa) junto do CNPJ do processo — um par
+  incoerente, que o ERP recusa. As 140 NDes já emitidas para essa pessoa usam `endCod 2`. Ver
+  **ADR-0035**.
+- **fix(recebimentos):** morre o fallback `END_COD_FIS_DEFAULT = 1` da etapa da NDe. Ele produzia
+  exatamente o valor errado — `1` é o endereço padrão, justamente o que o ERP recusa numa pessoa
+  multi-estabelecimento. Sem endereço resolvido, o fluxo **falha antes** do POST irreversível.
+- **fix(recebimentos):** novo gate 1.5 do pré-flight. Nenhum endereço com o CNPJ do processo →
+  `BLOCKED_CADASTRO` **antes de qualquer escrita**, dizendo qual CNPJ faltou e quais endereços existem.
+  A mensagem "regularize o cadastro no Conexos" agora só aparece quando o cadastro é mesmo o problema.
+- **chore(recebimentos):** `WARN` quando o endereço resolvido diverge do sugerido pelo validador (mede
+  quantas execuções teriam falhado), e sonda read-only de produção
+  (`recebimentos.probe.endCod.integration.test.ts`) que documenta a medição.
+- **test:** os fakes de ERP dos e2e voltam a servir o nome REAL da config da NDe
+  (`"NOTA DE DEBITO PAGAMENTO ANTECIPADO"`); estavam com o nome antigo, e as 4 suítes e2e falhavam em
+  14 testes na `main` por essa deriva de fixture — sem relação com esta correção.
+
 ## v0.23.1 (2026-08-10) — Recebimentos: o `gcd` da SN sai do nome e passa a vir do histórico do processo
 
 - **fix(recebimentos):** o gate 3 do pré-flight deixa de resolver a **Configuração de Documento** da SN
