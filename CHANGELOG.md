@@ -1,5 +1,37 @@
 # Columbia Financeiro — Changelog
 
+## v0.23.3 (2026-08-12) — Recebimentos: a NDe garante a descrição do item antes de homologar
+
+- **fix(recebimentos):** a homologação da **NDe** era recusada para os clientes cujo cadastro tem
+  **"1ª Descrição dos Produtos" = Descrição da DI** (`cmn025` → `dpeVld1DescrNfe = 4`, rótulo do tenant
+  "DI + DUIMP"). O campo governa o `dprLngDescrNf` ("Descrição para Impressão") da linha do item — que é
+  o **`xProd` da NF-e**. Como a NDe é um **encargo** (produto `41978` PAGAMENTO ANTECIPADO, que não tem
+  adição de DI), a derivação não tinha de onde tirar texto: campo vazio, nota sem descrição de produto,
+  SEFAZ recusa. A automação **nunca havia tocado** nesse campo — estava inteiramente à mercê de
+  dado-mestre por-cliente.
+- **fix(recebimentos):** entra uma etapa entre a geração da NDe e a leg fiscal (`com300`) que **garante a
+  descrição NO DOCUMENTO**: lê os itens (`POST com297/comDocProdutos/list`), e **só se** a descrição
+  estiver vazia lê a linha inteira e a regrava por **read-modify-write** (`PUT com297/comDocProdutos`,
+  objeto completo, `putGenericOnce` — mesma doutrina do `com300`). Sucesso ⟺ **eco com descrição
+  não-vazia**; qualquer outra coisa é falha *fail-closed*, **antes** de qualquer escrita irreversível.
+  Cliente com cadastro compatível não vê diferença: a etapa é **no-op**.
+- **fix(recebimentos):** o conserto é de **documento**, nunca de **cadastro**. Trocar o
+  `dpeVld1DescrNfe` do cliente faria a NDe homologar **quebrando o faturamento**: para a NF-e de
+  mercadoria do mesmo cliente, descrever a DI/DUIMP é o comportamento fiscal **desejado**. É dado-mestre
+  versionado e compartilhado — trocar-e-restaurar correria contra qualquer nota emitida por humano na
+  janela. Ver **ADR-0036** e `business-rules/descricao-item-nde.md` (I-Receb-5).
+- **fix(recebimentos):** o texto default **não é uma decisão fiscal nova** — é o que o próprio ERP
+  produziria com o cadastro em "1 - Descrição Produto", reproduzindo **byte a byte** o workaround
+  manual. Precedência: `NDE_DESCRICAO_ITEM_FALLBACK` (env, opcional) → `preDescrProdutoNf` do ERP →
+  `prdDesNome` da própria linha → constante de geração. **Nenhuma configuração nova é necessária em
+  produção**: ausente, o default já é o correto.
+- **fix(recebimentos):** a etapa é idempotente **pelo estado do documento** e de propósito **não** ganhou
+  etapa própria no ledger — uma etapa monotônica pularia exatamente as execuções que **já falharam** por
+  isso (paradas em `obs-done`). Na prática: **retomar uma alocação travada conserta-a**.
+- **chore(erp):** a conta de serviço passa a exigir a ação de **alteração de item** em `com297`. Sem ela
+  a etapa falha *fail-closed* com o 403 do ERP, antes de qualquer coisa irreversível — mas é
+  pré-requisito operacional a confirmar no tenant.
+
 ## v0.23.2 (2026-08-11) — Recebimentos: o endereço do documento sai do CNPJ do processo
 
 - **fix(recebimentos):** a emissão da NDe deixa de copiar o `endCodFis` do `validaProcessoPessoa` e
