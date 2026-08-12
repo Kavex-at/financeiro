@@ -36,16 +36,19 @@ foram remediados nesta branch e não aparecem aqui).
 Availability 7,5 · Performance 7 · Fault Tolerance 7). 34 achados consolidados em **28 cards**
 (6 P1 · 6 P2 · 16 P3) após unificar 4 duplicados cross-QA nos `xqa-*`.
 
-### P1 — 6 cards
+### P1 — 6 cards (2 já CORRIGIDOS nesta branch)
 
-| Card | O quê | Origem |
-|---|---|---|
-| `fault-tolerance-2` | `slice(0, 4000)` conta code units UTF-16, mas a coluna Oracle é `VARCHAR2(4000 BYTE)`. Texto pt-BR acentuado de 4000 chars vira ~8000 bytes → `ORA-12899`. Vetor concreto: a env de fallback. Corrige-se com `Buffer.byteLength`. | **delta** |
-| `testability-1` | A fixture do fallback #3 usa `'PAGAMENTO ANTECIPADO'`, string idêntica ao `NDE_GERACAO_DEFAULTS.produtoNome` (fallback #4) — o teste passa por coincidência, e uma regressão do ramo #3 fica invisível. | **delta** |
-| `availability-1` | `ConexosBaseClient` sem `timeout:` no axios (só o `BcbClient` tem). O delta soma 3–4 chamadas síncronas ao caminho do "Processar". | herdado (agravado) |
-| `fault-tolerance-1` | RMW do item sem controle otimista de versão: edição concorrente do analista entre GET e PUT é sobrescrita em silêncio, inclusive em campos que a automação não quis tocar. | **delta** (classe herdada do com300) |
-| `testability-6` | 14 testes vermelhos permanentes no baseline da `main` — enquanto durar, "verde" não significa nada em PR nenhum. | herdado |
-| `modifiability-2` | `RecebimentoNumerarioService` a 1897 LOC (3,16× o cap). Delta soma +120 (+6,7%) — não é regressão. Split (`NdeCaudaFiscalService`) fica para o próximo tweak que tocar ≥ 2 `etapa*` fiscais. | herdado |
+> Os dois P1 **introduzidos pelo delta** foram corrigidos a pedido do Yuri, fora da política padrão
+> (que só reintroduz P0 no loop) — ambos eram S e um deles enfraquecia a prova do próprio conserto.
+
+| Card | O quê | Origem | Estado |
+|---|---|---|---|
+| `fault-tolerance-2` | `slice(0, 4000)` contava code units UTF-16, mas a coluna Oracle é `VARCHAR2(4000 BYTE)`. Texto pt-BR acentuado de 4000 chars vira ~8000 bytes → `ORA-12899`. Vetor concreto: a env de fallback. | **delta** | ✅ **corrigido** — `truncarPorBytesUtf8` corta por code point até caber em 4000 bytes; constante renomeada para `DESCRICAO_IMPRESSAO_MAX_BYTES`. 4 testes (ASCII, acentuado, surrogate na borda, dentro do limite). Verificado por mutação: com o `slice` antigo, 2 deles falham. |
+| `testability-1` | A fixture do fallback #3 usava `'PAGAMENTO ANTECIPADO'`, string idêntica ao `NDE_GERACAO_DEFAULTS.produtoNome` (fallback #4) — o teste passava por coincidência, e uma regressão do ramo #3 ficava invisível. | **delta** | ✅ **corrigido** — fixture passa a ser `'DESCRICAO CADASTRADA DO PRODUTO'`, com asserção explícita de que difere do default; novo teste isola o fallback #4. Verificado por mutação: colapsar os ramos #3/#4 agora quebra a suíte. |
+| `availability-1` | `ConexosBaseClient` sem `timeout:` no axios (só o `BcbClient` tem). O delta soma 3–4 chamadas síncronas ao caminho do "Processar". | herdado (agravado) | aberto |
+| `fault-tolerance-1` | RMW do item sem controle otimista de versão: edição concorrente do analista entre GET e PUT é sobrescrita em silêncio, inclusive em campos que a automação não quis tocar. | **delta** (classe herdada do com300) | aberto |
+| `testability-6` | 14 testes vermelhos permanentes no baseline da `main`. | herdado | ✅ **resolvido na origem** — o rebase em `origin/main` trouxe os 6 commits que consertaram as 4 suítes e2e. Suíte inteira verde (1188/1188). |
+| `modifiability-2` | `RecebimentoNumerarioService` a 1897 LOC (3,16× o cap). Delta soma +120 (+6,7%) — não é regressão. Split (`NdeCaudaFiscalService`) fica para o próximo tweak que tocar ≥ 2 `etapa*` fiscais. | herdado | aberto |
 
 ### P2 — 6 cards
 
@@ -82,10 +85,10 @@ reintroduz **exatamente o bug que esta branch veio consertar** não acende nada.
   confirma, contra o tenant, se o XML sai do `dprLngDescrNf` **gravado** ou é recalculado na
   homologação. Rodar com um doc que falhou e um que homologou.
   Ver `_inbox/nde-descricao-produto-nfe-diagnostico.md`.
-- **4 suítes e2e de rota vermelhas na `main`** (`recebimentos.e2e{,.falhas,.gates,.retomada}.test.ts`,
-  14 testes). Conjunto de falhas **idêntico** em worktree limpo da `main` — pré-existente, não
-  regressão desta branch. Merece investigação própria: o pipeline de feature roda com `npm test`
-  vermelho, o que corrói o gate de verde.
+- ~~**4 suítes e2e de rota vermelhas na `main`**~~ — **resolvido**. Eram 14 testes
+  (`recebimentos.e2e{,.falhas,.gates,.retomada}.test.ts`), pré-existentes e não regressão desta
+  branch. Os 6 commits que a `main` recebeu enquanto esta branch estava no gate consertaram as quatro
+  suítes; o rebase trouxe as correções e o `npm test` fecha **1188/1188, 103 suítes**.
 - **ACL da conta de serviço:** a etapa nova exige a ação de **alteração de item** em `com297`
   (`PUT comDocProdutos`). Sem ela a etapa falha fail-closed (403) antes de qualquer escrita
   irreversível — mas é pré-requisito operacional a confirmar no tenant.

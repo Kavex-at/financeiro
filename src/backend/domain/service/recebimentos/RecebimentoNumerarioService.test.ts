@@ -5,6 +5,7 @@ import type ConexosGerDocProcessoClient from '../../client/ConexosGerDocProcesso
 import type ConexosNdeClient from '../../client/ConexosNdeClient.js';
 import type ConexosNdeFiscalClient from '../../client/ConexosNdeFiscalClient.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import { NDE_GERACAO_DEFAULTS } from '../../interface/recebimentos/constants.js';
 import type {
     SolicitacaoNumerarioExecucaoRepositoryInterface,
     SolicitacaoNumerarioExecucaoRow,
@@ -1768,15 +1769,25 @@ describe('RecebimentoNumerarioService — SN existente selecionada pula o gate 3
 });
 
 describe('RecebimentoNumerarioService — descrição de impressão do item da NDe (etapa 3.5)', () => {
+    /**
+     * Descrição do produto vinda do CADASTRO (fallback #3).
+     *
+     * Deliberadamente DIFERENTE de `NDE_GERACAO_DEFAULTS.produtoNome` ('PAGAMENTO ANTECIPADO', o
+     * fallback #4). Enquanto as duas strings eram iguais, o teste do #3 passava por coincidência: uma
+     * regressão que suprimisse o ramo do `prdDesNome` cairia no default e ninguém veria — justamente o
+     * bug que esta feature conserta.
+     */
+    const PRD_DES_NOME = 'DESCRICAO CADASTRADA DO PRODUTO';
+
     /** O caso do campo: o ERP deixou `dprLngDescrNf` VAZIA (cadastro do cliente = "4 - Descrição DI"). */
-    const comDescricaoVazia = (m: Mocks): void => {
+    const comDescricaoVazia = (m: Mocks, prdDesNome: string | null = PRD_DES_NOME): void => {
         (m.fiscal.listItensNde as jest.Mock).mockResolvedValue([
             {
                 docCod: 18337,
                 fisCod: 1,
                 prdCod: 41978,
                 dprCodSeq: 1,
-                prdDesNome: 'PAGAMENTO ANTECIPADO',
+                ...(prdDesNome === null ? {} : { prdDesNome }),
                 // sem dprLngDescrNf — o client normaliza null/'' para undefined
             },
         ]);
@@ -1788,9 +1799,13 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
             dprPreValorun: 15000,
         });
         (m.fiscal.gravarDescricaoItemNde as jest.Mock).mockResolvedValue({
-            dprLngDescrNf: 'PAGAMENTO ANTECIPADO',
+            dprLngDescrNf: prdDesNome ?? 'PAGAMENTO ANTECIPADO',
         });
     };
+
+    /** O texto que a etapa decidiu gravar no documento. */
+    const descricaoGravada = (m: Mocks): string =>
+        (m.fiscal.gravarDescricaoItemNde as jest.Mock).mock.calls[0][0].descricao;
 
     it('descrição JÁ preenchida: no-op — não lê nem grava o item (cadastro compatível)', async () => {
         const m = buildMocks();
@@ -1815,7 +1830,9 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
 
         const call = (m.fiscal.gravarDescricaoItemNde as jest.Mock).mock.calls[0][0];
         // O texto é o mesmo que o ERP produziria com o cadastro em "1 - Descrição Produto".
-        expect(call.descricao).toBe('PAGAMENTO ANTECIPADO');
+        expect(call.descricao).toBe(PRD_DES_NOME);
+        // ...e NÃO o default hardcoded — se estes dois coincidirem, o teste deixa de provar o ramo.
+        expect(call.descricao).not.toBe(NDE_GERACAO_DEFAULTS.produtoNome);
         // RMW: o corpo é a linha INTEIRA lida do ERP (campo omitido viraria null no banco).
         expect(call.item).toMatchObject({ docCod: 18337, dprCodSeq: 1, dprPreValorun: 15000 });
         expect(m.fiscal.lerItemNde).toHaveBeenCalledWith({
@@ -1856,9 +1873,24 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
             'DESCRICAO CALCULADA PELO ERP',
         );
         await buildService(m).processarAlocacao(baseInput());
-        expect((m.fiscal.gravarDescricaoItemNde as jest.Mock).mock.calls[0][0].descricao).toBe(
-            'DESCRICAO CALCULADA PELO ERP',
-        );
+        expect(descricaoGravada(m)).toBe('DESCRICAO CALCULADA PELO ERP');
+        // Precedência #2 > #3: a sugestão do ERP ganha do cadastro do produto.
+        expect(descricaoGravada(m)).not.toBe(PRD_DES_NOME);
+    });
+
+    /**
+     * Fallback #4 — último recurso. Sem env, sem sugestão do ERP e sem `prdDesNome` no join, o texto
+     * sai da constante de geração. Este ramo não tinha teste próprio: era indistinguível do #3
+     * enquanto as duas strings eram iguais.
+     */
+    it('sem env, sem preDescr e sem prdDesNome: cai na constante de geração (último recurso)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m, null); // item sem prdDesNome
+        (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue(undefined);
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+        expect(descricaoGravada(m)).toBe(NDE_GERACAO_DEFAULTS.produtoNome);
     });
 
     it('NDE_DESCRICAO_ITEM_FALLBACK do fiscal tem precedência sobre tudo', async () => {
@@ -1869,9 +1901,7 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
         comDescricaoVazia(m);
         (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue('IGNORADA');
         await buildService(m).processarAlocacao(baseInput());
-        expect((m.fiscal.gravarDescricaoItemNde as jest.Mock).mock.calls[0][0].descricao).toBe(
-            'NOTA DE DEBITO - SERVICOS',
-        );
+        expect(descricaoGravada(m)).toBe('NOTA DE DEBITO - SERVICOS');
         // Sugestão do ERP nem é consultada quando o fiscal fixou o texto.
         expect(m.fiscal.preDescricaoProdutoNf).not.toHaveBeenCalled();
     });

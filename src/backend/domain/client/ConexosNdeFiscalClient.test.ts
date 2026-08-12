@@ -219,17 +219,46 @@ describe('ConexosNdeFiscalClient — (d) com297 comDocProdutos (itens da NDe)', 
         expect(putGenericOnce).not.toHaveBeenCalled();
     });
 
-    it('gravarDescricaoItemNde: trunca em 4000 (maxLength do campo)', async () => {
+    /** O que de fato foi enviado no PUT — o payload é o que o Oracle vai receber. */
+    const descricaoEnviada = (putGenericOnce: jest.Mock): string =>
+        (putGenericOnce.mock.calls[0][1] as { dprLngDescrNf: string }).dprLngDescrNf;
+
+    const gravar = async (descricao: string): Promise<jest.Mock> => {
         const putGenericOnce = jest.fn().mockResolvedValue({ ...itemBase, dprLngDescrNf: 'ok' });
         const client = new ConexosNdeFiscalClient(buildBase({ putGenericOnce }));
-        await client.gravarDescricaoItemNde({
-            filCod: 2,
-            item: itemBase,
-            descricao: 'A'.repeat(5000),
-        });
-        expect(
-            (putGenericOnce.mock.calls[0][1] as { dprLngDescrNf: string }).dprLngDescrNf,
-        ).toHaveLength(4000);
+        await client.gravarDescricaoItemNde({ filCod: 2, item: itemBase, descricao });
+        return putGenericOnce;
+    };
+
+    it('gravarDescricaoItemNde: trunca em 4000 BYTES (ASCII: 1 byte por char)', async () => {
+        const enviada = descricaoEnviada(await gravar('A'.repeat(5000)));
+        expect(Buffer.byteLength(enviada, 'utf8')).toBe(4000);
+        expect(enviada).toHaveLength(4000); // em ASCII, byte e char coincidem
+    });
+
+    /**
+     * A regressão que motivou o corte por byte: `VARCHAR2(4000 BYTE)` no Oracle conta BYTES, e cada
+     * acento em pt-BR custa 2. Com `slice(0, 4000)` isto ia para o ERP com ~8000 bytes e voltava
+     * `ORA-12899` — erro do banco, não da automação.
+     */
+    it('gravarDescricaoItemNde: texto acentuado corta por BYTE, não por caractere', async () => {
+        const enviada = descricaoEnviada(await gravar('ã'.repeat(4000)));
+        expect(Buffer.byteLength(enviada, 'utf8')).toBeLessThanOrEqual(4000);
+        expect(enviada).toHaveLength(2000); // 2 bytes por 'ã' ⇒ metade dos caracteres
+    });
+
+    it('gravarDescricaoItemNde: não parte surrogate pair ao meio na borda do limite', async () => {
+        // 3999 bytes de ASCII + um emoji de 4 bytes: o emoji NÃO cabe e sai inteiro, não pela metade.
+        const enviada = descricaoEnviada(await gravar(`${'A'.repeat(3999)}😀BBBB`));
+        expect(Buffer.byteLength(enviada, 'utf8')).toBeLessThanOrEqual(4000);
+        expect(enviada).toBe('A'.repeat(3999));
+        // UTF-8 válido ⇒ round-trip por Buffer preserva a string (sem U+FFFD de surrogate solto)
+        expect(Buffer.from(enviada, 'utf8').toString('utf8')).toBe(enviada);
+    });
+
+    it('gravarDescricaoItemNde: texto dentro do limite passa intacto', async () => {
+        const enviada = descricaoEnviada(await gravar('PAGAMENTO ANTECIPADO'));
+        expect(enviada).toBe('PAGAMENTO ANTECIPADO');
     });
 
     it('preDescricaoProdutoNf: aceita string crua, envelope e objeto — e NUNCA lança', async () => {
