@@ -14,15 +14,19 @@ related_files:
   - src/backend/domain/service/recebimentos/ContingenciaDecider.ts
   - src/backend/domain/interface/recebimentos/constants.ts
 endpoints_write:
+  - "com297 (PUT /api/com297/comDocProdutos — item read-modify-write, dprLngDescrNf)"
   - "com300 (PUT /api/com300 — fiscal read-modify-write, fisVldTipoNfDebito=6)"
   - "com131 (POST /api/com131/geraObs — gerar observações SINIEF)"
   - "com297 (POST /api/com297/homologaNfe/{docCod} | homologaNfeContingencia/{docCod} — homologar)"
 endpoints_read:
+  - "com297 (POST /api/com297/comDocProdutos/list/{docCod}/{fisCod} — itens da nota)"
+  - "com297 (GET /api/com297/comDocProdutos/{docCod}/{fisCod}/{prdCod}/{dprCodSeq} — item inteiro, RMW)"
+  - "com297 (GET /api/com297/comDocProdutos/preDescrProdutoNf/{docCod}/{fisCod}/{prdCod}/{dprCodSeq} — descrição sugerida)"
   - "com300 (GET /api/com300/{docTip}/{docCod}/{fisCod} — finDocFiscal inteiro, RMW)"
   - "com131 (GET /api/com131/{docTip}/{docCod} — fisEspObs, guard idempotência)"
   - "com194 (GET initialValues + POST documento/list — validações fdvVldTperr:1, quando homologa=2)"
   - "com297 (GET /api/com297/{docCod} — poll vldAutorizado; docVldNfehom/vldStatus/docMnyValor)"
-last_review: 2026-08-01
+last_review: 2026-08-11
 source:
   - "HAR REAL de produção (Columbia, doc 18337, filCod=2, 2026-08-01) — integrations/recebimentos-numerario-real-fiscal-spec.md"
 ---
@@ -35,16 +39,22 @@ source:
 > `nota-debito-fiscal` que a trilha de permutas deixou aberto. Fonte: HAR real de produção
 > (`integrations/recebimentos-numerario-real-fiscal-spec.md`).
 
-## Ordem OBRIGATÓRIA: (a) fiscal → (b) observações → (c) homologar
+## Ordem OBRIGATÓRIA: (0) descrição do item → (a) fiscal → (b) observações → (c) homologar
 
 Homologar antes de gerar as observações produz o documento **sem** a observação SINIEF. As
 observações são geradas a partir do tipo de nota de débito setado na etapa fiscal.
+
+A etapa **(0)** entrou depois (ADR-0036) e vem ANTES de (a): garante que o item da nota tem
+`dprLngDescrNf` (a "Descrição para Impressão", que é o `xProd` da NF-e). Sem ela a homologação é
+recusada para os clientes cujo cadastro deriva a descrição da DI; e mexer no item depois de gerar as
+observações reabriria a pergunta de se elas seguem válidas. Ver `business-rules/descricao-item-nde.md`.
 
 ## Etapas + discriminadores (NÃO reusar um helper — cada etapa tem sucesso próprio)
 
 | Etapa | Rota | Sucesso ⟺ | Client |
 |-------|------|-----------|--------|
 | geração NDe | `POST /api/com297/gerDocProcesso` | `messages[0].valid==='SUCESSO'`, docCod em `vars.docCod` | `ConexosNdeClient` |
+| **(0) descrição do item** | `PUT /api/com297/comDocProdutos` (RMW: list → GET item inteiro → PUT com `dprLngDescrNf`) | eco com `dprLngDescrNf` NÃO-vazia | `ConexosNdeFiscalClient` |
 | **(a) fiscal** | `PUT /api/com300` (RMW: GET inteiro → PUT `fisVldTipoNfDebito=6`) | `resp.fisVldTipoNfDebito===6` | `ConexosNdeFiscalClient` |
 | **(b) observações** | `POST /api/com131/geraObs` `{docTip,docCod}` | `resp.fisEspObs` preenchido | `ConexosNdeFiscalClient` |
 | **(c) homologar** | `POST /api/com297/homologaNfe/{docCod}` (ou `homologaNfeContingencia`) | `resp.docVldComvalidacoes===1` | `ConexosNdeClient` + `ContingenciaDecider` |
@@ -54,6 +64,14 @@ observações são geradas a partir do tipo de nota de débito setado na etapa f
 
 ## Detalhes por etapa
 
+- **(0) com297 `comDocProdutos` — só quando o ERP deixou a descrição vazia.** `POST comDocProdutos/list/
+  {docCod}/{fisCod}` acha a linha (a automação NÃO a cria — o ERP a materializa do `prdCod` do header).
+  Descrição preenchida ⇒ **no-op**. Vazia ⇒ `GET comDocProdutos/{docCod}/{fisCod}/{prdCod}/{dprCodSeq}`
+  (linha INTEIRA, ~105 campos) → `PUT comDocProdutos` com o objeto inteiro e a `dprLngDescrNf`
+  substituída (campo omitido vira `null`, igual ao com300). O texto sai, em ordem, de
+  `NDE_DESCRICAO_ITEM_FALLBACK` → `preDescrProdutoNf` → `prdDesNome` da linha. **Nunca** se escreve no
+  cadastro do cliente (`cmn025.dpeVld1DescrNfe`), cujo valor "Descrição DI" é correto para a NF-e de
+  mercadoria. Idempotente pelo estado do documento — sem etapa própria no ledger (ADR-0036).
 - **(a) com300 — read-modify-write OBRIGATÓRIO.** `GET` devolve o `finDocFiscal` inteiro (73 campos);
   o `PUT /api/com300` (sem id na URL) reenvia o objeto INTEIRO com `fisVldTipoNfDebito=6` (Pagamento
   antecipado, inteiro). Campo omitido vira `null` → nunca montar parcial. `filCod` no corpo E no
@@ -77,6 +95,8 @@ fuso — converter BRT→UTC erra 1 dia.
 
 ## Gating + posture
 
+- **ACL adicional (0):** alteração de item em `com297` (`PUT comDocProdutos`) — sem ela a etapa falha
+  fail-closed com o 403 do ERP, antes de qualquer escrita irreversível.
 - **Gated:** `CONEXOS_WRITE_ENABLED` + `CONEXOS_DRY_RUN` (default dry-run) — em dry-run os payloads são
   montados/logados sem POST. 401/403 ou erro de etapa → fail-closed (`markError` + etapa na trilha).
 - **ACL da conta de serviço** (checar `GET /api/permissoes/new/com297` no pré-flight): com300 UPDATE ·

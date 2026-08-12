@@ -196,6 +196,7 @@ export default class EnvironmentProvider {
             ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
             ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
             snCondPgtoAutoajuste: this.readEnv('SN_COND_PGTO_AUTOAJUSTE') !== 'false',
+            ndeDescricaoItemFallback: this.readEnv('NDE_DESCRICAO_ITEM_FALLBACK') || undefined,
         });
     };
 
@@ -276,6 +277,7 @@ export default class EnvironmentProvider {
             ndePollIntervalMs: this.resolvePositiveInt('NDE_POLL_INTERVAL_MS', 5_000),
             ndeAclPreflight: this.readEnv('NDE_ACL_PREFLIGHT') !== 'false',
             snCondPgtoAutoajuste: this.readEnv('SN_COND_PGTO_AUTOAJUSTE') !== 'false',
+            ndeDescricaoItemFallback: this.readEnv('NDE_DESCRICAO_ITEM_FALLBACK') || undefined,
         });
     };
 

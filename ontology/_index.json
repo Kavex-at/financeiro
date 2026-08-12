@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-08-07",
-    "version": "0.16.0",
-    "note": "v0.16.0 (2026-08-07, ADR-0031): NDe DISPENSADA em processos POR CONTA E ORDEM DE TERCEIROS. A cadeia do \"Processar\" da Frente IV deixa de ser incondicional: quando imp021.priVldTipo=2, a alocacao roda com299 (SN) + fin014 (baixa) e PARA — nenhuma etapa com297/com300/com131 e nenhum poll SEFAZ; settla na etapa terminal nova quitado-sem-nde com nd_doc_cod nulo POR REGRA (nao e lacuna) e devolve ndeDispensada:true. A modalidade e lida SEMPRE do imp021 no SERVIDOR (gate 0.5 do pre-flight, via ConexosCadastroClient.listProcessos ramo priCods), nunca do payload do browser: e a chave que liga/desliga um documento fiscal irreversivel. Modalidade indeterminavel (processo ausente | priVldTipo nulo | read falhou) = BLOCKED fail-closed, sem abrir o write-ahead. O gatilho e EXCLUSIVAMENTE priVldTipo=2 — NAO a variante \"- TERCEIROS\" da config de SN (gcd 151), que so decide a conta de rateio: eixos independentes. Relacao NotaDebitoEletronica—Recebimento passa de 1—1 para 0..1. markSettled do ledger aceita override de etapa (COALESCE) — SEM migration, a coluna etapa e TEXT sem CHECK. Frontend: status blocked deixa de renderizar como \"Quitado\" (bug pre-existente que a decisao fail-closed tornou frequente) e o texto de sucesso para de prometer nota de debito incondicionalmente. Divida aberta: alocacoes conta-e-ordem processadas ANTES desta mudanca tem NDe emitida e homologada — fato fiscal irreversivel, a levantar com o cliente.",
+    "generated": "2026-08-11",
+    "version": "0.18.0",
+    "note": "v0.18.0 (2026-08-11, ADR-0036): a Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) passa a ser garantida NO DOCUMENTO antes da leg fiscal. O cadastro do cliente (cmn025 dpeVld1DescrNfe) segue intocado — o valor '4 - Descricao DI' e correto para a NF-e de mercadoria e so nao serve para o produto de encargo da NDe. Nova regra descricao-item-nde (I-Receb-5). ",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -851,6 +851,23 @@
         "ADR-0031"
       ],
       "note": "NDe so quando devida: priVldTipo=2 (conta e ordem de terceiros) quita com SN + baixa e para em quitado-sem-nde. Modalidade lida do imp021 no servidor; indeterminavel = blocked fail-closed. NAO confundir com a variante \"- TERCEIROS\" da config de SN."
+    },
+    "descricao-item-nde": {
+      "file": "business-rules/descricao-item-nde.md",
+      "invariant": "I-Receb-5",
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/client/ConexosNdeFiscalClient.ts",
+        "src/backend/domain/service/recebimentos/RecebimentoNumerarioService.ts",
+        "src/backend/domain/interface/recebimentos/NdeFiscal.ts",
+        "src/backend/domain/libs/environment/model/EnvironmentVars.ts",
+        "src/backend/domain/libs/environment/EnvironmentProvider.ts"
+      ],
+      "resolved_by": [
+        "ADR-0036"
+      ],
+      "note": "Descricao para Impressao (dprLngDescrNf) do item da NDe e escrita NO DOCUMENTO (com297 comDocProdutos RMW) quando o ERP a deixa vazia — nunca no cadastro do cliente (cmn025 dpeVld1DescrNfe=4 'Descricao DI'), que e legitimo para a NF-e de mercadoria. No-op quando ja preenchida; idempotente pelo estado do documento (sem etapa propria no ledger) para alcancar execucoes paradas em obs-done."
     }
   },
   "state_machines": {

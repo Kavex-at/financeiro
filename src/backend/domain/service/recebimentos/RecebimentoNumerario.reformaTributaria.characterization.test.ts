@@ -151,6 +151,20 @@ const buildMocks = (): Mocks => ({
         lerObservacoes: jest.fn().mockResolvedValue({}),
         gerarObservacoes: jest.fn().mockResolvedValue({ fisEspObs: 'AJUSTE SINIEF /' }),
         listValidacoes: jest.fn().mockResolvedValue([]),
+        // Etapa 3.5 — a descrição de impressão do item já vem do ERP (cadastro compatível): no-op.
+        listItensNde: jest.fn().mockResolvedValue([
+            {
+                docCod: 18337,
+                fisCod: 1,
+                prdCod: 41978,
+                dprCodSeq: 1,
+                prdDesNome: 'PAGAMENTO ANTECIPADO',
+                dprLngDescrNf: 'PAGAMENTO ANTECIPADO',
+            },
+        ]),
+        lerItemNde: jest.fn().mockResolvedValue({}),
+        gravarDescricaoItemNde: jest.fn().mockResolvedValue({}),
+        preDescricaoProdutoNf: jest.fn().mockResolvedValue(undefined),
         lerDocParaPolling: jest
             .fn()
             .mockResolvedValue({ vldTpNf: '10', vldAutorizado: 1, docMnyValor: 15000 }),

@@ -123,3 +123,136 @@ describe('ConexosNdeFiscalClient — (c) com194 + (poll) com297', () => {
         expect(getGeneric).toHaveBeenCalledWith('com297/18337', { filCod: 2 });
     });
 });
+
+describe('ConexosNdeFiscalClient — (d) com297 comDocProdutos (itens da NDe)', () => {
+    const itemBase = {
+        docCod: 18347,
+        fisCod: 1,
+        prdCod: 41978,
+        dprCodSeq: 1,
+        prdDesNome: 'PAGAMENTO ANTECIPADO',
+        dprLngDescrNf: null,
+        // campo "extra" qualquer p/ provar que o passthrough preserva a linha inteira no RMW
+        dprPreValorun: 15000,
+    };
+
+    it('listItensNde: POST comDocProdutos/list e normaliza descrição vazia p/ undefined', async () => {
+        const postGeneric = jest.fn().mockResolvedValue({
+            rows: [itemBase, { ...itemBase, dprCodSeq: 2, dprLngDescrNf: '   ' }],
+        });
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+        const itens = await client.listItensNde({ filCod: 2, docCod: 18347, fisCod: 1 });
+        expect(postGeneric.mock.calls[0][0]).toBe('com297/comDocProdutos/list/18347/1');
+        expect(itens).toHaveLength(2);
+        // `null` e string em branco são a MESMA coisa p/ o invariante: não há descrição.
+        expect(itens[0].dprLngDescrNf).toBeUndefined();
+        expect(itens[1].dprLngDescrNf).toBeUndefined();
+        expect(itens[0].prdDesNome).toBe('PAGAMENTO ANTECIPADO');
+    });
+
+    it('listItensNde: descrição preenchida sobrevive (é o caso no-op do fluxo)', async () => {
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValue({ rows: [{ ...itemBase, dprLngDescrNf: 'MERCADORIA X' }] });
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+        const itens = await client.listItensNde({ filCod: 2, docCod: 18347, fisCod: 1 });
+        expect(itens[0].dprLngDescrNf).toBe('MERCADORIA X');
+    });
+
+    it('lerItemNde: GET da chave composta devolve a linha INTEIRA (passthrough)', async () => {
+        const getGeneric = jest.fn().mockResolvedValue(itemBase);
+        const client = new ConexosNdeFiscalClient(buildBase({ getGeneric }));
+        const item = await client.lerItemNde({
+            filCod: 2,
+            docCod: 18347,
+            fisCod: 1,
+            prdCod: 41978,
+            dprCodSeq: 1,
+        });
+        expect(getGeneric).toHaveBeenCalledWith('com297/comDocProdutos/18347/1/41978/1', {
+            filCod: 2,
+        });
+        expect(item.dprPreValorun).toBe(15000); // passthrough preservou o campo extra
+    });
+
+    it('gravarDescricaoItemNde: PUT com a linha INTEIRA + dprLngDescrNf, sucesso ⟺ eco não-vazio', async () => {
+        const putGenericOnce = jest
+            .fn()
+            .mockResolvedValue({ ...itemBase, dprLngDescrNf: 'PAGAMENTO ANTECIPADO' });
+        const client = new ConexosNdeFiscalClient(buildBase({ putGenericOnce }));
+        const eco = await client.gravarDescricaoItemNde({
+            filCod: 2,
+            item: { ...itemBase, dprLngDescrNf: undefined },
+            descricao: 'PAGAMENTO ANTECIPADO',
+        });
+        expect(putGenericOnce).toHaveBeenCalledTimes(1); // tentativa ÚNICA
+        expect(putGenericOnce.mock.calls[0][0]).toBe('com297/comDocProdutos');
+        // objeto INTEIRO no corpo (campo omitido viraria null no banco)
+        expect(putGenericOnce.mock.calls[0][1]).toMatchObject({
+            docCod: 18347,
+            dprPreValorun: 15000,
+            dprLngDescrNf: 'PAGAMENTO ANTECIPADO',
+        });
+        expect(eco.dprLngDescrNf).toBe('PAGAMENTO ANTECIPADO');
+    });
+
+    it('gravarDescricaoItemNde: eco SEM descrição FALHA (não é sucesso silencioso)', async () => {
+        const putGenericOnce = jest.fn().mockResolvedValue({ ...itemBase, dprLngDescrNf: '' });
+        const client = new ConexosNdeFiscalClient(buildBase({ putGenericOnce }));
+        const erro = await client
+            .gravarDescricaoItemNde({
+                filCod: 2,
+                item: itemBase,
+                descricao: 'PAGAMENTO ANTECIPADO',
+            })
+            .catch((e: { cause?: Error }) => e);
+        expect(String((erro as { cause?: Error }).cause?.message)).toMatch(/dprLngDescrNf/);
+    });
+
+    it('gravarDescricaoItemNde: recusa descrição vazia ANTES de chamar o ERP', async () => {
+        const putGenericOnce = jest.fn();
+        const client = new ConexosNdeFiscalClient(buildBase({ putGenericOnce }));
+        const erro = await client
+            .gravarDescricaoItemNde({ filCod: 2, item: itemBase, descricao: '   ' })
+            .catch((e: { cause?: Error }) => e);
+        expect(String((erro as { cause?: Error }).cause?.message)).toMatch(/vazia/);
+        expect(putGenericOnce).not.toHaveBeenCalled();
+    });
+
+    it('gravarDescricaoItemNde: trunca em 4000 (maxLength do campo)', async () => {
+        const putGenericOnce = jest.fn().mockResolvedValue({ ...itemBase, dprLngDescrNf: 'ok' });
+        const client = new ConexosNdeFiscalClient(buildBase({ putGenericOnce }));
+        await client.gravarDescricaoItemNde({
+            filCod: 2,
+            item: itemBase,
+            descricao: 'A'.repeat(5000),
+        });
+        expect(
+            (putGenericOnce.mock.calls[0][1] as { dprLngDescrNf: string }).dprLngDescrNf,
+        ).toHaveLength(4000);
+    });
+
+    it('preDescricaoProdutoNf: aceita string crua, envelope e objeto — e NUNCA lança', async () => {
+        const client = (resp: unknown) =>
+            new ConexosNdeFiscalClient(
+                buildBase({ getGeneric: jest.fn().mockResolvedValue(resp) }),
+            );
+        const alvo = { filCod: 2, docCod: 18347, fisCod: 1, prdCod: 41978, dprCodSeq: 1 };
+        await expect(client('DESCR CRUA').preDescricaoProdutoNf(alvo)).resolves.toBe('DESCR CRUA');
+        await expect(
+            client({ responseData: 'DO ENVELOPE' }).preDescricaoProdutoNf(alvo),
+        ).resolves.toBe('DO ENVELOPE');
+        await expect(
+            client({ responseData: { dprLngDescrNf: 'DO OBJETO' } }).preDescricaoProdutoNf(alvo),
+        ).resolves.toBe('DO OBJETO');
+        // vazio ⇒ undefined (é justamente o caso do cadastro "Descrição DI")
+        await expect(
+            client({ dprLngDescrNf: '  ' }).preDescricaoProdutoNf(alvo),
+        ).resolves.toBeUndefined();
+        // erro de transporte ⇒ undefined, jamais throw (é só uma sugestão)
+        const explode = new ConexosNdeFiscalClient(
+            buildBase({ getGeneric: jest.fn().mockRejectedValue(new Error('500')) }),
+        );
+        await expect(explode.preDescricaoProdutoNf(alvo)).resolves.toBeUndefined();
+    });
+});

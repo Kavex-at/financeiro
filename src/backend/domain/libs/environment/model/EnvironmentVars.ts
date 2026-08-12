@@ -150,6 +150,19 @@ export default class EnvironmentVars {
      */
     public snCondPgtoAutoajuste: boolean;
 
+    /**
+     * Texto FIXO para a "Descrição para Impressão" (`dprLngDescrNf`) do item da NDe
+     * (`NDE_DESCRICAO_ITEM_FALLBACK`). Só entra em jogo quando o ERP deixou o campo VAZIO — ou seja,
+     * para os clientes cujo cadastro manda derivar a descrição da DI (`cmn025.dpeVld1DescrNfe = 4`) e o
+     * produto de encargo da NDe não tem adição de DI.
+     *
+     * **Normalmente NÃO se seta.** Sem ele a automação usa a descrição CADASTRADA do próprio produto
+     * (`prdDesNome`, "PAGAMENTO ANTECIPADO"), que é exatamente o texto que o ERP produziria com o
+     * cadastro em "1 - Descrição Produto" — o workaround manual, sem tocar no cadastro. Setar só faz
+     * sentido se o fiscal quiser OUTRO texto na nota. Ver `business-rules/descricao-item-nde.md`.
+     */
+    public ndeDescricaoItemFallback?: string;
+
     constructor({
         databaseConnectionString,
         conexosLogin,
@@ -182,6 +195,7 @@ export default class EnvironmentVars {
         ndePollIntervalMs,
         ndeAclPreflight,
         snCondPgtoAutoajuste,
+        ndeDescricaoItemFallback,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -214,6 +228,7 @@ export default class EnvironmentVars {
         ndePollIntervalMs: number;
         ndeAclPreflight: boolean;
         snCondPgtoAutoajuste: boolean;
+        ndeDescricaoItemFallback?: string;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -246,5 +261,6 @@ export default class EnvironmentVars {
         this.ndePollIntervalMs = ndePollIntervalMs;
         this.ndeAclPreflight = ndeAclPreflight;
         this.snCondPgtoAutoajuste = snCondPgtoAutoajuste;
+        this.ndeDescricaoItemFallback = ndeDescricaoItemFallback;
     }
 }
