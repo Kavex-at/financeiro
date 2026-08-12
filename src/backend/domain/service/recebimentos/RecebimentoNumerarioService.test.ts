@@ -61,6 +61,8 @@ const buildEnv = (over: Record<string, unknown> = {}): jest.Mocked<EnvironmentPr
             ndePollIntervalMs: 1,
             // Default de produção: o ajuste da condição de pagamento está LIGADO (o freio é opt-out).
             snCondPgtoAutoajuste: true,
+            // Idem para a correção da descrição do item: ligada por default, `=false` desliga.
+            ndeDescricaoItemEnabled: true,
             ...over,
         }),
     }) as never;
@@ -1904,6 +1906,48 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
         expect(descricaoGravada(m)).toBe('NOTA DE DEBITO - SERVICOS');
         // Sugestão do ERP nem é consultada quando o fiscal fixou o texto.
         expect(m.fiscal.preDescricaoProdutoNf).not.toHaveBeenCalled();
+    });
+
+    it('NDE_DESCRICAO_ITEM_ENABLED=false desliga só esta etapa — a leg fiscal segue normal', async () => {
+        const m = buildMocks({ env: buildEnv({ ndeDescricaoItemEnabled: false }) });
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+        // Nem a LEITURA acontece: desligado é desligado.
+        expect(m.fiscal.listItensNde).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
+        // ...e o resto da cauda fiscal continua rodando (é o comportamento anterior à feature).
+        expect(m.fiscal.gravarDocFiscal).toHaveBeenCalled();
+        expect(m.nde.homologar).toHaveBeenCalled();
+    });
+
+    /**
+     * Blast radius: `listItensNde` roda para TODA NDe, inclusive as em que esta etapa é no-op. Se a
+     * falha dela derrubasse a alocação, uma ACL faltando pararia a frente inteira — em vez de deixar
+     * quebrado só o que já estava quebrado. Por isso a LEITURA degrada.
+     */
+    it('falha ao LER os itens degrada: avisa e segue para a leg fiscal (não derruba a alocação)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.fiscal.listItensNde as jest.Mock).mockRejectedValue(new Error('403 sem ACL em com297'));
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDocFiscal).toHaveBeenCalled();
+        expect(m.nde.homologar).toHaveBeenCalled();
+    });
+
+    it('falha ao LER a linha completa degrada: pula o item, não grava objeto parcial', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        (m.fiscal.lerItemNde as jest.Mock).mockRejectedValue(new Error('500'));
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+        // Sem a linha inteira não há RMW seguro — escrever parcial destruiria os outros ~104 campos.
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDocFiscal).toHaveBeenCalled();
     });
 
     it('falha ao gravar a descrição é FAIL-CLOSED: não homologa (nada irreversível aconteceu)', async () => {

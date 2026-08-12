@@ -163,6 +163,18 @@ export default class EnvironmentVars {
      */
     public ndeDescricaoItemFallback?: string;
 
+    /**
+     * Interruptor da etapa que garante a descrição de impressão do item da NDe
+     * (`NDE_DESCRICAO_ITEM_ENABLED`, **default `true`** — só `'false'` desliga).
+     *
+     * Existe porque a alternativa era desligar a Frente IV inteira com `CONEXOS_DRY_RUN`: se a rota
+     * `com297/comDocProdutos` mudar numa manutenção do ERP, ou se a correção passar a fazer mal, isto
+     * apaga só ela, por env, sem redeploy. Desligar é seguro por construção — a etapa roda ANTES de
+     * `com300`/`com131`/homologar, então pulá-la devolve exatamente o comportamento anterior à feature.
+     * Mesmo padrão da ADR-0028 (`snCondPgtoAutoajuste`).
+     */
+    public ndeDescricaoItemEnabled: boolean;
+
     constructor({
         databaseConnectionString,
         conexosLogin,
@@ -196,6 +208,7 @@ export default class EnvironmentVars {
         ndeAclPreflight,
         snCondPgtoAutoajuste,
         ndeDescricaoItemFallback,
+        ndeDescricaoItemEnabled,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -229,6 +242,7 @@ export default class EnvironmentVars {
         ndeAclPreflight: boolean;
         snCondPgtoAutoajuste: boolean;
         ndeDescricaoItemFallback?: string;
+        ndeDescricaoItemEnabled: boolean;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -262,5 +276,6 @@ export default class EnvironmentVars {
         this.ndeAclPreflight = ndeAclPreflight;
         this.snCondPgtoAutoajuste = snCondPgtoAutoajuste;
         this.ndeDescricaoItemFallback = ndeDescricaoItemFallback;
+        this.ndeDescricaoItemEnabled = ndeDescricaoItemEnabled;
     }
 }

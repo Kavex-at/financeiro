@@ -26,7 +26,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import TransacaoRepository from '../../repository/recebimentos/TransacaoRepository.js';
 import type { Processo } from '../../interface/recebimentos/GerDocProcesso.js';
-import type { DocFiscal, ItemNdeResumo } from '../../interface/recebimentos/NdeFiscal.js';
+import type { DocFiscal, ItemNde, ItemNdeResumo } from '../../interface/recebimentos/NdeFiscal.js';
 import {
     NDE_REPOSITORY_TOKEN,
     type NdeRepositoryInterface,
@@ -1685,7 +1685,16 @@ export default class RecebimentoNumerarioService {
      *
      * Roda ANTES do com300/com131 de propósito: a ordem fiscal obrigatória é (a) fiscal → (b) obs →
      * (c) homologar, e mexer no item depois de gerar as observações reabriria a pergunta de se elas
-     * continuam válidas. Falha aqui é fail-closed ANTES de qualquer coisa irreversível.
+     * continuam válidas.
+     *
+     * **Assimetria deliberada entre LER e ESCREVER.** A ESCRITA (`gravarDescricaoItemNde`) é
+     * fail-closed: se não conseguimos gravar a descrição, homologar seria queimar a nota. Já as
+     * LEITURAS degradam — falha de `listItensNde`/`lerItemNde` emite WARN e segue para a leg fiscal.
+     * O motivo é blast radius: a leitura roda para TODA NDe, inclusive a esmagadora maioria em que
+     * esta etapa é no-op. Se ela derrubasse a alocação, uma ACL faltando ou um ERP instável
+     * transformaria um problema que hoje afeta ALGUNS clientes numa parada da frente inteira. Ao
+     * degradar, o pior caso da feature é exatamente o comportamento anterior a ela: a homologação
+     * falha com a mensagem do ERP, como já falhava.
      */
     private etapaDescricaoItem = async (
         ctx: EscritaCtx,
@@ -1694,11 +1703,19 @@ export default class RecebimentoNumerarioService {
     ): Promise<void> => {
         if (this.etapaAtingida(existente, 'homologado')) return; // NF-e já emitida — nada a consertar
         const { filCod } = ctx;
-        const itens = await this.fiscalClient.listItensNde({
-            filCod,
-            docCod: ndDocCod,
-            fisCod: FIS_COD_DEFAULT,
-        });
+        const env = await this.environmentProvider.getEnvironmentVars();
+        if (!env.ndeDescricaoItemEnabled) {
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message:
+                    'Etapa de descrição do item da NDe DESLIGADA por NDE_DESCRICAO_ITEM_ENABLED — ' +
+                    'seguindo direto para a leg fiscal (comportamento anterior à feature)',
+                data: { txnId: ctx.txnId, ndDocCod, priCod: ctx.priCod },
+            });
+            return;
+        }
+        const itens = await this.lerItensOuDegradar(ctx, ndDocCod);
+        if (itens === undefined) return;
         if (itens.length === 0) {
             // Não inventamos a linha: criá-la é outra escrita, com outro contrato, e o ERP tem a última
             // palavra sobre a nota sem item. Registra e segue — a homologação falha com a mensagem DELE.
@@ -1715,13 +1732,8 @@ export default class RecebimentoNumerarioService {
         for (const item of itens) {
             if (item.dprLngDescrNf !== undefined) continue; // já tem descrição → no-op
             const descricao = await this.resolverDescricaoItem(ctx, item);
-            const completo = await this.fiscalClient.lerItemNde({
-                filCod,
-                docCod: item.docCod,
-                fisCod: item.fisCod,
-                prdCod: item.prdCod,
-                dprCodSeq: item.dprCodSeq,
-            });
+            const completo = await this.lerItemOuDegradar(ctx, ndDocCod, item);
+            if (completo === undefined) continue;
             const eco = await this.fiscalClient.gravarDescricaoItemNde({
                 filCod,
                 item: completo,
@@ -1742,6 +1754,76 @@ export default class RecebimentoNumerarioService {
                     descricaoEco: eco.dprLngDescrNf,
                 },
             });
+        }
+    };
+
+    /**
+     * Lista os itens da NDe. **Degrada**: falha de leitura vira WARN e `undefined`, que o caller lê como
+     * "não dá para verificar a descrição — segue para a leg fiscal". Ver a assimetria explicada em
+     * `etapaDescricaoItem`: esta leitura roda para toda NDe, então derrubá-la propagaria a ALGUNS
+     * clientes um problema que hoje afeta poucos.
+     */
+    private lerItensOuDegradar = async (
+        ctx: EscritaCtx,
+        ndDocCod: number,
+    ): Promise<ItemNdeResumo[] | undefined> => {
+        try {
+            return await this.fiscalClient.listItensNde({
+                filCod: ctx.filCod,
+                docCod: ndDocCod,
+                fisCod: FIS_COD_DEFAULT,
+            });
+        } catch (cause) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'Falha ao LER os itens da NDe (com297/comDocProdutos/list) — descrição de impressão ' +
+                    'não verificável; seguindo para a leg fiscal (o ERP decide). Verifique a ACL de ' +
+                    'com297 da conta de serviço se isto for recorrente',
+                data: {
+                    txnId: ctx.txnId,
+                    ndDocCod,
+                    priCod: ctx.priCod,
+                    erro: cause instanceof Error ? cause.message : String(cause),
+                },
+            });
+            return undefined;
+        }
+    };
+
+    /**
+     * Lê a linha INTEIRA do item (o objeto do read-modify-write). **Degrada** do mesmo jeito: sem a
+     * linha completa não há RMW possível, e escrever um objeto parcial destruiria os outros ~104 campos.
+     */
+    private lerItemOuDegradar = async (
+        ctx: EscritaCtx,
+        ndDocCod: number,
+        item: ItemNdeResumo,
+    ): Promise<ItemNde | undefined> => {
+        try {
+            return await this.fiscalClient.lerItemNde({
+                filCod: ctx.filCod,
+                docCod: item.docCod,
+                fisCod: item.fisCod,
+                prdCod: item.prdCod,
+                dprCodSeq: item.dprCodSeq,
+            });
+        } catch (cause) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'Falha ao LER a linha completa do item da NDe (com297/comDocProdutos) — sem ela não ' +
+                    'há read-modify-write seguro; item pulado, seguindo para a leg fiscal',
+                data: {
+                    txnId: ctx.txnId,
+                    ndDocCod,
+                    priCod: ctx.priCod,
+                    prdCod: item.prdCod,
+                    dprCodSeq: item.dprCodSeq,
+                    erro: cause instanceof Error ? cause.message : String(cause),
+                },
+            });
+            return undefined;
         }
     };
 
