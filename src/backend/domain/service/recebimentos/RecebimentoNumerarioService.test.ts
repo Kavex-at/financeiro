@@ -178,6 +178,25 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
         lerObservacoes: jest.fn().mockResolvedValue({}),
         gerarObservacoes: jest.fn().mockResolvedValue({ fisEspObs: 'AJUSTE SINIEF /' }),
         listValidacoes: jest.fn().mockResolvedValue([]),
+        // Etapa 3.5 — item da NDe. DEFAULT = o caso feliz: o ERP já preencheu a descrição de impressão
+        // (cliente com o cadastro em "1 - Descrição Produto"), então a etapa é um no-op.
+        listItensNde: jest.fn().mockResolvedValue([
+            {
+                docCod: 18337,
+                fisCod: 1,
+                prdCod: 41978,
+                dprCodSeq: 1,
+                prdDesNome: 'PAGAMENTO ANTECIPADO',
+                dprLngDescrNf: 'PAGAMENTO ANTECIPADO',
+            },
+        ]),
+        lerItemNde: jest
+            .fn()
+            .mockResolvedValue({ docCod: 18337, fisCod: 1, prdCod: 41978, dprCodSeq: 1 }),
+        gravarDescricaoItemNde: jest
+            .fn()
+            .mockResolvedValue({ dprLngDescrNf: 'PAGAMENTO ANTECIPADO' }),
+        preDescricaoProdutoNf: jest.fn().mockResolvedValue(undefined),
         lerDocParaPolling: jest
             .fn()
             .mockResolvedValue({ vldTpNf: '10', vldAutorizado: 1, docMnyValor: 15000 }),
@@ -1745,5 +1764,173 @@ describe('RecebimentoNumerarioService — SN existente selecionada pula o gate 3
         expect(out.status).toBe('blocked');
         expect(out.classificacao).toBe('BLOCKED_CADASTRO');
         expect(m.fin014.gravarBaixa).not.toHaveBeenCalled();
+    });
+});
+
+describe('RecebimentoNumerarioService — descrição de impressão do item da NDe (etapa 3.5)', () => {
+    /** O caso do campo: o ERP deixou `dprLngDescrNf` VAZIA (cadastro do cliente = "4 - Descrição DI"). */
+    const comDescricaoVazia = (m: Mocks): void => {
+        (m.fiscal.listItensNde as jest.Mock).mockResolvedValue([
+            {
+                docCod: 18337,
+                fisCod: 1,
+                prdCod: 41978,
+                dprCodSeq: 1,
+                prdDesNome: 'PAGAMENTO ANTECIPADO',
+                // sem dprLngDescrNf — o client normaliza null/'' para undefined
+            },
+        ]);
+        (m.fiscal.lerItemNde as jest.Mock).mockResolvedValue({
+            docCod: 18337,
+            fisCod: 1,
+            prdCod: 41978,
+            dprCodSeq: 1,
+            dprPreValorun: 15000,
+        });
+        (m.fiscal.gravarDescricaoItemNde as jest.Mock).mockResolvedValue({
+            dprLngDescrNf: 'PAGAMENTO ANTECIPADO',
+        });
+    };
+
+    it('descrição JÁ preenchida: no-op — não lê nem grava o item (cadastro compatível)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+        expect(m.fiscal.listItensNde).toHaveBeenCalledWith({
+            filCod: PROCESSO_FIL_COD,
+            docCod: 18337,
+            fisCod: 1,
+        });
+        expect(m.fiscal.lerItemNde).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
+    });
+
+    it('descrição VAZIA: grava o prdDesNome do item no DOCUMENTO (nenhum cadastro é tocado)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+
+        const call = (m.fiscal.gravarDescricaoItemNde as jest.Mock).mock.calls[0][0];
+        // O texto é o mesmo que o ERP produziria com o cadastro em "1 - Descrição Produto".
+        expect(call.descricao).toBe('PAGAMENTO ANTECIPADO');
+        // RMW: o corpo é a linha INTEIRA lida do ERP (campo omitido viraria null no banco).
+        expect(call.item).toMatchObject({ docCod: 18337, dprCodSeq: 1, dprPreValorun: 15000 });
+        expect(m.fiscal.lerItemNde).toHaveBeenCalledWith({
+            filCod: PROCESSO_FIL_COD,
+            docCod: 18337,
+            fisCod: 1,
+            prdCod: 41978,
+            dprCodSeq: 1,
+        });
+    });
+
+    it('corrige a descrição ANTES da leg fiscal (com300) — a ordem fiscal obrigatória é preservada', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        const ordem: string[] = [];
+        (m.fiscal.gravarDescricaoItemNde as jest.Mock).mockImplementation(async () => {
+            ordem.push('descricao');
+            return { dprLngDescrNf: 'PAGAMENTO ANTECIPADO' };
+        });
+        (m.fiscal.gravarDocFiscal as jest.Mock).mockImplementation(async () => {
+            ordem.push('fiscal');
+            return { fisVldTipoNfDebito: 6 };
+        });
+        (m.fiscal.gerarObservacoes as jest.Mock).mockImplementation(async () => {
+            ordem.push('obs');
+            return { fisEspObs: 'AJUSTE SINIEF /' };
+        });
+        await buildService(m).processarAlocacao(baseInput());
+        expect(ordem).toEqual(['descricao', 'fiscal', 'obs']);
+    });
+
+    it('respeita a config do cliente quando ela produz algo: usa o preDescrProdutoNf do ERP', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue(
+            'DESCRICAO CALCULADA PELO ERP',
+        );
+        await buildService(m).processarAlocacao(baseInput());
+        expect((m.fiscal.gravarDescricaoItemNde as jest.Mock).mock.calls[0][0].descricao).toBe(
+            'DESCRICAO CALCULADA PELO ERP',
+        );
+    });
+
+    it('NDE_DESCRICAO_ITEM_FALLBACK do fiscal tem precedência sobre tudo', async () => {
+        const m = buildMocks({
+            env: buildEnv({ ndeDescricaoItemFallback: 'NOTA DE DEBITO - SERVICOS' }),
+        });
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue('IGNORADA');
+        await buildService(m).processarAlocacao(baseInput());
+        expect((m.fiscal.gravarDescricaoItemNde as jest.Mock).mock.calls[0][0].descricao).toBe(
+            'NOTA DE DEBITO - SERVICOS',
+        );
+        // Sugestão do ERP nem é consultada quando o fiscal fixou o texto.
+        expect(m.fiscal.preDescricaoProdutoNf).not.toHaveBeenCalled();
+    });
+
+    it('falha ao gravar a descrição é FAIL-CLOSED: não homologa (nada irreversível aconteceu)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        (m.fiscal.gravarDescricaoItemNde as jest.Mock).mockRejectedValue(new Error('PUT recusado'));
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('error');
+        expect(out.etapa).toBe('nota-debito');
+        expect(m.fiscal.gravarDocFiscal).not.toHaveBeenCalled();
+        expect(m.nde.homologar).not.toHaveBeenCalled();
+        expect(m.repo.markError).toHaveBeenCalled();
+    });
+
+    it('documento sem linha de item: avisa e segue (o ERP tem a última palavra)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.fiscal.listItensNde as jest.Mock).mockResolvedValue([]);
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDocFiscal).toHaveBeenCalled();
+    });
+
+    it('RETOMADA de execução que já falhou na homologação passa pela correção (não é etapa monotônica)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        // Exatamente o estado dos casos parados hoje: NDe gerada, fiscal+obs feitos, homologação recusada.
+        (m.repo.findByIdempotencyKey as jest.Mock).mockResolvedValue({
+            idempotencyKey: 'sn-real:txn-1:90001:15000',
+            status: 'error',
+            etapa: 'obs-done',
+            docCod: 18200,
+            fin014BorCod: 77,
+            ndDocCod: 18337,
+        });
+        await buildService(m).processarAlocacao(baseInput());
+        // A descrição é consertada na retomada — uma etapa própria no ledger teria pulado este caso.
+        expect(m.fiscal.gravarDescricaoItemNde).toHaveBeenCalledTimes(1);
+    });
+
+    it('já homologada: não mexe no item (a NF-e já saiu)', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        (m.repo.findByIdempotencyKey as jest.Mock).mockResolvedValue({
+            idempotencyKey: 'sn-real:txn-1:90001:15000',
+            status: 'settled',
+            etapa: 'homologado',
+            docCod: 18200,
+            fin014BorCod: 77,
+            ndDocCod: 18337,
+        });
+        await buildService(m).processarAlocacao(baseInput());
+        expect(m.fiscal.listItensNde).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
     });
 });

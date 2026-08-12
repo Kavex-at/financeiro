@@ -3,6 +3,29 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.18.0 — descrição do item da NDe é do DOCUMENTO, não do cadastro (2026-08-11, ADR-0036)
+
+Feature: `nde-descricao-item` (branch `fix/nde-descricao-item`, base `main`). A homologação da NDe era
+recusada para os clientes cujo cadastro (`cmn025` → `CmnDadosPessoas.dpeVld1DescrNfe`) manda derivar a
+descrição do produto da **DI** (`4 - Descrição DI`; o tenant rotula "DI + DUIMP"): o produto de encargo da
+NDe (`41978` PAGAMENTO ANTECIPADO) não tem adição de DI, então a **Descrição para Impressão**
+(`dprLngDescrNf`, o `xProd` da NF-e) saía **vazia**.
+
+- **NEW business-rule `descricao-item-nde` (I-Receb-5, `implemented`)** — antes da leg fiscal, se a
+  descrição do item estiver vazia ela é gravada **no documento** (`PUT com297/comDocProdutos`,
+  read-modify-write, sucesso ⟺ eco não-vazio). Ordem do texto: `NDE_DESCRICAO_ITEM_FALLBACK` →
+  `preDescrProdutoNf` (o que o próprio ERP calcularia) → `prdDesNome` da linha → constante.
+  → **business-rules 20 → 21**.
+- **`integrations/conexos-nde-fiscal` ganha a etapa (0)** na ordem obrigatória:
+  `(0) descrição do item → (a) fiscal → (b) observações → (c) homologar`, com 1 endpoint de escrita e 3 de
+  leitura novos em `com297/comDocProdutos`.
+- **Nada muda no cadastro.** O `dpeVld1DescrNfe` do cliente é **legítimo** como está — para a NF-e de
+  **mercadoria** descrever a DI/DUIMP é o comportamento fiscal desejado. Trocá-lo consertaria a NDe e
+  quebraria o faturamento; e é dado-mestre versionado (`dpeCodSeq`), compartilhado.
+- **Sem entidade nova, sem máquina de estado nova, sem migração.** A regra é idempotente pelo estado do
+  **documento** (descrição preenchida ⇒ no-op) e **não** ganhou etapa no ledger de propósito: as execuções
+  que já falharam por isso pararam em `obs-done` e uma etapa monotônica as pularia na retomada.
+
 ## v0.14.0 — Frente IV: alocar contra uma SN existente (2026-08-03, ADR-0027)
 
 Feature: `alocar-sn-select` (branch `fix/alocar-sn-select`, base `fix/erp-4xx-nao-retentavel`). O botão

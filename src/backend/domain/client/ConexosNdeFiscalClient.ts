@@ -5,6 +5,8 @@ import { NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO } from '../interface/rec
 import type {
     DocFiscal,
     DocStatusFiscal,
+    ItemNde,
+    ItemNdeResumo,
     ObservacoesFiscais,
     ValidacaoDocumento,
 } from '../interface/recebimentos/NdeFiscal.js';
@@ -58,13 +60,42 @@ const VALIDACAO_ROW_SCHEMA = z
     .passthrough();
 
 /**
+ * Boundary do item do com297 (`comDocProdutos`). A chave é COMPOSTA (`docCod`+`fisCod`+`prdCod`+
+ * `dprCodSeq`) — os quatro são exigidos; `dprLngDescrNf` (descrição de impressão) e `prdDesNome`
+ * (descrição cadastrada do produto) são `nullish` porque o ERP devolve `null` nos dois. `.passthrough()`
+ * preserva os ~105 campos para o read-modify-write.
+ */
+const ITEM_NDE_SCHEMA = z
+    .object({
+        docCod: z.coerce.number().int(),
+        fisCod: z.coerce.number().int(),
+        prdCod: z.coerce.number().int(),
+        dprCodSeq: z.coerce.number().int(),
+        prdDesNome: z.string().nullish(),
+        dprLngDescrNf: z.string().nullish(),
+    })
+    .passthrough();
+
+/** `maxLength` de `dprLngDescrNf` no swagger do tenant — truncamos ANTES de enviar, nunca depois. */
+export const DESCRICAO_IMPRESSAO_MAX = 4000;
+
+/** Texto não-vazio (após trim) ou `undefined` — o teste que separa "tem descrição" de "não tem". */
+const textoOuIndefinido = (valor: unknown): string | undefined => {
+    if (typeof valor !== 'string') return undefined;
+    const limpo = valor.trim();
+    return limpo === '' ? undefined : limpo;
+};
+
+/**
  * ConexosNdeFiscalClient — a leg FISCAL da Nota de Débito Eletrônica, capturada por HAR real (doc
- * 18337). Fecha o GAP `nota-debito-fiscal` que o writer permutas deixava fail-closed. QUATRO contratos
+ * 18337). Fecha o GAP `nota-debito-fiscal` que o writer permutas deixava fail-closed. CINCO contratos
  * DISTINTOS, cada um com seu Zod e seu discriminador de sucesso — a spec proíbe reusar UM helper:
  *   (a) com300 — fiscal, read-modify-write: GET o objeto INTEIRO → seta `fisVldTipoNfDebito=6` → PUT
  *       o objeto inteiro. Sucesso ⟺ eco `fisVldTipoNfDebito === 6`. `putGenericOnce` (RMW não-retryable).
  *   (b) com131 — observações: `POST geraObs {docTip,docCod}`. Sucesso ⟺ `fisEspObs` preenchido.
  *   (c) com194 — validações (leitura), logadas quando a homologação volta `docVldComvalidacoes===2`.
+ *   (d) com297 `comDocProdutos` — ITENS da nota: listar/ler/`preDescrProdutoNf` + o RMW que grava a
+ *       `dprLngDescrNf` (o `xProd` da NF-e). Sucesso do PUT ⟺ eco com `dprLngDescrNf` NÃO-vazia.
  *   (poll) com297 — `GET com297/{docCod}` p/ pré-condição + `vldAutorizado` (SEFAZ é assíncrono).
  * A HOMOLOGAÇÃO em si vive no `ConexosNdeClient` (discriminador `docVldComvalidacoes`). `filCod` SEMPRE
  * no header (`Cnx-filCod`), nunca na URL. Ver `_inbox/recebimentos-numerario-real-fiscal-spec.md`.
@@ -214,6 +245,176 @@ export default class ConexosNdeFiscalClient {
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: 'com194/documento/list', cause });
+        }
+    };
+
+    /**
+     * (d) ITENS da nota — `POST com297/comDocProdutos/list/{docCod}/{fisCod}`. A linha da NDe não é criada
+     * pela automação: o ERP a materializa a partir do `prdCod` do HEADER do `gerDocProcesso`. Esta leitura
+     * é como descobrimos a chave composta do item e se a `dprLngDescrNf` saiu preenchida. Idempotente →
+     * `runWithRetry`.
+     */
+    public listItensNde = async (params: {
+        filCod: number;
+        docCod: number;
+        fisCod: number;
+    }): Promise<ItemNdeResumo[]> => {
+        const { filCod, docCod, fisCod } = params;
+        const path = `com297/comDocProdutos/list/${docCod}/${fisCod}`;
+        try {
+            return await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                const raw = await this.base.postGeneric<{ rows?: unknown[] } | unknown[]>(
+                    path,
+                    {
+                        fieldList: [],
+                        filterList: {},
+                        pageNumber: 1,
+                        pageSize: 200,
+                        orderList: { orderList: [{ propertyName: 'dprCodSeq', order: 'asc' }] },
+                    },
+                    { filCod },
+                );
+                const rows = Array.isArray(raw) ? raw : (raw?.rows ?? []);
+                return rows.map((r) => {
+                    const item = ITEM_NDE_SCHEMA.parse(r);
+                    const prdDesNome = textoOuIndefinido(item.prdDesNome);
+                    const dprLngDescrNf = textoOuIndefinido(item.dprLngDescrNf);
+                    return {
+                        docCod: item.docCod,
+                        fisCod: item.fisCod,
+                        prdCod: item.prdCod,
+                        dprCodSeq: item.dprCodSeq,
+                        ...(prdDesNome !== undefined ? { prdDesNome } : {}),
+                        ...(dprLngDescrNf !== undefined ? { dprLngDescrNf } : {}),
+                    };
+                });
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * (d) leitura do RMW do item — `GET com297/comDocProdutos/{docCod}/{fisCod}/{prdCod}/{dprCodSeq}`
+     * devolve a linha INTEIRA (~105 campos), que é o que o PUT precisa reenviar. Idempotente.
+     */
+    public lerItemNde = async (params: {
+        filCod: number;
+        docCod: number;
+        fisCod: number;
+        prdCod: number;
+        dprCodSeq: number;
+    }): Promise<ItemNde> => {
+        const { filCod, docCod, fisCod, prdCod, dprCodSeq } = params;
+        const path = `com297/comDocProdutos/${docCod}/${fisCod}/${prdCod}/${dprCodSeq}`;
+        try {
+            return await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                const raw = await this.base.getGeneric<unknown>(path, { filCod });
+                return ITEM_NDE_SCHEMA.parse(raw) as ItemNde;
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * (d) o que o ERP CALCULARIA para a descrição deste item — `GET com297/comDocProdutos/
+     * preDescrProdutoNf/{docCod}/{fisCod}/{prdCod}/{dprCodSeq}`. É a rota que o UI usa para PRÉ-PREENCHER
+     * o campo quando o analista edita o item, ou seja: ela aplica a regra do cadastro do cliente
+     * (`dpeVld1DescrNfe`) e o valor GRAVADO é que vale.
+     *
+     * **Best-effort de propósito — NUNCA lança.** É uma sugestão: se o ERP recusar a rota, devolver um
+     * shape inesperado ou (o caso que nos trouxe aqui) uma string vazia, o caller cai no próximo
+     * fallback. Falhar aqui derrubaria uma emissão por causa de um enfeite.
+     */
+    public preDescricaoProdutoNf = async (params: {
+        filCod: number;
+        docCod: number;
+        fisCod: number;
+        prdCod: number;
+        dprCodSeq: number;
+    }): Promise<string | undefined> => {
+        const { filCod, docCod, fisCod, prdCod, dprCodSeq } = params;
+        const path = `com297/comDocProdutos/preDescrProdutoNf/${docCod}/${fisCod}/${prdCod}/${dprCodSeq}`;
+        try {
+            await this.base.ensureSid();
+            const raw = await this.base.getGeneric<unknown>(path, { filCod });
+            return this.extrairDescricaoSugerida(raw);
+        } catch {
+            return undefined;
+        }
+    };
+
+    /**
+     * O swagger do tenant não declara o corpo do `preDescrProdutoNf` (`content: {}`), então aceitamos as
+     * três formas plausíveis — string crua, `{responseData: …}` ou um objeto com a descrição em
+     * `dprLngDescrNf`/`descricao`/`descr` — e desistimos em qualquer outra. Nunca lança.
+     */
+    private extrairDescricaoSugerida = (raw: unknown): string | undefined => {
+        const direto = textoOuIndefinido(raw);
+        if (direto !== undefined) return direto;
+        if (typeof raw !== 'object' || raw === null) return undefined;
+        const o = raw as Record<string, unknown>;
+        const interno = textoOuIndefinido(o.responseData);
+        if (interno !== undefined) return interno;
+        const alvo =
+            o.responseData !== null && typeof o.responseData === 'object'
+                ? (o.responseData as Record<string, unknown>)
+                : o;
+        return (
+            textoOuIndefinido(alvo.dprLngDescrNf) ??
+            textoOuIndefinido(alvo.descricao) ??
+            textoOuIndefinido(alvo.descr)
+        );
+    };
+
+    /**
+     * (d) escrita do RMW do item — `PUT com297/comDocProdutos` com a linha INTEIRA e a `dprLngDescrNf`
+     * já substituída. Sem id na URL, igual ao com300; campo omitido vira `null`, então NUNCA montar
+     * parcial (o caller passa o objeto vindo do `lerItemNde`). Tentativa ÚNICA (`putGenericOnce`).
+     *
+     * **Sucesso ⟺ o eco traz `dprLngDescrNf` NÃO-vazia.** Não exigimos igualdade exata com o que
+     * mandamos: o ERP pode normalizar/truncar o texto, e o invariante que estamos protegendo é "a NF-e
+     * tem descrição de produto", não "a NF-e tem exatamente esta string". Divergência é problema do
+     * caller (que loga); vazio é falha desta etapa.
+     */
+    public gravarDescricaoItemNde = async (params: {
+        filCod: number;
+        item: ItemNde;
+        descricao: string;
+    }): Promise<ItemNde> => {
+        const { filCod, item } = params;
+        const descricao = params.descricao.trim().slice(0, DESCRICAO_IMPRESSAO_MAX);
+        if (descricao === '') {
+            // Enviar vazio seria gravar o próprio bug — recusa antes de sair da máquina.
+            throw new ConexosError({
+                endpoint: 'com297/comDocProdutos',
+                cause: new Error('descricao vazia — recusando gravar dprLngDescrNf em branco'),
+            });
+        }
+        try {
+            await this.base.ensureSid();
+            const raw = await this.base.putGenericOnce<unknown>(
+                'com297/comDocProdutos',
+                { ...item, dprLngDescrNf: descricao },
+                { filCod },
+            );
+            const eco = ITEM_NDE_SCHEMA.parse(raw) as ItemNde;
+            if (textoOuIndefinido(eco.dprLngDescrNf) === undefined) {
+                throw new ConexosError({
+                    endpoint: 'com297/comDocProdutos',
+                    cause: new Error(
+                        `PUT com297/comDocProdutos nao gravou dprLngDescrNf (eco vazio) no item ` +
+                            `${item.docCod}/${item.fisCod}/${item.prdCod}/${item.dprCodSeq}`,
+                    ),
+                });
+            }
+            return eco;
+        } catch (cause) {
+            if (cause instanceof ConexosError) throw cause;
+            throw new ConexosError({ endpoint: 'com297/comDocProdutos', cause });
         }
     };
 

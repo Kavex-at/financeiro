@@ -26,7 +26,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import TransacaoRepository from '../../repository/recebimentos/TransacaoRepository.js';
 import type { Processo } from '../../interface/recebimentos/GerDocProcesso.js';
-import type { DocFiscal } from '../../interface/recebimentos/NdeFiscal.js';
+import type { DocFiscal, ItemNdeResumo } from '../../interface/recebimentos/NdeFiscal.js';
 import {
     NDE_REPOSITORY_TOKEN,
     type NdeRepositoryInterface,
@@ -483,6 +483,9 @@ export default class RecebimentoNumerarioService {
 
             ndDocCod = await this.etapaNotaDebito(ctx, existente, ndDocCod);
             etapa = 'nota-debito';
+            // 3.5 — garante a descrição de impressão do item ANTES da leg fiscal. Sem etapa própria no
+            // ledger de propósito: é auto-idempotente pelo estado do documento (ver `etapaDescricaoItem`).
+            await this.etapaDescricaoItem(ctx, existente, ndDocCod);
             await this.etapaFiscal(ctx, existente, ndDocCod);
             etapa = 'fiscal-done';
             await this.etapaObservacoes(ctx, existente, ndDocCod);
@@ -1659,6 +1662,121 @@ export default class RecebimentoNumerarioService {
         // NÃO adicionar produto via com297/comDocProdutos: o produto (41978) já vai no HEADER do
         // gerDocProcesso (HAR 23-27 NÃO faz esse POST — falhava `docVldTipo required`). Segue p/ o fiscal.
         return ndDocCod;
+    };
+
+    /**
+     * Etapa 3.5 (com297 `comDocProdutos`): garante que o ITEM da NDe tem **Descrição para Impressão**
+     * (`dprLngDescrNf`) — o campo que vira o `xProd` da NF-e.
+     *
+     * **Por que existe.** A linha de produto da NDe é materializada pelo ERP a partir do `prdCod` do
+     * header, e a descrição dela é derivada da regra do CADASTRO DO CLIENTE (`cmn025` →
+     * `CmnDadosPessoas.dpeVld1DescrNfe`). Para os clientes com essa regra em `4 - Descrição DI` a
+     * derivação não tem de onde tirar texto — o produto de encargo (41978 PAGAMENTO ANTECIPADO) não tem
+     * adição de DI — e o campo sai VAZIO, o que faz a homologação ser recusada. Trocar o cadastro
+     * "conserta" a NDe e QUEBRA a NF-e de mercadoria do mesmo cliente (lá derivar da DI é o certo), além
+     * de ser dado-mestre versionado e compartilhado. Então o conserto é POR DOCUMENTO, aqui.
+     * Ver `business-rules/descricao-item-nde.md` e ADR-0036.
+     *
+     * **Auto-idempotente pelo estado do DOCUMENTO, não pelo ledger.** Se a descrição já veio preenchida
+     * (cliente com cadastro compatível), é um no-op — a esmagadora maioria das emissões não sente esta
+     * etapa. Por isso o gate é só "ainda não homologou": uma execução que já falhou na homologação (e
+     * portanto parou em `obs-done`) precisa passar por aqui ao ser retomada, o que uma etapa monotônica
+     * própria no ledger impediria. Depois de homologada não há o que consertar — a NF-e já saiu.
+     *
+     * Roda ANTES do com300/com131 de propósito: a ordem fiscal obrigatória é (a) fiscal → (b) obs →
+     * (c) homologar, e mexer no item depois de gerar as observações reabriria a pergunta de se elas
+     * continuam válidas. Falha aqui é fail-closed ANTES de qualquer coisa irreversível.
+     */
+    private etapaDescricaoItem = async (
+        ctx: EscritaCtx,
+        existente: SolicitacaoNumerarioExecucaoRow | null,
+        ndDocCod: number,
+    ): Promise<void> => {
+        if (this.etapaAtingida(existente, 'homologado')) return; // NF-e já emitida — nada a consertar
+        const { filCod } = ctx;
+        const itens = await this.fiscalClient.listItensNde({
+            filCod,
+            docCod: ndDocCod,
+            fisCod: FIS_COD_DEFAULT,
+        });
+        if (itens.length === 0) {
+            // Não inventamos a linha: criá-la é outra escrita, com outro contrato, e o ERP tem a última
+            // palavra sobre a nota sem item. Registra e segue — a homologação falha com a mensagem DELE.
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'NDe sem linha de produto no com297 — descrição de impressão não verificável; ' +
+                    'seguindo para a leg fiscal (o ERP decide)',
+                data: { txnId: ctx.txnId, ndDocCod, priCod: ctx.priCod },
+            });
+            return;
+        }
+
+        for (const item of itens) {
+            if (item.dprLngDescrNf !== undefined) continue; // já tem descrição → no-op
+            const descricao = await this.resolverDescricaoItem(ctx, item);
+            const completo = await this.fiscalClient.lerItemNde({
+                filCod,
+                docCod: item.docCod,
+                fisCod: item.fisCod,
+                prdCod: item.prdCod,
+                dprCodSeq: item.dprCodSeq,
+            });
+            const eco = await this.fiscalClient.gravarDescricaoItemNde({
+                filCod,
+                item: completo,
+                descricao,
+            });
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'Descrição de impressão do item da NDe estava VAZIA e foi gravada no documento ' +
+                    '(cadastro do cliente deriva a descrição da DI) — nenhum cadastro foi alterado',
+                data: {
+                    txnId: ctx.txnId,
+                    ndDocCod,
+                    priCod: ctx.priCod,
+                    prdCod: item.prdCod,
+                    dprCodSeq: item.dprCodSeq,
+                    descricaoGravada: descricao,
+                    descricaoEco: eco.dprLngDescrNf,
+                },
+            });
+        }
+    };
+
+    /**
+     * De onde sai a descrição quando o ERP deixou o campo vazio, em ordem de precedência:
+     *   1. `NDE_DESCRICAO_ITEM_FALLBACK` — texto explícito do fiscal, quando existir (ele manda);
+     *   2. `preDescrProdutoNf` — o que o próprio ERP calcularia (respeita a config do cliente QUANDO ela
+     *      produz algo; é a mesma rota que o UI usa para pré-preencher o campo). Best-effort;
+     *   3. `prdDesNome` da linha — a descrição CADASTRADA do produto. É byte-a-byte o que o ERP gravaria
+     *      com o cadastro em "1 - Descrição Produto", ou seja, o resultado do workaround manual;
+     *   4. `NDE_GERACAO_DEFAULTS.produtoNome` — último recurso, se nem o join do produto vier.
+     *
+     * Nunca devolve vazio: sem nenhuma fonte, é fail-closed (o cliente também recusa string vazia).
+     */
+    private resolverDescricaoItem = async (
+        ctx: EscritaCtx,
+        item: ItemNdeResumo,
+    ): Promise<string> => {
+        const env = await this.environmentProvider.getEnvironmentVars();
+        const configurada = env.ndeDescricaoItemFallback?.trim();
+        if (configurada !== undefined && configurada !== '') return configurada;
+
+        const sugerida = await this.fiscalClient.preDescricaoProdutoNf({
+            filCod: ctx.filCod,
+            docCod: item.docCod,
+            fisCod: item.fisCod,
+            prdCod: item.prdCod,
+            dprCodSeq: item.dprCodSeq,
+        });
+        if (sugerida !== undefined && sugerida.trim() !== '') return sugerida.trim();
+
+        const cadastrada = item.prdDesNome?.trim();
+        if (cadastrada !== undefined && cadastrada !== '') return cadastrada;
+
+        return NDE_GERACAO_DEFAULTS.produtoNome;
     };
 
     /** Etapa 4 (com300 fiscal, RMW): GET o finDocFiscal INTEIRO → set fisVldTipoNfDebito=6 → PUT. */

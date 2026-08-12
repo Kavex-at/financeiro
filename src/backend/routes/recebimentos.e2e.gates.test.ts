@@ -323,6 +323,23 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
     app.post('/api/:tela/comDocProdutos/initialValues', (_req, res) => {
         res.json({ COM299: { ComDocProdutos: { ...TEMPLATE_ITEM_SN } } });
     });
+    // Itens da NF (etapa 3.5): o ERP devolve a linha do produto com a Descrição para Impressão JÁ
+    // preenchida — cliente com o cadastro compatível ("1 - Descrição Produto"), então a etapa é no-op.
+    app.post('/api/:tela/comDocProdutos/list/:docCod/:fisCod', (req, res) => {
+        res.json({
+            count: 1,
+            rows: [
+                {
+                    docCod: Number(req.params.docCod),
+                    fisCod: Number(req.params.fisCod),
+                    prdCod: 41978,
+                    dprCodSeq: 1,
+                    prdDesNome: 'PAGAMENTO ANTECIPADO',
+                    dprLngDescrNf: 'PAGAMENTO ANTECIPADO',
+                },
+            ],
+        });
+    });
     app.post('/api/:tela/comDocProdutos', (req, res) => {
         const body = (req.body ?? {}) as Record<string, unknown>;
         const docCod = Number(body.docCod ?? 0);

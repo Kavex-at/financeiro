@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-08-07",
-    "version": "0.16.0",
-    "note": "v0.16.0 (2026-08-07, ADR-0031): regra de negocio NOVA nde-dispensada-conta-e-ordem (I-Receb-4), implemented + teste canonico. Processos POR CONTA E ORDEM DE TERCEIROS (imp021.priVldTipo=2) nao geram Nota de Debito Eletronica: a alocacao quita com SN (com299) + baixa (fin014) e para na etapa terminal nova quitado-sem-nde. Modalidade lida do imp021 NO SERVIDOR (gate 0.5 do pre-flight); indeterminavel = blocked fail-closed, sem escrita. Relacao NotaDebitoEletronica—Recebimento vira 0..1. Sem migration (etapa e TEXT sem CHECK). Coverage: business_rules_total 17->18, implemented 8->9, with_tests 4->5.",
+    "generated": "2026-08-11",
+    "version": "0.18.0",
+    "note": "v0.18.0 (2026-08-11, ADR-0036): regra de negocio NOVA descricao-item-nde (I-Receb-5), implemented + teste canonico. A Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) e garantida NO DOCUMENTO antes da leg fiscal (PUT com297/comDocProdutos, RMW, sucesso ⟺ eco nao-vazio); o cadastro do cliente (cmn025 dpeVld1DescrNfe) NUNCA e escrito. No-op quando o ERP ja preencheu. Sem migration e sem etapa nova no ledger (idempotencia pelo estado do documento, para alcancar execucoes paradas em obs-done). Coverage: business_rules_total 18->19, implemented 9->10, with_tests 5->6.",
     "upstream": "../../produtizacao/nf-projects",
     "last_feature": "nde-dispensada-conta-e-ordem"
   },
@@ -21,10 +21,10 @@
     "actions_partial": 1,
     "actions_planned": 6,
     "actions_coverage_pct": 70,
-    "business_rules_total": 18,
-    "business_rules_implemented": 9,
+    "business_rules_total": 19,
+    "business_rules_implemented": 10,
     "business_rules_planned": 9,
-    "business_rules_with_tests": 5,
+    "business_rules_with_tests": 6,
     "business_rules_retired": 1,
     "state_machines_total": 5,
     "state_machines_partial": 1,

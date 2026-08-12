@@ -44,6 +44,14 @@ universality_evidence:
 > era devida"**, nunca "faltou emitir". Ver `business-rules/nde-dispensada-conta-e-ordem.md`
 > (I-Receb-4).
 
+> **⚠️ Atualização (2026-08-11, ADR-0036) — toda NDe sai com descrição de produto.** A **Descrição
+> para Impressão** do item (`com297.dprLngDescrNf`, o `xProd` da NF-e) é derivada pelo ERP de uma
+> regra do **cadastro do cliente** (`cmn025.dpeVld1DescrNfe`). Quando essa regra é "Descrição DI", o
+> produto de encargo da NDe não tem de onde tirar texto e o campo sai **vazio**, o que faz a
+> homologação ser recusada. Antes da leg fiscal a automação **grava a descrição no documento** — e
+> **nunca** no cadastro, cujo valor é legítimo para a NF-e de mercadoria. Ver
+> `business-rules/descricao-item-nde.md` (I-Receb-5).
+
 > **SKELETON (Fase 0).** A `NotaDebitoEletronica` (NDe) é o **artefato terminal** de um `Recebimento`
 > executado — **emitida pelo Conexos ERP** (decisão Yuri, 2026-07-24): **não** é um sistema fiscal
 > separado, **não** é auto-gerada por nós. Modelamos a NDe como (1) uma **ação disparada no ERP**
