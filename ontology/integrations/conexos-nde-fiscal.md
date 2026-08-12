@@ -64,14 +64,18 @@ observações reabriria a pergunta de se elas seguem válidas. Ver `business-rul
 
 ## Detalhes por etapa
 
-- **(0) com297 `comDocProdutos` — só quando o ERP deixou a descrição vazia.** `POST comDocProdutos/list/
-  {docCod}/{fisCod}` acha a linha (a automação NÃO a cria — o ERP a materializa do `prdCod` do header).
-  Descrição preenchida ⇒ **no-op**. Vazia ⇒ `GET comDocProdutos/{docCod}/{fisCod}/{prdCod}/{dprCodSeq}`
+- **(0) com297 `comDocProdutos` — só quando o ERP NÃO consegue derivar a descrição.** `POST
+  comDocProdutos/list/{docCod}/{fisCod}` acha a linha (a automação NÃO a cria — o ERP a materializa do
+  `prdCod` do header). O gatilho é o `GET comDocProdutos/preDescrProdutoNf/{...}`: **com texto ⇒ no-op**
+  (o ERP deriva e a nota sai certa); **vazio ⇒** `GET comDocProdutos/{docCod}/{fisCod}/{prdCod}/{dprCodSeq}`
   (linha INTEIRA, ~105 campos) → `PUT comDocProdutos` com o objeto inteiro e a `dprLngDescrNf`
-  substituída (campo omitido vira `null`, igual ao com300). O texto sai, em ordem, de
-  `NDE_DESCRICAO_ITEM_FALLBACK` → `preDescrProdutoNf` → `prdDesNome` da linha. **Nunca** se escreve no
-  cadastro do cliente (`cmn025.dpeVld1DescrNfe`), cujo valor "Descrição DI" é correto para a NF-e de
-  mercadoria. Idempotente pelo estado do documento — sem etapa própria no ledger (ADR-0036).
+  substituída (campo omitido vira `null`, igual ao com300). Linha que já tenha `dprLngDescrNf` também é
+  no-op — é override manual de alguém. O texto sai, em ordem, de `NDE_DESCRICAO_ITEM_FALLBACK` →
+  `prdDesNome` da linha → constante de geração. **Nunca** se escreve no cadastro do cliente
+  (`cmn025.dpeVld1DescrNfe`), cujo valor "Descrição DI" é correto para a NF-e de mercadoria.
+  Idempotente pelo estado do documento — sem etapa própria no ledger (ADR-0036). Falha de LEITURA
+  degrada (WARN e segue); só a ESCRITA é fail-closed. Interruptor: `NDE_DESCRICAO_ITEM_ENABLED=false`.
+  ⚠️ `dprLngDescrNf` fica vazia em TODA NDe, inclusive nas saudáveis — por isso o gatilho não é ela.
 - **(a) com300 — read-modify-write OBRIGATÓRIO.** `GET` devolve o `finDocFiscal` inteiro (73 campos);
   o `PUT /api/com300` (sem id na URL) reenvia o objeto INTEIRO com `fisVldTipoNfDebito=6` (Pagamento
   antecipado, inteiro). Campo omitido vira `null` → nunca montar parcial. `filCod` no corpo E no

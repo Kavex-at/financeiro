@@ -1867,17 +1867,35 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
         expect(ordem).toEqual(['descricao', 'fiscal', 'obs']);
     });
 
-    it('respeita a config do cliente quando ela produz algo: usa o preDescrProdutoNf do ERP', async () => {
+    /**
+     * O CASO NORMAL, e a razão de o gatilho não ser "campo vazio": medido em produção, `dprLngDescrNf`
+     * fica vazia em TODA NDe, inclusive nas que homologam sem problema. Quem distingue o caso quebrado
+     * é o ERP conseguir ou não derivar a descrição. Conseguindo, esta etapa não escreve nada — do
+     * contrário estaríamos trocando, em 100% das notas, o valor derivado na homologação pela saída de
+     * uma rota de pré-visualização.
+     */
+    it('ERP derivando descrição: NÃO grava nada, mesmo com o campo vazio (é o caso saudável)', async () => {
         const m = buildMocks();
         wireDocCods(m);
         comDescricaoVazia(m);
         (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue(
             'DESCRICAO CALCULADA PELO ERP',
         );
+        const out = await buildService(m).processarAlocacao(baseInput());
+        expect(out.status).toBe('settled');
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
+        // Nem lemos a linha inteira: sem escrita, o RMW não começa.
+        expect(m.fiscal.lerItemNde).not.toHaveBeenCalled();
+        expect(m.fiscal.gravarDocFiscal).toHaveBeenCalled();
+    });
+
+    it('preDescr em BRANCO conta como "não derivou" — o ERP diz que não tem texto', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue('   ');
         await buildService(m).processarAlocacao(baseInput());
-        expect(descricaoGravada(m)).toBe('DESCRICAO CALCULADA PELO ERP');
-        // Precedência #2 > #3: a sugestão do ERP ganha do cadastro do produto.
-        expect(descricaoGravada(m)).not.toBe(PRD_DES_NOME);
+        expect(descricaoGravada(m)).toBe(PRD_DES_NOME);
     });
 
     /**
@@ -1895,17 +1913,30 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
         expect(descricaoGravada(m)).toBe(NDE_GERACAO_DEFAULTS.produtoNome);
     });
 
-    it('NDE_DESCRICAO_ITEM_FALLBACK do fiscal tem precedência sobre tudo', async () => {
+    it('NDE_DESCRICAO_ITEM_FALLBACK do fiscal tem precedência sobre o prdDesNome', async () => {
         const m = buildMocks({
             env: buildEnv({ ndeDescricaoItemFallback: 'NOTA DE DEBITO - SERVICOS' }),
         });
         wireDocCods(m);
         comDescricaoVazia(m);
-        (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue('IGNORADA');
         await buildService(m).processarAlocacao(baseInput());
         expect(descricaoGravada(m)).toBe('NOTA DE DEBITO - SERVICOS');
-        // Sugestão do ERP nem é consultada quando o fiscal fixou o texto.
-        expect(m.fiscal.preDescricaoProdutoNf).not.toHaveBeenCalled();
+        expect(descricaoGravada(m)).not.toBe(PRD_DES_NOME);
+    });
+
+    /**
+     * A env escolhe o TEXTO, não se a etapa age. Se o ERP deriva, não há o que consertar — fixar um
+     * texto no fiscal não pode passar a sobrescrever a descrição de todas as notas saudáveis.
+     */
+    it('NDE_DESCRICAO_ITEM_FALLBACK não faz a etapa agir quando o ERP deriva sozinho', async () => {
+        const m = buildMocks({
+            env: buildEnv({ ndeDescricaoItemFallback: 'NOTA DE DEBITO - SERVICOS' }),
+        });
+        wireDocCods(m);
+        comDescricaoVazia(m);
+        (m.fiscal.preDescricaoProdutoNf as jest.Mock).mockResolvedValue('DERIVADA PELO ERP');
+        await buildService(m).processarAlocacao(baseInput());
+        expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
     });
 
     it('NDE_DESCRICAO_ITEM_ENABLED=false desliga só esta etapa — a leg fiscal segue normal', async () => {

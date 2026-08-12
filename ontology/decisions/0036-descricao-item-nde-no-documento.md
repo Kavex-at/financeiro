@@ -40,15 +40,22 @@ A automação **nunca tocou** `dprLngDescrNf`: estava inteiramente à mercê de 
 ## Decisão
 
 **Garantir a descrição no DOCUMENTO, antes da leg fiscal.** Entre a geração da NDe e o `com300`, ler os
-itens (`POST com297/comDocProdutos/list/{docCod}/{fisCod}`); se `dprLngDescrNf` estiver vazia, ler a
-linha inteira (`GET com297/comDocProdutos/{docCod}/{fisCod}/{prdCod}/{dprCodSeq}`), substituir o campo e
-regravar por **read-modify-write** (`PUT com297/comDocProdutos`, objeto inteiro, `putGenericOnce`) —
-mesma doutrina do com300. Sucesso ⟺ eco com descrição **não-vazia**; falha é fail-closed antes de
-qualquer escrita irreversível.
+itens (`POST com297/comDocProdutos/list/{docCod}/{fisCod}`); para o item cuja descrição o **ERP não
+consegue derivar**, ler a linha inteira
+(`GET com297/comDocProdutos/{docCod}/{fisCod}/{prdCod}/{dprCodSeq}`), substituir o campo e regravar por
+**read-modify-write** (`PUT com297/comDocProdutos`, objeto inteiro, `putGenericOnce`) — mesma doutrina
+do com300. Sucesso ⟺ eco com descrição **não-vazia**. Falha de ESCRITA é fail-closed antes de qualquer
+coisa irreversível; falha de LEITURA degrada (WARN e segue), porque a leitura roda para toda NDe e
+derrubá-la propagaria a todos um problema que é de alguns.
+
+**O gatilho é o `preDescrProdutoNf` VAZIO, não o campo vazio** — ver §Emenda 2026-08-12.
 
 O texto default **não é uma escolha nova**: é o que o próprio ERP produziria com o cadastro em
-"1 - Descrição Produto" (`prdDesNome` da linha), depois de tentar o `preDescrProdutoNf` do ERP.
-`NDE_DESCRICAO_ITEM_FALLBACK` existe para o caso — e só para o caso — de o fiscal querer outro texto.
+"1 - Descrição Produto" (`prdDesNome` da linha) — confirmado em campo, o visualizador de pré-descrição
+do ERP resolve para o mesmo `PAGAMENTO ANTECIPADO`. `NDE_DESCRICAO_ITEM_FALLBACK` existe para o caso —
+e só para o caso — de o fiscal querer outro texto: ele escolhe o TEXTO, não se a regra age.
+
+`NDE_DESCRICAO_ITEM_ENABLED=false` desliga só esta etapa, sem derrubar a Frente IV.
 
 Regra completa e ordem de precedência: `business-rules/descricao-item-nde.md`.
 
@@ -75,9 +82,33 @@ Regra completa e ordem de precedência: `business-rules/descricao-item-nde.md`.
 - NDes **já homologadas** com descrição vazia (se houver) não são alcançadas: homologação é
   irreversível. O levantamento fica em `_inbox/nde-descricao-produto-nfe-diagnostico.md`.
 
-## Verificação pendente (não bloqueia)
+## Emenda 2026-08-12 — o gatilho passa a ser o `preDescrProdutoNf`
 
-Se o ERP monta o XML a partir do `dprLngDescrNf` **gravado** (hipótese, sustentada por o campo ser
-persistido, editável no UI e ter uma rota dedicada só para *pré-preencher*) ou se o recalcula na
-homologação. A sonda read-only `recebimentos.e2e.descricaoNfeNde.integration.test.ts` responde
-comparando um documento que falhou com um que homologou.
+Medição de campo no doc **18790** (o que homologou após a troca de cadastro) e nas demais NDes
+saudáveis: **`dprLngDescrNf` está vazia em TODAS**, inclusive nas que homologam sem problema. O ERP
+**não persiste** ali a descrição que imprime — o campo é um *override* manual, normalmente em branco.
+
+Consequência para o desenho original: "campo vazio" **não** distingue o caso quebrado do normal. Com
+ele como gatilho, a etapa escreveria em toda nota de todo cliente, trocando em 100% das emissões um
+valor derivado na homologação pela saída de uma rota de **pré-visualização** — uma superfície muito
+maior que o problema que a decisão existe para resolver.
+
+O gatilho passa a ser o próprio ERP: `preDescrProdutoNf` com texto ⟹ ele deriva, não há o que
+consertar, no-op; vazio ⟹ caso quebrado, grava. Se ele responder algo mesmo no caso quebrado, a etapa
+não age — falha para o lado seguro. Com isso o `preDescrProdutoNf` deixa de ser *fonte* do texto e
+vira *sinal*, e a precedência do texto encurta para env → `prdDesNome` → constante.
+
+## Verificação pendente (não bloqueia) — a premissa de OVERRIDE
+
+Se preencher `dprLngDescrNf` **sobrepõe** a derivação, ou se o ERP monta o `xProd` sempre a partir do
+cadastro. O 18790 mostra que o campo fica vazio e a nota sai — o que estabelece que o ERP não persiste
+ali, mas **não** decide se um campo preenchido seria respeitado. O nome do campo ("Descrição para
+Impressão"), o tamanho (4000 × 50 do nome do produto) e existir uma rota só para pré-preenchê-lo
+apontam para override, sem provar.
+
+Fecha com um gesto manual: na próxima NDe travada, o analista digita o texto no campo do item **sem
+tocar no cadastro** e homologa. Passou ⟹ override confirmado. Em paralelo, cabe perguntar à NTT Data.
+
+Enquanto isso a decisão é segura por construção: só age no caso já quebrado, degrada em falha de
+leitura, é fail-closed na escrita, tem interruptor por env, e o texto gravado é o mesmo que o ERP
+imprimiria — não há passivo fiscal em ter escrito.
