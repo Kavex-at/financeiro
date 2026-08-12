@@ -76,8 +76,36 @@ const ITEM_NDE_SCHEMA = z
     })
     .passthrough();
 
-/** `maxLength` de `dprLngDescrNf` no swagger do tenant — truncamos ANTES de enviar, nunca depois. */
-export const DESCRICAO_IMPRESSAO_MAX = 4000;
+/**
+ * Limite de `dprLngDescrNf` no tenant — truncamos ANTES de enviar, nunca depois. A unidade é **BYTE**,
+ * não caractere: a coluna é `VARCHAR2(4000 BYTE)` no Oracle do ERP.
+ */
+export const DESCRICAO_IMPRESSAO_MAX_BYTES = 4000;
+
+/**
+ * Trunca por **bytes UTF-8**, não por code units UTF-16.
+ *
+ * `String.prototype.slice` conta code units; a coluna conta bytes. Em português cada acento custa 2
+ * bytes, então uma string de 4000 caracteres acentuados vira ~8000 bytes e o ERP responde `ORA-12899`
+ * — com a mensagem do banco, não da automação, o que manda o plantonista para o lugar errado. O vetor
+ * concreto é a env `NDE_DESCRICAO_ITEM_FALLBACK`, que é texto livre fixado pelo fiscal.
+ *
+ * O corte é por **code point** (o iterador de string percorre code points, não code units), de modo a
+ * nunca partir um surrogate pair ao meio — meio par produziria UTF-8 inválido, que é pior do que o
+ * texto longo.
+ */
+const truncarPorBytesUtf8 = (texto: string, maxBytes: number): string => {
+    if (Buffer.byteLength(texto, 'utf8') <= maxBytes) return texto;
+    let bytes = 0;
+    let recorte = '';
+    for (const ponto of texto) {
+        const custo = Buffer.byteLength(ponto, 'utf8');
+        if (bytes + custo > maxBytes) break;
+        bytes += custo;
+        recorte += ponto;
+    }
+    return recorte;
+};
 
 /** Texto não-vazio (após trim) ou `undefined` — o teste que separa "tem descrição" de "não tem". */
 const textoOuIndefinido = (valor: unknown): string | undefined => {
@@ -386,7 +414,10 @@ export default class ConexosNdeFiscalClient {
         descricao: string;
     }): Promise<ItemNde> => {
         const { filCod, item } = params;
-        const descricao = params.descricao.trim().slice(0, DESCRICAO_IMPRESSAO_MAX);
+        const descricao = truncarPorBytesUtf8(
+            params.descricao.trim(),
+            DESCRICAO_IMPRESSAO_MAX_BYTES,
+        ).trimEnd();
         if (descricao === '') {
             // Enviar vazio seria gravar o próprio bug — recusa antes de sair da máquina.
             throw new ConexosError({
