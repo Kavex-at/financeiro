@@ -1677,11 +1677,22 @@ export default class RecebimentoNumerarioService {
      * de ser dado-mestre versionado e compartilhado. Então o conserto é POR DOCUMENTO, aqui.
      * Ver `business-rules/descricao-item-nde.md` e ADR-0036.
      *
-     * **Auto-idempotente pelo estado do DOCUMENTO, não pelo ledger.** Se a descrição já veio preenchida
-     * (cliente com cadastro compatível), é um no-op — a esmagadora maioria das emissões não sente esta
-     * etapa. Por isso o gate é só "ainda não homologou": uma execução que já falhou na homologação (e
-     * portanto parou em `obs-done`) precisa passar por aqui ao ser retomada, o que uma etapa monotônica
-     * própria no ledger impediria. Depois de homologada não há o que consertar — a NF-e já saiu.
+     * **O gatilho é o `preDescrProdutoNf`, não o campo vazio.** Medido em produção (2026-08-12, doc
+     * 18790 e outras NDes saudáveis): `dprLngDescrNf` fica vazia em TODA NDe, inclusive nas que
+     * homologam sem problema — o ERP não persiste ali a descrição que imprime; o campo é um override
+     * manual, normalmente em branco. Então "campo vazio" não distingue caso quebrado de caso normal, e
+     * usá-lo como gatilho faria esta etapa escrever em toda nota de todo cliente — trocando, em 100%
+     * das emissões, um valor derivado na homologação pela saída de uma rota de pré-visualização.
+     *
+     * O discriminador correto é o que o próprio ERP consegue derivar: `preDescrProdutoNf` com texto ⟹
+     * a nota sai certa sozinha e não tocamos em nada; vazio ⟹ é o caso quebrado, e só aí gravamos.
+     * Se ele responder algo mesmo no caso quebrado, a etapa não age — falha para o lado seguro, que é
+     * o comportamento anterior à feature.
+     *
+     * **Auto-idempotente pelo estado do DOCUMENTO, não pelo ledger.** O gate é só "ainda não
+     * homologou": uma execução que já falhou na homologação (e portanto parou em `obs-done`) precisa
+     * passar por aqui ao ser retomada, o que uma etapa monotônica própria no ledger impediria. Depois
+     * de homologada não há o que consertar — a NF-e já saiu.
      *
      * Roda ANTES do com300/com131 de propósito: a ordem fiscal obrigatória é (a) fiscal → (b) obs →
      * (c) homologar, e mexer no item depois de gerar as observações reabriria a pergunta de se elas
@@ -1730,8 +1741,21 @@ export default class RecebimentoNumerarioService {
         }
 
         for (const item of itens) {
-            if (item.dprLngDescrNf !== undefined) continue; // já tem descrição → no-op
-            const descricao = await this.resolverDescricaoItem(ctx, item);
+            // Override manual de alguém no documento — respeita, não é nosso.
+            if (item.dprLngDescrNf !== undefined) continue;
+
+            // O DISCRIMINADOR: o que o ERP consegue derivar para este item. Texto ⟹ a nota vai sair
+            // com descrição sozinha e NÃO tocamos em nada. Vazio ⟹ é o caso quebrado.
+            const sugerida = await this.fiscalClient.preDescricaoProdutoNf({
+                filCod,
+                docCod: item.docCod,
+                fisCod: item.fisCod,
+                prdCod: item.prdCod,
+                dprCodSeq: item.dprCodSeq,
+            });
+            if (sugerida !== undefined && sugerida.trim() !== '') continue;
+
+            const descricao = await this.resolverDescricaoItem(item);
             const completo = await this.lerItemOuDegradar(ctx, ndDocCod, item);
             if (completo === undefined) continue;
             const eco = await this.fiscalClient.gravarDescricaoItemNde({
@@ -1742,8 +1766,9 @@ export default class RecebimentoNumerarioService {
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message:
-                    'Descrição de impressão do item da NDe estava VAZIA e foi gravada no documento ' +
-                    '(cadastro do cliente deriva a descrição da DI) — nenhum cadastro foi alterado',
+                    'O ERP não derivou descrição para o item da NDe (cadastro do cliente manda derivar ' +
+                    'da DI e o produto de encargo não tem adição) — descrição gravada NO DOCUMENTO; ' +
+                    'nenhum cadastro foi alterado',
                 data: {
                     txnId: ctx.txnId,
                     ndDocCod,
@@ -1828,32 +1853,24 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
-     * De onde sai a descrição quando o ERP deixou o campo vazio, em ordem de precedência:
+     * Qual texto gravar, DEPOIS de o `preDescrProdutoNf` já ter dito que o ERP não deriva nada para
+     * este item. Em ordem de precedência:
      *   1. `NDE_DESCRICAO_ITEM_FALLBACK` — texto explícito do fiscal, quando existir (ele manda);
-     *   2. `preDescrProdutoNf` — o que o próprio ERP calcularia (respeita a config do cliente QUANDO ela
-     *      produz algo; é a mesma rota que o UI usa para pré-preencher o campo). Best-effort;
-     *   3. `prdDesNome` da linha — a descrição CADASTRADA do produto. É byte-a-byte o que o ERP gravaria
-     *      com o cadastro em "1 - Descrição Produto", ou seja, o resultado do workaround manual;
-     *   4. `NDE_GERACAO_DEFAULTS.produtoNome` — último recurso, se nem o join do produto vier.
+     *   2. `prdDesNome` da linha — a descrição CADASTRADA do produto. É byte-a-byte o que o ERP
+     *      produziria com o cadastro em "1 - Descrição Produto", ou seja, o resultado do workaround
+     *      manual;
+     *   3. `NDE_GERACAO_DEFAULTS.produtoNome` — último recurso, se nem o join do produto vier.
+     *
+     * O `preDescrProdutoNf` NÃO entra aqui: ele é o **discriminador** que decide se esta etapa age
+     * (ver `etapaDescricaoItem`), não uma fonte de texto. Quando ele responde algo, não há o que
+     * gravar — a nota sai certa pela derivação do próprio ERP.
      *
      * Nunca devolve vazio: sem nenhuma fonte, é fail-closed (o cliente também recusa string vazia).
      */
-    private resolverDescricaoItem = async (
-        ctx: EscritaCtx,
-        item: ItemNdeResumo,
-    ): Promise<string> => {
+    private resolverDescricaoItem = async (item: ItemNdeResumo): Promise<string> => {
         const env = await this.environmentProvider.getEnvironmentVars();
         const configurada = env.ndeDescricaoItemFallback?.trim();
         if (configurada !== undefined && configurada !== '') return configurada;
-
-        const sugerida = await this.fiscalClient.preDescricaoProdutoNf({
-            filCod: ctx.filCod,
-            docCod: item.docCod,
-            fisCod: item.fisCod,
-            prdCod: item.prdCod,
-            dprCodSeq: item.dprCodSeq,
-        });
-        if (sugerida !== undefined && sugerida.trim() !== '') return sugerida.trim();
 
         const cadastrada = item.prdDesNome?.trim();
         if (cadastrada !== undefined && cadastrada !== '') return cadastrada;
