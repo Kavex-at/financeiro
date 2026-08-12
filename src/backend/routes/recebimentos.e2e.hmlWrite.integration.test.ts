@@ -243,6 +243,17 @@ describe('FASE B — E2E ESCRITA REAL no Conexos HML (SN → fin014 → NDe → 
         setEnv('NDE_POLL_TIMEOUT_MS', '120000');
         setEnv('NDE_POLL_INTERVAL_MS', '5000');
         setEnv('NDE_ACL_PREFLIGHT', 'true');
+        // Braços do experimento da descrição do item (ADR-0036 §Verificação pendente). Vêm do SHELL
+        // para permitir o A/B sem editar arquivo: `=false` é o braço de CONTROLE (reproduz o bug),
+        // ausente/`true` é o braço de TRATAMENTO (a automação grava a descrição no item).
+        setEnv(
+            'NDE_DESCRICAO_ITEM_ENABLED',
+            process.env.NDE_DESCRICAO_ITEM_ENABLED ?? dotenv.NDE_DESCRICAO_ITEM_ENABLED ?? 'true',
+        );
+        setEnv(
+            'NDE_DESCRICAO_ITEM_FALLBACK',
+            process.env.NDE_DESCRICAO_ITEM_FALLBACK ?? dotenv.NDE_DESCRICAO_ITEM_FALLBACK,
+        );
         setEnv('environment', 'local');
         setEnv('client_name', undefined);
         setEnv('databaseConnectionString', undefined);
