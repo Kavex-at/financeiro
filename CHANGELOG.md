@@ -1,5 +1,29 @@
 # Columbia Financeiro — Changelog
 
+## v0.23.4 (2026-08-13) — Recebimentos: a homologação da NDe é conferida no documento
+
+- **fix(recebimentos):** a etapa de homologação passa a **verificar o estado gravado** (`docVldNfehom`)
+  em vez de acreditar na resposta do POST. Em produção, a NDe **18771** (DYNAMIS) devolveu HTTP 200 com
+  `docVldComvalidacoes: 0` e o documento continuou **aberto** (`vldStatus: 1`); a execução foi marcada
+  `settled`, a transação virou `processada` e ninguém viu erro nenhum. O controle derruba a explicação
+  fácil: a 18779 (GOPER), mesmo dia e mesmas três validações de aviso, homologou — nenhum valor da
+  resposta separa os dois casos. Agora, sem `docVldNfehom: 1`, a etapa **falha**: não settla, não grava
+  a NDe como emitida, não avança a etapa. Ver **ADR-0036**.
+- **fix(recebimentos):** a mensagem de falha carrega as validações do com194 **e o prazo**. A tentativa
+  de homologação carimba a data/hora de emissão da NF-e e abre uma janela de **15 minutos**; passada
+  ela, nem a homologação manual funciona (foi o que aconteceu: carimbo 15:36:19, tentativa manual
+  15:52:45). O silêncio anterior não era só ruim de auditoria — consumia o prazo de conserto.
+- **fix(recebimentos):** o com194 é lido nas **duas** classes de `fdvVldTperr` (filtro obrigatório que
+  não aceita lista). Só a classe `1` era consultada; o doc 18737 guarda a sua única validação na `2`.
+- **fix(recebimentos):** `fdvVldErr` documentado ao contrário — o correto é **`1` = ERRO (❌)** e
+  **`2` = AVISO (⚠️)**. O único consumidor casava `2`, o valor certo: acertava por acidente e explicava
+  errado. Constante renomeada, comportamento intacto.
+- **chore(recebimentos):** o log do poll para de prometer o SEFAZ. `vldStatus: 2` é nomeado como
+  **homologada e SEM NF-e** — estado em que **todas** as NDes da automação pararam (a 18348 desde
+  03/08), porque homologar não transmite. Novo open-gap `com297-transmissao-nfe`.
+- **chore(recebimentos):** sonda read-only de produção para o estado fiscal da NDe
+  (`recebimentos.probe.homologacao.integration.test.ts`), fora do CI.
+
 ## v0.23.3 (2026-08-12) — Recebimentos: a NDe garante a descrição do item antes de homologar
 
 - **fix(recebimentos):** a homologação da **NDe** era recusada para os clientes cujo cadastro tem

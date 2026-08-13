@@ -1,7 +1,10 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import ConexosError from '../errors/ConexosError.js';
-import { NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO } from '../interface/recebimentos/constants.js';
+import {
+    COM194_TIPOS_ERRO,
+    NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO,
+} from '../interface/recebimentos/constants.js';
 import type {
     DocFiscal,
     DocStatusFiscal,
@@ -56,6 +59,7 @@ const VALIDACAO_ROW_SCHEMA = z
         fdvEspErr: z.string().nullish(),
         fdvEspObs: z.string().nullish(),
         fdvVldErr: z.coerce.number().int().optional(),
+        fdvVldTperr: z.coerce.number().int().optional(),
     })
     .passthrough();
 
@@ -121,7 +125,8 @@ const textoOuIndefinido = (valor: unknown): string | undefined => {
  *   (a) com300 — fiscal, read-modify-write: GET o objeto INTEIRO → seta `fisVldTipoNfDebito=6` → PUT
  *       o objeto inteiro. Sucesso ⟺ eco `fisVldTipoNfDebito === 6`. `putGenericOnce` (RMW não-retryable).
  *   (b) com131 — observações: `POST geraObs {docTip,docCod}`. Sucesso ⟺ `fisEspObs` preenchido.
- *   (c) com194 — validações (leitura), logadas quando a homologação volta `docVldComvalidacoes===2`.
+ *   (c) com194 — validações (leitura): o que travou/avisou no documento, varrendo as duas classes de
+ *       `fdvVldTperr`. É o corpo da mensagem quando a homologação não confirma.
  *   (d) com297 `comDocProdutos` — ITENS da nota: listar/ler/`preDescrProdutoNf` + o RMW que grava a
  *       `dprLngDescrNf` (o `xProd` da NF-e). Sucesso do PUT ⟺ eco com `dprLngDescrNf` NÃO-vazia.
  *   (poll) com297 — `GET com297/{docCod}` p/ pré-condição + `vldAutorizado` (SEFAZ é assíncrono).
@@ -245,8 +250,13 @@ export default class ConexosNdeFiscalClient {
     };
 
     /**
-     * (c) validações do com194 — leitura p/ log quando a homologação volta `docVldComvalidacoes===2`.
-     * `GET initialValues` (contagem) + `POST documento/list` (linhas com `fdvVldTperr:1`).
+     * (c) validações do com194 — o que o modal "VALIDAÇÃO - COM_194" mostra ao analista.
+     *
+     * `fdvVldTperr` é filtro OBRIGATÓRIO (sem ele: `Generic.REQUIRED_FILTER_ERROR`, HTTP 400) e não
+     * aceita lista, então varremos as classes de `COM194_TIPOS_ERRO` e unimos. Consultar só a classe `1`
+     * — o que fazíamos — escondia a `2`, onde o doc 18737 (autorizado) guarda a sua única validação.
+     * Uma classe indisponível NÃO derruba a leitura inteira: a mensagem de falha da homologação vale
+     * mais parcial do que ausente, e o analista tem 15 minutos de tolerância da NF-e para agir.
      */
     public listValidacoes = async (params: {
         filCod: number;
@@ -254,16 +264,16 @@ export default class ConexosNdeFiscalClient {
         docCod: number;
     }): Promise<ValidacaoDocumento[]> => {
         const { filCod, docTip, docCod } = params;
-        try {
-            return await this.base.runWithRetry(async () => {
+        const consultarClasse = async (fdvVldTperr: number): Promise<ValidacaoDocumento[]> =>
+            this.base.runWithRetry(async () => {
                 await this.base.ensureSid();
                 const raw = await this.base.postGeneric<{ rows?: unknown[] } | unknown[]>(
                     'com194/documento/list',
                     {
                         fieldList: [],
-                        filterList: { docTip, docCod, fdvVldTperr: 1 },
+                        filterList: { docTip, docCod, fdvVldTperr },
                         pageNumber: 1,
-                        pageSize: 20,
+                        pageSize: 50,
                         orderList: { orderList: [{ propertyName: 'docCod', order: 'asc' }] },
                     },
                     { filCod },
@@ -271,9 +281,15 @@ export default class ConexosNdeFiscalClient {
                 const rows = Array.isArray(raw) ? raw : (raw?.rows ?? []);
                 return rows.map((r) => VALIDACAO_ROW_SCHEMA.parse(r) as ValidacaoDocumento);
             });
-        } catch (cause) {
-            throw new ConexosError({ endpoint: 'com194/documento/list', cause });
+
+        const porClasse = await Promise.allSettled(COM194_TIPOS_ERRO.map(consultarClasse));
+        if (porClasse.every((r) => r.status === 'rejected')) {
+            throw new ConexosError({
+                endpoint: 'com194/documento/list',
+                cause: porClasse[0]?.status === 'rejected' ? porClasse[0].reason : undefined,
+            });
         }
+        return porClasse.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
     };
 
     /**

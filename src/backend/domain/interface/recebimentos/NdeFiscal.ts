@@ -28,12 +28,17 @@ export interface ObservacoesFiscais {
     fisEspInfadfisco?: string;
 }
 
-/** Linha de validação do com194 (mostrada no modal "VALIDAÇÃO - COM_194"). Logada quando homologa=2. */
+/**
+ * Linha de validação do com194 (o modal "VALIDAÇÃO - COM_194"). `fdvVldErr` é a SEVERIDADE
+ * (`COM194_FDV_VLD_ERR`: 1 = ❌ erro, 2 = ⚠️ aviso) e `fdvVldTperr` é a CLASSE — que também é o filtro
+ * obrigatório da consulta, varrido em `COM194_TIPOS_ERRO`.
+ */
 export interface ValidacaoDocumento {
     fdvCodSeq?: number;
     fdvEspErr?: string;
     fdvEspObs?: string;
     fdvVldErr?: number;
+    fdvVldTperr?: number;
 }
 
 /**

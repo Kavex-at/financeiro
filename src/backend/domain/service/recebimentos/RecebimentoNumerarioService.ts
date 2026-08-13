@@ -6,9 +6,13 @@ import ConexosFin014Client from '../../client/ConexosFin014Client.js';
 import ConexosGerDocProcessoClient from '../../client/ConexosGerDocProcessoClient.js';
 import ConexosNdeClient from '../../client/ConexosNdeClient.js';
 import ConexosNdeFiscalClient from '../../client/ConexosNdeFiscalClient.js';
+import HomologacaoRejeitadaError from '../../errors/HomologacaoRejeitadaError.js';
 import NumerarioGapError from '../../errors/NumerarioGapError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
+    COM194_FDV_VLD_ERR,
+    NDE_COM297_VLD_STATUS,
+    NDE_DOC_VLD_NFEHOM,
     NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO,
     NDE_GERACAO_DEFAULTS,
     NDE_GLOBAL_DOC_VLD_TIPO,
@@ -26,7 +30,13 @@ import {
 import { randomUUID } from 'node:crypto';
 import TransacaoRepository from '../../repository/recebimentos/TransacaoRepository.js';
 import type { Processo } from '../../interface/recebimentos/GerDocProcesso.js';
-import type { DocFiscal, ItemNde, ItemNdeResumo } from '../../interface/recebimentos/NdeFiscal.js';
+import type {
+    DocFiscal,
+    DocStatusFiscal,
+    ItemNde,
+    ItemNdeResumo,
+    ValidacaoDocumento,
+} from '../../interface/recebimentos/NdeFiscal.js';
 import {
     NDE_REPOSITORY_TOKEN,
     type NdeRepositoryInterface,
@@ -83,8 +93,8 @@ const somenteDigitos = (valor: string): string => valor.replace(/\D/g, '');
 /** Moeda da NDe (registro local) — o fluxo de numerário assume BRL (mesmo default do processo). */
 const NDE_MOEDA_PADRAO = 'BRL';
 
-/** `fdvVldErr` da com194 que BLOQUEIA o documento (1 = aviso, não bloqueia). */
-const VALIDACAO_BLOQUEANTE = 2;
+/** Tolerância da NF-e para data de emissão/movimento, medida na mensagem do com194 (produção). */
+const NFE_TOLERANCIA_MINUTOS = 15;
 
 /**
  * Gate 0 (transporte × domínio): status HTTP que denunciam rota/permissão erradas em QUALQUER validador.
@@ -770,7 +780,11 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
-     * A com194 acusa pendência BLOQUEANTE de condição de pagamento neste documento?
+     * A com194 acusa pendência de condição de pagamento neste documento?
+     *
+     * Casa a severidade `COM194_FDV_VLD_ERR.AVISO` (⚠️) — que é como o ERP classifica esta linha em
+     * produção. O nome anterior da constante (`VALIDACAO_BLOQUEANTE`) dizia o contrário do que o valor
+     * significava: acertava o valor e errava a explicação. Ver ADR-0036.
      *
      * Segue o gate 0 do pré-flight (transporte × domínio, `classifyValidatorError`): **404/401/403/405 é
      * bug de rota/permissão, NÃO "não há pendência"** — nesses casos a etapa PARA, porque responder
@@ -792,7 +806,7 @@ export default class RecebimentoNumerarioService {
             });
             return validacoes.some(
                 (v) =>
-                    v.fdvVldErr === VALIDACAO_BLOQUEANTE &&
+                    v.fdvVldErr === COM194_FDV_VLD_ERR.AVISO &&
                     CONDICAO_PAGAMENTO_REGEX.test(
                         this.stripAccents(`${v.fdvEspErr ?? ''} ${v.fdvEspObs ?? ''}`),
                     ),
@@ -1925,8 +1939,88 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
+     * A homologação não pegou: o POST foi aceito e o documento continuou NÃO homologado. Monta a
+     * mensagem que o analista precisa e LANÇA — nada de etapa avançada, nada de NDe gravada como
+     * `emitida`.
+     *
+     * A urgência é o ponto: no instante da tentativa o ERP carimba a data/hora de emissão da NF-e
+     * (`fisTimEmissao`), e a partir daí correm ~15 minutos de tolerância. Passados eles, as validações
+     * de data viram ERRO e nem a homologação manual funciona — foi assim que a 18771 ficou irrecuperável
+     * (carimbo 15:36:19, tentativa manual 15:52:45, 16min26s depois). Por isso a falha tem de chegar ao
+     * analista AGORA, com o que travar e o que fazer. Ver ADR-0036.
+     */
+    private falharHomologacaoNaoConfirmada = async (
+        ctx: EscritaCtx,
+        ndDocCod: number,
+        posHomolog: DocStatusFiscal,
+        homolog: { docVldComvalidacoes?: number },
+    ): Promise<never> => {
+        // Best-effort: sem as validações a mensagem fica pobre, mas a falha continua sendo a mesma —
+        // um com194 fora do ar não pode virar "homologou".
+        let validacoes: ValidacaoDocumento[] = [];
+        try {
+            validacoes = await this.fiscalClient.listValidacoes({
+                filCod: ctx.filCod,
+                docTip: SOLICITACAO_NUMERARIO_DOC_TIP,
+                docCod: ndDocCod,
+            });
+        } catch (cause) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'com194 indisponível ao detalhar a homologação não confirmada',
+                data: {
+                    txnId: ctx.txnId,
+                    ndDocCod,
+                    erro: cause instanceof Error ? cause.message : String(cause),
+                },
+            });
+        }
+        const rotulo = (v: ValidacaoDocumento): string =>
+            `${v.fdvVldErr === COM194_FDV_VLD_ERR.ERRO ? 'ERRO' : 'AVISO'}: ${v.fdvEspErr ?? ''}`.trim();
+        const lista =
+            validacoes.length > 0
+                ? ` Validações do documento: ${validacoes.map(rotulo).join(' | ')}.`
+                : '';
+        const mensagem =
+            `O Conexos aceitou a homologação da Nota de Débito ${ndDocCod} (HTTP 200), mas o documento ` +
+            `NÃO ficou homologado (docVldNfehom=${posHomolog.docVldNfehom ?? 'ausente'}, ` +
+            `vldStatus=${posHomolog.vldStatus ?? 'ausente'}).${lista} A baixa e a nota já existem no ERP — ` +
+            `resolva as pendências e homologue a nota ${ndDocCod} manualmente DENTRO DE ` +
+            `${NFE_TOLERANCIA_MINUTOS} MINUTOS: passado esse prazo, a data de emissão da NF-e estoura a ` +
+            'tolerância e o documento só volta a homologar com as datas liberadas no ERP ' +
+            '(vldDtEmisLiberada/vldDtMovLiberada) ou cancelado e reemitido.';
+        await this.logService.error({
+            type: LOG_TYPE.BUSINESS_WARN,
+            message: 'NDe NÃO homologada — o ERP devolveu 200 e o documento não mudou de estado',
+            data: {
+                txnId: ctx.txnId,
+                ndDocCod,
+                priCod: ctx.priCod,
+                docVldComvalidacoes: homolog.docVldComvalidacoes,
+                docVldNfehom: posHomolog.docVldNfehom,
+                vldStatus: posHomolog.vldStatus,
+                validacoes,
+            },
+        });
+        throw new HomologacaoRejeitadaError({
+            docCod: String(ndDocCod),
+            motivo: 'nao-homologado',
+            ...(homolog.docVldComvalidacoes !== undefined
+                ? { docVldComvalidacoes: homolog.docVldComvalidacoes }
+                : {}),
+            ...(posHomolog.docVldNfehom !== undefined
+                ? { docVldNfehom: posHomolog.docVldNfehom }
+                : {}),
+            validacoes,
+            message: mensagem,
+            userMessage: mensagem,
+        });
+    };
+
+    /**
      * Etapa 6 (homologar): pré-condição (docVldConferencia/vldEnviarConferencia) → ContingenciaDecider
-     * (por vldTpNf) → ConexosNdeClient.homologar. Em `docVldComvalidacoes===2` → listValidacoes + revisão.
+     * (por vldTpNf) → ConexosNdeClient.homologar → **verificação do estado gravado** (`docVldNfehom`).
+     * Em `docVldComvalidacoes` de aviso → listValidacoes + revisão humana.
      */
     private etapaHomologar = async (
         ctx: EscritaCtx,
@@ -1955,8 +2049,16 @@ export default class RecebimentoNumerarioService {
             correlationId: key,
         });
 
-        // Após homologa: lê docMnyValor; 0 é aceitável (log, não bloqueia).
+        // VEREDITO da homologação: o ESTADO GRAVADO, não a resposta do POST. Medido em produção
+        // (2026-08-11): a NDe 18771 devolveu HTTP 200 com `docVldComvalidacoes: 0` — valor que o client
+        // aceita — e ficou em `docVldNfehom: 0` / `vldStatus: 1`, isto é, NÃO homologada; a 18779, mesmo
+        // fluxo e as mesmas três validações de aviso, homologou. Nenhum valor da resposta separa os dois
+        // casos. Esta leitura já existia (era usada só para conferir `docMnyValor`) — a resposta estava
+        // em mãos e era descartada, e por isso a execução era reportada como sucesso.
         const posHomolog = await this.fiscalClient.lerDocParaPolling({ filCod, docCod: ndDocCod });
+        if (posHomolog.docVldNfehom !== NDE_DOC_VLD_NFEHOM.HOMOLOGADO) {
+            await this.falharHomologacaoNaoConfirmada(ctx, ndDocCod, posHomolog, homolog);
+        }
         if (posHomolog.docMnyValor === 0) {
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
@@ -2032,12 +2134,28 @@ export default class RecebimentoNumerarioService {
             await this.execucaoRepository.setNdeAutorizado(key, true);
             return { autorizado: true, vldAutorizado };
         }
+        // "Ainda não autorizou" era otimismo: em produção NENHUMA NDe da automação passou de
+        // `vldStatus 2` — a 18348 está parada nele desde 03/08, oito dias. Homologar não transmite a
+        // NF-e (`vldNfeGerado: 0` no com300), e as autorizadas da mesma configuração chegam a
+        // `vldStatus 3` com número. Enquanto o passo de transmissão não estiver contratado
+        // (open-gap `com297-transmissao-nfe`), o log ao menos NOMEIA o estado em vez de sugerir que é só
+        // uma questão de esperar o SEFAZ. Ver ADR-0036.
+        const homologadoSemNfe = status.vldStatus === NDE_COM297_VLD_STATUS.HOMOLOGADO;
         await this.logService.warn({
             type: LOG_TYPE.BUSINESS_WARN,
-            message:
-                'NDe homologada; SEFAZ ainda não autorizou (assíncrono) — não bloqueia o Processar; ' +
-                'reconcilia depois (retoma a leitura a partir de homologado)',
-            data: { txnId: ctx.txnId, ndDocCod, priCod: ctx.priCod },
+            message: homologadoSemNfe
+                ? 'NDe homologada, mas SEM NF-e: o documento parou em vldStatus=2 (homologado) e nenhuma ' +
+                  'NF-e foi gerada/transmitida. Não bloqueia o Processar, mas NÃO se resolve sozinho — ' +
+                  'a transmissão da NF-e ainda é manual (gap com297-transmissao-nfe)'
+                : 'NDe homologada; SEFAZ ainda não autorizou (assíncrono) — não bloqueia o Processar; ' +
+                  'reconcilia depois (retoma a leitura a partir de homologado)',
+            data: {
+                txnId: ctx.txnId,
+                ndDocCod,
+                priCod: ctx.priCod,
+                vldStatus: status.vldStatus,
+                docEspNumero: status.docEspNumero,
+            },
         });
         return { autorizado: false, ...(vldAutorizado !== undefined ? { vldAutorizado } : {}) };
     };

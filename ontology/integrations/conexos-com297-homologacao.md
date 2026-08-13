@@ -15,8 +15,9 @@ related_files:
 endpoints_write:
   - "com297/homologaNfe/{docCod} (POST — homologa NF-e normal; body {})"
   - "com297/homologaNfeContingencia/{docCod} (POST — homologa em contingência; body {})"
-last_review: 2026-07-30
+last_review: 2026-08-11
 open-gap:
+  - "com297-transmissao-nfe (P0 operacional) — homologar NÃO gera/transmite a NF-e. TODA NDe da automação parou em `vldStatus 2` / `vldNfeGerado 0`; as autorizadas (`vldStatus 3`) foram feitas à mão. Falta contratar por HAR o passo que faz `vldNfeGerado` virar 1. Ver ADR-0036"
   - "vldTpNf-distribuicao (P0 gate-before-live) — SEED NDE_NORMAL_TP_NF_CONHECIDOS a partir da distribuição real de vldTpNf; hoje VAZIO (recusa docs normais de propósito)"
   - "com297-doc-generation (P0 p/ fluxo completo) — os endpoints da GERAÇÃO do doc com297 (mintam o docCod) só existem como UI no docx"
   - "homologacao-response-fields (P1) — numeroNde exato + enum completo de docVldComvalidacoes a confirmar no HAR"
@@ -71,10 +72,10 @@ fail-loud (ver `business-rules/homologacao-nde-com297.md`):
 - O aviso DPEC/SCAN (`vldTpNf === "11" ? DPEC : SCAN`) **só** muda o texto do dialog — **não** afeta a
   rota.
 
-## HTTP 200 ≠ sucesso — `docVldComvalidacoes`
+## HTTP 200 ≠ sucesso — e `docVldComvalidacoes` também não é o veredito
 
-O `customizedSuccess: true` do controller suprime o toast default justamente p/ permitir este branch
-obrigatório:
+O `customizedSuccess: true` do controller suprime o toast default justamente p/ permitir um branch
+obrigatório. A leitura do controller Angular era:
 
 | `docVldComvalidacoes` | Significado | Resultado |
 |---|---|---|
@@ -82,7 +83,45 @@ obrigatório:
 | `2` | homologada, mas validações pendentes (abre com194, mostra *aviso*) | `emitida` **com aviso** |
 | qualquer outro | falha (com194 + toast de erro) | **`HomologacaoRejeitadaError`** (recusa) |
 
-Tratar um 200 como concluído marcaria homologações falhas como sucesso — o client **nunca** faz isso.
+⚠️ **Medido em produção (2026-08-11) — este campo não separa homologada de recusada.** A NDe 18771
+devolveu `0` e o documento ficou **não homologado** (`docVldNfehom: 0`, `vldStatus: 1`); a 18779, mesmo
+fluxo e as MESMAS três validações de aviso, devolveu um valor aceito e **homologou**. O `0` foi
+admitido como sucesso em 2026-08-03 e foi por essa porta que a execução da DYNAMIS foi reportada como
+`settled` sem nota.
+
+**O veredito é o ESTADO GRAVADO:** depois do POST, ler `GET com297/{docCod}` e exigir
+`docVldNfehom === 1`. O branch do client segue permissivo (ele não tem como saber); a verificação
+autoritativa vive no `RecebimentoNumerarioService`. Ver **ADR-0036**.
+
+## Homologar ≠ transmitir a NF-e
+
+`vldStatus` do com297, medido na população real da `gcd 248` (filial 2):
+
+| `vldStatus` | Estado | Sinais |
+|---|---|---|
+| `1` | aberto | `docVldNfehom: 0` |
+| `2` | **homologado, sem NF-e** | `vldAutorizado: 0`, `docEspNumero: "0"`, `vldNfeGerado: 0` (com300) |
+| `3` | autorizado | `vldAutorizado: 1`, `docEspNumero` real, `vldNfeGerado: 1`, `fisVldImpressao: 1` |
+
+Toda NDe que a automação homologou parou em `2` — a 18348 desde 03/08. As autorizadas da mesma
+configuração foram feitas à mão. Entre `2` e `3` há um passo que ainda **não** temos contratado
+(open-gap `com297-transmissao-nfe`): `homologaNfe` não gera nem transmite a NF-e.
+
+## Tolerância de 15 minutos (janela de recuperação)
+
+A tentativa de homologação carimba `fisTimEmissao`/`fisTimSaida`. Passados **15 minutos**, o com194
+levanta `A DATA DE EMISSÃO/MOVIMENTO DA NOTA FISCAL EXCEDEU A TOLERÂNCIA DE 15 MINUTOS` como **ERRO**
+e nem a homologação manual passa — só liberando as datas no ERP (`vldDtEmisLiberada`/
+`vldDtMovLiberada`) ou cancelando e reemitindo. Por isso uma homologação que não confirma tem de
+**falhar alto na hora**: o prazo de conserto é curto e começa a correr no instante da tentativa.
+
+## com194 — severidade e classe
+
+- `fdvVldErr`: **`1` = ERRO (❌, bloqueia)**, **`2` = AVISO (⚠️, não bloqueia)**. A doutrina anterior
+  (`VALIDACAO_BLOQUEANTE = 2`) dizia o inverso.
+- `fdvVldTperr`: **filtro obrigatório** (sem ele, `Generic.REQUIRED_FILTER_ERROR` / HTTP 400) e não
+  aceita lista — as classes `1` e `2` são varridas e unidas. O doc 18737 guarda a sua única validação
+  na classe `2`.
 
 ## Doutrina de escrita (irreversível/fiscal)
 
