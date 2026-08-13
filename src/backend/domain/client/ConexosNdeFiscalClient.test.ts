@@ -101,12 +101,54 @@ describe('ConexosNdeFiscalClient — (c) com194 + (poll) com297', () => {
     it('listValidacoes: mapeia as linhas fdv* do com194', async () => {
         const postGeneric = jest
             .fn()
-            .mockResolvedValue({ rows: [{ fdvCodSeq: 1, fdvEspErr: 'condicao de pagamento' }] });
+            .mockResolvedValueOnce({ rows: [{ fdvCodSeq: 1, fdvEspErr: 'condicao de pagamento' }] })
+            .mockResolvedValueOnce({ rows: [] });
         const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
         const rows = await client.listValidacoes({ filCod: 2, docTip: 1, docCod: 18337 });
         expect(rows).toHaveLength(1);
         expect(rows[0].fdvEspErr).toBe('condicao de pagamento');
         expect(postGeneric.mock.calls[0][0]).toBe('com194/documento/list');
+    });
+
+    /**
+     * `fdvVldTperr` é filtro OBRIGATÓRIO e não aceita lista. Consultar só a classe `1` escondia a `2`,
+     * onde o doc 18737 (autorizado, produção) guarda a sua única validação. Ver ADR-0036.
+     */
+    it('listValidacoes: varre as DUAS classes de fdvVldTperr e une o resultado', async () => {
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValueOnce({ rows: [{ fdvCodSeq: 1, fdvVldErr: 1, fdvVldTperr: 1 }] })
+            .mockResolvedValueOnce({ rows: [{ fdvCodSeq: 9, fdvVldErr: 2, fdvVldTperr: 2 }] });
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+
+        const rows = await client.listValidacoes({ filCod: 2, docTip: 1, docCod: 18771 });
+
+        expect(rows.map((r) => r.fdvVldTperr)).toEqual([1, 2]);
+        expect(postGeneric.mock.calls.map((c) => (c[1] as never)['filterList'])).toEqual([
+            { docTip: 1, docCod: 18771, fdvVldTperr: 1 },
+            { docTip: 1, docCod: 18771, fdvVldTperr: 2 },
+        ]);
+    });
+
+    it('listValidacoes: uma classe indisponível ainda devolve a outra (parcial > ausente)', async () => {
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValueOnce({ rows: [{ fdvCodSeq: 1, fdvVldTperr: 1 }] })
+            .mockRejectedValueOnce(new Error('boom'));
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+
+        const rows = await client.listValidacoes({ filCod: 2, docTip: 1, docCod: 18771 });
+
+        expect(rows).toHaveLength(1);
+    });
+
+    it('listValidacoes: TODAS as classes falhando lança — silêncio viraria "sem pendência"', async () => {
+        const postGeneric = jest.fn().mockRejectedValue(new Error('com194 fora do ar'));
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+
+        await expect(
+            client.listValidacoes({ filCod: 2, docTip: 1, docCod: 18771 }),
+        ).rejects.toThrow();
     });
 
     it('lerDocParaPolling: lê vldAutorizado / vldTpNf / pré-condições do com297', async () => {

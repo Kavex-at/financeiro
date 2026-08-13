@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
+import { COM194_TIPOS_ERRO } from '../domain/interface/recebimentos/constants.js';
 
 /**
  * E2E de FALHAS FISCAIS da Frente IV — cenários onde a cauda fiscal da Solicitação de Numerário/NDe
@@ -287,8 +288,18 @@ const buildErp = (): { app: express.Express; state: ErpState } => {
     });
 
     // ── com194 (validações — o cenário 1 devolve 1 linha de erro) ──
-    app.post('/api/com194/documento/list', (_req, res) => {
-        res.json({ rows: state.cenario.com194Rows });
+    // `fdvVldTperr` é filtro OBRIGATÓRIO e classifica a linha; o fake honra o filtro (as linhas do
+    // cenário são da classe 1) para que a varredura de `COM194_TIPOS_ERRO` não devolva duplicatas.
+    app.post('/api/com194/documento/list', (req, res) => {
+        const filtro = (req.body as { filterList?: { fdvVldTperr?: number } })?.filterList;
+        if (filtro?.fdvVldTperr === undefined) {
+            res.status(400).json({
+                type: 'GENERIC',
+                messages: [{ message: 'Generic.REQUIRED_FILTER_ERROR' }],
+            });
+            return;
+        }
+        res.json({ rows: filtro.fdvVldTperr === 1 ? state.cenario.com194Rows : [] });
     });
 
     // ── com131 (observações SINIEF) ──
@@ -880,6 +891,8 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
             // (b) depois da homologação com `docVldComvalidacoes=2`: lê as validações pendentes.
             // Asseverar só a segunda deixaria um refactor remover a primeira em silêncio — e é ela que
             // impede o PUT que destrói o título (doc 735 do HML).
+            // Cada consulta custa uma requisição POR CLASSE de `fdvVldTperr`: o filtro é obrigatório e
+            // não aceita lista, então `listValidacoes` varre `COM194_TIPOS_ERRO` e une (ADR-0036).
             const paths = pathsDesde(mark);
             const idxHomolog = paths.findIndex((p) => p.includes('POST /api/com297/homologaNfe/'));
             const com194 = paths.reduce<number[]>(
@@ -887,8 +900,8 @@ describe('E2E Recebimentos — FALHAS fiscais da SN/NDe (ERP fake parametrizáve
                 [],
             );
             expect(idxHomolog).toBeGreaterThan(-1);
-            expect(com194.filter((i) => i < idxHomolog)).toHaveLength(1);
-            expect(com194.filter((i) => i > idxHomolog)).toHaveLength(1);
+            expect(com194.filter((i) => i < idxHomolog)).toHaveLength(COM194_TIPOS_ERRO.length);
+            expect(com194.filter((i) => i > idxHomolog)).toHaveLength(COM194_TIPOS_ERRO.length);
 
             // Ledger write-ahead: settla, mas com a revisão humana gravada.
             const row = snLedgerRows.get(`sn-real:${txnId}:${PRI_COD}:${VALOR}`);

@@ -349,6 +349,12 @@ export const NDE_HOMOLOGACAO_ACTION = {
  *          do produto). Confirmado pelo Yuri (2026-08-03): na plataforma essas validações NÃO bloqueiam a
  *          homologação — ela ACONTECE (igual ao HAR). Tratado como `2`: emitida + revisão humana (com194).
  *   - default → falha (com194 + erro) — RECUSA (nunca marcar um 200 desconhecido como sucesso).
+ *
+ * ⚠️ **Este campo é ADVISORY, não o veredito.** Produção 2026-08-11: a NDe 18771 voltou `0` e NÃO foi
+ * homologada (`docVldNfehom: 0`); a 18779, mesmo fluxo e as MESMAS três validações de aviso, foi. Ou
+ * seja: `0` não separa homologada de recusada, e nenhum valor deste enum separa — quem separa é o
+ * estado gravado no documento (`NDE_DOC_VLD_NFEHOM`), lido de volta depois do POST. Mantemos o branch
+ * permissivo (o client não tem como saber) e a verificação autoritativa vive no serviço. Ver ADR-0036.
  */
 export const NDE_DOC_VLD_COM_VALIDACOES = {
     SUCESSO: 1,
@@ -391,3 +397,55 @@ export const NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO = 6;
  * Torna a etapa de observações retomável. Ver spec §(b).
  */
 export const NDE_OBS_SINIEF_MARKER = 'AJUSTE SINIEF';
+
+/**
+ * `docVldNfehom` do com297 — o documento FOI homologado? É o **estado gravado**, e por isso o único
+ * discriminador confiável da homologação: `docVldComvalidacoes` é o que o POST *diz*, `docVldNfehom` é
+ * o que *ficou*. Medido em produção (2026-08-11): a NDe 18771 (DYNAMIS) voltou HTTP 200 com
+ * `docVldComvalidacoes: 0` — que o client tratava como "homologada com validações não bloqueantes" —
+ * e o documento continuou em `docVldNfehom: 0` / `vldStatus: 1`, ou seja, NÃO homologado. Ver ADR-0036.
+ */
+export const NDE_DOC_VLD_NFEHOM = {
+    NAO_HOMOLOGADO: 0,
+    HOMOLOGADO: 1,
+} as const;
+
+/**
+ * `vldStatus` do com297 — a máquina de estado do documento fiscal, medida na população real da
+ * `gcd 248` (filial 2, produção, 2026-08-11):
+ *   - `1` ABERTO      — gerado, não homologado (`docVldNfehom: 0`).
+ *   - `2` HOMOLOGADO  — `docVldNfehom: 1`, mas SEM NF-e: `vldAutorizado: 0`, `docEspNumero: "0"`,
+ *                       `vldNfeGerado: 0` (com300). Estado em que TODAS as NDes da automação pararam.
+ *   - `3` AUTORIZADO  — `vldAutorizado: 1`, `docEspNumero` real (ex.: 180739), `vldNfeGerado: 1`.
+ * Homologar NÃO transmite a NF-e: entre `2` e `3` existe um passo que a automação ainda não faz
+ * (open-gap `com297-transmissao-nfe`). Ver ADR-0036.
+ */
+export const NDE_COM297_VLD_STATUS = {
+    ABERTO: 1,
+    HOMOLOGADO: 2,
+    AUTORIZADO: 3,
+} as const;
+
+/**
+ * `fdvVldErr` da com194 — severidade da validação. **Medido em produção (2026-08-11, doc 18771)**,
+ * casando as linhas do modal "VALIDAÇÃO - COM_194" com a resposta da API:
+ *   - `1` = ERRO (❌) — bloqueia. Ex.: "A DATA DE EMISSÃO DA NOTA FISCAL EXCEDEU A TOLERÂNCIA DE 15
+ *           MINUTOS".
+ *   - `2` = AVISO (⚠️) — não bloqueia a homologação. Ex.: condição de pagamento divergente do cadastro,
+ *           tipo de frete sem transportadora, produto sem GTIN.
+ * A doutrina anterior (`VALIDACAO_BLOQUEANTE = 2`, "1 = aviso") era exatamente o INVERSO. O único
+ * consumidor casava `2` — o valor certo para o aviso de condição de pagamento —, então o comportamento
+ * estava certo pelo motivo errado; aqui o nome passa a dizer a verdade.
+ */
+export const COM194_FDV_VLD_ERR = {
+    ERRO: 1,
+    AVISO: 2,
+} as const;
+
+/**
+ * `fdvVldTperr` — CLASSE da validação, e filtro **obrigatório** do `com194/documento/list` (sem ele o
+ * ERP devolve `Generic.REQUIRED_FILTER_ERROR`, HTTP 400). Consultávamos só a classe `1` e perdíamos a
+ * `2` de vista: o doc 18737 (autorizado) carrega a sua única validação em `fdvVldTperr: 2`. Como o
+ * filtro não aceita lista, varremos as duas classes e unimos.
+ */
+export const COM194_TIPOS_ERRO: readonly number[] = [1, 2];

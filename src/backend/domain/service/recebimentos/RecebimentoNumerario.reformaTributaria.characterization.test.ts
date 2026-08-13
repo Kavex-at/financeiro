@@ -165,9 +165,13 @@ const buildMocks = (): Mocks => ({
         lerItemNde: jest.fn().mockResolvedValue({}),
         gravarDescricaoItemNde: jest.fn().mockResolvedValue({}),
         preDescricaoProdutoNf: jest.fn().mockResolvedValue(undefined),
-        lerDocParaPolling: jest
-            .fn()
-            .mockResolvedValue({ vldTpNf: '10', vldAutorizado: 1, docMnyValor: 15000 }),
+        lerDocParaPolling: jest.fn().mockResolvedValue({
+            vldTpNf: '10',
+            vldAutorizado: 1,
+            docMnyValor: 15000,
+            docVldNfehom: 1,
+            vldStatus: 3,
+        }),
     } as never,
     nde: {
         homologar: jest.fn().mockResolvedValue({
@@ -321,8 +325,13 @@ describe('RT-007 — NDe homologada com docMnyValor=0 NÃO bloqueia (warn não-b
         (m.fiscal.lerDocParaPolling as jest.Mock)
             // 1) pré-condição da homologação
             .mockResolvedValueOnce({ vldTpNf: '10', vldAutorizado: 0 })
-            // 2) pós-homologação: base ZERADA
-            .mockResolvedValueOnce({ vldTpNf: '10', vldAutorizado: 0, docMnyValor: 0 })
+            // 2) pós-homologação: homologou (docVldNfehom=1) com base ZERADA
+            .mockResolvedValueOnce({
+                vldTpNf: '10',
+                vldAutorizado: 0,
+                docMnyValor: 0,
+                docVldNfehom: 1,
+            })
             // 3) poll: SEFAZ autoriza o documento de valor 0
             .mockResolvedValue({ vldTpNf: '10', vldAutorizado: 1, docMnyValor: 0 });
 

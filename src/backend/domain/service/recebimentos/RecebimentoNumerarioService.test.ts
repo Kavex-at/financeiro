@@ -200,9 +200,15 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
             .fn()
             .mockResolvedValue({ dprLngDescrNf: 'PAGAMENTO ANTECIPADO' }),
         preDescricaoProdutoNf: jest.fn().mockResolvedValue(undefined),
-        lerDocParaPolling: jest
-            .fn()
-            .mockResolvedValue({ vldTpNf: '10', vldAutorizado: 1, docMnyValor: 15000 }),
+        // `docVldNfehom: 1` + `vldStatus: 3` = documento homologado E autorizado — o estado que o ERP
+        // grava no caminho feliz. Sem eles a verificação pós-homologação (ADR-0036) recusa, como deve.
+        lerDocParaPolling: jest.fn().mockResolvedValue({
+            vldTpNf: '10',
+            vldAutorizado: 1,
+            docMnyValor: 15000,
+            docVldNfehom: 1,
+            vldStatus: 3,
+        }),
     } as never,
     nde: {
         homologar: jest.fn().mockResolvedValue({
@@ -1402,6 +1408,7 @@ describe('RecebimentoNumerarioService — roteamento de contingência (vldTpNf)'
             vldTpNf: '11',
             vldAutorizado: 1,
             docMnyValor: 15000,
+            docVldNfehom: 1,
         });
         await buildService(m).processarAlocacao(baseInput());
         expect(m.nde.homologar).toHaveBeenCalledWith(
@@ -1472,6 +1479,7 @@ describe('RecebimentoNumerarioService — docVldComvalidacoes===2 (revisão huma
             vldTpNf: '10',
             vldAutorizado: 0,
             docMnyValor: 15000,
+            docVldNfehom: 1,
         });
         const out = await buildService(m).processarAlocacao(baseInput());
         expect(m.repo.markSettled).toHaveBeenCalled();
@@ -1489,6 +1497,7 @@ describe('RecebimentoNumerarioService — poll timeout NÃO é erro', () => {
             vldTpNf: '10',
             vldAutorizado: 0,
             docMnyValor: 15000,
+            docVldNfehom: 1,
         });
         const out = await buildService(m).processarAlocacao(baseInput());
         expect(out.status).toBe('settled');
@@ -1527,8 +1536,13 @@ describe('RecebimentoNumerarioService — docMnyValor==0 continua (não bloqueia
         (m.fiscal.lerDocParaPolling as jest.Mock)
             // 1) pré-condição homologar
             .mockResolvedValueOnce({ vldTpNf: '10', vldAutorizado: 0 })
-            // 2) pós-homologa: docMnyValor=0
-            .mockResolvedValueOnce({ vldTpNf: '10', vldAutorizado: 0, docMnyValor: 0 })
+            // 2) pós-homologa: homologou (docVldNfehom=1), mas com base zerada
+            .mockResolvedValueOnce({
+                vldTpNf: '10',
+                vldAutorizado: 0,
+                docMnyValor: 0,
+                docVldNfehom: 1,
+            })
             // 3) poll: autorizado
             .mockResolvedValue({ vldTpNf: '10', vldAutorizado: 1, docMnyValor: 0 });
         const out = await buildService(m).processarAlocacao(baseInput());
@@ -2037,5 +2051,109 @@ describe('RecebimentoNumerarioService — descrição de impressão do item da N
         await buildService(m).processarAlocacao(baseInput());
         expect(m.fiscal.listItensNde).not.toHaveBeenCalled();
         expect(m.fiscal.gravarDescricaoItemNde).not.toHaveBeenCalled();
+    });
+});
+
+describe('RecebimentoNumerarioService — homologação medida pelo ESTADO GRAVADO (ADR-0036)', () => {
+    /**
+     * O caso real da NDe 18771 (DYNAMIS, produção 2026-08-11): o `homologaNfe` devolveu HTTP 200 com
+     * `docVldComvalidacoes: 0` — valor que o client aceita — e o documento continuou `docVldNfehom: 0`
+     * / `vldStatus: 1`, ou seja, aberto. Antes desta verificação isso virava `settled`.
+     */
+    const homologacaoQueNaoPegou = (): Mocks => {
+        const m = buildMocks();
+        wireDocCods(m);
+        (m.nde.homologar as jest.Mock).mockResolvedValue({
+            docVldComvalidacoes: 0,
+            avisoValidacoesPendentes: true,
+            erpResponse: {},
+        });
+        (m.fiscal.lerDocParaPolling as jest.Mock).mockResolvedValue({
+            vldTpNf: '10',
+            vldAutorizado: 0,
+            docMnyValor: 15000,
+            docVldNfehom: 0,
+            vldStatus: 1,
+        });
+        (m.fiscal.listValidacoes as jest.Mock).mockResolvedValue([
+            {
+                fdvCodSeq: 1,
+                fdvVldErr: 1,
+                fdvEspErr: 'A DATA DE EMISSÃO DA NOTA FISCAL EXCEDEU A TOLERÂNCIA DE 15 MINUTOS',
+            },
+            {
+                fdvCodSeq: 2,
+                fdvVldErr: 2,
+                fdvEspErr: 'O(S) PRODUTO(S) (41978 UND: UN) NÃO POSSUEM CODIGO GTIN',
+            },
+        ]);
+        return m;
+    };
+
+    it('200 com docVldNfehom=0 é FALHA: não settla, não grava a NDe, não avança a etapa', async () => {
+        const m = homologacaoQueNaoPegou();
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('error');
+        expect(m.repo.markSettled).not.toHaveBeenCalled();
+        expect(m.ndeRepo.save).not.toHaveBeenCalled();
+        expect(m.repo.setEtapa).not.toHaveBeenCalledWith(expect.any(String), 'homologado');
+        expect(m.repo.markError).toHaveBeenCalled();
+    });
+
+    it('a mensagem nomeia o que travou e dá o prazo — é o que o analista tem para agir', async () => {
+        const m = homologacaoQueNaoPegou();
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.erro).toContain('NÃO ficou homologado');
+        // A validação REAL do ERP viaja junto: sem ela o analista não sabe o que corrigir.
+        expect(out.erro).toContain('EXCEDEU A TOLERÂNCIA');
+        // E o prazo, porque depois dele nem a homologação manual funciona.
+        expect(out.erro).toContain('15 MINUTOS');
+        expect(out.erro).toContain('vldDtEmisLiberada');
+    });
+
+    it('com194 fora do ar não transforma a recusa em sucesso', async () => {
+        const m = homologacaoQueNaoPegou();
+        (m.fiscal.listValidacoes as jest.Mock).mockRejectedValue(new Error('com194 indisponível'));
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('error');
+        expect(m.ndeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('homologada de verdade (docVldNfehom=1) segue o fluxo normal', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(m.ndeRepo.save).toHaveBeenCalled();
+    });
+
+    it('homologada mas SEM NF-e (vldStatus=2): settla e NOMEIA o estado, sem prometer o SEFAZ', async () => {
+        const m = buildMocks();
+        wireDocCods(m);
+        // O estado em que TODAS as NDes da automação pararam em produção.
+        (m.fiscal.lerDocParaPolling as jest.Mock).mockResolvedValue({
+            vldTpNf: '10',
+            vldAutorizado: 0,
+            docMnyValor: 15000,
+            docVldNfehom: 1,
+            vldStatus: 2,
+            docEspNumero: '0',
+        });
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(out.ndeAutorizado).toBe(false);
+        expect(logStub.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ message: expect.stringContaining('SEM NF-e') }),
+        );
     });
 });
