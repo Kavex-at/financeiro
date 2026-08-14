@@ -427,6 +427,68 @@ describe('AlocarProcessosDialog', () => {
   })
 })
 
+/**
+ * ADR-0034 — sem este callback a mudança de status não chega à tela: a linha processada ficaria na
+ * carteira até alguém clicar "Recarregar", e a impressão seria a de que nada funcionou.
+ */
+describe('AlocarProcessosDialog — onProcessado (ADR-0034)', () => {
+  beforeEach(() => {
+    mockClientes.mockResolvedValue(clientes)
+    mockFetch.mockResolvedValue([processo])
+    mockFetchSNs.mockResolvedValue([])
+  })
+  afterEach(() => jest.clearAllMocks())
+
+  const processarUmaVez = async (resultado: AlocacaoResultado) => {
+    const user = userEvent.setup()
+    const onProcessado = jest.fn()
+    mockProcessar.mockResolvedValue(resultado)
+    render(
+      <AlocarProcessosDialog
+        transacao={transacao}
+        open
+        onOpenChange={() => {}}
+        onProcessado={onProcessado}
+      />,
+    )
+    await selecionarProcesso(user)
+    await user.click(await screen.findByRole('button', { name: /processar/i }))
+    return onProcessado
+  }
+
+  it('dispara após execução real bem-sucedida', async () => {
+    const onProcessado = await processarUmaVez(settledResult)
+    await waitFor(() => expect(onProcessado).toHaveBeenCalled())
+  })
+
+  it('dispara também quando a execução falha — o status do crédito virou erro', async () => {
+    const onProcessado = await processarUmaVez({
+      status: 'error',
+      etapa: 'fin014',
+      erro: 'título já baixado',
+      dryRun: false,
+    })
+    await waitFor(() => expect(onProcessado).toHaveBeenCalled())
+  })
+
+  it('NÃO dispara em dry-run — simulação não muda estado', async () => {
+    const onProcessado = await processarUmaVez({ status: 'dry-run', dryRun: true })
+    await waitFor(() => expect(mockProcessar).toHaveBeenCalled())
+    expect(onProcessado).not.toHaveBeenCalled()
+  })
+
+  it('NÃO dispara em blocked — nada foi escrito no ERP', async () => {
+    const onProcessado = await processarUmaVez({
+      status: 'blocked',
+      etapa: 'sn',
+      motivo: 'cadastro incompleto',
+      dryRun: false,
+    })
+    await waitFor(() => expect(mockProcessar).toHaveBeenCalled())
+    expect(onProcessado).not.toHaveBeenCalled()
+  })
+})
+
 describe('sugerirCliente', () => {
   it('casa por prefixo apesar do truncamento do banco', () => {
     const lista = [

@@ -32,9 +32,9 @@ import { formatBRL } from '@/lib/utils'
 import {
   arquivarTransacao,
   fetchPainelRecebimentos,
+  type PainelStatusFiltro,
   type RecebimentosPainel,
   type TransacaoBancaria,
-  type TransacaoBancariaStatus,
 } from '@/lib/recebimentos'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 import {
@@ -43,6 +43,7 @@ import {
   TransacaoStatusBadge,
 } from './components/status-badges'
 import { AcoesLinhaMenu } from './components/AcoesLinhaMenu'
+import { FalhasTable } from './components/FalhasTable'
 import { NdeTable } from './components/NdeTable'
 import { AlocarProcessosDialog } from './components/AlocarProcessosDialog'
 import { ImportarExtratoDialog } from './components/ImportarExtratoDialog'
@@ -57,8 +58,28 @@ const fmtData = (iso?: string) =>
  * `'pendentes'` = tudo que NÃO está `processada`. É o default porque a tela é uma fila de trabalho:
  * o que o analista abre para ver é o que falta fazer, não o histórico. Ver `'todas'` continua a um
  * clique (ADR-0033).
+ *
+ * Aplicado no SERVIDOR desde a ADR-0034. Filtrar no cliente rodava sobre a página já capada em 500
+ * linhas: o histórico processado consumia a cota da fila de trabalho, e um crédito antigo com
+ * problema ficava fora da tela justamente na aba feita para mostrá-lo.
  */
-type StatusFiltro = 'todas' | 'pendentes' | TransacaoBancariaStatus
+type StatusFiltro = PainelStatusFiltro
+
+/**
+ * Botões de status oferecidos na carteira.
+ *
+ * `conciliada` e `manual` ficaram DE FORA (ADR-0034): nenhum caminho de código os escreve até o
+ * Módulo 2 (motor de matching), então o botão devolveria lista vazia sempre. Um filtro que nunca
+ * casa ensina o analista a desconfiar de todos os outros.
+ */
+const STATUS_BOTOES: readonly StatusFiltro[] = [
+  'pendentes',
+  'todas',
+  'importada',
+  'parcial',
+  'processada',
+  'erro',
+]
 
 /**
  * Rota `/recebimentos` — liberada em produção desde a v0.20.0 (ADR-0028). Não há
@@ -99,32 +120,40 @@ function RecebimentosPanel() {
     setLoading(true)
     setError(null)
     try {
-      setPainel(await fetchPainelRecebimentos({ arquivadas: verArquivadas }))
+      setPainel(
+        await fetchPainelRecebimentos({ arquivadas: verArquivadas, status: statusFiltro }),
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar o painel.')
     } finally {
       setLoading(false)
     }
-  }, [verArquivadas])
+  }, [verArquivadas, statusFiltro])
 
   React.useEffect(() => {
     void carregar()
   }, [carregar])
 
   const transacoes = painel?.transacoes ?? []
-  const transacoesFiltradas = React.useMemo(
-    () =>
-      statusFiltro === 'todas'
-        ? transacoes
-        : statusFiltro === 'pendentes'
-          ? transacoes.filter((t) => t.status !== 'processada')
-          : transacoes.filter((t) => t.status === statusFiltro),
-    [transacoes, statusFiltro],
-  )
+
+  /**
+   * Total da JANELA, não da página — soma os KPIs, que o backend conta sobre tudo.
+   *
+   * Usar `transacoes.length` aqui faria o rótulo da aba encolher a cada filtro aplicado, dando a
+   * impressão de que créditos sumiram da carteira quando só a lista foi filtrada.
+   */
+  const totalNaJanela = painel
+    ? painel.kpis.importadas +
+      painel.kpis.conciliadas +
+      painel.kpis.parciais +
+      painel.kpis.filaManual +
+      painel.kpis.erro +
+      painel.kpis.processadas
+    : 0
 
   // Filial + busca + paginação — mesmo kit do painel de Permutas/SISPAG (consistência de UX).
   const abaTransacoes = useTabelaFiltro(
-    transacoesFiltradas,
+    transacoes,
     (t) => t.filCod,
     (t) => `${t.contraparte ?? ''} ${t.referenciaBancaria ?? ''} ${t.correlationId} ${t.tipo}`,
   )
@@ -166,8 +195,14 @@ function RecebimentosPanel() {
 
   /** KPI click → aplica filtro de status e leva à aba correspondente (page-as-maestro). */
   const filtrarPorStatus = (status: StatusFiltro) => {
+    // A aba de falhas tem fonte própria (busca sem o teto da carteira), então o KPI de erro leva
+    // até ela em vez de filtrar a tabela principal.
+    if (status === 'erro') {
+      setAba('falhas')
+      return
+    }
     setStatusFiltro((prev) => (prev === status ? 'todas' : status))
-    setAba(status === 'manual' ? 'fila-manual' : 'transacoes')
+    setAba('transacoes')
   }
 
   return (
@@ -234,41 +269,37 @@ function RecebimentosPanel() {
               tooltip="Transações importadas, ainda não conciliadas."
               footer="a conciliar"
             />
-            <SimpleKPI
-              label="Conciliadas"
-              value={painel.kpis.conciliadas.toLocaleString('pt-BR')}
-              color="success"
-              active={statusFiltro === 'conciliada'}
-              onClick={() => filtrarPorStatus('conciliada')}
-              tooltip="Casadas com confiança."
-              footer="casadas 1:1"
-            />
+            {/*
+              "Conciliadas" e "Fila manual" saíram da tela na ADR-0034: dependem do motor de
+              matching (Módulo 2), que não existe, então os cards eram permanentemente zero — e um
+              KPI sempre-zero ensina o analista que os números da tela são decorativos. Os campos
+              continuam na API e no enum, prontos para quando o Módulo 2 chegar.
+            */}
             <SimpleKPI
               label="Parciais"
               value={painel.kpis.parciais.toLocaleString('pt-BR')}
               color="warning"
               active={statusFiltro === 'parcial'}
               onClick={() => filtrarPorStatus('parcial')}
-              tooltip="Casamento parcial — resta saldo."
+              tooltip="Parte do crédito já foi baixada no ERP — resta saldo a alocar."
               footer="com saldo"
             />
             <SimpleKPI
-              label="Fila manual"
-              value={painel.kpis.filaManual.toLocaleString('pt-BR')}
-              color="permuta"
-              active={statusFiltro === 'manual'}
-              onClick={() => filtrarPorStatus('manual')}
-              tooltip="Match incerto — nunca auto-baixa. Aguarda o analista."
-              footer="⚠ aguardando análise"
+              label="Processadas"
+              value={painel.kpis.processadas.toLocaleString('pt-BR')}
+              color="success"
+              active={statusFiltro === 'processada'}
+              onClick={() => filtrarPorStatus('processada')}
+              tooltip="Alocação executada até o fim. Fora da fila de trabalho por default."
+              footer="concluídas"
             />
             <SimpleKPI
               label="Erro"
               value={painel.kpis.erro.toLocaleString('pt-BR')}
               color="danger"
-              active={statusFiltro === 'erro'}
               onClick={() => filtrarPorStatus('erro')}
-              tooltip="Falha reprocessável."
-              footer="reprocessável"
+              tooltip="A última execução falhou. Abre a aba Falhas."
+              footer="ver falhas"
             />
             <SimpleKPI
               label="Valor não alocado"
@@ -289,11 +320,11 @@ function RecebimentosPanel() {
 
           <Tabs value={aba} onValueChange={setAba}>
             <TabsList>
-              <TabsTrigger value="transacoes">Transações ({transacoes.length})</TabsTrigger>
+              <TabsTrigger value="transacoes">Transações ({totalNaJanela})</TabsTrigger>
+              <TabsTrigger value="falhas">Falhas ({painel.kpis.erro})</TabsTrigger>
               <TabsTrigger value="conciliacoes">
                 Conciliações ({painel.recebimentos.length})
               </TabsTrigger>
-              <TabsTrigger value="fila-manual">Fila manual ({painel.kpis.filaManual})</TabsTrigger>
               <TabsTrigger value="nde">NDe ({painel.ndes.length})</TabsTrigger>
               <TabsTrigger value="ingestoes">Ingestões</TabsTrigger>
             </TabsList>
@@ -305,22 +336,12 @@ function RecebimentosPanel() {
                 buscaPlaceholder="Buscar por contraparte, referência ou correlationId…"
               />
               <div className="flex flex-wrap items-center gap-1">
-                {(
-                  [
-                    'pendentes',
-                    'todas',
-                    'importada',
-                    'conciliada',
-                    'parcial',
-                    'manual',
-                    'processada',
-                    'erro',
-                  ] as const
-                ).map((s) => (
+                {STATUS_BOTOES.map((s) => (
                   <Button
                     key={s}
                     size="sm"
                     variant={statusFiltro === s ? 'default' : 'outline'}
+                    disabled={loading}
                     onClick={() => setStatusFiltro(s)}
                   >
                     {s === 'todas' ? 'Todas' : s === 'pendentes' ? 'A processar' : s}
@@ -453,13 +474,11 @@ function RecebimentosPanel() {
               />
             </TabsContent>
 
-            {/* ---- Fila manual (placeholder Fase 2) ---- */}
-            <TabsContent value="fila-manual" className="space-y-3">
-              <EmptyState
-                icon={<UserSearch className="size-6" aria-hidden />}
-                title="Fila manual em breve"
-                description="A fila de exceções (matches incertos que nunca auto-baixam) chega na Fase 2."
-              />
+            {/* ---- Falhas (ADR-0034) ---- */}
+            <TabsContent value="falhas" className="space-y-3">
+              {/* Monta só quando a aba abre: a busca é própria (sem o teto da carteira) e o painel
+                  normal não deve pagá-la enquanto ninguém olha. */}
+              {aba === 'falhas' ? <FalhasTable onAlocar={setAlocarTxn} /> : null}
             </TabsContent>
 
             {/* ---- NDe ---- */}
@@ -485,6 +504,7 @@ function RecebimentosPanel() {
         onOpenChange={(o) => {
           if (!o) setAlocarTxn(null)
         }}
+        onProcessado={() => void carregar()}
       />
 
       <ImportarExtratoDialog

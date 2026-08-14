@@ -36,6 +36,16 @@ interface AlocarProcessosDialogProps {
   transacao: TransacaoBancaria | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  /**
+   * Chamado depois de uma execução REAL que mexeu no estado do crédito (ADR-0034).
+   *
+   * Sem isto, o status recém-escrito no backend não chega à tela: a linha processada continuaria
+   * na carteira até o analista clicar "Recarregar" à mão, e a impressão seria a de que a mudança
+   * não funcionou — exatamente o sintoma que a ADR-0034 foi escrita para eliminar.
+   *
+   * NÃO dispara em dry-run: simulação não muda estado, e recarregar ali só piscaria a tela.
+   */
+  onProcessado?: () => void
 }
 
 /** Valor sentinela do radio "Criar novo SN" (default) — distinto de qualquer `docCod` real. */
@@ -225,6 +235,7 @@ export function AlocarProcessosDialog({
   transacao,
   open,
   onOpenChange,
+  onProcessado,
 }: AlocarProcessosDialogProps) {
   const [loading, setLoading] = React.useState(false)
   const [carregandoClientes, setCarregandoClientes] = React.useState(false)
@@ -383,6 +394,15 @@ export function AlocarProcessosDialog({
       // Congela o valor efetivamente processado neste processo para o cálculo do saldo.
       setValores((prev) => ({ ...prev, [processo.priCod]: numToMask(valor) }))
       setResultados((prev) => ({ ...prev, [processo.priCod]: resultado }))
+
+      // Avisa a página para recarregar (ADR-0034). Vale para settled E para error: os dois mudam o
+      // status do crédito no backend, e a carteira precisa refletir os dois. `blocked` e dry-run
+      // ficam de fora porque nada foi escrito.
+      const mexeuNoEstado =
+        !resultado.dryRun &&
+        resultado.status !== 'dry-run' &&
+        resultado.status !== 'blocked'
+      if (mexeuNoEstado) onProcessado?.()
 
       if (resultado.status === 'error') {
         toast.error('A alocação falhou no Conexos.', {
