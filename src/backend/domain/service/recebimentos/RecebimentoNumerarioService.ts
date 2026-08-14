@@ -26,7 +26,10 @@ import {
     SN_CONTA_ADIANTAMENTO_PREFIXO,
     SN_TPD_COD,
     SOLICITACAO_NUMERARIO_DOC_TIP,
+    TRANSACAO_BANCARIA_STATUS,
 } from '../../interface/recebimentos/constants.js';
+import type { TransacaoBancariaStatus } from '../../interface/recebimentos/constants.js';
+import { decidirStatusPosSettle } from '../../interface/recebimentos/recebimentoTransitions.js';
 import { randomUUID } from 'node:crypto';
 import TransacaoRepository from '../../repository/recebimentos/TransacaoRepository.js';
 import type { Processo } from '../../interface/recebimentos/GerDocProcesso.js';
@@ -458,6 +461,9 @@ export default class RecebimentoNumerarioService {
             executadoPor: ator,
         });
         if (begin.alreadySettled) {
+            // Mesmo reparo do `checarBloqueio` (ADR-0034), aqui para a janela de corrida: dois
+            // POSTs simultâneos com a mesma chave, um settla e o outro cai neste ramo.
+            await this.sincronizarStatusTransacao(ctx);
             const existente = await this.execucaoRepository.findByIdempotencyKey(key);
             return this.settledResult(existente);
         }
@@ -511,7 +517,7 @@ export default class RecebimentoNumerarioService {
                 ...(ndDocCod !== undefined ? { ndDocCod } : {}),
                 ...(homolog.erpResponse !== undefined ? { erpResponse: homolog.erpResponse } : {}),
             });
-            await this.marcarTransacaoProcessada(ctx);
+            await this.sincronizarStatusTransacao(ctx);
             const poll = await this.etapaPoll(ctx, ndDocCod);
             vldAutorizado = poll.vldAutorizado;
             ndeAutorizado = poll.autorizado;
@@ -535,28 +541,66 @@ export default class RecebimentoNumerarioService {
     };
 
     /**
-     * Leva a TRANSAÇÃO ao terminal `processada` (ADR-0033) — chamado nos DOIS settles, com NDe
-     * (`concluido`) e sem (`quitado-sem-nde`): as duas são trabalho concluído do ponto de vista do
-     * analista, e a diferença entre elas é fiscal.
+     * Alinha o status da TRANSAÇÃO com o que o ledger diz sobre ela (ADR-0033, ampliado pela
+     * ADR-0034) — chamado nos DOIS settles, com NDe (`concluido`) e sem (`quitado-sem-nde`).
      *
-     * NÃO propaga falha. O dinheiro já se moveu no ERP quando esta linha roda; derrubar a resposta
-     * porque o status da tela não atualizou transformaria um sucesso em erro aparente e convidaria o
-     * analista a reprocessar uma baixa que já aconteceu. A divergência vira WARN e o ledger — que é
-     * a fonte da verdade da execução — segue correto.
+     * Não escreve `processada` cegamente: soma as alocações JÁ EXECUTADAS deste crédito e compara com
+     * o valor dele. A marcação é por `txnId`, mas o ledger é por `(txnId, priCod, valor)` — sem a
+     * soma, o primeiro settle de um crédito dividido entre quatro processos marcaria o crédito
+     * INTEIRO como concluído e esconderia da carteira o dinheiro que ainda falta alocar.
+     *
+     * Uma falha ao MEDIR **não escreve nada**. `processada` é o único terminal de verdade — nada o
+     * reverte: nem a varredura, nem o backfill, nem reprocessar, porque `origensPermitidasPara`
+     * nunca o devolve. Marcar por causa de um `SUM` que deu timeout tiraria da carteira, de forma
+     * permanente e só recuperável por SQL manual, um crédito que ainda tem saldo a alocar. Não
+     * escrever deixa o crédito visível na fila e entrega a decisão à varredura horária, que mede
+     * dentro do Postgres numa statement só, sem round-trip que possa falhar no meio.
      */
-    private marcarTransacaoProcessada = async (ctx: EscritaCtx): Promise<void> => {
+    private sincronizarStatusTransacao = async (ctx: EscritaCtx): Promise<void> => {
         if (ctx.txnId === undefined) return;
+        let soma: number | undefined;
         try {
-            await this.transacaoRepository.marcarProcessada(ctx.txnId);
+            soma = await this.execucaoRepository.somarSettledPorTxnId(ctx.txnId);
         } catch (err) {
             void this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message:
-                    '[RECEBIMENTOS] alocação executada mas o status da transação não virou ' +
-                    '`processada` — o ledger está correto; a carteira pode mostrar a linha como ' +
-                    'pendente até a próxima execução',
+                    '[RECEBIMENTOS] não foi possível somar as alocações executadas do crédito — ' +
+                    'o status NÃO será escrito; a reconciliação da próxima ingestão decide',
                 error: err,
                 data: { txnId: ctx.txnId, priCod: ctx.priCod, key: ctx.key },
+            });
+        }
+        const destino = decidirStatusPosSettle(soma, ctx.transacao.valor);
+        if (destino === undefined) return;
+        await this.escreverStatusTransacao(ctx, destino);
+    };
+
+    /**
+     * Escreve o status da transação sem NUNCA propagar falha.
+     *
+     * O dinheiro já se moveu no ERP quando esta linha roda; derrubar a resposta porque o status da
+     * tela não atualizou transformaria um sucesso em erro aparente e convidaria o analista a
+     * reprocessar uma baixa que já aconteceu. A divergência vira WARN, o ledger — que é a fonte da
+     * verdade da execução — segue correto, e a varredura de `reconciliarStatusPorLedger` conserta a
+     * carteira na próxima ingestão.
+     */
+    private escreverStatusTransacao = async (
+        ctx: EscritaCtx,
+        destino: TransacaoBancariaStatus,
+    ): Promise<void> => {
+        if (ctx.txnId === undefined) return;
+        try {
+            await this.transacaoRepository.marcarStatus(ctx.txnId, destino);
+        } catch (err) {
+            void this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    `[RECEBIMENTOS] o status da transação não virou \`${destino}\` — o ledger está ` +
+                    'correto; a carteira pode mostrar a linha desatualizada até a próxima ' +
+                    'reconciliação',
+                error: err,
+                data: { txnId: ctx.txnId, priCod: ctx.priCod, key: ctx.key, destino },
             });
         }
     };
@@ -581,7 +625,7 @@ export default class RecebimentoNumerarioService {
             ...(snDocCod !== undefined ? { docCod: snDocCod } : {}),
             etapa,
         });
-        await this.marcarTransacaoProcessada(ctx);
+        await this.sincronizarStatusTransacao(ctx);
         void this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
             message: `NDe DISPENSADA — modalidade ${
@@ -2225,6 +2269,11 @@ export default class RecebimentoNumerarioService {
             erroMensagem: mensagem,
             erpResponse: this.extractErpData(err),
         });
+        // A falha também vai para a TRANSAÇÃO (ADR-0034): até aqui ela só existia no ledger, e o
+        // analista não tinha como ver na carteira que uma alocação daquele crédito quebrou. A guarda
+        // de origem impede que isto rebaixe um crédito já `processada` (outra perna do split que
+        // fechou antes desta falhar).
+        await this.escreverStatusTransacao(ctx, TRANSACAO_BANCARIA_STATUS.ERRO);
         await this.logService.error({
             type: LOG_TYPE.BUSINESS_WARN,
             message: isGap
@@ -2293,6 +2342,13 @@ export default class RecebimentoNumerarioService {
     private checarBloqueio = async (ctx: EscritaCtx): Promise<ProcessarAlocacaoResult | null> => {
         const existente = await this.execucaoRepository.findByIdempotencyKey(ctx.key);
         if (existente?.status === 'settled') {
+            // REPARO (ADR-0034): este é o curto-circuito que realmente dispara num re-POST — roda
+            // antes do pré-flight. Antes ele devolvia `skipped` sem tocar no status, então um crédito
+            // cuja marcação falhou na primeira execução ficava divergente PARA SEMPRE: ninguém
+            // reprocessa uma alocação bem-sucedida. Ressincronizar aqui faz de "processar de novo" o
+            // botão de conserto, sem rota nova. Custo zero quando já está certo — a guarda
+            // `status <> destino` transforma a escrita num UPDATE de zero linhas.
+            await this.sincronizarStatusTransacao(ctx);
             return this.settledResult(existente);
         }
         if (
@@ -2309,6 +2365,10 @@ export default class RecebimentoNumerarioService {
                 message: 'processarAlocacao IN-DOUBT (orphan reconciling) — NOT re-POSTed',
                 data: { txnId: ctx.txnId, priCod: ctx.priCod, valor: ctx.valor },
             });
+            // Marca a TRANSAÇÃO (ADR-0034). Este ramo devolve `error` sem passar por
+            // `registrarFalha`, então sem esta linha o crédito ficaria `importada` — invisível na
+            // aba de falhas justamente no caso mais perigoso, o da SN possivelmente órfã no ERP.
+            await this.escreverStatusTransacao(ctx, TRANSACAO_BANCARIA_STATUS.ERRO);
             return { status: 'error', etapa: 'sn', erro: msg, dryRun: false };
         }
         return null;

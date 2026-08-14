@@ -8,6 +8,7 @@ import {
     TRANSACAO_BANCARIA_STATUS,
     TRANSACAO_TIPO,
 } from '../../interface/recebimentos/constants.js';
+import type { TransacaoBancariaStatus } from '../../interface/recebimentos/constants.js';
 import type { TransacaoBancaria } from '../../interface/recebimentos/TransacaoBancaria.js';
 import {
     PROCESSO_PROVIDER_TOKEN,
@@ -16,6 +17,7 @@ import {
 import type {
     ProcessoProviderInterface,
     SolicitacaoNumerarioExecucaoRepositoryInterface,
+    UltimaFalhaExecucao,
 } from '../../interface/recebimentos/ports.js';
 import RecebimentoIngestaoRunRepository from '../../repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import TransacaoRepository from '../../repository/recebimentos/TransacaoRepository.js';
@@ -39,6 +41,8 @@ export interface ModalidadeNaTela {
 /** Transação do painel: a entidade + o que só a tela precisa. */
 export interface TransacaoPainel extends TransacaoBancaria {
     modalidade?: ModalidadeNaTela;
+    /** Só preenchida na aba de falhas (ADR-0034) — ver `enriquecerComFalhas`. */
+    ultimaFalha?: UltimaFalhaExecucao;
 }
 
 /** Resposta do painel de recebimentos. */
@@ -52,10 +56,13 @@ export interface RecebimentosPainel {
     ndes: [];
     kpis: {
         importadas: number;
+        /** Sem writer até o Módulo 2 (motor de matching) — sempre 0 hoje, e fora da tela (ADR-0034). */
         conciliadas: number;
         parciais: number;
+        /** Sem writer até o Módulo 2 — sempre 0 hoje, e fora da tela (ADR-0034). */
         filaManual: number;
         erro: number;
+        processadas: number;
         valorNaoAlocado: number;
         ndePendentes: number;
     };
@@ -80,7 +87,19 @@ export interface MontarPainelInput {
      * o ruído que o analista acabou de esconder. Ver as duas listas exige duas leituras.
      */
     arquivadas?: boolean;
+    /**
+     * Filtro de status da LISTA (ADR-0034). `'pendentes'` = tudo que não é `processada` (o default
+     * da tela); `'todas'`/ausente não filtra.
+     *
+     * Server-side de propósito: o filtro client-side rodava sobre a página já capada em 500 linhas,
+     * então uma falha antiga simplesmente não aparecia na aba de falhas. De quebra, a fila de
+     * trabalho para de gastar o teto com histórico já processado.
+     */
+    status?: PainelStatusFiltro;
 }
+
+/** Valores aceitos no filtro de status do painel — os 6 do enum + os dois agregados da tela. */
+export type PainelStatusFiltro = 'todas' | 'pendentes' | TransacaoBancariaStatus;
 
 /**
  * RecebimentosPainelService — monta o painel a partir do BANCO (não do ERP).
@@ -126,15 +145,28 @@ export default class RecebimentosPainelService {
             incluirTransferenciasInternas: input.incluirTesouraria === true,
         };
 
+        const statuses = this.resolverStatuses(input.status);
+
         const [transacoes, porStatus, valorPorStatus, ultimaIngestao] = await Promise.all([
-            this.transacaoRepo.listParaPainel({ ...filtroBase, limit }),
+            // ⚠️ `statuses` entra SÓ aqui. `contarKpis` e `somarValorPorStatus` compartilham o mesmo
+            // `buildFiltro`, e deixá-lo escorregar para eles faria os KPIs contarem apenas a aba
+            // aberta — as contagens dos cards mudariam conforme o analista navega, que é exatamente
+            // o erro que a decisão nº 1 deste serviço existe para prevenir.
+            this.transacaoRepo.listParaPainel({
+                ...filtroBase,
+                ...(statuses !== undefined ? { statuses } : {}),
+                limit,
+            }),
             this.transacaoRepo.contarKpis(filtroBase),
             this.transacaoRepo.somarValorPorStatus(filtroBase),
             this.runRepo.findLatestSuccessFinishedAt(),
         ]);
 
         const n = (s: string): number => porStatus[s] ?? 0;
-        const transacoesComModalidade = await this.enriquecerComModalidade(transacoes, filCods);
+        const transacoesComModalidade = await this.enriquecerComFalhas(
+            await this.enriquecerComModalidade(transacoes, filCods),
+            input.status,
+        );
 
         return {
             geradoEm: new Date().toISOString(),
@@ -148,10 +180,8 @@ export default class RecebimentosPainelService {
                 parciais: n(TRANSACAO_BANCARIA_STATUS.PARCIAL),
                 filaManual: n(TRANSACAO_BANCARIA_STATUS.MANUAL),
                 erro: n(TRANSACAO_BANCARIA_STATUS.ERRO),
-                // "A distribuir" = o que entrou e ainda não foi conciliado.
-                valorNaoAlocado:
-                    (valorPorStatus[TRANSACAO_BANCARIA_STATUS.IMPORTADA] ?? 0) +
-                    (valorPorStatus[TRANSACAO_BANCARIA_STATUS.PARCIAL] ?? 0),
+                processadas: n(TRANSACAO_BANCARIA_STATUS.PROCESSADA),
+                valorNaoAlocado: this.somarValorEmAberto(valorPorStatus),
                 // Módulo 5 não existe — nenhuma NDe é emitida ainda.
                 ndePendentes: 0,
             },
@@ -160,6 +190,73 @@ export default class RecebimentosPainelService {
             categoriasOcultas: categoriasExcluidas,
         };
     };
+
+    /**
+     * Traduz o filtro da tela para a lista de status do repositório.
+     *
+     * `'pendentes'` é o default da carteira (ADR-0033 D6): a tabela é uma FILA DE TRABALHO, não um
+     * histórico — o que o analista abre para ver é o que falta fazer. Enumerar "tudo menos
+     * `processada`" em vez de negar no SQL mantém o `buildFiltro` com uma única forma de filtrar.
+     */
+    private resolverStatuses = (
+        filtro?: PainelStatusFiltro,
+    ): TransacaoBancariaStatus[] | undefined => {
+        if (filtro === undefined || filtro === 'todas') return undefined;
+        if (filtro === 'pendentes') {
+            return Object.values(TRANSACAO_BANCARIA_STATUS).filter(
+                (s) => s !== TRANSACAO_BANCARIA_STATUS.PROCESSADA,
+            );
+        }
+        return [filtro];
+    };
+
+    /**
+     * Anexa a última falha de cada crédito — SÓ na aba de falhas (ADR-0034).
+     *
+     * Condicionado ao filtro de propósito: o painel normal não deve pagar uma query a mais por uma
+     * coluna que ele não mostra. Degrada como o enriquecimento de modalidade: um ledger indisponível
+     * tira a coluna, nunca a carteira.
+     */
+    private enriquecerComFalhas = async (
+        transacoes: TransacaoPainel[],
+        filtro?: PainelStatusFiltro,
+    ): Promise<TransacaoPainel[]> => {
+        if (filtro !== TRANSACAO_BANCARIA_STATUS.ERRO || transacoes.length === 0) return transacoes;
+
+        const falhas = await this.execucaoRepo
+            .listUltimaFalhaPorTxnIds(transacoes.map((t) => t.id))
+            .catch(() => new Map<string, UltimaFalhaExecucao>());
+
+        return transacoes.map((t) => {
+            const falha = falhas.get(t.id);
+            return falha === undefined ? t : { ...t, ultimaFalha: falha };
+        });
+    };
+
+    /**
+     * "A distribuir" = Σ (valor de face − já alocado) de tudo que NÃO chegou ao terminal (ADR-0034).
+     *
+     * Duas escolhas que valem explicação:
+     *
+     *  - **Subtrai o alocado.** Antes somava o valor de face de `importada` + `parcial`. Como nada
+     *    saía de `importada`, todo crédito já baixado no Conexos continuava contando integralmente
+     *    como "a distribuir". Com a máquina de estados viva a distorção mudaria de lugar mas não
+     *    sumiria: um crédito rotulado `parcial` na tabela apareceria no KPI pelo valor cheio, com o
+     *    painel se contradizendo na mesma tela.
+     *  - **Todo status menos `processada`, e não uma lista fixa.** Um crédito em `erro` ou `manual`
+     *    tem dinheiro esperando alocação tanto quanto um `importada` — enumerar status faria o número
+     *    cair silenciosamente assim que uma linha transicionasse.
+     *
+     * O corte em zero é feito POR CRÉDITO, no SQL (`GREATEST(valor - alocado, 0)`), e não aqui sobre
+     * os totais do grupo: um crédito sobre-alocado geraria saldo negativo que cancelaria o saldo
+     * aberto de outro crédito do mesmo status, escondendo dinheiro que ainda precisa ser distribuído.
+     */
+    private somarValorEmAberto = (
+        valorPorStatus: Record<string, { total: number; alocado: number; emAberto: number }>,
+    ): number =>
+        Object.entries(valorPorStatus)
+            .filter(([status]) => status !== TRANSACAO_BANCARIA_STATUS.PROCESSADA)
+            .reduce((soma, [, v]) => soma + v.emAberto, 0);
 
     /**
      * Preenche a coluna de modalidade (ADR-0033), com DUAS fontes de qualidade diferente:

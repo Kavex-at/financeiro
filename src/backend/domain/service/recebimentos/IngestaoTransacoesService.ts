@@ -187,6 +187,8 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
             if (contasFalhas > 0) await this.logService.warn(resumo);
             else await this.logService.info(resumo);
 
+            await this.reconciliarStatus(runId);
+
             return {
                 runId,
                 total: totalLidas,
@@ -205,6 +207,42 @@ export default class IngestaoTransacoesService implements IngestaoTransacoesInte
                 errorMessage: err instanceof Error ? err.message : String(err),
             });
             throw err;
+        }
+    };
+
+    /**
+     * Realinha o status das transações com o ledger de execução (ADR-0034), ao fim de cada run.
+     *
+     * Existe porque o reparo pontual — reprocessar a alocação — só acontece se alguém clicar, e
+     * ninguém reprocessa uma alocação que deu certo. Sem esta varredura, uma escrita de status que
+     * falhou deixa a carteira mentindo indefinidamente: foi exatamente assim que o painel chegou a
+     * mostrar centenas de `importada` com baixa já feita no Conexos por trás.
+     *
+     * Pendurada na ingestão em vez de num job próprio porque é a mesma cadência (horária) e o mesmo
+     * assunto — e um job a mais é uma peça a mais para alguém esquecer de observar.
+     *
+     * NUNCA derruba a ingestão. Importar extrato é o trabalho principal; reconciliar rótulo é
+     * manutenção. Uma falha aqui vira WARN e a próxima run tenta de novo.
+     */
+    private reconciliarStatus = async (runId: string): Promise<void> => {
+        try {
+            const alteradas = await this.transacaoRepo.reconciliarStatusPorLedger();
+            if (alteradas > 0) {
+                await this.logService.info({
+                    type: LOG_TYPE.BUSINESS_INFO,
+                    message: `[RECEBIMENTOS] reconciliação de status alinhou ${alteradas} transação(ões) ao ledger`,
+                    data: { runId, alteradas },
+                });
+            }
+        } catch (err) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    '[RECEBIMENTOS] reconciliação de status falhou — a ingestão está OK; a carteira ' +
+                    'pode mostrar status desatualizado até a próxima run',
+                error: err,
+                data: { runId },
+            });
         }
     };
 

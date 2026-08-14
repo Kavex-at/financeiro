@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import { EXECUCAO_INTERROMPIDA_MINUTOS } from '../../interface/recebimentos/constants.js';
 import type {
     BeginSolicitacaoNumerarioExecucaoInput,
     BeginSolicitacaoNumerarioExecucaoResult,
@@ -9,6 +10,7 @@ import type {
     SolicitacaoNumerarioExecucaoRepositoryInterface,
     SolicitacaoNumerarioExecucaoRow,
     SolicitacaoNumerarioExecucaoSettleData,
+    UltimaFalhaExecucao,
 } from '../../interface/recebimentos/ports.js';
 
 /** Colunas lidas — inclui a leg FISCAL (0042): txn_id/valor/fin014_bor_cod/nd_doc_cod/etapa/flags. */
@@ -217,6 +219,74 @@ export default class SolicitacaoNumerarioExecucaoRepository
             out.set(String(r.txn_id), {
                 ...(r.pri_vld_tipo != null ? { priVldTipo: Number(r.pri_vld_tipo) } : {}),
                 ...(r.nde_dispensada != null ? { ndeDispensada: Boolean(r.nde_dispensada) } : {}),
+            });
+        }
+        return out;
+    };
+
+    /**
+     * Σ das alocações JÁ EXECUTADAS de um crédito (ADR-0034) — decide `parcial` × `processada`.
+     *
+     * `status = 'settled' AND dry_run = FALSE`: a chave de idempotência é
+     * `sn-real:{txnId}:{priCod}:{valor}`, então somar todos os status contaria duas vezes uma
+     * alocação que foi tentada com valores diferentes. Só o que settlou de verdade é dinheiro movido.
+     *
+     * Zero linhas → `undefined` (indeterminado). Linhas com `valor` nulo (anteriores à 0042) são
+     * puladas pelo `SUM`, o que só pode SUBESTIMAR a Σ — direção segura, nunca esconde dinheiro.
+     */
+    public somarSettledPorTxnId = async (txnId: string): Promise<number | undefined> => {
+        const row = await this.databaseClient.selectFirst<{ total: unknown; linhas: unknown }>(
+            `SELECT SUM(valor) AS total, COUNT(*) AS linhas
+               FROM solicitacao_numerario_execucao
+              WHERE txn_id = $txnId AND status = 'settled' AND dry_run = FALSE`,
+            { txnId },
+        );
+        if (!row || Number(row.linhas ?? 0) === 0) return undefined;
+        return row.total == null ? 0 : Number(row.total);
+    };
+
+    /**
+     * Última falha de cada crédito, em lote (ADR-0034) — a aba Falhas do painel.
+     *
+     * Inclui execuções presas em `reconciling` além da janela: o processo morreu entre o
+     * `beginExecution` e o fecho, e nada no sistema mostrava isso até agora. Vêm marcadas
+     * `interrompida` para a tela rotulá-las à parte — o risco ali é documento órfão no ERP, não uma
+     * falha que o analista possa simplesmente reprocessar às cegas.
+     *
+     * `erp_response`/`request_payload` NÃO são selecionados de propósito: esta leitura alimenta o
+     * `/painel`, que não é admin-only. Ver `UltimaFalhaExecucao` no port.
+     */
+    public listUltimaFalhaPorTxnIds = async (
+        txnIds: string[],
+    ): Promise<Map<string, UltimaFalhaExecucao>> => {
+        if (txnIds.length === 0) return new Map();
+        const rows = await this.databaseClient.selectMany(
+            `SELECT DISTINCT ON (txn_id)
+                    txn_id, pri_cod, valor, etapa, erro_mensagem, doc_cod, nd_doc_cod,
+                    executado_por, status, atualizado_em
+               FROM solicitacao_numerario_execucao
+              WHERE txn_id = ANY($txnIds)
+                AND (
+                     status = 'error'
+                     OR (status = 'reconciling'
+                         AND atualizado_em < now() - make_interval(mins => $minutosParado::int))
+                    )
+              ORDER BY txn_id, atualizado_em DESC`,
+            { txnIds, minutosParado: EXECUCAO_INTERROMPIDA_MINUTOS },
+        );
+        const out = new Map<string, UltimaFalhaExecucao>();
+        for (const raw of rows) {
+            const r = raw as Record<string, unknown>;
+            out.set(String(r.txn_id), {
+                priCod: Number(r.pri_cod),
+                ...(r.valor != null ? { valor: Number(r.valor) } : {}),
+                ...(r.etapa != null ? { etapa: r.etapa as SolicitacaoNumerarioEtapa } : {}),
+                ...(r.erro_mensagem != null ? { mensagem: String(r.erro_mensagem) } : {}),
+                ...(r.doc_cod != null ? { docCod: Number(r.doc_cod) } : {}),
+                ...(r.nd_doc_cod != null ? { ndDocCod: Number(r.nd_doc_cod) } : {}),
+                ...(r.executado_por != null ? { executadoPor: String(r.executado_por) } : {}),
+                ocorridaEm: new Date(r.atualizado_em as string | Date),
+                interrompida: r.status === 'reconciling',
             });
         }
         return out;

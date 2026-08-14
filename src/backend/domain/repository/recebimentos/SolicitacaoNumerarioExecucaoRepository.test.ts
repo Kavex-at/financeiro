@@ -295,3 +295,120 @@ describe('SolicitacaoNumerarioExecucaoRepository — auditoria (listByTxnId / li
         expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ status: 'error', limit: 50 });
     });
 });
+
+describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-0034)', () => {
+    describe('somarSettledPorTxnId', () => {
+        it('soma só settled e não-dry-run, parametrizado', async () => {
+            const db = buildDb();
+            (db.selectFirst as jest.Mock).mockResolvedValue({ total: '7500.00', linhas: '2' });
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+
+            const out = await repo.somarSettledPorTxnId('txn-1');
+
+            const sql = sqlOf(db.selectFirst as jest.Mock);
+            expect(sql).toContain('SUM(valor)');
+            expect(sql).toContain('WHERE txn_id = $txnId');
+            expect(sql).toContain("status = 'settled'");
+            expect(sql).toContain('dry_run = FALSE');
+            expect(sql).not.toMatch(/'\s*\+|\$\{/);
+            expect(paramsOf(db.selectFirst as jest.Mock)).toEqual({ txnId: 'txn-1' });
+            expect(out).toBe(7500);
+        });
+
+        it('zero linhas → undefined (indeterminado, o chamador não regride o status)', async () => {
+            const db = buildDb();
+            (db.selectFirst as jest.Mock).mockResolvedValue({ total: null, linhas: '0' });
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            await expect(repo.somarSettledPorTxnId('txn-1')).resolves.toBeUndefined();
+        });
+
+        it('linhas sem valor (pré-0042) → 0, não undefined: houve execução, a Σ é que é 0', async () => {
+            const db = buildDb();
+            (db.selectFirst as jest.Mock).mockResolvedValue({ total: null, linhas: '3' });
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            await expect(repo.somarSettledPorTxnId('txn-1')).resolves.toBe(0);
+        });
+
+        it('sem linha de retorno → undefined', async () => {
+            const db = buildDb();
+            (db.selectFirst as jest.Mock).mockResolvedValue(null);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            await expect(repo.somarSettledPorTxnId('txn-1')).resolves.toBeUndefined();
+        });
+    });
+
+    describe('listUltimaFalhaPorTxnIds', () => {
+        const falha = {
+            txn_id: 'txn-1',
+            pri_cod: 90001,
+            valor: '2500.00',
+            etapa: 'fin014',
+            erro_mensagem: 'Título já baixado no Conexos.',
+            doc_cod: 18342,
+            nd_doc_cod: null,
+            executado_por: 'yuri',
+            status: 'error',
+            atualizado_em: '2026-08-12T10:00:00Z',
+        };
+
+        it('lista vazia não vai ao banco', async () => {
+            const db = buildDb();
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            await expect(repo.listUltimaFalhaPorTxnIds([])).resolves.toEqual(new Map());
+            expect(db.selectMany).not.toHaveBeenCalled();
+        });
+
+        it('DISTINCT ON pega a mais recente, fan-in por ANY, parametrizado', async () => {
+            const db = buildDb();
+            (db.selectMany as jest.Mock).mockResolvedValue([falha]);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+
+            const out = await repo.listUltimaFalhaPorTxnIds(['txn-1', 'txn-2']);
+
+            const sql = sqlOf(db.selectMany as jest.Mock);
+            expect(sql).toContain('DISTINCT ON (txn_id)');
+            expect(sql).toContain('txn_id = ANY($txnIds)');
+            expect(sql).toContain('ORDER BY txn_id, atualizado_em DESC');
+            expect(sql).not.toMatch(/'\s*\+|\$\{/);
+            expect(paramsOf(db.selectMany as jest.Mock)).toEqual({
+                txnIds: ['txn-1', 'txn-2'],
+                minutosParado: 15,
+            });
+            expect(out.get('txn-1')).toMatchObject({
+                priCod: 90001,
+                valor: 2500,
+                etapa: 'fin014',
+                mensagem: 'Título já baixado no Conexos.',
+                docCod: 18342,
+                executadoPor: 'yuri',
+                interrompida: false,
+            });
+        });
+
+        it('inclui reconciling parado além da janela, marcado como interrompida', async () => {
+            const db = buildDb();
+            (db.selectMany as jest.Mock).mockResolvedValue([
+                { ...falha, status: 'reconciling', erro_mensagem: null },
+            ]);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+
+            const out = await repo.listUltimaFalhaPorTxnIds(['txn-1']);
+
+            const sql = sqlOf(db.selectMany as jest.Mock);
+            expect(sql).toContain("status = 'reconciling'");
+            expect(sql).toContain('make_interval(mins => $minutosParado::int)');
+            expect(out.get('txn-1')).toMatchObject({ interrompida: true });
+            expect(out.get('txn-1')).not.toHaveProperty('mensagem');
+        });
+
+        it('NUNCA seleciona erp_response nem request_payload — a aba não é admin-only', async () => {
+            const db = buildDb();
+            (db.selectMany as jest.Mock).mockResolvedValue([]);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            await repo.listUltimaFalhaPorTxnIds(['txn-1']);
+            const sql = sqlOf(db.selectMany as jest.Mock);
+            expect(sql).not.toContain('erp_response');
+            expect(sql).not.toContain('request_payload');
+        });
+    });
+});

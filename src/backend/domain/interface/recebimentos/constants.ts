@@ -270,6 +270,17 @@ export const PAINEL_TRANSACOES_CAP = 500;
 export const RECEBIMENTO_INGEST_DIAS_PADRAO = 90;
 
 /**
+ * Minutos em `reconciling` a partir dos quais uma execução é considerada INTERROMPIDA (ADR-0034).
+ *
+ * O write-ahead abre a linha como `reconciling` antes do primeiro POST no ERP e a fecha em
+ * `settled`/`error`. Uma linha que ficou nesse estado além da janela significa que o processo morreu
+ * no meio da sequência — pode haver documento órfão no Conexos sem nada observando. A janela é folgada
+ * o bastante para não rotular uma execução ainda em voo (a sequência completa leva segundos, não
+ * minutos), e curta o bastante para o analista ver no mesmo turno de trabalho.
+ */
+export const EXECUCAO_INTERROMPIDA_MINUTOS = 15;
+
+/**
  * PISO da janela de ingestão do extrato (`YYYY-MM-DD`). Nenhum caminho de
  * sincronização — cron horário, `DIAS=` ou `POST /recebimentos/ingestao { dias }` —
  * lê lançamento anterior a esta data (ADR-0028).
