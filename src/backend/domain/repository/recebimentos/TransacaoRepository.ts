@@ -1,6 +1,7 @@
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import {
+    EXECUCAO_INTERROMPIDA_MINUTOS,
     TRANSACAO_BANCARIA_STATUS,
     TRANSACAO_TIPO,
 } from '../../interface/recebimentos/constants.js';
@@ -8,11 +9,27 @@ import type {
     TransacaoBancariaStatus,
     TransacaoTipo,
 } from '../../interface/recebimentos/constants.js';
+import { origensPermitidasPara } from '../../interface/recebimentos/recebimentoTransitions.js';
 import type { TransacaoBancaria } from '../../interface/recebimentos/TransacaoBancaria.js';
 import type { TransacaoRepositoryInterface } from '../../interface/recebimentos/ports.js';
 
 /** Linhas por statement no upsert em lote (espelha o chunk do `TituloAPagarRepository`). */
 const UPSERT_CHUNK = 200;
+
+/**
+ * Σ das alocações JÁ EXECUTADAS por crédito — subconsulta compartilhada pela reconciliação e pelo
+ * KPI "a distribuir" (ADR-0034).
+ *
+ * `status = 'settled' AND dry_run = FALSE` porque a chave de idempotência do ledger é
+ * `sn-real:{txnId}:{priCod}:{valor}`: somar todos os status contaria duas vezes uma alocação
+ * retentada com valor diferente. Comparações derivadas daqui usam `ROUND(x * 100)` sobre `NUMERIC`
+ * — dinheiro nunca é comparado em ponto flutuante.
+ */
+const SETTLED_POR_TXN = `SELECT txn_id, SUM(valor) AS alocado
+                           FROM solicitacao_numerario_execucao
+                          WHERE status = 'settled' AND dry_run = FALSE AND txn_id IS NOT NULL
+                          GROUP BY txn_id
+                         HAVING SUM(valor) IS NOT NULL`;
 
 const COLUNAS = `id, correlation_id, fil_cod, data_movimento, tipo, valor, moeda,
                  contraparte, referencia_bancaria, natural_key, raw_payload, normalized,
@@ -70,7 +87,7 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
      * UPSERT em lote da ingestão (Módulo 1). Uma transação por chamada, chunks de
      * `CHUNK` linhas, multi-row `VALUES` — todos os valores parametrizados.
      *
-     * ⚠️ A cláusula `WHERE transacao_bancaria.status = 'importada'` é o ponto mais
+     * ⚠️ O LATCH — `status = 'importada'` E nenhuma linha de ledger — é o ponto mais
      * importante deste método. O `save` unitário faz `status = EXCLUDED.status`, o
      * que significa que a reingestão diária DEVOLVE para `importada` qualquer
      * transação que o analista já tenha movido para `conciliada`/`parcial`/`manual`
@@ -78,6 +95,12 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
      * atualização só alcança linhas ainda intocadas, e `status`/`id`/`correlation_id`/
      * `import_run_id`/`importado_em` NUNCA são sobrescritos: são propriedades do
      * nascimento da transação.
+     *
+     * O `NOT EXISTS` sobre o ledger (ADR-0034) fecha o furo que sobrava: um crédito cuja marcação de
+     * status falhou continuava `importada` e portanto continuava sendo refrescado toda hora — com
+     * `valor` incluído, que é justamente o denominador da regra Σ. O cron podia mexer no denominador
+     * debaixo de uma alocação em curso. Qualquer linha de ledger, em qualquer status, significa que
+     * um humano mirou neste crédito; a guarda é estritamente mais forte, nunca mais fraca.
      *
      * `RETURNING (xmax = 0)` distingue INSERT de UPDATE sem uma query extra
      * (`xmax = 0` só em tupla recém-inserida). Linhas barradas pelo `WHERE` não
@@ -153,6 +176,10 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
                         visto_em_run_id = EXCLUDED.visto_em_run_id,
                         atualizado_em = now()
                      WHERE transacao_bancaria.status = $statusIntocado
+                       AND NOT EXISTS (
+                           SELECT 1 FROM solicitacao_numerario_execucao e
+                            WHERE e.txn_id = transacao_bancaria.id
+                       )
                      RETURNING (xmax = 0) AS inserida`,
                     { ...params, statusIntocado: TRANSACAO_BANCARIA_STATUS.IMPORTADA },
                 )) as Array<{ inserida: boolean }>;
@@ -221,7 +248,22 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         return Object.fromEntries(rows.map((r) => [r.status, r.total]));
     };
 
-    /** Soma do valor ainda não conciliado — alimenta o KPI "valor a distribuir". */
+    /**
+     * Valor de face E valor já alocado, por status, sobre a JANELA INTEIRA — alimenta o KPI
+     * "a distribuir".
+     *
+     * O `alocado` entrou na ADR-0034 junto com o status `parcial`. Sem ele, um crédito de R$ 100 mil
+     * com R$ 90 mil já baixados apareceria na tela rotulado `parcial` enquanto o KPI logo acima o
+     * contava por R$ 100 mil inteiros — o painel se contradizendo, que num painel financeiro é o
+     * pior tipo de erro. Antes da ADR-0034 a distorção existia e era MAIOR (todo crédito já baixado
+     * contava integralmente, porque nada saía de `importada`).
+     *
+     * `emAberto` é somado com `GREATEST(..., 0)` POR LINHA, dentro do SQL, e não subtraindo os dois
+     * totais depois. A diferença importa: nada valida Σ alocações ≤ valor do crédito (a regra Σ
+     * tolera `>=` de propósito, para pagamento a maior), então um crédito sobre-alocado geraria
+     * saldo negativo que CANCELARIA o saldo aberto de outro crédito do mesmo grupo. O corte por
+     * grupo esconderia dinheiro real a distribuir; o corte por linha, não.
+     */
     public somarValorPorStatus = async (input: {
         filCods: number[];
         tipos?: TransacaoTipo[];
@@ -231,38 +273,57 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         desde?: Date;
         /** `true` = a aba de revisão das arquivadas. Ausente = carteira ativa (default). */
         arquivadas?: boolean;
-    }): Promise<Record<string, number>> => {
+    }): Promise<Record<string, { total: number; alocado: number; emAberto: number }>> => {
         if (input.filCods.length === 0) return {};
-        const { where, params } = this.buildFiltro(input);
+        const { where, params } = this.buildFiltro(input, 't');
         const rows = (await this.databaseClient.selectMany(
-            `SELECT status, COALESCE(SUM(valor), 0)::float8 AS total
-             FROM transacao_bancaria
+            `SELECT t.status,
+                    COALESCE(SUM(t.valor), 0)::float8 AS total,
+                    COALESCE(SUM(s.alocado), 0)::float8 AS alocado,
+                    COALESCE(SUM(GREATEST(t.valor - COALESCE(s.alocado, 0), 0)), 0)::float8
+                        AS em_aberto
+             FROM transacao_bancaria t
+             LEFT JOIN (${SETTLED_POR_TXN}) s ON s.txn_id = t.id
              WHERE ${where}
-             GROUP BY status`,
+             GROUP BY t.status`,
             params,
-        )) as Array<{ status: string; total: number }>;
-        return Object.fromEntries(rows.map((r) => [r.status, r.total]));
+        )) as Array<{ status: string; total: number; alocado: number; em_aberto: number }>;
+        return Object.fromEntries(
+            rows.map((r) => [
+                r.status,
+                { total: r.total, alocado: r.alocado, emAberto: r.em_aberto },
+            ]),
+        );
     };
 
-    /** Cláusula WHERE compartilhada por list/contar/somar — sempre parametrizada. */
-    private buildFiltro = (input: {
-        filCods: number[];
-        tipos?: TransacaoTipo[];
-        statuses?: TransacaoBancariaStatus[];
-        categoriasExcluidas?: string[];
-        /** Default `false` — transferência entre contas da casa fica fora da carteira. */
-        incluirTransferenciasInternas?: boolean;
-        desde?: Date;
-        /** `false`/ausente = só ATIVAS (default). `true` = só as arquivadas (a aba de revisão). */
-        arquivadas?: boolean;
-    }): { where: string; params: Record<string, unknown> } => {
+    /**
+     * Cláusula WHERE compartilhada por list/contar/somar — sempre parametrizada.
+     *
+     * `alias` qualifica as colunas (`t.fil_cod`) para as consultas que fazem JOIN com o ledger.
+     * Ausente = sem prefixo, a forma que as consultas de tabela única sempre usaram.
+     */
+    private buildFiltro = (
+        input: {
+            filCods: number[];
+            tipos?: TransacaoTipo[];
+            statuses?: TransacaoBancariaStatus[];
+            categoriasExcluidas?: string[];
+            /** Default `false` — transferência entre contas da casa fica fora da carteira. */
+            incluirTransferenciasInternas?: boolean;
+            desde?: Date;
+            /** `false`/ausente = só ATIVAS (default). `true` = só as arquivadas (a aba de revisão). */
+            arquivadas?: boolean;
+        },
+        alias?: string,
+    ): { where: string; params: Record<string, unknown> } => {
+        const col = (nome: string): string => (alias ? `${alias}.${nome}` : nome);
         // `fil_cod IS NULL` = conta CORPORATIVA (canal fin095, ADR-0032): o crédito
         // ainda não pertence a nenhuma filial e é visível a todo usuário autorizado,
         // qualquer que seja a filial dele. A authz por filial NÃO é enfraquecida —
         // ela vale onde move dinheiro (`pipeline/run`, `alocar`, emissão da NDe),
         // contra a filial do PROCESSO escolhido. Excluir os corporativos aqui deixaria
         // a carteira vazia e o dinheiro a conciliar invisível.
-        const clauses = ['(fil_cod IS NULL OR fil_cod = ANY($filCods))'];
+        const clauses = [`(${col('fil_cod')} IS NULL OR ${col('fil_cod')} = ANY($filCods))`];
         const params: Record<string, unknown> = { filCods: input.filCods };
 
         // Arquivadas ficam de fora por DEFAULT — de toda leitura, incluindo os KPIs (ADR-0033).
@@ -270,30 +331,34 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
         // ninguém consiga somar no "a distribuir" um crédito que o analista tirou da carteira: um
         // KPI e uma tabela que discordam sobre o que existe é pior que qualquer um dos dois errado.
         clauses.push(
-            input.arquivadas === true ? 'arquivada_em IS NOT NULL' : 'arquivada_em IS NULL',
+            input.arquivadas === true
+                ? `${col('arquivada_em')} IS NOT NULL`
+                : `${col('arquivada_em')} IS NULL`,
         );
 
         if (input.tipos && input.tipos.length > 0) {
-            clauses.push('tipo = ANY($tipos)');
+            clauses.push(`${col('tipo')} = ANY($tipos)`);
             params.tipos = input.tipos;
         }
         if (input.statuses && input.statuses.length > 0) {
-            clauses.push('status = ANY($statuses)');
+            clauses.push(`${col('status')} = ANY($statuses)`);
             params.statuses = input.statuses;
         }
         if (input.categoriasExcluidas && input.categoriasExcluidas.length > 0) {
             // `categoria IS NULL` continua entrando: ausência de categoria não é
             // prova de ruído, e esconder o desconhecido é pior que mostrá-lo.
-            clauses.push('(categoria IS NULL OR NOT (categoria = ANY($categoriasExcluidas)))');
+            clauses.push(
+                `(${col('categoria')} IS NULL OR NOT (${col('categoria')} = ANY($categoriasExcluidas)))`,
+            );
             params.categoriasExcluidas = input.categoriasExcluidas;
         }
         if (!input.incluirTransferenciasInternas) {
             // Transferência entre contas da própria casa não é recebível. Escondida,
             // não apagada — mesma política do ruído de tesouraria.
-            clauses.push('transferencia_interna = FALSE');
+            clauses.push(`${col('transferencia_interna')} = FALSE`);
         }
         if (input.desde) {
-            clauses.push('data_movimento >= $desde');
+            clauses.push(`${col('data_movimento')} >= $desde`);
             params.desde = input.desde;
         }
         return { where: clauses.join(' AND '), params };
@@ -340,23 +405,120 @@ export default class TransacaoRepository implements TransacaoRepositoryInterface
     });
 
     /**
-     * Marca a transação como PROCESSADA (ADR-0033) — chamada quando o ledger da alocação settla.
+     * Escreve o status da transação aplicando a máquina de estados como GUARDA DE ORIGEM em SQL
+     * (ADR-0034). Substitui o antigo `marcarProcessada`, que só sabia escrever o terminal.
      *
-     * O `WHERE status <> 'processada'` torna a chamada idempotente e devolve `false` quando nada
-     * mudou, para o chamador não logar uma transição que não houve. Não usa
-     * `assertTransitionTransacao` porque o settle é a autoridade: se o ERP confirmou a baixa, a
-     * transação ESTÁ processada — recusar por causa do estado anterior deixaria a tela mentindo
-     * sobre trabalho que o Conexos já registrou.
+     * A guarda mora no `WHERE`, e não num `assertTransitionTransacao` antes da chamada, por dois
+     * motivos que se somam:
+     *
+     *  1. **Não pode lançar.** Quando esta linha roda, o dinheiro JÁ se moveu no ERP. Recusar por
+     *     causa do estado anterior deixaria a tela mentindo sobre trabalho que o Conexos registrou —
+     *     era o argumento correto do docblock antigo. Mas a conclusão de que a máquina precisava ser
+     *     BYPASSADA não seguia: não escrever nada é seguro, lançar é que não era.
+     *  2. **É atômico.** Ler o status, decidir e escrever em três tempos abriria janela para uma
+     *     alocação concorrente rebaixar o terminal. No `WHERE`, o Postgres decide.
+     *
+     * Como `PROCESSADA` não é origem de nenhuma transição, `origensPermitidasPara` nunca a devolve —
+     * então nenhuma escrita tardia consegue rebaixar um crédito já concluído, de graça.
+     *
+     * `status <> $destino` torna a reescrita um NO-OP silencioso (devolve `mudou: false`), não um
+     * bloqueio: o chamador reparador pode chamar à vontade sem poluir o log.
      */
-    public marcarProcessada = async (id: string): Promise<boolean> => {
-        const row = await this.databaseClient.selectFirst<{ id: string }>(
-            `UPDATE transacao_bancaria
-                SET status = $status, atualizado_em = now()
-              WHERE id = $id AND status <> $status
-              RETURNING id`,
-            { id, status: TRANSACAO_BANCARIA_STATUS.PROCESSADA },
+    public marcarStatus = async (
+        id: string,
+        destino: TransacaoBancariaStatus,
+    ): Promise<{ antes?: TransacaoBancariaStatus; mudou: boolean }> => {
+        const row = await this.databaseClient.selectFirst<{ antes?: string; depois?: string }>(
+            `WITH atual AS (
+                SELECT status FROM transacao_bancaria WHERE id = $id
+             ), upd AS (
+                UPDATE transacao_bancaria SET status = $destino, atualizado_em = now()
+                 WHERE id = $id AND status = ANY($origens) AND status <> $destino
+                RETURNING status
+             )
+             SELECT (SELECT status FROM atual) AS antes, (SELECT status FROM upd) AS depois`,
+            { id, destino, origens: [...origensPermitidasPara(destino)] },
         );
-        return row != null;
+        return {
+            ...(row?.antes != null ? { antes: row.antes as TransacaoBancariaStatus } : {}),
+            mudou: row?.depois != null,
+        };
+    };
+
+    /**
+     * Varredura de reconciliação: realinha o status de TODA transação cujo ledger discorda dela
+     * (ADR-0034). Idempotente — reexecutar não muda nada quando já está alinhado.
+     *
+     * Existe porque o reparo pontual (re-POST da alocação) só age se alguém clicar, e ninguém
+     * reprocessa uma alocação bem-sucedida. Sem esta varredura, um `marcarStatus` que falhou deixa a
+     * carteira mentindo para sempre. É o MESMO SQL do backfill da 0046, mantido aqui para rodar ao
+     * fim de cada ingestão.
+     *
+     * Ordem das três statements importa: `erro` é a última porque quem escreve por último é o último
+     * evento do ledger — a mesma regra do caminho vivo.
+     */
+    public reconciliarStatusPorLedger = async (): Promise<number> => {
+        const { PROCESSADA, PARCIAL, ERRO } = TRANSACAO_BANCARIA_STATUS;
+        let alteradas = 0;
+
+        await this.databaseClient.withTransaction(async (tx) => {
+            // 1) Cobertura total pela Σ das alocações executadas → terminal.
+            alteradas += await tx.update(
+                `UPDATE transacao_bancaria t
+                    SET status = $destino, atualizado_em = now()
+                   FROM (${SETTLED_POR_TXN}) s
+                  WHERE t.id = s.txn_id
+                    AND t.status = ANY($origens)
+                    AND t.valor > 0
+                    AND ROUND(s.alocado * 100) >= ROUND(t.valor * 100)`,
+                { destino: PROCESSADA, origens: [...origensPermitidasPara(PROCESSADA)] },
+            );
+
+            // 2) Cobertura parcial → segue na fila, agora rotulada corretamente.
+            alteradas += await tx.update(
+                `UPDATE transacao_bancaria t
+                    SET status = $destino, atualizado_em = now()
+                   FROM (${SETTLED_POR_TXN}) s
+                  WHERE t.id = s.txn_id
+                    AND t.status = ANY($origens)
+                    AND t.valor > 0
+                    AND ROUND(s.alocado * 100) > 0
+                    AND ROUND(s.alocado * 100) < ROUND(t.valor * 100)`,
+                { destino: PARCIAL, origens: [...origensPermitidasPara(PARCIAL)] },
+            );
+
+            // 3) Último evento do ledger não terminou bem → erro (rebaixa o `parcial` do passo 2).
+            //
+            // Inclui a execução INTERROMPIDA — presa em `reconciling` além da janela. Sem esta
+            // cláusula ela seria invisível: o processo que morreu no meio nunca roda o `catch`, logo
+            // nunca chama `registrarFalha`, logo nada escreve `erro`. O crédito ficaria `importada`
+            // com documento possivelmente órfão no ERP e não apareceria na aba de falhas — que é o
+            // único lugar do sistema que mostra esse estado.
+            alteradas += await tx.update(
+                `UPDATE transacao_bancaria t
+                    SET status = $destino, atualizado_em = now()
+                   FROM (
+                        SELECT DISTINCT ON (txn_id) txn_id, status, atualizado_em
+                          FROM solicitacao_numerario_execucao
+                         WHERE txn_id IS NOT NULL AND dry_run = FALSE
+                         ORDER BY txn_id, atualizado_em DESC
+                   ) u
+                  WHERE t.id = u.txn_id
+                    AND (
+                         u.status = 'error'
+                         OR (u.status = 'reconciling'
+                             AND u.atualizado_em < now() - make_interval(mins => $minutosParado::int))
+                        )
+                    AND t.status = ANY($origens)`,
+                {
+                    destino: ERRO,
+                    origens: [...origensPermitidasPara(ERRO)],
+                    minutosParado: EXECUCAO_INTERROMPIDA_MINUTOS,
+                },
+            );
+        });
+
+        return alteradas;
     };
 
     /**

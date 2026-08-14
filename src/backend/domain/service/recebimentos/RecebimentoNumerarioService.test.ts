@@ -35,6 +35,8 @@ interface Mocks {
     cadastro: jest.Mocked<ConexosCadastroClient>;
     repo: jest.Mocked<SolicitacaoNumerarioExecucaoRepositoryInterface>;
     ndeRepo: { save: jest.Mock; findByRecebimentoId: jest.Mock };
+    /** Onde o status da TRANSAÇÃO é escrito (ADR-0034) — observável para as asserções da regra Σ. */
+    transacaoRepo: { marcarStatus: jest.Mock };
     env: jest.Mocked<EnvironmentProvider>;
 }
 
@@ -231,10 +233,16 @@ const buildMocks = (over: Partial<Mocks> = {}): Mocks => ({
         setNdeAutorizado: jest.fn().mockResolvedValue(undefined),
         markSettled: jest.fn().mockResolvedValue(undefined),
         markError: jest.fn().mockResolvedValue(undefined),
+        // Default: cobertura TOTAL (o valor do `baseInput`) — a trilha que os ~60 testes existentes
+        // já pinam, em que o crédito inteiro foi alocado numa só vez.
+        somarSettledPorTxnId: jest.fn().mockResolvedValue(15000),
     } as never,
     ndeRepo: {
         save: jest.fn().mockImplementation((nde: unknown) => Promise.resolve(nde)),
         findByRecebimentoId: jest.fn().mockResolvedValue(null),
+    },
+    transacaoRepo: {
+        marcarStatus: jest.fn().mockResolvedValue({ antes: 'importada', mudou: true }),
     },
     cadastro: {
         // Default da suíte: POR ENCOMENDA (3) — a trilha COM NDe, que é o que os ~60 testes já pinam.
@@ -256,10 +264,9 @@ const buildService = (m: Mocks): RecebimentoNumerarioService =>
         new SnPayloadBuilder(),
         m.repo,
         m.ndeRepo as never,
-        // Stub do repo de transação: o serviço só o usa para levar a transação a `processada`
-        // (ADR-0033). Nenhum teste deste arquivo asserta sobre ele — o que importa é que a falha
-        // dele nunca derrube a alocação, coberto em teste próprio.
-        { marcarProcessada: jest.fn().mockResolvedValue(true) } as never,
+        // Repo de transação: o serviço o usa para alinhar o status do CRÉDITO com o ledger — Σ das
+        // alocações executadas × valor da transação (ADR-0034). Observável via `m.transacaoRepo`.
+        m.transacaoRepo as never,
         logService,
         new ErpErrorInterpreter(),
     );
@@ -1594,6 +1601,169 @@ describe('RecebimentoNumerarioService — idempotência (já settled)', () => {
         expect(out.snDocCod).toBe(18200);
         expect(out.ndDocCod).toBe(18337);
         expect(m.repo.beginExecution).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * ADR-0034 — o status da TRANSAÇÃO passa a ser escrito de verdade.
+ *
+ * Antes só existia `marcarProcessada`, disparada por `txnId`. Como o ledger é por
+ * `(txnId, priCod, valor)`, o primeiro settle de um crédito dividido marcava o crédito INTEIRO como
+ * concluído; e a falha da escrita virava só um WARN que nada retentava.
+ */
+describe('RecebimentoNumerarioService — status da transação (ADR-0034)', () => {
+    const ledgerSettled = {
+        idempotencyKey: 'sn-real:txn-1:90001:15000',
+        filCod: 2,
+        priCod: 90001,
+        status: 'settled',
+        dryRun: false,
+        docCod: 18200,
+        fin014BorCod: 77,
+        ndDocCod: 18337,
+        etapa: 'concluido',
+        criadoEm: new Date(),
+        atualizadoEm: new Date(),
+    };
+
+    it('cobertura TOTAL → processada', async () => {
+        const m = buildMocks();
+        (m.repo.somarSettledPorTxnId as jest.Mock).mockResolvedValue(15000);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('settled');
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'processada');
+    });
+
+    it('cobertura PARCIAL → parcial (o crédito segue na fila)', async () => {
+        const m = buildMocks();
+        // Split: esta perna alocou 15.000 de um crédito de 40.000 — o restante ainda espera.
+        (m.repo.somarSettledPorTxnId as jest.Mock).mockResolvedValue(15000);
+
+        await buildService(m).processarAlocacao(
+            baseInput({ transacao: { gerNum: 9, valor: 40000 } }),
+        );
+
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'parcial');
+    });
+
+    it('a última perna do split fecha em processada', async () => {
+        const m = buildMocks();
+        (m.repo.somarSettledPorTxnId as jest.Mock).mockResolvedValue(40000);
+
+        await buildService(m).processarAlocacao(
+            baseInput({ transacao: { gerNum: 9, valor: 40000 } }),
+        );
+
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'processada');
+    });
+
+    it('falha ao MEDIR não escreve status nenhum — processada é irreversível', async () => {
+        const m = buildMocks();
+        (m.repo.somarSettledPorTxnId as jest.Mock).mockRejectedValue(new Error('ledger fora'));
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        // A alocação continua sendo sucesso — o dinheiro se moveu. Mas marcar `processada` sem ter
+        // medido tiraria da carteira, permanentemente, um crédito que pode ter saldo a alocar:
+        // nada reverte esse estado. A varredura horária decide com a medição feita no Postgres.
+        expect(out.status).toBe('settled');
+        expect(m.transacaoRepo.marcarStatus).not.toHaveBeenCalled();
+    });
+
+    it('execução órfã em reconciling marca a transação como erro', async () => {
+        const m = buildMocks();
+        (m.repo.findByIdempotencyKey as jest.Mock).mockResolvedValue({
+            ...ledgerSettled,
+            status: 'reconciling',
+            docCod: undefined,
+            etapa: undefined,
+        });
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        // Este ramo devolve `error` SEM passar por `registrarFalha`. Sem a marcação, o crédito com
+        // SN possivelmente órfã no ERP ficaria `importada` e invisível na aba de falhas.
+        expect(out.status).toBe('error');
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'erro');
+    });
+
+    it('quitado-sem-nde também alinha o status', async () => {
+        const m = buildMocks();
+        (m.cadastro.listProcessos as jest.Mock).mockResolvedValue([processoRow(2)]);
+        (m.gerDoc.gerarDocProcesso as jest.Mock).mockResolvedValue({ docCod: 18200, messages: [] });
+        (m.repo.somarSettledPorTxnId as jest.Mock).mockResolvedValue(15000);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.etapa).toBe('quitado-sem-nde');
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'processada');
+    });
+
+    it('falha ao escrever o status NÃO derruba a alocação — o dinheiro já se moveu', async () => {
+        const m = buildMocks();
+        m.transacaoRepo.marcarStatus.mockRejectedValue(new Error('banco fora'));
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        // O rótulo da tela pode ficar desatualizado; a resposta NÃO pode virar erro, ou o analista
+        // reprocessaria uma baixa que já aconteceu. A varredura horária conserta o rótulo.
+        expect(out.status).toBe('settled');
+        expect(m.repo.markError).not.toHaveBeenCalled();
+    });
+
+    it('falha de etapa escreve erro na transação, não só no ledger', async () => {
+        const m = buildMocks();
+        (m.fin014.gravarBaixa as jest.Mock).mockRejectedValue(new Error('título já baixado'));
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('error');
+        expect(m.repo.markError).toHaveBeenCalled();
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'erro');
+    });
+
+    it('bloqueio de pré-flight NÃO escreve status — nada foi tentado no ERP', async () => {
+        const m = buildMocks();
+        // Processo sem o campo Tipo: o gate 0.5 reprova antes de qualquer escrita.
+        (m.cadastro.listProcessos as jest.Mock).mockResolvedValue([processoRow(undefined)]);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('blocked');
+        expect(m.transacaoRepo.marcarStatus).not.toHaveBeenCalled();
+    });
+
+    it('REPARO: re-POST de alocação já settled ressincroniza o status', async () => {
+        const m = buildMocks();
+        (m.repo.findByIdempotencyKey as jest.Mock).mockResolvedValue(ledgerSettled);
+        (m.repo.somarSettledPorTxnId as jest.Mock).mockResolvedValue(15000);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        // Este é o curto-circuito que realmente dispara num re-POST (roda antes do pré-flight).
+        // Antes ele devolvia `skipped` sem tocar no status, e a divergência era permanente.
+        expect(out.status).toBe('skipped');
+        expect(m.repo.beginExecution).not.toHaveBeenCalled();
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'processada');
+    });
+
+    it('REPARO: corrida em que o beginExecution encontra alreadySettled também ressincroniza', async () => {
+        const m = buildMocks();
+        (m.repo.beginExecution as jest.Mock).mockResolvedValue({
+            status: 'settled',
+            alreadySettled: true,
+        });
+        (m.repo.findByIdempotencyKey as jest.Mock)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValue(ledgerSettled);
+        (m.repo.somarSettledPorTxnId as jest.Mock).mockResolvedValue(15000);
+
+        const out = await buildService(m).processarAlocacao(baseInput());
+
+        expect(out.status).toBe('skipped');
+        expect(m.transacaoRepo.marcarStatus).toHaveBeenCalledWith('txn-1', 'processada');
     });
 });
 

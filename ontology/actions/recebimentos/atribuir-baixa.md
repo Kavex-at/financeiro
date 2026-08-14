@@ -23,6 +23,20 @@ side_effects:
 
 # atribuirBaixa — matching crédito ↔ recebíveis (Módulo 2) — SKELETON
 
+> ⚠️ **Conflito a resolver antes de implementar (ADR-0034).** Duas postconditions acima colidem com o
+> que já existe em produção:
+>
+> 1. **`parcial` já tem outro writer.** Desde a ADR-0034, `TransacaoBancaria.parcial` é escrito pelo
+>    settle da alocação e significa **dinheiro já baixado no ERP** (Σ das alocações executadas < valor
+>    do crédito). Aqui ele significaria um palpite do matching, sem nenhuma escrita no ERP. O tooltip
+>    da tela hoje promete explicitamente a primeira leitura ao analista — trocar o significado em
+>    silêncio quebraria essa promessa. Reconciliar, ou renomear um dos dois.
+> 2. **`conciliada` está definida de duas formas.** `state-machines/transacao-bancaria.md` diz "match
+>    resolvido **e executado/pronto**"; a postcondition abaixo diz "**nenhuma escrita no ERP** — só
+>    rascunho local". Um estado cujo gatilho não toca o ERP não pode significar "executado".
+>
+> Ver `ontology/_inbox/recebimentos-status-writers-followups.md` (P2).
+
 > **SKELETON (Fase 0). Implementação = Fase 2 (Módulo 2).** Casa um crédito (`TransacaoBancaria`)
 > contra `DocumentoAReceber` em aberto e **classifica** o match: `unica` / `multiplas` (candidatas) /
 > `parcial` / `nenhuma`. Match incerto vai para a **fila de análise manual** — **nunca** vira baixa

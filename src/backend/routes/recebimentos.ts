@@ -9,6 +9,7 @@ import {
     MATCH_CLASSIFICACAO,
     PAINEL_TRANSACOES_CAP,
     RECEBIMENTO_STATUS,
+    TRANSACAO_BANCARIA_STATUS,
 } from '../domain/interface/recebimentos/constants.js';
 import type { Processo } from '../domain/interface/recebimentos/GerDocProcesso.js';
 import type { Recebimento } from '../domain/interface/recebimentos/Recebimento.js';
@@ -102,6 +103,22 @@ const painelQuerySchema = z.object({
         .enum(['true', 'false'])
         .optional()
         .transform((v) => v === 'true'),
+    /**
+     * Filtro de status da LISTA (ADR-0034) — não afeta os KPIs, que sempre contam a janela inteira.
+     * `pendentes` = tudo que não é `processada` (o default da carteira).
+     */
+    status: z
+        .enum([
+            'todas',
+            'pendentes',
+            TRANSACAO_BANCARIA_STATUS.IMPORTADA,
+            TRANSACAO_BANCARIA_STATUS.CONCILIADA,
+            TRANSACAO_BANCARIA_STATUS.PARCIAL,
+            TRANSACAO_BANCARIA_STATUS.MANUAL,
+            TRANSACAO_BANCARIA_STATUS.ERRO,
+            TRANSACAO_BANCARIA_STATUS.PROCESSADA,
+        ])
+        .optional(),
 });
 
 /**
@@ -144,6 +161,7 @@ router.get(
                 limit: parsed.data.limit,
                 incluirTesouraria: parsed.data.incluirTesouraria,
                 arquivadas: parsed.data.arquivadas,
+                ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
             }),
         );
     }),

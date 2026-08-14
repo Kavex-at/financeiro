@@ -11,6 +11,9 @@ related_files:
   - src/backend/domain/interface/recebimentos/TransacaoBancaria.ts
   - src/backend/domain/repository/recebimentos/TransacaoRepository.ts
   - src/backend/domain/service/recebimentos/normalizarLancamento.ts
+  - src/backend/domain/interface/recebimentos/recebimentoTransitions.ts
+  - src/backend/migrations/0045_modalidade_processada_arquivamento.sql
+  - src/backend/migrations/0047_backfill_status_transacao_por_ledger.sql
 properties:
   - id
   - correlationId
@@ -22,9 +25,17 @@ properties:
   - contraparte
   - referenciaBancaria
   - naturalKey
+  - gerNum
+  - contaDescricao
+  - categoria
+  - categoriaDesc
+  - canal
+  - transferenciaInterna
   - rawPayload
   - normalized
   - status
+  - arquivadaEm
+  - arquivadaPor
   - importRunId
   - importadoEm
 relationships:
@@ -79,7 +90,7 @@ Nexxera** (não o ERP). É **READ-ONLY no Nexxera** (só importa) e a única esc
 | `categoria` / `categoriaDesc` | string? | `exiEspCategoria` | Discriminador do RUÍDO DE TESOURARIA (resgate de aplicação, ações, transferência entre contas). Filtro de exibição; a ingestão persiste tudo. |
 | `rawPayload` | json | `transacao_bancaria.raw_payload` | **Payload cru original** do Nexxera (auditoria + reprocessamento sem re-fetch). |
 | `normalized` | json | `transacao_bancaria.normalized` | Forma **normalizada** interna (independe do canal API/SFTP/CNAB — port channel-agnostic, O7). |
-| `status` | enum | `transacao_bancaria.status` | Ciclo de vida da conciliação — ver `state-machines/transacao-bancaria.md` (`importada → conciliada/parcial/manual/erro/processada`). `processada` é o terminal operacional escrito pelo settle da alocação (ADR-0033). |
+| `status` | enum | `transacao_bancaria.status` | Ciclo de vida da conciliação — ver `state-machines/transacao-bancaria.md` (`importada → conciliada/parcial/manual/erro/processada`). Desde a ADR-0034, `parcial` e `processada` são decididos pela **regra Σ** (soma das alocações `settled` do ledger × valor do crédito, em centavos) e `erro` é escrito na falha da execução. `conciliada` e `manual` seguem **sem produtor** até o Módulo 2 e estão fora da tela. Toda escrita passa pela guarda de origem derivada de `TRANSACAO_ALLOWED`, que torna `processada` estruturalmente irreversível. |
 | `arquivadaEm` / `arquivadaPor` | Date? / string? | `transacao_bancaria.arquivada_em` / `arquivada_por` | **Arquivamento** (ADR-0033) — ortogonal ao status. Preenchido = fora da listagem **e dos KPIs**. Serve ao ruído de tesouraria que nunca será conciliado. Guarda quem e quando, não um boolean. Reversível. |
 | `importRunId` | string? (uuid) | FK → run de importação | A run Nexxera que gravou o movimento (auditoria de cadência). |
 | `importadoEm` | Date | `importado_em` | Quando foi importado. |

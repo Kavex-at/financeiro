@@ -397,8 +397,46 @@ export interface SolicitacaoNumerarioExecucaoRepositoryInterface {
     listModalidadePorTxnIds: (
         txnIds: string[],
     ) => Promise<Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>>;
+    /**
+     * Σ das alocações JÁ EXECUTADAS de um crédito (ADR-0034) — o denominador da regra que decide
+     * entre `parcial` e `processada`.
+     *
+     * `undefined` = indeterminado (o ledger não conhece o `txnId`), que o chamador trata como
+     * "não consegui medir" e portanto não regride o status.
+     */
+    somarSettledPorTxnId: (txnId: string) => Promise<number | undefined>;
+    /**
+     * Última falha de cada crédito, em lote — alimenta a aba Falhas (ADR-0034). Em lote pelo mesmo
+     * motivo de `listModalidadePorTxnIds`: uma query por linha seria centenas de round-trips.
+     */
+    listUltimaFalhaPorTxnIds: (txnIds: string[]) => Promise<Map<string, UltimaFalhaExecucao>>;
     markSettled: (key: string, data: SolicitacaoNumerarioExecucaoSettleData) => Promise<void>;
     markError: (key: string, data: SolicitacaoNumerarioExecucaoErrorData) => Promise<void>;
+}
+
+/**
+ * O que a aba Falhas mostra por crédito (ADR-0034).
+ *
+ * Deliberadamente SEM `erpResponse`/`requestPayload`: a aba pendura no `/painel`, que não é
+ * admin-only, e esses campos são corpos crus do ERP sem redação. Quem precisa deles usa
+ * `GET /recebimentos/execucoes`, que é `requireRole('admin')`. `mensagem` é segura por construção —
+ * `registrarFalha` grava a frase amigável do `ErpErrorInterpreter`, nunca o 400 cru.
+ */
+export interface UltimaFalhaExecucao {
+    priCod: number;
+    valor?: number;
+    etapa?: SolicitacaoNumerarioEtapa;
+    mensagem?: string;
+    docCod?: number;
+    ndDocCod?: number;
+    executadoPor?: string;
+    ocorridaEm: Date;
+    /**
+     * `true` = a execução ficou presa em `reconciling` — o processo morreu entre o `beginExecution` e
+     * o fecho. É o estado mais perigoso do sistema (pode haver documento órfão no Conexos sem
+     * ninguém olhando), então a tela o rotula à parte em vez de misturá-lo com falhas registradas.
+     */
+    interrompida: boolean;
 }
 
 /**

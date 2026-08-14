@@ -214,3 +214,187 @@ describe('TransacaoRepository — leitura para o painel', () => {
         expect(kpis).toEqual({ importada: 1200, conciliada: 37 });
     });
 });
+
+describe('TransacaoRepository — marcarStatus (guarda de origem, ADR-0034)', () => {
+    it('aplica as origens permitidas no WHERE e é parametrizado', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({
+            antes: 'importada',
+            depois: 'processada',
+        });
+
+        const out = await new TransacaoRepository(db).marcarStatus(
+            'txn-1',
+            TRANSACAO_BANCARIA_STATUS.PROCESSADA,
+        );
+
+        const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(sql).toContain('UPDATE transacao_bancaria SET status = $destino');
+        expect(sql).toContain('status = ANY($origens)');
+        expect(sql).toContain('status <> $destino');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params.destino).toBe('processada');
+        // `processada` NUNCA é origem — é o que impede uma escrita tardia de rebaixar o terminal.
+        expect(params.origens).not.toContain('processada');
+        expect(params.origens).toEqual(
+            expect.arrayContaining(['importada', 'conciliada', 'parcial', 'manual', 'erro']),
+        );
+        expect(out).toEqual({ antes: 'importada', mudou: true });
+    });
+
+    it('origem proibida não muda nada e devolve o estado atual', async () => {
+        const db = buildDb();
+        // Linha já `processada`: o UPDATE não alcança, o CTE `atual` ainda devolve o status.
+        (db.selectFirst as jest.Mock).mockResolvedValue({ antes: 'processada', depois: null });
+
+        const out = await new TransacaoRepository(db).marcarStatus(
+            'txn-1',
+            TRANSACAO_BANCARIA_STATUS.PARCIAL,
+        );
+
+        const [, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(params.origens).not.toContain('processada');
+        expect(out).toEqual({ antes: 'processada', mudou: false });
+    });
+
+    it('destino igual ao atual é no-op silencioso, não bloqueio', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ antes: 'erro', depois: null });
+        const out = await new TransacaoRepository(db).marcarStatus(
+            'txn-1',
+            TRANSACAO_BANCARIA_STATUS.ERRO,
+        );
+        expect(out).toEqual({ antes: 'erro', mudou: false });
+    });
+
+    it('transação inexistente devolve mudou=false sem antes', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ antes: null, depois: null });
+        const out = await new TransacaoRepository(db).marcarStatus(
+            'txn-sumida',
+            TRANSACAO_BANCARIA_STATUS.PROCESSADA,
+        );
+        expect(out).toEqual({ mudou: false });
+    });
+});
+
+describe('TransacaoRepository — latch da reingestão (ADR-0034)', () => {
+    it('upsertMany só refresca linha intocada E sem nenhuma linha de ledger', async () => {
+        const db = buildDb();
+        const tx = {
+            selectMany: jest.fn().mockResolvedValue([{ inserida: true }]),
+            selectFirst: jest.fn(),
+            insert: jest.fn(),
+            update: jest.fn(),
+        };
+        (db.withTransaction as unknown as jest.Mock) = jest
+            .fn()
+            .mockImplementation((fn: (t: unknown) => Promise<unknown>) => fn(tx));
+
+        await new TransacaoRepository(db).upsertMany([buildTransacao()], 'run-1');
+
+        const [sql, params] = tx.selectMany.mock.calls[0];
+        expect(sql).toContain('WHERE transacao_bancaria.status = $statusIntocado');
+        expect(sql).toContain('NOT EXISTS');
+        expect(sql).toContain('e.txn_id = transacao_bancaria.id');
+        expect(params.statusIntocado).toBe('importada');
+        // O cron não pode mexer no `valor`, que é o denominador da regra Σ, de um crédito com
+        // alocação em curso — e uma marcação de status que falhou deixava a linha em `importada`.
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+    });
+});
+
+describe('TransacaoRepository — reconciliarStatusPorLedger (ADR-0034)', () => {
+    const rodar = async () => {
+        const db = buildDb();
+        const tx = {
+            selectMany: jest.fn().mockResolvedValue([]),
+            selectFirst: jest.fn(),
+            insert: jest.fn(),
+            update: jest.fn().mockResolvedValue(2),
+        };
+        (db.withTransaction as unknown as jest.Mock) = jest
+            .fn()
+            .mockImplementation((fn: (t: unknown) => Promise<unknown>) => fn(tx));
+        const total = await new TransacaoRepository(db).reconciliarStatusPorLedger();
+        return { tx, total };
+    };
+
+    it('roda três statements na ordem processada → parcial → erro', async () => {
+        const { tx, total } = await rodar();
+        expect(tx.update).toHaveBeenCalledTimes(3);
+        expect(total).toBe(6);
+
+        const destinos = tx.update.mock.calls.map((c) => (c[1] as { destino: string }).destino);
+        // `erro` por último: quem escreve o status é o ÚLTIMO evento do ledger — mesma regra do
+        // caminho vivo. Inverter faria o backfill produzir um estado que o runtime nunca produz.
+        expect(destinos).toEqual(['processada', 'parcial', 'erro']);
+    });
+
+    it('compara dinheiro em centavos inteiros, nunca em float', async () => {
+        const { tx } = await rodar();
+        const [sqlProcessada] = tx.update.mock.calls[0];
+        const [sqlParcial] = tx.update.mock.calls[1];
+        expect(sqlProcessada).toContain('ROUND(s.alocado * 100) >= ROUND(t.valor * 100)');
+        expect(sqlParcial).toContain('ROUND(s.alocado * 100) < ROUND(t.valor * 100)');
+        expect(sqlProcessada).not.toContain('float8');
+    });
+
+    it('só soma alocação settled e não-dry-run, e não adivinha sobre valor nulo', async () => {
+        const { tx } = await rodar();
+        const [sql] = tx.update.mock.calls[0];
+        expect(sql).toContain("status = 'settled'");
+        expect(sql).toContain('dry_run = FALSE');
+        expect(sql).toContain('HAVING SUM(valor) IS NOT NULL');
+    });
+
+    it('a statement de erro captura também a execução INTERROMPIDA', async () => {
+        const { tx } = await rodar();
+        const [sql, params] = tx.update.mock.calls[2];
+        // Sem esta cláusula, o processo que morre no meio nunca roda o `catch`, nunca chama
+        // `registrarFalha`, e o crédito com documento possivelmente órfão no ERP fica `importada` —
+        // invisível na única tela que mostraria esse estado.
+        expect(sql).toContain("u.status = 'error'");
+        expect(sql).toContain("u.status = 'reconciling'");
+        expect(sql).toContain('make_interval(mins => $minutosParado::int)');
+        expect((params as { minutosParado: number }).minutosParado).toBe(15);
+    });
+
+    it('nenhuma statement admite processada como origem', async () => {
+        const { tx } = await rodar();
+        for (const [, params] of tx.update.mock.calls) {
+            expect((params as { origens: string[] }).origens).not.toContain('processada');
+        }
+    });
+});
+
+describe('TransacaoRepository — somarValorPorStatus com alocado (ADR-0034)', () => {
+    it('faz LEFT JOIN com o ledger e qualifica as colunas do filtro', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            { status: 'parcial', total: 100000, alocado: 90000, em_aberto: 10000 },
+        ]);
+
+        const out = await new TransacaoRepository(db).somarValorPorStatus({ filCods: [1] });
+
+        const [sql] = (db.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toContain('LEFT JOIN');
+        expect(sql).toContain('s.txn_id = t.id');
+        expect(sql).toContain('GROUP BY t.status');
+        // Corte em zero POR LINHA: no grupo, um crédito sobre-alocado cancelaria o saldo aberto de
+        // outro e o KPI esconderia dinheiro que ainda precisa ser distribuído.
+        expect(sql).toContain('GREATEST(t.valor - COALESCE(s.alocado, 0), 0)');
+        // Colunas qualificadas: sem o prefixo, um JOIN futuro que exponha as mesmas colunas
+        // tornaria o filtro ambíguo em vez de errado — falha barulhenta, mas evitável.
+        expect(sql).toContain('t.fil_cod');
+        expect(sql).toContain('t.arquivada_em');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(out).toEqual({ parcial: { total: 100000, alocado: 90000, emAberto: 10000 } });
+    });
+
+    it('sem filiais permitidas não consulta o banco', async () => {
+        const db = buildDb();
+        expect(await new TransacaoRepository(db).somarValorPorStatus({ filCods: [] })).toEqual({});
+        expect(db.selectMany).not.toHaveBeenCalled();
+    });
+});
