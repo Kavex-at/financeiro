@@ -46,6 +46,7 @@ describe('computeKpis', () => {
       parciais: 1,
       filaManual: 1,
       erro: 1,
+      processadas: 0,
       valorNaoAlocado: 3500,
       ndePendentes: 1,
     })
@@ -110,7 +111,25 @@ describe('fetchPainelRecebimentos', () => {
 describe('fixture', () => {
   it('exercita todos os status de transação (para a review ver cada chip)', () => {
     const statuses = new Set(recebimentosPainelFixture.transacoes.map((t) => t.status))
-    expect(statuses).toEqual(new Set(['importada', 'conciliada', 'parcial', 'manual', 'erro']))
+    expect(statuses).toEqual(
+      new Set(['importada', 'conciliada', 'parcial', 'manual', 'erro', 'processada']),
+    )
+  })
+
+  it('cobre os dois tipos de falha da aba Falhas (ADR-0034)', () => {
+    const falhas = recebimentosPainelFixture.transacoes
+      .map((t) => t.ultimaFalha)
+      .filter((f): f is NonNullable<typeof f> => f !== undefined)
+
+    // Falha registrada: tem mensagem amigável, e NUNCA payload cru do ERP (a aba não é admin-only).
+    const registrada = falhas.find((f) => !f.interrompida)
+    expect(registrada?.mensagem).toBeTruthy()
+    expect(registrada).not.toHaveProperty('erpResponse')
+
+    // Interrompida: parou no meio, então não há mensagem — o risco é documento órfão no Conexos.
+    const interrompida = falhas.find((f) => f.interrompida)
+    expect(interrompida?.mensagem).toBeUndefined()
+    expect(interrompida?.docCod).toBeDefined()
   })
 })
 

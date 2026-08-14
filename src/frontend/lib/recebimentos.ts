@@ -84,8 +84,35 @@ export interface TransacaoBancaria {
   contaDescricao?: string
   /** Classificação do match (quando já houve `atribuirBaixa`). Fase 2 popula de verdade. */
   classificacaoMatch?: MatchClassificacao
+  /**
+   * Última falha de execução deste crédito (ADR-0034). Só vem preenchida na aba de falhas — o
+   * painel normal não paga a query.
+   */
+  ultimaFalha?: UltimaFalhaExecucao
   importRunId?: string
   importadoEm: string
+}
+
+/**
+ * O que a aba Falhas mostra por crédito (ADR-0034).
+ *
+ * Sem payload cru do ERP de propósito: a aba pendura no `/painel`, que não é admin-only.
+ * `mensagem` é a frase amigável que o backend já interpretou, nunca o 400 do Conexos.
+ */
+export interface UltimaFalhaExecucao {
+  priCod: number
+  valor?: number
+  etapa?: string
+  mensagem?: string
+  docCod?: number
+  ndDocCod?: number
+  executadoPor?: string
+  ocorridaEm: string
+  /**
+   * `true` = a execução ficou presa no meio (o processo morreu entre abrir e fechar), não uma falha
+   * registrada. Pode haver documento órfão no Conexos — por isso a tela a rotula à parte.
+   */
+  interrompida: boolean
 }
 
 /** Agregado de conciliação (a spine) — espelho de `Recebimento`. */
@@ -126,13 +153,19 @@ export interface NotaDebitoEletronica {
 /** KPIs agregados do painel (Fase 1 — derivados client-side do fixture se ausentes). */
 export interface RecebimentosKpis {
   importadas: number
+  /** Sem writer até o Módulo 2 (motor de matching) — sempre 0, e fora da tela (ADR-0034). */
   conciliadas: number
   parciais: number
+  /** Sem writer até o Módulo 2 — sempre 0, e fora da tela (ADR-0034). */
   filaManual: number
   erro: number
+  processadas: number
   valorNaoAlocado: number
   ndePendentes: number
 }
+
+/** Filtro de status aceito pelo painel — os 6 do enum + os dois agregados da tela (ADR-0034). */
+export type PainelStatusFiltro = 'todas' | 'pendentes' | TransacaoBancariaStatus
 
 export interface RecebimentosPainel {
   /**
@@ -168,6 +201,7 @@ export function computeKpis(
     parciais: transacoes.filter((t) => t.status === 'parcial').length,
     filaManual: transacoes.filter((t) => t.status === 'manual').length,
     erro: transacoes.filter((t) => t.status === 'erro').length,
+    processadas: transacoes.filter((t) => t.status === 'processada').length,
     valorNaoAlocado: recebimentos.reduce((acc, r) => acc + (r.diferencaNaoAlocada || 0), 0),
     ndePendentes: ndes.filter((n) => n.statusEmissao === 'pendente').length,
   }
@@ -249,8 +283,60 @@ const fixtureTransacoes: TransacaoBancaria[] = [
     referenciaBancaria: 'PIX-EF5567',
     naturalKey: '4:77310:2026-07-16:21750:PIX-EF5567',
     status: 'erro',
+    ultimaFalha: {
+      priCod: 90004,
+      valor: 21750,
+      etapa: 'fin014',
+      mensagem: 'Título já baixado no Conexos — confira o borderô antes de repetir.',
+      docCod: 18342,
+      executadoPor: 'yuri',
+      ocorridaEm: '2026-07-16T10:05:00.000Z',
+      interrompida: false,
+    },
     importRunId: 'run-0002',
     importadoEm: '2026-07-16T09:52:00.000Z',
+  },
+  {
+    // Execução INTERROMPIDA (ADR-0034): o processo morreu entre abrir e fechar a execução. Fica na
+    // aba de falhas com rótulo próprio — é onde mora o risco de documento órfão no Conexos.
+    id: 'txn-0006',
+    correlationId: 'corr-0006',
+    filCod: 4,
+    dataMovimento: '2026-07-15T14:20:00.000Z',
+    tipo: 'CREDITO',
+    valor: 88400,
+    moeda: 'BRL',
+    contraparte: 'ATUAL T P L',
+    referenciaBancaria: 'TED-99120',
+    naturalKey: '4:77310:2026-07-15:88400:TED-99120',
+    status: 'erro',
+    ultimaFalha: {
+      priCod: 90006,
+      valor: 88400,
+      etapa: 'sn',
+      docCod: 18390,
+      executadoPor: 'yuri',
+      ocorridaEm: '2026-07-15T14:22:00.000Z',
+      interrompida: true,
+    },
+    importRunId: 'run-0002',
+    importadoEm: '2026-07-15T14:25:00.000Z',
+  },
+  {
+    // Terminal: só aparece com o filtro "Processadas" ou "Todas" — o default da carteira a esconde.
+    id: 'txn-0007',
+    correlationId: 'corr-0007',
+    filCod: 4,
+    dataMovimento: '2026-07-14T08:00:00.000Z',
+    tipo: 'CREDITO',
+    valor: 33000,
+    moeda: 'BRL',
+    contraparte: 'BUNTECH TECNOLOGIA',
+    referenciaBancaria: 'PIX-AA1002',
+    naturalKey: '4:77310:2026-07-14:33000:PIX-AA1002',
+    status: 'processada',
+    importRunId: 'run-0002',
+    importadoEm: '2026-07-14T08:05:00.000Z',
   },
 ]
 
@@ -663,10 +749,15 @@ export async function processarSolicitacaoNumerario(
  * de erro com botão de tentar de novo.
  */
 export async function fetchPainelRecebimentos(
-  opts: { arquivadas?: boolean } = {},
+  opts: { arquivadas?: boolean; status?: PainelStatusFiltro } = {},
 ): Promise<RecebimentosPainel> {
+  const params = new URLSearchParams()
   // `arquivadas=true` troca a carteira ativa pela lista de arquivadas — não soma as duas (ADR-0033).
-  const qs = opts.arquivadas ? '?arquivadas=true' : ''
+  if (opts.arquivadas) params.set('arquivadas', 'true')
+  // O filtro de status é SERVER-side (ADR-0034): filtrar no cliente rodava sobre a página já capada
+  // em 500 linhas, então uma falha antiga simplesmente não aparecia na aba que existe para mostrá-la.
+  if (opts.status) params.set('status', opts.status)
+  const qs = params.size > 0 ? `?${params}` : ''
   const res = await apiFetch(`${API}/recebimentos/painel${qs}`, {
     headers: await withAuthHeaders(),
   })

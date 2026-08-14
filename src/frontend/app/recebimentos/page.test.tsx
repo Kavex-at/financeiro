@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import RecebimentosPage from '@/app/recebimentos/page'
 import { metadata } from '@/app/recebimentos/layout'
+import { fetchPainelRecebimentos } from '@/lib/recebimentos'
 
 // O painel busca a carteira no mount; o objeto deste teste é o cabeçalho, não os
 // dados. Reaproveita o `recebimentosPainelFixture` já exportado pela lib — montar
@@ -58,5 +59,52 @@ describe('RecebimentosPage — título', () => {
     // Precisa morar no layout: `page.tsx` é 'use client' e o Next ignora
     // `export const metadata` em client component — sairia o título do layout raiz.
     expect(metadata.title).toBe('Gestão de Adiantamentos')
+  })
+})
+
+/**
+ * ADR-0034 — a tela para de oferecer o que não existe e ganha a aba de falhas.
+ */
+describe('RecebimentosPage — abas e filtros (ADR-0034)', () => {
+  const renderPainel = async () => {
+    await act(async () => {
+      render(<RecebimentosPage />)
+    })
+  }
+
+  it('pede a carteira já filtrada no servidor pelo default "A processar"', async () => {
+    await renderPainel()
+
+    // Server-side de propósito: filtrar no cliente rodava sobre a página capada em 500 linhas, e o
+    // histórico processado consumia a cota da fila de trabalho.
+    expect(fetchPainelRecebimentos).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pendentes' }),
+    )
+  })
+
+  it('tem aba Falhas e NÃO tem mais a Fila manual (placeholder do Módulo 2)', async () => {
+    await renderPainel()
+
+    expect(screen.getByRole('tab', { name: /Falhas/ })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /Fila manual/ })).not.toBeInTheDocument()
+  })
+
+  it('não mostra os KPIs sem writer — Conciliadas e Fila manual', async () => {
+    await renderPainel()
+
+    // Um KPI permanentemente zero ensina o analista que os números da tela são decorativos.
+    expect(screen.queryByText('Conciliadas')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fila manual')).not.toBeInTheDocument()
+    expect(screen.getByText('Processadas')).toBeInTheDocument()
+  })
+
+  it('não oferece filtro por status que nada escreve', async () => {
+    await renderPainel()
+
+    const botoes = screen.getAllByRole('button').map((b) => b.textContent)
+    expect(botoes).toContain('processada')
+    expect(botoes).toContain('parcial')
+    expect(botoes).not.toContain('conciliada')
+    expect(botoes).not.toContain('manual')
   })
 })

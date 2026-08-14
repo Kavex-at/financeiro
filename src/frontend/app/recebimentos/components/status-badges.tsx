@@ -79,6 +79,9 @@ const TRANSACAO_SPECS: Record<TransacaoBancariaStatus, ChipSpec> = {
     className: 'border-info/40 text-info',
     tooltip: 'Importado, ainda não conciliado.',
   },
+  // `conciliada` e `manual` não têm produtor até o Módulo 2 (motor de matching) e estão fora da
+  // tela desde a ADR-0034. As chaves ficam porque o `Record` é exaustivo — e porque uma linha
+  // antiga do banco ainda poderia trazê-las.
   conciliada: {
     label: 'conciliada',
     icon: CheckCircle2,
@@ -89,7 +92,8 @@ const TRANSACAO_SPECS: Record<TransacaoBancariaStatus, ChipSpec> = {
     label: 'parcial',
     icon: PieChart,
     className: 'border-warning/40 text-warning',
-    tooltip: 'Parte casada, resta saldo a alocar.',
+    tooltip:
+      'Parte do crédito já foi alocada e BAIXADA no ERP — resta saldo a alocar. Não é um palpite de match: é dinheiro que já se moveu.',
   },
   manual: {
     label: 'fila manual',
@@ -101,7 +105,7 @@ const TRANSACAO_SPECS: Record<TransacaoBancariaStatus, ChipSpec> = {
     label: 'erro',
     icon: AlertTriangle,
     className: 'border-danger/40 text-danger',
-    tooltip: 'Falha reprocessável na conciliação.',
+    tooltip: 'A última execução de uma alocação deste crédito falhou — veja a aba Falhas.',
   },
   processada: {
     label: 'processada',
