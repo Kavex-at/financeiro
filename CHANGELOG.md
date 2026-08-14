@@ -1,5 +1,57 @@
 # Columbia Financeiro — Changelog
 
+## v0.24.0 (2026-08-13) — Gestão de Adiantamentos: a carteira para de mentir sobre o próprio trabalho
+
+> ⚠️ **Aviso operacional — a carteira encolhe neste deploy.** A migração `0047` realinha o status de
+> créditos que já tinham baixa feita no Conexos mas apareciam como pendentes. Na prática: a lista da
+> primeira aba fica menor e o KPI "valor não alocado" cai de uma vez. **Rodar as consultas de medição
+> do rodapé da migração e aprovar os números antes de subir.**
+
+- **feat(recebimentos):** quatro dos seis status de `TransacaoBancaria` nunca eram escritos por
+  caminho de código nenhum. Os KPIs "Conciliadas", "Parciais", "Fila manual" e "Erro" eram
+  permanentemente **zero**, os filtros correspondentes devolviam lista vazia sempre, e todo crédito
+  ficava em `importada` mesmo com a baixa já registrada no ERP — inclusive um de R$ 6.690.000,00.
+- **fix(recebimentos):** `processada` e `parcial` passam a ser decididos pela **regra Σ** — soma das
+  alocações já executadas do crédito × valor dele, comparada em **centavos inteiros**. Isso conserta
+  um defeito que a marcação anterior não tinha como evitar: ela era por transação, mas o ledger é por
+  `(transação, processo, valor)`, então a **primeira** baixa de um crédito dividido entre quatro
+  processos marcava o crédito inteiro como concluído e escondia o que faltava alocar.
+- **fix(recebimentos):** `erro` passa a ser escrito na transação quando uma alocação falha. Antes a
+  falha só existia no ledger de execução, e o analista não tinha como vê-la na carteira.
+- **feat(recebimentos):** nova aba **Falhas**, com a etapa em que quebrou, a mensagem já traduzida do
+  ERP, quem tentou e quando. Busca própria no servidor (não filtra a página capada em 500 linhas, que
+  esconderia justamente a falha mais antiga) e **sem payload cru do ERP** — a aba não é admin-only.
+- **feat(recebimentos):** a aba mostra também as execuções **interrompidas no meio** (processo morreu
+  entre abrir e concluir), com rótulo próprio e aviso de possível documento órfão no Conexos. Nada no
+  sistema mostrava esse estado, que é o mais perigoso que existe na frente. Como o processo que morre
+  nunca roda o tratamento de erro, quem revela essas linhas são a varredura de reconciliação e o
+  backfill — não o caminho de falha normal.
+- **fix(recebimentos):** a máquina de estados vira **autoritativa** — a tabela de transições passa a
+  ser aplicada como guarda de origem dentro do `WHERE` do SQL, atômica e sem lançar num caminho onde
+  o dinheiro já se moveu. Como `processada` não é origem de nada, nenhuma escrita tardia consegue
+  rebaixar um crédito concluído.
+- **fix(recebimentos):** reprocessar uma alocação vira **botão de conserto**. Os dois curto-circuitos
+  de idempotência ressincronizam o status antes de devolver "já processado" — antes, um status que
+  falhou ao ser escrito ficava divergente para sempre, porque ninguém reprocessa uma alocação que deu
+  certo. Uma varredura ao fim de cada ingestão horária cobre o resto.
+- **fix(recebimentos):** o latch da reingestão ganhou uma segunda condição: além de "status
+  intocado", exige **nenhuma linha de ledger**. Um crédito cuja marcação falhou continuava sendo
+  refrescado toda hora pelo cron — com `valor` incluído, que é o denominador da regra Σ.
+- **fix(recebimentos):** o KPI **"valor não alocado"** passa a subtrair o já alocado. Antes contava o
+  valor de face inteiro de créditos parcialmente baixados, deixando o painel se contradizendo: uma
+  linha marcada `parcial` na tabela e contada por inteiro no KPI logo acima.
+- **fix(recebimentos):** a linha processada agora **sai da tabela sozinha**. O diálogo de alocação
+  ganhou callback de conclusão — sem ele, o status recém-escrito no backend só chegava à tela depois
+  de um "Recarregar" manual.
+- **fix(recebimentos):** saem da tela os KPIs "Conciliadas" e "Fila manual" e os filtros por
+  `conciliada`/`manual`. Dependem do motor de matching (Módulo 2), que não existe — e um KPI sempre
+  zero ensina o analista a desconfiar de todos os outros números da mesma tela. Os valores continuam
+  no enum e na API. A aba placeholder "Fila manual" (que o KPI abria) foi removida.
+- **fix(recebimentos):** o filtro de status vira **server-side**, então o histórico já processado para
+  de consumir o teto de 500 linhas da fila de trabalho.
+- Ver **ADR-0034**, `state-machines/transacao-bancaria.md` e
+  `ontology/_inbox/recebimentos-status-writers-followups.md`.
+
 ## v0.23.4 (2026-08-13) — Recebimentos: a homologação da NDe é conferida no documento
 
 - **fix(recebimentos):** a etapa de homologação passa a **verificar o estado gravado** (`docVldNfehom`)
