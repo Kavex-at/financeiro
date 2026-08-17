@@ -1,7 +1,15 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosBaseClient from '../../client/ConexosBaseClient.js';
+import ConexosNdeFiscalClient from '../../client/ConexosNdeFiscalClient.js';
+import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import LogService from '../LogService.js';
 import {
     CATEGORIAS_TESOURARIA,
+    FANOUT_LIMIT_RECEBIMENTOS,
+    PAINEL_NDE_HIDRATACAO_BUDGET_MS,
+    PAINEL_NDE_HIDRATACAO_CAP,
+    PAINEL_NDE_HIDRATACAO_TIMEOUT_MS,
+    PAINEL_NDES_CAP,
     PAINEL_TRANSACOES_CAP,
     PRI_VLD_TIPO_ROTULO,
     ndeEDevida,
@@ -9,12 +17,16 @@ import {
     TRANSACAO_TIPO,
 } from '../../interface/recebimentos/constants.js';
 import type { TransacaoBancariaStatus } from '../../interface/recebimentos/constants.js';
+import type { DocStatusFiscal } from '../../interface/recebimentos/NdeFiscal.js';
 import type { TransacaoBancaria } from '../../interface/recebimentos/TransacaoBancaria.js';
 import {
+    NDE_REPOSITORY_TOKEN,
     PROCESSO_PROVIDER_TOKEN,
     SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN,
 } from '../../interface/recebimentos/ports.js';
 import type {
+    NdePainelRow,
+    NdeRepositoryInterface,
     ProcessoProviderInterface,
     SolicitacaoNumerarioExecucaoRepositoryInterface,
     UltimaFalhaExecucao,
@@ -38,6 +50,21 @@ export interface ModalidadeNaTela {
     ndeDispensada: boolean;
 }
 
+/**
+ * Filtra o `docEspNumero` do com297 antes de ele virar número de NDe.
+ *
+ * O campo é a **melhor aposta** para o número da NF-e, e não está confirmado por HAR
+ * (`ontology/integrations/conexos-com297-homologacao.md`); o único HAR observado mostra o documento
+ * saindo com `"0"` logo após homologar. Como a linha autorizada sai da fila de hidratação, um `"0"`
+ * gravado aqui viraria o número da nota **para sempre**. Na dúvida, é melhor a tela mostrar "—" do
+ * que exibir e persistir um número fiscal falso.
+ */
+const numeroNdeUtilizavel = (bruto?: string): string | undefined => {
+    const v = bruto?.trim();
+    if (v === undefined || v === '' || Number(v) === 0) return undefined;
+    return v;
+};
+
 /** Transação do painel: a entidade + o que só a tela precisa. */
 export interface TransacaoPainel extends TransacaoBancaria {
     modalidade?: ModalidadeNaTela;
@@ -51,9 +78,10 @@ export interface RecebimentosPainel {
     /** `'banco'` sempre — o painel não tem mais caminho de demonstração. */
     fonte: 'banco';
     transacoes: TransacaoPainel[];
-    /** Vazios nesta fatia — Módulos 2 e 5 ainda não existem. */
+    /** Vazio nesta fatia — o Módulo 2 ainda não existe. */
     recebimentos: [];
-    ndes: [];
+    /** Aba NDe: as notas emitidas + as que o ERP começou e não terminou. */
+    ndes: NdePainelRow[];
     kpis: {
         importadas: number;
         /** Sem writer até o Módulo 2 (motor de matching) — sempre 0 hoje, e fora da tela (ADR-0034). */
@@ -126,6 +154,9 @@ export default class RecebimentosPainelService {
         private readonly processoProvider: ProcessoProviderInterface,
         @inject(SOLICITACAO_NUMERARIO_EXECUCAO_REPOSITORY_TOKEN)
         private readonly execucaoRepo: SolicitacaoNumerarioExecucaoRepositoryInterface,
+        @inject(NDE_REPOSITORY_TOKEN) private readonly ndeRepo: NdeRepositoryInterface,
+        @inject(ConexosNdeFiscalClient) private readonly fiscalClient: ConexosNdeFiscalClient,
+        @inject(LogService) private readonly logService: LogService,
     ) {}
 
     public montarPainel = async (input: MontarPainelInput = {}): Promise<RecebimentosPainel> => {
@@ -147,33 +178,39 @@ export default class RecebimentosPainelService {
 
         const statuses = this.resolverStatuses(input.status);
 
-        const [transacoes, porStatus, valorPorStatus, ultimaIngestao] = await Promise.all([
-            // ⚠️ `statuses` entra SÓ aqui. `contarKpis` e `somarValorPorStatus` compartilham o mesmo
-            // `buildFiltro`, e deixá-lo escorregar para eles faria os KPIs contarem apenas a aba
-            // aberta — as contagens dos cards mudariam conforme o analista navega, que é exatamente
-            // o erro que a decisão nº 1 deste serviço existe para prevenir.
-            this.transacaoRepo.listParaPainel({
-                ...filtroBase,
-                ...(statuses !== undefined ? { statuses } : {}),
-                limit,
-            }),
-            this.transacaoRepo.contarKpis(filtroBase),
-            this.transacaoRepo.somarValorPorStatus(filtroBase),
-            this.runRepo.findLatestSuccessFinishedAt(),
-        ]);
+        const [transacoes, porStatus, valorPorStatus, ultimaIngestao, ndesDoBanco, ndePendentes] =
+            await Promise.all([
+                // ⚠️ `statuses` entra SÓ aqui. `contarKpis` e `somarValorPorStatus` compartilham o
+                // mesmo `buildFiltro`, e deixá-lo escorregar para eles faria os KPIs contarem apenas
+                // a aba aberta — as contagens dos cards mudariam conforme o analista navega, que é
+                // exatamente o erro que a decisão nº 1 deste serviço existe para prevenir.
+                this.transacaoRepo.listParaPainel({
+                    ...filtroBase,
+                    ...(statuses !== undefined ? { statuses } : {}),
+                    limit,
+                }),
+                this.transacaoRepo.contarKpis(filtroBase),
+                this.transacaoRepo.somarValorPorStatus(filtroBase),
+                this.runRepo.findLatestSuccessFinishedAt(),
+                // A aba NDe tem teto próprio e NÃO herda o filtro de status da carteira: os dois
+                // recortes são de entidades diferentes (crédito x documento fiscal).
+                this.ndeRepo.listParaPainel({ filCods, limit: PAINEL_NDES_CAP }),
+                this.ndeRepo.contarPendentes({ filCods }),
+            ]);
 
         const n = (s: string): number => porStatus[s] ?? 0;
         const transacoesComModalidade = await this.enriquecerComFalhas(
             await this.enriquecerComModalidade(transacoes, filCods),
             input.status,
         );
+        const ndes = await this.hidratarNdes(ndesDoBanco);
 
         return {
             geradoEm: new Date().toISOString(),
             fonte: 'banco',
             transacoes: transacoesComModalidade,
             recebimentos: [],
-            ndes: [],
+            ndes: ndes.linhas,
             kpis: {
                 importadas: n(TRANSACAO_BANCARIA_STATUS.IMPORTADA),
                 conciliadas: n(TRANSACAO_BANCARIA_STATUS.CONCILIADA),
@@ -182,8 +219,10 @@ export default class RecebimentosPainelService {
                 erro: n(TRANSACAO_BANCARIA_STATUS.ERRO),
                 processadas: n(TRANSACAO_BANCARIA_STATUS.PROCESSADA),
                 valorNaoAlocado: this.somarValorEmAberto(valorPorStatus),
-                // Módulo 5 não existe — nenhuma NDe é emitida ainda.
-                ndePendentes: 0,
+                // COUNT do banco (doutrina 1) menos o que ESTE request acabou de reconciliar: o
+                // COUNT foi tirado antes da hidratação, então sem o desconto o card contaria como
+                // pendente uma NDe que a própria tela já mostra autorizada.
+                ndePendentes: Math.max(0, ndePendentes - ndes.reconciliadas),
             },
             ...(ultimaIngestao !== undefined ? { ultimaIngestao } : {}),
             truncado: transacoesComModalidade.length >= limit,
@@ -310,6 +349,164 @@ export default class RecebimentosPainelService {
                 },
             };
         });
+    };
+
+    /**
+     * Hidrata a aba NDe com o estado ATUAL do documento no ERP (`GET com297/{docCod}`).
+     *
+     * Por que existe: a autorização do SEFAZ é ASSÍNCRONA. Na hora da homologação o `vldAutorizado`
+     * ainda é `0` e o número da NF-e normalmente nem veio — o banco guarda o retrato daquele
+     * instante. Sem reler, a aba mostraria "aguardando SEFAZ" para sempre.
+     *
+     * Quatro limites deliberados:
+     *  1. **Só as não autorizadas** (e que já têm `docCod`). Uma NDe autorizada e numerada não muda
+     *     mais; reler seria pagar HTTP por nada.
+     *  2. **Capado + em lotes** de `FANOUT_LIMIT_RECEBIMENTOS` — 1 GET por linha, e o teto de
+     *     concorrência é o mesmo do fan-out da ingestão (mitigação do `LOGIN_ERROR_MAX_SESSIONS`).
+     *  3. **Com orçamento de tempo.** `lerDocParaPolling` roda sob `runWithRetry` e o axios do
+     *     `ConexosBaseClient` tem timeout de 40s POR TENTATIVA: um único documento pendurado
+     *     custaria ~2min, e os 4 lotes em série passariam de 8min segurando o GET do painel. O
+     *     `PAINEL_NDE_HIDRATACAO_TIMEOUT_MS` corta cada leitura e o `..._BUDGET_MS` corta a fase
+     *     inteira — o resto das linhas volta como o banco as tem.
+     *  4. **Best-effort** — mesma doutrina de `enriquecerComModalidade`: ERP fora do ar degrada para
+     *     "o que o banco sabe", nunca derruba a carteira do analista. Mas degradar em SILÊNCIO é
+     *     outra coisa: toda falha vira `logService.warn`.
+     *
+     * Também RECONCILIA: quando o SEFAZ autorizou, grava o número na NDe e SÓ ENTÃO o flag no ledger
+     * — senão a linha sairia da fila de hidratação (já autorizada) e voltaria a exibir "—" no
+     * próximo load.
+     */
+    private hidratarNdes = async (
+        ndes: NdePainelRow[],
+    ): Promise<{ linhas: NdePainelRow[]; reconciliadas: number }> => {
+        const candidatas = ndes
+            .filter((n) => n.ndDocCod !== undefined && n.ndeAutorizado !== true)
+            .slice(0, PAINEL_NDE_HIDRATACAO_CAP);
+        if (candidatas.length === 0) return { linhas: ndes, reconciliadas: 0 };
+
+        const porChave = new Map<string, NdePainelRow>();
+        const prazoFinal = Date.now() + PAINEL_NDE_HIDRATACAO_BUDGET_MS;
+        let reconciliadas = 0;
+
+        for (let i = 0; i < candidatas.length; i += FANOUT_LIMIT_RECEBIMENTOS) {
+            if (Date.now() >= prazoFinal) {
+                // Estourou o orçamento: as linhas restantes voltam do banco. Isso é degradação
+                // esperada (ERP lento), não erro — mas precisa aparecer no log, senão ninguém
+                // descobre que a aba parou de reconciliar.
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message:
+                        'Hidratação da aba NDe interrompida pelo orçamento de tempo — as linhas ' +
+                        'restantes voltam com o estado do banco (o próximo load retoma)',
+                    data: {
+                        candidatas: candidatas.length,
+                        hidratadas: porChave.size,
+                        budgetMs: PAINEL_NDE_HIDRATACAO_BUDGET_MS,
+                    },
+                });
+                break;
+            }
+            const lote = candidatas.slice(i, i + FANOUT_LIMIT_RECEBIMENTOS);
+            const hidratadas = await Promise.all(lote.map((nde) => this.hidratarUma(nde)));
+            for (const { linha, reconciliada } of hidratadas) {
+                porChave.set(linha.idempotencyKey, linha);
+                if (reconciliada) reconciliadas += 1;
+            }
+        }
+
+        return {
+            linhas: ndes.map((n) => porChave.get(n.idempotencyKey) ?? n),
+            reconciliadas,
+        };
+    };
+
+    /** Uma leitura no com297. Nunca lança: uma linha que não hidratou volta como está. */
+    private hidratarUma = async (
+        nde: NdePainelRow,
+    ): Promise<{ linha: NdePainelRow; reconciliada: boolean }> => {
+        const docCod = nde.ndDocCod;
+        if (docCod === undefined) return { linha: nde, reconciliada: false };
+
+        const status = await this.lerStatusComPrazo(nde.filCod, docCod);
+        if (status === undefined) return { linha: nde, reconciliada: false };
+
+        // `vldAutorizado === 0` é "SEFAZ ainda não respondeu", não falha. Só um valor não-zero autoriza.
+        const autorizado = status.vldAutorizado !== undefined && status.vldAutorizado !== 0;
+        const numeroNde = numeroNdeUtilizavel(status.docEspNumero) ?? nde.numeroNde;
+        const linha: NdePainelRow = {
+            ...nde,
+            ...(numeroNde !== undefined ? { numeroNde } : {}),
+            ndeAutorizado: autorizado,
+        };
+        if (!autorizado) return { linha, reconciliada: false };
+
+        await this.reconciliar(nde, numeroNde);
+        // Conta como reconciliada porque o ERP DISSE que está autorizada — é o que esta resposta
+        // mostra na tabela. O card tem que concordar com a linha ao lado dele; se a gravação falhou,
+        // o banco é que está atrasado, e o próximo load refaz.
+        return { linha, reconciliada: true };
+    };
+
+    /**
+     * `GET com297/{docCod}` com prazo. O `Promise.race` NÃO cancela o HTTP em curso (o axios segue
+     * até o próprio timeout dele) — o que ele garante é que o painel não fica preso esperando.
+     * O `.catch` no promise original evita unhandled rejection quando o prazo vence primeiro.
+     */
+    private lerStatusComPrazo = async (
+        filCod: number,
+        docCod: number,
+    ): Promise<DocStatusFiscal | undefined> => {
+        const leitura = this.fiscalClient
+            .lerDocParaPolling({ filCod, docCod })
+            .catch((cause: unknown) => {
+                void this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'Hidratação da aba NDe: falha ao reler o documento no com297',
+                    data: { docCod, filCod, cause: String(cause) },
+                });
+                return undefined;
+            });
+        const prazo = new Promise<undefined>((resolve) => {
+            const t = setTimeout(() => resolve(undefined), PAINEL_NDE_HIDRATACAO_TIMEOUT_MS);
+            // `unref` para o timer não segurar o event loop se a resposta vier antes.
+            if (typeof t.unref === 'function') t.unref();
+        });
+        return Promise.race([leitura, prazo]);
+    };
+
+    /**
+     * Escrita LOCAL de reconciliação (nada vai para o ERP): o painel é o poll que a homologação não
+     * pôde esperar.
+     *
+     * A ORDEM é a garantia: grava o número PRIMEIRO e o flag DEPOIS. O flag é o ponto de commit —
+     * enquanto ele não está gravado, a linha continua candidata à hidratação. Na ordem inversa, uma
+     * falha ao gravar o número deixaria a linha autorizada e sem número PARA SEMPRE, porque ela já
+     * teria saído do filtro de candidatas.
+     */
+    private reconciliar = async (nde: NdePainelRow, numeroNde?: string): Promise<void> => {
+        if (numeroNde !== undefined && numeroNde !== nde.numeroNde) {
+            try {
+                await this.ndeRepo.updateNumeroNde(nde.idempotencyKey, numeroNde);
+            } catch (cause) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message:
+                        'Hidratação da aba NDe: falha ao gravar o número da NDe — o flag de ' +
+                        'autorização NÃO será gravado, para a linha seguir candidata no próximo load',
+                    data: { idempotencyKey: nde.idempotencyKey, numeroNde, cause: String(cause) },
+                });
+                return;
+            }
+        }
+        try {
+            await this.execucaoRepo.setNdeAutorizado(nde.idempotencyKey, true);
+        } catch (cause) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'Hidratação da aba NDe: falha ao gravar o flag de autorização no ledger',
+                data: { idempotencyKey: nde.idempotencyKey, cause: String(cause) },
+            });
+        }
     };
 
     /** Índice de previsão sobre os processos abertos das filiais permitidas (tudo do cache). */

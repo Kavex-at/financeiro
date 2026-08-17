@@ -249,6 +249,51 @@ export function NdeStatusBadge({ status }: { status: NdeStatusEmissao }) {
   return <DomainChip spec={NDE_SPECS[status]} />
 }
 
+/**
+ * Autorização do SEFAZ — deliberadamente SEPARADA do status de emissão.
+ *
+ * Homologar e autorizar são dois eventos: a homologação é nossa (síncrona), a autorização é do SEFAZ
+ * (assíncrona, de segundos a horas). Fundir os dois num chip só faria "aguardando SEFAZ" parecer
+ * falha de emissão — e levaria o analista a reprocessar uma NDe que está perfeitamente emitida.
+ */
+export function SefazBadge({ autorizado }: { autorizado?: boolean }) {
+  return (
+    <DomainChip
+      spec={
+        autorizado === true
+          ? {
+              label: 'autorizada',
+              icon: CheckCheck,
+              className: 'border-success/40 text-success',
+              tooltip: 'SEFAZ autorizou a NF-e (vldAutorizado ≠ 0).',
+            }
+          : {
+              label: 'aguardando SEFAZ',
+              icon: Clock,
+              className: 'border-info/40 text-info',
+              tooltip:
+                'Emitida e homologada; a autorização do SEFAZ é assíncrona e ainda não voltou. Não é falha — o painel relê o Conexos a cada carga.',
+            }
+      }
+    />
+  )
+}
+
+/** Marca a NDe que homologou COM validações pendentes (com194) — emitida, mas precisa de olhos. */
+export function RevisaoHumanaBadge() {
+  return (
+    <DomainChip
+      spec={{
+        label: 'revisão',
+        icon: UserSearch,
+        className: 'border-warning/40 text-warning',
+        tooltip:
+          'Homologou com validações pendentes no com194 — a NDe saiu, mas alguém precisa conferir.',
+      }}
+    />
+  )
+}
+
 // ─────────────────────────────────────────────────────────── Aging (idade na fila)
 
 /**

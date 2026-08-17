@@ -183,6 +183,9 @@ describe('EXPERIMENTO DA CONDIÇÃO (HML) — condição no header da geração 
             useValue: {
                 save: async (nde: AnyRecord) => nde,
                 findByRecebimentoId: async () => null,
+                listParaPainel: async () => [],
+                contarPendentes: async () => 0,
+                updateNumeroNde: async () => undefined,
             },
         });
         const { default: ConexosGerDocProcessoClient } = await import(
