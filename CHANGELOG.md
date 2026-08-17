@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.25.0 (2026-08-17) — Permutas: a data do adiantamento sai de dentro do "expandir"
+
+- **feat(permutas):** as abas **Múltiplas**, **Cross-over** e **Cross-process** ganham a coluna
+  **"Data adto"** (data de emissão do adiantamento), logo após "Código". Antes o dado só existia ao
+  expandir a linha na Visão Geral — nas tabelas de alocação manual não havia **nenhum** sinal
+  temporal, e o analista via N linhas do mesmo exportador sem conseguir dizer qual adiantamento é o
+  mais antigo sem abrir uma por uma.
+- **Por que importa:** a distribuição greedy do motor já desempata por `dataEmissao` ascendente
+  (FIFO), então a tela estava escondendo justamente a chave pela qual o sistema ordena. Além disso a
+  taxa do adto é travada na contratação — ver a data na linha deixa explícita a janela cambial antes
+  de alocar/baixar.
+- **Não confundir com "Dias em Aberto"** (coluna da Visão Geral): aquela é ancorada na **data-base da
+  D.I/DUIMP** (regra `aging-anchor`) e fica vazia quando o processo não tem declaração — o caso comum
+  nos cross-process. São métricas distintas; a nova coluna é a idade do **próprio adiantamento**.
+- Sem mudança de backend, contrato de API ou migration: o campo já trafegava em
+  `PermutaPendente.detalhe.dataEmissao`, apenas não era renderizado.
+
 ## v0.24.0 (2026-08-13) — Gestão de Adiantamentos: a carteira para de mentir sobre o próprio trabalho
 
 > ⚠️ **Aviso operacional — a carteira encolhe neste deploy.** A migração `0047` realinha o status de
