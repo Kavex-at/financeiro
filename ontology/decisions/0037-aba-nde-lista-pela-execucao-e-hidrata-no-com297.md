@@ -31,8 +31,10 @@ Duas perguntas apareceram junto:
 1. **Listar de onde?** A tabela `nota_debito_eletronica` só recebe linha **depois de homologar**. Uma
    cauda fiscal que morre no com300 ou no com131 deixa um documento com297 **existindo no ERP** e
    nenhuma linha local — exatamente a NDe que exige ação, e a única que ficaria invisível.
-2. **Listar da onde, versão ERP?** Não há endpoint de **grid/pesquisa** do com297 mapeado. O único
-   read conhecido é `GET /api/com297/{docCod}`, um documento por vez (o poll do SEFAZ).
+2. **Listar da onde, versão ERP?** No começo desta feature não havia endpoint de grid do com297
+   mapeado — só `GET /api/com297/{docCod}`, um documento por vez. **Isso mudou no meio do ciclo:** o
+   Yuri capturou o HAR de `POST /api/com297/list` (2026-08-17) e um probe read-only confirmou o
+   contrato. Ver "Emenda" ao final.
 
 ## Decisão
 
@@ -137,3 +139,55 @@ grid/pesquisa do `com297` — captura de HAR da tela de Fiscais de Saída, como 
   seria permanentemente desatualizado num fluxo cuja conclusão é assíncrona por natureza.
 - **Contar pendentes pela coluna `status_emissao`.** Fiel ao nome da coluna e inútil na prática: o
   contador ficaria em zero para sempre.
+
+
+## Emenda (2026-08-17, mesmo ciclo) — o grid do com297 apareceu
+
+O `POST /api/com297/list` foi capturado por HAR e confirmado por probe read-only
+(`jobs/probe-com297-list.ts`, PRD). Três consequências, todas já no código:
+
+### E1 — A hidratação virou 1 POST por filial
+
+O grid projeta `vldAutorizado` e `docEspNumero` de toda a família NDe de uma vez. Os até 20
+`GET com297/{docCod}` por carga (D2 acima) saíram: `ConexosNdeFiscalClient.listNdes` faz UMA leitura
+por filial, com o mesmo prazo e o mesmo orçamento de fase. O fan-out passou a ser por filial,
+limitado a `FANOUT_LIMIT_RECEBIMENTOS`.
+
+### E2 — O filtro é por CÓDIGO, não por nome
+
+O HAR filtrava `tpdDesNome#LIKE:"NOTA DE DEBITO ELETRÔNICA"` — o **nome** do tipo de documento. O
+probe descobriu o código (`tpdCod = 167`) e **provou a equivalência**: mesmo `count`, nenhum outro
+`tpdDesNome` no resultado, estável entre as filiais 2 e 4. Filtramos pelo código porque:
+
+- nome de cadastro é editável, e este módulo já pagou por isso duas vezes (a env
+  `COM297_GCD_NOTA_DEBITO` existe como escape do `NDE_CONFIG_NOME`, e há ADR dedicado a tirar o `gcd`
+  da SN do nome);
+- `#LIKE` sobre string acentuada (`Ô`) falha em silêncio se a normalização Unicode divergir — **zero
+  linhas, sem erro**, indistinguível de "não há NDe". Era exatamente o bug que esta feature veio
+  consertar, entrando por outra porta.
+
+O `docVldTipo` do documento é **7** — NÃO confundir com `NDE_GLOBAL_DOC_VLD_TIPO = 0`, que é o
+`globalDocVldTipo` do ConfigDocProcesso. Trocar um pelo outro já fez o ERP rejeitar a config 248.
+
+### E3 — As NDes emitidas FORA da ferramenta passam a aparecer
+
+Era o gap `integrability-4`. Uma linha do grid sem execução nossa é uma nota fiscal real que a
+ferramenta não emitiu, e esconder isso do analista seria pior que mostrá-la incompleta. A projeção
+ganhou `origem: 'ferramenta' | 'erp'`:
+
+- `'ferramenta'` — tem `correlationId`, `etapa`, transação bancária, rastro completo;
+- `'erp'` — não tem NADA disso, e a tela **diz isso** (chip "fora da ferramenta"). A identidade dela
+  é **cliente + processo** (`dpeNomPessoa`, `priEspRefcliente`), que o grid fornece.
+
+`correlationId`, `recebimentoId` e `idempotencyKey` viraram opcionais no `NdePainelRow` — a alternativa
+seria preencher com placeholder, o que é mentira em um campo de rastro.
+
+**KPI:** as externas não autorizadas entram em `ndePendentes`. O `COUNT` do banco não as conhece (não
+há linha nossa), e o grid não é uma página — é a família inteira da filial —, então somá-las em
+memória é exato, não estimativa.
+
+### O que a emenda NÃO mudou
+
+A fonte da lista continua sendo a **execução** (D1): é ela que traz `etapa` e o diagnóstico da NDe que
+não saiu. O grid entra como enriquecimento e como segunda fonte, não como substituto. E o guard do
+`docEspNumero` continua — migrou para o boundary do client, onde o dado entra.

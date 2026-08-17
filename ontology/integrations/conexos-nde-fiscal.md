@@ -26,6 +26,7 @@ endpoints_read:
   - "com131 (GET /api/com131/{docTip}/{docCod} — fisEspObs, guard idempotência)"
   - "com194 (GET initialValues + POST documento/list — validações fdvVldTperr:1, quando homologa=2)"
   - "com297 (GET /api/com297/{docCod} — poll vldAutorizado; docVldNfehom/vldStatus/docMnyValor)"
+  - "com297 (POST /api/com297/list — GRID da família NDe por filial: tpdCod#EQ=167, projeta vldAutorizado/docEspNumero/cliente/processo. ATENÇÃO: sem o sufixo /list, POST /com297 é a CRIAÇÃO de documento)"
 last_review: 2026-08-11
 source:
   - "HAR REAL de produção (Columbia, doc 18337, filCod=2, 2026-08-01) — integrations/recebimentos-numerario-real-fiscal-spec.md"

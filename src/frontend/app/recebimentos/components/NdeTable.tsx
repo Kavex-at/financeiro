@@ -14,7 +14,12 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { formatBRL } from '@/lib/utils'
 import type { NotaDebitoEletronica } from '@/lib/recebimentos'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
-import { NdeStatusBadge, RevisaoHumanaBadge, SefazBadge } from './status-badges'
+import {
+  NdeStatusBadge,
+  OrigemErpBadge,
+  RevisaoHumanaBadge,
+  SefazBadge,
+} from './status-badges'
 
 /** Formata uma data ISO (ou undefined) para pt-BR curta. */
 const fmtData = (iso?: string) =>
@@ -45,7 +50,9 @@ export function NdeTable({ ndes }: { ndes: NotaDebitoEletronica[] }) {
     ndes,
     (n) => n.filCod,
     (n) =>
-      `${n.numeroNde ?? ''} ${n.ndDocCod ?? ''} ${n.correlationId} ${n.statusEmissao} ${n.etapa ?? ''}`,
+      `${n.numeroNde ?? ''} ${n.ndDocCod ?? ''} ${n.correlationId ?? ''} ${n.statusEmissao} ${
+        n.etapa ?? ''
+      } ${n.cliente ?? ''} ${n.processoRef ?? ''} ${n.priCod ?? ''}`,
   )
 
   if (ndes.length === 0) {
@@ -62,7 +69,7 @@ export function NdeTable({ ndes }: { ndes: NotaDebitoEletronica[] }) {
     <div className="space-y-3">
       <FiltroBarra
         aba={aba}
-        buscaPlaceholder="Buscar por nº NDe, docCod, correlationId ou status…"
+        buscaPlaceholder="Buscar por nº NDe, docCod, cliente, processo ou status…"
       />
       {aba.total === 0 ? (
         <EmptyState
@@ -76,6 +83,7 @@ export function NdeTable({ ndes }: { ndes: NotaDebitoEletronica[] }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Nº NDe</TableHead>
+                <TableHead>Cliente / processo</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead>Filial</TableHead>
                 <TableHead>Emissão</TableHead>
@@ -96,11 +104,26 @@ export function NdeTable({ ndes }: { ndes: NotaDebitoEletronica[] }) {
                       </div>
                     )}
                   </TableCell>
+                  <TableCell className="max-w-[22rem]">
+                    {n.cliente !== undefined ? (
+                      <span className="block truncate" title={n.cliente}>
+                        {n.cliente}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                    {(n.processoRef ?? n.priCod) !== undefined && (
+                      <div className="text-xs text-muted-foreground">
+                        {n.processoRef ?? `processo ${String(n.priCod)}`}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{formatBRL(n.valor)}</TableCell>
                   <TableCell className="text-muted-foreground">{n.filCod}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <NdeStatusBadge status={n.statusEmissao} />
+                      {n.origem === 'erp' && <OrigemErpBadge />}
                       {n.revisaoHumana === true && <RevisaoHumanaBadge />}
                     </div>
                     {/* Para a NDe que não fechou, a etapa é o diagnóstico: diz onde retomar. */}

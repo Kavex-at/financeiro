@@ -58,6 +58,43 @@ export interface ValidacaoDocumento {
  * deixa o caller decidir com um único teste (`=== undefined`) em vez de repetir `null || '' ||
  * undefined` em cada uso. A linha CRUA, com os `null` preservados para o read-modify-write, é o `ItemNde`.
  */
+/**
+ * Uma NDe como o GRID do com297 a devolve (`POST com297/list`) — a visão do ERP, não a nossa.
+ *
+ * É a FONTE DA VERDADE da aba NDe para duas coisas que o banco local não sabe:
+ *  - **`vldAutorizado`** — a autorização do SEFAZ, assíncrona, que chega depois da homologação;
+ *  - **`docEspNumero`** — o número da NF-e. No grid vem consolidado (0 de 10 vazios no probe de PRD),
+ *    diferente do `GET com297/{docCod}` pós-homologação, que devolve `"0"`.
+ *
+ * Também é o que permite listar as NDes emitidas **fora** da ferramenta: elas existem aqui e não têm
+ * execução nossa. Os campos de cliente/processo (`cliente`, `processoRef`) são o que dá identidade a
+ * essas linhas na tela, já que elas não têm `correlationId`.
+ *
+ * Contrato do probe read-only em PRD (`jobs/probe-com297-list.ts`, 2026-08-17).
+ */
+export interface NdeErpListItem {
+    filCod: number;
+    docTip: number;
+    docCod: number;
+    /** Número da NF-e. Consolidado no grid; ver o guard `numeroNdeUtilizavel` para o caso `"0"`. */
+    docEspNumero?: string;
+    /** `!= 0` ⟹ SEFAZ autorizou. `0` é "ainda não respondeu", NÃO falha. */
+    vldAutorizado?: number;
+    /** Status do documento no ERP (só `3` observado em PRD — mapa ainda não confirmado). */
+    vldStatus?: number;
+    valor?: number;
+    /** Emissão do documento (epoch ms na resposta do ERP). */
+    emitidaEm?: Date;
+    /** Processo — o handle que liga a NDe ao trabalho de importação. */
+    priCod?: number;
+    /** Referência do cliente para o processo (ex.: `0017DYS/26`). */
+    processoRef?: string;
+    /** Razão social do cliente. */
+    cliente?: string;
+    /** CNPJ/CPF do cliente, como o ERP devolve (cru ou formatado). */
+    clienteDoc?: string;
+}
+
 export interface ItemNdeResumo {
     docCod: number;
     fisCod: number;

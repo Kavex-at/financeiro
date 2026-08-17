@@ -4,6 +4,7 @@ import type { NotaDebitoEletronica } from '@/lib/recebimentos'
 
 const nde = (o: Partial<NotaDebitoEletronica> = {}): NotaDebitoEletronica => ({
   id: 'nde-1',
+  origem: 'ferramenta',
   recebimentoId: 'txn-1',
   filCod: 4,
   correlationId: 'corr-1',
@@ -69,6 +70,34 @@ describe('NdeTable', () => {
     const linha = screen.getByText('homologação recusada').closest('div')
     expect(linha?.querySelector('svg')).toBeInTheDocument()
     expect(container).toHaveTextContent('homologação recusada')
+  })
+
+  it('NDe emitida fora da ferramenta é marcada, e mostra cliente e processo', () => {
+    // Sem a marca, as colunas vazias pareceriam rastro perdido de algo que a ferramenta emitiu.
+    render(
+      <NdeTable
+        ndes={[
+          nde({
+            id: 'erp:4:18790',
+            origem: 'erp',
+            numeroNde: '180792',
+            ndDocCod: 18790,
+            ndeAutorizado: true,
+            cliente: 'DYNAMIS IMPORTADORA E DISTRIBUIDORA LTDA',
+            processoRef: '0017DYS/26',
+          }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('fora da ferramenta')).toBeInTheDocument()
+    expect(screen.getByText('DYNAMIS IMPORTADORA E DISTRIBUIDORA LTDA')).toBeInTheDocument()
+    expect(screen.getByText('0017DYS/26')).toBeInTheDocument()
+    expect(screen.getByText('autorizada')).toBeInTheDocument()
+  })
+
+  it('linha da ferramenta NÃO recebe a marca de origem externa', () => {
+    render(<NdeTable ndes={[nde({ ndDocCod: 18337, ndeAutorizado: true })]} />)
+    expect(screen.queryByText('fora da ferramenta')).not.toBeInTheDocument()
   })
 
   it('homologada com validações pendentes é sinalizada para revisão', () => {

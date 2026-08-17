@@ -150,6 +150,9 @@ export default class NdeRepository implements NdeRepositoryInterface {
 
         return {
             id: temNde ? String(r.nde_id) : `exec:${idempotencyKey}`,
+            // Toda linha desta query nasceu de uma execução NOSSA — por definição do
+            // `PAINEL_FROM_WHERE`. As linhas `'erp'` entram depois, no serviço, a partir do grid.
+            origem: 'ferramenta',
             recebimentoId: String(r.recebimento_id ?? r.txn_id ?? ''),
             filCod: Number(r.fil_cod),
             correlationId: String(r.correlation_id ?? idempotencyKey),
