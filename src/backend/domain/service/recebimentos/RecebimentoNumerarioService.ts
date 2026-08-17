@@ -101,9 +101,6 @@ const somenteDigitos = (valor: string): string => valor.replace(/\D/g, '');
 /** Tolerância da NF-e para data de emissão/movimento, medida na mensagem do com194 (produção). */
 const NFE_TOLERANCIA_MINUTOS = 15;
 
-/** `fdvVldErr` da com194 que BLOQUEIA o documento (1 = aviso, não bloqueia). */
-const VALIDACAO_BLOQUEANTE = 2;
-
 /**
  * Gate 0 (transporte × domínio): status HTTP que denunciam rota/permissão erradas em QUALQUER validador.
  * Nunca são resposta de domínio — quem os recebe PARA, em vez de inventar "não há pendência".

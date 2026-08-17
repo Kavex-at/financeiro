@@ -124,7 +124,11 @@ describe('ConexosNdeFiscalClient — (c) com194 + (poll) com297', () => {
         const rows = await client.listValidacoes({ filCod: 2, docTip: 1, docCod: 18771 });
 
         expect(rows.map((r) => r.fdvVldTperr)).toEqual([1, 2]);
-        expect(postGeneric.mock.calls.map((c) => (c[1] as never)['filterList'])).toEqual([
+        // Tipado em vez de `as never` + chave por string: o `never` não aceita acesso por ponto, e o
+        // acesso por colchete reprova no `useLiteralKeys` do biome. Este cast satisfaz os dois.
+        expect(
+            postGeneric.mock.calls.map((c) => (c[1] as { filterList?: unknown }).filterList),
+        ).toEqual([
             { docTip: 1, docCod: 18771, fdvVldTperr: 1 },
             { docTip: 1, docCod: 18771, fdvVldTperr: 2 },
         ]);
