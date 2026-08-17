@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { SALDO_TOL, moedaCodigo } from './format'
+import { SALDO_TOL, fmtData, moedaCodigo } from './format'
 import { Moeda, PermutaBorderoBadge } from './ui'
 
 /**
@@ -44,6 +44,7 @@ export function PermutaPendenteTable({
         <TableRow>
           <TableHead>Filial</TableHead>
           <TableHead>Código</TableHead>
+          <TableHead>Data adto</TableHead>
           <TableHead>Exportador</TableHead>
           <TableHead className="text-right">Valor Moeda Negociada</TableHead>
           <TableHead className="text-right">Saldo restante</TableHead>
@@ -64,6 +65,12 @@ export function PermutaPendenteTable({
             <TableRow key={p.docCod}>
               <TableCell>{p.filCod}</TableCell>
               <TableCell className="font-medium">{p.docCod}</TableCell>
+              {/* Data de emissão do ADIANTAMENTO — âncora de idade do próprio adto (FIFO).
+                  Não confundir com "Dias em Aberto" da Visão Geral, que é ancorada na
+                  data-base da D.I/DUIMP e fica vazia nos cross-process sem declaração. */}
+              <TableCell className="whitespace-nowrap tabular-nums">
+                {fmtData(p.detalhe?.dataEmissao)}
+              </TableCell>
               <TableCell>{p.exportador}</TableCell>
               <TableCell className="text-right">
                 <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
