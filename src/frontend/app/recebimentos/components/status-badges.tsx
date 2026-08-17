@@ -279,6 +279,27 @@ export function SefazBadge({ autorizado }: { autorizado?: boolean }) {
   )
 }
 
+/**
+ * Marca a NDe que existe no ERP e NÃO passou pela ferramenta.
+ *
+ * Não é um alerta: é uma nota fiscal legítima, emitida à mão no Conexos. O chip existe porque essas
+ * linhas não têm `correlationId`, etapa nem transação bancária — sem a marca, o analista veria
+ * metade das colunas vazias e concluiria que a ferramenta perdeu o rastro de algo que ela emitiu.
+ */
+export function OrigemErpBadge() {
+  return (
+    <DomainChip
+      spec={{
+        label: 'fora da ferramenta',
+        icon: Landmark,
+        className: 'border-dashed border-muted-foreground/40 text-muted-foreground',
+        tooltip:
+          'Emitida direto no Conexos, sem passar pelo "Processar" — por isso não há correlationId nem etapa. O ERP é a fonte desta linha.',
+      }}
+    />
+  )
+}
+
 /** Marca a NDe que homologou COM validações pendentes (com194) — emitida, mas precisa de olhos. */
 export function RevisaoHumanaBadge() {
   return (

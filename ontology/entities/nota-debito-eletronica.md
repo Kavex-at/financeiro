@@ -14,6 +14,8 @@ related_files:
   - src/backend/domain/repository/recebimentos/NdeRepository.ts
   - src/backend/domain/service/recebimentos/RecebimentosPainelService.ts
   - src/frontend/app/recebimentos/components/NdeTable.tsx
+  - src/backend/domain/client/ConexosNdeFiscalClient.ts
+  - src/backend/jobs/probe-com297-list.ts
 properties:
   - id
   - recebimentoId
@@ -132,6 +134,12 @@ diferença importa:
 A inversão da fonte é deliberada: o documento com297 nasce no ERP **antes** da nossa linha local, então
 listar pela tabela local esconderia justamente a NDe cuja cauda fiscal morreu no meio — a única que
 exige ação humana. Ficam fora as execuções `dry_run` e as com NDe **dispensada** (ADR-0031).
+
+**Duas origens na mesma aba (emenda de 2026-08-17).** Com o grid do com297 mapeado
+(`POST com297/list`, filtro `tpdCod#EQ`), a projeção passou a incluir as NDes que existem no ERP e
+**não** têm execução nossa — emitidas à mão no Conexos. Elas vêm com `origem: 'erp'`, sem
+`correlationId`/`etapa`/transação bancária, e a tela sinaliza isso: a identidade delas é cliente +
+processo. As nossas vêm com `origem: 'ferramenta'`.
 
 Além dos campos da entidade, a projeção carrega o `ndDocCod` (handle do documento no ERP), a `etapa`
 (onde a trilha parou), `revisaoHumana` e `ndeAutorizado`.

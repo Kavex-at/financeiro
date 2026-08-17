@@ -270,28 +270,35 @@ export const PAINEL_TRANSACOES_CAP = 500;
 export const PAINEL_NDES_CAP = 200;
 
 /**
- * Quantas NDes o painel hidrata AO VIVO no com297 por carga (`GET com297/{docCod}`).
+ * Página do GRID do com297 na hidratação da aba NDe (`POST com297/list`).
  *
  * A autorização do SEFAZ é assíncrona: número e `vldAutorizado` chegam depois da homologação, e sem
- * reler o ERP a aba mostraria para sempre o retrato do instante da emissão. O teto existe porque a
- * leitura é 1 HTTP por linha — sem ele, abrir o painel viraria uma rajada no ERP. Só entram as
- * linhas ainda NÃO autorizadas: uma vez autorizada e com número gravado, a linha não muda mais.
+ * reler o ERP a aba mostraria para sempre o retrato do instante da emissão. A leitura é **1 POST por
+ * filial** (não 1 GET por linha, como na primeira versão): o grid devolve `vldAutorizado` e
+ * `docEspNumero` de todas as NDes da família de uma vez.
  */
-export const PAINEL_NDE_HIDRATACAO_CAP = 20;
+export const PAINEL_NDE_ERP_PAGE_SIZE = 200;
 
 /**
- * Prazo de UMA leitura de hidratação (`GET com297/{docCod}`).
+ * Teto de páginas do grid por filial. Existe para o pior caso patológico (o ERP ignorar a paginação e
+ * devolver sempre a mesma página) não virar loop infinito num request de tela. Em produção hoje a
+ * família inteira cabe em UMA página (10 linhas na filial 2), então o teto nunca é atingido.
+ */
+export const PAINEL_NDE_ERP_MAX_PAGINAS = 10;
+
+/**
+ * Prazo de UMA leitura do grid (`POST com297/list`, uma filial).
  *
- * Não é redundante com o timeout do axios: o `lerDocParaPolling` roda sob `runWithRetry`, e 40s por
- * tentativa × 3 tentativas = ~2min POR DOCUMENTO. Num GET de tela isso é inaceitável. Alinhado ao
+ * Não é redundante com o timeout do axios: a leitura roda sob `runWithRetry`, e 40s por tentativa ×
+ * 3 tentativas = ~2min por chamada. Num GET de tela isso é inaceitável. Alinhado ao
  * `ERP_WRITE_TIMEOUT_MS` — a doutrina de prazo do módulo.
  */
 export const PAINEL_NDE_HIDRATACAO_TIMEOUT_MS = 8_000;
 
 /**
- * Orçamento da FASE inteira de hidratação. Os lotes são sequenciais; sem um teto global, um ERP
- * uniformemente lento multiplicaria o prazo individual pelo número de lotes. Vencido o orçamento, as
- * linhas restantes voltam com o estado do banco e o próximo load retoma.
+ * Orçamento da FASE inteira de hidratação (todas as filiais). Sem um teto global, um ERP
+ * uniformemente lento multiplicaria o prazo individual pelo número de filiais. Vencido o orçamento, as
+ * filiais restantes voltam com o estado do banco e o próximo load retoma.
  */
 export const PAINEL_NDE_HIDRATACAO_BUDGET_MS = 12_000;
 
@@ -425,6 +432,32 @@ export const NDE_GERACAO_DEFAULTS = {
  */
 export const NDE_GLOBAL_DOC_VLD_TIPO = 0;
 export const NDE_CONFIG_NOME = 'NOTA DE DEBITO PAGAMENTO ANTECIPADO';
+
+/**
+ * Identidade da família NDe no GRID do com297 (`POST com297/list`) — probe read-only em PRD,
+ * 2026-08-17, `jobs/probe-com297-list.ts`.
+ *
+ * `NDE_TPD_COD = 167` é o **código** do tipo de documento cujo nome de cadastro é
+ * `"NOTA DE DEBITO ELETRÔNICA"`. Filtramos por ele, e NÃO por `tpdDesNome#LIKE`, por três razões
+ * medidas:
+ *
+ *  1. **Equivalência provada:** `tpdCod#EQ:167` devolve o MESMO conjunto que o filtro por nome
+ *     (10 linhas na filial 2, 1 na filial 4) e nenhum outro `tpdDesNome` entra — o código não é mais
+ *     largo que o rótulo.
+ *  2. **Nome de cadastro é editável.** Este módulo já pagou por isso: o `NDE_CONFIG_NOME` acima
+ *     obrigou a criar a env `COM297_GCD_NOTA_DEBITO` como escape quando o nome não bate, e existe ADR
+ *     dedicado a tirar o `gcd` da SN do nome e levá-lo para o histórico do processo.
+ *  3. **`#LIKE` sobre string acentuada falha silenciosamente.** Uma diferença de normalização Unicode
+ *     no `Ô` devolveria ZERO linhas sem erro — indistinguível de "não há NDe", que é exatamente o bug
+ *     que esta feature veio consertar.
+ *
+ * `NDE_DOC_VLD_TIPO = 7` é o `docVldTipo` do DOCUMENTO com297 — NÃO confundir com o
+ * `NDE_GLOBAL_DOC_VLD_TIPO = 0` acima, que é o `globalDocVldTipo` do ConfigDocProcesso. São campos
+ * diferentes, de chamadas diferentes; trocar um pelo outro fez o ERP rejeitar a config 248 em produção.
+ */
+export const NDE_TPD_COD = 167;
+export const NDE_DOC_VLD_TIPO = 7;
+export const NDE_DOC_VLD_TIPO_ADTO = 0;
 
 /**
  * com300 `fisVldTipoNfDebito` — tipo de nota de débito FISCAL (inteiro, NÃO string). `6` = PAGAMENTO

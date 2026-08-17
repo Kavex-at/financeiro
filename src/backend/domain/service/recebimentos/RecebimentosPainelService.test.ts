@@ -9,6 +9,7 @@ import RecebimentosPainelService from './RecebimentosPainelService.js';
 
 const buildNde = (o: Partial<NdePainelRow> = {}): NdePainelRow => ({
     id: 'nde-1',
+    origem: 'ferramenta',
     recebimentoId: 'txn-1',
     filCod: 4,
     correlationId: 'nde:txn-1:1',
@@ -27,7 +28,8 @@ const build = (
         falhas?: Map<string, unknown>;
         ndes?: NdePainelRow[];
         ndePendentes?: number;
-        docStatus?: unknown;
+        /** Linhas que o GRID do com297 devolve — a fonte da hidratação agora. */
+        erpNdes?: unknown[];
     } = {},
 ) => {
     const transacaoRepo = {
@@ -65,7 +67,7 @@ const build = (
         updateNumeroNde: jest.fn().mockResolvedValue(undefined),
     };
     const fiscalClient = {
-        lerDocParaPolling: jest.fn().mockResolvedValue(o.docStatus ?? {}),
+        listNdes: jest.fn().mockResolvedValue(o.erpNdes ?? []),
     } as unknown as jest.Mocked<ConexosNdeFiscalClient>;
     const logService = { warn: jest.fn().mockResolvedValue(undefined) };
 
@@ -278,6 +280,15 @@ describe('RecebimentosPainelService — filtro de status e falhas (ADR-0034)', (
     });
 });
 
+/** Linha como o GRID do com297 a devolve (já projetada pelo client). */
+const buildErp = (o: Record<string, unknown> = {}) => ({
+    filCod: 4,
+    docTip: 1,
+    docCod: 18337,
+    vldAutorizado: 0,
+    ...o,
+});
+
 describe('RecebimentosPainelService — aba NDe', () => {
     it('lista as NDes das filiais permitidas, com teto próprio', async () => {
         const { service, ndeRepo } = build({ ndes: [buildNde()] });
@@ -296,44 +307,111 @@ describe('RecebimentosPainelService — aba NDe', () => {
         expect((await service.montarPainel()).kpis.ndePendentes).toBe(37);
     });
 
-    it('hidrata no com297 só as não autorizadas que têm docCod — e nunca as demais', async () => {
-        const { service, fiscalClient } = build({
-            ndes: [
-                buildNde({ id: 'a', idempotencyKey: 'k-a', ndDocCod: 18337, ndeAutorizado: false }),
-                buildNde({ id: 'b', idempotencyKey: 'k-b', ndDocCod: 18338, ndeAutorizado: true }),
-                buildNde({ id: 'c', idempotencyKey: 'k-c' }),
-            ],
-            docStatus: { vldAutorizado: 0 },
-        });
-        await service.montarPainel();
+    it('hidrata com UM POST por filial, não um GET por linha', async () => {
+        // A versão anterior fazia 1 GET por documento (até 20 por carga). O grid resolve tudo de uma vez.
+        const ndes = Array.from({ length: 12 }, (_, i) =>
+            buildNde({ id: `n-${i}`, idempotencyKey: `k-${i}`, ndDocCod: 2000 + i }),
+        );
+        const { service, fiscalClient } = build({ ndes });
+        await service.montarPainel({ filCodsPermitidas: [4, 7] });
 
-        expect(fiscalClient.lerDocParaPolling).toHaveBeenCalledTimes(1);
-        expect(fiscalClient.lerDocParaPolling).toHaveBeenCalledWith({ filCod: 4, docCod: 18337 });
+        expect(fiscalClient.listNdes).toHaveBeenCalledTimes(2);
+        expect(fiscalClient.listNdes).toHaveBeenCalledWith({ filCod: 4 });
+        expect(fiscalClient.listNdes).toHaveBeenCalledWith({ filCod: 7 });
     });
 
     it('SEFAZ autorizou → reconcilia o ledger, o número e o KPI de pendentes', async () => {
         const { service, execucaoRepo, ndeRepo } = build({
             ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337, ndeAutorizado: false })],
             ndePendentes: 3,
-            docStatus: { vldAutorizado: 1, docEspNumero: '000123' },
+            erpNdes: [buildErp({ vldAutorizado: 1, docEspNumero: '180791' })],
         });
         const painel = await service.montarPainel();
 
-        expect(painel.ndes[0]).toMatchObject({ ndeAutorizado: true, numeroNde: '000123' });
+        expect(painel.ndes[0]).toMatchObject({ ndeAutorizado: true, numeroNde: '180791' });
         expect(execucaoRepo.setNdeAutorizado).toHaveBeenCalledWith('k-a', true);
-        // O número só chega DEPOIS (SEFAZ é assíncrono) — sem persistir, a linha voltaria a "—" no
-        // próximo load, já que autorizada ela não é mais candidata a hidratação.
-        expect(ndeRepo.updateNumeroNde).toHaveBeenCalledWith('k-a', '000123');
-        // Uma pendência a menos foi resolvida NESTE request; o COUNT foi tirado antes dela.
+        // O número só chega DEPOIS (SEFAZ é assíncrono) — sem persistir, a linha voltaria a "—".
+        expect(ndeRepo.updateNumeroNde).toHaveBeenCalledWith('k-a', '180791');
         expect(painel.kpis.ndePendentes).toBe(2);
     });
 
+    it('linha já autorizada no banco NÃO é reescrita a cada carga de painel', async () => {
+        const { service, execucaoRepo, ndeRepo } = build({
+            ndes: [
+                buildNde({
+                    idempotencyKey: 'k-a',
+                    ndDocCod: 18337,
+                    ndeAutorizado: true,
+                    numeroNde: '180791',
+                }),
+            ],
+            erpNdes: [buildErp({ vldAutorizado: 1, docEspNumero: '180791' })],
+        });
+        await service.montarPainel();
+
+        expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
+        expect(ndeRepo.updateNumeroNde).not.toHaveBeenCalled();
+    });
+
+    it('NDe do ERP sem execução nossa aparece marcada como emitida FORA da ferramenta', async () => {
+        // É o ponto da feature: uma nota fiscal real que a ferramenta não emitiu não pode desaparecer.
+        const { service } = build({
+            ndes: [],
+            erpNdes: [
+                buildErp({
+                    docCod: 18790,
+                    vldAutorizado: 1,
+                    docEspNumero: '180792',
+                    valor: 236143.79,
+                    priCod: 3640,
+                    processoRef: '0017DYS/26',
+                    cliente: 'DYNAMIS IMPORTADORA E DISTRIBUIDORA LTDA',
+                }),
+            ],
+        });
+        const painel = await service.montarPainel({ filCodsPermitidas: [4] });
+
+        expect(painel.ndes).toHaveLength(1);
+        expect(painel.ndes[0]).toMatchObject({
+            id: 'erp:4:18790',
+            origem: 'erp',
+            numeroNde: '180792',
+            valor: 236143.79,
+            cliente: 'DYNAMIS IMPORTADORA E DISTRIBUIDORA LTDA',
+            processoRef: '0017DYS/26',
+            ndeAutorizado: true,
+        });
+        // Não inventa rastro que não existe.
+        expect(painel.ndes[0]?.correlationId).toBeUndefined();
+        expect(painel.ndes[0]?.idempotencyKey).toBeUndefined();
+    });
+
+    it('NDe do ERP que casa com execução nossa NÃO duplica a linha', async () => {
+        const { service } = build({
+            ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337 })],
+            erpNdes: [buildErp({ docCod: 18337, vldAutorizado: 1 })],
+        });
+        const painel = await service.montarPainel();
+
+        expect(painel.ndes).toHaveLength(1);
+        expect(painel.ndes[0]?.origem).toBe('ferramenta');
+    });
+
+    it('externa não autorizada entra no KPI de pendentes — o COUNT do banco não a conhece', async () => {
+        const { service } = build({
+            ndes: [],
+            ndePendentes: 0,
+            erpNdes: [buildErp({ docCod: 18999, vldAutorizado: 0 })],
+        });
+        expect((await service.montarPainel({ filCodsPermitidas: [4] })).kpis.ndePendentes).toBe(1);
+    });
+
     it('ERP fora do ar não derruba o painel — a aba volta com o que o banco sabe', async () => {
-        const { service, fiscalClient, execucaoRepo } = build({
+        const { service, fiscalClient, execucaoRepo, logService } = build({
             ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337, ndeAutorizado: false })],
             ndePendentes: 1,
         });
-        (fiscalClient.lerDocParaPolling as jest.Mock).mockRejectedValue(new Error('conexos down'));
+        (fiscalClient.listNdes as jest.Mock).mockRejectedValue(new Error('conexos down'));
 
         const painel = await service.montarPainel();
 
@@ -341,51 +419,32 @@ describe('RecebimentosPainelService — aba NDe', () => {
         expect(painel.ndes[0]).toMatchObject({ ndeAutorizado: false });
         expect(painel.kpis.ndePendentes).toBe(1);
         expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
+        // Degradar é aceitável; degradar em silêncio não.
+        expect(logService.warn).toHaveBeenCalled();
     });
 
-    it('a hidratação é capada — uma carteira grande não vira uma rajada no ERP', async () => {
-        const ndes = Array.from({ length: 50 }, (_, i) =>
-            buildNde({ id: `n-${i}`, idempotencyKey: `k-${i}`, ndDocCod: 1000 + i }),
+    it('uma filial que falha não zera as outras — aba parcial vale mais que aba vazia', async () => {
+        const { service, fiscalClient } = build({ ndes: [] });
+        (fiscalClient.listNdes as jest.Mock).mockImplementation(
+            async ({ filCod }: { filCod: number }) => {
+                if (filCod === 4) throw new Error('filial 4 fora');
+                return [buildErp({ filCod: 7, docCod: 18888, vldAutorizado: 1 })];
+            },
         );
-        const { service, fiscalClient } = build({ ndes, docStatus: { vldAutorizado: 0 } });
-        await service.montarPainel();
 
-        expect((fiscalClient.lerDocParaPolling as jest.Mock).mock.calls).toHaveLength(20);
+        const painel = await service.montarPainel({ filCodsPermitidas: [4, 7] });
+        expect(painel.ndes).toHaveLength(1);
+        expect(painel.ndes[0]).toMatchObject({ id: 'erp:7:18888' });
     });
 
-    it('a concorrência é o FANOUT do módulo (4), não uma rajada de 20 sessões no Conexos', async () => {
-        // O teto de 4 vem do incidente LOGIN_ERROR_MAX_SESSIONS. Sem medir o LOTE, trocar a
-        // constante por 20 passaria verde — o teste do cap sozinho não protege a concorrência.
-        const ndes = Array.from({ length: 12 }, (_, i) =>
-            buildNde({ id: `n-${i}`, idempotencyKey: `k-${i}`, ndDocCod: 2000 + i }),
-        );
-        const { service, fiscalClient } = build({ ndes, docStatus: { vldAutorizado: 0 } });
-
-        let emVoo = 0;
-        let picoDeConcorrencia = 0;
-        (fiscalClient.lerDocParaPolling as jest.Mock).mockImplementation(async () => {
-            emVoo += 1;
-            picoDeConcorrencia = Math.max(picoDeConcorrencia, emVoo);
-            await new Promise((r) => setImmediate(r));
-            emVoo -= 1;
-            return { vldAutorizado: 0 };
-        });
-
-        await service.montarPainel();
-        expect(picoDeConcorrencia).toBe(4);
-    });
-
-    it('ERP pendurado não segura o painel — o prazo por leitura corta e a linha volta do banco', async () => {
+    it('ERP lento não segura o painel — o prazo por leitura corta', async () => {
         jest.useFakeTimers();
         try {
             const { service, fiscalClient } = build({
                 ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337, ndeAutorizado: false })],
                 ndePendentes: 1,
             });
-            // Uma leitura que NUNCA resolve — o caso do doc pendurado no com297.
-            (fiscalClient.lerDocParaPolling as jest.Mock).mockImplementation(
-                () => new Promise(() => {}),
-            );
+            (fiscalClient.listNdes as jest.Mock).mockImplementation(() => new Promise(() => {}));
 
             const promessa = service.montarPainel();
             await jest.advanceTimersByTimeAsync(9_000);
@@ -399,10 +458,9 @@ describe('RecebimentosPainelService — aba NDe', () => {
     });
 
     it('falha ao gravar o número NÃO grava o flag — senão a linha nunca mais seria reconciliada', async () => {
-        // O flag é o ponto de commit: enquanto ele não está no banco, a linha segue candidata.
         const { service, execucaoRepo, ndeRepo, logService } = build({
             ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337, ndeAutorizado: false })],
-            docStatus: { vldAutorizado: 1, docEspNumero: '000123' },
+            erpNdes: [buildErp({ vldAutorizado: 1, docEspNumero: '180791' })],
         });
         (ndeRepo.updateNumeroNde as jest.Mock).mockRejectedValue(new Error('db down'));
 
@@ -410,31 +468,5 @@ describe('RecebimentosPainelService — aba NDe', () => {
 
         expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
         expect(logService.warn).toHaveBeenCalled();
-    });
-
-    it('falha na leitura do ERP é registrada — degradar em silêncio esconde regressão', async () => {
-        const { service, fiscalClient, logService } = build({
-            ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337, ndeAutorizado: false })],
-        });
-        (fiscalClient.lerDocParaPolling as jest.Mock).mockRejectedValue(new Error('conexos down'));
-
-        await service.montarPainel();
-        expect(logService.warn).toHaveBeenCalled();
-    });
-
-    it('docEspNumero "0" NÃO vira número de nota — o campo não é confirmado por HAR', async () => {
-        // O único HAR observado mostra o documento com `docEspNumero` "0" logo após homologar.
-        // Como a linha autorizada sai da fila de hidratação, gravar isso fixaria um número falso.
-        const { service, ndeRepo } = build({
-            ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337, ndeAutorizado: false })],
-            docStatus: { vldAutorizado: 1, docEspNumero: '0' },
-        });
-
-        const painel = await service.montarPainel();
-
-        expect(ndeRepo.updateNumeroNde).not.toHaveBeenCalled();
-        expect(painel.ndes[0]?.numeroNde).toBeUndefined();
-        // A autorização é fato e é gravada mesmo sem número.
-        expect(painel.ndes[0]).toMatchObject({ ndeAutorizado: true });
     });
 });

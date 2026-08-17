@@ -4,16 +4,65 @@ import ConexosError from '../errors/ConexosError.js';
 import {
     COM194_TIPOS_ERRO,
     NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO,
+    NDE_TPD_COD,
+    PAINEL_NDE_ERP_MAX_PAGINAS,
+    PAINEL_NDE_ERP_PAGE_SIZE,
 } from '../interface/recebimentos/constants.js';
 import type {
     DocFiscal,
     DocStatusFiscal,
     ItemNde,
     ItemNdeResumo,
+    NdeErpListItem,
     ObservacoesFiscais,
     ValidacaoDocumento,
 } from '../interface/recebimentos/NdeFiscal.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
+
+/**
+ * Colunas pedidas ao grid do com297. Todas confirmadas como projetáveis pelo probe de PRD
+ * (`jobs/probe-com297-list.ts`, 2026-08-17) — o grid devolve o que se pede no `fieldList`.
+ *
+ * `vldAutorizado` é a razão de ser desta lista: é ele que substitui N `GET com297/{docCod}` por 1 POST.
+ * Os campos de cliente/processo dão identidade às NDes emitidas fora da ferramenta, que não têm
+ * `correlationId` nosso.
+ */
+const NDE_LIST_FIELDS = [
+    'docCod',
+    'docTip',
+    'filCod',
+    'docEspNumero',
+    'vldAutorizado',
+    'vldStatus',
+    'docMnyValor',
+    'docDtaEmissao',
+    'priCod',
+    'priEspRefcliente',
+    'dpeNomPessoa',
+    'pdcDocFederal',
+] as const;
+
+/**
+ * Boundary Zod da linha do grid. Só os identificadores são exigidos — todo o resto é opcional porque
+ * o ERP omite coluna vazia em vez de mandar `null`, e uma NDe recém-gerada legitimamente não tem
+ * número nem autorização. `.passthrough()` preserva o resto para auditoria.
+ */
+const NDE_LIST_ROW_SCHEMA = z
+    .object({
+        filCod: z.coerce.number().int(),
+        docTip: z.coerce.number().int(),
+        docCod: z.coerce.number().int(),
+        docEspNumero: z.union([z.string(), z.number()]).nullish(),
+        vldAutorizado: z.coerce.number().int().nullish(),
+        vldStatus: z.coerce.number().int().nullish(),
+        docMnyValor: z.coerce.number().nullish(),
+        docDtaEmissao: z.coerce.number().int().nullish(),
+        priCod: z.coerce.number().int().nullish(),
+        priEspRefcliente: z.union([z.string(), z.number()]).nullish(),
+        dpeNomPessoa: z.string().nullish(),
+        pdcDocFederal: z.union([z.string(), z.number()]).nullish(),
+    })
+    .passthrough();
 
 /**
  * Boundary Zod do com300 (fiscal). `.passthrough()` preserva os ~73 campos p/ o read-modify-write —
@@ -258,6 +307,79 @@ export default class ConexosNdeFiscalClient {
      * Uma classe indisponível NÃO derruba a leitura inteira: a mensagem de falha da homologação vale
      * mais parcial do que ausente, e o analista tem 15 minutos de tolerância da NF-e para agir.
      */
+    /**
+     * GRID da família NDe de UMA filial — `POST com297/list`, paginado.
+     *
+     * ⚠️ **O sufixo `/list` é o que separa ler de escrever neste serviço.** `POST /com297` (sem
+     * `/list`) é a rota de CRIAÇÃO de documento — ela responde `400 VALIDATION` a um corpo de grid,
+     * mas é escrita. Por isso o path é literal aqui e NÃO passa pelo helper `listGenericPaginated`
+     * (que monta `/{serviceName}`).
+     *
+     * Filtra por `tpdCod#EQ: NDE_TPD_COD` — o CÓDIGO do tipo de documento, nunca o nome. Ver o
+     * racional medido em `constants.ts`: o filtro por `tpdDesNome#LIKE` sobre string acentuada
+     * devolveria zero linhas sem erro se a normalização Unicode divergir, e nome de cadastro é
+     * editável. A equivalência código ⟷ nome foi provada em PRD (mesmo `count`, nenhum outro tipo).
+     *
+     * NÃO filtra por `vldStatus`: a aba quer a família inteira, e o mapa de status do ERP ainda não
+     * está confirmado (só `3` observado) — filtrar por um valor não entendido esconderia NDe real.
+     *
+     * Leitura idempotente → `runWithRetry` + `ensureSid`, igual aos métodos irmãos. Zod no boundary.
+     */
+    public listNdes = async (params: { filCod: number }): Promise<NdeErpListItem[]> => {
+        const { filCod } = params;
+        const path = 'com297/list';
+        try {
+            return await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                const acumulado: NdeErpListItem[] = [];
+                for (let pagina = 1; pagina <= PAINEL_NDE_ERP_MAX_PAGINAS; pagina += 1) {
+                    const raw = await this.base.postGeneric<{ count?: number; rows?: unknown[] }>(
+                        path,
+                        {
+                            fieldList: [...NDE_LIST_FIELDS],
+                            filterList: { 'tpdCod#EQ': NDE_TPD_COD },
+                            pageNumber: pagina,
+                            pageSize: PAINEL_NDE_ERP_PAGE_SIZE,
+                            serviceName: 'com297',
+                            orderList: {
+                                orderList: [{ propertyName: 'docCod', order: 'desc' }],
+                            },
+                        },
+                        { filCod },
+                    );
+                    const rows = raw?.rows ?? [];
+                    acumulado.push(...rows.map((r) => this.mapNdeErpRow(r)));
+                    // Página incompleta = última. `count` do ERP é o total do filtro, não da página.
+                    if (rows.length < PAINEL_NDE_ERP_PAGE_SIZE) break;
+                    if (acumulado.length >= (raw?.count ?? acumulado.length)) break;
+                }
+                return acumulado;
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /** Projeta a linha do grid. Epoch ms → `Date`; `0`/vazio em número vira AUSENTE. */
+    private mapNdeErpRow = (raw: unknown): NdeErpListItem => {
+        const r = NDE_LIST_ROW_SCHEMA.parse(raw);
+        const numero = r.docEspNumero != null ? String(r.docEspNumero).trim() : '';
+        return {
+            filCod: r.filCod,
+            docTip: r.docTip,
+            docCod: r.docCod,
+            ...(numero !== '' && Number(numero) !== 0 ? { docEspNumero: numero } : {}),
+            ...(r.vldAutorizado != null ? { vldAutorizado: r.vldAutorizado } : {}),
+            ...(r.vldStatus != null ? { vldStatus: r.vldStatus } : {}),
+            ...(r.docMnyValor != null ? { valor: r.docMnyValor } : {}),
+            ...(r.docDtaEmissao != null ? { emitidaEm: new Date(r.docDtaEmissao) } : {}),
+            ...(r.priCod != null ? { priCod: r.priCod } : {}),
+            ...(r.priEspRefcliente != null ? { processoRef: String(r.priEspRefcliente) } : {}),
+            ...(r.dpeNomPessoa != null ? { cliente: String(r.dpeNomPessoa) } : {}),
+            ...(r.pdcDocFederal != null ? { clienteDoc: String(r.pdcDocFederal) } : {}),
+        };
+    };
+
     public listValidacoes = async (params: {
         filCod: number;
         docTip: number;

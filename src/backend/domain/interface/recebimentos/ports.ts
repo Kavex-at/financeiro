@@ -573,18 +573,39 @@ export interface RegraRecebimentoRepositoryInterface {
  * (ADR-0031 — `nd_doc_cod` nulo ali é "não era devida", nunca "faltou emitir").
  */
 export interface NdePainelRow {
-    /** `nota_debito_eletronica.id` quando já existe; senão `exec:<idempotencyKey>`. */
+    /**
+     * `nota_debito_eletronica.id` quando já existe; `exec:<idempotencyKey>` quando só há execução;
+     * `erp:<filCod>:<docCod>` quando a NDe foi emitida FORA da ferramenta (não há nada nosso).
+     */
     id: string;
-    /** Transação bancária que originou a alocação. */
-    recebimentoId: string;
+    /**
+     * De onde a linha veio.
+     *
+     * `'ferramenta'` — houve execução nossa; a linha tem `correlationId`, `etapa` e rastro completo.
+     * `'erp'` — existe no com297 e NÃO tem execução nossa (alguém emitiu direto no Conexos). A
+     * identidade dela é o cliente + o processo, porque `correlationId` e transação bancária não
+     * existem. Distinguir as duas é obrigatório: prometer rastro onde não há seria mentira, e sumir
+     * com a linha esconderia uma nota fiscal real.
+     */
+    origem: 'ferramenta' | 'erp';
+    /** Transação bancária que originou a alocação. Ausente em NDe emitida fora da ferramenta. */
+    recebimentoId?: string;
     filCod: number;
-    correlationId: string;
+    /** Ausente em NDe emitida fora da ferramenta — não passou pelo nosso rastro. */
+    correlationId?: string;
+    /** Processo (`priCod`) — vem do ERP; é o que dá contexto a uma linha sem execução nossa. */
+    priCod?: number;
+    /** Referência do cliente para o processo (ex.: `0017DYS/26`). */
+    processoRef?: string;
+    /** Razão social do cliente, do ERP. */
+    cliente?: string;
     /** Número da NF-e atribuído na homologação. Ausente até o SEFAZ devolver. */
     numeroNde?: string;
     valor: number;
     moeda: string;
     statusEmissao: NdeStatusEmissao;
-    idempotencyKey: string;
+    /** Ausente em NDe emitida fora da ferramenta (a chave é nossa, não do ERP). */
+    idempotencyKey?: string;
     emitidaEm?: Date;
     emitidaPor?: string;
     /** `docCod` do documento com297 no ERP — o handle que abre a NDe no Conexos. */

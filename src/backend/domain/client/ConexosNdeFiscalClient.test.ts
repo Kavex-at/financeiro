@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import type ConexosBaseClient from './ConexosBaseClient.js';
+import ConexosError from '../errors/ConexosError.js';
 import ConexosNdeFiscalClient from './ConexosNdeFiscalClient.js';
 import type { DocFiscal } from '../interface/recebimentos/NdeFiscal.js';
 
@@ -329,5 +330,92 @@ describe('ConexosNdeFiscalClient — (d) com297 comDocProdutos (itens da NDe)', 
             buildBase({ getGeneric: jest.fn().mockRejectedValue(new Error('500')) }),
         );
         await expect(explode.preDescricaoProdutoNf(alvo)).resolves.toBeUndefined();
+    });
+});
+
+describe('ConexosNdeFiscalClient — listNdes (GRID do com297)', () => {
+    const linhaErp = (o: Record<string, unknown> = {}) => ({
+        filCod: 2,
+        docTip: 1,
+        docCod: 18790,
+        docEspNumero: '180792',
+        vldAutorizado: 1,
+        vldStatus: 3,
+        docMnyValor: 236143.79,
+        docDtaEmissao: 1786406400000,
+        priCod: 3640,
+        priEspRefcliente: '0017DYS/26',
+        dpeNomPessoa: 'DYNAMIS IMPORTADORA E DISTRIBUIDORA LTDA',
+        pdcDocFederal: '10384567000405',
+        ...o,
+    });
+
+    it('bate em com297/LIST e filtra por CÓDIGO do tipo, nunca pelo nome', async () => {
+        // O sufixo /list é o que separa ler de escrever: POST /com297 é a CRIAÇÃO de documento.
+        // E `tpdDesNome#LIKE` sobre string acentuada devolveria zero linhas sem erro se a
+        // normalização Unicode divergir — indistinguível de "não há NDe".
+        const postGeneric = jest.fn().mockResolvedValue({ count: 1, rows: [linhaErp()] });
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+
+        await client.listNdes({ filCod: 2 });
+
+        const [path, body, opts] = postGeneric.mock.calls[0];
+        expect(path).toBe('com297/list');
+        expect((body as { filterList: Record<string, unknown> }).filterList).toEqual({
+            'tpdCod#EQ': 167,
+        });
+        expect(JSON.stringify(body)).not.toContain('tpdDesNome');
+        expect((body as { fieldList: string[] }).fieldList).toContain('vldAutorizado');
+        expect(opts).toEqual({ filCod: 2 });
+    });
+
+    it('projeta a linha: epoch→Date, cliente e processo, autorização', async () => {
+        const postGeneric = jest.fn().mockResolvedValue({ count: 1, rows: [linhaErp()] });
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+
+        const [nde] = await client.listNdes({ filCod: 2 });
+
+        expect(nde).toMatchObject({
+            docCod: 18790,
+            docEspNumero: '180792',
+            vldAutorizado: 1,
+            valor: 236143.79,
+            priCod: 3640,
+            processoRef: '0017DYS/26',
+            cliente: 'DYNAMIS IMPORTADORA E DISTRIBUIDORA LTDA',
+        });
+        expect(nde?.emitidaEm?.toISOString()).toBe('2026-08-11T00:00:00.000Z');
+    });
+
+    it('docEspNumero "0" ou vazio NÃO vira número — o campo não é confirmado por HAR', async () => {
+        // O GET por docCod devolve "0" logo após homologar; gravar isso fixaria um número falso.
+        const postGeneric = jest.fn().mockResolvedValue({
+            rows: [linhaErp({ docEspNumero: '0' }), linhaErp({ docCod: 2, docEspNumero: '  ' })],
+        });
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+
+        const rows = await client.listNdes({ filCod: 2 });
+        expect(rows.map((r) => r.docEspNumero)).toEqual([undefined, undefined]);
+    });
+
+    it('pagina até a página incompleta, sem loop infinito', async () => {
+        const cheia = Array.from({ length: 200 }, (_, i) => linhaErp({ docCod: 1000 + i }));
+        const postGeneric = jest
+            .fn()
+            .mockResolvedValueOnce({ count: 250, rows: cheia })
+            .mockResolvedValueOnce({ count: 250, rows: [linhaErp({ docCod: 9999 })] });
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+
+        const rows = await client.listNdes({ filCod: 2 });
+
+        expect(rows).toHaveLength(201);
+        expect(postGeneric).toHaveBeenCalledTimes(2);
+        expect((postGeneric.mock.calls[1][1] as { pageNumber: number }).pageNumber).toBe(2);
+    });
+
+    it('falha de transporte vira ConexosError (o caller decide degradar)', async () => {
+        const postGeneric = jest.fn().mockRejectedValue(new Error('500'));
+        const client = new ConexosNdeFiscalClient(buildBase({ postGeneric }));
+        await expect(client.listNdes({ filCod: 2 })).rejects.toBeInstanceOf(ConexosError);
     });
 });

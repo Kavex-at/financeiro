@@ -44,8 +44,27 @@
   levando o analista a reprocessar uma nota perfeitamente emitida. A NDe que não fechou mostra
   **onde parou** (`etapa`), e toda linha carrega o `docCod` — o único jeito de achar no Conexos uma
   NDe que ainda não tem número.
-- **GAP aberto:** listar as NDes emitidas **fora** da ferramenta exige mapear o grid/pesquisa do
-  `com297` (captura de HAR, como foi feito para o `fin095`) — `_inbox/nde-painel-lista-gap.md`.
+- **feat(recebimentos):** as NDes **emitidas fora da ferramenta** passam a aparecer na aba. O grid do
+  com297 (`POST com297/list`) foi mapeado no meio deste ciclo, então uma nota emitida direto no
+  Conexos — que a ferramenta não tem como conhecer — deixa de ser invisível. Ela entra com
+  `origem: 'erp'` e o chip **"fora da ferramenta"**: não tem `correlationId`, etapa nem transação
+  bancária, e a tela **diz isso** em vez de fingir rastro. A identidade dela é **cliente + processo**,
+  que o grid fornece. `correlationId`/`recebimentoId`/`idempotencyKey` viraram opcionais — preencher
+  com placeholder seria mentira num campo de rastro.
+- **perf(recebimentos):** a hidratação passou de **até 20 `GET com297/{docCod}` para 1 POST por
+  filial**. O grid projeta `vldAutorizado` e `docEspNumero` da família inteira de uma vez, então o
+  custo por carga de painel deixou de crescer com o número de NDes pendentes.
+- **fix(recebimentos):** o filtro do grid é por **CÓDIGO** (`tpdCod#EQ: 167`), não pelo nome do tipo
+  de documento. O HAR original filtrava `tpdDesNome#LIKE: "NOTA DE DEBITO ELETRÔNICA"` — nome de
+  cadastro é editável (a env `COM297_GCD_NOTA_DEBITO` existe justamente como escape de um lookup por
+  nome), e `#LIKE` sobre string acentuada falha em **silêncio** se a normalização Unicode divergir:
+  zero linhas, sem erro, indistinguível de "não há NDe" — o mesmo bug que esta release conserta,
+  entrando por outra porta. A equivalência código ⟷ nome foi **provada em produção** por probe
+  read-only (mesmo `count`, nenhum outro tipo, estável entre filiais).
+- **GAP FECHADO:** o grid do `com297` foi mapeado e validado ao vivo — `_inbox/nde-painel-lista-gap.md`.
+  ⚠️ Armadilha registrada: `POST /com297` **sem** o sufixo `/list` é a **criação** de documento; no
+  com297 é o sufixo que separa ler de escrever, e o helper genérico `listGenericPaginated` monta o
+  path errado.
 - **Regis-Review** desta feature em `docs/regis-review/2026-08-17-1402/`. O gate alterou o desenho
   (prazo/orçamento, lote 4, ordem de escrita, guard do número, `LogService`) e deixou cards abertos —
   o maior deles é **pré-existente e sistêmico**: `filiaisPermitidas` devolve `undefined` para todos

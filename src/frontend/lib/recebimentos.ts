@@ -144,14 +144,27 @@ export interface Recebimento {
  */
 export interface NotaDebitoEletronica {
   id: string
-  recebimentoId: string
+  /**
+   * `'ferramenta'` = houve execução nossa (tem rastro completo).
+   * `'erp'` = existe no com297 e ninguém a emitiu por aqui — a identidade dela é cliente + processo,
+   * porque `correlationId` e transação bancária não existem. A tela precisa distinguir: prometer
+   * rastro onde não há seria mentira, e esconder a linha esconderia uma nota fiscal real.
+   */
+  origem: 'ferramenta' | 'erp'
+  recebimentoId?: string
   filCod: number
-  correlationId: string
+  correlationId?: string
+  /** Processo (`priCod`) — do ERP. */
+  priCod?: number
+  /** Referência do cliente para o processo (ex.: `0017DYS/26`). */
+  processoRef?: string
+  /** Razão social do cliente, do ERP. */
+  cliente?: string
   numeroNde?: string
   valor: number
   moeda: string
   statusEmissao: NdeStatusEmissao
-  idempotencyKey: string
+  idempotencyKey?: string
   emitidaEm?: string
   emitidaPor?: string
   /** `docCod` do documento no Conexos — o handle que abre a NDe no ERP. */
@@ -411,6 +424,7 @@ const fixtureRecebimentos: Recebimento[] = [
 const fixtureNdes: NotaDebitoEletronica[] = [
   {
     id: 'nde-0002',
+    origem: 'ferramenta',
     recebimentoId: 'rec-0002',
     filCod: 4,
     correlationId: 'corr-0002',
@@ -428,6 +442,7 @@ const fixtureNdes: NotaDebitoEletronica[] = [
   {
     // Emitida e homologada, SEFAZ ainda em silêncio — o caso mais comum logo após processar.
     id: 'nde-0004',
+    origem: 'ferramenta',
     recebimentoId: 'rec-0004',
     filCod: 4,
     correlationId: 'corr-0004',
@@ -445,6 +460,7 @@ const fixtureNdes: NotaDebitoEletronica[] = [
   {
     // Documento gerado no ERP, cauda fiscal parada: a NDe que deveria existir e não saiu.
     id: 'exec:receb:rec-0003:corr-0003',
+    origem: 'ferramenta',
     recebimentoId: 'rec-0003',
     filCod: 7,
     correlationId: 'corr-0003',
@@ -454,6 +470,22 @@ const fixtureNdes: NotaDebitoEletronica[] = [
     idempotencyKey: 'receb:rec-0003:corr-0003',
     ndDocCod: 18410,
     etapa: 'fiscal-done',
+  },
+  {
+    // Emitida direto no Conexos, sem passar pelo "Processar" — sem correlationId nem etapa.
+    id: 'erp:4:18790',
+    origem: 'erp',
+    filCod: 4,
+    valor: 236143.79,
+    moeda: 'BRL',
+    statusEmissao: 'emitida',
+    numeroNde: '180792',
+    ndDocCod: 18790,
+    ndeAutorizado: true,
+    emitidaEm: '2026-08-11T00:00:00.000Z',
+    priCod: 3640,
+    processoRef: '0017DYS/26',
+    cliente: 'DYNAMIS IMPORTADORA E DISTRIBUIDORA LTDA',
   },
 ]
 
