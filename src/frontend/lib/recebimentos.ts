@@ -135,7 +135,13 @@ export interface Recebimento {
   criadoEm: string
 }
 
-/** Nota de Débito Eletrônica — espelho de `NotaDebitoEletronica` (artefato terminal). */
+/**
+ * Nota de Débito Eletrônica — espelho do `NdePainelRow` do backend (projeção da aba, não a entidade).
+ *
+ * A lista é dirigida pela EXECUÇÃO da alocação: uma linha aqui é um documento com297 que existe (ou
+ * deveria existir) no ERP. Por isso ela carrega também o diagnóstico de uma NDe que NÃO saiu —
+ * `etapa` (onde a cauda fiscal parou) e `erroMensagem` — além do estado da autorização do SEFAZ.
+ */
 export interface NotaDebitoEletronica {
   id: string
   recebimentoId: string
@@ -148,6 +154,16 @@ export interface NotaDebitoEletronica {
   idempotencyKey: string
   emitidaEm?: string
   emitidaPor?: string
+  /** `docCod` do documento no Conexos — o handle que abre a NDe no ERP. */
+  ndDocCod?: number
+  /** Etapa alcançada na trilha fiscal (`homologado`, `fiscal-done`, …). */
+  etapa?: string
+  /** Homologou com validações pendentes (com194) — emitida, mas precisa de olhos. */
+  revisaoHumana?: boolean
+  /** SEFAZ autorizou. `false` logo após emitir é NORMAL — a autorização é assíncrona. */
+  ndeAutorizado?: boolean
+  /** Mensagem do ERP quando a execução parou em erro. */
+  erroMensagem?: string
 }
 
 /** KPIs agregados do painel (Fase 1 — derivados client-side do fixture se ausentes). */
@@ -203,7 +219,10 @@ export function computeKpis(
     erro: transacoes.filter((t) => t.status === 'erro').length,
     processadas: transacoes.filter((t) => t.status === 'processada').length,
     valorNaoAlocado: recebimentos.reduce((acc, r) => acc + (r.diferencaNaoAlocada || 0), 0),
-    ndePendentes: ndes.filter((n) => n.statusEmissao === 'pendente').length,
+    // "Pendente" = o ciclo não fechou: não emitida, OU emitida e o SEFAZ ainda não autorizou.
+    // Mesma definição do COUNT do backend — as duas precisam concordar quando o card troca de fonte.
+    ndePendentes: ndes.filter((n) => !(n.statusEmissao === 'emitida' && n.ndeAutorizado === true))
+      .length,
   }
 }
 
@@ -402,9 +421,30 @@ const fixtureNdes: NotaDebitoEletronica[] = [
     idempotencyKey: 'receb:rec-0002:corr-0002',
     emitidaEm: '2026-07-19T14:02:00.000Z',
     emitidaPor: 'analista',
+    ndDocCod: 18337,
+    etapa: 'concluido',
+    ndeAutorizado: true,
   },
   {
-    id: 'nde-0003',
+    // Emitida e homologada, SEFAZ ainda em silêncio — o caso mais comum logo após processar.
+    id: 'nde-0004',
+    recebimentoId: 'rec-0004',
+    filCod: 4,
+    correlationId: 'corr-0004',
+    valor: 12750,
+    moeda: 'BRL',
+    statusEmissao: 'emitida',
+    idempotencyKey: 'receb:rec-0004:corr-0004',
+    emitidaEm: '2026-07-21T10:11:00.000Z',
+    emitidaPor: 'analista',
+    ndDocCod: 18402,
+    etapa: 'homologado',
+    ndeAutorizado: false,
+    revisaoHumana: true,
+  },
+  {
+    // Documento gerado no ERP, cauda fiscal parada: a NDe que deveria existir e não saiu.
+    id: 'exec:receb:rec-0003:corr-0003',
     recebimentoId: 'rec-0003',
     filCod: 7,
     correlationId: 'corr-0003',
@@ -412,6 +452,8 @@ const fixtureNdes: NotaDebitoEletronica[] = [
     moeda: 'BRL',
     statusEmissao: 'pendente',
     idempotencyKey: 'receb:rec-0003:corr-0003',
+    ndDocCod: 18410,
+    etapa: 'fiscal-done',
   },
 ]
 

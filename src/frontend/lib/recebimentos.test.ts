@@ -35,9 +35,12 @@ describe('computeKpis', () => {
       { diferencaNaoAlocada: 3000 },
       { diferencaNaoAlocada: 500 },
     ] as Recebimento[]
+    // "Pendente" é o ciclo aberto, não só a coluna `status_emissao`: uma NDe emitida cuja
+    // autorização do SEFAZ ainda não voltou continua na fila de acompanhamento do analista.
     const ndes = [
       { statusEmissao: 'pendente' },
-      { statusEmissao: 'emitida' },
+      { statusEmissao: 'emitida', ndeAutorizado: false },
+      { statusEmissao: 'emitida', ndeAutorizado: true },
     ] as NotaDebitoEletronica[]
 
     expect(computeKpis(transacoes, recebimentos, ndes)).toEqual({
@@ -48,7 +51,7 @@ describe('computeKpis', () => {
       erro: 1,
       processadas: 0,
       valorNaoAlocado: 3500,
-      ndePendentes: 1,
+      ndePendentes: 2,
     })
   })
 })

@@ -172,6 +172,9 @@ describe('EXPERIMENTO DO ZERO (HML) — em que passo o título da SN nasce e mor
             useValue: {
                 save: async (nde: AnyRecord) => nde,
                 findByRecebimentoId: async () => null,
+                listParaPainel: async () => [],
+                contarPendentes: async () => 0,
+                updateNumeroNde: async () => undefined,
             },
         });
         const { default: ConexosGerDocProcessoClient } = await import(

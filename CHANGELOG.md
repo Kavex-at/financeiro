@@ -1,5 +1,57 @@
 # Columbia Financeiro — Changelog
 
+## v0.26.0 (2026-08-17) — Recebimentos: a aba NDe passa a listar de verdade
+
+- **fix(recebimentos):** a **aba NDe do painel estava sempre vazia** — não por falta de dado, mas
+  porque o `RecebimentosPainelService` devolvia `ndes: []` e `ndePendentes: 0` *hardcoded*, com o
+  comentário "Módulo 5 não existe". O comentário ficou obsoleto quando o Módulo 5 entrou: desde
+  então toda alocação executada grava a NDe e o `nd_doc_cod`. A tela era o único lugar que não sabia.
+- **feat(recebimentos):** a aba lista pela **EXECUÇÃO** (`solicitacao_numerario_execucao` LEFT JOIN
+  `nota_debito_eletronica`), não pela tabela local de NDe. Uma linha = um documento **com297 que
+  existe (ou deveria existir) no ERP** — o que inclui a NDe cuja **cauda fiscal morreu no meio**,
+  justamente a que exige ação humana e que a tabela local esconderia (ela só recebe linha depois de
+  homologar). Fora ficam `dry_run` (nada foi ao ERP) e `nde_dispensada` (**ADR-0031**: não era
+  devida, nunca "faltou emitir"). Ver **ADR-0037**.
+- **feat(recebimentos):** o painel **hidrata o estado atual no ERP** a cada carga — `GET
+  com297/{docCod}` para as linhas ainda não autorizadas, **capado em 20** e em **lotes de 4** (o
+  mesmo teto de concorrência do fan-out da ingestão, herdado do incidente `LOGIN_ERROR_MAX_SESSIONS`).
+  A autorização do SEFAZ é assíncrona: sem reler, a aba mostraria para sempre o retrato do instante
+  da emissão. Best-effort — ERP fora do ar degrada para "o que o banco sabe" e **não derruba o
+  painel** — mas nunca em silêncio: toda falha vira `logService.warn`.
+- **feat(recebimentos):** a hidratação tem **orçamento de tempo** — 8 s por leitura e 12 s para a
+  fase inteira. Sem isso o pior caso era brutal: `lerDocParaPolling` roda sob `runWithRetry` com
+  timeout de 40 s **por tentativa**, então um único documento pendurado custaria ~2 min e os lotes em
+  série segurariam o GET do painel por ~8 min. Vencido o prazo, as linhas restantes voltam do banco.
+- **feat(recebimentos):** a hidratação **reconcilia localmente** `numero_nde` e depois
+  `nde_autorizado` (nada é escrito no ERP). O número não é cosmético: sem gravá-lo, a linha sairia da
+  fila de hidratação por já estar autorizada e voltaria a exibir "—" na carga seguinte. A **ordem** é
+  a garantia: o flag é o ponto de commit, então falha ao gravar o número não deixa mais a linha
+  autorizada-e-sem-número para sempre.
+- **fix(recebimentos):** o `docEspNumero` do com297 passa por um filtro antes de virar número de
+  nota. O campo é a *melhor aposta* para o número da NF-e e **não está confirmado por HAR** — o único
+  HAR observado mostra o documento com `"0"` logo após homologar. Como a linha autorizada sai da fila
+  de hidratação, um `"0"` gravado viraria o número da nota **para sempre**. Vazio e zero são
+  rejeitados; a autorização é registrada mesmo sem número, e a tela mostra "—" em vez de um número
+  fiscal falso.
+- **perf(recebimentos):** migration **0048** — índice PARCIAL em `solicitacao_numerario_execucao
+  (fil_cod, nd_doc_cod)` no mesmo recorte da aba. A tabela só tinha índice em `pri_cod`, `status` e
+  `txn_id`; as duas queries da aba faziam seq scan a cada carga de painel.
+- **feat(recebimentos):** **"NDe pendente"** passa a significar **ciclo aberto** — `NOT (emitida AND
+  autorizada)` —, contado por `COUNT` no banco e não na lista capada. A leitura literal da coluna
+  `status_emissao` contaria zero para sempre (o service só grava `emitida`), deixando o card morto.
+- **feat(recebimentos):** na tabela, **emissão e autorização são colunas separadas**: "aguardando
+  SEFAZ" é o curso normal de uma NDe recém-emitida, e fundir os dois faria a espera parecer falha —
+  levando o analista a reprocessar uma nota perfeitamente emitida. A NDe que não fechou mostra
+  **onde parou** (`etapa`), e toda linha carrega o `docCod` — o único jeito de achar no Conexos uma
+  NDe que ainda não tem número.
+- **GAP aberto:** listar as NDes emitidas **fora** da ferramenta exige mapear o grid/pesquisa do
+  `com297` (captura de HAR, como foi feito para o `fin095`) — `_inbox/nde-painel-lista-gap.md`.
+- **Regis-Review** desta feature em `docs/regis-review/2026-08-17-1402/`. O gate alterou o desenho
+  (prazo/orçamento, lote 4, ordem de escrita, guard do número, `LogService`) e deixou cards abertos —
+  o maior deles é **pré-existente e sistêmico**: `filiaisPermitidas` devolve `undefined` para todos
+  os tokens Supabase de hoje, então o recorte por filial cai em "todas as filiais do ERP" — vale para
+  a carteira inteira, não só para a aba NDe.
+
 ## v0.25.0 (2026-08-17) — Permutas: a data do adiantamento sai de dentro do "expandir"
 
 - **feat(permutas):** as abas **Múltiplas**, **Cross-over** e **Cross-process** ganham a coluna

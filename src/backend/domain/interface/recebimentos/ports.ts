@@ -1,4 +1,4 @@
-import type { MatchClassificacao, ParcelaFinalidade } from './constants.js';
+import type { MatchClassificacao, NdeStatusEmissao, ParcelaFinalidade } from './constants.js';
 import type { CreditoCliente } from './CreditoCliente.js';
 import type { DocumentoAReceber } from './DocumentoAReceber.js';
 import type { Processo } from './GerDocProcesso.js';
@@ -560,9 +560,62 @@ export interface RegraRecebimentoRepositoryInterface {
     listAtivas: () => Promise<RegraRecebimento[]>;
 }
 
+/**
+ * Linha da aba NDe do painel — projeção de LEITURA, não a entidade.
+ *
+ * A fonte é a **execução** (`solicitacao_numerario_execucao`), com a `nota_debito_eletronica` em
+ * LEFT JOIN. A inversão é deliberada: o documento com297 nasce no ERP ANTES de a gente gravar a NDe
+ * local (que só existe depois de homologar), então listar pela tabela local esconderia exatamente o
+ * caso que o analista precisa ver — a NDe cuja cauda fiscal morreu no meio. Uma linha aqui significa
+ * "existe (ou deveria existir) um documento com297 para esta alocação".
+ *
+ * Fora da lista, por definição: execuções `dry_run` (nada foi ao ERP) e as com NDe **dispensada**
+ * (ADR-0031 — `nd_doc_cod` nulo ali é "não era devida", nunca "faltou emitir").
+ */
+export interface NdePainelRow {
+    /** `nota_debito_eletronica.id` quando já existe; senão `exec:<idempotencyKey>`. */
+    id: string;
+    /** Transação bancária que originou a alocação. */
+    recebimentoId: string;
+    filCod: number;
+    correlationId: string;
+    /** Número da NF-e atribuído na homologação. Ausente até o SEFAZ devolver. */
+    numeroNde?: string;
+    valor: number;
+    moeda: string;
+    statusEmissao: NdeStatusEmissao;
+    idempotencyKey: string;
+    emitidaEm?: Date;
+    emitidaPor?: string;
+    /** `docCod` do documento com297 no ERP — o handle que abre a NDe no Conexos. */
+    ndDocCod?: number;
+    /** Onde a trilha parou: o diagnóstico de uma NDe que não saiu. */
+    etapa?: SolicitacaoNumerarioEtapa;
+    /** Homologou com validações pendentes (com194) — emitida, mas alguém precisa olhar. */
+    revisaoHumana?: boolean;
+    /** SEFAZ autorizou. `false` logo após homologar é NORMAL (autorização é assíncrona). */
+    ndeAutorizado?: boolean;
+    /** Mensagem do ERP quando a execução parou em erro. */
+    erroMensagem?: string;
+}
+
+/** Filtro da aba NDe — sempre recortado pelas filiais que o usuário pode ver. */
+export interface ListNdesPainelFiltro {
+    filCods: number[];
+    limit: number;
+}
+
 export interface NdeRepositoryInterface {
     save: (nde: NotaDebitoEletronica) => Promise<NotaDebitoEletronica>;
     findByRecebimentoId: (recebimentoId: string) => Promise<NotaDebitoEletronica | null>;
+    listParaPainel: (filtro: ListNdesPainelFiltro) => Promise<NdePainelRow[]>;
+    /**
+     * Quantas NDes ainda não fecharam o ciclo (não emitidas OU emitidas sem autorização do SEFAZ).
+     * COUNT no banco, e não na página: um KPI derivado da lista capada mentiria para o analista.
+     */
+    contarPendentes: (filtro: { filCods: number[] }) => Promise<number>;
+    /** Grava o número que só existe depois do SEFAZ (reconciliação do poll assíncrono). */
+    updateNumeroNde: (idempotencyKey: string, numeroNde: string) => Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────── DI tokens (one Symbol per port)

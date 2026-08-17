@@ -266,6 +266,38 @@ export const CATEGORIAS_TESOURARIA = [
 /** Teto de linhas devolvidas pelo painel (espelha o `TITULOS_CAP` do SISPAG). */
 export const PAINEL_TRANSACOES_CAP = 500;
 
+/** Teto da aba NDe. Menor que o da carteira: uma NDe existe só por alocação executada. */
+export const PAINEL_NDES_CAP = 200;
+
+/**
+ * Quantas NDes o painel hidrata AO VIVO no com297 por carga (`GET com297/{docCod}`).
+ *
+ * A autorização do SEFAZ é assíncrona: número e `vldAutorizado` chegam depois da homologação, e sem
+ * reler o ERP a aba mostraria para sempre o retrato do instante da emissão. O teto existe porque a
+ * leitura é 1 HTTP por linha — sem ele, abrir o painel viraria uma rajada no ERP. Só entram as
+ * linhas ainda NÃO autorizadas: uma vez autorizada e com número gravado, a linha não muda mais.
+ */
+export const PAINEL_NDE_HIDRATACAO_CAP = 20;
+
+/**
+ * Prazo de UMA leitura de hidratação (`GET com297/{docCod}`).
+ *
+ * Não é redundante com o timeout do axios: o `lerDocParaPolling` roda sob `runWithRetry`, e 40s por
+ * tentativa × 3 tentativas = ~2min POR DOCUMENTO. Num GET de tela isso é inaceitável. Alinhado ao
+ * `ERP_WRITE_TIMEOUT_MS` — a doutrina de prazo do módulo.
+ */
+export const PAINEL_NDE_HIDRATACAO_TIMEOUT_MS = 8_000;
+
+/**
+ * Orçamento da FASE inteira de hidratação. Os lotes são sequenciais; sem um teto global, um ERP
+ * uniformemente lento multiplicaria o prazo individual pelo número de lotes. Vencido o orçamento, as
+ * linhas restantes voltam com o estado do banco e o próximo load retoma.
+ */
+export const PAINEL_NDE_HIDRATACAO_BUDGET_MS = 12_000;
+
+/** Moeda da NDe. Toda a operação é BRL; existe como constante para nunca virar string solta. */
+export const NDE_MOEDA_PADRAO = 'BRL';
+
 /** Janela default da ingestão de extratos, em dias. */
 export const RECEBIMENTO_INGEST_DIAS_PADRAO = 90;
 

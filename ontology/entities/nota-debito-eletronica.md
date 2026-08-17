@@ -11,6 +11,9 @@ related_files:
   - src/backend/domain/service/recebimentos/ContingenciaDecider.ts
   - src/backend/domain/interface/recebimentos/HomologacaoNde.ts
   - src/backend/domain/interface/recebimentos/NotaDebitoEletronica.ts
+  - src/backend/domain/repository/recebimentos/NdeRepository.ts
+  - src/backend/domain/service/recebimentos/RecebimentosPainelService.ts
+  - src/frontend/app/recebimentos/components/NdeTable.tsx
 properties:
   - id
   - recebimentoId
@@ -27,7 +30,7 @@ properties:
 relationships:
   - "NotaDebitoEletronica 0..1—1 Recebimento (via recebimentoId — a NDe é o artefato terminal de uma conciliação executada QUANDO DEVIDA; processo por conta e ordem de terceiros (imp021.priVldTipo=2) executa sem NDe — ADR-0031 / I-Receb-4)"
   - "NotaDebitoEletronica N—1 Filial (via filCod)"
-last_review: 2026-08-07
+last_review: 2026-08-17
 universality_evidence:
   - "ontology/_inbox/frente-iv-recebimentos-interview.md — Eixo 1 + Decisão 1 (Yuri, 2026-07-24): NDe é EMITIDA pelo Conexos ERP (não sistema fiscal separado, não auto-gerada)"
   - "ontology/_inbox/frente-iv-recebimentos-nde-plan.md §1 / Fase 5 — a NDe é o output terminal do Módulo 5 (borderô + quitação + emitir NDe)"
@@ -113,6 +116,31 @@ gated OFF:
   `business-rules/idempotencia-quitacao-nde.md`).
 - **`numeroNde`** atribuído na homologação (campo wire exato = best-effort, `docEspNumero` —
   confirmar no HAR).
+
+## Projeção de LEITURA — a aba NDe do painel (2026-08-17, ADR-0037)
+
+A entidade tem uma **segunda forma**, só de leitura: o `NdePainelRow` (em
+`interface/recebimentos/ports.ts`), que é o que a aba NDe do painel exibe. Não é a entidade, e a
+diferença importa:
+
+| | Entidade `NotaDebitoEletronica` | Projeção `NdePainelRow` |
+|---|---|---|
+| Fonte | `nota_debito_eletronica` | `solicitacao_numerario_execucao` **LEFT JOIN** a NDe |
+| Existe quando | a homologação confirmou | o ERP mintou o `docCod` **ou** a NDe foi gravada |
+| Serve para | idempotência + auditoria | mostrar o que saiu **e o que não saiu** |
+
+A inversão da fonte é deliberada: o documento com297 nasce no ERP **antes** da nossa linha local, então
+listar pela tabela local esconderia justamente a NDe cuja cauda fiscal morreu no meio — a única que
+exige ação humana. Ficam fora as execuções `dry_run` e as com NDe **dispensada** (ADR-0031).
+
+Além dos campos da entidade, a projeção carrega o `ndDocCod` (handle do documento no ERP), a `etapa`
+(onde a trilha parou), `revisaoHumana` e `ndeAutorizado`.
+
+**Autorização ≠ emissão.** A homologação é nossa e síncrona; a autorização é do SEFAZ e assíncrona. O
+painel relê `GET com297/{docCod}` a cada carga (capado, em lotes, best-effort) para as linhas ainda
+não autorizadas, e reconcilia localmente `nde_autorizado` + `numero_nde`. Sem isso a aba mostraria
+para sempre o retrato do instante da emissão. "NDe pendente" no KPI = ciclo aberto:
+`NOT (emitida AND autorizada)`.
 
 ## Fora de escopo (ainda) — info-gaps (`_inbox/recebimentos-nde-com297-gap.md`)
 

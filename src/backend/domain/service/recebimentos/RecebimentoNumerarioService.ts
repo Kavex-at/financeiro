@@ -16,6 +16,7 @@ import {
     NDE_FISCAL_TIPO_NF_DEBITO_PAGAMENTO_ANTECIPADO,
     NDE_GERACAO_DEFAULTS,
     NDE_GLOBAL_DOC_VLD_TIPO,
+    NDE_MOEDA_PADRAO,
     NDE_OBS_SINIEF_MARKER,
     NDE_STATUS_EMISSAO,
     PRI_VLD_TIPO_ROTULO,
@@ -93,11 +94,15 @@ const FIS_COD_DEFAULT = 1;
  */
 const somenteDigitos = (valor: string): string => valor.replace(/\D/g, '');
 
-/** Moeda da NDe (registro local) — o fluxo de numerário assume BRL (mesmo default do processo). */
-const NDE_MOEDA_PADRAO = 'BRL';
+// `NDE_MOEDA_PADRAO` saiu daqui: virou constante compartilhada em
+// `interface/recebimentos/constants.js` quando a projeção do painel passou a precisar do mesmo
+// default para a linha sem NDe local (ADR-0037).
 
 /** Tolerância da NF-e para data de emissão/movimento, medida na mensagem do com194 (produção). */
 const NFE_TOLERANCIA_MINUTOS = 15;
+
+/** `fdvVldErr` da com194 que BLOQUEIA o documento (1 = aviso, não bloqueia). */
+const VALIDACAO_BLOQUEANTE = 2;
 
 /**
  * Gate 0 (transporte × domínio): status HTTP que denunciam rota/permissão erradas em QUALQUER validador.

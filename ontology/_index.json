@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-08-11",
-    "version": "0.18.0",
-    "note": "v0.18.0 (2026-08-11, ADR-0036): a Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) passa a ser garantida NO DOCUMENTO antes da leg fiscal. O cadastro do cliente (cmn025 dpeVld1DescrNfe) segue intocado — o valor '4 - Descricao DI' e correto para a NF-e de mercadoria e so nao serve para o produto de encargo da NDe. Nova regra descricao-item-nde (I-Receb-5). ",
+    "generated": "2026-08-17",
+    "version": "0.19.0",
+    "note": "v0.17.0 (2026-08-17, ADR-0037): a aba NDe do painel de recebimentos passa a listar de verdade. Fonte da projecao = solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica (a NDe local so nasce apos homologar, entao listar por ela esconderia a NDe cuja cauda fiscal parou no meio); fora ficam dry_run e nde_dispensada (ADR-0031). O painel HIDRATA o estado atual no com297 (GET por docCod, cap 20, lotes de 5, best-effort — ERP fora do ar degrada, nao derruba) e reconcilia localmente nde_autorizado + numero_nde: a autorizacao do SEFAZ e assincrona e o banco so guarda o retrato da emissao. \"NDe pendente\" passa a significar ciclo aberto — NOT(emitida AND autorizada) — contado por COUNT no banco, nao na lista capada. Emissao e autorizacao viram colunas separadas na tela (aguardando SEFAZ nao e falha). Nenhuma coluna nova, nenhuma regra de emissao alterada. Anterior: v0.18.0 (2026-08-11, ADR-0036): a Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) passa a ser garantida NO DOCUMENTO antes da leg fiscal. O cadastro do cliente (cmn025 dpeVld1DescrNfe) segue intocado — o valor '4 - Descricao DI' e correto para a NF-e de mercadoria e so nao serve para o produto de encargo da NDe. Nova regra descricao-item-nde (I-Receb-5). ",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -214,12 +214,23 @@
     },
     "NotaDebitoEletronica": {
       "file": "entities/nota-debito-eletronica.md",
-      "status": "planned",
-      "impl_files": [],
-      "resolved_by": [
-        "ADR-0022 (D1 — emitida pelo Conexos ERP)"
+      "status": "partial",
+      "impl_files": [
+        "src/backend/domain/interface/recebimentos/NotaDebitoEletronica.ts",
+        "src/backend/domain/repository/recebimentos/NdeRepository.ts",
+        "src/backend/domain/client/ConexosNdeClient.ts",
+        "src/backend/domain/client/ConexosNdeFiscalClient.ts",
+        "src/backend/domain/service/recebimentos/RecebimentoNumerarioService.ts",
+        "src/backend/domain/service/recebimentos/RecebimentosPainelService.ts",
+        "src/frontend/app/recebimentos/components/NdeTable.tsx"
       ],
-      "note": "Frente IV (SKELETON Fase 0): artefato terminal de um Recebimento executado — EMITIDA pelo Conexos ERP (não sistema fiscal separado, não auto-gerada). Modelada como (1) ação disparada no ERP dentro de executarRecebimento + (2) registro local só para idempotência ('já emitida') + auditoria (fonte da verdade = ERP). Contrato de emissão (endpoint/trigger) a confirmar na Fase 5, junto do write O3 (integrations/conexos superfície NDe). idempotencyKey UNIQUE → uma NDe por recebimento (idempotencia-quitacao-nde). planned."
+      "resolved_by": [
+        "ADR-0022 (D1 — emitida pelo Conexos ERP)",
+        "ADR-0031 (dispensada em conta e ordem de terceiros)",
+        "ADR-0033 (só POR ENCOMENDA emite)",
+        "ADR-0037 (aba do painel lista pela execução e hidrata no com297)"
+      ],
+      "note": "Frente IV (SKELETON Fase 0): artefato terminal de um Recebimento executado — EMITIDA pelo Conexos ERP (não sistema fiscal separado, não auto-gerada). Modelada como (1) ação disparada no ERP dentro de executarRecebimento + (2) registro local só para idempotência ('já emitida') + auditoria (fonte da verdade = ERP). Contrato de emissão (endpoint/trigger) a confirmar na Fase 5, junto do write O3 (integrations/conexos superfície NDe). idempotencyKey UNIQUE → uma NDe por recebimento (idempotencia-quitacao-nde). planned. ADR-0037 (2026-08-17): a aba NDe do painel deixa de ser hardcoded vazia. A projeção de LEITURA (NdePainelRow) é dirigida pela EXECUÇÃO (solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica) — uma linha = documento com297 que existe (ou deveria existir) no ERP, o que inclui a NDe cuja cauda fiscal morreu no meio; dry_run e nde_dispensada ficam fora. O painel hidrata GET com297/{docCod} a cada carga (cap 20, lotes de 5, best-effort) para as não autorizadas e reconcilia nde_autorizado + numero_nde localmente. KPI ndePendentes = NOT(emitida AND autorizada), COUNT no banco. GAP: listar NDes emitidas fora da ferramenta exige HAR do grid com297 (_inbox/nde-painel-lista-gap.md). partial."
     },
     "RegraRecebimento": {
       "file": "entities/regra-recebimento.md",

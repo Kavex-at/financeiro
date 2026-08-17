@@ -182,6 +182,9 @@ const buildNdeRepo = (): { repo: AnyRecord; rows: AnyRecord[] } => {
             },
             findByRecebimentoId: async (id: string): Promise<AnyRecord | null> =>
                 rows.find((r) => r.recebimentoId === id) ?? null,
+            listParaPainel: async (): Promise<AnyRecord[]> => [],
+            contarPendentes: async (): Promise<number> => 0,
+            updateNumeroNde: async (): Promise<void> => undefined,
         },
     };
 };

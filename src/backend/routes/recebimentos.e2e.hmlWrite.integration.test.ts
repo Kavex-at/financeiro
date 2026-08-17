@@ -177,6 +177,11 @@ const buildFakeNdeRepo = (): { repo: AnyRecord; rows: AnyRecord[] } => {
         },
         findByRecebimentoId: async (recebimentoId: string): Promise<AnyRecord | null> =>
             rows.find((r) => r.recebimentoId === recebimentoId) ?? null,
+        // A aba NDe do painel lê pela EXECUÇÃO (LEFT JOIN na NDe) — este harness não modela o
+        // join, e o que estes cenários provam é a emissão, não a listagem.
+        listParaPainel: async (): Promise<AnyRecord[]> => [],
+        contarPendentes: async (): Promise<number> => 0,
+        updateNumeroNde: async (): Promise<void> => undefined,
     };
     return { repo, rows };
 };
