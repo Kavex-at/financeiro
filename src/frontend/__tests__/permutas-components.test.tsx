@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import type { ItemHistorico } from '@/app/permutas/components/format'
 import {
   fmtData,
@@ -123,6 +123,41 @@ describe('PermutaPendenteTable', () => {
       />,
     )
     expect(screen.getByRole('button', { name: /Alocar/ })).toBeDisabled()
+  })
+
+  // A data do adto é a única âncora de idade do PRÓPRIO adiantamento — "Dias em
+  // Aberto" (só na Visão Geral) é ancorada na data-base da D.I/DUIMP e fica vazia
+  // nos cross-process sem declaração. Meio-dia UTC no fixture evita a virada de
+  // dia do `fmtData` em qualquer fuso.
+  it('mostra a data de emissão do adiantamento vinda do detalhe', () => {
+    render(
+      <PermutaPendenteTable
+        list={[
+          makePendente({
+            detalhe: { priCod: 'PRI-1', pago: true, dataEmissao: '2026-03-01T12:00:00.000Z' },
+          }),
+        ]}
+        statusPorAdto={{}}
+        abrirAlocar={() => {}}
+        abrirReconciliar={() => {}}
+      />,
+    )
+    expect(screen.getByRole('columnheader', { name: 'Data adto' })).toBeInTheDocument()
+    const linha = screen.getByRole('row', { name: /ADTO-1/ })
+    expect(within(linha).getByText('01/03/2026')).toBeInTheDocument()
+  })
+
+  it('cai no travessão quando o adiantamento não tem data de emissão', () => {
+    render(
+      <PermutaPendenteTable
+        list={[makePendente()]} // sem `detalhe`
+        statusPorAdto={{}}
+        abrirAlocar={() => {}}
+        abrirReconciliar={() => {}}
+      />,
+    )
+    const linha = screen.getByRole('row', { name: /ADTO-1/ })
+    expect(within(linha).getByText('—')).toBeInTheDocument()
   })
 })
 
