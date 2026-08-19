@@ -175,10 +175,20 @@ export default class TituloAprovacaoRepository implements TituloAprovacaoReposit
         return { items: rows.map(this.mapRow), total: Number(totalRow?.total ?? 0) };
     };
 
-    /** Instante da observação mais recente — alimenta o `snapshotEm` exigido pela UI (I7). */
-    public ultimoSnapshot = async (): Promise<Date | null> => {
+    /**
+     * Instante da observação mais recente DAS FILIAIS CONSULTADAS (invariante I7).
+     *
+     * Escopado de propósito: um `MAX` global afirmaria o frescor da filial mais recente para quem
+     * está olhando outra. Lista vazia devolve `null` — sem filial, não há o que afirmar.
+     */
+    public ultimoSnapshot = async (filCods: number[]): Promise<Date | null> => {
+        if (filCods.length === 0) return null;
+
         const row = await this.databaseClient.selectFirst<{ observado_em: string | null }>(
-            'SELECT MAX(observado_em) AS observado_em FROM aprovacao_titulo',
+            `SELECT MAX(observado_em) AS observado_em
+               FROM aprovacao_titulo
+              WHERE fil_cod = ANY($filCods::int[])`,
+            { filCods },
         );
         return row?.observado_em ? new Date(row.observado_em) : null;
     };

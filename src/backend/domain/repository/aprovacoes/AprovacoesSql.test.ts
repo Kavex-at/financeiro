@@ -202,7 +202,7 @@ describe('SQL da Frente V — consistência de parâmetros nomeados', () => {
 
         it('ultimoSnapshot é traduzível', async () => {
             const { repo, capturadas } = montar();
-            await repo.ultimoSnapshot();
+            await repo.ultimoSnapshot([1, 2]);
 
             expect(() => traduzir(capturadas[0])).not.toThrow();
         });

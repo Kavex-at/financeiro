@@ -17,6 +17,7 @@ import {
     type TrilhaAprovacaoGatewayInterface,
 } from '../../interface/aprovacoes/ports.js';
 import type { DocPagarRow, TituloAprovacao } from '../../interface/aprovacoes/TituloAprovacao.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import DuracaoCalculator from './DuracaoCalculator.js';
 import EtapaStatusResolver from './EtapaStatusResolver.js';
 import StatusWorkflowResolver from './StatusWorkflowResolver.js';
@@ -26,6 +27,27 @@ const PAGE_SIZE = 500;
 
 /** Teto de páginas por filial — mesma doutrina do `MAX_PAGES` do client base. */
 const MAX_PAGINAS = 200;
+
+/**
+ * Títulos lidos em paralelo dentro de uma página.
+ *
+ * Não é "quanto mais melhor": o Conexos derruba sessão sob rajada
+ * (`LOGIN_ERROR_MAX_SESSIONS`), que foi o motivo de o `BoundedConcurrency` existir no repo. 4 é o
+ * mesmo patamar conservador que as frentes irmãs usam, e já corta a varredura de horas para uma
+ * fração — o gargalo real continua sendo a chamada por título, que só a PV-07 elimina.
+ */
+const CONCORRENCIA_TITULOS = 4;
+
+/** Quantas falhas guardar por extenso na mensagem da run — o resto vira contagem. */
+const MAX_EXEMPLOS_DE_FALHA = 5;
+
+/** Estado que atravessa filiais e páginas de uma mesma execução. */
+interface Acumulado {
+    titulos: number;
+    etapas: number;
+    falhas: number;
+    exemplosDeFalha: string[];
+}
 
 export interface IngestaoParams {
     filCods: number[];
@@ -40,6 +62,8 @@ export interface IngestaoResultado {
     runId: string;
     titulos: number;
     etapas: number;
+    /** Títulos que falharam e foram pulados — a varredura não morre por causa de um registro. */
+    falhas: number;
     interrompida: boolean;
 }
 
@@ -70,14 +94,15 @@ export default class IngestaoAprovacoesService {
         @inject(EtapaStatusResolver) private etapaStatusResolver: EtapaStatusResolver,
         @inject(StatusWorkflowResolver) private statusWorkflowResolver: StatusWorkflowResolver,
         @inject(DuracaoCalculator) private duracaoCalculator: DuracaoCalculator,
+        @inject(BoundedConcurrency) private boundedConcurrency: BoundedConcurrency,
     ) {}
 
     public executar = async (params: IngestaoParams): Promise<IngestaoResultado> => {
         const retomada = params.retomar ? await this.runRepository.ultimaRunRetomavel() : null;
 
         const runId = retomada?.id ?? randomUUID();
-        let titulos = retomada?.totalTitulos ?? 0;
-        let etapas = retomada?.totalEtapas ?? 0;
+        const titulos = retomada?.totalTitulos ?? 0;
+        const etapas = retomada?.totalEtapas ?? 0;
 
         if (!retomada) {
             await this.runRepository.iniciar({
@@ -92,51 +117,122 @@ export default class IngestaoAprovacoesService {
             });
         }
 
+        const acumulado: Acumulado = { titulos, etapas, falhas: 0, exemplosDeFalha: [] };
+
         try {
             for (const filCod of params.filCods) {
                 // Numa retomada, pula as filiais já concluídas e recomeça na página onde parou.
-                if (retomada?.cursorFilCod !== undefined && filCod < retomada.cursorFilCod)
+                if (retomada?.cursorFilCod !== undefined && filCod < retomada.cursorFilCod) {
                     continue;
+                }
                 const paginaInicial =
                     retomada?.cursorFilCod === filCod ? (retomada.cursorPagina ?? 1) : 1;
 
-                for (let pagina = paginaInicial; pagina <= MAX_PAGINAS; pagina++) {
-                    const { rows } = await this.gateway.listUniverso({
-                        filCod,
-                        emissaoDesde: params.emissaoDesde,
-                        pageNumber: pagina,
-                        pageSize: PAGE_SIZE,
-                    });
-
-                    if (rows.length === 0) break;
-
-                    for (const row of rows) {
-                        const persistidas = await this.processarTitulo(row, filCod, runId);
-                        if (persistidas === null) continue;
-
-                        titulos += 1;
-                        etapas += persistidas;
-
-                        // Cursor DEPOIS da persistência: uma queda repete no máximo um título,
-                        // e o UPSERT torna a repetição inofensiva.
-                        await this.runRepository.salvarCursor(
-                            runId,
-                            { filCod, pagina, docCod: Number(row.docCod ?? 0) },
-                            { titulos, etapas },
-                        );
-                    }
-
-                    if (rows.length < PAGE_SIZE) break;
-                }
+                await this.processarFilial(
+                    { filCod, paginaInicial, emissaoDesde: params.emissaoDesde, runId },
+                    acumulado,
+                );
             }
 
-            await this.runRepository.finalizar(runId, 'success');
-            return { runId, titulos, etapas, interrompida: false };
+            // Uma varredura com falhas NÃO é um sucesso limpo, e dizer que foi esconderia o buraco
+            // no histórico. O status continua `success` (a run terminou), mas a mensagem carrega a
+            // contagem — é o que o operador lê no runbook para decidir se reprocessa.
+            const resumo =
+                acumulado.falhas > 0
+                    ? `${acumulado.falhas} título(s) falharam e foram pulados. Exemplos: ${acumulado.exemplosDeFalha.join('; ')}`
+                    : undefined;
+            await this.runRepository.finalizar(runId, 'success', resumo);
+
+            return {
+                runId,
+                titulos: acumulado.titulos,
+                etapas: acumulado.etapas,
+                falhas: acumulado.falhas,
+                interrompida: false,
+            };
         } catch (error) {
             const mensagem = error instanceof Error ? error.message : String(error);
             await this.runRepository.finalizar(runId, 'error', mensagem);
             throw error;
         }
+    };
+
+    /** Varre uma filial, página a página, a partir de `paginaInicial`. */
+    private processarFilial = async (
+        ctx: { filCod: number; paginaInicial: number; emissaoDesde?: number; runId: string },
+        acumulado: Acumulado,
+    ): Promise<void> => {
+        for (let pagina = ctx.paginaInicial; pagina <= MAX_PAGINAS; pagina++) {
+            const { rows } = await this.gateway.listUniverso({
+                filCod: ctx.filCod,
+                emissaoDesde: ctx.emissaoDesde,
+                pageNumber: pagina,
+                pageSize: PAGE_SIZE,
+            });
+
+            if (rows.length === 0) break;
+
+            await this.processarPagina({ ...ctx, pagina, rows }, acumulado);
+
+            if (rows.length < PAGE_SIZE) break;
+        }
+    };
+
+    /**
+     * Processa uma página inteira e grava o cursor UMA vez, no fim.
+     *
+     * Duas decisões moram aqui, e as duas vieram de revisão:
+     *
+     * 1. **Um título que falha não derruba a varredura.** Antes, uma única exceção abortava a run
+     *    inteira — e, como a retomada volta ao cursor (o título ANTERIOR ao problemático), a
+     *    execução seguinte batia no mesmo registro e morria de novo: um backfill de 23 mil títulos
+     *    que nunca termina por causa de um. Agora a falha é contada, registrada e a varredura segue.
+     *
+     * 2. **Cursor por PÁGINA, não por título.** Salvar a cada título custava 23.632 UPDATEs por
+     *    filial. Por página são 48. O preço é a granularidade da retomada: no pior caso reprocessa
+     *    uma página inteira — o que é inofensivo, porque o UPSERT é idempotente, e barato perto do
+     *    que se economiza.
+     *
+     * A concorrência limitada dentro da página é o que torna (2) possível: com títulos terminando
+     * fora de ordem, um cursor por título deixaria de significar "tudo antes daqui está pronto".
+     */
+    private processarPagina = async (
+        ctx: { filCod: number; pagina: number; runId: string; rows: DocPagarRow[] },
+        acumulado: Acumulado,
+    ): Promise<void> => {
+        const resultados = await this.boundedConcurrency.run(
+            ctx.rows,
+            async (row) => this.processarTitulo(row, ctx.filCod, ctx.runId),
+            CONCORRENCIA_TITULOS,
+        );
+
+        resultados.forEach((resultado, indice) => {
+            if (resultado.status === 'rejected') {
+                acumulado.falhas += 1;
+                const row = ctx.rows[indice];
+                const chave = `fil ${ctx.filCod}/doc ${row?.docCod}/tit ${row?.titCod}`;
+                if (acumulado.exemplosDeFalha.length < MAX_EXEMPLOS_DE_FALHA) {
+                    const motivo =
+                        resultado.reason instanceof Error
+                            ? resultado.reason.message
+                            : String(resultado.reason);
+                    acumulado.exemplosDeFalha.push(`${chave}: ${motivo}`);
+                }
+                console.warn(`[ingest-aprovacoes] título ${chave} falhou e foi pulado.`);
+                return;
+            }
+            if (resultado.value === null) return;
+
+            acumulado.titulos += 1;
+            acumulado.etapas += resultado.value;
+        });
+
+        const ultimo = ctx.rows[ctx.rows.length - 1];
+        await this.runRepository.salvarCursor(
+            ctx.runId,
+            { filCod: ctx.filCod, pagina: ctx.pagina, docCod: Number(ultimo?.docCod ?? 0) },
+            { titulos: acumulado.titulos, etapas: acumulado.etapas },
+        );
     };
 
     /**

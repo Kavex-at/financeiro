@@ -156,7 +156,8 @@ export default class AprovacoesPainelService {
             ),
         );
 
-        const snapshot = await this.tituloRepository.ultimoSnapshot();
+        // Escopado às filiais consultadas: o frescor afirmado tem de ser o do dado que está na tela.
+        const snapshot = await this.tituloRepository.ultimoSnapshot(filtro.filCods);
 
         return {
             items: linhas,

@@ -69,8 +69,16 @@ export interface TituloAprovacaoRepositoryInterface {
         titCod: number,
     ) => Promise<TituloAprovacaoComTrilha | null>;
     list: (filtro: ListaAprovacoesFiltro) => Promise<{ items: TituloAprovacao[]; total: number }>;
-    /** Instante da observação mais recente — alimenta o `snapshotEm` da UI (I7). */
-    ultimoSnapshot: () => Promise<Date | null>;
+    /**
+     * Instante da observação mais recente **das filiais consultadas** — alimenta o `snapshotEm`
+     * da UI (invariante I7).
+     *
+     * O escopo por filial não é detalhe: um `MAX` global mentiria. Se a filial 1 foi ingerida hoje
+     * e a analista está olhando a filial 2, ingerida semana passada, o painel afirmaria um frescor
+     * que aquele dado não tem — exatamente a "afirmação falsamente redonda" que a frente existe
+     * para evitar.
+     */
+    ultimoSnapshot: (filCods: number[]) => Promise<Date | null>;
 }
 
 export const TITULO_APROVACAO_REPOSITORY_TOKEN = Symbol('TituloAprovacaoRepository');

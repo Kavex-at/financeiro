@@ -9,6 +9,23 @@ import ConexosAprovacoesClient from './ConexosAprovacoesClient.js';
  * Não são preferências de estilo: cada uma já custou uma rodada de investigação, e todas falham de
  * forma silenciosa — devolvendo lista vazia ou dado incompleto em vez de erro.
  */
+/** Linha real de `FinTituloBloq` observada em produção: doc 4156/1, filial 1. */
+const etapaReal = (): Record<string, unknown> => ({
+    filCod: 1,
+    docTip: 2,
+    docCod: 4156,
+    titCod: 1,
+    fblCod: 6,
+    ftbCod: 1,
+    fblDesNome: 'CONTROLLER',
+    aprovador: 'COMPRAS',
+    fbaDesNome: 'LIBERAR',
+    usnDesNomeCmd: 'DANILO_LARA',
+    ftbVldStatus: 2,
+    ftbTimBloq: 1778753566000,
+    ftbTimCmd: 1778838100000,
+});
+
 describe('ConexosAprovacoesClient', () => {
     interface Chamada {
         path: string;
@@ -153,6 +170,66 @@ describe('ConexosAprovacoesClient', () => {
             const r = await client.listTrilha({ filCod: 1, docTip: 2, docCod: 973, titCod: 1 });
 
             expect(r).toEqual([]);
+        });
+    });
+
+    describe('boundary Zod — tolerante, mas sem deixar lixo entrar', () => {
+        it('descarta linha que não é objeto sem derrubar a página', async () => {
+            // Numa varredura de 23 mil títulos, um registro torto não pode invalidar os outros 499
+            // da página. Mas também não pode passar adiante e virar NaN silencioso lá na frente.
+            const { client } = montar({ count: 3, rows: [etapaReal(), null, 'lixo'] });
+
+            const r = await client.listTrilha({ filCod: 1, docTip: 2, docCod: 4156, titCod: 1 });
+
+            expect(r).toHaveLength(1);
+            expect(r[0]?.fblDesNome).toBe('CONTROLLER');
+        });
+
+        it('preserva campos que ainda não modelamos (passthrough)', async () => {
+            // O ERP projeta mais campos do que consumimos; descartá-los silenciosamente esconderia
+            // dado útil de quem for depurar contra a resposta crua.
+            const { client } = montar({
+                count: 1,
+                rows: [{ ...etapaReal(), campoNovoDoErp: 'valor' }],
+            });
+
+            const r = await client.listTrilha({ filCod: 1, docTip: 2, docCod: 4156, titCod: 1 });
+
+            expect((r[0] as Record<string, unknown>).campoNovoDoErp).toBe('valor');
+        });
+
+        it('coage número vindo como string — o ERP alterna os dois entre telas', async () => {
+            const { client } = montar({
+                count: 1,
+                rows: [{ ...etapaReal(), ftbVldStatus: '2', ftbTimBloq: '1778753566000' }],
+            });
+
+            const r = await client.listTrilha({ filCod: 1, docTip: 2, docCod: 4156, titCod: 1 });
+
+            expect(r[0]?.ftbVldStatus).toBe(2);
+            expect(r[0]?.ftbTimBloq).toBe(1778753566000);
+        });
+
+        it('degrada campo torto para indefinido em vez de propagar NaN', async () => {
+            const { client } = montar({
+                count: 1,
+                rows: [{ ...etapaReal(), ftbTimCmd: 'não é data' }],
+            });
+
+            const r = await client.listTrilha({ filCod: 1, docTip: 2, docCod: 4156, titCod: 1 });
+
+            expect(r[0]?.ftbTimCmd).toBeUndefined();
+            // O resto da linha sobrevive — degradação por campo, não por registro.
+            expect(r[0]?.usnDesNomeCmd).toBe('DANILO_LARA');
+        });
+
+        it('vale também para o universo', async () => {
+            const { client } = montar({ count: 2, rows: [{ docCod: 4156, titCod: 1 }, 42] });
+
+            const r = await client.listUniverso({ filCod: 1, pageNumber: 1, pageSize: 500 });
+
+            expect(r.rows).toHaveLength(1);
+            expect(r.rows[0]?.docCod).toBe(4156);
         });
     });
 

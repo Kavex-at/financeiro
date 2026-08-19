@@ -1,4 +1,5 @@
 import { inject, injectable, singleton } from 'tsyringe';
+import { z } from 'zod';
 import type { FinTituloBloqRow } from '../interface/aprovacoes/EtapaAprovacao.js';
 import type { DocPagarRow } from '../interface/aprovacoes/TituloAprovacao.js';
 import type { TrilhaAprovacaoGatewayInterface } from '../interface/aprovacoes/ports.js';
@@ -11,6 +12,70 @@ interface PagedRaw<Row> {
     count?: number;
     rows?: Row[];
 }
+
+/**
+ * Boundary Zod da resposta do ERP.
+ *
+ * O CLAUDE.md manda validar entrada externa com Zod no boundary, e este client era o único dos
+ * nove clients Conexos sem nenhuma validação — a revisão de arquitetura mediu isso.
+ *
+ * O desenho é **tolerante de propósito**: `passthrough` preserva campos que ainda não modelamos, e
+ * `catch` degrada campo a campo em vez de derrubar a página inteira. Numa varredura de 23 mil
+ * títulos, um registro com um campo torto não pode invalidar os outros 499 da página — mas também
+ * não pode entrar como `NaN` silencioso, que é o que `Number(undefined)` produziria.
+ *
+ * `coerce` existe porque o Conexos alterna número e string no mesmo campo entre telas.
+ */
+const numeroOpcional = z.coerce.number().finite().optional().catch(undefined);
+const textoOpcional = z.coerce.string().optional().catch(undefined);
+
+const DOC_PAGAR_SCHEMA = z
+    .object({
+        filCod: numeroOpcional,
+        docTip: numeroOpcional,
+        docCod: numeroOpcional,
+        titCod: numeroOpcional,
+        docEspNumero: textoOpcional,
+        titEspNumero: textoOpcional,
+        pesCod: numeroOpcional,
+        dpeNomPessoa: textoOpcional,
+        titMnyValor: numeroOpcional,
+        docDtaEmissao: numeroOpcional,
+        titDtaVencimento: numeroOpcional,
+    })
+    .passthrough();
+
+const FIN_TITULO_BLOQ_SCHEMA = z
+    .object({
+        filCod: numeroOpcional,
+        docTip: numeroOpcional,
+        docCod: numeroOpcional,
+        titCod: numeroOpcional,
+        fblCod: numeroOpcional,
+        ftbCod: numeroOpcional,
+        fblDesNome: textoOpcional,
+        fbaDesNome: textoOpcional,
+        aprovador: textoOpcional,
+        usnDesNomeCmd: textoOpcional,
+        usnCodCmd: numeroOpcional,
+        ftbVldStatus: numeroOpcional,
+        ftbTimBloq: numeroOpcional,
+        ftbTimCmd: numeroOpcional,
+        ftbEspObsCmd: textoOpcional,
+        ftbEspInfo: textoOpcional,
+    })
+    .passthrough();
+
+/** Aplica o schema linha a linha, descartando o que não for objeto. */
+const validarLinhas = <T>(rows: unknown[] | undefined, schema: z.ZodType<T>): T[] => {
+    if (!rows) return [];
+    const validas: T[] = [];
+    for (const row of rows) {
+        const parsed = schema.safeParse(row);
+        if (parsed.success) validas.push(parsed.data);
+    }
+    return validas;
+};
 
 /**
  * Universo dos títulos: a tela de **PESQUISA**, não a de carteira.
@@ -73,7 +138,7 @@ export default class ConexosAprovacoesClient implements TrilhaAprovacaoGatewayIn
         }
 
         const resposta = await this.base.runWithRetry(() =>
-            this.base.postGeneric<PagedRaw<DocPagarRow>>(
+            this.base.postGeneric<PagedRaw<unknown>>(
                 ENDPOINT_UNIVERSO,
                 {
                     filterList,
@@ -86,7 +151,10 @@ export default class ConexosAprovacoesClient implements TrilhaAprovacaoGatewayIn
             ),
         );
 
-        return { count: resposta.count ?? 0, rows: resposta.rows ?? [] };
+        return {
+            count: resposta.count ?? 0,
+            rows: validarLinhas(resposta.rows, DOC_PAGAR_SCHEMA) as DocPagarRow[],
+        };
     };
 
     /**
@@ -105,7 +173,7 @@ export default class ConexosAprovacoesClient implements TrilhaAprovacaoGatewayIn
     }): Promise<FinTituloBloqRow[]> => {
         const { filCod, docTip, docCod, titCod } = params;
         const resposta = await this.base.runWithRetry(() =>
-            this.base.postGeneric<PagedRaw<FinTituloBloqRow>>(
+            this.base.postGeneric<PagedRaw<unknown>>(
                 `${SERVICE_TRILHA}/infoTitulo/list/${filCod}/${docTip}/${docCod}/${titCod}`,
                 {
                     filterList: {},
@@ -117,6 +185,6 @@ export default class ConexosAprovacoesClient implements TrilhaAprovacaoGatewayIn
             ),
         );
 
-        return resposta.rows ?? [];
+        return validarLinhas(resposta.rows, FIN_TITULO_BLOQ_SCHEMA) as FinTituloBloqRow[];
     };
 }

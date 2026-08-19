@@ -50,6 +50,7 @@ Crie um **Web Service** apontando para o repositório.
 | `client_name` | `local` (faz o `EnvironmentProvider` ler do ENV, não do SSM/AWS) |
 | `SISPAG_ENABLED` | `true|false` — liga/desliga a Frente II (SISPAG). **Fail-safe:** sem a var, fica **bloqueada em produção** e habilitada fora de prod. |
 | `RECEBIMENTOS_ENABLED` | **KILL-SWITCH** da Frente IV (Recebimentos / "Gestão de Adiantamentos"), liberada em produção desde a v0.20.0 (ADR-0028). Ao contrário do SISPAG **não é fail-safe**: sem a var a frente fica **habilitada**. Só `false` desliga (rotas `/recebimentos/*` → 403), e vale sem redeploy. |
+| `APROVACOES_ENABLED` | **Gate da Frente V** (Workflow de Aprovação), ADR-0038. **Fail-safe** como o SISPAG e ao contrário da Frente IV: sem a var fica **bloqueada em produção** e habilitada fora. Ligar a estreia exige `true` explícito; `false` é o kill-switch. Vale sem redeploy (`sync:false`). Ver `docs/runbooks/frente-v-primeira-ingestao.md`. |
 | `CONEXOS_EXTRATO_SYNC_START_DATE` | *(opcional)* `YYYY-MM-DD` — **piso** da janela de ingestão do extrato; default `2026-08-03`. Nenhum caminho de sincronização (cron horário, `DIAS=`, `POST /recebimentos/ingestao`) lê lançamento anterior a esta data. |
 | `RECEBIMENTO_INGEST_DIAS` | *(opcional)* janela default da ingestão, em dias; default `90`. A janela efetiva é a **interseção** com o piso acima. |
 | `RECEBIMENTO_INGEST_FIL_CODS` | *(opcional)* CSV de filiais a ingerir (ex.: `1,2`). Vazio/ausente = todas as filiais que o ERP devolver. |

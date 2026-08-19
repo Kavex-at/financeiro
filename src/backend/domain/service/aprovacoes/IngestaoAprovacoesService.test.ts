@@ -15,6 +15,7 @@ import type {
     DocPagarRow,
     TituloAprovacao,
 } from '../../interface/aprovacoes/TituloAprovacao.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import DuracaoCalculator from './DuracaoCalculator.js';
 import EtapaStatusResolver from './EtapaStatusResolver.js';
 import IngestaoAprovacoesService from './IngestaoAprovacoesService.js';
@@ -68,6 +69,10 @@ const montar = (opts: {
     universo?: DocPagarRow[][];
     trilha?: FinTituloBloqRow[];
     trilhaThrow?: Error;
+    /** Falha só no título indicado — simula um registro problemático no meio da varredura. */
+    trilhaThrowNoDoc?: number;
+    /** Falha na listagem do universo — indisponibilidade sistêmica. */
+    universoThrow?: Error;
     runRetomavel?: AprovacaoIngestaoRun | null;
 }): Fakes => {
     const titulosSalvos: TituloAprovacao[] = [];
@@ -80,13 +85,19 @@ const montar = (opts: {
     const paginas = opts.universo ?? [[docRow()]];
 
     const gateway: TrilhaAprovacaoGatewayInterface = {
-        listUniverso: async ({ pageNumber }) => ({
-            count: paginas.flat().length,
-            rows: paginas[pageNumber - 1] ?? [],
-        }),
+        listUniverso: async ({ pageNumber }) => {
+            if (opts.universoThrow) throw opts.universoThrow;
+            return {
+                count: paginas.flat().length,
+                rows: paginas[pageNumber - 1] ?? [],
+            };
+        },
         listTrilha: async ({ filCod, docCod, titCod }) => {
             chamadasTrilha.push({ filCod, docCod, titCod });
             if (opts.trilhaThrow) throw opts.trilhaThrow;
+            if (opts.trilhaThrowNoDoc === docCod) {
+                throw new Error(`registro problemático no doc ${docCod}`);
+            }
             return opts.trilha ?? [bloqRow()];
         },
     };
@@ -129,6 +140,7 @@ const montar = (opts: {
         new EtapaStatusResolver(),
         new StatusWorkflowResolver(),
         new DuracaoCalculator(),
+        new BoundedConcurrency(),
     );
 
     return {
@@ -192,14 +204,17 @@ describe('IngestaoAprovacoesService', () => {
         expect(f.chamadasTrilha[0].filCod).toBe(1);
     });
 
-    it('grava o cursor depois de cada título persistido', async () => {
+    it('grava o cursor UMA vez por página, não por título', async () => {
+        // Por título custava 23.632 UPDATEs por filial; por página, 48. O preço é reprocessar no
+        // máximo uma página na retomada — inofensivo, porque o UPSERT é idempotente.
         const f = montar({
             universo: [[docRow({ docCod: 100 }), docRow({ docCod: 200 })]],
         });
 
         await f.service.executar({ filCods: [1], triggeredBy: 'teste' });
 
-        expect(f.cursores.map((c) => c.docCod)).toEqual([100, 200]);
+        expect(f.cursores).toHaveLength(1);
+        expect(f.cursores[0]?.docCod).toBe(200);
     });
 
     it('retoma da página do cursor em vez de recomeçar', async () => {
@@ -233,8 +248,31 @@ describe('IngestaoAprovacoesService', () => {
         expect(f.chamadasTrilha.map((c) => c.docCod)).toEqual([2]);
     });
 
-    it('marca a run como erro e propaga quando o ERP falha', async () => {
-        const f = montar({ trilhaThrow: new Error('ERP fora do ar') });
+    describe('um título problemático não derruba a varredura', () => {
+        it('conta a falha, segue em frente e registra na run', async () => {
+            // Antes, uma única exceção abortava a run inteira — e a retomada voltava ao cursor
+            // ANTERIOR ao título problemático, batia nele de novo e morria de novo: um backfill de
+            // 23 mil títulos que nunca terminava por causa de um registro.
+            const f = montar({
+                universo: [[docRow({ docCod: 100 }), docRow({ docCod: 200 })]],
+                trilhaThrowNoDoc: 100,
+            });
+
+            const r = await f.service.executar({ filCods: [1], triggeredBy: 'teste' });
+
+            expect(r.falhas).toBe(1);
+            expect(r.titulos).toBe(1); // o doc 200 seguiu normalmente
+            expect(f.finalizacoes[0].status).toBe('success');
+            // O sucesso não é limpo, e a mensagem diz isso — é o que o operador lê no runbook.
+            expect(f.finalizacoes[0].erro).toContain('1 título(s) falharam');
+            expect(f.finalizacoes[0].erro).toContain('doc 100');
+        });
+    });
+
+    it('falha SISTÊMICA (universo indisponível) ainda aborta e marca erro', async () => {
+        // A distinção importa: tolerar um registro ruim é resiliência; tolerar o ERP inteiro fora
+        // do ar seria varrer o nada e declarar sucesso.
+        const f = montar({ universoThrow: new Error('ERP fora do ar') });
 
         await expect(f.service.executar({ filCods: [1], triggeredBy: 'teste' })).rejects.toThrow(
             'ERP fora do ar',
