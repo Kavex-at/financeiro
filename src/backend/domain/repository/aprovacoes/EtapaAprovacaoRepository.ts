@@ -1,6 +1,7 @@
 import { inject, injectable } from 'tsyringe';
 import type { EtapaStatus } from '../../interface/aprovacoes/constants.js';
 import type { EtapaAprovacao } from '../../interface/aprovacoes/EtapaAprovacao.js';
+import { chaveTitulo } from '../../interface/aprovacoes/ports.js';
 import type { EtapaAprovacaoRepositoryInterface } from '../../interface/aprovacoes/ports.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 
@@ -102,6 +103,49 @@ export default class EtapaAprovacaoRepository implements EtapaAprovacaoRepositor
                 },
             );
         });
+    };
+
+    /**
+     * Trilhas de vários títulos numa consulta só, agrupadas por `filCod:docCod:titCod`.
+     *
+     * O filtro é `(fil_cod, doc_cod, tit_cod) IN ((...), (...))` — comparação de tupla, e não três
+     * `IN` independentes. A diferença importa: `fil_cod IN (1,2) AND doc_cod IN (10,20)` casaria
+     * também o par (1,20), que pode nem existir, inflando o resultado com trilhas de outros títulos.
+     *
+     * A ordenação repete a de `listByTitulo` para que lista e detalhe nunca discordem sobre qual é
+     * a etapa mais antiga.
+     */
+    public listByTitulos = async (
+        chaves: Array<{ filCod: number; docCod: number; titCod: number }>,
+    ): Promise<Map<string, EtapaAprovacao[]>> => {
+        const agrupado = new Map<string, EtapaAprovacao[]>();
+        if (chaves.length === 0) return agrupado;
+
+        const params: Record<string, unknown> = {};
+        const tuplas = chaves.map((c, i) => {
+            params[`f${i}`] = c.filCod;
+            params[`d${i}`] = c.docCod;
+            params[`t${i}`] = c.titCod;
+            return `($f${i}, $d${i}, $t${i})`;
+        });
+
+        const rows = await this.databaseClient.selectMany(
+            `SELECT ${COLUNAS} FROM aprovacao_etapa
+              WHERE (fil_cod, doc_cod, tit_cod) IN (${tuplas.join(', ')})
+                AND ativo = TRUE
+              ORDER BY recebido_em ASC NULLS LAST, fbl_cod ASC, ftb_cod ASC`,
+            params,
+        );
+
+        for (const row of rows) {
+            const etapa = this.mapRow(row);
+            const chave = chaveTitulo(etapa.filCod, etapa.docCod, etapa.titCod);
+            const lista = agrupado.get(chave);
+            if (lista) lista.push(etapa);
+            else agrupado.set(chave, [etapa]);
+        }
+
+        return agrupado;
     };
 
     public listByTitulo = async (

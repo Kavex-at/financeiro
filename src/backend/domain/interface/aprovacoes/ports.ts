@@ -89,7 +89,23 @@ export interface EtapaAprovacaoRepositoryInterface {
         etapas: EtapaAprovacao[],
     ) => Promise<void>;
     listByTitulo: (filCod: number, docCod: number, titCod: number) => Promise<EtapaAprovacao[]>;
+
+    /**
+     * Trilhas de VÁRIOS títulos numa única consulta, agrupadas pela chave `filCod:docCod:titCod`.
+     *
+     * Existe para o grid. A alternativa — um `listByTitulo` por linha da página dentro de um
+     * `Promise.all` — dispara até `pageSize` consultas concorrentes a cada carregamento e, com
+     * poucos analistas simultâneos, esgota o pool de conexões do Postgres. O custo de uma página
+     * não deve crescer com o número de linhas dela.
+     */
+    listByTitulos: (
+        chaves: Array<{ filCod: number; docCod: number; titCod: number }>,
+    ) => Promise<Map<string, EtapaAprovacao[]>>;
 }
+
+/** Chave de agrupamento das trilhas devolvidas por `listByTitulos`. */
+export const chaveTitulo = (filCod: number, docCod: number, titCod: number): string =>
+    `${filCod}:${docCod}:${titCod}`;
 
 export const ETAPA_APROVACAO_REPOSITORY_TOKEN = Symbol('EtapaAprovacaoRepository');
 

@@ -32,10 +32,15 @@ interface AprovacaoListItem {
     moeda?: string;
     dataEmissao?: string;             // ISO 8601
     dataVencimento?: string;
-    dataFinalizacao?: string;         // hoje sempre ausente — PV-04
+    // Hoje SEMPRE ausente (PV-04). O backend não fabrica substituto: preencher com
+    // dataEmissao seria mentira silenciosa no marco que define o aceite do cliente.
+    dataFinalizacao?: string;
     statusWorkflow: StatusWorkflow;
     etapasConcluidas: number;
     etapasTotais: number;
+    // Etapa PENDENTE mais antiga; desempate por menor fblCod, depois menor ftbCod.
+    // A regra de desempate não é detalhe: sem ela, duas execuções da mesma consulta
+    // devolveriam aprovadores diferentes e a fila "mudaria sozinha" para o analista.
     etapaAtual?: {
         nome?: string;
         alcada?: string;
@@ -43,6 +48,9 @@ interface AprovacaoListItem {
         recebidoEm?: string;
         paradaHaSegundos?: number;    // NÃO é duração — ver duracao-etapa-aprovacao.md
     };
+    // Quantas etapas PENDENTE o título tem. Deixa a UI mostrar "CONTROLLER +2" em vez
+    // de exibir uma e fingir que é a única. Ver frente-v-contrato-reconciliacao.md §1.1.
+    etapasAbertas: number;
     tempoTotalSegundos?: number;
     lacunas: string[];
 }
@@ -142,13 +150,17 @@ RBAC e allow-list de filiais no padrão da Frente IV; `snapshotEm` sempre presen
 
 ### T2.2 — Serviço de painel
 **Arquivos:** `domain/service/aprovacoes/AprovacoesPainelService.ts` + teste
-**Aceite:** filtros e paginação em SQL; campos derivados no backend; `lacunas` propagadas.
+**Aceite:** filtros e paginação em SQL; campos derivados no backend; `lacunas` propagadas;
+`etapaAtual` determinística (pendente mais antiga, desempate por `fblCod`/`ftbCod`) + `etapasAbertas`.
 
 ### T2.3 — Página de lista
 **Arquivos:** `src/frontend/app/aprovacoes/{page,layout}.tsx`, `components/status-badges.tsx`,
 `lib/aprovacoes.ts`, `components/AppShell.tsx` (editar)
-**Aceite:** reusa `tabela-filtro` e `components/ui/*`; estados loading/erro/vazio; `observadoEm`
-visível; DesignSystemReviewer verde.
+**Aceite:** **paginação no SERVIDOR** — o `useTabelaFiltro` do repo pagina em memória e não serve
+aos 23.632 títulos da filial 2; reusar `FiltroBarra`/`Paginacao` como componentes visuais alimentados
+pela resposta do servidor; estados loading/erro/vazio; `snapshotEm` visível (I7); `INDETERMINADO`
+com destaque próprio; `lacunas` acessíveis na linha; DesignSystemReviewer verde.
+Ver `frente-v-contrato-reconciliacao.md` §2.1.
 
 **Gate F2:** typecheck + lint + testes + DesignSystemReviewer.
 

@@ -105,6 +105,7 @@ const montar = (opts: {
             trilhasSalvas.push({ chave, etapas });
         },
         listByTitulo: async () => [],
+        listByTitulos: async () => new Map(),
     };
 
     const runRepository: AprovacaoIngestaoRunRepositoryInterface = {

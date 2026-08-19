@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowLeftRight, Banknote, Landmark, Lock } from 'lucide-react'
+import { ArrowLeftRight, Banknote, Landmark, ListChecks, Lock } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -74,6 +74,22 @@ export default function HomePage() {
           <CardContent>
             <Button asChild>
               <Link href="/recebimentos">Abrir Gestão de Adiantamentos</Link>
+            </Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ListChecks className="size-4" aria-hidden /> Trilha de Aprovações
+            </CardTitle>
+            <CardDescription>
+              Títulos a pagar e seu percurso de bloqueio/liberação no Conexos: quem aprovou, quem
+              falta e há quanto tempo está parado (Frente V). Somente leitura.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link href="/aprovacoes">Abrir Trilha de Aprovações</Link>
             </Button>
           </CardContent>
         </Card>
