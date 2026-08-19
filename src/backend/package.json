@@ -17,7 +17,8 @@
         "test:watch": "jest --watch",
         "lint": "npx biome check .",
         "lint:fix": "npx biome check --write .",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "job:ingest-aprovacoes": "tsx jobs/ingest-aprovacoes.ts"
     },
     "keywords": [],
     "author": "",
