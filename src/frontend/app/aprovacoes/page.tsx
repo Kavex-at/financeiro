@@ -1,9 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { format, formatDistanceToNowStrict } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
-import { AlertTriangle, Database, FileSearch, RefreshCcw } from 'lucide-react'
+import { AlertTriangle, FileSearch, RefreshCcw } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
 import { KPIGrid, SimpleKPI } from '@/components/ui/kpi-card'
 import {
@@ -39,6 +37,8 @@ import {
   ParadaHaBadge,
   StatusWorkflowBadge,
 } from './components/status-badges'
+import { SnapshotFaixa } from './components/snapshot-faixa'
+import { TrilhaDrawer } from './components/TrilhaDrawer'
 
 /** Tamanho da página — a paginação é do SERVIDOR (ver `carregar`). */
 const PAGE_SIZE = 25
@@ -62,12 +62,6 @@ const fmtValor = (valor?: number, moeda?: string): string => {
   if (valor === undefined) return '—'
   if (moeda === undefined || moeda === 'BRL') return formatBRL(valor)
   return `${moeda} ${formatNumber(valor)}`
-}
-
-const parseData = (iso?: string): Date | null => {
-  if (!iso) return null
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? null : d
 }
 
 /**
@@ -100,48 +94,6 @@ function PainelSkeleton() {
 }
 
 /**
- * Faixa de idade do dado — invariante **I7**, não negociável.
- *
- * Este painel NÃO fala com o ERP ao vivo: ele lê um snapshot ingerido periodicamente. Um analista
- * que aprova (ou cobra) com base numa foto velha, achando que é o estado atual, toma a decisão
- * errada com toda a confiança do mundo. Por isso a idade do dado é a primeira coisa da tela, e a
- * AUSÊNCIA dela é tratada como um alerta — não como um detalhe silencioso.
- */
-function SnapshotFaixa({ snapshotEm }: { snapshotEm?: string }) {
-  const data = parseData(snapshotEm)
-  if (data === null) {
-    return (
-      <div
-        role="status"
-        className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/5 p-3 text-sm"
-      >
-        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden />
-        <div>
-          <span className="font-medium">Idade do dado desconhecida.</span> O backend não informou
-          quando este snapshot do Conexos foi tirado, então não há como saber o quanto ele está
-          defasado. Trate os números abaixo como indicativos até a próxima ingestão.
-        </div>
-      </div>
-    )
-  }
-  return (
-    <div
-      role="status"
-      className="flex items-start gap-2 rounded-lg border border-info/40 bg-info/5 p-3 text-sm"
-    >
-      <Database className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
-      <div>
-        <span className="font-medium">Snapshot, não o ERP ao vivo.</span> Dados sincronizados do
-        Conexos em{' '}
-        <span className="font-medium">{format(data, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</span>{' '}
-        ({formatDistanceToNowStrict(data, { locale: ptBR, addSuffix: true })}). Aprovações feitas no
-        ERP depois desse instante ainda não aparecem aqui.
-      </div>
-    </div>
-  )
-}
-
-/**
  * Célula "Etapa atual": nome da etapa (com a alçada abaixo) e o `+N` quando o título tem mais
  * de uma etapa aberta ao mesmo tempo. `etapaAtual` é a pendente MAIS ANTIGA, não a única.
  */
@@ -168,6 +120,14 @@ function AprovacoesPainel() {
   const [resposta, setResposta] = React.useState<AprovacoesListResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+
+  /**
+   * Título cuja trilha está aberta no drawer — `null` = drawer fechado.
+   *
+   * O id é a chave natural (`filCod:docCod:titCod`), não o índice da linha: trocar de página ou
+   * de filtro não pode fazer o drawer passar a mostrar a trilha de outro documento.
+   */
+  const [trilhaId, setTrilhaId] = React.useState<string | null>(null)
 
   // ── Estado dos filtros. TUDO daqui vira query string: filtro e paginação são do SERVIDOR.
   // O `useTabelaFiltro` das outras frentes NÃO serve aqui: ele filtra e pagina 100% em memória,
@@ -557,11 +517,27 @@ function AprovacoesPainel() {
                       Aprovações
                     </TableHead>
                     <TableHead scope="col" title="O que este título não nos diz.">Lacunas</TableHead>
+                    <TableHead scope="col">Trilha</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {items.map((item) => (
-                    <TableRow key={item.id}>
+                    /*
+                      O clique na linha é uma conveniência REDUNDANTE de mouse, nunca o único
+                      caminho: toda linha carrega o botão "Ver trilha" (última coluna), que é
+                      focável, anunciado por leitor de tela e ativado por Enter/Espaço. Como a
+                      ação existe inteira ali, nenhuma funcionalidade fica inacessível por
+                      teclado (WCAG 2.1.1).
+                      Não colocamos `role="button"`/`tabIndex` no `<tr>` de propósito: isso
+                      destruiria a semântica de linha da tabela (WCAG 1.3.1) e criaria um segundo
+                      tab-stop mudo, ao lado do botão que já faz a mesma coisa — pior para quem
+                      navega por teclado, não melhor.
+                    */
+                    <TableRow
+                      key={item.id}
+                      className="cursor-pointer"
+                      onClick={() => setTrilhaId(item.id)}
+                    >
                       <TableCell className="font-medium">{item.documentoNumero ?? '—'}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {item.tituloNumero ?? '—'}
@@ -614,6 +590,25 @@ function AprovacoesPainel() {
                       <TableCell>
                         <LacunasIndicador lacunas={item.lacunas} />
                       </TableCell>
+                      {/*
+                        A linha inteira abre o drawer (é o gesto que o analista espera numa
+                        tabela densa), mas um `onClick` em `<tr>` não é alcançável por teclado
+                        nem anunciado por leitor de tela. Este botão é o caminho acessível de
+                        verdade — mesma ação, com foco, `Enter`/`Espaço` e rótulo que diz de
+                        QUAL documento é a trilha.
+                      */}
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Ver trilha de aprovação do documento ${
+                            item.documentoNumero ?? item.id
+                          }`}
+                          onClick={() => setTrilhaId(item.id)}
+                        >
+                          Ver trilha
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -624,6 +619,14 @@ function AprovacoesPainel() {
           <Paginacao aba={aba} />
         </>
       )}
+
+      <TrilhaDrawer
+        id={trilhaId}
+        open={trilhaId !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) setTrilhaId(null)
+        }}
+      />
     </div>
   )
 }

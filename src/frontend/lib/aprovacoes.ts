@@ -277,6 +277,50 @@ export async function fetchAprovacoes(
   }
 }
 
+/**
+ * Busca a trilha COMPLETA de um título (`GET /aprovacoes/:id/trilha`).
+ *
+ * `id` é a chave natural composta `${filCod}:${docCod}:${titCod}` — vai `encodeURIComponent`ada
+ * porque os `:` são significativos para o path.
+ *
+ * Mesma doutrina do `fetchAprovacoes`: erro sobe, nada vira fixture. Uma trilha meio carregada,
+ * exibida como se fosse a trilha inteira, faria o analista concluir que faltam etapas quando na
+ * verdade faltou a resposta.
+ */
+export async function fetchTrilha(id: string): Promise<TrilhaResponse> {
+  const res = await apiFetch(`${API}/aprovacoes/${encodeURIComponent(id)}/trilha`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) {
+    let detalhe = ''
+    try {
+      const j = await res.json()
+      detalhe = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detalhe}`)
+  }
+  const json = (await res.json()) as Partial<TrilhaResponse>
+  const cabecalho = json.cabecalho
+  if (cabecalho === undefined) {
+    // Sem cabeçalho não há como saber de QUE título é a trilha. Renderizar as etapas soltas
+    // seria pior que falhar: o analista leria a trilha de um título achando que é a de outro.
+    throw new Error('Resposta sem cabeçalho: não é possível identificar o título desta trilha.')
+  }
+  return {
+    cabecalho: {
+      ...cabecalho,
+      lacunas: cabecalho.lacunas ?? [],
+      etapasAbertas: cabecalho.etapasAbertas ?? 0,
+    },
+    // A ordem cronológica é responsabilidade do BACKEND (contrato: "ordem cronológica por
+    // `recebidoEm`"). O cliente não reordena: se a ordem vier errada, o bug tem de aparecer
+    // onde ele nasce, não ser mascarado aqui.
+    etapas: json.etapas ?? [],
+    lacunas: json.lacunas ?? [],
+    snapshotEm: json.snapshotEm,
+  }
+}
+
 // ─────────────────────────────────────────────────────────── Formatação de tempo
 
 /**
