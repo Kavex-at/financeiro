@@ -854,6 +854,54 @@ export async function fetchPainelRecebimentos(
   }
 }
 
+/** Modalidade como a tela a mostra — espelha `ModalidadeNaTela` do backend. */
+export interface ModalidadeNaTela {
+  priVldTipo: number
+  rotulo: string
+  previsao: boolean
+  ndeDispensada: boolean
+}
+
+/** Resposta de `GET /recebimentos/painel/enriquecimento` (ADR-0038). */
+export interface PainelEnriquecimento {
+  geradoEm: string
+  /** `txnId → modalidade PREVISTA`. Só vem para transação SEM modalidade de fato. */
+  modalidades: Record<string, ModalidadeNaTela>
+  /** Aba NDe hidratada contra o ERP — inclui as emitidas fora da ferramenta. */
+  ndes: NotaDebitoEletronica[]
+  /** KPI de NDe pendentes já corrigido pela leitura do ERP. */
+  ndePendentes: number
+}
+
+/**
+ * Busca o ENRIQUECIMENTO do painel (`GET /recebimentos/painel/enriquecimento`) — a parte que
+ * depende de ler o ERP (ADR-0038).
+ *
+ * Chamada DEPOIS de `fetchPainelRecebimentos`, com o mesmo recorte, e o resultado é aplicado por
+ * cima do que já está na tela. Falhar aqui não apaga nada: a carteira e os KPIs vieram do Postgres
+ * e continuam válidos — por isso a página trata o erro como silencioso, sem toast e sem estado de
+ * erro. O que o analista perde é a coluna de modalidade PREVISTA, não a carteira.
+ */
+export async function fetchPainelEnriquecimento(
+  opts: { arquivadas?: boolean; status?: PainelStatusFiltro } = {},
+): Promise<PainelEnriquecimento> {
+  const params = new URLSearchParams()
+  if (opts.arquivadas) params.set('arquivadas', 'true')
+  if (opts.status) params.set('status', opts.status)
+  const qs = params.size > 0 ? `?${params}` : ''
+  const res = await apiFetch(`${API}/recebimentos/painel/enriquecimento${qs}`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as Partial<PainelEnriquecimento>
+  return {
+    geradoEm: json.geradoEm ?? new Date().toISOString(),
+    modalidades: json.modalidades ?? {},
+    ndes: json.ndes ?? [],
+    ndePendentes: json.ndePendentes ?? 0,
+  }
+}
+
 /**
  * Arquiva ou desarquiva um crédito (ADR-0033).
  *

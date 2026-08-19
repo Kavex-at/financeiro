@@ -41,22 +41,41 @@ export function useTabelaFiltro<T>(
   const [busca, setBuscaState] = React.useState('')
   const [pagina, setPagina] = React.useState(1)
   const b = busca.trim().toLowerCase()
-  // `filCod` indefinido = item CORPORATIVO (crédito do fin095, ADR-0032): não pertence a nenhuma
-  // filial e por isso passa em QUALQUER seleção, em vez de sumir quando o analista escolhe a dele.
-  const filtrados = items.filter(
-    (x) =>
-      (filial === 'todas' ||
-        getFilCod(x) === undefined ||
-        String(getFilCod(x)) === filial) &&
-      (b === '' || getBuscaTexto(x).toLowerCase().includes(b)),
+
+  // Memoizado porque a lista chega com até 500 linhas e o filtro rodava a CADA render — inclusive
+  // nos que nada têm a ver com ele (abrir um popover, um spinner mudar de estado). Digitar na busca
+  // disparava um varrimento completo por tecla, e é daí que vem a sensação de travamento.
+  // As funções de acesso vêm inline do chamador (identidade nova a cada render), então ficam FORA
+  // das deps de propósito: incluí-las anularia o memo. Elas são puras e derivam só de `items`.
+  const filtrados = React.useMemo(
+    () =>
+      // `filCod` indefinido = item CORPORATIVO (crédito do fin095, ADR-0032): não pertence a nenhuma
+      // filial e por isso passa em QUALQUER seleção, em vez de sumir quando o analista escolhe a dele.
+      items.filter(
+        (x) =>
+          (filial === 'todas' ||
+            getFilCod(x) === undefined ||
+            String(getFilCod(x)) === filial) &&
+          (b === '' || getBuscaTexto(x).toLowerCase().includes(b)),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, filial, b],
   )
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / pageSize))
   const paginaAtual = Math.min(pagina, totalPaginas)
-  const slice = filtrados.slice((paginaAtual - 1) * pageSize, paginaAtual * pageSize)
+  const slice = React.useMemo(
+    () => filtrados.slice((paginaAtual - 1) * pageSize, paginaAtual * pageSize),
+    [filtrados, paginaAtual, pageSize],
+  )
   // Corporativos não geram opção no dropdown — não há filial a oferecer.
-  const filiais = [
-    ...new Set(items.map(getFilCod).filter((f): f is number => f !== undefined)),
-  ].sort((a, c) => a - c)
+  const filiais = React.useMemo(
+    () =>
+      [...new Set(items.map(getFilCod).filter((f): f is number => f !== undefined))].sort(
+        (a, c) => a - c,
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items],
+  )
   const setFilial = (v: string) => {
     setFilialState(v)
     setPagina(1)

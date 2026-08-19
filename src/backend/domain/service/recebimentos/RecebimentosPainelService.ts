@@ -88,6 +88,26 @@ export interface RecebimentosPainel {
     categoriasOcultas: string[];
 }
 
+/**
+ * Resposta da rota de enriquecimento (ADR-0038) — a parte do painel que depende do ERP.
+ *
+ * Tudo aqui é SUBSTITUIÇÃO idempotente sobre o que a tela já mostra: `modalidades` preenche células
+ * que estavam "—", `ndes` troca a aba pela versão hidratada e `ndePendentes` corrige o card. Nada
+ * some se esta chamada falhar.
+ */
+export interface EnriquecimentoPainel {
+    geradoEm: string;
+    /**
+     * `txnId → modalidade PREVISTA`. Só entram transações sem fato: o fato vence a previsão, e
+     * mandá-lo de volta abriria espaço para sobrescrever dado real numa corrida entre os requests.
+     */
+    modalidades: Record<string, ModalidadeNaTela>;
+    /** Aba NDe hidratada — inclui as emitidas FORA da ferramenta, que o banco não conhece. */
+    ndes: NdePainelRow[];
+    /** KPI corrigido: COUNT do banco − reconciliadas nesta leitura + externas ainda pendentes. */
+    ndePendentes: number;
+}
+
 export interface MontarPainelInput {
     /** Filiais que o usuário pode ver; `undefined` = todas as do ERP. */
     filCodsPermitidas?: number[];
@@ -145,7 +165,14 @@ export default class RecebimentosPainelService {
         @inject(LogService) private readonly logService: LogService,
     ) {}
 
-    public montarPainel = async (input: MontarPainelInput = {}): Promise<RecebimentosPainel> => {
+    /**
+     * Recorte da carteira — filtros, teto e lista de status.
+     *
+     * Fonte ÚNICA para `montarPainel` e `montarEnriquecimento`: as duas rotas precisam enxergar
+     * exatamente as mesmas linhas, senão o enriquecimento preencheria a modalidade de um crédito que
+     * não está na tela e deixaria de fora um que está.
+     */
+    private resolverRecorte = async (input: MontarPainelInput) => {
         const filCods = await this.resolverFilCods(input.filCodsPermitidas);
         const limit = Math.min(input.limit ?? PAINEL_TRANSACOES_CAP, PAINEL_TRANSACOES_CAP);
         const categoriasExcluidas = input.incluirTesouraria ? [] : [...CATEGORIAS_TESOURARIA];
@@ -163,6 +190,19 @@ export default class RecebimentosPainelService {
         };
 
         const statuses = this.resolverStatuses(input.status);
+        return { filCods, limit, categoriasExcluidas, filtroBase, statuses };
+    };
+
+    /** Filtro da LISTA: o recorte + os status da aba aberta (que nunca escorrega para os KPIs). */
+    private filtroDaLista = (recorte: Awaited<ReturnType<typeof this.resolverRecorte>>) => ({
+        ...recorte.filtroBase,
+        ...(recorte.statuses !== undefined ? { statuses: recorte.statuses } : {}),
+        limit: recorte.limit,
+    });
+
+    public montarPainel = async (input: MontarPainelInput = {}): Promise<RecebimentosPainel> => {
+        const recorte = await this.resolverRecorte(input);
+        const { filCods, limit, categoriasExcluidas, filtroBase } = recorte;
 
         const [transacoes, porStatus, valorPorStatus, ultimaIngestao, ndesDoBanco, ndePendentes] =
             await Promise.all([
@@ -170,11 +210,7 @@ export default class RecebimentosPainelService {
                 // mesmo `buildFiltro`, e deixá-lo escorregar para eles faria os KPIs contarem apenas
                 // a aba aberta — as contagens dos cards mudariam conforme o analista navega, que é
                 // exatamente o erro que a decisão nº 1 deste serviço existe para prevenir.
-                this.transacaoRepo.listParaPainel({
-                    ...filtroBase,
-                    ...(statuses !== undefined ? { statuses } : {}),
-                    limit,
-                }),
+                this.transacaoRepo.listParaPainel(this.filtroDaLista(recorte)),
                 this.transacaoRepo.contarKpis(filtroBase),
                 this.transacaoRepo.somarValorPorStatus(filtroBase),
                 this.runRepo.findLatestSuccessFinishedAt(),
@@ -186,17 +222,18 @@ export default class RecebimentosPainelService {
 
         const n = (s: string): number => porStatus[s] ?? 0;
         const transacoesComModalidade = await this.enriquecerComFalhas(
-            await this.enriquecerComModalidade(transacoes, filCods),
+            await this.enriquecerComModalidadeReal(transacoes),
             input.status,
         );
-        const ndes = await this.hidratarNdes(ndesDoBanco, filCods);
 
         return {
             geradoEm: new Date().toISOString(),
             fonte: 'banco',
             transacoes: transacoesComModalidade,
             recebimentos: [],
-            ndes: ndes.linhas,
+            // O que o BANCO sabe. A releitura do com297 (números do SEFAZ, NDes emitidas fora da
+            // ferramenta) chega pela rota de enriquecimento — ver `montarEnriquecimento`.
+            ndes: ndesDoBanco,
             kpis: {
                 importadas: n(TRANSACAO_BANCARIA_STATUS.IMPORTADA),
                 conciliadas: n(TRANSACAO_BANCARIA_STATUS.CONCILIADA),
@@ -205,19 +242,66 @@ export default class RecebimentosPainelService {
                 erro: n(TRANSACAO_BANCARIA_STATUS.ERRO),
                 processadas: n(TRANSACAO_BANCARIA_STATUS.PROCESSADA),
                 valorNaoAlocado: this.somarValorEmAberto(valorPorStatus),
-                // COUNT do banco (doutrina 1) menos o que ESTE request acabou de reconciliar: o
-                // COUNT foi tirado antes da hidratação, então sem o desconto o card contaria como
-                // pendente uma NDe que a própria tela já mostra autorizada.
-                // COUNT do banco (doutrina 1) menos o que ESTE request reconciliou, MAIS as NDes
-                // que só existem no ERP e ainda não foram autorizadas. As externas não podem sair do
-                // banco (não há linha nossa), e o grid não é uma página — é a família inteira da
-                // filial —, então contá-las em memória é exato, não uma estimativa.
-                ndePendentes:
-                    Math.max(0, ndePendentes - ndes.reconciliadas) + ndes.externasPendentes,
+                // COUNT do banco (doutrina 1). O ajuste que só a leitura do ERP permite — descontar
+                // o que acabou de ser reconciliado e somar as NDes emitidas fora da ferramenta —
+                // vem no enriquecimento, e a tela substitui o número quando ele chega.
+                ndePendentes,
             },
             ...(ultimaIngestao !== undefined ? { ultimaIngestao } : {}),
             truncado: transacoesComModalidade.length >= limit,
             categoriasOcultas: categoriasExcluidas,
+        };
+    };
+
+    /**
+     * Enriquecimento do painel (ADR-0038) — tudo que depende de LER o ERP, fora do caminho crítico.
+     *
+     * Existe porque o `/painel` esperava duas leituras caras antes de responder qualquer coisa: a
+     * varredura do `imp021` (previsão de modalidade, sem teto de tempo) e o grid do com297
+     * (hidratação da aba NDe, até `PAINEL_NDE_HIDRATACAO_BUDGET_MS`). Enquanto elas rodavam, o
+     * analista olhava para uma tela vazia — inclusive os KPIs e a carteira, que só dependem do
+     * Postgres e estavam prontos havia centenas de milissegundos.
+     *
+     * Recebe o MESMO recorte da carteira (status, arquivadas, tesouraria, filiais) porque precisa
+     * enxergar exatamente as linhas que estão na tela. Best-effort de ponta a ponta: ERP fora do ar
+     * devolve mapa vazio e as linhas do banco, nunca um erro — a carteira já está renderizada e
+     * derrubá-la agora seria trocar uma tela incompleta por uma tela quebrada.
+     *
+     * **Efeito colateral deliberado:** `hidratarNdes` RECONCILIA (grava número do SEFAZ e o flag no
+     * ledger). A reconciliação seguiu junto com a leitura em vez de ficar no `/painel` — é a mesma
+     * leitura do ERP que a habilita, e duplicá-la só para manter a escrita na rota antiga custaria
+     * um segundo grid por carga de tela.
+     */
+    public montarEnriquecimento = async (
+        input: MontarPainelInput = {},
+    ): Promise<EnriquecimentoPainel> => {
+        const recorte = await this.resolverRecorte(input);
+        const { filCods } = recorte;
+
+        const [transacoes, ndesDoBanco, ndePendentes] = await Promise.all([
+            this.transacaoRepo.listParaPainel(this.filtroDaLista(recorte)),
+            this.ndeRepo.listParaPainel({ filCods, limit: PAINEL_NDES_CAP }),
+            this.ndeRepo.contarPendentes({ filCods }),
+        ]);
+
+        // O fato precisa ser relido aqui (é ele que diz QUEM ainda precisa de palpite), mas é uma
+        // consulta Postgres por id — barata perto das duas leituras de ERP que vêm a seguir.
+        const comFato = await this.enriquecerComModalidadeReal(transacoes);
+
+        const [modalidades, ndes] = await Promise.all([
+            this.preverModalidades(comFato, filCods),
+            this.hidratarNdes(ndesDoBanco, filCods),
+        ]);
+
+        return {
+            geradoEm: new Date().toISOString(),
+            modalidades,
+            ndes: ndes.linhas,
+            // COUNT do banco menos o que ESTA leitura reconciliou, MAIS as NDes que só existem no
+            // ERP e ainda não foram autorizadas. As externas não podem sair do banco (não há linha
+            // nossa), e o grid não é uma página — é a família inteira da filial —, então contá-las
+            // em memória é exato, não uma estimativa.
+            ndePendentes: Math.max(0, ndePendentes - ndes.reconciliadas) + ndes.externasPendentes,
         };
     };
 
@@ -289,21 +373,18 @@ export default class RecebimentosPainelService {
             .reduce((soma, [, v]) => soma + v.emAberto, 0);
 
     /**
-     * Preenche a coluna de modalidade (ADR-0033), com DUAS fontes de qualidade diferente:
+     * Preenche a coluna de modalidade (ADR-0033) com o FATO: para crédito já alocado, a modalidade
+     * gravada no ledger daquela execução. Fonte Postgres, barata — fica no caminho crítico do painel.
      *
-     *  1. **Fato** — para crédito já alocado, a modalidade gravada no ledger daquela execução.
-     *  2. **Previsão** — para o resto, o palpite pelos processos abertos do cliente que aparenta ter
-     *     pago. Só quando o cliente tem UMA modalidade; ambíguo vira ausência.
+     * A outra fonte, a **previsão** pelos processos abertos do cliente, saiu daqui: ela depende de
+     * varrer o `imp021` e segurava a carteira inteira por segundos só para pintar uma coluna. Agora
+     * mora em `preverModalidades`, servida pela rota de enriquecimento (ADR-0038).
      *
      * O fato SEMPRE vence a previsão. Nunca inventa: sem casamento, a linha volta sem `modalidade` e
-     * a tela mostra "—".
-     *
-     * NÃO derruba o painel. A previsão depende do `imp021`; um ERP fora do ar não pode apagar a
-     * carteira do analista, então a falha degrada para "sem coluna" e o resto da tela segue de pé.
+     * a tela mostra "—" até (e a menos que) o enriquecimento chegue.
      */
-    private enriquecerComModalidade = async (
+    private enriquecerComModalidadeReal = async (
         transacoes: TransacaoBancaria[],
-        filCods: number[],
     ): Promise<TransacaoPainel[]> => {
         if (transacoes.length === 0) return [];
 
@@ -311,35 +392,53 @@ export default class RecebimentosPainelService {
             .listModalidadePorTxnIds(transacoes.map((t) => t.id))
             .catch(() => new Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>());
 
-        const indice = await this.construirIndicePrevisao(filCods);
-
         return transacoes.map((t) => {
             const real = reais.get(t.id);
-            if (real?.priVldTipo !== undefined) {
-                return {
-                    ...t,
-                    modalidade: {
-                        priVldTipo: real.priVldTipo,
-                        rotulo: PRI_VLD_TIPO_ROTULO[real.priVldTipo] ?? `Tipo ${real.priVldTipo}`,
-                        previsao: false,
-                        ndeDispensada: real.ndeDispensada ?? false,
-                    },
-                };
-            }
-            const prevista = indice?.prever(t.contraparte);
-            if (prevista === undefined) return t;
+            if (real?.priVldTipo === undefined) return t;
             return {
                 ...t,
                 modalidade: {
-                    priVldTipo: prevista.priVldTipo,
-                    rotulo: prevista.rotulo,
-                    previsao: true,
-                    // Derivada da regra atual, e não do histórico: para um crédito que AINDA não foi
-                    // processado, o que vale é o que aconteceria se ele fosse processado hoje.
-                    ndeDispensada: !ndeEDevida(prevista.priVldTipo),
+                    priVldTipo: real.priVldTipo,
+                    rotulo: PRI_VLD_TIPO_ROTULO[real.priVldTipo] ?? `Tipo ${real.priVldTipo}`,
+                    previsao: false,
+                    ndeDispensada: real.ndeDispensada ?? false,
                 },
             };
         });
+    };
+
+    /**
+     * Modalidade PREVISTA das transações que não têm fato — a metade cara, que depende do `imp021`.
+     *
+     * Devolve um mapa `txnId → modalidade` em vez da lista inteira porque quem consome é a rota de
+     * enriquecimento: a tela já tem as linhas na mão e só precisa preencher a célula que estava "—".
+     * Transação com fato NUNCA entra no mapa — o fato vence a previsão, e reenviá-lo abriria a porta
+     * para a previsão sobrescrever um dado real numa corrida entre os dois requests.
+     */
+    private preverModalidades = async (
+        transacoes: TransacaoPainel[],
+        filCods: number[],
+    ): Promise<Record<string, ModalidadeNaTela>> => {
+        const semFato = transacoes.filter((t) => t.modalidade === undefined);
+        if (semFato.length === 0) return {};
+
+        const indice = await this.construirIndicePrevisao(filCods);
+        if (indice === undefined) return {};
+
+        const previstas: Record<string, ModalidadeNaTela> = {};
+        for (const t of semFato) {
+            const prevista = indice.prever(t.contraparte);
+            if (prevista === undefined) continue;
+            previstas[t.id] = {
+                priVldTipo: prevista.priVldTipo,
+                rotulo: prevista.rotulo,
+                previsao: true,
+                // Derivada da regra atual, e não do histórico: para um crédito que AINDA não foi
+                // processado, o que vale é o que aconteceria se ele fosse processado hoje.
+                ndeDispensada: !ndeEDevida(prevista.priVldTipo),
+            };
+        }
+        return previstas;
     };
 
     /**

@@ -89,6 +89,17 @@ export const sugerirCliente = (
   return melhor?.pesCod ?? null
 }
 
+/**
+ * Processos do mais RECENTE para o mais antigo (`priCod` decrescente).
+ *
+ * O `imp021` devolve na ordem dele e a rota concatena filial a filial, então a lista chegava sem
+ * critério nenhum. `priCod` é sequencial no ERP, e o crédito que acabou de cair quase sempre é de um
+ * processo novo — deixá-lo no topo poupa o analista de varrer a lista inteira. Ordenar aqui (e não
+ * no servidor) porque a lista não é paginada: vem inteira, com os processos abertos de UM cliente.
+ */
+const ordenarProcessos = (lista: Processo[]): Processo[] =>
+  [...lista].sort((a, b) => b.priCod - a.priCod)
+
 /** Tolerância (centavos) ao comparar o valor da linha com o saldo restante. */
 const SALDO_TOL = 0.005
 
@@ -334,7 +345,7 @@ export function AlocarProcessosDialog({
     setSnEscolhida(CRIAR_NOVO_SN)
     fetchProcessosParaTransacao(transacao.id, pesCod)
       .then((lista) => {
-        if (!cancelado) setProcessos(lista)
+        if (!cancelado) setProcessos(ordenarProcessos(lista))
       })
       .catch((e) => {
         if (!cancelado) setErro(e instanceof Error ? e.message : 'Falha ao carregar processos.')
@@ -372,6 +383,35 @@ export function AlocarProcessosDialog({
     // Só reage à troca do processo selecionado (não ao objeto `sns` recém-preenchido).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [processoSelecionado?.priCod, processoSelecionado?.filCod])
+
+  /**
+   * Escolha de SN → preenche o "Valor a alocar" com `min(valor da SN, saldo restante)`.
+   *
+   * O default do campo é o saldo INTEIRO do crédito (o `imp021` não expõe valor de processo, então
+   * não há outro teto). Quando o analista aponta uma SN existente, ele disse qual dívida está
+   * quitando: partir do valor dela evita digitar à mão o número que está na tela logo acima, e o
+   * `min` garante que a sugestão nunca proponha alocar mais do que sobrou do pagamento.
+   *
+   * Voltar para "Criar novo SN" LIMPA o campo, que volta ao default — não existe SN de referência,
+   * então manter o valor da anterior seria arrastar um número sem dono.
+   *
+   * SN com valor não-positivo não preenche nada: prefixar `0,00` deixaria "Processar" travado com
+   * uma mensagem de valor inválido logo depois de um clique que deveria ajudar.
+   */
+  const escolherSn = (escolha: string, sn?: SolicitacaoNumerarioListItem) => {
+    setSnEscolhida(escolha)
+    if (processoSelecionado === null) return
+    const priCod = processoSelecionado.priCod
+    if (escolha === CRIAR_NOVO_SN) {
+      setValores((prev) => {
+        const { [priCod]: _removido, ...resto } = prev
+        return resto
+      })
+      return
+    }
+    if (sn === undefined || !(sn.valor > 0)) return
+    setValores((prev) => ({ ...prev, [priCod]: numToMask(Math.min(sn.valor, saldoRestante)) }))
+  }
 
   const processar = async (processo: Processo) => {
     if (!transacao) return
@@ -491,7 +531,10 @@ export function AlocarProcessosDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <DialogBody className="flex flex-col overflow-hidden">
+        {/* No desktop o corpo NÃO rola: quem rola são as regiões internas, para o rodapé com
+            "Processar" nunca sair da tela. No mobile os dois painéis empilhados não cabem lado a
+            lado, então o corpo volta a rolar inteiro e o rodapé fica `sticky`. */}
+        <DialogBody className="flex flex-col overflow-y-auto md:overflow-hidden">
           <div className="mb-3 flex shrink-0 items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
             <div>
@@ -593,10 +636,10 @@ export function AlocarProcessosDialog({
               description="Este cliente não tem processo aberto em nenhuma filial acessível. Escolha outro cliente ou trate a conciliação manualmente."
             />
           ) : (
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:min-h-0 md:flex-1 md:grid-cols-2 md:overflow-hidden">
               {/* ── Painel ESQUERDO: lista de processos (seleção por rádio) ── */}
               <div
-                className="min-h-0 overflow-auto rounded-lg border"
+                className="rounded-lg border md:min-h-0 md:overflow-auto"
                 role="radiogroup"
                 aria-label="Processos candidatos"
               >
@@ -647,17 +690,22 @@ export function AlocarProcessosDialog({
                 </ul>
               </div>
 
-              {/* ── Painel DIREITO: SN do processo selecionado + Processar ── */}
-              <div className="min-h-0 overflow-auto rounded-lg border p-4">
+              {/* ── Painel DIREITO: três regiões — cabeçalho fixo, lista de SN rolável, rodapé
+                     sempre visível. Antes era UMA caixa rolável com tudo dentro: com muitas SN o
+                     botão "Processar" ia para baixo da dobra e o analista tinha de rolar a lista
+                     inteira para alcançá-lo. ── */}
+              <div className="flex flex-col rounded-lg border md:min-h-0 md:overflow-hidden">
                 {processoSelecionado === null ? (
-                  <EmptyState
-                    icon={<FileText className="size-6" aria-hidden />}
-                    title="Selecione um processo"
-                    description="Escolha um processo à esquerda para ver as Solicitações de Numerário existentes e processar a alocação."
-                  />
+                  <div className="p-4">
+                    <EmptyState
+                      icon={<FileText className="size-6" aria-hidden />}
+                      title="Selecione um processo"
+                      description="Escolha um processo à esquerda para ver as Solicitações de Numerário existentes e processar a alocação."
+                    />
+                  </div>
                 ) : (
-                  <div className="space-y-4">
-                    <div>
+                  <>
+                    <div className="shrink-0 border-b p-4">
                       <h3 className="text-sm font-medium">
                         Solicitação de Numerário — processo {processoSelecionado.priCod}
                       </h3>
@@ -670,7 +718,7 @@ export function AlocarProcessosDialog({
                       role="radiogroup"
                       aria-label="Solicitação de Numerário"
                       aria-busy={carregandoSns || undefined}
-                      className="space-y-2"
+                      className="space-y-2 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto"
                     >
                       {/* "Criar novo SN" é sempre a 1ª opção e o default. */}
                       <label
@@ -684,7 +732,7 @@ export function AlocarProcessosDialog({
                           className="accent-primary"
                           value={CRIAR_NOVO_SN}
                           checked={snEscolhida === CRIAR_NOVO_SN}
-                          onChange={() => setSnEscolhida(CRIAR_NOVO_SN)}
+                          onChange={() => escolherSn(CRIAR_NOVO_SN)}
                           aria-label="Criar novo SN"
                         />
                         <span className="font-medium">Criar novo SN</span>
@@ -720,7 +768,7 @@ export function AlocarProcessosDialog({
                               className="mt-1 accent-primary"
                               value={String(sn.docCod)}
                               checked={snEscolhida === String(sn.docCod)}
-                              onChange={() => setSnEscolhida(String(sn.docCod))}
+                              onChange={() => escolherSn(String(sn.docCod), sn)}
                               aria-label={`SN ${sn.numero} — ${sn.descricao}`}
                             />
                             <div className="min-w-0 flex-1 space-y-1">
@@ -744,7 +792,10 @@ export function AlocarProcessosDialog({
                       )}
                     </div>
 
-                    {/* Valor + Processar (ou o resultado, quando já processado). */}
+                    {/* Rodapé: valor + Processar (ou o resultado, quando já processado). Fica FORA
+                        da região rolável — é a ação terminal do modal e não pode depender de o
+                        analista rolar até o fim de uma lista de 100 SN para aparecer. */}
+                    <div className="sticky bottom-0 z-10 shrink-0 border-t bg-card p-4">
                     {processadoSelecionado && resultadoSelecionado ? (
                       <ResultadoAlocacao resultado={resultadoSelecionado} />
                     ) : (
@@ -768,8 +819,23 @@ export function AlocarProcessosDialog({
                             max={saldoRestante}
                             aria-label={`Valor a alocar no processo ${processoSelecionado.priCod}`}
                             aria-invalid={excedeSaldo || undefined}
+                            aria-describedby={
+                              excedeSaldo ? `valor-alocar-erro-${processoSelecionado.priCod}` : undefined
+                            }
                             className="w-40"
                           />
+                          {/* Mensagem visível, não só o `title` do botão travado: sem ela o
+                              analista vê "Processar" desabilitado e não sabe por quê. E o valor
+                              NÃO é cortado sozinho — corrigir é decisão dele. */}
+                          {excedeSaldo ? (
+                            <p
+                              id={`valor-alocar-erro-${processoSelecionado.priCod}`}
+                              role="alert"
+                              className="text-xs text-danger"
+                            >
+                              Acima do saldo a alocar ({formatBRL(saldoRestante)}). Ajuste o valor.
+                            </p>
+                          ) : null}
                         </div>
                         <Button
                           onClick={() => void processar(processoSelecionado)}
@@ -793,7 +859,8 @@ export function AlocarProcessosDialog({
                         ) : null}
                       </div>
                     )}
-                  </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>
