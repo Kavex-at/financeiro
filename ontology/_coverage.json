@@ -1,37 +1,37 @@
 {
   "_meta": {
-    "generated": "2026-08-17",
-    "version": "0.19.1",
-    "note": "v0.17.0 (2026-08-17, ADR-0037): aba NDe do painel deixa de ser hardcoded vazia. Projecao de leitura dirigida pela EXECUCAO (LEFT JOIN na NDe local) + hidratacao capada no com297 (GET por docCod) com reconciliacao local de nde_autorizado/numero_nde. KPI ndePendentes = NOT(emitida AND autorizada), COUNT no banco. Entidade NotaDebitoEletronica sai de planned para partial no _index (entities_planned 6->5, entities_partial 1->2); nenhuma coluna nova, nenhuma regra de emissao alterada. GAP aberto: grid com297 para listar NDes emitidas fora da ferramenta. EMENDA (mesmo dia): o grid do com297 (POST com297/list) foi mapeado por HAR + probe read-only em PRD e o GAP integrability-4 fechou. Hidratacao passou de ate 20 GET com297/{docCod} para 1 POST por filial (o grid projeta vldAutorizado e docEspNumero da familia inteira). Filtro por CODIGO (tpdCod#EQ=167), NAO por tpdDesNome#LIKE: nome de cadastro e editavel e #LIKE sobre string acentuada falha em silencio (zero linhas, sem erro) se a normalizacao Unicode divergir; equivalencia codigo x nome provada em PRD. NDes emitidas FORA da ferramenta passam a aparecer com origem=erp e chip \"fora da ferramenta\" — sem correlationId/etapa/txn, identidade por cliente+processo; correlationId, recebimentoId e idempotencyKey viraram opcionais no NdePainelRow. Externas nao autorizadas somam ao KPI ndePendentes. ARMADILHA registrada: POST /com297 sem o sufixo /list e a CRIACAO de documento — o helper listGenericPaginated monta o path errado para este servico. Anterior: v0.18.0 (2026-08-11, ADR-0036): regra de negocio NOVA descricao-item-nde (I-Receb-5), implemented + teste canonico. A Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) e garantida NO DOCUMENTO antes da leg fiscal (PUT com297/comDocProdutos, RMW, sucesso ⟺ eco nao-vazio); o cadastro do cliente (cmn025 dpeVld1DescrNfe) NUNCA e escrito. No-op quando o ERP ja preencheu. Sem migration e sem etapa nova no ledger (idempotencia pelo estado do documento, para alcancar execucoes paradas em obs-done). Coverage: business_rules_total 18->19, implemented 9->10, with_tests 5->6.",
+    "generated": "2026-08-19",
+    "version": "0.20.0",
+    "note": "v0.20.0 (2026-08-19, ADR-0038): ACERTO DE CONTAS da Frente V (Workflow de Aprovacao). As fatias F1 e F2 ja estavam commitadas e a ontologia ja tinha os artefatos; faltava a contabilidade. Entram 2 entidades (TituloAprovacao, EtapaAprovacao, ambas implemented), 3 acoes (ingerirTrilhaAprovacao, exporPainelAprovacoes, detalharTrilhaAprovacao), 3 business-rules com teste canonico (duracao-etapa-aprovacao, idempotencia-ingestao-aprovacao, e a NOVA status-etapa-fail-safe, que ate agora so existia no codigo), 2 state-machines e 1 integracao. Deltas: entities 16->18 (implemented 9->11, pct 56->61); actions 23->26 (implemented 16->19, pct 70->73); business_rules 19->22 (implemented 10->13, with_tests 6->9); state_machines 5->7 (implemented 1->3); integrations 5->6 (implemented 4->5). DRIFT PRE-EXISTENTE, nao introduzido aqui e nao corrigido aqui: _index.json ja contava mais itens que este arquivo (entities 17 x 16, actions 24 x 23, business_rules 20 x 19) porque SolicitacaoNumerario, gerarSolicitacaoNumerarioPermuta e descricao-item-nde entraram no indice sem entrar na cobertura; os totais acima somam +2/+3/+3 sobre a base ANTIGA deste arquivo, entao a diferenca de 1 item por dimensao permanece. Reconciliar num /retro-ontology. Anterior: v0.17.0 (2026-08-17, ADR-0037): aba NDe do painel deixa de ser hardcoded vazia. Projecao de leitura dirigida pela EXECUCAO (LEFT JOIN na NDe local) + hidratacao capada no com297 (GET por docCod) com reconciliacao local de nde_autorizado/numero_nde. KPI ndePendentes = NOT(emitida AND autorizada), COUNT no banco. Entidade NotaDebitoEletronica sai de planned para partial no _index (entities_planned 6->5, entities_partial 1->2); nenhuma coluna nova, nenhuma regra de emissao alterada. GAP aberto: grid com297 para listar NDes emitidas fora da ferramenta. EMENDA (mesmo dia): o grid do com297 (POST com297/list) foi mapeado por HAR + probe read-only em PRD e o GAP integrability-4 fechou. Hidratacao passou de ate 20 GET com297/{docCod} para 1 POST por filial (o grid projeta vldAutorizado e docEspNumero da familia inteira). Filtro por CODIGO (tpdCod#EQ=167), NAO por tpdDesNome#LIKE: nome de cadastro e editavel e #LIKE sobre string acentuada falha em silencio (zero linhas, sem erro) se a normalizacao Unicode divergir; equivalencia codigo x nome provada em PRD. NDes emitidas FORA da ferramenta passam a aparecer com origem=erp e chip \"fora da ferramenta\" — sem correlationId/etapa/txn, identidade por cliente+processo; correlationId, recebimentoId e idempotencyKey viraram opcionais no NdePainelRow. Externas nao autorizadas somam ao KPI ndePendentes. ARMADILHA registrada: POST /com297 sem o sufixo /list e a CRIACAO de documento — o helper listGenericPaginated monta o path errado para este servico. Anterior: v0.18.0 (2026-08-11, ADR-0036): regra de negocio NOVA descricao-item-nde (I-Receb-5), implemented + teste canonico. A Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) e garantida NO DOCUMENTO antes da leg fiscal (PUT com297/comDocProdutos, RMW, sucesso ⟺ eco nao-vazio); o cadastro do cliente (cmn025 dpeVld1DescrNfe) NUNCA e escrito. No-op quando o ERP ja preencheu. Sem migration e sem etapa nova no ledger (idempotencia pelo estado do documento, para alcancar execucoes paradas em obs-done). Coverage: business_rules_total 18->19, implemented 9->10, with_tests 5->6.",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "nde-painel-lista"
+    "last_feature": "frente-v-aprovacoes-acerto-de-contas"
   },
   "summary": {
-    "entities_total": 16,
+    "entities_total": 18,
     "entities_imported": 0,
-    "entities_custom": 16,
+    "entities_custom": 18,
     "entities_core": 0,
-    "entities_implemented": 9,
+    "entities_implemented": 11,
     "entities_partial": 2,
     "entities_planned": 5,
     "entities_planned_migration": 0,
-    "entities_coverage_pct": 56,
-    "actions_total": 23,
-    "actions_implemented": 16,
+    "entities_coverage_pct": 61,
+    "actions_total": 26,
+    "actions_implemented": 19,
     "actions_partial": 1,
     "actions_planned": 6,
-    "actions_coverage_pct": 70,
-    "business_rules_total": 19,
-    "business_rules_implemented": 10,
+    "actions_coverage_pct": 73,
+    "business_rules_total": 22,
+    "business_rules_implemented": 13,
     "business_rules_planned": 9,
-    "business_rules_with_tests": 6,
+    "business_rules_with_tests": 9,
     "business_rules_retired": 1,
-    "state_machines_total": 5,
+    "state_machines_total": 7,
     "state_machines_partial": 1,
-    "state_machines_implemented": 1,
+    "state_machines_implemented": 3,
     "state_machines_planned": 3,
-    "integrations_total": 5,
-    "integrations_implemented": 4,
+    "integrations_total": 6,
+    "integrations_implemented": 5,
     "integrations_planned": 1,
     "ui_flows_total": 0,
     "workflows_total": 0,
@@ -228,6 +228,40 @@
         "ADR-0022"
       ],
       "note": "Frente IV (SKELETON Fase 0 — só a forma): regra configurável+versionada+explicável. Semântica das 3 regras (encomenda/adiantamento-cliente/multa-juros) DEFERIDA à Fase 4. planned."
+    },
+    "TituloAprovacao": {
+      "status": "implemented",
+      "actions": [
+        "ingerirTrilhaAprovacao",
+        "exporPainelAprovacoes"
+      ],
+      "impl_pct": 100,
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-04/PV-07 — data_finalizacao nasce SEMPRE nula: o marco zero que o cliente descreveu ('o documento 123 foi finalizado às 10:00') não vem na projeção acessível. O relógio começa na primeira etapa e a lacuna SEM_DATA_FINALIZACAO explica isso na tela",
+        "moeda — a coluna existe na migration 0049, mas a ingestão nunca a preenche (o mapeamento do psq014 não a lê). Campo morto até alguém decidir a origem",
+        "Fase 2 (analítico por fornecedor/pessoa/filial) fora de escopo — o schema suporta, nenhuma tela entrega"
+      ],
+      "note": "Frente V (ADR-0038, F1+F2): snapshot local do título a pagar sob a ótica do workflow (tabela aprovacao_titulo, migration 0049). status_workflow é DERIVADO das etapas a cada ingestão, nunca lido do ERP. Entidade DISTINTA de TituloAPagar (Frente II) por decisão explícita D4: universos diferentes (psq014/histórico × fin064/carteira corrente), cadências diferentes, tabelas separadas — o doc 4156, que tem trilha completa, NEM APARECE na carteira corrente. READ-only no ERP (D2). implemented."
+    },
+    "EtapaAprovacao": {
+      "status": "implemented",
+      "actions": [
+        "ingerirTrilhaAprovacao",
+        "detalharTrilhaAprovacao"
+      ],
+      "impl_pct": 100,
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-01 — 13 etapas reais com ftbVldStatus=7 ficam INDETERMINADO até alguém dizer o que o 7 significa",
+        "PV-10 — responsavel_cod (usnCodCmd) nasce nulo; a identidade da pessoa é o NOME normalizado, frágil a renomeação de usuário",
+        "PV-02 — LIBERAR (122×) e APROVAR (34×) contam ambas como conclusão positiva; se APROVAR for etapa intermediária, o status agregado fica otimista"
+      ],
+      "note": "Frente V (ADR-0038, F1+F2): um passo da trilha = uma linha de FinTituloBloq (tabela aprovacao_etapa, chave fil/doc/tit/fbl/ftb). ftbVldStatus BRUTO preservado em status_erp mesmo ilegível — reclassificar depois é migration, não reingestão de 23 mil títulos. duracao_segundos só em etapa resolvida; pendente é null, NUNCA estimada. Anti-fantasma POR TÍTULO (não global como na Frente II, onde seria destrutivo num backfill parcial). implemented."
     }
   },
   "by_business_rule": {
@@ -401,6 +435,43 @@
         "ADR-0031"
       ],
       "note": "Frente IV (ADR-0031): a NDe so e emitida QUANDO DEVIDA. priVldTipo=2 (conta e ordem de terceiros) => com299 + fin014 e PARA (sem com297/com300/com131/poll SEFAZ), etapa terminal quitado-sem-nde, nd_doc_cod nulo POR REGRA. Modalidade lida do imp021 no SERVIDOR — nunca do payload do cliente, porque decide emissao de documento fiscal IRREVERSIVEL. Indeterminavel (processo ausente | campo nulo | read falhou) => blocked fail-closed, write-ahead nem abre. Gatilho e SO priVldTipo=2, NAO a variante \"- TERCEIROS\" da config de SN (gcd 151), que so decide a conta de rateio. Testes canonicos: RecebimentoNumerarioService.test.ts (describe ADR-0031), recebimentos.e2e.falhas.test.ts (Cenario 5, prova por HTTP que nada chega ao com297/com300/com131), SolicitacaoNumerarioExecucaoRepository.test.ts, AlocarProcessosDialog.test.tsx."
+    },
+    "duracao-etapa-aprovacao": {
+      "invariant": "I3 (Frente V — nenhuma duração é estimada)",
+      "status": "implemented",
+      "has_test": true,
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-03 — se ftbTimBloq for o instante em que a REGRA criou o bloqueio (e não o instante em que o aprovador foi notificado), a fórmula não muda, mas o número deixa de medir espera humana"
+      ],
+      "note": "Frente V: duração = agidoEm − recebidoEm em segundos corridos (não dias úteis — o corrido é o FATO; dias úteis exigiria calendário de feriados por filial e seria interpretação). Recusa calcular em 4 casos: sem agidoEm; agidoEm == recebidoEm (o ERP carimba o mesmo instante enquanto ninguém age — tratar como conclusão criaria durações zero que afundam a mediana); agidoEm < recebidoEm (não clampa para zero — zero é plausível e mentiroso); status ilegível. 'paradaHaSegundos' é métrica DIFERENTE (aberta, cresce a cada leitura) e não entra em média alguma. Teste canônico: DuracaoCalculator.test.ts, incluindo o caso real do doc 4156 (23h29m). Evidência: 169 etapas resolvidas — mediana 2,5h, média 20,4h, p90 70h, máx 234h; a distância entre mediana e média é o achado que justifica a frente."
+    },
+    "idempotencia-ingestao-aprovacao": {
+      "invariant": "I2 (Frente V — reprocessar nunca duplica nem apaga)",
+      "status": "implemented",
+      "has_test": true,
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "O advisory lock (APROVACOES_INGEST_LOCK_KEY) é aplicado no JOB, não dentro do IngestaoAprovacoesService: o cenário 'duas runs simultâneas' do contrato de teste da regra não tem teste de serviço, e quem chamar o serviço direto não herda a exclusão mútua"
+      ],
+      "note": "Frente V: UPSERT por chave natural + anti-fantasma POR TÍTULO. O anti-fantasma GLOBAL da Frente II seria destrutivo aqui — o backfill é parcial por natureza e marcaria como fantasma todo o histórico apenas não revisitado. Cursor gravado DEPOIS de persistir o título: uma queda repete no máximo um título e o UPSERT torna a repetição inofensiva. A retomada só é correta porque a listagem do psq014 usa orderList explícito por docCod. Testes: IngestaoAprovacoesService.test.ts (cursor por título, retomada da página, título sem etapas → SEM_WORKFLOW, run marcada como erro)."
+    },
+    "status-etapa-fail-safe": {
+      "invariant": "I4 (Frente V — desconhecido nunca vira aprovado)",
+      "status": "implemented",
+      "has_test": true,
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-01 — significado de ftbVldStatus=7 (13 ocorrências reais na amostra de 300 títulos da filial 2) segue desconhecido",
+        "PV-02 — a lista ACAO_REJEICAO ('CANCELAR','RECUSAR','REJEITAR') é aposta: nenhuma recusa foi observada em produção"
+      ],
+      "note": "Frente V (ADR-0038 D5), regra que existia SÓ no código até esta curadoria: status do ERP fora de {1,2} vira INDETERMINADO, nunca CONCLUIDA, e o valor bruto fica em status_erp para reclassificação por migration. Vale também para 'respondido' sem ação e para ação desconhecida. Propaga para cima: uma etapa indeterminada torna o título inteiro INDETERMINADO, precedendo rejeitado/aguardando/aprovado. ETAPA_STATUS_ERP em interface/aprovacoes/constants.ts é a ÚNICA porta de entrada do número cru. Contra-exemplo que a regra existe para impedir: titVld1/2/3Libera vale 1 em 100% dos títulos, sem timestamps — lê-la como 'o nível N aprovou' produziria um painel afirmando que tudo está aprovado. Testes canônicos: EtapaStatusResolver.test.ts e StatusWorkflowResolver.test.ts."
     }
   },
   "health_flags": {
@@ -444,7 +515,13 @@
       "FRENTE IV (ADR-0022, SKELETON Fase 0) spikes ABERTOS que gatilham as fases: O7 (Nexxera direto — canal API vs SFTP/CNAB, formato CNAB240/OFX/JSON, auth, sandbox) BLOQUEIA o Módulo 1 — spike na Fase 0, port channel-agnostic na Fase 1; O3 (write de recebível) = aposta 'assume fin010 + parametriza', CONFIRMAR shape do payload/endpoint no build (Fase 5) — capturar baixa real de recebível se não fechar; NDe — endpoint/trigger de emissão no Conexos a confirmar na Fase 5 (junto do O3); O4 (scheduler inexistente, herdado do SISPAG) — cadência do Módulo 1 começa manual+cron probe, EventBridge é o alvo.",
       "FRENTE IV regras de negócio DEFERIDAS à Fase 4 (stubs planned, semântica NÃO fixada — evita modelar antes da hora, uma OfficeHours por regra): encomenda-percentuais (0,1%/0,9% — base, significado, contas, arredondamento); adiantamento-cliente (critério de identificação + ciclo do CreditoCliente); separacao-multa-juros (informado × calculado, destino por parcela, divergência esperado×pago). Ver ontology/_inbox/_watchlist.md.",
       "FRENTE IV business-rules sem teste canônico (nascem planned): invariante-rateio (I-Receb-1) e idempotencia-quitacao-nde (I-Receb-2) — invariantes travados na Fase 0, teste canônico a fixar no TDD da Fase 3/5. Os 3 stubs de regra (encomenda/adiantamento-cliente/multa-juros) só ganham teste após a Fase 4.",
-      "FRENTE IV Módulo 6 (observabilidade) — transversal, NÃO é entidade/ação única: semeado em cada fase (correlation id nasce na TransacaoBancaria, run de auditoria, logs estruturados) e consolidado na Fase 6 (dashboards/métricas/alertas/tracing). Não modelar como entidade."
+      "FRENTE IV Módulo 6 (observabilidade) — transversal, NÃO é entidade/ação única: semeado em cada fase (correlation id nasce na TransacaoBancaria, run de auditoria, logs estruturados) e consolidado na Fase 6 (dashboards/métricas/alertas/tracing). Não modelar como entidade.",
+      "FRENTE V — 10 pendências de validação com o time seguem ABERTAS (ontology/_inbox/frente-v-pendencias-validacao.md, PV-01..PV-10). Cada uma tem premissa fail-safe registrada e o ID citado no código; fechar uma é `grep -rn \"PV-0n\"` e ajustar. As 3 de maior impacto: PV-01 (ftbVldStatus=7, 13 etapas reais em INDETERMINADO), PV-03 (se ftbTimBloq não for 'quando o aprovador recebeu', a duração medida muda de significado — a métrica-produto da frente) e PV-07 (acesso do usuário de API à tela fin103; é PRÉ-REQUISITO OPERACIONAL do cliente, não trabalho nosso, e derruba o custo da ingestão em 2 ordens de grandeza além de trazer docDtaFinalizacao, usnCodCmd, acdCod, wffUuid, fbaVldAcao, motCodCanc).",
+      "FRENTE V — os NOMES DAS TABELAS divergem do texto da ontologia. A migration 0049 cria aprovacao_titulo / aprovacao_etapa / aprovacao_ingestao_run; entities/titulo-aprovacao.md, entities/etapa-aprovacao.md, business-rules/idempotencia-ingestao-aprovacao.md e o ADR-0038 D3 falam em titulo_aprovacao / etapa_aprovacao. Só as duas primeiras estão trocadas (aprovacao_ingestao_run confere). Correção de texto, sem impacto em código — fazer num /feature-tweak.",
+      "FRENTE V — divergência entre state-machines/etapa-aprovacao.md e o EtapaStatusResolver implementado. O .md diz 'statusErp=2 → CONCLUIDA exige agidoEm > recebidoEm; senão PENDENTE'; o código decide o desfecho pela AÇÃO (LIBERAR/APROVAR concluem; ação de recusa rejeita; ação ausente ou desconhecida → INDETERMINADO) e não compara os dois instantes para escolher o status. O efeito que o .md queria proteger — nenhuma etapa entrar na média com duração zero — é garantido pelo DuracaoCalculator, que recusa a duração quando agidoEm == recebidoEm. Alinhar o texto ao código (ou o código ao texto) numa curadoria.",
+      "FRENTE V — a exclusão mútua da ingestão vive no JOB (jobs/ingest-aprovacoes.ts, withAdvisoryLock) e não no IngestaoAprovacoesService. Consequência: o cenário 'duas runs simultâneas: a segunda falha sem escrever' do contrato de teste de idempotencia-ingestao-aprovacao não tem teste, e um segundo gatilho (uma rota manual como a da Frente II, por exemplo) não herdaria o lock — teria de reaplicá-lo. Hoje não existe gatilho manual nem cron provisionado: a ingestão só roda por `npm run job:ingest-aprovacoes` executado à mão.",
+      "FRENTE V — a coluna aprovacao_titulo.moeda existe na migration 0049 mas a ingestão nunca a preenche (o mapeamento do psq014 em IngestaoAprovacoesService não lê moeda alguma). O painel expõe o campo no contrato e ele chega sempre ausente. Decidir a origem ou podar a coluna.",
+      "FRENTE V — integrations/conexos-aprovacao-trilha.md lista src/backend/domain/client/ConexosAprovacoesClient.test.ts em related_files, e esse arquivo NÃO existe. O client do ERP é o único componente da frente sem teste próprio; o resto do slice (resolvers, calculadora, ingestão, painel, rota) tem."
     ]
   }
 }

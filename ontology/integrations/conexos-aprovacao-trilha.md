@@ -3,7 +3,7 @@ name: conexos-aprovacao-trilha
 type: integration
 system: Conexos ERP
 ontology_version: "0.10"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:

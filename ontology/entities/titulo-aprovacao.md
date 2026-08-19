@@ -2,7 +2,7 @@
 name: TituloAprovacao
 type: entity
 ontology_version: "0.10"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:

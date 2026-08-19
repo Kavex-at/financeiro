@@ -3,13 +3,14 @@ name: aprovacao-titulo
 type: state-machine
 entity: TituloAprovacao
 ontology_version: "0.10"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/domain/interface/aprovacoes/constants.ts
   - src/backend/domain/service/aprovacoes/StatusWorkflowResolver.ts
-  - src/backend/domain/service/aprovacoes/TrilhaAprovacaoService.ts
+  - src/backend/domain/service/aprovacoes/EtapaStatusResolver.ts
+  - src/backend/domain/service/aprovacoes/AprovacoesPainelService.ts
   - src/frontend/app/aprovacoes/components/status-badges.tsx
 last_review: 2026-08-19
 states: [SEM_WORKFLOW, AGUARDANDO, APROVADO, REJEITADO, INDETERMINADO]

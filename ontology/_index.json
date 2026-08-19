@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-08-17",
-    "version": "0.19.1",
-    "note": "v0.17.0 (2026-08-17, ADR-0037): a aba NDe do painel de recebimentos passa a listar de verdade. Fonte da projecao = solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica (a NDe local so nasce apos homologar, entao listar por ela esconderia a NDe cuja cauda fiscal parou no meio); fora ficam dry_run e nde_dispensada (ADR-0031). O painel HIDRATA o estado atual no com297 (GET por docCod, cap 20, lotes de 5, best-effort — ERP fora do ar degrada, nao derruba) e reconcilia localmente nde_autorizado + numero_nde: a autorizacao do SEFAZ e assincrona e o banco so guarda o retrato da emissao. \"NDe pendente\" passa a significar ciclo aberto — NOT(emitida AND autorizada) — contado por COUNT no banco, nao na lista capada. Emissao e autorizacao viram colunas separadas na tela (aguardando SEFAZ nao e falha). Nenhuma coluna nova, nenhuma regra de emissao alterada. EMENDA (mesmo dia): o grid do com297 (POST com297/list) foi mapeado por HAR + probe read-only em PRD e o GAP integrability-4 fechou. Hidratacao passou de ate 20 GET com297/{docCod} para 1 POST por filial (o grid projeta vldAutorizado e docEspNumero da familia inteira). Filtro por CODIGO (tpdCod#EQ=167), NAO por tpdDesNome#LIKE: nome de cadastro e editavel e #LIKE sobre string acentuada falha em silencio (zero linhas, sem erro) se a normalizacao Unicode divergir; equivalencia codigo x nome provada em PRD. NDes emitidas FORA da ferramenta passam a aparecer com origem=erp e chip \"fora da ferramenta\" — sem correlationId/etapa/txn, identidade por cliente+processo; correlationId, recebimentoId e idempotencyKey viraram opcionais no NdePainelRow. Externas nao autorizadas somam ao KPI ndePendentes. ARMADILHA registrada: POST /com297 sem o sufixo /list e a CRIACAO de documento — o helper listGenericPaginated monta o path errado para este servico. Anterior: v0.18.0 (2026-08-11, ADR-0036): a Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) passa a ser garantida NO DOCUMENTO antes da leg fiscal. O cadastro do cliente (cmn025 dpeVld1DescrNfe) segue intocado — o valor '4 - Descricao DI' e correto para a NF-e de mercadoria e so nao serve para o produto de encargo da NDe. Nova regra descricao-item-nde (I-Receb-5). ",
+    "generated": "2026-08-19",
+    "version": "0.20.0",
+    "note": "v0.20.0 (2026-08-19, ADR-0038): ACERTO DE CONTAS da Frente V — Workflow de Aprovacao. As fatias F1 (ingestao + modelo) e F2 (API + painel) ja estavam commitadas; a ontologia tinha entidades, state-machines, business-rules, integracao e ADR, mas NAO estava indexada. Entram: 2 entidades (TituloAprovacao, EtapaAprovacao), 3 acoes (ingerirTrilhaAprovacao, exporPainelAprovacoes, detalharTrilhaAprovacao), 3 business-rules (duracao-etapa-aprovacao, idempotencia-ingestao-aprovacao e a NOVA status-etapa-fail-safe, que so existia no codigo), 2 state-machines (aprovacao-titulo, etapa-aprovacao) e 1 integracao (conexos-aprovacao-trilha). TituloAprovacao NAO e TituloAPagar: universos, fontes (psq014/historico x fin064/carteira corrente) e cadencias diferentes, tabelas separadas — ver relationships.md, que registra a nao-relacao explicitamente para ninguem unificar as duas por engano. Tabelas reais da migration 0049: aprovacao_titulo, aprovacao_etapa, aprovacao_ingestao_run (o texto de algumas entities/ADR fala em titulo_aprovacao/etapa_aprovacao — nomes trocados, corrigir num tweak). Pendencias PV-01..PV-10 abertas em ontology/_inbox/frente-v-pendencias-validacao.md; as de maior impacto sao PV-01 (ftbVldStatus=7, 13 casos reais), PV-03 (semantica de ftbTimBloq) e PV-07 (acesso a tela fin103). ARMADILHA registrada no glossario: titVld1/2/3Libera e VESTIGIAL (vale 1 em 100% dos titulos, sem timestamps) e NAO significa 'o nivel N aprovou' — ja enganou uma sondagem. Anterior: v0.17.0 (2026-08-17, ADR-0037): a aba NDe do painel de recebimentos passa a listar de verdade. Fonte da projecao = solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica (a NDe local so nasce apos homologar, entao listar por ela esconderia a NDe cuja cauda fiscal parou no meio); fora ficam dry_run e nde_dispensada (ADR-0031). O painel HIDRATA o estado atual no com297 (GET por docCod, cap 20, lotes de 5, best-effort — ERP fora do ar degrada, nao derruba) e reconcilia localmente nde_autorizado + numero_nde: a autorizacao do SEFAZ e assincrona e o banco so guarda o retrato da emissao. \"NDe pendente\" passa a significar ciclo aberto — NOT(emitida AND autorizada) — contado por COUNT no banco, nao na lista capada. Emissao e autorizacao viram colunas separadas na tela (aguardando SEFAZ nao e falha). Nenhuma coluna nova, nenhuma regra de emissao alterada. EMENDA (mesmo dia): o grid do com297 (POST com297/list) foi mapeado por HAR + probe read-only em PRD e o GAP integrability-4 fechou. Hidratacao passou de ate 20 GET com297/{docCod} para 1 POST por filial (o grid projeta vldAutorizado e docEspNumero da familia inteira). Filtro por CODIGO (tpdCod#EQ=167), NAO por tpdDesNome#LIKE: nome de cadastro e editavel e #LIKE sobre string acentuada falha em silencio (zero linhas, sem erro) se a normalizacao Unicode divergir; equivalencia codigo x nome provada em PRD. NDes emitidas FORA da ferramenta passam a aparecer com origem=erp e chip \"fora da ferramenta\" — sem correlationId/etapa/txn, identidade por cliente+processo; correlationId, recebimentoId e idempotencyKey viraram opcionais no NdePainelRow. Externas nao autorizadas somam ao KPI ndePendentes. ARMADILHA registrada: POST /com297 sem o sufixo /list e a CRIACAO de documento — o helper listGenericPaginated monta o path errado para este servico. Anterior: v0.18.0 (2026-08-11, ADR-0036): a Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) passa a ser garantida NO DOCUMENTO antes da leg fiscal. O cadastro do cliente (cmn025 dpeVld1DescrNfe) segue intocado — o valor '4 - Descricao DI' e correto para a NF-e de mercadoria e so nao serve para o produto de encargo da NDe. Nova regra descricao-item-nde (I-Receb-5). ",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -262,6 +262,56 @@
         "src/backend/migrations/0042_solicitacao_numerario_execucao_fiscal.sql"
       ],
       "note": "v0.12 (2026-08-01): SN gerada de DUAS origens — (I) adiantamento de permuta (Frente I, trilha existente) e (II) pagamento de cliente alocado a um processo (Frente IV, recebimentos, split-capable). Trilha recebimentos REAL: com299 (SN+finaliza) → fin014 (baixa, conta = transacao.gerNum) → com297 (NDe + produto 41978) → cauda fiscal com300(fisVldTipoNfDebito=6)→com131(SINIEF)→com297-homologar→poll SEFAZ vldAutorizado, gated + retomada-safe (colunas 0042: txn_id/valor/fin014_bor_cod/nd_doc_cod/etapa/revisao_humana/nde_autorizado). Split: 1..N SNs por pagamento, Σ≤transacao.valor; idempotência sn-real:{txnId}:{priCod}:{valor}. Fecha o GAP nota-debito-fiscal (Frente I permanece fail-closed nessa cauda). Prévio v0.11 (2026-07-31, Frente I): fluxo de 3 TELAS do guia 'telas Conexos', disparado pelo botão Processar (substitui a baixa fin010; decisão 2026-07-31). Tela 1 (com299): gera a SN 'SOLICITAÇÃO DE NUMERÁRIO - ENCOMENDA' (gcdCod=150) via gerDocProcesso (form com068) com datas + docEspNumero(=data do dia) + FINALIZA (validate/finalizacaoDocumento→finalizaDocumento) — CONFIRMADO. Tela 2 (fin014): recebimento do crédito REAL — borderô (POST /api/fin014, gerNum=conta FIN014_CONTA_FINANCEIRA) → validacao/tituloBaixa (docCod da SN) → gravar baixa (postGenericOnce) → finalizar/{borCod}; espelha fin010/ConexosBaixaClient (ConexosFin014Client), corpos derivados do bundle fin014 + probes read-only. Tela 3 (com297): nota de débito PARCIAL — resolve gcd por nome 'NOTA DE DÉBITO ELETRÔNICA' (COM297_GCD_NOTA_DEBITO_NOME/override), gera (com297/gerDocProcesso) + Produto 41978 (com297/comDocProdutos); fiscal 'Pagamento antecipado' + observações + homologar (enviaConferencia/homologaNfe) = GAP fail-closed (submenus ausentes do bundle, 1 HAR fecha). valor = valorASerUsado (moeda negociada). Escritas IRREVERSÍVEIS (postGenericOnce), gated por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN (default dry-run) + trilha write-ahead per adiantamento com RETOMADA anti-duplicação (NumerarioExecucaoRepository: doc_cod/fin014_bor_cod/nd_doc_cod/etapa). Config FIN014_CONTA_FINANCEIRA (fail-closed se ausente). Engenharia reversa dos bundles com068/fin014/com297 (CDN, sem browser) + probes read-only 2026-07-31. CORREÇÃO v0.12.1 (2026-08-03, ADR-0025): na trilha RECEBIMENTOS a SN é completada antes de finalizar, na ordem linha-de-item → condição de pagamento CONDICIONAL (só sob validação bloqueante da com194) → verificação mnyTitValor === docMnyValor → finalizar (a trilha PERMUTA segue gerando+finalizando sem completação). O título a receber NASCE na geração do com299 (não precisa da tela com032); o PUT que troca pgtCod destrói as parcelas sem regenerar. Ver integrations/conexos-com299-gerdoc.md (banner CICLO DE VIDA DO TÍTULO). partial (Tela 1 completa + Tela 2 real + Tela 3 gera/produto; só fiscal/observações/homologar fail-closed até HAR)."
+    },
+    "TituloAprovacao": {
+      "file": "entities/titulo-aprovacao.md",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/migrations/0049_aprovacao_trilha.sql",
+        "src/backend/domain/interface/aprovacoes/TituloAprovacao.ts",
+        "src/backend/domain/interface/aprovacoes/constants.ts",
+        "src/backend/domain/interface/aprovacoes/ports.ts",
+        "src/backend/domain/repository/aprovacoes/TituloAprovacaoRepository.ts",
+        "src/backend/domain/repository/aprovacoes/AprovacaoIngestaoRunRepository.ts",
+        "src/backend/domain/service/aprovacoes/IngestaoAprovacoesService.ts",
+        "src/backend/domain/service/aprovacoes/AprovacoesPainelService.ts",
+        "src/backend/domain/service/aprovacoes/StatusWorkflowResolver.ts",
+        "src/backend/domain/service/aprovacoes/DuracaoCalculator.ts",
+        "src/backend/domain/client/ConexosAprovacoesClient.ts",
+        "src/backend/domain/aprovacoesContainer.ts",
+        "src/backend/routes/aprovacoes.ts",
+        "src/backend/http/aprovacoesGate.ts",
+        "src/backend/jobs/ingest-aprovacoes.ts",
+        "src/frontend/lib/aprovacoes.ts",
+        "src/frontend/app/aprovacoes/page.tsx",
+        "src/frontend/app/aprovacoes/layout.tsx",
+        "src/frontend/app/aprovacoes/components/status-badges.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "note": "Frente V (ADR-0038, fatias F1+F2): snapshot LOCAL do titulo a pagar sob a otica do workflow de aprovacao. Tabela aprovacao_titulo (migration 0049) — ATENCAO: o nome real da tabela e aprovacao_titulo, nao titulo_aprovacao como o texto da entity/ADR sugere. Chave natural (fil_cod, doc_cod, tit_cod), UPSERT idempotente. status_workflow e DERIVADO das etapas (StatusWorkflowResolver), nunca lido do ERP. NAO compartilha tabela nem entidade com TituloAPagar (Frente II): universos, fontes e cadencias diferentes — ver relationships.md e entities/titulo-aprovacao.md §Relacao com a Frente II. READ-ONLY no ERP (D2): o port TrilhaAprovacaoGatewayInterface nao expoe metodo de escrita. Campos que HOJE nascem nulos por falta de projecao acessivel: data_finalizacao (PV-04/PV-07) e moeda (a ingestao nunca preenche — a coluna existe, o mapeamento do psq014 nao). implemented."
+    },
+    "EtapaAprovacao": {
+      "file": "entities/etapa-aprovacao.md",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/migrations/0049_aprovacao_trilha.sql",
+        "src/backend/domain/interface/aprovacoes/EtapaAprovacao.ts",
+        "src/backend/domain/interface/aprovacoes/constants.ts",
+        "src/backend/domain/repository/aprovacoes/EtapaAprovacaoRepository.ts",
+        "src/backend/domain/service/aprovacoes/EtapaStatusResolver.ts",
+        "src/backend/domain/service/aprovacoes/DuracaoCalculator.ts",
+        "src/backend/domain/service/aprovacoes/AprovacoesPainelService.ts",
+        "src/backend/domain/client/ConexosAprovacoesClient.ts",
+        "src/frontend/lib/aprovacoes.ts",
+        "src/frontend/app/aprovacoes/components/TrilhaDrawer.tsx",
+        "src/frontend/app/aprovacoes/components/status-badges.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "note": "Frente V (ADR-0038): um passo da trilha = uma linha de FinTituloBloq (bloqueio por alcada) no Conexos. Tabela aprovacao_etapa (migration 0049), chave natural (fil_cod, doc_cod, tit_cod, fbl_cod, ftb_cod). O ftbVldStatus BRUTO e preservado em status_erp mesmo quando ilegivel — reclassificar depois e uma migration, nao uma reingestao de 23 mil titulos (business-rules/status-etapa-fail-safe.md). duracao_segundos so existe em etapa resolvida; pendente e null, NUNCA estimada (I3). Anti-fantasma por TITULO (sincronizarTrilha), nao global como na Frente II: o backfill e parcial por natureza e um anti-fantasma global marcaria como fantasma todo o historico nao revisitado. responsavel_cod nasce nulo (usnCodCmd fora da projecao, PV-10). TrilhaDrawer.tsx e da fatia F3, entregue em paralelo a esta curadoria e nao verificada aqui. implemented."
     }
   },
   "actions": {
@@ -602,6 +652,73 @@
         "src/frontend/app/permutas/components/ConfirmarProcessamentoDialog.tsx"
       ],
       "note": "v0.11 (2026-07-31, Frente I): o botão Processar (aba Automáticas) passa a GERAR uma SolicitacaoNumerario no ERP (com299/gerDocProcesso) em vez de executar a baixa fin010 (decisão 2026-07-31). UMA SN por adiantamento; valor = valorASerUsado do modal (moeda negociada, sem conversão). Fluxo: findAdiantamento → resolve header → validaConfigDoc(gcdCod=150) → contasProj/list → itens (tmpMnyValor=round2(valor×total/100), Σ==valor) → gate dry-run → write-ahead begin → valida → gerDocProcesso (postGenericOnce) → markSettled(docCod). Rota POST /permutas/adiantamentos/:docCod/gerar-numerario (requireRole admin), body {valor>0, dryRun?}. Gated por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN (default dry-run). Idempotência por adiantamento (numerario:{docCod}:{valor}) anti-documento-duplicado; reconciling órfão = FAIL-CLOSED. NÃO executa mais a baixa fin010 no Processar (/reconciliar permanece no backend, desligado da UI). planned."
+    },
+    "ingerirTrilhaAprovacao": {
+      "file": "actions/aprovacoes/ingerir-trilha-aprovacao.md",
+      "entity": "TituloAprovacao",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/migrations/0049_aprovacao_trilha.sql",
+        "src/backend/domain/client/ConexosAprovacoesClient.ts",
+        "src/backend/domain/service/aprovacoes/IngestaoAprovacoesService.ts",
+        "src/backend/domain/service/aprovacoes/EtapaStatusResolver.ts",
+        "src/backend/domain/service/aprovacoes/StatusWorkflowResolver.ts",
+        "src/backend/domain/service/aprovacoes/DuracaoCalculator.ts",
+        "src/backend/domain/repository/aprovacoes/TituloAprovacaoRepository.ts",
+        "src/backend/domain/repository/aprovacoes/EtapaAprovacaoRepository.ts",
+        "src/backend/domain/repository/aprovacoes/AprovacaoIngestaoRunRepository.ts",
+        "src/backend/domain/interface/aprovacoes/ports.ts",
+        "src/backend/jobs/ingest-aprovacoes.ts"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-07 — sem acesso a tela fin103 a varredura custa 1 chamada ao ERP POR TITULO (23.632 so na filial 2 em 12 meses)",
+        "Nao ha gatilho manual (rota HTTP) nem cron provisionado: hoje o unico gatilho e npm run job:ingest-aprovacoes, executado a mao"
+      ],
+      "note": "Frente V: varre o universo (psq014/list, paginado, ordenado por docCod) e le a trilha de cada titulo (fin026/infoTitulo/list). UPSERT por chave natural + anti-fantasma POR TITULO; cursor (fil/pagina/docCod) gravado DEPOIS de cada titulo persistido, entao RETOMAR=1 continua de onde parou e uma queda repete no maximo um titulo. Exclusao mutua por advisory lock no JOB (APROVACOES_INGEST_LOCK_KEY=918273649), nao dentro do service — quem chamar o service direto NAO herda o lock. Filiais obrigatorias via FILS/APROVACOES_INGEST_FIL_CODS (falha alto em vez de varrer todas, PV-09); janela por APROVACOES_BACKFILL_DESDE, default 12 meses (PV-08). READ-ONLY no ERP: o port injetado nao expoe escrita. implemented."
+    },
+    "exporPainelAprovacoes": {
+      "file": "actions/aprovacoes/expor-painel-aprovacoes.md",
+      "entity": "TituloAprovacao",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/aprovacoes/AprovacoesPainelService.ts",
+        "src/backend/domain/service/aprovacoes/DuracaoCalculator.ts",
+        "src/backend/domain/repository/aprovacoes/TituloAprovacaoRepository.ts",
+        "src/backend/domain/repository/aprovacoes/EtapaAprovacaoRepository.ts",
+        "src/backend/domain/interface/aprovacoes/ports.ts",
+        "src/backend/routes/aprovacoes.ts",
+        "src/backend/http/aprovacoesGate.ts",
+        "src/backend/http/filialAuthz.ts",
+        "src/frontend/lib/aprovacoes.ts",
+        "src/frontend/app/aprovacoes/page.tsx",
+        "src/frontend/app/aprovacoes/components/status-badges.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "note": "Frente V, fatia F2: GET /aprovacoes — grid paginado NO SERVIDOR (page/pageSize<=100, filtros em SQL). Paginar no servidor e decisao de contrato, nao detalhe: o useTabelaFiltro das outras frentes filtra e pagina EM MEMORIA e nao serve a uma lista de 23.6k linhas. Todo derivado (status agregado, etapasAbertas, etapaAtual, paradaHa, tempoTotal, lacunas) nasce no BACKEND — o frontend so formata, senao o relogio do browser e o do servidor divergiriam. etapaAtual e DETERMINISTICA (pendente com recebidoEm mais antigo; desempate por menor fblCod e depois menor ftbCod), senao a fila trocaria sozinha entre duas leituras. snapshotEm (MAX(observado_em)) e obrigatorio na tela (I7). Escopo de filial: allow-list do JWT quando existir, senao todas as filiais do ERP — filCod explicito fora da allow-list e 403, nunca lista vazia silenciosa (PV-09). Leitura pura: nenhuma escrita, nem no banco nem no ERP."
+    },
+    "detalharTrilhaAprovacao": {
+      "file": "actions/aprovacoes/detalhar-trilha-aprovacao.md",
+      "entity": "EtapaAprovacao",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/aprovacoes/AprovacoesPainelService.ts",
+        "src/backend/domain/service/aprovacoes/DuracaoCalculator.ts",
+        "src/backend/domain/repository/aprovacoes/TituloAprovacaoRepository.ts",
+        "src/backend/domain/repository/aprovacoes/EtapaAprovacaoRepository.ts",
+        "src/backend/domain/errors/AprovacaoIdInvalidoError.ts",
+        "src/backend/routes/aprovacoes.ts",
+        "src/frontend/lib/aprovacoes.ts",
+        "src/frontend/app/aprovacoes/components/TrilhaDrawer.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "note": "Frente V: GET /aprovacoes/:id/trilha — timeline completa de UM titulo. id = ${filCod}:${docCod}:${titCod}, validado duas vezes (regex Zod na rota + parseId no service, que recusa '+1', '1.0', '1e3' em vez de normalizar). Filial fora da allow-list responde 404, NAO 403: distinguir os dois confirmaria a existencia do titulo a quem nao pode ve-lo. snapshotEm aqui e o observado_em DESTE titulo (nao o MAX da tabela) — e a idade do dado que o analista tem na frente. Etapas ordenadas pelo mesmo criterio total do etapaAtual; so as ativas aparecem (as inativas ficam no banco para auditoria). duracaoSegundos vem do banco (fato fechado); paradaHaSegundos e sempre recalculado contra agora. Backend commitado na F2; TrilhaDrawer.tsx e da F3, entregue em paralelo a esta curadoria e nao verificada aqui."
     }
   },
   "business_rules": {
@@ -879,6 +996,66 @@
         "ADR-0036"
       ],
       "note": "Descricao para Impressao (dprLngDescrNf) do item da NDe e escrita NO DOCUMENTO (com297 comDocProdutos RMW) quando o ERP a deixa vazia — nunca no cadastro do cliente (cmn025 dpeVld1DescrNfe=4 'Descricao DI'), que e legitimo para a NF-e de mercadoria. No-op quando ja preenchida; idempotente pelo estado do documento (sem etapa propria no ledger) para alcancar execucoes paradas em obs-done."
+    },
+    "duracao-etapa-aprovacao": {
+      "file": "business-rules/duracao-etapa-aprovacao.md",
+      "invariant": "I3 (Frente V — nenhuma duracao e estimada)",
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/service/aprovacoes/DuracaoCalculator.ts",
+        "src/backend/domain/service/aprovacoes/DuracaoCalculator.test.ts",
+        "src/backend/migrations/0049_aprovacao_trilha.sql"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "note": "Frente V: duracaoSegundos = agidoEm - recebidoEm, relogio CORRIDO (nao dias uteis: feriado por filial nao existe, e o numero corrido e o FATO — dias uteis seria interpretacao). Recusa-se a calcular em 4 casos: agidoEm ausente, agidoEm == recebidoEm (o ERP carimba o mesmo instante enquanto ninguem age — tratar como conclusao criaria dezenas de duracoes zero e afundaria a mediana), agidoEm < recebidoEm (nao clampa para zero: zero e plausivel e mentiroso) e status ilegivel. 'paradaHaSegundos' (agora - recebidoEm, so em PENDENTE) e campo DISTINTO e nao entra em media alguma: e aberto e cresce a cada leitura. Dependencia aberta PV-03: se ftbTimBloq for o instante em que a REGRA criou o bloqueio e nao o instante em que o aprovador foi notificado, a formula nao muda mas a INTERPRETACAO do numero muda. Evidencia: 169 etapas resolvidas na filial 2 — mediana 2,5h, media 20,4h, p90 70h, maximo 234h."
+    },
+    "idempotencia-ingestao-aprovacao": {
+      "file": "business-rules/idempotencia-ingestao-aprovacao.md",
+      "invariant": "I2 (Frente V — reprocessar nunca duplica nem apaga)",
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/migrations/0049_aprovacao_trilha.sql",
+        "src/backend/domain/repository/aprovacoes/TituloAprovacaoRepository.ts",
+        "src/backend/domain/repository/aprovacoes/EtapaAprovacaoRepository.ts",
+        "src/backend/domain/repository/aprovacoes/AprovacaoIngestaoRunRepository.ts",
+        "src/backend/domain/service/aprovacoes/IngestaoAprovacoesService.ts",
+        "src/backend/domain/service/aprovacoes/IngestaoAprovacoesService.test.ts",
+        "src/backend/jobs/ingest-aprovacoes.ts"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "O advisory lock vive no JOB (ingest-aprovacoes.ts), nao no IngestaoAprovacoesService — o cenario 'duas runs simultaneas falham' do contrato de teste da regra nao e coberto por teste de servico"
+      ],
+      "note": "Frente V: UPSERT por chave natural (titulo: fil/doc/tit; etapa: + fbl/ftb) e anti-fantasma POR TITULO. O anti-fantasma GLOBAL da Frente II (marcarInativosForaDaRun) seria destrutivo aqui: o backfill e parcial por natureza (uma janela, uma filial, interrompivel) e marcaria como fantasma todo o historico apenas nao revisitado. Nada e apagado — etapa que some do ERP (regerarBloqueios, PV-06) fica ativo=false com o ultimo estado conhecido. Cursor gravado DEPOIS da persistencia do titulo: uma queda repete no maximo um titulo, e o UPSERT torna a repeticao inofensiva. Retomada so funciona porque a listagem do psq014 usa orderList explicito por docCod — sem ordenacao estavel entre execucoes, a retomada pularia ou repetiria titulos. Testes cobrem: cursor por titulo, retomada da pagina do cursor, titulo sem etapas => SEM_WORKFLOW, run marcada como erro quando o ERP falha."
+    },
+    "status-etapa-fail-safe": {
+      "file": "business-rules/status-etapa-fail-safe.md",
+      "invariant": "I4 (Frente V — desconhecido nunca vira aprovado)",
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/interface/aprovacoes/constants.ts",
+        "src/backend/domain/service/aprovacoes/EtapaStatusResolver.ts",
+        "src/backend/domain/service/aprovacoes/EtapaStatusResolver.test.ts",
+        "src/backend/domain/service/aprovacoes/StatusWorkflowResolver.ts",
+        "src/backend/domain/service/aprovacoes/StatusWorkflowResolver.test.ts",
+        "src/backend/migrations/0049_aprovacao_trilha.sql",
+        "src/frontend/app/aprovacoes/components/status-badges.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-01 — o significado de ftbVldStatus=7 (13 ocorrencias reais) segue desconhecido; fechar a pendencia e uma linha em ETAPA_STATUS_ERP + uma migration de reclassificacao sobre status_erp",
+        "PV-02 — ACAO_REJEICAO ('CANCELAR','RECUSAR','REJEITAR') e APOSTA, nao fato: nenhuma recusa foi observada em producao"
+      ],
+      "note": "Frente V (ADR-0038 D5): ftbVldStatus fora de {1,2} => EtapaStatus.INDETERMINADO, NUNCA CONCLUIDA; o valor bruto fica em status_erp para reclassificacao futura por migration, sem reingerir 23 mil titulos. Vale tambem para 'respondido' sem fbaDesNome e para acao desconhecida. Propaga para cima: uma etapa INDETERMINADO faz o titulo inteiro ser INDETERMINADO, PRECEDENDO rejeitado/aguardando/aprovado — se nao sabemos ler uma etapa, qualquer afirmacao sobre o titulo pode estar errada. ETAPA_STATUS_ERP em interface/aprovacoes/constants.ts e o UNICO ponto que interpreta o numero cru. Contra-regra que esta regra existe para impedir: a escada titVld1/2/3Libera vale 1 em 100% dos titulos, sem timestamps — le-la como 'nivel N aprovou' produziria um painel dizendo que tudo esta aprovado."
     }
   },
   "state_machines": {
@@ -942,6 +1119,44 @@
         "ADR-0022"
       ],
       "note": "Frente IV (SKELETON Fase 0): ciclo do agregado de conciliação — rascunho|aprovado|executado|estornado (estado LOCAL, espelha lote-pagamento). Transições R1 atribuir+ratear+aplicarRegras / R2 aprovarRecebimento (GATE human-in-the-loop) / R3 reabrirRecebimento (reversível enquanto não executado) / R4 executarRecebimento (baixa+NDe, idempotente, gated) / R5 estornarRecebimento (undo controlado, terminal). Sub-estados de execução (executando/pending do write-ahead) = detalhe de impl da Fase 5. planned."
+    },
+    "aprovacao-titulo": {
+      "file": "state-machines/aprovacao-titulo.md",
+      "entity": "TituloAprovacao",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/interface/aprovacoes/constants.ts",
+        "src/backend/domain/service/aprovacoes/StatusWorkflowResolver.ts",
+        "src/backend/domain/service/aprovacoes/StatusWorkflowResolver.test.ts",
+        "src/backend/migrations/0049_aprovacao_trilha.sql",
+        "src/frontend/app/aprovacoes/components/status-badges.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "REJEITADO nunca foi observado em producao (169 etapas resolvidas, todas LIBERAR ou APROVAR) — o estado e alcancavel por unidade, nao por evidencia"
+      ],
+      "note": "Frente V: SEM_WORKFLOW|AGUARDANDO|APROVADO|REJEITADO|INDETERMINADO. Status DERIVADO das etapas a cada ingestao — nao ha transicao comandada por usuario, a Frente V e read-only no ERP; o que transiciona e a LEITURA. Ordem de derivacao (primeira que casa vence): sem etapa ativa => SEM_WORKFLOW; alguma INDETERMINADO => INDETERMINADO; alguma REJEITADA => REJEITADO; alguma PENDENTE => AGUARDANDO; todas CONCLUIDA => APROVADO. INDETERMINADO precede tudo por I4. SEM_WORKFLOW nao e erro nem ausencia de dado: ~metade dos titulos da filial 2 esta nesse estado e isso e o diagnostico. Transicao A8 (APROVADO => AGUARDANDO por regerarBloqueios, PV-06) e legitima: o ERP e a fonte da verdade e as etapas antigas ficam ativo=false. Persistido em aprovacao_titulo.status_workflow com CHECK, para o painel filtrar em SQL."
+    },
+    "etapa-aprovacao": {
+      "file": "state-machines/etapa-aprovacao.md",
+      "entity": "EtapaAprovacao",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/interface/aprovacoes/constants.ts",
+        "src/backend/domain/service/aprovacoes/EtapaStatusResolver.ts",
+        "src/backend/domain/service/aprovacoes/EtapaStatusResolver.test.ts",
+        "src/backend/migrations/0049_aprovacao_trilha.sql",
+        "src/frontend/app/aprovacoes/components/status-badges.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-01 (ftbVldStatus=7) e PV-02 (rotulos de recusa) mantem INDETERMINADO e REJEITADA sem confirmacao de negocio"
+      ],
+      "note": "Frente V: PENDENTE|CONCLUIDA|REJEITADA|INDETERMINADO, derivado de ftbVldStatus + fbaDesNome. DIVERGENCIA ENTRE DOC E CODIGO, registrada aqui: o .md descreve 'statusErp=2 => CONCLUIDA exige agidoEm > recebidoEm'; o EtapaStatusResolver implementado NAO compara os dois instantes para decidir o status — ele decide pela ACAO (LIBERAR/APROVAR concluem; recusa rejeita; acao ausente ou desconhecida => INDETERMINADO). O efeito pratico pretendido pelo .md e preservado por outro caminho: quando agidoEm == recebidoEm o DuracaoCalculator recusa a duracao, entao nenhuma etapa entra na media com duracao zero. 'ativo' e flag ORTOGONAL aos estados (E6), nao um estado: etapa que some do ERP conserva o ultimo status conhecido e nunca e deletada."
     }
   },
   "integrations": {
@@ -1049,6 +1264,28 @@
         "ADR-0028"
       ],
       "note": "Superficie de EXTRATOS do Conexos (fin133/list contas + fin095/list lancamentos, exiDtaLcto#GE/#LE em epoch-ms). Fonte real do extrato — a Nexxera NAO esta no caminho. Cadencia horaria; janela com piso 2026-08-03. Limitacao: LOGIN_ERROR_MAX_SESSIONS (usuario-robo dedicado segue como debito P1)."
+    },
+    "conexos-aprovacao-trilha": {
+      "file": "integrations/conexos-aprovacao-trilha.md",
+      "direction": "read",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/client/ConexosAprovacoesClient.ts",
+        "src/backend/domain/interface/aprovacoes/ports.ts",
+        "src/backend/domain/interface/aprovacoes/TituloAprovacao.ts",
+        "src/backend/domain/interface/aprovacoes/EtapaAprovacao.ts",
+        "src/backend/domain/aprovacoesContainer.ts",
+        "src/backend/jobs/probe-aprovacoes-trilha.ts",
+        "src/backend/jobs/probe-aprovacoes-fin026.ts"
+      ],
+      "resolved_by": [
+        "ADR-0038"
+      ],
+      "open_gap": [
+        "PV-07 — fin103/list devolve count=0 em todas as filiais (usuario de API sem acesso a TELA), em PRD e HML. Sem ele: 1 chamada por titulo e ausencia de docDtaFinalizacao, usnCodCmd, acdCod, wffUuid, fbaVldAcao, motCodCanc",
+        "integrations/conexos-aprovacao-trilha.md lista src/backend/domain/client/ConexosAprovacoesClient.test.ts em related_files — esse arquivo NAO existe na arvore"
+      ],
+      "note": "Frente V (ADR-0038): universo por POST psq014/list (filCod#EQ, docTip#EQ=2, docDtaEmissao#GE em epoch MS, orderList por docCod) + trilha por POST fin026/infoTitulo/list/{filCod}/{docTip}/{docCod}/{titCod}. psq014 e NAO fin026/list porque fin026 projeta a carteira CORRENTE e o doc 4156, que tem trilha completa, nem aparece nela — o valor da Frente V esta no historico. Armadilhas verificadas em PRD: datas so em epoch ms (ISO e recusado com erro de ECnxDataType); #BETWEEN nao existe; campos Tim* tem hora e Dta* sao data pura; a grafia varia por endpoint e nao e intercambiavel (titVld1Libera x titVld1libera); filCod errado devolve count:0 SEM ERRO (falso negativo mudo — origem do invariante I5); path literal, nunca listGenericPaginated (que posta em /{serviceName}, rota de escrita em varias telas). READ-ONLY absoluto: os endpoints de escrita (trocaBloqueio, regerarBloqueios, fin103/aplicarComando, bloqueioManual) existem e liberam pagamento — o port nao os expoe, tornando a escrita inexpressavel em vez de proibida por disciplina."
     }
   },
   "ui_flows": {},

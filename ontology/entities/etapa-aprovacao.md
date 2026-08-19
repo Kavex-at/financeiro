@@ -2,7 +2,7 @@
 name: EtapaAprovacao
 type: entity
 ontology_version: "0.10"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
@@ -10,7 +10,8 @@ related_files:
   - src/backend/domain/interface/aprovacoes/EtapaAprovacao.ts
   - src/backend/domain/interface/aprovacoes/constants.ts
   - src/backend/domain/repository/aprovacoes/EtapaAprovacaoRepository.ts
-  - src/backend/domain/service/aprovacoes/TrilhaAprovacaoService.ts
+  - src/backend/domain/service/aprovacoes/EtapaStatusResolver.ts
+  - src/backend/domain/service/aprovacoes/AprovacoesPainelService.ts
   - src/backend/domain/client/ConexosAprovacoesClient.ts
   - src/frontend/app/aprovacoes/components/TrilhaDrawer.tsx
 properties:

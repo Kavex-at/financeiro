@@ -9,10 +9,10 @@
 > (`/feature-new`, `/feature-tweak`, etc.) não negocia com o estado atual: cada feature nova deve
 > cumprir os gates; código legado é migrado proporcionalmente em cada `/feature-tweak` que o tocar.
 >
-> **Domínio específico:** Automação Financeira da Columbia Trading — quatro frentes (**Permutas**,
-> **SISPAG**, **Popula GED**, **Conciliação de Recebimentos**). Propósito definido na proposta
+> **Domínio específico:** Automação Financeira da Columbia Trading — cinco frentes (**Permutas**,
+> **SISPAG**, **Popula GED**, **Conciliação de Recebimentos**, **Workflow de Aprovação**). Propósito definido na proposta
 > (`docs/proposta/`); narrativa em `docs-contexto/03_ontologia_financeiro.md`. Ver ADRs `0001` (bootstrap),
-> `0002` (propósito, 3 frentes) e `0022` (extensão para a 4ª frente).
+> `0002` (propósito, 3 frentes), `0022` (extensão para a 4ª frente) e `0038` (5ª frente).
 
 ## Estado Atual vs. Alvo (leitura obrigatória)
 
@@ -36,7 +36,7 @@ não bloqueiam o legado Express até a migração.
 
 ## Overview
 Automação assistida da área **Financeira da Columbia Trading**, entregue pela Kavex (created by
-Clonex). Quatro frentes, todas integradas ao ERP **Conexos** (mesmo tenant do `fechamento-processos`),
+Clonex). Cinco frentes, todas integradas ao ERP **Conexos** (mesmo tenant do `fechamento-processos`),
 multi-filial, com analista no controle (*human-in-the-loop*):
 
 | Frente | Em uma frase | Integra |
@@ -45,6 +45,7 @@ multi-filial, com analista no controle (*human-in-the-loop*):
 | **II — SISPAG** (Pagamentos) | montar lote, gerar remessa, enviar ao banco, conciliar retorno | Conexos `com298` + Nexxera |
 | **III — Popula GED** (NC/ND) | casar PDF do SharePoint com a NC/ND e subir no GED | SharePoint + GED |
 | **IV — Conciliação de Recebimentos** (NDe) | importar extrato Nexxera, casar com recebíveis, ratear, aplicar regras, baixar e emitir a **Nota de Débito Eletrônica** | Nexxera + Conexos (`com299`/`gerDoc`) |
+| **V — Workflow de Aprovação** (trilha) | rastrear a trilha de aprovação dos títulos a pagar: quem, quando, quanto tempo | Conexos `psq014` + `fin026` |
 
 > **Não confundir NC/ND (Frente III) com NDe (Frente IV).** A Frente III **não emite** documento algum —
 > a NC/ND nasce em planilha e sobe ao ERP como rascunho; a solução só anexa o PDF que destrava a baixa.
