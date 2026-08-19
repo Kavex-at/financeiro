@@ -1,5 +1,12 @@
 # Columbia Financeiro — Changelog
 
+## v0.27.0 (2026-08-19)
+
+- fix(aprovacoes): remedia├º├úo do Regis-Review ΓÇö resili├¬ncia, honestidade e boundary
+- feat(aprovacoes): F3 ΓÇö timeline da trilha + valida├º├úo do SQL sem banco
+- feat(aprovacoes): F2 ΓÇö API e painel de lista da trilha de aprova├º├úo
+- feat(aprovacoes): F1 ΓÇö ingest├úo e modelo da trilha de aprova├º├úo (Frente V)
+
 ## v0.26.0 (2026-08-17) — Recebimentos: a aba NDe passa a listar de verdade
 
 - **fix(recebimentos):** a **aba NDe do painel estava sempre vazia** — não por falta de dado, mas
@@ -1126,3 +1133,4 @@ homologação-first). ADR-0013, ontologia v0.3.0.
 > Mantida pelo `scripts/bump-version.ps1` na fase Ship do pipeline (semver por conventional-commit).
 >
 > NÃO confundir com `ontology/CHANGELOG.md`, que versiona a **ontologia** (domínio/regras).
+
