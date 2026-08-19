@@ -32,6 +32,7 @@ import ConexosExtratoClient from '../domain/client/ConexosExtratoClient.js';
 import ConexosGerDocProcessoClient from '../domain/client/ConexosGerDocProcessoClient.js';
 import RecebimentoIngestaoRunRepository from '../domain/repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
+import type { MontarPainelInput } from '../domain/service/recebimentos/RecebimentosPainelService.js';
 import IngestaoTransacoesService from '../domain/service/recebimentos/IngestaoTransacoesService.js';
 import ImportacaoExtratoArquivoService from '../domain/service/recebimentos/ImportacaoExtratoArquivoService.js';
 import RecebimentoPipelineService from '../domain/service/recebimentos/RecebimentoPipelineService.js';
@@ -122,48 +123,92 @@ const painelQuerySchema = z.object({
 });
 
 /**
+ * Valida a query do painel e resolve o recorte de filiais.
+ *
+ * Compartilhado por `/painel` e `/painel/enriquecimento` de propósito: as duas rotas precisam
+ * enxergar a MESMA carteira, e um filtro que divergisse entre elas faria o enriquecimento pintar a
+ * modalidade de um crédito que não está na tela. Devolve `undefined` depois de já ter respondido o
+ * erro (400/403) — o chamador só precisa retornar.
+ */
+const recorteDoPainel = (
+    req: Parameters<Parameters<typeof asyncHandler>[0]>[0],
+    res: Parameters<Parameters<typeof asyncHandler>[0]>[1],
+): MontarPainelInput | undefined => {
+    const parsed = painelQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+        res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
+        return undefined;
+    }
+
+    let filCodsPermitidas = filiaisPermitidas(req.user);
+    if (parsed.data.filCod !== undefined) {
+        try {
+            assertUserCanActOnFilial(req.user, parsed.data.filCod);
+        } catch (err) {
+            if (err instanceof FilialForbiddenError) {
+                res.status(403).json({
+                    error: 'Forbidden: filial não autorizada',
+                    code: err.code,
+                });
+                return undefined;
+            }
+            throw err;
+        }
+        filCodsPermitidas = [parsed.data.filCod];
+    }
+
+    return {
+        ...(filCodsPermitidas !== undefined ? { filCodsPermitidas } : {}),
+        limit: parsed.data.limit,
+        incluirTesouraria: parsed.data.incluirTesouraria,
+        arquivadas: parsed.data.arquivadas,
+        ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+    };
+};
+
+/**
  * GET /recebimentos/painel — carteira de créditos, lida do BANCO.
  *
  * Ganhou authz por-filial: antes a rota não tinha nenhuma porque não devolvia
  * dado. Agora devolve movimento financeiro real.
+ *
+ * **Só Postgres** desde a ADR-0038. As duas leituras de ERP que moravam aqui (previsão de
+ * modalidade pelo `imp021` e hidratação da aba NDe pelo com297) seguravam a resposta inteira por
+ * segundos — KPIs e carteira inclusive, que já estavam prontos. Foram para `/painel/enriquecimento`.
  */
 router.get(
     '/painel',
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const parsed = painelQuerySchema.safeParse(req.query);
-        if (!parsed.success) {
-            res.status(400).json({ error: 'Query inválida', details: parsed.error.flatten() });
-            return;
-        }
-
-        let filCodsPermitidas = filiaisPermitidas(req.user);
-        if (parsed.data.filCod !== undefined) {
-            try {
-                assertUserCanActOnFilial(req.user, parsed.data.filCod);
-            } catch (err) {
-                if (err instanceof FilialForbiddenError) {
-                    res.status(403).json({
-                        error: 'Forbidden: filial não autorizada',
-                        code: err.code,
-                    });
-                    return;
-                }
-                throw err;
-            }
-            filCodsPermitidas = [parsed.data.filCod];
-        }
+        const input = recorteDoPainel(req, res);
+        if (input === undefined) return;
 
         const service = container.resolve(RecebimentosPainelService);
-        res.json(
-            await service.montarPainel({
-                filCodsPermitidas,
-                limit: parsed.data.limit,
-                incluirTesouraria: parsed.data.incluirTesouraria,
-                arquivadas: parsed.data.arquivadas,
-                ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
-            }),
-        );
+        res.json(await service.montarPainel(input));
+    }),
+);
+
+/**
+ * GET /recebimentos/painel/enriquecimento — a parte do painel que depende de LER o ERP (ADR-0038).
+ *
+ * Aceita exatamente a mesma query de `/painel` (o recorte tem de ser o mesmo) e devolve a modalidade
+ * PREVISTA por transação, a aba NDe hidratada e o KPI de pendentes corrigido. A tela chama esta rota
+ * depois de já ter renderizado a carteira, e SUBSTITUI o que recebe — falhar aqui não apaga nada.
+ *
+ * Sem `requireRole('admin')`: é a mesma leitura que vivia dentro de `/painel`, disponível para quem
+ * enxerga a carteira. Leva `heavyRouteLimiter` porque cada chamada custa um grid do com297 por
+ * filial (a rota que ela desafogou não tinha limiter, e passou a ter uma vizinha bem mais barata).
+ */
+router.get(
+    '/painel/enriquecimento',
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const input = recorteDoPainel(req, res);
+        if (input === undefined) return;
+
+        const service = container.resolve(RecebimentosPainelService);
+        res.json(await service.montarEnriquecimento(input));
     }),
 );
 

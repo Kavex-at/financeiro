@@ -30,6 +30,10 @@ const build = (
         ndePendentes?: number;
         /** Linhas que o GRID do com297 devolve — a fonte da hidratação agora. */
         erpNdes?: unknown[];
+        /** Processos abertos do `imp021` — insumo da PREVISÃO de modalidade. */
+        processos?: unknown[];
+        /** Modalidade de FATO por txnId, como o ledger a devolve. */
+        modalidadesReais?: Map<string, { priVldTipo?: number; ndeDispensada?: boolean }>;
     } = {},
 ) => {
     const transacaoRepo = {
@@ -51,13 +55,13 @@ const build = (
         getFiliais: jest.fn().mockResolvedValue([{ filCod: 1 }, { filCod: 2 }]),
     } as unknown as jest.Mocked<ConexosBaseClient>;
 
-    // A coluna de modalidade (ADR-0033) tem fontes próprias; estes testes são sobre KPIs/janela, e
-    // os stubs vazios deixam `enriquecerComModalidade` num no-op observável (nenhuma `modalidade`).
+    // A coluna de modalidade (ADR-0033) tem fontes próprias; nos testes de KPI/janela os stubs
+    // vazios deixam o enriquecimento num no-op observável (nenhuma `modalidade`).
     const processoProvider = {
-        listProcessosDaFilial: jest.fn().mockResolvedValue([]),
-    } as never;
+        listProcessosDaFilial: jest.fn().mockResolvedValue(o.processos ?? []),
+    };
     const execucaoRepo = {
-        listModalidadePorTxnIds: jest.fn().mockResolvedValue(new Map()),
+        listModalidadePorTxnIds: jest.fn().mockResolvedValue(o.modalidadesReais ?? new Map()),
         listUltimaFalhaPorTxnIds: jest.fn().mockResolvedValue(o.falhas ?? new Map()),
         setNdeAutorizado: jest.fn().mockResolvedValue(undefined),
     };
@@ -75,6 +79,7 @@ const build = (
         transacaoRepo,
         runRepo,
         base,
+        processoProvider,
         execucaoRepo,
         ndeRepo,
         fiscalClient,
@@ -83,7 +88,7 @@ const build = (
             transacaoRepo,
             runRepo,
             base,
-            processoProvider,
+            processoProvider as never,
             execucaoRepo as never,
             ndeRepo as never,
             fiscalClient,
@@ -289,7 +294,7 @@ const buildErp = (o: Record<string, unknown> = {}) => ({
     ...o,
 });
 
-describe('RecebimentosPainelService — aba NDe', () => {
+describe('RecebimentosPainelService — aba NDe (lista no painel, hidratação no enriquecimento)', () => {
     it('lista as NDes das filiais permitidas, com teto próprio', async () => {
         const { service, ndeRepo } = build({ ndes: [buildNde()] });
         const painel = await service.montarPainel({ filCodsPermitidas: [4] });
@@ -313,7 +318,7 @@ describe('RecebimentosPainelService — aba NDe', () => {
             buildNde({ id: `n-${i}`, idempotencyKey: `k-${i}`, ndDocCod: 2000 + i }),
         );
         const { service, fiscalClient } = build({ ndes });
-        await service.montarPainel({ filCodsPermitidas: [4, 7] });
+        await service.montarEnriquecimento({ filCodsPermitidas: [4, 7] });
 
         expect(fiscalClient.listNdes).toHaveBeenCalledTimes(2);
         expect(fiscalClient.listNdes).toHaveBeenCalledWith({ filCod: 4 });
@@ -326,13 +331,13 @@ describe('RecebimentosPainelService — aba NDe', () => {
             ndePendentes: 3,
             erpNdes: [buildErp({ vldAutorizado: 1, docEspNumero: '180791' })],
         });
-        const painel = await service.montarPainel();
+        const enriquecimento = await service.montarEnriquecimento();
 
-        expect(painel.ndes[0]).toMatchObject({ ndeAutorizado: true, numeroNde: '180791' });
+        expect(enriquecimento.ndes[0]).toMatchObject({ ndeAutorizado: true, numeroNde: '180791' });
         expect(execucaoRepo.setNdeAutorizado).toHaveBeenCalledWith('k-a', true);
         // O número só chega DEPOIS (SEFAZ é assíncrono) — sem persistir, a linha voltaria a "—".
         expect(ndeRepo.updateNumeroNde).toHaveBeenCalledWith('k-a', '180791');
-        expect(painel.kpis.ndePendentes).toBe(2);
+        expect(enriquecimento.ndePendentes).toBe(2);
     });
 
     it('linha já autorizada no banco NÃO é reescrita a cada carga de painel', async () => {
@@ -347,7 +352,7 @@ describe('RecebimentosPainelService — aba NDe', () => {
             ],
             erpNdes: [buildErp({ vldAutorizado: 1, docEspNumero: '180791' })],
         });
-        await service.montarPainel();
+        await service.montarEnriquecimento();
 
         expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
         expect(ndeRepo.updateNumeroNde).not.toHaveBeenCalled();
@@ -369,10 +374,10 @@ describe('RecebimentosPainelService — aba NDe', () => {
                 }),
             ],
         });
-        const painel = await service.montarPainel({ filCodsPermitidas: [4] });
+        const enriquecimento = await service.montarEnriquecimento({ filCodsPermitidas: [4] });
 
-        expect(painel.ndes).toHaveLength(1);
-        expect(painel.ndes[0]).toMatchObject({
+        expect(enriquecimento.ndes).toHaveLength(1);
+        expect(enriquecimento.ndes[0]).toMatchObject({
             id: 'erp:4:18790',
             origem: 'erp',
             numeroNde: '180792',
@@ -382,8 +387,8 @@ describe('RecebimentosPainelService — aba NDe', () => {
             ndeAutorizado: true,
         });
         // Não inventa rastro que não existe.
-        expect(painel.ndes[0]?.correlationId).toBeUndefined();
-        expect(painel.ndes[0]?.idempotencyKey).toBeUndefined();
+        expect(enriquecimento.ndes[0]?.correlationId).toBeUndefined();
+        expect(enriquecimento.ndes[0]?.idempotencyKey).toBeUndefined();
     });
 
     it('NDe do ERP que casa com execução nossa NÃO duplica a linha', async () => {
@@ -391,10 +396,10 @@ describe('RecebimentosPainelService — aba NDe', () => {
             ndes: [buildNde({ idempotencyKey: 'k-a', ndDocCod: 18337 })],
             erpNdes: [buildErp({ docCod: 18337, vldAutorizado: 1 })],
         });
-        const painel = await service.montarPainel();
+        const enriquecimento = await service.montarEnriquecimento();
 
-        expect(painel.ndes).toHaveLength(1);
-        expect(painel.ndes[0]?.origem).toBe('ferramenta');
+        expect(enriquecimento.ndes).toHaveLength(1);
+        expect(enriquecimento.ndes[0]?.origem).toBe('ferramenta');
     });
 
     it('externa não autorizada entra no KPI de pendentes — o COUNT do banco não a conhece', async () => {
@@ -403,7 +408,9 @@ describe('RecebimentosPainelService — aba NDe', () => {
             ndePendentes: 0,
             erpNdes: [buildErp({ docCod: 18999, vldAutorizado: 0 })],
         });
-        expect((await service.montarPainel({ filCodsPermitidas: [4] })).kpis.ndePendentes).toBe(1);
+        expect((await service.montarEnriquecimento({ filCodsPermitidas: [4] })).ndePendentes).toBe(
+            1,
+        );
     });
 
     it('ERP fora do ar não derruba o painel — a aba volta com o que o banco sabe', async () => {
@@ -413,11 +420,11 @@ describe('RecebimentosPainelService — aba NDe', () => {
         });
         (fiscalClient.listNdes as jest.Mock).mockRejectedValue(new Error('conexos down'));
 
-        const painel = await service.montarPainel();
+        const enriquecimento = await service.montarEnriquecimento();
 
-        expect(painel.ndes).toHaveLength(1);
-        expect(painel.ndes[0]).toMatchObject({ ndeAutorizado: false });
-        expect(painel.kpis.ndePendentes).toBe(1);
+        expect(enriquecimento.ndes).toHaveLength(1);
+        expect(enriquecimento.ndes[0]).toMatchObject({ ndeAutorizado: false });
+        expect(enriquecimento.ndePendentes).toBe(1);
         expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
         // Degradar é aceitável; degradar em silêncio não.
         expect(logService.warn).toHaveBeenCalled();
@@ -432,9 +439,9 @@ describe('RecebimentosPainelService — aba NDe', () => {
             },
         );
 
-        const painel = await service.montarPainel({ filCodsPermitidas: [4, 7] });
-        expect(painel.ndes).toHaveLength(1);
-        expect(painel.ndes[0]).toMatchObject({ id: 'erp:7:18888' });
+        const enriquecimento = await service.montarEnriquecimento({ filCodsPermitidas: [4, 7] });
+        expect(enriquecimento.ndes).toHaveLength(1);
+        expect(enriquecimento.ndes[0]).toMatchObject({ id: 'erp:7:18888' });
     });
 
     it('ERP lento não segura o painel — o prazo por leitura corta', async () => {
@@ -446,12 +453,12 @@ describe('RecebimentosPainelService — aba NDe', () => {
             });
             (fiscalClient.listNdes as jest.Mock).mockImplementation(() => new Promise(() => {}));
 
-            const promessa = service.montarPainel();
+            const promessa = service.montarEnriquecimento();
             await jest.advanceTimersByTimeAsync(9_000);
-            const painel = await promessa;
+            const enriquecimento = await promessa;
 
-            expect(painel.ndes[0]).toMatchObject({ ndeAutorizado: false });
-            expect(painel.kpis.ndePendentes).toBe(1);
+            expect(enriquecimento.ndes[0]).toMatchObject({ ndeAutorizado: false });
+            expect(enriquecimento.ndePendentes).toBe(1);
         } finally {
             jest.useRealTimers();
         }
@@ -464,9 +471,112 @@ describe('RecebimentosPainelService — aba NDe', () => {
         });
         (ndeRepo.updateNumeroNde as jest.Mock).mockRejectedValue(new Error('db down'));
 
-        await service.montarPainel();
+        await service.montarEnriquecimento();
 
         expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
         expect(logService.warn).toHaveBeenCalled();
+    });
+});
+
+describe('RecebimentosPainelService — enriquecimento diferido (ADR-0038)', () => {
+    const txn = (o: Record<string, unknown> = {}) => ({
+        id: 'txn-1',
+        contraparte: 'BROWN FORMAN BRASIL',
+        status: 'importada',
+        ...o,
+    });
+
+    it('o painel NÃO toca o ERP — nem o grid do com297, nem a varredura do imp021', async () => {
+        // É a razão de ser da ADR-0038: a carteira e os KPIs só dependem do Postgres, e esperar o
+        // ERP para pintar uma coluna deixava o analista olhando para uma tela vazia por segundos.
+        const { service, fiscalClient, processoProvider } = build({
+            transacoes: [txn()],
+            ndes: [buildNde()],
+        });
+
+        await service.montarPainel({ filCodsPermitidas: [4] });
+
+        expect(fiscalClient.listNdes).not.toHaveBeenCalled();
+        expect(processoProvider.listProcessosDaFilial).not.toHaveBeenCalled();
+    });
+
+    it('o painel ainda traz a modalidade de FATO — ela vem do ledger, não do ERP', async () => {
+        const { service } = build({
+            transacoes: [txn()],
+            modalidadesReais: new Map([['txn-1', { priVldTipo: 3, ndeDispensada: false }]]),
+        });
+
+        const painel = await service.montarPainel();
+
+        expect(painel.transacoes[0]?.modalidade).toMatchObject({
+            priVldTipo: 3,
+            rotulo: 'POR ENCOMENDA',
+            previsao: false,
+        });
+    });
+
+    it('o enriquecimento prevê por txnId para quem NÃO tem fato', async () => {
+        const { service } = build({
+            transacoes: [txn()],
+            processos: [
+                { pesCod: 10, dpeNomPessoa: 'BROWN FORMAN BRASIL LTDA', priVldTipo: 3 },
+                { pesCod: 10, dpeNomPessoa: 'BROWN FORMAN BRASIL LTDA', priVldTipo: 3 },
+            ],
+        });
+
+        const { modalidades } = await service.montarEnriquecimento();
+
+        expect(modalidades['txn-1']).toMatchObject({
+            priVldTipo: 3,
+            rotulo: 'POR ENCOMENDA',
+            previsao: true,
+            // POR ENCOMENDA é a única modalidade que emite NDe (ADR-0033).
+            ndeDispensada: false,
+        });
+    });
+
+    it('quem já tem fato fica FORA do mapa — previsão não sobrescreve dado real', async () => {
+        // As duas respostas chegam à tela em momentos diferentes; devolver o fato aqui abriria uma
+        // corrida em que o palpite pinta por cima da modalidade efetivamente executada.
+        const { service } = build({
+            transacoes: [txn()],
+            modalidadesReais: new Map([['txn-1', { priVldTipo: 2, ndeDispensada: true }]]),
+            processos: [{ pesCod: 10, dpeNomPessoa: 'BROWN FORMAN BRASIL LTDA', priVldTipo: 3 }],
+        });
+
+        const { modalidades } = await service.montarEnriquecimento();
+
+        expect(modalidades).toEqual({});
+    });
+
+    it('cliente com modalidade ambígua não vira palpite — "—" honesto vale mais', async () => {
+        const { service } = build({
+            transacoes: [txn()],
+            processos: [
+                { pesCod: 10, dpeNomPessoa: 'BROWN FORMAN BRASIL LTDA', priVldTipo: 3 },
+                { pesCod: 10, dpeNomPessoa: 'BROWN FORMAN BRASIL LTDA', priVldTipo: 1 },
+            ],
+        });
+
+        expect((await service.montarEnriquecimento()).modalidades).toEqual({});
+    });
+
+    it('ERP fora do ar devolve mapa vazio, não erro — a carteira já está na tela', async () => {
+        const { service, processoProvider } = build({ transacoes: [txn()] });
+        (processoProvider.listProcessosDaFilial as jest.Mock).mockRejectedValue(
+            new Error('imp021 fora'),
+        );
+
+        await expect(service.montarEnriquecimento()).resolves.toMatchObject({ modalidades: {} });
+    });
+
+    it('enriquecimento enxerga o MESMO recorte da carteira — senão preveria linha fora da tela', async () => {
+        const { service, transacaoRepo } = build({ transacoes: [txn()] });
+
+        await service.montarEnriquecimento({ filCodsPermitidas: [4], status: 'parcial' });
+
+        expect(transacaoRepo.listParaPainel).toHaveBeenCalledWith(
+            expect.objectContaining({ filCods: [4], statuses: ['parcial'] }),
+        );
     });
 });

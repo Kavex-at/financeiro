@@ -489,6 +489,124 @@ describe('AlocarProcessosDialog — onProcessado (ADR-0034)', () => {
   })
 })
 
+describe('AlocarProcessosDialog — ordenação dos processos', () => {
+  beforeEach(() => {
+    mockClientes.mockResolvedValue(clientes)
+    mockFetchSNs.mockResolvedValue([])
+  })
+  afterEach(() => jest.clearAllMocks())
+
+  it('lista do processo mais RECENTE para o mais antigo (priCod desc)', async () => {
+    // O `imp021` devolve na ordem dele e a rota concatena filial a filial: sem ordenar, a lista
+    // chega sem critério e o processo recém-aberto — o candidato provável do crédito que acabou de
+    // cair — pode aparecer no fim.
+    mockFetch.mockResolvedValue([
+      { ...processo, priCod: 90001 },
+      { ...processo, priCod: 90055 },
+      { ...processo, priCod: 90010 },
+    ])
+
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+
+    const radios = await screen.findAllByRole('radio', { name: /^Processo 900/i })
+    expect(radios.map((r) => r.getAttribute('aria-label'))).toEqual([
+      expect.stringContaining('90055'),
+      expect.stringContaining('90010'),
+      expect.stringContaining('90001'),
+    ])
+  })
+})
+
+describe('AlocarProcessosDialog — valor sugerido ao escolher a SN', () => {
+  const user = () => userEvent.setup()
+
+  beforeEach(() => {
+    mockClientes.mockResolvedValue(clientes)
+    mockFetch.mockResolvedValue([processo])
+  })
+  afterEach(() => jest.clearAllMocks())
+
+  const campoValor = () => screen.getByLabelText(/Valor a alocar no processo/i)
+
+  it('escolher uma SN preenche o valor com o da SN quando ele cabe no saldo', async () => {
+    mockFetchSNs.mockResolvedValue([{ ...snExistente, valor: 4000, solicitado: 9999 }])
+    const u = user()
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+    await selecionarProcesso(u)
+
+    await u.click(await screen.findByLabelText(/SN 731/i))
+
+    expect(campoValor()).toHaveValue('4.000,00')
+  })
+
+  it('SN maior que o saldo é limitada pelo saldo — nunca sugere alocar mais do que sobrou', async () => {
+    // Crédito de 15.000; a SN pede 90.000. A sugestão não pode propor um valor que a baixa recusaria.
+    mockFetchSNs.mockResolvedValue([{ ...snExistente, valor: 90000 }])
+    const u = user()
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+    await selecionarProcesso(u)
+
+    await u.click(await screen.findByLabelText(/SN 731/i))
+
+    expect(campoValor()).toHaveValue('15.000,00')
+  })
+
+  it('o valor sugerido continua editável — o analista manda mais que a sugestão', async () => {
+    mockFetchSNs.mockResolvedValue([{ ...snExistente, valor: 4000 }])
+    const u = user()
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+    await selecionarProcesso(u)
+    await u.click(await screen.findByLabelText(/SN 731/i))
+
+    await u.clear(campoValor())
+    await u.type(campoValor(), '250050')
+
+    expect(campoValor()).toHaveValue('2.500,50')
+    expect(screen.getByRole('button', { name: /Processar/ })).not.toBeDisabled()
+  })
+
+  it('voltar para "Criar novo SN" devolve o campo ao default (o saldo do crédito)', async () => {
+    mockFetchSNs.mockResolvedValue([{ ...snExistente, valor: 4000 }])
+    const u = user()
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+    await selecionarProcesso(u)
+    await u.click(await screen.findByLabelText(/SN 731/i))
+    expect(campoValor()).toHaveValue('4.000,00')
+
+    await u.click(screen.getByLabelText('Criar novo SN'))
+
+    // Sem SN de referência não há de onde tirar valor: arrastar o da anterior seria número sem dono.
+    expect(campoValor()).toHaveValue('15.000,00')
+  })
+
+  it('SN sem valor não preenche zero — prefixar 0,00 travaria o Processar logo após o clique', async () => {
+    mockFetchSNs.mockResolvedValue([{ ...snExistente, valor: 0 }])
+    const u = user()
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+    await selecionarProcesso(u)
+
+    await u.click(await screen.findByLabelText(/SN 731/i))
+
+    expect(campoValor()).toHaveValue('15.000,00')
+    expect(screen.getByRole('button', { name: /Processar/ })).not.toBeDisabled()
+  })
+
+  it('acima do saldo mostra erro VISÍVEL e não corta o número sozinho', async () => {
+    mockFetchSNs.mockResolvedValue([])
+    const u = user()
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+    await selecionarProcesso(u)
+
+    await u.clear(campoValor())
+    await u.type(campoValor(), '9000000')
+
+    // O que o analista digitou continua lá — corrigir é decisão dele, não silenciosa da tela.
+    expect(campoValor()).toHaveValue('90.000,00')
+    expect(screen.getByRole('alert')).toHaveTextContent(/Acima do saldo a alocar/i)
+    expect(screen.getByRole('button', { name: /Processar/ })).toBeDisabled()
+  })
+})
+
 describe('sugerirCliente', () => {
   it('casa por prefixo apesar do truncamento do banco', () => {
     const lista = [

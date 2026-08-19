@@ -26,11 +26,13 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Skeleton, TableSkeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import { EmptyState } from '@/components/ui/empty-state'
 import { formatBRL } from '@/lib/utils'
 import {
   arquivarTransacao,
+  fetchPainelEnriquecimento,
   fetchPainelRecebimentos,
   type PainelStatusFiltro,
   type RecebimentosPainel,
@@ -91,24 +93,84 @@ export default function RecebimentosPage() {
   return <RecebimentosPanel />
 }
 
+/**
+ * Larguras por coluna da carteira — data, contraparte, ref., conta, valor, status, modalidade,
+ * match, correlationId, ações. Aproximam o conteúdo real para a página não pular lateralmente
+ * quando os dados entram no lugar do skeleton.
+ */
+const LARGURAS_CARTEIRA = [
+  'w-16',
+  'w-40',
+  'w-20',
+  'w-28',
+  'w-20',
+  'w-24',
+  'w-28',
+  'w-20',
+  'w-32',
+  'w-16',
+]
+
+/**
+ * Tratamento de RECARGA: os dados continuam na tela, apagados e inertes.
+ *
+ * `patterns.md §8.1` proíbe overlay/backdrop sobre dados já visíveis, então nada de spinner gigante
+ * — só opacidade e o bloqueio de clique, que evita o analista agir sobre uma linha que está prestes
+ * a mudar. Quem sinaliza QUE algo acontece é o botão clicado, que fica com spinner próprio.
+ */
+const CLASSE_ATUALIZANDO = 'pointer-events-none opacity-60 transition-opacity'
+
+/**
+ * Skeleton da PRIMEIRA carga — mesma contagem de KPIs, mesmas 10 colunas e mesma altura de linha
+ * da tela final (`docs/design-system/skeleton.md`: "skeleton reflete o shape final").
+ *
+ * Só aparece quando não há nada a preservar. Recarga com carteira na tela usa tratamento
+ * não-destrutivo, nunca este skeleton — ver `atualizando` no painel.
+ */
 function PainelSkeleton() {
   return (
-    <div className="space-y-6" aria-busy="true" aria-label="Carregando painel">
+    <div className="space-y-6" role="status" aria-busy="true" aria-label="Carregando painel">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 7 }).map((_, i) => (
+        {/* 6 cards — os mesmos que a tela mostra depois (ADR-0034 tirou Conciliadas e Fila manual). */}
+        {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className="h-24 w-full" />
         ))}
       </div>
-      <Skeleton className="h-10 w-full max-w-md" />
-      <Skeleton className="h-64 w-full" />
+      <Skeleton className="h-9 w-full max-w-lg" aria-hidden />
+      <div className="flex flex-wrap gap-1" aria-hidden>
+        {Array.from({ length: 7 }).map((_, i) => (
+          <Skeleton key={i} className="h-8 w-24" />
+        ))}
+      </div>
+      <TableSkeleton
+        columns={10}
+        rows={10}
+        larguras={LARGURAS_CARTEIRA}
+        aria-label="Carregando a carteira de créditos"
+      />
     </div>
   )
 }
 
+/**
+ * O que disparou a busca em voo — o botão clicado precisa mostrar que é ELE que está trabalhando.
+ *
+ * Sem isso, um clique em "parcial" some com a tabela e não diz qual controle respondeu ao clique; o
+ * analista clica de novo achando que não pegou.
+ */
+type AcaoEmVoo =
+  | { tipo: 'recarregar' }
+  | { tipo: 'status'; valor: StatusFiltro }
+  | { tipo: 'arquivadas' }
+
 function RecebimentosPanel() {
   const [painel, setPainel] = React.useState<RecebimentosPainel | null>(null)
-  const [loading, setLoading] = React.useState(true)
+  const [carregando, setCarregando] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  /** Falha de RECARGA, com carteira já na tela — vira faixa, não estado de erro (ver `carregar`). */
+  const [erroAtualizacao, setErroAtualizacao] = React.useState<string | null>(null)
+  const [enriquecendo, setEnriquecendo] = React.useState(false)
+  const [acaoEmVoo, setAcaoEmVoo] = React.useState<AcaoEmVoo | null>(null)
   const [statusFiltro, setStatusFiltro] = React.useState<StatusFiltro>('pendentes')
   const [verArquivadas, setVerArquivadas] = React.useState(false)
   const [arquivando, setArquivando] = React.useState<string | null>(null)
@@ -116,23 +178,93 @@ function RecebimentosPanel() {
   const [alocarTxn, setAlocarTxn] = React.useState<TransacaoBancaria | null>(null)
   const [importOpen, setImportOpen] = React.useState(false)
 
+  /**
+   * Sequência da busca em voo. O analista troca de filtro mais rápido do que o backend responde, e
+   * sem isto a resposta de um filtro antigo, chegando depois, pintaria a tela por cima do filtro
+   * novo — numa carteira financeira, mostrar a lista errada sob o rótulo certo é o pior desfecho.
+   */
+  const requisicao = React.useRef(0)
+  /** `true` depois da primeira carga bem-sucedida — decide erro-de-tela x faixa de erro. */
+  const temPainel = React.useRef(false)
+
+  /**
+   * Segunda etapa da carga (ADR-0038): modalidade prevista + aba NDe hidratada, tudo que depende de
+   * ler o ERP. Roda DEPOIS que a carteira já está na tela e SUBSTITUI o que recebe.
+   *
+   * Falha em silêncio de propósito: os dados que importam vieram do Postgres e já estão
+   * renderizados. Um toast vermelho aqui alarmaria o analista sobre uma coluna auxiliar enquanto a
+   * carteira, correta, está bem na frente dele.
+   */
+  const enriquecer = React.useCallback(
+    async (id: number, opts: { arquivadas: boolean; status: StatusFiltro }) => {
+      setEnriquecendo(true)
+      try {
+        const extra = await fetchPainelEnriquecimento(opts)
+        if (id !== requisicao.current) return
+        setPainel((prev) =>
+          prev === null
+            ? prev
+            : {
+                ...prev,
+                transacoes: prev.transacoes.map((t) => {
+                  const prevista = extra.modalidades[t.id]
+                  return prevista === undefined ? t : { ...t, modalidade: prevista }
+                }),
+                ndes: extra.ndes,
+                kpis: { ...prev.kpis, ndePendentes: extra.ndePendentes },
+              },
+        )
+      } catch {
+        // Sem coluna de modalidade prevista. A carteira segue de pé.
+      } finally {
+        if (id === requisicao.current) setEnriquecendo(false)
+      }
+    },
+    [],
+  )
+
   const carregar = React.useCallback(async () => {
-    setLoading(true)
-    setError(null)
+    const id = ++requisicao.current
+    const opts = { arquivadas: verArquivadas, status: statusFiltro }
+    setCarregando(true)
+    setErroAtualizacao(null)
     try {
-      setPainel(
-        await fetchPainelRecebimentos({ arquivadas: verArquivadas, status: statusFiltro }),
-      )
+      const novo = await fetchPainelRecebimentos(opts)
+      if (id !== requisicao.current) return
+      setPainel(novo)
+      setError(null)
+      temPainel.current = true
+      void enriquecer(id, opts)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao carregar o painel.')
+      if (id !== requisicao.current) return
+      const msg = e instanceof Error ? e.message : 'Falha ao carregar o painel.'
+      // Primeira carga: não há o que preservar, a tela inteira vira o erro. Recarga: a carteira já
+      // está na frente do analista, e apagá-la por uma falha de rede troca dado velho por nenhum.
+      if (temPainel.current) setErroAtualizacao(msg)
+      else setError(msg)
     } finally {
-      setLoading(false)
+      if (id === requisicao.current) {
+        setCarregando(false)
+        setAcaoEmVoo(null)
+      }
     }
-  }, [verArquivadas, statusFiltro])
+  }, [verArquivadas, statusFiltro, enriquecer])
 
   React.useEffect(() => {
     void carregar()
   }, [carregar])
+
+  /** Primeira carga = ainda não há nada a preservar; só ela mostra skeleton. */
+  const primeiraCarga = carregando && painel === null
+  /** Recarga com dados na tela: a tabela FICA, apagada e inerte (nunca volta a skeleton). */
+  const atualizando = carregando && painel !== null
+
+  /** Troca o filtro de status (server-side) marcando qual botão disparou a busca. */
+  const aplicarStatus = (proximo: StatusFiltro) => {
+    if (proximo === statusFiltro || carregando) return
+    setAcaoEmVoo({ tipo: 'status', valor: proximo })
+    setStatusFiltro(proximo)
+  }
 
   const transacoes = painel?.transacoes ?? []
 
@@ -201,7 +333,7 @@ function RecebimentosPanel() {
       setAba('falhas')
       return
     }
-    setStatusFiltro((prev) => (prev === status ? 'todas' : status))
+    aplicarStatus(statusFiltro === status ? 'todas' : status)
     setAba('transacoes')
   }
 
@@ -224,16 +356,25 @@ function RecebimentosPanel() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void carregar()}
-              disabled={loading}
+              onClick={() => {
+                setAcaoEmVoo({ tipo: 'recarregar' })
+                void carregar()
+              }}
+              disabled={carregando}
+              aria-busy={acaoEmVoo?.tipo === 'recarregar' || undefined}
             >
-              <RefreshCcw className="size-4" aria-hidden /> Recarregar
+              {acaoEmVoo?.tipo === 'recarregar' ? (
+                <Spinner className="size-4" />
+              ) : (
+                <RefreshCcw className="size-4" aria-hidden />
+              )}
+              Recarregar
             </Button>
           </div>
         }
       />
 
-      {loading ? (
+      {primeiraCarga ? (
         <PainelSkeleton />
       ) : error ? (
         <EmptyState
@@ -248,6 +389,30 @@ function RecebimentosPanel() {
         />
       ) : painel ? (
         <>
+          {erroAtualizacao !== null ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/5 p-3 text-sm"
+            >
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden />
+              <div className="flex-1">
+                <span className="font-medium">Não foi possível atualizar.</span> {erroAtualizacao} A
+                carteira abaixo é a da última carga bem-sucedida.
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setAcaoEmVoo({ tipo: 'recarregar' })
+                  void carregar()
+                }}
+                disabled={carregando}
+              >
+                <RefreshCcw className="size-4" aria-hidden /> Tentar de novo
+              </Button>
+            </div>
+          ) : null}
+
           {painel.truncado ? (
             <div className="flex items-start gap-2 rounded-lg border border-info/40 bg-info/5 p-3 text-sm">
               <Landmark className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
@@ -259,6 +424,7 @@ function RecebimentosPanel() {
             </div>
           ) : null}
 
+          <div className={atualizando ? CLASSE_ATUALIZANDO : undefined} aria-busy={atualizando}>
           <KPIGrid columns={4}>
             <SimpleKPI
               label="Importadas"
@@ -317,6 +483,7 @@ function RecebimentosPanel() {
               footer="a emitir"
             />
           </KPIGrid>
+          </div>
 
           <Tabs value={aba} onValueChange={setAba}>
             <TabsList>
@@ -336,28 +503,46 @@ function RecebimentosPanel() {
                 buscaPlaceholder="Buscar por contraparte, referência ou correlationId…"
               />
               <div className="flex flex-wrap items-center gap-1">
-                {STATUS_BOTOES.map((s) => (
-                  <Button
-                    key={s}
-                    size="sm"
-                    variant={statusFiltro === s ? 'default' : 'outline'}
-                    disabled={loading}
-                    onClick={() => setStatusFiltro(s)}
-                  >
-                    {s === 'todas' ? 'Todas' : s === 'pendentes' ? 'A processar' : s}
-                  </Button>
-                ))}
+                {STATUS_BOTOES.map((s) => {
+                  const disparou = acaoEmVoo?.tipo === 'status' && acaoEmVoo.valor === s
+                  return (
+                    <Button
+                      key={s}
+                      size="sm"
+                      variant={statusFiltro === s ? 'default' : 'outline'}
+                      disabled={carregando}
+                      aria-busy={disparou || undefined}
+                      onClick={() => aplicarStatus(s)}
+                    >
+                      {disparou ? <Spinner className="size-4" /> : null}
+                      {s === 'todas' ? 'Todas' : s === 'pendentes' ? 'A processar' : s}
+                    </Button>
+                  )
+                })}
                 <Button
                   size="sm"
                   variant={verArquivadas ? 'default' : 'outline'}
-                  onClick={() => setVerArquivadas((v) => !v)}
+                  onClick={() => {
+                    setAcaoEmVoo({ tipo: 'arquivadas' })
+                    setVerArquivadas((v) => !v)
+                  }}
+                  disabled={carregando}
+                  aria-busy={acaoEmVoo?.tipo === 'arquivadas' || undefined}
                   aria-pressed={verArquivadas}
                 >
-                  <Archive className="size-4" aria-hidden />
+                  {acaoEmVoo?.tipo === 'arquivadas' ? (
+                    <Spinner className="size-4" />
+                  ) : (
+                    <Archive className="size-4" aria-hidden />
+                  )}
                   {verArquivadas ? 'Vendo arquivadas' : 'Arquivadas'}
                 </Button>
               </div>
 
+              <div
+                className={atualizando ? CLASSE_ATUALIZANDO : undefined}
+                aria-busy={atualizando}
+              >
               {abaTransacoes.total === 0 ? (
                 <EmptyState
                   icon={<Banknote className="size-6" aria-hidden />}
@@ -384,7 +569,17 @@ function RecebimentosPanel() {
                         <TableHead>Conta</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Modalidade</TableHead>
+                        <TableHead>
+                          <span className="inline-flex items-center gap-1.5">
+                            Modalidade
+                            {/* A previsão vem numa segunda chamada (ADR-0038). O spinner aponta a
+                                coluna que ainda vai preencher, em vez de deixar "—" parecendo
+                                resposta final. */}
+                            {enriquecendo ? (
+                              <Spinner className="size-3" aria-label="Carregando modalidade" />
+                            ) : null}
+                          </span>
+                        </TableHead>
                         <TableHead>Match</TableHead>
                         <TableHead>correlationId</TableHead>
                         <TableHead className="text-right">Ações</TableHead>
@@ -462,6 +657,7 @@ function RecebimentosPanel() {
                   </Table>
                 </div>
               )}
+              </div>
               <Paginacao aba={abaTransacoes} />
             </TabsContent>
 
