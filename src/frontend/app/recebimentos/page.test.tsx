@@ -247,6 +247,18 @@ describe('RecebimentosPage — estados de carregamento', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('mas a falha do enriquecimento NÃO passa por sucesso — a coluna diz que está indisponível', async () => {
+    // Engolir a falha em silêncio a tornaria indistinguível de "nenhum cliente tem palpite", e é
+    // neste caminho que roda a reconciliação do SEFAZ. Sinal discreto, sem toast.
+    ;(fetchPainelEnriquecimento as jest.Mock).mockRejectedValue(new Error('conexos fora'))
+
+    await act(async () => {
+      render(<RecebimentosPage />)
+    })
+
+    expect(screen.getByText('(indisponível)')).toBeInTheDocument()
+  })
+
   it('enriquecimento obsoleto NÃO pinta a carteira nova', async () => {
     // Os botões de busca ficam desabilitados enquanto a carteira carrega, mas o enriquecimento roda
     // em SEGUNDO PLANO: ele sobrevive à troca de filtro e pode chegar depois. Aplicá-lo então

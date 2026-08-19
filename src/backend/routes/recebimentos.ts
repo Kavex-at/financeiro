@@ -196,12 +196,19 @@ router.get(
  * depois de já ter renderizado a carteira, e SUBSTITUI o que recebe — falhar aqui não apaga nada.
  *
  * Sem `requireRole('admin')`: é a mesma leitura que vivia dentro de `/painel`, disponível para quem
- * enxerga a carteira. Leva `heavyRouteLimiter` porque cada chamada custa um grid do com297 por
- * filial (a rota que ela desafogou não tinha limiter, e passou a ter uma vizinha bem mais barata).
+ * enxerga a carteira.
+ *
+ * **Sem `heavyRouteLimiter`, deliberadamente.** A tentação é óbvia — cada chamada custa um grid do
+ * com297 por filial. Mas o teto dele é de 10 req/min POR IP, e esta rota não é acionada por gesto
+ * deliberado do analista: a tela a dispara em toda carga da carteira, inclusive a cada troca de
+ * status (são 6 botões, mais arquivadas e recarregar). Um analista explorando a tela estoura
+ * sozinho, e dois atrás do mesmo NAT corporativo estouram na certa — o 429 cairia no `catch`
+ * silencioso do cliente e a coluna Modalidade ficaria congelada em "—" sem ninguém entender por quê.
+ * O volume de leitura do ERP é EXATAMENTE o mesmo de antes (o trabalho não aumentou, só mudou de
+ * rota), então o `globalLimiter` que já protegia o `/painel` continua sendo a proteção correta.
  */
 router.get(
     '/painel/enriquecimento',
-    heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const input = recorteDoPainel(req, res);

@@ -170,6 +170,8 @@ function RecebimentosPanel() {
   /** Falha de RECARGA, com carteira já na tela — vira faixa, não estado de erro (ver `carregar`). */
   const [erroAtualizacao, setErroAtualizacao] = React.useState<string | null>(null)
   const [enriquecendo, setEnriquecendo] = React.useState(false)
+  /** O enriquecimento falhou nesta carga — vira sinal discreto na coluna, nunca um toast. */
+  const [enriquecimentoIndisponivel, setEnriquecimentoIndisponivel] = React.useState(false)
   const [acaoEmVoo, setAcaoEmVoo] = React.useState<AcaoEmVoo | null>(null)
   const [statusFiltro, setStatusFiltro] = React.useState<StatusFiltro>('pendentes')
   const [verArquivadas, setVerArquivadas] = React.useState(false)
@@ -198,6 +200,7 @@ function RecebimentosPanel() {
   const enriquecer = React.useCallback(
     async (id: number, opts: { arquivadas: boolean; status: StatusFiltro }) => {
       setEnriquecendo(true)
+      setEnriquecimentoIndisponivel(false)
       try {
         const extra = await fetchPainelEnriquecimento(opts)
         if (id !== requisicao.current) return
@@ -215,7 +218,11 @@ function RecebimentosPanel() {
               },
         )
       } catch {
-        // Sem coluna de modalidade prevista. A carteira segue de pé.
+        // Sem toast: a carteira veio do Postgres e está correta na tela; alarmar sobre uma coluna
+        // auxiliar assustaria o analista à toa. Mas TAMBÉM não pode passar por sucesso — falha
+        // engolida aqui é indistinguível de "cliente sem palpite", e é neste caminho que mora a
+        // reconciliação do SEFAZ. O estado vira um aviso discreto no cabeçalho da coluna.
+        if (id === requisicao.current) setEnriquecimentoIndisponivel(true)
       } finally {
         if (id === requisicao.current) setEnriquecendo(false)
       }
@@ -577,6 +584,13 @@ function RecebimentosPanel() {
                                 resposta final. */}
                             {enriquecendo ? (
                               <Spinner className="size-3" aria-label="Carregando modalidade" />
+                            ) : enriquecimentoIndisponivel ? (
+                              <span
+                                className="text-xs font-normal text-muted-foreground"
+                                title="Não foi possível ler a previsão de modalidade no ERP nesta carga. A carteira e os valores não dependem dela; recarregue para tentar de novo."
+                              >
+                                (indisponível)
+                              </span>
                             ) : null}
                           </span>
                         </TableHead>

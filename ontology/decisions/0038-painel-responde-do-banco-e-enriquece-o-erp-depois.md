@@ -85,7 +85,16 @@ escrita na rota antiga custaria um segundo com297 por carga de tela).
   sem ele, um "—" transitório passaria por resposta final.
 - Duas rotas onde havia uma, com o recorte precisando concordar. Mitigado pelo `resolverRecorte`
   compartilhado e por um teste que trava a igualdade do filtro.
-- `/painel/enriquecimento` leva `heavyRouteLimiter` (a rota que ela desafogou não tinha).
+- `/painel/enriquecimento` executa a **reconciliação do SEFAZ** (escrita no ledger) sob um verbo
+  GET, sem `requireRole('admin')`. Não amplia o blast radius — o `/painel` já fazia exatamente isso,
+  com o mesmo perfil de ator —, mas isolar a escrita numa rota nomeada é o momento natural para
+  alinhá-la à convenção "write-ish → admin" usada no resto do arquivo. Registrado como follow-up.
+- **Sem limiter próprio, por decisão.** A primeira versão levava `heavyRouteLimiter`; o gate de
+  Performance mostrou que o teto dele (10 req/min por IP) é incompatível com uma rota que a TELA
+  dispara — 6 botões de status, mais arquivadas e recarregar, estouram numa sessão de exploração, e
+  o 429 apareceria como coluna Modalidade eternamente em "—". O volume de leitura do ERP é o mesmo
+  de antes da ADR (o trabalho mudou de rota, não aumentou), então o `globalLimiter` que já cobria o
+  `/painel` continua sendo a proteção proporcional.
 
 ## Alternativas descartadas
 
