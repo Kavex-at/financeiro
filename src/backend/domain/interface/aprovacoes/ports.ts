@@ -28,8 +28,8 @@ import type {
  * uma chamada de distância.
  *
  * Implementação atual: `psq014/list` + `fin026/infoTitulo/list` (1 chamada por título).
- * Quando **PV-07** (acesso à tela `fin103`) for resolvida, entra uma implementação nova que varre
- * `fin103/list` paginado — sem tocar no job nem no serviço.
+ * Se a **PV-07** encontrar alguma projeção em massa de `FinTituloBloq`, entra uma implementação nova
+ * aqui — sem tocar no job nem no serviço. A `fin103` NÃO serve: é a fila pessoal do usuário logado.
  */
 export interface TrilhaAprovacaoGatewayInterface {
     /**

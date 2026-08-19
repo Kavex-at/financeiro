@@ -16,6 +16,15 @@ last_review: 2026-08-19
 
 # Integração — trilha de aprovação no Conexos (`psq014` + `fin026`)
 
+> ## ⚠ Correção (2026-08-19) — a `fin103` não é questão de acesso
+>
+> Vários trechos abaixo supõem que `fin103/list` devolvia vazio por **falta de permissão de tela** e
+> que "pedir acesso" tornaria a varredura 500× mais barata. **Isso está errado.** A `fin103` é a
+> **fila pessoal de aprovação do usuário logado**: o vazio significa que a conta de integração não
+> tem nada a aprovar. Não há acesso a pedir, e o custo de **uma chamada por título é estrutural**.
+> A pendência **PV-07** foi reformulada — ver `ontology/_inbox/frente-v-pendencias-validacao.md`.
+
+
 > **Todo o conteúdo deste documento foi verificado contra a PRODUÇÃO** em 2026-08-18/19, por sonda
 > read-only (`src/backend/jobs/probe-aprovacoes-trilha.ts`). Não há hipótese não marcada.
 > **Read-only absoluto (I1)** — nenhum verbo de escrita é usado ou permitido nesta integração.

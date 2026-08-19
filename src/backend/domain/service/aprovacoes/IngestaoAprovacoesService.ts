@@ -74,7 +74,7 @@ export interface IngestaoResultado {
  *
  * Para cada filial: pagina o universo (`psq014/list`) e, para cada título da página, lê a trilha
  * (`fin026/infoTitulo/list`) — **uma chamada ao ERP por título**. É caro por construção enquanto
- * **PV-07** não liberar a varredura em massa do `fin103`; por isso o job é retomável.
+ * não houver projeção em massa (PV-07 — a `fin103` é fila pessoal, não serve); por isso o job é retomável.
  *
  * ## Read-only
  *

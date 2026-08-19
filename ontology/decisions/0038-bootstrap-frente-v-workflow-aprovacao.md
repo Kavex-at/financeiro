@@ -1,5 +1,14 @@
 # ADR-0038 — Bootstrap da Frente V: rastreamento do workflow de aprovação
 
+> ## ⚠ Correção (2026-08-19) — a `fin103` não é questão de acesso
+>
+> Vários trechos abaixo supõem que `fin103/list` devolvia vazio por **falta de permissão de tela** e
+> que "pedir acesso" tornaria a varredura 500× mais barata. **Isso está errado.** A `fin103` é a
+> **fila pessoal de aprovação do usuário logado**: o vazio significa que a conta de integração não
+> tem nada a aprovar. Não há acesso a pedir, e o custo de **uma chamada por título é estrutural**.
+> A pendência **PV-07** foi reformulada — ver `ontology/_inbox/frente-v-pendencias-validacao.md`.
+
+
 - **Status:** aceito
 - **Data:** 2026-08-19
 - **Contexto de origem:** pedido do Yuri (2026-08-18) + sondagem read-only em produção

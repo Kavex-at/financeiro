@@ -18,8 +18,8 @@ import TituloAprovacaoRepository from './repository/aprovacoes/TituloAprovacaoRe
  *
  * O binding que mais importa é o do `TRILHA_APROVACAO_GATEWAY_TOKEN`. Hoje ele aponta para o
  * `ConexosAprovacoesClient`, que lê título a título (`psq014/list` + `fin026/infoTitulo/list`).
- * Quando **PV-07** liberar o acesso à tela `fin103`, a varredura em massa entra **trocando esta
- * linha** — o job, o serviço e os repositories não sabem de onde o dado vem.
+ * Se a **PV-07** encontrar uma projeção em massa, ela entra **trocando esta linha** — o job, o
+ * serviço e os repositories não sabem de onde o dado vem.
  */
 export const registerAprovacoesPorts = (): void => {
     if (container.isRegistered(TRILHA_APROVACAO_GATEWAY_TOKEN)) return;

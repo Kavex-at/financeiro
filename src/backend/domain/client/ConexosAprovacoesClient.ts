@@ -160,10 +160,9 @@ export default class ConexosAprovacoesClient implements TrilhaAprovacaoGatewayIn
     /**
      * A trilha de UM título — hoje, uma chamada por título.
      *
-     * É o custo que **PV-07** (acesso do usuário de API à tela `fin103`) derruba em duas ordens de
-     * grandeza: com ele, isto vira uma varredura paginada. Enquanto a pendência não fecha, o job
-     * compensa sendo retomável. Trocar a fonte é trocar o binding do
-     * `TRILHA_APROVACAO_GATEWAY_TOKEN` — nada acima deste client muda.
+     * Uma chamada por título é **estrutural**, não temporária: a `fin103` é a fila pessoal do usuário
+     * logado e nunca serviria para varredura (ver PV-07). Se aparecer outra projeção em massa,
+     * trocar a fonte é trocar o binding do `TRILHA_APROVACAO_GATEWAY_TOKEN` — nada acima muda.
      */
     public listTrilha = async (params: {
         filCod: number;

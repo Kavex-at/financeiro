@@ -135,9 +135,12 @@ Kill-switch: `APROVACOES_ENABLED=false` + restart. Reversível em menos de um mi
 
 ### Cadência
 
-O job não está agendado. Depois da estreia, defina a cadência com base no volume observado — o custo
-hoje é **uma chamada ao ERP por título** enquanto **PV-07** (acesso à tela `fin103`) não sair. Com
-esse acesso, a varredura vira paginada e a cadência deixa de ser um problema.
+O job não está agendado. Depois da estreia, defina a cadência com base no volume observado.
+
+O custo é **uma chamada ao ERP por título**, e isso é **estrutural**: a `fin103` — que parecia a
+saída — é a fila pessoal do usuário logado, não uma listagem administrativa (PV-07). As mitigações
+são as que já existem no código: concorrência limitada (4), cursor de retomada por página e
+tolerância a título problemático. A alavanca de custo que sobra é a **janela de backfill** (PV-08).
 
 ---
 
