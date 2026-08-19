@@ -1,5 +1,33 @@
 # Columbia Financeiro — Changelog
 
+## v0.26.1 (2026-08-19) — Recebimentos: a tela para de esperar o ERP para aparecer
+
+- **fix(recebimentos):** o painel **passava vários segundos em branco** a cada abertura e a cada
+  troca de filtro. Não era lentidão de banco: o `GET /recebimentos/painel` esperava DUAS leituras do
+  ERP antes de responder qualquer coisa — a varredura do `imp021` para prever a modalidade (sem teto
+  de tempo) e o grid do com297 para hidratar a aba NDe (12s de orçamento). Os KPIs e a carteira, que
+  saem de três queries do Postgres, ficavam reféns delas. Com o filtro server-side da ADR-0034, cada
+  clique num botão de status pagava o mesmo pedágio.
+- **feat(recebimentos):** `/painel` vira **Postgres-only** e nasce `/painel/enriquecimento`, que
+  recebe o mesmo recorte e devolve a modalidade prevista, a aba NDe hidratada e o KPI de pendentes
+  corrigido. A tela renderiza a carteira e aplica o enriquecimento por cima (ADR-0038). O fato do
+  ledger continua vindo na primeira resposta — ele é Postgres, e é ele que vence a previsão.
+- **fix(recebimentos):** **skeleton só na primeira carga**, com a forma final da tabela (10 colunas,
+  altura de linha real) — antes era um bloco genérico que empurrava a página quando o dado chegava.
+  Recarga mantém a tabela montada; nunca mais volta a skeleton.
+- **fix(recebimentos):** o botão que dispara a busca mostra spinner e fica desabilitado; falha de
+  recarga **preserva a carteira** e vira faixa com "Tentar de novo" (só a primeira carga, que não tem
+  o que preservar, vira erro de tela cheia). Falha do enriquecimento marca a coluna Modalidade como
+  `(indisponível)` em vez de passar por sucesso.
+- **fix(recebimentos):** modal "Alocar" — processos em ordem decrescente de `priCod`; painel direito
+  reestruturado em cabeçalho fixo, lista de SN rolável e **rodapé sempre visível**: com muitas SN o
+  botão "Processar" ia para baixo da dobra e obrigava a rolar a lista inteira.
+- **feat(recebimentos):** escolher uma SN existente **sugere `min(valor da SN, saldo restante)`** no
+  campo de valor, editável, com erro inline quando passa do saldo — em vez de cortar o número em
+  silêncio.
+- **chore(ds):** `TableSkeleton` entra no design system (implementa `skeleton.md` §Skeleton.Table) e
+  `useTabelaFiltro` passa a memoizar a filtragem, que rodava a cada tecla sobre até 500 linhas.
+
 ## v0.26.0 (2026-08-17) — Recebimentos: a aba NDe passa a listar de verdade
 
 - **fix(recebimentos):** a **aba NDe do painel estava sempre vazia** — não por falta de dado, mas
