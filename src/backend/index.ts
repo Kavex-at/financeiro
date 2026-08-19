@@ -6,6 +6,7 @@ import cors from 'cors';
 import { buildAuthMiddleware } from './http/auth.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
+import { aprovacoesGate } from './http/aprovacoesGate.js';
 import { recebimentosGate } from './http/recebimentosGate.js';
 import { sispagGate } from './http/sispagGate.js';
 import { buildCorsOptions } from './http/cors.js';
@@ -16,6 +17,7 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import BootMigrator from './migrations/BootMigrator.js';
 import { MIGRATION_RUNNER_TOKEN } from './migrations/migrationRunnerPort.js';
 import MigrationRunner from './migrations/runMigrations.js';
+import aprovacoesRouter from './routes/aprovacoes.js';
 import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
 import permutasRouter from './routes/permutas.js';
@@ -116,6 +118,12 @@ app.use('/sispag', sispagGate, sispagRouter);
 // desabilitado, como o SISPAG). Coordinator stubbed; nenhuma escrita real no ERP. Ver
 // ontology/_inbox/frente-iv-*.md.
 app.use('/recebimentos', recebimentosGate, recebimentosRouter);
+
+// Aprovações Frente V — painel READ-ONLY do workflow de aprovação de contas a pagar. Atrás do
+// `aprovacoesGate` (403 quando desabilitada). O port de leitura não expõe escrita no ERP
+// (ADR-0038 D2), então fica no `globalLimiter` como as demais leituras. Ver
+// ontology/_inbox/frente-v-*.md.
+app.use('/aprovacoes', aprovacoesGate, aprovacoesRouter);
 
 // Gestão de usuários da plataforma — só `admin` (guard no próprio router). Fica
 // no `globalLimiter`; substitui o cadastro manual de usuários @kavex no banco.

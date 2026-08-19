@@ -38,6 +38,13 @@ services:
       # `sync: false` mantém o dashboard como fonte da verdade (o blueprint não sobrescreve).
       - key: RECEBIMENTOS_ENABLED
         sync: false
+      # Frente V (Workflow de Aprovação) — ADR-0038. FAIL-SAFE, ao contrário da Frente IV acima:
+      # ausência da env = BLOQUEADO em produção (e habilitado fora dela). A frente ainda não
+      # estreou e, antes da primeira ingestão, o painel mostraria tela vazia ao cliente. Ligar é
+      # decisão explícita: `APROVACOES_ENABLED=true` no dashboard. `sync: false` mantém o dashboard
+      # como fonte da verdade, então o flip (e o rollback) valem SEM redeploy.
+      - key: APROVACOES_ENABLED
+        sync: false
       # Frente IV — PISO da janela de ingestão do extrato (`YYYY-MM-DD`). Nenhuma sincronização lê
       # lançamento anterior a esta data, nem o backfill manual. O código já tem o mesmo default;
       # declarado aqui para o operador enxergar o marco de go-live. Ver ADR-0028.

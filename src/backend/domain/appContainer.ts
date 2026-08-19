@@ -6,6 +6,7 @@ import ConexosBaseClient, { LEGACY_CONEXOS_TOKEN } from './client/ConexosBaseCli
 import ConexosSessionResolver from './client/ConexosSessionResolver.js';
 import PostgreeDatabaseClient from './client/database/PostgreeDatabaseClient.js';
 import EnvironmentProvider from './libs/environment/EnvironmentProvider.js';
+import { registerAprovacoesPorts } from './aprovacoesContainer.js';
 import { registerRecebimentosPorts } from './recebimentosContainer.js';
 
 let bootstrapped = false;
@@ -66,6 +67,10 @@ export const bootstrapAppContainer = async (): Promise<void> => {
 
     // Frente IV — bind every port TOKEN to its stub/repo (idempotent, register-once).
     registerRecebimentosPorts();
+
+    // Frente V — trilha de aprovação. O binding do gateway é o ponto de troca quando PV-07
+    // liberar a varredura em massa do `fin103`.
+    registerAprovacoesPorts();
 
     await initDatabaseAndMigrate(env.environment === 'production');
 

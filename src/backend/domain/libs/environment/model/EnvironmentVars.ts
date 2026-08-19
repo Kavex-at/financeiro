@@ -52,6 +52,14 @@ export default class EnvironmentVars {
     public recebimentosEnabled: boolean;
 
     /**
+     * KILL-SWITCH da Frente V (Workflow de Aprovação). Quando `false`, as rotas
+     * `/aprovacoes/*` respondem 403. Como a Frente IV, NÃO é fail-safe: a frente é
+     * read-only no ERP, então ausência da env significa habilitado e só
+     * `APROVACOES_ENABLED=false` desliga.
+     */
+    public aprovacoesEnabled: boolean;
+
+    /**
      * Janela default (em dias) da ingestão de extratos da Frente IV.
      * `RECEBIMENTO_INGEST_DIAS`; default 90. Sempre recortada pelo
      * `recebimentoIngestStartDate` — a janela efetiva é a INTERSEÇÃO das duas.
@@ -196,6 +204,7 @@ export default class EnvironmentVars {
         conexosCredEncKey,
         sispagEnabled,
         recebimentosEnabled,
+        aprovacoesEnabled,
         recebimentoIngestDias,
         recebimentoIngestStartDate,
         recebimentoIngestFilCods,
@@ -230,6 +239,7 @@ export default class EnvironmentVars {
         conexosCredEncKey?: string;
         sispagEnabled: boolean;
         recebimentosEnabled: boolean;
+        aprovacoesEnabled: boolean;
         recebimentoIngestDias: number;
         recebimentoIngestStartDate: Date;
         recebimentoIngestFilCods: number[];
@@ -264,6 +274,7 @@ export default class EnvironmentVars {
         this.conexosCredEncKey = conexosCredEncKey;
         this.sispagEnabled = sispagEnabled;
         this.recebimentosEnabled = recebimentosEnabled;
+        this.aprovacoesEnabled = aprovacoesEnabled;
         this.recebimentoIngestDias = recebimentoIngestDias;
         this.recebimentoIngestStartDate = recebimentoIngestStartDate;
         this.recebimentoIngestFilCods = recebimentoIngestFilCods;

@@ -1,6 +1,6 @@
 {
     "name": "financeiro-backend",
-    "version": "0.26.0",
+    "version": "0.27.0",
     "description": "Columbia Trading — Financeiro (template bootstrap)",
     "main": "dist/index.js",
     "scripts": {
@@ -17,7 +17,9 @@
         "test:watch": "jest --watch",
         "lint": "npx biome check .",
         "lint:fix": "npx biome check --write .",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "job:ingest-aprovacoes": "tsx jobs/ingest-aprovacoes.ts",
+        "verify:sql-aprovacoes": "tsx scripts/verify-sql-aprovacoes.ts"
     },
     "keywords": [],
     "author": "",
@@ -51,6 +53,7 @@
         "@types/multer": "^1.4.12",
         "@types/node": "^20.10.6",
         "@types/pg": "^8.20.0",
+        "embedded-postgres": "^18.4.0-beta.17",
         "jest": "^30.0.0",
         "jest-environment-node": "^30.0.0",
         "ts-jest": "^29.4.6",

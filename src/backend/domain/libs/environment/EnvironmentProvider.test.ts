@@ -130,6 +130,33 @@ describe('EnvironmentProvider', () => {
             delete process.env.RECEBIMENTOS_ENABLED;
         });
 
+        it('aprovacoesEnabled: fail-safe — bloqueado em produção sem env explícita', async () => {
+            // ADR-0038. Segue o SISPAG, NÃO a Frente IV: a Frente V ainda não estreou, tem dez
+            // validações de negócio em aberto e, antes da primeira ingestão, o painel em produção
+            // mostraria uma tela vazia ao cliente. Se este teste passar a esperar `true` em
+            // produção sem env, alguém copiou o default da Frente IV — que só é seguro porque
+            // aquela frente foi liberada por ADR.
+            const resolve = async () => {
+                const p = new EnvironmentProvider();
+                return (await p.getEnvironmentVars()).aprovacoesEnabled;
+            };
+            // sem env + produção → BLOQUEADO
+            delete process.env.APROVACOES_ENABLED;
+            process.env.environment = 'production';
+            expect(await resolve()).toBe(false);
+            // sem env + fora de produção → habilitado (dev e homologação sem fricção)
+            process.env.environment = 'local';
+            expect(await resolve()).toBe(true);
+            // estreia explícita em produção
+            process.env.APROVACOES_ENABLED = 'true';
+            process.env.environment = 'production';
+            expect(await resolve()).toBe(true);
+            // kill-switch continua valendo
+            process.env.APROVACOES_ENABLED = 'false';
+            expect(await resolve()).toBe(false);
+            delete process.env.APROVACOES_ENABLED;
+        });
+
         it('recebimentoIngestStartDate: default 2026-08-03, override e valor inválido', async () => {
             const resolve = async () => {
                 const p = new EnvironmentProvider();

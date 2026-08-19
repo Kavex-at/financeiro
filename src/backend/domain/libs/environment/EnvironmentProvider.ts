@@ -57,6 +57,28 @@ export default class EnvironmentProvider {
         this.readEnv('RECEBIMENTOS_ENABLED') !== 'false';
 
     /**
+     * Resolve a flag da Frente V (Workflow de Aprovação). **Fail-safe como o SISPAG, e não como a
+     * Frente IV.**
+     *
+     * A tentação é copiar `resolveRecebimentosEnabled` (default HABILITADO), mas aquele default
+     * existe porque o ADR-0028 **liberou** a Frente IV em produção. A Frente V não foi liberada:
+     * tem dez validações de negócio em aberto (`frente-v-pendencias-validacao.md`) e, até a primeira
+     * ingestão rodar, o painel em produção mostraria uma tela vazia para o cliente — pior que
+     * mostrar nada.
+     *
+     * O fato de a frente ser read-only no ERP protege contra estrago, não contra estrear cedo.
+     * Fora de produção liga sozinha (dev e homologação seguem sem fricção); em produção exige um
+     * `APROVACOES_ENABLED=true` explícito, que é a decisão de estreia — e continua reversível pelo
+     * dashboard, sem redeploy.
+     */
+    private resolveAprovacoesEnabled = (environment: string): boolean => {
+        const flag = this.readEnv('APROVACOES_ENABLED');
+        if (flag === 'true') return true;
+        if (flag === 'false') return false;
+        return environment !== 'production';
+    };
+
+    /**
      * Janela default da ingestão de extratos (`RECEBIMENTO_INGEST_DIAS`).
      * Valor inválido ou ausente cai no padrão — nunca zero (uma janela de zero
      * dias faria a ingestão rodar e não trazer nada, silenciosamente).
@@ -175,6 +197,7 @@ export default class EnvironmentProvider {
             conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment', 'local')),
             recebimentosEnabled: this.resolveRecebimentosEnabled(),
+            aprovacoesEnabled: this.resolveAprovacoesEnabled(this.readEnv('environment', 'local')),
             recebimentoIngestDias: this.resolveIngestDias(),
             recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
@@ -257,6 +280,7 @@ export default class EnvironmentProvider {
                 undefined,
             sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment')),
             recebimentosEnabled: this.resolveRecebimentosEnabled(),
+            aprovacoesEnabled: this.resolveAprovacoesEnabled(this.readEnv('environment')),
             recebimentoIngestDias: this.resolveIngestDias(),
             recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
