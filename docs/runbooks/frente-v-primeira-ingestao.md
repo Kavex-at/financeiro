@@ -4,10 +4,11 @@
 > runbook é bem mais leve que o do `fin010`. O que ele protege é outra coisa: **estrear um painel
 > vazio ou com número errado na frente do cliente**.
 >
-> Duas verificações aqui não são burocracia. O SQL desta frente **nunca tocou um Postgres real** (não
-> há banco na máquina de desenvolvimento; os testes usam dublês) e a ingestão **nunca rodou** — o job
-> foi exercitado só contra fakes. A primeira execução em homologação é o primeiro contato do código
-> com um banco de verdade.
+> **Atualização 2026-08-19:** duas dessas lacunas foram fechadas antes da estreia.
+> O SQL agora é validado contra um **PostgreSQL real** por `npm run verify:sql-aprovacoes`
+> (Postgres embarcado, sem Docker), e a ingestão roda ponta a ponta contra um **ERP fake HTTP** em
+> `jobs/ingest-aprovacoes.e2e.test.ts`. O que continua sendo estreia de verdade na Fase 1 é o
+> contato com o **Conexos real** e com o **banco de produção**.
 
 ## Flags
 
@@ -25,6 +26,12 @@ O `EnvironmentProvider` é `@singleton` com cache — **mudar flag exige restart
 ## Fase 1 — Homologação
 
 ### 1.1 Aplicar a migration
+
+**Antes de subir**, rode a verificação local — ela pega erro de SQL sem depender de ambiente:
+
+```bash
+cd src/backend && npm run verify:sql-aprovacoes
+```
 
 A `0049_aprovacao_trilha.sql` roda no boot (`appContainer.initDatabaseAndMigrate`). Suba o backend
 apontado para o banco de homologação e confirme no log:
@@ -136,9 +143,11 @@ esse acesso, a varredura vira paginada e a cadência deixa de ser um problema.
 
 ## Lacunas conhecidas neste runbook
 
-- **Sintaxe SQL e semântica de tipos não foram validadas** contra Postgres (não há banco na máquina
-  de desenvolvimento). A Fase 1.1 é o primeiro teste real.
-- **A ingestão nunca rodou** contra o ERP — só contra dublês. A Fase 1.2 é a estreia.
+- ~~Sintaxe SQL e semântica de tipos não validadas~~ → **fechado**: `npm run verify:sql-aprovacoes`
+  aplica a migration num PostgreSQL real, confere idempotência, tabelas, índices e CHECK, e exercita
+  os repositories. Rode antes de qualquer deploy que toque o schema.
+- ~~A ingestão nunca rodou~~ → **parcialmente fechado**: roda contra ERP fake HTTP no e2e. O que
+  falta é o Conexos **real**, e isso é a Fase 1.2.
 - **Dez pendências de negócio** seguem abertas em `ontology/_inbox/frente-v-pendencias-validacao.md`.
   As que podem mudar número na tela: **PV-01** (status 7), **PV-02** (`LIBERAR` vs `APROVAR`) e
   **PV-03** (o que `ftbTimBloq` significa de fato).

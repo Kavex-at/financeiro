@@ -21,7 +21,7 @@
 | **PV-04** | Qual campo é o "documento finalizado" do exemplo do cliente? | Marco zero do relógio ausente no painel | 🟡 aberta |
 | **PV-05** | Aprovação por e-mail conta como etapa? | Etapas podem estar faltando na trilha | 🟡 aberta |
 | **PV-06** | `regerarBloqueios` é usado na operação? | Trilha pode ser reescrita sem detectarmos | 🟡 aberta |
-| **PV-07** | Acesso do usuário de API à tela `fin103` | Ingestão cara (1 chamada/título) e campos faltando | 🔴 aberta |
+| **PV-07** | ~~Acesso à tela `fin103`~~ → existe projeção em massa de `FinTituloBloq`? | Custo de 1 chamada/título é **estrutural**; campos ausentes precisam de outra fonte | 🔴 **reformulada** |
 | **PV-08** | Janela de backfill: quanto histórico o cliente quer? | Volume e tempo da primeira carga | 🟡 aberta |
 | **PV-09** | Quais filiais entram no escopo? | Cobertura do painel | 🟡 aberta |
 | **PV-10** | Identidade do aprovador é o nome (`usnDesNomeCmd`)? | Analítico da Fase 2 frágil a mudança de nome | 🟡 aberta |
@@ -139,29 +139,50 @@ acumula linhas inativas e a trilha exibida pode confundir.
 
 ---
 
-## PV-07 — Acesso do usuário de API à tela `fin103` 🔴
+## PV-07 — ~~Acesso do usuário de API à tela `fin103`~~ → **ENTENDIMENTO CORRIGIDO** ✅🔴
 
-**Evidência.** `POST fin103/list` devolve `count = 0` em todas as filiais, em produção e
-homologação, **mesmo havendo títulos bloqueados** (filial 2 tinha 3 com `vldIsBloqueado = 1`). O spec
-do Conexos exige que o usuário seja *"liberado para a empresa (filial) e a **tela** onde a API está
-relacionada"*.
+> **Corrigido pelo Yuri em 2026-08-19.** A hipótese original estava errada e vinha sendo repetida em
+> vários documentos. Registrada aqui na íntegra porque o erro é instrutivo.
 
-**O que o acesso destrava, de uma vez:**
+**O que eu supunha (ERRADO).** Que `fin103/list` fosse uma listagem administrativa de todos os
+bloqueios, devolvendo vazio por **falta de permissão de tela** do usuário de API. Daí a conclusão de
+que bastava "pedir acesso ao administrador do Conexos" para a varredura ficar 500× mais barata.
 
-1. **Custo da ingestão.** Hoje: **1 chamada por título** — 23.632 títulos só na filial 2 em 12 meses.
-   Com `fin103/list`: varredura paginada, duas ordens de grandeza mais barata.
-2. **Campos ausentes na projeção atual:** `docDtaFinalizacao` (PV-04), `usnCodCmd` (PV-10),
-   `acdCod`, `wffUuid`, `fbaVldAcao`, `motCodCanc`.
-3. **Legendas dos enums** via `configList` do endpoint de log da tela (PV-01).
+**O que é de verdade.** A `fin103` é a **fila pessoal de aprovação do usuário logado** — lista os
+títulos que *aquele usuário* tem para liberar ou bloquear. O retorno vazio significa simplesmente que
+o **Francinei** (a conta de integração) **não tem nada a aprovar**. Não há acesso a pedir: a tela
+nunca serviria para varredura, por desenho.
 
-**Premissa adotada:** a ingestão foi desenhada para funcionar **sem** o acesso (título a título,
-interrompível e retomável). O adaptador de leitura fica isolado atrás de um port, para que ligar o
-`fin103` depois seja trocar uma implementação — não reescrever o job.
+### Consequências
 
-**Como fechar:** pedir ao administrador do Conexos da Columbia a liberação do usuário de integração
-para `fin103` (e `fin102`/`fin106` se formos ler configuração de alçadas).
+1. **O custo de uma chamada por título é ESTRUTURAL, não temporário.** Não existe atalho esperando
+   liberação. As mitigações que já estão no código — `BoundedConcurrency` (limite 4), cursor de
+   retomada por página, tolerância a título problemático — deixam de ser paliativo e passam a ser
+   **a arquitetura**.
 
----
+2. **Os campos ausentes precisam de outra fonte.** `docDtaFinalizacao` (PV-04), `usnCodCmd` (PV-10),
+   `acdCod`, `wffUuid` e `fbaVldAcao` não virão da `fin103`. Candidatos a investigar:
+   - `psq014/infoTitulo/list/{filCod}/{docTip}/{docCod}/{titCod}` — exige os filtros
+     `fExibirPrevisao` e `fExibirRenegociados`; **pode projetar mais campos** que o `fin026`. É o
+     teste mais barato e o próximo a fazer.
+   - `com308/financeiroAPagar/infoTitulo/list/{docCod}/{titCod}` — já verificado, projeta o mesmo
+     conjunto do `fin026`.
+   - Algum relatório do módulo financeiro (`docs/conexos-api/reports.md` não foi varrido com essa
+     pergunta em mente).
+
+3. **Nada do que já foi construído se perde.** O port `TrilhaAprovacaoGatewayInterface` continua
+   sendo o ponto de troca: se aparecer uma projeção melhor, entra uma implementação nova sem tocar no
+   job nem no serviço. A diferença é que agora não sabemos se essa implementação existe.
+
+### Pergunta que substitui a antiga
+
+**Existe no Conexos alguma projeção que devolva `FinTituloBloq` (ou equivalente) para VÁRIOS títulos
+de uma vez, sem depender de quem está logado?** É pergunta para o fornecedor do ERP ou para quem
+conhece o módulo financeiro a fundo — não é algo que a sondagem consiga responder sozinha, porque não
+se pode provar a inexistência de um endpoint varrendo os specs.
+
+**Enquanto não houver resposta:** a varredura segue com uma chamada por título, e o dimensionamento
+da janela de backfill (PV-08) passa a ser a alavanca principal de custo.
 
 ## PV-08 — Janela de backfill 🟡
 

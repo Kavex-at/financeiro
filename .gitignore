@@ -67,3 +67,6 @@ tmp-*.md
 node_modules
 src/backend/node_modules
 src/frontend/node_modules
+
+# Cluster efêmero do `verify:sql-aprovacoes` (embedded-postgres)
+src/backend/.pg-verify/
