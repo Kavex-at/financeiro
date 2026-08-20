@@ -115,90 +115,53 @@ header. **O serviço de orquestração precisa buscar a conta pagadora por filia
 
 ---
 
-## 9. DEFEITO CONFIRMADO — a baixa via retorno nasce SEM conta financeira
+## 9. A conta financeira NÃO se perde — e a rastreabilidade existe
 
-Levantado ao olhar o `fin010`: o borderô gerado pelo retorno vem com **`gerNum` e `gerDes`
-nulos**, enquanto borderôs normais da mesma filial trazem `gerNum=38` ("BANCO ITAÚ - AG. 0641
-CONTA 55.795-4").
+> Esta seção substitui duas conclusões anteriores que estavam **erradas**. Ficam registradas
+> porque o caminho do erro é instrutivo.
+>
+> - ❌ *"O caminho de baixa por retorno não propaga a conta financeira — defeito do ERP,
+>   reportar à Conexos."* Baseado em duas amostras do nosso fluxo sintético e na coluna vazia
+>   do grid do `fin010`.
+> - ❌ *"É o parâmetro `filVldSugContabaixa`, desligado em HML."* A comparação HML × PRD lia
+>   `ger008/list` e pegava `rows[0]` — que pode ser de **filiais diferentes** em cada ambiente.
+>   Lendo `ger008/{filCod}` corretamente, o parâmetro é **1 nos dois**.
 
-**Primeira hipótese (errada):** seria efeito de um cadastro quebrado. O harness fixava
-`ccoCod=1`, e na filial 2 esse código aponta para um registro inconsistente do HML — conta
-corrente **BANESTES ag 1111 cc 111111** ligada à conta financeira **37** ("BANCO ITAÚ - AG.
-2000"). Foi o que produziu o `.REM` com header `021` e o erro de conta financeira inativa.
+### O que é verdade
+A linha de detalhe do retorno (`arquivosRetornoDetalhe`) do nosso ciclo (gar 5, lote 13):
 
-**Teste controlado:** repetido o ciclo inteiro com `ccoCod=2` — a conta Itaú de verdade
-(ag 0641, cc 55795-4, `gerNum=38`). O `.REM` saiu com header **341 / ITAU**, correto.
+```
+flpCod=13  itsCodSeq=1        ← o item do lote
+borCod=249 bxaCodSeq=1        ← o borderô e a baixa
+gerNum=38  gerDes="BANCO ITAÚ - AG. 0641 CONTA 55.795-4"   ← a CONTA FINANCEIRA
+fbeEspCod="00" "PAGAMENTO EFETUADO"
+ardEspObs="BORDERO: 249 - DATA DE CREDITO: 04/10/2026"
+```
 
-| borderô | conta pagadora usada | `gerNum` do borderô |
-|---|---|---|
-| 248 | ccoCod 1 (registro quebrado, Banestes) | **null** |
-| 249 | ccoCod 2 (Itaú 0641 correta, gerNum 38) | **null** |
+**A conta financeira está registrada e correta.** O que acontece é que a *linha do borderô* no
+grid do `fin010` não a exibe — mas o dado existe e é consultável pelo detalhe do retorno.
+Não há buraco contábil, não há o que reportar à Conexos.
 
-**Conclusão: não é o cadastro.** O caminho de baixa por retorno **não propaga a conta
-financeira** para o borderô, mesmo com conta pagadora bem configurada. Nos dois casos o título
-foi quitado corretamente (doc 801 → 275,00; doc 813 → 6.622.898,68) e a baixa está no borderô —
-mas sem `gerNum`.
+**E a rastreabilidade lote → borderô existe**, na mesma linha: `flpCod` + `itsCodSeq` +
+`borCod` + `bxaCodSeq`. A afirmação anterior de que "não existe no ERP" também estava errada —
+ela existe justamente no endpoint que eu não conseguia ler.
 
-**Por que importa:** relatório e conciliação por conta financeira não enxergam esses
-lançamentos. O dinheiro sai e o borderô não diz de qual conta. Em produção isso vira buraco
-contábil silencioso — o pagamento aparece como feito, mas não aparece no extrato gerencial da
-conta.
+### `arquivosRetornoDetalhe/list` — DESBLOQUEADO
+O filtro exigido é o **código exato** do evento bancário:
+```json
+{ "bncCod#EQ": 4, "gtbCodSeq#EQ": 1, "garCodSeq#EQ": 5,
+  "fbeEspCod#EQ": "00", "fbeVldTipo#EQ": 2 }
+```
+Por que resistiu 7 meses: **arquivo não processado não tem linha de detalhe**. Todas as
+tentativas anteriores foram contra arquivos em `garVldProcStatus=1` (carregado), então nenhum
+código devolvia linha — e o `REQUIRED_FILTER_ERROR` de fundo mascarava isso. Com um arquivo
+processado (`=2`), `fbeEspCod#EQ='00'` devolve na hora. Operadores abrangentes (`#IN`, `#LIKE`)
+continuam recusados: tem que ser código a código.
 
-**Ações:**
-1. **Reportar à Conexos** — é comportamento do ERP, não do nosso código. Levar os borderôs 248 e
-   249 do HML como evidência (mesma conclusão com conta quebrada e com conta correta).
-2. **Confirmar em PRD** se os borderôs originados de retorno SISPAG também vêm sem `gerNum`. Se
-   vierem, já existe hoje um passivo de conciliação na Columbia, independente da nossa automação.
-3. Enquanto não houver correção, o nosso serviço precisa **registrar o vínculo lote → borderô →
-   conta pagadora do nosso lado** — o que já era necessário, porque `vldHasRemessaPgto` também
-   vem 0 e não marca origem SISPAG (§ item do lote com `borCod` nulo).
+`finItemSispagRet[Cab]/list` (lado do lote) também passou a devolver linha — mas traz só a
+chave; o detalhe rico está no `arquivosRetornoDetalhe`.
 
-### Correção de rumo do harness
-`validate-fin015-import.ts` não fixa mais a conta pagadora: lê do `fin005` da filial via `CCO=`.
-O mesmo `ccoCod` aponta para contas DIFERENTES em cada filial — fixar foi o que causou toda esta
-investigação.
-
-### Nota operacional
-O usuário do `.env` (`MPS_FRANCINEI`) bateu **`LOGIN_ERROR_MAX_SESSIONS`**: cada job abre sessão
-nova e o ERP limita as simultâneas. O serviço de orquestração precisa **reusar sessão**, e vale
-um usuário de robô dedicado — hoje toda escrita fica atribuída a uma pessoa real.
-
-
----
-
-## 10. CORREÇÃO DO §9 — provavelmente NÃO é defeito do ERP
-
-O §9 concluiu "o caminho de retorno não propaga a conta financeira" e sugeriu reportar à
-Conexos. **A conclusão foi precipitada** — estava baseada em duas amostras, ambas do nosso
-fluxo sintético em HML. Três verificações depois, o quadro mudou.
-
-### Check 2 (o decisivo) — parâmetro de filial diverge entre HML e PRD
-Comparando `ger008` (Parâmetros por Filial), filial 2, HML × PRD:
-
-| parâmetro | HML | PRD |
-|---|---|---|
-| **`filVldSugContabaixa`** ("sugerir conta de baixa") | **0** | **1** |
-| `filVldInfbanco` ("informar banco") | 0 | 1 |
-
-`filVldSugContabaixa` desligado em HML explica exatamente o sintoma: o borderô nasce sem conta
-financeira sugerida. **É configuração de ambiente, não defeito** — mesma classe da conta
-financeira 37 inativa. Não reportar à Conexos antes de testar com o parâmetro ligado.
-
-> **Como provar:** ligar `filVldSugContabaixa` na filial 2 do HML e repetir o ciclo. Se o
-> borderô sair com `gerNum`, está fechado.
-
-### Check 1 (PRD) — inconclusivo para o `gerNum`, mas confirmou outra coisa
-Não foi possível localizar, em produção, o borderô de uma baixa originada de retorno: o elo
-não é exposto por nenhum caminho testado. **E isso vale para PRD também** — nos 3 lotes de
-produção com retorno processado (filial 2, flp 3/4/8, 60 itens), **todos** os itens têm
-`borCod` nulo, e os títulos, embora `vldPago=1`, também mostram `borCod` nulo no `fin064`.
-
-> **Confirmado, então:** a rastreabilidade lote → borderô **não existe no ERP, nem em produção**.
-> Não é sintoma do nosso fluxo sintético. O vínculo tem que ser guardado do nosso lado.
-
-Nota: 5% dos borderôs a-pagar de PRD (23 de 500) estão sem conta financeira, mas todos com
-`borVldFinalizado=3` — população diferente dos nossos (status 1). Não serve de comparação.
-
-### Check 3 — não respondido
-O `configList` não voltou na resposta do `fin052/arquivosRetorno/list` pelo caminho usado, então
-os valores de "Tipo de Processamento" seguem desconhecidos. Baixa prioridade: `tipo=1` funciona.
+### Lição de método
+Três conclusões erradas seguidas tiveram a mesma causa: **inferir de ausência**. Coluna vazia no
+grid, `count=0` numa lista, `rows[0]` de uma lista não filtrada. Em ERP, ausência quase sempre
+significa "olhei no lugar errado", não "não existe".
