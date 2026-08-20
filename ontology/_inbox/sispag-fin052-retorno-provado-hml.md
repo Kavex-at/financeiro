@@ -67,8 +67,9 @@ INATIVA. CONTA(S): 37"* — configuração de ambiente, não formato nem payload
 (`fin004` / Plano de Contas Financeiro, "BANCO ITAÚ - AG. 2000 CONTA 35.911-3") estava com
 `gerVldStatus=2`. Ativada (`=1`) pela Columbia, o ciclo fechou na hora.
 
-**Body do `processar` (o que funciona):** registro inteiro do arquivo em `items[]` **E** a chave
-no nível da requisição — a mesma forma "nos dois níveis" do `titulosPendentes/importar`.
+**Body do `processar` (o que funciona):** o envelope é **`items[]` com a chave do arquivo**:
+`{ items: [{ filCod, bncCod, gtbCodSeq, garCodSeq, tipo: 1 }] }`. Confirmado em execução limpa
+(gar 5). A chave FORA de `items[]` dá `SELECTION_ERROR / NENHUM_REGISTRO_SELECIONADO`.
 
 Estado após o processamento (lote 12, filial 2, doc 801):
 
@@ -110,3 +111,54 @@ header. **O serviço de orquestração precisa buscar a conta pagadora por filia
 | `sintetizar-ret-fin052.ts` | gera o `.RET` a partir do nosso `.REM`; `RET_UPLOAD=1` sobe | HML, opt-in |
 | `processar-ret-fin052.ts` | descobre o body e chama o `processar` | HML, opt-in |
 | `probe-fin052-retorno.ts` | leitura: configs, arquivos, detalhe, lado do lote | não |
+
+
+---
+
+## 9. DEFEITO CONFIRMADO — a baixa via retorno nasce SEM conta financeira
+
+Levantado ao olhar o `fin010`: o borderô gerado pelo retorno vem com **`gerNum` e `gerDes`
+nulos**, enquanto borderôs normais da mesma filial trazem `gerNum=38` ("BANCO ITAÚ - AG. 0641
+CONTA 55.795-4").
+
+**Primeira hipótese (errada):** seria efeito de um cadastro quebrado. O harness fixava
+`ccoCod=1`, e na filial 2 esse código aponta para um registro inconsistente do HML — conta
+corrente **BANESTES ag 1111 cc 111111** ligada à conta financeira **37** ("BANCO ITAÚ - AG.
+2000"). Foi o que produziu o `.REM` com header `021` e o erro de conta financeira inativa.
+
+**Teste controlado:** repetido o ciclo inteiro com `ccoCod=2` — a conta Itaú de verdade
+(ag 0641, cc 55795-4, `gerNum=38`). O `.REM` saiu com header **341 / ITAU**, correto.
+
+| borderô | conta pagadora usada | `gerNum` do borderô |
+|---|---|---|
+| 248 | ccoCod 1 (registro quebrado, Banestes) | **null** |
+| 249 | ccoCod 2 (Itaú 0641 correta, gerNum 38) | **null** |
+
+**Conclusão: não é o cadastro.** O caminho de baixa por retorno **não propaga a conta
+financeira** para o borderô, mesmo com conta pagadora bem configurada. Nos dois casos o título
+foi quitado corretamente (doc 801 → 275,00; doc 813 → 6.622.898,68) e a baixa está no borderô —
+mas sem `gerNum`.
+
+**Por que importa:** relatório e conciliação por conta financeira não enxergam esses
+lançamentos. O dinheiro sai e o borderô não diz de qual conta. Em produção isso vira buraco
+contábil silencioso — o pagamento aparece como feito, mas não aparece no extrato gerencial da
+conta.
+
+**Ações:**
+1. **Reportar à Conexos** — é comportamento do ERP, não do nosso código. Levar os borderôs 248 e
+   249 do HML como evidência (mesma conclusão com conta quebrada e com conta correta).
+2. **Confirmar em PRD** se os borderôs originados de retorno SISPAG também vêm sem `gerNum`. Se
+   vierem, já existe hoje um passivo de conciliação na Columbia, independente da nossa automação.
+3. Enquanto não houver correção, o nosso serviço precisa **registrar o vínculo lote → borderô →
+   conta pagadora do nosso lado** — o que já era necessário, porque `vldHasRemessaPgto` também
+   vem 0 e não marca origem SISPAG (§ item do lote com `borCod` nulo).
+
+### Correção de rumo do harness
+`validate-fin015-import.ts` não fixa mais a conta pagadora: lê do `fin005` da filial via `CCO=`.
+O mesmo `ccoCod` aponta para contas DIFERENTES em cada filial — fixar foi o que causou toda esta
+investigação.
+
+### Nota operacional
+O usuário do `.env` (`MPS_FRANCINEI`) bateu **`LOGIN_ERROR_MAX_SESSIONS`**: cada job abre sessão
+nova e o ERP limita as simultâneas. O serviço de orquestração precisa **reusar sessão**, e vale
+um usuário de robô dedicado — hoje toda escrita fica atribuída a uma pessoa real.

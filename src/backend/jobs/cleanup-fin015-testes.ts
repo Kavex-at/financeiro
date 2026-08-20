@@ -52,6 +52,39 @@ async function main(): Promise<void> {
             console.log(`  flp ${flpCod} → erro: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
+    // Arquivos de retorno de teste (fin052). `PUT arquivosRetorno/cancelar/{bnc}/{gtb}/{gar}`.
+    // Só faz sentido nos NÃO processados; o processado é a evidência do ciclo.
+    const GARS = (process.env.GARS ?? '')
+        .split(',')
+        .map((x) => Number(x.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0);
+    if (GARS.length > 0) {
+        const GTB = Number(process.env.GTB ?? 1);
+        console.log(`\ncancelando arquivos de retorno: ${GARS.join(', ')}`);
+        for (const gar of GARS) {
+            let ok = false;
+            for (const body of [
+                { items: [{ filCod: FIL, bncCod: BNC, gtbCodSeq: GTB, garCodSeq: gar }] },
+                { filCod: FIL, bncCod: BNC, gtbCodSeq: GTB, garCodSeq: gar },
+            ]) {
+                try {
+                    await base.putGenericOnce(
+                        `fin052/arquivosRetorno/cancelar/${BNC}/${GTB}/${gar}`,
+                        body,
+                        { filCod: FIL },
+                    );
+                    console.log(`  gar ${gar} → CANCELADO`);
+                    ok = true;
+                    break;
+                } catch (e) {
+                    const d = (e as { response?: { data?: unknown } })?.response?.data;
+                    console.log(`  gar ${gar} → ${JSON.stringify(d ?? (e as Error).message).slice(0, 160)}`);
+                }
+            }
+            if (!ok) console.log(`  gar ${gar} → não cancelado`);
+        }
+    }
+
     console.log('\nfim.');
 }
 
