@@ -47,17 +47,14 @@ const BNC = Number(process.env.FLP_BNC ?? 4);
 const WRITE = process.env.FIN015_IMPORT_WRITE === '1';
 const CLEANUP = process.env.CLEANUP === '1';
 
-/** Conta pagadora Itaú (default empírico, 8/8 lotes PRD). */
-const ITAU: ContaPagadora = {
-    bncCod: BNC,
-    bncNumCodbanco: 341,
-    ccoCod: 1,
-    ccoNumConta: 55795,
-    ccoEspDvconta: '4',
-    ccoEspAgcod: '0641',
-    conta: '55795-4',
-    layoutConta: 'AG:0641/CT:55795-4',
-};
+/**
+ * Conta corrente pagadora a usar (`ccoCod`). NÃO pode ser fixa: o mesmo `ccoCod` aponta
+ * para contas DIFERENTES em cada filial. Fixar `1` levou o lote da filial 2 a um registro
+ * quebrado do HML (conta corrente BANESTES ag 1111 cc 111111 apontando para a conta
+ * financeira 37, "BANCO ITAÚ - AG. 2000") — o `.REM` saiu com header 021 e o borderô da
+ * baixa nasceu sem conta financeira. A conta é lida do `fin005` da filial.
+ */
+const CCO = Number(process.env.CCO ?? 1);
 
 /** Modalidade nativa do fin015 — 1 = crédito em conta / transferência (observado no item real). */
 const MODALIDADE_TRANSFERENCIA = 1;
@@ -99,6 +96,39 @@ async function main(): Promise<void> {
     await base.ensureSid();
     log('login OK');
 
+    // ── 0) conta pagadora REAL da filial (fin005), nunca hardcoded ───────────
+    const { rows: contasCorrentes } = await base.listGenericPaginated<Row>(
+        'fin005/list',
+        { fieldList: [], filterList: {}, serviceName: 'fin005', pageNumber: 1, pageSize: 100 },
+        { filCod: FIL },
+    );
+    const cc = contasCorrentes.find((c) => Number(c.ccoCod) === CCO);
+    if (!cc) {
+        log(`0) ccoCod=${CCO} não existe na filial ${FIL}. Disponíveis:`);
+        for (const c of contasCorrentes.slice(0, 20)) {
+            log(`     ccoCod=${c.ccoCod} bnc=${c.bncCod} ag=${c.ccoEspAgcod} cc=${c.ccoNumConta}-${c.ccoEspDvconta} gerNum=${c.gerNum} · ${c.gerDes}`);
+        }
+        return;
+    }
+    const bncDaConta = Number(cc.bncCod);
+    const contaFmt = `${cc.ccoNumConta}-${cc.ccoEspDvconta ?? ''}`;
+    const contaPagadora: ContaPagadora = {
+        bncCod: bncDaConta,
+        bncNumCodbanco: FEBRABAN_POR_BNCCOD[bncDaConta] ?? 341,
+        ccoCod: CCO,
+        ccoNumConta: Number(cc.ccoNumConta),
+        ccoEspDvconta: String(cc.ccoEspDvconta ?? ''),
+        ccoEspAgcod: String(cc.ccoEspAgcod ?? ''),
+        conta: contaFmt,
+        layoutConta: `AG:${cc.ccoEspAgcod}/CT:${contaFmt}`,
+    };
+    log(
+        `0) conta pagadora (fin005 fil ${FIL}, ccoCod ${CCO}): banco ${bncDaConta}/${contaPagadora.bncNumCodbanco} ag ${cc.ccoEspAgcod} cc ${contaFmt} · conta financeira gerNum=${cc.gerNum} "${cc.gerDes}"`,
+    );
+    if (bncDaConta !== BNC) {
+        log(`   ⚠️  banco da conta (${bncDaConta}) ≠ FLP_BNC (${BNC}) — usando o da conta.`);
+    }
+
     const dataDebito = hojeUtc();
     log(`data de débito (R1: ≥ hoje) = ${new Date(dataDebito).toISOString().slice(0, 10)}`);
 
@@ -106,7 +136,7 @@ async function main(): Promise<void> {
     let flpCod: number | undefined;
     if (WRITE) {
         try {
-            const lote = await write.criarLote({ filCod: FIL, conta: ITAU, dataDebito });
+            const lote = await write.criarLote({ filCod: FIL, conta: contaPagadora, dataDebito });
             flpCod = lote.flpCod;
             log(`1) criarLote OK → flp ${flpCod}`);
         } catch (e) {
