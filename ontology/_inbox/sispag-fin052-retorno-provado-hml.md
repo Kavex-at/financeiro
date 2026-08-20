@@ -162,3 +162,43 @@ investigação.
 O usuário do `.env` (`MPS_FRANCINEI`) bateu **`LOGIN_ERROR_MAX_SESSIONS`**: cada job abre sessão
 nova e o ERP limita as simultâneas. O serviço de orquestração precisa **reusar sessão**, e vale
 um usuário de robô dedicado — hoje toda escrita fica atribuída a uma pessoa real.
+
+
+---
+
+## 10. CORREÇÃO DO §9 — provavelmente NÃO é defeito do ERP
+
+O §9 concluiu "o caminho de retorno não propaga a conta financeira" e sugeriu reportar à
+Conexos. **A conclusão foi precipitada** — estava baseada em duas amostras, ambas do nosso
+fluxo sintético em HML. Três verificações depois, o quadro mudou.
+
+### Check 2 (o decisivo) — parâmetro de filial diverge entre HML e PRD
+Comparando `ger008` (Parâmetros por Filial), filial 2, HML × PRD:
+
+| parâmetro | HML | PRD |
+|---|---|---|
+| **`filVldSugContabaixa`** ("sugerir conta de baixa") | **0** | **1** |
+| `filVldInfbanco` ("informar banco") | 0 | 1 |
+
+`filVldSugContabaixa` desligado em HML explica exatamente o sintoma: o borderô nasce sem conta
+financeira sugerida. **É configuração de ambiente, não defeito** — mesma classe da conta
+financeira 37 inativa. Não reportar à Conexos antes de testar com o parâmetro ligado.
+
+> **Como provar:** ligar `filVldSugContabaixa` na filial 2 do HML e repetir o ciclo. Se o
+> borderô sair com `gerNum`, está fechado.
+
+### Check 1 (PRD) — inconclusivo para o `gerNum`, mas confirmou outra coisa
+Não foi possível localizar, em produção, o borderô de uma baixa originada de retorno: o elo
+não é exposto por nenhum caminho testado. **E isso vale para PRD também** — nos 3 lotes de
+produção com retorno processado (filial 2, flp 3/4/8, 60 itens), **todos** os itens têm
+`borCod` nulo, e os títulos, embora `vldPago=1`, também mostram `borCod` nulo no `fin064`.
+
+> **Confirmado, então:** a rastreabilidade lote → borderô **não existe no ERP, nem em produção**.
+> Não é sintoma do nosso fluxo sintético. O vínculo tem que ser guardado do nosso lado.
+
+Nota: 5% dos borderôs a-pagar de PRD (23 de 500) estão sem conta financeira, mas todos com
+`borVldFinalizado=3` — população diferente dos nossos (status 1). Não serve de comparação.
+
+### Check 3 — não respondido
+O `configList` não voltou na resposta do `fin052/arquivosRetorno/list` pelo caminho usado, então
+os valores de "Tipo de Processamento" seguem desconhecidos. Baixa prioridade: `tipo=1` funciona.
