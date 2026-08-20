@@ -43,6 +43,23 @@ export interface TituloAPagar {
     ativo?: boolean;
 }
 
+/**
+ * Uma conta corrente cadastrada do favorecido (`CmnPessoasCtcorr` / `cmn025/ctcorr`).
+ * Fonte AUTORITATIVA do destino de pagamento — o `fin064` não carrega essa informação.
+ * `pctCodSeq` é a chave que o item do lote fin015 (`FinItemSispag`) referencia.
+ */
+export interface ContaFavorecido {
+    pctCodSeq: number;
+    /** Código FEBRABAN do banco (ex.: 341 = Itaú, 1 = Banco do Brasil). */
+    banco: number;
+    bancoNome?: string;
+    agencia?: string;
+    conta?: string;
+    dvConta?: string;
+    /** Conta default do favorecido (`pctVldDefault`) — a que a tela do ERP usa. */
+    padrao: boolean;
+}
+
 /** Run de auditoria da ingestão de pagamentos (cron ou manual). */
 export interface PagamentoIngestaoRun {
     id: string;
