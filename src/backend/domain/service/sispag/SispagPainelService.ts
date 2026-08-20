@@ -5,12 +5,13 @@ import ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
-import type {
-    LoteSispag,
-    Modalidade,
-    SispagKpis,
-    SispagPainelResponse,
-    TituloAPagar,
+import {
+    type LoteSispag,
+    MODALIDADE,
+    type Modalidade,
+    type SispagKpis,
+    type SispagPainelResponse,
+    type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
@@ -200,15 +201,33 @@ export default class SispagPainelService {
     ): Promise<Array<{ docCod: string; titCod: string; modalidades: Modalidade[] }>> => {
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote) return [];
+        // Duas fontes, porque o ERP as guarda em lugares diferentes:
+        //   boleto/PIX  → do TÍTULO (`fin064`, via `getTituloAPagar`)
+        //   TED/crédito → da CONTA DO FAVORECIDO (`cmn025/ctcorr`)
+        // O `fin064` NÃO carrega a conta (0% em 561 títulos de HML e 2000 de PRD — os
+        // campos `pct*` de lá são join no item SISPAG e só populam depois do import).
+        // Antes desta correção a rota devolvia lista vazia para todo item.
         const settled = await this.bounded.run(
             lote.itens,
-            (it) => this.sispag.getTituloAPagar(it.filCod, it.docCod, it.titCod),
+            async (it) => {
+                const titulo = await this.sispag.getTituloAPagar(it.filCod, it.docCod, it.titCod);
+                const modalidades = [...(titulo?.modalidadesDisponiveis ?? [])];
+                if (titulo?.pesCod) {
+                    const contas = await this.sispag.listContasFavorecido(
+                        titulo.pesCod,
+                        it.filCod,
+                    );
+                    if (contas.length > 0) {
+                        modalidades.push(MODALIDADE.TED, MODALIDADE.CREDITO_CONTA);
+                    }
+                }
+                return modalidades;
+            },
             CONEXOS_FANOUT_LIMIT,
         );
         return lote.itens.map((it, i) => {
             const s = settled[i];
-            const modalidades =
-                s.status === 'fulfilled' ? (s.value?.modalidadesDisponiveis ?? []) : [];
+            const modalidades = s.status === 'fulfilled' ? (s.value ?? []) : [];
             return { docCod: it.docCod, titCod: it.titCod, modalidades };
         });
     };

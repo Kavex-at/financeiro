@@ -66,14 +66,58 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
     });
 
     describe('importarTitulos', () => {
-        it('embrulha os itens em { items } e usa postGenericOnce', async () => {
+        // Shape provado ao vivo em HML (2026-08-20, flp 26): os campos de SELEÇÃO precisam
+        // ir no nível da requisição E dentro de cada item. Só num dos dois → SELECTION_ERROR.
+        it('repete os campos de seleção nos DOIS níveis e usa postGenericOnce', async () => {
             const base = buildBase();
             base.postGenericOnce.mockResolvedValue({ valid: 'SUCESSO' });
-            const item = { docCod: 520, titCod: 1, filCodLote: 1, bncCod: 4, flpCod: 18 };
+            const item = { docCod: 520, titCod: 1, filCod: 2, filCodLote: 1, bncCod: 4, flpCod: 18 };
             await make(base).importarTitulos({ filCod: 1, bncCod: 4, flpCod: 18, itens: [item] });
             const [endpoint, body] = base.postGenericOnce.mock.calls[0];
             expect(endpoint).toBe('fin015/finItemSispag/titulosPendentes/importar');
-            expect(body).toEqual({ items: [item] });
+            expect(body).toEqual({
+                items: [
+                    {
+                        ...item,
+                        op: 1,
+                        bncCodFin015: 4,
+                        titVldReflexoDdaAssoc: 0,
+                        titVldReflexoDdaDesassoc: 0,
+                    },
+                ],
+                op: 1,
+                bncCodFin015: 4,
+                titVldReflexoDdaAssoc: 0,
+                titVldReflexoDdaDesassoc: 0,
+            });
+        });
+
+        it('preserva a identidade do item verbatim (filCod do TÍTULO ≠ filCodLote)', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+            // O grid de pendentes cruza filiais: forçar filCod = filial do lote devolve
+            // `Not Found: FinTituloPag`. O client não pode reescrever a chave.
+            const item = { docCod: 813, titCod: 1, filCod: 2, filCodLote: 1 };
+            await make(base).importarTitulos({ filCod: 1, bncCod: 4, flpCod: 26, itens: [item] });
+            const body = base.postGenericOnce.mock.calls[0][1] as {
+                items: Array<Record<string, unknown>>;
+            };
+            expect(body.items[0].filCod).toBe(2);
+            expect(body.items[0].filCodLote).toBe(1);
+        });
+
+        it('op é parametrizável', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+            await make(base).importarTitulos({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                itens: [{ docCod: 1 }],
+                op: 2,
+            });
+            const body = base.postGenericOnce.mock.calls[0][1] as { op: number };
+            expect(body.op).toBe(2);
         });
     });
 
@@ -106,6 +150,23 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
     });
 
     describe('gerarRemessa', () => {
+        // O ERP sinaliza falha com 400 (→ ConexosError). Um retorno 200 É o sucesso, mesmo
+        // SEM `valid: 'SUCESSO'` no corpo — foi o caso da geração provada em HML
+        // (2026-08-20, flp 26 → PG200893.REM), que o parse antigo marcava como falha.
+        it('200 sem campo `valid` ainda é sucesso (regressão do parse antigo)', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+            const res = await make(base).gerarRemessa({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 26,
+                grbCodSeq: 1,
+                seqNum: 93,
+                gabEspNomeArquivo: 'PG200893.REM',
+            });
+            expect(res.sucesso).toBe(true);
+        });
+
         it('usa postGenericOnce e marca sucesso em SUCESSO', async () => {
             const base = buildBase();
             base.postGenericOnce.mockResolvedValue({

@@ -6,6 +6,7 @@ import {
     MODALIDADE,
     type Modalidade,
     type TituloAPagar,
+    type ContaFavorecido,
 } from '../interface/sispag/SispagInterface.js';
 import Logger from '../libs/logger/Logger.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
@@ -125,13 +126,20 @@ export default class ConexosSispagClient {
 
     /** Mapeia uma linha do `fin064` para `TituloAPagar` (compartilhado por list/get). */
     private mapTitulo = (r: TituloRow, filCod: number): TituloAPagar => {
-        // Formas de pagamento DISPONÍVEIS no cadastro do favorecido (A2 opção B): o que o
-        // fin064 traz ao vivo. Boleto = tem código de barras (por título); PIX = tem chave;
-        // TED/crédito em conta = tem banco+conta do favorecido. O detalhe (barras/chave/conta)
-        // é hidratado pelo ERP só no envio (anti-drift) — aqui é só a DISPONIBILIDADE.
+        // Formas de pagamento DISPONÍVEIS (A2 opção B).
+        //
+        // ⚠️ `pctNumBanco`/`pctEspNumContaBanc` NÃO servem para isto. Sondagem read-only
+        // (2026-08-20) mediu 0% de preenchimento em 561 títulos de HML e 2000 de PRD: no
+        // `fin064` os campos `pct*`/`its*` são um LEFT JOIN no ITEM SISPAG e só populam
+        // depois que o título entra num lote. A conta do favorecido mora em
+        // `CmnPessoasCtcorr` (`cmn025/ctcorr/list`) — ver `listContasFavorecido`.
+        // Consequência: derivar TED/CRÉDITO daqui devolvia SEMPRE lista vazia.
+        //
+        // Boleto/PIX seguem vindo do título; a disponibilidade de conta é resolvida por
+        // quem tem orçamento para a chamada extra (`modalidadesDisponiveisDoLote`).
         const temBoleto = Boolean(r.titEspCodbar);
         const temPix = Boolean(r.itsDesChavePix);
-        const temContaBanco = Boolean(r.pctNumBanco && r.pctEspNumContaBanc);
+        const temContaBanco = false;
         const modalidadesDisponiveis: Modalidade[] = [];
         if (temBoleto) modalidadesDisponiveis.push(MODALIDADE.BOLETO);
         if (temPix) modalidadesDisponiveis.push(MODALIDADE.PIX);
@@ -240,6 +248,40 @@ export default class ConexosSispagClient {
             return this.mapTitulo(r, filCod);
         }
         return null;
+    };
+
+    /**
+     * Contas correntes cadastradas de um favorecido (`cmn025/ctcorr/list`, schema
+     * `CmnPessoasCtcorr`). É a fonte AUTORITATIVA do destino de pagamento — o `fin064`
+     * não carrega isso (ver `mapTitulo`). O `pctCodSeq` devolvido aqui é o campo que o
+     * `FinItemSispag` referencia no import do lote fin015.
+     *
+     * Devolve só contas ATIVAS (`pctVldStatus === 1`), com a conta DEFAULT
+     * (`pctVldDefault === 1`) à frente — é a que a tela do ERP usa.
+     */
+    public listContasFavorecido = async (
+        pesCod: string | number,
+        filCod: number,
+    ): Promise<ContaFavorecido[]> => {
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'cmn025/ctcorr/list',
+                this.listBody('cmn025', { 'pesCod#EQ': pesCod }, 50),
+                { filCod },
+            ),
+        );
+        return rows
+            .filter((c) => Number(c.pctVldStatus) === 1)
+            .map((c) => ({
+                pctCodSeq: Number(c.pctCodSeq),
+                banco: Number(c.pctNumBanco),
+                bancoNome: c.bncDesNome != null ? String(c.bncDesNome) : undefined,
+                agencia: c.pctEspNumAgencia != null ? String(c.pctEspNumAgencia) : undefined,
+                conta: c.pctEspNumContaBanc != null ? String(c.pctEspNumContaBanc) : undefined,
+                dvConta: c.pctEspDvconta != null ? String(c.pctEspDvconta) : undefined,
+                padrao: Number(c.pctVldDefault) === 1,
+            }))
+            .sort((a, b) => Number(b.padrao) - Number(a.padrao));
     };
 
     /**

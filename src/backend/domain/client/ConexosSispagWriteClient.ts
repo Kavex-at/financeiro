@@ -182,15 +182,42 @@ export default class ConexosSispagWriteClient {
 
     /**
      * Ferramenta 3 — importa os títulos selecionados no lote
-     * (`POST finItemSispag/titulosPendentes/importar`). Shape descoberto em HML:
-     * `{ items: [<linha crua do list>] }` (array cru dá 500). Escrita → `postGenericOnce`.
+     * (`POST finItemSispag/titulosPendentes/importar`). Escrita → `postGenericOnce`.
+     *
+     * SHAPE PROVADO AO VIVO EM HML (2026-08-20, lote flp 26). O endpoint NÃO recebe um
+     * `FinItemSispag` inteiro: ele projeta um DTO de SELEÇÃO. Quatro campos precisam ir
+     * ao MESMO TEMPO no nível da requisição E dentro de cada item — presentes em só um
+     * dos dois lados, o ERP responde `SELECTION_ERROR` listando-os como vazios:
+     *   `op`                        — operação da seleção (1)
+     *   `bncCodFin015`              — banco do LOTE (≠ `bncCod` do item)
+     *   `titVldReflexoDdaAssoc`     — reflexo DDA associar (0)
+     *   `titVldReflexoDdaDesassoc`  — reflexo DDA desassociar (0)
+     *
+     * ⚠️ IDENTIDADE: cada item leva a chave VERBATIM do `titulosPendentes/list`. `filCod`
+     * é a filial do TÍTULO e `filCodLote` a do LOTE — o grid cruza filiais, e forçar as
+     * duas iguais devolve `Not Found: FinTituloPag`.
+     *
+     * ⚠️ O ERP pode responder `{ type: 'QUESTION', answerList: [YES, ABORT] }` (ex.:
+     * favorecido sem conta ativa no banco do lote, `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_
+     * ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO`). É uma confirmação interativa e
+     * hoje vira erro — tratar no serviço de orquestração antes de ligar a escrita.
      */
     public importarTitulos = async (params: ImportarTitulosParams): Promise<void> => {
-        const { filCod, itens } = params;
+        const { filCod, bncCod, itens, op = 1 } = params;
         const path = 'fin015/finItemSispag/titulosPendentes/importar';
+        const selecao = {
+            op,
+            bncCodFin015: bncCod,
+            titVldReflexoDdaAssoc: 0,
+            titVldReflexoDdaDesassoc: 0,
+        };
         try {
             await this.base.ensureSid();
-            await this.base.postGenericOnce<unknown>(path, { items: itens }, { filCod });
+            await this.base.postGenericOnce<unknown>(
+                path,
+                { items: itens.map((item) => ({ ...item, ...selecao })), ...selecao },
+                { filCod },
+            );
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }
@@ -233,9 +260,16 @@ export default class ConexosSispagWriteClient {
                 { filCodLote: filCod, bncCod, flpCod, grbCodSeq, seqNum, gabEspNomeArquivo },
                 { filCod },
             );
+            // O ERP sinaliza falha de negócio com 400 (`VALIDATION_LIST`), que vira
+            // `ConexosError` no catch — logo, chegar aqui É o sinal de sucesso. NÃO dá
+            // para derivar de `valid === 'SUCESSO'`: na geração provada em HML
+            // (2026-08-20, flp 26 → PG200893.REM, gabCod 46, 1210 chars) o corpo veio
+            // SEM esse campo e a remessa foi gerada mesmo assim — o parse antigo
+            // reportava `sucesso: false` num caso de sucesso.
+            // Defesa em profundidade: o orquestrador confirma via `listarArquivosRemessa`.
             const parsed = SUCESSO_SCHEMA.parse(raw ?? {});
             return {
-                sucesso: (parsed.valid ?? '').toUpperCase() === 'SUCESSO',
+                sucesso: true,
                 ...(parsed.message ? { mensagem: parsed.message } : {}),
             };
         } catch (cause) {

@@ -62,13 +62,23 @@ export interface TituloPendente {
     raw: Record<string, unknown>;
 }
 
-/** Parâmetros para importar títulos selecionados num lote (`titulosPendentes/importar`). */
+/**
+ * Parâmetros para importar títulos selecionados num lote (`titulosPendentes/importar`).
+ *
+ * `itens` são as linhas do `titulosPendentes/list` VERBATIM (a identidade tem que bater:
+ * `filCod` é a filial do TÍTULO, não a do lote), enriquecidas com a modalidade e o
+ * destino do favorecido (`pctCodSeq` de `cmn025/ctcorr`). Os campos de SELEÇÃO
+ * (`op`, `bncCodFin015`, `titVldReflexoDda*`) são montados pelo client nos dois níveis
+ * que o ERP exige — ver `ConexosSispagWriteClient.importarTitulos`.
+ */
 export interface ImportarTitulosParams {
     filCod: number;
     bncCod: number;
     flpCod: number;
     /** Itens de seleção (linhas cruas do `titulosPendentes/list` dos títulos escolhidos). */
     itens: Array<Record<string, unknown>>;
+    /** Operação da seleção. Default 1 (o valor provado em HML). */
+    op?: number;
 }
 
 /** Parâmetros para gerar a remessa `.REM` de um lote FINALIZADO (`gerArquivosBancos/gerarRemessa`). */
