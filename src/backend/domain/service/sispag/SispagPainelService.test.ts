@@ -51,11 +51,13 @@ const make = (
         retornoArquivos?: jest.Mock;
         getLoteComItens?: jest.Mock;
         getTituloAPagar?: jest.Mock;
+        listContasFavorecido?: jest.Mock;
     } = {},
 ) => {
     const sispag = {
         listLotes: over.listLotes ?? jest.fn().mockResolvedValue([loteNativo()]),
         getTituloAPagar: over.getTituloAPagar ?? jest.fn().mockResolvedValue(null),
+        listContasFavorecido: over.listContasFavorecido ?? jest.fn().mockResolvedValue([]),
     } as unknown as ConexosSispagClient;
     const retorno = {
         listConfigsRetorno: over.retornoConfigs ?? jest.fn().mockResolvedValue([]),
@@ -175,5 +177,88 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
     it('lote inexistente → lista vazia', async () => {
         const { service } = make({ getLoteComItens: jest.fn().mockResolvedValue(null) });
         expect(await service.modalidadesDisponiveisDoLote('X')).toEqual([]);
+    });
+
+    it('TED/crédito vêm da conta do favorecido, não do fin064', async () => {
+        const getLoteComItens = jest.fn().mockResolvedValue({
+            id: 'L1',
+            itens: [{ filCod: 2, docCod: '100', titCod: '1' }],
+        });
+        const getTituloAPagar = jest
+            .fn()
+            .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: ['BOLETO'] });
+        const listContasFavorecido = jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 341 }]);
+        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens[0].modalidades).toEqual(['BOLETO', 'TED', 'CREDITO_CONTA']);
+        expect(listContasFavorecido).toHaveBeenCalledWith('P1', 2);
+    });
+
+    it('agrupa por (filial, favorecido): 3 títulos do mesmo pesCod = 1 consulta de contas', async () => {
+        const getLoteComItens = jest.fn().mockResolvedValue({
+            id: 'L1',
+            itens: [
+                { filCod: 2, docCod: '100', titCod: '1' },
+                { filCod: 2, docCod: '100', titCod: '2' },
+                { filCod: 2, docCod: '200', titCod: '1' },
+            ],
+        });
+        const getTituloAPagar = jest.fn().mockResolvedValue({ pesCod: 'P1' });
+        const listContasFavorecido = jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 341 }]);
+        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(getTituloAPagar).toHaveBeenCalledTimes(3); // 1 por título — são títulos distintos
+        expect(listContasFavorecido).toHaveBeenCalledTimes(1); // 1 por favorecido distinto
+        expect(itens.every((i) => i.modalidades.includes('TED'))).toBe(true);
+    });
+
+    it('o mesmo favorecido em filiais diferentes são consultas diferentes', async () => {
+        const getLoteComItens = jest.fn().mockResolvedValue({
+            id: 'L1',
+            itens: [
+                { filCod: 2, docCod: '100', titCod: '1' },
+                { filCod: 4, docCod: '200', titCod: '1' },
+            ],
+        });
+        const getTituloAPagar = jest.fn().mockResolvedValue({ pesCod: 'P1' });
+        const listContasFavorecido = jest.fn().mockResolvedValue([]);
+        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
+        await service.modalidadesDisponiveisDoLote('L1');
+        expect(listContasFavorecido).toHaveBeenCalledTimes(2);
+        expect(listContasFavorecido).toHaveBeenCalledWith('P1', 2);
+        expect(listContasFavorecido).toHaveBeenCalledWith('P1', 4);
+    });
+
+    it('consulta de contas que falha não vira TED/crédito (não promete destino inexistente)', async () => {
+        const getLoteComItens = jest.fn().mockResolvedValue({
+            id: 'L1',
+            itens: [{ filCod: 2, docCod: '100', titCod: '1' }],
+        });
+        const getTituloAPagar = jest
+            .fn()
+            .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: ['PIX'] });
+        const listContasFavorecido = jest.fn().mockRejectedValue(new Error('504'));
+        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens[0].modalidades).toEqual(['PIX']);
+    });
+
+    it('título que falha no fin064 não derruba os demais itens do lote', async () => {
+        const getLoteComItens = jest.fn().mockResolvedValue({
+            id: 'L1',
+            itens: [
+                { filCod: 2, docCod: '100', titCod: '1' },
+                { filCod: 2, docCod: '200', titCod: '1' },
+            ],
+        });
+        const getTituloAPagar = jest
+            .fn()
+            .mockRejectedValueOnce(new Error('504'))
+            .mockResolvedValueOnce({ pesCod: 'P1', modalidadesDisponiveis: ['BOLETO'] });
+        const listContasFavorecido = jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 341 }]);
+        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens[0]).toEqual({ docCod: '100', titCod: '1', modalidades: [] });
+        expect(itens[1].modalidades).toEqual(['BOLETO', 'TED', 'CREDITO_CONTA']);
     });
 });

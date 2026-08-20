@@ -207,27 +207,53 @@ export default class SispagPainelService {
         // O `fin064` NÃO carrega a conta (0% em 561 títulos de HML e 2000 de PRD — os
         // campos `pct*` de lá são join no item SISPAG e só populam depois do import).
         // Antes desta correção a rota devolvia lista vazia para todo item.
-        const settled = await this.bounded.run(
+        //
+        // Em DUAS FASES porque a conta é do FAVORECIDO, não do título, e um lote repete
+        // favorecido (várias parcelas do mesmo fornecedor). Consultar por título faria N
+        // chamadas idênticas ao mesmo `pesCod`; a fase 2 faz uma por par DISTINTO.
+        const titulosSettled = await this.bounded.run(
             lote.itens,
-            async (it) => {
-                const titulo = await this.sispag.getTituloAPagar(it.filCod, it.docCod, it.titCod);
-                const modalidades = [...(titulo?.modalidadesDisponiveis ?? [])];
-                if (titulo?.pesCod) {
-                    const contas = await this.sispag.listContasFavorecido(
-                        titulo.pesCod,
-                        it.filCod,
-                    );
-                    if (contas.length > 0) {
-                        modalidades.push(MODALIDADE.TED, MODALIDADE.CREDITO_CONTA);
-                    }
-                }
-                return modalidades;
-            },
+            (it) => this.sispag.getTituloAPagar(it.filCod, it.docCod, it.titCod),
             CONEXOS_FANOUT_LIMIT,
         );
+        const titulos = titulosSettled.map((s) => (s.status === 'fulfilled' ? s.value : null));
+
+        // `filCod` entra na chave porque a chamada ao Conexos é por filial — o mesmo
+        // favorecido em duas filiais são duas consultas, não uma.
+        const chaveFavorecido = (filCod: number, pesCod: string): string => `${filCod}:${pesCod}`;
+        const favorecidos = new Map<string, { pesCod: string; filCod: number }>();
+        titulos.forEach((titulo, i) => {
+            if (!titulo?.pesCod) return;
+            const { filCod } = lote.itens[i];
+            favorecidos.set(chaveFavorecido(filCod, titulo.pesCod), {
+                pesCod: titulo.pesCod,
+                filCod,
+            });
+        });
+
+        const distintos = [...favorecidos.values()];
+        const contasSettled = await this.bounded.run(
+            distintos,
+            (f) => this.sispag.listContasFavorecido(f.pesCod, f.filCod),
+            CONEXOS_FANOUT_LIMIT,
+        );
+        // Consulta que FALHOU ≠ favorecido sem conta: na dúvida não oferece TED/crédito,
+        // porque prometer um destino inexistente só estoura mais tarde, no envio.
+        const temConta = new Map<string, boolean>();
+        distintos.forEach((f, i) => {
+            const s = contasSettled[i];
+            temConta.set(
+                chaveFavorecido(f.filCod, f.pesCod),
+                s.status === 'fulfilled' && s.value.length > 0,
+            );
+        });
+
         return lote.itens.map((it, i) => {
-            const s = settled[i];
-            const modalidades = s.status === 'fulfilled' ? (s.value ?? []) : [];
+            const titulo = titulos[i];
+            const modalidades = [...(titulo?.modalidadesDisponiveis ?? [])];
+            if (titulo?.pesCod && temConta.get(chaveFavorecido(it.filCod, titulo.pesCod))) {
+                modalidades.push(MODALIDADE.TED, MODALIDADE.CREDITO_CONTA);
+            }
             return { docCod: it.docCod, titCod: it.titCod, modalidades };
         });
     };
