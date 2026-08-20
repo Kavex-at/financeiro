@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.26.2 (2026-08-20) — Recebimentos: o modal diz se vai sair nota de débito ANTES do Processar
+
+- **feat(recebimentos):** o modal "Alocar" passa a avisar, **antes** do clique em "Processar", se a
+  automação vai ou não emitir a **nota de débito** do processo selecionado. Até aqui o analista só
+  descobria depois, no resultado — e "Processar" é ação real e irreversível, que emite documento
+  fiscal no Conexos. Rede de segurança pedida pelo time.
+- **feat(recebimentos):** o veredito é **derivado no backend** (`previsaoNdeDoProcesso`, sobre o
+  mesmo `ndeEDevida` da ADR-0033) e entregue pronto em `previsaoNde` no
+  `GET /transacoes/:txnId/processos`. A tela exibe; não compara `priVldTipo` por conta própria —
+  quem decide emitir documento fiscal não espalha a comparação pelo stack.
+- **fix(recebimentos):** modalidade **indefinida ou fora do domínio** no `imp021` não vira aviso de
+  "não emite": vira aviso de **bloqueio**, que é o que o gate 0.5 de fato faz (ADR-0031). Apresentar
+  o desconhecido como dispensa esconderia justamente o caso que talvez devesse nota.
+
 ## v0.26.1 (2026-08-19) — Recebimentos: a tela para de esperar o ERP para aparecer
 
 - **fix(recebimentos):** o painel **passava vários segundos em branco** a cada abertura e a cada
