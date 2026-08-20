@@ -62,6 +62,10 @@ const ITAU: ContaPagadora = {
 /** Modalidade nativa do fin015 — 1 = crédito em conta / transferência (observado no item real). */
 const MODALIDADE_TRANSFERENCIA = 1;
 
+/** Código FEBRABAN do banco do LOTE (bncCod é o código INTERNO do Conexos). */
+const FEBRABAN_POR_BNCCOD: Record<number, number> = { 3: 1, 4: 341, 7: 237, 10: 33 };
+const BANCO_FEBRABAN = Number(process.env.BANCO_FEBRABAN ?? FEBRABAN_POR_BNCCOD[BNC] ?? 341);
+
 const log = (s: string, v?: unknown): void =>
     console.log(`[fin015-import] ${s}`, v !== undefined ? JSON.stringify(v).slice(0, 500) : '');
 
@@ -176,7 +180,16 @@ async function main(): Promise<void> {
         let escolhido: (typeof pagaveis)[number] | undefined;
         let conta: Row | undefined;
 
-        for (const p of pagaveis.slice(0, 25)) {
+        // INVARIANTE DESCOBERTA NA PERNA DE RETORNO: o título tem que ser da MESMA filial
+        // do lote. O parser do .RET (ger015.gtbLngSql) exige, ao mesmo tempo,
+        // FIN_ITEM_SISPAG.FIL_COD = <filial no arquivo> E
+        // FIN_LOTE_SISPAG.FIL_COD = FIN_ITEM_SISPAG.FIL_COD — logo item cross-filial
+        // NUNCA processa o retorno, seja qual for a filial gravada na remessa.
+        const mesmaFilial = pagaveis.filter((p) => Number(p.raw.filCod) === FIL);
+        log(
+            `   ${mesmaFilial.length}/${pagaveis.length} pendentes são da filial do LOTE (${FIL}) — só esses fecham o retorno`,
+        );
+        for (const p of mesmaFilial.slice(0, 40)) {
             const pesCod = p.raw.pesCod;
             if (pesCod === null || pesCod === undefined || pesCod === '') continue;
             try {
@@ -192,14 +205,26 @@ async function main(): Promise<void> {
                     { filCod: FIL },
                 );
                 const ativas = rows.filter((c) => Number(c.pctVldStatus) === 1);
-                log(
-                    `   pesCod=${pesCod} (doc ${p.docCod}) → ${rows.length} conta(s), ${ativas.length} ativa(s)`,
-                );
                 if (ativas.length === 0) continue;
-                // Prefere a conta DEFAULT do favorecido (é a que a tela usa).
-                escolhido = p;
-                conta = ativas.find((c) => Number(c.pctVldDefault) === 1) ?? ativas[0];
-                break;
+                // O ERP interrompe o import com uma PERGUNTA (`type: QUESTION`,
+                // FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO...) quando o
+                // favorecido não tem conta no banco do LOTE. Então preferimos conta do
+                // MESMO banco; as demais só servem de último recurso.
+                const noBancoDoLote = ativas.filter(
+                    (c) => Number(c.pctNumBanco) === BANCO_FEBRABAN,
+                );
+                log(
+                    `   pesCod=${pesCod} (doc ${p.docCod}) → ${ativas.length} ativa(s), ${noBancoDoLote.length} no banco do lote (${BANCO_FEBRABAN})`,
+                );
+                const preferidas = noBancoDoLote.length > 0 ? noBancoDoLote : ativas;
+                const candidata =
+                    preferidas.find((c) => Number(c.pctVldDefault) === 1) ?? preferidas[0];
+                // Guarda o primeiro achado como plano B, mas só PARA quando bate o banco.
+                if (!escolhido || noBancoDoLote.length > 0) {
+                    escolhido = p;
+                    conta = candidata;
+                }
+                if (noBancoDoLote.length > 0) break;
             } catch (e) {
                 log(`   pesCod=${pesCod} ERRO: ${erroDe(e)}`);
             }
