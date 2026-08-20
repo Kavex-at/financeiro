@@ -42,6 +42,18 @@ export interface Processo {
      * (ADR-0031 D3). Opcional porque processo legado pode não ter o campo preenchido.
      */
     priVldTipo?: number;
+    /**
+     * PREVISÃO de emissão da NDe deste processo, derivada do `priVldTipo` por
+     * `previsaoNdeDoProcesso` — o veredito pronto para a UI avisar ANTES do Processar.
+     *
+     * AUSENTE quando não dá para prever (`priVldTipo` faltando ou fora do domínio conhecido): a
+     * tela avisa que o processamento vai bloquear, e nunca lê a ausência como "não emite".
+     */
+    previsaoNde?: {
+        priVldTipo: number;
+        rotulo: string;
+        ndeDispensada: boolean;
+    };
     /** Moeda do processo. */
     moeCod: number;
     /**

@@ -542,6 +542,18 @@ export interface Processo {
    * calado num payload financeiro vira bug no dia em que deixar de ser dry-run.
    */
   moeCodAssumido?: boolean
+  /**
+   * PREVISÃO de emissão da nota de débito deste processo (ADR-0033), decidida no backend — a tela
+   * exibe o veredito, nunca compara `priVldTipo` por conta própria.
+   *
+   * AUSENTE = não dá para prever (modalidade faltando ou fora do domínio no `imp021`), e o
+   * processamento vai bloquear. Ausência NÃO significa "não emite".
+   */
+  previsaoNde?: {
+    priVldTipo: number
+    rotulo: string
+    ndeDispensada: boolean
+  }
   valor?: number
   contraparte?: string
 }

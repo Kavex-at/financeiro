@@ -227,6 +227,32 @@ export const isPriVldTipoConhecido = (priVldTipo: number): boolean =>
     Object.values(PRI_VLD_TIPO).some((v) => v === priVldTipo);
 
 /**
+ * PREVISÃO de emissão da NDe de UM processo — insumo do aviso que o modal "Alocar" mostra ANTES
+ * do Processar, para o analista saber o que a automação vai fazer antes de disparar a ação real.
+ *
+ * Deriva de `ndeEDevida`: a comparação de código NÃO se espalha pelo stack (o frontend recebe o
+ * veredito pronto, nunca o `priVldTipo` cru para comparar por conta própria).
+ *
+ * Devolve `undefined` quando o `priVldTipo` falta ou está fora do domínio conhecido — aí não há
+ * previsão a dar, e o gate 0.5 vai BLOQUEAR a alocação. Ausência significa "não dá para prever",
+ * NUNCA "não emite": tratar o desconhecido como dispensa é exatamente o silêncio que a ADR-0031
+ * proíbe.
+ *
+ * ⚠️ É PREVISÃO, não decisão. Sai do cache TTL da lista de processos; a fonte autoritativa é a
+ * releitura do `imp021` no gate 0.5, no processamento (ADR-0031 D3).
+ */
+export const previsaoNdeDoProcesso = (
+    priVldTipo?: number,
+): { priVldTipo: number; rotulo: string; ndeDispensada: boolean } | undefined => {
+    if (priVldTipo === undefined || !isPriVldTipoConhecido(priVldTipo)) return undefined;
+    return {
+        priVldTipo,
+        rotulo: PRI_VLD_TIPO_ROTULO[priVldTipo],
+        ndeDispensada: !ndeEDevida(priVldTipo),
+    };
+};
+
+/**
  * Moeda ASSUMIDA do PROCESSO (BRL/790) — concern SEPARADO do `moeCod` do doc SN (que é `null`). O
  * `imp021` não expõe a moeda do processo (só `moeCodConv`/`moeCodSeg`); o `ProcessoProviderConexos`
  * assume BRL e marca `moeCodAssumido: true` p/ a UI avisar. Named constant (não o `SOLICITACAO_*`
