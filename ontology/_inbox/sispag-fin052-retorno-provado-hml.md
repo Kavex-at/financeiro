@@ -60,16 +60,32 @@ ITEM"* **desapareceu** — confirmação direta.
 > lote" olhando a filial do TÍTULO. Precisa passar a exigir `filial do título == filial do lote`,
 > senão montamos lotes cujo retorno nunca processa. Ver §7.
 
-## 5. Onde o ciclo parou (dado de HML, não código)
+## 5. CICLO FECHADO — o título foi quitado ✅
 
-Com a filial correta, o `processar` percorreu tudo — achou o item, montou a fila de baixa e
-chegou a **finalizar o borderô no fin010** — e parou em:
+O `processar` primeiro parou em *"NÃO É POSSÍVEL FINALIZAR UM BORDERO COM CONTA FINANCEIRA
+INATIVA. CONTA(S): 37"* — configuração de ambiente, não formato nem payload. A conta 37
+(`fin004` / Plano de Contas Financeiro, "BANCO ITAÚ - AG. 2000 CONTA 35.911-3") estava com
+`gerVldStatus=2`. Ativada (`=1`) pela Columbia, o ciclo fechou na hora.
 
-> NÃO É POSSÍVEL FINALIZAR UM BORDERO COM CONTA FINANCEIRA INATIVA. CONTA(S): 37
+**Body do `processar` (o que funciona):** registro inteiro do arquivo em `items[]` **E** a chave
+no nível da requisição — a mesma forma "nos dois níveis" do `titulosPendentes/importar`.
 
-É **configuração do ambiente**: a conta financeira 37 está inativa em HML. Não é formato, não é
-payload, não é o nosso código. Para fechar a baixa ponta-a-ponta, alguém da Columbia precisa
-ativar essa conta financeira (ou indicar a conta correta) no HML.
+Estado após o processamento (lote 12, filial 2, doc 801):
+
+| onde | evidência |
+|---|---|
+| arquivo `gar 4` | `garVldProcStatus = 2` (processado), 0 erros, 0 rejeitados |
+| item do lote | `itsVldRej = 0` · retorno vinculado em `FIN_ITEM_SISPAG_RET` (`fstCodSeq=1`) |
+| lote 12 | `flpVldConfEnvio = 1` · `itensRetorno = 1` |
+| **título doc 801** | **`vldPago = 1`** · `vldPendente = 0` · `totalPago = 275` · `titMnyAberto = null` |
+
+Ou seja: `.REM → .RET → carregar → processar → BAIXA no fin010`, ponta a ponta.
+
+### ⚠️ `flpVldRet` NÃO é o sinal de retorno processado
+Mesmo com o retorno processado e a baixa dada, o lote ficou com **`flpVldRet = 0`** e
+`itensRetorno = 1`. O `ConexosSispagClient` mapeia `retornoProcessado` a partir de `flpVldRet`,
+então o painel mostraria "aberto" para um lote já conciliado. **Usar `itensRetorno > 0` ou o
+vínculo no item (`finItemSispagRet`), não `flpVldRet`.**
 
 ## 6. Achado de harness — conta pagadora é POR FILIAL
 O harness passava a `ContaPagadora` do Itaú hardcoded (`ccoCod=1`). Na filial 2 o ERP resolveu
@@ -77,7 +93,7 @@ O harness passava a `ContaPagadora` do Itaú hardcoded (`ccoCod=1`). Na filial 2
 header. **O serviço de orquestração precisa buscar a conta pagadora por filial**, nunca fixar.
 
 ## 7. Gaps abertos
-1. **Ativar a conta financeira 37 em HML** (Columbia) — destrava a baixa ponta-a-ponta. **P0** para fechar o ciclo.
+1. ~~Ativar a conta financeira 37 em HML~~ — **FEITO** (2026-08-20). Ver §5.
 2. **`.RET` real do Itaú** (Columbia) — o sintético não substitui.
 3. **Invariante filial** (§4) — mudar o I4 do `LotePagamentoService`.
 4. **Conta pagadora por filial** (§6) — remover o hardcode antes de qualquer escrita real.
