@@ -8,6 +8,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import {
     MATCH_CLASSIFICACAO,
     PAINEL_TRANSACOES_CAP,
+    previsaoNdeDoProcesso,
     RECEBIMENTO_STATUS,
     TRANSACAO_BANCARIA_STATUS,
 } from '../domain/interface/recebimentos/constants.js';
@@ -425,7 +426,16 @@ router.get(
             };
             processos.push(...(await provider.listCandidatosParaTransacao(input)));
         }
-        res.json({ transacaoId: req.params.txnId, processos });
+        // A previsão da NDe é derivada AQUI (um ponto só, os dois providers cobertos) para o modal
+        // avisar antes do Processar. Ausente = não dá para prever; a tela não lê isso como "não
+        // emite" (ADR-0031/0033).
+        res.json({
+            transacaoId: req.params.txnId,
+            processos: processos.map((p) => {
+                const previsaoNde = previsaoNdeDoProcesso(p.priVldTipo);
+                return previsaoNde ? { ...p, previsaoNde } : p;
+            }),
+        });
     }),
 );
 

@@ -1,7 +1,15 @@
 'use client'
 
 import * as React from 'react'
-import { AlertTriangle, Boxes, CheckCircle2, FileText, Landmark } from 'lucide-react'
+import {
+  AlertTriangle,
+  Boxes,
+  CheckCircle2,
+  FileCheck,
+  FileText,
+  FileX,
+  Landmark,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -110,6 +118,53 @@ const SALDO_TOL = 0.005
  */
 const isReprocessavel = (r?: AlocacaoResultado): boolean =>
   r?.status === 'error' || r?.status === 'blocked'
+
+/**
+ * Aviso pré-Processar: esta alocação vai gerar nota de débito ou não (ADR-0033).
+ *
+ * Pedido do time como rede de segurança — "Processar" é irreversível e emite documento fiscal, e
+ * até aqui o analista só descobria se saiu NDe DEPOIS, no resultado. O veredito vem pronto do
+ * backend (`previsaoNde`): a tela não compara `priVldTipo`, porque a regra de emitir vive num
+ * lugar só.
+ *
+ * Sem previsão o aviso é de BLOQUEIO, nunca "não emite": modalidade indefinida no `imp021` faz o
+ * gate 0.5 parar a alocação, e pintar isso como dispensa esconderia justamente o caso que talvez
+ * devesse nota.
+ */
+function AvisoNde({ previsao }: { previsao?: Processo['previsaoNde'] }) {
+  if (!previsao) {
+    return (
+      <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
+        <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+        <span>
+          Modalidade do processo indefinida no <code>imp021</code> — não dá para prever a nota de
+          débito, e o Processar vai bloquear.
+        </span>
+      </p>
+    )
+  }
+  const { rotulo, ndeDispensada } = previsao
+  const Icone = ndeDispensada ? FileX : FileCheck
+  return (
+    <p role="status" className="flex items-start gap-1.5 text-xs text-muted-foreground">
+      <Icone className="mt-px size-3.5 shrink-0" aria-hidden />
+      <span>
+        Processo <strong className="text-foreground">{rotulo}</strong>:{' '}
+        {ndeDispensada ? (
+          <>
+            a automação <strong className="text-foreground">não</strong> gera nota de débito — a
+            quitação fecha com a SN e a baixa.
+          </>
+        ) : (
+          <>
+            a automação <strong className="text-foreground">gera</strong> nota de débito no Conexos.
+          </>
+        )}{' '}
+        A modalidade é reconferida no processamento.
+      </span>
+    </p>
+  )
+}
 
 /**
  * Resultado REAL de uma alocação renderizado no painel. O status carrega o desfecho
@@ -837,6 +892,7 @@ export function AlocarProcessosDialog({
                             </p>
                           ) : null}
                         </div>
+                        <AvisoNde previsao={processoSelecionado.previsaoNde} />
                         <Button
                           onClick={() => void processar(processoSelecionado)}
                           disabled={processarDesabilitado}

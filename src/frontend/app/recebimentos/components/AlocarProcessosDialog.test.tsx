@@ -623,3 +623,62 @@ describe('sugerirCliente', () => {
     expect(sugerirCliente(lista, undefined)).toBeNull()
   })
 })
+
+/**
+ * Aviso pré-Processar (ADR-0033). O analista precisa saber ANTES de disparar a ação irreversível
+ * se ela emite documento fiscal — até aqui isso só aparecia depois, no resultado.
+ */
+describe('AlocarProcessosDialog — aviso de nota de débito antes do Processar', () => {
+  beforeEach(() => {
+    mockClientes.mockResolvedValue(clientes)
+    mockFetchSNs.mockResolvedValue([])
+  })
+  afterEach(() => jest.clearAllMocks())
+
+  /** O aviso é o `role="status"` que fala de nota de débito (o Spinner também é status). */
+  const lerAviso = async (): Promise<string> => {
+    const avisos = await screen.findAllByRole('status')
+    const aviso = avisos.find((n) => /nota de débito/i.test(n.textContent ?? ''))
+    expect(aviso).toBeDefined()
+    return (aviso?.textContent ?? '').replace(/\s+/g, ' ')
+  }
+
+  const abrirCom = async (previsaoNde: Processo['previsaoNde']) => {
+    const user = userEvent.setup()
+    mockFetch.mockResolvedValue([{ ...processo, previsaoNde }])
+    render(<AlocarProcessosDialog transacao={transacao} open onOpenChange={() => {}} />)
+    await selecionarProcesso(user)
+  }
+
+  it('POR ENCOMENDA: avisa que a automação GERA a nota de débito', async () => {
+    await abrirCom({ priVldTipo: 3, rotulo: 'POR ENCOMENDA', ndeDispensada: false })
+    const texto = await lerAviso()
+    expect(texto).toContain('POR ENCOMENDA')
+    expect(texto).toContain('a automação gera nota de débito')
+    // Previsão, não promessa: sai do cache da lista e é relida no gate 0.5.
+    expect(texto).toContain('reconferida no processamento')
+  })
+
+  it('CONTA E ORDEM: avisa que a automação NÃO gera a nota de débito', async () => {
+    await abrirCom({ priVldTipo: 2, rotulo: 'CONTA E ORDEM', ndeDispensada: true })
+    const texto = await lerAviso()
+    expect(texto).toContain('CONTA E ORDEM')
+    expect(texto).toContain('a automação não gera nota de débito')
+    expect(texto).toContain('a quitação fecha com a SN e a baixa')
+  })
+
+  it('sem previsão o aviso é de BLOQUEIO — nunca "não emite"', async () => {
+    await abrirCom(undefined)
+    const texto = await lerAviso()
+    expect(texto).toContain('Modalidade do processo indefinida')
+    expect(texto).toContain('Processar vai bloquear')
+    // O caso perigoso: silêncio ou um "não gera" tranquilizador sobre modalidade desconhecida.
+    expect(texto).not.toContain('não gera nota de débito')
+  })
+
+  it('o aviso aparece ANTES de processar — sem clicar em Processar', async () => {
+    await abrirCom({ priVldTipo: 3, rotulo: 'POR ENCOMENDA', ndeDispensada: false })
+    await lerAviso()
+    expect(mockProcessar).not.toHaveBeenCalled()
+  })
+})
