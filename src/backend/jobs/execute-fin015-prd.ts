@@ -316,7 +316,7 @@ async function main(): Promise<void> {
 
         // (4) gerar a remessa
         const hoje = new Date();
-        const nome =
+        const nome: string =
             process.env.NOME ??
             `PG${String(hoje.getUTCDate()).padStart(2, '0')}${String(hoje.getUTCMonth() + 1).padStart(2, '0')}${String(SEQ).padStart(2, '0')}.REM`;
         await write.gerarRemessa({
@@ -331,7 +331,17 @@ async function main(): Promise<void> {
 
         // ══ 4) O ARQUIVO — o que a Columbia confere ═════════════════════════
         const arquivos = await write.listarArquivosRemessa({ filCod: FIL, bncCod: BNC, flpCod });
-        const rem = arquivos.find((a) => a.conteudo);
+        // ⚠️ NUNCA `find(a => a.conteudo)`. O ERP REUTILIZA `flpCod` de lotes antigos que
+        // deixaram de existir, e os arquivos de remessa daqueles lotes continuam apontando
+        // para o número reciclado — logo a lista de um lote NOVO pode conter arquivos
+        // órfãos de meses atrás. Em 2026-08-21 isso me fez imprimir e CANCELAR o
+        // PG191101.REM (gabCod 16, nov/2025, UPS SCS) achando que era o nosso.
+        // Só serve casar pelo NOME que acabamos de pedir.
+        const rem = arquivos.find((a) => a.nomeArquivo === nome);
+        if (!rem) {
+            log(`   ⚠️ arquivo "${nome}" não encontrado entre os ${arquivos.length} do lote:`);
+            for (const a of arquivos) log(`      gabCod=${a.gabCod} ${a.nomeArquivo}`);
+        }
         if (!rem?.conteudo) {
             log('   remessa gerada mas sem conteúdo legível — verificar na tela.');
         } else {
