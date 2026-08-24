@@ -288,4 +288,21 @@ describe('EnvironmentProvider', () => {
         });
     });
 
+    describe('hermetismo sob Jest (testability-3)', () => {
+        it('NÃO carrega o .env quando roda sob Jest', async () => {
+            // Se o dotenv rodasse aqui, o `.env` da máquina (que tem CONEXOS_USERNAME
+            // preenchido) vazaria para dentro do cenário e o teste passaria a depender
+            // de quem clonou o repo. `JEST_WORKER_ID` está setada por definição neste
+            // ponto — é o próprio Jest que injeta.
+            expect(process.env.JEST_WORKER_ID).toBeDefined();
+
+            const provider = new EnvironmentProvider();
+            const env = await provider.getEnvironmentVars();
+
+            // O beforeEach limpou o process.env; sem dotenv, continua limpo.
+            expect(env.conexosLogin).toBe('');
+            expect(env.conexosPassword).toBe('');
+        });
+    });
+
 });
