@@ -60,6 +60,9 @@ const buildEnv = (over: Record<string, unknown> = {}) =>
     ({
         getEnvironmentVars: jest.fn().mockResolvedValue({
             conexosWriteEnabled: true,
+            // Kill-switch da frente. Default REAL é false (gate de go-live); os testes de
+            // escrita ligam explicitamente para exercitar o caminho vivo.
+            sispagLiveWriteEnabled: true,
             conexosDryRun: false,
             ...over,
         }),

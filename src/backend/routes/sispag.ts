@@ -448,6 +448,8 @@ router.get(
 );
 
 // POST /sispag/retornos/conciliar — lê o detalhe do .RET e traz o resultado para os lotes. admin.
+// Honra `Idempotency-Key`; sem ele o serviço deriva a chave do próprio arquivo de retorno —
+// que é a identidade certa: o risco é reprocessar o MESMO arquivo, não a mesma requisição.
 router.post(
     '/retornos/conciliar',
     requireRole('admin'),
@@ -469,6 +471,12 @@ router.post(
                 ator: ator(req),
                 ...(parsed.data.processar !== undefined ? { processar: parsed.data.processar } : {}),
                 ...(parsed.data.dryRun === true ? { dryRunOverride: true } : {}),
+                ...(req.header('Idempotency-Key')
+                    ? { idempotencyKey: String(req.header('Idempotency-Key')) }
+                    : {}),
+                ...(req.header('x-request-id')
+                    ? { correlationId: String(req.header('x-request-id')) }
+                    : {}),
             });
             res.json(result);
         } catch (err) {

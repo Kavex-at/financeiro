@@ -5,6 +5,9 @@ import type { ArquivoRetornoDetalhe } from '../../interface/sispag/Fin052Retorno
 import { LOTE_STATUS } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import ConciliacaoEmDuvidaError from '../../errors/ConciliacaoEmDuvidaError.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
+import ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import LogService from '../LogService.js';
 
 export interface ConciliarInput {
@@ -16,6 +19,9 @@ export interface ConciliarInput {
     /** Processa o arquivo no ERP antes de conciliar (gera as baixas no fin010). */
     processar?: boolean;
     dryRunOverride?: boolean;
+    /** Chave de idempotência. Ausente → derivada do arquivo (fil+bnc+gtb+gar). */
+    idempotencyKey?: string;
+    correlationId?: string;
 }
 
 export interface ItemConciliado {
@@ -35,6 +41,12 @@ export interface ItemConciliado {
     reconhecido: boolean;
 }
 
+/**
+ * Concorrência do fan-out por código de evento. Mesmo valor do painel — o gargalo real
+ * não é CPU, é o pool de sessões do Conexos (`LOGIN_ERROR_MAX_SESSIONS` acima disso).
+ */
+const CONEXOS_FANOUT_LIMIT = 4;
+
 export interface ConciliarResult {
     dryRun: boolean;
     writeEnabled: boolean;
@@ -53,6 +65,8 @@ export interface ConciliarResult {
     varreduraIncompleta: boolean;
     /** Códigos que falharam, com o motivo — para o operador saber o que refazer. */
     eventosNaoLidos: Array<{ evento: string; motivo: string }>;
+    /** `true` quando o ledger curto-circuitou: este arquivo já tinha sido conciliado. */
+    jaConciliado?: boolean;
 }
 
 /**
@@ -78,12 +92,79 @@ export default class ConciliacaoRetornoService {
         @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
+        @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
+        @inject(ConciliacaoExecucaoRepository)
+        private readonly ledger: ConciliacaoExecucaoRepository,
     ) {}
 
     public conciliar = async (input: ConciliarInput): Promise<ConciliarResult> => {
         const env = await this.environmentProvider.getEnvironmentVars();
         const writeEnabled = env.conexosWriteEnabled;
-        const dryRun = !writeEnabled || env.conexosDryRun || input.dryRunOverride === true;
+        // `sispagLiveWriteEnabled` é o kill-switch DESTA frente: conter um bug do SISPAG
+        // pelo `conexosDryRun` global desligaria Permutas e Recebimentos junto.
+        const dryRun =
+            !writeEnabled ||
+            !env.sispagLiveWriteEnabled ||
+            env.conexosDryRun ||
+            input.dryRunOverride === true;
+
+        // ── 0) ledger write-ahead ───────────────────────────────────────────
+        // `arquivosRetorno/processar` gera as baixas no fin010 e NÃO é idempotente. Sem
+        // trilha, dois cliques ou um restart do Render entre o PUT e a resposta HTTP gravam
+        // baixa em cima de baixa. A identidade é o ARQUIVO, não a sessão de quem clicou.
+        const key =
+            input.idempotencyKey ??
+            `conciliacao:${input.filCod}:${input.bncCod}:${input.gtbCodSeq}:${input.garCodSeq}`;
+        const anterior = await this.ledger.findByIdempotencyKey(key);
+
+        if (anterior?.status === 'settled' && !anterior.dryRun && !dryRun) {
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'conciliação já processada — curto-circuito idempotente',
+                data: { ...this.chave(input), key, processouAntes: anterior.processou },
+            });
+            return {
+                dryRun,
+                writeEnabled,
+                processado: anterior.processou,
+                totalLinhas: anterior.totalLinhas ?? 0,
+                pagos: anterior.pagos ?? 0,
+                rejeitados: anterior.rejeitados ?? 0,
+                naoReconhecidos: 0,
+                lotesAfetados: [],
+                itens: [],
+                varreduraIncompleta: anterior.varreduraIncompleta,
+                eventosNaoLidos: [],
+                jaConciliado: true,
+            };
+        }
+
+        // FAIL-CLOSED: `processar` anterior em voo que nunca confirmou.
+        if (anterior && !anterior.dryRun && anterior.status === 'reconciling') {
+            await this.logService.error({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'conciliação EM DÚVIDA (reconciling órfão) — NÃO re-processada',
+                data: { ...this.chave(input), key },
+            });
+            throw new ConciliacaoEmDuvidaError({
+                idempotencyKey: key,
+                filCod: input.filCod,
+                bncCod: input.bncCod,
+                garCodSeq: input.garCodSeq,
+                ...(anterior.criadoEm !== undefined ? { criadoEm: anterior.criadoEm } : {}),
+            });
+        }
+
+        await this.ledger.beginExecution({
+            idempotencyKey: key,
+            ...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
+            filCod: input.filCod,
+            bncCod: input.bncCod,
+            gtbCodSeq: input.gtbCodSeq,
+            garCodSeq: input.garCodSeq,
+            dryRun,
+            executadoPor: input.ator,
+        });
 
         // ── 1) processar no ERP (opcional) — é o passo que gera as BAIXAS ────
         let processado = false;
@@ -95,6 +176,9 @@ export default class ConciliacaoRetornoService {
                     data: { ...this.chave(input) },
                 });
             } else {
+                // Marcado ANTES do PUT: se o processo morrer aqui, o ledger fica
+                // `reconciling` com `processou=true` e a próxima tentativa é fail-closed.
+                await this.ledger.marcarProcessado(key);
                 await this.retorno.processarArquivoRetorno(this.chave(input));
                 processado = true;
                 await this.logService.info({
@@ -120,26 +204,39 @@ export default class ConciliacaoRetornoService {
         // linha de REJEIÇÃO perdida: sem ela, `transicionarLote` não vê rejeição nenhuma e
         // marca o lote como BAIXADO. Dinheiro que o banco recusou, reportado como pago.
         const eventosNaoLidos: Array<{ evento: string; motivo: string }> = [];
-        for (const ev of eventos) {
-            try {
-                const det = await this.retorno.listDetalhe({
+        // Em série isso custava ~92 s p50 no Bradesco (153 códigos × runWithRetry) — acima do
+        // timeout do proxy do Render. O pool é o mesmo já usado no painel; o limite é baixo
+        // de propósito, porque o burst de sessões é o que produz LOGIN_ERROR_MAX_SESSIONS.
+        const detalhes = await this.bounded.run(
+            eventos,
+            (ev) =>
+                this.retorno.listDetalhe({
                     ...this.chave(input),
                     eventoCod: ev.cod,
                     eventoTipo: ev.tipo,
                     pageSize: 200,
-                });
-                for (const d of det) {
+                }),
+            CONEXOS_FANOUT_LIMIT,
+        );
+        for (const [i, resultado] of detalhes.entries()) {
+            const ev = eventos[i];
+            if (ev === undefined) continue;
+            if (resultado.status === 'fulfilled') {
+                for (const d of resultado.value) {
                     linhas.push({ ...d, eventoDescricao: d.eventoDescricao ?? ev.descricao });
                 }
-            } catch (cause) {
-                const motivo = cause instanceof Error ? cause.message : String(cause);
-                eventosNaoLidos.push({ evento: ev.cod, motivo });
-                await this.logService.error({
-                    type: LOG_TYPE.CONEXOS_ERROR,
-                    message: 'falha ao ler detalhe de evento do retorno — varredura incompleta',
-                    data: { ...this.chave(input), evento: ev.cod, descricao: ev.descricao, motivo },
-                });
+                continue;
             }
+            const motivo =
+                resultado.reason instanceof Error
+                    ? resultado.reason.message
+                    : String(resultado.reason);
+            eventosNaoLidos.push({ evento: ev.cod, motivo });
+            await this.logService.error({
+                type: LOG_TYPE.CONEXOS_ERROR,
+                message: 'falha ao ler detalhe de evento do retorno — varredura incompleta',
+                data: { ...this.chave(input), evento: ev.cod, descricao: ev.descricao, motivo },
+            });
         }
         const varreduraIncompleta = eventosNaoLidos.length > 0;
 
@@ -227,6 +324,23 @@ export default class ConciliacaoRetornoService {
                 eventosNaoLidos: eventosNaoLidos.length,
             },
         });
+
+        // Fecha o ledger. Varredura incompleta NÃO fecha: o arquivo precisa ser reconciliado
+        // de novo, e `settled` bloquearia a segunda passada — que aqui é justamente o certo.
+        if (varreduraIncompleta) {
+            await this.ledger.fail(
+                key,
+                `varredura incompleta: ${eventosNaoLidos.map((e) => e.evento).join(', ')}`,
+            );
+        } else {
+            await this.ledger.settle(key, {
+                processou: processado,
+                totalLinhas: itens.length,
+                pagos,
+                rejeitados,
+                varreduraIncompleta,
+            });
+        }
 
         return {
             dryRun,
