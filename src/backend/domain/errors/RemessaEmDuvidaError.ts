@@ -18,12 +18,59 @@ export default class RemessaEmDuvidaError extends Error implements HandlerError 
     public readonly statusCode = 409;
     public readonly details?: unknown;
 
-    constructor(params: { loteId: string; idempotencyKey: string; nativeFlpCod?: number; etapa?: string }) {
+    constructor(params: {
+        loteId: string;
+        idempotencyKey: string;
+        nativeFlpCod?: number;
+        etapa?: string;
+        filCod?: number;
+        bncCod?: number;
+        criadoEm?: string;
+    }) {
         super(`remessa IN-DOUBT for lote ${params.loteId} (key ${params.idempotencyKey})`);
         this.name = 'RemessaEmDuvidaError';
-        this.userMessage = params.nativeFlpCod
-            ? `Há uma geração de remessa anterior sem confirmação para este lote. O lote ${params.nativeFlpCod} pode ter ficado órfão no Conexos (parou em "${params.etapa ?? '?'}"). Confira no fin015 e cancele-o antes de tentar de novo — repetir agora poderia gerar um segundo pagamento.`
-            : `Há uma geração de remessa anterior sem confirmação para este lote. Confira o fin015 antes de tentar de novo — repetir agora poderia gerar um segundo pagamento.`;
+        this.userMessage = RemessaEmDuvidaError.montarMensagem(params);
         this.details = params;
     }
+
+    /**
+     * A mensagem TEM que dizer o que fazer. O caso fácil é quando o ledger já gravou o
+     * `flpCod`: aponta-se o lote e acabou.
+     *
+     * O caso difícil é a morte na janela entre o `criarLote` responder e o ledger gravar —
+     * aí não há `flpCod` nenhum, e a versão anterior desta mensagem simplesmente dizia
+     * "confira o fin015", o que num grid de milhares de rascunhos não é uma instrução, é um
+     * encolher de ombros. Com filial, banco e horário dá para varrer o intervalo certo.
+     */
+    private static montarMensagem = (p: {
+        nativeFlpCod?: number;
+        etapa?: string;
+        filCod?: number;
+        bncCod?: number;
+        criadoEm?: string;
+    }): string => {
+        const abertura = 'Há uma geração de remessa anterior sem confirmação para este lote.';
+        const risco = 'Repetir agora poderia gerar um segundo pagamento.';
+
+        if (p.nativeFlpCod) {
+            return `${abertura} O lote ${p.nativeFlpCod} pode ter ficado órfão no Conexos (parou em "${p.etapa ?? '?'}"). Confira no fin015 e cancele-o antes de tentar de novo — ${risco}`;
+        }
+
+        const desde = p.criadoEm
+            ? new Date(p.criadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+            : undefined;
+        const onde = [
+            p.filCod !== undefined ? `filial ${p.filCod}` : undefined,
+            p.bncCod !== undefined ? `banco ${p.bncCod}` : undefined,
+        ]
+            .filter(Boolean)
+            .join(', ');
+
+        return (
+            `${abertura} A interrupção foi ANTES de registrarmos o número do lote, então pode existir ` +
+            `um rascunho órfão no Conexos sem trilha nossa. Procure no fin015 por rascunhos${onde ? ` da ${onde}` : ''}` +
+            `${desde ? `, criados a partir de ${desde}` : ''}, ainda em aberto e sem títulos — cancele o que encontrar ` +
+            `antes de tentar de novo. ${risco}`
+        );
+    };
 }

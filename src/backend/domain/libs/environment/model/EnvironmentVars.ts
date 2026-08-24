@@ -99,6 +99,20 @@ export default class EnvironmentVars {
      * default 0 é sentinela "não confirmado" que TRAVA a escrita real.
      */
     public snLiveWriteEnabled: boolean;
+
+    /**
+     * SISPAG (Frente II) — kill-switch DEDICADO da escrita, independente do global.
+     *
+     * `conexosDryRun` é global: contê-lo por causa de um bug só do SISPAG desligaria
+     * junto Permutas e Recebimentos, que não têm nada com o incidente. Este flag
+     * (`SISPAG_LIVE_WRITE_ENABLED`, default **false**) reduz o raio de contenção a uma
+     * frente. Mesmo padrão do `snLiveWriteEnabled`.
+     *
+     * Default false porque é gate de go-live: enquanto a Columbia não validar a remessa
+     * ponta a ponta, um deploy que esqueça de setar NÃO escreve no ERP. Não confundir com
+     * `sispagEnabled`, que decide se a tela existe — este decide se ela escreve.
+     */
+    public sispagLiveWriteEnabled: boolean;
     public solicitacaoNumerarioGcdCod: number;
 
     /**
@@ -191,6 +205,7 @@ export default class EnvironmentVars {
         conexosWriteEnabled,
         conexosDryRun,
         snLiveWriteEnabled,
+        sispagLiveWriteEnabled,
         solicitacaoNumerarioGcdCod,
         solicitacaoNumerarioGcdCodPorFilial,
         conexosCredEncKey,
@@ -225,6 +240,7 @@ export default class EnvironmentVars {
         conexosWriteEnabled: boolean;
         conexosDryRun: boolean;
         snLiveWriteEnabled: boolean;
+        sispagLiveWriteEnabled: boolean;
         solicitacaoNumerarioGcdCod: number;
         solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
         conexosCredEncKey?: string;
@@ -259,6 +275,7 @@ export default class EnvironmentVars {
         this.conexosWriteEnabled = conexosWriteEnabled;
         this.conexosDryRun = conexosDryRun;
         this.snLiveWriteEnabled = snLiveWriteEnabled;
+        this.sispagLiveWriteEnabled = sispagLiveWriteEnabled;
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};
         this.conexosCredEncKey = conexosCredEncKey;

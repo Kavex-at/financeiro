@@ -4,6 +4,8 @@ import type { ArquivoRetornoDetalhe } from '../../interface/sispag/Fin052Retorno
 import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
+import type ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import type LogService from '../LogService.js';
 import ConciliacaoRetornoService from './ConciliacaoRetornoService.js';
 
@@ -63,6 +65,9 @@ const buildEnv = (over: Record<string, unknown> = {}) =>
     ({
         getEnvironmentVars: jest.fn().mockResolvedValue({
             conexosWriteEnabled: true,
+            // Kill-switch da frente. Default REAL é false (gate de go-live); os testes de
+            // escrita ligam explicitamente para exercitar o caminho vivo.
+            sispagLiveWriteEnabled: true,
             conexosDryRun: false,
             ...over,
         }),
@@ -73,6 +78,14 @@ const buildRetorno = (porCodigo: Record<string, ArquivoRetornoDetalhe[]> = { '00
     processarArquivoRetorno: jest.fn().mockResolvedValue(undefined),
     listEventosBancarios: jest.fn().mockResolvedValue(EVENTOS),
     listDetalhe: jest.fn(async (p: { eventoCod: string }) => porCodigo[p.eventoCod] ?? []),
+});
+
+const buildLedger = (anterior: Record<string, unknown> | null = null) => ({
+    findByIdempotencyKey: jest.fn().mockResolvedValue(anterior),
+    beginExecution: jest.fn().mockResolvedValue({ status: 'reconciling', alreadySettled: false }),
+    marcarProcessado: jest.fn().mockResolvedValue(undefined),
+    settle: jest.fn().mockResolvedValue(undefined),
+    fail: jest.fn().mockResolvedValue(undefined),
 });
 
 const buildRepo = (l: LotePagamento | null = lote()) => ({
@@ -86,12 +99,15 @@ const make = (o: {
     retorno?: ReturnType<typeof buildRetorno>;
     repo?: ReturnType<typeof buildRepo>;
     env?: EnvironmentProvider;
+    ledger?: ReturnType<typeof buildLedger>;
 }) =>
     new ConciliacaoRetornoService(
         (o.retorno ?? buildRetorno()) as unknown as ConexosSispagRetornoClient,
         (o.repo ?? buildRepo()) as unknown as LotePagamentoRepository,
         o.env ?? buildEnv(),
         buildLog(),
+        new BoundedConcurrency(),
+        (o.ledger ?? buildLedger()) as unknown as ConciliacaoExecucaoRepository,
     );
 
 describe('ConciliacaoRetornoService', () => {
@@ -267,4 +283,108 @@ describe('ConciliacaoRetornoService', () => {
             expect(retorno.processarArquivoRetorno).toHaveBeenCalledWith(CHAVE);
         });
     });
+    describe('kill-switch da frente (fault-tolerance-7)', () => {
+        it('SISPAG_LIVE_WRITE_ENABLED=false força dry-run sem tocar Permutas/Recebimentos', async () => {
+            // O `conexosDryRun` global segue true aqui: conter o SISPAG não pode exigir
+            // desligar as outras frentes.
+            const repo = buildRepo();
+            const res = await make({
+                repo,
+                env: buildEnv({ sispagLiveWriteEnabled: false }),
+            }).conciliar({ ...CHAVE, ator: 'u' });
+
+            expect(res.dryRun).toBe(true);
+            expect(repo.registrarConciliacaoItem).not.toHaveBeenCalled();
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('ledger write-ahead (availability-1 / fault-tolerance-1)', () => {
+        it('grava a intenção ANTES do `processar` irreversível', async () => {
+            const ledger = buildLedger();
+            const retorno = buildRetorno();
+            await make({ ledger, retorno }).conciliar({ ...CHAVE, ator: 'u', processar: true });
+
+            expect(ledger.beginExecution).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    idempotencyKey: 'conciliacao:2:4:1:5',
+                    filCod: 2,
+                    garCodSeq: 5,
+                    dryRun: false,
+                }),
+            );
+            // `marcarProcessado` antes do PUT: morrer no meio deixa trilha.
+            const ordemMarcar = ledger.marcarProcessado.mock.invocationCallOrder[0] ?? 0;
+            const ordemPut = retorno.processarArquivoRetorno.mock.invocationCallOrder[0] ?? 0;
+            expect(ordemMarcar).toBeLessThan(ordemPut);
+        });
+
+        it('curto-circuita quando o arquivo JÁ foi conciliado — não re-processa', async () => {
+            // Dois cliques na tela. O segundo não pode gerar baixa em cima de baixa.
+            const ledger = buildLedger({
+                status: 'settled',
+                dryRun: false,
+                processou: true,
+                totalLinhas: 3,
+                pagos: 3,
+                rejeitados: 0,
+                varreduraIncompleta: false,
+            });
+            const retorno = buildRetorno();
+            const res = await make({ ledger, retorno }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+                processar: true,
+            });
+
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
+            expect(ledger.beginExecution).not.toHaveBeenCalled();
+            expect(res.jaConciliado).toBe(true);
+            expect(res.pagos).toBe(3);
+        });
+
+        it('FAIL-CLOSED num `reconciling` órfão — 409, sem re-processar', async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                processou: true,
+                varreduraIncompleta: false,
+                criadoEm: '2026-08-24T12:00:00.000Z',
+            });
+            const retorno = buildRetorno();
+
+            await expect(
+                make({ ledger, retorno }).conciliar({ ...CHAVE, ator: 'u', processar: true }),
+            ).rejects.toMatchObject({ code: 'CONCILIACAO_EM_DUVIDA', statusCode: 409 });
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
+        });
+
+        it('conciliação bem-sucedida fecha o ledger em settled', async () => {
+            const ledger = buildLedger();
+            await make({ ledger }).conciliar({ ...CHAVE, ator: 'u' });
+
+            expect(ledger.settle).toHaveBeenCalledWith(
+                'conciliacao:2:4:1:5',
+                expect.objectContaining({ totalLinhas: 1, pagos: 1, varreduraIncompleta: false }),
+            );
+            expect(ledger.fail).not.toHaveBeenCalled();
+        });
+
+        it('varredura incompleta NÃO fecha o ledger — a segunda passada tem que ser possível', async () => {
+            const ledger = buildLedger();
+            const retorno = buildRetorno();
+            retorno.listDetalhe.mockImplementation(async (p: { eventoCod: string }) => {
+                if (p.eventoCod === 'NA') throw new Error('ETIMEDOUT');
+                return [detalhe()];
+            });
+            await make({ ledger, retorno }).conciliar({ ...CHAVE, ator: 'u' });
+
+            expect(ledger.settle).not.toHaveBeenCalled();
+            expect(ledger.fail).toHaveBeenCalledWith(
+                'conciliacao:2:4:1:5',
+                expect.stringContaining('NA'),
+            );
+        });
+    });
+
 });

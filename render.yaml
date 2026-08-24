@@ -32,6 +32,13 @@ services:
       # navegáveis; geração de remessa (fin015) e retorno (fin052) seguem dormentes/gated.
       - key: SISPAG_ENABLED
         value: 'true'
+      # KILL-SWITCH da ESCRITA do SISPAG (fin015 remessa + fin052 conciliacao), separado do
+      # `SISPAG_ENABLED` (que decide se a TELA existe) e do `CONEXOS_DRY_RUN` (que e GLOBAL e
+      # levaria Permutas e Recebimentos junto). Default do codigo e `false`: enquanto a
+      # Columbia nao validar a remessa ponta a ponta, a tela navega e simula, mas NAO escreve.
+      # `sync: false` deixa o dashboard como fonte da verdade — ligar e desligar sem redeploy.
+      - key: SISPAG_LIVE_WRITE_ENABLED
+        sync: false
       # Frente IV (Recebimentos / "Gestão de Adiantamentos") LIBERADA em produção (v0.20.0, ADR-0028).
       # NÃO é mais fail-safe: ausência da env = HABILITADO. Isto virou o KILL-SWITCH de emergência —
       # setar `false` no dashboard derruba `/recebimentos/*` para 403 SEM redeploy.

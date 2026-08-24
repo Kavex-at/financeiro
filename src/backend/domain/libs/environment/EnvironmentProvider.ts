@@ -210,6 +210,7 @@ export default class EnvironmentProvider {
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
             // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
             snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
+            sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
@@ -292,6 +293,7 @@ export default class EnvironmentProvider {
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
             // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
             snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
+            sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,

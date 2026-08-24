@@ -110,7 +110,13 @@ export default class RemessaService {
 
         const env = await this.environmentProvider.getEnvironmentVars();
         const writeEnabled = env.conexosWriteEnabled;
-        const dryRun = !writeEnabled || env.conexosDryRun || input.dryRunOverride === true;
+        // `sispagLiveWriteEnabled` é o kill-switch DESTA frente: conter um bug do SISPAG
+        // pelo `conexosDryRun` global desligaria Permutas e Recebimentos junto.
+        const dryRun =
+            !writeEnabled ||
+            !env.sispagLiveWriteEnabled ||
+            env.conexosDryRun ||
+            input.dryRunOverride === true;
 
         // Chave estável por LOTE: duas tentativas para o mesmo lote colidem de propósito.
         const key = input.idempotencyKey ?? `remessa:${lote.id}`;
@@ -145,8 +151,15 @@ export default class RemessaService {
             throw new RemessaEmDuvidaError({
                 loteId: lote.id,
                 idempotencyKey: key,
-                ...(anterior.nativeFlpCod !== undefined ? { nativeFlpCod: anterior.nativeFlpCod } : {}),
+                ...(anterior.nativeFlpCod !== undefined
+                    ? { nativeFlpCod: anterior.nativeFlpCod }
+                    : {}),
                 ...(anterior.etapa !== undefined ? { etapa: anterior.etapa } : {}),
+                // Sem `flpCod` o operador precisa de coordenadas para varrer o fin015:
+                // é a janela entre o `criarLote` responder e o ledger gravar.
+                ...(anterior.filCod !== undefined ? { filCod: anterior.filCod } : {}),
+                ...(anterior.bncCod !== undefined ? { bncCod: anterior.bncCod } : {}),
+                ...(anterior.criadoEm !== undefined ? { criadoEm: anterior.criadoEm } : {}),
             });
         }
 
