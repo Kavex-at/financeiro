@@ -443,7 +443,11 @@ router.get(
         }
         res.setHeader('Content-Type', 'text/plain; charset=latin1');
         res.setHeader('Content-Disposition', `attachment; filename="${arquivo.nomeArquivo}"`);
-        res.send(arquivo.conteudo);
+        // Buffer, não string. Com string o Express REESCREVE o charset para utf-8 e
+        // codifica os bytes em UTF-8 — e o CNAB 240 é posicional: um "Ç" no nome do
+        // favorecido viraria 2 bytes e empurraria todas as colunas seguintes daquele
+        // registro. O banco recusa o arquivo, ou pior, lê os campos deslocados.
+        res.send(Buffer.from(arquivo.conteudo, 'latin1'));
     }),
 );
 
