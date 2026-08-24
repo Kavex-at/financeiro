@@ -115,7 +115,16 @@ export async function fetchSispagPainel(): Promise<SispagPainel> {
 // ============================================================ Fatia 2 — Lote candidato
 // Montagem local (sem escrita no ERP). Espelha backend/interface/sispag/SispagInterface.ts.
 
-export type LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'CANCELADO' | 'RETORNADO'
+export type LotePagamentoStatus =
+  | 'RASCUNHO'
+  | 'FINALIZADO'
+  /** Remessa .REM gerada no Conexos. NÃO é "enviado": o ERP não transmite ao banco. */
+  | 'REMESSA_GERADA'
+  /** Retorno .RET do banco processado e conciliado. */
+  | 'RETORNADO'
+  /** Baixa confirmada no fin010 para todos os itens. */
+  | 'BAIXADO'
+  | 'CANCELADO'
 
 export type Modalidade = 'BOLETO' | 'TED' | 'PIX' | 'CREDITO_CONTA'
 
@@ -139,6 +148,16 @@ export interface ItemLote {
   modalidade?: Modalidade
   incluidoPor: string
   incluidoEm?: string
+  // ── resultado da conciliação do retorno ──
+  /** Código do evento bancário. Itaú: `00` = PAGAMENTO EFETUADO. */
+  retornoEvento?: string
+  retornoDescricao?: string
+  /** `true` quando o banco rejeitou este item. */
+  rejeitado?: boolean
+  /** Borderô e baixa no fin010 — o elo que o ERP não guarda consultável. */
+  borCod?: number
+  bxaCodSeq?: number
+  conciliadoEm?: string
 }
 
 export interface LotePagamento {
@@ -154,6 +173,14 @@ export interface LotePagamento {
   criadoEm?: string
   /** Formado pelo cron de formação automática (vs. montado manualmente). */
   automatico?: boolean
+  // ── ponte com o lote NATIVO do Conexos (fin015) ──
+  nativeFlpCod?: number
+  nativeGabCod?: number
+  remessaArquivo?: string
+  remessaNum?: number
+  remessaGeradaEm?: string
+  /** Conta financeira (plano gerencial) da conta pagadora. */
+  gerNum?: number
   itens: ItemLote[]
 }
 
@@ -234,6 +261,144 @@ export const marcarRetorno = (loteId: string, versao: number) =>
   loteRequest(`/sispag/lotes/${loteId}/retorno`, {
     method: 'POST',
     body: JSON.stringify({ versao }),
+  })
+
+// ══════════════════════════════════════════ Fatia 3 — remessa e conciliação
+
+export interface GerarRemessaResult {
+  status: 'gerada' | 'dry-run' | 'skipped'
+  dryRun: boolean
+  writeEnabled: boolean
+  loteId: string
+  nativeFlpCod?: number
+  nativeGabCod?: number
+  arquivo?: string
+  numRemessa?: number
+  conteudo?: string
+  itens: number
+  valorTotal: number
+}
+
+export interface ItemConciliado {
+  loteId?: string
+  docCod?: string
+  titCod?: string
+  flpCod?: number
+  itsCodSeq?: number
+  evento?: string
+  descricao?: string
+  rejeitado: boolean
+  borCod?: number
+  bxaCodSeq?: number
+  contaFinanceira?: number
+  valorPago?: number
+  /** `false` quando a linha não casou com nenhum lote nosso (montado direto no ERP). */
+  reconhecido: boolean
+}
+
+export interface ConciliarResult {
+  dryRun: boolean
+  writeEnabled: boolean
+  processado: boolean
+  totalLinhas: number
+  pagos: number
+  rejeitados: number
+  naoReconhecidos: number
+  lotesAfetados: string[]
+  itens: ItemConciliado[]
+}
+
+/**
+ * Erros de domínio que a tela precisa distinguir de uma falha genérica, porque cada um
+ * pede uma ação humana diferente.
+ */
+export class RemessaEmDuvidaError extends Error {
+  constructor(
+    message: string,
+    /** Lote nativo possivelmente órfão no Conexos — é por onde a pessoa investiga. */
+    readonly nativeFlpCod?: number,
+  ) {
+    super(message)
+    this.name = 'RemessaEmDuvidaError'
+  }
+}
+
+export class ErpPerguntaError extends Error {
+  constructor(
+    message: string,
+    readonly chave?: string,
+  ) {
+    super(message)
+    this.name = 'ErpPerguntaError'
+  }
+}
+
+/** Traduz os códigos do backend em erros tipados; o resto vira Error comum. */
+async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
+  const res = await apiFetch(`${API}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...((init.headers ?? {}) as Record<string, string>),
+      ...(await withAuthHeaders()),
+    },
+  })
+  const body = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    const msg = String(body.error ?? `Falha (${res.status})`)
+    const det = (body.details ?? {}) as Record<string, unknown>
+    if (body.code === 'REMESSA_EM_DUVIDA') {
+      throw new RemessaEmDuvidaError(msg, det.nativeFlpCod as number | undefined)
+    }
+    if (body.code === 'ERP_PERGUNTA') {
+      throw new ErpPerguntaError(msg, det.chave as string | undefined)
+    }
+    throw new Error(msg)
+  }
+  return body as T
+}
+
+/**
+ * Gera a remessa `.REM` de um lote FINALIZADO, dirigindo o fin015.
+ *
+ * `Idempotency-Key` derivada do lote: duas tentativas para o MESMO lote colidem de
+ * propósito. As escritas do fin015 não são idempotentes — sem isso, um duplo clique
+ * ou um retry após timeout viraria um segundo lote de pagamento.
+ */
+export const gerarRemessa = (loteId: string, opts?: { dryRun?: boolean }) =>
+  sispagRequest<GerarRemessaResult>(`/sispag/lotes/${loteId}/remessa`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': `remessa:${loteId}` },
+    body: JSON.stringify({ dryRun: opts?.dryRun ?? false }),
+  })
+
+/** Baixa o `.REM` já gerado (CNAB 240, texto puro) e devolve o conteúdo. */
+export async function baixarRemessa(loteId: string): Promise<{ nome: string; conteudo: string }> {
+  const res = await apiFetch(`${API}/sispag/lotes/${loteId}/remessa/arquivo`, {
+    headers: { ...(await withAuthHeaders()) },
+  })
+  if (!res.ok) throw new Error(`Falha ao baixar a remessa (${res.status})`)
+  const disp = res.headers.get('Content-Disposition') ?? ''
+  const nome = /filename="([^"]+)"/.exec(disp)?.[1] ?? `lote-${loteId}.REM`
+  return { nome, conteudo: await res.text() }
+}
+
+/**
+ * Concilia um arquivo de retorno: lê o detalhe do `.RET` e traz borderô, baixa e evento
+ * bancário para os itens dos nossos lotes. Com `processar: true`, manda o ERP processar
+ * o arquivo antes — é o passo que GERA AS BAIXAS no fin010.
+ */
+export const conciliarRetorno = (input: {
+  filCod: number
+  bncCod: number
+  gtbCodSeq: number
+  garCodSeq: number
+  processar?: boolean
+  dryRun?: boolean
+}) =>
+  sispagRequest<ConciliarResult>('/sispag/retornos/conciliar', {
+    method: 'POST',
+    body: JSON.stringify(input),
   })
 
 /**

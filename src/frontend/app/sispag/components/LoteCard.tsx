@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle2, ChevronDown, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileText, Plus, Trash2 } from 'lucide-react'
 import * as React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,10 +23,12 @@ import {
 import {
   atualizarContaPagadora,
   atualizarModalidadeItem,
+  baixarRemessa,
   cancelarLote,
   CONTAS_PAGADORAS,
   fetchModalidadesDisponiveis,
   finalizarLote,
+  gerarRemessa,
   type LotePagamento,
   marcarRetorno,
   type Modalidade,
@@ -44,6 +46,18 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
     return (
       <Badge variant="outline" className="border-warning/40 text-warning">
         aguardando retorno
+      </Badge>
+    )
+  if (status === 'REMESSA_GERADA')
+    return (
+      <Badge variant="outline" className="border-info/40 text-info">
+        remessa gerada
+      </Badge>
+    )
+  if (status === 'BAIXADO')
+    return (
+      <Badge variant="outline" className="border-success/40 text-success">
+        baixado
       </Badge>
     )
   if (status === 'RETORNADO')
@@ -84,6 +98,9 @@ export function LoteCard({
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
   // A2: revisão obrigatória — não finaliza enquanto houver item "a definir".
+  // A coluna de retorno só aparece depois que houve conciliação — antes disso seria
+  // uma coluna vazia em todo lote, ruído puro.
+  const temConciliacao = l.itens.some((i) => i.retornoEvento != null)
   const faltaModalidade = l.itens.some((i) => !i.modalidade)
 
   // A2 opção B: formas disponíveis (cadastro do favorecido) por item, lidas ao vivo ao
@@ -175,7 +192,18 @@ export function LoteCard({
               <Button
                 size="sm"
                 disabled={busy}
-                title="Simula o retorno do Nexxera (o gatilho real é o robô-poller da Fatia 3)."
+                title="Cria o lote no Conexos, importa os títulos, finaliza e gera o arquivo .REM."
+                onClick={() =>
+                  acao(() => gerarRemessa(l.id), 'Remessa gerada no Conexos')
+                }
+              >
+                <FileText className="size-4" /> Gerar remessa (.REM)
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                title="Simula o retorno do Nexxera (o gatilho real é a conciliação do .RET)."
                 onClick={() => acao(() => marcarRetorno(l.id, l.versao), 'Retorno do Nexxera registrado')}
               >
                 <CheckCircle2 className="size-4" /> Marcar retorno recebido
@@ -189,6 +217,30 @@ export function LoteCard({
                 Reabrir
               </Button>
             </>
+          ) : null}
+          {l.remessaArquivo ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              title={`Arquivo ${l.remessaArquivo} (remessa nº ${l.remessaNum ?? '—'}), lote nativo ${l.nativeFlpCod ?? '—'}`}
+              onClick={() =>
+                acao(async () => {
+                  const { nome, conteudo } = await baixarRemessa(l.id)
+                  // Blob local: o arquivo já veio do ERP, só entregamos ao navegador.
+                  const url = URL.createObjectURL(
+                    new Blob([conteudo], { type: 'text/plain;charset=latin1' }),
+                  )
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = nome
+                  a.click()
+                  URL.revokeObjectURL(url)
+                }, 'Arquivo baixado')
+              }
+            >
+              <Download className="size-4" /> Baixar {l.remessaArquivo}
+            </Button>
           ) : null}
         </div>
       </CardHeader>
@@ -239,6 +291,7 @@ export function LoteCard({
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead>Vencimento</TableHead>
                     <TableHead>Forma de pgto.</TableHead>
+                    {temConciliacao ? <TableHead>Retorno do banco</TableHead> : null}
                     {isRascunho ? <TableHead className="w-10" /> : null}
                   </TableRow>
                 </TableHeader>
@@ -317,6 +370,34 @@ export function LoteCard({
                           </span>
                         )}
                       </TableCell>
+                      {temConciliacao ? (
+                        <TableCell>
+                          {i.retornoEvento ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span
+                                className={`text-xs font-medium ${i.rejeitado ? 'text-danger' : 'text-success'}`}
+                              >
+                                {i.rejeitado ? (
+                                  <AlertTriangle className="mr-1 inline size-3" />
+                                ) : (
+                                  <CheckCircle2 className="mr-1 inline size-3" />
+                                )}
+                                {i.retornoEvento} · {i.retornoDescricao ?? '—'}
+                              </span>
+                              {/* borderô e baixa: o elo que o ERP não guarda consultável.
+                                  Sem exibir aqui, ninguém consegue rastrear o pagamento. */}
+                              {i.borCod ? (
+                                <span className="text-[11px] text-muted-foreground tabular-nums">
+                                  borderô {i.borCod}
+                                  {i.bxaCodSeq ? ` · baixa ${i.bxaCodSeq}` : ''}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">aguardando</span>
+                          )}
+                        </TableCell>
+                      ) : null}
                       {isRascunho ? (
                         <TableCell>
                           <Button
