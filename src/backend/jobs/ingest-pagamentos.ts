@@ -1,4 +1,9 @@
 import 'reflect-metadata';
+// Carrega o .env ANTES dos imports que constroem o `conexosService` singleton: ele lê
+// CONEXOS_USERNAME/PASSWORD na CONSTRUÇÃO, no import. Sem isto o job só funciona quando
+// há sessão em cache (não precisa logar) — e falha com "credentials are required" no
+// primeiro run contra uma base nova. Em CI as variáveis vêm do ambiente e o dotenv é no-op.
+import 'dotenv/config';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
