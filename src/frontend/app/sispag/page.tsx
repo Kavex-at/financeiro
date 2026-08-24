@@ -310,13 +310,20 @@ function SispagPanel() {
 
   const acaoLote = async (
     fn: () => Promise<unknown>,
-    okMsg: string,
+    // Função quando a confirmação depende do QUE ACONTECEU. "Remessa gerada" e
+    // "simulação em dry-run" não podem ter a mesma mensagem num botão que move dinheiro.
+    okMsg: string | ((resultado: unknown) => { titulo: string; descricao?: string }),
   ) => {
     setBusy(true)
     try {
-      await fn()
+      const resultado = await fn()
       await recarregarLotes()
-      toast.success(okMsg)
+      if (typeof okMsg === 'string') {
+        toast.success(okMsg)
+      } else {
+        const { titulo, descricao } = okMsg(resultado)
+        toast.success(titulo, descricao ? { description: descricao } : undefined)
+      }
     } catch (e) {
       // Dois erros pedem ação humana diferente de "tente de novo" — e insistir em um
       // deles pode gerar pagamento em duplicidade. Não podem virar toast genérico.

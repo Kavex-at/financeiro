@@ -222,15 +222,32 @@ export default class RemessaService {
             executadoPor: input.ator,
         });
 
-        let flpCod: number | undefined;
+        // REAPROVEITA o lote nativo de uma tentativa anterior que falhou.
+        //
+        // Sem isto, cada retry criava OUTRO lote no ERP: a falha marca o ledger como
+        // `error`, o que não bloqueia (só `settled` e `reconciling` bloqueiam), e a
+        // sequência recomeça do `criarLote`. Dois cliques na tela = dois lotes órfãos,
+        // que foi exatamente o que aconteceu em HML (flp 1 e flp 2).
+        //
+        // O lote nativo vazio é reaproveitável com segurança: ele só ganha itens no
+        // passo seguinte, e a falha anterior aconteceu ANTES de qualquer import.
+        let flpCod: number | undefined = anterior?.nativeFlpCod;
         try {
-            // (1) lote nativo
-            const criado = await this.write.criarLote({
-                filCod: lote.filCod,
-                conta: contaPagadora,
-                dataDebito,
-            });
-            flpCod = criado.flpCod;
+            if (flpCod !== undefined) {
+                await this.logService.info({
+                    type: LOG_TYPE.BUSINESS_INFO,
+                    message: 'reaproveitando lote nativo de tentativa anterior',
+                    data: { loteId: lote.id, flpCod, etapaAnterior: anterior?.etapa },
+                });
+            } else {
+                // (1) lote nativo
+                const criado = await this.write.criarLote({
+                    filCod: lote.filCod,
+                    conta: contaPagadora,
+                    dataDebito,
+                });
+                flpCod = criado.flpCod;
+            }
             // Persistido ANTES do próximo POST: se morrer aqui, é a pista do lote órfão.
             await this.ledger.setNativeFlpCod(key, flpCod);
             await this.loteRepo.setChavesNativas({
@@ -242,7 +259,10 @@ export default class RemessaService {
                 ...(escolhida.gerNum !== undefined ? { gerNum: escolhida.gerNum } : {}),
             });
 
-            // (2) importar: identidade VERBATIM do grid de pendentes do ERP
+            // (2) importar: identidade VERBATIM do grid de pendentes do ERP.
+            // Se algum título não for elegível, isto lança ANTES de qualquer escrita no
+            // lote — e o lote nativo vazio fica registrado no ledger para ser reusado na
+            // próxima tentativa, em vez de virar órfão.
             const itens = await this.montarItensImport(lote, bncCod, flpCod);
             await this.ledger.setRequestPayload(key, { itens: itens.length, flpCod });
             await this.write.importarTitulos({
