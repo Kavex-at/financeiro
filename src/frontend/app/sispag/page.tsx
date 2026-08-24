@@ -33,6 +33,9 @@ import { formatBRL } from '@/lib/utils'
 import {
   type ArquivoRetorno,
   cancelarLote,
+  conciliarRetorno,
+  type ConciliarResult,
+  ErpPerguntaError,
   criarLote,
   fetchLotes,
   fetchRetornos,
@@ -44,6 +47,7 @@ import {
   IngestaoPagamentosEmAndamentoError,
   type PagamentoIngestaoRun,
   reabrirLote,
+  RemessaEmDuvidaError,
   removerItem,
   runIngestaoPagamentos,
   type LotePagamento,
@@ -213,12 +217,15 @@ function SispagPanel() {
     (t) => t.filCod,
     (t) => `${t.credor ?? ''} ${t.docCod}/${t.titCod} ${t.banco ?? ''}`,
   )
-  // Lotes: candidatos (RASCUNHO) vs. finalizados (FINALIZADO/RETORNADO), com filtros + paginação.
+  // Lotes: candidatos (RASCUNHO) vs. em andamento (do FINALIZADO até o BAIXADO).
   const lotesRascunho = lotes.filter((l) => l.status === 'RASCUNHO')
-  const lotesFinalizados = lotes.filter(
-    (l) => l.status === 'FINALIZADO' || l.status === 'RETORNADO',
+  const EM_ANDAMENTO = ['FINALIZADO', 'REMESSA_GERADA', 'RETORNADO', 'BAIXADO'] as const
+  const lotesFinalizados = lotes.filter((l) =>
+    (EM_ANDAMENTO as readonly string[]).includes(l.status),
   )
-  const [statusFin, setStatusFin] = React.useState<'todos' | 'aguardando' | 'retornado'>('todos')
+  const [statusFin, setStatusFin] = React.useState<
+    'todos' | 'aguardando' | 'remessa' | 'retornado'
+  >('todos')
   const [adicionarLote, setAdicionarLote] = React.useState<LotePagamento | null>(null)
   const buscaLote = (l: LotePagamento) =>
     `${l.filCod} ${l.criadoPor} ${l.itens.map((i) => i.credor ?? '').join(' ')}`
@@ -226,9 +233,11 @@ function SispagPanel() {
   const finFiltrados = lotesFinalizados.filter((l) =>
     statusFin === 'aguardando'
       ? l.status === 'FINALIZADO'
-      : statusFin === 'retornado'
-        ? l.status === 'RETORNADO'
-        : true,
+      : statusFin === 'remessa'
+        ? l.status === 'REMESSA_GERADA'
+        : statusFin === 'retornado'
+          ? l.status === 'RETORNADO' || l.status === 'BAIXADO'
+          : true,
   )
   const abaFinalizados = useTabelaFiltro(finFiltrados, (l) => l.filCod, buscaLote, 8)
   // Retornos (.RET) do fin052 — mesmo kit (filial + busca + paginação) das demais abas.
@@ -305,7 +314,52 @@ function SispagPanel() {
       await recarregarLotes()
       toast.success(okMsg)
     } catch (e) {
-      toast.error('Ação não concluída', {
+      // Dois erros pedem ação humana diferente de "tente de novo" — e insistir em um
+      // deles pode gerar pagamento em duplicidade. Não podem virar toast genérico.
+      if (e instanceof RemessaEmDuvidaError) {
+        toast.error('Remessa em dúvida — NÃO repita', {
+          description: e.message,
+          duration: 30000,
+        })
+      } else if (e instanceof ErpPerguntaError) {
+        toast.warning('O Conexos pediu uma confirmação', {
+          description: e.message,
+          duration: 20000,
+        })
+      } else {
+        toast.error('Ação não concluída', {
+          description: e instanceof Error ? e.message : undefined,
+        })
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Concilia um arquivo `.RET`. Com `processar`, manda o ERP processar antes — é o passo
+   * que GERA AS BAIXAS no fin010, então é uma ação separada e explícita.
+   */
+  const conciliar = async (r: ArquivoRetorno, processar: boolean) => {
+    setBusy(true)
+    try {
+      const res: ConciliarResult = await conciliarRetorno({
+        filCod: r.filCod,
+        bncCod: r.bncCod,
+        gtbCodSeq: r.gtbCodSeq,
+        garCodSeq: r.garCodSeq,
+        processar,
+      })
+      await recarregarLotes()
+      await carregarRetornos()
+      const partes = [`${res.pagos} pago(s)`]
+      if (res.rejeitados > 0) partes.push(`${res.rejeitados} rejeitado(s)`)
+      if (res.naoReconhecidos > 0) partes.push(`${res.naoReconhecidos} de outro lote`)
+      toast.success(res.dryRun ? 'Conciliação simulada (dry-run)' : 'Retorno conciliado', {
+        description: `${res.totalLinhas} linha(s): ${partes.join(' · ')}`,
+      })
+    } catch (e) {
+      toast.error('Não foi possível conciliar', {
         description: e instanceof Error ? e.message : undefined,
       })
     } finally {
@@ -599,7 +653,8 @@ function SispagPanel() {
             {/* ---- Lotes finalizados (aguardando retorno / de volta do Nexxera) ---- */}
             <TabsContent value="lotes-finalizados" className="space-y-3">
               <p className="text-xs text-muted-foreground">
-                Lotes finalizados — aguardando o retorno do Nexxera, ou já de volta.
+                Lotes finalizados — prontos para virar remessa, com remessa gerada aguardando o
+                retorno do banco, ou já conciliados.
               </p>
               <FiltroBarra
                 aba={abaFinalizados}
@@ -607,7 +662,7 @@ function SispagPanel() {
               />
               <div className="flex flex-wrap gap-x-3 gap-y-2">
                 <div className="flex gap-1">
-                  {(['todos', 'aguardando', 'retornado'] as const).map((s) => (
+                  {(['todos', 'aguardando', 'remessa', 'retornado'] as const).map((s) => (
                     <Button
                       key={s}
                       size="sm"
@@ -617,8 +672,10 @@ function SispagPanel() {
                       {s === 'todos'
                         ? 'Todos'
                         : s === 'aguardando'
-                          ? 'Aguardando retorno'
-                          : 'De volta do Nexxera'}
+                          ? 'A gerar remessa'
+                          : s === 'remessa'
+                            ? 'Remessa gerada'
+                            : 'Conciliados'}
                     </Button>
                   ))}
                 </div>
@@ -699,12 +756,11 @@ function SispagPanel() {
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
-                  {painel.lotes.length} lotes nativos (fin015). Lançar a remessa (.REM) a partir de um
-                  lote finalizado é a próxima fase (em validação com a analista).
+                  {painel.lotes.length} lotes nativos (fin015) — a visão do ERP. Para gerar uma
+                  remessa, use <strong>Gerar remessa (.REM)</strong> no lote finalizado, na aba
+                  "Lotes finalizados".
                 </p>
-                <Button size="sm" variant="outline" disabled title="Em validação com a analista (Fatia 3)">
-                  Lançar remessa (.REM)
-                </Button>
+
               </div>
             </TabsContent>
 
@@ -712,16 +768,15 @@ function SispagPanel() {
             <TabsContent value="retornos" className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
-                  Arquivos de retorno (.RET) do Conexos (fin052), lidos <strong>ao vivo</strong>. Subir e
-                  processar o .RET é a próxima fase (em validação com a analista).
+                  Arquivos de retorno (.RET) do Conexos (fin052), lidos <strong>ao vivo</strong>.
+                  <strong> Processar</strong> manda o ERP parsear o arquivo e dar as baixas no
+                  fin010; <strong> Conciliar</strong> só lê o resultado e traz para os nossos lotes.
                 </p>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={carregarRetornos} disabled={retornosLoading}>
                     <RefreshCcw className="size-4" /> {retornos === null ? 'Carregar retornos' : 'Recarregar'}
                   </Button>
-                  <Button size="sm" variant="outline" disabled title="Em validação com a analista (Fatia 3)">
-                    Subir .RET
-                  </Button>
+
                 </div>
               </div>
               {retornosLoading ? (
@@ -763,6 +818,7 @@ function SispagPanel() {
                             <TableHead className="text-right">Rejeitados</TableHead>
                             <TableHead className="text-right">Erros</TableHead>
                             <TableHead>Filial</TableHead>
+                            <TableHead className="text-right">Ações</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -813,6 +869,32 @@ function SispagPanel() {
                                 )}
                               </TableCell>
                               <TableCell className="text-muted-foreground">{r.filCod}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex justify-end gap-2">
+                                  {/* Arquivo apenas CARREGADO não tem linha de detalhe: só
+                                      depois de processado. Por isso "Processar" some quando
+                                      o ERP já processou. */}
+                                  {!r.statusProcessamento ? (
+                                    <Button
+                                      size="sm"
+                                      disabled={busy}
+                                      title="Manda o ERP parsear o .RET e gravar as baixas no fin010."
+                                      onClick={() => conciliar(r, true)}
+                                    >
+                                      Processar e conciliar
+                                    </Button>
+                                  ) : null}
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={busy}
+                                    title="Só lê o resultado já processado e traz para os nossos lotes."
+                                    onClick={() => conciliar(r, false)}
+                                  >
+                                    Conciliar
+                                  </Button>
+                                </div>
+                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
