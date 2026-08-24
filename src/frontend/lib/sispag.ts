@@ -401,14 +401,60 @@ export const conciliarRetorno = (input: {
     body: JSON.stringify(input),
   })
 
+/** Conta corrente pagadora da filial, lida do `fin005`. */
+export interface ContaPagadora {
+  ccoCod: number
+  /** Código INTERNO do banco no Conexos (≠ FEBRABAN). */
+  bncCod: number
+  agencia?: string
+  numeroConta?: number
+  dvConta?: string
+  /** Conta financeira (plano gerencial) vinculada. */
+  gerNum?: number
+  gerDes?: string
+}
+
 /**
- * Contas pagadoras conhecidas (A3). Default = Itaú; as demais são exceções raras
- * (fornecedor que não aceita boleto via Itaú). O analista escolhe na revisão.
+ * Contas pagadoras REAIS da filial (A3).
+ *
+ * Substitui uma lista fixa de duas contas (Itaú e Santander). A filial tem 17 no
+ * `fin005`, e a escolha importa: um favorecido só recebe se a conta pagadora for do
+ * MESMO banco da conta dele. Com a lista fixa, todo favorecido de outro banco ficava
+ * impossível de pagar pela tela — o serviço recusava, corretamente, e não havia como
+ * escolher a conta que resolveria.
  */
-export const CONTAS_PAGADORAS = [
-  { banco: 'ITAÚ', conta: '55795-4', label: 'Itaú · 55795-4 (padrão)' },
-  { banco: 'SANTANDER', conta: '13001274-8', label: 'Santander · 13001274-8' },
-] as const
+export async function fetchContasPagadoras(filCod: number): Promise<ContaPagadora[]> {
+  const res = await apiFetch(`${API}/sispag/contas-pagadoras?filCod=${filCod}`, {
+    headers: { ...(await withAuthHeaders()) },
+  })
+  if (!res.ok) throw new Error(`Falha ao carregar as contas pagadoras (${res.status})`)
+  const j = (await res.json()) as { contas: ContaPagadora[] }
+  return j.contas ?? []
+}
+
+/** Rótulo legível de uma conta pagadora, para o seletor. */
+export const rotuloConta = (c: ContaPagadora): string => {
+  const nome = BANCO_NOME[c.bncCod] ?? `banco ${c.bncCod}`
+  return `${nome} · ag ${c.agencia ?? '—'} · ${c.numeroConta ?? '—'}-${c.dvConta ?? ''}`
+}
+
+/** Nome do banco pelo código INTERNO do Conexos (o `bncCod`, não o FEBRABAN). */
+const BANCO_NOME: Record<number, string> = {
+  3: 'Banco do Brasil',
+  4: 'Itaú',
+  6: 'Banco 6',
+  7: 'Bradesco',
+  8: 'Safra',
+  10: 'Santander',
+  11: 'Banestes',
+  14: 'Banco 14',
+  15: 'Daycoval',
+  25: 'Votorantim',
+  35: 'Pine',
+  38: 'Original',
+  39: 'Banco 39',
+  44: 'XP',
+}
 
 /** A3 — troca a conta pagadora do lote (só RASCUNHO; optimistic lock por versao). */
 export const atualizarContaPagadora = (
