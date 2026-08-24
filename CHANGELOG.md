@@ -1,5 +1,40 @@
 # Columbia Financeiro — Changelog
 
+## v0.29.0 (2026-08-24) — Regis-Review Lista B: a conciliação para de poder duplicar dinheiro
+
+- **fix(sispag):** ledger write-ahead da conciliação (`conciliacao_execucao`, migration 0050).
+  `PUT fin052/arquivosRetorno/processar` gera as baixas no fin010 e **não é idempotente** — rodava
+  sem trilha nenhuma, então dois cliques na tela, ou um restart do Render entre o PUT e a resposta
+  HTTP, gravavam baixa em cima de baixa. A identidade da chave é o **arquivo de retorno**
+  (`fil+bnc+gtb+gar`), não a requisição: o risco real é reprocessar o mesmo `.RET`. `settled`
+  curto-circuita, `reconciling` órfão é fail-closed (`ConciliacaoEmDuvidaError`, 409), e
+  `marcarProcessado` grava **antes** do PUT. Varredura incompleta não fecha o ledger — ali a
+  segunda passada é justamente o certo.
+- **fix(sispag):** o `catch {}` da varredura de eventos dizia "código não presente neste arquivo".
+  Mas código ausente devolve `rows: []`, sem exceção: tudo que aquele catch engolia era falha real
+  (timeout, 5xx, 401). O caso caro é perder a linha de **rejeição** — sem ela `transicionarLote` não
+  vê rejeição nenhuma e fecha o lote em `BAIXADO`. Dinheiro que o banco recusou, reportado como
+  pago. Agora cada falha é registrada, `varreduraIncompleta` sobe até a UI, o lote não passa de
+  `RETORNADO` e o toast diz PARCIAL em vez de sucesso.
+- **fix(sispag):** `listarTitulosPendentes` pedia `pageSize: 500` e fixava `pageNumber: 1`. A filial
+  2 tem ~2020 pendentes, então o serviço via 24,7% do grid e chamava o resto de "não está mais
+  elegível" — frase falsa, e cara, porque o lote nativo já tinha sido criado e ficava órfão. Agora
+  pagina de verdade, com parada antecipada pelas chaves do lote e aviso explícito se o guarda de 40
+  páginas for atingido.
+- **fix(sispag):** o painel cortava em 400 títulos e a carteira tem 1511. A tela dizia "Todos (400)"
+  ao lado de um KPI de "1.225 a vencer em 30 dias", e os títulos além do 400º eram **inalcançáveis**
+  para quem monta lote, sem sinal de que existiam. Medido: a carteira inteira serializa 386 KB. O
+  cap virou guarda-rail e a resposta carrega `titulosTotal`; a UI avisa quando cortou.
+- **perf(sispag):** varredura de códigos de evento em paralelo (`BoundedConcurrency`, limite 4).
+  Era serial: ~92 s p50 no Bradesco (153 códigos), acima do timeout do proxy do Render.
+- **feat(sispag):** `SISPAG_LIVE_WRITE_ENABLED` (default **false**) — kill-switch desta frente.
+  O `CONEXOS_DRY_RUN` é global: conter um bug só do SISPAG obrigava a desligar Permutas e
+  Recebimentos junto. **Ação de deploy:** ligar no dashboard do Render quando a Columbia validar.
+- **fix(sispag):** `RemessaEmDuvidaError` sem `flpCod` dizia "confira o fin015" — num grid de
+  milhares de rascunhos isso não é instrução. Agora carrega filial, banco e horário.
+- **test(sispag):** o `RemessaExecucaoRepository` — a trava anti-duplicação da remessa — estava com
+  0% de cobertura; a invariante "settled não regride" existia só no SQL do `ON CONFLICT`.
+
 ## v0.28.0 (2026-08-24) — Regis-Review: os três P0 que bloqueavam o merge, e o vencido sai da frente
 
 - **fix(sispag):** `GET /contas-pagadoras` e `GET /lotes/:id/remessa/arquivo` estavam sem
