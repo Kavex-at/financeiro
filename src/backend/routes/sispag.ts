@@ -367,6 +367,10 @@ router.get(
 // lista fixa, todo favorecido de outro banco ficava impossível de pagar pela tela.
 router.get(
     '/contas-pagadoras',
+    // Dado bancário da EMPRESA (17 contas na filial 2). As rotas irmãs de escrita já exigem
+    // admin; a assimetria era o defeito — leitura de conta corrente não é menos sensível que
+    // escrita. Quando existir um papel `viewer`, reavaliar se esta rota o aceita.
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const filCod = Number(req.query.filCod);
@@ -425,6 +429,10 @@ router.post(
 // GET /sispag/lotes/:id/remessa/arquivo — conteúdo do .REM já gerado (CNAB 240). Leitura.
 router.get(
     '/lotes/:id/remessa/arquivo',
+    // O `.REM` é um CNAB 240 com CNPJ, banco, agência e conta de CADA FORNECEDOR pago.
+    // Sem este guard, qualquer usuário autenticado extraía a carteira de fornecedores da
+    // Columbia com um loop de `curl` — LGPD Art. 6º e sigilo bancário (LC 105).
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(RemessaService);

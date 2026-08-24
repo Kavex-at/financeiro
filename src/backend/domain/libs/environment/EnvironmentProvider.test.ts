@@ -215,4 +215,77 @@ describe('EnvironmentProvider', () => {
             expect(env.supabaseServiceRoleKey).toBeUndefined();
         });
     });
+    describe('CONEXOS_WRITE_ENABLED em máquina local', () => {
+        const PRD = 'https://columbiatrading.conexos.cloud/api';
+        const HML = 'https://columbiatrading-hml.conexos.cloud/api';
+
+        beforeEach(() => {
+            process.env.CONEXOS_USERNAME = 'u';
+            process.env.CONEXOS_PASSWORD = 'p';
+            process.env.databaseConnectionString = 'postgres://localhost:5432/test';
+            process.env.CONEXOS_WRITE_ENABLED = 'true';
+            jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        });
+
+        it('IGNORA write=true quando environment=local aponta para a Conexos de PRODUÇÃO', async () => {
+            // Ler PRD de uma máquina de dev é legítimo (é de lá que vêm os títulos reais).
+            // ESCREVER não é: viraria lote de pagamento no ERP da Columbia sem deploy.
+            process.env.environment = 'local';
+            process.env.CONEXOS_BASE_URL = PRD;
+
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+
+            expect(env.conexosWriteEnabled).toBe(false);
+        });
+
+        it('mantém write=true em local contra HML — é o fluxo sancionado de validação', async () => {
+            process.env.environment = 'local';
+            process.env.CONEXOS_BASE_URL = HML;
+
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+
+            expect(env.conexosWriteEnabled).toBe(true);
+        });
+
+        it('mantém write=true quando o ambiente NÃO é local (Render)', async () => {
+            process.env.environment = 'production';
+            process.env.CONEXOS_BASE_URL = PRD;
+
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+
+            expect(env.conexosWriteEnabled).toBe(true);
+        });
+
+        it('permite o override deliberado PERMITIR_ESCRITA_PRD_LOCAL=1 (go-live assistido)', async () => {
+            process.env.environment = 'local';
+            process.env.CONEXOS_BASE_URL = PRD;
+            process.env.PERMITIR_ESCRITA_PRD_LOCAL = '1';
+
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+
+            expect(env.conexosWriteEnabled).toBe(true);
+        });
+
+        it('NÃO bloqueia um mock local — servidor de teste não é produção', async () => {
+            // Os e2e de Recebimentos sobem um ERP falso em 127.0.0.1 e ligam a escrita.
+            // Bloquear por "não tem -hml no host" recusaria isso: ruído, não segurança.
+            process.env.environment = 'local';
+            process.env.CONEXOS_BASE_URL = 'http://127.0.0.1:41234/api';
+
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+
+            expect(env.conexosWriteEnabled).toBe(true);
+        });
+
+        it('write=false continua false — o guard não liga escrita que ninguém pediu', async () => {
+            process.env.environment = 'production';
+            process.env.CONEXOS_BASE_URL = PRD;
+            process.env.CONEXOS_WRITE_ENABLED = 'false';
+
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+
+            expect(env.conexosWriteEnabled).toBe(false);
+        });
+    });
+
 });
