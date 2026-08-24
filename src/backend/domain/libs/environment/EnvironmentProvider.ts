@@ -179,8 +179,16 @@ export default class EnvironmentProvider {
     private readCred = (obj: Record<string, any>, key: string): string => obj[key] || '';
 
     private GetLocalEnvironmentVars = (): EnvironmentVars => {
-        const envPath = path.resolve(process.cwd(), '.env');
-        dotenv.config({ path: envPath });
+        // NÃO carrega o `.env` sob Jest. O teste monta o cenário limpando `process.env`;
+        // o dotenv reescrevia por cima, a partir de um arquivo que varia de máquina para
+        // máquina. O sintoma: 5 testes de `recebimentos.e2e.gates` falhavam no laptop
+        // (porque o `.env` local tem `CONEXOS_DRY_RUN=false`) e passavam no CI — verde
+        // local deixava de significar verde de verdade, e a rotina virou apagar o `.env`
+        // antes de cada gate. `JEST_WORKER_ID` é injetada pelo Jest em cada worker.
+        if (!process.env.JEST_WORKER_ID) {
+            const envPath = path.resolve(process.cwd(), '.env');
+            dotenv.config({ path: envPath });
+        }
 
         return new EnvironmentVars({
             databaseConnectionString: this.readEnv('databaseConnectionString'),
