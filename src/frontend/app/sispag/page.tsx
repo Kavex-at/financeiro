@@ -29,6 +29,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Spinner } from '@/components/ui/spinner'
 import { EmptyState } from '@/components/ui/empty-state'
 import { isSispagEnabled } from '@/lib/features'
+import { isSessionExpiredError } from '@/lib/http'
 import { formatBRL } from '@/lib/utils'
 import {
   type ArquivoRetorno,
@@ -127,6 +128,9 @@ function SispagPanel() {
       setPainel(p)
       setLotes(ls)
     } catch (e) {
+      // Sessão expirada tem dono: o SessionExpiredModal. Se renderizarmos o nosso
+      // EmptyState aqui, ele cobre o modal e o usuário fica sem caminho para o login.
+      if (isSessionExpiredError(e)) return
       setError(e instanceof Error ? e.message : 'Falha ao carregar o painel.')
     } finally {
       setLoading(false)
@@ -288,7 +292,7 @@ function SispagPanel() {
       await recarregarLotes()
       if (falhas.length === 0) {
         toast.success(`Lote criado com ${ok} título(s)`, {
-          description: 'Montagem local — nada foi enviado ao banco/ERP.',
+          description: 'Lote criado localmente — nada foi escrito no ERP ainda.',
         })
       } else {
         toast.warning(`Lote criado com ${ok} título(s); ${falhas.length} não entraram`, {
@@ -316,6 +320,7 @@ function SispagPanel() {
     } catch (e) {
       // Dois erros pedem ação humana diferente de "tente de novo" — e insistir em um
       // deles pode gerar pagamento em duplicidade. Não podem virar toast genérico.
+      if (isSessionExpiredError(e)) return
       if (e instanceof RemessaEmDuvidaError) {
         toast.error('Remessa em dúvida — NÃO repita', {
           description: e.message,
@@ -359,6 +364,7 @@ function SispagPanel() {
         description: `${res.totalLinhas} linha(s): ${partes.join(' · ')}`,
       })
     } catch (e) {
+      if (isSessionExpiredError(e)) return
       toast.error('Não foi possível conciliar', {
         description: e instanceof Error ? e.message : undefined,
       })
@@ -372,6 +378,7 @@ function SispagPanel() {
     try {
       setRetornos(await fetchRetornos())
     } catch (e) {
+      if (isSessionExpiredError(e)) return
       toast.error('Não foi possível ler os retornos', {
         description: e instanceof Error ? e.message : undefined,
       })
@@ -384,7 +391,7 @@ function SispagPanel() {
     <div className="space-y-6">
       <PageHeader
         title="SISPAG — Pagamentos"
-        subtitle="Escopo II · Frente II. Painel diário + montagem do lote (local). Não envia ao banco."
+        subtitle="Escopo II · Frente II. Painel, montagem do lote, geração da remessa e conciliação do retorno. O arquivo não é transmitido ao banco."
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -422,10 +429,12 @@ function SispagPanel() {
       <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
         <Lock className="mt-0.5 size-4 shrink-0 text-warning" />
         <div>
-          <span className="font-medium">Montagem local — sem escrita no ERP.</span> A carteira de
-          títulos vem do <strong>nosso banco</strong> (última ingestão); lotes nativos e borderôs são
-          lidos <strong>ao vivo do Conexos</strong> (contexto). Criar lote, incluir/remover e finalizar
-          são <strong>estado local</strong>; a remessa/pagamento ao banco é a próxima fase.
+          <span className="font-medium">Gerar remessa e conciliar ESCREVEM no Conexos.</span> A
+          carteira vem do <strong>nosso banco</strong> (última ingestão); lotes nativos e borderôs
+          são lidos <strong>ao vivo</strong>. Montar o lote é estado local, mas{' '}
+          <strong>Gerar remessa</strong> cria o lote no ERP e <strong>Processar</strong> grava as
+          baixas no fin010. O arquivo <strong>não é entregue ao banco</strong>: o Conexos não
+          transmite remessa de pagamento — o transporte é externo e manual.
           {painel?.ingestao.ultimaRunEm ? (
             <span className="text-muted-foreground">
               {' '}
