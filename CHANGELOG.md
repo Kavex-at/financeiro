@@ -1,5 +1,53 @@
 # Columbia Financeiro — Changelog
 
+## v0.27.0 (2026-08-24) — SISPAG: a remessa e a conciliação saem do script e entram na aplicação
+
+- **feat(sispag):** o ciclo `criar lote → importar → finalizar → gerar .REM` passa a ser um botão na
+  tela do lote finalizado, e o retorno `.RET` ganha **Processar** e **Conciliar** na aba de retornos.
+  Até aqui o `lote_pagamento` era 100% local (ADR-0015) e as ferramentas do `fin015`/`fin052`
+  existiam soltas em jobs; o que faltava era o fluxo — gating, idempotência, auditoria e a ponte com
+  o lote nativo do ERP.
+- **feat(sispag):** ledger write-ahead `remessa_execucao` (migration 0049), espelhando
+  `solicitacao_numerario_execucao`. As três escritas do `fin015` **não são idempotentes**: um retry
+  após timeout gera um SEGUNDO lote de pagamento. Execução `settled` curto-circuita; `reconciling`
+  órfão é **fail-closed** (`RemessaEmDuvidaError`) e exige conciliação humana; o `flpCod` é
+  persistido assim que o ERP o devolve, para que uma queda no meio aponte o lote órfão.
+- **feat(sispag):** a conciliação copia **borderô, baixa, conta financeira e evento bancário** para o
+  item do lote. Isso é obrigatório porque o ERP **não guarda essa rastreabilidade em lugar
+  consultável**: medido em produção, todos os itens de lotes com retorno processado têm `borCod`
+  nulo, e o `vldHasRemessaPgto` do borderô vem 0 mesmo para baixa vinda de remessa. O vínculo só
+  existe na linha de detalhe do retorno — e some se ninguém copiar.
+- **fix(sispag):** `importarTitulos` mandava só `{ items }`. O endpoint projeta um DTO de **seleção**
+  e exige `op`, `bncCodFin015` e os dois `titVldReflexoDda*` no nível da requisição **E** dentro de
+  cada item, ao mesmo tempo. A identidade do título também vai verbatim do grid: `filCod` é a filial
+  do TÍTULO e `filCodLote` a do LOTE, e igualá-las devolve `Not Found: FinTituloPag`.
+- **fix(sispag):** `modalidadesDisponiveis` era **sempre vazio em produção**. Derivava o destino de
+  campos do `fin064` que medem 0% de preenchimento em 561 títulos de HML e 2000 de PRD — lá eles são
+  join no item SISPAG e só populam depois do import. A conta do favorecido mora em
+  `CmnPessoasCtcorr` (`cmn025`), e é o `pctCodSeq` de lá que o `FinItemSispag` referencia.
+- **fix(sispag):** a **conta pagadora** vem do `fin005` da filial, nunca fixa. O mesmo `ccoCod`
+  aponta para contas DIFERENTES em cada filial — fixá-lo gerou um `.REM` com header do banco errado.
+  A tela também oferecia duas contas escritas no código enquanto a filial tem 17; como um favorecido
+  só recebe se a conta pagadora for do mesmo banco da conta dele, isso tornava impossível pagar
+  qualquer favorecido de outro banco.
+- **fix(sispag):** o arquivo gerado é localizado **pelo nome**, nunca pelo "primeiro com conteúdo".
+  O ERP **recicla `flpCod`** de lotes que deixaram de existir, e a lista de um lote novo pode conter
+  arquivos órfãos de meses atrás.
+- **fix(sispag):** documentos de **previsão** (`docVldPrevisao=1`) saem da carteira. O `fin015` os
+  recusa — não se paga uma previsão — mas só na geração da remessa, depois de a analista já ter
+  montado o lote e finalizado.
+- **fix(sispag):** retry após falha **reaproveita** o lote nativo em vez de criar outro. A falha
+  marcava o ledger como `error`, o que não bloqueia, e a sequência recomeçava do `criarLote`: dois
+  cliques deixavam dois órfãos no ERP.
+- **fix(sispag):** o protocolo de **PERGUNTA** do ERP (`type: QUESTION`, YES/ABORT) vira
+  `ErpPerguntaError` e sobe para a tela. Responder `YES` altera a forma de pagamento do título —
+  decisão de quem opera, não de um serviço.
+- **fix(auth):** um **401 passa a descartar o token**. Antes só levantava a flag do modal; se
+  qualquer tela engolisse o erro, o usuário ficava preso — a página de login expulsa quem "já está
+  logado", e o token inválido continuava lá. Sem saída para trocar de conta.
+- **fix(sispag):** `ingest-pagamentos` carrega o `.env` antes de construir o cliente Conexos, que lê
+  as credenciais no import. Só funcionava quando havia sessão em cache.
+
 ## v0.26.2 (2026-08-20) — Recebimentos: o modal diz se vai sair nota de débito ANTES do Processar
 
 - **feat(recebimentos):** o modal "Alocar" passa a avisar, **antes** do clique em "Processar", se a
