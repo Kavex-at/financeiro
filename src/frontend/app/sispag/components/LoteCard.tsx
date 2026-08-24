@@ -25,8 +25,9 @@ import {
   atualizarModalidadeItem,
   baixarRemessa,
   cancelarLote,
-  CONTAS_PAGADORAS,
+  type ContaPagadora,
   fetchModalidadesDisponiveis,
+  fetchContasPagadoras,
   finalizarLote,
   gerarRemessa,
   type LotePagamento,
@@ -35,6 +36,7 @@ import {
   MODALIDADES,
   reabrirLote,
   removerItem,
+  rotuloConta,
 } from '@/lib/sispag'
 import { formatBRL } from '@/lib/utils'
 
@@ -100,6 +102,24 @@ export function LoteCard({
   // A2: revisão obrigatória — não finaliza enquanto houver item "a definir".
   // A coluna de retorno só aparece depois que houve conciliação — antes disso seria
   // uma coluna vazia em todo lote, ruído puro.
+  // Contas pagadoras REAIS da filial (fin005). Antes era uma lista fixa de duas, o que
+  // tornava impossível pagar favorecido de qualquer outro banco pela tela.
+  const [contas, setContas] = React.useState<ContaPagadora[]>([])
+  React.useEffect(() => {
+    if (!isRascunho) return
+    let vivo = true
+    fetchContasPagadoras(l.filCod)
+      .then((cs) => {
+        if (vivo) setContas(cs)
+      })
+      .catch(() => {
+        if (vivo) setContas([])
+      })
+    return () => {
+      vivo = false
+    }
+  }, [isRascunho, l.filCod])
+
   const temConciliacao = l.itens.some((i) => i.retornoEvento != null)
   const faltaModalidade = l.itens.some((i) => !i.modalidade)
 
@@ -253,30 +273,39 @@ export function LoteCard({
                 value={l.conta ?? undefined}
                 disabled={busy}
                 onValueChange={(conta) => {
-                  const opt = CONTAS_PAGADORAS.find((c) => c.conta === conta)
-                  if (!opt || opt.conta === l.conta) return
+                  const opt = contas.find((c) => `${c.numeroConta}-${c.dvConta ?? ''}` === conta)
+                  if (!opt || conta === l.conta) return
                   acao(
                     () =>
                       atualizarContaPagadora(l.id, {
                         versao: l.versao,
-                        banco: opt.banco,
-                        conta: opt.conta,
+                        banco: rotuloConta(opt).split(' · ')[0],
+                        conta,
                       }),
                     'Conta pagadora atualizada',
                   )
                 }}
               >
-                <SelectTrigger className="h-8 w-64" aria-label="Conta pagadora do lote">
+                <SelectTrigger className="h-8 w-72" aria-label="Conta pagadora do lote">
                   <SelectValue placeholder="Selecione a conta" />
                 </SelectTrigger>
                 <SelectContent>
-                  {CONTAS_PAGADORAS.map((c) => (
-                    <SelectItem key={c.conta} value={c.conta}>
-                      {c.label}
+                  {contas.map((c) => (
+                    <SelectItem
+                      key={c.ccoCod}
+                      value={`${c.numeroConta}-${c.dvConta ?? ''}`}
+                    >
+                      {rotuloConta(c)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {contas.length > 0 ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {contas.length} contas da filial {l.filCod} · o favorecido só recebe se o banco
+                  da conta pagadora for o mesmo da conta dele
+                </span>
+              ) : null}
             </div>
           ) : null}
           {l.itens.length === 0 ? (

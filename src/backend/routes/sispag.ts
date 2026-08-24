@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
+import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import { isHandlerError } from '../domain/libs/handler/HandlerError.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
@@ -357,6 +358,24 @@ router.get(
         const limit = Math.min(Number(req.query.limit) || 10, 50);
         const repo = container.resolve(PagamentoIngestaoRunRepository);
         res.json({ runs: await repo.listRecentRuns(limit) });
+    }),
+);
+
+// GET /sispag/contas-pagadoras?filCod= — contas correntes da filial (fin005). Leitura.
+// A tela usava uma lista FIXA de duas contas (Itaú e Santander) enquanto a filial tem 17.
+// Um favorecido só recebe se a conta pagadora for do MESMO banco da conta dele — com a
+// lista fixa, todo favorecido de outro banco ficava impossível de pagar pela tela.
+router.get(
+    '/contas-pagadoras',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const filCod = Number(req.query.filCod);
+        if (!Number.isInteger(filCod) || filCod <= 0) {
+            res.status(400).json({ error: 'filCod obrigatório' });
+            return;
+        }
+        const service = container.resolve(ConexosSispagClient);
+        res.json({ contas: await service.listContasCorrentes(filCod) });
     }),
 );
 
