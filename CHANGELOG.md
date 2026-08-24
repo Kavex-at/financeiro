@@ -1,5 +1,28 @@
 # Columbia Financeiro — Changelog
 
+## v0.28.0 (2026-08-24) — Regis-Review: os três P0 que bloqueavam o merge, e o vencido sai da frente
+
+- **fix(sispag):** `GET /contas-pagadoras` e `GET /lotes/:id/remessa/arquivo` estavam sem
+  `requireRole('admin')`. O CNAB carrega agência e conta de fornecedor — qualquer usuário
+  autenticado baixava. (`security-1`)
+- **fix(deploy):** `BootMigrator` recusa aplicar DDL quando `environment=local` aponta para um banco
+  remoto gerenciado. O `dev` do projeto é `tsx watch`: com o `.env` na Supabase compartilhada, salvar
+  um arquivo em `migrations/` virava DDL em produção em segundos, sem PR e sem deploy — foi assim que
+  a `0049` chegou lá. Escapatória deliberada: `PERMITIR_MIGRACAO_REMOTA=1`. (`deployability-1`)
+- **fix(security):** `EnvironmentProvider` ignora `CONEXOS_WRITE_ENABLED=true` quando
+  `environment=local` e a base é o ERP real. Ler produção de uma máquina de dev é legítimo — é de lá
+  que vêm os títulos para conferir tela; escrever criaria lote de pagamento na Columbia sem deploy. A
+  regra mira `*.conexos.cloud` sem `-hml`, e **não** "tudo que não é `-hml`": os e2e sobem um mock em
+  `127.0.0.1`, e servidor de teste não é produção. Escapatória: `PERMITIR_ESCRITA_PRD_LOCAL=1`.
+  A rotação dos quatro segredos comprometidos é ação humana e depende da titular da credencial
+  Conexos — runbook em `docs/runbooks/rotacao-segredos.md`. (`security-2`)
+- **feat(sispag):** títulos vencidos saem da lista de trabalho por padrão (pedido do financeiro).
+  Vencido não entra em lote — o ERP recusa finalizar quando a data de débito passa do menor
+  vencimento (R2). Mudou o default do filtro que já existia em vez de criar uma seção colapsável:
+  dois mecanismos para o mesmo trabalho. Os botões passam a contar, e uma linha diz quantos vencidos
+  ficaram de fora — esconder um título a pagar sem dizer que ele existe trocaria tabela poluída por
+  vencimento esquecido.
+
 ## v0.27.0 (2026-08-24) — SISPAG: a remessa e a conciliação saem do script e entram na aplicação
 
 - **feat(sispag):** o ciclo `criar lote → importar → finalizar → gerar .REM` passa a ser um botão na
