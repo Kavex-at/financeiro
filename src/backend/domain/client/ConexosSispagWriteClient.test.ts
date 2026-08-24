@@ -282,4 +282,102 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             );
         });
     });
+    describe('listarTitulosPendentes — paginação (performance-3)', () => {
+        /** Grid falso: `total` linhas, servidas em páginas de `pageSize`. */
+        const gridDe = (total: number) => (_path: string, body: Record<string, unknown>) => {
+            const pageSize = Number(body.pageSize);
+            const pageNumber = Number(body.pageNumber);
+            const inicio = (pageNumber - 1) * pageSize;
+            const rows = Array.from({ length: Math.max(0, Math.min(pageSize, total - inicio)) }, (_, i) => ({
+                filCod: 1,
+                docCod: inicio + i + 1,
+                titCod: 1,
+            }));
+            return Promise.resolve({ count: total, rows });
+        };
+
+        it('varre TODAS as páginas até esgotar o grid', async () => {
+            // A filial 2 tem ~2020 pendentes. A versão anterior via 500 e chamava o resto
+            // de "não elegível" — com o lote nativo já criado e órfão.
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDe(2020));
+
+            const pend = await make(base).listarTitulosPendentes({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 30,
+                pageSize: 500,
+            });
+
+            expect(pend).toHaveLength(2020);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(5);
+        });
+
+        it('para assim que encontra todas as chaves pedidas', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDe(2020));
+
+            const pend = await make(base).listarTitulosPendentes({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 30,
+                pageSize: 500,
+                chavesDesejadas: new Set(['3:1', '7:1']),
+            });
+
+            // Ambas estão na primeira página — não faz sentido puxar as outras quatro.
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(1);
+            expect(pend).toHaveLength(500);
+        });
+
+        it('NÃO para na primeira página quando falta uma chave', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDe(2020));
+
+            await make(base).listarTitulosPendentes({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 30,
+                pageSize: 500,
+                // 1600 só aparece na 4ª página — era exatamente o falso negativo.
+                chavesDesejadas: new Set(['3:1', '1600:1']),
+            });
+
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(4);
+        });
+
+        it('avisa em vez de truncar calado quando bate o guarda de páginas', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDe(10_000));
+            const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+            const pend = await make(base).listarTitulosPendentes({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 30,
+                pageSize: 500,
+                maxPaginas: 2,
+            });
+
+            expect(pend).toHaveLength(1000);
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining('truncado em 2 páginas'));
+            warn.mockRestore();
+        });
+
+        it('uma página curta encerra a varredura (grid menor que o pageSize)', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDe(12));
+
+            const pend = await make(base).listarTitulosPendentes({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                pageSize: 500,
+            });
+
+            expect(pend).toHaveLength(12);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(1);
+        });
+    });
+
 });

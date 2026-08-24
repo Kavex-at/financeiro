@@ -21,7 +21,19 @@ import LogService from '../LogService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Nº máx. de títulos devolvidos ao painel (evita payload gigante). */
-const TITULOS_CAP = 400;
+/**
+ * Teto do payload de títulos. É GUARDA-RAIL, não limite de trabalho.
+ *
+ * Era 400 — e 400 é menos que a carteira (1511 títulos hoje), então a tela mostrava
+ * "Todos (400)" ao lado de um KPI dizendo "1.225 a vencer em 30 dias". Pior que a
+ * contradição: os títulos além do 400º eram INALCANÇÁVEIS para quem monta lote, sem
+ * nenhum sinal de que existiam. Medido: a carteira inteira serializa ~410 KB (278 B por
+ * título), o que não justifica cortar alcançabilidade.
+ *
+ * A resposta agora carrega `titulosTotal` para que a UI possa dizer que cortou. Corte
+ * sem aviso é o que transformou um limite de payload num bug de negócio.
+ */
+const TITULOS_CAP = 5000;
 /**
  * Teto de chamadas Conexos SIMULTÂNEAS no fan-out do painel (lotes nativos).
  * Evita o burst que pressiona o pool de sessões do Conexos (`LOGIN_ERROR_MAX_SESSIONS`).
@@ -104,6 +116,7 @@ export default class SispagPainelService {
         const titulosPreparados = this.prepararTitulos(titulosRaw, now);
         const kpis = this.calcularKpis(titulosPreparados, lotesRaw);
         const titulos = titulosPreparados.slice(0, TITULOS_CAP);
+        const titulosTotal = titulosPreparados.length;
         const envVars = await this.env.getEnvironmentVars();
 
         await this.logService.info({
@@ -112,6 +125,8 @@ export default class SispagPainelService {
             data: {
                 filiais: filCods.length,
                 titulos: titulos.length,
+                titulosTotal,
+                truncado: titulosTotal > titulos.length,
                 lotes: lotesRaw.length,
             },
         });
@@ -128,6 +143,7 @@ export default class SispagPainelService {
             },
             kpis,
             titulos,
+            titulosTotal,
             lotes: this.ordenarLotes(lotesRaw),
         };
     };

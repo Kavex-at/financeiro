@@ -105,14 +105,50 @@ describe('ConciliacaoRetornoService', () => {
             );
         });
 
-        it('um código sem linha não derruba a varredura', async () => {
+        it('um código AUSENTE do arquivo devolve lista vazia — e não é falha', async () => {
+            // `NA` não está no arquivo: o ERP responde `rows: []`, sem exceção.
+            const retorno = buildRetorno({ '00': [detalhe()] });
+            const res = await make({ retorno }).conciliar({ ...CHAVE, ator: 'u' });
+            expect(res.totalLinhas).toBe(1);
+            expect(res.varreduraIncompleta).toBe(false);
+        });
+
+        it('uma FALHA de leitura não derruba a varredura, mas marca como incompleta', async () => {
+            // O `catch {}` anterior chamava isso de "código não presente" e seguia calado.
             const retorno = buildRetorno();
             retorno.listDetalhe.mockImplementation(async (p: { eventoCod: string }) => {
-                if (p.eventoCod === 'NA') throw new Error('REQUIRED_FILTER_ERROR');
+                if (p.eventoCod === 'NA') throw new Error('socket hang up');
                 return [detalhe()];
             });
             const res = await make({ retorno }).conciliar({ ...CHAVE, ator: 'u' });
             expect(res.totalLinhas).toBe(1);
+            expect(res.varreduraIncompleta).toBe(true);
+            expect(res.eventosNaoLidos).toEqual([
+                { evento: 'NA', motivo: 'socket hang up' },
+            ]);
+        });
+
+        it('varredura incompleta NÃO fecha o lote em BAIXADO', async () => {
+            // O caso caro: o código de REJEIÇÃO é justamente o que falhou. Sem ele,
+            // "não vi rejeição" viraria "não houve rejeição" e o lote fecharia como pago.
+            const repo = buildRepo();
+            const retorno = buildRetorno();
+            retorno.listDetalhe.mockImplementation(async (p: { eventoCod: string }) => {
+                if (p.eventoCod === 'NA') throw new Error('ETIMEDOUT');
+                return [detalhe()];
+            });
+            await make({ retorno, repo }).conciliar({ ...CHAVE, ator: 'u' });
+            expect(repo.transicionarStatus).toHaveBeenCalledWith(
+                expect.objectContaining({ para: 'RETORNADO' }),
+            );
+        });
+
+        it('varredura completa e sem rejeição fecha o lote em BAIXADO', async () => {
+            const repo = buildRepo();
+            await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
+            expect(repo.transicionarStatus).toHaveBeenCalledWith(
+                expect.objectContaining({ para: 'BAIXADO' }),
+            );
         });
     });
 

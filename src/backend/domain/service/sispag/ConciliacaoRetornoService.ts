@@ -45,6 +45,14 @@ export interface ConciliarResult {
     naoReconhecidos: number;
     lotesAfetados: string[];
     itens: ItemConciliado[];
+    /**
+     * `true` quando algum código de evento não pôde ser lido. A conciliação é PARCIAL:
+     * pode haver rejeição ou pagamento que não apareceu. Nenhum lote fecha em BAIXADO
+     * nessa condição.
+     */
+    varreduraIncompleta: boolean;
+    /** Códigos que falharam, com o motivo — para o operador saber o que refazer. */
+    eventosNaoLidos: Array<{ evento: string; motivo: string }>;
 }
 
 /**
@@ -105,6 +113,13 @@ export default class ConciliacaoRetornoService {
             bncCod: input.bncCod,
         });
         const linhas: ArquivoRetornoDetalhe[] = [];
+        // Falhas de leitura por código. NÃO é a mesma coisa que "código ausente": um código
+        // que não está no arquivo devolve `rows: []`, sem exceção. O `catch` anterior dizia
+        // "código não presente neste arquivo — segue" e engolia timeout, 5xx e 401 junto —
+        // uma varredura pela metade saía como conciliação bem-sucedida. O caso caro é a
+        // linha de REJEIÇÃO perdida: sem ela, `transicionarLote` não vê rejeição nenhuma e
+        // marca o lote como BAIXADO. Dinheiro que o banco recusou, reportado como pago.
+        const eventosNaoLidos: Array<{ evento: string; motivo: string }> = [];
         for (const ev of eventos) {
             try {
                 const det = await this.retorno.listDetalhe({
@@ -116,10 +131,17 @@ export default class ConciliacaoRetornoService {
                 for (const d of det) {
                     linhas.push({ ...d, eventoDescricao: d.eventoDescricao ?? ev.descricao });
                 }
-            } catch {
-                // código não presente neste arquivo — segue.
+            } catch (cause) {
+                const motivo = cause instanceof Error ? cause.message : String(cause);
+                eventosNaoLidos.push({ evento: ev.cod, motivo });
+                await this.logService.error({
+                    type: LOG_TYPE.CONEXOS_ERROR,
+                    message: 'falha ao ler detalhe de evento do retorno — varredura incompleta',
+                    data: { ...this.chave(input), evento: ev.cod, descricao: ev.descricao, motivo },
+                });
             }
         }
+        const varreduraIncompleta = eventosNaoLidos.length > 0;
 
         // `fbeVldTpret = 2` marca rejeição; `1` é pagamento efetuado.
         const rejeicaoPorCodigo = new Map(eventos.map((e) => [e.cod, e.tipoRetorno === 2]));
@@ -179,9 +201,10 @@ export default class ConciliacaoRetornoService {
         }
 
         // ── 4) transicionar os lotes ────────────────────────────────────────
+        // Varredura incompleta NÃO fecha lote: o teto vira RETORNADO (exige olho humano).
         if (!dryRun) {
             for (const loteId of lotesAfetados) {
-                await this.transicionarLote(loteId);
+                await this.transicionarLote(loteId, varreduraIncompleta);
             }
         }
 
@@ -200,6 +223,8 @@ export default class ConciliacaoRetornoService {
                 pagos,
                 rejeitados,
                 naoReconhecidos,
+                varreduraIncompleta,
+                eventosNaoLidos: eventosNaoLidos.length,
             },
         });
 
@@ -213,6 +238,8 @@ export default class ConciliacaoRetornoService {
             naoReconhecidos,
             lotesAfetados: [...lotesAfetados],
             itens,
+            varreduraIncompleta,
+            eventosNaoLidos,
         };
     };
 
@@ -221,15 +248,21 @@ export default class ConciliacaoRetornoService {
      * Um lote com rejeição fica em RETORNADO de propósito: exige tratamento humano
      * (sanear cadastro e reenviar), e não é uma conciliação concluída.
      */
-    private transicionarLote = async (loteId: string): Promise<void> => {
+    private transicionarLote = async (
+        loteId: string,
+        varreduraIncompleta = false,
+    ): Promise<void> => {
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote) return;
         const conciliaveis = lote.itens.filter((i) => !i.rejeitado);
         const todosBaixados =
             conciliaveis.length > 0 && conciliaveis.every((i) => i.bxaCodSeq !== undefined);
         const houveRejeicao = lote.itens.some((i) => i.rejeitado);
+        // Se algum código não pôde ser lido, "não vi rejeição" não é "não houve rejeição".
         const destino =
-            todosBaixados && !houveRejeicao ? LOTE_STATUS.BAIXADO : LOTE_STATUS.RETORNADO;
+            todosBaixados && !houveRejeicao && !varreduraIncompleta
+                ? LOTE_STATUS.BAIXADO
+                : LOTE_STATUS.RETORNADO;
 
         const afetadas = await this.loteRepo.transicionarStatus({
             id: lote.id,

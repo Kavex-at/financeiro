@@ -67,6 +67,8 @@ export interface SispagPainel {
   }
   kpis: SispagKpis
   titulos: TituloAPagar[]
+  /** Tamanho da carteira antes do corte de payload — opcional para tolerar backend antigo. */
+  titulosTotal?: number
   lotes: LoteSispag[]
 }
 
@@ -306,6 +308,9 @@ export interface ConciliarResult {
   naoReconhecidos: number
   lotesAfetados: string[]
   itens: ItemConciliado[]
+  /** Algum código de evento não pôde ser lido — a conciliação é parcial. */
+  varreduraIncompleta?: boolean
+  eventosNaoLidos?: Array<{ evento: string; motivo: string }>
 }
 
 /**

@@ -139,6 +139,20 @@ export default class ConexosSispagWriteClient {
      * Ferramenta 2 — lista os títulos PENDENTES elegíveis a importar num lote
      * (`POST finItemSispag/titulosPendentes/list/{fil}/{bnc}/{flp}`). Leitura →
      * `runWithRetry`. `filtro` repassa filtros do Conexos (ex. `{ 'docCod#EQ': 520 }`).
+     *
+     * PAGINA DE VERDADE. A versão anterior pedia `pageSize: 500` e fixava `pageNumber: 1`,
+     * o que parecia suficiente até alguém medir: a filial 2 tem ~2020 pendentes, então o
+     * chamador enxergava 24,7% do grid. Um título fora da primeira página produzia
+     * "não está mais elegível" — uma frase FALSA, e cara, porque o lote nativo já tinha
+     * sido criado e ficava órfão.
+     *
+     * `chavesDesejadas` permite sair assim que as chaves `docCod:titCod` procuradas
+     * apareceram, sem varrer o grid inteiro: o caso normal (lote de ≤ 25 itens com
+     * vencimento próximo, que o ERP ordena primeiro) resolve na primeira página.
+     *
+     * `maxPaginas` é guarda contra loop infinito, não limite de trabalho. Se ele for
+     * atingido antes de esgotar o grid, o método AVISA em vez de devolver um resultado
+     * parcial calado — foi o silêncio, não o corte, que criou o bug original.
      */
     public listarTitulosPendentes = async (params: {
         filCod: number;
@@ -146,40 +160,85 @@ export default class ConexosSispagWriteClient {
         flpCod: number;
         filtro?: Record<string, unknown>;
         pageSize?: number;
+        chavesDesejadas?: ReadonlySet<string>;
+        maxPaginas?: number;
     }): Promise<TituloPendente[]> => {
-        const { filCod, bncCod, flpCod, filtro = {}, pageSize = 500 } = params;
+        const {
+            filCod,
+            bncCod,
+            flpCod,
+            filtro = {},
+            pageSize = 500,
+            chavesDesejadas,
+            maxPaginas = 40,
+        } = params;
         const path = `fin015/finItemSispag/titulosPendentes/list/${filCod}/${bncCod}/${flpCod}`;
+        const acumulado: TituloPendente[] = [];
+        const vistas = new Set<string>();
+        let total = Number.POSITIVE_INFINITY;
+        let pagina = 0;
+
         try {
-            const page = await this.base.runWithRetry(async () => {
-                await this.base.ensureSid();
-                return this.base.listGenericPaginated<Record<string, unknown>>(
-                    path,
-                    {
-                        fieldList: [],
-                        filterList: filtro,
-                        serviceName: 'fin015',
-                        pageNumber: 1,
-                        pageSize,
-                    },
-                    { filCod },
+            while (pagina < maxPaginas) {
+                pagina += 1;
+                const pageNumber = pagina;
+                const resposta = await this.base.runWithRetry(async () => {
+                    await this.base.ensureSid();
+                    return this.base.listGenericPaginated<Record<string, unknown>>(
+                        path,
+                        {
+                            fieldList: [],
+                            filterList: filtro,
+                            serviceName: 'fin015',
+                            pageNumber,
+                            pageSize,
+                        },
+                        { filCod },
+                    );
+                });
+
+                const linhas = resposta.rows ?? [];
+                if (Number.isFinite(Number(resposta.count))) total = Number(resposta.count);
+                for (const r of linhas) {
+                    const pendente = this.paraTituloPendente(r, filCod);
+                    acumulado.push(pendente);
+                    vistas.add(`${pendente.docCod}:${pendente.titCod}`);
+                }
+
+                // Parada 1 — já achei tudo que me pediram.
+                if (chavesDesejadas && [...chavesDesejadas].every((k) => vistas.has(k))) break;
+                // Parada 2 — o grid acabou (página curta ou `count` alcançado).
+                if (linhas.length < pageSize || acumulado.length >= total) break;
+            }
+
+            if (pagina >= maxPaginas && acumulado.length < total) {
+                // Silêncio aqui reintroduz o bug: quem chama precisa saber que viu um pedaço.
+                console.warn(
+                    `[fin015] titulosPendentes truncado em ${maxPaginas} páginas: ${acumulado.length} de ${total} ` +
+                        `(fil=${filCod} bnc=${bncCod} flp=${flpCod}). Aumente maxPaginas ou filtre server-side.`,
                 );
-            });
-            return (page.rows ?? []).map((r) => ({
-                filCod: Number(r.filCod ?? filCod),
-                docCod: String(r.docCod ?? ''),
-                titCod: String(r.titCod ?? '1'),
-                ...(r.itsVldModalidade != null
-                    ? { itsVldModalidade: Number(r.itsVldModalidade) }
-                    : {}),
-                ...(r.itsMnyValor != null ? { valor: Number(r.itsMnyValor) } : {}),
-                ...(r.titDtaVencimento != null ? { vencimento: Number(r.titDtaVencimento) } : {}),
-                ...(r.itsEspNomeFav != null ? { favorecido: String(r.itsEspNomeFav) } : {}),
-                raw: r,
-            }));
+            }
+
+            return acumulado;
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }
     };
+
+    /** Projeção da linha crua do grid — a identidade vai VERBATIM em `raw`. */
+    private paraTituloPendente = (
+        r: Record<string, unknown>,
+        filCodPadrao: number,
+    ): TituloPendente => ({
+        filCod: Number(r.filCod ?? filCodPadrao),
+        docCod: String(r.docCod ?? ''),
+        titCod: String(r.titCod ?? '1'),
+        ...(r.itsVldModalidade != null ? { itsVldModalidade: Number(r.itsVldModalidade) } : {}),
+        ...(r.itsMnyValor != null ? { valor: Number(r.itsMnyValor) } : {}),
+        ...(r.titDtaVencimento != null ? { vencimento: Number(r.titDtaVencimento) } : {}),
+        ...(r.itsEspNomeFav != null ? { favorecido: String(r.itsEspNomeFav) } : {}),
+        raw: r,
+    });
 
     /**
      * Ferramenta 3 — importa os títulos selecionados no lote
