@@ -60,6 +60,25 @@ export interface ContaFavorecido {
     padrao: boolean;
 }
 
+/**
+ * Conta corrente PAGADORA da Columbia (`fin005`) — de onde o dinheiro sai.
+ *
+ * ⚠️ `ccoCod` NÃO é global: o mesmo código aponta para contas DIFERENTES em cada filial.
+ * Na filial 1 o `ccoCod=1` é o Itaú ag 0641; na filial 2 é uma conta Banestes. Fixar o
+ * código gerou um `.REM` com header do banco errado. Sempre resolver pela filial.
+ */
+export interface ContaCorrentePagadora {
+    ccoCod: number;
+    /** Código INTERNO do banco no Conexos (≠ FEBRABAN). */
+    bncCod: number;
+    agencia?: string;
+    numeroConta?: number;
+    dvConta?: string;
+    /** Conta financeira (plano gerencial, fin004) vinculada — usada na conciliação contábil. */
+    gerNum?: number;
+    gerDes?: string;
+}
+
 /** Run de auditoria da ingestão de pagamentos (cron ou manual). */
 export interface PagamentoIngestaoRun {
     id: string;
@@ -151,8 +170,15 @@ export const LOTE_STATUS = {
     RASCUNHO: 'RASCUNHO',
     FINALIZADO: 'FINALIZADO',
     CANCELADO: 'CANCELADO',
-    /** Retorno do Nexxera recebido ("de volta do Nexxera"). */
+    /**
+     * Remessa `.REM` gerada no Conexos (fin015). NÃO é "enviado": o ERP não transmite
+     * remessa de pagamento — o transporte ao banco é externo e manual.
+     */
+    REMESSA_GERADA: 'REMESSA_GERADA',
+    /** Retorno do banco (`.RET`) processado no fin052. */
     RETORNADO: 'RETORNADO',
+    /** Baixa confirmada no fin010 para todos os itens não rejeitados. */
+    BAIXADO: 'BAIXADO',
 } as const;
 
 export type LotePagamentoStatus = (typeof LOTE_STATUS)[keyof typeof LOTE_STATUS];
@@ -191,6 +217,18 @@ export interface ItemLote {
     modalidade?: Modalidade;
     incluidoPor: string;
     incluidoEm?: string;
+    /** Sequencial do item no lote NATIVO — 4ª parte da chave que viaja no `.REM`/`.RET`. */
+    nativeItsCodSeq?: number;
+    // ── resultado da conciliação do retorno (fin052/arquivosRetornoDetalhe) ──
+    /** Código do evento bancário. Itaú: `00` = PAGAMENTO EFETUADO. */
+    retornoEvento?: string;
+    retornoDescricao?: string;
+    /** `true` quando o evento é de rejeição (`fbeVldTpret = 2`). */
+    rejeitado?: boolean;
+    /** Borderô e baixa gravados no fin010 — o elo que o ERP não guarda consultável. */
+    borCod?: number;
+    bxaCodSeq?: number;
+    conciliadoEm?: string;
 }
 
 /** Lote candidato (raiz do agregado). */
@@ -207,6 +245,18 @@ export interface LotePagamento {
     criadoEm?: string;
     /** Formado pelo cron de formação automática (vs. montado manualmente pelo analista). */
     automatico?: boolean;
+    // ── 0049: ponte com o lote NATIVO do Conexos (fin015) ──
+    // A chave é COMPOSTA: o ERP recicla `flpCod`, então o número sozinho não identifica nada.
+    nativeFilCod?: number;
+    nativeBncCod?: number;
+    nativeFlpCod?: number;
+    nativeGabCod?: number;
+    remessaArquivo?: string;
+    remessaNum?: number;
+    remessaGeradaEm?: string;
+    /** Conta corrente pagadora (fin005) e sua conta financeira (fin004). */
+    ccoCod?: number;
+    gerNum?: number;
     itens: ItemLote[];
 }
 

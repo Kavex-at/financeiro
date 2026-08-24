@@ -80,6 +80,13 @@ describe('ConexosSispagRetornoClient (fin052 retorno)', () => {
             bncCod: 4,
             gtbCodSeq: 1,
             garCodSeq: 7,
+            // O ERP exige o código EXATO do evento como filtro (REQUIRED_FILTER_ERROR sem ele).
+            eventoCod: '00',
+        });
+        const [, body] = base.listGenericPaginated.mock.calls[0];
+        expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
+            'fbeEspCod#EQ': '00',
+            'fbeVldTipo#EQ': 2,
         });
         expect(det[0]).toMatchObject({
             docCod: '900',
