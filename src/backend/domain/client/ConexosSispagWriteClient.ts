@@ -233,6 +233,9 @@ export default class ConexosSispagWriteClient {
         filCod: Number(r.filCod ?? filCodPadrao),
         docCod: String(r.docCod ?? ''),
         titCod: String(r.titCod ?? '1'),
+        // O grid de pendentes NÃO traz `itsVldModalidade` — medido em produção
+        // (`__fixtures__/contrato.test.ts`). A leitura fica por precaução, mas não construa
+        // nada em cima dela: a modalidade que vale vem do NOSSO item de lote.
         ...(r.itsVldModalidade != null ? { itsVldModalidade: Number(r.itsVldModalidade) } : {}),
         ...(r.itsMnyValor != null ? { valor: Number(r.itsMnyValor) } : {}),
         ...(r.titDtaVencimento != null ? { vencimento: Number(r.titDtaVencimento) } : {}),

@@ -1,0 +1,15 @@
+{
+    "_fonte": "ger015/list fil=2",
+    "_capturadoEm": "2026-08-24",
+    "_nota": "Valores redigidos por tipo; as CHAVES são as que o ERP devolveu.",
+    "linha": {
+        "bncCod": 0,
+        "gtbCodSeq": 0,
+        "gtbLngSql": "<string>",
+        "gtbDesNome": "<string>",
+        "gtbVldPgrc": 0,
+        "gtbVldStatus": 0,
+        "grbEspIdent": "<string>",
+        "bncDesNome": "<string>"
+    }
+}
