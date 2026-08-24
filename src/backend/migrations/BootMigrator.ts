@@ -67,6 +67,8 @@ export default class BootMigrator {
             return [];
         }
 
+        this.recusarBancoRemotoEmAmbienteLocal(env.databaseConnectionString, env.environment);
+
         return this.comLock(async () => {
             const aplicadas = await this.runner.run();
             if (aplicadas.length === 0) console.log('[boot-migrate] esquema em dia');
@@ -76,6 +78,37 @@ export default class BootMigrator {
                 );
             return aplicadas;
         });
+    };
+
+    /**
+     * GUARD-RAIL: recusa aplicar DDL num banco REMOTO quando o ambiente diz ser LOCAL.
+     *
+     * O `dev` do projeto é `tsx watch`, que reinicia a cada arquivo salvo — e o boot aplica
+     * migrações. Com o `.env` de desenvolvimento apontando para a Supabase compartilhada, salvar
+     * um arquivo novo em `migrations/` vira DDL em PRODUÇÃO em segundos, sem revisão, sem deploy
+     * e sem ninguém decidir. Não é hipótese: foi assim que a `0049` chegou à produção antes do
+     * PR ser mergeado.
+     *
+     * A migração dessa vez era aditiva e idempotente. A próxima pode ser um `DROP`.
+     *
+     * Use `npm run dev:local` (Postgres em container) para desenvolver. Se você PRECISA rodar
+     * contra o banco remoto — e deve ser raro e deliberado — passe `environment` diferente de
+     * `local` ou `PERMITIR_MIGRACAO_REMOTA=1`.
+     */
+    private recusarBancoRemotoEmAmbienteLocal = (conn: string, environment?: string): void => {
+        if (environment !== 'local') return;
+        if (process.env.PERMITIR_MIGRACAO_REMOTA === '1') return;
+        // Hosts gerenciados conhecidos. `localhost`/`127.0.0.1`/socket unix passam direto.
+        const remoto = /(supabase\.(com|co)|neon\.tech|render\.com|amazonaws\.com|azure\.com)/i;
+        if (!remoto.test(conn)) return;
+
+        const host = /@([^/:?]+)/.exec(conn)?.[1] ?? '(host não identificado)';
+        throw new Error(
+            `[boot-migrate] RECUSADO: environment=local apontando para um banco REMOTO (${host}).\n` +
+                'Aplicar migração daqui escreveria DDL num banco compartilhado a partir de uma máquina ' +
+                'de desenvolvimento — foi assim que a 0049 chegou à produção sem deploy.\n' +
+                'Use `npm run dev:local`. Se for deliberado, PERMITIR_MIGRACAO_REMOTA=1.',
+        );
     };
 
     /**

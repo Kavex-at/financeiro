@@ -25,7 +25,9 @@ const buildDb = (concederApos = 0) => {
     };
 };
 
-const build = (o: { conn?: string; aplicadas?: string[]; concederApos?: number } = {}) => {
+const build = (
+    o: { conn?: string; aplicadas?: string[]; concederApos?: number; environment?: string } = {},
+) => {
     const runner = {
         run: jest.fn().mockResolvedValue(o.aplicadas ?? []),
     } as unknown as jest.Mocked<MigrationRunnerInterface>;
@@ -33,6 +35,7 @@ const build = (o: { conn?: string; aplicadas?: string[]; concederApos?: number }
     const environmentProvider = {
         getEnvironmentVars: jest.fn().mockResolvedValue({
             databaseConnectionString: o.conn ?? 'postgresql://x',
+            environment: o.environment,
         }),
     } as unknown as jest.Mocked<EnvironmentProvider>;
 
@@ -125,4 +128,40 @@ describe('BootMigrator — ambiente sem banco', () => {
         expect(runner.run).not.toHaveBeenCalled();
         expect(db.withAdvisoryLock).not.toHaveBeenCalled();
     });
+    describe('guard-rail: environment=local com banco remoto', () => {
+        const REMOTO = 'postgresql://u:p@aws-1-sa-east-1.pooler.supabase.com:5432/postgres';
+        const LOCAL = 'postgresql://financeiro:devlocal@localhost:5433/financeiro';
+
+        afterEach(() => {
+            delete process.env.PERMITIR_MIGRACAO_REMOTA;
+        });
+
+        it('RECUSA aplicar DDL num banco remoto quando environment=local', async () => {
+            // Foi assim que a 0049 chegou à produção: `tsx watch` reinicia a cada save e o
+            // boot migra. O guard existe para que a próxima migration não seja um DROP.
+            const { migrator, runner } = build({ conn: REMOTO, environment: 'local' });
+            await expect(migrator.run()).rejects.toThrow(/RECUSADO/);
+            expect(runner.run).not.toHaveBeenCalled();
+        });
+
+        it('permite banco LOCAL com environment=local', async () => {
+            const { migrator, runner } = build({ conn: LOCAL, environment: 'local' });
+            await migrator.run();
+            expect(runner.run).toHaveBeenCalled();
+        });
+
+        it('permite banco remoto quando o ambiente NÃO é local (deploy de verdade)', async () => {
+            const { migrator, runner } = build({ conn: REMOTO, environment: 'prd' });
+            await migrator.run();
+            expect(runner.run).toHaveBeenCalled();
+        });
+
+        it('permite override deliberado via PERMITIR_MIGRACAO_REMOTA', async () => {
+            process.env.PERMITIR_MIGRACAO_REMOTA = '1';
+            const { migrator, runner } = build({ conn: REMOTO, environment: 'local' });
+            await migrator.run();
+            expect(runner.run).toHaveBeenCalled();
+        });
+    });
+
 });

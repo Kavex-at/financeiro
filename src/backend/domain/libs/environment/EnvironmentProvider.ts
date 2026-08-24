@@ -32,6 +32,45 @@ export default class EnvironmentProvider {
     private readEnv = (key: string, fallback = ''): string => process.env[key] || fallback;
 
     /**
+     * Resolve `conexosWriteEnabled` com um piso de segurança: **máquina local não escreve
+     * na Conexos de PRODUÇÃO.**
+     *
+     * O `.env` de desenvolvimento aponta para `columbiatrading.conexos.cloud` (PRD) porque é
+     * de lá que vêm os títulos reais para conferência de tela. Isso é leitura e é legítimo.
+     * O que não é legítimo é o mesmo arquivo carregar `CONEXOS_WRITE_ENABLED=true`: a partir
+     * daí um clique em "Gerar remessa" num laptop de dev vira lote de pagamento no ERP da
+     * Columbia — sem deploy, sem revisão, sem PR.
+     *
+     * A regra é estreita de propósito: só recusa quando `environment=local` **e** a base é
+     * de produção. Desenvolver contra HML (`columbiatrading-hml…`) com escrita ligada continua
+     * funcionando, que é o fluxo sancionado de validação.
+     *
+     * Escapatória deliberada — `PERMITIR_ESCRITA_PRD_LOCAL=1` — para o caso, raro, de
+     * executar o go-live assistido a partir da máquina de alguém. Deve ser digitada na hora,
+     * nunca morar no `.env`.
+     */
+    private resolveConexosWriteEnabled = (environment: string, conexosApiUrl: string): boolean => {
+        const pedido = this.readEnv('CONEXOS_WRITE_ENABLED') === 'true';
+        if (!pedido) return false;
+        if (environment !== 'local') return true;
+        if (this.readEnv('PERMITIR_ESCRITA_PRD_LOCAL') === '1') return true;
+        // O alvo é o ERP REAL — `*.conexos.cloud` sem o marcador `-hml` de homologação.
+        // Deliberadamente NÃO é "tudo que não é -hml": os e2e apontam para um mock em
+        // 127.0.0.1 e um servidor de teste não é produção. Bloquear por ausência de `-hml`
+        // recusaria escrita contra um mock — ruído, não segurança.
+        const ehErpDeProducao = /(^|\/\/|\.)conexos\.cloud/i.test(conexosApiUrl) && !conexosApiUrl.includes('-hml');
+        if (!ehErpDeProducao) return true;
+
+        console.warn(
+            `[env] CONEXOS_WRITE_ENABLED=true IGNORADO: environment=local apontando para a Conexos ` +
+                `de PRODUÇÃO (${conexosApiUrl}). Escrita a partir de máquina de dev criaria lote/baixa ` +
+                'real no ERP da Columbia sem deploy. Use a base -hml, ou PERMITIR_ESCRITA_PRD_LOCAL=1 ' +
+                'se for um go-live assistido.',
+        );
+        return false;
+    };
+
+    /**
      * Resolve a flag do SISPAG: `SISPAG_ENABLED=true|false` força; sem a env, fica
      * habilitado FORA de produção e bloqueado EM produção (fail-safe — esquecer de
      * setar em prod NÃO expõe o SISPAG).
@@ -164,7 +203,10 @@ export default class EnvironmentProvider {
             clientName: this.readEnv('client_name', 'local'),
             awsRegion: this.readEnv('aws_region', this.readEnv('AWS_REGION', 'us-east-1')),
             // Fase 3 (ADR-0013): escrita fin010 desligada por padrão; dry-run ligado por padrão.
-            conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
+            conexosWriteEnabled: this.resolveConexosWriteEnabled(
+                this.readEnv('environment', 'local'),
+                this.readEnv('CONEXOS_BASE_URL', 'https://columbiatrading.conexos.cloud/api'),
+            ),
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
             // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
             snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
@@ -243,7 +285,10 @@ export default class EnvironmentProvider {
             clientName: this.readEnv('client_name'),
             awsRegion: this.readEnv('aws_region', this.readEnv('AWS_REGION', 'us-east-1')),
             // Fase 3 (ADR-0013): toggles de deploy (env), não segredos por-tenant.
-            conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
+            conexosWriteEnabled: this.resolveConexosWriteEnabled(
+                this.readEnv('environment'),
+                this.readCred(conexos, 'ApiUrl'),
+            ),
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
             // SN (com299) — gates de go-live: default OFF / gcdCod sentinela 0 (ver EnvironmentVars).
             snLiveWriteEnabled: this.readEnv('SN_LIVE_WRITE_ENABLED') === 'true',
