@@ -84,11 +84,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const notifySessionExpired = useCallback(() => {
     if (devBypass) return
     // Capture the real expiry instant from the token's `exp` so the modal can
-    // tell the user EXACTLY when the session died (and that earlier work is safe).
+    // tell the user EXACTLY when a sessão morreu (and that earlier work is safe).
     const current =
       typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null
     const exp = current ? decodeJwtExp(current) : null
     setSessionExpiredAt(exp != null ? exp * 1000 : Date.now())
+
+    // DESCARTA o token aqui, e não só ao clicar no modal. Um 401 já provou que ele não
+    // vale — e enquanto ele existir no localStorage, `/login` devolve o usuário para `/`
+    // (a página de login bounce quem "já está logado"), prendendo-o num laço sem saída.
+    //
+    // Não basta confiar no modal: se uma tela engolir o erro e renderizar o próprio
+    // estado de falha, ninguém chama `signOut()`. Aconteceu — token ainda válido por
+    // `exp` mas rejeitado pelo backend deixou a aplicação inacessível.
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
+      window.localStorage.removeItem(USERNAME_STORAGE_KEY)
+    }
+    setToken(null)
+    setUsername(null)
+
     setSessionExpired(true)
   }, [devBypass])
 
