@@ -6,7 +6,9 @@ import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import { isHandlerError } from '../domain/libs/handler/HandlerError.js';
+import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
+import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
@@ -486,6 +488,54 @@ router.post(
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
+    }),
+);
+
+// GET /sispag/execucoes?status=&limit= — trilha dos DOIS ledgers (remessa e conciliação). admin.
+//
+// Existe porque o fail-closed protege mas não avisa: quando uma execução fica presa em
+// `reconciling`, a única forma de descobrir era um operador esbarrar no 409 da tela, ou
+// alguém com acesso ao Supabase rodar SQL na mão. Aqui a lista fica visível — e o job
+// `reaper-sispag-reconciling` consome a mesma consulta para logar sozinho.
+//
+// Não age: só mostra. Cancelar um lote órfão no ERP é decisão humana, e continua sendo.
+const execucoesSchema = z.object({
+    status: z.enum(['pending', 'reconciling', 'settled', 'error']).optional(),
+    limit: z.coerce.number().int().positive().max(200).optional(),
+    /** Só execuções `reconciling` paradas há mais de N minutos (triagem de órfão). */
+    paradasHaMin: z.coerce.number().int().positive().max(10_080).optional(),
+});
+
+router.get(
+    '/execucoes',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = execucoesSchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid query', details: parsed.error.flatten() });
+            return;
+        }
+        const limit = parsed.data.limit ?? 50;
+        const remessaRepo = container.resolve(RemessaExecucaoRepository);
+        const conciliacaoRepo = container.resolve(ConciliacaoExecucaoRepository);
+
+        if (parsed.data.paradasHaMin !== undefined) {
+            const min = parsed.data.paradasHaMin;
+            res.json({
+                remessa: await remessaRepo.listReconcilingParadas(min, limit),
+                conciliacao: await conciliacaoRepo.listReconcilingParadas(min, limit),
+            });
+            return;
+        }
+        if (parsed.data.status !== undefined) {
+            res.json({
+                remessa: await remessaRepo.listByStatus(parsed.data.status, limit),
+                conciliacao: await conciliacaoRepo.listByStatus(parsed.data.status, limit),
+            });
+            return;
+        }
+        res.status(400).json({ error: 'Informe status ou paradasHaMin' });
     }),
 );
 

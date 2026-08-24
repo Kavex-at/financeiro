@@ -13,7 +13,9 @@ jest.mock('../domain/appContainer.js', () => ({
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import ErpPerguntaError from '../domain/errors/ErpPerguntaError.js';
 import RemessaEmDuvidaError from '../domain/errors/RemessaEmDuvidaError.js';
+import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
+import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
@@ -557,6 +559,77 @@ describe('POST /sispag/retornos/conciliar', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filCod: 2, bncCod: 4, gtbCodSeq: 1, garCodSeq: 5 }),
             });
+            expect(res.status).toBe(403);
+        });
+    });
+});
+
+describe('GET /sispag/execucoes', () => {
+    const registrarLedgers = (over: Record<string, jest.Mock> = {}) => {
+        const remessa = {
+            listByStatus: jest.fn().mockResolvedValue([{ idempotencyKey: 'remessa:L1' }]),
+            listReconcilingParadas: jest.fn().mockResolvedValue([{ idempotencyKey: 'remessa:L9' }]),
+            ...over,
+        };
+        const conciliacao = {
+            listByStatus: jest.fn().mockResolvedValue([]),
+            listReconcilingParadas: jest.fn().mockResolvedValue([]),
+        };
+        container.registerInstance(RemessaExecucaoRepository, remessa as never);
+        container.registerInstance(ConciliacaoExecucaoRepository, conciliacao as never);
+        return { remessa, conciliacao };
+    };
+
+    it('lista os DOIS ledgers por status', async () => {
+        const { remessa, conciliacao } = registrarLedgers();
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/execucoes?status=reconciling`);
+            expect(res.status).toBe(200);
+            const body = await readJson(res);
+            expect(body).toHaveProperty('remessa');
+            expect(body).toHaveProperty('conciliacao');
+            expect(remessa.listByStatus).toHaveBeenCalledWith('reconciling', 50);
+            expect(conciliacao.listByStatus).toHaveBeenCalledWith('reconciling', 50);
+        });
+    });
+
+    it('`paradasHaMin` faz a triagem de órfão pelo SQL', async () => {
+        const { remessa } = registrarLedgers();
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/execucoes?paradasHaMin=15&limit=10`);
+            expect(res.status).toBe(200);
+            expect(remessa.listReconcilingParadas).toHaveBeenCalledWith(15, 10);
+            // Quando pedem paradas, NÃO cai no caminho por status.
+            expect(remessa.listByStatus).not.toHaveBeenCalled();
+        });
+    });
+
+    it('400 sem status nem paradasHaMin — não devolve a tabela inteira por omissão', async () => {
+        const { remessa } = registrarLedgers();
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/execucoes`);
+            expect(res.status).toBe(400);
+            expect(remessa.listByStatus).not.toHaveBeenCalled();
+        });
+    });
+
+    it('400 com status fora do enum', async () => {
+        registrarLedgers();
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/execucoes?status=inventado`);
+            expect(res.status).toBe(400);
+        });
+    });
+
+    it('exige role admin — é trilha de execução financeira', async () => {
+        registrarLedgers();
+
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/execucoes?status=error`);
             expect(res.status).toBe(403);
         });
     });

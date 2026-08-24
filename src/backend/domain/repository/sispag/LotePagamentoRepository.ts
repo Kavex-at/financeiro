@@ -546,8 +546,8 @@ export default class LotePagamentoRepository {
         rejeitado: boolean;
         borCod?: number;
         bxaCodSeq?: number;
-    }): Promise<void> => {
-        await this.databaseClient.update(
+    }, tx?: TransactionClient): Promise<void> => {
+        await this.db(tx).update(
             `UPDATE lote_pagamento_item
              SET retorno_evento = $evento, retorno_descricao = $descricao, rejeitado = $rejeitado,
                  bor_cod = COALESCE($borCod, bor_cod), bxa_cod_seq = COALESCE($bxaCodSeq, bxa_cod_seq),

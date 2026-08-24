@@ -5,6 +5,7 @@ import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
+import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import type LogService from '../LogService.js';
 import ConciliacaoRetornoService from './ConciliacaoRetornoService.js';
@@ -80,6 +81,15 @@ const buildRetorno = (porCodigo: Record<string, ArquivoRetornoDetalhe[]> = { '00
     listDetalhe: jest.fn(async (p: { eventoCod: string }) => porCodigo[p.eventoCod] ?? []),
 });
 
+/**
+ * `withTransaction` que apenas executa o callback com um `tx` sentinela — o objetivo dos
+ * testes aqui é provar que o `tx` CHEGA nos repositórios, não reimplementar Postgres.
+ */
+const TX = { marcador: 'tx' };
+const buildDb = () => ({
+    withTransaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(TX)),
+});
+
 const buildLedger = (anterior: Record<string, unknown> | null = null) => ({
     findByIdempotencyKey: jest.fn().mockResolvedValue(anterior),
     beginExecution: jest.fn().mockResolvedValue({ status: 'reconciling', alreadySettled: false }),
@@ -100,6 +110,7 @@ const make = (o: {
     repo?: ReturnType<typeof buildRepo>;
     env?: EnvironmentProvider;
     ledger?: ReturnType<typeof buildLedger>;
+    db?: ReturnType<typeof buildDb>;
 }) =>
     new ConciliacaoRetornoService(
         (o.retorno ?? buildRetorno()) as unknown as ConexosSispagRetornoClient,
@@ -108,6 +119,7 @@ const make = (o: {
         buildLog(),
         new BoundedConcurrency(),
         (o.ledger ?? buildLedger()) as unknown as ConciliacaoExecucaoRepository,
+        (o.db ?? buildDb()) as unknown as PostgreeDatabaseClient,
     );
 
 describe('ConciliacaoRetornoService', () => {
@@ -156,6 +168,7 @@ describe('ConciliacaoRetornoService', () => {
             await make({ retorno, repo }).conciliar({ ...CHAVE, ator: 'u' });
             expect(repo.transicionarStatus).toHaveBeenCalledWith(
                 expect.objectContaining({ para: 'RETORNADO' }),
+                TX,
             );
         });
 
@@ -164,6 +177,7 @@ describe('ConciliacaoRetornoService', () => {
             await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
             expect(repo.transicionarStatus).toHaveBeenCalledWith(
                 expect.objectContaining({ para: 'BAIXADO' }),
+                TX,
             );
         });
     });
@@ -204,6 +218,7 @@ describe('ConciliacaoRetornoService', () => {
                     borCod: 249,
                     bxaCodSeq: 1,
                 }),
+                TX,
             );
         });
 
@@ -222,6 +237,7 @@ describe('ConciliacaoRetornoService', () => {
             await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
             expect(repo.transicionarStatus).toHaveBeenCalledWith(
                 expect.objectContaining({ para: 'BAIXADO' }),
+                TX,
             );
         });
 
@@ -236,6 +252,7 @@ describe('ConciliacaoRetornoService', () => {
             await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
             expect(repo.transicionarStatus).toHaveBeenCalledWith(
                 expect.objectContaining({ para: 'RETORNADO' }),
+                TX,
             );
         });
 
@@ -251,6 +268,7 @@ describe('ConciliacaoRetornoService', () => {
             await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
             expect(repo.transicionarStatus).toHaveBeenCalledWith(
                 expect.objectContaining({ para: 'RETORNADO' }),
+                TX,
             );
         });
     });
@@ -384,6 +402,48 @@ describe('ConciliacaoRetornoService', () => {
                 'conciliacao:2:4:1:5',
                 expect.stringContaining('NA'),
             );
+        });
+    });
+
+    describe('transação por arquivo (fault-tolerance-4)', () => {
+        it('itens e transição rodam DENTRO da mesma transação', async () => {
+            const db = buildDb();
+            const repo = buildRepo();
+            await make({ db, repo }).conciliar({ ...CHAVE, ator: 'u' });
+
+            expect(db.withTransaction).toHaveBeenCalledTimes(1);
+            // Ambos recebem o MESMO `tx` — é isso que faz o rollback ser total.
+            expect(repo.registrarConciliacaoItem).toHaveBeenCalledWith(expect.anything(), TX);
+            expect(repo.transicionarStatus).toHaveBeenCalledWith(expect.anything(), TX);
+        });
+
+        it('falha no meio do loop propaga — a transação inteira desfaz', async () => {
+            // Sem transação, uma queda aqui deixava parte dos itens com baixa gravada e o
+            // lote ainda em REMESSA_GERADA: estado que nenhum código sabe ler, e que a
+            // conciliação seguinte não corrige sozinha.
+            const db = buildDb();
+            const repo = buildRepo();
+            repo.registrarConciliacaoItem.mockRejectedValue(new Error('conexão caiu'));
+
+            await expect(
+                make({ db, repo }).conciliar({ ...CHAVE, ator: 'u' }),
+            ).rejects.toThrow('conexão caiu');
+
+            // O erro sai de dentro do withTransaction (o driver dá ROLLBACK) e o lote
+            // NÃO chega a ser transicionado.
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
+        it('dry-run não abre escrita nenhuma dentro da transação', async () => {
+            const db = buildDb();
+            const repo = buildRepo();
+            await make({ db, repo, env: buildEnv({ conexosDryRun: true }) }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+            });
+
+            expect(repo.registrarConciliacaoItem).not.toHaveBeenCalled();
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
         });
     });
 
