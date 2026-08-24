@@ -283,6 +283,39 @@ describe('RemessaService', () => {
         });
     });
 
+    describe('retry após falha — não pode vazar lote órfão', () => {
+        it('reaproveita o lote nativo da tentativa anterior em vez de criar outro', async () => {
+            // Ledger em `error` com flpCod já atribuído: foi uma falha de validação DEPOIS
+            // do criarLote. Criar um segundo lote aqui deixaria o primeiro órfão no ERP.
+            const ledger = buildLedger({ status: 'error', dryRun: false, nativeFlpCod: 12, etapa: 'importar' });
+            const write = buildWrite();
+            const res = await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(res.nativeFlpCod).toBe(12);
+            expect(write.importarTitulos).toHaveBeenCalledWith(
+                expect.objectContaining({ flpCod: 12 }),
+            );
+        });
+
+        it('cria o lote quando não há nenhum de tentativa anterior', async () => {
+            const ledger = buildLedger({ status: 'error', dryRun: false, etapa: 'criar_lote' });
+            const write = buildWrite();
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(write.criarLote).toHaveBeenCalledTimes(1);
+        });
+
+        it('título inelegível falha SEM deixar um segundo lote para trás', async () => {
+            const ledger = buildLedger({ status: 'error', dryRun: false, nativeFlpCod: 12 });
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([]);
+            await expect(
+                make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toThrow(/não está mais elegível/i);
+            expect(write.criarLote).not.toHaveBeenCalled();
+        });
+    });
+
     describe('guarda do arquivo', () => {
         it('falha se o arquivo pedido não aparece na lista — não devolve outro', async () => {
             const write = buildWrite();

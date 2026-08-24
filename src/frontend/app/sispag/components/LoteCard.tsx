@@ -29,6 +29,7 @@ import {
   fetchModalidadesDisponiveis,
   fetchContasPagadoras,
   finalizarLote,
+  type GerarRemessaResult,
   gerarRemessa,
   type LotePagamento,
   marcarRetorno,
@@ -81,7 +82,10 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
   )
 }
 
-type Acao = (fn: () => Promise<unknown>, okMsg: string) => void
+type Acao = (
+  fn: () => Promise<unknown>,
+  okMsg: string | ((resultado: unknown) => { titulo: string; descricao?: string }),
+) => void
 
 /** Card de lote (colapsável): resumo sempre visível; os títulos expandem sob demanda. */
 export function LoteCard({
@@ -214,7 +218,28 @@ export function LoteCard({
                 disabled={busy}
                 title="Cria o lote no Conexos, importa os títulos, finaliza e gera o arquivo .REM."
                 onClick={() =>
-                  acao(() => gerarRemessa(l.id), 'Remessa gerada no Conexos')
+                  acao(() => gerarRemessa(l.id), (r) => {
+                    const res = r as GerarRemessaResult
+                    if (res.status === 'dry-run') {
+                      return {
+                        titulo: 'Simulação (dry-run) — NADA foi criado no Conexos',
+                        descricao:
+                          'A escrita está desligada (CONEXOS_DRY_RUN). Nenhum lote nem arquivo existe no ERP.',
+                      }
+                    }
+                    if (res.status === 'skipped') {
+                      return {
+                        titulo: 'Remessa já existia — nada foi gerado de novo',
+                        descricao: `Lote nativo ${res.nativeFlpCod ?? '—'} no Conexos.`,
+                      }
+                    }
+                    return {
+                      titulo: `Remessa ${res.arquivo ?? ''} gerada`,
+                      // Sem isto, quem gerou não sabe ONDE procurar no ERP — foi o que
+                      // aconteceu no primeiro teste: sucesso na tela, e ninguém achava o lote.
+                      descricao: `Lote nativo ${res.nativeFlpCod} · filial ${l.filCod} · remessa nº ${res.numRemessa ?? '—'}`,
+                    }
+                  })
                 }
               >
                 <FileText className="size-4" /> Gerar remessa (.REM)

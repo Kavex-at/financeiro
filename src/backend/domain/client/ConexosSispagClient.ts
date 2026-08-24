@@ -182,7 +182,12 @@ export default class ConexosSispagClient {
         filCod: number,
         opts: { minVencimento?: number; maxVencimento?: number } = {},
     ): Promise<TituloAPagar[]> => {
-        const filtered: Record<string, unknown> = { 'vldPago#EQ': 0 };
+        // `docVldPrevisao#EQ: 0` exclui documentos de PREVISÃO. Sem isso a carteira mostra
+        // títulos que o `fin015` NUNCA aceita num lote (previsão não se paga) — a analista
+        // monta o lote, define modalidade, finaliza, e só descobre na geração da remessa.
+        // Foi o que aconteceu em HML: a carteira inteira era previsão (docVldPrevisao=1,
+        // docVldTipo=9), e o erro só aparecia depois de o lote nativo já ter sido criado.
+        const filtered: Record<string, unknown> = { 'vldPago#EQ': 0, 'docVldPrevisao#EQ': 0 };
         if (opts.minVencimento !== undefined) {
             filtered['titDtaVencimento#GE'] = opts.minVencimento;
         }
