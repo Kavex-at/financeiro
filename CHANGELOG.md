@@ -1,5 +1,32 @@
 # Columbia Financeiro — Changelog
 
+## v0.30.0 (2026-08-24) — o último P0, órfãos visíveis e o primeiro contrato de verdade com o ERP
+
+- **test(sispag):** as 18 rotas de `routes/sispag.ts` ganharam teste (`testability-1`, último P0 do
+  Regis-Review). Passou a pesar mais depois que decisão foi para dentro da camada de rota:
+  `requireRole`, `Idempotency-Key` e o mapeamento dos 409 não eram exercitados.
+- **fix(sispag):** **bug achado pelo teste acima** — `GET /lotes/:id/remessa/arquivo` servia o CNAB
+  com `res.send(string)`. O Express reescreve o charset para utf-8 nesse caso e codifica os bytes
+  em UTF-8, apesar do header dizer latin1. CNAB 240 é **posicional**: um "Ç" no nome do favorecido
+  vira 2 bytes e empurra todas as colunas seguintes daquele registro. Agora vai
+  `Buffer.from(conteudo, 'latin1')`, com teste que compara byte a byte.
+- **test(env):** suíte hermética ao `.env` (`testability-3`). O `dotenv` reescrevia por cima do
+  `process.env` que os testes acabavam de limpar, a partir de um arquivo que varia por máquina —
+  verde local não significava verde. `npm test` agora passa com o `.env` presente.
+- **feat(sispag):** visibilidade de órfãos (`fault-tolerance-5` + `availability-3`). O fail-closed
+  protege o dinheiro mas não avisa: uma execução presa em `reconciling` ficava invisível até alguém
+  esbarrar no 409. Agora `GET /sispag/execucoes?status=|paradasHaMin=` e o job
+  `reaper-sispag-reconciling` (cron 15 min). O reaper **não age** — cancelar rascunho no ERP é
+  decisão humana; automatizar trocaria um problema visível por um invisível.
+- **fix(sispag):** conciliação transacional (`fault-tolerance-4`). Um arquivo de retorno = uma
+  transação. Antes, uma queda no meio do loop deixava parte dos itens com baixa gravada e o lote
+  ainda em `REMESSA_GERADA` — estado que nenhum código sabe ler.
+- **test(sispag):** contract test com fixtures **reais** do ERP (`integrability-1`), capturados
+  read-only da produção e **redigidos por tipo** — as chaves são as que o Conexos devolveu, os
+  valores viram marcadores. Commitar os payloads crus publicaria nome, CNPJ e conta bancária de
+  fornecedor no repositório. Achado na primeira execução: o grid de pendentes **não** traz
+  `itsVldModalidade`, que o cliente lia — leitura morta, agora registrada.
+
 ## v0.29.0 (2026-08-24) — Regis-Review Lista B: a conciliação para de poder duplicar dinheiro
 
 - **fix(sispag):** ledger write-ahead da conciliação (`conciliacao_execucao`, migration 0050).
