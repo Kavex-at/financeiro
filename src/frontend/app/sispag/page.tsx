@@ -214,6 +214,9 @@ function SispagPanel() {
   const titulos = painel?.titulos ?? []
   const ehVencido = (t: TituloAPagar): boolean => (t.diasAteVencimento ?? 0) < 0
   const totalVencidos = React.useMemo(() => titulos.filter(ehVencido).length, [titulos])
+  // O backend corta o payload num teto. Se cortou, dizer — a versão anterior mostrava
+  // "Todos (400)" ao lado de um KPI de 1.225 e ninguém tinha como saber qual valia.
+  const truncado = (painel?.titulosTotal ?? titulos.length) > titulos.length
   const titulosFiltrados = React.useMemo(() => {
     const base = titulos
     if (filtro === 'a-vencer') return base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
@@ -373,6 +376,19 @@ function SispagPanel() {
       const partes = [`${res.pagos} pago(s)`]
       if (res.rejeitados > 0) partes.push(`${res.rejeitados} rejeitado(s)`)
       if (res.naoReconhecidos > 0) partes.push(`${res.naoReconhecidos} de outro lote`)
+      // Varredura parcial não é sucesso: pode haver rejeição que não foi lida, e o
+      // lote fica em RETORNADO de propósito. Um toast verde aqui seria mentira.
+      if (res.varreduraIncompleta) {
+        const codigos = (res.eventosNaoLidos ?? []).map((e) => e.evento).join(', ')
+        toast.warning('Conciliação PARCIAL — nem todos os códigos foram lidos', {
+          description:
+            `${res.totalLinhas} linha(s) lidas, mas ${codigos || 'algum código'} falhou. ` +
+            'Pode haver pagamento ou rejeição não conciliado. O lote NÃO foi fechado — ' +
+            'repita a conciliação.',
+          duration: 12000,
+        })
+        return
+      }
       toast.success(res.dryRun ? 'Conciliação simulada (dry-run)' : 'Retorno conciliado', {
         description: `${res.totalLinhas} linha(s): ${partes.join(' · ')}`,
       })
@@ -530,6 +546,13 @@ function SispagPanel() {
                       </Button>
                     ))}
                   </div>
+                  {truncado ? (
+                    <span className="text-xs font-medium text-amber-700 dark:text-amber-500">
+                      Lista cortada em {titulos.length} de {painel?.titulosTotal} títulos — os
+                      demais não aparecem aqui nem podem entrar em lote. Filtre por filial ou
+                      busque pelo credor.
+                    </span>
+                  ) : null}
                   {filtro === 'a-vencer' && totalVencidos > 0 ? (
                     <span className="text-xs text-muted-foreground">
                       {totalVencidos} vencido{totalVencidos > 1 ? 's' : ''} fora da lista — não

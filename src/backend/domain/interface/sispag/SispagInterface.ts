@@ -158,6 +158,11 @@ export interface SispagPainelResponse {
     };
     kpis: SispagKpis;
     titulos: TituloAPagar[];
+    /**
+     * Tamanho da carteira ANTES do corte de payload. Quando for maior que
+     * `titulos.length`, a UI está mostrando um pedaço e precisa dizer isso.
+     */
+    titulosTotal: number;
     lotes: LoteSispag[];
 }
 

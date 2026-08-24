@@ -369,19 +369,22 @@ export default class RemessaService {
         bncCod: number,
         flpCod: number,
     ): Promise<Array<Record<string, unknown>>> => {
+        // As chaves do lote deixam o cliente parar assim que achar todas, em vez de varrer
+        // o grid inteiro — e garantem que ele NÃO pare na primeira página se faltar alguma.
+        const chavesDesejadas = new Set(lote.itens.map((i) => `${i.docCod}:${i.titCod}`));
         const pendentes = await this.write.listarTitulosPendentes({
             filCod: lote.filCod,
             bncCod,
             flpCod,
             pageSize: 500,
+            chavesDesejadas,
         });
+        const porChave = new Map(pendentes.map((p) => [`${p.docCod}:${p.titCod}`, p]));
         const febraban = FEBRABAN_POR_BNCCOD[bncCod] ?? 341;
         const itens: Array<Record<string, unknown>> = [];
 
         for (const item of lote.itens) {
-            const pendente = pendentes.find(
-                (p) => p.docCod === item.docCod && p.titCod === item.titCod,
-            );
+            const pendente = porChave.get(`${item.docCod}:${item.titCod}`);
             if (!pendente) {
                 throw new Error(
                     `título ${item.docCod}/${item.titCod} não está mais elegível no Conexos — pode já ter sido pago ou entrado em outro lote`,
