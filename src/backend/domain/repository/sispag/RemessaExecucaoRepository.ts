@@ -101,6 +101,28 @@ export default class RemessaExecucaoRepository {
     };
 
     /**
+     * Execuções presas em `reconciling` há mais de N minutos — o órfão que exige olho humano.
+     *
+     * Sem isto a única forma de descobrir um órfão era um operador esbarrar num 409 na tela,
+     * ou alguém com acesso ao Supabase rodar SQL. O filtro de idade mora no SQL de propósito:
+     * o reaper roda a cada poucos minutos e não deve trazer a tabela inteira para filtrar em
+     * memória.
+     */
+    public listReconcilingParadas = async (
+        minutos: number,
+        limit: number,
+    ): Promise<RemessaExecucaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT ${SELECT_COLS} FROM remessa_execucao
+             WHERE status = 'reconciling'
+               AND atualizado_em < now() - ($minutos || ' minutes')::interval
+             ORDER BY atualizado_em ASC LIMIT $limit`,
+            { minutos: String(minutos), limit },
+        );
+        return rows.map((r) => this.mapRow(r as Record<string, unknown>));
+    };
+
+    /**
      * Persiste o `flpCod` ASSIM QUE o ERP cria o lote nativo — ANTES do import. Se o processo
      * morrer aqui, esta linha é a única pista de que existe um lote órfão no Conexos.
      */

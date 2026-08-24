@@ -5,6 +5,9 @@ import type { ArquivoRetornoDetalhe } from '../../interface/sispag/Fin052Retorno
 import { LOTE_STATUS } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import PostgreeDatabaseClient, {
+    type TransactionClient,
+} from '../../client/database/PostgreeDatabaseClient.js';
 import ConciliacaoEmDuvidaError from '../../errors/ConciliacaoEmDuvidaError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
@@ -95,6 +98,7 @@ export default class ConciliacaoRetornoService {
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
         @inject(ConciliacaoExecucaoRepository)
         private readonly ledger: ConciliacaoExecucaoRepository,
+        @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
     ) {}
 
     public conciliar = async (input: ConciliarInput): Promise<ConciliarResult> => {
@@ -244,9 +248,12 @@ export default class ConciliacaoRetornoService {
         const rejeicaoPorCodigo = new Map(eventos.map((e) => [e.cod, e.tipoRetorno === 2]));
 
         // ── 3) casar cada linha com o lote local e gravar ───────────────────
+        // Um arquivo de retorno = UMA transação. Sem isto, uma queda no meio do loop deixava
+        // parte dos itens com baixa gravada e o lote ainda em REMESSA_GERADA: um estado que
+        // nenhum código sabe ler, e que a próxima conciliação não corrige sozinha.
         const itens: ItemConciliado[] = [];
         const lotesAfetados = new Set<string>();
-
+        await this.db.withTransaction(async (tx) => {
         for (const l of linhas) {
             const rejeitado = rejeicaoPorCodigo.get(l.eventoCod ?? '') ?? false;
             const base: ItemConciliado = {
@@ -281,29 +288,35 @@ export default class ConciliacaoRetornoService {
             }
 
             if (!dryRun) {
-                await this.loteRepo.registrarConciliacaoItem({
-                    loteId,
-                    filCod: l.filCod,
-                    docCod: l.docCod,
-                    titCod: l.titCod ?? '1',
-                    evento: l.eventoCod ?? '',
-                    ...(l.eventoDescricao !== undefined ? { descricao: l.eventoDescricao } : {}),
-                    rejeitado,
-                    ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
-                    ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
-                });
+                await this.loteRepo.registrarConciliacaoItem(
+                    {
+                        loteId,
+                        filCod: l.filCod,
+                        docCod: l.docCod,
+                        titCod: l.titCod ?? '1',
+                        evento: l.eventoCod ?? '',
+                        ...(l.eventoDescricao !== undefined
+                            ? { descricao: l.eventoDescricao }
+                            : {}),
+                        rejeitado,
+                        ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
+                        ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
+                    },
+                    tx,
+                );
             }
             lotesAfetados.add(loteId);
             itens.push({ ...base, loteId, reconhecido: true });
         }
 
-        // ── 4) transicionar os lotes ────────────────────────────────────────
+        // ── 4) transicionar os lotes (MESMA transação do passo 3) ───────────
         // Varredura incompleta NÃO fecha lote: o teto vira RETORNADO (exige olho humano).
         if (!dryRun) {
             for (const loteId of lotesAfetados) {
-                await this.transicionarLote(loteId, varreduraIncompleta);
+                await this.transicionarLote(loteId, varreduraIncompleta, tx);
             }
         }
+        });
 
         const pagos = itens.filter((i) => !i.rejeitado && i.reconhecido).length;
         const rejeitados = itens.filter((i) => i.rejeitado).length;
@@ -365,8 +378,9 @@ export default class ConciliacaoRetornoService {
     private transicionarLote = async (
         loteId: string,
         varreduraIncompleta = false,
+        tx?: TransactionClient,
     ): Promise<void> => {
-        const lote = await this.loteRepo.getLoteComItens(loteId);
+        const lote = await this.loteRepo.getLoteComItens(loteId, tx);
         if (!lote) return;
         const conciliaveis = lote.itens.filter((i) => !i.rejeitado);
         const todosBaixados =
@@ -378,12 +392,15 @@ export default class ConciliacaoRetornoService {
                 ? LOTE_STATUS.BAIXADO
                 : LOTE_STATUS.RETORNADO;
 
-        const afetadas = await this.loteRepo.transicionarStatus({
-            id: lote.id,
-            de: [LOTE_STATUS.REMESSA_GERADA, LOTE_STATUS.RETORNADO],
-            para: destino,
-            versaoEsperada: lote.versao,
-        });
+        const afetadas = await this.loteRepo.transicionarStatus(
+            {
+                id: lote.id,
+                de: [LOTE_STATUS.REMESSA_GERADA, LOTE_STATUS.RETORNADO],
+                para: destino,
+                versaoEsperada: lote.versao,
+            },
+            tx,
+        );
         if (afetadas === 0) {
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,

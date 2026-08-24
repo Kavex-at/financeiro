@@ -1,7 +1,7 @@
 {
     "name": "financeiro-backend",
     "version": "0.29.0",
-    "description": "Columbia Trading — Financeiro (template bootstrap)",
+    "description": "Columbia Trading \u2014 Financeiro (template bootstrap)",
     "main": "dist/index.js",
     "scripts": {
         "dev": "tsx watch index.ts",
@@ -20,7 +20,8 @@
         "test:watch": "jest --watch",
         "lint": "npx biome check .",
         "lint:fix": "npx biome check --write .",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "job:reaper-sispag": "tsx jobs/reaper-sispag-reconciling.ts"
     },
     "keywords": [],
     "author": "",

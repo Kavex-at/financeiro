@@ -49,6 +49,21 @@ export default class ConciliacaoExecucaoRepository {
         return rows.map((r) => this.mapRow(r as Record<string, unknown>));
     };
 
+    /** Execuções presas em `reconciling` há mais de N minutos — ver o gêmeo da remessa. */
+    public listReconcilingParadas = async (
+        minutos: number,
+        limit: number,
+    ): Promise<ConciliacaoExecucaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT ${SELECT_COLS} FROM conciliacao_execucao
+             WHERE status = 'reconciling'
+               AND atualizado_em < now() - ($minutos || ' minutes')::interval
+             ORDER BY atualizado_em ASC LIMIT $limit`,
+            { minutos: String(minutos), limit },
+        );
+        return rows.map((r) => this.mapRow(r as Record<string, unknown>));
+    };
+
     /**
      * Grava a intenção ANTES do `processar`. Em dry-run entra como `pending` (não houve
      * escrita a conciliar); com escrita real entra como `reconciling`. Uma linha já `settled`
