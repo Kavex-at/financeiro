@@ -109,7 +109,11 @@ function SispagPanel() {
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
-  const [filtro, setFiltro] = React.useState<'a-vencer' | 'vencidos' | 'todos'>('todos')
+  // Default 'a-vencer' a pedido do financeiro: vencido não entra em lote (o ERP recusa
+  // finalizar quando a data de débito passa do menor vencimento), então ele só polui a
+  // tabela de trabalho. Continua a um clique de distância — e o contador no botão existe
+  // para que "escondido" nunca vire "esquecido".
+  const [filtro, setFiltro] = React.useState<'a-vencer' | 'vencidos' | 'todos'>('a-vencer')
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
   const [busy, setBusy] = React.useState(false)
   const [ingerindo, setIngerindo] = React.useState(false)
@@ -208,10 +212,12 @@ function SispagPanel() {
   }, [carregar])
 
   const titulos = painel?.titulos ?? []
+  const ehVencido = (t: TituloAPagar): boolean => (t.diasAteVencimento ?? 0) < 0
+  const totalVencidos = React.useMemo(() => titulos.filter(ehVencido).length, [titulos])
   const titulosFiltrados = React.useMemo(() => {
     const base = titulos
     if (filtro === 'a-vencer') return base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
-    if (filtro === 'vencidos') return base.filter((t) => (t.diasAteVencimento ?? 0) < 0)
+    if (filtro === 'vencidos') return base.filter(ehVencido)
     return base
   }, [titulos, filtro])
 
@@ -509,17 +515,28 @@ function SispagPanel() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <div className="flex gap-1">
-                    {(['todos', 'a-vencer', 'vencidos'] as const).map((f) => (
+                    {(['a-vencer', 'vencidos', 'todos'] as const).map((f) => (
                       <Button
                         key={f}
                         size="sm"
                         variant={filtro === f ? 'default' : 'outline'}
                         onClick={() => setFiltro(f)}
                       >
-                        {f === 'todos' ? 'Todos' : f === 'a-vencer' ? 'A vencer' : 'Vencidos'}
+                        {f === 'todos'
+                          ? `Todos (${titulos.length})`
+                          : f === 'a-vencer'
+                            ? `A vencer (${titulos.length - totalVencidos})`
+                            : `Vencidos (${totalVencidos})`}
                       </Button>
                     ))}
                   </div>
+                  {filtro === 'a-vencer' && totalVencidos > 0 ? (
+                    <span className="text-xs text-muted-foreground">
+                      {totalVencidos} vencido{totalVencidos > 1 ? 's' : ''} fora da lista — não
+                      entra{totalVencidos > 1 ? 'm' : ''} em lote enquanto o vencimento não for
+                      renegociado no ERP.
+                    </span>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   {selecionados.size > 0 ? (
