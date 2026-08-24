@@ -137,20 +137,103 @@ export default class ConexosSispagRetornoClient {
      * Ferramenta 2 (leitura) — DETALHE do retorno (`arquivosRetornoDetalhe/list`).
      * É a ponte com o fin010: cada linha traz `bxaCodSeq`+`borCod`+`titCod`/`docCod`.
      */
+    /**
+     * PROCESSA um arquivo de retorno já carregado (`PUT arquivosRetorno/processar`). O ERP
+     * parseia o `.RET`, vincula os códigos de retorno aos itens do lote e GRAVA AS BAIXAS no
+     * fin010 — é a escrita mais consequente de toda a perna de retorno.
+     *
+     * Body descoberto ao vivo (ausente do OpenAPI): `{ items: [ chave + tipo ] }`. A chave
+     * fora de `items[]` devolve `SELECTION_ERROR / NENHUM_REGISTRO_SELECIONADO`.
+     *
+     * `tipo` é o bind `:TIPO` do PL/SQL de parse: `1` dispara as atualizações no item, no
+     * vínculo de retorno e na confirmação de envio do lote.
+     *
+     * NÃO é idempotente do ponto de vista de negócio (reprocessar gera novas baixas), mas o
+     * ERP se defende: a transação é ATÔMICA — provado em HML, uma falha na etapa do borderô
+     * não deixou nada gravado. Ainda assim: `postGenericOnce`, tentativa única.
+     */
+    public processarArquivoRetorno = async (params: {
+        filCod: number;
+        bncCod: number;
+        gtbCodSeq: number;
+        garCodSeq: number;
+        tipo?: number;
+    }): Promise<void> => {
+        const { filCod, bncCod, gtbCodSeq, garCodSeq, tipo = 1 } = params;
+        const path = 'fin052/arquivosRetorno/processar';
+        try {
+            await this.base.ensureSid();
+            await this.base.putGenericOnce<unknown>(
+                path,
+                { items: [{ filCod, bncCod, gtbCodSeq, garCodSeq, tipo }] },
+                { filCod },
+            );
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
+     * Eventos bancários configurados de um banco (`fin050/list`, tabela `FIN_BANCOS_ERROS`).
+     * Cada código de ocorrência que aparece no `.RET` precisa existir aqui, senão o ERP recusa
+     * o arquivo inteiro. `fbeVldTpret`: 1 = pagamento efetuado · 2 = rejeição.
+     *
+     * Serve a dois propósitos: saber quais códigos consultar no detalhe (que exige o código
+     * EXATO como filtro) e classificar pago × rejeitado na conciliação.
+     */
+    public listEventosBancarios = async (params: {
+        filCod: number;
+        bncCod: number;
+    }): Promise<Array<{ cod: string; descricao?: string; tipo: number; tipoRetorno?: number }>> => {
+        const { filCod, bncCod } = params;
+        const path = 'fin050/list';
+        try {
+            const page = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    path,
+                    this.listBody('fin050', { 'bncCod#EQ': bncCod }, 300),
+                    { filCod },
+                ),
+            );
+            return (page.rows ?? [])
+                .filter((r) => r.fbeEspCod != null)
+                .map((r) => ({
+                    cod: String(r.fbeEspCod),
+                    ...(r.fbeEspDescricao != null ? { descricao: String(r.fbeEspDescricao) } : {}),
+                    tipo: Number(r.fbeVldTipo ?? 2),
+                    ...(r.fbeVldTpret != null ? { tipoRetorno: Number(r.fbeVldTpret) } : {}),
+                }));
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
+     * Detalhe do retorno — a linha que amarra TUDO: `flpCod` + `itsCodSeq` (o item do lote),
+     * `borCod` + `bxaCodSeq` (a baixa no fin010), `gerNum` (a conta financeira) e o evento
+     * bancário. É a única fonte dessa rastreabilidade: o ERP não a expõe em mais lugar nenhum.
+     *
+     * ⚠️ O ERP exige `fbeEspCod` como filtro, com o código EXATO — `#IN`, `#LIKE` e afins são
+     * recusados. Por isso a conciliação consulta código a código. E arquivo apenas CARREGADO
+     * (`garVldProcStatus=1`) não tem linha de detalhe: só depois de processado (`=2`).
+     */
     public listDetalhe = async (params: {
         filCod: number;
         bncCod: number;
         gtbCodSeq: number;
         garCodSeq: number;
+        /** Código do evento bancário. Obrigatório: sem ele o ERP devolve REQUIRED_FILTER_ERROR. */
+        eventoCod: string;
+        eventoTipo?: number;
         pageSize?: number;
     }): Promise<ArquivoRetornoDetalhe[]> => {
-        const { filCod, bncCod, gtbCodSeq, garCodSeq, pageSize } = params;
-        // Chave composta completa no filterList (o ERP exige — REQUIRED_FILTER_ERROR sem ela).
+        const { filCod, bncCod, gtbCodSeq, garCodSeq, eventoCod, eventoTipo, pageSize } = params;
         const filterList = {
-            'filCod#EQ': filCod,
             'bncCod#EQ': bncCod,
             'gtbCodSeq#EQ': gtbCodSeq,
             'garCodSeq#EQ': garCodSeq,
+            'fbeEspCod#EQ': eventoCod,
+            'fbeVldTipo#EQ': eventoTipo ?? 2,
         };
         const path = 'fin052/arquivosRetornoDetalhe/list';
         try {
@@ -182,6 +265,8 @@ export default class ConexosSispagRetornoClient {
                 vencimento: r.titDtaVencimento != null ? Number(r.titDtaVencimento) : undefined,
                 valorPago: r.itsMnyVlrPgto != null ? Number(r.itsMnyVlrPgto) : undefined,
                 observacao: r.ardEspObs != null ? String(r.ardEspObs) : undefined,
+                gerNum: r.gerNum != null ? Number(r.gerNum) : undefined,
+                gerDes: r.gerDes != null ? String(r.gerDes) : undefined,
             }));
         } catch (cause) {
             throw this.toConexosError(path, cause);

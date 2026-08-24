@@ -27,6 +27,15 @@ interface LoteHeaderRow {
     versao: number;
     criado_em: Date;
     automatico: boolean;
+    native_fil_cod: number | null;
+    native_bnc_cod: number | null;
+    native_flp_cod: number | null;
+    native_gab_cod: number | null;
+    remessa_arquivo: string | null;
+    remessa_num: number | null;
+    remessa_gerada_em: Date | null;
+    cco_cod: number | null;
+    ger_num: number | null;
 }
 
 interface ItemRow {
@@ -40,6 +49,14 @@ interface ItemRow {
     modalidade: string | null;
     incluido_por: string;
     incluido_em: Date | null;
+    // ── 0049: chave nativa + resultado da conciliação do retorno ──
+    native_its_cod_seq: number | null;
+    retorno_evento: string | null;
+    retorno_descricao: string | null;
+    rejeitado: boolean | null;
+    bor_cod: number | null;
+    bxa_cod_seq: number | null;
+    conciliado_em: Date | null;
 }
 
 /**
@@ -68,6 +85,13 @@ export default class LotePagamentoRepository {
         modalidade: (r.modalidade as Modalidade | null) ?? undefined,
         incluidoPor: r.incluido_por,
         incluidoEm: r.incluido_em ? r.incluido_em.toISOString() : undefined,
+        ...(r.native_its_cod_seq != null ? { nativeItsCodSeq: Number(r.native_its_cod_seq) } : {}),
+        ...(r.retorno_evento != null ? { retornoEvento: String(r.retorno_evento) } : {}),
+        ...(r.retorno_descricao != null ? { retornoDescricao: String(r.retorno_descricao) } : {}),
+        ...(r.rejeitado != null ? { rejeitado: Boolean(r.rejeitado) } : {}),
+        ...(r.bor_cod != null ? { borCod: Number(r.bor_cod) } : {}),
+        ...(r.bxa_cod_seq != null ? { bxaCodSeq: Number(r.bxa_cod_seq) } : {}),
+        ...(r.conciliado_em != null ? { conciliadoEm: String(r.conciliado_em) } : {}),
     });
 
     private mapLote = (h: LoteHeaderRow, itens: ItemLote[]): LotePagamento => ({
@@ -83,6 +107,15 @@ export default class LotePagamentoRepository {
         criadoEm: h.criado_em ? h.criado_em.toISOString() : undefined,
         automatico: h.automatico,
         itens,
+        ...(h.native_fil_cod != null ? { nativeFilCod: Number(h.native_fil_cod) } : {}),
+        ...(h.native_bnc_cod != null ? { nativeBncCod: Number(h.native_bnc_cod) } : {}),
+        ...(h.native_flp_cod != null ? { nativeFlpCod: Number(h.native_flp_cod) } : {}),
+        ...(h.native_gab_cod != null ? { nativeGabCod: Number(h.native_gab_cod) } : {}),
+        ...(h.remessa_arquivo != null ? { remessaArquivo: String(h.remessa_arquivo) } : {}),
+        ...(h.remessa_num != null ? { remessaNum: Number(h.remessa_num) } : {}),
+        ...(h.remessa_gerada_em != null ? { remessaGeradaEm: String(h.remessa_gerada_em) } : {}),
+        ...(h.cco_cod != null ? { ccoCod: Number(h.cco_cod) } : {}),
+        ...(h.ger_num != null ? { gerNum: Number(h.ger_num) } : {}),
     });
 
     public criarLote = async (
@@ -157,14 +190,17 @@ export default class LotePagamentoRepository {
     ): Promise<LotePagamento | null> => {
         const header = await this.db(tx).selectFirst<LoteHeaderRow>(
             `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
-                    finalizado_em, versao, criado_em, automatico
+                    finalizado_em, versao, criado_em, automatico,
+                    native_fil_cod, native_bnc_cod, native_flp_cod, native_gab_cod,
+                    remessa_arquivo, remessa_num, remessa_gerada_em, cco_cod, ger_num
              FROM lote_pagamento WHERE id = $id`,
             { id },
         );
         if (!header) return null;
         const itens = await this.db(tx).selectMany(
             `SELECT lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
-                    modalidade, incluido_por, incluido_em
+                    modalidade, incluido_por, incluido_em, native_its_cod_seq,
+                    retorno_evento, retorno_descricao, rejeitado, bor_cod, bxa_cod_seq, conciliado_em
              FROM lote_pagamento_item WHERE lote_id = $id ORDER BY incluido_em ASC, id ASC`,
             { id },
         );
@@ -417,4 +453,114 @@ export default class LotePagamentoRepository {
             },
         );
     };
+    /**
+     * Grava as chaves do lote NATIVO do Conexos assim que o ERP as devolve. Chamado ANTES do
+     * import — se a sequência morrer no meio, é por aqui que se acha o lote órfão no fin015.
+     *
+     * ⚠️ A chave é COMPOSTA (fil, bnc, flp). O ERP recicla `flpCod` de lotes que deixaram de
+     * existir, então o número sozinho não identifica nada de forma estável.
+     */
+    public setChavesNativas = async (input: {
+        loteId: string;
+        nativeFilCod: number;
+        nativeBncCod: number;
+        nativeFlpCod: number;
+        ccoCod?: number;
+        gerNum?: number;
+    }): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE lote_pagamento
+             SET native_fil_cod = $nativeFilCod, native_bnc_cod = $nativeBncCod,
+                 native_flp_cod = $nativeFlpCod,
+                 cco_cod = COALESCE($ccoCod, cco_cod), ger_num = COALESCE($gerNum, ger_num),
+                 atualizado_em = now()
+             WHERE id = $loteId`,
+            {
+                loteId: input.loteId,
+                nativeFilCod: input.nativeFilCod,
+                nativeBncCod: input.nativeBncCod,
+                nativeFlpCod: input.nativeFlpCod,
+                ccoCod: input.ccoCod ?? null,
+                gerNum: input.gerNum ?? null,
+            },
+        );
+    };
+
+    /** Sequencial nativo de um item (4ª parte da chave que viaja no "uso da empresa" do .REM). */
+    public setItsCodSeq = async (input: {
+        loteId: string;
+        filCod: number;
+        docCod: string;
+        titCod: string;
+        itsCodSeq: number;
+    }): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE lote_pagamento_item
+             SET native_its_cod_seq = $itsCodSeq
+             WHERE lote_id = $loteId AND fil_cod = $filCod
+               AND doc_cod = $docCod AND tit_cod = $titCod`,
+            input,
+        );
+    };
+
+    /** Registra o arquivo de remessa gerado no lote. */
+    public setRemessaGerada = async (input: {
+        loteId: string;
+        gabCod: number;
+        arquivo: string;
+        numRemessa: number;
+    }): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE lote_pagamento
+             SET native_gab_cod = $gabCod, remessa_arquivo = $arquivo, remessa_num = $numRemessa,
+                 remessa_gerada_em = now(), atualizado_em = now()
+             WHERE id = $loteId`,
+            input,
+        );
+    };
+
+    /** Acha o lote LOCAL a partir da chave nativa lida do `.RET` (conciliação do retorno). */
+    public findByChaveNativa = async (input: {
+        nativeFilCod: number;
+        nativeBncCod: number;
+        nativeFlpCod: number;
+    }): Promise<string | null> => {
+        const row = await this.databaseClient.selectFirst<{ id: string }>(
+            `SELECT id FROM lote_pagamento
+             WHERE native_fil_cod = $nativeFilCod AND native_bnc_cod = $nativeBncCod
+               AND native_flp_cod = $nativeFlpCod
+             ORDER BY criado_em DESC LIMIT 1`,
+            input,
+        );
+        return row?.id ?? null;
+    };
+
+    /** Resultado da conciliação de um item, vindo do detalhe do retorno (fin052). */
+    public registrarConciliacaoItem = async (input: {
+        loteId: string;
+        filCod: number;
+        docCod: string;
+        titCod: string;
+        evento: string;
+        descricao?: string;
+        rejeitado: boolean;
+        borCod?: number;
+        bxaCodSeq?: number;
+    }): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE lote_pagamento_item
+             SET retorno_evento = $evento, retorno_descricao = $descricao, rejeitado = $rejeitado,
+                 bor_cod = COALESCE($borCod, bor_cod), bxa_cod_seq = COALESCE($bxaCodSeq, bxa_cod_seq),
+                 conciliado_em = now()
+             WHERE lote_id = $loteId AND fil_cod = $filCod
+               AND doc_cod = $docCod AND tit_cod = $titCod`,
+            {
+                ...input,
+                descricao: input.descricao ?? null,
+                borCod: input.borCod ?? null,
+                bxaCodSeq: input.bxaCodSeq ?? null,
+            },
+        );
+    };
+
 }

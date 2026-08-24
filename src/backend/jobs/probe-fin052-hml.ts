@@ -76,7 +76,11 @@ async function main(): Promise<void> {
                 gtbCodSeq: alvo.gtbCodSeq,
                 garCodSeq: alvo.garCodSeq,
             };
-            const det = await retorno.listDetalhe(key).catch((e) => {
+            // O detalhe exige o código EXATO do evento bancário como filtro; '00' = PAGAMENTO
+            // EFETUADO (Itaú). E arquivo apenas CARREGADO não tem linha — só depois de processado.
+            const det = await retorno
+                .listDetalhe({ ...key, eventoCod: process.env.EVENTO ?? '00' })
+                .catch((e) => {
                 log(
                     '   detalhe ERRO (filtros exigidos? precisa HAR):',
                     e instanceof Error ? e.message : String(e),

@@ -51,6 +51,8 @@ async function main(): Promise<void> {
             bncCod: alvo.bncCod,
             gtbCodSeq: alvo.gtbCodSeq,
             garCodSeq: alvo.garCodSeq,
+            // Código EXATO do evento é filtro obrigatório; '00' = PAGAMENTO EFETUADO (Itaú).
+            eventoCod: process.env.EVENTO ?? '00',
         });
         log(
             `READ listDetalhe OK · ${det.length} linhas · com bxaCodSeq=${det.filter((d) => d.bxaCodSeq != null).length}`,

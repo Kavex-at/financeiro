@@ -46,6 +46,9 @@ export interface ArquivoRetorno {
  * schema `GerArquivosRetDet`/`GerArquivosRetDetDTO`.
  */
 export interface ArquivoRetornoDetalhe {
+    /** Conta financeira da baixa (plano gerencial). */
+    gerNum?: number;
+    gerDes?: string;
     filCod: number;
     bncCod: number;
     gtbCodSeq: number;
@@ -73,6 +76,9 @@ export interface ArquivoRetornoDetalhe {
     valorPago?: number;
     observacao?: string;
 }
+
+/** Conta financeira (plano gerencial) da baixa — o `fin010` não a mostra na linha do borderô. */
+// (campos acrescentados em ArquivoRetornoDetalhe: gerNum, gerDes)
 
 /** Um erro de parse de uma linha do `.RET` (`arquivosRetorno/erro/list`). Schema `GerArquivosRetornoErro`. */
 export interface ArquivoRetornoErro {

@@ -9,6 +9,8 @@ import PagamentoIngestaoRunRepository from '../domain/repository/sispag/Pagament
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
+import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
+import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
@@ -355,6 +357,96 @@ router.get(
         const limit = Math.min(Number(req.query.limit) || 10, 50);
         const repo = container.resolve(PagamentoIngestaoRunRepository);
         res.json({ runs: await repo.listRecentRuns(limit) });
+    }),
+);
+
+// ===================================================== Fatia 3 — REMESSA e CONCILIAÇÃO
+// ESCRITA no Conexos. Gated por `conexosWriteEnabled`/`conexosDryRun` no serviço; dry-run é
+// o default seguro (monta e loga o payload, sem POST).
+
+const conciliarSchema = z.object({
+    bncCod: z.coerce.number().int().positive(),
+    gtbCodSeq: z.coerce.number().int().nonnegative(),
+    garCodSeq: z.coerce.number().int().nonnegative(),
+    filCod: z.coerce.number().int().positive(),
+    /** Chama o `processar` do ERP antes de conciliar — é o que gera as BAIXAS no fin010. */
+    processar: z.coerce.boolean().optional(),
+    dryRun: z.coerce.boolean().optional(),
+});
+
+// POST /sispag/lotes/:id/remessa — gera a remessa .REM do lote FINALIZADO. admin.
+// Honra `Idempotency-Key`; sem ele a chave é derivada do lote (duas tentativas colidem
+// de propósito — é o que impede duas remessas para o mesmo lote).
+router.post(
+    '/lotes/:id/remessa',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(RemessaService);
+        try {
+            const result = await service.gerarRemessa({
+                loteId: String(req.params.id),
+                ator: ator(req),
+                ...(req.header('Idempotency-Key')
+                    ? { idempotencyKey: req.header('Idempotency-Key') as string }
+                    : {}),
+                ...(req.header('x-request-id')
+                    ? { correlationId: req.header('x-request-id') as string }
+                    : {}),
+                ...(req.body?.dryRun === true ? { dryRunOverride: true } : {}),
+            });
+            res.json(result);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/lotes/:id/remessa/arquivo — conteúdo do .REM já gerado (CNAB 240). Leitura.
+router.get(
+    '/lotes/:id/remessa/arquivo',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(RemessaService);
+        const arquivo = await service.baixarArquivo(String(req.params.id));
+        if (!arquivo) {
+            res.status(404).json({ error: 'lote sem remessa gerada' });
+            return;
+        }
+        res.setHeader('Content-Type', 'text/plain; charset=latin1');
+        res.setHeader('Content-Disposition', `attachment; filename="${arquivo.nomeArquivo}"`);
+        res.send(arquivo.conteudo);
+    }),
+);
+
+// POST /sispag/retornos/conciliar — lê o detalhe do .RET e traz o resultado para os lotes. admin.
+router.post(
+    '/retornos/conciliar',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = conciliarSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const service = container.resolve(ConciliacaoRetornoService);
+        try {
+            const result = await service.conciliar({
+                filCod: parsed.data.filCod,
+                bncCod: parsed.data.bncCod,
+                gtbCodSeq: parsed.data.gtbCodSeq,
+                garCodSeq: parsed.data.garCodSeq,
+                ator: ator(req),
+                ...(parsed.data.processar !== undefined ? { processar: parsed.data.processar } : {}),
+                ...(parsed.data.dryRun === true ? { dryRunOverride: true } : {}),
+            });
+            res.json(result);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
     }),
 );
 

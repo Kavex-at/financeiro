@@ -1,6 +1,7 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import ConexosError from '../errors/ConexosError.js';
+import ErpPerguntaError from '../errors/ErpPerguntaError.js';
 import type {
     ArquivoRemessa,
     CriarLoteParams,
@@ -219,6 +220,62 @@ export default class ConexosSispagWriteClient {
                 { filCod },
             );
         } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
+     * O Conexos às vezes interrompe com uma PERGUNTA em vez de um erro:
+     * `{ type:'QUESTION', questions:[{ key, parameterValueList, answerList:[YES, ABORT] }] }`.
+     * Devolve a pergunta quando reconhece o shape; senão `undefined`.
+     */
+    private perguntaDoErp = (
+        cause: unknown,
+    ): { chave: string; parametros?: Record<string, unknown> } | undefined => {
+        const data = (cause as { response?: { data?: unknown } })?.response?.data as
+            | { type?: string; questions?: Array<{ key?: string; parameterValueList?: Record<string, unknown> }> }
+            | undefined;
+        if (data?.type !== 'QUESTION') return undefined;
+        const q = data.questions?.[0];
+        if (!q?.key) return undefined;
+        return {
+            chave: String(q.key),
+            ...(q.parameterValueList ? { parametros: q.parameterValueList } : {}),
+        };
+    };
+
+    /**
+     * Numeração e nome do próximo arquivo de remessa, SUGERIDOS PELO ERP
+     * (`GET gerArquivosBancos/initialValues/{fil}/{bnc}/{cco}` → `{gabNumRemessa, gabEspNomeArquivo}`).
+     *
+     * Não inventar esses valores: o nº de remessa é controle bancário e a sequência é por
+     * conta. Um número fora da faixa (ex.: 97 quando a conta está em 11) confunde o banco.
+     */
+    public sugerirRemessa = async (params: {
+        filCod: number;
+        bncCod: number;
+        ccoCod: number;
+    }): Promise<{ numRemessa: number; nomeArquivo: string }> => {
+        const { filCod, bncCod, ccoCod } = params;
+        const path = `fin015/gerArquivosBancos/initialValues/${filCod}/${bncCod}/${ccoCod}`;
+        try {
+            const raw = await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                return this.base.getGeneric<Record<string, unknown>>(path, { filCod });
+            });
+            const inner = ((raw?.fin080 as Record<string, unknown>)?.GerArquivosBancos ??
+                raw) as Record<string, unknown>;
+            const numRemessa = Number(inner?.gabNumRemessa);
+            const nomeArquivo = String(inner?.gabEspNomeArquivo ?? '');
+            if (!Number.isFinite(numRemessa) || numRemessa <= 0 || !nomeArquivo) {
+                throw new Error(`initialValues sem numeração utilizável: ${JSON.stringify(raw).slice(0, 200)}`);
+            }
+            return { numRemessa, nomeArquivo };
+        } catch (cause) {
+            const pergunta = this.perguntaDoErp(cause);
+            if (pergunta) {
+                throw new ErpPerguntaError({ ...pergunta, contexto: 'importarTitulos' });
+            }
             throw this.toConexosError(path, cause);
         }
     };

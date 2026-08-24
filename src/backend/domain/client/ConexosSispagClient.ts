@@ -6,6 +6,7 @@ import {
     MODALIDADE,
     type Modalidade,
     type TituloAPagar,
+    type ContaCorrentePagadora,
     type ContaFavorecido,
 } from '../interface/sispag/SispagInterface.js';
 import Logger from '../libs/logger/Logger.js';
@@ -248,6 +249,32 @@ export default class ConexosSispagClient {
             return this.mapTitulo(r, filCod);
         }
         return null;
+    };
+
+    /**
+     * Contas correntes PAGADORAS de uma filial (`fin005/list`). É a origem do dinheiro e a
+     * fonte da conta financeira (`gerNum`) que a conciliação contábil usa. Nunca fixar o
+     * `ccoCod`: ele é relativo à filial (ver `ContaCorrentePagadora`).
+     */
+    public listContasCorrentes = async (filCod: number): Promise<ContaCorrentePagadora[]> => {
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'fin005/list',
+                this.listBody('fin005', {}, 100),
+                { filCod },
+            ),
+        );
+        return rows
+            .map((r) => ({
+                ccoCod: Number(r.ccoCod),
+                bncCod: Number(r.bncCod),
+                ...(r.ccoEspAgcod != null ? { agencia: String(r.ccoEspAgcod) } : {}),
+                ...(r.ccoNumConta != null ? { numeroConta: Number(r.ccoNumConta) } : {}),
+                ...(r.ccoEspDvconta != null ? { dvConta: String(r.ccoEspDvconta) } : {}),
+                ...(r.gerNum != null ? { gerNum: Number(r.gerNum) } : {}),
+                ...(r.gerDes != null ? { gerDes: String(r.gerDes) } : {}),
+            }))
+            .filter((c) => Number.isFinite(c.ccoCod));
     };
 
     /**
