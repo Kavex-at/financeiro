@@ -351,9 +351,12 @@ export default class RemessaService {
                     filCod: lote.filCod,
                     bncCod,
                 });
-                const marca = anteriores.reduce((max, l) => Math.max(max, l.flpCod), 0);
+                // O CONJUNTO dos que já existiam, não o MAIOR deles. O `flpCod` NÃO é
+                // monotônico: medido em HML (2026-08-25), um lote novo na filial 2 nasceu
+                // com flp 15 quando o maior era 40 — o ERP reaproveita buracos de
+                // numeração. Guardar só o máximo tornaria o órfão invisível.
                 await this.ledger.setRequestPayload(key, {
-                    marcaFlpCod: marca,
+                    marcaFlpCods: anteriores.map((l) => l.flpCod),
                     ccoCod: escolhida.ccoCod,
                     dataDebito,
                 });
@@ -677,9 +680,11 @@ export default class RemessaService {
         resultado: { etapa: EtapaReal; motivo: string };
     }> => {
         const payload = anterior.requestPayload as
-            | { marcaFlpCod?: unknown; ccoCod?: unknown; dataDebito?: unknown }
+            | { marcaFlpCods?: unknown; ccoCod?: unknown; dataDebito?: unknown }
             | undefined;
-        const marca = typeof payload?.marcaFlpCod === 'number' ? payload.marcaFlpCod : undefined;
+        const marca = Array.isArray(payload?.marcaFlpCods)
+            ? new Set((payload.marcaFlpCods as unknown[]).map(Number))
+            : undefined;
         if (marca === undefined) {
             // Execução anterior a este mecanismo, ou que morreu antes até da marca.
             return {
@@ -691,9 +696,10 @@ export default class RemessaService {
         }
 
         const lotes = await this.write.listarLotesNativos({ filCod: anterior.filCod, bncCod });
+        // "Não estava lá antes" — e NÃO "tem número maior". Ver o comentário da gravação.
         const candidatos = lotes.filter(
             (l) =>
-                l.flpCod > marca &&
+                !marca.has(l.flpCod) &&
                 l.status === 0 &&
                 l.titulosCount === 0 &&
                 (payload?.ccoCod === undefined || l.ccoCod === payload.ccoCod) &&
@@ -705,7 +711,7 @@ export default class RemessaService {
             return {
                 resultado: {
                     etapa: 'criar_lote',
-                    motivo: `nenhum lote acima da marca ${marca} — o criarLote não valeu`,
+                    motivo: `nenhum lote novo além dos ${marca.size} conhecidos — o criarLote não valeu`,
                 },
             };
         }
@@ -713,7 +719,7 @@ export default class RemessaService {
             return {
                 resultado: {
                     etapa: 'indeterminado',
-                    motivo: `${candidatos.length} lotes vazios com a mesma assinatura acima da marca ${marca}: ${candidatos
+                    motivo: `${candidatos.length} lotes vazios novos com a mesma assinatura: ${candidatos
                         .map((c) => c.flpCod)
                         .join(', ')}`,
                 },
@@ -725,7 +731,7 @@ export default class RemessaService {
             flpCod: unico.flpCod,
             resultado: {
                 etapa: 'importar',
-                motivo: `lote ${unico.flpCod} adotado pela marca d'água ${marca}`,
+                motivo: `lote ${unico.flpCod} adotado (não estava entre os ${marca.size} conhecidos)`,
             },
         };
     };

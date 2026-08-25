@@ -285,9 +285,9 @@ describe('RemessaService', () => {
             await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
 
             const marca = ledger.setRequestPayload.mock.calls.find(
-                (c: unknown[]) => (c[1] as { marcaFlpCod?: number })?.marcaFlpCod !== undefined,
+                (c: unknown[]) => (c[1] as { marcaFlpCods?: number[] })?.marcaFlpCods !== undefined,
             );
-            expect(marca?.[1]).toMatchObject({ marcaFlpCod: 98, ccoCod: 2 });
+            expect(marca?.[1]).toMatchObject({ marcaFlpCods: [98], ccoCod: 2 });
             // ANTES do POST: senão a janela continua irrecuperável.
             const ordemMarca = ledger.setRequestPayload.mock.invocationCallOrder[0] ?? 0;
             const ordemCriar = write.criarLote.mock.invocationCallOrder[0] ?? 0;
@@ -299,7 +299,7 @@ describe('RemessaService', () => {
                 status: 'reconciling',
                 dryRun: false,
                 etapa: 'criar_lote',
-                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+                requestPayload: { marcaFlpCods: [98], ccoCod: 2, dataDebito: 1_790_000_000_000 },
             });
             const write = buildWrite();
             write.listarLotesNativos.mockResolvedValue([
@@ -332,12 +332,52 @@ describe('RemessaService', () => {
             expect(write.importarTitulos).toHaveBeenCalled();
         });
 
-        it('nenhum candidato acima da marca → o criarLote não valeu, recomeça do zero', async () => {
+        it('ADOTA um lote com flpCod MENOR que o máximo — o ERP reaproveita números', async () => {
+            // Medido em HML: um lote novo na filial 2 nasceu com flp 15 quando o maior era
+            // 40. A marca é o CONJUNTO dos conhecidos, não o máximo — com "maior que",
+            // este órfão ficaria invisível e o retry criaria um segundo lote.
             const ledger = buildLedger({
                 status: 'reconciling',
                 dryRun: false,
                 etapa: 'criar_lote',
-                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+                requestPayload: { marcaFlpCods: [40, 41], ccoCod: 2, dataDebito: 1_790_000_000_000 },
+            });
+            const write = buildWrite();
+            write.listarLotesNativos.mockResolvedValue([
+                { filCod: 2, bncCod: 4, flpCod: 40, status: 1, titulosCount: 1, soma: 10 },
+                { filCod: 2, bncCod: 4, flpCod: 41, status: 1, titulosCount: 1, soma: 10 },
+                {
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 15,
+                    status: 0,
+                    titulosCount: 0,
+                    soma: 0,
+                    ccoCod: 2,
+                    dataDebito: 1_790_000_000_000,
+                },
+            ]);
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 15,
+                status: 0,
+                titulosCount: 0,
+                soma: 0,
+            });
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(ledger.setNativeFlpCod).toHaveBeenCalledWith(expect.any(String), 15);
+        });
+
+        it('nenhum candidato novo → o criarLote não valeu, recomeça do zero', async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                etapa: 'criar_lote',
+                requestPayload: { marcaFlpCods: [98], ccoCod: 2, dataDebito: 1_790_000_000_000 },
             });
             const write = buildWrite();
 
@@ -351,7 +391,7 @@ describe('RemessaService', () => {
                 status: 'reconciling',
                 dryRun: false,
                 etapa: 'criar_lote',
-                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+                requestPayload: { marcaFlpCods: [98], ccoCod: 2, dataDebito: 1_790_000_000_000 },
             });
             const write = buildWrite();
             const vazio = (flpCod: number) => ({
@@ -377,7 +417,7 @@ describe('RemessaService', () => {
                 status: 'reconciling',
                 dryRun: false,
                 etapa: 'criar_lote',
-                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+                requestPayload: { marcaFlpCods: [98], ccoCod: 2, dataDebito: 1_790_000_000_000 },
             });
             const write = buildWrite();
             write.listarLotesNativos.mockResolvedValue([
