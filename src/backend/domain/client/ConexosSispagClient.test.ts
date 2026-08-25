@@ -180,4 +180,25 @@ describe('ConexosSispagClient (read-only)', () => {
             'ufEspSigla#LIKE': 'EX',
         });
     });
+    describe('listLotes — escopo de filial', () => {
+        it('filtra por filCod#EQ e rotula com a filial DA LINHA', async () => {
+            // `opts.filCod` é contexto de sessão, não filtro. Sem `filCod#EQ` o ERP devolve
+            // lotes de todas as filiais, e carimbar o parâmetro faria um lote da filial 1
+            // sair como da 2 — `findByChaveNativa` casa o retorno por (fil, bnc, flp).
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [{ filCod: 1, flpCod: 5, flpVldStatus: 1 }],
+            });
+
+            const lotes = await make(base).listLotes(2);
+
+            const [, body] = base.listGenericPaginated.mock.calls[0];
+            expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
+                'filCod#EQ': 2,
+            });
+            if (lotes.length > 0) expect(lotes[0]?.filCod).toBe(1);
+        });
+    });
+
 });

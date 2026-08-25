@@ -157,7 +157,19 @@ export default class ConexosSispagWriteClient {
                     path,
                     {
                         fieldList: [],
-                        filterList: { 'bncCod#EQ': bncCod },
+                        // `filCod#EQ` É OBRIGATÓRIO. O `filCod` de `opts` é o CONTEXTO da
+                        // sessão, não um filtro: sem isto o `fin015/list` devolve lotes de
+                        // TODAS as filiais (medido: 74 linhas das filiais 1, 2 e 7).
+                        //
+                        // Foi essa ausência que me fez concluir, erradamente, que
+                        // `(filCod, bncCod, flpCod)` não era única — os "gêmeos" eram lotes
+                        // de filiais diferentes. Com o filtro: 0 repetições. A chave é única.
+                        //
+                        // O dano real era na marca d'água: o conjunto de "lotes conhecidos"
+                        // vinha contaminado com flpCod de outras filiais, e um órfão cujo
+                        // número já existisse em outra filial ficava invisível — o retry
+                        // criava um segundo lote, que é exatamente o que o mecanismo evita.
+                        filterList: { 'bncCod#EQ': bncCod, 'filCod#EQ': filCod },
                         serviceName: 'fin015',
                         pageNumber: 1,
                         pageSize: 500,

@@ -460,4 +460,22 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
         });
     });
 
+    describe('listarLotesNativos — filtra por FILIAL', () => {
+        it('manda filCod#EQ no filterList, não só no contexto', async () => {
+            // O `filCod` de `opts` é o contexto da sessão, não um filtro. Sem `filCod#EQ`
+            // o ERP devolve lotes de todas as filiais — medido: 74 linhas das filiais
+            // 1, 2 e 7 numa consulta que deveria trazer 30.
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+
+            await make(base).listarLotesNativos({ filCod: 2, bncCod: 4 });
+
+            const [, body] = base.listGenericPaginated.mock.calls[0];
+            expect((body as { filterList: Record<string, unknown> }).filterList).toEqual({
+                'bncCod#EQ': 4,
+                'filCod#EQ': 2,
+            });
+        });
+    });
+
 });
