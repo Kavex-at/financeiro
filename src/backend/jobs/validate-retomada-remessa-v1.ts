@@ -116,11 +116,6 @@ async function main(): Promise<void> {
 
     const contarLotes = async (): Promise<number> =>
         (await write.listarLotesNativos({ filCod: FIL, bncCod })).length;
-    const marcaAtual = async (): Promise<number> =>
-        (await write.listarLotesNativos({ filCod: FIL, bncCod })).reduce(
-            (m, l) => Math.max(m, l.flpCod),
-            0,
-        );
 
     const baseline = await contarLotes();
     log(`linha de base: ${baseline} lote(s) · banco ${bncCod} · conta ${cc.ccoCod}`);
@@ -275,14 +270,14 @@ async function main(): Promise<void> {
     log('── C1 · órfão sem flpCod (marca d\'água tem que ADOTAR, não criar outro)');
     try {
         if (cenariosPossiveis < 1) throw new Error('PULADO — pool insuficiente');
-        const marca = await marcaAtual();
+        const marca = (await write.listarLotesNativos({ filCod: FIL, bncCod })).map((l) => l.flpCod);
         // Encena a queda: o lote foi criado no ERP e o número não chegou ao ledger.
         const orfao = await write.criarLote({
             filCod: FIL,
             conta,
             dataDebito: hojeUtc(),
         });
-        log(`   órfão plantado no ERP: flp ${orfao.flpCod} (marca era ${marca})`);
+        log(`   órfão plantado no ERP: flp ${orfao.flpCod} (${marca.length} lotes conhecidos antes)`);
 
         const loteId = await montarLoteLocal(parDe(0));
         const antes = await contarLotes();
@@ -290,7 +285,7 @@ async function main(): Promise<void> {
         await remessa.gerarRemessa({ loteId, ator: ATOR, dryRunOverride: true }); // cria a linha
         await rebobinarLedger(loteId, {
             nativeFlpCod: null,
-            requestPayload: { marcaFlpCod: marca, ccoCod: cc.ccoCod },
+            requestPayload: { marcaFlpCods: marca, ccoCod: cc.ccoCod, dataDebito: hojeUtc() },
         });
 
         const r = await remessa.gerarRemessa({ loteId, ator: ATOR });
