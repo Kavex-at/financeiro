@@ -166,6 +166,24 @@ para processar". **Hoje `marcarRetorno` é acionada MANUALMENTE** (botão "Marca
 `0027_lote_retornado.sql` recria o CHECK de `status` incluindo `RETORNADO`; `POST /sispag/lotes/:id/retorno`
 → `LotePagamentoService.marcarRetorno` (optimistic-lock por `versao`, I6). READ-only no ERP mantido (I1).
 
+## Recuperação de execução interrompida (ADR-0039)
+
+As escritas do `fin015` e o `processar` do `fin052` **não são idempotentes**: um retry cego
+significa um segundo lote de pagamento, ou baixa em cima de baixa. Os dois ledgers write-ahead
+(`remessa_execucao` 0049, `conciliacao_execucao` 0050) travam isso.
+
+Desde a ADR-0039, travar deixou de ser o fim: quando o ERP **expõe estado verificável** daquela
+escrita, a retomada **consulta** e continua do ponto certo, em vez de exigir conserto manual no
+fin015. Onde não expõe, o fail-closed do ADR-0013 continua valendo.
+
+A máquina de retomada, o encoding medido do `flpVldStatus`, a ordem obrigatória do write-ahead
+(marca d'água antes do `criarLote`, nome do arquivo antes do `gerarRemessa`) e os três casos que
+seguem travando estão em **`business-rules/retomada-remessa-sispag.md`**.
+
+Um caso não trava nem retoma sozinho: **lote cancelado**. O ERP deixa o mesmo `flpVldStatus = 2`
+para "cancelei para limpar o órfão" e "cancelei para abortar o pagamento", então quem decide é a
+pessoa — `LoteAnteriorCanceladoError` e um segundo clique na tela.
+
 ## Fora de escopo (Fatia 1+2)
 
 - Nenhuma escrita no ERP: gerar remessa (`fin015`), pasta de rede, VAN Nexxera, leitura real do retorno

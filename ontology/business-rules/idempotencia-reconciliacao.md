@@ -38,6 +38,13 @@
 morre **entre** o POST e o `markSettled`, a linha fica em `reconciling` — sinal explícito de "verificar no
 ERP se a baixa entrou" (reconciliação manual), em vez de um silêncio que pareceria "não executado".
 
+> **Emendado pela ADR-0039 (2026-08-25), só para o SISPAG.** "Reconciliação manual" continua sendo a
+> doutrina aqui, na permuta. No SISPAG, onde o ERP **expõe estado verificável** da escrita
+> (`flpVldStatus`/`titulosCount` no fin015, `processadoEm` no fin052), a execução órfã é **retomada por
+> consulta** em vez de mandar a pessoa ao ERP — ver `retomada-remessa-sispag.md`. O critério é
+> por-escrita, não por-módulo: para a baixa do `fin010` ninguém mediu ainda se existe estado
+> consultável equivalente, então aqui nada muda.
+
 ## Invariantes
 
 - **I-Recon-1:** no máximo **uma** baixa `settled` por par adto↔invoice (a chave UNIQUE garante).
