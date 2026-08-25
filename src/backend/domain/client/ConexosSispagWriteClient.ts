@@ -137,6 +137,55 @@ export default class ConexosSispagWriteClient {
     };
 
     /**
+     * Lotes de `(filCod, bncCod)` — usado para dois fins:
+     *   1. marca d'água ANTES do `criarLote` (o maior `flpCod` que existia);
+     *   2. busca dos candidatos a órfão DEPOIS de uma queda sem `flpCod` registrado.
+     *
+     * Sem isto, a janela entre o ERP responder e o ledger gravar é a única falha
+     * genuinamente irrecuperável — e ela não precisa ser.
+     */
+    public listarLotesNativos = async (params: {
+        filCod: number;
+        bncCod: number;
+    }): Promise<LoteNativoEstado[]> => {
+        const { filCod, bncCod } = params;
+        const path = 'fin015/list';
+        try {
+            const page = await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                return this.base.listGenericPaginated<Record<string, unknown>>(
+                    path,
+                    {
+                        fieldList: [],
+                        filterList: { 'bncCod#EQ': bncCod },
+                        serviceName: 'fin015',
+                        pageNumber: 1,
+                        pageSize: 500,
+                    },
+                    { filCod },
+                );
+            });
+            return (page.rows ?? [])
+                .filter((r) => r.flpCod != null)
+                .map((r) => ({
+                    filCod: Number(r.filCod ?? filCod),
+                    bncCod: Number(r.bncCod ?? bncCod),
+                    flpCod: Number(r.flpCod),
+                    status: Number(r.flpVldStatus ?? 0),
+                    titulosCount: Number(r.titulosCount ?? 0),
+                    soma: Number(r.soma ?? 0),
+                    ...(r.ccoCod != null ? { ccoCod: Number(r.ccoCod) } : {}),
+                    ...(r.flpDtaCredito != null ? { dataDebito: Number(r.flpDtaCredito) } : {}),
+                    ...(r.flpTimFinaliza != null
+                        ? { finalizadoEm: Number(r.flpTimFinaliza) }
+                        : {}),
+                }));
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
      * Estado do lote nativo no ERP. É o que permite RETOMAR uma sequência interrompida em
      * vez de só travar: em vez de acreditar no nosso ledger sobre uma escrita que não
      * confirmou, vamos perguntar ao ERP o que de fato aconteceu.
@@ -181,6 +230,46 @@ export default class ConexosSispagWriteClient {
             // 404 é resposta, não falha: o lote não existe.
             if (cause instanceof Error && /404|not found/i.test(cause.message)) return undefined;
             throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
+     * Chaves `docCod:titCod` dos títulos que JÁ estão dentro do lote nativo.
+     *
+     * É o que transforma um import parcial de beco sem saída em retomada: em vez de
+     * re-enviar tudo (duplicando o que entrou) ou travar (exigindo conserto na mão), a
+     * diferença entre o que o lote local tem e o que o ERP já recebeu é computável.
+     *
+     * Devolve `undefined` quando a leitura falha — que NÃO é "lote vazio". Um `Set` vazio
+     * diria "nada foi importado" e mandaria reimportar tudo; a distinção importa.
+     */
+    public listarChavesDoLote = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+    }): Promise<Set<string> | undefined> => {
+        const { filCod, bncCod, flpCod } = params;
+        const path = `fin015/finItemSispag/list/${filCod}/${bncCod}/${flpCod}`;
+        try {
+            const page = await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                return this.base.listGenericPaginated<Record<string, unknown>>(
+                    path,
+                    {
+                        fieldList: [],
+                        filterList: {},
+                        serviceName: 'fin015',
+                        pageNumber: 1,
+                        pageSize: 500,
+                    },
+                    { filCod },
+                );
+            });
+            return new Set(
+                (page.rows ?? []).map((r) => `${String(r.docCod ?? '')}:${String(r.titCod ?? '1')}`),
+            );
+        } catch {
+            return undefined;
         }
     };
 

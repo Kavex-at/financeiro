@@ -420,6 +420,9 @@ router.post(
                     ? { correlationId: req.header('x-request-id') as string }
                     : {}),
                 ...(req.body?.dryRun === true ? { dryRunOverride: true } : {}),
+                // Segundo clique da tela quando o lote anterior foi cancelado no ERP.
+                // Deliberadamente NÃO tem default: a confirmação tem que ser explícita.
+                ...(req.body?.confirmarNovoLote === true ? { confirmarNovoLote: true } : {}),
             });
             res.json(result);
         } catch (err) {

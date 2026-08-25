@@ -48,6 +48,7 @@ import {
   IngestaoPagamentosEmAndamentoError,
   type PagamentoIngestaoRun,
   reabrirLote,
+  LoteAnteriorCanceladoError,
   RemessaEmDuvidaError,
   removerItem,
   runIngestaoPagamentos,
@@ -321,7 +322,7 @@ function SispagPanel() {
   }
 
   const acaoLote = async (
-    fn: () => Promise<unknown>,
+    fn: (opts?: { confirmarNovoLote?: boolean }) => Promise<unknown>,
     // Função quando a confirmação depende do QUE ACONTECEU. "Remessa gerada" e
     // "simulação em dry-run" não podem ter a mesma mensagem num botão que move dinheiro.
     okMsg: string | ((resultado: unknown) => { titulo: string; descricao?: string }),
@@ -340,7 +341,21 @@ function SispagPanel() {
       // Dois erros pedem ação humana diferente de "tente de novo" — e insistir em um
       // deles pode gerar pagamento em duplicidade. Não podem virar toast genérico.
       if (isSessionExpiredError(e)) return
-      if (e instanceof RemessaEmDuvidaError) {
+      if (e instanceof LoteAnteriorCanceladoError) {
+        // NÃO é erro: é uma pergunta. Limpar um órfão travado e abortar um pagamento
+        // deixam o mesmo estado no Conexos, e só quem cancelou sabe qual dos dois foi.
+        // Por isso a ação fica atrás de um segundo clique, e não de um retry automático.
+        toast.warning('O lote anterior foi cancelado no Conexos', {
+          description: e.message,
+          duration: 60000,
+          action: {
+            label: 'Gerar um lote novo',
+            onClick: () => {
+              void acaoLote((o) => fn({ ...o, confirmarNovoLote: true }), okMsg)
+            },
+          },
+        })
+      } else if (e instanceof RemessaEmDuvidaError) {
         toast.error('Remessa em dúvida — NÃO repita', {
           description: e.message,
           duration: 30000,

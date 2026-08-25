@@ -4,6 +4,7 @@ import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import ErpPerguntaError from '../../errors/ErpPerguntaError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
+import LoteAnteriorCanceladoError from '../../errors/LoteAnteriorCanceladoError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin015Write.js';
@@ -35,6 +36,12 @@ const ORDEM_ETAPAS = ['criar_lote', 'importar', 'finalizar', 'gerar_remessa', 'c
 type EtapaReal = (typeof ORDEM_ETAPAS)[number] | 'indeterminado';
 
 export interface GerarRemessaInput {
+    /**
+     * Confirma gerar um lote NOVO quando o anterior foi cancelado no ERP. Vem de um segundo
+     * clique na tela — o sistema não consegue distinguir "cancelei para limpar" de
+     * "cancelei para abortar", e essa distinção vale dinheiro.
+     */
+    confirmarNovoLote?: boolean;
     loteId: string;
     ator: string;
     /** Estável por tentativa do usuário — é o que impede duas remessas para o mesmo lote. */
@@ -154,6 +161,8 @@ export default class RemessaService {
         // Execução anterior em voo que nunca confirmou. Em vez de travar para sempre,
         // PERGUNTA AO ERP o que de fato aconteceu e retoma do ponto certo.
         let retomarDe: EtapaReal | undefined;
+        let apenasChaves: ReadonlySet<string> | undefined;
+        let flpCodRetomado: number | undefined;
         if (anterior && !anterior.dryRun && anterior.status === 'reconciling') {
             const sync = await this.sincronizarComErp(anterior, lote);
             await this.logService.warn({
@@ -199,8 +208,18 @@ export default class RemessaService {
                 };
             }
 
+            if (sync.canceladoFlpCod !== undefined && input.confirmarNovoLote !== true) {
+                throw new LoteAnteriorCanceladoError({
+                    loteId: lote.id,
+                    flpCodCancelado: sync.canceladoFlpCod,
+                    filCod: lote.filCod,
+                });
+            }
+
             if (sync.etapa !== 'indeterminado') {
                 retomarDe = sync.etapa;
+                apenasChaves = sync.apenas;
+                flpCodRetomado = sync.flpCod;
             }
         }
 
@@ -308,7 +327,13 @@ export default class RemessaService {
         //
         // O lote nativo vazio é reaproveitável com segurança: ele só ganha itens no
         // passo seguinte, e a falha anterior aconteceu ANTES de qualquer import.
-        let flpCod: number | undefined = anterior?.nativeFlpCod;
+        // `flpCodRetomado` cobre o caso adotado por marca d'água, que o ledger não tinha.
+        //
+        // `criar_lote` ZERA o número de propósito: o sync só devolve essa etapa quando o
+        // lote do ledger não serve mais (não existe no ERP, ou foi cancelado). Reusar o
+        // `nativeFlpCod` antigo aqui mandaria títulos para um lote morto.
+        let flpCod: number | undefined =
+            retomarDe === 'criar_lote' ? undefined : (flpCodRetomado ?? anterior?.nativeFlpCod);
         try {
             if (flpCod !== undefined) {
                 await this.logService.info({
@@ -317,6 +342,22 @@ export default class RemessaService {
                     data: { loteId: lote.id, flpCod, etapaAnterior: anterior?.etapa },
                 });
             } else {
+                // MARCA D'ÁGUA — gravada ANTES do POST. Se o processo morrer entre o ERP
+                // responder e o `setNativeFlpCod` seguinte, é isto que permite reconhecer
+                // o lote criado: qualquer flpCod ACIMA da marca, com esta conta e esta data
+                // de débito, e ainda vazio, é candidato. Sem a marca, essa janela é a única
+                // falha irrecuperável do fluxo.
+                const anteriores = await this.write.listarLotesNativos({
+                    filCod: lote.filCod,
+                    bncCod,
+                });
+                const marca = anteriores.reduce((max, l) => Math.max(max, l.flpCod), 0);
+                await this.ledger.setRequestPayload(key, {
+                    marcaFlpCod: marca,
+                    ccoCod: escolhida.ccoCod,
+                    dataDebito,
+                });
+
                 // (1) lote nativo
                 const criado = await this.write.criarLote({
                     filCod: lote.filCod,
@@ -349,7 +390,9 @@ export default class RemessaService {
             // lote — e o lote nativo vazio fica registrado no ledger para ser reusado na
             // próxima tentativa, em vez de virar órfão.
             if (!pular('importar')) {
-                const itens = await this.montarItensImport(lote, bncCod, flpCod);
+                // `apenasChaves` só vem preenchido numa retomada de import parcial: manda
+                // exatamente os títulos que o ERP ainda não tem.
+                const itens = await this.montarItensImport(lote, bncCod, flpCod, apenasChaves);
                 await this.ledger.setRequestPayload(key, { itens: itens.length, flpCod });
                 await this.write.importarTitulos({
                     filCod: lote.filCod,
@@ -473,17 +516,36 @@ export default class RemessaService {
     private sincronizarComErp = async (
         anterior: RemessaExecucaoRow,
         lote: LotePagamento,
-    ): Promise<{ etapa: EtapaReal; motivo: string; arquivo?: ArquivoRemessa }> => {
-        const flpCod = anterior.nativeFlpCod;
-        if (flpCod === undefined) {
-            // Morreu entre o `criarLote` responder e o ledger gravar. Sem o número não há
-            // como identificar o lote com segurança: procurar por filial+data casaria com
-            // um rascunho que um humano tenha criado no mesmo intervalo. Aqui a resposta
-            // honesta é "não sei", e quem decide é gente.
-            return { etapa: 'indeterminado', motivo: 'flpCod não registrado antes da queda' };
-        }
-
+    ): Promise<{
+        etapa: EtapaReal;
+        motivo: string;
+        arquivo?: ArquivoRemessa;
+        /** Chaves `docCod:titCod` que ainda faltam importar (retomada de import parcial). */
+        apenas?: ReadonlySet<string>;
+        /** Lote a reusar — inclusive o adotado por marca d'água, que o ledger não tinha. */
+        flpCod?: number;
+        /** Preenchido quando a retomada esbarrou num lote cancelado por alguém. */
+        canceladoFlpCod?: number;
+    }> => {
         const bncCod = anterior.bncCod;
+        let flpCod = anterior.nativeFlpCod;
+
+        if (flpCod === undefined) {
+            // Morreu entre o `criarLote` responder e o ledger gravar. A marca d'água grava
+            // ANTES do POST o maior flpCod que existia, junto com conta e data de débito —
+            // então o lote criado, se existir, está acima dela e tem essa impressão digital.
+            const adotado = await this.adotarPorMarcaDagua(anterior, bncCod);
+            if (adotado.flpCod === undefined) return adotado.resultado;
+            flpCod = adotado.flpCod;
+            // Persistido já: a partir daqui a retomada tem número, como qualquer outra.
+            await this.ledger.setNativeFlpCod(anterior.idempotencyKey, flpCod);
+            await this.loteRepo.setChavesNativas({
+                loteId: lote.id,
+                nativeFilCod: anterior.filCod,
+                nativeBncCod: bncCod,
+                nativeFlpCod: flpCod,
+            });
+        }
         const estado = await this.write.getLoteNativo({ filCod: anterior.filCod, bncCod, flpCod });
 
         if (!estado) {
@@ -491,12 +553,18 @@ export default class RemessaService {
             // início é seguro justamente porque não há nada lá para duplicar.
             return { etapa: 'criar_lote', motivo: `lote ${flpCod} não existe no ERP` };
         }
+        // Daqui para baixo o lote está identificado — o chamador precisa do número para
+        // NÃO criar outro, inclusive quando ele veio da adoção por marca d'água.
+        const reusar = { flpCod } as const;
 
         if (estado.status === 2 || estado.status === 3) {
-            // Cancelado por uma pessoa. Retomar em cima disso desfaria uma decisão humana.
+            // Cancelado por uma pessoa. O lote em si não serve mais (os itens saíram), mas
+            // criar um novo é seguro — nada é duplicado. O que falta é saber a INTENÇÃO de
+            // quem cancelou, e isso o ERP não guarda; quem responde é a tela.
             return {
-                etapa: 'indeterminado',
-                motivo: `lote ${flpCod} está cancelado no ERP (status ${estado.status})`,
+                etapa: 'criar_lote',
+                motivo: 'lote-anterior-cancelado',
+                canceladoFlpCod: flpCod,
             };
         }
 
@@ -507,6 +575,7 @@ export default class RemessaService {
             const nomeEsperado = this.nomeArquivoDoLedger(anterior);
             if (!nomeEsperado) {
                 return {
+                    ...reusar,
                     etapa: 'gerar_remessa',
                     motivo: `lote ${flpCod} finalizado e nenhum arquivo foi pedido ainda`,
                 };
@@ -518,8 +587,14 @@ export default class RemessaService {
             });
             const arquivo = arquivos.find((a) => a.nomeArquivo === nomeEsperado);
             return arquivo
-                ? { etapa: 'concluido', motivo: `remessa "${nomeEsperado}" já existe`, arquivo }
+                ? {
+                      ...reusar,
+                      etapa: 'concluido',
+                      motivo: `remessa "${nomeEsperado}" já existe`,
+                      arquivo,
+                  }
                 : {
+                      ...reusar,
                       etapa: 'gerar_remessa',
                       motivo: `lote ${flpCod} finalizado, "${nomeEsperado}" não foi gerado`,
                   };
@@ -528,19 +603,130 @@ export default class RemessaService {
         // status 0 — aberto. `titulosCount` diz se o import entrou.
         const esperados = lote.itens.length;
         if (estado.titulosCount === 0) {
-            return { etapa: 'importar', motivo: `lote ${flpCod} aberto e vazio` };
+            return { ...reusar, etapa: 'importar', motivo: `lote ${flpCod} aberto e vazio` };
         }
         if (estado.titulosCount >= esperados) {
             return {
+                ...reusar,
                 etapa: 'finalizar',
                 motivo: `lote ${flpCod} já tem ${estado.titulosCount} título(s)`,
             };
         }
-        // Import PARCIAL. Re-importar duplicaria o que já entrou, e remover na mão é decisão
-        // de gente. Este é o caso raro que continua fail-closed — e agora com o número.
+        // Import PARCIAL. Re-importar tudo duplicaria o que já entrou; travar exigiria
+        // conserto na mão. Mas o ERP diz QUAIS títulos entraram, então a diferença é
+        // computável — importa-se só o que falta.
+        const jaNoErp = await this.write.listarChavesDoLote({
+            filCod: anterior.filCod,
+            bncCod,
+            flpCod,
+        });
+        if (!jaNoErp) {
+            // Falha de LEITURA não é "lote vazio". Sem saber o que está lá, qualquer import
+            // é um chute com dinheiro.
+            return {
+                ...reusar,
+                etapa: 'indeterminado',
+                motivo: `lote ${flpCod} tem ${estado.titulosCount} de ${esperados} títulos e a lista de itens não pôde ser lida`,
+            };
+        }
+
+        const nossas = new Set(lote.itens.map((i) => `${i.docCod}:${i.titCod}`));
+        const intrusos = [...jaNoErp].filter((k) => !nossas.has(k));
+        if (intrusos.length > 0) {
+            // O lote nativo tem título que NÃO está no nosso lote: alguém mexeu nele pelo
+            // ERP. Completar o import aqui misturaria a intenção de duas pessoas.
+            return {
+                ...reusar,
+                etapa: 'indeterminado',
+                motivo: `lote ${flpCod} contém título(s) fora do nosso lote: ${intrusos.join(', ')}`,
+            };
+        }
+
+        const faltando = new Set([...nossas].filter((k) => !jaNoErp.has(k)));
+        if (faltando.size === 0) {
+            return {
+                ...reusar,
+                etapa: 'finalizar',
+                motivo: `lote ${flpCod} já tem os ${jaNoErp.size} título(s) do lote`,
+            };
+        }
         return {
-            etapa: 'indeterminado',
-            motivo: `lote ${flpCod} tem ${estado.titulosCount} de ${esperados} títulos (import parcial)`,
+            ...reusar,
+            etapa: 'importar',
+            motivo: `lote ${flpCod} tem ${jaNoErp.size} de ${esperados}; faltam ${faltando.size}`,
+            apenas: faltando,
+        };
+    };
+
+    /**
+     * Tenta reconhecer o lote criado numa queda que não chegou a gravar o `flpCod`.
+     *
+     * A impressão digital é tripla: `flpCod` acima da marca gravada antes do POST, mesma
+     * conta pagadora, mesma data de débito — e ainda vazio (um lote com títulos não é o
+     * nosso, porque o import é o passo seguinte).
+     *
+     * A regra do EXATAMENTE UM é a salvaguarda. Dois lotes com essa mesma assinatura é
+     * ambíguo o bastante para não escolher no lugar de uma pessoa: adotar o errado
+     * importaria os títulos no lote de outro.
+     */
+    private adotarPorMarcaDagua = async (
+        anterior: RemessaExecucaoRow,
+        bncCod: number,
+    ): Promise<{
+        flpCod?: number;
+        resultado: { etapa: EtapaReal; motivo: string };
+    }> => {
+        const payload = anterior.requestPayload as
+            | { marcaFlpCod?: unknown; ccoCod?: unknown; dataDebito?: unknown }
+            | undefined;
+        const marca = typeof payload?.marcaFlpCod === 'number' ? payload.marcaFlpCod : undefined;
+        if (marca === undefined) {
+            // Execução anterior a este mecanismo, ou que morreu antes até da marca.
+            return {
+                resultado: {
+                    etapa: 'indeterminado',
+                    motivo: 'flpCod não registrado e sem marca d\'água para reconhecer o lote',
+                },
+            };
+        }
+
+        const lotes = await this.write.listarLotesNativos({ filCod: anterior.filCod, bncCod });
+        const candidatos = lotes.filter(
+            (l) =>
+                l.flpCod > marca &&
+                l.status === 0 &&
+                l.titulosCount === 0 &&
+                (payload?.ccoCod === undefined || l.ccoCod === payload.ccoCod) &&
+                (payload?.dataDebito === undefined || l.dataDebito === payload.dataDebito),
+        );
+
+        if (candidatos.length === 0) {
+            // O `criarLote` não chegou a valer. Recomeçar é seguro: não há nada lá.
+            return {
+                resultado: {
+                    etapa: 'criar_lote',
+                    motivo: `nenhum lote acima da marca ${marca} — o criarLote não valeu`,
+                },
+            };
+        }
+        if (candidatos.length > 1) {
+            return {
+                resultado: {
+                    etapa: 'indeterminado',
+                    motivo: `${candidatos.length} lotes vazios com a mesma assinatura acima da marca ${marca}: ${candidatos
+                        .map((c) => c.flpCod)
+                        .join(', ')}`,
+                },
+            };
+        }
+
+        const unico = candidatos[0] as (typeof candidatos)[number];
+        return {
+            flpCod: unico.flpCod,
+            resultado: {
+                etapa: 'importar',
+                motivo: `lote ${unico.flpCod} adotado pela marca d'água ${marca}`,
+            },
         };
     };
 
@@ -559,10 +745,15 @@ export default class RemessaService {
         lote: LotePagamento,
         bncCod: number,
         flpCod: number,
+        /** Subconjunto a importar. Ausente = todos os itens do lote (caminho normal). */
+        apenas?: ReadonlySet<string>,
     ): Promise<Array<Record<string, unknown>>> => {
-        // As chaves do lote deixam o cliente parar assim que achar todas, em vez de varrer
-        // o grid inteiro — e garantem que ele NÃO pare na primeira página se faltar alguma.
-        const chavesDesejadas = new Set(lote.itens.map((i) => `${i.docCod}:${i.titCod}`));
+        const alvo = apenas
+            ? lote.itens.filter((i) => apenas.has(`${i.docCod}:${i.titCod}`))
+            : lote.itens;
+        // As chaves deixam o cliente parar assim que achar todas, em vez de varrer o grid
+        // inteiro — e garantem que ele NÃO pare na primeira página se faltar alguma.
+        const chavesDesejadas = new Set(alvo.map((i) => `${i.docCod}:${i.titCod}`));
         const pendentes = await this.write.listarTitulosPendentes({
             filCod: lote.filCod,
             bncCod,
@@ -574,7 +765,7 @@ export default class RemessaService {
         const febraban = FEBRABAN_POR_BNCCOD[bncCod] ?? 341;
         const itens: Array<Record<string, unknown>> = [];
 
-        for (const item of lote.itens) {
+        for (const item of alvo) {
             const pendente = porChave.get(`${item.docCod}:${item.titCod}`);
             if (!pendente) {
                 throw new Error(
