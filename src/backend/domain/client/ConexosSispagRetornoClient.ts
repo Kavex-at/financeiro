@@ -1,5 +1,6 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import ConexosError from '../errors/ConexosError.js';
+import ErpPerguntaError from '../errors/ErpPerguntaError.js';
 import type {
     ArquivoRetorno,
     ArquivoRetornoDetalhe,
@@ -77,7 +78,31 @@ export default class ConexosSispagRetornoClient {
         return undefined;
     };
 
-    private toConexosError = (endpoint: string, cause: unknown): ConexosError =>
+    /**
+     * `QUESTION` do ERP também aqui: `arquivosRetorno/processar` e `carregar` são escritas, e
+     * uma pergunta interativa vinda delas embrulhada em `ConexosError` faria a conciliação
+     * parecer quebrada quando o ERP só queria uma confirmação. Mesmo raciocínio do gêmeo em
+     * `ConexosSispagWriteClient.toConexosError`.
+     */
+    private toConexosError = (endpoint: string, cause: unknown): Error => {
+        const data = (cause as { response?: { data?: unknown } })?.response?.data as
+            | {
+                  type?: string;
+                  questions?: Array<{ key?: string; parameterValueList?: Record<string, unknown> }>;
+              }
+            | undefined;
+        const q = data?.type === 'QUESTION' ? data.questions?.[0] : undefined;
+        if (q?.key) {
+            return new ErpPerguntaError({
+                chave: String(q.key),
+                ...(q.parameterValueList ? { parametros: q.parameterValueList } : {}),
+                contexto: endpoint,
+            });
+        }
+        return this.conexosErrorPuro(endpoint, cause);
+    };
+
+    private conexosErrorPuro = (endpoint: string, cause: unknown): ConexosError =>
         new ConexosError({ endpoint, cause, message: this.describeConexosValidation(cause) });
 
     /**
@@ -184,7 +209,7 @@ export default class ConexosSispagRetornoClient {
     /**
      * Um arquivo de retorno específico — para saber se o ERP JÁ o processou.
      *
-     * `processadoEm` (`garTimProcessamento`) é carimbado pelo próprio ERP quando o
+     * `processadoEm` (`garTimProc` — confirmado no fixture) é carimbado pelo próprio ERP quando o
      * `arquivosRetorno/processar` roda. É o que permite retomar uma conciliação
      * interrompida sem adivinhar: em vez de supor pelo nosso ledger se o PUT valeu,
      * pergunta-se a quem sabe.

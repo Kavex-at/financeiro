@@ -48,7 +48,9 @@ import {
   IngestaoPagamentosEmAndamentoError,
   type PagamentoIngestaoRun,
   reabrirLote,
+  ConciliacaoEmDuvidaError,
   LoteAnteriorCanceladoError,
+  RemessaEmAndamentoError,
   RemessaEmDuvidaError,
   removerItem,
   runIngestaoPagamentos,
@@ -341,7 +343,14 @@ function SispagPanel() {
       // Dois erros pedem ação humana diferente de "tente de novo" — e insistir em um
       // deles pode gerar pagamento em duplicidade. Não podem virar toast genérico.
       if (isSessionExpiredError(e)) return
-      if (e instanceof LoteAnteriorCanceladoError) {
+      if (e instanceof RemessaEmAndamentoError) {
+        // Não é falha: outra execução está rodando agora. Insistir é o que criaria o
+        // segundo lote — por isso a mensagem pede espera, não retry.
+        toast.warning('Geração já em andamento', {
+          description: e.message,
+          duration: 12000,
+        })
+      } else if (e instanceof LoteAnteriorCanceladoError) {
         // NÃO é erro: é uma pergunta. Limpar um órfão travado e abortar um pagamento
         // deixam o mesmo estado no Conexos, e só quem cancelou sabe qual dos dois foi.
         // Por isso a ação fica atrás de um segundo clique, e não de um retry automático.
@@ -412,6 +421,15 @@ function SispagPanel() {
       })
     } catch (e) {
       if (isSessionExpiredError(e)) return
+      if (e instanceof ConciliacaoEmDuvidaError) {
+        // Paridade com a remessa: "em dúvida" é classe própria, não falha de rede. Sem
+        // isso o operador retenta por reflexo — e aprende a ignorar o alerta.
+        toast.error('Conciliação em dúvida — NÃO repita', {
+          description: e.message,
+          duration: 30000,
+        })
+        return
+      }
       toast.error('Não foi possível conciliar', {
         description: e instanceof Error ? e.message : undefined,
       })

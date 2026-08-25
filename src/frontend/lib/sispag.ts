@@ -350,6 +350,25 @@ export class LoteAnteriorCanceladoError extends Error {
   }
 }
 
+/** Já existe uma geração em curso para este lote — esperar resolve. */
+export class RemessaEmAndamentoError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RemessaEmAndamentoError'
+  }
+}
+
+/** Conciliação em dúvida: o `processar` anterior não confirmou. NÃO repetir sem conferir. */
+export class ConciliacaoEmDuvidaError extends Error {
+  constructor(
+    message: string,
+    readonly garCodSeq?: number,
+  ) {
+    super(message)
+    this.name = 'ConciliacaoEmDuvidaError'
+  }
+}
+
 export class ErpPerguntaError extends Error {
   constructor(
     message: string,
@@ -376,6 +395,12 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
     const det = (body.details ?? {}) as Record<string, unknown>
     if (body.code === 'REMESSA_EM_DUVIDA') {
       throw new RemessaEmDuvidaError(msg, det.nativeFlpCod as number | undefined)
+    }
+    if (body.code === 'REMESSA_EM_ANDAMENTO') {
+      throw new RemessaEmAndamentoError(msg)
+    }
+    if (body.code === 'CONCILIACAO_EM_DUVIDA') {
+      throw new ConciliacaoEmDuvidaError(msg, det.garCodSeq as number | undefined)
     }
     if (body.code === 'LOTE_ANTERIOR_CANCELADO') {
       throw new LoteAnteriorCanceladoError(msg, det.flpCodCancelado as number | undefined)

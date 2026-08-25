@@ -507,4 +507,45 @@ describe('ConciliacaoRetornoService', () => {
         });
     });
 
+    describe('arquivo já processado no ERP — vale SEMPRE, não só na retomada', () => {
+        it('conciliação NOVA sobre arquivo já processado NÃO chama `processar`', async () => {
+            // Achado pelo gate ao vivo: com o ledger limpo, a checagem de `processadoEm`
+            // não rodava e o `processar` era chamado de novo. O ERP recusou com
+            // "O VALOR BAIXADO NÃO PODE SER ZERO" — quem protegeu foi ele, não nós.
+            const retorno = buildRetorno();
+            retorno.getArquivoRetorno.mockResolvedValue({ ...CHAVE, processadoEm: 1787000000000 });
+
+            const res = await make({ retorno }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+                processar: true,
+            });
+
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
+            expect(res.processado).toBe(true);
+        });
+
+        it('arquivo NÃO processado segue chamando `processar` normalmente', async () => {
+            const retorno = buildRetorno();
+            retorno.getArquivoRetorno.mockResolvedValue({ ...CHAVE, processadoEm: undefined });
+
+            await make({ retorno }).conciliar({ ...CHAVE, ator: 'u', processar: true });
+
+            expect(retorno.processarArquivoRetorno).toHaveBeenCalledTimes(1);
+        });
+
+        it('dry-run não consulta o estado do arquivo — não há o que proteger', async () => {
+            const retorno = buildRetorno();
+
+            await make({ retorno, env: buildEnv({ conexosDryRun: true }) }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+                processar: true,
+            });
+
+            expect(retorno.getArquivoRetorno).not.toHaveBeenCalled();
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
+        });
+    });
+
 });

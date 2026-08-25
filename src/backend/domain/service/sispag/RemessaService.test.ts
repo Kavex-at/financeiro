@@ -4,6 +4,7 @@ import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
 import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
+import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
@@ -144,6 +145,17 @@ const buildSispag = () => ({
         ]),
 });
 
+/**
+ * `withAdvisoryLock` que concede o lock por padrão. Um teste específico simula "ocupado"
+ * para provar que a segunda requisição concorrente é barrada antes de qualquer POST.
+ */
+const buildDb = (concede = true) => ({
+    withAdvisoryLock: jest.fn(
+        async (_k: number, onAcquired: () => Promise<unknown>, onBusy: () => Promise<unknown>) =>
+            concede ? onAcquired() : onBusy(),
+    ),
+});
+
 const make = (o: {
     loteRepo?: ReturnType<typeof buildLoteRepo>;
     ledger?: ReturnType<typeof buildLedger>;
@@ -151,6 +163,7 @@ const make = (o: {
     sispag?: ReturnType<typeof buildSispag>;
     env?: EnvironmentProvider;
     lote?: LotePagamento;
+    db?: ReturnType<typeof buildDb>;
 }) =>
     new RemessaService(
         (o.loteRepo ?? buildLoteRepo(o.lote)) as unknown as LotePagamentoRepository,
@@ -159,6 +172,7 @@ const make = (o: {
         (o.sispag ?? buildSispag()) as unknown as ConexosSispagClient,
         o.env ?? buildEnv(),
         buildLog(),
+        (o.db ?? buildDb()) as unknown as PostgreeDatabaseClient,
     );
 
 describe('RemessaService', () => {
@@ -825,4 +839,47 @@ describe('RemessaService', () => {
             expect(write.gerarRemessa).not.toHaveBeenCalled();
         });
     });
+    describe('serialização por lote (regis: fault-tolerance-1)', () => {
+        it('requisição concorrente é barrada ANTES de qualquer POST no ERP', async () => {
+            // O ledger write-ahead cobre INTERRUPÇÃO, não CONCORRÊNCIA: duas requisições
+            // simultâneas liam o ledger antes de qualquer uma escrever e ambas criavam lote.
+            const write = buildWrite();
+            const ledger = buildLedger();
+
+            await expect(
+                make({ write, ledger, db: buildDb(false) }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                }),
+            ).rejects.toMatchObject({ code: 'REMESSA_EM_ANDAMENTO', statusCode: 409 });
+
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            // Nem sequer abre execução no ledger — a barreira é antes de tudo.
+            expect(ledger.beginExecution).not.toHaveBeenCalled();
+        });
+
+        it('o lock é POR LOTE — a chave muda com o loteId', async () => {
+            // Lock global serializaria lotes independentes sem necessidade.
+            const dbA = buildDb();
+            const dbB = buildDb();
+            await make({ db: dbA }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            await make({ db: dbB, loteRepo: buildLoteRepo(lote({ id: 'L2' })) }).gerarRemessa({
+                loteId: 'L2',
+                ator: 'u',
+            });
+
+            const chaveA = dbA.withAdvisoryLock.mock.calls[0]?.[0];
+            const chaveB = dbB.withAdvisoryLock.mock.calls[0]?.[0];
+            expect(typeof chaveA).toBe('number');
+            expect(chaveA).not.toBe(chaveB);
+        });
+
+        it('o erro é retryable — a execução em curso vai terminar', async () => {
+            await expect(
+                make({ db: buildDb(false) }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toMatchObject({ retryable: true });
+        });
+    });
+
 });

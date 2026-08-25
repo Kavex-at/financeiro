@@ -1,0 +1,30 @@
+{
+    "_fonte": "arquivosRetorno fil=2 bnc=4 gtb=1",
+    "_capturadoEm": "2026-08-25",
+    "_nota": "Valores redigidos por tipo; as CHAVES são as que o ERP devolveu.",
+    "linha": {
+        "filCod": 0,
+        "bncCod": 0,
+        "gtbCodSeq": 0,
+        "garCodSeq": 0,
+        "usnCodStatus": null,
+        "usnCodCadastro": 0,
+        "usnCodProc": 0,
+        "usnCodProcCanc": null,
+        "garTimCadastro": 0,
+        "garTimStatus": null,
+        "garTimProc": 0,
+        "garTimProcCanc": null,
+        "garEspArquivo": "<string>",
+        "garVldStatus": 0,
+        "garVldProcStatus": 0,
+        "usnDesNomeCadastro": "<string>",
+        "usnDesNomeStatus": null,
+        "usnDesNomeProc": "<string>",
+        "usnDesNomeProcCanc": null,
+        "gtbDesNome": "<string>",
+        "bncDesNome": "<string>",
+        "erro": 0,
+        "titulosRejeitados": 0
+    }
+}
