@@ -52,6 +52,8 @@ const make = (
         getLoteComItens?: jest.Mock;
         getTituloAPagar?: jest.Mock;
         listContasFavorecido?: jest.Mock;
+        remessaLedger?: { listReconcilingParadas: jest.Mock };
+        conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
     } = {},
 ) => {
     const sispag = {
@@ -84,6 +86,13 @@ const make = (
             .mockResolvedValue({ conexosWriteEnabled: false, conexosDryRun: true }),
     } as unknown as EnvironmentProvider;
     const log = over.log ?? buildLog();
+    // Ledgers: por padrão sem nenhuma execução presa. Um teste específico injeta órfãos.
+    const remessaLedger = (over.remessaLedger ?? {
+        listReconcilingParadas: jest.fn().mockResolvedValue([]),
+    }) as never;
+    const conciliacaoLedger = (over.conciliacaoLedger ?? {
+        listReconcilingParadas: jest.fn().mockResolvedValue([]),
+    }) as never;
     const service = new SispagPainelService(
         sispag,
         retorno,
@@ -92,6 +101,8 @@ const make = (
         tituloRepo,
         runRepo,
         loteRepo,
+        remessaLedger,
+        conciliacaoLedger,
         env,
         log,
     );
@@ -261,4 +272,46 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
         expect(itens[0]).toEqual({ docCod: '100', titCod: '1', modalidades: [] });
         expect(itens[1].modalidades).toEqual(['BOLETO', 'TED', 'CREDITO_CONTA']);
     });
+    describe('execuções presas (aviso na tela)', () => {
+        it('reporta zero quando não há órfão', async () => {
+            const { service } = make();
+            const painel = await service.montarPainel();
+            expect(painel.execucoesParadas).toMatchObject({ remessa: 0, conciliacao: 0 });
+        });
+
+        it('conta os órfãos e entrega o flpCod para o operador levar ao fin015', async () => {
+            const { service } = make({
+                remessaLedger: {
+                    listReconcilingParadas: jest
+                        .fn()
+                        .mockResolvedValue([
+                            { idempotencyKey: 'remessa:L1', nativeFlpCod: 42 },
+                            { idempotencyKey: 'remessa:L2' },
+                        ]),
+                },
+            });
+
+            const painel = await service.montarPainel();
+
+            expect(painel.execucoesParadas.remessa).toBe(2);
+            // Só o que TEM número entra na lista; o outro é o caso "morreu antes de
+            // registrarmos", que a tela trata com outra frase.
+            expect(painel.execucoesParadas.lotesNativos).toEqual([42]);
+        });
+
+        it('falha ao ler o ledger NÃO derruba o painel', async () => {
+            // Ficar sem o aviso é ruim; ficar sem a tela de pagamentos é pior.
+            const { service } = make({
+                remessaLedger: {
+                    listReconcilingParadas: jest.fn().mockRejectedValue(new Error('db fora')),
+                },
+            });
+
+            const painel = await service.montarPainel();
+
+            expect(painel.execucoesParadas).toMatchObject({ remessa: 0, conciliacao: 0 });
+            expect(painel.titulos).toBeDefined();
+        });
+    });
+
 });

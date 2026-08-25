@@ -163,6 +163,8 @@ export interface SispagPainelResponse {
      * `titulos.length`, a UI está mostrando um pedaço e precisa dizer isso.
      */
     titulosTotal: number;
+    /** Execuções de escrita presas — ver `ExecucoesParadas`. */
+    execucoesParadas: ExecucoesParadas;
     lotes: LoteSispag[];
 }
 
@@ -293,4 +295,20 @@ export interface IncluirTituloInput {
 export interface ListarLotesFiltro {
     status?: LotePagamentoStatus;
     filCod?: number;
+}
+
+/**
+ * Resumo das execuções presas em `reconciling`, para a tela avisar quem pode agir.
+ *
+ * Existe porque o fail-closed é silencioso: ele impede o segundo pagamento, mas só se
+ * manifesta se alguém tentar de novo. Sem este aviso, um lote nativo órfão no Conexos
+ * pode ficar semanas sem ninguém saber.
+ */
+export interface ExecucoesParadas {
+    remessa: number;
+    conciliacao: number;
+    /** Idade mínima considerada (minutos). */
+    desdeMinutos: number;
+    /** `flpCod` dos lotes nativos conhecidos — o número que se leva ao fin015. */
+    lotesNativos: number[];
 }

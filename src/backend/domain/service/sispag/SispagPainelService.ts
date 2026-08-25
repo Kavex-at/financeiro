@@ -10,11 +10,14 @@ import {
     MODALIDADE,
     type Modalidade,
     type SispagKpis,
+    type ExecucoesParadas,
     type SispagPainelResponse,
     type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
@@ -34,6 +37,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * sem aviso é o que transformou um limite de payload num bug de negócio.
  */
 const TITULOS_CAP = 5000;
+
+/** Idade a partir da qual uma execução `reconciling` deixa de ser "em voo" e vira órfã. */
+const MINUTOS_ORFAO = 15;
 /**
  * Teto de chamadas Conexos SIMULTÂNEAS no fan-out do painel (lotes nativos).
  * Evita o burst que pressiona o pool de sessões do Conexos (`LOGIN_ERROR_MAX_SESSIONS`).
@@ -60,6 +66,10 @@ export default class SispagPainelService {
         @inject(PagamentoIngestaoRunRepository)
         private readonly runRepo: PagamentoIngestaoRunRepository,
         @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
+        @inject(RemessaExecucaoRepository)
+        private readonly remessaLedger: RemessaExecucaoRepository,
+        @inject(ConciliacaoExecucaoRepository)
+        private readonly conciliacaoLedger: ConciliacaoExecucaoRepository,
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
     ) {}
@@ -117,6 +127,12 @@ export default class SispagPainelService {
         const kpis = this.calcularKpis(titulosPreparados, lotesRaw);
         const titulos = titulosPreparados.slice(0, TITULOS_CAP);
         const titulosTotal = titulosPreparados.length;
+
+        // Execuções presas — a MESMA consulta do reaper, mas entregue a quem pode agir.
+        // Um WARN no log do Render é lido por quem abre o log, ou seja: ninguém, por
+        // hábito. O órfão continuaria invisível. Aqui ele aparece na tela em que a pessoa
+        // gera remessa, que é onde a decisão de repetir ou não vai ser tomada.
+        const execucoesParadas = await this.contarExecucoesParadas();
         const envVars = await this.env.getEnvironmentVars();
 
         await this.logService.info({
@@ -144,6 +160,7 @@ export default class SispagPainelService {
             kpis,
             titulos,
             titulosTotal,
+            execucoesParadas,
             lotes: this.ordenarLotes(lotesRaw),
         };
     };
@@ -275,6 +292,37 @@ export default class SispagPainelService {
     };
 
     /** Filtra não-pagos, deriva aging e ordena por vencimento (mais urgente 1º). */
+    /**
+     * Execuções `reconciling` paradas há mais de `MINUTOS_ORFAO`. Duas leituras locais em
+     * coluna indexada — barato o bastante para o caminho quente do painel.
+     *
+     * Falha aqui NÃO derruba o painel: não saber quantos órfãos existem é ruim, mas ficar
+     * sem a tela de pagamentos inteira por causa disso seria pior.
+     */
+    private contarExecucoesParadas = async (): Promise<ExecucoesParadas> => {
+        try {
+            const [remessa, conciliacao] = await Promise.all([
+                this.remessaLedger.listReconcilingParadas(MINUTOS_ORFAO, 50),
+                this.conciliacaoLedger.listReconcilingParadas(MINUTOS_ORFAO, 50),
+            ]);
+            return {
+                remessa: remessa.length,
+                conciliacao: conciliacao.length,
+                desdeMinutos: MINUTOS_ORFAO,
+                // O `flpCod` é o que o operador leva para o fin015. Quando é `undefined`,
+                // a queda foi antes de registrarmos o número — e isso também é informação.
+                lotesNativos: remessa.map((r) => r.nativeFlpCod).filter((n): n is number => n != null),
+            };
+        } catch (e) {
+            void this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'não foi possível contar execuções paradas — painel segue sem o aviso',
+                data: { erro: e instanceof Error ? e.message : String(e) },
+            });
+            return { remessa: 0, conciliacao: 0, desdeMinutos: MINUTOS_ORFAO, lotesNativos: [] };
+        }
+    };
+
     private prepararTitulos = (titulos: TituloAPagar[], now: number): TituloAPagar[] =>
         titulos
             .filter((t) => !t.pago)
