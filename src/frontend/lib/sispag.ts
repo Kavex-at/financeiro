@@ -69,6 +69,13 @@ export interface SispagPainel {
   titulos: TituloAPagar[]
   /** Tamanho da carteira antes do corte de payload — opcional para tolerar backend antigo. */
   titulosTotal?: number
+  /** Execuções de escrita presas no meio — opcional para tolerar backend antigo. */
+  execucoesParadas?: {
+    remessa: number
+    conciliacao: number
+    desdeMinutos: number
+    lotesNativos: number[]
+  }
   lotes: LoteSispag[]
 }
 

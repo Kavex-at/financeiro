@@ -217,6 +217,9 @@ function SispagPanel() {
   // O backend corta o payload num teto. Se cortou, dizer — a versão anterior mostrava
   // "Todos (400)" ao lado de um KPI de 1.225 e ninguém tinha como saber qual valia.
   const truncado = (painel?.titulosTotal ?? titulos.length) > titulos.length
+  const paradas = painel?.execucoesParadas
+  const execucoesParadas =
+    paradas && paradas.remessa + paradas.conciliacao > 0 ? paradas : undefined
   const titulosFiltrados = React.useMemo(() => {
     const base = titulos
     if (filtro === 'a-vencer') return base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
@@ -454,6 +457,44 @@ function SispagPanel() {
           await Promise.all([carregar(), recarregarLotes()])
         }}
       />
+
+      {/*
+        Execuções presas no meio de uma escrita. O fail-closed impede o pagamento em
+        duplicidade, mas é MUDO: só se manifesta se alguém tentar de novo. Sem este aviso o
+        lote órfão no Conexos ficaria semanas sem ninguém saber — o WARN no log do servidor
+        é lido por quem abre o log, ou seja, ninguém por hábito. Aqui aparece para quem gera
+        remessa, na tela onde a decisão de repetir vai ser tomada.
+      */}
+      {execucoesParadas ? (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <div>
+            <span className="font-medium text-destructive">
+              {execucoesParadas.remessa + execucoesParadas.conciliacao} execução(ões) sem
+              confirmação há mais de {execucoesParadas.desdeMinutos} min.
+            </span>{' '}
+            Uma escrita no Conexos começou e não terminou — pode haver lote de pagamento
+            órfão no ERP.
+            {execucoesParadas.lotesNativos.length > 0 ? (
+              <>
+                {' '}
+                Procure no fin015 o(s) lote(s){' '}
+                <strong>{execucoesParadas.lotesNativos.join(', ')}</strong> e cancele antes de
+                tentar de novo.
+              </>
+            ) : (
+              <>
+                {' '}
+                A interrupção foi antes de registrarmos o número do lote — procure no fin015
+                por rascunhos em aberto e sem títulos.
+              </>
+            )}{' '}
+            <span className="text-muted-foreground">
+              Repetir sem conferir poderia gerar um segundo pagamento.
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
         <Lock className="mt-0.5 size-4 shrink-0 text-warning" />
