@@ -22,7 +22,7 @@ handlers Lambda como presentes ao revisar mudanças.
 
 | Camada | **Atual (hoje)** | **Alvo (roadmap)** |
 |--------|------------------|--------------------|
-| Backend | Express puro (`src/backend/`, `routes/` + `http/`) | AWS Lambda + API Gateway (`src/lambda/`) |
+| Backend | Express puro (`src/backend/`, `routes/` + `http/`) | AWS Lambda + API Gateway (`src/backend/lambda/`) |
 | Frontend | Next.js (deploy Vercel) | Next.js (igual) |
 | Infra/Deploy | Render (deploy hook via GitHub Actions); **sem `infra/` / Terraform** | Terraform multi-tenant, uma conta AWS por cliente |
 | Auth / DB | Supabase (JWT + Postgres) | SSO corporativo + RBAC; Postgres via SSM |
@@ -73,7 +73,7 @@ Lambda handler → Service (@injectable) → Repository (@injectable) → Client
 ```
 > **Atual:** Express route handler → Service → … (mesma cadeia DDD a partir de Service; só o gatilho difere).
 
-### Client Layer (`backend/src/domain/client/`)
+### Client Layer (`src/backend/domain/client/`)
 All clients: `@singleton() @injectable()`. NEVER instantiate AWS SDK clients directly — always
 `container.resolve()`. **(alvo)** Region: `process.env.aws_region ?? AWS_REGION ?? 'us-east-1'` — o atual
 roda em Render/Supabase e não usa região AWS.
@@ -87,15 +87,47 @@ roda em Render/Supabase e não usa região AWS.
 > Outros clients do estado-alvo (`SqsClient`, `S3Client`, `SesClient`, `OpenAiClient`, …) são
 > adicionados sob demanda quando uma feature precisar — sempre `@singleton() @injectable()`.
 
+### Layout do repositório (leia antes de rodar qualquer busca)
+
+> **Atenção, ferramentas e agentes:** este repositório usa `src/backend/` e `src/frontend/` —
+> **não** `backend/src/` nem `frontend/src/`. Comandos herdados do template (`find backend/src …`,
+> `Grep … frontend/src`) retornam vazio aqui e devem ser reescritos para os caminhos abaixo.
+> Não existe `infra/` — toda métrica de Terraform/tenant é **não medível** neste repo.
+
+| O que | Caminho real | Observação |
+|-------|--------------|------------|
+| Backend | `src/backend/` | Express (legado do template) |
+| Frontend | `src/frontend/` | Next.js (App Router) |
+| Infra | — | não existe; deploy via Render hook |
+| Testes backend | `src/backend/**/*.test.ts` | colocados ao lado do fonte |
+| Testes frontend | `src/frontend/**/*.test.ts(x)` | colocados ao lado do fonte |
+
 ### Directory Map
 ```
-backend/src/domain/
-  client/      # External clients
-  interface/   # TypeScript interfaces
-  libs/        # EnvironmentProvider, Logger, Executors, Handlers
-  repository/  # Raw parameterized SQL
-  service/     # Business logic
-backend/src/lambda/        # (alvo) — ainda não existe; hoje as rotas vivem em backend/src/routes/
+src/backend/
+  domain/
+    client/      # External clients (ConexosClient, PostgreeDatabaseClient, BcbClient)
+    core/        # Núcleo compartilhado do domínio
+    errors/      # Tipos de erro do domínio
+    interface/   # TypeScript interfaces
+    libs/        # EnvironmentProvider, Logger, Executors, Handlers
+    repository/  # Raw parameterized SQL
+    service/     # Business logic
+    appContainer.ts / recebimentosContainer.ts   # composição tsyringe
+  http/          # camada HTTP do Express (atual)
+  routes/        # route handlers do Express (atual)
+  middleware/    # middlewares Express
+  jobs/          # scripts de job/probe rodados à mão (não há scheduler)
+  migrations/    # migrations SQL
+  services/      # legado pré-DDD — migrar para domain/service/ (ver migration-debt)
+  types/ utils/  # apoio
+src/frontend/
+  app/           # Next.js App Router (páginas e rotas)
+  components/    # componentes compartilhados
+  lib/           # clientes de API e helpers
+  docs/          # design system e documentação de UI
+
+src/backend/lambda/        # (alvo) — ainda não existe; hoje as rotas vivem em src/backend/routes/
   api/         # API Gateway handlers
   job/         # Scheduled batch processing
 infra/tenants/             # (alvo) — ainda não existe; deploy atual é Render hook (sem Terraform)
@@ -147,7 +179,7 @@ cd src/frontend && npm run dev / npm test / npm run build / npm run lint / npm r
 cd infra/tenants && terraform plan -var-file="tenants-vars/{env}/{client}/account-vars.tfvars"
 ```
 
-## Handlers (`backend/src/domain/libs/handler/`) **(alvo)**
+## Handlers (`src/backend/domain/libs/handler/`) **(alvo)**
 Wrap every Lambda export with a Handler (auto: log metadata, error handling, SQS batch failures).
 > **Atual:** o runtime é Express (`src/backend/http/` + `routes/`); estes Handlers existem como código
 > pronto para o alvo Lambda, mas ainda não são o caminho de execução em produção.
@@ -168,7 +200,7 @@ export const handler = sqsHandler.handle(async ({ event, context, record }) => {
 - `LogService` MUST be `@singleton()` — metadata set by Handler must propagate downstream
 - Never double-log: Handler already calls `logService.error()` for unhandled throws
 
-## Executors (`backend/src/domain/libs/executor/`)
+## Executors (`src/backend/domain/libs/executor/`)
 All implement `IExecutor` (`execute<T>(fn: () => Promise<T>): Promise<T>`).
 NEVER use manual `setTimeout` loops — always use Executors.
 
@@ -238,7 +270,7 @@ Every feature or rule change goes through the pipeline. No exceptions.
 4. PatternGuardian ✅
 5. All task acceptance criteria ✅
 6. If `entity_changed=true` → ontology diff present ✅
-7. If `frontend/src/` touched → DesignReviewer ✅
+7. If `src/frontend/` touched → DesignReviewer ✅
 8. **Regis-Review gate** ran and all **P0 (Crítico)** findings remediated (P1/P2/P3 → inbox follow-ups) ✅
    — salvo `--no-regis-review` / `--urgent` / opt-out explícito no prompt
 9. **Rebase da branch base** (default `main`) aplicado sem conflitos pendentes, gates ainda verdes ✅
