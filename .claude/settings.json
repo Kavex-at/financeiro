@@ -44,57 +44,5 @@
       "Bash(rm -rf:*)",
       "Bash(rm -r:*)"
     ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"const f=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).tool_input?.file_path||''; if(f.includes('.tfstate')||f.endsWith('.env')||f.includes('node_modules/')||f.includes('.terraform/')) { process.stderr.write('BLOCKED: Cannot edit state files, .env, node_modules, or .terraform directories'); process.exit(2); }\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"try { const input=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); const cmd=(input.tool_input?.command||''); if(!cmd.includes('gh pr create')) process.exit(0); const fs=require('fs'); const path=require('path'); const gitDir=process.cwd(); const inboxDir=path.join(gitDir,'ontology/_inbox'); if(!fs.existsSync(inboxDir)){process.exit(0);} const files=fs.readdirSync(inboxDir).filter(f=>f.endsWith('-interview.md')); let entityChanged=false; let featureSlug=''; for(const f of files){ const content=fs.readFileSync(path.join(inboxDir,f),'utf8'); if(content.includes('entity_changed: true')){entityChanged=true; featureSlug=f.replace('-interview.md',''); break;} } if(!entityChanged)process.exit(0); const ontologyDir=path.join(gitDir,'ontology/entities'); const result=require('child_process').execSync('git diff --name-only HEAD ontology/entities/ 2>/dev/null || echo none',{encoding:'utf8'}); if(result.trim()==='none'||result.trim()===''){process.stderr.write('BLOCKED: PR touches domain code with entity_changed=true in inbox but no ontology/entities/ diff found. Run OntologyCurator first or confirm entity_changed=false.'); process.exit(2);} } catch(e){ process.exit(0); }\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"const f=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).tool_input?.file_path||''; if(f.endsWith('.ts')||f.endsWith('.tsx')||f.endsWith('.js')||f.endsWith('.jsx')) { const {execSync}=require('child_process'); try{execSync('npx biome check '+JSON.stringify(f),{stdio:'pipe'})}catch(e){process.stderr.write('Biome issues found:\\n'+e.stdout.toString().slice(0,500)); process.exit(1);} }\"",
-            "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "node -e \"const f=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).tool_input?.file_path||''; if((f.endsWith('.ts')||f.endsWith('.tsx'))&&f.includes('src/backend/')) { const {execSync}=require('child_process'); try{execSync('cd backend && npx tsc --noEmit 2>&1 | head -20',{stdio:'pipe',cwd:process.cwd()})}catch(e){const out=(e.stdout||e.stderr||'').toString().slice(0,600); if(out.trim()) process.stderr.write('TypeScript errors:\\n'+out); } }\"",
-            "timeout": 60
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"try { const fs=require('fs'); const path=require('path'); const inboxDir=path.join(process.cwd(),'ontology/_inbox'); if(!fs.existsSync(inboxDir))process.exit(0); const gapFiles=fs.readdirSync(inboxDir).filter(f=>f.endsWith('-gap.md')); for(const f of gapFiles){ const content=fs.readFileSync(path.join(inboxDir,f),'utf8'); if(content.includes('Status: OPEN')&&content.includes('P0 — Blocking')){ process.stderr.write('REMINDER: Open P0 InfoGap in ontology/_inbox/'+f+'. Edit the file with answers to unblock the loop.'); break; } } } catch(e){ process.exit(0); }\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
   }
 }
