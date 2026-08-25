@@ -1,7 +1,7 @@
 {
     "name": "financeiro-backend",
     "version": "0.31.0",
-    "description": "Columbia Trading \u2014 Financeiro (template bootstrap)",
+    "description": "Columbia Trading — Financeiro (template bootstrap)",
     "main": "dist/index.js",
     "scripts": {
         "dev": "tsx watch index.ts",
