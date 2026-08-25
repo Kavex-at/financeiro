@@ -15,7 +15,12 @@ const CHAVE = { filCod: 2, bncCod: 4, gtbCodSeq: 1, garCodSeq: 5 };
 /** Códigos do Itaú: `00` é o único com `tipoRetorno: 1` (pago); o resto rejeita. */
 const EVENTOS = [
     { cod: '00', descricao: 'PAGAMENTO EFETUADO', tipo: 2, tipoRetorno: 1 },
-    { cod: 'NA', descricao: 'PAGAMENTO CANCELADO POR FALTA DE AUTORIZAÇÃO', tipo: 2, tipoRetorno: 2 },
+    {
+        cod: 'NA',
+        descricao: 'PAGAMENTO CANCELADO POR FALTA DE AUTORIZAÇÃO',
+        tipo: 2,
+        tipoRetorno: 2,
+    },
 ];
 
 const detalhe = (over: Partial<ArquivoRetornoDetalhe> = {}): ArquivoRetornoDetalhe => ({
@@ -75,7 +80,9 @@ const buildEnv = (over: Record<string, unknown> = {}) =>
     }) as unknown as EnvironmentProvider;
 
 /** O detalhe é consultado CÓDIGO A CÓDIGO — o ERP exige `fbeEspCod` exato. */
-const buildRetorno = (porCodigo: Record<string, ArquivoRetornoDetalhe[]> = { '00': [detalhe()] }) => ({
+const buildRetorno = (
+    porCodigo: Record<string, ArquivoRetornoDetalhe[]> = { '00': [detalhe()] },
+) => ({
     processarArquivoRetorno: jest.fn().mockResolvedValue(undefined),
     // Estado do arquivo no ERP: por default existe e NÃO foi processado.
     getArquivoRetorno: jest.fn().mockResolvedValue({ ...CHAVE, processadoEm: undefined }),
@@ -153,9 +160,7 @@ describe('ConciliacaoRetornoService', () => {
             const res = await make({ retorno }).conciliar({ ...CHAVE, ator: 'u' });
             expect(res.totalLinhas).toBe(1);
             expect(res.varreduraIncompleta).toBe(true);
-            expect(res.eventosNaoLidos).toEqual([
-                { evento: 'NA', motivo: 'socket hang up' },
-            ]);
+            expect(res.eventosNaoLidos).toEqual([{ evento: 'NA', motivo: 'socket hang up' }]);
         });
 
         it('varredura incompleta NÃO fecha o lote em BAIXADO', async () => {
@@ -247,7 +252,14 @@ describe('ConciliacaoRetornoService', () => {
             const repo = buildRepo(
                 lote({
                     itens: [
-                        { loteId: 'L1', filCod: 2, docCod: '813', titCod: '1', incluidoPor: 'u', rejeitado: true },
+                        {
+                            loteId: 'L1',
+                            filCod: 2,
+                            docCod: '813',
+                            titCod: '1',
+                            incluidoPor: 'u',
+                            rejeitado: true,
+                        },
                     ],
                 }),
             );
@@ -262,7 +274,14 @@ describe('ConciliacaoRetornoService', () => {
             const repo = buildRepo(
                 lote({
                     itens: [
-                        { loteId: 'L1', filCod: 2, docCod: '813', titCod: '1', incluidoPor: 'u', bxaCodSeq: 1 },
+                        {
+                            loteId: 'L1',
+                            filCod: 2,
+                            docCod: '813',
+                            titCod: '1',
+                            incluidoPor: 'u',
+                            bxaCodSeq: 1,
+                        },
                         { loteId: 'L1', filCod: 2, docCod: '814', titCod: '1', incluidoPor: 'u' },
                     ],
                 }),
@@ -431,9 +450,9 @@ describe('ConciliacaoRetornoService', () => {
             const repo = buildRepo();
             repo.registrarConciliacaoItem.mockRejectedValue(new Error('conexão caiu'));
 
-            await expect(
-                make({ db, repo }).conciliar({ ...CHAVE, ator: 'u' }),
-            ).rejects.toThrow('conexão caiu');
+            await expect(make({ db, repo }).conciliar({ ...CHAVE, ator: 'u' })).rejects.toThrow(
+                'conexão caiu',
+            );
 
             // O erro sai de dentro do withTransaction (o driver dá ROLLBACK) e o lote
             // NÃO chega a ser transicionado.
@@ -547,5 +566,4 @@ describe('ConciliacaoRetornoService', () => {
             expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
         });
     });
-
 });

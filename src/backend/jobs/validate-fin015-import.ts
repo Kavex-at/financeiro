@@ -106,7 +106,9 @@ async function main(): Promise<void> {
     if (!cc) {
         log(`0) ccoCod=${CCO} não existe na filial ${FIL}. Disponíveis:`);
         for (const c of contasCorrentes.slice(0, 20)) {
-            log(`     ccoCod=${c.ccoCod} bnc=${c.bncCod} ag=${c.ccoEspAgcod} cc=${c.ccoNumConta}-${c.ccoEspDvconta} gerNum=${c.gerNum} · ${c.gerDes}`);
+            log(
+                `     ccoCod=${c.ccoCod} bnc=${c.bncCod} ag=${c.ccoEspAgcod} cc=${c.ccoNumConta}-${c.ccoEspDvconta} gerNum=${c.gerNum} · ${c.gerDes}`,
+            );
         }
         return;
     }
@@ -307,9 +309,7 @@ async function main(): Promise<void> {
                 destino.pctEspNumAgencia != null ? String(destino.pctEspNumAgencia) : undefined,
             itsNumBanco: destino.pctNumBanco != null ? Number(destino.pctNumBanco) : undefined,
             conta:
-                destino.pctEspNumContaBanc != null
-                    ? String(destino.pctEspNumContaBanc)
-                    : undefined,
+                destino.pctEspNumContaBanc != null ? String(destino.pctEspNumContaBanc) : undefined,
             agencia:
                 destino.pctEspNumAgencia != null ? String(destino.pctEspNumAgencia) : undefined,
             itsEspNomeFav: destino.dpeNomPessoa ?? escolhido.favorecido,
@@ -337,7 +337,9 @@ async function main(): Promise<void> {
         log('4) item candidato montado (pendente + destino fin064 + modalidade).');
 
         if (!WRITE) {
-            log('MODO DIAGNÓSTICO — parando antes de qualquer escrita. Rode com FIN015_IMPORT_WRITE=1.');
+            log(
+                'MODO DIAGNÓSTICO — parando antes de qualquer escrita. Rode com FIN015_IMPORT_WRITE=1.',
+            );
             return;
         }
 
@@ -352,10 +354,15 @@ async function main(): Promise<void> {
             save('30-item-enriquecido.json', enriquecido);
             const novos = Object.entries(enriquecido ?? {}).filter(
                 ([k, v]) =>
-                    v !== null && v !== undefined && v !== '' &&
+                    v !== null &&
+                    v !== undefined &&
+                    v !== '' &&
                     (itemBase[k] === null || itemBase[k] === undefined || itemBase[k] === ''),
             );
-            log('5) validacao/modalidadeTed OK — campos que o ERP PREENCHEU:', Object.fromEntries(novos));
+            log(
+                '5) validacao/modalidadeTed OK — campos que o ERP PREENCHEU:',
+                Object.fromEntries(novos),
+            );
             if (enriquecido && typeof enriquecido === 'object') itemParaImportar = enriquecido;
         } catch (e) {
             log('5) validacao/modalidadeTed ERRO (segue com o item cru):', erroDe(e));
@@ -454,7 +461,9 @@ async function main(): Promise<void> {
 
         // ── 9) gerarRemessa ──────────────────────────────────────────────────
         const seqNum = Number(process.env.SEQ ?? 91);
-        const nomeArquivo = process.env.NOME ?? `PG${new Date(dataDebito).toISOString().slice(8, 10)}${new Date(dataDebito).toISOString().slice(5, 7)}${String(seqNum).padStart(2, '0')}.REM`;
+        const nomeArquivo =
+            process.env.NOME ??
+            `PG${new Date(dataDebito).toISOString().slice(8, 10)}${new Date(dataDebito).toISOString().slice(5, 7)}${String(seqNum).padStart(2, '0')}.REM`;
         try {
             const rem = await write.gerarRemessa({
                 filCod: FIL,
@@ -471,14 +480,20 @@ async function main(): Promise<void> {
 
         // ── 10) baixar e IMPRIMIR o .REM (a validação do leiaute CNAB 240) ────
         try {
-            const arquivos = await write.listarArquivosRemessa({ filCod: FIL, bncCod: BNC, flpCod });
+            const arquivos = await write.listarArquivosRemessa({
+                filCod: FIL,
+                bncCod: BNC,
+                flpCod,
+            });
             log(`10) listarArquivosRemessa → ${arquivos.length} arquivo(s)`);
             const rem = arquivos.find((a) => a.conteudo);
             if (rem?.conteudo) {
                 const destinoArq = `${OUT}/${rem.nomeArquivo ?? 'remessa'}.REM`;
                 writeFileSync(destinoArq, rem.conteudo);
-                console.log('\n' + '='.repeat(78));
-                console.log(`.REM GERADO — ${rem.nomeArquivo} (gabCod ${rem.gabCod}) · ${rem.conteudo.length} chars`);
+                console.log(`\n${'='.repeat(78)}`);
+                console.log(
+                    `.REM GERADO — ${rem.nomeArquivo} (gabCod ${rem.gabCod}) · ${rem.conteudo.length} chars`,
+                );
                 console.log(`arquivo: ${destinoArq}`);
                 console.log('='.repeat(78));
                 for (const linha of rem.conteudo.split(/\r?\n/)) {
@@ -497,13 +512,17 @@ async function main(): Promise<void> {
         // ── 11) limpeza do artefato de teste ─────────────────────────────────
         if (WRITE && CLEANUP && flpCod) {
             try {
-                await base.getGeneric(`fin015/cancelarLote/${FIL}/${BNC}/${flpCod}`, { filCod: FIL });
+                await base.getGeneric(`fin015/cancelarLote/${FIL}/${BNC}/${flpCod}`, {
+                    filCod: FIL,
+                });
                 log(`11) cancelarLote(flp ${flpCod}) OK — artefato de teste limpo.`);
             } catch (e) {
                 log(`11) cancelarLote(flp ${flpCod}) ERRO (limpe na mão):`, erroDe(e));
             }
         } else if (WRITE && flpCod) {
-            log(`ATENÇÃO: lote de teste flp=${flpCod} deixado em HML. Limpar: CLEANUP=1 ou cancelarLote/${FIL}/${BNC}/${flpCod}`);
+            log(
+                `ATENÇÃO: lote de teste flp=${flpCod} deixado em HML. Limpar: CLEANUP=1 ou cancelarLote/${FIL}/${BNC}/${flpCod}`,
+            );
         }
     }
 

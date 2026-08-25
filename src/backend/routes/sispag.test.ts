@@ -100,7 +100,9 @@ afterEach(() => {
 
 describe('GET /sispag/painel', () => {
     it('devolve o painel montado pelo serviço', async () => {
-        const montarPainel = jest.fn().mockResolvedValue({ titulos: [], titulosTotal: 0, kpis: {} });
+        const montarPainel = jest
+            .fn()
+            .mockResolvedValue({ titulos: [], titulosTotal: 0, kpis: {} });
         container.registerInstance(SispagPainelService, { montarPainel } as never);
 
         await comApp({}, async (url) => {

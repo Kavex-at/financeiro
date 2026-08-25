@@ -67,7 +67,9 @@ async function main(): Promise<void> {
         log('não consegui ler o ger008 da filial.');
         return;
     }
-    log(`ger008 lido: ${Object.keys(rec).length} campos · ${CAMPO} = ${JSON.stringify(rec[CAMPO])}`);
+    log(
+        `ger008 lido: ${Object.keys(rec).length} campos · ${CAMPO} = ${JSON.stringify(rec[CAMPO])}`,
+    );
 
     // Backup do registro INTEIRO antes de qualquer escrita (não sobrescreve).
     if (WRITE && !REVERTER && !existsSync(BACKUP)) {

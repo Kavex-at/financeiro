@@ -313,5 +313,4 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
             expect(painel.titulos).toBeDefined();
         });
     });
-
 });

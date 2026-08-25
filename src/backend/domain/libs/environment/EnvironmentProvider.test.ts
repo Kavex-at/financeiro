@@ -304,5 +304,4 @@ describe('EnvironmentProvider', () => {
             expect(env.conexosPassword).toBe('');
         });
     });
-
 });

@@ -136,10 +136,9 @@ async function main(): Promise<void> {
     // ── Limpeza das execuções anteriores deste job ───────────────────────────
     // Sem isto, um lote RASCUNHO de uma tentativa que falhou prende os títulos (I3) e o
     // gate reprova por sujeira, não por defeito. Só remove o que ESTE job criou.
-    const limpos = await db.update(
-        `DELETE FROM lote_pagamento WHERE criado_por = $ator`,
-        { ator: ATOR },
-    );
+    const limpos = await db.update(`DELETE FROM lote_pagamento WHERE criado_por = $ator`, {
+        ator: ATOR,
+    });
     log(`limpeza: ${limpos} lote(s) local(is) de execuções anteriores removido(s)`);
 
     // ── Títulos de teste: do GRID DE PENDENTES, não da carteira ──────────────
@@ -152,7 +151,8 @@ async function main(): Promise<void> {
     const jaVazio = (await write.listarLotesNativos({ filCod: FIL, bncCod })).find(
         (l) => l.status === 0 && l.titulosCount === 0,
     );
-    const scratch = jaVazio ?? (await write.criarLote({ filCod: FIL, conta, dataDebito: hojeUtc() }));
+    const scratch =
+        jaVazio ?? (await write.criarLote({ filCod: FIL, conta, dataDebito: hojeUtc() }));
     log(
         `lote de sondagem: flp ${scratch.flpCod} ` +
             `(${jaVazio ? 'reusado, já estava vazio' : 'criado agora'})`,
@@ -217,9 +217,7 @@ async function main(): Promise<void> {
     }
     // 2 títulos POR CENÁRIO: um título só pode estar num rascunho por vez (I3).
     const parDe = (n: number) => pool.slice(n * 2, n * 2 + 2);
-    log(
-        `pool de teste: ${pool.map((t) => `fil${t.filCod}·${t.docCod}/${t.titCod}`).join(', ')}`,
-    );
+    log(`pool de teste: ${pool.map((t) => `fil${t.filCod}·${t.docCod}/${t.titCod}`).join(', ')}`);
 
     /** Cria um lote LOCAL finalizado com os dois títulos. Devolve o id. */
     const montarLoteLocal = async (
@@ -295,18 +293,22 @@ async function main(): Promise<void> {
     // ── C1: órfão sem flpCod → adota pela marca d'água ───────────────────────
     // C1 primeiro: é o mecanismo mais novo e o único com julgamento (a regra do
     // "exatamente um"). Se só um cenário couber no pool, que seja este.
-    log('── C1 · órfão sem flpCod (marca d\'água tem que ADOTAR, não criar outro)');
+    log("── C1 · órfão sem flpCod (marca d'água tem que ADOTAR, não criar outro)");
     try {
         if (!rodar('orfao-sem-flpCod')) throw new Error('PULADO — não selecionado');
         if (cenariosPossiveis < 1) throw new Error('PULADO — pool insuficiente');
-        const marca = (await write.listarLotesNativos({ filCod: FIL, bncCod })).map((l) => l.flpCod);
+        const marca = (await write.listarLotesNativos({ filCod: FIL, bncCod })).map(
+            (l) => l.flpCod,
+        );
         // Encena a queda: o lote foi criado no ERP e o número não chegou ao ledger.
         const orfao = await write.criarLote({
             filCod: FIL,
             conta,
             dataDebito: hojeUtc(),
         });
-        log(`   órfão plantado no ERP: flp ${orfao.flpCod} (${marca.length} lotes conhecidos antes)`);
+        log(
+            `   órfão plantado no ERP: flp ${orfao.flpCod} (${marca.length} lotes conhecidos antes)`,
+        );
 
         const loteId = await montarLoteLocal(parDe(0));
         const antes = await contarLotes();
@@ -404,10 +406,9 @@ async function main(): Promise<void> {
         // Rebobina TAMBÉM o status do lote local. Uma queda antes do settle não teria
         // transicionado o lote para REMESSA_GERADA — deixá-lo assim faria o gate de estado
         // recusar a segunda chamada ANTES da retomada, e o cenário não seria exercitado.
-        await db.update(
-            `UPDATE lote_pagamento SET status = 'FINALIZADO' WHERE id = $id::uuid`,
-            { id: loteId },
-        );
+        await db.update(`UPDATE lote_pagamento SET status = 'FINALIZADO' WHERE id = $id::uuid`, {
+            id: loteId,
+        });
         await rebobinarLedger(loteId, {
             nativeFlpCod: primeira.nativeFlpCod ?? null,
             requestPayload: { nomeArquivo: primeira.arquivo, numRemessa: primeira.numRemessa },

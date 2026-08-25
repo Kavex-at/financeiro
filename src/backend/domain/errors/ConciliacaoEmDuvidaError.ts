@@ -25,7 +25,9 @@ export default class ConciliacaoEmDuvidaError extends Error implements HandlerEr
         garCodSeq: number;
         criadoEm?: string;
     }) {
-        super(`conciliação IN-DOUBT for arquivo ${params.garCodSeq} (key ${params.idempotencyKey})`);
+        super(
+            `conciliação IN-DOUBT for arquivo ${params.garCodSeq} (key ${params.idempotencyKey})`,
+        );
         this.name = 'ConciliacaoEmDuvidaError';
         const desde = params.criadoEm
             ? new Date(params.criadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })

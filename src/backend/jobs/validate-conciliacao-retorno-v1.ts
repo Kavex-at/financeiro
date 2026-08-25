@@ -65,7 +65,9 @@ async function main(): Promise<void> {
     // É o insumo do cenário mais importante: se o ERP já processou, a retomada tem que
     // PULAR o `processar` e seguir da leitura.
     const configs = await retorno.listConfigsRetorno({ filCod: FIL });
-    let alvo: { bncCod: number; gtbCodSeq: number; garCodSeq: number; processadoEm?: number } | undefined;
+    let alvo:
+        | { bncCod: number; gtbCodSeq: number; garCodSeq: number; processadoEm?: number }
+        | undefined;
     for (const c of configs) {
         const arquivos = await retorno.listArquivosRetorno({
             filCod: FIL,
@@ -106,7 +108,12 @@ async function main(): Promise<void> {
         return;
     }
 
-    const chave = { filCod: FIL, bncCod: alvo.bncCod, gtbCodSeq: alvo.gtbCodSeq, garCodSeq: alvo.garCodSeq };
+    const chave = {
+        filCod: FIL,
+        bncCod: alvo.bncCod,
+        gtbCodSeq: alvo.gtbCodSeq,
+        garCodSeq: alvo.garCodSeq,
+    };
     const key = `conciliacao:${FIL}:${alvo.bncCod}:${alvo.gtbCodSeq}:${alvo.garCodSeq}`;
     const limparLedger = async (): Promise<void> => {
         await db.update(`DELETE FROM conciliacao_execucao WHERE idempotency_key = $key`, { key });
@@ -115,7 +122,9 @@ async function main(): Promise<void> {
     // Conta quantas vezes o `processar` REALMENTE foi chamado. É a métrica do gate.
     const original = retorno.processarArquivoRetorno;
     let chamadas = 0;
-    (retorno as unknown as Record<string, unknown>).processarArquivoRetorno = async (p: unknown) => {
+    (retorno as unknown as Record<string, unknown>).processarArquivoRetorno = async (
+        p: unknown,
+    ) => {
         chamadas += 1;
         return original(p as Parameters<typeof original>[0]);
     };
@@ -127,7 +136,7 @@ async function main(): Promise<void> {
     };
 
     // ── C1: ERP já processou → a retomada NÃO pode chamar `processar` de novo ──
-    log("── C1 · arquivo já processado no ERP (não pode reprocessar)");
+    log('── C1 · arquivo já processado no ERP (não pode reprocessar)');
     try {
         await limparLedger();
         chamadas = 0;
@@ -197,7 +206,8 @@ async function main(): Promise<void> {
 
     console.log('');
     console.log('='.repeat(78));
-    for (const r of resultados) console.log(`${r.ok ? '✅' : '❌'} ${r.cenario.padEnd(24)} ${r.obtido}`);
+    for (const r of resultados)
+        console.log(`${r.ok ? '✅' : '❌'} ${r.cenario.padEnd(24)} ${r.obtido}`);
     const todosOk = resultados.every((r) => r.ok);
     console.log(todosOk ? 'GATE OK — nenhuma retomada reprocessou o arquivo.' : 'GATE REPROVADO.');
     console.log('='.repeat(78));

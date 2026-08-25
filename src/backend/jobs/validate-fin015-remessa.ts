@@ -110,9 +110,7 @@ async function main(): Promise<void> {
             `1b) lote: flpDtaCredito=${typeof credito === 'number' ? new Date(credito).toISOString().slice(0, 10) : String(credito)} · status=${lote?.flpVldStatus} · titulosCount=${lote?.titulosCount} · soma=${lote?.soma}`,
         );
         const menorVenc = Math.min(
-            ...itens.rows
-                .map((i) => Number(i.titDtaVencimento))
-                .filter((n) => Number.isFinite(n)),
+            ...itens.rows.map((i) => Number(i.titDtaVencimento)).filter((n) => Number.isFinite(n)),
         );
         if (Number.isFinite(menorVenc) && typeof credito === 'number') {
             console.log(

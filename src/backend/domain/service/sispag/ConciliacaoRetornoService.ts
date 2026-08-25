@@ -300,68 +300,68 @@ export default class ConciliacaoRetornoService {
         const itens: ItemConciliado[] = [];
         const lotesAfetados = new Set<string>();
         await this.db.withTransaction(async (tx) => {
-        for (const l of linhas) {
-            const rejeitado = rejeicaoPorCodigo.get(l.eventoCod ?? '') ?? false;
-            const base: ItemConciliado = {
-                ...(l.flpCod !== undefined ? { flpCod: l.flpCod } : {}),
-                ...(l.itsCodSeq !== undefined ? { itsCodSeq: l.itsCodSeq } : {}),
-                ...(l.docCod !== undefined ? { docCod: l.docCod } : {}),
-                ...(l.titCod !== undefined ? { titCod: l.titCod } : {}),
-                ...(l.eventoCod !== undefined ? { evento: l.eventoCod } : {}),
-                ...(l.eventoDescricao !== undefined ? { descricao: l.eventoDescricao } : {}),
-                rejeitado,
-                ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
-                ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
-                ...(l.gerNum !== undefined ? { contaFinanceira: l.gerNum } : {}),
-                ...(l.valorPago !== undefined ? { valorPago: l.valorPago } : {}),
-                reconhecido: false,
-            };
+            for (const l of linhas) {
+                const rejeitado = rejeicaoPorCodigo.get(l.eventoCod ?? '') ?? false;
+                const base: ItemConciliado = {
+                    ...(l.flpCod !== undefined ? { flpCod: l.flpCod } : {}),
+                    ...(l.itsCodSeq !== undefined ? { itsCodSeq: l.itsCodSeq } : {}),
+                    ...(l.docCod !== undefined ? { docCod: l.docCod } : {}),
+                    ...(l.titCod !== undefined ? { titCod: l.titCod } : {}),
+                    ...(l.eventoCod !== undefined ? { evento: l.eventoCod } : {}),
+                    ...(l.eventoDescricao !== undefined ? { descricao: l.eventoDescricao } : {}),
+                    rejeitado,
+                    ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
+                    ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
+                    ...(l.gerNum !== undefined ? { contaFinanceira: l.gerNum } : {}),
+                    ...(l.valorPago !== undefined ? { valorPago: l.valorPago } : {}),
+                    reconhecido: false,
+                };
 
-            if (l.flpCod === undefined || l.docCod === undefined) {
-                itens.push(base);
-                continue;
-            }
-            const loteId = await this.loteRepo.findByChaveNativa({
-                nativeFilCod: input.filCod,
-                nativeBncCod: input.bncCod,
-                nativeFlpCod: l.flpCod,
-            });
-            if (!loteId) {
-                // Retorno de um lote montado direto no ERP, fora da nossa aplicação. Não é
-                // erro — é informação: mostramos, mas não temos onde gravar.
-                itens.push(base);
-                continue;
+                if (l.flpCod === undefined || l.docCod === undefined) {
+                    itens.push(base);
+                    continue;
+                }
+                const loteId = await this.loteRepo.findByChaveNativa({
+                    nativeFilCod: input.filCod,
+                    nativeBncCod: input.bncCod,
+                    nativeFlpCod: l.flpCod,
+                });
+                if (!loteId) {
+                    // Retorno de um lote montado direto no ERP, fora da nossa aplicação. Não é
+                    // erro — é informação: mostramos, mas não temos onde gravar.
+                    itens.push(base);
+                    continue;
+                }
+
+                if (!dryRun) {
+                    await this.loteRepo.registrarConciliacaoItem(
+                        {
+                            loteId,
+                            filCod: l.filCod,
+                            docCod: l.docCod,
+                            titCod: l.titCod ?? '1',
+                            evento: l.eventoCod ?? '',
+                            ...(l.eventoDescricao !== undefined
+                                ? { descricao: l.eventoDescricao }
+                                : {}),
+                            rejeitado,
+                            ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
+                            ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
+                        },
+                        tx,
+                    );
+                }
+                lotesAfetados.add(loteId);
+                itens.push({ ...base, loteId, reconhecido: true });
             }
 
+            // ── 4) transicionar os lotes (MESMA transação do passo 3) ───────────
+            // Varredura incompleta NÃO fecha lote: o teto vira RETORNADO (exige olho humano).
             if (!dryRun) {
-                await this.loteRepo.registrarConciliacaoItem(
-                    {
-                        loteId,
-                        filCod: l.filCod,
-                        docCod: l.docCod,
-                        titCod: l.titCod ?? '1',
-                        evento: l.eventoCod ?? '',
-                        ...(l.eventoDescricao !== undefined
-                            ? { descricao: l.eventoDescricao }
-                            : {}),
-                        rejeitado,
-                        ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
-                        ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
-                    },
-                    tx,
-                );
+                for (const loteId of lotesAfetados) {
+                    await this.transicionarLote(loteId, varreduraIncompleta, tx);
+                }
             }
-            lotesAfetados.add(loteId);
-            itens.push({ ...base, loteId, reconhecido: true });
-        }
-
-        // ── 4) transicionar os lotes (MESMA transação do passo 3) ───────────
-        // Varredura incompleta NÃO fecha lote: o teto vira RETORNADO (exige olho humano).
-        if (!dryRun) {
-            for (const loteId of lotesAfetados) {
-                await this.transicionarLote(loteId, varreduraIncompleta, tx);
-            }
-        }
         });
 
         const pagos = itens.filter((i) => !i.rejeitado && i.reconhecido).length;
@@ -456,7 +456,9 @@ export default class ConciliacaoRetornoService {
         }
     };
 
-    private chave = (i: ConciliarInput): {
+    private chave = (
+        i: ConciliarInput,
+    ): {
         filCod: number;
         bncCod: number;
         gtbCodSeq: number;

@@ -26,9 +26,7 @@ export default class ConciliacaoExecucaoRepository {
         private readonly databaseClient: PostgreeDatabaseClient,
     ) {}
 
-    public findByIdempotencyKey = async (
-        key: string,
-    ): Promise<ConciliacaoExecucaoRow | null> => {
+    public findByIdempotencyKey = async (key: string): Promise<ConciliacaoExecucaoRow | null> => {
         const row = await this.databaseClient.selectFirst<Record<string, unknown>>(
             `SELECT ${SELECT_COLS} FROM conciliacao_execucao WHERE idempotency_key = $key`,
             { key },
@@ -116,10 +114,7 @@ export default class ConciliacaoExecucaoRepository {
         );
     };
 
-    public settle = async (
-        key: string,
-        data: ConciliacaoExecucaoSettleData,
-    ): Promise<void> => {
+    public settle = async (key: string, data: ConciliacaoExecucaoSettleData): Promise<void> => {
         await this.databaseClient.update(
             `UPDATE conciliacao_execucao
              SET status = 'settled', processou = $processou, total_linhas = $totalLinhas,

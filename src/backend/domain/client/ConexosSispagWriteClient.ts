@@ -114,7 +114,11 @@ export default class ConexosSispagWriteClient {
     private toConexosError = (endpoint: string, cause: unknown): Error => {
         const pergunta = this.perguntaDoErp(cause);
         if (pergunta) return new ErpPerguntaError({ ...pergunta, contexto: endpoint });
-        return new ConexosError({ endpoint, cause, message: this.describeConexosValidation(cause) });
+        return new ConexosError({
+            endpoint,
+            cause,
+            message: this.describeConexosValidation(cause),
+        });
     };
 
     /**
@@ -206,9 +210,7 @@ export default class ConexosSispagWriteClient {
                     soma: Number(r.soma ?? 0),
                     ...(r.ccoCod != null ? { ccoCod: Number(r.ccoCod) } : {}),
                     ...(r.flpDtaCredito != null ? { dataDebito: Number(r.flpDtaCredito) } : {}),
-                    ...(r.flpTimFinaliza != null
-                        ? { finalizadoEm: Number(r.flpTimFinaliza) }
-                        : {}),
+                    ...(r.flpTimFinaliza != null ? { finalizadoEm: Number(r.flpTimFinaliza) } : {}),
                 }));
         } catch (cause) {
             throw this.toConexosError(path, cause);
@@ -484,7 +486,10 @@ export default class ConexosSispagWriteClient {
         cause: unknown,
     ): { chave: string; parametros?: Record<string, unknown> } | undefined => {
         const data = (cause as { response?: { data?: unknown } })?.response?.data as
-            | { type?: string; questions?: Array<{ key?: string; parameterValueList?: Record<string, unknown> }> }
+            | {
+                  type?: string;
+                  questions?: Array<{ key?: string; parameterValueList?: Record<string, unknown> }>;
+              }
             | undefined;
         if (data?.type !== 'QUESTION') return undefined;
         const q = data.questions?.[0];
@@ -519,7 +524,9 @@ export default class ConexosSispagWriteClient {
             const numRemessa = Number(inner?.gabNumRemessa);
             const nomeArquivo = String(inner?.gabEspNomeArquivo ?? '');
             if (!Number.isFinite(numRemessa) || numRemessa <= 0 || !nomeArquivo) {
-                throw new Error(`initialValues sem numeração utilizável: ${JSON.stringify(raw).slice(0, 200)}`);
+                throw new Error(
+                    `initialValues sem numeração utilizável: ${JSON.stringify(raw).slice(0, 200)}`,
+                );
             }
             return { numRemessa, nomeArquivo };
         } catch (cause) {

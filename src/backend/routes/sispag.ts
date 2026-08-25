@@ -478,7 +478,9 @@ router.post(
                 gtbCodSeq: parsed.data.gtbCodSeq,
                 garCodSeq: parsed.data.garCodSeq,
                 ator: ator(req),
-                ...(parsed.data.processar !== undefined ? { processar: parsed.data.processar } : {}),
+                ...(parsed.data.processar !== undefined
+                    ? { processar: parsed.data.processar }
+                    : {}),
                 ...(parsed.data.dryRun === true ? { dryRunOverride: true } : {}),
                 ...(req.header('Idempotency-Key')
                     ? { idempotencyKey: String(req.header('Idempotency-Key')) }

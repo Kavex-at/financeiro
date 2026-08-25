@@ -91,7 +91,10 @@ async function main(): Promise<void> {
             nome: 'F — chave + tipoProcessamentoRetornoArquivo',
             body: { ...chave, tipoProcessamentoRetornoArquivo: TIPO },
         },
-        { nome: 'G — header + chave no nível da requisição', body: { items: [header], ...chave, tipo: TIPO } },
+        {
+            nome: 'G — header + chave no nível da requisição',
+            body: { items: [header], ...chave, tipo: TIPO },
+        },
     ];
 
     let ok = false;

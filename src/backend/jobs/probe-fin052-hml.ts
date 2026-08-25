@@ -81,12 +81,12 @@ async function main(): Promise<void> {
             const det = await retorno
                 .listDetalhe({ ...key, eventoCod: process.env.EVENTO ?? '00' })
                 .catch((e) => {
-                log(
-                    '   detalhe ERRO (filtros exigidos? precisa HAR):',
-                    e instanceof Error ? e.message : String(e),
-                );
-                return [];
-            });
+                    log(
+                        '   detalhe ERRO (filtros exigidos? precisa HAR):',
+                        e instanceof Error ? e.message : String(e),
+                    );
+                    return [];
+                });
             if (det.length > 0) {
                 log(`   detalhe (${det.length} linhas). 1ª:`, det[0]);
                 log(

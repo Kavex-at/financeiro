@@ -887,8 +887,8 @@ function SispagPanel() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   {painel.lotes.length} lotes nativos (fin015) — a visão do ERP. Para gerar uma
-                  remessa, use <strong>Gerar remessa (.REM)</strong> no lote finalizado, na aba
-                  "Lotes finalizados".
+                  remessa, use <strong>Gerar remessa (.REM)</strong> no lote finalizado, na aba{' '}
+                  <strong>Lotes finalizados</strong>.
                 </p>
 
               </div>

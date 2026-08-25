@@ -119,7 +119,9 @@ async function main(): Promise<void> {
                         `${OUT}/exemplo-com-destino-fil${filCod}.json`,
                         JSON.stringify(ex, null, 2),
                     );
-                    console.log(`        ↳ exemplo salvo em ${OUT}/exemplo-com-destino-fil${filCod}.json`);
+                    console.log(
+                        `        ↳ exemplo salvo em ${OUT}/exemplo-com-destino-fil${filCod}.json`,
+                    );
                     exemploSalvo = true;
                 }
             }
@@ -155,7 +157,9 @@ async function main(): Promise<void> {
             const preenchidos = Object.entries(rows[0])
                 .filter(([, v]) => preenchido(v))
                 .map(([k]) => k);
-            console.log(`   [raw] campos preenchidos (${preenchidos.length}): ${preenchidos.join(', ')}`);
+            console.log(
+                `   [raw] campos preenchidos (${preenchidos.length}): ${preenchidos.join(', ')}`,
+            );
         }
 
         // `pesCod` é o favorecido; no a-pagar o ERP às vezes usa `pesCodFor`.
@@ -164,7 +168,9 @@ async function main(): Promise<void> {
                 rows.flatMap((r) => [r.pesCod, r.pesCodFor, r.pes2CodSacado]).filter(preenchido),
             ),
         ].slice(0, 5);
-        console.log(`fil=${filCod} — testando ${pesCods.length} favorecido(s): ${pesCods.join(', ')}`);
+        console.log(
+            `fil=${filCod} — testando ${pesCods.length} favorecido(s): ${pesCods.join(', ')}`,
+        );
 
         for (const pesCod of pesCods) {
             try {
@@ -183,14 +189,11 @@ async function main(): Promise<void> {
                 console.log(`   pesCod=${pesCod} → ${c.length} conta(s)`);
                 for (const conta of c.slice(0, 3)) {
                     console.log(
-                        `      pctCodSeq=${conta.pctCodSeq} banco=${conta.pctNumBanco} ag=${conta.pctEspNumAgencia}${conta.pctEspDvage ? '-' + conta.pctEspDvage : ''} cc=${conta.pctEspNumContaBanc}${conta.pctEspDvconta ? '-' + conta.pctEspDvconta : ''} default=${conta.pctVldDefault} status=${conta.pctVldStatus}`,
+                        `      pctCodSeq=${conta.pctCodSeq} banco=${conta.pctNumBanco} ag=${conta.pctEspNumAgencia}${conta.pctEspDvage ? `-${conta.pctEspDvage}` : ''} cc=${conta.pctEspNumContaBanc}${conta.pctEspDvconta ? `-${conta.pctEspDvconta}` : ''} default=${conta.pctVldDefault} status=${conta.pctVldStatus}`,
                     );
                 }
                 if (c.length > 0) {
-                    writeFileSync(
-                        `${OUT}/contas-pes${pesCod}.json`,
-                        JSON.stringify(c, null, 2),
-                    );
+                    writeFileSync(`${OUT}/contas-pes${pesCod}.json`, JSON.stringify(c, null, 2));
                 }
             } catch (e) {
                 console.log(

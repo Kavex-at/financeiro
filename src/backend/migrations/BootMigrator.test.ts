@@ -163,5 +163,4 @@ describe('BootMigrator — ambiente sem banco', () => {
             expect(runner.run).toHaveBeenCalled();
         });
     });
-
 });
