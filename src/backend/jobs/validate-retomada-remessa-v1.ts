@@ -37,6 +37,13 @@ const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const EXECUTAR = process.argv.includes('--executar');
 const FIL = Number(process.env.VAL_FIL ?? 1);
 const ATOR = 'validate-retomada';
+/**
+ * Cenários a rodar (`VAL_ONLY=import-parcial`). Cada cenário CONSOME seus títulos — eles
+ * saem do grid de pendentes para sempre —, e em HML o estoque de títulos elegíveis é
+ * pequeno. Poder escolher evita gastar o pool nos que já estão provados.
+ */
+const SOMENTE = (process.env.VAL_ONLY ?? '').split(',').filter(Boolean);
+const rodar = (nome: string): boolean => SOMENTE.length === 0 || SOMENTE.includes(nome);
 
 if (!BASE.includes('-hml') && process.env.PERMITIR_PRD !== '1') {
     console.error(`RECUSADO: base não é HML (${BASE}). Para PRD, passe PERMITIR_PRD=1.`);
@@ -164,7 +171,11 @@ async function main(): Promise<void> {
     // HML a maioria dos favorecidos não tem nenhuma — a sonda `probe-fin064-destino` mediu
     // 0% em 561 títulos. Sem este filtro o gate reprova por dado de homologação, não por
     // defeito da retomada, que foi o que aconteceu na primeira execução.
-    const pool: Array<{ docCod: string; titCod: string }> = [];
+    // Carrega `filCod`: `docCod` NÃO é único entre filiais, e o grid de pendentes cruza
+    // filiais. Sem isso o job monta um lote local com o título homônimo de outra filial e
+    // o serviço recusa com "é da filial 4, mas o lote é da 2" — que é o serviço acertando.
+    const pool: Array<{ filCod: number; docCod: string; titCod: string }> = [];
+    // I4: o lote é de UMA filial. O grid cruza filiais, então filtra aqui.
     for (const cand of pendentesGrid.filter((p) => Number(p.raw.filCod) === FIL)) {
         if (pool.length >= PRECISO) break;
         // VENCIDO não entra em lote: a data de débito é hoje e o ERP recusa quando ela passa
@@ -177,7 +188,11 @@ async function main(): Promise<void> {
         if (pesCod == null) continue;
         const contasFav = await sispag.listContasFavorecido(String(pesCod), FIL);
         if (contasFav.some((c) => c.banco === bncNumCodbanco)) {
-            pool.push({ docCod: cand.docCod, titCod: cand.titCod });
+            pool.push({
+                filCod: Number(cand.raw.filCod),
+                docCod: cand.docCod,
+                titCod: cand.titCod,
+            });
         }
     }
     const cenariosPossiveis = Math.floor(pool.length / 2);
@@ -202,17 +217,30 @@ async function main(): Promise<void> {
     }
     // 2 títulos POR CENÁRIO: um título só pode estar num rascunho por vez (I3).
     const parDe = (n: number) => pool.slice(n * 2, n * 2 + 2);
-    log(`pool de teste: ${pool.map((t) => `${t.docCod}/${t.titCod}`).join(', ')}`);
+    log(
+        `pool de teste: ${pool.map((t) => `fil${t.filCod}·${t.docCod}/${t.titCod}`).join(', ')}`,
+    );
 
     /** Cria um lote LOCAL finalizado com os dois títulos. Devolve o id. */
     const montarLoteLocal = async (
-        titulos: Array<{ docCod: string; titCod: string }>,
+        titulos: Array<{ filCod: number; docCod: string; titCod: string }>,
     ): Promise<string> => {
         const lote = await loteService.criarLote({ filCod: FIL, ator: ATOR });
+        // O serviço escolhe a conta pagadora por `lote.conta`, caindo em `contas[0]` se
+        // vazio. Sem fixar aqui, ele pagaria por OUTRO banco que não o testado — e o
+        // favorecido não tem conta nele. Fixar é o que alinha o teste ao cenário.
+        const zero = await loteService.getLote(lote.id);
+        await loteService.atualizarContaPagadora({
+            loteId: lote.id,
+            versao: zero?.versao ?? 1,
+            banco: String(bncNumCodbanco),
+            conta: contaFmt,
+            ator: ATOR,
+        });
         for (const t of titulos) {
             await loteService.incluirTitulo({
                 loteId: lote.id,
-                filCod: FIL,
+                filCod: t.filCod,
                 docCod: t.docCod,
                 titCod: t.titCod,
                 ator: ATOR,
@@ -221,7 +249,7 @@ async function main(): Promise<void> {
             const atual = await loteService.getLote(lote.id);
             await loteService.atualizarModalidadeItem({
                 loteId: lote.id,
-                filCod: FIL,
+                filCod: t.filCod,
                 docCod: t.docCod,
                 titCod: t.titCod,
                 modalidade: 'CREDITO_CONTA',
@@ -269,6 +297,7 @@ async function main(): Promise<void> {
     // "exatamente um"). Se só um cenário couber no pool, que seja este.
     log('── C1 · órfão sem flpCod (marca d\'água tem que ADOTAR, não criar outro)');
     try {
+        if (!rodar('orfao-sem-flpCod')) throw new Error('PULADO — não selecionado');
         if (cenariosPossiveis < 1) throw new Error('PULADO — pool insuficiente');
         const marca = (await write.listarLotesNativos({ filCod: FIL, bncCod })).map((l) => l.flpCod);
         // Encena a queda: o lote foi criado no ERP e o número não chegou ao ledger.
@@ -310,8 +339,10 @@ async function main(): Promise<void> {
     // ── C2: import parcial → importa só o que falta ──────────────────────────
     log('── C2 · import parcial (só o título que falta deve entrar)');
     try {
-        if (cenariosPossiveis < 2) throw new Error('PULADO — pool insuficiente');
-        const par = parDe(1);
+        if (!rodar('import-parcial')) throw new Error('PULADO — não selecionado');
+        if (cenariosPossiveis < (rodar('orfao-sem-flpCod') ? 2 : 1))
+            throw new Error('PULADO — pool insuficiente');
+        const par = parDe(rodar('orfao-sem-flpCod') ? 1 : 0);
         const loteId = await montarLoteLocal(par);
         const antes = await contarLotes();
         const novo = await write.criarLote({ filCod: FIL, conta, dataDebito: hojeUtc() });
@@ -338,13 +369,15 @@ async function main(): Promise<void> {
         await rebobinarLedger(loteId, { nativeFlpCod: novo.flpCod, requestPayload: null });
 
         const r = await remessa.gerarRemessa({ loteId, ator: ATOR });
-        const estado = await write.getLoteNativo({ filCod: FIL, bncCod, flpCod: novo.flpCod });
+        // `titulosCount` NÃO conta itens (vale 1 para qualquer lote não-vazio, medido).
+        // Quem responde quantos e quais é a lista de chaves.
+        const chaves = await write.listarChavesDoLote({ filCod: FIL, bncCod, flpCod: novo.flpCod });
         const novos = (await contarLotes()) - antes;
         registrar({
             cenario: 'import-parcial',
-            esperado: 'lote fica com 2 títulos, 1 lote novo (o plantado)',
-            obtido: `flp ${r.nativeFlpCod} com ${estado?.titulosCount} título(s) · ${novos} novo(s)`,
-            ok: estado?.titulosCount === 2 && novos === 1,
+            esperado: 'lote fica com 2 chaves, 1 lote novo (o plantado)',
+            obtido: `flp ${r.nativeFlpCod} com ${chaves?.size ?? '?'} chave(s) [${[...(chaves ?? [])].join(', ')}] · ${novos} novo(s)`,
+            ok: chaves?.size === 2 && novos === 1,
             lotesNovos: novos,
         });
     } catch (e) {
@@ -360,12 +393,21 @@ async function main(): Promise<void> {
     // ── C3: remessa já gerada → devolve o mesmo arquivo ──────────────────────
     log('── C3 · remessa já gerada, ledger não fechou (deve devolver o MESMO arquivo)');
     try {
-        if (cenariosPossiveis < 3) throw new Error('PULADO — pool insuficiente');
+        if (!rodar('remessa-gerada-sem-settle')) throw new Error('PULADO — não selecionado');
+        if (cenariosPossiveis < SOMENTE.length || cenariosPossiveis < 3)
+            throw new Error('PULADO — pool insuficiente');
         const loteId = await montarLoteLocal(parDe(2));
         const antes = await contarLotes();
         const primeira = await remessa.gerarRemessa({ loteId, ator: ATOR });
         log(`   remessa gerada: ${primeira.arquivo} (flp ${primeira.nativeFlpCod})`);
 
+        // Rebobina TAMBÉM o status do lote local. Uma queda antes do settle não teria
+        // transicionado o lote para REMESSA_GERADA — deixá-lo assim faria o gate de estado
+        // recusar a segunda chamada ANTES da retomada, e o cenário não seria exercitado.
+        await db.update(
+            `UPDATE lote_pagamento SET status = 'FINALIZADO' WHERE id = $id::uuid`,
+            { id: loteId },
+        );
         await rebobinarLedger(loteId, {
             nativeFlpCod: primeira.nativeFlpCod ?? null,
             requestPayload: { nomeArquivo: primeira.arquivo, numRemessa: primeira.numRemessa },
