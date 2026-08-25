@@ -1,0 +1,59 @@
+name: Reaper de execuções SISPAG presas
+
+# Varre os ledgers `remessa_execucao` e `conciliacao_execucao` atrás de execuções paradas
+# em `reconciling` — escritas no Conexos que começaram e não confirmaram. Cada uma dessas
+# pode significar um lote de pagamento órfão no fin015, ou baixas incertas no fin010.
+#
+# NÃO AGE. Só publica (WARN estruturado). Cancelar rascunho no ERP ou decidir que uma baixa
+# já existe é decisão humana com dinheiro no meio; automatizar trocaria um problema visível
+# por um invisível.
+#
+# POR QUE EXISTE, se o painel já mostra: o painel é on-demand — depende de alguém abrir a
+# tela. Uma queda na sexta à noite ficaria invisível até segunda. Este cron é o canal que
+# não depende de ninguém estar olhando.
+#
+# ⚠️ Minuto :40 é deliberado. O Conexos limita sessões simultâneas por usuário
+# (`LOGIN_ERROR_MAX_SESSIONS`, ~3 slots). Os outros crons usam :00 (Permutas, SISPAG) e
+# :20 (Extratos) — o :40 mantém a janela livre. Este job nem toca o Conexos (só Postgres),
+# mas o espaçamento é barato e evita disputa se isso mudar.
+#
+# ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main). Enquanto
+# este arquivo não estiver em `main`, use o "Run workflow" manual na aba Actions.
+on:
+  schedule:
+    # A cada 15 minutos, deslocado para o :40 da primeira janela.
+    - cron: '10,25,40,55 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: reaper-sispag
+  cancel-in-progress: false
+
+jobs:
+  reaper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      # O reaper só lê o Postgres, mas o bootstrap do container resolve os clients Conexos
+      # na construção — sem estas, o boot falha antes de chegar na query.
+      CONEXOS_BASE_URL: ${{ secrets.CONEXOS_BASE_URL }}
+      CONEXOS_USERNAME: ${{ secrets.CONEXOS_USERNAME }}
+      CONEXOS_PASSWORD: ${{ secrets.CONEXOS_PASSWORD }}
+      CONEXOS_FIL_COD: ${{ vars.CONEXOS_FIL_COD }}
+      environment: production
+      client_name: local
+      # Janela a partir da qual uma execução em voo passa a ser tratada como órfã.
+      SISPAG_REAPER_MIN: '15'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependências (com devDeps p/ tsx)
+        run: npm ci --include=dev
+      - name: Varrer execuções presas
+        run: npm run job:reaper-sispag

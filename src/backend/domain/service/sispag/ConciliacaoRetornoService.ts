@@ -143,23 +143,38 @@ export default class ConciliacaoRetornoService {
             };
         }
 
-        // `processar` anterior em voo que nunca confirmou. Aqui a retomada é mais simples
-        // que a da remessa: o ERP CARIMBA o arquivo com `processadoEm`, então "já rodou?"
-        // tem resposta direta, sem heurística.
+        // O ERP CARIMBA o arquivo com `processadoEm` quando o `processar` roda. Perguntar
+        // isso é barato e vale SEMPRE — não só na retomada.
+        //
+        // Antes esta checagem morava só dentro do ramo de órfão, e o gate ao vivo mostrou o
+        // buraco: uma conciliação NOVA (ledger limpo) sobre um arquivo já processado chamava
+        // `processar` de novo. O ERP recusou com "O VALOR BAIXADO NÃO PODE SER ZERO" — ou
+        // seja, quem nos protegeu foi ele, não nós. Depender da recusa do outro sistema é
+        // exatamente a postura que este serviço existe para abandonar.
         let jaProcessadoNoErp = false;
+        if (input.processar && !dryRun) {
+            const estadoArquivo = await this.retorno.getArquivoRetorno(this.chave(input));
+            if (estadoArquivo?.processadoEm) {
+                jaProcessadoNoErp = true;
+                await this.logService.info({
+                    type: LOG_TYPE.BUSINESS_INFO,
+                    message: 'arquivo já processado no ERP — `processar` não será chamado',
+                    data: { ...this.chave(input), processadoEm: estadoArquivo.processadoEm },
+                });
+            }
+        }
+
+        // `processar` anterior em voo que nunca confirmou.
         if (anterior && !anterior.dryRun && anterior.status === 'reconciling') {
-            const estado = await this.retorno.getArquivoRetorno(this.chave(input));
+            const estado = jaProcessadoNoErp
+                ? { processadoEm: 1 }
+                : await this.retorno.getArquivoRetorno(this.chave(input));
             if (estado?.processadoEm) {
                 jaProcessadoNoErp = true;
                 await this.logService.warn({
                     type: LOG_TYPE.BUSINESS_WARN,
                     message: 'conciliação órfã: o ERP já processou o arquivo — seguindo da leitura',
-                    data: {
-                        ...this.chave(input),
-                        key,
-                        processadoEm: estado.processadoEm,
-                        statusProcessamento: estado.statusProcessamento,
-                    },
+                    data: { ...this.chave(input), key },
                 });
             } else if (estado) {
                 // O arquivo existe e NÃO foi processado: o PUT não chegou a valer. Refazer

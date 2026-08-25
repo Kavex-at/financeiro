@@ -84,6 +84,57 @@ const CONTRATOS: Array<{
         campos: ['bncCod', 'gtbCodSeq'],
     },
     {
+        fixture: 'fin015-item-lote',
+        consumidor: 'ConexosSispagWriteClient.listarChavesDoLote (retomada de import parcial)',
+        // A chave do item decide o que ainda falta importar. `filCod` entra nela porque
+        // `docCod` NÃO é único entre filiais — foi o bug corrigido no commit 9c73d1a.
+        campos: ['filCod', 'docCod', 'titCod', 'itsCodSeq', 'flpCod'],
+    },
+    {
+        fixture: 'fin052-arquivo-retorno',
+        consumidor: 'ConexosSispagRetornoClient.getArquivoRetorno (retomada da conciliação)',
+        // `garTimProc` é o carimbo que responde "o processar já rodou?". Sem ele a retomada
+        // da conciliação não tem como distinguir "já processei" de "não sei" — e repetir o
+        // `processar` grava baixa em cima de baixa no fin010.
+        campos: ['filCod', 'bncCod', 'gtbCodSeq', 'garCodSeq', 'garTimProc', 'garVldProcStatus'],
+    },
+    {
+        fixture: 'fin052-detalhe-retorno',
+        consumidor: 'ConexosSispagRetornoClient.listDetalhe (conciliação item a item)',
+        // `fbeVldTipo` + o código do evento separam PAGO de REJEITADO. Perder isso faria
+        // toda rejeição virar pagamento silenciosamente.
+        campos: [
+            'filCod',
+            'bncCod',
+            'gtbCodSeq',
+            'garCodSeq',
+            'flpCod',
+            'itsCodSeq',
+            'docCod',
+            'titCod',
+            'fbeEspCod',
+            'fbeVldTipo',
+            'borCod',
+            'bxaCodSeq',
+            'gerNum',
+        ],
+    },
+    {
+        fixture: 'cmn025-conta-favorecido',
+        consumidor: 'ConexosSispagClient.listContasFavorecido (destino do pagamento)',
+        // `pctVldStatus` decide se a conta é utilizável — é o filtro que determina se um
+        // título é sequer importável. `pctCodSeq` é o que o FinItemSispag referencia.
+        campos: [
+            'pesCod',
+            'pctCodSeq',
+            'pctNumBanco',
+            'pctEspNumAgencia',
+            'pctEspNumContaBanc',
+            'pctVldStatus',
+            'pctVldDefault',
+        ],
+    },
+    {
         fixture: 'fin064-titulo-a-pagar',
         consumidor: 'ConexosSispagClient.listTitulosAPagar (carteira do painel)',
         campos: ['filCod', 'docCod', 'titCod', 'titDtaVencimento', 'titMnyValor'],

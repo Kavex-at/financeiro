@@ -19,8 +19,9 @@ import LogService from '../domain/service/LogService.js';
  * decisão humana com dinheiro no meio — automatizar isso trocaria um problema visível por
  * um invisível. A mesma consulta está em `GET /sispag/execucoes?paradasHaMin=`.
  *
- * CRON (não configurado — entrada documentada):
- *   *\/15 * * * *  cd /caminho/do/repo/src/backend && npm run job:reaper-sispag
+ * CRON: `.github/workflows/reaper-sispag.yml` (a cada 15 min, minutos 10/25/40/55).
+ * GitHub Actions e não Render Cron porque o Cron do Render é pago; e roda fora do serviço
+ * web para existir UMA vez, não uma por instância.
  *
  * Exit 0 mesmo achando órfãos: achar é o trabalho, não é falha do job. Exit não-zero só
  * quando o próprio reaper falha (banco fora), para o agendador registrar.

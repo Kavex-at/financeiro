@@ -160,8 +160,34 @@ const main = async (): Promise<void> => {
         }
     }
 
+    // 4b) itens JÁ dentro de um lote — a shape que `listarChavesDoLote` consome e que
+    // decide, na retomada de import parcial, o que ainda falta importar.
+    const loteComItens = configs.length
+        ? (await lista('fin015/list', 'fin015', { 'filCod#EQ': FIL })).find(
+              (l) => Number(l.titulosCount) > 0,
+          )
+        : undefined;
+    if (loteComItens) {
+        const itens = await lista(
+            `fin015/finItemSispag/list/${FIL}/${loteComItens.bncCod}/${loteComItens.flpCod}`,
+            'fin015',
+        );
+        salvar('fin015-item-lote', itens[0], `finItemSispag flp=${loteComItens.flpCod}`);
+    } else {
+        console.warn('[fixtures] fin015-item-lote: nenhum lote com itens nesta filial');
+    }
+
     const eventos = await lista('fin050/list', 'fin050');
     salvar('fin050-evento-bancario', eventos[0], `fin050/list fil=${FIL}`);
+
+    // 4c) contas do favorecido (cmn025) — `pctVldStatus` é o filtro que decide se um título
+    // é sequer importável. Estava sem contrato e sem teste.
+    const tits = await lista('fin064/list', 'fin064');
+    const pesCod = tits.find((t) => t.pesCod != null)?.pesCod;
+    if (pesCod != null) {
+        const contasFav = await lista('cmn025/ctcorr/list', 'cmn025', { 'pesCod#EQ': pesCod });
+        salvar('cmn025-conta-favorecido', contasFav[0], `cmn025/ctcorr pesCod=${pesCod}`);
+    }
 
     // 5) títulos a pagar (fin064) — a carteira do painel.
     const titulos = await lista('fin064/list', 'fin064');

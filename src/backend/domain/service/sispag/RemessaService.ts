@@ -5,9 +5,11 @@ import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import ErpPerguntaError from '../../errors/ErpPerguntaError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteAnteriorCanceladoError from '../../errors/LoteAnteriorCanceladoError.js';
+import RemessaEmAndamentoError from '../../errors/RemessaEmAndamentoError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin015Write.js';
+import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type { RemessaExecucaoRow } from '../../interface/sispag/RemessaExecucao.js';
 import { LOTE_STATUS, type LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
@@ -97,9 +99,47 @@ export default class RemessaService {
         @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
+        @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
     ) {}
 
-    public gerarRemessa = async (input: GerarRemessaInput): Promise<GerarRemessaResult> => {
+    /**
+     * SERIALIZA por lote. Duas requisições simultâneas para o MESMO `loteId` — dois cliques,
+     * duas abas, dois operadores — passavam juntas pelo ledger e criavam DOIS lotes nativos.
+     * O ledger write-ahead cobre interrupção, não concorrência; e o `heavyRouteLimiter` é por
+     * IP, então não alcança duas máquinas.
+     *
+     * A chave é derivada do `loteId` (hash estável de 32 bits) para que lotes diferentes
+     * sigam em paralelo — o lock é por lote, não global.
+     */
+    public gerarRemessa = async (input: GerarRemessaInput): Promise<GerarRemessaResult> =>
+        this.db.withAdvisoryLock(
+            this.chaveDeLock(input.loteId),
+            () => this.gerarRemessaSerializado(input),
+            async () => {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'geração de remessa concorrente barrada pelo lock',
+                    data: { loteId: input.loteId, ator: input.ator },
+                });
+                throw new RemessaEmAndamentoError({ loteId: input.loteId });
+            },
+        );
+
+    /**
+     * Hash estável do `loteId` para o advisory lock do Postgres (int4). Colisão entre lotes
+     * distintos só custa serialização desnecessária — nunca corretude.
+     */
+    private chaveDeLock = (loteId: string): number => {
+        let h = 0;
+        for (let i = 0; i < loteId.length; i += 1) {
+            h = (Math.imul(31, h) + loteId.charCodeAt(i)) | 0;
+        }
+        return h;
+    };
+
+    private gerarRemessaSerializado = async (
+        input: GerarRemessaInput,
+    ): Promise<GerarRemessaResult> => {
         const lote = await this.loteRepo.getLoteComItens(input.loteId);
         if (!lote) {
             throw new LoteEstadoInvalidoError({

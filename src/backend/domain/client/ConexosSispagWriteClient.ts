@@ -96,8 +96,26 @@ export default class ConexosSispagWriteClient {
     };
 
     /** Embrulha a falha em ConexosError com a validação do ERP no `message`, quando houver. */
-    private toConexosError = (endpoint: string, cause: unknown): ConexosError =>
-        new ConexosError({ endpoint, cause, message: this.describeConexosValidation(cause) });
+    /**
+     * Converte a falha do ERP no erro certo — e `QUESTION` NÃO é falha.
+     *
+     * O Conexos responde `{type:'QUESTION', questions:[{key, answerList:[YES, ABORT]}]}` quando
+     * precisa de uma confirmação interativa. O caso mais provável em produção é
+     * `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_...` — favorecido sem conta ativa no
+     * banco do lote.
+     *
+     * Antes só o `sugerirRemessa` reconhecia isso; as 4 escritas embrulhavam em `ConexosError`
+     * genérico, o ledger ia para `error`, e a retomada refazia o mesmo caminho até falhar de
+     * novo. Do lado de quem opera, "o ERP quer uma confirmação" virava "o sistema quebrou".
+     *
+     * Detectar AQUI cobre todas as chamadas de uma vez, porque todo `catch` deste cliente
+     * passa por este método.
+     */
+    private toConexosError = (endpoint: string, cause: unknown): Error => {
+        const pergunta = this.perguntaDoErp(cause);
+        if (pergunta) return new ErpPerguntaError({ ...pergunta, contexto: endpoint });
+        return new ConexosError({ endpoint, cause, message: this.describeConexosValidation(cause) });
+    };
 
     /**
      * Ferramenta 1 — cria o lote nativo fin015 (`POST /fin015`) da conta pagadora.
@@ -505,10 +523,7 @@ export default class ConexosSispagWriteClient {
             }
             return { numRemessa, nomeArquivo };
         } catch (cause) {
-            const pergunta = this.perguntaDoErp(cause);
-            if (pergunta) {
-                throw new ErpPerguntaError({ ...pergunta, contexto: 'importarTitulos' });
-            }
+            // `toConexosError` já distingue `QUESTION` de falha — ver o JSDoc dele.
             throw this.toConexosError(path, cause);
         }
     };

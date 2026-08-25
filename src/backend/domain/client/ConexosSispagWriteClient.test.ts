@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import ConexosError from '../errors/ConexosError.js';
+import ErpPerguntaError from '../errors/ErpPerguntaError.js';
 import type { ContaPagadora } from '../interface/sispag/Fin015Write.js';
 import type ConexosBaseClient from './ConexosBaseClient.js';
 import ConexosSispagWriteClient from './ConexosSispagWriteClient.js';
@@ -475,6 +476,78 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 'bncCod#EQ': 4,
                 'filCod#EQ': 2,
             });
+        });
+    });
+
+    describe('protocolo QUESTION do ERP (regis: integrability-1)', () => {
+        /** Resposta interativa do Conexos — não é falha, é pergunta. */
+        const question = (key: string) => ({
+            response: {
+                status: 400,
+                data: {
+                    type: 'QUESTION',
+                    questions: [
+                        {
+                            key,
+                            parameterValueList: { bncDesNome: 'ITAÚ', pesCod: '14' },
+                            answerList: [{ id: 'YES' }, { id: 'NO', type: 'ABORT' }],
+                        },
+                    ],
+                },
+            },
+        });
+        const FIN041 = 'FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA';
+
+        it('importarTitulos devolve ErpPerguntaError, não ConexosError genérico', async () => {
+            // Antes: o ledger ia para `error`, a retomada refazia o mesmo caminho e falhava
+            // igual. Do lado de quem opera, "o ERP quer confirmação" virava "sistema quebrou".
+            const base = buildBase();
+            base.postGenericOnce.mockRejectedValue(question(FIN041));
+
+            await expect(
+                make(base).importarTitulos({
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 30,
+                    itens: [{ filCod: 2, docCod: 801, titCod: 1 }],
+                }),
+            ).rejects.toBeInstanceOf(ErpPerguntaError);
+        });
+
+        it('criarLote também — a detecção vale para TODA chamada do cliente', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockRejectedValue(question(FIN041));
+
+            await expect(
+                make(base).criarLote({ filCod: 2, conta: ITAU, dataDebito: 1_790_000_000_000 }),
+            ).rejects.toBeInstanceOf(ErpPerguntaError);
+        });
+
+        it('a pergunta carrega chave e parâmetros para a tela poder explicar', async () => {
+            // `finalizarLote` usa `getGeneric` (o endpoint é GET apesar de mutar) — a
+            // detecção precisa valer para ele também, e vale porque mora no wrapper de erro.
+            const base = buildBase();
+            base.getGeneric.mockRejectedValue(question(FIN041));
+
+            const erro = await make(base)
+                .finalizarLote({ filCod: 2, bncCod: 4, flpCod: 30 })
+                .catch((e: unknown) => e);
+
+            expect(erro).toMatchObject({
+                code: 'ERP_PERGUNTA',
+                details: expect.objectContaining({ chave: FIN041 }),
+            });
+        });
+
+        it('erro COMUM continua ConexosError — a detecção não engole falha de verdade', async () => {
+            const base = buildBase();
+            base.getGeneric.mockRejectedValue(
+                validationError({ type: 'SELECTION_ERROR', validation: {} }),
+            );
+
+            await expect(
+                make(base).finalizarLote({ filCod: 2, bncCod: 4, flpCod: 30 }),
+            ).rejects.toBeInstanceOf(ConexosError);
         });
     });
 
