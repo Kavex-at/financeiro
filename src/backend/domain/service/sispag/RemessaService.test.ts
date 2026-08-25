@@ -32,6 +32,24 @@ const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
     ...over,
 });
 
+/** Lote com 2 itens — usado para exercitar o cenário de import PARCIAL no ERP. */
+const loteCom2Itens = (): LotePagamento =>
+    lote({
+        itens: [
+            ...lote().itens,
+            {
+                loteId: 'L1',
+                filCod: 2,
+                docCod: '802',
+                titCod: '1',
+                credor: 'OUTRO',
+                valor: 100,
+                modalidade: 'CREDITO_CONTA',
+                incluidoPor: 'u1',
+            },
+        ],
+    });
+
 /** Linha do grid de pendentes — a identidade tem que voltar VERBATIM para o import. */
 const pendente = (over: Record<string, unknown> = {}) => ({
     docCod: '801',
@@ -87,6 +105,11 @@ const buildLedger = (anterior: unknown = null) => ({
 
 const buildWrite = () => ({
     criarLote: jest.fn().mockResolvedValue({ flpCod: 12, filCod: 2, bncCod: 4 }),
+    // Estado do lote no ERP. Encoding medido em produção: 0 aberto · 1 finalizado ·
+    // 2/3 cancelado. Default: lote aberto e vazio (o caso "morreu logo depois de criar").
+    getLoteNativo: jest
+        .fn()
+        .mockResolvedValue({ filCod: 2, bncCod: 4, flpCod: 99, status: 0, titulosCount: 0, soma: 0 }),
     listarTitulosPendentes: jest.fn().mockResolvedValue([pendente()]),
     importarTitulos: jest.fn().mockResolvedValue(undefined),
     finalizarLote: jest.fn().mockResolvedValue(undefined),
@@ -116,9 +139,10 @@ const make = (o: {
     write?: ReturnType<typeof buildWrite>;
     sispag?: ReturnType<typeof buildSispag>;
     env?: EnvironmentProvider;
+    lote?: LotePagamento;
 }) =>
     new RemessaService(
-        (o.loteRepo ?? buildLoteRepo()) as unknown as LotePagamentoRepository,
+        (o.loteRepo ?? buildLoteRepo(o.lote)) as unknown as LotePagamentoRepository,
         (o.ledger ?? buildLedger()) as unknown as RemessaExecucaoRepository,
         (o.write ?? buildWrite()) as unknown as ConexosSispagWriteClient,
         (o.sispag ?? buildSispag()) as unknown as ConexosSispagClient,
@@ -160,7 +184,9 @@ describe('RemessaService', () => {
             expect(write.gerarRemessa).not.toHaveBeenCalled();
         });
 
-        it('`reconciling` órfão é FAIL-CLOSED — nunca re-POSTa', async () => {
+        it('órfão com lote ABERTO e VAZIO retoma no import — não cria um segundo lote', async () => {
+            // Antes isto era 409 para sempre. O ERP sabe o que aconteceu; perguntar troca
+            // "não sei, não mexo" por "sei onde parou, continuo daqui".
             const ledger = buildLedger({
                 status: 'reconciling',
                 dryRun: false,
@@ -168,10 +194,138 @@ describe('RemessaService', () => {
                 etapa: 'importar',
             });
             const write = buildWrite();
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(write.importarTitulos).toHaveBeenCalled();
+            expect(write.gerarRemessa).toHaveBeenCalled();
+        });
+
+        it('órfão com títulos JÁ importados pula o import', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('órfão com lote FINALIZADO pula import e finalizar', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 1,
+                titulosCount: 1,
+                soma: 100,
+            });
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+            expect(write.gerarRemessa).toHaveBeenCalled();
+        });
+
+        it('órfão cuja remessa JÁ existe fecha o ledger e devolve o arquivo — sem gerar de novo', async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                nativeFlpCod: 99,
+                // Write-ahead: o nome foi gravado ANTES do gerarRemessa.
+                requestPayload: { flpCod: 99, nomeArquivo: 'PG210801.REM', numRemessa: 12 },
+            });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 1,
+                titulosCount: 1,
+                soma: 100,
+            });
+
+            const r = await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.gerarRemessa).not.toHaveBeenCalled();
+            expect(r.status).toBe('skipped');
+            // Casou PELO NOME: a lista tem um órfão de lote antigo primeiro.
+            expect(r.arquivo).toBe('PG210801.REM');
+            expect(r.conteudo).toBe('CNAB DO LOTE');
+            expect(ledger.settle).toHaveBeenCalled();
+        });
+
+        it('órfão SEM flpCod continua FAIL-CLOSED — não dá para identificar o lote', async () => {
+            // Morreu entre o criarLote responder e o ledger gravar. Procurar por
+            // filial+data casaria com um rascunho criado por uma pessoa no mesmo intervalo.
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, etapa: 'criar_lote' });
+            const write = buildWrite();
+
             await expect(
                 make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
             ).rejects.toBeInstanceOf(RemessaEmDuvidaError);
             expect(write.criarLote).not.toHaveBeenCalled();
+        });
+
+        it('órfão cujo lote foi CANCELADO por uma pessoa continua FAIL-CLOSED', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 2,
+                titulosCount: 0,
+                soma: 0,
+            });
+
+            await expect(
+                make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toBeInstanceOf(RemessaEmDuvidaError);
+        });
+
+        it('import PARCIAL continua FAIL-CLOSED — re-importar duplicaria o que entrou', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            // O lote local tem 2 itens; o ERP recebeu 1.
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+
+            await expect(
+                make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                }),
+            ).rejects.toBeInstanceOf(RemessaEmDuvidaError);
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+        });
+
+        it('lote INEXISTENTE no ERP recomeça do zero — não há nada para duplicar', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue(undefined);
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.importarTitulos).toHaveBeenCalled();
         });
 
         it('`reconciling` de um DRY-RUN anterior não bloqueia (não houve escrita)', async () => {

@@ -6,7 +6,8 @@ import ErpPerguntaError from '../../errors/ErpPerguntaError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
-import type { ContaPagadora } from '../../interface/sispag/Fin015Write.js';
+import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin015Write.js';
+import type { RemessaExecucaoRow } from '../../interface/sispag/RemessaExecucao.js';
 import { LOTE_STATUS, type LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
@@ -23,6 +24,15 @@ const MODALIDADE_NATIVA: Record<string, number> = {
     PIX: 1,
     BOLETO: 7,
 };
+
+/**
+ * Ordem canônica da sequência. Retomar numa etapa significa que todas as anteriores já
+ * foram observadas como concluídas NO ERP — não presumidas pelo nosso ledger.
+ */
+const ORDEM_ETAPAS = ['criar_lote', 'importar', 'finalizar', 'gerar_remessa', 'concluido'] as const;
+
+/** Etapa REAL apurada no ERP. `indeterminado` é o único caminho que ainda trava. */
+type EtapaReal = (typeof ORDEM_ETAPAS)[number] | 'indeterminado';
 
 export interface GerarRemessaInput {
     loteId: string;
@@ -141,11 +151,65 @@ export default class RemessaService {
                 valorTotal,
             };
         }
-        // FAIL-CLOSED: execução anterior em voo que nunca confirmou.
+        // Execução anterior em voo que nunca confirmou. Em vez de travar para sempre,
+        // PERGUNTA AO ERP o que de fato aconteceu e retoma do ponto certo.
+        let retomarDe: EtapaReal | undefined;
         if (anterior && !anterior.dryRun && anterior.status === 'reconciling') {
+            const sync = await this.sincronizarComErp(anterior, lote);
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'execução órfã encontrada — estado real consultado no ERP',
+                data: {
+                    loteId: lote.id,
+                    key,
+                    nativeFlpCod: anterior.nativeFlpCod,
+                    etapaNoLedger: anterior.etapa,
+                    etapaReal: sync.etapa,
+                    motivo: sync.motivo,
+                },
+            });
+
+            if (sync.etapa === 'concluido' && sync.arquivo) {
+                // A remessa TINHA sido gerada; só não chegamos a registrar. Fechar o ledger
+                // é a correção — e o operador recebe o arquivo que já existe.
+                await this.ledger.settle(key, {
+                    ...(sync.arquivo.gabCod !== undefined
+                        ? { nativeGabCod: sync.arquivo.gabCod }
+                        : {}),
+                });
+                return {
+                    status: 'skipped',
+                    dryRun: false,
+                    writeEnabled,
+                    loteId: lote.id,
+                    ...(anterior.nativeFlpCod !== undefined
+                        ? { nativeFlpCod: anterior.nativeFlpCod }
+                        : {}),
+                    ...(sync.arquivo.gabCod !== undefined
+                        ? { nativeGabCod: sync.arquivo.gabCod }
+                        : {}),
+                    itens: lote.itens.length,
+                    valorTotal,
+                    ...(sync.arquivo.nomeArquivo !== undefined
+                        ? { arquivo: sync.arquivo.nomeArquivo }
+                        : {}),
+                    ...(sync.arquivo.conteudo !== undefined
+                        ? { conteudo: sync.arquivo.conteudo }
+                        : {}),
+                };
+            }
+
+            if (sync.etapa !== 'indeterminado') {
+                retomarDe = sync.etapa;
+            }
+        }
+
+        // Só o que o ERP NÃO deixa determinar continua fail-closed. É a diferença entre
+        // "não sei" e "não quero saber".
+        if (anterior && !anterior.dryRun && anterior.status === 'reconciling' && !retomarDe) {
             await this.logService.error({
                 type: LOG_TYPE.BUSINESS_WARN,
-                message: 'remessa EM DÚVIDA (reconciling órfão) — NÃO re-POSTada',
+                message: 'remessa EM DÚVIDA (estado do ERP indeterminado) — NÃO re-POSTada',
                 data: { loteId: lote.id, key, nativeFlpCod: anterior.nativeFlpCod, etapa: anterior.etapa },
             });
             throw new RemessaEmDuvidaError({
@@ -272,22 +336,34 @@ export default class RemessaService {
                 ...(escolhida.gerNum !== undefined ? { gerNum: escolhida.gerNum } : {}),
             });
 
+            // Cada passo abaixo é pulado quando o ERP já mostrou que ele valeu. `pular`
+            // compara com a ordem canônica da sequência: retomar em 'finalizar' significa
+            // que criar e importar já aconteceram lá.
+            const pular = (etapa: (typeof ORDEM_ETAPAS)[number]): boolean =>
+                retomarDe !== undefined &&
+                retomarDe !== 'indeterminado' &&
+                ORDEM_ETAPAS.indexOf(etapa) < ORDEM_ETAPAS.indexOf(retomarDe);
+
             // (2) importar: identidade VERBATIM do grid de pendentes do ERP.
             // Se algum título não for elegível, isto lança ANTES de qualquer escrita no
             // lote — e o lote nativo vazio fica registrado no ledger para ser reusado na
             // próxima tentativa, em vez de virar órfão.
-            const itens = await this.montarItensImport(lote, bncCod, flpCod);
-            await this.ledger.setRequestPayload(key, { itens: itens.length, flpCod });
-            await this.write.importarTitulos({
-                filCod: lote.filCod,
-                bncCod,
-                flpCod,
-                itens,
-            });
+            if (!pular('importar')) {
+                const itens = await this.montarItensImport(lote, bncCod, flpCod);
+                await this.ledger.setRequestPayload(key, { itens: itens.length, flpCod });
+                await this.write.importarTitulos({
+                    filCod: lote.filCod,
+                    bncCod,
+                    flpCod,
+                    itens,
+                });
+            }
             await this.ledger.setEtapa(key, 'finalizar');
 
             // (3) finalizar (o ERP valida R1 e a regra do itsDtaPgto)
-            await this.write.finalizarLote({ filCod: lote.filCod, bncCod, flpCod });
+            if (!pular('finalizar')) {
+                await this.write.finalizarLote({ filCod: lote.filCod, bncCod, flpCod });
+            }
             await this.ledger.setEtapa(key, 'gerar_remessa');
 
             // (4) gerar a remessa. `seqNum`/nome vêm do próprio ERP — a numeração é controle
@@ -296,6 +372,15 @@ export default class RemessaService {
                 filCod: lote.filCod,
                 bncCod,
                 ccoCod: escolhida.ccoCod,
+            });
+            // WRITE-AHEAD DO NOME: gravado ANTES do `gerarRemessa`. É o que torna a etapa
+            // final determinável depois de uma queda — sem isso, uma retomada não saberia
+            // QUAL arquivo procurar, e o ERP recicla `flpCod`, então "o primeiro com
+            // conteúdo" pode ser de outro lote (foi assim que cancelei o gabCod 16).
+            await this.ledger.setRequestPayload(key, {
+                flpCod,
+                nomeArquivo: sugerido.nomeArquivo,
+                numRemessa: sugerido.numRemessa,
             });
             await this.write.gerarRemessa({
                 filCod: lote.filCod,
@@ -342,7 +427,7 @@ export default class RemessaService {
                     flpCod,
                     gabCod: arquivo.gabCod,
                     arquivo: sugerido.nomeArquivo,
-                    itens: itens.length,
+                    itens: lote.itens.length,
                     valorTotal,
                 },
             });
@@ -357,7 +442,7 @@ export default class RemessaService {
                 arquivo: sugerido.nomeArquivo,
                 numRemessa: sugerido.numRemessa,
                 ...(arquivo.conteudo !== undefined ? { conteudo: arquivo.conteudo } : {}),
-                itens: itens.length,
+                itens: lote.itens.length,
                 valorTotal,
             };
         } catch (e) {
@@ -370,6 +455,99 @@ export default class RemessaService {
             });
             throw e;
         }
+    };
+
+    /**
+     * Pergunta ao ERP o que de fato aconteceu numa execução que não confirmou.
+     *
+     * ── POR QUE ISTO EXISTE ─────────────────────────────────────────────────────────────
+     * O fail-closed anterior estava certo em não repetir, mas parava aí: o operador recebia
+     * um 409 e tinha que ir ao fin015 na mão. E o motivo do 409 é sempre o mesmo — NÓS não
+     * sabemos se a escrita valeu. Só que o ERP sabe. Perguntar transforma "não sei, não
+     * mexo" em "sei exatamente onde parou, continuo daqui".
+     *
+     * O que NÃO muda: nada é repetido às cegas. Cada etapa só é pulada mediante evidência
+     * observada no ERP, e o que não for determinável continua fail-closed. A diferença
+     * entre isto e um retry é que um retry supõe; isto verifica.
+     */
+    private sincronizarComErp = async (
+        anterior: RemessaExecucaoRow,
+        lote: LotePagamento,
+    ): Promise<{ etapa: EtapaReal; motivo: string; arquivo?: ArquivoRemessa }> => {
+        const flpCod = anterior.nativeFlpCod;
+        if (flpCod === undefined) {
+            // Morreu entre o `criarLote` responder e o ledger gravar. Sem o número não há
+            // como identificar o lote com segurança: procurar por filial+data casaria com
+            // um rascunho que um humano tenha criado no mesmo intervalo. Aqui a resposta
+            // honesta é "não sei", e quem decide é gente.
+            return { etapa: 'indeterminado', motivo: 'flpCod não registrado antes da queda' };
+        }
+
+        const bncCod = anterior.bncCod;
+        const estado = await this.write.getLoteNativo({ filCod: anterior.filCod, bncCod, flpCod });
+
+        if (!estado) {
+            // O lote não existe: ou o `criarLote` não valeu, ou alguém apagou. Recomeçar do
+            // início é seguro justamente porque não há nada lá para duplicar.
+            return { etapa: 'criar_lote', motivo: `lote ${flpCod} não existe no ERP` };
+        }
+
+        if (estado.status === 2 || estado.status === 3) {
+            // Cancelado por uma pessoa. Retomar em cima disso desfaria uma decisão humana.
+            return {
+                etapa: 'indeterminado',
+                motivo: `lote ${flpCod} está cancelado no ERP (status ${estado.status})`,
+            };
+        }
+
+        if (estado.status === 1) {
+            // Finalizado. Falta saber se a remessa chegou a ser gerada — e é aqui que o
+            // nome gravado no write-ahead paga: sem ele não dá para distinguir o NOSSO
+            // arquivo de um órfão de lote antigo, porque o ERP recicla `flpCod`.
+            const nomeEsperado = this.nomeArquivoDoLedger(anterior);
+            if (!nomeEsperado) {
+                return {
+                    etapa: 'gerar_remessa',
+                    motivo: `lote ${flpCod} finalizado e nenhum arquivo foi pedido ainda`,
+                };
+            }
+            const arquivos = await this.write.listarArquivosRemessa({
+                filCod: anterior.filCod,
+                bncCod,
+                flpCod,
+            });
+            const arquivo = arquivos.find((a) => a.nomeArquivo === nomeEsperado);
+            return arquivo
+                ? { etapa: 'concluido', motivo: `remessa "${nomeEsperado}" já existe`, arquivo }
+                : {
+                      etapa: 'gerar_remessa',
+                      motivo: `lote ${flpCod} finalizado, "${nomeEsperado}" não foi gerado`,
+                  };
+        }
+
+        // status 0 — aberto. `titulosCount` diz se o import entrou.
+        const esperados = lote.itens.length;
+        if (estado.titulosCount === 0) {
+            return { etapa: 'importar', motivo: `lote ${flpCod} aberto e vazio` };
+        }
+        if (estado.titulosCount >= esperados) {
+            return {
+                etapa: 'finalizar',
+                motivo: `lote ${flpCod} já tem ${estado.titulosCount} título(s)`,
+            };
+        }
+        // Import PARCIAL. Re-importar duplicaria o que já entrou, e remover na mão é decisão
+        // de gente. Este é o caso raro que continua fail-closed — e agora com o número.
+        return {
+            etapa: 'indeterminado',
+            motivo: `lote ${flpCod} tem ${estado.titulosCount} de ${esperados} títulos (import parcial)`,
+        };
+    };
+
+    /** Nome do `.REM` gravado no write-ahead, se a execução chegou até lá. */
+    private nomeArquivoDoLedger = (anterior: RemessaExecucaoRow): string | undefined => {
+        const payload = anterior.requestPayload as { nomeArquivo?: unknown } | undefined;
+        return typeof payload?.nomeArquivo === 'string' ? payload.nomeArquivo : undefined;
     };
 
     /**

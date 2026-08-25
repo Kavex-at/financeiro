@@ -8,9 +8,13 @@ import type {
     RemessaExecucaoStatus,
 } from '../../interface/sispag/RemessaExecucao.js';
 
+// `request_payload` entra no SELECT porque a RETOMADA depende dele: é lá que fica o nome
+// do `.REM` gravado ANTES do `gerarRemessa`. Sem ler de volta, uma execução interrompida
+// não sabe QUAL arquivo procurar — e o ERP recicla `flpCod`, então "o primeiro com
+// conteúdo" pode ser de outro lote.
 const SELECT_COLS = `idempotency_key, correlation_id, lote_id, fil_cod, bnc_cod, status, dry_run,
-                     native_flp_cod, native_gab_cod, etapa, erp_response, erro_mensagem,
-                     executado_por, criado_em, atualizado_em`;
+                     native_flp_cod, native_gab_cod, etapa, request_payload, erp_response,
+                     erro_mensagem, executado_por, criado_em, atualizado_em`;
 
 /**
  * RemessaExecucaoRepository — ledger write-ahead da geração de remessa SISPAG (0049).
@@ -203,6 +207,7 @@ export default class RemessaExecucaoRepository {
         ...(r.erp_response != null ? { erpResponse: r.erp_response } : {}),
         ...(r.erro_mensagem != null ? { erroMensagem: String(r.erro_mensagem) } : {}),
         ...(r.executado_por != null ? { executadoPor: String(r.executado_por) } : {}),
+        ...(r.request_payload != null ? { requestPayload: r.request_payload } : {}),
         ...(r.criado_em != null ? { criadoEm: String(r.criado_em) } : {}),
         ...(r.atualizado_em != null ? { atualizadoEm: String(r.atualizado_em) } : {}),
     });

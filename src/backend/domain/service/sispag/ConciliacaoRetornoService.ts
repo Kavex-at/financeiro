@@ -143,20 +143,48 @@ export default class ConciliacaoRetornoService {
             };
         }
 
-        // FAIL-CLOSED: `processar` anterior em voo que nunca confirmou.
+        // `processar` anterior em voo que nunca confirmou. Aqui a retomada é mais simples
+        // que a da remessa: o ERP CARIMBA o arquivo com `processadoEm`, então "já rodou?"
+        // tem resposta direta, sem heurística.
+        let jaProcessadoNoErp = false;
         if (anterior && !anterior.dryRun && anterior.status === 'reconciling') {
-            await this.logService.error({
-                type: LOG_TYPE.BUSINESS_WARN,
-                message: 'conciliação EM DÚVIDA (reconciling órfão) — NÃO re-processada',
-                data: { ...this.chave(input), key },
-            });
-            throw new ConciliacaoEmDuvidaError({
-                idempotencyKey: key,
-                filCod: input.filCod,
-                bncCod: input.bncCod,
-                garCodSeq: input.garCodSeq,
-                ...(anterior.criadoEm !== undefined ? { criadoEm: anterior.criadoEm } : {}),
-            });
+            const estado = await this.retorno.getArquivoRetorno(this.chave(input));
+            if (estado?.processadoEm) {
+                jaProcessadoNoErp = true;
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'conciliação órfã: o ERP já processou o arquivo — seguindo da leitura',
+                    data: {
+                        ...this.chave(input),
+                        key,
+                        processadoEm: estado.processadoEm,
+                        statusProcessamento: estado.statusProcessamento,
+                    },
+                });
+            } else if (estado) {
+                // O arquivo existe e NÃO foi processado: o PUT não chegou a valer. Refazer
+                // é seguro — não há baixa no fin010 para duplicar.
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'conciliação órfã: o ERP não processou o arquivo — refazendo',
+                    data: { ...this.chave(input), key },
+                });
+            } else {
+                // Não consegui ler o estado do arquivo. Sem essa resposta, repetir o
+                // `processar` poderia gravar baixa em cima de baixa.
+                await this.logService.error({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'conciliação EM DÚVIDA (estado do arquivo indeterminado)',
+                    data: { ...this.chave(input), key },
+                });
+                throw new ConciliacaoEmDuvidaError({
+                    idempotencyKey: key,
+                    filCod: input.filCod,
+                    bncCod: input.bncCod,
+                    garCodSeq: input.garCodSeq,
+                    ...(anterior.criadoEm !== undefined ? { criadoEm: anterior.criadoEm } : {}),
+                });
+            }
         }
 
         await this.ledger.beginExecution({
@@ -179,9 +207,12 @@ export default class ConciliacaoRetornoService {
                     message: 'retorno DRY-RUN — `processar` não chamado',
                     data: { ...this.chave(input) },
                 });
+            } else if (jaProcessadoNoErp) {
+                // Já rodou lá. Repetir geraria baixa em cima de baixa.
+                processado = true;
             } else {
-                // Marcado ANTES do PUT: se o processo morrer aqui, o ledger fica
-                // `reconciling` com `processou=true` e a próxima tentativa é fail-closed.
+                // Marcado ANTES do PUT: se o processo morrer aqui, a próxima tentativa
+                // pergunta ao ERP em vez de supor.
                 await this.ledger.marcarProcessado(key);
                 await this.retorno.processarArquivoRetorno(this.chave(input));
                 processado = true;

@@ -110,3 +110,19 @@ export interface ArquivoRemessa {
     /** Conteúdo do `.REM` (CNAB 240 gerado nativamente) — `gabLngDados`. */
     conteudo?: string;
 }
+
+/**
+ * Estado observado do lote nativo no fin015 — a fonte da verdade para retomar uma
+ * sequência interrompida. Ver `ConexosSispagWriteClient.getLoteNativo` para o encoding
+ * de `status`, que foi medido em produção e não inferido.
+ */
+export interface LoteNativoEstado {
+    filCod: number;
+    bncCod: number;
+    flpCod: number;
+    /** 0 aberto · 1 finalizado · 2 cancelado · 3 outro terminal. */
+    status: number;
+    titulosCount: number;
+    soma: number;
+    finalizadoEm?: number;
+}

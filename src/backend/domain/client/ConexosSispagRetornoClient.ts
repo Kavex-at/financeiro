@@ -181,6 +181,37 @@ export default class ConexosSispagRetornoClient {
      * Serve a dois propósitos: saber quais códigos consultar no detalhe (que exige o código
      * EXATO como filtro) e classificar pago × rejeitado na conciliação.
      */
+    /**
+     * Um arquivo de retorno específico — para saber se o ERP JÁ o processou.
+     *
+     * `processadoEm` (`garTimProcessamento`) é carimbado pelo próprio ERP quando o
+     * `arquivosRetorno/processar` roda. É o que permite retomar uma conciliação
+     * interrompida sem adivinhar: em vez de supor pelo nosso ledger se o PUT valeu,
+     * pergunta-se a quem sabe.
+     *
+     * `undefined` quando o arquivo não pôde ser lido — e isso NÃO é "não processado":
+     * é "não sei", que na conciliação continua sendo motivo para travar.
+     */
+    public getArquivoRetorno = async (params: {
+        filCod: number;
+        bncCod: number;
+        gtbCodSeq: number;
+        garCodSeq: number;
+    }): Promise<ArquivoRetorno | undefined> => {
+        const { filCod, bncCod, gtbCodSeq, garCodSeq } = params;
+        try {
+            const arquivos = await this.listArquivosRetorno({
+                filCod,
+                bncCod,
+                gtbCodSeq,
+                pageSize: 200,
+            });
+            return arquivos.find((a) => a.garCodSeq === garCodSeq);
+        } catch {
+            return undefined;
+        }
+    };
+
     public listEventosBancarios = async (params: {
         filCod: number;
         bncCod: number;
