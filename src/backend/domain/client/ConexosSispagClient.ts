@@ -343,12 +343,23 @@ export default class ConexosSispagClient {
         return set;
     };
 
-    /** Lotes SISPAG nativos de uma filial (`fin015/list`). */
+    /**
+     * Lotes SISPAG nativos de uma filial (`fin015/list`).
+     *
+     * `filCod#EQ` é OBRIGATÓRIO: o `filCod` de `opts` é o contexto da sessão, não um filtro.
+     * Sem ele o ERP devolve lotes de TODAS as filiais — e como este método carimbava o
+     * `filCod` do PARÂMETRO na linha de saída, um lote da filial 1 saía rotulado como da
+     * filial que fez a consulta. No painel, que faz fan-out por filial, isso multiplicava
+     * lotes alheios com o rótulo errado.
+     *
+     * O `flpCod` se repete entre filiais (é sequência por filial+banco), então rótulo errado
+     * aqui não é cosmético: `findByChaveNativa` casa o retorno por `(fil, bnc, flp)`.
+     */
     public listLotes = async (filCod: number): Promise<LoteSispag[]> => {
         const { rows } = await this.base.runWithRetry(() =>
             this.base.listGenericPaginated<Record<string, unknown>>(
                 'fin015/list',
-                this.listBody('fin015', {}, 100),
+                this.listBody('fin015', { 'filCod#EQ': filCod }, 100),
                 { filCod },
             ),
         );
@@ -358,7 +369,9 @@ export default class ConexosSispagClient {
             const r = parsed.data;
             return [
                 {
-                    filCod,
+                    // Da LINHA, com o parâmetro só como rede: rotular errado aqui
+                    // corromperia o casamento do retorno.
+                    filCod: Number(row.filCod ?? filCod),
                     flpCod: r.flpCod,
                     banco: r.bncDesNome,
                     conta: r.conta,

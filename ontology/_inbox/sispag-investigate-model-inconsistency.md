@@ -42,41 +42,60 @@ Eu usava `estado.titulosCount >= esperados` para decidir se o import já tinha e
 o que nunca seria verdade para lote com 2+ títulos. **Corrigido**: `titulosCount` vale só
 como booleano "tem alguma coisa?"; quem responde QUAIS é `listarChavesDoLote`.
 
-## Achado 3 — P0: a chave nativa `(filCod, bncCod, flpCod)` NÃO é única
+## Achado 3 — RETRATADO: a chave nativa É única. O bug era meu.
 
-Este é o mais grave, e não estava no escopo da investigação.
+**Primeira conclusão (ERRADA):** vi 30 `flpCod` repetidos na filial 2 banco 4, `getLoteNativo`
+devolvendo um gêmeo cancelado enquanto o outro tinha R$ 33.184,53, e classifiquei como P0 —
+"a chave `(filCod, bncCod, flpCod)` não é única, a conciliação pode gravar no lote errado".
 
-`fin015/list` na filial 2, banco 4: **30 `flpCod` distintos aparecem 2 ou 3 vezes**.
+**O que o diff completo mostrou:** entre os "gêmeos", o campo que difere é o **`filCod`**.
 
 ```
-flpCod 5 (fil 2, bnc 4):
-   ccoCod=2  status=2 (cancelado)   soma=0
-   ccoCod=1  status=1 (finalizado)  soma=33.184,53
-   getLoteNativo(2,4,5) devolveu → status=2, soma=0   ← o CANCELADO
-
-flpCod 3 (fil 2, bnc 4):
-   ccoCod=1  status=3  soma=0
-   ccoCod=1  status=1  soma=24.339,02      ← mesmo ccoCod, dois registros
-   ccoCod=2  status=2  soma=0
+flpCod 5:  filCod=2 (cancelado, soma 0)  |  filCod=1 (finalizado, R$ 33.184,53)
+flpCod 3:  filCod=7  |  filCod=1  |  filCod=2
 ```
 
-Duas consequências, ambas com dinheiro no meio:
+São lotes de **filiais diferentes**. A chave é única — eu é que estava listando errado.
 
-1. **`sincronizarComErp` pode ler o lote errado.** Se o gêmeo cancelado for retornado, a
-   retomada conclui "lote cancelado" — e com o T2 isso oferece "gerar um lote novo". Se a
-   pessoa confirmar, nasce um **pagamento duplicado** de um lote que na verdade está
-   finalizado. É o dano exato que o mecanismo existe para evitar.
-2. **`LotePagamentoRepository.findByChaveNativa`** casa o retorno `.RET` por
-   `(nativeFilCod, nativeBncCod, nativeFlpCod)`. Com a chave ambígua, uma baixa pode ser
-   gravada no lote errado.
+**A causa raiz, que É um defeito nosso:** `listarLotesNativos` mandava
+`filterList: { 'bncCod#EQ': bncCod }` e passava `filCod` apenas em `opts`. Mas o `filCod` de
+`opts` é o **contexto de sessão**, não um filtro de dados — o `fin015/list` devolvia lotes de
+todas as filiais.
 
-Nem `ccoCod` fecha a chave: `flpCod 3` tem dois registros com `ccoCod = 1`. Eles diferem
-por `flpDtaCredito`, mas não dá para afirmar que a data seja parte da identidade — pode
-haver coluna que não estamos lendo. **Não vou adivinhar isto: precisa de resposta do
-Conexos ou da Columbia.**
+Medido:
 
-Agrava: `getLoteNativo` usa o path `fin015/{fil}/{bnc}/{flp}`, que **não aceita ccoCod** e
-devolveu `ccoCod: undefined` — então nem dá para desambiguar pela resposta.
+| Consulta | Linhas | Filiais | `(fil,bnc,flp)` repetidos |
+|---|---|---|---|
+| `{bncCod#EQ:4}` | 74 | 1, 2, 7 | **0** |
+| `{bncCod#EQ:4, filCod#EQ:2}` | 30 | só 2 | **0** |
+
+Zero repetições nos dois casos: as "repetições" que eu vi eram só a coincidência de números
+entre filiais.
+
+**O dano real** (menor que o alarme, mas concreto) era na **marca d'água**: o conjunto de
+"lotes conhecidos" vinha contaminado com `flpCod` de outras filiais. Um órfão cujo número já
+existisse em outra filial ficava invisível, o `adotarPorMarcaDagua` não achava candidato e o
+retry **criava um segundo lote** — exatamente o que o mecanismo evita. Foi isso que fez o
+cenário C1 do gate falhar com *"usou flp 30 · 1 lote novo"*.
+
+**Corrigido:** `filCod#EQ` no `filterList`, com teste.
+
+`getLoteNativo` foi verificado à parte e está correto: em 8 lotes de 2 bancos, o que ele
+devolve pelo path `fin015/{fil}/{bnc}/{flp}` bate com a linha da `list` em status e soma.
+
+### Hipóteses testadas e descartadas
+
+| # | Hipótese | Veredito |
+|---|---|---|
+| H1 | Existe coluna de chave que não estamos lendo | **descartada** — o diff mostrou que o que difere é `filCod` |
+| H2 | A `list` é um join que duplica linhas do mesmo lote | **descartada** — são lotes distintos, de filiais distintas |
+| H3 | `flpCod` é sequência anual e os gêmeos são de anos diferentes | **descartada** — mesmo período, filiais diferentes |
+| H4 | O path `fin015/{fil}/{bnc}/{flp}` está incompleto | **descartada** — bate com a `list` em 8/8 |
+| H5 | O ERP concilia por `fil+bnc+flp` (está no CNAB), logo a chave é essa | **CONFIRMADA** |
+
+H5 era a pista que eu tinha e não segui: o CNAB carrega `filCod+bncCod+flpCod+itsCodSeq` no
+"uso da empresa". Se o próprio ERP se reconcilia por esses campos, eles **têm** que identificar
+o lote — a dúvida deveria ter recaído sobre a minha consulta desde o começo.
 
 ## Estado da retomada depois disto
 
@@ -90,11 +109,11 @@ devolveu `ccoCod: undefined` — então nem dá para desambiguar pela resposta.
 
 ## Recomendação
 
-1. **Antes da primeira remessa real**, fechar a identidade do lote nativo com o Conexos ou
-   a Columbia. É pergunta de uma linha: *"o que identifica unicamente um lote no fin015?"*.
-2. Enquanto não fechar, considerar **desligar o ramo "lote cancelado → gerar novo"** do T2:
-   é o único caminho onde a ambiguidade produz pagamento duplicado sem outra trava.
-3. Reavaliar `findByChaveNativa` com a chave correta.
+1. Nada a perguntar à Columbia — a chave está resolvida e é `(filCod, bncCod, flpCod)`.
+2. **Auditar as outras chamadas de `fin015/list`** no código: onde mais passamos `filCod`
+   só em `opts` achando que filtra? Este defeito pode estar repetido.
+3. O gate ao vivo continua com C2 e C3 sem executar — a causa agora é plumbing do próprio
+   job de teste (o pool guarda `docCod` sem `filCod`, e `docCod` se repete entre filiais).
 
 ## Reprodução
 
