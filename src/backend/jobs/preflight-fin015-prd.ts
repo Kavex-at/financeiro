@@ -63,7 +63,9 @@ async function main(): Promise<void> {
 
     console.log('='.repeat(78));
     console.log(`BASE: ${BASE}  ${IS_HML ? '(HML)' : '*** PRODUÇÃO — SOMENTE LEITURA ***'}`);
-    console.log(`ALVO: filial ${FIL} · banco ${BNC} (FEBRABAN ${FEBRABAN[BNC] ?? '?'}) · teto ${brl(TETO)}`);
+    console.log(
+        `ALVO: filial ${FIL} · banco ${BNC} (FEBRABAN ${FEBRABAN[BNC] ?? '?'}) · teto ${brl(TETO)}`,
+    );
     console.log('='.repeat(78));
     await base.ensureSid();
 
@@ -107,7 +109,13 @@ async function main(): Promise<void> {
     for (let pagina = 1; pagina <= 40; pagina += 1) {
         const { rows, count } = await base.listGenericPaginated<Row>(
             `fin015/finItemSispag/titulosPendentes/list/${FIL}/${BNC}/${flpCtx}`,
-            { fieldList: [], filterList: {}, serviceName: 'fin015', pageNumber: pagina, pageSize: 500 },
+            {
+                fieldList: [],
+                filterList: {},
+                serviceName: 'fin015',
+                pageNumber: pagina,
+                pageSize: 500,
+            },
             { filCod: FIL },
         );
         pendentes.push(...rows);
@@ -119,7 +127,9 @@ async function main(): Promise<void> {
     // ── 3) funil das restrições ──────────────────────────────────────────────
     const hoje = hojeUtc();
     const liberado = (p: Row): boolean =>
-        Number(p.titVld1libera) === 1 && Number(p.titVld2libera) === 1 && Number(p.titVld3libera) === 1;
+        Number(p.titVld1libera) === 1 &&
+        Number(p.titVld2libera) === 1 &&
+        Number(p.titVld3libera) === 1;
 
     const etapas: Array<{ nome: string; restam: number }> = [];
     let f = pendentes.filter((p) => Number(p.filCod) === FIL);
@@ -137,12 +147,17 @@ async function main(): Promise<void> {
     if (f.length === 0) {
         console.log(`\n   Nenhum candidato com teto de ${brl(TETO)}. Aumente TETO e rode de novo.`);
         const semTeto = pendentes
-            .filter((p) => Number(p.filCod) === FIL && Number(p.titDtaVencimento) >= hoje && liberado(p))
+            .filter(
+                (p) =>
+                    Number(p.filCod) === FIL && Number(p.titDtaVencimento) >= hoje && liberado(p),
+            )
             .sort((a, b) => Number(a.titMnyValor) - Number(b.titMnyValor));
         if (semTeto.length > 0) {
             console.log('   Os 5 menores valores elegíveis (sem teto):');
             for (const p of semTeto.slice(0, 5)) {
-                console.log(`      doc ${p.docCod}/${p.titCod} · ${brl(p.titMnyValor)} · venc ${dia(p.titDtaVencimento)} · ${p.dpeNomPessoa}`);
+                console.log(
+                    `      doc ${p.docCod}/${p.titCod} · ${brl(p.titMnyValor)} · venc ${dia(p.titDtaVencimento)} · ${p.dpeNomPessoa}`,
+                );
             }
         }
         return;
@@ -151,13 +166,23 @@ async function main(): Promise<void> {
     // ── 4) conta bancária do favorecido no banco DO LOTE ─────────────────────
     const febraban = FEBRABAN[BNC] ?? 341;
     const candidatos: Row[] = [];
-    console.log(`\n4) checando conta do favorecido no banco ${febraban} (até ${MAX_LOOKUPS} consultas):`);
-    for (const p of f.sort((a, b) => Number(a.titMnyValor) - Number(b.titMnyValor)).slice(0, MAX_LOOKUPS)) {
+    console.log(
+        `\n4) checando conta do favorecido no banco ${febraban} (até ${MAX_LOOKUPS} consultas):`,
+    );
+    for (const p of f
+        .sort((a, b) => Number(a.titMnyValor) - Number(b.titMnyValor))
+        .slice(0, MAX_LOOKUPS)) {
         if (p.pesCod == null) continue;
         try {
             const { rows: ctas } = await base.listGenericPaginated<Row>(
                 'cmn025/ctcorr/list',
-                { fieldList: [], filterList: { 'pesCod#EQ': p.pesCod }, serviceName: 'cmn025', pageNumber: 1, pageSize: 50 },
+                {
+                    fieldList: [],
+                    filterList: { 'pesCod#EQ': p.pesCod },
+                    serviceName: 'cmn025',
+                    pageNumber: 1,
+                    pageSize: 50,
+                },
                 { filCod: FIL },
             );
             const ativas = ctas.filter((c) => Number(c.pctVldStatus) === 1);
@@ -197,9 +222,13 @@ async function main(): Promise<void> {
     console.log(`\n${'='.repeat(78)}`);
     console.log('O QUE A EXECUÇÃO FARIA (nada disso foi feito agora)');
     console.log('='.repeat(78));
-    console.log(`  título   : doc ${alvo.docCod}/${alvo.titCod} · ${brl(alvo.titMnyValor)} · ${alvo.dpeNomPessoa}`);
+    console.log(
+        `  título   : doc ${alvo.docCod}/${alvo.titCod} · ${brl(alvo.titMnyValor)} · ${alvo.dpeNomPessoa}`,
+    );
     console.log(`  lote     : filial ${FIL}, banco ${BNC}, conta pagadora ccoCod ${conta.ccoCod}`);
-    console.log(`             (ag ${conta.ccoEspAgcod} cc ${conta.ccoNumConta}-${conta.ccoEspDvconta}, conta financeira ${conta.gerNum})`);
+    console.log(
+        `             (ag ${conta.ccoEspAgcod} cc ${conta.ccoNumConta}-${conta.ccoEspDvconta}, conta financeira ${conta.gerNum})`,
+    );
     console.log(`  débito   : ${dia(hoje)}  (R1: ≥ hoje · R2: ≤ ${dia(alvo.titDtaVencimento)})`);
     console.log('\n  4 ESCRITAS no ERP de produção:');
     console.log('    1. POST fin015                          → cria o lote (novo flpCod)');

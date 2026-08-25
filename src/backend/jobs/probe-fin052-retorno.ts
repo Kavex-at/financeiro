@@ -76,7 +76,13 @@ async function main(): Promise<void> {
         try {
             const { rows } = await base.listGenericPaginated<Row>(
                 'ger015/list',
-                { fieldList: [], filterList: {}, serviceName: 'ger015', pageNumber: 1, pageSize: 50 },
+                {
+                    fieldList: [],
+                    filterList: {},
+                    serviceName: 'ger015',
+                    pageNumber: 1,
+                    pageSize: 50,
+                },
                 { filCod },
             );
             for (const c of rows) {
@@ -165,26 +171,94 @@ async function main(): Promise<void> {
     // ── 4) O DETALHE — a ponte com a baixa fin010 (bxaCodSeq) ────────────────
     // (a) o list, variando os filtros; imprime o corpo do erro para descobrir o exigido.
     const tentativas: Array<{ nome: string; filtro: Row }> = [
-        { nome: 'chave completa', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar } },
-        { nome: '+ filCod', filtro: { 'filCod#EQ': fil, 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar } },
+        {
+            nome: 'chave completa',
+            filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar },
+        },
+        {
+            nome: '+ filCod',
+            filtro: {
+                'filCod#EQ': fil,
+                'bncCod#EQ': bnc,
+                'gtbCodSeq#EQ': gtb,
+                'garCodSeq#EQ': gar,
+            },
+        },
         { nome: 'só bnc+gtb', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb } },
-        { nome: 'chave + flpCod=0', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'flpCod#EQ': 0 } },
+        {
+            nome: 'chave + flpCod=0',
+            filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'flpCod#EQ': 0 },
+        },
         { nome: 'sem filtro', filtro: {} },
         // O ERP exige `fbeEspCod` como FILTRO, mas talvez aceite um operador abrangente
         // em vez de um código exato — o que evita varrer os 153 códigos do banco.
-        { nome: 'fbeEspCod#LIKE %', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'fbeEspCod#LIKE': '%' } },
-        { nome: 'fbeEspCod#NEQ ZZZ', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'fbeEspCod#NEQ': 'ZZZ' } },
-        { nome: 'fbeEspCod#NE ZZZ', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'fbeEspCod#NE': 'ZZZ' } },
-        { nome: 'fbeEspCod#GE 0', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'fbeEspCod#GE': '0' } },
-        { nome: 'fbeEspCod#EQ vazio', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'fbeEspCod#EQ': '' } },
-        { nome: 'fbeEspCod#IS_NOT_NULL', filtro: { 'bncCod#EQ': bnc, 'gtbCodSeq#EQ': gtb, 'garCodSeq#EQ': gar, 'fbeEspCod#IS_NOT_NULL': true } },
+        {
+            nome: 'fbeEspCod#LIKE %',
+            filtro: {
+                'bncCod#EQ': bnc,
+                'gtbCodSeq#EQ': gtb,
+                'garCodSeq#EQ': gar,
+                'fbeEspCod#LIKE': '%',
+            },
+        },
+        {
+            nome: 'fbeEspCod#NEQ ZZZ',
+            filtro: {
+                'bncCod#EQ': bnc,
+                'gtbCodSeq#EQ': gtb,
+                'garCodSeq#EQ': gar,
+                'fbeEspCod#NEQ': 'ZZZ',
+            },
+        },
+        {
+            nome: 'fbeEspCod#NE ZZZ',
+            filtro: {
+                'bncCod#EQ': bnc,
+                'gtbCodSeq#EQ': gtb,
+                'garCodSeq#EQ': gar,
+                'fbeEspCod#NE': 'ZZZ',
+            },
+        },
+        {
+            nome: 'fbeEspCod#GE 0',
+            filtro: {
+                'bncCod#EQ': bnc,
+                'gtbCodSeq#EQ': gtb,
+                'garCodSeq#EQ': gar,
+                'fbeEspCod#GE': '0',
+            },
+        },
+        {
+            nome: 'fbeEspCod#EQ vazio',
+            filtro: {
+                'bncCod#EQ': bnc,
+                'gtbCodSeq#EQ': gtb,
+                'garCodSeq#EQ': gar,
+                'fbeEspCod#EQ': '',
+            },
+        },
+        {
+            nome: 'fbeEspCod#IS_NOT_NULL',
+            filtro: {
+                'bncCod#EQ': bnc,
+                'gtbCodSeq#EQ': gtb,
+                'garCodSeq#EQ': gar,
+                'fbeEspCod#IS_NOT_NULL': true,
+            },
+        },
     ];
     console.log('4) arquivosRetornoDetalhe/list — caçando o filtro exigido:');
     for (const t of tentativas) {
         try {
             const { rows, count } = await base.listGenericPaginated<Row>(
                 'fin052/arquivosRetornoDetalhe/list',
-                { fieldList: [], filterList: t.filtro, serviceName: 'fin052', pageNumber: 1, pageSize: 50 },
+                {
+                    fieldList: [],
+                    filterList: t.filtro,
+                    serviceName: 'fin052',
+                    pageNumber: 1,
+                    pageSize: 50,
+                },
                 { filCod: fil },
             );
             log(`   ✅ "${t.nome}" → count=${count} rows=${rows.length}`);
@@ -238,7 +312,9 @@ async function main(): Promise<void> {
     if (eventos[0]) {
         console.log('    exemplos:');
         for (const e of eventos.slice(0, 8)) {
-            console.log(`      ${String(e.fbeEspCod).padEnd(6)} tipo=${e.fbeVldTipo} · ${e.fbeEspDescricao}`);
+            console.log(
+                `      ${String(e.fbeEspCod).padEnd(6)} tipo=${e.fbeVldTipo} · ${e.fbeEspDescricao}`,
+            );
         }
     }
 
@@ -277,7 +353,9 @@ async function main(): Promise<void> {
     }
 
     for (const cod of detalhes.length > 0 ? [] : codigos) {
-        for (const tipo of [...new Set(eventos.filter((e) => e.fbeEspCod === cod).map((e) => e.fbeVldTipo))]) {
+        for (const tipo of [
+            ...new Set(eventos.filter((e) => e.fbeEspCod === cod).map((e) => e.fbeVldTipo)),
+        ]) {
             try {
                 const { rows } = await base.listGenericPaginated<Row>(
                     'fin052/arquivosRetornoDetalhe/list',
@@ -297,7 +375,9 @@ async function main(): Promise<void> {
                     { filCod: fil },
                 );
                 if (rows.length > 0) {
-                    log(`4b) ✅ detalhe com fbeEspCod=${cod} tipo=${tipo} → ${rows.length} linha(s)`);
+                    log(
+                        `4b) ✅ detalhe com fbeEspCod=${cod} tipo=${tipo} → ${rows.length} linha(s)`,
+                    );
                     detalhes.push(...rows);
                 }
             } catch {
@@ -364,7 +444,13 @@ async function main(): Promise<void> {
             try {
                 const cab = await base.listGenericPaginated<Row>(
                     `fin015/finItemSispag/finItemSispagRetCab/list/${filLote}/${bncLote}/${flpAlvo}/${its}`,
-                    { fieldList: [], filterList: {}, serviceName: 'fin015', pageNumber: 1, pageSize: 50 },
+                    {
+                        fieldList: [],
+                        filterList: {},
+                        serviceName: 'fin015',
+                        pageNumber: 1,
+                        pageSize: 50,
+                    },
                     { filCod: filLote },
                 );
                 log(`   ✅ finItemSispagRetCab(its ${its}) → count=${cab.count}`);

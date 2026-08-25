@@ -78,7 +78,9 @@ async function main(): Promise<void> {
                     break;
                 } catch (e) {
                     const d = (e as { response?: { data?: unknown } })?.response?.data;
-                    console.log(`  gar ${gar} → ${JSON.stringify(d ?? (e as Error).message).slice(0, 160)}`);
+                    console.log(
+                        `  gar ${gar} → ${JSON.stringify(d ?? (e as Error).message).slice(0, 160)}`,
+                    );
                 }
             }
             if (!ok) console.log(`  gar ${gar} → não cancelado`);

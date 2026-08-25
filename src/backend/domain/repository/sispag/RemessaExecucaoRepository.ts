@@ -170,7 +170,8 @@ export default class RemessaExecucaoRepository {
             {
                 key,
                 gabCod: data.nativeGabCod ?? null,
-                erpResponse: data.erpResponse === undefined ? null : JSON.stringify(data.erpResponse),
+                erpResponse:
+                    data.erpResponse === undefined ? null : JSON.stringify(data.erpResponse),
             },
         );
     };
@@ -188,7 +189,8 @@ export default class RemessaExecucaoRepository {
             {
                 key,
                 mensagem: data.mensagem.slice(0, 2000),
-                erpResponse: data.erpResponse === undefined ? null : JSON.stringify(data.erpResponse),
+                erpResponse:
+                    data.erpResponse === undefined ? null : JSON.stringify(data.erpResponse),
             },
         );
     };

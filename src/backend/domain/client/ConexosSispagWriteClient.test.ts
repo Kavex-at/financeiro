@@ -72,7 +72,14 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
         it('repete os campos de seleção nos DOIS níveis e usa postGenericOnce', async () => {
             const base = buildBase();
             base.postGenericOnce.mockResolvedValue({ valid: 'SUCESSO' });
-            const item = { docCod: 520, titCod: 1, filCod: 2, filCodLote: 1, bncCod: 4, flpCod: 18 };
+            const item = {
+                docCod: 520,
+                titCod: 1,
+                filCod: 2,
+                filCodLote: 1,
+                bncCod: 4,
+                flpCod: 18,
+            };
             await make(base).importarTitulos({ filCod: 1, bncCod: 4, flpCod: 18, itens: [item] });
             const [endpoint, body] = base.postGenericOnce.mock.calls[0];
             expect(endpoint).toBe('fin015/finItemSispag/titulosPendentes/importar');
@@ -289,11 +296,14 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             const pageSize = Number(body.pageSize);
             const pageNumber = Number(body.pageNumber);
             const inicio = (pageNumber - 1) * pageSize;
-            const rows = Array.from({ length: Math.max(0, Math.min(pageSize, total - inicio)) }, (_, i) => ({
-                filCod: 2,
-                docCod: inicio + i + 1,
-                titCod: 1,
-            }));
+            const rows = Array.from(
+                { length: Math.max(0, Math.min(pageSize, total - inicio)) },
+                (_, i) => ({
+                    filCod: 2,
+                    docCod: inicio + i + 1,
+                    titCod: 1,
+                }),
+            );
             return Promise.resolve({ count: total, rows });
         };
 
@@ -435,7 +445,9 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             });
 
             for (const chamada of base.postGenericOnce.mock.calls) {
-                const body = chamada[1] as Record<string, unknown> & { items: Array<Record<string, unknown>> };
+                const body = chamada[1] as Record<string, unknown> & {
+                    items: Array<Record<string, unknown>>;
+                };
                 expect(body).toMatchObject({ op: 1, bncCodFin015: 4 });
                 expect(body.items[0]).toMatchObject({ op: 1, bncCodFin015: 4 });
             }
@@ -550,5 +562,4 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             ).rejects.toBeInstanceOf(ConexosError);
         });
     });
-
 });

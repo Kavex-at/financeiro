@@ -311,7 +311,9 @@ export default class SispagPainelService {
                 desdeMinutos: MINUTOS_ORFAO,
                 // O `flpCod` é o que o operador leva para o fin015. Quando é `undefined`,
                 // a queda foi antes de registrarmos o número — e isso também é informação.
-                lotesNativos: remessa.map((r) => r.nativeFlpCod).filter((n): n is number => n != null),
+                lotesNativos: remessa
+                    .map((r) => r.nativeFlpCod)
+                    .filter((n): n is number => n != null),
             };
         } catch (e) {
             void this.logService.warn({

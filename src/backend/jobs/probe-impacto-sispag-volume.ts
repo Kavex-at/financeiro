@@ -87,7 +87,9 @@ async function main(): Promise<void> {
         }
 
         const media = amostrados > 0 ? totalBaixas / amostrados : Number.NaN;
-        console.log(`amostra: ${amostrados} borderôs → ${totalBaixas} baixas · média ${media.toFixed(2)}/borderô`);
+        console.log(
+            `amostra: ${amostrados} borderôs → ${totalBaixas} baixas · média ${media.toFixed(2)}/borderô`,
+        );
 
         const meses = [...porMes.entries()].sort().slice(-14);
         console.table(

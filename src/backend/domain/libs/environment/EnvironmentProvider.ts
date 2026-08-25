@@ -58,7 +58,8 @@ export default class EnvironmentProvider {
         // Deliberadamente NÃO é "tudo que não é -hml": os e2e apontam para um mock em
         // 127.0.0.1 e um servidor de teste não é produção. Bloquear por ausência de `-hml`
         // recusaria escrita contra um mock — ruído, não segurança.
-        const ehErpDeProducao = /(^|\/\/|\.)conexos\.cloud/i.test(conexosApiUrl) && !conexosApiUrl.includes('-hml');
+        const ehErpDeProducao =
+            /(^|\/\/|\.)conexos\.cloud/i.test(conexosApiUrl) && !conexosApiUrl.includes('-hml');
         if (!ehErpDeProducao) return true;
 
         console.warn(

@@ -536,17 +536,20 @@ export default class LotePagamentoRepository {
     };
 
     /** Resultado da conciliação de um item, vindo do detalhe do retorno (fin052). */
-    public registrarConciliacaoItem = async (input: {
-        loteId: string;
-        filCod: number;
-        docCod: string;
-        titCod: string;
-        evento: string;
-        descricao?: string;
-        rejeitado: boolean;
-        borCod?: number;
-        bxaCodSeq?: number;
-    }, tx?: TransactionClient): Promise<void> => {
+    public registrarConciliacaoItem = async (
+        input: {
+            loteId: string;
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            evento: string;
+            descricao?: string;
+            rejeitado: boolean;
+            borCod?: number;
+            bxaCodSeq?: number;
+        },
+        tx?: TransactionClient,
+    ): Promise<void> => {
         await this.db(tx).update(
             `UPDATE lote_pagamento_item
              SET retorno_evento = $evento, retorno_descricao = $descricao, rejeitado = $rejeitado,
@@ -562,5 +565,4 @@ export default class LotePagamentoRepository {
             },
         );
     };
-
 }

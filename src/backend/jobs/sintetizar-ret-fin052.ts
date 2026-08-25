@@ -89,7 +89,9 @@ async function main(): Promise<void> {
         log(`nenhum .REM com conteúdo no lote ${FLP} — gere a remessa antes.`);
         return;
     }
-    log(`1) .REM de origem: ${rem.nomeArquivo} (gabCod ${rem.gabCod}, ${rem.conteudo.length} chars)`);
+    log(
+        `1) .REM de origem: ${rem.nomeArquivo} (gabCod ${rem.gabCod}, ${rem.conteudo.length} chars)`,
+    );
 
     // ── 2) transformar remessa → retorno ─────────────────────────────────────
     const linhas = rem.conteudo.split(/\r?\n/).filter((l) => l.trim().length > 0);
@@ -127,24 +129,30 @@ async function main(): Promise<void> {
     }
 
     const conteudo = `${saida.join('\r\n')}\r\n`;
-    const nomeArquivo = process.env.NOME ?? `${(rem.nomeArquivo ?? `flp${FLP}`).replace(/\.REM$/i, '')}.RET`;
+    const nomeArquivo =
+        process.env.NOME ?? `${(rem.nomeArquivo ?? `flp${FLP}`).replace(/\.REM$/i, '')}.RET`;
     const caminho = `${OUT}/${nomeArquivo}`;
     writeFileSync(caminho, conteudo, 'latin1');
 
     console.log(`\n${'='.repeat(78)}`);
-    console.log(`.RET SINTÉTICO — ${nomeArquivo} · ${detalhes} detalhe(s) · ${conteudo.length} chars`);
+    console.log(
+        `.RET SINTÉTICO — ${nomeArquivo} · ${detalhes} detalhe(s) · ${conteudo.length} chars`,
+    );
     console.log(`arquivo: ${caminho}`);
     console.log('='.repeat(78));
     for (const l of saida) {
         const reg = peek(l, 8, 1);
         const seg = peek(l, 14, 1);
-        const marca = reg === '3' ? `DET/${seg} ocorr="${peek(l, 231, 10).trimEnd()}"` : `reg ${reg}`;
+        const marca =
+            reg === '3' ? `DET/${seg} ocorr="${peek(l, 231, 10).trimEnd()}"` : `reg ${reg}`;
         console.log(`${marca.padEnd(24)}| ${l.slice(0, 120)}`);
     }
     console.log('='.repeat(78));
 
     if (!UPLOAD) {
-        log('\nSÓ GERAÇÃO. Para subir no fin052: RET_UPLOAD=1 (HML). O `processar` NÃO é chamado por este job.');
+        log(
+            '\nSÓ GERAÇÃO. Para subir no fin052: RET_UPLOAD=1 (HML). O `processar` NÃO é chamado por este job.',
+        );
         return;
     }
 

@@ -67,7 +67,13 @@ async function main(): Promise<void> {
         try {
             const r = await base.listGenericPaginated<Row>(
                 'fin015/list',
-                { fieldList: [], filterList: {}, serviceName: 'fin015', pageNumber: 1, pageSize: 100 },
+                {
+                    fieldList: [],
+                    filterList: {},
+                    serviceName: 'fin015',
+                    pageNumber: 1,
+                    pageSize: 100,
+                },
                 { filCod },
             );
             lotes = r.rows;
@@ -84,7 +90,13 @@ async function main(): Promise<void> {
             try {
                 const { rows: itens } = await base.listGenericPaginated<Row>(
                     `fin015/finItemSispag/list/${filCod}/${bnc}/${flp}`,
-                    { fieldList: [], filterList: {}, serviceName: 'fin015', pageNumber: 1, pageSize: 50 },
+                    {
+                        fieldList: [],
+                        filterList: {},
+                        serviceName: 'fin015',
+                        pageNumber: 1,
+                        pageSize: 50,
+                    },
                     { filCod },
                 );
                 const comBor = itens.filter((i) => i.borCod != null);
@@ -141,10 +153,16 @@ async function main(): Promise<void> {
                     { filCod },
                 );
                 if (rows.length === 0) continue;
-                const campos = Object.entries(rows[0]).filter(([k]) => /ger(Num|Cod|Des)|conta|cco/i.test(k));
+                const campos = Object.entries(rows[0]).filter(([k]) =>
+                    /ger(Num|Cod|Des)|conta|cco/i.test(k),
+                );
                 console.log(`  ${svc} fil ${filCod}: ${campos.length} campo(s) de conta`);
-                for (const [k, v] of campos) console.log(`     ${k.padEnd(28)} = ${JSON.stringify(v)}`);
-                writeFileSync(`${OUT}/20-${svc}-fil${filCod}.json`, JSON.stringify(rows[0], null, 2));
+                for (const [k, v] of campos)
+                    console.log(`     ${k.padEnd(28)} = ${JSON.stringify(v)}`);
+                writeFileSync(
+                    `${OUT}/20-${svc}-fil${filCod}.json`,
+                    JSON.stringify(rows[0], null, 2),
+                );
                 break;
             } catch (e) {
                 log(`  ${svc} fil ${filCod}: ${corpo(e)}`);
@@ -168,10 +186,14 @@ async function main(): Promise<void> {
         );
         const cfg = (raw?.configList ?? []) as Array<Row>;
         writeFileSync(`${OUT}/30-fin052-configlist.json`, JSON.stringify(cfg, null, 2));
-        const comOpcoes = cfg.filter((c) => Array.isArray(c.optionList) && (c.optionList as []).length);
+        const comOpcoes = cfg.filter(
+            (c) => Array.isArray(c.optionList) && (c.optionList as []).length,
+        );
         console.log(`  ${cfg.length} coluna(s) no configList, ${comOpcoes.length} com enum:`);
         for (const c of comOpcoes) {
-            const ops = (c.optionList as Array<Row>).map((o) => `${o.value}=${o.description}`).join(' · ');
+            const ops = (c.optionList as Array<Row>)
+                .map((o) => `${o.value}=${o.description}`)
+                .join(' · ');
             console.log(`     ${String(c.name).padEnd(22)} ${ops}`);
         }
     } catch (e) {

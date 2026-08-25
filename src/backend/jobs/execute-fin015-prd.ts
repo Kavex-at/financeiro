@@ -178,9 +178,7 @@ async function main(): Promise<void> {
     }
     const alvo = pendentes.find(
         (p) =>
-            String(p.docCod) === DOC &&
-            String(p.titCod ?? '1') === TIT &&
-            Number(p.filCod) === FIL,
+            String(p.docCod) === DOC && String(p.titCod ?? '1') === TIT && Number(p.filCod) === FIL,
     );
     if (!alvo) {
         log(
@@ -202,7 +200,11 @@ async function main(): Promise<void> {
                 Number(alvo.titVld3libera) === 1,
             `${alvo.titVld1libera}/${alvo.titVld2libera}/${alvo.titVld3libera}`,
         ],
-        ['filial do título = filial do lote', Number(alvo.filCod) === FIL, `${alvo.filCod} = ${FIL}`],
+        [
+            'filial do título = filial do lote',
+            Number(alvo.filCod) === FIL,
+            `${alvo.filCod} = ${FIL}`,
+        ],
     ];
     console.log(`\n2) REVALIDAÇÃO — doc ${DOC}/${TIT} · ${alvo.dpeNomPessoa}`);
     for (const [nome, ok, det] of checagens) {
@@ -302,7 +304,9 @@ async function main(): Promise<void> {
             { filCod: FIL },
         );
         if (itens.length !== 1) {
-            log(`   lote ficou com ${itens.length} item(ns), esperado 1. Parando antes de finalizar.`);
+            log(
+                `   lote ficou com ${itens.length} item(ns), esperado 1. Parando antes de finalizar.`,
+            );
             throw new Error('contagem de itens inesperada');
         }
         estado.itsCodSeq = itens[0].itsCodSeq;
@@ -352,7 +356,9 @@ async function main(): Promise<void> {
             const caminho = `${OUT}/${rem.nomeArquivo ?? `flp${flpCod}`}`;
             writeFileSync(caminho, rem.conteudo);
             console.log(`\n${'='.repeat(78)}`);
-            console.log(`.REM — ${rem.nomeArquivo} · gabCod ${gabCod} · ${rem.conteudo.length} chars`);
+            console.log(
+                `.REM — ${rem.nomeArquivo} · gabCod ${gabCod} · ${rem.conteudo.length} chars`,
+            );
             console.log(`arquivo: ${caminho}`);
             console.log('='.repeat(78));
             for (const l of rem.conteudo.split(/\r?\n/)) {

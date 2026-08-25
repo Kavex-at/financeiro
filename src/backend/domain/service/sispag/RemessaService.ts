@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { inject, injectable } from 'tsyringe';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
-import ErpPerguntaError from '../../errors/ErpPerguntaError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteAnteriorCanceladoError from '../../errors/LoteAnteriorCanceladoError.js';
 import RemessaEmAndamentoError from '../../errors/RemessaEmAndamentoError.js';
@@ -192,8 +190,12 @@ export default class RemessaService {
                 dryRun: false,
                 writeEnabled,
                 loteId: lote.id,
-                ...(anterior.nativeFlpCod !== undefined ? { nativeFlpCod: anterior.nativeFlpCod } : {}),
-                ...(anterior.nativeGabCod !== undefined ? { nativeGabCod: anterior.nativeGabCod } : {}),
+                ...(anterior.nativeFlpCod !== undefined
+                    ? { nativeFlpCod: anterior.nativeFlpCod }
+                    : {}),
+                ...(anterior.nativeGabCod !== undefined
+                    ? { nativeGabCod: anterior.nativeGabCod }
+                    : {}),
                 itens: lote.itens.length,
                 valorTotal,
             };
@@ -269,7 +271,12 @@ export default class RemessaService {
             await this.logService.error({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message: 'remessa EM DÚVIDA (estado do ERP indeterminado) — NÃO re-POSTada',
-                data: { loteId: lote.id, key, nativeFlpCod: anterior.nativeFlpCod, etapa: anterior.etapa },
+                data: {
+                    loteId: lote.id,
+                    key,
+                    nativeFlpCod: anterior.nativeFlpCod,
+                    etapa: anterior.etapa,
+                },
             });
             throw new RemessaEmDuvidaError({
                 loteId: lote.id,
@@ -318,7 +325,9 @@ export default class RemessaService {
         if (dryRun) {
             await this.ledger.beginExecution({
                 idempotencyKey: key,
-                ...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
+                ...(input.correlationId !== undefined
+                    ? { correlationId: input.correlationId }
+                    : {}),
                 loteId: lote.id,
                 filCod: lote.filCod,
                 bncCod,
@@ -729,7 +738,7 @@ export default class RemessaService {
             return {
                 resultado: {
                     etapa: 'indeterminado',
-                    motivo: 'flpCod não registrado e sem marca d\'água para reconhecer o lote',
+                    motivo: "flpCod não registrado e sem marca d'água para reconhecer o lote",
                 },
             };
         }
@@ -837,9 +846,10 @@ export default class RemessaService {
             }
 
             const pesCod = pendente.raw.pesCod;
-            const contas = pesCod != null
-                ? await this.sispag.listContasFavorecido(String(pesCod), lote.filCod)
-                : [];
+            const contas =
+                pesCod != null
+                    ? await this.sispag.listContasFavorecido(String(pesCod), lote.filCod)
+                    : [];
             const noBanco = contas.filter((c) => c.banco === febraban);
             const destino = noBanco.find((c) => c.padrao) ?? noBanco[0];
             if (!destino) {
@@ -906,5 +916,4 @@ export default class RemessaService {
         if (!arquivo?.conteudo) return null;
         return { nomeArquivo: lote.remessaArquivo, conteudo: arquivo.conteudo };
     };
-
 }

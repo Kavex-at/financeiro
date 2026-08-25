@@ -200,5 +200,4 @@ describe('ConexosSispagClient (read-only)', () => {
             if (lotes.length > 0) expect(lotes[0]?.filCod).toBe(1);
         });
     });
-
 });

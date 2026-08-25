@@ -140,14 +140,16 @@ async function main(): Promise<void> {
                 },
                 { filCod },
             );
-            log(`finItemSispag/list fil=${filCod} bnc=${bncCod} flp=${flpCod} → ${page.rows.length} item(ns)`);
+            log(
+                `finItemSispag/list fil=${filCod} bnc=${bncCod} flp=${flpCod} → ${page.rows.length} item(ns)`,
+            );
             if (page.rows.length === 0) continue;
 
             itensEncontrados = true;
             save(`20-itens-flp${flpCod}-fil${filCod}.json`, page.rows);
 
             const item = page.rows[0];
-            console.log('\n' + '─'.repeat(78));
+            console.log(`\n${'─'.repeat(78)}`);
             console.log(`ITEM IMPORTADO REAL — flp ${flpCod} (fil ${filCod}, bnc ${bncCod})`);
             console.log('─'.repeat(78));
             for (const k of Object.keys(item).sort()) {
@@ -198,11 +200,16 @@ async function main(): Promise<void> {
                         (k) => item[k] !== null && item[k] !== undefined && item[k] !== '',
                     );
                     console.log('\n  >>> DELTA — campos que o ITEM tem e o PENDENTE não <<<');
-                    console.log('  (preenchidos):', preenchidosSoNoItem.sort().join(', ') || '(nenhum)');
+                    console.log(
+                        '  (preenchidos):',
+                        preenchidosSoNoItem.sort().join(', ') || '(nenhum)',
+                    );
                     console.log(
                         '  (vazios):',
-                        soNoItem.filter((k) => !preenchidosSoNoItem.includes(k)).sort().join(', ') ||
-                            '(nenhum)',
+                        soNoItem
+                            .filter((k) => !preenchidosSoNoItem.includes(k))
+                            .sort()
+                            .join(', ') || '(nenhum)',
                     );
                     save(`40-delta-flp${flpCod}.json`, {
                         soNoItem: soNoItem.sort(),

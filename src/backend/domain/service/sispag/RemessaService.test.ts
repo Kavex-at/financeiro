@@ -111,9 +111,14 @@ const buildWrite = () => ({
     criarLote: jest.fn().mockResolvedValue({ flpCod: 12, filCod: 2, bncCod: 4 }),
     // Estado do lote no ERP. Encoding medido em produção: 0 aberto · 1 finalizado ·
     // 2/3 cancelado. Default: lote aberto e vazio (o caso "morreu logo depois de criar").
-    getLoteNativo: jest
-        .fn()
-        .mockResolvedValue({ filCod: 2, bncCod: 4, flpCod: 99, status: 0, titulosCount: 0, soma: 0 }),
+    getLoteNativo: jest.fn().mockResolvedValue({
+        filCod: 2,
+        bncCod: 4,
+        flpCod: 99,
+        status: 0,
+        titulosCount: 0,
+        soma: 0,
+    }),
     // Chaves já dentro do lote nativo. Default: vazio (nada importado ainda).
     listarChavesDoLote: jest.fn().mockResolvedValue(new Set<string>()),
     // Marca d'água: por default a filial já tem o lote 98, então a marca é 98.
@@ -135,9 +140,11 @@ const buildWrite = () => ({
 });
 
 const buildSispag = () => ({
-    listContasCorrentes: jest.fn().mockResolvedValue([
-        { ccoCod: 2, bncCod: 4, agencia: '0641', numeroConta: 55795, dvConta: '4', gerNum: 38 },
-    ]),
+    listContasCorrentes: jest
+        .fn()
+        .mockResolvedValue([
+            { ccoCod: 2, bncCod: 4, agencia: '0641', numeroConta: 55795, dvConta: '4', gerNum: 38 },
+        ]),
     listContasFavorecido: jest
         .fn()
         .mockResolvedValue([
@@ -295,7 +302,7 @@ describe('RemessaService', () => {
             expect(ledger.settle).toHaveBeenCalled();
         });
 
-        it('grava a MARCA D\'ÁGUA antes do criarLote — é o que salva a janela sem flpCod', async () => {
+        it("grava a MARCA D'ÁGUA antes do criarLote — é o que salva a janela sem flpCod", async () => {
             const ledger = buildLedger();
             const write = buildWrite();
 
@@ -357,7 +364,11 @@ describe('RemessaService', () => {
                 status: 'reconciling',
                 dryRun: false,
                 etapa: 'criar_lote',
-                requestPayload: { marcaFlpCods: [40, 41], ccoCod: 2, dataDebito: 1_790_000_000_000 },
+                requestPayload: {
+                    marcaFlpCods: [40, 41],
+                    ccoCod: 2,
+                    dataDebito: 1_790_000_000_000,
+                },
             });
             const write = buildWrite();
             write.listarLotesNativos.mockResolvedValue([
@@ -456,8 +467,12 @@ describe('RemessaService', () => {
             expect(write.criarLote).toHaveBeenCalledTimes(1);
         });
 
-        it('sem marca d\'água gravada continua FAIL-CLOSED (execução antiga)', async () => {
-            const ledger = buildLedger({ status: 'reconciling', dryRun: false, etapa: 'criar_lote' });
+        it("sem marca d'água gravada continua FAIL-CLOSED (execução antiga)", async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                etapa: 'criar_lote',
+            });
             const write = buildWrite();
 
             await expect(
@@ -736,7 +751,12 @@ describe('RemessaService', () => {
         it('reaproveita o lote nativo da tentativa anterior em vez de criar outro', async () => {
             // Ledger em `error` com flpCod já atribuído: foi uma falha de validação DEPOIS
             // do criarLote. Criar um segundo lote aqui deixaria o primeiro órfão no ERP.
-            const ledger = buildLedger({ status: 'error', dryRun: false, nativeFlpCod: 12, etapa: 'importar' });
+            const ledger = buildLedger({
+                status: 'error',
+                dryRun: false,
+                nativeFlpCod: 12,
+                etapa: 'importar',
+            });
             const write = buildWrite();
             const res = await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
 
@@ -783,9 +803,9 @@ describe('RemessaService', () => {
         it('recusa título de filial diferente da do lote', async () => {
             const write = buildWrite();
             write.listarTitulosPendentes.mockResolvedValue([pendente({ filCod: 1 })]);
-            await expect(
-                make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
-            ).rejects.toThrow(/filial/i);
+            await expect(make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' })).rejects.toThrow(
+                /filial/i,
+            );
             expect(write.importarTitulos).not.toHaveBeenCalled();
         });
 
@@ -804,15 +824,22 @@ describe('RemessaService', () => {
         it('recusa título que saiu da lista de pendentes do ERP', async () => {
             const write = buildWrite();
             write.listarTitulosPendentes.mockResolvedValue([]);
-            await expect(
-                make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
-            ).rejects.toThrow(/não está mais elegível/i);
+            await expect(make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' })).rejects.toThrow(
+                /não está mais elegível/i,
+            );
         });
 
         it('usa a conta pagadora da FILIAL, nunca uma fixa', async () => {
             const sispag = buildSispag();
             sispag.listContasCorrentes.mockResolvedValue([
-                { ccoCod: 9, bncCod: 4, agencia: '0870', numeroConta: 29949, dvConta: '2', gerNum: 39 },
+                {
+                    ccoCod: 9,
+                    bncCod: 4,
+                    agencia: '0870',
+                    numeroConta: 29949,
+                    dvConta: '2',
+                    gerNum: 39,
+                },
             ]);
             const write = buildWrite();
             await make({ sispag, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
@@ -881,5 +908,4 @@ describe('RemessaService', () => {
             ).rejects.toMatchObject({ retryable: true });
         });
     });
-
 });
