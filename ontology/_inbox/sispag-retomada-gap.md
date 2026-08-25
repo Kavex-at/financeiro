@@ -142,3 +142,72 @@ isolado, sem o resto da sequência.
 - ~10 lotes vazios criados nas filiais 1 e 2 ao longo das tentativas. Não há endpoint de
   cancelamento de lote no fin015. O job já reusa lote vazio como sondagem para não piorar.
 - 2 títulos (606, 614) foram consumidos por imports parciais e saíram do grid de pendentes.
+
+
+---
+
+# FECHADO — 2026-08-25, fim do dia: os três cenários passaram ao vivo
+
+## Placar final
+
+| Cenário | Resultado | Evidência |
+|---|---|---|
+| C1 · órfão sem `flpCod` (marca d'água) | **✅ VERDE** | `usou flp 12 · 0 lote(s) novo(s)` — adotou o órfão plantado |
+| C2 · import parcial | **✅ VERDE** | `flp 13 com 2 chave(s) [2:591:1, 2:633:1] · 1 novo(s)` |
+| C3 · remessa já gerada | **✅ VERDE** | `status=skipped arquivo=PG2508006002.R1EM` |
+
+Em nenhuma execução verde a retomada criou um lote a mais do que o esperado — que é o
+critério do gate.
+
+## O que destravou o pool
+
+Não foi cadastrar conta bancária. Medindo a cobertura por banco na filial 2:
+
+| Banco do favorecido | Favorecidos | Títulos | Temos conta pagadora? |
+|---|---|---|---|
+| **237 Bradesco** | 7 | **24** | sim |
+| 1 Banco do Brasil | 4 | 12 | sim |
+| 755 BofA | 2 | 11 | não |
+| 33 Santander | 1 | 1 | sim |
+| 341 Itaú | 1 | 1 | sim |
+
+O Itaú, que eu vinha usando, tem a PIOR cobertura de HML. Com `VAL_BNC=7` + o seed de
+vencimento, o pool existe sem criar nenhum cadastro.
+
+## Defeitos de PRODUÇÃO achados por este gate
+
+Nenhum deles apareceria em teste mockado.
+
+1. **`importar` aceita um item por chamada.** Qualquer lote com 2+ títulos falhava — no
+   caminho normal, não só na retomada.
+2. **`flpCod` não é monotônico.** A marca d'água virou conjunto.
+3. **`fin015/list` sem `filCod#EQ`.** Contaminava a marca d'água e, no
+   `ConexosSispagClient.listLotes` do painel, rotulava lote de outra filial com a filial
+   consultada.
+4. **Chave do item sem filial.** `docCod` se repete entre filiais (o doc 285 existe na 2 e
+   na 4); o `Map` colidia e o título de outra filial sobrescrevia o nosso — importaria
+   pagamento de outro fornecedor, com outro valor.
+5. **`titulosCount` não conta itens** (vale 1 para qualquer lote não-vazio). Eu usava como
+   contagem; e a asserção do próprio gate caiu nessa armadilha antes de eu perceber.
+
+## Custo em HML
+
+- ~30 títulos da filial 2 com vencimento empurrado (reversível via `REVERTER=1`).
+- ~13 lotes criados nas filiais 1 e 2. Não há endpoint de cancelamento de lote no fin015.
+- Títulos importados nos lotes de teste saem do grid de pendentes de forma permanente.
+
+## Como repetir
+
+```
+cd src/backend
+CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
+databaseConnectionString=<postgres local> \
+CONEXOS_WRITE_ENABLED=true CONEXOS_DRY_RUN=false SISPAG_LIVE_WRITE_ENABLED=true \
+VAL_FIL=2 VAL_BNC=7 [VAL_ONLY=import-parcial] \
+npx tsx jobs/validate-retomada-remessa-v1.ts --executar
+```
+
+Cada cenário consome 2 títulos permanentemente. Sem `VAL_ONLY` o job roda os três e precisa
+de 6 no pool; com `VAL_ONLY` dá para exercitar um cenário sem gastar o resto. Se o pool
+acabar, `jobs/seed-hml-vencimento.ts` renova empurrando vencimentos de títulos cujo
+favorecido tenha conta no banco escolhido.

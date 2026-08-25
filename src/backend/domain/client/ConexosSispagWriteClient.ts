@@ -278,7 +278,10 @@ export default class ConexosSispagWriteClient {
                 );
             });
             return new Set(
-                (page.rows ?? []).map((r) => `${String(r.docCod ?? '')}:${String(r.titCod ?? '1')}`),
+                (page.rows ?? []).map(
+                    (r) =>
+                        `${Number(r.filCod ?? filCod)}:${String(r.docCod ?? '')}:${String(r.titCod ?? '1')}`,
+                ),
             );
         } catch {
             return undefined;
@@ -352,7 +355,8 @@ export default class ConexosSispagWriteClient {
                 for (const r of linhas) {
                     const pendente = this.paraTituloPendente(r, filCod);
                     acumulado.push(pendente);
-                    vistas.add(`${pendente.docCod}:${pendente.titCod}`);
+                    // Com a FILIAL: o grid cruza filiais e `docCod` se repete entre elas.
+                    vistas.add(`${pendente.filCod}:${pendente.docCod}:${pendente.titCod}`);
                 }
 
                 // Parada 1 — já achei tudo que me pediram.

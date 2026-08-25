@@ -631,7 +631,8 @@ export default class RemessaService {
             };
         }
 
-        const nossas = new Set(lote.itens.map((i) => `${i.docCod}:${i.titCod}`));
+        // Mesma chave com FILIAL usada no import — as duas pontas têm que falar a mesma língua.
+        const nossas = new Set(lote.itens.map((i) => `${i.filCod}:${i.docCod}:${i.titCod}`));
         const intrusos = [...jaNoErp].filter((k) => !nossas.has(k));
         if (intrusos.length > 0) {
             // O lote nativo tem título que NÃO está no nosso lote: alguém mexeu nele pelo
@@ -752,12 +753,16 @@ export default class RemessaService {
         /** Subconjunto a importar. Ausente = todos os itens do lote (caminho normal). */
         apenas?: ReadonlySet<string>,
     ): Promise<Array<Record<string, unknown>>> => {
-        const alvo = apenas
-            ? lote.itens.filter((i) => apenas.has(`${i.docCod}:${i.titCod}`))
-            : lote.itens;
+        // A chave inclui a FILIAL. O grid de pendentes cruza filiais e `docCod` NÃO é único
+        // entre elas: medido em HML, o doc 285 existe na filial 2 E na 4. Com a chave só
+        // `docCod:titCod`, o Map colide e o título de OUTRA filial sobrescreve o nosso —
+        // importaríamos o pagamento de outro fornecedor, com outro valor.
+        const chaveDe = (t: { filCod: number; docCod: string; titCod: string }): string =>
+            `${t.filCod}:${t.docCod}:${t.titCod}`;
+        const alvo = apenas ? lote.itens.filter((i) => apenas.has(chaveDe(i))) : lote.itens;
         // As chaves deixam o cliente parar assim que achar todas, em vez de varrer o grid
         // inteiro — e garantem que ele NÃO pare na primeira página se faltar alguma.
-        const chavesDesejadas = new Set(alvo.map((i) => `${i.docCod}:${i.titCod}`));
+        const chavesDesejadas = new Set(alvo.map(chaveDe));
         const pendentes = await this.write.listarTitulosPendentes({
             filCod: lote.filCod,
             bncCod,
@@ -765,20 +770,29 @@ export default class RemessaService {
             pageSize: 500,
             chavesDesejadas,
         });
-        const porChave = new Map(pendentes.map((p) => [`${p.docCod}:${p.titCod}`, p]));
+        const porChave = new Map(
+            pendentes.map((p) => [`${Number(p.raw.filCod)}:${p.docCod}:${p.titCod}`, p]),
+        );
         const febraban = FEBRABAN_POR_BNCCOD[bncCod] ?? 341;
         const itens: Array<Record<string, unknown>> = [];
 
         for (const item of alvo) {
-            const pendente = porChave.get(`${item.docCod}:${item.titCod}`);
+            const pendente = porChave.get(chaveDe(item));
             if (!pendente) {
+                // Não achou pela chave COMPLETA. Antes de dizer "não é mais elegível",
+                // olha se existe um homônimo em outra filial: a mensagem "é da filial X"
+                // aponta o problema real (item cross-filial), enquanto "não é mais
+                // elegível" mandaria a pessoa procurar pagamento e baixa que não existem.
+                const homonimo = pendentes.find(
+                    (p) => p.docCod === item.docCod && p.titCod === item.titCod,
+                );
+                if (homonimo) {
+                    throw new Error(
+                        `título ${item.docCod}/${item.titCod} é da filial ${homonimo.raw.filCod}, mas o lote é da ${lote.filCod}. Item cross-filial nunca concilia o retorno.`,
+                    );
+                }
                 throw new Error(
                     `título ${item.docCod}/${item.titCod} não está mais elegível no Conexos — pode já ter sido pago ou entrado em outro lote`,
-                );
-            }
-            if (Number(pendente.raw.filCod) !== lote.filCod) {
-                throw new Error(
-                    `título ${item.docCod}/${item.titCod} é da filial ${pendente.raw.filCod}, mas o lote é da ${lote.filCod}. Item cross-filial nunca concilia o retorno.`,
                 );
             }
 

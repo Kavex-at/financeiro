@@ -289,7 +289,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             const pageNumber = Number(body.pageNumber);
             const inicio = (pageNumber - 1) * pageSize;
             const rows = Array.from({ length: Math.max(0, Math.min(pageSize, total - inicio)) }, (_, i) => ({
-                filCod: 1,
+                filCod: 2,
                 docCod: inicio + i + 1,
                 titCod: 1,
             }));
@@ -322,7 +322,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 bncCod: 4,
                 flpCod: 30,
                 pageSize: 500,
-                chavesDesejadas: new Set(['3:1', '7:1']),
+                chavesDesejadas: new Set(['2:3:1', '2:7:1']),
             });
 
             // Ambas estão na primeira página — não faz sentido puxar as outras quatro.
@@ -340,7 +340,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 flpCod: 30,
                 pageSize: 500,
                 // 1600 só aparece na 4ª página — era exatamente o falso negativo.
-                chavesDesejadas: new Set(['3:1', '1600:1']),
+                chavesDesejadas: new Set(['2:3:1', '2:1600:1']),
             });
 
             expect(base.listGenericPaginated).toHaveBeenCalledTimes(4);

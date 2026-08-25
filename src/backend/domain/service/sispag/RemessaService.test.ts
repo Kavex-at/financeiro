@@ -226,7 +226,7 @@ describe('RemessaService', () => {
                 titulosCount: 1,
                 soma: 100,
             });
-            write.listarChavesDoLote.mockResolvedValue(new Set(['801:1']));
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1']));
 
             await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
 
@@ -513,7 +513,7 @@ describe('RemessaService', () => {
                 titulosCount: 1,
                 soma: 100,
             });
-            write.listarChavesDoLote.mockResolvedValue(new Set(['801:1']));
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1']));
             write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
 
             await make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({
@@ -540,7 +540,7 @@ describe('RemessaService', () => {
                 soma: 100,
             });
             // titulosCount diz 1, mas a lista mostra as 2 chaves do lote.
-            write.listarChavesDoLote.mockResolvedValue(new Set(['801:1', '802:1']));
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1', '2:802:1']));
 
             await make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({
                 loteId: 'L1',
@@ -563,7 +563,7 @@ describe('RemessaService', () => {
                 titulosCount: 1,
                 soma: 100,
             });
-            write.listarChavesDoLote.mockResolvedValue(new Set(['999:1']));
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:999:1']));
 
             await expect(
                 make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({
