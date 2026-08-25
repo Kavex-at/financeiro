@@ -404,7 +404,7 @@ export default class ConexosSispagWriteClient {
      * hoje vira erro — tratar no serviço de orquestração antes de ligar a escrita.
      */
     public importarTitulos = async (params: ImportarTitulosParams): Promise<void> => {
-        const { filCod, bncCod, itens, op = 1 } = params;
+        const { filCod, bncCod, flpCod, itens, op = 1 } = params;
         const path = 'fin015/finItemSispag/titulosPendentes/importar';
         const selecao = {
             op,
@@ -412,6 +412,23 @@ export default class ConexosSispagWriteClient {
             titVldReflexoDdaAssoc: 0,
             titVldReflexoDdaDesassoc: 0,
         };
+
+        // UM ITEM POR CHAMADA. Medido em HML (2026-08-25): dois itens no mesmo `items[]`
+        // devolvem `400 SELECTION_ERROR` com um `Generic.MODEL_INCONSISTENCY` POR ITEM;
+        // os mesmos dois itens, um por chamada, entram sem erro e ambos ficam no lote.
+        //
+        // O nome do campo (`items`, plural) e a nossa leitura do shape sugeriam lote — e a
+        // validação original passou porque foi feita com UM título só. Qualquer lote com 2+
+        // títulos, que é o caso normal, quebrava.
+        //
+        // NÃO é atômico: uma falha no meio deixa parte importada. É exatamente o cenário de
+        // import parcial que a retomada trata (ver `retomada-remessa-sispag.md`).
+        if (itens.length > 1) {
+            for (const item of itens) {
+                await this.importarTitulos({ filCod, bncCod, flpCod, itens: [item], op });
+            }
+            return;
+        }
         try {
             await this.base.ensureSid();
             await this.base.postGenericOnce<unknown>(
