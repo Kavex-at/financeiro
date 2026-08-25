@@ -8,6 +8,7 @@ import type {
     GerarRemessaParams,
     ImportarTitulosParams,
     LoteNativoCriado,
+    LoteNativoEstado,
     RemessaGerada,
     TituloPendente,
 } from '../interface/sispag/Fin015Write.js';
@@ -132,6 +133,54 @@ export default class ConexosSispagWriteClient {
             return { flpCod, filCod, bncCod: conta.bncCod };
         } catch (cause) {
             throw this.toConexosError('fin015', cause);
+        }
+    };
+
+    /**
+     * Estado do lote nativo no ERP. É o que permite RETOMAR uma sequência interrompida em
+     * vez de só travar: em vez de acreditar no nosso ledger sobre uma escrita que não
+     * confirmou, vamos perguntar ao ERP o que de fato aconteceu.
+     *
+     * Encoding de `flpVldStatus` MEDIDO em produção (2026-08-25, 22 lotes nas filiais
+     * 1/2/4/6) — não inferido:
+     *   0 → aberto (rascunho). `titulosCount` diz se o import chegou a entrar.
+     *   1 → finalizado. Sempre com `titulosCount >= 1` e `flpTimFinaliza` preenchido.
+     *   2 → cancelado. Os itens são removidos (`titulosCount` volta a 0).
+     *   3 → outro estado terminal, também com os itens removidos.
+     *
+     * Devolve `undefined` quando o lote não existe — o que também é resposta: significa
+     * que o `criarLote` não chegou a valer.
+     */
+    public getLoteNativo = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+    }): Promise<LoteNativoEstado | undefined> => {
+        const { filCod, bncCod, flpCod } = params;
+        const path = `fin015/${filCod}/${bncCod}/${flpCod}`;
+        try {
+            const bruto = await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                return this.base.getGeneric<Record<string, unknown>>(path, { filCod });
+            });
+            const row = ((bruto?.data as Record<string, unknown>) ?? bruto) as Record<
+                string,
+                unknown
+            >;
+            if (row?.flpCod == null) return undefined;
+            return {
+                filCod: Number(row.filCod ?? filCod),
+                bncCod: Number(row.bncCod ?? bncCod),
+                flpCod: Number(row.flpCod),
+                status: Number(row.flpVldStatus ?? 0),
+                titulosCount: Number(row.titulosCount ?? 0),
+                soma: Number(row.soma ?? 0),
+                finalizadoEm: row.flpTimFinaliza != null ? Number(row.flpTimFinaliza) : undefined,
+            };
+        } catch (cause) {
+            // 404 é resposta, não falha: o lote não existe.
+            if (cause instanceof Error && /404|not found/i.test(cause.message)) return undefined;
+            throw this.toConexosError(path, cause);
         }
     };
 

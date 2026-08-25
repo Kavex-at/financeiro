@@ -77,6 +77,8 @@ const buildEnv = (over: Record<string, unknown> = {}) =>
 /** O detalhe é consultado CÓDIGO A CÓDIGO — o ERP exige `fbeEspCod` exato. */
 const buildRetorno = (porCodigo: Record<string, ArquivoRetornoDetalhe[]> = { '00': [detalhe()] }) => ({
     processarArquivoRetorno: jest.fn().mockResolvedValue(undefined),
+    // Estado do arquivo no ERP: por default existe e NÃO foi processado.
+    getArquivoRetorno: jest.fn().mockResolvedValue({ ...CHAVE, processadoEm: undefined }),
     listEventosBancarios: jest.fn().mockResolvedValue(EVENTOS),
     listDetalhe: jest.fn(async (p: { eventoCod: string }) => porCodigo[p.eventoCod] ?? []),
 });
@@ -361,7 +363,10 @@ describe('ConciliacaoRetornoService', () => {
             expect(res.pagos).toBe(3);
         });
 
-        it('FAIL-CLOSED num `reconciling` órfão — 409, sem re-processar', async () => {
+        it('`reconciling` órfão NUNCA re-processa às cegas — consulta o ERP antes', async () => {
+            // A regra que não muda: o `processar` não é repetido por suposição. O que mudou
+            // é que "não sei" virou uma pergunta ao ERP em vez de um beco sem saída.
+            // Os três desfechos estão em 'retomada da conciliação'.
             const ledger = buildLedger({
                 status: 'reconciling',
                 dryRun: false,
@@ -370,10 +375,11 @@ describe('ConciliacaoRetornoService', () => {
                 criadoEm: '2026-08-24T12:00:00.000Z',
             });
             const retorno = buildRetorno();
+            retorno.getArquivoRetorno.mockResolvedValue({ ...CHAVE, processadoEm: 1787000000000 });
 
-            await expect(
-                make({ ledger, retorno }).conciliar({ ...CHAVE, ator: 'u', processar: true }),
-            ).rejects.toMatchObject({ code: 'CONCILIACAO_EM_DUVIDA', statusCode: 409 });
+            await make({ ledger, retorno }).conciliar({ ...CHAVE, ator: 'u', processar: true });
+
+            expect(retorno.getArquivoRetorno).toHaveBeenCalled();
             expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
         });
 
@@ -444,6 +450,60 @@ describe('ConciliacaoRetornoService', () => {
 
             expect(repo.registrarConciliacaoItem).not.toHaveBeenCalled();
             expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('retomada da conciliação (perguntar ao ERP)', () => {
+        const orfao = () =>
+            buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                processou: true,
+                varreduraIncompleta: false,
+                criadoEm: '2026-08-25T12:00:00.000Z',
+            });
+
+        it('ERP já processou → NÃO chama `processar` de novo, segue da leitura', async () => {
+            // O ERP carimba `processadoEm`. Repetir o PUT geraria baixa em cima de baixa.
+            const retorno = buildRetorno();
+            retorno.getArquivoRetorno.mockResolvedValue({ ...CHAVE, processadoEm: 1787000000000 });
+
+            const res = await make({ ledger: orfao(), retorno }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+                processar: true,
+            });
+
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
+            expect(res.processado).toBe(true);
+            expect(res.totalLinhas).toBe(1);
+        });
+
+        it('ERP NÃO processou → refaz com segurança (não há baixa para duplicar)', async () => {
+            const retorno = buildRetorno();
+            retorno.getArquivoRetorno.mockResolvedValue({ ...CHAVE, processadoEm: undefined });
+
+            await make({ ledger: orfao(), retorno }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+                processar: true,
+            });
+
+            expect(retorno.processarArquivoRetorno).toHaveBeenCalled();
+        });
+
+        it('estado do arquivo INDETERMINADO continua fail-closed', async () => {
+            const retorno = buildRetorno();
+            retorno.getArquivoRetorno.mockResolvedValue(undefined);
+
+            await expect(
+                make({ ledger: orfao(), retorno }).conciliar({
+                    ...CHAVE,
+                    ator: 'u',
+                    processar: true,
+                }),
+            ).rejects.toMatchObject({ code: 'CONCILIACAO_EM_DUVIDA' });
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
         });
     });
 

@@ -29,6 +29,8 @@ export interface RemessaExecucaoRow {
     nativeFlpCod?: number;
     nativeGabCod?: number;
     etapa?: RemessaEtapa;
+    /** Payload gravado write-ahead. Carrega `nomeArquivo` do `.REM` na etapa final. */
+    requestPayload?: unknown;
     erpResponse?: unknown;
     erroMensagem?: string;
     executadoPor?: string;
