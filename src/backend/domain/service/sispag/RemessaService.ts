@@ -603,21 +603,19 @@ export default class RemessaService {
                   };
         }
 
-        // status 0 — aberto. `titulosCount` diz se o import entrou.
+        // status 0 — aberto.
+        //
+        // ⚠️ `titulosCount` NÃO é a contagem de itens. Medido em HML: um lote com 3 itens
+        // reais reporta `titulosCount = 1`; em produção, TODOS os lotes reportam 1. O que
+        // bate é a `soma`. Serve só como booleano "tem alguma coisa?" — quem responde
+        // QUANTOS e QUAIS é `listarChavesDoLote`.
         const esperados = lote.itens.length;
         if (estado.titulosCount === 0) {
             return { ...reusar, etapa: 'importar', motivo: `lote ${flpCod} aberto e vazio` };
         }
-        if (estado.titulosCount >= esperados) {
-            return {
-                ...reusar,
-                etapa: 'finalizar',
-                motivo: `lote ${flpCod} já tem ${estado.titulosCount} título(s)`,
-            };
-        }
-        // Import PARCIAL. Re-importar tudo duplicaria o que já entrou; travar exigiria
-        // conserto na mão. Mas o ERP diz QUAIS títulos entraram, então a diferença é
-        // computável — importa-se só o que falta.
+        // O lote tem ALGUMA coisa. Quais, só a lista diz — e a partir daí a diferença
+        // entre o que o lote local quer e o que o ERP já tem é computável: importa-se só o
+        // que falta, seja o caso "faltou tudo menos um" ou "já está completo".
         const jaNoErp = await this.write.listarChavesDoLote({
             filCod: anterior.filCod,
             bncCod,

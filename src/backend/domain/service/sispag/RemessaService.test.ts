@@ -214,6 +214,8 @@ describe('RemessaService', () => {
         });
 
         it('órfão com títulos JÁ importados pula o import', async () => {
+            // `titulosCount` só diz "tem alguma coisa" — QUAIS vem da lista de chaves.
+            // Medido em HML: um lote com 3 itens reais reporta titulosCount=1.
             const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
             const write = buildWrite();
             write.getLoteNativo.mockResolvedValue({
@@ -224,6 +226,7 @@ describe('RemessaService', () => {
                 titulosCount: 1,
                 soma: 100,
             });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['801:1']));
 
             await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
 

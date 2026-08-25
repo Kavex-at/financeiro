@@ -380,4 +380,84 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
         });
     });
 
+    describe('importarTitulos — UM item por chamada', () => {
+        /**
+         * Medido em HML (2026-08-25): dois itens no mesmo `items[]` devolvem
+         * `400 SELECTION_ERROR` com um `Generic.MODEL_INCONSISTENCY` POR ITEM. Os mesmos
+         * dois, um por chamada, entram e ambos ficam no lote.
+         *
+         * A validação original passou porque foi feita com UM título. Qualquer lote com 2+,
+         * que é o caso normal, quebrava — e quebrava no caminho NORMAL, não só na retomada.
+         */
+        const item = (docCod: number) => ({ filCod: 2, docCod, titCod: 1 });
+
+        it('quebra o lote em uma chamada por item', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+
+            await make(base).importarTitulos({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 30,
+                itens: [item(801), item(802), item(803)],
+            });
+
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(3);
+            for (const chamada of base.postGenericOnce.mock.calls) {
+                expect((chamada[1] as { items: unknown[] }).items).toHaveLength(1);
+            }
+        });
+
+        it('um item só continua sendo uma chamada só', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+
+            await make(base).importarTitulos({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 30,
+                itens: [item(801)],
+            });
+
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
+        });
+
+        it('cada chamada leva os 4 campos de seleção nos DOIS níveis', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+
+            await make(base).importarTitulos({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 30,
+                itens: [item(801), item(802)],
+            });
+
+            for (const chamada of base.postGenericOnce.mock.calls) {
+                const body = chamada[1] as Record<string, unknown> & { items: Array<Record<string, unknown>> };
+                expect(body).toMatchObject({ op: 1, bncCodFin015: 4 });
+                expect(body.items[0]).toMatchObject({ op: 1, bncCodFin015: 4 });
+            }
+        });
+
+        it('falha no meio PROPAGA — a retomada trata o import parcial', async () => {
+            // Não é atômico e não finge ser: o item 1 entrou, o 2 falhou. Engolir aqui
+            // deixaria o lote incompleto e "bem-sucedido".
+            const base = buildBase();
+            base.postGenericOnce
+                .mockResolvedValueOnce({})
+                .mockRejectedValueOnce(validationError({ type: 'SELECTION_ERROR' }));
+
+            await expect(
+                make(base).importarTitulos({
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 30,
+                    itens: [item(801), item(802)],
+                }),
+            ).rejects.toBeInstanceOf(ConexosError);
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(2);
+        });
+    });
+
 });
