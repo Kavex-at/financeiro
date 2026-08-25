@@ -83,7 +83,9 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
 }
 
 type Acao = (
-  fn: () => Promise<unknown>,
+  // Recebe `opts` para que a própria ação possa ser repetida COM confirmação — é assim
+  // que o toast do lote cancelado reexecuta exatamente a mesma chamada, só que aprovada.
+  fn: (opts?: { confirmarNovoLote?: boolean }) => Promise<unknown>,
   okMsg: string | ((resultado: unknown) => { titulo: string; descricao?: string }),
 ) => void
 
@@ -218,7 +220,7 @@ export function LoteCard({
                 disabled={busy}
                 title="Cria o lote no Conexos, importa os títulos, finaliza e gera o arquivo .REM."
                 onClick={() =>
-                  acao(() => gerarRemessa(l.id), (r) => {
+                  acao((o) => gerarRemessa(l.id, o), (r) => {
                     const res = r as GerarRemessaResult
                     if (res.status === 'dry-run') {
                       return {

@@ -32,6 +32,9 @@ const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
     ...over,
 });
 
+/** Pendente do doc 802 — `pendente()` só sobrescreve o `raw`, então o topo vai à mão. */
+const pendente802 = () => ({ ...pendente({ docCod: 802 }), docCod: '802' });
+
 /** Lote com 2 itens — usado para exercitar o cenário de import PARCIAL no ERP. */
 const loteCom2Itens = (): LotePagamento =>
     lote({
@@ -110,6 +113,14 @@ const buildWrite = () => ({
     getLoteNativo: jest
         .fn()
         .mockResolvedValue({ filCod: 2, bncCod: 4, flpCod: 99, status: 0, titulosCount: 0, soma: 0 }),
+    // Chaves já dentro do lote nativo. Default: vazio (nada importado ainda).
+    listarChavesDoLote: jest.fn().mockResolvedValue(new Set<string>()),
+    // Marca d'água: por default a filial já tem o lote 98, então a marca é 98.
+    listarLotesNativos: jest
+        .fn()
+        .mockResolvedValue([
+            { filCod: 2, bncCod: 4, flpCod: 98, status: 1, titulosCount: 1, soma: 10 },
+        ]),
     listarTitulosPendentes: jest.fn().mockResolvedValue([pendente()]),
     importarTitulos: jest.fn().mockResolvedValue(undefined),
     finalizarLote: jest.fn().mockResolvedValue(undefined),
@@ -267,9 +278,128 @@ describe('RemessaService', () => {
             expect(ledger.settle).toHaveBeenCalled();
         });
 
-        it('órfão SEM flpCod continua FAIL-CLOSED — não dá para identificar o lote', async () => {
-            // Morreu entre o criarLote responder e o ledger gravar. Procurar por
-            // filial+data casaria com um rascunho criado por uma pessoa no mesmo intervalo.
+        it('grava a MARCA D\'ÁGUA antes do criarLote — é o que salva a janela sem flpCod', async () => {
+            const ledger = buildLedger();
+            const write = buildWrite();
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            const marca = ledger.setRequestPayload.mock.calls.find(
+                (c: unknown[]) => (c[1] as { marcaFlpCod?: number })?.marcaFlpCod !== undefined,
+            );
+            expect(marca?.[1]).toMatchObject({ marcaFlpCod: 98, ccoCod: 2 });
+            // ANTES do POST: senão a janela continua irrecuperável.
+            const ordemMarca = ledger.setRequestPayload.mock.invocationCallOrder[0] ?? 0;
+            const ordemCriar = write.criarLote.mock.invocationCallOrder[0] ?? 0;
+            expect(ordemMarca).toBeLessThan(ordemCriar);
+        });
+
+        it('órfão sem flpCod ADOTA o único lote acima da marca — não cria um segundo', async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                etapa: 'criar_lote',
+                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+            });
+            const write = buildWrite();
+            write.listarLotesNativos.mockResolvedValue([
+                { filCod: 2, bncCod: 4, flpCod: 98, status: 1, titulosCount: 1, soma: 10 },
+                // O órfão: acima da marca, mesma conta e data, vazio.
+                {
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 99,
+                    status: 0,
+                    titulosCount: 0,
+                    soma: 0,
+                    ccoCod: 2,
+                    dataDebito: 1_790_000_000_000,
+                },
+            ]);
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 0,
+                soma: 0,
+            });
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(ledger.setNativeFlpCod).toHaveBeenCalledWith(expect.any(String), 99);
+            expect(write.importarTitulos).toHaveBeenCalled();
+        });
+
+        it('nenhum candidato acima da marca → o criarLote não valeu, recomeça do zero', async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                etapa: 'criar_lote',
+                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+            });
+            const write = buildWrite();
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(write.criarLote).toHaveBeenCalledTimes(1);
+        });
+
+        it('DOIS candidatos com a mesma assinatura é FAIL-CLOSED — não escolho por ninguém', async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                etapa: 'criar_lote',
+                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+            });
+            const write = buildWrite();
+            const vazio = (flpCod: number) => ({
+                filCod: 2,
+                bncCod: 4,
+                flpCod,
+                status: 0,
+                titulosCount: 0,
+                soma: 0,
+                ccoCod: 2,
+                dataDebito: 1_790_000_000_000,
+            });
+            write.listarLotesNativos.mockResolvedValue([vazio(99), vazio(100)]);
+
+            await expect(
+                make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toBeInstanceOf(RemessaEmDuvidaError);
+            expect(write.criarLote).not.toHaveBeenCalled();
+        });
+
+        it('lote acima da marca com OUTRA conta não é candidato', async () => {
+            const ledger = buildLedger({
+                status: 'reconciling',
+                dryRun: false,
+                etapa: 'criar_lote',
+                requestPayload: { marcaFlpCod: 98, ccoCod: 2, dataDebito: 1_790_000_000_000 },
+            });
+            const write = buildWrite();
+            write.listarLotesNativos.mockResolvedValue([
+                {
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 99,
+                    status: 0,
+                    titulosCount: 0,
+                    soma: 0,
+                    ccoCod: 7,
+                    dataDebito: 1_790_000_000_000,
+                },
+            ]);
+
+            await make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            // Nenhum candidato → recomeça, em vez de adotar o lote de outra conta.
+            expect(write.criarLote).toHaveBeenCalledTimes(1);
+        });
+
+        it('sem marca d\'água gravada continua FAIL-CLOSED (execução antiga)', async () => {
             const ledger = buildLedger({ status: 'reconciling', dryRun: false, etapa: 'criar_lote' });
             const write = buildWrite();
 
@@ -279,27 +409,59 @@ describe('RemessaService', () => {
             expect(write.criarLote).not.toHaveBeenCalled();
         });
 
-        it('órfão cujo lote foi CANCELADO por uma pessoa continua FAIL-CLOSED', async () => {
-            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
-            const write = buildWrite();
-            write.getLoteNativo.mockResolvedValue({
-                filCod: 2,
-                bncCod: 4,
-                flpCod: 99,
-                status: 2,
-                titulosCount: 0,
-                soma: 0,
+        describe('lote anterior CANCELADO por uma pessoa', () => {
+            const cancelado = () => {
+                const write = buildWrite();
+                write.getLoteNativo.mockResolvedValue({
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 99,
+                    status: 2,
+                    titulosCount: 0,
+                    soma: 0,
+                });
+                return write;
+            };
+            const orfao = () =>
+                buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+
+            it('sem confirmação → 409 próprio, e NADA é criado', async () => {
+                // O ERP não guarda a intenção de quem cancelou: "limpei o órfão" e
+                // "abortei o pagamento" deixam o mesmo status. Quem separa é a pessoa.
+                const write = cancelado();
+
+                await expect(
+                    make({ ledger: orfao(), write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+                ).rejects.toMatchObject({
+                    code: 'LOTE_ANTERIOR_CANCELADO',
+                    statusCode: 409,
+                    retryable: true,
+                });
+                expect(write.criarLote).not.toHaveBeenCalled();
             });
 
-            await expect(
-                make({ ledger, write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
-            ).rejects.toBeInstanceOf(RemessaEmDuvidaError);
+            it('com confirmação → cria um lote NOVO, sem reusar o cancelado', async () => {
+                const write = cancelado();
+
+                await make({ ledger: orfao(), write }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                    confirmarNovoLote: true,
+                });
+
+                expect(write.criarLote).toHaveBeenCalledTimes(1);
+                // O import vai para o lote NOVO (12, do mock), nunca para o 99 cancelado.
+                expect(write.importarTitulos).toHaveBeenCalledWith(
+                    expect.objectContaining({ flpCod: 12 }),
+                );
+            });
         });
 
-        it('import PARCIAL continua FAIL-CLOSED — re-importar duplicaria o que entrou', async () => {
+        it('import PARCIAL importa SÓ o que falta — sem duplicar o que já entrou', async () => {
+            // O ERP diz quais títulos entraram, então a diferença é computável. Antes isto
+            // era 409 e uma ida ao fin015.
             const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
             const write = buildWrite();
-            // O lote local tem 2 itens; o ERP recebeu 1.
             write.getLoteNativo.mockResolvedValue({
                 filCod: 2,
                 bncCod: 4,
@@ -308,6 +470,79 @@ describe('RemessaService', () => {
                 titulosCount: 1,
                 soma: 100,
             });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['801:1']));
+            write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
+
+            await make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+
+            expect(write.importarTitulos).toHaveBeenCalledTimes(1);
+            const { itens } = write.importarTitulos.mock.calls[0][0];
+            expect(itens).toHaveLength(1);
+            // Número, não string: a identidade vai VERBATIM do grid do ERP.
+            expect(itens[0]).toMatchObject({ docCod: 802 });
+        });
+
+        it('import parcial cujo conjunto JÁ está completo pula o import', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+            // titulosCount diz 1, mas a lista mostra as 2 chaves do lote.
+            write.listarChavesDoLote.mockResolvedValue(new Set(['801:1', '802:1']));
+
+            await make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('título INTRUSO no lote nativo é FAIL-CLOSED — alguém mexeu pelo ERP', async () => {
+            // Completar o import aqui misturaria a intenção de duas pessoas.
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['999:1']));
+
+            await expect(
+                make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                }),
+            ).rejects.toBeInstanceOf(RemessaEmDuvidaError);
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+        });
+
+        it('falha ao LER os itens é FAIL-CLOSED — não é o mesmo que lote vazio', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 100,
+            });
+            write.listarChavesDoLote.mockResolvedValue(undefined);
 
             await expect(
                 make({ ledger, write, lote: loteCom2Itens() }).gerarRemessa({

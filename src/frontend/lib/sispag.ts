@@ -335,6 +335,21 @@ export class RemessaEmDuvidaError extends Error {
   }
 }
 
+/**
+ * O lote nativo da tentativa anterior foi cancelado no Conexos por uma pessoa.
+ * Não é falha: é uma bifurcação que só quem cancelou resolve — limpar um órfão travado
+ * e abortar um pagamento deixam o MESMO estado no ERP. A tela pergunta.
+ */
+export class LoteAnteriorCanceladoError extends Error {
+  constructor(
+    message: string,
+    readonly flpCodCancelado?: number,
+  ) {
+    super(message)
+    this.name = 'LoteAnteriorCanceladoError'
+  }
+}
+
 export class ErpPerguntaError extends Error {
   constructor(
     message: string,
@@ -362,6 +377,9 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
     if (body.code === 'REMESSA_EM_DUVIDA') {
       throw new RemessaEmDuvidaError(msg, det.nativeFlpCod as number | undefined)
     }
+    if (body.code === 'LOTE_ANTERIOR_CANCELADO') {
+      throw new LoteAnteriorCanceladoError(msg, det.flpCodCancelado as number | undefined)
+    }
     if (body.code === 'ERP_PERGUNTA') {
       throw new ErpPerguntaError(msg, det.chave as string | undefined)
     }
@@ -377,11 +395,18 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
  * propósito. As escritas do fin015 não são idempotentes — sem isso, um duplo clique
  * ou um retry após timeout viraria um segundo lote de pagamento.
  */
-export const gerarRemessa = (loteId: string, opts?: { dryRun?: boolean }) =>
+export const gerarRemessa = (
+  loteId: string,
+  opts?: { dryRun?: boolean; confirmarNovoLote?: boolean },
+) =>
   sispagRequest<GerarRemessaResult>(`/sispag/lotes/${loteId}/remessa`, {
     method: 'POST',
     headers: { 'Idempotency-Key': `remessa:${loteId}` },
-    body: JSON.stringify({ dryRun: opts?.dryRun ?? false }),
+    body: JSON.stringify({
+      dryRun: opts?.dryRun ?? false,
+      // Só vai quando a pessoa confirmou no diálogo — nunca por default.
+      ...(opts?.confirmarNovoLote ? { confirmarNovoLote: true } : {}),
+    }),
   })
 
 /** Baixa o `.REM` já gerado (CNAB 240, texto puro) e devolve o conteúdo. */

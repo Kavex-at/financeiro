@@ -124,5 +124,9 @@ export interface LoteNativoEstado {
     status: number;
     titulosCount: number;
     soma: number;
+    /** Conta pagadora do lote — parte da impressão digital na busca por órfão. */
+    ccoCod?: number;
+    /** `flpDtaCredito` — a data de débito pedida. Também compõe a impressão digital. */
+    dataDebito?: number;
     finalizadoEm?: number;
 }
