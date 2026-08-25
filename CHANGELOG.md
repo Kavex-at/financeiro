@@ -1,5 +1,51 @@
 # Columbia Financeiro — Changelog
 
+## v0.31.0 (2026-08-25) — retomar de onde parou, sem correção manual no Conexos
+
+O SISPAG passa a **retomar uma execução interrompida consultando o estado no ERP**, em vez de
+travar e mandar a pessoa consertar no fin015. O critério (ADR-0039) é estreito de propósito: onde
+o ERP expõe estado verificável daquela escrita, consulta-se; onde não expõe, o fail-closed
+continua. Um retry supõe; a retomada verifica.
+
+- **feat(sispag):** os oito desfechos de uma remessa interrompida. Lote inexistente → recomeça;
+  aberto e vazio → retoma no import; com parte dos títulos → **importa só o que falta**;
+  finalizado → pula direto para a geração; arquivo já existe → fecha o ledger e devolve o `.REM`.
+  Cancelado por alguém → **pergunta na tela** antes de gerar um novo, porque o ERP deixa o mesmo
+  status para "limpei o órfão" e "abortei o pagamento". Três casos seguem travando por decisão:
+  órfão sem marca d'água, dois candidatos com a mesma assinatura, e título intruso no lote nativo.
+- **feat(sispag):** marca d'água — o conjunto dos `flpCod` conhecidos, gravado **antes** do POST —
+  reconhece o lote criado numa queda que não chegou a registrar o número. Adota só se houver
+  **exatamente um** candidato.
+- **fix(sispag):** `titulosPendentes/importar` aceita **um item por chamada**. O campo se chama
+  `items`, no plural, e a validação original foi feita com um título só — qualquer lote com 2+
+  títulos falhava, no caminho normal. A Columbia bateria nisso na primeira remessa real.
+- **fix(sispag):** a chave do item passou a incluir a **filial**. `docCod` não é único entre
+  filiais (o doc 285 existe na 2 e na 4); o `Map` colidia e o título da outra filial sobrescrevia
+  o nosso — importaria o pagamento de outro fornecedor, com outro valor.
+- **fix(sispag):** `fin015/list` exige `filCod#EQ`. Passar `filCod` só no contexto de sessão
+  devolvia lotes de todas as filiais, contaminando a marca d'água e rotulando lote alheio no
+  painel. Medido: 74 linhas de 3 filiais viram 30 da filial pedida.
+- **fix(sispag):** `flpCod` **não é monotônico** — o ERP reaproveita buracos de numeração (um lote
+  novo nasceu como 15 quando o maior era 40). A marca d'água virou conjunto, não máximo.
+- **fix(sispag):** `titulosCount` não conta itens — vale 1 para qualquer lote não-vazio. Quem
+  responde quantos e quais é a lista de chaves.
+- **fix(sispag):** `gerarRemessa` **serializa por lote** com advisory lock. O ledger write-ahead
+  cobre interrupção, não concorrência: duas requisições simultâneas criavam dois lotes de
+  pagamento. Novo `RemessaEmAndamentoError` (409, retryable).
+- **fix(sispag):** o protocolo `QUESTION` do ERP passa a ser reconhecido em **todas** as chamadas
+  dos dois clients, não só numa leitura. Uma pergunta interativa (favorecido sem conta ativa no
+  banco do lote) deixava o ledger em `error` e a retomada refazia o mesmo caminho.
+- **fix(sispag):** a checagem de "o ERP já processou este `.RET`?" vale **sempre**, não só na
+  retomada. Uma conciliação nova sobre arquivo já processado chamava `processar` de novo — e quem
+  recusava era o ERP, não nós.
+- **feat(sispag):** conciliação transacional (um arquivo = uma transação) e execuções presas
+  visíveis: `GET /sispag/execucoes`, banner no painel e o cron `reaper-sispag` a cada 15 min.
+- **feat(sispag):** `SISPAG_LIVE_WRITE_ENABLED` — kill-switch desta frente, separado do
+  `CONEXOS_DRY_RUN` global. **Default `false`: ligar no dashboard do Render para escrever.**
+- **test(sispag):** dois gates AO VIVO contra o ERP — remessa (3/3) e conciliação (3/3) — e
+  contract test sobre 10 shapes reais capturadas do Conexos, com valores redigidos por tipo.
+  **Foram esses gates que acharam sete dos defeitos acima**; nenhum aparecia em teste mockado.
+
 ## v0.30.0 (2026-08-24) — o último P0, órfãos visíveis e o primeiro contrato de verdade com o ERP
 
 - **test(sispag):** as 18 rotas de `routes/sispag.ts` ganharam teste (`testability-1`, último P0 do
