@@ -1,7 +1,7 @@
 ---
 name: TituloAPagar
 type: entity
-ontology_version: "0.7"
+ontology_version: "0.10"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -13,6 +13,7 @@ related_files:
   - src/backend/domain/repository/sispag/PagamentoIngestaoRunRepository.ts
   - src/backend/domain/service/sispag/IngestaoPagamentosService.ts
   - src/backend/domain/service/sispag/SispagPainelService.ts
+  - src/backend/domain/client/ConexosSispagWriteClient.ts
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/backend/jobs/ingest-pagamentos.ts
@@ -32,6 +33,7 @@ properties:
   - numRemessa
   - tpdCod
   - prontoParaRemessa
+  - temBoleto
   - ativo
   - ingestaoRunId
   - atualizadoEm
@@ -40,7 +42,7 @@ relationships:
   - "TituloAPagar N—1 PagamentoIngestaoRun (via ingestaoRunId — a run que gravou/atualizou este título)"
   - "TituloAPagar N—1 LotePagamento (via ItemLote — um título elegível pode ser incluído em um lote candidato RASCUNHO)"
   - "TituloAPagar 1—1 (contexto) Borderô a-pagar / Lote SISPAG nativos (fin010/fin015 — leitura de contexto no painel, não vínculo próprio)"
-last_review: 2026-07-18
+last_review: 2026-08-27
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -101,6 +103,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `numRemessa` | string? | `fin064` → `titNumRemessa` → `num_remessa` | Nº da remessa quando o título já saiu (contexto). |
 | `tpdCod` | string? | `com298` → `tpd_cod` | Tipo de documento. |
 | `prontoParaRemessa` | boolean | **heurística** da ingestão (ver abaixo) → `pronto_para_remessa` | **INFORMATIVO** — tem modalidade + destino (banco/conta, barras ou PIX)? Palpite de completude. A **validação autoritativa** acontece **no envio, ao vivo** (Fatia 3). **Não** é gate de elegibilidade. |
+| `temBoleto` | boolean | **flag de DDA** do grid de pendentes (`fin015` → `titVldReflexoDdaAssoc`) → `tem_boleto` | O Conexos tem um **boleto DDA** (`fin124`) casado com este título. É o único vínculo pagamento↔boleto que existe — o código de barras **não está no título**. Alimenta a coluna "Boleto" do painel e habilita a modalidade BOLETO. Ver ADR-0040. |
 
 > **`internacional` REMOVIDO (ADR-0021, 2026-07-18).** O SISPAG é **doméstico**: pagamento ao exterior é
 > **câmbio manual da tesouraria** (Itaú→BB), não passa pelo SISPAG. Títulos internacionais são
@@ -122,6 +125,22 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
   tenant/config sem mudar a estrutura.
 - Downstream (não modelado aqui): `titVldEnviaBanco` / `titDtaEnvioBanco` / `titVldRetBanco` /
   `titNumRemessa` / `vldBordero` rastreiam remessa→envio→retorno→baixa (Fatia de transporte).
+
+## `temBoleto` — vem do DDA, NÃO do `titEspCodbar` (ADR-0040)
+
+- **Era** `Boolean(fin064.titEspCodbar)`. Medido em produção (2026-08-27): `titEspCodbar` é
+  **null em 100%** dos títulos — 0 de 2000 no `fin064`, 0 de 2173 no grid de pendentes do
+  `fin015`, 0 de 50 no `com308`. A auto-detecção de boleto **nunca disparou**.
+- **É** o flag `titVldReflexoDdaAssoc` do grid de pendentes: o ERP sinaliza ali quais títulos ele
+  casou com um boleto do arquivo DDA (`fin124`). Medido em PRD: 54/173 (fil 1), 136/500 (fil 2),
+  24/500 (fil 4), 152/500 (fil 6).
+- **Quem preenche:** a ingestão (`ConexosSispagWriteClient.listarTitulosComBoletoDda`), por
+  filial. O grid exige um `flpCod`, então usa-se o **lote nativo mais recente da conta apenas
+  como contexto de leitura** — ele não é modificado, e o grid lista os pendentes da filial
+  inteira. Filial sem lote nenhum degrada para `false` com `BUSINESS_WARN`.
+- **O código de barras em si não é persistido** (nem existe do nosso lado). Quem o anexa ao item
+  é o ERP, no import, quando pedimos a associação. Ver ADR-0040 e
+  `business-rules/boleto-exige-codigo-de-barras.md`.
 
 ## `prontoParaRemessa` — heurística INFORMATIVA (não-autoritativa)
 

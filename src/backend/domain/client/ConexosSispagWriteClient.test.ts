@@ -223,6 +223,194 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
         });
     });
 
+    describe('boleto DDA (titVldReflexoDdaAssoc + resposta à pergunta do ERP)', () => {
+        const item = { filCod: 1, docCod: 520, titCod: 1 };
+        const perguntaBarcode = validationError({
+            type: 'QUESTION',
+            questions: [
+                {
+                    id: '1',
+                    key: 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO',
+                    answerList: [
+                        { id: 'YES', key: 'YES', type: 'SIMPLE' },
+                        { id: 'NO', key: 'NO', type: 'SIMPLE' },
+                    ],
+                },
+            ],
+        });
+
+        it('sem associarDda mantém o payload histórico (assoc = 0)', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+            await make(base).importarTitulos({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                itens: [item],
+            });
+            const [, body] = base.postGenericOnce.mock.calls[0];
+            expect(body).toMatchObject({ titVldReflexoDdaAssoc: 0, titVldReflexoDdaDesassoc: 0 });
+            expect((body as { items: unknown[] }).items[0]).toMatchObject({
+                titVldReflexoDdaAssoc: 0,
+            });
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
+        });
+
+        it('associarDda manda 1 nos DOIS níveis que a seleção do ERP exige', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+            await make(base).importarTitulos({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                itens: [item],
+                associarDda: true,
+            });
+            const [, body] = base.postGenericOnce.mock.calls[0];
+            expect(body).toMatchObject({ titVldReflexoDdaAssoc: 1 });
+            expect((body as { items: unknown[] }).items[0]).toMatchObject({
+                titVldReflexoDdaAssoc: 1,
+            });
+        });
+
+        it('responde YES à pergunta do barcode e reenvia o MESMO body (answers por id)', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockRejectedValueOnce(perguntaBarcode).mockResolvedValueOnce({});
+            await make(base).importarTitulos({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                itens: [item],
+                associarDda: true,
+            });
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(2);
+            const [, primeiro] = base.postGenericOnce.mock.calls[0];
+            const [, segundo] = base.postGenericOnce.mock.calls[1];
+            // `answers` é um MAP chaveado pelo `id` da pergunta — não pelo `key`, não um array.
+            expect(segundo).toMatchObject({ answers: { '1': 'YES' } });
+            // e o resto do body vai VERBATIM (a identidade do item não pode ser reescrita)
+            expect((segundo as { items: unknown[] }).items).toEqual(
+                (primeiro as { items: unknown[] }).items,
+            );
+        });
+
+        it('pergunta FORA da allowlist → ErpPerguntaError, sem segundo POST', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockRejectedValue(
+                validationError({
+                    type: 'QUESTION',
+                    questions: [
+                        {
+                            id: '1',
+                            key: 'FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO',
+                        },
+                    ],
+                }),
+            );
+            await expect(
+                make(base).importarTitulos({
+                    filCod: 1,
+                    bncCod: 4,
+                    flpCod: 18,
+                    itens: [item],
+                    associarDda: true,
+                }),
+            ).rejects.toBeInstanceOf(ErpPerguntaError);
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
+        });
+
+        it('envelope com 2 perguntas não é auto-respondível, mesmo contendo a allowlistada', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockRejectedValue(
+                validationError({
+                    type: 'QUESTION',
+                    questions: [
+                        { id: '1', key: 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO' },
+                        { id: '2', key: 'FIN_041.OUTRA_COISA_QUALQUER' },
+                    ],
+                }),
+            );
+            await expect(
+                make(base).importarTitulos({
+                    filCod: 1,
+                    bncCod: 4,
+                    flpCod: 18,
+                    itens: [item],
+                    associarDda: true,
+                }),
+            ).rejects.toBeInstanceOf(ErpPerguntaError);
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
+        });
+
+        it('pergunta repetida após a resposta NÃO vira laço — falha na segunda', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockRejectedValue(perguntaBarcode);
+            await expect(
+                make(base).importarTitulos({
+                    filCod: 1,
+                    bncCod: 4,
+                    flpCod: 18,
+                    itens: [item],
+                    associarDda: true,
+                }),
+            ).rejects.toBeInstanceOf(ErpPerguntaError);
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(2);
+        });
+
+        it('propaga associarDda na quebra de 1-item-por-chamada', async () => {
+            const base = buildBase();
+            base.postGenericOnce.mockResolvedValue({});
+            await make(base).importarTitulos({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                itens: [item, { ...item, docCod: 521 }],
+                associarDda: true,
+            });
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(2);
+            for (const [, body] of base.postGenericOnce.mock.calls) {
+                expect(body).toMatchObject({ titVldReflexoDdaAssoc: 1 });
+                expect((body as { items: unknown[] }).items).toHaveLength(1);
+            }
+        });
+    });
+
+    describe('listarTitulosComBoletoDda', () => {
+        it('usa o lote nativo mais recente como contexto e devolve só quem tem o flag', async () => {
+            const base = buildBase();
+            base.listGenericPaginated
+                // 1ª chamada: fin015/list (lotes) — o maior flpCod vira contexto
+                .mockResolvedValueOnce({
+                    count: 2,
+                    rows: [
+                        { flpCod: 3, filCod: 1, bncCod: 4 },
+                        { flpCod: 9, filCod: 1, bncCod: 4 },
+                    ],
+                })
+                // 2ª: o grid de pendentes daquele contexto
+                .mockResolvedValueOnce({
+                    count: 2,
+                    rows: [
+                        { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 1 },
+                        { filCod: 1, docCod: 200, titCod: 1, titVldReflexoDdaAssoc: 0 },
+                    ],
+                });
+            const set = await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 });
+            expect(set).toEqual(new Set(['1:100:1']));
+            expect(base.listGenericPaginated.mock.calls[1][0]).toBe(
+                'fin015/finItemSispag/titulosPendentes/list/1/4/9',
+            );
+        });
+
+        it('filial sem lote nativo → conjunto vazio, sem ler o grid', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValueOnce({ count: 0, rows: [] });
+            const set = await make(base).listarTitulosComBoletoDda({ filCod: 6, bncCod: 4 });
+            expect(set.size).toBe(0);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('leituras (via runWithRetry)', () => {
         it('listarTitulosPendentes mapeia as linhas e passa pelo runWithRetry', async () => {
             const base = buildBase();
@@ -251,6 +439,8 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 itsVldModalidade: 7,
                 valor: 1000,
                 favorecido: 'DC LOGISTICS',
+                // sem `titVldReflexoDdaAssoc` na linha = sem boleto DDA
+                temBoletoDda: false,
             });
             expect(pend[0].raw).toBeDefined();
             expect(base.listGenericPaginated.mock.calls[0][0]).toBe(

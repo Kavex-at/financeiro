@@ -1,6 +1,7 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -33,6 +34,7 @@ export default class IngestaoPagamentosService {
         @inject(PagamentoIngestaoRunRepository)
         private readonly runRepo: PagamentoIngestaoRunRepository,
         @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
+        @inject(ConexosSispagWriteClient) private readonly fin015: ConexosSispagWriteClient,
         @inject(ConexosBaseClient) private readonly base: ConexosBaseClient,
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
@@ -60,6 +62,42 @@ export default class IngestaoPagamentosService {
         );
     };
 
+    /**
+     * Títulos da filial que o ERP casou com um boleto DDA (`titVldReflexoDdaAssoc`).
+     *
+     * Best-effort por desenho: a carteira é o produto principal da ingestão, e o flag de boleto
+     * é enriquecimento. Uma filial sem lote nativo (nada a usar como contexto de leitura do
+     * grid), ou uma falha nessa leitura, devolve conjunto vazio com WARN — os títulos entram
+     * com `temBoleto = false` em vez de a rodada inteira cair.
+     */
+    private titulosComBoletoDda = async (filCod: number): Promise<Set<string>> => {
+        try {
+            // O banco NUNCA é fixo: sai da conta pagadora da própria filial (`fin005`).
+            // O mesmo `ccoCod` aponta para contas diferentes em cada filial.
+            const contas = await this.sispag.listContasCorrentes(filCod);
+            const bncCod = contas[0]?.bncCod;
+            if (bncCod === undefined) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'ingestão pagamentos: filial sem conta pagadora — sem flag de boleto',
+                    data: { filCod },
+                });
+                return new Set();
+            }
+            return await this.fin015.listarTitulosComBoletoDda({ filCod, bncCod });
+        } catch (error) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'ingestão pagamentos: leitura do flag de boleto DDA falhou (ignorada)',
+                data: {
+                    filCod,
+                    reason: error instanceof Error ? error.message : String(error),
+                },
+            });
+            return new Set();
+        }
+    };
+
     private runIngestion = async (input: {
         triggeredBy: string;
         idempotencyKey?: string;
@@ -81,11 +119,12 @@ export default class IngestaoPagamentosService {
             const settled = await this.bounded.run(
                 filCods,
                 async (filCod) => {
-                    const [titulos, exterior] = await Promise.all([
+                    const [titulos, exterior, comBoleto] = await Promise.all([
                         this.sispag.listTitulosAPagar(filCod, { minVencimento, maxVencimento }),
                         this.sispag.listExteriorDocCods(filCod),
+                        this.titulosComBoletoDda(filCod),
                     ]);
-                    return { titulos, exterior };
+                    return { titulos, exterior, comBoleto };
                 },
                 FANOUT_LIMIT,
             );
@@ -102,7 +141,12 @@ export default class IngestaoPagamentosService {
                         if (t.pago) continue;
                         // Internacional (exterior/câmbio) NÃO entra na carteira SISPAG (fora do escopo).
                         if (s.value.exterior.has(t.docCod)) continue;
-                        titulos.push(t);
+                        // "Tem boleto?" vem do flag de DDA do grid de pendentes — nunca do
+                        // título (o `titEspCodbar` é null em 100% da carteira).
+                        titulos.push({
+                            ...t,
+                            temBoleto: s.value.comBoleto.has(`${t.filCod}:${t.docCod}:${t.titCod}`),
+                        });
                     }
                 } else {
                     await this.logService.warn({

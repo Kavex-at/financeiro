@@ -136,9 +136,17 @@ export default class ConexosSispagClient {
         // `CmnPessoasCtcorr` (`cmn025/ctcorr/list`) — ver `listContasFavorecido`.
         // Consequência: derivar TED/CRÉDITO daqui devolvia SEMPRE lista vazia.
         //
-        // Boleto/PIX seguem vindo do título; a disponibilidade de conta é resolvida por
-        // quem tem orçamento para a chamada extra (`modalidadesDisponiveisDoLote`).
-        const temBoleto = Boolean(r.titEspCodbar);
+        // ⚠️ `titEspCodbar` NÃO serve para detectar boleto. Sondagem read-only de 2026-08-27
+        // mediu 0% de preenchimento em PRD — no `fin064` (2000 títulos), no grid de pendentes
+        // do `fin015` (2173) e no `com308` (50). O código de barras não está no título em
+        // momento algum: ele chega ao item pela associação do boleto DDA (`fin124`), e o único
+        // sinal prévio é o flag `titVldReflexoDdaAssoc` do grid de pendentes — lido pela
+        // ingestão (`ConexosSispagWriteClient.listarTitulosComBoletoDda`) e persistido em
+        // `titulo_a_pagar.tem_boleto`. Ver `ontology/_inbox/sispag-boleto-dda-sondagem.md`.
+        //
+        // Aqui `temBoleto` nasce `false` de propósito: este mapper lê o `fin064` e o `fin064`
+        // não sabe de boleto. Quem sabe sobrescreve depois.
+        const temBoleto = false;
         const temPix = Boolean(r.itsDesChavePix);
         const temContaBanco = false;
         const modalidadesDisponiveis: Modalidade[] = [];
@@ -163,7 +171,6 @@ export default class ConexosSispagClient {
             pesCod: r.pesCod,
             tpdCod: r.tpdCod,
             prontoParaRemessa: temBoleto || temPix || temContaBanco || temModalidade,
-            // A2: código de barras presente = candidato a BOLETO (auto-detecção na revisão).
             temBoleto,
             modalidadesDisponiveis,
         };

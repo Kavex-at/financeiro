@@ -4,6 +4,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
+  Barcode,
   CheckCircle2,
   DatabaseZap,
   Layers,
@@ -671,6 +672,7 @@ function SispagPanel() {
                         <TableHead>Documento</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Vencimento</TableHead>
+                        <TableHead>Boleto</TableHead>
                         <TableHead>Situação</TableHead>
                         <TableHead>Filial</TableHead>
                       </TableRow>
@@ -712,6 +714,28 @@ function SispagPanel() {
                               </span>
                               <VencimentoBadge dias={t.diasAteVencimento} />
                             </div>
+                          </TableCell>
+                          <TableCell>
+                            {/* Boleto DDA: o Conexos casou um boleto (fin124) com este título.
+                                É o que permite a remessa sair com código de barras — sem ele,
+                                escolher BOLETO no lote é barrado na geração. */}
+                            {t.temBoleto ? (
+                              <Badge
+                                variant="outline"
+                                className="border-success/40 text-success"
+                                title="O Conexos tem um boleto DDA associado a este título — pode sair por boleto, com código de barras."
+                              >
+                                <Barcode className="mr-1 size-3" aria-hidden />
+                                boleto
+                              </Badge>
+                            ) : (
+                              <span
+                                className="text-xs text-muted-foreground"
+                                title="Nenhum boleto DDA associado. Pagamento por TED/PIX/crédito, ou importe o arquivo DDA no fin124."
+                              >
+                                sem boleto
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col items-start gap-1">
