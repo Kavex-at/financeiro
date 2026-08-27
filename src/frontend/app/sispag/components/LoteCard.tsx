@@ -417,7 +417,11 @@ export function LoteCard({
                             {semCadastro ? (
                               <span className="text-xs text-warning">sem forma cadastrada</span>
                             ) : indisponivel ? (
-                              <span className="text-xs text-warning">forma não cadastrada</span>
+                              <span className="text-xs text-warning">
+                                {i.modalidade === 'BOLETO'
+                                  ? 'sem boleto DDA — a remessa sairia sem código de barras'
+                                  : 'forma não cadastrada'}
+                              </span>
                             ) : null}
                           </div>
                         ) : (

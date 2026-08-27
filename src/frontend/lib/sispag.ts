@@ -25,6 +25,13 @@ export interface TituloAPagar {
   pesCod?: string
   tpdCod?: string
   prontoParaRemessa?: boolean
+  /**
+   * O Conexos tem um boleto DDA (`fin124`) casado com este título — é o que permite a
+   * remessa sair com código de barras. Persistido pela ingestão a partir do flag
+   * `titVldReflexoDdaAssoc` do grid de pendentes; o código de barras em si NÃO existe no
+   * título. Sem isto, marcar BOLETO no lote é barrado na geração da remessa.
+   */
+  temBoleto?: boolean
   ativo?: boolean
   /** Já está num lote RASCUNHO — não pode ser atachado a outro (bloqueia a seleção). */
   emLote?: boolean

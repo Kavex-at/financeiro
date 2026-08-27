@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import type ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -36,6 +37,8 @@ interface Mocks {
     };
     listTitulos: jest.Mock;
     listExterior: jest.Mock;
+    listContas: jest.Mock;
+    listBoletoDda: jest.Mock;
     acquire: boolean;
     filiais: Array<{ filCod: number }>;
 }
@@ -54,10 +57,16 @@ const make = (over: Partial<Mocks> = {}) => {
     const listTitulos =
         over.listTitulos ??
         jest.fn().mockResolvedValue([titulo(), titulo({ titCod: '2', pago: true })]);
+    const listContas = over.listContas ?? jest.fn().mockResolvedValue([{ ccoCod: 1, bncCod: 4 }]);
     const sispag = {
         listTitulosAPagar: listTitulos,
         listExteriorDocCods: over.listExterior ?? jest.fn().mockResolvedValue(new Set<string>()),
+        listContasCorrentes: listContas,
     } as unknown as ConexosSispagClient;
+    const listBoletoDda = over.listBoletoDda ?? jest.fn().mockResolvedValue(new Set<string>());
+    const fin015 = {
+        listarTitulosComBoletoDda: listBoletoDda,
+    } as unknown as ConexosSispagWriteClient;
     const base = {
         getFiliais: jest.fn().mockResolvedValue(over.filiais ?? [{ filCod: 2 }]),
     } as unknown as ConexosBaseClient;
@@ -72,12 +81,13 @@ const make = (over: Partial<Mocks> = {}) => {
         tituloRepo as unknown as TituloAPagarRepository,
         runRepo as unknown as PagamentoIngestaoRunRepository,
         sispag,
+        fin015,
         base,
         new BoundedConcurrency(),
         db,
         buildLog(),
     );
-    return { service, tituloRepo, runRepo, listTitulos };
+    return { service, tituloRepo, runRepo, listTitulos, listContas, listBoletoDda };
 };
 
 describe('IngestaoPagamentosService', () => {
@@ -151,5 +161,65 @@ describe('IngestaoPagamentosService', () => {
         expect(runRepo.finishRun).toHaveBeenCalledWith(
             expect.objectContaining({ runId: 'RUN1', status: 'error' }),
         );
+    });
+});
+
+describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
+    it('marca temBoleto nos títulos que o ERP casou com um boleto DDA', async () => {
+        // O `fin064` não sabe de boleto (titEspCodbar é null em 100% da carteira); quem sabe
+        // é o flag `titVldReflexoDdaAssoc` do grid de pendentes.
+        const { service, tituloRepo } = make({
+            listBoletoDda: jest.fn().mockResolvedValue(new Set(['2:100:1'])),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(tituloRepo.upsertMany).toHaveBeenCalledWith(
+            [expect.objectContaining({ docCod: '100', titCod: '1', temBoleto: true })],
+            'RUN1',
+        );
+    });
+
+    it('título fora do conjunto fica temBoleto=false', async () => {
+        const { service, tituloRepo } = make({
+            listBoletoDda: jest.fn().mockResolvedValue(new Set(['2:999:1'])),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(tituloRepo.upsertMany).toHaveBeenCalledWith(
+            [expect.objectContaining({ temBoleto: false })],
+            'RUN1',
+        );
+    });
+
+    it('o banco sai da conta pagadora da FILIAL — nunca fixo', async () => {
+        const listContas = jest.fn().mockResolvedValue([{ ccoCod: 1, bncCod: 7 }]);
+        const listBoletoDda = jest.fn().mockResolvedValue(new Set<string>());
+        const { service } = make({ listContas, listBoletoDda });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(listBoletoDda).toHaveBeenCalledWith({ filCod: 2, bncCod: 7 });
+    });
+
+    it('falha ao ler o flag NÃO derruba a ingestão — carteira persiste com warn', async () => {
+        const { service, tituloRepo, runRepo } = make({
+            listBoletoDda: jest.fn().mockRejectedValue(new Error('ERP fora do ar')),
+        });
+        const r = await service.executar({ triggeredBy: 'cron' });
+        expect(r.status).toBe('success');
+        expect(tituloRepo.upsertMany).toHaveBeenCalledWith(
+            [expect.objectContaining({ temBoleto: false })],
+            'RUN1',
+        );
+        expect(runRepo.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'success' }),
+        );
+    });
+
+    it('filial sem conta pagadora degrada em silêncio (sem contexto para o grid)', async () => {
+        const listBoletoDda = jest.fn();
+        const { service } = make({
+            listContas: jest.fn().mockResolvedValue([]),
+            listBoletoDda,
+        });
+        const r = await service.executar({ triggeredBy: 'cron' });
+        expect(r.status).toBe('success');
+        expect(listBoletoDda).not.toHaveBeenCalled();
     });
 });

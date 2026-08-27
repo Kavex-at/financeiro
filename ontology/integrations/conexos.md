@@ -275,6 +275,8 @@ cadastro/finalizado/cancelado/estornado) é **derivada na leitura** (`situacaoDo
 | `com308/.../list/{docCod}` | **alçada de liberação** (`liberado`) + detalhe do título | `getAlcadaTitulo({docCod})` (ou hidratado na carteira) | `titVld1libera`/`titVld2libera`/`titVld3libera` (+`Tim/Usn/usnDesNomel`), `titVldEnviaBanco`, `vldBordero`, `titVldStatus` | **READ.** `liberado = AND das flags de alçada`. "Aprovado para baixa" (Escopo II). Ver `elegibilidade-titulo-lote`. |
 | `fin015/list` | **lotes SISPAG nativos** (contexto do painel) | `listLotesSispag({filCod?})` | `FinLoteSispag`: `bncCod`, `ccoCod`, `layoutConta`, `flpVldConfEnvio`, `soma`, analista | **READ (contexto).** 17 lotes reais (Itaú/Santander). NÃO participam do nosso ciclo de vida de lote candidato. |
 | `fin010/list` (a-pagar) | **borderôs a-pagar** (contexto do painel) | `listBorderosAPagar({filCod?})` | `borCod`, `borVldTipo`, `borVldFinalizado`, `vldHasRemessaPgto` | **READ (contexto).** A baixa via borderô é o mecanismo massivo (`vldHasRemessaPgto≈0` em ~99% — baixa direta). |
+| `fin015/…/titulosPendentes/list/{fil}/{bnc}/{flp}` | **flag de boleto DDA** por título | `ConexosSispagWriteClient.listarTitulosComBoletoDda({filCod, bncCod})` | `titVldReflexoDdaAssoc` (+ identidade `filCod`/`docCod`/`titCod`) | **READ.** Único vínculo pagamento↔boleto do ERP. Exige um `flpCod`: usa-se o lote nativo mais recente **como contexto de leitura** (não modificado; o grid é da FILIAL). Ver ADR-0040. |
+| `fin124/list` · `fin124/itens/list/{ddcCod}` | **arquivos DDA e seus boletos** (diagnóstico) | — (sondas `jobs/probe-fin124-dda.ts`) | `FinDda`: `ddcCod`, `ddcEspFilename`, `ddcVldStatus` · `FinDdaItem`: `ditEspCodbar`, `ditMnyValor`, `ditDtaVencimento`, `docCod`/`titCod`/`flpCod` | **READ.** 143 arquivos, 100% com barras — mas `docCod`/`titCod` **0%** até o boleto ser consumido por um lote. **Não é por filial** (pool da conta pagadora). Não usado em runtime: o vínculo vem do flag acima. |
 
 - **I1 (read-only):** o `ConexosSispagClient` **não importa** nenhum verbo de escrita nesta fatia.
   Toda escrita da fatia é **local** (`lote_pagamento`/`lote_pagamento_item`).
@@ -283,6 +285,34 @@ cadastro/finalizado/cancelado/estornado) é **derivada na leitura** (`situacaoDo
 - **Constantes de tenant:** IDs de banco/conta/layout (Itaú 341, Santander 33, `layoutConta`) e
   níveis de alçada são da instalação Columbia — constantes tipadas, nunca hardcode em service
   (Inviolable Rule #2). Outra trading recalibra.
+
+### Protocolo de PERGUNTA do ERP (`type: QUESTION`) — e como se responde
+
+Algumas escritas do `fin015` não devolvem erro nem sucesso: devolvem **400 com uma pergunta**.
+
+```json
+{ "type": "QUESTION",
+  "questions": [{ "id": "1", "key": "FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO",
+                  "answerList": [{"id":"YES",…},{"id":"NO",…}] }] }
+```
+
+**A resposta** (medida em HML 2026-08-27; o Conexos não documenta): re-POST do **mesmo body**
+com `answers: { "<question.id>": "YES" }` — um `Map<String,String>` chaveado pelo **`id`**, não
+pelo `key`, e **não** um array. Outros sete encodings devolvem a mesma pergunta; o array devolve
+`Cannot deserialize LinkedHashMap<String,String> from Array value`.
+
+O POST que devolve `QUESTION` **não escreve nada** — é pré-commit, não escrita parcial. Por isso
+o re-POST não é retry cego e não fere a doutrina de escrita não-idempotente (ADR-0013).
+
+**Allowlist de auto-resposta (uma chave, exata):**
+
+| Chave | Auto-respondida? | Por quê |
+|---|---|---|
+| `FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO` | **sim, `YES`** | só confirma o uso do boleto que o próprio ERP casou. Não escolhe favorecido, valor nem forma. |
+| `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO` | **não** → `ErpPerguntaError` (409) | responder `YES` **altera a forma de pagamento** do título. Decisão de quem opera. |
+| qualquer outra | **não** → `ErpPerguntaError` (409) | allowlist por chave exata; pergunta nova nunca entra de carona. |
+
+Envelope com **2+ perguntas** também não é auto-respondível, mesmo contendo a allowlistada.
 
 ### ESCRITA SISPAG — FUTURO/gated (fora de escopo, ADR-0015)
 

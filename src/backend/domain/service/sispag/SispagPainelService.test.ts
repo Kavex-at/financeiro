@@ -52,6 +52,8 @@ const make = (
         getLoteComItens?: jest.Mock;
         getTituloAPagar?: jest.Mock;
         listContasFavorecido?: jest.Mock;
+        listContasCorrentes?: jest.Mock;
+        listarTitulosComBoletoDda?: jest.Mock;
         remessaLedger?: { listReconcilingParadas: jest.Mock };
         conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
     } = {},
@@ -60,7 +62,15 @@ const make = (
         listLotes: over.listLotes ?? jest.fn().mockResolvedValue([loteNativo()]),
         getTituloAPagar: over.getTituloAPagar ?? jest.fn().mockResolvedValue(null),
         listContasFavorecido: over.listContasFavorecido ?? jest.fn().mockResolvedValue([]),
+        listContasCorrentes:
+            over.listContasCorrentes ?? jest.fn().mockResolvedValue([{ ccoCod: 1, bncCod: 4 }]),
     } as unknown as ConexosSispagClient;
+    // BOLETO agora vem do flag de DDA do grid de pendentes, não do `fin064`.
+    const listBoletoDda =
+        over.listarTitulosComBoletoDda ?? jest.fn().mockResolvedValue(new Set<string>());
+    const fin015 = {
+        listarTitulosComBoletoDda: listBoletoDda,
+    } as unknown as import('../../client/ConexosSispagWriteClient.js').default;
     const retorno = {
         listConfigsRetorno: over.retornoConfigs ?? jest.fn().mockResolvedValue([]),
         listArquivosRetorno: over.retornoArquivos ?? jest.fn().mockResolvedValue([]),
@@ -95,6 +105,7 @@ const make = (
     }) as never;
     const service = new SispagPainelService(
         sispag,
+        fin015,
         retorno,
         base,
         new BoundedConcurrency(),
@@ -106,7 +117,7 @@ const make = (
         env,
         log,
     );
-    return { service, log };
+    return { service, log, listBoletoDda };
 };
 
 describe('SispagPainelService.montarPainel', () => {
@@ -173,16 +184,16 @@ describe('SispagPainelService.listRetornos', () => {
 
 describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
     it('devolve as formas disponíveis por título (ao vivo) do fin064', async () => {
+        // Do `fin064` só sai PIX. BOLETO saía de `titEspCodbar`, que é null em 100% dos
+        // títulos de produção — a detecção nunca disparava. Agora vem do flag de DDA.
         const getLoteComItens = jest.fn().mockResolvedValue({
             id: 'L1',
             itens: [{ filCod: 2, docCod: '100', titCod: '1' }],
         });
-        const getTituloAPagar = jest
-            .fn()
-            .mockResolvedValue({ modalidadesDisponiveis: ['BOLETO', 'PIX'] });
+        const getTituloAPagar = jest.fn().mockResolvedValue({ modalidadesDisponiveis: ['PIX'] });
         const { service } = make({ getLoteComItens, getTituloAPagar });
         const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: ['BOLETO', 'PIX'] }]);
+        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: ['PIX'] }]);
     });
 
     it('lote inexistente → lista vazia', async () => {
@@ -197,11 +208,11 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
         });
         const getTituloAPagar = jest
             .fn()
-            .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: ['BOLETO'] });
+            .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] });
         const listContasFavorecido = jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 341 }]);
         const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
         const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(itens[0].modalidades).toEqual(['BOLETO', 'TED', 'CREDITO_CONTA']);
+        expect(itens[0].modalidades).toEqual(['TED', 'CREDITO_CONTA']);
         expect(listContasFavorecido).toHaveBeenCalledWith('P1', 2);
     });
 
@@ -312,5 +323,55 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
             expect(painel.execucoesParadas).toMatchObject({ remessa: 0, conciliacao: 0 });
             expect(painel.titulos).toBeDefined();
         });
+    });
+});
+
+describe('SispagPainelService.modalidadesDisponiveisDoLote — BOLETO vem do DDA', () => {
+    const loteDe = (itens: Array<{ filCod: number; docCod: string; titCod: string }>) =>
+        jest.fn().mockResolvedValue({ id: 'L1', itens });
+
+    it('oferece BOLETO quando o ERP tem um boleto DDA casado com o título', async () => {
+        const { service } = make({
+            getLoteComItens: loteDe([{ filCod: 2, docCod: '100', titCod: '1' }]),
+            getTituloAPagar: jest.fn().mockResolvedValue({ modalidadesDisponiveis: [] }),
+            listarTitulosComBoletoDda: jest.fn().mockResolvedValue(new Set(['2:100:1'])),
+        });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens[0].modalidades).toEqual(['BOLETO']);
+    });
+
+    it('NÃO oferece BOLETO para título sem boleto DDA', async () => {
+        const { service } = make({
+            getLoteComItens: loteDe([{ filCod: 2, docCod: '100', titCod: '1' }]),
+            getTituloAPagar: jest.fn().mockResolvedValue({ modalidadesDisponiveis: [] }),
+            listarTitulosComBoletoDda: jest.fn().mockResolvedValue(new Set(['2:999:1'])),
+        });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens[0].modalidades).toEqual([]);
+    });
+
+    it('uma leitura por FILIAL distinta — o grid é da filial, não do item', async () => {
+        const listBoletoDda = jest.fn().mockResolvedValue(new Set<string>());
+        const { service } = make({
+            getLoteComItens: loteDe([
+                { filCod: 2, docCod: '100', titCod: '1' },
+                { filCod: 2, docCod: '200', titCod: '1' },
+                { filCod: 4, docCod: '300', titCod: '1' },
+            ]),
+            getTituloAPagar: jest.fn().mockResolvedValue({ modalidadesDisponiveis: [] }),
+            listarTitulosComBoletoDda: listBoletoDda,
+        });
+        await service.modalidadesDisponiveisDoLote('L1');
+        expect(listBoletoDda).toHaveBeenCalledTimes(2);
+    });
+
+    it('falha na leitura do DDA não oferece BOLETO (prometer destino inexistente estoura no envio)', async () => {
+        const { service } = make({
+            getLoteComItens: loteDe([{ filCod: 2, docCod: '100', titCod: '1' }]),
+            getTituloAPagar: jest.fn().mockResolvedValue({ modalidadesDisponiveis: ['PIX'] }),
+            listarTitulosComBoletoDda: jest.fn().mockRejectedValue(new Error('ERP fora')),
+        });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens[0].modalidades).toEqual(['PIX']);
     });
 });

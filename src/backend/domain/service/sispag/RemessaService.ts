@@ -9,16 +9,30 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin015Write.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type { RemessaExecucaoRow } from '../../interface/sispag/RemessaExecucao.js';
-import { LOTE_STATUS, type LotePagamento } from '../../interface/sispag/SispagInterface.js';
+import {
+    LOTE_STATUS,
+    MODALIDADE,
+    type LotePagamento,
+} from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.js';
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import LogService from '../LogService.js';
 
 /** Código FEBRABAN a partir do `bncCod` interno do Conexos. */
 const FEBRABAN_POR_BNCCOD: Record<number, number> = { 3: 1, 4: 341, 7: 237, 10: 33 };
 
-/** Modalidade nativa do fin015: 1 = crédito em conta / transferência. */
+/**
+ * Modalidade nativa do fin015. Encoding MEDIDO em produção (2026-08-27, 36 itens boleto reais
+ * nos lotes das filiais 1 e 2): `1` = crédito em conta / transferência, `6` = boleto do MESMO
+ * banco do lote (Itaú 341 — 32 itens), `7` = boleto de OUTRO banco (748/237 — 4 itens).
+ *
+ * ⚠️ Para boleto COM associação DDA este mapa não decide nada: o ERP deriva a modalidade do
+ * banco emissor do código de barras e sobrescreve o que mandamos (provado em HML — mandamos 6,
+ * o ERP gravou 7 num boleto 745). Só sobra o caso boleto SEM DDA, que hoje é barrado por
+ * `BoletoSemCodigoBarrasError` antes de chegar aqui.
+ */
 const MODALIDADE_NATIVA: Record<string, number> = {
     CREDITO_CONTA: 1,
     TED: 1,
@@ -444,14 +458,24 @@ export default class RemessaService {
             if (!pular('importar')) {
                 // `apenasChaves` só vem preenchido numa retomada de import parcial: manda
                 // exatamente os títulos que o ERP ainda não tem.
-                const itens = await this.montarItensImport(lote, bncCod, flpCod, apenasChaves);
-                await this.ledger.setRequestPayload(key, { itens: itens.length, flpCod });
-                await this.write.importarTitulos({
-                    filCod: lote.filCod,
-                    bncCod,
-                    flpCod,
-                    itens,
-                });
+                const montados = await this.montarItensImport(lote, bncCod, flpCod, apenasChaves);
+                await this.ledger.setRequestPayload(key, { itens: montados.length, flpCod });
+                // Duas chamadas, não uma: `titVldReflexoDdaAssoc` é campo da SELEÇÃO (vale para
+                // a requisição inteira), e só os títulos que o ERP casou com um boleto DDA
+                // podem pedir a associação. O client já quebra cada grupo em um POST por item.
+                for (const associarDda of [false, true]) {
+                    const itens = montados
+                        .filter((m) => m.associarDda === associarDda)
+                        .map((m) => m.payload);
+                    if (itens.length === 0) continue;
+                    await this.write.importarTitulos({
+                        filCod: lote.filCod,
+                        bncCod,
+                        flpCod,
+                        itens,
+                        associarDda,
+                    });
+                }
             }
             await this.ledger.setEtapa(key, 'finalizar');
 
@@ -801,7 +825,7 @@ export default class RemessaService {
         flpCod: number,
         /** Subconjunto a importar. Ausente = todos os itens do lote (caminho normal). */
         apenas?: ReadonlySet<string>,
-    ): Promise<Array<Record<string, unknown>>> => {
+    ): Promise<Array<{ payload: Record<string, unknown>; associarDda: boolean }>> => {
         // A chave inclui a FILIAL. O grid de pendentes cruza filiais e `docCod` NÃO é único
         // entre elas: medido em HML, o doc 285 existe na filial 2 E na 4. Com a chave só
         // `docCod:titCod`, o Map colide e o título de OUTRA filial sobrescreve o nosso —
@@ -823,7 +847,7 @@ export default class RemessaService {
             pendentes.map((p) => [`${Number(p.raw.filCod)}:${p.docCod}:${p.titCod}`, p]),
         );
         const febraban = FEBRABAN_POR_BNCCOD[bncCod] ?? 341;
-        const itens: Array<Record<string, unknown>> = [];
+        const itens: Array<{ payload: Record<string, unknown>; associarDda: boolean }> = [];
 
         for (const item of alvo) {
             const pendente = porChave.get(chaveDe(item));
@@ -845,14 +869,29 @@ export default class RemessaService {
                 );
             }
 
+            // BOLETO sem boleto DDA associado = remessa com segmento J vazio. O código de
+            // barras NÃO está no título (0% em fin064/pendentes/com308): ou o ERP tem um DDA
+            // casado, ou não há barras nenhuma para mandar. Barra ANTES de qualquer escrita.
+            const associarDda = item.modalidade === MODALIDADE.BOLETO && pendente.temBoletoDda;
+            if (item.modalidade === MODALIDADE.BOLETO && !pendente.temBoletoDda) {
+                throw new BoletoSemCodigoBarrasError({
+                    docCod: item.docCod,
+                    titCod: item.titCod,
+                    ...(item.credor ? { credor: item.credor } : {}),
+                });
+            }
+
+            // Boleto é pago pelo código de barras — não tem favorecido com conta corrente.
+            // Exigir conta aqui rejeitaria todo boleto de fornecedor sem cadastro bancário,
+            // que é justamente o caso em que o boleto existe.
             const pesCod = pendente.raw.pesCod;
             const contas =
-                pesCod != null
+                pesCod != null && !associarDda
                     ? await this.sispag.listContasFavorecido(String(pesCod), lote.filCod)
                     : [];
             const noBanco = contas.filter((c) => c.banco === febraban);
             const destino = noBanco.find((c) => c.padrao) ?? noBanco[0];
-            if (!destino) {
+            if (!destino && !associarDda) {
                 throw new Error(
                     `favorecido de ${item.docCod}/${item.titCod} não tem conta ativa no banco ${febraban}. Cadastre a conta ou escolha outra forma de pagamento.`,
                 );
@@ -866,26 +905,39 @@ export default class RemessaService {
                 titVldReflexoDdaDesassoc: 0,
             };
             itens.push({
-                ...pendente.raw,
-                filCodLote: lote.filCod,
-                bncCod,
-                flpCod,
-                itsVldModalidade: MODALIDADE_NATIVA[item.modalidade ?? 'CREDITO_CONTA'] ?? 1,
-                pctCodSeq: destino.pctCodSeq,
-                itsNumBanco: destino.banco,
-                agencia: destino.agencia ?? '',
-                pctEspNumAgencia: destino.agencia ?? '',
-                conta: destino.conta ?? '',
-                itsEspNomeFav: pendente.raw.dpeNomPessoa ?? item.credor,
-                itsMnyValor: valor,
-                itsMnyVlrPgto: valor,
-                titMnyLiquido: valor,
-                itsDtaPgto: Number(pendente.raw.titDtaVencimento ?? 0),
-                vldOk: 1,
-                vldImporta: 1,
-                titEspCodbar: pendente.raw.titEspCodbar ?? '',
-                avisos: '[]',
-                ...selecao,
+                associarDda,
+                payload: {
+                    ...pendente.raw,
+                    filCodLote: lote.filCod,
+                    bncCod,
+                    flpCod,
+                    // Para o boleto DDA o ERP deriva a modalidade do banco emissor do barcode e
+                    // sobrescreve o que mandarmos (medido em HML: mandamos 6, gravou 7). Mandar
+                    // o palpite mesmo assim mantém o payload válido caso o ERP mude de ideia.
+                    itsVldModalidade: MODALIDADE_NATIVA[item.modalidade ?? 'CREDITO_CONTA'] ?? 1,
+                    // Boleto não tem conta de favorecido — o destino é o próprio código de barras.
+                    ...(destino
+                        ? {
+                              pctCodSeq: destino.pctCodSeq,
+                              itsNumBanco: destino.banco,
+                              agencia: destino.agencia ?? '',
+                              pctEspNumAgencia: destino.agencia ?? '',
+                              conta: destino.conta ?? '',
+                          }
+                        : {}),
+                    itsEspNomeFav: pendente.raw.dpeNomPessoa ?? item.credor,
+                    itsMnyValor: valor,
+                    itsMnyVlrPgto: valor,
+                    titMnyLiquido: valor,
+                    itsDtaPgto: Number(pendente.raw.titDtaVencimento ?? 0),
+                    vldOk: 1,
+                    vldImporta: 1,
+                    // `titEspCodbar` NÃO vai mais: era sempre `''` (o campo é null em 100% dos
+                    // títulos) e mandar vazio é exatamente o que produzia segmento J sem barras.
+                    // Quem preenche o barcode é o ERP, na associação DDA.
+                    avisos: '[]',
+                    ...selecao,
+                },
             });
         }
         return itens;

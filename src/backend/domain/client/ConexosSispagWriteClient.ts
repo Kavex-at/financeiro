@@ -37,6 +37,31 @@ const SUCESSO_SCHEMA = z.object({
 });
 
 /**
+ * A ÚNICA pergunta do ERP que respondemos sozinhos.
+ *
+ * `FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO` é o ERP dizendo "achei o boleto DDA deste
+ * título — uso?". Responder `YES` só anexa o código de barras que o próprio ERP casou; não
+ * move dinheiro, não escolhe favorecido, não altera valor. Medido em HML (2026-08-27): o POST
+ * que devolve a pergunta **não importa nada** — a pergunta é um pré-commit, não escrita parcial.
+ *
+ * Tudo o mais continua humano por doutrina (`ErpPerguntaError`). Em especial
+ * `PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO`, que ALTERA
+ * A FORMA DE PAGAMENTO do título — decisão de quem opera. É allowlist por chave exata, e não
+ * um `includes`, justamente para que uma pergunta nova nunca entre de carona.
+ */
+const PERGUNTA_AUTO_RESPONDIVEL = 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO';
+
+/**
+ * Envelope de PERGUNTA do Conexos. O `id` é o que importa: a resposta vai num
+ * `answers: Map<String,String>` chaveado por ELE (não pelo `key`) — descoberto em HML porque
+ * mandar um array devolveu `Cannot deserialize LinkedHashMap<String,String> from Array value`.
+ */
+const QUESTION_SCHEMA = z.object({
+    type: z.literal('QUESTION'),
+    questions: z.array(z.object({ id: z.string().optional(), key: z.string().optional() })).min(1),
+});
+
+/**
  * ConexosSispagWriteClient — família de ESCRITA do `fin015` (Geração de Lotes
  * SISPAG / remessa `.REM`). É a 1ª superfície de escrita do SISPAG no Conexos e
  * QUEBRA a invariante I1 (read-only); espelha a doutrina de escrita irreversível
@@ -399,6 +424,43 @@ export default class ConexosSispagWriteClient {
         }
     };
 
+    /**
+     * Conjunto `filCod:docCod:titCod` dos títulos da filial que o ERP casou com um boleto DDA.
+     *
+     * É a fonte de "este pagamento tem boleto" — o código de barras não está no título (0% em
+     * `fin064`, `titulosPendentes` e `com308`), só o FLAG `titVldReflexoDdaAssoc` está, e só no
+     * grid de pendentes. Ver `ontology/_inbox/sispag-boleto-dda-sondagem.md`.
+     *
+     * ⚠️ O grid exige um `flpCod` — usa-se o lote nativo mais recente da conta apenas como
+     * CONTEXTO DE LEITURA. Ele não é modificado, e o grid lista os pendentes da filial inteira,
+     * não do lote (medido: lê igual em lote finalizado). Filial sem lote nenhum devolve conjunto
+     * vazio, e quem chama degrada em vez de quebrar.
+     */
+    public listarTitulosComBoletoDda = async (params: {
+        filCod: number;
+        bncCod: number;
+        maxPaginas?: number;
+    }): Promise<Set<string>> => {
+        const { filCod, bncCod, maxPaginas } = params;
+        const lotes = await this.listarLotesNativos({ filCod, bncCod });
+        const contexto = lotes.reduce<number | undefined>(
+            (maior, l) => (maior === undefined || l.flpCod > maior ? l.flpCod : maior),
+            undefined,
+        );
+        if (contexto === undefined) return new Set();
+        const pendentes = await this.listarTitulosPendentes({
+            filCod,
+            bncCod,
+            flpCod: contexto,
+            ...(maxPaginas !== undefined ? { maxPaginas } : {}),
+        });
+        return new Set(
+            pendentes
+                .filter((p) => p.temBoletoDda)
+                .map((p) => `${p.filCod}:${p.docCod}:${p.titCod}`),
+        );
+    };
+
     /** Projeção da linha crua do grid — a identidade vai VERBATIM em `raw`. */
     private paraTituloPendente = (
         r: Record<string, unknown>,
@@ -414,6 +476,9 @@ export default class ConexosSispagWriteClient {
         ...(r.itsMnyValor != null ? { valor: Number(r.itsMnyValor) } : {}),
         ...(r.titDtaVencimento != null ? { vencimento: Number(r.titDtaVencimento) } : {}),
         ...(r.itsEspNomeFav != null ? { favorecido: String(r.itsEspNomeFav) } : {}),
+        // Único sinal de "este pagamento tem boleto" que existe no ERP antes do import.
+        // Medido em PRD: 54/173 (fil 1), 136/500 (fil 2), 24/500 (fil 4), 152/500 (fil 6).
+        temBoletoDda: Number(r.titVldReflexoDdaAssoc ?? 0) === 1,
         raw: r,
     });
 
@@ -427,25 +492,33 @@ export default class ConexosSispagWriteClient {
      * dos dois lados, o ERP responde `SELECTION_ERROR` listando-os como vazios:
      *   `op`                        — operação da seleção (1)
      *   `bncCodFin015`              — banco do LOTE (≠ `bncCod` do item)
-     *   `titVldReflexoDdaAssoc`     — reflexo DDA associar (0)
+     *   `titVldReflexoDdaAssoc`     — reflexo DDA associar (ver `associarDda`)
      *   `titVldReflexoDdaDesassoc`  — reflexo DDA desassociar (0)
      *
      * ⚠️ IDENTIDADE: cada item leva a chave VERBATIM do `titulosPendentes/list`. `filCod`
      * é a filial do TÍTULO e `filCodLote` a do LOTE — o grid cruza filiais, e forçar as
      * duas iguais devolve `Not Found: FinTituloPag`.
      *
-     * ⚠️ O ERP pode responder `{ type: 'QUESTION', answerList: [YES, ABORT] }` (ex.:
-     * favorecido sem conta ativa no banco do lote, `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_
-     * ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO`). É uma confirmação interativa e
-     * hoje vira erro — tratar no serviço de orquestração antes de ligar a escrita.
+     * ⚠️ O ERP pode responder `{ type: 'QUESTION', … }` em vez de erro. Uma única chave é
+     * auto-respondida (`PERGUNTA_AUTO_RESPONDIVEL`, o boleto DDA); todas as outras — em
+     * especial `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_
+     * TITULO_PROPRIO`, que altera a forma de pagamento — sobem como `ErpPerguntaError` para
+     * decisão humana.
+     *
+     * Protocolo da resposta (não documentado pelo Conexos, descoberto em HML 2026-08-27):
+     * re-POST do MESMO body com `answers: { "<question.id>": "YES" }` — um MAP chaveado pelo
+     * `id`, não pelo `key` e não um array.
      */
     public importarTitulos = async (params: ImportarTitulosParams): Promise<void> => {
-        const { filCod, bncCod, flpCod, itens, op = 1 } = params;
+        const { filCod, bncCod, flpCod, itens, op = 1, associarDda = false } = params;
         const path = 'fin015/finItemSispag/titulosPendentes/importar';
         const selecao = {
             op,
             bncCodFin015: bncCod,
-            titVldReflexoDdaAssoc: 0,
+            // 1 = "associe o boleto DDA deste título". Era `0` fixo, e era por isso que todo
+            // boleto saía na remessa sem código de barras: o barcode não está no título, só
+            // chega por esta associação. Ver `sispag-boleto-dda-sondagem.md`.
+            titVldReflexoDdaAssoc: associarDda ? 1 : 0,
             titVldReflexoDdaDesassoc: 0,
         };
 
@@ -461,20 +534,51 @@ export default class ConexosSispagWriteClient {
         // import parcial que a retomada trata (ver `retomada-remessa-sispag.md`).
         if (itens.length > 1) {
             for (const item of itens) {
-                await this.importarTitulos({ filCod, bncCod, flpCod, itens: [item], op });
+                await this.importarTitulos({
+                    filCod,
+                    bncCod,
+                    flpCod,
+                    itens: [item],
+                    op,
+                    associarDda,
+                });
             }
             return;
         }
+        const body = { items: itens.map((item) => ({ ...item, ...selecao })), ...selecao };
         try {
             await this.base.ensureSid();
-            await this.base.postGenericOnce<unknown>(
-                path,
-                { items: itens.map((item) => ({ ...item, ...selecao })), ...selecao },
-                { filCod },
-            );
+            await this.base.postGenericOnce<unknown>(path, body, { filCod });
         } catch (cause) {
-            throw this.toConexosError(path, cause);
+            const idPergunta = this.perguntaAutoRespondivel(cause);
+            if (idPergunta === undefined) throw this.toConexosError(path, cause);
+            // Re-POST do MESMO body com a resposta. UMA vez só: se o ERP perguntar de novo,
+            // a segunda falha sobe como pergunta humana em vez de virar laço de escrita.
+            try {
+                await this.base.postGenericOnce<unknown>(
+                    path,
+                    { ...body, answers: { [idPergunta]: 'YES' } },
+                    { filCod },
+                );
+            } catch (causeAposResposta) {
+                throw this.toConexosError(path, causeAposResposta);
+            }
         }
+    };
+
+    /**
+     * `id` da pergunta quando o ERP interrompeu com a ÚNICA pergunta que respondemos sozinhos;
+     * `undefined` em qualquer outro caso (inclusive envelope com 2+ perguntas, mesmo que uma
+     * delas seja a allowlistada — aí a decisão volta a ser humana).
+     */
+    private perguntaAutoRespondivel = (cause: unknown): string | undefined => {
+        const data = (cause as { response?: { data?: unknown } })?.response?.data;
+        const parsed = QUESTION_SCHEMA.safeParse(data);
+        if (!parsed.success || parsed.data.questions.length !== 1) return undefined;
+        const q = parsed.data.questions[0];
+        if (q.key !== PERGUNTA_AUTO_RESPONDIVEL) return undefined;
+        // A resposta é chaveada pelo `id`; sem ele não há como responder.
+        return q.id;
     };
 
     /**

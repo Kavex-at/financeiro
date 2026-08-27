@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "generated": "2026-08-17",
-    "version": "0.19.1",
-    "note": "v0.17.0 (2026-08-17, ADR-0037): aba NDe do painel deixa de ser hardcoded vazia. Projecao de leitura dirigida pela EXECUCAO (LEFT JOIN na NDe local) + hidratacao capada no com297 (GET por docCod) com reconciliacao local de nde_autorizado/numero_nde. KPI ndePendentes = NOT(emitida AND autorizada), COUNT no banco. Entidade NotaDebitoEletronica sai de planned para partial no _index (entities_planned 6->5, entities_partial 1->2); nenhuma coluna nova, nenhuma regra de emissao alterada. GAP aberto: grid com297 para listar NDes emitidas fora da ferramenta. EMENDA (mesmo dia): o grid do com297 (POST com297/list) foi mapeado por HAR + probe read-only em PRD e o GAP integrability-4 fechou. Hidratacao passou de ate 20 GET com297/{docCod} para 1 POST por filial (o grid projeta vldAutorizado e docEspNumero da familia inteira). Filtro por CODIGO (tpdCod#EQ=167), NAO por tpdDesNome#LIKE: nome de cadastro e editavel e #LIKE sobre string acentuada falha em silencio (zero linhas, sem erro) se a normalizacao Unicode divergir; equivalencia codigo x nome provada em PRD. NDes emitidas FORA da ferramenta passam a aparecer com origem=erp e chip \"fora da ferramenta\" — sem correlationId/etapa/txn, identidade por cliente+processo; correlationId, recebimentoId e idempotencyKey viraram opcionais no NdePainelRow. Externas nao autorizadas somam ao KPI ndePendentes. ARMADILHA registrada: POST /com297 sem o sufixo /list e a CRIACAO de documento — o helper listGenericPaginated monta o path errado para este servico. Anterior: v0.18.0 (2026-08-11, ADR-0036): regra de negocio NOVA descricao-item-nde (I-Receb-5), implemented + teste canonico. A Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) e garantida NO DOCUMENTO antes da leg fiscal (PUT com297/comDocProdutos, RMW, sucesso ⟺ eco nao-vazio); o cadastro do cliente (cmn025 dpeVld1DescrNfe) NUNCA e escrito. No-op quando o ERP ja preencheu. Sem migration e sem etapa nova no ledger (idempotencia pelo estado do documento, para alcancar execucoes paradas em obs-done). Coverage: business_rules_total 18->19, implemented 9->10, with_tests 5->6.",
+    "generated": "2026-08-27",
+    "version": "0.21.0",
+    "note": "v0.21.0 (2026-08-27, ADR-0040): nova business-rule boleto-exige-codigo-de-barras (implemented, com teste). TituloAPagar.temBoleto troca de fonte: titEspCodbar (null em 100% da carteira medida em PRD) -> flag titVldReflexoDdaAssoc do grid de pendentes do fin015. business_rules_total 19->20, implemented 10->11, with_tests 6->7. Nenhuma entidade muda de status. v0.17.0 (2026-08-17, ADR-0037): aba NDe do painel deixa de ser hardcoded vazia. Projecao de leitura dirigida pela EXECUCAO (LEFT JOIN na NDe local) + hidratacao capada no com297 (GET por docCod) com reconciliacao local de nde_autorizado/numero_nde. KPI ndePendentes = NOT(emitida AND autorizada), COUNT no banco. Entidade NotaDebitoEletronica sai de planned para partial no _index (entities_planned 6->5, entities_partial 1->2); nenhuma coluna nova, nenhuma regra de emissao alterada. GAP aberto: grid com297 para listar NDes emitidas fora da ferramenta. EMENDA (mesmo dia): o grid do com297 (POST com297/list) foi mapeado por HAR + probe read-only em PRD e o GAP integrability-4 fechou. Hidratacao passou de ate 20 GET com297/{docCod} para 1 POST por filial (o grid projeta vldAutorizado e docEspNumero da familia inteira). Filtro por CODIGO (tpdCod#EQ=167), NAO por tpdDesNome#LIKE: nome de cadastro e editavel e #LIKE sobre string acentuada falha em silencio (zero linhas, sem erro) se a normalizacao Unicode divergir; equivalencia codigo x nome provada em PRD. NDes emitidas FORA da ferramenta passam a aparecer com origem=erp e chip \"fora da ferramenta\" — sem correlationId/etapa/txn, identidade por cliente+processo; correlationId, recebimentoId e idempotencyKey viraram opcionais no NdePainelRow. Externas nao autorizadas somam ao KPI ndePendentes. ARMADILHA registrada: POST /com297 sem o sufixo /list e a CRIACAO de documento — o helper listGenericPaginated monta o path errado para este servico. Anterior: v0.18.0 (2026-08-11, ADR-0036): regra de negocio NOVA descricao-item-nde (I-Receb-5), implemented + teste canonico. A Descricao para Impressao do item da NDe (com297 dprLngDescrNf, o xProd da NF-e) e garantida NO DOCUMENTO antes da leg fiscal (PUT com297/comDocProdutos, RMW, sucesso ⟺ eco nao-vazio); o cadastro do cliente (cmn025 dpeVld1DescrNfe) NUNCA e escrito. No-op quando o ERP ja preencheu. Sem migration e sem etapa nova no ledger (idempotencia pelo estado do documento, para alcancar execucoes paradas em obs-done). Coverage: business_rules_total 18->19, implemented 9->10, with_tests 5->6.",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "nde-painel-lista"
+    "last_feature": "sispag-boleto-dda"
   },
   "summary": {
     "entities_total": 16,
@@ -21,10 +21,10 @@
     "actions_partial": 1,
     "actions_planned": 6,
     "actions_coverage_pct": 70,
-    "business_rules_total": 19,
-    "business_rules_implemented": 10,
+    "business_rules_total": 20,
+    "business_rules_implemented": 11,
     "business_rules_planned": 9,
-    "business_rules_with_tests": 6,
+    "business_rules_with_tests": 7,
     "business_rules_retired": 1,
     "state_machines_total": 5,
     "state_machines_partial": 1,
@@ -401,6 +401,14 @@
         "ADR-0031"
       ],
       "note": "Frente IV (ADR-0031): a NDe so e emitida QUANDO DEVIDA. priVldTipo=2 (conta e ordem de terceiros) => com299 + fin014 e PARA (sem com297/com300/com131/poll SEFAZ), etapa terminal quitado-sem-nde, nd_doc_cod nulo POR REGRA. Modalidade lida do imp021 no SERVIDOR — nunca do payload do cliente, porque decide emissao de documento fiscal IRREVERSIVEL. Indeterminavel (processo ausente | campo nulo | read falhou) => blocked fail-closed, write-ahead nem abre. Gatilho e SO priVldTipo=2, NAO a variante \"- TERCEIROS\" da config de SN (gcd 151), que so decide a conta de rateio. Testes canonicos: RecebimentoNumerarioService.test.ts (describe ADR-0031), recebimentos.e2e.falhas.test.ts (Cenario 5, prova por HTTP que nada chega ao com297/com300/com131), SolicitacaoNumerarioExecucaoRepository.test.ts, AlocarProcessosDialog.test.tsx."
+    },
+    "boleto-exige-codigo-de-barras": {
+      "status": "implemented",
+      "has_test": true,
+      "resolved_by": [
+        "sondagem PRD 2026-08-27 — titEspCodbar 0% em fin064 (2000) / pendentes (2173) / com308 (50)",
+        "teste de escrita HML 2026-08-27 — titVldReflexoDdaAssoc:1 + answers{id:YES} anexa itsNumCodbar"
+      ]
     }
   },
   "health_flags": {

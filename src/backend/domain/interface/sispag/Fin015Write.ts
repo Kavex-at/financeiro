@@ -53,11 +53,27 @@ export interface TituloPendente {
     filCod: number;
     docCod: string;
     titCod: string;
-    /** Forma de pagamento (7=boleto; há TED/PIX). O ERP escolhe o segmento CNAB por ela. */
+    /**
+     * Forma de pagamento. Encoding MEDIDO em produção (2026-08-27, 36 itens boleto reais):
+     * `1` = crédito em conta / TED, `6` = **boleto do MESMO banco** do lote (Itaú 341),
+     * `7` = **boleto de OUTRO banco** (medidos: 748 Sicredi, 237 Bradesco). O ERP escolhe o
+     * segmento CNAB por ela — e, quando o boleto vem por associação DDA, ele mesmo a deriva
+     * do banco emissor do código de barras, ignorando o que mandamos.
+     */
     itsVldModalidade?: number;
     valor?: number;
     vencimento?: number;
     favorecido?: string;
+    /**
+     * O ERP tem um boleto DDA (`fin124`) casado com este título — flag `titVldReflexoDdaAssoc`
+     * do grid de pendentes.
+     *
+     * É o ÚNICO vínculo pagamento↔boleto que existe: o código de barras não está no título
+     * (medido 0% em `fin064`, `titulosPendentes` e `com308`) e o item do `fin124` não guarda
+     * documento/título até ser consumido por um lote. Ver
+     * `ontology/_inbox/sispag-boleto-dda-sondagem.md`.
+     */
+    temBoletoDda: boolean;
     /** Linha crua do ERP — repassada no `importar` (o ERP exige o registro completo do item). */
     raw: Record<string, unknown>;
 }
@@ -79,6 +95,16 @@ export interface ImportarTitulosParams {
     itens: Array<Record<string, unknown>>;
     /** Operação da seleção. Default 1 (o valor provado em HML). */
     op?: number;
+    /**
+     * Pedir ao ERP que associe o boleto DDA deste título (`titVldReflexoDdaAssoc: 1`).
+     *
+     * Com isto o ERP anexa o código de barras ao item (`itsNumCodbar`), marca
+     * `vldVinculoDda = 1` e deriva a modalidade correta do banco emissor — provado ao vivo em
+     * HML (2026-08-27). O caminho passa por uma PERGUNTA do ERP, que `importarTitulos`
+     * responde sozinho **só** para a chave allowlistada. Default `false` = comportamento
+     * histórico (manda `0`, nenhum boleto é associado).
+     */
+    associarDda?: boolean;
 }
 
 /** Parâmetros para gerar a remessa `.REM` de um lote FINALIZADO (`gerArquivosBancos/gerarRemessa`). */

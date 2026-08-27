@@ -55,9 +55,10 @@ const loteCom2Itens = (): LotePagamento =>
     });
 
 /** Linha do grid de pendentes — a identidade tem que voltar VERBATIM para o import. */
-const pendente = (over: Record<string, unknown> = {}) => ({
+const pendente = (over: Record<string, unknown> = {}, temBoletoDda = false) => ({
     docCod: '801',
     titCod: '1',
+    temBoletoDda,
     raw: {
         filCod: 2,
         docCod: 801,
@@ -907,5 +908,104 @@ describe('RemessaService', () => {
                 make({ db: buildDb(false) }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
             ).rejects.toMatchObject({ retryable: true });
         });
+    });
+});
+
+describe('RemessaService — boleto (código de barras via DDA)', () => {
+    const loteBoleto = (temDda: boolean) => ({
+        lote: lote({
+            itens: [{ ...lote().itens[0], modalidade: 'BOLETO' as const }],
+        }),
+        pendentes: [pendente({}, temDda)],
+    });
+
+    it('BOLETO com boleto DDA → import pede a associação ao ERP', async () => {
+        const { lote: l, pendentes } = loteBoleto(true);
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue(pendentes);
+        const loteRepo = buildLoteRepo(l);
+
+        await make({ write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+        expect(write.importarTitulos).toHaveBeenCalledWith(
+            expect.objectContaining({ associarDda: true }),
+        );
+    });
+
+    it('BOLETO SEM boleto DDA → BoletoSemCodigoBarrasError antes de qualquer escrita', async () => {
+        // O barcode não está no título em lugar nenhum: sem DDA, a remessa sairia com
+        // segmento J vazio — um pagamento que o banco não liquida.
+        const { lote: l, pendentes } = loteBoleto(false);
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue(pendentes);
+        const loteRepo = buildLoteRepo(l);
+
+        await expect(
+            make({ write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'BOLETO_SEM_CODIGO_BARRAS' });
+
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+        expect(write.gerarRemessa).not.toHaveBeenCalled();
+    });
+
+    it('a mensagem nomeia o título — a analista precisa saber qual sanear', async () => {
+        const { lote: l, pendentes } = loteBoleto(false);
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue(pendentes);
+        await expect(
+            make({ write, lote: l }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({
+            userMessage: expect.stringContaining('801/1'),
+        });
+    });
+
+    it('não manda mais titEspCodbar VAZIO no payload do import', async () => {
+        // Era `titEspCodbar: raw.titEspCodbar ?? ''` — e o campo é null em 100% dos títulos
+        // de produção. Mandar string vazia é exatamente o que produzia remessa sem código de
+        // barras. O `raw` do ERP realmente traz a chave (com null), então o que precisa
+        // sumir é a COERÇÃO para `''`, não a chave.
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([pendente({ titEspCodbar: null })]);
+        await make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        const [{ itens }] = write.importarTitulos.mock.calls[0];
+        expect(itens[0].titEspCodbar).toBeNull();
+        expect(itens[0].titEspCodbar).not.toBe('');
+    });
+
+    it('item não-boleto segue sem pedir associação (regressão)', async () => {
+        const write = buildWrite();
+        await make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(write.importarTitulos).toHaveBeenCalledWith(
+            expect.objectContaining({ associarDda: false }),
+        );
+    });
+
+    it('lote misto → uma chamada por grupo, cada uma com o seu associarDda', async () => {
+        const l = lote({
+            itens: [
+                { ...lote().itens[0], modalidade: 'CREDITO_CONTA' as const },
+                {
+                    loteId: 'L1',
+                    filCod: 2,
+                    docCod: '802',
+                    titCod: '1',
+                    credor: 'OUTRO',
+                    valor: 100,
+                    modalidade: 'BOLETO' as const,
+                    incluidoPor: 'u1',
+                },
+            ],
+        });
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([
+            pendente(),
+            { ...pendente({ docCod: 802 }, true), docCod: '802' },
+        ]);
+
+        await make({ write, lote: l }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+        const flags = write.importarTitulos.mock.calls.map(([p]) => p.associarDda);
+        expect(flags).toEqual([false, true]);
+        for (const [p] of write.importarTitulos.mock.calls) expect(p.itens).toHaveLength(1);
     });
 });

@@ -1,8 +1,8 @@
 {
     "_meta": {
-        "generated": "2026-08-25",
-        "version": "0.20.0",
-        "note": "v0.20.0 (2026-08-25, ADR-0039): o SISPAG retoma execucao orfa CONSULTANDO o estado no ERP em vez de exigir conserto manual no fin015. Criterio por-escrita: onde o ERP expoe estado verificavel (flpVldStatus/titulosCount no fin015, processadoEm no fin052), consulta-se; onde nao expoe, o fail-closed do ADR-0013 continua. Emenda idempotencia-reconciliacao.md, que segue integral para a permuta (fin010). v0.17.0 (2026-08-17, ADR-0037): a aba NDe do painel de recebimentos passa a listar de verdade. Fonte da projecao = solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica (a NDe local so nasce apos homologar, entao listar por ela esconderia a NDe cuja cauda fiscal parou no meio); fora ficam dry_run e nde_dispensada (ADR-0031). O painel HIDRATA o estado atual no com297 (GET por docCod, cap ",
+        "generated": "2026-08-27",
+        "version": "0.21.0",
+        "note": "v0.21.0 (2026-08-27, ADR-0040): o boleto do SISPAG deixa de ser tratado como PIX/TED. Medido em producao: titEspCodbar e null em 100% dos titulos (fin064 2000, grid de pendentes 2173, com308 50), entao a auto-deteccao de boleto nunca disparava e todo BOLETO ia para a remessa com barras VAZIA. O vinculo pagamento<->boleto passa a ser o flag titVldReflexoDdaAssoc do grid de pendentes; no import pede-se a associacao (associarDda) e o ERP anexa itsNumCodbar + deriva a modalidade do banco emissor (6=mesmo banco, 7=outro). O caminho passa por uma QUESTION do ERP, respondida com answers:{id:'YES'} — allowlist de UMA chave; qualquer outra segue humana (ErpPerguntaError). BOLETO sem boleto DDA e barrado no ENVIO (BoletoSemCodigoBarrasError). v0.20.0 (2026-08-25, ADR-0039): o SISPAG retoma execucao orfa CONSULTANDO o estado no ERP em vez de exigir conserto manual no fin015. Criterio por-escrita: onde o ERP expoe estado verificavel (flpVldStatus/titulosCount no fin015, processadoEm no fin052), consulta-se; onde nao expoe, o fail-closed do ADR-0013 continua. Emenda idempotencia-reconciliacao.md, que segue integral para a permuta (fin010). v0.17.0 (2026-08-17, ADR-0037): a aba NDe do painel de recebimentos passa a listar de verdade. Fonte da projecao = solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica (a NDe local so nasce apos homologar, entao listar por ela esconderia a NDe cuja cauda fiscal parou no meio); fora ficam dry_run e nde_dispensada (ADR-0031). O painel HIDRATA o estado atual no com297 (GET por docCod, cap ",
         "upstream": "../../produtizacao/nf-projects",
         "status_legend": {
             "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -143,9 +143,10 @@
                 "src/backend/domain/interface/sispag/SispagInterface.ts",
                 "src/backend/routes/sispag.ts",
                 "src/backend/jobs/ingest-pagamentos.ts",
-                "src/frontend/app/sispag/page.tsx"
+                "src/frontend/app/sispag/page.tsx",
+                "src/backend/domain/client/ConexosSispagWriteClient.ts"
             ],
-            "note": "ADR-0016 (SISPAG ingestão): a carteira EVOLUIU de read model read-through → PERSISTIDA. Dados básicos ingeridos (cron + manual) e gravados em titulo_a_pagar (migration 0024, chave filCod:docCod:titCod, UPSERT); run de auditoria pagamento_ingestao_run (+ idempotency). Painel LÊ DO BANCO (TituloAPagarRepository.listAtivos). NEW fields: aprovado (persistido; era o derivado 'liberado' do ADR-0015), pago, pes_cod, tpd_cod, banco, num_remessa, pronto_para_remessa (heurística INFORMATIVA — validação real no envio), ativo (anti-fantasma via marcarInativosForaDaRun), ingestao_run_id, atualizado_em. ADR-0021 (INTERNACIONAL FORA DO ESCOPO, supersede ADR-0017): a propriedade/coluna internacional foi REMOVIDA (migration 0030_remove_internacional.sql purga o legado + dropa as colunas da migration 0025). O SISPAG é DOMÉSTICO — pagamento ao exterior é câmbio manual da tesouraria, não passa pelo SISPAG; títulos internacionais (com298 ufEspSigla='EX' via listExteriorDocCods, agora filtro-out) são EXCLUÍDOS na ingestão e nunca entram na carteira. Detalhe de remessa hidratado AO VIVO só no envio (Fatia 3, anti-drift). implemented. READ-only no ERP (I1) — única escrita é o Postgres. Ver ADR-0015 (prévio: read-through)."
+            "note": "ADR-0040 (2026-08-27): `temBoleto` mudou de FONTE. Era Boolean(fin064.titEspCodbar) — null em 100% dos titulos medidos em PRD, logo sempre false. Agora vem do flag titVldReflexoDdaAssoc do grid de pendentes do fin015, lido por filial na ingestao (listarTitulosComBoletoDda) usando o lote nativo mais recente apenas como CONTEXTO de leitura. O codigo de barras nao e persistido: quem o anexa ao item e o ERP, no import. ADR-0016 (SISPAG ingestão): a carteira EVOLUIU de read model read-through → PERSISTIDA. Dados básicos ingeridos (cron + manual) e gravados em titulo_a_pagar (migration 0024, chave filCod:docCod:titCod, UPSERT); run de auditoria pagamento_ingestao_run (+ idempotency). Painel LÊ DO BANCO (TituloAPagarRepository.listAtivos). NEW fields: aprovado (persistido; era o derivado 'liberado' do ADR-0015), pago, pes_cod, tpd_cod, banco, num_remessa, pronto_para_remessa (heurística INFORMATIVA — validação real no envio), ativo (anti-fantasma via marcarInativosForaDaRun), ingestao_run_id, atualizado_em. ADR-0021 (INTERNACIONAL FORA DO ESCOPO, supersede ADR-0017): a propriedade/coluna internacional foi REMOVIDA (migration 0030_remove_internacional.sql purga o legado + dropa as colunas da migration 0025). O SISPAG é DOMÉSTICO — pagamento ao exterior é câmbio manual da tesouraria, não passa pelo SISPAG; títulos internacionais (com298 ufEspSigla='EX' via listExteriorDocCods, agora filtro-out) são EXCLUÍDOS na ingestão e nunca entram na carteira. Detalhe de remessa hidratado AO VIVO só no envio (Fatia 3, anti-drift). implemented. READ-only no ERP (I1) — única escrita é o Postgres. Ver ADR-0015 (prévio: read-through)."
         },
         "LotePagamento": {
             "file": "entities/lote-pagamento.md",
@@ -916,6 +917,17 @@
                 "ADR-0041"
             ],
             "note": "ADR-0041: o fallback para o robô segue silencioso PARA O USUÁRIO, mas passa a emitir warn quando o vínculo existe e não pôde ser usado (I-1), e os seis ledgers write-ahead passam a registrar conexos_username + conexos_usn_cod ao lado de executado_por (I-2). Origem: incidente 2026-08-25 — usuário com vínculo cujo login nunca completava acumulou 35 execuções atribuídas a ele no banco e ao robô no ERP. NULL nas colunas = identidade não capturada, nunca robô; sem backfill."
+        },
+        "boleto-exige-codigo-de-barras": {
+            "file": "business-rules/boleto-exige-codigo-de-barras.md",
+            "status": "implemented",
+            "has_canonical_test": true,
+            "impl_files": [
+                "src/backend/domain/errors/BoletoSemCodigoBarrasError.ts",
+                "src/backend/domain/service/sispag/RemessaService.ts",
+                "src/backend/domain/client/ConexosSispagWriteClient.ts"
+            ],
+            "note": "Fail-closed no ENVIO (nao no rascunho): item modalidade=BOLETO sem boleto DDA associado nao vira linha de remessa. Sem isso o .REM sai com segmento J sem codigo de barras. ADR-0040."
         }
     },
     "state_machines": {
