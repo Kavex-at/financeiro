@@ -246,6 +246,74 @@ describe('IngestaoPermutasService', () => {
         expect(snapshot.persistRun).toHaveBeenCalledTimes(1);
     });
 
+    // Regressão do Regis-Review 2026-08-28 (invoice-pago-detalhe).
+    //
+    // `toInvoiceRows` monta as linhas em duas passadas: candidatas primeiro, universo depois
+    // com `if (byDocCod.has(...)) continue`. A invoice da candidata carrega o `pago` do
+    // `com298/list` (via `isPago`), que é SEMPRE false — o list não popula saldo. Se a
+    // candidata vencer, a correção do `pago` não alcança nenhuma invoice de processo COM
+    // adiantamento, que são as que mais importam para permuta.
+    //
+    // Os demais testes deste arquivo passam `todasInvoices` vazio (default do mock), então
+    // nenhum exercitava esta precedência — foi o ponto cego que deixou o bug passar.
+    it('o `pago` do universo hidratado VENCE o da candidata (que vem do list, sempre false)', async () => {
+        const eleicao = {
+            computeCandidatas: jest.fn().mockResolvedValue({
+                candidatas: [elegivel],
+                flowId: 'flow-1',
+                // MESMA invoice I1 da candidata, agora com o `pago` REAL derivado do com308.
+                todasInvoices: [
+                    {
+                        inv: { ...elegivel.invoiceCasada, pago: true },
+                        filCod: 2,
+                    },
+                ],
+                totals: {
+                    totalCandidatas: 1,
+                    totalElegiveis: 1,
+                    totalBloqueadas: 0,
+                    bloqueadasByMotivo: {},
+                },
+            }),
+        } as unknown as jest.Mocked<EleicaoPermutasService>;
+        const { repo } = buildRelational();
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            buildSnapshot(),
+            variacao,
+            borderoGestao,
+            buildLogService().logService,
+        );
+
+        await service.executar({ triggeredBy: 'cron' });
+
+        const invoiceRows = repo.upsertInvoices.mock.calls[0][2];
+        const i1 = invoiceRows.find((r) => r.docCod === 'I1');
+        // A candidata dizia `pago: false`; o universo hidratado diz `true`. Vence o universo,
+        // senão a invoice liquidada volta a aparecer na aba "Invoices em aberto".
+        expect(i1?.pago).toBe(true);
+    });
+
+    it('sem entrada no universo, o `pago` da candidata é preservado (piso conservador)', async () => {
+        // Cap de paginação ou invoice fora do universo: nunca inferimos `pago=true` sem prova.
+        const eleicao = buildEleicao([elegivel]);
+        const { repo } = buildRelational();
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            buildSnapshot(),
+            variacao,
+            borderoGestao,
+            buildLogService().logService,
+        );
+
+        await service.executar({ triggeredBy: 'cron' });
+
+        const invoiceRows = repo.upsertInvoices.mock.calls[0][2];
+        expect(invoiceRows.find((r) => r.docCod === 'I1')?.pago).toBe(false);
+    });
+
     it('only elegivel-with-invoice candidatas become auto casamentos', async () => {
         const eleicao = buildEleicao([elegivel, bloqueada]);
         const { repo } = buildRelational();

@@ -618,11 +618,35 @@ export default class EleicaoPermutasService {
             // a LISTA é inservível, a verdade está no título. Custo zero: este com308
             // já era chamado aqui para valor/taxa negociada.
             const pagoDosTitulos = derivarPagoDosTitulos(tit);
-            if (pagoDosTitulos !== undefined) inv.pago = pagoDosTitulos;
-        } catch {
+            if (pagoDosTitulos !== undefined) {
+                inv.pago = pagoDosTitulos;
+            } else {
+                // Títulos vieram, mas sem face/pago utilizável — o `pago` fica no piso
+                // conservador SEM prova. Sinalizado porque, em massa, é indistinguível de
+                // "invoice realmente em aberto": exatamente o sintoma que originou este fix.
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'invoice sem pago derivável dos títulos — piso conservador aplicado',
+                    data: { docCod: raw.docCod, filCod, titulos: tit.length },
+                });
+            }
+        } catch (error) {
             // com308 indisponível p/ esta invoice — segue sem valor negociado e com
             // `pago` no piso conservador (`false`): a invoice continua visível na aba
             // em vez de sumir sem prova de quitação.
+            //
+            // NÃO é silencioso: um surto de falhas do com308 degrada a aba inteira de volta
+            // ao bug original (invoice liquidada reaparece), e sem este sinal o operador só
+            // descobriria por relato de analista — que foi como este bug chegou até nós.
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'com308 indisponível na hidratação da invoice — pago não derivado',
+                data: {
+                    docCod: raw.docCod,
+                    filCod,
+                    error: error instanceof Error ? error.message : String(error),
+                },
+            });
         }
         return { inv, filCod };
     };

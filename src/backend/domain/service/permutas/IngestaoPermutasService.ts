@@ -292,6 +292,23 @@ export default class IngestaoPermutasService {
         }> = [],
     ): InvoiceRow[] => {
         const byDocCod = new Map<string, InvoiceRow>();
+        // `pago` CONFIÁVEL por docCod, vindo do universo hidratado (`hidratarInvoiceNegociada`
+        // → `derivarPagoDosTitulos` sobre o com308). É a ÚNICA fonte boa deste campo.
+        //
+        // As invoices das candidatas (adicionadas primeiro, logo abaixo) carregam o `pago` do
+        // `com298/list` via `ConexosBaseClient.isPago`, que é sempre `false` — o list não popula
+        // `mnyTitAberto`/`mnyTitPago` (null em 1146/1146 INVOICEs, sonda 2026-08-28). Como a
+        // candidata entra primeiro e o laço do universo pula quem já existe, sem este mapa a
+        // correção do `pago` NÃO alcançaria justamente as invoices de processo COM adiantamento
+        // — as que mais importam para permuta. Achado do Regis-Review 2026-08-28.
+        //
+        // O universo (`listInvoicesFinalizadas`) usa o mesmo filtro das candidatas
+        // (`tpdCod=128` + FINALIZADO) sem o recorte de `priCod`, então toda invoice casada
+        // também está aqui. Se faltar (ex.: cap de paginação), o `?? inv.pago` preserva o
+        // piso conservador `false` — a invoice continua visível.
+        const pagoConfiavel = new Map<string, boolean>(
+            todasInvoices.map(({ inv }) => [inv.docCod, inv.pago]),
+        );
         const add = (
             inv: PermutaCandidata['invoiceCasada'],
             filCod: number,
@@ -317,7 +334,7 @@ export default class IngestaoPermutasService {
                 ...(inv.taxa !== undefined ? { taxa: inv.taxa } : {}),
                 ...(cliente?.pesCod !== undefined ? { pesCod: cliente.pesCod } : {}),
                 ...(cliente?.importador !== undefined ? { importador: cliente.importador } : {}),
-                pago: inv.pago,
+                pago: pagoConfiavel.get(inv.docCod) ?? inv.pago,
             });
         };
         for (const c of candidatas) {
