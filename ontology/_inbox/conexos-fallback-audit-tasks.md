@@ -50,11 +50,11 @@ interrompendo ninguém. Muda o que fica registrado.
 - `current()` reflete `viaRobo: true` quando o usuário vinculado degradou, e `false` quando a
   sessão dele foi de fato usada.
 
-## T2 — Migration `0051`: as colunas de identidade nos cinco ledgers
+## T2 — Migration `0051`: as colunas de identidade nos seis ledgers
 
 **Mudança.** `src/backend/migrations/0051_execucao_identidade_conexos.sql` adiciona, em
 `permuta_alocacao_execucao`, `solicitacao_numerario_execucao`, `recebimento_execucao`,
-`remessa_execucao` e `conciliacao_execucao`:
+`remessa_execucao`, `conciliacao_execucao` e `solicitacao_numerario`:
 
 ```sql
 conexos_username TEXT   -- login do ERP que executou (usuário vinculado ou robô)
@@ -62,12 +62,12 @@ conexos_usn_cod  TEXT   -- usnCod do /login; TEXT p/ espelhar conexos_sessions.u
 ```
 
 **Critérios de aceite.**
-- `ADD COLUMN IF NOT EXISTS` nas 5 tabelas — idempotente, re-rodável.
+- `ADD COLUMN IF NOT EXISTS` nas 6 tabelas — idempotente, re-rodável.
 - Ambas NULLABLE, sem default. Linhas históricas ficam NULL = "não capturada" (nunca "robô").
 - Nenhum backfill. Nenhum índice (não há consulta por identidade no escopo).
 - `npm run migrate` aplica limpo sobre um banco já em `0050`.
 
-## T3 — Os cinco ledgers persistem a identidade (I-2)
+## T3 — Os seis ledgers persistem a identidade (I-2)
 
 **Mudança.** Cada repositório de execução injeta `ConexosIdentityProvider` e grava as duas colunas:
 - no INSERT de write-ahead (`beginExecution` / `insertIntent`);
@@ -75,7 +75,9 @@ conexos_usn_cod  TEXT   -- usnCod do /login; TEXT p/ espelhar conexos_sessions.u
   no `beginExecution` a sessão pode não ter sido resolvida ainda, no terminal ela sempre foi.
 
 Repositórios: `PermutaExecucaoRepository`, `SolicitacaoNumerarioExecucaoRepository`,
-`RecebimentoExecucaoRepository`, `RemessaExecucaoRepository`, `ConciliacaoExecucaoRepository`.
+`RecebimentoExecucaoRepository`, `RemessaExecucaoRepository`, `ConciliacaoExecucaoRepository` e
+`NumerarioExecucaoRepository` (a sexta, `solicitacao_numerario` — sem o sufixo `_execucao` no nome;
+achada pelo Regis-Review e corrigida dentro do ciclo).
 
 **Critérios de aceite.**
 - Execução de usuário com vínculo válido → linha com o login **dele** e o `usnCod` dele.

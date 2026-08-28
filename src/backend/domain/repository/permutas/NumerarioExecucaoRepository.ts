@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type { NumerarioEtapa } from '../../interface/permutas/SolicitacaoNumerario.js';
 
@@ -63,6 +64,8 @@ export default class NumerarioExecucaoRepository {
     constructor(
         @inject(PostgreeDatabaseClient)
         private databaseClient: PostgreeDatabaseClient,
+        @inject(ConexosIdentityProvider)
+        private identityProvider: ConexosIdentityProvider,
     ) {}
 
     public findByIdempotencyKey = async (key: string): Promise<NumerarioExecucaoRow | null> => {
@@ -96,10 +99,10 @@ export default class NumerarioExecucaoRepository {
         const row = await this.databaseClient.selectFirst<{ status: string }>(
             `INSERT INTO solicitacao_numerario (
                 idempotency_key, adiantamento_doc_cod, fil_cod, pri_cod, pes_cod, gcd_cod, valor,
-                status, dry_run, executado_por, atualizado_em
+                status, dry_run, executado_por, conexos_username, conexos_usn_cod, atualizado_em
             ) VALUES (
                 $key, $adtoDocCod, $filCod, $priCod, $pesCod, $gcdCod, $valor,
-                $newStatus, $dryRun, $executadoPor, now()
+                $newStatus, $dryRun, $executadoPor, $conexosUsername, $conexosUsnCod, now()
             )
             ON CONFLICT (idempotency_key) DO UPDATE SET
                 status = CASE WHEN solicitacao_numerario.status = 'settled'
@@ -108,6 +111,11 @@ export default class NumerarioExecucaoRepository {
                                THEN solicitacao_numerario.dry_run ELSE EXCLUDED.dry_run END,
                 executado_por = CASE WHEN solicitacao_numerario.status = 'settled'
                                THEN solicitacao_numerario.executado_por ELSE EXCLUDED.executado_por END,
+                -- Identidade do ERP: linha settled NUNCA reescreve quem assinou (ADR-0041).
+                conexos_username = CASE WHEN solicitacao_numerario.status = 'settled'
+                               THEN solicitacao_numerario.conexos_username ELSE EXCLUDED.conexos_username END,
+                conexos_usn_cod = CASE WHEN solicitacao_numerario.status = 'settled'
+                               THEN solicitacao_numerario.conexos_usn_cod ELSE EXCLUDED.conexos_usn_cod END,
                 atualizado_em = now()
             RETURNING status`,
             {
@@ -121,6 +129,7 @@ export default class NumerarioExecucaoRepository {
                 newStatus,
                 dryRun: input.dryRun,
                 executadoPor: input.executadoPor,
+                ...this.identityProvider.currentParams(),
             },
         );
         const status = (row?.status ?? newStatus) as NumerarioStatus;
@@ -187,12 +196,16 @@ export default class NumerarioExecucaoRepository {
                 etapa = 'concluido',
                 erp_response = $erpResponse::jsonb,
                 erro_mensagem = NULL,
+                -- COALESCE: no write-ahead a sessão podia não estar resolvida; aqui já está.
+                conexos_username = COALESCE(conexos_username, $conexosUsername),
+                conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
                 key,
                 ndDocCod: data.ndDocCod ?? null,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
+                ...this.identityProvider.currentParams(),
             },
         );
     };
@@ -207,6 +220,8 @@ export default class NumerarioExecucaoRepository {
                 etapa = $etapa,
                 erro_mensagem = $erroMensagem,
                 erp_response = $erpResponse::jsonb,
+                conexos_username = COALESCE(conexos_username, $conexosUsername),
+                conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -214,6 +229,7 @@ export default class NumerarioExecucaoRepository {
                 etapa: data.etapa,
                 erroMensagem: data.erroMensagem,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
+                ...this.identityProvider.currentParams(),
             },
         );
     };
