@@ -1,5 +1,38 @@
 # Columbia Financeiro — Changelog
 
+## v0.31.2 (2026-08-28) — a invoice já paga some da aba "em aberto"
+
+A aba **Invoices em aberto** das Permutas listava invoices já liquidadas. A analista viu "algumas"
+porque a tela estava filtrada por exportador; medido na filial 2, era pior — o filtro
+`WHERE NOT pago` era **no-op** e ~75% das linhas não deviam estar ali. Caso relatado: doc `14042`
+(processo 1953, ref `0085INX/26`), `Valor em Aberto 0,00` no Conexos e presente na aba.
+
+O `pago` de cada invoice era derivado da row do `com298/list` — e esse grid devolve `mnyTitAberto`,
+`mnyTitPago` e `mnyTitValor` **nulos em 1146/1146** INVOICEs; o campo `pago` nem é chave. Terceira
+manifestação da mesma classe de defeito em dez semanas: já tinha sido corrigida no Gate 3 do
+adiantamento (2026-06-18) e na busca de invoice da alocação (2026-06-21), mas a ingestão do
+universo completo nasceu depois e não herdou a correção.
+
+- **fix(permutas):** o `pago` da invoice passa a ser derivado de `Σ titMnyValor − Σ titMnyTotPago === 0`
+  (estrito, sem epsilon — mantém a decisão `residual-pago-centavos`) a partir do **com308**, que a
+  ingestão **já chamava** para valor/taxa negociada: **zero chamadas novas** ao ERP. A alternativa
+  considerada (um `getDetalheTitulos` por invoice) teria dobrado o fan-out. Sem prova — com308 fora,
+  sem títulos, campo ausente — o `pago` fica `false`: esconder uma invoice em aberto tira dinheiro do
+  radar da analista; mostrar uma paga apenas incomoda.
+- **fix(permutas):** a correção passa a alcançar as invoices de processo **com** adiantamento. A
+  montagem de `permuta_invoice` fazia a linha da candidata (que carrega o `pago` inservível do list)
+  vencer a do universo hidratado, de modo que o fix não chegava justamente às invoices mais
+  relevantes para permuta. Achado pelo Regis-Review; o ground-truth ao vivo não pegou porque exercita
+  a fórmula, não a fiação.
+- **fix(permutas):** a hidratação deixa de falhar em silêncio — um surto de erro do com308 degradava
+  a aba de volta ao sintoma original sem sinal para ninguém.
+- **test(permutas):** primeiros **fixtures reais** do wire de Permutas (5, capturados read-only de
+  produção e redigidos por tipo) + `contrato.test.ts`. O fixture do `com298/list` congela a
+  nulidade que causou o bug; o do detalhe mostra os mesmos campos populados. Os 269 mocks digitados
+  à mão desta frente concordavam com o autor do código, não com o ERP — por isso a suíte ficou verde
+  por 62 dias com o defeito em produção.
+
+
 ## v0.31.1 (2026-08-28) — o robô pode assumir, mas não sem deixar rastro
 
 Um usuário com vínculo Conexos cadastrado cuja credencial não loga no ERP operava pelo robô sem
