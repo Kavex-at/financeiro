@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 
 export type ExecucaoStatus = 'pending' | 'reconciling' | 'settled' | 'error';
@@ -63,6 +64,8 @@ export default class PermutaExecucaoRepository {
     constructor(
         @inject(PostgreeDatabaseClient)
         private databaseClient: PostgreeDatabaseClient,
+        @inject(ConexosIdentityProvider)
+        private identityProvider: ConexosIdentityProvider,
     ) {}
 
     public findByIdempotencyKey = async (key: string): Promise<ExecucaoRow | null> => {
@@ -225,10 +228,10 @@ export default class PermutaExecucaoRepository {
         const row = await this.databaseClient.selectFirst<{ status: string }>(
             `INSERT INTO permuta_alocacao_execucao (
                 idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod,
-                status, dry_run, executado_por, atualizado_em
+                status, dry_run, executado_por, conexos_username, conexos_usn_cod, atualizado_em
             ) VALUES (
                 $key, $adtoDocCod, $invoiceDocCod, $filCod,
-                $newStatus, $dryRun, $executadoPor, now()
+                $newStatus, $dryRun, $executadoPor, $conexosUsername, $conexosUsnCod, now()
             )
             ON CONFLICT (idempotency_key) DO UPDATE SET
                 status = CASE WHEN permuta_alocacao_execucao.status = 'settled'
@@ -237,6 +240,12 @@ export default class PermutaExecucaoRepository {
                                THEN permuta_alocacao_execucao.dry_run ELSE EXCLUDED.dry_run END,
                 executado_por = CASE WHEN permuta_alocacao_execucao.status = 'settled'
                                THEN permuta_alocacao_execucao.executado_por ELSE EXCLUDED.executado_por END,
+                -- Identidade do ERP segue a mesma doutrina do executado_por: linha settled
+                -- NUNCA reescreve quem assinou a escrita (ADR-0041).
+                conexos_username = CASE WHEN permuta_alocacao_execucao.status = 'settled'
+                               THEN permuta_alocacao_execucao.conexos_username ELSE EXCLUDED.conexos_username END,
+                conexos_usn_cod = CASE WHEN permuta_alocacao_execucao.status = 'settled'
+                               THEN permuta_alocacao_execucao.conexos_usn_cod ELSE EXCLUDED.conexos_usn_cod END,
                 atualizado_em = now()
             RETURNING status`,
             {
@@ -247,6 +256,7 @@ export default class PermutaExecucaoRepository {
                 newStatus,
                 dryRun: input.dryRun,
                 executadoPor: input.executadoPor,
+                ...this.identityProvider.currentParams(),
             },
         );
         const status = (row?.status ?? newStatus) as ExecucaoStatus;
@@ -295,6 +305,10 @@ export default class PermutaExecucaoRepository {
                 conta_juros = $contaJuros,
                 erp_response = $erpResponse::jsonb,
                 erro_mensagem = NULL,
+                -- COALESCE: no write-ahead a sessão podia ainda não ter sido resolvida;
+                -- aqui já foi. Nunca sobrescreve uma identidade já registrada (ADR-0041).
+                conexos_username = COALESCE(conexos_username, $conexosUsername),
+                conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -305,6 +319,7 @@ export default class PermutaExecucaoRepository {
                 juros: data.juros ?? null,
                 contaJuros: data.contaJuros ?? null,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
+                ...this.identityProvider.currentParams(),
             },
         );
     };
@@ -319,6 +334,8 @@ export default class PermutaExecucaoRepository {
                 erro_mensagem = $erroMensagem,
                 erp_response = $erpResponse::jsonb,
                 bor_cod = COALESCE($borCod, bor_cod),
+                conexos_username = COALESCE(conexos_username, $conexosUsername),
+                conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -326,6 +343,7 @@ export default class PermutaExecucaoRepository {
                 erroMensagem: data.erroMensagem,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
                 borCod: data.borCod ?? null,
+                ...this.identityProvider.currentParams(),
             },
         );
     };

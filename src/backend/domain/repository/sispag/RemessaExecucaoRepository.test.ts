@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import type ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import RemessaExecucaoRepository from './RemessaExecucaoRepository.js';
 
@@ -23,13 +24,20 @@ const BEGIN = {
  * `gerarRemessa` não são idempotentes, e um segundo lote é dinheiro saindo duas vezes.
  * Estava sem nenhum teste — a invariante "settled não regride" existia só no SQL.
  */
+/** Identidade Conexos ausente (fora de request) — o default dos testes de SQL. */
+const buildIdentity = () =>
+    ({
+        current: jest.fn().mockReturnValue(undefined),
+        currentParams: jest.fn().mockReturnValue({ conexosUsername: null, conexosUsnCod: null }),
+    }) as unknown as jest.Mocked<ConexosIdentityProvider>;
+
 describe('RemessaExecucaoRepository', () => {
     describe('beginExecution', () => {
         it('escrita real entra como `reconciling` (write-ahead)', async () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
 
-            const r = await new RemessaExecucaoRepository(db).beginExecution({
+            const r = await new RemessaExecucaoRepository(db, buildIdentity()).beginExecution({
                 ...BEGIN,
                 dryRun: false,
             });
@@ -43,7 +51,7 @@ describe('RemessaExecucaoRepository', () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'pending' });
 
-            const r = await new RemessaExecucaoRepository(db).beginExecution({
+            const r = await new RemessaExecucaoRepository(db, buildIdentity()).beginExecution({
                 ...BEGIN,
                 dryRun: true,
             });
@@ -59,7 +67,7 @@ describe('RemessaExecucaoRepository', () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'settled' });
 
-            const r = await new RemessaExecucaoRepository(db).beginExecution({
+            const r = await new RemessaExecucaoRepository(db, buildIdentity()).beginExecution({
                 ...BEGIN,
                 dryRun: false,
             });
@@ -70,7 +78,10 @@ describe('RemessaExecucaoRepository', () => {
         it('o SQL preserva settled no ON CONFLICT', async () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
-            await new RemessaExecucaoRepository(db).beginExecution({ ...BEGIN, dryRun: false });
+            await new RemessaExecucaoRepository(db, buildIdentity()).beginExecution({
+                ...BEGIN,
+                dryRun: false,
+            });
 
             const [sql] = (db.selectFirst as jest.Mock).mock.calls[0];
             expect(sql).toContain('ON CONFLICT (idempotency_key) DO UPDATE');
@@ -84,7 +95,10 @@ describe('RemessaExecucaoRepository', () => {
         it('setNativeFlpCod grava o flpCod e avança a etapa para `importar`', async () => {
             // Persistido ANTES do próximo POST: morrer aqui deixa a pista do lote órfão.
             const db = buildDb();
-            await new RemessaExecucaoRepository(db).setNativeFlpCod('remessa:L1', 42);
+            await new RemessaExecucaoRepository(db, buildIdentity()).setNativeFlpCod(
+                'remessa:L1',
+                42,
+            );
 
             const [sql, params] = (db.update as jest.Mock).mock.calls[0];
             expect(sql).toContain("etapa = 'importar'");
@@ -93,7 +107,10 @@ describe('RemessaExecucaoRepository', () => {
 
         it('setEtapa move o marcador sem tocar em mais nada', async () => {
             const db = buildDb();
-            await new RemessaExecucaoRepository(db).setEtapa('remessa:L1', 'gerar_remessa');
+            await new RemessaExecucaoRepository(db, buildIdentity()).setEtapa(
+                'remessa:L1',
+                'gerar_remessa',
+            );
 
             const [sql, params] = (db.update as jest.Mock).mock.calls[0];
             expect(sql).toContain('SET etapa = $etapa');
@@ -104,7 +121,9 @@ describe('RemessaExecucaoRepository', () => {
     describe('fechamento', () => {
         it('settle marca settled + etapa concluido', async () => {
             const db = buildDb();
-            await new RemessaExecucaoRepository(db).settle('remessa:L1', { nativeGabCod: 16 });
+            await new RemessaExecucaoRepository(db, buildIdentity()).settle('remessa:L1', {
+                nativeGabCod: 16,
+            });
 
             const [sql, params] = (db.update as jest.Mock).mock.calls[0];
             expect(sql).toContain("status = 'settled'");
@@ -114,7 +133,7 @@ describe('RemessaExecucaoRepository', () => {
 
         it('fail registra o erro sem apagar os handles já gravados', async () => {
             const db = buildDb();
-            await new RemessaExecucaoRepository(db).fail('remessa:L1', {
+            await new RemessaExecucaoRepository(db, buildIdentity()).fail('remessa:L1', {
                 mensagem: 'timeout no fin015',
             });
 
@@ -140,7 +159,10 @@ describe('RemessaExecucaoRepository', () => {
                 criado_em: '2026-08-24T12:00:00.000Z',
             });
 
-            const row = await new RemessaExecucaoRepository(db).findByIdempotencyKey('remessa:L1');
+            const row = await new RemessaExecucaoRepository(
+                db,
+                buildIdentity(),
+            ).findByIdempotencyKey('remessa:L1');
 
             expect(row).toMatchObject({
                 idempotencyKey: 'remessa:L1',
@@ -155,13 +177,19 @@ describe('RemessaExecucaoRepository', () => {
 
         it('findByIdempotencyKey devolve null quando não há execução', async () => {
             const db = buildDb();
-            const row = await new RemessaExecucaoRepository(db).findByIdempotencyKey('nada');
+            const row = await new RemessaExecucaoRepository(
+                db,
+                buildIdentity(),
+            ).findByIdempotencyKey('nada');
             expect(row).toBeNull();
         });
 
         it('listByStatus filtra e limita — é como se acha o `reconciling` órfão', async () => {
             const db = buildDb();
-            await new RemessaExecucaoRepository(db).listByStatus('reconciling', 20);
+            await new RemessaExecucaoRepository(db, buildIdentity()).listByStatus(
+                'reconciling',
+                20,
+            );
 
             const [sql, params] = (db.selectMany as jest.Mock).mock.calls[0];
             expect(sql).toContain('WHERE status = $status');

@@ -341,6 +341,16 @@ export class ConexosService {
     }
 
     /**
+     * `usnCod` JÁ capturado no `/login` desta sessão, SEM disparar login (ao contrário de
+     * `getSid`). É o identificador que o ERP grava do lado dele, e é o que a trilha de
+     * auditoria persiste no ledger (ADR-0041) no momento da escrita — quando o login já
+     * aconteceu. `null` enquanto esta sessão nunca logou.
+     */
+    getCapturedUsnCod(): string | null {
+        return this.usnCod;
+    }
+
+    /**
      * Public sid accessor — pattern from nf-projects `ConexosClient.getSid`.
      * Used by `legacyConexosAdapter` to consume the already-authenticated
      * session instead of opening a parallel one (ADR-0007).

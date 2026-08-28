@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import type ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import PermutaExecucaoRepository from './PermutaExecucaoRepository.js';
 
@@ -10,11 +11,18 @@ const buildDb = () =>
         selectFirst: jest.fn().mockResolvedValue(null),
     }) as unknown as jest.Mocked<PostgreeDatabaseClient>;
 
+/** Identidade Conexos ausente (fora de request) — o default dos testes de SQL. */
+const buildIdentity = () =>
+    ({
+        current: jest.fn().mockReturnValue(undefined),
+        currentParams: jest.fn().mockReturnValue({ conexosUsername: null, conexosUsnCod: null }),
+    }) as unknown as jest.Mocked<ConexosIdentityProvider>;
+
 describe('PermutaExecucaoRepository', () => {
     it('beginExecution: UPSERT que PRESERVA settled (idempotência) e é parametrizado', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
 
         const out = await repo.beginExecution({
             idempotencyKey: 'permuta:A:I',
@@ -43,7 +51,7 @@ describe('PermutaExecucaoRepository', () => {
     it('borderoDoPar: SÓ execução REAL com bor_cod (dry_run=false, bor_cod NOT NULL), parametrizado', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ bor_cod: 2039 });
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
 
         const out = await repo.borderoDoPar('4061', '4117');
 
@@ -67,14 +75,14 @@ describe('PermutaExecucaoRepository', () => {
     it('borderoDoPar: sem linha → null (par sem borderô vivo: nunca baixou OU borderô cancelado/excluído)', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue(null);
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
         expect(await repo.borderoDoPar('4061', '4117')).toBeNull();
     });
 
     it('beginExecution: dry-run abre como pending; settled retornado vira alreadySettled', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'settled' });
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
 
         const out = await repo.beginExecution({
             idempotencyKey: 'permuta:A:I',
@@ -92,7 +100,7 @@ describe('PermutaExecucaoRepository', () => {
 
     it('markSettled: UPDATE para settled com bxaCodSeq, JSONB e parametrizado', async () => {
         const db = buildDb();
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
 
         await repo.markSettled('permuta:A:I', {
             borCod: 1999,
@@ -113,7 +121,7 @@ describe('PermutaExecucaoRepository', () => {
 
     it('markError: UPDATE para error com mensagem + erpResponse', async () => {
         const db = buildDb();
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
 
         await repo.markError('permuta:A:I', {
             erroMensagem: 'ERP 500',
@@ -128,7 +136,7 @@ describe('PermutaExecucaoRepository', () => {
 
     it('setBorCod: UPDATE parametrizado do bor_cod', async () => {
         const db = buildDb();
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
 
         await repo.setBorCod('permuta:A:I', 1999);
 
@@ -152,7 +160,7 @@ describe('PermutaExecucaoRepository', () => {
             criado_em: '2026-06-23T00:00:00Z',
             atualizado_em: '2026-06-23T00:00:00Z',
         });
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
 
         const row = await repo.findByIdempotencyKey('permuta:A:I');
 
@@ -170,7 +178,7 @@ describe('PermutaExecucaoRepository', () => {
 
     it('findByIdempotencyKey: null quando não existe', async () => {
         const db = buildDb();
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
         expect(await repo.findByIdempotencyKey('nope')).toBeNull();
     });
 });
@@ -181,7 +189,7 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
 
     it('listByAdiantamento: filtra por adiantamento_doc_cod, parametrizado', async () => {
         const db = buildDb();
-        await new PermutaExecucaoRepository(db).listByAdiantamento('A1');
+        await new PermutaExecucaoRepository(db, buildIdentity()).listByAdiantamento('A1');
         const sql = sqlOf(db.selectMany as jest.Mock);
         expect(sql).toContain('FROM permuta_alocacao_execucao');
         expect(sql).toContain('adiantamento_doc_cod = $adtoDocCod');
@@ -191,13 +199,13 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
 
     it('listComBordero: só linhas com bor_cod NOT NULL', async () => {
         const db = buildDb();
-        await new PermutaExecucaoRepository(db).listComBordero();
+        await new PermutaExecucaoRepository(db, buildIdentity()).listComBordero();
         expect(sqlOf(db.selectMany as jest.Mock)).toContain('bor_cod IS NOT NULL');
     });
 
     it('findByBorCodInvoice: WHERE bor_cod AND invoice_doc_cod, parametrizado', async () => {
         const db = buildDb();
-        await new PermutaExecucaoRepository(db).findByBorCodInvoice(2039, '4117');
+        await new PermutaExecucaoRepository(db, buildIdentity()).findByBorCodInvoice(2039, '4117');
         const sql = sqlOf(db.selectFirst as jest.Mock);
         expect(sql).toContain('bor_cod = $borCod');
         expect(sql).toContain('invoice_doc_cod = $invoiceDocCod');
@@ -209,7 +217,10 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
 
     it('deleteByBorCodInvoice: DELETE por par, retorna nº de linhas', async () => {
         const db = buildDb();
-        const n = await new PermutaExecucaoRepository(db).deleteByBorCodInvoice(2039, '4117');
+        const n = await new PermutaExecucaoRepository(db, buildIdentity()).deleteByBorCodInvoice(
+            2039,
+            '4117',
+        );
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain('DELETE FROM permuta_alocacao_execucao');
         expect(sql).toContain('bor_cod = $borCod');
@@ -220,7 +231,7 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
 
     it('listByBorCod: filtra por bor_cod', async () => {
         const db = buildDb();
-        await new PermutaExecucaoRepository(db).listByBorCod(2039);
+        await new PermutaExecucaoRepository(db, buildIdentity()).listByBorCod(2039);
         expect(sqlOf(db.selectMany as jest.Mock)).toContain('WHERE bor_cod = $borCod');
         expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ borCod: 2039 });
     });
@@ -228,15 +239,17 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
     it('countByBorCod: count(*) → número (0 quando null)', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ n: '3' });
-        expect(await new PermutaExecucaoRepository(db).countByBorCod(2039)).toBe(3);
+        expect(await new PermutaExecucaoRepository(db, buildIdentity()).countByBorCod(2039)).toBe(
+            3,
+        );
         expect(sqlOf(db.selectFirst as jest.Mock)).toContain('count(*)');
         const db2 = buildDb();
-        expect(await new PermutaExecucaoRepository(db2).countByBorCod(1)).toBe(0);
+        expect(await new PermutaExecucaoRepository(db2, buildIdentity()).countByBorCod(1)).toBe(0);
     });
 
     it('deleteByBorCod / deleteByKey / setRequestPayload / renameKey: parametrizados', async () => {
         const db = buildDb();
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
         await repo.deleteByBorCod(2039);
         await repo.deleteByKey('permuta:A:I');
         await repo.setRequestPayload('permuta:A:I', { a: 1 });
@@ -266,7 +279,7 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
                 usn_des_nome_cad: 'admin',
             },
         ]);
-        const out = await new PermutaExecucaoRepository(db).listBorderoCache(50);
+        const out = await new PermutaExecucaoRepository(db, buildIdentity()).listBorderoCache(50);
         const sql = sqlOf(db.selectMany as jest.Mock);
         expect(sql).toContain('FROM permuta_bordero');
         expect(sql).toContain('ORDER BY bor_dta_mvto DESC');
@@ -277,7 +290,7 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
     it('listBorderoCache: borderôs da trilha entram por UNION (imunes ao LIMIT)', async () => {
         const db = buildDb();
         (db.selectMany as jest.Mock).mockResolvedValue([]);
-        await new PermutaExecucaoRepository(db).listBorderoCache(500);
+        await new PermutaExecucaoRepository(db, buildIdentity()).listBorderoCache(500);
         const sql = sqlOf(db.selectMany as jest.Mock);
         // Os recentes (top-N) são unidos aos borderôs referenciados pela trilha de execução,
         // casando por PAR (fil_cod, bor_cod) — senão um borderô da plataforma some ao envelhecer.
@@ -288,7 +301,7 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
 
     it('replaceBorderoCache: no-op com lista vazia; upsert + delete-dos-ausentes com itens', async () => {
         const db = buildDb();
-        const repo = new PermutaExecucaoRepository(db);
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
         await repo.replaceBorderoCache([]);
         expect(db.update as jest.Mock).not.toHaveBeenCalled(); // fetch vazio NÃO limpa o cache
         await repo.replaceBorderoCache([
@@ -312,9 +325,13 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
 
     it('updateBorderoCacheSituacao: seta situação por (filCod, borCod) — cancelar → 2', async () => {
         const db = buildDb();
-        await new PermutaExecucaoRepository(db).updateBorderoCacheSituacao(4, 2038, {
-            borVldFinalizado: 2,
-        });
+        await new PermutaExecucaoRepository(db, buildIdentity()).updateBorderoCacheSituacao(
+            4,
+            2038,
+            {
+                borVldFinalizado: 2,
+            },
+        );
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain('UPDATE permuta_bordero');
         expect(sql).toContain('WHERE fil_cod = $fil AND bor_cod = $bor');
@@ -323,10 +340,89 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
 
     it('deleteBorderoCache: DELETE por (filCod, borCod)', async () => {
         const db = buildDb();
-        await new PermutaExecucaoRepository(db).deleteBorderoCache(4, 2038);
+        await new PermutaExecucaoRepository(db, buildIdentity()).deleteBorderoCache(4, 2038);
         expect(sqlOf(db.update as jest.Mock)).toContain(
             'DELETE FROM permuta_bordero WHERE fil_cod = $fil AND bor_cod = $bor',
         );
         expect(paramsOf(db.update as jest.Mock)).toEqual({ fil: 4, bor: 2038 });
+    });
+});
+
+describe('PermutaExecucaoRepository — identidade Conexos da execução (I-2, ADR-0041)', () => {
+    /** Provider com identidade resolvida — o caso real de uma request autenticada. */
+    const identidade = (conexosUsername: string, conexosUsnCod: string) =>
+        ({
+            current: jest.fn(),
+            currentParams: jest.fn().mockReturnValue({ conexosUsername, conexosUsnCod }),
+        }) as unknown as jest.Mocked<ConexosIdentityProvider>;
+
+    it('beginExecution grava as duas colunas e PRESERVA a identidade de uma linha settled', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
+        const repo = new PermutaExecucaoRepository(db, identidade('SIMONE_PEREIRA', '14'));
+
+        await repo.beginExecution({
+            idempotencyKey: 'permuta:A:I',
+            adiantamentoDocCod: 'A',
+            invoiceDocCod: 'I',
+            filCod: 4,
+            dryRun: false,
+            executadoPor: 'simone@kavex.com',
+        });
+
+        const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(sql).toContain('conexos_username');
+        expect(sql).toContain('conexos_usn_cod');
+        // Mesma doutrina do executado_por: settled não regride a autoria.
+        expect(sql).toContain(
+            "conexos_username = CASE WHEN permuta_alocacao_execucao.status = 'settled'",
+        );
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params).toMatchObject({
+            executadoPor: 'simone@kavex.com',
+            conexosUsername: 'SIMONE_PEREIRA',
+            conexosUsnCod: '14',
+        });
+    });
+
+    it('markSettled preenche a identidade só quando ainda nula (COALESCE)', async () => {
+        const db = buildDb();
+        const repo = new PermutaExecucaoRepository(db, identidade('MPS_ROBO', '97'));
+
+        await repo.markSettled('permuta:A:I', { borCod: 19992, bxaCodSeq: 1 });
+
+        const [sql, params] = (db.update as jest.Mock).mock.calls[0];
+        expect(sql).toContain('conexos_username = COALESCE(conexos_username, $conexosUsername)');
+        expect(sql).toContain('conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod)');
+        expect(params).toMatchObject({ conexosUsername: 'MPS_ROBO', conexosUsnCod: '97' });
+    });
+
+    it('markError também carimba a identidade (execução que falhou tem autor)', async () => {
+        const db = buildDb();
+        const repo = new PermutaExecucaoRepository(db, identidade('MPS_ROBO', '97'));
+
+        await repo.markError('permuta:A:I', { erroMensagem: 'ERP 500' });
+
+        const [sql, params] = (db.update as jest.Mock).mock.calls[0];
+        expect(sql).toContain('conexos_username = COALESCE(conexos_username, $conexosUsername)');
+        expect(params).toMatchObject({ conexosUsername: 'MPS_ROBO', conexosUsnCod: '97' });
+    });
+
+    it('sem identidade (job/cron) grava NULL nas duas colunas, sem quebrar a escrita', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        await repo.beginExecution({
+            idempotencyKey: 'permuta:A:I',
+            adiantamentoDocCod: 'A',
+            invoiceDocCod: 'I',
+            filCod: 4,
+            dryRun: false,
+            executadoPor: 'cron',
+        });
+
+        const [, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(params).toMatchObject({ conexosUsername: null, conexosUsnCod: null });
     });
 });

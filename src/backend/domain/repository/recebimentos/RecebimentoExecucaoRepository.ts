@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type {
     BeginRecebimentoExecucaoInput,
@@ -23,6 +24,8 @@ export default class RecebimentoExecucaoRepository
     constructor(
         @inject(PostgreeDatabaseClient)
         private databaseClient: PostgreeDatabaseClient,
+        @inject(ConexosIdentityProvider)
+        private identityProvider: ConexosIdentityProvider,
     ) {}
 
     public findByIdempotencyKey = async (key: string): Promise<RecebimentoExecucaoRow | null> => {
@@ -42,9 +45,11 @@ export default class RecebimentoExecucaoRepository
         const newStatus: RecebimentoExecucaoStatus = input.dryRun ? 'pending' : 'reconciling';
         const row = await this.databaseClient.selectFirst<{ status: string }>(
             `INSERT INTO recebimento_execucao (
-                idempotency_key, recebimento_id, fil_cod, status, dry_run, executado_por, atualizado_em
+                idempotency_key, recebimento_id, fil_cod, status, dry_run, executado_por,
+                conexos_username, conexos_usn_cod, atualizado_em
             ) VALUES (
-                $key, $recebimentoId, $filCod, $newStatus, $dryRun, $executadoPor, now()
+                $key, $recebimentoId, $filCod, $newStatus, $dryRun, $executadoPor,
+                $conexosUsername, $conexosUsnCod, now()
             )
             ON CONFLICT (idempotency_key) DO UPDATE SET
                 status = CASE WHEN recebimento_execucao.status = 'settled'
@@ -53,6 +58,11 @@ export default class RecebimentoExecucaoRepository
                                THEN recebimento_execucao.dry_run ELSE EXCLUDED.dry_run END,
                 executado_por = CASE WHEN recebimento_execucao.status = 'settled'
                                THEN recebimento_execucao.executado_por ELSE EXCLUDED.executado_por END,
+                -- Identidade do ERP: linha settled NUNCA reescreve quem assinou (ADR-0041).
+                conexos_username = CASE WHEN recebimento_execucao.status = 'settled'
+                               THEN recebimento_execucao.conexos_username ELSE EXCLUDED.conexos_username END,
+                conexos_usn_cod = CASE WHEN recebimento_execucao.status = 'settled'
+                               THEN recebimento_execucao.conexos_usn_cod ELSE EXCLUDED.conexos_usn_cod END,
                 atualizado_em = now()
             RETURNING status`,
             {
@@ -62,6 +72,7 @@ export default class RecebimentoExecucaoRepository
                 newStatus,
                 dryRun: input.dryRun,
                 executadoPor: input.executadoPor,
+                ...this.identityProvider.currentParams(),
             },
         );
         const status = (row?.status ?? newStatus) as RecebimentoExecucaoStatus;
@@ -99,6 +110,9 @@ export default class RecebimentoExecucaoRepository
                 nde_id = $ndeId,
                 erp_response = $erpResponse::jsonb,
                 erro_mensagem = NULL,
+                -- COALESCE: no write-ahead a sessão podia não estar resolvida; aqui já está.
+                conexos_username = COALESCE(conexos_username, $conexosUsername),
+                conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -106,6 +120,7 @@ export default class RecebimentoExecucaoRepository
                 borCod: data.borCod ?? null,
                 ndeId: data.ndeId ?? null,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
+                ...this.identityProvider.currentParams(),
             },
         );
     };
@@ -117,6 +132,8 @@ export default class RecebimentoExecucaoRepository
                 erro_mensagem = $erroMensagem,
                 erp_response = $erpResponse::jsonb,
                 bor_cod = COALESCE($borCod, bor_cod),
+                conexos_username = COALESCE(conexos_username, $conexosUsername),
+                conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -124,6 +141,7 @@ export default class RecebimentoExecucaoRepository
                 erroMensagem: data.erroMensagem,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
                 borCod: data.borCod ?? null,
+                ...this.identityProvider.currentParams(),
             },
         );
     };
