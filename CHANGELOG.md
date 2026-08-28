@@ -1,5 +1,29 @@
 # Columbia Financeiro — Changelog
 
+## v0.31.1 (2026-08-28) — o robô pode assumir, mas não sem deixar rastro
+
+Um usuário com vínculo Conexos cadastrado cuja credencial não loga no ERP operava pelo robô sem
+deixar rastro nenhum. Em 2026-08-25 isso valeu **35 execuções** — 13 num dia só, baixas reais no
+fin010 — gravadas no banco como dela e assinadas, no ERP, pelo robô. Descobrir exigiu inferir pela
+**ausência** de uma linha em `conexos_sessions`. Nada mudou no que o usuário vê; mudou o que fica
+registrado (ADR-0041).
+
+- **fix(conexos):** vínculo **presente** que não pôde ser usado agora emite `warn` estruturado
+  (`platformUsername`, `conexosUsername`, motivo `decrypt`/`login`, erro original — nunca a senha).
+  Antes eram três `catch` mudos. Usuário **sem** vínculo e execução fora de request seguem em
+  silêncio: são o caminho normal, e logar viraria ruído.
+- **fix(conexos):** os **seis** ledgers write-ahead (permuta, numerário da permuta, numerário de
+  recebimentos, recebimento, remessa, conciliação) passam a gravar `conexos_username` +
+  `conexos_usn_cod` ao lado do `executado_por`. "Esta baixa saiu no nome de quem?" vira uma consulta
+  ao banco, em vez de abrir o ERP linha a linha. Migration `0051`, idempotente. Linha `settled`
+  **preserva** a autoria original.
+- **fix(conexos):** o fallback para o robô **continua não interrompendo ninguém** — nenhuma das
+  quatro degradações passa a lançar, e o aviso ao usuário segue só no banner de login. NULL nas
+  colunas novas significa "identidade não capturada", nunca "robô"; sem backfill, porque a
+  identidade usada no passado não está gravada em lugar nenhum.
+- **test(conexos):** `NumerarioExecucaoRepository` e `ConciliacaoExecucaoRepository` ganham seus
+  primeiros arquivos de teste — eram as duas ledgers sem nenhuma asserção sobre a mudança.
+
 ## v0.31.0 (2026-08-25) — retomar de onde parou, sem correção manual no Conexos
 
 O SISPAG passa a **retomar uma execução interrompida consultando o estado no ERP**, em vez de
