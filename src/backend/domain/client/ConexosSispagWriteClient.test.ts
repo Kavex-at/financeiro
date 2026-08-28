@@ -12,8 +12,15 @@ const buildBase = () => ({
     listGenericPaginated: jest.fn(),
     runWithRetry: jest.fn(<T>(fn: () => Promise<T>) => fn()),
 });
-const make = (base: ReturnType<typeof buildBase>) =>
-    new ConexosSispagWriteClient(base as unknown as ConexosBaseClient);
+const buildLog = () =>
+    ({
+        info: jest.fn().mockResolvedValue(undefined),
+        warn: jest.fn().mockResolvedValue(undefined),
+        error: jest.fn().mockResolvedValue(undefined),
+    }) as unknown as import('../service/LogService.js').default;
+
+const make = (base: ReturnType<typeof buildBase>, log = buildLog()) =>
+    new ConexosSispagWriteClient(base as unknown as ConexosBaseClient, log);
 
 const ITAU: ContaPagadora = {
     bncCod: 4,
@@ -292,6 +299,44 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             expect((segundo as { items: unknown[] }).items).toEqual(
                 (primeiro as { items: unknown[] }).items,
             );
+        });
+
+        it('registra a auto-resposta em log (auditoria da escrita automatizada)', async () => {
+            // Decisão automatizada num fluxo que move dinheiro precisa ser provável depois.
+            const base = buildBase();
+            const log = buildLog();
+            base.postGenericOnce.mockRejectedValueOnce(perguntaBarcode).mockResolvedValueOnce({});
+            await make(base, log).importarTitulos({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                itens: [item],
+                associarDda: true,
+            });
+            expect(log.info).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: expect.stringContaining('auto-respondida'),
+                    data: expect.objectContaining({
+                        questionId: '1',
+                        pergunta: 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO',
+                        flpCod: 18,
+                    }),
+                }),
+            );
+        });
+
+        it('NÃO loga auto-resposta quando não houve pergunta', async () => {
+            const base = buildBase();
+            const log = buildLog();
+            base.postGenericOnce.mockResolvedValue({});
+            await make(base, log).importarTitulos({
+                filCod: 1,
+                bncCod: 4,
+                flpCod: 18,
+                itens: [item],
+                associarDda: true,
+            });
+            expect(log.info).not.toHaveBeenCalled();
         });
 
         it('pergunta FORA da allowlist → ErpPerguntaError, sem segundo POST', async () => {

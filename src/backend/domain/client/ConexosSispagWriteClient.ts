@@ -12,6 +12,8 @@ import type {
     RemessaGerada,
     TituloPendente,
 } from '../interface/sispag/Fin015Write.js';
+import { LOG_TYPE } from '../interface/log/LogInterface.js';
+import LogService from '../service/LogService.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
 /**
@@ -84,7 +86,10 @@ const QUESTION_SCHEMA = z.object({
 @singleton()
 @injectable()
 export default class ConexosSispagWriteClient {
-    public constructor(@inject(ConexosBaseClient) private readonly base: ConexosBaseClient) {}
+    public constructor(
+        @inject(ConexosBaseClient) private readonly base: ConexosBaseClient,
+        @inject(LogService) private readonly logService: LogService,
+    ) {}
 
     /**
      * Extrai a mensagem de validação do corpo de erro do Conexos (2 formatos, ambos 400):
@@ -552,6 +557,21 @@ export default class ConexosSispagWriteClient {
         } catch (cause) {
             const idPergunta = this.perguntaAutoRespondivel(cause);
             if (idPergunta === undefined) throw this.toConexosError(path, cause);
+            // Toda auto-resposta ao ERP num fluxo de pagamento é registrada. Sem isto, não há
+            // como provar depois o que a ferramenta respondeu — e isto é uma decisão
+            // automatizada numa escrita que move dinheiro.
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'fin015 import: pergunta do ERP auto-respondida YES (boleto DDA)',
+                data: {
+                    pergunta: PERGUNTA_AUTO_RESPONDIVEL,
+                    questionId: idPergunta,
+                    filCod,
+                    bncCod,
+                    flpCod,
+                    itens: itens.map((i) => `${i.filCod}:${i.docCod}:${i.titCod}`),
+                },
+            });
             // Re-POST do MESMO body com a resposta. UMA vez só: se o ERP perguntar de novo,
             // a segunda falha sobe como pergunta humana em vez de virar laço de escrita.
             try {

@@ -114,7 +114,7 @@ Resultado medido no item (fil 2, flp 24, doc 452/1):
 
 | campo | valor |
 |---|---|
-| `itsNumCodbar` | `74593180079362001100201010433181712720000048980` (47 díg.) |
+| `itsNumCodbar` | `745…` — 47 dígitos, banco emissor **745**. Valor redigido: é boleto real de fornecedor (o barcode carrega valor e vencimento). |
 | `vldVinculoDda` | **1** |
 | `itsVldModalidade` | **7** — *mandamos 6; o ERP sobrescreveu* |
 
