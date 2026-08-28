@@ -450,3 +450,66 @@ describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-
         });
     });
 });
+
+describe('SolicitacaoNumerarioExecucaoRepository — identidade Conexos (I-2, ADR-0041)', () => {
+    const identidade = (conexosUsername: string | null, conexosUsnCod: string | null) =>
+        ({
+            current: jest.fn(),
+            currentParams: jest.fn().mockReturnValue({ conexosUsername, conexosUsnCod }),
+        }) as unknown as jest.Mocked<ConexosIdentityProvider>;
+
+    it('beginExecution grava as duas colunas e PRESERVA a identidade de uma linha settled', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
+
+        await new SolicitacaoNumerarioExecucaoRepository(
+            db,
+            identidade('SIMONE_PEREIRA', '14'),
+        ).beginExecution({
+            idempotencyKey: 'sne:1',
+            filCod: 4,
+            priCod: 9,
+            dryRun: false,
+            executadoPor: 'simone@kavex.com',
+        });
+
+        const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(sql).toContain('conexos_username');
+        expect(sql).toContain('conexos_usn_cod');
+        expect(sql).toContain(
+            "conexos_username = CASE WHEN solicitacao_numerario_execucao.status = 'settled'",
+        );
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params).toMatchObject({ conexosUsername: 'SIMONE_PEREIRA', conexosUsnCod: '14' });
+    });
+
+    it('o terminal preenche a identidade só quando ainda nula (COALESCE)', async () => {
+        const db = buildDb();
+        await new SolicitacaoNumerarioExecucaoRepository(
+            db,
+            identidade('MPS_ROBO', '97'),
+        ).markSettled('sne:1', { docCod: 1 });
+
+        const [sql, params] = (db.update as jest.Mock).mock.calls[0];
+        expect(sql).toContain('conexos_username = COALESCE(conexos_username, $conexosUsername)');
+        expect(params).toMatchObject({ conexosUsername: 'MPS_ROBO', conexosUsnCod: '97' });
+    });
+
+    it('sem identidade (job/cron) grava NULL, sem quebrar a escrita', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
+
+        await new SolicitacaoNumerarioExecucaoRepository(db, identidade(null, null)).beginExecution(
+            {
+                idempotencyKey: 'sne:1',
+                filCod: 4,
+                priCod: 9,
+                dryRun: false,
+                executadoPor: 'simone@kavex.com',
+            },
+        );
+
+        const [, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(params).toMatchObject({ conexosUsername: null, conexosUsnCod: null });
+    });
+});

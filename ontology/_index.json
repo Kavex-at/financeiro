@@ -909,12 +909,13 @@
                 "src/backend/domain/repository/recebimentos/SolicitacaoNumerarioExecucaoRepository.ts",
                 "src/backend/domain/repository/recebimentos/RecebimentoExecucaoRepository.ts",
                 "src/backend/domain/repository/sispag/RemessaExecucaoRepository.ts",
-                "src/backend/domain/repository/sispag/ConciliacaoExecucaoRepository.ts"
+                "src/backend/domain/repository/sispag/ConciliacaoExecucaoRepository.ts",
+                "src/backend/domain/repository/permutas/NumerarioExecucaoRepository.ts"
             ],
             "resolved_by": [
                 "ADR-0041"
             ],
-            "note": "ADR-0041: o fallback para o robô segue silencioso PARA O USUÁRIO, mas passa a emitir warn quando o vínculo existe e não pôde ser usado (I-1), e os cinco ledgers write-ahead passam a registrar conexos_username + conexos_usn_cod ao lado de executado_por (I-2). Origem: incidente 2026-08-25 — usuário com vínculo cujo login nunca completava acumulou 35 execuções atribuídas a ele no banco e ao robô no ERP. NULL nas colunas = identidade não capturada, nunca robô; sem backfill."
+            "note": "ADR-0041: o fallback para o robô segue silencioso PARA O USUÁRIO, mas passa a emitir warn quando o vínculo existe e não pôde ser usado (I-1), e os seis ledgers write-ahead passam a registrar conexos_username + conexos_usn_cod ao lado de executado_por (I-2). Origem: incidente 2026-08-25 — usuário com vínculo cujo login nunca completava acumulou 35 execuções atribuídas a ele no banco e ao robô no ERP. NULL nas colunas = identidade não capturada, nunca robô; sem backfill."
         }
     },
     "state_machines": {

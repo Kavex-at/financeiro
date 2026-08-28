@@ -41,8 +41,15 @@ a identidade **do ERP** efetivamente usada:
 | `conexos_username` | login Conexos da sessão que executou (ex.: `MARILYN_MUTAFCI` ou o robô) |
 | `conexos_usn_cod`  | `usnCod` capturado no `/login` — é o que o ERP grava do lado dele |
 
-Ledgers cobertos: `permuta_alocacao_execucao`, `solicitacao_numerario_execucao`, `recebimento_execucao`,
-`remessa_execucao`, `conciliacao_execucao`.
+Ledgers cobertos (**seis**): `permuta_alocacao_execucao`, `solicitacao_numerario_execucao`,
+`recebimento_execucao`, `remessa_execucao`, `conciliacao_execucao` e `solicitacao_numerario`.
+
+> **A sexta não tem `_execucao` no nome.** `solicitacao_numerario` (migration 0032,
+> `NumerarioExecucaoRepository`, alcançável por `routes/permutas.ts`) é write-ahead como as outras e
+> guarda a cadeia com299 → fin014 → com297 da trilha de PERMUTA. Ficou de fora da primeira versão
+> deste delta porque a lista foi montada pelo padrão de nome — o Regis-Review pegou (modifiability-2
+> e fault-tolerance-1, independentemente). Quem adicionar uma sétima: o critério é **"guarda escrita
+> irreversível no ERP"**, não o sufixo.
 
 - **Nulo é permitido** e significa "identidade não capturada" — linhas anteriores à migration, e execuções
   `dry_run` que não chegam a resolver sessão. Nulo **não** significa robô.
@@ -64,4 +71,4 @@ Conexos linha a linha — e nenhuma forma de auditar retroativamente quantas sa�
 - `src/backend/domain/client/ConexosSessionResolver.ts` — I-1 (logs) + publicação da identidade.
 - `src/backend/domain/libs/requestContext/ConexosRequestContext.ts` — carrega a identidade resolvida.
 - `src/backend/migrations/0051_execucao_identidade_conexos.sql` — I-2 (colunas).
-- Repositórios de execução das cinco frentes — persistem as colunas.
+- Os seis repositórios de execução — persistem as colunas.

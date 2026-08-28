@@ -34,3 +34,12 @@ ALTER TABLE remessa_execucao
 ALTER TABLE conciliacao_execucao
     ADD COLUMN IF NOT EXISTS conexos_username TEXT,
     ADD COLUMN IF NOT EXISTS conexos_usn_cod  TEXT;
+
+-- A SEXTA ledger. `solicitacao_numerario` (0032, NumerarioExecucaoRepository) não carrega o
+-- sufixo `_execucao` no nome, mas é write-ahead igual às outras: idempotency_key, status,
+-- dry_run, erp_response, executado_por, e guarda a cadeia com299 → fin014 → com297 da trilha
+-- de PERMUTA (routes/permutas.ts). Ficou de fora da primeira versão desta migration porque a
+-- lista foi montada pelo padrão de nome; o Regis-Review pegou (modifiability-2 / fault-tolerance-1).
+ALTER TABLE solicitacao_numerario
+    ADD COLUMN IF NOT EXISTS conexos_username TEXT,
+    ADD COLUMN IF NOT EXISTS conexos_usn_cod  TEXT;

@@ -50,7 +50,7 @@ Separar duas coisas que estavam coladas sob a palavra "silencioso":
 
 E fechar o buraco de auditoria que o incidente expôs: todo ledger write-ahead grava, junto do
 `executado_por` (usuário da plataforma), o `conexos_username` + `conexos_usn_cod` da sessão que
-**de fato** executou. Cinco ledgers, não só o da permuta onde o caso apareceu — o resolver é o mesmo para
+**de fato** executou. Seis ledgers, não só o da permuta onde o caso apareceu — o resolver é o mesmo para
 todas as frentes, e o ponto cego era idêntico em todas.
 
 ## Alternativas consideradas
@@ -75,6 +75,14 @@ está gravada em lugar nenhum. Nulo fica significando "não capturada", nunca "r
 - "Esta baixa saiu no nome de quem?" passa a ser uma consulta ao ledger.
 - Duas colunas nulas nas linhas anteriores à migration `0051` — dívida assumida e documentada.
 - O comportamento visível ao usuário não muda em nada.
+
+## Correção de escopo dentro do ciclo
+
+A primeira implementação cobriu **cinco** ledgers, montando a lista pelo sufixo `_execucao`. O
+Regis-Review de 2026-08-28 achou a sexta por dois caminhos independentes (`modifiability-2`,
+`fault-tolerance-1`): `solicitacao_numerario` (0032) é write-ahead igual, guarda escrita
+irreversível no ERP e é alcançável por rota — só não carrega o sufixo. Corrigido no mesmo ciclo,
+antes do PR. **O critério passa a ser "guarda escrita irreversível no ERP", não o nome da tabela.**
 
 ## Não decidido aqui
 
