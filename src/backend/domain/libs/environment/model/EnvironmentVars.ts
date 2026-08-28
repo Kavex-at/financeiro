@@ -113,6 +113,25 @@ export default class EnvironmentVars {
      * `sispagEnabled`, que decide se a tela existe — este decide se ela escreve.
      */
     public sispagLiveWriteEnabled: boolean;
+
+    /**
+     * Associação do boleto DDA no import do `fin015` (`SISPAG_DDA_ASSOC_ENABLED`, default **true**).
+     *
+     * Granularidade MENOR que `sispagLiveWriteEnabled`: aquele é o kill-switch da frente
+     * inteira e derruba remessa E conciliação, inclusive de itens PIX/TED que não têm nada
+     * com boleto. Medido em produção, só **31–35%** dos itens seguem o caminho DDA — conter
+     * um bug dele desligando 100% do SISPAG é desproporcional.
+     *
+     * Desligado, `associarDda` vira `false` em todo item: o ERP não é consultado sobre boleto,
+     * nenhuma pergunta é auto-respondida, e o `BoletoSemCodigoBarrasError` passa a barrar TODO
+     * item marcado como BOLETO — que é exatamente o comportamento pré-ADR-0040, com a diferença
+     * de que agora falha alto em vez de mandar remessa com barras vazia.
+     *
+     * Default **true** (≠ `sispagLiveWriteEnabled`): o caminho DDA já foi provado ao vivo em HML
+     * e é o comportamento correto. Este flag existe para CONTER incidente, não para liberar
+     * go-live — quem faz o gate de go-live é o `sispagLiveWriteEnabled`.
+     */
+    public sispagDdaAssocEnabled: boolean;
     public solicitacaoNumerarioGcdCod: number;
 
     /**
@@ -206,6 +225,7 @@ export default class EnvironmentVars {
         conexosDryRun,
         snLiveWriteEnabled,
         sispagLiveWriteEnabled,
+        sispagDdaAssocEnabled,
         solicitacaoNumerarioGcdCod,
         solicitacaoNumerarioGcdCodPorFilial,
         conexosCredEncKey,
@@ -241,6 +261,7 @@ export default class EnvironmentVars {
         conexosDryRun: boolean;
         snLiveWriteEnabled: boolean;
         sispagLiveWriteEnabled: boolean;
+        sispagDdaAssocEnabled: boolean;
         solicitacaoNumerarioGcdCod: number;
         solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
         conexosCredEncKey?: string;
@@ -276,6 +297,7 @@ export default class EnvironmentVars {
         this.conexosDryRun = conexosDryRun;
         this.snLiveWriteEnabled = snLiveWriteEnabled;
         this.sispagLiveWriteEnabled = sispagLiveWriteEnabled;
+        this.sispagDdaAssocEnabled = sispagDdaAssocEnabled;
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};
         this.conexosCredEncKey = conexosCredEncKey;

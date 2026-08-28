@@ -12,7 +12,18 @@
 | `security-1` (P1) — audit trail da auto-resposta | Era **acceptance criterion do T1** do `tasks.md`, marcado como feito sem implementar. Corrigir o próprio descumprimento não é agir sobre finding de review. |
 | `security-2` (P2) — redigir barcode real | Dado individual de fornecedor da Columbia commitado por mim. Custo ~zero, valor de privacidade real. |
 
-## P1 — abertos (4)
+## P1 — TODOS IMPLEMENTADOS na mesma branch (commit `d?`)
+
+O Yuri optou por fazer os quatro em vez de deixá-los como follow-up. Ver ADR-0040 §Emenda.
+
+| Card | O que mudou |
+|---|---|
+| `deployability-1` ✅ | `SISPAG_DDA_ASSOC_ENABLED` (default true) — freio do caminho DDA sem derrubar PIX/TED |
+| `integrability-2` ✅ | `PENDENTE_DDA_SCHEMA` (Zod `{0,1}`) + erro explícito se o grid inteiro vier ilegível + taxa por filial logada a cada rodada |
+| `sispag-question-wire-contract` ✅ | fixture do envelope real + `contrato.test.ts` + `id` obrigatório no `QUESTION_SCHEMA` |
+| `performance-1` ✅ | painel lê `tem_boleto` do banco (0 req Conexos); envio segue ao vivo. `SispagPainelService` deixou de depender do write client |
+
+### Registro do que eram (P1 — resolvidos)
 
 | Card | QA | Esforço | Uma linha |
 |---|---|---|---|

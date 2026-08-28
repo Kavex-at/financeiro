@@ -1,7 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
-import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
@@ -59,7 +58,6 @@ const CONEXOS_FANOUT_LIMIT = 4;
 export default class SispagPainelService {
     public constructor(
         @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
-        @inject(ConexosSispagWriteClient) private readonly fin015: ConexosSispagWriteClient,
         @inject(ConexosSispagRetornoClient)
         private readonly retorno: ConexosSispagRetornoClient,
         @inject(ConexosBaseClient) private readonly base: ConexosBaseClient,
@@ -233,7 +231,8 @@ export default class SispagPainelService {
      * TRÊS fontes, porque o ERP guarda cada coisa num lugar:
      *   PIX         → do TÍTULO (`fin064`, via `getTituloAPagar`)
      *   TED/crédito → da CONTA DO FAVORECIDO (`cmn025/ctcorr`)
-     *   BOLETO      → do flag `titVldReflexoDdaAssoc` no grid de pendentes do `fin015`
+     *   BOLETO      → de `titulo_a_pagar.tem_boleto`, que a ingestão preencheu a partir do
+     *                 flag `titVldReflexoDdaAssoc` do grid de pendentes do `fin015`
      *
      * BOLETO passou a sair daí porque o `fin064` **não sabe** de boleto: o `titEspCodbar`
      * que a detecção antiga usava é null em 100% dos títulos de produção. Oferecer BOLETO
@@ -291,24 +290,23 @@ export default class SispagPainelService {
             );
         });
 
-        // BOLETO: uma leitura por FILIAL distinta do lote (o grid é da filial, não do item).
-        // Falha vira "não oferece boleto" — prometer uma forma de pagamento que não tem
-        // código de barras só estoura mais tarde, no envio (`BoletoSemCodigoBarrasError`).
+        // BOLETO: lido do BANCO, não do ERP. A ingestão já resolveu o flag de DDA na última
+        // rodada e gravou em `tem_boleto`; refazer o grid de pendentes aqui custava +7
+        // requisições Conexos por abertura de lote na filial 2, para chegar à mesma resposta.
+        //
+        // Servir dado de ≤ 24 h neste ponto é seguro por construção: aqui só se decide o que
+        // o dropdown OFERECE. O que move dinheiro é validado ao vivo no envio
+        // (`BoletoSemCodigoBarrasError`), que continua lendo o grid no momento do import.
+        // Um `tem_boleto` stale desatualiza uma tela; não deixa sair remessa sem barras.
+        //
+        // I4 garante uma filial por lote, então isto é UMA consulta, não um fan-out.
         const filiaisDoLote = [...new Set(lote.itens.map((it) => it.filCod))];
-        const boletoSettled = await this.bounded.run(
-            filiaisDoLote,
-            async (filCod) => {
-                const contas = await this.sispag.listContasCorrentes(filCod);
-                const bncCod = contas[0]?.bncCod;
-                if (bncCod === undefined) return new Set<string>();
-                return this.fin015.listarTitulosComBoletoDda({ filCod, bncCod });
-            },
-            CONEXOS_FANOUT_LIMIT,
-        );
         const comBoleto = new Set<string>();
-        boletoSettled.forEach((s) => {
-            if (s.status === 'fulfilled') for (const chave of s.value) comBoleto.add(chave);
-        });
+        for (const filCod of filiaisDoLote) {
+            for (const chave of await this.tituloRepo.listChavesComBoleto(filCod)) {
+                comBoleto.add(chave);
+            }
+        }
 
         return lote.itens.map((it, i) => {
             const titulo = titulos[i];

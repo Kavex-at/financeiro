@@ -387,6 +387,28 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
         });
 
+        it('pergunta sem `id` NÃO é auto-respondível (nada para chavear o answers)', async () => {
+            // O `id` é a chave do map de resposta. Sem ele, construir `{undefined:'YES'}` e
+            // mandar ao ERP seria pior que desistir — sobe como pergunta humana.
+            const base = buildBase();
+            base.postGenericOnce.mockRejectedValue(
+                validationError({
+                    type: 'QUESTION',
+                    questions: [{ key: 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO' }],
+                }),
+            );
+            await expect(
+                make(base).importarTitulos({
+                    filCod: 1,
+                    bncCod: 4,
+                    flpCod: 18,
+                    itens: [item],
+                    associarDda: true,
+                }),
+            ).rejects.toBeInstanceOf(ErpPerguntaError);
+            expect(base.postGenericOnce).toHaveBeenCalledTimes(1);
+        });
+
         it('pergunta repetida após a resposta NÃO vira laço — falha na segunda', async () => {
             const base = buildBase();
             base.postGenericOnce.mockRejectedValue(perguntaBarcode);
@@ -417,6 +439,60 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 expect(body).toMatchObject({ titVldReflexoDdaAssoc: 1 });
                 expect((body as { items: unknown[] }).items).toHaveLength(1);
             }
+        });
+    });
+
+    describe('boundary do flag de DDA (Zod, não coerção)', () => {
+        const gridCom = (linhas: Array<Record<string, unknown>>) => {
+            const base = buildBase();
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 1, rows: [{ flpCod: 9, filCod: 1, bncCod: 4 }] })
+                .mockResolvedValueOnce({ count: linhas.length, rows: linhas });
+            return base;
+        };
+
+        it('aceita 0 e 1 e nada mais', async () => {
+            const base = gridCom([
+                { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 1 },
+                { filCod: 1, docCod: 200, titCod: 1, titVldReflexoDdaAssoc: 0 },
+            ]);
+            expect(await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 })).toEqual(
+                new Set(['1:100:1']),
+            );
+        });
+
+        it('campo AUSENTE em todas as linhas → erro, não "ninguém tem boleto"', async () => {
+            // Este é o ponto: a coerção `?? 0` transformaria um rename do Conexos em
+            // "a carteira inteira não tem boleto" — a mesma classe do bug do titEspCodbar.
+            const base = gridCom([
+                { filCod: 1, docCod: 100, titCod: 1 },
+                { filCod: 1, docCod: 200, titCod: 1 },
+            ]);
+            await expect(
+                make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 }),
+            ).rejects.toMatchObject({
+                message: expect.stringContaining('titVldReflexoDdaAssoc'),
+            });
+        });
+
+        it('campo com valor FORA de {0,1} conta como ilegível', async () => {
+            const base = gridCom([
+                { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 'S' },
+            ]);
+            await expect(
+                make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 }),
+            ).rejects.toMatchObject({ message: expect.stringContaining('contrato do Conexos') });
+        });
+
+        it('ilegibilidade PARCIAL não derruba a leitura (só a total é quebra de contrato)', async () => {
+            // Uma linha esquisita é dado sujo; TODAS esquisitas é o wire ter mudado.
+            const base = gridCom([
+                { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 1 },
+                { filCod: 1, docCod: 200, titCod: 1 },
+            ]);
+            expect(await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 })).toEqual(
+                new Set(['1:100:1']),
+            );
         });
     });
 

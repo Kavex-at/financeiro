@@ -101,6 +101,43 @@ boleto — transformaria o caminho normal do pagamento em exceção manual.
 - **Deixar a analista digitar o barcode.** É o que acontece hoje (73% dos itens boleto reais têm
   barras sem `vldVinculoDda`) e é exatamente o trabalho que a frente existe para eliminar.
 
+## Emenda (2026-08-28) — endurecimentos do Regis-Review
+
+A review do delta (`docs/regis-review/2026-08-28-0249-sispag-boleto-dda/`) passou no gate com
+0 P0, mas os quatro P1 foram implementados na mesma branch. Três mudam o que este ADR decidiu:
+
+1. **Freio de incidente próprio.** `SISPAG_DDA_ASSOC_ENABLED` (default **true**) desliga só a
+   associação DDA. Antes, conter um bug deste caminho exigia `SISPAG_LIVE_WRITE_ENABLED=false`,
+   que derruba remessa E conciliação — 100% do SISPAG para conter algo que afeta 31–35% dos
+   itens. Desligado, todo BOLETO cai em `BoletoSemCodigoBarrasError`: é o comportamento
+   pré-ADR-0040, mas falhando alto em vez de mandar barras vazia.
+
+2. **`titVldReflexoDdaAssoc` é validado, não coagido.** Era
+   `Number(r.titVldReflexoDdaAssoc ?? 0) === 1` — e essa coerção transformaria um rename do
+   Conexos em "a carteira inteira não tem boleto", que é a MESMA classe de defeito que este ADR
+   corrigiu. Agora há `PENDENTE_DDA_SCHEMA` (`z.union([literal(0), literal(1)])`), e o grid
+   inteiro ilegível vira `ConexosError` explícito — não um Set vazio silencioso. Ilegibilidade
+   parcial (uma linha suja) segue tolerada; só a total é tratada como quebra de contrato.
+   A ingestão também passou a registrar a taxa de boleto DDA por filial a cada rodada.
+
+3. **O painel lê do banco; só o envio lê ao vivo.** `modalidadesDisponiveisDoLote` refazia o
+   grid de pendentes a cada abertura de lote — +7 requisições Conexos na filial 2 para chegar
+   à resposta que a ingestão já gravou em `tem_boleto`. Passa a ler
+   `TituloAPagarRepository.listChavesComBoleto`.
+
+   **Isto NÃO enfraquece o anti-drift**, e vale registrar por quê: o painel decide o que o
+   dropdown OFERECE; quem decide o que vira dinheiro é `montarItensImport`, que continua lendo
+   o grid AO VIVO no momento do import e barrando com `BoletoSemCodigoBarrasError`. Um
+   `tem_boleto` de até 24 h desatualiza uma tela — nunca deixa sair remessa sem barras.
+
+   Efeito colateral bem-vindo: `SispagPainelService` deixou de depender do
+   `ConexosSispagWriteClient` (era um service read-only importando a superfície de escrita).
+
+4. **O envelope da pergunta virou fixture.** `__fixtures__/2026-08-27-fin015-question-barcode.json`
+   guarda o wire real capturado em HML, coberto pelo `contrato.test.ts`. O `id` deixou de ser
+   `.optional()` no `QUESTION_SCHEMA`: sem ele não há como chavear o `answers`, e recusar é
+   melhor que mandar `{ undefined: 'YES' }` ao ERP.
+
 ## Pendências
 
 - **P1:** confirmar com a Flávia se o caminho DDA cobre 100% dos boletos ou se sobra resíduo

@@ -59,6 +59,7 @@ const pendente = (over: Record<string, unknown> = {}, temBoletoDda = false) => (
     docCod: '801',
     titCod: '1',
     temBoletoDda,
+    ddaLegivel: true,
     raw: {
         filCod: 2,
         docCod: 801,
@@ -86,6 +87,8 @@ const buildEnv = (over: Record<string, unknown> = {}) =>
             // Kill-switch da frente. Default REAL é false (gate de go-live); os testes de
             // escrita ligam explicitamente para exercitar o caminho vivo.
             sispagLiveWriteEnabled: true,
+            // Default REAL é true: é freio de incidente, não gate de go-live.
+            sispagDdaAssocEnabled: true,
             conexosDryRun: false,
             ...over,
         }),
@@ -1007,5 +1010,47 @@ describe('RemessaService — boleto (código de barras via DDA)', () => {
         const flags = write.importarTitulos.mock.calls.map(([p]) => p.associarDda);
         expect(flags).toEqual([false, true]);
         for (const [p] of write.importarTitulos.mock.calls) expect(p.itens).toHaveLength(1);
+    });
+});
+
+describe('RemessaService — freio de incidente do DDA (SISPAG_DDA_ASSOC_ENABLED)', () => {
+    const loteBoletoComDda = () => ({
+        lote: lote({ itens: [{ ...lote().itens[0], modalidade: 'BOLETO' as const }] }),
+        pendentes: [pendente({}, true)],
+    });
+
+    it('desligado, BOLETO com DDA passa a falhar em vez de associar', async () => {
+        // O ponto do freio: conter o caminho DDA sem derrubar remessa de PIX/TED. O item
+        // BOLETO falha ALTO (não sai com barras vazia), e o resto do lote segue.
+        const { lote: l, pendentes } = loteBoletoComDda();
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue(pendentes);
+        const env = buildEnv({ sispagDdaAssocEnabled: false });
+
+        await expect(
+            make({ write, lote: l, env }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'BOLETO_SEM_CODIGO_BARRAS' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('ligado (default), o mesmo item associa normalmente', async () => {
+        const { lote: l, pendentes } = loteBoletoComDda();
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue(pendentes);
+
+        await make({ write, lote: l }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(write.importarTitulos).toHaveBeenCalledWith(
+            expect.objectContaining({ associarDda: true }),
+        );
+    });
+
+    it('desligado, item NÃO-boleto segue passando (o freio é só do caminho DDA)', async () => {
+        const write = buildWrite();
+        const env = buildEnv({ sispagDdaAssocEnabled: false });
+        await make({ write, env }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(write.importarTitulos).toHaveBeenCalledWith(
+            expect.objectContaining({ associarDda: false }),
+        );
+        expect(write.gerarRemessa).toHaveBeenCalled();
     });
 });

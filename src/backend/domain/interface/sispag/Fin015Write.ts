@@ -74,6 +74,12 @@ export interface TituloPendente {
      * `ontology/_inbox/sispag-boleto-dda-sondagem.md`.
      */
     temBoletoDda: boolean;
+    /**
+     * O campo `titVldReflexoDdaAssoc` veio legível (presente e ∈ {0,1}) nesta linha.
+     * `false` significa "não sei", não "não tem" — quem consome decide o que fazer com a
+     * diferença. Ver `PENDENTE_DDA_SCHEMA` em `ConexosSispagWriteClient`.
+     */
+    ddaLegivel: boolean;
     /** Linha crua do ERP — repassada no `importar` (o ERP exige o registro completo do item). */
     raw: Record<string, unknown>;
 }

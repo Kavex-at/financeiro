@@ -275,7 +275,7 @@ cadastro/finalizado/cancelado/estornado) é **derivada na leitura** (`situacaoDo
 | `com308/.../list/{docCod}` | **alçada de liberação** (`liberado`) + detalhe do título | `getAlcadaTitulo({docCod})` (ou hidratado na carteira) | `titVld1libera`/`titVld2libera`/`titVld3libera` (+`Tim/Usn/usnDesNomel`), `titVldEnviaBanco`, `vldBordero`, `titVldStatus` | **READ.** `liberado = AND das flags de alçada`. "Aprovado para baixa" (Escopo II). Ver `elegibilidade-titulo-lote`. |
 | `fin015/list` | **lotes SISPAG nativos** (contexto do painel) | `listLotesSispag({filCod?})` | `FinLoteSispag`: `bncCod`, `ccoCod`, `layoutConta`, `flpVldConfEnvio`, `soma`, analista | **READ (contexto).** 17 lotes reais (Itaú/Santander). NÃO participam do nosso ciclo de vida de lote candidato. |
 | `fin010/list` (a-pagar) | **borderôs a-pagar** (contexto do painel) | `listBorderosAPagar({filCod?})` | `borCod`, `borVldTipo`, `borVldFinalizado`, `vldHasRemessaPgto` | **READ (contexto).** A baixa via borderô é o mecanismo massivo (`vldHasRemessaPgto≈0` em ~99% — baixa direta). |
-| `fin015/…/titulosPendentes/list/{fil}/{bnc}/{flp}` | **flag de boleto DDA** por título | `ConexosSispagWriteClient.listarTitulosComBoletoDda({filCod, bncCod})` | `titVldReflexoDdaAssoc` (+ identidade `filCod`/`docCod`/`titCod`) | **READ.** Único vínculo pagamento↔boleto do ERP. Exige um `flpCod`: usa-se o lote nativo mais recente **como contexto de leitura** (não modificado; o grid é da FILIAL). Ver ADR-0040. |
+| `fin015/…/titulosPendentes/list/{fil}/{bnc}/{flp}` | **flag de boleto DDA** por título | `ConexosSispagWriteClient.listarTitulosComBoletoDda({filCod, bncCod})` | `titVldReflexoDdaAssoc` (+ identidade `filCod`/`docCod`/`titCod`) | **READ.** Único vínculo pagamento↔boleto do ERP. Exige um `flpCod`: usa-se o lote nativo mais recente **como contexto de leitura** (não modificado; o grid é da FILIAL). Validado por Zod (`{0,1}`), não coagido — grid inteiro ilegível vira `ConexosError`. Consumido pela **ingestão**; o painel lê o resultado persistido em `tem_boleto`. Ver ADR-0040 §Emenda. |
 | `fin124/list` · `fin124/itens/list/{ddcCod}` | **arquivos DDA e seus boletos** (diagnóstico) | — (sondas `jobs/probe-fin124-dda.ts`) | `FinDda`: `ddcCod`, `ddcEspFilename`, `ddcVldStatus` · `FinDdaItem`: `ditEspCodbar`, `ditMnyValor`, `ditDtaVencimento`, `docCod`/`titCod`/`flpCod` | **READ.** 143 arquivos, 100% com barras — mas `docCod`/`titCod` **0%** até o boleto ser consumido por um lote. **Não é por filial** (pool da conta pagadora). Não usado em runtime: o vínculo vem do flag acima. |
 
 - **I1 (read-only):** o `ConexosSispagClient` **não importa** nenhum verbo de escrita nesta fatia.
@@ -303,6 +303,11 @@ pelo `key`, e **não** um array. Outros sete encodings devolvem a mesma pergunta
 
 O POST que devolve `QUESTION` **não escreve nada** — é pré-commit, não escrita parcial. Por isso
 o re-POST não é retry cego e não fere a doutrina de escrita não-idempotente (ADR-0013).
+
+O envelope real está capturado em
+`src/backend/domain/interface/sispag/__fixtures__/2026-08-27-fin015-question-barcode.json` e é
+verificado pelo `contrato.test.ts` — inclusive a propriedade de que `answers` é chaveado pelo
+`id` e **não** pelo `key`. Um rename no Conexos falha o CI em vez de falhar no banco.
 
 **Allowlist de auto-resposta (uma chave, exata):**
 

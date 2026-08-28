@@ -84,7 +84,16 @@ export default class IngestaoPagamentosService {
                 });
                 return new Set();
             }
-            return await this.fin015.listarTitulosComBoletoDda({ filCod, bncCod });
+            const comBoleto = await this.fin015.listarTitulosComBoletoDda({ filCod, bncCod });
+            // Taxa por filial, registrada TODA rodada. É o sinal barato de quebra de contrato:
+            // uma filial que historicamente traz dezenas de boletos e passa a trazer 0 aparece
+            // aqui na rodada seguinte, em vez de aparecer no banco recusando a remessa.
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'ingestão pagamentos: taxa de boleto DDA por filial',
+                data: { filCod, bncCod, comBoletoDda: comBoleto.size },
+            });
+            return comBoleto;
         } catch (error) {
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
