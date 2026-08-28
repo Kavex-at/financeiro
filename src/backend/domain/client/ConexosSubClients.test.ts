@@ -960,6 +960,44 @@ describe('ConexosClient', () => {
             expect(titles[0].taxa).toBeUndefined();
             expect(titles[0].moedaCod).toBeUndefined();
             expect(titles[0].moedaNome).toBeUndefined();
+            expect(titles[0].valorPago).toBeUndefined();
+        });
+
+        // invoice-pago-detalhe (2026-08-28) — o `pago` da invoice passa a sair daqui,
+        // porque o com298/list não popula saldo nenhum. Números reais do doc 14042
+        // (filial 2, processo 1953), sonda `probe-invoice-pago` em PRD.
+        it('mapeia titMnyTotPago → valorPago (doc 14042: face == pago, invoice quitada)', async () => {
+            const legacy = buildLegacy();
+            legacy.listGeneric.mockResolvedValue([
+                {
+                    titCod: 1,
+                    titMnyValor: 2032384.41,
+                    titMnyTotPago: 2032384.41,
+                    titFltTaxaMneg: 5.2647,
+                    titMnyValorMneg: 386039.93,
+                    moeCodMneg: 220,
+                    moeEspNome: 'DOLAR DOS EUA',
+                },
+            ]);
+            const client = buildClient(legacy);
+
+            const titles = await client.listTitulosAPagar({ docCod: '14042', filCod: 2 });
+
+            expect(titles[0].valorBrl).toBe(2032384.41);
+            expect(titles[0].valorPago).toBe(2032384.41);
+        });
+
+        it('pede titMnyTotPago no fieldList — sem ele não há como derivar o pago', async () => {
+            const legacy = buildLegacy();
+            legacy.listGeneric.mockResolvedValue([]);
+            const client = buildClient(legacy);
+
+            await client.listTitulosAPagar({ docCod: '14042', filCod: 2 });
+
+            const body = legacy.listGeneric.mock.calls[0][1] as Record<string, unknown>;
+            expect(body.fieldList as string[]).toEqual(
+                expect.arrayContaining(['titMnyValor', 'titMnyTotPago']),
+            );
         });
     });
 

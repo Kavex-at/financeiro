@@ -60,7 +60,7 @@ processo — não há baixa/reconciliação.
 | `dataEmissao` | Date | sim | `com298.docDtaEmissao` | Data de emissão. |
 | `valor` | number | não | `com298.docMnyValor` | Valor de face (entrada do cálculo de variação cambial). |
 | `moeda` | string | sim | `com298.moeEspSigla` | Moeda. |
-| `pago` | boolean | não | derivado | Estado de pagamento (informativo nesta fatia). |
+| `pago` | boolean | não | derivado: `Σ titMnyValor − Σ titMnyTotPago === 0` (com308) | Estado de pagamento — **discrimina a aba "Invoices em aberto"** (`WHERE NOT stale AND NOT pago`). **NÃO** vem da row do `com298/list`: ali os agregados de título são `null` em 1146/1146 INVOICEs (sonda `probe-invoice-pago`, 2026-08-28), o que fazia o filtro ser no-op e a aba exibir invoices liquidadas. Regra estrita, sem epsilon (decisão `residual-pago-centavos`). Sem prova (com308 falhou / título sem os campos) → `false` conservador: a invoice segue visível. |
 | `exportador` | string? | não | `com298.dpeNomPessoa` | Exibição. |
 | `valorAbertoNegociado` | number? | não | `getDetalheTitulos` → `mnyTitAberto / taxaInvoice` | **Em-aberto vivo** em moeda negociada (USD) — o **TETO** do lado-crédito no auto-casamento Simples (ADR-0010). Fallback `valorMoedaNegociada`; ausente ⇒ sem teto (comportamento legado). |
 | `pesCod` | string? | não | `imp021` (processo) → `permuta_invoice.pes_cod` | **Chave do importador (cliente)** do processo da invoice — hidratado na ingestão via `imp021` para TODAS as invoices (ADR-0014, migration `0017`). |

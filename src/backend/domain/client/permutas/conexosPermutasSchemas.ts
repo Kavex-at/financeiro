@@ -44,6 +44,7 @@ export const com308RowSchema = z
         titFltTaxaMneg: wireNumber.optional(),
         titMnyValorMneg: wireNumber.optional(),
         titMnyValor: wireNumber.optional(),
+        titMnyTotPago: wireNumber.optional(),
         moeCodMneg: wireNumber.optional(),
         moeEspNome: z.union([z.string(), z.number()]).optional(),
     })

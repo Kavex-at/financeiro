@@ -40,6 +40,23 @@ export interface TituloAPagar {
      * (`titMnyValorMneg`) — este campo é o face doméstico.
      */
     valorBrl?: number;
+    /**
+     * Valor JÁ PAGO do título em BRL (`titMnyTotPago` no wire). Com `valorBrl`
+     * (face) forma a identidade que decide se o documento está quitado:
+     * `pago ⟺ Σ valorBrl − Σ valorPago === 0` (estrita, sem epsilon — decisão
+     * Yuri 2026-06-18, `residual-pago-centavos`).
+     *
+     * Existe porque o `com298/list` **não** popula `mnyTitAberto`/`mnyTitPago`
+     * (null em 1146/1146 INVOICEs da filial 2 — sonda `probe-invoice-pago`,
+     * 2026-08-28), o que fazia `isPago` devolver `false` para TODAS e a aba
+     * "Invoices em aberto" exibir invoices já liquidadas. Derivar daqui custa
+     * ZERO chamadas extras: este list já é feito para toda invoice na ingestão.
+     * Validado contra `getDetalheTitulos` (ground truth): 30/30 concordam.
+     *
+     * `undefined` (não `0`) quando o wire não traz o campo — "não sei" é
+     * distinto de "nada pago", e o caller cai no fallback conservador.
+     */
+    valorPago?: number;
 }
 
 /**
@@ -230,6 +247,10 @@ export default class ConexosTitulosClient {
                     'titFltTaxaMneg',
                     'titMnyValorMneg',
                     'titMnyValor',
+                    // `titMnyTotPago` — valor já pago do título. Aceito no
+                    // fieldList explícito (sonda 2026-08-28); é a fonte do
+                    // `pago` da invoice, já que o com298/list não traz saldo.
+                    'titMnyTotPago',
                     'moeCodMneg',
                     'moeEspNome',
                 ],
@@ -251,6 +272,7 @@ export default class ConexosTitulosClient {
             const moedaCod = this.base.parseOptionalNumber(r.moeCodMneg);
             const moedaNome = r.moeEspNome != null ? String(r.moeEspNome) : undefined;
             const valorBrl = this.base.parseOptionalNumber(r.titMnyValor);
+            const valorPago = this.base.parseOptionalNumber(r.titMnyTotPago);
             return {
                 titCod: String(r.titCod),
                 ...(valorNegociado !== undefined ? { valorNegociado } : {}),
@@ -258,6 +280,7 @@ export default class ConexosTitulosClient {
                 ...(moedaCod !== undefined ? { moedaCod } : {}),
                 ...(moedaNome !== undefined ? { moedaNome } : {}),
                 ...(valorBrl !== undefined ? { valorBrl } : {}),
+                ...(valorPago !== undefined ? { valorPago } : {}),
             };
         });
     };

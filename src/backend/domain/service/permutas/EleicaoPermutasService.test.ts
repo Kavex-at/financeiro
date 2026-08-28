@@ -941,4 +941,123 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             expect(repo.recordIdempotencyKey).toHaveBeenCalledWith('idem-3', result.runId);
         });
     });
+
+    // ── invoice-pago-detalhe (2026-08-28) ────────────────────────────────────
+    describe('`pago` da INVOICE vem dos TÍTULOS (com308), não da row do com298/list', () => {
+        // Relato Simone 2026-08-25: invoices já liquidadas na aba "Invoices em aberto".
+        // A vista lê `permuta_invoice WHERE NOT pago`, e `pago` era persistido a partir
+        // da row do com298/list — que NÃO popula mnyTitAberto/mnyTitPago (null em
+        // 1146/1146 INVOICEs da filial 2, sonda `probe-invoice-pago` em PRD). Resultado:
+        // `pago=false` para TODAS, filtro no-op, ~75% da aba era lixo.
+        // Mesma classe de defeito de 01b99bf (Gate 3) e df90fa6 (busca da alocação).
+        const invoiceDoList = {
+            docCod: '14042',
+            priCod: '1953',
+            dataEmissao: new Date('2026-03-12'),
+            valor: 2032384.41,
+            moeda: 'BRL',
+            // O list SEMPRE diz false — é exatamente o dado que não se pode usar.
+            pago: false,
+            faturada: false,
+        };
+
+        const runCompute = async (listTitulosAPagar: jest.Mock) => {
+            const conexos = buildConexos({
+                listInvoicesFinalizadas: jest
+                    .fn()
+                    .mockResolvedValue({ invoices: [invoiceDoList], capHit: false }),
+                listTitulosAPagar,
+            } as Partial<jest.Mocked<ConexosMock>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
+                realServices();
+            const service = buildEleicao(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+                clienteFiltro,
+            );
+            return service.computeCandidatas();
+        };
+
+        it('doc 14042 (face === pago) → pago:true, mesmo com o list dizendo false', async () => {
+            // Números REAIS do wire (probe PRD 2026-08-28, filial 2).
+            const { todasInvoices } = await runCompute(
+                jest.fn().mockResolvedValue([
+                    {
+                        titCod: '1',
+                        valorBrl: 2032384.41,
+                        valorPago: 2032384.41,
+                        valorNegociado: 386039.93,
+                        taxa: 5.2647,
+                        moedaCod: 220,
+                        moedaNome: 'DOLAR DOS EUA',
+                    },
+                ]),
+            );
+
+            expect(todasInvoices).toHaveLength(1);
+            expect(todasInvoices[0].inv.pago).toBe(true);
+        });
+
+        it('parcialmente paga (face > pago) → pago:false — segue na aba', async () => {
+            const { todasInvoices } = await runCompute(
+                jest
+                    .fn()
+                    .mockResolvedValue([{ titCod: '1', valorBrl: 2032384.41, valorPago: 1000000 }]),
+            );
+
+            expect(todasInvoices[0].inv.pago).toBe(false);
+        });
+
+        it('resíduo de centavos NÃO é quitação — regra estrita (residual-pago-centavos)', async () => {
+            // Decisão Yuri 2026-06-18: Gate 3 permanece `=== 0`, sem epsilon. A aba
+            // segue a MESMA regra; um resíduo de R$0,02 mantém a invoice visível.
+            const { todasInvoices } = await runCompute(
+                jest
+                    .fn()
+                    .mockResolvedValue([
+                        { titCod: '1', valorBrl: 20373009.0, valorPago: 20373008.98 },
+                    ]),
+            );
+
+            expect(todasInvoices[0].inv.pago).toBe(false);
+        });
+
+        it('múltiplos títulos: soma face vs soma pago', async () => {
+            const { todasInvoices } = await runCompute(
+                jest.fn().mockResolvedValue([
+                    { titCod: '1', valorBrl: 1000, valorPago: 1000 },
+                    { titCod: '2', valorBrl: 500, valorPago: 500 },
+                ]),
+            );
+
+            expect(todasInvoices[0].inv.pago).toBe(true);
+        });
+
+        it('com308 indisponível → pago:false (conservador) e a invoice NÃO some', async () => {
+            // Nunca inferir pago=true sem prova: esconder uma invoice em aberto tira
+            // dinheiro do radar da analista; mostrar uma paga apenas incomoda.
+            const { todasInvoices } = await runCompute(
+                jest.fn().mockRejectedValue(new Error('com308 fora do ar')),
+            );
+
+            expect(todasInvoices).toHaveLength(1);
+            expect(todasInvoices[0].inv.pago).toBe(false);
+        });
+
+        it('título sem titMnyTotPago → pago:false (não sei ≠ nada pago)', async () => {
+            const { todasInvoices } = await runCompute(
+                jest.fn().mockResolvedValue([{ titCod: '1', valorBrl: 2032384.41 }]),
+            );
+
+            expect(todasInvoices[0].inv.pago).toBe(false);
+        });
+    });
 });

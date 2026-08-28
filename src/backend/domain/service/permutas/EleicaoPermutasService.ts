@@ -85,6 +85,33 @@ const somaValorNegociado = (
 
 /** Limites de concorrência do fan-out Conexos (P0-4). Mantêm o paralelismo sob
  * controle para não estourar a sessão do ERP (LOGIN_ERROR_MAX_SESSIONS). */
+/**
+ * `pago` da invoice derivado dos TÍTULOS (com308), não da row do `com298/list`.
+ *
+ * Regra: `pago ⟺ Σ face − Σ pago === 0`, **estrita** (sem epsilon) — mesma regra do
+ * Gate 3 do adiantamento, mantida por decisão do Yuri em 2026-06-18
+ * (`residual-pago-centavos`: um resíduo de R$0,02 NÃO conta como quitado).
+ *
+ * Validada ao vivo contra `getDetalheTitulos` (ground truth do ERP): 30/30 concordam,
+ * 0 divergências (sonda `probe-invoice-pago`, PRD filial 2, 2026-08-28).
+ *
+ * Devolve `undefined` — e não `false` — quando não há títulos ou algum título não traz
+ * face/pago: "não sei" é distinto de "está em aberto". O caller mantém o piso conservador,
+ * então a invoice segue VISÍVEL. Nunca inferimos `pago = true` sem prova: esconder uma
+ * invoice em aberto tira dinheiro do radar da analista; mostrar uma paga só incomoda.
+ */
+export const derivarPagoDosTitulos = (
+    titulos: ReadonlyArray<{ valorBrl?: number; valorPago?: number }>,
+): boolean | undefined => {
+    if (titulos.length === 0) return undefined;
+    if (titulos.some((t) => t.valorBrl === undefined || t.valorPago === undefined)) {
+        return undefined;
+    }
+    const face = titulos.reduce((acc, t) => acc + (t.valorBrl ?? 0), 0);
+    const pago = titulos.reduce((acc, t) => acc + (t.valorPago ?? 0), 0);
+    return face - pago === 0;
+};
+
 const FILIAIS_CONCURRENCY = 5;
 const ADIANTAMENTOS_CONCURRENCY = 10;
 
@@ -564,6 +591,10 @@ export default class EleicaoPermutasService {
             dataEmissao: raw.dataEmissao,
             valor: raw.valor,
             moeda: raw.moeda,
+            // `raw.pago` vem do `com298/list` via `isPago` — e o list NÃO popula
+            // `mnyTitAberto`/`mnyTitPago` (null em 1146/1146 INVOICEs da filial 2,
+            // sonda `probe-invoice-pago` 2026-08-28), então é SEMPRE `false`. Fica
+            // aqui só como piso; o valor real é derivado dos títulos logo abaixo.
             pago: raw.pago,
             ...(raw.exportador !== undefined ? { exportador: raw.exportador } : {}),
             ...(raw.referencia !== undefined ? { referencia: raw.referencia } : {}),
@@ -582,8 +613,16 @@ export default class EleicaoPermutasService {
             if (valorMoedaNegociada !== undefined) inv.valorMoedaNegociada = valorMoedaNegociada;
             if (moedaNegociada !== undefined) inv.moedaNegociada = moedaNegociada;
             if (taxa !== undefined) inv.taxa = taxa;
+            // `pago` REAL da invoice — mesma classe de defeito já corrigida no Gate 3
+            // do adiantamento (01b99bf) e na busca de invoice da alocação (df90fa6):
+            // a LISTA é inservível, a verdade está no título. Custo zero: este com308
+            // já era chamado aqui para valor/taxa negociada.
+            const pagoDosTitulos = derivarPagoDosTitulos(tit);
+            if (pagoDosTitulos !== undefined) inv.pago = pagoDosTitulos;
         } catch {
-            // com308 indisponível p/ esta invoice — segue sem valor negociado.
+            // com308 indisponível p/ esta invoice — segue sem valor negociado e com
+            // `pago` no piso conservador (`false`): a invoice continua visível na aba
+            // em vez de sumir sem prova de quitação.
         }
         return { inv, filCod };
     };

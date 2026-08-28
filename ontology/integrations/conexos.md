@@ -31,8 +31,10 @@ resolved-by:
   - "P0-4 — campos wire da data-base RESOLVIDOS: cdiDtaCi (imp019, D.I) / dioDtaDesembaraco (imp223, DUIMP); probe de rede 2026-06-18; XOR confirmado em dados reais"
   - "P0-7 — query lista TODAS via 3 filtros; sem janela incremental; multi-filial; rate-limit é nota de impl (Yuri, 2026-06-17)"
   - "gate-3-pago-via-detail — RESOLVIDO (probe de rede 2026-06-18, 408 detalhes): pago ⟺ mnyTitAberto === 0 (estrito); hidratado via getDetalheTitulos na mesma chamada do Gate 2"
+  - "invoice-pago-via-titulo — RESOLVIDO (sonda probe-invoice-pago, PRD filial 2, 2026-08-28): o com298/list também não popula saldo no lado INVOICE (mnyTitAberto null em 1146/1146); o pago da invoice passa a sair de titMnyTotPago no com308 (0 chamadas extras), derivação validada 30/30 contra o detalhe"
 open-gap:
   - "residual-pago-centavos (P2) — doc 8721 tem aberto=0,02 em título ~R$20M; Gate 3 estrito bloqueia. Confirmar c/ analistas se resíduo de centavos = totalmente pago e qual o teto"
+  - "com308-enum-pago (P3) — o com308 expõe um campo `pago` que NÃO é booleano (valores 1/2/3 observados: 21/2/7 numa amostra de 30). Significado de cada valor não decodificado; a derivação em uso é a identidade monetária, provada. Decodificar simplificaria a soma"
   - "vc-permuta-parcial (Fatia 2) — variação cambial em permutas parciais deve usar o valor PARCIAL (mnyTitPermutar literal), não o integral do título"
 ---
 
@@ -115,6 +117,26 @@ registro no ledger (I-2).
   Regra: `pago ⟺ mnyTitAberto === 0` (estrito). Hidratado via `getDetalheTitulos` na **mesma**
   chamada de detalhe do Gate 2 (zero fan-out novo). `EleicaoPermutasService.buildCandidata` injeta
   `pago` no adiantamento antes de `avaliarElegibilidade`.
+
+- **`invoice-pago-via-titulo` — RESOLVIDO (sonda `probe-invoice-pago`, PRD filial 2, 2026-08-28).**
+  A evidência de 2026-06-18 media **PROFORMAs** (411 docs) e foi generalizada para "o list não traz
+  saldo" sem nunca ter sido medida no lado **INVOICE**. Medido agora: `mnyTitAberto`, `mnyTitPago` e
+  `mnyTitValor` vêm `null` em **1146/1146** INVOICEs finalizadas da filial 2, e o campo `pago` sequer
+  existe na row. Logo `isPago(row)` devolvia `false` para **todas**, e o filtro
+  `permuta_invoice WHERE NOT pago` da aba "Invoices em aberto" era **no-op**.
+  Fonte adotada: **`titMnyTotPago` do `com308/financeiroAPagar/list/{docCod}`** — aceito no
+  `fieldList` explícito e obtido na chamada que a ingestão **já fazia** para valor/taxa negociada
+  (custo zero). Regra: `pago ⟺ Σ titMnyValor − Σ titMnyTotPago === 0` (estrita), validada contra o
+  detalhe como ground truth: **30/30, zero divergências**.
+
+## `com298/list` — o que o list NÃO entrega (medido, não suposto)
+
+- Os agregados de título (`mnyTitValor`/`mnyTitPago`/`mnyTitAberto`/`mnyTitPermutar`) são `null` no
+  list para **PROFORMA e INVOICE**. Nunca derive estado de pagamento da row do list.
+- `mnyTitAberto` **também não serve como filtro**: `'mnyTitAberto#GT': 0` no `filterList` faz o
+  endpoint responder **HTTP 500** (sonda 2026-08-28). A evidência anterior de `ORA-00904` era sobre
+  `fieldList`/SELECT; agora está medido que a cláusula de filtro também não aceita. Não há como pedir
+  ao ERP "só as invoices em aberto" — o recorte é sempre nosso, depois de ler o título.
 
 ## Detalhe `com298/{docCod}` — agregados de títulos (probe 2026-06-18, 408 docs)
 
