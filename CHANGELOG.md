@@ -1,5 +1,56 @@
 # Columbia Financeiro — Changelog
 
+## v0.32.0 (2026-08-28) — boleto sai na remessa com código de barras
+
+O SISPAG tratava boleto, PIX e TED do mesmo jeito. A auto-detecção de boleto lia
+`fin064.titEspCodbar` — medido **null em 100%** dos títulos de produção (0/2000 no `fin064`,
+0/2173 no grid de pendentes, 0/50 no `com308`). A detecção nunca disparou: todo BOLETO ia para a
+remessa com **segmento J sem código de barras**, que o banco não liquida. O código de barras não
+está no título em momento nenhum — chega pela associação do boleto DDA (`fin124`) que o próprio
+ERP faz, e que estávamos explicitamente pedindo para NÃO fazer.
+
+- **feat(sispag):** o import do `fin015` passa a pedir a associação do boleto DDA
+  (`titVldReflexoDdaAssoc: 1`) para os títulos que o ERP sinaliza. O ERP então anexa o
+  `itsNumCodbar`, marca `vldVinculoDda` e **deriva a modalidade do banco emissor do barcode** —
+  provado ao vivo em HML. O caminho passa por uma pergunta do ERP
+  (`FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO`), respondida com `answers: { "<id>": "YES" }`.
+  O protocolo de resposta não é documentado pelo Conexos: é um `Map<String,String>` chaveado pelo
+  **id** da pergunta, descoberto porque mandar array vazou o tipo Java no erro.
+- **feat(sispag):** a carteira ganha a coluna **Boleto**. `tem_boleto` **muda de fonte** — era
+  `titEspCodbar` (sempre falso), passa a ser o flag de DDA lido do grid de pendentes pela
+  ingestão. O `LoteCard` avisa quando a modalidade BOLETO ficou sem boleto disponível.
+- **feat(sispag):** invariante nova — **BOLETO sem boleto DDA não vira remessa**
+  (`BoletoSemCodigoBarrasError`, 409). Fail-closed **no envio**, não no rascunho: a analista monta
+  o lote como quiser e a validação autoritativa acontece ao vivo no import.
+- **fix(sispag):** o import parou de mandar `titEspCodbar: ''`. Mandar string vazia era
+  exatamente o que produzia remessa sem código de barras.
+- **fix(sispag):** boleto **não exige conta do favorecido** — o destino é o próprio código de
+  barras. A exigência anterior rejeitava justamente o fornecedor que só aceita boleto (em PRD,
+  1 de 5 favorecidos amostrados tem conta cadastrada).
+- **fix(sispag):** a auto-resposta ao ERP é **auditada** (`BUSINESS_INFO` com a chave da pergunta,
+  o `questionId`, a chave do lote e os títulos). Decisão automatizada numa escrita que move
+  dinheiro sem registro não é defensável em incidente.
+- **feat(sispag):** `SISPAG_DDA_ASSOC_ENABLED` (default **true**) — freio só do caminho DDA.
+  Antes, contê-lo exigia `SISPAG_LIVE_WRITE_ENABLED=false`, que derruba remessa **e** conciliação:
+  100% do SISPAG para conter algo que afeta 31–35% dos itens.
+- **fix(sispag):** o flag de DDA é **validado, não coagido** (`z.union([literal(0), literal(1)])`).
+  A coerção `?? 0` transformaria um rename do Conexos em "a carteira inteira não tem boleto" — a
+  mesma classe do defeito que esta versão corrige. Grid inteiro ilegível vira erro explícito.
+- **fix(sispag):** o painel deixou de refazer o grid de pendentes a cada abertura de lote
+  (+7 requisições Conexos na filial 2) e passou a ler `tem_boleto` do banco. O envio segue lendo
+  ao vivo — é lá que se decide o que vira dinheiro.
+- **test(sispag):** o envelope `QUESTION` do ERP virou fixture do wire real, coberto pelo
+  `contrato.test.ts`. Antes os testes afirmavam contra um shape que eles mesmos inventavam.
+
+> **Deploy — sem migration.** A coluna `tem_boleto` já existia (migration 0031); só a **semântica**
+> mudou. Entre o deploy e a próxima rodada do cron, a coluna carrega o valor antigo (tudo `false`)
+> e o painel mostra "sem boleto" para todo mundo — isso **não** é a feature falhando. Para eliminar
+> a janela, rode `npm run job:ingest-pagamentos` uma vez logo após o deploy.
+
+> **Go-live.** A primeira remessa real com boleto deve ser acompanhada: o `.REM` precisa mostrar
+> segmento J com barras, e o `itsVldModalidade` do item deve bater com o banco emissor do código
+> de barras (341 → 6, outro banco → 7). Ver ADR-0040 e
+> `docs/regis-review/2026-08-28-0249-sispag-boleto-dda/`.
 ## v0.31.2 (2026-08-28) — a invoice já paga some da aba "em aberto"
 
 A aba **Invoices em aberto** das Permutas listava invoices já liquidadas. A analista viu "algumas"
