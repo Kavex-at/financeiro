@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import type ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import RecebimentoExecucaoRepository from './RecebimentoExecucaoRepository.js';
 
@@ -13,11 +14,18 @@ const buildDb = () =>
 const sqlOf = (m: jest.Mock, i = 0) => m.mock.calls[i][0] as string;
 const paramsOf = (m: jest.Mock, i = 0) => m.mock.calls[i][1] as Record<string, unknown>;
 
+/** Identidade Conexos ausente (fora de request) — o default dos testes de SQL. */
+const buildIdentity = () =>
+    ({
+        current: jest.fn().mockReturnValue(undefined),
+        currentParams: jest.fn().mockReturnValue({ conexosUsername: null, conexosUsnCod: null }),
+    }) as unknown as jest.Mocked<ConexosIdentityProvider>;
+
 describe('RecebimentoExecucaoRepository — write-ahead ledger da idempotência (I-Receb-2)', () => {
     it('beginExecution: UPSERT que PRESERVA settled (CASE WHEN) e é parametrizado', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
-        const repo = new RecebimentoExecucaoRepository(db);
+        const repo = new RecebimentoExecucaoRepository(db, buildIdentity());
 
         const out = await repo.beginExecution({
             idempotencyKey: 'receb:u:1',
@@ -45,7 +53,7 @@ describe('RecebimentoExecucaoRepository — write-ahead ledger da idempotência 
     it('beginExecution: dry-run abre como pending; settled retornado vira alreadySettled', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'settled' });
-        const repo = new RecebimentoExecucaoRepository(db);
+        const repo = new RecebimentoExecucaoRepository(db, buildIdentity());
 
         const out = await repo.beginExecution({
             idempotencyKey: 'receb:u:1',
@@ -64,14 +72,17 @@ describe('RecebimentoExecucaoRepository — write-ahead ledger da idempotência 
 
     it('setBorCod: UPDATE parametrizado do bor_cod (rastreabilidade de órfão)', async () => {
         const db = buildDb();
-        await new RecebimentoExecucaoRepository(db).setBorCod('receb:u:1', 999000);
+        await new RecebimentoExecucaoRepository(db, buildIdentity()).setBorCod('receb:u:1', 999000);
         expect(sqlOf(db.update as jest.Mock)).toContain('SET bor_cod = $borCod');
         expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'receb:u:1', borCod: 999000 });
     });
 
     it('setRequestPayload: UPDATE jsonb parametrizado', async () => {
         const db = buildDb();
-        await new RecebimentoExecucaoRepository(db).setRequestPayload('receb:u:1', { a: 1 });
+        await new RecebimentoExecucaoRepository(db, buildIdentity()).setRequestPayload(
+            'receb:u:1',
+            { a: 1 },
+        );
         expect(sqlOf(db.update as jest.Mock)).toContain('request_payload = $payload::jsonb');
         expect(paramsOf(db.update as jest.Mock)).toEqual({
             key: 'receb:u:1',
@@ -81,7 +92,7 @@ describe('RecebimentoExecucaoRepository — write-ahead ledger da idempotência 
 
     it('markSettled: UPDATE para settled com bor_cod/nde_id/jsonb, limpa erro_mensagem', async () => {
         const db = buildDb();
-        await new RecebimentoExecucaoRepository(db).markSettled('receb:u:1', {
+        await new RecebimentoExecucaoRepository(db, buildIdentity()).markSettled('receb:u:1', {
             borCod: 999000,
             ndeId: 'nde-1',
             erpResponse: { bxaCodSeq: 999001 },
@@ -98,7 +109,7 @@ describe('RecebimentoExecucaoRepository — write-ahead ledger da idempotência 
 
     it('markError: UPDATE para error, preserva bor_cod via COALESCE', async () => {
         const db = buildDb();
-        await new RecebimentoExecucaoRepository(db).markError('receb:u:1', {
+        await new RecebimentoExecucaoRepository(db, buildIdentity()).markError('receb:u:1', {
             erroMensagem: 'ERP 500',
             erpResponse: { type: 'VALIDATION' },
         });
@@ -123,7 +134,7 @@ describe('RecebimentoExecucaoRepository — write-ahead ledger da idempotência 
             criado_em: '2026-07-01T00:00:00Z',
             atualizado_em: '2026-07-01T00:00:00Z',
         });
-        const repo = new RecebimentoExecucaoRepository(db);
+        const repo = new RecebimentoExecucaoRepository(db, buildIdentity());
         const row = await repo.findByIdempotencyKey('receb:u:1');
         expect(row).toMatchObject({
             idempotencyKey: 'receb:u:1',
@@ -137,7 +148,9 @@ describe('RecebimentoExecucaoRepository — write-ahead ledger da idempotência 
 
         const db2 = buildDb();
         expect(
-            await new RecebimentoExecucaoRepository(db2).findByIdempotencyKey('nope'),
+            await new RecebimentoExecucaoRepository(db2, buildIdentity()).findByIdempotencyKey(
+                'nope',
+            ),
         ).toBeNull();
     });
 });
@@ -156,7 +169,7 @@ describe('RecebimentoExecucaoRepository — preservação de settled (CASE WHEN)
     ])('begin retornando %s → status final %s, alreadySettled=%s', async (returned, finalStatus, already) => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: returned });
-        const repo = new RecebimentoExecucaoRepository(db);
+        const repo = new RecebimentoExecucaoRepository(db, buildIdentity());
         const out = await repo.beginExecution({
             idempotencyKey: 'receb:u:1',
             recebimentoId: 'rec-1',

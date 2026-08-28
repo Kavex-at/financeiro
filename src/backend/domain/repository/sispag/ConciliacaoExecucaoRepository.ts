@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type {
     BeginConciliacaoExecucaoInput,
@@ -24,6 +25,8 @@ export default class ConciliacaoExecucaoRepository {
     public constructor(
         @inject(PostgreeDatabaseClient)
         private readonly databaseClient: PostgreeDatabaseClient,
+        @inject(ConexosIdentityProvider)
+        private readonly identityProvider: ConexosIdentityProvider,
     ) {}
 
     public findByIdempotencyKey = async (key: string): Promise<ConciliacaoExecucaoRow | null> => {
@@ -74,10 +77,10 @@ export default class ConciliacaoExecucaoRepository {
         const row = await this.databaseClient.selectFirst<{ status: string }>(
             `INSERT INTO conciliacao_execucao (
                 idempotency_key, correlation_id, fil_cod, bnc_cod, gtb_cod_seq, gar_cod_seq,
-                status, dry_run, executado_por, atualizado_em
+                status, dry_run, executado_por, conexos_username, conexos_usn_cod, atualizado_em
             ) VALUES (
                 $key, $correlationId, $filCod, $bncCod, $gtbCodSeq, $garCodSeq,
-                $newStatus, $dryRun, $executadoPor, now()
+                $newStatus, $dryRun, $executadoPor, $conexosUsername, $conexosUsnCod, now()
             )
             ON CONFLICT (idempotency_key) DO UPDATE SET
                 status = CASE WHEN conciliacao_execucao.status = 'settled'
@@ -87,6 +90,11 @@ export default class ConciliacaoExecucaoRepository {
                 executado_por = CASE WHEN conciliacao_execucao.status = 'settled'
                                THEN conciliacao_execucao.executado_por
                                ELSE EXCLUDED.executado_por END,
+                -- Identidade do ERP: linha settled NUNCA reescreve quem assinou (ADR-0041).
+                conexos_username = CASE WHEN conciliacao_execucao.status = 'settled'
+                               THEN conciliacao_execucao.conexos_username ELSE EXCLUDED.conexos_username END,
+                conexos_usn_cod = CASE WHEN conciliacao_execucao.status = 'settled'
+                               THEN conciliacao_execucao.conexos_usn_cod ELSE EXCLUDED.conexos_usn_cod END,
                 atualizado_em = now()
             RETURNING status`,
             {
@@ -99,6 +107,7 @@ export default class ConciliacaoExecucaoRepository {
                 newStatus,
                 dryRun: input.dryRun,
                 executadoPor: input.executadoPor,
+                ...this.identityProvider.currentParams(),
             },
         );
         const status = (row?.status ?? newStatus) as ConciliacaoExecucaoStatus;
@@ -119,7 +128,11 @@ export default class ConciliacaoExecucaoRepository {
             `UPDATE conciliacao_execucao
              SET status = 'settled', processou = $processou, total_linhas = $totalLinhas,
                  pagos = $pagos, rejeitados = $rejeitados,
-                 varredura_incompleta = $varreduraIncompleta, atualizado_em = now()
+                 varredura_incompleta = $varreduraIncompleta,
+                 -- COALESCE: no write-ahead a sessão podia não estar resolvida; aqui já está.
+                 conexos_username = COALESCE(conexos_username, $conexosUsername),
+                 conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
                 key,
@@ -128,6 +141,7 @@ export default class ConciliacaoExecucaoRepository {
                 pagos: data.pagos,
                 rejeitados: data.rejeitados,
                 varreduraIncompleta: data.varreduraIncompleta,
+                ...this.identityProvider.currentParams(),
             },
         );
     };
@@ -135,9 +149,12 @@ export default class ConciliacaoExecucaoRepository {
     public fail = async (key: string, mensagem: string): Promise<void> => {
         await this.databaseClient.update(
             `UPDATE conciliacao_execucao
-             SET status = 'error', erro_mensagem = $mensagem, atualizado_em = now()
+             SET status = 'error', erro_mensagem = $mensagem,
+                 conexos_username = COALESCE(conexos_username, $conexosUsername),
+                 conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                 atualizado_em = now()
              WHERE idempotency_key = $key`,
-            { key, mensagem },
+            { key, mensagem, ...this.identityProvider.currentParams() },
         );
     };
 

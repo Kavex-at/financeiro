@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import type ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import SolicitacaoNumerarioExecucaoRepository from './SolicitacaoNumerarioExecucaoRepository.js';
 
@@ -13,11 +14,18 @@ const buildDb = () =>
 const sqlOf = (m: jest.Mock, i = 0) => m.mock.calls[i][0] as string;
 const paramsOf = (m: jest.Mock, i = 0) => m.mock.calls[i][1] as Record<string, unknown>;
 
+/** Identidade Conexos ausente (fora de request) — o default dos testes de SQL. */
+const buildIdentity = () =>
+    ({
+        current: jest.fn().mockReturnValue(undefined),
+        currentParams: jest.fn().mockReturnValue({ conexosUsername: null, conexosUsnCod: null }),
+    }) as unknown as jest.Mocked<ConexosIdentityProvider>;
+
 describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (com299)', () => {
     it('beginExecution: UPSERT que PRESERVA settled (CASE WHEN) e é parametrizado', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
-        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
 
         const out = await repo.beginExecution({
             idempotencyKey: 'sn:u:1',
@@ -54,7 +62,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
     it('beginExecution: dry-run abre como pending; settled retornado vira alreadySettled', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'settled' });
-        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
 
         const out = await repo.beginExecution({
             idempotencyKey: 'sn:u:1',
@@ -76,7 +84,10 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
     it('setDocCod: UPDATE parametrizado do doc_cod (rastreabilidade de órfão) + etapa sn', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).setDocCod('sn:u:1', 18202);
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).setDocCod(
+            'sn:u:1',
+            18202,
+        );
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain('SET doc_cod = $docCod');
         expect(sql).toContain("etapa = 'sn'");
@@ -85,7 +96,10 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
     it('setFin014BorCod: UPDATE parametrizado do borderô + etapa fin014-done', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).setFin014BorCod('sn:u:1', 77);
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).setFin014BorCod(
+            'sn:u:1',
+            77,
+        );
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain('fin014_bor_cod = $borCod');
         expect(sql).toContain("etapa = 'fin014-done'");
@@ -94,7 +108,10 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
     it('setNdDocCod: UPDATE parametrizado da nota de débito + etapa nota-debito', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).setNdDocCod('sn:u:1', 18337);
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).setNdDocCod(
+            'sn:u:1',
+            18337,
+        );
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain('nd_doc_cod = $docCod');
         expect(sql).toContain("etapa = 'nota-debito'");
@@ -103,28 +120,40 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
     it('setEtapa: UPDATE parametrizado da etapa (leg fiscal)', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).setEtapa('sn:u:1', 'fiscal-done');
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).setEtapa(
+            'sn:u:1',
+            'fiscal-done',
+        );
         expect(sqlOf(db.update as jest.Mock)).toContain('SET etapa = $etapa');
         expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', etapa: 'fiscal-done' });
     });
 
     it('setRevisaoHumana: UPDATE parametrizado do flag de revisão', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).setRevisaoHumana('sn:u:1', true);
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).setRevisaoHumana(
+            'sn:u:1',
+            true,
+        );
         expect(sqlOf(db.update as jest.Mock)).toContain('revisao_humana = $revisao');
         expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', revisao: true });
     });
 
     it('setNdeAutorizado: UPDATE parametrizado do flag de autorização SEFAZ', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).setNdeAutorizado('sn:u:1', true);
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).setNdeAutorizado(
+            'sn:u:1',
+            true,
+        );
         expect(sqlOf(db.update as jest.Mock)).toContain('nde_autorizado = $autorizado');
         expect(paramsOf(db.update as jest.Mock)).toEqual({ key: 'sn:u:1', autorizado: true });
     });
 
     it('setRequestPayload: UPDATE jsonb parametrizado', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).setRequestPayload('sn:u:1', { a: 1 });
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).setRequestPayload(
+            'sn:u:1',
+            { a: 1 },
+        );
         expect(sqlOf(db.update as jest.Mock)).toContain('request_payload = $payload::jsonb');
         expect(paramsOf(db.update as jest.Mock)).toEqual({
             key: 'sn:u:1',
@@ -134,10 +163,13 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
     it('markSettled: UPDATE para settled com doc_cod/jsonb, limpa erro_mensagem', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).markSettled('sn:u:1', {
-            docCod: 18202,
-            erpResponse: { docVldComvalidacoes: 1 },
-        });
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).markSettled(
+            'sn:u:1',
+            {
+                docCod: 18202,
+                erpResponse: { docVldComvalidacoes: 1 },
+            },
+        );
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain("status = 'settled'");
         // Sem override, o settle continua gravando `concluido` (trilha completa, com NDe).
@@ -152,10 +184,13 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
     it('markSettled: etapa override grava o terminal do ramo sem NDe (ADR-0031)', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).markSettled('sn:u:2', {
-            docCod: 18203,
-            etapa: 'quitado-sem-nde',
-        });
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).markSettled(
+            'sn:u:2',
+            {
+                docCod: 18203,
+                etapa: 'quitado-sem-nde',
+            },
+        );
         const sql = sqlOf(db.update as jest.Mock);
         // Mesmo UPDATE parametrizado — o COALESCE é o único ponto de variação (nada interpolado).
         expect(sql).toContain("etapa = COALESCE($etapa, 'concluido')");
@@ -172,7 +207,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
     it('markError: UPDATE para error, preserva doc_cod via COALESCE', async () => {
         const db = buildDb();
-        await new SolicitacaoNumerarioExecucaoRepository(db).markError('sn:u:1', {
+        await new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity()).markError('sn:u:1', {
             erroMensagem: 'ERP 500',
             erpResponse: { docVldComvalidacoes: 3 },
         });
@@ -204,7 +239,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
             criado_em: '2026-07-01T00:00:00Z',
             atualizado_em: '2026-07-01T00:00:00Z',
         });
-        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
         const row = await repo.findByIdempotencyKey('sn:u:1');
         expect(row).toMatchObject({
             idempotencyKey: 'sn:u:1',
@@ -225,7 +260,10 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
 
         const db2 = buildDb();
         expect(
-            await new SolicitacaoNumerarioExecucaoRepository(db2).findByIdempotencyKey('nope'),
+            await new SolicitacaoNumerarioExecucaoRepository(
+                db2,
+                buildIdentity(),
+            ).findByIdempotencyKey('nope'),
         ).toBeNull();
     });
 });
@@ -243,7 +281,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — preservação de settled (C
     ])('begin retornando %s → status final %s, alreadySettled=%s', async (returned, finalStatus, already) => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: returned });
-        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
         const out = await repo.beginExecution({
             idempotencyKey: 'sn:u:1',
             filCod: 2,
@@ -275,7 +313,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — auditoria (listByTxnId / li
     it('listByTxnId: WHERE txn_id, ordena por atualizado_em DESC, parametrizado, mapeia as linhas', async () => {
         const db = buildDb();
         (db.selectMany as jest.Mock).mockResolvedValue([row]);
-        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
         const out = await repo.listByTxnId('txn-1');
         const sql = sqlOf(db.selectMany as jest.Mock);
         expect(sql).toContain('WHERE txn_id = $txnId');
@@ -287,7 +325,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — auditoria (listByTxnId / li
     it('listByStatus: WHERE status + LIMIT, parametrizado', async () => {
         const db = buildDb();
         (db.selectMany as jest.Mock).mockResolvedValue([row]);
-        const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
         await repo.listByStatus('error', 50);
         const sql = sqlOf(db.selectMany as jest.Mock);
         expect(sql).toContain('WHERE status = $status');
@@ -301,7 +339,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-
         it('soma só settled e não-dry-run, parametrizado', async () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue({ total: '7500.00', linhas: '2' });
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
 
             const out = await repo.somarSettledPorTxnId('txn-1');
 
@@ -318,21 +356,21 @@ describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-
         it('zero linhas → undefined (indeterminado, o chamador não regride o status)', async () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue({ total: null, linhas: '0' });
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
             await expect(repo.somarSettledPorTxnId('txn-1')).resolves.toBeUndefined();
         });
 
         it('linhas sem valor (pré-0042) → 0, não undefined: houve execução, a Σ é que é 0', async () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue({ total: null, linhas: '3' });
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
             await expect(repo.somarSettledPorTxnId('txn-1')).resolves.toBe(0);
         });
 
         it('sem linha de retorno → undefined', async () => {
             const db = buildDb();
             (db.selectFirst as jest.Mock).mockResolvedValue(null);
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
             await expect(repo.somarSettledPorTxnId('txn-1')).resolves.toBeUndefined();
         });
     });
@@ -353,7 +391,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-
 
         it('lista vazia não vai ao banco', async () => {
             const db = buildDb();
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
             await expect(repo.listUltimaFalhaPorTxnIds([])).resolves.toEqual(new Map());
             expect(db.selectMany).not.toHaveBeenCalled();
         });
@@ -361,7 +399,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-
         it('DISTINCT ON pega a mais recente, fan-in por ANY, parametrizado', async () => {
             const db = buildDb();
             (db.selectMany as jest.Mock).mockResolvedValue([falha]);
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
 
             const out = await repo.listUltimaFalhaPorTxnIds(['txn-1', 'txn-2']);
 
@@ -390,7 +428,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-
             (db.selectMany as jest.Mock).mockResolvedValue([
                 { ...falha, status: 'reconciling', erro_mensagem: null },
             ]);
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
 
             const out = await repo.listUltimaFalhaPorTxnIds(['txn-1']);
 
@@ -404,7 +442,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — regra Σ e aba Falhas (ADR-
         it('NUNCA seleciona erp_response nem request_payload — a aba não é admin-only', async () => {
             const db = buildDb();
             (db.selectMany as jest.Mock).mockResolvedValue([]);
-            const repo = new SolicitacaoNumerarioExecucaoRepository(db);
+            const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
             await repo.listUltimaFalhaPorTxnIds(['txn-1']);
             const sql = sqlOf(db.selectMany as jest.Mock);
             expect(sql).not.toContain('erp_response');

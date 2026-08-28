@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type {
     BeginRemessaExecucaoInput,
@@ -29,6 +30,8 @@ export default class RemessaExecucaoRepository {
     public constructor(
         @inject(PostgreeDatabaseClient)
         private readonly databaseClient: PostgreeDatabaseClient,
+        @inject(ConexosIdentityProvider)
+        private readonly identityProvider: ConexosIdentityProvider,
     ) {}
 
     public findByIdempotencyKey = async (key: string): Promise<RemessaExecucaoRow | null> => {
@@ -74,10 +77,10 @@ export default class RemessaExecucaoRepository {
         const row = await this.databaseClient.selectFirst<{ status: string }>(
             `INSERT INTO remessa_execucao (
                 idempotency_key, correlation_id, lote_id, fil_cod, bnc_cod, status, dry_run,
-                etapa, executado_por, atualizado_em
+                etapa, executado_por, conexos_username, conexos_usn_cod, atualizado_em
             ) VALUES (
                 $key, $correlationId, $loteId, $filCod, $bncCod, $newStatus, $dryRun,
-                'criar_lote', $executadoPor, now()
+                'criar_lote', $executadoPor, $conexosUsername, $conexosUsnCod, now()
             )
             ON CONFLICT (idempotency_key) DO UPDATE SET
                 status = CASE WHEN remessa_execucao.status = 'settled'
@@ -87,6 +90,11 @@ export default class RemessaExecucaoRepository {
                 executado_por = CASE WHEN remessa_execucao.status = 'settled'
                                THEN remessa_execucao.executado_por
                                ELSE EXCLUDED.executado_por END,
+                -- Identidade do ERP: linha settled NUNCA reescreve quem assinou (ADR-0041).
+                conexos_username = CASE WHEN remessa_execucao.status = 'settled'
+                               THEN remessa_execucao.conexos_username ELSE EXCLUDED.conexos_username END,
+                conexos_usn_cod = CASE WHEN remessa_execucao.status = 'settled'
+                               THEN remessa_execucao.conexos_usn_cod ELSE EXCLUDED.conexos_usn_cod END,
                 atualizado_em = now()
             RETURNING status`,
             {
@@ -98,6 +106,7 @@ export default class RemessaExecucaoRepository {
                 newStatus,
                 dryRun: input.dryRun,
                 executadoPor: input.executadoPor,
+                ...this.identityProvider.currentParams(),
             },
         );
         const status = (row?.status ?? newStatus) as RemessaExecucaoStatus;
@@ -165,6 +174,9 @@ export default class RemessaExecucaoRepository {
              SET status = 'settled', etapa = 'concluido',
                  native_gab_cod = COALESCE($gabCod, native_gab_cod),
                  erp_response = COALESCE($erpResponse::jsonb, erp_response),
+                 -- COALESCE: no write-ahead a sessão podia não estar resolvida; aqui já está.
+                 conexos_username = COALESCE(conexos_username, $conexosUsername),
+                 conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                  atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -172,6 +184,7 @@ export default class RemessaExecucaoRepository {
                 gabCod: data.nativeGabCod ?? null,
                 erpResponse:
                     data.erpResponse === undefined ? null : JSON.stringify(data.erpResponse),
+                ...this.identityProvider.currentParams(),
             },
         );
     };
@@ -184,6 +197,8 @@ export default class RemessaExecucaoRepository {
             `UPDATE remessa_execucao
              SET status = 'error', erro_mensagem = $mensagem,
                  erp_response = COALESCE($erpResponse::jsonb, erp_response),
+                 conexos_username = COALESCE(conexos_username, $conexosUsername),
+                 conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
                  atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -191,6 +206,7 @@ export default class RemessaExecucaoRepository {
                 mensagem: data.mensagem.slice(0, 2000),
                 erpResponse:
                     data.erpResponse === undefined ? null : JSON.stringify(data.erpResponse),
+                ...this.identityProvider.currentParams(),
             },
         );
     };

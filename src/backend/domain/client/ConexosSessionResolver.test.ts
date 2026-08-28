@@ -1,7 +1,9 @@
 import 'reflect-metadata';
 import type SecretCipher from '../libs/crypto/SecretCipher.js';
+import type EnvironmentProvider from '../libs/environment/EnvironmentProvider.js';
 import { conexosRequestContext } from '../libs/requestContext/ConexosRequestContext.js';
 import type UserRepository from '../repository/auth/UserRepository.js';
+import type LogService from '../service/LogService.js';
 import type ConexosSessionRegistry from './ConexosSessionRegistry.js';
 import ConexosSessionResolver from './ConexosSessionResolver.js';
 
@@ -23,8 +25,33 @@ const build = (over: {
         robot: jest.fn().mockReturnValue(ROBOT),
         forUser: jest.fn().mockReturnValue(userSession),
     } as unknown as ConexosSessionRegistry;
-    return { resolver: new ConexosSessionResolver(repo, cipher, registry), userSession, registry };
+    const environmentProvider = {
+        getEnvironmentVars: jest.fn().mockResolvedValue({ conexosLogin: 'MPS_ROBO' }),
+    } as unknown as EnvironmentProvider;
+    const logService = { warn: jest.fn().mockResolvedValue(undefined) } as unknown as LogService;
+    return {
+        resolver: new ConexosSessionResolver(
+            repo,
+            cipher,
+            registry,
+            environmentProvider,
+            logService,
+        ),
+        userSession,
+        registry,
+        logService,
+    };
 };
+
+/** Resolve dentro de uma request e devolve a identidade publicada no contexto. */
+const resolveCapturandoIdentidade = async (
+    resolver: ConexosSessionResolver,
+    platformUsername: string,
+) =>
+    conexosRequestContext.run({ platformUsername }, async () => {
+        await resolver.resolve();
+        return conexosRequestContext.getStore()?.identity;
+    });
 
 describe('ConexosSessionResolver.resolve', () => {
     it('sem request/contexto → robô', async () => {
@@ -107,5 +134,125 @@ describe('ConexosSessionResolver.testarVinculo', () => {
             },
         });
         expect(await resolver.testarVinculo('x@kavex.com')).toBe('falha');
+    });
+});
+
+describe('ConexosSessionResolver — I-1: o fallback com vínculo presente fala (ADR-0041)', () => {
+    it('senha não decifra → warn com motivo `decrypt`, e ainda assim devolve o robô', async () => {
+        const { resolver, logService } = build({
+            vinculo: { conexosUsername: 'MARILYN_MUTAFCI', conexosPasswordEnc: 'enc' },
+            decrypt: async () => {
+                throw new Error('bad tag');
+            },
+        });
+
+        const out = await conexosRequestContext.run({ platformUsername: 'm@kavex.com' }, () =>
+            resolver.resolve(),
+        );
+
+        expect(out).toBe(ROBOT);
+        expect(logService.warn as jest.Mock).toHaveBeenCalledTimes(1);
+        expect((logService.warn as jest.Mock).mock.calls[0][0]).toMatchObject({
+            data: {
+                platformUsername: 'm@kavex.com',
+                conexosUsername: 'MARILYN_MUTAFCI',
+                motivo: 'decrypt',
+                erro: 'bad tag',
+            },
+        });
+    });
+
+    it('login do ERP falha → warn com motivo `login` (o caso do incidente 2026-08-25)', async () => {
+        const { resolver, logService } = build({
+            vinculo: { conexosUsername: 'MARILYN_MUTAFCI', conexosPasswordEnc: 'enc' },
+            userEnsureSid: async () => {
+                throw new Error('LOGIN_ERROR');
+            },
+        });
+
+        const out = await conexosRequestContext.run({ platformUsername: 'm@kavex.com' }, () =>
+            resolver.resolve(),
+        );
+
+        expect(out).toBe(ROBOT);
+        expect(logService.warn as jest.Mock).toHaveBeenCalledTimes(1);
+        expect((logService.warn as jest.Mock).mock.calls[0][0]).toMatchObject({
+            data: { conexosUsername: 'MARILYN_MUTAFCI', motivo: 'login', erro: 'LOGIN_ERROR' },
+        });
+    });
+
+    it('o warn NUNCA carrega a senha, cifrada ou em claro', async () => {
+        const { resolver, logService } = build({
+            vinculo: { conexosUsername: 'X', conexosPasswordEnc: 'blob-cifrado' },
+            userEnsureSid: async () => {
+                throw new Error('nope');
+            },
+        });
+
+        await conexosRequestContext.run({ platformUsername: 'x@kavex.com' }, () =>
+            resolver.resolve(),
+        );
+
+        const payload = JSON.stringify((logService.warn as jest.Mock).mock.calls[0][0]);
+        expect(payload).not.toContain('blob-cifrado');
+        expect(payload).not.toContain('senha-clara');
+    });
+
+    it('usuário SEM vínculo → robô em silêncio (caminho normal, logar viraria ruído)', async () => {
+        const { resolver, logService } = build({ vinculo: null });
+        await conexosRequestContext.run({ platformUsername: 'novato@kavex.com' }, () =>
+            resolver.resolve(),
+        );
+        expect(logService.warn as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it('fora de request (job/cron) → robô em silêncio', async () => {
+        const { resolver, logService } = build({});
+        expect(await resolver.resolve()).toBe(ROBOT);
+        expect(logService.warn as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it('testarVinculo NÃO loga — é teste pedido pela UI, não degradação de execução', async () => {
+        const { resolver, logService } = build({
+            vinculo: { conexosUsername: 'X', conexosPasswordEnc: 'enc' },
+            userEnsureSid: async () => {
+                throw new Error('nope');
+            },
+        });
+        expect(await resolver.testarVinculo('x@kavex.com')).toBe('falha');
+        expect(logService.warn as jest.Mock).not.toHaveBeenCalled();
+    });
+});
+
+describe('ConexosSessionResolver — publica a identidade resolvida (I-2, ADR-0041)', () => {
+    it('vínculo válido → identidade do usuário, viaRobo=false', async () => {
+        const { resolver } = build({
+            vinculo: { conexosUsername: 'SIMONE_PEREIRA', conexosPasswordEnc: 'enc' },
+        });
+        expect(await resolveCapturandoIdentidade(resolver, 's@kavex.com')).toEqual({
+            conexosUsername: 'SIMONE_PEREIRA',
+            viaRobo: false,
+        });
+    });
+
+    it('degradou para o robô → identidade DO ROBÔ, viaRobo=true (o fallback fica registrado)', async () => {
+        const { resolver } = build({
+            vinculo: { conexosUsername: 'MARILYN_MUTAFCI', conexosPasswordEnc: 'enc' },
+            userEnsureSid: async () => {
+                throw new Error('LOGIN_ERROR');
+            },
+        });
+        expect(await resolveCapturandoIdentidade(resolver, 'm@kavex.com')).toEqual({
+            conexosUsername: 'MPS_ROBO',
+            viaRobo: true,
+        });
+    });
+
+    it('usuário sem vínculo → identidade do robô', async () => {
+        const { resolver } = build({ vinculo: null });
+        expect(await resolveCapturandoIdentidade(resolver, 'novato@kavex.com')).toEqual({
+            conexosUsername: 'MPS_ROBO',
+            viaRobo: true,
+        });
     });
 });

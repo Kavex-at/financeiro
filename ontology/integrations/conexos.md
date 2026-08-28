@@ -43,6 +43,30 @@ open-gap:
 > **Sem escrita** (`fin010` fora de escopo). Esta fatia **re-introduz** reads de D.I/DUIMP
 > que o ADR-0003 podou (ver ADR-0004 e migration-debt O3).
 
+## Identidade da sessão — robô vs. usuário vinculado (Fatia B, ADR-0041)
+
+Toda chamada ao Conexos sai sob **uma** identidade do ERP, decidida **por request** pelo
+`ConexosSessionResolver`:
+
+| Situação | Sessão usada | Chave em `conexos_sessions` |
+|----------|--------------|------------------------------|
+| Request de usuário com vínculo Conexos válido | a dele | `columbia:user:<login>` |
+| Sem request (job/cron/script) | robô (`CONEXOS_USERNAME`) | `columbia-default` |
+| Usuário sem vínculo | robô | `columbia-default` |
+| Senha do vínculo não decifra | robô (**loga `warn`**) | `columbia-default` |
+| Login Conexos do usuário falha | robô (**loga `warn`**) | `columbia-default` |
+
+A identidade viaja para o ERP como o cookie `sid` + o header `cnx-usncod`, ambos capturados no
+`POST /login` **daquela** sessão — logo, trocar a sessão troca de verdade a autoria da escrita no
+Conexos, sem mudar nenhum sub-client.
+
+**Diagnóstico rápido:** a existência de uma linha `columbia:user:<login>` em `conexos_sessions` é a
+prova de que aquele vínculo já logou com sucesso. Ausência = nunca logou → aquele usuário está
+operando pelo robô. `GET /me/conexos-status` dá o veredito direto (`ok` / `falha` / `ausente`).
+
+Ver `business-rules/identidade-execucao-conexos.md` para os invariantes de log (I-1) e de
+registro no ledger (I-2).
+
 ## Endpoints de leitura
 
 | Endpoint | Uso | Método `ConexosClient` | Wire | Notas |
