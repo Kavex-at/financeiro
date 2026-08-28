@@ -142,6 +142,29 @@ export default class TituloAPagarRepository {
     };
 
     /**
+     * Chaves `filCod:docCod:titCod` dos títulos ATIVOS que têm boleto DDA associado.
+     *
+     * Serve o painel sem ir ao ERP: a ingestão já resolveu isso na última rodada (≤ 24 h) e
+     * gravou em `tem_boleto`. Refazer a leitura ao vivo custava +7 requisições Conexos por
+     * abertura de lote na filial 2 (5 páginas do grid de pendentes + lotes + contas) para
+     * chegar à mesma resposta.
+     *
+     * O dado servido aqui é do último ingest, e isso é seguro por construção: a decisão que
+     * move dinheiro é validada AO VIVO no envio (`RemessaService.montarItensImport` →
+     * `BoletoSemCodigoBarrasError`). Um `tem_boleto` stale só pode desatualizar um dropdown,
+     * nunca deixar sair remessa com barras vazia.
+     */
+    public listChavesComBoleto = async (filCod: number): Promise<Set<string>> => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT fil_cod, doc_cod, tit_cod
+             FROM titulo_a_pagar
+             WHERE ativo = TRUE AND tem_boleto = TRUE AND fil_cod = $filCod`,
+            { filCod },
+        )) as Array<{ fil_cod: number; doc_cod: string; tit_cod: string }>;
+        return new Set(rows.map((r) => `${r.fil_cod}:${r.doc_cod}:${r.tit_cod}`));
+    };
+
+    /**
      * Elegíveis para FORMAÇÃO AUTOMÁTICA de lote: ativos, aprovados, não-pagos, A VENCER
      * dentro de `maxDias` (vencidos NÃO entram), e que ainda NÃO estão em nenhum lote RASCUNHO
      * (anti-join — não duplica o que o analista já tem em montagem, manual ou automático).

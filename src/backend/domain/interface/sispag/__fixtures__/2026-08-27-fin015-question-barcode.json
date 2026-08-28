@@ -1,0 +1,22 @@
+{
+    "_fonte": "POST fin015/finItemSispag/titulosPendentes/importar com titVldReflexoDdaAssoc=1 (HML, fil 2, flp 24, doc 452/1)",
+    "_capturadoEm": "2026-08-27",
+    "_nota": "Envelope de PERGUNTA do ERP, capturado VERBATIM por jobs/probe-dda-assoc-write-hml.ts. Nenhum valor foi redigido de propósito: aqui as STRINGS SÃO O CONTRATO (o `id` é a chave do map de resposta, o `key` é a allowlist, o `answerList[].id` é o valor aceito). Não há dado de fornecedor neste envelope. Ver ADR-0040 e ontology/integrations/conexos.md.",
+    "envelope": {
+        "type": "QUESTION",
+        "questions": [
+            {
+                "id": "1",
+                "key": "FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO",
+                "answerList": [
+                    { "id": "YES", "key": "YES", "type": "SIMPLE" },
+                    { "id": "NO", "key": "NO", "type": "SIMPLE" }
+                ]
+            }
+        ]
+    },
+    "_resposta": {
+        "_nota": "Body do re-POST que resolve a pergunta: o MESMO body do 1º POST + `answers`. Map<String,String> chaveado pelo `id` (não pelo `key`, não array) — descoberto porque o array devolveu 'Cannot deserialize LinkedHashMap<String,String> from Array value'.",
+        "answers": { "1": "YES" }
+    }
+}

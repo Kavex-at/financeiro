@@ -458,7 +458,13 @@ export default class RemessaService {
             if (!pular('importar')) {
                 // `apenasChaves` só vem preenchido numa retomada de import parcial: manda
                 // exatamente os títulos que o ERP ainda não tem.
-                const montados = await this.montarItensImport(lote, bncCod, flpCod, apenasChaves);
+                const montados = await this.montarItensImport(
+                    lote,
+                    bncCod,
+                    flpCod,
+                    apenasChaves,
+                    env.sispagDdaAssocEnabled,
+                );
                 await this.ledger.setRequestPayload(key, { itens: montados.length, flpCod });
                 // Duas chamadas, não uma: `titVldReflexoDdaAssoc` é campo da SELEÇÃO (vale para
                 // a requisição inteira), e só os títulos que o ERP casou com um boleto DDA
@@ -825,6 +831,8 @@ export default class RemessaService {
         flpCod: number,
         /** Subconjunto a importar. Ausente = todos os itens do lote (caminho normal). */
         apenas?: ReadonlySet<string>,
+        /** `false` = freio de incidente ligado (`SISPAG_DDA_ASSOC_ENABLED=false`). */
+        ddaHabilitado = true,
     ): Promise<Array<{ payload: Record<string, unknown>; associarDda: boolean }>> => {
         // A chave inclui a FILIAL. O grid de pendentes cruza filiais e `docCod` NÃO é único
         // entre elas: medido em HML, o doc 285 existe na filial 2 E na 4. Com a chave só
@@ -872,8 +880,13 @@ export default class RemessaService {
             // BOLETO sem boleto DDA associado = remessa com segmento J vazio. O código de
             // barras NÃO está no título (0% em fin064/pendentes/com308): ou o ERP tem um DDA
             // casado, ou não há barras nenhuma para mandar. Barra ANTES de qualquer escrita.
-            const associarDda = item.modalidade === MODALIDADE.BOLETO && pendente.temBoletoDda;
-            if (item.modalidade === MODALIDADE.BOLETO && !pendente.temBoletoDda) {
+            //
+            // Com `SISPAG_DDA_ASSOC_ENABLED=false` (freio de incidente) ninguém associa: todo
+            // BOLETO cai no erro abaixo. É o comportamento pré-ADR-0040, mas falhando ALTO em
+            // vez de mandar remessa com barras vazia — e PIX/TED seguem passando normalmente.
+            const associarDda =
+                ddaHabilitado && item.modalidade === MODALIDADE.BOLETO && pendente.temBoletoDda;
+            if (item.modalidade === MODALIDADE.BOLETO && !associarDda) {
                 throw new BoletoSemCodigoBarrasError({
                     docCod: item.docCod,
                     titCod: item.titCod,

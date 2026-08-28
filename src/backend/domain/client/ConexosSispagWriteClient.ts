@@ -54,13 +54,41 @@ const SUCESSO_SCHEMA = z.object({
 const PERGUNTA_AUTO_RESPONDIVEL = 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO';
 
 /**
+ * Boundary do grid de pendentes. Existe por um motivo específico: `titVldReflexoDdaAssoc` é o
+ * ÚNICO sinal de "este pagamento tem boleto", e uma coerção tolerante (`?? 0`) o degradaria em
+ * silêncio para `false` se o Conexos renomeasse o campo — reintroduzindo, num lugar novo, a
+ * mesma classe de defeito que o ADR-0040 corrigiu (o `titEspCodbar` null em 100% que a
+ * auto-detecção antiga lia sem nunca disparar).
+ *
+ * Por isso o campo é `z.union([literal(0), literal(1)])` e NÃO tem default: ausente ou com
+ * outro valor, o `safeParse` falha e o chamador decide (hoje: conta como "não sei" e avisa),
+ * em vez de a carteira inteira virar "sem boleto" como estado normal.
+ *
+ * O resto da linha vai `passthrough` — a identidade tem que seguir VERBATIM para o `importar`.
+ */
+const PENDENTE_DDA_SCHEMA = z
+    .object({ titVldReflexoDdaAssoc: z.union([z.literal(0), z.literal(1)]) })
+    .passthrough();
+
+/**
  * Envelope de PERGUNTA do Conexos. O `id` é o que importa: a resposta vai num
  * `answers: Map<String,String>` chaveado por ELE (não pelo `key`) — descoberto em HML porque
  * mandar um array devolveu `Cannot deserialize LinkedHashMap<String,String> from Array value`.
  */
 const QUESTION_SCHEMA = z.object({
     type: z.literal('QUESTION'),
-    questions: z.array(z.object({ id: z.string().optional(), key: z.string().optional() })).min(1),
+    questions: z
+        .array(
+            z.object({
+                // `id` é OBRIGATÓRIO: é a chave do map `answers`. Um envelope sem ele não é
+                // auto-respondível, e é melhor o Zod recusar (→ pergunta humana) do que o
+                // código construir `{ undefined: 'YES' }` e mandar isso ao ERP.
+                // Fixture do wire real: `__fixtures__/2026-08-27-fin015-question-barcode.json`.
+                id: z.string().min(1),
+                key: z.string().optional(),
+            }),
+        )
+        .min(1),
 });
 
 /**
@@ -459,6 +487,19 @@ export default class ConexosSispagWriteClient {
             flpCod: contexto,
             ...(maxPaginas !== undefined ? { maxPaginas } : {}),
         });
+        // Se NENHUMA linha do grid tiver o campo legível, o wire mudou — devolver um Set
+        // vazio aqui seria indistinguível de "esta filial não tem boleto nenhum", que é
+        // exatamente o modo de falha silencioso que o ADR-0040 existe para não repetir.
+        const ilegiveis = pendentes.filter((p) => !p.ddaLegivel).length;
+        if (pendentes.length > 0 && ilegiveis === pendentes.length) {
+            throw new ConexosError({
+                endpoint: `fin015/finItemSispag/titulosPendentes/list/${filCod}/${bncCod}/${contexto}`,
+                message:
+                    `titVldReflexoDdaAssoc ausente ou fora de {0,1} em TODAS as ${pendentes.length} ` +
+                    'linhas do grid de pendentes — o contrato do Conexos mudou. A carteira NÃO ' +
+                    'deve ser marcada como "sem boleto" por causa disto.',
+            });
+        }
         return new Set(
             pendentes
                 .filter((p) => p.temBoletoDda)
@@ -483,7 +524,9 @@ export default class ConexosSispagWriteClient {
         ...(r.itsEspNomeFav != null ? { favorecido: String(r.itsEspNomeFav) } : {}),
         // Único sinal de "este pagamento tem boleto" que existe no ERP antes do import.
         // Medido em PRD: 54/173 (fil 1), 136/500 (fil 2), 24/500 (fil 4), 152/500 (fil 6).
-        temBoletoDda: Number(r.titVldReflexoDdaAssoc ?? 0) === 1,
+        // Validado (não coagido) — ver PENDENTE_DDA_SCHEMA.
+        temBoletoDda: PENDENTE_DDA_SCHEMA.safeParse(r).data?.titVldReflexoDdaAssoc === 1,
+        ddaLegivel: PENDENTE_DDA_SCHEMA.safeParse(r).success,
         raw: r,
     });
 
@@ -597,7 +640,7 @@ export default class ConexosSispagWriteClient {
         if (!parsed.success || parsed.data.questions.length !== 1) return undefined;
         const q = parsed.data.questions[0];
         if (q.key !== PERGUNTA_AUTO_RESPONDIVEL) return undefined;
-        // A resposta é chaveada pelo `id`; sem ele não há como responder.
+        // A resposta é chaveada pelo `id` — o schema já garante que ele existe.
         return q.id;
     };
 

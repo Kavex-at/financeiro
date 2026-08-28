@@ -29,6 +29,16 @@ const carregar = (sufixo: string): Record<string, unknown> => {
     return bruto.linha as Record<string, unknown>;
 };
 
+/** Fixtures que NÃO são linha de grid — envelopes de protocolo, com shape próprio. */
+const carregarEnvelope = (sufixo: string): Record<string, unknown> => {
+    const arquivo = readdirSync(DIR).find((f) => f.endsWith(`${sufixo}.json`));
+    if (!arquivo) throw new Error(`fixture ausente: *${sufixo}.json`);
+    return JSON.parse(readFileSync(path.join(DIR, arquivo), 'utf-8'));
+};
+
+/** Envelopes de protocolo cobertos (não entram em CONTRATOS — não têm `linha`). */
+const ENVELOPES = ['fin015-question-barcode'];
+
 /** Campos que o código LÊ. Cada entrada aqui é uma dependência real, não documentação. */
 const CONTRATOS: Array<{
     fixture: string;
@@ -168,13 +178,55 @@ describe('contrato com o Conexos (fixtures reais, redigidas)', () => {
         });
     }
 
+    describe('fin015-question-barcode (envelope de PERGUNTA do ERP)', () => {
+        // Este envelope não veio de documentação: foi descoberto por engenharia reversa
+        // (7 encodings testados até o erro de deserialização do Java vazar o tipo).
+        // Sem esta fixture, os testes do cliente afirmam contra um shape que eles mesmos
+        // inventam — e um rename no Conexos passa verde até o banco recusar a remessa.
+        it('mantém o shape que a auto-resposta depende', () => {
+            const f = carregarEnvelope('fin015-question-barcode');
+            const env = f.envelope as {
+                type?: string;
+                questions?: Array<{ id?: string; key?: string; answerList?: unknown[] }>;
+            };
+            expect(env.type).toBe('QUESTION');
+            expect(Array.isArray(env.questions)).toBe(true);
+            const q = env.questions?.[0];
+            // `id` é a CHAVE do map de resposta. Sem ele não há como responder — o cliente
+            // recusa a auto-resposta e sobe como pergunta humana.
+            expect(typeof q?.id).toBe('string');
+            expect(q?.key).toBe('FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO');
+            expect(Array.isArray(q?.answerList)).toBe(true);
+        });
+
+        it('o answerList continua oferecendo YES', () => {
+            const f = carregarEnvelope('fin015-question-barcode');
+            const q = (f.envelope as { questions: Array<{ answerList: Array<{ id?: string }> }> })
+                .questions[0];
+            expect(q.answerList.map((a) => a.id)).toContain('YES');
+        });
+
+        it('a resposta é um MAP chaveado pelo id — não array, não pelo key', () => {
+            // Regressão do achado central: `answers` é `Map<String,String>` no DTO Java.
+            // Mandar array devolve `Cannot deserialize LinkedHashMap<String,String>`.
+            const f = carregarEnvelope('fin015-question-barcode');
+            const resp = f._resposta as { answers: Record<string, string> };
+            expect(Array.isArray(resp.answers)).toBe(false);
+            const q = (f.envelope as { questions: Array<{ id: string; key: string }> })
+                .questions[0];
+            expect(resp.answers[q.id]).toBe('YES');
+            // chaveado pelo `id`, NÃO pelo `key`
+            expect(resp.answers[q.key]).toBeUndefined();
+        });
+    });
+
     it('todo fixture no diretório está coberto por um contrato', () => {
         // Um fixture capturado e esquecido não vale nada. Se alguém adicionar um JSON
         // sem entrada em CONTRATOS, este teste avisa em vez de deixar passar.
         const arquivos = readdirSync(DIR)
             .filter((f) => f.endsWith('.json'))
             .map((f) => f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.json$/, ''));
-        const cobertos = new Set(CONTRATOS.map((c) => c.fixture));
+        const cobertos = new Set([...CONTRATOS.map((c) => c.fixture), ...ENVELOPES]);
         expect(arquivos.filter((a) => !cobertos.has(a))).toEqual([]);
     });
 });
