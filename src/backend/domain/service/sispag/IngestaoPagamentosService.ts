@@ -70,42 +70,87 @@ export default class IngestaoPagamentosService {
      * grid), ou uma falha nessa leitura, devolve conjunto vazio com WARN — os títulos entram
      * com `temBoleto = false` em vez de a rodada inteira cair.
      */
+    /**
+     * Bancos distintos com conta pagadora na filial. Lista, não "o primeiro": o grid de
+     * pendentes é da FILIAL e o banco só serve para achar um lote que sirva de contexto de
+     * leitura. Medido em PRD (2026-08-31): `contas[0]` é o banco 38 na filial 1 e o 11 na
+     * filial 2 — nenhum dos dois tem lote nativo, e a carteira INTEIRA dessas duas filiais
+     * vinha marcada como "sem boleto". Pelo banco 4 a mesma leitura devolve 38 e 266 títulos.
+     */
+    private bancosDaFilial = async (filCod: number): Promise<number[]> => {
+        const contas = await this.sispag.listContasCorrentes(filCod);
+        return [...new Set(contas.map((c) => c.bncCod))];
+    };
+
+    /**
+     * Títulos da filial que o ERP casou com um boleto DDA (`titVldReflexoDdaAssoc`).
+     *
+     * Best-effort por desenho: a carteira é o produto principal da ingestão, e o flag de boleto
+     * é enriquecimento. Falha de leitura devolve conjunto vazio com WARN — os títulos entram com
+     * `temBoleto = false` em vez de a rodada inteira cair.
+     */
     private titulosComBoletoDda = async (filCod: number): Promise<Set<string>> => {
         try {
-            // O banco NUNCA é fixo: sai da conta pagadora da própria filial (`fin005`).
-            // O mesmo `ccoCod` aponta para contas diferentes em cada filial.
-            const contas = await this.sispag.listContasCorrentes(filCod);
-            const bncCod = contas[0]?.bncCod;
-            if (bncCod === undefined) {
-                await this.logService.warn({
-                    type: LOG_TYPE.BUSINESS_WARN,
-                    message: 'ingestão pagamentos: filial sem conta pagadora — sem flag de boleto',
-                    data: { filCod },
-                });
+            const bncCods = await this.bancosDaFilial(filCod);
+            if (bncCods.length === 0) {
+                await this.avisar('filial sem conta pagadora — sem flag de boleto', { filCod });
                 return new Set();
             }
-            const comBoleto = await this.fin015.listarTitulosComBoletoDda({ filCod, bncCod });
+            const comBoleto = await this.fin015.listarTitulosComBoletoDda({ filCod, bncCods });
             // Taxa por filial, registrada TODA rodada. É o sinal barato de quebra de contrato:
             // uma filial que historicamente traz dezenas de boletos e passa a trazer 0 aparece
             // aqui na rodada seguinte, em vez de aparecer no banco recusando a remessa.
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'ingestão pagamentos: taxa de boleto DDA por filial',
-                data: { filCod, bncCod, comBoletoDda: comBoleto.size },
+                data: { filCod, bncCodsTentados: bncCods.length, comBoletoDda: comBoleto.size },
             });
+            // Zero pode ser verdade (filial sem boleto) ou "nenhum banco tinha lote para servir
+            // de contexto". A diferença importa: no segundo caso a coluna do painel mente.
+            if (comBoleto.size === 0) {
+                await this.avisar('nenhum título com boleto DDA nesta filial', {
+                    filCod,
+                    bncCodsTentados: bncCods.length,
+                });
+            }
             return comBoleto;
         } catch (error) {
-            await this.logService.warn({
-                type: LOG_TYPE.BUSINESS_WARN,
-                message: 'ingestão pagamentos: leitura do flag de boleto DDA falhou (ignorada)',
-                data: {
-                    filCod,
-                    reason: error instanceof Error ? error.message : String(error),
-                },
+            await this.avisar('leitura do flag de boleto DDA falhou (ignorada)', {
+                filCod,
+                reason: error instanceof Error ? error.message : String(error),
             });
             return new Set();
         }
     };
+
+    /** WARN da ingestão, com o prefixo padrão da frente. */
+    private avisar = async (mensagem: string, data: Record<string, unknown>): Promise<void> => {
+        await this.logService.warn({
+            type: LOG_TYPE.BUSINESS_WARN,
+            message: `ingestão pagamentos: ${mensagem}`,
+            data,
+        });
+    };
+
+    /**
+     * Títulos de UMA filial que entram na carteira, já com o flag de boleto resolvido.
+     * Extraído de `runIngestion` para manter o laço de acumulação legível.
+     */
+    private titulosDaFilial = (lido: {
+        titulos: TituloAPagar[];
+        exterior: Set<string>;
+        comBoleto: Set<string>;
+    }): TituloAPagar[] =>
+        lido.titulos
+            // Pago sai; internacional (exterior/câmbio) também — é câmbio manual da tesouraria,
+            // fora do escopo SISPAG (ADR-0021).
+            .filter((t) => !t.pago && !lido.exterior.has(t.docCod))
+            // "Tem boleto?" vem do flag de DDA do grid de pendentes — nunca do título
+            // (o `titEspCodbar` é null em 100% da carteira medida em produção).
+            .map((t) => ({
+                ...t,
+                temBoleto: lido.comBoleto.has(`${t.filCod}:${t.docCod}:${t.titCod}`),
+            }));
 
     private runIngestion = async (input: {
         triggeredBy: string;
@@ -144,29 +189,15 @@ export default class IngestaoPagamentosService {
             const filiaisLidas: number[] = [];
             for (let i = 0; i < settled.length; i += 1) {
                 const s = settled[i];
-                if (s.status === 'fulfilled') {
-                    filiaisLidas.push(filCods[i]);
-                    for (const t of s.value.titulos) {
-                        if (t.pago) continue;
-                        // Internacional (exterior/câmbio) NÃO entra na carteira SISPAG (fora do escopo).
-                        if (s.value.exterior.has(t.docCod)) continue;
-                        // "Tem boleto?" vem do flag de DDA do grid de pendentes — nunca do
-                        // título (o `titEspCodbar` é null em 100% da carteira).
-                        titulos.push({
-                            ...t,
-                            temBoleto: s.value.comBoleto.has(`${t.filCod}:${t.docCod}:${t.titCod}`),
-                        });
-                    }
-                } else {
-                    await this.logService.warn({
-                        type: LOG_TYPE.BUSINESS_WARN,
-                        message: 'ingestão pagamentos: leitura de filial falhou (ignorada)',
-                        data: {
-                            filCod: filCods[i],
-                            reason: s.reason instanceof Error ? s.reason.message : String(s.reason),
-                        },
+                if (s.status !== 'fulfilled') {
+                    await this.avisar('leitura de filial falhou (ignorada)', {
+                        filCod: filCods[i],
+                        reason: s.reason instanceof Error ? s.reason.message : String(s.reason),
                     });
+                    continue;
                 }
+                filiaisLidas.push(filCods[i]);
+                titulos.push(...this.titulosDaFilial(s.value));
             }
 
             await this.tituloRepo.upsertMany(titulos, runId);

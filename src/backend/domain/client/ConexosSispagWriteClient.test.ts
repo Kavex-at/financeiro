@@ -456,7 +456,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 1 },
                 { filCod: 1, docCod: 200, titCod: 1, titVldReflexoDdaAssoc: 0 },
             ]);
-            expect(await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 })).toEqual(
+            expect(await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCods: [4] })).toEqual(
                 new Set(['1:100:1']),
             );
         });
@@ -469,7 +469,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 { filCod: 1, docCod: 200, titCod: 1 },
             ]);
             await expect(
-                make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 }),
+                make(base).listarTitulosComBoletoDda({ filCod: 1, bncCods: [4] }),
             ).rejects.toMatchObject({
                 message: expect.stringContaining('titVldReflexoDdaAssoc'),
             });
@@ -480,7 +480,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 'S' },
             ]);
             await expect(
-                make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 }),
+                make(base).listarTitulosComBoletoDda({ filCod: 1, bncCods: [4] }),
             ).rejects.toMatchObject({ message: expect.stringContaining('contrato do Conexos') });
         });
 
@@ -490,7 +490,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 1 },
                 { filCod: 1, docCod: 200, titCod: 1 },
             ]);
-            expect(await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 })).toEqual(
+            expect(await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCods: [4] })).toEqual(
                 new Set(['1:100:1']),
             );
         });
@@ -516,7 +516,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                         { filCod: 1, docCod: 200, titCod: 1, titVldReflexoDdaAssoc: 0 },
                     ],
                 });
-            const set = await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCod: 4 });
+            const set = await make(base).listarTitulosComBoletoDda({ filCod: 1, bncCods: [4] });
             expect(set).toEqual(new Set(['1:100:1']));
             expect(base.listGenericPaginated.mock.calls[1][0]).toBe(
                 'fin015/finItemSispag/titulosPendentes/list/1/4/9',
@@ -526,9 +526,43 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
         it('filial sem lote nativo → conjunto vazio, sem ler o grid', async () => {
             const base = buildBase();
             base.listGenericPaginated.mockResolvedValueOnce({ count: 0, rows: [] });
-            const set = await make(base).listarTitulosComBoletoDda({ filCod: 6, bncCod: 4 });
+            const set = await make(base).listarTitulosComBoletoDda({ filCod: 6, bncCods: [4] });
             expect(set.size).toBe(0);
             expect(base.listGenericPaginated).toHaveBeenCalledTimes(1);
+        });
+
+        it('tenta os bancos EM ORDEM até achar um com lote', async () => {
+            // Medido em PRD: `contas[0]` é o banco 38 na filial 1 e o 11 na filial 2 — nenhum
+            // com lote. Parar no primeiro banco marcava a carteira inteira como "sem boleto".
+            const base = buildBase();
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 0, rows: [] }) // bnc 38 — sem lote
+                .mockResolvedValueOnce({ count: 0, rows: [] }) // bnc 11 — sem lote
+                .mockResolvedValueOnce({ count: 1, rows: [{ flpCod: 7, filCod: 2, bncCod: 4 }] })
+                .mockResolvedValueOnce({
+                    count: 1,
+                    rows: [{ filCod: 2, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 1 }],
+                });
+            const set = await make(base).listarTitulosComBoletoDda({
+                filCod: 2,
+                bncCods: [38, 11, 4],
+            });
+            expect(set).toEqual(new Set(['2:100:1']));
+            // o grid foi lido no banco que TEM lote, não no primeiro da lista
+            expect(base.listGenericPaginated.mock.calls[3][0]).toBe(
+                'fin015/finItemSispag/titulosPendentes/list/2/4/7',
+            );
+        });
+
+        it('nenhum banco com lote → conjunto vazio (degrada, não quebra)', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+            const set = await make(base).listarTitulosComBoletoDda({
+                filCod: 1,
+                bncCods: [38, 10],
+            });
+            expect(set.size).toBe(0);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(2);
         });
     });
 
