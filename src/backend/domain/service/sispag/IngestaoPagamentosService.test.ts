@@ -189,12 +189,18 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
         );
     });
 
-    it('o banco sai da conta pagadora da FILIAL — nunca fixo', async () => {
-        const listContas = jest.fn().mockResolvedValue([{ ccoCod: 1, bncCod: 7 }]);
+    it('manda TODOS os bancos distintos da filial, não só o primeiro', async () => {
+        // Medido em PRD: `contas[0]` é um banco sem lote nas filiais 1 e 2, e parar nele
+        // marcava a carteira inteira dessas filiais como "sem boleto".
+        const listContas = jest.fn().mockResolvedValue([
+            { ccoCod: 12, bncCod: 38 },
+            { ccoCod: 1, bncCod: 4 },
+            { ccoCod: 3, bncCod: 4 },
+        ]);
         const listBoletoDda = jest.fn().mockResolvedValue(new Set<string>());
         const { service } = make({ listContas, listBoletoDda });
         await service.executar({ triggeredBy: 'cron' });
-        expect(listBoletoDda).toHaveBeenCalledWith({ filCod: 2, bncCod: 7 });
+        expect(listBoletoDda).toHaveBeenCalledWith({ filCod: 2, bncCods: [38, 4] });
     });
 
     it('falha ao ler o flag NÃO derruba a ingestão — carteira persiste com warn', async () => {

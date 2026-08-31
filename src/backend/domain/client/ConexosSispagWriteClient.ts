@@ -464,27 +464,43 @@ export default class ConexosSispagWriteClient {
      * `fin064`, `titulosPendentes` e `com308`), só o FLAG `titVldReflexoDdaAssoc` está, e só no
      * grid de pendentes. Ver `ontology/_inbox/sispag-boleto-dda-sondagem.md`.
      *
-     * ⚠️ O grid exige um `flpCod` — usa-se o lote nativo mais recente da conta apenas como
-     * CONTEXTO DE LEITURA. Ele não é modificado, e o grid lista os pendentes da filial inteira,
-     * não do lote (medido: lê igual em lote finalizado). Filial sem lote nenhum devolve conjunto
-     * vazio, e quem chama degrada em vez de quebrar.
+     * ⚠️ O grid exige um `flpCod`, mas **o resultado não depende do banco**: o grid lista os
+     * pendentes da FILIAL inteira, e o lote serve só como CONTEXTO DE LEITURA (não é modificado;
+     * lê igual em lote finalizado). Medido em PRD: filial 1 devolve 38 títulos com o flag tanto
+     * pelo banco 4 quanto pelo 10; filial 2 devolve 266 pelos dois.
+     *
+     * Por isso `bncCods` é uma LISTA de candidatos, tentados em ordem até um ter lote. Escolher
+     * "o primeiro banco da filial" não funciona: em PRD `contas[0]` é o banco 38 na filial 1 e o
+     * 11 na filial 2 — nenhum dos dois tem lote nativo, e o resultado vinha VAZIO, marcando toda
+     * a carteira dessas duas filiais como "sem boleto". É a mesma armadilha que a migration 0049
+     * descreve para o `ccoCod`: o código do banco não é comparável entre filiais.
+     *
+     * Filial sem lote em banco nenhum devolve conjunto vazio — quem chama degrada em vez de
+     * quebrar, mas perde o sinal (ver o WARN em `IngestaoPagamentosService`).
      */
     public listarTitulosComBoletoDda = async (params: {
         filCod: number;
-        bncCod: number;
+        bncCods: readonly number[];
         maxPaginas?: number;
     }): Promise<Set<string>> => {
-        const { filCod, bncCod, maxPaginas } = params;
-        const lotes = await this.listarLotesNativos({ filCod, bncCod });
-        const contexto = lotes.reduce<number | undefined>(
-            (maior, l) => (maior === undefined || l.flpCod > maior ? l.flpCod : maior),
-            undefined,
-        );
+        const { filCod, bncCods, maxPaginas } = params;
+        let contexto: { bncCod: number; flpCod: number } | undefined;
+        for (const bncCod of bncCods) {
+            const lotes = await this.listarLotesNativos({ filCod, bncCod });
+            const maior = lotes.reduce<number | undefined>(
+                (acc, l) => (acc === undefined || l.flpCod > acc ? l.flpCod : acc),
+                undefined,
+            );
+            if (maior !== undefined) {
+                contexto = { bncCod, flpCod: maior };
+                break;
+            }
+        }
         if (contexto === undefined) return new Set();
         const pendentes = await this.listarTitulosPendentes({
             filCod,
-            bncCod,
-            flpCod: contexto,
+            bncCod: contexto.bncCod,
+            flpCod: contexto.flpCod,
             ...(maxPaginas !== undefined ? { maxPaginas } : {}),
         });
         // Se NENHUMA linha do grid tiver o campo legível, o wire mudou — devolver um Set
@@ -493,7 +509,7 @@ export default class ConexosSispagWriteClient {
         const ilegiveis = pendentes.filter((p) => !p.ddaLegivel).length;
         if (pendentes.length > 0 && ilegiveis === pendentes.length) {
             throw new ConexosError({
-                endpoint: `fin015/finItemSispag/titulosPendentes/list/${filCod}/${bncCod}/${contexto}`,
+                endpoint: `fin015/finItemSispag/titulosPendentes/list/${filCod}/${contexto.bncCod}/${contexto.flpCod}`,
                 message:
                     `titVldReflexoDdaAssoc ausente ou fora de {0,1} em TODAS as ${pendentes.length} ` +
                     'linhas do grid de pendentes — o contrato do Conexos mudou. A carteira NÃO ' +

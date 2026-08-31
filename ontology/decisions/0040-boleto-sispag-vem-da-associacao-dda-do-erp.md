@@ -133,7 +133,14 @@ A review do delta (`docs/regis-review/2026-08-28-0249-sispag-boleto-dda/`) passo
    Efeito colateral bem-vindo: `SispagPainelService` deixou de depender do
    `ConexosSispagWriteClient` (era um service read-only importando a superfície de escrita).
 
-4. **O envelope da pergunta virou fixture.** `__fixtures__/2026-08-27-fin015-question-barcode.json`
+4. **O banco da filial é uma LISTA, não `contas[0]`.** A verificação contra produção
+   (2026-08-31) mostrou que `contas[0].bncCod` é o banco 38 na filial 1 e o 11 na filial 2 —
+   nenhum com lote nativo — e a carteira INTEIRA dessas duas filiais vinha marcada como "sem
+   boleto", em silêncio. O resultado não depende do banco (o grid é da filial; o lote é só
+   contexto de leitura), então `listarTitulosComBoletoDda` passou a receber os bancos da filial
+   e tentar em ordem. Sem isso, a feature não funcionava para 2 das 4 filiais, incluindo a maior.
+
+5. **O envelope da pergunta virou fixture.** `__fixtures__/2026-08-27-fin015-question-barcode.json`
    guarda o wire real capturado em HML, coberto pelo `contrato.test.ts`. O `id` deixou de ser
    `.optional()` no `QUESTION_SCHEMA`: sem ele não há como chavear o `answers`, e recusar é
    melhor que mandar `{ undefined: 'YES' }` ao ERP.

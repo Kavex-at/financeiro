@@ -165,6 +165,56 @@ arquivo que **já foi ao banco**. Veio do caminho manual, onde alguém digita 47
 argumento empírico a favor do caminho DDA: o ERP copia do arquivo do banco e não erra assim.
 Vale avisar a Columbia sobre esse pagamento específico.
 
+## 5.2 Verificação da coluna contra PRODUÇÃO (read-only, 2026-08-31)
+
+`jobs/probe-verificar-coluna-boleto.ts` reproduz o cálculo da ingestão **sem escrever nada** e
+confere o resultado contra o pool de boletos do `fin124`.
+
+### Achado: o banco da filial NÃO pode ser "o primeiro da lista"
+
+Primeira execução deu **0 títulos marcados nas filiais 1 e 2** — inclusive na filial 2, a maior
+carteira da empresa (2.234 títulos). Causa:
+
+| filial | `contas[0].bncCod` | tem lote nativo? | flag DDA lido |
+|---|---|---|---|
+| 1 | **38** | não | 0 ❌ |
+| 2 | **11** | não | 0 ❌ |
+| 4 | 4 (Itaú) | sim | 35 ✅ |
+| 6 | 4 (Itaú) | sim | 228 ✅ |
+
+Pelo banco 4 as mesmas filiais devolvem **38** e **266**. O código pegava `contas[0].bncCod`, que
+é ordem arbitrária do `fin005` — a mesma armadilha que a migration 0049 descreve para o `ccoCod`
+("o mesmo código aponta para contas diferentes em cada filial"). O comentário no código dizia
+"o banco NUNCA é fixo"; a implementação pegava um banco arbitrário, que dá no mesmo.
+
+**O resultado não depende do banco.** Medido: filial 1 devolve 38 pelo banco 4 e 38 pelo 10;
+filial 2 devolve 266 pelos dois. O grid de pendentes é da **FILIAL** — o banco só serve para
+achar um `flpCod` que sirva de contexto de leitura. Corrigido: `listarTitulosComBoletoDda` recebe
+a LISTA de bancos da filial e tenta em ordem até um ter lote.
+
+### Depois da correção
+
+| filial | carteira (janela) | marcados | com boleto de mesmo valor no `fin124` |
+|---|---|---|---|
+| 1 | 74 | 37 | 35 |
+| 2 | 1000 | 242 | 241 |
+| 4 | 245 | 23 | 23 |
+| 6 | 405 | 212 | 197 |
+
+### O flag do ERP aponta para o boleto CERTO?
+
+Casar por valor é fraco quando o valor se repete (166 boletos compartilham R$ 844,65). Filtrando
+só os títulos cujo valor é **único** no pool de 3.149 boletos: **166 casamentos, e os 166 têm
+vencimento idêntico** entre título e boleto. É corroboração independente forte — o ERP acerta.
+
+Exemplo inequívoco para conferência humana: filial 2, doc **34737/1** (ITAPOA TERMINAIS),
+**R$ 16.822,88**, vencimento **2026-09-01**, boleto no arquivo DDA **142**, item **21435**,
+nº **1256421001**, banco 341.
+
+⚠️ **Anomalia para a Flávia:** docs **36077/1** e **36214/1** (TRANSPORTES PESADOS ITAJAI,
+R$ 25.877,50) apontam para o **mesmo** boleto (`ditCod 21884`). Dois títulos, um boleto — título
+duplicado ou duas parcelas da mesma cobrança. Não é bug nosso; é dado que alguém precisa olhar.
+
 ## 6. Perguntas ainda abertas
 
 - **P0-1.** Quem popula `titVldReflexoDdaAssoc = 1`? (Rotina do ERP no import do DDA, provavelmente
