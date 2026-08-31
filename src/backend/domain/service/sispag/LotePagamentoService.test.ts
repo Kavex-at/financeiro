@@ -10,6 +10,7 @@ import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import type { LotePagamento, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type LogService from '../LogService.js';
+import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LotePagamentoService from './LotePagamentoService.js';
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
@@ -78,17 +79,27 @@ const buildRepo = (): RepoMock => ({
     atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
 });
 
-const make = (repo: RepoMock, conexosTitulo: TituloAPagar | null = titulo()) => {
+/** Carteira persistida: é DAQUI que sai o "tem boleto?" — nunca do `fin064`. */
+const buildTituloRepo = (temBoleto = false) => ({
+    temBoletoPersistido: jest.fn().mockResolvedValue(temBoleto),
+});
+
+const make = (
+    repo: RepoMock,
+    conexosTitulo: TituloAPagar | null = titulo(),
+    tituloRepo = buildTituloRepo(),
+) => {
     const conexos = {
         getTituloAPagar: jest.fn().mockResolvedValue(conexosTitulo),
     } as unknown as ConexosSispagClient;
     const service = new LotePagamentoService(
         repo as unknown as LotePagamentoRepository,
+        tituloRepo as unknown as TituloAPagarRepository,
         conexos,
         buildDb(),
         buildLog(),
     );
-    return { service, conexos };
+    return { service, conexos, tituloRepo };
 };
 
 describe('LotePagamentoService — invariantes', () => {
@@ -367,6 +378,7 @@ describe('LotePagamentoService — invariantes', () => {
             } as unknown as PostgreeDatabaseClient;
             const service = new LotePagamentoService(
                 repo as unknown as LotePagamentoRepository,
+                buildTituloRepo() as unknown as TituloAPagarRepository,
                 conexos,
                 dbBusy,
                 buildLog(),
@@ -428,19 +440,37 @@ describe('LotePagamentoService — invariantes', () => {
     describe('modalidade (A2)', () => {
         const incluir = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', ator: 'u1' };
 
-        it('incluir default BOLETO quando o título tem código de barras (temBoleto)', async () => {
+        it('incluir default BOLETO quando a carteira diz que o título tem boleto DDA', async () => {
             const repo = buildRepo();
-            const { service } = make(repo, titulo({ temBoleto: true }));
+            const { service, tituloRepo } = make(repo, titulo(), buildTituloRepo(true));
             await service.incluirTitulo(incluir);
+            expect(tituloRepo.temBoletoPersistido).toHaveBeenCalledWith({
+                filCod: 2,
+                docCod: '100',
+                titCod: '1',
+            });
             expect(repo.adicionarItem).toHaveBeenCalledWith(
                 expect.objectContaining({ modalidade: 'BOLETO' }),
                 expect.anything(),
             );
         });
 
-        it('incluir sem código de barras → modalidade "a definir" (undefined)', async () => {
+        it('sem boleto DDA → modalidade "a definir" (undefined)', async () => {
             const repo = buildRepo();
-            const { service } = make(repo, titulo({ temBoleto: false }));
+            const { service } = make(repo, titulo(), buildTituloRepo(false));
+            await service.incluirTitulo(incluir);
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ modalidade: undefined }),
+                expect.anything(),
+            );
+        });
+
+        it('NÃO usa o temBoleto do fin064 — de lá ele é sempre false por construção', async () => {
+            // Regressão do bug que a analista encontrou testando local: a pré-seleção lia
+            // `getTituloAPagar().temBoleto`, e o `fin064` não sabe de boleto. Resultado: nunca
+            // pré-selecionava, e ela escolhia a forma de pagamento item por item.
+            const repo = buildRepo();
+            const { service } = make(repo, titulo({ temBoleto: true }), buildTituloRepo(false));
             await service.incluirTitulo(incluir);
             expect(repo.adicionarItem).toHaveBeenCalledWith(
                 expect.objectContaining({ modalidade: undefined }),

@@ -140,10 +140,38 @@ A review do delta (`docs/regis-review/2026-08-28-0249-sispag-boleto-dda/`) passo
    contexto de leitura), então `listarTitulosComBoletoDda` passou a receber os bancos da filial
    e tentar em ordem. Sem isso, a feature não funcionava para 2 das 4 filiais, incluindo a maior.
 
-5. **O envelope da pergunta virou fixture.** `__fixtures__/2026-08-27-fin015-question-barcode.json`
+5. **A pré-seleção de BOLETO na inclusão manual lê a carteira, não o `fin064`.**
+   `LotePagamentoService.incluirTitulo` pré-selecionava a modalidade a partir de
+   `getTituloAPagar().temBoleto` — e o `fin064` não sabe de boleto, então a pré-seleção nunca
+   disparava e a analista escolhia a forma de pagamento item por item. Passa a ler
+   `TituloAPagarRepository.temBoletoPersistido`, a mesma fonte que o painel usa para OFERECER a
+   modalidade. A releitura ao vivo do `fin064` continua onde faz sentido: decidir ELEGIBILIDADE
+   (pago / liberado), que é o que ela sabe responder.
+
+   Assimetria que explica por que ninguém pegou antes: o lote **automático**
+   (`FormacaoLotesService`) já lia do repositório e funcionava; só a inclusão **manual** estava
+   quebrada — e é o caminho que a analista usa.
+
+6. **O envelope da pergunta virou fixture.** `__fixtures__/2026-08-27-fin015-question-barcode.json`
    guarda o wire real capturado em HML, coberto pelo `contrato.test.ts`. O `id` deixou de ser
    `.optional()` no `QUESTION_SCHEMA`: sem ele não há como chavear o `answers`, e recusar é
    melhor que mandar `{ undefined: 'YES' }` ao ERP.
+
+## Padrão de defeito observado três vezes nesta feature
+
+O mesmo erro apareceu em três lugares diferentes, e vale nomear porque é barato de repetir:
+
+| # | Sinal lido de… | Efeito |
+|---|---|---|
+| 1 | `fin064.titEspCodbar` | null em 100% → boleto nunca detectado → remessa sem barras |
+| 2 | `contas[0].bncCod` | banco sem lote nas filiais 1 e 2 → carteira inteira "sem boleto" |
+| 3 | `getTituloAPagar().temBoleto` | `fin064` não sabe de boleto → modalidade nunca pré-selecionada |
+
+Os três **falham em silêncio devolvendo um valor plausível** (`false`, conjunto vazio,
+`undefined`) em vez de erro. Nenhum teste unitário pega, porque o mock devolve o que o autor
+espera; só medir contra produção pega. A regra que teria evitado os três: **antes de um campo do
+ERP virar gate de comportamento, medir a taxa de preenchimento dele em produção** — e tratar 0%
+como "a fonte está errada", não como "ninguém se qualifica".
 
 ## Pendências
 
