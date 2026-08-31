@@ -134,6 +134,37 @@ O ERP **deriva `itsVldModalidade` do banco emissor do barcode** (745 → 7 = out
 o que mandamos. Ou seja: para boleto com DDA associado, não devemos adivinhar a modalidade —
 o ERP decide, e decide certo. `MODALIDADE_NATIVA.BOLETO = 7` só importa para boleto SEM DDA.
 
+## 5.1 Prova ponta a ponta (HML, 2026-08-31)
+
+O que faltava era ligar "o ERP grava `itsNumCodbar`" a "o barcode sai no arquivo". Feito pelo
+**nosso** client (`importarTitulos` com `associarDda`, auto-resposta inclusa):
+
+| passo | resultado |
+|---|---|
+| `criarLote` (débito = hoje) | `flp 34`, fil 2, bnc 4 |
+| `importarTitulos({ associarDda: true })` | doc 453/1 importado; pergunta do ERP auto-respondida |
+| item no ERP | modalidade **6** · `vldVinculoDda = 1` · barras 47 díg. iniciando **341** |
+| `gerarRemessa` | `PG310801.REM` |
+| segmento J do arquivo | **44 dígitos, DV módulo-11 válido**, R$ 5.720,68, banco 341 |
+
+O barcode do `.REM` é o mesmo `ditEspCodbar` do item DDA do `fin124`, e o valor bate com o do
+título. **Cadeia fechada sem inferência.**
+
+### Auditoria dos `.REM` REAIS de produção (read-only)
+
+Varredura de todos os arquivos gerados nas filiais 1/2/4/6: **61 segmentos J · 61 com 44
+dígitos · 60 com DV válido · 0 vazios**.
+
+> ⚠️ **Armadilha de medição:** cada boleto emite DOIS registros com `J` na posição 14 — o
+> segmento J e o **J-52** (complemento, CNPJ do favorecido/pagador), que não carrega barras.
+> Contar os dois juntos produz um falso "50% dos segmentos J estão vazios". Filtrar por
+> posições 18-19 ≠ `52`.
+
+**O único DV inválido** está em `PG121101.REM` (fil 2, lote 4): banco 341, R$ 37.567,14 — um
+arquivo que **já foi ao banco**. Veio do caminho manual, onde alguém digita 47 dígitos. É o
+argumento empírico a favor do caminho DDA: o ERP copia do arquivo do banco e não erra assim.
+Vale avisar a Columbia sobre esse pagamento específico.
+
 ## 6. Perguntas ainda abertas
 
 - **P0-1.** Quem popula `titVldReflexoDdaAssoc = 1`? (Rotina do ERP no import do DDA, provavelmente

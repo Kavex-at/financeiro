@@ -41,6 +41,13 @@ ERP faz, e que estávamos explicitamente pedindo para NÃO fazer.
   ao vivo — é lá que se decide o que vira dinheiro.
 - **test(sispag):** o envelope `QUESTION` do ERP virou fixture do wire real, coberto pelo
   `contrato.test.ts`. Antes os testes afirmavam contra um shape que eles mesmos inventavam.
+- **feat(sispag):** **gate de integridade do `.REM`** — o arquivo é verificado ANTES de virar
+  entregável. Todo segmento J precisa de 44 dígitos com dígito verificador válido; falhando,
+  o lote não transiciona para `REMESSA_GERADA` e o download não serve nada
+  (`RemessaCorrompidaError`, 409). Rodado sobre 6 remessas reais de produção (49 segmentos J),
+  passou em todas e **barrou uma**: `PG121101.REM` carrega um código de barras com DV inválido
+  — digitado à mão, num arquivo que já foi ao banco. Boleto de valor aberto só avisa; segmento
+  O (tributo) é ignorado de propósito (48 posições, outra regra de DV).
 
 > **Deploy — sem migration.** A coluna `tem_boleto` já existia (migration 0031); só a **semântica**
 > mudou. Entre o deploy e a próxima rodada do cron, a coluna carrega o valor antigo (tudo `false`)

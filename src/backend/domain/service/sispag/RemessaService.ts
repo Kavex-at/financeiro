@@ -17,6 +17,8 @@ import {
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.js';
+import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
+import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import LogService from '../LogService.js';
 
@@ -112,6 +114,7 @@ export default class RemessaService {
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
+        @inject(RemessaCnabValidator) private readonly cnab: RemessaCnabValidator,
     ) {}
 
     /**
@@ -528,6 +531,47 @@ export default class RemessaService {
                 throw new Error(
                     `remessa gerada mas o arquivo "${sugerido.nomeArquivo}" não foi encontrado entre ${arquivos.length} do lote`,
                 );
+            }
+
+            // (5.1) GATE DE INTEGRIDADE — verifica o artefato antes de ele virar entregável.
+            // O bug que a ADR-0040 corrigiu (segmento J sem barras) só aparecia quando o banco
+            // recusava, dias depois. O arquivo é autoverificável: barras carrega DV próprio e o
+            // layout é posicional. Falhou aqui, o lote NÃO vai para REMESSA_GERADA e o
+            // `baixarArquivo` não serve nada — o arquivo fica no ERP para cancelamento manual.
+            if (arquivo.conteudo) {
+                const validacao = this.cnab.validar(arquivo.conteudo);
+                await this.logService.info({
+                    type: LOG_TYPE.BUSINESS_INFO,
+                    message: 'remessa: verificação de integridade do .REM',
+                    data: {
+                        loteId: lote.id,
+                        arquivo: sugerido.nomeArquivo,
+                        segmentosJ: validacao.segmentosJ,
+                        segmentosA: validacao.segmentosA,
+                        invalidos: validacao.invalidos.length,
+                        avisos: validacao.avisos,
+                    },
+                });
+                if (validacao.invalidos.length > 0) {
+                    throw new RemessaCorrompidaError({
+                        nomeArquivo: sugerido.nomeArquivo,
+                        gabCod: arquivo.gabCod,
+                        segmentosJ: validacao.segmentosJ,
+                        invalidos: validacao.invalidos,
+                    });
+                }
+            } else {
+                // Sem conteúdo não dá para verificar. Não bloqueia (o arquivo existe e o ERP
+                // confirmou a geração), mas fica registrado — é o caso em que a garantia cai.
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'remessa: .REM sem conteúdo legível — integridade NÃO verificada',
+                    data: {
+                        loteId: lote.id,
+                        arquivo: sugerido.nomeArquivo,
+                        gabCod: arquivo.gabCod,
+                    },
+                });
             }
 
             await this.loteRepo.setRemessaGerada({
