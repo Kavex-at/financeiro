@@ -9,6 +9,7 @@ import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import type LogService from '../LogService.js';
+import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
 import RemessaService from './RemessaService.js';
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
@@ -175,6 +176,7 @@ const make = (o: {
     env?: EnvironmentProvider;
     lote?: LotePagamento;
     db?: ReturnType<typeof buildDb>;
+    log?: LogService;
 }) =>
     new RemessaService(
         (o.loteRepo ?? buildLoteRepo(o.lote)) as unknown as LotePagamentoRepository,
@@ -182,8 +184,9 @@ const make = (o: {
         (o.write ?? buildWrite()) as unknown as ConexosSispagWriteClient,
         (o.sispag ?? buildSispag()) as unknown as ConexosSispagClient,
         o.env ?? buildEnv(),
-        buildLog(),
+        o.log ?? buildLog(),
         (o.db ?? buildDb()) as unknown as PostgreeDatabaseClient,
+        new RemessaCnabValidator(),
     );
 
 describe('RemessaService', () => {
@@ -1052,5 +1055,83 @@ describe('RemessaService — freio de incidente do DDA (SISPAG_DDA_ASSOC_ENABLED
             expect.objectContaining({ associarDda: false }),
         );
         expect(write.gerarRemessa).toHaveBeenCalled();
+    });
+});
+
+describe('RemessaService — gate de integridade do .REM', () => {
+    /** Registro de detalhe CNAB 240 com o segmento na pos 14 e as barras na 18-61. */
+    const linhaJ = (barras: string, subtipo = ''): string => {
+        const buf = ' '.repeat(240).split('');
+        '3410001300001'.split('').forEach((c, i) => {
+            buf[i] = c;
+        });
+        buf[13] = 'J';
+        (subtipo + barras).split('').forEach((c, i) => {
+            buf[17 + i] = c;
+        });
+        return buf.join('');
+    };
+    const BARRAS_OK = '34199100000005720681234567890123456789012345';
+
+    const comConteudo = (conteudo: string) => {
+        const write = buildWrite();
+        write.listarArquivosRemessa.mockResolvedValue([
+            { gabCod: 52, nomeArquivo: 'PG210801.REM', conteudo },
+        ]);
+        return write;
+    };
+
+    it('remessa com segmento J SEM barras não vira entregável', async () => {
+        // O arquivo existe no ERP — não dá para desgerar. O que o gate garante é que o lote
+        // NÃO transiciona e o `baixarArquivo` não serve nada.
+        const write = comConteudo([linhaJ(' '.repeat(44)), linhaJ('', '52')].join('\n'));
+        const loteRepo = buildLoteRepo(lote());
+
+        await expect(
+            make({ write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'REMESSA_CORROMPIDA' });
+
+        expect(loteRepo.setRemessaGerada).not.toHaveBeenCalled();
+        expect(loteRepo.transicionarStatus).not.toHaveBeenCalled();
+    });
+
+    it('remessa com DV inválido também é barrada', async () => {
+        const write = comConteudo(linhaJ('34198100000005720681234567890123456789012345'));
+        await expect(
+            make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'REMESSA_CORROMPIDA' });
+    });
+
+    it('a mensagem nomeia o arquivo e quantos boletos falharam', async () => {
+        const write = comConteudo(linhaJ(' '.repeat(44)));
+        await expect(
+            make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({
+            userMessage: expect.stringContaining('PG210801.REM'),
+        });
+    });
+
+    it('remessa íntegra passa e o lote transiciona normalmente', async () => {
+        const write = comConteudo([linhaJ(BARRAS_OK), linhaJ('', '52')].join('\n'));
+        const loteRepo = buildLoteRepo(lote());
+        const res = await make({ write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(res.status).toBe('gerada');
+        expect(loteRepo.setRemessaGerada).toHaveBeenCalled();
+    });
+
+    it('.REM sem conteúdo legível NÃO bloqueia — avisa e segue', async () => {
+        // A garantia cai neste caso, e isso fica registrado em vez de virar recusa silenciosa.
+        const write = buildWrite();
+        write.listarArquivosRemessa.mockResolvedValue([
+            { gabCod: 52, nomeArquivo: 'PG210801.REM', conteudo: '' },
+        ]);
+        const log = buildLog();
+        const res = await make({ write, log }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(res.status).toBe('gerada');
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringContaining('integridade NÃO verificada'),
+            }),
+        );
     });
 });

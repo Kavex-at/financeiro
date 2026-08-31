@@ -36,7 +36,13 @@ O Yuri optou por fazer os quatro em vez de deixá-los como follow-up. Ver ADR-00
 > escolha explícita do Yuri ("nos dois lugares"), coerente com a doutrina anti-drift. O
 > card é o contra-argumento numérico; quem decide é quem tem o contexto de operação.
 
-## P2 — abertos (18)
+## Também implementado depois da review
+
+| Card | O que mudou |
+|---|---|
+| `fault-tolerance-4` ✅ (era P2) | `RemessaCnabValidator` + `RemessaCorrompidaError`: o `.REM` é verificado antes de virar entregável. Validado contra 6 remessas reais de produção (0 falso-positivo) e contra o `.REM` do e2e em HML; barra `PG121101.REM`, que tem um DV inválido real. Fecha a pendência de go-live da ADR-0040. |
+
+## P2 — abertos (17)
 
 `testability-1` (asserção negativa do payload boleto) · `testability-2` (re-POST com erro
 não-QUESTION) · `fault-tolerance-1` (canário runtime antes do re-POST) · `deployability-2`

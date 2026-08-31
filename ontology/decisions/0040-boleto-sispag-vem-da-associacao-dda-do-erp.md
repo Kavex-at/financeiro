@@ -142,5 +142,18 @@ A review do delta (`docs/regis-review/2026-08-28-0249-sispag-boleto-dda/`) passo
 
 - **P1:** confirmar com a Flávia se o caminho DDA cobre 100% dos boletos ou se sobra resíduo
   digitado à mão. Ver `sispag-boleto-dda-sondagem.md` §6.
-- **Go-live:** a associação foi provada em HML. A primeira remessa real com boleto deve ser
-  acompanhada (o `.REM` gerado precisa mostrar segmento J com barras).
+- ~~**Go-live:** acompanhar a primeira remessa real com boleto.~~ **FECHADO (2026-08-31).**
+  A cadeia inteira foi provada ponta a ponta em HML — `titVldReflexoDdaAssoc` → `importarTitulos`
+  com auto-resposta → `itsNumCodbar` no item → `gerarRemessa` → **segmento J com 44 dígitos e DV
+  válido** no `PG310801.REM` (banco 341, R$ 5.720,68, o mesmo barcode do item DDA do `fin124`).
+  O item saiu com modalidade **6**, confirmando o encoding na nossa própria trilha (o teste
+  anterior, com boleto 745, saiu 7).
+
+  A conferência humana virou **gate automático**: `RemessaCnabValidator` recusa o arquivo antes
+  de ele ficar disponível. Evidência deixada em HML: lote `flp 34` (fil 2, bnc 4) e a remessa
+  `PG310801.REM`.
+
+  Dois achados de operação nesse caminho: `sugerirRemessa` devolve `numRemessa` vazio em HML
+  (a conta não tem sequência configurada — em produção esse número é controle bancário e não
+  pode ser inventado), e `ccoCod = 1` na filial 2 é conta **Banestes**, não Itaú — a armadilha
+  que a migration 0049 descreve.
