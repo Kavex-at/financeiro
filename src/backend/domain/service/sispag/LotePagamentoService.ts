@@ -20,6 +20,7 @@ import {
     type Modalidade,
 } from '../../interface/sispag/SispagInterface.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 
 interface TransicaoInput {
@@ -39,6 +40,7 @@ interface TransicaoInput {
 export default class LotePagamentoService {
     public constructor(
         @inject(LotePagamentoRepository) private readonly repo: LotePagamentoRepository,
+        @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
         @inject(ConexosSispagClient) private readonly conexos: ConexosSispagClient,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
@@ -196,6 +198,20 @@ export default class LotePagamentoService {
                 motivo: 'nao-liberado',
             });
         }
+        // A modalidade BOLETO é pré-selecionada a partir da carteira PERSISTIDA, não do
+        // `fin064`: o `getTituloAPagar` acima é a fonte autoritativa de ELEGIBILIDADE (pago /
+        // liberado), mas não sabe de boleto — `temBoleto` vem `false` de lá por construção.
+        // Sem esta leitura, a analista tinha de escolher a forma de pagamento item por item
+        // mesmo quando o boleto era o único destino possível.
+        //
+        // Continua sendo só um DEFAULT de tela: ela pode trocar, e a validação que vale é o
+        // `BoletoSemCodigoBarrasError` no envio, que relê o flag ao vivo no momento do import.
+        const temBoleto = await this.tituloRepo.temBoletoPersistido({
+            filCod: input.filCod,
+            docCod: input.docCod,
+            titCod: input.titCod,
+        });
+
         // I3 + inserção atômica, serializadas por título (lock só em torno do DB).
         const lockKey = this.lockKey(input.filCod, input.docCod, input.titCod);
         await this.db.withAdvisoryLock(
@@ -222,8 +238,9 @@ export default class LotePagamentoService {
                             credor: titulo.credor,
                             valor: titulo.valor,
                             vencimento: titulo.vencimento,
-                            // A2: boleto auto-detectado (código de barras); senão "a definir".
-                            modalidade: titulo.temBoleto ? MODALIDADE.BOLETO : undefined,
+                            // A2: boleto pré-selecionado quando o ERP tem um DDA casado com o
+                            // título; senão "a definir" e o analista escolhe.
+                            modalidade: temBoleto ? MODALIDADE.BOLETO : undefined,
                             incluidoPor: input.ator,
                         },
                         tx,

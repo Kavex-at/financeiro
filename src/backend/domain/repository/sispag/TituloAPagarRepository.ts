@@ -165,6 +165,28 @@ export default class TituloAPagarRepository {
     };
 
     /**
+     * O título tem boleto DDA associado? Consulta pontual, para a inclusão manual no lote.
+     *
+     * A inclusão relê o título AO VIVO no `fin064` para decidir elegibilidade (I2 — pago /
+     * liberado), mas o `fin064` **não sabe de boleto**: `temBoleto` vem sempre `false` de lá,
+     * por construção. Quem sabe é a carteira persistida, que a ingestão preencheu a partir do
+     * flag de DDA. Sem esta consulta, a modalidade BOLETO nunca era pré-selecionada e a analista
+     * tinha de escolher à mão item por item — mesmo o boleto sendo o único destino possível.
+     */
+    public temBoletoPersistido = async (chave: {
+        filCod: number;
+        docCod: string;
+        titCod: string;
+    }): Promise<boolean> => {
+        const row = await this.databaseClient.selectFirst<{ tem_boleto?: boolean }>(
+            `SELECT tem_boleto FROM titulo_a_pagar
+             WHERE fil_cod = $filCod AND doc_cod = $docCod AND tit_cod = $titCod`,
+            chave,
+        );
+        return row?.tem_boleto === true;
+    };
+
+    /**
      * Elegíveis para FORMAÇÃO AUTOMÁTICA de lote: ativos, aprovados, não-pagos, A VENCER
      * dentro de `maxDias` (vencidos NÃO entram), e que ainda NÃO estão em nenhum lote RASCUNHO
      * (anti-join — não duplica o que o analista já tem em montagem, manual ou automático).
