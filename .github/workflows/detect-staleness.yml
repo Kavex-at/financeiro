@@ -42,6 +42,10 @@ jobs:
     env:
       # ÚNICO segredo necessário: o detector não fala com o ERP.
       databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      # Metade PUSH do dead-man's switch: URL de um observador externo que alerta quando o ping
+      # NÃO chega. É o único mecanismo que enxerga o próprio GitHub Actions parar de disparar —
+      # nenhuma sonda hospedada aqui consegue. Ausente = no-op.
+      HEALTHCHECK_PING_URL: ${{ secrets.HEALTHCHECK_PING_URL }}
       environment: production
       client_name: local
     steps:

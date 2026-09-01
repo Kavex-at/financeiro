@@ -24,20 +24,34 @@
 
 ## P1 — os pontos cegos que este slice NÃO fecha
 
-### 1. Dead-man's switch externo (fecha DOIS pontos cegos de uma vez)
+### 1. ~~Dead-man's switch externo~~ — **IMPLEMENTADO 2026-09-01**
 
-A ADR-0042 nomeia duas lacunas que têm a MESMA solução:
+Os dois pontos cegos da ADR-0042 precisavam de mecanismos DIFERENTES, e é por isso que a solução
+tem duas metades:
 
-- o detector de staleness roda no próprio GitHub Actions e não vê o Actions parar de disparar;
-- `DbAlertSink` não consegue alertar que o backend caiu — se o processo não sobe, ninguém escreve a
-  linha.
+| Metade | Como | Que ponto cego fecha |
+|---|---|---|
+| **PULL** — `GET /health/pipelines` | Observador externo consulta; **503** quando há pipeline parado ou run abandonada | `DbAlertSink` não consegue alertar que o backend caiu — sem processo, ninguém escreve a linha. Um observador externo não depende de nada nosso estar de pé. |
+| **PUSH** — `HEALTHCHECK_PING_URL` | O detector pinga ao fim de cada rodada BEM-SUCEDIDA; o serviço externo alerta quando o ping **não chega** | O detector roda no próprio GitHub Actions e não vê o Actions parar de disparar. Nada roda, logo nada reclama: a inversão é o que torna a ausência detectável. |
 
-Encaminhamento: expor `GET /health/pipelines` (read-only, sem auth ou com token) devolvendo a idade
-da última run de cada pipeline, e apontar um pinger externo (healthchecks.io, cronitor) para ele,
-configurado para alertar tanto no não-200 quanto na AUSÊNCIA do ping.
+Decisões que valem registrar:
 
-Mitigação parcial já entregue: **I6** — o painel computa staleness na leitura, então um humano que
-abra a tela vê a verdade mesmo numa janela em que o detector não rodou.
+- **A sonda é pública e deliberadamente pobre.** O pinger não tem JWT, então ela devolve só status e
+  contagens — sem nome de pipeline, sem idade, sem mensagem de erro. Detalhe fica em `/operacao`,
+  atrás de `admin`. Há teste que falha se nome ou erro vazarem.
+- **O status HTTP é o produto.** Nenhum uptime checker lê o nosso JSON; todos leem um 503. É isso que
+  faz um serviço gratuito virar alerta sem escrever integração nenhuma.
+- **`nunca-executou` e `sem-trilha` NÃO derrubam a sonda.** São estados conhecidos e declarados, não
+  incidentes. Fazê-los degradar o health faria a sonda nascer vermelha — e uma sonda que nasce
+  vermelha ensina o time a ignorá-la, o mesmo erro que a dedup de alerta existe para evitar.
+- **O ping sai só no caminho de sucesso.** Enviado depois de uma detecção que falhou, ele diria ao
+  observador externo que está tudo bem justamente quando não está.
+- **Ausente a env, o ping é no-op.** Dev e teste não precisam de conta em serviço externo.
+
+**Falta fazer (não é código):** criar o check no healthchecks.io, pôr a URL em
+`secrets.HEALTHCHECK_PING_URL`, e apontar um monitor de uptime para `GET /health/pipelines`
+alertando em não-200. Enquanto o secret não existir, o config doctor reporta
+`HEALTHCHECK_PING_URL` como *degrada em silêncio* — a própria ferramenta cobra a configuração.
 
 ### 2. O reaper não tem trilha de execução
 

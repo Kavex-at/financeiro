@@ -65,3 +65,21 @@ describe('bootstrapAppContainer — migration wiring (P0-1)', () => {
         await expect(bootstrapAppContainer()).rejects.toThrow('relation does not exist');
     });
 });
+
+describe('diagnosticarConfiguracao — auto-suficiência (regressão do boot local)', () => {
+    it('registra os sinks sozinha: o start() do servidor não chama bootstrapAppContainer', async () => {
+        // Pegou-se isto rodando de verdade, não nos testes: o boot logava
+        // "Attempted to resolve unregistered dependency token: Symbol(AlertSinks)" e o
+        // diagnóstico ficava DESLIGADO em silêncio, protegido pelo próprio catch.
+        const { container } = await import('tsyringe');
+        const { ALERT_SINKS_TOKEN } = await import('./interface/operacao/AlertSink.js');
+        const { diagnosticarConfiguracao } = await import('./appContainer.js');
+
+        container.reset();
+        expect(container.isRegistered(ALERT_SINKS_TOKEN)).toBe(false);
+
+        await diagnosticarConfiguracao();
+
+        expect(container.isRegistered(ALERT_SINKS_TOKEN)).toBe(true);
+    });
+});

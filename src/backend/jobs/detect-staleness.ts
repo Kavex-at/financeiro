@@ -65,10 +65,48 @@ const main = async (): Promise<void> => {
                 alertasEmitidos: resultado.emitidos.length,
             },
         });
+
+        // SÓ no caminho de sucesso: um ping enviado depois de uma detecção que falhou diria ao
+        // observador externo que está tudo bem justamente quando não está.
+        await pingDeadManSwitch();
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         await runRepo.finishRun({ runId, status: 'error', errorMessage });
         throw error;
+    }
+};
+
+/**
+ * Metade PUSH do dead-man's switch (ADR-0042, follow-up 1).
+ *
+ * Fecha o ponto cego que nenhuma sonda nossa alcança: um detector hospedado no próprio GitHub
+ * Actions não vê o Actions **deixar de disparar**. Nada roda, logo nada reclama — o silêncio é
+ * indistinguível de saúde.
+ *
+ * A inversão resolve: em vez de nós avisarmos que algo quebrou, um serviço externo espera o nosso
+ * ping e alerta quando ele NÃO chega. Falha de rede, runner morto, cron cancelado, repositório
+ * arquivado — tudo vira ausência de ping, que é justamente o que o observador externo detecta.
+ *
+ * Best-effort e sem `await` bloqueante do desfecho: um pinger fora do ar não pode derrubar a
+ * detecção, que é o trabalho de verdade (I5). Ausente a env, vira no-op silencioso — dev e teste
+ * não precisam de conta em serviço nenhum.
+ */
+const pingDeadManSwitch = async (): Promise<void> => {
+    const url = process.env.HEALTHCHECK_PING_URL;
+    if (url === undefined || url.trim() === '') return;
+    try {
+        const resposta = await fetch(url.trim(), {
+            method: 'GET',
+            signal: AbortSignal.timeout(10_000),
+        });
+        console.log(`[detect-staleness] dead-man ping: HTTP ${resposta.status}`);
+    } catch (error) {
+        // Não relança: o ping é a rede de segurança, não a tarefa. Falhar aqui e derrubar o job
+        // faria a rede de segurança virar a causa da queda.
+        console.warn(
+            '[detect-staleness] dead-man ping falhou (a detecção em si concluiu):',
+            error instanceof Error ? error.message : String(error),
+        );
     }
 };
 
