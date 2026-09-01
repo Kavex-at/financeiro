@@ -23,23 +23,22 @@ has_canonical_test: false
 | `recebimentos-extratos` | `20 * * * *` | 1h | **3h** | 2 execuções perdidas |
 | `permutas-eleicao` | `0 9,15,21 * * *` | 12h (21h→9h) | **18h** | 1 execução perdida |
 | `sispag-pagamentos` | `0 10 * * *` | 24h | **30h** | 6h |
-| ~~`sispag-reaper`~~ | `10,25,40,55 * * * *` | 15min | — | **não monitorável** (ver abaixo) |
+| `sispag-reaper` | `10,25,40,55 * * * *` | 15min | **1h** | 3 execuções perdidas |
 
-## O reaper não tem trilha — e isso é o mais desconfortável daqui
+## O reaper ganhou trilha (2026-09-01)
 
-`jobs/reaper-sispag-reconciling.ts` **não escreve nenhuma linha de run**. Ele resolve
-`RemessaExecucaoRepository` e `ConciliacaoExecucaoRepository` e age; não há
-`createRun`/`finishRun`. Sem linha, o read-model não tem o que ler, e nenhum limite de staleness é
-aplicável.
+Ele nasceu sem escrever linha de run, e por isso era o único job que o painel não conseguia vigiar
+— justamente aquele cuja cegueira o comentário do próprio workflow já registrava (*"uma queda na
+sexta à noite ficaria invisível até segunda"*). A ironia era completa: o job que existe para tornar
+visível o que ninguém vê era o invisível.
 
-O desconforto: o comentário do próprio `reaper-sispag.yml` é onde a cegueira operacional está
-registrada — *"uma queda na sexta à noite ficaria invisível até segunda"* — e é justamente esse job
-que este slice **não** consegue vigiar.
+Agora escreve em `job_execucao` como qualquer outro (ADR-0042, follow-up 2), e o limite de 1h
+tolera três execuções perdidas — ele roda a cada 15 minutos, **todos os dias**, inclusive fins de
+semana.
 
-**Encaminhamento:** o painel **lista o reaper explicitamente como `sem trilha de execução`**, em vez
-de omiti-lo. Omitir faria a tela afirmar cobertura completa sobre 3 de 4 jobs. Dar-lhe uma trilha é
-follow-up: exige um writer novo — aditivo, não uma migração de writer vivo, portanto tolerável pela
-ADR-0042 — mas é escopo próprio e não entra aqui.
+**Nenhum pipeline resta como `sem-trilha`.** A lista `PIPELINES_SEM_TRILHA` continua existindo, e
+vazia, porque o problema volta: todo job novo que nascer sem trilha entra ali para ser LISTADO como
+cego em vez de sumir da tela.
 
 ## Como os números foram escolhidos
 

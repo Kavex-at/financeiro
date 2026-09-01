@@ -53,19 +53,21 @@ Decisões que valem registrar:
 alertando em não-200. Enquanto o secret não existir, o config doctor reporta
 `HEALTHCHECK_PING_URL` como *degrada em silêncio* — a própria ferramenta cobra a configuração.
 
-### 2. O reaper não tem trilha de execução
+### 2. ~~O reaper não tem trilha de execução~~ — **IMPLEMENTADO 2026-09-01**
 
-`jobs/reaper-sispag-reconciling.ts` não escreve linha de run — é o único job que o painel não
-consegue vigiar por staleness, e é justamente aquele cuja cegueira já estava documentada por escrito
-no comentário do próprio workflow ("uma queda na sexta à noite ficaria invisível até segunda").
+`jobs/reaper-sispag-reconciling.ts` passou a escrever em `job_execucao`, e o painel o monitora com
+limite de **1h** — ele roda a cada 15 minutos, todos os dias, então 1h tolera três execuções
+perdidas.
 
-Hoje ele aparece LISTADO como `sem-trilha` (nunca omitido) e ganhou alerta de falha de workflow
-(T7), o que recupera parte da cegueira — mas um reaper que roda e não faz nada de útil segue
-invisível.
+**Nenhum pipeline resta como `sem-trilha`.** A lista continua existindo, vazia, para o próximo job
+que nascer sem trilha ser listado como cego em vez de sumir da tela.
 
-**O destino já existe:** basta ele passar a escrever em `job_execucao` (migration `0053`) via
-`JobExecucaoRepository`, exatamente como `reconciliar-nde-sefaz.ts` faz. É trabalho pequeno e
-aditivo; não entrou aqui só por ser escopo de outra frente.
+Verificado ao vivo: o job rodou, gravou `success` com `{paradas:0, remessas:0, conciliacoes:0}`, e
+o `GET /operacao` passou a devolver 6 pipelines monitorados e zero cegos.
+
+Nota de desenho: o reaper fecha `success` mesmo achando execuções presas. Achar é o trabalho dele —
+marcar `partial` faria o painel pintar de amarelo o funcionamento normal, e o operador aprenderia a
+ignorar a cor. As execuções presas já têm canal próprio, o WARN estruturado.
 
 ---
 

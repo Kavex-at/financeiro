@@ -55,6 +55,9 @@ jobs:
           node-version: 22
       - name: Instalar dependências (com devDeps p/ tsx)
         run: npm ci --include=dev
+      # O reaper agora escreve a própria trilha em `job_execucao` (ADR-0042, follow-up 2).
+      - name: Aplicar migrations pendentes (idempotente)
+        run: npm run migrate
       - name: Varrer execuções presas
         run: npm run job:reaper-sispag
 

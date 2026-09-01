@@ -238,14 +238,31 @@ describe('JobRunReadModel — situação de staleness (I6: computada na leitura)
     });
 });
 
-describe('JobRunReadModel — pipelines sem trilha', () => {
-    it('LISTA o reaper como sem-trilha em vez de omiti-lo', async () => {
-        const saude = await build({}).exporSaude(AGORA);
-        const reaper = acharPipeline(saude, PIPELINE.SISPAG_REAPER);
+describe('JobRunReadModel — o reaper deixou de ser cego (ADR-0042, follow-up 2)', () => {
+    it('o reaper agora é MONITORADO, com limite próprio', async () => {
+        const saude = await build({
+            jobExecucao: [
+                {
+                    id: 'reap-1',
+                    pipeline: PIPELINE.SISPAG_REAPER,
+                    triggeredBy: 'cron',
+                    status: 'success',
+                    metricas: { paradas: 0, remessas: 0, conciliacoes: 0 },
+                    startedAt: '2026-09-01T11:55:00.000Z',
+                    finishedAt: '2026-09-01T11:55:01.000Z',
+                },
+            ],
+        }).exporSaude(AGORA);
 
-        expect(reaper.situacao).toBe(SITUACAO_PIPELINE.SEM_TRILHA);
-        expect(reaper.limiteStalenessMs).toBeUndefined();
-        expect(reaper.runsRecentes).toEqual([]);
+        const reaper = acharPipeline(saude, PIPELINE.SISPAG_REAPER);
+        expect(reaper.situacao).toBe(SITUACAO_PIPELINE.OK);
+        expect(reaper.limiteStalenessMs).toBe(60 * 60 * 1000);
+        expect(reaper.ultimaRun?.metricas).toEqual({ paradas: 0, remessas: 0, conciliacoes: 0 });
+    });
+
+    it('nenhum pipeline sobra como sem-trilha — a lista de cegos está vazia', async () => {
+        const saude = await build({}).exporSaude(AGORA);
+        expect(saude.filter((s) => s.situacao === SITUACAO_PIPELINE.SEM_TRILHA)).toEqual([]);
     });
 
     it('expõe TODOS os pipelines — omitir o cego afirmaria cobertura que não existe', async () => {
