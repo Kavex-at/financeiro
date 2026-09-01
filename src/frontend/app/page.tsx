@@ -1,10 +1,11 @@
 import Link from 'next/link'
-import { Activity, ArrowLeftRight, Banknote, Landmark, Lock } from 'lucide-react'
+import { ArrowLeftRight, Banknote, Landmark, Lock } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
 import { AdminHomeCard } from '@/components/home/AdminHomeCard'
+import { OperacaoHomeCard } from '@/components/home/OperacaoHomeCard'
 import { isSispagEnabled } from '@/lib/features'
 
 /**
@@ -77,22 +78,7 @@ export default function HomePage() {
             </Button>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="size-4" aria-hidden /> Operação
-            </CardTitle>
-            <CardDescription>
-              Saúde dos pipelines, alertas abertos e diagnóstico de configuração. É a tela que se
-              abre durante um incidente — não depende do ERP.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button asChild>
-              <Link href="/operacao">Abrir Painel de Operação</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <OperacaoHomeCard />
         <AdminHomeCard />
       </div>
     </div>

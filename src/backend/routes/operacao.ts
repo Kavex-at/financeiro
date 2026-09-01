@@ -8,6 +8,7 @@ import ConfigDoctor from '../domain/service/operacao/ConfigDoctor.js';
 import JobRunReadModel from '../domain/service/operacao/JobRunReadModel.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
+import { requireOperacaoAcesso } from '../http/operacaoAcesso.js';
 
 /** Quantos alertas abertos a tela lista. */
 const ALERTAS_LIMIT = 50;
@@ -31,6 +32,7 @@ const router = Router();
 router.get(
     '/',
     requireRole('admin'),
+    requireOperacaoAcesso(),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
 
@@ -49,6 +51,7 @@ router.get(
 router.post(
     '/alertas/:id/reconhecer',
     requireRole('admin'),
+    requireOperacaoAcesso(),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = reconhecerParamsSchema.safeParse(req.params);

@@ -92,6 +92,18 @@ export async function fetchOperacao(): Promise<OperacaoPainel> {
   return (await res.json()) as OperacaoPainel
 }
 
+export interface Permissoes {
+  /** `true` quando este usuário está no allow-list `OPERACAO_USUARIOS` (ou ele está vazio). */
+  operacao: boolean
+}
+
+/** Fonte ÚNICA da regra de allow-list: o front não a reimplementa, só pergunta. */
+export async function fetchPermissoes(): Promise<Permissoes> {
+  const res = await apiFetch(`${API}/me/permissoes`, { headers: await withAuthHeaders() })
+  if (!res.ok) throw new Error(`Falha ao consultar permissões (HTTP ${res.status}).`)
+  return (await res.json()) as Permissoes
+}
+
 export async function reconhecerAlerta(id: number): Promise<void> {
   const res = await apiFetch(`${API}/operacao/alertas/${id}/reconhecer`, {
     method: 'POST',

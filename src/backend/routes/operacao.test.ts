@@ -62,6 +62,9 @@ const listen = (app: express.Express): Promise<TestServer> =>
 const getJson = async (url: string, init?: RequestInit): Promise<Record<string, never>> =>
     (await (await fetch(url, init)).json()) as Record<string, never>;
 
+/** Allow-list vigente no teste — mutável para exercitar dentro e fora do recorte. */
+let allowList: string[] = [];
+
 let srv: TestServer;
 let reconhecer: jest.Mock;
 /** Tudo que a rota resolveu do container — a prova do I4. */
@@ -81,6 +84,13 @@ beforeAll(async () => {
             return {
                 listarAbertos: jest.fn().mockResolvedValue([alertaFake]),
                 reconhecer,
+            };
+        }
+        if (typeof token === 'function' && token.name === 'EnvironmentProvider') {
+            return {
+                getEnvironmentVars: jest.fn().mockResolvedValue({
+                    operacaoUsuarios: allowList,
+                }),
             };
         }
         if (token === ConfigDoctor) {
@@ -162,5 +172,37 @@ describe('POST /operacao/alertas/:id/reconhecer', () => {
     it('rejeita id negativo com 400', async () => {
         const res = await fetch(`${srv.url}/operacao/alertas/-1/reconhecer`, { method: 'POST' });
         expect(res.status).toBe(400);
+    });
+});
+
+describe('recorte por identidade (OPERACAO_USUARIOS)', () => {
+    afterEach(() => {
+        allowList = [];
+    });
+
+    it('lista vazia: admin entra — comportamento de hoje preservado', async () => {
+        allowList = [];
+        expect((await fetch(`${srv.url}/operacao`)).status).toBe(200);
+    });
+
+    it('usuário FORA do recorte recebe 404, não 403', async () => {
+        // 403 confirmaria que a rota existe. Como o recorte é obscuridade deliberada — o pedido
+        // é que o painel não apareça para quem não opera —, confirmar a rota entregaria metade
+        // do que ele quer esconder.
+        allowList = ['outra-pessoa'];
+        const res = await fetch(`${srv.url}/operacao`);
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ error: 'Not found' });
+    });
+
+    it('usuário DENTRO do recorte entra normalmente', async () => {
+        allowList = ['yuri'];
+        expect((await fetch(`${srv.url}/operacao`)).status).toBe(200);
+    });
+
+    it('o recorte vale também para o POST de reconhecer', async () => {
+        allowList = ['outra-pessoa'];
+        const res = await fetch(`${srv.url}/operacao/alertas/3/reconhecer`, { method: 'POST' });
+        expect(res.status).toBe(404);
     });
 });
