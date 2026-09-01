@@ -86,3 +86,26 @@ jobs:
           done
           echo "as 3 tentativas falharam — extrato NÃO ingerido nesta hora"
           exit 1
+
+      # ⚠️ Passo de ALERTA — ADR-0042. Roda SÓ quando algo acima falhou.
+      #
+      # Complementa o `detect-staleness`, não o duplica: aquele lê a tabela de runs e enxerga a run
+      # que foi aberta e fechada com `error`; ESTE cobre o workflow que morreu antes de existir
+      # linha de run — `npm ci` que falhou, migration que não aplicou, runner que evaporou, ou o
+      # processo derrubado entre o `createRun` e o `finishRun` (que deixa a linha presa em
+      # `running`, e `running` não é `error`). Sem ele, a falha mais bruta seria a invisível.
+      #
+      # `continue-on-error` + exit 0 no script: o workflow JÁ está falhando, e o passo de alerta não
+      # pode mascarar nem duplicar essa falha (I5 no nível do CI). O desfecho do workflow continua
+      # sendo o da etapa que quebrou.
+      - name: Alertar falha (ADR-0042)
+        if: failure()
+        continue-on-error: true
+        env:
+          databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          PIPELINE_ALVO: recebimentos-extratos
+          WORKFLOW_NOME: Ingestão de Extratos
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          environment: production
+          client_name: local
+        run: npm run job:alerta-workflow-falhou
