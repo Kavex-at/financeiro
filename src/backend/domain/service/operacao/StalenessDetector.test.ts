@@ -147,9 +147,78 @@ describe('StalenessDetector — falha e parcialidade da última run', () => {
         });
     });
 
-    it('run em `running` não gera alerta', async () => {
+    it('run `running` DENTRO do limite não gera alerta — está apenas em andamento', async () => {
+        const recente = new Date(AGORA.getTime() - 60_000).toISOString();
         const { detector, notif } = montar([
-            saudeDe({ ultimaRun: runDe({ status: JOB_RUN_STATUS.RUNNING }) as never }),
+            saudeDe({
+                ultimaRun: runDe({
+                    status: JOB_RUN_STATUS.RUNNING,
+                    startedAt: recente,
+                    finishedAt: undefined,
+                }) as never,
+            }),
+        ]);
+        await detector.detectar(AGORA);
+        expect(notif.emitir).not.toHaveBeenCalled();
+    });
+
+    it('run `running` ALÉM do limite é run ABANDONADA e alerta (F-fault-tolerance-1)', async () => {
+        // Runner morto entre createRun e finishRun: `running` não é `error`, então sem esta regra
+        // a única detecção residual seria o staleness do último SUCESSO — até 30h de janela cega
+        // no SISPAG.
+        const velha = new Date(AGORA.getTime() - (LIMITE_RECEB + 60_000)).toISOString();
+        const { detector, emitidos } = montar([
+            saudeDe({
+                ultimaRun: runDe({
+                    status: JOB_RUN_STATUS.RUNNING,
+                    startedAt: velha,
+                    finishedAt: undefined,
+                }) as never,
+            }),
+        ]);
+
+        await detector.detectar(AGORA);
+
+        expect(emitidos).toHaveLength(1);
+        expect(emitidos[0]).toMatchObject({ tipo: ALERTA_TIPO.JOB_FALHOU });
+        expect(
+            (emitidos[0] as unknown as { detalhe: { motivo: string } }).detalhe.motivo,
+        ).toContain('abandonada');
+    });
+
+    it('a run abandonada alerta UMA vez, não a cada rodada do detector', async () => {
+        const velha = new Date(AGORA.getTime() - LIMITE_RECEB * 3).toISOString();
+        const abandonada = saudeDe({
+            ultimaRun: runDe({
+                status: JOB_RUN_STATUS.RUNNING,
+                startedAt: velha,
+                finishedAt: undefined,
+            }) as never,
+        });
+
+        const a = montar([abandonada]);
+        await a.detector.detectar(AGORA);
+        const b = montar([abandonada]);
+        await b.detector.detectar(new Date(AGORA.getTime() + 2 * 60 * 60 * 1000));
+
+        // Janela = a run, não o relógio.
+        expect(a.emitidos[0].janelaInicio.toISOString()).toBe(
+            b.emitidos[0].janelaInicio.toISOString(),
+        );
+    });
+
+    it('pipeline sem-trilha com run `running` não alerta — sem limite, sem teto aplicável', async () => {
+        const { detector, notif } = montar([
+            saudeDe({
+                pipeline: PIPELINE.SISPAG_REAPER,
+                situacao: SITUACAO_PIPELINE.SEM_TRILHA,
+                limiteStalenessMs: undefined,
+                ultimaRun: runDe({
+                    status: JOB_RUN_STATUS.RUNNING,
+                    startedAt: '2020-01-01T00:00:00.000Z',
+                    finishedAt: undefined,
+                }) as never,
+            }),
         ]);
         await detector.detectar(AGORA);
         expect(notif.emitir).not.toHaveBeenCalled();
