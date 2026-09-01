@@ -3,7 +3,7 @@ name: validarConfiguracao
 type: action
 entity: Alerta
 ontology_version: "0.22"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files: []
