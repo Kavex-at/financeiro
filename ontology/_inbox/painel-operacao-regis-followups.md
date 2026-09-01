@@ -52,22 +52,23 @@ O conserto certo é **uma linha em `TableHead`**, que corrige o app inteiro de u
 justamente por ser app-wide que não entrou numa fatia de feature. As tabelas de `/operacao` já
 receberam `aria-label`, que era a parte que cabia aqui.
 
-### 4. CLAUDE.md manda logar em inglês; o código loga em português
+### 4. ~~CLAUDE.md manda logar em inglês; o código loga em português~~ — **RESOLVIDO 2026-09-01**
 
 Contradição **do repositório**, não deste slice. Medido: **39 de 91** mensagens de `LogService` em
-`domain/service/` têm marcas de português (`'remessa gerada'`, `'falha ao gerar remessa'`,
-`'conciliação já processada'`), e os jobs existentes logam `início`, `lidas`, `inseridas`,
-`deduplicadas`. O código novo seguiu a vizinhança.
+`domain/service/` tinham marcas de português (`'remessa gerada'`, `'falha ao gerar remessa'`,
+`'conciliação já processada'`), e os jobs existentes logam `início`, `lidas`, `deduplicadas`.
 
 O PatternGuardian levantou 5 achados de idioma contra os arquivos novos. Tratá-los isoladamente
 faria destes os únicos arquivos em inglês do repositório — trocaria uma inconsistência declarada por
-uma real. Decisão a tomar, e é binária:
+uma real.
 
-- **(a)** atualizar o CLAUDE.md para refletir a prática (logs de domínio em PT, identificadores em
-  EN), ou
-- **(b)** abrir uma fatia de normalização que converta os 39+ sítios de uma vez.
+**Decisão (Yuri, 2026-09-01): o CLAUDE.md passa a refletir a prática.** A seção `Conventions →
+Language` foi reescrita: identificadores, tipos de erro e commits em inglês; mensagens de log e de
+erro voltadas ao operador em português, porque é a língua de quem lê o log durante um incidente.
+Uma regra que 40% do código viola faz todo gate gastar tempo com falso-positivo.
 
-Enquanto não se decide, o código novo continua espelhando o antigo.
+Consequência: os 5 achados do PatternGuardian deixam de ser achados. Nenhuma normalização
+retroativa é necessária.
 
 ### 5. Rota resolve `Repository` direto, sem `Service` no meio
 

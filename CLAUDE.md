@@ -140,7 +140,19 @@ infra/tenants/             # (alvo) — ainda não existe; deploy atual é Rende
 ### Language
 - Identifiers: English only (classes, vars, functions, enums). No exceptions.
 - DB columns/interface fields mirroring DB schema: Portuguese OK (`cnpj_prestador`)
-- Errors, logs, commits: English only
+- **Error types/classes and commit subjects: English.** Nomes de erro são identificadores
+  (`LoteVersaoConflitoError` é a exceção herdada do domínio, não o padrão a seguir).
+- **Mensagens de log e de erro voltadas ao operador: português.** É a língua de quem lê o log
+  durante um incidente — o analista da Columbia e o time da Kavex. Vale para `LogService.message`,
+  `console.log` de job e mensagem de erro que chega à tela.
+
+  > **Regra ajustada em 2026-09-01 (ADR-0042) para refletir a prática.** A versão anterior dizia
+  > "errors, logs, commits: English only", e o código nunca fez isso: medido no ciclo do
+  > `painel-operacao`, **39 de 91** mensagens de `LogService` em `domain/service/` já eram em
+  > português (`'remessa gerada'`, `'falha ao gerar remessa'`, `'conciliação já processada'`), e os
+  > jobs logam `início`, `lidas`, `deduplicadas`. Uma regra que 40% do código viola não é uma regra,
+  > é um ruído que faz todo gate de revisão gastar tempo com falso-positivo. Entre normalizar 39+
+  > sítios e admitir a prática, admitir a prática é o que serve a quem lê o log às 2h da manhã.
 
 ### Naming
 - Files: PascalCase for classes, camelCase for utilities
