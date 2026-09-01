@@ -4,6 +4,7 @@ import {
     type JobRun,
     type JobRunStatus,
     PIPELINE,
+    type Pipeline,
     type PipelineSaude,
     SITUACAO_PIPELINE,
     type SituacaoPipeline,
@@ -13,6 +14,7 @@ import {
     type MonitoravelPipeline,
     PIPELINES_SEM_TRILHA,
 } from '../../interface/operacao/stalenessLimits.js';
+import JobExecucaoRepository from '../../repository/operacao/JobExecucaoRepository.js';
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import RecebimentoIngestaoRunRepository from '../../repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
@@ -51,6 +53,8 @@ export default class JobRunReadModel {
         private readonly recebimentoRepository: RecebimentoIngestaoRunRepository,
         @inject(PagamentoIngestaoRunRepository)
         private readonly pagamentoRepository: PagamentoIngestaoRunRepository,
+        @inject(JobExecucaoRepository)
+        private readonly jobExecucaoRepository: JobExecucaoRepository,
     ) {}
 
     /**
@@ -58,15 +62,17 @@ export default class JobRunReadModel {
      * a fronteira do limite sem depender do relógio real.
      */
     public exporSaude = async (agora: Date = new Date()): Promise<PipelineSaude[]> => {
-        const [permutas, recebimentos, sispag] = await Promise.all([
+        const [permutas, recebimentos, sispag, ndeSefaz] = await Promise.all([
             this.lerPermutas(),
             this.lerRecebimentos(),
             this.lerSispag(),
+            this.lerJobExecucao(PIPELINE.RECEBIMENTOS_NDE_SEFAZ),
         ]);
 
         const monitoraveis = [
             this.montarSaude(PIPELINE.PERMUTAS_ELEICAO, permutas, agora),
             this.montarSaude(PIPELINE.RECEBIMENTOS_EXTRATOS, recebimentos, agora),
+            this.montarSaude(PIPELINE.RECEBIMENTOS_NDE_SEFAZ, ndeSefaz, agora),
             this.montarSaude(PIPELINE.SISPAG_PAGAMENTOS, sispag, agora),
         ];
 
@@ -125,6 +131,31 @@ export default class JobRunReadModel {
     };
 
     // --- Adapters (um por fonte) ---
+
+    /**
+     * Adapter dos jobs NOVOS (`job_execucao`, migration 0053). Genérico de propósito: qualquer job
+     * que nasça daqui em diante ganha visibilidade sem código novo — inclusive o reaper, quando o
+     * follow-up lhe der uma trilha.
+     */
+    private lerJobExecucao = async (pipeline: Pipeline): Promise<JobRun[]> => {
+        const runs = await this.jobExecucaoRepository.listRecentRuns(pipeline, RUNS_POR_PIPELINE);
+        return runs.map((r) => {
+            const finishedAt = iso(r.finishedAt);
+            return {
+                runId: r.id,
+                pipeline,
+                status: r.status,
+                triggeredBy: r.triggeredBy,
+                startedAt: r.startedAt,
+                ...(finishedAt !== undefined ? { finishedAt } : {}),
+                ...(duracao(r.startedAt, finishedAt) !== undefined
+                    ? { duracaoMs: duracao(r.startedAt, finishedAt) }
+                    : {}),
+                metricas: r.metricas,
+                ...(r.errorMessage !== undefined ? { errorMessage: r.errorMessage } : {}),
+            } satisfies JobRun;
+        });
+    };
 
     private lerPermutas = async (): Promise<JobRun[]> => {
         const runs = await this.permutaRepository.listRecentRuns(RUNS_POR_PIPELINE);

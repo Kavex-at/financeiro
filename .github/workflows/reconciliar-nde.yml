@@ -1,0 +1,73 @@
+name: Reconciliação da NDe com o SEFAZ (ADR-0042)
+
+# Fecha o follow-up F1. A hidratação da NDe (ADR-0038) grava o número do SEFAZ e o flag
+# `ndeAutorizado` no ledger — e vivia em `GET /recebimentos/painel/enriquecimento`, QUE SÓ O
+# NAVEGADOR CHAMA. Quem lesse `ndeAutorizado` direto do Postgres (relatório, integração) via um dado
+# defasado até alguém abrir a aba. A divergência se autocurava, mas a janela não tinha dono.
+#
+# A rota de enriquecimento continua servindo a tela; ela apenas deixa de ser a única escritora — o
+# que também tira a escrita de baixo de um GET sem role (follow-up F3).
+#
+# ⚠️ Minuto :35 é deliberado. Este job LÊ O ERP (grid com297 por filial), então disputa os ~3 slots
+# de LOGIN_ERROR_MAX_SESSIONS. Os outros ocupam :00 (Permutas/SISPAG), :20 (Extratos) e
+# :10/:25/:40/:55 (reaper). O :35 é a janela livre mais distante de todos.
+#
+# ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main).
+on:
+  schedule:
+    - cron: '35 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: reconciliar-nde
+  cancel-in-progress: false
+
+jobs:
+  reconciliar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      CONEXOS_BASE_URL: ${{ secrets.CONEXOS_BASE_URL }}
+      CONEXOS_USERNAME: ${{ secrets.CONEXOS_USERNAME }}
+      CONEXOS_PASSWORD: ${{ secrets.CONEXOS_PASSWORD }}
+      CONEXOS_FIL_COD: ${{ vars.CONEXOS_FIL_COD }}
+      COM297_GCD_NOTA_DEBITO_NOME: ${{ vars.COM297_GCD_NOTA_DEBITO_NOME }}
+      environment: production
+      client_name: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependências (com devDeps p/ tsx)
+        run: npm ci --include=dev
+      - name: Aplicar migrations pendentes (idempotente)
+        run: npm run migrate
+      # Sem retry: a reconciliação é idempotente e roda de hora em hora. Insistir aqui só
+      # prolongaria a ocupação de um slot de sessão do Conexos.
+      - name: Reconciliar NDes com o SEFAZ
+        run: npm run job:reconciliar-nde-sefaz
+
+      # ⚠️ Passo de ALERTA — ADR-0042. Roda SÓ quando algo acima falhou.
+      #
+      # Complementa o `detect-staleness`, não o duplica: aquele lê a tabela de runs e enxerga a run
+      # que foi aberta e fechada com `error`; ESTE cobre o workflow que morreu antes de existir
+      # linha de run — `npm ci` que falhou, migration que não aplicou, runner que evaporou.
+      #
+      # `continue-on-error` + exit 0 no script: o workflow JÁ está falhando, e o passo de alerta não
+      # pode mascarar nem duplicar essa falha (I5 no nível do CI).
+      - name: Alertar falha (ADR-0042)
+        if: failure()
+        continue-on-error: true
+        env:
+          databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          PIPELINE_ALVO: recebimentos-nde-sefaz
+          WORKFLOW_NOME: Reconciliação da NDe
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          environment: production
+          client_name: local
+        run: npm run job:alerta-workflow-falhou

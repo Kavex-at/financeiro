@@ -11,6 +11,8 @@ export const PIPELINE = {
     PERMUTAS_ELEICAO: 'permutas-eleicao',
     RECEBIMENTOS_EXTRATOS: 'recebimentos-extratos',
     SISPAG_PAGAMENTOS: 'sispag-pagamentos',
+    /** Reconciliação da NDe com o SEFAZ (ADR-0042) — nasce COM trilha, em `job_execucao`. */
+    RECEBIMENTOS_NDE_SEFAZ: 'recebimentos-nde-sefaz',
     /** Sem trilha de execução — declarado para ser LISTADO como cego, nunca omitido. */
     SISPAG_REAPER: 'sispag-reaper',
 } as const;

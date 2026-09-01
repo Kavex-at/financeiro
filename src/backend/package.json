@@ -24,7 +24,8 @@
         "lint:fix": "npx biome check --write .",
         "typecheck": "tsc --noEmit",
         "job:reaper-sispag": "tsx jobs/reaper-sispag-reconciling.ts",
-        "job:capture-fixtures": "tsx jobs/capture-fixtures-sispag.ts"
+        "job:capture-fixtures": "tsx jobs/capture-fixtures-sispag.ts",
+        "job:reconciliar-nde-sefaz": "tsx jobs/reconciliar-nde-sefaz.ts"
     },
     "keywords": [],
     "author": "",
