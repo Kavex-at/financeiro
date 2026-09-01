@@ -4,6 +4,7 @@ import { container } from 'tsyringe';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { diagnosticarConfiguracao } from './domain/appContainer.js';
+import healthRouter from './routes/health.js';
 import { buildAuthMiddleware } from './http/auth.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
@@ -76,6 +77,11 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // deploys are verifiable; `npm start`/`npm run dev` populate npm_package_version.
 const APP_VERSION = process.env.npm_package_version ?? 'unknown';
 app.get('/health', (_req, res) => res.json({ status: 'ok', version: APP_VERSION }));
+
+// Sonda de pipelines — PÚBLICA e mínima, montada AQUI (antes do auth) porque o observador externo
+// que a consulta não tem JWT. Devolve 503 quando há pipeline parado ou run abandonada, que é o que
+// transforma um uptime checker gratuito em alerta. Ver `routes/health.ts`.
+app.use('/health', healthRouter);
 
 // Login route — PUBLIC, mounted BEFORE the auth middleware so unauthenticated
 // users can obtain a token. `POST /auth/login` validates username/password

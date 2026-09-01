@@ -63,6 +63,12 @@ const initDatabaseAndMigrate = async (isProduction: boolean): Promise<void> => {
  */
 export const diagnosticarConfiguracao = async (): Promise<void> => {
     try {
+        // Auto-suficiente de propósito: o `ConfigDoctor` depende do `NotificacaoService`, que
+        // depende dos sinks. O `start()` do servidor NÃO chama `bootstrapAppContainer` (as rotas o
+        // fazem sob demanda, por request), então sem esta linha o token `AlertSinks` não existe
+        // ainda e o diagnóstico morre no boot — silenciosamente, porque o catch abaixo o protege.
+        // `registerOperacaoSinks` é idempotente.
+        registerOperacaoSinks();
         const diagnostico = await container.resolve(ConfigDoctor).verificarNoBoot();
         const { totalAusentesObrigatorias: obrig, totalAusentesSilenciosas: silenc } = diagnostico;
         if (obrig > 0 || silenc > 0) {

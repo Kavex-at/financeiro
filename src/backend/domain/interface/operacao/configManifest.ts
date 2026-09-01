@@ -98,6 +98,16 @@ export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
         segredo: true,
     },
 
+    {
+        nome: 'HEALTHCHECK_PING_URL',
+        frente: FRENTE.NUCLEO,
+        criticidade: CRITICIDADE.DEGRADA_SILENCIOSAMENTE,
+        consequenciaSeAusente:
+            "O dead-man's switch fica desligado: ninguém detecta o GitHub Actions parar de " +
+            'disparar, porque nenhuma sonda hospedada aqui enxerga a própria ausência de execução.',
+        segredo: false,
+    },
+
     // --- Recebimentos (Frente IV) ---
     {
         nome: 'RECEBIMENTO_TITULARES_INTERNOS',
