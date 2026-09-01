@@ -48,11 +48,17 @@ const sispagRun = (over: Partial<Record<string, unknown>> = {}) => ({
     ...over,
 });
 
-const build = (opts: { permutas?: unknown[]; recebimentos?: unknown[]; sispag?: unknown[] }) =>
+const build = (opts: {
+    permutas?: unknown[];
+    recebimentos?: unknown[];
+    sispag?: unknown[];
+    jobExecucao?: unknown[];
+}) =>
     new JobRunReadModel(
         { listRecentRuns: jest.fn().mockResolvedValue(opts.permutas ?? []) } as never,
         { listRecentRuns: jest.fn().mockResolvedValue(opts.recebimentos ?? []) } as never,
         { listRecentRuns: jest.fn().mockResolvedValue(opts.sispag ?? []) } as never,
+        { listRecentRuns: jest.fn().mockResolvedValue(opts.jobExecucao ?? []) } as never,
     );
 
 const acharPipeline = (saude: Awaited<ReturnType<JobRunReadModel['exporSaude']>>, p: string) => {
@@ -233,15 +239,37 @@ describe('JobRunReadModel — pipelines sem trilha', () => {
         expect(reaper.runsRecentes).toEqual([]);
     });
 
-    it('expõe os quatro pipelines — omitir o cego afirmaria cobertura de 3 em 4', async () => {
+    it('expõe TODOS os pipelines — omitir o cego afirmaria cobertura que não existe', async () => {
         const saude = await build({}).exporSaude(AGORA);
         expect(saude.map((s) => s.pipeline).sort()).toEqual(
             [
                 PIPELINE.PERMUTAS_ELEICAO,
                 PIPELINE.RECEBIMENTOS_EXTRATOS,
+                PIPELINE.RECEBIMENTOS_NDE_SEFAZ,
                 PIPELINE.SISPAG_PAGAMENTOS,
                 PIPELINE.SISPAG_REAPER,
             ].sort(),
         );
+    });
+
+    it('o job novo (job_execucao) nasce COM trilha, ao contrário do reaper', async () => {
+        const saude = await build({
+            jobExecucao: [
+                {
+                    id: 'nde-1',
+                    pipeline: PIPELINE.RECEBIMENTOS_NDE_SEFAZ,
+                    triggeredBy: 'cron',
+                    status: 'success',
+                    metricas: { ndesLidas: 12, reconciliadas: 2 },
+                    startedAt: '2026-09-01T11:35:00.000Z',
+                    finishedAt: '2026-09-01T11:35:20.000Z',
+                },
+            ],
+        }).exporSaude(AGORA);
+
+        const nde = acharPipeline(saude, PIPELINE.RECEBIMENTOS_NDE_SEFAZ);
+        expect(nde.situacao).toBe(SITUACAO_PIPELINE.OK);
+        expect(nde.ultimaRun?.metricas).toEqual({ ndesLidas: 12, reconciliadas: 2 });
+        expect(nde.distinguePartial).toBe(true);
     });
 });

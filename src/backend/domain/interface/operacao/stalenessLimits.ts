@@ -68,6 +68,13 @@ export const LIMITES_STALENESS: Readonly<Record<MonitoravelPipeline, LimiteStale
         limiteMs: 18 * HORA_MS,
         distinguePartial: true,
     },
+    [PIPELINE.RECEBIMENTOS_NDE_SEFAZ]: {
+        pipeline: PIPELINE.RECEBIMENTOS_NDE_SEFAZ,
+        rotulo: 'Recebimentos — reconciliação da NDe com o SEFAZ',
+        cadencia: '35 * * * * (de hora em hora)',
+        limiteMs: 3 * HORA_MS,
+        distinguePartial: true,
+    },
     [PIPELINE.SISPAG_PAGAMENTOS]: {
         pipeline: PIPELINE.SISPAG_PAGAMENTOS,
         rotulo: 'SISPAG — ingestão de pagamentos',

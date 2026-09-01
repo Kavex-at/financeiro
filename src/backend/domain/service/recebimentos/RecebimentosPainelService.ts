@@ -511,6 +511,31 @@ export default class RecebimentosPainelService {
     };
 
     /**
+     * Reconciliação da NDe com o SEFAZ, FORA do caminho do navegador (ADR-0042, follow-up F1).
+     *
+     * A ADR-0038 moveu a hidratação para `GET /painel/enriquecimento`, **que só o navegador chama**.
+     * A gravação do número do SEFAZ e do flag `ndeAutorizado` no ledger passou a depender de alguém
+     * ter a aba aberta: relatórios que leem `ndeAutorizado` direto do Postgres mentem até a próxima
+     * carga de alguém. A divergência se autocura, mas a janela ficava sem dono.
+     *
+     * **Equivalência comportamental por construção, não por reimplementação.** Este método chama o
+     * MESMO `hidratarNdes`, que chama o MESMO `reconciliar`, com a mesma guarda de idempotência
+     * (`if (autorizado && nde.ndeAutorizado !== true)`) e a mesma ordem de gravação (número antes do
+     * flag, que é o ponto de commit). Não há segunda cópia da regra para divergir da primeira.
+     *
+     * A rota de enriquecimento continua existindo para a tela; ela apenas deixa de ser a única
+     * escritora — o que também tira a escrita de baixo de um GET sem role (follow-up F3).
+     */
+    public reconciliarNdesComSefaz = async (
+        input: MontarPainelInput = {},
+    ): Promise<{ reconciliadas: number; externasPendentes: number; ndesLidas: number }> => {
+        const { filCods } = await this.resolverRecorte(input);
+        const ndesDoBanco = await this.ndeRepo.listParaPainel({ filCods, limit: PAINEL_NDES_CAP });
+        const { reconciliadas, externasPendentes } = await this.hidratarNdes(ndesDoBanco, filCods);
+        return { reconciliadas, externasPendentes, ndesLidas: ndesDoBanco.length };
+    };
+
+    /**
      * Lê o grid de todas as filiais permitidas. `undefined` = não deu para ler NADA (ERP fora do ar):
      * o caller devolve a aba com o estado do banco, sem inventar "não há NDe externa".
      *

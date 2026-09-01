@@ -20,6 +20,7 @@ import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
 import permutasRouter from './routes/permutas.js';
 import meRouter from './routes/me.js';
+import operacaoRouter from './routes/operacao.js';
 import recebimentosRouter from './routes/recebimentos.js';
 import sispagRouter from './routes/sispag.js';
 import usuariosRouter from './routes/usuarios.js';
@@ -120,6 +121,12 @@ app.use('/recebimentos', recebimentosGate, recebimentosRouter);
 // Gestão de usuários da plataforma — só `admin` (guard no próprio router). Fica
 // no `globalLimiter`; substitui o cadastro manual de usuários @kavex no banco.
 app.use('/usuarios', usuariosRouter);
+
+// Painel de Operação (ADR-0042) — saúde dos pipelines, alertas e diagnóstico de configuração.
+// NÃO leva `heavyRouteLimiter`: é a tela que se consulta durante um incidente, e limitá-la seria
+// estrangular o diagnóstico bem quando ele é mais necessário. Não toca o ERP (I4), então também
+// não disputa os slots de sessão do Conexos.
+app.use('/operacao', operacaoRouter);
 
 // Rotas do próprio usuário (status do vínculo Conexos p/ o aviso no login).
 app.use('/me', meRouter);

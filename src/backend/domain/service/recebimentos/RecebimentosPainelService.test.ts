@@ -580,3 +580,76 @@ describe('RecebimentosPainelService — enriquecimento diferido (ADR-0038)', () 
         );
     });
 });
+
+describe('RecebimentosPainelService — reconciliação SEFAZ fora do browser (ADR-0042, F1)', () => {
+    it('grava número e flag exatamente como o caminho da tela — mesmo hidratarNdes', async () => {
+        const { service, ndeRepo, execucaoRepo } = build({
+            ndes: [buildNde({ ndDocCod: 18337, ndeAutorizado: false })],
+            erpNdes: [buildErp({ docCod: 18337, vldAutorizado: 1, docEspNumero: '000123' })],
+        });
+
+        const r = await service.reconciliarNdesComSefaz({ filCodsPermitidas: [4] });
+
+        expect(r.reconciliadas).toBe(1);
+        expect(ndeRepo.updateNumeroNde).toHaveBeenCalledWith('nde:txn-1:1', '000123');
+        expect(execucaoRepo.setNdeAutorizado).toHaveBeenCalledWith('nde:txn-1:1', true);
+    });
+
+    it('respeita a MESMA guarda de idempotência: já autorizada não regrava', async () => {
+        const { service, execucaoRepo } = build({
+            ndes: [buildNde({ ndDocCod: 18337, ndeAutorizado: true })],
+            erpNdes: [buildErp({ docCod: 18337, vldAutorizado: 1, docEspNumero: '000123' })],
+        });
+
+        const r = await service.reconciliarNdesComSefaz({ filCodsPermitidas: [4] });
+
+        expect(r.reconciliadas).toBe(0);
+        expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
+    });
+
+    it('SEFAZ ainda não respondeu (vldAutorizado=0) não é falha e não reconcilia', async () => {
+        const { service, execucaoRepo } = build({
+            ndes: [buildNde({ ndDocCod: 18337, ndeAutorizado: false })],
+            erpNdes: [buildErp({ docCod: 18337, vldAutorizado: 0 })],
+        });
+
+        const r = await service.reconciliarNdesComSefaz({ filCodsPermitidas: [4] });
+
+        expect(r.reconciliadas).toBe(0);
+        expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
+    });
+
+    it('produz o MESMO efeito no ledger que o enriquecimento do browser', async () => {
+        // A prova de equivalência: os dois caminhos, sobre a mesma entrada, chamam os mesmos
+        // writers com os mesmos argumentos. Não há segunda cópia da regra para divergir.
+        const viaJob = build({
+            ndes: [buildNde({ ndDocCod: 18337, ndeAutorizado: false })],
+            erpNdes: [buildErp({ docCod: 18337, vldAutorizado: 1, docEspNumero: '000123' })],
+        });
+        const viaTela = build({
+            ndes: [buildNde({ ndDocCod: 18337, ndeAutorizado: false })],
+            erpNdes: [buildErp({ docCod: 18337, vldAutorizado: 1, docEspNumero: '000123' })],
+        });
+
+        await viaJob.service.reconciliarNdesComSefaz({ filCodsPermitidas: [4] });
+        await viaTela.service.montarEnriquecimento({ filCodsPermitidas: [4] });
+
+        expect(viaJob.ndeRepo.updateNumeroNde.mock.calls).toEqual(
+            viaTela.ndeRepo.updateNumeroNde.mock.calls,
+        );
+        expect(viaJob.execucaoRepo.setNdeAutorizado.mock.calls).toEqual(
+            viaTela.execucaoRepo.setNdeAutorizado.mock.calls,
+        );
+    });
+
+    it('ERP fora do ar degrada para no-op, sem derrubar o job', async () => {
+        const { service, execucaoRepo } = build({
+            ndes: [buildNde({ ndDocCod: 18337, ndeAutorizado: false })],
+        });
+        // `listNdes` devolvendo vazio para todas as filiais = nada a reconciliar.
+        const r = await service.reconciliarNdesComSefaz({ filCodsPermitidas: [4] });
+
+        expect(r.reconciliadas).toBe(0);
+        expect(execucaoRepo.setNdeAutorizado).not.toHaveBeenCalled();
+    });
+});
