@@ -79,7 +79,7 @@ Um pipeline novo entra escrevendo um adapter. Não há migration a fazer, mas ta
 automática: **pipeline sem adapter é invisível no painel.** É a dívida conhecida deste desenho, e o
 preço de não tocar nos writers atuais.
 
-**Caso concreto já existente:** `jobs/reaper-sispag-reconciling.ts` não escreve linha de run nenhuma
-— sem fonte, não há adapter possível. O painel o lista como `sem trilha de execução` em vez de
-omiti-lo, porque omitir afirmaria cobertura completa sobre 3 de 4 jobs. Ver
-`business-rules/staleness-por-pipeline.md`.
+**O caso que provou a regra:** `jobs/reaper-sispag-reconciling.ts` nasceu sem escrever linha de run
+e ficou invisível ao painel, listado como `sem trilha`. Ganhou uma em 2026-09-01 (ADR-0042,
+follow-up 2) e hoje é monitorado como qualquer outro. A lista de cegos segue existindo, vazia, para
+o próximo que nascer assim.

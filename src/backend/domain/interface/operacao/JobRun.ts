@@ -19,7 +19,10 @@ export const PIPELINE = {
      * operação. Ele escreve em `job_execucao` como qualquer outro job.
      */
     OPERACAO_DETECTOR: 'operacao-detector',
-    /** Sem trilha de execução — declarado para ser LISTADO como cego, nunca omitido. */
+    /**
+     * Reaper de execuções SISPAG presas. Nasceu sem trilha e por isso era o único job que o
+     * painel não vigiava — ganhou uma em 2026-09-01 (ADR-0042, follow-up 2).
+     */
     SISPAG_REAPER: 'sispag-reaper',
 } as const;
 

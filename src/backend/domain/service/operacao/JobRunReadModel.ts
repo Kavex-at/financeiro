@@ -62,12 +62,13 @@ export default class JobRunReadModel {
      * a fronteira do limite sem depender do relógio real.
      */
     public exporSaude = async (agora: Date = new Date()): Promise<PipelineSaude[]> => {
-        const [permutas, recebimentos, sispag, ndeSefaz, detector] = await Promise.all([
+        const [permutas, recebimentos, sispag, ndeSefaz, detector, reaper] = await Promise.all([
             this.lerPermutas(),
             this.lerRecebimentos(),
             this.lerSispag(),
             this.lerJobExecucao(PIPELINE.RECEBIMENTOS_NDE_SEFAZ),
             this.lerJobExecucao(PIPELINE.OPERACAO_DETECTOR),
+            this.lerJobExecucao(PIPELINE.SISPAG_REAPER),
         ]);
 
         const monitoraveis = [
@@ -78,6 +79,7 @@ export default class JobRunReadModel {
             // O vigia entra na lista que ele mesmo vigia. Sem isto, `alertas: []` na tela é
             // ambíguo entre "nada a reportar" e "o detector morreu".
             this.montarSaude(PIPELINE.OPERACAO_DETECTOR, detector, agora),
+            this.montarSaude(PIPELINE.SISPAG_REAPER, reaper, agora),
         ];
 
         // Os cegos entram na lista de propósito — omiti-los afirmaria cobertura que não existe.

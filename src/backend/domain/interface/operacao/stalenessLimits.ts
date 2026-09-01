@@ -14,8 +14,13 @@ import { PIPELINE, type Pipeline } from './JobRun.js';
 
 const HORA_MS = 60 * 60 * 1000;
 
-/** Pipelines que de fato têm fonte para ler. */
-export type MonitoravelPipeline = Exclude<Pipeline, typeof PIPELINE.SISPAG_REAPER>;
+/**
+ * Pipelines que têm fonte para ler.
+ *
+ * Hoje é `Pipeline` inteiro: desde que o reaper ganhou trilha, não há mais pipeline cego. O alias
+ * permanece porque a distinção é real e volta assim que um job novo nascer sem trilha.
+ */
+export type MonitoravelPipeline = Pipeline;
 
 export interface LimiteStaleness {
     pipeline: MonitoravelPipeline;
@@ -44,14 +49,14 @@ export interface PipelineSemTrilha {
     motivo: string;
 }
 
-export const PIPELINES_SEM_TRILHA: readonly PipelineSemTrilha[] = [
-    {
-        pipeline: PIPELINE.SISPAG_REAPER,
-        rotulo: 'SISPAG — reaper de reconciliação',
-        cadencia: '10,25,40,55 * * * * (a cada 15min)',
-        motivo: 'O job não escreve linha de run; dar-lhe uma trilha é follow-up da ADR-0042.',
-    },
-] as const;
+/**
+ * Vazio hoje — e é bom que esteja.
+ *
+ * O `sispag-reaper` morava aqui até 2026-09-01, quando ganhou trilha em `job_execucao`
+ * (ADR-0042, follow-up 2). A lista continua existindo porque o problema volta: todo job novo que
+ * nascer sem escrever linha de run entra aqui, para ser LISTADO como cego em vez de sumir da tela.
+ */
+export const PIPELINES_SEM_TRILHA: readonly PipelineSemTrilha[] = [] as const;
 
 export const LIMITES_STALENESS: Readonly<Record<MonitoravelPipeline, LimiteStaleness>> = {
     [PIPELINE.RECEBIMENTOS_EXTRATOS]: {
@@ -80,6 +85,15 @@ export const LIMITES_STALENESS: Readonly<Record<MonitoravelPipeline, LimiteStale
         rotulo: 'Operação — detector de staleness',
         cadencia: '45 * * * * (de hora em hora)',
         limiteMs: 3 * HORA_MS,
+        distinguePartial: true,
+    },
+    [PIPELINE.SISPAG_REAPER]: {
+        pipeline: PIPELINE.SISPAG_REAPER,
+        rotulo: 'SISPAG — reaper de reconciliação',
+        cadencia: '10,25,40,55 * * * * (a cada 15min, todos os dias)',
+        // Roda a cada 15min: 1h tolera TRÊS execuções perdidas antes de reclamar. Schedules do
+        // GitHub são best-effort, e uma perdida é comportamento esperado, não incidente.
+        limiteMs: HORA_MS,
         distinguePartial: true,
     },
     [PIPELINE.SISPAG_PAGAMENTOS]: {
