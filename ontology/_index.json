@@ -266,14 +266,27 @@
     },
     "JobRun": {
       "file": "entities/job-run.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/interface/operacao/JobRun.ts",
+        "src/backend/domain/interface/operacao/stalenessLimits.ts",
+        "src/backend/domain/service/operacao/JobRunReadModel.ts",
+        "src/backend/domain/repository/operacao/JobExecucaoRepository.ts",
+        "src/backend/migrations/0053_job_execucao.sql"
+      ],
       "note": "Read-model sobre permuta_eleicao_run / recebimento_ingestao_run / pagamento_ingestao_run. NAO cria tabela (ADR-0042)."
     },
     "Alerta": {
       "file": "entities/alerta.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/migrations/0052_alerta.sql",
+        "src/backend/domain/interface/operacao/Alerta.ts",
+        "src/backend/domain/interface/operacao/AlertSink.ts",
+        "src/backend/domain/repository/operacao/AlertaRepository.ts",
+        "src/backend/domain/service/operacao/NotificacaoService.ts",
+        "src/backend/domain/service/operacao/DbAlertSink.ts"
+      ],
       "note": "Persistido para dedup e para servir de sink ao proprio painel (ADR-0042)."
     }
   },
@@ -618,23 +631,37 @@
     },
     "exporOperacao": {
       "file": "actions/operacao/expor-operacao.md",
-      "status": "planned",
-      "impl_files": []
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/routes/operacao.ts",
+        "src/backend/domain/service/operacao/JobRunReadModel.ts",
+        "src/frontend/app/operacao/page.tsx"
+      ]
     },
     "detectarStaleness": {
       "file": "actions/operacao/detectar-staleness.md",
-      "status": "planned",
-      "impl_files": []
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/operacao/StalenessDetector.ts",
+        "src/backend/jobs/detect-staleness.ts",
+        ".github/workflows/detect-staleness.yml"
+      ]
     },
     "notificarFalha": {
       "file": "actions/operacao/notificar-falha.md",
-      "status": "planned",
-      "impl_files": []
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/operacao/NotificacaoService.ts",
+        "src/backend/jobs/alerta-workflow-falhou.ts"
+      ]
     },
     "validarConfiguracao": {
       "file": "actions/operacao/validar-configuracao.md",
-      "status": "planned",
-      "impl_files": []
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/operacao/ConfigDoctor.ts",
+        "src/backend/domain/interface/operacao/configManifest.ts"
+      ]
     }
   },
   "business_rules": {
@@ -963,9 +990,11 @@
     },
     "staleness-por-pipeline": {
       "file": "business-rules/staleness-por-pipeline.md",
-      "status": "planned",
-      "impl_files": [],
-      "has_canonical_test": false
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/interface/operacao/stalenessLimits.ts"
+      ],
+      "has_canonical_test": true
     }
   },
   "state_machines": {

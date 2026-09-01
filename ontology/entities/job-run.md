@@ -2,13 +2,17 @@
 name: JobRun
 type: entity
 ontology_version: "0.22"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0001_permuta_eleicao.sql
   - src/backend/migrations/0024_pagamento_ingestao.sql
   - src/backend/migrations/0040_recebimento_ingestao.sql
+  - src/backend/migrations/0053_job_execucao.sql
+  - src/backend/domain/interface/operacao/JobRun.ts
+  - src/backend/domain/service/operacao/JobRunReadModel.ts
+  - src/backend/domain/repository/operacao/JobExecucaoRepository.ts
 properties:
   - runId
   - pipeline
@@ -24,8 +28,12 @@ properties:
 
 # JobRun
 
-> **Read-model, NÃO tabela.** `JobRun` é uma projeção normalizada sobre as três tabelas de run
-> que já existem. Nenhuma migration cria `job_run`; nenhum writer atual é tocado (ADR-0042).
+> **Read-model, NÃO tabela.** `JobRun` é uma projeção normalizada sobre as tabelas de run que já
+> existem. Nenhuma migration cria `job_run`; **nenhum writer atual é tocado** (ADR-0042).
+>
+> Jobs **novos** são o caso separado: eles nascem escrevendo `job_execucao` (migration `0053`),
+> tabela aditiva com `partial` desde o início. A restrição da ADR-0042 é sobre não MIGRAR writers
+> vivos, não sobre proibir trilha para código novo — e um job novo sem trilha seria mais um reaper.
 
 ## Por que read-model e não tabela unificada
 

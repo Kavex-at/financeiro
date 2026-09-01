@@ -56,6 +56,20 @@ sob observabilidade.
 
 Preço aceito: **pipeline sem adapter é invisível no painel.** Não há herança automática.
 
+#### Emenda de implementação (mesmo dia): jobs NOVOS nascem com trilha (`job_execucao`, 0053)
+
+A decisão de não criar tabela vale para os **três writers que já existem**. Ao implementar o
+reconciliador da NDe (item 4) ficou claro que aplicá-la a um job **novo** produziria o resultado
+oposto ao pretendido: o job nasceria sem trilha, exatamente como o `reaper-sispag`, e este slice
+entregaria um **segundo** ponto cego dentro do trabalho que existe para eliminá-los.
+
+Então: `job_execucao` (migration `0053`) é a trilha dos jobs criados daqui em diante. É **aditiva** —
+nenhum writer existente é tocado, o que preserva a restrição acima — e traz `partial` desde o
+nascimento, para não herdar a cegueira do `pagamento_ingestao_run`. O read-model ganha um quarto
+adapter, genérico: qualquer job futuro fica visível sem código novo.
+
+É também o destino pronto do follow-up "dar trilha ao reaper": basta ele passar a escrever aqui.
+
 `partial` é preservado, nunca achatado em `success`. Duas das três fontes o distinguem; o SISPAG
 não — e essa **cegueira herdada** (run com filial falhada indistinguível de run limpa) fica como
 follow-up, não corrigida aqui, porque corrigi-la significaria tocar um writer vivo. Ver

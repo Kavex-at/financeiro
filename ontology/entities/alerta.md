@@ -2,11 +2,16 @@
 name: Alerta
 type: entity
 ontology_version: "0.22"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0052_alerta.sql
+  - src/backend/domain/interface/operacao/Alerta.ts
+  - src/backend/domain/interface/operacao/AlertSink.ts
+  - src/backend/domain/repository/operacao/AlertaRepository.ts
+  - src/backend/domain/service/operacao/NotificacaoService.ts
+  - src/backend/domain/service/operacao/DbAlertSink.ts
 properties:
   - id
   - tipo
