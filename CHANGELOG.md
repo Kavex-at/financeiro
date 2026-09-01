@@ -1,5 +1,62 @@
 # Columbia Financeiro — Changelog
 
+## v0.33.0 (2026-09-01) — o sistema passa a relatar a própria execução
+
+Quatro crons alimentam as três frentes e **nenhum avisava quando falhava**: sem `if: failure()`, sem
+canal de notificação, e `/health` respondendo "o processo subiu" em vez de "o pipeline rodou". O
+comentário do próprio `reaper-sispag.yml` já registrava a consequência — *"uma queda na sexta à
+noite ficaria invisível até segunda"*. O único detector de falha em produção era um analista notar
+que "últ. ingestão" parecia antiga.
+
+Em paralelo, a configuração que decide comportamento de negócio vivia em env vars invisíveis pelo
+produto, e **duas delas já tinham produzido defeito**: `RECEBIMENTO_TITULARES_INTERNOS` ausente
+deixou a detecção de transferência interna inerte (ruído de tesouraria na carteira do analista, 338
+linhas), e `COM297_GCD_NOTA_DEBITO` ausente foi a única falha real de valor da Frente IV
+(R$ 477.741,70). As duas falharam no instante de tocar dinheiro, não no deploy.
+
+**Nova tela `/operacao`** — saúde dos pipelines, alertas abertos e diagnóstico de configuração. É a
+tela que se abre *durante* um incidente, e isso governa o desenho: ela **não toca o ERP** (há teste
+que falha se um client Conexos for resolvido na rota), porque depender do sistema que costuma ser a
+causa do incidente a derrubaria justamente quando é necessária.
+
+- **`JobRun` é read-model, não tabela.** Adapters normalizam `permuta_eleicao_run`,
+  `recebimento_ingestao_run` e `pagamento_ingestao_run` — nenhuma migration, nenhum writer tocado.
+  Unificar exigiria migrar três writers de caminhos que movem dinheiro, com backfill, justamente
+  enquanto ainda não havia alerta nenhum para avisar se isso quebrasse algo.
+- **Ausência de sinal nunca é pintada como saúde.** `nunca-executou` e `sem-trilha` têm estado
+  próprio; o `reaper-sispag`, que não escreve linha de run, aparece **listado como cego** em vez de
+  omitido — omiti-lo faria a tela afirmar cobertura sobre 3 de 4 jobs. E a fonte do SISPAG, que não
+  distingue execução parcial, é marcada como tal para que ausência de `partial` não seja lida como
+  ausência de problema.
+- **Alertas com dedup no banco** (`alerta`, unique index + `ON CONFLICT DO NOTHING`): o mesmo
+  incidente na mesma janela não realerta, janela nova volta a alertar. Alertar demais é o modo de
+  falha mais caro — um canal ruidoso é um canal ignorado, e ignorá-lo desativa todos os alertas que
+  passam por ele.
+- **`AlertSink` como port.** `DbAlertSink` entra agora e faz o painel ser o próprio canal, com
+  alerting funcional sem credencial nenhuma; `EmailAlertSink` fica atrás de config para quando o
+  acesso existir — ligar vira um flip, não uma reescrita.
+- **Config doctor no boot**, com três níveis de criticidade. O do meio é a razão de existir:
+  `degrada-silenciosamente` é o caso em que o sistema sobe, a tela renderiza, e uma regra de negócio
+  fica inerte sem avisar. O sigilo é **estrutural**: `DiagnosticoVar` não tem campo de valor, então
+  não há por onde vazar credencial nem se alguém acrescentar um log depois.
+- **Detector de staleness com limite por pipeline** (extratos 3h, permutas 18h, SISPAG 30h),
+  derivado da cadência real de cada cron com folga para ao menos uma execução perdida — schedules do
+  GitHub são best-effort e atrasar é comportamento esperado, não incidente.
+- **Os quatro crons passam a alertar quando falham**, cobrindo o caso que o detector não alcança: o
+  workflow que morreu antes de existir linha de run.
+- **A reconciliação SEFAZ sai do browser.** Ela gravava número e flag no ledger a partir de uma rota
+  que só o navegador chamava, então quem lesse `ndeAutorizado` do Postgres via dado defasado até
+  alguém abrir a aba. Agora tem job próprio, reusando o **mesmo** `hidratarNdes` — equivalência por
+  construção, com teste que roda os dois caminhos e compara as chamadas aos writers.
+
+**Dois pontos cegos ficam nomeados em vez de descobertos depois** (ADR-0042): o detector roda no
+mesmo GitHub Actions que vigia e não o vê parar; e o `DbAlertSink` não consegue alertar que o
+backend caiu. Mitigação parcial: o painel computa staleness **na leitura**, então quem abre a tela vê
+a verdade mesmo sem o detector ter rodado. Solução completa — um dead-man's switch externo — está
+registrada como follow-up.
+
+Migrations `0052_alerta` e `0053_job_execucao`. Ontologia v0.22.0, ADR-0042.
+
 ## v0.32.0 (2026-08-28) — boleto sai na remessa com código de barras
 
 O SISPAG tratava boleto, PIX e TED do mesmo jeito. A auto-detecção de boleto lia
