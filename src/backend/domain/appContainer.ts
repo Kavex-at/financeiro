@@ -7,6 +7,7 @@ import ConexosSessionResolver from './client/ConexosSessionResolver.js';
 import PostgreeDatabaseClient from './client/database/PostgreeDatabaseClient.js';
 import EnvironmentProvider from './libs/environment/EnvironmentProvider.js';
 import { registerOperacaoSinks } from './operacaoContainer.js';
+import ConfigDoctor from './service/operacao/ConfigDoctor.js';
 import { registerRecebimentosPorts } from './recebimentosContainer.js';
 
 let bootstrapped = false;
@@ -46,6 +47,27 @@ const initDatabaseAndMigrate = async (isProduction: boolean): Promise<void> => {
 };
 
 /**
+ * Roda o ConfigDoctor no boot. Duas vars não configuradas já produziram defeito visível em
+ * produção — `RECEBIMENTO_TITULARES_INTERNOS` (carteira contaminada) e `COM297_GCD_NOTA_DEBITO`
+ * (a única falha real de valor da Frente IV). As duas falharam no instante de tocar dinheiro, e
+ * não no deploy. Isto move a descoberta para o boot.
+ */
+const diagnosticarConfiguracao = async (): Promise<void> => {
+    try {
+        const diagnostico = await container.resolve(ConfigDoctor).verificarNoBoot();
+        const { totalAusentesObrigatorias: obrig, totalAusentesSilenciosas: silenc } = diagnostico;
+        if (obrig > 0 || silenc > 0) {
+            console.warn(
+                `[appContainer] config: ${obrig} obrigatória(s) ausente(s), ` +
+                    `${silenc} que degrada(m) em silêncio. Ver /operacao.`,
+            );
+        }
+    } catch (error) {
+        console.warn('[appContainer] ConfigDoctor skipped:', describeError(error));
+    }
+};
+
+/**
  * Lazy bootstrap that wires the legacy Conexos adapter into the tsyringe
  * container. Called once before resolving any service/client that depends on
  * the Conexos ERP (e.g. the example `/conexos/filiais` route).
@@ -72,6 +94,12 @@ export const bootstrapAppContainer = async (): Promise<void> => {
     registerOperacaoSinks();
 
     await initDatabaseAndMigrate(env.environment === 'production');
+
+    // Diagnóstico de configuração (ADR-0042). DEPOIS das migrations: o alerta de `config-ausente`
+    // precisa da tabela `alerta` para ser persistido. Best-effort — um processo que se recusa a
+    // subir por causa do próprio diagnóstico derruba o sistema inteiro em vez do recurso mal
+    // configurado.
+    await diagnosticarConfiguracao();
 
     bootstrapped = true;
 };
