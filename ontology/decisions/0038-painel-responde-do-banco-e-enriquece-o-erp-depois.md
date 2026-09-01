@@ -106,3 +106,11 @@ escrita na rota antiga custaria um segundo com297 por carga de tela).
 - **Duas rotas separadas** (`/modalidades` e `/ndes`). Mais granular e mais resiliente, porém mais
   superfície de API para manter, sem ganho perceptível: as duas leituras rodam em paralelo dentro da
   mesma chamada.
+
+## Emenda (2026-09-01, ADR-0042)
+
+A hidratação da NDe descrita acima deixou a gravação do número do SEFAZ e do flag `ndeAutorizado`
+dependente de alguém ter a tela aberta — `GET /painel/enriquecimento` só é chamado pelo navegador
+(follow-up **F1**). A ADR-0042 dá à reconciliação um **job próprio**; a rota de enriquecimento
+continua servindo a tela, mas deixa de ser a única escritora. A decisão desta ADR — painel responde
+do banco, ERP enriquece depois — permanece válida e inalterada.

@@ -18,9 +18,16 @@
   no build (Fase 5)** — capturar uma baixa real de recebível se a parametrização não fechar.
 - **Emissão da NDe:** endpoint/trigger de emissão no Conexos **a confirmar na Fase 5** (junto do O3).
   Idempotência ("já emitida") já modelada; o contrato wire não.
-- **Módulo 6 (observabilidade):** transversal, não é entidade/ação única — **semeado** em cada fase
+- ~~**Módulo 6 (observabilidade):** transversal, não é entidade/ação única — **semeado** em cada fase
   (correlation id, run de auditoria, logs) e **consolidado na Fase 6** (dashboards/métricas/alertas).
-  Não modelar como entidade agora.
+  Não modelar como entidade agora.~~ **FECHADO em 2026-09-01 pela ADR-0042.** A consolidação
+  aconteceu: `JobRun` (read-model sobre as três tabelas de run) e `Alerta` (persistido) entraram
+  como entidades, com quatro ações em `actions/operacao/`. A previsão de que observabilidade "não é
+  entidade única" estava certa quanto à origem — ela nasceu semeada em cada frente — e errada quanto
+  ao destino: o que faltava era exatamente um agregado de leitura por cima do que já estava semeado.
+  Ficam abertos, como follow-up e fora do slice, os dois pontos cegos nomeados na ADR-0042 (detector
+  hospedado no próprio GH Actions; `DbAlertSink` incapaz de alertar que o backend caiu), cuja solução
+  comum é um dead-man's switch externo.
 - **Enum de componentes do rateio** (`PRINCIPAL | MULTA | JUROS | ENCOMENDA | …`) e a **estratégia de
   distribuição** (greedy por saldo / vencimento / componente): forma esboçada em `RateioRecebimento`;
   enum e motor concretos na **Fase 3/4**.
