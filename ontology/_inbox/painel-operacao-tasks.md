@@ -85,7 +85,12 @@ com a mesma idempotência. Critério em T6.
 
 **Aceite**
 1. Limites conforme `business-rules/staleness-por-pipeline.md`: extratos **3h**, permutas **18h**,
-   SISPAG **30h**, reaper **1h**.
+   SISPAG **30h**.
+   > **Desvio do spec original, corrigido durante a implementação.** O critério dizia "reaper 1h".
+   > Descobriu-se que `jobs/reaper-sispag-reconciling.ts` **não escreve linha de run nenhuma** — sem
+   > fonte, não há idade a medir e nenhum limite é aplicável. Manter o número faria a regra prometer
+   > uma cobertura que não pode existir. O reaper passou a ser LISTADO como `sem-trilha`, e ganhou
+   > alerta de falha de workflow (T7). Dar-lhe trilha é follow-up.
 2. Compara contra a última run **`success`** — `partial` não conta como sinal de vida e gera o
    alerta `job-parcial`, que é incidente distinto.
 3. Pipeline sem nenhuma run bem-sucedida (sistema novo) **não** dispara alerta perpétuo — decidir e
@@ -128,6 +133,11 @@ com a mesma idempotência. Critério em T6.
 2. `GET /painel/enriquecimento` continua servindo a tela e **deixa de ser a única escritora**.
 3. A rota deixa de ser o único caminho de escrita sob um GET sem role — **F3 fecha**.
 4. Registra `JobRun` como qualquer outro pipeline, com limite de staleness próprio.
+   > **Ampliação de escopo assumida.** Cumprir isto exigiu uma trilha para um job NOVO, que não
+   > existia — daí `job_execucao` (migration `0053`). É aditiva e não toca writer nenhum, então a
+   > restrição da ADR-0042 (não migrar writer vivo) continua respeitada. A alternativa era o job
+   > nascer cego como o reaper, entregando um segundo ponto cego dentro do slice que existe para
+   > eliminá-los. ADR-0042 emendada para registrar a decisão.
 5. Nenhuma mudança na regra de emissão da NDe — só em **quem** dispara a reconciliação.
 
 ---
