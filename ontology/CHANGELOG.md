@@ -3,6 +3,41 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.22.0 — o sistema relata a própria execução (2026-09-01, ADR-0042)
+
+Feature: `painel-operacao` (branch `feat/painel-operacao`, base `main`). O sistema executava bem e não
+sabia dizer que estava executando: quatro crons em GitHub Actions alimentam as três frentes e **nenhum
+tinha `if: failure()`**; `/health` respondia "o processo subiu", não "o pipeline rodou".
+
+- **NEW entity `JobRun` (`planned`)** — **read-model, não tabela.** Adapters normalizam
+  `permuta_eleicao_run`, `recebimento_ingestao_run` e `pagamento_ingestao_run`. Nenhuma migration, nenhum
+  writer tocado. Unificar em tabela exigiria migrar três writers de caminhos que movem dinheiro,
+  com backfill, **justamente enquanto ainda não existe alerta** para avisar se isso quebrasse algo.
+  `partial` é preservado, nunca achatado em `success` — é o sinal das 5 runs com 77 contas falhas.
+  Duas das três fontes o distinguem; o SISPAG não, e essa cegueira herdada fica como follow-up.
+  Preço aceito: pipeline sem adapter é invisível no painel.
+- **NEW entity `Alerta` (`planned`)** — persistido, `dedupKey` por `(tipo, alvo, janela)`. Migration
+  `0052_alerta.sql`. `DbAlertSink` entra agora e faz o painel ser o próprio canal (alerting funcional
+  sem credencial); `EmailAlertSink` fica atrás de config até o acesso existir — e-mail é o canal
+  preferido, mas foi decidido que **não pode bloquear o slice**.
+- **NEW actions (4)** — `exporOperacao`, `detectarStaleness`, `notificarFalha`, `validarConfiguracao`,
+  em `actions/operacao/`.
+- **NEW business-rule `staleness-por-pipeline` (`planned`)** — limite por cadência real de cada cron
+  (extratos 3h, permutas 18h, SISPAG 30h, reaper 1h), sempre com folga de ao menos uma execução
+  perdida: schedules do GH são best-effort, e alertar na primeira perdida treina o time a ignorar o
+  canal — o modo de falha mais caro, porque desativa todos os outros alertas junto.
+- **Emenda à ADR-0038** — a reconciliação SEFAZ ganha job próprio e deixa de depender de uma aba
+  aberta. Fecha os follow-ups **F1** e **F3**.
+- **Watchlist:** o item "Módulo 6 (observabilidade) — consolidado na Fase 6" **fecha**. A previsão de
+  que observabilidade "não é entidade única" estava certa quanto à origem e errada quanto ao destino:
+  faltava um agregado de leitura por cima do que já estava semeado.
+- **Dois pontos cegos nomeados e aceitos:** um detector hospedado no próprio GH Actions não vê o GH
+  Actions parar de disparar; `DbAlertSink` não consegue alertar que o backend caiu. Mitigação parcial
+  via **I6** (staleness computado na leitura do painel, não só no cron). Solução completa — dead-man's
+  switch externo — é follow-up, fora do slice.
+- Coverage: `entities_total` 16→18 (planned 5→7, pct 56→50), `actions_total` 23→27 (pct 70→59),
+  `business_rules_total` 20→21.
+
 ## v0.18.0 — descrição do item da NDe é do DOCUMENTO, não do cadastro (2026-08-11, ADR-0036)
 
 Feature: `nde-descricao-item` (branch `fix/nde-descricao-item`, base `main`). A homologação da NDe era
