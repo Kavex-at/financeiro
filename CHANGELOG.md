@@ -1,5 +1,35 @@
 # Columbia Financeiro — Changelog
 
+## v0.34.0 (2026-09-01) — a linha digitável do boleto sai do ERP
+
+Para conferir um pagamento com o banco, a analista abria o Conexos numa outra aba. O
+código de barras existia (`FinItemSispag.itsNumCodbar`) mas só aparecia em probe job —
+nunca no domínio, nunca na API.
+
+Fica no **item do lote**, não na carteira de títulos, porque antes da remessa o dado não
+existe: o ERP anexa o `itsNumCodbar` durante o `importarTitulos(associarDda)`, que roda
+dentro da geração (ADR-0040). Em rascunho a resposta é vazia — é o estágio, não uma falha.
+São 47 dígitos (linha digitável), não os 44 do código de barras.
+
+- **feat(sispag):** `listarLinhasDigitaveisDoLote` lê o grid do `finItemSispag` com schema
+  exigindo 47 dígitos exatos. Item que não bate é **omitido**, nunca vira string vazia — um
+  `?? ''` aqui reintroduziria a classe de defeito do ADR-0040 num campo que a pessoa copia e
+  paga. Falha de leitura sobe `ConexosError`: lista vazia afirmaria "nenhum item tem boleto",
+  e um grid ilegível não afirma nada.
+- **feat(sispag):** botão de copiar no `LoteCard`. A busca acontece na **expansão do card**,
+  não no clique — navegador bloqueia `clipboard.writeText` chamado depois de `await`.
+- **feat(sispag):** `GET /lotes/:id/linhas-digitaveis` atrás de `requireRole('admin')`. A
+  linha carrega banco, agência e conta do cedente no campo livre, além do valor — mesma
+  classe de dado do `.REM`, que já tinha o guard por LGPD Art. 6º e LC 105.
+- **test(sispag):** 13 casos novos, entre eles a garantia de que os 47 dígitos não aparecem
+  em log nenhum, e o 403 do guard. `itsNumCodbar` declarado no contract test: sem isso, um
+  rename do Conexos passaria verde no CI e o botão sumiria da tela em silêncio.
+
+> Regis-Review `2026-09-01-1944`: **7,0, gate passa com 0 P0** (31 cards: 7 P1, 15 P2, 9 P3).
+> Os P1 abertos estão em `ontology/_inbox/copiar-barcode-item-lote-followups.md` — os dois
+> maiores são o interceptor axios que loga o body sem redigir `itsNumCodbar`, e o DV da linha
+> digitável não validado na leitura (o repo valida 100% dos 44 díg. na escrita e 0/47 na leitura).
+
 ## v0.33.0 (2026-09-01) — o sistema passa a relatar a própria execução
 
 Quatro crons alimentam as três frentes e **nenhum avisava quando falhava**: sem `if: failure()`, sem
@@ -146,7 +176,6 @@ universo completo nasceu depois e não herdou a correção.
   nulidade que causou o bug; o do detalhe mostra os mesmos campos populados. Os 269 mocks digitados
   à mão desta frente concordavam com o autor do código, não com o ERP — por isso a suíte ficou verde
   por 62 dias com o defeito em produção.
-
 
 ## v0.31.1 (2026-08-28) — o robô pode assumir, mas não sem deixar rastro
 
