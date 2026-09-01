@@ -70,3 +70,8 @@ lançamentos × inativar títulos).
 Um pipeline novo entra escrevendo um adapter. Não há migration a fazer, mas também não há herança
 automática: **pipeline sem adapter é invisível no painel.** É a dívida conhecida deste desenho, e o
 preço de não tocar nos writers atuais.
+
+**Caso concreto já existente:** `jobs/reaper-sispag-reconciling.ts` não escreve linha de run nenhuma
+— sem fonte, não há adapter possível. O painel o lista como `sem trilha de execução` em vez de
+omiti-lo, porque omitir afirmaria cobertura completa sobre 3 de 4 jobs. Ver
+`business-rules/staleness-por-pipeline.md`.
