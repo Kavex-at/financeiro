@@ -131,6 +131,48 @@ describe('GET /sispag/retornos', () => {
             expect(await readJson(res)).toEqual({ arquivos: [{ garCodSeq: 5 }] });
         });
     });
+
+    it('GET /lotes/:id/linhas-digitaveis devolve as linhas do lote', async () => {
+        const linhasDigitaveisDoLote = jest
+            .fn()
+            .mockResolvedValue([{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }]);
+        container.registerInstance(SispagPainelService, { linhasDigitaveisDoLote } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/lote-1/linhas-digitaveis`);
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toEqual({
+                itens: [{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }],
+            });
+        });
+        expect(linhasDigitaveisDoLote).toHaveBeenCalledWith('lote-1');
+    });
+
+    it('GET /lotes/:id/linhas-digitaveis exige role admin', async () => {
+        // A linha digitável é destino de pagamento (banco/agência/conta do cedente no campo
+        // livre, mais o valor). Sem o guard, um loop de `curl` extrai a carteira de boletos.
+        const linhasDigitaveisDoLote = jest.fn();
+        container.registerInstance(SispagPainelService, { linhasDigitaveisDoLote } as never);
+
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/lote-1/linhas-digitaveis`);
+            expect(res.status).toBe(403);
+        });
+        expect(linhasDigitaveisDoLote).not.toHaveBeenCalled();
+    });
+
+    it('GET /lotes/:id/linhas-digitaveis em rascunho devolve lista vazia, não erro', async () => {
+        // Rascunho não tem item no fin015. Vazio é o estágio, não uma falha — e a UI
+        // simplesmente não oferece o botão de copiar.
+        const linhasDigitaveisDoLote = jest.fn().mockResolvedValue([]);
+        container.registerInstance(SispagPainelService, { linhasDigitaveisDoLote } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/rascunho-1/linhas-digitaveis`);
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toEqual({ itens: [] });
+        });
+    });
 });
 
 describe('GET /sispag/lotes', () => {

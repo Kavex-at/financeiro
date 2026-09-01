@@ -2,6 +2,7 @@ import { inject, injectable } from 'tsyringe';
 import ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.js';
+import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
@@ -58,6 +59,7 @@ const CONEXOS_FANOUT_LIMIT = 4;
 export default class SispagPainelService {
     public constructor(
         @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
+        @inject(ConexosSispagWriteClient) private readonly fin015: ConexosSispagWriteClient,
         @inject(ConexosSispagRetornoClient)
         private readonly retorno: ConexosSispagRetornoClient,
         @inject(ConexosBaseClient) private readonly base: ConexosBaseClient,
@@ -221,6 +223,45 @@ export default class SispagPainelService {
         }
         // Mais recentes primeiro (por sequencial do arquivo).
         return arquivos.sort((a, b) => b.garCodSeq - a.garCodSeq);
+    };
+
+    /**
+     * Linhas digitáveis dos boletos do lote — o que a analista cola no banco para conferir.
+     *
+     * Só existe depois da remessa gerada: o ERP anexa `itsNumCodbar` ao item durante o
+     * `importarTitulos(associarDda)`, que roda dentro da geração (ADR-0040). Em RASCUNHO a
+     * resposta é vazia SEM ida ao ERP — não é falha, é o estágio.
+     *
+     * Nunca lança. Isto alimenta um botão de copiar; derrubar o card do lote inteiro porque o
+     * Conexos oscilou seria trocar uma conveniência por uma indisponibilidade. Falha vira
+     * `BUSINESS_WARN` e lista vazia — a UI simplesmente não oferece o botão.
+     */
+    public linhasDigitaveisDoLote = async (
+        loteId: string,
+    ): Promise<Array<{ docCod: string; titCod: string; linhaDigitavel: string }>> => {
+        const lote = await this.loteRepo.getLoteComItens(loteId);
+        if (!lote) return [];
+        const { nativeFilCod, nativeBncCod, nativeFlpCod } = lote;
+        if (nativeFilCod == null || nativeBncCod == null || nativeFlpCod == null) return [];
+        try {
+            return await this.fin015.listarLinhasDigitaveisDoLote({
+                filCod: nativeFilCod,
+                bncCod: nativeBncCod,
+                flpCod: nativeFlpCod,
+            });
+        } catch (err) {
+            // Sem a linha digitável em si no log — ela identifica beneficiário e valor.
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'linhasDigitaveisDoLote: leitura do fin015 falhou',
+                data: {
+                    loteId,
+                    flpCod: nativeFlpCod,
+                    motivo: err instanceof Error ? err.message : 'desconhecido',
+                },
+            });
+            return [];
+        }
     };
 
     /**

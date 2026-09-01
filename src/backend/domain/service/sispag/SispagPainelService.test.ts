@@ -54,6 +54,7 @@ const make = (
         listContasFavorecido?: jest.Mock;
         listContasCorrentes?: jest.Mock;
         listChavesComBoleto?: jest.Mock;
+        listarLinhasDigitaveisDoLote?: jest.Mock;
         remessaLedger?: { listReconcilingParadas: jest.Mock };
         conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
     } = {},
@@ -87,6 +88,11 @@ const make = (
         listTitulosEmRascunho: jest.fn().mockResolvedValue(over.emRascunho ?? []),
         getLoteComItens: over.getLoteComItens ?? jest.fn().mockResolvedValue(null),
     } as unknown as LotePagamentoRepository;
+    const listarLinhasDigitaveisDoLote =
+        over.listarLinhasDigitaveisDoLote ?? jest.fn().mockResolvedValue([]);
+    const fin015 = {
+        listarLinhasDigitaveisDoLote,
+    } as unknown as import('../../client/ConexosSispagWriteClient.js').default;
     const env = {
         getEnvironmentVars: jest
             .fn()
@@ -102,6 +108,7 @@ const make = (
     }) as never;
     const service = new SispagPainelService(
         sispag,
+        fin015,
         retorno,
         base,
         new BoundedConcurrency(),
@@ -113,7 +120,7 @@ const make = (
         env,
         log,
     );
-    return { service, log, listChavesComBoleto };
+    return { service, log, listChavesComBoleto, listarLinhasDigitaveisDoLote };
 };
 
 describe('SispagPainelService.montarPainel', () => {
@@ -379,5 +386,72 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — BOLETO vem do ban
         });
         await service.modalidadesDisponiveisDoLote('L1');
         expect(listChavesComBoleto).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('SispagPainelService.linhasDigitaveisDoLote', () => {
+    const loteGerado = (over: Record<string, unknown> = {}) => ({
+        id: 'lote-1',
+        filCod: 2,
+        status: 'REMESSA_GERADA',
+        nativeFilCod: 2,
+        nativeBncCod: 4,
+        nativeFlpCod: 7,
+        itens: [],
+        ...over,
+    });
+
+    it('devolve as linhas digitáveis do lote com remessa gerada', async () => {
+        const linhas = [{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }];
+        const { service, listarLinhasDigitaveisDoLote } = make({
+            getLoteComItens: jest.fn().mockResolvedValue(loteGerado()),
+            listarLinhasDigitaveisDoLote: jest.fn().mockResolvedValue(linhas),
+        });
+        await expect(service.linhasDigitaveisDoLote('lote-1')).resolves.toEqual(linhas);
+        expect(listarLinhasDigitaveisDoLote).toHaveBeenCalledWith({
+            filCod: 2,
+            bncCod: 4,
+            flpCod: 7,
+        });
+    });
+
+    it('lote RASCUNHO → lista vazia SEM chamar o ERP', async () => {
+        // Em rascunho o item nem existe no fin015: chamar seria gastar uma ida ao ERP para
+        // receber vazio de volta.
+        const { service, listarLinhasDigitaveisDoLote } = make({
+            getLoteComItens: jest
+                .fn()
+                .mockResolvedValue(loteGerado({ status: 'RASCUNHO', nativeFlpCod: undefined })),
+        });
+        await expect(service.linhasDigitaveisDoLote('lote-1')).resolves.toEqual([]);
+        expect(listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
+    });
+
+    it('lote inexistente → lista vazia, sem exceção', async () => {
+        const { service } = make({ getLoteComItens: jest.fn().mockResolvedValue(null) });
+        await expect(service.linhasDigitaveisDoLote('nao-existe')).resolves.toEqual([]);
+    });
+
+    it('falha do ERP → lista vazia + BUSINESS_WARN (o card não quebra por um botão)', async () => {
+        const { service, log } = make({
+            getLoteComItens: jest.fn().mockResolvedValue(loteGerado()),
+            listarLinhasDigitaveisDoLote: jest.fn().mockRejectedValue(new Error('erp fora')),
+        });
+        await expect(service.linhasDigitaveisDoLote('lote-1')).resolves.toEqual([]);
+        expect(log.warn).toHaveBeenCalled();
+    });
+
+    it('nunca loga a linha digitável completa', async () => {
+        const completa = '1'.repeat(47);
+        const { service, log } = make({
+            getLoteComItens: jest.fn().mockResolvedValue(loteGerado()),
+            listarLinhasDigitaveisDoLote: jest
+                .fn()
+                .mockResolvedValue([{ docCod: '1', titCod: '1', linhaDigitavel: completa }]),
+        });
+        await service.linhasDigitaveisDoLote('lote-1');
+        const chamadas = (fn: unknown) => (fn as jest.Mock).mock.calls;
+        const tudoQueFoiLogado = JSON.stringify([...chamadas(log.info), ...chamadas(log.warn)]);
+        expect(tudoQueFoiLogado).not.toContain(completa);
     });
 });

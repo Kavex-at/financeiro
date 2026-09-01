@@ -54,6 +54,25 @@ router.get(
 
 // GET /sispag/lotes/:id/modalidades-disponiveis — formas de pgto. do favorecido por título
 // (A2 opção B), lidas ao vivo do Conexos. READ-ONLY.
+/**
+ * Linhas digitáveis dos boletos do lote. Só devolve algo depois da remessa gerada — o ERP
+ * anexa o código ao item no import (ADR-0040). Em rascunho a lista é vazia, e isso é o
+ * estágio, não um erro: o serviço nunca lança.
+ */
+router.get(
+    '/lotes/:id/linhas-digitaveis',
+    // Mesmo raciocínio do download do `.REM`: a linha digitável é destino de pagamento —
+    // carrega banco, agência e conta do cedente no campo livre, além do valor. Sem o guard,
+    // um loop de `curl` extrai a carteira de boletos da Columbia. LGPD Art. 6º e LC 105.
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(SispagPainelService);
+        const itens = await service.linhasDigitaveisDoLote(String(req.params.id));
+        res.json({ itens });
+    }),
+);
+
 router.get(
     '/lotes/:id/modalidades-disponiveis',
     asyncHandler(async (req, res) => {

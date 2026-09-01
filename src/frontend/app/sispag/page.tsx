@@ -723,7 +723,7 @@ function SispagPanel() {
                               <Badge
                                 variant="outline"
                                 className="border-success/40 text-success"
-                                title="O Conexos tem um boleto DDA associado a este título — pode sair por boleto, com código de barras."
+                                title="Boleto DDA associado — código adicionado pelo ERP ao gerar a remessa"
                               >
                                 <Barcode className="mr-1 size-3" aria-hidden />
                                 boleto

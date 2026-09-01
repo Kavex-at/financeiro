@@ -496,6 +496,76 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
         });
     });
 
+    describe('listarLinhasDigitaveisDoLote', () => {
+        const linha = (over: Record<string, unknown> = {}) => ({
+            docCod: 10400,
+            titCod: 1,
+            itsNumCodbar: '1'.repeat(47),
+            ...over,
+        });
+
+        it('devolve só os itens com código de barras, como string de 47 dígitos', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                rows: [linha(), linha({ docCod: 10399, itsNumCodbar: null })],
+            });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+            });
+            expect(res).toEqual([{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }]);
+            expect(base.listGenericPaginated.mock.calls[0][0]).toBe(
+                'fin015/finItemSispag/list/2/4/4',
+            );
+        });
+
+        it('é LEITURA — nunca chama um post de escrita', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ rows: [linha()] });
+            await make(base).listarLinhasDigitaveisDoLote({ filCod: 2, bncCod: 4, flpCod: 4 });
+            expect(base.postGenericOnce).not.toHaveBeenCalled();
+        });
+
+        it('omite item cujo barcode não tem 47 dígitos — não devolve string vazia', async () => {
+            // Coagir aqui reintroduziria a classe de defeito do ADR-0040: campo degradado em
+            // silêncio que vira "boleto sem barras" lá na frente, no segmento J.
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                rows: [
+                    linha({ docCod: 1, itsNumCodbar: '123' }),
+                    linha({ docCod: 2, itsNumCodbar: `${'9'.repeat(46)}X` }),
+                    linha({ docCod: 3, itsNumCodbar: '' }),
+                    linha({ docCod: 4 }),
+                ],
+            });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+            });
+            expect(res.map((r) => r.docCod)).toEqual(['4']);
+        });
+
+        it('lote sem nenhum item com boleto → lista vazia, sem erro', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ rows: [] });
+            await expect(
+                make(base).listarLinhasDigitaveisDoLote({ filCod: 2, bncCod: 4, flpCod: 4 }),
+            ).resolves.toEqual([]);
+        });
+
+        it('falha de leitura do grid vira ConexosError — não lista vazia', async () => {
+            // Lista vazia diria "nenhum item tem boleto", que é uma AFIRMAÇÃO. Um grid que
+            // não pôde ser lido não afirma nada.
+            const base = buildBase();
+            base.listGenericPaginated.mockRejectedValue(new Error('boom'));
+            await expect(
+                make(base).listarLinhasDigitaveisDoLote({ filCod: 2, bncCod: 4, flpCod: 4 }),
+            ).rejects.toBeInstanceOf(ConexosError);
+        });
+    });
+
     describe('listarTitulosComBoletoDda', () => {
         it('usa o lote nativo mais recente como contexto e devolve só quem tem o flag', async () => {
             const base = buildBase();
