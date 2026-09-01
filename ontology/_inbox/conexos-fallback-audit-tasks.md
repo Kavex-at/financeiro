@@ -24,7 +24,24 @@ interrompendo ninguém. Muda o que fica registrado.
 
 ---
 
-## T1 — O resolver passa a falar (I-1) e a publicar a identidade resolvida
+### Task 1: O resolver passa a falar (I-1) e a publicar a identidade resolvida
+
+**Files to change:**
+- `ConexosRequestState`
+- `ConexosSessionResolver`
+- `ConexosService`
+- `ConexosIdentityProvider` (novo)
+
+**Acceptance criteria:**
+- Usuário SEM vínculo → robô, **nenhum** log (é o caminho normal, logar viraria ruído).
+- Fora de request (job/cron) → robô, **nenhum** log, `current()` devolve `undefined`.
+- Usuário COM vínculo e `decrypt` falhando → robô + 1 `warn` com `motivo: 'decrypt'`.
+- Usuário COM vínculo e `ensureSid` rejeitando → robô + 1 `warn` com `motivo: 'login'`.
+- O `warn` **nunca** contém a senha, cifrada ou em claro.
+- Nenhum caminho passa a lançar: as quatro degradações continuam devolvendo o robô.
+- `current()` reflete `viaRobo: true` quando o usuário vinculado degradou, e `false` quando a sessão dele foi de fato usada.
+
+**Dependencies:** none
 
 **Mudança.**
 - `ConexosRequestState` ganha `identity?: { conexosUsername: string; viaRobo: boolean }`.
@@ -40,17 +57,18 @@ interrompendo ninguém. Muda o que fica registrado.
   `state.resolved` (na hora da escrita no ledger o login já aconteceu; no `beginExecution` pode
   ainda não ter acontecido).
 
-**Critérios de aceite.**
-- Usuário SEM vínculo → robô, **nenhum** log (é o caminho normal, logar viraria ruído).
-- Fora de request (job/cron) → robô, **nenhum** log, `current()` devolve `undefined`.
-- Usuário COM vínculo e `decrypt` falhando → robô + 1 `warn` com `motivo: 'decrypt'`.
-- Usuário COM vínculo e `ensureSid` rejeitando → robô + 1 `warn` com `motivo: 'login'`.
-- O `warn` **nunca** contém a senha, cifrada ou em claro.
-- Nenhum caminho passa a lançar: as quatro degradações continuam devolvendo o robô.
-- `current()` reflete `viaRobo: true` quando o usuário vinculado degradou, e `false` quando a
-  sessão dele foi de fato usada.
+### Task 2: Migration `0051` — as colunas de identidade nos seis ledgers
 
-## T2 — Migration `0051`: as colunas de identidade nos seis ledgers
+**Files to change:**
+- `src/backend/migrations/0051_execucao_identidade_conexos.sql`
+
+**Acceptance criteria:**
+- `ADD COLUMN IF NOT EXISTS` nas 6 tabelas — idempotente, re-rodável.
+- Ambas NULLABLE, sem default. Linhas históricas ficam NULL = "não capturada" (nunca "robô").
+- Nenhum backfill. Nenhum índice (não há consulta por identidade no escopo).
+- `npm run migrate` aplica limpo sobre um banco já em `0050`.
+
+**Dependencies:** none
 
 **Mudança.** `src/backend/migrations/0051_execucao_identidade_conexos.sql` adiciona, em
 `permuta_alocacao_execucao`, `solicitacao_numerario_execucao`, `recebimento_execucao`,
@@ -61,32 +79,33 @@ conexos_username TEXT   -- login do ERP que executou (usuário vinculado ou rob�
 conexos_usn_cod  TEXT   -- usnCod do /login; TEXT p/ espelhar conexos_sessions.usn_cod
 ```
 
-**Critérios de aceite.**
-- `ADD COLUMN IF NOT EXISTS` nas 6 tabelas — idempotente, re-rodável.
-- Ambas NULLABLE, sem default. Linhas históricas ficam NULL = "não capturada" (nunca "robô").
-- Nenhum backfill. Nenhum índice (não há consulta por identidade no escopo).
-- `npm run migrate` aplica limpo sobre um banco já em `0050`.
+### Task 3: Os seis ledgers persistem a identidade (I-2)
 
-## T3 — Os seis ledgers persistem a identidade (I-2)
+**Files to change:**
+- `PermutaExecucaoRepository`
+- `SolicitacaoNumerarioExecucaoRepository`
+- `RecebimentoExecucaoRepository`
+- `RemessaExecucaoRepository`
+- `ConciliacaoExecucaoRepository`
+- `NumerarioExecucaoRepository`
+
+**Acceptance criteria:**
+- Execução de usuário com vínculo válido → linha com o login **dele** e o `usnCod` dele.
+- Execução degradada para o robô → linha com o login **do robô**.
+- `ON CONFLICT` de linha `settled` **preserva** a identidade original, como já faz com `executado_por` (não regride idempotência).
+- Identidade indisponível → colunas ficam NULL; nenhuma escrita falha por causa disso.
+- `dry_run` não é tratado de forma especial: se houve sessão resolvida, registra.
+- SQL 100% parametrizado (Rule #5); nenhuma assinatura de service muda.
+
+**Dependencies:** Task 1, Task 2
 
 **Mudança.** Cada repositório de execução injeta `ConexosIdentityProvider` e grava as duas colunas:
 - no INSERT de write-ahead (`beginExecution` / `insertIntent`);
 - no `markSettled` / `markError`, preenchendo **só quando ainda nulo** (`COALESCE(coluna, $novo)`) —
   no `beginExecution` a sessão pode não ter sido resolvida ainda, no terminal ela sempre foi.
 
-Repositórios: `PermutaExecucaoRepository`, `SolicitacaoNumerarioExecucaoRepository`,
-`RecebimentoExecucaoRepository`, `RemessaExecucaoRepository`, `ConciliacaoExecucaoRepository` e
-`NumerarioExecucaoRepository` (a sexta, `solicitacao_numerario` — sem o sufixo `_execucao` no nome;
-achada pelo Regis-Review e corrigida dentro do ciclo).
-
-**Critérios de aceite.**
-- Execução de usuário com vínculo válido → linha com o login **dele** e o `usnCod` dele.
-- Execução degradada para o robô → linha com o login **do robô**.
-- `ON CONFLICT` de linha `settled` **preserva** a identidade original, como já faz com
-  `executado_por` (não regride idempotência).
-- Identidade indisponível → colunas ficam NULL; nenhuma escrita falha por causa disso.
-- `dry_run` não é tratado de forma especial: se houve sessão resolvida, registra.
-- SQL 100% parametrizado (Rule #5); nenhuma assinatura de service muda.
+A sexta é `solicitacao_numerario` — sem o sufixo `_execucao` no nome; achada pelo Regis-Review e
+corrigida dentro do ciclo.
 
 ---
 

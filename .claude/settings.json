@@ -44,5 +44,19 @@
       "Bash(rm -rf:*)",
       "Bash(rm -r:*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/hook-board-cards-bash.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
   }
 }

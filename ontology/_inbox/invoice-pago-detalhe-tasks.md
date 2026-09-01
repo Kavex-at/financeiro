@@ -44,50 +44,88 @@ Derivação `Σ titMnyValor − Σ titMnyTotPago === 0` validada contra o DETALH
 
 ## Tasks
 
-### T1 — `com308` passa a trazer o valor pago do título
-- **Arquivo:** `domain/client/ConexosTitulosClient.ts`, `domain/client/permutas/conexosPermutasSchemas.ts`
-- Adicionar `titMnyTotPago` ao `fieldList` de `listTitulosAPagar` e mapear para `valorPago?: number`
-  em `TituloAPagar` (via `parseOptionalNumber`, como os campos irmãos). Campo opcional no
-  `com308RowSchema`.
-- **Aceite:** (a) `npm run typecheck` verde; (b) teste unitário prova que uma row com
-  `titMnyTotPago` mapeia para `valorPago`, e que a ausência do campo devolve `undefined`
-  (não `0` — `0` significaria "nada pago" e é semanticamente diferente de "não sei").
+### Task 1: `com308` passa a trazer o valor pago do título
 
-### T2 — a ingestão deriva `pago` dos títulos, não da row do list
-- **Arquivo:** `domain/service/permutas/EleicaoPermutasService.ts` (`hidratarInvoiceNegociada`)
-- Derivar `pago` de `Σ titMnyValor − Σ titMnyTotPago === 0` (estrito, sem epsilon).
-- **Fallback conservador** (mantém a convenção das duas correções anteriores): com308 falhou, sem
-  títulos, ou algum título sem `valorPago`/`valorBrl` → `pago = false`. NUNCA inferir `pago=true`
-  sem prova — esconder uma invoice em aberto é pior do que mostrar uma paga.
-- **Aceite:** teste de regressão com os valores REAIS do doc 14042 (face/pago `2032384.41` →
-  `pago: true`) e um caso parcialmente pago (face > pago → `pago: false`); mais o caso
-  "com308 lançou" → `pago: false`.
+**Files to change:**
+- `domain/client/ConexosTitulosClient.ts`
+- `domain/client/permutas/conexosPermutasSchemas.ts`
 
-### T3 — agendar o cron da ingestão (decisão do Yuri: incluir neste PR)
-- **Arquivo:** `render.yaml`
-- `jobs/ingest-permutas.ts` existe desde sempre com o crontab `0 6 * * *` **documentado no header e
-  nunca configurado**; o `render.yaml` só declara `type: web`. Sem isso, o `pago` corrigido só é
-  recalculado quando alguém clica em "Ingerir" — uma invoice liquidada DEPOIS da última ingestão
-  continua aparecendo.
-- **Aceite:** serviço `type: cron` no `render.yaml` rodando `npm run job:ingest-permutas`, com os
-  mesmos envs do serviço web.
+**Acceptance criteria:**
+- `npm run typecheck` verde.
+- Teste unitário prova que uma row com `titMnyTotPago` mapeia para `valorPago`.
+- A ausência do campo devolve `undefined`, não `0` — `0` significaria "nada pago" e é semanticamente diferente de "não sei".
 
-### T4 — registrar a evidência de wire na ontologia
-- **Arquivos:** `ontology/integrations/conexos.md`, `ontology/entities/invoice.md`
-- Registrar: (a) o `com298/list` **também não popula** `mnyTitAberto`/`mnyTitPago`/`mnyTitValor` no
-  lado INVOICE (1146/1146) — a evidência de 2026-06-18 era só sobre as 411 PROFORMAs e foi
-  generalizada sem medição; (b) `mnyTitAberto` **não serve como filtro** (`#GT` → 500);
-  (c) o com308 carrega `titMnyTotPago` e a derivação bate 30/30 com o detalhe; (d) o enum `pago`
-  do com308 como pergunta aberta.
-- **Aceite:** nenhuma REGRA alterada — só evidência de integração. Sem ADR (a regra do `pago` não mudou).
+**Dependencies:** none
 
-### T5 — a sonda fica no repo
-- `jobs/probe-invoice-pago.ts` commitado (convenção: 40+ probes versionados). Read-only, com o gate
-  `PROBE_ALLOW_PRD=1`.
+Adicionar `titMnyTotPago` ao `fieldList` de `listTitulosAPagar` e mapear para `valorPago?: number`
+em `TituloAPagar` (via `parseOptionalNumber`, como os campos irmãos). Campo opcional no
+`com308RowSchema`.
+
+### Task 2: a ingestão deriva `pago` dos títulos, não da row do list
+
+**Files to change:**
+- `domain/service/permutas/EleicaoPermutasService.ts` (`hidratarInvoiceNegociada`)
+
+**Acceptance criteria:**
+- Teste de regressão com os valores REAIS do doc 14042 (face/pago `2032384.41` → `pago: true`).
+- Caso parcialmente pago (face > pago) → `pago: false`.
+- Caso "com308 lançou" → `pago: false`.
+
+**Dependencies:** Task 1
+
+Derivar `pago` de `Σ titMnyValor − Σ titMnyTotPago === 0` (estrito, sem epsilon).
+
+**Fallback conservador** (mantém a convenção das duas correções anteriores): com308 falhou, sem
+títulos, ou algum título sem `valorPago`/`valorBrl` → `pago = false`. NUNCA inferir `pago=true`
+sem prova — esconder uma invoice em aberto é pior do que mostrar uma paga.
+
+### Task 3: agendar o cron da ingestão
+
+**Files to change:**
+- `render.yaml`
+
+**Acceptance criteria:**
+- Serviço `type: cron` no `render.yaml` rodando `npm run job:ingest-permutas`, com os mesmos envs do serviço web.
+
+**Dependencies:** Task 2
+
+Decisão do Yuri: incluir neste PR. `jobs/ingest-permutas.ts` existe desde sempre com o crontab
+`0 6 * * *` **documentado no header e nunca configurado**; o `render.yaml` só declara `type: web`.
+Sem isso, o `pago` corrigido só é recalculado quando alguém clica em "Ingerir" — uma invoice
+liquidada DEPOIS da última ingestão continua aparecendo.
+
+### Task 4: registrar a evidência de wire na ontologia
+
+**Files to change:**
+- `ontology/integrations/conexos.md`
+- `ontology/entities/invoice.md`
+
+**Acceptance criteria:**
+- Nenhuma REGRA alterada — só evidência de integração.
+- Sem ADR (a regra do `pago` não mudou).
+
+**Dependencies:** Task 2
+
+Registrar: (a) o `com298/list` **também não popula** `mnyTitAberto`/`mnyTitPago`/`mnyTitValor` no
+lado INVOICE (1146/1146) — a evidência de 2026-06-18 era só sobre as 411 PROFORMAs e foi
+generalizada sem medição; (b) `mnyTitAberto` **não serve como filtro** (`#GT` → 500);
+(c) o com308 carrega `titMnyTotPago` e a derivação bate 30/30 com o detalhe; (d) o enum `pago`
+do com308 como pergunta aberta.
+
+### Task 5: a sonda fica no repo
+
+**Files to change:**
+- `jobs/probe-invoice-pago.ts`
+
+**Acceptance criteria:**
+- `jobs/probe-invoice-pago.ts` commitado (convenção: 40+ probes versionados).
+- Read-only, com o gate `PROBE_ALLOW_PRD=1`.
+
+**Dependencies:** none
 
 ## Fora de escopo (follow-ups)
 - **Backfill:** desnecessário — a ingestão faz UPSERT com `pago = EXCLUDED.pago`, então a primeira
-  execução após o deploy corrige as 1146 linhas sozinha. (Com o T3, isso passa a acontecer sozinho.)
-- **Enum `pago` do com308** (1/2/3): decodificar em sonda futura; pode simplificar T2.
+  execução após o deploy corrige as 1146 linhas sozinha. (Com a Task 3, isso passa a acontecer sozinho.)
+- **Enum `pago` do com308** (1/2/3): decodificar em sonda futura; pode simplificar a Task 2.
 - **`titVldStatus#EQ '1'`** no com308: a soma ignora títulos com outro status. Não deu divergência
   em 30/30, mas é risco residual — o fallback conservador cobre.
