@@ -121,6 +121,34 @@ export default class StalenessDetector {
         const run = p.ultimaRun;
         if (run === undefined) return undefined;
 
+        // Run ABANDONADA: aberta, nunca fechada. Acontece quando o runner morre entre o
+        // `createRun` e o `finishRun` — SIGKILL, `timeout-minutes` estourado, runner evaporado.
+        // `running` não é `error`, então nada mais aqui reagiria a ela: a única detecção residual
+        // seria o staleness do último SUCESSO, que para o SISPAG abriria uma janela cega de até
+        // 30h. O teto é o limite do próprio pipeline — passou disso, a run não está lenta, está
+        // morta.
+        if (run.status === JOB_RUN_STATUS.RUNNING) {
+            const abertaHaMs = agora.getTime() - Date.parse(run.startedAt);
+            const teto = p.limiteStalenessMs;
+            if (teto !== undefined && abertaHaMs > teto) {
+                return {
+                    tipo: ALERTA_TIPO.JOB_FALHOU,
+                    alvo: p.pipeline,
+                    severidade: ALERTA_SEVERIDADE.ERRO,
+                    // Janela = a run. Uma run abandonada alerta uma vez, não a cada rodada.
+                    janelaInicio: new Date(run.startedAt),
+                    detalhe: {
+                        rotulo: p.rotulo,
+                        runId: run.runId,
+                        motivo: 'run abandonada — aberta e nunca fechada',
+                        abertaHaMs,
+                        limiteMs: teto,
+                    },
+                };
+            }
+            return undefined;
+        }
+
         if (run.status === JOB_RUN_STATUS.ERROR) {
             return {
                 tipo: ALERTA_TIPO.JOB_FALHOU,

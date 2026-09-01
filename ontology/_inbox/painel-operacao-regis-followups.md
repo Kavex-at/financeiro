@@ -2,8 +2,23 @@
 
 > Aberto em 2026-09-01, ao fim do ciclo `/feature-new`. Nada aqui bloqueia a entrega.
 > Gates: **SpecVerifier APROVADO** (35 critérios, 0 reprovados) · **PatternGuardian** 6 achados
-> (2 rejeitados com justificativa, 4 viram a nota #4 abaixo) · **DesignSystemReviewer** 3 achados
-> (1 rejeitado, 1 aplicado, 1 vira #3).
+> (2 rejeitados com justificativa, 4 resolvidos pelo item 4) · **DesignSystemReviewer** 3 achados
+> (1 rejeitado, 1 aplicado, 1 vira #3) · **Regis-Review (subset: availability, fault-tolerance,
+> security)** — 0 P0; **6 P1 REMEDIADOS nesta branch** (ver abaixo), demais viraram follow-up.
+
+---
+
+## REMEDIADOS neste ciclo (não são follow-up — ficam registrados porque mudaram o desenho)
+
+| # | Achado | O que era |
+|---|---|---|
+| R1 | **ConfigDoctor rodava em todos os 58 jobs** | Estava no `bootstrapAppContainer`. Jobs recebem env estreito de propósito (`detect-staleness` passa só `databaseConnectionString`), e a janela de dedup é o instante do boot → **~144 alertas falsos/dia**. O sistema de alerta produzindo o ruído que existe para evitar. Movido para o boot do servidor HTTP. |
+| R2 | **O detector era o job menos observado da frota** | Sem trilha e sem `if: failure()`. Um detector que rebenta deixaria `alertas: []` ambíguo entre "tudo bem" e "o vigia morreu". Agora escreve `job_execucao` como `operacao-detector` e entra na lista que ele mesmo vigia. |
+| R3 | **Detector sem isolamento por pipeline** | Uma exceção do banco ao emitir abortava o laço: um defeito em permutas cegava extratos e SISPAG na mesma rodada. `emitirIsolado`, mesma doutrina do `entregarSeguro`. |
+| R4 | **`reconciliar-nde-sefaz` fechava `success` com o ERP fora** | `hidratarNdes` degrada em silêncio e devolve `reconciliadas: 0`, indistinguível de "nada a reconciliar". A cobertura de filial agora sobe até o job, que marca `partial` — a cegueira do `pagamento_ingestao_run` que este job nasceu para não herdar. |
+| R5 | **Mensagem de erro vazava credencial para o banco e para a tela** | `password authentication failed for user "…"`, connection strings inteiras, iam para `job_execucao.error_message` e `alerta.detalhe.erro` — **persistidos**, não só logados. `redactErrorMessage` redige na **fronteira de escrita**, valendo para todo job futuro sem depender do autor lembrar. |
+| R6 | **Run ABANDONADA não era detectada** | Runner morto entre `createRun` e `finishRun` deixa a linha em `running`, que não é `error` — a única detecção residual era o staleness do último sucesso, até **30h de janela cega** no SISPAG. O detector passa a tratar `running` além do limite do pipeline como run abandonada. |
+| R7 | **`registrarEntrega` engolia falha em silêncio** | Quebrava a promessa da própria classe de que "não chegou" fosse distinguível de "não houve alerta" — justamente no momento em que essa distinção importa. Agora registra.
 
 ---
 
@@ -41,6 +56,15 @@ aditivo; não entrou aqui só por ser escopo de outra frente.
 ---
 
 ## P2
+
+### 2b. `alerta-workflow-falhou` sai 0 mesmo quando não consegue emitir
+
+Deliberado — o workflow já está falhando e o passo de alerta não pode mascarar nem duplicar essa
+falha (I5 no nível do CI). Mitigação parcial existente: ele faz `console.error`, e o log do Actions é
+um canal secundário real, visível para quem abre a execução.
+
+O que falta é um canal que **notifique** em vez de apenas registrar — o mesmo dead-man's switch do
+item 1. Não tem conserto próprio.
 
 ### 3. `scope="col"` ausente em TODAS as tabelas do app
 
@@ -97,6 +121,22 @@ compartilhar o link já apontando para a aba certa tem valor real — só não �
 `fetchOperacao()` faz cast do JSON para `OperacaoPainel` sem validar. Nenhuma lib do front usa Zod
 hoje (`lib/recebimentos.ts`, `lib/api.ts`, `lib/sispag.ts` — todas fazem cast), então adotar aqui
 sozinho divergiria. Mesma natureza do item 4: decisão de repositório.
+
+### 7b. `GET /operacao` é `Promise.all` — uma leitura lenta derruba a tela inteira
+
+`routes/operacao.ts` faz `Promise.all([exporSaude, listarAbertos])`. Se a tabela `alerta` estiver
+presa num lock, a resposta inteira 500a — e o operador abriu a tela justamente porque suspeitou de
+incidente. Contradiz a própria promessa da docstring ("é a tela que se abre quando o ERP está fora")
+para o caso simétrico de UMA leitura do Postgres estar lenta.
+
+`ConfigDoctor.diagnosticar()` é síncrono e nem toca o banco — deveria conseguir renderizar sozinho.
+Conserto: `Promise.allSettled` com uma seção `erros[]` no payload; a UI já é por aba e a API pode
+espelhar. Não entrou aqui porque muda o contrato da resposta e merece a sua própria fatia.
+
+### 7c. `hidratarNdes` percorre as NDes com `await` sequencial
+
+Backlog grande pós-outage pode encostar no `timeout-minutes: 20` do workflow e cair no caso da run
+abandonada (agora detectado, mas ainda assim uma rodada perdida).
 
 ### 8. `partial` no `pagamento_ingestao_run` (SISPAG)
 

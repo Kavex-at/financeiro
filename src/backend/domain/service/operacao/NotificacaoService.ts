@@ -62,12 +62,22 @@ export default class NotificacaoService {
         }
     };
 
-    /** Gravar o desfecho também é best-effort: o alerta já existe, e perdê-lo agora seria pior. */
+    /**
+     * Gravar o desfecho é best-effort: o alerta já existe, e perdê-lo agora seria pior.
+     *
+     * Best-effort, porém, NÃO é silencioso. A promessa desta classe é que "o alerta não chegou"
+     * seja distinguível de "não houve alerta" — e ela mora justamente em `sinkResultados`. Se a
+     * gravação falha, é exatamente essa distinção que se perde, e engolir a falha sem registro
+     * quebraria a garantia no único momento em que ela importa.
+     */
     private registrarEntrega = async (id: number, resultados: SinkResultado[]): Promise<void> => {
         try {
             await this.alertaRepository.registrarEntrega(id, resultados);
-        } catch {
-            // silêncio deliberado: ver docstring.
+        } catch (error) {
+            console.error(
+                `[notificacao] alerta ${id} emitido, mas o desfecho dos sinks NÃO foi gravado:`,
+                error instanceof Error ? error.message : String(error),
+            );
         }
     };
 }
