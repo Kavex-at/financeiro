@@ -319,6 +319,15 @@ Every feature or rule change goes through the pipeline. No exceptions.
 | `ObservabilityAdvisor` | Called when new Lambda handler/job added |
 | `Regis-Review` (8× `qa-*` + `qa-consolidator`) | Mandatory post-impl architecture review; only P0 findings re-enter the loop |
 
+## Gotchas conhecidos
+
+- **`bootstrapAppContainer` é compartilhado com ~58 jobs.** Tudo que se acrescenta a ele roda em
+  TODA execução de job, não só no servidor. Jobs recebem env deliberadamente estreito (o
+  `detect-staleness` passa só `databaseConnectionString`), então qualquer diagnóstico, warm-up ou
+  efeito colateral posto ali dispara falso-positivo em massa. Efeito de boot que dependa de
+  configuração completa vai em `index.ts`, no boot do servidor. *(Lição do ciclo `painel-operacao`,
+  2026-09-01: o ConfigDoctor ali teria emitido ~144 alertas falsos por dia.)*
+
 ## Inviolable Rules
 1. Never commit `.env`, AWS credentials, or `terraform.tfstate` **(alvo — quando a infra Terraform existir)**
 2. Never hardcode tenant values — use `EnvironmentProvider`
