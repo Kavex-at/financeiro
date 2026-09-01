@@ -10,6 +10,7 @@ import {
     type PipelineSaude,
     SITUACAO_PIPELINE,
 } from '../../interface/operacao/JobRun.js';
+import { redactErrorMessage } from '../../../http/redact.js';
 import JobRunReadModel from './JobRunReadModel.js';
 import NotificacaoService from './NotificacaoService.js';
 
@@ -45,7 +46,13 @@ export default class StalenessDetector {
 
         for (const p of saude) {
             for (const alerta of this.alertasDe(p, agora)) {
-                const emitido = await this.notificacaoService.emitir(alerta);
+                // Isolamento POR INCIDENTE. `NotificacaoService` já isola por SINK, mas
+                // `criarSeNovo` ainda pode lançar por conta do banco (pool exausto, timeout,
+                // violação de CHECK). Sem esta guarda, uma pipeline problemática aborta o laço e as
+                // SEGUINTES deixam de ser inspecionadas na rodada — o detector ficaria cego para
+                // extratos e SISPAG por causa de um defeito em permutas. Mesma doutrina do
+                // `entregarSeguro`: falha isolada, nunca em silêncio.
+                const emitido = await this.emitirIsolado(alerta, p.pipeline);
                 if (emitido !== null) emitidos.push(emitido);
             }
         }
@@ -55,6 +62,22 @@ export default class StalenessDetector {
             emitidos,
             inspecionados: saude.map((p) => ({ pipeline: p.pipeline, situacao: p.situacao })),
         };
+    };
+
+    /** Emite um alerta sem deixar a falha contaminar os pipelines seguintes da mesma rodada. */
+    private emitirIsolado = async (
+        alerta: AlertaNovo,
+        pipeline: string,
+    ): Promise<Alerta | null> => {
+        try {
+            return await this.notificacaoService.emitir(alerta);
+        } catch (error) {
+            console.error(
+                `[detect-staleness] falha ao emitir alerta de ${pipeline}:`,
+                error instanceof Error ? error.message : String(error),
+            );
+            return null;
+        }
     };
 
     /** Um pipeline pode gerar staleness E parcialidade — são incidentes distintos. */
@@ -105,7 +128,15 @@ export default class StalenessDetector {
                 severidade: ALERTA_SEVERIDADE.ERRO,
                 // Janela = a run. Uma falha nova gera alerta novo; a mesma run, não.
                 janelaInicio: new Date(run.finishedAt ?? run.startedAt),
-                detalhe: { rotulo: p.rotulo, runId: run.runId, erro: run.errorMessage },
+                // `detalhe` é persistido em JSONB e renderizado no painel — mesma exigência de
+                // redação da coluna `error_message`.
+                detalhe: {
+                    rotulo: p.rotulo,
+                    runId: run.runId,
+                    ...(run.errorMessage !== undefined
+                        ? { erro: redactErrorMessage(run.errorMessage) }
+                        : {}),
+                },
             };
         }
 

@@ -249,3 +249,71 @@ describe('StalenessDetector — resultado', () => {
         expect(r.inspecionados).toHaveLength(2);
     });
 });
+
+describe('StalenessDetector — o erro da run não vaza credencial (achado de segurança)', () => {
+    it('redige a mensagem de erro antes de gravá-la em alerta.detalhe', async () => {
+        const { detector, emitidos } = montar([
+            saudeDe({
+                ultimaRun: runDe({
+                    status: JOB_RUN_STATUS.ERROR,
+                    errorMessage:
+                        'connect failed: postgresql://financeiro:s3nh4Secreta@db:5432/fin — ' +
+                        'password authentication failed for user "financeiro"',
+                }) as never,
+            }),
+        ]);
+
+        await detector.detectar(AGORA);
+
+        const serializado = JSON.stringify(emitidos);
+        expect(serializado).not.toContain('s3nh4Secreta');
+        expect(serializado).not.toContain('"financeiro"');
+        // Mas o operador ainda precisa saber QUE falhou e onde.
+        expect(serializado).toContain('connect failed');
+    });
+
+    it('omite o campo `erro` quando a run não trouxe mensagem', async () => {
+        const { detector, emitidos } = montar([
+            saudeDe({ ultimaRun: runDe({ status: JOB_RUN_STATUS.ERROR }) as never }),
+        ]);
+
+        await detector.detectar(AGORA);
+        expect(
+            (emitidos[0] as unknown as { detalhe: Record<string, unknown> }).detalhe,
+        ).not.toHaveProperty('erro');
+    });
+});
+
+describe('StalenessDetector — isolamento por pipeline (F-avail-3)', () => {
+    it('uma pipeline que explode ao emitir NÃO impede a inspeção das seguintes', async () => {
+        const readModel = {
+            exporSaude: jest.fn().mockResolvedValue([
+                saudeDe({
+                    pipeline: PIPELINE.PERMUTAS_ELEICAO,
+                    situacao: SITUACAO_PIPELINE.PARADO,
+                    idadeDesdeUltimoSucessoMs: LIMITE_RECEB * 2,
+                }),
+                saudeDe({
+                    pipeline: PIPELINE.SISPAG_PAGAMENTOS,
+                    situacao: SITUACAO_PIPELINE.PARADO,
+                    idadeDesdeUltimoSucessoMs: LIMITE_RECEB * 2,
+                }),
+            ]),
+        };
+        const notif = {
+            emitir: jest
+                .fn()
+                .mockRejectedValueOnce(new Error('pool exausto'))
+                .mockResolvedValueOnce({ id: 2, tipo: 'job-parado', alvo: 'x' }),
+        };
+        const detector = new StalenessDetector(readModel as never, notif as never);
+
+        const r = await detector.detectar(AGORA);
+
+        // A segunda pipeline foi inspecionada apesar de a primeira ter explodido — sem isto, um
+        // defeito em permutas cegaria SISPAG na mesma rodada.
+        expect(notif.emitir).toHaveBeenCalledTimes(2);
+        expect(r.emitidos).toHaveLength(1);
+        expect(r.inspecionados).toHaveLength(2);
+    });
+});

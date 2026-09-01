@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import { redactErrorMessage } from '../../../http/redact.js';
 import type { JobRunStatus } from '../../interface/operacao/JobRun.js';
 
 export interface JobExecucao {
@@ -81,7 +82,14 @@ export default class JobExecucaoRepository {
                 runId: input.runId,
                 status: input.status,
                 metricas: JSON.stringify(input.metricas ?? {}),
-                errorMessage: input.errorMessage ?? null,
+                // Redigido NA FRONTEIRA DE ESCRITA, não no chamador: assim vale para todo job
+                // presente e futuro sem depender de cada autor lembrar. Mensagem de erro de infra
+                // carrega credencial no corpo (`password authentication failed for user "…"`,
+                // connection string inteira), e isto aqui é PERSISTIDO e renderizado no painel.
+                errorMessage:
+                    input.errorMessage === undefined
+                        ? null
+                        : redactErrorMessage(input.errorMessage),
             },
         );
     };

@@ -13,6 +13,12 @@ export const PIPELINE = {
     SISPAG_PAGAMENTOS: 'sispag-pagamentos',
     /** Reconciliação da NDe com o SEFAZ (ADR-0042) — nasce COM trilha, em `job_execucao`. */
     RECEBIMENTOS_NDE_SEFAZ: 'recebimentos-nde-sefaz',
+    /**
+     * O PRÓPRIO detector de staleness. Vigiar a frota e não se vigiar deixaria `alertas: []`
+     * ambíguo entre "tudo bem" e "o vigia morreu" — a pior ambiguidade possível num painel de
+     * operação. Ele escreve em `job_execucao` como qualquer outro job.
+     */
+    OPERACAO_DETECTOR: 'operacao-detector',
     /** Sem trilha de execução — declarado para ser LISTADO como cego, nunca omitido. */
     SISPAG_REAPER: 'sispag-reaper',
 } as const;

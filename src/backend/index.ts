@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { container } from 'tsyringe';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+import { diagnosticarConfiguracao } from './domain/appContainer.js';
 import { buildAuthMiddleware } from './http/auth.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
@@ -155,6 +156,14 @@ const start = async (): Promise<void> => {
     // (que usa `import.meta`, incompatível com o Jest) fique fora do alcance dos testes do boot.
     container.register(MIGRATION_RUNNER_TOKEN, { useClass: MigrationRunner });
     await container.resolve(BootMigrator).run();
+
+    // Diagnóstico de configuração (ADR-0042) — DEPOIS das migrations, porque o alerta de
+    // `config-ausente` precisa da tabela `alerta`. Roda AQUI, no boot do servidor, e não no
+    // `bootstrapAppContainer`: aquele é compartilhado com 58 jobs, que recebem env estreito de
+    // propósito, e diagnosticá-los encheria o painel de falso-positivo. Ver a docstring de
+    // `diagnosticarConfiguracao`.
+    await diagnosticarConfiguracao();
+
     app.listen(PORT, () => {
         console.log(`Financeiro backend on port ${PORT}`);
     });

@@ -58,7 +58,16 @@ const build = (opts: {
         { listRecentRuns: jest.fn().mockResolvedValue(opts.permutas ?? []) } as never,
         { listRecentRuns: jest.fn().mockResolvedValue(opts.recebimentos ?? []) } as never,
         { listRecentRuns: jest.fn().mockResolvedValue(opts.sispag ?? []) } as never,
-        { listRecentRuns: jest.fn().mockResolvedValue(opts.jobExecucao ?? []) } as never,
+        {
+            // `lerJobExecucao` é chamado uma vez por pipeline novo (NDe-SEFAZ e o detector), no
+            // mesmo repositório — o mock precisa responder POR pipeline, senão os dois recebem as
+            // mesmas runs e o teste valida uma fantasia.
+            listRecentRuns: jest.fn(async (pipeline: string) =>
+                (opts.jobExecucao ?? []).filter(
+                    (r) => (r as { pipeline?: string }).pipeline === pipeline,
+                ),
+            ),
+        } as never,
     );
 
 const acharPipeline = (saude: Awaited<ReturnType<JobRunReadModel['exporSaude']>>, p: string) => {
@@ -243,6 +252,7 @@ describe('JobRunReadModel — pipelines sem trilha', () => {
         const saude = await build({}).exporSaude(AGORA);
         expect(saude.map((s) => s.pipeline).sort()).toEqual(
             [
+                PIPELINE.OPERACAO_DETECTOR,
                 PIPELINE.PERMUTAS_ELEICAO,
                 PIPELINE.RECEBIMENTOS_EXTRATOS,
                 PIPELINE.RECEBIMENTOS_NDE_SEFAZ,
@@ -271,5 +281,34 @@ describe('JobRunReadModel — pipelines sem trilha', () => {
         expect(nde.situacao).toBe(SITUACAO_PIPELINE.OK);
         expect(nde.ultimaRun?.metricas).toEqual({ ndesLidas: 12, reconciliadas: 2 });
         expect(nde.distinguePartial).toBe(true);
+    });
+});
+
+describe('JobRunReadModel — o vigia entra na lista que ele vigia', () => {
+    it('expõe o próprio detector como pipeline, para `alertas: []` deixar de ser ambíguo', async () => {
+        const saude = await build({
+            jobExecucao: [
+                {
+                    id: 'det-1',
+                    pipeline: PIPELINE.OPERACAO_DETECTOR,
+                    triggeredBy: 'cron',
+                    status: 'success',
+                    metricas: { inspecionados: 6, alertasEmitidos: 0 },
+                    startedAt: '2026-09-01T11:45:00.000Z',
+                    finishedAt: '2026-09-01T11:45:02.000Z',
+                },
+            ],
+        }).exporSaude(AGORA);
+
+        const detector = acharPipeline(saude, PIPELINE.OPERACAO_DETECTOR);
+        expect(detector.situacao).toBe(SITUACAO_PIPELINE.OK);
+        expect(detector.ultimaRun?.metricas).toEqual({ inspecionados: 6, alertasEmitidos: 0 });
+    });
+
+    it('detector que nunca rodou aparece como nunca-executou, não como ok', async () => {
+        const saude = await build({}).exporSaude(AGORA);
+        expect(acharPipeline(saude, PIPELINE.OPERACAO_DETECTOR).situacao).toBe(
+            SITUACAO_PIPELINE.NUNCA_EXECUTOU,
+        );
     });
 });

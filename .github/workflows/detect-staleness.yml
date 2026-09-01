@@ -54,5 +54,24 @@ jobs:
       # Sem retry: se a detecção falhar, a próxima hora tenta de novo. Insistir aqui só
       # atrasaria a descoberta — e um detector que não roda é justamente o que o painel cobre
       # pela leitura (I6).
+      # O detector agora escreve a própria trilha em `job_execucao` (migration 0053).
+      - name: Aplicar migrations pendentes (idempotente)
+        run: npm run migrate
       - name: Detectar pipelines parados
         run: npm run job:detect-staleness
+
+      # ⚠️ O vigia também precisa ser vigiado. Sem este passo, o detector era a ÚNICA workflow da
+      # frota sem alerta de falha — e um detector que rebenta na execução (não porque o Actions
+      # parou, mas por um defeito seu) deixaria a tela mostrando "pipeline vermelho + lista de
+      # alertas vazia", convidando o operador a culpar o painel em vez do detector.
+      - name: Alertar falha (ADR-0042)
+        if: failure()
+        continue-on-error: true
+        env:
+          databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          PIPELINE_ALVO: operacao-detector
+          WORKFLOW_NOME: Detector de staleness
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          environment: production
+          client_name: local
+        run: npm run job:alerta-workflow-falhou

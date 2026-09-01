@@ -37,18 +37,36 @@ const main = async (): Promise<void> => {
 
         console.log(
             `[reconciliar-nde-sefaz] ${r.ndesLidas} NDe(s) lidas · ` +
-                `${r.reconciliadas} reconciliada(s) · ${r.externasPendentes} externa(s) pendente(s)`,
+                `${r.reconciliadas} reconciliada(s) · ${r.externasPendentes} externa(s) pendente(s) · ` +
+                `filiais ${r.filiaisOk}/${r.filiaisTentadas}`,
         );
 
         // `externasPendentes` NÃO é falha: são NDes emitidas fora da ferramenta que a SEFAZ ainda
         // não autorizou. Marcar `partial` por causa delas transformaria operação normal em alarme.
+        //
+        // Cobertura de filial, sim, decide o status. `hidratarNdes` degrada em silêncio quando o
+        // ERP não responde — devolve `reconciliadas: 0` sem lançar, exatamente igual a "não havia
+        // nada a reconciliar". Fechar `success` sobre isso esconderia uma divergência crescente
+        // entre o ledger e o SEFAZ atrás de uma tela verde, que é a cegueira do
+        // `pagamento_ingestao_run` que este job nasceu para não herdar.
+        const cobertura = r.filiaisOk < r.filiaisTentadas;
+        const status = cobertura ? 'partial' : 'success';
+        if (cobertura) {
+            console.warn(
+                `[reconciliar-nde-sefaz] PARCIAL — ${r.filiaisTentadas - r.filiaisOk} filial(is) ` +
+                    'não puderam ser lidas no ERP; a reconciliação delas fica para a próxima rodada.',
+            );
+        }
+
         await runRepo.finishRun({
             runId,
-            status: 'success',
+            status,
             metricas: {
                 ndesLidas: r.ndesLidas,
                 reconciliadas: r.reconciliadas,
                 externasPendentes: r.externasPendentes,
+                filiaisTentadas: r.filiaisTentadas,
+                filiaisOk: r.filiaisOk,
             },
         });
     } catch (error) {

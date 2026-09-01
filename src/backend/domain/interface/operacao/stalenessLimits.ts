@@ -75,6 +75,13 @@ export const LIMITES_STALENESS: Readonly<Record<MonitoravelPipeline, LimiteStale
         limiteMs: 3 * HORA_MS,
         distinguePartial: true,
     },
+    [PIPELINE.OPERACAO_DETECTOR]: {
+        pipeline: PIPELINE.OPERACAO_DETECTOR,
+        rotulo: 'Operação — detector de staleness',
+        cadencia: '45 * * * * (de hora em hora)',
+        limiteMs: 3 * HORA_MS,
+        distinguePartial: true,
+    },
     [PIPELINE.SISPAG_PAGAMENTOS]: {
         pipeline: PIPELINE.SISPAG_PAGAMENTOS,
         rotulo: 'SISPAG — ingestão de pagamentos',

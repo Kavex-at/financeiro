@@ -466,13 +466,26 @@ export default class RecebimentosPainelService {
     private hidratarNdes = async (
         ndes: NdePainelRow[],
         filCods: number[],
-    ): Promise<{ linhas: NdePainelRow[]; reconciliadas: number; externasPendentes: number }> => {
+    ): Promise<{
+        linhas: NdePainelRow[];
+        reconciliadas: number;
+        externasPendentes: number;
+        /** Cobertura da leitura do ERP — ver `reconciliarNdesComSefaz`. */
+        filiaisTentadas: number;
+        filiaisOk: number;
+    }> => {
         const doErp = await this.lerNdesDoErp(filCods);
-        if (doErp === undefined) {
-            return { linhas: ndes, reconciliadas: 0, externasPendentes: 0 };
+        if (doErp.filiaisOk === 0) {
+            return {
+                linhas: ndes,
+                reconciliadas: 0,
+                externasPendentes: 0,
+                filiaisTentadas: doErp.filiaisTentadas,
+                filiaisOk: 0,
+            };
         }
 
-        const porDocCod = new Map<number, NdeErpListItem>(doErp.map((n) => [n.docCod, n]));
+        const porDocCod = new Map<number, NdeErpListItem>(doErp.itens.map((n) => [n.docCod, n]));
         const linhas: NdePainelRow[] = [];
         let reconciliadas = 0;
 
@@ -507,6 +520,8 @@ export default class RecebimentosPainelService {
             linhas: [...linhas, ...externas],
             reconciliadas,
             externasPendentes: externas.filter((n) => n.ndeAutorizado !== true).length,
+            filiaisTentadas: doErp.filiaisTentadas,
+            filiaisOk: doErp.filiaisOk,
         };
     };
 
@@ -528,11 +543,27 @@ export default class RecebimentosPainelService {
      */
     public reconciliarNdesComSefaz = async (
         input: MontarPainelInput = {},
-    ): Promise<{ reconciliadas: number; externasPendentes: number; ndesLidas: number }> => {
+    ): Promise<{
+        reconciliadas: number;
+        externasPendentes: number;
+        ndesLidas: number;
+        filiaisTentadas: number;
+        filiaisOk: number;
+    }> => {
         const { filCods } = await this.resolverRecorte(input);
         const ndesDoBanco = await this.ndeRepo.listParaPainel({ filCods, limit: PAINEL_NDES_CAP });
-        const { reconciliadas, externasPendentes } = await this.hidratarNdes(ndesDoBanco, filCods);
-        return { reconciliadas, externasPendentes, ndesLidas: ndesDoBanco.length };
+        const r = await this.hidratarNdes(ndesDoBanco, filCods);
+        // A cobertura de filial sobe até o job. Sem ela, um ERP INTEIRAMENTE fora do ar produz
+        // `reconciliadas: 0` sem lançar — indistinguível de "não havia nada a reconciliar" — e o
+        // job fecharia `success` sobre uma divergência crescente entre o ledger e o SEFAZ. Era
+        // exatamente a cegueira do `pagamento_ingestao_run` que a ADR-0042 se propôs a não herdar.
+        return {
+            reconciliadas: r.reconciliadas,
+            externasPendentes: r.externasPendentes,
+            ndesLidas: ndesDoBanco.length,
+            filiaisTentadas: r.filiaisTentadas,
+            filiaisOk: r.filiaisOk,
+        };
     };
 
     /**
@@ -542,10 +573,13 @@ export default class RecebimentosPainelService {
      * Uma filial que falha isoladamente NÃO zera as outras — a aba parcial vale mais que a aba vazia,
      * desde que a falha apareça no log.
      */
-    private lerNdesDoErp = async (filCods: number[]): Promise<NdeErpListItem[] | undefined> => {
+    private lerNdesDoErp = async (
+        filCods: number[],
+    ): Promise<{ itens: NdeErpListItem[]; filiaisTentadas: number; filiaisOk: number }> => {
         const prazoFinal = Date.now() + PAINEL_NDE_HIDRATACAO_BUDGET_MS;
         const acumulado: NdeErpListItem[] = [];
-        let algumaOk = false;
+        let filiaisOk = 0;
+        let filiaisTentadas = 0;
 
         for (let i = 0; i < filCods.length; i += FANOUT_LIMIT_RECEBIMENTOS) {
             if (Date.now() >= prazoFinal) {
@@ -567,12 +601,15 @@ export default class RecebimentosPainelService {
                 lote.map((filCod) => this.lerFilialComPrazo(filCod)),
             );
             for (const r of resultados) {
+                filiaisTentadas += 1;
                 if (r === undefined) continue;
-                algumaOk = true;
+                filiaisOk += 1;
                 acumulado.push(...r);
             }
         }
-        return algumaOk ? acumulado : undefined;
+        // Cobertura sobe junto com os itens: o caller precisa distinguir "o ERP não tinha nada a
+        // dizer" de "o ERP não pôde ser lido", que produzem o MESMO array vazio.
+        return { itens: acumulado, filiaisTentadas, filiaisOk };
     };
 
     /**
