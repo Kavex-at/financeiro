@@ -83,6 +83,17 @@ export default class EnvironmentVars {
     public recebimentoTitularesInternos: string[];
 
     /**
+     * Allow-list de USUÁRIOS (não papéis) que enxergam o Painel de Operação
+     * (`OPERACAO_USUARIOS`, CSV). Vazio = cai no `requireRole('admin')` de sempre.
+     *
+     * Existe porque `admin` hoje é todo mundo (12 de 12 contas), então o papel não restringe
+     * nada — restringir por identidade é o único recorte real. Fail-OPEN de propósito: o painel
+     * é ferramenta de incidente, e uma env ausente não pode trancar a porta justamente na hora
+     * de diagnosticar. O `ConfigDoctor` marca a ausência como `degrada-silenciosamente`.
+     */
+    public operacaoUsuarios: string[];
+
+    /**
      * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
      * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
      * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
@@ -235,6 +246,7 @@ export default class EnvironmentVars {
         recebimentoIngestStartDate,
         recebimentoIngestFilCods,
         recebimentoTitularesInternos,
+        operacaoUsuarios,
         fin014ContaFinanceira,
         com297GcdNotaDebitoNome,
         com297GcdNotaDebito,
@@ -271,6 +283,7 @@ export default class EnvironmentVars {
         recebimentoIngestStartDate: Date;
         recebimentoIngestFilCods: number[];
         recebimentoTitularesInternos: string[];
+        operacaoUsuarios: string[];
         fin014ContaFinanceira?: number;
         com297GcdNotaDebitoNome: string;
         com297GcdNotaDebito?: number;
@@ -307,6 +320,7 @@ export default class EnvironmentVars {
         this.recebimentoIngestStartDate = recebimentoIngestStartDate;
         this.recebimentoIngestFilCods = recebimentoIngestFilCods;
         this.recebimentoTitularesInternos = recebimentoTitularesInternos;
+        this.operacaoUsuarios = operacaoUsuarios;
         this.fin014ContaFinanceira = fin014ContaFinanceira;
         this.com297GcdNotaDebitoNome = com297GcdNotaDebitoNome;
         this.com297GcdNotaDebito = com297GcdNotaDebito;

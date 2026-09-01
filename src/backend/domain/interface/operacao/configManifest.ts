@@ -108,6 +108,16 @@ export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
         segredo: false,
     },
 
+    {
+        nome: 'OPERACAO_USUARIOS',
+        frente: FRENTE.NUCLEO,
+        criticidade: CRITICIDADE.DEGRADA_SILENCIOSAMENTE,
+        consequenciaSeAusente:
+            'O Painel de Operação fica visível para QUALQUER admin — e admin hoje é toda a ' +
+            'plataforma (12 de 12 contas). Sem a lista, o recorte por identidade não existe.',
+        segredo: false,
+    },
+
     // --- Recebimentos (Frente IV) ---
     {
         nome: 'RECEBIMENTO_TITULARES_INTERNOS',

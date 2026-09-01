@@ -133,3 +133,32 @@ por escrito é o ponto: sem isso, o próximo a olhar assume cobertura que não e
 - **Alertar na primeira execução perdida.** Descartado: schedules best-effort atrasam por
   comportamento normal, e um canal ruidoso é um canal ignorado — o modo de falha mais caro, porque
   desativa todos os outros alertas junto. Ver `business-rules/staleness-por-pipeline.md`.
+
+## Emenda (2026-09-01): o painel é recortado por IDENTIDADE, não por papel
+
+O painel nasceu atrás de `requireRole('admin')`, o que não recortava nada: **12 de 12 contas da
+plataforma são `admin`** (`docs/impacto/h1-permutas-achados.md` §6). Na prática, "só admin" queria
+dizer "todo mundo".
+
+Ele também não pertence à mesma prateleira das outras telas. Permutas, SISPAG e Recebimentos são do
+analista financeiro; a Operação é de quem opera a plataforma. Estavam lado a lado na home por
+inércia, não por decisão.
+
+**`OPERACAO_USUARIOS` (CSV)** passa a recortar por username. Três escolhas dentro disso:
+
+1. **Allow-list, não usuário único.** Um painel de incidente que só uma pessoa enxerga é um painel
+   que ninguém enxerga quando essa pessoa está dormindo. E um username fixo no código quebraria ao
+   renomear a conta.
+2. **Fail-OPEN quando a lista está vazia.** Env ausente = comportamento de hoje (qualquer admin).
+   Trancar a porta por causa de configuração faltando, justamente numa ferramenta de incidente,
+   troca uma exposição por um lockout silencioso durante uma queda. O `ConfigDoctor` reporta a
+   ausência como `degrada-silenciosamente`, então o buraco fica visível.
+3. **404, não 403.** O pedido era que a tela não aparecesse para quem não opera; um 403 confirma
+   que ela existe e entrega metade do que se queria esconder.
+
+O gate é **server-side** nas duas rotas. `GET /me/permissoes` existe só para a home saber se mostra
+o card — o front não reimplementa a regra, e um front desatualizado esconde ou mostra um card, nunca
+abre porta.
+
+A sonda `GET /health/pipelines` **continua pública**: ela é para máquina, não para gente, e já
+devolve o mínimo (status e contagens, sem nomes).
