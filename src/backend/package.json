@@ -16,6 +16,7 @@
         "job:ingest-pagamentos": "tsx jobs/ingest-pagamentos.ts",
         "job:formar-lotes": "tsx jobs/formar-lotes.ts",
         "job:ingest-extratos": "tsx jobs/ingest-extratos.ts",
+    "job:detect-staleness": "tsx jobs/detect-staleness.ts",
         "test": "jest",
         "test:watch": "jest --watch",
         "lint": "npx biome check .",

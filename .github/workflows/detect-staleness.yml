@@ -1,0 +1,58 @@
+name: Detector de staleness dos pipelines (ADR-0042)
+
+# Compara a idade da última run BEM-SUCEDIDA de cada pipeline com o limite daquele pipeline
+# (ontology/business-rules/staleness-por-pipeline.md) e emite alerta com deduplicação por janela.
+#
+# Existe porque até aqui NENHUM dos quatro crons avisava quando falhava: sem `if: failure()`, sem
+# canal, e `/health` respondendo "o processo subiu" em vez de "o pipeline rodou". O comentário do
+# próprio reaper-sispag.yml já registrava a consequência: "uma queda na sexta à noite ficaria
+# invisível até segunda".
+#
+# ⚠️ PONTO CEGO CONHECIDO E ACEITO (ADR-0042). Este detector roda no MESMO GitHub Actions que ele
+# vigia, então não enxerga o cenário em que o próprio Actions deixa de disparar — e schedules do
+# GitHub são best-effort, podendo atrasar ou ser descartados sob carga. Mitigação parcial: o painel
+# `/operacao` computa staleness NA LEITURA (invariante I6), de modo que um humano que abra a tela vê
+# a verdade mesmo numa janela em que este job nunca rodou. O cron alerta; o painel sempre sabe.
+# Cobertura completa exigiria um dead-man's switch externo — follow-up registrado, fora deste slice.
+#
+# ⚠️ Minuto :45 é deliberado, mas por um motivo DIFERENTE dos outros crons: este job não toca o
+# Conexos (só lê Postgres), então não disputa os ~3 slots de LOGIN_ERROR_MAX_SESSIONS. O :45 evita
+# apenas a contenda por runner com :00 (Permutas/SISPAG), :20 (Extratos) e :10/:25/:40/:55 (reaper).
+#
+# ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main). Enquanto este arquivo
+# não estiver em `main`, use o "Run workflow" manual na aba Actions.
+on:
+  schedule:
+    # De hora em hora, no minuto :45 (UTC). Cobre com folga o limite mais apertado (extratos, 3h);
+    # a janela de dedup garante 1 alerta por limite decorrido, não 1 por rodada.
+    - cron: '45 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: detect-staleness
+  cancel-in-progress: false
+
+jobs:
+  detectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      # ÚNICO segredo necessário: o detector não fala com o ERP.
+      databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      environment: production
+      client_name: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependências (com devDeps p/ tsx)
+        run: npm ci --include=dev
+      # Sem retry: se a detecção falhar, a próxima hora tenta de novo. Insistir aqui só
+      # atrasaria a descoberta — e um detector que não roda é justamente o que o painel cobre
+      # pela leitura (I6).
+      - name: Detectar pipelines parados
+        run: npm run job:detect-staleness
