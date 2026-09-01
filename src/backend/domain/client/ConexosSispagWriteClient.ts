@@ -66,6 +66,27 @@ const PERGUNTA_AUTO_RESPONDIVEL = 'FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO
  *
  * O resto da linha vai `passthrough` — a identidade tem que seguir VERBATIM para o `importar`.
  */
+/**
+ * Boundary da linha digitável do item de lote. `itsNumCodbar` é o código que a analista COLA
+ * no banco — um valor degradado aqui não é um campo feio na tela, é pagamento no lugar errado.
+ *
+ * Por isso 47 dígitos exatos e nada de coerção: item que não bate é OMITIDO da resposta, nunca
+ * convertido em string vazia. É a mesma disciplina do `PENDENTE_DDA_SCHEMA` — um `?? ''`
+ * reintroduziria, num lugar novo, a classe de defeito que o ADR-0040 corrigiu.
+ *
+ * 47 e não 44: `itsNumCodbar` é a LINHA DIGITÁVEL; o código de barras do `fin124`
+ * (`ditEspCodbar`) tem 44. Ver `sispag-boleto-dda-sondagem.md`.
+ */
+const LINHA_DIGITAVEL_SCHEMA = z.object({
+    docCod: z.union([z.string(), z.number()]).transform(String),
+    titCod: z
+        .union([z.string(), z.number()])
+        .transform(String)
+        .optional()
+        .transform((v) => v ?? '1'),
+    itsNumCodbar: z.string().regex(/^\d{47}$/),
+});
+
 const PENDENTE_DDA_SCHEMA = z
     .object({ titVldReflexoDdaAssoc: z.union([z.literal(0), z.literal(1)]) })
     .passthrough();
@@ -363,6 +384,56 @@ export default class ConexosSispagWriteClient {
             );
         } catch {
             return undefined;
+        }
+    };
+
+    /**
+     * Linhas digitáveis dos boletos dos itens JÁ importados no lote nativo.
+     *
+     * O código de barras não existe no título: o ERP o anexa ao item (`itsNumCodbar`) durante
+     * o `importarTitulos(associarDda)`, que roda dentro da geração da remessa. Logo, isto só
+     * devolve algo para lote que já gerou remessa — em rascunho a lista é legitimamente vazia
+     * (e o chamador nem deve chegar aqui). Ver ADR-0040.
+     *
+     * Item sem boleto é omitido. Falha de leitura NÃO vira lista vazia: `[]` afirmaria "nenhum
+     * item tem boleto", e um grid que não pôde ser lido não afirma nada — por isso sobe
+     * `ConexosError` e quem chama decide o que dizer à analista.
+     */
+    public listarLinhasDigitaveisDoLote = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+    }): Promise<Array<{ docCod: string; titCod: string; linhaDigitavel: string }>> => {
+        const { filCod, bncCod, flpCod } = params;
+        const path = `fin015/finItemSispag/list/${filCod}/${bncCod}/${flpCod}`;
+        try {
+            const page = await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                return this.base.listGenericPaginated<Record<string, unknown>>(
+                    path,
+                    {
+                        fieldList: [],
+                        filterList: {},
+                        serviceName: 'fin015',
+                        pageNumber: 1,
+                        pageSize: 500,
+                    },
+                    { filCod },
+                );
+            });
+            const itens: Array<{ docCod: string; titCod: string; linhaDigitavel: string }> = [];
+            for (const row of page.rows ?? []) {
+                const parsed = LINHA_DIGITAVEL_SCHEMA.safeParse(row);
+                if (!parsed.success) continue;
+                itens.push({
+                    docCod: parsed.data.docCod,
+                    titCod: parsed.data.titCod,
+                    linhaDigitavel: parsed.data.itsNumCodbar,
+                });
+            }
+            return itens;
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
         }
     };
 

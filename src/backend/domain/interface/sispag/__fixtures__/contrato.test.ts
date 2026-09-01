@@ -95,10 +95,19 @@ const CONTRATOS: Array<{
     },
     {
         fixture: 'fin015-item-lote',
-        consumidor: 'ConexosSispagWriteClient.listarChavesDoLote (retomada de import parcial)',
+        consumidor:
+            'ConexosSispagWriteClient.listarChavesDoLote (retomada de import parcial) + ' +
+            'listarLinhasDigitaveisDoLote (linha digitável do boleto no painel)',
         // A chave do item decide o que ainda falta importar. `filCod` entra nela porque
         // `docCod` NÃO é único entre filiais — foi o bug corrigido no commit 9c73d1a.
-        campos: ['filCod', 'docCod', 'titCod', 'itsCodSeq', 'flpCod'],
+        //
+        // `itsNumCodbar` é a LINHA DIGITÁVEL que o ERP anexa ao item no import com DDA
+        // (ADR-0040) — 47 dígitos, o que a analista cola no banco. Sem esta entrada, um
+        // rename do Conexos faria o `LINHA_DIGITAVEL_SCHEMA` reprovar toda linha, o cliente
+        // devolver `[]`, e o botão de copiar sumir da tela SEM nada acusar. Asserimos a
+        // presença da CHAVE: na fixture ela vem `null`, porque o título capturado não tinha
+        // boleto — o valor varia, a existência do campo não pode.
+        campos: ['filCod', 'docCod', 'titCod', 'itsCodSeq', 'flpCod', 'itsNumCodbar'],
     },
     {
         fixture: 'fin052-arquivo-retorno',

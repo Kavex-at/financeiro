@@ -560,6 +560,25 @@ export async function fetchRetornos(): Promise<ArquivoRetorno[]> {
   return j.arquivos ?? []
 }
 
+/**
+ * Linhas digitáveis dos boletos do lote (47 dígitos — o que se cola no app do banco).
+ *
+ * Só há dado depois da remessa gerada: o Conexos anexa o código ao item durante o import
+ * (ADR-0040). Em rascunho volta lista vazia, e isso é o estágio, não uma falha.
+ */
+export async function fetchLinhasDigitaveis(
+  loteId: string,
+): Promise<Array<{ docCod: string; titCod: string; linhaDigitavel: string }>> {
+  const res = await apiFetch(`${API}/sispag/lotes/${loteId}/linhas-digitaveis`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const j = (await res.json()) as {
+    itens: Array<{ docCod: string; titCod: string; linhaDigitavel: string }>
+  }
+  return j.itens ?? []
+}
+
 /** A2 opção B — formas de pagamento disponíveis (cadastro do favorecido) por item do lote, ao vivo. */
 export async function fetchModalidadesDisponiveis(
   loteId: string,

@@ -1,7 +1,8 @@
 'use client'
 
-import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileText, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Download, FileText, Plus, Trash2 } from 'lucide-react'
 import * as React from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -26,6 +27,7 @@ import {
   baixarRemessa,
   cancelarLote,
   type ContaPagadora,
+  fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   fetchContasPagadoras,
   finalizarLote,
@@ -147,6 +149,37 @@ export function LoteCard({
       vivo = false
     }
   }, [aberto, isRascunho, l.id])
+
+  // Linha digitável do boleto por item, para a analista conferir com o banco. Só existe
+  // depois da remessa gerada — o ERP anexa o código no import (ADR-0040), então em rascunho
+  // nem chamamos. Buscado AQUI, na expansão, e não no clique: navegador bloqueia
+  // `clipboard.writeText` chamado depois de um `await`.
+  const [linhas, setLinhas] = React.useState<Map<string, string>>(new Map())
+  React.useEffect(() => {
+    if (!aberto || isRascunho) return
+    let vivo = true
+    fetchLinhasDigitaveis(l.id)
+      .then((itens) => {
+        if (!vivo) return
+        setLinhas(new Map(itens.map((i) => [`${i.docCod}:${i.titCod}`, i.linhaDigitavel])))
+      })
+      .catch(() => {
+        if (vivo) setLinhas(new Map()) // sem linha → sem botão; nada quebra
+      })
+    return () => {
+      vivo = false
+    }
+  }, [aberto, isRascunho, l.id])
+
+  /** Copia a linha digitável. O toast confirma sem repetir os 47 dígitos na tela. */
+  const copiarLinha = async (linhaDigitavel: string, docCod: string, titCod: string) => {
+    try {
+      await navigator.clipboard.writeText(linhaDigitavel)
+      toast.success('Linha digitável copiada', { description: `Título ${docCod}/${titCod}` })
+    } catch {
+      toast.error('Não foi possível copiar')
+    }
+  }
 
   return (
     <Card>
@@ -425,9 +458,30 @@ export function LoteCard({
                             ) : null}
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">
-                            {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-muted-foreground">
+                              {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
+                            </span>
+                            {i.modalidade === 'BOLETO' &&
+                            linhas.get(`${i.docCod}:${i.titCod}`) ? (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-6"
+                                onClick={() =>
+                                  void copiarLinha(
+                                    linhas.get(`${i.docCod}:${i.titCod}`) ?? '',
+                                    i.docCod,
+                                    i.titCod,
+                                  )
+                                }
+                                aria-label={`Copiar linha digitável do boleto do título ${i.docCod}/${i.titCod}`}
+                                title="Copiar linha digitável do boleto"
+                              >
+                                <Copy className="size-3" aria-hidden />
+                              </Button>
+                            ) : null}
+                          </div>
                         )}
                       </TableCell>
                       {temConciliacao ? (
