@@ -47,12 +47,21 @@ const initDatabaseAndMigrate = async (isProduction: boolean): Promise<void> => {
 };
 
 /**
- * Roda o ConfigDoctor no boot. Duas vars não configuradas já produziram defeito visível em
- * produção — `RECEBIMENTO_TITULARES_INTERNOS` (carteira contaminada) e `COM297_GCD_NOTA_DEBITO`
- * (a única falha real de valor da Frente IV). As duas falharam no instante de tocar dinheiro, e
- * não no deploy. Isto move a descoberta para o boot.
+ * Roda o ConfigDoctor no boot **do servidor HTTP** (ADR-0042). Duas vars não configuradas já
+ * produziram defeito visível em produção — `RECEBIMENTO_TITULARES_INTERNOS` (carteira contaminada)
+ * e `COM297_GCD_NOTA_DEBITO` (a única falha real de valor da Frente IV). As duas falharam no
+ * instante de tocar dinheiro, e não no deploy. Isto move a descoberta para o boot.
+ *
+ * ⚠️ **NÃO pertence ao `bootstrapAppContainer`** — 58 jobs o chamam, e jobs recebem env
+ * deliberadamente estreito. O `detect-staleness`, por exemplo, passa APENAS
+ * `databaseConnectionString`, porque não fala com o ERP. Diagnosticar ali faria cada rodada horária
+ * emitir `config-ausente` para todos os `CONEXOS_*` — e como a janela de dedup é o instante do boot,
+ * cada execução abriria janela nova: ~144 alertas falsos por dia, afogando o painel.
+ *
+ * Seria o próprio sistema de alerta produzindo o ruído que ele existe para evitar. Quem tem
+ * configuração completa a diagnosticar é o SERVIDOR, e é só lá que isto roda.
  */
-const diagnosticarConfiguracao = async (): Promise<void> => {
+export const diagnosticarConfiguracao = async (): Promise<void> => {
     try {
         const diagnostico = await container.resolve(ConfigDoctor).verificarNoBoot();
         const { totalAusentesObrigatorias: obrig, totalAusentesSilenciosas: silenc } = diagnostico;
@@ -94,12 +103,6 @@ export const bootstrapAppContainer = async (): Promise<void> => {
     registerOperacaoSinks();
 
     await initDatabaseAndMigrate(env.environment === 'production');
-
-    // Diagnóstico de configuração (ADR-0042). DEPOIS das migrations: o alerta de `config-ausente`
-    // precisa da tabela `alerta` para ser persistido. Best-effort — um processo que se recusa a
-    // subir por causa do próprio diagnóstico derruba o sistema inteiro em vez do recurso mal
-    // configurado.
-    await diagnosticarConfiguracao();
 
     bootstrapped = true;
 };

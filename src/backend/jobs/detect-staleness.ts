@@ -2,6 +2,8 @@ import 'reflect-metadata';
 import 'dotenv/config';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
+import { PIPELINE } from '../domain/interface/operacao/JobRun.js';
+import JobExecucaoRepository from '../domain/repository/operacao/JobExecucaoRepository.js';
 import StalenessDetector from '../domain/service/operacao/StalenessDetector.js';
 
 /**
@@ -29,19 +31,44 @@ import StalenessDetector from '../domain/service/operacao/StalenessDetector.js';
  */
 const main = async (): Promise<void> => {
     await bootstrapAppContainer();
-    const resultado = await container.resolve(StalenessDetector).detectar();
 
-    for (const i of resultado.inspecionados) {
-        console.log(`[detect-staleness] ${i.pipeline}: ${i.situacao}`);
-    }
+    // O vigia registra a PRÓPRIA execução. Sem isto ele seria o job menos observado da frota, e
+    // uma lista de alertas vazia na tela ficaria ambígua entre "nada a reportar" e "o detector
+    // morreu na execução" — que é a leitura mais perigosa de um painel de operação.
+    const runRepo = container.resolve(JobExecucaoRepository);
+    const runId = await runRepo.createRun({
+        pipeline: PIPELINE.OPERACAO_DETECTOR,
+        triggeredBy: process.env.TRIGGERED_BY ?? 'cron',
+    });
 
-    if (resultado.emitidos.length === 0) {
-        console.log('[detect-staleness] nenhum alerta novo.');
-    } else {
-        for (const a of resultado.emitidos) {
-            console.log(`[detect-staleness] ALERTA ${a.tipo} · ${a.alvo} · ${a.severidade}`);
+    try {
+        const resultado = await container.resolve(StalenessDetector).detectar();
+
+        for (const i of resultado.inspecionados) {
+            console.log(`[detect-staleness] ${i.pipeline}: ${i.situacao}`);
         }
-        console.log(`[detect-staleness] ${resultado.emitidos.length} alerta(s) emitido(s).`);
+
+        if (resultado.emitidos.length === 0) {
+            console.log('[detect-staleness] nenhum alerta novo.');
+        } else {
+            for (const a of resultado.emitidos) {
+                console.log(`[detect-staleness] ALERTA ${a.tipo} · ${a.alvo} · ${a.severidade}`);
+            }
+            console.log(`[detect-staleness] ${resultado.emitidos.length} alerta(s) emitido(s).`);
+        }
+
+        await runRepo.finishRun({
+            runId,
+            status: 'success',
+            metricas: {
+                inspecionados: resultado.inspecionados.length,
+                alertasEmitidos: resultado.emitidos.length,
+            },
+        });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        await runRepo.finishRun({ runId, status: 'error', errorMessage });
+        throw error;
     }
 };
 
