@@ -1,5 +1,124 @@
 # Columbia Financeiro — Changelog
 
+## v0.34.1 (2026-09-03) — o processo aprende a morrer direito
+
+Três furos de infra de processo, nenhum deles visível numa tela. O que os une é o modo de
+falha: **os três falhavam para o lado errado**, em silêncio.
+
+O handler de erro do pool de conexões zerava a referência sem encerrar o pool. O pool
+quebrado ia para o coletor de lixo **ainda segurando até 5 sessões** no Supabase, e a
+inicialização seguinte abria mais 5. O laço se fechava sozinho: `too many clients` e
+`MaxClientsInSessionMode` estão na lista de erros que o próprio cliente trata como
+transitórios — ou seja, o handler que existia para **recuperar** do esgotamento de conexões
+era o que o **acelerava**.
+
+E todo deploy no Render manda SIGTERM. Sem handler, o processo morria no ato e cortava o que
+estivesse em voo. Uma requisição interrompida entre o `createRun` e o `finishRun` deixa a
+execução parada em `reconciling` — exatamente o órfão que o `reaper-sispag` varre de 15 em 15
+minutos. O detector do sintoma já existia; faltava remover a causa mais frequente.
+
+- **fix(database):** o handler de `error` encerra o pool antes de soltar a referência, com
+  guarda de reentrada. O evento dispara uma vez por cliente ocioso derrubado, e sem a guarda
+  o segundo disparo zeraria uma referência que já aponta para o pool **novo**, criado pela
+  inicialização no meio do caminho — matando um pool saudável. Novo `close()` idempotente.
+- **fix(plataforma):** `SIGTERM`/`SIGINT` param de aceitar conexões, drenam as requisições em
+  voo com teto de 10s, encerram o pool e saem com 0. Idempotente contra sinal repetido; sai
+  assim mesmo se a drenagem estourar (o processo está descendo por ordem do orquestrador, e
+  ficar preso só troca a saída limpa por um SIGKILL). Vive em módulo próprio porque o
+  `index.ts` dispara `start()` no import — importá-lo num teste subiria o servidor.
+- **fix(database):** o pool passa a ser reobtido **a cada tentativa** do retry, e não
+  congelado antes dele. Esta é uma regressão que a primeira correção introduzia: com o pool
+  agora encerrado de fato, uma retentativa contra a referência congelada bateria em
+  `Cannot use a pool after calling end` — trocando um erro recuperável por um definitivo,
+  justamente no caminho que o retry existe para salvar. Pega pelo Regis-Review.
+- **fix(tooling):** `npm run lint` do backend era `npx biome check .` e saía **0 em silêncio**
+  sem `node_modules` — o gate reportava verde sem ter examinado uma linha. Em CI não mordia
+  (o `npm ci` vem antes), mas mordia em **todo worktree novo**, que é o fluxo obrigatório do
+  pipe. Medido com o `package.json` real: antes exit 0 sem saída, depois exit 127 com
+  `biome: not found`. Mesmo vício em `npx tsc-esm-fix` no `build`. O frontend já resolvia
+  tudo por `node_modules/.bin` e não precisou mudar.
+- **test:** casos novos para o shutdown (ordem, idempotência, timeout, liberação de recursos que
+  rejeita, `unref`) e 8 para o pool (encerramento único, disparo tardio que não mata o pool novo,
+  `end()` que rejeita, `close()` idempotente, retentativa contra o pool novo).
+
+> Regis-Review `2026-09-03-1901`: **8,07, gate passa com 0 P0** (24 cards: 1 P1, 11 P2, 12 P3).
+
+### E então o P1 e os 11 P2 foram fechados também
+
+O gate já passava sem eles, mas o P1 era grande demais para virar backlog: o `conexosSessionStore`
+criava um **segundo** pool Postgres com `on('error', () => undefined)` — a assinatura exata do bug
+acima, num sítio que o shutdown não conhecia. Corrigir um pool e deixar o outro armado teria sido
+consertar o exemplo em vez do problema.
+
+- **fix(conexos):** o pool do session store encerra-se no handler de `error` e entra no shutdown.
+  Pools liberados por deploy: **1 de 2 → 2 de 2**.
+- **feat(plataforma):** `IClient` ganhou `close?()` e `http/lifecycle.ts` fecha a coleção em
+  paralelo, **sem nunca rejeitar** — um client quebrado não pode impedir os outros de liberar
+  recurso nem travar a saída, trocando um shutdown limpo por SIGKILL. O `index.ts` deixou de
+  acoplar o shutdown à classe concreta, que é o que fez o segundo pool ser esquecido.
+- **fix(plataforma):** `/health` responde **503** durante o drain. Enquanto respondia 200 depois do
+  SIGTERM, o balanceador seguia livre para mandar requisição nova por keep-alive já aberta — e ela
+  podia cair na fatia `createRun → finishRun`, o órfão que o shutdown veio evitar.
+- **fix(plataforma):** `server.closeIdleConnections()` antes do `close`. Sem isso o drain esperava
+  as keep-alive ociosas do balanceador e estourava o teto **quase sempre**, tornando o caminho
+  feliz indistinguível do force-exit — e destruindo a evidência de que o drain funciona.
+- **fix(plataforma):** teto de drenagem **10s → 25s** (~83% do envelope de ~30s do Render, contra
+  33%). Requisição entre 10s e 28s deixa de ser cortada pelo próprio handler.
+- **feat(operacao):** o force-exit publica `OPERATIONAL_WARN` no painel. Antes só existia em
+  `console.log`: uma rota que **sempre** estourasse o drain truncaria requisições a cada restart
+  sem ninguém ver — a mesma falha invisível que a ADR-0042 gastou um workflow para eliminar. O
+  código de saída segue 0: não é falha, é orçamento estourado.
+- **fix(security):** `redactErrorMessage` em todo log de erro do shutdown. O `pg`, ao rejeitar
+  `end()` sobre um pool quebrado, traz usuário do Postgres e host do Supabase na mensagem — e o
+  drain de logs do Render sai do perímetro do processo.
+- **refactor(plataforma):** a sequência de boot saiu do `index.ts` para `http/bootstrap.ts`. Eram 5
+  passos ordenados com **zero** cobertura, porque `index.ts` dispara o boot no import; a ordem já
+  causou incidente em 2026-08-10 (código da ADR-0032 em produção antes da `0044`). Agora é asserção
+  executável: migração que falha **aborta antes** do `listen`.
+- **docs:** `docs/runbooks/rollback.md` (a regra que decide tudo: reverter código sem reverter
+  schema é seguro, o contrário não), budget de sessões do pooler no `DEPLOY.md` (49 no pior caso), e
+  o `preDeployCommand` órfão removido do `render.yaml` — declarado desde sempre e **nunca
+  executado** (é feature de plano pago), enquanto quem migrava era o `BootMigrator`. O `DEPLOY.md`
+  repetia a mesma informação errada.
+- **test:** cobertura de branches do shutdown **58,82% → 90,47%**; 5 testes de ordem do boot; 12 do
+  ciclo de vida dos pools. Total do backend: **1782 testes em 128 suítes**.
+
+### E, no fim, o backlog inteiro
+
+O P1 do run era o `conexosSessionStore` criando um **segundo** pool Postgres com
+`on('error', () => undefined)` — e a primeira tentativa de corrigi-lo estava **errada**: encerrar o
+pool sem reconstruí-lo deixava `db.query` sobre um pool morto, degradando o store em silêncio até o
+processo terminar. Pior que o defeito original, porque o `pg` sozinho apenas remove o cliente ocioso
+com erro e segue servindo. Corrigido com reconstrução preguiçosa. Depois disso, o resto dos cards:
+
+- **fix(conexos):** o pool do session store vive num holder — o handler de `error` encerra o
+  quebrado e a próxima chamada reconstrói, com janela mínima de 5s entre tentativas (sem ela, um
+  pooler fora do ar faria uma tentativa por chamada, cada uma pagando 5s de timeout).
+- **feat(operacao):** eventos do pool no mesmo canal do force-exit (`OPERATIONAL_WARN`), com
+  contador de rebuilds. Um pool flapando deixa de ser invisível.
+- **fix(security):** os **três** sítios de log do session store passam pelo redator — o do `catch`
+  de construção era o mais perigoso, porque quem lança ali é o parser da connection string, com a
+  senha dentro. O redator ganhou padrões de topologia (`ECONNREFUSED <ip>`, `ENOTFOUND <host>`) e
+  mudou-se para `domain/libs/redact/`, corrigindo a inversão de camada dos 3 consumidores.
+- **feat(plataforma):** `unhandledRejection`/`uncaughtException` drenam antes de sair (código 1) —
+  era a única porta pela qual o processo ainda morria sem passar pelo drain.
+- **refactor(plataforma):** `http/buildApp.ts` extraído; **`index.ts` foi de 235 para 95 linhas**,
+  só wiring. A ordem dos middlewares — que é contrato de segurança, não estilo — ganhou 5 testes.
+- **refactor:** `endPoolQuietly` recolhe o idiom `pool.end().catch(...)` que estava em 3 sítios;
+  `NamedCloseable` faz o drain dizer **qual** recurso falhou.
+- **chore:** teto de drenagem por `SHUTDOWN_DRAIN_TIMEOUT_MS` (valor inválido cai no default, nunca
+  "sem teto"); pisos de cobertura por arquivo para pool/shutdown/boot; ratchet do frontend
+  20/9/14 → 33/23/28 (o real era 35/25/29 — o piso estava ~15 pontos abaixo e não travava nada);
+  `scripts.gate.test.ts` falha se algum script voltar a usar `npx`, travando a classe do BE-09 em
+  zero; 40 docstrings de job deixaram de ensinar `npx tsx`.
+
+Backend: **132 suítes, 1824 testes**.
+
+> **Quatro itens seguem abertos**, todos bloqueados por dado ou decisão externa: o Pool size real do
+> Supabase (para o alerta a 70%), infra de métrica para o histograma p50/p95/p99, a medição da
+> latência do Conexos (o `timeout: 40000` do ERP ainda excede o drain de 25s) e o upgrade de plano
+> do Render. Detalhes em `ontology/_inbox/tapar-furos-backend-regis-followups.md`.
+
 ## v0.34.0 (2026-09-01) — a linha digitável do boleto sai do ERP
 
 Para conferir um pagamento com o banco, a analista abria o Conexos numa outra aba. O

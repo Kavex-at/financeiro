@@ -22,7 +22,7 @@ import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.
  *
  * Run:
  *   cd src/backend
- *   PROBE_PRD=1 npx tsx jobs/probe-verificar-coluna-boleto.ts
+ *   PROBE_PRD=1 tsx jobs/probe-verificar-coluna-boleto.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PROBE_PRD !== '1') {

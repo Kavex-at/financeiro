@@ -8,8 +8,8 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
  * Sonda fin015 em HOMOLOGAÇÃO — testa login + (opcional) escrita p/ gerar um `.REM`.
  *
  * SEGURANÇA: RECUSA rodar se a base não for HML (guard anti-PRD). Escrita só com PROBE_WRITE=1.
- * Run (leitura): CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/probe-fin015-hml.ts
- * Run (gerar):   ...  PROBE_WRITE=1 FLP=8 FLP_FIL=1 FLP_BNC=4 npx tsx jobs/probe-fin015-hml.ts
+ * Run (leitura): CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/probe-fin015-hml.ts
+ * Run (gerar):   ...  PROBE_WRITE=1 FLP=8 FLP_FIL=1 FLP_BNC=4 tsx jobs/probe-fin015-hml.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

@@ -62,6 +62,29 @@ describe('redactErrorMessage — mensagem de erro livre (ADR-0042)', () => {
         expect(r).toContain('for user "[REDACTED]"');
     });
 
+    /**
+     * Card `security-2`. Não é credencial, mas entrega o desenho da rede interna a quem lê o
+     * drain de logs do Render — que sai do perímetro do processo. São exatamente os dois
+     * formatos que o `pg`/Node emitem quando o pooler do Supabase cai, e é esse caminho que o
+     * `conexosSessionStore` passou a logar.
+     */
+    it('redige IP e porta de erro de conexão (topologia interna)', () => {
+        const r = redactErrorMessage('connect ECONNREFUSED 10.0.0.5:5432');
+        expect(r).not.toContain('10.0.0.5');
+        expect(r).toContain('ECONNREFUSED [REDACTED_HOST]');
+    });
+
+    it('redige o hostname do pooler em ENOTFOUND', () => {
+        const r = redactErrorMessage('getaddrinfo ENOTFOUND aws-0-sa-east-1.pooler.supabase.com');
+        expect(r).not.toContain('supabase.com');
+        expect(r).toContain('ENOTFOUND [REDACTED_HOST]');
+    });
+
+    it('redige ETIMEDOUT/EHOSTUNREACH com IP', () => {
+        expect(redactErrorMessage('connect ETIMEDOUT 172.16.0.9:6543')).not.toContain('172.16.0.9');
+        expect(redactErrorMessage('EHOSTUNREACH 192.168.1.1')).not.toContain('192.168.1.1');
+    });
+
     it('redige password=/token=/secret= em texto livre', () => {
         for (const entrada of ['password=abc123', 'token: eyJhbGciOi', 'api_key=xyz']) {
             expect(redactErrorMessage(`falhou com ${entrada}`)).toContain('[REDACTED]');

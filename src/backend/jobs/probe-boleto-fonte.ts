@@ -19,7 +19,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * SEGURANÇA: só endpoints `/list` (leitura). Nenhuma escrita.
  *
- * Run:  cd src/backend && PROBE_PRD=1 npx tsx jobs/probe-boleto-fonte.ts
+ * Run:  cd src/backend && PROBE_PRD=1 tsx jobs/probe-boleto-fonte.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

@@ -1,6 +1,6 @@
 {
     "name": "financeiro-backend",
-    "version": "0.34.0",
+    "version": "0.34.1",
     "description": "Columbia Trading — Financeiro (template bootstrap)",
     "main": "dist/index.js",
     "scripts": {
@@ -8,7 +8,7 @@
         "db:local": "docker start financeiro-pg-dev 2>/dev/null || docker run -d --name financeiro-pg-dev -e POSTGRES_PASSWORD=devlocal -e POSTGRES_USER=financeiro -e POSTGRES_DB=financeiro -p 5433:5432 postgres:16-alpine",
         "dev:local": "databaseConnectionString=postgresql://financeiro:devlocal@localhost:5433/financeiro tsx watch index.ts",
         "migrate:local": "databaseConnectionString=postgresql://financeiro:devlocal@localhost:5433/financeiro tsx migrations/migrate.ts",
-        "build": "tsc && npx tsc-esm-fix dist",
+        "build": "tsc && tsc-esm-fix dist",
         "start": "node dist/index.js",
         "migrate": "tsx migrations/migrate.ts",
         "seed:admin": "tsx jobs/seed-admin.ts",
@@ -20,8 +20,8 @@
         "job:alerta-workflow-falhou": "tsx jobs/alerta-workflow-falhou.ts",
         "test": "jest",
         "test:watch": "jest --watch",
-        "lint": "npx biome check .",
-        "lint:fix": "npx biome check --write .",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
         "typecheck": "tsc --noEmit",
         "job:reaper-sispag": "tsx jobs/reaper-sispag-reconciling.ts",
         "job:capture-fixtures": "tsx jobs/capture-fixtures-sispag.ts",

@@ -35,9 +35,9 @@ import type { ContaPagadora } from '../domain/interface/sispag/Fin015Write.js';
  * Run (ensaio, sem escrever):
  *   cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading.conexos.cloud/api PERMITIR_PRD=1 \
- *   FIL=2 BNC=4 CCO=2 DOC=33975 TIT=1 TETO=500 npx tsx jobs/execute-fin015-prd.ts
+ *   FIL=2 BNC=4 CCO=2 DOC=33975 TIT=1 TETO=500 tsx jobs/execute-fin015-prd.ts
  *
- * Run (execução):  ... EXECUTAR=1 npx tsx jobs/execute-fin015-prd.ts
+ * Run (execução):  ... EXECUTAR=1 tsx jobs/execute-fin015-prd.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

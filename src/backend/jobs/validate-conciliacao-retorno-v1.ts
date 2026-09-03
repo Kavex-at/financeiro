@@ -27,9 +27,9 @@ import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetor
  *   cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
  *   databaseConnectionString=<postgres local> \
- *   npx tsx jobs/validate-conciliacao-retorno-v1.ts            # inspeciona
+ *   tsx jobs/validate-conciliacao-retorno-v1.ts            # inspeciona
  *   ... CONEXOS_WRITE_ENABLED=true CONEXOS_DRY_RUN=false SISPAG_LIVE_WRITE_ENABLED=true \
- *       VAL_GAR=<garCodSeq> npx tsx jobs/validate-conciliacao-retorno-v1.ts --executar
+ *       VAL_GAR=<garCodSeq> tsx jobs/validate-conciliacao-retorno-v1.ts --executar
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const EXECUTAR = process.argv.includes('--executar');

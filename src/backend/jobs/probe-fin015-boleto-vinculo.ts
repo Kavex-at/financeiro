@@ -26,7 +26,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * Run:
  *   cd src/backend
- *   PROBE_PRD=1 npx tsx jobs/probe-fin015-boleto-vinculo.ts
+ *   PROBE_PRD=1 tsx jobs/probe-fin015-boleto-vinculo.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

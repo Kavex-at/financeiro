@@ -30,10 +30,10 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * Run (leitura):  cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
- *   DOC=820 TIT=1 TIPO=2 FIL=2 npx tsx jobs/seed-hml-vencimento.ts
+ *   DOC=820 TIT=1 TIPO=2 FIL=2 tsx jobs/seed-hml-vencimento.ts
  *
- * Run (escrita):  ... SEED_WRITE=1 DIAS=30 npx tsx jobs/seed-hml-vencimento.ts
- * Reverter:       ... SEED_WRITE=1 REVERTER=1 npx tsx jobs/seed-hml-vencimento.ts
+ * Run (escrita):  ... SEED_WRITE=1 DIAS=30 tsx jobs/seed-hml-vencimento.ts
+ * Reverter:       ... SEED_WRITE=1 REVERTER=1 tsx jobs/seed-hml-vencimento.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

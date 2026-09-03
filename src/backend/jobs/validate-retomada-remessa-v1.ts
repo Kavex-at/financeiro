@@ -31,7 +31,7 @@ import RemessaService from '../domain/service/sispag/RemessaService.js';
  *   cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
  *   databaseConnectionString=postgresql://financeiro:devlocal@localhost:5433/financeiro \
- *   npx tsx jobs/validate-retomada-remessa-v1.ts --executar
+ *   tsx jobs/validate-retomada-remessa-v1.ts --executar
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const EXECUTAR = process.argv.includes('--executar');

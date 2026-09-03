@@ -26,7 +26,7 @@ import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.
  *
  * Run:
  *   cd src/backend
- *   PROBE_PRD=1 npx tsx jobs/probe-rem-segmento-j.ts
+ *   PROBE_PRD=1 tsx jobs/probe-rem-segmento-j.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

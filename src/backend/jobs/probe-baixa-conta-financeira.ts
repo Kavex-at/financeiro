@@ -25,8 +25,8 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * Run:
  *   cd src/backend
- *   PROBE_PRD=1 npx tsx jobs/probe-baixa-conta-financeira.ts          # produção, read-only
- *   CONEXOS_BASE_URL=...-hml... npx tsx jobs/probe-baixa-conta-financeira.ts
+ *   PROBE_PRD=1 tsx jobs/probe-baixa-conta-financeira.ts          # produção, read-only
+ *   CONEXOS_BASE_URL=...-hml... tsx jobs/probe-baixa-conta-financeira.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

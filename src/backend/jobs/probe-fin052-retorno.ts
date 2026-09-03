@@ -28,8 +28,8 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * Run:
  *   cd src/backend
- *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/probe-fin052-retorno.ts
- *   PROBE_PRD=1 npx tsx jobs/probe-fin052-retorno.ts   # PRD, read-only
+ *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/probe-fin052-retorno.ts
+ *   PROBE_PRD=1 tsx jobs/probe-fin052-retorno.ts   # PRD, read-only
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');
