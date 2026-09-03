@@ -4,8 +4,10 @@ import { container } from 'tsyringe';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { diagnosticarConfiguracao } from './domain/appContainer.js';
+import PostgreeDatabaseClient from './domain/client/database/PostgreeDatabaseClient.js';
 import healthRouter from './routes/health.js';
 import { buildAuthMiddleware } from './http/auth.js';
+import { registerGracefulShutdown } from './http/gracefulShutdown.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
 import { recebimentosGate } from './http/recebimentosGate.js';
@@ -170,8 +172,20 @@ const start = async (): Promise<void> => {
     // `diagnosticarConfiguracao`.
     await diagnosticarConfiguracao();
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
         console.log(`Financeiro backend on port ${PORT}`);
+    });
+
+    // Todo deploy no Render manda SIGTERM. Sem isto o processo morria no ato,
+    // cortando as requisições em voo — e uma delas interrompida entre o
+    // `createRun` e o `finishRun` deixa a execução órfã em `reconciling`, que é
+    // justamente o que o `reaper-sispag` varre de 15 em 15 minutos. Aqui também
+    // é onde o pool devolve as conexões ao Supabase em vez de largá-las
+    // penduradas até o timeout do pooler. Ver `http/gracefulShutdown.ts`.
+    registerGracefulShutdown({
+        server,
+        closePool: () => container.resolve(PostgreeDatabaseClient).close(),
+        onExit: (code) => process.exit(code),
     });
 };
 

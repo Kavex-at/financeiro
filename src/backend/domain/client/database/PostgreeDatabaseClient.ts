@@ -59,17 +59,57 @@ export default class PostgreeDatabaseClient implements IClient {
 
         await retryExecutor.execute(async () => {
             const envVars = await this.environmentProvider.getEnvironmentVars();
-            this.connectionPool = new Pool({
+            const pool = new Pool({
                 connectionString: envVars.databaseConnectionString,
                 idleTimeoutMillis: this.poolIdleTimeoutMillis,
                 connectionTimeoutMillis: this.poolConnectionTimeoutMillis,
                 max: this.poolMaxConnections,
             });
+            this.connectionPool = pool;
 
-            this.connectionPool.on('error', (_err) => {
-                this.connectionPool = undefined;
+            // Descarta o pool quebrado E ENCERRA suas conexões. Zerar apenas a
+            // referência (como era antes) devolvia o pool ao GC ainda segurando
+            // até `poolMaxConnections` sessões no Supabase, e a `init()` seguinte
+            // abria mais 5. O laço se fecha porque `'too many clients'` e
+            // `'MaxClientsInSessionMode'` estão entre os erros que este cliente
+            // trata como transitórios: o handler que existia para recuperar do
+            // esgotamento de conexões era justamente o que o acelerava.
+            //
+            // `pool` fica capturado em const porque o evento `error` dispara uma
+            // vez por cliente ocioso derrubado — sem a comparação abaixo, o
+            // segundo disparo zeraria uma referência que já aponta para o pool
+            // NOVO criado por uma `init()` no meio do caminho.
+            let ended = false;
+            pool.on('error', (_err) => {
+                if (!ended) {
+                    ended = true;
+                    // `end()` de um pool já quebrado rejeita; um throw aqui
+                    // derrubaria o processo por unhandled rejection.
+                    void pool.end().catch(() => {});
+                }
+                if (this.connectionPool === pool) this.connectionPool = undefined;
             });
         });
+    };
+
+    /**
+     * Encerra o pool e devolve as conexões ao Postgres. Idempotente e seguro sem
+     * `init()` prévia. Usado pelo shutdown gracioso (SIGTERM/SIGINT) para que um
+     * deploy não deixe sessões penduradas no pooler até o timeout do servidor.
+     */
+    public close = async (): Promise<void> => {
+        const pool = this.connectionPool;
+        if (!pool) return;
+
+        // Zera ANTES do await: uma segunda chamada concorrente não deve esperar
+        // pelo mesmo `end()` nem disparar um segundo.
+        this.connectionPool = undefined;
+        try {
+            await pool.end();
+        } catch {
+            // Fechar um pool já quebrado rejeita. Estamos descendo de qualquer
+            // forma — não há a quem reportar.
+        }
     };
 
     public selectMany = async (query: string, params?: Record<string, unknown>): Promise<any[]> => {
