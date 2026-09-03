@@ -5,7 +5,7 @@ const poolEnd = jest.fn();
  * handlers de `error` — o mock precisa expor o listener porque é exatamente ali
  * que morava o defeito (`() => undefined`, a assinatura do BE-05 repetida).
  */
-const createdPools: Array<{ emitError: (err?: Error) => void }> = [];
+const createdPools: Array<{ emitError: (err?: Error) => void; query: jest.Mock }> = [];
 
 jest.mock('pg', () => ({
     Pool: jest.fn().mockImplementation(() => {
@@ -64,6 +64,54 @@ describe('conexosSessionStore — ciclo de vida do 2º pool (integrability-2, P1
         expect(() => createdPools[0].emitError()).not.toThrow();
         await Promise.resolve();
         expect(poolEnd).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * A prova que faltava. Encerrar o pool no handler SEM reconstruí-lo é pior que
+     * engolir o erro: `db.query` fecharia sobre um pool morto e o store degradaria
+     * em silêncio até o processo terminar — trocando 2 conexões vazadas por deploy
+     * por um session store permanentemente cego. O pg, sozinho, apenas remove o
+     * cliente ocioso com erro e segue servindo.
+     */
+    it('rebuilds the pool on the next call after an error killed it', async () => {
+        const store = buildSessionStoreFromEnv(envWithDb);
+        expect(createdPools).toHaveLength(1);
+
+        createdPools[0].emitError();
+        expect(poolEnd).toHaveBeenCalledTimes(1);
+
+        // A próxima leitura precisa funcionar, num pool NOVO.
+        await store.acquire();
+
+        expect(createdPools).toHaveLength(2);
+        expect(createdPools[1].query).toHaveBeenCalledTimes(1);
+        expect(createdPools[0].query).not.toHaveBeenCalled();
+    });
+
+    it('logs a redacted warning instead of swallowing the error silently', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        buildSessionStoreFromEnv(envWithDb);
+
+        createdPools[0].emitError(
+            new Error('password authentication failed for user "financeiro"'),
+        );
+
+        const logged = warn.mock.calls.flat().join('\n');
+        expect(logged).toContain('pool derrubado por erro de socket');
+        expect(logged).toContain('for user "[REDACTED]"');
+        expect(logged).not.toContain('"financeiro"');
+        warn.mockRestore();
+    });
+
+    it('does not reopen a pool after the shutdown already closed the store', async () => {
+        const store = buildSessionStoreFromEnv(envWithDb);
+        await closeConexosSessionStorePool();
+        const poolsAfterShutdown = createdPools.length;
+
+        // Uma query em voo não pode reabrir conexões enquanto o processo desce.
+        // O store degrada para "miss", que é o contrato dele em qualquer erro.
+        await expect(store.acquire()).resolves.toBeNull();
+        expect(createdPools).toHaveLength(poolsAfterShutdown);
     });
 
     describe('closeConexosSessionStorePool', () => {

@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { redactErrorMessage } from '../http/redact.js';
 import { boxLog, DEBUG_VERBOSE } from '../utils/index.js';
 import type { Filial } from './conexos.js';
 
@@ -225,7 +226,15 @@ export class ConexosSessionStore {
  * TAMBÉM degrada para desabilitado (o store nunca pode derrubar o backend no
  * boot). Pool dedicado e pequeno (max 2): só é tocado no fluxo de login.
  */
+/** Slot do pool corrente de um store. Vazio ⇒ a próxima chamada reconstrói. */
+interface PoolHolder {
+    pool?: Pool;
+}
+
 const openPools = new Set<Pool>();
+const poolHolders = new Set<PoolHolder>();
+/** Trava a reconstrução preguiçosa depois do shutdown. */
+let storeClosed = false;
 
 /**
  * Encerra o pool do session store no shutdown gracioso. Idempotente e no-op
@@ -236,8 +245,12 @@ const openPools = new Set<Pool>();
  * deixava até 2 sessões penduradas no pooler até o `idleTimeoutMillis`.
  */
 export const closeConexosSessionStorePool = async (): Promise<void> => {
+    storeClosed = true;
     const pools = [...openPools];
     openPools.clear();
+    // Esvaziar os holders impede que uma query em voo reabra um pool enquanto o
+    // processo desce — o `storeClosed` é o que segura a reconstrução preguiçosa.
+    for (const holder of poolHolders) holder.pool = undefined;
     await Promise.all(pools.map((pool) => pool.end().catch(() => undefined)));
 };
 
@@ -255,32 +268,62 @@ export const buildSessionStoreFromEnv = (
         return new ConexosSessionStore({ db: null });
     }
     try {
-        const pool = new Pool({
-            connectionString,
-            max: 2,
-            idleTimeoutMillis: 10000,
-            connectionTimeoutMillis: 5000,
-        });
-        openPools.add(pool);
-        // Um Pool sem listener de 'error' derruba o processo num erro de socket
-        // ocioso. Mantém o store resiliente (mesma defesa do PostgreeDatabaseClient).
-        //
-        // O handler ENCERRA o pool, não só engole o erro. `() => undefined` era a
-        // assinatura exata do BE-05 repetida aqui: o pool quebrado seguia segurando
-        // até 2 sessões no pooler, sem ninguém para liberá-las (Regis-Review,
-        // card `integrability-2` — único P1 do run). Guarda de reentrada porque o
-        // evento dispara uma vez por cliente ocioso derrubado.
-        let ended = false;
-        pool.on('error', () => {
-            if (ended) return;
-            ended = true;
-            openPools.delete(pool);
-            // `end()` de um pool já quebrado rejeita; um throw aqui derrubaria o
-            // processo por unhandled rejection.
-            void pool.end().catch(() => undefined);
-        });
+        storeClosed = false;
+        const holder: PoolHolder = {};
+        poolHolders.add(holder);
+
+        /**
+         * Abre o pool e arma o handler de `error`.
+         *
+         * O listener existe para o processo NÃO cair num erro de socket ocioso —
+         * essa propriedade é preservada. O que muda em relação ao `() => undefined`
+         * original são duas coisas:
+         *
+         * 1. O pool quebrado é **encerrado e esquecido**, para o holder reconstruí-lo
+         *    na próxima chamada. Encerrar sem reconstruir seria pior que engolir:
+         *    `db.query` fecharia sobre um pool morto e o store degradaria em silêncio
+         *    até o processo terminar. Encerrar + reconstruir preserva a resiliência e
+         *    devolve as conexões.
+         * 2. O erro deixa de ser invisível. `console.warn` redigido — barulho mínimo,
+         *    mas rastro existente. Nada de `throw`: derrubaria o backend.
+         */
+        const openPool = (): Pool => {
+            const pool = new Pool({
+                connectionString,
+                max: 2,
+                idleTimeoutMillis: 10000,
+                connectionTimeoutMillis: 5000,
+            });
+            openPools.add(pool);
+            // Guarda de reentrada: o evento dispara uma vez por cliente ocioso
+            // derrubado, e sem ela o segundo disparo mataria o pool já reconstruído.
+            let ended = false;
+            pool.on('error', (cause: unknown) => {
+                if (ended) return;
+                ended = true;
+                openPools.delete(pool);
+                const detail = cause instanceof Error ? cause.message : String(cause);
+                console.warn(
+                    `[ConexosSessionStore] pool derrubado por erro de socket — reconstruído na próxima chamada: ${redactErrorMessage(detail)}`,
+                );
+                // `end()` de um pool já quebrado rejeita; um throw aqui derrubaria o
+                // processo por unhandled rejection.
+                void pool.end().catch(() => undefined);
+                if (holder.pool === pool) holder.pool = undefined;
+            });
+            holder.pool = pool;
+            return pool;
+        };
+
+        openPool();
         const db: SessionStoreDb = {
-            query: (sql, params) => pool.query(sql, params as unknown[] | undefined),
+            query: (sql, params) => {
+                // Reconstrução preguiçosa. Depois do shutdown NÃO reabre: reabrir
+                // conexões enquanto o processo desce anularia o drain.
+                const pool = holder.pool ?? (storeClosed ? undefined : openPool());
+                if (!pool) throw new Error('ConexosSessionStore: pool encerrado');
+                return pool.query(sql, params as unknown[] | undefined);
+            },
         };
         return new ConexosSessionStore({ db });
     } catch (cause) {
