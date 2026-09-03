@@ -21,7 +21,48 @@
 | Testability | 8,0 | 0 | 0 | 2 | 2 |
 | **Total** | **8,07** | **0** | **1** | **11** | **12** |
 
-Conforme a política do pipe, **P1/P2/P3 não são implementados neste ciclo** — ficam registrados aqui.
+> **ATUALIZAÇÃO — rodada 2.** O Yuri autorizou explicitamente fechar o P1 e os P2 ("close the p1
+> and p2"), suspendendo a política padrão do pipe para esta rodada. **O P1 e os 11 P2 foram
+> implementados** — ver "Fechados na rodada 2". Restam os **12 P3**, mais **3 follow-ups novos** que
+> a própria remediação produziu.
+
+Política padrão do pipe (suspensa aqui por autorização direta): P1/P2/P3 viram follow-up.
+
+---
+
+## Fechados na rodada 2
+
+| Card | Prio | O que foi feito |
+|---|---|---|
+| `integrability-2` | **P1** | O pool do `conexosSessionStore` passou a encerrar-se no handler de `error` (era `() => undefined`, a assinatura do BE-05) e entrou no shutdown via `closeConexosSessionStorePool()`. Pools cobertos: **1 de 2 → 2 de 2**. |
+| `integrability-1` | P2 | `IClient` ganhou `close?()`; `http/lifecycle.ts` fecha a coleção em paralelo sem nunca rejeitar. O `index.ts` deixou de acoplar o shutdown à classe concreta. |
+| `availability-1` | P2 | `http/readinessState.ts`; `/health` responde **503** durante o drain. `/health/pipelines` intocado. |
+| `availability-2` | P2 | `server.closeIdleConnections()` antes do `server.close`, com guarda para runtimes sem o método. |
+| `fault-tolerance-1` | P2 | `DEFAULT_DRAIN_TIMEOUT_MS` **10s → 25s** (~83% do envelope do Render). **Divergência do card** — ver abaixo. |
+| `fault-tolerance-2` | P2 | `onForceExit` publica o estouro de drenagem como `OPERATIONAL_WARN` no `LogService`; exit code segue 0. |
+| `security-1` | P2 | `redactErrorMessage` aplicado em todo log de erro do shutdown. Caminhos em `http/` sem redator: **1 → 0**. |
+| `testability-1` | P2 | Os 3 branches reais cobertos (erro no `server.close`, guarda de `exitOnce`, default `target = process`). |
+| `testability-2` | P2 | `http/bootstrap.ts` + 5 testes de **ordem** do boot; `index.ts` deixou de conter a sequência. |
+| `performance-1` | P2 | Tabela de budget de sessões no `DEPLOY.md` (49 no pior caso). Probe fica como follow-up. |
+| `deployability-2` | P2 | `docs/runbooks/rollback.md`, com a regra código-vs-schema no topo. |
+| `deployability-3` | P2 | `preDeployCommand` órfão removido do `render.yaml`; `DEPLOY.md` corrigido (dizia a mesma coisa errada). Fontes divergentes: **2 → 1**. |
+
+### Follow-ups NOVOS gerados pela rodada 2
+
+1. **Timeout do axios do Conexos × teto de drenagem** (do `fault-tolerance-1`). O card mandava somar
+   `timeout: 20_000` a quatro clients e derivar `drain = maior_timeout + 5s`. **Medido: os clients
+   não criam instância axios** — há **uma**, em `src/backend/services/conexos.ts:121`, já com
+   `timeout: 40000`. Seguir o card daria drain de 45s, acima do envelope de ~30s do Render. E baixar
+   40s→20s é mudança de comportamento de negócio (chamadas longas ao ERP passariam a abortar), que
+   não se faz sem medir a distribuição real de latência do Conexos. **Feito:** drain em 25s.
+   **Pendente:** medir a latência do ERP e então alinhar os dois números. Enquanto isso, uma chamada
+   que passe de 25s ainda é cortada no drain.
+2. **Probe de sessões do Supabase** (do `performance-1`). O budget está documentado; falta o alerta
+   a 70% do teto. **Bloqueado por um dado que eu não tenho:** o **Pool size** do Session pooler, em
+   Project Settings → Database → Connection pooling no dashboard do Supabase. Preencher o
+   `DEPLOY.md §1` primeiro; sem o teto real, o alerta não tem contra o que comparar.
+3. **Upgrade de plano do Render** (opção (a) do `deployability-3`). Habilitaria `preDeployCommand`
+   de verdade e tornaria o `BootMigrator` dispensável. É decisão comercial, não técnica.
 
 ---
 

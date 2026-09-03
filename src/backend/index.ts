@@ -7,7 +7,12 @@ import { diagnosticarConfiguracao } from './domain/appContainer.js';
 import PostgreeDatabaseClient from './domain/client/database/PostgreeDatabaseClient.js';
 import healthRouter from './routes/health.js';
 import { buildAuthMiddleware } from './http/auth.js';
+import { startServer } from './http/bootstrap.js';
 import { registerGracefulShutdown } from './http/gracefulShutdown.js';
+import { closeAll } from './http/lifecycle.js';
+import { isDraining } from './http/readinessState.js';
+import LogService from './domain/service/LogService.js';
+import { closeConexosSessionStorePool } from './services/conexosSessionStore.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
 import { recebimentosGate } from './http/recebimentosGate.js';
@@ -78,7 +83,18 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // `version` mirrors package.json (FE+BE lockstep, see CHANGELOG.md) so prod
 // deploys are verifiable; `npm start`/`npm run dev` populate npm_package_version.
 const APP_VERSION = process.env.npm_package_version ?? 'unknown';
-app.get('/health', (_req, res) => res.json({ status: 'ok', version: APP_VERSION }));
+// 503 durante o drain (card `availability-1`). Este é o `healthCheckPath` do Render: enquanto
+// respondia 200 depois do SIGTERM, o balanceador seguia livre para mandar requisição nova por
+// keep-alive já aberta — e ela podia cair na fatia `createRun → finishRun`, que é o órfão
+// `reconciling` que o shutdown gracioso veio evitar. `/health/pipelines` NÃO muda: é a sonda dos
+// pipelines e não deve carregar o estado do processo.
+app.get('/health', (_req, res) => {
+    const draining = isDraining();
+    res.status(draining ? 503 : 200).json({
+        status: draining ? 'shutting_down' : 'ok',
+        version: APP_VERSION,
+    });
+});
 
 // Sonda de pipelines — PÚBLICA e mínima, montada AQUI (antes do auth) porque o observador externo
 // que a consulta não tem JWT. Devolve 503 quando há pipeline parado ou run abandonada, que é o que
@@ -148,48 +164,64 @@ app.use(errorMiddleware);
 const PORT = process.env.PORT || 3001;
 
 /**
- * Boot: MIGRA e só então aceita tráfego.
+ * Libera TODO recurso de processo no shutdown — não só o pool primário.
  *
- * A ordem é o ponto. O `preDeployCommand` do `render.yaml` nunca rodou (serviço configurado pelo
- * dashboard; pre-deploy é de plano pago), e em 2026-08-10 o código da ADR-0032 chegou a produção
- * antes da `0044` — chave natural nova contra banco velho. Aqui o `listen` é inalcançável enquanto
- * houver migração pendente. Ver `migrations/BootMigrator.ts`.
- *
- * Falha ao migrar = processo morre com código 1. O Render marca o deploy como falho e MANTÉM a
- * versão anterior no ar, que é o desfecho certo: melhor a release não subir do que subir servindo
- * contra um esquema que ninguém sabe qual é.
+ * São dois pools Postgres: o do `PostgreeDatabaseClient` (max 5) e o do
+ * `conexosSessionStore` (max 2, criado no load do módulo). O segundo ficou fora
+ * do SIGTERM até o Regis-Review achá-lo, e cada deploy deixava até 2 sessões
+ * penduradas no pooler. A coleção existe para que o próximo client que segure
+ * recurso entre aqui em vez de ser esquecido. Ver `http/lifecycle.ts`.
  */
-const start = async (): Promise<void> => {
-    // O amarramento token → classe vive AQUI, e não no `BootMigrator`, para que `runMigrations.js`
-    // (que usa `import.meta`, incompatível com o Jest) fique fora do alcance dos testes do boot.
-    container.register(MIGRATION_RUNNER_TOKEN, { useClass: MigrationRunner });
-    await container.resolve(BootMigrator).run();
+const closeProcessResources = async (): Promise<void> => {
+    const { errors } = await closeAll([
+        container.resolve(PostgreeDatabaseClient),
+        { close: closeConexosSessionStorePool },
+    ]);
+    for (const error of errors) {
+        console.error('[shutdown] recurso falhou ao fechar:', error);
+    }
+};
 
-    // Diagnóstico de configuração (ADR-0042) — DEPOIS das migrations, porque o alerta de
-    // `config-ausente` precisa da tabela `alerta`. Roda AQUI, no boot do servidor, e não no
-    // `bootstrapAppContainer`: aquele é compartilhado com 58 jobs, que recebem env estreito de
-    // propósito, e diagnosticá-los encheria o painel de falso-positivo. Ver a docstring de
-    // `diagnosticarConfiguracao`.
-    await diagnosticarConfiguracao();
-
-    const server = app.listen(PORT, () => {
-        console.log(`Financeiro backend on port ${PORT}`);
-    });
-
-    // Todo deploy no Render manda SIGTERM. Sem isto o processo morria no ato,
-    // cortando as requisições em voo — e uma delas interrompida entre o
-    // `createRun` e o `finishRun` deixa a execução órfã em `reconciling`, que é
-    // justamente o que o `reaper-sispag` varre de 15 em 15 minutos. Aqui também
-    // é onde o pool devolve as conexões ao Supabase em vez de largá-las
-    // penduradas até o timeout do pooler. Ver `http/gracefulShutdown.ts`.
-    registerGracefulShutdown({
-        server,
-        closePool: () => container.resolve(PostgreeDatabaseClient).close(),
-        onExit: (code) => process.exit(code),
+/**
+ * Publica o estouro da drenagem no canal estruturado, para que uma rota que
+ * SEMPRE force-exit apareça em `/operacao` em vez de morrer num `console.log`.
+ * A ADR-0042 gastou um workflow inteiro para não deixar falha invisível.
+ */
+const publicarForceExit = async (reason: string): Promise<void> => {
+    await container.resolve(LogService).warn({
+        type: 'OPERATIONAL_WARN',
+        message: 'shutdown force-exit — drenagem excedeu o teto',
+        data: { reason },
     });
 };
 
-void start().catch((error: unknown) => {
+void startServer({
+    runMigrations: async () => {
+        // O amarramento token → classe vive AQUI, e não no `BootMigrator`, para que
+        // `runMigrations.js` (que usa `import.meta`, incompatível com o Jest) fique fora do
+        // alcance dos testes do boot.
+        container.register(MIGRATION_RUNNER_TOKEN, { useClass: MigrationRunner });
+        await container.resolve(BootMigrator).run();
+    },
+    // Diagnóstico de configuração (ADR-0042). Roda no boot do servidor, e não no
+    // `bootstrapAppContainer`: aquele é compartilhado com 58 jobs, que recebem env estreito de
+    // propósito, e diagnosticá-los encheria o painel de falso-positivo.
+    diagnose: diagnosticarConfiguracao,
+    listen: () =>
+        app.listen(PORT, () => {
+            console.log(`Financeiro backend on port ${PORT}`);
+        }),
+    // Todo deploy no Render manda SIGTERM. Sem isto o processo morria no ato, cortando as
+    // requisições em voo — e uma delas interrompida entre o `createRun` e o `finishRun` deixa a
+    // execução órfã em `reconciling`, que é o que o `reaper-sispag` varre de 15 em 15 minutos.
+    registerShutdown: (server) =>
+        registerGracefulShutdown({
+            server,
+            closeResources: closeProcessResources,
+            onExit: (code) => process.exit(code),
+            onForceExit: publicarForceExit,
+        }),
+}).catch((error: unknown) => {
     console.error(
         '[boot] FALHOU ao subir:',
         error instanceof Error ? (error.stack ?? error.message) : String(error),

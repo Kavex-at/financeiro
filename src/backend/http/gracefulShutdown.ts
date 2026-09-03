@@ -1,3 +1,6 @@
+import { markDraining } from './readinessState.js';
+import { redactErrorMessage } from './redact.js';
+
 /**
  * Shutdown gracioso (BE-06).
  *
@@ -10,27 +13,51 @@
  *
  * Vive em módulo próprio, e não inline no `index.ts`, porque `index.ts` dispara
  * `start()` no import — importá-lo num teste subiria o servidor. Todas as
- * dependências entram por parâmetro (server, closePool, onExit), então a máquina
- * de estados é testável sem processo, sem porta e sem banco.
+ * dependências entram por parâmetro, então a máquina de estados é testável sem
+ * processo, sem porta e sem banco.
+ *
+ * Sequência: marca o processo como não-pronto → libera keep-alive ociosas → para
+ * de aceitar conexões → aguarda as em voo → libera recursos → sai com 0.
  */
 
 /** Sinais que devem virar drenagem, não corte. */
 export const SHUTDOWN_SIGNALS: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
 
 /**
- * Teto da drenagem. 10s cabe folgado nos ~30s que o Render espera entre o
- * SIGTERM e o SIGKILL — se estourar, saímos por conta própria em vez de ser
- * mortos no meio.
+ * Teto da drenagem.
+ *
+ * O Render dá ~30s entre SIGTERM e SIGKILL. Os 10s originais usavam só 1/3 do
+ * envelope e força-cortavam qualquer requisição entre 10s e ~28s — reproduzindo o
+ * mesmo órfão `reconciling` que este módulo existe para eliminar, apenas com log.
+ * 25s aproveita ~83% do envelope e deixa ~5s de folga para encerrar recursos e
+ * sair limpo antes do SIGKILL (card `fault-tolerance-1`).
+ *
+ * NOTA: a instância axios do Conexos (`services/conexos.ts`) tem `timeout: 40000`,
+ * acima deste teto — uma chamada ao ERP que passe de 25s ainda é cortada aqui.
+ * Alinhar os dois exige medir a latência real do Conexos; ficou como follow-up,
+ * porque baixar o timeout do ERP é mudança de comportamento de negócio, não de
+ * infra, e não se faz às cegas.
  */
-export const DEFAULT_DRAIN_TIMEOUT_MS = 10_000;
+export const DEFAULT_DRAIN_TIMEOUT_MS = 25_000;
 
 export interface GracefulShutdownDeps {
-    /** Retorno de `app.listen`. Só precisamos de `close`. */
-    server: { close: (callback?: (err?: Error) => void) => unknown };
-    /** Encerra o pool do Postgres (`PostgreeDatabaseClient.close`). */
-    closePool: () => Promise<void>;
+    /** Retorno de `app.listen`. */
+    server: {
+        close: (callback?: (err?: Error) => void) => unknown;
+        /** Node ≥18.2. Opcional: fakes de teste e runtimes antigos não têm. */
+        closeIdleConnections?: () => void;
+    };
+    /** Libera os recursos do processo (pools, sockets) — ver `http/lifecycle.ts`. */
+    closeResources: () => Promise<void>;
     /** Sai do processo. Injetado para o teste não matar o runner do Jest. */
     onExit: (code: number) => void;
+    /**
+     * Publica o force-exit num canal estruturado (painel `/operacao`). Sem isto o
+     * estouro de drenagem só existia em `console.log`: uma rota que SEMPRE estoura
+     * truncaria requisições a cada restart sem ninguém ver — a categoria de falha
+     * invisível que a ADR-0042 gastou um workflow inteiro para eliminar.
+     */
+    onForceExit?: (reason: string) => void | Promise<void>;
     drainTimeoutMs?: number;
     log?: (message: string) => void;
 }
@@ -43,9 +70,13 @@ const asMessage = (error: unknown): string =>
     error instanceof Error ? error.message : String(error);
 
 /**
- * Monta o handler de sinal. Sequência: para de aceitar conexões novas
- * (`server.close`) → aguarda as em voo → encerra o pool → sai com 0.
+ * Mensagem de erro pronta para o stdout. O drain de logs do Render sai do
+ * perímetro do processo, então o que vai para o stdout é o que efetivamente
+ * escapa — e o `pg`, ao rejeitar `end()` sobre um pool quebrado, traz usuário do
+ * Postgres e host interno do Supabase na mensagem (card `security-1`).
  */
+const safeMessage = (error: unknown): string => redactErrorMessage(asMessage(error));
+
 export const createShutdownHandler = (deps: GracefulShutdownDeps): ((signal: string) => void) => {
     const drainTimeoutMs = deps.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
     const log = deps.log ?? ((message: string) => console.log(message));
@@ -60,6 +91,10 @@ export const createShutdownHandler = (deps: GracefulShutdownDeps): ((signal: str
         }
         shuttingDown = true;
         log(`[shutdown] ${signal} recebido — parando de aceitar novas conexões`);
+
+        // ANTES do `server.close`: enquanto `/health` responder 200, o balanceador
+        // segue livre para rotear requisição nova por keep-alive já aberta.
+        markDraining();
 
         let exited = false;
         let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
@@ -77,7 +112,18 @@ export const createShutdownHandler = (deps: GracefulShutdownDeps): ((signal: str
         // Armado em paralelo à drenagem: uma requisição pendurada não pode
         // impedir a saída até o SIGKILL.
         forceExitTimer = setTimeout(() => {
-            exitOnce(`drenagem excedeu ${drainTimeoutMs}ms — saindo com requisições ainda em voo`);
+            void (async () => {
+                // A drenagem pode ter concluído enquanto o timer esperava na fila.
+                if (exited) return;
+                const reason = `drenagem excedeu ${drainTimeoutMs}ms — saindo com requisições ainda em voo`;
+                try {
+                    await deps.onForceExit?.(reason);
+                } catch (error) {
+                    // Falhar ao publicar o alerta não pode impedir a saída.
+                    log(`[shutdown] falha ao publicar o force-exit: ${safeMessage(error)}`);
+                }
+                exitOnce(reason);
+            })();
         }, drainTimeoutMs);
         // Não segurar o event loop: se tudo drenar antes, este timer não deve
         // manter o processo vivo esperando o próprio timeout.
@@ -86,18 +132,27 @@ export const createShutdownHandler = (deps: GracefulShutdownDeps): ((signal: str
 
         const drain = async (): Promise<void> => {
             try {
-                await deps.closePool();
-                log('[shutdown] pool de conexões encerrado');
+                await deps.closeResources();
+                log('[shutdown] recursos encerrados');
             } catch (error) {
-                // Falhar ao fechar o pool não pode virar processo zumbi que o
+                // Falhar ao fechar recurso não pode virar processo zumbi que o
                 // orquestrador precise matar com SIGKILL.
-                log(`[shutdown] falha ao encerrar o pool: ${asMessage(error)}`);
+                log(`[shutdown] falha ao encerrar recursos: ${safeMessage(error)}`);
             }
             exitOnce('requisições em voo concluídas');
         };
 
+        // `server.close` só chama o callback quando TODAS as conexões TCP
+        // fecharam — keep-alive ociosas inclusive. Como o balanceador do Render
+        // mantém keep-alive, sem isto o drain estouraria o teto praticamente
+        // sempre, tornando o caminho feliz indistinguível do force-exit.
+        if (typeof deps.server.closeIdleConnections === 'function') {
+            deps.server.closeIdleConnections();
+            log('[shutdown] conexões keep-alive ociosas liberadas');
+        }
+
         deps.server.close((err?: Error) => {
-            if (err) log(`[shutdown] server.close reportou: ${err.message}`);
+            if (err) log(`[shutdown] server.close reportou: ${safeMessage(err)}`);
             void drain();
         });
     };

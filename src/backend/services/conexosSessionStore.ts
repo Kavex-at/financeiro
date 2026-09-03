@@ -225,6 +225,22 @@ export class ConexosSessionStore {
  * TAMBÉM degrada para desabilitado (o store nunca pode derrubar o backend no
  * boot). Pool dedicado e pequeno (max 2): só é tocado no fluxo de login.
  */
+const openPools = new Set<Pool>();
+
+/**
+ * Encerra o pool do session store no shutdown gracioso. Idempotente e no-op
+ * quando o store nasceu desabilitado (sem `databaseConnectionString`).
+ *
+ * Existe porque este é o SEGUNDO pool Postgres do processo: o
+ * `PostgreeDatabaseClient` já era fechado no SIGTERM, este não era, e cada deploy
+ * deixava até 2 sessões penduradas no pooler até o `idleTimeoutMillis`.
+ */
+export const closeConexosSessionStorePool = async (): Promise<void> => {
+    const pools = [...openPools];
+    openPools.clear();
+    await Promise.all(pools.map((pool) => pool.end().catch(() => undefined)));
+};
+
 export const buildSessionStoreFromEnv = (
     env: NodeJS.ProcessEnv = process.env,
 ): ConexosSessionStore => {
@@ -245,9 +261,24 @@ export const buildSessionStoreFromEnv = (
             idleTimeoutMillis: 10000,
             connectionTimeoutMillis: 5000,
         });
+        openPools.add(pool);
         // Um Pool sem listener de 'error' derruba o processo num erro de socket
         // ocioso. Mantém o store resiliente (mesma defesa do PostgreeDatabaseClient).
-        pool.on('error', () => undefined);
+        //
+        // O handler ENCERRA o pool, não só engole o erro. `() => undefined` era a
+        // assinatura exata do BE-05 repetida aqui: o pool quebrado seguia segurando
+        // até 2 sessões no pooler, sem ninguém para liberá-las (Regis-Review,
+        // card `integrability-2` — único P1 do run). Guarda de reentrada porque o
+        // evento dispara uma vez por cliente ocioso derrubado.
+        let ended = false;
+        pool.on('error', () => {
+            if (ended) return;
+            ended = true;
+            openPools.delete(pool);
+            // `end()` de um pool já quebrado rejeita; um throw aqui derrubaria o
+            // processo por unhandled rejection.
+            void pool.end().catch(() => undefined);
+        });
         const db: SessionStoreDb = {
             query: (sql, params) => pool.query(sql, params as unknown[] | undefined),
         };

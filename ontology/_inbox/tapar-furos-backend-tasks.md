@@ -145,3 +145,263 @@ O frontend **não** tem o problema (`eslint .`, `next build`, `tsc --noEmit` já
 - `src/frontend/package.json` inspecionado e confirmado sem o problema (documentado, sem mudança).
 
 **Dependencies:** none
+
+---
+
+# Rodada 2 — fechar o P1 e os P2 do Regis-Review
+
+> Pedido explícito do Yuri após o gate passar ("close the p1 and p2"). Isto **suspende
+> deliberadamente** a política padrão do pipe ("P1/P2/P3 não são implementados; viram
+> follow-ups"), por autorização direta. Fonte dos cards:
+> `docs/regis-review/2026-09-03-1901-tapar-furos-backend/KANBAN.md`.
+> Os 12 cards **P3 permanecem** como follow-up em
+> `ontology/_inbox/tapar-furos-backend-regis-followups.md`.
+
+### Task 4: Give IClient a lifecycle so every resource-holding client is closed
+
+`IClient` declara só `init()`. O `close()` da Task 1 é convenção informal, e o `index.ts`
+referencia a **classe concreta**. Cada client novo que segure recurso vira uma edição pontual do
+`index.ts` — que estatisticamente é esquecida, como já foi para o `conexosSessionStore` (é
+exatamente o P1 da Task 5).
+
+`close?()` é **opcional** no contrato: a maioria dos ~17 clients não segura recurso, e torná-lo
+obrigatório forçaria implementação vazia em todos eles.
+
+**Files to change:**
+- `src/backend/domain/core/client/IClient.ts` — acrescentar `close?(): Promise<void>`.
+- `src/backend/http/lifecycle.ts` (novo) — `closeAll(clients)` que fecha todos em paralelo e
+  **nunca rejeita** (um client que falha não pode impedir os outros nem travar o shutdown).
+- `src/backend/http/lifecycle.test.ts` (novo).
+
+**Acceptance criteria:**
+- `IClient` declara `close?(): Promise<void>`; `PostgreeDatabaseClient` continua satisfazendo o
+  contrato sem mudança de assinatura.
+- `closeAll` fecha todos os clients mesmo quando um rejeita, e resolve com a lista de erros.
+- `closeAll` ignora client sem `close` definido (não lança `TypeError`).
+- `closeAll` com lista vazia resolve sem erro.
+
+**Dependencies:** Task 1
+
+---
+
+### Task 5: Close the session store's second Postgres pool (P1 — same defect as BE-05)
+
+`src/backend/services/conexosSessionStore.ts` cria um **segundo** `Pool` (`max: 2`) no load do
+módulo com `pool.on('error', () => undefined)` — a assinatura exata do BE-05, num sítio que o
+shutdown não conhece. É o único P1 do Regis-Review.
+
+**Files to change:**
+- `src/backend/services/conexosSessionStore.ts` — o handler de `error` passa a encerrar o pool
+  (mesma guarda de reentrada da Task 1); exportar `closeConexosSessionStorePool()` idempotente.
+- `src/backend/services/conexosSessionStore.test.ts` — cobertura do novo caminho.
+
+**Acceptance criteria:**
+- O handler de `error` do pool do session store chama `pool.end()` uma única vez, mesmo com o
+  evento disparando repetidamente.
+- `closeConexosSessionStorePool()` é idempotente e resolve sem lançar quando não há pool.
+- Um `end()` que rejeita não vira unhandled rejection nem propaga.
+- Pools Postgres cobertos pelo shutdown: **1 de 2 → 2 de 2**.
+
+**Dependencies:** Task 4
+
+---
+
+### Task 6: Report readiness=false on /health during the drain
+
+`/health` é o `healthCheckPath` do Render e continua devolvendo 200 depois do SIGTERM, porque a
+flag `shuttingDown` vive num closure isolado. Sem sinal de readiness o LB pode mandar requisição
+nova por keep-alive já aberta dentro da janela do drain — e ela pode cair na fatia
+`createRun → finishRun`, que é o que a Task 2 veio evitar. `/health/pipelines` **não** muda.
+
+**Files to change:**
+- `src/backend/http/readinessState.ts` (novo) — `markDraining()` / `isDraining()` / `resetForTests()`.
+- `src/backend/http/readinessState.test.ts` (novo).
+- `src/backend/http/gracefulShutdown.ts` — `markDraining()` no início, **antes** do `server.close`.
+- `src/backend/index.ts` — `/health` devolve **503** quando `isDraining()`.
+
+**Acceptance criteria:**
+- `/health` responde 200 em operação normal e **503** durante todo o drain.
+- `markDraining()` é idempotente; `isDraining()` começa `false`.
+- O handler marca o drain antes de chamar `server.close` (ordem assertada em teste).
+- `/health/pipelines` permanece inalterado.
+
+**Dependencies:** Task 2
+
+---
+
+### Task 7: Release idle keep-alive sockets so the happy path is not the timeout path
+
+`server.close(cb)` só chama o callback quando **todas** as conexões TCP fecharam, keep-alive
+ociosas inclusive. Como o LB do Render mantém keep-alive, o drain tende a estourar o teto
+**sempre** — tornando o caminho feliz indistinguível do force-exit.
+
+**Files to change:**
+- `src/backend/http/gracefulShutdown.ts` — `server.closeIdleConnections()` (Node ≥18.2) antes do
+  `server.close(cb)`, com guarda para o método ausente.
+
+**Acceptance criteria:**
+- `closeIdleConnections()` é chamado exatamente 1× por shutdown, **antes** do `server.close`.
+- Um `server` sem `closeIdleConnections` não quebra o shutdown (guarda de tipo).
+- Ordem completa assertada: `markDraining` → `closeIdleConnections` → `server.close` → `closeAll` → `exit`.
+
+**Dependencies:** Task 6
+
+---
+
+### Task 8: Raise the drain ceiling to use the Render envelope
+
+10s consome só 1/3 do envelope de ~30s entre SIGTERM e SIGKILL. Requisição de escrita financeira
+entre 10s e ~28s é força-cortada pelo próprio handler, virando o mesmo órfão `reconciling`.
+
+> **Divergência deliberada do card `fault-tolerance-1`.** O card manda somar `timeout: 20_000` a
+> quatro clients Conexos e derivar `drainTimeoutMs = maior_axios_timeout + 5_000`. Medido: os
+> clients **não** criam instância axios — há **uma** em `src/backend/services/conexos.ts:121`, já
+> com `timeout: 40000`. Seguir o card daria drain de 45s, acima do envelope do Render. E baixar
+> 40s→20s é mudança de comportamento de negócio (chamadas longas ao ERP passariam a abortar), que
+> não cabe num card de infra sem medir a latência real do Conexos. Portanto: **sobe o drain para
+> 25s e NÃO mexe no timeout do axios**; a tensão vira follow-up.
+
+**Files to change:**
+- `src/backend/http/gracefulShutdown.ts` — `DEFAULT_DRAIN_TIMEOUT_MS` 10_000 → 25_000.
+- `ontology/_inbox/tapar-furos-backend-regis-followups.md` — registrar a divergência.
+
+**Acceptance criteria:**
+- `DEFAULT_DRAIN_TIMEOUT_MS === 25_000`, com o raciocínio do envelope no comentário.
+- `drainTimeoutMs` continua injetável por parâmetro.
+- A divergência está escrita nos follow-ups, com a medição que a motiva.
+
+**Dependencies:** Task 2
+
+---
+
+### Task 9: Make a force-exit visible to the operations panel
+
+A saída forçada só imprime em `console.log`. Uma rota que **sempre** estoura o drain truncaria
+requisições a cada restart com zero visibilidade em `/operacao`. A ADR-0042 gastou um workflow
+inteiro para não deixar falha invisível. O código de saída **continua 0** — não é falha, é
+orçamento estourado; o sinal vai pelo canal certo. Callback em vez de resolver o `LogService`
+dentro do módulo, para manter a injeção pura.
+
+**Files to change:**
+- `src/backend/http/gracefulShutdown.ts` — `onForceExit?: (reason: string) => void | Promise<void>`.
+- `src/backend/index.ts` — amarrar em `LogService.warn` com `type: 'OPERATIONAL_WARN'`.
+
+**Acceptance criteria:**
+- Force-exit invoca `onForceExit` 1× com a razão; drain normal **não** o invoca.
+- `onForceExit` que rejeita não impede `onExit(0)`.
+- Código de saída permanece **0** em ambos os caminhos.
+
+**Dependencies:** Task 2
+
+---
+
+### Task 10: Redact the shutdown error log
+
+O `pg`, ao rejeitar `end()` sobre um pool quebrado, pode trazer usuário do Postgres ou host interno
+do Supabase. O drain de logs do Render sai do perímetro do processo. O projeto já tem o redator.
+
+**Files to change:**
+- `src/backend/http/gracefulShutdown.ts` — envolver com `redactErrorMessage` de `./redact.js`.
+
+**Acceptance criteria:**
+- Erro com `password authentication failed for user "financeiro"` sai como `for user "[REDACTED]"`.
+- Caminhos de log de erro em `http/` sem redator: **1 → 0**.
+
+**Dependencies:** Task 2
+
+---
+
+### Task 11: Cover the three real uncovered branches of gracefulShutdown
+
+Branches em 58,82% (10/17). Três importam: o callback de `server.close` com `err`; a guarda
+`if (exited) return` (hoje nunca atingida — remover o `clearTimeout` deixaria os 8 testes verdes
+com `onExit` chamado 2×); e o default `target = process`.
+
+**Files to change:**
+- `src/backend/http/gracefulShutdown.test.ts` — 3 casos novos.
+
+**Acceptance criteria:**
+- Caso 1: `cb(new Error('EADDRINUSE'))` loga `server.close reportou` e o drain roda mesmo assim.
+- Caso 2: timer disparando **depois** do drain concluído → `onExit` chamado exatamente 1×.
+- Caso 3: o default `target = process` é exercitado, com `removeListener` no teardown.
+- Branches de `http/gracefulShutdown.ts` ≥ **82%**.
+
+**Dependencies:** Tasks 6-10
+
+---
+
+### Task 12: Extract the boot sequence into a testable module
+
+`start()` tem 5 passos ordenados e **zero** cobertura, porque `index.ts` dispara `start()` no
+import. A ordem já causou incidente em 2026-08-10. É invariante documentada sem teste.
+
+**Files to change:**
+- `src/backend/http/bootstrap.ts` (novo) — `startServer(deps)` com deps injetadas.
+- `src/backend/http/bootstrap.test.ts` (novo).
+- `src/backend/index.ts` — monta as deps e chama `startServer`.
+
+**Acceptance criteria:**
+- ≥ 4 testes cobrindo: ordem correta; falha de migração **aborta antes** do `listen`; `diagnose`
+  roda **depois** das migrations; shutdown registrado **depois** do `listen`.
+- `index.ts` deixa de conter a sequência de boot.
+- Falha no boot continua saindo com código 1.
+
+**Dependencies:** Tasks 4-10
+
+---
+
+### Task 13: Document the Supabase session budget
+
+Com 6 crons + web service a `poolMaxConnections = 5`, o teto teórico é ~35 sessões; um bump futuro
+pode estourar o plano sem alarme.
+
+> O card também pede probe de `pg_stat_database` com alerta a 70%. Fica **fora** desta rodada:
+> exige decidir onde mora e um teto real que só o dashboard do Supabase informa — número que eu não
+> tenho e não vou inventar. Documento o budget e registro o probe como follow-up.
+
+**Files to change:**
+- `DEPLOY.md` — tabela de budget de sessões.
+- `ontology/_inbox/tapar-furos-backend-regis-followups.md` — o probe como follow-up.
+
+**Acceptance criteria:**
+- `DEPLOY.md` tem tabela de budget com a conta explícita e o teto real marcado como pendente.
+- O follow-up nomeia o dado que falta (Pool size do Supavisor no dashboard).
+
+**Dependencies:** none
+
+---
+
+### Task 14: Write the rollback runbook
+
+`autoDeploy: true` — cada push em `main` sobe. A assimetria que mais importa é a de schema:
+reverter **código** sem reverter **schema** é seguro; o contrário não é.
+
+**Files to change:**
+- `docs/runbooks/rollback.md` (novo).
+- `DEPLOY.md` — referência cruzada.
+
+**Acceptance criteria:**
+- O runbook cobre: localizar o deploy anterior; o botão de rollback; a regra sobre migrations
+  irreversíveis; validação por `/health` e `/health/pipelines`; quando escalar.
+- `DEPLOY.md` aponta para ele.
+
+**Dependencies:** none
+
+---
+
+### Task 15: Reconcile render.yaml with the boot that actually runs
+
+`render.yaml` declara `preDeployCommand` que **nunca roda** (pre-deploy é de plano pago). A
+mitigação real é o `BootMigrator`. Duas fontes discordantes: o próximo dev que "limpar" o boot pode
+remover o `BootMigrator` acreditando que o Render cobre. Escolhida a **opção (b)** do card; a (a) —
+upgrade de plano — é decisão comercial do Yuri.
+
+**Files to change:**
+- `render.yaml` — remover o `preDeployCommand` órfão e apontar para o `BootMigrator`.
+
+**Acceptance criteria:**
+- Fontes divergentes sobre quando as migrations rodam: **2 → 1**.
+- `render.yaml` aponta explicitamente para o `BootMigrator`.
+- Nenhuma mudança de comportamento (o comando já não executava).
+
+**Dependencies:** none

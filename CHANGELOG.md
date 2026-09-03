@@ -37,14 +37,56 @@ minutos. O detector do sintoma já existia; faltava remover a causa mais frequen
   pipe. Medido com o `package.json` real: antes exit 0 sem saída, depois exit 127 com
   `biome: not found`. Mesmo vício em `npx tsc-esm-fix` no `build`. O frontend já resolvia
   tudo por `node_modules/.bin` e não precisou mudar.
-- **test:** 8 casos novos para o shutdown (ordem, idempotência, timeout, `closePool` que
-  rejeita, `unref`) e 8 para o pool (encerramento único, disparo tardio que não mata o pool
-  novo, `end()` que rejeita, `close()` idempotente, retentativa contra o pool novo).
+- **test:** casos novos para o shutdown (ordem, idempotência, timeout, liberação de recursos que
+  rejeita, `unref`) e 8 para o pool (encerramento único, disparo tardio que não mata o pool novo,
+  `end()` que rejeita, `close()` idempotente, retentativa contra o pool novo).
 
 > Regis-Review `2026-09-03-1901`: **8,07, gate passa com 0 P0** (24 cards: 1 P1, 11 P2, 12 P3).
-> O P1 é o achado que importa: o `conexosSessionStore` cria um **segundo** pool Postgres com
-> `on('error', () => undefined)` — a mesma assinatura do bug corrigido aqui, num sítio que o
-> shutdown não conhece. Está em `ontology/_inbox/tapar-furos-backend-regis-followups.md`.
+
+### E então o P1 e os 11 P2 foram fechados também
+
+O gate já passava sem eles, mas o P1 era grande demais para virar backlog: o `conexosSessionStore`
+criava um **segundo** pool Postgres com `on('error', () => undefined)` — a assinatura exata do bug
+acima, num sítio que o shutdown não conhecia. Corrigir um pool e deixar o outro armado teria sido
+consertar o exemplo em vez do problema.
+
+- **fix(conexos):** o pool do session store encerra-se no handler de `error` e entra no shutdown.
+  Pools liberados por deploy: **1 de 2 → 2 de 2**.
+- **feat(plataforma):** `IClient` ganhou `close?()` e `http/lifecycle.ts` fecha a coleção em
+  paralelo, **sem nunca rejeitar** — um client quebrado não pode impedir os outros de liberar
+  recurso nem travar a saída, trocando um shutdown limpo por SIGKILL. O `index.ts` deixou de
+  acoplar o shutdown à classe concreta, que é o que fez o segundo pool ser esquecido.
+- **fix(plataforma):** `/health` responde **503** durante o drain. Enquanto respondia 200 depois do
+  SIGTERM, o balanceador seguia livre para mandar requisição nova por keep-alive já aberta — e ela
+  podia cair na fatia `createRun → finishRun`, o órfão que o shutdown veio evitar.
+- **fix(plataforma):** `server.closeIdleConnections()` antes do `close`. Sem isso o drain esperava
+  as keep-alive ociosas do balanceador e estourava o teto **quase sempre**, tornando o caminho
+  feliz indistinguível do force-exit — e destruindo a evidência de que o drain funciona.
+- **fix(plataforma):** teto de drenagem **10s → 25s** (~83% do envelope de ~30s do Render, contra
+  33%). Requisição entre 10s e 28s deixa de ser cortada pelo próprio handler.
+- **feat(operacao):** o force-exit publica `OPERATIONAL_WARN` no painel. Antes só existia em
+  `console.log`: uma rota que **sempre** estourasse o drain truncaria requisições a cada restart
+  sem ninguém ver — a mesma falha invisível que a ADR-0042 gastou um workflow para eliminar. O
+  código de saída segue 0: não é falha, é orçamento estourado.
+- **fix(security):** `redactErrorMessage` em todo log de erro do shutdown. O `pg`, ao rejeitar
+  `end()` sobre um pool quebrado, traz usuário do Postgres e host do Supabase na mensagem — e o
+  drain de logs do Render sai do perímetro do processo.
+- **refactor(plataforma):** a sequência de boot saiu do `index.ts` para `http/bootstrap.ts`. Eram 5
+  passos ordenados com **zero** cobertura, porque `index.ts` dispara o boot no import; a ordem já
+  causou incidente em 2026-08-10 (código da ADR-0032 em produção antes da `0044`). Agora é asserção
+  executável: migração que falha **aborta antes** do `listen`.
+- **docs:** `docs/runbooks/rollback.md` (a regra que decide tudo: reverter código sem reverter
+  schema é seguro, o contrário não), budget de sessões do pooler no `DEPLOY.md` (49 no pior caso), e
+  o `preDeployCommand` órfão removido do `render.yaml` — declarado desde sempre e **nunca
+  executado** (é feature de plano pago), enquanto quem migrava era o `BootMigrator`. O `DEPLOY.md`
+  repetia a mesma informação errada.
+- **test:** cobertura de branches do shutdown **58,82% → 90,47%**; 5 testes de ordem do boot; 12 do
+  ciclo de vida dos pools. Total do backend: **1782 testes em 128 suítes**.
+
+> Os **12 cards P3 seguem abertos**, com 3 follow-ups novos que a própria remediação gerou, em
+> `ontology/_inbox/tapar-furos-backend-regis-followups.md`. O mais relevante: o timeout de 40s do
+> axios do Conexos ainda excede o teto de drenagem de 25s — alinhar os dois exige medir a latência
+> real do ERP, e baixá-lo às cegas seria mudança de comportamento de negócio, não de infra.
 
 ## v0.34.0 (2026-09-01) — a linha digitável do boleto sai do ERP
 

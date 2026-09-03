@@ -17,8 +17,17 @@ services:
     autoDeploy: true
     buildCommand: npm ci && npm run build
     startCommand: npm start
-    # Runs migrations + admin seed before serving traffic on each deploy.
-    preDeployCommand: npm run migrate && npm run seed:admin
+    # SEM preDeployCommand — deliberado, não esquecimento.
+    #
+    # A linha `preDeployCommand: npm run migrate && npm run seed:admin` viveu aqui até a v0.34.1 e
+    # NUNCA executou: pre-deploy é feature de plano pago e este serviço foi criado pelo dashboard.
+    # Quem migra é o `BootMigrator`, chamado por `src/backend/index.ts` antes do `app.listen` (ver
+    # `src/backend/http/bootstrap.ts`) — o servidor é inalcançável enquanto houver migração
+    # pendente, e falhar ao migrar mata o processo com código 1, mantendo a versão anterior no ar.
+    #
+    # Removida porque duas fontes discordando é como se perde a de verdade: o próximo dev que
+    # "limpasse" o boot poderia remover o `BootMigrator` acreditando que o Render cobria.
+    # (Regis-Review 2026-09-03, card `deployability-3`.)
     healthCheckPath: /health
     envVars:
       # Non-secret, fixed defaults.

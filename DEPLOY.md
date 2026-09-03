@@ -17,6 +17,35 @@ O auth é um **login simples usuário/senha** — o backend valida a senha (bcry
 As tabelas são criadas pelas migrations (`npm run migrate`), incluindo `app_user`
 (`migrations/0007_app_user.sql`). O usuário admin é criado por `npm run seed:admin`.
 
+### Budget de sessões do pooler
+
+Cada processo que fala com o Postgres abre seu próprio pool. O teto do Supavisor é **por projeto**,
+não por processo — então o que importa é a soma, e ela cresce a cada cron novo, silenciosamente.
+
+Registrado aqui porque o primeiro sintoma de saturação é 5xx mascarado por retry, que foi
+exatamente o que escondeu o vazamento de pool corrigido na v0.34.1 (o handler de `error` tratava
+`too many clients` como transitório e, ao descartar o pool sem encerrá-lo, abria mais conexões).
+
+| Processo | Pools | `max` por pool | Sessões no pico |
+|---|---:|---:|---:|
+| Web service (Render) — `PostgreeDatabaseClient` | 1 | 5 | 5 |
+| Web service (Render) — `conexosSessionStore` | 1 | 2 | 2 |
+| 6 crons do GitHub Actions (`ingest-permutas`, `ingest-sispag`, `ingest-extratos`, `detect-staleness`, `reaper-sispag`, `reconciliar-nde`) | 2 cada | 5 + 2 | 42 |
+| **Total teórico se todos coincidirem** | | | **49** |
+
+Os crons são espaçados de propósito (`:00`, `:20`, `:40` — ver o comentário no
+`.github/workflows/reaper-sispag.yml`), então o pico real é bem menor que 49. O número acima é o
+**pior caso**, que é o que interessa para dimensionar.
+
+> ⚠️ **Teto real: a preencher.** O `max_client_conn` do Session pooler aparece em
+> **Project Settings → Database → Connection pooling → Pool size** no dashboard do Supabase.
+> Não está aqui porque ninguém o leu ainda — e chutar o número seria pior que deixar em branco.
+> Ao preencher: se o teto for menor que ~49, reduza `poolMaxConnections`
+> (`domain/client/database/PostgreeDatabaseClient.ts`) ou espace mais os crons.
+
+Ao mexer em `poolMaxConnections` ou acrescentar um cron, **atualize esta tabela**. É o único lugar
+onde a conta existe.
+
 ---
 
 ## 2. Render (backend — `src/backend`)
@@ -28,9 +57,20 @@ Crie um **Web Service** apontando para o repositório.
 | Root Directory | `src/backend` |
 | Build Command | `npm ci && npm run build` |
 | Start Command | `npm start` |
-| Pre-Deploy Command | `npm run migrate && npm run seed:admin` |
+| Pre-Deploy Command | *(não usar — ver abaixo)* |
 
-> O Pre-Deploy roda as migrations (cria `app_user` etc.) e semeia o admin ANTES de servir tráfego.
+> **As migrations rodam no BOOT, não em pre-deploy.** O `preDeployCommand` é feature de plano pago
+> e o serviço foi criado pelo dashboard, então ele **nunca executou** — apesar de estar declarado no
+> `render.yaml` até a v0.34.1. Quem migra é o `BootMigrator`, chamado por `src/backend/index.ts`
+> antes do `app.listen`: o servidor é inalcançável enquanto houver migração pendente, e falhar ao
+> migrar mata o processo com código 1 (o Render marca o deploy como falho e mantém a versão
+> anterior no ar). Ver a docstring de `http/bootstrap.ts`.
+>
+> Manter as duas fontes concordando importa: enquanto o blueprint dizia uma coisa e o código fazia
+> outra, o próximo dev que "limpasse" o boot poderia remover o `BootMigrator` acreditando que o
+> Render cobria.
+
+**Deploy quebrou em produção?** → [`docs/runbooks/rollback.md`](docs/runbooks/rollback.md).
 
 ### Variáveis de ambiente (Render → Environment)
 
