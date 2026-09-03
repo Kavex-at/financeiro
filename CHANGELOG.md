@@ -1,5 +1,51 @@
 # Columbia Financeiro — Changelog
 
+## v0.34.1 (2026-09-03) — o processo aprende a morrer direito
+
+Três furos de infra de processo, nenhum deles visível numa tela. O que os une é o modo de
+falha: **os três falhavam para o lado errado**, em silêncio.
+
+O handler de erro do pool de conexões zerava a referência sem encerrar o pool. O pool
+quebrado ia para o coletor de lixo **ainda segurando até 5 sessões** no Supabase, e a
+inicialização seguinte abria mais 5. O laço se fechava sozinho: `too many clients` e
+`MaxClientsInSessionMode` estão na lista de erros que o próprio cliente trata como
+transitórios — ou seja, o handler que existia para **recuperar** do esgotamento de conexões
+era o que o **acelerava**.
+
+E todo deploy no Render manda SIGTERM. Sem handler, o processo morria no ato e cortava o que
+estivesse em voo. Uma requisição interrompida entre o `createRun` e o `finishRun` deixa a
+execução parada em `reconciling` — exatamente o órfão que o `reaper-sispag` varre de 15 em 15
+minutos. O detector do sintoma já existia; faltava remover a causa mais frequente.
+
+- **fix(database):** o handler de `error` encerra o pool antes de soltar a referência, com
+  guarda de reentrada. O evento dispara uma vez por cliente ocioso derrubado, e sem a guarda
+  o segundo disparo zeraria uma referência que já aponta para o pool **novo**, criado pela
+  inicialização no meio do caminho — matando um pool saudável. Novo `close()` idempotente.
+- **fix(plataforma):** `SIGTERM`/`SIGINT` param de aceitar conexões, drenam as requisições em
+  voo com teto de 10s, encerram o pool e saem com 0. Idempotente contra sinal repetido; sai
+  assim mesmo se a drenagem estourar (o processo está descendo por ordem do orquestrador, e
+  ficar preso só troca a saída limpa por um SIGKILL). Vive em módulo próprio porque o
+  `index.ts` dispara `start()` no import — importá-lo num teste subiria o servidor.
+- **fix(database):** o pool passa a ser reobtido **a cada tentativa** do retry, e não
+  congelado antes dele. Esta é uma regressão que a primeira correção introduzia: com o pool
+  agora encerrado de fato, uma retentativa contra a referência congelada bateria em
+  `Cannot use a pool after calling end` — trocando um erro recuperável por um definitivo,
+  justamente no caminho que o retry existe para salvar. Pega pelo Regis-Review.
+- **fix(tooling):** `npm run lint` do backend era `npx biome check .` e saía **0 em silêncio**
+  sem `node_modules` — o gate reportava verde sem ter examinado uma linha. Em CI não mordia
+  (o `npm ci` vem antes), mas mordia em **todo worktree novo**, que é o fluxo obrigatório do
+  pipe. Medido com o `package.json` real: antes exit 0 sem saída, depois exit 127 com
+  `biome: not found`. Mesmo vício em `npx tsc-esm-fix` no `build`. O frontend já resolvia
+  tudo por `node_modules/.bin` e não precisou mudar.
+- **test:** 8 casos novos para o shutdown (ordem, idempotência, timeout, `closePool` que
+  rejeita, `unref`) e 8 para o pool (encerramento único, disparo tardio que não mata o pool
+  novo, `end()` que rejeita, `close()` idempotente, retentativa contra o pool novo).
+
+> Regis-Review `2026-09-03-1901`: **8,07, gate passa com 0 P0** (24 cards: 1 P1, 11 P2, 12 P3).
+> O P1 é o achado que importa: o `conexosSessionStore` cria um **segundo** pool Postgres com
+> `on('error', () => undefined)` — a mesma assinatura do bug corrigido aqui, num sítio que o
+> shutdown não conhece. Está em `ontology/_inbox/tapar-furos-backend-regis-followups.md`.
+
 ## v0.34.0 (2026-09-01) — a linha digitável do boleto sai do ERP
 
 Para conferir um pagamento com o banco, a analista abria o Conexos numa outra aba. O
