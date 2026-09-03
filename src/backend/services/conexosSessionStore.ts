@@ -250,7 +250,11 @@ export const closeConexosSessionStorePool = async (): Promise<void> => {
     openPools.clear();
     // Esvaziar os holders impede que uma query em voo reabra um pool enquanto o
     // processo desce — o `storeClosed` é o que segura a reconstrução preguiçosa.
+    // O `clear()` importa: sem ele o Set cresce a cada `buildSessionStoreFromEnv`
+    // e nunca encolhe, o que é inócuo hoje mas vira armadilha no dia em que
+    // alguém iterar `poolHolders` com semântica (sonda de readiness, métrica).
     for (const holder of poolHolders) holder.pool = undefined;
+    poolHolders.clear();
     await Promise.all(pools.map((pool) => pool.end().catch(() => undefined)));
 };
 
@@ -328,8 +332,12 @@ export const buildSessionStoreFromEnv = (
         return new ConexosSessionStore({ db });
     } catch (cause) {
         const detail = cause instanceof Error ? cause.message : String(cause);
+        // Redigido como o irmão 25 linhas acima. Este é o caminho MAIS perigoso dos
+        // dois: quem lança aqui é o parser da connection string, e ele põe a URL de
+        // entrada — com a senha — dentro da mensagem. O drain de logs do Render sai
+        // do perímetro do processo.
         console.warn(
-            `[ConexosSessionStore] construção do Pool falhou — store desabilitado: ${detail}`,
+            `[ConexosSessionStore] construção do Pool falhou — store desabilitado: ${redactErrorMessage(detail)}`,
         );
         return new ConexosSessionStore({ db: null });
     }

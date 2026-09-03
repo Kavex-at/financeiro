@@ -25,6 +25,7 @@ jest.mock('pg', () => ({
     }),
 }));
 
+import { Pool } from 'pg';
 import { buildSessionStoreFromEnv, closeConexosSessionStorePool } from './conexosSessionStore.js';
 
 const envWithDb = { databaseConnectionString: 'postgresql://u:p@h:6543/db' } as NodeJS.ProcessEnv;
@@ -100,6 +101,32 @@ describe('conexosSessionStore — ciclo de vida do 2º pool (integrability-2, P1
         expect(logged).toContain('pool derrubado por erro de socket');
         expect(logged).toContain('for user "[REDACTED]"');
         expect(logged).not.toContain('"financeiro"');
+        warn.mockRestore();
+    });
+
+    /**
+     * O contrato que a docstring do módulo promete — "o store NUNCA pode derrubar
+     * a integração com o Conexos" — e que nenhum teste garantia. Quem lança aqui é
+     * o parser da connection string, e ele põe a URL de entrada, com a senha,
+     * dentro da mensagem.
+     */
+    it('fails open with a redacted log when the Pool constructor throws', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        (Pool as unknown as jest.Mock).mockImplementationOnce(() => {
+            throw new Error(
+                'invalid connection string: postgresql://financeiro:s3nh4-sup3r@db.supabase.co:5432/postgres',
+            );
+        });
+
+        const store = buildSessionStoreFromEnv(envWithDb);
+
+        // Fail-open: store desabilitado, backend de pé.
+        expect(store.enabled).toBe(false);
+        await expect(store.acquire()).resolves.toBeNull();
+
+        const logged = warn.mock.calls.flat().join('\n');
+        expect(logged).toContain('construção do Pool falhou');
+        expect(logged).not.toContain('s3nh4-sup3r');
         warn.mockRestore();
     });
 

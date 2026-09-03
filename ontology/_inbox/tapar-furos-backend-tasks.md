@@ -405,3 +405,49 @@ upgrade de plano — é decisão comercial do Yuri.
 - Nenhuma mudança de comportamento (o comando já não executava).
 
 **Dependencies:** none
+
+---
+
+# Rodada 3 — remediar um defeito introduzido pela Task 5
+
+### Task 16: Rebuild the session store pool instead of leaving it dead
+
+Apontado pelo coordenador ao revisar o delta. O diagnóstico que escrevi na Task 5 estava errado num
+ponto que **muda a correção**: eu tratei o caso como "a mesma assinatura do BE-05". Não é.
+
+| | `PostgreeDatabaseClient` (BE-05) | `conexosSessionStore` |
+|---|---|---|
+| Criação do pool | **recriado a cada `init()`** | criado **uma vez**, capturado na closure de `db.query` |
+| Efeito do erro sem `end()` | pool órfão por evento → vazamento **cumulativo** | pool único; **sem acúmulo** |
+| `end()` sozinho basta? | **sim** — a `init()` seguinte reconstrói | **não** — nada reconstrói |
+
+Consequência: encerrar o pool na Task 5 deixou `db.query` fechando sobre um pool morto. Toda query
+subsequente falhava, o store degradava para "miss" e **ficava assim até o processo terminar** — eu
+troquei 2 conexões penduradas por deploy por um session store permanentemente cego. Pior que o
+`() => undefined` original, porque o `pg` sozinho apenas remove o cliente ocioso com erro e segue
+servindo.
+
+**Files to change:**
+- `src/backend/services/conexosSessionStore.ts` — o pool passa a viver num `PoolHolder`; o handler
+  de `error` encerra o quebrado (guarda de reentrada mantida) e **esvazia o slot**, e a próxima
+  chamada reconstrói. `closeConexosSessionStorePool` marca `storeClosed`, esvazia os holders e
+  **trava a reconstrução** — reabrir conexões durante o drain anularia o shutdown gracioso. O erro
+  engolido ganha `console.warn` redigido com `redactErrorMessage`: barulho mínimo, rastro existente,
+  e a propriedade original preservada (o processo **não** cai num erro de socket ocioso; nenhum
+  `throw` acrescentado).
+- `src/backend/services/conexosSessionStorePool.test.ts` — 3 testes novos.
+
+> **Fora de escopo por decisão do coordenador:** migrar este módulo para DDD. É legado pré-DDD e lê
+> `process.env` direto, exceção documentada na própria docstring. Misturar aqui poluiria o delta.
+
+**Acceptance criteria:**
+- Depois de um evento de `error`, a chamada seguinte funciona **num pool novo** — teste que falha
+  contra a implementação da Task 5.
+- Guarda de reentrada mantida: `end()` uma única vez por pool, mesmo com o evento repetindo.
+- Depois de `closeConexosSessionStorePool()`, uma query **não** reabre pool; o store degrada para
+  "miss" (contrato dele em qualquer erro).
+- O `console.warn` sai redigido: erro com `password authentication failed for user "financeiro"`
+  aparece como `for user "[REDACTED]"`.
+- Nenhum `throw` novo no handler de `error`.
+
+**Dependencies:** Task 5

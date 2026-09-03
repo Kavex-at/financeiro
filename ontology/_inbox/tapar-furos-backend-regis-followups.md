@@ -1,5 +1,85 @@
 # tapar-furos-backend — follow-ups do Regis-Review
 
+---
+
+# Rodada 3 — Regis-Review `2026-09-03-2015-session-store-pool`
+
+**Veredito: 0 P0 → o gate passa.** Escopo: 1 arquivo (`services/conexosSessionStore.ts`).
+Seções em `docs/regis-review/2026-09-03-2015-session-store-pool/`.
+
+> **Desvio de processo declarado:** rodei **5 dos 8 QAs** (fault-tolerance, availability,
+> integrability, security, testability). Deployability, modifiability e performance não têm o que
+> dizer sobre ~50 linhas num único módulo cuja infra de deploy não mudou, e o mesmo código já passou
+> pelo pipeline completo no run `2026-09-03-1901`. Não rodei o `qa-consolidator`, que exige as 8
+> seções — por isso não há `REPORT.md`/`KANBAN.md` neste run. Se o Yuri quiser o run canônico, peça.
+
+| QA | Score | P0 | P1 | P2 | P3 |
+|---|---:|---:|---:|---:|---:|
+| Fault Tolerance | 8,4 | 0 | 0 | 1 | 3 |
+| Integrability | 8,4 | 0 | 0 | 2 | 1 |
+| Availability | 7,5 | 0 | **1** | 2 | 0 |
+| Security | 7,5 | 0 | 0 | 2 | 1 |
+| Testability | 7,5 | 0 | **2** | 2 | 1 |
+
+## Fechado ainda na rodada (dívida que eu criei ou toquei)
+
+- **`security-1` (P2)** — o `console.warn` do `catch` da construção do Pool logava `${detail}` cru.
+  É o caminho **mais** perigoso dos dois: quem lança ali é o parser da connection string, e ele põe
+  a URL de entrada, **com a senha**, dentro da mensagem. A linha era pré-existente, mas foi este
+  delta que criou a inconsistência (redigido a 25 linhas de distância) — migração proporcional de
+  dívida, conforme o CLAUDE.md. Coberto por teste com asserção negativa sobre a senha.
+- **`testability-4` (P2)** — `poolHolders` nunca era esvaziado; o Set crescia a cada
+  `buildSessionStoreFromEnv` e nunca encolhia. Bug **meu, desta rodada**. `poolHolders.clear()`.
+- **`testability-2` (P1)** — o fail-open da construção do Pool não tinha teste. É o contrato que a
+  docstring do módulo promete ("o store NUNCA pode derrubar a integração com o Conexos") e que
+  ninguém garantia. Coberto pelo mesmo teste da redação acima.
+
+## Em aberto
+
+### P1
+
+- **`availability-1`** — o `console.warn` do rebuild fica fora do canal estruturado, enquanto o
+  force-exit do shutdown, **no mesmo delta**, vai para `LogService` com `OPERATIONAL_WARN`. A
+  assimetria é real: shutdown estourado aparece em `/operacao`, pool flapando não. Um pooler que
+  reinicia clientes ociosos a cada 30s produziria dezenas de rebuilds por hora afogados no drain de
+  logs do Render. **Não implementei** porque o coordenador pediu escopo mínimo e "não logar de forma
+  ruidosa" — decidir o que merece alerta no painel é escolha de produto, não de infra. Recomendo
+  fazer: é o mesmo hook que o `onForceExit` já usa.
+- **`testability-1`** — o mock de `pg` **não simula pool encerrado**: `pool.query` segue resolvendo
+  depois do `end()`. Foi por isso que o defeito da rodada 2 passou verde. O teste novo discrimina
+  contando `createdPools`, mas por **convenção do autor**, não por construção. Endurecer o mock para
+  rejeitar query após `end()` cobriria a classe inteira.
+
+### P2/P3
+
+`fault-tolerance-3` (nenhum contador de rebuild — o único sinal de que a frota caiu em "miss" é
+stdout) · `availability-2` (Retry sem backoff nem teto: pooler indisponível faz `openPool()` a cada
+query, cada uma pagando ~5s de `connectionTimeoutMillis`) · `integrability-1` (o drain perde a
+identidade do closeable no log de erro) · `integrability-2` (`resources()` do `processResources.ts`
+não tem teste — nada impede o segundo esquecimento) · `integrability-3` (`services/` importando de
+`http/redact.js` inverte camada; já são 3 sítios, resolver movendo o redator para `utils/`) ·
+`security-2` (o redator não cobre `ECONNREFUSED <ip>:<porta>` nem `ENOTFOUND <host>.supabase.com` —
+topologia, não credencial) · `security-3` (o `private warn` do store, pré-existente, sem redator) ·
+`testability-3` (sem threshold de cobertura específico do arquivo) · `fault-tolerance-1`
+(`buildSessionStoreFromEnv` reseta `storeClosed = false` incondicionalmente — inofensivo em produção,
+onde a factory roda uma vez no import, mas derrotaria o drain se alguém a reinvocasse) ·
+`fault-tolerance-4` (quarentena / circuit breaker).
+
+## O julgamento honesto que o QA de Fault Tolerance devolveu
+
+> *"É parcialmente teatro, sim."*
+
+O `pg` **se cura sozinho** de erro em cliente ocioso: remove o cliente e segue com os restantes do
+`max: 2`. O ganho **real** desta rodada sobre o `() => undefined` original é o **warn redigido** — o
+erro deixou de ser invisível. O `end()` + reconstrução é defensável se o cenário dominante em
+produção for restart do pooler Supabase, e é churn se for socket ocioso isolado. **Ninguém sabe qual
+domina, porque não medimos.** Vale instrumentar (`fault-tolerance-2`) antes de defender o design.
+
+O que **não** é teatro, e era o furo de verdade: as 2 conexões agora voltam no SIGTERM, e a rodada 2
+sozinha teria deixado o store cego para sempre.
+
+---
+
 **Run:** `2026-09-03-1901-tapar-furos-backend`
 **Relatórios:** `docs/regis-review/2026-09-03-1901-tapar-furos-backend/REPORT.md` e `KANBAN.md`
 **Branch:** `fix/tapar-furos-backend` · commits `e575221` + `e974796`
