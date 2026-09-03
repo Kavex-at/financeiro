@@ -4,15 +4,13 @@ import { container } from 'tsyringe';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { diagnosticarConfiguracao } from './domain/appContainer.js';
-import PostgreeDatabaseClient from './domain/client/database/PostgreeDatabaseClient.js';
 import healthRouter from './routes/health.js';
 import { buildAuthMiddleware } from './http/auth.js';
 import { startServer } from './http/bootstrap.js';
 import { registerGracefulShutdown } from './http/gracefulShutdown.js';
-import { closeAll } from './http/lifecycle.js';
+import { closeProcessResources } from './http/processResources.js';
 import { isDraining } from './http/readinessState.js';
 import LogService from './domain/service/LogService.js';
-import { closeConexosSessionStorePool } from './services/conexosSessionStore.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
 import { recebimentosGate } from './http/recebimentosGate.js';
@@ -162,25 +160,6 @@ app.use('/me', meRouter);
 app.use(errorMiddleware);
 
 const PORT = process.env.PORT || 3001;
-
-/**
- * Libera TODO recurso de processo no shutdown — não só o pool primário.
- *
- * São dois pools Postgres: o do `PostgreeDatabaseClient` (max 5) e o do
- * `conexosSessionStore` (max 2, criado no load do módulo). O segundo ficou fora
- * do SIGTERM até o Regis-Review achá-lo, e cada deploy deixava até 2 sessões
- * penduradas no pooler. A coleção existe para que o próximo client que segure
- * recurso entre aqui em vez de ser esquecido. Ver `http/lifecycle.ts`.
- */
-const closeProcessResources = async (): Promise<void> => {
-    const { errors } = await closeAll([
-        container.resolve(PostgreeDatabaseClient),
-        { close: closeConexosSessionStorePool },
-    ]);
-    for (const error of errors) {
-        console.error('[shutdown] recurso falhou ao fechar:', error);
-    }
-};
 
 /**
  * Publica o estouro da drenagem no canal estruturado, para que uma rota que

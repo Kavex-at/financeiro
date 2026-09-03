@@ -104,7 +104,7 @@ export class ConexosSessionStore {
      * banco (sem abrir um novo Pool por usuário). Usado pelo registry de sessões
      * para dar a cada usuário Conexos vinculado a sua própria linha de sessão.
      */
-    withKey(key: string): ConexosSessionStore {
+    public withKey(key: string): ConexosSessionStore {
         return new ConexosSessionStore({ db: this.db, holder: this.holder, key });
     }
 
@@ -112,7 +112,7 @@ export class ConexosSessionStore {
      * Lê a linha de sessão compartilhada. Retorna null em miss, store desabilitado
      * ou QUALQUER erro de banco (degrada para login por processo — nunca lança).
      */
-    async acquire(): Promise<ConexosSessionRecord | null> {
+    public async acquire(): Promise<ConexosSessionRecord | null> {
         if (!this.db) return null;
         try {
             const { rows } = await this.db.query(
@@ -136,7 +136,7 @@ export class ConexosSessionStore {
      * Em `lost`, o chamador DEVE adotar `current.sid` (sessão do vencedor) para
      * que dois processos nunca mantenham dois logins concorrentes.
      */
-    async persist(input: PersistInput): Promise<PersistResult> {
+    public async persist(input: PersistInput): Promise<PersistResult> {
         if (!this.db) return { outcome: 'disabled' };
         const expiresAtIso = new Date(input.expiresAt).toISOString();
         const loginPayload = input.loginPayload != null ? JSON.stringify(input.loginPayload) : null;
@@ -198,7 +198,7 @@ export class ConexosSessionStore {
      * o `deadSid` dado, para que um sid fresco persistido por outro processo nunca
      * seja apagado. Usado no caminho de 401 antes do re-login.
      */
-    async invalidate(deadSid: string): Promise<void> {
+    public async invalidate(deadSid: string): Promise<void> {
         if (!this.db) return;
         try {
             await this.db.query(`DELETE FROM ${TABLE} WHERE key = $1 AND sid = $2`, [

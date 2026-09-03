@@ -64,6 +64,23 @@ Política padrão do pipe (suspensa aqui por autorização direta): P1/P2/P3 vir
 3. **Upgrade de plano do Render** (opção (a) do `deployability-3`). Habilitaria `preDeployCommand`
    de verdade e tornaria o `BootMigrator` dispensável. É decisão comercial, não técnica.
 
+### Critério cumprido apenas em parte — `testability-2`
+
+O card pedia duas coisas, e só uma foi feita:
+
+| Critério do card | Situação |
+|---|---|
+| ≥ 4 testes cobrindo a ordem do boot | ✅ **5 testes** em `http/bootstrap.test.ts` |
+| Passos do boot fora de teste: 5 → 0 | ✅ os 5 passos são asserção executável |
+| LOC de `src/backend/index.ts`: ~180 → ≤ 40 | ❌ **209 linhas** |
+
+O que importava — a **sequência** de boot, invariante documentada e não testada que já causou o
+incidente de 2026-08-10 — está extraída e coberta. O que não caiu foi o tamanho do arquivo, porque
+o que sobra no `index.ts` é o wiring do Express (middlewares, CORS, rate-limit, ~12 routers), que
+não é boot e não estava no escopo deste card. Extraí-lo é o card **`modifiability-3`** (`buildApp()`
++ `startServer()`), que é **P3 e segue aberto**. Contar o LOC como cumprido aqui seria contar o
+trabalho do outro card.
+
 ---
 
 ## Resolvido DENTRO deste ciclo (não é follow-up)
