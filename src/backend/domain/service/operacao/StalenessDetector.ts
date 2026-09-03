@@ -10,7 +10,7 @@ import {
     type PipelineSaude,
     SITUACAO_PIPELINE,
 } from '../../interface/operacao/JobRun.js';
-import { redactErrorMessage } from '../../../http/redact.js';
+import { redactErrorMessage } from '../../libs/redact/redactErrorMessage.js';
 import JobRunReadModel from './JobRunReadModel.js';
 import NotificacaoService from './NotificacaoService.js';
 

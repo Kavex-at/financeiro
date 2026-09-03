@@ -3,6 +3,7 @@ import {
     SHUTDOWN_SIGNALS,
     createShutdownHandler,
     registerGracefulShutdown,
+    resolveDrainTimeoutMs,
 } from './gracefulShutdown.js';
 import { isDraining, resetReadinessForTests } from './readinessState.js';
 
@@ -238,6 +239,32 @@ describe('gracefulShutdown (BE-06)', () => {
 
             expect(close).toHaveBeenCalledTimes(1);
             expect(onExit).toHaveBeenCalledWith(0);
+        });
+    });
+
+    // ── modifiability-2 ───────────────────────────────────────────────────────
+    describe('resolveDrainTimeoutMs (modifiability-2)', () => {
+        it('reads the ceiling from the environment', () => {
+            expect(resolveDrainTimeoutMs({ SHUTDOWN_DRAIN_TIMEOUT_MS: '12000' })).toBe(12_000);
+        });
+
+        it('falls back to the default when the variable is absent', () => {
+            expect(resolveDrainTimeoutMs({})).toBe(DEFAULT_DRAIN_TIMEOUT_MS);
+        });
+
+        /**
+         * Valor inválido cai no default em vez de desligar o teto: um drain sem limite é
+         * exatamente o modo de falha que o timer existe para impedir.
+         */
+        it.each([
+            ['não-numérico', 'vinte'],
+            ['zero', '0'],
+            ['negativo', '-1'],
+            ['vazio', ''],
+        ])('ignores an invalid ceiling (%s) instead of disabling it', (_caso, valor) => {
+            expect(resolveDrainTimeoutMs({ SHUTDOWN_DRAIN_TIMEOUT_MS: valor })).toBe(
+                DEFAULT_DRAIN_TIMEOUT_MS,
+            );
         });
     });
 

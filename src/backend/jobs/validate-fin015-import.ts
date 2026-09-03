@@ -33,7 +33,7 @@ import type { ContaPagadora } from '../domain/interface/sispag/Fin015Write.js';
  * Run:
  *   cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
- *   FIN015_IMPORT_WRITE=1 CLEANUP=1 npx tsx jobs/validate-fin015-import.ts
+ *   FIN015_IMPORT_WRITE=1 CLEANUP=1 tsx jobs/validate-fin015-import.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

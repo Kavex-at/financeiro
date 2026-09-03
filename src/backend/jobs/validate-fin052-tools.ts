@@ -13,8 +13,8 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
  * `.RET`) fica atrás de `FIN052_WRITE=1` + `RET_FILE=<caminho>` — PULADO até haver um
  * `.RET` de exemplo (analista, segunda). Guard anti-PRD (recusa base não `-hml`).
  *
- * Run (leitura):  CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/validate-fin052-tools.ts
- * Run (upload):   ... FIN052_WRITE=1 RET_FILE=/caminho/PG0707.RET BNC=4 GTB=1 npx tsx jobs/validate-fin052-tools.ts
+ * Run (leitura):  CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/validate-fin052-tools.ts
+ * Run (upload):   ... FIN052_WRITE=1 RET_FILE=/caminho/PG0707.RET BNC=4 GTB=1 tsx jobs/validate-fin052-tools.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

@@ -3,6 +3,7 @@ import { inject, injectable, singleton } from 'tsyringe';
 import type IClient from '../../core/client/IClient.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import RetryExecutor from '../../libs/executor/RetryExecutor.js';
+import { endPoolQuietly, endPoolQuietlyAsync } from '../../libs/pool/endPoolQuietly.js';
 import SqlBuilder from '../../libs/sql/SqlBuilder.js';
 
 /**
@@ -83,9 +84,7 @@ export default class PostgreeDatabaseClient implements IClient {
             pool.on('error', (_err) => {
                 if (!ended) {
                     ended = true;
-                    // `end()` de um pool já quebrado rejeita; um throw aqui
-                    // derrubaria o processo por unhandled rejection.
-                    void pool.end().catch(() => {});
+                    endPoolQuietly(pool);
                 }
                 if (this.connectionPool === pool) this.connectionPool = undefined;
             });
@@ -104,12 +103,7 @@ export default class PostgreeDatabaseClient implements IClient {
         // Zera ANTES do await: uma segunda chamada concorrente não deve esperar
         // pelo mesmo `end()` nem disparar um segundo.
         this.connectionPool = undefined;
-        try {
-            await pool.end();
-        } catch {
-            // Fechar um pool já quebrado rejeita. Estamos descendo de qualquer
-            // forma — não há a quem reportar.
-        }
+        await endPoolQuietlyAsync(pool);
     };
 
     public selectMany = async (query: string, params?: Record<string, unknown>): Promise<any[]> => {

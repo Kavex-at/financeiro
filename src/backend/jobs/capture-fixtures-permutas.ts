@@ -35,8 +35,8 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  * que teria evitado o bug.
  *
  * Run:
- *   cd src/backend && PROBE_ALLOW_PRD=1 npx tsx jobs/capture-fixtures-permutas.ts
- *   cd src/backend && PROBE_ALLOW_PRD=1 FIX_FIL=2 npx tsx jobs/capture-fixtures-permutas.ts
+ *   cd src/backend && PROBE_ALLOW_PRD=1 tsx jobs/capture-fixtures-permutas.ts
+ *   cd src/backend && PROBE_ALLOW_PRD=1 FIX_FIL=2 tsx jobs/capture-fixtures-permutas.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PROBE_ALLOW_PRD !== '1') {

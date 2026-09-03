@@ -25,7 +25,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
  *     warn-and-continue se o banco estiver indisponível).
  *
  * Run:
- *   cd src/backend && npx tsx jobs/probe-sispag.ts
+ *   cd src/backend && tsx jobs/probe-sispag.ts
  *   (usa CONEXOS_BASE_URL do .env — hoje PRD columbiatrading.conexos.cloud)
  *
  * Saída: JSON por sonda + summary.md em PROBE_OUT (default /tmp/sispag-probe).

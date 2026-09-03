@@ -14,31 +14,52 @@ export interface Closeable {
     close?: () => Promise<void>;
 }
 
+/**
+ * Recurso com nome. O nome não é enfeite: sem ele, o log de um drain que falhou diz
+ * apenas "algo não fechou", e às 2h da manhã a diferença entre "o pool do Postgres"
+ * e "o pool do session store" é a diferença entre saber e adivinhar.
+ */
+export interface NamedCloseable {
+    nome: string;
+    recurso: Closeable;
+}
+
+export interface CloseAllFailure {
+    nome: string;
+    erro: unknown;
+}
+
 export interface CloseAllResult {
-    /** Erros de quem falhou ao fechar. Vazio = todos fecharam limpos. */
-    errors: unknown[];
+    /** Falhas ao fechar, já com o nome do recurso. Vazio = todos fecharam limpos. */
+    errors: CloseAllFailure[];
 }
 
 /**
  * Fecha todos em paralelo e **nunca rejeita**.
  *
- * Rejeitar aqui seria o pior desfecho possível: um client quebrado impediria os
- * demais de liberar seus recursos e travaria o shutdown, trocando uma saída limpa
- * por um SIGKILL — exatamente o que o drain existe para evitar. Os erros voltam
- * como dado para quem quiser logar.
+ * Rejeitar aqui seria o pior desfecho possível: um recurso quebrado impediria os
+ * demais de serem liberados e travaria o shutdown, trocando uma saída limpa por um
+ * SIGKILL — exatamente o que o drain existe para evitar. Os erros voltam como dado,
+ * nomeados, para quem quiser logar.
  */
-export const closeAll = async (closeables: readonly Closeable[]): Promise<CloseAllResult> => {
+export const closeAll = async (closeables: readonly NamedCloseable[]): Promise<CloseAllResult> => {
     const settled = await Promise.allSettled(
-        closeables.map(async (closeable) => {
-            // Client sem `close` é o caso comum (stateless sobre HTTP), não um erro.
-            if (typeof closeable?.close !== 'function') return;
-            await closeable.close();
+        closeables.map(async ({ nome, recurso }) => {
+            try {
+                // Recurso sem `close` é o caso comum (stateless sobre HTTP), não um erro.
+                if (typeof recurso?.close !== 'function') return;
+                await recurso.close();
+            } catch (erro) {
+                // Reembrulha para o nome sobreviver ao `allSettled`.
+                const falha: CloseAllFailure = { nome, erro };
+                throw falha;
+            }
         }),
     );
 
     return {
         errors: settled
             .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-            .map((result) => result.reason),
+            .map((result) => result.reason as CloseAllFailure),
     };
 };

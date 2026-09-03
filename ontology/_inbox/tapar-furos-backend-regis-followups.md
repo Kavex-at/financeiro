@@ -2,6 +2,56 @@
 
 ---
 
+# Rodada 4 — varredura final: **todos os cards fecháveis, fechados**
+
+> Pedido do Yuri: *"feche os p1 em aberto… quero revisar os mínimos detalhes e resolver, até mesmo
+> os outros não prioritários"*. Fechados os 2 P1 pendentes da rodada 3 **e os P2/P3 dos dois runs**.
+
+## Fechados nesta rodada
+
+| Card | Run | O que foi feito |
+|---|---|---|
+| `availability-1` | r3 (**P1**) | Eventos do pool vão para o `LogService` (`OPERATIONAL_WARN`) via sink injetado — o módulo legado não conhece o container. Fim da assimetria com o force-exit. |
+| `testability-1` | r3 (**P1**) | Mock de `pg` endurecido: `query` **rejeita** após `end()`. Era o sensor cego que deixou o defeito da rodada 2 passar verde. |
+| `availability-2` | r3 | Janela mínima de 5s entre reconstruções. Sem ela, pooler fora do ar = `openPool()` por chamada, cada uma pagando 5s de `connectionTimeoutMillis`. |
+| `fault-tolerance-3` | r3 | `getSessionStorePoolStats()` — contador de rebuilds, pools abertos, estado. |
+| `fault-tolerance-1` | r3 | `storeClosed`/`ultimoRebuildEm`/`rebuildsTotal` resetados explicitamente na factory, com o porquê escrito. |
+| `fault-tolerance-4` | r3 | A janela mínima **é** a quarentena; um circuit breaker completo seria peso sem medição que o justifique. |
+| `integrability-1` | r3 | `NamedCloseable`: o drain agora diz **qual** recurso falhou. "Algo não fechou" é inútil às 2h da manhã. |
+| `integrability-2` | r3 | `processResources.test.ts` — trava a contagem de recursos; acrescentar um sem atualizar o teste falha. |
+| `integrability-3` | r3 | `redactErrorMessage` mudou-se para `domain/libs/redact/`; os 3 consumidores fora de `http/` repontados. `http/redact.ts` reexporta. |
+| `security-2` | r3 | Padrões novos: `ECONNREFUSED <ip>:<porta>`, `ENOTFOUND <host>`, `ETIMEDOUT`, `EHOSTUNREACH`. |
+| `security-3` | r3 | O `private warn` do store ganhou o redator. **Os 3 sítios de log do arquivo agora redigem** — zero assimetria. |
+| `testability-3` | r3 | Pisos de cobertura **por arquivo** no `jest.config.cjs` para pool/shutdown/boot. |
+| `availability-3` | r1 | Coberto pelo contador + eventos estruturados. |
+| `deployability-1` | r1 | Já fechado na rodada 2 (`/health` → 503). |
+| `integrability-3` | r1 | Documentado **no código** por que a sessão do Conexos não é encerrada no SIGTERM (`processResources.ts`): o `sid` é compartilhado com os 6 crons; deslogar dispararia kill-oldest em cascata. |
+| `modifiability-1` | r1 | `endPoolQuietly` / `endPoolQuietlyAsync` em `domain/libs/pool/` — o idiom estava em 3 sítios. |
+| `modifiability-2` | r1 | `SHUTDOWN_DRAIN_TIMEOUT_MS` por env, com fallback seguro (valor inválido → default, nunca "sem teto"). |
+| `modifiability-3` | r1 | `http/buildApp.ts` extraído. **`index.ts`: 235 → 95 linhas**, só wiring. +5 testes de ordem de middleware. |
+| `fault-tolerance-3` | r1 | `http/lastResortHandlers.ts` — `unhandledRejection`/`uncaughtException` drenam antes de sair, com código **1**. |
+| `security-2` | r1 | 40 arquivos de job: `npx tsx` → `tsx` nas docstrings. Zero `npx` no backend. |
+| `testability-3` | r1 | `scripts.gate.test.ts` — falha se qualquer script voltar a usar `npx`. Trava a classe do BE-09 em zero. |
+| `testability-4` | r1 | Ratchet do frontend: 20/9/14 → **33/23/28** (o real é 35,11/25,02/29,67 — o piso estava ~15 pontos abaixo e não travava nada). |
+
+## O que continua em aberto, e por quê
+
+Quatro itens, todos bloqueados por **dado ou decisão que não é minha**:
+
+1. **Probe de sessões do Supabase** (`performance-1`, r2). O budget está no `DEPLOY.md` (49 no pior
+   caso). Falta o alerta a 70% do teto — e o **teto real** só existe no dashboard do Supabase
+   (Project Settings → Database → Connection pooling → **Pool size**). Sem esse número o alerta não
+   tem contra o que comparar, e inventá-lo seria pior que não ter.
+2. **Histograma p50/p95/p99 de latência** (`performance-2`, r1). Exige infra de métrica que o
+   projeto não tem (hoje é `console.log` de duração). Fazer direito é escolher destino — Prometheus,
+   OTel, tabela própria — e isso é decisão de arquitetura, não card de follow-up.
+3. **Timeout do axios do Conexos × teto de drenagem** (r2). O ERP tem `timeout: 40000` e o drain
+   agora é 25s: uma chamada que passe de 25s ainda é cortada. Alinhar exige **medir** a latência
+   real do Conexos; baixar 40s→20s às cegas é mudança de comportamento de negócio.
+4. **Upgrade de plano do Render** (`deployability-3`, opção (a)). Decisão comercial.
+
+---
+
 # Rodada 3 — Regis-Review `2026-09-03-2015-session-store-pool`
 
 **Veredito: 0 P0 → o gate passa.** Escopo: 1 arquivo (`services/conexosSessionStore.ts`).

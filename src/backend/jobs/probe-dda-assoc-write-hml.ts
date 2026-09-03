@@ -24,8 +24,8 @@ import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.
  *
  * Run:
  *   cd src/backend
- *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/probe-dda-assoc-write-hml.ts          # levantamento
- *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api EXECUTAR=1 npx tsx jobs/probe-dda-assoc-write-hml.ts  # escreve
+ *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/probe-dda-assoc-write-hml.ts          # levantamento
+ *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api EXECUTAR=1 tsx jobs/probe-dda-assoc-write-hml.ts  # escreve
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

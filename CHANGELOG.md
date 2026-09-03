@@ -83,10 +83,41 @@ consertar o exemplo em vez do problema.
 - **test:** cobertura de branches do shutdown **58,82% → 90,47%**; 5 testes de ordem do boot; 12 do
   ciclo de vida dos pools. Total do backend: **1782 testes em 128 suítes**.
 
-> Os **12 cards P3 seguem abertos**, com 3 follow-ups novos que a própria remediação gerou, em
-> `ontology/_inbox/tapar-furos-backend-regis-followups.md`. O mais relevante: o timeout de 40s do
-> axios do Conexos ainda excede o teto de drenagem de 25s — alinhar os dois exige medir a latência
-> real do ERP, e baixá-lo às cegas seria mudança de comportamento de negócio, não de infra.
+### E, no fim, o backlog inteiro
+
+O P1 do run era o `conexosSessionStore` criando um **segundo** pool Postgres com
+`on('error', () => undefined)` — e a primeira tentativa de corrigi-lo estava **errada**: encerrar o
+pool sem reconstruí-lo deixava `db.query` sobre um pool morto, degradando o store em silêncio até o
+processo terminar. Pior que o defeito original, porque o `pg` sozinho apenas remove o cliente ocioso
+com erro e segue servindo. Corrigido com reconstrução preguiçosa. Depois disso, o resto dos cards:
+
+- **fix(conexos):** o pool do session store vive num holder — o handler de `error` encerra o
+  quebrado e a próxima chamada reconstrói, com janela mínima de 5s entre tentativas (sem ela, um
+  pooler fora do ar faria uma tentativa por chamada, cada uma pagando 5s de timeout).
+- **feat(operacao):** eventos do pool no mesmo canal do force-exit (`OPERATIONAL_WARN`), com
+  contador de rebuilds. Um pool flapando deixa de ser invisível.
+- **fix(security):** os **três** sítios de log do session store passam pelo redator — o do `catch`
+  de construção era o mais perigoso, porque quem lança ali é o parser da connection string, com a
+  senha dentro. O redator ganhou padrões de topologia (`ECONNREFUSED <ip>`, `ENOTFOUND <host>`) e
+  mudou-se para `domain/libs/redact/`, corrigindo a inversão de camada dos 3 consumidores.
+- **feat(plataforma):** `unhandledRejection`/`uncaughtException` drenam antes de sair (código 1) —
+  era a única porta pela qual o processo ainda morria sem passar pelo drain.
+- **refactor(plataforma):** `http/buildApp.ts` extraído; **`index.ts` foi de 235 para 95 linhas**,
+  só wiring. A ordem dos middlewares — que é contrato de segurança, não estilo — ganhou 5 testes.
+- **refactor:** `endPoolQuietly` recolhe o idiom `pool.end().catch(...)` que estava em 3 sítios;
+  `NamedCloseable` faz o drain dizer **qual** recurso falhou.
+- **chore:** teto de drenagem por `SHUTDOWN_DRAIN_TIMEOUT_MS` (valor inválido cai no default, nunca
+  "sem teto"); pisos de cobertura por arquivo para pool/shutdown/boot; ratchet do frontend
+  20/9/14 → 33/23/28 (o real era 35/25/29 — o piso estava ~15 pontos abaixo e não travava nada);
+  `scripts.gate.test.ts` falha se algum script voltar a usar `npx`, travando a classe do BE-09 em
+  zero; 40 docstrings de job deixaram de ensinar `npx tsx`.
+
+Backend: **132 suítes, 1824 testes**.
+
+> **Quatro itens seguem abertos**, todos bloqueados por dado ou decisão externa: o Pool size real do
+> Supabase (para o alerta a 70%), infra de métrica para o histograma p50/p95/p99, a medição da
+> latência do Conexos (o `timeout: 40000` do ERP ainda excede o drain de 25s) e o upgrade de plano
+> do Render. Detalhes em `ontology/_inbox/tapar-furos-backend-regis-followups.md`.
 
 ## v0.34.0 (2026-09-01) — a linha digitável do boleto sai do ERP
 

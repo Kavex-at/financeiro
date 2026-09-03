@@ -17,7 +17,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *     frouxo por nome). `ConexosCadastroClient.listProcessos` só expõe
  *     filCod/priCods — a tela documenta `{ label: "Cód. Pessoa", field: pesCod }`.
  *
- * Run: PROBE_ALLOW_PRD=1 npx tsx jobs/probe-extratos-fase3.ts
+ * Run: PROBE_ALLOW_PRD=1 tsx jobs/probe-extratos-fase3.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PROBE_ALLOW_PRD !== '1') {

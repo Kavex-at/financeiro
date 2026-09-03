@@ -23,7 +23,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
  * padrão e não quero que este rode por acidente.
  *
  * Run (PRD, autorizado por Yuri 2026-07-30 — não há ambiente HML):
- *   PROBE_ALLOW_PRD=1 npx tsx jobs/probe-fin134.ts
+ *   PROBE_ALLOW_PRD=1 tsx jobs/probe-fin134.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

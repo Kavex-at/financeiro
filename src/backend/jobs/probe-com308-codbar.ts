@@ -15,7 +15,7 @@ import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
  * vem preenchido em produção.
  *
  * SEGURANÇA: só `/list`. Nenhuma escrita.
- * Run: cd src/backend && PROBE_PRD=1 npx tsx jobs/probe-com308-codbar.ts
+ * Run: cd src/backend && PROBE_PRD=1 tsx jobs/probe-com308-codbar.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PROBE_PRD !== '1') {

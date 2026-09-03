@@ -40,6 +40,19 @@ export const SHUTDOWN_SIGNALS: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
  */
 export const DEFAULT_DRAIN_TIMEOUT_MS = 25_000;
 
+/**
+ * Lê o teto da drenagem do ambiente (card `modifiability-2`).
+ *
+ * O número certo depende do orquestrador, não do código: o Render dá ~30s, outro alvo pode dar 10s
+ * ou 120s. Amarrado em constante, descobrir isso em produção exige redeploy. Valor inválido
+ * (não-numérico, zero, negativo) cai no default em vez de desligar o teto — um drain sem limite é
+ * exatamente o modo de falha que o timer existe para impedir.
+ */
+export const resolveDrainTimeoutMs = (env: NodeJS.ProcessEnv = process.env): number => {
+    const bruto = Number(env.SHUTDOWN_DRAIN_TIMEOUT_MS);
+    return Number.isFinite(bruto) && bruto > 0 ? bruto : DEFAULT_DRAIN_TIMEOUT_MS;
+};
+
 export interface GracefulShutdownDeps {
     /** Retorno de `app.listen`. */
     server: {
@@ -78,7 +91,7 @@ const asMessage = (error: unknown): string =>
 const safeMessage = (error: unknown): string => redactErrorMessage(asMessage(error));
 
 export const createShutdownHandler = (deps: GracefulShutdownDeps): ((signal: string) => void) => {
-    const drainTimeoutMs = deps.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+    const drainTimeoutMs = deps.drainTimeoutMs ?? resolveDrainTimeoutMs();
     const log = deps.log ?? ((message: string) => console.log(message));
     let shuttingDown = false;
 

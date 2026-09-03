@@ -20,7 +20,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  * linhas — o objetivo é decidir qual tela devolve LANÇAMENTOS de extrato
  * (candidatos a `TransacaoBancaria`) e com quais campos.
  *
- * Run: PROBE_ALLOW_PRD=1 npx tsx jobs/probe-extratos-fase2.ts
+ * Run: PROBE_ALLOW_PRD=1 tsx jobs/probe-extratos-fase2.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PROBE_ALLOW_PRD !== '1') {

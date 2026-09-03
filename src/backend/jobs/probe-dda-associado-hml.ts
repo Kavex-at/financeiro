@@ -16,7 +16,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  * `ditEspCodbar` (44) com `itsNumCodbar` (47) no MESMO boleto — prova a conversão.
  *
  * SEGURANÇA: só `/list`. Nenhuma escrita.
- * Run: cd src/backend && CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/probe-dda-associado-hml.ts
+ * Run: cd src/backend && CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/probe-dda-associado-hml.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

@@ -24,7 +24,7 @@ import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.
  * Run:
  *   cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
- *   FLP=26 SEQ=93 npx tsx jobs/validate-fin015-remessa.ts
+ *   FLP=26 SEQ=93 tsx jobs/validate-fin015-remessa.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PERMITIR_PRD !== '1') {

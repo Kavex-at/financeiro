@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
-import { redactErrorMessage } from '../http/redact.js';
+import { endPoolQuietly, endPoolQuietlyAsync } from '../domain/libs/pool/endPoolQuietly.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 import { boxLog, DEBUG_VERBOSE } from '../utils/index.js';
 import type { Filial } from './conexos.js';
 
@@ -213,9 +214,15 @@ export class ConexosSessionStore {
 
     private warn(message: string, cause: unknown): void {
         // Problemas do store devem ser visíveis mas NUNCA fatais.
+        //
+        // Redigido (card `security-3`): quem chega aqui é erro de query do `pg`, que traz usuário
+        // do Postgres e host interno na mensagem — e o `JSON.stringify` de um não-Error pode
+        // arrastar um objeto de conexão inteiro. Terceiro e último sítio de log deste arquivo a
+        // ganhar o redator; não sobra assimetria.
         const detail = cause instanceof Error ? cause.message : JSON.stringify(cause);
-        console.warn(`[ConexosSessionStore] ${message}: ${detail}`);
-        if (DEBUG_VERBOSE) boxLog('ConexosSessionStore warn', { message, detail });
+        const safe = redactErrorMessage(detail);
+        console.warn(`[ConexosSessionStore] ${message}: ${safe}`);
+        if (DEBUG_VERBOSE) boxLog('ConexosSessionStore warn', { message, detail: safe });
     }
 }
 
@@ -231,10 +238,65 @@ interface PoolHolder {
     pool?: Pool;
 }
 
+/**
+ * Evento do ciclo de vida do pool, já com a mensagem redigida.
+ *
+ * O `console.warn` do rebuild ficava fora do canal estruturado enquanto o force-exit do shutdown,
+ * no mesmo delta, ia para o `LogService` — assimetria real: shutdown estourado aparecia no
+ * `/operacao`, pool flapando não (card `availability-1`). Um pooler que reinicia clientes ociosos
+ * a cada 30s produziria dezenas de rebuilds por hora afogados no drain de logs do Render.
+ *
+ * O sink é injetado de fora para este módulo legado não conhecer o container (o `index.ts` o
+ * amarra no `LogService`). Default = `console.warn`, para que job e script sigam funcionando.
+ */
+export interface SessionStorePoolEvent {
+    tipo: 'rebuild' | 'construcao-falhou' | 'rebuild-suprimido';
+    mensagem: string;
+    rebuildsTotal: number;
+}
+
+type PoolEventSink = (evento: SessionStorePoolEvent) => void;
+
+const defaultSink: PoolEventSink = (evento) =>
+    console.warn(`[ConexosSessionStore] ${evento.mensagem}`);
+
+let poolEventSink: PoolEventSink = defaultSink;
+
+/** Amarra os eventos do pool a um canal estruturado. Ver `index.ts`. */
+export const setSessionStorePoolEventSink = (sink: PoolEventSink): void => {
+    poolEventSink = sink;
+};
+
+/** Volta ao `console.warn`. Usado por teste e por quem quiser desamarrar o canal. */
+export const resetSessionStorePoolEventSink = (): void => {
+    poolEventSink = defaultSink;
+};
+
+/**
+ * Intervalo mínimo entre reconstruções (card `availability-2`).
+ *
+ * Sem teto, um pooler indisponível faz `openPool()` a CADA chamada, e cada uma paga os 5s de
+ * `connectionTimeoutMillis` antes de falhar — o retry vira amplificador. Com a janela, a primeira
+ * reconstrução é imediata (o caso comum, socket ocioso isolado) e as seguintes esperam.
+ */
+const MIN_REBUILD_INTERVAL_MS = 5_000;
+
 const openPools = new Set<Pool>();
 const poolHolders = new Set<PoolHolder>();
 /** Trava a reconstrução preguiçosa depois do shutdown. */
 let storeClosed = false;
+let rebuildsTotal = 0;
+let ultimoRebuildEm = 0;
+
+/**
+ * Contadores do ciclo de vida do pool (card `fault-tolerance-3`). Sem isto, o único sinal de que
+ * a frota inteira caiu em "miss" era `console.warn` no stdout.
+ */
+export const getSessionStorePoolStats = (): {
+    rebuilds: number;
+    poolsAbertos: number;
+    fechado: boolean;
+} => ({ rebuilds: rebuildsTotal, poolsAbertos: openPools.size, fechado: storeClosed });
 
 /**
  * Encerra o pool do session store no shutdown gracioso. Idempotente e no-op
@@ -255,7 +317,7 @@ export const closeConexosSessionStorePool = async (): Promise<void> => {
     // alguém iterar `poolHolders` com semântica (sonda de readiness, métrica).
     for (const holder of poolHolders) holder.pool = undefined;
     poolHolders.clear();
-    await Promise.all(pools.map((pool) => pool.end().catch(() => undefined)));
+    await Promise.all(pools.map((pool) => endPoolQuietlyAsync(pool)));
 };
 
 export const buildSessionStoreFromEnv = (
@@ -272,7 +334,12 @@ export const buildSessionStoreFromEnv = (
         return new ConexosSessionStore({ db: null });
     }
     try {
+        // Reset do estado de módulo: construir um store novo significa que não estamos mais no
+        // caminho de shutdown. Em produção a factory roda UMA vez (singleton no import); a
+        // reinvocação só existe em teste. Ver `fault-tolerance-1`.
         storeClosed = false;
+        ultimoRebuildEm = 0;
+        rebuildsTotal = 0;
         const holder: PoolHolder = {};
         poolHolders.add(holder);
 
@@ -307,38 +374,61 @@ export const buildSessionStoreFromEnv = (
                 ended = true;
                 openPools.delete(pool);
                 const detail = cause instanceof Error ? cause.message : String(cause);
-                console.warn(
-                    `[ConexosSessionStore] pool derrubado por erro de socket — reconstruído na próxima chamada: ${redactErrorMessage(detail)}`,
-                );
-                // `end()` de um pool já quebrado rejeita; um throw aqui derrubaria o
-                // processo por unhandled rejection.
-                void pool.end().catch(() => undefined);
+                poolEventSink({
+                    tipo: 'rebuild',
+                    mensagem: `pool derrubado por erro de socket — reconstruído na próxima chamada: ${redactErrorMessage(detail)}`,
+                    rebuildsTotal,
+                });
+                endPoolQuietly(pool);
                 if (holder.pool === pool) holder.pool = undefined;
             });
             holder.pool = pool;
             return pool;
         };
 
+        /**
+         * Reconstrução preguiçosa, com janela mínima entre tentativas.
+         *
+         * Devolve `undefined` quando não deve reconstruir — depois do shutdown (reabrir conexões
+         * enquanto o processo desce anularia o drain) ou dentro da janela de espera. Nos dois
+         * casos a query falha e o store degrada para "miss", que é o contrato dele em qualquer
+         * erro.
+         */
+        const reconstruirPool = (): Pool | undefined => {
+            if (storeClosed) return undefined;
+            const agora = Date.now();
+            if (ultimoRebuildEm !== 0 && agora - ultimoRebuildEm < MIN_REBUILD_INTERVAL_MS) {
+                poolEventSink({
+                    tipo: 'rebuild-suprimido',
+                    mensagem: `reconstrução suprimida — menos de ${MIN_REBUILD_INTERVAL_MS}ms desde a anterior`,
+                    rebuildsTotal,
+                });
+                return undefined;
+            }
+            ultimoRebuildEm = agora;
+            rebuildsTotal += 1;
+            return openPool();
+        };
+
         openPool();
         const db: SessionStoreDb = {
             query: (sql, params) => {
-                // Reconstrução preguiçosa. Depois do shutdown NÃO reabre: reabrir
-                // conexões enquanto o processo desce anularia o drain.
-                const pool = holder.pool ?? (storeClosed ? undefined : openPool());
-                if (!pool) throw new Error('ConexosSessionStore: pool encerrado');
+                const pool = holder.pool ?? reconstruirPool();
+                if (!pool) throw new Error('ConexosSessionStore: pool indisponível');
                 return pool.query(sql, params as unknown[] | undefined);
             },
         };
         return new ConexosSessionStore({ db });
     } catch (cause) {
         const detail = cause instanceof Error ? cause.message : String(cause);
-        // Redigido como o irmão 25 linhas acima. Este é o caminho MAIS perigoso dos
-        // dois: quem lança aqui é o parser da connection string, e ele põe a URL de
-        // entrada — com a senha — dentro da mensagem. O drain de logs do Render sai
-        // do perímetro do processo.
-        console.warn(
-            `[ConexosSessionStore] construção do Pool falhou — store desabilitado: ${redactErrorMessage(detail)}`,
-        );
+        // Redigido como os outros dois sítios de log deste arquivo. Este é o MAIS perigoso:
+        // quem lança aqui é o parser da connection string, e ele põe a URL de entrada — com a
+        // senha — dentro da mensagem. O drain de logs do Render sai do perímetro do processo.
+        poolEventSink({
+            tipo: 'construcao-falhou',
+            mensagem: `construção do Pool falhou — store desabilitado: ${redactErrorMessage(detail)}`,
+            rebuildsTotal,
+        });
         return new ConexosSessionStore({ db: null });
     }
 };
