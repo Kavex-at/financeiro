@@ -281,6 +281,31 @@ describe('PostgreeDatabaseClient', () => {
             expect(createdPools).toHaveLength(2); // nenhum pool extra foi aberto
         });
 
+        /**
+         * Regressão do próprio BE-05: encerrar o pool quebrado tornou fatal uma
+         * retentativa que antes funcionava. `query` congelava a referência fora
+         * do `RetryExecutor`, então a 2ª tentativa bateria em `Cannot use a pool
+         * after calling end on the pool` em vez de usar o pool novo — trocando um
+         * erro recuperável por um definitivo, justamente no caminho que o retry
+         * de `Connection terminated` existe para salvar.
+         */
+        it('retries against a NEW pool after the broken one was ended', async () => {
+            poolQuery
+                .mockImplementationOnce(async () => {
+                    createdPools[0].emitError();
+                    throw new Error('Connection terminated unexpectedly');
+                })
+                .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 });
+
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            const rows = await client.selectMany('SELECT 1');
+
+            expect(rows).toEqual([{ id: 1 }]);
+            expect(poolEnd).toHaveBeenCalledTimes(1);
+            // a retentativa reabriu o pool em vez de reusar o encerrado.
+            expect(createdPools).toHaveLength(2);
+        });
+
         it('survives an end() that rejects (no unhandled rejection)', async () => {
             poolEnd.mockRejectedValue(new Error('pool already ended'));
             const client = new PostgreeDatabaseClient(environmentProvider as any);

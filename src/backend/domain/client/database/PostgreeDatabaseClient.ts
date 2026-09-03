@@ -225,15 +225,22 @@ export default class PostgreeDatabaseClient implements IClient {
      * (optionally via SqlBuilder for named params like `$name`).
      */
     private query = async (rawQuery: string, rawParams?: Record<string, unknown>): Promise<any> => {
-        await this.init();
-        if (!this.connectionPool) throw new Error('Database connection pool not initialized');
-
-        const pool = this.connectionPool;
         const { query, params } = rawParams
             ? this.sqlBuilder.build(rawQuery, rawParams)
             : { query: rawQuery, params: undefined };
 
         return this.queryRetryExecutor.execute(async () => {
+            // O pool é reobtido a CADA tentativa, e não congelado fora do retry
+            // como antes. Agora que o handler de `error` ENCERRA o pool quebrado,
+            // uma retentativa contra a referência congelada bateria em
+            // `Cannot use a pool after calling end on the pool` — trocaria um erro
+            // recuperável por um fatal. Com a `init()` aqui dentro, a tentativa
+            // seguinte pega o pool novo, que é justamente o desfecho que o retry
+            // de `'too many clients'`/`'Connection terminated'` existe para obter.
+            await this.init();
+            const pool = this.connectionPool;
+            if (!pool) throw new Error('Database connection pool not initialized');
+
             if (params) {
                 return pool.query(query, params as any[]);
             }
