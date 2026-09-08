@@ -26,6 +26,7 @@ import GerarSolicitacaoNumerarioService from '../domain/service/permutas/GerarSo
 import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
+import { respondHandlerError } from '../http/respondHandlerError.js';
 import { requireRole } from '../http/auth.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
 
@@ -499,13 +500,25 @@ router.post(
         const docCod = String(req.params.docCod);
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(ReconciliacaoPermutaService);
-        const result = await service.reconciliar({
-            adiantamentoDocCod: docCod,
-            executadoPor,
-            dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
-            ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
-        });
-        res.json(result);
+        try {
+            const result = await service.reconciliar({
+                adiantamentoDocCod: docCod,
+                executadoPor,
+                dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
+                ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
+            });
+            res.json(result);
+        } catch (err) {
+            // Sem isto o `errorMiddleware` global achata TUDO em 500 e DESCARTA `statusCode`,
+            // `code`, `userMessage` e `retryable`: o 409 (`RECONCILIACAO_EM_ANDAMENTO` — "aguarde")
+            // e o 422 (`ALOCACAO_SEM_COBERTURA` — "re-aloque") chegariam à analista como "erro
+            // interno", e a mensagem em PT que é a razão de existir dessas classes morreria no meio
+            // do caminho. Precedente: routes/recebimentos.ts:740, routes/sispag.ts (respondLoteError).
+            // O que NÃO é HandlerError segue para o middleware global (500 genérico, sem vazar
+            // `err.message` ao cliente — regressão de security-3/F-security-5).
+            if (respondHandlerError(req, res, err)) return;
+            throw err;
+        }
     }),
 );
 

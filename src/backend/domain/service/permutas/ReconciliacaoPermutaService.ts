@@ -1,7 +1,11 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosBaixaClient from '../../client/ConexosBaixaClient.js';
 import ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
+import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import AlocacaoSemCoberturaError from '../../errors/AlocacaoSemCoberturaError.js';
+import ReconciliacaoEmAndamentoError from '../../errors/ReconciliacaoEmAndamentoError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import { isHandlerError } from '../../libs/handler/HandlerError.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import PermutaAlocacaoRepository, {
     type AlocacaoRow,
@@ -26,6 +30,17 @@ const CONTA_GER_DESCONTO = 130;
 const GER_DES_DESCONTO = 'VARIAÇÃO CAMBIAL ATIVA REALIZADA';
 
 /**
+ * Tolerância do fechamento do alocado, em MOEDA NEGOCIADA. É o mesmo epsilon que o laço de baixa
+ * já usava para decidir "acabou" (`restanteUsd <= 0.005`), agora nomeado porque passou a decidir
+ * também qual TERMINAL a execução recebe (I-Recon-6) e se a pré-checagem recusa (I-Write-8a).
+ *
+ * NÃO confundir com a tolerância anti-drift de `baixarTitulo`
+ * (`Math.max(0.01, emAbertoErp * 0.005)`): aquela é em BRL, POR TÍTULO, e compara contra o
+ * em-aberto vivo que o ERP devolve no passo 2. Grandezas diferentes, propósitos diferentes.
+ */
+const TOLERANCIA_FECHAMENTO_NEG = 0.005;
+
+/**
  * Arredonda para 2 casas decimais. OBRIGATÓRIO em todo valor monetário enviado ao `fin010`
  * (sonda real 2026-06-23): o ERP rejeita money com >2 decimais (`CnxValidatorMny`,
  * `precision_not_supported`). A variação cambial chega com ruído de ponto flutuante.
@@ -33,11 +48,17 @@ const GER_DES_DESCONTO = 'VARIAÇÃO CAMBIAL ATIVA REALIZADA';
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /**
- * A alocação virou baixa REAL no borderô? Só `settled` conta — é o único estado com confirmação
- * (`bxaCodSeq`) do ERP. `error`/`skipped`/`dry-run` NÃO põem item no borderô (`skipped` sequer chega
- * ao handshake; a baixa dele vive em OUTRO borderô, anterior). Gate da limpeza do órfão (I-Write-7).
+ * A alocação virou baixa REAL no borderô? Contam os DOIS terminais — `settled` e `parcial` —, que
+ * são os únicos estados com confirmação (`bxaCodSeq`) do ERP. O critério é "pôs item no borderô?",
+ * e `parcial` pôs: as baixas dos títulos consumidos estão lá. `error`/`skipped`/`dry-run` não põem
+ * (`skipped` sequer chega ao handshake; a baixa dele vive em OUTRO borderô, anterior).
+ *
+ * Gate da limpeza do órfão (I-Write-7): sem incluir `parcial`, uma execução parcial sozinha faria a
+ * limpeza apagar do ERP um borderô que TEM baixa real dentro. A limpeza é fail-safe via
+ * `listBaixas`, mas depender disso é depender de um catch.
  */
-const isBaixaConfirmada = (r: ResultadoAlocacao): boolean => r.status === 'settled';
+const isBaixaConfirmada = (r: ResultadoAlocacao): boolean =>
+    r.status === 'settled' || r.status === 'parcial';
 
 export interface ReconciliarInput {
     adiantamentoDocCod: string;
@@ -55,8 +76,26 @@ export interface ResultadoAlocacao {
     borCod?: number;
     bxaCodSeq?: number;
     valorBaixado?: number;
+    /** Resíduo NÃO baixado do valor alocado, em moeda negociada. Só em `parcial` (I-Recon-7b). */
+    valorResidualUsd?: number;
     erro?: string;
     payload?: Record<string, unknown>;
+}
+
+/**
+ * Um título (parcela) da invoice, como o laço de baixa o consome. `usd`/`taxa` vêm em moeda
+ * negociada (`titMnyValorMneg`/`titFltTaxaMneg`); `pagoBrl` é `titMnyTotPago` e vem em **BRL** —
+ * o ERP não expõe `titMnyTotPagoMneg` (conferido no swagger `FinTituloFin`). Daí a divisão pela
+ * taxa na cobertura: não é preferência, é a única forma de trazer o pago para o lado do alocado.
+ */
+interface TituloParaBaixa {
+    titCod: number;
+    usd: number;
+    taxa: number;
+    /** `titMnyTotPago` — valor já pago do título, em BRL. */
+    pagoBrl?: number;
+    /** `pago`: 1 TOTALMENTE PAGO · 2 PARCIALMENTE PAGO · 3 NÃO PAGO. Corroboração, nunca gate. */
+    pago?: number;
 }
 
 export interface ReconciliarResult {
@@ -94,9 +133,56 @@ export default class ReconciliacaoPermutaService {
         private alocacaoService: AlocacaoPermutasService,
         @inject(LogService) private logService: LogService,
         @inject(ErpErrorInterpreter) private erpErrorInterpreter: ErpErrorInterpreter,
+        // Injetado no FIM da lista de propósito: os testes deste serviço montam as dependências
+        // POSICIONALMENTE (`as never`), então inserir no meio quebraria todos eles de uma vez.
+        @inject(PostgreeDatabaseClient) private db: PostgreeDatabaseClient,
     ) {}
 
-    public reconciliar = async (input: ReconciliarInput): Promise<ReconciliarResult> => {
+    /**
+     * SERIALIZA por adiantamento (I-Recon-5). Duas requisições simultâneas para o MESMO
+     * `adiantamentoDocCod` — dois cliques, duas abas, dois operadores — passavam juntas pelo ledger
+     * e criavam DOIS borderôs e DUAS baixas para o mesmo par. O ledger write-ahead cobre
+     * interrupção, não concorrência; e o `heavyRouteLimiter` é por IP, então não alcança duas
+     * máquinas. Tática espelhada de `RemessaService.gerarRemessa` (SISPAG).
+     *
+     * O caller barrado recebe 409 (`ReconciliacaoEmAndamentoError`, retryable) e NÃO toca o ERP:
+     * zero borderô, zero baixa. Adiantamentos distintos seguem em paralelo.
+     */
+    public reconciliar = async (input: ReconciliarInput): Promise<ReconciliarResult> =>
+        this.db.withAdvisoryLock(
+            this.chaveDeLock(input.adiantamentoDocCod),
+            () => this.reconciliarSerializado(input),
+            async () => {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'reconciliação concorrente barrada pelo lock (nenhuma escrita no ERP)',
+                    data: {
+                        adiantamentoDocCod: input.adiantamentoDocCod,
+                        executadoPor: input.executadoPor,
+                    },
+                });
+                throw new ReconciliacaoEmAndamentoError({
+                    adiantamentoDocCod: input.adiantamentoDocCod,
+                });
+            },
+        );
+
+    /**
+     * Hash estável do `adiantamentoDocCod` para o advisory lock do Postgres (int4). Colisão entre
+     * adiantamentos distintos só custa SERIALIZAÇÃO DESNECESSÁRIA — nunca corretude: o pior caso é
+     * um analista esperar a baixa de outro adto terminar. Mesma técnica de `RemessaService`.
+     */
+    private chaveDeLock = (adiantamentoDocCod: string): number => {
+        let h = 0;
+        for (let i = 0; i < adiantamentoDocCod.length; i += 1) {
+            h = (Math.imul(31, h) + adiantamentoDocCod.charCodeAt(i)) | 0;
+        }
+        return h;
+    };
+
+    private reconciliarSerializado = async (
+        input: ReconciliarInput,
+    ): Promise<ReconciliarResult> => {
         const { adiantamentoDocCod, executadoPor, dataMovto } = input;
 
         const adto = await this.relationalRepository.findAdiantamento(adiantamentoDocCod);
@@ -169,11 +255,19 @@ export default class ReconciliacaoPermutaService {
             // - Adicionar nova alocação (outro par) → chave nova → lançável.
             const key = `permuta:${adiantamentoDocCod}:${aloc.invoiceDocCod}:${aloc.atualizadoEm.getTime()}`;
 
-            // Idempotência VIVA: se já há baixa settled MAS o borderô dela foi CANCELADO/ESTORNADO/
-            // REMOVIDO no ERP, a baixa é nula → libera o relançamento (remove a linha stale). Só
-            // bloqueia se o borderô ainda é válido (em cadastro ou finalizado).
+            // Idempotência VIVA: se já há baixa TERMINAL (`settled` ou `parcial`) MAS o borderô dela
+            // foi CANCELADO/ESTORNADO/REMOVIDO no ERP, a baixa é nula → libera o relançamento
+            // (renomeia a linha stale). Só bloqueia se o borderô ainda é válido (em cadastro ou
+            // finalizado).
+            //
+            // C-8 — por que `parcial` entra aqui: o critério do `renameKey` é "a escrita
+            // irreversível ainda VALE no ERP?", e num borderô cancelado ela não vale, em `settled`
+            // ou em `parcial`. Sem esta simetria, a máquina de badge (B3: "nenhum borderô válido
+            // sobra ⇒ reabre") diria PENDENTE enquanto o ledger recusaria em silêncio com
+            // `skipped` — a tela e o livro-razão discordando sobre dinheiro. Isso NÃO afrouxa
+            // I-Recon-1: com o borderô VIVO, `parcial` segue preservado e pulado.
             const existente = await this.execucaoRepository.findByIdempotencyKey(key);
-            if (existente?.status === 'settled') {
+            if (existente?.status === 'settled' || existente?.status === 'parcial') {
                 const baixaAindaValida = await this.borderoAindaValido(filCod, existente.borCod);
                 if (baixaAindaValida) {
                     resultados.push({
@@ -374,16 +468,29 @@ export default class ReconciliacaoPermutaService {
 
         // Títulos (parcelas) da invoice — cada um com valor/taxa em moeda negociada. Ordena por titCod.
         // Fallback: ERP indisponível/sem dados → título 1 com o valor cheio (compat de título único).
-        let titulos: Array<{ titCod: number; usd: number; taxa: number }> = [];
+        //
+        // `titulosDoErp` rastreia a ORIGEM da lista EXPLICITAMENTE, e não por `titulos.length === 1`
+        // (C-2): uma invoice real de título único é indistinguível do fallback por contagem, e
+        // confundir as duas desligaria a pré-checagem justamente no caso legítimo.
+        let titulos: TituloParaBaixa[] = [];
+        let titulosDoErp = false;
         try {
             const raw = await this.conexosTitulosClient.listTitulosAPagar({
                 docCod: String(invoiceDocCod),
                 filCod,
             });
             titulos = raw
-                .map((t) => ({ titCod: Number(t.titCod), usd: t.valorNegociado, taxa: t.taxa }))
+                .map((t) => ({
+                    titCod: Number(t.titCod),
+                    usd: t.valorNegociado,
+                    taxa: t.taxa,
+                    // `valorPago` é `titMnyTotPago` e vem em BRL — a conversão para a moeda
+                    // negociada é feita na cobertura (C-3), não aqui.
+                    ...(t.valorPago !== undefined ? { pagoBrl: t.valorPago } : {}),
+                    ...(t.pago !== undefined ? { pago: t.pago } : {}),
+                }))
                 .filter(
-                    (t): t is { titCod: number; usd: number; taxa: number } =>
+                    (t): t is TituloParaBaixa =>
                         Number.isFinite(t.titCod) &&
                         t.usd !== undefined &&
                         t.usd > 0 &&
@@ -391,12 +498,23 @@ export default class ReconciliacaoPermutaService {
                         t.taxa > 0,
                 )
                 .sort((a, b) => a.titCod - b.titCod);
+            titulosDoErp = titulos.length > 0;
         } catch {
             // segue no fallback
         }
         if (titulos.length === 0) {
             titulos = [{ titCod: 1, usd: aloc.valorAlocado, taxa: aloc.taxaInvoice }];
         }
+
+        // I-Write-8a — PRÉ-CHECAGEM DE COBERTURA, antes da PRIMEIRA chamada de baixa: aqui nada foi
+        // escrito no ERP ainda, então recusar é fail-closed de verdade e de graça.
+        await this.assertCobertura({
+            titulos,
+            titulosDoErp,
+            aloc,
+            adiantamentoDocCod,
+            invoiceDocCod,
+        });
 
         // ÂNCORA NO ADIANTAMENTO (I-Write-6): só quando ESTA baixa consome o adto por inteiro (o alocado
         // cobre o saldo a permutar do adto) E a invoice é de título único. Nesse caso o líquido fecha no
@@ -413,10 +531,17 @@ export default class ReconciliacaoPermutaService {
         let totalBaixadoBrl = 0;
         let jurosTotal = 0;
         let descontoTotal = 0;
+        // Quanto do que PRETENDÍAMOS baixar o ERP NÃO aceitou. `baixarTitulo` posta
+        // `min(desejado, emAbertoErp)`: quando o em-aberto vivo é menor que o desejado (dentro da
+        // tolerância anti-drift, senão a chamada aborta), a baixa entra MENOR. Sem medir isso, o
+        // resíduo desaparecia — o laço debita `restanteUsd` pela INTENÇÃO, e a execução fechava
+        // `settled` afirmando ter baixado um dinheiro que o ERP não recebeu. Este é o resíduo que
+        // "só aparece depois de baixas já gravadas" (I-Write-8b).
+        let naoBaixadoUsd = 0;
         const bxaCodSeqs: number[] = [];
 
         for (const t of titulos) {
-            if (restanteUsd <= 0.005) break;
+            if (restanteUsd <= TOLERANCIA_FECHAMENTO_NEG) break;
             const usdTitulo = Math.min(restanteUsd, t.usd);
             const r = await this.baixarTitulo({
                 key,
@@ -434,7 +559,57 @@ export default class ReconciliacaoPermutaService {
             totalBaixadoBrl = round2(totalBaixadoBrl + r.bxaMnyValor);
             jurosTotal = round2(jurosTotal + r.juros);
             descontoTotal = round2(descontoTotal + r.desconto);
+            naoBaixadoUsd = round2(naoBaixadoUsd + (usdTitulo - round2(r.bxaMnyValor / t.taxa)));
+            // A distribuição segue debitando pela intenção (o rateio entre títulos não muda);
+            // o que o ERP não aceitou é contabilizado à parte, acima.
             restanteUsd = round2(restanteUsd - usdTitulo);
+        }
+
+        // Títulos esgotados + alocado não fechado = RESÍDUO. `Math.max(0, …)` porque um `naoBaixado`
+        // negativo (o ERP aceitou MAIS do que pedimos) não é resíduo — seria outro problema, e
+        // I-Write-1 já barra a baixa acima do em-aberto vivo.
+        const residuoUsd = round2(Math.max(0, restanteUsd + naoBaixadoUsd));
+        const contaJuros = descontoTotal > 0 ? CONTA_GER_DESCONTO : CONTA_GER_JUROS;
+        const erpResponse = { bxaCodSeqs, totalBaixadoBrl, titulos: bxaCodSeqs.length };
+
+        // I-Recon-6 / I-Write-8b — o terminal DIZ A VERDADE sobre o que foi baixado. `settled`
+        // afirma "o alocado foi integralmente baixado"; afirmar isso com resíduo é uma afirmação
+        // falsa no livro-razão. Nenhum caminho grava `settled` com resíduo, e nenhum grava `error`
+        // sobre baixas já POSTadas (elas existem — o dinheiro se moveu).
+        if (residuoUsd > TOLERANCIA_FECHAMENTO_NEG) {
+            await this.execucaoRepository.markParcial(key, {
+                borCod,
+                ...(bxaCodSeqs[0] !== undefined ? { bxaCodSeq: bxaCodSeqs[0] } : {}),
+                valorBaixado: totalBaixadoBrl,
+                juros: jurosTotal,
+                contaJuros,
+                valorResidualUsd: residuoUsd,
+                erpResponse: { ...erpResponse, valorResidualUsd: residuoUsd },
+            });
+            // WARN, não info (I-Recon-7a): é o WARN que o detector proativo e a busca em log usam.
+            // Os quatro campos são os que o invariante enumera — não mexer sem mexer nele.
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'permuta reconciliacao PARCIAL — alocado NÃO fechou; resíduo a re-alocar',
+                data: {
+                    adiantamentoDocCod,
+                    invoiceDocCod,
+                    borCod,
+                    valorResidualUsd: residuoUsd,
+                    titulos: bxaCodSeqs.length,
+                    bxaCodSeqs,
+                    totalBaixado: totalBaixadoBrl,
+                },
+            });
+            return {
+                invoiceDocCod: aloc.invoiceDocCod,
+                status: 'parcial',
+                dryRun: false,
+                borCod,
+                ...(bxaCodSeqs[0] !== undefined ? { bxaCodSeq: bxaCodSeqs[0] } : {}),
+                valorBaixado: totalBaixadoBrl,
+                valorResidualUsd: residuoUsd,
+            };
         }
 
         await this.execucaoRepository.markSettled(key, {
@@ -442,8 +617,8 @@ export default class ReconciliacaoPermutaService {
             bxaCodSeq: bxaCodSeqs[0],
             valorBaixado: totalBaixadoBrl,
             juros: jurosTotal,
-            contaJuros: descontoTotal > 0 ? CONTA_GER_DESCONTO : CONTA_GER_JUROS,
-            erpResponse: { bxaCodSeqs, totalBaixadoBrl, titulos: bxaCodSeqs.length },
+            contaJuros,
+            erpResponse,
         });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -466,6 +641,81 @@ export default class ReconciliacaoPermutaService {
             bxaCodSeq: bxaCodSeqs[0],
             valorBaixado: totalBaixadoBrl,
         };
+    };
+
+    /**
+     * I-Write-8a — a COBERTURA EM ABERTO dos títulos cobre o valor alocado?
+     *
+     * ── Por que a conta não é `Σ valorNegociado` (a face) ────────────────────────────────────
+     * O filtro do client é `titVldStatus#EQ: '1'`, e `titVldStatus` é o CICLO DE VIDA DO REGISTRO
+     * — `1 ATIVO · 2 RENEGOCIADO · 3 CANCELADO` (swagger versionado
+     * `docs/conexos-api/070-com3.json`, schema `FinTituloFin`, o mesmo `serviceName` que o client
+     * envia). Ele NÃO significa "em aberto": o eixo de pagamento é outro campo do mesmo DTO,
+     * `pago` (`1 TOTALMENTE PAGO · 2 PARCIALMENTE · 3 NÃO PAGO`). Sondado em produção
+     * (`jobs/probe-com308-cobertura.ts`, 2026-09-08, 20 invoices / 22 títulos): 19 das 20 invoices
+     * devolveram títulos ATIVOS com face cheia e aberto ZERO — pior caso, doc 9320 (filial 2),
+     * face USD 83.476,12, aberto 0. Somar a face aprovaria uma cobertura INEXISTENTE.
+     *
+     * O ERP também não expõe `titMnyTotPagoMneg`: o pago só existe em BRL (`titMnyTotPago`). Daí
+     * a divisão pela taxa (C-3). **Não "simplifique" esta conta de volta para a face** — sem a
+     * subtração do pago o invariante deixa de recusar exatamente o caso que o motivou.
+     *
+     * ── Quando NÃO se aplica (C-2) ──────────────────────────────────────────────────────────
+     * Quando os títulos vieram do FALLBACK (lista vazia, zero linhas úteis, ou `catch`): ali
+     * `Σ usd === valorAlocado` POR CONSTRUÇÃO, porque a lista é sintética e não uma medida do
+     * ERP. Checar isso não mede nada e recusaria o caminho majoritário em produção.
+     *
+     * ── Truncamento (guarda deliberadamente NÃO implementada) ───────────────────────────────
+     * `listTitulosAPagar` pede uma página só e o `count` do envelope é descartado por
+     * `legacyConexosAdapter`, então uma lista truncada subestimaria a cobertura e produziria
+     * recusa indevida (falha para o lado seguro, mas atrapalha). A ontologia classifica a guarda
+     * como DEFENSIVA, não requisito: na população medida são 1–2 títulos por invoice, 22 no total,
+     * e nenhuma divergência. Se um dia for implementada, o critério é `rows.length !== count` —
+     * **nunca** `rows.length === pageSize`, porque o ERP impõe a própria página (medido em HML:
+     * pedimos 500, vieram 50 com `count: 86`).
+     */
+    private assertCobertura = async (p: {
+        titulos: TituloParaBaixa[];
+        titulosDoErp: boolean;
+        aloc: AlocacaoRow;
+        adiantamentoDocCod: number;
+        invoiceDocCod: number;
+    }): Promise<void> => {
+        if (!p.titulosDoErp) return; // C-2 — lista sintética: não há o que medir.
+
+        let cobertura = 0;
+        for (const t of p.titulos) {
+            const abertoUsd = round2(t.usd - (t.pagoBrl ?? 0) / t.taxa);
+            cobertura = round2(cobertura + abertoUsd);
+            // Corroboração, NUNCA recusa: `pago` é retornável mas NÃO filtrável (`pago#NE: '1'`
+            // responde HTTP 500 — medido). Dois campos do ERP discordando entre si é problema de
+            // quem mantém o contrato, não motivo para bloquear o trabalho da analista.
+            if (t.pago === 1 && Math.abs(abertoUsd) > TOLERANCIA_FECHAMENTO_NEG) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message:
+                        'com308 divergente: título com pago=1 (TOTALMENTE PAGO) e em-aberto derivado ≠ 0',
+                    data: {
+                        adiantamentoDocCod: p.adiantamentoDocCod,
+                        invoiceDocCod: p.invoiceDocCod,
+                        titCod: t.titCod,
+                        abertoUsd,
+                        faceUsd: t.usd,
+                        pagoBrl: t.pagoBrl ?? null,
+                        taxa: t.taxa,
+                    },
+                });
+            }
+        }
+
+        if (cobertura < p.aloc.valorAlocado - TOLERANCIA_FECHAMENTO_NEG) {
+            throw new AlocacaoSemCoberturaError({
+                adiantamentoDocCod: p.adiantamentoDocCod,
+                invoiceDocCod: p.invoiceDocCod,
+                cobertura,
+                valorAlocado: p.aloc.valorAlocado,
+            });
+        }
     };
 
     /**
@@ -832,7 +1082,12 @@ export default class ReconciliacaoPermutaService {
     /**
      * Mensagem amigável (PT) a partir do erro do ERP. Delega ao `ErpErrorInterpreter` (fonte única):
      * surface a razão real (`vars.msg`) do `Generic.ERROR_MESSAGE` em vez da string genérica/key.
+     *
+     * Um `HandlerError` nosso (ex.: `AlocacaoSemCoberturaError`) já traz a mensagem curada em PT e
+     * NÃO passa pelo interpretador: o `message` dele é técnico, em inglês, e é o `userMessage` que
+     * a analista precisa ler na trilha do par — inclusive quando o erro fica contido no
+     * `resultados[]` porque o lote segue (continue-on-error) em vez de subir até a rota.
      */
     private friendlyErpMessage = (err: unknown): string =>
-        this.erpErrorInterpreter.interpret(err).friendly;
+        isHandlerError(err) ? err.userMessage : this.erpErrorInterpreter.interpret(err).friendly;
 }

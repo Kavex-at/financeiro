@@ -103,6 +103,93 @@ const buildService = (
 };
 
 describe('ReconciliacaoLotePermutaService.reconciliarLote', () => {
+    /**
+     * C-5 / ADR-0043 — um par `parcial` de EXECUÇÃO não é sucesso nem erro: o dinheiro se moveu,
+     * mas sobrou resíduo a re-alocar. Somá-lo a `totalSettled` recriaria, um nível acima, o mesmo
+     * silêncio que a ADR existe para acabar; contá-lo como erro mandaria a analista procurar uma
+     * falha que não houve.
+     */
+    it('par `parcial` conta em totalParciais — nem settled, nem erro — e o adto vira `com-residuo`', async () => {
+        const { service } = buildService(async (docCod) => {
+            if (docCod === '9026') {
+                return {
+                    adiantamentoDocCod: '9026',
+                    dryRun: false,
+                    writeEnabled: true,
+                    borCod: 100,
+                    resultados: [
+                        {
+                            invoiceDocCod: 'I9026',
+                            status: 'parcial',
+                            dryRun: false,
+                            borCod: 100,
+                            valorBaixado: 4990,
+                            valorResidualUsd: 2,
+                        },
+                    ],
+                } satisfies ReconciliarResult;
+            }
+            return resultSettled(docCod, 100);
+        });
+
+        const out = await service.reconciliarLote({
+            executadoPor: 'user-abc',
+            dataMovto: 1_700_000_000_000,
+            requestId: 'req-parcial',
+        });
+
+        expect(out.totalParciais).toBe(1);
+        expect(out.totalSettled).toBe(2); // 11821 + 19019 — o 9026 NÃO entra aqui
+        expect(out.totalErros).toBe(0);
+        const item = out.resultados.find((r) => r.adiantamentoDocCod === '9026');
+        expect(item?.status).toBe('com-residuo');
+    });
+
+    /**
+     * A distinção que C-5 obriga a manter: `'parcial'` do LOTE (erro + sucesso no mesmo adto) e
+     * `'com-residuo'` (resíduo de execução, sem erro nenhum) são desfechos diferentes. Se um dia
+     * alguém unificar os dois, este teste cai — e é para cair.
+     */
+    it('erro + parcial no mesmo adto ⇒ `parcial` do LOTE (o erro domina), não `com-residuo`', async () => {
+        const { service } = buildService(async (docCod) => {
+            if (docCod === '9026') {
+                return {
+                    adiantamentoDocCod: '9026',
+                    dryRun: false,
+                    writeEnabled: true,
+                    borCod: 100,
+                    resultados: [
+                        {
+                            invoiceDocCod: 'I1',
+                            status: 'parcial',
+                            dryRun: false,
+                            borCod: 100,
+                            valorResidualUsd: 2,
+                        },
+                        {
+                            invoiceDocCod: 'I2',
+                            status: 'error',
+                            dryRun: false,
+                            erro: 'ERP recusou',
+                        },
+                    ],
+                } satisfies ReconciliarResult;
+            }
+            return resultSettled(docCod, 100);
+        });
+
+        const out = await service.reconciliarLote({
+            executadoPor: 'user-abc',
+            dataMovto: 1_700_000_000_000,
+            requestId: 'req-misto',
+        });
+
+        const item = out.resultados.find((r) => r.adiantamentoDocCod === '9026');
+        expect(item?.status).toBe('parcial');
+        expect(out.totalParciais).toBe(1);
+        expect(out.totalErros).toBe(1);
+    });
+
     it('coleta as automáticas não-processadas (dedup, ignora processado) e agrega', async () => {
         const { service, reconciliar } = buildService(async (docCod) => {
             if (docCod === '11821')

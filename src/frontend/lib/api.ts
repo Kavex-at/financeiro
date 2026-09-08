@@ -286,12 +286,17 @@ export async function reconciliarAdiantamento(
     },
   )
   if (!res.ok) {
-    let detail = ''
+    // O backend responde 409 (RECONCILIACAO_EM_ANDAMENTO — "aguarde e recarregue") e 422
+    // (ALOCACAO_SEM_COBERTURA — "re-aloque o par") com `error` já sendo o `userMessage` em PT,
+    // curado para ser lido pela analista. Nesses casos a mensagem É a orientação: prefixá-la com
+    // "API 409" só empurra a informação acionável para o fim do toast. Sem `code`, mantém o
+    // formato técnico antigo (falha genuína de servidor, sem texto para o operador).
+    let body: { error?: string; code?: string } | undefined
     try {
-      const j = await res.json()
-      detail = j?.error ? ` — ${j.error}` : ''
+      body = (await res.json()) as { error?: string; code?: string }
     } catch {}
-    throw new Error(`API ${res.status}${detail}`)
+    if (body?.error && body?.code) throw new Error(body.error)
+    throw new Error(`API ${res.status}${body?.error ? ` — ${body.error}` : ''}`)
   }
   return (await res.json()) as ReconciliarResult
 }

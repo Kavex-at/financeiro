@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { ArrowLeftRight, Ban, CheckCircle2, Layers, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, Ban, CheckCircle2, Layers, RefreshCw } from 'lucide-react'
 import type {
   PermutaBorderoVinculo,
   PermutaRun,
@@ -111,9 +111,17 @@ export function ProcessamentoBadge({ status }: { status: ProcessamentoStatus }) 
 }
 
 /**
- * Badge do status PERMUTA→BORDERÔ (Fase 3.1). Sem vínculo → "Pendente" (executável). Borderô EM
- * CADASTRO → "Aguardando finalização" (amarelo). Borderô FINALIZADO → "Finalizado" (verde). Mostra
- * o nº do borderô. (Cancelado/estornado/excluído volta a "pendente" pelo backend → sem vínculo.)
+ * Badge do status PERMUTA→BORDERÔ (Fase 3.1 + B1'). Sem vínculo → "Pendente" (executável). Borderô
+ * FINALIZADO → "Finalizado" (verde). Borderô EM CADASTRO → "Aguardando finalização" (amarelo), ou
+ * "Baixa parcial" (vermelho) quando a execução deixou resíduo. Mostra o nº do borderô.
+ * (Cancelado/estornado/excluído volta a "pendente" pelo backend → sem vínculo.)
+ *
+ * ⚠️ RAMOS EXPLÍCITOS SOBRE OS TRÊS VALORES, sem `else` guarda-chuva. A versão anterior testava
+ * `=== 'finalizado'` e caía no `else` para todo o resto: acrescentar
+ * `parcial-aguardando-finalizacao` só ao TIPO faria o estado novo ser desenhado como o antigo, e o
+ * `typecheck` NÃO pegaria (o `else` continua válido). Seria `parcial` virando o novo silêncio —
+ * exatamente o risco que a ADR-0043 nomeia ao criar o estado. Se um valor novo aparecer, ele cai no
+ * `null` final e some da tela, o que é ruidoso e visível — não silenciosamente errado.
  */
 export function PermutaBorderoBadge({ vinculo }: { vinculo?: PermutaBorderoVinculo }) {
   if (!vinculo) return <Badge variant="outline">Pendente</Badge>
@@ -124,11 +132,26 @@ export function PermutaBorderoBadge({ vinculo }: { vinculo?: PermutaBorderoVincu
       </Badge>
     )
   }
-  return (
-    <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
-      Aguardando finalização · borderô {vinculo.borCod}
-    </Badge>
-  )
+  if (vinculo.permutaStatus === 'parcial-aguardando-finalizacao') {
+    // DUAS pendências ao mesmo tempo: o borderô a finalizar E o resíduo a re-alocar. Precisa ser
+    // visualmente distinto de "Aguardando finalização" — se parecer igual, o resíduo desaparece.
+    return (
+      <Badge
+        className="border-transparent bg-danger-subtle text-danger-foreground"
+        title="A baixa entrou no Conexos mas não cobriu todo o valor alocado. Re-aloque o par para lançar o restante."
+      >
+        <AlertTriangle aria-hidden /> Baixa parcial · resíduo a re-alocar · borderô {vinculo.borCod}
+      </Badge>
+    )
+  }
+  if (vinculo.permutaStatus === 'aguardando-finalizacao') {
+    return (
+      <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
+        Aguardando finalização · borderô {vinculo.borCod}
+      </Badge>
+    )
+  }
+  return null
 }
 
 /** Valor em moeda negociada (número pt-BR) + código da moeda em tom suave.

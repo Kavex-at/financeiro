@@ -246,6 +246,130 @@ describe('BorderoGestaoService', () => {
             expect(out['9027']).toBeUndefined(); // estornado → reabre p/ novo lançamento
         });
 
+        /**
+         * B1' (ADR-0043) — o resíduo tem de aparecer no badge, e tem de aparecer DIFERENTE.
+         */
+        it('execução `parcial` + borderô EM CADASTRO → parcial-aguardando-finalizacao', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({
+                    adiantamentoDocCod: '9026',
+                    borCod: 14735,
+                    status: 'parcial',
+                    filCod: 2,
+                    valorResidualUsd: 2,
+                }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14735, filCod: 2, borVldFinalizado: 0, borCodEstornado: null },
+            ]);
+
+            const out = await service.statusPorAdiantamento();
+
+            expect(out['9026']).toMatchObject({
+                borCod: 14735,
+                permutaStatus: 'parcial-aguardando-finalizacao',
+            });
+        });
+
+        it('parcial E settled no MESMO borderô ⇒ parcial vence (o resíduo não pode se perder)', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({
+                    adiantamentoDocCod: '9026',
+                    invoiceDocCod: 'I1',
+                    borCod: 14735,
+                    status: 'settled',
+                    filCod: 2,
+                }),
+                row({
+                    adiantamentoDocCod: '9026',
+                    invoiceDocCod: 'I2',
+                    borCod: 14735,
+                    status: 'parcial',
+                    filCod: 2,
+                    valorResidualUsd: 2,
+                }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14735, filCod: 2, borVldFinalizado: 0, borCodEstornado: null },
+            ]);
+
+            const out = await service.statusPorAdiantamento();
+
+            expect(out['9026']?.permutaStatus).toBe('parcial-aguardando-finalizacao');
+        });
+
+        it('B3 vale para o estado novo: parcial + borderô CANCELADO ⇒ adto OMITIDO (volta a pendente)', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({
+                    adiantamentoDocCod: '9026',
+                    borCod: 14735,
+                    status: 'parcial',
+                    filCod: 2,
+                }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14735, filCod: 2, borVldFinalizado: 2, borCodEstornado: null },
+            ]);
+
+            expect(await service.statusPorAdiantamento()).toEqual({});
+        });
+
+        it('parcial + borderô FINALIZADO ⇒ finalizado (a máquina responde sobre o BORDERÔ)', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({
+                    adiantamentoDocCod: '9026',
+                    borCod: 14735,
+                    status: 'parcial',
+                    filCod: 2,
+                }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14735, filCod: 2, borVldFinalizado: 1, borCodEstornado: null },
+            ]);
+
+            const out = await service.statusPorAdiantamento();
+            // O borderô ESTÁ concluído; o resíduo segue rastreado pelo ledger (valor_residual_usd
+            // + GET /execucoes), que é onde ele pertence. Ver o seam nomeado na ADR-0043.
+            expect(out['9026']?.permutaStatus).toBe('finalizado');
+        });
+
+        /**
+         * REQUISITO DURO da ADR-0043: este badge é SOBRE O BORDERÔ e NUNCA input de elegibilidade.
+         * `statusPorAdiantamento` é consumido só para enriquecer badges (`GET /permutas/status`);
+         * a fila de pendentes/elegíveis é montada por `GestaoPermutasService`, que não conhece
+         * esta função. Se algum dia alguém plugar o mapa na elegibilidade, o adto com resíduo
+         * sumiria da fila — e o defeito do R-2 teria apenas mudado de lugar.
+         */
+        it('o mapa não é input de elegibilidade: nada além do vínculo do borderô sai daqui', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({
+                    adiantamentoDocCod: '9026',
+                    borCod: 14735,
+                    status: 'parcial',
+                    filCod: 2,
+                    valorResidualUsd: 2,
+                }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14735, filCod: 2, borVldFinalizado: 0, borCodEstornado: null },
+            ]);
+
+            const out = await service.statusPorAdiantamento();
+
+            // O contrato é {borCod, permutaStatus, situacao} — nenhum campo que diga "não elegível",
+            // "processado" ou "oculto". A fila continua sendo montada por outro serviço.
+            expect(Object.keys(out['9026'] ?? {}).sort()).toEqual([
+                'borCod',
+                'permutaStatus',
+                'situacao',
+            ]);
+        });
+
         it('sem execução settled → mapa vazio (sem chamar o ERP)', async () => {
             const { service, conexosClient, execucaoRepository } = build(jest.fn());
             execucaoRepository.listComBordero.mockResolvedValue([

@@ -121,6 +121,83 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
   > `"ESTE BORDERÔ NÃO POSSUI ITENS."`. Antes disto o ERP só reclamava **depois** do POST, com um texto
   > que não dizia o que fazer. Ver ADR-0030.
 
+- **I-Write-8 (fechamento do alocado — anti-resíduo silencioso):** a baixa de um par adto→invoice
+  **consome o alocado integralmente ou registra o desvio** — nunca declara liquidado tendo baixado
+  a menos. É o par **simétrico** de I-Write-1: I-Write-1 impede baixar **a mais** que o em-aberto
+  vivo, **por título**; I-Write-8 fecha o **agregado**.
+
+  A regra é **uma só**, aplicada em **dois instantes** — porque o estado do ERP é diferente em cada
+  um, e com ele o que é honesto fazer:
+
+  - **I-Write-8a (pré-POST — fail-closed):** **antes da primeira** chamada de baixa do par,
+    calcula-se a **cobertura em aberto** dos títulos da invoice; se
+    `cobertura < aloc.valorAlocado − 0,005` (moeda negociada), a execução **aborta** com
+    `AlocacaoSemCoberturaError` (HTTP 422). Aqui abortar é fail-closed **de verdade e de graça**:
+    nada foi escrito no ERP, nenhum borderô foi consumido, e a trilha que diz "não executado" está
+    dizendo a verdade. É o irmão-déficit do `AlocacaoSaldoError` (que barra o excesso).
+
+    **A cobertura é DERIVADA, não lida.** O `com308/financeiroAPagar/list/{docCod}` não expõe
+    nenhum campo "em aberto na moeda negociada":
+
+    ```
+    abertoUsd(titulo) = titMnyValorMneg − (titMnyTotPago / titFltTaxaMneg)
+    cobertura         = Σ abertoUsd sobre os títulos com titVldStatus = 1 (ATIVO)
+    ```
+
+    Duas armadilhas que essa fórmula existe para evitar, **ambas medidas em produção**
+    (sonda `src/backend/jobs/probe-com308-cobertura.ts`, 2026-09-08, 20 invoices / 22 títulos):
+
+    1. **`titVldStatus` NÃO significa "em aberto".** O swagger versionado
+       (`docs/conexos-api/070-com3.json`, schema `FinTituloFin`) o define como ciclo de vida do
+       **registro**: `1 ATIVO · 2 RENEGOCIADO · 3 CANCELADO`. A dimensão "em aberto" é outro campo,
+       `pago`: `1 TOTALMENTE PAGO · 2 PARCIALMENTE PAGO · 3 NÃO PAGO`. **19 das 20 invoices
+       sondadas** devolveram títulos `titVldStatus = 1` com face cheia e aberto **zero**. Pior caso
+       medido: doc **9320** (filial 2), face **USD 83.476,12**, aberto **0**, devolvido como ATIVO.
+       Uma pré-checagem somando `titMnyValorMneg` (a face) aprovaria uma cobertura **inexistente** —
+       nasceria sistematicamente frouxa, aprovando justamente o caso que deve recusar.
+    2. **O ERP não expõe `titMnyTotPagoMneg`.** O schema tem `titMnyTotPago` (BRL) e não tem o
+       equivalente em moeda negociada — conferido no swagger, campo **ausente**. Por isso a divisão
+       pela taxa: não é preferência, é a única forma disponível de trazer o pago para o lado do
+       alocado.
+
+    > **Não "simplifique" esta conta de volta para a face.** Ela parece um `Σ titMnyValorMneg` com
+    > ruído de câmbio no meio, e não é: sem a subtração do pago, o invariante deixa de recusar
+    > exatamente o caso que motivou sua existência. Quem for mexer aqui precisa ter lido este
+    > parágrafo primeiro.
+
+    **`pago` entra no `fieldList` como corroboração, nunca como gate.** Ele é **retornável**
+    (confirmado em row real) mas **não filtrável**: `filterList: {'pago#NE': '1'}` responde
+    **HTTP 500** — a opção server-side, que teria dispensado a aritmética, foi medida e morreu.
+    Regra de uso: se `pago === 1` (totalmente pago) e o `abertoUsd` derivado **não** der ~0, isso é
+    **`BUSINESS_WARN`** (divergência de contrato do ERP), **nunca** recusa da baixa. Dois campos do
+    ERP discordando entre si é problema de quem mantém o contrato — não motivo para bloquear o
+    trabalho da analista.
+
+    *Implementação (fora deste contrato, registrada aqui como requisito):* o `fieldList` do
+    `ConexosTitulosClient` precisará passar a pedir `pago`, além de `titMnyTotPago` e
+    `titFltTaxaMneg`.
+
+    **Truncamento da lista — guarda defensiva, não requisito.** Uma lista truncada produziria
+    cobertura subestimada e, portanto, recusa indevida (falha para o lado seguro, mas atrapalha).
+    Na população medida o cenário é teórico: 1–2 títulos por invoice, 22 no total, e `count` nunca
+    divergiu de `rows.length`. Se implementada, a guarda é `count !== rows.length`, **não**
+    `rows.length === pageSize` — há medição no repo de o ERP impor página menor que a pedida.
+
+  - **I-Write-8b (pós-POST — registra, não mente):** se o resíduo só aparecer **depois** de baixas
+    já gravadas, a execução termina em **`parcial`** com o resíduo gravado — nunca em `settled` e
+    nunca em `error`. Estado, valor residual e visibilidade em **I-Recon-6/I-Recon-7**
+    (`idempotencia-reconciliacao.md`); aqui só o contrato.
+
+    **Gatilho real de 8b** (corrigido em 2026-09-08 — ver emenda da ADR-0043): **não** é "título
+    baixado externamente entre a eleição e o POST". Esse caso **já lança erro hoje**, no passo 2:
+    `baixarTitulo` recusa em-aberto ≤ 0 (I-Recon-3), e ele responde por parte das 12 falhas reais
+    observadas em produção. O que produz resíduo **silencioso** é o título **renegociado ou
+    cancelado depois da alocação** (sai do filtro `titVldStatus = 1` e some da soma sem erro
+    nenhum) ou uma **lista incompleta**.
+
+  As duas cláusulas convivem por construção: 8a elimina o caso **detectável antes de escrever**,
+  8b registra o que só se revela depois. Ver ADR-0043 e sua emenda de 2026-09-08.
+
 ## Adendo v0.7.0 (2026-06-24) — auto-alocação ANTES de gravar
 
 > **Vigência:** 2026-06-24 (v0.7.0, ADR-0014). O contrato de escrita acima (handshake de 5 chamadas,
@@ -174,7 +251,11 @@ money com >2 decimais (`CnxValidatorMny` → `precision_not_supported`), e a var
 ruído de ponto flutuante (ex.: `1000×(5.2887−4.9806)=308.1000000000005`).
 
 ## Fora do contrato (a confirmar em campo)
-- Comportamento quando a invoice **já tem baixa parcial** anterior (passo 2 pode mudar `bxaMnyValor`).
+- Comportamento quando a invoice **já tem baixa parcial** anterior (passo 2 pode mudar
+  `bxaMnyValor`). **Parcialmente respondido pela ADR-0043:** o agregado insuficiente agora é
+  barrado antes do 1º POST (I-Write-8a) ou vira `parcial` (I-Write-8b), em vez de `settled`
+  mudo. O que segue não observado é o `bxaMnyValor` que o passo 2 devolve numa invoice com
+  baixa anterior.
 - Estorno programático (hoje o analista estorna pela UI).
 
 ## Resolvido em campo (2026-06-25)

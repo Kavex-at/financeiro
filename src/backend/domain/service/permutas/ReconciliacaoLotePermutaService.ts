@@ -13,8 +13,28 @@ import LogService from '../LogService.js';
  */
 export const LOTE_MAX = 6;
 
-/** Status agregado de UM adiantamento dentro do lote. */
-export type LoteAdiantamentoStatus = 'settled' | 'parcial' | 'error' | 'dry-run' | 'skipped';
+/**
+ * Status agregado de UM adiantamento dentro do lote.
+ *
+ * ⚠️ COLISÃO DE NOME DELIBERADA, registrada para não virar unificação acidental (C-5): o
+ * `'parcial'` DESTA união significa *"alguns pares do adto deram settled, outros deram error"* —
+ * é um agregado sobre PARES. O `'parcial'` de `ExecucaoStatus`
+ * (`repository/permutas/PermutaExecucaoRepository.ts`) é o desfecho de UM par: *"a baixa deste par
+ * cobriu o alocado só em parte"*. São grandezas diferentes no mesmo módulo.
+ *
+ * `'com-residuo'` é o valor novo (ADR-0043): todos os pares do adto tiveram desfecho terminal, sem
+ * erro, mas ao menos um terminou em `parcial` de EXECUÇÃO. Precisa ser distinguível de `'settled'`
+ * (senão o resíduo some do relatório) e de `'parcial'` (que fala de erro, não de resíduo).
+ *
+ * Espelhado à mão em `src/frontend/lib/types.ts` — guarda em `lib/types.test.ts`.
+ */
+export type LoteAdiantamentoStatus =
+    | 'settled'
+    | 'parcial'
+    | 'com-residuo'
+    | 'error'
+    | 'dry-run'
+    | 'skipped';
 
 /** Resultado por adiantamento processado no lote. */
 export interface ReconciliarLoteItem {
@@ -33,8 +53,14 @@ export interface ReconciliarLoteResult {
     writeEnabled: boolean;
     /** Adiantamentos tentados (automáticas não-processadas). */
     totalCasos: number;
-    /** Baixas (par adto↔invoice) liquidadas com sucesso. */
+    /** Baixas (par adto↔invoice) liquidadas com sucesso — integralmente. */
     totalSettled: number;
+    /**
+     * Baixas que entraram no ERP mas NÃO fecharam o alocado (`parcial` de execução, I-Recon-6).
+     * Contado à parte de propósito: não é sucesso (sobrou resíduo a re-alocar) nem erro (o dinheiro
+     * se moveu). Somá-lo a `totalSettled` recriaria o silêncio que a ADR-0043 existe para acabar.
+     */
+    totalParciais: number;
     /** Baixas com erro + adtos que lançaram antes de qualquer baixa. */
     totalErros: number;
     /** Borderôs distintos criados no ERP. */
@@ -106,6 +132,7 @@ export default class ReconciliacaoLotePermutaService {
         const resultados: ReconciliarLoteItem[] = [];
         const borderos = new Set<number>();
         let totalSettled = 0;
+        let totalParciais = 0;
         let totalErros = 0;
         let dryRun = false;
         let writeEnabled = false;
@@ -124,13 +151,15 @@ export default class ReconciliacaoLotePermutaService {
                 writeEnabled = r.writeEnabled;
                 if (r.borCod !== undefined) borderos.add(r.borCod);
                 const settled = r.resultados.filter((x) => x.status === 'settled').length;
+                const parciais = r.resultados.filter((x) => x.status === 'parcial').length;
                 const erros = r.resultados.filter((x) => x.status === 'error');
                 totalSettled += settled;
+                totalParciais += parciais;
                 totalErros += erros.length;
                 resultados.push({
                     adiantamentoDocCod: docCod,
                     ...(priCod !== undefined ? { priCod } : {}),
-                    status: this.statusDoAdto(r, settled, erros.length),
+                    status: this.statusDoAdto(r, settled, parciais, erros.length),
                     ...(r.borCod !== undefined ? { borCod: r.borCod } : {}),
                     ...(erros[0]?.erro !== undefined ? { erro: erros[0].erro } : {}),
                 });
@@ -156,6 +185,7 @@ export default class ReconciliacaoLotePermutaService {
                 executadoPor,
                 totalCasos: selecionados.length,
                 totalSettled,
+                totalParciais,
                 totalErros,
                 borderos: borderos.size,
                 dryRun,
@@ -167,22 +197,34 @@ export default class ReconciliacaoLotePermutaService {
             writeEnabled,
             totalCasos: selecionados.length,
             totalSettled,
+            totalParciais,
             totalErros,
             borderos: [...borderos],
             resultados,
         };
     };
 
-    /** Deriva o status agregado de um adto a partir do seu ReconciliarResult. */
+    /**
+     * Deriva o status agregado de um adto a partir do seu ReconciliarResult.
+     *
+     * A ordem dos ramos é a ordem da GRAVIDADE: erro primeiro (há trabalho de conciliação), depois
+     * resíduo (há trabalho de re-alocação), depois sucesso limpo. Um adto com par `parcial` NUNCA
+     * pode sair daqui como `'settled'` — seria o mesmo silêncio, um nível acima.
+     *
+     * `'parcial'` aqui é o agregado ERRO+SUCESSO (nome herdado, ver o docblock da união);
+     * `'com-residuo'` é o resíduo de execução. Não são a mesma coisa e não se substituem.
+     */
     private statusDoAdto = (
         r: ReconciliarResult,
         settled: number,
+        parciais: number,
         erros: number,
     ): LoteAdiantamentoStatus => {
         if (r.dryRun) return 'dry-run';
-        if (erros > 0) return settled > 0 ? 'parcial' : 'error';
+        if (erros > 0) return settled > 0 || parciais > 0 ? 'parcial' : 'error';
+        if (parciais > 0) return 'com-residuo';
         if (settled > 0) return 'settled';
-        // Sem settled e sem erro → tudo já estava liquidado (idempotência: `skipped`).
+        // Sem terminal nenhum e sem erro → tudo já estava liquidado (idempotência: `skipped`).
         return 'skipped';
     };
 }
