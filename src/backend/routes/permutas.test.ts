@@ -11,12 +11,15 @@ jest.mock('../domain/appContainer.js', () => ({
 }));
 
 import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
+import AlocacaoSemCoberturaError from '../domain/errors/AlocacaoSemCoberturaError.js';
+import ReconciliacaoEmAndamentoError from '../domain/errors/ReconciliacaoEmAndamentoError.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
 import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
 import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
+import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import LogService from '../domain/service/LogService.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
@@ -912,6 +915,91 @@ describe('POST /permutas/borderos/:borCod/finalizar (erro do ERP — observabili
             expect(res.status).toBe(403);
             expect(body.error).toMatch(/não foi criado por este sistema/);
             expect(typeof body.requestId).toBe('string');
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+/**
+ * C-4 — a rota `/reconciliar` transformava QUALQUER `HandlerError` em HTTP 500 (o
+ * `errorMiddleware` global achata tudo e descarta `statusCode`/`code`/`userMessage`/`retryable`).
+ * Implementar o 409 e o 422 no serviço não bastava: os dois chegavam à analista como "erro
+ * interno", e a mensagem em PT — a razão de existir das duas classes de erro — morria no caminho.
+ */
+describe('POST /permutas/adiantamentos/:docCod/reconciliar — contrato de erro', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('ReconciliacaoEmAndamentoError ⇒ 409 com code, userMessage e retryable (não 500)', async () => {
+        const reconciliar = jest
+            .fn()
+            .mockRejectedValue(new ReconciliacaoEmAndamentoError({ adiantamentoDocCod: '2767' }));
+        container.registerInstance(ReconciliacaoPermutaService, { reconciliar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/2767/reconciliar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            expect(res.status).toBe(409);
+            const body = await readJson(res as never);
+            expect(body.code).toBe('RECONCILIACAO_EM_ANDAMENTO');
+            expect(body.retryable).toBe(true);
+            expect(body.error).toMatch(/Aguarde/i);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('AlocacaoSemCoberturaError ⇒ 422 com userMessage acionável', async () => {
+        const reconciliar = jest.fn().mockRejectedValue(
+            new AlocacaoSemCoberturaError({
+                adiantamentoDocCod: '2767',
+                invoiceDocCod: '5078',
+                cobertura: 900,
+                valorAlocado: 1000,
+            }),
+        );
+        container.registerInstance(ReconciliacaoPermutaService, { reconciliar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/2767/reconciliar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            expect(res.status).toBe(422);
+            const body = await readJson(res as never);
+            expect(body.code).toBe('ALOCACAO_SEM_COBERTURA');
+            expect(body.retryable).toBe(false);
+            expect(body.error).toMatch(/não cobrem|re-alocar/i);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('Error cru continua virando 500 genérico (nada de err.message vazando ao cliente)', async () => {
+        const reconciliar = jest
+            .fn()
+            .mockRejectedValue(new Error('conexão recusada em 10.0.0.7:5432 (senha do pool)'));
+        container.registerInstance(ReconciliacaoPermutaService, { reconciliar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/2767/reconciliar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            expect(res.status).toBe(500);
+            const body = await readJson(res as never);
+            expect(JSON.stringify(body)).not.toContain('10.0.0.7');
+            expect(body.code).toBeUndefined();
         } finally {
             await server.close();
         }

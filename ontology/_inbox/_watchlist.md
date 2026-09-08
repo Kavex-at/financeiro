@@ -72,3 +72,24 @@
   + `0036-homologacao-da-nde-medida-pelo-estado-gravado.md`). **Não corrigido neste ciclo** (renumerar quebra referências
   cruzadas já escritas). Registrado para uma limpeza deliberada: decidir se renumera com
   `superseded_by` ou se mantém e documenta a colisão.
+
+## Permutas — integridade da baixa (curadoria 2026-09-08, ADR-0044)
+
+- **`ExecucaoPermuta` como entidade própria: NÃO criada.** O ledger `permuta_alocacao_execucao` já
+  tem chave versionada, 5 estados (`pending`/`reconciling`/`settled`/`parcial`/`error`), valor
+  residual, identidade Conexos (ADR-0041) e trilha de auditoria — é o candidato natural. Segue
+  modelado *dentro* de `business-rules/idempotencia-reconciliacao.md` + ação `reconciliarPermuta`,
+  pela regra "entidade existente antes de entidade nova". **Promover se** ganhar um 6º estado, ou
+  uma **ação própria** de resolução de resíduo (hoje a resolução é re-alocar, que é ação da
+  `Permuta`, não do ledger).
+- **`state-machines/execucao-permuta.md`: NÃO criado.** A máquina está desenhada em ASCII dentro da
+  business-rule e um arquivo separado duplicaria a fonte — dois lugares para o mesmo diagrama é como
+  o drift da chave de idempotência nasceu. Promover **junto** com o item acima, nunca antes.
+- **Paridade `ExecucaoStatus` backend × frontend.** `PermutaExecucaoRepository.ts:5` e
+  `src/frontend/lib/types.ts:255` são espelhos manuais. Cada estado novo custa duas edições e nada
+  detecta a divergência. Não é questão de ontologia hoje; vira, se a divergência produzir um bug de
+  domínio (badge errado sobre dinheiro já movido).
+- **Borderô FINALIZADO com resíduo — seam aceito, não resolvido.** `status-permuta-bordero.md`
+  devolve `finalizado` (ela responde sobre o *borderô*); o resíduo fica com o ledger + o reaper +
+  o saldo do adto. Revisitar se aparecer um caso real em que o resíduo se perdeu na prática — aí a
+  costura vira um 4º estado, não antes.

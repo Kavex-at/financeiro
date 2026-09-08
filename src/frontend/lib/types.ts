@@ -251,8 +251,15 @@ export interface GestaoPermutasResponse {
   }
 }
 
-/** Status de execução da baixa no ERP, por par adto↔invoice (Fase 3, ADR-0013). */
-export type ExecucaoStatus = 'pending' | 'reconciling' | 'settled' | 'error'
+/**
+ * Status de execução da baixa no ERP, por par adto↔invoice (Fase 3, ADR-0013).
+ *
+ * `settled` e `parcial` são os DOIS terminais (ADR-0043): `parcial` = houve baixa confirmada, mas
+ * sobrou `valorResidualUsd` a re-alocar. Espelha À MÃO
+ * `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts` (`ExecucaoStatus`) —
+ * guarda de paridade em `lib/types.test.ts`.
+ */
+export type ExecucaoStatus = 'pending' | 'reconciling' | 'settled' | 'error' | 'parcial'
 
 /** Resultado de UM par adto→invoice numa chamada de reconciliação. */
 export interface ResultadoAlocacao {
@@ -262,6 +269,8 @@ export interface ResultadoAlocacao {
   borCod?: number
   bxaCodSeq?: number
   valorBaixado?: number
+  /** Resíduo NÃO baixado do valor alocado, em moeda negociada. Só em `parcial` (I-Recon-7b). */
+  valorResidualUsd?: number
   erro?: string
   payload?: Record<string, unknown>
 }
@@ -275,8 +284,22 @@ export interface ReconciliarResult {
   resultados: ResultadoAlocacao[]
 }
 
-/** Status agregado de UM adiantamento dentro do lote de automáticas. */
-export type LoteAdiantamentoStatus = 'settled' | 'parcial' | 'error' | 'dry-run' | 'skipped'
+/**
+ * Status agregado de UM adiantamento dentro do lote de automáticas.
+ *
+ * ⚠️ O `'parcial'` DAQUI é outra coisa que o `'parcial'` de `ExecucaoStatus`: aqui significa
+ * "alguns pares do adto deram settled, outros deram error"; lá, "a baixa deste par cobriu o
+ * alocado só em parte". `'com-residuo'` (ADR-0043) é o segundo caso agregado ao adto: todos os
+ * pares terminaram, sem erro, mas ao menos um deixou resíduo. Espelha à mão
+ * `src/backend/domain/service/permutas/ReconciliacaoLotePermutaService.ts`.
+ */
+export type LoteAdiantamentoStatus =
+  | 'settled'
+  | 'parcial'
+  | 'com-residuo'
+  | 'error'
+  | 'dry-run'
+  | 'skipped'
 
 /** Resultado por adiantamento no lote (POST /reconciliar-lote). */
 export interface ReconciliarLoteItem {
@@ -293,6 +316,8 @@ export interface ReconciliarLoteResult {
   writeEnabled: boolean
   totalCasos: number
   totalSettled: number
+  /** Baixas que entraram no ERP mas NÃO fecharam o alocado (resíduo a re-alocar). */
+  totalParciais: number
   totalErros: number
   borderos: number[]
   resultados: ReconciliarLoteItem[]
@@ -309,14 +334,25 @@ export interface ExecucaoPermuta {
   borCod?: number
   bxaCodSeq?: number
   valorBaixado?: number
+  /** Resíduo NÃO baixado do valor alocado, em moeda negociada. Só em `parcial` (I-Recon-7b). */
+  valorResidualUsd?: number
   erroMensagem?: string
   executadoPor?: string
   criadoEm: string
   atualizadoEm: string
 }
 
-/** Status da PERMUTA em relação ao seu borderô no fin010 (badge na tela de permutas). */
-export type PermutaStatusBordero = 'aguardando-finalizacao' | 'finalizado'
+/**
+ * Status da PERMUTA em relação ao seu borderô no fin010 (badge na tela de permutas).
+ *
+ * `parcial-aguardando-finalizacao` (B1', ADR-0043) afirma DUAS pendências: borderô a finalizar E
+ * resíduo a re-alocar. Nunca é input de elegibilidade — o adto segue na fila. Espelha À MÃO
+ * `src/backend/domain/service/permutas/BorderoGestaoService.ts` (`PermutaStatus`).
+ */
+export type PermutaStatusBordero =
+  | 'aguardando-finalizacao'
+  | 'parcial-aguardando-finalizacao'
+  | 'finalizado'
 
 /** Vínculo permuta→borderô (status vivo) — `GET /permutas/status`. */
 export interface PermutaBorderoVinculo {

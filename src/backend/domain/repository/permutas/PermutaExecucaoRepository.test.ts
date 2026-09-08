@@ -19,7 +19,7 @@ const buildIdentity = () =>
     }) as unknown as jest.Mocked<ConexosIdentityProvider>;
 
 describe('PermutaExecucaoRepository', () => {
-    it('beginExecution: UPSERT que PRESERVA settled (idempotência) e é parametrizado', async () => {
+    it('beginExecution: UPSERT que PRESERVA os DOIS terminais (settled e parcial) e é parametrizado', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'reconciling' });
         const repo = new PermutaExecucaoRepository(db, buildIdentity());
@@ -36,8 +36,15 @@ describe('PermutaExecucaoRepository', () => {
         const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
         expect(sql).toContain('INSERT INTO permuta_alocacao_execucao');
         expect(sql).toContain('ON CONFLICT (idempotency_key) DO UPDATE');
-        // O CASE preserva o status quando já é 'settled' (não regride).
-        expect(sql).toContain("permuta_alocacao_execucao.status = 'settled'");
+        // A CASE preserva o status quando ele já é TERMINAL (não regride). São DOIS terminais
+        // desde a ADR-0043: `settled` (cobriu o alocado) e `parcial` (cobriu em parte, mas houve
+        // escrita irreversível no ERP). O critério é "houve escrita irreversível sob esta chave?".
+        expect(sql).toContain("permuta_alocacao_execucao.status IN ('settled', 'parcial')");
+        // Todas as 5 CASEs do DO UPDATE usam o MESMO predicado terminal — status, dry_run,
+        // executado_por e a identidade Conexos (username + usn_cod, ADR-0041).
+        expect(
+            sql.match(/permuta_alocacao_execucao\.status IN \('settled', 'parcial'\)/g),
+        ).toHaveLength(5);
         expect(sql).toContain('$newStatus');
         expect(sql).not.toMatch(/'\s*\+|\$\{/);
         expect(params).toMatchObject({
@@ -46,6 +53,126 @@ describe('PermutaExecucaoRepository', () => {
             dryRun: false,
         });
         expect(out).toEqual({ status: 'reconciling', alreadySettled: false });
+    });
+
+    it('beginExecution: linha já settled ⇒ alreadySettled (idempotência)', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'settled' });
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        const out = await repo.beginExecution({
+            idempotencyKey: 'permuta:A:I',
+            adiantamentoDocCod: 'A',
+            invoiceDocCod: 'I',
+            filCod: 4,
+            dryRun: false,
+            executadoPor: 'yuri',
+        });
+
+        expect(out).toEqual({ status: 'settled', alreadySettled: true });
+    });
+
+    it('beginExecution PRESERVA parcial (não regride para reconciling) — I-Recon-1/ADR-0043', async () => {
+        const db = buildDb();
+        // A linha já era `parcial`: a baixa dos títulos consumidos ESTÁ no ERP. Re-POSTar seria
+        // super-pagamento; o resíduo se resolve RE-ALOCANDO o par (chave nova), nunca re-executando.
+        (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'parcial' });
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        const out = await repo.beginExecution({
+            idempotencyKey: 'permuta:A:I',
+            adiantamentoDocCod: 'A',
+            invoiceDocCod: 'I',
+            filCod: 4,
+            dryRun: false,
+            executadoPor: 'yuri',
+        });
+
+        expect(out).toEqual({ status: 'parcial', alreadySettled: true });
+    });
+
+    it('markParcial: grava status=parcial + valor_residual_usd + bxa_cod_seq, parametrizado', async () => {
+        const db = buildDb();
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        await repo.markParcial('permuta:A:I', {
+            borCod: 1999,
+            bxaCodSeq: 7,
+            valorBaixado: 3000,
+            juros: 120,
+            contaJuros: 131,
+            valorResidualUsd: 100.5,
+            erpResponse: { ok: true },
+        });
+
+        const [sql, params] = (db.update as jest.Mock).mock.calls[0];
+        expect(sql).toContain("status = 'parcial'");
+        expect(sql).toContain('valor_residual_usd = $valorResidualUsd');
+        expect(sql).toContain('bxa_cod_seq = $bxaCodSeq');
+        expect(sql).toContain('$erpResponse::jsonb');
+        // Mesmo COALESCE de identidade do markSettled (ADR-0041): nunca reescreve quem assinou.
+        expect(sql).toContain('conexos_username = COALESCE(conexos_username, $conexosUsername)');
+        expect(sql).toContain('conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod)');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params).toMatchObject({
+            key: 'permuta:A:I',
+            borCod: 1999,
+            bxaCodSeq: 7,
+            valorBaixado: 3000,
+            juros: 120,
+            contaJuros: 131,
+            valorResidualUsd: 100.5,
+        });
+        expect(params.erpResponse).toBe(JSON.stringify({ ok: true }));
+    });
+
+    it('mapRow: devolve valorResidualUsd quando a coluna vem preenchida e OMITE quando null', async () => {
+        const db = buildDb();
+        const base = {
+            idempotency_key: 'permuta:A:I',
+            adiantamento_doc_cod: 'A',
+            invoice_doc_cod: 'I',
+            fil_cod: 4,
+            dry_run: false,
+            criado_em: '2026-09-08T00:00:00Z',
+            atualizado_em: '2026-09-08T00:00:00Z',
+        };
+        (db.selectFirst as jest.Mock).mockResolvedValue({
+            ...base,
+            status: 'parcial',
+            valor_residual_usd: '100.5',
+        });
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        const parcial = await repo.findByIdempotencyKey('permuta:A:I');
+        expect(parcial).toMatchObject({ status: 'parcial', valorResidualUsd: 100.5 });
+
+        (db.selectFirst as jest.Mock).mockResolvedValue({
+            ...base,
+            status: 'settled',
+            valor_residual_usd: null,
+        });
+        const settled = await repo.findByIdempotencyKey('permuta:A:I');
+        // Spread condicional (CLAUDE.md, `property?: Type`): a chave NÃO existe, não é `undefined`.
+        expect(settled && 'valorResidualUsd' in settled).toBe(false);
+    });
+
+    it('as 5 listas de SELECT trazem valor_residual_usd (senão o resíduo nunca chega ao endpoint)', async () => {
+        const db = buildDb();
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        await repo.findByIdempotencyKey('k');
+        await repo.findByBorCodInvoice(1999, 'I');
+        await repo.listByAdiantamento('A');
+        await repo.listComBordero();
+        await repo.listByBorCod(1999);
+
+        const selects = [
+            ...(db.selectFirst as jest.Mock).mock.calls,
+            ...(db.selectMany as jest.Mock).mock.calls,
+        ].map(([sql]) => sql as string);
+        expect(selects).toHaveLength(5);
+        for (const sql of selects) expect(sql).toContain('valor_residual_usd');
     });
 
     it('borderoDoPar: SÓ execução REAL com bor_cod (dry_run=false, bor_cod NOT NULL), parametrizado', async () => {
@@ -373,9 +500,10 @@ describe('PermutaExecucaoRepository — identidade Conexos da execução (I-2, A
         const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
         expect(sql).toContain('conexos_username');
         expect(sql).toContain('conexos_usn_cod');
-        // Mesma doutrina do executado_por: settled não regride a autoria.
+        // Mesma doutrina do executado_por: linha TERMINAL não regride a autoria (ADR-0041) —
+        // e desde a ADR-0043 os terminais são dois (`settled` e `parcial`).
         expect(sql).toContain(
-            "conexos_username = CASE WHEN permuta_alocacao_execucao.status = 'settled'",
+            "conexos_username = CASE WHEN permuta_alocacao_execucao.status IN ('settled', 'parcial')",
         );
         expect(sql).not.toMatch(/'\s*\+|\$\{/);
         expect(params).toMatchObject({

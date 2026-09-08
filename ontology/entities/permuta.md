@@ -14,6 +14,9 @@ related_files:
   - src/backend/domain/service/permutas/GestaoPermutasService.ts
   - src/backend/domain/service/permutas/BorderoGestaoService.ts
   - src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts
+  - src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts
+  - src/backend/migrations/0015_permuta_alocacao_execucao.sql
+  - src/backend/migrations/0054_permuta_execucao_parcial.sql
   - src/backend/routes/permutas.ts
   - src/frontend/app/permutas/page.tsx
 properties:
@@ -33,7 +36,7 @@ relationships:
   - "Permuta N—1 Invoice (lado-crédito, via invoiceDocCod — pode ser de OUTRO processo, cross-process)"
   - "Permuta 1—1 VariacaoCambial (derivada pela taxa da invoice sobre o valor PARCIAL alocado)"
   - "Permuta *—1 PermutaCandidata (a candidata em permuta-manual/casamento-manual é a origem da alocação)"
-last_review: 2026-06-24
+last_review: 2026-09-08
 universality_evidence:
   - "ADR-0008 — alocação manual N:M cross-process (a Permuta consumada nasce como ALOCAÇÃO)"
   - "ADR-0010 — o auto-casamento Simples também ficou PARCIAL (mesma semântica de teto/residual)"
@@ -43,6 +46,7 @@ universality_evidence:
   - "ontology/glossary.md — 'Permuta' (reconciliação adiantamento ↔ invoice)"
   - "Columbia + INOX-TECH (priCod=1153): cross-process N:M validado com o time (2026-06-20), 290 adtos + 21 invoices, 0 D.I no processo"
   - "Conceito universal de comex: abater o adiantamento (PROFORMA) contra a fatura (INVOICE) definitiva, com variação cambial"
+  - "ADR-0043 — baixa parcial como estado terminal + serialização por adiantamento (Regis-Review 2026-09-08, R-1/R-2, duas derivações independentes)"
 ---
 
 # Permuta (consumada / alocação)
@@ -137,9 +141,21 @@ calcula `saldoRestante` (saldo − Σ alocado) e expõe as `alocacoes` por adian
   (`idempotencia-reconciliacao.md`).
 - **Anti-super-pagamento:** o valor a baixar vem do **em-aberto vivo do ERP** (passo 2), não do
   rascunho local; em-aberto ≤ 0 → aborta.
+- **Serializada por adiantamento (ADR-0043).** Uma reconciliação em voo por `adiantamentoDocCod`; a
+  segunda requisição concorrente recebe 409 sem tocar o ERP (**I-Recon-5**). O ledger write-ahead
+  cobre interrupção; o lock cobre concorrência.
+- **Cobertura insuficiente é barrada antes de escrever (ADR-0043).** Se a **cobertura em aberto** dos
+  títulos da invoice não alcança o `valorAlocado`, a execução aborta **antes do primeiro POST** com
+  `AlocacaoSemCoberturaError` (422) — nada escrito, nada a estornar (**I-Write-8a**). A cobertura é
+  **derivada** (`titMnyValorMneg − titMnyTotPago / titFltTaxaMneg`), não a face: `titVldStatus` é
+  ciclo de vida do registro, não "em aberto" — refutado por sonda em produção (emenda ADR-0043).
+- **Baixa parcial é estado, não silêncio (ADR-0043).** Para o que a pré-checagem não alcança (título
+  **renegociado/cancelado após a alocação**, ou lista incompleta), a execução termina em **`parcial`**
+  com o resíduo gravado — nunca em `settled`. O resíduo se resolve **re-alocando** o par (chave nova
+  ⇒ novo lançamento), e o adiantamento **continua na fila de elegibilidade**. Ver **I-Recon-6/7** e
+  o badge `parcial-aguardando-finalizacao` em `state-machines/status-permuta-bordero.md` (B1').
 - **Pendente de validação em produção:** o 1º caso real controlado (reversível, com o analista
-  acompanhando). Casos ainda não observados no ERP: baixa **parcial** (invoice N:M), finalização do
-  borderô, `DESCONTO`.
+  acompanhando). Casos ainda não observados no ERP: finalização do borderô e `DESCONTO`.
 
 ## v0.7.0 (2026-06-24, ADR-0014) — classificação automática, atomicidade e ciclo do borderô
 
@@ -169,7 +185,9 @@ reverte (sem meia-permuta). Ver `business-rules/auto-alocacao-atomica.md`. Códi
 Por adiantamento com baixa `settled`: borderô EM CADASTRO → `aguardando-finalizacao`; FINALIZADO →
 `finalizado`; CANCELADO/ESTORNADO/REMOVIDO → a permuta **reabre** (volta a `pendente`). Consulta lazy
 `GET /permutas/status` (`routes/permutas.ts:579-587`), separada do `/gestao`. Ver
-`state-machines/status-permuta-bordero.md`. Código: `BorderoGestaoService.statusPorAdiantamento`
+`state-machines/status-permuta-bordero.md` (ADR-0043 acrescenta **B1'**: baixa `parcial` +
+borderô EM CADASTRO → `parcial-aguardando-finalizacao`, badge que afirma as DUAS pendências sem
+tirar o adto da fila). Código: `BorderoGestaoService.statusPorAdiantamento`
 (`:429-487`). **Estorno e "Liberar" removidos da UI** (sem borderô travado; `removerDaTrilha`
 removido — risco de dupla-baixa, Regis-Review R-1 P0).
 

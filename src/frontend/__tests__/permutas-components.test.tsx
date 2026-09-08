@@ -10,7 +10,7 @@ import {
   parseBrl,
   somaPorMoeda,
 } from '@/app/permutas/components/format'
-import { Moeda } from '@/app/permutas/components/ui'
+import { Moeda, PermutaBorderoBadge } from '@/app/permutas/components/ui'
 import { PermutaPendenteTable } from '@/app/permutas/components/PermutaPendenteTable'
 import { AbaHistorico } from '@/app/permutas/components/AbaHistorico'
 import type { PermutaPendente } from '@/lib/types'
@@ -195,5 +195,63 @@ describe('AbaHistorico', () => {
     render(<HistoricoHarness items={[item]} />)
     expect(screen.getByText('523')).toBeInTheDocument()
     expect(screen.getByText('Finalizado')).toBeInTheDocument()
+  })
+})
+
+
+/**
+ * C-6 — o badge era a única porta pela qual o estado novo podia entrar e sair parecendo o antigo.
+ * O `typecheck` NÃO pega isso: um `else` guarda-chuva continua sendo código válido. Este teste é a
+ * guarda, e por isso ele cobre os QUATRO casos (os três valores + a ausência de vínculo), cada um
+ * assertando um texto distinto.
+ */
+describe('PermutaBorderoBadge — os três estados + pendente têm textos distintos (C-6)', () => {
+  const textos = new Set<string>()
+
+  it('sem vínculo → Pendente', () => {
+    const { container } = render(<PermutaBorderoBadge />)
+    expect(screen.getByText('Pendente')).toBeInTheDocument()
+    textos.add(container.textContent ?? '')
+  })
+
+  it('aguardando-finalizacao → "Aguardando finalização" + nº do borderô', () => {
+    const { container } = render(
+      <PermutaBorderoBadge
+        vinculo={{ borCod: 14735, permutaStatus: 'aguardando-finalizacao', situacao: 'EM_CADASTRO' }}
+      />,
+    )
+    expect(screen.getByText(/Aguardando finalização · borderô 14735/)).toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/parcial|resíduo/i)
+    textos.add(container.textContent ?? '')
+  })
+
+  it('parcial-aguardando-finalizacao → texto PRÓPRIO, dizendo que há resíduo a re-alocar', () => {
+    const { container } = render(
+      <PermutaBorderoBadge
+        vinculo={{
+          borCod: 14735,
+          permutaStatus: 'parcial-aguardando-finalizacao',
+          situacao: 'EM_CADASTRO',
+        }}
+      />,
+    )
+    expect(screen.getByText(/Baixa parcial/)).toBeInTheDocument()
+    expect(screen.getByText(/resíduo a re-alocar/)).toBeInTheDocument()
+    expect(screen.getByText(/borderô 14735/)).toBeInTheDocument()
+    // NÃO pode ser renderizado como o estado antigo — este é literalmente o defeito C-6.
+    expect(container.textContent).not.toMatch(/^Aguardando finalização/)
+    textos.add(container.textContent ?? '')
+  })
+
+  it('finalizado → "Finalizado"', () => {
+    const { container } = render(
+      <PermutaBorderoBadge
+        vinculo={{ borCod: 14735, permutaStatus: 'finalizado', situacao: 'FINALIZADO' }}
+      />,
+    )
+    expect(screen.getByText(/Finalizado · borderô 14735/)).toBeInTheDocument()
+    textos.add(container.textContent ?? '')
+    // Os quatro renders produziram quatro textos DIFERENTES.
+    expect(textos.size).toBe(4)
   })
 })

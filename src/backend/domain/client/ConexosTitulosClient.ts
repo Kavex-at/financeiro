@@ -57,6 +57,20 @@ export interface TituloAPagar {
      * distinto de "nada pago", e o caller cai no fallback conservador.
      */
     valorPago?: number;
+    /**
+     * Situação de PAGAMENTO do título (`pago` no wire):
+     * `1 TOTALMENTE PAGO · 2 PARCIALMENTE PAGO · 3 NÃO PAGO`
+     * (swagger versionado `docs/conexos-api/070-com3.json`, schema `FinTituloFin`).
+     *
+     * Eixo ORTOGONAL ao `titVldStatus` do `filterList`, que é o CICLO DE VIDA do registro
+     * (`1 ATIVO · 2 RENEGOCIADO · 3 CANCELADO`) e **não** significa "em aberto" — a confusão
+     * entre os dois é a premissa que a ADR-0043 teve de emendar.
+     *
+     * É **retornável mas NÃO filtrável**: `filterList: {'pago#NE': '1'}` responde HTTP 500 (a
+     * opção server-side foi medida e morreu). Por isso entra como CORROBORAÇÃO do em-aberto
+     * derivado (I-Write-8a), nunca como gate de recusa.
+     */
+    pago?: number;
 }
 
 /**
@@ -251,6 +265,10 @@ export default class ConexosTitulosClient {
                     // fieldList explícito (sonda 2026-08-28); é a fonte do
                     // `pago` da invoice, já que o com298/list não traz saldo.
                     'titMnyTotPago',
+                    // `pago` (1 TOTALMENTE PAGO / 2 PARCIALMENTE / 3 NÃO PAGO) — corroboração do
+                    // em-aberto derivado em I-Write-8a. Retornável no fieldList; NÃO filtrável
+                    // (`pago#NE` ⇒ HTTP 500). Ver o docblock de `TituloAPagar.pago`.
+                    'pago',
                     'moeCodMneg',
                     'moeEspNome',
                 ],
@@ -273,6 +291,7 @@ export default class ConexosTitulosClient {
             const moedaNome = r.moeEspNome != null ? String(r.moeEspNome) : undefined;
             const valorBrl = this.base.parseOptionalNumber(r.titMnyValor);
             const valorPago = this.base.parseOptionalNumber(r.titMnyTotPago);
+            const pago = this.base.parseOptionalNumber(r.pago);
             return {
                 titCod: String(r.titCod),
                 ...(valorNegociado !== undefined ? { valorNegociado } : {}),
@@ -281,6 +300,7 @@ export default class ConexosTitulosClient {
                 ...(moedaNome !== undefined ? { moedaNome } : {}),
                 ...(valorBrl !== undefined ? { valorBrl } : {}),
                 ...(valorPago !== undefined ? { valorPago } : {}),
+                ...(pago !== undefined ? { pago } : {}),
             };
         });
     };

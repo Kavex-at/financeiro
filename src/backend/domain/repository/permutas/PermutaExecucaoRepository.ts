@@ -2,7 +2,18 @@ import { inject, injectable } from 'tsyringe';
 import ConexosIdentityProvider from '../../client/ConexosIdentityProvider.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 
-export type ExecucaoStatus = 'pending' | 'reconciling' | 'settled' | 'error';
+/**
+ * Status de UMA execução de baixa (par adto↔invoice).
+ *
+ * `settled` e `parcial` são os DOIS terminais (ADR-0043): `settled` afirma "o alocado foi
+ * integralmente baixado"; `parcial` afirma "houve baixa confirmada, mas sobrou resíduo"
+ * (`valor_residual_usd`). Nenhum dos dois regride em `beginExecution` — o critério é "houve
+ * escrita irreversível no ERP sob esta chave?". `pending`/`error` são reabríveis.
+ *
+ * ⚠️ Espelhado À MÃO em `src/frontend/lib/types.ts` (`ExecucaoStatus`) — os projetos são
+ * separados e nada força a paridade no compilador; a guarda é `src/frontend/lib/types.test.ts`.
+ */
+export type ExecucaoStatus = 'pending' | 'reconciling' | 'settled' | 'error' | 'parcial';
 
 /** Linha de execução da baixa/permuta no ERP (Fase 3 — auditoria/idempotência). */
 export interface ExecucaoRow {
@@ -17,6 +28,8 @@ export interface ExecucaoRow {
     valorBaixado?: number;
     juros?: number;
     contaJuros?: number;
+    /** Resíduo NÃO baixado do valor alocado, em moeda negociada. Só em `parcial` (I-Recon-6). */
+    valorResidualUsd?: number;
     erpResponse?: unknown;
     erroMensagem?: string;
     executadoPor?: string;
@@ -45,9 +58,13 @@ export interface BeginExecutionInput {
 }
 
 export interface BeginExecutionResult {
-    /** Status APÓS o upsert. `settled` ⇒ já estava executada (idempotência) — pular. */
+    /** Status APÓS o upsert. Terminal (`settled`/`parcial`) ⇒ já executada (idempotência) — pular. */
     status: ExecucaoStatus;
-    /** TRUE quando a linha já estava `settled` antes desta chamada. */
+    /**
+     * TRUE quando a linha já estava num TERMINAL (`settled` OU `parcial`) antes desta chamada.
+     * O nome guarda a história (nasceu só com `settled`); a semântica é "já houve escrita
+     * irreversível sob esta chave" — e em `parcial` houve (ADR-0043).
+     */
     alreadySettled: boolean;
 }
 
@@ -71,8 +88,8 @@ export default class PermutaExecucaoRepository {
     public findByIdempotencyKey = async (key: string): Promise<ExecucaoRow | null> => {
         const row = await this.databaseClient.selectFirst<Record<string, unknown>>(
             `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
-                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
-                    erro_mensagem, executado_por, criado_em, atualizado_em
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, valor_residual_usd,
+                    erp_response, erro_mensagem, executado_por, criado_em, atualizado_em
              FROM permuta_alocacao_execucao
              WHERE idempotency_key = $key`,
             { key },
@@ -83,8 +100,8 @@ export default class PermutaExecucaoRepository {
     public listByAdiantamento = async (adiantamentoDocCod: string): Promise<ExecucaoRow[]> => {
         const rows = await this.databaseClient.selectMany(
             `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
-                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
-                    erro_mensagem, executado_por, criado_em, atualizado_em
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, valor_residual_usd,
+                    erp_response, erro_mensagem, executado_por, criado_em, atualizado_em
              FROM permuta_alocacao_execucao
              WHERE adiantamento_doc_cod = $adtoDocCod
              ORDER BY criado_em`,
@@ -129,8 +146,8 @@ export default class PermutaExecucaoRepository {
     public listComBordero = async (): Promise<ExecucaoRow[]> => {
         const rows = await this.databaseClient.selectMany(
             `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
-                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
-                    erro_mensagem, executado_por, criado_em, atualizado_em
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, valor_residual_usd,
+                    erp_response, erro_mensagem, executado_por, criado_em, atualizado_em
              FROM permuta_alocacao_execucao
              WHERE bor_cod IS NOT NULL
              ORDER BY bor_cod DESC, criado_em`,
@@ -145,8 +162,8 @@ export default class PermutaExecucaoRepository {
     ): Promise<ExecucaoRow | null> => {
         const row = await this.databaseClient.selectFirst<Record<string, unknown>>(
             `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
-                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
-                    erro_mensagem, executado_por, criado_em, atualizado_em
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, valor_residual_usd,
+                    erp_response, erro_mensagem, executado_por, criado_em, atualizado_em
              FROM permuta_alocacao_execucao
              WHERE bor_cod = $borCod AND invoice_doc_cod = $invoiceDocCod
              LIMIT 1`,
@@ -171,8 +188,8 @@ export default class PermutaExecucaoRepository {
     public listByBorCod = async (borCod: number): Promise<ExecucaoRow[]> => {
         const rows = await this.databaseClient.selectMany(
             `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
-                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
-                    erro_mensagem, executado_por, criado_em, atualizado_em
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, valor_residual_usd,
+                    erp_response, erro_mensagem, executado_por, criado_em, atualizado_em
              FROM permuta_alocacao_execucao
              WHERE bor_cod = $borCod
              ORDER BY criado_em`,
@@ -220,8 +237,10 @@ export default class PermutaExecucaoRepository {
     /**
      * Write-ahead: abre (ou reabre) a execução de um par adto↔invoice.
      * - Linha nova → status `reconciling` (real) ou `pending` (dry-run).
-     * - Linha existente NÃO-settled → reaberta (retry) com o novo status.
-     * - Linha `settled` → PRESERVADA (idempotência): não regride. `alreadySettled=true`.
+     * - Linha existente NÃO-terminal (`pending`/`reconciling`/`error`) → reaberta (retry).
+     * - Linha TERMINAL (`settled` ou `parcial`) → PRESERVADA: não regride. `alreadySettled=true`.
+     *   `parcial` entra aqui porque as baixas dos títulos consumidos JÁ estão no ERP (ADR-0043):
+     *   re-POSTar seria super-pagamento. O resíduo se resolve RE-ALOCANDO o par (chave nova).
      */
     public beginExecution = async (input: BeginExecutionInput): Promise<BeginExecutionResult> => {
         const newStatus: ExecucaoStatus = input.dryRun ? 'pending' : 'reconciling';
@@ -234,17 +253,17 @@ export default class PermutaExecucaoRepository {
                 $newStatus, $dryRun, $executadoPor, $conexosUsername, $conexosUsnCod, now()
             )
             ON CONFLICT (idempotency_key) DO UPDATE SET
-                status = CASE WHEN permuta_alocacao_execucao.status = 'settled'
+                status = CASE WHEN permuta_alocacao_execucao.status IN ('settled', 'parcial')
                               THEN permuta_alocacao_execucao.status ELSE EXCLUDED.status END,
-                dry_run = CASE WHEN permuta_alocacao_execucao.status = 'settled'
+                dry_run = CASE WHEN permuta_alocacao_execucao.status IN ('settled', 'parcial')
                                THEN permuta_alocacao_execucao.dry_run ELSE EXCLUDED.dry_run END,
-                executado_por = CASE WHEN permuta_alocacao_execucao.status = 'settled'
+                executado_por = CASE WHEN permuta_alocacao_execucao.status IN ('settled', 'parcial')
                                THEN permuta_alocacao_execucao.executado_por ELSE EXCLUDED.executado_por END,
-                -- Identidade do ERP segue a mesma doutrina do executado_por: linha settled
+                -- Identidade do ERP segue a mesma doutrina do executado_por: linha TERMINAL
                 -- NUNCA reescreve quem assinou a escrita (ADR-0041).
-                conexos_username = CASE WHEN permuta_alocacao_execucao.status = 'settled'
+                conexos_username = CASE WHEN permuta_alocacao_execucao.status IN ('settled', 'parcial')
                                THEN permuta_alocacao_execucao.conexos_username ELSE EXCLUDED.conexos_username END,
-                conexos_usn_cod = CASE WHEN permuta_alocacao_execucao.status = 'settled'
+                conexos_usn_cod = CASE WHEN permuta_alocacao_execucao.status IN ('settled', 'parcial')
                                THEN permuta_alocacao_execucao.conexos_usn_cod ELSE EXCLUDED.conexos_usn_cod END,
                 atualizado_em = now()
             RETURNING status`,
@@ -260,9 +279,9 @@ export default class PermutaExecucaoRepository {
             },
         );
         const status = (row?.status ?? newStatus) as ExecucaoStatus;
-        // `newStatus` nunca é 'settled' (só markSettled grava isso). Logo, um status
-        // 'settled' retornado = a linha JÁ estava settled e foi preservada (idempotência).
-        return { status, alreadySettled: status === 'settled' };
+        // `newStatus` nunca é terminal (só markSettled/markParcial gravam isso). Logo, um
+        // 'settled'/'parcial' retornado = a linha JÁ estava terminal e foi preservada.
+        return { status, alreadySettled: status === 'settled' || status === 'parcial' };
     };
 
     /** Persiste o borCod assim que o borderô é criado (recuperação de órfão, Regis F-availability-1). */
@@ -318,6 +337,58 @@ export default class PermutaExecucaoRepository {
                 valorBaixado: data.valorBaixado ?? null,
                 juros: data.juros ?? null,
                 contaJuros: data.contaJuros ?? null,
+                erpResponse: JSON.stringify(data.erpResponse ?? null),
+                ...this.identityProvider.currentParams(),
+            },
+        );
+    };
+
+    /**
+     * IRMÃO de `markSettled`, não um parâmetro a mais dele: os dois terminais AFIRMAM COISAS
+     * DIFERENTES. `settled` afirma "o alocado foi integralmente baixado"; `parcial` afirma "houve
+     * baixa confirmada no ERP, e sobrou `valorResidualUsd` (moeda negociada) para re-alocar".
+     * Colapsá-los num campo opcional convidaria justamente o `settled` mudo que a ADR-0043 mata.
+     *
+     * I-Recon-2 vale igual aqui: só existe `parcial` sobre baixa confirmada (`bxaCodSeq`).
+     * Ver `business-rules/idempotencia-reconciliacao.md` (I-Recon-6/7) e I-Write-8b.
+     */
+    public markParcial = async (
+        key: string,
+        data: {
+            borCod?: number;
+            bxaCodSeq?: number;
+            valorBaixado?: number;
+            juros?: number;
+            contaJuros?: number;
+            /** Resíduo NÃO baixado do valor alocado, em moeda negociada. */
+            valorResidualUsd: number;
+            erpResponse?: unknown;
+        },
+    ): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE permuta_alocacao_execucao SET
+                status = 'parcial',
+                bor_cod = $borCod,
+                bxa_cod_seq = $bxaCodSeq,
+                valor_baixado = $valorBaixado,
+                juros = $juros,
+                conta_juros = $contaJuros,
+                valor_residual_usd = $valorResidualUsd,
+                erp_response = $erpResponse::jsonb,
+                erro_mensagem = NULL,
+                -- Mesma doutrina do markSettled: nunca sobrescreve identidade já registrada (ADR-0041).
+                conexos_username = COALESCE(conexos_username, $conexosUsername),
+                conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                atualizado_em = now()
+             WHERE idempotency_key = $key`,
+            {
+                key,
+                borCod: data.borCod ?? null,
+                bxaCodSeq: data.bxaCodSeq ?? null,
+                valorBaixado: data.valorBaixado ?? null,
+                juros: data.juros ?? null,
+                contaJuros: data.contaJuros ?? null,
+                valorResidualUsd: data.valorResidualUsd,
                 erpResponse: JSON.stringify(data.erpResponse ?? null),
                 ...this.identityProvider.currentParams(),
             },
@@ -470,6 +541,7 @@ export default class PermutaExecucaoRepository {
         ...(r.valor_baixado != null ? { valorBaixado: Number(r.valor_baixado) } : {}),
         ...(r.juros != null ? { juros: Number(r.juros) } : {}),
         ...(r.conta_juros != null ? { contaJuros: Number(r.conta_juros) } : {}),
+        ...(r.valor_residual_usd != null ? { valorResidualUsd: Number(r.valor_residual_usd) } : {}),
         ...(r.erp_response != null ? { erpResponse: r.erp_response } : {}),
         ...(r.erro_mensagem != null ? { erroMensagem: String(r.erro_mensagem) } : {}),
         ...(r.executado_por != null ? { executadoPor: String(r.executado_por) } : {}),

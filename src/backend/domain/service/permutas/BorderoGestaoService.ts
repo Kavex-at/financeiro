@@ -18,8 +18,24 @@ export type BorderoSituacao =
     | 'REMOVIDO'
     | 'INDISPONIVEL';
 
-/** Status da PERMUTA em relação ao seu borderô no fin010 (tela de permutas). */
-export type PermutaStatus = 'aguardando-finalizacao' | 'finalizado';
+/**
+ * Status da PERMUTA em relação ao seu borderô no fin010 (tela de permutas).
+ *
+ * `parcial-aguardando-finalizacao` (transição B1', ADR-0043) afirma DUAS pendências ao mesmo
+ * tempo: o borderô a finalizar E o resíduo a re-alocar. É distinto de `aguardando-finalizacao`
+ * de propósito — colapsar os dois faria `parcial` virar o novo silêncio, que é o risco que a
+ * própria ADR nomeia ao criar o estado.
+ *
+ * ⚠️ ESTE BADGE FALA SOBRE O BORDERÔ E NUNCA É INPUT DE ELEGIBILIDADE. Nenhum estado desta
+ * máquina remove o adiantamento da fila: o resíduo é trabalho pendente, e escondê-lo da fila
+ * apenas mudaria o defeito de lugar. Ver `state-machines/status-permuta-bordero.md`.
+ *
+ * Espelhado à mão em `src/frontend/lib/types.ts` (`PermutaStatusBordero`).
+ */
+export type PermutaStatus =
+    | 'aguardando-finalizacao'
+    | 'parcial-aguardando-finalizacao'
+    | 'finalizado';
 
 /** Vínculo permuta→borderô: borderô gerado pela baixa do adiantamento + status vivo. */
 export interface PermutaBorderoVinculo {
@@ -478,12 +494,19 @@ export default class BorderoGestaoService {
 
     /**
      * STATUS PERMUTA→BORDERÔ (tela de permutas, consulta lazy). Para cada adiantamento com baixa
-     * `settled` na trilha, resolve o status VIVO do borderô vinculado no fin010:
-     *   - FINALIZADO   → `finalizado` (permuta concluída; continua aparecendo).
-     *   - EM CADASTRO  → `aguardando-finalizacao` (baixado, falta finalizar o borderô).
+     * TERMINAL na trilha (`settled` OU `parcial` — os dois puseram item no borderô), resolve o
+     * status VIVO do borderô vinculado no fin010:
+     *   - FINALIZADO   → `finalizado` (o borderô está concluído; continua aparecendo).
+     *   - EM CADASTRO  → `aguardando-finalizacao`, ou `parcial-aguardando-finalizacao` quando ao
+     *     menos UMA execução daquele borderô terminou em `parcial` (B1').
      *   - CANCELADO/ESTORNADO/REMOVIDO/indisponível → OMITIDO → a permuta volta a "pendente"
-     *     (reabre p/ execução), alinhado à idempotência viva do reconciliar.
+     *     (reabre p/ execução), alinhado à idempotência viva do reconciliar (B3, vale igual para
+     *     o estado novo).
      * Busca PRECISA por `borCod#IN` (não perde por paginação do fin010/list).
+     *
+     * O `FINALIZADO` vence o resíduo de propósito: a pergunta que ESTA máquina responde é sobre o
+     * BORDERÔ, e ele está concluído. O resíduo segue rastreado pelo ledger
+     * (`valor_residual_usd` + `GET /execucoes`), que é onde ele pertence.
      */
     public statusPorAdiantamento = async (): Promise<Record<string, PermutaBorderoVinculo>> => {
         const rows = await this.execucaoRepository.listComBordero();
@@ -491,8 +514,14 @@ export default class BorderoGestaoService {
         // e, no fim, escolho o que está VÁLIDO no ERP (em cadastro/finalizado) — não o "último".
         const borCodsByAdto = new Map<string, Set<number>>();
         const borCodsPorFilial = new Map<number, Set<number>>();
+        // Pares `adto:borCod` em que ALGUMA execução terminal ficou `parcial`. A agregação é por
+        // par (e não por adto) porque um adto pode ter borderôs de épocas diferentes: o resíduo
+        // pertence ao borderô em que ele aconteceu.
+        const comResiduo = new Set<string>();
         for (const r of rows) {
-            if (r.status !== 'settled' || r.borCod === undefined) continue;
+            const terminal = r.status === 'settled' || r.status === 'parcial';
+            if (!terminal || r.borCod === undefined) continue;
+            if (r.status === 'parcial') comResiduo.add(`${r.adiantamentoDocCod}:${r.borCod}`);
             const set = borCodsByAdto.get(r.adiantamentoDocCod) ?? new Set<number>();
             set.add(r.borCod);
             borCodsByAdto.set(r.adiantamentoDocCod, set);
@@ -537,8 +566,10 @@ export default class BorderoGestaoService {
             if (!escolhido) continue;
             out[adto] = {
                 borCod: escolhido.borCod,
-                permutaStatus:
-                    escolhido.situacao === 'FINALIZADO' ? 'finalizado' : 'aguardando-finalizacao',
+                permutaStatus: this.permutaStatusDe(
+                    escolhido.situacao,
+                    comResiduo.has(`${adto}:${escolhido.borCod}`),
+                ),
                 situacao: escolhido.situacao,
             };
         }
@@ -552,6 +583,16 @@ export default class BorderoGestaoService {
      * lançamento (`statusPorAdiantamento` ignora estornado → volta a pendente). Senão:
      * `borVldFinalizado` 1 = FINALIZADO, 2 = CANCELADO, 0/undefined = EM CADASTRO.
      */
+    /**
+     * Mapeia (situação viva do borderô × houve resíduo?) para o badge. Ramos EXPLÍCITOS sobre os
+     * três valores — nada de `else` guarda-chuva, que é justamente o que faria um estado novo ser
+     * renderizado como o antigo sem o typecheck reclamar.
+     */
+    private permutaStatusDe = (situacao: BorderoSituacao, comResiduo: boolean): PermutaStatus => {
+        if (situacao === 'FINALIZADO') return 'finalizado';
+        return comResiduo ? 'parcial-aguardando-finalizacao' : 'aguardando-finalizacao';
+    };
+
     private situacaoDoItem = (item: {
         borVldFinalizado?: number;
         borCodEstornado?: number | null;

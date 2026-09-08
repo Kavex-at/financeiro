@@ -163,6 +163,7 @@ export default function GestaoPermutasPage() {
     setProcessando(c.invoice.docCod)
     try {
       let settled = 0
+      let parciais = 0
       let erros = 0
       let dryRun = false
       const borderos = new Set<number>()
@@ -170,6 +171,7 @@ export default function GestaoPermutasPage() {
         const r = await reconciliarAdiantamento(adto.docCod, { dryRun: false })
         if (r.dryRun) dryRun = true
         settled += r.resultados.filter((x) => x.status === 'settled').length
+        parciais += r.resultados.filter((x) => x.status === 'parcial').length
         erros += r.resultados.filter((x) => x.status === 'error').length
         if (r.borCod !== undefined) borderos.add(r.borCod)
       }
@@ -177,6 +179,13 @@ export default function GestaoPermutasPage() {
         toast.info('Escrita desabilitada no servidor (dry-run). Payload validado, sem baixa real.')
       } else {
         if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja a aba Borderôs.`)
+        // `parcial` NÃO é sucesso nem erro: a baixa entrou, mas sobrou resíduo. Sem este toast ele
+        // não apareceria em lugar nenhum da tela — o silêncio que a ADR-0043 existe para acabar.
+        if (parciais > 0)
+          toast.warning(
+            `${parciais} baixa(s) PARCIAIS — entraram no Conexos sem fechar o valor alocado. ` +
+              'Re-aloque o par para lançar o restante.',
+          )
         if (settled > 0)
           toast.success(
             `Processo ${c.priCod}: ${settled} baixa(s) no fin010 (borderô${
@@ -216,7 +225,14 @@ export default function GestaoPermutasPage() {
             )
           if (r.totalErros > 0)
             toast.error(`${r.totalErros} baixa(s) falharam — os casos seguem pendentes para retry.`)
-          if (r.totalSettled === 0 && r.totalErros === 0)
+          if (r.totalParciais > 0)
+            toast.warning(
+              `${r.totalParciais} baixa(s) PARCIAIS — entraram no Conexos sem fechar o valor ` +
+                'alocado. Re-aloque os pares para lançar o restante.',
+            )
+          // A condição inclui `totalParciais`: sem ela, um lote inteiro de baixas parciais era
+          // anunciado como "nada a executar" — uma mentira sobre dinheiro que se moveu.
+          if (r.totalSettled === 0 && r.totalParciais === 0 && r.totalErros === 0)
             toast.info('Nada a executar — as automáticas já estavam processadas.')
         }
         await load()
@@ -368,8 +384,16 @@ export default function GestaoPermutasPage() {
         toast.info('Escrita desabilitada no servidor (dry-run). Payload validado, sem baixa real.')
       } else {
         const ok = result.resultados.filter((r) => r.status === 'settled').length
+        const parciais = result.resultados.filter((r) => r.status === 'parcial')
         const erros = result.resultados.filter((r) => r.status === 'error').length
         if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja o detalhe.`)
+        if (parciais.length > 0) {
+          const residuo = parciais.reduce((acc, r) => acc + (r.valorResidualUsd ?? 0), 0)
+          toast.warning(
+            `${parciais.length} baixa(s) PARCIAIS — resíduo de ${formatNumber(residuo)} não baixado. ` +
+              'Re-aloque o par para lançar o restante.',
+          )
+        }
         if (ok > 0)
           toast.success(
             `${ok} baixa(s) no borderô ${result.borCod} (EM CADASTRO). Revise e aprove em Borderôs.`,
