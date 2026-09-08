@@ -51,8 +51,8 @@ import ConexosTitulosClient from '../domain/client/ConexosTitulosClient.js';
  * `listInvoicesFinalizadas` de produção, para medir o caminho real e não um parecido.
  *
  * Run (PRD — não há ambiente HML neste tenant):
- *   PROBE_ALLOW_PRD=1 npx tsx jobs/probe-invoice-pago.ts
- *   PROBE_ALLOW_PRD=1 FILS=1,2,3 AMOSTRA=60 npx tsx jobs/probe-invoice-pago.ts
+ *   PROBE_ALLOW_PRD=1 tsx jobs/probe-invoice-pago.ts
+ *   PROBE_ALLOW_PRD=1 FILS=1,2,3 AMOSTRA=60 tsx jobs/probe-invoice-pago.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

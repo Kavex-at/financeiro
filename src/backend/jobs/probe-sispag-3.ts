@@ -18,7 +18,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
  *
  * Só leitura (assertReadPath bloqueia verbos mutantes). Zero escrita.
  * Run: cd src/backend && PROBE_OUT=/tmp/sispag-probe3 \
- *   CONEXOS_BASE_URL=https://columbiatrading.conexos.cloud/api npx tsx jobs/probe-sispag-3.ts
+ *   CONEXOS_BASE_URL=https://columbiatrading.conexos.cloud/api tsx jobs/probe-sispag-3.ts
  */
 
 const OUT = process.env.PROBE_OUT ?? '/tmp/sispag-probe3';

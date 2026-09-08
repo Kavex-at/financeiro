@@ -31,6 +31,11 @@ module.exports = {
     // `LogService` remains in domain/service until features add TDD'd services
     // via /feature-new. Floors recalibrated just below current LogService
     // coverage (~91% lines, ~64% branches). Re-tighten as the domain grows.
+    //
+    // Pisos POR ARQUIVO para o ciclo de vida de processo (card `testability-3`): pool, shutdown,
+    // boot. São arquivos pequenos, novos e de alto risco, onde uma regressão de cobertura sumiria
+    // no bucket global de ~52k linhas sem mover a agulha. Piso = medido hoje, arredondado para
+    // baixo — é ratchet contra regressão, não meta a alcançar.
     coverageThreshold: {
         global: {
             lines: 72,
@@ -40,6 +45,26 @@ module.exports = {
         './domain/service/': {
             lines: 88,
             branches: 60,
+        },
+        './http/gracefulShutdown.ts': {
+            lines: 95,
+            branches: 85,
+        },
+        './http/bootstrap.ts': {
+            lines: 95,
+            branches: 90,
+        },
+        './http/lifecycle.ts': {
+            lines: 95,
+            branches: 90,
+        },
+        './http/lastResortHandlers.ts': {
+            lines: 90,
+            branches: 75,
+        },
+        './services/conexosSessionStore.ts': {
+            lines: 88,
+            branches: 70,
         },
     },
     transform: {

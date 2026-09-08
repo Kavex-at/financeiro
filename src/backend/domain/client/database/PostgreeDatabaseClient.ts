@@ -3,6 +3,7 @@ import { inject, injectable, singleton } from 'tsyringe';
 import type IClient from '../../core/client/IClient.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import RetryExecutor from '../../libs/executor/RetryExecutor.js';
+import { endPoolQuietly, endPoolQuietlyAsync } from '../../libs/pool/endPoolQuietly.js';
 import SqlBuilder from '../../libs/sql/SqlBuilder.js';
 
 /**
@@ -59,17 +60,50 @@ export default class PostgreeDatabaseClient implements IClient {
 
         await retryExecutor.execute(async () => {
             const envVars = await this.environmentProvider.getEnvironmentVars();
-            this.connectionPool = new Pool({
+            const pool = new Pool({
                 connectionString: envVars.databaseConnectionString,
                 idleTimeoutMillis: this.poolIdleTimeoutMillis,
                 connectionTimeoutMillis: this.poolConnectionTimeoutMillis,
                 max: this.poolMaxConnections,
             });
+            this.connectionPool = pool;
 
-            this.connectionPool.on('error', (_err) => {
-                this.connectionPool = undefined;
+            // Descarta o pool quebrado E ENCERRA suas conexões. Zerar apenas a
+            // referência (como era antes) devolvia o pool ao GC ainda segurando
+            // até `poolMaxConnections` sessões no Supabase, e a `init()` seguinte
+            // abria mais 5. O laço se fecha porque `'too many clients'` e
+            // `'MaxClientsInSessionMode'` estão entre os erros que este cliente
+            // trata como transitórios: o handler que existia para recuperar do
+            // esgotamento de conexões era justamente o que o acelerava.
+            //
+            // `pool` fica capturado em const porque o evento `error` dispara uma
+            // vez por cliente ocioso derrubado — sem a comparação abaixo, o
+            // segundo disparo zeraria uma referência que já aponta para o pool
+            // NOVO criado por uma `init()` no meio do caminho.
+            let ended = false;
+            pool.on('error', (_err) => {
+                if (!ended) {
+                    ended = true;
+                    endPoolQuietly(pool);
+                }
+                if (this.connectionPool === pool) this.connectionPool = undefined;
             });
         });
+    };
+
+    /**
+     * Encerra o pool e devolve as conexões ao Postgres. Idempotente e seguro sem
+     * `init()` prévia. Usado pelo shutdown gracioso (SIGTERM/SIGINT) para que um
+     * deploy não deixe sessões penduradas no pooler até o timeout do servidor.
+     */
+    public close = async (): Promise<void> => {
+        const pool = this.connectionPool;
+        if (!pool) return;
+
+        // Zera ANTES do await: uma segunda chamada concorrente não deve esperar
+        // pelo mesmo `end()` nem disparar um segundo.
+        this.connectionPool = undefined;
+        await endPoolQuietlyAsync(pool);
     };
 
     public selectMany = async (query: string, params?: Record<string, unknown>): Promise<any[]> => {
@@ -185,15 +219,22 @@ export default class PostgreeDatabaseClient implements IClient {
      * (optionally via SqlBuilder for named params like `$name`).
      */
     private query = async (rawQuery: string, rawParams?: Record<string, unknown>): Promise<any> => {
-        await this.init();
-        if (!this.connectionPool) throw new Error('Database connection pool not initialized');
-
-        const pool = this.connectionPool;
         const { query, params } = rawParams
             ? this.sqlBuilder.build(rawQuery, rawParams)
             : { query: rawQuery, params: undefined };
 
         return this.queryRetryExecutor.execute(async () => {
+            // O pool é reobtido a CADA tentativa, e não congelado fora do retry
+            // como antes. Agora que o handler de `error` ENCERRA o pool quebrado,
+            // uma retentativa contra a referência congelada bateria em
+            // `Cannot use a pool after calling end on the pool` — trocaria um erro
+            // recuperável por um fatal. Com a `init()` aqui dentro, a tentativa
+            // seguinte pega o pool novo, que é justamente o desfecho que o retry
+            // de `'too many clients'`/`'Connection terminated'` existe para obter.
+            await this.init();
+            const pool = this.connectionPool;
+            if (!pool) throw new Error('Database connection pool not initialized');
+
             if (params) {
                 return pool.query(query, params as any[]);
             }

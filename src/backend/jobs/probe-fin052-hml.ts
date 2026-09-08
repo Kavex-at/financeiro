@@ -12,7 +12,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
  * arquivos de retorno, o detalhe (a ponte `bxaCodSeq`→fin010), os erros de parse e as
  * configs de layout `ger015`. Guard anti-PRD (recusa base não `-hml`). NENHUMA escrita.
  *
- * Run: CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/probe-fin052-hml.ts
+ * Run: CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/probe-fin052-hml.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

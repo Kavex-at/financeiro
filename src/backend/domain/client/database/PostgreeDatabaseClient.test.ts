@@ -3,17 +3,37 @@ import 'reflect-metadata';
 const poolQuery = jest.fn();
 const clientQuery = jest.fn();
 const clientRelease = jest.fn();
+const poolEnd = jest.fn();
 const poolConnect = jest.fn(async () => ({
     query: (sql: string, params?: unknown[]) => clientQuery(sql, params),
     release: () => clientRelease(),
 }));
 
+/**
+ * Pools criados pelo cliente, na ordem. O mock anterior descartava o listener
+ * (`on: jest.fn()`), o que deixava o handler de `error` — exatamente onde o pool
+ * vazava — inalcançável pelo teste. Aqui cada pool guarda seus handlers e expõe
+ * `emitError` para dispará-los.
+ */
+const createdPools: Array<{ emitError: (err?: Error) => void }> = [];
+
 jest.mock('pg', () => ({
-    Pool: jest.fn().mockImplementation(() => ({
-        query: (sql: string, params?: unknown[]) => poolQuery(sql, params),
-        connect: () => poolConnect(),
-        on: jest.fn(),
-    })),
+    Pool: jest.fn().mockImplementation(() => {
+        const errorHandlers: Array<(err: Error) => void> = [];
+        const pool = {
+            query: (sql: string, params?: unknown[]) => poolQuery(sql, params),
+            connect: () => poolConnect(),
+            on: (event: string, handler: (err: Error) => void) => {
+                if (event === 'error') errorHandlers.push(handler);
+            },
+            end: () => poolEnd(),
+            emitError: (err: Error = new Error('Connection terminated unexpectedly')) => {
+                for (const handler of [...errorHandlers]) handler(err);
+            },
+        };
+        createdPools.push(pool);
+        return pool;
+    }),
 }));
 
 import PostgreeDatabaseClient from './PostgreeDatabaseClient.js';
@@ -30,6 +50,11 @@ describe('PostgreeDatabaseClient', () => {
         clientQuery.mockReset();
         clientRelease.mockReset();
         poolConnect.mockClear();
+        // `mockReset` apagaria a implementação e `end()` devolveria `undefined`,
+        // quebrando o `.catch()` do handler. Reset + implementação explícita.
+        poolEnd.mockReset();
+        poolEnd.mockResolvedValue(undefined);
+        createdPools.length = 0;
         environmentProvider.getEnvironmentVars.mockClear();
     });
 
@@ -198,6 +223,126 @@ describe('PostgreeDatabaseClient', () => {
             const issued = clientQuery.mock.calls.map((c) => c[0] as string);
             expect(issued.some((q) => q.includes('pg_advisory_unlock'))).toBe(false);
             expect(clientRelease).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    /**
+     * BE-05. O handler de `error` zerava `connectionPool` sem chamar `end()`: o
+     * pool quebrado ia para o GC ainda segurando até 5 sessões no Supabase, e a
+     * `init()` seguinte abria mais 5. Como `'too many clients'` e
+     * `'MaxClientsInSessionMode'` são erros que este cliente trata como
+     * transitórios, o handler que existia para recuperar do esgotamento de
+     * conexões era o que o acelerava.
+     */
+    describe('pool error handling (BE-05)', () => {
+        const primePool = async (client: PostgreeDatabaseClient): Promise<void> => {
+            poolQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+            await client.selectMany('SELECT 1');
+        };
+
+        it('ends the broken pool and drops the reference on a pool error', async () => {
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            await primePool(client);
+            expect(createdPools).toHaveLength(1);
+
+            createdPools[0].emitError();
+
+            expect(poolEnd).toHaveBeenCalledTimes(1);
+
+            // referência zerada ⇒ a próxima query abre um pool NOVO.
+            await client.selectMany('SELECT 1');
+            expect(createdPools).toHaveLength(2);
+        });
+
+        it('ends the pool only once when the error event fires repeatedly', async () => {
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            await primePool(client);
+
+            createdPools[0].emitError();
+            createdPools[0].emitError();
+            createdPools[0].emitError();
+
+            expect(poolEnd).toHaveBeenCalledTimes(1);
+        });
+
+        it('a late error from the OLD pool does not kill the pool created meanwhile', async () => {
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            await primePool(client);
+
+            createdPools[0].emitError();
+            await client.selectMany('SELECT 1'); // cria o pool novo
+            expect(createdPools).toHaveLength(2);
+
+            // Disparo tardio do pool ANTIGO — não pode zerar a referência corrente.
+            createdPools[0].emitError();
+
+            expect(poolEnd).toHaveBeenCalledTimes(1);
+            await expect(client.selectMany('SELECT 1')).resolves.toEqual([]);
+            expect(createdPools).toHaveLength(2); // nenhum pool extra foi aberto
+        });
+
+        /**
+         * Regressão do próprio BE-05: encerrar o pool quebrado tornou fatal uma
+         * retentativa que antes funcionava. `query` congelava a referência fora
+         * do `RetryExecutor`, então a 2ª tentativa bateria em `Cannot use a pool
+         * after calling end on the pool` em vez de usar o pool novo — trocando um
+         * erro recuperável por um definitivo, justamente no caminho que o retry
+         * de `Connection terminated` existe para salvar.
+         */
+        it('retries against a NEW pool after the broken one was ended', async () => {
+            poolQuery
+                .mockImplementationOnce(async () => {
+                    createdPools[0].emitError();
+                    throw new Error('Connection terminated unexpectedly');
+                })
+                .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 });
+
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            const rows = await client.selectMany('SELECT 1');
+
+            expect(rows).toEqual([{ id: 1 }]);
+            expect(poolEnd).toHaveBeenCalledTimes(1);
+            // a retentativa reabriu o pool em vez de reusar o encerrado.
+            expect(createdPools).toHaveLength(2);
+        });
+
+        it('survives an end() that rejects (no unhandled rejection)', async () => {
+            poolEnd.mockRejectedValue(new Error('pool already ended'));
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            await primePool(client);
+
+            expect(() => createdPools[0].emitError()).not.toThrow();
+            await Promise.resolve(); // deixa o `.catch()` do handler rodar
+            expect(poolEnd).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('close (shutdown gracioso)', () => {
+        it('ends the pool and is idempotent', async () => {
+            poolQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            await client.selectMany('SELECT 1');
+
+            await client.close();
+            await client.close();
+
+            expect(poolEnd).toHaveBeenCalledTimes(1);
+        });
+
+        it('is a no-op when the pool was never initialized', async () => {
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+
+            await expect(client.close()).resolves.toBeUndefined();
+            expect(poolEnd).not.toHaveBeenCalled();
+        });
+
+        it('swallows an end() that rejects', async () => {
+            poolQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+            poolEnd.mockRejectedValue(new Error('pool already ended'));
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            await client.selectMany('SELECT 1');
+
+            await expect(client.close()).resolves.toBeUndefined();
         });
     });
 });

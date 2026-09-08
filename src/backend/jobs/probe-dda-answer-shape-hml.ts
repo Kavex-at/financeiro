@@ -18,7 +18,7 @@ import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.
  * acerto.
  *
  * ⚠️ ESCREVE em HML. Recusa qualquer base que não seja `-hml`.
- * Run: cd src/backend && CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/probe-dda-answer-shape-hml.ts
+ * Run: cd src/backend && CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/probe-dda-answer-shape-hml.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

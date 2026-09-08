@@ -51,8 +51,8 @@ interface PagedRaw {
  * Exige opt-in explícito em produção, igual aos probes irmãos (`probe-fin134`, `probe-fin052-hml`).
  *
  * Run (PRD — não há ambiente HML neste tenant):
- *   PROBE_ALLOW_PRD=1 npx tsx jobs/probe-com297-list.ts
- *   PROBE_ALLOW_PRD=1 FILS=1,2,3 npx tsx jobs/probe-com297-list.ts
+ *   PROBE_ALLOW_PRD=1 tsx jobs/probe-com297-list.ts
+ *   PROBE_ALLOW_PRD=1 FILS=1,2,3 tsx jobs/probe-com297-list.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

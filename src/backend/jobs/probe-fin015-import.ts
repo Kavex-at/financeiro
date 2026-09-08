@@ -31,9 +31,9 @@ import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.
  *
  * Run:
  *   cd src/backend
- *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/probe-fin015-import.ts
+ *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/probe-fin015-import.ts
  *   # PRD (read-only, onde estão os 17 lotes reais):
- *   PROBE_PRD=1 npx tsx jobs/probe-fin015-import.ts
+ *   PROBE_PRD=1 tsx jobs/probe-fin015-import.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');
