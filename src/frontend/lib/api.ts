@@ -15,7 +15,12 @@ import type {
   RelatorioTipo,
   ReconciliarResult,
 } from './types'
+import { assertDemoEnv, isDemoMode } from './features'
 import { gestaoPermutasFixture } from './permutas-fixture'
+
+// Fail-fast: crash on import if demo mode is on in a non-local build, instead
+// of silently serving fixture data as if it were the portfolio.
+assertDemoEnv()
 
 const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '')
 
@@ -56,22 +61,39 @@ export async function fetchFiliais(): Promise<FiliaisResponse> {
 }
 
 /**
- * Gestão de Permutas — tenta o backend (`GET /permutas/gestao`) e cai no
- * fixture de dados reais quando o backend não responde, erra ou devolve vazio.
- * Esse fallback é a REDE DE SEGURANÇA do demo: a tela nunca quebra na review,
- * mesmo sem Postgres semeado / backend de pé. Quando o banco local estiver
- * populado (Fase B), o backend assume e o fixture só entra como contingência.
+ * Gestão de Permutas — `GET /permutas/gestao`.
+ *
+ * **O que está na tela é o que está no banco.** Esta função já quebrou essa
+ * regra: devolvia `gestaoPermutasFixture` tanto quando o backend caía quanto
+ * quando ele respondia uma carteira legitimamente VAZIA, e a tela não tinha
+ * como distinguir. "Zero pendentes" é um estado correto e desejável do domínio;
+ * substituí-lo por linhas fantasma com nomes de clientes e valores em USD é o
+ * pior dos dois caminhos, e era o que disparava no dia a dia.
+ *
+ * Agora os três casos são distintos e o chamador decide o que mostrar:
+ * - carteira vazia → resposta `fonte: 'banco'` com listas vazias (→ `EmptyState`);
+ * - falha (HTTP, rede, 401) → LANÇA (→ banner de erro + retry);
+ * - `NEXT_PUBLIC_DEMO_MODE=true` → fixture, marcado `fonte: 'fixture'` para a
+ *   tela poder gritar que aquilo não é o banco.
  */
 export async function fetchGestaoPermutas(): Promise<GestaoPermutasResponse> {
   try {
     const res = await apiFetch(`${API}/permutas/gestao`, {
       headers: await withAuthHeaders(),
     })
-    if (!res.ok) throw new Error(`API ${res.status}`)
-    const json = (await res.json()) as Partial<GestaoPermutasResponse>
-    if (!json?.pendentes?.length && !json?.invoicesEmAberto?.length) {
-      return gestaoPermutasFixture
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const j = await res.json()
+        detail = j?.error ? ` — ${j.error}` : ''
+      } catch {}
+      throw new Error(`API ${res.status}${detail}`)
     }
+    const json = (await res.json()) as Partial<GestaoPermutasResponse>
+    const vazia = !json?.pendentes?.length && !json?.invoicesEmAberto?.length
+    // O fixture só entra em demo explícito. Uma carteira vazia é uma RESPOSTA,
+    // não uma falha — e é a tela que decide como exibi-la.
+    if (vazia && isDemoMode()) return gestaoPermutasFixture
     return {
       fonte: 'banco',
       geradoEm: json.geradoEm,
@@ -89,8 +111,12 @@ export async function fetchGestaoPermutas(): Promise<GestaoPermutasResponse> {
         jaPermutado: (json.pendentes ?? []).filter((p) => p.status === 'ja-permutado').length,
       },
     }
-  } catch {
-    return gestaoPermutasFixture
+  } catch (err) {
+    // Em demo, a rede de segurança de sempre. Fora dele a falha SOBE: inclusive
+    // a `SessionExpiredError`, que antes virava fixture e engolia o modal de
+    // sessão expirada.
+    if (isDemoMode()) return gestaoPermutasFixture
+    throw err
   }
 }
 

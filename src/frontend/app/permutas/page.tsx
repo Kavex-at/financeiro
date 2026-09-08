@@ -4,6 +4,7 @@ import * as React from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import {
+  AlertTriangle,
   ArrowLeftRight,
   Banknote,
   CheckCircle2,
@@ -64,6 +65,7 @@ import {
 } from './components/format'
 import { KpiFooter } from './components/ui'
 import { useTabelaFiltro } from './components/tabela-filtro'
+import { DemoDataBanner, LoadErrorBanner } from './components/banners'
 import { usePermutasData } from './components/usePermutasData'
 import { useIngestao } from './components/useIngestao'
 import { useExportRelatorios } from './components/useExportRelatorios'
@@ -93,7 +95,7 @@ const ReconciliarDialog = dynamic(() =>
 )
 
 export default function GestaoPermutasPage() {
-  const { data, loading, statusPorAdto, carregarStatus, load } = usePermutasData()
+  const { data, loading, error, statusPorAdto, carregarStatus, load } = usePermutasData()
   const [filtro, setFiltro] = React.useState<FiltroStatus>('todos')
   // Filtro de filial (busca no Conexos é por filial — facilita conferir lá).
   const [filtroFilial, setFiltroFilial] = React.useState<string>('todas')
@@ -714,10 +716,32 @@ export default function GestaoPermutasPage() {
         }
       />
 
+      {/* De onde veio o que está na tela. O demo grita enquanto estiver ligado; a
+          falha de refresh vira banner e PRESERVA a carteira anterior (que era
+          real), em vez de esvaziar o painel. Com a tela ainda vazia, a falha vai
+          para o `EmptyState` abaixo — não faz sentido dizer a mesma frase duas
+          vezes. */}
+      <DemoDataBanner fonte={data?.fonte ?? 'banco'} />
+      {data ? (
+        <LoadErrorBanner message={error} onRetry={() => void load()} retrying={loading} stale />
+      ) : null}
+
       {loading && !data ? (
         <LoadingSkeleton />
       ) : !data ? (
-        <EmptyState title="Não foi possível carregar a gestão de permutas" />
+        <EmptyState
+          // Ícone de alerta, e não o padrão: este `EmptyState` é o estado de
+          // FALHA da carga inicial, não uma carteira vazia. Confundir os dois é
+          // exatamente o que este fix veio corrigir.
+          icon={<AlertTriangle aria-hidden />}
+          title="Não foi possível carregar a gestão de permutas"
+          description={error ?? undefined}
+          action={
+            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+              <RefreshCw className={cn(loading && 'animate-spin')} aria-hidden /> Tentar novamente
+            </Button>
+          }
+        />
       ) : (
         <>
           {/* Topo = RESUMO (contadores). Os tipos de permuta (simples/múltiplas/
