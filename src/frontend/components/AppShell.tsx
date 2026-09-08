@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAppNavGroups } from '@/components/nav/app-nav'
 import { ConexosStatusBanner } from '@/components/auth/ConexosStatusBanner'
 import { RouteGate } from '@/components/auth/RouteGate'
@@ -281,7 +282,18 @@ export function AppShell({ version, children }: { version: string; children: Rea
       <ConexosStatusBanner />
 
       <div className="flex min-h-0 flex-1">
-        {authenticated ? <AppNavigation /> : null}
+        {/*
+          A navegação é o único pedaço da moldura com estado, `localStorage` e fetch — e ela mora no
+          layout raiz, fora do alcance do `app/error.tsx`. Sem esta fronteira, um throw em
+          `useAppNavGroups` (ou na leitura do colapso da sidebar) levaria junto a página que o
+          usuário estava usando. Com ela, o pior caso é a moldura ficar sem navegação: o conteúdo
+          continua na tela e o logo do header continua levando para `/`.
+        */}
+        {authenticated ? (
+          <ErrorBoundary boundaryName="AppNavigation">
+            <AppNavigation />
+          </ErrorBoundary>
+        ) : null}
         {/* `pb-24` em mobile reserva a faixa do BottomNav (h-16) — sem isso a última linha da
             tabela fica escondida atrás dele. */}
         <AppShellMain className={authenticated ? 'pb-24 md:pb-6' : undefined}>
