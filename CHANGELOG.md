@@ -1,5 +1,242 @@
 # Columbia Financeiro — Changelog
 
+## v0.35.0 (2026-09-03) — a aplicação ganha moldura
+
+Varredura no `src/frontend/` antes deste ciclo: **zero** `<nav>`, **zero**
+`role="navigation"`, **zero** `aria-current`, **zero** `role="main"`, **zero** `sr-only`.
+O `AppShell` tinha 47 linhas e nenhum link. Mapeando todo `href` interno, as telas
+`/sispag`, `/recebimentos`, `/operacao` e `/usuarios` não continham link nenhum: uma vez
+dentro, a única saída era o botão voltar do navegador, e a home virou o único roteador da
+aplicação. Trocar de frente custava voltar à raiz.
+
+A solução já estava escrita e nunca tinha sido construída — `docs/design-system/sidebar.md`
+(385 linhas) e `layout.md` (400 linhas) especificam a Sidebar de dois níveis com badges, o
+BottomNav, o colapso persistido, as larguras, o skip link e a acessibilidade inteira. Este
+ciclo implementa contra a spec; só os **itens** de navegação foram adaptados ao domínio real
+(a spec usa exemplos de outro produto).
+
+- **feat(nav):** `NavItem` (molecule) + `Sidebar` (organism, forma direta e compound) +
+  `BottomNav`. O item ativo é o de href mais específico que casa com a rota, de modo que
+  existe **um** `aria-current="page"` na árvore: com `/permutas` e `/permutas/borderos` ambos
+  casando, só o filho o recebe; o pai fica com o realce de trilha. Dois `aria-current` diriam
+  ao leitor de tela que o usuário está em duas páginas ao mesmo tempo.
+- **feat(nav):** o gating que já existia na home passa a valer item a item na navegação —
+  SISPAG por `isSispagEnabled()`, Operação por `fetchPermissoes().operacao` (falha fechada),
+  Usuários por `useIsAdmin()`. Sempre por **ausência**: o design system proíbe `disabled` para
+  permissão. Os três gates reais continuam server-side, e o Regis-Review verificou os três no
+  backend (`sispagGate`, `requireRole('admin')`, `requireOperacaoAcesso`) — esconder é
+  ergonomia, não segurança.
+- **feat(plataforma):** `AppShell` reescrito na forma compound, com link "pular para o
+  conteúdo" (`sr-only` até receber foco), `role="main"` + `id="main-content"`, `role="banner"`
+  e `AppShell.EnvBadge`. A marca "Columbia Trading" virou `<a href="/">` — a convenção que
+  todo usuário tenta primeiro e que antes não fazia nada.
+- **fix(a11y):** o `AppShell` deixa de emitir `<h1>`. Ele e o `PageHeader` emitiam um cada, de
+  modo que, para um leitor de tela, toda tela do sistema se chamava "Columbia Trading".
+- **feat(ds):** a escala de z-index de `tokens.md` passa a existir em `globals.css`. O skip
+  link é o primeiro consumidor (`--z-max`, com a justificativa que a spec exige: precisa ficar
+  acima do header sticky e de qualquer backdrop).
+- **test:** 39 casos novos. A cobertura global do frontend foi de ~20,7% para **38,19%**
+  (branches 9,59% → 28,73%). Cobrem o que não se vê na tela: `aria-current` único, item
+  escondido por permissão, colapso persistido e relido, badge 0/99+, overflow do "Mais" em
+  mobile, e a ausência de `<h1>` no shell.
+
+A prop `badge` do `Sidebar` fica implementada e **sem consumidor**, de propósito: a rodada
+seguinte só liga os números.
+
+> Desvios deliberados da spec do design system, com motivo, em
+> `ontology/ui-flows/navegacao-global.md`. Ground-truth dispensado (`--no-ground-truth`): o
+> delta é casca de aplicação — não toca lógica monetária nem lê/escreve no Conexos.
+>
+> DesignSystemReviewer: **aprovado**, 0 P0, 1 P1 (remediado no ciclo).
+> Regis-Review `2026-09-03-1913-moldura-navegacao`: **7,6, gate passa com 0 P0**
+> (Availability 8 · Deployability 6,0 · Integrability 7 · Modifiability 9 · Performance 8 ·
+> Fault Tolerance 7,0 · Security 8 · Testability 7). Os P1 abertos estão em
+> `ontology/_inbox/moldura-navegacao-regis-followups.md`; os três maiores são o open redirect
+> do `returnTo` no login, a ausência de Error Boundary (a moldura em toda rota fez o blast
+> radius de um throw sair de ~0% para 100% das telas) e o `npm run build` que falta no job
+> `frontend` do CI.
+
+**Dois desses P1 foram fechados antes do merge**, porque os dois eram baratos e o custo de
+adiá-los era desproporcional:
+
+- **fix(plataforma):** a aplicação ganha fronteiras de erro. Eram **zero** em todo o
+  `src/frontend/` (`grep -rn "ErrorBoundary\|componentDidCatch\|getDerivedStateFromError"` → 0;
+  `find -name error.tsx` → 0), e isso não incomodava enquanto o `AppShell` tinha 47 linhas sem
+  lógica. A moldura mudou o cálculo: ela é código com estado, `localStorage` e fetch, montado em
+  **toda** rota autenticada — um throw ali levava 100% das telas para o branco, sem sequer um
+  botão. Agora são três camadas, cada uma cobrindo o que a de dentro não alcança: `app/error.tsx`
+  para a página (o layout sobrevive, então o usuário sai navegando em vez de usar o botão voltar),
+  `ErrorBoundary` em volta da navegação (a moldura degrada para "sem navegação" e o conteúdo fica
+  na tela) e `app/global-error.tsx` para uma falha do próprio layout raiz — este último com estilo
+  inline e nenhum import do design system, porque um arquivo que só roda quando tudo mais falhou
+  não pode depender de mais nada. Os três expõem o `digest` do Next: é o único fio entre "deu erro
+  na tela da analista" e o stack no log do servidor, já que a mensagem real é ocultada em produção.
+- **fix(security):** `returnTo` do login deixa de aceitar destino externo. `searchParams.get('returnTo')`
+  ia direto para o `router.replace`, que aceita URL absoluta e protocol-relative — open redirect, com
+  phishing como uso plausível numa plataforma cujos admins assinam remessa SISPAG. `safeReturnTo`
+  (`lib/auth/safe-return-to.ts`) só deixa passar caminho interno, e recusa as três formas de abrir
+  autoridade sem escrever esquema: `//host`, `/\host` (o parser do WHATWG normaliza `\` para `/`) e
+  controle no meio da string (o navegador remove o TAB e sobra `//host`). Herdado, não introduzido
+  por esta moldura — mas é o consumidor único do valor, e o choke point é uma linha.
+
+Os follow-ups continuam válidos para o **resto** da fila; os dois cards acima estão fechados.
+Segue aberto o `deployability-1` (o job `frontend` do CI roda typecheck/lint/test e **não** roda
+`build`) — três linhas de YAML que ficam para a próxima janela.
+
+### E a tela de Permutas para de servir fixture como se fosse a carteira do banco
+
+Terceiro delta dobrado nesta mesma versão, de outra branch (`worktree-permutas-fixture-fonte`).
+Vale ler junto porque é o mesmo modo de falha das entradas acima: **o sistema falhando para o lado
+errado, em silêncio**.
+
+`fetchGestaoPermutas` devolvia `gestaoPermutasFixture` em dois caminhos e não sinalizava nenhum —
+quando o backend falhava, e quando ele respondia uma carteira **legitimamente vazia**. O segundo é
+o que disparava no dia a dia: "zero pendentes" é um estado correto do domínio, e era substituído
+por 227 linhas de dados reais sondados, com exportadores nominais e valores em USD. A analista via
+uma carteira cheia que não existia.
+
+O mais desconfortável é que o sinal já existia e era jogado fora: o tipo carregava
+`fonte: 'banco' | 'fixture'` (`types.ts:236`) e o fixture se identificava corretamente. Nenhuma
+tela lia o campo.
+
+- **fix(api):** os três casos passam a ser distintos. Carteira vazia → `fonte: 'banco'` com listas
+  vazias e totais zerados. Falha de HTTP, rede ou 401 → **lança**. Fixture → só sob
+  `NEXT_PUBLIC_DEMO_MODE=true`. De quebra, o `catch` engolia a `SessionExpiredError`, então sessão
+  expirada virava fixture em vez de abrir o modal.
+- **feat(features):** `isDemoMode()` + `assertDemoEnv()`, com default **OFF em todo ambiente**,
+  `local` inclusive — ao contrário de `isSispagEnabled()`, aqui não cabe default por ambiente,
+  porque dado falso na tela nunca é o comportamento desejado por omissão. Build deployado com o
+  flag ligado estoura no import, em vez de subir bonito e mentiroso.
+- **feat(ui):** `DemoDataBanner` (destrutivo e permanente — o risco dura enquanto a tela estiver
+  aberta, e toast não dura) e `LoadErrorBanner` com retry. Falha de refresh **preserva** a carteira
+  anterior, que era real, e avisa que pode estar desatualizada; esvaziar o painel perderia
+  informação verdadeira.
+
+> Regis-Review `permutas-fixture-fonte`: **7,5, gate passa com 0 P0**; 27 cards em
+> `ontology/_inbox/permutas-fixture-fonte-regis-followups.md`. Invariante registrada em
+> `ontology/ui-flows/fonte-do-dado-permutas.md` ("o que está na tela é o que está no banco"), que
+> também deixa no backlog o mesmo padrão em `lib/recebimentos.ts`.
+
+## v0.34.1 (2026-09-03) — o processo aprende a morrer direito
+
+Três furos de infra de processo, nenhum deles visível numa tela. O que os une é o modo de
+falha: **os três falhavam para o lado errado**, em silêncio.
+
+O handler de erro do pool de conexões zerava a referência sem encerrar o pool. O pool
+quebrado ia para o coletor de lixo **ainda segurando até 5 sessões** no Supabase, e a
+inicialização seguinte abria mais 5. O laço se fechava sozinho: `too many clients` e
+`MaxClientsInSessionMode` estão na lista de erros que o próprio cliente trata como
+transitórios — ou seja, o handler que existia para **recuperar** do esgotamento de conexões
+era o que o **acelerava**.
+
+E todo deploy no Render manda SIGTERM. Sem handler, o processo morria no ato e cortava o que
+estivesse em voo. Uma requisição interrompida entre o `createRun` e o `finishRun` deixa a
+execução parada em `reconciling` — exatamente o órfão que o `reaper-sispag` varre de 15 em 15
+minutos. O detector do sintoma já existia; faltava remover a causa mais frequente.
+
+- **fix(database):** o handler de `error` encerra o pool antes de soltar a referência, com
+  guarda de reentrada. O evento dispara uma vez por cliente ocioso derrubado, e sem a guarda
+  o segundo disparo zeraria uma referência que já aponta para o pool **novo**, criado pela
+  inicialização no meio do caminho — matando um pool saudável. Novo `close()` idempotente.
+- **fix(plataforma):** `SIGTERM`/`SIGINT` param de aceitar conexões, drenam as requisições em
+  voo com teto de 25s (era 10s na primeira rodada; ver o ajuste abaixo, no mesmo ciclo),
+  encerram o pool e saem com 0. Idempotente contra sinal repetido; sai
+  assim mesmo se a drenagem estourar (o processo está descendo por ordem do orquestrador, e
+  ficar preso só troca a saída limpa por um SIGKILL). Vive em módulo próprio porque o
+  `index.ts` dispara `start()` no import — importá-lo num teste subiria o servidor.
+- **fix(database):** o pool passa a ser reobtido **a cada tentativa** do retry, e não
+  congelado antes dele. Esta é uma regressão que a primeira correção introduzia: com o pool
+  agora encerrado de fato, uma retentativa contra a referência congelada bateria em
+  `Cannot use a pool after calling end` — trocando um erro recuperável por um definitivo,
+  justamente no caminho que o retry existe para salvar. Pega pelo Regis-Review.
+- **fix(tooling):** `npm run lint` do backend era `npx biome check .` e saía **0 em silêncio**
+  sem `node_modules` — o gate reportava verde sem ter examinado uma linha. Em CI não mordia
+  (o `npm ci` vem antes), mas mordia em **todo worktree novo**, que é o fluxo obrigatório do
+  pipe. Medido com o `package.json` real: antes exit 0 sem saída, depois exit 127 com
+  `biome: not found`. Mesmo vício em `npx tsc-esm-fix` no `build`. O frontend já resolvia
+  tudo por `node_modules/.bin` e não precisou mudar.
+- **test:** casos novos para o shutdown (ordem, idempotência, timeout, liberação de recursos que
+  rejeita, `unref`) e 8 para o pool (encerramento único, disparo tardio que não mata o pool novo,
+  `end()` que rejeita, `close()` idempotente, retentativa contra o pool novo).
+
+> Regis-Review `2026-09-03-1901`: **8,07, gate passa com 0 P0** (24 cards: 1 P1, 11 P2, 12 P3).
+
+### E então o P1 e os 11 P2 foram fechados também
+
+O gate já passava sem eles, mas o P1 era grande demais para virar backlog: o `conexosSessionStore`
+criava um **segundo** pool Postgres com `on('error', () => undefined)` — a assinatura exata do bug
+acima, num sítio que o shutdown não conhecia. Corrigir um pool e deixar o outro armado teria sido
+consertar o exemplo em vez do problema.
+
+- **fix(conexos):** o pool do session store encerra-se no handler de `error` e entra no shutdown.
+  Pools liberados por deploy: **1 de 2 → 2 de 2**.
+- **feat(plataforma):** `IClient` ganhou `close?()` e `http/lifecycle.ts` fecha a coleção em
+  paralelo, **sem nunca rejeitar** — um client quebrado não pode impedir os outros de liberar
+  recurso nem travar a saída, trocando um shutdown limpo por SIGKILL. O `index.ts` deixou de
+  acoplar o shutdown à classe concreta, que é o que fez o segundo pool ser esquecido.
+- **fix(plataforma):** `/health` responde **503** durante o drain. Enquanto respondia 200 depois do
+  SIGTERM, o balanceador seguia livre para mandar requisição nova por keep-alive já aberta — e ela
+  podia cair na fatia `createRun → finishRun`, o órfão que o shutdown veio evitar.
+- **fix(plataforma):** `server.closeIdleConnections()` antes do `close`. Sem isso o drain esperava
+  as keep-alive ociosas do balanceador e estourava o teto **quase sempre**, tornando o caminho
+  feliz indistinguível do force-exit — e destruindo a evidência de que o drain funciona.
+- **fix(plataforma):** teto de drenagem **10s → 25s** (~83% do envelope de ~30s do Render, contra
+  33%). Requisição entre 10s e 28s deixa de ser cortada pelo próprio handler.
+- **feat(operacao):** o force-exit publica `OPERATIONAL_WARN` no painel. Antes só existia em
+  `console.log`: uma rota que **sempre** estourasse o drain truncaria requisições a cada restart
+  sem ninguém ver — a mesma falha invisível que a ADR-0042 gastou um workflow para eliminar. O
+  código de saída segue 0: não é falha, é orçamento estourado.
+- **fix(security):** `redactErrorMessage` em todo log de erro do shutdown. O `pg`, ao rejeitar
+  `end()` sobre um pool quebrado, traz usuário do Postgres e host do Supabase na mensagem — e o
+  drain de logs do Render sai do perímetro do processo.
+- **refactor(plataforma):** a sequência de boot saiu do `index.ts` para `http/bootstrap.ts`. Eram 5
+  passos ordenados com **zero** cobertura, porque `index.ts` dispara o boot no import; a ordem já
+  causou incidente em 2026-08-10 (código da ADR-0032 em produção antes da `0044`). Agora é asserção
+  executável: migração que falha **aborta antes** do `listen`.
+- **docs:** `docs/runbooks/rollback.md` (a regra que decide tudo: reverter código sem reverter
+  schema é seguro, o contrário não), budget de sessões do pooler no `DEPLOY.md` (49 no pior caso), e
+  o `preDeployCommand` órfão removido do `render.yaml` — declarado desde sempre e **nunca
+  executado** (é feature de plano pago), enquanto quem migrava era o `BootMigrator`. O `DEPLOY.md`
+  repetia a mesma informação errada.
+- **test:** cobertura de branches do shutdown **58,82% → 90,47%**; 5 testes de ordem do boot; 12 do
+  ciclo de vida dos pools. Total do backend: **1782 testes em 128 suítes**.
+
+### E, no fim, o backlog inteiro
+
+O P1 do run era o `conexosSessionStore` criando um **segundo** pool Postgres com
+`on('error', () => undefined)` — e a primeira tentativa de corrigi-lo estava **errada**: encerrar o
+pool sem reconstruí-lo deixava `db.query` sobre um pool morto, degradando o store em silêncio até o
+processo terminar. Pior que o defeito original, porque o `pg` sozinho apenas remove o cliente ocioso
+com erro e segue servindo. Corrigido com reconstrução preguiçosa. Depois disso, o resto dos cards:
+
+- **fix(conexos):** o pool do session store vive num holder — o handler de `error` encerra o
+  quebrado e a próxima chamada reconstrói, com janela mínima de 5s entre tentativas (sem ela, um
+  pooler fora do ar faria uma tentativa por chamada, cada uma pagando 5s de timeout).
+- **feat(operacao):** eventos do pool no mesmo canal do force-exit (`OPERATIONAL_WARN`), com
+  contador de rebuilds. Um pool flapando deixa de ser invisível.
+- **fix(security):** os **três** sítios de log do session store passam pelo redator — o do `catch`
+  de construção era o mais perigoso, porque quem lança ali é o parser da connection string, com a
+  senha dentro. O redator ganhou padrões de topologia (`ECONNREFUSED <ip>`, `ENOTFOUND <host>`) e
+  mudou-se para `domain/libs/redact/`, corrigindo a inversão de camada dos 3 consumidores.
+- **feat(plataforma):** `unhandledRejection`/`uncaughtException` drenam antes de sair (código 1) —
+  era a única porta pela qual o processo ainda morria sem passar pelo drain.
+- **refactor(plataforma):** `http/buildApp.ts` extraído; **`index.ts` foi de 235 para 95 linhas**,
+  só wiring. A ordem dos middlewares — que é contrato de segurança, não estilo — ganhou 5 testes.
+- **refactor:** `endPoolQuietly` recolhe o idiom `pool.end().catch(...)` que estava em 3 sítios;
+  `NamedCloseable` faz o drain dizer **qual** recurso falhou.
+- **chore:** teto de drenagem por `SHUTDOWN_DRAIN_TIMEOUT_MS` (valor inválido cai no default, nunca
+  "sem teto"); pisos de cobertura por arquivo para pool/shutdown/boot; ratchet do frontend
+  20/9/14 → 33/23/28 (o real era 35/25/29 — o piso estava ~15 pontos abaixo e não travava nada);
+  `scripts.gate.test.ts` falha se algum script voltar a usar `npx`, travando a classe do BE-09 em
+  zero; 40 docstrings de job deixaram de ensinar `npx tsx`.
+
+Backend: **132 suítes, 1824 testes**.
+
+> **Quatro itens seguem abertos**, todos bloqueados por dado ou decisão externa: o Pool size real do
+> Supabase (para o alerta a 70%), infra de métrica para o histograma p50/p95/p99, a medição da
+> latência do Conexos (o `timeout: 40000` do ERP ainda excede o drain de 25s) e o upgrade de plano
+> do Render. Detalhes em `ontology/_inbox/tapar-furos-backend-regis-followups.md`.
+
 ## v0.34.0 (2026-09-01) — a linha digitável do boleto sai do ERP
 
 Para conferir um pagamento com o banco, a analista abria o Conexos numa outra aba. O

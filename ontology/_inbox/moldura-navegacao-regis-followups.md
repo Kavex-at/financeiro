@@ -14,6 +14,26 @@
 > `deployability-2` é descartado — a evidência que os sustentava era falsa. Ver
 > `docs/regis-review/2026-09-03-1913-moldura-navegacao/ERRATA.md`. Fila efetiva de P1: **3**.
 
+## Fechado no merge com `fix/tapar-furos-backend` (2026-09-08)
+
+Quatro cards saíram da fila sem entrar numa rodada nova: dois foram implementados por serem
+baratos demais para adiar, e dois já estavam resolvidos do outro lado do merge — o Regis-Review
+desta feature não enxergava a branch de backend, então os relatou como abertos.
+
+| Card | Situação | Onde |
+|---|---|---|
+| `fault-tolerance-1` / `availability-1` — Error Boundary | **IMPLEMENTADO.** `app/error.tsx` (rota, com `reset()` e saída para `/`), `components/ErrorBoundary.tsx` em volta da `AppNavigation` (degrada para moldura sem navegação) e `app/global-error.tsx` (falha do layout raiz, sem nenhum import do design system). 16 testes; os quatro arquivos a 100%. | `app/error.tsx`, `app/global-error.tsx`, `components/ErrorBoundary.tsx`, `components/AppShell.tsx` |
+| `security-1` — sanitizar `returnTo` | **IMPLEMENTADO.** `safeReturnTo` recusa `//host`, `/\host`, controle no meio da string e `://`. O login é o consumidor único do valor, e os dois `router.replace(returnTo)` passam pelo helper. 25 testes. | `lib/auth/safe-return-to.ts`, `app/login/page.tsx:26` |
+| `testability-1` — reassentar `coverageThreshold` | **PARCIAL.** O card lia o piso como `20/9/14`; o lado backend do merge já o tinha subido para **33/23/28** (card `testability-4` daquele run). O real medido na árvore mesclada, com os testes novos, é **38,88 / 29,52 / 34,25** — resta um ajuste de ~5pp, não os 18pp que o card descrevia. | `src/frontend/jest.config.js` |
+| `deployability-3` — runbook de rollback da Vercel | **JÁ FECHADO** pelo outro lado do merge. O `grep rollback → 0 hits` que sustentava o card era verdadeiro nesta branch e falso na outra: `docs/runbooks/rollback.md` §2 é "Reverter o frontend (Vercel), se necessário". | `docs/runbooks/rollback.md` |
+
+**Segue aberto e vale a próxima janela:** `deployability-1` — o job `frontend` do
+`.github/workflows/ci.yml` roda `typecheck`, `lint` e `test`, e **não** roda `build`. O job do
+backend roda. Três linhas de YAML, e o `next build` cobre a fronteira server/client que o
+`tsc --noEmit` não cobre. Verificado de novo em 2026-09-08: o gap continua no YAML.
+
+---
+
 ## Como ler esta lista
 
 Duas colunas de julgamento que o Yuri vai querer separar:
