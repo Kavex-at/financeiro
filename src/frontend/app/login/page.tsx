@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/lib/auth/AuthProvider'
+import { safeReturnTo } from '@/lib/auth/safe-return-to'
 import pkg from '../../package.json'
 
 /**
@@ -20,7 +21,9 @@ function LoginForm() {
   const { signIn, token, devBypass, loading } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const returnTo = searchParams.get('returnTo') || '/'
+  // Sanitizado: `router.replace` aceita URL absoluta, e o `returnTo` vem da query string —
+  // isto é, do link que alguém mandou para a analista. Ver `lib/auth/safe-return-to.ts`.
+  const returnTo = safeReturnTo(searchParams.get('returnTo'))
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
