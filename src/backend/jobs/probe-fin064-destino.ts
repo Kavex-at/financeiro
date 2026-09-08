@@ -25,7 +25,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * Run:
  *   cd src/backend
- *   CONEXOS_BASE_URL=https://columbiatrading.conexos.cloud/api npx tsx jobs/probe-fin064-destino.ts
+ *   CONEXOS_BASE_URL=https://columbiatrading.conexos.cloud/api tsx jobs/probe-fin064-destino.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const OUT = process.env.PROBE_OUT ?? '/tmp/fin064-destino';

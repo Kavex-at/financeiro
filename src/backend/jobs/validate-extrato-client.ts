@@ -11,7 +11,7 @@ import ConexosExtratoClient from '../domain/client/ConexosExtratoClient.js';
  * ingestão ser construída em cima — mesmo papel de `validate-fin015-tools.ts`.
  * Nenhuma escrita.
  *
- * Run: PROBE_ALLOW_PRD=1 FIL=1 npx tsx jobs/validate-extrato-client.ts
+ * Run: PROBE_ALLOW_PRD=1 FIL=1 tsx jobs/validate-extrato-client.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PROBE_ALLOW_PRD !== '1') {

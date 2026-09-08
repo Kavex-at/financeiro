@@ -23,7 +23,7 @@ import { derivarPagoDosTitulos } from '../domain/service/permutas/EleicaoPermuta
  *
  * READ-ONLY: `POST com298/list`, `POST com308/.../list/{docCod}`, `GET com298/{docCod}`.
  *
- * Run: PROBE_ALLOW_PRD=1 FILS=2 N=80 npx tsx jobs/validate-invoice-pago-detalhe-v1.ts
+ * Run: PROBE_ALLOW_PRD=1 FILS=2 N=80 tsx jobs/validate-invoice-pago-detalhe-v1.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml') && process.env.PROBE_ALLOW_PRD !== '1') {

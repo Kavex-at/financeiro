@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
-import { redactErrorMessage } from '../../../http/redact.js';
+import { redactErrorMessage } from '../../libs/redact/redactErrorMessage.js';
 import type { JobRunStatus } from '../../interface/operacao/JobRun.js';
 
 export interface JobExecucao {

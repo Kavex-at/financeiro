@@ -27,7 +27,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * Run:
  *   cd src/backend
- *   PROBE_PRD=1 FIL=2 BNC=4 CCO=2 TETO=100 npx tsx jobs/preflight-fin015-prd.ts
+ *   PROBE_PRD=1 FIL=2 BNC=4 CCO=2 TETO=100 tsx jobs/preflight-fin015-prd.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

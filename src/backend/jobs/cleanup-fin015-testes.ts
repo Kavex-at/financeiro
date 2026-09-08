@@ -18,7 +18,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  * Run:
  *   cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
- *   FLPS=22,23,24,25 npx tsx jobs/cleanup-fin015-testes.ts
+ *   FLPS=22,23,24,25 tsx jobs/cleanup-fin015-testes.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

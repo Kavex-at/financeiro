@@ -27,7 +27,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  * renomeado no ERP continua quebrando o teste; um CNPJ real nunca entra no repo.
  *
  * Run:
- *   cd src/backend && npx tsx jobs/capture-fixtures-sispag.ts
+ *   cd src/backend && tsx jobs/capture-fixtures-sispag.ts
  */
 const DESTINO = path.resolve(process.cwd(), 'domain/interface/sispag/__fixtures__');
 const HOJE = new Date().toISOString().slice(0, 10);

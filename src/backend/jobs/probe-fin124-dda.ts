@@ -34,7 +34,7 @@ import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
  *
  * Run:
  *   cd src/backend
- *   PROBE_PRD=1 npx tsx jobs/probe-fin124-dda.ts
+ *   PROBE_PRD=1 tsx jobs/probe-fin124-dda.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const IS_HML = BASE.includes('-hml');

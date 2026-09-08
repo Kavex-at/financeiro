@@ -20,8 +20,8 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
  *   - RECUSA rodar se a base não for HML (guard anti-PRD).
  *   - Escrita (criar/importar/finalizar/gerar) só com FIN015_WRITE=1 (default: só leitura).
  *
- * Run (leitura):  CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api npx tsx jobs/validate-fin015-tools.ts
- * Run (escrita):  ... FIN015_WRITE=1 npx tsx jobs/validate-fin015-tools.ts
+ * Run (leitura):  CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api tsx jobs/validate-fin015-tools.ts
+ * Run (escrita):  ... FIN015_WRITE=1 tsx jobs/validate-fin015-tools.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

@@ -22,9 +22,9 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
  *
  * Run (leitura):  cd src/backend
  *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api \
- *   FIL=2 CAMPO=filVldSugContabaixa npx tsx jobs/seed-hml-param-filial.ts
- * Run (escrita):  ... VALOR=1 PARAM_WRITE=1 npx tsx jobs/seed-hml-param-filial.ts
- * Reverter:       ... REVERTER=1 PARAM_WRITE=1 npx tsx jobs/seed-hml-param-filial.ts
+ *   FIL=2 CAMPO=filVldSugContabaixa tsx jobs/seed-hml-param-filial.ts
+ * Run (escrita):  ... VALOR=1 PARAM_WRITE=1 tsx jobs/seed-hml-param-filial.ts
+ * Reverter:       ... REVERTER=1 PARAM_WRITE=1 tsx jobs/seed-hml-param-filial.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 if (!BASE.includes('-hml')) {

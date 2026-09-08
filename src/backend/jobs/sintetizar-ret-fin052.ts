@@ -41,9 +41,9 @@ import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.
  * recusa base que não seja HML. Este job NÃO chama `processar`.
  *
  * Run (só gera):   cd src/backend
- *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api FLP=26 npx tsx jobs/sintetizar-ret-fin052.ts
- * Run (+ upload):  ... RET_UPLOAD=1 npx tsx jobs/sintetizar-ret-fin052.ts
- * Rejeição:        ... OCORRENCIA=NA npx tsx jobs/sintetizar-ret-fin052.ts
+ *   CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud/api FLP=26 tsx jobs/sintetizar-ret-fin052.ts
+ * Run (+ upload):  ... RET_UPLOAD=1 tsx jobs/sintetizar-ret-fin052.ts
+ * Rejeição:        ... OCORRENCIA=NA tsx jobs/sintetizar-ret-fin052.ts
  */
 const BASE = process.env.CONEXOS_BASE_URL ?? '';
 const UPLOAD = process.env.RET_UPLOAD === '1';
