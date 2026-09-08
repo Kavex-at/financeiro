@@ -44,6 +44,21 @@
   --permuta-foreground: #5b21b6;
   --overlay: rgb(0 0 0 / 0.5);
 
+  /* Z-index — a escala do design system (`docs/design-system/tokens.md` §Z-index tokens)
+     passa a existir em CSS. Os componentes legados ainda usam `z-50` cru; a migração é
+     proporcional. `--z-max` é declaradamente de uso excepcional. */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-popover: 30;
+  --z-drawer-backdrop: 40;
+  --z-drawer: 45;
+  --z-modal-backdrop: 50;
+  --z-modal: 55;
+  --z-toast: 60;
+  --z-tooltip: 70;
+  --z-max: 9999;
+
   /* Origem do documento — domain tokens for the FIFO timeline (Phase 4 of
      `exposure-from-invoice-baixa`). Same pattern as `--color-status-*`:
      domain-bound but lives in the DS because it is part of the visual
