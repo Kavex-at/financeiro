@@ -1,5 +1,54 @@
 # Columbia Financeiro — Changelog
 
+## v0.36.0 (2026-09-09) — a baixa da permuta para de depender de sorte
+
+O Regis-Review do módulo Permutas (`docs/regis-review/2026-09-08-1414-permutas/`) mediu o
+caminho de escrita que já rodou **137 vezes em produção, R$ 38.466.226,25 baixados**, e achou
+dois defeitos que nunca ocorreram — não por construção, por sorte.
+
+**R-1 (P0) — duas requisições ao mesmo adiantamento passavam juntas.** O `ON CONFLICT DO UPDATE`
+do `beginExecution` só preservava `settled`; dois callers em `reconciling` seguiam os dois, cada
+um criava um borderô e gravava uma baixa no `fin010`, e a trilha registrava só o último `bor_cod`
+— o borderô perdedor ficava invisível ao painel. O `heavyRouteLimiter` é por IP e não alcança dois
+operadores em máquinas diferentes. O SISPAG já tinha resolvido o caso idêntico
+(`RemessaService.gerarRemessa`), e a permuta ganhou o espelho: advisory lock por
+`adiantamentoDocCod`, 409 `RECONCILIACAO_EM_ANDAMENTO`, sem tocar o ERP. Adiantamentos distintos
+seguem em paralelo (**I-Recon-5**).
+
+**R-2 — o resíduo sumia em silêncio.** Quando os títulos da invoice não cobriam o `valorAlocado`,
+o laço terminava com sobra e `markSettled` afirmava "o alocado foi integralmente baixado" — falso
+no livro-razão. Agora há duas guardas em instantes diferentes, porque fail-closed só é honesto
+**antes** do primeiro POST: cobertura insuficiente detectada antes aborta com 422
+`ALOCACAO_SEM_COBERTURA` sem escrever nada (**I-Write-8a**); o que escapa termina no estado
+terminal novo **`parcial`**, com `valor_residual_usd` e `BUSINESS_WARN` (**I-Recon-6/7**,
+**I-Write-8b**). Lançar erro depois do POST seria pior que o silêncio: gravaria `error` sobre
+dinheiro que já se moveu, e `error` convida ao retry.
+
+**A cobertura é DERIVADA, não lida — e isso custou uma sonda.** A ADR nasceu supondo que
+`Σ titulos.usd` fosse o em aberto da invoice. Uma sonda read-only em produção
+(`jobs/probe-com308-cobertura.ts`, commitada) mostrou que `titVldStatus = 1` significa **ATIVO**
+(ciclo de vida do registro), não "em aberto": título quitado volta na lista com face cheia — doc
+9320, face **USD 83.476,12**, aberto **0**. O ERP não expõe `titMnyTotPagoMneg` e recusa `pago`
+como filtro (HTTP 500), então o aberto se deriva:
+`titMnyValorMneg − titMnyTotPago / titFltTaxaMneg`. A divisão fecha exata porque
+`titFltTaxaMneg` tem 12 casas decimais, não as 3 que motivaram a âncora I-Write-6.
+
+**`parcial` também mexeu na máquina do borderô.** Um adiantamento com baixa parcial ganha valor
+próprio, `parcial-aguardando-finalizacao` (**B1'**), em vez de reusar `aguardando-finalizacao` —
+que substituiria `pendente` e tiraria o resíduo da fila de elegibilidade, recriando o mesmo
+silêncio noutro lugar.
+
+**Migration 0057 — o guard que sobrevive ao rollback.** O gate do delta
+(`docs/regis-review/2026-09-08-1955-permutas-baixa-integridade/`, 8 QAs, 0 P0, nota 7,5) achou por
+dois agentes independentes uma dupla-baixa pela porta traseira: reverter o código mantendo a
+migration faz linhas `parcial` regredirem a `reconciling` e serem re-POSTadas. Um guard em código
+não serviria — some junto com o revert. Migrations são forward-only, então o guard é um trigger:
+uma vez com `bxa_cod_seq` preenchido, a linha só transita entre estados terminais. Validado contra
+Postgres 16 real, inclusive com o SQL literal do `beginExecution` da versão anterior.
+
+Ver ADR-0044 e sua emenda de 2026-09-08. **A escrita segue gated** (`CONEXOS_WRITE_ENABLED` +
+`CONEXOS_DRY_RUN`) e nenhum destes caminhos foi validado no 1º caso real em produção.
+
 ## v0.35.1 (2026-09-09) — o snapshot da eleição para de mentir (ADR-0043)
 
 > **A série histórica de "bloqueadas" MUDOU DE SIGNIFICADO.** Isto é **correção de
