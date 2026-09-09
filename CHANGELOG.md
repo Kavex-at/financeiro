@@ -59,6 +59,13 @@
   a run e **aborta a transação inteira** se alguma divergir. Idempotente — o header é
   recomputado a partir do snapshot, nunca por subtração.
 
+- **fix(deps):** `multer` para `^2.3.0` e `js-yaml` para `3.15.2`, destravando o gate
+  `npm audit --audit-level=high` do CI. A quebra veio do `main`, não deste ciclo: `npm audit`
+  é dependente do tempo, e os advisories foram publicados sem que nenhum commit tocasse
+  dependência. O `js-yaml` é dev-only e transitivo (via `ts-jest`), e foi corrigido **dentro
+  da linha 3.x** — o que importa, porque o `@istanbuljs/load-nyc-config` chama `safeLoad`,
+  removido no 4.x. Cinco pacotes se movem no lockfile, todos no mesmo major.
+
 - **fix(migrations):** migration `0055` proíbe, por CHECK, as combinações de estado
   que só o código anterior à ADR-0043 produz. A 0054 **alargou** as CHECKs, e alargar
   aceita o novo sem deixar de aceitar o velho — então reverter o deploy sem reverter o
