@@ -1,5 +1,77 @@
 # Columbia Financeiro — Changelog
 
+## v0.35.1 (2026-09-09) — o snapshot da eleição para de mentir (ADR-0043)
+
+> **A série histórica de "bloqueadas" MUDOU DE SIGNIFICADO.** Isto é **correção de
+> classificação, não melhora operacional**, e todo relatório que comparar antes × depois
+> precisa dizer isso explicitamente — sob pena de repetir, com o sinal invertido, o erro do
+> relatório de impacto v1 (`docs/impacto/CORRECOES-2026-08-24.md` §1).
+>
+> | Recorte | Antes | Depois |
+> |---|---|---|
+> | `total_bloqueadas`, agregado das 250 runs históricas | 64.893 | **51.459** |
+> | snapshot da run viva `1c1acefe` | 677 | **249** |
+> | `total_ja_permutado`, agregado (bucket novo) | — | **13.434** |
+>
+> Nenhum adiantamento foi desbloqueado. O que mudou é que 348 itens que são a **nossa** fila
+> de trabalho (300 permutas manuais cross-process + 48 casamentos N:M) e 13.434 adiantamentos
+> **já permutados** deixaram de ser contados como passivo de terceiro. Daqui em diante,
+> `bloqueada` significa uma coisa só: passivo dependente de terceiro ou de leitura.
+
+- **fix(migrations):** toda migration passa a rodar sob `lock_timeout` de 30s e
+  `statement_timeout` de 10min. Sem isso, um `ALTER TABLE` esperando lock trava o boot
+  **indefinidamente** — e como o `BootMigrator` roda antes do `app.listen()`, a instância nova
+  fica sem responder `/health` durante toda a espera. A 0054 passou a adicionar as CHECKs como
+  `NOT VALID` e validá-las depois do backfill, trocando ACCESS EXCLUSIVE por SHARE UPDATE
+  EXCLUSIVE na varredura.
+- **fix(migrations):** a 0054 ganhou script de reverse determinístico
+  (`migrations/rollbacks/0054_estado_ja_permutado.rollback.sql`). O backfill é destrutivo quanto
+  ao `status`, mas não quanto ao `motivo_bloqueio` — e o mapeamento é função do motivo, então o
+  inverso é reconstruível. Verificado em PG 17: reverse idempotente, e `0054 → reverse → 0054`
+  devolve o estado original linha a linha. Os reverses vivem num subdiretório de propósito: o
+  runner não é recursivo, e um `.sql` solto em `migrations/` seria aplicado no boot seguinte,
+  desfazendo em silêncio a migration que acabou de subir.
+
+- **fix(permutas):** `permuta_candidata_snapshot.status` deixa de ser binário. A CHECK da
+  migration 0001 (`elegivel|bloqueada`) somada a dois catch-all — um na escrita, um na leitura —
+  achatava três estados e fazia a **mesma run se contradizer dentro da própria transação**
+  (header 329 × snapshot 677, 2,06×). Escrita e leitura passam a carregar o estado inteiro, e a
+  leitura **falha alto** num valor fora do enum em vez de chutar `bloqueada`.
+- **fix(permutas):** `ja-permutado` vira estado de domínio de primeira classe (transição T6),
+  em vez de um motivo escondido dentro de `bloqueada`. É um estado **concluído** — o
+  adiantamento foi pago e teve o saldo 100% consumido numa permuta anterior —, não uma
+  reprovação de mérito; a apresentação já o promovia item a item, o banco é que não sabia.
+- **fix(permutas):** o header da run ganha `total_casamento_manual`, `total_permuta_manual` e
+  `total_ja_permutado`. Header e snapshot passam a convergir **por construção**: uma agregação
+  só (`contarPorEstado`) alimenta os dois, sobre a mesma coleção, na mesma transação
+  (invariante I5, `ontology/business-rules/fidelidade-snapshot-eleicao.md`).
+- **fix(operacao):** "Últimas rodadas" deixa de ser cega para os itens da nossa própria fila —
+  os 5 buckets aparecem no painel, com chaves em português legível.
+- **fix(permutas):** `IngestaoPermutasService.toEstadoRow` virou `switch` exaustivo. O
+  `default: return 'descoberta'` que estava lá teria persistido todo adiantamento já permutado
+  como `descoberta` — trocando um apagamento por outro, **sem erro de compilação**.
+- **chore(permutas):** `GET /permutas/painel` e `PainelService` **removidos** (ADR-0043 §5).
+  Zero call sites no frontend; era o segundo implementador da ação `exporNoPainel` — justamente
+  o que achatava. A ação fica com um implementador em vez de dois.
+- **migration 0054:** backfill de 152.516 linhas de snapshot e 250 headers. Não é reconstrução
+  heurística: é **reconciliação com um valor íntegro já gravado** (o header confere a
+  reclassificação por motivo, 64.893 = 64.893 e 7.883 = 7.883). Um bloco `DO` verifica isso run
+  a run e **aborta a transação inteira** se alguma divergir. Idempotente — o header é
+  recomputado a partir do snapshot, nunca por subtração.
+
+- **fix(migrations):** migration `0055` proíbe, por CHECK, as combinações de estado
+  que só o código anterior à ADR-0043 produz. A 0054 **alargou** as CHECKs, e alargar
+  aceita o novo sem deixar de aceitar o velho — então reverter o deploy sem reverter o
+  banco regravava dado corrigido **sem violar constraint nenhuma**. Agora o código antigo
+  falha alto na primeira escrita. Falhar é recuperável; corromper em silêncio não é.
+  Runbook com os três cenários de rollback em `docs/runbooks/rollback-adr-0043.md`.
+- **fix(permutas):** exaustividade checada pelo compilador nos seis sítios que
+  particionam candidatas por estado (antes: um). Acrescentar um estado ao enum agora
+  quebra o build em cada lugar onde ele precisa ganhar um balde, em vez de sumir das
+  contagens em silêncio — que era o que aconteceria com a Fase 3 (`EXECUTADA`, ADR-0013).
+  `EstadoElegibilidadeRow` e `StatusElegibilidade` passam a ser **derivados** do enum:
+  eram uniões redigitadas à mão, e a desconexão anulava as guardas rio abaixo.
+
 ## v0.35.0 (2026-09-03) — a aplicação ganha moldura
 
 Varredura no `src/frontend/` antes deste ciclo: **zero** `<nav>`, **zero**
