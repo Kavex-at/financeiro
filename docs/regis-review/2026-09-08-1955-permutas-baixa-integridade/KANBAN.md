@@ -40,7 +40,7 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 **Findings**: F-fault-tolerance-4
 
 **Problema**
-> O terminal `parcial` (ADR-0043) grava fielmente o que aconteceu — baixa confirmada, resíduo por re-alocar — mas depende **inteiramente** de detecção humana: log `BUSINESS_WARN` (para quem lê logs), coluna `valor_residual_usd` positiva (sem query agregada), badge `parcial-aguardando-finalizacao` (visível só quando a analista abre a tela de Borderôs). SISPAG resolveu o problema idêntico com `RemessaExecucaoRepository.listReconcilingParadas` (`:124`) + `ConciliacaoExecucaoRepository.listReconcilingParadas` (`:54`) + `SispagPainelService:376-377` + `reaper-sispag-reconciling.ts` (cron 15 min). Sem o par para permutas, `parcial` vira o novo silêncio que a própria ADR nomeia como risco.
+> O terminal `parcial` (ADR-0044) grava fielmente o que aconteceu — baixa confirmada, resíduo por re-alocar — mas depende **inteiramente** de detecção humana: log `BUSINESS_WARN` (para quem lê logs), coluna `valor_residual_usd` positiva (sem query agregada), badge `parcial-aguardando-finalizacao` (visível só quando a analista abre a tela de Borderôs). SISPAG resolveu o problema idêntico com `RemessaExecucaoRepository.listReconcilingParadas` (`:124`) + `ConciliacaoExecucaoRepository.listReconcilingParadas` (`:54`) + `SispagPainelService:376-377` + `reaper-sispag-reconciling.ts` (cron 15 min). Sem o par para permutas, `parcial` vira o novo silêncio que a própria ADR nomeia como risco.
 
 **Melhoria Proposta**
 > (1) Adicionar `PermutaExecucaoRepository.listParcialPendentes(limit)` — `WHERE status='parcial' AND valor_residual_usd > 0 ORDER BY atualizado_em DESC`. (2) Expor `GET /permutas/execucoes?status=parcial` (`requireRole('admin')` como no SISPAG). (3) Publicar contador no painel operacional (`sispag`-style card com `parciais_pendentes` + `soma_residual_usd`). (4) Job `reaper-permutas-parcial.ts` que roda por hora, escreve no `job_execucao` (`data: {parciaisPendentes: N, agingMedio: dias}`) e emite `BUSINESS_WARN` para pares com > 24 h em `parcial` (não age — só publica; forward recovery humano).
@@ -69,10 +69,10 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 **Findings**: F-fault-tolerance-5
 
 **Problema**
-> A migration 0054 amplia o CHECK de `permuta_alocacao_execucao.status` para aceitar `'parcial'` e o código passa a gravar esse valor. Reverter só o código (rollback via `git revert 8b18686` ou tag `v0.34.0`) mantendo a migration deixa linhas `parcial` no banco que a versão antiga **regride para `reconciling` no próximo `beginExecution`** (CASE antiga só preserva `settled`), habilitando um segundo `criarBordero` + `gravarBaixaPermuta` — a mesma dupla-baixa que R-1 fechou pela porta da frente. É baixa probabilidade (rollback é evento raro), alto impacto (R$ 280 k médios por par).
+> A migration 0056 amplia o CHECK de `permuta_alocacao_execucao.status` para aceitar `'parcial'` e o código passa a gravar esse valor. Reverter só o código (rollback via `git revert 8b18686` ou tag `v0.34.0`) mantendo a migration deixa linhas `parcial` no banco que a versão antiga **regride para `reconciling` no próximo `beginExecution`** (CASE antiga só preserva `settled`), habilitando um segundo `criarBordero` + `gravarBaixaPermuta` — a mesma dupla-baixa que R-1 fechou pela porta da frente. É baixa probabilidade (rollback é evento raro), alto impacto (R$ 280 k médios por par).
 
 **Melhoria Proposta**
-> (a) Documentar `docs/runbook/rollback-permutas-parcial.md` explicitando: "revert do commit `8b18686` **exige** SQL prévio `UPDATE permuta_alocacao_execucao SET status='settled' WHERE status='parcial'` (perde-se `valor_residual_usd`, aceitável dado que o par `parcial` retornaria a ser re-lançado num relançamento humano) OU rollback da migration 0054 numa migration nova (`0055_permuta_execucao_parcial_rollback.sql`)". (b) Alternativa defensiva no código: incluir uma cláusula `--- version-tag ---` na 0054 e uma probe boot-time que checa se o CHECK aceita `'parcial'` mas o código não conhece a string (mismatch → refuse to boot, fail-closed). (c) Marcar a ADR-0043 como **forward-only** no header.
+> (a) Documentar `docs/runbook/rollback-permutas-parcial.md` explicitando: "revert do commit `8b18686` **exige** SQL prévio `UPDATE permuta_alocacao_execucao SET status='settled' WHERE status='parcial'` (perde-se `valor_residual_usd`, aceitável dado que o par `parcial` retornaria a ser re-lançado num relançamento humano) OU rollback da migration 0056 numa migration nova (`0055_permuta_execucao_parcial_rollback.sql`)". (b) Alternativa defensiva no código: incluir uma cláusula `--- version-tag ---` na 0054 e uma probe boot-time que checa se o CHECK aceita `'parcial'` mas o código não conhece a string (mismatch → refuse to boot, fail-closed). (c) Marcar a ADR-0044 como **forward-only** no header.
 
 **Resultado Esperado**
 > Rollback documentado como operação com pré-condição SQL. 0 caminhos silenciosos para regressão `parcial → reconciling`.
@@ -80,7 +80,7 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 **Métricas de sucesso**
 - Runbook `rollback-permutas-parcial.md`: ausente → presente
 - Probe boot-time (opcional mas defensável): ausente → presente, com teste
-- ADR-0043 header: sem marca → marcada como `forward-only`
+- ADR-0044 header: sem marca → marcada como `forward-only`
 
 **Risco de não fazer**
 > Um único rollback mal orquestrado insere dupla-baixa em N pares parciais — a mesma escala do dano que R-1 acabou de eliminar. É a via traseira.
@@ -186,7 +186,7 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 **Findings**: F-integrability-1, F-integrability-2, F-integrability-5
 
 **Problema**
-> O delta acrescentou `pago` e passou a depender criticamente de `titMnyTotPago` (pivô de `assertCobertura`), ambos coerced via `parseOptionalNumber` (`Number.parseFloat` locale-cego). Uma virada de formato do ERP para `"1.234,56"` faz `pagoBrl` colapsar em ordem de grandeza; a cobertura passa a aprovar invoices já quitadas — o defeito exato que a ADR-0043 institui para barrar. `pago === 7` ou `pago === "PAID"` passa como `undefined` sem sinal.
+> O delta acrescentou `pago` e passou a depender criticamente de `titMnyTotPago` (pivô de `assertCobertura`), ambos coerced via `parseOptionalNumber` (`Number.parseFloat` locale-cego). Uma virada de formato do ERP para `"1.234,56"` faz `pagoBrl` colapsar em ordem de grandeza; a cobertura passa a aprovar invoices já quitadas — o defeito exato que a ADR-0044 institui para barrar. `pago === 7` ou `pago === "PAID"` passa como `undefined` sem sinal.
 
 **Melhoria Proposta**
 > Criar `TITULO_A_PAGAR_SCHEMA = z.object({ titCod: z.coerce.number().int().positive(), titMnyValorMneg: z.coerce.number().finite().optional(), titFltTaxaMneg: z.coerce.number().finite().positive().optional(), titMnyTotPago: z.coerce.number().finite().optional(), pago: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(), moeCodMneg: z.coerce.number().int().optional(), moeEspNome: z.string().optional() })` e `.parse()` cada row de `listTitulosAPagar` (Adhere to Standards). No mesmo PR, estreitar `TituloAPagar.pago` para `1 | 2 | 3` (fecha F-integrability-5). Adicionar fixture em `ConexosSubClients.test.ts` com locale BR (`"1.234,56"`) e outra com `pago` fora do enum — ambas devem lançar.
@@ -200,13 +200,13 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 - `TituloAPagar.pago` tipo: `number` → `1 | 2 | 3`
 
 **Risco de não fazer**
-> Em 6 meses, uma evolutiva do fornecedor (locale, ou expansão do enum de `pago`) passa despercebida. A pré-checagem de I-Write-8a — que existe para recusar baixa em invoice quitada — silenciosamente aprova o mesmo defeito que a ADR-0043 documentou como razão-de-ser do gate. Cenário concreto: doc 9320-like (face USD 83.476,12, aberto 0) volta a passar.
+> Em 6 meses, uma evolutiva do fornecedor (locale, ou expansão do enum de `pago`) passa despercebida. A pré-checagem de I-Write-8a — que existe para recusar baixa em invoice quitada — silenciosamente aprova o mesmo defeito que a ADR-0044 documentou como razão-de-ser do gate. Cenário concreto: doc 9320-like (face USD 83.476,12, aberto 0) volta a passar.
 
 **Dependências**: nenhuma.
 
 ---
 
-### [testability-baixa-1] Suíte de integração contra Postgres real cobrindo advisory lock + CHECK da migration 0054
+### [testability-baixa-1] Suíte de integração contra Postgres real cobrindo advisory lock + CHECK da migration 0056
 
 **QA**: Testability
 **Tactic alvo**: Sandbox, Executable Assertions
@@ -214,18 +214,18 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 **Findings**: F-testability-1, F-testability-2
 
 **Problema**
-> Duas remediações P0/P1 deste delta dependem de comportamento do Postgres que o teste unitário **não pode** provar: (a) `pg_try_advisory_lock` serializando duas conexões DIFERENTES do pool (o mock com `Set<number>` prova o contrato, não a semântica cross-connection); (b) o CHECK constraint da migration 0054 aceitando `INSERT status='parcial'` — hoje só o TEXTO do SQL do repositório é assertado (`PermutaExecucaoRepository.test.ts:42`). Enquanto essa suíte não existir, uma migration mal-aplicada, um typo no nome da constraint, ou uma migração acidental do lock para uma API que não sobrevive ao pooler passam batido — e a detecção acontece **em produção**, depois do POST fin010 já ter movido dinheiro. Referências: `PostgreeDatabaseClient.ts:137-158`, `0054_permuta_execucao_parcial.sql:18-23`, `ReconciliacaoPermutaService.test.ts:83-100`.
+> Duas remediações P0/P1 deste delta dependem de comportamento do Postgres que o teste unitário **não pode** provar: (a) `pg_try_advisory_lock` serializando duas conexões DIFERENTES do pool (o mock com `Set<number>` prova o contrato, não a semântica cross-connection); (b) o CHECK constraint da migration 0056 aceitando `INSERT status='parcial'` — hoje só o TEXTO do SQL do repositório é assertado (`PermutaExecucaoRepository.test.ts:42`). Enquanto essa suíte não existir, uma migration mal-aplicada, um typo no nome da constraint, ou uma migração acidental do lock para uma API que não sobrevive ao pooler passam batido — e a detecção acontece **em produção**, depois do POST fin010 já ter movido dinheiro. Referências: `PostgreeDatabaseClient.ts:137-158`, `0056_permuta_execucao_parcial.sql:18-23`, `ReconciliacaoPermutaService.test.ts:83-100`.
 
 **Melhoria Proposta**
-> Introduzir suíte com marcador `describe('integration: ...', ...)` conforme padrão do CLAUDE.md, contra Postgres em contêiner (docker-compose.test.yml minimo). Casos: (1) duas conexões concorrentes pedindo `pg_try_advisory_lock($1)` — a segunda recebe `locked=false`; (2) migration 0054 aplicada, `INSERT ... status='parcial'` **succeeds**; (3) constraint antigo (pré-0054) rejeita `'parcial'` com CHECK violation; (4) SESSION-level lock não vaza para outra sessão do pool após `release()`. Tactic Bass: **Sandbox** (banco descartável) + **Executable Assertions** (invariante do CHECK verificado no banco, não no texto do SQL).
+> Introduzir suíte com marcador `describe('integration: ...', ...)` conforme padrão do CLAUDE.md, contra Postgres em contêiner (docker-compose.test.yml minimo). Casos: (1) duas conexões concorrentes pedindo `pg_try_advisory_lock($1)` — a segunda recebe `locked=false`; (2) migration 0056 aplicada, `INSERT ... status='parcial'` **succeeds**; (3) constraint antigo (pré-0054) rejeita `'parcial'` com CHECK violation; (4) SESSION-level lock não vaza para outra sessão do pool após `release()`. Tactic Bass: **Sandbox** (banco descartável) + **Executable Assertions** (invariante do CHECK verificado no banco, não no texto do SQL).
 
 **Resultado Esperado**
-> Testes de integração contra Postgres real do módulo permutas: **0 → ≥4 cases**. Confiança contra dupla-baixa cross-instance: **derivada** (mocked) → **medida**. Migration 0054 verificada em CI antes do deploy.
+> Testes de integração contra Postgres real do módulo permutas: **0 → ≥4 cases**. Confiança contra dupla-baixa cross-instance: **derivada** (mocked) → **medida**. Migration 0056 verificada em CI antes do deploy.
 
 **Métricas de sucesso**
 - Testes de integração contra PG real no módulo permutas: 0 → ≥4 cases
 - Confiança da guarda R-1 P0 (dupla-baixa): "prova o contrato" → "prova o comportamento cross-connection"
-- Migration 0054 gates em CI: 0 → 1 (aplica + testa antes de release)
+- Migration 0056 gates em CI: 0 → 1 (aplica + testa antes de release)
 
 **Risco de não fazer**
 > Uma migration não-idempotente ou renomeada em `0055+` pode deixar o CHECK antigo de pé; o primeiro `parcial` em produção falha DEPOIS do fin010 aceitar a baixa; o erro chega ao analista como "falha ao gravar terminal" e o ledger diverge. Custo estimado: 1 super-pagamento por incidente do padrão do borderô 15593 = ~R$ 5–40k por par afetado.
@@ -298,13 +298,13 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 **Findings**: F-deployability-2
 
 **Problema**
-> `/health` devolve `{ status, version }`. A "nota de vigência" que este delta adicionou ao runbook aponta para `/health` como âncora de "esta versão já traz a ADR-0043", mas o operador precisa correlacionar version → CHANGELOG.md → ADR à mão. Adicionalmente, saber se o serviço está escrevendo agora (não em dry-run) exige abrir o dashboard do Render. Card já existia no run anterior (`deployability-2`) — este delta o reforça em vez de fechar.
+> `/health` devolve `{ status, version }`. A "nota de vigência" que este delta adicionou ao runbook aponta para `/health` como âncora de "esta versão já traz a ADR-0044", mas o operador precisa correlacionar version → CHANGELOG.md → ADR à mão. Adicionalmente, saber se o serviço está escrevendo agora (não em dry-run) exige abrir o dashboard do Render. Card já existia no run anterior (`deployability-2`) — este delta o reforça em vez de fechar.
 
 **Melhoria Proposta**
 > Ampliar o handler de `src/backend/index.ts:79` para expor `{ status, version, writeEnabled, dryRun, lastMigration }`. `lastMigration` vem do próprio `BootMigrator` (nome do último arquivo aplicado / `MAX(name) FROM migrations_applied`). Manter o campo `status` como estava — decisão binária que a sonda externa consome. Não expor secrets nem info que descreva a operação para não-`admin` (segue a doutrina do `routes/health.ts:14-22`). Tactic Bass: **Deployment Observability**.
 
 **Resultado Esperado**
-> `curl /health` responde os 5 campos; runbook pode citar `lastMigration >= 0054_permuta_execucao_parcial` como critério de vigência sem correlacionar CHANGELOG à mão. MTTR de "qual código estava rodando com qual flag" cai do minuto (correlacionar 2 sistemas) para segundos.
+> `curl /health` responde os 5 campos; runbook pode citar `lastMigration >= 0056_permuta_execucao_parcial` como critério de vigência sem correlacionar CHANGELOG à mão. MTTR de "qual código estava rodando com qual flag" cai do minuto (correlacionar 2 sistemas) para segundos.
 
 **Métricas de sucesso**
 - Campos expostos em `/health`: 2 → 5 (`status`, `version`, `writeEnabled`, `dryRun`, `lastMigration`)
@@ -467,7 +467,7 @@ _Nenhum. Zero P0 no delta — gate PASSA._
 **Findings**: F-integrability-4
 
 **Problema**
-> A ADR-0043 declara a guarda `rows.length !== count` como "defensiva opcional" e deixa a critério do futuro. O critério é irrealizável a partir do ponto atual: `legacyConexosAdapter.listGeneric` (linha 26-30) descarta `count` uma linha antes de `callList` receber o resultado. Ativar a guarda depois exige refactor cascata (adapter → base → client). Amostra atual (22 títulos, 1–2 por invoice) é enviesada — só cobre invoices que já baixamos.
+> A ADR-0044 declara a guarda `rows.length !== count` como "defensiva opcional" e deixa a critério do futuro. O critério é irrealizável a partir do ponto atual: `legacyConexosAdapter.listGeneric` (linha 26-30) descarta `count` uma linha antes de `callList` receber o resultado. Ativar a guarda depois exige refactor cascata (adapter → base → client). Amostra atual (22 títulos, 1–2 por invoice) é enviesada — só cobre invoices que já baixamos.
 
 **Melhoria Proposta**
 > Migrar `listTitulosAPagar` de `callList` para `paginate`/`listGenericPaginated` (que já expõe `{ count, rows }`); adicionar `envelopeCount` no retorno do client e ativar a guarda em `assertCobertura` (`if (envelopeCount !== undefined && titulos.length !== envelopeCount) warn+ conservador`). Encapsulate: o caller decide sobre a informação — sem precisar cavar o adapter.

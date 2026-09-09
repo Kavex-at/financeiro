@@ -18,7 +18,7 @@ Escopo: DELTA do commit `8b18686` (R-1 P0 serialização + R-2 terminal `parcial
 
 | Source | Stimulus | Artifact | Environment | Response | Response Measure |
 |---|---|---|---|---|---|
-| Dev que altera o serviço de baixa (`ReconciliacaoPermutaService`, `PermutaExecucaoRepository`, migration 0054) | Refactor toca advisory lock, laço de resíduo, `assertCobertura`, ou o CHECK do status | Camada `service/permutas` + repository + migration + união `ExecucaoStatus` espelhada FE↔BE | CI local (`npm test` no worktree) antes do gate `Regis-Review` | O teste **falha** quando o invariante quebra: `1 handshake` em vez de 2 sob concorrência; `markParcial` em vez de `markSettled` com resíduo; 422 em vez de 500 no HTTP; badge FE distinto para `parcial-aguardando-finalizacao` | Baseline: **123 suites / 1.768 testes verdes** neste worktree · **28 testes novos** no delta cobrem R-1/R-2 · **0** regressões nos 1.740 testes pré-existentes |
+| Dev que altera o serviço de baixa (`ReconciliacaoPermutaService`, `PermutaExecucaoRepository`, migration 0056) | Refactor toca advisory lock, laço de resíduo, `assertCobertura`, ou o CHECK do status | Camada `service/permutas` + repository + migration + união `ExecucaoStatus` espelhada FE↔BE | CI local (`npm test` no worktree) antes do gate `Regis-Review` | O teste **falha** quando o invariante quebra: `1 handshake` em vez de 2 sob concorrência; `markParcial` em vez de `markSettled` com resíduo; 422 em vez de 500 no HTTP; badge FE distinto para `parcial-aguardando-finalizacao` | Baseline: **123 suites / 1.768 testes verdes** neste worktree · **28 testes novos** no delta cobrem R-1/R-2 · **0** regressões nos 1.740 testes pré-existentes |
 
 ## 2. Métricas observadas
 
@@ -35,7 +35,7 @@ Sem `--coverage` neste run (`--quick`). A cobertura do módulo permutas está no
 | Ramos testados de `borderoAindaValido` (T2 do run anterior) | **5/5** — cada ramo em `it()` próprio (`ReconciliacaoPermutaService.test.ts:1241-1300`); o P3 `testability-4` está **CERRADO** por este delta | 5/5 | ✅ | grep `borderoAindaValido` no teste + leitura |
 | Asserções em `logService.warn` (BUSINESS_WARN) | **3** novas (concorrência 816, parcial 1147, pago=1 divergente 965); o card `testability-7` pedia ≥5 e o total sobe de 0 → 3 | ≥5 | ⚠️ | grep no arquivo |
 | Guarda de paridade FE↔BE de uniões espelhadas à mão | **3 uniões** cobertas (`ExecucaoStatus`, `PermutaStatusBordero`/`PermutaStatus`, `LoteAdiantamentoStatus`) de **≥7** no `types.ts` (`StatusElegibilidade`, `TipoPermuta`, `ProcessamentoStatus`, `BorderoSituacao`, `RelatorioTipo` **não cobertas**) | ≥7/7 | ⚠️ | `grep "^export type" src/frontend/lib/types.ts` + leitura de `types.test.ts` |
-| Teste da migration `0054_permuta_execucao_parcial.sql` | **0 (mock-apenas)** — o CHECK só é asserido por `sql.includes("...IN ('settled', 'parcial')")` em `PermutaExecucaoRepository.test.ts:42`, o que valida o TEXTO do SQL do repositório, não a semântica do CHECK no banco. `testability-9` do run anterior segue aberto. | ≥1 integração contra Postgres real que INSERE `'parcial'` sob o CHECK | ❌ | ver `PermutaExecucaoRepository.test.ts:42` + `0054_permuta_execucao_parcial.sql` |
+| Teste da migration `0056_permuta_execucao_parcial.sql` | **0 (mock-apenas)** — o CHECK só é asserido por `sql.includes("...IN ('settled', 'parcial')")` em `PermutaExecucaoRepository.test.ts:42`, o que valida o TEXTO do SQL do repositório, não a semântica do CHECK no banco. `testability-9` do run anterior segue aberto. | ≥1 integração contra Postgres real que INSERE `'parcial'` sob o CHECK | ❌ | ver `PermutaExecucaoRepository.test.ts:42` + `0056_permuta_execucao_parcial.sql` |
 | Asserções monetárias que passam por `round2()` do serviço (uso legítimo de `toBe(<literal>)`) | 21 sítios em `ReconciliacaoPermutaService.test.ts` — **todas** contra saídas já normalizadas por `round2` (`bxaMnyValor`, `bxaMnyJuros`, `bxaMnyLiquido`); o card `testability-8` (6 sítios pré-existentes fora de `round2`) **NÃO** é reaberto por este delta | `toBe` só sobre saídas de `round2`; `toBeCloseTo` para intermediários float | ✅ | grep `.toBe([0-9]` + leitura de `ReconciliacaoPermutaService.ts:48` (`round2`) |
 | Tamanho de `ReconciliacaoPermutaService.test.ts` | **1.301 LOC** (era ~570) — 4 `describe` de topo, 46 `it()` | < 800 LOC por arquivo de teste, ou split por invariante | ⚠️ | `wc -l` |
 | `.test.ts` no worktree | 123 suites backend · 27 suites frontend (baseline em `main` era 122/26) | manter razão ≥ 1 arquivo de teste por serviço tocado | ✅ | `_shared-metrics.md` |
@@ -44,7 +44,7 @@ Sem `--coverage` neste run (`--quick`). A cobertura do módulo permutas está no
 | Determinismo: `Math.random`/UUID no delta | 0 sítios em código de produção do delta | 0 | ✅ | grep |
 
 > ⚠️ **Não medível localmente**: cobertura de branch por arquivo neste run (`--quick`). Custo declarado em `_shared-metrics.md`.
-> ⚠️ **Não medível localmente**: teste de integração contra Postgres real da migration 0054. Não existe suíte `docker-compose.test.yml` no repo; a instrumentação está em aberto desde `testability-9` do run anterior.
+> ⚠️ **Não medível localmente**: teste de integração contra Postgres real da migration 0056. Não existe suíte `docker-compose.test.yml` no repo; a instrumentação está em aberto desde `testability-9` do run anterior.
 
 ## 3. Tactics — Cobertura no nf-projects
 
@@ -85,11 +85,11 @@ Bass ch.10 — nomes canônicos em inglês.
 - **Impacto de negócio**: **super-pagamento** é o defeito que R-1 P0 combate — duas baixas de R$ 38 mil no mesmo par escapariam se o lock só existisse no papel. `PostgreeDatabaseClient.test.ts:164-201` prova a semântica **DENTRO** de um único cliente do pool (mocka `pool.connect().query()`); não prova a serialização cross-connection.
 - **Métrica de baseline**: 4 testes de concorrência **contra mock** neste delta (`ReconciliacaoPermutaService.test.ts:784/824/848/874`); **0** testes de concorrência contra Postgres real. O run anterior aponta `testability-9` (integração contra PG real) como aberto.
 
-### F-testability-2: Migration `0054_permuta_execucao_parcial.sql` sem teste que exercite o CHECK em runtime
+### F-testability-2: Migration `0056_permuta_execucao_parcial.sql` sem teste que exercite o CHECK em runtime
 
 - **Severidade**: P1
 - **Tactic violada**: Executable Assertions (o invariante `status ∈ {pending, reconciling, settled, error, parcial}` só é verificado no TEXTO do SQL do repositório, nunca no banco)
-- **Localização**: `src/backend/migrations/0054_permuta_execucao_parcial.sql:18-23` + `src/backend/domain/repository/permutas/PermutaExecucaoRepository.test.ts:42-48`
+- **Localização**: `src/backend/migrations/0056_permuta_execucao_parcial.sql:18-23` + `src/backend/domain/repository/permutas/PermutaExecucaoRepository.test.ts:42-48`
 - **Evidência (objetiva)**:
   ```typescript
   // PermutaExecucaoRepository.test.ts:42-48 — LITERAL SQL, não semântica
@@ -97,7 +97,7 @@ Bass ch.10 — nomes canônicos em inglês.
   expect(sql.match(/permuta_alocacao_execucao\.status IN \('settled', 'parcial'\)/g)).toHaveLength(5);
   ```
   ```sql
-  -- 0054_permuta_execucao_parcial.sql:18-23
+  -- 0056_permuta_execucao_parcial.sql:18-23
   ALTER TABLE permuta_alocacao_execucao
       DROP CONSTRAINT IF EXISTS permuta_alocacao_execucao_status_check;
   ALTER TABLE permuta_alocacao_execucao
@@ -106,8 +106,8 @@ Bass ch.10 — nomes canônicos em inglês.
   ```
   A migration comenta explicitamente: **"o CHECK antigo rejeita o INSERT em RUNTIME (não no deploy), e a falha apareceria DEPOIS de baixas já POSTadas no ERP"**. Ou seja: se por qualquer motivo (typo no nome da constraint em uma migration futura, migration não aplicada no ambiente, rollback parcial) o CHECK antigo permanecer, o primeiro `INSERT ... status='parcial'` **falha em produção**, e neste momento a linha do handshake fin010 já foi POSTada, o dinheiro já se moveu, e a trilha não conseguirá gravar o terminal correto.
 - **Impacto técnico**: falha detectada apenas em produção, num ponto onde o rollback é caro (o borderô + baixa fin010 existem no ERP; a única forma de reagir é `markError` e reconciliação manual).
-- **Impacto de negócio**: reintrodução do `settled` mudo que ADR-0043 mata — mas em silêncio, mascarado por um erro genérico de INSERT. O ledger diverge do ERP em uma linha que é, por definição, o registro mais sensível do módulo.
-- **Métrica de baseline**: **0 testes** exercitam a migration 0054 contra Postgres real. `testability-9` do run anterior (integração contra PG) segue aberto e este delta não o remedia — pelo contrário, adiciona **uma migration a mais** que depende dela.
+- **Impacto de negócio**: reintrodução do `settled` mudo que ADR-0044 mata — mas em silêncio, mascarado por um erro genérico de INSERT. O ledger diverge do ERP em uma linha que é, por definição, o registro mais sensível do módulo.
+- **Métrica de baseline**: **0 testes** exercitam a migration 0056 contra Postgres real. `testability-9` do run anterior (integração contra PG) segue aberto e este delta não o remedia — pelo contrário, adiciona **uma migration a mais** que depende dela.
 
 ### F-testability-3: Guarda de paridade FE↔BE cobre 3 de 7 uniões e o regex quebra com formatação
 
@@ -181,16 +181,16 @@ Bass ch.10 — nomes canônicos em inglês.
 
 ## 5. Cards Kanban
 
-### [testability-baixa-1] Suíte de integração contra Postgres real cobrindo advisory lock + CHECK da migration 0054
+### [testability-baixa-1] Suíte de integração contra Postgres real cobrindo advisory lock + CHECK da migration 0056
 
 - **Problema**
-  > Duas remediações P0/P1 deste delta dependem de comportamento do Postgres que o teste unitário **não pode** provar: (a) `pg_try_advisory_lock` serializando duas conexões DIFERENTES do pool (o mock com `Set<number>` prova o contrato, não a semântica cross-connection); (b) o CHECK constraint da migration 0054 aceitando `INSERT status='parcial'` — hoje só o TEXTO do SQL do repositório é assertado (`PermutaExecucaoRepository.test.ts:42`). Enquanto essa suíte não existir, uma migration mal-aplicada, um typo no nome da constraint, ou uma migração acidental do lock para uma API que não sobrevive ao pooler passam batido — e a detecção acontece **em produção**, depois do POST fin010 já ter movido dinheiro. Referências: `PostgreeDatabaseClient.ts:137-158`, `0054_permuta_execucao_parcial.sql:18-23`, `ReconciliacaoPermutaService.test.ts:83-100`.
+  > Duas remediações P0/P1 deste delta dependem de comportamento do Postgres que o teste unitário **não pode** provar: (a) `pg_try_advisory_lock` serializando duas conexões DIFERENTES do pool (o mock com `Set<number>` prova o contrato, não a semântica cross-connection); (b) o CHECK constraint da migration 0056 aceitando `INSERT status='parcial'` — hoje só o TEXTO do SQL do repositório é assertado (`PermutaExecucaoRepository.test.ts:42`). Enquanto essa suíte não existir, uma migration mal-aplicada, um typo no nome da constraint, ou uma migração acidental do lock para uma API que não sobrevive ao pooler passam batido — e a detecção acontece **em produção**, depois do POST fin010 já ter movido dinheiro. Referências: `PostgreeDatabaseClient.ts:137-158`, `0056_permuta_execucao_parcial.sql:18-23`, `ReconciliacaoPermutaService.test.ts:83-100`.
 
 - **Melhoria Proposta**
-  > Introduzir suíte com marcador `describe('integration: ...', ...)` conforme padrão do CLAUDE.md, contra Postgres em contêiner (docker-compose.test.yml minimo). Casos: (1) duas conexões concorrentes pedindo `pg_try_advisory_lock($1)` — a segunda recebe `locked=false`; (2) migration 0054 aplicada, `INSERT ... status='parcial'` **succeeds**; (3) constraint antigo (pré-0054) rejeita `'parcial'` com CHECK violation; (4) SESSION-level lock não vaza para outra sessão do pool após `release()`. Tactic Bass: **Sandbox** (banco descartável) + **Executable Assertions** (invariante do CHECK verificado no banco, não no texto do SQL).
+  > Introduzir suíte com marcador `describe('integration: ...', ...)` conforme padrão do CLAUDE.md, contra Postgres em contêiner (docker-compose.test.yml minimo). Casos: (1) duas conexões concorrentes pedindo `pg_try_advisory_lock($1)` — a segunda recebe `locked=false`; (2) migration 0056 aplicada, `INSERT ... status='parcial'` **succeeds**; (3) constraint antigo (pré-0054) rejeita `'parcial'` com CHECK violation; (4) SESSION-level lock não vaza para outra sessão do pool após `release()`. Tactic Bass: **Sandbox** (banco descartável) + **Executable Assertions** (invariante do CHECK verificado no banco, não no texto do SQL).
 
 - **Resultado Esperado**
-  > Testes de integração contra Postgres real do módulo permutas: **0 → ≥4 cases**. Confiança contra dupla-baixa cross-instance: **derivada** (mocked) → **medida**. Migration 0054 verificada em CI antes do deploy.
+  > Testes de integração contra Postgres real do módulo permutas: **0 → ≥4 cases**. Confiança contra dupla-baixa cross-instance: **derivada** (mocked) → **medida**. Migration 0056 verificada em CI antes do deploy.
 
 - **Tactic alvo**: Sandbox, Executable Assertions
 - **Severidade**: P1
@@ -199,7 +199,7 @@ Bass ch.10 — nomes canônicos em inglês.
 - **Métricas de sucesso**:
   - Testes de integração contra PG real no módulo permutas: 0 → ≥4 cases
   - Confiança da guarda R-1 P0 (dupla-baixa): "prova o contrato" → "prova o comportamento cross-connection"
-  - Migration 0054 gates em CI: 0 → 1 (aplica + testa antes de release)
+  - Migration 0056 gates em CI: 0 → 1 (aplica + testa antes de release)
 - **Risco de não fazer**: uma migration não-idempotente ou renomeada em `0055+` pode deixar o CHECK antigo de pé; o primeiro `parcial` em produção falha DEPOIS do fin010 aceitar a baixa; o erro chega ao analista como "falha ao gravar terminal" e o ledger diverge. Custo estimado: 1 super-pagamento por incidente do padrão do borderô 15593 = ~R$ 5–40k por par afetado.
 - **Dependências**: escolha entre `pg-mem` (rápido, sem docker) e Postgres real em contêiner (fidelidade total). Recomendação: Postgres real — `pg-mem` não implementa `pg_advisory_lock` fielmente. Coordenar com `Deployability` para o CI runner.
 

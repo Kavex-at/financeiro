@@ -20,7 +20,7 @@ cards_count: 2
 
 | Source | Stimulus | Artifact | Environment | Response | Response Measure |
 |---|---|---|---|---|---|
-| Yuri/Kavex dev | ADR-0043 exige novo terminal `parcial` + advisory lock + pré-checagem I-Write-8a | `ReconciliacaoPermutaService.ts` (baixa `fin010`), `PermutaExecucaoRepository.ts` (terminal parcial), `types.ts`/`ui.tsx` (badge B1'), `types.test.ts` (paridade FE↔BE) | Delta em branch, gate `--quick` | Uma única iteração de `/feature-tweak` deve implementar 4 invariantes novas SEM introduzir novos hotspots de complexidade nem novas cópias mudas entre backend e frontend | Cognitive-complexity do laço central não pode SUBIR (cc ≤ baseline `main`); nenhum literal de estado espelhado à mão pode entrar em produção sem guarda automática; nenhuma constante nova de regra pode entrar como número mágico dentro de método |
+| Yuri/Kavex dev | ADR-0044 exige novo terminal `parcial` + advisory lock + pré-checagem I-Write-8a | `ReconciliacaoPermutaService.ts` (baixa `fin010`), `PermutaExecucaoRepository.ts` (terminal parcial), `types.ts`/`ui.tsx` (badge B1'), `types.test.ts` (paridade FE↔BE) | Delta em branch, gate `--quick` | Uma única iteração de `/feature-tweak` deve implementar 4 invariantes novas SEM introduzir novos hotspots de complexidade nem novas cópias mudas entre backend e frontend | Cognitive-complexity do laço central não pode SUBIR (cc ≤ baseline `main`); nenhum literal de estado espelhado à mão pode entrar em produção sem guarda automática; nenhuma constante nova de regra pode entrar como número mágico dentro de método |
 
 ## 2. Métricas observadas
 
@@ -71,7 +71,7 @@ Só as tactics tocadas pelo delta são avaliadas — o restante entra por heran�
   Grep resolveExecutionMode|ensureBordero|processarUmaAlocacao: 0 hits (mod-1 do run 2026-09-08-1414 pedia esses três)
   Métodos privados extraídos no delta: chaveDeLock, assertCobertura, removerBorderoOrfao — nenhum é os três pedidos
   ```
-- **Impacto técnico**: o próximo card sobre este serviço (ADR-0043 emenda de hoje já cita um novo pedaço — o "reconciling órfão" em `:307-338`) vai bater na mesma parede: uma função de 223 linhas com dez responsabilidades intercaladas (idempotência viva, dry-run, criação de borderô, execução, catch, órfão, retorno) é hostil a mudança cirúrgica. Cada regra nova acrescenta um bloco.
+- **Impacto técnico**: o próximo card sobre este serviço (ADR-0044 emenda de hoje já cita um novo pedaço — o "reconciling órfão" em `:307-338`) vai bater na mesma parede: uma função de 223 linhas com dez responsabilidades intercaladas (idempotência viva, dry-run, criação de borderô, execução, catch, órfão, retorno) é hostil a mudança cirúrgica. Cada regra nova acrescenta um bloco.
 - **Impacto de negócio**: risco de regressão em cada ADR novo sobre a baixa. O run anterior atribuiu 78 dias de atraso a `mod-1`; o delta atual não é o momento de cobrar, mas confirma que ele não é auto-remediável — sem um ciclo dedicado, nunca vai ceder.
 - **Métrica de baseline**: cc 36 (limite 15); LOC 1.093 (alvo 600); função central 223 linhas.
 
@@ -108,7 +108,7 @@ Só as tactics tocadas pelo delta são avaliadas — o restante entra por heran�
     - ExecucaoPermuta { idempotencyKey, adiantamentoDocCod, invoiceDocCod, ... }
   ```
   A guarda extrai literais de STRING de uma `export type = 'a' | 'b'`. Não pega adição de PROPRIEDADE nova numa interface — que é o modo de falha mais frequente da duplicação (o delta ADICIONOU `valorResidualUsd?` a `ResultadoAlocacao` nos dois lados, à mão, e nada checaria se um lado esquecesse).
-- **Impacto técnico**: quando o próximo campo entrar em `ResultadoAlocacao` (por exemplo, o `valorResidualBrl` que ADR-0043 emenda menciona como follow-up), a UI vai receber `undefined` até alguém rodar o build do outro projeto e reparar.
+- **Impacto técnico**: quando o próximo campo entrar em `ResultadoAlocacao` (por exemplo, o `valorResidualBrl` que ADR-0044 emenda menciona como follow-up), a UI vai receber `undefined` até alguém rodar o build do outro projeto e reparar.
 - **Impacto de negócio**: modo de falha silencioso — número aparece na tela como "—" e o analista clica pra baixa achando que fechou 100 %.
 - **Métrica de baseline**: 3 uniões guardadas / 3 uniões existentes = 100 %. 0 interfaces guardadas / ≥5 interfaces espelhadas com valorResidualUsd/valorBaixado/etc. = 0 %.
 
@@ -124,7 +124,7 @@ Só as tactics tocadas pelo delta são avaliadas — o restante entra por heran�
   Linhas idênticas na cláusula SET: 11 de 12 (~92 %)
   Bloco de bind de parâmetros: 8 de 8 chaves comuns idênticas + 1 chave a mais (`valorResidualUsd`)
   ```
-  O comment em `:346-354` explica: os dois métodos AFIRMAM COISAS DIFERENTES no livro-razão (`settled` = "alocado 100 % baixado"; `parcial` = "baixa confirmada mas resíduo a re-alocar"), e colapsá-los reintroduziria o `settled` mudo que ADR-0043 mata.
+  O comment em `:346-354` explica: os dois métodos AFIRMAM COISAS DIFERENTES no livro-razão (`settled` = "alocado 100 % baixado"; `parcial` = "baixa confirmada mas resíduo a re-alocar"), e colapsá-los reintroduziria o `settled` mudo que ADR-0044 mata.
 - **Impacto técnico**: se uma coluna nova entrar em ambos os terminais, precisa ser adicionada duas vezes. Baixo — só duas cópias, ambas visíveis lado a lado, e o campo distinto (`valor_residual_usd`) é o único acoplado ao domínio de `parcial`.
 - **Impacto de negócio**: nenhum previsível — a granularidade de cada método reforça auditabilidade da baixa, o que É o negócio deste código.
 - **Métrica de baseline**: 92 % duplicação; 0 findings sobre auditoria do livro-razão desde `parcial` entrou.

@@ -41,7 +41,7 @@ cards_count: 2
 | Teste de adtos distintos ⇒ 2 baixas em paralelo | 2/2 | 2/2 | ✅ | `ReconciliacaoPermutaService.test.ts:827-855` |
 | Reaper para permutas (`reconciling` órfão) | ausente | 1 job / 15 min | ❌ | `ls src/backend/jobs/ \| grep -i reap` ⇒ só `reaper-sispag-reconciling.ts` (fora do escopo deste delta, herdado do run anterior) |
 | Reaper/detector proativo para `parcial` | **ausente** | ao menos um sinal proativo (job ou consulta agregada na tela) | ❌ | `grep -rn "listParcial\|listReconcilingParadas" src/backend/domain/repository/permutas/` ⇒ 0 hits; único sinal é o badge lazy em `BorderoGestaoService.statusPorAdiantamento` (:494-593) |
-| Rollback-safe: código anterior a `8b18686` sabe ler linhas `parcial` | **não** — a versão anterior nem tinha o valor no union, e `beginExecution` só preservava `settled` | rollback seguro ou runbook de forward-only | ❌ | `PermutaExecucaoRepository.ts:16` (union pré-delta = 4 valores); migration `0054_permuta_execucao_parcial.sql` amplia o CHECK mas não é revertida por rollback do código |
+| Rollback-safe: código anterior a `8b18686` sabe ler linhas `parcial` | **não** — a versão anterior nem tinha o valor no union, e `beginExecution` só preservava `settled` | rollback seguro ou runbook de forward-only | ❌ | `PermutaExecucaoRepository.ts:16` (union pré-delta = 4 valores); migration `0056_permuta_execucao_parcial.sql` amplia o CHECK mas não é revertida por rollback do código |
 | Baseline de testes do módulo (backend, worktree) | 123 suites / 1.768 testes, 0 falhas | verde | ✅ | `_shared-metrics.md` |
 
 ⚠️ **Não medível localmente**: contagem real de `parcial` em prod (o delta ainda não subiu — `docs/impacto/h1-permutas-achados.md` registra 12 erros, sem categoria `parcial` porque o estado não existia). Recomendação: instrumentar contador `permuta_parcial_pendente` no painel operacional assim que shippar.
@@ -94,7 +94,7 @@ cards_count: 2
   3. `ReconciliacaoPermutaService.ts:262-263` — idempotência viva do serviço: `existente?.status === 'settled' || existente?.status === 'parcial'` ⇒ borderô válido ⇒ skipped; borderô nulo ⇒ `renameKey` (libera relançamento sem apagar histórico).
   4. `ReconciliacaoPermutaService.ts:60-61` — `isBaixaConfirmada` retorna true para os dois; gate em `:385` (`!resultados.some(isBaixaConfirmada)`) NÃO chama `removerBorderoOrfao` quando qualquer resultado é `parcial`.
   5. `BorderoGestaoService.ts:522-524` — a máquina B1' agrega por par `adto:borCod`, marcando `parcial-aguardando-finalizacao` quando ao menos uma execução daquele borderô é `parcial`.
-- **Cross-check semântico**: `parcial` é irmão de `settled` (afirma "houve baixa confirmada, sobrou resíduo em moeda negociada"), NÃO `settled` degradado nem `error` suavizado. `markParcial` grava `bxa_cod_seq` obrigatório (I-Recon-2), e `valor_residual_usd` != NULL apenas em `parcial` (documentado em `0054_permuta_execucao_parcial.sql`).
+- **Cross-check semântico**: `parcial` é irmão de `settled` (afirma "houve baixa confirmada, sobrou resíduo em moeda negociada"), NÃO `settled` degradado nem `error` suavizado. `markParcial` grava `bxa_cod_seq` obrigatório (I-Recon-2), e `valor_residual_usd` != NULL apenas em `parcial` (documentado em `0056_permuta_execucao_parcial.sql`).
 - **Sem card** — remediação de R-2 confirmada.
 
 ### F-fault-tolerance-3: Pré-checagem I-Write-8a — condicional pelo booleano de origem, não pela contagem
@@ -132,8 +132,8 @@ cards_count: 2
 ### F-fault-tolerance-5: Rollback do código sem rollback da migration re-executa `parcial` (P1)
 
 - **Severidade**: **P1** — probabilidade **baixa** (rollback é evento raro), impacto **crítico** (é justamente a dupla-baixa que R-1 acaba de matar por outro caminho).
-- **Tactic violada**: **Rollback** (Bass) — o esquema deste QA é "toda transição commit-a-tudo, roll-back-tudo, ou fica em quarentena". O delta introduz um estado terminal (`parcial`) cuja retração é **assimétrica**: a migration 0054 amplia o CHECK, mas o rollback do código não reverte o CHECK — e o código anterior a `8b18686` NÃO conhece `parcial` como terminal.
-- **Localização**: `src/backend/migrations/0054_permuta_execucao_parcial.sql` (amplia CHECK) + comparação com `PermutaExecucaoRepository.ts` versão anterior (recuperável do run `2026-09-08-1414`, seção sobre `beginExecution`).
+- **Tactic violada**: **Rollback** (Bass) — o esquema deste QA é "toda transição commit-a-tudo, roll-back-tudo, ou fica em quarentena". O delta introduz um estado terminal (`parcial`) cuja retração é **assimétrica**: a migration 0056 amplia o CHECK, mas o rollback do código não reverte o CHECK — e o código anterior a `8b18686` NÃO conhece `parcial` como terminal.
+- **Localização**: `src/backend/migrations/0056_permuta_execucao_parcial.sql` (amplia CHECK) + comparação com `PermutaExecucaoRepository.ts` versão anterior (recuperável do run `2026-09-08-1414`, seção sobre `beginExecution`).
 - **Evidência (traçada)**:
   - Migration adiciona `'parcial'` ao CHECK (`0054:20-22`) e a coluna `valor_residual_usd` (`:26-27`).
   - `PermutaExecucaoRepository.ts:16` (após o delta): union `'pending' | 'reconciling' | 'settled' | 'error' | 'parcial'`. Antes: `... | 'error'` (sem `parcial`).
@@ -147,14 +147,14 @@ cards_count: 2
 - **Interleaving concreto**: `2767→INV-X` é executado com sucesso em D, deixa `parcial` com resíduo 100 USD. Em D+1 detectam bug **outro** neste delta e revertem o commit `8b18686` (mantendo a migration — o padrão de operação `main` a migration já rodou). Em D+2 Simone re-executa `2767` porque quer tentar o resíduo. `beginExecution` regride `parcial → reconciling`, `criarBordero` gera bor 10001, `gravarBaixaPermuta` posta uma **segunda baixa** — sobre o mesmo título que já foi baixado em `parcial`. Anti-drift **detecta** parcialmente (o em-aberto do título já foi consumido pelo `parcial`, então o em-aberto vivo é 0 → 0 aborta). Mas isto só protege se o título já foi TOTALMENTE consumido; num `parcial` típico o resíduo é sobre alocação, não sobre título — títulos com em-aberto positivo ainda existem, e a "segunda tentativa" baixa por cima.
 - **Impacto técnico**: retrocesso do delta requer revert coordenado do CHECK e conversão manual `UPDATE permuta_alocacao_execucao SET status='settled' WHERE status='parcial'` (perda de informação — o resíduo some do livro-razão). Sem esse cuidado, rollback = dupla-baixa.
 - **Impacto de negócio**: cenário de baixa probabilidade e alto impacto — um dia de rollback silencioso pode inserir a mesma R$ 280 k média × N pares parciais. É a mesma escala do risco que R-1 acabou de fechar, mas pela porta de trás da operação, não da concorrência.
-- **Métrica de baseline**: 0 runbooks de rollback deste delta; 0 scripts de conversão `parcial → settled` documentados; migration 0054 é forward-only mas nada barra o rollback do código.
+- **Métrica de baseline**: 0 runbooks de rollback deste delta; 0 scripts de conversão `parcial → settled` documentados; migration 0056 é forward-only mas nada barra o rollback do código.
 
 ## 5. Cards Kanban
 
 ### [fault-tolerance-1] Reaper/detector proativo de execuções `parcial` — paridade com SISPAG e defesa contra o novo silêncio
 
 - **Problema**
-  > O terminal `parcial` (ADR-0043) grava fielmente o que aconteceu — baixa confirmada, resíduo por re-alocar — mas depende **inteiramente** de detecção humana: log `BUSINESS_WARN` (para quem lê logs), coluna `valor_residual_usd` positiva (sem query agregada), badge `parcial-aguardando-finalizacao` (visível só quando a analista abre a tela de Borderôs). SISPAG resolveu o problema idêntico com `RemessaExecucaoRepository.listReconcilingParadas` (`:124`) + `ConciliacaoExecucaoRepository.listReconcilingParadas` (`:54`) + `SispagPainelService:376-377` + `reaper-sispag-reconciling.ts` (cron 15 min). Sem o par para permutas, `parcial` vira o novo silêncio que a própria ADR nomeia como risco.
+  > O terminal `parcial` (ADR-0044) grava fielmente o que aconteceu — baixa confirmada, resíduo por re-alocar — mas depende **inteiramente** de detecção humana: log `BUSINESS_WARN` (para quem lê logs), coluna `valor_residual_usd` positiva (sem query agregada), badge `parcial-aguardando-finalizacao` (visível só quando a analista abre a tela de Borderôs). SISPAG resolveu o problema idêntico com `RemessaExecucaoRepository.listReconcilingParadas` (`:124`) + `ConciliacaoExecucaoRepository.listReconcilingParadas` (`:54`) + `SispagPainelService:376-377` + `reaper-sispag-reconciling.ts` (cron 15 min). Sem o par para permutas, `parcial` vira o novo silêncio que a própria ADR nomeia como risco.
 
 - **Melhoria Proposta**
   > (1) Adicionar `PermutaExecucaoRepository.listParcialPendentes(limit)` — `WHERE status='parcial' AND valor_residual_usd > 0 ORDER BY atualizado_em DESC`. (2) Expor `GET /permutas/execucoes?status=parcial` (`requireRole('admin')` como no SISPAG). (3) Publicar contador no painel operacional (`sispag`-style card com `parciais_pendentes` + `soma_residual_usd`). (4) Job `reaper-permutas-parcial.ts` que roda por hora, escreve no `job_execucao` (`data: {parciaisPendentes: N, agingMedio: dias}`) e emite `BUSINESS_WARN` para pares com > 24 h em `parcial` (não age — só publica; forward recovery humano).
@@ -177,10 +177,10 @@ cards_count: 2
 ### [fault-tolerance-2] Runbook + guard de rollback para o delta `parcial` — evitar dupla-baixa por retrocesso
 
 - **Problema**
-  > A migration 0054 amplia o CHECK de `permuta_alocacao_execucao.status` para aceitar `'parcial'` e o código passa a gravar esse valor. Reverter só o código (rollback via `git revert 8b18686` ou tag `v0.34.0`) mantendo a migration deixa linhas `parcial` no banco que a versão antiga **regride para `reconciling` no próximo `beginExecution`** (CASE antiga só preserva `settled`), habilitando um segundo `criarBordero` + `gravarBaixaPermuta` — a mesma dupla-baixa que R-1 fechou pela porta da frente. É baixa probabilidade (rollback é evento raro), alto impacto (R$ 280 k médios por par).
+  > A migration 0056 amplia o CHECK de `permuta_alocacao_execucao.status` para aceitar `'parcial'` e o código passa a gravar esse valor. Reverter só o código (rollback via `git revert 8b18686` ou tag `v0.34.0`) mantendo a migration deixa linhas `parcial` no banco que a versão antiga **regride para `reconciling` no próximo `beginExecution`** (CASE antiga só preserva `settled`), habilitando um segundo `criarBordero` + `gravarBaixaPermuta` — a mesma dupla-baixa que R-1 fechou pela porta da frente. É baixa probabilidade (rollback é evento raro), alto impacto (R$ 280 k médios por par).
 
 - **Melhoria Proposta**
-  > (a) Documentar `docs/runbook/rollback-permutas-parcial.md` explicitando: "revert do commit `8b18686` **exige** SQL prévio `UPDATE permuta_alocacao_execucao SET status='settled' WHERE status='parcial'` (perde-se `valor_residual_usd`, aceitável dado que o par `parcial` retornaria a ser re-lançado num relançamento humano) OU rollback da migration 0054 numa migration nova (`0055_permuta_execucao_parcial_rollback.sql`)". (b) Alternativa defensiva no código: incluir uma cláusula `--- version-tag ---` na 0054 e uma probe boot-time que checa se o CHECK aceita `'parcial'` mas o código não conhece a string (mismatch → refuse to boot, fail-closed). (c) Marcar a ADR-0043 como **forward-only** no header.
+  > (a) Documentar `docs/runbook/rollback-permutas-parcial.md` explicitando: "revert do commit `8b18686` **exige** SQL prévio `UPDATE permuta_alocacao_execucao SET status='settled' WHERE status='parcial'` (perde-se `valor_residual_usd`, aceitável dado que o par `parcial` retornaria a ser re-lançado num relançamento humano) OU rollback da migration 0056 numa migration nova (`0055_permuta_execucao_parcial_rollback.sql`)". (b) Alternativa defensiva no código: incluir uma cláusula `--- version-tag ---` na 0054 e uma probe boot-time que checa se o CHECK aceita `'parcial'` mas o código não conhece a string (mismatch → refuse to boot, fail-closed). (c) Marcar a ADR-0044 como **forward-only** no header.
 
 - **Resultado Esperado**
   > Rollback documentado como operação com pré-condição SQL. 0 caminhos silenciosos para regressão `parcial → reconciling`.
@@ -192,7 +192,7 @@ cards_count: 2
 - **Métricas de sucesso**:
   - Runbook `rollback-permutas-parcial.md`: ausente → presente
   - Probe boot-time (opcional mas defensável): ausente → presente, com teste
-  - ADR-0043 header: sem marca → marcada como `forward-only`
+  - ADR-0044 header: sem marca → marcada como `forward-only`
 - **Risco de não fazer**: um único rollback mal orquestrado insere dupla-baixa em N pares parciais — a mesma escala do dano que R-1 acabou de eliminar. É a via traseira.
 - **Dependências**: nenhuma.
 

@@ -32,7 +32,7 @@ cards_count: 2
 | Chamadas Conexos NOVAS introduzidas pelo delta | **0** — `assertCobertura` reusa a lista já buscada por `listTitulosAPagar` | 0 | ✅ | `ReconciliacaoPermutaService.ts:509-517,679-703` |
 | `PermutaAlocacaoRepository.listAtivas()` — `LIMIT`/`WHERE` | ausente (full scan + filtro em memória, ordenado por `adiantamento_doc_cod, criado_em`) | filtrar por `adiantamento_doc_cod` no SQL | ❌ | `PermutaAlocacaoRepository.ts:97-108` (não modificado neste delta) |
 | Índices em `permuta_alocacao_execucao` (chave-quente) | `UNIQUE (idempotency_key)` + `idx…_adto` + `idx…_status` | presente | ✅ | `migrations/0015_permuta_alocacao_execucao.sql:35-40` |
-| Migration 0054 — colunas/CHECK do delta | `ALTER TABLE … ADD COLUMN valor_residual_usd NUMERIC` + CHECK atualizado; sem novo índice | apenas colunas + CHECK; sem impacto de I/O em SELECT | ✅ | `migrations/0054_permuta_execucao_parcial.sql` |
+| Migration 0056 — colunas/CHECK do delta | `ALTER TABLE … ADD COLUMN valor_residual_usd NUMERIC` + CHECK atualizado; sem novo índice | apenas colunas + CHECK; sem impacto de I/O em SELECT | ✅ | `migrations/0056_permuta_execucao_parcial.sql` |
 | `heavyRouteLimiter` no `/reconciliar` e `/reconciliar-lote` | 10 req/min por IP | 10 req/min por IP (por-IP não protege dois operadores em máquinas distintas) | ⚠️ (parcial) | `src/backend/http/rateLimit.ts:28-35`, `routes/permutas.ts:493,570` |
 | `LOTE_MAX` em `/reconciliar-lote` | **6 adtos** por request, sequenciais | limite existe (cap de blast-radius e duração) | ✅ | `ReconciliacaoLotePermutaService.ts:14` |
 | `server.timeout` do Express | **não configurado** (herdado do run anterior — `performance-1`) | timeout duro na request | ⚠️ Não introduzido pelo delta; permanece aberto | `src/backend/index.ts:172-175` |
@@ -60,7 +60,7 @@ cards_count: 2
 Facetas modernas aplicáveis:
 - **Cold start budget**: N/A — Express long-running no Render, não é Lambda.
 - **Cache strategy**: N/A no delta.
-- **Index discipline**: OK — as chaves quentes (`idempotency_key`, `adiantamento_doc_cod`, `status`) já são indexadas em `0015`. `0054` só adiciona coluna + CHECK.
+- **Index discipline**: OK — as chaves quentes (`idempotency_key`, `adiantamento_doc_cod`, `status`) já são indexadas em `0015`. `0056` só adiciona coluna + CHECK.
 - **Bundle leanness**: N/A — servidor.
 
 ## 4. Findings (achados)
@@ -172,7 +172,7 @@ Facetas modernas aplicáveis:
 
 ## 6. Notas do agente
 
-- Delta é curto e o desenho da mudança é acertado nos eixos que o `--quick` cobre: `assertCobertura` **reusa** a lista `listTitulosAPagar` já buscada (zero chamadas Conexos novas — o achado que o prompt sugeria investigar não existe), `LOTE_MAX=6` limita blast-radius, migration `0054` só adiciona coluna+CHECK sem regressão de índice.
+- Delta é curto e o desenho da mudança é acertado nos eixos que o `--quick` cobre: `assertCobertura` **reusa** a lista `listTitulosAPagar` já buscada (zero chamadas Conexos novas — o achado que o prompt sugeria investigar não existe), `LOTE_MAX=6` limita blast-radius, migration `0056` só adiciona coluna+CHECK sem regressão de índice.
 - O único finding P2 é a interação `withAdvisoryLock` × `Pool.max=5` — foi exatamente o modo-de-erro que o prompt previu como mais provável. Baseline: `poolMax=5`, timeout HTTP `40 s`, ≥6 chamadas Conexos por par, `connectionTimeoutMillis=5 s`.
 - Cross-QA para o consolidator:
   - **Availability** (F-availability-*): pool starvation também é modo de falha de disponibilidade. `performance-3` compartilha causa-raiz com `availability-5` (instrumentação de duração) — deduplicar no KANBAN.

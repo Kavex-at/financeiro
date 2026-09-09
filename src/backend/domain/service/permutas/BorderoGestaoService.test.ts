@@ -247,7 +247,7 @@ describe('BorderoGestaoService', () => {
         });
 
         /**
-         * B1' (ADR-0043) — o resíduo tem de aparecer no badge, e tem de aparecer DIFERENTE.
+         * B1' (ADR-0044) — o resíduo tem de aparecer no badge, e tem de aparecer DIFERENTE.
          */
         it('execução `parcial` + borderô EM CADASTRO → parcial-aguardando-finalizacao', async () => {
             const { service, conexosClient, execucaoRepository } = build(jest.fn());
@@ -333,12 +333,12 @@ describe('BorderoGestaoService', () => {
 
             const out = await service.statusPorAdiantamento();
             // O borderô ESTÁ concluído; o resíduo segue rastreado pelo ledger (valor_residual_usd
-            // + GET /execucoes), que é onde ele pertence. Ver o seam nomeado na ADR-0043.
+            // + GET /execucoes), que é onde ele pertence. Ver o seam nomeado na ADR-0044.
             expect(out['9026']?.permutaStatus).toBe('finalizado');
         });
 
         /**
-         * REQUISITO DURO da ADR-0043: este badge é SOBRE O BORDERÔ e NUNCA input de elegibilidade.
+         * REQUISITO DURO da ADR-0044: este badge é SOBRE O BORDERÔ e NUNCA input de elegibilidade.
          * `statusPorAdiantamento` é consumido só para enriquecer badges (`GET /permutas/status`);
          * a fila de pendentes/elegíveis é montada por `GestaoPermutasService`, que não conhece
          * esta função. Se algum dia alguém plugar o mapa na elegibilidade, o adto com resíduo

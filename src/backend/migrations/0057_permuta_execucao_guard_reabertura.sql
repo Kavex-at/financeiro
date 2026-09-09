@@ -1,5 +1,5 @@
--- 0055_permuta_execucao_guard_reabertura.sql
--- ADR-0043 — guard de ROLLBACK: uma execução com baixa confirmada no ERP nunca volta a ser reaberta.
+-- 0057_permuta_execucao_guard_reabertura.sql
+-- ADR-0044 — guard de ROLLBACK: uma execução com baixa confirmada no ERP nunca volta a ser reaberta.
 --
 -- ── POR QUE ISTO É UM TRIGGER E NÃO CÓDIGO ──────────────────────────────────────────────────────
 --
@@ -66,4 +66,4 @@ CREATE TRIGGER trg_permuta_execucao_bloqueia_reabertura
     EXECUTE FUNCTION permuta_execucao_bloqueia_reabertura();
 
 COMMENT ON FUNCTION permuta_execucao_bloqueia_reabertura() IS
-    'ADR-0043 — recusa reabrir execucao com baixa confirmada no fin010. Vive no banco (e nao no codigo) para sobreviver a um rollback do codigo.';
+    'ADR-0044 — recusa reabrir execucao com baixa confirmada no fin010. Vive no banco (e nao no codigo) para sobreviver a um rollback do codigo.';

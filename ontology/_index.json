@@ -118,7 +118,7 @@
         "src/frontend/app/permutas/page.tsx",
         "src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts",
         "src/backend/migrations/0015_permuta_alocacao_execucao.sql",
-        "src/backend/migrations/0054_permuta_execucao_parcial.sql"
+        "src/backend/migrations/0056_permuta_execucao_parcial.sql"
       ],
       "open_gap": [
         "validação em produção do 1º caso real de baixa fin010 (Fase 3 implementada, gated por flags) — implementado NAO e validado, e o delta da ADR-0043 esta na branch fix/permutas-baixa-integridade sem commit/PR/release (vigencia por GET /health + CHANGELOG.md)"
@@ -396,7 +396,7 @@
         "src/backend/routes/permutas.ts",
         "src/frontend/app/permutas/page.tsx",
         "src/frontend/app/permutas/BorderosPanel.tsx",
-        "src/backend/migrations/0054_permuta_execucao_parcial.sql",
+        "src/backend/migrations/0056_permuta_execucao_parcial.sql",
         "src/backend/domain/errors/ReconciliacaoEmAndamentoError.ts",
         "src/backend/domain/errors/AlocacaoSemCoberturaError.ts"
       ],
@@ -1070,7 +1070,7 @@
         "src/backend/routes/permutas.ts",
         "src/backend/migrations/0018_permuta_bordero_cache.sql",
         "src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts",
-        "src/backend/migrations/0054_permuta_execucao_parcial.sql",
+        "src/backend/migrations/0056_permuta_execucao_parcial.sql",
         "src/frontend/app/permutas/components/ui.tsx",
         "src/frontend/lib/types.ts"
       ],

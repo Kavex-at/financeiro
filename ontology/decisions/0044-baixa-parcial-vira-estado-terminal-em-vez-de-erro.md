@@ -1,5 +1,5 @@
 ---
-adr_number: 0043
+adr_number: 0044
 title: A baixa parcial da permuta vira estado terminal `parcial` — fail-closed antes do POST, registro honesto depois — e a reconciliação passa a serializar por adiantamento
 date: 2026-09-08
 status: accepted
@@ -161,7 +161,7 @@ ADR (registrada em `ontology/_inbox/permutas-baixa-integridade-followups.md`).
 
 ## Consequências
 
-- **Migration `0054_permuta_execucao_parcial.sql`**: `CHECK (status IN
+- **Migration `0056_permuta_execucao_parcial.sql`**: `CHECK (status IN
   ('pending','reconciling','settled','error','parcial'))` e coluna `valor_residual_usd NUMERIC`. O
   CHECK atual está em `0015_permuta_alocacao_execucao.sql:20`.
 - **União `ExecucaoStatus` em dois lugares espelhados à mão**:
@@ -289,7 +289,7 @@ I-Recon-5/6/7, I-Write-8a/8b e B1' estão **no código, com teste**, na branch
 (`ReconciliacaoPermutaService.ts:100-153`) com teste de concorrência real; `assertCobertura` antes do
 1º POST (pulada no fallback de título único, via `titulosDoErp` explícito); `markParcial` irmão de
 `markSettled` e `valor_residual_usd` preservado no `ON CONFLICT`
-(`PermutaExecucaoRepository.ts:287-338`); migration `0054`; badge `parcial-aguardando-finalizacao`
+(`PermutaExecucaoRepository.ts:287-338`); migration `0056`; badge `parcial-aguardando-finalizacao`
 com ramo próprio (`src/frontend/app/permutas/components/ui.tsx:124-143`). O `_coverage.json`
 **não registra mais o recuo de 90 para 85** — devolveu `Permuta.impl_pct` a 90, e
 `idempotencia-reconciliacao` e `status-permuta-bordero` passaram a `implemented`.

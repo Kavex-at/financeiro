@@ -34,7 +34,7 @@ O delta tanto **fecha um vetor de dano com efeito monetário** (dois borderôs p
 | Métrica | Valor atual | Alvo | Status | Fonte |
 |---|---|---|---|---|
 | Segredos hardcoded nos arquivos do delta | 0 | 0 | ✅ | `grep -rEn "(password\|secret\|token\|api[_-]?key\|credential\|AKIA)…" ` nos 21 arquivos do delta — vazio |
-| SQL parametrizado nas queries novas (`markParcial`, `beginExecution` alterado, `setBorCod`, migration `0054`) | 100% | 100% | ✅ | `PermutaExecucaoRepository.ts:73-101, 258-303`; `SqlBuilder` traduz `$key/$borCod/$valorResidualUsd` → `$1/$2/…` |
+| SQL parametrizado nas queries novas (`markParcial`, `beginExecution` alterado, `setBorCod`, migration `0056`) | 100% | 100% | ✅ | `PermutaExecucaoRepository.ts:73-101, 258-303`; `SqlBuilder` traduz `$key/$borCod/$valorResidualUsd` → `$1/$2/…` |
 | SQL parametrizado no probe (`probe-com308-cobertura.ts` L131-138) | 100% (após remediação do PatternGuardian: `LIMIT $limite`) | 100% | ✅ | `src/backend/jobs/probe-com308-cobertura.ts:131-141` — `LIMIT $limite` bound; a "interpolação de `LIMIT`" que o PG achou foi corrigida antes deste gate |
 | Advisory lock: valor injetado é number bound-parameter | ✅ (`[lockKey]`, integer) | ✅ | ✅ | `PostgreeDatabaseClient.ts:148, 153` — `pg_try_advisory_lock($1)` / `pg_advisory_unlock($1)` |
 | Advisory lock: chave derivada de dado do usuário | `chaveDeLock` = hash int32 de `adiantamentoDocCod` (colisão custa serialização, nunca corretude) | não injeta em SQL | ✅ | `ReconciliacaoPermutaService.ts:175-181` |
@@ -72,7 +72,7 @@ O delta tanto **fecha um vetor de dano com efeito monetário** (dois borderôs p
 | Lock Computer | N/A no delta | N/A | — |
 | Inform Actors | `AlocacaoSemCoberturaError.userMessage` orienta re-alocar (não retryable); `ReconciliacaoEmAndamentoError.userMessage` orienta esperar (retryable). Frontend consome `code` + `error` e mostra a mensagem em PT sem prefixo genérico. | ✅ presente (NOVO) | `errors/AlocacaoSemCoberturaError.ts:37-52`; `errors/ReconciliacaoEmAndamentoError.ts:34-40`; `src/frontend/lib/api.ts:262-274` |
 | Restore | Fora de escopo do delta (roll-forward do `parcial` é RE-alocação, coberta por `markParcial` + I-Recon-6) | ✅ presente por adjacência | `PermutaExecucaoRepository.ts:64-105` |
-| Audit Trail | **Terminal `parcial` + `valor_residual_usd` + `BUSINESS_WARN` com 4 campos canônicos.** Antes deste delta, resíduo era silenciado (`settled` mudo); agora a trilha AFIRMA a verdade — cross-ref Fault Tolerance. | ✅ presente (NOVO — reforço substancial) | `migrations/0054_permuta_execucao_parcial.sql`; `PermutaExecucaoRepository.markParcial:258-303`; `ReconciliacaoPermutaService.ts:583-604` |
+| Audit Trail | **Terminal `parcial` + `valor_residual_usd` + `BUSINESS_WARN` com 4 campos canônicos.** Antes deste delta, resíduo era silenciado (`settled` mudo); agora a trilha AFIRMA a verdade — cross-ref Fault Tolerance. | ✅ presente (NOVO — reforço substancial) | `migrations/0056_permuta_execucao_parcial.sql`; `PermutaExecucaoRepository.markParcial:258-303`; `ReconciliacaoPermutaService.ts:583-604` |
 
 ## 4. Findings (achados)
 
@@ -230,5 +230,5 @@ O delta tanto **fecha um vetor de dano com efeito monetário** (dois borderôs p
   - **Fault Tolerance** — `parcial` + WARN estruturado é reforço mútuo de Audit Trail (Security) e Idempotency/Recover (Fault Tolerance). Consolidator: alinhar cards para não duplicar.
   - **Availability** — o advisory lock é Limit Exposure (Security) e blast-radius cap (Availability). Um card só.
   - **Integrability** — `assertCobertura` é Validate Input (Security) e contract-check no boundary (Integrability). Cross-ref.
-  - **Deployability** — a ordem de deploy da migration `0054` é explícita no arquivo e é requisito de Security também: sem ela, o INSERT de `parcial` falha em runtime **depois** do POST bem-sucedido, deixando a trilha mentindo (`error` sobre baixa confirmada). Não é card, é nota para o consolidator.
+  - **Deployability** — a ordem de deploy da migration `0056` é explícita no arquivo e é requisito de Security também: sem ela, o INSERT de `parcial` falha em runtime **depois** do POST bem-sucedido, deixando a trilha mentindo (`error` sobre baixa confirmada). Não é card, é nota para o consolidator.
 - Não consegui medir `npm audit` (respeitei `--quick`) e IAM/CloudTrail (não existe `infra/` neste repo). Ambos declarados na seção 2.

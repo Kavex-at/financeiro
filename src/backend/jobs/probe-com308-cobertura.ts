@@ -10,11 +10,11 @@ import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseCl
 
 /**
  * Sonda READ-ONLY do `com308/financeiroAPagar/list/{docCod}` — decide a forma do invariante
- * **I-Write-8a** (pré-checagem de cobertura antes do 1º POST da baixa), ADR-0043.
+ * **I-Write-8a** (pré-checagem de cobertura antes do 1º POST da baixa), ADR-0044.
  *
  * ## Por que existe
  *
- * A ADR-0043 assumiu que `Σ titulos.usd` do `listTitulosAPagar` representava "o que ainda está
+ * A ADR-0044 assumiu que `Σ titulos.usd` do `listTitulosAPagar` representava "o que ainda está
  * em aberto na invoice". O swagger versionado deste repo (`docs/conexos-api/070-com3.json`,
  * schema `FinTituloFin`) diz outra coisa:
  *

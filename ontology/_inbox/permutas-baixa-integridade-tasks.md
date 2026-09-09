@@ -1,12 +1,12 @@
 # Tasks: permutas-baixa-integridade
 
-**Spec source:** `ontology/decisions/0043-baixa-parcial-vira-estado-terminal-em-vez-de-erro.md` (ADR-0043)
+**Spec source:** `ontology/decisions/0043-baixa-parcial-vira-estado-terminal-em-vez-de-erro.md` (ADR-0044)
 · `ontology/business-rules/idempotencia-reconciliacao.md` (I-Recon-1/5/6/7)
 · `ontology/business-rules/fin010-write-contract.md` (I-Write-8a/8b)
 · `ontology/state-machines/status-permuta-bordero.md` (B1')
 · `ontology/_inbox/permutas-baixa-integridade-followups.md`
 
-**Ontology diff:** sim — já aplicado neste worktree pelo `OntologyCurator` (ADR-0043,
+**Ontology diff:** sim — já aplicado neste worktree pelo `OntologyCurator` (ADR-0044,
 `entity_changed = true`). O código está **atrás** da ontologia de propósito; `_coverage.json`
 registra `Permuta.impl_pct` em 85 e volta a 90 na Task 13.
 
@@ -20,7 +20,7 @@ de tipo espelhadas à mão, 1 máquina de estados, ~13 arquivos de produção + 
 grande; o tamanho vem da quantidade de seams distintos que precisam concordar entre si.
 
 > **Comece pela Task 14.** Ela é P0 e **bloqueia as Tasks 7 e 8**: o scoping refutou uma premissa da
-> própria ADR-0043 (`titVldStatus = 1` é **ATIVO**, não "em aberto" — ver **C-1**), e a fórmula de
+> própria ADR-0044 (`titVldStatus = 1` é **ATIVO**, não "em aberto" — ver **C-1**), e a fórmula de
 > cobertura de I-Write-8a depende de uma decisão de domínio que ainda não foi tomada. As demais
 > tasks (R-1/I-Recon-5, `parcial`/I-Write-8b, B1') **não** dependem dela e podem correr em paralelo.
 
@@ -32,7 +32,7 @@ grande; o tamanho vem da quantidade de seams distintos que precisam concordar en
 
 | Arquivo | Papel no delta |
 |---|---|
-| `src/backend/migrations/0054_permuta_execucao_parcial.sql` | **novo** — CHECK + `valor_residual_usd` (próximo livre confirmado: `0053_job_execucao.sql` é o último) |
+| `src/backend/migrations/0056_permuta_execucao_parcial.sql` | **novo** — CHECK + `valor_residual_usd` (próximo livre confirmado: `0053_job_execucao.sql` é o último) |
 | `src/backend/domain/errors/ReconciliacaoEmAndamentoError.ts` | **novo** — 409, espelho de `RemessaEmAndamentoError.ts` |
 | `src/backend/domain/errors/AlocacaoSemCoberturaError.ts` | **novo** — 422, irmão-déficit de `AlocacaoSaldoError.ts` |
 | `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts` | `ExecucaoStatus:5`, `beginExecution:226-266`, `markSettled:287`, `mapRow:461`, SELECTs (5 listas de colunas: 73, 85, 131, 147, 173) |
@@ -83,7 +83,7 @@ não é necessariamente 100 — há medição em HML (`ConexosGerDocProcessoClie
 impõe a própria página.**
 
 **Consequência para I-Write-8a:** a fórmula `Σ(titulos.usd) < valorAlocado − 0,005` compara o
-alocado contra a **face bruta dos títulos ativos**. Ela dispara **menos** do que a ADR-0043
+alocado contra a **face bruta dos títulos ativos**. Ela dispara **menos** do que a ADR-0044
 pretende — só quando a alocação excede até o valor cheio de títulos já pagos. O gate fail-closed
 nasce sistematicamente **frouxo**, e frouxo do lado que empurra caso previsível para o `parcial`,
 que é justamente o que 8a existia para evitar. Não é erro de digitação: a fórmula foi escrita sobre
@@ -137,7 +137,7 @@ espelhados no frontend (`types.ts:279`). Não unificar, não reusar: nomear e te
 `ui.tsx:118-133` — `PermutaBorderoBadge` testa `=== 'finalizado'` e **cai no else** para todo o
 resto, renderizando "Aguardando finalização". Acrescentar `parcial-aguardando-finalizacao` só ao
 **tipo** faz o novo estado ser exibido como se fosse o antigo — exatamente o "`parcial` vira o novo
-silêncio" que a ADR-0043 nomeia como o risco que ela mesma cria. O `typecheck` **não** pega isso (o
+silêncio" que a ADR-0044 nomeia como o risco que ela mesma cria. O `typecheck` **não** pega isso (o
 `else` continua válido).
 
 ### C-7 · O construtor do serviço é injetado posicionalmente nos testes
@@ -152,7 +152,7 @@ testes existentes** se a posição for escolhida no meio. Acrescentar no fim e a
 `borderoAindaValido` e, quando o borderô foi CANCELADO/ESTORNADO/REMOVIDO no ERP, faz `renameKey` e
 **libera o relançamento** (a baixa foi anulada; a permuta volta a ser lançável).
 
-Com `parcial` terminal, esse gate deixa um **buraco que a ADR-0043 não endereça**: se o borderô de
+Com `parcial` terminal, esse gate deixa um **buraco que a ADR-0044 não endereça**: se o borderô de
 uma execução `parcial` for cancelado no ERP, `:176` não casa, o fluxo cai direto no
 `beginExecution` — que devolverá `alreadySettled: true` (Task 2) — e o par fica **bloqueado para
 sempre** sob aquela chave. Ao mesmo tempo, **B3** manda a máquina de badge devolver o adto a
@@ -198,10 +198,10 @@ outra, é uma pergunta P0 de `InfoGapBroker`, não um detalhe de código.
 
 ---
 
-### Task 2: Migration `0054` + `ExecucaoStatus` + `markParcial` no repositório
+### Task 2: Migration `0056` + `ExecucaoStatus` + `markParcial` no repositório
 
 **Files to change:**
-- `src/backend/migrations/0054_permuta_execucao_parcial.sql` (novo)
+- `src/backend/migrations/0056_permuta_execucao_parcial.sql` (novo)
 - `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts`
 
 **Acceptance criteria:**
@@ -516,9 +516,9 @@ outra, é uma pergunta P0 de `InfoGapBroker`, não um detalhe de código.
       terminais; a agregação guarda, por adto+borCod, se **alguma** execução terminal é `parcial`
 - [ ] Mapeamento: borderô `EM_CADASTRO` + todas as execuções terminais `settled` ⇒
       `aguardando-finalizacao`; **ao menos uma** `parcial` ⇒ `parcial-aguardando-finalizacao`;
-      `FINALIZADO` ⇒ `finalizado` (o seam nomeado na ADR-0043 — a máquina responde sobre o
+      `FINALIZADO` ⇒ `finalizado` (o seam nomeado na ADR-0044 — a máquina responde sobre o
       **borderô**, e ele está concluído; o resíduo segue com o ledger)
-- [ ] **Requisito duro (a armadilha nomeada na ADR-0043):** teste que prova que o adiantamento com
+- [ ] **Requisito duro (a armadilha nomeada na ADR-0044):** teste que prova que o adiantamento com
       execução `parcial` **continua na fila de elegibilidade** — nenhum consumidor de
       `statusPorAdiantamento` o remove de "pendentes"/elegíveis. Este badge é **sobre o borderô** e
       **nunca** input de elegibilidade; se falhar, o defeito do R-2 apenas mudou de lugar
@@ -573,12 +573,12 @@ outra, é uma pergunta P0 de `InfoGapBroker`, não um detalhe de código.
 **Acceptance criteria:**
 - [ ] O runbook tem **três** pontos com a ressalva "ainda não em produção", não um; todos os três
       saem/viram afirmação positiva. Medidos hoje em `docs/runbooks/fin010-write-cutover.md`:
-      (i) `:40-45` — o parágrafo "Mudança decidida (ADR-0043), ainda não em produção" dentro de
+      (i) `:40-45` — o parágrafo "Mudança decidida (ADR-0044), ainda não em produção" dentro de
       *Rollback*, incluindo a frase final "Até isso entrar, o resíduo continua chegando como
       `settled` mudo";
-      (ii) `:52-54` — o `*(ADR-0043, ainda não em produção)*` do bullet **409
+      (ii) `:52-54` — o `*(ADR-0044, ainda não em produção)*` do bullet **409
       `RECONCILIACAO_EM_ANDAMENTO`** em *Sinais de problema*;
-      (iii) `:65-76` — a seção inteira **"Invariantes decididos (ADR-0043) e AINDA NÃO no código"**,
+      (iii) `:65-76` — a seção inteira **"Invariantes decididos (ADR-0044) e AINDA NÃO no código"**,
       cujos dois bullets (I-Recon-5 e I-Write-8) declaram os buracos abertos e prescrevem mitigação
       manual ("combinar quem reconcilia qual adto antes de rodar")
 - [ ] Os invariantes migrados para a seção **"Invariantes que o código já garante"** (`:58-64`),
@@ -587,8 +587,8 @@ outra, é uma pergunta P0 de `InfoGapBroker`, não um detalhe de código.
       trabalho manual que o código já faz — e o custo de um runbook desatualizado é alguém confiar
       nele
 - [ ] `_coverage.json`: `Permuta.impl_pct` volta de **85** para **90** (o recuo de propósito registrado
-      na ADR-0043 se paga aqui, não antes)
-- [ ] `_index.json`: os arquivos novos (`0054_permuta_execucao_parcial.sql`,
+      na ADR-0044 se paga aqui, não antes)
+- [ ] `_index.json`: os arquivos novos (`0056_permuta_execucao_parcial.sql`,
       `ReconciliacaoEmAndamentoError.ts`, `AlocacaoSemCoberturaError.ts`) **já estão** em
       `business_rules['idempotencia-reconciliacao'].impl_files` — o curator os escreveu
       antecipadamente. O que muda aqui é o `status`, hoje `"partial"`. Idem para
@@ -611,9 +611,9 @@ outra, é uma pergunta P0 de `InfoGapBroker`, não um detalhe de código.
 
 ---
 
-### Task 14: [P0 — BLOQUEANTE] Fechar a pergunta de domínio que a ADR-0043 não sabia que tinha
+### Task 14: [P0 — BLOQUEANTE] Fechar a pergunta de domínio que a ADR-0044 não sabia que tinha
 
-> **Esta task existe porque o scoping refutou uma premissa da ADR-0043, não porque o código está
+> **Esta task existe porque o scoping refutou uma premissa da ADR-0044, não porque o código está
 > errado em relação a ela.** A ADR foi escrita assumindo que os títulos lidos eram "os títulos em
 > aberto da invoice". Não são (C-1a). Implementar 8a sobre a premissa antiga produz um gate
 > fail-closed que quase nunca fecha — e que *parece* funcionar, porque todo teste que escrevêssemos
@@ -628,7 +628,7 @@ outra, é uma pergunta P0 de `InfoGapBroker`, não um detalhe de código.
 **Acceptance criteria:**
 - [ ] **P0 ao Yuri (`InfoGapBroker`), com as três opções já instrumentadas:** a cobertura de
       I-Write-8a deve ser **(i)** `Σ valorNegociado` (face — comportamento de hoje, mais frouxo),
-      **(ii)** `Σ (valorNegociado − valorPago/taxa)` (aberto derivado — o que a ADR-0043 descreve em
+      **(ii)** `Σ (valorNegociado − valorPago/taxa)` (aberto derivado — o que a ADR-0044 descreve em
       palavras), ou **(iii)** manter a face e trocar o filtro para incluir `pago#NE: 1`?
       A pergunta carrega o enum verificado e o impacto medido, não só o dilema
 - [ ] Sub-pergunta explícita: um título **RENEGOCIADO (2)** ou **CANCELADO (3)** com saldo aberto
@@ -669,7 +669,7 @@ registra isso na ontologia em vez de deixar o invariante parecer verde.
 
 ## Riscos e ambiguidades detectados
 
-1. **A ADR-0043 tem uma premissa refutada, e ela é o coração do I-Write-8a.** Não é ambiguidade:
+1. **A ADR-0044 tem uma premissa refutada, e ela é o coração do I-Write-8a.** Não é ambiguidade:
    é fato medido. `titVldStatus = 1` é **ATIVO**, não "em aberto" (swagger `FinTituloFin`,
    verificado), e `usd` é **face**, não saldo. A soma que a ADR chama de "os títulos vivos" é a face
    bruta dos títulos ativos, quitados inclusive. Isso não quebra 8b nem I-Recon-5 — quebra
@@ -693,7 +693,7 @@ registra isso na ontologia em vez de deixar o invariante parecer verde.
    este tweak **aumenta**. Renomear o `LoteAdiantamentoStatus.parcial` seria mais limpo, mas é um
    valor já serializado ao frontend e fora do escopo R-1/R-2. Fica documentado; candidato a
    follow-up.
-6. **C-8 é a única lacuna real de modelagem que este scoping encontrou.** A ADR-0043 decidiu que
+6. **C-8 é a única lacuna real de modelagem que este scoping encontrou.** A ADR-0044 decidiu que
    `parcial` é preservado na re-execução, e decidiu que B3 reabre o adto quando o borderô é
    cancelado — mas não cruzou as duas. A resolução proposta (simetria com `settled`) é a leitura
    coerente com o critério que a própria ADR usa ("houve escrita irreversível **que ainda vale** sob
@@ -715,7 +715,7 @@ Todas as tasks completas E:
 - [ ] `cd src/backend && npm test` ✅
 - [ ] `cd src/frontend && npm run typecheck && npm run lint && npm test` ✅
 - [ ] PatternGuardian gate ✅
-- [ ] `entity_changed = true` ⇒ diff de ontologia presente ✅ (já aplicado — ADR-0043)
+- [ ] `entity_changed = true` ⇒ diff de ontologia presente ✅ (já aplicado — ADR-0044)
 - [ ] `src/frontend/` tocado ⇒ DesignSystemReviewer gate ✅ (Task 11)
 - [ ] **Sem novo handler/job Lambda ⇒ ObservabilityAdvisor NÃO é acionado.** O delta muda serviços,
       repositório, rota Express existente e migration; nenhum handler ou job novo. (O detector

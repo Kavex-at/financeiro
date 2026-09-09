@@ -254,7 +254,7 @@ export interface GestaoPermutasResponse {
 /**
  * Status de execução da baixa no ERP, por par adto↔invoice (Fase 3, ADR-0013).
  *
- * `settled` e `parcial` são os DOIS terminais (ADR-0043): `parcial` = houve baixa confirmada, mas
+ * `settled` e `parcial` são os DOIS terminais (ADR-0044): `parcial` = houve baixa confirmada, mas
  * sobrou `valorResidualUsd` a re-alocar. Espelha À MÃO
  * `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts` (`ExecucaoStatus`) —
  * guarda de paridade em `lib/types.test.ts`.
@@ -289,7 +289,7 @@ export interface ReconciliarResult {
  *
  * ⚠️ O `'parcial'` DAQUI é outra coisa que o `'parcial'` de `ExecucaoStatus`: aqui significa
  * "alguns pares do adto deram settled, outros deram error"; lá, "a baixa deste par cobriu o
- * alocado só em parte". `'com-residuo'` (ADR-0043) é o segundo caso agregado ao adto: todos os
+ * alocado só em parte". `'com-residuo'` (ADR-0044) é o segundo caso agregado ao adto: todos os
  * pares terminaram, sem erro, mas ao menos um deixou resíduo. Espelha à mão
  * `src/backend/domain/service/permutas/ReconciliacaoLotePermutaService.ts`.
  */
@@ -345,7 +345,7 @@ export interface ExecucaoPermuta {
 /**
  * Status da PERMUTA em relação ao seu borderô no fin010 (badge na tela de permutas).
  *
- * `parcial-aguardando-finalizacao` (B1', ADR-0043) afirma DUAS pendências: borderô a finalizar E
+ * `parcial-aguardando-finalizacao` (B1', ADR-0044) afirma DUAS pendências: borderô a finalizar E
  * resíduo a re-alocar. Nunca é input de elegibilidade — o adto segue na fila. Espelha À MÃO
  * `src/backend/domain/service/permutas/BorderoGestaoService.ts` (`PermutaStatus`).
  */

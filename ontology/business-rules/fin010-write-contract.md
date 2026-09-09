@@ -188,7 +188,7 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
     nunca em `error`. Estado, valor residual e visibilidade em **I-Recon-6/I-Recon-7**
     (`idempotencia-reconciliacao.md`); aqui só o contrato.
 
-    **Gatilho real de 8b** (corrigido em 2026-09-08 — ver emenda da ADR-0043): **não** é "título
+    **Gatilho real de 8b** (corrigido em 2026-09-08 — ver emenda da ADR-0044): **não** é "título
     baixado externamente entre a eleição e o POST". Esse caso **já lança erro hoje**, no passo 2:
     `baixarTitulo` recusa em-aberto ≤ 0 (I-Recon-3), e ele responde por parte das 12 falhas reais
     observadas em produção. O que produz resíduo **silencioso** é o título **renegociado ou
@@ -196,7 +196,7 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
     nenhum) ou uma **lista incompleta**.
 
   As duas cláusulas convivem por construção: 8a elimina o caso **detectável antes de escrever**,
-  8b registra o que só se revela depois. Ver ADR-0043 e sua emenda de 2026-09-08.
+  8b registra o que só se revela depois. Ver ADR-0044 e sua emenda de 2026-09-08.
 
 ## Adendo v0.7.0 (2026-06-24) — auto-alocação ANTES de gravar
 
@@ -252,7 +252,7 @@ ruído de ponto flutuante (ex.: `1000×(5.2887−4.9806)=308.1000000000005`).
 
 ## Fora do contrato (a confirmar em campo)
 - Comportamento quando a invoice **já tem baixa parcial** anterior (passo 2 pode mudar
-  `bxaMnyValor`). **Parcialmente respondido pela ADR-0043:** o agregado insuficiente agora é
+  `bxaMnyValor`). **Parcialmente respondido pela ADR-0044:** o agregado insuficiente agora é
   barrado antes do 1º POST (I-Write-8a) ou vira `parcial` (I-Write-8b), em vez de `settled`
   mudo. O que segue não observado é o `bxaMnyValor` que o passo 2 devolve numa invoice com
   baixa anterior.

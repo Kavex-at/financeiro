@@ -104,7 +104,7 @@ const buildService = (
 
 describe('ReconciliacaoLotePermutaService.reconciliarLote', () => {
     /**
-     * C-5 / ADR-0043 — um par `parcial` de EXECUÇÃO não é sucesso nem erro: o dinheiro se moveu,
+     * C-5 / ADR-0044 — um par `parcial` de EXECUÇÃO não é sucesso nem erro: o dinheiro se moveu,
      * mas sobrou resíduo a re-alocar. Somá-lo a `totalSettled` recriaria, um nível acima, o mesmo
      * silêncio que a ADR existe para acabar; contá-lo como erro mandaria a analista procurar uma
      * falha que não houve.

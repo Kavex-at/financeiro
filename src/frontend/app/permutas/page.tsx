@@ -180,7 +180,7 @@ export default function GestaoPermutasPage() {
       } else {
         if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja a aba Borderôs.`)
         // `parcial` NÃO é sucesso nem erro: a baixa entrou, mas sobrou resíduo. Sem este toast ele
-        // não apareceria em lugar nenhum da tela — o silêncio que a ADR-0043 existe para acabar.
+        // não apareceria em lugar nenhum da tela — o silêncio que a ADR-0044 existe para acabar.
         if (parciais > 0)
           toast.warning(
             `${parciais} baixa(s) PARCIAIS — entraram no Conexos sem fechar o valor alocado. ` +
