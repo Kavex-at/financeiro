@@ -581,10 +581,11 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(res.casamentos).toHaveLength(0); // sem casamentos sintéticos
     });
 
-    it('promotes BLOQUEADA+motivo ja-permutado to its OWN status (out of bloqueadas)', async () => {
-        // Doc pago + 100% consumido em permuta anterior: gravado como bloqueada
-        // com motivo `ja-permutado`. Na tela vira status próprio `ja-permutado`,
-        // NÃO conta em bloqueadas (estado concluído, não erro).
+    // Fixture atualizado pela migration 0054 (ADR-0043): `ja-permutado` deixou de
+    // ser BLOQUEADA+motivo e virou estado no banco. As EXPECTATIVAS abaixo são as
+    // mesmas de antes — o painel ao vivo não muda de comportamento, só a origem
+    // do dado muda (lido, não reconstruído).
+    it('ja-permutado tem status próprio na tela e fica FORA de bloqueadas', async () => {
         const jaPermutado: AdiantamentoAtivo = {
             docCod: '8266',
             priCod: '5000',
@@ -594,7 +595,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             valorMoedaNegociada: 70570,
             moeda: 'USD',
             pago: true,
-            estadoElegibilidade: 'bloqueada',
+            estadoElegibilidade: 'ja-permutado',
             motivoBloqueio: 'ja-permutado',
             agingDays: 156,
             stale: false,
@@ -612,6 +613,34 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(res.totais.jaPermutado).toBe(1);
         // A2 segue bloqueada; o já-permutado NÃO entra na contagem de bloqueadas.
         expect(res.totais.bloqueadas).toBe(1);
+    });
+
+    it('a derivação LÊ o estado: ja-permutado SEM motivoBloqueio ainda aparece correto', async () => {
+        // Prova de que a apresentação parou de reconstruir o estado a partir do
+        // motivo (ADR-0043): sem `motivoBloqueio`, a cadeia antiga de ternários
+        // devolvia 'bloqueada' e o item voltava para o balde de passivo externo.
+        const semMotivo: AdiantamentoAtivo = {
+            docCod: '8267',
+            priCod: '5001',
+            filCod: 2,
+            valorMoedaNegociada: 1000,
+            moeda: 'USD',
+            pago: true,
+            estadoElegibilidade: 'ja-permutado',
+            stale: false,
+        };
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [semMotivo] }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildSnapshot(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        expect(res.pendentes.find((p) => p.docCod === '8267')?.status).toBe('ja-permutado');
+        expect(res.totais.jaPermutado).toBe(1);
+        expect(res.totais.bloqueadas).toBe(0);
     });
 
     it('attaches candidatas (invoices em aberto do mesmo priCod) ONLY to casamento-manual', async () => {

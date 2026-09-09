@@ -3,11 +3,35 @@ import 'reflect-metadata';
 
 import { Client } from 'pg';
 
-/** Verificação dos três achados que contradizem o relatório v1. Read-only. */
+/**
+ * Verificação dos três achados que contradizem o relatório v1. READ-ONLY.
+ *
+ * ATENÇÃO À SÉRIE HISTÓRICA (migration 0054 / ADR-0043): `status` do snapshot
+ * deixou de ser binário. Antes da 0054, `status='bloqueada'` continha TRÊS
+ * estados achatados (`casamento-manual`, `permuta-manual` e `ja-permutado`) além
+ * do passivo externo real. Depois da 0054, `bloqueada` significa SÓ passivo
+ * dependente de terceiro ou de leitura — a série cai de 64.893 para 51.459 no
+ * agregado por RECLASSIFICAÇÃO, não por melhora operacional. Por isso a consulta
+ * abaixo quebra por ESTADO em vez de somar tudo num balde só.
+ */
+
+/** Ressalva impressa junto do resultado — ver `docs/impacto/CORRECOES-2026-08-24.md` §1. */
+const AVISO_SERIE = [
+    '',
+    'RESSALVA OBRIGATÓRIA (ADR-0043 / migration 0054): a série de "bloqueadas" MUDOU DE',
+    'SIGNIFICADO. Até a 0054 o snapshot achatava casamento-manual, permuta-manual e',
+    'ja-permutado dentro de "bloqueada"; depois dela, "bloqueada" é só passivo de',
+    'terceiro/leitura. Comparar antes × depois sem dizer isto repete — com o sinal',
+    'invertido — o erro do relatório de impacto v1.',
+    '',
+].join('\n');
 
 const CONSULTAS: ReadonlyArray<{ readonly nome: string; readonly sql: string }> = [
     {
-        nome: 'bloqueadas_tendencia_por_motivo',
+        // Quebra por ESTADO e motivo. `bloqueada` aqui é o sentido NOVO (estrito);
+        // os estados que saíram do balde aparecem em linhas próprias, para que a
+        // queda no total não seja lida como melhora operacional.
+        nome: 'candidatas_tendencia_por_estado_e_motivo',
         sql: `
             WITH runs AS (
                 SELECT id, finished_at,
@@ -17,14 +41,33 @@ const CONSULTAS: ReadonlyArray<{ readonly nome: string; readonly sql: string }> 
                  WHERE status = 'success' AND finished_at IS NOT NULL
             )
             SELECT DATE(r.finished_at) AS dia,
+                   s.status,
                    s.motivo_bloqueio,
                    COUNT(*) AS qtd
               FROM runs r
               JOIN permuta_candidata_snapshot s ON s.run_id = r.id
-             WHERE s.status = 'bloqueada'
+             WHERE s.status <> 'elegivel'
                AND (r.n = 1 OR r.n = r.total)
-             GROUP BY DATE(r.finished_at), s.motivo_bloqueio
-             ORDER BY dia, COUNT(*) DESC
+             GROUP BY DATE(r.finished_at), s.status, s.motivo_bloqueio
+             ORDER BY dia, s.status, COUNT(*) DESC
+        `,
+    },
+    {
+        // O header da run, com os 5 buckets — confere a convergência I5 de olho.
+        nome: 'header_runs_por_bucket',
+        sql: `
+            SELECT DATE(finished_at) AS dia,
+                   SUM(total_candidatas)       AS candidatas,
+                   SUM(total_elegiveis)        AS elegiveis,
+                   SUM(total_bloqueadas)       AS bloqueadas_estrito,
+                   SUM(total_casamento_manual) AS casamento_manual,
+                   SUM(total_permuta_manual)   AS permuta_manual,
+                   SUM(total_ja_permutado)     AS ja_permutado
+              FROM permuta_eleicao_run
+             WHERE kind = 'eleicao'
+             GROUP BY DATE(finished_at)
+             ORDER BY dia DESC
+             LIMIT 10
         `,
     },
     {
@@ -106,6 +149,8 @@ const main = async (): Promise<void> => {
     } finally {
         await client.end();
     }
+
+    console.log(AVISO_SERIE);
 };
 
 void main();

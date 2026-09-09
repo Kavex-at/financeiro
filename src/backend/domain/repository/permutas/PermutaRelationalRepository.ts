@@ -5,6 +5,59 @@ import PostgreeDatabaseClient, {
 } from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 
+/**
+ * Valores aceitos pela coluna `permuta_adiantamento.estado_elegibilidade`
+ * (CHECK criada na 0003 e estendida por 0005, 0012 e 0054).
+ *
+ * Tipo NOMEADO de propósito: este union aparecia DUPLICADO — na row e no filtro
+ * de `listAdiantamentosAtivos` — e cada estado novo (`casamento-manual` em
+ * ADR-0005, `permuta-manual` em ADR-0007, `ja-permutado` em ADR-0043) obrigava a
+ * editar os dois lugares. Esquecer o do filtro deixa a tela sem conseguir
+ * filtrar o estado novo, sem nenhum erro de compilação. Uma fonte só.
+ */
+export type EstadoElegibilidadeRow =
+    | 'descoberta'
+    | 'elegivel'
+    | 'bloqueada'
+    | 'casamento-manual'
+    | 'permuta-manual'
+    | 'ja-permutado';
+
+const ESTADOS_ROW_VALIDOS: ReadonlySet<string> = new Set<string>([
+    'descoberta',
+    'elegivel',
+    'bloqueada',
+    'casamento-manual',
+    'permuta-manual',
+    'ja-permutado',
+]);
+
+const ehEstadoElegibilidadeRow = (valor: string): valor is EstadoElegibilidadeRow =>
+    ESTADOS_ROW_VALIDOS.has(valor);
+
+/**
+ * Estreita o valor da coluna `estado_elegibilidade` para o tipo do domínio,
+ * FALHANDO ALTO em valor desconhecido em vez de aceitar um `as` cego.
+ *
+ * O `as` que morava aqui não era inofensivo: quando ADR-0043 promoveu
+ * `ja-permutado` a estado, o cast teria feito o valor novo atravessar um union
+ * que não o comportava, sem erro de compilação nem de execução. É a mesma classe
+ * de defeito que este ciclo corrige do lado do snapshot — informação passando por
+ * um tipo que mente sobre ela.
+ *
+ * O conjunto é fechado pela CHECK `permuta_adiantamento_estado_elegibilidade_check`
+ * (0003 + 0005 + 0012 + 0054), então na prática isto nunca dispara; se disparar, o
+ * código está mais velho que o banco, e é exatamente aí que ninguém quer um chute.
+ */
+const parseEstadoElegibilidadeRow = (bruto: unknown, docCod: string): EstadoElegibilidadeRow => {
+    const valor = String(bruto);
+    if (ehEstadoElegibilidadeRow(valor)) return valor;
+    throw new Error(
+        `adiantamento com estado_elegibilidade fora do dominio: '${valor}' ` +
+            `(documento ${docCod}). A CHECK do banco deveria impedir isto.`,
+    );
+};
+
 /** Linha de Adiantamento persistida no modelo relacional (Fase B). */
 export interface AdiantamentoRow {
     docCod: string;
@@ -21,12 +74,7 @@ export interface AdiantamentoRow {
     moedaNegociada?: string;
     pago: boolean;
     valorPermutar?: number;
-    estadoElegibilidade:
-        | 'descoberta'
-        | 'elegivel'
-        | 'bloqueada'
-        | 'casamento-manual'
-        | 'permuta-manual';
+    estadoElegibilidade: EstadoElegibilidadeRow;
     motivoBloqueio?: string;
     agingDays?: number;
     /** Taxa de câmbio negociada do título (`com308` `titFltTaxaMneg`). */
@@ -504,12 +552,7 @@ export default class PermutaRelationalRepository {
     };
 
     public listAdiantamentosAtivos = async (filtro?: {
-        estadoElegibilidade?:
-            | 'descoberta'
-            | 'elegivel'
-            | 'bloqueada'
-            | 'casamento-manual'
-            | 'permuta-manual';
+        estadoElegibilidade?: EstadoElegibilidadeRow;
     }): Promise<AdiantamentoAtivo[]> => {
         const rows = filtro?.estadoElegibilidade
             ? await this.databaseClient.selectMany(
@@ -581,9 +624,7 @@ export default class PermutaRelationalRepository {
         ...(r.moeda_negociada != null ? { moedaNegociada: String(r.moeda_negociada) } : {}),
         pago: Boolean(r.pago),
         ...(r.valor_permutar != null ? { valorPermutar: Number(r.valor_permutar) } : {}),
-        estadoElegibilidade: String(
-            r.estado_elegibilidade,
-        ) as AdiantamentoRow['estadoElegibilidade'],
+        estadoElegibilidade: parseEstadoElegibilidadeRow(r.estado_elegibilidade, String(r.doc_cod)),
         ...(r.motivo_bloqueio != null ? { motivoBloqueio: String(r.motivo_bloqueio) } : {}),
         ...(r.aging_days != null ? { agingDays: Number(r.aging_days) } : {}),
         ...(r.taxa != null ? { taxa: Number(r.taxa) } : {}),
@@ -618,6 +659,10 @@ export default class PermutaRelationalRepository {
 
     private mapDeclaracaoRow = (r: Record<string, unknown>): DeclaracaoRow => ({
         priCod: String(r.pri_cod),
+        // Cast mantido de propósito: `variante` é fechada pela CHECK
+        // `permuta_declaracao_importacao_variante_check` ('DI'|'DUIMP'), é
+        // ortogonal a este ciclo e não tem histórico de estado novo entrando por
+        // ela. Documentado, não hardenizado — endurecer aqui seria escopo alheio.
         variante: String(r.variante) as DeclaracaoRow['variante'],
         ...(r.data_base != null ? { dataBase: new Date(String(r.data_base)) } : {}),
     });

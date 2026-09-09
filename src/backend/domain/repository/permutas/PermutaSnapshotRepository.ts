@@ -5,6 +5,7 @@ import PostgreeDatabaseClient, {
 } from '../../client/database/PostgreeDatabaseClient.js';
 import {
     ESTADO_ELEGIBILIDADE,
+    type EstadoElegibilidade,
     type MotivoBloqueio,
 } from '../../interface/permutas/EstadoElegibilidade.js';
 import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js';
@@ -20,7 +21,17 @@ export interface PermutaEleicaoRunInput {
     triggeredBy: string;
     totalCandidatas: number;
     totalElegiveis: number;
+    /** Contagem ESTRITA de `BLOQUEADA` — passivo de terceiro/leitura (ADR-0043). */
     totalBloqueadas: number;
+    /**
+     * Os 3 buckets abaixo são OBRIGATÓRIOS de propósito: opcionais fariam a
+     * convergência header ↔ snapshot (invariante I5, cláusula 2) depender de o
+     * caller lembrar de preenchê-los — e um caller esquecido gravaria zeros
+     * mudos, que é exatamente a classe de defeito que este ciclo corrige.
+     */
+    totalCasamentoManual: number;
+    totalPermutaManual: number;
+    totalJaPermutado: number;
     bloqueadasByMotivo: Record<string, number>;
     errorMessage?: string;
 }
@@ -39,6 +50,9 @@ export interface PermutaRunSummary {
     totalCandidatas: number;
     totalElegiveis: number;
     totalBloqueadas: number;
+    totalCasamentoManual: number;
+    totalPermutaManual: number;
+    totalJaPermutado: number;
     errorMessage?: string;
 }
 
@@ -48,7 +62,12 @@ export interface PermutaCandidataSnapshotRow {
     docCod: string;
     filCod?: number;
     priCod: string;
-    status: 'elegivel' | 'bloqueada';
+    /**
+     * O ESTADO INTEIRO da máquina, não uma projeção binária (ADR-0043 / I5).
+     * Até a migration 0054 esta coluna aceitava só `elegivel|bloqueada` e três
+     * estados eram achatados na gravação.
+     */
+    status: EstadoElegibilidade;
     motivoBloqueio?: MotivoBloqueio;
     agingDays?: number;
     invoiceDocCod?: string;
@@ -67,6 +86,28 @@ export interface PermutaCandidataSnapshotRow {
 /** Máx. de candidatas por INSERT multi-row (mantém o nº de placeholders sob o
  * teto do protocolo wire do Postgres; 500 × 10 cols ≈ 5k placeholders). */
 const SNAPSHOT_INSERT_CHUNK = 500;
+
+/** Valores aceitos na coluna `permuta_candidata_snapshot.status` (CHECK da 0054). */
+const ESTADOS_VALIDOS: ReadonlySet<string> = new Set<string>(Object.values(ESTADO_ELEGIBILIDADE));
+
+const ehEstadoElegibilidade = (valor: string): valor is EstadoElegibilidade =>
+    ESTADOS_VALIDOS.has(valor);
+
+/**
+ * Estreita o valor lido da coluna para o estado do domínio. FALHA ALTO em vez de
+ * cair num fallback: o fallback silencioso `!== 'elegivel' ? 'bloqueada'` era
+ * metade do bug que a ADR-0043 corrige — informação perdida na leitura, sem
+ * nenhum sinal. Se a CHECK da 0054 deixou passar um valor desconhecido, quem lê
+ * precisa saber disso, não receber um palpite.
+ */
+const parseStatusSnapshot = (bruto: unknown, docCod: string): EstadoElegibilidade => {
+    const valor = String(bruto);
+    if (ehEstadoElegibilidade(valor)) return valor;
+    throw new Error(
+        `snapshot de permuta com status fora da máquina de estados: '${valor}' ` +
+            `(documento ${docCod}). A CHECK da migration 0054 deveria impedir isto.`,
+    );
+};
 
 const chunked = <T>(items: readonly T[], size: number): T[][] => {
     if (items.length === 0) return [];
@@ -114,10 +155,12 @@ export default class PermutaSnapshotRepository {
             `INSERT INTO permuta_eleicao_run (
                 id, flow_id, started_at, finished_at, status,
                 total_candidatas, total_elegiveis, total_bloqueadas,
+                total_casamento_manual, total_permuta_manual, total_ja_permutado,
                 bloqueadas_by_motivo, triggered_by, error_message
             ) VALUES (
                 $id, $flowId, $startedAt, $finishedAt, $status,
                 $totalCandidatas, $totalElegiveis, $totalBloqueadas,
+                $totalCasamentoManual, $totalPermutaManual, $totalJaPermutado,
                 $bloqueadasByMotivo, $triggeredBy, $errorMessage
             )`,
             {
@@ -129,6 +172,9 @@ export default class PermutaSnapshotRepository {
                 totalCandidatas: run.totalCandidatas,
                 totalElegiveis: run.totalElegiveis,
                 totalBloqueadas: run.totalBloqueadas,
+                totalCasamentoManual: run.totalCasamentoManual,
+                totalPermutaManual: run.totalPermutaManual,
+                totalJaPermutado: run.totalJaPermutado,
                 bloqueadasByMotivo: JSON.stringify(run.bloqueadasByMotivo),
                 triggeredBy: run.triggeredBy,
                 errorMessage: run.errorMessage ?? null,
@@ -179,6 +225,9 @@ export default class PermutaSnapshotRepository {
         totalCandidatas: number;
         totalElegiveis: number;
         totalBloqueadas: number;
+        totalCasamentoManual: number;
+        totalPermutaManual: number;
+        totalJaPermutado: number;
         bloqueadasByMotivo: Record<string, number>;
     } | null> => {
         const row = await this.databaseClient.selectFirst<{
@@ -188,10 +237,14 @@ export default class PermutaSnapshotRepository {
             total_candidatas: number;
             total_elegiveis: number;
             total_bloqueadas: number;
+            total_casamento_manual: number;
+            total_permuta_manual: number;
+            total_ja_permutado: number;
             bloqueadas_by_motivo: Record<string, number> | string;
         }>(
             `SELECT id, flow_id, status, total_candidatas, total_elegiveis,
-                    total_bloqueadas, bloqueadas_by_motivo
+                    total_bloqueadas, total_casamento_manual, total_permuta_manual,
+                    total_ja_permutado, bloqueadas_by_motivo
              FROM permuta_eleicao_run
              WHERE id = $runId`,
             { runId },
@@ -208,6 +261,9 @@ export default class PermutaSnapshotRepository {
             totalCandidatas: Number(row.total_candidatas),
             totalElegiveis: Number(row.total_elegiveis),
             totalBloqueadas: Number(row.total_bloqueadas),
+            totalCasamentoManual: Number(row.total_casamento_manual),
+            totalPermutaManual: Number(row.total_permuta_manual),
+            totalJaPermutado: Number(row.total_ja_permutado),
             bloqueadasByMotivo: bloqueadasByMotivo ?? {},
         };
     };
@@ -227,7 +283,9 @@ export default class PermutaSnapshotRepository {
     public listRecentRuns = async (limit: number): Promise<PermutaRunSummary[]> => {
         const rows = await this.databaseClient.selectMany(
             `SELECT id, triggered_by, started_at, finished_at, status,
-                    total_candidatas, total_elegiveis, total_bloqueadas, error_message
+                    total_candidatas, total_elegiveis, total_bloqueadas,
+                    total_casamento_manual, total_permuta_manual, total_ja_permutado,
+                    error_message
              FROM permuta_eleicao_run
              WHERE NOT (kind = 'ingest' AND status = 'success')
              ORDER BY finished_at DESC
@@ -246,6 +304,9 @@ export default class PermutaSnapshotRepository {
         totalCandidatas: Number(r.total_candidatas),
         totalElegiveis: Number(r.total_elegiveis),
         totalBloqueadas: Number(r.total_bloqueadas),
+        totalCasamentoManual: Number(r.total_casamento_manual),
+        totalPermutaManual: Number(r.total_permuta_manual),
+        totalJaPermutado: Number(r.total_ja_permutado),
         ...(r.error_message != null ? { errorMessage: String(r.error_message) } : {}),
     });
 
@@ -317,14 +378,23 @@ export default class PermutaSnapshotRepository {
 
         const params: Record<string, unknown> = { runId };
         const valuesTuples = candidatas.map((candidata, i) => {
-            const status =
-                candidata.estadoElegibilidade === ESTADO_ELEGIBILIDADE.ELEGIVEL
-                    ? 'elegivel'
-                    : 'bloqueada';
             params[`docCod_${i}`] = candidata.adiantamento.docCod;
             params[`filCod_${i}`] = candidata.adiantamento.filCod ?? null;
             params[`priCod_${i}`] = candidata.priCod;
-            params[`status_${i}`] = status;
+            // O estado ÍNTEGRO da máquina — zero ramo catch-all (ADR-0043 / I5
+            // cláusula 1). O ternário que morava aqui achatava casamento-manual,
+            // permuta-manual e ja-permutado em 'bloqueada'.
+            //
+            // A CHECK da 0054 aceita os 5 estados que a eleição produz, e NÃO
+            // `descoberta`: toda candidata passa por `avaliarElegibilidade` antes
+            // de chegar aqui, então `descoberta` é inalcançável neste caminho. Se
+            // algum dia deixar de ser, a transação falha alto na constraint em vez
+            // de gravar um estado que ninguém sabe ler — que é o comportamento
+            // desejado, e o oposto do que esta linha fazia antes.
+            //
+            // Verificado contra Postgres 16 em 2026-09-08: os 5 valores passam e
+            // 'descoberta' é rejeitado pela constraint.
+            params[`status_${i}`] = candidata.estadoElegibilidade;
             params[`motivoBloqueio_${i}`] = candidata.motivoBloqueio ?? null;
             params[`agingDays_${i}`] = candidata.aging ?? null;
             params[`invoiceDocCod_${i}`] = candidata.invoiceCasada?.docCod ?? null;
@@ -351,7 +421,13 @@ export default class PermutaSnapshotRepository {
         docCod: String(r.doc_cod),
         ...(r.fil_cod != null ? { filCod: Number(r.fil_cod) } : {}),
         priCod: String(r.pri_cod),
-        status: r.status === 'elegivel' ? 'elegivel' : 'bloqueada',
+        status: parseStatusSnapshot(r.status, String(r.doc_cod)),
+        // `status` é validado acima porque tem CHECK e conjunto fechado; o MOTIVO
+        // NÃO tem constraint nenhuma no banco (coluna TEXT livre) e sua taxonomia
+        // é aberta e explicitamente fora do escopo da ADR-0043 (§8). Fazer este
+        // cast falhar alto derrubaria a leitura inteira do snapshot no primeiro
+        // motivo antigo ou novo — trocaria uma perda de informação por uma perda
+        // de disponibilidade. Fica documentado, não endurecido.
         ...(r.motivo_bloqueio != null
             ? { motivoBloqueio: String(r.motivo_bloqueio) as MotivoBloqueio }
             : {}),

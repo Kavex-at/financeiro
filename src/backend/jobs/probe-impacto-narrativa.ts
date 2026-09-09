@@ -10,7 +10,24 @@ import { Client } from 'pg';
  *
  * Descartável, como os demais `probe-impacto-*`. Não usa `bootstrapAppContainer`
  * de propósito: nada de migrations na Supabase compartilhada.
+ *
+ * ATENÇÃO À SÉRIE HISTÓRICA (migration 0054 / ADR-0043): `estado_elegibilidade`
+ * ganhou `ja-permutado`, e `bloqueada` passou a significar SÓ passivo dependente
+ * de terceiro ou de leitura. Antes da 0054 os adtos já permutados estavam dentro
+ * de `bloqueada` (80 casos vivos, 13.434 históricos). A queda no número é
+ * RECLASSIFICAÇÃO, não melhora — as consultas abaixo quebram por estado.
  */
+
+/** Ressalva impressa junto do resultado — ver `docs/impacto/CORRECOES-2026-08-24.md` §1. */
+const AVISO_SERIE = [
+    '',
+    'RESSALVA OBRIGATÓRIA (ADR-0043 / migration 0054): "bloqueadas" MUDOU DE SIGNIFICADO.',
+    'Os adiantamentos já permutados saíram do balde (estado próprio `ja-permutado`), e o',
+    'snapshot deixou de achatar casamento-manual/permuta-manual em "bloqueada". Qualquer',
+    'leitura antes × depois precisa dizer isto explicitamente, sob pena de repetir — com o',
+    'sinal invertido — o erro do relatório de impacto v1.',
+    '',
+].join('\n');
 
 interface Consulta {
     readonly nome: string;
@@ -19,7 +36,9 @@ interface Consulta {
 
 const CONSULTAS: readonly Consulta[] = [
     {
-        nome: 'permutas_bloqueadas_por_motivo',
+        // `bloqueada` no sentido NOVO (estrito): já não inclui os `ja-permutado`,
+        // que agora têm estado próprio e aparecem na consulta seguinte.
+        nome: 'permutas_bloqueadas_estrito_por_motivo',
         sql: `
             SELECT motivo_bloqueio,
                    moeda,
@@ -35,6 +54,7 @@ const CONSULTAS: readonly Consulta[] = [
         `,
     },
     {
+        // Quebra por estado — é aqui que `ja-permutado` deixa de ser invisível.
         nome: 'permutas_estado_atual',
         sql: `
             SELECT estado_elegibilidade,
@@ -129,6 +149,7 @@ const main = async (): Promise<void> => {
     }
 
     console.log(`\n--- JSON ---\n${JSON.stringify(saida, null, 2)}`);
+    console.log(AVISO_SERIE);
 };
 
 void main();

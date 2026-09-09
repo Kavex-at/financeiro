@@ -24,6 +24,23 @@ export const ESTADO_ELEGIBILIDADE = {
      * exigida na manual (vem da invoice escolhida). Motivo: `cliente-filtro`.
      */
     PERMUTA_MANUAL: 'permuta-manual',
+    /**
+     * Adiantamento **pago** cujo saldo a permutar já foi 100% consumido numa
+     * permuta anterior (`valorPermutar = 0` E `valorPermutado > 0`,
+     * `mnyTitPermuta` do detalhe). Estado **CONCLUÍDO** — o trabalho foi feito —,
+     * NÃO uma reprovação de mérito (≠ BLOQUEADA): mantê-lo dentro do balde de
+     * bloqueadas inflava o passivo externo em 2,72× (ADR-0043).
+     *
+     * **Terminal dentro de uma run**: sem saldo, não origina alocação nem a
+     * transição T5 (`→ EXECUTADA`) — uma aresta para lá contaria a mesma permuta
+     * duas vezes. A máquina é recomputada do zero a cada run, então um estorno no
+     * ERP devolve `valorPermutar > 0` e a próxima eleição reclassifica.
+     *
+     * Motivo informativo: `MOTIVO_BLOQUEIO.JA_PERMUTADO` (mesmo padrão de
+     * `composto-nm`/`CASAMENTO_MANUAL` e `cliente-filtro`/`PERMUTA_MANUAL`).
+     * ADR-0043 · state-machine `elegibilidade-permuta-candidata` (T6).
+     */
+    JA_PERMUTADO: 'ja-permutado',
 } as const;
 
 export type EstadoElegibilidade = (typeof ESTADO_ELEGIBILIDADE)[keyof typeof ESTADO_ELEGIBILIDADE];

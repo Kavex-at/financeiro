@@ -13,6 +13,7 @@ import type {
     AdiantamentoAtivo,
     CasamentoRow,
     DeclaracaoRow,
+    EstadoElegibilidadeRow,
     InvoiceRow,
 } from '../../repository/permutas/PermutaRelationalRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
@@ -250,6 +251,21 @@ export default class GestaoPermutasService {
         return reclass;
     };
 
+    /**
+     * Status de tela a partir do estado gravado — LEITURA, não reconstrução.
+     *
+     * Até ADR-0043 `ja-permutado` não existia no banco e esta derivação o
+     * reconstruía a partir de `motivoBloqueio`, o que significava que um adto no
+     * estado certo mas sem o motivo aparecia como `bloqueada`. Com a migration
+     * 0054 o estado vem íntegro do relacional e a apresentação só o repassa.
+     *
+     * `descoberta` não é produzido pela eleição (toda candidata passa por
+     * `avaliarElegibilidade`); se aparecer — ingestão interrompida no meio —
+     * cai em `bloqueada`, como já caía, para a linha nunca sumir da tela.
+     */
+    private statusDoEstado = (estado: EstadoElegibilidadeRow): StatusElegibilidade =>
+        estado === 'descoberta' ? 'bloqueada' : estado;
+
     private toPendente = (
         a: AdiantamentoAtivo,
         statusByDocCod: Map<string, ProcessamentoStatus>,
@@ -260,25 +276,15 @@ export default class GestaoPermutasService {
         adtosCasamentoPorPriCod: Map<string, number>,
         adtosReclassificadosManual: Map<string, 'cross-over' | 'multiplas'>,
     ): PermutaPendente => {
-        // "Já permutado" é gravado como BLOQUEADA+motivo `ja-permutado` (estado
-        // concluído, não erro). Aqui na apresentação é promovido a status próprio,
-        // pra sair do balde de bloqueadas e virar filtro/KPI separado — sem novo
-        // estado no banco (zero migration/reseed).
-        // Reclassificação (regra 2026-06-24): adto elegível cujo casamento ULTRAPASSA a invoice vira
-        // casamento-manual (múltipla) — execução manual pelo analista.
+        // Reclassificação (regra 2026-06-24, ADR-0014): adto elegível cujo casamento
+        // ULTRAPASSA a invoice vira casamento-manual (múltipla) — execução manual
+        // pelo analista. Ortogonal a este ciclo, e mantém a precedência que tinha
+        // sobre o estado lido do banco.
         const ultrapassaInvoice =
             a.estadoElegibilidade === 'elegivel' && adtosReclassificadosManual.has(a.docCod);
         const status: StatusElegibilidade = ultrapassaInvoice
             ? 'casamento-manual'
-            : a.estadoElegibilidade === 'elegivel'
-              ? 'elegivel'
-              : a.estadoElegibilidade === 'casamento-manual'
-                ? 'casamento-manual'
-                : a.estadoElegibilidade === 'permuta-manual'
-                  ? 'permuta-manual'
-                  : a.motivoBloqueio === 'ja-permutado'
-                    ? 'ja-permutado'
-                    : 'bloqueada';
+            : this.statusDoEstado(a.estadoElegibilidade);
         const processamentoStatus = statusByDocCod.get(a.docCod);
         // Casamento manual (N:M): candidatas = invoices em aberto do MESMO processo.
         const candidatas =

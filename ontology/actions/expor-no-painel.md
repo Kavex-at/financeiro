@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-18
+last_review: 2026-09-08
 preconditions:
   - "Candidatas avaliadas (gates + casamento + variação quando disponível)."
 postconditions:
@@ -24,6 +24,12 @@ resolved-by:
 
 > **Etapa 5.** Agrega as `PermutaCandidata` (elegíveis e bloqueadas) com **aging** e expõe
 > no endpoint de leitura do painel READ-ONLY.
+
+> **2026-09-08 (ADR-0043):** o endpoint legado `GET /permutas/painel` (`PainelService`, projeção
+> binária do snapshot, **zero call sites** no frontend) foi **removido**. A ação passa a ter um
+> único implementador — `GestaoPermutasService` + `src/frontend/app/permutas/page.tsx` —, que expõe
+> os estados sem achatamento. `PainelService` nunca constou de `_index.json`: a remoção não deixa
+> ação órfã.
 
 ## Comportamento
 

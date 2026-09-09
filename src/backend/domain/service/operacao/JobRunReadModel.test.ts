@@ -15,7 +15,10 @@ const permutaRun = (over: Partial<Record<string, unknown>> = {}) => ({
     status: 'success',
     totalCandidatas: 700,
     totalElegiveis: 42,
-    totalBloqueadas: 648,
+    totalBloqueadas: 348,
+    totalCasamentoManual: 48,
+    totalPermutaManual: 200,
+    totalJaPermutado: 62,
     ...over,
 });
 
@@ -102,10 +105,17 @@ describe('JobRunReadModel — normalização das três fontes', () => {
             sispag: [sispagRun()],
         }).exporSaude(AGORA);
 
+        // Os 5 buckets da eleição (ADR-0043): "Últimas rodadas" deixa de somar a
+        // NOSSA fila de trabalho (casamento manual + permuta manual) dentro de
+        // "bloqueadas", que passa a significar só passivo de terceiro. As chaves
+        // saem em português legível porque a tela imprime a chave crua.
         expect(acharPipeline(saude, PIPELINE.PERMUTAS_ELEICAO).ultimaRun?.metricas).toEqual({
             candidatas: 700,
             elegiveis: 42,
-            bloqueadas: 648,
+            bloqueadas: 348,
+            'casamento manual': 48,
+            'permuta manual': 200,
+            'já permutado': 62,
         });
         expect(acharPipeline(saude, PIPELINE.RECEBIMENTOS_EXTRATOS).ultimaRun?.metricas).toEqual({
             lidas: 100,

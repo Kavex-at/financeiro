@@ -9,7 +9,7 @@ import type ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
 import type ConexosFinanceiroClient from '../../client/ConexosFinanceiroClient.js';
 import type ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
-import type PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
+import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import type LogService from '../LogService.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
@@ -825,9 +825,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 runId: 'run-existing',
                 flowId: 'flow-existing',
                 status: 'success',
-                totalCandidatas: 3,
+                totalCandidatas: 8,
                 totalElegiveis: 2,
                 totalBloqueadas: 1,
+                totalCasamentoManual: 2,
+                totalPermutaManual: 2,
+                totalJaPermutado: 1,
                 bloqueadasByMotivo: { 'sem-invoice': 1 },
             });
             const { logService } = buildLogService();
@@ -850,6 +853,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             expect(result.runId).toBe('run-existing');
             expect(result.idempotentReplay).toBe(true);
             expect(result.totalElegiveis).toBe(2);
+            // Os 3 buckets novos atravessam o REPLAY. Sem isto, uma run reaproveitada
+            // devolveria zeros mudos nos buckets — e nenhum teste existente quebraria.
+            expect(result.totalCasamentoManual).toBe(2);
+            expect(result.totalPermutaManual).toBe(2);
+            expect(result.totalJaPermutado).toBe(1);
             // No new fan-out: Conexos never touched, no new run persisted.
             expect(listFiliais).not.toHaveBeenCalled();
             expect(repo.persistRun).not.toHaveBeenCalled();
@@ -871,6 +879,9 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 totalCandidatas: 1,
                 totalElegiveis: 1,
                 totalBloqueadas: 0,
+                totalCasamentoManual: 0,
+                totalPermutaManual: 0,
+                totalJaPermutado: 0,
                 bloqueadasByMotivo: {},
             });
             const { logService, calls } = buildLogService();
@@ -1059,5 +1070,206 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
 
             expect(todasInvoices[0].inv.pago).toBe(false);
         });
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CASO CANÔNICO da invariante I5 (`business-rules/fidelidade-snapshot-eleicao.md`)
+// — ADR-0043. Roda o serviço REAL contra o repositório REAL (só o cliente de
+// banco é mock), porque a convergência header ↔ snapshot é uma propriedade da
+// gravação, não do mock: um teste contra `persistRun` mockado provaria nada.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('EleicaoPermutasService — fidelidade e convergência do snapshot (I5)', () => {
+    /** Captura os INSERTs emitidos dentro da transação do repositório real. */
+    const buildSnapshotDb = () => {
+        const txInsert = jest.fn().mockResolvedValue(1);
+        const tx = {
+            insert: txInsert,
+            selectMany: jest.fn().mockResolvedValue([]),
+            selectFirst: jest.fn().mockResolvedValue(null),
+            update: jest.fn().mockResolvedValue(0),
+        };
+        return {
+            client: {
+                insert: jest.fn().mockResolvedValue(1),
+                selectMany: jest.fn().mockResolvedValue([]),
+                selectFirst: jest.fn().mockResolvedValue(null),
+                withTransaction: jest.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+            } as unknown as PostgreeDatabaseClient,
+            txInsert,
+        };
+    };
+
+    /** Uma run com EXATAMENTE 1 candidata em cada um dos 5 estados. */
+    const runCanonica = async () => {
+        const adto = (docCod: string, priCod: string) => ({
+            ...adiantamento,
+            docCod,
+            priCod,
+        });
+        const inv = (docCod: string, priCod: string) => ({ ...invoice, docCod, priCod });
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest.fn().mockResolvedValue({
+                adiantamentos: [
+                    adto('A-ELEG', 'P1'),
+                    adto('A-BLOQ', 'P5'),
+                    adto('A-CASA', 'P2'),
+                    adto('A-PMAN', 'P3'),
+                    adto('A-JAPE', 'P4'),
+                ],
+                capHit: false,
+            }),
+            // D.I só em P1/P2/P4 — P3 e P5 ficam sem âncora de data-base.
+            listDeclaracaoByProcesso: jest.fn().mockResolvedValue([
+                { variante: 'DI', priCod: 'P1' },
+                { variante: 'DI', priCod: 'P2' },
+                { variante: 'DI', priCod: 'P4' },
+            ]),
+            listFinanceiroAPagar: jest.fn().mockResolvedValue({
+                proformas: [],
+                // P2 tem DUAS invoices → N:M → casamento-manual.
+                invoices: [inv('I1', 'P1'), inv('I2a', 'P2'), inv('I2b', 'P2'), inv('I4', 'P4')],
+            }),
+            // P3 é de cliente-filtro (pesCod 191) → permuta-manual cross-process.
+            listProcessos: jest
+                .fn()
+                .mockResolvedValue([{ priCod: 'P3', pesCod: '191', importador: 'INOX-TECH' }]),
+            getDetalheTitulos: jest.fn(async (params: { docCod: string; filCod: number }) =>
+                params.docCod === 'A-JAPE'
+                    ? // pago E saldo 100% consumido numa permuta anterior → T6.
+                      { valorPermutar: 0, pago: true, valorPermutado: 378636.28 }
+                    : { valorPermutar: 1000, pago: true },
+            ),
+        } as Partial<jest.Mocked<ConexosMock>>);
+
+        const { client, txInsert } = buildSnapshotDb();
+        const repo = new PermutaSnapshotRepository(client);
+        const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+        const service = buildEleicao(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo,
+            buildLogService().logService,
+            concurrency,
+            db,
+            buildClienteFiltro(['191']),
+        );
+
+        const result = await service.executar({ triggeredBy: 'analista' });
+        const headerParams = txInsert.mock.calls[0][1] as Record<string, unknown>;
+        const snapshotParams = txInsert.mock.calls[1][1] as Record<string, unknown>;
+        const statusGravados = Object.entries(snapshotParams)
+            .filter(([k]) => k.startsWith('status_'))
+            .map(([, v]) => String(v));
+        return { result, headerParams, statusGravados };
+    };
+
+    it('replay VAZIO (lock ocupado, vencedor ainda sem key) devolve os 5 buckets zerados', async () => {
+        const repo = buildRepo();
+        (repo.findRunIdByIdempotencyKey as jest.Mock).mockResolvedValue(null);
+        const { elegibilidade, variacao, aging, concurrency, clienteFiltro } = realServices();
+        const busyDb = {
+            withAdvisoryLock: jest.fn(
+                async (
+                    _k: number,
+                    _onAcquired: () => Promise<unknown>,
+                    onBusy: () => Promise<unknown>,
+                ) => onBusy(),
+            ),
+        } as unknown as jest.Mocked<PostgreeDatabaseClient>;
+        const service = buildEleicao(
+            buildConexos(),
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            buildLogService().logService,
+            concurrency,
+            busyDb,
+            clienteFiltro,
+        );
+
+        const result = await service.executar({ triggeredBy: 'u', idempotencyKey: 'idem-vazio' });
+
+        expect(result.idempotentReplay).toBe(true);
+        expect(result.totalCasamentoManual).toBe(0);
+        expect(result.totalPermutaManual).toBe(0);
+        expect(result.totalJaPermutado).toBe(0);
+    });
+
+    it('run ABORTADA persiste os 5 buckets zerados no header, sem snapshot', async () => {
+        const boom = new Error('conexos down');
+        const conexos = buildConexos({
+            listFiliais: jest.fn().mockRejectedValue(boom),
+        } as Partial<jest.Mocked<ConexosMock>>);
+        const repo = buildRepo();
+        const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
+        const service = buildEleicao(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            buildLogService().logService,
+            concurrency,
+            db,
+            clienteFiltro,
+        );
+
+        await expect(service.executar({ triggeredBy: 'u' })).rejects.toThrow('conexos down');
+
+        const [runArg, candidatasArg] = repo.persistRun.mock.calls[0];
+        expect(runArg.status).toBe('error');
+        expect(candidatasArg).toHaveLength(0);
+        expect(runArg).toMatchObject({
+            totalCandidatas: 0,
+            totalElegiveis: 0,
+            totalBloqueadas: 0,
+            totalCasamentoManual: 0,
+            totalPermutaManual: 0,
+            totalJaPermutado: 0,
+        });
+    });
+
+    it('grava 5 linhas de snapshot com 5 status DISTINTOS (fidelidade, cláusula 1)', async () => {
+        const { statusGravados } = await runCanonica();
+
+        expect(statusGravados).toHaveLength(5);
+        expect([...statusGravados].sort()).toEqual([
+            'bloqueada',
+            'casamento-manual',
+            'elegivel',
+            'ja-permutado',
+            'permuta-manual',
+        ]);
+    });
+
+    it('total_bloqueadas da run canônica é 1 — não 3, não 2', async () => {
+        const { result } = await runCanonica();
+
+        expect(result.totalCandidatas).toBe(5);
+        expect(result.totalElegiveis).toBe(1);
+        // Contagem ESTRITA de BLOQUEADA: casamento-manual, permuta-manual e
+        // ja-permutado saem do balde (ADR-0043 §1).
+        expect(result.totalBloqueadas).toBe(1);
+    });
+
+    it('convergência I5 (cláusula 2): header.total_<s> === COUNT(snapshot WHERE status = s)', async () => {
+        const { headerParams, statusGravados } = await runCanonica();
+
+        const colunaDoEstado: Record<string, string> = {
+            elegivel: 'totalElegiveis',
+            bloqueada: 'totalBloqueadas',
+            'casamento-manual': 'totalCasamentoManual',
+            'permuta-manual': 'totalPermutaManual',
+            'ja-permutado': 'totalJaPermutado',
+        };
+        for (const [estado, coluna] of Object.entries(colunaDoEstado)) {
+            const noSnapshot = statusGravados.filter((s) => s === estado).length;
+            expect({ [coluna]: headerParams[coluna] }).toEqual({ [coluna]: noSnapshot });
+        }
+        expect(headerParams.totalCandidatas).toBe(statusGravados.length);
     });
 });

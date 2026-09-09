@@ -20,7 +20,6 @@ import ReconciliacaoLotePermutaService from '../domain/service/permutas/Reconcil
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import LogService from '../domain/service/LogService.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
-import PainelService from '../domain/service/permutas/PainelService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
 import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRelationalRepository.js';
@@ -257,64 +256,6 @@ describe('GET /permutas/runs', () => {
         try {
             const res = await fetch(`${server.url}/permutas/runs`);
             expect(res.status).toBe(401);
-        } finally {
-            await server.close();
-        }
-    });
-});
-
-describe('GET /permutas/painel', () => {
-    afterEach(() => {
-        container.clearInstances();
-    });
-
-    it('returns the latest snapshot payload', async () => {
-        const exporNoPainel = jest.fn().mockResolvedValue({
-            runId: 'run-9',
-            snapshotAge: 1000,
-            totalElegiveis: 1,
-            totalBloqueadas: 1,
-            items: [
-                { docCod: 'A1', priCod: '2048', status: 'elegivel', aging: 10 },
-                {
-                    docCod: 'A2',
-                    priCod: '3000',
-                    status: 'bloqueada',
-                    motivoBloqueio: 'sem-invoice',
-                    aging: null,
-                },
-            ],
-        });
-        container.registerInstance(PainelService, { exporNoPainel } as never);
-
-        const server = await listen(buildApp({ authenticated: true }));
-        try {
-            const res = await fetch(`${server.url}/permutas/painel`);
-            const body = await readJson(res);
-            expect(res.status).toBe(200);
-            expect(body.totalElegiveis).toBe(1);
-            expect(body.items).toHaveLength(2);
-            // Blocked candidate is visible with its motivo (bloqueada ≠ falha).
-            expect(body.items[1].motivoBloqueio).toBe('sem-invoice');
-            // ⏸ GATED-P0-4 — aging null is preserved, not dropped.
-            expect(body.items[1].aging).toBeNull();
-        } finally {
-            await server.close();
-        }
-    });
-
-    it('returns an empty payload when no snapshot exists (not 500)', async () => {
-        const exporNoPainel = jest
-            .fn()
-            .mockResolvedValue({ totalElegiveis: 0, totalBloqueadas: 0, items: [] });
-        container.registerInstance(PainelService, { exporNoPainel } as never);
-
-        const server = await listen(buildApp({ authenticated: true }));
-        try {
-            const res = await fetch(`${server.url}/permutas/painel`);
-            const body = await readJson(res);
-            expect(res.status).toBe(200);
-            expect(body.items).toEqual([]);
         } finally {
             await server.close();
         }
@@ -685,12 +626,30 @@ describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
                 });
                 expect(res.status).toBe(403);
             }
-            // Leitura (GET /painel) NÃO é gateada por role.
-            container.registerInstance(PainelService, {
-                montarPainel: jest.fn().mockResolvedValue({ pendencias: [], totais: {} }),
-            } as never);
-            const leitura = await fetch(`${server.url}/permutas/painel`);
-            expect(leitura.status).not.toBe(403);
+            // Leitura NÃO é gateada por role. A sonda anterior era `GET /painel`
+            // (removida em ADR-0043 §5) e registrava um mock com o método ERRADO
+            // (`montarPainel` em vez de `exporNoPainel`), então a rota estourava
+            // 500 e o `not.toBe(403)` passava POR ACIDENTE, sem exercitar o
+            // caminho não-gateado. Aqui a leitura é real e responde 200.
+            const exporGestao = jest.fn().mockResolvedValue({
+                fonte: 'banco',
+                pendentes: [],
+                invoicesEmAberto: [],
+                casamentos: [],
+                totais: {
+                    pendentes: 0,
+                    invoicesEmAberto: 0,
+                    elegiveis: 0,
+                    bloqueadas: 0,
+                    casamentoManual: 0,
+                    permutaManual: 0,
+                    jaPermutado: 0,
+                },
+            });
+            container.registerInstance(GestaoPermutasService, { exporGestao } as never);
+            const leitura = await fetch(`${server.url}/permutas/gestao`);
+            expect(leitura.status).toBe(200);
+            expect(exporGestao).toHaveBeenCalled();
         } finally {
             await server.close();
         }

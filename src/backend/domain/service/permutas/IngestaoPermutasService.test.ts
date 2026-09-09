@@ -134,6 +134,24 @@ const permutaManual: PermutaCandidata = {
     gatesAvaliados: [],
 };
 
+const jaPermutado: PermutaCandidata = {
+    priCod: '8266',
+    adiantamento: {
+        docCod: 'A8266',
+        priCod: '8266',
+        filCod: 2,
+        dataEmissao: new Date('2026-01-15'),
+        valor: 378636.28,
+        moeda: 'USD',
+        pago: true,
+        valorPermutar: 0,
+        valorPermutado: 378636.28,
+    },
+    estadoElegibilidade: ESTADO_ELEGIBILIDADE.JA_PERMUTADO,
+    motivoBloqueio: MOTIVO_BLOQUEIO.JA_PERMUTADO,
+    gatesAvaliados: [],
+};
+
 const buildEleicao = (candidatas: PermutaCandidata[]) =>
     ({
         computeCandidatas: jest.fn().mockResolvedValue({
@@ -401,6 +419,30 @@ describe('IngestaoPermutasService', () => {
         expect(row?.estadoElegibilidade).toBe('permuta-manual');
         expect(row?.pesCod).toBe('191');
         expect(row?.importador).toBe('INOX-TECH');
+    });
+
+    // ADR-0043 — sem este caso, `toEstadoRow` mapeava o estado novo para
+    // 'descoberta' pelo `default` do switch, SEM erro de compilação: trocaria um
+    // apagamento (`ja-permutado` → `bloqueada`) por outro.
+    it('persiste estado ja-permutado na row relacional — nunca `descoberta`', async () => {
+        const eleicao = buildEleicao([jaPermutado]);
+        const { repo } = buildRelational();
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            buildSnapshot(),
+            variacao,
+            borderoGestao,
+            buildLogService().logService,
+        );
+
+        await service.executar({ triggeredBy: 'cron' });
+
+        const rows = repo.upsertAdiantamentos.mock.calls[0][2];
+        const row = rows.find((r) => r.docCod === 'A8266');
+        expect(row?.estadoElegibilidade).toBe('ja-permutado');
+        expect(row?.estadoElegibilidade).not.toBe('descoberta');
+        expect(row?.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.JA_PERMUTADO);
     });
 
     it('on compute failure: ROLLBACK (no write) + error header outside tx, rethrows', async () => {

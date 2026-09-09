@@ -320,6 +320,60 @@ describe('PermutaRelationalRepository', () => {
         expect(params).toMatchObject({ estado: 'elegivel' });
     });
 
+    it('listAdiantamentosAtivos filtra pelo estado ja-permutado com SQL parametrizado', async () => {
+        // ADR-0043 — o union do filtro era HARDCODED e separado do da row; sem
+        // esta linha a tela não conseguia filtrar o estado novo, e nada quebrava.
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        await repo.listAdiantamentosAtivos({ estadoElegibilidade: 'ja-permutado' });
+
+        const [sql, params] = (db.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toContain('estado_elegibilidade = $estado');
+        // Rule #5 — nenhum valor interpolado na string.
+        expect(sql).not.toContain('ja-permutado');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params).toMatchObject({ estado: 'ja-permutado' });
+    });
+
+    it('mapAdiantamentoRow devolve o estado ja-permutado íntegro (union da row)', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            {
+                doc_cod: '8266',
+                pri_cod: '5000',
+                pago: true,
+                estado_elegibilidade: 'ja-permutado',
+                motivo_bloqueio: 'ja-permutado',
+                stale: false,
+            },
+        ]);
+        const repo = new PermutaRelationalRepository(db);
+
+        const [row] = await repo.listAdiantamentosAtivos();
+
+        expect(row.estadoElegibilidade).toBe('ja-permutado');
+    });
+
+    it('estado_elegibilidade fora do domínio FALHA ALTO na leitura — sem `as` cego', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            {
+                doc_cod: 'A404',
+                pri_cod: '5000',
+                pago: true,
+                estado_elegibilidade: 'estado-que-nao-existe',
+                stale: false,
+            },
+        ]);
+        const repo = new PermutaRelationalRepository(db);
+
+        await expect(repo.listAdiantamentosAtivos()).rejects.toThrow(/estado-que-nao-existe/);
+    });
+
     it('listInvoicesEmAberto filters NOT pago AND NOT stale', async () => {
         const tx = buildTx();
         const db = buildDb(tx);

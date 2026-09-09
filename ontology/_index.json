@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-09-01",
-    "version": "0.22.0",
-    "note": "v0.21.0 (2026-08-27, ADR-0040): o boleto do SISPAG deixa de ser tratado como PIX/TED. Medido em producao: titEspCodbar e null em 100% dos titulos (fin064 2000, grid de pendentes 2173, com308 50), entao a auto-deteccao de boleto nunca disparava e todo BOLETO ia para a remessa com barras VAZIA. O vinculo pagamento<->boleto passa a ser o flag titVldReflexoDdaAssoc do grid de pendentes; no import pede-se a associacao (associarDda) e o ERP anexa itsNumCodbar + deriva a modalidade do banco emissor (6=mesmo banco, 7=outro). O caminho passa por uma QUESTION do ERP, respondida com answers:{id:'YES'} — allowlist de UMA chave; qualquer outra segue humana (ErpPerguntaError). BOLETO sem boleto DDA e barrado no ENVIO (BoletoSemCodigoBarrasError). v0.20.0 (2026-08-25, ADR-0039): o SISPAG retoma execucao orfa CONSULTANDO o estado no ERP em vez de exigir conserto manual no fin015. Criterio por-escrita: onde o ERP expoe estado verificavel (flpVldStatus/titulosCount no fin015, processadoEm no fin052), consulta-se; onde nao expoe, o fail-closed do ADR-0013 continua. Emenda idempotencia-reconciliacao.md, que segue integral para a permuta (fin010). v0.17.0 (2026-08-17, ADR-0037): a aba NDe do painel de recebimentos passa a listar de verdade. Fonte da projecao = solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica (a NDe local so nasce apos homologar, entao listar por ela esconderia a NDe cuja cauda fiscal parou no meio); fora ficam dry_run e nde_dispensada (ADR-0031). O painel HIDRATA o estado atual no com297 (GET por docCod, cap ",
+    "generated": "2026-09-08",
+    "version": "0.23.0",
+    "note": "v0.23.0 (2026-09-08, ADR-0043): `ja-permutado` promovido de motivo a ESTADO de primeira classe da elegibilidade e a projecao binaria do snapshot da eleicao revogada. permuta_candidata_snapshot.status deixa de ser CHECK (elegivel|bloqueada) e passa a gravar o estado inteiro (migration 0054 + backfill determinista). Medido em PRD: run 1c1acefe (2026-09-08 18:16 UTC) header 329 bloqueadas x snapshot 677 na MESMA transacao (2,06x); passivo externo real 249 (2,72x de inflacao); 348 itens da fila propria (300 cross-process + 48 N:M) apareciam como culpa de terceiro. Backfill reconciliado com header ja gravado: 64.893 = 64.893 (bloqueadas) e 7.883 = 7.883 (elegiveis) sobre 250 runs kind=eleicao; 264 runs kind=ingest nascem com as colunas novas em 0 sem caso especial; header historico se move (total_bloqueadas 64.893 -> 51.459, total_ja_permutado 13.434). Header ganha 5 buckets (total_casamento_manual/total_permuta_manual/total_ja_permutado — 5 confirmado pelo Yuri em 2026-09-08, apos escolha inicial de 4 anterior a promocao de ja-permutado). NEW business-rule fidelidade-snapshot-eleicao (I5). GET /permutas/painel + PainelService REMOVIDOS (zero call sites; PainelService nunca esteve indexado, exporNoPainel segue implementada por GestaoPermutasService). Revogada por escrito a decisao de back-compat das migrations 0005/0012. business_rules_total 21->22. Nenhuma entidade/acao/maquina nova. v0.21.0 (2026-08-27, ADR-0040): o boleto do SISPAG deixa de ser tratado como PIX/TED. Medido em producao: titEspCodbar e null em 100% dos titulos (fin064 2000, grid de pendentes 2173, com308 50), entao a auto-deteccao de boleto nunca disparava e todo BOLETO ia para a remessa com barras VAZIA. O vinculo pagamento<->boleto passa a ser o flag titVldReflexoDdaAssoc do grid de pendentes; no import pede-se a associacao (associarDda) e o ERP anexa itsNumCodbar + deriva a modalidade do banco emissor (6=mesmo banco, 7=outro). O caminho passa por uma QUESTION do ERP, respondida com answers:{id:'YES'} — allowlist de UMA chave; qualquer outra segue humana (ErpPerguntaError). BOLETO sem boleto DDA e barrado no ENVIO (BoletoSemCodigoBarrasError). v0.20.0 (2026-08-25, ADR-0039): o SISPAG retoma execucao orfa CONSULTANDO o estado no ERP em vez de exigir conserto manual no fin015. Criterio por-escrita: onde o ERP expoe estado verificavel (flpVldStatus/titulosCount no fin015, processadoEm no fin052), consulta-se; onde nao expoe, o fail-closed do ADR-0013 continua. Emenda idempotencia-reconciliacao.md, que segue integral para a permuta (fin010). v0.17.0 (2026-08-17, ADR-0037): a aba NDe do painel de recebimentos passa a listar de verdade. Fonte da projecao = solicitacao_numerario_execucao LEFT JOIN nota_debito_eletronica (a NDe local so nasce apos homologar, entao listar por ela esconderia a NDe cuja cauda fiscal parou no meio); fora ficam dry_run e nde_dispensada (ADR-0031). O painel HIDRATA o estado atual no com297 (GET por docCod, cap ",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -84,8 +84,13 @@
         "src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts",
         "src/backend/domain/interface/permutas/PermutaCandidata.ts",
         "src/backend/domain/interface/permutas/Gestao.ts",
+        "src/backend/domain/interface/permutas/EstadoElegibilidade.ts",
+        "src/backend/domain/service/permutas/ElegibilidadeService.ts",
         "src/backend/migrations/0012_estado_permuta_manual.sql",
-        "src/frontend/app/permutas/page.tsx"
+        "src/backend/migrations/0054_estado_ja_permutado.sql",
+        "src/frontend/app/permutas/page.tsx",
+        "src/backend/domain/service/operacao/JobRunReadModel.ts",
+        "src/backend/routes/permutas.ts"
       ],
       "resolved_by": [
         "P0-6",
@@ -93,7 +98,7 @@
         "P0-5",
         "P0-4 (aging column read; probe 2026-06-18)"
       ],
-      "note": "Estados: descoberta|elegivel|casamento-manual|permuta-manual|bloqueada (migration 0012). Classificação derivada tipoPermuta (simples/multiplas/cross-over/cross-process, ADR-0009) calculada em GestaoPermutasService — não persiste. ADR-0010: auto-casamento Simples (toCasamentoRows) ficou PARCIAL — distribuição greedy N:1 com teto da invoice; expõe saldoRestante. ADR-0014: nova flag derivada autoElegivel (múltipla AUTOMÁTICA quando o adto cobre todas as invoices do processo, GestaoPermutasService.ts:322-335); tipoPermuta pode ser RECLASSIFICADO (simples→cross-over/multiplas quando ultrapassa a invoice, :219-251, :309-320). Aba 'Simples'→'Automáticas'."
+      "note": "Estados: descoberta|elegivel|casamento-manual|permuta-manual|bloqueada (migration 0012). Classificação derivada tipoPermuta (simples/multiplas/cross-over/cross-process, ADR-0009) calculada em GestaoPermutasService — não persiste. ADR-0010: auto-casamento Simples (toCasamentoRows) ficou PARCIAL — distribuição greedy N:1 com teto da invoice; expõe saldoRestante. ADR-0014: nova flag derivada autoElegivel (múltipla AUTOMÁTICA quando o adto cobre todas as invoices do processo, GestaoPermutasService.ts:322-335); tipoPermuta pode ser RECLASSIFICADO (simples→cross-over/multiplas quando ultrapassa a invoice, :219-251, :309-320). Aba 'Simples'→'Automáticas'. ADR-0043: estados passam a descoberta|elegivel|casamento-manual|permuta-manual|ja-permutado|bloqueada (migration 0054); `ja-permutado` deixa de ser motivo dentro de `bloqueada` e vira estado CONCLUIDO e terminal; o snapshot passa a gravar o estado inteiro (fim da projecao binaria) e a derivacao em GestaoPermutasService le o estado direto. Ciclo permuta-snapshot-estados (2026-09-08) fechado: toEstadoRow virou switch exaustivo (never) — o `default: descoberta` teria apagado o estado novo sem erro de compilacao; PermutaSnapshotRepository perdeu os dois catch-all (escrita e leitura) e a leitura agora FALHA ALTO em valor fora do enum; header ganhou total_casamento_manual/total_permuta_manual/total_ja_permutado; GET /permutas/painel + PainelService REMOVIDOS (nunca constaram deste indice)."
     },
     "Permuta": {
       "file": "entities/permuta.md",
@@ -665,12 +670,28 @@
     }
   },
   "business_rules": {
+    "fidelidade-snapshot-eleicao": {
+      "file": "business-rules/fidelidade-snapshot-eleicao.md",
+      "invariant": "I5",
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts",
+        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+        "src/backend/domain/service/permutas/ElegibilidadeService.ts",
+        "src/backend/migrations/0054_estado_ja_permutado.sql"
+      ],
+      "note": "ADR-0043. Duas clausulas: (1) fidelidade — snapshot.status = estadoElegibilidade, sem projecao com perda; (2) convergencia — header(run).total_<s> = COUNT do snapshot da mesma run, por construcao (mesmo predicado, uma fonte). Contra-exemplo historico: run 1c1acefe, 329 x 677. Generalizacao para recebimento_ingestao_run/pagamento_ingestao_run e NOTA + watchlist, nao regra (nao medida). RECONCILIADO em 2026-09-08: o ciclo permuta-snapshot-estados fechou verde e o teste canonico existe (EleicaoPermutasService.test.ts, describe 'fidelidade e convergencia do snapshot (I5)'), rodando servico real x repositorio real. Convergencia por construcao: contarPorEstado e a unica agregacao e o header e gravado com ...totals.",
+      "canonical_test": "src/backend/domain/service/permutas/EleicaoPermutasService.test.ts"
+    },
     "elegibilidade-permuta": {
       "file": "business-rules/elegibilidade-permuta.md",
       "invariant": "I3",
       "status": "implemented",
       "has_canonical_test": false,
+      "note": "ADR-0043: o enunciado deixou de afirmar que qualquer falha vai para BLOQUEADA (falso desde ADR-0005/0007, junho/2026 — divida preexistente fechada de carona). Falha agora mapeia para casamento-manual / permuta-manual / ja-permutado / bloqueada; I3 (definicao de elegivel) inalterada.",
       "impl_files": [
+        "src/backend/domain/service/permutas/ElegibilidadeService.ts",
         "src/backend/domain/service/permutas/EleicaoPermutasService.ts"
       ],
       "resolved_by": [
@@ -1005,10 +1026,14 @@
       "impl_files": [
         "src/backend/migrations/0005_estado_casamento_manual.sql",
         "src/backend/migrations/0012_estado_permuta_manual.sql",
+        "src/backend/migrations/0054_estado_ja_permutado.sql",
+        "src/backend/domain/interface/permutas/EstadoElegibilidade.ts",
+        "src/backend/domain/service/permutas/ElegibilidadeService.ts",
         "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
-        "src/backend/domain/service/permutas/GestaoPermutasService.ts"
+        "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+        "src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts"
       ],
-      "note": "States descoberta|elegivel|casamento-manual|permuta-manual|bloqueada implementados (T1-T4). EXECUTADA (baixa fin010) = Fase 3 (ADR-0013) = partial: T5 reconciliarPermuta implementada e gated (dry-run não transiciona)."
+      "note": "States descoberta|elegivel|casamento-manual|permuta-manual|ja-permutado|bloqueada implementados (T1-T4 + T6). T6 DESCOBERTA->JA_PERMUTADO (Gate 3 OK + Gate 2 reprovado com valorPermutado>0), terminal: nao origina T5 (sem saldo, nada a alocar); terminal = sem aresta de saida DENTRO de uma run, pois a maquina e recomputada a cada eleicao (ADR-0043, migration 0054). EXECUTADA (baixa fin010) = Fase 3 (ADR-0013) = partial: T5 reconciliarPermuta implementada e gated (dry-run não transiciona)."
     },
     "status-permuta-bordero": {
       "file": "state-machines/status-permuta-bordero.md",
