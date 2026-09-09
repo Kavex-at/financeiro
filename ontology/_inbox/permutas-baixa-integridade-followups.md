@@ -2,7 +2,7 @@
 
 > Origem: Regis-Review `docs/regis-review/2026-09-08-1414-permutas/` — R-1 (P0, card
 > `fault-tolerance-1`) e R-2 (card `fault-tolerance-4`). Escopo aceito e escrito na ontologia:
-> ADR-0043 (I-Recon-5/6/7, I-Write-8a/8b, estado `PARCIAL_AGUARDANDO_FINALIZACAO`/B1', correção da
+> ADR-0044 (I-Recon-5/6/7, I-Write-8a/8b, estado `PARCIAL_AGUARDANDO_FINALIZACAO`/B1', correção da
 > chave de idempotência). O que segue **não** entrou, e por quê.
 
 > **Atualização 2026-09-08 (mesmo dia) — o ciclo fechou: a implementação entrou.** Este arquivo foi
@@ -79,7 +79,7 @@ no mesmo dia.** Mantido como checklist auditável — item a item, com a âncora
 
 | Item exigido pela ontologia | Status | Onde |
 |---|---|---|
-| Migration `0054_permuta_execucao_parcial.sql` (`CHECK` com `'parcial'` + `valor_residual_usd`) | ✅ | `src/backend/migrations/0054_permuta_execucao_parcial.sql`, idempotente |
+| Migration `0056_permuta_execucao_parcial.sql` (`CHECK` com `'parcial'` + `valor_residual_usd`) | ✅ | `src/backend/migrations/0056_permuta_execucao_parcial.sql`, idempotente |
 | `ExecucaoStatus` espelhado à mão em dois lugares — **nada forçava a paridade** | ✅ **resolvido, não só espelhado** | guarda de paridade FE↔BE em `src/frontend/lib/types.test.ts` (era o "follow-up próprio" pedido aqui) |
 | `PermutaStatus` + filtro `r.status !== 'settled'` | ✅ | `BorderoGestaoService.ts:37` e `:593` |
 | `beginExecution` preserva `parcial` no `ON CONFLICT` | ✅ | `PermutaExecucaoRepository.ts` — as 5 `CASE`s |
@@ -96,12 +96,12 @@ fallback de título único via `titulosDoErp: boolean` (a origem da lista é ras
 explicitamente, não inferida de `titulos.length === 1`).
 
 **B1'** ganhou ramo próprio no badge (`src/frontend/app/permutas/components/ui.tsx:124-143`, 4 testes
-de render) — e não um `else` reaproveitado, que era exatamente o defeito que a ADR-0043 pediu para
+de render) — e não um `else` reaproveitado, que era exatamente o defeito que a ADR-0044 pediu para
 não cometer.
 
 ### O requisito duro de B1' — satisfeito **por construção**, e é melhor assim
 
-A ADR-0043 exige que `parcial-aguardando-finalizacao` **não** remova o adiantamento da elegibilidade
+A ADR-0044 exige que `parcial-aguardando-finalizacao` **não** remova o adiantamento da elegibilidade
 (senão o resíduo perde a cobrança, e o defeito do R-2 só muda de lugar). Verificado: não há guarda
 que garanta isso — **não é preciso haver**. `ElegibilidadeService.ts` não referencia status de
 execução, nem `parcial`, nem `statusPorAdiantamento` (grep vazio); a elegibilidade sai do **saldo**
@@ -166,7 +166,7 @@ não são fechados por implementar:
    que nós já baixamos, logo tendentes a estar pagas. Sem essa segunda execução, **não existe** base
    para estimar quantas vezes 8a vai disparar na fila real — e a tentação de citar "19 de 20" como se
    fosse taxa de disparo só cresce agora que o código existe. Não citar.
-2. **Guarda de truncamento** — ABERTA e **deliberadamente não implementada**. A própria ADR-0043 a
+2. **Guarda de truncamento** — ABERTA e **deliberadamente não implementada**. A própria ADR-0044 a
    rebaixou de requisito para **defensiva opcional** (população medida: 1–2 títulos por invoice,
    `count` nunca divergiu de `rows.length`). Se um dia for implementada, o critério é
    `count !== rows.length` — **não** `rows.length === pageSize`, que é frágil e já foi medido falhando
@@ -180,7 +180,7 @@ portanto, os dois riscos abaixo seguem **exatamente tão abertos quanto estavam*
 "implementado" e parar aí seria trocar um registro falso ("a ontologia está à frente") por outro
 ("já está protegido").
 
-Enquanto a versão em produção não trouxer a ADR-0043 — confira por `GET /health` (campo `version`) e
+Enquanto a versão em produção não trouxer a ADR-0044 — confira por `GET /health` (campo `version`) e
 pelo `CHANGELOG.md` da release, como manda a nota de vigência do runbook
 `docs/runbooks/fin010-write-cutover.md`:
 

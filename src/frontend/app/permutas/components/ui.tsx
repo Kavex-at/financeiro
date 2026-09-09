@@ -120,7 +120,7 @@ export function ProcessamentoBadge({ status }: { status: ProcessamentoStatus }) 
  * `=== 'finalizado'` e caía no `else` para todo o resto: acrescentar
  * `parcial-aguardando-finalizacao` só ao TIPO faria o estado novo ser desenhado como o antigo, e o
  * `typecheck` NÃO pegaria (o `else` continua válido). Seria `parcial` virando o novo silêncio —
- * exatamente o risco que a ADR-0043 nomeia ao criar o estado. Se um valor novo aparecer, ele cai no
+ * exatamente o risco que a ADR-0044 nomeia ao criar o estado. Se um valor novo aparecer, ele cai no
  * `null` final e some da tela, o que é ruidoso e visível — não silenciosamente errado.
  */
 export function PermutaBorderoBadge({ vinculo }: { vinculo?: PermutaBorderoVinculo }) {

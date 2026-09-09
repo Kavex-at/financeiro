@@ -5,7 +5,7 @@ import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient
 /**
  * Status de UMA execução de baixa (par adto↔invoice).
  *
- * `settled` e `parcial` são os DOIS terminais (ADR-0043): `settled` afirma "o alocado foi
+ * `settled` e `parcial` são os DOIS terminais (ADR-0044): `settled` afirma "o alocado foi
  * integralmente baixado"; `parcial` afirma "houve baixa confirmada, mas sobrou resíduo"
  * (`valor_residual_usd`). Nenhum dos dois regride em `beginExecution` — o critério é "houve
  * escrita irreversível no ERP sob esta chave?". `pending`/`error` são reabríveis.
@@ -63,7 +63,7 @@ export interface BeginExecutionResult {
     /**
      * TRUE quando a linha já estava num TERMINAL (`settled` OU `parcial`) antes desta chamada.
      * O nome guarda a história (nasceu só com `settled`); a semântica é "já houve escrita
-     * irreversível sob esta chave" — e em `parcial` houve (ADR-0043).
+     * irreversível sob esta chave" — e em `parcial` houve (ADR-0044).
      */
     alreadySettled: boolean;
 }
@@ -239,7 +239,7 @@ export default class PermutaExecucaoRepository {
      * - Linha nova → status `reconciling` (real) ou `pending` (dry-run).
      * - Linha existente NÃO-terminal (`pending`/`reconciling`/`error`) → reaberta (retry).
      * - Linha TERMINAL (`settled` ou `parcial`) → PRESERVADA: não regride. `alreadySettled=true`.
-     *   `parcial` entra aqui porque as baixas dos títulos consumidos JÁ estão no ERP (ADR-0043):
+     *   `parcial` entra aqui porque as baixas dos títulos consumidos JÁ estão no ERP (ADR-0044):
      *   re-POSTar seria super-pagamento. O resíduo se resolve RE-ALOCANDO o par (chave nova).
      */
     public beginExecution = async (input: BeginExecutionInput): Promise<BeginExecutionResult> => {
@@ -347,7 +347,7 @@ export default class PermutaExecucaoRepository {
      * IRMÃO de `markSettled`, não um parâmetro a mais dele: os dois terminais AFIRMAM COISAS
      * DIFERENTES. `settled` afirma "o alocado foi integralmente baixado"; `parcial` afirma "houve
      * baixa confirmada no ERP, e sobrou `valorResidualUsd` (moeda negociada) para re-alocar".
-     * Colapsá-los num campo opcional convidaria justamente o `settled` mudo que a ADR-0043 mata.
+     * Colapsá-los num campo opcional convidaria justamente o `settled` mudo que a ADR-0044 mata.
      *
      * I-Recon-2 vale igual aqui: só existe `parcial` sobre baixa confirmada (`bxaCodSeq`).
      * Ver `business-rules/idempotencia-reconciliacao.md` (I-Recon-6/7) e I-Write-8b.

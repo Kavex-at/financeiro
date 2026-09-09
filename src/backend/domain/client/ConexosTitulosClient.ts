@@ -64,7 +64,7 @@ export interface TituloAPagar {
      *
      * Eixo ORTOGONAL ao `titVldStatus` do `filterList`, que é o CICLO DE VIDA do registro
      * (`1 ATIVO · 2 RENEGOCIADO · 3 CANCELADO`) e **não** significa "em aberto" — a confusão
-     * entre os dois é a premissa que a ADR-0043 teve de emendar.
+     * entre os dois é a premissa que a ADR-0044 teve de emendar.
      *
      * É **retornável mas NÃO filtrável**: `filterList: {'pago#NE': '1'}` responde HTTP 500 (a
      * opção server-side foi medida e morreu). Por isso entra como CORROBORAÇÃO do em-aberto

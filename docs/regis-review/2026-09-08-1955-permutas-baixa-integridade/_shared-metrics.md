@@ -17,7 +17,7 @@ Remediação de **R-1 (P0)** e **R-2** daquele run. Base `main` @ `47c48f8`.
 | Estado terminal `parcial` + `valor_residual_usd` + `BUSINESS_WARN` | `ReconciliacaoPermutaService.ts:559-588`, `PermutaExecucaoRepository.markParcial:287-338` | I-Recon-6/7, I-Write-8b |
 | Pré-checagem de cobertura antes do 1º POST, 422 | `ReconciliacaoPermutaService.assertCobertura:679-703` + `errors/AlocacaoSemCoberturaError.ts` | I-Write-8a |
 | `parcial-aguardando-finalizacao` na 2ª máquina | `BorderoGestaoService.ts` + `frontend/app/permutas/components/ui.tsx:124-143` | B1' |
-| Migration do CHECK + coluna | `migrations/0054_permuta_execucao_parcial.sql` | — |
+| Migration do CHECK + coluna | `migrations/0056_permuta_execucao_parcial.sql` | — |
 | `pago` no `fieldList` | `ConexosTitulosClient.ts` | I-Write-8a (corroboração) |
 
 Especificação: `ontology/decisions/0043-*.md` **e sua emenda de 2026-09-08**, `business-rules/idempotencia-reconciliacao.md` (I-Recon-1 corrigida, I-Recon-5/6/7), `business-rules/fin010-write-contract.md` (I-Write-8a/8b), `state-machines/status-permuta-bordero.md` (B1').

@@ -37,7 +37,7 @@ describe('PermutaExecucaoRepository', () => {
         expect(sql).toContain('INSERT INTO permuta_alocacao_execucao');
         expect(sql).toContain('ON CONFLICT (idempotency_key) DO UPDATE');
         // A CASE preserva o status quando ele já é TERMINAL (não regride). São DOIS terminais
-        // desde a ADR-0043: `settled` (cobriu o alocado) e `parcial` (cobriu em parte, mas houve
+        // desde a ADR-0044: `settled` (cobriu o alocado) e `parcial` (cobriu em parte, mas houve
         // escrita irreversível no ERP). O critério é "houve escrita irreversível sob esta chave?".
         expect(sql).toContain("permuta_alocacao_execucao.status IN ('settled', 'parcial')");
         // Todas as 5 CASEs do DO UPDATE usam o MESMO predicado terminal — status, dry_run,
@@ -72,7 +72,7 @@ describe('PermutaExecucaoRepository', () => {
         expect(out).toEqual({ status: 'settled', alreadySettled: true });
     });
 
-    it('beginExecution PRESERVA parcial (não regride para reconciling) — I-Recon-1/ADR-0043', async () => {
+    it('beginExecution PRESERVA parcial (não regride para reconciling) — I-Recon-1/ADR-0044', async () => {
         const db = buildDb();
         // A linha já era `parcial`: a baixa dos títulos consumidos ESTÁ no ERP. Re-POSTar seria
         // super-pagamento; o resíduo se resolve RE-ALOCANDO o par (chave nova), nunca re-executando.
@@ -501,7 +501,7 @@ describe('PermutaExecucaoRepository — identidade Conexos da execução (I-2, A
         expect(sql).toContain('conexos_username');
         expect(sql).toContain('conexos_usn_cod');
         // Mesma doutrina do executado_por: linha TERMINAL não regride a autoria (ADR-0041) —
-        // e desde a ADR-0043 os terminais são dois (`settled` e `parcial`).
+        // e desde a ADR-0044 os terminais são dois (`settled` e `parcial`).
         expect(sql).toContain(
             "conexos_username = CASE WHEN permuta_alocacao_execucao.status IN ('settled', 'parcial')",
         );

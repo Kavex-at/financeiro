@@ -20,7 +20,7 @@ import type { HandlerError } from '../libs/handler/HandlerError.js';
  * Saída para a analista: RE-ALOCAR o par (a re-alocação cunha chave nova e libera um novo
  * lançamento). Por isso `retryable = false` — repetir o mesmo POST daria o mesmo 422.
  *
- * Ver `business-rules/fin010-write-contract.md` (I-Write-8a) e ADR-0043.
+ * Ver `business-rules/fin010-write-contract.md` (I-Write-8a) e ADR-0044.
  */
 export default class AlocacaoSemCoberturaError extends Error implements HandlerError {
     public readonly code = 'ALOCACAO_SEM_COBERTURA';

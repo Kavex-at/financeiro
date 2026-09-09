@@ -48,7 +48,7 @@ overall_score: 7.5
 - Contract test raro FE↔BE — `src/frontend/lib/types.test.ts` lê o arquivo-fonte do backend e
   compara literais de 3 uniões (`ExecucaoStatus`, `PermutaStatusBordero`, `LoteAdiantamentoStatus`).
   A guarda cobre 3/8, mas ativos como esse são atípicos no repo.
-- Migration `0054_permuta_execucao_parcial.sql` idempotente (`DROP … IF EXISTS` + `ADD COLUMN …
+- Migration `0056_permuta_execucao_parcial.sql` idempotente (`DROP … IF EXISTS` + `ADD COLUMN …
   IF NOT EXISTS`), forward-compatible (schema novo é SUPERSET do union antigo), aplicada sob
   `pg_advisory_lock(314159265)` pelo `BootMigrator` antes do `listen()`.
 - Security **subiu com o delta** (7,5 → 8,0): novos vetores de Limit Exposure (advisory lock
@@ -78,11 +78,11 @@ Performance 1,0 · Integrability 0,9 · Deployability 0,9 (Σ pesos = 9,0).
 | Availability | 7,5 | 0 | 2 | 2 | 0 | F-availability-1: pool `max=5` + advisory lock retido ~240 s ⇒ starvation de leituras não-relacionadas |
 | Deployability | 7,0 | 0 | 1 | 3 | 1 | F-deployability-1: rollback do commit com linhas `parcial` no banco regride para `reconciling` e re-POSTa `fin010` |
 | Fault Tolerance | 8,0 | 0 | 2 | 0 | 0 | F-fault-tolerance-4: `parcial` é terminal humano-dependente sem reaper/detector proativo |
-| Integrability | 7,5 | 0 | 1 | 3 | 1 | F-integrability-2: `titMnyTotPago` (pivô da cobertura) passa por `Number.parseFloat` locale-cego — flip para BR-locale reintroduz o defeito da ADR-0043 |
+| Integrability | 7,5 | 0 | 1 | 3 | 1 | F-integrability-2: `titMnyTotPago` (pivô da cobertura) passa por `Number.parseFloat` locale-cego — flip para BR-locale reintroduz o defeito da ADR-0044 |
 | Modifiability | 6,5 | 0 | 0 | 0 | 2 | F-modifiability-1: `mod-1` do run pai não atacada — `reconciliarSerializado` cresceu +255 LOC, cc 35→36 |
 | Performance | 7,5 | 0 | 0 | 1 | 1 | F-performance-1: `withAdvisoryLock` retém 1/5 clients do pool durante toda a reconciliação (~240 s worst-case) |
 | Security | 8,0 | 0 | 0 | 0 | 3 | F-security-delta-1: `AlocacaoSemCoberturaError.details` ecoa cobertura/valorAlocado/deficit no 422 — inócuo hoje (todos `admin`), vira canal lateral quando `security-1/2/3` for implementado |
-| Testability | 8,0 | 0 | 1 | 2 | 2 | F-testability-1/2: mock do lock com `Set` prova contrato, não cross-connection; migration 0054 sem teste contra Postgres real |
+| Testability | 8,0 | 0 | 1 | 2 | 2 | F-testability-1/2: mock do lock com `Set` prova contrato, não cross-connection; migration 0056 sem teste contra Postgres real |
 | **Overall (ponderado)** | **7,5** | **0** | **7** | **10** | **10** | — |
 
 Score interpretation:
@@ -101,7 +101,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
 - **QA(s) afetados**: Deployability + Fault Tolerance
 - **Findings de origem**: F-deployability-1 (P1) — `deployability.md:69-86`; F-fault-tolerance-5 (P1) — `fault-tolerance.md:132-150`
 - **Evidência sintetizada**: dois agentes independentes chegaram à mesma janela. Migration
-  `0054` amplia o CHECK para aceitar `parcial`, mas se o commit for revertido (`git revert 8b18686`)
+  `0056` amplia o CHECK para aceitar `parcial`, mas se o commit for revertido (`git revert 8b18686`)
   mantendo a migration (que é forward-only), o código pré-delta em `main@47c48f8` tem
   `PermutaExecucaoRepository.beginExecution` com CASE preservando **apenas** `status='settled'`
   (`:257-284`). Linha `parcial` cai no ELSE, `EXCLUDED.status='reconciling'` sobrescreve, a rota
@@ -129,7 +129,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
 > **A decisão é do Yuri**: apresentamos o trade-off, não decidimos — este risco está acima da
 > sua prioridade formal porque expõe uma superfície com histórico de causar o P0 original.
 
-### R-2: `parcial` acumula silenciosamente sem reaper proativo — o "novo silêncio" que a ADR-0043 nomeia
+### R-2: `parcial` acumula silenciosamente sem reaper proativo — o "novo silêncio" que a ADR-0044 nomeia
 
 - **QA(s) afetados**: Availability + Fault Tolerance
 - **Findings de origem**: F-availability-2 (P1) — `availability.md`; F-fault-tolerance-4 (P1) — `fault-tolerance.md:112-131`
@@ -139,7 +139,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
   o problema idêntico com `RemessaExecucaoRepository.listReconcilingParadas:124` +
   `SispagPainelService:376-377` + `reaper-sispag-reconciling.ts` (cron 15 min). Para Permutas,
   `grep -rn "permuta_alocacao_execucao" src/backend/jobs/` retorna só probes; zero reapers.
-  A própria ADR-0043 nomeou o risco ao escolher `parcial` em vez de fail-closed — a defesa
+  A própria ADR-0044 nomeou o risco ao escolher `parcial` em vez de fail-closed — a defesa
   fecha um silêncio (POST duplicado) e abre outro (resíduo esquecido).
 - **Impacto técnico**: MTBF do resíduo → indefinido; MTTR → depende do olho humano no painel.
 - **Impacto de negócio**: KPI "R$ baixado" diverge de "R$ alocado" cronicamente; resíduo médio
@@ -183,7 +183,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
   serviço chama `withAdvisoryLock` com chave estável derivada do `adiantamentoDocCod`, invoca
   `onBusy` quando ocupada). **Não** prova que `pg_try_advisory_lock` serializa entre conexões
   DIFERENTES do pool — o cenário de produção (Render ≥2 instâncias, um Postgres compartilhado).
-  Simultaneamente, a migration 0054 é validada só no texto do SQL
+  Simultaneamente, a migration 0056 é validada só no texto do SQL
   (`PermutaExecucaoRepository.test.ts:42` — `sql.toContain("... IN ('settled', 'parcial')")`), não
   na semântica do CHECK contra Postgres real. Um typo em migration futura, uma renomeação, um
   ambiente que não aplicou 0054, causam falha em runtime **depois** do POST `fin010`.
@@ -208,9 +208,9 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
   4 ordens de magnitude a menos. Se o Conexos flipar `titMnyTotPago` para locale BR (o cliente
   é BR, o ERP tem tenants BR — não é hipótese absurda), `pagoBrl` colapsa, `abertoUsd ≈ usd`,
   cobertura resulta ≈ `Σ face`, e a pré-checagem I-Write-8a **aprova exatamente o caso do doc
-  9320 que a ADR-0043 documenta como motivação**. Nem string nem NaN levantam. Simultaneamente,
+  9320 que a ADR-0044 documenta como motivação**. Nem string nem NaN levantam. Simultaneamente,
   `pago` entra sem enum `1|2|3` — `pago==="PAGO"` vira `undefined` silencioso; a corroboração
-  ADR-0043 morre sem sinal.
+  ADR-0044 morre sem sinal.
 - **Impacto técnico**: dormente hoje (ERP devolve número JSON, formato US). *Ativa-se* na
   primeira mudança de contrato do fornecedor.
 - **Impacto de negócio**: **crítico condicional**. Custo do fix: 1 schema Zod em 1 arquivo
@@ -218,7 +218,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
 - **Card(s) Kanban relacionados**: `integrability-1` (S, P1); `integrability-3` (S, P2 — fixture);
   `integrability-2` (S, P2 — estender Zod aos 3 passos intermediários do handshake `fin010`)
 - **Custo de inação em 6 meses**: uma evolutiva do fornecedor (locale, expansão de enum) passa
-  despercebida em CI e chega em prod na tela do analista — reintroduz o defeito que a ADR-0043
+  despercebida em CI e chega em prod na tela do analista — reintroduz o defeito que a ADR-0044
   foi criada para barrar.
 
 ### R-6: `PERMUTAS_WRITE_ENABLED` inexistente — kill-switch da Frente I é o global `CONEXOS_WRITE_ENABLED`
@@ -241,7 +241,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
 - **Findings de origem**: F-deployability-2 (P2) — `deployability.md:88-106`
 - **Evidência sintetizada**: `src/backend/index.ts:79` — `app.get('/health', … res.json({ status,
   version }))`. O runbook novo deste delta (`docs/runbooks/fin010-write-cutover.md:80-83`) diz
-  "confirme que a versão em produção já traz a ADR-0043 — GET /health devolve a version, e a
+  "confirme que a versão em produção já traz a ADR-0044 — GET /health devolve a version, e a
   ADR aparece no CHANGELOG.md". Isso força o operador (às 2h da manhã, num incidente) a
   correlacionar version → CHANGELOG → ADR à mão E abrir o dashboard do Render para saber se
   `CONEXOS_WRITE_ENABLED=true`. Este delta apoia-se no `/health` como âncora sem completar a
@@ -267,7 +267,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
 - **Custo de inação em 6 meses**: recorrência do defeito C-6 (badge divergente sem typecheck
   failure) em qualquer união fora das 3 cobertas.
 
-### R-9: Guarda de truncamento (`rows.length !== count`) declarada "opcional" pela ADR-0043 é INEXEQUÍVEL do ponto atual do pipe
+### R-9: Guarda de truncamento (`rows.length !== count`) declarada "opcional" pela ADR-0044 é INEXEQUÍVEL do ponto atual do pipe
 
 - **QA(s) afetados**: Integrability
 - **Findings de origem**: F-integrability-4 (P2) — `integrability.md:132-147`
@@ -305,7 +305,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
 
 - **Aparece em**: Deployability + Fault Tolerance
 - **Findings**: F-deployability-1 (P1), F-fault-tolerance-5 (P1)
-- **Diagnóstico unificado**: derivação independente por dois QAs. Migration 0054 é forward-only,
+- **Diagnóstico unificado**: derivação independente por dois QAs. Migration 0056 é forward-only,
   código anterior a `8b18686` não conhece o valor `parcial`, e `beginExecution` pré-delta só
   preserva `settled`. A ampliação do union num commit único, sem shim de leitura no código
   antigo, cria uma janela de retração assimétrica. É a mesma classe do P0 original, agora pela
@@ -313,7 +313,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
 - **Recomendação consolidada**: entregar `deployability-1` + `fault-tolerance-2` no mesmo PR:
   (a) guard no `beginExecution` — recusar reabertura quando `bxa_cod_seq IS NOT NULL` (fecha
   a porta via dado, não via documento); (b) runbook `rollback-permutas-parcial.md` com SQL
-  numerado; (c) marcar ADR-0043 no header como forward-only. Custo: ≤ 1 dia combinado.
+  numerado; (c) marcar ADR-0044 no header como forward-only. Custo: ≤ 1 dia combinado.
 
 ### CC-2: Advisory lock retém client dedicado + pool `max=5` = starvation
 
@@ -328,7 +328,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
   handshake, reduzir `writeRouteLimiter` para `poolMax − 2`. Custo: S (config) + M (instrumentação
   + 2 semanas de p95 medido). Sem instrumentação, qualquer ajuste é adivinhação.
 
-### CC-3: `parcial` sem sinal proativo — o "novo silêncio" da ADR-0043
+### CC-3: `parcial` sem sinal proativo — o "novo silêncio" da ADR-0044
 
 - **Aparece em**: Availability + Fault Tolerance
 - **Findings**: F-availability-2 (P1), F-fault-tolerance-4 (P1)
@@ -341,7 +341,7 @@ especificamente, não no débito estrutural do módulo (que é do run pai).
   `GET /permutas/execucoes?status=parcial` + card no painel operacional. Fecha os dois findings.
   Custo: S (≤ 1 dia).
 
-### CC-4: Sem prova cross-connection do advisory lock + sem teste de integração da migration 0054
+### CC-4: Sem prova cross-connection do advisory lock + sem teste de integração da migration 0056
 
 - **Aparece em**: Testability + Fault Tolerance
 - **Findings**: F-testability-1, F-testability-2 (P1), com nota do `qa-fault-tolerance` sobre a mesma limitação
@@ -393,7 +393,7 @@ Cards com esforço S e severidade ≥ P2, alta razão impacto/esforço:
 |---|---|---|---|---|
 | `testability-baixa-1` | Testability + Fault Tolerance | L | Sandbox + Executable Assertions | O P0 fechado por este delta e o CHECK da 0054 são hoje defesas *derivadas*. Baseline: 0 testes de integração PG no módulo. Alvo: ≥4 casos. Vira "prova por construção" em "prova medida em CI". Sem isso, o próximo delta que tocar lock ou union arrisca reintroduzir R-1 do run pai sem sinal. |
 | `performance-3` (parte B) | Performance + Availability | M | Bound Execution Times | Retenção do client dedicado no lock cai de ~240 s (worst-case: 6 chamadas × 40 s) para ≤ 90 s (só o trecho write). Amplia folga do pool sem crescer capacidade. Métrica dependente de `availability-1` para observar. |
-| `integrability-4` | Integrability | M | Encapsulate | ADR-0043 declara `rows.length !== count` como "defensivo opcional"; medição neste run mostrou que o critério é *inexequível* sem migrar `listTitulosAPagar` de `callList` para `listGenericPaginated`. Baseline: 0 pontos do pipe onde `count` está acessível. Se uma invoice multi-parcela chegar (não impossível), sem esta base a subestimativa de cobertura vira recusa indevida. |
+| `integrability-4` | Integrability | M | Encapsulate | ADR-0044 declara `rows.length !== count` como "defensivo opcional"; medição neste run mostrou que o critério é *inexequível* sem migrar `listTitulosAPagar` de `callList` para `listGenericPaginated`. Baseline: 0 pontos do pipe onde `count` está acessível. Se uma invoice multi-parcela chegar (não impossível), sem esta base a subestimativa de cobertura vira recusa indevida. |
 | `testability-baixa-2` | Testability + Modifiability | M | Executable Assertions | Baseline: 3/8 uniões cobertas, regex frágil em 3 vetores. Alvo: 8/8 via `as const` em módulo compartilhado. Custo de acrescentar união: 4 lugares → 2. Fecha classes de recorrência de C-6. |
 | `testability-baixa-4` | Testability | M | Limit Structural Complexity | `ReconciliacaoPermutaService.test.ts` cruzou 1.301 LOC / 46 `it()`. Adicionar 1 `@inject` custa 46 edições `as never`. Sem split ou testkit, cada `/feature-tweak` paralela colide. |
 | `modifiability-delta-2` | Modifiability + Integrability | M | Use an Intermediary | Guarda de parity só cobre uniões; o delta adicionou `valorResidualUsd?` em `ResultadoAlocacao` nos dois lados à mão. 0/5 interfaces guardadas. Alvo: 5/5 via parser ou pacote compartilhado. |
@@ -420,7 +420,7 @@ Cards com esforço S e severidade ≥ P2, alta razão impacto/esforço:
    `routes/permutas.ts:513-521` + `http/respondHandlerError.ts:21-32`. `AlocacaoSemCoberturaError`
    (422) e `ReconciliacaoEmAndamentoError` (409) chegam à analista com `userMessage` em PT,
    `code` estável, `retryable`. Não vazam `err.message` bruto. *Inform Actors tactic.*
-7. **Migration idempotente e forward-compatible** — `0054_permuta_execucao_parcial.sql`:
+7. **Migration idempotente e forward-compatible** — `0056_permuta_execucao_parcial.sql`:
    `DROP CONSTRAINT IF EXISTS` + `ADD COLUMN IF NOT EXISTS`; CHECK novo é SUPERSET do antigo,
    deploy blue/green passa sem quebrar instância antiga. Aplicada pelo `BootMigrator` sob
    `pg_advisory_lock(314159265)` antes do `listen()`. *Script Deployment Commands + Idempotent
@@ -450,7 +450,7 @@ Cards com esforço S e severidade ≥ P2, alta razão impacto/esforço:
   - **`mod-1` do run pai cita cc obsoleto.** `qa-modifiability` mediu `reconciliar` em cc 35
     em `main@47c48f8` (não 24 como o card afirma) e 36 pós-delta. Efeito real: +1, dentro do
     ruído. O card `mod-1` precisa ter o baseline atualizado quando for retomado.
-  - **A ADR-0043 sugere um follow-up barato que é caro.** A guarda `rows.length !== count`
+  - **A ADR-0044 sugere um follow-up barato que é caro.** A guarda `rows.length !== count`
     (§ "defensiva opcional") é INEXEQUÍVEL do ponto atual do pipe — `legacyConexosAdapter.listGeneric`
     descarta `count`. Merece emenda na ADR registrando o custo real (M, 3 camadas). Registrado
     aqui e no card `integrability-4`.

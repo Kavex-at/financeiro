@@ -10,7 +10,7 @@ related_files:
   - src/backend/domain/errors/ReconciliacaoEmAndamentoError.ts
   - src/backend/domain/errors/AlocacaoSemCoberturaError.ts
   - src/backend/migrations/0015_permuta_alocacao_execucao.sql
-  - src/backend/migrations/0054_permuta_execucao_parcial.sql
+  - src/backend/migrations/0056_permuta_execucao_parcial.sql
 last_review: 2026-09-08
 has_canonical_test: true
 ---
@@ -19,7 +19,7 @@ has_canonical_test: true
 
 > Fase 3 (risco arquitetural #1). A baixa no ERP é a **primeira escrita irreversível-por-nós** do sistema
 > (o estorno é manual, na UI do `fin010`). Estas regras garantem que uma re-execução, um clique duplo, ou
-> uma falha parcial **não** gerem baixa duplicada nem percam o rastro. Ver ADR-0013, ADR-0043 e
+> uma falha parcial **não** gerem baixa duplicada nem percam o rastro. Ver ADR-0013, ADR-0044 e
 > `fin010-write-contract.md`.
 
 ## Granularidade e chave
@@ -38,7 +38,7 @@ has_canonical_test: true
   CANCELADO/ESTORNADO/REMOVIDO no ERP, a baixa é nula: a linha antiga é **renomeada** (não apagada,
   para preservar o borderô cancelado no histórico) e o par volta a ser lançável.
 
-> **Correção de drift (2026-09-08, ADR-0043).** Este documento afirmava a chave sem o sufixo de
+> **Correção de drift (2026-09-08, ADR-0044).** Este documento afirmava a chave sem o sufixo de
 > versão, e atribuía à UNIQUE uma garantia que ela nunca teve. O código está certo desde sempre; a
 > ontologia é que descrevia outra coisa. Ver `I-Recon-1`.
 
@@ -70,7 +70,7 @@ has_canonical_test: true
   `alreadySettled=true` → **pulado**.
 - **`error` e `pending` são reabríveis** — um retry os leva de volta a `reconciling`.
 - **`parcial` não é `settled` degradado nem `error` suavizado.** É o registro fiel de uma escrita
-  que aconteceu pela metade. Ver ADR-0043.
+  que aconteceu pela metade. Ver ADR-0044.
 
 ## Write-ahead (ordem obrigatória)
 
@@ -124,7 +124,7 @@ serialização desnecessária, nunca corretude. O caller barrado recebe **HTTP 4
      de `parcial`. Quem re-aloca está pedindo um novo lançamento;
   2. **concorrência** — duas requisições simultâneas leem antes de qualquer uma escrever, e as duas
      se veem como primeira. Isso é barrado por **I-Recon-5** (advisory lock), **não** pela UNIQUE. A
-     ontologia afirmava o contrário até 2026-09-08 (ADR-0043).
+     ontologia afirmava o contrário até 2026-09-08 (ADR-0044).
 - **I-Recon-2:** toda transição para `settled` carrega o `bxaCodSeq` confirmado pelo ERP — sem confirmação,
   não há `settled`. Vale igualmente para `parcial`: o terminal parcial só existe sobre baixas confirmadas.
 - **I-Recon-3:** nenhuma baixa é gravada se o em-aberto vivo do ERP (`bxaMnyValor`, passo 2) for ≤ 0
@@ -140,7 +140,7 @@ serialização desnecessária, nunca corretude. O caller barrado recebe **HTTP 4
   `valor_residual_usd = restanteUsd` gravado. **Nunca `settled`.** `settled` afirma "o alocado foi
   integralmente baixado"; declarar isso com resíduo é uma afirmação falsa no livro-razão. O caso
   caso **detectável antes de escrever** é barrado por **I-Write-8a** (cobertura em aberto derivada,
-  não a face — ver a emenda de 2026-09-08 da ADR-0043); `parcial` cobre o que 8a não alcança:
+  não a face — ver a emenda de 2026-09-08 da ADR-0044); `parcial` cobre o que 8a não alcança:
   título **renegociado/cancelado após a alocação** (sai do filtro `titVldStatus = 1` sem erro
   nenhum) ou lista incompleta. **Não** é "título baixado externamente antes do POST" — esse caso já
   lança erro no passo 2 por I-Recon-3.

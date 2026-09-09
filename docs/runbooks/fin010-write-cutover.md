@@ -38,7 +38,7 @@ serviço (redeploy/restart no Render).
 - **Imediato:** `CONEXOS_DRY_RUN=true` (ou `CONEXOS_WRITE_ENABLED=false`) + restart → nenhuma escrita nova.
 - **Baixa já gravada:** não há rollback automático — **estornar manualmente no `fin010`** (UI). A linha em
   `permuta_alocacao_execucao` fica `settled`; um job de conciliação (follow-up) detectará a divergência.
-  **Cobertura insuficiente (ADR-0043):** quando a soma do **em aberto** dos títulos não cobre o
+  **Cobertura insuficiente (ADR-0044):** quando a soma do **em aberto** dos títulos não cobre o
   `valorAlocado`, a execução **aborta antes do 1º POST** (422 `ALOCACAO_SEM_COBERTURA`, nada
   escrito). Para o que escapar dessa janela, a linha fica **`parcial`** com `valor_residual_usd`,
   **não** `settled`. Um `parcial` é pendência: **re-aloque o par** para lançar o que faltou (a chave
@@ -46,7 +46,7 @@ serviço (redeploy/restart no Render).
 
 ### Rollback do código com linhas `parcial` já gravadas
 
-> **Leia isto ANTES de reverter o commit da ADR-0043.** Migrations são forward-only: reverter o
+> **Leia isto ANTES de reverter o commit da ADR-0044.** Migrations são forward-only: reverter o
 > código **não** remove o estado `parcial` do banco, e a versão anterior não sabe o que ele significa.
 > O `beginExecution` antigo só preserva `= 'settled'`, então uma linha `parcial` cairia no ramo ELSE,
 > voltaria para `reconciling` e o serviço **re-POSTaria uma baixa que já existe no `fin010`**.
@@ -76,7 +76,7 @@ Passos, nesta ordem:
    em aberto no adiantamento e vai precisar de re-alocação depois.
 5. **Agora sim** reverta o commit e faça o deploy.
 
-**Se você pular estes passos**, a migration `0055` te protege: um trigger no banco recusa reabrir
+**Se você pular estes passos**, a migration `0057` te protege: um trigger no banco recusa reabrir
 qualquer execução com `bxa_cod_seq` preenchido, e a rota devolve **500** em vez de duplicar a baixa.
 Isso é rede de segurança, não procedimento — o 500 aparece para a analista no meio do trabalho dela.
 
@@ -84,13 +84,13 @@ Isso é rede de segurança, não procedimento — o 500 aparece para a analista 
 - Linha presa em `reconciling` em `permuta_alocacao_execucao`: o processo morreu entre o POST e a confirmação.
   Cheque no `fin010` (pelo `bor_cod` persistido) se a baixa entrou; se sim, marque `settled` manualmente; se
   não, retry.
-- **409 `RECONCILIACAO_EM_ANDAMENTO`** *(ADR-0043)*: outra execução do MESMO adiantamento está em voo
+- **409 `RECONCILIACAO_EM_ANDAMENTO`** *(ADR-0044)*: outra execução do MESMO adiantamento está em voo
   agora (advisory lock). Não é erro de escrita e **nada foi enviado ao ERP** — espere alguns segundos
   e recarregue. Não clique de novo.
-- **422 `ALOCACAO_SEM_COBERTURA`** *(ADR-0043)*: o em aberto dos títulos da invoice não cobre o
+- **422 `ALOCACAO_SEM_COBERTURA`** *(ADR-0044)*: o em aberto dos títulos da invoice não cobre o
   `valorAlocado` — **nada foi escrito**. Confira no ERP se algum título foi renegociado/cancelado
   depois da alocação e re-aloque o par pelo valor que de fato cabe.
-- **`status='parcial'`** *(ADR-0043)*: a baixa entrou, mas não cobriu todo o alocado; o que faltou
+- **`status='parcial'`** *(ADR-0044)*: a baixa entrou, mas não cobriu todo o alocado; o que faltou
   está em `valor_residual_usd`. O borderô existe e pode ser finalizado; o resíduo se resolve
   **re-alocando o par**. Não marque `settled` à mão.
 - `status='error'` com `erp_response`: leia a mensagem do ERP; corrija e re-execute (idempotente — par já
@@ -113,7 +113,7 @@ Isso é rede de segurança, não procedimento — o 500 aparece para a analista 
   *(Título baixado externamente **não** é este caso: ele já falha ruidosamente no passo 2. O caso
   real é título **renegociado ou cancelado depois da alocação**.)*
 
-> **Vigência.** As duas linhas acima entraram com a ADR-0043. Se estiver diagnosticando um incidente,
+> **Vigência.** As duas linhas acima entraram com a ADR-0044. Se estiver diagnosticando um incidente,
 > confirme que a versão em produção já as traz — `GET /health` devolve a `version`, e a ADR aparece
 > no `CHANGELOG.md` da release que a introduziu. Em versão anterior, valem as mitigações manuais:
 > combinar quem reconcilia qual adto, e cruzar `valorPermutar` (ERP) × soma das baixas registradas.

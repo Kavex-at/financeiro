@@ -11,7 +11,7 @@ related_files:
   - src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts
   - src/backend/routes/permutas.ts
   - src/backend/migrations/0018_permuta_bordero_cache.sql
-  - src/backend/migrations/0054_permuta_execucao_parcial.sql
+  - src/backend/migrations/0056_permuta_execucao_parcial.sql
   - src/frontend/app/permutas/components/ui.tsx
   - src/frontend/lib/types.ts
 last_review: 2026-09-08
@@ -21,7 +21,7 @@ out_of_scope_states: []
 
 # Status PERMUTA → BORDERÔ (ciclo de vida do borderô que baixou a permuta)
 
-> **Vigência:** 2026-06-24 (v0.7.0, ADR-0014); **emendada em 2026-09-08 (ADR-0043)** com o estado
+> **Vigência:** 2026-06-24 (v0.7.0, ADR-0014); **emendada em 2026-09-08 (ADR-0044)** com o estado
 > `PARCIAL_AGUARDANDO_FINALIZACAO`. Modela o status de uma permuta **em relação ao borderô do
 > `fin010`** que a baixou. É consulta **lazy** (`GET /permutas/status`), separada do `/gestao` (que
 > segue rápido, sem ERP) — enriquece os badges da tela depois do load.
@@ -29,7 +29,7 @@ out_of_scope_states: []
 > **Esta máquina é um BADGE sobre o borderô — nunca um input de elegibilidade.** Nenhum valor dela
 > remove um adiantamento da fila de permutas pendentes; a elegibilidade é derivada do **saldo** do
 > adto (`elegibilidade-permuta-candidata.md`). A distinção deixou de ser detalhe em 2026-09-08: um
-> status que subtraísse o adto da fila reintroduziria, noutro lugar, o silêncio que a ADR-0043
+> status que subtraísse o adto da fila reintroduziria, noutro lugar, o silêncio que a ADR-0044
 > existe para fechar.
 
 ## Estados (constantes tipadas)
@@ -38,14 +38,14 @@ out_of_scope_states: []
 |----------------|-------|-------------|
 | (omitido) | `pendente` | Sem borderô **válido** vinculado — a permuta está aberta para (re)lançamento. **Não é um valor explícito**: resulta da ausência do adto no mapa retornado por `statusPorAdiantamento`. |
 | `AGUARDANDO_FINALIZACAO` | `aguardando-finalizacao` | Existe baixa `settled` na trilha e o borderô vinculado está **EM CADASTRO** no ERP (baixado, falta finalizar). |
-| `PARCIAL_AGUARDANDO_FINALIZACAO` | `parcial-aguardando-finalizacao` | Existe baixa **`parcial`** (ADR-0043) na trilha e o borderô vinculado está **EM CADASTRO** no ERP. Afirma **duas** pendências ao mesmo tempo: o borderô aguarda finalização **e** o resíduo aguarda re-alocação. **Não** substitui a elegibilidade — o adto segue na fila. |
+| `PARCIAL_AGUARDANDO_FINALIZACAO` | `parcial-aguardando-finalizacao` | Existe baixa **`parcial`** (ADR-0044) na trilha e o borderô vinculado está **EM CADASTRO** no ERP. Afirma **duas** pendências ao mesmo tempo: o borderô aguarda finalização **e** o resíduo aguarda re-alocação. **Não** substitui a elegibilidade — o adto segue na fila. |
 | `FINALIZADO` | `finalizado` | O borderô vinculado está **FINALIZADO** no ERP (permuta concluída; continua aparecendo). |
 
 Tipo: `PermutaStatus = 'aguardando-finalizacao' | 'parcial-aguardando-finalizacao' | 'finalizado'`
 (`src/backend/domain/service/permutas/BorderoGestaoService.ts:21`); `pendente` é a ausência.
 
 > **Por que um valor NOVO e não o reuso de `aguardando-finalizacao`** (alternativa recusada,
-> ADR-0043): `PermutaStatus` é **um** valor por adiantamento, e o `pendente` que move a permuta é
+> ADR-0044): `PermutaStatus` é **um** valor por adiantamento, e o `pendente` que move a permuta é
 > produzido pela **omissão** do adto no mapa. Devolver `aguardando-finalizacao` para uma execução
 > `parcial` **substituiria** o `pendente` — tirando o adiantamento da leitura de "aberto" e deixando
 > o resíduo sem cobrança. Seria o defeito do R-2 mudado de lugar, não corrigido. O valor distinto
@@ -58,7 +58,7 @@ Tipo: `PermutaStatus = 'aguardando-finalizacao' | 'parcial-aguardando-finalizaca
 
 1. Coleta, por adiantamento, **todos** os `borCod` de baixas **terminais** na trilha
    (`permuta_alocacao_execucao`): `status === 'settled'` **ou** `status === 'parcial'` — `:435-443`.
-   Um adto pode ter vários borderôs (re-baixa após cancelar/estornar). *(Antes da ADR-0043 o filtro
+   Um adto pode ter vários borderôs (re-baixa após cancelar/estornar). *(Antes da ADR-0044 o filtro
    era só `settled`; o borderô de uma execução `parcial` já era resgatado para o cache
    `permuta_bordero` por `listComBordero` — que filtra `bor_cod IS NOT NULL`, sem filtro de status —
    e portanto SEMPRE apareceu na aba Borderôs. O que faltava era o badge no painel de permutas.)*
@@ -92,7 +92,7 @@ A situação viva do borderô vem de `situacaoDoItem`
 | # | De → Para | Gatilho | Regra | Vigência |
 |---|-----------|---------|-------|----------|
 | B1 | `PENDENTE → AGUARDANDO_FINALIZACAO` | baixa `settled` cria/atualiza o borderô (`reconciliarPermuta`) | há `settled` na trilha e o borderô está **EM CADASTRO** no ERP | 2026-06-24 |
-| B1' | `PENDENTE → PARCIAL_AGUARDANDO_FINALIZACAO` | baixa **`parcial`** cria/atualiza o borderô (`reconciliarPermuta`, I-Recon-6) | há `parcial` na trilha e o borderô está **EM CADASTRO** no ERP. **Propriedade obrigatória da transição:** o adiantamento **permanece na fila de elegibilidade** — o resíduo é trabalho pendente e o badge não pode escondê-lo | 2026-09-08 (ADR-0043) |
+| B1' | `PENDENTE → PARCIAL_AGUARDANDO_FINALIZACAO` | baixa **`parcial`** cria/atualiza o borderô (`reconciliarPermuta`, I-Recon-6) | há `parcial` na trilha e o borderô está **EM CADASTRO** no ERP. **Propriedade obrigatória da transição:** o adiantamento **permanece na fila de elegibilidade** — o resíduo é trabalho pendente e o badge não pode escondê-lo | 2026-09-08 (ADR-0044) |
 | B2 | `{AGUARDANDO_FINALIZACAO, PARCIAL_AGUARDANDO_FINALIZACAO} → FINALIZADO` | `finalizarBordero` (aprovar) | borderô passa a `borVldFinalizado === 1`. Saindo de `PARCIAL_*`, o resíduo segue rastreado pelo ledger (ver seam acima) | 2026-06-24 / emendada 2026-09-08 |
 | B3 | `{AGUARDANDO_FINALIZACAO, PARCIAL_AGUARDANDO_FINALIZACAO, FINALIZADO} → PENDENTE` | borderô CANCELADO / ESTORNADO / REMOVIDO no ERP | nenhum borderô válido sobra para o adto → **reabre** a permuta (idempotência viva) | 2026-06-24 / emendada 2026-09-08 |
 

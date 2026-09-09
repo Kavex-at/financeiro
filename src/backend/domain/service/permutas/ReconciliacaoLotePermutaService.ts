@@ -22,7 +22,7 @@ export const LOTE_MAX = 6;
  * (`repository/permutas/PermutaExecucaoRepository.ts`) é o desfecho de UM par: *"a baixa deste par
  * cobriu o alocado só em parte"*. São grandezas diferentes no mesmo módulo.
  *
- * `'com-residuo'` é o valor novo (ADR-0043): todos os pares do adto tiveram desfecho terminal, sem
+ * `'com-residuo'` é o valor novo (ADR-0044): todos os pares do adto tiveram desfecho terminal, sem
  * erro, mas ao menos um terminou em `parcial` de EXECUÇÃO. Precisa ser distinguível de `'settled'`
  * (senão o resíduo some do relatório) e de `'parcial'` (que fala de erro, não de resíduo).
  *
@@ -58,7 +58,7 @@ export interface ReconciliarLoteResult {
     /**
      * Baixas que entraram no ERP mas NÃO fecharam o alocado (`parcial` de execução, I-Recon-6).
      * Contado à parte de propósito: não é sucesso (sobrou resíduo a re-alocar) nem erro (o dinheiro
-     * se moveu). Somá-lo a `totalSettled` recriaria o silêncio que a ADR-0043 existe para acabar.
+     * se moveu). Somá-lo a `totalSettled` recriaria o silêncio que a ADR-0044 existe para acabar.
      */
     totalParciais: number;
     /** Baixas com erro + adtos que lançaram antes de qualquer baixa. */

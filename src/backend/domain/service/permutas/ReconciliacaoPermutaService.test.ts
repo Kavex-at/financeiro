@@ -1102,7 +1102,7 @@ describe('ReconciliacaoPermutaService — terminal parcial (I-Recon-6/7, I-Write
      *
      * Baixamos 4.990 BRL ÷ taxa 5 = 998 USD dos 1.000 alocados. Antes desta mudança o laço debitava
      * `restanteUsd` pela INTENÇÃO (1.000) e a execução fechava `settled` — afirmando ter baixado
-     * 2 USD que o ERP nunca recebeu. Este é o `settled` mudo que a ADR-0043 mata.
+     * 2 USD que o ERP nunca recebeu. Este é o `settled` mudo que a ADR-0044 mata.
      */
     it('resíduo detectado APÓS o 1º POST ⇒ markParcial com resíduo, markSettled NUNCA', async () => {
         const { service, conexosClient, execucaoRepository } = buildDeps();

@@ -16,7 +16,7 @@ cards_count: 5
 
 | Source | Stimulus | Artifact | Environment | Response | Response Measure |
 |---|---|---|---|---|---|
-| Merge em `main` (autoDeploy do Render) do commit `8b18686` — que traz `migrations/0054_permuta_execucao_parcial.sql` (novo CHECK + coluna `valor_residual_usd`) e código que escreve `parcial` | Deploy dispara: instância nova sobe em paralelo à antiga; `preDeployCommand` roda `npm run migrate`; `BootMigrator.run()` também tenta migrar sob `pg_advisory_lock(314159265)` antes do `listen()`; healthCheck `/health` valida readiness; Render então flipa o tráfego | Backend Express em `src/backend/`, banco Supabase, `permuta_alocacao_execucao` (CHECK ampliado), runbook `docs/runbooks/fin010-write-cutover.md` | Produção com **`CONEXOS_WRITE_ENABLED=true` / `CONEXOS_DRY_RUN=false` desde 2026-06-24** — 137 execuções, R$ 38,46M baixados já contam com esse caminho quente | (a) Migration idempotente aplicada antes do tráfego, sob lock; (b) instância antiga (ainda no ar durante a janela) continua servindo — schema novo é SUPERSET do union antigo, então nada quebra; (c) rollback do código, se necessário, tem plano documentado; (d) `/health` permite ao pinger externo confirmar a versão vigente | 0 escritas duplicadas na janela de flip; 0 baixas produzidas contra schema antigo; MTTR de rollback ≤ 10min (revert + push + Render redeploy) com procedimento explícito para linhas `parcial` já persistidas |
+| Merge em `main` (autoDeploy do Render) do commit `8b18686` — que traz `migrations/0056_permuta_execucao_parcial.sql` (novo CHECK + coluna `valor_residual_usd`) e código que escreve `parcial` | Deploy dispara: instância nova sobe em paralelo à antiga; `preDeployCommand` roda `npm run migrate`; `BootMigrator.run()` também tenta migrar sob `pg_advisory_lock(314159265)` antes do `listen()`; healthCheck `/health` valida readiness; Render então flipa o tráfego | Backend Express em `src/backend/`, banco Supabase, `permuta_alocacao_execucao` (CHECK ampliado), runbook `docs/runbooks/fin010-write-cutover.md` | Produção com **`CONEXOS_WRITE_ENABLED=true` / `CONEXOS_DRY_RUN=false` desde 2026-06-24** — 137 execuções, R$ 38,46M baixados já contam com esse caminho quente | (a) Migration idempotente aplicada antes do tráfego, sob lock; (b) instância antiga (ainda no ar durante a janela) continua servindo — schema novo é SUPERSET do union antigo, então nada quebra; (c) rollback do código, se necessário, tem plano documentado; (d) `/health` permite ao pinger externo confirmar a versão vigente | 0 escritas duplicadas na janela de flip; 0 baixas produzidas contra schema antigo; MTTR de rollback ≤ 10min (revert + push + Render redeploy) com procedimento explícito para linhas `parcial` já persistidas |
 
 **Contexto que dita a severidade:** a escrita `fin010` está LIGADA em produção. Este delta é o
 primeiro em que o Render sobe código que grava um estado novo (`parcial`) num CHECK que precisa
@@ -28,7 +28,7 @@ o delta introduz e nenhuma documentação prévia cobria.
 
 | Métrica | Valor atual | Alvo | Status | Fonte |
 |---|---|---|---|---|
-| Migration 0054 idempotente (`IF EXISTS` / `IF NOT EXISTS`) | Sim — `DROP CONSTRAINT IF EXISTS`, `ADD COLUMN IF NOT EXISTS`, `ADD CONSTRAINT` sem `IF NOT EXISTS` (Postgres não suporta) mas precedido do drop | Sim | ✅ | `src/backend/migrations/0054_permuta_execucao_parcial.sql:20-27` |
+| Migration 0056 idempotente (`IF EXISTS` / `IF NOT EXISTS`) | Sim — `DROP CONSTRAINT IF EXISTS`, `ADD COLUMN IF NOT EXISTS`, `ADD CONSTRAINT` sem `IF NOT EXISTS` (Postgres não suporta) mas precedido do drop | Sim | ✅ | `src/backend/migrations/0056_permuta_execucao_parcial.sql:20-27` |
 | Migração ordenada antes do tráfego (forward-safe) | Sim — `preDeployCommand: npm run migrate` no `render.yaml:24` + `BootMigrator.run()` antes do `app.listen(PORT)` | Sim | ✅ | `render.yaml:24`, `src/backend/index.ts:164-173` |
 | Corrida entre instâncias durante rolling deploy | Serializada por `pg_advisory_lock(314159265)`, chave dedicada, distinta das de ingestão/permutas/lotes/poller | Serializada | ✅ | `src/backend/migrations/BootMigrator.ts:12,125-145` |
 | Forward-compatibility do schema (schema novo + código antigo em paralelo na janela de flip) | Segura — CHECK novo é SUPERSET do antigo; `valor_residual_usd` é `NUMERIC` nullable; código antigo só grava valores ainda válidos | Segura | ✅ | Migration + `PermutaExecucaoRepository.ts:16` (union `pending/reconciling/settled/error/parcial`) |
@@ -38,7 +38,7 @@ o delta introduz e nenhuma documentação prévia cobria.
 | Kill-switch dedicado para Permutas (blast radius) | Ausente — só `CONEXOS_WRITE_ENABLED` (global) desliga a escrita, o que derruba **Recebimentos junto** | Flag `PERMUTAS_WRITE_ENABLED` gating específico | ❌ | `render.yaml:50-53`, ausência de `PERMUTAS_*` no manifest (`configManifest.ts`) — `deployability-1` do run anterior segue aberto |
 | CI gates antes do autoDeploy (branch protection) | 5 steps backend (audit high, typecheck, lint, test+coverage, build) + 4 frontend (`ci.yml`) | ≥5 automatizados | ✅ | `.github/workflows/ci.yml:18-27` |
 | Rollback documentado / one-command | Parcial — texto sob "Rollback / desligar a escrita" cobre kill-switch de flags; **não** cobre "reverter este commit com linhas `parcial` já persistidas" | Runbook com "receita" para revert + estado do schema/dado | ⚠️ | `docs/runbooks/fin010-write-cutover.md:29-33` |
-| Feature-flag ordering (0054 ANTES do código que grava `parcial`) | Correto — cabeçalho da migration explicita a ordem e o custo do erro ("baixas já POSTadas no ERP") | Correto | ✅ | `src/backend/migrations/0054_permuta_execucao_parcial.sql:9-13` |
+| Feature-flag ordering (0054 ANTES do código que grava `parcial`) | Correto — cabeçalho da migration explicita a ordem e o custo do erro ("baixas já POSTadas no ERP") | Correto | ✅ | `src/backend/migrations/0056_permuta_execucao_parcial.sql:9-13` |
 | Build reprodutível (lockfile, versão pinada) | `package-lock.json` presente; Node 24 pinado no CI (`ci.yml`); esbuild não é usado (Express `tsc` build) | Presente | ✅ | `.github/workflows/ci.yml:23-24` |
 | Terraform / IaC / drift detection | **Não medível** — não existe `infra/` no repositório; deploy por Render Blueprint (`render.yaml`) versionado; um dashboard do Render é a fonte da verdade dos secrets. Não é lacuna deste QA neste stack | — | N/A | `render.yaml`, `CLAUDE.md` §"Estado Atual vs. Alvo" |
 | Blue/green ou canário multi-tenant | **Não medível** — não há tenants provisionados (um serviço `financeiro-backend` único); Render faz rolling replacement (nova instância sobe, healthcheck, flip) | — | N/A | `CLAUDE.md` §Tenants |
@@ -53,7 +53,7 @@ Escopo: só as tactics que este delta toca ou deveria ter tocado. As demais fora
 | Script Deployment Commands | Migrations SQL versionadas + `BootMigrator` que aplica sob lock antes do listen; `render.yaml` declara `preDeployCommand` e `healthCheckPath` | ✅ presente | `src/backend/migrations/BootMigrator.ts:60-81`, `render.yaml:20-24` |
 | Manage Configuration Overrides (feature flags como Configure Behavior) | Global (`CONEXOS_WRITE_ENABLED`/`CONEXOS_DRY_RUN`), granular por frente (`SISPAG_ENABLED`, `SISPAG_LIVE_WRITE_ENABLED`, `RECEBIMENTOS_ENABLED`), **mas sem `PERMUTAS_*` dedicado** | ⚠️ parcial | `render.yaml:29-58` (nada de `PERMUTAS_`); `configManifest.ts` (Permutas ausente do manifest) |
 | Rollback (código) | Revert + push em `main` → Render autoDeploy refaz o release; sem receita documentada para o caso "código antigo + linhas `parcial`" | ⚠️ parcial | `docs/runbooks/fin010-write-cutover.md:29-33` cobre flag rollback, não code rollback com estado novo |
-| Rollback (schema) | Migração 0054 é forward-only; não há `0054_down.sql` nem plano documentado — o CHECK ampliado pode conviver com código antigo por design (superset), então "rollback de schema" é geralmente desnecessário. **Não faz o inverso: apagar `parcial` do CHECK enquanto houver linhas `parcial` violaria o CHECK.** | ⚠️ parcial (aceito por design; risco residual documentável) | `migrations/0054_permuta_execucao_parcial.sql` |
+| Rollback (schema) | Migração 0054 é forward-only; não há `0054_down.sql` nem plano documentado — o CHECK ampliado pode conviver com código antigo por design (superset), então "rollback de schema" é geralmente desnecessário. **Não faz o inverso: apagar `parcial` do CHECK enquanto houver linhas `parcial` violaria o CHECK.** | ⚠️ parcial (aceito por design; risco residual documentável) | `migrations/0056_permuta_execucao_parcial.sql` |
 | Scale Rollouts (canário / progressive delivery) | Não aplica — 1 serviço, 1 instância nominal, 1 ambiente de produção; Render faz rolling replacement (não canário). Homologação existe como stage manual (fase 1 do runbook), não como pipeline automatizado | N/A no stack atual | `docs/runbooks/fin010-write-cutover.md:14-20` |
 | Logical Grouping (feature flag por front) | Frentes II e IV têm gate próprio; **Frente I (Permutas) usa o gate global do Conexos** — ampliando o blast radius desnecessariamente | ⚠️ parcial | `deployability-1` do run anterior segue aberto |
 | Physical Grouping | N/A — deploy monolítico via Render, único web service | N/A | `render.yaml:4-6` |
@@ -62,7 +62,7 @@ Escopo: só as tactics que este delta toca ou deveria ter tocado. As demais fora
 | Reproducible Builds | Node pinado (`node-version: '24'` no CI); `npm ci` no build do Render (`buildCommand`); sem timestamp/UUID em artefato | ✅ presente | `.github/workflows/ci.yml:23`, `render.yaml:22` |
 | Drift Detection (schema/config) | Migrations idempotentes + `BootMigrator` re-executa por design (no-op se em dia); **não há job periódico** que compare CHECK do banco com o esperado nem alerta sobre linhas `parcial` órfãs | ⚠️ parcial | `BootMigrator.ts:73-79` (só compara na hora do boot) |
 | Deployment Observability | `/health` retorna `{status, version}`; `/health/pipelines` responde 503 quando há pipeline PARADO/abandonado (dead-man's switch, ADR-0042); **nenhum endpoint expõe as flags de escrita** | ⚠️ parcial | `src/backend/index.ts:79`; `src/backend/routes/health.ts:29-58` — `deployability-2` do run anterior segue aberto |
-| Idempotent Deploys | Migração 0054 é idempotente por construção (`IF EXISTS`/`IF NOT EXISTS`); `BootMigrator` idempotente (fila de aplicadas no banco); `preDeployCommand` refaz sem efeito colateral | ✅ presente | `migrations/0054_permuta_execucao_parcial.sql:20-27`, `BootMigrator.ts:60-81` |
+| Idempotent Deploys | Migração 0054 é idempotente por construção (`IF EXISTS`/`IF NOT EXISTS`); `BootMigrator` idempotente (fila de aplicadas no banco); `preDeployCommand` refaz sem efeito colateral | ✅ presente | `migrations/0056_permuta_execucao_parcial.sql:20-27`, `BootMigrator.ts:60-81` |
 
 ## 4. Findings
 
@@ -70,7 +70,7 @@ Escopo: só as tactics que este delta toca ou deveria ter tocado. As demais fora
 
 - **Severidade**: P1
 - **Tactic violada**: Rollback (backward-compatibility do schema com o código imediatamente anterior)
-- **Localização**: `src/backend/migrations/0054_permuta_execucao_parcial.sql`, `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts:16,257-284`, `docs/runbooks/fin010-write-cutover.md:29-33`
+- **Localização**: `src/backend/migrations/0056_permuta_execucao_parcial.sql`, `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts:16,257-284`, `docs/runbooks/fin010-write-cutover.md:29-33`
 - **Evidência (objetiva)**:
   ```
   # Código NOVO (este commit) — beginExecution preserva ambos os terminais
@@ -97,11 +97,11 @@ Escopo: só as tactics que este delta toca ou deveria ter tocado. As demais fora
   ```
   ```markdown
   # docs/runbooks/fin010-write-cutover.md:80-83 (novo neste delta)
-  > Vigência. As duas linhas acima entraram com a ADR-0043. Se estiver diagnosticando um
+  > Vigência. As duas linhas acima entraram com a ADR-0044. Se estiver diagnosticando um
   > incidente, confirme que a versão em produção já as traz — GET /health devolve a
   > `version`, e a ADR aparece no CHANGELOG.md da release que a introduziu.
   ```
-- **Impacto técnico**: o operador precisa (a) chamar `/health`, (b) mapear a versão para uma entrada do `CHANGELOG.md`, (c) confirmar que a versão inclui a ADR-0043. Se estiver às 2h da manhã diagnosticando um `parcial` inesperado ou um `settled` mudo em versão anterior, esse loop de correlação é lento e sujeito a erro. Além disso, `/health` não diz se `CONEXOS_WRITE_ENABLED=true`/`CONEXOS_DRY_RUN=false` — o operador precisa abrir o dashboard do Render para saber se estava em dry-run ou não, o que colide com o próprio runbook que diz "mudar flag exige restart".
+- **Impacto técnico**: o operador precisa (a) chamar `/health`, (b) mapear a versão para uma entrada do `CHANGELOG.md`, (c) confirmar que a versão inclui a ADR-0044. Se estiver às 2h da manhã diagnosticando um `parcial` inesperado ou um `settled` mudo em versão anterior, esse loop de correlação é lento e sujeito a erro. Além disso, `/health` não diz se `CONEXOS_WRITE_ENABLED=true`/`CONEXOS_DRY_RUN=false` — o operador precisa abrir o dashboard do Render para saber se estava em dry-run ou não, o que colide com o próprio runbook que diz "mudar flag exige restart".
 - **Impacto de negócio**: MTTR de incidentes que envolvem "qual versão de código, com qual configuração, escreveu esta linha?" é multiplicado por o tempo do operador correlacionar CHANGELOG + dashboard. Card já existia (`deployability-2` do run anterior); este delta apoiou-se em `/health` como âncora de vigência, o que reforça a necessidade sem resolvê-la.
 - **Métrica de baseline**: 2 campos expostos hoje (`status`, `version`). Alvo mínimo para atender à vigência: 4 campos — `version`, `writeEnabled`, `dryRun`, `lastMigration`.
 
@@ -135,7 +135,7 @@ Escopo: só as tactics que este delta toca ou deveria ter tocado. As demais fora
   - Imediato: CONEXOS_DRY_RUN=true (ou CONEXOS_WRITE_ENABLED=false) + restart → nenhuma escrita nova.
   - Baixa já gravada: não há rollback automático — estornar manualmente no fin010 (UI). A linha em
     permuta_alocacao_execucao fica settled; um job de conciliação (follow-up) detectará a divergência.
-    Cobertura insuficiente (ADR-0043): [...] a linha fica parcial [...] re-aloque o par [...]
+    Cobertura insuficiente (ADR-0044): [...] a linha fica parcial [...] re-aloque o par [...]
   ```
   O texto cobre o kill-switch de flag e o `parcial` **em operação normal**, mas não descreve o
   cenário: "commit `8b18686` foi revertido e existem linhas `status='parcial'` no banco — o que o
@@ -149,7 +149,7 @@ Escopo: só as tactics que este delta toca ou deveria ter tocado. As demais fora
 
 - **Severidade**: P3
 - **Tactic violada**: Rollback (schema)
-- **Localização**: `src/backend/migrations/0054_permuta_execucao_parcial.sql`
+- **Localização**: `src/backend/migrations/0056_permuta_execucao_parcial.sql`
 - **Evidência (objetiva)**:
   ```sql
   -- SQL idempotente: rodar duas vezes é no-op na segunda.
@@ -193,13 +193,13 @@ Escopo: só as tactics que este delta toca ou deveria ter tocado. As demais fora
 ### [deployability-2] Expor `writeEnabled`, `dryRun` e `lastMigration` no `/health`
 
 - **Problema**
-  > `/health` devolve `{ status, version }`. A "nota de vigência" que este delta adicionou ao runbook aponta para `/health` como âncora de "esta versão já traz a ADR-0043", mas o operador precisa correlacionar version → CHANGELOG.md → ADR à mão. Adicionalmente, saber se o serviço está escrevendo agora (não em dry-run) exige abrir o dashboard do Render. Card já existia no run anterior (`deployability-2`) — este delta o reforça em vez de fechar.
+  > `/health` devolve `{ status, version }`. A "nota de vigência" que este delta adicionou ao runbook aponta para `/health` como âncora de "esta versão já traz a ADR-0044", mas o operador precisa correlacionar version → CHANGELOG.md → ADR à mão. Adicionalmente, saber se o serviço está escrevendo agora (não em dry-run) exige abrir o dashboard do Render. Card já existia no run anterior (`deployability-2`) — este delta o reforça em vez de fechar.
 
 - **Melhoria Proposta**
   > Ampliar o handler de `src/backend/index.ts:79` para expor `{ status, version, writeEnabled, dryRun, lastMigration }`. `lastMigration` vem do próprio `BootMigrator` (nome do último arquivo aplicado / `MAX(name) FROM migrations_applied`). Manter o campo `status` como estava — decisão binária que a sonda externa consome. Não expor secrets nem info que descreva a operação para não-`admin` (segue a doutrina do `routes/health.ts:14-22`). Tactic Bass: **Deployment Observability**.
 
 - **Resultado Esperado**
-  > `curl /health` responde os 5 campos; runbook pode citar `lastMigration >= 0054_permuta_execucao_parcial` como critério de vigência sem correlacionar CHANGELOG à mão. MTTR de "qual código estava rodando com qual flag" cai do minuto (correlacionar 2 sistemas) para segundos.
+  > `curl /health` responde os 5 campos; runbook pode citar `lastMigration >= 0056_permuta_execucao_parcial` como critério de vigência sem correlacionar CHANGELOG à mão. MTTR de "qual código estava rodando com qual flag" cai do minuto (correlacionar 2 sistemas) para segundos.
 
 - **Tactic alvo**: Deployment Observability
 - **Severidade**: P2

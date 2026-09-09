@@ -1,5 +1,5 @@
--- 0054_permuta_execucao_parcial.sql
--- ADR-0043 — a baixa parcial vira ESTADO TERMINAL em vez de erro (I-Recon-6/7, I-Write-8b).
+-- 0056_permuta_execucao_parcial.sql
+-- ADR-0044 — a baixa parcial vira ESTADO TERMINAL em vez de erro (I-Recon-6/7, I-Write-8b).
 --
 -- Até aqui `executarBaixa` marcava `settled` incondicionalmente ao fim do laço de títulos: se o
 -- alocado não coubesse nos títulos disponíveis, o resíduo sumia e a trilha afirmava "o alocado foi
@@ -28,4 +28,4 @@ ALTER TABLE permuta_alocacao_execucao
     ADD COLUMN IF NOT EXISTS valor_residual_usd NUMERIC;
 
 COMMENT ON COLUMN permuta_alocacao_execucao.valor_residual_usd IS
-    'ADR-0043 — resíduo não baixado do valor alocado, em moeda negociada. Só em status=parcial.';
+    'ADR-0044 — resíduo não baixado do valor alocado, em moeda negociada. Só em status=parcial.';

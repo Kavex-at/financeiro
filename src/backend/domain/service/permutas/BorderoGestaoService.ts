@@ -21,7 +21,7 @@ export type BorderoSituacao =
 /**
  * Status da PERMUTA em relação ao seu borderô no fin010 (tela de permutas).
  *
- * `parcial-aguardando-finalizacao` (transição B1', ADR-0043) afirma DUAS pendências ao mesmo
+ * `parcial-aguardando-finalizacao` (transição B1', ADR-0044) afirma DUAS pendências ao mesmo
  * tempo: o borderô a finalizar E o resíduo a re-alocar. É distinto de `aguardando-finalizacao`
  * de propósito — colapsar os dois faria `parcial` virar o novo silêncio, que é o risco que a
  * própria ADR nomeia ao criar o estado.
