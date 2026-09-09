@@ -43,7 +43,9 @@ export type ElegibilidadeResult = Pick<
  * Ontology: `ontology/business-rules/elegibilidade-permuta.md` + state-machine.
  * Aplica os 4 gates (PROFORMA / valorPermutar>0 / TOTALMENTE PAGO / D.I XOR DUIMP)
  * e o casamento 1:1. ELEGIVEL ⇔ 4 gates verdes E exatamente 1 invoice casada.
- * Caso contrário → BLOQUEADA com motivo. Estados como constantes tipadas (P3).
+ * Caso contrário → BLOQUEADA com motivo, EXCETO o adiantamento pago cujo saldo
+ * já foi consumido numa permuta anterior, que vai a JA_PERMUTADO (T6/ADR-0043 —
+ * estado concluído, não reprovação). Estados como constantes tipadas (P3).
  */
 @injectable()
 export default class ElegibilidadeService {
@@ -94,10 +96,19 @@ export default class ElegibilidadeService {
         // então um não-pago também zera o gate 2; mostrar "não pago" é o acionável.
         const algumGateFalhou = gatesAvaliados.some((g) => !g.passed);
         if (algumGateFalhou) {
+            // T6 (ADR-0043) — o motivo é resolvido UMA vez e o estado é DERIVADO
+            // dele. A regra de prioridade não é duplicada: se `motivoDoGateFalho`
+            // concluiu `ja-permutado` (pago + gate 2 reprovado + já houve permuta),
+            // o estado é JA_PERMUTADO — estado CONCLUÍDO, não reprovação. Qualquer
+            // outro motivo segue BLOQUEADA.
+            const motivo = this.motivoDoGateFalho(gatesAvaliados, adiantamento);
             return {
                 ...base,
-                estadoElegibilidade: ESTADO_ELEGIBILIDADE.BLOQUEADA,
-                motivoBloqueio: this.motivoDoGateFalho(gatesAvaliados, adiantamento),
+                estadoElegibilidade:
+                    motivo === MOTIVO_BLOQUEIO.JA_PERMUTADO
+                        ? ESTADO_ELEGIBILIDADE.JA_PERMUTADO
+                        : ESTADO_ELEGIBILIDADE.BLOQUEADA,
+                motivoBloqueio: motivo,
             };
         }
 
@@ -137,7 +148,9 @@ export default class ElegibilidadeService {
      * Mapeia o gate reprovado para um motivo ESPECÍFICO (em vez do genérico
      * `falha-gate`). Prioridade pela causa-raiz quando mais de um gate falha:
      *   gate 3 (NÃO PAGO) → gate 2 (SEM SALDO / JÁ PERMUTADO) → gate 4 (D.I +
-     *   DUIMP) → fallback.
+     *   DUIMP) → fallback. Esta ordem é a ÚNICA fonte da regra de prioridade —
+     *   o estado (BLOQUEADA vs. JA_PERMUTADO) é derivado do motivo resolvido
+     *   aqui, nunca recalculado no call site (ADR-0043).
      *
      * Gate 2 (VALOR_PERMUTAR) reprovado chega aqui só quando o adiantamento já
      * está pago (gate 3 tem prioridade). Nesse ponto distingue-se a causa do

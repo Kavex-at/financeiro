@@ -7,8 +7,10 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 invariant: I3
-related_files: []
-last_review: 2026-06-18
+related_files:
+  - src/backend/domain/service/permutas/ElegibilidadeService.ts
+  - src/backend/domain/service/permutas/EleicaoPermutasService.ts
+last_review: 2026-09-08
 has_canonical_test: false
 resolved-by:
   - "P0-6 — 'INVOICE casada' = exatamente 1 invoice FINALIZADA no processo (Yuri, 2026-06-17)"
@@ -34,7 +36,24 @@ elegivel(candidata) ⇔
     invoiceCasada(candidata) presente
 ```
 
-Falha em qualquer conjunto → `BLOQUEADA` (reportada, NÃO contada como falha do job).
+Falha em qualquer conjunto → **um estado não-elegível**, que **não é necessariamente `BLOQUEADA`**:
+
+| Falha | Estado resultante | ADR |
+|---|---|---|
+| >1 invoice FINALIZADA no processo (4 gates OK) | `CASAMENTO_MANUAL` | 0005 |
+| cliente-filtro pago + saldo (Gate 4 dispensado) | `PERMUTA_MANUAL` | 0007 |
+| pago, Gate 2 reprovado **com `valorPermutado > 0`** | `JA_PERMUTADO` (concluído, terminal) | 0043 |
+| demais (0 invoice, não pago, sem saldo, XOR, data-base, detalhe indisponível) | `BLOQUEADA` (reportada, NÃO contada como falha do job) | — |
+
+**I3 não muda:** a definição de *elegível* é exatamente a mesma. O que mudou é o **destino de quem
+não é elegível**.
+
+> **Dívida preexistente, fechada de carona (2026-09-08, ADR-0043).** O enunciado acima dizia, até
+> hoje, que *qualquer* falha ia para `BLOQUEADA`. Isso já era **falso desde junho de 2026** para
+> dois estados — `CASAMENTO_MANUAL` (ADR-0005, 2026-06-18) e `PERMUTA_MANUAL` (ADR-0007,
+> 2026-06-20) —, que mudaram a máquina de estados sem atualizar esta regra. O ciclo
+> `permuta-snapshot-estados` **não criou** essa dívida: ela é anterior, e foi corrigida aqui junto
+> com a entrada de `JA_PERMUTADO`. Quem ler o histórico deve conseguir distinguir as duas coisas.
 
 ## Gates (referência)
 
@@ -62,6 +81,7 @@ Falha em qualquer conjunto → `BLOQUEADA` (reportada, NÃO contada como falha d
 
 - `has_canonical_test: false` — caso canônico: 1 adiantamento + 1 invoice + D.I, 4 gates
   verdes → ELEGIVEL; mesma candidata sem invoice → BLOQUEADA (`sem-invoice`); com múltiplas
-  invoices → **CASAMENTO_MANUAL** (`composto-nm`, 4 gates passados — ADR-0005). Fixado pelo
+  invoices → **CASAMENTO_MANUAL** (`composto-nm`, 4 gates passados — ADR-0005); adto pago cujo
+  Gate 2 reprova com `valorPermutado > 0` → **JA_PERMUTADO** (ADR-0043), nunca `BLOQUEADA`. Fixado pelo
   TaskScoper/TDD. Âncora real: PDF processo `2048` (priCod=1153). Coberto em
   `ElegibilidadeService.test.ts` (N:M → casamento-manual; sem-invoice → bloqueada).

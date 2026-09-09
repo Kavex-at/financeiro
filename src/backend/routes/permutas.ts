@@ -21,7 +21,6 @@ import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasServ
 import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
 import { isRelatorioTipo } from '../domain/interface/permutas/Relatorio.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
-import PainelService from '../domain/service/permutas/PainelService.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
 import GerarSolicitacaoNumerarioService from '../domain/service/permutas/GerarSolicitacaoNumerarioService.js';
 import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
@@ -770,15 +769,11 @@ router.get(
     }),
 );
 
-// GET /permutas/painel — lê o último snapshot (READ-ONLY). Sem ação de execução.
-router.get(
-    '/painel',
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const service = container.resolve(PainelService);
-        const painel = await service.exporNoPainel(req.requestId);
-        res.json(painel);
-    }),
-);
+// `GET /permutas/painel` e o `PainelService` foram REMOVIDOS em ADR-0043 §5:
+// zero call sites no frontend, e era o segundo implementador da ação
+// `exporNoPainel` — justamente o que achatava os 5 estados em `elegivel|bloqueada`.
+// A ação segue implementada por `GestaoPermutasService` + `app/permutas/page.tsx`.
+// NÃO confundir com `GET /sispag/painel` e `GET /recebimentos/painel`, que são
+// outras rotas, de outros serviços, e continuam existindo.
 
 export default router;

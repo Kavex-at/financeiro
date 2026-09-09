@@ -7,13 +7,14 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-18
+last_review: 2026-09-08
 preconditions:
   - "Adiantamento eleito por elegerAdiantamentos."
   - "Sessão Conexos ativa."
 postconditions:
   - "Cada Adiantamento marcado como aprovado-nos-4-gates ou bloqueado, com o detalhe por gate (auditoria I5)."
-  - "Estado da PermutaCandidata transita descoberta → (elegivel | bloqueada) conforme gates + INVOICE casada."
+  - "Estado da PermutaCandidata transita descoberta → (elegivel | casamento-manual | permuta-manual | ja-permutado | bloqueada) conforme gates + INVOICE casada (ADR-0005/0007/0043)."
+  - "Gate 2 reprovado com adiantamento PAGO e valorPermutado > 0 → JA_PERMUTADO (conclusão, terminal), nunca BLOQUEADA (ADR-0043)."
   - "Nenhuma escrita no ERP (I4)."
 side_effects:
   - "Leitura detail com298 (getMnyTitPermutar) por candidato — fan-out."
@@ -72,7 +73,9 @@ blocked-by:
 
 Motivo **específico por gate reprovado** (substituiu o genérico `falha-gate`, 2026-06-19):
 - `nao-pago` — Gate 3 reprovado (não totalmente pago, `mnyTitAberto > 0`).
-- `sem-saldo-permutar` — Gate 2 reprovado (pago, mas `mnyTitPermutar = 0`).
+- `sem-saldo-permutar` — Gate 2 reprovado (pago, `mnyTitPermutar = 0`, **e nunca houve permuta**).
+- `ja-permutado` — Gate 2 reprovado com `valorPermutado > 0`: **não é bloqueio**. Leva ao estado
+  `JA_PERMUTADO` (conclusão, terminal — ADR-0043); o motivo permanece como informativo do estado.
 - `di-duimp-ambos` — Gate 4 anomalia (D.I **e** DUIMP no mesmo processo).
 - `data-base-indisponivel` — Gate 4 sem D.I **nem** DUIMP.
 - Prioridade quando >1 gate falha: `nao-pago` → `sem-saldo-permutar` → `di-duimp-ambos` (causa-raiz

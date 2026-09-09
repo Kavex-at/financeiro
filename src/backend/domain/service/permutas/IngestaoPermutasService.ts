@@ -52,7 +52,8 @@ export const INGEST_LOCK_KEY = 918273645;
  *   4. staleness sweep (`stale=true` no que não foi visto neste run);
  *   5. finaliza o cabeçalho com os totais.
  * Falha → ROLLBACK + cabeçalho `error` FORA da transação. Também grava o
- * snapshot (back-compat `/painel`) via `PermutaSnapshotRepository.persistRun`.
+ * snapshot da eleição — o REGISTRO DE AUDITORIA da run (invariante I5) — via
+ * `PermutaSnapshotRepository.persistRun`.
  */
 @injectable()
 export default class IngestaoPermutasService {
@@ -120,17 +121,18 @@ export default class IngestaoPermutasService {
                 },
             );
 
-            // Back-compat `/painel`: mantém o snapshot de candidatas vivo.
+            // Snapshot da eleição — REGISTRO DE AUDITORIA da run (invariante I5,
+            // `business-rules/fidelidade-snapshot-eleicao.md`), não back-compat de
+            // rota: o `GET /permutas/painel` foi removido em ADR-0043 §5. Os totais
+            // vêm de `totals` (fonte ÚNICA de contagem), sem recontagem local — é o
+            // que faz header e snapshot convergirem POR CONSTRUÇÃO.
             const snapshotInput: PermutaEleicaoRunInput = {
                 flowId,
                 startedAt,
                 finishedAt: new Date(),
                 status: 'success',
                 triggeredBy,
-                totalCandidatas: totals.totalCandidatas,
-                totalElegiveis: totals.totalElegiveis,
-                totalBloqueadas: totals.totalBloqueadas,
-                bloqueadasByMotivo: totals.bloqueadasByMotivo,
+                ...totals,
             };
             await this.snapshotRepository.persistRun(snapshotInput, candidatas);
 
@@ -255,24 +257,38 @@ export default class IngestaoPermutasService {
 
     /**
      * Mapeia o estado de elegibilidade do domínio para o valor da coluna
-     * `permuta_adiantamento.estado_elegibilidade` (migration 0005 inclui
-     * `casamento-manual` — ADR-0005). 1:1, sem normalização: o relacional carrega
-     * o estado real (≠ snapshot, que colapsa N:M → bloqueada para o `/painel`).
+     * `permuta_adiantamento.estado_elegibilidade` (CHECK da 0003, estendida por
+     * 0005/0012/0054). 1:1, sem normalização — e desde ADR-0043 o snapshot também
+     * grava o estado inteiro, então NÃO há mais projeção binária em lugar nenhum.
+     *
+     * O `default` deste switch era `return 'descoberta'`, e isso é a razão de ele
+     * ter virado um check de exaustividade: com o `default` genérico, `ja-permutado`
+     * teria sido persistido como `'descoberta'` — trocando um apagamento por outro,
+     * SEM erro de compilação. A atribuição a `never` faz o PRÓXIMO estado novo
+     * quebrar o build em vez de sumir em silêncio.
      */
     private toEstadoRow = (
         estado: PermutaCandidata['estadoElegibilidade'],
     ): AdiantamentoRow['estadoElegibilidade'] => {
         switch (estado) {
+            case ESTADO_ELEGIBILIDADE.DESCOBERTA:
+                return 'descoberta';
             case ESTADO_ELEGIBILIDADE.ELEGIVEL:
                 return 'elegivel';
             case ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL:
                 return 'casamento-manual';
             case ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL:
                 return 'permuta-manual';
+            case ESTADO_ELEGIBILIDADE.JA_PERMUTADO:
+                return 'ja-permutado';
             case ESTADO_ELEGIBILIDADE.BLOQUEADA:
                 return 'bloqueada';
-            default:
-                return 'descoberta';
+            default: {
+                const naoMapeado: never = estado;
+                throw new Error(
+                    `estado de elegibilidade sem mapeamento relacional: ${String(naoMapeado)}`,
+                );
+            }
         }
     };
 

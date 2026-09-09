@@ -46,7 +46,7 @@ se ela quebrar algo. O read-model entrega a mesma tela com risco zero.
 
 | `pipeline` | Tabela | Vocabulário de status | Métricas próprias |
 |---|---|---|---|
-| `permutas-eleicao` | `permuta_eleicao_run` | `success/partial/error` | candidatas, elegíveis, bloqueadas |
+| `permutas-eleicao` | `permuta_eleicao_run` | `success/partial/error` | candidatas, elegíveis, casamento-manual, permuta-manual, já-permutado, bloqueadas (**5 buckets — ADR-0043**; antes só elegíveis/bloqueadas, o que mantinha 348 itens da fila própria invisíveis no painel) |
 | `recebimentos-extratos` | `recebimento_ingestao_run` | `running/success/partial/error` | lidas, inseridas, deduplicadas, contas, contas falhas |
 | `sispag-pagamentos` | `pagamento_ingestao_run` | `running/success/error` | títulos, inativados |
 

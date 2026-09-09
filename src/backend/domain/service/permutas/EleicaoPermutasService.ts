@@ -13,6 +13,7 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type Adiantamento from '../../interface/permutas/Adiantamento.js';
 import {
     ESTADO_ELEGIBILIDADE,
+    type EstadoElegibilidade,
     MOTIVO_BLOQUEIO,
 } from '../../interface/permutas/EstadoElegibilidade.js';
 import { GATE } from '../../interface/permutas/PermutaCandidata.js';
@@ -28,13 +29,30 @@ import AgingService from './AgingService.js';
 import ElegibilidadeService from './ElegibilidadeService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 
-export interface EleicaoResult {
-    runId: string;
-    flowId: string;
+/**
+ * Totais de uma run, por estado da máquina — a ÚNICA contagem da eleição.
+ *
+ * O shape é deliberadamente idêntico ao bloco de totais de
+ * `PermutaEleicaoRunInput`, para que o header da run seja gravado com
+ * `...totals` em vez de campo a campo: a convergência header ↔ snapshot
+ * (invariante I5, cláusula 2) passa a ser estrutural, não uma conferência que
+ * alguém precisa lembrar de fazer.
+ */
+export interface EleicaoTotals {
     totalCandidatas: number;
     totalElegiveis: number;
+    /** Contagem ESTRITA de `BLOQUEADA` — passivo de terceiro/leitura (ADR-0043). */
     totalBloqueadas: number;
+    totalCasamentoManual: number;
+    totalPermutaManual: number;
+    totalJaPermutado: number;
+    /** Detalhamento do passivo externo — só as bloqueadas ESTRITAS o alimentam. */
     bloqueadasByMotivo: Record<string, number>;
+}
+
+export interface EleicaoResult extends EleicaoTotals {
+    runId: string;
+    flowId: string;
     status: 'success' | 'error';
     candidatas: PermutaCandidata[];
     /** `true` quando a run foi REAPROVEITADA via Idempotency-Key (P0-6) — não
@@ -203,10 +221,7 @@ export default class EleicaoPermutasService {
                 return {
                     runId: '',
                     flowId: '',
-                    totalCandidatas: 0,
-                    totalElegiveis: 0,
-                    totalBloqueadas: 0,
-                    bloqueadasByMotivo: {},
+                    ...this.contarPorEstado([]),
                     status: 'success',
                     candidatas: [],
                     idempotentReplay: true,
@@ -225,6 +240,11 @@ export default class EleicaoPermutasService {
             totalCandidatas: summary.totalCandidatas,
             totalElegiveis: summary.totalElegiveis,
             totalBloqueadas: summary.totalBloqueadas,
+            // Caminho fácil de esquecer: sem estes 3, um replay idempotente
+            // devolveria zeros nos buckets novos sem quebrar teste nenhum.
+            totalCasamentoManual: summary.totalCasamentoManual,
+            totalPermutaManual: summary.totalPermutaManual,
+            totalJaPermutado: summary.totalJaPermutado,
             bloqueadasByMotivo: summary.bloqueadasByMotivo,
             status: summary.status === 'error' ? 'error' : 'success',
             candidatas: [],
@@ -250,12 +270,7 @@ export default class EleicaoPermutasService {
             pesCod?: string;
             importador?: string;
         }>;
-        totals: {
-            totalCandidatas: number;
-            totalElegiveis: number;
-            totalBloqueadas: number;
-            bloqueadasByMotivo: Record<string, number>;
-        };
+        totals: EleicaoTotals;
     }> => {
         const flowId = randomUUID();
 
@@ -332,22 +347,12 @@ export default class EleicaoPermutasService {
             );
             const todasInvoices = todasInvoicesPorFilial.flat();
 
-            const elegiveis = candidatas.filter(
-                (c) => c.estadoElegibilidade === ESTADO_ELEGIBILIDADE.ELEGIVEL,
-            );
-            const bloqueadas = candidatas.filter(
-                (c) => c.estadoElegibilidade === ESTADO_ELEGIBILIDADE.BLOQUEADA,
-            );
             return {
                 candidatas,
                 flowId,
                 todasInvoices,
-                totals: {
-                    totalCandidatas: candidatas.length,
-                    totalElegiveis: elegiveis.length,
-                    totalBloqueadas: bloqueadas.length,
-                    bloqueadasByMotivo: this.countByMotivo(bloqueadas),
-                },
+                // Uma agregação só, sobre a MESMA coleção que vai ao snapshot.
+                totals: this.contarPorEstado(candidatas),
             };
         } catch (error) {
             // P0-4 — corta os workers de fan-out ainda em voo (best-effort).
@@ -373,16 +378,15 @@ export default class EleicaoPermutasService {
             const { candidatas, totals } = computed;
             const finishedAt = new Date();
 
+            // `...totals` (e não campo a campo): header e snapshot saem da MESMA
+            // contagem, na mesma transação — I5 cláusula 2, por construção.
             const runInput: PermutaEleicaoRunInput = {
                 flowId,
                 startedAt,
                 finishedAt,
                 status: 'success',
                 triggeredBy,
-                totalCandidatas: totals.totalCandidatas,
-                totalElegiveis: totals.totalElegiveis,
-                totalBloqueadas: totals.totalBloqueadas,
-                bloqueadasByMotivo: totals.bloqueadasByMotivo,
+                ...totals,
             };
             const runId = await this.snapshotRepository.persistRun(runInput, candidatas);
 
@@ -400,16 +404,16 @@ export default class EleicaoPermutasService {
             return {
                 runId,
                 flowId,
-                totalCandidatas: totals.totalCandidatas,
-                totalElegiveis: totals.totalElegiveis,
-                totalBloqueadas: totals.totalBloqueadas,
-                bloqueadasByMotivo: totals.bloqueadasByMotivo,
+                ...totals,
                 status: 'success',
                 candidatas,
             };
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             // Atomicidade: persiste a run com status=error e ZERO snapshot rows.
+            // Run sem snapshot ⇒ todos os buckets zerados, e zerados pela MESMA
+            // função que conta a run cheia — nenhum literal solto que possa ficar
+            // para trás quando um estado novo entrar na máquina.
             const runId = await this.snapshotRepository.persistRun(
                 {
                     flowId,
@@ -417,10 +421,7 @@ export default class EleicaoPermutasService {
                     finishedAt: new Date(),
                     status: 'error',
                     triggeredBy,
-                    totalCandidatas: 0,
-                    totalElegiveis: 0,
-                    totalBloqueadas: 0,
-                    bloqueadasByMotivo: {},
+                    ...this.contarPorEstado([]),
                     errorMessage: message,
                 },
                 [],
@@ -963,6 +964,39 @@ export default class EleicaoPermutasService {
         return enriched;
     };
 
+    /**
+     * ÚNICA fonte de contagem de uma run (invariante I5, cláusula 2).
+     *
+     * Uma agregação só, sobre a mesma coleção `candidatas` que é persistida no
+     * snapshot. Antes havia dois `filter` avulsos alimentando o header enquanto o
+     * repositório derivava o status linha a linha — dois caminhos que podiam (e
+     * podem) discordar. Coincidir por acaso não satisfaz a regra: ela exige
+     * convergência POR CONSTRUÇÃO.
+     */
+    private contarPorEstado = (candidatas: PermutaCandidata[]): EleicaoTotals => {
+        const porEstado = new Map<EstadoElegibilidade, PermutaCandidata[]>();
+        for (const candidata of candidatas) {
+            const doEstado = porEstado.get(candidata.estadoElegibilidade) ?? [];
+            doEstado.push(candidata);
+            porEstado.set(candidata.estadoElegibilidade, doEstado);
+        }
+        const balde = (estado: EstadoElegibilidade): PermutaCandidata[] =>
+            porEstado.get(estado) ?? [];
+        const bloqueadas = balde(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        return {
+            totalCandidatas: candidatas.length,
+            totalElegiveis: balde(ESTADO_ELEGIBILIDADE.ELEGIVEL).length,
+            totalBloqueadas: bloqueadas.length,
+            totalCasamentoManual: balde(ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL).length,
+            totalPermutaManual: balde(ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL).length,
+            totalJaPermutado: balde(ESTADO_ELEGIBILIDADE.JA_PERMUTADO).length,
+            // Detalhamento do passivo EXTERNO: só as bloqueadas estritas entram.
+            // `ja-permutado` e os manuais não são passivo de terceiro (ADR-0043).
+            bloqueadasByMotivo: this.countByMotivo(bloqueadas),
+        };
+    };
+
+    /** Detalhamento por motivo — recebe SEMPRE só as bloqueadas estritas. */
     private countByMotivo = (bloqueadas: PermutaCandidata[]): Record<string, number> => {
         const acc: Record<string, number> = {};
         for (const c of bloqueadas) {

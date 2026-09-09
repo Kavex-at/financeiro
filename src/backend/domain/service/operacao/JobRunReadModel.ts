@@ -178,10 +178,24 @@ export default class JobRunReadModel {
                 ...(duracao(startedAt, finishedAt) !== undefined
                     ? { duracaoMs: duracao(startedAt, finishedAt) }
                     : {}),
+                // Chaves em PORTUGUÊS LEGÍVEL, decisão do Yuri em 2026-09-08: a
+                // tela renderiza `Object.entries(metricas)` com a CHAVE CRUA, sem
+                // mapa de rótulos (`app/operacao/page.tsx`), então `casamentoManual`
+                // apareceria assim mesmo para o operador. Nomear aqui não é
+                // vazamento de camada — `JobRunReadModel` É o read-model de
+                // apresentação; um mapa de rótulos no frontend acionaria o
+                // DesignSystemReviewer e ampliaria um ajuste de projeção de backend
+                // para mudança de UI, fora do escopo da ADR-0043.
+                //
+                // Vale SÓ para este pipeline: renomear as chaves de recebimentos,
+                // sispag ou ingest mudaria a tela deles sem necessidade.
                 metricas: {
                     candidatas: r.totalCandidatas,
                     elegiveis: r.totalElegiveis,
                     bloqueadas: r.totalBloqueadas,
+                    'casamento manual': r.totalCasamentoManual,
+                    'permuta manual': r.totalPermutaManual,
+                    'já permutado': r.totalJaPermutado,
                 },
                 ...(r.errorMessage !== undefined ? { errorMessage: r.errorMessage } : {}),
             } satisfies JobRun;

@@ -52,3 +52,23 @@
 - **Máquina de estados do documento com299 no ERP** (gerado → com item → com condição → finalizado → com
   título): NÃO modelada — é ciclo de vida **do ERP**, não do nosso agregado (o nosso é `etapa` na trilha de
   execução). Revisitar só se um 2º ERP exibir o mesmo ciclo.
+
+## Permutas — snapshot de estados (curadoria 2026-09-08, ADR-0043)
+
+- **Aposentar o motivo `multiplas-invoices`:** **0 ocorrências** em 250 runs / 152.516 linhas de
+  snapshot (2026-06-20 → 2026-09-08). Convive com `composto-nm`, que cobre o caso geral de N:M.
+  **Não removido agora** — 0 ocorrências não é impossibilidade, e mudar a taxonomia de motivos ficou
+  fora do escopo do ciclo. Revisitar no próximo `/retro-ontology`; promover a rejeição formal se um
+  2º cliente também não o produzir.
+- **Generalizar `fidelidade-snapshot-eleicao` para os demais pipelines com snapshot**
+  (`recebimento_ingestao_run`, `pagamento_ingestao_run`): ambos persistem contagens de header ao
+  lado de linhas de detalhe, portanto podem ter a **mesma classe de bug** (header × detalhe
+  divergindo). **Não medido** — por isso a regra nasceu escopada a `PermutaCandidata`, com a
+  generalização como nota, não como invariante transversal. Promover só com evidência medida nos
+  outros dois.
+- **ADRs 0034 e 0036 estão DUPLICADOS** em `ontology/decisions/` (dois arquivos com cada número:
+  `0034-gcd-da-sn-resolvido-por-historico-do-processo.md` +
+  `0034-maquina-de-estados-da-transacao-ganha-writers.md`; `0036-descricao-item-nde-no-documento.md`
+  + `0036-homologacao-da-nde-medida-pelo-estado-gravado.md`). **Não corrigido neste ciclo** (renumerar quebra referências
+  cruzadas já escritas). Registrado para uma limpeza deliberada: decidir se renumera com
+  `superseded_by` ou se mantém e documenta a colisão.

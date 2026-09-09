@@ -103,22 +103,26 @@ describe('ElegibilidadeService.avaliarElegibilidade (I3: 4 gates + INVOICE casad
         expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR);
     });
 
-    it('valorPermutar = 0 (pago) MAS valorPermutado > 0 → BLOQUEADA(ja-permutado) (doc 8266)', () => {
+    // T6 (ADR-0043) — pago + Gate 2 reprovado + `valorPermutado > 0` deixa de ser
+    // BLOQUEADA e passa ao estado CONCLUÍDO `JA_PERMUTADO`. O motivo permanece,
+    // informativo, no mesmo padrão de `composto-nm`/CASAMENTO_MANUAL.
+    it('T6: valorPermutar = 0 (pago) MAS valorPermutado > 0 → JA_PERMUTADO (doc 8266)', () => {
         const result = service.avaliarElegibilidade({
             // Print real Conexos doc 8266: pago E saldo já 100% consumido numa
-            // permuta (valorPermutado = mnyTitPermuta = 378636.28) → motivo
-            // distinto de "sem saldo": é um estado concluído, não um erro.
+            // permuta (valorPermutado = mnyTitPermuta = 378636.28) → estado
+            // concluído, não reprovação de mérito.
             adiantamento: buildAdiantamento({ valorPermutar: 0, valorPermutado: 378636.28 }),
             declaracoes: [di],
             invoices: [buildInvoice()],
         });
-        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.JA_PERMUTADO);
+        // O motivo NÃO é removido — vira motivo informativo do estado novo.
         expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.JA_PERMUTADO);
         const gate2 = result.gatesAvaliados.find((g) => g.gate === GATE.VALOR_PERMUTAR);
         expect(gate2?.passed).toBe(false);
     });
 
-    it('nao-pago tem prioridade sobre ja-permutado mesmo com valorPermutado > 0', () => {
+    it('T6 só dispara em adto PAGO: nao-pago (gate 3) vence, segue BLOQUEADA', () => {
         const result = service.avaliarElegibilidade({
             adiantamento: buildAdiantamento({
                 pago: false,
@@ -128,8 +132,29 @@ describe('ElegibilidadeService.avaliarElegibilidade (I3: 4 gates + INVOICE casad
             declaracoes: [di],
             invoices: [buildInvoice()],
         });
+        // Prioridade de causa-raiz preservada: gate 3 antes do gate 2.
         expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
         expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.NAO_PAGO);
+    });
+
+    it('fronteira: pago, gate 2 reprovado, valorPermutado = 0 → BLOQUEADA(sem-saldo-permutar)', () => {
+        const result = service.avaliarElegibilidade({
+            adiantamento: buildAdiantamento({ valorPermutar: 0, valorPermutado: 0 }),
+            declaracoes: [di],
+            invoices: [buildInvoice()],
+        });
+        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR);
+    });
+
+    it('fronteira: pago, gate 2 reprovado, valorPermutado ausente → BLOQUEADA(sem-saldo-permutar)', () => {
+        const result = service.avaliarElegibilidade({
+            adiantamento: buildAdiantamento({ valorPermutar: 0 }),
+            declaracoes: [di],
+            invoices: [buildInvoice()],
+        });
+        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR);
     });
 
     it('not fully paid → BLOQUEADA(nao-pago) (Gate 3, raiz antes do Gate 2)', () => {
