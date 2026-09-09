@@ -32,6 +32,47 @@ describe('migrations — segurança do diretório', () => {
         expect(suspeitos).toEqual([]);
     });
 
+    it('todo reverse tem a migration correspondente, e vice-versa', () => {
+        // Um reverse órfão é pior que nenhum: promete um caminho de volta que não
+        // corresponde a nada. E uma migration destrutiva sem reverse é a dívida
+        // que a Regis-Review cobrou (card `rollback-0054`).
+        const reverses = readdirSync(ROLLBACKS_DIR)
+            .filter((f) => f.endsWith('.rollback.sql'))
+            .map((f) => f.replace('.rollback.sql', '.sql'));
+        const aplicaveis = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'));
+
+        expect(reverses.sort()).toEqual(
+            ['0054_estado_ja_permutado.sql', '0055_guarda_estado_colapsado.sql'].sort(),
+        );
+        for (const alvo of reverses) {
+            expect(aplicaveis).toContain(alvo);
+        }
+    });
+
+    /**
+     * A 0055 proíbe exatamente as combinações que o reverse da 0054 precisa
+     * escrever para recolapsar. Se o §0 do reverse deixar de derrubar essas
+     * travas, o rollback passa a falhar no meio — e falharia justamente na hora
+     * em que alguém depende dele.
+     */
+    it('o reverse da 0054 derruba as travas da 0055 antes de recolapsar', () => {
+        const reverse = readFileSync(
+            path.join(ROLLBACKS_DIR, '0054_estado_ja_permutado.rollback.sql'),
+            'utf8',
+        );
+
+        const posGuardaAdto = reverse.indexOf('permuta_adiantamento_sem_estado_colapsado');
+        const posGuardaSnapshot = reverse.indexOf(
+            'permuta_candidata_snapshot_sem_status_colapsado',
+        );
+        const posRecolapso = reverse.indexOf("SET status = 'bloqueada'");
+
+        expect(posGuardaAdto).toBeGreaterThan(-1);
+        expect(posGuardaSnapshot).toBeGreaterThan(-1);
+        expect(posGuardaAdto).toBeLessThan(posRecolapso);
+        expect(posGuardaSnapshot).toBeLessThan(posRecolapso);
+    });
+
     it('o reverse da 0054 existe, fora do alcance do runner', () => {
         const noSubdiretorio = readdirSync(ROLLBACKS_DIR);
         expect(noSubdiretorio).toContain('0054_estado_ja_permutado.rollback.sql');

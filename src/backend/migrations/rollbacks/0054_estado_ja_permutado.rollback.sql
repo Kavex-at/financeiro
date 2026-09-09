@@ -30,6 +30,17 @@ BEGIN;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '10min';
 
+-- ─── 0. Derrubar as travas da 0055 ANTES de qualquer coisa ──────────────────
+-- A 0055 instalou CHECKs que proíbem justamente as combinações que este reverse
+-- precisa escrever (`bloqueada` + motivo `ja-permutado`, `bloqueada` +
+-- `cliente-filtro`, etc.). Sem derrubá-las primeiro, este script falha no §2.
+-- `IF EXISTS`, então rodar num banco onde a 0055 nunca foi aplicada é inofensivo.
+ALTER TABLE permuta_adiantamento
+    DROP CONSTRAINT IF EXISTS permuta_adiantamento_sem_estado_colapsado;
+
+ALTER TABLE permuta_candidata_snapshot
+    DROP CONSTRAINT IF EXISTS permuta_candidata_snapshot_sem_status_colapsado;
+
 -- ─── 1. Afrouxar as CHECKs ANTES de recolapsar ───────────────────────────────
 -- Mesma razão de ordem da 0054, invertida: a CHECK restaurada é mais estreita
 -- que o dado atual, então recolapsar primeiro e restringir depois falharia no

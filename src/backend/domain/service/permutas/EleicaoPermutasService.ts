@@ -50,6 +50,49 @@ export interface EleicaoTotals {
     bloqueadasByMotivo: Record<string, number>;
 }
 
+/** Só os campos de EleicaoTotals que são CONTAGEM POR ESTADO (fora `totalCandidatas`
+ *  e `bloqueadasByMotivo`, que não são baldes de estado). */
+export type EleicaoTotaisPorEstado = Pick<
+    EleicaoTotals,
+    | 'totalElegiveis'
+    | 'totalBloqueadas'
+    | 'totalCasamentoManual'
+    | 'totalPermutaManual'
+    | 'totalJaPermutado'
+>;
+
+/**
+ * Estado de elegibilidade → campo de `EleicaoTotals` que o conta.
+ *
+ * Regis-Review 2026-09-08, card `assertNever-propagacao`. Antes daqui a contagem
+ * lia CINCO baldes nominais de um `Map`, e ler cinco chaves de um mapa que tem
+ * seis é perfeitamente válido: um estado novo entraria no `Map` e nunca sairia.
+ * As candidatas dele sumiriam de TODOS os totais do header — enquanto continuariam
+ * sendo gravadas no snapshot. Ou seja, a próxima adição de estado violaria em
+ * silêncio a invariante `fidelidade-snapshot-eleicao` que este mesmo ciclo
+ * instalou, e o teste canônico não pegaria, porque ele cobre os 5 estados de hoje.
+ *
+ * `Record<EstadoElegibilidade, …>` exige TODAS as chaves da união neste literal.
+ * Acrescentar um estado ao enum quebra o build AQUI, que é onde a decisão
+ * ("este estado conta em qual balde?") precisa ser tomada por uma pessoa.
+ */
+const BALDE_DO_ESTADO: Record<EstadoElegibilidade, keyof EleicaoTotaisPorEstado | null> = {
+    [ESTADO_ELEGIBILIDADE.ELEGIVEL]: 'totalElegiveis',
+    [ESTADO_ELEGIBILIDADE.BLOQUEADA]: 'totalBloqueadas',
+    [ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL]: 'totalCasamentoManual',
+    [ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL]: 'totalPermutaManual',
+    [ESTADO_ELEGIBILIDADE.JA_PERMUTADO]: 'totalJaPermutado',
+    /**
+     * `descoberta` NÃO tem balde, e o `null` é deliberado — não é esquecimento.
+     * É o estado transitório de uma candidata ainda não avaliada, e toda candidata
+     * passa por `avaliarElegibilidade` antes de ser contada. Se uma escapasse até
+     * aqui, ela entraria em `totalCandidatas` sem entrar em balde nenhum — e a
+     * gravação no snapshot falharia alto na CHECK, que não aceita `descoberta`
+     * (migration 0054 §2). O `null` documenta a exclusão; o banco a garante.
+     */
+    [ESTADO_ELEGIBILIDADE.DESCOBERTA]: null,
+};
+
 export interface EleicaoResult extends EleicaoTotals {
     runId: string;
     flowId: string;
@@ -982,17 +1025,30 @@ export default class EleicaoPermutasService {
         }
         const balde = (estado: EstadoElegibilidade): PermutaCandidata[] =>
             porEstado.get(estado) ?? [];
-        const bloqueadas = balde(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+
+        // O `Record<EstadoElegibilidade, …>` acima (BALDE_DO_ESTADO) é o que torna
+        // esta contagem exaustiva: montar os totais percorrendo AS CHAVES DELE, em
+        // vez de listar cinco baldes à mão, faz um estado novo aparecer aqui sem
+        // que ninguém precise lembrar de vir. Ver a docstring do mapa.
+        const totaisPorEstado: EleicaoTotaisPorEstado = {
+            totalElegiveis: 0,
+            totalBloqueadas: 0,
+            totalCasamentoManual: 0,
+            totalPermutaManual: 0,
+            totalJaPermutado: 0,
+        };
+        for (const estado of Object.values(ESTADO_ELEGIBILIDADE)) {
+            const campo = BALDE_DO_ESTADO[estado];
+            if (campo === null) continue;
+            totaisPorEstado[campo] = balde(estado).length;
+        }
+
         return {
             totalCandidatas: candidatas.length,
-            totalElegiveis: balde(ESTADO_ELEGIBILIDADE.ELEGIVEL).length,
-            totalBloqueadas: bloqueadas.length,
-            totalCasamentoManual: balde(ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL).length,
-            totalPermutaManual: balde(ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL).length,
-            totalJaPermutado: balde(ESTADO_ELEGIBILIDADE.JA_PERMUTADO).length,
+            ...totaisPorEstado,
             // Detalhamento do passivo EXTERNO: só as bloqueadas estritas entram.
             // `ja-permutado` e os manuais não são passivo de terceiro (ADR-0043).
-            bloqueadasByMotivo: this.countByMotivo(bloqueadas),
+            bloqueadasByMotivo: this.countByMotivo(balde(ESTADO_ELEGIBILIDADE.BLOQUEADA)),
         };
     };
 
