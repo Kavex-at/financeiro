@@ -42,7 +42,7 @@
         "express-rate-limit": "^8.5.2",
         "jose": "^5.10.0",
         "jszip": "^3.10.1",
-        "multer": "^2.0.2",
+        "multer": "^2.3.0",
         "pg": "^8.20.0",
         "reflect-metadata": "^0.2.2",
         "tsyringe": "^4.10.0",
