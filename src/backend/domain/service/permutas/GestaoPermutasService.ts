@@ -23,6 +23,30 @@ import PermutaProcessamentoRepository from '../../repository/permutas/PermutaPro
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import LogService from '../LogService.js';
 
+/** Baldes de contagem POR STATUS do painel (fora `pendentes` e `invoicesEmAberto`,
+ *  que não são baldes de status). */
+type GestaoTotaisPorStatus = Pick<
+    GestaoPermutasResponse['totais'],
+    'elegiveis' | 'bloqueadas' | 'casamentoManual' | 'permutaManual' | 'jaPermutado'
+>;
+
+/**
+ * Status de elegibilidade → balde de contagem do painel.
+ *
+ * `Record<StatusElegibilidade, …>` exige TODAS as chaves da união: um status novo
+ * quebra o build AQUI. Regis-Review 2026-09-08, card `assertNever-propagacao`.
+ * A cadeia de quebra é encadeada de propósito — um estado novo no enum quebra
+ * primeiro o `statusDoEstado` (por incompatibilidade de tipo), o dev o acrescenta
+ * a `StatusElegibilidade`, e então quebra aqui, onde se decide o balde.
+ */
+const BALDE_DO_STATUS: Record<StatusElegibilidade, keyof GestaoTotaisPorStatus> = {
+    elegivel: 'elegiveis',
+    bloqueada: 'bloqueadas',
+    'casamento-manual': 'casamentoManual',
+    'permuta-manual': 'permutaManual',
+    'ja-permutado': 'jaPermutado',
+};
+
 /**
  * GestaoPermutasService — monta o payload da tela `GET /permutas/gestao` a
  * partir do modelo relacional (Fase B). Junta adiantamentos ativos + estado de
@@ -173,11 +197,8 @@ export default class GestaoPermutasService {
             importadorByPriCod,
         ).filter((g) => !g.adiantamentos.some((a) => adtosReclassificadosManual.has(a.docCod)));
 
-        const elegiveis = pendentes.filter((p) => p.status === 'elegivel').length;
-        const bloqueadas = pendentes.filter((p) => p.status === 'bloqueada').length;
-        const casamentoManual = pendentes.filter((p) => p.status === 'casamento-manual').length;
-        const permutaManual = pendentes.filter((p) => p.status === 'permuta-manual').length;
-        const jaPermutado = pendentes.filter((p) => p.status === 'ja-permutado').length;
+        const { elegiveis, bloqueadas, casamentoManual, permutaManual, jaPermutado } =
+            this.contarPorStatus(pendentes);
 
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -263,6 +284,30 @@ export default class GestaoPermutasService {
      * `avaliarElegibilidade`); se aparecer — ingestão interrompida no meio —
      * cai em `bloqueada`, como já caía, para a linha nunca sumir da tela.
      */
+    /**
+     * Contagem por status do painel ao vivo, exaustiva por construção.
+     *
+     * Regis-Review 2026-09-08, card `assertNever-propagacao`. Antes eram cinco
+     * `filter` nominais em sequência: um status novo simplesmente não seria
+     * contado, e a soma dos baldes deixaria de fechar com `pendentes.length` sem
+     * que nada reclamasse. `BALDE_DO_STATUS` é um `Record<StatusElegibilidade, …>`,
+     * então acrescentar um status quebra o build lá, e não aqui — que é o lugar
+     * certo, porque lá é onde se decide em qual balde ele entra.
+     */
+    private contarPorStatus = (pendentes: PermutaPendente[]): GestaoTotaisPorStatus => {
+        const totais: GestaoTotaisPorStatus = {
+            elegiveis: 0,
+            bloqueadas: 0,
+            casamentoManual: 0,
+            permutaManual: 0,
+            jaPermutado: 0,
+        };
+        for (const pendente of pendentes) {
+            totais[BALDE_DO_STATUS[pendente.status]] += 1;
+        }
+        return totais;
+    };
+
     private statusDoEstado = (estado: EstadoElegibilidadeRow): StatusElegibilidade =>
         estado === 'descoberta' ? 'bloqueada' : estado;
 

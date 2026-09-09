@@ -5,6 +5,7 @@ import type {
     GestaoPermutasResponse,
     InvoiceEmAberto,
     PermutaPendente,
+    StatusElegibilidade,
 } from '../../interface/permutas/Gestao.js';
 import type {
     CelulaValor,
@@ -13,6 +14,40 @@ import type {
 } from '../../interface/permutas/Relatorio.js';
 import GestaoPermutasService from './GestaoPermutasService.js';
 import LogService from '../LogService.js';
+
+/**
+ * Status → coluna do relatório "Reconciliação por processo".
+ *
+ * `casamento-manual` e `permuta-manual` caem na MESMA coluna (`manual`) de
+ * propósito: para quem lê esse relatório, os dois são "depende do analista". O
+ * `Record` acomoda isso naturalmente e ainda exige que todo status tenha destino.
+ */
+const COLUNA_RECONCILIACAO: Readonly<
+    Record<StatusElegibilidade, 'elegiveis' | 'bloqueadas' | 'manual' | 'jaPermutado' | null>
+> = {
+    elegivel: 'elegiveis',
+    bloqueada: 'bloqueadas',
+    'casamento-manual': 'manual',
+    'permuta-manual': 'manual',
+    'ja-permutado': 'jaPermutado',
+};
+
+/**
+ * Status → coluna do relatório "Clientes".
+ *
+ * `casamento-manual` é `null` — este relatório é sobre a carteira POR CLIENTE, e
+ * o casamento N:M é intra-processo, não diz nada sobre o cliente. A exclusão é
+ * deliberada e fica escrita; o que o mapa impede é a exclusão por esquecimento.
+ */
+const COLUNA_CLIENTES: Readonly<
+    Record<StatusElegibilidade, 'elegiveis' | 'bloqueadas' | 'permutaManual' | 'jaPermutado' | null>
+> = {
+    elegivel: 'elegiveis',
+    bloqueada: 'bloqueadas',
+    'casamento-manual': null,
+    'permuta-manual': 'permutaManual',
+    'ja-permutado': 'jaPermutado',
+};
 
 /** Largura padrão de coluna (caracteres) quando a coluna não especifica. */
 const LARGURA_PADRAO = 18;
@@ -91,6 +126,31 @@ export default class RelatorioExportService {
     };
 
     // ---- Projeções por relatório -------------------------------------------
+
+    /**
+     * Conta `adtos` nas colunas de um relatório, guiado por um mapa
+     * `Record<StatusElegibilidade, coluna | null>`.
+     *
+     * Regis-Review 2026-09-08, card `assertNever-propagacao`. Antes era uma
+     * sequência de `filter` nominais por coluna, e um status novo simplesmente
+     * não seria contado em lugar nenhum — a linha do relatório fecharia com
+     * números que não somam o total, sem nada reclamar. O mapa força a decisão
+     * ("este status entra em qual coluna, ou em nenhuma?") no ponto certo, e o
+     * `Record` faz o build quebrar lá quando a união crescer.
+     */
+    private contar = <C extends string>(
+        adtos: ReadonlyArray<{ status: StatusElegibilidade }>,
+        colunaDoStatus: Readonly<Record<StatusElegibilidade, C | null>>,
+        zeros: Record<C, number>,
+    ): Record<C, number> => {
+        const total = { ...zeros };
+        for (const adto of adtos) {
+            const coluna = colunaDoStatus[adto.status];
+            if (coluna === null) continue;
+            total[coluna] += 1;
+        }
+        return total;
+    };
 
     private defAdiantamentos = (
         tipo: RelatorioTipo,
@@ -255,12 +315,12 @@ export default class RelatorioExportService {
                         somaInvoicesUsd > 0
                             ? Math.round((saldoAdtosUsd / somaInvoicesUsd) * 100)
                             : null,
-                    elegiveis: g.adtos.filter((a) => a.status === 'elegivel').length,
-                    bloqueadas: g.adtos.filter((a) => a.status === 'bloqueada').length,
-                    manual: g.adtos.filter(
-                        (a) => a.status === 'casamento-manual' || a.status === 'permuta-manual',
-                    ).length,
-                    jaPermutado: g.adtos.filter((a) => a.status === 'ja-permutado').length,
+                    ...this.contar(g.adtos, COLUNA_RECONCILIACAO, {
+                        elegiveis: 0,
+                        bloqueadas: 0,
+                        manual: 0,
+                        jaPermutado: 0,
+                    }),
                     agingMedio:
                         agings.length > 0 ? Math.round(this.soma(agings) / agings.length) : null,
                     agingMax: agings.length > 0 ? Math.max(...agings) : null,
@@ -325,10 +385,12 @@ export default class RelatorioExportService {
                     valorAdtosUsd: this.soma(g.adtos.map((a) => a.valorMoedaNegociada)),
                     valorAdtosBrl: this.soma(g.adtos.map((a) => a.valorBrl)),
                     valorInvoicesUsd: this.soma(g.invoices.map((i) => i.valorMoedaNegociada)),
-                    elegiveis: g.adtos.filter((a) => a.status === 'elegivel').length,
-                    bloqueadas: g.adtos.filter((a) => a.status === 'bloqueada').length,
-                    permutaManual: g.adtos.filter((a) => a.status === 'permuta-manual').length,
-                    jaPermutado: g.adtos.filter((a) => a.status === 'ja-permutado').length,
+                    ...this.contar(g.adtos, COLUNA_CLIENTES, {
+                        elegiveis: 0,
+                        bloqueadas: 0,
+                        permutaManual: 0,
+                        jaPermutado: 0,
+                    }),
                     agingMedio:
                         agings.length > 0 ? Math.round(this.soma(agings) / agings.length) : null,
                 };

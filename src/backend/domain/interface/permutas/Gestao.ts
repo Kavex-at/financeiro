@@ -1,16 +1,25 @@
 import type { ProcessamentoStatus } from './Processamento.js';
+import type { ESTADO_ELEGIBILIDADE, EstadoElegibilidade } from './EstadoElegibilidade.js';
 
 /**
  * Shapes da resposta `GET /permutas/gestao` — espelham EXATAMENTE
  * `src/frontend/lib/types.ts` (a tela consome este JSON diretamente).
  */
 
-export type StatusElegibilidade =
-    | 'elegivel'
-    | 'bloqueada'
-    | 'casamento-manual'
-    | 'permuta-manual'
-    | 'ja-permutado';
+/**
+ * Status exibido no painel — **derivado** do estado de domínio, não redigitado
+ * (Regis-Review 2026-09-08, card `assertNever-propagacao`).
+ *
+ * É exatamente `EstadoElegibilidade` menos `descoberta`: uma candidata só chega à
+ * tela depois de avaliada, e `statusDoEstado` colapsa `descoberta` em `bloqueada`
+ * para a linha nunca sumir do painel. Derivar em vez de repetir é o que faz um
+ * estado novo no enum quebrar o build aqui — e, por consequência, na contagem do
+ * painel, que é onde ele precisaria ganhar um balde.
+ */
+export type StatusElegibilidade = Exclude<
+    EstadoElegibilidade,
+    typeof ESTADO_ELEGIBILIDADE.DESCOBERTA
+>;
 
 /**
  * Tipo de permuta — classificação DERIVADA (apresentação), não é estado no banco.

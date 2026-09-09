@@ -17,15 +17,15 @@
 |---|---|---|
 | `rollback-0054` | P1 / S | `src/backend/migrations/rollbacks/0054_estado_ja_permutado.rollback.sql` + `rollbacks/README.md` com a política. Verificado em PG 17: reverse correto, **idempotente** (hashes idênticos em 2 execuções) e **ida-e-volta é identidade** (0054 → reverse → 0054 devolve o estado original linha a linha). |
 | `lock-timeout-not-valid` | P1 / S | `SET LOCAL lock_timeout='30s'` + `statement_timeout='10min'` prefixados a toda migration no `MigrationRunner`; 0054 passa a usar `ADD CONSTRAINT ... NOT VALID` + `VALIDATE CONSTRAINT` pós-backfill (lock SHARE UPDATE EXCLUSIVE em vez de ACCESS EXCLUSIVE). |
+| `rollback-assimetrico` | P1 / M | Migration `0055_guarda_estado_colapsado.sql`: CHECKs que proíbem as COMBINAÇÕES que só o código antigo produz (`bloqueada` + motivo que pertence a outro estado). **CHECK e não TRIGGER** — declarativa, sem função PL/pgSQL, sem custo por linha, e aparece no `\d` da tabela. Com ela, o backend antigo **falha alto** na primeira escrita em vez de corromper em silêncio. Reverse próprio + `docs/runbooks/rollback-adr-0043.md` com os 3 cenários. Verificado em PG 17: escrita antiga rejeitada, escrita nova aceita, e as duas cadeias de reverse do runbook funcionam. |
+| `assertNever-propagacao` | P1 / M | `ExhaustivenessGuard` + `Record<Uniao, …>` nos sítios de particionamento. **Sítios que quebram o build ao adicionar um estado: 1 → 6** (medido injetando um estado falso). Exigiu derivar `EstadoElegibilidadeRow` e `StatusElegibilidade` do enum (fatia mínima do `taxonomia-fonte-unica`) — sem isso a cadeia não propagava e as guardas eram decorativas. |
 | — | — | **Bônus não catalogado:** `migrations/rollbacks.test.ts` (4 guardas). O runner faz `readdirSync(...).filter(f => f.endsWith('.sql'))` e **não é recursivo** — um reverse salvo solto em `migrations/` seria aplicado no boot seguinte e desfaria a migration que acabou de subir, registrando-se em `schema_migrations` como passo para a frente. O teste impede isso e também falha se alguém acrescentar `SET motivo_bloqueio` à 0054, que é o que torna o reverse reconstruível. |
 
 ## P1 — abertos (sprint 1 pós-merge)
 
 | Card | Esforço | Problema em uma linha |
 |---|---|---|
-| `rollback-assimetrico` | M | A CHECK nova **aceita** o comportamento antigo: reverter o backend sem reverter a 0054 faz ~80 linhas de `ja-permutado` voltarem a `bloqueada` na primeira ingestão, sem violação de constraint e sem log. Proposta: TRIGGER que rejeite o combo antigo. **É o risco não mitigado deste delta.** |
-| `taxonomia-fonte-unica` | M | A lista de estados vive em 6 representações TS paralelas. Este ciclo tocou ~10 arquivos para adicionar 1 estado. |
-| `assertNever-propagacao` | M | Exaustividade checada pelo compilador existe em **1 de ~20** sítios que despacham sobre `EstadoElegibilidade` (5%). O sítio corrigido foi o que quebrou; os vizinhos seguem silenciando — mesma classe de defeito que este ciclo corrige. |
+| `taxonomia-fonte-unica` | M | **Parcialmente feito** (ver abaixo). Restam as representações do FRONTEND (`src/frontend/lib/types.ts`, `format.ts`, `ui.tsx`), que exigem codegen ou barrel compartilhado e acionam o DesignSystemReviewer. |
 | `migration-test-harness` | L | A 0054 (227 LOC, 152k linhas) não tem teste automatizado. A validação foi manual, em container, e não é reexecutável por quem vier depois. |
 | `view-compat-snapshot` | S | `COMMENT ON COLUMN` / view de compat para leitores externos: quem filtra `WHERE status='bloqueada'` fora da aplicação vê o número cair sem sinal de que a semântica mudou. |
 

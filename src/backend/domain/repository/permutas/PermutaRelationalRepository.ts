@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import {
+    ESTADO_ELEGIBILIDADE,
+    type EstadoElegibilidade,
+} from '../../interface/permutas/EstadoElegibilidade.js';
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient, {
     type TransactionClient,
@@ -15,22 +19,23 @@ import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
  * editar os dois lugares. Esquecer o do filtro deixa a tela sem conseguir
  * filtrar o estado novo, sem nenhum erro de compilação. Uma fonte só.
  */
-export type EstadoElegibilidadeRow =
-    | 'descoberta'
-    | 'elegivel'
-    | 'bloqueada'
-    | 'casamento-manual'
-    | 'permuta-manual'
-    | 'ja-permutado';
+/**
+ * Estado como gravado em `permuta_adiantamento.estado_elegibilidade`.
+ *
+ * **Derivado, não redigitado** (Regis-Review 2026-09-08, cards
+ * `assertNever-propagacao` e `taxonomia-fonte-unica`). Era uma união escrita à
+ * mão, idêntica ao enum mas desconectada dele — e essa desconexão anulava as
+ * guardas de exaustividade rio abaixo: acrescentar um estado ao enum não quebrava
+ * nada aqui, nem no `statusDoEstado`, nem na contagem do painel. O alias faz a
+ * cadeia voltar a existir. O conjunto é o mesmo do enum porque a coluna aceita os
+ * mesmos valores (CHECK da migration 0054 §1), `descoberta` inclusive.
+ */
+export type EstadoElegibilidadeRow = EstadoElegibilidade;
 
-const ESTADOS_ROW_VALIDOS: ReadonlySet<string> = new Set<string>([
-    'descoberta',
-    'elegivel',
-    'bloqueada',
-    'casamento-manual',
-    'permuta-manual',
-    'ja-permutado',
-]);
+/** Derivado do enum: um estado novo entra aqui sozinho, sem manutenção manual. */
+const ESTADOS_ROW_VALIDOS: ReadonlySet<string> = new Set<string>(
+    Object.values(ESTADO_ELEGIBILIDADE),
+);
 
 const ehEstadoElegibilidadeRow = (valor: string): valor is EstadoElegibilidadeRow =>
     ESTADOS_ROW_VALIDOS.has(valor);

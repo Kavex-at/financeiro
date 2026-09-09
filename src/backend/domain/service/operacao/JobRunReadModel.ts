@@ -18,6 +18,32 @@ import JobExecucaoRepository from '../../repository/operacao/JobExecucaoReposito
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import RecebimentoIngestaoRunRepository from '../../repository/recebimentos/RecebimentoIngestaoRunRepository.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
+import type { StatusElegibilidade } from '../../interface/permutas/Gestao.js';
+import type { EleicaoTotaisPorEstado } from '../permutas/EleicaoPermutasService.js';
+
+/**
+ * Estado → rótulo exibido e campo do resumo da run.
+ *
+ * Regis-Review 2026-09-08, card `assertNever-propagacao`. Antes as seis chaves
+ * eram digitadas à mão no objeto `metricas`: um estado novo simplesmente não
+ * apareceria em "Últimas rodadas", que é precisamente o sintoma que este ciclo
+ * corrigiu para os 348 itens da fila própria. `Record<StatusElegibilidade, …>`
+ * exige todas as chaves — o estado novo quebra o build aqui e ganha rótulo.
+ *
+ * Os rótulos têm espaço e acento porque `app/operacao/page.tsx` renderiza a CHAVE
+ * CRUA, sem mapa de rótulos. Decisão do Yuri em 2026-09-08 para não tocar o
+ * frontend; é dívida consciente, com card próprio (`metricas-camelcase`, P2).
+ */
+const METRICA_POR_ESTADO: Record<
+    StatusElegibilidade,
+    { rotulo: string; campo: keyof EleicaoTotaisPorEstado }
+> = {
+    elegivel: { rotulo: 'elegiveis', campo: 'totalElegiveis' },
+    bloqueada: { rotulo: 'bloqueadas', campo: 'totalBloqueadas' },
+    'casamento-manual': { rotulo: 'casamento manual', campo: 'totalCasamentoManual' },
+    'permuta-manual': { rotulo: 'permuta manual', campo: 'totalPermutaManual' },
+    'ja-permutado': { rotulo: 'já permutado', campo: 'totalJaPermutado' },
+};
 
 /** Quantas runs recentes o painel mostra por pipeline. */
 export const RUNS_POR_PIPELINE = 10;
@@ -191,11 +217,9 @@ export default class JobRunReadModel {
                 // sispag ou ingest mudaria a tela deles sem necessidade.
                 metricas: {
                     candidatas: r.totalCandidatas,
-                    elegiveis: r.totalElegiveis,
-                    bloqueadas: r.totalBloqueadas,
-                    'casamento manual': r.totalCasamentoManual,
-                    'permuta manual': r.totalPermutaManual,
-                    'já permutado': r.totalJaPermutado,
+                    ...Object.fromEntries(
+                        Object.values(METRICA_POR_ESTADO).map((m) => [m.rotulo, r[m.campo]]),
+                    ),
                 },
                 ...(r.errorMessage !== undefined ? { errorMessage: r.errorMessage } : {}),
             } satisfies JobRun;
