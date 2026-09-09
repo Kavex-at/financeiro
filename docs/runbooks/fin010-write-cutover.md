@@ -44,6 +44,42 @@ serviço (redeploy/restart no Render).
   **não** `settled`. Um `parcial` é pendência: **re-aloque o par** para lançar o que faltou (a chave
   de idempotência inclui o `atualizado_em` da alocação, então re-alocar libera o novo lançamento).
 
+### Rollback do código com linhas `parcial` já gravadas
+
+> **Leia isto ANTES de reverter o commit da ADR-0043.** Migrations são forward-only: reverter o
+> código **não** remove o estado `parcial` do banco, e a versão anterior não sabe o que ele significa.
+> O `beginExecution` antigo só preserva `= 'settled'`, então uma linha `parcial` cairia no ramo ELSE,
+> voltaria para `reconciling` e o serviço **re-POSTaria uma baixa que já existe no `fin010`**.
+
+Passos, nesta ordem:
+
+1. **Corte a escrita primeiro:** `CONEXOS_WRITE_ENABLED=false` + restart. Nada de novo entra enquanto
+   você audita.
+2. **Veja se existe alguma linha `parcial`:**
+   ```sql
+   SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod,
+          bor_cod, bxa_cod_seq, valor_baixado, valor_residual_usd
+     FROM permuta_alocacao_execucao
+    WHERE status = 'parcial';
+   ```
+   **Nenhuma linha ⇒ pode reverter sem mais nada.** Este é o caso enquanto o delta não tiver produzido
+   a primeira baixa parcial em produção.
+3. **Havendo linhas:** para cada uma, confira no `fin010` (pelo `bor_cod`) o que de fato foi baixado.
+   O `bxa_cod_seq` estar preenchido significa que a baixa **existe** — o resíduo é o que faltou.
+4. **Só depois de auditar**, converta cada linha para o vocabulário que a versão antiga entende:
+   ```sql
+   UPDATE permuta_alocacao_execucao
+      SET status = 'settled'
+    WHERE status = 'parcial' AND idempotency_key = $1;   -- uma a uma, após conferir no ERP
+   ```
+   Isso **perde** a informação do resíduo — anote `valor_residual_usd` antes, porque o saldo continua
+   em aberto no adiantamento e vai precisar de re-alocação depois.
+5. **Agora sim** reverta o commit e faça o deploy.
+
+**Se você pular estes passos**, a migration `0055` te protege: um trigger no banco recusa reabrir
+qualquer execução com `bxa_cod_seq` preenchido, e a rota devolve **500** em vez de duplicar a baixa.
+Isso é rede de segurança, não procedimento — o 500 aparece para a analista no meio do trabalho dela.
+
 ## Sinais de problema
 - Linha presa em `reconciling` em `permuta_alocacao_execucao`: o processo morreu entre o POST e a confirmação.
   Cheque no `fin010` (pelo `bor_cod` persistido) se a baixa entrou; se sim, marque `settled` manualmente; se
