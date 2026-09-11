@@ -549,7 +549,7 @@ describe('ReconciliacaoPermutaService', () => {
         // O `markError` grava o borCod ANTES da limpeza; como o borderô deixou de existir, o
         // ponteiro tem de ser zerado — senão o ERP reaproveita o número e o painel mostra ao
         // analista um borderô de outro fornecedor (medido 2026-09-11: 2771 → doc 6708).
-        expect(execucaoRepository.clearBorCod).toHaveBeenCalledWith(1999);
+        expect(execucaoRepository.clearBorCod).toHaveBeenCalledWith(4, 1999);
     });
 
     it('borderô órfão NÃO removido (tem item no ERP): NÃO zera o ponteiro das execuções', async () => {

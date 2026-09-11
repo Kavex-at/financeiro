@@ -423,7 +423,7 @@ export default class ReconciliacaoPermutaService {
             // `markError` já o gravou alguns milissegundos antes, e o ERP REAPROVEITA o código —
             // deixar o ponteiro pendurado faz o painel exibir ao analista um borderô que hoje é de
             // outro fornecedor (2026-09-11: bor 2771 → doc 6708, bor 2436 → doc 5155).
-            const limpas = await this.execucaoRepository.clearBorCod(borCod);
+            const limpas = await this.execucaoRepository.clearBorCod(filCod, borCod);
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'borderô órfão (vazio) removido após falha de todas as baixas',
@@ -662,6 +662,21 @@ export default class ReconciliacaoPermutaService {
     };
 
     /**
+     * EM-ABERTO de UMA parcela, em moeda negociada. Fonte única para a pré-checagem de
+     * cobertura (I-Write-8a) E para a distribuição (I-Write-9) — as duas discordarem foi
+     * exatamente o bug de 2026-09-11: a cobertura media em-aberto, o laço distribuía por face,
+     * e a parcela já quitada engolia a cota do adiantamento seguinte.
+     *
+     * `pagoBrl` (`titMnyTotPago`) vem em BRL; a conversão usa a taxa travada da própria parcela.
+     * Lista SINTÉTICA (ERP indisponível, `titulosDoErp = false`) não tem `pagoBrl` — ali a face
+     * É o em-aberto presumido, e o guard I-Write-1 no ERP segue sendo a rede de segurança.
+     */
+    private abertoDaParcela = (t: TituloParaBaixa, titulosDoErp: boolean): number => {
+        if (!titulosDoErp) return t.usd;
+        return round2(t.usd - (t.pagoBrl ?? 0) / t.taxa);
+    };
+
+    /**
      * I-Write-8a — a COBERTURA EM ABERTO dos títulos cobre o valor alocado?
      *
      * ── Por que a conta não é `Σ valorNegociado` (a face) ────────────────────────────────────
@@ -692,21 +707,6 @@ export default class ReconciliacaoPermutaService {
      * **nunca** `rows.length === pageSize`, porque o ERP impõe a própria página (medido em HML:
      * pedimos 500, vieram 50 com `count: 86`).
      */
-    /**
-     * EM-ABERTO de UMA parcela, em moeda negociada. Fonte única para a pré-checagem de
-     * cobertura (I-Write-8a) E para a distribuição (I-Write-9) — as duas discordarem foi
-     * exatamente o bug de 2026-09-11: a cobertura media em-aberto, o laço distribuía por face,
-     * e a parcela já quitada engolia a cota do adiantamento seguinte.
-     *
-     * `pagoBrl` (`titMnyTotPago`) vem em BRL; a conversão usa a taxa travada da própria parcela.
-     * Lista SINTÉTICA (ERP indisponível, `titulosDoErp = false`) não tem `pagoBrl` — ali a face
-     * É o em-aberto presumido, e o guard I-Write-1 no ERP segue sendo a rede de segurança.
-     */
-    private abertoDaParcela = (t: TituloParaBaixa, titulosDoErp: boolean): number => {
-        if (!titulosDoErp) return t.usd;
-        return round2(t.usd - (t.pagoBrl ?? 0) / t.taxa);
-    };
-
     private assertCobertura = async (p: {
         titulos: TituloParaBaixa[];
         titulosDoErp: boolean;

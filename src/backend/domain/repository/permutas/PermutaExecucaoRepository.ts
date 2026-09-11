@@ -223,13 +223,19 @@ export default class PermutaExecucaoRepository {
      * da execução 399 hoje contém baixas do doc 6708; o 2436 da execução 341, do doc 5155).
      *
      * Só toca linhas `error`: `settled`/`parcial` apontam para borderô VIVO, com dinheiro movido.
+     *
+     * ESCOPADO POR FILIAL de propósito: o `bor_cod` é sequencial POR FILIAL, então o mesmo número
+     * existe em filiais diferentes ao mesmo tempo (medido: bor 2436 na filial 1 e bor 2771 na
+     * filial 4). Limpar só por número apagaria o ponteiro de uma execução de OUTRA filial cujo
+     * borderô está vivo. (As irmãs `listByBorCod`/`countByBorCod`/`deleteByBorCod` ainda filtram
+     * só pelo número — dívida anterior a esta mudança, registrada em `_inbox/`.)
      */
-    public clearBorCod = async (borCod: number): Promise<number> => {
+    public clearBorCod = async (filCod: number, borCod: number): Promise<number> => {
         return this.databaseClient.update(
             `UPDATE permuta_alocacao_execucao
                 SET bor_cod = NULL, atualizado_em = now()
-              WHERE bor_cod = $borCod AND status = 'error'`,
-            { borCod },
+              WHERE bor_cod = $borCod AND fil_cod = $filCod AND status = 'error'`,
+            { filCod, borCod },
         );
     };
 
