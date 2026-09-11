@@ -419,10 +419,15 @@ export default class ReconciliacaoPermutaService {
             }
             await this.conexosBaixaClient.excluirBordero({ filCod, borCod });
             await this.execucaoRepository.deleteBorderoCache(filCod, borCod);
+            // O borderô não existe mais: nenhuma linha pode seguir apontando para o número. O
+            // `markError` já o gravou alguns milissegundos antes, e o ERP REAPROVEITA o código —
+            // deixar o ponteiro pendurado faz o painel exibir ao analista um borderô que hoje é de
+            // outro fornecedor (2026-09-11: bor 2771 → doc 6708, bor 2436 → doc 5155).
+            const limpas = await this.execucaoRepository.clearBorCod(borCod);
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'borderô órfão (vazio) removido após falha de todas as baixas',
-                data: { adiantamentoDocCod, borCod },
+                data: { adiantamentoDocCod, borCod, execucoesComPonteiroLimpo: limpas },
             });
         } catch (err) {
             await this.logService.warn({
@@ -540,9 +545,22 @@ export default class ReconciliacaoPermutaService {
         let naoBaixadoUsd = 0;
         const bxaCodSeqs: number[] = [];
 
-        for (const t of titulos) {
+        // I-Write-9 — a parcela entra pelo EM-ABERTO dela, não pela face, e parcela já quitada
+        // fica FORA do rateio. Uma invoice parcelada (ex.: 10% antecipado + 90% no embarque) tem
+        // uma parcela por etapa de pagamento, e cada adiantamento do grupo quita a SUA. Distribuir
+        // pela face fazia o laço recomeçar na parcela 1 — já quitada pelo adiantamento anterior —
+        // e o ERP respondia `bxaMnyValor=0`, que o guard I-Write-1 transformava em
+        // "título <inv>/1 sem valor em aberto". O dinheiro estava na parcela seguinte.
+        // Medido em prod 2026-09-11: invoice 7144 (tit 1 quitado 7.685,12 / tit 2 aberto
+        // 31.814,88) e 4755 (3.286,14 / 29.575,24). Invoices de parcela única nunca falharam —
+        // a 28260 tem OITO adiantamentos e liquidou inteira.
+        const parcelasAbertas = titulos
+            .map((t) => ({ ...t, abertoUsd: this.abertoDaParcela(t, titulosDoErp) }))
+            .filter((t) => t.abertoUsd > TOLERANCIA_FECHAMENTO_NEG);
+
+        for (const t of parcelasAbertas) {
             if (restanteUsd <= TOLERANCIA_FECHAMENTO_NEG) break;
-            const usdTitulo = Math.min(restanteUsd, t.usd);
+            const usdTitulo = Math.min(restanteUsd, t.abertoUsd);
             const r = await this.baixarTitulo({
                 key,
                 borCod,
@@ -674,6 +692,21 @@ export default class ReconciliacaoPermutaService {
      * **nunca** `rows.length === pageSize`, porque o ERP impõe a própria página (medido em HML:
      * pedimos 500, vieram 50 com `count: 86`).
      */
+    /**
+     * EM-ABERTO de UMA parcela, em moeda negociada. Fonte única para a pré-checagem de
+     * cobertura (I-Write-8a) E para a distribuição (I-Write-9) — as duas discordarem foi
+     * exatamente o bug de 2026-09-11: a cobertura media em-aberto, o laço distribuía por face,
+     * e a parcela já quitada engolia a cota do adiantamento seguinte.
+     *
+     * `pagoBrl` (`titMnyTotPago`) vem em BRL; a conversão usa a taxa travada da própria parcela.
+     * Lista SINTÉTICA (ERP indisponível, `titulosDoErp = false`) não tem `pagoBrl` — ali a face
+     * É o em-aberto presumido, e o guard I-Write-1 no ERP segue sendo a rede de segurança.
+     */
+    private abertoDaParcela = (t: TituloParaBaixa, titulosDoErp: boolean): number => {
+        if (!titulosDoErp) return t.usd;
+        return round2(t.usd - (t.pagoBrl ?? 0) / t.taxa);
+    };
+
     private assertCobertura = async (p: {
         titulos: TituloParaBaixa[];
         titulosDoErp: boolean;
@@ -685,7 +718,7 @@ export default class ReconciliacaoPermutaService {
 
         let cobertura = 0;
         for (const t of p.titulos) {
-            const abertoUsd = round2(t.usd - (t.pagoBrl ?? 0) / t.taxa);
+            const abertoUsd = this.abertoDaParcela(t, p.titulosDoErp);
             cobertura = round2(cobertura + abertoUsd);
             // Corroboração, NUNCA recusa: `pago` é retornável mas NÃO filtrável (`pago#NE: '1'`
             // responde HTTP 500 — medido). Dois campos do ERP discordando entre si é problema de
