@@ -1,5 +1,27 @@
 # Columbia Financeiro — Changelog
 
+## v0.36.1 (2026-09-11) — o link compartilhado para de chegar sem ícone
+
+Compartilhar a URL do app no Teams produzia um card com título, descrição e um placeholder cinza
+no lugar da imagem; a aba do navegador mostrava o globo genérico. Nenhum dos dois era cache:
+`/favicon.ico` respondia **404** e o HTML servido trazia exatamente duas tags de metadata,
+`<title>` e `<meta name="description">`. Não havia `public/`, nem `app/icon.*`, nem `og:*` no
+repositório — o ícone nunca existiu.
+
+Os dois consumidores passam a ser servidos a partir da marca que o app já usa (`AppShellLogo`: a
+barra em `--primary`, `oklch(0.50 0.12 250)` = `#2266a4`): `app/icon.svg` para a aba,
+`app/apple-icon.tsx` como PNG para quem não lê favicon SVG, e `app/opengraph-image.tsx` para o
+card 1200x630 — desenhado em código em vez de versionado como binário, de modo que o wordmark
+acompanhe o header real.
+
+A peça que de fato destrava o unfurl é o `metadataBase`: sem ele o Next emite `og:image`
+relativo, e Teams, Outlook e Slack descartam imagem relativa. O card seguia mostrando texto e
+nenhuma imagem — exatamente o sintoma relatado.
+
+**Cache dos consumidores.** Teams e Outlook guardam o unfurl por URL. Um link já compartilhado
+pode continuar exibindo o card antigo por horas; um parâmetro novo na URL (`?v=1`) força o
+recrawl.
+
 ## v0.36.0 (2026-09-09) — a baixa da permuta para de depender de sorte
 
 O Regis-Review do módulo Permutas (`docs/regis-review/2026-09-08-1414-permutas/`) mediu o
