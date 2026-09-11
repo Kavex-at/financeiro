@@ -110,7 +110,12 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
      falha: o `borCod` é compartilhado por todas as alocações (I-Write-3), então *falha-depois-sucesso*
      deixa o borderô **com** item e ele **não** é órfão. É **best-effort e fail-safe** — a fonte da
      verdade é o ERP (`listBaixas`): havendo item, não apaga; qualquer falha vira `BUSINESS_WARN` e
-     **nunca** mascara o erro real da baixa.
+     **nunca** mascara o erro real da baixa. **Apagado o borderô, o ponteiro morre com ele:**
+     `clearBorCod(filCod, borCod)` zera o `bor_cod` das linhas `error` daquele borderô (a linha
+     permanece, com o `erro_mensagem` que a analista precisa ler). Sem isso o número fica pendurado —
+     e o ERP **reaproveita** o código, de modo que o painel passa a exibir um borderô que hoje é de
+     **outro fornecedor** (medido 2026-09-11: o 2771 contém baixas do doc 6708; o 2436, do doc 5155).
+     A limpeza é **escopada por filial**, porque `bor_cod` é sequencial por filial.
   2. **Recusa (consumidor):** `finalizarBordero` rejeita borderô **sem item no ERP** antes do POST
      (`assertBorderoTemItens`), com mensagem que aponta a saída ("use Excluir"). A contagem vem do
      **ERP**, não da trilha — a trilha guarda linhas `error` **com** `bor_cod` (sem baixa nenhuma no
@@ -197,6 +202,38 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
 
   As duas cláusulas convivem por construção: 8a elimina o caso **detectável antes de escrever**,
   8b registra o que só se revela depois. Ver ADR-0044 e sua emenda de 2026-09-08.
+
+- **I-Write-9 (rateio por parcela — pelo em-aberto, nunca pela face):** ao distribuir o valor
+  alocado entre as **parcelas (títulos)** da invoice, cada parcela entra pelo **em-aberto** dela, e
+  parcela **já quitada fica FORA** do rateio. É a mesma conta de I-Write-8a
+  (`abertoUsd = titMnyValorMneg − titMnyTotPago / titFltTaxaMneg`), agora aplicada também no laço —
+  fonte única: `ReconciliacaoPermutaService.abertoDaParcela`.
+
+  **Por que é invariante e não detalhe de laço.** Uma invoice de importação é parcelada segundo o
+  **cronograma de pagamento do processo** (ex.: 10% antecipado + 90% no embarque), e na permuta cada
+  adiantamento do grupo quitou a **sua** etapa — as parcelas casam 1:1 com as alocações. Distribuir
+  pela face faz o laço recomeçar sempre na parcela 1: o 2º adiantamento é roteado para a parcela que
+  o 1º fechou, o ERP responde `bxaMnyValor = 0` e **I-Write-1** derruba a baixa com *"título
+  &lt;inv&gt;/1 sem valor em aberto no ERP"*. A mensagem é enganosa — o título tem saldo, só não
+  naquela parcela.
+
+  > **Origem:** medido em produção em 2026-09-11 a partir de 14 falhas reais no ledger. Invoice
+  > **7144** (processo 579) — tit 1 face 7.685,12 USD **quitado** pelo adto 4635, tit 2 face
+  > 31.814,88 USD **aberto** para o adto 6833, que falhou; invoice **4755** (processo 173) —
+  > 3.286,14 quitado / 29.575,24 aberto. O gatilho **não** é "ter 2+ adiantamentos": dos 21 grupos
+  > multi-adiantamento do banco, **17 liquidaram inteiros**, inclusive a invoice 28260 com **oito**
+  > adiantamentos — todos em invoice de **parcela única**, onde o laço antigo funcionava por
+  > acidente (a parcela 1 seguia com saldo para o adiantamento seguinte).
+
+  **É a repetição de um erro já cometido uma vez.** A primeira redação de I-Write-8a somava a
+  **face** dos títulos ativos (ver `_inbox/permutas-baixa-integridade-followups.md`); a cobertura foi
+  corrigida para em-aberto e o **laço de distribuição ficou para trás**. Cobertura e rateio medindo
+  grandezas diferentes *é* o bug — daí a fonte única. O aviso de I-Write-8a ("não 'simplifique' esta
+  conta de volta para a face") vale igual aqui.
+
+  **Fora do escopo (follow-up consciente):** a âncora I-Write-6 segue condicionada a
+  `titulos.length === 1` — e **não** a "uma única parcela aberta". Mudar isso alteraria o
+  arredondamento de centavos em baixas multi-parcela e é decisão de outra rodada.
 
 ## Adendo v0.7.0 (2026-06-24) — auto-alocação ANTES de gravar
 
