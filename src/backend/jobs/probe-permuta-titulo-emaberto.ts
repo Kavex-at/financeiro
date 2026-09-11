@@ -44,38 +44,47 @@ import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseCl
  * exigiria um borderô real.
  *
  * ─────────────────────────────────────────────────────────────────────────────────────
- * RESULTADO DA EXECUÇÃO (2026-09-11, prod) — (A) e (B) REFUTADAS nos casos reais N:1.
+ * CONCLUSÃO (2026-09-11, prod) — CAUSA-RAIZ ENCONTRADA. (A), (B) e (E) refutadas.
  *
- * 8 invoices com settled+error no ledger. 5 caíram em (B), mas são casos de UM só adto
- * (retentativa após "período fechado") — não são o sintoma reportado. Os 3 casos com
- * DOIS adiantamentos de verdade (7144, 4755, 32496) deram INDEFINIDO, e a fase 2 mostrou
- * por quê — os DOIS lados têm saldo sobrando:
+ * O gatilho NÃO é "ter 2+ adiantamentos". Dos 21 grupos multi-adto do banco, 17
+ * liquidaram inteiros — inclusive a invoice 28260 com OITO adiantamentos. O que separa
+ * os que passam dos que quebram é o número de PARCELAS (títulos) da invoice:
  *
- *   invoice 7144  título em-aberto R$ 164.619,74   adto 6833 a permutar R$ 160.397,90
- *   invoice 4755  título em-aberto R$ 150.061,81   adto 4471 a permutar R$ 151.889,56
+ *   passam  → invoice de 1 parcela: 28260 (8 adtos), 23191 (3), 17618 (3), 29900 (5)
+ *   quebram → invoice de 2 parcelas: 7144, 4755, 4803
  *
- * Ou seja: a mensagem "título sem valor em aberto no ERP" é ENGANOSA — o título tem
- * saldo. O que difere entre o adto que liquidou e o que falhou é o BORDERÔ:
+ * Medido no ERP (fase 3), a invoice que quebra tem as parcelas casando 1:1 com as
+ * alocações — e a parcela 1 já foi quitada pelo 1º adiantamento:
  *
- *   bor 2057 (adto 4635, settled) → contém `doc 7144/1` R$ 39.765,11   ✔ é o nosso
- *   bor 2771 (adto 6833, error)   → contém `doc 6708/1` e `doc 6708/2` ✗ é de OUTRO
- *   bor 2185 (adto 3211, settled) → contém `doc 4755/1` R$ 16.673,54   ✔ é o nosso
- *   bor 2436 (adto 4471, error)   → contém `doc 5155/1` R$ 542,85      ✗ é de OUTRO
+ *   invoice 7144  tit 1 face 7.685,12 PAGO (aberto 0) · tit 2 face 31.814,88 ABERTO
+ *                 adto 4635 alocou 7.685,12 (settled) · adto 6833 alocou 31.814,88 (ERRO)
+ *   invoice 4755  tit 1 face 3.286,14 PAGO (aberto 0) · tit 2 face 29.575,24 ABERTO
+ *                 adto 3211 alocou 3.286,14 (settled) · adto 4471 alocou 29.575,24 (ERRO)
  *
- * Os borderôs das execuções com erro já estavam FINALIZADOS (`borVldFinalizado:1`) com
- * baixas de outro fornecedor ANTES de o nosso passo de validação rodar. Validar o nosso
- * título dentro do borderô de outro fornecedor devolve `bxaMnyValor=0` — e é exatamente
- * o erro que o analista vê.
+ * ⇒ BUG: o laço que distribui o valor alocado entre as parcelas
+ *   (`ReconciliacaoPermutaService.ts:543-545`) usa `t.usd`, a FACE da parcela, e NÃO pula
+ *   parcela já quitada:
  *
- * ⇒ HIPÓTESE (E), a que sobrou: o `borCod` que `criarBordero` devolve NÃO é exclusivamente
- *   nosso — colide com borderôs que analistas finalizam direto na UI do Conexos. Suspeito
- *   primário: `ConexosBaixaClient.criarBordero` (`:67-92`) confia no `BORDERO_CRIADO_SCHEMA
- *   .parse(raw)` para extrair um `borCod` da resposta do `POST /fin010` sem verificar que
- *   o borderô voltou VAZIO e EM CADASTRO (`borVldFinalizado:0`, `vldHasBaixa:0`) e nosso.
- *   Não é bug de rateio — é de propriedade/concorrência do borderô.
+ *       for (const t of titulos) {                       // sempre começa na parcela 1
+ *           const usdTitulo = Math.min(restanteUsd, t.usd);   // face, não em-aberto
  *
- * Confirmado por: `request_payload`/`erp_response` das execuções com erro são NULL — elas
- * morrem no passo 2 (validação) e nunca chegam a POSTar baixa. O borderô fica órfão.
+ *   Para o adto 6833 (alocado 31.814,88) isso vira `min(31.814,88 , 7.685,12) = 7.685,12`
+ *   na parcela 1 — que está quitada. O ERP devolve `bxaMnyValor=0` e o guard I-Write-1
+ *   (`:500-504`) lança "título 7144/1 sem valor em aberto no ERP". Bate com a mensagem
+ *   exata do ledger. O dinheiro estava na parcela 2 o tempo todo.
+ *
+ *   A ironia: o em-aberto POR PARCELA já é calculado 60 linhas antes, em `assertCobertura`
+ *   (`:686`, `abertoUsd = t.usd - pagoBrl/taxa`) — e é descartado ali. A cobertura passa
+ *   (31.814,88 ≥ 31.814,88, correto) e a distribuição erra o alvo.
+ *
+ * CORREÇÃO indicada: no laço, derivar `abertoUsd` por parcela (mesma fórmula da cobertura),
+ * pular parcela com aberto ≈ 0 e capar em `min(restanteUsd, abertoUsd)`.
+ *
+ * NOTA sobre o `bor_cod` das linhas com erro (a pista falsa da rodada anterior): quando
+ * TODAS as baixas falham, `removerBorderoOrfao` (`:385-387`) APAGA o borderô — mas o
+ * `markError` já gravou o `bor_cod` antes. O número fica pendurado e o ERP o reaproveita
+ * depois, então o painel mostra ao analista um borderô que hoje é de outro fornecedor
+ * (2771 → doc 6708; 2436 → doc 5155). É bug de rastro, não a causa da falha.
  * ─────────────────────────────────────────────────────────────────────────────────────
  *
  * Run:
@@ -373,6 +382,55 @@ const main = async (): Promise<void> => {
             } catch (err) {
                 console.log(`    · adto ${a.adiantamento_doc_cod}: ${(err as Error).message}`);
             }
+        }
+        console.log('');
+    }
+
+    // ── FASE 3 — AS PARCELAS (títulos) DA INVOICE ────────────────────────────────
+    // Hipótese (F), a que o código sustenta: `ReconciliacaoPermutaService` distribui o
+    // valor alocado entre as parcelas com `for (const t of titulos)` usando `t.usd`, que é
+    // a FACE da parcela — NÃO o em-aberto dela (`:543-545`). O laço não pula parcela já
+    // quitada. Então o 2º adiantamento do grupo recomeça na parcela 1, que o 1º já baixou,
+    // e o ERP responde `bxaMnyValor=0` → "título <inv>/1 sem valor em aberto".
+    // O em-aberto por parcela JÁ é calculado em `assertCobertura` (`:686`,
+    // `abertoUsd = t.usd - pagoBrl/taxa`) e descartado ali.
+    // Assinatura esperada: parcela 1 quitada (pago=1 / aberto≈0) e parcela 2+ em aberto.
+    if (relatorio.length > 0) {
+        console.log('═'.repeat(78));
+        console.log('FASE 3 — parcelas (títulos) de cada invoice\n');
+    }
+    for (const r of relatorio) {
+        const invoiceDocCod = String(r.invoiceDocCod);
+        const filCod = Number(r.filCod);
+        console.log('─'.repeat(78));
+        console.log(`INVOICE ${invoiceDocCod} (filial ${filCod})`);
+        try {
+            const parcelas = await titulos.listTitulosAPagar({ docCod: invoiceDocCod, filCod });
+            console.log(`  ${parcelas.length} parcela(s):`);
+            let abertoTotal = 0;
+            for (const t of parcelas) {
+                const taxa = t.taxa ?? 0;
+                const faceUsd = t.valorNegociado ?? 0;
+                const pagoUsd = taxa > 0 ? (t.valorPago ?? 0) / taxa : 0;
+                const abertoUsd = faceUsd - pagoUsd;
+                abertoTotal += abertoUsd;
+                console.log(
+                    `    · tit ${t.titCod}  face ${faceUsd.toFixed(2)} ${t.moedaNome ?? ''} | ` +
+                        `pago ${pagoUsd.toFixed(2)} | EM ABERTO ${abertoUsd.toFixed(2)} | ` +
+                        `pago=${String(t.pago)} | taxa ${taxa}`,
+                );
+            }
+            console.log(`  em-aberto somado: ${abertoTotal.toFixed(2)} (moeda negociada)`);
+            const quitadas = parcelas.filter((t) => t.pago === 1).map((t) => t.titCod);
+            if (quitadas.length > 0 && parcelas.length > quitadas.length) {
+                console.log(
+                    `  ▶ (F) CONFIRMADA: parcela(s) ${quitadas.join(', ')} já quitada(s) e ` +
+                        `${parcelas.length - quitadas.length} ainda aberta(s) — o laço de baixa ` +
+                        `recomeça na parcela 1 e bate em em-aberto 0.`,
+                );
+            }
+        } catch (err) {
+            console.log(`  ⚠ falha ao listar parcelas: ${(err as Error).message}`);
         }
         console.log('');
     }
