@@ -70,6 +70,7 @@ const buildDeps = () => {
         markError: jest.fn().mockResolvedValue(undefined),
         listByAdiantamento: jest.fn().mockResolvedValue([]),
         deleteBorderoCache: jest.fn().mockResolvedValue(1),
+        clearBorCod: jest.fn().mockResolvedValue(1),
     };
     const relationalRepository = {
         findAdiantamento: jest
@@ -545,6 +546,106 @@ describe('ReconciliacaoPermutaService', () => {
         expect(out.resultados[0].status).toBe('error');
         expect(conexosClient.excluirBordero).toHaveBeenCalledWith({ filCod: 4, borCod: 1999 });
         expect(execucaoRepository.deleteBorderoCache).toHaveBeenCalledWith(4, 1999);
+        // O `markError` grava o borCod ANTES da limpeza; como o borderô deixou de existir, o
+        // ponteiro tem de ser zerado — senão o ERP reaproveita o número e o painel mostra ao
+        // analista um borderô de outro fornecedor (medido 2026-09-11: 2771 → doc 6708).
+        expect(execucaoRepository.clearBorCod).toHaveBeenCalledWith(1999);
+    });
+
+    it('borderô órfão NÃO removido (tem item no ERP): NÃO zera o ponteiro das execuções', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, execucaoRepository } = buildDeps();
+        conexosClient.gravarBaixaPermuta.mockRejectedValue(new Error('ERP 500'));
+        // O ERP diz que o borderô TEM baixa (uma parcial entrou antes do erro) → não apaga.
+        conexosClient.listBaixas.mockResolvedValue([{ docCod: 5078, bxaCodSeq: 1 }]);
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(conexosClient.excluirBordero).not.toHaveBeenCalled();
+        // Borderô vivo ⇒ o ponteiro do ledger continua VÁLIDO e tem de ser preservado.
+        expect(execucaoRepository.clearBorCod).not.toHaveBeenCalled();
+    });
+
+    // ── I-Write-9: distribuição por EM-ABERTO da parcela, não pela face ──────────────
+    // Regressão do bug medido em prod (2026-09-11): invoice 7144 (processo 579) tem 2 parcelas
+    // — tit 1 de 7.685,12 USD já quitado pelo adto 4635, tit 2 de 31.814,88 USD em aberto para o
+    // adto 6833. O laço antigo recomeçava na parcela 1 usando a FACE, o ERP devolvia
+    // `bxaMnyValor=0` e a baixa morria com "título 7144/1 sem valor em aberto no ERP".
+    it('parcela já quitada é PULADA — a baixa vai para a parcela que ainda tem saldo', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, alocacaoRepository, execucaoRepository } = buildDeps();
+        alocacaoRepository.listAtivas = jest
+            .fn()
+            .mockResolvedValue([buildAloc({ valorAlocado: 900, taxaInvoice: 5.0 })]);
+        conexosClient.listTitulosAPagar = jest.fn().mockResolvedValue([
+            // tit 1: face 100 e 500 BRL pagos ⇒ em-aberto 100 − 500/5 = 0 → QUITADA.
+            { titCod: '1', valorNegociado: 100, taxa: 5.0, valorPago: 500, pago: 1 },
+            // tit 2: face 900, nada pago ⇒ em-aberto 900.
+            { titCod: '2', valorNegociado: 900, taxa: 5.0, valorPago: 0, pago: 3 },
+        ]);
+        conexosClient.validarTituloBaixa = jest.fn().mockImplementation((p: { titCod: number }) =>
+            // O ERP reflete a realidade: parcela 1 sem saldo, parcela 2 com 4500 BRL.
+            Promise.resolve({
+                responseData: { bxaMnyValor: p.titCod === 1 ? 0 : 4500 },
+            }),
+        );
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        // A parcela quitada nem é tentada — antes do fix, ESTA chamada era feita com titCod 1
+        // e derrubava a execução inteira.
+        expect(conexosClient.validarTituloBaixa).toHaveBeenCalledTimes(1);
+        expect(conexosClient.validarTituloBaixa.mock.calls[0][0].titCod).toBe(2);
+        expect(conexosClient.gravarBaixaPermuta).toHaveBeenCalledTimes(1);
+        expect(conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload.titCod).toBe(2);
+        expect(conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload.bxaMnyValor).toBe(4500);
+        expect(out.resultados[0].status).toBe('settled');
+        expect(execucaoRepository.markSettled).toHaveBeenCalledWith(
+            KEY,
+            expect.objectContaining({ valorBaixado: 4500 }),
+        );
+    });
+
+    it('parcela PARCIALMENTE paga: consome só o em-aberto dela e transborda para a seguinte', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, alocacaoRepository } = buildDeps();
+        alocacaoRepository.listAtivas = jest
+            .fn()
+            .mockResolvedValue([buildAloc({ valorAlocado: 800, taxaInvoice: 5.0 })]);
+        conexosClient.listTitulosAPagar = jest.fn().mockResolvedValue([
+            // tit 1: face 1000, 2500 BRL pagos ⇒ em-aberto 1000 − 500 = 500 (não 1000!).
+            { titCod: '1', valorNegociado: 1000, taxa: 5.0, valorPago: 2500, pago: 2 },
+            { titCod: '2', valorNegociado: 400, taxa: 5.0, valorPago: 0, pago: 3 },
+        ]);
+        conexosClient.validarTituloBaixa = jest.fn().mockImplementation((p: { titCod: number }) =>
+            Promise.resolve({
+                responseData: { bxaMnyValor: p.titCod === 1 ? 2500 : 2000 },
+            }),
+        );
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        const p1 = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        const p2 = conexosClient.gravarBaixaPermuta.mock.calls[1][0].payload;
+        expect(p1.titCod).toBe(1);
+        expect(p1.bxaMnyValor).toBe(2500); // 500 em-aberto × 5 — NÃO 1000 × 5
+        expect(p2.titCod).toBe(2);
+        expect(p2.bxaMnyValor).toBe(1500); // os 300 restantes × 5
     });
 
     // O `borCod` é compartilhado por todas as alocações (I-Write-3). Apagar na PRIMEIRA falha

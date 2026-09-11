@@ -215,6 +215,24 @@ export default class PermutaExecucaoRepository {
         );
     };
 
+    /**
+     * Zera o `bor_cod` das execuções com ERRO que apontam para um borderô APAGADO no ERP
+     * (I-Write-7). O `markError` grava o `bor_cod` antes de a limpeza anti-órfão rodar, então
+     * sem isto o número fica pendurado — e o ERP REAPROVEITA o código, fazendo o painel mostrar
+     * ao analista um borderô que hoje é de outro fornecedor (medido 2026-09-11: o borderô 2771
+     * da execução 399 hoje contém baixas do doc 6708; o 2436 da execução 341, do doc 5155).
+     *
+     * Só toca linhas `error`: `settled`/`parcial` apontam para borderô VIVO, com dinheiro movido.
+     */
+    public clearBorCod = async (borCod: number): Promise<number> => {
+        return this.databaseClient.update(
+            `UPDATE permuta_alocacao_execucao
+                SET bor_cod = NULL, atualizado_em = now()
+              WHERE bor_cod = $borCod AND status = 'error'`,
+            { borCod },
+        );
+    };
+
     /** Remove a execução por chave de idempotência (libera re-baixa quando o borderô virou nulo). */
     public deleteByKey = async (idempotencyKey: string): Promise<number> => {
         return this.databaseClient.update(
