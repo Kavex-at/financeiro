@@ -1,5 +1,37 @@
 # Columbia Financeiro — Changelog
 
+## v0.36.2 (2026-09-11) — a baixa da permuta passa a respeitar as parcelas da invoice
+
+Analistas relataram erro ao clicar "Processar" em grupos da aba Automáticas com dois ou mais
+adiantamentos. O ledger `permuta_alocacao_execucao` guardava 14 falhas reais, e três delas eram o
+sintoma descrito: o primeiro adiantamento liquidava e o seguinte morria com *"título &lt;inv&gt;/1 sem
+valor em aberto no ERP (bxaMnyValor=0)"*. No painel essas linhas voltavam a aparecer como
+**Pendente** — não há badge para execução que falhou —, então o caso parecia intocado.
+
+A mensagem do ERP era enganosa. Medido ao vivo, os dois lados tinham saldo: a invoice 7144 com
+R$ 164.619,74 em aberto e o adiantamento 6833 com R$ 160.397,90 a permutar. E o gatilho não era
+"ter 2+ adiantamentos": dos 21 grupos multi-adiantamento do banco, 17 liquidaram inteiros —
+inclusive a invoice 28260, com **oito**. O que separa uns dos outros é o número de **parcelas**
+(títulos) da invoice, o cronograma de pagamento do processo (ex.: 10% antecipado + 90% no
+embarque). Os três que quebraram têm duas parcelas; todos os que passaram têm uma.
+
+Numa invoice parcelada as parcelas casam 1:1 com os adiantamentos — cada adiantamento quitou a sua
+etapa. O laço que distribuía o valor alocado (`ReconciliacaoPermutaService`) começava sempre na
+parcela 1 e usava a **face** dela, sem pular parcela já quitada: o segundo adiantamento era roteado
+para a parcela que o primeiro havia fechado. A parcela entra agora pelo **em-aberto**
+(`face − pago/taxa`), e parcela quitada fica fora do rateio. A fórmula virou `abertoDaParcela`,
+compartilhada com `assertCobertura` — as duas discordarem era a origem do bug: a cobertura media
+em-aberto e a distribuição media face.
+
+Junto, o `bor_cod` das execuções com erro deixa de ficar pendurado. A limpeza anti-órfão (I-Write-7)
+apaga o borderô vazio, mas o `markError` já havia gravado o número — e o ERP reaproveita o código,
+de modo que o painel passava a apontar para o borderô de outro fornecedor (o 2771 hoje contém
+baixas do doc 6708; o 2436, do doc 5155). `clearBorCod` zera o ponteiro após a exclusão, tocando
+apenas linhas `error`: `settled` e `parcial` apontam para borderô vivo, com dinheiro movido.
+
+Destrava três permutas que estavam paradas: adto 6833 → invoice 7144 parcela 2 (USD 31.814,88),
+adto 4471 → invoice 4755 parcela 2 (USD 29.575,24) e a invoice 4803 (USD 180.576,48).
+
 ## v0.36.1 (2026-09-11) — o link compartilhado para de chegar sem ícone
 
 Compartilhar a URL do app no Teams produzia um card com título, descrição e um placeholder cinza
