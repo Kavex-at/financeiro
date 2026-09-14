@@ -71,7 +71,7 @@ export default function MetricasPage() {
     <div className="space-y-6">
       <PageHeader
         title="Métricas"
-        subtitle="Quanto trabalho o sistema fez pela operação, por semana (sexta 20:00 a sexta 20:00). Valores gravados no momento de cada operação."
+        subtitle="Quanto trabalho o sistema fez pela operação, por semana (sexta 18:00 a sexta 18:00). Valores gravados no momento de cada operação."
         actions={
           <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={carregando}>
             {carregando ? <Spinner className="size-4" /> : <RefreshCcw className="size-4" aria-hidden />}
@@ -97,7 +97,7 @@ export default function MetricasPage() {
         <EmptyState
           icon={<BarChart3 className="size-6" aria-hidden />}
           title="Nenhuma semana iniciada ainda"
-          description={`A série começa em ${serieInicio}, sexta às 20:00.`}
+          description={`A série começa em ${serieInicio}, sexta às 18:00.`}
         />
       ) : leitura && ultima ? (
         <>
@@ -109,7 +109,7 @@ export default function MetricasPage() {
             {ultima.parcial ? (
               <p className="text-xs text-muted-foreground">
                 Parcial até {formatarMomentoLocal(ultima.apuradoAte)}. Os números mudam até a semana fechar, na
-                sexta às 20:00.
+                sexta às 18:00.
               </p>
             ) : null}
             <KPIGrid columns={4}>

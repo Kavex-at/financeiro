@@ -67,13 +67,18 @@ Em 2026-09-14, das 177 baixas `settled`: 150 finalizadas (R$ 57,00 mi), 20 cance
 ausentes mesmo com o cache atualizado no dia). Na semana de 2026-06-19, contar as desfeitas levaria a
 taxa de 39% para 80%. Na de 2026-08-07, a regra estrita leva de 92,3% para 73,1%.
 
-### D4 — Série desde 2026-09-11 20:00, só janela fechada, `timestamp` de São Paulo
+### D4 — Série desde 2026-09-11 18:00, só janela fechada, `timestamp` de São Paulo
 
+- **Semana fecha sexta às 18:00** *(Yuri, 2026-09-14, antes do merge; a primeira versão usava 20:00)*.
+  Ninguém trabalha na operação depois das 18:00, então o corte mais cedo não tira nada relevante da
+  semana, e o report feito no fim da tarde de sexta passa a ler a semana já fechada. O
+  `kavex-report-ciclo/collect.sh` (commits/PRs do report) usa o mesmo corte, para as Seções 2 e 3
+  cobrirem a mesma semana.
 - **Sem backfill**, embora o ledger tenha dado desde junho. O ledger de permutas apaga linha quando o
   borderô é excluído, e as definições não existiam. Número reconstruído parece medido e não é.
 - **Semana em curso: lida, mas marcada** *(revisto em 2026-09-14, antes do merge)*. A primeira
   versão só emitia semana fechada. Mas o report é feito na sexta à tarde, antes do fechamento das
-  20:00, e sairia sem número; o Yuri não aceitou. Agora a função também devolve a semana em curso,
+  18:00, e sairia sem número; o Yuri não aceitou. Agora a função também devolve a semana em curso,
   com `parcial = true` e o horário de corte em `apurado_ate`. A regra que protege a série virou
   outra: **número parcial nunca aparece sem o horário** (card do report, título dos KPIs, linha do
   histórico). A view segue só com semanas fechadas e as 9 colunas; a parcial sai pela API. O report
@@ -81,7 +86,7 @@ taxa de 39% para 80%. Na de 2026-08-07, a regra estrita leva de 92,3% para 73,1%
   Descartado: adiantar o corte para sexta 12:00. Não resolve relatório feito de manhã e mudaria a
   fronteira da série.
 - **`timestamp` sem fuso, em horário de São Paulo.** A sessão do Supabase é UTC. Com `timestamptz`,
-  o texto `'2026-09-11T20:00:00'` que o `metrics.py` envia viraria 17:00 local.
+  o texto `'2026-09-11T18:00:00'` que o `metrics.py` envia viraria 15:00 local.
 - Tentativa atribuída ao `criado_em` (imutável). O desfecho é o estado atual do ledger, e o report
   congela o número no ciclo em que o leu.
 
@@ -104,7 +109,7 @@ aplicação não enxerga. O ganho, um leitor que não vê `erp_response`, també
 só devolve agregados.
 
 A API também fecha o gap K1. `fim` só com data cobre o dia inteiro, então `fim=2026-09-18` inclui a
-janela que fecha às 20:00. Fuso explícito na query é recusado (400): a janela é hora de São Paulo
+janela que fecha às 18:00. Fuso explícito na query é recusado (400): a janela é hora de São Paulo
 por contrato.
 
 ## Consequências

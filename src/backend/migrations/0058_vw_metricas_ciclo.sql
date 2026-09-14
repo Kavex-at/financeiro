@@ -31,16 +31,16 @@
 -- ── INVARIANTES ──────────────────────────────────────────────────────────────────────────────────
 --
 --   * Somente leitura. Nenhum DML, nenhuma chamada ao Conexos.
---   * Série começa em 2026-09-11 20:00 (ciclo 6). Janelas anteriores não são emitidas, mesmo com dado
+--   * Série começa em 2026-09-11 18:00 (ciclo 6). Janelas anteriores não são emitidas, mesmo com dado
 --     no ledger: o ledger de permutas APAGA linhas quando um borderô é excluído, e estas definições
 --     não existiam antes. Número reconstruído parece medido e não é.
 --   * A semana EM CURSO também sai, mas marcada: `parcial = true` e `apurado_ate = agora`. Decisão do
---     Yuri (2026-09-14): o report é feito na sexta à tarde, antes de a semana fechar às 20:00, e sair
+--     Yuri (2026-09-14): o report é feito na sexta à tarde, antes de a semana fechar às 18:00, e sair
 --     vazio não é aceitável. Número parcial nunca aparece sem o horário de corte — é isso que o separa
 --     de número fechado. A VIEW continua só com semanas fechadas e as 9 colunas do contrato; quem quer
 --     a parcial lê a função (a API faz isso).
---   * Janela sexta 20:00 → sexta 20:00 em horário de São Paulo, como `timestamp` SEM fuso. A sessão do
---     Supabase é UTC; com `timestamptz`, um filtro por texto `'2026-09-11T20:00:00'` viraria 17:00
+--   * Janela sexta 18:00 → sexta 18:00 em horário de São Paulo, como `timestamp` SEM fuso. A sessão do
+--     Supabase é UTC; com `timestamptz`, um filtro por texto `'2026-09-11T18:00:00'` viraria 15:00
 --     em São Paulo e erraria a semana.
 --   * `%` só sai com tentativa na janela (nunca 0/0) e leva o absoluto no `rotulo`. `R$` sai sempre.
 --   * `baseline` NULL: não há medição do processo manual. Só preencher com fonte.
@@ -77,7 +77,7 @@ LANGUAGE sql
 IMMUTABLE
 SET search_path = ''
 AS $fn$
-    SELECT TIMESTAMP '2026-09-11 20:00:00'
+    SELECT TIMESTAMP '2026-09-11 18:00:00'
 $fn$;
 
 REVOKE ALL ON FUNCTION metricas.serie_inicio() FROM PUBLIC;
