@@ -744,17 +744,46 @@ describe('ReconciliacaoPermutaService', () => {
         expect(out.resultados[0].erro).toBe('CONTA DE DESCONTO NÃO INFORMADA!!!');
     });
 
-    it('throws when adiantamento has no alocacoes', async () => {
-        const { service, alocacaoRepository } = buildDeps();
+    // I-Recon-8 — NADA A RECONCILIAR ≠ FALHA. Antes isto era um `throw` genérico que o handler
+    // traduzia em HTTP 500: em produção (2026-09-14, processo 173) o adto 4742 — `0,00 BRL`, moeda
+    // diferente da invoice, portanto sem alocação — derrubou a tela DEPOIS de o adto 4471 ter
+    // liquidado corretamente. O analista via "erro" numa operação que deu certo.
+    it('sem alocação: retorna terminal vazio em vez de lançar (não é 500)', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, alocacaoRepository, conexosClient } = buildDeps();
         alocacaoRepository.listAtivas.mockResolvedValue([]);
 
-        await expect(
-            service.reconciliar({
-                adiantamentoDocCod: '2767',
-                executadoPor: 'yuri',
-                dataMovto: 1,
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(out.resultados).toEqual([]);
+        expect(out.adiantamentoDocCod).toBe('2767');
+        expect(out.borCod).toBeUndefined();
+        // E, sobretudo, NÃO tocou o ERP: sem alocação não se cria borderô nem baixa.
+        expect(conexosClient.criarBordero).not.toHaveBeenCalled();
+        expect(conexosClient.gravarBaixaPermuta).not.toHaveBeenCalled();
+    });
+
+    it('sem alocação: registra BUSINESS_WARN (silêncio não, 500 também não)', async () => {
+        const { service, alocacaoRepository, logService } = buildDeps();
+        alocacaoRepository.listAtivas.mockResolvedValue([]);
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(logService.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringContaining('sem alocação'),
+                data: expect.objectContaining({ adiantamentoDocCod: '2767' }),
             }),
-        ).rejects.toThrow(/no alocacoes/);
+        );
     });
 
     it('DESCONTO classification routes the value to bxaMnyDesconto (juros=0)', async () => {

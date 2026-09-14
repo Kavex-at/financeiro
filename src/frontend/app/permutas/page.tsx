@@ -62,6 +62,7 @@ import {
   formatRunWhen,
   parseBrl,
   somaPorMoeda,
+  temAlgoAProcessar,
 } from './components/format'
 import { KpiFooter } from './components/ui'
 import { useTabelaFiltro } from './components/tabela-filtro'
@@ -158,7 +159,12 @@ export default function GestaoPermutasPage() {
   const confirmarProcessamento = React.useCallback(async () => {
     if (!confirmacao) return
     const c = confirmacao
-    const pendentes = c.adiantamentos.filter((a) => a.processamentoStatus !== 'processado')
+    // MESMO predicado do modal (`temAlgoAProcessar`): só dispara requisição para linha que tem de
+    // fato algo a baixar. Linha `valorASerUsado = 0` (adto já consumido, ou moeda diferente da
+    // invoice) não tem alocação no backend — mandá-la respondia HTTP 500 e a tela declarava a
+    // operação inteira falha, mesmo com a permuta que importava já liquidada (prod 2026-09-14,
+    // processo 173: adto 4471 baixou certo, adto 4742 `0,00 BRL` derrubou a tela).
+    const pendentes = c.adiantamentos.filter(temAlgoAProcessar)
     setConfirmacao(null)
     setProcessando(c.invoice.docCod)
     try {

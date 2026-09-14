@@ -215,15 +215,28 @@ export default class ReconciliacaoPermutaService {
                 (a) => a.adiantamentoDocCod === adiantamentoDocCod,
             );
         }
-        if (alocacoes.length === 0) {
-            throw new Error(`adiantamento ${adiantamentoDocCod} has no alocacoes to reconcile`);
-        }
-
         // Guard-rails de escrita via EnvironmentProvider (Rule #8 — nunca process.env no serviço).
         const env = await this.environmentProvider.getEnvironmentVars();
         const writeEnabled = env.conexosWriteEnabled;
         // Dry-run vence: sem escrita habilitada OU flag dryRun OU override explícito.
         const dryRun = !writeEnabled || env.conexosDryRun || input.dryRunOverride === true;
+
+        // NADA A RECONCILIAR ≠ FALHA (I-Recon-8). Um adiantamento do grupo pode legitimamente não ter
+        // alocação: já foi consumido por completo, ou é de MOEDA diferente da invoice — e aí a
+        // auto-alocação acima não cria nada (`autoAlocarDeCasamento` só aloca `valorASerUsado > 0`).
+        // Isto era um `throw` genérico, que o handler traduzia em **HTTP 500 "Internal server
+        // error"**: o analista via a operação inteira falhar mesmo quando a permuta que importava
+        // tinha acabado de liquidar. Medido em produção 2026-09-14, processo 173 — o adto 4471
+        // baixou certo (borderô 2466, título 4755/2) e o 4742, `0,00 BRL`, derrubou a tela.
+        // Terminal honesto: 200 com `resultados: []`. Fica no log como WARN para não virar silêncio.
+        if (alocacoes.length === 0) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'permuta reconciliação sem alocação — nada a baixar (ignorado)',
+                data: { adiantamentoDocCod, filCod, executadoPor },
+            });
+            return { adiantamentoDocCod, dryRun, writeEnabled, resultados: [] };
+        }
 
         const resultados: ResultadoAlocacao[] = [];
         let borCod: number | undefined;
