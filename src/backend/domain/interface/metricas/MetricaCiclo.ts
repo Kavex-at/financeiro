@@ -19,6 +19,13 @@ export interface MetricaCiclo {
     /** `null` quando não existe medição do processo manual — nunca estimado. */
     baseline: number | null;
     baseline_desc: string;
+    /**
+     * Além do contrato da view: `true` na semana em curso, ainda não fechada. O número vale até
+     * `apurado_ate` e muda até sexta 20:00. Quem mostra uma linha parcial mostra o horário junto.
+     */
+    parcial: boolean;
+    /** Até quando a linha foi apurada: o fim da janela, ou o momento da leitura se parcial. */
+    apurado_ate: string;
 }
 
 export interface MetricasCicloFiltro {

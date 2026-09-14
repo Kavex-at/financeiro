@@ -12,6 +12,8 @@ const linha: MetricaCiclo = {
     janela_fim: '2026-09-18T20:00:00',
     baseline: null,
     baseline_desc: 'sem medição do processo manual',
+    parcial: true,
+    apurado_ate: '2026-09-18T15:02:00',
 };
 
 const montar = () => {

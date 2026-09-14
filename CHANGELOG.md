@@ -16,8 +16,11 @@ de São Paulo.
   de Numerário. A spine `recebimento*` que o pedido apontava tem 0 linhas em produção, e medir por
   ela diria "nada alocado" numa semana em que foram alocados R$ 789 mil. O "% sem toque humano" não é
   emitido: toda alocação é disparada por um analista, então a métrica seria zero por construção (ADR-0045).
-- **Sem histórico reconstruído:** a série começa no ciclo 6 (2026-09-11 20:00) e só aparece semana
-  fechada.
+- **Sem histórico reconstruído:** a série começa no ciclo 6 (2026-09-11 20:00).
+- **Report na sexta à tarde:** a semana ainda aberta também é lida, sempre marcada como parcial e com
+  o horário de corte ("parcial até sex 18/09, 15:02"). Rodar de novo atualiza o número. Na tela, os
+  quatro números de cima mostram a última semana fechada, e a semana em andamento aparece no
+  histórico.
 - **Acesso:** a tela e a rota exigem login, como o resto da aplicação. O report entra com um usuário da
   aplicação (`FINANCEIRO_API_URL`, `FINANCEIRO_API_USUARIO`, `FINANCEIRO_API_SENHA`), sem senha de
   banco e sem passo manual no Supabase. Pedir `fim=2026-09-18`, só com a data, já traz a semana que

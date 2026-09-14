@@ -139,6 +139,29 @@ DSN, 13/13 verdes; `CI=true` sem DSN, falha com mensagem explícita (exit 1).
 
 **Dependencies:** Task 1, Task 2
 
+### Task 6 (tweak, pedido do Yuri em 2026-09-14): report na sexta à tarde lê a semana em curso, marcada
+
+> Motivo: o report é feito na sexta à tarde; com "só semana fechada" a Seção 3 sairia sem número.
+> Decisão: leitura parcial, sempre com horário de corte; sem reconciliação no report seguinte.
+
+**Files to change:** `0058_vw_metricas_ciclo.sql` (função +`parcial`/`apurado_ate`, janela em curso; view só fechadas);
+`MetricaCiclo.ts`, `MetricasCicloRepository.ts` (lê a função) e testes; `lib/metricas.ts`, `app/metricas/page.tsx` e testes;
+skill `metrics.py` (repassa os campos) e `render.py` ("parcial até …", R$ e % em pt-BR), `SKILL.md`, `contrato-metricas.md`.
+
+**Acceptance criteria:**
+- A função devolve a semana já iniciada e ainda aberta com `parcial = true` e `apurado_ate = agora`; semana fechada com `parcial = false` e `apurado_ate = janela_fim`.
+- Lida exatamente às 20:00 de sexta, não abre semana vazia.
+- A view continua só com semanas fechadas e as 9 colunas do contrato.
+- API: os dois campos em toda linha. `fim=<sexta>` só com a data inclui a semana que fecha nessa sexta, parcial ou não.
+- Tela: KPIs = última semana fechada (ou a em curso, com "Semana em andamento" + "Parcial até …", se nenhuma fechou); histórico marca a em curso.
+- Report: todo card parcial imprime "parcial até <dia dd/mm, HH:MM>"; R$ `R$ 1.283.986,92`, % `92,3%`.
+
+**Resultado:** backend 22 unitários + 14 de SQL (mutação `<` → `<=` no corte derruba 1); frontend 13 da tela/lib. Ponta a ponta local
+na segunda 14/09 (semana aberta): `metrics.py --inicio 2026-09-11 --fim 2026-09-18` → 3 linhas `parcial=true` com
+`apurado_ate` do momento; cards renderizados "50,0% … parcial até seg 14/09, 18:59" e "R$ 1.283.986,92 … parcial até seg 14/09, 18:59".
+
+**Dependencies:** Task 5
+
 ## Definition of Done
 
 - `npm run typecheck`, `npm run lint`, `npm test` verdes em `src/backend`.

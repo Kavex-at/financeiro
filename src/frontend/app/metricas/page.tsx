@@ -25,6 +25,7 @@ import {
   fetchMetricasCiclo,
   formatarDiaLocal,
   formatarMetrica,
+  formatarMomentoLocal,
 } from '@/lib/metricas'
 
 /**
@@ -33,8 +34,9 @@ import {
  * Mesma fonte do report semanal da Columbia (`GET /metricas/ciclo`), então tela e report não
  * divergem. Duas regras de desenho:
  *
- * 1. **Só semana fechada** (sexta 20:00 → sexta 20:00). Enquanto a primeira não fecha, a tela diz
- *    quando vai fechar — não mostra número parcial com cara de fechado.
+ * 1. **Número parcial nunca parece fechado.** A semana em curso aparece, mas sempre com "parcial até
+ *    <dia, hora>". Os KPIs mostram a última semana FECHADA; só enquanto nenhuma fechou mostram a em
+ *    curso, e o título diz isso.
  * 2. **O percentual nunca aparece sozinho.** O absoluto ("12 de 13 tentativas") vem junto: "100%"
  *    de uma tentativa conta outra história que "100%" de cinquenta.
  */
@@ -61,7 +63,8 @@ export default function MetricasPage() {
   }, [carregar])
 
   const semanas = React.useMemo(() => agruparPorSemana(leitura?.metricas ?? []), [leitura])
-  const ultima = semanas[0]
+  // KPIs: a última semana fechada; enquanto nenhuma fechou, a em curso (marcada no título).
+  const ultima = semanas.find((s) => !s.parcial) ?? semanas[0]
   const serieInicio = leitura ? formatarDiaLocal(leitura.serieInicio, true) : '—'
 
   return (
@@ -93,15 +96,22 @@ export default function MetricasPage() {
       ) : leitura && ultima === undefined ? (
         <EmptyState
           icon={<BarChart3 className="size-6" aria-hidden />}
-          title="Nenhuma semana fechada ainda"
-          description={`A série começou em ${serieInicio}. A primeira semana fecha na sexta seguinte, às 20:00.`}
+          title="Nenhuma semana iniciada ainda"
+          description={`A série começa em ${serieInicio}, sexta às 20:00.`}
         />
       ) : leitura && ultima ? (
         <>
           <section aria-labelledby="ultima-semana" className="space-y-3">
             <h2 id="ultima-semana" className="text-2xl font-semibold leading-tight">
-              Semana de {formatarDiaLocal(ultima.janelaInicio)} a {formatarDiaLocal(ultima.janelaFim, true)}
+              {ultima.parcial ? 'Semana em andamento' : 'Semana'} de {formatarDiaLocal(ultima.janelaInicio)} a{' '}
+              {formatarDiaLocal(ultima.janelaFim, true)}
             </h2>
+            {ultima.parcial ? (
+              <p className="text-xs text-muted-foreground">
+                Parcial até {formatarMomentoLocal(ultima.apuradoAte)}. Os números mudam até a semana fechar, na
+                sexta às 20:00.
+              </p>
+            ) : null}
             <KPIGrid columns={4}>
               <SimpleKPI
                 label="Permutas concluídas"
@@ -154,6 +164,11 @@ export default function MetricasPage() {
                     <TableRow key={s.janelaInicio}>
                       <TableCell className="whitespace-nowrap font-medium">
                         {formatarDiaLocal(s.janelaInicio)} a {formatarDiaLocal(s.janelaFim, true)}
+                        {s.parcial ? (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            em andamento · parcial até {formatarMomentoLocal(s.apuradoAte)}
+                          </span>
+                        ) : null}
                       </TableCell>
                       <CelulaPercentual metrica={s.porChave[METRICA.PERMUTAS_PCT]} />
                       <TableCell className="text-right tabular-nums">
