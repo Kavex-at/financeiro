@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.36.4 (2026-09-14) — o pré-voo enxerga alocação nunca executada
+
+Só ferramenta: nenhum caminho de código do app em execução muda. A sonda
+`jobs/retry-permuta-com-erro.ts` tirava o `filCod` da linha do ledger — que só existe se a permuta
+**já foi tentada**. Numa alocação nunca executada não há linha nenhuma, o `filCod` virava `NaN` e o
+Conexos respondia `MISSING_FIL_COD`.
+
+Agora cai no `filCod` do próprio adiantamento (via `PermutaRelationalRepository.findAdiantamento`,
+de onde o `reconciliar` o tira em produção), com `PERMUTA_FIL` para sobrescrever e mensagem clara
+se ainda assim não der para determinar.
+
+Apareceu ao preparar o teste do **processo 139**, cujas duas alocações (adtos 2472 e 4336) casam 1:1
+com as duas parcelas da invoice 4803 — e a do 2472 nunca tinha sido executada.
+
 ## v0.36.3 (2026-09-14) — "nada a reconciliar" deixa de ser erro de servidor
 
 Primeira permuta multi-parcela real depois do v0.36.2 (processo 173, HUBEI CROWN): o adiantamento
