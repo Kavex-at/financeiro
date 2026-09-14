@@ -1,5 +1,27 @@
 # Columbia Financeiro — Changelog
 
+## v0.37.0 (2026-09-15) — o sistema passa a dizer, por semana, quanto trabalho fez pela operação
+
+O report semanal da Columbia mostrava ritmo — commits, PRs, versões — e não efeito. A migration
+`0058` cria `metricas.vw_metricas_ciclo`, a view de forma fixa que o `kavex-report-ciclo` lê para a
+Seção 3: duas métricas por frente, por janela de sexta 20:00 a sexta 20:00, horário de São Paulo.
+
+- **Permutas:** baixas concluídas ÷ tentativas, com o absoluto no rótulo ("12 de 13 tentativas"), e o
+  valor baixado em R$ gravado no momento da baixa. Baixa em borderô que depois foi cancelado ou
+  estornado não conta como concluída. Na semana de 2026-06-19 isso é a diferença entre 39% e 80%.
+- **Conciliação de Recebimentos:** taxa de conclusão e valor alocado, lidos da trilha da Solicitação
+  de Numerário. A spine `recebimento*` que o pedido apontava tem 0 linhas em produção, e medir por
+  ela diria "nada alocado" numa semana em que foram alocados R$ 789 mil. O "% sem toque humano" não é
+  emitido: nenhuma tabela registra esse fato (decisão aberta, ADR-0045 proposta).
+- **Sem histórico reconstruído:** a série começa no ciclo 6 (2026-09-11 20:00) e só aparece semana
+  fechada.
+- **Acesso:** schema próprio, fora da API pública; o role `metricas_ciclo_leitor` é somente leitura e
+  só enxerga a view, nunca as tabelas. O `LOGIN` com senha é passo manual, descrito no cabeçalho da migration.
+
+Validado contra o ledger vivo, em leitura: 12 semanas, 48 comparações com uma consulta independente,
+nenhuma divergência. As 13 garantias de comportamento passam a rodar em todo PR, no job `backend-sql`
+do CI, contra um Postgres 17 real.
+
 ## v0.36.5 (2026-09-15) — o painel de Permutas para de esconder permuta feita e saldo que falta
 
 Três defeitos medidos no banco de produção em 2026-09-14 (ADR-0046):
