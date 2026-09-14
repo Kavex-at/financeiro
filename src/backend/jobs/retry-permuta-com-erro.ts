@@ -6,6 +6,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosTitulosClient from '../domain/client/ConexosTitulosClient.js';
 import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
 import PermutaAlocacaoRepository from '../domain/repository/permutas/PermutaAlocacaoRepository.js';
+import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRelationalRepository.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
 
 /**
@@ -59,6 +60,7 @@ const main = async (): Promise<void> => {
     await bootstrapAppContainer();
     const titulos = container.resolve(ConexosTitulosClient);
     const alocacaoRepository = container.resolve(PermutaAlocacaoRepository);
+    const relationalRepository = container.resolve(PermutaRelationalRepository);
     const db = container.resolve(PostgreeDatabaseClient);
 
     const dataMovto = dataMovtoEpoch();
@@ -90,13 +92,23 @@ const main = async (): Promise<void> => {
     const alocacoes = (await alocacaoRepository.listAtivas()).filter(
         (a) => a.adiantamentoDocCod === ADTO,
     );
+    const adiantamento = await relationalRepository.findAdiantamento(ADTO);
     if (alocacoes.length === 0) throw new Error(`sem alocação ativa para o adiantamento ${ADTO}`);
 
     // ── PRÉ-VOO — a decisão de roteamento por parcela, sem tocar no ERP ──────────
     console.log('\n── PRÉ-VOO (read-only): para onde cada centavo vai ──');
     let bloqueado = false;
     for (const aloc of alocacoes) {
-        const filCod = Number(execs.find((e) => e.invoice_doc_cod === aloc.invoiceDocCod)?.fil_cod);
+        // Filial: o ledger só tem a linha se a permuta JÁ foi tentada. Alocação nunca executada
+        // (o caso do adto 2472) não tem execução nenhuma — aí vem do próprio adiantamento, que é
+        // de onde o `reconciliar` a tira em produção. `PERMUTA_FIL` sobrescreve se precisar.
+        const filDoLedger = execs.find((e) => e.invoice_doc_cod === aloc.invoiceDocCod)?.fil_cod;
+        const filCod = Number(process.env.PERMUTA_FIL ?? filDoLedger ?? adiantamento?.filCod);
+        if (!Number.isFinite(filCod)) {
+            throw new Error(
+                `não foi possível determinar a filial do adiantamento ${ADTO} — passe PERMUTA_FIL=<filCod>`,
+            );
+        }
         console.log(
             `\n  alocação ${ADTO} → invoice ${aloc.invoiceDocCod} (filial ${filCod}): ` +
                 `${num(aloc.valorAlocado)} ${aloc.moeda ?? ''} @ taxa ${aloc.taxaInvoice}`,
