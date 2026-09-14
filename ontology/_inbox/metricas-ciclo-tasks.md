@@ -114,6 +114,31 @@ DSN, 13/13 verdes; `CI=true` sem DSN, falha com mensagem explícita (exit 1).
 
 **Dependencies:** Task 2
 
+### Task 5 (tweak, pedido do Yuri em 2026-09-14): a métrica é da aplicação — API, tela e report via HTTP
+
+> Motivo: ter as métricas num painel da aplicação e o report chamando a app com um usuário dela, sem
+> DSN à parte nem passo manual de senha no banco. ADR-0045 D5 reescrita.
+
+**Files to change:**
+- `src/backend/migrations/0058_vw_metricas_ciclo.sql` (sai role/GRANT/DEFINER; entra `metricas.serie_inicio()`)
+- `src/backend/domain/{interface,repository,service}/metricas/*` (novos) e `src/backend/routes/metricas.ts` (novo), montada em `http/buildApp.ts`
+- `src/frontend/lib/metricas.ts`, `src/frontend/app/metricas/page.tsx` (novos), `src/frontend/components/nav/app-nav.tsx`
+- Skill `kavex-report-ciclo` (fora do repo): `scripts/metrics.py`, `config/columbia.json`, `SKILL.md`, `references/contrato-metricas.md`
+
+**Acceptance criteria:**
+- `GET /metricas/ciclo?inicio=&fim=` exige login e devolve `{serieInicio, metricas[]}` com os 9 campos do contrato, com os mesmos nomes.
+- `fim` só com data cobre o dia inteiro; fuso explícito ou formato livre → 400. Não resolve client do Conexos.
+- Linha do banco validada com Zod; `numeric` vira número; `baseline` nulo continua `null`.
+- Tela Métricas: KPIs da última semana fechada (o `%` sempre com o absoluto), histórico por semana, "série iniciada em", estados de carregando, erro e "nenhuma semana fechada ainda". Item no menu Plataforma, visível a qualquer usuário autenticado.
+- `metrics.py`: fonte HTTP (login → rota) por `api_url_env`/`usuario_env`/`senha_env`, fonte Postgres mantida para outras soluções; falha de login vira lacuna declarada.
+- Migration sem `CREATE ROLE`, `GRANT` ou `SECURITY DEFINER`; teste de SQL e teste do repositório contra Postgres real verdes.
+
+**Resultado:** backend 137 suites / 1910 testes; frontend 41 / 329; `test:sql` 11/11 em Postgres 17. Ponta a ponta local
+(backend do worktree + Postgres descartável): sem login → 401; `metrics.py` com usuário → `serie_inicio` e 0 linhas
+(nenhuma semana fechou); senha errada → lacuna declarada. DesignSystemReviewer: 1 bloqueio (token de `h2`), corrigido.
+
+**Dependencies:** Task 1, Task 2
+
 ## Definition of Done
 
 - `npm run typecheck`, `npm run lint`, `npm test` verdes em `src/backend`.

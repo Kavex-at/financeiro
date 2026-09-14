@@ -1,8 +1,9 @@
 -- 0058_vw_metricas_ciclo.sql
--- ADR-0045 (proposta) — o sistema expõe, por semana, quanto trabalho fez pela operação.
+-- ADR-0045 — o sistema expõe, por semana, quanto trabalho fez pela operação.
 --
--- O report semanal da Columbia (`kavex-report-ciclo/scripts/metrics.py`) lê `vw_metricas_ciclo` e não
--- sabe o que os números significam — só lê a forma. A forma é o contrato e NÃO muda:
+-- A tela Métricas e o report semanal da Columbia (`kavex-report-ciclo/scripts/metrics.py`, via
+-- `GET /metricas/ciclo`) leem `vw_metricas_ciclo`. O report não sabe o que os números significam — só
+-- lê a forma. A forma é o contrato e NÃO muda:
 --   frente, metrica, rotulo, valor, unidade, janela_inicio, janela_fim, baseline, baseline_desc
 -- `metrica` é chave de série: nunca renomear. Mudou a definição → chave nova, quebra anotada no report.
 --
@@ -36,8 +37,8 @@
 --   * Só janela FECHADA (`janela_fim <= agora`). Semana em curso seria número incompleto com cara
 --     de fechado.
 --   * Janela sexta 20:00 → sexta 20:00 em horário de São Paulo, como `timestamp` SEM fuso. A sessão do
---     Supabase é UTC; com `timestamptz`, o `'2026-09-11T20:00:00'` que o metrics.py envia viraria
---     17:00 em São Paulo e o filtro erraria a semana.
+--     Supabase é UTC; com `timestamptz`, um filtro por texto `'2026-09-11T20:00:00'` viraria 17:00
+--     em São Paulo e erraria a semana.
 --   * `%` só sai com tentativa na janela (nunca 0/0) e leva o absoluto no `rotulo`. `R$` sai sempre.
 --   * `baseline` NULL: não há medição do processo manual. Só preencher com fonte.
 --   * O estado é o ATUAL do ledger: um borderô cancelado depois muda a semana em que a baixa nasceu.
@@ -46,34 +47,36 @@
 -- ── POR QUE FUNÇÃO + VIEW ────────────────────────────────────────────────────────────────────────
 --
 -- A lógica vive em `metricas.metricas_ciclo(serie_inicio, agora)`. Assim o teste de integração prova o
--- comportamento com um "agora" fixo, sem esperar sexta. Ninguém além do dono a executa: com ela, quem
--- lê o report recuaria a série.
---
--- A view lê `metricas.metricas_ciclo_vigente()`, SEM parâmetro, que fixa a série e usa `now()`. Ela é
--- a única coisa que o leitor executa, e existe por um detalhe do Postgres que o teste de integração
--- pegou: função chamada DENTRO de view checa `EXECUTE` e roda com o privilégio de QUEM CONSULTA, não
--- do dono da view. Revogar a função parametrizada, então, trancava o próprio leitor; conceder a ela
--- devolvia a ele o poder de recuar a série. A vigente é SECURITY DEFINER para que o leitor não precise
--- de SELECT nas tabelas (que guardam `erp_response`, `request_payload`, e-mails). `search_path` vazio e
--- tudo qualificado, que é o preço de um DEFINER seguro.
+-- comportamento com um "agora" fixo, sem esperar sexta. A view é essa função com a série vigente
+-- (`metricas.serie_inicio()`, fonte ÚNICA da data — a API a devolve para a tela escrever "série
+-- iniciada em") e o `now()` de São Paulo.
 --
 -- ── ACESSO ───────────────────────────────────────────────────────────────────────────────────────
 --
--- Schema próprio (`metricas`), fora do PostgREST: não é exposto a `anon`/`authenticated`.
--- Role `metricas_ciclo_leitor`: USAGE no schema, EXECUTE na vigente e SELECT na view. Nasce NOLOGIN (senha não entra em
--- migration). PASSO HUMANO, uma vez, no SQL editor do Supabase:
+-- Quem lê é a APLICAÇÃO, com a conexão que ela já usa: `GET /metricas/ciclo` (tela Métricas e o
+-- `kavex-report-ciclo`, que faz login na API). Não há role de banco dedicado nem DSN a distribuir —
+-- decisão do Yuri em 2026-09-14 (ADR-0045, D5). Uma versão anterior deste delta criava um role
+-- só-leitura para o report conectar direto no Postgres; foi removida antes de ir para produção.
 --
---     ALTER ROLE metricas_ciclo_leitor WITH LOGIN PASSWORD '<gerada, guardada no cofre>';
+-- Schema próprio (`metricas`), fora do PostgREST: não é exposto a `anon`/`authenticated`. `EXECUTE`
+-- revogado de PUBLIC nas funções: só o dono (o usuário da aplicação) as usa.
 --
--- e `DSN_FINANCEIRO` apontando para ELE — não para um membro dele: `ALTER ROLE … SET` (read-only,
--- search_path, timeout) não é herdado por quem recebe o role. No pooler do Supabase o usuário é
--- `metricas_ciclo_leitor.<project_ref>`. O `search_path = metricas` é o que deixa o metrics.py ler
--- `vw_metricas_ciclo` sem qualificar.
---
--- SQL idempotente: `IF NOT EXISTS`, `CREATE OR REPLACE`, GRANT/REVOKE e `ALTER ROLE … SET` re-rodáveis.
+-- SQL idempotente: `IF NOT EXISTS`, `CREATE OR REPLACE` e REVOKE re-rodáveis.
 
 CREATE SCHEMA IF NOT EXISTS metricas;
 REVOKE ALL ON SCHEMA metricas FROM PUBLIC;
+
+-- Início da série (ciclo 6). Mudar é decisão de negócio, em migration nova, com a quebra anotada no report.
+CREATE OR REPLACE FUNCTION metricas.serie_inicio()
+RETURNS timestamp
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $fn$
+    SELECT TIMESTAMP '2026-09-11 20:00:00'
+$fn$;
+
+REVOKE ALL ON FUNCTION metricas.serie_inicio() FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION metricas.metricas_ciclo(p_serie_inicio timestamp, p_agora timestamp)
 RETURNS TABLE (
@@ -217,33 +220,6 @@ $fn$;
 
 REVOKE ALL ON FUNCTION metricas.metricas_ciclo(timestamp, timestamp) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION metricas.metricas_ciclo_vigente()
-RETURNS TABLE (
-    frente          text,
-    metrica         text,
-    rotulo          text,
-    valor           numeric,
-    unidade         text,
-    janela_inicio   timestamp,
-    janela_fim      timestamp,
-    baseline        numeric,
-    baseline_desc   text
-)
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = ''
-AS $fn$
-    SELECT m.frente, m.metrica, m.rotulo, m.valor, m.unidade,
-           m.janela_inicio, m.janela_fim, m.baseline, m.baseline_desc
-    FROM metricas.metricas_ciclo(
-        TIMESTAMP '2026-09-11 20:00:00',
-        (pg_catalog.now() AT TIME ZONE 'America/Sao_Paulo')
-    ) AS m
-$fn$;
-
-REVOKE ALL ON FUNCTION metricas.metricas_ciclo_vigente() FROM PUBLIC;
-
 CREATE OR REPLACE VIEW metricas.vw_metricas_ciclo AS
 SELECT
     m.frente,
@@ -255,20 +231,7 @@ SELECT
     m.janela_fim,
     m.baseline,
     m.baseline_desc
-FROM metricas.metricas_ciclo_vigente() AS m;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'metricas_ciclo_leitor') THEN
-        CREATE ROLE metricas_ciclo_leitor NOLOGIN;
-    END IF;
-END
-$$;
-
-ALTER ROLE metricas_ciclo_leitor SET default_transaction_read_only = on;
-ALTER ROLE metricas_ciclo_leitor SET search_path = metricas;
-ALTER ROLE metricas_ciclo_leitor SET statement_timeout = '30s';
-
-GRANT USAGE ON SCHEMA metricas TO metricas_ciclo_leitor;
-GRANT EXECUTE ON FUNCTION metricas.metricas_ciclo_vigente() TO metricas_ciclo_leitor;
-GRANT SELECT ON metricas.vw_metricas_ciclo TO metricas_ciclo_leitor;
+FROM metricas.metricas_ciclo(
+    metricas.serie_inicio(),
+    (now() AT TIME ZONE 'America/Sao_Paulo')
+) AS m;

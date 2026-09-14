@@ -35,3 +35,23 @@
 | `FT-3` | P3 | S | F-fault-tolerance-3 | Pré-check de `CREATEROLE` no boot (produção verificada: `rolcreaterole = true`) |
 | `PERF-1` | P3 | S | F-performance-1, F-performance-2 | Gatilho de índice funcional anotado (≥ 50 k linhas ou > 3 s) |
 | `INTEG-5` | P3 | M | F-integrability-5 | Guarda de shape via `information_schema` (parcialmente coberta por `CI-1`) |
+
+## Revisão após mover o acesso para a aplicação (2026-09-14, ADR-0045 D5)
+
+O role só-leitura `metricas_ciclo_leitor` saiu da migration; a tela e o report leem `GET /metricas/ciclo`.
+Efeito sobre os cards acima:
+
+| Card | Situação | Por quê |
+|---|---|---|
+| `SEC-2`, `SEC-4`, `HAB-LEITOR`, `TEST-3`, `FT-3`, `MOD-6` | **obsoletos** | Tratavam do role de banco, da senha dele, do `statement_timeout` e do `CREATE ROLE` no boot; nada disso existe mais |
+| `SEC-5` | **obsoleto** | O teste de integração não define mais senha nenhuma |
+| `INTEG-2` | **resolvido** | A API trata `fim` só com data como o dia inteiro (`MetricasCicloService`, testado) |
+| `SEC-1` | **rebaixado a P3** | O teste ainda faz `DROP DATABASE metricas_ciclo_it` guardado só por hostname, mas não mexe mais em role |
+| `ROLLBACK-0058` | **rebaixado a P3** | Sem artefato cluster-level, o reverse é só `DROP VIEW/FUNCTION/SCHEMA` |
+| `MOD-3` | **parcial** | A série virou `metricas.serie_inicio()`; fuso e intervalo continuam literais |
+| `CROSS-CONTRACT` | **continua** | O contrato agora é JSON por HTTP; o teste da rota trava os 9 campos deste lado, falta o da skill |
+| demais | **continuam** | — |
+
+Regis-Review **não** foi reexecutado para a mudança de acesso. A superfície nova (rota autenticada de
+leitura, tela) passou por PatternGuardian e DesignSystemReviewer, e por um teste ponta a ponta local:
+skill → login → rota → Postgres.

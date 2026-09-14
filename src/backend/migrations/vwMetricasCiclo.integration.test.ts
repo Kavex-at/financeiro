@@ -1,13 +1,16 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from 'pg';
+import 'reflect-metadata';
+import SqlBuilder from '../domain/libs/sql/SqlBuilder.js';
+import MetricasCicloRepository from '../domain/repository/metricas/MetricasCicloRepository.js';
 
 /**
  * `vw_metricas_ciclo` contra um Postgres DE VERDADE (ADR-0045).
  *
  * Aplica 0001..0058 num banco novo, semeia os dois ledgers e prova o comportamento com um "agora"
  * fixo, chamando `metricas.metricas_ciclo(serie_inicio, agora)` — a view é essa função com a série do
- * ciclo 6 e `now()`. Também conecta COMO o leitor para provar o alcance do role.
+ * ciclo 6 e `now()`. Quem lê em produção é a aplicação (`GET /metricas/ciclo`), sem role dedicado.
  *
  * Não roda no `npm test` (padrão `*.integration.test.ts` do jest.config). Roda no CI, no job
  * `backend-sql` (Postgres 17 como service), e localmente com:
@@ -50,11 +53,9 @@ interface Linha {
     baseline_desc: string;
 }
 
-const dsnPara = (dsn: string, banco: string, usuario?: string, senha?: string): string => {
+const dsnPara = (dsn: string, banco: string): string => {
     const url = new URL(dsn);
     url.pathname = `/${banco}`;
-    if (usuario !== undefined) url.username = usuario;
-    if (senha !== undefined) url.password = senha;
     return url.toString();
 };
 
@@ -226,9 +227,8 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
     it('a view é a função com a série do ciclo 6 e o agora de São Paulo', async () => {
         const view = await admin.query('SELECT * FROM metricas.vw_metricas_ciclo ORDER BY 1, 2, 6');
         const funcao = await admin.query(
-            `SELECT * FROM metricas.metricas_ciclo($1::timestamp, (now() AT TIME ZONE 'America/Sao_Paulo'))
+            `SELECT * FROM metricas.metricas_ciclo(metricas.serie_inicio(), (now() AT TIME ZONE 'America/Sao_Paulo'))
              ORDER BY 1, 2, 6`,
-            [SERIE],
         );
 
         expect(view.rows).toEqual(funcao.rows);
@@ -240,57 +240,30 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         await expect(admin.query(sql)).resolves.toBeDefined();
     });
 
-    describe('como o role leitor', () => {
-        let leitor: Client;
+    it('o repositório da API roda contra o banco real: SQL, casts e formato de data', async () => {
+        const builder = new SqlBuilder();
+        const db = {
+            selectMany: async (sql: string, params: Record<string, unknown>) => {
+                const { query, params: valores } = builder.build(sql, params);
+                return (await admin.query(query, valores)).rows;
+            },
+            selectFirst: async (sql: string) => (await admin.query(sql)).rows[0] ?? null,
+        };
+        const repository = new MetricasCicloRepository(db as never);
 
-        beforeAll(async () => {
-            // Simula o passo humano do cabeçalho da migration.
-            await admin.query(
-                `ALTER ROLE metricas_ciclo_leitor WITH LOGIN PASSWORD 'leitor-teste'`,
-            );
-            leitor = new Client({
-                connectionString: dsnPara(
-                    ADMIN_DSN ?? '',
-                    BANCO,
-                    'metricas_ciclo_leitor',
-                    'leitor-teste',
-                ),
-            });
-            await leitor.connect();
-        });
+        await expect(repository.serieInicio()).resolves.toBe('2026-09-11T20:00:00');
+        // Nenhuma janela fecha antes de 2026-09-18 20:00: o filtro com `fim` precisa rodar e vir vazio.
+        await expect(repository.listar({ fim: '2026-09-11T20:00:00' })).resolves.toEqual([]);
+        for (const linha of await repository.listar({})) {
+            expect(linha.janela_inicio).toMatch(/^\d{4}-\d{2}-\d{2}T20:00:00$/);
+        }
+    });
 
-        afterAll(async () => {
-            await leitor?.end();
-            await admin.query('ALTER ROLE metricas_ciclo_leitor WITH NOLOGIN PASSWORD NULL');
-        });
+    it('a série vigente vem de `metricas.serie_inicio()` — ciclo 6', async () => {
+        const { rows } = await admin.query<{ serie: string }>(
+            'SELECT metricas.serie_inicio()::text AS serie',
+        );
 
-        it('lê `vw_metricas_ciclo` sem qualificar o schema, como o metrics.py faz', async () => {
-            await expect(
-                leitor.query(
-                    'SELECT frente, metrica, rotulo, valor, unidade, janela_inicio, janela_fim, baseline, baseline_desc FROM vw_metricas_ciclo',
-                ),
-            ).resolves.toBeDefined();
-        });
-
-        it('não lê as tabelas de origem', async () => {
-            await expect(
-                leitor.query('SELECT 1 FROM public.permuta_alocacao_execucao'),
-            ).rejects.toThrow(/permission denied/);
-            await expect(
-                leitor.query('SELECT 1 FROM public.solicitacao_numerario_execucao'),
-            ).rejects.toThrow(/permission denied/);
-        });
-
-        it('não recua a série chamando a função', async () => {
-            await expect(
-                leitor.query(`SELECT * FROM metricas.metricas_ciclo('2026-01-01', '2026-09-26')`),
-            ).rejects.toThrow(/permission denied/);
-        });
-
-        it('não escreve', async () => {
-            await expect(leitor.query('CREATE TABLE metricas.x (a int)')).rejects.toThrow(
-                /read-only transaction|permission denied/,
-            );
-        });
+        expect(rows[0].serie).toBe(SERIE);
     });
 });

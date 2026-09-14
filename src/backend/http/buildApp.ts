@@ -29,6 +29,7 @@ import authRouter from '../routes/auth.js';
 import conexosRouter from '../routes/conexos.js';
 import permutasRouter from '../routes/permutas.js';
 import meRouter from '../routes/me.js';
+import metricasRouter from '../routes/metricas.js';
 import operacaoRouter from '../routes/operacao.js';
 import recebimentosRouter from '../routes/recebimentos.js';
 import sispagRouter from '../routes/sispag.js';
@@ -153,6 +154,10 @@ export const buildApp = () => {
     // estrangular o diagnóstico bem quando ele é mais necessário. Não toca o ERP (I4), então também
     // não disputa os slots de sessão do Conexos.
     app.use('/operacao', operacaoRouter);
+
+    // Métricas do ciclo (ADR-0045) — tela Métricas e `kavex-report-ciclo`. Leitura de agregados do
+    // Postgres, sem ERP; aberta a qualquer usuário autenticado, como as demais leituras.
+    app.use('/metricas', metricasRouter);
 
     // Rotas do próprio usuário (status do vínculo Conexos p/ o aviso no login).
     app.use('/me', meRouter);

@@ -4,11 +4,10 @@ import path from 'node:path';
 /**
  * Guardas estáticas da `0058_vw_metricas_ciclo.sql` (ADR-0045) — rodam sem banco.
  *
- * O comportamento (janelas, taxas, borderô desfeito, acesso do leitor) é provado em
- * `vwMetricasCiclo.integration.test.ts` contra um Postgres de verdade. Aqui fica o que tem que
- * valer mesmo onde não há banco: a forma do contrato que o `metrics.py` lê, o somente-leitura e o
- * alcance do role. São exatamente as três coisas que, se quebradas, falham em silêncio — o report
- * mostra "sem instrumentação" e ninguém liga a causa a esta migration.
+ * O comportamento (janelas, taxas, borderô finalizado) é provado em
+ * `vwMetricasCiclo.integration.test.ts` contra um Postgres de verdade, no job `backend-sql` do CI.
+ * Aqui fica o que tem que valer mesmo onde não há banco: a forma do contrato que a API e o report
+ * leem, o somente-leitura e a ausência de caminho de acesso paralelo à aplicação.
  */
 
 const MIGRATION = readFileSync(path.join(__dirname, '0058_vw_metricas_ciclo.sql'), 'utf8');
@@ -33,18 +32,16 @@ describe('0058_vw_metricas_ciclo — guardas estáticas', () => {
         );
     });
 
-    it('as duas funções devolvem as nove colunas do contrato, nesta ordem', () => {
+    it('a função devolve as nove colunas do contrato, nesta ordem', () => {
         const retornos = [...SQL.matchAll(/RETURNS TABLE \(([\s\S]*?)\)\s*LANGUAGE/g)];
 
-        expect(retornos).toHaveLength(2);
-        for (const retorno of retornos) {
-            const colunas = retorno[1]
-                .split(',')
-                .map((c) => c.trim().split(/\s+/)[0])
-                .filter((c) => c !== '');
+        expect(retornos).toHaveLength(1);
+        const colunas = retornos[0][1]
+            .split(',')
+            .map((c) => c.trim().split(/\s+/)[0])
+            .filter((c) => c !== '');
 
-            expect(colunas).toEqual(COLUNAS_DO_CONTRATO);
-        }
+        expect(colunas).toEqual(COLUNAS_DO_CONTRATO);
     });
 
     it('a view projeta as mesmas nove colunas, nesta ordem', () => {
@@ -66,36 +63,22 @@ describe('0058_vw_metricas_ciclo — guardas estáticas', () => {
         expect(SQL).not.toMatch(/timestamptz|with time zone/i);
     });
 
-    it('só a função SEM parâmetro é DEFINER; as duas têm EXECUTE revogado de PUBLIC', () => {
-        const definers = SQL.match(/SECURITY DEFINER\s+SET search_path = ''/g) ?? [];
-        const vigente = SQL.slice(SQL.indexOf('FUNCTION metricas.metricas_ciclo_vigente()'));
+    it('a série do ciclo 6 mora só em `metricas.serie_inicio()`, e a view a usa', () => {
+        const literais = SQL.match(/TIMESTAMP '2026-09-11 20:00:00'/g) ?? [];
 
-        expect(definers).toHaveLength(1);
-        expect(vigente).toMatch(/^[^$]*SECURITY DEFINER\s+SET search_path = ''/);
+        expect(literais).toHaveLength(1);
+        expect(SQL).toMatch(
+            /FUNCTION metricas\.serie_inicio\(\)[\s\S]*?TIMESTAMP '2026-09-11 20:00:00'/,
+        );
+        expect(SQL).toMatch(/metricas\.metricas_ciclo\(\s*metricas\.serie_inicio\(\),/);
+    });
+
+    it('sem caminho paralelo à aplicação: nenhum role, GRANT ou SECURITY DEFINER (ADR-0045, D5)', () => {
+        expect(SQL).not.toMatch(/CREATE ROLE|ALTER ROLE|GRANT |SECURITY DEFINER|PASSWORD/i);
         expect(SQL).toMatch(
             /REVOKE ALL ON FUNCTION metricas\.metricas_ciclo\(timestamp, timestamp\) FROM PUBLIC;/,
         );
-        expect(SQL).toMatch(
-            /REVOKE ALL ON FUNCTION metricas\.metricas_ciclo_vigente\(\) FROM PUBLIC;/,
-        );
-    });
-
-    it('o leitor recebe USAGE, EXECUTE só na vigente e SELECT na view — nada nas tabelas', () => {
-        const grants = SQL.match(/GRANT [^;]+;/g) ?? [];
-
-        expect(grants).toEqual([
-            'GRANT USAGE ON SCHEMA metricas TO metricas_ciclo_leitor;',
-            'GRANT EXECUTE ON FUNCTION metricas.metricas_ciclo_vigente() TO metricas_ciclo_leitor;',
-            'GRANT SELECT ON metricas.vw_metricas_ciclo TO metricas_ciclo_leitor;',
-        ]);
-    });
-
-    it('o leitor conecta read-only, e o role nasce sem LOGIN (senha não entra em migration)', () => {
-        expect(SQL).toMatch(
-            /ALTER ROLE metricas_ciclo_leitor SET default_transaction_read_only = on;/,
-        );
-        expect(SQL).toMatch(/CREATE ROLE metricas_ciclo_leitor NOLOGIN;/);
-        expect(SQL).not.toMatch(/PASSWORD/i);
+        expect(SQL).toMatch(/REVOKE ALL ON FUNCTION metricas\.serie_inicio\(\) FROM PUBLIC;/);
     });
 
     it('a Frente IV não lê a spine `recebimento*`, vazia em produção (ADR-0045, D1)', () => {
@@ -103,7 +86,7 @@ describe('0058_vw_metricas_ciclo — guardas estáticas', () => {
         expect(SQL).toMatch(/public\.solicitacao_numerario_execucao/);
     });
 
-    it('a série começa no ciclo 6 — sem backfill', () => {
-        expect(SQL).toMatch(/TIMESTAMP '2026-09-11 20:00:00'/);
+    it('só borderô FINALIZADO e sem estorno conclui (gap G2)', () => {
+        expect(SQL).toMatch(/b\.bor_vld_finalizado = 1\s+AND b\.bor_cod_estornado IS NULL/);
     });
 });

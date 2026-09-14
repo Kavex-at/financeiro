@@ -2,9 +2,11 @@
 
 ## v0.37.0 (2026-09-15) — o sistema passa a dizer, por semana, quanto trabalho fez pela operação
 
-O report semanal da Columbia mostrava ritmo — commits, PRs, versões — e não efeito. A migration
-`0058` cria `metricas.vw_metricas_ciclo`, a view de forma fixa que o `kavex-report-ciclo` lê para a
-Seção 3: duas métricas por frente, por janela de sexta 20:00 a sexta 20:00, horário de São Paulo.
+O report semanal da Columbia mostrava ritmo — commits, PRs, versões — e não efeito. Agora a própria
+aplicação mede. Há uma tela nova, **Métricas** (menu Plataforma): a última semana fechada em quatro
+números e o histórico semana a semana. O `kavex-report-ciclo` lê a mesma coisa, por
+`GET /metricas/ciclo`. Duas métricas por frente, por janela de sexta 20:00 a sexta 20:00, horário
+de São Paulo.
 
 - **Permutas:** baixas concluídas ÷ tentativas, com o absoluto no rótulo ("12 de 13 tentativas"), e o
   valor baixado em R$ gravado no momento da baixa. Só conta como concluída a baixa cujo borderô está
@@ -16,12 +18,14 @@ Seção 3: duas métricas por frente, por janela de sexta 20:00 a sexta 20:00, h
   emitido: toda alocação é disparada por um analista, então a métrica seria zero por construção (ADR-0045).
 - **Sem histórico reconstruído:** a série começa no ciclo 6 (2026-09-11 20:00) e só aparece semana
   fechada.
-- **Acesso:** schema próprio, fora da API pública; o role `metricas_ciclo_leitor` é somente leitura e
-  só enxerga a view, nunca as tabelas. O `LOGIN` com senha é passo manual, descrito no cabeçalho da migration.
+- **Acesso:** a tela e a rota exigem login, como o resto da aplicação. O report entra com um usuário da
+  aplicação (`FINANCEIRO_API_URL`, `FINANCEIRO_API_USUARIO`, `FINANCEIRO_API_SENHA`), sem senha de
+  banco e sem passo manual no Supabase. Pedir `fim=2026-09-18`, só com a data, já traz a semana que
+  fecha nesse dia às 20:00.
 
 Validado contra o ledger vivo, em leitura: 12 semanas, 48 comparações com uma consulta independente,
-nenhuma divergência. As 13 garantias de comportamento passam a rodar em todo PR, no job `backend-sql`
-do CI, contra um Postgres 17 real.
+nenhuma divergência. As garantias de comportamento da view passam a rodar em todo PR, no job
+`backend-sql` do CI, contra um Postgres 17 real.
 
 ## v0.36.5 (2026-09-15) — o painel de Permutas para de esconder permuta feita e saldo que falta
 
