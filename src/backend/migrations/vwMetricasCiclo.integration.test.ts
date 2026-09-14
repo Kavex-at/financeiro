@@ -9,12 +9,12 @@ import { Client } from 'pg';
  * fixo, chamando `metricas.metricas_ciclo(serie_inicio, agora)` — a view é essa função com a série do
  * ciclo 6 e `now()`. Também conecta COMO o leitor para provar o alcance do role.
  *
- * Não roda no `npm test` (padrão `*.integration.test.ts` do jest.config). Rodar explicitamente:
+ * Não roda no `npm test` (padrão `*.integration.test.ts` do jest.config). Roda no CI, no job
+ * `backend-sql` (Postgres 17 como service), e localmente com:
  *
  *   docker run -d --rm --name metricas-ciclo-pg-test -e POSTGRES_PASSWORD=test \
  *     -p 55432:5432 postgres:17-alpine
- *   METRICAS_CICLO_TEST_DSN=postgres://postgres:test@localhost:55432/postgres \
- *     npx jest vwMetricasCiclo.integration --testPathIgnorePatterns "/node_modules/"
+ *   METRICAS_CICLO_TEST_DSN=postgres://postgres:test@localhost:55432/postgres npm run test:sql
  *
  * O DSN precisa ser de superusuário (cria banco e role) e LOCAL — o teste recusa qualquer outro
  * host, porque apaga e recria o banco `metricas_ciclo_it`.
@@ -23,6 +23,15 @@ import { Client } from 'pg';
 jest.setTimeout(120_000);
 
 const ADMIN_DSN = process.env.METRICAS_CICLO_TEST_DSN;
+
+// Regis-Review 2026-09-14 (card `testability-1`, P0): as 13 garantias comportamentais não rodavam em
+// lugar nenhum automaticamente. No CI, DSN ausente tem que DERRUBAR o job — um `describe.skip` sai
+// verde com zero asserts, e é exatamente o defeito que o job existe para fechar.
+if (process.env.CI === 'true' && !ADMIN_DSN) {
+    throw new Error(
+        'METRICAS_CICLO_TEST_DSN ausente no CI — o job backend-sql não pode passar sem banco',
+    );
+}
 const BANCO = 'metricas_ciclo_it';
 const SERIE = '2026-09-11 20:00:00';
 const AGORA = '2026-09-26 10:00:00';
@@ -208,8 +217,9 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
     it('a view é a função com a série do ciclo 6 e o agora de São Paulo', async () => {
         const view = await admin.query('SELECT * FROM metricas.vw_metricas_ciclo ORDER BY 1, 2, 6');
         const funcao = await admin.query(
-            `SELECT * FROM metricas.metricas_ciclo(TIMESTAMP '${SERIE}', (now() AT TIME ZONE 'America/Sao_Paulo'))
+            `SELECT * FROM metricas.metricas_ciclo($1::timestamp, (now() AT TIME ZONE 'America/Sao_Paulo'))
              ORDER BY 1, 2, 6`,
+            [SERIE],
         );
 
         expect(view.rows).toEqual(funcao.rows);

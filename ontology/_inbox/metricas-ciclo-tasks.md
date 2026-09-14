@@ -91,6 +91,29 @@ desde 2026-09-11 20:00: a janela do ciclo 6 está vazia até aqui.
 
 **Dependencies:** Task 1, Task 2
 
+### Task 4 (sub-loop P0 do Regis-Review, card `CI-1`): as garantias comportamentais rodam no CI
+
+> Origem: `docs/regis-review/2026-09-14-1624-metricas-ciclo/KANBAN.md`, `CI-1` (testability-1 +
+> availability-2). Interview surgical: sem mudança de regra ou entidade (`entity_changed = false`).
+
+**Files to change:**
+- `.github/workflows/ci.yml` (job `backend-sql`; `tag-release` passa a depender dele)
+- `src/backend/package.json` (script `test:sql`)
+- `src/backend/migrations/vwMetricasCiclo.integration.test.ts` (falha no CI sem DSN; nota do PatternGuardian)
+
+**Acceptance criteria:**
+- Job com `postgres:17-alpine` como service roda `npm run test:sql` com `METRICAS_CICLO_TEST_DSN`.
+- `test:sql` seleciona **só** `migrations/*.integration.test.ts`. Os de `routes/` escrevem no HML do
+  Conexos e não podem rodar em CI.
+- Com `CI=true` e sem DSN, a suíte **falha**. Um `describe.skip` sairia verde com zero asserts.
+- `tag-release` não publica versão com o job vermelho.
+- A consulta do teste "a view é a função" passa `SERIE` como parâmetro, não interpolado (nota do PatternGuardian).
+
+**Resultado:** verificado localmente em 2026-09-14. `--listTests` lista só o arquivo de migrations; com
+DSN, 13/13 verdes; `CI=true` sem DSN, falha com mensagem explícita (exit 1).
+
+**Dependencies:** Task 2
+
 ## Definition of Done
 
 - `npm run typecheck`, `npm run lint`, `npm test` verdes em `src/backend`.
