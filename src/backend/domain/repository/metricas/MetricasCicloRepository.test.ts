@@ -11,6 +11,8 @@ const row = (over: Record<string, unknown> = {}) => ({
     janela_fim: '2026-09-18T20:00:00',
     baseline: null,
     baseline_desc: 'sem medição do processo manual',
+    parcial: false,
+    apurado_ate: '2026-09-18T20:00:00',
     ...over,
 });
 
@@ -30,9 +32,23 @@ describe('MetricasCicloRepository', () => {
         await new MetricasCicloRepository(db as never).listar({ fim: '2026-09-18T23:59:59' });
 
         const [sql, params] = db.selectMany.mock.calls[0];
-        expect(sql).toMatch(/FROM metricas\.vw_metricas_ciclo/);
+        // A função, não a view: a view não tem a semana em curso.
+        expect(sql).toMatch(/FROM metricas\.metricas_ciclo\(\s*metricas\.serie_inicio\(\)/);
         expect(sql).toMatch(/\$inicio::timestamp IS NULL/);
         expect(params).toEqual({ inicio: null, fim: '2026-09-18T23:59:59' });
+    });
+
+    it('semana em curso chega marcada, com o horário de corte', async () => {
+        const db = {
+            selectMany: jest
+                .fn()
+                .mockResolvedValue([row({ parcial: true, apurado_ate: '2026-09-18T15:02:00' })]),
+        };
+
+        const [linha] = await new MetricasCicloRepository(db as never).listar({});
+
+        expect(linha.parcial).toBe(true);
+        expect(linha.apurado_ate).toBe('2026-09-18T15:02:00');
     });
 
     it('linha fora do contrato falha alto em vez de chegar torta à tela', async () => {

@@ -32,7 +32,7 @@ describe('0058_vw_metricas_ciclo — guardas estáticas', () => {
         );
     });
 
-    it('a função devolve as nove colunas do contrato, nesta ordem', () => {
+    it('a função devolve as nove colunas do contrato, nesta ordem, e depois parcial e apurado_ate', () => {
         const retornos = [...SQL.matchAll(/RETURNS TABLE \(([\s\S]*?)\)\s*LANGUAGE/g)];
 
         expect(retornos).toHaveLength(1);
@@ -41,10 +41,14 @@ describe('0058_vw_metricas_ciclo — guardas estáticas', () => {
             .map((c) => c.trim().split(/\s+/)[0])
             .filter((c) => c !== '');
 
-        expect(colunas).toEqual(COLUNAS_DO_CONTRATO);
+        expect(colunas).toEqual([...COLUNAS_DO_CONTRATO, 'parcial', 'apurado_ate']);
     });
 
-    it('a view projeta as mesmas nove colunas, nesta ordem', () => {
+    it('a view tem só semanas fechadas — a parcial sai só pela função (a API)', () => {
+        expect(SQL).toMatch(/\) AS m\s+WHERE NOT m\.parcial;/);
+    });
+
+    it('a view projeta as nove colunas do contrato, nesta ordem', () => {
         const view = SQL.match(
             /CREATE OR REPLACE VIEW metricas\.vw_metricas_ciclo AS\s+SELECT([\s\S]*?)FROM/,
         );

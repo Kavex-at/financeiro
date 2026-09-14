@@ -34,8 +34,11 @@
 --   * Série começa em 2026-09-11 20:00 (ciclo 6). Janelas anteriores não são emitidas, mesmo com dado
 --     no ledger: o ledger de permutas APAGA linhas quando um borderô é excluído, e estas definições
 --     não existiam antes. Número reconstruído parece medido e não é.
---   * Só janela FECHADA (`janela_fim <= agora`). Semana em curso seria número incompleto com cara
---     de fechado.
+--   * A semana EM CURSO também sai, mas marcada: `parcial = true` e `apurado_ate = agora`. Decisão do
+--     Yuri (2026-09-14): o report é feito na sexta à tarde, antes de a semana fechar às 20:00, e sair
+--     vazio não é aceitável. Número parcial nunca aparece sem o horário de corte — é isso que o separa
+--     de número fechado. A VIEW continua só com semanas fechadas e as 9 colunas do contrato; quem quer
+--     a parcial lê a função (a API faz isso).
 --   * Janela sexta 20:00 → sexta 20:00 em horário de São Paulo, como `timestamp` SEM fuso. A sessão do
 --     Supabase é UTC; com `timestamptz`, um filtro por texto `'2026-09-11T20:00:00'` viraria 17:00
 --     em São Paulo e erraria a semana.
@@ -47,7 +50,8 @@
 -- ── POR QUE FUNÇÃO + VIEW ────────────────────────────────────────────────────────────────────────
 --
 -- A lógica vive em `metricas.metricas_ciclo(serie_inicio, agora)`. Assim o teste de integração prova o
--- comportamento com um "agora" fixo, sem esperar sexta. A view é essa função com a série vigente
+-- comportamento com um "agora" fixo, sem esperar sexta. A API lê a função (fechadas + parcial). A view é
+-- essa função só com as semanas fechadas e as 9 colunas, com a série vigente
 -- (`metricas.serie_inicio()`, fonte ÚNICA da data — a API a devolve para a tela escrever "série
 -- iniciada em") e o `now()` de São Paulo.
 --
@@ -88,19 +92,26 @@ RETURNS TABLE (
     janela_inicio   timestamp,
     janela_fim      timestamp,
     baseline        numeric,
-    baseline_desc   text
+    baseline_desc   text,
+    -- Além do contrato: TRUE na semana em curso (`janela_fim > agora`).
+    parcial         boolean,
+    -- Até quando a linha foi apurada: `janela_fim` na semana fechada, `agora` na parcial.
+    apurado_ate     timestamp
 )
 LANGUAGE sql
 STABLE
 SET search_path = ''
 AS $fn$
     WITH janelas AS (
+        -- Toda semana já INICIADA: as fechadas e a em curso. `< p_agora` evita uma semana vazia que
+        -- começaria exatamente no instante da leitura.
         SELECT g.inicio AS janela_inicio, g.inicio + INTERVAL '7 days' AS janela_fim
         FROM pg_catalog.generate_series(
             p_serie_inicio,
-            p_agora - INTERVAL '7 days',
+            p_agora,
             INTERVAL '7 days'
         ) AS g(inicio)
+        WHERE g.inicio < p_agora
     ),
     permutas AS (
         SELECT
@@ -214,7 +225,9 @@ AS $fn$
         l.janela_inicio,
         l.janela_fim,
         NULL::numeric AS baseline,
-        'sem medição do processo manual'::text AS baseline_desc
+        'sem medição do processo manual'::text AS baseline_desc,
+        l.janela_fim > p_agora AS parcial,
+        LEAST(l.janela_fim, p_agora) AS apurado_ate
     FROM linhas l
 $fn$;
 
@@ -234,4 +247,5 @@ SELECT
 FROM metricas.metricas_ciclo(
     metricas.serie_inicio(),
     (now() AT TIME ZONE 'America/Sao_Paulo')
-) AS m;
+) AS m
+WHERE NOT m.parcial;

@@ -14,6 +14,8 @@ const linhaSchema = z.object({
     janela_fim: z.string(),
     baseline: z.coerce.number().nullable(),
     baseline_desc: z.string(),
+    parcial: z.boolean(),
+    apurado_ate: z.string(),
 });
 
 const serieSchema = z.object({ serie_inicio: z.string() });
@@ -22,7 +24,11 @@ const serieSchema = z.object({ serie_inicio: z.string() });
 const FORMATO_DATA = `'YYYY-MM-DD"T"HH24:MI:SS'`;
 
 /**
- * MetricasCicloRepository — leitura de `metricas.vw_metricas_ciclo` (ADR-0045).
+ * MetricasCicloRepository — leitura das métricas do ciclo (ADR-0045).
+ *
+ * Lê a FUNÇÃO `metricas.metricas_ciclo`, não a view: a view só tem semanas fechadas, e a API precisa
+ * também da semana em curso — o report é feito na sexta à tarde, antes do fechamento das 20:00. A
+ * linha da semana em curso vem com `parcial = true` e o horário de corte em `apurado_ate`.
  *
  * Somente leitura, SQL parametrizado. **Não toca o ERP**: os valores são o que os ledgers gravaram no
  * momento do fato. A regra de cada métrica mora na migration 0058, não aqui.
@@ -39,8 +45,13 @@ export default class MetricasCicloRepository {
             `SELECT frente, metrica, rotulo, valor::text AS valor, unidade,
                     to_char(janela_inicio, ${FORMATO_DATA}) AS janela_inicio,
                     to_char(janela_fim, ${FORMATO_DATA}) AS janela_fim,
-                    baseline::text AS baseline, baseline_desc
-               FROM metricas.vw_metricas_ciclo
+                    baseline::text AS baseline, baseline_desc,
+                    parcial,
+                    to_char(apurado_ate, ${FORMATO_DATA}) AS apurado_ate
+               FROM metricas.metricas_ciclo(
+                        metricas.serie_inicio(),
+                        (now() AT TIME ZONE 'America/Sao_Paulo')
+                    )
               WHERE ($inicio::timestamp IS NULL OR janela_inicio >= $inicio::timestamp)
                 AND ($fim::timestamp IS NULL OR janela_fim <= $fim::timestamp)
               ORDER BY janela_inicio DESC, frente, metrica`,

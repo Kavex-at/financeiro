@@ -5,6 +5,7 @@ import {
   agruparPorSemana,
   formatarDiaLocal,
   formatarMetrica,
+  formatarMomentoLocal,
 } from '@/lib/metricas'
 
 const linha = (over: Partial<MetricaCiclo>): MetricaCiclo => ({
@@ -17,6 +18,8 @@ const linha = (over: Partial<MetricaCiclo>): MetricaCiclo => ({
   janela_fim: '2026-09-18T20:00:00',
   baseline: null,
   baseline_desc: 'sem medição do processo manual',
+  parcial: false,
+  apurado_ate: '2026-09-18T20:00:00',
   ...over,
 })
 
@@ -66,5 +69,22 @@ describe('absolutoDoRotulo', () => {
       absolutoDoRotulo('baixas de adiantamento concluídas, com borderô finalizado — 12 de 13 tentativas'),
     ).toBe('12 de 13 tentativas')
     expect(absolutoDoRotulo('valor baixado em permutas de adiantamento')).toBeUndefined()
+  })
+})
+
+describe('formatarMomentoLocal', () => {
+  it('mostra o dia da semana e a hora do corte, sem converter fuso', () => {
+    expect(formatarMomentoLocal('2026-09-18T15:02:00')).toBe('sex 18/09, 15:02')
+    expect(formatarMomentoLocal('2026-09-14T09:30:00')).toBe('seg 14/09, 09:30')
+    expect(formatarMomentoLocal('2026-09-18')).toBe('—')
+  })
+})
+
+describe('agruparPorSemana — semana em curso', () => {
+  it('carrega parcial e o horário de corte para a semana', () => {
+    const [semana] = agruparPorSemana([linha({ parcial: true, apurado_ate: '2026-09-18T15:02:00' })])
+
+    expect(semana.parcial).toBe(true)
+    expect(semana.apuradoAte).toBe('2026-09-18T15:02:00')
   })
 })

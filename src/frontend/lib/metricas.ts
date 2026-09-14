@@ -24,6 +24,10 @@ export interface MetricaCiclo {
   janela_fim: string
   baseline: number | null
   baseline_desc: string
+  /** Semana em curso, ainda não fechada: o número vale até `apurado_ate` e muda até sexta 20:00. */
+  parcial: boolean
+  /** Até quando a linha foi apurada: o fim da semana, ou o momento da leitura se parcial. */
+  apurado_ate: string
 }
 
 export interface MetricasCicloLeitura {
@@ -45,10 +49,12 @@ export async function fetchMetricasCiclo(): Promise<MetricasCicloLeitura> {
   return (await res.json()) as MetricasCicloLeitura
 }
 
-/** Uma semana fechada, com as métricas indexadas pela chave. */
+/** Uma semana (fechada ou em curso), com as métricas indexadas pela chave. */
 export interface SemanaMetricas {
   janelaInicio: string
   janelaFim: string
+  parcial: boolean
+  apuradoAte: string
   porChave: Partial<Record<string, MetricaCiclo>>
 }
 
@@ -59,6 +65,8 @@ export function agruparPorSemana(metricas: MetricaCiclo[]): SemanaMetricas[] {
     const semana = semanas.get(m.janela_inicio) ?? {
       janelaInicio: m.janela_inicio,
       janelaFim: m.janela_fim,
+      parcial: m.parcial,
+      apuradoAte: m.apurado_ate,
       porChave: {},
     }
     semana.porChave[m.metrica] = m
@@ -72,6 +80,20 @@ export function formatarDiaLocal(dataLocal: string, comAno = false): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dataLocal)
   if (!m) return '—'
   return comAno ? `${m[3]}/${m[2]}/${m[1]}` : `${m[3]}/${m[2]}`
+}
+
+const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
+
+/**
+ * `2026-09-18T15:02:00` → `sex 18/09, 15:02` — o horário de corte de uma semana parcial. O dia da
+ * semana sai de `Date.UTC` sobre os números da string, não de `new Date(string)`: nenhuma conversão de
+ * fuso entra no caminho.
+ */
+export function formatarMomentoLocal(dataLocal: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(dataLocal)
+  if (!m) return '—'
+  const dia = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay()
+  return `${DIAS_SEMANA[dia]} ${m[3]}/${m[2]}, ${m[4]}:${m[5]}`
 }
 
 /** Valor de uma linha na unidade dela; `—` quando a métrica não existe na semana. */

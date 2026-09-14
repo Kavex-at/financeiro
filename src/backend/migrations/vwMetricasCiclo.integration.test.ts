@@ -40,6 +40,8 @@ const SERIE = '2026-09-11 20:00:00';
 const AGORA = '2026-09-26 10:00:00';
 const JANELA_A = { inicio: '2026-09-11 20:00:00', fim: '2026-09-18 20:00:00' };
 const JANELA_B = { inicio: '2026-09-18 20:00:00', fim: '2026-09-25 20:00:00' };
+/** Semana EM CURSO no `AGORA` do teste: começou sexta 25/09 20:00 e fecharia sexta 02/10 20:00. */
+const JANELA_C = { inicio: '2026-09-25 20:00:00', fim: '2026-10-02 20:00:00' };
 
 interface Linha {
     frente: string;
@@ -51,6 +53,8 @@ interface Linha {
     janela_fim: string;
     baseline: string | null;
     baseline_desc: string;
+    parcial: boolean;
+    apurado_ate: string;
 }
 
 const dsnPara = (dsn: string, banco: string): string => {
@@ -62,7 +66,7 @@ const dsnPara = (dsn: string, banco: string): string => {
 const SELECT_LINHAS = `
     SELECT frente, metrica, rotulo, valor::text AS valor, unidade,
            janela_inicio::text AS janela_inicio, janela_fim::text AS janela_fim,
-           baseline::text AS baseline, baseline_desc
+           baseline::text AS baseline, baseline_desc, parcial, apurado_ate::text AS apurado_ate
     FROM metricas.metricas_ciclo($1::timestamp, $2::timestamp)
 `;
 
@@ -147,15 +151,51 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         await admin?.end();
     });
 
-    it('emite só janelas fechadas a partir da série — nem antes, nem a semana em curso', () => {
+    it('emite as semanas desde a série — nada antes dela — e a em curso marcada como parcial', () => {
         const janelas = [
-            ...new Set(linhas.map((l) => `${l.janela_inicio}→${l.janela_fim}`)),
+            ...new Set(linhas.map((l) => `${l.janela_inicio}→${l.janela_fim}→${l.parcial}`)),
         ].sort();
 
         expect(janelas).toEqual([
-            `${JANELA_A.inicio}→${JANELA_A.fim}`,
-            `${JANELA_B.inicio}→${JANELA_B.fim}`,
+            `${JANELA_A.inicio}→${JANELA_A.fim}→false`,
+            `${JANELA_B.inicio}→${JANELA_B.fim}→false`,
+            `${JANELA_C.inicio}→${JANELA_C.fim}→true`,
         ]);
+    });
+
+    it('semana em curso: número apurado até o agora, com o horário de corte na linha', () => {
+        // Só `p-aberta` (settled, borderô 100 finalizado, R$ 5) caiu na semana C até o AGORA.
+        expect(linha('permutas_baixas_concluidas_pct', JANELA_C.inicio)).toMatchObject({
+            valor: '100.0',
+            rotulo: 'baixas de adiantamento concluídas, com borderô finalizado — 1 de 1 tentativas',
+            parcial: true,
+            apurado_ate: AGORA,
+        });
+        expect(linha('permutas_valor_baixado', JANELA_C.inicio)).toMatchObject({
+            valor: '5.00',
+            parcial: true,
+            apurado_ate: AGORA,
+        });
+        expect(linha('recebimentos_valor_alocado', JANELA_C.inicio)).toMatchObject({
+            valor: '0.00',
+            parcial: true,
+        });
+    });
+
+    it('semana fechada: apurada até o próprio fim, nunca parcial', () => {
+        for (const l of linhas.filter((x) => x.janela_inicio !== JANELA_C.inicio)) {
+            expect(l.parcial).toBe(false);
+            expect(l.apurado_ate).toBe(l.janela_fim);
+        }
+    });
+
+    it('lida exatamente no instante em que a semana fecha, não abre uma semana vazia', async () => {
+        const { rows } = await admin.query<Linha>(SELECT_LINHAS, [SERIE, JANELA_B.fim]);
+
+        expect(new Set(rows.map((r) => r.janela_inicio))).toEqual(
+            new Set([JANELA_A.inicio, JANELA_B.inicio]),
+        );
+        expect(rows.every((r) => !r.parcial)).toBe(true);
     });
 
     it('Permutas: concluídas ÷ tentativas, com o absoluto no rótulo', () => {
@@ -173,6 +213,8 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             janela_fim: JANELA_A.fim,
             baseline: null,
             baseline_desc: 'sem medição do processo manual',
+            parcial: false,
+            apurado_ate: JANELA_A.fim,
         });
     });
 
@@ -224,12 +266,26 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         expect(soData.rows).toHaveLength(0);
     });
 
-    it('a view é a função com a série do ciclo 6 e o agora de São Paulo', async () => {
+    it('a view é a função só com as semanas fechadas e as 9 colunas do contrato', async () => {
         const view = await admin.query('SELECT * FROM metricas.vw_metricas_ciclo ORDER BY 1, 2, 6');
         const funcao = await admin.query(
-            `SELECT * FROM metricas.metricas_ciclo(metricas.serie_inicio(), (now() AT TIME ZONE 'America/Sao_Paulo'))
+            `SELECT frente, metrica, rotulo, valor, unidade, janela_inicio, janela_fim, baseline, baseline_desc
+               FROM metricas.metricas_ciclo(metricas.serie_inicio(), (now() AT TIME ZONE 'America/Sao_Paulo'))
+              WHERE NOT parcial
              ORDER BY 1, 2, 6`,
         );
+
+        expect(view.fields.map((f) => f.name)).toEqual([
+            'frente',
+            'metrica',
+            'rotulo',
+            'valor',
+            'unidade',
+            'janela_inicio',
+            'janela_fim',
+            'baseline',
+            'baseline_desc',
+        ]);
 
         expect(view.rows).toEqual(funcao.rows);
     });
@@ -252,10 +308,12 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         const repository = new MetricasCicloRepository(db as never);
 
         await expect(repository.serieInicio()).resolves.toBe('2026-09-11T20:00:00');
-        // Nenhuma janela fecha antes de 2026-09-18 20:00: o filtro com `fim` precisa rodar e vir vazio.
+        // Nenhuma janela termina antes de 2026-09-18 20:00: o filtro com `fim` precisa rodar e vir vazio.
         await expect(repository.listar({ fim: '2026-09-11T20:00:00' })).resolves.toEqual([]);
         for (const linha of await repository.listar({})) {
             expect(linha.janela_inicio).toMatch(/^\d{4}-\d{2}-\d{2}T20:00:00$/);
+            expect(linha.apurado_ate).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+            expect(typeof linha.parcial).toBe('boolean');
         }
     });
 

@@ -23,6 +23,8 @@ const leituraFake = {
             janela_fim: '2026-09-18T20:00:00',
             baseline: null,
             baseline_desc: 'sem medição do processo manual',
+            parcial: true,
+            apurado_ate: '2026-09-18T15:02:00',
         },
     ],
 };
@@ -73,7 +75,7 @@ beforeEach(() => {
 });
 
 describe('GET /metricas/ciclo', () => {
-    it('devolve a série e as linhas no formato do contrato (snake_case, 9 campos)', async () => {
+    it('devolve a série e as linhas: os 9 campos do contrato, depois parcial e apurado_ate', async () => {
         const res = await fetch(`${srv.url}/metricas/ciclo`);
 
         expect(res.status).toBe(200);
@@ -89,6 +91,8 @@ describe('GET /metricas/ciclo', () => {
             'janela_fim',
             'baseline',
             'baseline_desc',
+            'parcial',
+            'apurado_ate',
         ]);
     });
 
