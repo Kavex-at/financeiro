@@ -1,6 +1,6 @@
 'use client'
 
-import type { CasamentoSugerido, PermutaPendente } from '@/lib/types'
+import type { CasamentoSugerido, PermutaBorderoVinculo, PermutaPendente } from '@/lib/types'
 import { formatNumber } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -28,13 +28,19 @@ export function ConfirmarProcessamentoDialog({
   confirmacao,
   onClose,
   pendenteByDocCod,
+  statusPorAdto,
   confirmarProcessamento,
 }: {
   confirmacao: CasamentoSugerido | null
   onClose: () => void
   pendenteByDocCod: Map<string, PermutaPendente>
+  /** Vínculo de borderô por adiantamento — a AUTORIDADE sobre "já processado" (ver
+   * `motivoSemProcessar`). A mesma fonte que a tabela usa nos badges. */
+  statusPorAdto: Record<string, PermutaBorderoVinculo>
   confirmarProcessamento: () => void
 }) {
+  const processaveis =
+    confirmacao?.adiantamentos.filter((a) => temAlgoAProcessar(a, statusPorAdto[a.docCod])) ?? []
   return (
     <Dialog
       open={confirmacao !== null}
@@ -81,7 +87,10 @@ export function ConfirmarProcessamentoDialog({
                       const det = pendenteByDocCod.get(adto.docCod)?.detalhe
                       // Linha que não será processada segue VISÍVEL (o analista vê o grupo
                       // inteiro), mas rotulada com o motivo e fora da contagem do botão.
-                      const motivo = motivoSemProcessar(adto, confirmacao.invoice.moeda)
+                      const motivo = motivoSemProcessar(adto, {
+                        moedaInvoice: confirmacao.invoice.moeda,
+                        vinculo: statusPorAdto[adto.docCod],
+                      })
                       return (
                         <TableRow
                           key={adto.docCod}
@@ -126,8 +135,7 @@ export function ConfirmarProcessamentoDialog({
           </Button>
           <Button
             disabled={
-              !PROCESSAMENTO_HABILITADO ||
-              (confirmacao?.adiantamentos.filter(temAlgoAProcessar).length ?? 0) === 0
+              !PROCESSAMENTO_HABILITADO || processaveis.length === 0
             }
             title={
               !PROCESSAMENTO_HABILITADO
@@ -137,7 +145,7 @@ export function ConfirmarProcessamentoDialog({
             onClick={() => void confirmarProcessamento()}
           >
             Processar{' '}
-            {confirmacao ? confirmacao.adiantamentos.filter(temAlgoAProcessar).length : 0}{' '}
+            {processaveis.length}{' '}
             adiantamento(s)
           </Button>
         </DialogFooter>

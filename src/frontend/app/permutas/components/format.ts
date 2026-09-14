@@ -1,4 +1,8 @@
-import type { ProcessamentoStatus, StatusElegibilidade } from '@/lib/types'
+import type {
+  PermutaBorderoVinculo,
+  ProcessamentoStatus,
+  StatusElegibilidade,
+} from '@/lib/types'
 import { formatNumber } from '@/lib/utils'
 
 // Máscara/parse/format de valores pt-BR promovidos para `@/lib/brl` (fonte única
@@ -35,26 +39,51 @@ export const SALDO_TOL = 1
  * importava tinha liquidado. Produção 2026-09-14, processo 173: o adto 4471 baixou certo e o 4742,
  * `0,00 BRL`, derrubou a tela.
  */
-export const temAlgoAProcessar = (a: {
-    valorASerUsado?: number
-    processamentoStatus?: ProcessamentoStatus
-}): boolean => a.processamentoStatus !== 'processado' && (a.valorASerUsado ?? 0) > 0
+export const temAlgoAProcessar = (
+  a: { valorASerUsado?: number; processamentoStatus?: ProcessamentoStatus },
+  vinculo?: PermutaBorderoVinculo,
+): boolean =>
+  !vinculoSeguraBaixa(vinculo) &&
+  a.processamentoStatus !== 'processado' &&
+  (a.valorASerUsado ?? 0) > 0
 
 /**
- * Por que esta linha não será processada — rótulo curto para o modal. `undefined` = será processada.
+ * O vínculo de borderô ainda SEGURA a baixa deste adiantamento? Espelha o
+ * `borderoAindaValido` do backend: borderô CANCELADO/ESTORNADO/REMOVIDO deixa de segurar — a baixa
+ * foi desfeita no ERP e o par volta a ser lançável (idempotência viva). `INDISPONIVEL` (não deu
+ * para ler o ERP) conta como vivo, que é o lado conservador: não oferecemos relançar o que talvez
+ * ainda exista.
+ */
+export const vinculoSeguraBaixa = (v?: PermutaBorderoVinculo): boolean =>
+  v !== undefined &&
+  v.situacao !== 'CANCELADO' &&
+  v.situacao !== 'ESTORNADO' &&
+  v.situacao !== 'REMOVIDO'
+
+/**
+ * Por que esta linha não será processada — rótulo curto. `undefined` = será processada.
+ *
+ * A AUTORIDADE sobre "já processado" é o vínculo de borderô (`statusPorAdto`), não o
+ * `processamentoStatus` do casamento: o primeiro reflete execução real (há borderô), o segundo é um
+ * marcador manual do analista que na prática ninguém preenche. Usar o marcador fazia o modal rotular
+ * um adiantamento JÁ LIQUIDADO como "sem saldo a permutar" enquanto a tabela, ao lado, mostrava
+ * "Finalizado · borderô 2185" para a mesma linha.
+ *
  * `moedaInvoice` separa as duas causas de `valorASerUsado = 0`: moeda incompatível (a distribuição
- * não cruza moedas — um adto em BRL não abate invoice em USD) de adiantamento já consumido.
+ * não cruza moedas — adto em BRL não abate invoice em USD) de adiantamento já consumido.
  */
 export const motivoSemProcessar = (
-    a: { valorASerUsado?: number; moeda?: string; processamentoStatus?: ProcessamentoStatus },
-    moedaInvoice?: string,
+  a: { valorASerUsado?: number; moeda?: string; processamentoStatus?: ProcessamentoStatus },
+  opts: { moedaInvoice?: string; vinculo?: PermutaBorderoVinculo } = {},
 ): string | undefined => {
-    if (a.processamentoStatus === 'processado') return 'já processado'
-    if ((a.valorASerUsado ?? 0) > 0) return undefined
-    if (a.moeda !== undefined && moedaInvoice !== undefined && a.moeda !== moedaInvoice) {
-        return 'moeda diferente da invoice'
-    }
-    return 'sem saldo a permutar'
+  const v = opts.vinculo
+  if (v !== undefined && vinculoSeguraBaixa(v)) return `já processado · borderô ${v.borCod}`
+  if (a.processamentoStatus === 'processado') return 'já processado'
+  if ((a.valorASerUsado ?? 0) > 0) return undefined
+  if (a.moeda !== undefined && opts.moedaInvoice !== undefined && a.moeda !== opts.moedaInvoice) {
+    return 'moeda diferente da invoice'
+  }
+  return 'sem saldo a permutar'
 }
 
 /** Paginação da tabela principal (visão geral): 50 linhas por página. */
