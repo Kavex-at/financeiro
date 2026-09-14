@@ -2,7 +2,7 @@
 adr_number: 0045
 title: As métricas do ciclo leem os ledgers de execução — a trilha da SN, e não a spine `recebimento` — com série a partir do ciclo 6 e só janela fechada
 date: 2026-09-14
-status: proposed
+status: accepted
 type: new
 related_entities: [Permuta, SolicitacaoNumerario]
 related_actions: []
@@ -18,7 +18,8 @@ amends_decisions: []
 # ADR 0045: o report mede o que o sistema gravou, onde ele gravou
 
 **Cliente:** Columbia Trading · **Entrega:** Kavex · **Branch:** `feat/metricas-ciclo`.
-**Status: proposta.** Aguarda o Yuri para G1 (`ontology/_inbox/metricas-ciclo-gap.md`), e nenhuma
+**Status: aceita** — G1, G2 e G3 respondidos pelo Yuri em 2026-09-14
+(`ontology/_inbox/metricas-ciclo-gap.md`). Enquanto proposta, nenhuma
 chave de `metrica` é permanente até o merge. **`entity_changed = false`**: é read-model, sem entidade,
 ação ou estado novo.
 
@@ -50,14 +51,21 @@ renomeadas.
 Nenhuma coluna registra esse fato. Toda SN é disparada por analista, e há 0 regras automáticas. O único
 flag vizinho, `revisao_humana`, quer dizer "a homologação voltou com validação pendente no com194". Hoje
 daria 0%, e por outro motivo. Métrica emitida provisoriamente: taxa de conclusão
-(`recebimentos_alocacoes_concluidas_pct`), simétrica à de Permutas. **G1 decide antes do merge.**
+(`recebimentos_alocacoes_concluidas_pct`), simétrica à de Permutas. **G1 (2026-09-14): descartado.** Se
+todo registro é disparado por alguém, a métrica não existe; não há chave reservada para ela.
 
-### D3 — Baixa em borderô desfeito não conta como concluída
+### D3 — Só baixa em borderô FINALIZADO conta como concluída
 
-Desfeito = CANCELADO (`bor_vld_finalizado = 2`) ou ESTORNADO (`bor_cod_estornado IS NOT NULL`), a
-mesma derivação de `BorderoGestaoService.situacaoDoItem`. Fica fora do numerador e do R$, e dentro do
-denominador. Na semana de 2026-06-19 foram 17 de 41. Contar como concluída levaria a taxa de 39% para
-80%.
+Concluída = `settled` com borderô FINALIZADO (`bor_vld_finalizado = 1` e `bor_cod_estornado IS NULL`),
+a mesma derivação de `BorderoGestaoService.situacaoDoItem`. CANCELADO, ESTORNADO e **EM CADASTRO**
+(G2, 2026-09-14: "pode ser outra métrica, mas não concluída") ficam fora do numerador e do R$, e dentro
+do denominador. Borderô ausente do cache também não conta, porque situação desconhecida não é
+finalizada.
+
+Em 2026-09-14, das 177 baixas `settled`: 150 finalizadas (R$ 57,00 mi), 20 canceladas (R$ 3,03 mi),
+3 em cadastro (R$ 0,30 mi) e 4 sem cache (R$ 2,76 mi; borderôs 2466 e 19254–19256, de agosto,
+ausentes mesmo com o cache atualizado no dia). Na semana de 2026-06-19, contar as desfeitas levaria a
+taxa de 39% para 80%. Na de 2026-08-07, a regra estrita leva de 92,3% para 73,1%.
 
 ### D4 — Série desde 2026-09-11 20:00, só janela fechada, `timestamp` de São Paulo
 

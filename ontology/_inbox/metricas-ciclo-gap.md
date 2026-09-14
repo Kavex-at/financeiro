@@ -22,7 +22,8 @@ Opções:
   todas as 12 SN concluídas precisaram de revisão no com194;
 - (c) outra definição.
 
-**Resposta:**
+**Resposta (Yuri, 2026-09-14):** se todo registro é disparado por alguém, descartar o "% sem toque
+humano". → Opção (a) sem a métrica futura: fonte = trilha da SN; ficam taxa de conclusão e R$.
 
 ## P1 — o palpite é defensável, mas a decisão é de negócio
 
@@ -35,7 +36,13 @@ não ficou de pé). Na semana de 2026-06-19 isso é a diferença entre 39% e 80%
 Borderô EM CADASTRO (baixa gravada, borderô não finalizado no ERP) **conta** como concluída. Confirmar.
 O `permuta_bordero` é cache: se a sincronização atrasar, o cancelamento demora a aparecer.
 
-**Resposta:**
+**Resposta (Yuri, 2026-09-14):** de acordo que cancelado/estornado não conta, e **em cadastro também não
+conta**. Pode virar outra métrica, mas não é concluída. → Implementado: só borderô FINALIZADO
+(`bor_vld_finalizado = 1`, sem estorno) conclui e entra no R$. Consequência aplicada no mesmo sentido:
+baixa cujo borderô **não está no cache** também não conta (situação desconhecida não é finalizada). Em
+2026-09-14 são 4 baixas / R$ 2,76 mi, dos borderôs 2466 (fil 1) e 19254–19256 (fil 2), de 10 e
+14/08. O cache foi atualizado hoje e eles não aparecem: provável exclusão no ERP, vale conferir.
+Métrica de "em cadastro", se vier, entra com chave nova.
 
 ### G3 — Início da série
 
@@ -44,7 +51,7 @@ não são emitidos: o ledger de permutas apaga linhas quando um borderô é excl
 não existiam antes. Se quiserem a série desde o go-live de cada frente, a mudança é uma linha
 (`serie_inicio`) numa migration nova. É uma decisão consciente contra a regra 2, não um ajuste técnico.
 
-**Resposta:**
+**Resposta (Yuri, 2026-09-14):** sim.
 
 ## Achados na skill `kavex-report-ciclo` (fora deste repo)
 

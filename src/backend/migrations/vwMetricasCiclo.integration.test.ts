@@ -98,12 +98,14 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             await admin.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
         }
 
-        // Borderô 200 cancelado, 300 estornado, 100 vivo — mesma derivação da tela de borderôs.
+        // Mesma derivação da tela de borderôs. Só o 100 (FINALIZADO) conclui (gap G2, 2026-09-14):
+        // 200 cancelado, 300 estornado, 400 em cadastro; o 500 não existe no cache.
         await admin.query(`
             INSERT INTO permuta_bordero (bor_cod, fil_cod, bor_vld_finalizado, bor_cod_estornado) VALUES
                 (100, 1, 1, NULL),
                 (200, 1, 2, NULL),
-                (300, 1, 0, 901)
+                (300, 1, 0, 901),
+                (400, 1, 0, NULL)
         `);
 
         // Janela A (sex 11/09 20:00 → sex 18/09 20:00, horário de São Paulo).
@@ -116,6 +118,9 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
                 ('p-inicio-exato','A1', 'I1', 1, 'settled', false, 100, 1000.00, '2026-09-11 20:00:00-03'),
                 ('p-cancelado',   'A2', 'I2', 1, 'settled', false, 200,  500.00, '2026-09-15 10:00:00-03'),
                 ('p-estornado',   'A3', 'I3', 1, 'settled', false, 300,  400.00, '2026-09-15 11:00:00-03'),
+                ('p-em-cadastro', 'AC', 'IC', 1, 'settled', false, 400,  250.00, '2026-09-15 12:00:00-03'),
+                ('p-parc-cadast', 'AD', 'ID', 1, 'parcial', false, 400,   80.00, '2026-09-15 13:00:00-03'),
+                ('p-sem-cache',   'AE', 'IE', 1, 'settled', false, 500,  120.00, '2026-09-15 14:00:00-03'),
                 ('p-erro',        'A4', 'I4', 1, 'error',   false, NULL,   NULL, '2026-09-16 10:00:00-03'),
                 ('p-parcial',     'A5', 'I5', 1, 'parcial', false, 100,  300.00, '2026-09-17 10:00:00-03'),
                 ('p-dry-run',     'A6', 'I6', 1, 'settled', true,  100, 9999.00, '2026-09-17 11:00:00-03'),
@@ -153,13 +158,15 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
     });
 
     it('Permutas: concluídas ÷ tentativas, com o absoluto no rótulo', () => {
-        // Tentativas A: início-exato, cancelado, estornado, erro, parcial, utc-na-A, fim-A = 7.
-        // Concluídas A: início-exato, fim-A = 2 (cancelado/estornado desfeitos; parcial não conclui).
+        // Tentativas A: início-exato, cancelado, estornado, em-cadastro, parc-cadast, sem-cache, erro,
+        // parcial, utc-na-A, fim-A = 10.
+        // Concluídas A: início-exato, fim-A = 2. Cancelado, estornado, em cadastro e sem cache não
+        // concluem (G2); parcial nunca conclui.
         expect(linha('permutas_baixas_concluidas_pct', JANELA_A.inicio)).toEqual({
             frente: 'Permutas (Frente I)',
             metrica: 'permutas_baixas_concluidas_pct',
-            rotulo: 'baixas de adiantamento concluídas sem erro — 2 de 7 tentativas',
-            valor: '28.6',
+            rotulo: 'baixas de adiantamento concluídas, com borderô finalizado — 2 de 10 tentativas',
+            valor: '20.0',
             unidade: '%',
             janela_inicio: JANELA_A.inicio,
             janela_fim: JANELA_A.fim,
@@ -168,7 +175,9 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         });
     });
 
-    it('Permutas: R$ soma settled e parcial que ficaram de pé; ignora dry-run e borderô desfeito', () => {
+    it('Permutas: R$ soma settled e parcial de borderô finalizado; ignora dry-run e o resto', () => {
+        // 1000 (início-exato) + 300 (parcial, borderô 100) + 50 (fim-A). Fora: cancelado 500,
+        // estornado 400, em cadastro 250 + 80, sem cache 120, dry-run 9999.
         expect(linha('permutas_valor_baixado', JANELA_A.inicio)).toMatchObject({
             valor: '1350.00',
             unidade: 'R$',
@@ -179,7 +188,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
     it('fronteira: 19:59:59 de sexta fica na semana anterior, 20:00:00 abre a seguinte', () => {
         expect(linha('permutas_baixas_concluidas_pct', JANELA_B.inicio)).toMatchObject({
             valor: '100.0',
-            rotulo: 'baixas de adiantamento concluídas sem erro — 1 de 1 tentativas',
+            rotulo: 'baixas de adiantamento concluídas, com borderô finalizado — 1 de 1 tentativas',
         });
         expect(linha('permutas_valor_baixado', JANELA_B.inicio)?.valor).toBe('70.00');
     });
