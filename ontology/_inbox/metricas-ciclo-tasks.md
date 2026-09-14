@@ -39,9 +39,9 @@ desde 2026-09-11 20:00: a janela do ciclo 6 está vazia até aqui.
 - Emite as 4 chaves de `metricas-ciclo-interview.md` com os rótulos de cliente. O `%` só sai quando
   há tentativa (nunca com denominador zero) e leva o absoluto no `rotulo`. O `R$` sai em toda janela
   fechada, `0` quando não houve baixa.
-- Baixa em borderô desfeito (`permuta_bordero`: CANCELADO `bor_vld_finalizado = 2` ou ESTORNADO
-  `bor_cod_estornado IS NOT NULL`) fica fora do numerador e do R$, e dentro do denominador.
-  `dry_run = true` fica fora de tudo.
+- Só baixa em borderô FINALIZADO (`permuta_bordero.bor_vld_finalizado = 1` e sem estorno) conta no
+  numerador e no R$. CANCELADO, ESTORNADO, EM CADASTRO e borderô ausente do cache ficam no denominador.
+  *(Ajustado após G2, 2026-09-14: antes só cancelado/estornado ficavam fora.)* `dry_run = true` fica fora de tudo.
 - `baseline` = `NULL`, e `baseline_desc` diz que não há medição do processo manual (I-M5).
 - Somente leitura: nenhum DML, nenhuma chamada externa (I-M1).
 - `metricas.metricas_ciclo(serie, agora)` com `EXECUTE` revogado de `PUBLIC`; a view lê

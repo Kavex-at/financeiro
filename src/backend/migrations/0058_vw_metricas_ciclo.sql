@@ -10,20 +10,22 @@
 --
 -- Frente I — `permuta_alocacao_execucao` (ledger write-ahead da baixa no fin010).
 --   Tentativa  = linha real (`dry_run = false`), atribuída à semana do `criado_em`.
---   Concluída  = `settled` com borderô que ficou de pé.
---   R$         = `valor_baixado` (BRL gravado no momento da baixa) de `settled` e `parcial` que ficaram
---                de pé. `parcial` é dinheiro baixado de verdade, mas não é baixa concluída.
---   Borderô que NÃO ficou de pé = CANCELADO (`bor_vld_finalizado = 2`) ou ESTORNADO
---   (`bor_cod_estornado IS NOT NULL`) no cache `permuta_bordero` — a mesma derivação da tela
---   (`BorderoGestaoService.situacaoDoItem`). Em 2026-09-14 eram 20 baixas / R$ 3,03 mi só de
---   cancelados: contar como concluídas inflaria a taxa em ~11%. Ficam no denominador.
+--   Concluída  = `settled` com borderô FINALIZADO.
+--   R$         = `valor_baixado` (BRL gravado no momento da baixa) de `settled` e `parcial` com borderô
+--                FINALIZADO. `parcial` é dinheiro baixado de verdade, mas não é baixa concluída.
+--   Borderô FINALIZADO = `bor_vld_finalizado = 1` e sem estorno (`bor_cod_estornado IS NULL`) no cache
+--   `permuta_bordero` — a mesma derivação da tela (`BorderoGestaoService.situacaoDoItem`). Decisão do
+--   Yuri (gap G2, 2026-09-14): CANCELADO, ESTORNADO e EM CADASTRO **não** são concluídos; em cadastro
+--   ainda não fechou no ERP. Borderô ausente do cache também não conta — situação desconhecida não é
+--   finalizada. Em 2026-09-14 (177 settled): 150 finalizados, 20 cancelados, 3 em cadastro, 4 sem
+--   cache. Todos ficam no denominador. Se "em cadastro" virar métrica, é chave nova.
 --
 -- Frente IV — `solicitacao_numerario_execucao` (trilha SN → fin014 → NDe).
 --   NÃO `recebimento`/`recebimento_execucao`/`rateio_recebimento`: a spine tem 0 linhas em produção.
 --   Medir por ela diria "0 créditos alocados" na semana em que a trilha da SN alocou R$ 789 mil.
 --   Tentativa = linha real; concluída = `settled`; R$ = `valor` das concluídas.
---   "% sem toque humano" NÃO é emitido: nenhuma tabela registra esse fato (toda SN é disparada por
---   analista). Decisão aberta em `ontology/_inbox/metricas-ciclo-gap.md` (G1).
+--   "% sem toque humano" NÃO existe e não será emitido (gap G1, 2026-09-14): toda SN é disparada por
+--   analista, então a métrica seria zero por construção.
 --
 -- ── INVARIANTES ──────────────────────────────────────────────────────────────────────────────────
 --
@@ -102,9 +104,9 @@ AS $fn$
             j.janela_inicio,
             j.janela_fim,
             COUNT(e.id) AS tentativas,
-            COUNT(e.id) FILTER (WHERE e.status = 'settled' AND NOT e.desfeita) AS concluidas,
+            COUNT(e.id) FILTER (WHERE e.status = 'settled' AND e.finalizada) AS concluidas,
             COALESCE(
-                SUM(e.valor_baixado) FILTER (WHERE e.status IN ('settled', 'parcial') AND NOT e.desfeita),
+                SUM(e.valor_baixado) FILTER (WHERE e.status IN ('settled', 'parcial') AND e.finalizada),
                 0
             ) AS valor_baixado
         FROM janelas j
@@ -119,8 +121,9 @@ AS $fn$
                     FROM public.permuta_bordero b
                     WHERE b.fil_cod = x.fil_cod
                       AND b.bor_cod = x.bor_cod
-                      AND (b.bor_vld_finalizado = 2 OR b.bor_cod_estornado IS NOT NULL)
-                ) AS desfeita
+                      AND b.bor_vld_finalizado = 1
+                      AND b.bor_cod_estornado IS NULL
+                ) AS finalizada
             FROM public.permuta_alocacao_execucao x
             WHERE x.dry_run = false
         ) e
@@ -147,7 +150,7 @@ AS $fn$
             'Permutas (Frente I)' AS frente,
             'permutas_baixas_concluidas_pct' AS metrica,
             pg_catalog.format(
-                'baixas de adiantamento concluídas sem erro — %s de %s tentativas',
+                'baixas de adiantamento concluídas, com borderô finalizado — %s de %s tentativas',
                 p.concluidas,
                 p.tentativas
             ) AS rotulo,
