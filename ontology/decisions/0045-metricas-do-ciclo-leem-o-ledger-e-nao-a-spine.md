@@ -77,29 +77,38 @@ taxa de 39% para 80%. Na de 2026-08-07, a regra estrita leva de 92,3% para 73,1%
 - Tentativa atribuída ao `criado_em` (imutável). O desfecho é o estado atual do ledger, e o report
   congela o número no ciclo em que o leu.
 
-### D5 — Acesso: schema próprio, função vigente DEFINER, role só-leitura
+### D5 — Acesso: a métrica é da aplicação (API + tela), não de um DSN à parte
 
-Schema `metricas`, fora do PostgREST. `metricas.metricas_ciclo(serie, agora)` (INVOKER, EXECUTE
-revogado) carrega a lógica e é o que o teste chama com "agora" fixo. `metricas_ciclo_vigente()` (sem
-parâmetro, DEFINER, `search_path = ''`) fixa série e `now()`. A view lê a vigente.
+**Decisão do Yuri (2026-09-14):** as métricas fazem parte da aplicação. `GET /metricas/ciclo`
+(route → `MetricasCicloService` → `MetricasCicloRepository` → `metricas.vw_metricas_ciclo`) serve
+as linhas no formato do contrato. Duas consumidoras leem a mesma coisa: a tela **Métricas** (grupo
+Plataforma) e o `kavex-report-ciclo`. Este último faz login em `POST /auth/login` com um usuário da
+aplicação e deixa de conectar no Postgres.
 
-A vigente existe por um detalhe que **o teste de integração pegou**: função dentro de view checa
-`EXECUTE` e roda com o privilégio de quem consulta. Revogar a função parametrizada trancava o leitor;
-conceder a ela deixava o leitor recuar a série.
+Na migration ficam o schema `metricas` (fora do PostgREST), `metricas.serie_inicio()` (fonte única
+da data, que a API devolve para "série iniciada em"), `metricas.metricas_ciclo(serie, agora)`
+(INVOKER, EXECUTE revogado de PUBLIC, e é o que o teste chama com "agora" fixo) e a view.
 
-Role `metricas_ciclo_leitor`: `NOLOGIN` na migration, `default_transaction_read_only`,
-`search_path = metricas`, `statement_timeout = 30s`, e só USAGE + EXECUTE na vigente + SELECT na
-view. O `LOGIN PASSWORD` é passo humano, no próprio role: `ALTER ROLE … SET` não é herdado por membro.
+**Descartado:** um role só-leitura (`metricas_ciclo_leitor`) com DSN próprio para o report. Foi a
+primeira versão deste delta, removida antes de ir para produção. Exigia um passo manual de senha no
+Supabase, um segredo a mais para distribuir e rotacionar, e um segundo caminho de acesso que a
+aplicação não enxerga. O ganho, um leitor que não vê `erp_response`, também existe na API: a rota
+só devolve agregados.
+
+A API também fecha o gap K1. `fim` só com data cobre o dia inteiro, então `fim=2026-09-18` inclui a
+janela que fecha às 20:00. Fuso explícito na query é recusado (400): a janela é hora de São Paulo
+por contrato.
 
 ## Consequências
 
-- **+** A Seção 3 passa a ter número de operação com origem auditável, lido por um role que não enxerga
-  `erp_response` nem e-mail.
+- **+** A Seção 3 e a tela Métricas mostram o mesmo número, com origem auditável, pela mesma rota
+  autenticada. Nenhum segredo novo, nenhum passo manual no banco.
 - **+** Validado contra o ledger vivo: 12 semanas, 48 comparações com consulta independente, 0
   divergência.
 - **−** O número de uma semana passada muda se um borderô for cancelado depois. O conserto de fundo é
   uma tabela de eventos append-only (follow-up), não esta view.
-- **−** O critério "`metrics.py --inicio 2026-09-11 --fim 2026-09-18`" devolve **zero linhas** com data
-  sem hora. Precisa de `--fim 2026-09-18T20:00:00` ou de ajuste no filtro do script (gap K1).
+- **−** O report passa a depender de a aplicação estar no ar e de um usuário da aplicação (variáveis
+  `FINANCEIRO_API_URL`, `FINANCEIRO_API_USUARIO`, `FINANCEIRO_API_SENHA` onde o report roda). Com a
+  API fora, a frente aparece como lacuna declarada no report, não como número.
 - **−** Frente IV sem execução desde a semana de 2026-08-07: o ciclo 6 mostrará R$ 0 e nenhum %. É
   verdade, e é tema de Seção 4.

@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Activity, ArrowLeftRight, Banknote, Landmark, Users } from 'lucide-react'
+import { Activity, ArrowLeftRight, Banknote, BarChart3, Landmark, Users } from 'lucide-react'
 import type { SidebarGroup } from '@/components/ui/sidebar'
 import { useIsAdmin } from '@/lib/auth/AuthProvider'
 import { isSispagEnabled } from '@/lib/features'
@@ -99,6 +99,16 @@ export function buildAppNavGroups({
           tooltip: {
             title: 'Painel de Operação',
             description: 'Saúde dos pipelines, alertas abertos e diagnóstico de configuração.',
+          },
+        },
+        {
+          id: 'metricas',
+          label: 'Métricas',
+          icon: <BarChart3 />,
+          href: '/metricas',
+          tooltip: {
+            title: 'Métricas',
+            description: 'Quanto trabalho o sistema fez pela operação, por semana.',
           },
         },
         {

@@ -31,7 +31,7 @@ describe('buildAppNavGroups', () => {
     const groups = buildAppNavGroups(tudoLiberado)
     expect(groups.map((g) => g.label)).toEqual(['Frentes', 'Plataforma'])
     expect(visiveis([groups[0]])).toEqual(['Permutas', 'SISPAG', 'Adiantamentos'])
-    expect(visiveis([groups[1]])).toEqual(['Operação', 'Usuários'])
+    expect(visiveis([groups[1]])).toEqual(['Operação', 'Métricas', 'Usuários'])
   })
 
   it('aponta para as rotas reais, incluindo as sub-rotas de Permutas', () => {
@@ -46,9 +46,15 @@ describe('buildAppNavGroups', () => {
         '/sispag',
         '/recebimentos',
         '/operacao',
+        '/metricas',
         '/usuarios',
       ]),
     )
+  })
+
+  it('Métricas aparece para qualquer usuário autenticado — a rota só exige login', () => {
+    const groups = buildAppNavGroups({ sispagEnabled: false, isAdmin: false, operacaoEnabled: false })
+    expect(visiveis(groups)).toContain('Métricas')
   })
 
   it('esconde SISPAG quando a flag está desligada', () => {
