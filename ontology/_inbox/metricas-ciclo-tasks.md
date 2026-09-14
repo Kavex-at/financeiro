@@ -162,6 +162,25 @@ na segunda 14/09 (semana aberta): `metrics.py --inicio 2026-09-11 --fim 2026-09-
 
 **Dependencies:** Task 5
 
+### Task 7 (tweak, pedido do Yuri em 2026-09-14): a semana fecha sexta às 18:00, não às 20:00
+
+> Motivo: ninguém trabalha na operação depois das 18:00; o corte mais cedo não tira nada relevante e o
+> report do fim da tarde de sexta passa a ler a semana já fechada. As menções a 20:00 nas tasks acima
+> são o histórico de antes desta mudança.
+
+**Files to change:** `0058` (`metricas.serie_inicio()` = 2026-09-11 18:00; comentários), testes de SQL/unitários
+(fronteiras 17:59:59/18:00:00), tela e lib (textos), ADR-0045 D4, CHANGELOG; skill `collect.sh`
+(`HORA_CORTE="18:00"`, para commits/PRs usarem o mesmo corte), `SKILL.md`, `metrics.py`, `contrato-metricas.md`.
+
+**Acceptance criteria:** todas as janelas começam e terminam sexta 18:00 (São Paulo); 17:59:59 fica na semana
+anterior e 18:00:00 abre a seguinte; a série começa em 11/09 18:00; o `collect.sh` corta no mesmo horário.
+
+**Resultado:** backend 22 + SQL 14 + frontend 13 verdes. Validação read-only contra produção com corte 18:00:
+13 semanas, 52 comparações, 0 divergência. Impacto medido: em 13 semanas, **uma** sexta teve execução
+entre 18:00 e 20:00 (03/07, 7 baixas entre 18:05 e 19:09, R$ 2,24 mi), que passam a contar na semana seguinte.
+
+**Dependencies:** Task 6
+
 ## Definition of Done
 
 - `npm run typecheck`, `npm run lint`, `npm test` verdes em `src/backend`.

@@ -68,11 +68,11 @@ describe('0058_vw_metricas_ciclo — guardas estáticas', () => {
     });
 
     it('a série do ciclo 6 mora só em `metricas.serie_inicio()`, e a view a usa', () => {
-        const literais = SQL.match(/TIMESTAMP '2026-09-11 20:00:00'/g) ?? [];
+        const literais = SQL.match(/TIMESTAMP '2026-09-11 18:00:00'/g) ?? [];
 
         expect(literais).toHaveLength(1);
         expect(SQL).toMatch(
-            /FUNCTION metricas\.serie_inicio\(\)[\s\S]*?TIMESTAMP '2026-09-11 20:00:00'/,
+            /FUNCTION metricas\.serie_inicio\(\)[\s\S]*?TIMESTAMP '2026-09-11 18:00:00'/,
         );
         expect(SQL).toMatch(/metricas\.metricas_ciclo\(\s*metricas\.serie_inicio\(\),/);
     });

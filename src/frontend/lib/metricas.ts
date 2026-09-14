@@ -24,7 +24,7 @@ export interface MetricaCiclo {
   janela_fim: string
   baseline: number | null
   baseline_desc: string
-  /** Semana em curso, ainda não fechada: o número vale até `apurado_ate` e muda até sexta 20:00. */
+  /** Semana em curso, ainda não fechada: o número vale até `apurado_ate` e muda até sexta 18:00. */
   parcial: boolean
   /** Até quando a linha foi apurada: o fim da semana, ou o momento da leitura se parcial. */
   apurado_ate: string
@@ -75,7 +75,7 @@ export function agruparPorSemana(metricas: MetricaCiclo[]): SemanaMetricas[] {
   return [...semanas.values()].sort((a, b) => b.janelaInicio.localeCompare(a.janelaInicio))
 }
 
-/** `2026-09-11T20:00:00` → `11/09` (ou `11/09/2026` com ano). Sem `Date`: ver o cabeçalho. */
+/** `2026-09-11T18:00:00` → `11/09` (ou `11/09/2026` com ano). Sem `Date`: ver o cabeçalho. */
 export function formatarDiaLocal(dataLocal: string, comAno = false): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dataLocal)
   if (!m) return '—'

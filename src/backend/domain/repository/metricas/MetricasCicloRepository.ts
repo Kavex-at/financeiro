@@ -27,7 +27,7 @@ const FORMATO_DATA = `'YYYY-MM-DD"T"HH24:MI:SS'`;
  * MetricasCicloRepository — leitura das métricas do ciclo (ADR-0045).
  *
  * Lê a FUNÇÃO `metricas.metricas_ciclo`, não a view: a view só tem semanas fechadas, e a API precisa
- * também da semana em curso — o report é feito na sexta à tarde, antes do fechamento das 20:00. A
+ * também da semana em curso — o report é feito na sexta à tarde, antes do fechamento das 18:00. A
  * linha da semana em curso vem com `parcial = true` e o horário de corte em `apurado_ate`.
  *
  * Somente leitura, SQL parametrizado. **Não toca o ERP**: os valores são o que os ledgers gravaram no

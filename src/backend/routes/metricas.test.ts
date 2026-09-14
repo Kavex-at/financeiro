@@ -11,7 +11,7 @@ jest.mock('../domain/appContainer.js', () => ({
 }));
 
 const leituraFake = {
-    serieInicio: '2026-09-11T20:00:00',
+    serieInicio: '2026-09-11T18:00:00',
     metricas: [
         {
             frente: 'Permutas (Frente I)',
@@ -19,8 +19,8 @@ const leituraFake = {
             rotulo: 'baixas de adiantamento concluídas, com borderô finalizado — 12 de 13 tentativas',
             valor: 92.3,
             unidade: '%',
-            janela_inicio: '2026-09-11T20:00:00',
-            janela_fim: '2026-09-18T20:00:00',
+            janela_inicio: '2026-09-11T18:00:00',
+            janela_fim: '2026-09-18T18:00:00',
             baseline: null,
             baseline_desc: 'sem medição do processo manual',
             parcial: true,
@@ -97,13 +97,13 @@ describe('GET /metricas/ciclo', () => {
     });
 
     it('repassa inicio/fim ao serviço', async () => {
-        await fetch(`${srv.url}/metricas/ciclo?inicio=2026-09-11&fim=2026-09-18T20:00:00`);
+        await fetch(`${srv.url}/metricas/ciclo?inicio=2026-09-11&fim=2026-09-18T18:00:00`);
 
-        expect(ler).toHaveBeenCalledWith({ inicio: '2026-09-11', fim: '2026-09-18T20:00:00' });
+        expect(ler).toHaveBeenCalledWith({ inicio: '2026-09-11', fim: '2026-09-18T18:00:00' });
     });
 
     it('recusa data com fuso ou formato livre — a janela é hora de São Paulo', async () => {
-        for (const fim of ['2026-09-18T20:00:00Z', '18/09/2026', 'semana-passada']) {
+        for (const fim of ['2026-09-18T18:00:00Z', '18/09/2026', 'semana-passada']) {
             const res = await fetch(`${srv.url}/metricas/ciclo?fim=${encodeURIComponent(fim)}`);
             expect(res.status).toBe(400);
         }

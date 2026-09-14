@@ -14,33 +14,33 @@ const linha = (over: Partial<MetricaCiclo>): MetricaCiclo => ({
   rotulo: 'valor baixado em permutas de adiantamento',
   valor: 0,
   unidade: 'R$',
-  janela_inicio: '2026-09-11T20:00:00',
-  janela_fim: '2026-09-18T20:00:00',
+  janela_inicio: '2026-09-11T18:00:00',
+  janela_fim: '2026-09-18T18:00:00',
   baseline: null,
   baseline_desc: 'sem medição do processo manual',
   parcial: false,
-  apurado_ate: '2026-09-18T20:00:00',
+  apurado_ate: '2026-09-18T18:00:00',
   ...over,
 })
 
 describe('agruparPorSemana', () => {
   it('junta as métricas da mesma janela e ordena da mais recente para a mais antiga', () => {
     const semanas = agruparPorSemana([
-      linha({ janela_inicio: '2026-09-11T20:00:00', janela_fim: '2026-09-18T20:00:00' }),
+      linha({ janela_inicio: '2026-09-11T18:00:00', janela_fim: '2026-09-18T18:00:00' }),
       linha({
         metrica: METRICA.PERMUTAS_PCT,
         unidade: '%',
-        janela_inicio: '2026-09-18T20:00:00',
-        janela_fim: '2026-09-25T20:00:00',
+        janela_inicio: '2026-09-18T18:00:00',
+        janela_fim: '2026-09-25T18:00:00',
       }),
       linha({
         metrica: METRICA.RECEBIMENTOS_RS,
-        janela_inicio: '2026-09-11T20:00:00',
-        janela_fim: '2026-09-18T20:00:00',
+        janela_inicio: '2026-09-11T18:00:00',
+        janela_fim: '2026-09-18T18:00:00',
       }),
     ])
 
-    expect(semanas.map((s) => s.janelaInicio)).toEqual(['2026-09-18T20:00:00', '2026-09-11T20:00:00'])
+    expect(semanas.map((s) => s.janelaInicio)).toEqual(['2026-09-18T18:00:00', '2026-09-11T18:00:00'])
     expect(Object.keys(semanas[1].porChave).sort()).toEqual(
       [METRICA.PERMUTAS_RS, METRICA.RECEBIMENTOS_RS].sort(),
     )
@@ -48,9 +48,9 @@ describe('agruparPorSemana', () => {
 })
 
 describe('formatarDiaLocal', () => {
-  it('corta a string em vez de converter fuso — sexta 20:00 continua sendo o mesmo dia', () => {
-    expect(formatarDiaLocal('2026-09-18T20:00:00')).toBe('18/09')
-    expect(formatarDiaLocal('2026-09-11T20:00:00', true)).toBe('11/09/2026')
+  it('corta a string em vez de converter fuso — sexta 18:00 continua sendo o mesmo dia', () => {
+    expect(formatarDiaLocal('2026-09-18T18:00:00')).toBe('18/09')
+    expect(formatarDiaLocal('2026-09-11T18:00:00', true)).toBe('11/09/2026')
     expect(formatarDiaLocal('lixo')).toBe('—')
   })
 })

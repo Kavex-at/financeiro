@@ -36,12 +36,12 @@ if (process.env.CI === 'true' && !ADMIN_DSN) {
     );
 }
 const BANCO = 'metricas_ciclo_it';
-const SERIE = '2026-09-11 20:00:00';
+const SERIE = '2026-09-11 18:00:00';
 const AGORA = '2026-09-26 10:00:00';
-const JANELA_A = { inicio: '2026-09-11 20:00:00', fim: '2026-09-18 20:00:00' };
-const JANELA_B = { inicio: '2026-09-18 20:00:00', fim: '2026-09-25 20:00:00' };
-/** Semana EM CURSO no `AGORA` do teste: começou sexta 25/09 20:00 e fecharia sexta 02/10 20:00. */
-const JANELA_C = { inicio: '2026-09-25 20:00:00', fim: '2026-10-02 20:00:00' };
+const JANELA_A = { inicio: '2026-09-11 18:00:00', fim: '2026-09-18 18:00:00' };
+const JANELA_B = { inicio: '2026-09-18 18:00:00', fim: '2026-09-25 18:00:00' };
+/** Semana EM CURSO no `AGORA` do teste: começou sexta 25/09 18:00 e fecharia sexta 02/10 18:00. */
+const JANELA_C = { inicio: '2026-09-25 18:00:00', fim: '2026-10-02 18:00:00' };
 
 interface Linha {
     frente: string;
@@ -113,14 +113,14 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
                 (400, 1, 0, NULL)
         `);
 
-        // Janela A (sex 11/09 20:00 → sex 18/09 20:00, horário de São Paulo).
+        // Janela A (sex 11/09 18:00 → sex 18/09 18:00, horário de São Paulo).
         await admin.query(`
             INSERT INTO permuta_alocacao_execucao
                 (idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
                  bor_cod, valor_baixado, criado_em)
             VALUES
                 ('p-antes-serie', 'A0', 'I0', 1, 'settled', false, 100,  777.00, '2026-09-10 10:00:00-03'),
-                ('p-inicio-exato','A1', 'I1', 1, 'settled', false, 100, 1000.00, '2026-09-11 20:00:00-03'),
+                ('p-inicio-exato','A1', 'I1', 1, 'settled', false, 100, 1000.00, '2026-09-11 18:00:00-03'),
                 ('p-cancelado',   'A2', 'I2', 1, 'settled', false, 200,  500.00, '2026-09-15 10:00:00-03'),
                 ('p-estornado',   'A3', 'I3', 1, 'settled', false, 300,  400.00, '2026-09-15 11:00:00-03'),
                 ('p-em-cadastro', 'AC', 'IC', 1, 'settled', false, 400,  250.00, '2026-09-15 12:00:00-03'),
@@ -129,9 +129,9 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
                 ('p-erro',        'A4', 'I4', 1, 'error',   false, NULL,   NULL, '2026-09-16 10:00:00-03'),
                 ('p-parcial',     'A5', 'I5', 1, 'parcial', false, 100,  300.00, '2026-09-17 10:00:00-03'),
                 ('p-dry-run',     'A6', 'I6', 1, 'settled', true,  100, 9999.00, '2026-09-17 11:00:00-03'),
-                ('p-utc-na-A',    'A7', 'I7', 1, 'error',   false, NULL,   NULL, '2026-09-18 22:30:00+00'),
-                ('p-fim-A',       'A8', 'I8', 1, 'settled', false, 100,   50.00, '2026-09-18 19:59:59-03'),
-                ('p-inicio-B',    'A9', 'I9', 1, 'settled', false, 100,   70.00, '2026-09-18 20:00:00-03'),
+                ('p-utc-na-A',    'A7', 'I7', 1, 'error',   false, NULL,   NULL, '2026-09-18 20:30:00+00'),
+                ('p-fim-A',       'A8', 'I8', 1, 'settled', false, 100,   50.00, '2026-09-18 17:59:59-03'),
+                ('p-inicio-B',    'A9', 'I9', 1, 'settled', false, 100,   70.00, '2026-09-18 18:00:00-03'),
                 ('p-aberta',      'AX', 'IX', 1, 'settled', false, 100,    5.00, '2026-09-25 21:00:00-03')
         `);
 
@@ -228,7 +228,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         });
     });
 
-    it('fronteira: 19:59:59 de sexta fica na semana anterior, 20:00:00 abre a seguinte', () => {
+    it('fronteira: 17:59:59 de sexta fica na semana anterior, 18:00:00 abre a seguinte', () => {
         expect(linha('permutas_baixas_concluidas_pct', JANELA_B.inicio)).toMatchObject({
             valor: '100.0',
             rotulo: 'baixas de adiantamento concluídas, com borderô finalizado — 1 de 1 tentativas',
@@ -257,8 +257,8 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         const comHora = await admin.query(filtro, [
             SERIE,
             AGORA,
-            '2026-09-11T20:00:00',
-            '2026-09-18T20:00:00',
+            '2026-09-11T18:00:00',
+            '2026-09-18T18:00:00',
         ]);
         const soData = await admin.query(filtro, [SERIE, AGORA, '2026-09-11', '2026-09-18']);
 
@@ -307,11 +307,11 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         };
         const repository = new MetricasCicloRepository(db as never);
 
-        await expect(repository.serieInicio()).resolves.toBe('2026-09-11T20:00:00');
-        // Nenhuma janela termina antes de 2026-09-18 20:00: o filtro com `fim` precisa rodar e vir vazio.
-        await expect(repository.listar({ fim: '2026-09-11T20:00:00' })).resolves.toEqual([]);
+        await expect(repository.serieInicio()).resolves.toBe('2026-09-11T18:00:00');
+        // Nenhuma janela termina antes de 2026-09-18 18:00: o filtro com `fim` precisa rodar e vir vazio.
+        await expect(repository.listar({ fim: '2026-09-11T18:00:00' })).resolves.toEqual([]);
         for (const linha of await repository.listar({})) {
-            expect(linha.janela_inicio).toMatch(/^\d{4}-\d{2}-\d{2}T20:00:00$/);
+            expect(linha.janela_inicio).toMatch(/^\d{4}-\d{2}-\d{2}T18:00:00$/);
             expect(linha.apurado_ate).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
             expect(typeof linha.parcial).toBe('boolean');
         }

@@ -13,24 +13,24 @@ const linha = (over: Partial<MetricaCiclo>): MetricaCiclo => ({
   rotulo: 'valor baixado em permutas de adiantamento',
   valor: 0,
   unidade: 'R$',
-  janela_inicio: '2026-09-18T20:00:00',
-  janela_fim: '2026-09-25T20:00:00',
+  janela_inicio: '2026-09-18T18:00:00',
+  janela_fim: '2026-09-25T18:00:00',
   baseline: null,
   baseline_desc: 'sem medição do processo manual',
   parcial: false,
-  apurado_ate: '2026-09-25T20:00:00',
+  apurado_ate: '2026-09-25T18:00:00',
   ...over,
 })
 
 const EM_CURSO = {
-  janela_inicio: '2026-09-25T20:00:00',
-  janela_fim: '2026-10-02T20:00:00',
+  janela_inicio: '2026-09-25T18:00:00',
+  janela_fim: '2026-10-02T18:00:00',
   parcial: true,
   apurado_ate: '2026-10-02T15:02:00',
 }
 
 const leituraFake: MetricasCicloLeitura = {
-  serieInicio: '2026-09-11T20:00:00',
+  serieInicio: '2026-09-11T18:00:00',
   metricas: [
     linha({ ...EM_CURSO, valor: 70 }),
     linha({
@@ -46,9 +46,9 @@ const leituraFake: MetricasCicloLeitura = {
       rotulo: 'valor de créditos de cliente alocados',
     }),
     linha({
-      janela_inicio: '2026-09-11T20:00:00',
-      janela_fim: '2026-09-18T20:00:00',
-      apurado_ate: '2026-09-18T20:00:00',
+      janela_inicio: '2026-09-11T18:00:00',
+      janela_fim: '2026-09-18T18:00:00',
+      apurado_ate: '2026-09-18T18:00:00',
       valor: 500,
     }),
   ],
@@ -96,11 +96,11 @@ describe('MetricasPage', () => {
 
   it('antes da primeira semana fechar, os KPIs mostram a em curso — e dizem que é parcial', async () => {
     ;(fetchMetricasCiclo as jest.Mock).mockResolvedValue({
-      serieInicio: '2026-09-11T20:00:00',
+      serieInicio: '2026-09-11T18:00:00',
       metricas: [
         linha({
-          janela_inicio: '2026-09-11T20:00:00',
-          janela_fim: '2026-09-18T20:00:00',
+          janela_inicio: '2026-09-11T18:00:00',
+          janela_fim: '2026-09-18T18:00:00',
           parcial: true,
           apurado_ate: '2026-09-18T15:02:00',
           valor: 1283986.92,
@@ -117,7 +117,7 @@ describe('MetricasPage', () => {
   })
 
   it('antes de a série começar, diz isso em vez de mostrar zeros', async () => {
-    ;(fetchMetricasCiclo as jest.Mock).mockResolvedValue({ serieInicio: '2026-09-11T20:00:00', metricas: [] })
+    ;(fetchMetricasCiclo as jest.Mock).mockResolvedValue({ serieInicio: '2026-09-11T18:00:00', metricas: [] })
 
     await renderPagina()
 

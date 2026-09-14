@@ -13,7 +13,7 @@ const SEM_SEGUNDOS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 /**
  * MetricasCicloService — leitura das métricas do ciclo para a tela e para o report (ADR-0045).
  *
- * A única regra que mora aqui é a leitura das datas do filtro. A janela fecha sexta **20:00**. Quem
+ * A única regra que mora aqui é a leitura das datas do filtro. A janela fecha sexta **18:00**. Quem
  * pede `fim=2026-09-18` quer a semana que termina nesse dia; lido como `00:00`, o filtro
  * `janela_fim <= fim` descartaria justamente essa semana e devolveria vazio, sem erro nenhum. Foi o
  * que acontecia com o `metrics.py` lendo a view direto (gap K1). Então data sem hora vira o dia

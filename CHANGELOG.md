@@ -5,7 +5,7 @@
 O report semanal da Columbia mostrava ritmo — commits, PRs, versões — e não efeito. Agora a própria
 aplicação mede. Há uma tela nova, **Métricas** (menu Plataforma): a última semana fechada em quatro
 números e o histórico semana a semana. O `kavex-report-ciclo` lê a mesma coisa, por
-`GET /metricas/ciclo`. Duas métricas por frente, por janela de sexta 20:00 a sexta 20:00, horário
+`GET /metricas/ciclo`. Duas métricas por frente, por janela de sexta 18:00 a sexta 18:00, horário
 de São Paulo.
 
 - **Permutas:** baixas concluídas ÷ tentativas, com o absoluto no rótulo ("12 de 13 tentativas"), e o
@@ -16,7 +16,7 @@ de São Paulo.
   de Numerário. A spine `recebimento*` que o pedido apontava tem 0 linhas em produção, e medir por
   ela diria "nada alocado" numa semana em que foram alocados R$ 789 mil. O "% sem toque humano" não é
   emitido: toda alocação é disparada por um analista, então a métrica seria zero por construção (ADR-0045).
-- **Sem histórico reconstruído:** a série começa no ciclo 6 (2026-09-11 20:00).
+- **Sem histórico reconstruído:** a série começa no ciclo 6 (2026-09-11 18:00).
 - **Report na sexta à tarde:** a semana ainda aberta também é lida, sempre marcada como parcial e com
   o horário de corte ("parcial até sex 18/09, 15:02"). Rodar de novo atualiza o número. Na tela, os
   quatro números de cima mostram a última semana fechada, e a semana em andamento aparece no
@@ -24,7 +24,7 @@ de São Paulo.
 - **Acesso:** a tela e a rota exigem login, como o resto da aplicação. O report entra com um usuário da
   aplicação (`FINANCEIRO_API_URL`, `FINANCEIRO_API_USUARIO`, `FINANCEIRO_API_SENHA`), sem senha de
   banco e sem passo manual no Supabase. Pedir `fim=2026-09-18`, só com a data, já traz a semana que
-  fecha nesse dia às 20:00.
+  fecha nesse dia às 18:00.
 
 Validado contra o ledger vivo, em leitura: 12 semanas, 48 comparações com uma consulta independente,
 nenhuma divergência. As garantias de comportamento da view passam a rodar em todo PR, no job

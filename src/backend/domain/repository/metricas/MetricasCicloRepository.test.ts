@@ -7,12 +7,12 @@ const row = (over: Record<string, unknown> = {}) => ({
     rotulo: 'valor baixado em permutas de adiantamento',
     valor: '1283986.92',
     unidade: 'R$',
-    janela_inicio: '2026-09-11T20:00:00',
-    janela_fim: '2026-09-18T20:00:00',
+    janela_inicio: '2026-09-11T18:00:00',
+    janela_fim: '2026-09-18T18:00:00',
     baseline: null,
     baseline_desc: 'sem medição do processo manual',
     parcial: false,
-    apurado_ate: '2026-09-18T20:00:00',
+    apurado_ate: '2026-09-18T18:00:00',
     ...over,
 });
 
@@ -59,11 +59,11 @@ describe('MetricasCicloRepository', () => {
 
     it('lê o início da série da função da migration', async () => {
         const db = {
-            selectFirst: jest.fn().mockResolvedValue({ serie_inicio: '2026-09-11T20:00:00' }),
+            selectFirst: jest.fn().mockResolvedValue({ serie_inicio: '2026-09-11T18:00:00' }),
         };
 
         await expect(new MetricasCicloRepository(db as never).serieInicio()).resolves.toBe(
-            '2026-09-11T20:00:00',
+            '2026-09-11T18:00:00',
         );
         expect(db.selectFirst.mock.calls[0][0]).toMatch(/metricas\.serie_inicio\(\)/);
     });
