@@ -164,7 +164,7 @@ export default function GestaoPermutasPage() {
     // invoice) não tem alocação no backend — mandá-la respondia HTTP 500 e a tela declarava a
     // operação inteira falha, mesmo com a permuta que importava já liquidada (prod 2026-09-14,
     // processo 173: adto 4471 baixou certo, adto 4742 `0,00 BRL` derrubou a tela).
-    const pendentes = c.adiantamentos.filter(temAlgoAProcessar)
+    const pendentes = c.adiantamentos.filter((a) => temAlgoAProcessar(a, statusPorAdto[a.docCod]))
     setConfirmacao(null)
     setProcessando(c.invoice.docCod)
     try {
@@ -1020,6 +1020,7 @@ export default function GestaoPermutasPage() {
           {/* Modal de confirmação do processamento (checkout) */}
           <ConfirmarProcessamentoDialog
             confirmacao={confirmacao}
+            statusPorAdto={statusPorAdto}
             onClose={() => setConfirmacao(null)}
             pendenteByDocCod={pendenteByDocCod}
             confirmarProcessamento={confirmarProcessamento}

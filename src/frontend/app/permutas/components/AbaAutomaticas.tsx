@@ -15,7 +15,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { LOTE_MAX, type LoteResumo, PROCESSAMENTO_HABILITADO, moedaCodigo } from './format'
+import {
+  LOTE_MAX,
+  type LoteResumo,
+  PROCESSAMENTO_HABILITADO,
+  moedaCodigo,
+  motivoSemProcessar,
+  temAlgoAProcessar,
+} from './format'
 import { FiltroBarra, Paginacao, type TabelaFiltro } from './tabela-filtro'
 import { BotaoAtualizar, Campo, Moeda, PermutaBorderoBadge } from './ui'
 
@@ -100,11 +107,23 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
               )
               const moedaGrupo = c.adiantamentos[0]?.moeda ?? c.invoice.moeda
               const sep = g > 0 ? 'border-t-2 border-border' : ''
-              // "Processado" = já tem borderô vinculado (aguardando finalização ou finalizado).
-              // Sem vínculo no statusPorAdto → ainda pendente (executável).
-              const pendentesGrupo = c.adiantamentos.filter((a) => !statusPorAdto[a.docCod])
+              // EXECUTÁVEL ≠ "sem borderô". Uma linha sem vínculo pode não ter nada a processar —
+              // `valorASerUsado = 0` porque o adiantamento já foi consumido ou é de moeda diferente
+              // da invoice. Contá-la mantinha o "Processar" aceso para sempre num grupo que já
+              // acabou, e o clique ia bater no backend só para ser ignorado.
+              const pendentesGrupo = c.adiantamentos.filter((a) =>
+                temAlgoAProcessar(a, statusPorAdto[a.docCod]),
+              )
               const todosProcessados =
                 c.adiantamentos.length > 0 && pendentesGrupo.length === 0
+              // Badge do grupo: prefere um vínculo que ainda PEDE ação (aguardando finalização) ao
+              // primeiro da lista — senão um grupo com borderô 2185 finalizado e 2466 a aprovar
+              // anunciava só o finalizado, escondendo o que falta fazer.
+              const vinculosGrupo = c.adiantamentos
+                .map((a) => statusPorAdto[a.docCod])
+                .filter((v): v is NonNullable<typeof v> => v !== undefined)
+              const vinculoGrupo =
+                vinculosGrupo.find((v) => v.permutaStatus !== 'finalizado') ?? vinculosGrupo[0]
               return (
                 <React.Fragment key={c.invoice.docCod}>
                   {/* Header da invoice — clicável, expande a micro-info dela */}
@@ -148,9 +167,7 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
                     </TableCell>
                     <TableCell className="text-right">
                       {todosProcessados ? (
-                        <PermutaBorderoBadge
-                          vinculo={statusPorAdto[c.adiantamentos[0]?.docCod ?? '']}
-                        />
+                        <PermutaBorderoBadge vinculo={vinculoGrupo} />
                       ) : c.adiantamentos.length > 0 ? (
                         <Button
                           size="sm"
@@ -228,7 +245,19 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
                             : '—'}
                         </TableCell>
                         <TableCell className="text-right">
-                          <PermutaBorderoBadge vinculo={statusPorAdto[adto.docCod]} />
+                          {statusPorAdto[adto.docCod] === undefined &&
+                          !temAlgoAProcessar(adto, statusPorAdto[adto.docCod]) ? (
+                            // Sem borderô E sem nada a processar: "Pendente" seria mentira — a linha
+                            // nunca vai rodar. Mostra o porquê (moeda diferente / sem saldo).
+                            <span className="text-xs text-muted-foreground">
+                              {motivoSemProcessar(adto, {
+                                moedaInvoice: c.invoice.moeda,
+                                vinculo: statusPorAdto[adto.docCod],
+                              })}
+                            </span>
+                          ) : (
+                            <PermutaBorderoBadge vinculo={statusPorAdto[adto.docCod]} />
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
