@@ -21,6 +21,42 @@ export const LOTE_MAX = 6
 /** Tolerância (moeda negociada) p/ ruído de centavos ao decidir se um adiantamento ficou sem saldo. */
 export const SALDO_TOL = 1
 
+/**
+ * Este adiantamento do grupo tem de fato algo a baixar? FONTE ÚNICA da decisão — usada pela
+ * contagem do botão, pelo rótulo de cada linha e pelo disparo das requisições, para que os três
+ * não divirjam.
+ *
+ * Duas razões legítimas para NÃO ter: (a) já processado (borderô vinculado); (b) `valorASerUsado`
+ * zerado — o adiantamento já foi consumido por inteiro, ou é de MOEDA diferente da invoice (a
+ * distribuição não cruza moedas). Nos dois casos o backend não tem alocação para reconciliar.
+ *
+ * Antes disto o modal contava e disparava essas linhas: o backend respondia **HTTP 500** ("has no
+ * alocacoes to reconcile") e a tela declarava a operação inteira falha — mesmo quando a permuta que
+ * importava tinha liquidado. Produção 2026-09-14, processo 173: o adto 4471 baixou certo e o 4742,
+ * `0,00 BRL`, derrubou a tela.
+ */
+export const temAlgoAProcessar = (a: {
+    valorASerUsado?: number
+    processamentoStatus?: ProcessamentoStatus
+}): boolean => a.processamentoStatus !== 'processado' && (a.valorASerUsado ?? 0) > 0
+
+/**
+ * Por que esta linha não será processada — rótulo curto para o modal. `undefined` = será processada.
+ * `moedaInvoice` separa as duas causas de `valorASerUsado = 0`: moeda incompatível (a distribuição
+ * não cruza moedas — um adto em BRL não abate invoice em USD) de adiantamento já consumido.
+ */
+export const motivoSemProcessar = (
+    a: { valorASerUsado?: number; moeda?: string; processamentoStatus?: ProcessamentoStatus },
+    moedaInvoice?: string,
+): string | undefined => {
+    if (a.processamentoStatus === 'processado') return 'já processado'
+    if ((a.valorASerUsado ?? 0) > 0) return undefined
+    if (a.moeda !== undefined && moedaInvoice !== undefined && a.moeda !== moedaInvoice) {
+        return 'moeda diferente da invoice'
+    }
+    return 'sem saldo a permutar'
+}
+
 /** Paginação da tabela principal (visão geral): 50 linhas por página. */
 export const PAGE_SIZE = 50
 

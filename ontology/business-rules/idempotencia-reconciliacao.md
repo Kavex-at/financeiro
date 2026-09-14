@@ -152,6 +152,29 @@ serialização desnecessária, nunca corretude. O caller barrado recebe **HTTP 4
   Este invariante existe porque a alternativa óbvia ao silêncio de hoje é *outro* silêncio: um estado
   que ninguém olha. `parcial` é **trabalho pendente**, não linha de log.
 
+- **I-Recon-8 (nada a reconciliar ≠ falha):** um adiantamento **sem alocação** não é erro de
+  servidor. `reconciliar` devolve o terminal vazio (`resultados: []`, HTTP 200) e registra
+  `BUSINESS_WARN` — **nunca** lança. O lote já classifica esse retorno como `skipped`
+  (`statusDoAdto`: sem settled, sem parcial, sem erro).
+
+  **Duas razões legítimas** para um adiantamento do grupo não ter alocação: (a) já foi consumido por
+  inteiro; (b) é de **moeda diferente** da invoice — e a distribuição não cruza moedas, então
+  `autoAlocarDeCasamento` (que só aloca `valorASerUsado > 0`) não cria nada. Nos dois casos não há o
+  que baixar, e dizer isso é a resposta correta.
+
+  > **Origem:** produção, 2026-09-14, processo 173. O analista clicou "Processar" num grupo de três
+  > adiantamentos: o **4471** baixou corretamente (borderô 2466, título 4755/2 — a primeira permuta
+  > a exercitar I-Write-9), o **3211** foi pulado por idempotência, e o **4742** — `0,00 BRL` contra
+  > invoice em USD — lançou `Error("has no alocacoes to reconcile")`, que o handler traduziu em
+  > **HTTP 500 "Internal server error"**. A tela declarou a operação inteira falha. A permuta que
+  > importava tinha acabado de liquidar, e ninguém teria sabido sem ler o log do servidor.
+
+  **A ponta do cliente faz par com o invariante.** O modal de confirmação só conta e só dispara
+  requisição para linha com algo a processar (`temAlgoAProcessar`, fonte única compartilhada entre
+  contagem, rótulo e disparo). A linha sem nada continua **visível**, cinza, com o motivo ("já
+  processado", "moeda diferente da invoice", "sem saldo a permutar") — o analista vê o grupo
+  inteiro e entende por que só uma parte roda. Esconder seria trocar um erro falso por uma omissão.
+
 ## Recuperação de linhas `reconciling`/`error` (operacional)
 
 - `GET /permutas/adiantamentos/:docCod/execucoes` expõe o status por par. Linhas `error` mostram a mensagem

@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { PROCESSAMENTO_HABILITADO } from './format'
+import { motivoSemProcessar, PROCESSAMENTO_HABILITADO, temAlgoAProcessar } from './format'
 import { Campo, Moeda, ProcessamentoBadge } from './ui'
 
 /** Modal de confirmação do processamento (checkout) de um casamento automático. */
@@ -79,8 +79,14 @@ export function ConfirmarProcessamentoDialog({
                   <TableBody>
                     {confirmacao.adiantamentos.map((adto) => {
                       const det = pendenteByDocCod.get(adto.docCod)?.detalhe
+                      // Linha que não será processada segue VISÍVEL (o analista vê o grupo
+                      // inteiro), mas rotulada com o motivo e fora da contagem do botão.
+                      const motivo = motivoSemProcessar(adto, confirmacao.invoice.moeda)
                       return (
-                        <TableRow key={adto.docCod}>
+                        <TableRow
+                          key={adto.docCod}
+                          className={motivo !== undefined ? 'text-muted-foreground' : undefined}
+                        >
                           <TableCell className="font-medium">{adto.docCod}</TableCell>
                           <TableCell className="text-right">
                             <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
@@ -92,9 +98,13 @@ export function ConfirmarProcessamentoDialog({
                               : '—'}
                           </TableCell>
                           <TableCell className="text-right">
-                            <ProcessamentoBadge
-                              status={adto.processamentoStatus ?? 'pendente'}
-                            />
+                            {motivo !== undefined ? (
+                              <span className="text-xs text-muted-foreground">{motivo}</span>
+                            ) : (
+                              <ProcessamentoBadge
+                                status={adto.processamentoStatus ?? 'pendente'}
+                              />
+                            )}
                           </TableCell>
                         </TableRow>
                       )
@@ -104,7 +114,8 @@ export function ConfirmarProcessamentoDialog({
               </div>
               <p className="mt-3 text-xs text-muted-foreground">
                 Os adiantamentos pendentes acima vão abater a invoice{' '}
-                <strong>{confirmacao.invoice.docCod}</strong>. Os já processados são ignorados.
+                <strong>{confirmacao.invoice.docCod}</strong>. Linhas marcadas em cinza — já
+                processadas, sem saldo a permutar ou de moeda diferente — são ignoradas.
               </p>
             </>
           ) : null}
@@ -114,7 +125,10 @@ export function ConfirmarProcessamentoDialog({
             Cancelar
           </Button>
           <Button
-            disabled={!PROCESSAMENTO_HABILITADO}
+            disabled={
+              !PROCESSAMENTO_HABILITADO ||
+              (confirmacao?.adiantamentos.filter(temAlgoAProcessar).length ?? 0) === 0
+            }
             title={
               !PROCESSAMENTO_HABILITADO
                 ? 'Indisponível — aguardando write-back no Conexos'
@@ -123,11 +137,7 @@ export function ConfirmarProcessamentoDialog({
             onClick={() => void confirmarProcessamento()}
           >
             Processar{' '}
-            {confirmacao
-              ? confirmacao.adiantamentos.filter(
-                  (a) => a.processamentoStatus !== 'processado',
-                ).length
-              : 0}{' '}
+            {confirmacao ? confirmacao.adiantamentos.filter(temAlgoAProcessar).length : 0}{' '}
             adiantamento(s)
           </Button>
         </DialogFooter>

@@ -1,5 +1,28 @@
 # Columbia Financeiro — Changelog
 
+## v0.36.3 (2026-09-14) — "nada a reconciliar" deixa de ser erro de servidor
+
+Primeira permuta multi-parcela real depois do v0.36.2 (processo 173, HUBEI CROWN): o adiantamento
+**4471** baixou corretamente na **parcela 2** da invoice 4755 — borderô 2466, R$ 150.061,81 de
+principal e R$ 1.827,75 de variação cambial, fechando no saldo a permutar do adiantamento. O fix
+da parcela funcionou.
+
+A tela, porém, mostrou erro. O grupo tinha três adiantamentos: o 3211 foi pulado por idempotência
+(já liquidado no borderô 2185) e o **4742** — `0,00 BRL` contra uma invoice em USD — lançou
+`has no alocacoes to reconcile`, que o handler traduziu em **HTTP 500 "Internal server error"**.
+Um adiantamento de moeda incompatível **nunca** terá alocação: a distribuição não cruza moedas, e
+`autoAlocarDeCasamento` só aloca valor positivo. Ou seja, o 500 era o comportamento normal do
+sistema descrito como defeito de servidor — e escondia o fato de que a permuta que importava tinha
+dado certo.
+
+`reconciliar` passa a devolver terminal vazio (`resultados: []`, HTTP 200) com `BUSINESS_WARN`
+quando não há o que baixar (**I-Recon-8**). O lote já classificava esse retorno como `skipped`, sem
+mudança. E o modal de confirmação passa a contar e disparar apenas linhas com algo a processar: a
+linha sem nada continua visível, em cinza, com o motivo — "já processado", "moeda diferente da
+invoice", "sem saldo a permutar". Contagem, rótulo e disparo saem de uma fonte única
+(`temAlgoAProcessar`), porque a versão anterior deste bug foi exatamente dois pedaços do código
+medindo a mesma coisa de formas diferentes.
+
 ## v0.36.2 (2026-09-11) — a baixa da permuta passa a respeitar as parcelas da invoice
 
 Analistas relataram erro ao clicar "Processar" em grupos da aba Automáticas com dois ou mais
