@@ -2,11 +2,21 @@
 name: ExcecaoPermuta
 type: entity
 ontology_version: "0.2"
-# Ontologia à frente do código (ADR-0047): nenhuma tabela, rota ou tela existe ainda.
-implementation_status: planned
+# Implementada em v0.26.1 (ADR-0047): migration 0059, serviço/repositório, rotas admin e UI.
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/migrations/0059_excecao_permuta.sql
+  - src/backend/domain/interface/permutas/ExcecaoPermuta.ts
+  - src/backend/domain/repository/permutas/ExcecaoPermutaRepository.ts
+  - src/backend/domain/service/permutas/ExcecaoPermutaService.ts
+  - src/backend/domain/errors/ExcecaoPermutaRecusadaError.ts
+  - src/backend/domain/service/permutas/EleicaoPermutasService.ts
+  - src/backend/domain/service/permutas/GestaoPermutasService.ts
+  - src/backend/routes/permutas.ts
+  - src/frontend/app/permutas/components/ExcecaoManualDialog.tsx
+  - src/frontend/app/permutas/components/DesfazerExcecaoDialog.tsx
 properties:
   - adiantamentoDocCod
   - justificativa
@@ -85,7 +95,11 @@ automática confiável que reconheça "permutado por fora" (ADR-0047, alternativ
   saldo).
 
 Rotas, status HTTP e o efeito imediato na linha de `permuta_adiantamento` são decisão de implementação
-(ver `_inbox/permutas-excecao-manual-interview.md`, "Defaults").
+(ver `_inbox/permutas-excecao-manual-interview.md`, "Defaults"). Como ficou (v0.26.1):
+`POST /permutas/adiantamentos/:docCod/excecao-manual` `{ justificativa }` e `DELETE` na mesma rota, ambas
+admin; 400 corpo inválido, 401 sem identidade no token, 404 adto fora do backlog ou sem exceção ativa, 409
+exceção já ativa, 422 guarda. Marcar e desfazer reclassificam a linha de `permuta_adiantamento` na mesma
+transação da exceção (desfazer só reverte se o motivo gravado for `permutado-fora-do-painel`).
 
 ## Fora de escopo
 

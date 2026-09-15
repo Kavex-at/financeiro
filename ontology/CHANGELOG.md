@@ -3,6 +3,20 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.26.1 — ADR-0047 implementada (2026-09-15)
+
+Feature: `permutas-excecao-manual`. `ExcecaoPermuta` passa de `planned` a `implemented`.
+
+- Migration **0059**: `permuta_excecao_manual` (soft delete, índice parcial de uma ativa por adto, CHECK de
+  10 a 500 e de remoção pareada) e extensão da guarda da 0055 (`bloqueada + permutado-fora-do-painel`
+  proibido em `permuta_adiantamento` e no snapshot).
+- T7 no pós-passe de `computeCandidatas`; o cálculo vence com `BUSINESS_WARN` pt-BR (transitório para
+  `detail-indisponivel`). Rotas admin `POST`/`DELETE /permutas/adiantamentos/:docCod/excecao-manual`, autor
+  só do JWT (401 sem identidade). `/permutas/gestao` expõe `excecaoManual`; o Excel mantém o motivo cru e
+  ganha 4 colunas de exceção (ADR-0047 D5 e `expor-no-painel` ajustados ao implementado).
+- Coverage: `entities_implemented` 11→12, `planned` 6→5, pct 58→63; `PermutaCandidata.impl_pct` 95→100;
+  removido o `open_gap` "ADR-0047 à frente do código".
+
 ## v0.26.0 — exceção manual "permutado fora do painel" (2026-09-15, ADR-0047)
 
 Feature: `permutas-excecao-manual` (branch `fix/permutas-excecao-manual`, base `main` v0.36.5).
