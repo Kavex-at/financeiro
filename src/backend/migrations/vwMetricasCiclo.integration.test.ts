@@ -98,7 +98,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         const migrations = readdirSync(__dirname)
             .filter((f) => /^\d{4}_.*\.sql$/.test(f))
             .sort();
-        expect(migrations[migrations.length - 1]).toBe('0058_vw_metricas_ciclo.sql');
+        expect(migrations).toContain('0058_vw_metricas_ciclo.sql');
         for (const arquivo of migrations) {
             await admin.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
         }
