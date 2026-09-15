@@ -49,6 +49,20 @@ describe('ToleranciaResiduo (ADR-0046 D1)', () => {
             );
         });
 
+        it('em aberto NEGATIVO além do limite (sobrepagamento, doc 4058: −R$ 34.088,65) → não pago', () => {
+            // Anomalia, não resíduo de centavos: segue reprovando como no `=== 0` estrito de antes.
+            expect(ToleranciaResiduo.adiantamentoTotalmentePago({ valorAberto: -34088.65 })).toBe(
+                false,
+            );
+            expect(ToleranciaResiduo.adiantamentoTotalmentePago({ valorAberto: -1.01 })).toBe(
+                false,
+            );
+        });
+
+        it('em aberto negativo de centavos (−R$ 0,02) → pago (resíduo de arredondamento)', () => {
+            expect(ToleranciaResiduo.adiantamentoTotalmentePago({ valorAberto: -0.02 })).toBe(true);
+        });
+
         it('sem prova (nem valorAberto nem pago) → não pago (nunca infere pago)', () => {
             expect(ToleranciaResiduo.adiantamentoTotalmentePago({})).toBe(false);
         });

@@ -6,15 +6,15 @@ import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
-
-/** Teto de invoices buscadas em paralelo no Conexos (3 chamadas/invoice). Cap = bound de I/O (performance-1). */
-const INVOICES_CONCURRENCY = 8;
 import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaExecucaoRepository from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import LogService from '../LogService.js';
 import SaldoAlocacaoAdiantamentoService from './SaldoAlocacaoAdiantamentoService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
+
+/** Teto de invoices buscadas em paralelo no Conexos (3 chamadas/invoice). Cap = bound de I/O (performance-1). */
+const INVOICES_CONCURRENCY = 8;
 
 /** Invoice encontrada na busca cross-process (live no Conexos), p/ a alocação manual. */
 export interface InvoiceBuscada {
