@@ -1,5 +1,6 @@
 import type {
   PermutaBorderoVinculo,
+  PermutaPendente,
   ProcessamentoStatus,
   StatusElegibilidade,
 } from '@/lib/types'
@@ -118,6 +119,18 @@ export const MOTIVO_LABEL: Record<string, string> = {
   'falha-gate': 'Falha em gate',
   'detail-indisponivel': 'Detalhe indisponível',
   'cliente-filtro': 'Cliente filtro (permuta manual)',
+  'permutado-fora-do-painel': 'Permutado fora do painel (exceção manual)',
+}
+
+/**
+ * Pode receber a ação "Marcar como permutado fora do painel" (ADR-0047)? Espelha a guarda do
+ * backend: só `bloqueada` com motivo "Sem saldo a permutar", e só se ainda não houver exceção
+ * ativa (uma inativa precisa ser desfeita antes de registrar outra).
+ */
+export function podeMarcarExcecao(
+  p: Pick<PermutaPendente, 'status' | 'motivoBloqueio' | 'excecaoManual'>,
+): boolean {
+  return p.status === 'bloqueada' && p.motivoBloqueio === 'sem-saldo-permutar' && !p.excecaoManual
 }
 
 /**
