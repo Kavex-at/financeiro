@@ -20,7 +20,7 @@ related_files:
   - src/backend/domain/service/permutas/EleicaoPermutasService.ts
   - src/backend/domain/service/permutas/GestaoPermutasService.ts
   - src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts
-last_review: 2026-09-14
+last_review: 2026-09-15
 states: [DESCOBERTA, ELEGIVEL, CASAMENTO_MANUAL, PERMUTA_MANUAL, JA_PERMUTADO, BLOQUEADA, EXECUTADA]
 out_of_scope_states: []
 ---
@@ -39,7 +39,7 @@ out_of_scope_states: []
 | `ELEGIVEL` | `'elegivel'` | Passou nos 4 gates **E** tem exatamente 1 INVOICE casada (I3) — auto 1:1. |
 | `CASAMENTO_MANUAL` | `'casamento-manual'` | Passou nos **4 gates**, mas o casamento é **N:M** (>1 INVOICE FINALIZADA) **no mesmo processo**: falta **só o analista escolher/alocar a invoice**. **Não é reprovação** (≠ BLOQUEADA). Escopo: motivos `composto-nm` / `multiplas-invoices` (ADR-0005). Mantém o motivo informativo. |
 | `PERMUTA_MANUAL` | `'permuta-manual'` | Adto de **cliente-filtro** (importador cadastrado, `ClienteFiltro`/ADR-0007) **pago e com saldo a permutar**, pronto para **permuta manual CROSS-PROCESS** (a invoice vem de OUTRO processo, escolhida pelo analista). **Gate 4 (D.I) NÃO é exigido** — a D.I/data-base virá da invoice escolhida. Motivo informativo: `cliente-filtro`. **Não é reprovação** (≠ BLOQUEADA). |
-| `JA_PERMUTADO` | `'ja-permutado'` | Adiantamento **pago** cujo saldo a permutar já foi **100% consumido** numa permuta anterior (`valorPermutar ≤ R$1,00` **E** `valorPermutado > 0`, `mnyTitPermuta` do detalhe; tolerância de resíduo ADR-0046). Vale **com ou sem D.I** (ADR-0046). Estado **CONCLUÍDO** — o trabalho foi feito —, **não** reprovação de mérito (≠ `BLOQUEADA`). Motivo informativo: `ja-permutado`. **Terminal**: sem saldo, não origina alocação nem T5. **ADR-0043.** |
+| `JA_PERMUTADO` | `'ja-permutado'` | Adiantamento **pago** cujo saldo a permutar já foi **100% consumido** numa permuta anterior (`valorPermutar ≤ R$1,00` **E** `valorPermutado > 0`, `mnyTitPermuta` do detalhe; tolerância de resíduo ADR-0046). Vale **com ou sem D.I** (ADR-0046). Estado **CONCLUÍDO** — o trabalho foi feito —, **não** reprovação de mérito (≠ `BLOQUEADA`). Motivo informativo: `ja-permutado`, ou `permutado-fora-do-painel` quando a conclusão vem de uma `ExcecaoPermuta` (T7, ADR-0047). **Terminal**: sem saldo, não origina alocação nem T5. **ADR-0043.** |
 | `BLOQUEADA` | `'bloqueada'` | Falhou ≥1 gate, sem INVOICE casada (0), ou data-base indisponível. Reportada **com motivo** (taxonomia abaixo), não é falha. Desde ADR-0043 significa **passivo dependente de terceiro ou de leitura**, e nada além disso. **N:M deixou de cair aqui** (→ `CASAMENTO_MANUAL`, ADR-0005); adto de cliente-filtro pago+saldo também sai daqui (→ `PERMUTA_MANUAL`, ADR-0007); **adto já permutado também sai daqui** (→ `JA_PERMUTADO`, ADR-0043). |
 
 ## Taxonomia de motivos do estado `BLOQUEADA` (P0-5/P0-6/P0-8 — RESOLVIDO)
@@ -90,6 +90,11 @@ saldo e sem D.I segue `data-base-indisponivel` na avaliação e, se for de clien
 | Motivo | Valor | Origem | Significado |
 |--------|-------|--------|-------------|
 | Já permutado | `'ja-permutado'` | `avaliarElegibilidade` (Gate 2, `ElegibilidadeService.motivoDoGateFalho`) | Gate 3 (TOTALMENTE PAGO) passou e o Gate 2 reprovou com `valorPermutado > 0`: o saldo foi consumido numa permuta anterior. Distingue-se de `sem-saldo-permutar` (nunca teve saldo → segue `BLOQUEADA`). Mesmo padrão de `composto-nm` / `cliente-filtro`: **motivo informativo de um estado que não é reprovação.** |
+| Permutado fora do painel | `'permutado-fora-do-painel'` | `elegerAdiantamentos` (override `ExcecaoPermuta`, T7) | O ERP diria `sem-saldo-permutar` (`valorPermutado` 0/ausente), mas o analista registrou uma `ExcecaoPermuta` ativa: a permuta aconteceu fora do fluxo de permuta do Conexos. Só existe com a guarda de T7 satisfeita. **ADR-0047.** |
+
+> **Precedência entre os dois motivos de `JA_PERMUTADO` (ADR-0047).** O dado do ERP vence: com
+> `valorPermutado > 0` o motivo é `ja-permutado`, com ou sem exceção ativa. `permutado-fora-do-painel`
+> só aparece onde o cálculo daria `BLOQUEADA / sem-saldo-permutar`.
 
 > Nota: `composto-nm` e `multiplas-invoices` pertencem à mesma família (mais de 1 invoice).
 > Use `multiplas-invoices` se quiser distinguir do composto N:M de proformas; senão `composto-nm`
@@ -115,6 +120,7 @@ saldo e sem D.I segue `data-base-indisponivel` na avaliação e, se for de clien
 | T4 | `DESCOBERTA → PERMUTA_MANUAL` | `elegerAdiantamentos` (override `ClienteFiltro`) | Importador do adto está no cadastro `ClienteFiltro` ativo **E** adto `pago && saldoPermutar > R$1,00` — `pago` = `|mnyTitAberto| ≤ R$1,00`, mesmos predicados dos Gates 2/3 (ADR-0046) — (seria `BLOQUEADA`, mas é cliente-filtro). Gate 4 (D.I) dispensado — a invoice cross-process traz a data-base. Motivo informativo `cliente-filtro`. **ADR-0007.** | 2026-06-20 |
 | T5 | `{ELEGIVEL, CASAMENTO_MANUAL, PERMUTA_MANUAL} → EXECUTADA` | `reconciliarPermuta` | Alocação(ões) do adto baixadas no ERP `fin010` (handshake de 5 chamadas). Por par adto↔invoice; idempotente (par `settled` é pulado). **Gated** por `CONEXOS_WRITE_ENABLED`+`CONEXOS_DRY_RUN`; dry-run não transiciona. **ADR-0013.** | 2026-06-23 |
 | T6 | `DESCOBERTA → JA_PERMUTADO` | `avaliarElegibilidade` | Gate 3 (TOTALMENTE PAGO, `|mnyTitAberto| ≤ R$1,00`) **satisfeito** e Gate 2 (`valorPermutar > R$1,00`) **reprovado** com `valorPermutado > 0` — saldo consumido em permuta anterior. A prioridade de causa-raiz é preservada (`nao-pago` do Gate 3 vence o Gate 2), então T6 só dispara em adto **pago**. **O Gate 4 não impede T6**: sem D.I, o adto pago e sem saldo é `JA_PERMUTADO` (ADR-0046). Anota o motivo informativo `ja-permutado`. **Terminal.** **ADR-0043.** | 2026-09-08 (rev. 2026-09-14) |
+| T7 | `BLOQUEADA(sem-saldo-permutar) → JA_PERMUTADO` | `elegerAdiantamentos` (override `ExcecaoPermuta`) | **Somente** com `ExcecaoPermuta` **ativa** para o `docCod` **E** guarda satisfeita: a avaliação (T2) deu `BLOQUEADA` com motivo `sem-saldo-permutar`. Anota o motivo informativo `permutado-fora-do-painel`. Sem a exceção, ou com a guarda falha (saldo > R$1,00, não pago, `valorPermutado > 0`, outro motivo), vale o estado calculado e a eleição emite `BUSINESS_WARN` se houver exceção ativa não aplicada. **Reverso:** desfazer a exceção (soft-delete) devolve o adto a `BLOQUEADA / sem-saldo-permutar`. Não é fluxo automático: **I3 e T1–T6 não mudam**. Mutuamente exclusiva com T4 (T4 exige saldo, T7 exige sem saldo). **Terminal** como T6. **ADR-0047.** | 2026-09-15 |
 
 > **Decisão de terminalidade (ADR-0043).** `JA_PERMUTADO` **não** é origem de T5 (`→ EXECUTADA`).
 > A razão é de domínio, não de implementação: T5 consome **alocações** (`permuta_alocacao`), e uma
@@ -142,10 +148,11 @@ T1 ✓         T3 ◐           T4 ◓           T6 ●           T2 ✗
    │             │           cross-proc)      > 0)           data-base)
    ▼             ▼               ▼              ▼               ▼
 ┌─────────┐ ┌──────────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────┐
-│ ELEGIVEL│ │ CASAMENTO_MANUAL │ │PERMUTA_MANUAL│ │ JA_PERMUTADO │ │ BLOQUEADA│
+│ ELEGIVEL│ │ CASAMENTO_MANUAL │ │PERMUTA_MANUAL│ │ JA_PERMUTADO │◀┤ BLOQUEADA│
 └─────────┘ └──────────────────┘ └──────────────┘ └──────────────┘ └──────────┘
-                                                  (terminal: saldo 0,
-                                                   não origina T5)
+                                                  (terminal: saldo 0,  T7 ◆ só
+                                                   não origina T5)     sem-saldo-permutar
+                                                                       + ExcecaoPermuta ativa
    ┊             ┊                     ┊
    ┊             └──────── alocação N:M (Permuta) ───────┘
    ┊                  (distribui saldo em invoices,

@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-09-14
+last_review: 2026-09-15
 preconditions:
   - "Candidatas avaliadas (gates + casamento + variação quando disponível)."
 postconditions:
@@ -46,6 +46,22 @@ resolved-by:
   D.I"). Sem esta regra eles sumiriam do Histórico ao migrar de estado.
 - Saldo restante exibido (`permuta-manual` / `casamento-manual`) segue I-Permuta-1: desconta só as
   alocações ainda não consumidas pelo ERP (ADR-0046).
+
+## Exceção manual "permutado fora do painel" (ADR-0047, 2026-09-15)
+
+- **Card/filtro.** O adto com `ExcecaoPermuta` aplicada (T7) conta e aparece em **"Já permutado"**, não
+  em "Bloqueadas". Não há estado, card nem aba novos.
+- **Badge + tag.** Badge "Já permutado" + tag **"Exceção manual"**. A tag deriva do motivo
+  `permutado-fora-do-painel`, não de existir uma linha de exceção.
+- **Detalhe.** Justificativa, autor (`criadoPor`), data (`criadoEm`) e a ação **"Desfazer exceção"**
+  (admin). Para adto em `BLOQUEADA / sem-saldo-permutar`, a ação **"Marcar como permutado fora do
+  painel"** (admin, justificativa obrigatória). Nenhum outro estado ou motivo oferece a ação.
+- **Exceção ativa não aplicada** (I-Exc-2: o ERP mudou e a guarda falhou). O adto aparece no estado
+  calculado; o detalhe sinaliza a exceção como **inativa**, com a mesma trilha e a ação de desfazer.
+- **Histórico.** A exceção **não** entra na aba Histórico: não é permuta do painel e não tem borderô
+  (I-Exc-6). A regra de D4 da ADR-0046 continua valendo só para `ja-permutado` com borderô do painel.
+- **Exportação.** Motivo exibido como **"Permutado fora do painel (exceção manual)"**.
+- READ-ONLY em relação ao ERP: marcar e desfazer escrevem só no nosso banco (I4).
 
 ## Aging (P0-8 + P0-4 — RESOLVIDOS; coluna aging popula)
 
