@@ -36,7 +36,7 @@ relationships:
   - "Permuta N—1 Invoice (lado-crédito, via invoiceDocCod — pode ser de OUTRO processo, cross-process)"
   - "Permuta 1—1 VariacaoCambial (derivada pela taxa da invoice sobre o valor PARCIAL alocado)"
   - "Permuta *—1 PermutaCandidata (a candidata em permuta-manual/casamento-manual é a origem da alocação)"
-last_review: 2026-09-08
+last_review: 2026-09-14
 universality_evidence:
   - "ADR-0008 — alocação manual N:M cross-process (a Permuta consumada nasce como ALOCAÇÃO)"
   - "ADR-0010 — o auto-casamento Simples também ficou PARCIAL (mesma semântica de teto/residual)"
@@ -47,6 +47,7 @@ universality_evidence:
   - "Columbia + INOX-TECH (priCod=1153): cross-process N:M validado com o time (2026-06-20), 290 adtos + 21 invoices, 0 D.I no processo"
   - "Conceito universal de comex: abater o adiantamento (PROFORMA) contra a fatura (INVOICE) definitiva, com variação cambial"
   - "ADR-0044 — baixa parcial como estado terminal + serialização por adiantamento (Regis-Review 2026-09-08, R-1/R-2, duas derivações independentes)"
+  - "ADR-0046 — saldo restante do adto sem dupla contagem: o ERP só abate mnyTitPermutar quando o borderô é finalizado (125 de 128 adtos com execução real, banco 2026-09-14)"
 ---
 
 # Permuta (consumada / alocação)
@@ -105,8 +106,36 @@ invoices; uma invoice pode ser composta por vários adiantamentos. O saldo pode 
 
 ## Invariantes aplicáveis
 
-- **I-Permuta-1 (saldo do adto):** `Σ(valorAlocado por adiantamento) ≤ saldo a permutar do adto`
+- **I-Permuta-1 (saldo do adto):** `Σ(valorAlocado NÃO CONSUMIDO por adiantamento) ≤ saldo a permutar do adto`
   (moeda negociada = `saldoPermutar(BRL) / taxa`). Excesso → `AlocacaoSaldoError` (HTTP 422).
+  **Definição de "consumido" (ADR-0046, 2026-09-14).** O `saldoPermutar` (`mnyTitPermutar`) **já vem
+  abatido pelo ERP** do que foi baixado em borderô **finalizado**. Descontar essa alocação de novo
+  conta o consumido duas vezes. Por isso:
+
+  ```
+  saldoRestanteNeg = valorPermutar(BRL) / taxa − Σ naoConsumido(alocação do adto)
+  aplicavel(exec)  ⇔ exec.criado_em ≥ alocacao.atualizado_em            // versão ATUAL (1 linha por par)
+  consumida(exec)  ⇔ dry_run = false ∧ status ∈ {settled, parcial} ∧ aplicavel
+                     ∧ permuta_bordero (fil_cod, bor_cod): bor_vld_finalizado = 1 ∧ bor_cod_estornado IS NULL
+                     ∧ bordero.atualizado_em < started_at da ingestão que leu o valorPermutar do adto
+  naoConsumido(aloc) = valor_alocado                           sem execução consumida aplicável
+                     = 0                                       settled consumida aplicável
+                     = min(valor_residual_usd, valor_alocado)  parcial consumida aplicável
+  ```
+
+  Continua descontando (não consumida): rascunho sem execução, `pending`, `reconciling`, `error`,
+  execução em borderô em cadastro, cancelado ou estornado, borderô de **status desconhecido**
+  (ausente de `permuta_bordero`), execução de **versão anterior** da alocação (re-alocar sobrescreve
+  `valor_alocado` e `atualizado_em`) e borderô visto finalizado só **depois** do início da última
+  ingestão (guarda de frescor: o Finalizar do painel atualiza o cache na hora, o `valorPermutar` não). Na dúvida, subestimar o saldo, que nunca permite super-alocação.
+  **Uma fonte da regra** para a tela (`GestaoPermutasService`) e para o teto
+  (`AlocacaoPermutasService.alocar`).
+  Evidência (banco, read-only, 2026-09-14): de 128 adtos com execução real, **125** com borderô
+  finalizado tiveram `mnyTitPermutar` abatido; os em cadastro (2), cancelados (4) e fora do cache (4)
+  não. Casos: 12860 (tela −19.257,73, correto 30.364,73), 9328 (4.304,94 → 39.652,47); 9335/9869/9870
+  e 10307 seguem descontando. Com a guarda de frescor, não há janela de superestimação: o finalizado
+  recente continua descontando até a próxima ingestão. Os 2 (+1) adtos com borderô finalizado e sem
+  abate precisam ser confirmados ao vivo. Ver ADR-0046.
 - **I-Permuta-2 (saldo da invoice):** `Σ(valorAlocado por invoice) ≤ valor em aberto da invoice`.
   Excesso → `AlocacaoSaldoError` (HTTP 422).
 - **I-Permuta-3 (mesma filial):** adto e invoice na **mesma filial** — o `priCod` não é único
@@ -122,7 +151,8 @@ invoices; uma invoice pode ser composta por vários adiantamentos. O saldo pode 
 
 N:M com valores parciais. Cada linha de `permuta_alocacao` é **um** par adto↔invoice (UNIQUE);
 a permuta completa de um adiantamento é o **conjunto** de suas alocações. `GestaoPermutasService`
-calcula `saldoRestante` (saldo − Σ alocado) e expõe as `alocacoes` por adiantamento.
+calcula `saldoRestante` (saldo − Σ alocado **não consumido pelo ERP**, I-Permuta-1 / ADR-0046) e expõe as
+`alocacoes` por adiantamento.
 
 ## Fonte de leitura (Conexos)
 

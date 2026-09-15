@@ -8,11 +8,11 @@ invariant: I2
 related_files:
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/domain/client/ConexosSispagClient.ts
-last_review: 2026-07-07
+last_review: 2026-09-14
 has_canonical_test: false
 open-gap:
   - "níveis-de-alçada (Flávia) — quantos níveis titVld1/2/3libera a Columbia usa DE FATO? Nesta fatia liberado = AND das flags presentes; recalibrável por tenant sem mudar a estrutura."
-  - "residual-pago-centavos — herdado de Permutas: um título com aberto=centavos conta como pago? Mesmo dilema do Gate 3 de Permutas; alinhar a definição de 'pago' entre as frentes."
+  - "residual-pago-centavos — herdado de Permutas: um título com aberto=centavos conta como pago? Em Permutas foi decidido SÓ para o Gate 3 do adiantamento (ADR-0046, 2026-09-14: aberto ≤ R$1,00), sem estender a títulos SISPAG nem a Invoice.pago. Para o SISPAG segue aberto: estender a tolerância exige decisão própria."
 ---
 
 # Regra: elegibilidade-titulo-lote (só aprovado + não pago entra no lote)

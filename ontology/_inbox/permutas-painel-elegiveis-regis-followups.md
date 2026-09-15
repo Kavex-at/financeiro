@@ -83,7 +83,7 @@ Fonte: probe throwaway `probe-permutar-formula.ts` (deletado) — varreu os 411 
 `com298/{docCod}`. Identidade `mnyTitValor = mnyTitPago + mnyTitAberto` = **universal (0/408)**.
 Buckets: 70 NÃO PAGO · 332 TOTALMENTE PAGO · 6 PARCIALMENTE PAGO · 42 com permuta · 3 erros HTTP 500.
 
-- **`residual-pago-centavos` (P2 — decisão de domínio, c/ analistas).** Doc **8721** tem `aberto=0,02`
+- **[RESOLVIDO 2026-09-14 — ADR-0046: Gate 3 = aberto ≤ R$1,00, Gate 2 = saldo > R$1,00, só p/ o adiantamento] `residual-pago-centavos` (P2 — decisão de domínio, c/ analistas).** Doc **8721** tem `aberto=0,02`
   em título de `~R$20.373.009` (`permutar=0`). Gate 3 estrito (`=== 0`) o **BLOQUEIA**. Confirmar com os
   analistas Columbia: (a) resíduo de centavos conta como TOTALMENTE PAGO? (b) qual o teto de "residual"
   (epsilon)? Se sim → vira mudança de regra (ADR + OntologyCurator: `pago ⟺ mnyTitAberto < ε`).

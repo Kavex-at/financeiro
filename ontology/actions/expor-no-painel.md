@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-09-08
+last_review: 2026-09-14
 preconditions:
   - "Candidatas avaliadas (gates + casamento + variação quando disponível)."
 postconditions:
@@ -38,6 +38,14 @@ resolved-by:
   bloqueio reportados conforme a taxonomia (`composto-nm`, `sem-invoice`, `multiplas-invoices`,
   `falha-gate`, `data-base-indisponivel` — ver state-machine).
 - READ-ONLY: nenhuma ação de execução é oferecida aqui (a execução é a Fatia 2, I1/I4).
+- **Aba Histórico (ADR-0046, 2026-09-14).** Lista o que saiu das abas de trabalho porque foi lançado
+  pelo painel (casamentos sugeridos, múltiplas manuais, cross-over, cross-process) **e também** os
+  adtos em `JA_PERMUTADO` que têm borderô gerado pelo painel. Sem duplicar entrada (chave adto +
+  borderô). Motivo: a prioridade de motivos e a tolerância de R$1,00 (ADR-0046) levam a `JA_PERMUTADO`
+  adtos que o painel baixou (43 com execução real `settled`, R$ 18,0 mi, antes exibidos como "Sem
+  D.I"). Sem esta regra eles sumiriam do Histórico ao migrar de estado.
+- Saldo restante exibido (`permuta-manual` / `casamento-manual`) segue I-Permuta-1: desconta só as
+  alocações ainda não consumidas pelo ERP (ADR-0046).
 
 ## Aging (P0-8 + P0-4 — RESOLVIDOS; coluna aging popula)
 
