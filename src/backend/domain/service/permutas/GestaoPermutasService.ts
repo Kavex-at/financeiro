@@ -1,7 +1,10 @@
 import { inject, injectable } from 'tsyringe';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import type ExcecaoPermuta from '../../interface/permutas/ExcecaoPermuta.js';
+import { MOTIVO_BLOQUEIO } from '../../interface/permutas/EstadoElegibilidade.js';
 import type {
     CasamentoSugerido,
+    ExcecaoManualDetalhe,
     GestaoPermutasResponse,
     InvoiceEmAberto,
     PermutaDetalhe,
@@ -22,6 +25,7 @@ import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacao
 import PermutaProcessamentoRepository from '../../repository/permutas/PermutaProcessamentoRepository.js';
 import type { ConsumoExecucaoRow } from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
+import ExcecaoPermutaRepository from '../../repository/permutas/ExcecaoPermutaRepository.js';
 import LogService from '../LogService.js';
 import SaldoAlocacaoAdiantamentoService from './SaldoAlocacaoAdiantamentoService.js';
 
@@ -69,6 +73,8 @@ export default class GestaoPermutasService {
         @inject(LogService) private logService: LogService,
         @inject(SaldoAlocacaoAdiantamentoService)
         private saldoAlocacaoService: SaldoAlocacaoAdiantamentoService,
+        @inject(ExcecaoPermutaRepository)
+        private excecaoPermutaRepository: ExcecaoPermutaRepository,
     ) {}
 
     public exporGestao = async (requestId: string): Promise<GestaoPermutasResponse> => {
@@ -81,6 +87,7 @@ export default class GestaoPermutasService {
             alocacoes,
             ultimaIngestao,
             consumosByAdto,
+            excecoesAtivas,
         ] = await Promise.all([
             this.relationalRepository.listAdiantamentosAtivos(),
             this.relationalRepository.listInvoicesEmAberto(),
@@ -91,7 +98,12 @@ export default class GestaoPermutasService {
             this.snapshotRepository.findLatestIngestFinishedAt(),
             // Execuções já abatidas pelo ERP (ADR-0046 D3) — o saldo restante não as desconta.
             this.saldoAlocacaoService.carregarConsumosPorAdiantamento(),
+            // Exceções manuais ativas (ADR-0047) — detalhe e tag "Exceção manual" na tela.
+            this.excecaoPermutaRepository.listAtivas(),
         ]);
+        const excecaoByAdto = new Map<string, ExcecaoPermuta>(
+            excecoesAtivas.map((e) => [e.adiantamentoDocCod, e]),
+        );
 
         // Alocações manuais (Fase 2) agrupadas por adiantamento.
         const alocacoesByAdto = new Map<string, AlocacaoRow[]>();
@@ -158,6 +170,7 @@ export default class GestaoPermutasService {
                 consumosByAdto.get(a.docCod) ?? [],
                 adtosCasamentoPorPriCod,
                 adtosReclassificadosManual,
+                excecaoByAdto.get(a.docCod),
             ),
         );
         // Cliente (importador) por processo — o adto tem; a invoice não. Junta por priCod p/ que
@@ -329,6 +342,7 @@ export default class GestaoPermutasService {
         consumosDoAdto: ConsumoExecucaoRow[],
         adtosCasamentoPorPriCod: Map<string, number>,
         adtosReclassificadosManual: Map<string, 'cross-over' | 'multiplas'>,
+        excecao?: ExcecaoPermuta,
     ): PermutaPendente => {
         // Reclassificação (regra 2026-06-24, ADR-0014): adto elegível cujo casamento
         // ULTRAPASSA a invoice vira casamento-manual (múltipla) — execução manual
@@ -424,9 +438,30 @@ export default class GestaoPermutasService {
             ...(alocacoes !== undefined ? { alocacoes } : {}),
             ...(saldoRestante !== undefined ? { saldoRestante } : {}),
             ...(autoElegivel ? { autoElegivel: true } : {}),
+            ...(excecao !== undefined
+                ? { excecaoManual: this.toExcecaoManual(excecao, status, a.motivoBloqueio) }
+                : {}),
             detalhe,
         };
     };
+
+    /**
+     * Exceção manual para a tela (ADR-0047). `ativa` = APLICADA: a linha está `ja-permutado`
+     * com o motivo que só a exceção produz (T7). Em qualquer outro estado o cálculo do ERP
+     * venceu e a tela sinaliza a exceção como inativa.
+     */
+    private toExcecaoManual = (
+        excecao: ExcecaoPermuta,
+        status: StatusElegibilidade,
+        motivoBloqueio?: string,
+    ): ExcecaoManualDetalhe => ({
+        justificativa: excecao.justificativa,
+        criadoPor: excecao.criadoPor,
+        criadoEm: excecao.criadoEm.toISOString(),
+        ativa:
+            status === 'ja-permutado' &&
+            motivoBloqueio === MOTIVO_BLOQUEIO.PERMUTADO_FORA_DO_PAINEL,
+    });
 
     /** Mapeia uma AlocacaoRow para o shape exibido na tela (AlocacaoDetalhe). */
     private toAlocacaoDetalhe = (

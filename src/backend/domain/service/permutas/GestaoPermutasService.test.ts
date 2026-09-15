@@ -10,6 +10,8 @@ import type PermutaProcessamentoRepository from '../../repository/permutas/Permu
 import type PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import type { AlocacaoRow } from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import type PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
+import type ExcecaoPermutaRepository from '../../repository/permutas/ExcecaoPermutaRepository.js';
+import type ExcecaoPermuta from '../../interface/permutas/ExcecaoPermuta.js';
 import type {
     ConsumoExecucaoRow,
     default as PermutaExecucaoRepository,
@@ -146,6 +148,12 @@ const buildRelational = (over?: {
         listDeclaracoes: jest.fn().mockResolvedValue(over?.declaracoes ?? declaracoes),
     }) as unknown as jest.Mocked<PermutaRelationalRepository>;
 
+/** Exceções manuais ativas (ADR-0047) — nenhuma por padrão. */
+const buildExcecao = (rows: ExcecaoPermuta[] = []) =>
+    ({
+        listAtivas: jest.fn().mockResolvedValue(rows),
+    }) as unknown as jest.Mocked<ExcecaoPermutaRepository>;
+
 const buildProcessamento = (rows: Processamento[] = []) =>
     ({
         listProcessamentos: jest.fn().mockResolvedValue(rows),
@@ -160,6 +168,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
 
         const res = await service.exporGestao('req-1');
@@ -189,6 +198,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -208,6 +218,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         // A1 elegível → simples; A3 casamento-manual sozinho no priCod 4000 → multiplas.
@@ -237,6 +248,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         expect(res.pendentes.find((p) => p.docCod === 'X1')?.tipoPermuta).toBe('cross-over');
@@ -275,6 +287,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         const pm = res.pendentes.find((p) => p.docCod === 'M1');
@@ -293,6 +306,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         expect(res.pendentes.find((p) => p.docCod === 'A9')?.tipoPermuta).toBe('cross-process');
@@ -306,6 +320,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -368,6 +383,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
 
         const res = await service.exporGestao('req-1');
@@ -386,6 +402,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -422,6 +439,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -450,6 +468,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         expect(res.casamentos).toHaveLength(1);
@@ -478,6 +497,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -540,6 +560,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         const m = res.pendentes.find((p) => p.docCod === 'M1');
@@ -604,6 +625,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         const m = res.pendentes.find((p) => p.docCod === 'M1');
@@ -638,6 +660,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -668,6 +691,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -708,6 +732,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -740,6 +765,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -798,6 +824,7 @@ describe('GestaoPermutasService.exporGestao', () => {
                 buildSnapshot(),
                 buildLog(),
                 buildSaldo(consumos),
+                buildExcecao(),
             );
             const res = await service.exporGestao('req-1');
             return res.pendentes.find((p) => p.docCod === adto.docCod);
@@ -874,6 +901,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
         const jp = res.pendentes.find((p) => p.docCod === 'JP1');
@@ -891,6 +919,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -908,6 +937,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -941,6 +971,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildSnapshot(),
             buildLog(),
             buildSaldo(),
+            buildExcecao(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -948,5 +979,100 @@ describe('GestaoPermutasService.exporGestao', () => {
             'processado',
         );
         expect(res.casamentos[0].adiantamentos[0].processamentoStatus).toBe('processado');
+    });
+
+    describe('exceção manual "permutado fora do painel" (ADR-0047)', () => {
+        const excecao8721: ExcecaoPermuta = {
+            id: '1',
+            adiantamentoDocCod: '8721',
+            justificativa: 'Baixas cruzadas 21 x 198 em 30/04 com a invoice 7329',
+            criadoPor: 'user-abc',
+            criadoEm: new Date('2026-09-15T14:30:00.000Z'),
+        };
+        const adto8721 = (over: Partial<AdiantamentoAtivo> = {}): AdiantamentoAtivo => ({
+            docCod: '8721',
+            priCod: '124',
+            filCod: 2,
+            referencia: '0013COO/25',
+            exportador: 'CODELCO',
+            valorMoedaNegociada: 3787086.38,
+            moeda: 'USD',
+            pago: true,
+            valorPermutar: 0,
+            taxa: 5.3796,
+            estadoElegibilidade: 'ja-permutado',
+            motivoBloqueio: 'permutado-fora-do-painel',
+            stale: false,
+            ...over,
+        });
+
+        const exporCom = async (adtos: AdiantamentoAtivo[], excecoes: ExcecaoPermuta[]) => {
+            const excecaoRepo = buildExcecao(excecoes);
+            const service = new GestaoPermutasService(
+                buildRelational({ adiantamentos: adtos, casamentos: [], invoices: [] }),
+                buildProcessamento(),
+                buildAlocacao(),
+                buildSnapshot(),
+                buildLog(),
+                buildSaldo(),
+                excecaoRepo,
+            );
+            const res = await service.exporGestao('req-1');
+            return { res, excecaoRepo };
+        };
+
+        it('linha ja-permutado/permutado-fora-do-painel + exceção → excecaoManual aplicada (ativa: true)', async () => {
+            const { res, excecaoRepo } = await exporCom([adto8721()], [excecao8721]);
+
+            const p = res.pendentes[0];
+            expect(p.status).toBe('ja-permutado');
+            expect(p.motivoBloqueio).toBe('permutado-fora-do-painel');
+            expect(p.excecaoManual).toEqual({
+                justificativa: excecao8721.justificativa,
+                criadoPor: 'user-abc',
+                criadoEm: '2026-09-15T14:30:00.000Z',
+                ativa: true,
+            });
+            expect(p).not.toHaveProperty('saldoRestante');
+            expect(p).not.toHaveProperty('tipoPermuta');
+            expect(excecaoRepo.listAtivas).toHaveBeenCalledTimes(1);
+        });
+
+        it('totais: o 8721 conta em jaPermutado e não em bloqueadas', async () => {
+            const { res } = await exporCom([adto8721()], [excecao8721]);
+
+            expect(res.totais.jaPermutado).toBe(1);
+            expect(res.totais.bloqueadas).toBe(0);
+        });
+
+        it('linha permuta-manual com exceção ativa (o ERP venceu) → excecaoManual.ativa === false', async () => {
+            const { res } = await exporCom(
+                [
+                    adto8721({
+                        estadoElegibilidade: 'permuta-manual',
+                        motivoBloqueio: 'cliente-filtro',
+                        valorPermutar: 26898,
+                    }),
+                ],
+                [excecao8721],
+            );
+
+            expect(res.pendentes[0].excecaoManual?.ativa).toBe(false);
+        });
+
+        it('linha sem exceção → sem a chave excecaoManual', async () => {
+            const { res } = await exporCom(
+                [
+                    adto8721({
+                        estadoElegibilidade: 'bloqueada',
+                        motivoBloqueio: 'sem-saldo-permutar',
+                    }),
+                ],
+                [],
+            );
+
+            expect(res.pendentes[0]).not.toHaveProperty('excecaoManual');
+            expect(res.totais.bloqueadas).toBe(1);
+        });
     });
 });
