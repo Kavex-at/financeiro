@@ -271,3 +271,32 @@ describe('montarHistorico', () => {
     expect(itens).toHaveLength(3)
   })
 })
+
+describe('montarHistorico — exceção manual (ADR-0047)', () => {
+  it('ja-permutado por exceção manual SEM borderô do painel não entra no Histórico', () => {
+    const excecao = pendente({
+      docCod: '8721',
+      status: 'ja-permutado',
+      motivoBloqueio: 'permutado-fora-do-painel',
+      excecaoManual: {
+        justificativa: 'Baixas cruzadas 21 x 198 em 30/04',
+        criadoPor: 'user-abc',
+        criadoEm: '2026-09-15T14:30:00.000Z',
+        ativa: true,
+      },
+    })
+
+    const itens = montarHistorico({
+      casamentosSugeridos: [],
+      multiplasManuais: [],
+      crossOver: [],
+      crossProcess: [],
+      jaPermutados: [excecao],
+      statusPorAdto: {},
+      pendenteByDocCod: new Map([['8721', excecao]]),
+    })
+
+    expect(itens.some((h) => h.adtoDocCod === '8721')).toBe(false)
+  })
+})
+

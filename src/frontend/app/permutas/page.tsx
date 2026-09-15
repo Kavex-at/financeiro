@@ -69,6 +69,7 @@ import { montarHistorico } from './components/historico'
 import { DemoDataBanner, LoadErrorBanner } from './components/banners'
 import { usePermutasData } from './components/usePermutasData'
 import { useIngestao } from './components/useIngestao'
+import { useExcecaoManual } from './components/useExcecaoManual'
 import { useExportRelatorios } from './components/useExportRelatorios'
 import { VisaoGeralTable } from './components/VisaoGeralTable'
 import { AbaAutomaticas } from './components/AbaAutomaticas'
@@ -93,6 +94,12 @@ const IngestaoDialog = dynamic(() =>
 const AlocarDialog = dynamic(() => import('./components/AlocarDialog').then((m) => m.AlocarDialog))
 const ReconciliarDialog = dynamic(() =>
   import('./components/ReconciliarDialog').then((m) => m.ReconciliarDialog),
+)
+const ExcecaoManualDialog = dynamic(() =>
+  import('./components/ExcecaoManualDialog').then((m) => m.ExcecaoManualDialog),
+)
+const DesfazerExcecaoDialog = dynamic(() =>
+  import('./components/DesfazerExcecaoDialog').then((m) => m.DesfazerExcecaoDialog),
 )
 
 export default function GestaoPermutasPage() {
@@ -337,6 +344,18 @@ export default function GestaoPermutasPage() {
     },
     [alocando, load],
   )
+
+  // --- Exceção manual "permutado fora do painel" (ADR-0047) — modais + ações ---
+  const {
+    marcandoExcecao,
+    setMarcandoExcecao,
+    salvandoExcecao,
+    confirmarExcecao,
+    desfazendoExcecao,
+    setDesfazendoExcecao,
+    removendoExcecao,
+    confirmarDesfazerExcecao,
+  } = useExcecaoManual(load)
 
   // --- Reconciliação / baixa no ERP fin010 (Fase 3, ADR-0013) ---
   // Abre o modal SEMPRE em dry-run primeiro: o backend monta/loga o payload sem POST
@@ -851,6 +870,8 @@ export default function GestaoPermutasPage() {
                 setExpandido={setExpandido}
                 invoiceByAdto={invoiceByAdto}
                 abrirAlocar={abrirAlocar}
+                abrirMarcarExcecao={setMarcandoExcecao}
+                abrirDesfazerExcecao={setDesfazendoExcecao}
                 paginaAtual={paginaAtual}
                 totalPaginas={totalPaginas}
                 setPagina={setPagina}
@@ -1013,6 +1034,20 @@ export default function GestaoPermutasPage() {
             salvandoAloc={salvandoAloc}
             adicionarAloc={adicionarAloc}
             removerAloc={removerAloc}
+          />
+
+          {/* Exceção manual "permutado fora do painel" (ADR-0047) — marcar e desfazer */}
+          <ExcecaoManualDialog
+            pendente={marcandoExcecao}
+            onClose={() => setMarcandoExcecao(null)}
+            salvando={salvandoExcecao}
+            onConfirmar={(justificativa) => void confirmarExcecao(justificativa)}
+          />
+          <DesfazerExcecaoDialog
+            pendente={desfazendoExcecao}
+            onClose={() => setDesfazendoExcecao(null)}
+            desfazendo={removendoExcecao}
+            onConfirmar={() => void confirmarDesfazerExcecao()}
           />
 
           {/* Baixa no ERP fin010 (Fase 3) — preview (dry-run) → executar */}

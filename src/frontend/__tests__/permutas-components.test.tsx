@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ItemHistorico } from '@/app/permutas/components/format'
 import {
   fmtData,
@@ -10,7 +10,15 @@ import {
   parseBrl,
   somaPorMoeda,
 } from '@/app/permutas/components/format'
-import { Moeda, PermutaBorderoBadge } from '@/app/permutas/components/ui'
+import {
+  ExcecaoManualTag,
+  Moeda,
+  PermutaBorderoBadge,
+  StatusBadge,
+} from '@/app/permutas/components/ui'
+import { ExcecaoManualDialog } from '@/app/permutas/components/ExcecaoManualDialog'
+import { DesfazerExcecaoDialog } from '@/app/permutas/components/DesfazerExcecaoDialog'
+import { VisaoGeralTable } from '@/app/permutas/components/VisaoGeralTable'
 import { PermutaPendenteTable } from '@/app/permutas/components/PermutaPendenteTable'
 import { AbaHistorico } from '@/app/permutas/components/AbaHistorico'
 import type { PermutaPendente } from '@/lib/types'
@@ -253,5 +261,203 @@ describe('PermutaBorderoBadge — os três estados + pendente têm textos distin
     textos.add(container.textContent ?? '')
     // Os quatro renders produziram quatro textos DIFERENTES.
     expect(textos.size).toBe(4)
+  })
+})
+
+// ─── Exceção manual "permutado fora do painel" (ADR-0047) ─────────────────────
+describe('exceção manual — badge e tag', () => {
+  it('StatusBadge ja-permutado com o motivo da exceção: "Já permutado" + title da exceção', () => {
+    render(<StatusBadge status="ja-permutado" motivo="permutado-fora-do-painel" />)
+    const badge = screen.getByText('Já permutado')
+    expect(badge).toHaveAttribute('title', 'Permutado fora do painel (exceção manual)')
+  })
+
+  it('StatusBadge ja-permutado do ERP mantém o title "Já permutado"', () => {
+    render(<StatusBadge status="ja-permutado" motivo="ja-permutado" />)
+    expect(screen.getByText('Já permutado')).toHaveAttribute('title', 'Já permutado')
+  })
+
+  it('ExcecaoManualTag: ativa → "Exceção manual"; inativa → "Exceção inativa"', () => {
+    const { rerender } = render(<ExcecaoManualTag ativa />)
+    expect(screen.getByText('Exceção manual')).toBeInTheDocument()
+    rerender(<ExcecaoManualTag ativa={false} />)
+    expect(screen.getByText('Exceção inativa')).toBeInTheDocument()
+    expect(screen.getByText('Exceção inativa')).toHaveAttribute(
+      'title',
+      expect.stringContaining('vale o estado calculado'),
+    )
+  })
+})
+
+const EXCECAO = {
+  justificativa: 'Baixas cruzadas 21 x 198 em 30/04 com a invoice 7329',
+  criadoPor: 'user-abc',
+  criadoEm: '2026-09-15T14:30:00.000Z',
+  ativa: true,
+}
+
+const adto8721 = (over: Partial<PermutaPendente> = {}): PermutaPendente => ({
+  docCod: '8721',
+  filCod: 2,
+  referencia: '0013COO/25',
+  exportador: 'CODELCO',
+  importador: 'COPPER',
+  valorMoedaNegociada: 3787086.38,
+  moeda: 'USD',
+  diasEmAberto: 240,
+  status: 'bloqueada',
+  motivoBloqueio: 'sem-saldo-permutar',
+  detalhe: { priCod: '124', pago: true },
+  ...over,
+})
+
+describe('ExcecaoManualDialog', () => {
+  const abrir = (onConfirmar = jest.fn()) => {
+    render(
+      <ExcecaoManualDialog
+        pendente={adto8721()}
+        onClose={() => {}}
+        salvando={false}
+        onConfirmar={onConfirmar}
+      />,
+    )
+    const campo = screen.getByLabelText(/Justificativa/)
+    const confirmar = screen.getByRole('button', { name: /Marcar como permutado/ })
+    return { campo, confirmar, onConfirmar }
+  }
+
+  it('tem título, descrição e o campo ligado à ajuda e ao contador', () => {
+    const { campo } = abrir()
+    expect(
+      screen.getByRole('dialog', { name: 'Marcar como permutado fora do painel' }),
+    ).toBeInTheDocument()
+    const descritores = (campo.getAttribute('aria-describedby') ?? '').split(' ')
+    expect(descritores).toHaveLength(2)
+    for (const idDescritor of descritores) {
+      expect(document.getElementById(idDescritor)).not.toBeNull()
+    }
+  })
+
+  it('confirmar desabilitado com 0–9 caracteres (após trim) e habilitado com 10', () => {
+    const { campo, confirmar } = abrir()
+    expect(confirmar).toBeDisabled()
+    fireEvent.change(campo, { target: { value: '   123456789   ' } })
+    expect(confirmar).toBeDisabled()
+    fireEvent.change(campo, { target: { value: '1234567890' } })
+    expect(confirmar).toBeEnabled()
+  })
+
+  it('confirmar desabilitado acima de 500 caracteres', () => {
+    const { campo, confirmar } = abrir()
+    fireEvent.change(campo, { target: { value: 'x'.repeat(501) } })
+    expect(confirmar).toBeDisabled()
+    expect(campo).toHaveAttribute('aria-invalid', 'true')
+    fireEvent.change(campo, { target: { value: 'x'.repeat(500) } })
+    expect(confirmar).toBeEnabled()
+  })
+
+  it('onConfirmar recebe o texto com trim', () => {
+    const { campo, confirmar, onConfirmar } = abrir()
+    fireEvent.change(campo, { target: { value: `  ${EXCECAO.justificativa}  ` } })
+    fireEvent.click(confirmar)
+    expect(onConfirmar).toHaveBeenCalledWith(EXCECAO.justificativa)
+  })
+})
+
+describe('DesfazerExcecaoDialog', () => {
+  it('mostra justificativa, autor e data; "Cancelar" não chama onConfirmar', () => {
+    const onConfirmar = jest.fn()
+    const onClose = jest.fn()
+    render(
+      <DesfazerExcecaoDialog
+        pendente={adto8721({
+          status: 'ja-permutado',
+          motivoBloqueio: 'permutado-fora-do-painel',
+          excecaoManual: EXCECAO,
+        })}
+        onClose={onClose}
+        desfazendo={false}
+        onConfirmar={onConfirmar}
+      />,
+    )
+    expect(screen.getByText(EXCECAO.justificativa)).toBeInTheDocument()
+    expect(screen.getByText('user-abc')).toBeInTheDocument()
+    expect(screen.getByText(fmtData(EXCECAO.criadoEm))).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(onConfirmar).not.toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Desfazer exceção/ }))
+    expect(onConfirmar).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('VisaoGeralTable — exceção manual na linha expandida', () => {
+  const renderLinha = (p: PermutaPendente) => {
+    const abrirMarcarExcecao = jest.fn()
+    const abrirDesfazerExcecao = jest.fn()
+    render(
+      <VisaoGeralTable
+        vista="adiantamentos"
+        filtro="todos"
+        listaFiltrada={[p]}
+        invoicesPagina={[]}
+        pendentesPagina={[p]}
+        invoiceListExpandida={null}
+        setInvoiceListExpandida={() => {}}
+        expandido={p.docCod}
+        setExpandido={() => {}}
+        invoiceByAdto={new Map()}
+        abrirAlocar={() => {}}
+        abrirMarcarExcecao={abrirMarcarExcecao}
+        abrirDesfazerExcecao={abrirDesfazerExcecao}
+        paginaAtual={1}
+        totalPaginas={1}
+        setPagina={() => {}}
+      />,
+    )
+    return { abrirMarcarExcecao, abrirDesfazerExcecao }
+  }
+
+  it('bloqueada/sem-saldo-permutar mostra "Marcar como permutado fora do painel"', () => {
+    const p = adto8721()
+    const { abrirMarcarExcecao } = renderLinha(p)
+    fireEvent.click(screen.getByRole('button', { name: 'Marcar como permutado fora do painel' }))
+    expect(abrirMarcarExcecao).toHaveBeenCalledWith(p)
+    expect(screen.queryByRole('button', { name: /Desfazer exceção/ })).toBeNull()
+  })
+
+  it('bloqueada/nao-pago NÃO mostra a ação de marcar', () => {
+    renderLinha(adto8721({ motivoBloqueio: 'nao-pago' }))
+    expect(screen.queryByRole('button', { name: /permutado fora do painel/ })).toBeNull()
+  })
+
+  it('linha com exceção mostra tag, detalhe (justificativa/autor/data) e "Desfazer exceção"', () => {
+    const p = adto8721({
+      status: 'ja-permutado',
+      motivoBloqueio: 'permutado-fora-do-painel',
+      excecaoManual: EXCECAO,
+    })
+    const { abrirDesfazerExcecao } = renderLinha(p)
+    expect(screen.getAllByText('Exceção manual').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(EXCECAO.justificativa)).toBeInTheDocument()
+    expect(screen.getByText('user-abc')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Marcar como permutado/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Desfazer exceção/ }))
+    expect(abrirDesfazerExcecao).toHaveBeenCalledWith(p)
+  })
+
+  it('exceção inativa avisa que não foi aplicada e ainda permite desfazer', () => {
+    renderLinha(
+      adto8721({
+        status: 'permuta-manual',
+        motivoBloqueio: 'cliente-filtro',
+        excecaoManual: { ...EXCECAO, ativa: false },
+      }),
+    )
+    expect(screen.getAllByText('Exceção inativa').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(/Não aplicada/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Desfazer exceção/ })).toBeInTheDocument()
   })
 })

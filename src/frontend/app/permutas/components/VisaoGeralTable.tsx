@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { ArrowLeftRight, ChevronRight } from 'lucide-react'
+import { ArrowLeftRight, ChevronRight, CircleCheckBig, Undo2 } from 'lucide-react'
 import type { InvoiceEmAberto, PermutaPendente } from '@/lib/types'
 import { cn, formatNumber, progressoPagamento } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -22,8 +22,9 @@ import {
   fmtData,
   fmtTaxa,
   moedaCodigo,
+  podeMarcarExcecao,
 } from './format'
-import { Campo, Moeda, ProcessamentoBadge, StatusBadge } from './ui'
+import { Campo, ExcecaoManualTag, Moeda, ProcessamentoBadge, StatusBadge } from './ui'
 
 /**
  * Visão geral — adiantamentos pendentes OU invoices em aberto (dirigida pela `vista`).
@@ -41,6 +42,8 @@ export function VisaoGeralTable({
   setExpandido,
   invoiceByAdto,
   abrirAlocar,
+  abrirMarcarExcecao,
+  abrirDesfazerExcecao,
   paginaAtual,
   totalPaginas,
   setPagina,
@@ -56,6 +59,10 @@ export function VisaoGeralTable({
   setExpandido: React.Dispatch<React.SetStateAction<string | null>>
   invoiceByAdto: Map<string, InvoiceEmAberto>
   abrirAlocar: (p: PermutaPendente) => void
+  /** Abre o modal "Marcar como permutado fora do painel" (ADR-0047). */
+  abrirMarcarExcecao: (p: PermutaPendente) => void
+  /** Abre a confirmação "Desfazer exceção" (ADR-0047). */
+  abrirDesfazerExcecao: (p: PermutaPendente) => void
   paginaAtual: number
   totalPaginas: number
   setPagina: React.Dispatch<React.SetStateAction<number>>
@@ -239,6 +246,9 @@ export function VisaoGeralTable({
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <StatusBadge status={p.status} motivo={p.motivoBloqueio} />
+                        {p.excecaoManual ? (
+                          <ExcecaoManualTag ativa={p.excecaoManual.ativa} />
+                        ) : null}
                         {p.processamentoStatus ? (
                           <ProcessamentoBadge status={p.processamentoStatus} />
                         ) : null}
@@ -399,6 +409,54 @@ export function VisaoGeralTable({
                               (variação{' '}
                               {d.variacaoClassificacao === 'JUROS' ? 'passiva' : 'ativa'})
                             </div>
+                          </div>
+                        ) : null}
+                        {/* Exceção manual "permutado fora do painel" (ADR-0047): detalhe +
+                            desfazer quando existe; ação de marcar só onde a guarda do
+                            backend aceitaria (bloqueada / sem saldo a permutar). */}
+                        {p.excecaoManual ? (
+                          <div className="mt-3 rounded-md border bg-background/60 px-3 py-2">
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+                                Exceção manual
+                                <ExcecaoManualTag ativa={p.excecaoManual.ativa} />
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => abrirDesfazerExcecao(p)}
+                              >
+                                <Undo2 aria-hidden /> Desfazer exceção
+                              </Button>
+                            </div>
+                            {!p.excecaoManual.ativa ? (
+                              <p className="mb-2 text-xs text-warning-foreground">
+                                Não aplicada: o dado do ERP mudou e vale o estado calculado.
+                              </p>
+                            ) : null}
+                            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+                              <Campo label="Justificativa" className="col-span-2">
+                                <span className="whitespace-pre-wrap font-normal">
+                                  {p.excecaoManual.justificativa}
+                                </span>
+                              </Campo>
+                              <Campo label="Autor">{p.excecaoManual.criadoPor}</Campo>
+                              <Campo label="Data">{fmtData(p.excecaoManual.criadoEm)}</Campo>
+                            </dl>
+                          </div>
+                        ) : podeMarcarExcecao(p) ? (
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background/60 px-3 py-2">
+                            <span className="text-xs text-muted-foreground">
+                              Permuta feita por baixas manuais no Conexos, fora do fluxo de
+                              permuta? Registre a exceção com justificativa.
+                            </span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => abrirMarcarExcecao(p)}
+                            >
+                              <CircleCheckBig aria-hidden /> Marcar como permutado fora do painel
+                            </Button>
                           </div>
                         ) : null}
                         {/* Alocação manual cross-process (Fase 2) — só permuta-manual. */}
