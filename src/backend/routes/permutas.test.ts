@@ -13,6 +13,8 @@ jest.mock('../domain/appContainer.js', () => ({
 import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
 import AlocacaoSemCoberturaError from '../domain/errors/AlocacaoSemCoberturaError.js';
 import ReconciliacaoEmAndamentoError from '../domain/errors/ReconciliacaoEmAndamentoError.js';
+import ExcecaoPermutaRecusadaError from '../domain/errors/ExcecaoPermutaRecusadaError.js';
+import ExcecaoPermutaService from '../domain/service/permutas/ExcecaoPermutaService.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
@@ -40,7 +42,12 @@ const readJson = async (res: Response): Promise<Record<string, any>> =>
     (await res.json()) as Record<string, any>;
 
 // Mimics auth: attaches a fake user. Toggled per-test to simulate 401.
-const buildApp = (opts: { authenticated: boolean; role?: string }): express.Express => {
+const buildApp = (opts: {
+    authenticated: boolean;
+    role?: string;
+    /** Sobrescreve a identidade do token (ex.: sem `sub` nem `email`). */
+    identidade?: { sub: string; email?: string };
+}): express.Express => {
     const app = express();
     app.use(express.json());
     app.use(requestIdMiddleware);
@@ -50,7 +57,10 @@ const buildApp = (opts: { authenticated: boolean; role?: string }): express.Expr
             return;
         }
         // role 'admin' por padrão (rotas de mutação exigem requireRole('admin')).
-        req.user = { sub: 'user-abc', email: 'a@b.com', role: opts.role ?? 'admin' };
+        req.user = {
+            ...(opts.identidade ?? { sub: 'user-abc', email: 'a@b.com' }),
+            role: opts.role ?? 'admin',
+        };
         next();
     });
     app.use('/permutas', permutasRouter);
@@ -607,6 +617,177 @@ describe('POST /permutas/adiantamentos/:docCod/processar', () => {
     });
 });
 
+describe('exceção manual de permuta (ADR-0047)', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    const JUSTIFICATIVA = 'Baixas cruzadas 21 x 198 em 30/04 com a invoice 7329';
+    const URL_8721 = '/permutas/adiantamentos/8721/excecao-manual';
+
+    const post = (url: string, body: unknown) =>
+        fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    it.each([
+        ['curta', { justificativa: 'ab' }],
+        ['vazia', { justificativa: '' }],
+        ['só espaços', { justificativa: '            ' }],
+        ['501 caracteres', { justificativa: 'x'.repeat(501) }],
+        ['ausente', {}],
+    ])('POST com justificativa %s → 400 sem chamar o serviço', async (_caso, body) => {
+        const marcar = jest.fn();
+        container.registerInstance(ExcecaoPermutaService, { marcar } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await post(`${server.url}${URL_8721}`, body);
+            const json = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(json.error).toBe('invalid body');
+            expect(marcar).not.toHaveBeenCalled();
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('POST válido → 200, autor do token (criadoPor do body é ignorado) e justificativa com trim', async () => {
+        const marcar = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(ExcecaoPermutaService, { marcar } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await post(`${server.url}${URL_8721}`, {
+                justificativa: `  ${JUSTIFICATIVA}  `,
+                criadoPor: 'forjado',
+            });
+            const json = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(json).toEqual({ adiantamentoDocCod: '8721' });
+            expect(marcar).toHaveBeenCalledWith({
+                docCod: '8721',
+                justificativa: JUSTIFICATIVA,
+                criadoPor: 'user-abc',
+            });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('POST usa o email do token quando não há sub', async () => {
+        const marcar = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(ExcecaoPermutaService, { marcar } as never);
+        const server = await listen(
+            buildApp({ authenticated: true, identidade: { sub: '', email: 'ana@columbia.com' } }),
+        );
+        try {
+            const res = await post(`${server.url}${URL_8721}`, { justificativa: JUSTIFICATIVA });
+            expect(res.status).toBe(200);
+            expect(marcar).toHaveBeenCalledWith(
+                expect.objectContaining({ criadoPor: 'ana@columbia.com' }),
+            );
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('sem identidade no token (nem sub nem email) → 401 nas duas rotas, nunca grava "unknown"', async () => {
+        const marcar = jest.fn();
+        const desfazer = jest.fn();
+        container.registerInstance(ExcecaoPermutaService, { marcar, desfazer } as never);
+        const server = await listen(buildApp({ authenticated: true, identidade: { sub: '   ' } }));
+        try {
+            const resPost = await post(`${server.url}${URL_8721}`, {
+                justificativa: JUSTIFICATIVA,
+            });
+            const resDelete = await fetch(`${server.url}${URL_8721}`, { method: 'DELETE' });
+            expect(resPost.status).toBe(401);
+            expect(resDelete.status).toBe(401);
+            expect(marcar).not.toHaveBeenCalled();
+            expect(desfazer).not.toHaveBeenCalled();
+        } finally {
+            await server.close();
+        }
+    });
+
+    it.each([
+        [
+            422,
+            new ExcecaoPermutaRecusadaError({
+                tipo: 'guarda',
+                docCod: '8721',
+                estado: 'bloqueada',
+                motivo: 'nao-pago',
+            }),
+        ],
+        [
+            404,
+            new ExcecaoPermutaRecusadaError({
+                tipo: 'adiantamento-nao-encontrado',
+                docCod: '8721',
+            }),
+        ],
+        [409, new ExcecaoPermutaRecusadaError({ tipo: 'ja-ativa', docCod: '8721' })],
+    ])('POST: serviço lança %i → mesma resposta { error: code, message: userMessage }', async (status, erro) => {
+        const marcar = jest.fn().mockRejectedValue(erro);
+        container.registerInstance(ExcecaoPermutaService, { marcar } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await post(`${server.url}${URL_8721}`, { justificativa: JUSTIFICATIVA });
+            const json = await readJson(res);
+            expect(res.status).toBe(status);
+            expect(json).toEqual({ error: erro.code, message: erro.userMessage });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('DELETE → 200 com removidoPor do token', async () => {
+        const desfazer = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(ExcecaoPermutaService, { desfazer } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}${URL_8721}`, { method: 'DELETE' });
+            const json = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(json).toEqual({ adiantamentoDocCod: '8721' });
+            expect(desfazer).toHaveBeenCalledWith({ docCod: '8721', removidoPor: 'user-abc' });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('DELETE sem exceção ativa → 404 com o contrato de erro', async () => {
+        const erro = new ExcecaoPermutaRecusadaError({
+            tipo: 'excecao-nao-encontrada',
+            docCod: '8721',
+        });
+        container.registerInstance(ExcecaoPermutaService, {
+            desfazer: jest.fn().mockRejectedValue(erro),
+        } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}${URL_8721}`, { method: 'DELETE' });
+            const json = await readJson(res);
+            expect(res.status).toBe(404);
+            expect(json).toEqual({ error: 'EXCECAO_NAO_ENCONTRADA', message: erro.userMessage });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requer autenticação (401)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await post(`${server.url}${URL_8721}`, { justificativa: JUSTIFICATIVA });
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
 describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
     it('role não-admin → 403 nas mutações; leituras seguem abertas', async () => {
         // Usuário autenticado mas role 'authenticated' (não admin).
@@ -620,6 +801,8 @@ describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
                 ['POST', '/permutas/adiantamentos/A1/alocacoes'],
                 ['DELETE', '/permutas/adiantamentos/A1/alocacoes/I1'],
                 ['POST', '/permutas/adiantamentos/A1/processar'],
+                ['POST', '/permutas/adiantamentos/A1/excecao-manual'],
+                ['DELETE', '/permutas/adiantamentos/A1/excecao-manual'],
             ];
             for (const [method, path] of mutacoes) {
                 const res = await fetch(`${server.url}${path}`, {

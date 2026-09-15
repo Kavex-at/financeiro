@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-09-14
+last_review: 2026-09-15
 preconditions:
   - "Adiantamento eleito por elegerAdiantamentos."
   - "Sessão Conexos ativa."
@@ -16,6 +16,7 @@ postconditions:
   - "Estado da PermutaCandidata transita descoberta → (elegivel | casamento-manual | permuta-manual | ja-permutado | bloqueada) conforme gates + INVOICE casada (ADR-0005/0007/0043)."
   - "Gate 2 reprovado (valorPermutar ≤ R$1,00) com adiantamento PAGO (|mnyTitAberto| ≤ R$1,00) e valorPermutado > 0 → JA_PERMUTADO (conclusão, terminal), nunca BLOQUEADA — com ou sem D.I (ADR-0043, ADR-0046)."
   - "Motivo escolhido pela prioridade única: nao-pago → ja-permutado/sem-saldo-permutar → data-base-indisponivel/di-duimp-ambos → casamento de invoice (ADR-0046)."
+  - "A avaliação NÃO consulta ExcecaoPermuta: o override BLOQUEADA(sem-saldo-permutar) → JA_PERMUTADO (permutado-fora-do-painel) é aplicado depois, na eleição (T7, ADR-0047), sobre este resultado."
   - "Nenhuma escrita no ERP (I4)."
 side_effects:
   - "Leitura detail com298 (getMnyTitPermutar) por candidato — fan-out."
@@ -88,6 +89,9 @@ Motivo **específico por gate reprovado** (substituiu o genérico `falha-gate`, 
 - `sem-saldo-permutar` — Gate 2 reprovado (pago, `mnyTitPermutar ≤ R$1,00`, **e nunca houve permuta**).
 - `ja-permutado` — Gate 2 reprovado (`mnyTitPermutar ≤ R$1,00`) com `valorPermutado > 0`: **não é bloqueio**. Leva ao estado
   `JA_PERMUTADO` (conclusão, terminal — ADR-0043); o motivo permanece como informativo do estado.
+- `permutado-fora-do-painel` — **não é produzido por esta ação.** Motivo informativo de `JA_PERMUTADO` aplicado pela eleição
+  quando esta ação devolve `sem-saldo-permutar` e há `ExcecaoPermuta` ativa para o adto (T7, ADR-0047). Se esta ação devolver
+  `ja-permutado` (`valorPermutado > 0`), o motivo do ERP vence e a exceção não se aplica.
 - `di-duimp-ambos` — Gate 4 anomalia (D.I **e** DUIMP no mesmo processo).
 - `data-base-indisponivel` — Gate 4 sem D.I **nem** DUIMP.
 - **Prioridade quando >1 gate falha (ADR-0046, completa):**

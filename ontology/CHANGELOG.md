@@ -3,6 +3,41 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.26.1 — ADR-0047 implementada (2026-09-15)
+
+Feature: `permutas-excecao-manual`. `ExcecaoPermuta` passa de `planned` a `implemented`.
+
+- Migration **0059**: `permuta_excecao_manual` (soft delete, índice parcial de uma ativa por adto, CHECK de
+  10 a 500 e de remoção pareada) e extensão da guarda da 0055 (`bloqueada + permutado-fora-do-painel`
+  proibido em `permuta_adiantamento` e no snapshot).
+- T7 no pós-passe de `computeCandidatas`; o cálculo vence com `BUSINESS_WARN` pt-BR (transitório para
+  `detail-indisponivel`). Rotas admin `POST`/`DELETE /permutas/adiantamentos/:docCod/excecao-manual`, autor
+  só do JWT (401 sem identidade). `/permutas/gestao` expõe `excecaoManual`; o Excel mantém o motivo cru e
+  ganha 4 colunas de exceção (ADR-0047 D5 e `expor-no-painel` ajustados ao implementado).
+- Coverage: `entities_implemented` 11→12, `planned` 6→5, pct 58→63; `PermutaCandidata.impl_pct` 95→100;
+  removido o `open_gap` "ADR-0047 à frente do código".
+
+## v0.26.0 — exceção manual "permutado fora do painel" (2026-09-15, ADR-0047)
+
+Feature: `permutas-excecao-manual` (branch `fix/permutas-excecao-manual`, base `main` v0.36.5).
+
+- **NEW entity `ExcecaoPermuta` (`planned`)** — configuração mantida pelo analista, no padrão do
+  `ClienteFiltro`: chave `adiantamentoDocCod`, justificativa obrigatória (10 a 500), autor e data do JWT
+  (ADR-0006), remoção por soft-delete, no máximo uma ativa por adto.
+- **NEW transição T7** `BLOQUEADA(sem-saldo-permutar) → JA_PERMUTADO`, só com exceção ativa e guarda
+  satisfeita, aplicada na eleição. Reverso ao desfazer. **NEW motivo informativo**
+  `permutado-fora-do-painel`. O ERP vence: `valorPermutado > 0` dá `ja-permutado`; guarda falha dá o estado
+  calculado com `BUSINESS_WARN`. I3 e T1–T6 não mudam; nenhum estado novo; nenhuma escrita no ERP.
+- **Painel:** "Já permutado" + tag "Exceção manual", detalhe com justificativa/autor/data e "Desfazer
+  exceção"; fora do Histórico; exportação "Permutado fora do painel (exceção manual)".
+- Evidência: adto 8721 (R$ 20.373.009,89), permutado por baixas cruzadas manuais 21 ↔ 198 em 30/04,
+  com Valor permutado = 0 no ERP. Rejeitadas: regra automática pela conta da baixa, estorno e refazer no
+  Conexos, `UPDATE` manual no banco, estado novo `EXCECAO`.
+- Coverage: `entities_total` 18→19 (planned 5→6, pct 61→58); `PermutaCandidata.impl_pct` 100→95 e
+  `open_gap` "ADR-0047 à frente do código" em `ExcecaoPermuta`, `PermutaCandidata` e
+  `elegibilidade-permuta`. Drift de contagem de entidades preexistente mantido (só o +1 aplicado). A
+  ADR-0045 segue reservada por `feat/metricas-ciclo`.
+
 ## v0.25.0 — resíduo de R$1,00 é zero, a falta de D.I não mascara pagamento, e o saldo restante não conta o consumido duas vezes (2026-09-14, ADR-0046)
 
 Feature: `permutas-saldo-ordem-centavos` (branch `fix/permutas-saldo-ordem-centavos`, base `main`).

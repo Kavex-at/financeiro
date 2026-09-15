@@ -41,6 +41,12 @@ export const ESTADO_ELEGIBILIDADE = {
      * Motivo informativo: `MOTIVO_BLOQUEIO.JA_PERMUTADO` (mesmo padrão de
      * `composto-nm`/`CASAMENTO_MANUAL` e `cliente-filtro`/`PERMUTA_MANUAL`).
      * ADR-0043 · state-machine `elegibilidade-permuta-candidata` (T6).
+     *
+     * **Segunda origem (T7, ADR-0047): exceção manual.** Um adto calculado como
+     * `BLOQUEADA / sem-saldo-permutar` com `ExcecaoPermuta` ativa (o analista
+     * atestou que ele foi permutado por baixas manuais fora do fluxo do Conexos)
+     * chega aqui com o motivo `MOTIVO_BLOQUEIO.PERMUTADO_FORA_DO_PAINEL`. É o ÚNICO
+     * caminho para esse motivo; o fluxo automático (T1–T6) não muda.
      */
     JA_PERMUTADO: 'ja-permutado',
 } as const;
@@ -92,6 +98,14 @@ export const MOTIVO_BLOQUEIO = {
      * elegível como bloqueada por mérito. Re-avaliável na próxima run.
      */
     DETAIL_INDISPONIVEL: 'detail-indisponivel',
+    /**
+     * Motivo informativo do estado `JA_PERMUTADO` quando a classificação vem de uma
+     * **exceção manual** (ADR-0047, T7): o ERP diz `valorPermutado = 0`, mas o
+     * analista registrou, com justificativa, que a permuta aconteceu fora do fluxo
+     * de permuta do Conexos. Só é aplicado sobre `BLOQUEADA / SEM_SALDO_PERMUTAR`
+     * recalculado na própria run — se o dado do ERP mudar, o cálculo vence.
+     */
+    PERMUTADO_FORA_DO_PAINEL: 'permutado-fora-do-painel',
 } as const;
 
 export type MotivoBloqueio = (typeof MOTIVO_BLOQUEIO)[keyof typeof MOTIVO_BLOQUEIO];

@@ -5,12 +5,14 @@ import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import AlocacaoEmBorderoError from '../domain/errors/AlocacaoEmBorderoError.js';
 import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
+import ExcecaoPermutaRecusadaError from '../domain/errors/ExcecaoPermutaRecusadaError.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento.js';
 import { LOG_TYPE } from '../domain/interface/log/LogInterface.js';
 import LogService from '../domain/service/LogService.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import ErpErrorInterpreter from '../domain/service/permutas/ErpErrorInterpreter.js';
+import ExcecaoPermutaService from '../domain/service/permutas/ExcecaoPermutaService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
 import PermutaExecucaoRepository from '../domain/repository/permutas/PermutaExecucaoRepository.js';
@@ -158,6 +160,14 @@ const buscarInvoicesQuerySchema = z.object({
     priCod: z.string().trim().min(1),
     filCod: z.coerce.number().int().positive(),
     adtoDocCod: z.string().trim().min(1).optional(),
+});
+
+/**
+ * Zod no boundary — corpo do POST /adiantamentos/:docCod/excecao-manual (ADR-0047).
+ * Só a justificativa: autor e data vêm do servidor e do JWT, nunca do corpo (ADR-0006).
+ */
+const excecaoManualBodySchema = z.object({
+    justificativa: z.string().trim().min(10).max(500),
 });
 
 /** Zod no boundary — corpo do POST /alocacoes (alocação manual N:M). */
@@ -411,6 +421,89 @@ router.delete(
                     error: error.code,
                     message: error.userMessage,
                     details: error.details,
+                });
+                return;
+            }
+            throw error;
+        }
+    }),
+);
+
+/**
+ * Identidade de auditoria da exceção manual: `sub` do JWT verificado, com fallback no
+ * `email`. Sem nenhum dos dois devolve `undefined` e a rota recusa (401) — a trilha da
+ * exceção não aceita autor `'unknown'` (I-Exc-4).
+ */
+const autorDoToken = (user?: { sub?: string; email?: string }): string | undefined => {
+    const sub = user?.sub?.trim();
+    if (sub) return sub;
+    const email = user?.email?.trim();
+    return email ? email : undefined;
+};
+
+const IDENTIDADE_AUSENTE = {
+    error: 'IDENTIDADE_AUSENTE',
+    message: 'Não foi possível identificar o usuário no token. Entre de novo e repita a ação.',
+};
+
+// POST /permutas/adiantamentos/:docCod/excecao-manual — marca o adto como "permutado fora
+// do painel" (ADR-0047). Admin. 400 corpo inválido · 401 sem identidade · 404 adto fora do
+// backlog · 409 já ativa · 422 guarda (só `bloqueada/sem-saldo-permutar`).
+router.post(
+    '/adiantamentos/:docCod/excecao-manual',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = excecaoManualBodySchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const criadoPor = autorDoToken(req.user);
+        if (criadoPor === undefined) {
+            res.status(401).json(IDENTIDADE_AUSENTE);
+            return;
+        }
+        const docCod = String(req.params.docCod);
+        const service = container.resolve(ExcecaoPermutaService);
+        try {
+            await service.marcar({ docCod, justificativa: parsed.data.justificativa, criadoPor });
+            res.json({ adiantamentoDocCod: docCod });
+        } catch (error) {
+            if (error instanceof ExcecaoPermutaRecusadaError) {
+                res.status(error.statusCode).json({
+                    error: error.code,
+                    message: error.userMessage,
+                });
+                return;
+            }
+            throw error;
+        }
+    }),
+);
+
+// DELETE /permutas/adiantamentos/:docCod/excecao-manual — desfaz a exceção ativa (soft
+// delete com autor e data). Admin. 401 sem identidade · 404 sem exceção ativa.
+router.delete(
+    '/adiantamentos/:docCod/excecao-manual',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const removidoPor = autorDoToken(req.user);
+        if (removidoPor === undefined) {
+            res.status(401).json(IDENTIDADE_AUSENTE);
+            return;
+        }
+        const docCod = String(req.params.docCod);
+        const service = container.resolve(ExcecaoPermutaService);
+        try {
+            await service.desfazer({ docCod, removidoPor });
+            res.json({ adiantamentoDocCod: docCod });
+        } catch (error) {
+            if (error instanceof ExcecaoPermutaRecusadaError) {
+                res.status(error.statusCode).json({
+                    error: error.code,
+                    message: error.userMessage,
                 });
                 return;
             }

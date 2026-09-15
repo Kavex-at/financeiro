@@ -112,6 +112,20 @@ export interface PermutaDetalhe {
   variacaoDelta?: number
 }
 
+/**
+ * Exceção manual "permutado fora do painel" de um adto (ADR-0047). Presente só quando há
+ * exceção ativa. `ativa` = APLICADA (adto em "Já permutado"); `false` = o cálculo do ERP
+ * venceu e a exceção segue registrada, sinalizada como inativa.
+ */
+export interface ExcecaoManualDetalhe {
+  justificativa: string
+  /** Identidade do token de quem marcou (gravada no servidor). */
+  criadoPor: string
+  /** ISO 8601. */
+  criadoEm: string
+  ativa: boolean
+}
+
 /** Adiantamento PROFORMA pendente de permuta (linha da visão geral). */
 export interface PermutaPendente {
   docCod: string
@@ -147,6 +161,8 @@ export interface PermutaPendente {
   /** Múltipla AUTOMÁTICA: adto cobre todas as invoices do processo (adto ≥ Σ invoices) — aba
    * "Automáticas", baixa auto-aloca. (Regra 2026-06-24) */
   autoElegivel?: boolean
+  /** Exceção manual ativa do adto (ADR-0047). */
+  excecaoManual?: ExcecaoManualDetalhe
   /** Micro-informações exibidas ao expandir a linha (qualquer status). */
   detalhe?: PermutaDetalhe
 }

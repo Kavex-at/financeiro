@@ -80,6 +80,24 @@ export interface AlocacaoDetalhe {
     criadoEm: string;
 }
 
+/**
+ * Exceção manual "permutado fora do painel" de um adto (ADR-0047), exibida na linha e no
+ * detalhe. Só existe quando há exceção ATIVA (não removida) para o adto.
+ */
+export interface ExcecaoManualDetalhe {
+    justificativa: string;
+    /** Identidade do JWT de quem marcou (ADR-0006). */
+    criadoPor: string;
+    /** ISO 8601. */
+    criadoEm: string;
+    /**
+     * `true` quando a exceção está APLICADA: o adto aparece como `ja-permutado` com o motivo
+     * `permutado-fora-do-painel`. `false` quando o cálculo do ERP venceu (I-Exc-2) — a exceção
+     * segue registrada e a tela a sinaliza como inativa até alguém desfazê-la.
+     */
+    ativa: boolean;
+}
+
 export interface PermutaPendente {
     docCod: string;
     filCod: number;
@@ -118,6 +136,8 @@ export interface PermutaPendente {
      * auto-aloca (adto → cada invoice) num clique. `Σ invoices > adto` segue manual. (Regra 2026-06-24)
      */
     autoElegivel?: boolean;
+    /** Exceção manual ativa do adto (ADR-0047). Ausente quando não há exceção ativa. */
+    excecaoManual?: ExcecaoManualDetalhe;
     /** Micro-informações exibidas ao expandir a linha (qualquer status). */
     detalhe?: PermutaDetalhe;
 }

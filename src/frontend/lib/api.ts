@@ -266,6 +266,61 @@ export async function criarAlocacao(
 }
 
 /**
+ * Lançado por `marcarExcecaoManual()`/`desfazerExcecaoManual()` quando o backend recusa por regra
+ * de negócio (ADR-0047): 422 (guarda — só "Sem saldo a permutar"), 409 (já existe exceção ativa)
+ * ou 404 (adto fora do backlog / sem exceção ativa). A mensagem é a do backend, em pt-BR.
+ */
+export class ExcecaoManualRecusadaError extends Error {
+  constructor(message = 'A exceção manual foi recusada.') {
+    super(message)
+    this.name = 'ExcecaoManualRecusadaError'
+  }
+}
+
+const STATUS_RECUSA_EXCECAO = new Set([404, 409, 422])
+
+/** Traduz a resposta de erro das rotas de exceção manual. */
+async function lancarErroExcecao(res: Response): Promise<never> {
+  let body: { error?: string; message?: string } | undefined
+  try {
+    body = await res.json()
+  } catch {}
+  if (STATUS_RECUSA_EXCECAO.has(res.status)) {
+    throw new ExcecaoManualRecusadaError(body?.message)
+  }
+  const detail = body?.error ? ` — ${body.error}` : ''
+  throw new Error(`API ${res.status}${detail}`)
+}
+
+/**
+ * Marca o adiantamento como "permutado fora do painel" (ADR-0047). Envia SÓ a justificativa:
+ * autor e data são gravados pelo backend a partir do token.
+ */
+export async function marcarExcecaoManual(docCod: string, justificativa: string): Promise<void> {
+  const res = await apiFetch(
+    `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/excecao-manual`,
+    {
+      method: 'POST',
+      headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ justificativa }),
+    },
+  )
+  if (!res.ok) await lancarErroExcecao(res)
+}
+
+/** Desfaz a exceção manual ativa do adiantamento (soft delete com autor e data no backend). */
+export async function desfazerExcecaoManual(docCod: string): Promise<void> {
+  const res = await apiFetch(
+    `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/excecao-manual`,
+    {
+      method: 'DELETE',
+      headers: await withAuthHeaders(),
+    },
+  )
+  if (!res.ok) await lancarErroExcecao(res)
+}
+
+/**
  * Reconcilia (baixa no ERP `fin010`) as alocações de um adiantamento — Fase 3 (ADR-0013).
  * `dryRun=true` força o preview (monta/loga o payload, sem POST). O backend é dry-run por
  * padrão (gated por CONEXOS_WRITE_ENABLED/DRY_RUN); a escrita real exige as flags ligadas.

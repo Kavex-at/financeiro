@@ -10,6 +10,7 @@
 |--------|---------|---------|---------------|
 | `Adiantamento` | vinculado por `priCod` a | `Invoice` | 1—1 na permuta automática (P0-6: 1 invoice FINALIZADA); N:M → casamento-manual/permuta-manual |
 | `Adiantamento` | tem declaração (Gate 4) | `DeclaracaoImportacao` | 1—1 (D.I XOR DUIMP, I2) — dispensada na permuta-manual (cliente-filtro) |
+| `Adiantamento` | marcado por (via `docCod`) | `ExcecaoPermuta` | 1—N (no máximo 1 ativa; soft-delete) — `BLOQUEADA/sem-saldo-permutar` → `JA_PERMUTADO` (T7, ADR-0047) |
 | `Adiantamento` | roteado por (via `pesCod`) | `ClienteFiltro` | N—1 (importador cadastrado → permuta-manual, ADR-0007) |
 | `PermutaCandidata` | tem lado-débito | `Adiantamento` | 1—1 |
 | `PermutaCandidata` | tem lado-crédito (quando casada) | `Invoice` | 1—1 (casada = exatamente 1 invoice FINALIZADA, P0-6) |
