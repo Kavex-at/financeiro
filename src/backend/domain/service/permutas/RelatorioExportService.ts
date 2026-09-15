@@ -187,6 +187,12 @@ export default class RelatorioExportService {
             { header: 'Variacao (delta)', key: 'variacaoDelta', width: 16 },
             { header: 'Auto-elegivel', key: 'autoElegivel', width: 12 },
             { header: 'Saldo restante (moeda neg.)', key: 'saldoRestante', width: 24 },
+            // Exceção manual "permutado fora do painel" (ADR-0047). `Motivo bloqueio` segue com
+            // o código cru, como os demais motivos; o rótulo humano vive nesta coluna.
+            { header: 'Exceção manual', key: 'excecaoManual', width: 36 },
+            { header: 'Justificativa exceção', key: 'excecaoJustificativa', width: 48 },
+            { header: 'Autor exceção', key: 'excecaoAutor', width: 24 },
+            { header: 'Data exceção', key: 'excecaoData', width: 12 },
         ],
         linhas: pendentes.map((p) => {
             const d = p.detalhe;
@@ -218,6 +224,10 @@ export default class RelatorioExportService {
                 variacaoDelta: d?.variacaoDelta ?? null,
                 autoElegivel: p.autoElegivel === true,
                 saldoRestante: p.saldoRestante ?? null,
+                excecaoManual: this.rotuloExcecao(p),
+                excecaoJustificativa: p.excecaoManual?.justificativa ?? null,
+                excecaoAutor: p.excecaoManual?.criadoPor ?? null,
+                excecaoData: this.soData(p.excecaoManual?.criadoEm),
             };
         }),
     });
@@ -433,6 +443,14 @@ export default class RelatorioExportService {
 
     /** Extrai só a data (YYYY-MM-DD) de um ISO timestamp. `undefined` → null. */
     private soData = (iso?: string): string | null => (iso ? iso.slice(0, 10) : null);
+
+    /** Rótulo da coluna "Exceção manual": aplicada, registrada e não aplicada, ou vazio. */
+    private rotuloExcecao = (p: PermutaPendente): string | null => {
+        if (p.excecaoManual === undefined) return null;
+        return p.excecaoManual.ativa
+            ? 'Permutado fora do painel (exceção manual)'
+            : 'Registrada, não aplicada';
+    };
 
     /** Nome do arquivo: `permutas-<tipo>-<data-ingestao>.xlsx`. */
     private nomeArquivo = (tipo: RelatorioTipo, gestao: GestaoPermutasResponse): string => {
