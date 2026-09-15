@@ -117,7 +117,7 @@ Marcar e desfazer escrevem só no nosso banco. I4 intocado.
   qualquer trading com histórico anterior à ferramenta tem permutas por lançamento manual. A evidência
   hoje é **um cliente e um documento**. Se o uso crescer além de casos isolados, reabrir a alternativa (a)
   com dados.
-- Ontologia à frente do código até a implementação desta branch entrar (`_coverage.json` registra).
+- Implementada na mesma branch (ontologia v0.26.1): migration 0059, que também estende a guarda de estado colapsado da 0055 ao motivo novo; rotas admin; payload `excecaoManual`; UI.
 
 ## Alternativas rejeitadas
 

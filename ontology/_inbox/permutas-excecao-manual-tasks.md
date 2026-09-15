@@ -19,6 +19,31 @@ handler/job novo nem `infra/`.
 
 ---
 
+## Decisões do orquestrador (2026-09-15) — prevalecem sobre os ACs abaixo onde divergirem
+
+1. **Migration 0059 também estende a guarda da 0055** (defesa em profundidade): as CHECKs
+   `permuta_adiantamento_sem_estado_colapsado` e `permuta_candidata_snapshot_sem_status_colapsado`
+   passam a proibir também `bloqueada + permutado-fora-do-painel`, redefinidas de forma idempotente
+   (`DROP CONSTRAINT IF EXISTS` + `ADD ... NOT VALID` + `VALIDATE`) **dentro da 0059**. Os arquivos
+   0054/0055 continuam intocados (o AC "`git diff --stat src/backend/migrations/005[45]*` vazio" segue
+   valendo). Os reverses da 0054/0055 derrubam as CHECKs pelo nome, então seguem corretos: sem rollback
+   novo e `rollbacks.test.ts` inalterado.
+2. **Autor só do JWT, sem `'unknown'`.** Nas rotas de exceção o autor é `req.user.sub`, com fallback
+   `req.user.email`; sem nenhum dos dois a rota **recusa com 401** e não chama o serviço (substitui o
+   `?? 'unknown'` da Task 5).
+3. Exceção ativa duplicada → **409**. Detalhe indisponível (`detail-indisponivel`) numa run → o estado
+   calculado vence e o `BUSINESS_WARN` pt-BR diz que é transitório.
+4. Export Excel: a coluna `Motivo bloqueio` segue com o código cru; entram as 4 colunas de exceção (A6).
+   A frase de exportação da ADR-0047 (e `expor-no-painel.md`) é ajustada para refletir exatamente isso.
+5. Justificativa: o DesignSystemReviewer decidiu **criar o átomo `components/ui/textarea.tsx`**
+   (espelhando `input.tsx`), com label acessível, contador e validação 10–500.
+6. Desfazer com efeito imediato só reverte a linha se o motivo gravado for `permutado-fora-do-painel`
+   (WHERE do `reclassificarAdiantamento`). O Histórico filtra por borderô (`statusPorAdto`), não por
+   estado, então a exceção sem borderô do painel não aparece lá.
+7. Mensagens/logs ao operador em pt-BR; identificadores e assuntos de commit em inglês.
+
+---
+
 ## Achados do scoping (medidos no worktree @ 2f03116, não redescobrir)
 
 ### A1. Precedente cliente-filtro (o que espelhar e o que NÃO espelhar)
@@ -132,18 +157,18 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/backend/domain/repository/permutas/ExcecaoPermutaRepository.test.ts` (novo, padrão `ClienteFiltroRepository.test.ts`)
 
 **Acceptance criteria:**
-- [ ] `aplicarExcecoes` (puro): candidata 8721 (`BLOQUEADA`, `sem-saldo-permutar`, `pago=true`, `valorPermutar=0`, sem `valorPermutado`) + exceção ativa para `8721` → `estadoElegibilidade=JA_PERMUTADO`, `motivoBloqueio='permutado-fora-do-painel'`, `gatesAvaliados` **inalterado** (Gate 2 segue `passed=false`)
-- [ ] mesma candidata **sem** exceção → inalterada (mesma referência ou deep-equal)
-- [ ] exceção ativa + calculado `PERMUTA_MANUAL/cliente-filtro` ou `BLOQUEADA/nao-pago` (ex.: `valorPermutar` voltou a 5.000) → estado calculado mantido e 1 aviso `{ docCod, estadoCalculado, motivoCalculado }` devolvido
-- [ ] exceção ativa + calculado `JA_PERMUTADO/ja-permutado` (`valorPermutado > 0`) → mantém `ja-permutado` (o motivo do ERP vence) e emite aviso
-- [ ] exceção ativa + calculado `BLOQUEADA/detail-indisponivel` → mantém e emite aviso marcado `transiente: true`
-- [ ] exceções de `docCod` sem candidata na run → ignoradas, sem aviso nem erro
-- [ ] `EleicaoPermutasService.computeCandidatas`: com `listAtivas` mockado com `[8721]` e o detalhe `{ valorPermutar: 0, valorAberto: 0.02 }` → candidata `JA_PERMUTADO/permutado-fora-do-painel`; `totals.totalJaPermutado === 1`, `totals.totalBloqueadas === 0`, `bloqueadasByMotivo` sem `sem-saldo-permutar`
-- [ ] `computeCandidatas` com exceção ativa e `valorPermutar=5000` → **não** aplica e `logService.warn` é chamado 1× com `type: LOG_TYPE.BUSINESS_WARN`, mensagem pt-BR e `data` com `docCod`, `estadoCalculado`, `motivoCalculado`, `flowId`
-- [ ] `listAtivas` é chamado **exatamente 1×** por `computeCandidatas`, com 2 filiais e N adtos (sem N+1)
-- [ ] `ExcecaoPermutaRepository`: `listAtivas` tem SQL com `WHERE removido_em IS NULL`; `insertAtiva(tx, …)` usa `$adiantamentoDocCod`, `$justificativa`, `$criadoPor`; `softDeleteAtiva(tx, …)` faz `SET removido_por = $removidoPor, removido_em = now() WHERE adiantamento_doc_cod = $adiantamentoDocCod AND removido_em IS NULL` e devolve o rowCount; `findAtiva` idem. Nenhum `${}` com dado
-- [ ] Os testes existentes de `EleicaoPermutasService.test.ts` passam só com o mock novo injetado (sem mudar asserções)
-- [ ] `cd src/backend && npx jest ExcecaoPermuta EleicaoPermutasService` → os testes novos **falham** (vermelho registrado antes das Tasks 2-3)
+- [x] `aplicarExcecoes` (puro): candidata 8721 (`BLOQUEADA`, `sem-saldo-permutar`, `pago=true`, `valorPermutar=0`, sem `valorPermutado`) + exceção ativa para `8721` → `estadoElegibilidade=JA_PERMUTADO`, `motivoBloqueio='permutado-fora-do-painel'`, `gatesAvaliados` **inalterado** (Gate 2 segue `passed=false`)
+- [x] mesma candidata **sem** exceção → inalterada (mesma referência ou deep-equal)
+- [x] exceção ativa + calculado `PERMUTA_MANUAL/cliente-filtro` ou `BLOQUEADA/nao-pago` (ex.: `valorPermutar` voltou a 5.000) → estado calculado mantido e 1 aviso `{ docCod, estadoCalculado, motivoCalculado }` devolvido
+- [x] exceção ativa + calculado `JA_PERMUTADO/ja-permutado` (`valorPermutado > 0`) → mantém `ja-permutado` (o motivo do ERP vence) e emite aviso
+- [x] exceção ativa + calculado `BLOQUEADA/detail-indisponivel` → mantém e emite aviso marcado `transiente: true`
+- [x] exceções de `docCod` sem candidata na run → ignoradas, sem aviso nem erro
+- [x] `EleicaoPermutasService.computeCandidatas`: com `listAtivas` mockado com `[8721]` e o detalhe `{ valorPermutar: 0, valorAberto: 0.02 }` → candidata `JA_PERMUTADO/permutado-fora-do-painel`; `totals.totalJaPermutado === 1`, `totals.totalBloqueadas === 0`, `bloqueadasByMotivo` sem `sem-saldo-permutar`
+- [x] `computeCandidatas` com exceção ativa e `valorPermutar=5000` → **não** aplica e `logService.warn` é chamado 1× com `type: LOG_TYPE.BUSINESS_WARN`, mensagem pt-BR e `data` com `docCod`, `estadoCalculado`, `motivoCalculado`, `flowId`
+- [x] `listAtivas` é chamado **exatamente 1×** por `computeCandidatas`, com 2 filiais e N adtos (sem N+1)
+- [x] `ExcecaoPermutaRepository`: `listAtivas` tem SQL com `WHERE removido_em IS NULL`; `insertAtiva(tx, …)` usa `$adiantamentoDocCod`, `$justificativa`, `$criadoPor`; `softDeleteAtiva(tx, …)` faz `SET removido_por = $removidoPor, removido_em = now() WHERE adiantamento_doc_cod = $adiantamentoDocCod AND removido_em IS NULL` e devolve o rowCount; `findAtiva` idem. Nenhum `${}` com dado
+- [x] Os testes existentes de `EleicaoPermutasService.test.ts` passam só com o mock novo injetado (sem mudar asserções)
+- [x] `cd src/backend && npx jest ExcecaoPermuta EleicaoPermutasService` → os testes novos **falham** (vermelho registrado antes das Tasks 2-3)
 
 **Dependencies:** none
 
@@ -157,15 +182,15 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/backend/domain/repository/permutas/ExcecaoPermutaRepository.ts` (novo, `@injectable()`): `listAtivas()`, `findAtiva(docCod)`, `insertAtiva(tx, input)`, `softDeleteAtiva(tx, input)`
 
 **Acceptance criteria:**
-- [ ] A 0059 cria `permuta_excecao_manual (id BIGSERIAL PRIMARY KEY, adiantamento_doc_cod TEXT NOT NULL, justificativa TEXT NOT NULL, criado_por TEXT NOT NULL, criado_em TIMESTAMPTZ NOT NULL DEFAULT now(), removido_por TEXT, removido_em TIMESTAMPTZ)` com `CREATE TABLE IF NOT EXISTS`
-- [ ] `CHECK (char_length(justificativa) BETWEEN 10 AND 500)` e `CHECK ((removido_em IS NULL) = (removido_por IS NULL))`, idempotentes (`DROP CONSTRAINT IF EXISTS` + `ADD`, ou inline no `CREATE TABLE IF NOT EXISTS`)
-- [ ] `CREATE UNIQUE INDEX IF NOT EXISTS uq_permuta_excecao_manual_ativa ON permuta_excecao_manual (adiantamento_doc_cod) WHERE removido_em IS NULL`
-- [ ] Cabeçalho da migration explica: por que tabela e não UPDATE (a ingestão sobrescreve), soft delete como trilha (I5), por que não há FK nem reverse (A4), referência à ADR-0047. SQL estático, sem valor interpolado
-- [ ] Aplicar a 0059 duas vezes seguidas (`psql -f` 2×, banco local/dev) não dá erro
-- [ ] **Sem** `rollbacks/0059_*`: `migrations/rollbacks.test.ts` passa sem alteração
-- [ ] Nenhuma CHECK de `motivo_bloqueio` alterada (A3): `git diff --stat src/backend/migrations/005[45]*` vazio
-- [ ] Testes de repositório da Task 1 passam; o mapeamento de linha não usa `!` nem cast solto (`removido_*` opcionais via guard `!= null`)
-- [ ] `cd src/backend && npm run typecheck && npm run lint` ✅
+- [x] A 0059 cria `permuta_excecao_manual (id BIGSERIAL PRIMARY KEY, adiantamento_doc_cod TEXT NOT NULL, justificativa TEXT NOT NULL, criado_por TEXT NOT NULL, criado_em TIMESTAMPTZ NOT NULL DEFAULT now(), removido_por TEXT, removido_em TIMESTAMPTZ)` com `CREATE TABLE IF NOT EXISTS`
+- [x] `CHECK (char_length(justificativa) BETWEEN 10 AND 500)` e `CHECK ((removido_em IS NULL) = (removido_por IS NULL))`, idempotentes (`DROP CONSTRAINT IF EXISTS` + `ADD`, ou inline no `CREATE TABLE IF NOT EXISTS`)
+- [x] `CREATE UNIQUE INDEX IF NOT EXISTS uq_permuta_excecao_manual_ativa ON permuta_excecao_manual (adiantamento_doc_cod) WHERE removido_em IS NULL`
+- [x] Cabeçalho da migration explica: por que tabela e não UPDATE (a ingestão sobrescreve), soft delete como trilha (I5), por que não há FK nem reverse (A4), referência à ADR-0047. SQL estático, sem valor interpolado
+- [x] Aplicar a 0059 duas vezes seguidas (`psql -f` 2×, banco local/dev) não dá erro
+- [x] **Sem** `rollbacks/0059_*`: `migrations/rollbacks.test.ts` passa sem alteração
+- [x] Nenhuma CHECK de `motivo_bloqueio` alterada (A3): `git diff --stat src/backend/migrations/005[45]*` vazio
+- [x] Testes de repositório da Task 1 passam; o mapeamento de linha não usa `!` nem cast solto (`removido_*` opcionais via guard `!= null`)
+- [x] `cd src/backend && npm run typecheck && npm run lint` ✅
 
 **Dependencies:** Task 1
 
@@ -177,14 +202,14 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/backend/domain/service/permutas/EleicaoPermutasService.ts`: construtor `:195-210` (+ `ExcecaoPermutaRepository`, `ExcecaoPermutaService`); `computeCandidatas` `:396-402` (depois de `perFilial.flat()`/`todasInvoices`, antes de `contarPorEstado`: `listAtivas()` → `aplicarExcecoes` → um `logService.warn` por aviso); docblock da classe `:184-191` (nova etapa)
 
 **Acceptance criteria:**
-- [ ] Todos os testes da Task 1 passam
-- [ ] `guardaSatisfeita` ⇔ `estado === ESTADO_ELEGIBILIDADE.BLOQUEADA && motivo === MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR`, usando constantes e nunca string crua
-- [ ] Mensagem do warn em pt-BR, distinta para `transiente` (ex.: "Exceção manual de permuta não aplicada: estado calculado mudou no ERP" vs "… detalhe do Conexos indisponível nesta run")
-- [ ] `ElegibilidadeService.ts` e o roteamento de cliente-filtro (`EleicaoPermutasService.ts:812-833`) **não mudam** (`git diff` sem hunk nesses trechos)
-- [ ] `BALDE_DO_ESTADO`, `contarPorEstado` e `countByMotivo` não mudam; `totals` sai da coleção pós-exceção (a mesma do snapshot)
-- [ ] Os testes existentes de `IngestaoPermutasService.test.ts` e `PermutaSnapshotRepository.test.ts` passam sem mudar asserções
-- [ ] `cd src/backend && npm run typecheck && npm run lint && npm test` ✅
-- [ ] PatternGuardian ✅ (DI tsyringe, arrow methods, access modifiers, export de classe)
+- [x] Todos os testes da Task 1 passam
+- [x] `guardaSatisfeita` ⇔ `estado === ESTADO_ELEGIBILIDADE.BLOQUEADA && motivo === MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR`, usando constantes e nunca string crua
+- [x] Mensagem do warn em pt-BR, distinta para `transiente` (ex.: "Exceção manual de permuta não aplicada: estado calculado mudou no ERP" vs "… detalhe do Conexos indisponível nesta run")
+- [x] `ElegibilidadeService.ts` e o roteamento de cliente-filtro (`EleicaoPermutasService.ts:812-833`) **não mudam** (`git diff` sem hunk nesses trechos)
+- [x] `BALDE_DO_ESTADO`, `contarPorEstado` e `countByMotivo` não mudam; `totals` sai da coleção pós-exceção (a mesma do snapshot)
+- [x] Os testes existentes de `IngestaoPermutasService.test.ts` e `PermutaSnapshotRepository.test.ts` passam sem mudar asserções
+- [x] `cd src/backend && npm run typecheck && npm run lint && npm test` ✅
+- [x] PatternGuardian ✅ (DI tsyringe, arrow methods, access modifiers, export de classe)
 
 **Dependencies:** Task 2
 
@@ -197,19 +222,19 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/backend/domain/repository/permutas/PermutaRelationalRepository.test.ts` (`reclassificarAdiantamento`)
 
 **Acceptance criteria:**
-- [ ] `marcar({ docCod: '8721', justificativa, criadoPor })` com a linha `bloqueada/sem-saldo-permutar`, `stale=false` → dentro de **um** `withTransaction`: `insertAtiva` + `reclassificarAdiantamento(tx, { docCod, de: {bloqueada, sem-saldo-permutar}, para: {ja-permutado, permutado-fora-do-painel} })`
-- [ ] `marcar` com a linha em `nao-pago`, `data-base-indisponivel`, `elegivel`, `permuta-manual` (`cliente-filtro`), `ja-permutado` (`ja-permutado`) → lança `ExcecaoPermutaRecusadaError` (`statusCode 422`, `userMessage` pt-BR citando o motivo atual pelo rótulo), sem `insertAtiva` nem transação aberta
-- [ ] `marcar` com linha inexistente ou `stale=true` → erro `statusCode 404`
-- [ ] `marcar` com exceção já ativa (`findAtiva` ≠ null, ou violação `23505` do índice parcial dentro da tx) → erro `statusCode 409`
-- [ ] Reclassificação concorrente (`reclassificarAdiantamento` devolve 0 porque o `WHERE` com o estado de origem não casou) → rollback da tx e 422 (sem exceção órfã gravada)
-- [ ] `desfazer({ docCod, removidoPor })` com exceção aplicada → na mesma tx `softDeleteAtiva` + `reclassificarAdiantamento(de: {ja-permutado, permutado-fora-do-painel}, para: {bloqueada, sem-saldo-permutar})`; com exceção **inativa** (linha em outro estado) → só `softDeleteAtiva`, reclassificação devolvendo 0 **não** é erro
-- [ ] `desfazer` sem exceção ativa → `statusCode 404`
-- [ ] `PermutaRelationalRepository.reclassificarAdiantamento`: SQL `UPDATE permuta_adiantamento SET estado_elegibilidade = $paraEstado, motivo_bloqueio = $paraMotivo WHERE doc_cod = $docCod AND NOT stale AND estado_elegibilidade = $deEstado AND motivo_bloqueio = $deMotivo`, 100% parametrizado, retorna rowCount
-- [ ] Rota `POST /permutas/adiantamentos/:docCod/excecao-manual` body `{ justificativa: 'ab' }`, `''` ou só espaços → **400** `{ error: 'invalid body' }`; 501 caracteres → 400; body válido → 200 `{ adiantamentoDocCod }` e o serviço recebe `criadoPor === req.user.sub` do token (um `criadoPor` enviado no body é **ignorado**)
-- [ ] Serviço lança 422 → rota responde 422 `{ error: code, message: userMessage }`; 404 e 409 idem
-- [ ] `DELETE /permutas/adiantamentos/:docCod/excecao-manual` → 200 e `removidoPor === req.user.sub`
-- [ ] RBAC: role `authenticated` → **403** nas duas rotas novas (entradas adicionadas em `:614-622`)
-- [ ] Os testes novos **falham** antes da Task 5
+- [x] `marcar({ docCod: '8721', justificativa, criadoPor })` com a linha `bloqueada/sem-saldo-permutar`, `stale=false` → dentro de **um** `withTransaction`: `insertAtiva` + `reclassificarAdiantamento(tx, { docCod, de: {bloqueada, sem-saldo-permutar}, para: {ja-permutado, permutado-fora-do-painel} })`
+- [x] `marcar` com a linha em `nao-pago`, `data-base-indisponivel`, `elegivel`, `permuta-manual` (`cliente-filtro`), `ja-permutado` (`ja-permutado`) → lança `ExcecaoPermutaRecusadaError` (`statusCode 422`, `userMessage` pt-BR citando o motivo atual pelo rótulo), sem `insertAtiva` nem transação aberta
+- [x] `marcar` com linha inexistente ou `stale=true` → erro `statusCode 404`
+- [x] `marcar` com exceção já ativa (`findAtiva` ≠ null, ou violação `23505` do índice parcial dentro da tx) → erro `statusCode 409`
+- [x] Reclassificação concorrente (`reclassificarAdiantamento` devolve 0 porque o `WHERE` com o estado de origem não casou) → rollback da tx e 422 (sem exceção órfã gravada)
+- [x] `desfazer({ docCod, removidoPor })` com exceção aplicada → na mesma tx `softDeleteAtiva` + `reclassificarAdiantamento(de: {ja-permutado, permutado-fora-do-painel}, para: {bloqueada, sem-saldo-permutar})`; com exceção **inativa** (linha em outro estado) → só `softDeleteAtiva`, reclassificação devolvendo 0 **não** é erro
+- [x] `desfazer` sem exceção ativa → `statusCode 404`
+- [x] `PermutaRelationalRepository.reclassificarAdiantamento`: SQL `UPDATE permuta_adiantamento SET estado_elegibilidade = $paraEstado, motivo_bloqueio = $paraMotivo WHERE doc_cod = $docCod AND NOT stale AND estado_elegibilidade = $deEstado AND motivo_bloqueio = $deMotivo`, 100% parametrizado, retorna rowCount
+- [x] Rota `POST /permutas/adiantamentos/:docCod/excecao-manual` body `{ justificativa: 'ab' }`, `''` ou só espaços → **400** `{ error: 'invalid body' }`; 501 caracteres → 400; body válido → 200 `{ adiantamentoDocCod }` e o serviço recebe `criadoPor === req.user.sub` do token (um `criadoPor` enviado no body é **ignorado**)
+- [x] Serviço lança 422 → rota responde 422 `{ error: code, message: userMessage }`; 404 e 409 idem
+- [x] `DELETE /permutas/adiantamentos/:docCod/excecao-manual` → 200 e `removidoPor === req.user.sub`
+- [x] RBAC: role `authenticated` → **403** nas duas rotas novas (entradas adicionadas em `:614-622`)
+- [x] Os testes novos **falham** antes da Task 5
 
 **Dependencies:** Task 3 (mesmo arquivo de serviço)
 
@@ -223,13 +248,13 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/backend/routes/permutas.ts`: schema `excecaoManualBodySchema = z.object({ justificativa: z.string().trim().min(10).max(500) })` junto a `:148-176`; `POST` e `DELETE /adiantamentos/:docCod/excecao-manual` depois de `:398-422`, com `requireRole('admin')`, autor `req.user?.sub ?? req.user?.email ?? 'unknown'` e catch `instanceof ExcecaoPermutaRecusadaError`
 
 **Acceptance criteria:**
-- [ ] Todos os testes da Task 4 passam
-- [ ] Um único predicado de guarda (`grep -rn "SEM_SALDO_PERMUTAR" src/backend/domain/service/permutas/ExcecaoPermutaService.ts` → só dentro de `guardaSatisfeita`)
-- [ ] Marcar e desfazer logam `logService.info` (auditoria, com `docCod` e autor, **sem** a justificativa inteira no log)
-- [ ] Nenhuma escrita no Conexos (I4): o serviço não injeta cliente `Conexos*`
-- [ ] Sem `process.env` no serviço/repositório; nenhum `new` de dependência (tudo `@inject`)
-- [ ] `cd src/backend && npm run typecheck && npm run lint && npm test` ✅
-- [ ] PatternGuardian ✅ (SQL parametrizado, tx única, Zod no boundary, arrow methods, access modifiers)
+- [x] Todos os testes da Task 4 passam
+- [x] Um único predicado de guarda (`grep -rn "SEM_SALDO_PERMUTAR" src/backend/domain/service/permutas/ExcecaoPermutaService.ts` → só dentro de `guardaSatisfeita`)
+- [x] Marcar e desfazer logam `logService.info` (auditoria, com `docCod` e autor, **sem** a justificativa inteira no log)
+- [x] Nenhuma escrita no Conexos (I4): o serviço não injeta cliente `Conexos*`
+- [x] Sem `process.env` no serviço/repositório; nenhum `new` de dependência (tudo `@inject`)
+- [x] `cd src/backend && npm run typecheck && npm run lint && npm test` ✅
+- [x] PatternGuardian ✅ (SQL parametrizado, tx única, Zod no boundary, arrow methods, access modifiers)
 
 **Dependencies:** Task 4
 
@@ -243,14 +268,14 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/backend/domain/service/permutas/GestaoPermutasService.test.ts`, `RelatorioExportService.test.ts` (testes primeiro)
 
 **Acceptance criteria:**
-- [ ] (teste primeiro) `GestaoPermutasService`: linha 8721 `ja-permutado/permutado-fora-do-painel` + exceção ativa → `excecaoManual = { justificativa, criadoPor, criadoEm (ISO), ativa: true }`, `status='ja-permutado'` e **sem** `saldoRestante`/`tipoPermuta`
-- [ ] linha `permuta-manual` + exceção ativa (inativa) → `excecaoManual.ativa === false`
-- [ ] linha sem exceção → sem a chave `excecaoManual`
-- [ ] `listAtivas()` chamado 1× por `exporGestao`
-- [ ] `totais.jaPermutado` conta o 8721 e `totais.bloqueadas` não conta (derivação existente `:298-311`, sem mudar código de totais)
-- [ ] Export: linha com exceção ativa → `Exceção manual = 'Permutado fora do painel (exceção manual)'`, justificativa, autor e data preenchidos; inativa → `'Registrada, não aplicada'`; sem exceção → `null` nas 4
-- [ ] Os mocks de DI dos testes existentes ganham o repositório, sem mudar asserções de comportamento
-- [ ] `cd src/backend && npm run typecheck && npm run lint && npm test` ✅
+- [x] (teste primeiro) `GestaoPermutasService`: linha 8721 `ja-permutado/permutado-fora-do-painel` + exceção ativa → `excecaoManual = { justificativa, criadoPor, criadoEm (ISO), ativa: true }`, `status='ja-permutado'` e **sem** `saldoRestante`/`tipoPermuta`
+- [x] linha `permuta-manual` + exceção ativa (inativa) → `excecaoManual.ativa === false`
+- [x] linha sem exceção → sem a chave `excecaoManual`
+- [x] `listAtivas()` chamado 1× por `exporGestao`
+- [x] `totais.jaPermutado` conta o 8721 e `totais.bloqueadas` não conta (derivação existente `:298-311`, sem mudar código de totais)
+- [x] Export: linha com exceção ativa → `Exceção manual = 'Permutado fora do painel (exceção manual)'`, justificativa, autor e data preenchidos; inativa → `'Registrada, não aplicada'`; sem exceção → `null` nas 4
+- [x] Os mocks de DI dos testes existentes ganham o repositório, sem mudar asserções de comportamento
+- [x] `cd src/backend && npm run typecheck && npm run lint && npm test` ✅
 
 **Dependencies:** Task 2 (repositório); Task 5 (evita conflito no DI de testes compartilhados)
 
@@ -265,11 +290,11 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/frontend/app/permutas/components/excecao.test.ts` (novo, padrão `processavel.test.ts`)
 
 **Acceptance criteria:**
-- [ ] (teste primeiro) `marcarExcecaoManual`: `POST ${API}/permutas/adiantamentos/8721/excecao-manual` com `content-type: application/json`, auth header e body `{ justificativa }` **sem** autor; 422 com `{ message }` → lança `ExcecaoManualRecusadaError(message)`; 500 → `Error('API 500 …')`
-- [ ] `desfazerExcecaoManual`: `DELETE` na mesma URL; `docCod` com `encodeURIComponent`
-- [ ] `podeMarcarExcecao`: `true` só para `bloqueada/sem-saldo-permutar` sem exceção; `false` para `nao-pago`, `ja-permutado`, `permuta-manual`, `elegivel` e para `sem-saldo-permutar` com `excecaoManual` inativa
-- [ ] `MOTIVO_LABEL['permutado-fora-do-painel'] === 'Permutado fora do painel (exceção manual)'`
-- [ ] `cd src/frontend && npm run typecheck && npm run lint && npm test` ✅
+- [x] (teste primeiro) `marcarExcecaoManual`: `POST ${API}/permutas/adiantamentos/8721/excecao-manual` com `content-type: application/json`, auth header e body `{ justificativa }` **sem** autor; 422 com `{ message }` → lança `ExcecaoManualRecusadaError(message)`; 500 → `Error('API 500 …')`
+- [x] `desfazerExcecaoManual`: `DELETE` na mesma URL; `docCod` com `encodeURIComponent`
+- [x] `podeMarcarExcecao`: `true` só para `bloqueada/sem-saldo-permutar` sem exceção; `false` para `nao-pago`, `ja-permutado`, `permuta-manual`, `elegivel` e para `sem-saldo-permutar` com `excecaoManual` inativa
+- [x] `MOTIVO_LABEL['permutado-fora-do-painel'] === 'Permutado fora do painel (exceção manual)'`
+- [x] `cd src/frontend && npm run typecheck && npm run lint && npm test` ✅
 
 **Dependencies:** Task 6 (contrato do payload)
 
@@ -286,15 +311,15 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 - `src/frontend/__tests__/permutas-components.test.tsx` (novos casos)
 
 **Acceptance criteria:**
-- [ ] (teste primeiro) `StatusBadge status='ja-permutado' motivo='permutado-fora-do-painel'` renderiza "Já permutado" com `title` "Permutado fora do painel (exceção manual)"; `ExcecaoManualTag ativa` renderiza "Exceção manual" e `ativa={false}` renderiza "Exceção inativa"
-- [ ] `ExcecaoManualDialog`: botão confirmar desabilitado com 0–9 caracteres (após trim) e com mais de 500; habilitado com 10; `onConfirmar` recebe o texto com trim
-- [ ] `DesfazerExcecaoDialog`: mostra justificativa/autor/data; "Cancelar" não chama `onConfirmar`
-- [ ] Linha `bloqueada/sem-saldo-permutar` expandida mostra "Marcar como permutado fora do painel"; linha `nao-pago` não mostra; linha com `excecaoManual` mostra o bloco de detalhe e "Desfazer exceção"
-- [ ] Depois de marcar/desfazer com sucesso, `load()` é chamado, e o item muda de card ("Bloqueadas" ↔ "Já permutado") sem nova ingestão
-- [ ] 8721 com exceção **não** aparece na aba Histórico (sem `statusPorAdto`, `montarHistorico` inalterado)
-- [ ] Textos em pt-BR, só tokens do DS (`bg-info-subtle`, `bg-warning-subtle`…), sem cor crua; ícones `lucide-react` com `aria-hidden`; dialog com `DialogTitle`/`DialogDescription`
-- [ ] `cd src/frontend && npm run typecheck && npm run lint && npm test` ✅
-- [ ] DesignSystemReviewer gate ✅ (`ui.tsx`, `ExcecaoManualDialog.tsx`, `DesfazerExcecaoDialog.tsx`, `VisaoGeralTable.tsx`, `page.tsx`, `textarea.tsx` se criado)
+- [x] (teste primeiro) `StatusBadge status='ja-permutado' motivo='permutado-fora-do-painel'` renderiza "Já permutado" com `title` "Permutado fora do painel (exceção manual)"; `ExcecaoManualTag ativa` renderiza "Exceção manual" e `ativa={false}` renderiza "Exceção inativa"
+- [x] `ExcecaoManualDialog`: botão confirmar desabilitado com 0–9 caracteres (após trim) e com mais de 500; habilitado com 10; `onConfirmar` recebe o texto com trim
+- [x] `DesfazerExcecaoDialog`: mostra justificativa/autor/data; "Cancelar" não chama `onConfirmar`
+- [x] Linha `bloqueada/sem-saldo-permutar` expandida mostra "Marcar como permutado fora do painel"; linha `nao-pago` não mostra; linha com `excecaoManual` mostra o bloco de detalhe e "Desfazer exceção"
+- [x] Depois de marcar/desfazer com sucesso, `load()` é chamado, e o item muda de card ("Bloqueadas" ↔ "Já permutado") sem nova ingestão
+- [x] 8721 com exceção **não** aparece na aba Histórico (sem `statusPorAdto`, `montarHistorico` inalterado)
+- [x] Textos em pt-BR, só tokens do DS (`bg-info-subtle`, `bg-warning-subtle`…), sem cor crua; ícones `lucide-react` com `aria-hidden`; dialog com `DialogTitle`/`DialogDescription`
+- [x] `cd src/frontend && npm run typecheck && npm run lint && npm test` ✅
+- [x] DesignSystemReviewer gate ✅ (`ui.tsx`, `ExcecaoManualDialog.tsx`, `DesfazerExcecaoDialog.tsx`, `VisaoGeralTable.tsx`, `page.tsx`, `textarea.tsx` se criado)
 
 **Dependencies:** Task 7
 
@@ -303,19 +328,26 @@ inativa, vazio sem exceção), `Justificativa exceção`, `Autor exceção` e `D
 ## Definition of Done
 
 All tasks complete AND:
-- [ ] `cd src/backend && npm run typecheck` ✅ · `npm run lint` ✅ · `npm test` ✅
-- [ ] `cd src/frontend && npm run typecheck` ✅ · `npm run lint` ✅ · `npm test` ✅
-- [ ] PatternGuardian gate ✅
-- [ ] `entity_changed=true` ⇒ ontology diff presente em `ontology/` (ADR-0047, config `ExcecaoPermuta`, transição e motivo novos na state-machine `elegibilidade-permuta-candidata`, I5 com trilha de remoção) ✅
-- [ ] DesignSystemReviewer gate ✅ (frontend tocado)
-- [ ] ObservabilityAdvisor: **não se aplica** (sem handler/job novo; o `BUSINESS_WARN` usa o `LogService` existente)
-- [ ] AwsInfraArchitect: **não se aplica** (sem `infra/`)
-- [ ] Ground-Truth Validation gate: **N/A, com justificativa no PR** (ver abaixo) ✅
+- [x] `cd src/backend && npm run typecheck` ✅ · `npm run lint` ✅ · `npm test` ✅
+- [x] `cd src/frontend && npm run typecheck` ✅ · `npm run lint` ✅ · `npm test` ✅
+- [x] PatternGuardian gate ✅
+- [x] `entity_changed=true` ⇒ ontology diff presente em `ontology/` (ADR-0047, config `ExcecaoPermuta`, transição e motivo novos na state-machine `elegibilidade-permuta-candidata`, I5 com trilha de remoção) ✅
+- [x] DesignSystemReviewer gate ✅ (frontend tocado)
+- [x] ObservabilityAdvisor: **não se aplica** (sem handler/job novo; o `BUSINESS_WARN` usa o `LogService` existente)
+- [x] AwsInfraArchitect: **não se aplica** (sem `infra/`)
+- [x] Ground-Truth Validation gate: **N/A, com justificativa no PR** (ver abaixo) ✅
 - [ ] Regis-Review gate ✅ (0 P0; P1/P2/P3 e R1-R4 → `ontology/_inbox/permutas-excecao-manual-regis-followups.md`)
 - [ ] Rebase de `main` aplicado, gates ainda verdes ✅
 - [ ] Delta tem `fix` (e `feat` de UI) em `src/` ⇒ versão do app bumpada (FE+BE lockstep) via `scripts/bump-version.ps1 -Execute` no Ship + `CHANGELOG.md` atualizado ✅
 
 ---
+
+> **Estado (AutoLoopRunner, 2026-09-15):** Tasks 1–8 concluídas. Backend 137 suites / 2012 testes, frontend
+> 43 suites / 361 testes, typecheck e lint sem erro. PatternGuardian PASS, DesignSystemReviewer PASS (0
+> bloqueantes), SpecVerifier cego APROVADO (0 REPROVADO; 3 NAO_VERIFICAVEL históricos). A 0059 foi aplicada 3×
+> seguidas num Postgres 16 descartável local (nunca no Supabase), com índice parcial, CHECKs e o reverse da 0055
+> conferidos. Ground truth: `SEM_GROUND_TRUTH` por natureza (seção abaixo). Pendentes para o orquestrador:
+> Regis-Review, rebase e bump de versão.
 
 ## Ground truth: N/A (justificativa) e verificação pós-deploy
 
