@@ -10,6 +10,7 @@ import type PermutaExecucaoRepository from '../../repository/permutas/PermutaExe
 import type PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import type LogService from '../LogService.js';
 import AlocacaoPermutasService from './AlocacaoPermutasService.js';
+import SaldoAlocacaoAdiantamentoService from './SaldoAlocacaoAdiantamentoService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 
 const log = () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }) as unknown as LogService;
@@ -76,7 +77,6 @@ const buildAlocacaoRepo = (sums: { adto?: number; invoice?: number } = {}) => {
     return {
         repo: {
             upsertAlocacao,
-            sumByAdiantamento: jest.fn().mockResolvedValue(sums.adto ?? 0),
             sumByInvoice: jest.fn().mockResolvedValue(sums.invoice ?? 0),
             deleteAlocacao: jest.fn().mockResolvedValue(1),
         } as unknown as jest.Mocked<PermutaAlocacaoRepository>,
@@ -107,11 +107,18 @@ const buildRelational = (
         }),
     }) as unknown as jest.Mocked<PermutaRelationalRepository>;
 
+/** Mock do serviço do saldo não consumido do adto (ADR-0046 D3): devolve `adto` fixo. */
+const buildSaldoMock = (adto = 0) =>
+    ({
+        somaNaoConsumidaDoAdiantamento: jest.fn().mockResolvedValue(adto),
+    }) as unknown as jest.Mocked<SaldoAlocacaoAdiantamentoService>;
+
 const build = (opts: {
     conexos?: ConexosMock;
     sums?: { adto?: number; invoice?: number };
     relational?: jest.Mocked<PermutaRelationalRepository>;
     borCodDoPar?: number | null;
+    saldo?: SaldoAlocacaoAdiantamentoService;
 }) => {
     const { repo, upsertAlocacao } = buildAlocacaoRepo(opts.sums);
     const borderoDoPar = jest.fn().mockResolvedValue(opts.borCodDoPar ?? null);
@@ -127,6 +134,7 @@ const build = (opts: {
         opts.relational ?? buildRelational(),
         log(),
         new BoundedConcurrency(),
+        opts.saldo ?? buildSaldoMock(opts.sums?.adto),
     );
     return { service, upsertAlocacao, repo, borderoDoPar };
 };
@@ -179,6 +187,7 @@ describe('AlocacaoPermutasService', () => {
             buildRelational(),
             log(),
             new BoundedConcurrency(),
+            buildSaldoMock(),
         );
         const invoices = await service.buscarInvoices('510', 2, 'A9');
         expect(invoices[0].jaAlocado).toBe(300);
@@ -220,6 +229,82 @@ describe('AlocacaoPermutasService', () => {
                 valorAlocado: 1200,
             } as never),
         ).rejects.toBeInstanceOf(AlocacaoSaldoError);
+    });
+
+    describe('teto do ADIANTAMENTO desconta só o não consumido pelo ERP (ADR-0046 D3)', () => {
+        // Caso 9328: ERP valorPermutar/taxa = 39.652,47 (já abatido dos 35.347,53 baixados).
+        const T0 = new Date('2026-09-01T10:00:00Z');
+        const saldoReal = (consumida: boolean) =>
+            new SaldoAlocacaoAdiantamentoService(
+                {
+                    listByAdiantamento: jest.fn().mockResolvedValue([
+                        {
+                            adiantamentoDocCod: 'A9',
+                            invoiceDocCod: 'INV-19534',
+                            valorAlocado: 35347.53,
+                            criadoEm: T0,
+                            atualizadoEm: T0,
+                        },
+                    ]),
+                } as unknown as jest.Mocked<PermutaAlocacaoRepository>,
+                {
+                    listConsumosFinalizados: jest.fn().mockResolvedValue(
+                        consumida
+                            ? [
+                                  {
+                                      adiantamentoDocCod: 'A9',
+                                      invoiceDocCod: 'INV-19534',
+                                      status: 'settled',
+                                      criadoEm: new Date('2026-09-01T10:05:00Z'),
+                                  },
+                              ]
+                            : [],
+                    ),
+                } as unknown as jest.Mocked<PermutaExecucaoRepository>,
+            );
+        const conexosFolgada = () =>
+            buildConexos({
+                listTitulosAPagar: jest
+                    .fn()
+                    .mockResolvedValue([{ valorNegociado: 100000, taxa: 5.3, moedaNome: 'USD' }]),
+            } as Partial<jest.Mocked<ConexosMock>>);
+        const pedido = {
+            adiantamentoDocCod: 'A9',
+            invoiceDocCod: 'I7',
+            invoicePriCod: '510',
+            valorAlocado: 39000,
+            criadoPor: 'u',
+        };
+
+        it('outra alocação CONSUMIDA → aceita 39.000 (teto = 39.652,47)', async () => {
+            const { service, upsertAlocacao } = build({
+                conexos: conexosFolgada(),
+                relational: buildRelational({ valorPermutar: 39652.47 * 5, taxa: 5 }),
+                saldo: saldoReal(true),
+            });
+            await expect(service.alocar(pedido)).resolves.not.toThrow();
+            expect(upsertAlocacao).toHaveBeenCalledTimes(1);
+        });
+
+        it('outra alocação NÃO consumida → AlocacaoSaldoError com disponivel 4.304,94', async () => {
+            const { service } = build({
+                conexos: conexosFolgada(),
+                relational: buildRelational({ valorPermutar: 39652.47 * 5, taxa: 5 }),
+                saldo: saldoReal(false),
+            });
+            const erro = await service.alocar(pedido).catch((e: unknown) => e);
+            expect(erro).toBeInstanceOf(AlocacaoSaldoError);
+            expect(
+                ((erro as AlocacaoSaldoError).details as { disponivel: number }).disponivel,
+            ).toBeCloseTo(4304.94, 2);
+        });
+
+        it('re-alocação exclui o próprio par da soma', async () => {
+            const saldo = buildSaldoMock(0);
+            const { service } = build({ saldo });
+            await service.alocar({ ...pedido, valorAlocado: 100 });
+            expect(saldo.somaNaoConsumidaDoAdiantamento).toHaveBeenCalledWith('A9', 'I7');
+        });
     });
 
     it('alocar excede saldo da INVOICE → AlocacaoSaldoError', async () => {
@@ -326,7 +411,6 @@ describe('AlocacaoPermutasService', () => {
             const alocacaoRepo = {
                 upsertAlocacao,
                 deleteAlocacao,
-                sumByAdiantamento: jest.fn().mockResolvedValue(0),
                 sumByInvoice: jest.fn().mockResolvedValue(0),
                 listAtivas: jest.fn().mockResolvedValue(opts.ativas ?? []),
             } as unknown as jest.Mocked<PermutaAlocacaoRepository>;
@@ -365,6 +449,7 @@ describe('AlocacaoPermutasService', () => {
                 relational,
                 log(),
                 new BoundedConcurrency(),
+                buildSaldoMock(),
             );
             return { service, upsertAlocacao, deleteAlocacao };
         };

@@ -42,18 +42,33 @@ describe('PermutaAlocacaoRepository', () => {
         });
     });
 
-    it('sumByAdiantamento: SUM parametrizado, exclui par opcional', async () => {
+    it('listByAdiantamento: SELECT parametrizado por adiantamento, mapeia atualizadoEm', async () => {
         const db = buildDb();
-        (db.selectFirst as jest.Mock).mockResolvedValue({ total: '1500' });
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            {
+                adiantamento_doc_cod: 'A9',
+                invoice_doc_cod: 'I7',
+                valor_alocado: '1500.25',
+                criado_em: '2026-09-01T10:00:00Z',
+                atualizado_em: '2026-09-02T10:00:00Z',
+            },
+        ]);
         const repo = new PermutaAlocacaoRepository(db);
 
-        const total = await repo.sumByAdiantamento('A9', 'I7');
+        const rows = await repo.listByAdiantamento('A9');
 
-        expect(total).toBe(1500);
-        const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
-        expect(sql).toContain('SUM(valor_alocado)');
+        const [sql, params] = (db.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toContain('FROM permuta_alocacao');
         expect(sql).toContain('adiantamento_doc_cod = $adtoDocCod');
-        expect(params).toEqual({ adtoDocCod: 'A9', excludeInvoice: 'I7' });
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params).toEqual({ adtoDocCod: 'A9' });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+            adiantamentoDocCod: 'A9',
+            invoiceDocCod: 'I7',
+            valorAlocado: 1500.25,
+            atualizadoEm: new Date('2026-09-02T10:00:00Z'),
+        });
     });
 
     it('sumByInvoice: SUM parametrizado por invoice', async () => {

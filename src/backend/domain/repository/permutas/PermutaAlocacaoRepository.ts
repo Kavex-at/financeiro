@@ -106,19 +106,23 @@ export default class PermutaAlocacaoRepository {
         return rows.map((r) => this.mapRow(r));
     };
 
-    /** Σ valor_alocado de um adiantamento, opcionalmente EXCLUINDO um par (re-alocação). */
-    public sumByAdiantamento = async (
-        adiantamentoDocCod: string,
-        excludeInvoiceDocCod?: string,
-    ): Promise<number> => {
-        const row = await this.databaseClient.selectFirst<{ total: string | number }>(
-            `SELECT COALESCE(SUM(valor_alocado), 0) AS total
+    /**
+     * Alocações de UM adiantamento (todas as versões atuais dos pares). Insumo do teto de
+     * I-Permuta-1 no `alocar`, via `SaldoAlocacaoAdiantamentoService` — que desconta só a parte
+     * ainda NÃO consumida pelo ERP (ADR-0046 D3), em vez da soma crua de `valor_alocado`.
+     */
+    public listByAdiantamento = async (adiantamentoDocCod: string): Promise<AlocacaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT adiantamento_doc_cod, invoice_doc_cod, invoice_pri_cod, valor_alocado, moeda,
+                    variacao_classificacao, variacao_resultado, variacao_delta,
+                    taxa_adiantamento, taxa_invoice, data_base, criado_por, criado_em,
+                    atualizado_em, observacao
              FROM permuta_alocacao
              WHERE adiantamento_doc_cod = $adtoDocCod
-               AND ($excludeInvoice::text IS NULL OR invoice_doc_cod <> $excludeInvoice)`,
-            { adtoDocCod: adiantamentoDocCod, excludeInvoice: excludeInvoiceDocCod ?? null },
+             ORDER BY criado_em`,
+            { adtoDocCod: adiantamentoDocCod },
         );
-        return row ? Number(row.total) : 0;
+        return rows.map((r) => this.mapRow(r));
     };
 
     /** Σ valor_alocado de uma invoice, opcionalmente EXCLUINDO um par (re-alocação). */

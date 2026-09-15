@@ -13,6 +13,7 @@ import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacao
 import PermutaExecucaoRepository from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import LogService from '../LogService.js';
+import SaldoAlocacaoAdiantamentoService from './SaldoAlocacaoAdiantamentoService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 
 /** Invoice encontrada na busca cross-process (live no Conexos), p/ a alocação manual. */
@@ -82,6 +83,8 @@ export default class AlocacaoPermutasService {
         private relationalRepository: PermutaRelationalRepository,
         @inject(LogService) private logService: LogService,
         @inject(BoundedConcurrency) private boundedConcurrency: BoundedConcurrency,
+        @inject(SaldoAlocacaoAdiantamentoService)
+        private saldoAlocacaoService: SaldoAlocacaoAdiantamentoService,
     ) {}
 
     /**
@@ -238,13 +241,15 @@ export default class AlocacaoPermutasService {
             );
         }
 
-        // Saldo do ADIANTAMENTO (em moeda negociada): saldoPermutar(BRL) / taxaAdto.
+        // Saldo do ADIANTAMENTO (em moeda negociada): saldoPermutar(BRL) / taxaAdto, menos as
+        // alocações dos OUTROS pares ainda NÃO consumidas pelo ERP (ADR-0046 D3) — mesma regra do
+        // `saldoRestante` da tela (fonte única: SaldoAlocacaoAdiantamentoService).
         const taxaAdto = adto.taxa;
         const saldoAdtoNeg =
             adto.valorPermutar !== undefined && taxaAdto !== undefined && taxaAdto > 0
                 ? adto.valorPermutar / taxaAdto
                 : undefined;
-        const jaAdto = await this.alocacaoRepository.sumByAdiantamento(
+        const jaAdto = await this.saldoAlocacaoService.somaNaoConsumidaDoAdiantamento(
             adiantamentoDocCod,
             invoiceDocCod,
         );
