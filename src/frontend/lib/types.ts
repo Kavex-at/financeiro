@@ -139,7 +139,8 @@ export interface PermutaPendente {
    * o analista escolhe UMA e processa (ADR-0005).
    */
   candidatas?: InvoiceEmAberto[]
-  /** Alocações manuais N:M cross-process (Fase 2) — só p/ `permuta-manual`. */
+  /** Alocações manuais N:M (Fase 2) — `permuta-manual`, `casamento-manual` e `ja-permutado`
+   * (este só p/ exibição no Histórico, ADR-0046). */
   alocacoes?: AlocacaoDetalhe[]
   /** Saldo a permutar ainda não alocado (moeda negociada) — `permuta-manual`. */
   saldoRestante?: number

@@ -99,7 +99,10 @@ export interface PermutaPendente {
     processamentoStatus?: ProcessamentoStatus;
     /** Tipo de permuta (classificação derivada p/ as abas) — ver `TipoPermuta`. */
     tipoPermuta?: TipoPermuta;
-    /** Alocações manuais N:M cross-process (Fase 2) — só p/ `permuta-manual`. */
+    /**
+     * Alocações manuais N:M (Fase 2) — `permuta-manual`, `casamento-manual` e `ja-permutado` (este
+     * só p/ exibição no Histórico, ADR-0046 D4).
+     */
     alocacoes?: AlocacaoDetalhe[];
     /** Saldo a permutar AINDA não alocado (moeda negociada) — `permuta-manual`. */
     saldoRestante?: number;

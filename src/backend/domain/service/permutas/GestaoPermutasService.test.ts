@@ -849,6 +849,40 @@ describe('GestaoPermutasService.exporGestao', () => {
         });
     });
 
+    it('ja-permutado com alocações → devolve as alocações (Histórico), SEM saldoRestante nem tipo', async () => {
+        const jaPermutado: AdiantamentoAtivo = {
+            ...permutaManualAdto,
+            docCod: 'JP1',
+            estadoElegibilidade: 'ja-permutado',
+            motivoBloqueio: 'ja-permutado',
+            valorPermutar: 0,
+            taxa: 5,
+        };
+        const alocacao = (invoiceDocCod: string, valorAlocado: number): AlocacaoRow => ({
+            adiantamentoDocCod: 'JP1',
+            invoiceDocCod,
+            invoicePriCod: '510',
+            valorAlocado,
+            moeda: 'USD',
+            criadoEm: new Date('2026-09-01T10:00:00Z'),
+            atualizadoEm: new Date('2026-09-01T10:00:00Z'),
+        });
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [jaPermutado], casamentos: [], invoices: [] }),
+            buildProcessamento(),
+            buildAlocacao([alocacao('I1', 600), alocacao('I2', 400)]),
+            buildSnapshot(),
+            buildLog(),
+            buildSaldo(),
+        );
+        const res = await service.exporGestao('req-1');
+        const jp = res.pendentes.find((p) => p.docCod === 'JP1');
+        expect(jp?.status).toBe('ja-permutado');
+        expect(jp?.alocacoes).toHaveLength(2);
+        expect(jp?.saldoRestante).toBeUndefined();
+        expect(jp?.tipoPermuta).toBeUndefined();
+    });
+
     it('mapeia estado permuta-manual para status próprio + conta no total', async () => {
         const service = new GestaoPermutasService(
             buildRelational({ adiantamentos: [...adiantamentos, permutaManualAdto] }),
