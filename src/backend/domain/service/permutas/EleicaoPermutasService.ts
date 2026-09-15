@@ -23,11 +23,13 @@ import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js'
 import ToleranciaResiduo from '../../interface/permutas/ToleranciaResiduo.js';
 import LogService from '../LogService.js';
 import ClienteFiltroRepository from '../../repository/permutas/ClienteFiltroRepository.js';
+import ExcecaoPermutaRepository from '../../repository/permutas/ExcecaoPermutaRepository.js';
 import PermutaSnapshotRepository, {
     type PermutaEleicaoRunInput,
 } from '../../repository/permutas/PermutaSnapshotRepository.js';
 import AgingService from './AgingService.js';
 import ElegibilidadeService from './ElegibilidadeService.js';
+import ExcecaoPermutaService from './ExcecaoPermutaService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 
 /**
@@ -182,7 +184,7 @@ const ADIANTAMENTOS_CONCURRENCY = 10;
 /**
  * EleicaoPermutasService — orquestrador da cadeia (o "job", sem scheduler — O4):
  *   elegerAdiantamentos → avaliarElegibilidade → casarInvoice
- *   → calcularVariacaoCambial → aging → snapshot/auditoria.
+ *   → calcularVariacaoCambial → aging → exceções manuais (ADR-0047) → snapshot/auditoria.
  *
  * Ontology: `ontology/actions/eleger-adiantamentos.md` + state-machine.
  * Idempotente (P0-7): recomputa o backlog do zero a cada run. Multi-filial (I6).
@@ -207,6 +209,9 @@ export default class EleicaoPermutasService {
         @inject(PostgreeDatabaseClient) private databaseClient: PostgreeDatabaseClient,
         @inject(ClienteFiltroRepository)
         private clienteFiltroRepository: ClienteFiltroRepository,
+        @inject(ExcecaoPermutaRepository)
+        private excecaoPermutaRepository: ExcecaoPermutaRepository,
+        @inject(ExcecaoPermutaService) private excecaoPermutaService: ExcecaoPermutaService,
     ) {}
 
     /**
@@ -348,7 +353,7 @@ export default class EleicaoPermutasService {
                     ),
                 FILIAIS_CONCURRENCY,
             );
-            const candidatas: PermutaCandidata[] = perFilial.flat();
+            const calculadas: PermutaCandidata[] = perFilial.flat();
 
             // Universo COMPLETO de invoices finalizadas (regra 2026-06-24) — todas as filiais, não
             // só os processos com adiantamento. HIDRATA valor/moeda negociada (com308) + CLIENTE
@@ -393,6 +398,13 @@ export default class EleicaoPermutasService {
             );
             const todasInvoices = todasInvoicesPorFilial.flat();
 
+            // Exceções manuais "permutado fora do painel" (ADR-0047, T7): pós-passe sobre o
+            // resultado JÁ roteado (gates + cliente-filtro), antes da contagem, para que header,
+            // snapshot e modelo relacional saiam da MESMA coleção. Lidas aqui, no fim do fan-out,
+            // e não no início: uma exceção marcada durante a run fica fora dela por segundos,
+            // não por minutos (a ingestão só grava no `persistIngestRun`). Uma query por run.
+            const candidatas = await this.aplicarExcecoesManuais(calculadas, flowId);
+
             return {
                 candidatas,
                 flowId,
@@ -411,6 +423,39 @@ export default class EleicaoPermutasService {
             });
             throw error;
         }
+    };
+
+    /**
+     * Aplica as exceções ativas e registra, uma a uma, as que o cálculo derrubou (I-Exc-2: o
+     * ERP vence). O aviso de leitura indisponível tem mensagem própria, para não parecer uma
+     * mudança real no ERP.
+     */
+    private aplicarExcecoesManuais = async (
+        calculadas: PermutaCandidata[],
+        flowId: string,
+    ): Promise<PermutaCandidata[]> => {
+        const ativas = await this.excecaoPermutaRepository.listAtivas();
+        const docCods = new Set(ativas.map((e) => e.adiantamentoDocCod));
+        const { candidatas, avisos } = this.excecaoPermutaService.aplicarExcecoes(
+            calculadas,
+            docCods,
+        );
+        for (const aviso of avisos) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: aviso.transiente
+                    ? 'Exceção manual de permuta não aplicada: detalhe do Conexos indisponível nesta run (transitório, o estado calculado vence)'
+                    : 'Exceção manual de permuta não aplicada: estado calculado mudou no ERP (o cálculo vence; desfaça a exceção se ela não vale mais)',
+                data: {
+                    flowId,
+                    docCod: aviso.docCod,
+                    estadoCalculado: aviso.estadoCalculado,
+                    motivoCalculado: aviso.motivoCalculado,
+                    transiente: aviso.transiente,
+                },
+            });
+        }
+        return candidatas;
     };
 
     private runEleicao = async (params: EleicaoParams): Promise<EleicaoResult> => {

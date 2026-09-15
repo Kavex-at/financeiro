@@ -10,6 +10,9 @@ import type ConexosFinanceiroClient from '../../client/ConexosFinanceiroClient.j
 import type ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
+import type ExcecaoPermutaRepository from '../../repository/permutas/ExcecaoPermutaRepository.js';
+import type PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
+import ExcecaoPermutaService from './ExcecaoPermutaService.js';
 import type LogService from '../LogService.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
@@ -45,28 +48,74 @@ type ConexosMock = PublicShape<ConexosCadastroClient> &
     PublicShape<ConexosFinanceiroClient> &
     PublicShape<ConexosTitulosClient>;
 
-/**
- * Constructs the service from the single combined Conexos mock, injecting it
- * into the three sub-client constructor slots. `rest` mirrors the remaining
- * constructor params (elegibilidade … clienteFiltro) one-to-one.
- */
-const buildEleicao = (
-    conexos: ConexosMock,
-    ...rest: ConstructorParameters<typeof EleicaoPermutasService> extends [
+/** Parâmetros do construtor depois dos três sub-clients Conexos. */
+type EleicaoRest =
+    ConstructorParameters<typeof EleicaoPermutasService> extends [
         ConexosCadastroClient,
         ConexosFinanceiroClient,
         ConexosTitulosClient,
         ...infer R,
     ]
         ? R
-        : never
+        : never;
+
+/** Os mesmos parâmetros SEM os dois finais da exceção manual (ADR-0047), que têm default. */
+type EleicaoRestSemExcecao = EleicaoRest extends [
+    ...infer R,
+    ExcecaoPermutaRepository,
+    ExcecaoPermutaService,
+]
+    ? R
+    : never;
+
+/** Mock do ExcecaoPermutaRepository — sem exceções ativas por padrão. */
+const buildExcecaoRepo = (docCods: string[] = []) =>
+    ({
+        listAtivas: jest.fn().mockResolvedValue(
+            docCods.map((docCod, i) => ({
+                id: String(i + 1),
+                adiantamentoDocCod: docCod,
+                justificativa: 'baixas cruzadas fora do painel',
+                criadoPor: 'analista',
+                criadoEm: new Date('2026-09-15T12:00:00Z'),
+            })),
+        ),
+    }) as unknown as jest.Mocked<ExcecaoPermutaRepository>;
+
+/** Serviço REAL da regra de aplicação (pura) — só as dependências de escrita são fingidas. */
+const buildExcecaoService = () =>
+    new ExcecaoPermutaService(
+        {} as unknown as PostgreeDatabaseClient,
+        {} as unknown as PermutaRelationalRepository,
+        {} as unknown as ExcecaoPermutaRepository,
+        buildLogService().logService,
+    );
+
+/**
+ * Constructs the service from the single combined Conexos mock, injecting it
+ * into the three sub-client constructor slots and an explicit exceção repo.
+ */
+const buildEleicaoComExcecoes = (
+    conexos: ConexosMock,
+    excecaoRepo: jest.Mocked<ExcecaoPermutaRepository>,
+    ...rest: EleicaoRestSemExcecao
 ) =>
     new EleicaoPermutasService(
         conexos as unknown as ConexosCadastroClient,
         conexos as unknown as ConexosFinanceiroClient,
         conexos as unknown as ConexosTitulosClient,
         ...rest,
+        excecaoRepo,
+        buildExcecaoService(),
     );
+
+/**
+ * Constructs the service from the single combined Conexos mock. `rest` mirrors
+ * the remaining constructor params (elegibilidade … clienteFiltro) one-to-one;
+ * the exceção manual dependencies default to "no active exception".
+ */
+const buildEleicao = (conexos: ConexosMock, ...rest: EleicaoRestSemExcecao) =>
+    buildEleicaoComExcecoes(conexos, buildExcecaoRepo(), ...rest);
 
 const buildConexos = (over: Partial<jest.Mocked<ConexosMock>> = {}) =>
     ({
@@ -279,6 +328,147 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
     it('cliente-filtro NÃO pago continua bloqueada (a permuta manual exige pago)', async () => {
         const result = await runWith(buildFiltroConexos(false), buildClienteFiltro(['191']));
         expect(result.candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+    });
+
+    // ADR-0047 — exceção manual "permutado fora do painel": pós-passe no compute único
+    // (cron, botão e eleição), depois do roteamento de cliente-filtro e antes da contagem.
+    describe('exceção manual (ADR-0047)', () => {
+        const adto8721 = { ...adiantamento, docCod: '8721', priCod: '124', valorPermutar: 0 };
+
+        const conexos8721 = (detalhe: Record<string, unknown>, filiais = [{ filCod: 2 }]) =>
+            buildConexos({
+                listFiliais: jest.fn().mockResolvedValue(filiais),
+                listAdiantamentosProforma: jest
+                    .fn()
+                    .mockResolvedValue({ adiantamentos: [adto8721], capHit: false }),
+                listDeclaracaoByProcesso: jest
+                    .fn()
+                    .mockResolvedValue([{ variante: 'DI', priCod: '124' }]),
+                getDetalheTitulos: jest.fn().mockResolvedValue(detalhe),
+            } as Partial<jest.Mocked<ConexosMock>>);
+
+        const warnSpyLog = () => {
+            const warn = jest.fn().mockResolvedValue(undefined);
+            const logService = {
+                info: jest.fn().mockResolvedValue(undefined),
+                warn,
+                error: jest.fn().mockResolvedValue(undefined),
+                success: jest.fn().mockResolvedValue(undefined),
+            } as unknown as LogService;
+            return { logService, warn };
+        };
+
+        const compute = async (
+            conexos: ConexosMock,
+            excecaoRepo: ReturnType<typeof buildExcecaoRepo>,
+            logService: LogService = buildLogService().logService,
+        ) => {
+            const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
+                realServices();
+            const service = buildEleicaoComExcecoes(
+                conexos,
+                excecaoRepo,
+                elegibilidade,
+                variacao,
+                aging,
+                buildRepo() as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+                clienteFiltro,
+            );
+            return service.computeCandidatas();
+        };
+
+        it('8721 (pago, sem saldo, sem valorPermutado) + exceção ativa → JA_PERMUTADO fora do painel e totais', async () => {
+            const { candidatas, totals } = await compute(
+                conexos8721({ valorPermutar: 0, valorAberto: 0.02 }),
+                buildExcecaoRepo(['8721']),
+            );
+
+            expect(candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.JA_PERMUTADO);
+            expect(candidatas[0].motivoBloqueio).toBe(MOTIVO_BLOQUEIO.PERMUTADO_FORA_DO_PAINEL);
+            expect(totals.totalJaPermutado).toBe(1);
+            expect(totals.totalBloqueadas).toBe(0);
+            expect(totals.bloqueadasByMotivo).not.toHaveProperty(
+                MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR,
+            );
+        });
+
+        it('sem exceção o mesmo 8721 segue BLOQUEADA / sem-saldo-permutar', async () => {
+            const { candidatas, totals } = await compute(
+                conexos8721({ valorPermutar: 0, valorAberto: 0.02 }),
+                buildExcecaoRepo([]),
+            );
+
+            expect(candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+            expect(candidatas[0].motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR);
+            expect(totals.bloqueadasByMotivo).toEqual({ [MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR]: 1 });
+        });
+
+        it('exceção ativa com saldo de volta (valorPermutar=5000) → não aplica e 1 BUSINESS_WARN pt-BR', async () => {
+            const { logService, warn } = warnSpyLog();
+            const { candidatas, flowId } = await compute(
+                conexos8721({ valorPermutar: 5000, valorAberto: 0.02 }),
+                buildExcecaoRepo(['8721']),
+                logService,
+            );
+
+            expect(candidatas[0].motivoBloqueio).not.toBe(MOTIVO_BLOQUEIO.PERMUTADO_FORA_DO_PAINEL);
+            const avisosExcecao = warn.mock.calls.filter(
+                ([p]) => (p as { data?: { docCod?: string } }).data?.docCod === '8721',
+            );
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(avisosExcecao).toHaveLength(1);
+            const [aviso] = avisosExcecao[0] as [
+                { type: string; message: string; data: Record<string, unknown> },
+            ];
+            expect(aviso.type).toBe(LOG_TYPE.BUSINESS_WARN);
+            expect(aviso.message).toMatch(/Exceção manual de permuta não aplicada/);
+            expect(aviso.data).toMatchObject({
+                docCod: '8721',
+                estadoCalculado: candidatas[0].estadoElegibilidade,
+                motivoCalculado: candidatas[0].motivoBloqueio,
+                flowId,
+            });
+        });
+
+        it('detalhe indisponível nesta run → o calculado vence e o aviso diz que é transitório', async () => {
+            const { logService, warn } = warnSpyLog();
+            const conexos = buildConexos({
+                listAdiantamentosProforma: jest
+                    .fn()
+                    .mockResolvedValue({ adiantamentos: [adto8721], capHit: false }),
+                getDetalheTitulos: jest
+                    .fn()
+                    .mockRejectedValue(new ConexosError({ endpoint: 'com298', priCod: '8721' })),
+            } as Partial<jest.Mocked<ConexosMock>>);
+
+            const { candidatas } = await compute(conexos, buildExcecaoRepo(['8721']), logService);
+
+            expect(candidatas[0].motivoBloqueio).toBe(MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL);
+            const aviso = warn.mock.calls
+                .map(([p]) => p as { message: string; data: Record<string, unknown> })
+                .find((p) => p.data?.estadoCalculado !== undefined);
+            expect(aviso?.message).toMatch(/transitóri/);
+            expect(aviso?.data).toMatchObject({ docCod: '8721', transiente: true });
+        });
+
+        it('listAtivas é chamado exatamente 1× por compute (2 filiais, N adtos — sem N+1)', async () => {
+            const excecaoRepo = buildExcecaoRepo(['8721']);
+            const conexos = buildConexos({
+                listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }, { filCod: 7 }]),
+                listAdiantamentosProforma: jest.fn().mockResolvedValue({
+                    adiantamentos: [adto8721, { ...adiantamento, docCod: 'A2' }],
+                    capHit: false,
+                }),
+            } as Partial<jest.Mocked<ConexosMock>>);
+
+            const { candidatas } = await compute(conexos, excecaoRepo);
+
+            expect(candidatas.length).toBeGreaterThanOrEqual(4);
+            expect(excecaoRepo.listAtivas).toHaveBeenCalledTimes(1);
+        });
     });
 
     // ADR-0046 D1 — tolerância de R$ 1,00 aplicada na HIDRATAÇÃO do adiantamento (Gate 3) e no
