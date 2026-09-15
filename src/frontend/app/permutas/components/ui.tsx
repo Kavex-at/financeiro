@@ -1,7 +1,15 @@
 'use client'
 
 import * as React from 'react'
-import { AlertTriangle, ArrowLeftRight, Ban, CheckCircle2, Layers, RefreshCw } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeftRight,
+  Ban,
+  CheckCircle2,
+  Layers,
+  RefreshCw,
+  UserCheck,
+} from 'lucide-react'
 import type {
   PermutaBorderoVinculo,
   PermutaRun,
@@ -70,12 +78,13 @@ export function StatusBadge({ status, motivo }: { status: StatusElegibilidade; m
   }
   // "Já permutado": estado CONCLUÍDO (pago + 100% consumido em permuta anterior)
   // — não é um erro. Status próprio (fora de bloqueadas), badge em tom info com
-  // ícone de check, distinto do vermelho das bloqueadas.
+  // ícone de check, distinto do vermelho das bloqueadas. O `title` diz a ORIGEM: o ERP
+  // (`ja-permutado`) ou a exceção manual (`permutado-fora-do-painel`, ADR-0047).
   if (status === 'ja-permutado') {
     return (
       <Badge
         className="border-transparent bg-info-subtle text-info-foreground"
-        title={MOTIVO_LABEL['ja-permutado']}
+        title={MOTIVO_LABEL[motivo ?? 'ja-permutado'] ?? MOTIVO_LABEL['ja-permutado']}
       >
         <CheckCircle2 aria-hidden /> Já permutado
       </Badge>
@@ -87,6 +96,32 @@ export function StatusBadge({ status, motivo }: { status: StatusElegibilidade; m
       title={motivo ? MOTIVO_LABEL[motivo] ?? motivo : undefined}
     >
       <Ban aria-hidden /> {motivo ? MOTIVO_LABEL[motivo] ?? motivo : 'Bloqueada'}
+    </Badge>
+  )
+}
+
+/**
+ * Tag da exceção manual "permutado fora do painel" (ADR-0047), ao lado do `StatusBadge`.
+ * Aplicada → "Exceção manual" (neutra: o status já diz "Já permutado"). Registrada mas não
+ * aplicada → "Exceção inativa" em tom de atenção: o cálculo do ERP mudou e venceu.
+ */
+export function ExcecaoManualTag({ ativa }: { ativa: boolean }) {
+  if (ativa) {
+    return (
+      <Badge
+        variant="outline"
+        title="Classificado como já permutado por exceção manual do analista"
+      >
+        <UserCheck aria-hidden /> Exceção manual
+      </Badge>
+    )
+  }
+  return (
+    <Badge
+      className="border-transparent bg-warning-subtle text-warning-foreground"
+      title="Exceção registrada, mas não aplicada: o dado do ERP mudou e vale o estado calculado. Desfaça a exceção se ela não vale mais."
+    >
+      <AlertTriangle aria-hidden /> Exceção inativa
     </Badge>
   )
 }
