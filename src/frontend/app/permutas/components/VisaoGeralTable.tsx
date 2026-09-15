@@ -23,6 +23,7 @@ import {
   fmtTaxa,
   moedaCodigo,
   podeMarcarExcecao,
+  tagExcecao,
 } from './format'
 import { Campo, ExcecaoManualTag, Moeda, ProcessamentoBadge, StatusBadge } from './ui'
 
@@ -246,8 +247,8 @@ export function VisaoGeralTable({
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <StatusBadge status={p.status} motivo={p.motivoBloqueio} />
-                        {p.excecaoManual ? (
-                          <ExcecaoManualTag ativa={p.excecaoManual.ativa} />
+                        {tagExcecao(p) !== null ? (
+                          <ExcecaoManualTag ativa={tagExcecao(p) === 'ativa'} />
                         ) : null}
                         {p.processamentoStatus ? (
                           <ProcessamentoBadge status={p.processamentoStatus} />
