@@ -32,4 +32,10 @@ definitiva no PR). Diretórios: `src/backend/{domain/client,domain/interface/per
 
 - **`vc-permuta-parcial`** (conexos.md): permuta parcial / variação cambial sobre valor PARCIAL.
 - **Desbloquear** um `nao-pago` exige regra do Yuri (override do Gate 3 / I3) + write-back `fin010`.
-- `residual-pago-centavos` (P2): teto de resíduo de centavos para "totalmente pago".
+- ~~`residual-pago-centavos` (P2): teto de resíduo de centavos para "totalmente pago".~~
+  **RESOLVIDO em 2026-09-14 (ADR-0046, feature `permutas-saldo-ordem-centavos`).** Decisão do usuário:
+  tolerância **absoluta de R$ 1,00 (BRL)**, mesmo teto da âncora I-Write-6. Gate 3 = `|mnyTitAberto| ≤
+  R$1,00`; Gate 2 = `valorPermutar > R$1,00` (≤ R$1,00 = sem saldo → `ja-permutado` se `valorPermutado
+  > 0`, senão `sem-saldo-permutar`); roteamento de cliente-filtro com os mesmos predicados. Escopo: só a
+  elegibilidade do adiantamento. `Invoice.pago` e os títulos do SISPAG seguem estritos. Casos: doc 8721
+  (R$ 0,02 em aberto) e 28 adtos INOX com resíduo de USD 0,00–0,02.

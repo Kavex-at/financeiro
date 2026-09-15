@@ -3,6 +3,27 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.25.0 — resíduo de R$1,00 é zero, a falta de D.I não mascara pagamento, e o saldo restante não conta o consumido duas vezes (2026-09-14, ADR-0046)
+
+Feature: `permutas-saldo-ordem-centavos` (branch `fix/permutas-saldo-ordem-centavos`, base `main`).
+
+- **Mudança de regra (I3):** Gate 3 "TOTALMENTE PAGO" = `|mnyTitAberto| ≤ R$1,00`; Gate 2 = `valorPermutar
+  > R$1,00`. O roteamento de cliente-filtro usa os mesmos predicados. É o mesmo teto absoluto da âncora
+  I-Write-6. Vale só para a elegibilidade do adiantamento: `Invoice.pago` e os títulos do SISPAG seguem
+  estritos. Fecha `residual-pago-centavos` (P2) para o adto.
+- **Prioridade completa dos motivos:** `nao-pago` → `ja-permutado`/`sem-saldo-permutar` →
+  `data-base-indisponivel`/`di-duimp-ambos` → casamento de invoice. I2 não muda.
+- **I-Permuta-1:** o saldo restante desconta só as alocações **ainda não consumidas** pelo ERP. A
+  alocação é avaliada pela versão atual (execução com `criado_em ≥ atualizado_em`) e só é consumida
+  com execução real em borderô finalizado, não estornado e visto finalizado antes do início da ingestão
+  que leu o `valorPermutar`. Numa parcial, o não consumido é `min(valor_residual_usd, valor_alocado)`.
+  Evidência: 125 de 128 adtos.
+- **Histórico** do painel lista também os `ja-permutado` com borderô do painel.
+- Sincroniza drift: `gate-3-pago-via-detail` aparecia aberto em três arquivos, embora já resolvido na
+  implementação.
+- Coverage: contagens inalteradas; `PermutaCandidata.impl_pct` 100→95 (ontologia à frente do código).
+  A ADR-0045 está reservada pela branch `feat/metricas-ciclo`.
+
 ## v0.22.0 — o sistema relata a própria execução (2026-09-01, ADR-0042)
 
 Feature: `painel-operacao` (branch `feat/painel-operacao`, base `main`). O sistema executava bem e não

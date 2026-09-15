@@ -32,7 +32,7 @@ relationships:
   - "Adiantamento 1—1 PermutaCandidata (lado-débito da candidata)"
   - "Adiantamento N—1 ClienteFiltro (via pesCod; roteia o adto para permuta-manual)"
   - "Adiantamento 1—N Permuta (lado-débito da alocação consumada, ADR-0008)"
-last_review: 2026-06-22
+last_review: 2026-09-14
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente I (adiantamento ↔ invoice)"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I"
@@ -66,10 +66,10 @@ Esta fatia (Fatia 1, READ-ONLY) apenas **lê e avalia** adiantamentos; não os m
 | `dataEmissao` | Date | sim | `com298.docDtaEmissao` | Data de emissão do documento. |
 | `valor` | number | não | `com298.docMnyValor` | Valor de face. |
 | `moeda` | string | sim | `com298.moeEspSigla` | Moeda do documento. |
-| `pago` | boolean | não | derivado: `mnyTitAberto===0` ou `pago===1` | Gate 3 da elegibilidade (TOTALMENTE PAGO). **NOVO GAP (probe 2026-06-18):** no `com298/list`, `mnyTitAberto`/`mnyTitPago` vêm `null` nos 410 adiantamentos reais → `isPago` retorna `false` para todos. Fonte real do status pago provavelmente no **endpoint de detalhe** (igual a `mnyTitPermutar`). Ver gap `gate-3-pago-via-detail`. |
-| `valorPermutar` | number | não | `getMnyTitPermutar(docCod)` (detail `GET /com298/{docCod}`) | Saldo a permutar disponível. `null` no list — hidratar no detail. Gate 2 (`> 0`). |
+| `pago` | boolean | não | derivado do detalhe: `mnyTitAberto === 0` (estrito, wire) | Status literal de pagamento do título. **Não é o Gate 3**: desde ADR-0046 o Gate 3 (TOTALMENTE PAGO) é `valorAberto ≤ R$1,00`, e este campo estrito continua sendo o do mapper compartilhado com as invoices. Fonte: detalhe `com298/{docCod}` (gap `gate-3-pago-via-detail` RESOLVIDO; no `com298/list` o campo vem `null`). |
+| `valorPermutar` | number | não | `getMnyTitPermutar(docCod)` (detail `GET /com298/{docCod}`) | Saldo a permutar disponível, em BRL, **já abatido pelo ERP** do que foi baixado em borderô finalizado (ver I-Permuta-1 / ADR-0046). `null` no list — hidratar no detail. Gate 2 (`> R$1,00`, ADR-0046). |
 | `valorTotal` | number? | não | `getDetalheTitulos` → `mnyTitValor` (BRL) | Valor de face do título (detalhe). Identidade: `valorTotal = valorPago + valorAberto`. Migration `0010`. Base do **progresso de pagamento** (% pago) exibido nos bloqueados por `nao-pago`. |
-| `valorAberto` | number? | não | `getDetalheTitulos` → `mnyTitAberto` (BRL) | Saldo em aberto do título (detalhe). Quanto **falta** pagar. Migration `0010`. |
+| `valorAberto` | number? | não | `getDetalheTitulos` → `mnyTitAberto` (BRL) | Saldo em aberto do título (detalhe). Quanto **falta** pagar. Migration `0010`. **Base do Gate 3:** `≤ R$1,00` = TOTALMENTE PAGO (ADR-0046). |
 | `pesCod` | string? | não | `imp021` (listProcessos) | Chave do **importador** do processo, hidratada na eleição. Roteia adtos de `ClienteFiltro` para `permuta-manual` (ADR-0007). Migration `0011`. |
 | `importador` | string? | não | `imp021` (listProcessos) | Nome do importador (exibição/seletor do cadastro). Migration `0011`. |
 | `exportador` | string? | não | `com298.dpeNomPessoa` (coalesce) | Exibição. |
@@ -96,8 +96,8 @@ Esta fatia (Fatia 1, READ-ONLY) apenas **lê e avalia** adiantamentos; não os m
   `docVldTipoAdto=1` (FinDocCab) → `tpdCod=99`, FINALIZADO.
 - `ConexosClient.getMnyTitPermutar({ docCod, filCod })` → `valorPermutar` literal (detail).
 - **Gate 3 (TOTALMENTE PAGO):** o status pago **não** vem populável no `com298/list`
-  (`mnyTitAberto`/`mnyTitPago` = `null`). Provável fonte = endpoint de **detalhe** do adiantamento
-  (modal financeiro), a ser confirmado por probe — gap aberto `gate-3-pago-via-detail`.
+  (`mnyTitAberto`/`mnyTitPago` = `null`). Fonte = endpoint de **detalhe** (`getDetalheTitulos`), gap
+  `gate-3-pago-via-detail` RESOLVIDO. Regra desde ADR-0046: `|mnyTitAberto| ≤ R$1,00`.
 
 ## Auto-casamento Simples agora é PARCIAL (ADR-0010)
 

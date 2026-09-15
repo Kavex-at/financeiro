@@ -14,7 +14,7 @@ related_files:
   - src/backend/migrations/0017_invoice_importador.sql
   - src/backend/migrations/0018_permuta_bordero_cache.sql
   - src/backend/migrations/0019_permuta_perf_indexes.sql
-last_review: 2026-07-07
+last_review: 2026-09-14
 endpoints_read:
   - com298 (PROFORMA tpdCod=99 + docVldTipoAdto=1 / INVOICE tpdCod=128 / detail mnyTitPermutar + pago=mnyTitAberto===0)
   - imp019 (D.I — data CI = cdiDtaCi)
@@ -31,9 +31,9 @@ resolved-by:
   - "P0-4 — campos wire da data-base RESOLVIDOS: cdiDtaCi (imp019, D.I) / dioDtaDesembaraco (imp223, DUIMP); probe de rede 2026-06-18; XOR confirmado em dados reais"
   - "P0-7 — query lista TODAS via 3 filtros; sem janela incremental; multi-filial; rate-limit é nota de impl (Yuri, 2026-06-17)"
   - "gate-3-pago-via-detail — RESOLVIDO (probe de rede 2026-06-18, 408 detalhes): pago ⟺ mnyTitAberto === 0 (estrito); hidratado via getDetalheTitulos na mesma chamada do Gate 2"
+  - "residual-pago-centavos — RESOLVIDO p/ o ADIANTAMENTO (ADR-0046, 2026-09-14): o pago do wire segue estrito (mnyTitAberto === 0); a regra de domínio do Gate 3 é |mnyTitAberto| ≤ R$1,00 e a do Gate 2 é mnyTitPermutar > R$1,00. Invoice.pago e títulos SISPAG seguem estritos"
   - "invoice-pago-via-titulo — RESOLVIDO (sonda probe-invoice-pago, PRD filial 2, 2026-08-28): o com298/list também não popula saldo no lado INVOICE (mnyTitAberto null em 1146/1146); o pago da invoice passa a sair de titMnyTotPago no com308 (0 chamadas extras), derivação validada 30/30 contra o detalhe"
 open-gap:
-  - "residual-pago-centavos (P2) — doc 8721 tem aberto=0,02 em título ~R$20M; Gate 3 estrito bloqueia. Confirmar c/ analistas se resíduo de centavos = totalmente pago e qual o teto"
   - "com308-enum-pago (P3) — o com308 expõe um campo `pago` que NÃO é booleano (valores 1/2/3 observados: 21/2/7 numa amostra de 30). Significado de cada valor não decodificado; a derivação em uso é a identidade monetária, provada. Decodificar simplificaria a soma"
   - "vc-permuta-parcial (Fatia 2) — variação cambial em permutas parciais deve usar o valor PARCIAL (mnyTitPermutar literal), não o integral do título"
 ---
@@ -164,9 +164,16 @@ permutado, não sobre o valor integral do título — risco em permutas parciais
 permutar=44.917,24) passa Gate 2 mas **falha** Gate 3 (parcialmente pago). Os dois gates são necessários;
 Gate 3 é o estrito. Distribuição: 70 NÃO PAGO · 332 TOTALMENTE PAGO · 6 PARCIALMENTE PAGO · 42 com permuta.
 
-**Anomalia em aberto (`residual-pago-centavos`):** doc `8721` tem `aberto=0,02` em título de `~R$20M`
-(`permutar=0`). Hoje o Gate 3 estrito o **BLOQUEIA**. Pendente: confirmar com os analistas se um resíduo
-de centavos conta como TOTALMENTE PAGO e qual o teto de "residual". Ver follow-up no inbox.
+**`residual-pago-centavos` — RESOLVIDO (ADR-0046, 2026-09-14):** doc `8721` tem `aberto=0,02` em título
+de `~R$20M` (`permutar=0`). O `pago` do **wire** continua estrito (`mnyTitAberto === 0`), mas a regra de
+**domínio** da elegibilidade do adiantamento passa a ser `|mnyTitAberto| ≤ R$1,00` (Gate 3) e
+`mnyTitPermutar > R$1,00` (Gate 2), mesmo teto absoluto da âncora I-Write-6. O 8721 deixa de ser
+`nao-pago`. Resíduos reais (≥ R$ 21, ex.: `21841` com 1.621,34) seguem reprovando o Gate 3.
+
+**`mnyTitPermutar` é líquido do que o ERP já abateu (ADR-0046):** o ERP só abate o saldo a permutar
+quando o borderô da baixa é **finalizado** (`borVldFinalizado = 1`); em cadastro, cancelado ou
+estornado, não. Medido em 128 adtos com execução real (125 abatidos, todos com borderô finalizado).
+Consequência para o saldo restante: ver I-Permuta-1 em `entities/permuta.md`.
 
 ## ESCRITA — `fin010` baixa/permuta (Fase 3, ADR-0013)
 
