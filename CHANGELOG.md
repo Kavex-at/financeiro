@@ -1,5 +1,29 @@
 # Columbia Financeiro — Changelog
 
+## v0.38.0 (2026-09-15) — exceção manual: "permutado fora do painel"
+
+O adiantamento **8721** (processo 124, COPPER/CODELCO, R$ 20,37 mi) aparecia como **Bloqueada — Sem saldo
+a permutar**, mas foi permutado de verdade: em 30/04/2026, antes do painel existir, alguém lançou no Conexos
+duas baixas cruzadas — a proforma contra a conta 21 (Fornecedores exterior) e a invoice 7329 contra a conta
+198 (Adto fornecedor internacionais). Como não passou pelo fluxo de permuta do Conexos, o ERP não preencheu
+"Valor permutado" e o painel concluiu "nunca teve saldo".
+
+Não dá para virar regra automática: é 1 documento, e a conta da baixa não é marcador confiável (o próprio
+8721 tem baixa na 21 com permutado = 0; permutas oficiais também usam a 18). Por isso, **exceção manual**
+(ADR-0047):
+
+- No detalhe de um adiantamento **Bloqueada / Sem saldo a permutar**, o botão **"Marcar como permutado fora
+  do painel"** pede uma justificativa (10–500 caracteres). Autor vem do login, nunca do formulário.
+- O adiantamento passa a **Já permutado** com a tag **"Exceção manual"**; o detalhe mostra justificativa,
+  autor e data, e oferece **"Desfazer exceção"** (com trilha de quem removeu e quando).
+- A ingestão respeita a exceção em toda rodada. Se o dado do ERP mudar (saldo reaparece, título reabre,
+  "Valor permutado" passa a > 0), **o cálculo vence** e a tag vira **"Exceção inativa"** — nunca esconde
+  mudança real.
+- Só pode marcar quem está exatamente em "Sem saldo a permutar" (422 nos demais); uma exceção ativa por
+  adiantamento (409). Rotas admin. Exportação Excel ganha 4 colunas da exceção.
+- Migration **0059** (tabela `permuta_excecao_manual` + guardas de estado estendidas). Nenhuma escrita no
+  Conexos.
+
 ## v0.37.0 (2026-09-15) — o sistema passa a dizer, por semana, quanto trabalho fez pela operação
 
 O report semanal da Columbia mostrava ritmo — commits, PRs, versões — e não efeito. Agora a própria
