@@ -172,8 +172,10 @@ export default class ConexosTitulosClient {
      * null/non-numeric → `pago = undefined` (conservative: caller's Gate 3
      * reprova; NEVER inferred as paid).
      *
-     * **Consumers:** `EleicaoPermutasService` (Gate 2 `valorPermutar > 0` +
-     * Gate 3 `pago`). One call per PROFORMA candidate. Caller is expected to
+     * **Consumers:** `EleicaoPermutasService` (Gate 2 `valorPermutar` + Gate 3
+     * `valorAberto`/`pago`, both with the R$1,00 residual tolerance applied in the
+     * DOMAIN by `ToleranciaResiduo` — ADR-0046; the `pago` returned here stays
+     * strict, since invoices also consume it). One call per PROFORMA candidate. Caller is expected to
      * cache by `docCod` per execution to avoid redundant calls.
      *
      * @returns `{ valorPermutar?, pago?, valorPermutado? }` — fields independently

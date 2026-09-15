@@ -26,15 +26,17 @@ export const ESTADO_ELEGIBILIDADE = {
     PERMUTA_MANUAL: 'permuta-manual',
     /**
      * Adiantamento **pago** cujo saldo a permutar já foi 100% consumido numa
-     * permuta anterior (`valorPermutar = 0` E `valorPermutado > 0`,
-     * `mnyTitPermuta` do detalhe). Estado **CONCLUÍDO** — o trabalho foi feito —,
+     * permuta anterior (`valorPermutar ≤ R$1,00` E `valorPermutado > 0`,
+     * `mnyTitPermuta` do detalhe; resíduo de centavos conta como zero, ADR-0046).
+     * Vale mesmo sem D.I/DUIMP: a falta de declaração não mascara o motivo de
+     * saldo (prioridade dos motivos, ADR-0046 D2). Estado **CONCLUÍDO** — o trabalho foi feito —,
      * NÃO uma reprovação de mérito (≠ BLOQUEADA): mantê-lo dentro do balde de
      * bloqueadas inflava o passivo externo em 2,72× (ADR-0043).
      *
      * **Terminal dentro de uma run**: sem saldo, não origina alocação nem a
      * transição T5 (`→ EXECUTADA`) — uma aresta para lá contaria a mesma permuta
      * duas vezes. A máquina é recomputada do zero a cada run, então um estorno no
-     * ERP devolve `valorPermutar > 0` e a próxima eleição reclassifica.
+     * ERP devolve `valorPermutar > R$1,00` e a próxima eleição reclassifica.
      *
      * Motivo informativo: `MOTIVO_BLOQUEIO.JA_PERMUTADO` (mesmo padrão de
      * `composto-nm`/`CASAMENTO_MANUAL` e `cliente-filtro`/`PERMUTA_MANUAL`).
@@ -56,9 +58,9 @@ export const MOTIVO_BLOQUEIO = {
     SEM_INVOICE: 'sem-invoice',
     /** >1 INVOICE FINALIZADA — distinguível do composto N:M (mesma família). */
     MULTIPLAS_INVOICES: 'multiplas-invoices',
-    /** Gate 3 reprovado — adiantamento NÃO está totalmente pago (mnyTitAberto > 0). */
+    /** Gate 3 reprovado — adiantamento NÃO está totalmente pago (mnyTitAberto > R$1,00). */
     NAO_PAGO: 'nao-pago',
-    /** Gate 2 reprovado — sem saldo a permutar (mnyTitPermutar = 0), embora pago. */
+    /** Gate 2 reprovado — sem saldo a permutar (mnyTitPermutar ≤ R$1,00), embora pago. */
     SEM_SALDO_PERMUTAR: 'sem-saldo-permutar',
     /**
      * Gate 2 reprovado, mas o adiantamento está pago E seu saldo a permutar já
@@ -71,7 +73,10 @@ export const MOTIVO_BLOQUEIO = {
     DI_DUIMP_AMBOS: 'di-duimp-ambos',
     /** Fallback — falhou um gate sem motivo específico mapeado (não esperado). */
     FALHA_GATE: 'falha-gate',
-    /** Gate 4 sem D.I nem DUIMP — sem âncora de data-base. */
+    /**
+     * Gate 4 sem D.I nem DUIMP — sem âncora de data-base. Só aparece depois de
+     * `nao-pago` e `ja-permutado`/`sem-saldo-permutar` (prioridade, ADR-0046 D2).
+     */
     DATA_BASE_INDISPONIVEL: 'data-base-indisponivel',
     /**
      * Importador cadastrado como "cliente filtro": o adiantamento (pago + com

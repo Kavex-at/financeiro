@@ -281,6 +281,72 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         expect(result.candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
     });
 
+    // ADR-0046 D1 — tolerância de R$ 1,00 aplicada na HIDRATAÇÃO do adiantamento (Gate 3) e no
+    // roteamento de cliente-filtro (Gate 2). O `pago` estrito do wire não muda.
+    const buildDetalheConexos = (detalhe: Record<string, unknown>, declaracoes: unknown[] = []) =>
+        buildConexos({
+            listAdiantamentosProforma: jest.fn().mockResolvedValue({
+                adiantamentos: [{ ...adiantamento, priCod: '1153', pago: false }],
+                capHit: false,
+            }),
+            listProcessos: jest
+                .fn()
+                .mockResolvedValue([{ priCod: '1153', pesCod: '191', importador: 'INOX-TECH' }]),
+            listDeclaracaoByProcesso: jest.fn().mockResolvedValue(declaracoes),
+            getDetalheTitulos: jest.fn().mockResolvedValue(detalhe),
+        } as Partial<jest.Mocked<ConexosMock>>);
+
+    it('doc 8721: em aberto R$ 0,02 (wire sem `pago`) → adiantamento.pago=true, motivo ≠ nao-pago', async () => {
+        const result = await runWith(
+            buildDetalheConexos({
+                valorPermutar: 0,
+                valorAberto: 0.02,
+                valorPermutado: 20373009.87,
+            }),
+            buildClienteFiltro([]),
+        );
+        const c = result.candidatas[0];
+        expect(c.adiantamento.pago).toBe(true);
+        expect(c.motivoBloqueio).not.toBe(MOTIVO_BLOQUEIO.NAO_PAGO);
+        expect(c.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.JA_PERMUTADO);
+    });
+
+    it('doc 3754: em aberto R$ 21,01 → BLOQUEADA(nao-pago), adiantamento.pago=false', async () => {
+        const result = await runWith(
+            buildDetalheConexos({ valorPermutar: 1000, valorAberto: 21.01 }),
+            buildClienteFiltro([]),
+        );
+        const c = result.candidatas[0];
+        expect(c.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(c.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.NAO_PAGO);
+        expect(c.adiantamento.pago).toBe(false);
+    });
+
+    it('cliente-filtro com resíduo de R$ 0,10 (sem D.I, já permutado) NÃO roteia → JA_PERMUTADO', async () => {
+        const result = await runWith(
+            buildDetalheConexos({
+                valorPermutar: 0.1,
+                pago: true,
+                valorAberto: 0,
+                valorPermutado: 5000,
+            }),
+            buildClienteFiltro(['191']),
+        );
+        const c = result.candidatas[0];
+        expect(c.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.JA_PERMUTADO);
+        expect(c.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.JA_PERMUTADO);
+    });
+
+    it('cliente-filtro com saldo de R$ 1,01 (sem D.I) → PERMUTA_MANUAL/cliente-filtro', async () => {
+        const result = await runWith(
+            buildDetalheConexos({ valorPermutar: 1.01, pago: true, valorAberto: 0 }),
+            buildClienteFiltro(['191']),
+        );
+        const c = result.candidatas[0];
+        expect(c.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL);
+        expect(c.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.CLIENTE_FILTRO);
+    });
+
     it('hydrates moedaNegociada from the título (moedaCod 220 → USD) on adiantamento + invoice', async () => {
         // Doc currency is BRL (default), but the NEGOCIADA currency of the título
         // is USD (moedaCod 220). The candidata must carry USD as moedaNegociada so
@@ -350,9 +416,16 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                     moedaNome: 'DOLAR DOS EUA',
                 },
             ]),
+            // Mock por docCod: o `pago` do wire é `valorAberto === 0` (mapDetalheTitulos), então o
+            // adto pago tem em aberto 0 e só a INVOICE traz os 5000 BRL em aberto (ADR-0046 D1: o
+            // Gate 3 do adto passou a ler o `valorAberto`).
             getDetalheTitulos: jest
                 .fn()
-                .mockResolvedValue({ valorPermutar: 1000, pago: true, valorAberto: 5000 }),
+                .mockImplementation(async ({ docCod }: { docCod: string }) =>
+                    docCod === adiantamento.docCod
+                        ? { valorPermutar: 1000, pago: true, valorAberto: 0 }
+                        : { valorPermutar: 1000, pago: false, valorAberto: 5000 },
+                ),
         } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService } = buildLogService();

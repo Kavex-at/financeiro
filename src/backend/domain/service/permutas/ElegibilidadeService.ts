@@ -10,6 +10,7 @@ import {
 import type Invoice from '../../interface/permutas/Invoice.js';
 import { GATE, type GateResult } from '../../interface/permutas/PermutaCandidata.js';
 import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js';
+import ToleranciaResiduo from '../../interface/permutas/ToleranciaResiduo.js';
 import CasamentoInvoiceService from './CasamentoInvoiceService.js';
 
 export interface AvaliarElegibilidadeInput {
@@ -41,11 +42,16 @@ export type ElegibilidadeResult = Pick<
  * ElegibilidadeService — ação `avaliarElegibilidade` (regra `elegibilidade-permuta`).
  *
  * Ontology: `ontology/business-rules/elegibilidade-permuta.md` + state-machine.
- * Aplica os 4 gates (PROFORMA / valorPermutar>0 / TOTALMENTE PAGO / D.I XOR DUIMP)
+ * Aplica os 4 gates (PROFORMA / valorPermutar > R$1,00 / TOTALMENTE PAGO / D.I XOR DUIMP)
  * e o casamento 1:1. ELEGIVEL ⇔ 4 gates verdes E exatamente 1 invoice casada.
  * Caso contrário → BLOQUEADA com motivo, EXCETO o adiantamento pago cujo saldo
  * já foi consumido numa permuta anterior, que vai a JA_PERMUTADO (T6/ADR-0043 —
  * estado concluído, não reprovação). Estados como constantes tipadas (P3).
+ *
+ * Tolerância de resíduo (ADR-0046 D1): saldo ≤ R$1,00 conta como sem saldo (Gate 2);
+ * o Gate 3 lê o `pago` já hidratado com a mesma tolerância (em aberto ≤ R$1,00) pelo
+ * `EleicaoPermutasService`. Prioridade dos motivos (ADR-0046 D2): uma só, em
+ * `motivoDoGateFalho` — a falta de D.I nunca mascara pagamento nem saldo.
  */
 @injectable()
 export default class ElegibilidadeService {
@@ -62,13 +68,13 @@ export default class ElegibilidadeService {
             // Gate 1 — tipo PROFORMA: garantido pela eleição (caminho PROFORMA +
             // adiantamento=SIM). Registrado para auditoria (I5).
             { gate: GATE.PROFORMA, passed: true, detail: 'eleito via path PROFORMA' },
-            // Gate 2 — valorPermutar > 0.
+            // Gate 2 — valorPermutar > R$1,00 (resíduo de centavos conta como zero, ADR-0046 D1).
             {
                 gate: GATE.VALOR_PERMUTAR,
-                passed: (adiantamento.valorPermutar ?? 0) > 0,
+                passed: !ToleranciaResiduo.semSaldoPermutar(adiantamento.valorPermutar),
                 detail: `valorPermutar=${adiantamento.valorPermutar ?? 0}`,
             },
-            // Gate 3 — TOTALMENTE PAGO.
+            // Gate 3 — TOTALMENTE PAGO (em aberto ≤ R$1,00, hidratado pela eleição).
             { gate: GATE.TOTALMENTE_PAGO, passed: adiantamento.pago === true },
             // Gate 4 — D.I XOR DUIMP.
             { gate: GATE.DI_XOR_DUIMP, passed: gate4.passed, detail: gate4.detail },
@@ -81,19 +87,11 @@ export default class ElegibilidadeService {
             gatesAvaliados,
         };
 
-        // Gate 4 sem D.I nem DUIMP → motivo dedicado `data-base-indisponivel`.
-        if (gate4.motivo === MOTIVO_BLOQUEIO.DATA_BASE_INDISPONIVEL) {
-            return {
-                ...base,
-                estadoElegibilidade: ESTADO_ELEGIBILIDADE.BLOQUEADA,
-                motivoBloqueio: MOTIVO_BLOQUEIO.DATA_BASE_INDISPONIVEL,
-            };
-        }
-
         // Algum gate (2/3/4) falhou → motivo ESPECÍFICO do gate reprovado, em vez
-        // do genérico `falha-gate`. Prioridade pela causa-raiz: NÃO PAGO (gate 3)
-        // antes de SEM SALDO (gate 2) — o saldo a permutar deriva do valor pago,
-        // então um não-pago também zera o gate 2; mostrar "não pago" é o acionável.
+        // do genérico `falha-gate`. Prioridade pela causa-raiz (ADR-0046 D2): NÃO
+        // PAGO (gate 3) → SEM SALDO / JÁ PERMUTADO (gate 2) → SEM D.I / D.I+DUIMP
+        // (gate 4). O saldo a permutar deriva do valor pago, então um não-pago
+        // também zera o gate 2; mostrar "não pago" é o acionável.
         const algumGateFalhou = gatesAvaliados.some((g) => !g.passed);
         if (algumGateFalhou) {
             // T6 (ADR-0043) — o motivo é resolvido UMA vez e o estado é DERIVADO
@@ -101,7 +99,7 @@ export default class ElegibilidadeService {
             // concluiu `ja-permutado` (pago + gate 2 reprovado + já houve permuta),
             // o estado é JA_PERMUTADO — estado CONCLUÍDO, não reprovação. Qualquer
             // outro motivo segue BLOQUEADA.
-            const motivo = this.motivoDoGateFalho(gatesAvaliados, adiantamento);
+            const motivo = this.motivoDoGateFalho(gatesAvaliados, adiantamento, gate4.motivo);
             return {
                 ...base,
                 estadoElegibilidade:
@@ -146,11 +144,16 @@ export default class ElegibilidadeService {
 
     /**
      * Mapeia o gate reprovado para um motivo ESPECÍFICO (em vez do genérico
-     * `falha-gate`). Prioridade pela causa-raiz quando mais de um gate falha:
-     *   gate 3 (NÃO PAGO) → gate 2 (SEM SALDO / JÁ PERMUTADO) → gate 4 (D.I +
-     *   DUIMP) → fallback. Esta ordem é a ÚNICA fonte da regra de prioridade —
-     *   o estado (BLOQUEADA vs. JA_PERMUTADO) é derivado do motivo resolvido
-     *   aqui, nunca recalculado no call site (ADR-0043).
+     * `falha-gate`). Prioridade pela causa-raiz quando mais de um gate falha
+     * (ADR-0046 D2):
+     *   1. gate 3 → `nao-pago`
+     *   2. gate 2 → `ja-permutado` | `sem-saldo-permutar`
+     *   3. gate 4 → `data-base-indisponivel` (nenhuma declaração) | `di-duimp-ambos`
+     *   4. fallback `falha-gate`
+     * Esta ordem é a ÚNICA fonte da regra de prioridade — o estado (BLOQUEADA
+     * vs. JA_PERMUTADO) é derivado do motivo resolvido aqui, nunca recalculado
+     * no call site (ADR-0043). A falta de D.I/DUIMP nunca mascara pagamento nem
+     * saldo: um adto pago, sem saldo e já permutado é JA_PERMUTADO mesmo sem D.I.
      *
      * Gate 2 (VALOR_PERMUTAR) reprovado chega aqui só quando o adiantamento já
      * está pago (gate 3 tem prioridade). Nesse ponto distingue-se a causa do
@@ -161,6 +164,7 @@ export default class ElegibilidadeService {
     private motivoDoGateFalho = (
         gates: GateResult[],
         adiantamento: Adiantamento,
+        motivoGate4?: MotivoBloqueio,
     ): MotivoBloqueio => {
         const falhou = (gate: GateResult['gate']): boolean =>
             gates.some((g) => g.gate === gate && !g.passed);
@@ -170,7 +174,11 @@ export default class ElegibilidadeService {
                 ? MOTIVO_BLOQUEIO.JA_PERMUTADO
                 : MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR;
         }
-        if (falhou(GATE.DI_XOR_DUIMP)) return MOTIVO_BLOQUEIO.DI_DUIMP_AMBOS;
+        if (falhou(GATE.DI_XOR_DUIMP)) {
+            return motivoGate4 === MOTIVO_BLOQUEIO.DATA_BASE_INDISPONIVEL
+                ? MOTIVO_BLOQUEIO.DATA_BASE_INDISPONIVEL
+                : MOTIVO_BLOQUEIO.DI_DUIMP_AMBOS;
+        }
         return MOTIVO_BLOQUEIO.FALHA_GATE;
     };
 

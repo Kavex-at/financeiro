@@ -6,7 +6,8 @@
  * (`priCod`). Esta fatia (Fatia 1, READ-ONLY) apenas lê e avalia adiantamentos.
  *
  * `valorPermutar` é hidratado no detail (`getDetalheTitulos`) — `null` no list,
- * por isso opcional. `pago` também é hidratado no detail (`mnyTitAberto === 0`):
+ * por isso opcional. `pago` também é hidratado no detail (`mnyTitAberto ≤ R$1,00`,
+ * tolerância de resíduo da ADR-0046 — `ToleranciaResiduo.adiantamentoTotalmentePago`):
  * o list devolve `mnyTitAberto`/`mnyTitPago` NULL em produção, então o valor da
  * row do list é sempre `false` e é sobrescrito pelo detalhe na eleição.
  */
@@ -23,7 +24,7 @@ export default interface Adiantamento {
     valor: number;
     moeda: string;
     pago: boolean;
-    /** Saldo a permutar (detail `getDetalheTitulos`). Gate 2 (`> 0`). */
+    /** Saldo a permutar (detail `getDetalheTitulos`). Gate 2 (`> R$1,00`, ADR-0046). */
     valorPermutar?: number;
     /**
      * Valor já permutado (detail `getDetalheTitulos` → `mnyTitPermuta`,
@@ -72,7 +73,7 @@ export default interface Adiantamento {
     valorTotal?: number;
     /**
      * Saldo AINDA em aberto do título em BRL (`mnyTitAberto` do detail). Quanto
-     * falta pagar; `0` ⇒ totalmente pago (Gate 3). Opcional — depende do detalhe.
+     * falta pagar; `≤ R$1,00` ⇒ totalmente pago (Gate 3, ADR-0046). Opcional — depende do detalhe.
      */
     valorAberto?: number;
     /**

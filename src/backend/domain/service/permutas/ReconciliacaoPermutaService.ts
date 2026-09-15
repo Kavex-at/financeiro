@@ -5,6 +5,7 @@ import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient
 import AlocacaoSemCoberturaError from '../../errors/AlocacaoSemCoberturaError.js';
 import ReconciliacaoEmAndamentoError from '../../errors/ReconciliacaoEmAndamentoError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import ToleranciaResiduo from '../../interface/permutas/ToleranciaResiduo.js';
 import { isHandlerError } from '../../libs/handler/HandlerError.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import PermutaAlocacaoRepository, {
@@ -931,7 +932,7 @@ export default class ReconciliacaoPermutaService {
         // USD × 0,001) reabriria essa brecha (absorveria um saldo real como variação fictícia). Com
         // teto fixo, só resíduo de centavos é absorvido; resíduo maior (arredondamento grande raro OU
         // saldo real) NÃO é ancorado — vira BUSINESS_WARN para conferência manual. Ver ADR-0020.
-        const limiteResiduo = 1;
+        const limiteResiduo = ToleranciaResiduo.LIMITE_BRL;
         const ctx = {
             adiantamentoDocCod: p.adiantamentoDocCod,
             invoiceDocCod: p.invoiceDocCod,

@@ -150,6 +150,19 @@ describe('AlocacaoPermutasService', () => {
         expect(invoices[0].dataBase).toBeDefined();
     });
 
+    it('buscarInvoices: INVOICE com R$ 0,02 em aberto segue EM ABERTO (tolerância é só do adto, ADR-0046)', async () => {
+        const conexos = buildConexos({
+            // Wire estrito: `pago` do detalhe = (valorAberto === 0) ⇒ 0,02 ⇒ false.
+            getDetalheTitulos: jest.fn().mockImplementation(async ({ docCod }) => ({
+                pago: docCod === 'I8-PAGA',
+                valorAberto: docCod === 'I8-PAGA' ? 0 : 0.02,
+            })),
+        } as Partial<jest.Mocked<ConexosMock>>);
+        const { service } = build({ conexos });
+        const invoices = await service.buscarInvoices('510', 2);
+        expect(invoices.map((i) => i.docCod)).toEqual(['I7']);
+    });
+
     it('buscarInvoices reporta jaAlocado (consumo de OUTROS adtos) e exclui o próprio', async () => {
         // 300 já alocados na invoice por outros adiantamentos.
         const { repo } = buildAlocacaoRepo({ invoice: 300 });
