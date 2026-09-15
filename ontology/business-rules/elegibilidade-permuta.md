@@ -10,7 +10,7 @@ invariant: I3
 related_files:
   - src/backend/domain/service/permutas/ElegibilidadeService.ts
   - src/backend/domain/service/permutas/EleicaoPermutasService.ts
-last_review: 2026-09-14
+last_review: 2026-09-15
 has_canonical_test: false
 resolved-by:
   - "P0-6 — 'INVOICE casada' = exatamente 1 invoice FINALIZADA no processo (Yuri, 2026-06-17)"
@@ -18,7 +18,7 @@ resolved-by:
   - "P0-4 — Gate 4 data-base RESOLVIDA (cdiDtaCi imp019 / dioDtaDesembaraco imp223); probe de rede 2026-06-18, filCod=2, 410 adiantamentos reais"
   - "gate-3-pago-via-detail — RESOLVIDO na impl (getDetalheTitulos: mnyTitAberto do detalhe com298/{docCod})"
   - "residual-pago-centavos — RESOLVIDO para o ADIANTAMENTO (ADR-0046, 2026-09-14): tolerância absoluta de R$1,00 nos Gates 2 e 3"
-related_decisions: [0005, 0007, 0043, 0046]
+related_decisions: [0005, 0007, 0043, 0046, 0047]
 ---
 
 # Regra: elegibilidade-permuta (4 gates + INVOICE casada)
@@ -48,6 +48,7 @@ Falha em qualquer conjunto → **um estado não-elegível**, que **não é neces
 | >1 invoice FINALIZADA no processo (4 gates OK) | `CASAMENTO_MANUAL` | 0005 |
 | cliente-filtro pago + saldo (Gate 4 dispensado; mesmos predicados ≤/> R$1,00) | `PERMUTA_MANUAL` | 0007, 0046 |
 | pago, Gate 2 reprovado (`valorPermutar ≤ R$1,00`) **com `valorPermutado > 0`** — com ou sem D.I | `JA_PERMUTADO` (concluído, terminal) | 0043, 0046 |
+| pago, sem saldo, `valorPermutado` 0/ausente (seria `BLOQUEADA / sem-saldo-permutar`) **com `ExcecaoPermuta` ativa** | `JA_PERMUTADO` / `permutado-fora-do-painel` (override manual, T7) | 0047 |
 | demais (0 invoice, não pago, sem saldo, XOR, data-base, detalhe indisponível) | `BLOQUEADA` (reportada, NÃO contada como falha do job) | — |
 
 **I3 não muda (ADR-0043):** a definição de *elegível* é exatamente a mesma. *(A ADR-0046 depois mudou só o limiar dos Gates 2 e 3, para R$1,00; ver abaixo.)* O que mudou é o **destino de quem
@@ -94,6 +95,17 @@ Quando mais de um gate falha, o motivo é escolhido nesta ordem (causa-raiz prim
 
 A ausência de D.I/DUIMP **nunca** mascara motivo de pagamento ou de saldo. I2 (`di-xor-duimp`) não
 muda; muda só a precedência do motivo.
+
+## Exceção manual "permutado fora do painel" (ADR-0047)
+
+- **Não é parte de I3 nem da avaliação.** É um override da **eleição**, aplicado depois dos gates e do
+  roteamento de cliente-filtro, sobre um único resultado: `BLOQUEADA / sem-saldo-permutar`.
+- `ExcecaoPermuta` ativa ∧ resultado calculado = `BLOQUEADA / sem-saldo-permutar` → `JA_PERMUTADO` com
+  motivo `permutado-fora-do-painel`.
+- Qualquer outro resultado calculado vence a exceção (o ERP manda): `valorPermutado > 0` →
+  `JA_PERMUTADO / ja-permutado`; saldo > R$1,00, não pago etc. → o estado calculado, com `BUSINESS_WARN`.
+- Nenhuma regra automática infere "permutado por fora" (conta da baixa, baixas cruzadas): ver alternativas
+  rejeitadas na ADR-0047.
 
 ## Definição de "INVOICE casada" (P0-6 + P0-5 — RESOLVIDO)
 

@@ -7,12 +7,13 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-18
+last_review: 2026-09-15
 preconditions:
   - "Sessão Conexos ativa (ensureSid)."
   - "Escopo de filiais definido (multi-filial, I6)."
 postconditions:
   - "Lista de Adiantamentos (PROFORMA FINALIZADO) candidatos, por processo/filial."
+  - "Override ExcecaoPermuta (T7, ADR-0047): candidata avaliada como BLOQUEADA/sem-saldo-permutar com exceção ativa → JA_PERMUTADO/permutado-fora-do-painel; exceção ativa cuja guarda falhou → estado calculado + BUSINESS_WARN."
   - "Nenhuma escrita no ERP (I4)."
 side_effects:
   - "Leitura paginada do com298 (rate-limit — nota de implementação, paginate cap existente)."

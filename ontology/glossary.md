@@ -19,6 +19,7 @@ Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem e
 | **Permuta manual / cross-process** | Adto de **cliente-filtro** (pago + saldo, sem D.I no processo): a invoice vem de **outro processo**, escolhida manualmente (ADR-0007). Tipo `cross-process`. |
 | **Cliente filtro** | Importador cadastrado cujos adiantamentos a pipeline roteia para `permuta-manual` em vez de `bloqueada` (entidade `ClienteFiltro`, ADR-0007). Lista mantida pelo analista (config do cliente). |
 | **Já permutado** | Adiantamento **pago** cujo saldo a permutar já foi 100% consumido numa permuta anterior (`valorPermutar = 0`, `valorPermutado > 0`). Estado **concluído e terminal** (`ja-permutado`, ADR-0043) — **não** é pendência bloqueada. |
+| **Permutado fora do painel (exceção manual)** | Adto que o ERP diz "sem saldo, nunca permutado" (`valorPermutado = 0`), mas que o analista marcou como já permutado por fora do fluxo de permuta do Conexos, com justificativa e trilha (entidade `ExcecaoPermuta`, ADR-0047). Estado `ja-permutado`, motivo `permutado-fora-do-painel`, tag "Exceção manual". |
 | **tipoPermuta** | Rótulo **derivado** (apresentação/abas), não persistido: `simples` / `multiplas` / `cross-over` / `cross-process` (ADR-0009). |
 | **Backlog elegível** | Pendências com adiantamento pago + INVOICE disponível, prontas para permuta, com idade (aging). |
 | **Pendência bloqueada** | Caso que depende de terceiros (ex.: INVOICE ainda não emitida) — reportado, não contado como falha. |
