@@ -353,8 +353,11 @@ export default class GestaoPermutasService {
         // consumidas pelo ERP (ADR-0046 D3): o `valorPermutar` já vem abatido do que foi baixado
         // em borderô finalizado, então descontar TODAS as alocações contava o consumido 2×.
         const podeAlocar = status === 'permuta-manual' || status === 'casamento-manual';
+        // `ja-permutado` também leva as alocações, SÓ para exibição: o Histórico mostra o que
+        // entrou no borderô e deriva o tipo (cross-process) delas (ADR-0046 D4). Sem saldo nem tipo.
+        const exibeAlocacoes = podeAlocar || status === 'ja-permutado';
         const alocacoes =
-            podeAlocar && alocacoesDoAdto.length > 0
+            exibeAlocacoes && alocacoesDoAdto.length > 0
                 ? alocacoesDoAdto.map((al) => this.toAlocacaoDetalhe(al))
                 : undefined;
         const saldoNeg =

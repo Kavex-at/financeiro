@@ -32,7 +32,7 @@ import type {
   ReconciliarResult,
 } from '@/lib/types'
 import { RELATORIOS_DISPONIVEIS } from '@/lib/types'
-import { cn, formatNumber, ordenarPorEtapaPermuta } from '@/lib/utils'
+import { cn, formatNumber } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -53,7 +53,6 @@ import { Input } from '@/components/ui/input'
 import { BorderosPanel } from './BorderosPanel'
 import {
   FiltroStatus,
-  type ItemHistorico,
   LOTE_MAX,
   PAGE_SIZE,
   PROCESSAMENTO_HABILITADO,
@@ -66,6 +65,7 @@ import {
 } from './components/format'
 import { KpiFooter } from './components/ui'
 import { useTabelaFiltro } from './components/tabela-filtro'
+import { montarHistorico } from './components/historico'
 import { DemoDataBanner, LoadErrorBanner } from './components/banners'
 import { usePermutasData } from './components/usePermutasData'
 import { useIngestao } from './components/useIngestao'
@@ -590,67 +590,18 @@ export default function GestaoPermutasPage() {
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
 
-  // HISTÓRICO — tudo que já foi executado (tem borderô), unificado das 4 categorias. Read-only: as
-  // ações (aprovar/cancelar/estornar) ficam na aba Borderôs. Ordem: aguardando aprovação no topo,
-  // finalizadas no fundo; dentro de cada grupo, borderô mais recente primeiro.
-  const historico: ItemHistorico[] = []
-  for (const c of casamentosSugeridos) {
-    for (const a of c.adiantamentos) {
-      const v = statusPorAdto[a.docCod]
-      if (!v) continue
-      historico.push({
-        key: `auto-${a.docCod}-${v.borCod}`,
-        tipo: 'Automática',
-        filCod: c.invoice.filCod,
-        priCod: c.priCod,
-        cliente: c.invoice.importador ?? '',
-        exportador: c.invoice.exportador,
-        adtoDocCod: a.docCod,
-        // `valorASerUsado` zera quando a automática FINALIZA (a invoice foi abatida). Nesse caso usa o
-        // valor negociado do PRÓPRIO adiantamento (estável), pra não mostrar 0 no histórico.
-        valor:
-          (a.valorASerUsado ?? 0) > 0
-            ? a.valorASerUsado
-            : (pendenteByDocCod.get(a.docCod)?.valorMoedaNegociada ?? a.valorASerUsado ?? null),
-        moeda: a.moeda ?? c.invoice.moeda,
-        borCod: v.borCod,
-        finalizado: v.permutaStatus === 'finalizado',
-        busca: `${c.priCod} ${c.invoice.importador ?? ''} ${a.docCod} ${v.borCod}`,
-      })
-    }
-  }
-  const pushPendentesHistorico = (lista: PermutaPendente[], tipo: string) => {
-    for (const p of lista) {
-      const v = statusPorAdto[p.docCod]
-      if (!v) continue
-      historico.push({
-        key: `${tipo}-${p.docCod}-${v.borCod}`,
-        tipo,
-        filCod: p.filCod,
-        priCod: p.detalhe?.priCod ?? '',
-        cliente: p.importador ?? '',
-        exportador: p.exportador,
-        adtoDocCod: p.docCod,
-        // "Só o que foi lançado": soma das alocações (o que entrou no borderô), não o adto inteiro.
-        // Sem alocações detalhadas, cai no valor negociado do adto.
-        valor:
-          p.alocacoes && p.alocacoes.length > 0
-            ? p.alocacoes.reduce((s, al) => s + al.valorAlocado, 0)
-            : p.valorMoedaNegociada,
-        moeda: p.moeda,
-        borCod: v.borCod,
-        finalizado: v.permutaStatus === 'finalizado',
-        busca: `${p.docCod} ${p.importador ?? ''} ${v.borCod}`,
-      })
-    }
-  }
-  pushPendentesHistorico(multiplasManuais, 'Múltipla')
-  pushPendentesHistorico(crossOver, 'Cross-over')
-  pushPendentesHistorico(crossProcess, 'Cross-process')
-  historico.sort((a, b) => (b.borCod ?? 0) - (a.borCod ?? 0)) // borderô mais recente primeiro
-  const historicoOrdenado = ordenarPorEtapaPermuta(historico, (h) => [
-    h.finalizado ? 'finalizada' : 'aguardando-aprovacao',
-  ])
+  // HISTÓRICO — tudo que já foi executado (tem borderô): as 4 categorias de trabalho + os
+  // `ja-permutado` com borderô do painel (ADR-0046 D4), uma linha por adto + borderô. Read-only: as
+  // ações (aprovar/cancelar/estornar) ficam na aba Borderôs. Regra e ordem em `montarHistorico`.
+  const historicoOrdenado = montarHistorico({
+    casamentosSugeridos,
+    multiplasManuais,
+    crossOver,
+    crossProcess,
+    jaPermutados: (data?.pendentes ?? []).filter((p) => p.status === 'ja-permutado'),
+    statusPorAdto,
+    pendenteByDocCod,
+  })
   const abaHistorico = useTabelaFiltro(
     historicoOrdenado,
     (h) => h.filCod,
@@ -948,7 +899,7 @@ export default function GestaoPermutasPage() {
                     <Banknote className="size-4" aria-hidden /> Borderôs
                   </TabsTrigger>
                   <TabsTrigger value="historico">
-                    <CheckCircle2 className="size-4" aria-hidden /> Histórico ({historico.length})
+                    <CheckCircle2 className="size-4" aria-hidden /> Histórico ({historicoOrdenado.length})
                   </TabsTrigger>
                 </TabsList>
               </CardHeader>
