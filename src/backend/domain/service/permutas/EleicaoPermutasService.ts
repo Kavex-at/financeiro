@@ -20,6 +20,7 @@ import { GATE } from '../../interface/permutas/PermutaCandidata.js';
 import type InvoiceLancamento from '../../interface/closing-reports/Invoice.js';
 import type Invoice from '../../interface/permutas/Invoice.js';
 import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js';
+import ToleranciaResiduo from '../../interface/permutas/ToleranciaResiduo.js';
 import LogService from '../LogService.js';
 import ClienteFiltroRepository from '../../repository/permutas/ClienteFiltroRepository.js';
 import PermutaSnapshotRepository, {
@@ -149,9 +150,11 @@ const somaValorNegociado = (
 /**
  * `pago` da invoice derivado dos TÍTULOS (com308), não da row do `com298/list`.
  *
- * Regra: `pago ⟺ Σ face − Σ pago === 0`, **estrita** (sem epsilon) — mesma regra do
- * Gate 3 do adiantamento, mantida por decisão do Yuri em 2026-06-18
- * (`residual-pago-centavos`: um resíduo de R$0,02 NÃO conta como quitado).
+ * Regra: `pago ⟺ Σ face − Σ pago === 0`, **estrita** (sem epsilon) — decisão do Yuri em
+ * 2026-06-18 (`residual-pago-centavos`: um resíduo de R$0,02 NÃO conta como quitado). A
+ * ADR-0046 D1 passou o Gate 3 do ADIANTAMENTO a tolerar em aberto ≤ R$1,00
+ * (`ToleranciaResiduo`), mas deixou a INVOICE estrita de propósito: estender a tolerância
+ * a ela exige decisão própria.
  *
  * Validada ao vivo contra `getDetalheTitulos` (ground truth do ERP): 30/30 concordam,
  * 0 divergências (sonda `probe-invoice-pago`, PRD filial 2, 2026-08-28).
@@ -793,12 +796,13 @@ export default class EleicaoPermutasService {
             // dos bloqueados por `nao-pago` (% pago + quanto falta). Read-only.
             ...(detalhe.valorTotal !== undefined ? { valorTotal: detalhe.valorTotal } : {}),
             ...(detalhe.valorAberto !== undefined ? { valorAberto: detalhe.valorAberto } : {}),
-            // Gate 3 — `pago` SEMPRE vem do detalhe (mnyTitAberto === 0): o list
-            // devolve mnyTitAberto/mnyTitPago NULL em produção, então o `pago` da
-            // row do list é inservível. Quando o detalhe não traz `mnyTitAberto`
-            // (campo ausente/null), `detalhe.pago` é undefined → forçamos `false`
+            // Gate 3 — `pago` SEMPRE vem do detalhe: o list devolve
+            // mnyTitAberto/mnyTitPago NULL em produção, então o `pago` da row do
+            // list é inservível. TOTALMENTE PAGO ⇔ em aberto ≤ R$1,00 (ADR-0046 D1,
+            // tolerância de resíduo SÓ do adiantamento — o `pago` do wire segue
+            // estrito). Sem `mnyTitAberto` nem `pago` no detalhe → `false`
             // (conservador: Gate 3 reprova; NUNCA inferimos pago=true sem prova).
-            pago: detalhe.pago ?? false,
+            pago: ToleranciaResiduo.adiantamentoTotalmentePago(detalhe),
         };
 
         const result = this.elegibilidadeService.avaliarElegibilidade({
@@ -808,7 +812,8 @@ export default class EleicaoPermutasService {
         });
 
         // Roteamento de CLIENTE FILTRO (Fase 1): se o importador está cadastrado e o
-        // adiantamento está pago + com saldo a permutar, a candidata BLOQUEADA (ex.
+        // adiantamento está pago + com saldo a permutar (> R$1,00, mesmos predicados
+        // dos Gates 2/3 — ADR-0046 D1), a candidata BLOQUEADA (ex.
         // sem D.I / sem invoice no próprio processo) vira `permuta-manual` — será
         // permutada manualmente e cross-process (Fatia 2). nao-pago/sem-saldo seguem
         // bloqueados (a manual exige pago + saldo); elegível/casamento-manual/já-permutado
@@ -818,7 +823,7 @@ export default class EleicaoPermutasService {
             ehClienteFiltro &&
             result.estadoElegibilidade === ESTADO_ELEGIBILIDADE.BLOQUEADA &&
             hydrated.pago === true &&
-            (hydrated.valorPermutar ?? 0) > 0;
+            !ToleranciaResiduo.semSaldoPermutar(hydrated.valorPermutar);
         const estadoElegibilidade = roteiaParaManual
             ? ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL
             : result.estadoElegibilidade;
