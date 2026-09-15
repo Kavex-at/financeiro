@@ -28,15 +28,19 @@ export default class ToleranciaResiduo {
         ToleranciaResiduo.dentroDoLimite(valorPermutar ?? 0);
 
     /**
-     * Gate 3 (TOTALMENTE PAGO): em aberto (`mnyTitAberto`, BRL) ≤ R$ 1,00. Sem `valorAberto`, vale o
+     * Gate 3 (TOTALMENTE PAGO): |em aberto| (`mnyTitAberto`, BRL) ≤ R$ 1,00. Sem `valorAberto`, vale o
      * `pago` do wire; sem nenhum dos dois, `false` — nunca se infere pago sem prova.
+     *
+     * Módulo de propósito: um em-aberto NEGATIVO grande é sobrepagamento (anomalia, medido ao vivo
+     * no doc 4058: −R$ 34.088,65), não resíduo de centavos — segue reprovando, como no `=== 0`
+     * estrito de antes. A tolerância absorve só centavos, nos dois sentidos.
      */
     public static readonly adiantamentoTotalmentePago = (detalhe: {
         pago?: boolean;
         valorAberto?: number;
     }): boolean => {
         if (detalhe.valorAberto !== undefined && Number.isFinite(detalhe.valorAberto)) {
-            return ToleranciaResiduo.dentroDoLimite(detalhe.valorAberto);
+            return ToleranciaResiduo.dentroDoLimite(Math.abs(detalhe.valorAberto));
         }
         return detalhe.pago === true;
     };
