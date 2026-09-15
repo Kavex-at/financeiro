@@ -1,5 +1,29 @@
 # Columbia Financeiro — Changelog
 
+## v0.36.5 (2026-09-15) — o painel de Permutas para de esconder permuta feita e saldo que falta
+
+Três defeitos medidos no banco de produção em 2026-09-14 (ADR-0046):
+
+- **Saldo restante descontado duas vezes.** O saldo do adiantamento era `valorPermutar/taxa − Σ todas
+  as alocações`, mas o Conexos já abate o `mnyTitPermutar` quando o borderô é **finalizado** (125 de
+  128 casos). O adto **12860** tinha USD 30.364,73 a permutar e a tela mostrava −19.257,73 (saía da aba
+  Cross-process); o **9328** tinha 39.652,47 e a tela mostrava 4.304,94. Agora só desconta a alocação
+  ainda não consumida (execução da versão atual, borderô finalizado e não estornado, visto antes da
+  ingestão que leu o saldo). Fonte única para a tela e para o teto do `alocar`
+  (`SaldoAlocacaoAdiantamentoService`); na dúvida, desconta — nunca permite super-alocar.
+- **"Sem D.I / DUIMP" mascarava os outros motivos.** O Gate 4 era checado antes de "não pago" e "já
+  permutado": 43 adiantamentos da INOX permutados pelo painel (R$ 18 mi baixados) apareciam como
+  bloqueados e sumiam do Histórico, e 50 não pagos apareciam como "sem D.I". A prioridade passa a ser
+  `nao-pago` → `ja-permutado`/`sem-saldo-permutar` → D.I.
+- **Resíduo de centavos travava a fila.** Tolerância absoluta de **R$ 1,00** (o mesmo teto da âncora da
+  baixa) no saldo a permutar e no em aberto do adiantamento: 28 adtos já baixados com USD 0,01–0,02
+  sobrando saem da fila Cross-process e o doc 8721 (R$ 0,02 em aberto sobre R$ 20 mi) deixa de ser
+  "não pago". Em aberto negativo (sobrepagamento) segue não pago. Invoices e baixa seguem estritas.
+
+O Histórico também lista `Já permutado` com borderô do painel. Validação AO VIVO read-only contra o
+Conexos: 247 linhas, 0 divergências (`jobs/validate-permutas-saldo-ordem-centavos-v1.ts`). Sem migration.
+Até a primeira ingestão pós-deploy, os saldos continuam como hoje (lado conservador).
+
 ## v0.36.4 (2026-09-14) — o pré-voo enxerga alocação nunca executada
 
 Só ferramenta: nenhum caminho de código do app em execução muda. A sonda
