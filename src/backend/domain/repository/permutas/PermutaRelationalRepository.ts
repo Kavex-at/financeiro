@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
     ESTADO_ELEGIBILIDADE,
     type EstadoElegibilidade,
+    type MotivoBloqueio,
 } from '../../interface/permutas/EstadoElegibilidade.js';
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient, {
@@ -609,6 +610,35 @@ export default class PermutaRelationalRepository {
             { docCod },
         );
         return row ? this.mapAdiantamentoRow(row) : null;
+    };
+
+    /**
+     * Reclassifica UMA linha de adiantamento de um estado/motivo de ORIGEM para um de destino,
+     * dentro da transação do chamador (exceção manual, ADR-0047). O estado de origem no WHERE
+     * é a trava otimista: se a ingestão mudou a linha entre a leitura e a gravação, nada é
+     * escrito e o rowCount 0 volta para o serviço decidir. Ignora linhas `stale`.
+     */
+    public reclassificarAdiantamento = async (
+        tx: TransactionClient,
+        input: {
+            docCod: string;
+            de: { estado: EstadoElegibilidade; motivo: MotivoBloqueio };
+            para: { estado: EstadoElegibilidade; motivo: MotivoBloqueio };
+        },
+    ): Promise<number> => {
+        return tx.update(
+            `UPDATE permuta_adiantamento
+             SET estado_elegibilidade = $paraEstado, motivo_bloqueio = $paraMotivo
+             WHERE doc_cod = $docCod AND NOT stale
+               AND estado_elegibilidade = $deEstado AND motivo_bloqueio = $deMotivo`,
+            {
+                docCod: input.docCod,
+                deEstado: input.de.estado,
+                deMotivo: input.de.motivo,
+                paraEstado: input.para.estado,
+                paraMotivo: input.para.motivo,
+            },
+        );
     };
 
     private mapAdiantamentoRow = (r: Record<string, unknown>): AdiantamentoAtivo => ({
