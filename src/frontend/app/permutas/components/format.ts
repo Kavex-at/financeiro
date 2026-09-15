@@ -127,6 +127,18 @@ export const MOTIVO_LABEL: Record<string, string> = {
  * backend: só `bloqueada` com motivo "Sem saldo a permutar", e só se ainda não houver exceção
  * ativa (uma inativa precisa ser desfeita antes de registrar outra).
  */
+/**
+ * Qual tag de exceção manual a linha exibe (ADR-0047, `expor-no-painel`): "Exceção manual" quando
+ * aplicada, "Exceção inativa" quando registrada mas o cálculo do ERP venceu, nenhuma sem exceção.
+ */
+export function tagExcecao(
+  p: Pick<PermutaPendente, 'motivoBloqueio' | 'excecaoManual'>,
+): 'ativa' | 'inativa' | null {
+  if (p.excecaoManual) return p.excecaoManual.ativa ? 'ativa' : 'inativa'
+  // Sem a linha de exceção no payload, o motivo sozinho ainda prova a origem (só T7 o produz).
+  return p.motivoBloqueio === 'permutado-fora-do-painel' ? 'ativa' : null
+}
+
 export function podeMarcarExcecao(
   p: Pick<PermutaPendente, 'status' | 'motivoBloqueio' | 'excecaoManual'>,
 ): boolean {

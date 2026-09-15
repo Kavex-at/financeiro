@@ -93,8 +93,12 @@ A cada eleição a guarda é reavaliada sobre o dado relido:
 
 Card e filtro "Já permutado"; badge "Já permutado" + tag **"Exceção manual"**; detalhe com
 justificativa, autor, data e ação **"Desfazer exceção"**. Fora da aba Histórico (não há borderô do
-painel). Na exportação: **"Permutado fora do painel (exceção manual)"**. O snapshot da eleição grava o
-estado inteiro (ADR-0043): `ja-permutado` com o motivo novo.
+painel). Na exportação Excel dos adiantamentos, a coluna `Motivo bloqueio` mantém o código cru
+(`permutado-fora-do-painel`), como os demais motivos, e quatro colunas trazem a exceção: `Exceção
+manual` (**"Permutado fora do painel (exceção manual)"** quando aplicada, **"Registrada, não
+aplicada"** quando o cálculo venceu, vazia sem exceção ativa), `Justificativa exceção`, `Autor exceção`
+e `Data exceção`. O snapshot da eleição grava o estado inteiro (ADR-0043): `ja-permutado` com o motivo
+novo.
 
 ### D6. Sem escrita no ERP
 

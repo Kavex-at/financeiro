@@ -60,7 +60,10 @@ resolved-by:
   calculado; o detalhe sinaliza a exceção como **inativa**, com a mesma trilha e a ação de desfazer.
 - **Histórico.** A exceção **não** entra na aba Histórico: não é permuta do painel e não tem borderô
   (I-Exc-6). A regra de D4 da ADR-0046 continua valendo só para `ja-permutado` com borderô do painel.
-- **Exportação.** Motivo exibido como **"Permutado fora do painel (exceção manual)"**.
+- **Exportação.** A coluna `Motivo bloqueio` do Excel de adiantamentos mantém o código cru
+  (`permutado-fora-do-painel`), como os demais motivos. Quatro colunas trazem a exceção: `Exceção manual`
+  (**"Permutado fora do painel (exceção manual)"** aplicada, **"Registrada, não aplicada"** quando o
+  cálculo venceu, vazia sem exceção ativa), `Justificativa exceção`, `Autor exceção` e `Data exceção`.
 - READ-ONLY em relação ao ERP: marcar e desfazer escrevem só no nosso banco (I4).
 
 ## Aging (P0-8 + P0-4 — RESOLVIDOS; coluna aging popula)

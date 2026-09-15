@@ -1,5 +1,5 @@
 import type { PermutaPendente } from '@/lib/types'
-import { MOTIVO_LABEL, podeMarcarExcecao } from './format'
+import { MOTIVO_LABEL, podeMarcarExcecao, tagExcecao } from './format'
 
 /**
  * Exceção manual "permutado fora do painel" (ADR-0047): quem pode receber a ação "Marcar como
@@ -52,5 +52,27 @@ describe('podeMarcarExcecao', () => {
 describe('MOTIVO_LABEL', () => {
   it('rotula o motivo novo da exceção manual', () => {
     expect(MOTIVO_LABEL['permutado-fora-do-painel']).toBe('Permutado fora do painel (exceção manual)')
+  })
+})
+
+describe('tagExcecao', () => {
+  const excecao = {
+    justificativa: 'registrada',
+    criadoPor: 'user-abc',
+    criadoEm: '2026-09-15T14:30:00.000Z',
+    ativa: true,
+  }
+
+  it('aplicada → ativa; registrada e não aplicada → inativa', () => {
+    expect(tagExcecao(pendente({ status: 'ja-permutado', excecaoManual: excecao }))).toBe('ativa')
+    expect(tagExcecao(pendente({ excecaoManual: { ...excecao, ativa: false } }))).toBe('inativa')
+  })
+
+  it('sem linha de exceção: o motivo permutado-fora-do-painel ainda mostra a tag; os demais não', () => {
+    expect(
+      tagExcecao(pendente({ status: 'ja-permutado', motivoBloqueio: 'permutado-fora-do-painel' })),
+    ).toBe('ativa')
+    expect(tagExcecao(pendente({ status: 'ja-permutado', motivoBloqueio: 'ja-permutado' }))).toBeNull()
+    expect(tagExcecao(pendente())).toBeNull()
   })
 })
