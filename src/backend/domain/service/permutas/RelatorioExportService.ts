@@ -224,10 +224,7 @@ export default class RelatorioExportService {
                 variacaoDelta: d?.variacaoDelta ?? null,
                 autoElegivel: p.autoElegivel === true,
                 saldoRestante: p.saldoRestante ?? null,
-                excecaoManual: this.rotuloExcecao(p),
-                excecaoJustificativa: p.excecaoManual?.justificativa ?? null,
-                excecaoAutor: p.excecaoManual?.criadoPor ?? null,
-                excecaoData: this.soData(p.excecaoManual?.criadoEm),
+                ...this.celulasExcecao(p),
             };
         }),
     });
@@ -444,12 +441,28 @@ export default class RelatorioExportService {
     /** Extrai só a data (YYYY-MM-DD) de um ISO timestamp. `undefined` → null. */
     private soData = (iso?: string): string | null => (iso ? iso.slice(0, 10) : null);
 
-    /** Rótulo da coluna "Exceção manual": aplicada, registrada e não aplicada, ou vazio. */
-    private rotuloExcecao = (p: PermutaPendente): string | null => {
-        if (p.excecaoManual === undefined) return null;
-        return p.excecaoManual.ativa
-            ? 'Permutado fora do painel (exceção manual)'
-            : 'Registrada, não aplicada';
+    /**
+     * As 4 células da exceção manual (ADR-0047). "Exceção manual" diz se ela está aplicada ou
+     * só registrada (o cálculo do ERP venceu); sem exceção ativa, as 4 ficam em branco.
+     */
+    private celulasExcecao = (p: PermutaPendente): Record<string, CelulaValor> => {
+        const excecao = p.excecaoManual;
+        if (excecao === undefined) {
+            return {
+                excecaoManual: null,
+                excecaoJustificativa: null,
+                excecaoAutor: null,
+                excecaoData: null,
+            };
+        }
+        return {
+            excecaoManual: excecao.ativa
+                ? 'Permutado fora do painel (exceção manual)'
+                : 'Registrada, não aplicada',
+            excecaoJustificativa: excecao.justificativa,
+            excecaoAutor: excecao.criadoPor,
+            excecaoData: this.soData(excecao.criadoEm),
+        };
     };
 
     /** Nome do arquivo: `permutas-<tipo>-<data-ingestao>.xlsx`. */
