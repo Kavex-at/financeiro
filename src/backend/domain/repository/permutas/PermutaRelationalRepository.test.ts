@@ -389,4 +389,47 @@ describe('PermutaRelationalRepository', () => {
         const repo = new PermutaRelationalRepository(db);
         expect(await repo.findAdiantamento('absent')).toBeNull();
     });
+
+    it('reclassificarAdiantamento: UPDATE parametrizado com o estado de ORIGEM no WHERE, na tx', async () => {
+        const tx = buildTx();
+        (tx.update as jest.Mock).mockResolvedValue(1);
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        const linhas = await repo.reclassificarAdiantamento(tx, {
+            docCod: '8721',
+            de: { estado: 'bloqueada', motivo: 'sem-saldo-permutar' },
+            para: { estado: 'ja-permutado', motivo: 'permutado-fora-do-painel' },
+        });
+
+        expect(linhas).toBe(1);
+        expect(db.update).not.toHaveBeenCalled();
+        const [sql, params] = (tx.update as jest.Mock).mock.calls[0];
+        const normalizado = (sql as string).replace(/\s+/g, ' ').trim();
+        expect(normalizado).toBe(
+            'UPDATE permuta_adiantamento SET estado_elegibilidade = $paraEstado, motivo_bloqueio = $paraMotivo WHERE doc_cod = $docCod AND NOT stale AND estado_elegibilidade = $deEstado AND motivo_bloqueio = $deMotivo',
+        );
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params).toEqual({
+            docCod: '8721',
+            deEstado: 'bloqueada',
+            deMotivo: 'sem-saldo-permutar',
+            paraEstado: 'ja-permutado',
+            paraMotivo: 'permutado-fora-do-painel',
+        });
+    });
+
+    it('reclassificarAdiantamento devolve 0 quando a linha não está no estado de origem', async () => {
+        const tx = buildTx();
+        (tx.update as jest.Mock).mockResolvedValue(0);
+        const repo = new PermutaRelationalRepository(buildDb(tx));
+
+        await expect(
+            repo.reclassificarAdiantamento(tx, {
+                docCod: '8721',
+                de: { estado: 'ja-permutado', motivo: 'permutado-fora-do-painel' },
+                para: { estado: 'bloqueada', motivo: 'sem-saldo-permutar' },
+            }),
+        ).resolves.toBe(0);
+    });
 });
