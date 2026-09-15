@@ -557,8 +557,9 @@ export default function GestaoPermutasPage() {
   // Manual (Múltipla/Cross-over/Cross-process): só SAI da aba de trabalho quando TOTALMENTE permutado —
   // tem borderô E não sobra saldo a permutar (saldoRestante ≈ 0). Baixa PARCIAL (sobrou saldo p/ alocar
   // mais invoices) CONTINUA na aba; o que foi lançado vai pra Borderôs + Histórico. Cancelar remove o
-  // vínculo → reaparece (igual às automáticas). saldoRestante = saldo negociado − Σ alocações (as
-  // alocações persistem após a baixa; o saldo do adto só zera de fato quando tudo é alocado).
+  // vínculo → reaparece (igual às automáticas). saldoRestante = saldo negociado − Σ alocações ainda
+  // NÃO consumidas pelo ERP (ADR-0046): o saldo do ERP já vem abatido do que foi baixado em borderô
+  // finalizado, então só o que ainda não foi abatido (rascunho, borderô em cadastro) é descontado.
   const permutaManualCompleta = (p: PermutaPendente): boolean =>
     adtoExecutado(p.docCod) && p.saldoRestante !== undefined && p.saldoRestante <= SALDO_TOL
 

@@ -10,6 +10,11 @@ import type PermutaProcessamentoRepository from '../../repository/permutas/Permu
 import type PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import type { AlocacaoRow } from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import type PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
+import type {
+    ConsumoExecucaoRow,
+    default as PermutaExecucaoRepository,
+} from '../../repository/permutas/PermutaExecucaoRepository.js';
+import SaldoAlocacaoAdiantamentoService from './SaldoAlocacaoAdiantamentoService.js';
 import type { Processamento } from '../../interface/permutas/Processamento.js';
 import GestaoPermutasService from './GestaoPermutasService.js';
 import type LogService from '../LogService.js';
@@ -26,6 +31,18 @@ const buildAlocacao = (rows: AlocacaoRow[] = []) =>
     ({
         listAtivas: jest.fn().mockResolvedValue(rows),
     }) as unknown as jest.Mocked<PermutaAlocacaoRepository>;
+
+/**
+ * Serviço REAL do saldo não consumido (ADR-0046 D3) sobre um repositório de execução mockado:
+ * a regra "consumida" é exercida de verdade, só a query é fingida.
+ */
+const buildSaldo = (consumos: ConsumoExecucaoRow[] = []) =>
+    new SaldoAlocacaoAdiantamentoService(
+        {} as unknown as jest.Mocked<PermutaAlocacaoRepository>,
+        {
+            listConsumosFinalizados: jest.fn().mockResolvedValue(consumos),
+        } as unknown as jest.Mocked<PermutaExecucaoRepository>,
+    );
 
 const adiantamentos: AdiantamentoAtivo[] = [
     {
@@ -142,6 +159,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
 
         const res = await service.exporGestao('req-1');
@@ -170,6 +188,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -188,6 +207,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
         // A1 elegível → simples; A3 casamento-manual sozinho no priCod 4000 → multiplas.
@@ -216,6 +236,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
         expect(res.pendentes.find((p) => p.docCod === 'X1')?.tipoPermuta).toBe('cross-over');
@@ -253,6 +274,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             ]),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
         const pm = res.pendentes.find((p) => p.docCod === 'M1');
@@ -270,6 +292,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
         expect(res.pendentes.find((p) => p.docCod === 'A9')?.tipoPermuta).toBe('cross-process');
@@ -282,6 +305,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -343,6 +367,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
 
         const res = await service.exporGestao('req-1');
@@ -360,6 +385,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -395,6 +421,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -422,6 +449,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
         expect(res.casamentos).toHaveLength(1);
@@ -449,6 +477,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -510,6 +539,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
         const m = res.pendentes.find((p) => p.docCod === 'M1');
@@ -573,6 +603,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
         const m = res.pendentes.find((p) => p.docCod === 'M1');
@@ -606,6 +637,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -635,6 +667,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -674,6 +707,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -705,6 +739,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             ]),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -714,6 +749,106 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(pm?.saldoRestante).toBeCloseTo(400, 5);
     });
 
+    describe('saldoRestante sem dupla contagem (ADR-0046 D3)', () => {
+        const T0 = new Date('2026-09-01T10:00:00Z');
+        const depois = new Date('2026-09-01T10:05:00Z');
+        const alocacaoDe = (
+            adiantamentoDocCod: string,
+            invoiceDocCod: string,
+            valorAlocado: number,
+        ): AlocacaoRow => ({
+            adiantamentoDocCod,
+            invoiceDocCod,
+            valorAlocado,
+            moeda: 'USD',
+            criadoEm: T0,
+            atualizadoEm: T0,
+        });
+        const consumoDe = (
+            adiantamentoDocCod: string,
+            invoiceDocCod: string,
+        ): ConsumoExecucaoRow => ({
+            adiantamentoDocCod,
+            invoiceDocCod,
+            status: 'settled',
+            criadoEm: depois,
+        });
+        // taxa 5 ⇒ valorPermutar(BRL) = saldoNeg × 5.
+        const adtoCom = (
+            docCod: string,
+            saldoNeg: number,
+            estado: 'permuta-manual' | 'casamento-manual',
+        ): AdiantamentoAtivo => ({
+            ...permutaManualAdto,
+            docCod,
+            priCod: `P${docCod}`,
+            estadoElegibilidade: estado,
+            valorPermutar: saldoNeg * 5,
+            taxa: 5,
+        });
+        const exporCom = async (
+            adto: AdiantamentoAtivo,
+            alocacoes: AlocacaoRow[],
+            consumos: ConsumoExecucaoRow[],
+        ) => {
+            const service = new GestaoPermutasService(
+                buildRelational({ adiantamentos: [adto], casamentos: [], invoices: [] }),
+                buildProcessamento(),
+                buildAlocacao(alocacoes),
+                buildSnapshot(),
+                buildLog(),
+                buildSaldo(consumos),
+            );
+            const res = await service.exporGestao('req-1');
+            return res.pendentes.find((p) => p.docCod === adto.docCod);
+        };
+
+        it('12860: alocação consumida (borderô 19981 finalizado) → saldo = ERP (30.364,73)', async () => {
+            const pm = await exporCom(
+                adtoCom('12860', 30364.73, 'permuta-manual'),
+                [alocacaoDe('12860', 'INV-19981', 49622.46)],
+                [consumoDe('12860', 'INV-19981')],
+            );
+            expect(pm?.saldoRestante).toBeCloseTo(30364.73, 2);
+            expect(pm?.alocacoes).toHaveLength(1);
+        });
+
+        it.each([
+            'permuta-manual',
+            'casamento-manual',
+        ] as const)('9328 (%s): alocação consumida → saldo = ERP (39.652,47)', async (estado) => {
+            const pm = await exporCom(
+                adtoCom('9328', 39652.47, estado),
+                [alocacaoDe('9328', 'INV-19534', 35347.53)],
+                [consumoDe('9328', 'INV-19534')],
+            );
+            expect(pm?.saldoRestante).toBeCloseTo(39652.47, 2);
+        });
+
+        it.each([
+            '9335',
+            '9869',
+            '9870',
+            '10307',
+        ])('%s: alocação sem consumo (borderô fora do cache / cancelado) segue descontando', async (docCod) => {
+            const pm = await exporCom(
+                adtoCom(docCod, 10000, 'permuta-manual'),
+                [alocacaoDe(docCod, 'INV', 4000)],
+                [],
+            );
+            expect(pm?.saldoRestante).toBeCloseTo(6000, 5);
+        });
+
+        it('consumo de OUTRO adto não abate este', async () => {
+            const pm = await exporCom(
+                adtoCom('9328', 39652.47, 'permuta-manual'),
+                [alocacaoDe('9328', 'INV-19534', 35347.53)],
+                [consumoDe('12860', 'INV-19534')],
+            );
+            expect(pm?.saldoRestante).toBeCloseTo(4304.94, 2);
+        });
+    });
+
     it('mapeia estado permuta-manual para status próprio + conta no total', async () => {
         const service = new GestaoPermutasService(
             buildRelational({ adiantamentos: [...adiantamentos, permutaManualAdto] }),
@@ -721,6 +856,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -737,6 +873,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 
@@ -769,6 +906,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildAlocacao(),
             buildSnapshot(),
             buildLog(),
+            buildSaldo(),
         );
         const res = await service.exporGestao('req-1');
 

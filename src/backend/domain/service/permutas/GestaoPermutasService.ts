@@ -20,8 +20,10 @@ import PermutaRelationalRepository from '../../repository/permutas/PermutaRelati
 import type { AlocacaoRow } from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaProcessamentoRepository from '../../repository/permutas/PermutaProcessamentoRepository.js';
+import type { ConsumoExecucaoRow } from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import LogService from '../LogService.js';
+import SaldoAlocacaoAdiantamentoService from './SaldoAlocacaoAdiantamentoService.js';
 
 /** Baldes de contagem POR STATUS do painel (fora `pendentes` e `invoicesEmAberto`,
  *  que não são baldes de status). */
@@ -65,6 +67,8 @@ export default class GestaoPermutasService {
         @inject(PermutaSnapshotRepository)
         private snapshotRepository: PermutaSnapshotRepository,
         @inject(LogService) private logService: LogService,
+        @inject(SaldoAlocacaoAdiantamentoService)
+        private saldoAlocacaoService: SaldoAlocacaoAdiantamentoService,
     ) {}
 
     public exporGestao = async (requestId: string): Promise<GestaoPermutasResponse> => {
@@ -76,6 +80,7 @@ export default class GestaoPermutasService {
             declaracoes,
             alocacoes,
             ultimaIngestao,
+            consumosByAdto,
         ] = await Promise.all([
             this.relationalRepository.listAdiantamentosAtivos(),
             this.relationalRepository.listInvoicesEmAberto(),
@@ -84,6 +89,8 @@ export default class GestaoPermutasService {
             this.relationalRepository.listDeclaracoes(),
             this.alocacaoRepository.listAtivas(),
             this.snapshotRepository.findLatestIngestFinishedAt(),
+            // Execuções já abatidas pelo ERP (ADR-0046 D3) — o saldo restante não as desconta.
+            this.saldoAlocacaoService.carregarConsumosPorAdiantamento(),
         ]);
 
         // Alocações manuais (Fase 2) agrupadas por adiantamento.
@@ -148,6 +155,7 @@ export default class GestaoPermutasService {
                 declaracaoByPriCod,
                 casamentoByAdtoDocCod,
                 alocacoesByAdto.get(a.docCod) ?? [],
+                consumosByAdto.get(a.docCod) ?? [],
                 adtosCasamentoPorPriCod,
                 adtosReclassificadosManual,
             ),
@@ -318,6 +326,7 @@ export default class GestaoPermutasService {
         declaracaoByPriCod: Map<string, DeclaracaoRow>,
         casamentoByAdtoDocCod: Map<string, CasamentoRow>,
         alocacoesDoAdto: AlocacaoRow[],
+        consumosDoAdto: ConsumoExecucaoRow[],
         adtosCasamentoPorPriCod: Map<string, number>,
         adtosReclassificadosManual: Map<string, 'cross-over' | 'multiplas'>,
     ): PermutaPendente => {
@@ -340,7 +349,9 @@ export default class GestaoPermutasService {
         // Alocações manuais (Fase 2) + saldo restante (moeda negociada): para os
         // casos que usam a alocação N:M — permuta-manual (cross-process) E
         // casamento-manual (múltiplas/cross-over, distribuir 1 adto em N invoices).
-        // saldoNeg = saldoPermutar(BRL)/taxa; restante = saldoNeg − Σ alocado.
+        // saldoNeg = saldoPermutar(BRL)/taxa; restante = saldoNeg − Σ alocações ainda NÃO
+        // consumidas pelo ERP (ADR-0046 D3): o `valorPermutar` já vem abatido do que foi baixado
+        // em borderô finalizado, então descontar TODAS as alocações contava o consumido 2×.
         const podeAlocar = status === 'permuta-manual' || status === 'casamento-manual';
         const alocacoes =
             podeAlocar && alocacoesDoAdto.length > 0
@@ -352,7 +363,8 @@ export default class GestaoPermutasService {
                 : undefined;
         const saldoRestante =
             podeAlocar && saldoNeg !== undefined
-                ? saldoNeg - alocacoesDoAdto.reduce((s, al) => s + al.valorAlocado, 0)
+                ? saldoNeg -
+                  this.saldoAlocacaoService.somaNaoConsumida(alocacoesDoAdto, consumosDoAdto)
                 : undefined;
         // Tipo de permuta (derivado, p/ as abas). cross-process = cliente-filtro;
         // casamento-manual divide-se por nº de adtos do processo: 1 → multiplas

@@ -37,6 +37,20 @@ export interface ExecucaoRow {
     atualizadoEm: Date;
 }
 
+/**
+ * Execução que o ERP JÁ ABATEU do `mnyTitPermutar` do adiantamento (ADR-0046 D3): real, terminal
+ * (`settled`/`parcial`), num borderô FINALIZADO e não estornado, que o cache viu finalizado ANTES
+ * do início da ingestão que carimbou o `valorPermutar` do adto (guarda de frescor).
+ */
+export interface ConsumoExecucaoRow {
+    adiantamentoDocCod: string;
+    invoiceDocCod: string;
+    status: 'settled' | 'parcial';
+    /** Resíduo NÃO baixado, em moeda negociada. Só em `parcial`. */
+    valorResidualUsd?: number;
+    criadoEm: Date;
+}
+
 /** Linha do cache local de borderô (campos crus do ERP; situação derivada na leitura). */
 export interface BorderoCacheRow {
     borCod: number;
@@ -153,6 +167,47 @@ export default class PermutaExecucaoRepository {
              ORDER BY bor_cod DESC, criado_em`,
         );
         return rows.map((r) => this.mapRow(r));
+    };
+
+    /**
+     * Execuções que o ERP JÁ ABATEU do saldo a permutar do adiantamento (ADR-0046 D3) — insumo
+     * único do `SaldoAlocacaoAdiantamentoService`. Sem `adiantamentoDocCod`, devolve de todos (a
+     * tela de gestão faz UMA query para o painel inteiro).
+     *
+     * "Consumida" exige, AO MESMO TEMPO:
+     *   - execução real e terminal (`dry_run = false`, `settled`/`parcial`);
+     *   - borderô no cache, por PAR (fil_cod, bor_cod), FINALIZADO (`bor_vld_finalizado = 1`) e não
+     *     estornado (`bor_cod_estornado IS NULL`) — o ERP só abate quando o borderô é finalizado;
+     *     borderô fora do cache (status desconhecido) não conta (conservador);
+     *   - **guarda de frescor:** o cache viu o borderô finalizado ANTES do início da ingestão que
+     *     carimbou o `valorPermutar` do adto (`b.atualizado_em < r.started_at`). Sem ela, logo depois
+     *     do "Finalizar" do painel (que grava `1` no cache na hora) a execução contaria como
+     *     consumida sobre um `valorPermutar` ainda NÃO abatido, e o saldo voltaria cheio até a
+     *     próxima ingestão. O `replaceBorderoCache` só renova o carimbo quando a situação muda.
+     */
+    public listConsumosFinalizados = async (
+        adiantamentoDocCod?: string,
+    ): Promise<ConsumoExecucaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT e.adiantamento_doc_cod, e.invoice_doc_cod, e.status, e.valor_residual_usd,
+                    e.criado_em
+             FROM permuta_alocacao_execucao e
+             JOIN permuta_bordero b ON b.fil_cod = e.fil_cod AND b.bor_cod = e.bor_cod
+             JOIN permuta_adiantamento a ON a.doc_cod = e.adiantamento_doc_cod
+             JOIN permuta_eleicao_run r ON r.id = a.last_ingest_run_id
+             WHERE e.dry_run = false
+               AND e.status IN ('settled', 'parcial')
+               AND b.bor_vld_finalizado = 1
+               AND b.bor_cod_estornado IS NULL
+               AND b.atualizado_em < r.started_at
+               AND ($adtoDocCod::text IS NULL OR e.adiantamento_doc_cod = $adtoDocCod)
+             ORDER BY e.adiantamento_doc_cod, e.criado_em`,
+            { adtoDocCod: adiantamentoDocCod ?? null },
+        );
+        return rows.flatMap((r) => {
+            const consumo = this.mapConsumo(r);
+            return consumo !== null ? [consumo] : [];
+        });
     };
 
     /** Busca a execução (baixa) de um borderô por invoice — p/ exclusão da baixa específica. */
@@ -490,7 +545,14 @@ export default class PermutaExecucaoRepository {
         }));
     };
 
-    /** Substitui o cache pelos itens do ERP (upsert + remove os que sumiram). Fetch vazio = no-op. */
+    /**
+     * Substitui o cache pelos itens do ERP (upsert + remove os que sumiram). Fetch vazio = no-op.
+     *
+     * `atualizado_em` só anda quando a SITUAÇÃO muda (finalizado/estornado) — é o carimbo de
+     * "desde quando o cache vê este estado", lido pela guarda de frescor de
+     * `listConsumosFinalizados` (ADR-0046). Renová-lo em todo refresh (o "Atualizar" da tela, a
+     * ingestão) empurraria o carimbo para depois do início da ingestão e desfaria o consumo.
+     */
     public replaceBorderoCache = async (items: BorderoCacheRow[]): Promise<void> => {
         if (items.length === 0) return; // não limpa num fetch vazio (ERP indisponível)
         const params: Record<string, unknown> = {};
@@ -515,7 +577,10 @@ export default class PermutaExecucaoRepository {
                 vlr_total_liquido = EXCLUDED.vlr_total_liquido,
                 bor_dta_mvto = EXCLUDED.bor_dta_mvto,
                 usn_des_nome_cad = EXCLUDED.usn_des_nome_cad,
-                atualizado_em = now()`,
+                atualizado_em = CASE
+                    WHEN permuta_bordero.bor_vld_finalizado IS DISTINCT FROM EXCLUDED.bor_vld_finalizado
+                      OR permuta_bordero.bor_cod_estornado IS DISTINCT FROM EXCLUDED.bor_cod_estornado
+                    THEN now() ELSE permuta_bordero.atualizado_em END`,
             params,
         );
         // Remove do cache os que sumiram do ERP — por PAR (fil_cod, bor_cod), pois o nº é por filial.
@@ -526,7 +591,10 @@ export default class PermutaExecucaoRepository {
         );
     };
 
-    /** Atualiza a situação de UM borderô no cache (após Aprovar/Cancelar). Chave = (filial, borderô). */
+    /**
+     * Atualiza a situação de UM borderô no cache (após Aprovar/Cancelar). Chave = (filial, borderô).
+     * Mesma regra de carimbo do `replaceBorderoCache`: `atualizado_em` só anda se a situação mudou.
+     */
     public updateBorderoCacheSituacao = async (
         filCod: number,
         borCod: number,
@@ -534,7 +602,12 @@ export default class PermutaExecucaoRepository {
     ): Promise<number> => {
         return this.databaseClient.update(
             `UPDATE permuta_bordero
-             SET bor_vld_finalizado = $fin, bor_cod_estornado = $est, atualizado_em = now()
+             SET atualizado_em = CASE
+                     WHEN bor_vld_finalizado IS DISTINCT FROM $fin
+                       OR bor_cod_estornado IS DISTINCT FROM $est
+                     THEN now() ELSE atualizado_em END,
+                 bor_vld_finalizado = $fin,
+                 bor_cod_estornado = $est
              WHERE fil_cod = $fil AND bor_cod = $bor`,
             {
                 fil: filCod,
@@ -551,6 +624,21 @@ export default class PermutaExecucaoRepository {
             `DELETE FROM permuta_bordero WHERE fil_cod = $fil AND bor_cod = $bor`,
             { fil: filCod, bor: borCod },
         );
+    };
+
+    /** Guard explícito do terminal: status fora de `settled`/`parcial` é descartado (sem cast). */
+    private mapConsumo = (r: Record<string, unknown>): ConsumoExecucaoRow | null => {
+        const status = r.status;
+        if (status !== 'settled' && status !== 'parcial') return null;
+        return {
+            adiantamentoDocCod: String(r.adiantamento_doc_cod),
+            invoiceDocCod: String(r.invoice_doc_cod),
+            status,
+            ...(r.valor_residual_usd != null
+                ? { valorResidualUsd: Number(r.valor_residual_usd) }
+                : {}),
+            criadoEm: new Date(r.criado_em as string | Date),
+        };
     };
 
     private mapRow = (r: Record<string, unknown>): ExecucaoRow => ({

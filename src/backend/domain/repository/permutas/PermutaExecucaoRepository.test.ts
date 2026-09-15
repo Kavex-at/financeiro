@@ -450,6 +450,30 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
         expect(calls[0][1]).toMatchObject({ bor_0: 1, fil_0: 4, fin_0: 1 });
     });
 
+    it('replaceBorderoCache: renova atualizado_em SÓ quando a situação muda (guarda de frescor, ADR-0046)', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db, buildIdentity()).replaceBorderoCache([
+            { borCod: 1, filCod: 4, borVldFinalizado: 1, borCodEstornado: null },
+        ]);
+        const sql = (db.update as jest.Mock).mock.calls[0][0] as string;
+        const normalizado = sql.replace(/\s+/g, ' ');
+        // Os campos crus seguem sempre atualizados...
+        expect(normalizado).toContain('bor_vld_finalizado = EXCLUDED.bor_vld_finalizado');
+        expect(normalizado).toContain('vlr_total_liquido = EXCLUDED.vlr_total_liquido');
+        // ...mas o carimbo só anda quando finalizado/estornado mudam (o "Atualizar" da tela não
+        // pode empurrar o carimbo para depois do início da ingestão e desfazer o consumo).
+        expect(normalizado).toContain(
+            'permuta_bordero.bor_vld_finalizado IS DISTINCT FROM EXCLUDED.bor_vld_finalizado',
+        );
+        expect(normalizado).toContain(
+            'permuta_bordero.bor_cod_estornado IS DISTINCT FROM EXCLUDED.bor_cod_estornado',
+        );
+        expect(normalizado).toMatch(
+            /atualizado_em = CASE WHEN .* THEN now\(\) ELSE permuta_bordero\.atualizado_em END/,
+        );
+        expect(normalizado).not.toMatch(/atualizado_em = now\(\)\s*$/);
+    });
+
     it('updateBorderoCacheSituacao: seta situação por (filCod, borCod) — cancelar → 2', async () => {
         const db = buildDb();
         await new PermutaExecucaoRepository(db, buildIdentity()).updateBorderoCacheSituacao(
@@ -463,6 +487,102 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
         expect(sql).toContain('UPDATE permuta_bordero');
         expect(sql).toContain('WHERE fil_cod = $fil AND bor_cod = $bor');
         expect(paramsOf(db.update as jest.Mock)).toEqual({ fil: 4, bor: 2038, fin: 2, est: null });
+    });
+
+    it('updateBorderoCacheSituacao: carimbo só anda quando a situação muda (mesma regra do replace)', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db, buildIdentity()).updateBorderoCacheSituacao(
+            4,
+            2038,
+            { borVldFinalizado: 1 },
+        );
+        const sql = sqlOf(db.update as jest.Mock).replace(/\s+/g, ' ');
+        expect(sql).toContain('bor_vld_finalizado IS DISTINCT FROM $fin');
+        expect(sql).toContain('bor_cod_estornado IS DISTINCT FROM $est');
+        expect(sql).toMatch(/atualizado_em = CASE WHEN .* THEN now\(\) ELSE atualizado_em END/);
+    });
+
+    describe('listConsumosFinalizados (ADR-0046 D3 — execuções que o ERP já abateu)', () => {
+        const baseRow = {
+            adiantamento_doc_cod: '12860',
+            invoice_doc_cod: '20001',
+            status: 'settled',
+            valor_residual_usd: null,
+            criado_em: '2026-09-01T10:01:00Z',
+        };
+
+        it('SQL: real, terminal, borderô finalizado e vivo, visto antes da ingestão; parametrizado', async () => {
+            const db = buildDb();
+            await new PermutaExecucaoRepository(db, buildIdentity()).listConsumosFinalizados(
+                '12860',
+            );
+            const sql = sqlOf(db.selectMany as jest.Mock).replace(/\s+/g, ' ');
+            expect(sql).toContain('e.dry_run = false');
+            expect(sql).toContain("e.status IN ('settled', 'parcial')");
+            expect(sql).toContain('b.fil_cod = e.fil_cod AND b.bor_cod = e.bor_cod');
+            expect(sql).toContain('b.bor_vld_finalizado = 1');
+            expect(sql).toContain('b.bor_cod_estornado IS NULL');
+            expect(sql).toContain('JOIN permuta_adiantamento a');
+            expect(sql).toContain('JOIN permuta_eleicao_run r ON r.id = a.last_ingest_run_id');
+            expect(sql).toContain('b.atualizado_em < r.started_at');
+            expect(sql).toContain(
+                '($adtoDocCod::text IS NULL OR e.adiantamento_doc_cod = $adtoDocCod)',
+            );
+            expect(sql).not.toMatch(/\$\{/);
+            expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ adtoDocCod: '12860' });
+        });
+
+        it('sem adto → filtro nulo (todos os adtos, uma query só)', async () => {
+            const db = buildDb();
+            await new PermutaExecucaoRepository(db, buildIdentity()).listConsumosFinalizados();
+            expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ adtoDocCod: null });
+        });
+
+        it('mapeia settled e parcial (com resíduo numérico), sem campos nulos', async () => {
+            const db = buildDb();
+            (db.selectMany as jest.Mock).mockResolvedValue([
+                baseRow,
+                {
+                    ...baseRow,
+                    invoice_doc_cod: '20002',
+                    status: 'parcial',
+                    valor_residual_usd: '10.5',
+                },
+            ]);
+            const rows = await new PermutaExecucaoRepository(
+                db,
+                buildIdentity(),
+            ).listConsumosFinalizados();
+            expect(rows).toEqual([
+                {
+                    adiantamentoDocCod: '12860',
+                    invoiceDocCod: '20001',
+                    status: 'settled',
+                    criadoEm: new Date('2026-09-01T10:01:00Z'),
+                },
+                {
+                    adiantamentoDocCod: '12860',
+                    invoiceDocCod: '20002',
+                    status: 'parcial',
+                    valorResidualUsd: 10.5,
+                    criadoEm: new Date('2026-09-01T10:01:00Z'),
+                },
+            ]);
+        });
+
+        it('status fora da união terminal é descartado (guard explícito, sem cast)', async () => {
+            const db = buildDb();
+            (db.selectMany as jest.Mock).mockResolvedValue([
+                { ...baseRow, status: 'error' },
+                baseRow,
+            ]);
+            const rows = await new PermutaExecucaoRepository(
+                db,
+                buildIdentity(),
+            ).listConsumosFinalizados();
+            expect(rows).toHaveLength(1);
+            expect(rows[0].status).toBe('settled');
+        });
     });
 
     it('deleteBorderoCache: DELETE por (filCod, borCod)', async () => {
