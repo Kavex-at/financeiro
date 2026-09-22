@@ -1,5 +1,20 @@
 # Columbia Financeiro — Changelog
 
+## v0.39.1 (2026-09-22) — o `.REM` baixado pela tela chega com os bytes do ERP
+
+O botão **Baixar** do lote SISPAG entregava um arquivo diferente do que o backend mandava. O
+backend responde com os bytes latin1 do CNAB 240 de propósito, mas a tela lia a resposta como
+texto (o que decodifica sempre como UTF-8) e a regravava num `Blob` (que codifica em UTF-8). Cada
+acento no nome do favorecido (Ã, Ç, É…) virava `U+FFFD`, com 3 bytes no lugar de 1, e deslocava
+as colunas fixas do registro. Um arquivo assim o banco recusa, ou lê com os campos no lugar errado.
+
+- **A tela passa a entregar a resposta como bytes**, sem string no meio. O arquivo salvo é,
+  byte a byte, o que o ERP gerou.
+- **Teste de regressão** com `Ã`/`Ç` em latin1 garante que os bytes chegam idênticos e com o
+  mesmo tamanho.
+- **Quem baixou um `.REM` pela tela antes desta versão** e o arquivo tinha favorecido acentuado
+  deve baixá-lo de novo antes de enviar ao banco.
+
 ## v0.39.0 (2026-09-22) — a tela Métricas deixa de abrir vazia na primeira semana no ar
 
 A tela **Métricas** foi aberta em produção em 16/09 e mostrava `—` em tudo. Não era defeito: a série
