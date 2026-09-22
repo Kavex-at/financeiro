@@ -150,6 +150,66 @@ describe('BorderoGestaoService', () => {
 
         expect(conexosClient.listFiliais).toHaveBeenCalled();
         expect(execucaoRepository.replaceBorderoCache).toHaveBeenCalled();
+        // As duas filiais foram lidas com sucesso → as duas entram na limpeza.
+        expect(execucaoRepository.replaceBorderoCache.mock.calls[0][1]).toEqual([2, 4]);
+    });
+
+    // Uma leitura que FALHA devolvia `[]` e chegava ao cache indistinguível de "esta filial não
+    // tem borderô nenhum" — e o DELETE do replace apagava todo o histórico dela. Um 500 do ERP
+    // esvaziava a tela de borderôs da filial.
+    it('refresh: filial cuja leitura FALHOU fica fora da limpeza (cache preservado)', async () => {
+        const { service, conexosClient, execucaoRepository } = build(jest.fn());
+        conexosClient.listFiliais.mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]);
+        conexosClient.listBorderos.mockImplementation((p: { filCod: number }) =>
+            p.filCod === 4
+                ? Promise.reject(new Error('500 fin010/list'))
+                : Promise.resolve([
+                      { borCod: 14709, filCod: 2, borVldFinalizado: 0, borCodEstornado: null },
+                  ]),
+        );
+        execucaoRepository.listComBordero.mockResolvedValue([]);
+
+        await service.listarBorderos({ live: true });
+
+        const [items, filiaisLidas] = execucaoRepository.replaceBorderoCache.mock.calls[0];
+        expect(filiaisLidas).toEqual([2]); // a 4 NÃO é limpa
+        expect((items as Array<{ filCod: number }>).every((i) => i.filCod === 2)).toBe(true);
+    });
+
+    it('refresh: falha no RESGATE da trilha também preserva o cache da filial', async () => {
+        const { service, conexosClient, execucaoRepository } = build(jest.fn());
+        conexosClient.listFiliais.mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]);
+        // Bulk OK nas duas; o resgate por borCod#IN (filial 4) falha. Sem marcar a 4 como falha,
+        // o DELETE apagaria justamente os borderôs da trilha que o resgate ia recuperar.
+        conexosClient.listBorderos.mockImplementation(
+            (p: { filCod: number; borCods?: number[] }) =>
+                p.borCods
+                    ? Promise.reject(new Error('500 fin010/list borCod#IN'))
+                    : Promise.resolve([
+                          {
+                              borCod: 14709,
+                              filCod: p.filCod,
+                              borVldFinalizado: 0,
+                              borCodEstornado: null,
+                          },
+                      ]),
+        );
+        execucaoRepository.listComBordero.mockResolvedValue([row({ borCod: 99999, filCod: 4 })]);
+
+        await service.listarBorderos({ live: true });
+
+        expect(execucaoRepository.replaceBorderoCache.mock.calls[0][1]).toEqual([2]);
+    });
+
+    it('refresh: TODAS as filiais falharam → replace recebe lista de lidas vazia (não limpa nada)', async () => {
+        const { service, conexosClient, execucaoRepository } = build(jest.fn());
+        conexosClient.listFiliais.mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]);
+        conexosClient.listBorderos.mockRejectedValue(new Error('ERP fora'));
+        execucaoRepository.listComBordero.mockResolvedValue([]);
+
+        await service.listarBorderos({ live: true });
+
+        expect(execucaoRepository.replaceBorderoCache.mock.calls[0][1]).toEqual([]);
     });
 
     it('resgata borderô da trilha fora do top-1000 (borCod#IN) e o inclui no cache', async () => {
@@ -575,16 +635,6 @@ describe('BorderoGestaoService', () => {
             expect(conexosClient.excluirBaixa).not.toHaveBeenCalled();
         });
 
-        it('erro quando a baixa não está na trilha', async () => {
-            const { service, execucaoRepository } = build(jest.fn());
-            execucaoRepository.findByBorCodInvoice.mockResolvedValue(null);
-
-            await expect(
-                service.excluirBaixa({ borCod: 9, invoiceDocCod: '9', executadoPor: 'y' }),
-            ).rejects.toThrow(/não encontrada/);
-        });
-    });
-});
         // bor_cod é sequencial POR FILIAL (medido: 2436 na filial 1, 2771 na filial 4). Quando a
         // trilha conhece o MESMO número em duas filiais, a rota (que recebe só o número) não
         // identifica o borderô — e agir no palpite errado escreve na filial errada.
@@ -639,3 +689,13 @@ describe('BorderoGestaoService', () => {
             expect(execucaoRepository.deleteByBorCodInvoice).toHaveBeenCalledWith(4, 2436, '18780');
         });
 
+        it('erro quando a baixa não está na trilha', async () => {
+            const { service, execucaoRepository } = build(jest.fn());
+            execucaoRepository.findByBorCodInvoice.mockResolvedValue(null);
+
+            await expect(
+                service.excluirBaixa({ borCod: 9, invoiceDocCod: '9', executadoPor: 'y' }),
+            ).rejects.toThrow(/não encontrada/);
+        });
+    });
+});

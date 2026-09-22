@@ -590,13 +590,29 @@ export default class PermutaExecucaoRepository {
     /**
      * Substitui o cache pelos itens do ERP (upsert + remove os que sumiram). Fetch vazio = no-op.
      *
+     * `filiaisLidas` são as filiais cuja leitura no ERP **teve sucesso** — e SÓ elas são limpas.
+     * A falha de leitura de uma filial chegava aqui indistinguível de "esta filial não tem
+     * borderô nenhum", e o DELETE apagava todo o cache dela: a tela de borderôs esvaziava por
+     * causa de um 500 do ERP. A guarda antiga (`items.length === 0`) só cobria o caso em que
+     * TODAS as filiais falhavam ao mesmo tempo. Quem sabe o que falhou é o serviço; aqui a
+     * informação só precisa chegar.
+     *
+     * Upsert e DELETE correm na MESMA transação: são duas escritas que só fazem sentido juntas,
+     * e a ingestão pode interleave com o "Atualizar" da tela. Entre os dois comandos soltos que
+     * havia antes cabia uma janela em que o cache ficava sem os borderôs recém-removidos e sem
+     * os recém-inseridos.
+     *
      * `atualizado_em` só anda quando a SITUAÇÃO muda (finalizado/estornado) — é o carimbo de
      * "desde quando o cache vê este estado", lido pela guarda de frescor de
      * `listConsumosFinalizados` (ADR-0046). Renová-lo em todo refresh (o "Atualizar" da tela, a
      * ingestão) empurraria o carimbo para depois do início da ingestão e desfaria o consumo.
      */
-    public replaceBorderoCache = async (items: BorderoCacheRow[]): Promise<void> => {
+    public replaceBorderoCache = async (
+        items: BorderoCacheRow[],
+        filiaisLidas: number[],
+    ): Promise<void> => {
         if (items.length === 0) return; // não limpa num fetch vazio (ERP indisponível)
+        if (filiaisLidas.length === 0) return; // nenhuma filial lida com sucesso → nada a limpar
         const params: Record<string, unknown> = {};
         const tuples = items.map((b, i) => {
             params[`bor_${i}`] = b.borCod;
@@ -608,8 +624,18 @@ export default class PermutaExecucaoRepository {
             params[`usn_${i}`] = b.usnDesNomeCad ?? null;
             return `($bor_${i}, $fil_${i}, $fin_${i}, $est_${i}, $vlr_${i}, $dta_${i}, $usn_${i}, now())`;
         });
-        await this.databaseClient.update(
-            `INSERT INTO permuta_bordero (
+        // Remove do cache os que sumiram do ERP — por PAR (fil_cod, bor_cod), pois o nº é por
+        // filial — e SÓ dentro das filiais efetivamente lidas.
+        const pairList = items.map((_, i) => `($fil_${i}, $bor_${i})`).join(', ');
+        const lidasList = filiaisLidas
+            .map((filCod, i) => {
+                params[`lida_${i}`] = filCod;
+                return `$lida_${i}`;
+            })
+            .join(', ');
+        await this.databaseClient.withTransaction(async (tx) => {
+            await tx.update(
+                `INSERT INTO permuta_bordero (
                 bor_cod, fil_cod, bor_vld_finalizado, bor_cod_estornado, vlr_total_liquido,
                 bor_dta_mvto, usn_des_nome_cad, atualizado_em
              ) VALUES ${tuples.join(', ')}
@@ -623,14 +649,15 @@ export default class PermutaExecucaoRepository {
                     WHEN permuta_bordero.bor_vld_finalizado IS DISTINCT FROM EXCLUDED.bor_vld_finalizado
                       OR permuta_bordero.bor_cod_estornado IS DISTINCT FROM EXCLUDED.bor_cod_estornado
                     THEN now() ELSE permuta_bordero.atualizado_em END`,
-            params,
-        );
-        // Remove do cache os que sumiram do ERP — por PAR (fil_cod, bor_cod), pois o nº é por filial.
-        const pairList = items.map((_, i) => `($fil_${i}, $bor_${i})`).join(', ');
-        await this.databaseClient.update(
-            `DELETE FROM permuta_bordero WHERE (fil_cod, bor_cod) NOT IN (${pairList})`,
-            params,
-        );
+                params,
+            );
+            await tx.update(
+                `DELETE FROM permuta_bordero
+                  WHERE fil_cod IN (${lidasList})
+                    AND (fil_cod, bor_cod) NOT IN (${pairList})`,
+                params,
+            );
+        });
     };
 
     /**
