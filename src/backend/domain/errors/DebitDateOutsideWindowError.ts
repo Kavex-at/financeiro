@@ -1,3 +1,4 @@
+import type { TituloLimitante } from '../interface/sispag/SispagInterface.js';
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
 /** Por que uma data de débito (ou a janela inteira) foi recusada. */
@@ -16,16 +17,6 @@ export const MOTIVO_FORA_DA_JANELA = {
     TITULO_SEM_VENCIMENTO: 'titulo_sem_vencimento',
 } as const;
 export type MotivoForaDaJanela = (typeof MOTIVO_FORA_DA_JANELA)[keyof typeof MOTIVO_FORA_DA_JANELA];
-
-/** O título cujo vencimento define o limite superior da janela. */
-export interface TituloLimitante {
-    itemId: string;
-    credor?: string;
-    /** `docCod/titCod`. */
-    documento: string;
-    /** `'YYYY-MM-DD'`; ausente quando o item não tem vencimento. */
-    vencimento?: string;
-}
 
 export interface DebitDateOutsideWindowDetails {
     dataDebito?: string;

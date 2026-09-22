@@ -273,6 +273,44 @@ export interface LotePagamento {
     itens: ItemLote[];
 }
 
+/** O título cujo vencimento define o limite superior da janela de débito (I8a). */
+export interface TituloLimitante {
+    /** `filCod:docCod:titCod`. */
+    itemId: string;
+    credor?: string;
+    /** `docCod/titCod`. */
+    documento: string;
+    /** `'YYYY-MM-DD'`; ausente quando o item não tem vencimento. */
+    vencimento?: string;
+}
+
+/**
+ * Janela permitida para a data de débito de um lote FINALIZADO (I8, ADR-0049). Calculada no
+ * backend — o frontend só exibe, não reimplementa o calendário. Datas civis `'YYYY-MM-DD'`.
+ */
+export interface JanelaDataDebito {
+    /** Hoje em `America/Sao_Paulo`. */
+    hoje: string;
+    /** Default da tela = `min`. */
+    sugerida?: string;
+    /** Próximo dia útil depois de hoje, quando cabe na janela. */
+    amanha?: string;
+    min?: string;
+    max?: string;
+    limitante?: TituloLimitante;
+    /** Dias não úteis dentro de `[min, max]` (o input nativo não sabe desabilitá-los). */
+    naoUteis: string[];
+    /** Presente quando não existe data possível. */
+    vazia?: { motivo: 'titulo_vencido' | 'sem_dia_util' | 'titulo_sem_vencimento' };
+    /** Presente quando o lote nativo já nasceu com uma data (I8b). */
+    congelada?: {
+        data: string;
+        nativeFlpCod: number;
+        /** `no_passado` = a data congelada já passou; o ERP a recusará se ainda não finalizou. */
+        motivo: 'lote_nativo_criado' | 'no_passado';
+    };
+}
+
 /** Resultado de um run de formação automática de lotes. */
 export interface FormacaoLotesResult {
     lotesFormados: number;
