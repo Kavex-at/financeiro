@@ -7,6 +7,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
 import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.js';
 import type { ContaPagadora } from '../domain/interface/sispag/Fin015Write.js';
+import BankingCalendar from '../domain/libs/calendar/BankingCalendar.js';
 
 /**
  * EXECUTOR do teste de geração de `.REM` em PRODUÇÃO — a confirmação para o cliente.
@@ -70,9 +71,10 @@ const brl = (n: unknown): string =>
 const dia = (v: unknown): string =>
     typeof v === 'number' ? new Date(v).toISOString().slice(0, 10) : '—';
 
+/** Hoje em Brasília, no encoding do ERP (meia-noite UTC do dia civil) — ADR-0049. */
 const hojeUtc = (): number => {
-    const d = new Date();
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const calendar = container.resolve(BankingCalendar);
+    return calendar.toErpEpoch(calendar.todayBrt());
 };
 
 const log = (s: string): void => console.log(`[exec-prd] ${s}`);
