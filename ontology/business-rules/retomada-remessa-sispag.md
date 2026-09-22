@@ -14,7 +14,7 @@ related_files:
   - src/backend/domain/errors/LoteAnteriorCanceladoError.ts
   - src/backend/domain/errors/RemessaEmDuvidaError.ts
   - src/backend/domain/errors/ConciliacaoEmDuvidaError.ts
-last_review: 2026-08-25
+last_review: 2026-09-22
 has_canonical_test: true
 ---
 
@@ -70,6 +70,10 @@ No `fin052`, `processadoEm` (`garTimProcessamento`) responde "o `processar` já 
 
 1. **Marca d'água** antes do `criarLote`: maior `flpCod` de `(filCod, bncCod)` + `ccoCod` +
    `dataDebito`. É o que torna reconhecível o lote criado numa queda que não gravou o número.
+   A adoção já compara com a `dataDebito` **gravada no `requestPayload`** da tentativa anterior, não
+   com a de agora. Desde a ADR-0049 essa data também passa a ser escolhida pela analista e persistida
+   no lote (`LotePagamento.dataDebito`), e é **imutável** enquanto o lote nativo existir (I8b): a
+   retomada nunca a recalcula. Ver `data-debito-remessa-sispag.md`.
 2. `setNativeFlpCod` imediatamente após o `criarLote` responder.
 3. **Nome do arquivo** antes do `gerarRemessa`. Sem ele a etapa final é indeterminável: o ERP
    recicla `flpCod`, então "o primeiro arquivo com conteúdo" pode ser de outro lote.

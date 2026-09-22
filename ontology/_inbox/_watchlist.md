@@ -93,3 +93,14 @@
   devolve `finalizado` (ela responde sobre o *borderô*); o resíduo fica com o ledger + o reaper +
   o saldo do adto. Revisitar se aparecer um caso real em que o resíduo se perdeu na prática — aí a
   costura vira um 4º estado, não antes.
+
+## SISPAG — data de débito (curadoria 2026-09-22, ADR-0049)
+
+- **Feriados municipais/estaduais no calendário de dias úteis: NÃO modelados** (REJECT-PREMATURE). O
+  conjunto nacional é regulatório e fica na regra I8 (`business-rules/data-debito-remessa-sispag.md`);
+  o local depende da praça (filial/agência) e é **valor de configuração**, não ontologia. **Promover se**
+  a Flavia confirmar pagamento recusado ou atrasado por feriado local (`_inbox/sispag-data-pagamento-gap.md`
+  P1-1), ou se um 2º cliente trouxer o mesmo. Forma provável: lista por filial em configuração do tenant.
+- **Entidade `CalendarioBancario`: NÃO criada.** É função pura sobre datas, sem identidade nem ciclo
+  de vida. Revisitar só se o calendário ganhar dado mantido por pessoa (o item acima) **e** for consumido
+  por uma 2ª frente (ex.: Frente IV, data de baixa).

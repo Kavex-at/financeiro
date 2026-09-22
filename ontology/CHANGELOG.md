@@ -3,6 +3,27 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.27.0 — data de débito da remessa SISPAG escolhível (2026-09-22, ADR-0049)
+
+Feature: `sispag-data-pagamento` (`/feature-tweak`, branch `fix/sispag-data-pagamento`). Pedido da Flavia
+(Columbia), 2026-09-22. **Reverte a resposta A5** ("débito = hoje, sempre"): hoje vira só o default.
+
+- **NEW property `LotePagamento.dataDebito`** (data civil; `lote_pagamento.data_debito`, a criar), que vai
+  ao `fin015` como `flpDtaCredito`.
+- **NEW invariante I8** (`business-rules/data-debito-remessa-sispag.md`, `planned`): I8a janela
+  `[hoje_BRT, min(itsDtaPgto)] ∩ dias úteis bancários`, bloqueada antes de escrever (sem remoção
+  automática de título); I8b data **congelada** a partir do `criarLote` (retry/retomada reutilizam,
+  data diferente é recusada).
+- **Calendário de dias úteis bancários** (fim de semana + feriados nacionais fixos, 20/11 desde 2024, e
+  móveis da Páscoa) na ontologia como parte de I8, calculado no backend (fonte única). Municipais =
+  configuração futura → watchlist + gap P1.
+- **Fuso:** "hoje" = `America/Sao_Paulo` (corrige `hojeUtc()`, que virava o dia às 21h). É domínio, não tenant.
+- Emendas: `state-machines/lote-pagamento.md` (L8 recebe a data; sem estado novo, `AGENDADO`
+  rejeitado) e `retomada-remessa-sispag.md` (a data da marca d'água é a persistida).
+- Perguntas P1 à Flavia: `_inbox/sispag-data-pagamento-gap.md`.
+- Coverage: `business_rules_total` 22→23 (`planned` 9→10); `LotePagamento.impl_pct` inalterado (propriedade
+  e regra à frente do código, `open_gap` "ADR-0049 à frente do código").
+
 ## v0.26.1 — ADR-0047 implementada (2026-09-15)
 
 Feature: `permutas-excecao-manual`. `ExcecaoPermuta` passa de `planned` a `implemented`.
