@@ -1,5 +1,27 @@
 # Columbia Financeiro — Changelog
 
+## v0.42.1 (2026-09-25) — quatro leituras do SISPAG que afirmavam mais do que sabiam
+
+Quatro defeitos no boundary de leitura do Conexos, todos da mesma família: um valor ausente
+virando um valor **válido**, e uma resposta parcial se passando por completa.
+
+- **`null` do ERP deixa de virar `0`.** O `z.coerce.number()` do `fin064` fazia `Number(null) === 0`.
+  Duas consequências vivas: o aviso *"falta cadastro?"* da carteira **nunca apareceu** (a condição
+  era sempre verdadeira), e um `titDtaVencimento` nulo virava **01/01/1970** — que ordena no topo da
+  lista, come o teto de 5.000 títulos, conta como vencido no KPI e sairia como `itsDtaPgto: 0` na
+  remessa, violando a regra R2 do ERP.
+- **`prontoParaRemessa` passa a admitir "não sei".** Consertar só a coerção trocaria "sempre pronto"
+  por "**nunca** pronto" — carimbando *falta cadastro?* em 100% da carteira. O `fin064` não enxerga
+  boleto nem conta do favorecido, então agora ele diz `NULL` em vez de chutar, e a tela fica calada.
+  Quem afirma é a leitura ao vivo do cadastro, no envio.
+- **A lista de lotes nativos pagina.** Lia só a 1ª página (500 linhas) e era usada como *"os lotes que
+  existem"* — para a marca d'água e para achar lote órfão. Incompleta, ela erra nas duas direções:
+  cancelar um lote alheio, ou não ver o órfão e **criar um segundo lote**. Truncar agora falha em vez
+  de devolver meia lista.
+- **A linha digitável confere os 4 dígitos verificadores.** Antes era só "47 dígitos" — e o
+  comprimento é justamente o que uma troca de dígito não altera. Boleto recusado deixa de sumir
+  calado: a tela diz quantos foram, para a analista conferir no Conexos antes de pagar.
+
 ## v0.42.0 (2026-09-24) — aba "Boletos DDA" para achar o boleto de um título
 
 Quando a remessa parava com "título marcado como BOLETO sem boleto DDA associado", achar o boleto

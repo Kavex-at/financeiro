@@ -21,7 +21,8 @@ interface TituloRow {
     banco: string | null;
     num_remessa: string | null;
     tpd_cod: string | null;
-    pronto_para_remessa: boolean;
+    /** NULL = o read da carteira não soube dizer (ver migration 0061). */
+    pronto_para_remessa: boolean | null;
     tem_boleto: boolean;
 }
 
@@ -51,7 +52,7 @@ export default class TituloAPagarRepository {
         banco: r.banco ?? undefined,
         numRemessa: r.num_remessa ?? undefined,
         tpdCod: r.tpd_cod ?? undefined,
-        prontoParaRemessa: r.pronto_para_remessa,
+        prontoParaRemessa: r.pronto_para_remessa ?? undefined,
         temBoleto: r.tem_boleto,
         ativo: true,
     });
@@ -91,7 +92,9 @@ export default class TituloAPagarRepository {
             params[`ba${i}`] = t.banco ?? null;
             params[`nr${i}`] = t.numRemessa ?? null;
             params[`tp${i}`] = t.tpdCod ?? null;
-            params[`pr${i}`] = t.prontoParaRemessa ?? false;
+            // `?? null` e não `?? false`: o `fin064` quase nunca SABE, e NULL é esse
+            // "não sei". Um FALSE aqui acenderia "falta cadastro?" na carteira inteira.
+            params[`pr${i}`] = t.prontoParaRemessa ?? null;
             params[`tb${i}`] = t.temBoleto ?? false;
         });
         await tx.insert(

@@ -162,3 +162,28 @@ export interface LoteNativoEstado {
     dataDebito?: number;
     finalizadoEm?: number;
 }
+
+/** Uma linha digitável de boleto já anexada a um item do lote nativo. */
+export interface ItemLinhaDigitavel {
+    docCod: string;
+    titCod: string;
+    /** 47 dígitos, com os 4 verificadores conferidos no boundary. */
+    linhaDigitavel: string;
+}
+
+/**
+ * Resultado de `listarLinhasDigitaveisDoLote`.
+ *
+ * `total` conta os itens do lote que AFIRMAM ter boleto (`itsNumCodbar` presente); `dropped`,
+ * quantos desses foram recusados por não passar nos dígitos verificadores. Item sem o campo
+ * não entra em nenhum dos dois — não tem boleto, e isso é o estágio normal, não uma perda.
+ *
+ * A contagem existe porque a recusa precisa ser VISÍVEL: sem ela, um código corrompido vira
+ * um botão de copiar a menos, indistinguível de "este título não é boleto".
+ * Invariante: `itens.length + dropped === total`.
+ */
+export interface LinhasDigitaveisDoLote {
+    itens: ItemLinhaDigitavel[];
+    total: number;
+    dropped: number;
+}

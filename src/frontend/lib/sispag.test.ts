@@ -4,6 +4,7 @@ import {
   DebitDateFrozenError,
   DebitDateOutsideWindowError,
   fetchJanelaDataDebito,
+  fetchLinhasDigitaveis,
   formatCivilDate,
   gerarRemessa,
   retirarDoLote,
@@ -223,5 +224,44 @@ describe('fetchBoletosDda — filtros e página vão na query', () => {
   it('erro do backend vira Error com a mensagem dele', async () => {
     mockApiFetch.mockResolvedValueOnce(respostaJson(400, { error: 'invalid query' }))
     await expect(fetchBoletosDda({ escopo: 'todos', pagina: 1 })).rejects.toThrow('invalid query')
+  })
+})
+
+const okJson = (body: unknown): Response =>
+  ({ ok: true, status: 200, json: async () => body }) as unknown as Response
+
+describe('fetchLinhasDigitaveis', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+
+  it('repassa itens, total e dropped', async () => {
+    const itens = [{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }]
+    mockApiFetch.mockResolvedValue(okJson({ itens, total: 3, dropped: 2 }))
+
+    await expect(fetchLinhasDigitaveis('lote-1')).resolves.toEqual({ itens, total: 3, dropped: 2 })
+  })
+
+  it('resposta antiga (só `itens`) não inventa recusa', async () => {
+    // Um backend que ainda não manda a contagem não pode fazer a tela acusar boleto
+    // inválido: `dropped` cai para 0 e `total` para o que de fato veio.
+    const itens = [{ docCod: '1', titCod: '1', linhaDigitavel: '1'.repeat(47) }]
+    mockApiFetch.mockResolvedValue(okJson({ itens }))
+
+    await expect(fetchLinhasDigitaveis('lote-1')).resolves.toEqual({ itens, total: 1, dropped: 0 })
+  })
+
+  it('corpo vazio vira resultado vazio, não exceção', async () => {
+    mockApiFetch.mockResolvedValue(okJson({}))
+
+    await expect(fetchLinhasDigitaveis('lote-1')).resolves.toEqual({
+      itens: [],
+      total: 0,
+      dropped: 0,
+    })
+  })
+
+  it('HTTP não-ok lança — lista vazia afirmaria "nenhum boleto"', async () => {
+    mockApiFetch.mockResolvedValue({ ok: false, status: 500 } as unknown as Response)
+
+    await expect(fetchLinhasDigitaveis('lote-1')).rejects.toThrow('API 500')
   })
 })

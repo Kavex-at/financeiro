@@ -497,10 +497,18 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
     });
 
     describe('listarLinhasDigitaveisDoLote', () => {
+        // Linhas digitáveis SINTÉTICAS, com os 4 verificadores corretos. Não se usa aqui uma
+        // linha de produção: ela codifica banco, valor e "nosso número" de um pagamento real
+        // de um fornecedor da Columbia (o vazamento apontado no regis-review de 2026-08-28).
+        const LINHA_OK = '00191234546789012345767890123457199990000012345';
+        const LINHA_OK_2 = '34199876504321098765743210987657689050000098765';
+        // Mesma de cima com UM dígito trocado no DV do campo 2 — passa no length, falha no DV.
+        const LINHA_DV_RUIM = '00191234546789012345867890123457199990000012345';
+
         const linha = (over: Record<string, unknown> = {}) => ({
             docCod: 10400,
             titCod: 1,
-            itsNumCodbar: '1'.repeat(47),
+            itsNumCodbar: LINHA_OK,
             ...over,
         });
 
@@ -514,7 +522,12 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 bncCod: 4,
                 flpCod: 4,
             });
-            expect(res).toEqual([{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }]);
+            // Item sem `itsNumCodbar` não é boleto: não entra em `total` nem em `dropped`.
+            expect(res).toEqual({
+                itens: [{ docCod: '10400', titCod: '1', linhaDigitavel: LINHA_OK }],
+                total: 1,
+                dropped: 0,
+            });
             expect(base.listGenericPaginated.mock.calls[0][0]).toBe(
                 'fin015/finItemSispag/list/2/4/4',
             );
@@ -544,7 +557,45 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 bncCod: 4,
                 flpCod: 4,
             });
-            expect(res.map((r) => r.docCod)).toEqual(['4']);
+            expect(res.itens.map((r) => r.docCod)).toEqual(['4']);
+        });
+
+        it('recusa linha com 47 dígitos mas dígito verificador errado', async () => {
+            // O length é justamente o que um dígito trocado NÃO altera. Quem cola isso no app
+            // do banco paga o beneficiário errado, e o erro só aparece com o dinheiro fora.
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                rows: [linha({ docCod: 7, itsNumCodbar: LINHA_DV_RUIM })],
+            });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+            });
+            expect(res.itens).toEqual([]);
+        });
+
+        it('conta o que recusou — item com boleto ilegível não some calado', async () => {
+            // Antes a recusa era indistinguível de "este título não é boleto": nos dois casos
+            // o botão de copiar sumia, e a analista não tinha como saber qual era o caso.
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                rows: [
+                    linha({ docCod: 1, itsNumCodbar: LINHA_OK }),
+                    linha({ docCod: 2, itsNumCodbar: LINHA_OK_2 }),
+                    linha({ docCod: 3, itsNumCodbar: LINHA_DV_RUIM }),
+                    linha({ docCod: 4, itsNumCodbar: '123' }),
+                    linha({ docCod: 5, itsNumCodbar: null }),
+                ],
+            });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+            });
+            expect(res.total).toBe(4);
+            expect(res.dropped).toBe(2);
+            expect(res.itens.length + res.dropped).toBe(res.total);
         });
 
         it('lote sem nenhum item com boleto → lista vazia, sem erro', async () => {
@@ -552,7 +603,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             base.listGenericPaginated.mockResolvedValue({ rows: [] });
             await expect(
                 make(base).listarLinhasDigitaveisDoLote({ filCod: 2, bncCod: 4, flpCod: 4 }),
-            ).resolves.toEqual([]);
+            ).resolves.toEqual({ itens: [], total: 0, dropped: 0 });
         });
 
         it('falha de leitura do grid vira ConexosError — não lista vazia', async () => {
@@ -903,6 +954,84 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 'bncCod#EQ': 4,
                 'filCod#EQ': 2,
             });
+        });
+    });
+
+    describe("listarLotesNativos — paginação (marca d'água e órfãos)", () => {
+        /** Grid falso de lotes: `total` linhas, servidas em páginas de `pageSize`. */
+        const gridDeLotes = (total: number) => (_path: string, body: Record<string, unknown>) => {
+            const pageSize = Number(body.pageSize);
+            const pageNumber = Number(body.pageNumber);
+            const inicio = (pageNumber - 1) * pageSize;
+            const rows = Array.from(
+                { length: Math.max(0, Math.min(pageSize, total - inicio)) },
+                (_, i) => ({ filCod: 2, bncCod: 4, flpCod: inicio + i + 1, flpVldStatus: 1 }),
+            );
+            return Promise.resolve({ count: total, rows });
+        };
+
+        it("varre TODAS as páginas — a marca d'água precisa do MAIOR flpCod", async () => {
+            // Com `pageNumber: 1` fixo, o maior flpCod podia ficar na página 2: a marca
+            // d'água saía baixa e um lote alheio virava candidato a órfão (→ cancelado).
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDeLotes(1200));
+
+            const lotes = await make(base).listarLotesNativos({
+                filCod: 2,
+                bncCod: 4,
+                pageSize: 500,
+            });
+
+            expect(lotes).toHaveLength(1200);
+            expect(Math.max(...lotes.map((l) => l.flpCod))).toBe(1200);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(3);
+        });
+
+        it('para na página curta, sem pedir uma página a mais', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDeLotes(30));
+
+            const lotes = await make(base).listarLotesNativos({
+                filCod: 2,
+                bncCod: 4,
+                pageSize: 500,
+            });
+
+            expect(lotes).toHaveLength(30);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(1);
+        });
+
+        it('deduplica flpCod repetido entre páginas', async () => {
+            const base = buildBase();
+            const row = { filCod: 2, bncCod: 4, flpCod: 7, flpVldStatus: 1 };
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 4, rows: [row, row] })
+                .mockResolvedValueOnce({ count: 4, rows: [row, row] });
+
+            const lotes = await make(base).listarLotesNativos({
+                filCod: 2,
+                bncCod: 4,
+                pageSize: 2,
+            });
+
+            expect(lotes.map((l) => l.flpCod)).toEqual([7]);
+        });
+
+        it('truncar LANÇA — lista parcial de lotes é pior que resposta nenhuma', async () => {
+            // Diferente do `listarTitulosPendentes`, que só avisa: aqui o chamador decide
+            // CANCELAR lote com base nesta lista. Uma resposta parcial é uma afirmação falsa
+            // sobre quais lotes existem.
+            const base = buildBase();
+            base.listGenericPaginated.mockImplementation(gridDeLotes(100));
+
+            await expect(
+                make(base).listarLotesNativos({
+                    filCod: 2,
+                    bncCod: 4,
+                    pageSize: 10,
+                    maxPaginas: 3,
+                }),
+            ).rejects.toBeInstanceOf(ConexosError);
         });
     });
 

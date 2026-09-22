@@ -174,16 +174,22 @@ export function LoteCard({
   // nem chamamos. Buscado AQUI, na expansão, e não no clique: navegador bloqueia
   // `clipboard.writeText` chamado depois de um `await`.
   const [linhas, setLinhas] = React.useState<Map<string, string>>(new Map())
+  // Boletos cujo código o backend recusou nos dígitos verificadores. Sem isto, um código
+  // corrompido é indistinguível de "este título não é boleto": nos dois casos o botão some.
+  const [linhasRecusadas, setLinhasRecusadas] = React.useState(0)
   React.useEffect(() => {
     if (!aberto || isRascunho) return
     let vivo = true
     fetchLinhasDigitaveis(l.id)
-      .then((itens) => {
+      .then(({ itens, dropped }) => {
         if (!vivo) return
         setLinhas(new Map(itens.map((i) => [`${i.docCod}:${i.titCod}`, i.linhaDigitavel])))
+        setLinhasRecusadas(dropped)
       })
       .catch(() => {
-        if (vivo) setLinhas(new Map()) // sem linha → sem botão; nada quebra
+        if (!vivo) return
+        setLinhas(new Map()) // sem linha → sem botão; nada quebra
+        setLinhasRecusadas(0) // falha de leitura não afirma que algum código é inválido
       })
     return () => {
       vivo = false
@@ -546,6 +552,23 @@ export function LoteCard({
               </Table>
             </div>
           )}
+          {linhasRecusadas > 0 ? (
+            // `aria-live`: o aviso só aparece quando o fetch volta, depois de a expansão já
+            // ter sido lida. Sem isso, quem usa leitor de tela não fica sabendo.
+            <div
+              role="alert"
+              aria-live="polite"
+              className="mt-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning-subtle px-4 py-3 text-sm text-warning-foreground"
+            >
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <p>
+                {linhasRecusadas === 1
+                  ? '1 boleto veio com linha digitável inválida e não pode ser copiado.'
+                  : `${linhasRecusadas} boletos vieram com linha digitável inválida e não podem ser copiados.`}{' '}
+                Confira o código direto no Conexos antes de pagar.
+              </p>
+            </div>
+          ) : null}
           {l.finalizadoPor ? (
             <p className="mt-2 text-xs text-muted-foreground">
               Finalizado por {l.finalizadoPor}
