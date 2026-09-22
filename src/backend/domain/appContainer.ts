@@ -10,7 +10,21 @@ import { registerOperacaoSinks } from './operacaoContainer.js';
 import ConfigDoctor from './service/operacao/ConfigDoctor.js';
 import { registerRecebimentosPorts } from './recebimentosContainer.js';
 
-let bootstrapped = false;
+/**
+ * Promessa do bootstrap EM VOO — não um booleano de "já terminou".
+ *
+ * O flag anterior só virava `true` na última linha, então duas chamadas
+ * concorrentes (dois requests no primeiro segundo da instância, o `listen()` e
+ * um cron) encontravam `false` e executavam o bootstrap INTEIRO em paralelo:
+ * dois `MigrationRunner.run()`, dois `ConexosBaseClient` aquecidos, dois
+ * registros do adapter. Guardando a promessa, a segunda chamada espera a
+ * primeira em vez de repeti-la.
+ *
+ * `undefined` de novo quando o bootstrap FALHA: cachear a falha deixaria a
+ * instância permanentemente quebrada por um erro transitório de rede no boot,
+ * enquanto o comportamento anterior (flag só no fim) permitia nova tentativa.
+ */
+let bootstrapPromise: Promise<void> | undefined;
 
 const describeError = (error: unknown): string =>
     error instanceof Error ? error.message : String(error);
@@ -83,14 +97,13 @@ export const diagnosticarConfiguracao = async (): Promise<void> => {
 };
 
 /**
- * Lazy bootstrap that wires the legacy Conexos adapter into the tsyringe
- * container. Called once before resolving any service/client that depends on
- * the Conexos ERP (e.g. the example `/conexos/filiais` route).
- *
- * No-op on subsequent calls.
+ * Corpo do bootstrap. NADA aqui é de uso exclusivo do servidor: os ~58 jobs
+ * chamam `bootstrapAppContainer` com env deliberadamente estreito (o
+ * `detect-staleness` passa só `databaseConnectionString`), então diagnóstico,
+ * warm-up ou efeito colateral que dependa de configuração completa vai no
+ * `index.ts`, no boot do servidor — não aqui. Ver `diagnosticarConfiguracao`.
  */
-export const bootstrapAppContainer = async (): Promise<void> => {
-    if (bootstrapped) return;
+const runBootstrap = async (): Promise<void> => {
     const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
 
     // O adapter resolve a sessão Conexos POR REQUEST (Fatia B): usuário logado
@@ -109,6 +122,25 @@ export const bootstrapAppContainer = async (): Promise<void> => {
     registerOperacaoSinks();
 
     await initDatabaseAndMigrate(env.environment === 'production');
+};
 
-    bootstrapped = true;
+/**
+ * Lazy bootstrap that wires the legacy Conexos adapter into the tsyringe
+ * container. Called once before resolving any service/client that depends on
+ * the Conexos ERP (e.g. the example `/conexos/filiais` route).
+ *
+ * Executa UMA vez por processo: chamadas concorrentes recebem a MESMA promessa
+ * e esperam a execução em voo, em vez de dispararem um segundo bootstrap.
+ * Chamadas posteriores viram no-op (a promessa já resolvida).
+ */
+export const bootstrapAppContainer = async (): Promise<void> => {
+    if (!bootstrapPromise) {
+        bootstrapPromise = runBootstrap().catch((error: unknown) => {
+            // Falha não fica cacheada — a próxima chamada tenta de novo, como
+            // acontecia quando o flag só era marcado no fim do bootstrap.
+            bootstrapPromise = undefined;
+            throw error;
+        });
+    }
+    return bootstrapPromise;
 };
