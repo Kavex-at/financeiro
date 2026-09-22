@@ -16,6 +16,8 @@ import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindow
 import ErpPerguntaError from '../domain/errors/ErpPerguntaError.js';
 import LoteEstadoInvalidoError from '../domain/errors/LoteEstadoInvalidoError.js';
 import RemessaEmDuvidaError from '../domain/errors/RemessaEmDuvidaError.js';
+import RetencaoInexistenteError from '../domain/errors/RetencaoInexistenteError.js';
+import TituloForaDeLoteError from '../domain/errors/TituloForaDeLoteError.js';
 import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
 import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
@@ -44,7 +46,12 @@ const readJson = async (res: Response): Promise<Record<string, any>> =>
  * ninguém em produção. Estes testes exercitam o gate mesmo assim — ele é o que vai valer
  * no dia em que existir um papel `viewer`, e uma remoção acidental precisa quebrar algo.
  */
-const buildApp = (opts: { authenticated: boolean; role?: string }): express.Express => {
+const buildApp = (opts: {
+    authenticated: boolean;
+    role?: string;
+    /** JWT válido mas sem `sub`/`email` utilizáveis — a trilha de autoria recusa. */
+    semIdentidade?: boolean;
+}): express.Express => {
     const app = express();
     app.use(express.json());
     app.use(requestIdMiddleware);
@@ -53,7 +60,9 @@ const buildApp = (opts: { authenticated: boolean; role?: string }): express.Expr
             res.status(401).json({ error: 'Missing or malformed Authorization header' });
             return;
         }
-        req.user = { sub: 'user-abc', email: 'a@b.com', role: opts.role ?? 'admin' };
+        req.user = opts.semIdentidade
+            ? { sub: '  ', role: opts.role ?? 'admin' }
+            : { sub: 'user-abc', email: 'a@b.com', role: opts.role ?? 'admin' };
         next();
     });
     // Sem `sispagGate`: o gate tem teste próprio; aqui o alvo são os handlers.
@@ -75,7 +84,7 @@ const listen = (app: express.Express): Promise<TestServer> =>
 
 /** Sobe o app, roda o corpo e sempre fecha o servidor. */
 const comApp = async (
-    opts: { authenticated?: boolean; role?: string },
+    opts: { authenticated?: boolean; role?: string; semIdentidade?: boolean },
     fn: (url: string) => Promise<void>,
 ): Promise<void> => {
     const server = await listen(buildApp({ authenticated: opts.authenticated ?? true, ...opts }));
@@ -398,6 +407,179 @@ describe('DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod', () => {
             const res = await fetch(`${url}/sispag/lotes/L1/itens/0/813/1`, { method: 'DELETE' });
             expect(res.status).toBe(400);
             expect(removerTitulo).not.toHaveBeenCalled();
+        });
+    });
+
+    it('401 sem identidade no token — num lote automático a lixeira grava retenção (ADR-0050)', async () => {
+        const removerTitulo = jest.fn();
+        container.registerInstance(LotePagamentoService, { removerTitulo } as never);
+
+        await comApp({ semIdentidade: true }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/itens/2/813/1`, { method: 'DELETE' });
+            expect(res.status).toBe(401);
+            expect(await readJson(res)).toMatchObject({ error: 'IDENTIDADE_AUSENTE' });
+            expect(removerTitulo).not.toHaveBeenCalled();
+        });
+    });
+});
+
+// ─────────────────────────────────────── retenção da formação automática (ADR-0050)
+
+describe('POST /sispag/titulos/:filCod/:docCod/:titCod/retirar-do-lote', () => {
+    const rota = (url: string, chave = '2/813/1') =>
+        `${url}/sispag/titulos/${chave}/retirar-do-lote`;
+    const post = (url: string, body: unknown, chave?: string) =>
+        fetch(rota(url, chave), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    it('retira e retém com o motivo; autor vem do JWT, nunca do corpo', async () => {
+        const retirarDoLote = jest.fn().mockResolvedValue(LOTE);
+        container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, { motivo: '  em negociação  ', ator: 'forjado' });
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toMatchObject({ lote: { id: 'L1' } });
+            expect(retirarDoLote).toHaveBeenCalledWith({
+                filCod: 2,
+                docCod: '813',
+                titCod: '1',
+                motivo: 'em negociação',
+                ator: 'user-abc',
+            });
+        });
+    });
+
+    it('sem corpo ou com motivo em branco: retém sem motivo', async () => {
+        const retirarDoLote = jest.fn().mockResolvedValue(LOTE);
+        container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, { motivo: '   ' });
+            expect(res.status).toBe(200);
+            expect(retirarDoLote.mock.calls[0][0]).not.toHaveProperty('motivo');
+        });
+    });
+
+    it('400 com motivo acima de 500 caracteres, sem chamar o serviço', async () => {
+        const retirarDoLote = jest.fn();
+        container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, { motivo: 'x'.repeat(501) });
+            expect(res.status).toBe(400);
+            expect(retirarDoLote).not.toHaveBeenCalled();
+        });
+    });
+
+    it('400 quando o filCod da URL não é inteiro positivo', async () => {
+        const retirarDoLote = jest.fn();
+        container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, {}, 'abc/813/1');
+            expect(res.status).toBe(400);
+            expect(retirarDoLote).not.toHaveBeenCalled();
+        });
+    });
+
+    it('401 sem identidade no token', async () => {
+        const retirarDoLote = jest.fn();
+        container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
+
+        await comApp({ semIdentidade: true }, async (url) => {
+            const res = await post(url, {});
+            expect(res.status).toBe(401);
+            expect(retirarDoLote).not.toHaveBeenCalled();
+        });
+    });
+
+    it('exige role admin', async () => {
+        const retirarDoLote = jest.fn();
+        container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
+
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await post(url, {});
+            expect(res.status).toBe(403);
+            expect(retirarDoLote).not.toHaveBeenCalled();
+        });
+    });
+
+    it('título fora de lote vira 409 com a mensagem do domínio', async () => {
+        const retirarDoLote = jest
+            .fn()
+            .mockRejectedValue(
+                new TituloForaDeLoteError({ filCod: 2, docCod: '813', titCod: '1' }),
+            );
+        container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, {});
+            expect(res.status).toBe(409);
+            expect(await readJson(res)).toMatchObject({ code: 'TITULO_FORA_DE_LOTE' });
+        });
+    });
+});
+
+describe('DELETE /sispag/titulos/:filCod/:docCod/:titCod/retencao', () => {
+    const del = (url: string, chave = '2/813/1') =>
+        fetch(`${url}/sispag/titulos/${chave}/retencao`, { method: 'DELETE' });
+
+    it('libera a retenção com o autor do JWT', async () => {
+        const liberarRetencao = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(LotePagamentoService, { liberarRetencao } as never);
+
+        await comApp({}, async (url) => {
+            const res = await del(url);
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toEqual({ liberado: true });
+            expect(liberarRetencao).toHaveBeenCalledWith({
+                filCod: 2,
+                docCod: '813',
+                titCod: '1',
+                ator: 'user-abc',
+            });
+        });
+    });
+
+    it('404 quando não há retenção ativa', async () => {
+        const liberarRetencao = jest
+            .fn()
+            .mockRejectedValue(
+                new RetencaoInexistenteError({ filCod: 2, docCod: '813', titCod: '1' }),
+            );
+        container.registerInstance(LotePagamentoService, { liberarRetencao } as never);
+
+        await comApp({}, async (url) => {
+            const res = await del(url);
+            expect(res.status).toBe(404);
+            expect(await readJson(res)).toMatchObject({ code: 'RETENCAO_INEXISTENTE' });
+        });
+    });
+
+    it('401 sem identidade e 403 sem admin, sem chamar o serviço', async () => {
+        const liberarRetencao = jest.fn();
+        container.registerInstance(LotePagamentoService, { liberarRetencao } as never);
+
+        await comApp({ semIdentidade: true }, async (url) => {
+            expect((await del(url)).status).toBe(401);
+        });
+        await comApp({ role: 'viewer' }, async (url) => {
+            expect((await del(url)).status).toBe(403);
+        });
+        expect(liberarRetencao).not.toHaveBeenCalled();
+    });
+
+    it('400 quando o filCod da URL não é inteiro positivo', async () => {
+        const liberarRetencao = jest.fn();
+        container.registerInstance(LotePagamentoService, { liberarRetencao } as never);
+
+        await comApp({}, async (url) => {
+            expect((await del(url, '-1/813/1')).status).toBe(400);
+            expect(liberarRetencao).not.toHaveBeenCalled();
         });
     });
 });
