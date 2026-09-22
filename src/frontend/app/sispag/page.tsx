@@ -50,6 +50,8 @@ import {
   type PagamentoIngestaoRun,
   reabrirLote,
   ConciliacaoEmDuvidaError,
+  DebitDateFrozenError,
+  DebitDateOutsideWindowError,
   LoteAnteriorCanceladoError,
   RemessaEmAndamentoError,
   RemessaEmDuvidaError,
@@ -364,6 +366,19 @@ function SispagPanel() {
               void acaoLote((o) => fn({ ...o, confirmarNovoLote: true }), okMsg)
             },
           },
+        })
+      } else if (e instanceof DebitDateOutsideWindowError) {
+        // Nada foi escrito no ERP: a data não cabe na janela do lote (ADR-0049). A mensagem do
+        // backend já nomeia o título que limita e a janela permitida.
+        toast.warning('Data de débito fora da janela', {
+          description: `${e.message} Abra "Gerar remessa" de novo para escolher outra data.`,
+          duration: 20000,
+        })
+      } else if (e instanceof DebitDateFrozenError) {
+        // O lote nativo já nasceu no Conexos com outra data: trocar exige cancelá-lo no fin015.
+        toast.warning('Data de débito já fixada no Conexos (fin015)', {
+          description: e.message,
+          duration: 30000,
         })
       } else if (e instanceof RemessaEmDuvidaError) {
         toast.error('Remessa em dúvida — NÃO repita', {
