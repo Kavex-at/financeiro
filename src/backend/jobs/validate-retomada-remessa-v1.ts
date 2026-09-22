@@ -5,6 +5,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import type { ContaPagadora } from '../domain/interface/sispag/Fin015Write.js';
+import BankingCalendar from '../domain/libs/calendar/BankingCalendar.js';
 import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
@@ -52,12 +53,13 @@ if (!BASE.includes('-hml') && process.env.PERMITIR_PRD !== '1') {
 
 const log = (s: string): void => console.log(`[val-retomada] ${s}`);
 /**
- * Meia-noite UTC — o MESMO cálculo do `RemessaService.hojeUtc`. `Date.now()` carrega hora e o
- * ERP recusa (`flpDtaCredito: datetime_not_expected`); descobri isso reprovando o gate.
+ * Hoje em Brasília, no encoding do ERP (meia-noite UTC do dia civil) — o MESMO cálculo que o
+ * `RemessaService` usa via `BankingCalendar` (ADR-0049). `Date.now()` carrega hora e o ERP
+ * recusa (`flpDtaCredito: datetime_not_expected`); descobri isso reprovando o gate.
  */
 const hojeUtc = (): number => {
-    const d = new Date();
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const calendar = container.resolve(BankingCalendar);
+    return calendar.toErpEpoch(calendar.todayBrt());
 };
 const erroDe = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
