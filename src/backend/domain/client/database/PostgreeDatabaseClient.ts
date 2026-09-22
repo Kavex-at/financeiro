@@ -7,6 +7,16 @@ import { endPoolQuietly, endPoolQuietlyAsync } from '../../libs/pool/endPoolQuie
 import SqlBuilder from '../../libs/sql/SqlBuilder.js';
 
 /**
+ * Verbos que MODIFICAM o banco. Serve para decidir se um statement pode ser
+ * repetido depois de a conexão cair — ver `isRepeatableStatement`.
+ *
+ * Sem a flag `g` de propósito: `RegExp.test` com `g` guarda `lastIndex` entre
+ * chamadas e passaria a alternar `true`/`false` para o MESMO statement.
+ */
+const WRITE_STATEMENT_PATTERN =
+    /\b(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|REFRESH|GRANT|REVOKE)\b/;
+
+/**
  * Transaction-scoped query surface handed to `withTransaction(fn)`. Mirrors the
  * parameterized helpers of the pool client, but every call runs on the SAME
  * dedicated `PoolClient` between BEGIN and COMMIT, so the work is atomic.
@@ -28,18 +38,47 @@ export default class PostgreeDatabaseClient implements IClient {
     private readonly poolIdleTimeoutMillis = 10000;
     private readonly poolConnectionTimeoutMillis = 5000;
     private readonly sqlBuilder = new SqlBuilder();
-    private readonly transientErrorPatterns = [
-        'MaxClientsInSessionMode',
-        'Connection terminated',
-        'too many clients',
-        'ECONNRESET',
-    ];
-    private readonly queryRetryExecutor = new RetryExecutor({
+    /**
+     * Recusa do POOLER na hora de abrir a sessão. O statement comprovadamente
+     * não chegou ao Postgres — não há efeito para duplicar, então retentar é
+     * seguro para QUALQUER statement, inclusive escrita não-idempotente.
+     */
+    private readonly connectionRefusedPatterns = ['MaxClientsInSessionMode', 'too many clients'];
+
+    /**
+     * Socket derrubado com o statement EM VOO. O `COMMIT` pode ter acontecido no
+     * servidor e só a RESPOSTA ter se perdido — o cliente não tem como
+     * distinguir. Retentar um `INSERT` não-idempotente aqui grava a linha DUAS
+     * vezes (linha de auditoria, de razão, de execução de job duplicadas).
+     * Por isso só retentamos quando o statement é repetível.
+     */
+    private readonly droppedConnectionPatterns = ['Connection terminated', 'ECONNRESET'];
+
+    /**
+     * Statements repetíveis (leitura, ou escrita idempotente via `ON CONFLICT`):
+     * retentam nos dois tipos de falha de conexão.
+     */
+    private readonly repeatableQueryRetryExecutor = new RetryExecutor({
         retries: 3,
         delayMs: 200,
         jitterMs: 200,
         shouldLog: true,
-        shouldRetry: (error) => this.isTransientConnectionError(error),
+        shouldRetry: (error) =>
+            this.isConnectionRefusedError(error) || this.isDroppedConnectionError(error),
+    });
+
+    /**
+     * Escrita NÃO idempotente: retenta apenas quando a conexão foi recusada
+     * ANTES de executar. Conexão caída no meio vira erro para o chamador — que
+     * é o desfecho certo: melhor uma falha visível que uma linha duplicada em
+     * silêncio.
+     */
+    private readonly nonRepeatableQueryRetryExecutor = new RetryExecutor({
+        retries: 3,
+        delayMs: 200,
+        jitterMs: 200,
+        shouldLog: true,
+        shouldRetry: (error) => this.isConnectionRefusedError(error),
     });
 
     private connectionPool?: Pool;
@@ -223,7 +262,15 @@ export default class PostgreeDatabaseClient implements IClient {
             ? this.sqlBuilder.build(rawQuery, rawParams)
             : { query: rawQuery, params: undefined };
 
-        return this.queryRetryExecutor.execute(async () => {
+        // A política de retentativa é decidida pelo TEXTO do statement, e não
+        // pelo método que o chamou: `insert`/`update` também carregam upserts
+        // `ON CONFLICT`, que são repetíveis, e um `WITH ... AS (UPDATE ...)`
+        // chega aqui por `selectMany` sem deixar de ser escrita.
+        const executor = this.isRepeatableStatement(query)
+            ? this.repeatableQueryRetryExecutor
+            : this.nonRepeatableQueryRetryExecutor;
+
+        return executor.execute(async () => {
             // O pool é reobtido a CADA tentativa, e não congelado fora do retry
             // como antes. Agora que o handler de `error` ENCERRA o pool quebrado,
             // uma retentativa contra a referência congelada bateria em
@@ -242,8 +289,35 @@ export default class PostgreeDatabaseClient implements IClient {
         });
     };
 
-    private isTransientConnectionError = (error: unknown): boolean => {
+    /**
+     * Um statement é repetível quando reexecutá-lo deixa o banco no MESMO
+     * estado: leitura pura, ou escrita com `ON CONFLICT` (o upsert converge).
+     * Todo o resto — `INSERT` simples, `UPDATE`, `DELETE`, DDL — não é.
+     *
+     * Literais e comentários são removidos antes da checagem para que
+     * `SELECT ... WHERE motivo = 'DELETE'` não passe por escrita. O erro da
+     * heurística cai sempre para o lado seguro: classificar leitura como
+     * escrita custa uma retentativa; o contrário custaria uma linha duplicada.
+     */
+    private isRepeatableStatement = (query: string): boolean => {
+        const normalized = query
+            .replace(/--[^\n]*/g, ' ')
+            .replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .replace(/'(?:[^']|'')*'/g, ' ')
+            .toUpperCase();
+
+        if (!WRITE_STATEMENT_PATTERN.test(normalized)) return true;
+        return /\bON\s+CONFLICT\b/.test(normalized);
+    };
+
+    private isConnectionRefusedError = (error: unknown): boolean =>
+        this.matchesPattern(error, this.connectionRefusedPatterns);
+
+    private isDroppedConnectionError = (error: unknown): boolean =>
+        this.matchesPattern(error, this.droppedConnectionPatterns);
+
+    private matchesPattern = (error: unknown, patterns: readonly string[]): boolean => {
         const message = error instanceof Error ? error.message : String(error);
-        return this.transientErrorPatterns.some((pattern) => message.includes(pattern));
+        return patterns.some((pattern) => message.includes(pattern));
     };
 }
