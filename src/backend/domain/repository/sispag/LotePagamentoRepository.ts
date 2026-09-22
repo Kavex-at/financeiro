@@ -36,6 +36,8 @@ interface LoteHeaderRow {
     remessa_gerada_em: Date | null;
     cco_cod: number | null;
     ger_num: number | null;
+    /** `to_char(data_debito, 'YYYY-MM-DD')` — nunca o DATE cru (o node-pg o leria em hora local). */
+    data_debito?: string | null;
 }
 
 interface ItemRow {
@@ -116,6 +118,7 @@ export default class LotePagamentoRepository {
         ...(h.remessa_gerada_em != null ? { remessaGeradaEm: String(h.remessa_gerada_em) } : {}),
         ...(h.cco_cod != null ? { ccoCod: Number(h.cco_cod) } : {}),
         ...(h.ger_num != null ? { gerNum: Number(h.ger_num) } : {}),
+        ...(h.data_debito != null ? { dataDebito: String(h.data_debito) } : {}),
     });
 
     public criarLote = async (
@@ -192,7 +195,8 @@ export default class LotePagamentoRepository {
             `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
                     finalizado_em, versao, criado_em, automatico,
                     native_fil_cod, native_bnc_cod, native_flp_cod, native_gab_cod,
-                    remessa_arquivo, remessa_num, remessa_gerada_em, cco_cod, ger_num
+                    remessa_arquivo, remessa_num, remessa_gerada_em, cco_cod, ger_num,
+                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito
              FROM lote_pagamento WHERE id = $id`,
             { id },
         );
@@ -210,7 +214,8 @@ export default class LotePagamentoRepository {
     public listLotes = async (filtro: ListarLotesFiltro): Promise<LotePagamento[]> => {
         const headers = (await this.databaseClient.selectMany(
             `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
-                    finalizado_em, versao, criado_em, automatico
+                    finalizado_em, versao, criado_em, automatico,
+                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito
              FROM lote_pagamento
              WHERE ($status::text IS NULL OR status = $status)
                AND ($filCod::int IS NULL OR fil_cod = $filCod)
@@ -483,6 +488,22 @@ export default class LotePagamentoRepository {
                 ccoCod: input.ccoCod ?? null,
                 gerNum: input.gerNum ?? null,
             },
+        );
+    };
+
+    /**
+     * Grava a data de débito da remessa (I8, ADR-0049). Chamado ANTES do `criarLote` do fin015:
+     * a partir dali a data está no lote nativo e fica congelada (I8b).
+     */
+    public setDataDebito = async (
+        input: { loteId: string; dataDebito: string },
+        tx?: TransactionClient,
+    ): Promise<void> => {
+        await this.db(tx).update(
+            `UPDATE lote_pagamento
+             SET data_debito = $dataDebito::date, atualizado_em = now()
+             WHERE id = $loteId`,
+            { loteId: input.loteId, dataDebito: input.dataDebito },
         );
     };
 

@@ -168,6 +168,57 @@ describe('LotePagamentoRepository', () => {
         });
     });
 
+    describe('dataDebito (I8, ADR-0049)', () => {
+        it('getLoteComItens lê data_debito como texto YYYY-MM-DD e devolve a string', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header({ data_debito: '2026-09-23' }));
+            const lote = await make(db).getLoteComItens('L1');
+            const [sql] = db.selectFirst.mock.calls[0];
+            expect(sql).toContain("to_char(data_debito, 'YYYY-MM-DD') AS data_debito");
+            expect(lote?.dataDebito).toBe('2026-09-23');
+        });
+
+        it('getLoteComItens com data_debito NULL não expõe a chave', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header({ data_debito: null }));
+            const lote = await make(db).getLoteComItens('L1');
+            expect(lote?.dataDebito).toBeUndefined();
+            expect(lote).not.toHaveProperty('dataDebito');
+        });
+
+        it('listLotes também devolve dataDebito', async () => {
+            const db = buildDb();
+            db.selectMany
+                .mockResolvedValueOnce([header({ id: 'L1', data_debito: '2026-09-24' })])
+                .mockResolvedValueOnce([]);
+            const lotes = await make(db).listLotes({});
+            const [sql] = db.selectMany.mock.calls[0];
+            expect(sql).toContain("to_char(data_debito, 'YYYY-MM-DD') AS data_debito");
+            expect(lotes[0]?.dataDebito).toBe('2026-09-24');
+        });
+
+        it('setDataDebito grava com parâmetros nomeados, sem interpolar a data', async () => {
+            const db = buildDb();
+            await make(db).setDataDebito({ loteId: 'L1', dataDebito: '2026-09-23' });
+            const [sql, params] = db.update.mock.calls[0];
+            expect(sql).toContain('data_debito = $dataDebito');
+            expect(sql).toContain('WHERE id = $loteId');
+            expect(sql).not.toContain('2026-09-23');
+            expect(params).toEqual({ loteId: 'L1', dataDebito: '2026-09-23' });
+        });
+
+        it('setDataDebito usa a transação quando recebe uma', async () => {
+            const db = buildDb();
+            const tx = buildDb();
+            await make(db).setDataDebito(
+                { loteId: 'L1', dataDebito: '2026-09-23' },
+                tx as unknown as Parameters<LotePagamentoRepository['setDataDebito']>[1],
+            );
+            expect(tx.update).toHaveBeenCalledTimes(1);
+            expect(db.update).not.toHaveBeenCalled();
+        });
+    });
+
     it('transicionarStatus p/ RASCUNHO (reabrir) não exige finalizadoPor', async () => {
         const db = buildDb();
         await make(db).transicionarStatus({
