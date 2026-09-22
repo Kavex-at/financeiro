@@ -1,5 +1,33 @@
 # Columbia Financeiro — Changelog
 
+## v0.42.2 (2026-09-25) — `null` do ERP para de virar zero fora do SISPAG
+
+Mesma raiz da v0.39.2, agora nos clients fiscais e de rateio: `z.coerce.number()` roda a coerção
+ANTES do `.optional()`, e `Number(null)` é **0**. O ERP manda `null`; nós líamos zero. O dano nunca
+aparece como erro — aparece como um número plausível.
+
+- **Helper compartilhado `WireNumber`**, com o comportamento fixado em teste. Três armadilhas que o
+  teste agora trava: `.catch(undefined)` **não** protege (o catch só dispara em falha, e coagir
+  `null` dá certo); `.default(2)` entrega **0** para `null` (o default só vale para `undefined`);
+  `.nullish()` cobre `null` mas deixa `''` virar 0.
+- **NDe (com297)**: `docVldNfehom`, `vldStatus`, `vldAutorizado` e `docMnyValor` deixam de fabricar
+  zero. Antes, "o ERP não respondeu" era indistinguível de "o ERP respondeu **não**": um null
+  reprovava a homologação de uma NDe possivelmente homologada, registrava `vldStatus: 0` (um estado
+  que não existe na máquina {1,2,3}) e disparava um aviso afirmando `docMnyValor=0` sobre um
+  documento fiscal já emitido. O consumidor já escrevia `vldAutorizado !== undefined` — a coerção
+  derrotava esse guard desde sempre.
+- **Rateio da SN**: o `total` (percentual) obrigatório passa a **recusar** a linha em vez de virar
+  0%. Uma linha 0% fazia o resíduo do arredondamento levar o valor INTEIRO da solicitação para a
+  última conta — rateio errado dentro de um POST de criação de documento, sem nada a jusante
+  detectando.
+- **Extrato (fin095/fin133)**: `exiVldTipo` nulo classificava o lançamento como **DÉBITO**; um
+  crédito bancário sumia da fila de conciliação em silêncio. `exiDtaLcto` nulo virava 1970 e
+  `gerNum` nulo oferecia a conta financeira 0 como conta de baixa. Os três agora caem no descarte
+  com warn que o próprio schema já prometia ("nunca coalescida para zero").
+
+Campo obrigatório ausente passa a **derrubar a linha**; campo opcional vira `undefined`. O zero de
+verdade continua passando — é o ponto: `0` é dado, ausência não.
+
 ## v0.42.1 (2026-09-25) — quatro leituras do SISPAG que afirmavam mais do que sabiam
 
 Quatro defeitos no boundary de leitura do Conexos, todos da mesma família: um valor ausente

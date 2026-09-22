@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import type { GerDocProcessoPayload } from '../interface/permutas/SolicitacaoNumerario.js';
 import type LogService from '../service/LogService.js';
+import ConexosError from '../errors/ConexosError.js';
 import type ConexosBaseClient from './ConexosBaseClient.js';
 import ConexosGerDocProcessoClient from './ConexosGerDocProcessoClient.js';
 
@@ -784,6 +785,42 @@ describe('ConexosGerDocProcessoClient', () => {
         });
         expect(rows).toHaveLength(1);
         expect(rows[0].cfoEspCod).toBe('2353A8');
+    });
+
+    it('linha de rateio com `total` null é RECUSADA — não vira 0%', async () => {
+        // `total` é o PERCENTUAL. Coagido para 0, a linha valia `(valorSn * 0) / 100 = 0`, e o
+        // resíduo do arredondamento — o valor INTEIRO da SN — era despejado na última linha pelo
+        // SnPayloadBuilder. Rateio contábil errado dentro de um POST de criação de documento,
+        // sem nada a jusante para detectar. Falhar a leitura é a resposta segura.
+        const base = buildBase({
+            listGenericPaginated: jest.fn().mockResolvedValue({
+                count: 1,
+                rows: [{ prjCod: 1, ctpCod: 36, tpcCod: 86, cfoEspCod: '2353A8', total: null }],
+            }),
+        });
+        const client = new ConexosGerDocProcessoClient(base, buildLog());
+
+        await expect(
+            client.listContasProjeto({ filCod: 2, gcdCod: 150, pesCod: 239, endCodFis: 1 }),
+        ).rejects.toBeInstanceOf(ConexosError);
+    });
+
+    it('rateio de 0% legítimo continua passando — 0 declarado é um fato', async () => {
+        const base = buildBase({
+            listGenericPaginated: jest.fn().mockResolvedValue({
+                count: 1,
+                rows: [{ prjCod: 1, ctpCod: 36, tpcCod: 86, cfoEspCod: '2353A8', total: 0 }],
+            }),
+        });
+        const client = new ConexosGerDocProcessoClient(base, buildLog());
+        const rows = await client.listContasProjeto({
+            filCod: 2,
+            gcdCod: 150,
+            pesCod: 239,
+            endCodFis: 1,
+        });
+
+        expect(rows[0].total).toBe(0);
     });
 
     // ── finalizarDocumento: HTTP 200 NÃO é o discriminador de sucesso ────────────────────────────

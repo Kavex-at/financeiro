@@ -1,5 +1,6 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
+import WireNumber from '../libs/zod/WireNumber.js';
 import ConexosError from '../errors/ConexosError.js';
 import { LOG_TYPE } from '../interface/log/LogInterface.js';
 import type {
@@ -255,7 +256,15 @@ const CONTA_PROJETO_ROW_SCHEMA = z.object({
     tpcCod: z.coerce.number().int(),
     tpcDesNome: z.string().optional(),
     cfoEspCod: z.string(),
-    total: z.coerce.number(),
+    /**
+     * PERCENTUAL do rateio. Obrigatório, e por isso `WireNumber.required`: `z.coerce.number()`
+     * transformava um `null` do ERP em **0**, e daí a linha valia `(valorSn * 0) / 100 = 0`.
+     * Como o builder joga o resíduo do arredondamento na última linha
+     * (`SnPayloadBuilder.round2(last.tmpMnyValor + residuo)`), o valor INTEIRO da SN acabava
+     * despejado numa conta só — um rateio contábil errado, dentro de um POST de criação de
+     * documento, sem nada a jusante para detectar. Melhor recusar a linha.
+     */
+    total: WireNumber.required,
     tmpMnyValor: z.coerce.number().nullish(),
 });
 
