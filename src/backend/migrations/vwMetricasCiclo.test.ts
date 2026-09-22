@@ -94,3 +94,102 @@ describe('0058_vw_metricas_ciclo — guardas estáticas', () => {
         expect(SQL).toMatch(/b\.bor_vld_finalizado = 1\s+AND b\.bor_cod_estornado IS NULL/);
     });
 });
+
+/**
+ * Guardas estáticas da `0060_metricas_historico_inicio.sql` (ADR-0048) — o segundo piso da série.
+ *
+ * Moram no MESMO arquivo que as da 0058 de propósito: a ADR-0048 aceita conviver com dois pisos, e a
+ * mitigação que ela nomeia para a divergência é justamente esta — quem mexer num vê o outro.
+ */
+const MIGRATION_0060 = readFileSync(
+    path.join(__dirname, '0060_metricas_historico_inicio.sql'),
+    'utf8',
+);
+const SQL_0060 = MIGRATION_0060.replace(/--.*$/gm, '');
+
+/** `TIMESTAMP 'YYYY-MM-DD HH:MM:SS'` → `Date` em UTC, para comparar as duas datas sem fuso no meio. */
+const literalDeData = (sql: string, funcao: string): Date => {
+    const m = new RegExp(
+        `FUNCTION metricas\\.${funcao}\\(\\)[\\s\\S]*?TIMESTAMP '(\\d{4})-(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})'`,
+    ).exec(sql);
+    if (m === null) throw new Error(`piso de metricas.${funcao}() não encontrado`);
+    return new Date(
+        Date.UTC(
+            Number(m[1]),
+            Number(m[2]) - 1,
+            Number(m[3]),
+            Number(m[4]),
+            Number(m[5]),
+            Number(m[6]),
+        ),
+    );
+};
+
+const DIA_MS = 24 * 60 * 60 * 1000;
+
+describe('0060_metricas_historico_inicio — guardas estáticas', () => {
+    it('não escreve nada (sem DML fora de comentário)', () => {
+        expect(SQL_0060).not.toMatch(
+            /\b(INSERT\s+INTO|UPDATE\s+[a-z_.]+\s+SET|DELETE\s+FROM|TRUNCATE)\b/i,
+        );
+    });
+
+    it('é ADITIVA: não redefine nada da 0058', () => {
+        expect(SQL_0060).not.toMatch(/FUNCTION metricas\.serie_inicio\(\)/);
+        expect(SQL_0060).not.toMatch(/FUNCTION metricas\.metricas_ciclo\(/);
+        expect(SQL_0060).not.toMatch(/VIEW metricas\.vw_metricas_ciclo/);
+        expect(SQL_0060).not.toMatch(/DROP |CREATE SCHEMA/i);
+    });
+
+    it('o piso do histórico é 2026-08-07 18:00 e mora só aqui', () => {
+        const literais = SQL_0060.match(/TIMESTAMP '2026-08-07 18:00:00'/g) ?? [];
+
+        expect(literais).toHaveLength(1);
+        expect(SQL_0060).toMatch(
+            /FUNCTION metricas\.historico_inicio\(\)[\s\S]*?TIMESTAMP '2026-08-07 18:00:00'/,
+        );
+        // A 0058 não conhece o piso do histórico — cada um na sua migration.
+        expect(SQL).not.toMatch(/historico_inicio/);
+    });
+
+    it('sem caminho paralelo à aplicação: nenhum role, GRANT ou SECURITY DEFINER (ADR-0045, D5)', () => {
+        expect(SQL_0060).not.toMatch(/CREATE ROLE|ALTER ROLE|GRANT |SECURITY DEFINER|PASSWORD/i);
+        expect(SQL_0060).toMatch(
+            /REVOKE ALL ON FUNCTION metricas\.historico_inicio\(\) FROM PUBLIC;/,
+        );
+    });
+
+    it('timestamp sem fuso, como a 0058 (a sessão do Supabase é UTC)', () => {
+        expect(SQL_0060).toMatch(/RETURNS timestamp/);
+        expect(SQL_0060).not.toMatch(/timestamptz|with time zone/i);
+    });
+
+    /**
+     * O invariante que torna o recuo seguro (ADR-0048, D2).
+     *
+     * `metricas_ciclo` gera as janelas com `generate_series(piso, agora, '7 days')`. Se os dois pisos
+     * não caíssem no MESMO ponto da grade semanal, recuar a tela rebateria toda janela já fechada —
+     * e todo número que o report já publicou mudaria de valor sem que ninguém percebesse.
+     */
+    it('os dois pisos caem na mesma grade: ambos sexta 18:00, a múltiplo de 7 dias um do outro', () => {
+        const serie = literalDeData(SQL, 'serie_inicio');
+        const historico = literalDeData(SQL_0060, 'historico_inicio');
+
+        // 5 = sexta-feira.
+        expect(serie.getUTCDay()).toBe(5);
+        expect(historico.getUTCDay()).toBe(5);
+        expect([serie.getUTCHours(), serie.getUTCMinutes()]).toEqual([18, 0]);
+        expect([historico.getUTCHours(), historico.getUTCMinutes()]).toEqual([18, 0]);
+
+        const distanciaDias = (serie.getTime() - historico.getTime()) / DIA_MS;
+        expect(distanciaDias).toBeGreaterThan(0);
+        expect(distanciaDias % 7).toBe(0);
+    });
+
+    it('recua seis janelas: cinco semanas fechadas a mais, além da em curso', () => {
+        const serie = literalDeData(SQL, 'serie_inicio');
+        const historico = literalDeData(SQL_0060, 'historico_inicio');
+
+        expect((serie.getTime() - historico.getTime()) / DIA_MS / 7).toBe(5);
+    });
+});

@@ -33,10 +33,24 @@ export interface MetricasCicloFiltro {
     inicio?: string;
     /** Limite superior de `janela_fim`, `YYYY-MM-DDTHH:MM:SS` local. */
     fim?: string;
+    /**
+     * Recua o piso da série de `metricas.serie_inicio()` (ciclo 6, 2026-09-11) para
+     * `metricas.historico_inicio()` (2026-08-07) — ADR-0048.
+     *
+     * **Opt-in de propósito.** Sem isto a leitura é byte a byte a de antes da ADR-0048, que é o que
+     * o `kavex-report-ciclo` continua recebendo. Quem recua é a tela.
+     */
+    historico?: boolean;
 }
 
 export interface MetricasCicloLeitura {
-    /** Início da série (`metricas.serie_inicio()`) — a tela escreve "série iniciada em". */
+    /**
+     * Piso da série EM VIGOR nesta leitura — `metricas.serie_inicio()`, ou
+     * `metricas.historico_inicio()` quando `historico`. A tela escreve "série iniciada em".
+     *
+     * É o piso usado, não o da série oficial: devolver 2026-09-11 ao lado de semanas de agosto
+     * marcaria as recuperadas sem dizer que as está marcando, o oposto da ADR-0048 D4.
+     */
     serieInicio: string;
     metricas: MetricaCiclo[];
 }

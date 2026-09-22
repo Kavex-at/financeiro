@@ -32,10 +32,14 @@ export default class MetricasCicloService {
                 ? { inicio: this.normalizar(filtro.inicio, 'inicio') }
                 : {}),
             ...(filtro.fim !== undefined ? { fim: this.normalizar(filtro.fim, 'fim') } : {}),
+            ...(filtro.historico !== undefined ? { historico: filtro.historico } : {}),
         };
 
+        // O MESMO piso nas duas leituras. Pedir a lista com o piso do histórico e o rótulo com o da
+        // série oficial faria a tela escrever "série iniciada em 11/09" sobre uma tabela que começa
+        // em 07/08 — ADR-0048, D3.
         const [serieInicio, metricas] = await Promise.all([
-            this.repository.serieInicio(),
+            this.repository.serieInicio(normalizado.historico),
             this.repository.listar(normalizado),
         ]);
         return { serieInicio, metricas };

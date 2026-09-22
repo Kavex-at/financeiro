@@ -37,6 +37,8 @@ if (process.env.CI === 'true' && !ADMIN_DSN) {
 }
 const BANCO = 'metricas_ciclo_it';
 const SERIE = '2026-09-11 18:00:00';
+/** Piso do histórico da tela (ADR-0048) — cinco semanas antes da série, na MESMA grade de sexta. */
+const HISTORICO = '2026-08-07 18:00:00';
 const AGORA = '2026-09-26 10:00:00';
 const JANELA_A = { inicio: '2026-09-11 18:00:00', fim: '2026-09-18 18:00:00' };
 const JANELA_B = { inicio: '2026-09-18 18:00:00', fim: '2026-09-25 18:00:00' };
@@ -99,6 +101,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             .filter((f) => /^\d{4}_.*\.sql$/.test(f))
             .sort();
         expect(migrations).toContain('0058_vw_metricas_ciclo.sql');
+        expect(migrations).toContain('0060_metricas_historico_inicio.sql');
         for (const arquivo of migrations) {
             await admin.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
         }
@@ -323,5 +326,94 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         );
 
         expect(rows[0].serie).toBe(SERIE);
+    });
+
+    // --- O piso do histórico (ADR-0048) ---
+
+    it('o piso do histórico vem de `metricas.historico_inicio()` — 2026-08-07 18:00', async () => {
+        const { rows } = await admin.query<{ piso: string }>(
+            'SELECT metricas.historico_inicio()::text AS piso',
+        );
+
+        expect(rows[0].piso).toBe(HISTORICO);
+    });
+
+    /**
+     * O invariante que torna o recuo seguro (ADR-0048, D2). Se os dois pisos não caíssem no mesmo
+     * ponto da grade semanal, recuar a tela rebateria toda janela já fechada — e todo número que o
+     * report já publicou mudaria de valor. Aqui isso é PROVADO contra o Postgres, não argumentado:
+     * as linhas das janelas comuns aos dois pisos têm que ser idênticas, campo a campo.
+     */
+    it('recuar o piso não move uma vírgula das janelas que já existiam', async () => {
+        const doPiso = async (piso: string): Promise<Linha[]> =>
+            (
+                await admin.query<Linha>(
+                    `SELECT * FROM metricas.metricas_ciclo($1::timestamp, $2::timestamp)
+                      ORDER BY janela_inicio, frente, metrica`,
+                    [piso, AGORA],
+                )
+            ).rows;
+
+        const serie = await doPiso(SERIE);
+        const historico = await doPiso(HISTORICO);
+
+        const janelasDaSerie = new Set(serie.map((l) => String(l.janela_inicio)));
+        const sobrepostas = historico.filter((l) => janelasDaSerie.has(String(l.janela_inicio)));
+
+        expect(sobrepostas).toEqual(serie);
+    });
+
+    it('o recuo acrescenta exatamente cinco janelas, e só à frente da série', async () => {
+        const janelas = async (piso: string): Promise<string[]> =>
+            (
+                await admin.query<{ janela_inicio: string }>(
+                    `SELECT DISTINCT janela_inicio
+                       FROM metricas.metricas_ciclo($1::timestamp, $2::timestamp)
+                      ORDER BY janela_inicio`,
+                    [piso, AGORA],
+                )
+            ).rows.map((r) => String(r.janela_inicio));
+
+        const daSerie = await janelas(SERIE);
+        const doHistorico = await janelas(HISTORICO);
+
+        expect(doHistorico).toHaveLength(daSerie.length + 5);
+        // As da série continuam lá, na mesma ordem, no fim da lista.
+        expect(doHistorico.slice(5)).toEqual(daSerie);
+    });
+
+    it('a VIEW continua ancorada no ciclo 6 — o report não ganha agosto', async () => {
+        const { rows } = await admin.query<{ janela_inicio: string }>(
+            'SELECT DISTINCT janela_inicio FROM metricas.vw_metricas_ciclo ORDER BY janela_inicio',
+        );
+
+        for (const r of rows) {
+            expect(new Date(r.janela_inicio).getTime()).toBeGreaterThanOrEqual(
+                new Date(`${SERIE}Z`).getTime(),
+            );
+        }
+    });
+
+    it('o repositório com `historico` lê o piso recuado, e sem ele lê a série', async () => {
+        const builder = new SqlBuilder();
+        const db = {
+            selectMany: async (sql: string, params: Record<string, unknown>) => {
+                const { query, params: valores } = builder.build(sql, params);
+                return (await admin.query(query, valores)).rows;
+            },
+            selectFirst: async (sql: string) => (await admin.query(sql)).rows[0] ?? null,
+        };
+        const repository = new MetricasCicloRepository(db as never);
+
+        await expect(repository.serieInicio(true)).resolves.toBe('2026-08-07T18:00:00');
+        await expect(repository.serieInicio()).resolves.toBe('2026-09-11T18:00:00');
+
+        const comHistorico = await repository.listar({ historico: true });
+        const semHistorico = await repository.listar({});
+
+        expect(comHistorico.length).toBeGreaterThan(semHistorico.length);
+        // A janela de agosto existe no recuado e não existe na série.
+        expect(comHistorico.some((l) => l.janela_inicio.startsWith('2026-08-07'))).toBe(true);
+        expect(semHistorico.some((l) => l.janela_inicio.startsWith('2026-08'))).toBe(false);
     });
 });
