@@ -22,7 +22,7 @@ import {
 import { GATE } from '../../interface/permutas/PermutaCandidata.js';
 import ConexosError from '../../errors/ConexosError.js';
 
-type LogCall = { type: string; data?: Record<string, unknown> };
+type LogCall = { type: string; message?: string; data?: Record<string, unknown> };
 
 const buildLogService = () => {
     const calls: LogCall[] = [];
@@ -638,6 +638,60 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         expect(c.invoiceCasada?.valorAbertoNegociado).toBeCloseTo(1000, 4);
     });
 
+    // O `.catch(() => undefined)` que havia aqui apagava a diferença entre "o ERP respondeu e não
+    // há em-aberto" e "não conseguimos ler o em-aberto": as duas chegavam ao rateio como o mesmo
+    // `undefined`, e o teto caía para o valor negociado sem que nada registrasse a degradação.
+    it('falha ao ler o detalhe → warn no log + invoice marcada valorAbertoNaoVerificado', async () => {
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
+            listFinanceiroAPagar: jest
+                .fn()
+                .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+            listTitulosAPagar: jest.fn().mockResolvedValue([
+                {
+                    titCod: 'T1',
+                    valorNegociado: 1100,
+                    taxa: 5.0,
+                    moedaCod: 220,
+                    moedaNome: 'DOLAR DOS EUA',
+                },
+            ]),
+            // O adto ainda precisa ser lido (Gate 3); só o detalhe da INVOICE falha.
+            getDetalheTitulos: jest
+                .fn()
+                .mockImplementation(async ({ docCod }: { docCod: string }) => {
+                    if (docCod === adiantamento.docCod)
+                        return { valorPermutar: 1000, pago: true, valorAberto: 0 };
+                    throw new Error('500 com308/detalhe');
+                }),
+        } as Partial<jest.Mocked<ConexosMock>>);
+        const repo = buildRepo();
+        const { logService, calls } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
+        const service = buildEleicao(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+            clienteFiltro,
+        );
+
+        const result = await service.executar({ triggeredBy: 'user-123' });
+        const c = result.candidatas[0];
+        // Fallback PRESERVADO (a falha não trava o casamento) …
+        expect(c.invoiceCasada?.valorAbertoNegociado).toBeUndefined();
+        expect(c.invoiceCasada?.valorMoedaNegociada).toBe(1100);
+        // … mas agora é AUDITÁVEL: marca na candidata + warn no log.
+        expect(c.invoiceCasada?.valorAbertoNaoVerificado).toBe(true);
+        expect(calls.some((l) => /em-aberto vivo da invoice/i.test(l.message ?? ''))).toBe(true);
+    });
+
     it('sem valorAberto no detalhe → invoice fica SEM valorAbertoNegociado (fallback ao negociado)', async () => {
         // getDetalheTitulos default (sem valorAberto) → distribuição cai no valorMoedaNegociada.
         const conexos = buildConexos({
@@ -676,6 +730,9 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         const c = result.candidatas[0];
         expect(c.invoiceCasada?.valorAbertoNegociado).toBeUndefined();
         expect(c.invoiceCasada?.valorMoedaNegociada).toBe(1100);
+        // O ERP RESPONDEU — a ausência é real, não uma falha. Sem marca (é o contraste do teste
+        // acima: a marca só vale se distinguir os dois casos).
+        expect(c.invoiceCasada?.valorAbertoNaoVerificado).toBeUndefined();
     });
 
     it('is idempotent: two runs produce the same candidate set', async () => {

@@ -53,6 +53,23 @@ export interface EleicaoTotals {
     bloqueadasByMotivo: Record<string, number>;
 }
 
+/**
+ * Campos que `computeVariacao` acrescenta à candidata elegível.
+ *
+ * `valorAbertoNaoVerificado` é a marca de FALHA de leitura do em-aberto vivo — ver
+ * `Invoice.valorAbertoNaoVerificado`. Ela viaja junto com os valores porque a ausência do teto e
+ * o motivo da ausência são a mesma resposta.
+ */
+export interface VariacaoEnriquecida {
+    variacao?: PermutaCandidata['variacaoCambial'];
+    valorMoedaNegociadaAdto?: number;
+    valorMoedaNegociadaInvoice?: number;
+    moedaNegociadaAdto?: string;
+    moedaNegociadaInvoice?: string;
+    valorAbertoNegociadoInvoice?: number;
+    valorAbertoNaoVerificado?: boolean;
+}
+
 /** Só os campos de EleicaoTotals que são CONTAGEM POR ESTADO (fora `totalCandidatas`
  *  e `bloqueadasByMotivo`, que não são baldes de estado). */
 export type EleicaoTotaisPorEstado = Pick<
@@ -930,7 +947,8 @@ export default class EleicaoPermutasService {
             if (
                 (enriched.valorMoedaNegociadaInvoice !== undefined ||
                     enriched.moedaNegociadaInvoice !== undefined ||
-                    enriched.valorAbertoNegociadoInvoice !== undefined) &&
+                    enriched.valorAbertoNegociadoInvoice !== undefined ||
+                    enriched.valorAbertoNaoVerificado) &&
                 candidata.invoiceCasada
             ) {
                 candidata.invoiceCasada = {
@@ -944,6 +962,10 @@ export default class EleicaoPermutasService {
                     // Teto vivo da invoice p/ a distribuição Simples (greedy N:1).
                     ...(enriched.valorAbertoNegociadoInvoice !== undefined
                         ? { valorAbertoNegociado: enriched.valorAbertoNegociadoInvoice }
+                        : {}),
+                    // Marca a AUSÊNCIA POR FALHA (≠ ausência por inexistência) — ver Invoice.
+                    ...(enriched.valorAbertoNaoVerificado
+                        ? { valorAbertoNaoVerificado: true }
                         : {}),
                 };
             }
@@ -986,24 +1008,37 @@ export default class EleicaoPermutasService {
         invoice: Invoice,
         dataBase: Date | undefined,
         filCod: number,
-    ): Promise<{
-        variacao?: PermutaCandidata['variacaoCambial'];
-        valorMoedaNegociadaAdto?: number;
-        valorMoedaNegociadaInvoice?: number;
-        moedaNegociadaAdto?: string;
-        moedaNegociadaInvoice?: string;
-        valorAbertoNegociadoInvoice?: number;
-    }> => {
+    ): Promise<VariacaoEnriquecida> => {
         // `getDetalheTitulos` da invoice traz o EM ABERTO vivo (mnyTitAberto, BRL)
-        // — teto da distribuição Simples. `.catch` → undefined (falha de detalhe
-        // não trava o casamento; a distribuição cai no valorMoedaNegociada).
-        const [titAdto, titInv, detInv] = await Promise.all([
+        // — teto da distribuição Simples. Uma falha aqui NÃO trava o casamento (a
+        // distribuição cai no valorMoedaNegociada), mas deixa de ser SILENCIOSA:
+        // fica um warn no log e a invoice sai marcada `valorAbertoNaoVerificado`.
+        // Sem a marca, "o teto é o negociado" e "não conseguimos ler o teto"
+        // chegavam ao rateio como o mesmo `undefined`.
+        const [titAdto, titInv, detalhe] = await Promise.all([
             this.conexosTitulosClient.listTitulosAPagar({ docCod: adiantamento.docCod, filCod }),
             this.conexosTitulosClient.listTitulosAPagar({ docCod: invoice.docCod, filCod }),
             this.conexosTitulosClient
                 .getDetalheTitulos({ docCod: invoice.docCod, filCod })
-                .catch(() => undefined),
+                .then((resultado) => ({ lido: true as const, resultado }))
+                .catch((erro: unknown) => ({ lido: false as const, erro })),
         ]);
+        if (!detalhe.lido) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'falha ao ler o em-aberto vivo da invoice — teto do rateio NÃO verificado, ' +
+                    'usando o valor em moeda negociada',
+                data: {
+                    invoiceDocCod: invoice.docCod,
+                    adiantamentoDocCod: adiantamento.docCod,
+                    filCod,
+                    erro:
+                        detalhe.erro instanceof Error ? detalhe.erro.message : String(detalhe.erro),
+                },
+            });
+        }
+        const detInv = detalhe.lido ? detalhe.resultado : undefined;
         const taxaAdiantamento = titAdto[0]?.taxa;
         const taxaInvoice = titInv[0]?.taxa;
         const valorMoedaNegociadaAdto = somaValorNegociado(titAdto);
@@ -1026,19 +1061,13 @@ export default class EleicaoPermutasService {
             valorMoedaNegociadaAdto !== undefined && valorMoedaNegociadaInvoice !== undefined
                 ? Math.min(valorMoedaNegociadaAdto, valorMoedaNegociadaInvoice)
                 : (valorMoedaNegociadaAdto ?? valorMoedaNegociadaInvoice);
-        const enriched: {
-            variacao?: PermutaCandidata['variacaoCambial'];
-            valorMoedaNegociadaAdto?: number;
-            valorMoedaNegociadaInvoice?: number;
-            moedaNegociadaAdto?: string;
-            moedaNegociadaInvoice?: string;
-            valorAbertoNegociadoInvoice?: number;
-        } = {
+        const enriched: VariacaoEnriquecida = {
             ...(valorMoedaNegociadaAdto !== undefined ? { valorMoedaNegociadaAdto } : {}),
             ...(valorMoedaNegociadaInvoice !== undefined ? { valorMoedaNegociadaInvoice } : {}),
             ...(moedaNegociadaAdto !== undefined ? { moedaNegociadaAdto } : {}),
             ...(moedaNegociadaInvoice !== undefined ? { moedaNegociadaInvoice } : {}),
             ...(valorAbertoNegociadoInvoice !== undefined ? { valorAbertoNegociadoInvoice } : {}),
+            ...(detalhe.lido ? {} : { valorAbertoNaoVerificado: true as const }),
         };
         if (
             taxaAdiantamento === undefined ||
