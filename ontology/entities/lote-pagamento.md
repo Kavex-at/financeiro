@@ -19,6 +19,7 @@ related_files:
   - src/backend/routes/sispag.ts
   - src/backend/jobs/formar-lotes.ts
   - src/frontend/app/sispag/page.tsx
+  - src/backend/domain/service/sispag/RemessaService.ts
 properties:
   - id
   - filCod
@@ -30,18 +31,20 @@ properties:
   - finalizadoPor
   - finalizadoEm
   - versao
+  - dataDebito
   - itens
 relationships:
   - "LotePagamento 1—N ItemLote (agregado — os títulos incluídos, snapshot de valor/venc na inclusão)"
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
-last_review: 2026-07-18
+last_review: 2026-09-22
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
   - "ADR-0018 — formação AUTOMÁTICA de lotes candidatos (cron pós-ingestão + manual): pré-montar os lotes das obrigações a-vencer é a automação natural sobre a montagem manual; universal em contas-a-pagar de trading com comex"
   - "ontology/_inbox/sispag-native-vs-nexxera.md §1 — 17 lotes fin015 reais (FinLoteSispag por filial/banco/conta, analistas FLAVIA_SANTOS/RENE_DUARTE) — o lote de pagamento é conceito nativo do ERP"
   - "ontology/_inbox/sispag-painel-montagem-interview.md — Eixo 1/2, lote candidato montado pela analista (RASCUNHO→FINALIZADO)"
   - "Conceito universal de financeiro/comex: agrupar títulos a pagar em um lote para revisão e liberação em bloco (o borderô/lote de pagamento)"
+  - "dataDebito: o lote nativo do fin015 carrega a data de débito (flpDtaCredito) e o finalizarLote a valida (R1/R2, sispag-fin015-exploration.md:72-76) — todo lote SISPAG/CNAB 240 tem data de pagamento; pedido da Flavia (Columbia) de 2026-09-22, ADR-0049"
 ---
 
 # LotePagamento (lote candidato — agregado local)
@@ -108,6 +111,7 @@ fora de um lote.
 | `finalizadoPor` | string? | `lote_pagamento.finalizado_por` | Auditoria: quem finalizou (gate). `null` enquanto RASCUNHO. |
 | `finalizadoEm` | Date? | `lote_pagamento.finalizado_em` | Timestamp da finalização. `null` enquanto RASCUNHO. |
 | `versao` | number | `lote_pagamento.versao` | Controle otimista de concorrência (I6 — 2 analistas). Incrementa a cada transição. |
+| `dataDebito` | Date? (data civil, sem hora) | `lote_pagamento.data_debito` *(a criar)* | **Data de débito/pagamento** que vai ao `fin015` como `flpDtaCredito`. Escolhida pela analista ao pedir a remessa (L8); default = **hoje no fuso de Brasília**. Tem de cair na janela de I8. `null` até a primeira tentativa de remessa. **Imutável** a partir do momento em que existe lote nativo no `fin015` criado com ela (I8b). Ver `business-rules/data-debito-remessa-sispag.md` e ADR-0049. |
 | `itens` | ItemLote[] | join `lote_pagamento_item` | Os títulos incluídos (agregado). |
 
 ### Propriedades — `ItemLote` (`lote_pagamento_item`)
@@ -148,6 +152,18 @@ fora de um lote.
 - **I6 (concorrência):** montagem/finalização são seguras a 2 analistas via `versao` (optimistic
   lock), espelhando a doutrina de Permutas.
 - **I1 (sem escrita no ERP):** o lote é rascunho na tabela própria; nenhuma remessa/baixa no ERP.
+- **I8 (janela da data de débito — ADR-0049, 2026-09-22):**
+  - **I8a (janela):** `dataDebito ∈ [hoje_BRT, min(vencimento dos itens)] ∩ diasUteisBancarios`.
+    `hoje_BRT` = data civil em `America/Sao_Paulo` (nunca meia-noite UTC). O limite superior é o do
+    ERP (R2, comparado com o `itsDtaPgto` que o import grava); o inferior é o R1. Data fora da janela é
+    **bloqueada**, não corrigida: nenhum título é removido automaticamente — para uma data posterior, a
+    analista reabre o lote (L4) e retira o título que define o limite. Janela vazia (título vencido, ou
+    nenhum dia útil entre hoje e o menor vencimento) = remessa impossível até o lote ser editado.
+  - **I8b (congelamento):** uma vez criado o lote nativo no `fin015` com uma `dataDebito`, ela **não
+    muda** — retry e retomada (ADR-0039) reutilizam o valor persistido, nunca o recalculam. Ela é parte
+    da assinatura da marca d'água que reconhece o lote órfão. Só volta a ser escolhível se aquele lote
+    nativo deixar de existir (cancelado no ERP e confirmado pela analista via `LoteAnteriorCanceladoError`).
+  - Ver `business-rules/data-debito-remessa-sispag.md`.
 
 ## Cardinalidade
 
