@@ -1,12 +1,19 @@
+jest.mock('@/lib/http', () => ({ apiFetch: jest.fn() }))
+jest.mock('@/lib/auth/token', () => ({ withAuthHeaders: jest.fn(async () => ({})) }))
+
+import { apiFetch } from '@/lib/http'
 import {
   METRICA,
   type MetricaCiclo,
   absolutoDoRotulo,
   agruparPorSemana,
+  fetchMetricasCiclo,
   formatarDiaLocal,
   formatarMetrica,
   formatarMomentoLocal,
 } from '@/lib/metricas'
+
+const mockApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>
 
 const linha = (over: Partial<MetricaCiclo>): MetricaCiclo => ({
   frente: 'Permutas (Frente I)',
@@ -86,5 +93,33 @@ describe('agruparPorSemana — semana em curso', () => {
 
     expect(semana.parcial).toBe(true)
     expect(semana.apuradoAte).toBe('2026-09-18T15:02:00')
+  })
+})
+
+describe('fetchMetricasCiclo', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+
+  /**
+   * ADR-0048: sem `?historico=true` a tela volta a abrir com uma única janela aberta e `—` em tudo.
+   * O parâmetro é o que separa a leitura da tela da leitura do `kavex-report-ciclo`.
+   */
+  it('pede o histórico de seis semanas', async () => {
+    mockApiFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ serieInicio: '2026-08-07T18:00:00', metricas: [] }),
+    } as unknown as Response)
+
+    await expect(fetchMetricasCiclo()).resolves.toEqual({
+      serieInicio: '2026-08-07T18:00:00',
+      metricas: [],
+    })
+    expect(mockApiFetch.mock.calls[0][0]).toMatch(/\/metricas\/ciclo\?historico=true$/)
+  })
+
+  it('erro de leitura vira exceção com o status — a tela não finge número', async () => {
+    mockApiFetch.mockResolvedValue({ ok: false, status: 503 } as unknown as Response)
+
+    await expect(fetchMetricasCiclo()).rejects.toThrow('503')
   })
 })

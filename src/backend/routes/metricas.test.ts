@@ -110,6 +110,47 @@ describe('GET /metricas/ciclo', () => {
         expect(ler).not.toHaveBeenCalled();
     });
 
+    // --- `?historico=true` (ADR-0048) ---
+
+    it('`historico=true` chega ao serviço como booleano', async () => {
+        await fetch(`${srv.url}/metricas/ciclo?historico=true`);
+
+        expect(ler).toHaveBeenCalledWith({ historico: true });
+    });
+
+    it('sem o parâmetro, a chamada é a de antes da ADR-0048 — o report não muda', async () => {
+        await fetch(`${srv.url}/metricas/ciclo?inicio=2026-09-11T18:00:00&fim=2026-09-18T18:00:00`);
+
+        expect(ler).toHaveBeenCalledWith({
+            inicio: '2026-09-11T18:00:00',
+            fim: '2026-09-18T18:00:00',
+        });
+        expect(ler.mock.calls[0][0]).not.toHaveProperty('historico');
+    });
+
+    it('`historico=false` desliga o recuo — não é `Boolean("false")`', async () => {
+        await fetch(`${srv.url}/metricas/ciclo?historico=false`);
+
+        expect(ler).toHaveBeenCalledWith({});
+        expect(ler.mock.calls[0][0]).not.toHaveProperty('historico');
+    });
+
+    it('`historico` fora de true/false é 400, sem tocar o serviço', async () => {
+        for (const valor of ['1', 'sim', 'TRUE', '']) {
+            const res = await fetch(
+                `${srv.url}/metricas/ciclo?historico=${encodeURIComponent(valor)}`,
+            );
+            expect(res.status).toBe(400);
+        }
+        expect(ler).not.toHaveBeenCalled();
+    });
+
+    it('`historico` convive com inicio/fim', async () => {
+        await fetch(`${srv.url}/metricas/ciclo?inicio=2026-08-07&historico=true`);
+
+        expect(ler).toHaveBeenCalledWith({ inicio: '2026-08-07', historico: true });
+    });
+
     it('não resolve nenhum client do ERP', async () => {
         resolvidos.length = 0;
         await fetch(`${srv.url}/metricas/ciclo`);

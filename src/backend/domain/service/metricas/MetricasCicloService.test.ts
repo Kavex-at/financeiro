@@ -63,4 +63,35 @@ describe('MetricasCicloService.ler', () => {
             fim: '2026-09-18T18:00:00',
         });
     });
+
+    // --- Os dois pisos da série (ADR-0048) ---
+
+    it('repassa `historico` ao repositório', async () => {
+        const { repository, service } = montar();
+
+        await service.ler({ historico: true });
+
+        expect(repository.listar).toHaveBeenCalledWith({ historico: true });
+    });
+
+    it('pede o MESMO piso nas duas leituras — o rodapé não pode contradizer a tabela', async () => {
+        const { repository, service } = montar();
+
+        await service.ler({ historico: true });
+        expect(repository.serieInicio).toHaveBeenCalledWith(true);
+
+        await service.ler({});
+        expect(repository.serieInicio).toHaveBeenLastCalledWith(undefined);
+    });
+
+    it('`historico` convive com a normalização de datas', async () => {
+        const { repository, service } = montar();
+
+        await service.ler({ inicio: '2026-08-07', historico: true });
+
+        expect(repository.listar).toHaveBeenCalledWith({
+            inicio: '2026-08-07T00:00:00',
+            historico: true,
+        });
+    });
 });

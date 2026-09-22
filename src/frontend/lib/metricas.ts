@@ -43,8 +43,20 @@ export const METRICA = {
   RECEBIMENTOS_RS: 'recebimentos_valor_alocado',
 } as const
 
+/**
+ * `?historico=true` (ADR-0048) — a TELA lê seis semanas, a partir de 2026-08-07.
+ *
+ * Sem o parâmetro a série começa em 2026-09-11 18:00, e em 16/09 isso era uma única janela ainda
+ * aberta: a tela abria com `—` em tudo. O recuo é opt-in justamente para que o `kavex-report-ciclo`,
+ * que não passa o parâmetro, siga ancorado no ciclo 6 sem mudar nada.
+ *
+ * O `serieInicio` da resposta acompanha o piso pedido, então o rodapé "Série iniciada em" e a tabela
+ * falam da mesma data.
+ */
 export async function fetchMetricasCiclo(): Promise<MetricasCicloLeitura> {
-  const res = await apiFetch(`${API}/metricas/ciclo`, { headers: await withAuthHeaders() })
+  const res = await apiFetch(`${API}/metricas/ciclo?historico=true`, {
+    headers: await withAuthHeaders(),
+  })
   if (!res.ok) throw new Error(`Falha ao carregar as métricas (HTTP ${res.status}).`)
   return (await res.json()) as MetricasCicloLeitura
 }

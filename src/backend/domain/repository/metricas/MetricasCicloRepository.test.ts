@@ -67,4 +67,54 @@ describe('MetricasCicloRepository', () => {
         );
         expect(db.selectFirst.mock.calls[0][0]).toMatch(/metricas\.serie_inicio\(\)/);
     });
+
+    // --- Os dois pisos da série (ADR-0048) ---
+
+    it('com `historico`, o piso vira `metricas.historico_inicio()`', async () => {
+        const db = { selectMany: jest.fn().mockResolvedValue([]) };
+
+        await new MetricasCicloRepository(db as never).listar({ historico: true });
+
+        const [sql] = db.selectMany.mock.calls[0];
+        expect(sql).toMatch(/FROM metricas\.metricas_ciclo\(\s*metricas\.historico_inicio\(\)/);
+        expect(sql).not.toMatch(/metricas\.serie_inicio\(\)/);
+    });
+
+    it('sem `historico`, a leitura é a de antes da ADR-0048 — é o que o report recebe', async () => {
+        const db = { selectMany: jest.fn().mockResolvedValue([]) };
+        const repo = new MetricasCicloRepository(db as never);
+
+        await repo.listar({});
+        await repo.listar({ historico: false });
+
+        for (const [sql] of db.selectMany.mock.calls) {
+            expect(sql).toMatch(/FROM metricas\.metricas_ciclo\(\s*metricas\.serie_inicio\(\)/);
+            expect(sql).not.toMatch(/historico_inicio/);
+        }
+    });
+
+    it('o piso nunca vem da requisição: o SQL só tem as duas chamadas de função, sem data literal', async () => {
+        const db = { selectMany: jest.fn().mockResolvedValue([]) };
+
+        await new MetricasCicloRepository(db as never).listar({
+            historico: true,
+            inicio: '2026-08-07T18:00:00',
+        });
+
+        const [sql, params] = db.selectMany.mock.calls[0];
+        // A data do filtro viaja como parâmetro nomeado; o PISO é função, nunca texto interpolado.
+        expect(sql).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+        expect(params).toEqual({ inicio: '2026-08-07T18:00:00', fim: null });
+    });
+
+    it('`serieInicio` devolve o piso EM VIGOR, não o da série oficial', async () => {
+        const db = {
+            selectFirst: jest.fn().mockResolvedValue({ serie_inicio: '2026-08-07T18:00:00' }),
+        };
+
+        await expect(new MetricasCicloRepository(db as never).serieInicio(true)).resolves.toBe(
+            '2026-08-07T18:00:00',
+        );
+        expect(db.selectFirst.mock.calls[0][0]).toMatch(/metricas\.historico_inicio\(\)/);
+    });
 });
