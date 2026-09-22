@@ -137,6 +137,102 @@ describe('PostgreeDatabaseClient', () => {
         expect(count).toBe(5);
     });
 
+    /**
+     * Uma escrita não-idempotente NÃO pode ser repetida quando a conexão cai com
+     * o statement em voo: se o `COMMIT` aconteceu no servidor e só a resposta se
+     * perdeu, a retentativa grava a MESMA linha duas vezes. `Connection
+     * terminated`/`ECONNRESET` são exatamente esse caso ambíguo; recusa do
+     * pooler (`too many clients`, `MaxClientsInSessionMode`) não é — ali o
+     * statement nunca chegou a rodar.
+     */
+    describe('política de retentativa por statement (escrita não duplicada)', () => {
+        const runWith = async (
+            erro: string,
+            executar: (client: PostgreeDatabaseClient) => Promise<unknown>,
+        ): Promise<unknown> => {
+            poolQuery
+                .mockRejectedValueOnce(new Error(erro))
+                .mockResolvedValue({ rows: [{ id: 1 }], rowCount: 1 });
+            const client = new PostgreeDatabaseClient(environmentProvider as any);
+            return executar(client);
+        };
+
+        it('NÃO retenta um INSERT simples quando a conexão cai em voo', async () => {
+            await expect(
+                runWith('Connection terminated unexpectedly', (client) =>
+                    client.insert('INSERT INTO job_execucao (id, pipeline) VALUES ($id, $p)', {
+                        id: 'a',
+                        p: 'reaper',
+                    }),
+                ),
+            ).rejects.toThrow('Connection terminated');
+            expect(poolQuery).toHaveBeenCalledTimes(1);
+        });
+
+        it('NÃO retenta um UPDATE quando a conexão cai em voo (ECONNRESET)', async () => {
+            await expect(
+                runWith('read ECONNRESET', (client) =>
+                    client.update('UPDATE job_execucao SET status = $s WHERE id = $id', {
+                        s: 'success',
+                        id: 'a',
+                    }),
+                ),
+            ).rejects.toThrow('ECONNRESET');
+            expect(poolQuery).toHaveBeenCalledTimes(1);
+        });
+
+        it('NÃO retenta um UPDATE escondido num CTE chamado por selectMany', async () => {
+            await expect(
+                runWith('Connection terminated unexpectedly', (client) =>
+                    client.selectMany(
+                        `WITH upd AS (UPDATE transacao_bancaria SET status = $s WHERE id = $id
+                          RETURNING status) SELECT status FROM upd`,
+                        { s: 'conciliada', id: 'x' },
+                    ),
+                ),
+            ).rejects.toThrow('Connection terminated');
+            expect(poolQuery).toHaveBeenCalledTimes(1);
+        });
+
+        it('retenta o INSERT simples quando o POOLER recusou (statement não rodou)', async () => {
+            const count = await runWith('too many clients already', (client) =>
+                client.insert('INSERT INTO job_execucao (id) VALUES ($id)', { id: 'a' }),
+            );
+            expect(count).toBe(1);
+            expect(poolQuery).toHaveBeenCalledTimes(2);
+        });
+
+        it('retenta um upsert ON CONFLICT mesmo com a conexão caída (idempotente)', async () => {
+            const count = await runWith('Connection terminated unexpectedly', (client) =>
+                client.insert(
+                    `INSERT INTO pagamento_ingestao_idempotency (idempotency_key, run_id)
+                     VALUES ($key, $runId) ON CONFLICT (idempotency_key) DO NOTHING`,
+                    { key: 'k', runId: 'r' },
+                ),
+            );
+            expect(count).toBe(1);
+            expect(poolQuery).toHaveBeenCalledTimes(2);
+        });
+
+        it('segue retentando leitura pura com a conexão caída', async () => {
+            const rows = await runWith('Connection terminated unexpectedly', (client) =>
+                client.selectMany('SELECT id FROM job_execucao WHERE status = $s', {
+                    s: 'running',
+                }),
+            );
+            expect(rows).toEqual([{ id: 1 }]);
+            expect(poolQuery).toHaveBeenCalledTimes(2);
+        });
+
+        it('literal com palavra de escrita não transforma a leitura em escrita', async () => {
+            const rows = await runWith('Connection terminated unexpectedly', (client) =>
+                client.selectMany("SELECT id FROM alerta WHERE tipo = 'DELETE'"),
+            );
+            expect(rows).toEqual([{ id: 1 }]);
+            expect(poolQuery).toHaveBeenCalledTimes(2);
+        });
+    });
+
     describe('withTransaction', () => {
         it('wraps fn in BEGIN/COMMIT on a dedicated pooled client and releases it', async () => {
             clientQuery.mockResolvedValue({ rows: [], rowCount: 1 });
