@@ -441,15 +441,20 @@ export const gerarRemessa = (
     }),
   })
 
-/** Baixa o `.REM` já gerado (CNAB 240, texto puro) e devolve o conteúdo. */
-export async function baixarRemessa(loteId: string): Promise<{ nome: string; conteudo: string }> {
+/**
+ * Baixa o `.REM` já gerado (CNAB 240) e devolve os BYTES como vieram do backend.
+ * Nunca `res.text()`: ele decodifica sempre como UTF-8, e o backend manda latin1 de
+ * propósito. Um "Ç" no nome do favorecido viraria U+FFFD (3 bytes ao regravar) e
+ * deslocaria as colunas fixas do registro — o banco recusa ou lê os campos errados.
+ */
+export async function baixarRemessa(loteId: string): Promise<{ nome: string; arquivo: Blob }> {
   const res = await apiFetch(`${API}/sispag/lotes/${loteId}/remessa/arquivo`, {
     headers: { ...(await withAuthHeaders()) },
   })
   if (!res.ok) throw new Error(`Falha ao baixar a remessa (${res.status})`)
   const disp = res.headers.get('Content-Disposition') ?? ''
   const nome = /filename="([^"]+)"/.exec(disp)?.[1] ?? `lote-${loteId}.REM`
-  return { nome, conteudo: await res.text() }
+  return { nome, arquivo: await res.blob() }
 }
 
 /**
