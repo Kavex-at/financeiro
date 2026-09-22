@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.40.0 (2026-09-22) — a analista escolhe a data de débito da remessa SISPAG
+
+A remessa SISPAG saía sempre com débito "hoje", e esse "hoje" era meia-noite UTC: das 21h às 24h
+de Brasília, a data enviada ao `fin015` já era a de amanhã. A Flavia (financeiro) pediu para
+escolher a data — amanhã ou outra — para testes e para muitos pagamentos reais (ADR-0049).
+
+- **"Gerar remessa" abre uma confirmação com a data de débito.** O padrão continua sendo hoje;
+  há atalhos "Hoje" e "Amanhã" (próximo dia útil) e um calendário limitado à janela permitida.
+- **A janela é a mesma que o Conexos aplica, avisada antes:** de hoje (horário de Brasília) até o
+  menor vencimento dos títulos do lote, só em dias úteis bancários (sem fim de semana e sem
+  feriados nacionais, inclusive Carnaval, Sexta-feira Santa, Corpus Christi e 20/11). A tela
+  mostra qual título limita a janela. Data fora dela é recusada **antes** de qualquer escrita no
+  ERP; nenhum título é tirado do lote automaticamente.
+- **A data congela quando o lote nasce no Conexos.** Uma nova tentativa usa a mesma data; pedir
+  outra é recusado, com a orientação de cancelar o lote nativo no `fin015`. O card do lote mostra
+  "débito em dd/mm".
+- **"Hoje" passa a ser o dia de Brasília** também nos scripts de validação do `fin015`.
+- Feriados municipais/estaduais e 31/12 **não** são bloqueados nesta versão (pergunta aberta).
+
 ## v0.39.1 (2026-09-22) — o `.REM` baixado pela tela chega com os bytes do ERP
 
 O botão **Baixar** do lote SISPAG entregava um arquivo diferente do que o backend mandava. O
