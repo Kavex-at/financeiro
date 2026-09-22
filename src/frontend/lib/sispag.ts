@@ -198,6 +198,11 @@ export interface LotePagamento {
   remessaGeradaEm?: string
   /** Conta financeira (plano gerencial) da conta pagadora. */
   gerNum?: number
+  /**
+   * Data de débito da remessa (`'YYYY-MM-DD'`, data civil — ADR-0049). Congelada a partir do
+   * lote nativo do fin015. Exibir com `formatCivilDate`, nunca com `new Date(...)`.
+   */
+  dataDebito?: string
   itens: ItemLote[]
 }
 
@@ -294,6 +299,45 @@ export interface GerarRemessaResult {
   conteudo?: string
   itens: number
   valorTotal: number
+  /** Data de débito usada (`'YYYY-MM-DD'`). */
+  dataDebito?: string
+}
+
+/** Título cujo vencimento limita a janela de débito. */
+export interface TituloLimitante {
+  itemId: string
+  credor?: string
+  /** `docCod/titCod`. */
+  documento: string
+  vencimento?: string
+}
+
+/**
+ * Janela permitida da data de débito (espelha `JanelaDataDebito` do backend). O calendário
+ * bancário mora SÓ no backend: a tela exibe estes campos e não recalcula dia útil nenhum.
+ */
+export interface JanelaDataDebito {
+  /** Hoje em Brasília. */
+  hoje: string
+  sugerida?: string
+  /** Próximo dia útil depois de hoje, quando cabe na janela. */
+  amanha?: string
+  min?: string
+  max?: string
+  limitante?: TituloLimitante
+  /** Dias não úteis dentro de `[min, max]`. */
+  naoUteis: string[]
+  vazia?: { motivo: 'titulo_vencido' | 'sem_dia_util' | 'titulo_sem_vencimento' }
+  congelada?: { data: string; nativeFlpCod: number; motivo: 'lote_nativo_criado' | 'no_passado' }
+}
+
+/**
+ * `'2026-09-22'` → `'22/09'`. Por split de string, nunca `new Date(...)`: um `Date` de data
+ * civil nasce à meia-noite UTC e, exibido em Brasília, recua um dia.
+ */
+export function formatCivilDate(civil: string): string {
+  const [, mes, dia] = civil.split('-')
+  return `${dia}/${mes}`
 }
 
 export interface ItemConciliado {
@@ -358,6 +402,38 @@ export class LoteAnteriorCanceladoError extends Error {
   }
 }
 
+/** A data de débito pedida está fora da janela do lote (ou a janela está vazia). */
+export class DebitDateOutsideWindowError extends Error {
+  constructor(
+    message: string,
+    readonly details: {
+      dataDebito?: string
+      min?: string
+      max?: string
+      motivo?: string
+      limitante?: TituloLimitante
+    } = {},
+  ) {
+    super(message)
+    this.name = 'DebitDateOutsideWindowError'
+  }
+}
+
+/** O lote nativo já nasceu no Conexos com outra data — mudar exige cancelar no fin015. */
+export class DebitDateFrozenError extends Error {
+  constructor(
+    message: string,
+    readonly details: {
+      motivo?: 'diferente' | 'no_passado'
+      dataCongelada?: string
+      nativeFlpCod?: number
+    } = {},
+  ) {
+    super(message)
+    this.name = 'DebitDateFrozenError'
+  }
+}
+
 /** Já existe uma geração em curso para este lote — esperar resolve. */
 export class RemessaEmAndamentoError extends Error {
   constructor(message: string) {
@@ -413,6 +489,12 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
     if (body.code === 'LOTE_ANTERIOR_CANCELADO') {
       throw new LoteAnteriorCanceladoError(msg, det.flpCodCancelado as number | undefined)
     }
+    if (body.code === 'DATA_DEBITO_FORA_DA_JANELA') {
+      throw new DebitDateOutsideWindowError(msg, det as DebitDateOutsideWindowError['details'])
+    }
+    if (body.code === 'DATA_DEBITO_CONGELADA') {
+      throw new DebitDateFrozenError(msg, det as DebitDateFrozenError['details'])
+    }
     if (body.code === 'ERP_PERGUNTA') {
       throw new ErpPerguntaError(msg, det.chave as string | undefined)
     }
@@ -430,7 +512,7 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
  */
 export const gerarRemessa = (
   loteId: string,
-  opts?: { dryRun?: boolean; confirmarNovoLote?: boolean },
+  opts?: { dryRun?: boolean; confirmarNovoLote?: boolean; dataDebito?: string },
 ) =>
   sispagRequest<GerarRemessaResult>(`/sispag/lotes/${loteId}/remessa`, {
     method: 'POST',
@@ -439,8 +521,14 @@ export const gerarRemessa = (
       dryRun: opts?.dryRun ?? false,
       // Só vai quando a pessoa confirmou no diálogo — nunca por default.
       ...(opts?.confirmarNovoLote ? { confirmarNovoLote: true } : {}),
+      // Ausente = o backend usa o primeiro dia útil da janela.
+      ...(opts?.dataDebito ? { dataDebito: opts.dataDebito } : {}),
     }),
   })
+
+/** Janela permitida da data de débito de um lote FINALIZADO (ADR-0049). Leitura. */
+export const fetchJanelaDataDebito = (loteId: string) =>
+  sispagRequest<JanelaDataDebito>(`/sispag/lotes/${loteId}/remessa/janela`, { method: 'GET' })
 
 /**
  * Baixa o `.REM` já gerado (CNAB 240) e devolve os BYTES como vieram do backend.

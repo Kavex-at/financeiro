@@ -1,4 +1,11 @@
-import { baixarRemessa } from '@/lib/sispag'
+import {
+  baixarRemessa,
+  DebitDateFrozenError,
+  DebitDateOutsideWindowError,
+  fetchJanelaDataDebito,
+  formatCivilDate,
+  gerarRemessa,
+} from '@/lib/sispag'
 
 // `apiFetch` é o boundary HTTP — mockado para controlar os bytes que "chegam do backend".
 jest.mock('@/lib/http', () => ({ apiFetch: jest.fn() }))
@@ -56,5 +63,89 @@ describe('baixarRemessa', () => {
   it('falha com o status quando o backend recusa', async () => {
     mockApiFetch.mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
     await expect(baixarRemessa('lote-1')).rejects.toThrow('Falha ao baixar a remessa (404)')
+  })
+})
+
+const respostaJson = (status: number, body: unknown) =>
+  ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  }) as unknown as Response
+
+const ultimaChamada = (): RequestInit => mockApiFetch.mock.calls.at(-1)?.[1] as RequestInit
+
+const corpoEnviado = (): Record<string, unknown> =>
+  JSON.parse(String(ultimaChamada().body)) as Record<string, unknown>
+
+describe('gerarRemessa — data de débito (ADR-0049)', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+
+  it('manda dataDebito junto com confirmarNovoLote e mantém a Idempotency-Key do lote', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      respostaJson(200, { status: 'gerada', dataDebito: '2026-09-23' }),
+    )
+    const res = await gerarRemessa('L1', { dataDebito: '2026-09-23', confirmarNovoLote: true })
+    expect(corpoEnviado()).toEqual({
+      dryRun: false,
+      confirmarNovoLote: true,
+      dataDebito: '2026-09-23',
+    })
+    const headers = ultimaChamada().headers as Record<string, string>
+    expect(headers['Idempotency-Key']).toBe('remessa:L1')
+    expect(res.dataDebito).toBe('2026-09-23')
+  })
+
+  it('sem dataDebito o corpo não leva a chave', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaJson(200, { status: 'gerada' }))
+    await gerarRemessa('L1')
+    expect(corpoEnviado()).not.toHaveProperty('dataDebito')
+  })
+
+  it('DATA_DEBITO_FORA_DA_JANELA vira DebitDateOutsideWindowError com details', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      respostaJson(422, {
+        error: 'Data 30/09 depois do vencimento',
+        code: 'DATA_DEBITO_FORA_DA_JANELA',
+        details: { motivo: 'depois_do_vencimento', max: '2026-09-29' },
+      }),
+    )
+    const erro = await gerarRemessa('L1', { dataDebito: '2026-09-30' }).catch((e: unknown) => e)
+    expect(erro).toBeInstanceOf(DebitDateOutsideWindowError)
+    expect((erro as DebitDateOutsideWindowError).message).toBe('Data 30/09 depois do vencimento')
+    expect((erro as DebitDateOutsideWindowError).details).toMatchObject({ max: '2026-09-29' })
+  })
+
+  it('DATA_DEBITO_CONGELADA vira DebitDateFrozenError com details', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      respostaJson(409, {
+        error: 'congelada',
+        code: 'DATA_DEBITO_CONGELADA',
+        details: { motivo: 'diferente', dataCongelada: '2026-09-23', nativeFlpCod: 41 },
+      }),
+    )
+    const erro = await gerarRemessa('L1', { dataDebito: '2026-09-24' }).catch((e: unknown) => e)
+    expect(erro).toBeInstanceOf(DebitDateFrozenError)
+    expect((erro as DebitDateFrozenError).details).toMatchObject({ nativeFlpCod: 41 })
+  })
+})
+
+describe('fetchJanelaDataDebito', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+
+  it('lê a janela do backend', async () => {
+    const janela = { hoje: '2026-09-22', min: '2026-09-22', max: '2026-09-25', naoUteis: [] }
+    mockApiFetch.mockResolvedValueOnce(respostaJson(200, janela))
+    await expect(fetchJanelaDataDebito('L1')).resolves.toEqual(janela)
+    expect(String(mockApiFetch.mock.calls.at(-1)?.[0])).toContain(
+      '/sispag/lotes/L1/remessa/janela',
+    )
+  })
+})
+
+describe('formatCivilDate', () => {
+  it('formata dd/mm por split, sem fuso', () => {
+    expect(formatCivilDate('2026-09-22')).toBe('22/09')
+    expect(formatCivilDate('2026-01-01')).toBe('01/01')
   })
 })
