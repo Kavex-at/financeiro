@@ -37,12 +37,14 @@ properties:
   - ativo
   - ingestaoRunId
   - atualizadoEm
+  - retencaoFormacao
 relationships:
   - "TituloAPagar N—1 Filial (via filCod — a filial que originou o título a pagar)"
   - "TituloAPagar N—1 PagamentoIngestaoRun (via ingestaoRunId — a run que gravou/atualizou este título)"
   - "TituloAPagar N—1 LotePagamento (via ItemLote — um título elegível pode ser incluído em um lote candidato RASCUNHO)"
   - "TituloAPagar 1—1 (contexto) Borderô a-pagar / Lote SISPAG nativos (fin010/fin015 — leitura de contexto no painel, não vínculo próprio)"
-last_review: 2026-08-27
+  - "TituloAPagar 1—0..1 retenção ativa da formação automática (ADR-0050, tabela própria por filCod:docCod:titCod, com histórico em soft-delete)"
+last_review: 2026-09-22
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -50,6 +52,7 @@ universality_evidence:
   - "ontology/_inbox/sispag-native-vs-nexxera.md §2.5/§3 — 'aprovado para baixa' = flags de alçada titVld1/2/3libera (com308), doc 100 título 1 R$135.724,80 aprovado nos 3 níveis"
   - "ADR-0016 — a carteira de pagamentos vira PERSISTIDA (cadência diária, espelha a ingestão de Permutas): base durável do painel diário"
   - "Conceito universal de comex/financeiro: um título a pagar (fornecedor, valor, vencimento) aprovado pela alçada é candidato a pagamento no prazo — evita multa/juros"
+  - "ADR-0050 — retenção da formação automática: item em aberto fora da proposta automática de pagamento e ainda pagável à mão (equivale ao payment block do SAP e ao hold do Oracle); evidência de cliente: Columbia (2026-09-22)"
 ---
 
 # TituloAPagar (carteira de pagamento SISPAG — PERSISTIDA)
@@ -113,6 +116,21 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `ativo` | boolean | anti-fantasma: título fora da run mais recente → `ativo=false` | Título que **some** da run de ingestão mais recente é marcado **inativo** (some do painel). Ver "Anti-fantasma". |
 | `ingestaoRunId` | string? (UUID) | FK → `pagamento_ingestao_run.id` | A run que gravou/atualizou este título (auditoria de cadência). |
 | `atualizadoEm` | Date | `atualizado_em` (UPSERT) | Quando o registro foi atualizado pela última vez. |
+| `retencaoFormacao` | objeto? `{ marcadoPor, marcadoEm, motivo? }` | **tabela própria** (ADR-0050), chave `(fil_cod, doc_cod, tit_cod)`; **não** é coluna de `titulo_a_pagar` | **Decisão da analista**, não dado do ERP. Ativa = a formação automática não lota o título (I8); a inclusão manual continua permitida e libera a retenção. Ver "Retenção da formação automática". |
+
+## Retenção da formação automática (`retencaoFormacao`, ADR-0050)
+
+- **O que é:** a analista decidiu que o título não entra em lote automático. Nasce ao "Retirar do
+  lote" na aba de títulos, ou ao remover o título pela lixeira de um lote **automático** (remoção +
+  retenção, atômicas). Não se marca a retenção num título solto (P1-2, rejeitado).
+- **Efeito:** `formarLotesAutomaticos` o exclui do pool (I8,
+  `business-rules/retencao-formacao-automatica.md`). Nada mais muda: I2/I3/I4 e a finalização ignoram
+  a retenção.
+- **Como termina:** incluir o título num lote à mão (`motivoRemocao = 'incluido-no-lote'`) ou "Liberar
+  para lote automático" (`'liberado'`). Soft-delete, com autor e data do JWT. Não expira.
+- **Por que fora de `titulo_a_pagar`:** esta tabela é espelho do ERP, reescrita por UPSERT a cada
+  ingestão e já purgada uma vez (migration 0030). A retenção só sobrevive a qualquer rebuild da carteira
+  se não depender da allowlist de colunas do UPSERT. Ver ADR-0050 D1.
 
 ## `aprovado` (aprovado pela alçada) — evidência
 

@@ -3,6 +3,32 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.28.0 — retirar título do lote e retê-lo da formação automática (2026-09-22, ADR-0050, aceita)
+
+Feature: `sispag-reter-titulo-lote` (branch `fix/sispag-reter-titulo-lote`). Vem depois da v0.27.0
+(`fix/sispag-data-pagamento`, ADR-0049).
+
+- **Defeito que motiva:** o título retirado de um lote e deixado solto volta no cron seguinte, porque
+  `listElegiveisParaFormacao` só exige ativo, aprovado, não pago, a vencer em até 7 dias e fora de lote
+  RASCUNHO.
+- **NEW propriedade `TituloAPagar.retencaoFormacao`** `{ marcadoPor, marcadoEm, motivo? }`, persistida
+  em **tabela própria** (chave `fil_cod, doc_cod, tit_cod`, soft-delete, uma ativa por título, sem FK).
+  Não é coluna de `titulo_a_pagar`: aquela tabela é espelho do ERP e já foi purgada (migration 0030).
+- **NEW invariante I8** (`business-rules/retencao-formacao-automatica.md`, planned): a formação
+  automática não lota título retido. A inclusão manual continua permitida e libera a retenção
+  (`incluido-no-lote`).
+- **NEW action `reterTituloDaFormacao`** (planned): `retirarDoLote` (remoção + retenção, atômicas) e
+  `liberar`. A lixeira dentro de um lote **automático** também retém (P1-1: `automatico` lido antes do
+  `marcarManual`, mesma transação); lote manual não retém. "Reter" num título solto foi proposto e
+  **rejeitado** pelo usuário (P1-2).
+- **Emendas:** ADR-0018 D2 (termo I8), `formarLotesAutomaticos`, `gerenciarLoteCandidato`,
+  `montarPainelPagamentos` (a linha carrega o lote RASCUNHO e o badge; substitui `emLote`),
+  `state-machines/lote-pagamento.md` L2 (sem estado novo).
+- **Coverage:** `actions_total` 27→28, `planned` 6→7, pct 74→71; `business_rules_total` 23→24,
+  `planned` 9→10; `TituloAPagar.impl_pct` 100→90 (ontologia à frente do código).
+- **Gap:** `_inbox/sispag-retirar-titulo-lote-gap.md` (P1-1 e P1-2 respondidas em 2026-09-22; P2-1
+  expiração e P2-2 universalidade com o Francinei seguem abertas, sem bloquear).
+
 ## v0.27.0 — data de débito da remessa SISPAG escolhível (2026-09-22, ADR-0049)
 
 Feature: `sispag-data-pagamento` (`/feature-tweak`, branch `fix/sispag-data-pagamento`). Pedido da Flavia

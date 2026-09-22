@@ -104,3 +104,16 @@
 - **Entidade `CalendarioBancario`: NÃO criada.** É função pura sobre datas, sem identidade nem ciclo
   de vida. Revisitar só se o calendário ganhar dado mantido por pessoa (o item acima) **e** for consumido
   por uma 2ª frente (ex.: Frente IV, data de baixa).
+
+## SISPAG — retenção da formação automática (curadoria 2026-09-22, ADR-0050)
+
+- **Motivos tipados de retenção** (negociação, disputa, falta de documento...): NÃO modelados. O
+  `motivo` é texto livre opcional. Promover a enum só se aparecer relatório ou regra que dependa do
+  motivo, ou se um 2º cliente trouxer a mesma taxonomia.
+- **Expiração da retenção** (por data, por vencimento): NÃO modelada. Revisitar se uma retenção
+  esquecida causar atraso real de pagamento (P2-1 em `sispag-retirar-titulo-lote-gap.md`).
+- **Reter um título solto** (sem estar em lote): proposto no rascunho da ADR-0050 (D5) e **rejeitado
+  pelo usuário** em 2026-09-22 — fora de escopo. Revisitar se a analista pedir para segurar um título
+  antes de o cron lotá-lo.
+- **Entidade própria `RetencaoTitulo`**: NÃO criada; é propriedade de `TituloAPagar` com persistência
+  em tabela própria. Promover se ganhar ciclo de vida próprio (aprovação, prazo, escalonamento).
