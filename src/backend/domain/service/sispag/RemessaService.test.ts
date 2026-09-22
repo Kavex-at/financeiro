@@ -10,7 +10,16 @@ import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoR
 import type RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import type LogService from '../LogService.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import DebitDateFrozenError from '../../errors/DebitDateFrozenError.js';
+import DebitDateOutsideWindowError from '../../errors/DebitDateOutsideWindowError.js';
+import DebitDateService from './DebitDateService.js';
 import RemessaService from './RemessaService.js';
+
+/** Relógio default dos testes: terça 2026-09-22, meio-dia de Brasília. */
+const AGORA = '2026-09-22T15:00:00Z';
+/** Vencimento como o ERP grava (15:00Z do dia pretendido). Default: 2026-09-30. */
+const VENC = Date.UTC(2026, 8, 30, 15);
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
     id: 'L1',
@@ -27,6 +36,7 @@ const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
             titCod: '1',
             credor: 'CRONOS',
             valor: 258.4,
+            vencimento: VENC,
             modalidade: 'CREDITO_CONTA',
             incluidoPor: 'u1',
         },
@@ -49,6 +59,7 @@ const loteCom2Itens = (): LotePagamento =>
                 titCod: '1',
                 credor: 'OUTRO',
                 valor: 100,
+                vencimento: VENC,
                 modalidade: 'CREDITO_CONTA',
                 incluidoPor: 'u1',
             },
@@ -98,6 +109,7 @@ const buildEnv = (over: Record<string, unknown> = {}) =>
 const buildLoteRepo = (l: LotePagamento = lote()) => ({
     getLoteComItens: jest.fn().mockResolvedValue(l),
     setChavesNativas: jest.fn().mockResolvedValue(undefined),
+    setDataDebito: jest.fn().mockResolvedValue(undefined),
     setRemessaGerada: jest.fn().mockResolvedValue(undefined),
     transicionarStatus: jest.fn().mockResolvedValue(1),
 });
@@ -177,9 +189,13 @@ const make = (o: {
     lote?: LotePagamento;
     db?: ReturnType<typeof buildDb>;
     log?: LogService;
-}) =>
-    new RemessaService(
-        (o.loteRepo ?? buildLoteRepo(o.lote)) as unknown as LotePagamentoRepository,
+    /** Instante "agora" (ISO). Default: {@link AGORA}. */
+    agora?: string;
+}) => {
+    const loteRepo = o.loteRepo ?? buildLoteRepo(o.lote);
+    const calendar = BankingCalendar.withClock(() => new Date(o.agora ?? AGORA));
+    return new RemessaService(
+        loteRepo as unknown as LotePagamentoRepository,
         (o.ledger ?? buildLedger()) as unknown as RemessaExecucaoRepository,
         (o.write ?? buildWrite()) as unknown as ConexosSispagWriteClient,
         (o.sispag ?? buildSispag()) as unknown as ConexosSispagClient,
@@ -187,7 +203,10 @@ const make = (o: {
         o.log ?? buildLog(),
         (o.db ?? buildDb()) as unknown as PostgreeDatabaseClient,
         new RemessaCnabValidator(),
+        new DebitDateService(loteRepo as unknown as LotePagamentoRepository, calendar),
+        calendar,
     );
+};
 
 describe('RemessaService', () => {
     describe('gate de estado', () => {
@@ -997,6 +1016,7 @@ describe('RemessaService — boleto (código de barras via DDA)', () => {
                     titCod: '1',
                     credor: 'OUTRO',
                     valor: 100,
+                    vencimento: VENC,
                     modalidade: 'BOLETO' as const,
                     incluidoPor: 'u1',
                 },
@@ -1133,5 +1153,300 @@ describe('RemessaService — gate de integridade do .REM', () => {
                 message: expect.stringContaining('integridade NÃO verificada'),
             }),
         );
+    });
+});
+
+describe('data de débito (I8, ADR-0049)', () => {
+    const nadaEscrito = (
+        ledger: ReturnType<typeof buildLedger>,
+        write: ReturnType<typeof buildWrite>,
+        loteRepo: ReturnType<typeof buildLoteRepo>,
+    ) => {
+        expect(ledger.beginExecution).not.toHaveBeenCalled();
+        expect(write.listarLotesNativos).not.toHaveBeenCalled();
+        expect(write.criarLote).not.toHaveBeenCalled();
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+        expect(loteRepo.setDataDebito).not.toHaveBeenCalled();
+    };
+
+    describe('I8a — fora da janela é barrado antes de qualquer escrita', () => {
+        /** Vencimento em 30/10: a janela cobre 12/10 (feriado) e fins de semana. */
+        const loteLongo = () =>
+            lote({ itens: [{ ...lote().itens[0], vencimento: Date.UTC(2026, 9, 30, 15) }] });
+
+        it.each([
+            ['depois do menor vencimento', '2026-10-01', 'depois_do_vencimento', lote],
+            ['sábado', '2026-09-26', 'nao_util', loteLongo],
+            ['feriado (12/10)', '2026-10-12', 'nao_util', loteLongo],
+            ['antes de hoje', '2026-09-21', 'antes_de_hoje', loteLongo],
+        ])('%s → DATA_DEBITO_FORA_DA_JANELA', async (_c, dataDebito, motivo, fabrica) => {
+            const ledger = buildLedger();
+            const write = buildWrite();
+            const loteRepo = buildLoteRepo(fabrica());
+            await expect(
+                make({ ledger, write, loteRepo }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                    dataDebito,
+                }),
+            ).rejects.toMatchObject({ code: 'DATA_DEBITO_FORA_DA_JANELA', details: { motivo } });
+            nadaEscrito(ledger, write, loteRepo);
+        });
+
+        it('a recusa é um DebitDateOutsideWindowError', async () => {
+            await expect(
+                make({}).gerarRemessa({ loteId: 'L1', ator: 'u', dataDebito: '2026-10-01' }),
+            ).rejects.toBeInstanceOf(DebitDateOutsideWindowError);
+        });
+    });
+
+    describe('data escolhida numa criação nova', () => {
+        it('sem data: usa o primeiro dia útil da janela e o devolve', async () => {
+            const write = buildWrite();
+            const res = await make({ write, agora: '2026-09-26T15:00:00Z' }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+            expect(res.dataDebito).toBe('2026-09-28');
+            expect(write.criarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ dataDebito: Date.UTC(2026, 8, 28) }),
+            );
+        });
+
+        it('23:30 de Brasília em 21/09 (02:30Z do dia 22) manda o dia 21 ao ERP', async () => {
+            const write = buildWrite();
+            const ledger = buildLedger();
+            const res = await make({ write, ledger, agora: '2026-09-22T02:30:00Z' }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+            expect(res.dataDebito).toBe('2026-09-21');
+            expect(write.criarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ dataDebito: Date.UTC(2026, 8, 21) }),
+            );
+            expect(ledger.setRequestPayload).toHaveBeenCalledWith(
+                'remessa:L1',
+                expect.objectContaining({ dataDebito: Date.UTC(2026, 8, 21) }),
+            );
+        });
+
+        it('persiste a data ANTES do criarLote, e a marca d’água leva o mesmo epoch', async () => {
+            const write = buildWrite();
+            const ledger = buildLedger();
+            const loteRepo = buildLoteRepo();
+            const res = await make({ write, ledger, loteRepo }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+                dataDebito: '2026-09-24',
+            });
+            expect(res.dataDebito).toBe('2026-09-24');
+            expect(loteRepo.setDataDebito).toHaveBeenCalledWith({
+                loteId: 'L1',
+                dataDebito: '2026-09-24',
+            });
+            const ordemPersistir = loteRepo.setDataDebito.mock.invocationCallOrder[0] ?? 0;
+            const ordemCriar = write.criarLote.mock.invocationCallOrder[0] ?? 0;
+            expect(ordemPersistir).toBeGreaterThan(0);
+            expect(ordemPersistir).toBeLessThan(ordemCriar);
+            expect(write.criarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ dataDebito: Date.UTC(2026, 8, 24) }),
+            );
+            expect(ledger.setRequestPayload).toHaveBeenCalledWith(
+                'remessa:L1',
+                expect.objectContaining({
+                    marcaFlpCods: [98],
+                    dataDebito: Date.UTC(2026, 8, 24),
+                }),
+            );
+        });
+    });
+
+    describe('I8b — lote nativo existente congela a data', () => {
+        /** Tentativa anterior falhou depois do criarLote: o ledger tem o flp e status `error`. */
+        const ledgerComNativo = () =>
+            buildLedger({ status: 'error', dryRun: false, nativeFlpCod: 12, etapa: 'importar' });
+        const congelado = (dataDebito: string) =>
+            buildLoteRepo(lote({ nativeFlpCod: 12, dataDebito }));
+
+        it('data diferente da congelada → DebitDateFrozenError(diferente), nada escrito', async () => {
+            const ledger = ledgerComNativo();
+            const write = buildWrite();
+            const loteRepo = congelado('2026-09-23');
+            const erro = await make({ ledger, write, loteRepo })
+                .gerarRemessa({ loteId: 'L1', ator: 'u', dataDebito: '2026-09-24' })
+                .catch((e: unknown) => e);
+            expect(erro).toBeInstanceOf(DebitDateFrozenError);
+            expect((erro as DebitDateFrozenError).details).toMatchObject({
+                motivo: 'diferente',
+                dataCongelada: '2026-09-23',
+                nativeFlpCod: 12,
+            });
+            nadaEscrito(ledger, write, loteRepo);
+        });
+
+        it.each([
+            ['a mesma data', '2026-09-23'],
+            ['nenhuma data', undefined],
+        ])('com %s segue com a congelada e não cria outro lote', async (_c, dataDebito) => {
+            const ledger = ledgerComNativo();
+            const write = buildWrite();
+            const loteRepo = congelado('2026-09-23');
+            const res = await make({ ledger, write, loteRepo }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+                ...(dataDebito !== undefined ? { dataDebito } : {}),
+            });
+            expect(res.status).toBe('gerada');
+            expect(res.dataDebito).toBe('2026-09-23');
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(loteRepo.setDataDebito).not.toHaveBeenCalled();
+        });
+
+        it('congelada no passado e o ERP ainda não importou → no_passado antes do ledger', async () => {
+            // Órfão com lote aberto e vazio: retomar = importar → o finalizar ainda vai rodar,
+            // e o ERP recusaria pelo R1.
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            const loteRepo = buildLoteRepo(lote({ nativeFlpCod: 99, dataDebito: '2026-09-21' }));
+            await expect(
+                make({ ledger, write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toMatchObject({
+                code: 'DATA_DEBITO_CONGELADA',
+                details: { motivo: 'no_passado', nativeFlpCod: 99 },
+            });
+            expect(ledger.beginExecution).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+        });
+
+        it('congelada no passado com retomada em `finalizar` → no_passado', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 258.4,
+            });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1']));
+            const loteRepo = buildLoteRepo(lote({ nativeFlpCod: 99, dataDebito: '2026-09-21' }));
+            await expect(
+                make({ ledger, write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toBeInstanceOf(DebitDateFrozenError);
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+        });
+
+        it('congelada no passado com o ledger em `error` (finalizar ainda vai rodar) → no_passado', async () => {
+            const loteRepo = buildLoteRepo(lote({ nativeFlpCod: 12, dataDebito: '2026-09-21' }));
+            await expect(
+                make({ ledger: ledgerComNativo(), loteRepo }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                }),
+            ).rejects.toMatchObject({ details: { motivo: 'no_passado' } });
+        });
+
+        it('congelada no passado mas o ERP já finalizou (gerar_remessa) → segue', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 1,
+                titulosCount: 1,
+                soma: 258.4,
+            });
+            const loteRepo = buildLoteRepo(lote({ nativeFlpCod: 99, dataDebito: '2026-09-21' }));
+            const res = await make({ ledger, write, loteRepo }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+            expect(res.status).toBe('gerada');
+            expect(res.dataDebito).toBe('2026-09-21');
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+        });
+
+        it('lote nativo cancelado + confirmarNovoLote → a nova data vale e substitui a antiga', async () => {
+            const ledger = buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99 });
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 2,
+                titulosCount: 0,
+                soma: 0,
+            });
+            const loteRepo = buildLoteRepo(lote({ nativeFlpCod: 99, dataDebito: '2026-09-23' }));
+            const res = await make({ ledger, write, loteRepo }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+                confirmarNovoLote: true,
+                dataDebito: '2026-09-25',
+            });
+            expect(res.dataDebito).toBe('2026-09-25');
+            expect(loteRepo.setDataDebito).toHaveBeenCalledWith({
+                loteId: 'L1',
+                dataDebito: '2026-09-25',
+            });
+            expect(write.criarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ dataDebito: Date.UTC(2026, 8, 25) }),
+            );
+        });
+
+        it('lote legado (nativo sem data persistida) segue, avisa e não grava palpite', async () => {
+            const ledger = ledgerComNativo();
+            const write = buildWrite();
+            const loteRepo = buildLoteRepo(lote({ nativeFlpCod: 12 }));
+            const log = buildLog();
+            const res = await make({ ledger, write, loteRepo, log }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+                dataDebito: '2026-09-24',
+            });
+            expect(res.status).toBe('gerada');
+            expect(res.dataDebito).toBeUndefined();
+            expect(loteRepo.setDataDebito).not.toHaveBeenCalled();
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(log.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: 'BUSINESS_WARN',
+                    message: expect.stringContaining('legado'),
+                }),
+            );
+        });
+    });
+
+    describe('dry-run', () => {
+        it('valida a data: fora da janela recusa igual', async () => {
+            await expect(
+                make({ env: buildEnv({ conexosDryRun: true }) }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                    dataDebito: '2026-09-27',
+                }),
+            ).rejects.toBeInstanceOf(DebitDateOutsideWindowError);
+        });
+
+        it('devolve e loga a data, sem persistir', async () => {
+            const loteRepo = buildLoteRepo();
+            const log = buildLog();
+            const res = await make({
+                loteRepo,
+                log,
+                env: buildEnv({ conexosDryRun: true }),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u', dataDebito: '2026-09-23' });
+            expect(res.status).toBe('dry-run');
+            expect(res.dataDebito).toBe('2026-09-23');
+            expect(loteRepo.setDataDebito).not.toHaveBeenCalled();
+            expect(log.info).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: expect.stringContaining('DRY-RUN'),
+                    data: expect.objectContaining({ dataDebito: '2026-09-23' }),
+                }),
+            );
+        });
     });
 });

@@ -20,7 +20,10 @@ import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.
 import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
+import DebitDateFrozenError, { MOTIVO_CONGELADA } from '../../errors/DebitDateFrozenError.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import LogService from '../LogService.js';
+import DebitDateService from './DebitDateService.js';
 
 /** Código FEBRABAN a partir do `bncCod` interno do Conexos. */
 const FEBRABAN_POR_BNCCOD: Record<number, number> = { 3: 1, 4: 341, 7: 237, 10: 33 };
@@ -65,6 +68,11 @@ export interface GerarRemessaInput {
     correlationId?: string;
     /** Força dry-run mesmo com escrita habilitada (preview sem tocar o ERP). */
     dryRunOverride?: boolean;
+    /**
+     * Data de débito escolhida pela analista (`'YYYY-MM-DD'`, I8, ADR-0049). Ausente = primeiro
+     * dia útil da janela. Com lote nativo já criado, só a data congelada é aceita.
+     */
+    dataDebito?: string;
 }
 
 export interface GerarRemessaResult {
@@ -79,6 +87,8 @@ export interface GerarRemessaResult {
     conteudo?: string;
     itens: number;
     valorTotal: number;
+    /** Data de débito usada (`'YYYY-MM-DD'`). Ausente em lote legado sem data persistida. */
+    dataDebito?: string;
 }
 
 /**
@@ -115,6 +125,8 @@ export default class RemessaService {
         @inject(LogService) private readonly logService: LogService,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(RemessaCnabValidator) private readonly cnab: RemessaCnabValidator,
+        @inject(DebitDateService) private readonly debitDate: DebitDateService,
+        @inject(BankingCalendar) private readonly calendar: BankingCalendar,
     ) {}
 
     /**
@@ -215,6 +227,7 @@ export default class RemessaService {
                     : {}),
                 itens: lote.itens.length,
                 valorTotal,
+                ...(lote.dataDebito !== undefined ? { dataDebito: lote.dataDebito } : {}),
             };
         }
         // Execução anterior em voo que nunca confirmou. Em vez de travar para sempre,
@@ -264,6 +277,7 @@ export default class RemessaService {
                     ...(sync.arquivo.conteudo !== undefined
                         ? { conteudo: sync.arquivo.conteudo }
                         : {}),
+                    ...(lote.dataDebito !== undefined ? { dataDebito: lote.dataDebito } : {}),
                 };
             }
 
@@ -310,6 +324,13 @@ export default class RemessaService {
             });
         }
 
+        // ── Data de débito (I8) — decidida ANTES de qualquer escrita ────────
+        // O lote nativo que esta tentativa vai REUSAR, se houver. É a mesma expressão que
+        // decide, lá embaixo, pular o `criarLote`: se ela é definida, a data já está no ERP.
+        const flpCodExistente: number | undefined =
+            retomarDe === 'criar_lote' ? undefined : (flpCodRetomado ?? anterior?.nativeFlpCod);
+        const dataDebito = await this.resolverDataDebito(input, lote, flpCodExistente, retomarDe);
+
         // ── Conta pagadora da FILIAL (nunca fixa) ───────────────────────────
         const contas = await this.sispag.listContasCorrentes(lote.filCod);
         const cc = lote.conta
@@ -336,7 +357,10 @@ export default class RemessaService {
             conta: contaFmt,
             layoutConta: `AG:${escolhida.agencia}/CT:${contaFmt}`,
         };
-        const dataDebito = this.hojeUtc();
+        // Encoding do `flpDtaCredito`: meia-noite UTC do dia civil (o mesmo do antigo
+        // `hojeUtc()`), para a marca d'água seguir casando com o que o ERP devolve.
+        const dataDebitoErp =
+            dataDebito !== undefined ? this.calendar.toErpEpoch(dataDebito) : undefined;
 
         // ── DRY-RUN: monta e loga, sem tocar o ERP ──────────────────────────
         if (dryRun) {
@@ -370,6 +394,7 @@ export default class RemessaService {
                 loteId: lote.id,
                 itens: lote.itens.length,
                 valorTotal,
+                ...(dataDebito !== undefined ? { dataDebito } : {}),
             };
         }
 
@@ -398,8 +423,7 @@ export default class RemessaService {
         // `criar_lote` ZERA o número de propósito: o sync só devolve essa etapa quando o
         // lote do ledger não serve mais (não existe no ERP, ou foi cancelado). Reusar o
         // `nativeFlpCod` antigo aqui mandaria títulos para um lote morto.
-        let flpCod: number | undefined =
-            retomarDe === 'criar_lote' ? undefined : (flpCodRetomado ?? anterior?.nativeFlpCod);
+        let flpCod: number | undefined = flpCodExistente;
         try {
             if (flpCod !== undefined) {
                 await this.logService.info({
@@ -413,6 +437,10 @@ export default class RemessaService {
                 // o lote criado: qualquer flpCod ACIMA da marca, com esta conta e esta data
                 // de débito, e ainda vazio, é candidato. Sem a marca, essa janela é a única
                 // falha irrecuperável do fluxo.
+                if (dataDebito === undefined || dataDebitoErp === undefined) {
+                    // Inalcançável: sem lote nativo, `resolverDataDebito` sempre devolve data.
+                    throw new Error('data de débito ausente numa criação de lote nativo');
+                }
                 const anteriores = await this.write.listarLotesNativos({
                     filCod: lote.filCod,
                     bncCod,
@@ -421,17 +449,20 @@ export default class RemessaService {
                 // monotônico: medido em HML (2026-08-25), um lote novo na filial 2 nasceu
                 // com flp 15 quando o maior era 40 — o ERP reaproveita buracos de
                 // numeração. Guardar só o máximo tornaria o órfão invisível.
+                // I8b — a data persistida junto da marca d'água, ANTES do POST: a partir do
+                // `criarLote` ela está no lote nativo e não muda mais.
+                await this.loteRepo.setDataDebito({ loteId: lote.id, dataDebito });
                 await this.ledger.setRequestPayload(key, {
                     marcaFlpCods: anteriores.map((l) => l.flpCod),
                     ccoCod: escolhida.ccoCod,
-                    dataDebito,
+                    dataDebito: dataDebitoErp,
                 });
 
                 // (1) lote nativo
                 const criado = await this.write.criarLote({
                     filCod: lote.filCod,
                     conta: contaPagadora,
-                    dataDebito,
+                    dataDebito: dataDebitoErp,
                 });
                 flpCod = criado.flpCod;
             }
@@ -596,6 +627,7 @@ export default class RemessaService {
                     flpCod,
                     gabCod: arquivo.gabCod,
                     arquivo: sugerido.nomeArquivo,
+                    dataDebito,
                     itens: lote.itens.length,
                     valorTotal,
                 },
@@ -613,6 +645,7 @@ export default class RemessaService {
                 ...(arquivo.conteudo !== undefined ? { conteudo: arquivo.conteudo } : {}),
                 itens: lote.itens.length,
                 valorTotal,
+                ...(dataDebito !== undefined ? { dataDebito } : {}),
             };
         } catch (e) {
             const mensagem = e instanceof Error ? e.message : String(e);
@@ -1000,11 +1033,61 @@ export default class RemessaService {
         return itens;
     };
 
-    /** Meia-noite UTC de hoje — R1 exige data de débito ≥ hoje. */
-    private hojeUtc = (): number => {
-        const d = new Date();
-        return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    /**
+     * Decide a data de débito desta tentativa (I8, ADR-0049). Não escreve nada (só loga).
+     *
+     * - Sem lote nativo a reusar: é uma criação. A data pedida (ou o primeiro dia útil da
+     *   janela) é validada contra I8a.
+     * - Com lote nativo: a data já está no ERP (I8b). Vale a persistida; outra é recusada. Se
+     *   ela ficou no passado e o `finalizarLote` ainda vai rodar, o ERP recusaria pelo R1 —
+     *   barra antes, com a saída conhecida (cancelar o lote nativo no fin015).
+     * - Lote legado (nativo criado antes da 0061, sem data persistida): nada a comparar e nada
+     *   é enviado ao ERP (o `criarLote` é pulado). Segue sem palpite; o R1 do ERP guarda.
+     */
+    private resolverDataDebito = async (
+        input: GerarRemessaInput,
+        lote: LotePagamento,
+        flpCodExistente: number | undefined,
+        retomarDe: EtapaReal | undefined,
+    ): Promise<string | undefined> => {
+        if (flpCodExistente === undefined) {
+            return this.debitDate.resolve(lote, input.dataDebito);
+        }
+        const congelada = lote.dataDebito;
+        if (congelada === undefined) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'lote legado sem data de débito persistida — seguindo sem congelar',
+                data: {
+                    loteId: lote.id,
+                    nativeFlpCod: flpCodExistente,
+                    dataPedida: input.dataDebito,
+                },
+            });
+            return undefined;
+        }
+        if (input.dataDebito !== undefined && input.dataDebito !== congelada) {
+            throw new DebitDateFrozenError({
+                motivo: MOTIVO_CONGELADA.DIFERENTE,
+                dataCongelada: congelada,
+                nativeFlpCod: flpCodExistente,
+                dataPedida: input.dataDebito,
+            });
+        }
+        // O `finalizarLote` ainda vai rodar quando a retomada não passou dele: sem sync
+        // (ledger em `error` → a sequência roda inteira) ou retomando em importar/finalizar.
+        const finalizarPendente =
+            retomarDe === undefined || retomarDe === 'importar' || retomarDe === 'finalizar';
+        if (finalizarPendente && congelada < this.calendar.todayBrt()) {
+            throw new DebitDateFrozenError({
+                motivo: MOTIVO_CONGELADA.NO_PASSADO,
+                dataCongelada: congelada,
+                nativeFlpCod: flpCodExistente,
+            });
+        }
+        return congelada;
     };
+
     /**
      * Conteúdo do `.REM` já gerado de um lote. Busca PELO NOME registrado — nunca "o primeiro
      * com conteúdo": o ERP recicla `flpCod`, e a lista de um lote novo pode trazer arquivos
