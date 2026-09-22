@@ -322,6 +322,64 @@ export default class ConexosSispagWriteClient {
      * folgada: 40 × 500 = 20.000 lotes por `(filial, banco)`, contra 74 medidos em PRD nas
      * filiais 1, 2 e 7 somadas.
      */
+    /**
+     * Uma página do `fin015/list`, já com o filtro de filial que o grid exige.
+     *
+     * `filCod#EQ` É OBRIGATÓRIO. O `filCod` de `opts` é o CONTEXTO da sessão, não um filtro:
+     * sem isto o `fin015/list` devolve lotes de TODAS as filiais (medido: 74 linhas das
+     * filiais 1, 2 e 7).
+     *
+     * Foi essa ausência que me fez concluir, erradamente, que `(filCod, bncCod, flpCod)` não
+     * era única — os "gêmeos" eram lotes de filiais diferentes. Com o filtro: 0 repetições.
+     *
+     * O dano real era na marca d'água: o conjunto de "lotes conhecidos" vinha contaminado com
+     * flpCod de outras filiais, e um órfão cujo número já existisse em outra filial ficava
+     * invisível — o retry criava um segundo lote, que é o que o mecanismo evita.
+     */
+    private lerPaginaDeLotes = async (params: {
+        path: string;
+        filCod: number;
+        bncCod: number;
+        pageNumber: number;
+        pageSize: number;
+    }) => {
+        const { path, filCod, bncCod, pageNumber, pageSize } = params;
+        return this.base.runWithRetry(async () => {
+            await this.base.ensureSid();
+            return this.base.listGenericPaginated<Record<string, unknown>>(
+                path,
+                {
+                    fieldList: [],
+                    filterList: { 'bncCod#EQ': bncCod, 'filCod#EQ': filCod },
+                    serviceName: 'fin015',
+                    pageNumber,
+                    pageSize,
+                },
+                { filCod },
+            );
+        });
+    };
+
+    /**
+     * Linha do `fin015/list` → `LoteNativoEstado`. `filCod`/`bncCod` da chamada são fallback:
+     * o grid já vem filtrado por eles, mas a linha manda quando traz o próprio.
+     */
+    private paraLoteNativo = (
+        r: Record<string, unknown>,
+        filCod: number,
+        bncCod: number,
+    ): LoteNativoEstado => ({
+        filCod: Number(r.filCod ?? filCod),
+        bncCod: Number(r.bncCod ?? bncCod),
+        flpCod: Number(r.flpCod),
+        status: Number(r.flpVldStatus ?? 0),
+        titulosCount: Number(r.titulosCount ?? 0),
+        soma: Number(r.soma ?? 0),
+        ...(r.ccoCod != null ? { ccoCod: Number(r.ccoCod) } : {}),
+        ...(r.flpDtaCredito != null ? { dataDebito: Number(r.flpDtaCredito) } : {}),
+        ...(r.flpTimFinaliza != null ? { finalizadoEm: Number(r.flpTimFinaliza) } : {}),
+    });
+
     public listarLotesNativos = async (params: {
         filCod: number;
         bncCod: number;
@@ -330,6 +388,49 @@ export default class ConexosSispagWriteClient {
     }): Promise<LoteNativoEstado[]> => {
         const { filCod, bncCod, pageSize = 500, maxPaginas = 40 } = params;
         const path = 'fin015/list';
+        try {
+            const linhas = await this.varrerLotes({ path, filCod, bncCod, pageSize, maxPaginas });
+            return linhas.map((r) => this.paraLoteNativo(r, filCod, bncCod));
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
+     * Acumula em `destino` as linhas ainda não vistas, por `flpCod`.
+     *
+     * A chave é única dentro de `(filial, banco)` — isso está medido —, então uma repetição
+     * só pode vir de sobreposição de páginas. Linha sem `flpCod` não identifica lote nenhum
+     * e é descartada.
+     */
+    private acumularLotesUnicos = (
+        rows: Record<string, unknown>[],
+        vistos: Set<number>,
+        destino: Record<string, unknown>[],
+    ): void => {
+        for (const r of rows) {
+            if (r.flpCod == null) continue;
+            const flpCod = Number(r.flpCod);
+            if (vistos.has(flpCod)) continue;
+            vistos.add(flpCod);
+            destino.push(r);
+        }
+    };
+
+    /**
+     * Varre o `fin015/list` até esgotar o grid e devolve as linhas ÚNICAS por `flpCod`.
+     *
+     * Lança se bater em `maxPaginas` com grid sobrando: ver o porquê em `listarLotesNativos`
+     * — uma lista parcial de lotes guia decisão destrutiva, então recusar é o seguro.
+     */
+    private varrerLotes = async (params: {
+        path: string;
+        filCod: number;
+        bncCod: number;
+        pageSize: number;
+        maxPaginas: number;
+    }): Promise<Record<string, unknown>[]> => {
+        const { path, filCod, bncCod, pageSize, maxPaginas } = params;
         const linhas: Record<string, unknown>[] = [];
         const vistos = new Set<number>();
         let total = Number.POSITIVE_INFINITY;
@@ -338,78 +439,34 @@ export default class ConexosSispagWriteClient {
         // até `maxPaginas` — e daí um throw, por um grid que na verdade acabou.
         let lidas = 0;
         let pagina = 0;
-        try {
-            while (pagina < maxPaginas) {
-                pagina += 1;
-                const pageNumber = pagina;
-                const page = await this.base.runWithRetry(async () => {
-                    await this.base.ensureSid();
-                    return this.base.listGenericPaginated<Record<string, unknown>>(
-                        path,
-                        {
-                            fieldList: [],
-                            // `filCod#EQ` É OBRIGATÓRIO. O `filCod` de `opts` é o CONTEXTO da
-                            // sessão, não um filtro: sem isto o `fin015/list` devolve lotes de
-                            // TODAS as filiais (medido: 74 linhas das filiais 1, 2 e 7).
-                            //
-                            // Foi essa ausência que me fez concluir, erradamente, que
-                            // `(filCod, bncCod, flpCod)` não era única — os "gêmeos" eram lotes
-                            // de filiais diferentes. Com o filtro: 0 repetições. A chave é única.
-                            //
-                            // O dano real era na marca d'água: o conjunto de "lotes conhecidos"
-                            // vinha contaminado com flpCod de outras filiais, e um órfão cujo
-                            // número já existisse em outra filial ficava invisível — o retry
-                            // criava um segundo lote, que é exatamente o que o mecanismo evita.
-                            filterList: { 'bncCod#EQ': bncCod, 'filCod#EQ': filCod },
-                            serviceName: 'fin015',
-                            pageNumber,
-                            pageSize,
-                        },
-                        { filCod },
-                    );
-                });
 
-                const rows = page?.rows ?? [];
-                lidas += rows.length;
-                if (Number.isFinite(Number(page?.count))) total = Number(page.count);
-                for (const r of rows) {
-                    if (r.flpCod == null) continue;
-                    // Dedupe por `flpCod`: a chave é única dentro de `(filial, banco)` — está
-                    // medido — então uma repetição só pode vir de sobreposição de páginas.
-                    const flpCod = Number(r.flpCod);
-                    if (vistos.has(flpCod)) continue;
-                    vistos.add(flpCod);
-                    linhas.push(r);
-                }
+        while (pagina < maxPaginas) {
+            pagina += 1;
+            const page = await this.lerPaginaDeLotes({
+                path,
+                filCod,
+                bncCod,
+                pageNumber: pagina,
+                pageSize,
+            });
 
-                // O grid acabou: página curta ou `count` alcançado.
-                if (rows.length < pageSize || lidas >= total) break;
-            }
+            const rows = page?.rows ?? [];
+            lidas += rows.length;
+            if (Number.isFinite(Number(page?.count))) total = Number(page.count);
+            this.acumularLotesUnicos(rows, vistos, linhas);
 
-            if (pagina >= maxPaginas && lidas < total) {
-                // Parcial aqui não é "menos dados", é uma afirmação FALSA sobre quais lotes
-                // existem — e quem chama decide cancelar lote com base nela. Recusar é a
-                // resposta segura.
-                throw new Error(
-                    `fin015/list truncado em ${maxPaginas} páginas: ${lidas} de ${total} lotes ` +
-                        `(fil=${filCod} bnc=${bncCod}). A marca d'água e a busca de órfãos exigem a lista COMPLETA.`,
-                );
-            }
-
-            return linhas.map((r) => ({
-                filCod: Number(r.filCod ?? filCod),
-                bncCod: Number(r.bncCod ?? bncCod),
-                flpCod: Number(r.flpCod),
-                status: Number(r.flpVldStatus ?? 0),
-                titulosCount: Number(r.titulosCount ?? 0),
-                soma: Number(r.soma ?? 0),
-                ...(r.ccoCod != null ? { ccoCod: Number(r.ccoCod) } : {}),
-                ...(r.flpDtaCredito != null ? { dataDebito: Number(r.flpDtaCredito) } : {}),
-                ...(r.flpTimFinaliza != null ? { finalizadoEm: Number(r.flpTimFinaliza) } : {}),
-            }));
-        } catch (cause) {
-            throw this.toConexosError(path, cause);
+            // O grid acabou: página curta ou `count` alcançado.
+            if (rows.length < pageSize || lidas >= total) break;
         }
+
+        if (pagina >= maxPaginas && lidas < total) {
+            throw new Error(
+                `fin015/list truncado em ${maxPaginas} páginas: ${lidas} de ${total} lotes ` +
+                    `(fil=${filCod} bnc=${bncCod}). A marca d'água e a busca de órfãos exigem a lista COMPLETA.`,
+            );
+        }
+
+        return linhas;
     };
 
     /**

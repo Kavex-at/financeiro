@@ -139,13 +139,11 @@ describe('GET /sispag/retornos', () => {
     });
 
     it('GET /lotes/:id/linhas-digitaveis devolve as linhas do lote', async () => {
-        const linhasDigitaveisDoLote = jest
-            .fn()
-            .mockResolvedValue({
-                itens: [{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }],
-                total: 1,
-                dropped: 0,
-            });
+        const linhasDigitaveisDoLote = jest.fn().mockResolvedValue({
+            itens: [{ docCod: '10400', titCod: '1', linhaDigitavel: '1'.repeat(47) }],
+            total: 1,
+            dropped: 0,
+        });
         container.registerInstance(SispagPainelService, { linhasDigitaveisDoLote } as never);
 
         await comApp({}, async (url) => {
