@@ -41,6 +41,7 @@ import {
   removerItem,
   rotuloConta,
 } from '@/lib/sispag'
+import { baixarBlob } from '@/lib/download'
 import { formatBRL } from '@/lib/utils'
 
 const fmtData = (ms?: number) =>
@@ -309,12 +310,7 @@ export function LoteCard({
                   const { nome, arquivo } = await baixarRemessa(l.id)
                   // Os bytes do ERP vão direto ao navegador — sem string no meio, que
                   // reencodaria em UTF-8 e quebraria as colunas fixas do CNAB.
-                  const url = URL.createObjectURL(arquivo)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = nome
-                  a.click()
-                  URL.revokeObjectURL(url)
+                  baixarBlob(arquivo, nome)
                 }, 'Arquivo baixado')
               }
             >

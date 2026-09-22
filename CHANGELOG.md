@@ -14,6 +14,13 @@ as colunas fixas do registro. Um arquivo assim o banco recusa, ou lê com os cam
   mesmo tamanho.
 - **Quem baixou um `.REM` pela tela antes desta versão** e o arquivo tinha favorecido acentuado
   deve baixá-lo de novo antes de enviar ao banco.
+- **Download truncado no caminho deixa de passar batido.** Se o `Content-Length` anuncia mais bytes
+  do que chegaram, a tela recusa o arquivo e avisa, em vez de entregar meio `.REM` — mesma corrupção
+  de antes, causa diferente. A conferência é unilateral de propósito: resposta comprimida traz o
+  tamanho comprimido no header e não pode ser lida como truncamento.
+- **Um caminho só de download** (`lib/download.ts`) para o `.REM` do SISPAG e o `.xlsx` de Permutas.
+  Eram duas cópias do mesmo fluxo, com regex de nome divergente — e foi numa delas que o bug de
+  encoding nasceu. Quem for ligar o próximo download (GED, retorno Nexxera) herda o caminho certo.
 
 ## v0.39.0 (2026-09-22) — a tela Métricas deixa de abrir vazia na primeira semana no ar
 

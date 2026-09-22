@@ -1,4 +1,5 @@
 import { withAuthHeaders } from './auth/token'
+import { baixarBlob, lerArquivoDaResposta } from './download'
 import { apiFetch } from './http'
 import type {
   BorderoResumo,
@@ -582,13 +583,6 @@ export async function fetchImportadores(): Promise<Importador[]> {
   return json.importadores ?? []
 }
 
-/** Extrai o `filename="..."` de um header Content-Disposition (ou undefined). */
-function parseContentDispositionFilename(header: string | null): string | undefined {
-  if (!header) return undefined
-  const match = /filename="?([^"]+)"?/.exec(header)
-  return match?.[1]
-}
-
 /**
  * Exporta um relatório do painel em Excel (.xlsx). Bate em
  * `GET /permutas/relatorios/:tipo` com o token de auth, lê o blob e dispara o
@@ -608,21 +602,8 @@ export async function exportarRelatorio(tipo: RelatorioTipo): Promise<void> {
     } catch {}
     throw new Error(`API ${res.status}${detail}`)
   }
-  const blob = await res.blob()
-  const filename =
-    parseContentDispositionFilename(res.headers.get('content-disposition')) ??
-    `permutas-${tipo}.xlsx`
-  const url = URL.createObjectURL(blob)
-  try {
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = filename
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-  } finally {
-    URL.revokeObjectURL(url)
-  }
+  const { nome, arquivo } = await lerArquivoDaResposta(res, `permutas-${tipo}.xlsx`)
+  baixarBlob(arquivo, nome)
 }
 
 /**

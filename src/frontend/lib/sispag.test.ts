@@ -37,6 +37,22 @@ describe('baixarRemessa', () => {
     expect(Array.from(await lerBytes(arquivo))).toEqual(Array.from(bytes))
   })
 
+  it('recusa a remessa truncada no caminho em vez de entregar meio arquivo', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'Content-Disposition': 'attachment; filename="PG220901.REM"',
+        'Content-Length': '2400',
+      }),
+      blob: async () => new Blob([new Uint8Array(240)]),
+    } as unknown as Response)
+
+    await expect(baixarRemessa('lote-1')).rejects.toThrow(
+      'Download incompleto de PG220901.REM: recebidos 240 de 2400 bytes',
+    )
+  })
+
   it('falha com o status quando o backend recusa', async () => {
     mockApiFetch.mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
     await expect(baixarRemessa('lote-1')).rejects.toThrow('Falha ao baixar a remessa (404)')
