@@ -1,14 +1,19 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
-import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import PostgreeDatabaseClient, {
+    type TransactionClient,
+} from '../../client/database/PostgreeDatabaseClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
+import RetencaoInexistenteError from '../../errors/RetencaoInexistenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
+import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
+    type ChaveTitulo,
     CONTA_PAGADORA_DEFAULT,
     type CriarLoteInput,
     type IncluirTituloInput,
@@ -17,9 +22,11 @@ import {
     type LotePagamentoStatus,
     LOTE_STATUS,
     MODALIDADE,
+    MOTIVO_REMOCAO_RETENCAO,
     type Modalidade,
 } from '../../interface/sispag/SispagInterface.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import RetencaoFormacaoRepository from '../../repository/sispag/RetencaoFormacaoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 
@@ -28,6 +35,13 @@ interface TransicaoInput {
     versao: number;
     ator: string;
 }
+
+/**
+ * Quando a remoção de um item grava a retenção da formação automática (ADR-0050):
+ * - `sempre`: "Retirar do lote" na aba de títulos — a intenção de segurar é explícita;
+ * - `se-automatico`: lixeira dentro do lote — só retém se o lote era automático (P1-1).
+ */
+type RetencaoNaRemocao = 'sempre' | 'se-automatico';
 
 /**
  * LotePagamentoService — montagem assistida + gate do lote candidato SISPAG
@@ -44,6 +58,8 @@ export default class LotePagamentoService {
         @inject(ConexosSispagClient) private readonly conexos: ConexosSispagClient,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(RetencaoFormacaoRepository)
+        private readonly retencaoRepo: RetencaoFormacaoRepository,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -245,6 +261,14 @@ export default class LotePagamentoService {
                         },
                         tx,
                     );
+                    // ADR-0050 D4: lotar à mão encerra a retenção da formação automática.
+                    await this.retencaoRepo.liberarAtiva(tx, {
+                        filCod: input.filCod,
+                        docCod: input.docCod,
+                        titCod: input.titCod,
+                        removidoPor: input.ator,
+                        motivoRemocao: MOTIVO_REMOCAO_RETENCAO.INCLUIDO_NO_LOTE,
+                    });
                     // O analista mexeu num lote automático → vira manual (cron para de gerenciar).
                     if (lote.automatico) await this.repo.marcarManual(input.loteId, tx);
                     await this.repo.tocarLote(input.loteId, tx);
@@ -261,6 +285,11 @@ export default class LotePagamentoService {
         return this.exigirLote(input.loteId);
     };
 
+    /**
+     * Lixeira dentro do lote. Num lote AUTOMÁTICO também retém o título da formação automática
+     * (ADR-0050 D3, P1-1): quem tira um título de um lote que o cron montou está dizendo "esse
+     * não", e sem a retenção a rodada seguinte o lotaria de novo. Num lote manual, não retém.
+     */
     public removerTitulo = async (input: IncluirTituloInput): Promise<LotePagamento> => {
         const lote = await this.exigirLote(input.loteId);
         if (lote.status !== LOTE_STATUS.RASCUNHO) {
@@ -270,25 +299,64 @@ export default class LotePagamentoService {
                 acao: 'remover título',
             });
         }
-        await this.db.withTransaction(async (tx) => {
-            await this.repo.removerItem(
-                {
-                    loteId: input.loteId,
-                    filCod: input.filCod,
-                    docCod: input.docCod,
-                    titCod: input.titCod,
-                },
-                tx,
-            );
-            // O analista mexeu num lote automático → vira manual (cron para de gerenciar).
-            if (lote.automatico) await this.repo.marcarManual(input.loteId, tx);
-            await this.repo.tocarLote(input.loteId, tx);
-        });
+        const { removido, retido } = await this.removerItemDoLote(
+            input.loteId,
+            { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod },
+            { ator: input.ator, retencao: 'se-automatico' },
+        );
         await this.audit('removerTitulo', input.loteId, input.ator, {
             docCod: input.docCod,
             titCod: input.titCod,
+            removido,
+            retido,
         });
         return this.exigirLote(input.loteId);
+    };
+
+    /**
+     * "Retirar do lote" na aba de títulos (ADR-0050 D3): tira o título do lote RASCUNHO em que
+     * ele está e o retém da formação automática, numa transação só. Se uma parte falha, nenhuma
+     * acontece — título fora do lote sem retenção voltaria no próximo cron.
+     */
+    public retirarDoLote = async (
+        input: ChaveTitulo & { motivo?: string; ator: string },
+    ): Promise<LotePagamento> => {
+        const chave = { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod };
+        const loteId = await this.repo.loteRascunhoComTitulo(chave);
+        if (!loteId) throw new TituloForaDeLoteError(chave);
+        await this.removerItemDoLote(loteId, chave, {
+            ator: input.ator,
+            retencao: 'sempre',
+            motivo: input.motivo,
+            exigirItem: true,
+        });
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'SISPAG: título retirado do lote e retido da formação automática',
+            data: { loteId, ator: input.ator, ...chave, comMotivo: input.motivo !== undefined },
+        });
+        return this.exigirLote(loteId);
+    };
+
+    /**
+     * "Liberar" (ADR-0050 D5): encerra a retenção ativa do título. Ele volta ao pool da formação
+     * automática na rodada seguinte, se ainda for elegível.
+     */
+    public liberarRetencao = async (input: ChaveTitulo & { ator: string }): Promise<void> => {
+        const chave = { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod };
+        const liberadas = await this.db.withTransaction((tx) =>
+            this.retencaoRepo.liberarAtiva(tx, {
+                ...chave,
+                removidoPor: input.ator,
+                motivoRemocao: MOTIVO_REMOCAO_RETENCAO.LIBERADO,
+            }),
+        );
+        if (liberadas === 0) throw new RetencaoInexistenteError(chave);
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'SISPAG: retenção da formação automática liberada',
+            data: { ator: input.ator, ...chave },
+        });
     };
 
     /** GATE (I5) — finaliza o lote (≥1 item; optimistic lock por `versao`). */
@@ -383,6 +451,59 @@ export default class LotePagamentoService {
         }
         await this.audit(t.acao, input.loteId, input.ator, { para: t.para });
         return this.exigirLote(input.loteId);
+    };
+
+    /**
+     * Remove o item e, conforme `retencao`, grava a retenção — tudo numa transação.
+     *
+     * `automatico` é lido AQUI, com a linha do lote travada, ANTES de `marcarManual` virar o flag:
+     * lido depois, seria sempre `false` e a lixeira nunca reteria. O status é revalidado sob o
+     * mesmo lock, porque o lote pode ter sido finalizado entre a checagem do chamador e esta
+     * escrita.
+     */
+    private removerItemDoLote = async (
+        loteId: string,
+        chave: ChaveTitulo,
+        opts: {
+            ator: string;
+            retencao: RetencaoNaRemocao;
+            motivo?: string;
+            /** Nenhum item removido é erro (a analista pediu para retirar um título específico). */
+            exigirItem?: boolean;
+        },
+    ): Promise<{ removido: boolean; retido: boolean }> =>
+        this.db.withTransaction(async (tx) => {
+            const { automatico } = await this.travarRascunho(loteId, tx);
+            const removidos = await this.repo.removerItem({ loteId, ...chave }, tx);
+            if (removidos === 0 && opts.exigirItem) throw new TituloForaDeLoteError(chave);
+            const reter = removidos > 0 && (opts.retencao === 'sempre' || automatico);
+            if (reter) {
+                await this.retencaoRepo.insertAtiva(tx, {
+                    ...chave,
+                    ...(opts.motivo !== undefined ? { motivo: opts.motivo } : {}),
+                    marcadoPor: opts.ator,
+                });
+            }
+            // O analista mexeu num lote automático → vira manual (cron para de gerenciar).
+            if (automatico) await this.repo.marcarManual(loteId, tx);
+            await this.repo.tocarLote(loteId, tx);
+            return { removido: removidos > 0, retido: reter };
+        });
+
+    /** Trava a linha do lote na transação e exige RASCUNHO; devolve se ele era automático. */
+    private travarRascunho = async (
+        loteId: string,
+        tx: TransactionClient,
+    ): Promise<{ automatico: boolean }> => {
+        const estado = await this.repo.lerEstadoParaEdicao(loteId, tx);
+        if (!estado || estado.status !== LOTE_STATUS.RASCUNHO) {
+            throw new LoteEstadoInvalidoError({
+                loteId,
+                statusAtual: estado?.status ?? 'inexistente',
+                acao: 'remover título',
+            });
+        }
+        return { automatico: estado.automatico };
     };
 
     private exigirLote = async (id: string): Promise<LotePagamento> => {

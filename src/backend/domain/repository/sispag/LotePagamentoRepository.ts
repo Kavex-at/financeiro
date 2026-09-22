@@ -161,16 +161,60 @@ export default class LotePagamentoRepository {
         );
     };
 
-    /** Chaves (fil,doc,tit) de todos os títulos já num lote RASCUNHO — para o painel bloquear a seleção (I3). */
+    /**
+     * Estado do lote para uma edição de itens, lido DENTRO da transação com `FOR UPDATE`.
+     *
+     * A remoção precisa saber se o lote era automático (ADR-0050: a lixeira de um lote
+     * automático retém o título) e essa leitura tem de acontecer ANTES do `marcarManual`, que
+     * vira o flag para `false`. Travar a linha também fecha a janela em que o lote sai de
+     * RASCUNHO entre a checagem do serviço e a escrita. `null` = lote inexistente.
+     */
+    public lerEstadoParaEdicao = async (
+        loteId: string,
+        tx: TransactionClient,
+    ): Promise<{ status: LotePagamentoStatus; automatico: boolean } | null> => {
+        const row = await tx.selectFirst<{ status: LotePagamentoStatus; automatico: boolean }>(
+            `SELECT status, automatico FROM lote_pagamento
+             WHERE id = $loteId
+             FOR UPDATE`,
+            { loteId },
+        );
+        return row ? { status: row.status, automatico: row.automatico === true } : null;
+    };
+
+    /**
+     * Títulos já num lote RASCUNHO, com o lote e se ele é automático — o painel bloqueia a
+     * seleção (I3) e mostra/linka o lote na linha do título (ADR-0050).
+     */
     public listTitulosEmRascunho = async (
         tx?: TransactionClient,
-    ): Promise<Array<{ filCod: number; docCod: string; titCod: string }>> => {
+    ): Promise<
+        Array<{
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            loteId: string;
+            automatico: boolean;
+        }>
+    > => {
         const rows = (await this.db(tx).selectMany(
-            `SELECT i.fil_cod, i.doc_cod, i.tit_cod
+            `SELECT i.fil_cod, i.doc_cod, i.tit_cod, l.id AS lote_id, l.automatico
              FROM lote_pagamento_item i JOIN lote_pagamento l ON l.id = i.lote_id
              WHERE l.status = 'RASCUNHO'`,
-        )) as Array<{ fil_cod: number; doc_cod: string; tit_cod: string }>;
-        return rows.map((r) => ({ filCod: r.fil_cod, docCod: r.doc_cod, titCod: r.tit_cod }));
+        )) as Array<{
+            fil_cod: number;
+            doc_cod: string;
+            tit_cod: string;
+            lote_id: string;
+            automatico: boolean;
+        }>;
+        return rows.map((r) => ({
+            filCod: r.fil_cod,
+            docCod: r.doc_cod,
+            titCod: r.tit_cod,
+            loteId: r.lote_id,
+            automatico: r.automatico === true,
+        }));
     };
 
     /**
