@@ -9,6 +9,8 @@ import {
   DatabaseZap,
   Layers,
   Lock,
+  PauseCircle,
+  PlayCircle,
   RefreshCcw,
   Trash2,
 } from 'lucide-react'
@@ -47,6 +49,8 @@ import {
   formarLotes,
   incluirTitulo,
   IngestaoPagamentosEmAndamentoError,
+  liberarRetencao,
+  retirarDoLote,
   type PagamentoIngestaoRun,
   reabrirLote,
   ConciliacaoEmDuvidaError,
@@ -65,8 +69,14 @@ import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/componen
 import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
+import { RetencaoBadge } from './components/RetencaoBadge'
+import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
+import { paginaDoLote, rotuloLote } from './components/retencao'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
+
+/** Lotes candidatos por página na aba "Lotes candidatos" (o link da linha do título usa). */
+const LOTES_POR_PAGINA = 8
 
 const fmtData = (ms?: number) =>
   ms === undefined ? '—' : new Date(ms).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
@@ -166,6 +176,11 @@ function SispagPanel() {
   const [retornosLoading, setRetornosLoading] = React.useState(false)
   const [runs, setRuns] = React.useState<PagamentoIngestaoRun[] | null>(null)
   const [runsLoading, setRunsLoading] = React.useState(false)
+  // Abas controladas: o link do lote na linha do título (ADR-0050) troca de aba.
+  const [aba, setAba] = React.useState('titulos')
+  const [loteEmFoco, setLoteEmFoco] = React.useState<string | null>(null)
+  const [retirando, setRetirando] = React.useState<TituloAPagar | null>(null)
+  const [salvandoRetencao, setSalvandoRetencao] = React.useState(false)
 
   // Os lotes vêm de outro endpoint (`/sispag/lotes`) e podem falhar sozinhos. Falha NÃO vira
   // lista vazia: em 2026-09-23 o endpoint quebrou (coluna da 0061 ainda sem migrar) e a tela
@@ -197,6 +212,16 @@ function SispagPanel() {
       setLoading(false)
     }
   }, [recarregarLotes])
+
+  // Relê só o painel, sem o spinner de página inteira do `carregar` — a analista continua na
+  // aba em que estava depois de retirar/liberar um título.
+  const recarregarPainel = React.useCallback(async () => {
+    try {
+      setPainel(await fetchSispagPainel())
+    } catch {
+      /* mantém o painel anterior */
+    }
+  }, [])
 
   const carregarRuns = React.useCallback(async () => {
     setRunsLoading(true)
@@ -294,7 +319,77 @@ function SispagPanel() {
   const [adicionarLote, setAdicionarLote] = React.useState<LotePagamento | null>(null)
   const buscaLote = (l: LotePagamento) =>
     `${l.filCod} ${l.criadoPor} ${l.itens.map((i) => i.credor ?? '').join(' ')}`
-  const abaCandidatos = useTabelaFiltro(lotesRascunho, (l) => l.filCod, buscaLote, 8)
+  const abaCandidatos = useTabelaFiltro(
+    lotesRascunho,
+    (l) => l.filCod,
+    buscaLote,
+    LOTES_POR_PAGINA,
+  )
+
+  /** Link do lote na linha do título: abre a aba de candidatos na página do lote e o destaca. */
+  const irParaLote = (loteId: string) => {
+    const pagina = paginaDoLote(
+      lotesRascunho.map((l) => l.id),
+      loteId,
+      LOTES_POR_PAGINA,
+    )
+    if (pagina === null) {
+      toast.warning('Lote não encontrado na lista', {
+        description: 'A lista de lotes pode estar desatualizada. Clique em atualizar e tente de novo.',
+      })
+      return
+    }
+    abaCandidatos.setFilial('todas')
+    abaCandidatos.setBusca('')
+    abaCandidatos.setPagina(pagina)
+    setAba('lotes-candidatos')
+    setLoteEmFoco(loteId)
+  }
+
+  const trocarAba = (valor: string) => {
+    setAba(valor)
+    if (valor !== 'lotes-candidatos') setLoteEmFoco(null)
+  }
+
+  const chaveDe = (t: TituloAPagar) => ({ filCod: t.filCod, docCod: t.docCod, titCod: t.titCod })
+
+  const confirmarRetirada = async (motivo: string) => {
+    if (!retirando) return
+    setSalvandoRetencao(true)
+    try {
+      await retirarDoLote(chaveDe(retirando), motivo)
+      toast.success('Título retirado do lote', {
+        description: 'Ele não volta a entrar em lote automático até ser incluído à mão ou liberado.',
+      })
+      setRetirando(null)
+      await Promise.all([recarregarPainel(), recarregarLotes()])
+    } catch (e) {
+      if (isSessionExpiredError(e)) return
+      toast.error('Não foi possível retirar o título do lote', {
+        description: e instanceof Error ? e.message : undefined,
+      })
+    } finally {
+      setSalvandoRetencao(false)
+    }
+  }
+
+  const liberar = async (t: TituloAPagar) => {
+    setBusy(true)
+    try {
+      await liberarRetencao(chaveDe(t))
+      toast.success('Título liberado para lote automático', {
+        description: 'A próxima formação automática pode incluí-lo, se ele ainda for elegível.',
+      })
+      await recarregarPainel()
+    } catch (e) {
+      if (isSessionExpiredError(e)) return
+      toast.error('Não foi possível liberar o título', {
+        description: e instanceof Error ? e.message : undefined,
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
   const finFiltrados = lotesFinalizados.filter((l) =>
     statusFin === 'aguardando'
       ? l.status === 'FINALIZADO'
@@ -378,7 +473,8 @@ function SispagPanel() {
     setBusy(true)
     try {
       const resultado = await fn()
-      await recarregarLotes()
+      // O painel também muda: a linha do título mostra o lote e a retenção (ADR-0050).
+      await Promise.all([recarregarLotes(), recarregarPainel()])
       if (typeof okMsg === 'string') {
         toast.success(okMsg)
       } else {
@@ -541,6 +637,13 @@ function SispagPanel() {
         rodarIngestao={ingerir}
       />
 
+      <RetirarDoLoteDialog
+        titulo={retirando}
+        onClose={() => setRetirando(null)}
+        salvando={salvandoRetencao}
+        onConfirmar={(motivo) => void confirmarRetirada(motivo)}
+      />
+
       <AdicionarTituloDialog
         lote={adicionarLote}
         titulos={titulos}
@@ -653,7 +756,7 @@ function SispagPanel() {
             />
           </KPIGrid>
 
-          <Tabs defaultValue="titulos">
+          <Tabs value={aba} onValueChange={trocarAba}>
             <TabsList>
               <TabsTrigger value="titulos">Títulos a pagar</TabsTrigger>
               <TabsTrigger value="lotes-candidatos">
@@ -741,6 +844,9 @@ function SispagPanel() {
                         <TableHead>Boleto</TableHead>
                         <TableHead>Situação</TableHead>
                         <TableHead>Filial</TableHead>
+                        <TableHead>
+                          <span className="sr-only">Ações</span>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -759,7 +865,18 @@ function SispagPanel() {
                             <span className={t.emLote ? 'text-muted-foreground' : undefined}>
                               {t.credor ?? '—'}
                             </span>
-                            {t.emLote ? (
+                            {t.loteRascunho ? (
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="ml-2 h-auto p-0 text-xs"
+                                onClick={() => t.loteRascunho && irParaLote(t.loteRascunho.id)}
+                                title="Abrir o lote em que este título está."
+                              >
+                                <Layers className="size-3" aria-hidden />
+                                {rotuloLote(t.loteRascunho)}
+                              </Button>
+                            ) : t.emLote ? (
                               <Badge
                                 variant="outline"
                                 className="ml-2 border-muted text-muted-foreground"
@@ -812,6 +929,9 @@ function SispagPanel() {
                               ) : (
                                 <Badge variant="outline">bloqueado</Badge>
                               )}
+                              {t.retencaoFormacao ? (
+                                <RetencaoBadge retencao={t.retencaoFormacao} />
+                              ) : null}
                               {t.prontoParaRemessa === false ? (
                                 <Badge
                                   variant="outline"
@@ -824,6 +944,31 @@ function SispagPanel() {
                             </div>
                           </TableCell>
                           <TableCell className="text-muted-foreground">{t.filCod}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              {t.loteRascunho ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={busy || salvandoRetencao}
+                                  onClick={() => setRetirando(t)}
+                                >
+                                  <PauseCircle className="size-4" aria-hidden /> Retirar do lote
+                                </Button>
+                              ) : null}
+                              {t.retencaoFormacao ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={busy}
+                                  onClick={() => void liberar(t)}
+                                  title="Liberar para lote automático"
+                                >
+                                  <PlayCircle className="size-4" aria-hidden /> Liberar
+                                </Button>
+                              ) : null}
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -865,6 +1010,7 @@ function SispagPanel() {
                       busy={busy}
                       acao={acaoLote}
                       onAdicionar={setAdicionarLote}
+                      destacado={loteEmFoco === l.id}
                     />
                   ))}
                 </div>
