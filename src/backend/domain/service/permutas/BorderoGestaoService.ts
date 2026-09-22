@@ -456,17 +456,26 @@ export default class BorderoGestaoService {
     /**
      * REFRESH do cache de borderôs a partir do ERP — busca `fin010/list` (borVldTipo=2) de TODAS
      * as filiais e regrava `permuta_bordero`. Chamado pela ingestão e pelo botão "Atualizar".
+     *
+     * A leitura é best-effort POR FILIAL, e a lista de filiais efetivamente lidas segue junto para
+     * o `replaceBorderoCache`: só elas são limpas. Uma filial que falhou mantém o cache que tinha
+     * (stale) em vez de ficar vazia — stale é recuperável no próximo refresh, apagada não é.
      */
     public refreshCache = async (): Promise<void> => {
         const filiais = await this.conexosCadastroClient.listFiliais();
+        // Filiais cuja leitura FALHOU. Um `[]` devolvido por um erro do ERP é indistinguível de
+        // "esta filial não tem borderô" na hora de limpar o cache — e a limpeza apagaria todo o
+        // histórico da filial por causa de um 500. Quem falhou fica de fora do DELETE.
+        const filiaisComFalha = new Set<number>();
         const itensPorFilial = await Promise.all(
             filiais.map((f) =>
                 this.conexosBaixaClient
                     .listBorderos({ filCod: f.filCod, pageSize: 1000 })
                     .catch(async (err) => {
+                        filiaisComFalha.add(f.filCod);
                         await this.logService.warn({
                             type: LOG_TYPE.BUSINESS_WARN,
-                            message: 'falha ao listar borderôs do ERP (filial segue vazia)',
+                            message: 'falha ao listar borderôs do ERP (cache da filial preservado)',
                             data: {
                                 filCod: f.filCod,
                                 erro: err instanceof Error ? err.message : String(err),
@@ -499,10 +508,14 @@ export default class BorderoGestaoService {
                     this.conexosBaixaClient
                         .listBorderos({ filCod, borCods: [...borCods] })
                         .catch(async (err) => {
+                            // O resgate faltou → os borderôs da trilha desta filial NÃO estão em
+                            // `items`, e limpá-la agora apagaria justamente o que o resgate ia
+                            // recuperar. Trata como leitura falha.
+                            filiaisComFalha.add(filCod);
                             await this.logService.warn({
                                 type: LOG_TYPE.BUSINESS_WARN,
                                 message:
-                                    'falha ao resgatar borderôs da trilha p/ o cache (filial segue)',
+                                    'falha ao resgatar borderôs da trilha p/ o cache (cache da filial preservado)',
                                 data: {
                                     filCod,
                                     erro: err instanceof Error ? err.message : String(err),
@@ -529,6 +542,7 @@ export default class BorderoGestaoService {
                 ...(it.borDtaMvto !== undefined ? { borDtaMvto: it.borDtaMvto } : {}),
                 usnDesNomeCad: it.usnDesNomeCad ?? null,
             })),
+            filiais.map((f) => f.filCod).filter((filCod) => !filiaisComFalha.has(filCod)),
         );
     };
 

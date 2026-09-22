@@ -3,13 +3,24 @@ import type ConexosIdentityProvider from '../../client/ConexosIdentityProvider.j
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import PermutaExecucaoRepository from './PermutaExecucaoRepository.js';
 
-const buildDb = () =>
-    ({
+/**
+ * `withTransaction` roda a fn contra um `tx` que reaproveita os MESMOS mocks do pool — assim as
+ * asserções de SQL continuam lendo `db.update.mock.calls`, e uma escrita que escapar da transação
+ * fica indistinguível de uma que entrou. Por isso as asserções de transação olham para
+ * `db.withTransaction` explicitamente.
+ */
+const buildDb = () => {
+    const db = {
         insert: jest.fn().mockResolvedValue(1),
         update: jest.fn().mockResolvedValue(1),
         selectMany: jest.fn().mockResolvedValue([]),
         selectFirst: jest.fn().mockResolvedValue(null),
-    }) as unknown as jest.Mocked<PostgreeDatabaseClient>;
+    };
+    return {
+        ...db,
+        withTransaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) => fn(db)),
+    } as unknown as jest.Mocked<PostgreeDatabaseClient>;
+};
 
 /** Identidade Conexos ausente (fora de request) — o default dos testes de SQL. */
 const buildIdentity = () =>
@@ -338,9 +349,11 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
             '4117',
         );
         const sql = sqlOf(db.selectFirst as jest.Mock);
+        expect(sql).toContain('fil_cod = $filCod');
         expect(sql).toContain('bor_cod = $borCod');
         expect(sql).toContain('invoice_doc_cod = $invoiceDocCod');
         expect(paramsOf(db.selectFirst as jest.Mock)).toEqual({
+            filCod: 4,
             borCod: 2039,
             invoiceDocCod: '4117',
         });
@@ -349,13 +362,13 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
     it('deleteByBorCodInvoice: DELETE por par, retorna nº de linhas', async () => {
         const db = buildDb();
         const n = await new PermutaExecucaoRepository(db, buildIdentity()).deleteByBorCodInvoice(
-        expect(sql).toContain('fil_cod = $filCod');
+            4,
             2039,
             '4117',
         );
-            filCod: 4,
         const sql = sqlOf(db.update as jest.Mock);
         expect(sql).toContain('DELETE FROM permuta_alocacao_execucao');
+        expect(sql).toContain('fil_cod = $filCod');
         expect(sql).toContain('bor_cod = $borCod');
         expect(sql).toContain('invoice_doc_cod = $invoiceDocCod');
         expect(paramsOf(db.update as jest.Mock)).toEqual({
@@ -366,7 +379,6 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
         expect(n).toBe(1);
     });
 
-            4,
     it('listByBorCod: filtra por (fil_cod, bor_cod) — o nº do borderô é por filial', async () => {
         const db = buildDb();
         await new PermutaExecucaoRepository(db, buildIdentity()).listByBorCod(4, 2039);
@@ -374,7 +386,6 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
             'WHERE fil_cod = $filCod AND bor_cod = $borCod',
         );
         expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ filCod: 4, borCod: 2039 });
-        expect(sql).toContain('fil_cod = $filCod');
     });
 
     it('countByBorCod: count(*) → número (0 quando null)', async () => {
@@ -445,32 +456,100 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
     it('replaceBorderoCache: no-op com lista vazia; upsert + delete-dos-ausentes com itens', async () => {
         const db = buildDb();
         const repo = new PermutaExecucaoRepository(db, buildIdentity());
-        await repo.replaceBorderoCache([]);
+        await repo.replaceBorderoCache([], [1, 4]);
         expect(db.update as jest.Mock).not.toHaveBeenCalled(); // fetch vazio NÃO limpa o cache
-        await repo.replaceBorderoCache([
-            {
-                borCod: 1,
-                filCod: 4,
-                borVldFinalizado: 1,
-                borCodEstornado: null,
-                usnDesNomeCad: null,
-            },
-        ]);
+        await repo.replaceBorderoCache(
+            [
+                {
+                    borCod: 1,
+                    filCod: 4,
+                    borVldFinalizado: 1,
+                    borCodEstornado: null,
+                    usnDesNomeCad: null,
+                },
+            ],
+            [4],
+        );
         const calls = (db.update as jest.Mock).mock.calls;
         expect(calls[0][0]).toContain('INSERT INTO permuta_bordero');
         // chave por PAR (fil_cod, bor_cod) — nº do borderô é por filial.
         expect(calls[0][0]).toContain('ON CONFLICT (fil_cod, bor_cod) DO UPDATE');
-        expect(calls[1][0]).toContain(
-            'DELETE FROM permuta_bordero WHERE (fil_cod, bor_cod) NOT IN',
+        expect(calls[1][0].replace(/\s+/g, ' ')).toContain(
+            'DELETE FROM permuta_bordero WHERE fil_cod IN ($lida_0) AND (fil_cod, bor_cod) NOT IN',
         );
         expect(calls[0][1]).toMatchObject({ bor_0: 1, fil_0: 4, fin_0: 1 });
     });
 
+    it('replaceBorderoCache: o DELETE só alcança as filiais LIDAS — a que falhou fica intacta', async () => {
+        const db = buildDb();
+        // Filiais 1 e 4 existem; a leitura da 4 falhou no ERP, então ela NÃO entra em filiaisLidas
+        // e nenhum borderô dela aparece em `items`. Sem o escopo, o `NOT IN` dos pares apagaria
+        // TODO o cache da filial 4 — um 500 do ERP esvaziando a tela de borderôs.
+        await new PermutaExecucaoRepository(db, buildIdentity()).replaceBorderoCache(
+            [{ borCod: 10, filCod: 1, borCodEstornado: null }],
+            [1],
+        );
+        const [sql, params] = (db.update as jest.Mock).mock.calls[1];
+        const normalizado = (sql as string).replace(/\s+/g, ' ');
+        expect(normalizado).toContain('WHERE fil_cod IN ($lida_0)');
+        expect(normalizado).toContain('AND (fil_cod, bor_cod) NOT IN (($fil_0, $bor_0))');
+        expect(params).toMatchObject({ lida_0: 1, fil_0: 1, bor_0: 10 });
+        // Nada nomeia a filial 4: ela está fora do alcance do DELETE.
+        expect(Object.values(params as Record<string, unknown>)).not.toContain(4);
+    });
+
+    it('replaceBorderoCache: nenhuma filial lida (ERP todo fora) ⇒ nem upsert nem delete', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db, buildIdentity()).replaceBorderoCache(
+            [{ borCod: 10, filCod: 1, borCodEstornado: null }],
+            [],
+        );
+        expect(db.update as jest.Mock).not.toHaveBeenCalled();
+        expect(db.withTransaction as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it('replaceBorderoCache: upsert e delete na MESMA transação (o refresh não pode ser visto pela metade)', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db, buildIdentity()).replaceBorderoCache(
+            [{ borCod: 10, filCod: 1, borCodEstornado: null }],
+            [1],
+        );
+        expect(db.withTransaction as jest.Mock).toHaveBeenCalledTimes(1);
+        // As DUAS escritas saíram de dentro da transação — nenhuma sobrou solta no pool.
+        expect((db.update as jest.Mock).mock.calls).toHaveLength(2);
+    });
+
+    it('listFiliaisDaTrilha: DISTINCT fil_cod do número — a resolução que pode ser AMBÍGUA', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([{ fil_cod: 1 }, { fil_cod: 4 }]);
+        const filiais = await new PermutaExecucaoRepository(
+            db,
+            buildIdentity(),
+        ).listFiliaisDaTrilha(2436);
+        expect(filiais).toEqual([1, 4]);
+        const sql = sqlOf(db.selectMany as jest.Mock);
+        expect(sql).toContain('SELECT DISTINCT fil_cod');
+        expect(sql).toContain('bor_cod = $borCod');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ borCod: 2436 });
+    });
+
+    it('countByBorCod: conta SÓ na filial pedida (senão o casco vazio nunca é apagado)', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ n: '0' });
+        await new PermutaExecucaoRepository(db, buildIdentity()).countByBorCod(4, 2436);
+        expect(sqlOf(db.selectFirst as jest.Mock).replace(/\s+/g, ' ')).toContain(
+            'WHERE fil_cod = $filCod AND bor_cod = $borCod',
+        );
+        expect(paramsOf(db.selectFirst as jest.Mock)).toEqual({ filCod: 4, borCod: 2436 });
+    });
+
     it('replaceBorderoCache: renova atualizado_em SÓ quando a situação muda (guarda de frescor, ADR-0046)', async () => {
         const db = buildDb();
-        await new PermutaExecucaoRepository(db, buildIdentity()).replaceBorderoCache([
-            { borCod: 1, filCod: 4, borVldFinalizado: 1, borCodEstornado: null },
-        ]);
+        await new PermutaExecucaoRepository(db, buildIdentity()).replaceBorderoCache(
+            [{ borCod: 1, filCod: 4, borVldFinalizado: 1, borCodEstornado: null }],
+            [4],
+        );
         const sql = (db.update as jest.Mock).mock.calls[0][0] as string;
         const normalizado = sql.replace(/\s+/g, ' ');
         // Os campos crus seguem sempre atualizados...
