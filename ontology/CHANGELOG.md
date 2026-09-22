@@ -3,6 +3,24 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.28.1 — ADR-0050 implementada (2026-09-22)
+
+Feature: `sispag-reter-titulo-lote`. `reterTituloDaFormacao` e `retencao-formacao-automatica` (I8)
+passam de `planned` a `implemented`.
+
+- Migration `0062_titulo_retencao_formacao.sql`: tabela própria, soft-delete, índice único parcial
+  (uma ativa por título), `motivo` ≤ 500, remoção pareada com `motivo_remocao`
+  (`liberado` | `incluido-no-lote`), sem FK.
+- `listElegiveisParaFormacao` ganha o `NOT EXISTS` de I8.
+- `LotePagamentoService`: `retirarDoLote` e `liberarRetencao`; `removerTitulo` retém em lote
+  automático (`automatico` lido com `FOR UPDATE` antes do `marcarManual`); `incluirTitulo` libera
+  na mesma transação.
+- Painel projeta `loteRascunho { id, automatico }` e `retencaoFormacao`; UI com link do lote,
+  "Retirar do lote", badge "Não lotar automaticamente", "Liberar" e confirmação da lixeira em lote
+  automático.
+- **Coverage:** `actions_implemented` 20→21, `planned` 7→6, pct 71→75; `business_rules_implemented`
+  13→14, `planned` 10→9, `with_tests` 9→10; `TituloAPagar.impl_pct` 90→100.
+
 ## v0.28.0 — retirar título do lote e retê-lo da formação automática (2026-09-22, ADR-0050, aceita)
 
 Feature: `sispag-reter-titulo-lote` (branch `fix/sispag-reter-titulo-lote`). Vem depois da v0.27.0
