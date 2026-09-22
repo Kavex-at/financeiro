@@ -1,0 +1,13 @@
+-- 0061_lote_data_debito.sql
+-- ADR-0049 / invariante I8 (`business-rules/data-debito-remessa-sispag.md`).
+--
+-- A data de débito da remessa SISPAG deixa de ser "sempre hoje" e passa a ser escolhida pela
+-- analista. Ela congela quando o lote nativo do fin015 nasce (I8b): a coluna guarda a data que foi
+-- (write-ahead: que vai ser) enviada ao `criarLote` como `flpDtaCredito`.
+--
+-- DATE, e não TIMESTAMPTZ: é uma data civil, sem hora e sem fuso. Lida sempre com
+-- `to_char(data_debito, 'YYYY-MM-DD')` para não passar pelo parse DATE -> Date local do node-pg.
+--
+-- Aditiva, nullable, sem backfill: lotes anteriores ficam com NULL (o serviço trata esse caso como
+-- "lote legado" e não inventa um valor). Por isso não há reverse em `rollbacks/`.
+ALTER TABLE lote_pagamento ADD COLUMN IF NOT EXISTS data_debito DATE;

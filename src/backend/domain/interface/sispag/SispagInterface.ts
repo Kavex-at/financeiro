@@ -264,6 +264,12 @@ export interface LotePagamento {
     /** Conta corrente pagadora (fin005) e sua conta financeira (fin004). */
     ccoCod?: number;
     gerNum?: number;
+    /**
+     * Data de débito da remessa (`'YYYY-MM-DD'`, data civil) — I8, ADR-0049. Gravada ANTES do
+     * `criarLote` do fin015 e congelada a partir dele. Ausente = remessa ainda não pedida, ou
+     * lote legado (anterior à 0061).
+     */
+    dataDebito?: string;
     itens: ItemLote[];
 }
 
