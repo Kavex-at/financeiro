@@ -20,6 +20,7 @@ import ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoEx
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
+import RetencaoFormacaoRepository from '../../repository/sispag/RetencaoFormacaoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 
@@ -74,6 +75,8 @@ export default class SispagPainelService {
         private readonly conciliacaoLedger: ConciliacaoExecucaoRepository,
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
+        @inject(RetencaoFormacaoRepository)
+        private readonly retencaoRepo: RetencaoFormacaoRepository,
     ) {}
 
     public montarPainel = async (): Promise<SispagPainelResponse> => {
@@ -85,15 +88,27 @@ export default class SispagPainelService {
         const now = Date.now();
 
         // TÍTULOS: vêm da carteira PERSISTIDA (ingestão), não mais ao vivo do Conexos.
-        const [titulosRaw, ultimaRun, emRascunho] = await Promise.all([
+        const [titulosRaw, ultimaRun, emRascunho, retencoes] = await Promise.all([
             this.tituloRepo.listAtivos(),
             this.runRepo.findLatestSuccessFinishedAt(),
             this.loteRepo.listTitulosEmRascunho(),
+            this.retencaoRepo.listAtivas(),
         ]);
-        // Marca os títulos já num lote RASCUNHO — o painel bloqueia a seleção (I3, anti-reatache).
-        const emLote = new Set(emRascunho.map((t) => `${t.filCod}:${t.docCod}:${t.titCod}`));
+        // Marca os títulos já num lote RASCUNHO — o painel bloqueia a seleção (I3, anti-reatache)
+        // e a linha mostra/linka o lote (ADR-0050). A retenção ativa vira o badge "Não lotar
+        // automaticamente". Mapas por chave natural: O(n) sobre a carteira.
+        const chaveDe = (t: { filCod: number; docCod: string; titCod: string }): string =>
+            `${t.filCod}:${t.docCod}:${t.titCod}`;
+        const loteDe = new Map(
+            emRascunho.map((t) => [chaveDe(t), { id: t.loteId, automatico: t.automatico }]),
+        );
+        const retencaoDe = new Map(retencoes.map((r) => [chaveDe(r), r.retencao]));
         for (const t of titulosRaw) {
-            t.emLote = emLote.has(`${t.filCod}:${t.docCod}:${t.titCod}`);
+            const lote = loteDe.get(chaveDe(t));
+            t.emLote = lote !== undefined;
+            if (lote) t.loteRascunho = lote;
+            const retencao = retencaoDe.get(chaveDe(t));
+            if (retencao) t.retencaoFormacao = retencao;
         }
 
         // Contexto AO VIVO (lotes SISPAG nativos): fan-out LIMITADO (1 leitura/filial),
