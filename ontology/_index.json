@@ -1074,12 +1074,23 @@
     },
     "data-debito-remessa-sispag": {
       "file": "business-rules/data-debito-remessa-sispag.md",
-      "status": "planned",
-      "has_canonical_test": false,
+      "status": "implemented",
+      "has_canonical_test": true,
       "impl_files": [
+        "src/backend/domain/libs/calendar/BankingCalendar.ts",
+        "src/backend/domain/service/sispag/DebitDateService.ts",
         "src/backend/domain/service/sispag/RemessaService.ts",
-        "src/backend/domain/client/ConexosSispagWriteClient.ts",
-        "src/backend/domain/repository/sispag/LotePagamentoRepository.ts"
+        "src/backend/domain/errors/DebitDateOutsideWindowError.ts",
+        "src/backend/domain/errors/DebitDateFrozenError.ts",
+        "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
+        "src/backend/migrations/0061_lote_data_debito.sql",
+        "src/backend/routes/sispag.ts",
+        "src/frontend/app/sispag/components/GerarRemessaDialog.tsx"
+      ],
+      "canonical_tests": [
+        "src/backend/domain/libs/calendar/BankingCalendar.test.ts",
+        "src/backend/domain/service/sispag/DebitDateService.test.ts",
+        "src/backend/domain/service/sispag/RemessaService.test.ts"
       ],
       "decided_by": [
         "ADR-0049"

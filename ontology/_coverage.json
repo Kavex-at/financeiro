@@ -22,9 +22,9 @@
     "actions_planned": 6,
     "actions_coverage_pct": 74,
     "business_rules_total": 23,
-    "business_rules_implemented": 13,
-    "business_rules_planned": 10,
-    "business_rules_with_tests": 9,
+    "business_rules_implemented": 14,
+    "business_rules_planned": 9,
+    "business_rules_with_tests": 10,
     "business_rules_retired": 1,
     "state_machines_total": 5,
     "state_machines_partial": 1,
@@ -447,9 +447,10 @@
     },
     "data-debito-remessa-sispag": {
       "invariant": "I8",
-      "status": "planned",
-      "has_test": false,
-      "note": "ADR-0049 — janela [hoje BRT, min(itsDtaPgto)] ∩ dias úteis bancários; congelada após criarLote. Reverte A5."
+      "status": "implemented",
+      "has_test": true,
+      "note": "ADR-0049 — janela [hoje BRT, min(itsDtaPgto)] ∩ dias úteis bancários; congelada após criarLote. Reverte A5. Implementada na branch fix/sispag-data-pagamento (BankingCalendar, DebitDateService, RemessaService, migration 0061, diálogo Gerar remessa). 'implemented' = existe e passa nos gates; a prova ao vivo em HML (Task 11) é roteiro de QA manual no PR, ainda não executada.",
+      "open_gap": "verificação ao vivo em HML (D+1 útil finaliza no fin015; data > menor vencimento recusada por nós; retry reusa a data) pendente — roteiro no PR"
     }
   },
   "health_flags": {
