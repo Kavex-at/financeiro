@@ -44,4 +44,14 @@ export default interface Invoice {
      * distribuição cai no `valorMoedaNegociada`). Read-only.
      */
     valorAbertoNegociado?: number;
+    /**
+     * `true` quando a leitura do EM ABERTO vivo (`getDetalheTitulos`) **falhou** — o teto não foi
+     * verificado nesta run, e a distribuição está usando o fallback `valorMoedaNegociada`.
+     *
+     * Distinto de `valorAbertoNegociado === undefined` sem esta marca, que significa "o ERP
+     * respondeu, e o em-aberto/taxa simplesmente não existem para este título". As duas situações
+     * levam ao mesmo fallback, mas só uma é uma FALHA — e quem lê o resultado (operador, log,
+     * revisão de rateio) precisa poder distinguir "o teto é o negociado" de "não sabemos o teto".
+     */
+    valorAbertoNaoVerificado?: boolean;
 }
