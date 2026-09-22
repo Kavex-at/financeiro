@@ -13,6 +13,7 @@ import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
+import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
@@ -418,6 +419,39 @@ const conciliarSchema = z.object({
     dryRun: z.coerce.boolean().optional(),
 });
 
+/**
+ * Data civil `AAAA-MM-DD` que existe no calendário (recusa 2026-02-30). Checagem de forma só:
+ * janela e dia útil são regra de domínio e ficam no `DebitDateService`.
+ */
+const civilDateSchema = z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine((s) => {
+        const d = new Date(`${s}T00:00:00Z`);
+        return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+    }, 'data inexistente');
+
+/**
+ * Só `dataDebito` é validado aqui. `dryRun`/`confirmarNovoLote` seguem com a leitura estrita
+ * `=== true` de antes (passthrough): mudar o contrato deles não é escopo da ADR-0049.
+ */
+const gerarRemessaSchema = z.object({ dataDebito: civilDateSchema.optional() }).passthrough();
+
+// GET /sispag/lotes/:id/remessa/janela — janela permitida da data de débito (I8). Leitura.
+// Mesma autenticação das outras leituras de lote. Não consulta o ERP: usa o snapshot do lote.
+router.get(
+    '/lotes/:id/remessa/janela',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(DebitDateService);
+        try {
+            res.json(await service.getWindow(String(req.params.id)));
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
 // POST /sispag/lotes/:id/remessa — gera a remessa .REM do lote FINALIZADO. admin.
 // Honra `Idempotency-Key`; sem ele a chave é derivada do lote (duas tentativas colidem
 // de propósito — é o que impede duas remessas para o mesmo lote).
@@ -427,11 +461,20 @@ router.post(
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
+        const parsed = gerarRemessaSchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
         const service = container.resolve(RemessaService);
         try {
             const result = await service.gerarRemessa({
                 loteId: String(req.params.id),
                 ator: ator(req),
+                // I8 (ADR-0049): ausente = o serviço usa o primeiro dia útil da janela.
+                ...(parsed.data.dataDebito !== undefined
+                    ? { dataDebito: parsed.data.dataDebito }
+                    : {}),
                 ...(req.header('Idempotency-Key')
                     ? { idempotencyKey: req.header('Idempotency-Key') as string }
                     : {}),

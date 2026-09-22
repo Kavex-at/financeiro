@@ -11,12 +11,16 @@ jest.mock('../domain/appContainer.js', () => ({
 }));
 
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
+import DebitDateFrozenError from '../domain/errors/DebitDateFrozenError.js';
+import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindowError.js';
 import ErpPerguntaError from '../domain/errors/ErpPerguntaError.js';
+import LoteEstadoInvalidoError from '../domain/errors/LoteEstadoInvalidoError.js';
 import RemessaEmDuvidaError from '../domain/errors/RemessaEmDuvidaError.js';
 import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
 import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
+import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
@@ -502,6 +506,152 @@ describe('POST /sispag/lotes/:id/remessa', () => {
         await comApp({ role: 'viewer' }, async (url) => {
             const res = await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' });
             expect(res.status).toBe(403);
+        });
+    });
+
+    describe('dataDebito (I8, ADR-0049)', () => {
+        const post = (url: string, body: unknown) =>
+            fetch(`${url}/sispag/lotes/L1/remessa`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+        it('repassa a data junto com confirmarNovoLote e dryRun', async () => {
+            const gerarRemessa = jest.fn().mockResolvedValue({ status: 'gerada' });
+            container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+            await comApp({}, async (url) => {
+                const res = await post(url, {
+                    dataDebito: '2026-09-23',
+                    confirmarNovoLote: true,
+                    dryRun: true,
+                });
+                expect(res.status).toBe(200);
+                expect(gerarRemessa).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        dataDebito: '2026-09-23',
+                        confirmarNovoLote: true,
+                        dryRunOverride: true,
+                    }),
+                );
+            });
+        });
+
+        it('sem data: não inventa uma (o serviço usa o default da janela)', async () => {
+            const gerarRemessa = jest.fn().mockResolvedValue({ status: 'gerada' });
+            container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+            await comApp({}, async (url) => {
+                await post(url, {});
+                expect(gerarRemessa.mock.calls[0]?.[0]).not.toHaveProperty('dataDebito');
+            });
+        });
+
+        it.each([
+            '22/09/2026',
+            '2026-02-30',
+            '2026-9-22',
+            20260922,
+        ])('%s → 400 e o serviço não é chamado', async (dataDebito) => {
+            const gerarRemessa = jest.fn();
+            container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+            await comApp({}, async (url) => {
+                const res = await post(url, { dataDebito });
+                expect(res.status).toBe(400);
+                expect(gerarRemessa).not.toHaveBeenCalled();
+            });
+        });
+
+        it('fora da janela → 422 DATA_DEBITO_FORA_DA_JANELA com details', async () => {
+            const gerarRemessa = jest.fn().mockRejectedValue(
+                new DebitDateOutsideWindowError({
+                    motivo: 'depois_do_vencimento',
+                    dataDebito: '2026-09-30',
+                    min: '2026-09-22',
+                    max: '2026-09-29',
+                }),
+            );
+            container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+            await comApp({}, async (url) => {
+                const res = await post(url, { dataDebito: '2026-09-30' });
+                expect(res.status).toBe(422);
+                const body = await readJson(res);
+                expect(body).toMatchObject({
+                    code: 'DATA_DEBITO_FORA_DA_JANELA',
+                    details: { motivo: 'depois_do_vencimento', max: '2026-09-29' },
+                });
+            });
+        });
+
+        it('data congelada → 409 DATA_DEBITO_CONGELADA com details', async () => {
+            const gerarRemessa = jest.fn().mockRejectedValue(
+                new DebitDateFrozenError({
+                    motivo: 'diferente',
+                    dataCongelada: '2026-09-23',
+                    nativeFlpCod: 41,
+                }),
+            );
+            container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+            await comApp({}, async (url) => {
+                const res = await post(url, { dataDebito: '2026-09-24' });
+                expect(res.status).toBe(409);
+                const body = await readJson(res);
+                expect(body).toMatchObject({
+                    code: 'DATA_DEBITO_CONGELADA',
+                    details: { dataCongelada: '2026-09-23', nativeFlpCod: 41 },
+                });
+            });
+        });
+    });
+});
+
+describe('GET /sispag/lotes/:id/remessa/janela', () => {
+    it('200 com a janela calculada pelo DebitDateService', async () => {
+        const janela = {
+            hoje: '2026-09-22',
+            min: '2026-09-22',
+            max: '2026-09-25',
+            sugerida: '2026-09-22',
+            amanha: '2026-09-23',
+            naoUteis: [],
+        };
+        const getWindow = jest.fn().mockResolvedValue(janela);
+        container.registerInstance(DebitDateService, { getWindow } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa/janela`);
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toEqual(janela);
+            expect(getWindow).toHaveBeenCalledWith('L1');
+        });
+    });
+
+    it('lote fora de FINALIZADO → 409 pelo respondLoteError', async () => {
+        const getWindow = jest.fn().mockRejectedValue(
+            new LoteEstadoInvalidoError({
+                loteId: 'L1',
+                statusAtual: 'RASCUNHO',
+                acao: 'gerar remessa',
+            }),
+        );
+        container.registerInstance(DebitDateService, { getWindow } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa/janela`);
+            expect(res.status).toBe(409);
+            expect(await readJson(res)).toMatchObject({ code: 'LOTE_ESTADO_INVALIDO' });
+        });
+    });
+
+    it('exige autenticação, como as outras leituras de lote', async () => {
+        container.registerInstance(DebitDateService, { getWindow: jest.fn() } as never);
+        await comApp({ authenticated: false }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa/janela`);
+            expect(res.status).toBe(401);
         });
     });
 });
