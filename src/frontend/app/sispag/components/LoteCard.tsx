@@ -31,8 +31,7 @@ import {
   fetchModalidadesDisponiveis,
   fetchContasPagadoras,
   finalizarLote,
-  type GerarRemessaResult,
-  gerarRemessa,
+  formatCivilDate,
   type LotePagamento,
   marcarRetorno,
   type Modalidade,
@@ -43,6 +42,7 @@ import {
 } from '@/lib/sispag'
 import { baixarBlob } from '@/lib/download'
 import { formatBRL } from '@/lib/utils'
+import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
 
 const fmtData = (ms?: number) =>
   ms != null ? new Date(ms).toLocaleDateString('pt-BR') : '—'
@@ -85,13 +85,6 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
   )
 }
 
-type Acao = (
-  // Recebe `opts` para que a própria ação possa ser repetida COM confirmação — é assim
-  // que o toast do lote cancelado reexecuta exatamente a mesma chamada, só que aprovada.
-  fn: (opts?: { confirmarNovoLote?: boolean }) => Promise<unknown>,
-  okMsg: string | ((resultado: unknown) => { titulo: string; descricao?: string }),
-) => void
-
 /** Card de lote (colapsável): resumo sempre visível; os títulos expandem sob demanda. */
 export function LoteCard({
   lote: l,
@@ -105,6 +98,8 @@ export function LoteCard({
   onAdicionar?: (lote: LotePagamento) => void
 }) {
   const [aberto, setAberto] = React.useState(false)
+  // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
+  const [gerandoRemessa, setGerandoRemessa] = React.useState(false)
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
@@ -209,6 +204,7 @@ export function LoteCard({
           <CardTitle className="text-sm font-medium">
             Filial {l.filCod} · {l.itens.length} título(s) · {formatBRL(total)}
             {l.conta ? ` · paga por ${l.banco ?? ''} ${l.conta}`.trimEnd() : ''}
+            {l.dataDebito ? ` · débito em ${formatCivilDate(l.dataDebito)}` : ''}
           </CardTitle>
         </button>
         <div className="flex shrink-0 flex-wrap gap-1">
@@ -252,34 +248,20 @@ export function LoteCard({
               <Button
                 size="sm"
                 disabled={busy}
-                title="Cria o lote no Conexos, importa os títulos, finaliza e gera o arquivo .REM."
-                onClick={() =>
-                  acao((o) => gerarRemessa(l.id, o), (r) => {
-                    const res = r as GerarRemessaResult
-                    if (res.status === 'dry-run') {
-                      return {
-                        titulo: 'Simulação (dry-run) — NADA foi criado no Conexos',
-                        descricao:
-                          'A escrita está desligada (CONEXOS_DRY_RUN). Nenhum lote nem arquivo existe no ERP.',
-                      }
-                    }
-                    if (res.status === 'skipped') {
-                      return {
-                        titulo: 'Remessa já existia — nada foi gerado de novo',
-                        descricao: `Lote nativo ${res.nativeFlpCod ?? '—'} no Conexos.`,
-                      }
-                    }
-                    return {
-                      titulo: `Remessa ${res.arquivo ?? ''} gerada`,
-                      // Sem isto, quem gerou não sabe ONDE procurar no ERP — foi o que
-                      // aconteceu no primeiro teste: sucesso na tela, e ninguém achava o lote.
-                      descricao: `Lote nativo ${res.nativeFlpCod} · filial ${l.filCod} · remessa nº ${res.numRemessa ?? '—'}`,
-                    }
-                  })
-                }
+                title="Escolha a data de débito; depois cria o lote no Conexos, importa os títulos, finaliza e gera o arquivo .REM."
+                onClick={() => setGerandoRemessa(true)}
               >
                 <FileText className="size-4" /> Gerar remessa (.REM)
               </Button>
+              {gerandoRemessa ? (
+                <GerarRemessaDialog
+                  lote={l}
+                  open
+                  onOpenChange={setGerandoRemessa}
+                  busy={busy}
+                  acao={acao}
+                />
+              ) : null}
               <Button
                 size="sm"
                 variant="outline"
