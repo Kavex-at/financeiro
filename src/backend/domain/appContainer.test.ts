@@ -66,6 +66,78 @@ describe('bootstrapAppContainer — migration wiring (P0-1)', () => {
     });
 });
 
+/**
+ * O flag antigo (`bootstrapped = true` na ÚLTIMA linha) não protegia contra
+ * concorrência: duas primeiras chamadas simultâneas — dois requests no primeiro
+ * segundo da instância, ou o `listen()` junto de um cron — achavam `false` e
+ * rodavam o bootstrap inteiro em paralelo, incluindo dois
+ * `MigrationRunner.run()`. Guardar a PROMESSA em voo é o que fecha a janela.
+ */
+describe('bootstrapAppContainer — memoização da promessa', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        jest.clearAllMocks();
+        getEnvironmentVars.mockResolvedValue({ environment: 'production' });
+        buildLegacyConexosAdapter.mockResolvedValue({});
+        dbInit.mockResolvedValue(undefined);
+        migrationRun.mockResolvedValue([]);
+    });
+
+    it('duas chamadas CONCORRENTES executam o bootstrap uma única vez', async () => {
+        let liberar: () => void = () => {};
+        const emVoo = new Promise<void>((resolve) => {
+            liberar = resolve;
+        });
+        migrationRun.mockImplementation(async () => {
+            await emVoo;
+            return [];
+        });
+
+        const { bootstrapAppContainer } = await import('./appContainer.js');
+        const a = bootstrapAppContainer();
+        const b = bootstrapAppContainer();
+        liberar();
+        await Promise.all([a, b]);
+
+        expect(migrationRun).toHaveBeenCalledTimes(1);
+        expect(dbInit).toHaveBeenCalledTimes(1);
+    });
+
+    it('chamada posterior à conclusão é no-op', async () => {
+        const { bootstrapAppContainer } = await import('./appContainer.js');
+        await bootstrapAppContainer();
+        await bootstrapAppContainer();
+
+        expect(migrationRun).toHaveBeenCalledTimes(1);
+    });
+
+    it('bootstrap que FALHA não fica cacheado — a chamada seguinte tenta de novo', async () => {
+        migrationRun.mockRejectedValueOnce(new Error('relation does not exist'));
+        const { bootstrapAppContainer } = await import('./appContainer.js');
+
+        await expect(bootstrapAppContainer()).rejects.toThrow('relation does not exist');
+        await expect(bootstrapAppContainer()).resolves.toBeUndefined();
+        expect(migrationRun).toHaveBeenCalledTimes(2);
+    });
+
+    /**
+     * Regressão do gotcha do `bootstrapAppContainer` (CLAUDE.md): os ~58 jobs o
+     * chamam com env deliberadamente ESTREITO — o `detect-staleness` passa só
+     * `databaseConnectionString`. A memoização não pode ter introduzido nenhuma
+     * dependência de configuração completa (nenhum `CONEXOS_*` aqui).
+     */
+    it('job com env estreito (só databaseConnectionString) ainda sobe', async () => {
+        getEnvironmentVars.mockResolvedValue({
+            databaseConnectionString: 'postgresql://localhost:5432/financeiro',
+        });
+
+        const { bootstrapAppContainer } = await import('./appContainer.js');
+
+        await expect(bootstrapAppContainer()).resolves.toBeUndefined();
+        expect(migrationRun).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('diagnosticarConfiguracao — auto-suficiência (regressão do boot local)', () => {
     it('registra os sinks sozinha: o start() do servidor não chama bootstrapAppContainer', async () => {
         // Pegou-se isto rodando de verdade, não nos testes: o boot logava
