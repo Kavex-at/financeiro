@@ -96,12 +96,15 @@ export default class BorderoGestaoService {
     /**
      * Exclui UMA baixa específica de um borderô EM CADASTRO (antes de aprovar) — Fase 3.1.
      * Gated pela escrita (CONEXOS_WRITE_ENABLED). Exclui no ERP (`fin010/baixas/...`) e remove
-     * a linha da nossa trilha. `bxaCodSeq`/`filCod` vêm da trilha (não confia no cliente).
+     * a linha da nossa trilha. `bxaCodSeq` vem da trilha e o `filCod` é resolvido/conferido por
+     * `requireOwnBorderoFilCod` (não confia no cliente).
      */
     public excluirBaixa = async (params: {
         borCod: number;
         invoiceDocCod: string;
         executadoPor: string;
+        /** Desempata o nº do borderô quando a trilha o conhece em mais de uma filial. */
+        filCod?: number;
     }): Promise<{
         borCod: number;
         invoiceDocCod: string;
@@ -109,11 +112,13 @@ export default class BorderoGestaoService {
         borderoExcluido: boolean;
     }> => {
         const { borCod, invoiceDocCod, executadoPor } = params;
-        const env = await this.environmentProvider.getEnvironmentVars();
-        if (!env.conexosWriteEnabled) {
-            throw new Error('escrita no Conexos desabilitada (CONEXOS_WRITE_ENABLED=false)');
-        }
-        const row = await this.execucaoRepository.findByBorCodInvoice(borCod, invoiceDocCod);
+        await this.assertWriteEnabled();
+        const filCod = await this.requireOwnBorderoFilCod(borCod, params.filCod);
+        const row = await this.execucaoRepository.findByBorCodInvoice(
+            filCod,
+            borCod,
+            invoiceDocCod,
+        );
         if (!row)
             throw new Error(
                 `baixa não encontrada na trilha: borderô ${borCod} / invoice ${invoiceDocCod}`,
@@ -131,13 +136,13 @@ export default class BorderoGestaoService {
             titCod: 1,
             bxaCodSeq: row.bxaCodSeq,
         });
-        await this.execucaoRepository.deleteByBorCodInvoice(borCod, invoiceDocCod);
+        await this.execucaoRepository.deleteByBorCodInvoice(row.filCod, borCod, invoiceDocCod);
 
         // Se foi a ÚLTIMA baixa, o borderô fica vazio → tenta apagar o borderô no ERP também.
         // BEST-EFFORT: a baixa já foi removida (ação principal); uma falha aqui NÃO derruba a
         // operação — apenas loga e segue (o borderô some da nossa lista de qualquer forma).
         let borderoExcluido = false;
-        if ((await this.execucaoRepository.countByBorCod(borCod)) === 0) {
+        if ((await this.execucaoRepository.countByBorCod(row.filCod, borCod)) === 0) {
             try {
                 await this.conexosBaixaClient.excluirBordero({ filCod: row.filCod, borCod });
                 borderoExcluido = true;
@@ -174,10 +179,12 @@ export default class BorderoGestaoService {
     public excluirBordero = async (params: {
         borCod: number;
         executadoPor: string;
+        /** Desempata o nº do borderô quando a trilha o conhece em mais de uma filial. */
+        filCod?: number;
     }): Promise<{ borCod: number; excluido: boolean; baixasExcluidas: number }> => {
         const { borCod, executadoPor } = params;
         await this.assertWriteEnabled();
-        const filCod = await this.requireOwnBorderoFilCod(borCod);
+        const filCod = await this.requireOwnBorderoFilCod(borCod, params.filCod);
 
         // O estado (em cadastro/finalizado) é validado pela LISTA no front (fonte confiável) e,
         // em última instância, pelo próprio ERP (que recusa excluir baixa de borderô finalizado —
@@ -198,7 +205,8 @@ export default class BorderoGestaoService {
             });
         }
         await this.conexosBaixaClient.excluirBordero({ filCod, borCod });
-        await this.execucaoRepository.deleteByBorCod(borCod); // limpa a trilha (no-op se não houver)
+        // Escopado por filial: o nº do borderô é por filial, e este é o DELETE da trilha.
+        await this.execucaoRepository.deleteByBorCod(filCod, borCod); // no-op se não houver
         await this.execucaoRepository.deleteBorderoCache(filCod, borCod); // some do cache na hora
 
         await this.logService.info({
@@ -216,8 +224,10 @@ export default class BorderoGestaoService {
     public finalizarBordero = async (params: {
         borCod: number;
         executadoPor: string;
+        /** Desempata o nº do borderô quando a trilha o conhece em mais de uma filial. */
+        filCod?: number;
     }): Promise<{ borCod: number; finalizado: boolean }> => {
-        const filCod = await this.guardAcaoBordero(params.borCod);
+        const filCod = await this.guardAcaoBordero(params.borCod, params.filCod);
         await this.assertBorderoTemItens(filCod, params.borCod);
         await this.conexosBaixaClient.finalizarBordero({ filCod, borCod: params.borCod });
         // Reflete no cache na hora (sem esperar o próximo refresh).
@@ -238,8 +248,10 @@ export default class BorderoGestaoService {
     public cancelarBordero = async (params: {
         borCod: number;
         executadoPor: string;
+        /** Desempata o nº do borderô quando a trilha o conhece em mais de uma filial. */
+        filCod?: number;
     }): Promise<{ borCod: number; cancelado: boolean }> => {
-        const filCod = await this.guardAcaoBordero(params.borCod);
+        const filCod = await this.guardAcaoBordero(params.borCod, params.filCod);
         await this.conexosBaixaClient.cancelarBordero({ filCod, borCod: params.borCod });
         await this.execucaoRepository.updateBorderoCacheSituacao(filCod, params.borCod, {
             borVldFinalizado: 2,
@@ -259,8 +271,10 @@ export default class BorderoGestaoService {
     public estornarBordero = async (params: {
         borCod: number;
         executadoPor: string;
+        /** Desempata o nº do borderô quando a trilha o conhece em mais de uma filial. */
+        filCod?: number;
     }): Promise<{ borCod: number; estornado: boolean }> => {
-        const filCod = await this.guardEstornoBordero(params.borCod);
+        const filCod = await this.guardEstornoBordero(params.borCod, params.filCod);
         await this.conexosBaixaClient.estornarBordero({ filCod, borCod: params.borCod });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -297,19 +311,45 @@ export default class BorderoGestaoService {
 
     /**
      * AUTORIZAÇÃO server-side (Regis-Review P0 security — confused-deputy): só age sobre borderôs
-     * CRIADOS POR ESTE SISTEMA (presentes na trilha `permuta_alocacao_execucao`). O `filCod` vem da
-     * TRILHA — nunca do request — então um admin (ou JWT roubado) NÃO consegue mexer em borderô de
-     * terceiro via API passando um filCod arbitrário. Lança erro `FORBIDDEN:` (→ 403 no route).
+     * CRIADOS POR ESTE SISTEMA (presentes na trilha `permuta_alocacao_execucao`). O `filCod` é
+     * SEMPRE conferido contra a TRILHA: um `filCod` vindo do request só é aceito se a trilha
+     * conhecer aquele par (filial, borderô), então um admin (ou JWT roubado) NÃO consegue mexer
+     * em borderô de terceiro passando um filCod arbitrário. Lança `FORBIDDEN:` (→ 403 no route).
+     *
+     * Ele existe porque a rota recebe só o NÚMERO do borderô, que é sequencial POR FILIAL: a
+     * resolução número → filial pode ser ambígua, e nesse caso a ação PARA em vez de chutar.
      */
-    private requireOwnBorderoFilCod = async (borCod: number): Promise<number> => {
-        const baixas = await this.execucaoRepository.listByBorCod(borCod);
-        const filCod = baixas[0]?.filCod;
-        if (filCod === undefined) {
+    private requireOwnBorderoFilCod = async (
+        borCod: number,
+        filCodInformado?: number,
+    ): Promise<number> => {
+        const filiais = await this.execucaoRepository.listFiliaisDaTrilha(borCod);
+        if (filiais.length === 0) {
             throw new Error(
                 `FORBIDDEN: borderô ${borCod} não foi criado por este sistema — ação não permitida`,
             );
         }
-        return filCod;
+        if (filCodInformado !== undefined) {
+            if (!filiais.includes(filCodInformado)) {
+                throw new Error(
+                    `FORBIDDEN: borderô ${borCod} da filial ${filCodInformado} não foi criado ` +
+                        'por este sistema — ação não permitida',
+                );
+            }
+            return filCodInformado;
+        }
+        const [unica, ...demais] = filiais;
+        if (demais.length > 0 || unica === undefined) {
+            // Não escolhemos por conta própria: o `bor_cod` é sequencial POR FILIAL, então dois
+            // borderôs DIFERENTES compartilham este número, e agir no palpite errado escreve no
+            // borderô de outra filial. Antes daqui a resolução era `baixas[0].filCod` — a linha
+            // mais antiga da trilha, sem relação com o que o analista clicou.
+            throw new Error(
+                `Borderô ${borCod} existe na trilha em mais de uma filial (${filiais.join(', ')}) ` +
+                    '— informe a filial (`filCod`) para identificar qual deles.',
+            );
+        }
+        return unica;
     };
 
     /**
@@ -317,12 +357,12 @@ export default class BorderoGestaoService {
      * + filCod da trilha. O ESTADO (em cadastro/finalizado) é validado pela LISTA no front e pelo
      * próprio ERP (recusa transições inválidas com mensagem clara, traduzida no route).
      */
-    private guardAcaoBordero = (borCod: number): Promise<number> =>
-        this.assertWriteEnabled().then(() => this.requireOwnBorderoFilCod(borCod));
+    private guardAcaoBordero = (borCod: number, filCod?: number): Promise<number> =>
+        this.assertWriteEnabled().then(() => this.requireOwnBorderoFilCod(borCod, filCod));
 
     /** Guard do estorno — idêntico (o ERP recusa estornar o que não está finalizado). */
-    private guardEstornoBordero = (borCod: number): Promise<number> =>
-        this.guardAcaoBordero(borCod);
+    private guardEstornoBordero = (borCod: number, filCod?: number): Promise<number> =>
+        this.guardAcaoBordero(borCod, filCod);
 
     /**
      * Lista os borderôs de permuta a partir do CACHE local (`permuta_bordero`) — rápido, sem bater

@@ -714,6 +714,18 @@ router.get(
     }),
 );
 
+/**
+ * `?filCod=` opcional das ações de borderô. O nº do borderô é sequencial POR FILIAL, então o
+ * número sozinho pode casar com dois borderôs diferentes; quando isso acontece o serviço RECUSA
+ * a ação e pede a filial. O valor é apenas um desempate: o serviço ainda confere o par
+ * (filial, borderô) contra a trilha antes de agir (`requireOwnBorderoFilCod`).
+ */
+const filCodDaQuery = (raw: unknown): number | undefined => {
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const filCod = Number(raw);
+    return Number.isFinite(filCod) ? filCod : undefined;
+};
+
 // POST /permutas/borderos/:borCod/finalizar — finaliza/aprova o borderô no ERP (admin, gated).
 router.post(
     '/borderos/:borCod/finalizar',
@@ -729,7 +741,14 @@ router.post(
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(await service.finalizarBordero({ borCod, executadoPor }));
+            const filCod = filCodDaQuery(req.query.filCod);
+            res.json(
+                await service.finalizarBordero({
+                    borCod,
+                    executadoPor,
+                    ...(filCod !== undefined ? { filCod } : {}),
+                }),
+            );
         } catch (err) {
             await respondActionError(res, err, {
                 requestId: req.requestId,
@@ -756,7 +775,14 @@ router.post(
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(await service.cancelarBordero({ borCod, executadoPor }));
+            const filCod = filCodDaQuery(req.query.filCod);
+            res.json(
+                await service.cancelarBordero({
+                    borCod,
+                    executadoPor,
+                    ...(filCod !== undefined ? { filCod } : {}),
+                }),
+            );
         } catch (err) {
             await respondActionError(res, err, {
                 requestId: req.requestId,
@@ -783,7 +809,14 @@ router.post(
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(await service.estornarBordero({ borCod, executadoPor }));
+            const filCod = filCodDaQuery(req.query.filCod);
+            res.json(
+                await service.estornarBordero({
+                    borCod,
+                    executadoPor,
+                    ...(filCod !== undefined ? { filCod } : {}),
+                }),
+            );
         } catch (err) {
             await respondActionError(res, err, {
                 requestId: req.requestId,
@@ -810,7 +843,14 @@ router.delete(
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(await service.excluirBordero({ borCod, executadoPor }));
+            const filCod = filCodDaQuery(req.query.filCod);
+            res.json(
+                await service.excluirBordero({
+                    borCod,
+                    executadoPor,
+                    ...(filCod !== undefined ? { filCod } : {}),
+                }),
+            );
         } catch (err) {
             await respondActionError(res, err, {
                 requestId: req.requestId,
@@ -839,7 +879,15 @@ router.delete(
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(await service.excluirBaixa({ borCod, invoiceDocCod, executadoPor }));
+            const filCod = filCodDaQuery(req.query.filCod);
+            res.json(
+                await service.excluirBaixa({
+                    borCod,
+                    invoiceDocCod,
+                    executadoPor,
+                    ...(filCod !== undefined ? { filCod } : {}),
+                }),
+            );
         } catch (err) {
             await respondActionError(res, err, {
                 requestId: req.requestId,

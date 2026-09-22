@@ -210,8 +210,32 @@ export default class PermutaExecucaoRepository {
         });
     };
 
-    /** Busca a execução (baixa) de um borderô por invoice — p/ exclusão da baixa específica. */
+    /**
+     * Filiais em que a trilha conhece ESTE número de borderô — a consulta de DESCOBERTA.
+     *
+     * `bor_cod` é sequencial POR FILIAL: o mesmo número existe em filiais diferentes ao mesmo
+     * tempo (medido 2026-09-11: bor 2436 na filial 1, bor 2771 na filial 4). As rotas de ação
+     * recebem só o número, então alguém precisa resolver a filial — e essa resolução pode ser
+     * AMBÍGUA. Devolver a lista (em vez de "a" filial) é o que deixa a ambiguidade visível para
+     * quem chama decidir, em vez de escolher a primeira linha em silêncio.
+     */
+    public listFiliaisDaTrilha = async (borCod: number): Promise<number[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT DISTINCT fil_cod
+             FROM permuta_alocacao_execucao
+             WHERE bor_cod = $borCod
+             ORDER BY fil_cod`,
+            { borCod },
+        );
+        return rows.map((r) => Number(r.fil_cod));
+    };
+
+    /**
+     * Busca a execução (baixa) de um borderô por invoice — p/ exclusão da baixa específica.
+     * ESCOPADO POR FILIAL: ver `listFiliaisDaTrilha` (o nº do borderô é por filial).
+     */
     public findByBorCodInvoice = async (
+        filCod: number,
         borCod: number,
         invoiceDocCod: string,
     ): Promise<ExecucaoRow | null> => {
@@ -220,53 +244,70 @@ export default class PermutaExecucaoRepository {
                     bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, valor_residual_usd,
                     erp_response, erro_mensagem, executado_por, criado_em, atualizado_em
              FROM permuta_alocacao_execucao
-             WHERE bor_cod = $borCod AND invoice_doc_cod = $invoiceDocCod
+             WHERE fil_cod = $filCod AND bor_cod = $borCod AND invoice_doc_cod = $invoiceDocCod
              LIMIT 1`,
-            { borCod, invoiceDocCod },
+            { filCod, borCod, invoiceDocCod },
         );
         return row ? this.mapRow(row) : null;
     };
 
-    /** Remove a linha de execução de uma baixa (após excluí-la no ERP). */
+    /**
+     * Remove a linha de execução de uma baixa (após excluí-la no ERP).
+     * ESCOPADO POR FILIAL: ver `listFiliaisDaTrilha`.
+     */
     public deleteByBorCodInvoice = async (
+        filCod: number,
         borCod: number,
         invoiceDocCod: string,
     ): Promise<number> => {
         return this.databaseClient.update(
             `DELETE FROM permuta_alocacao_execucao
-             WHERE bor_cod = $borCod AND invoice_doc_cod = $invoiceDocCod`,
-            { borCod, invoiceDocCod },
+             WHERE fil_cod = $filCod AND bor_cod = $borCod AND invoice_doc_cod = $invoiceDocCod`,
+            { filCod, borCod, invoiceDocCod },
         );
     };
 
-    /** Todas as baixas (linhas) de um borderô — p/ excluir o borderô inteiro. */
-    public listByBorCod = async (borCod: number): Promise<ExecucaoRow[]> => {
+    /**
+     * Todas as baixas (linhas) de um borderô — p/ excluir o borderô inteiro.
+     * ESCOPADO POR FILIAL: ver `listFiliaisDaTrilha`.
+     */
+    public listByBorCod = async (filCod: number, borCod: number): Promise<ExecucaoRow[]> => {
         const rows = await this.databaseClient.selectMany(
             `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
                     bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, valor_residual_usd,
                     erp_response, erro_mensagem, executado_por, criado_em, atualizado_em
              FROM permuta_alocacao_execucao
-             WHERE bor_cod = $borCod
+             WHERE fil_cod = $filCod AND bor_cod = $borCod
              ORDER BY criado_em`,
-            { borCod },
+            { filCod, borCod },
         );
         return rows.map((r) => this.mapRow(r));
     };
 
-    /** Quantas baixas o borderô ainda tem na trilha (0 ⇒ borderô vazio → apagar). */
-    public countByBorCod = async (borCod: number): Promise<number> => {
+    /**
+     * Quantas baixas o borderô ainda tem na trilha (0 ⇒ borderô vazio → apagar).
+     * ESCOPADO POR FILIAL: ver `listFiliaisDaTrilha`. Sem a filial, a contagem somaria as baixas
+     * do borderô homônimo de OUTRA filial e o casco vazio nunca seria apagado.
+     */
+    public countByBorCod = async (filCod: number, borCod: number): Promise<number> => {
         const row = await this.databaseClient.selectFirst<{ n: string | number }>(
-            `SELECT count(*) AS n FROM permuta_alocacao_execucao WHERE bor_cod = $borCod`,
-            { borCod },
+            `SELECT count(*) AS n FROM permuta_alocacao_execucao
+              WHERE fil_cod = $filCod AND bor_cod = $borCod`,
+            { filCod, borCod },
         );
         return row ? Number(row.n) : 0;
     };
 
-    /** Remove todas as linhas de um borderô (após excluir o borderô no ERP). */
-    public deleteByBorCod = async (borCod: number): Promise<number> => {
+    /**
+     * Remove todas as linhas de um borderô (após excluir o borderô no ERP).
+     * ESCOPADO POR FILIAL: ver `listFiliaisDaTrilha`. Este é o DELETE — sem a filial ele apagava
+     * a trilha inteira do borderô homônimo de outra filial, cujo borderô segue VIVO no ERP.
+     */
+    public deleteByBorCod = async (filCod: number, borCod: number): Promise<number> => {
         return this.databaseClient.update(
-            `DELETE FROM permuta_alocacao_execucao WHERE bor_cod = $borCod`,
-            { borCod },
+            `DELETE FROM permuta_alocacao_execucao
+              WHERE fil_cod = $filCod AND bor_cod = $borCod`,
+            { filCod, borCod },
         );
     };
 
@@ -282,8 +323,9 @@ export default class PermutaExecucaoRepository {
      * ESCOPADO POR FILIAL de propósito: o `bor_cod` é sequencial POR FILIAL, então o mesmo número
      * existe em filiais diferentes ao mesmo tempo (medido: bor 2436 na filial 1 e bor 2771 na
      * filial 4). Limpar só por número apagaria o ponteiro de uma execução de OUTRA filial cujo
-     * borderô está vivo. (As irmãs `listByBorCod`/`countByBorCod`/`deleteByBorCod` ainda filtram
-     * só pelo número — dívida anterior a esta mudança, registrada em `_inbox/`.)
+     * borderô está vivo. As irmãs `listByBorCod`/`countByBorCod`/`deleteByBorCod`/
+     * `findByBorCodInvoice`/`deleteByBorCodInvoice` seguem o MESMO escopo desde 2026-09-22; a
+     * resolução do número → filial é `listFiliaisDaTrilha`.
      */
     public clearBorCod = async (filCod: number, borCod: number): Promise<number> => {
         return this.databaseClient.update(

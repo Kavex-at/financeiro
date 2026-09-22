@@ -42,6 +42,8 @@ const build = (getBorderoImpl: jest.Mock) => {
         deleteByBorCodInvoice: jest.fn().mockResolvedValue(1),
         countByBorCod: jest.fn().mockResolvedValue(1),
         listByBorCod: jest.fn(),
+        // Resolução nº do borderô → filial. Default: a trilha conhece 14707/etc. só na filial 2.
+        listFiliaisDaTrilha: jest.fn().mockResolvedValue([2]),
         deleteByBorCod: jest.fn().mockResolvedValue(1),
         listBorderoCache: jest.fn().mockResolvedValue([]),
         replaceBorderoCache: jest.fn().mockResolvedValue(undefined),
@@ -401,7 +403,11 @@ describe('BorderoGestaoService', () => {
                 titCod: 1,
                 bxaCodSeq: 1,
             });
-            expect(execucaoRepository.deleteByBorCodInvoice).toHaveBeenCalledWith(14707, '18780');
+            expect(execucaoRepository.deleteByBorCodInvoice).toHaveBeenCalledWith(
+                2,
+                14707,
+                '18780',
+            );
             expect(out).toMatchObject({ excluido: true });
         });
 
@@ -443,8 +449,8 @@ describe('BorderoGestaoService', () => {
             const { service, conexosClient, execucaoRepository } = build(
                 jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
             );
-            // filCod vem da TRILHA (autorização server-side), não do request.
-            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14707, filCod: 2 })]);
+            // filCod vem da TRILHA (autorização server-side); o do request só desempata.
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([2]);
             conexosClient.listBaixas.mockResolvedValue([
                 { filCod: 2, docCod: 18779, titCod: 1, bxaCodSeq: 1 },
                 { filCod: 2, docCod: 18780, titCod: 1, bxaCodSeq: 1 },
@@ -454,13 +460,15 @@ describe('BorderoGestaoService', () => {
 
             expect(conexosClient.excluirBaixa).toHaveBeenCalledTimes(2);
             expect(conexosClient.excluirBordero).toHaveBeenCalledWith({ filCod: 2, borCod: 14707 });
-            expect(execucaoRepository.deleteByBorCod).toHaveBeenCalledWith(14707);
+            // ESCOPADO POR FILIAL: sem o 2 este DELETE levaria junto a trilha do borderô
+            // homônimo de outra filial, que segue VIVO no ERP.
+            expect(execucaoRepository.deleteByBorCod).toHaveBeenCalledWith(2, 14707);
             expect(out).toMatchObject({ excluido: true, baixasExcluidas: 2 });
         });
 
         it('AUTORIZAÇÃO: borderô FORA da trilha (de terceiro) → FORBIDDEN, nada é escrito', async () => {
             const { service, conexosClient, execucaoRepository } = build(jest.fn());
-            execucaoRepository.listByBorCod.mockResolvedValue([]); // sem trilha → não é nosso
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([]); // sem trilha → não é nosso
 
             await expect(
                 service.excluirBordero({ borCod: 14709, executadoPor: 'admin' }),
@@ -471,7 +479,7 @@ describe('BorderoGestaoService', () => {
 
         it('AUTORIZAÇÃO: finalizar borderô de terceiro → FORBIDDEN', async () => {
             const { service, conexosClient, execucaoRepository } = build(jest.fn());
-            execucaoRepository.listByBorCod.mockResolvedValue([]); // sem trilha
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([]); // sem trilha
 
             await expect(
                 service.finalizarBordero({ borCod: 14709, executadoPor: 'admin' }),
@@ -483,7 +491,7 @@ describe('BorderoGestaoService', () => {
             const { service, conexosClient, execucaoRepository } = build(
                 jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
             );
-            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14707, filCod: 2 })]);
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([2]);
             conexosClient.listBaixas.mockResolvedValue([{ docCod: 18779, bxaCodSeq: 1 }]);
 
             const out = await service.finalizarBordero({ borCod: 14707, executadoPor: 'yuri' });
@@ -501,7 +509,7 @@ describe('BorderoGestaoService', () => {
             const { service, conexosClient, execucaoRepository } = build(
                 jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
             );
-            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 18538, filCod: 2 })]);
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([2]);
             conexosClient.listBaixas.mockResolvedValue([]); // casco vazio
 
             await expect(
@@ -516,9 +524,7 @@ describe('BorderoGestaoService', () => {
             const { service, conexosClient, execucaoRepository } = build(
                 jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
             );
-            execucaoRepository.listByBorCod.mockResolvedValue([
-                row({ borCod: 18538, filCod: 2, status: 'error', bxaCodSeq: undefined }),
-            ]);
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([2]);
             conexosClient.listBaixas.mockResolvedValue([]);
 
             await expect(
@@ -531,7 +537,7 @@ describe('BorderoGestaoService', () => {
             const { service, conexosClient, execucaoRepository } = build(
                 jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
             );
-            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14707, filCod: 2 })]);
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([2]);
 
             const out = await service.cancelarBordero({ borCod: 14707, executadoPor: 'yuri' });
 
@@ -546,7 +552,7 @@ describe('BorderoGestaoService', () => {
             const { service, conexosClient, execucaoRepository } = build(
                 jest.fn().mockResolvedValue({ borVldFinalizado: 1, borCodEstornado: null }),
             );
-            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14708, filCod: 2 })]);
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([2]);
 
             const out = await service.estornarBordero({ borCod: 14708, executadoPor: 'yuri' });
 
@@ -579,3 +585,57 @@ describe('BorderoGestaoService', () => {
         });
     });
 });
+        // bor_cod é sequencial POR FILIAL (medido: 2436 na filial 1, 2771 na filial 4). Quando a
+        // trilha conhece o MESMO número em duas filiais, a rota (que recebe só o número) não
+        // identifica o borderô — e agir no palpite errado escreve na filial errada.
+        it('AMBIGUIDADE: nº presente em 2 filiais e sem filCod → recusa, nada é escrito', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([1, 4]);
+
+            await expect(
+                service.finalizarBordero({ borCod: 2436, executadoPor: 'yuri' }),
+            ).rejects.toThrow(/mais de uma filial/i);
+            expect(conexosClient.finalizarBordero).not.toHaveBeenCalled();
+        });
+
+        it('AMBIGUIDADE: com filCod informado, age SÓ na filial pedida', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([1, 4]);
+            conexosClient.listBaixas.mockResolvedValue([{ docCod: 18779, bxaCodSeq: 1 }]);
+
+            await service.finalizarBordero({ borCod: 2436, filCod: 4, executadoPor: 'yuri' });
+
+            expect(conexosClient.finalizarBordero).toHaveBeenCalledWith({
+                filCod: 4,
+                borCod: 2436,
+            });
+        });
+
+        it('AUTORIZAÇÃO: filCod informado FORA da trilha → FORBIDDEN (não vira filial arbitrária)', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([1, 4]);
+
+            await expect(
+                service.finalizarBordero({ borCod: 2436, filCod: 7, executadoPor: 'admin' }),
+            ).rejects.toThrow(/FORBIDDEN/);
+            expect(conexosClient.finalizarBordero).not.toHaveBeenCalled();
+        });
+
+        it('excluirBaixa: lê e apaga a trilha ESCOPADAS pela filial resolvida', async () => {
+            const { service, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listFiliaisDaTrilha.mockResolvedValue([4]);
+            execucaoRepository.findByBorCodInvoice.mockResolvedValue(
+                row({ borCod: 2436, invoiceDocCod: '18780', filCod: 4, bxaCodSeq: 1 }),
+            );
+
+            await service.excluirBaixa({
+                borCod: 2436,
+                invoiceDocCod: '18780',
+                executadoPor: 'yuri',
+            });
+
+            expect(execucaoRepository.findByBorCodInvoice).toHaveBeenCalledWith(4, 2436, '18780');
+            expect(execucaoRepository.countByBorCod).toHaveBeenCalledWith(4, 2436);
+            expect(execucaoRepository.deleteByBorCodInvoice).toHaveBeenCalledWith(4, 2436, '18780');
+        });
+
