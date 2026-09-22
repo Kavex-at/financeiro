@@ -2,15 +2,17 @@
 name: retencao-formacao-automatica
 type: business-rule
 entity: TituloAPagar
-ontology_version: "0.28"
-implementation_status: planned
+ontology_version: "0.28.1"
+implementation_status: implemented
 invariant: I8
 related_files:
+  - src/backend/migrations/0062_titulo_retencao_formacao.sql
+  - src/backend/domain/repository/sispag/RetencaoFormacaoRepository.ts
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/service/sispag/FormacaoLotesService.ts
   - src/backend/domain/service/sispag/LotePagamentoService.ts
 last_review: 2026-09-22
-has_canonical_test: false
+has_canonical_test: true
 ---
 
 # Regra: retencao-formacao-automatica (título retido não entra em lote automático)
@@ -55,7 +57,13 @@ pelo usuário em 2026-09-22 (P1-2 em `_inbox/sispag-retirar-titulo-lote-gap.md`)
   sobreviver a qualquer re-ingestão ou rebuild da carteira (ADR-0050 D1).
 - Não toca o ERP (I1).
 
-## Teste canônico (a escrever no TDD)
+## Teste canônico
+
+`TituloAPagarRepository.test.ts` (termo I8 no SQL) e `LotePagamentoService.test.ts`
+(bloco "retenção da formação automática"). A re-ingestão não toca a tabela por construção: o UPSERT
+escreve só em `titulo_a_pagar`.
+
+Casos cobertos:
 
 - Título elegível e sem retenção → entra no lote automático.
 - Mesmo título com retenção ativa → fica fora; a rodada não falha e os demais títulos da filial são

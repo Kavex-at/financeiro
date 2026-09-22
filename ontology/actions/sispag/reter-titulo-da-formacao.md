@@ -2,11 +2,13 @@
 name: reterTituloDaFormacao
 type: action
 entity: TituloAPagar
-ontology_version: "0.28"
-implementation_status: planned
-status: draft
+ontology_version: "0.28.1"
+implementation_status: implemented
+status: stable
 owners: [yuri]
 related_files:
+  - src/backend/migrations/0062_titulo_retencao_formacao.sql
+  - src/backend/domain/repository/sispag/RetencaoFormacaoRepository.ts
   - src/backend/domain/service/sispag/LotePagamentoService.ts
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/service/sispag/SispagPainelService.ts
@@ -42,7 +44,9 @@ side_effects:
 | lixeira no lote | card do lote, **só quando o lote é automático** | remoção + retenção, atômico (P1-1) |
 | `liberar` | linha do título retido (badge "Não lotar automaticamente") | retenção liberada, `motivoRemocao = 'liberado'` |
 
-As rotas concretas ficam com o TaskScoper. A `DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod`
+Rotas (v0.28.1): `POST /sispag/titulos/:filCod/:docCod/:titCod/retirar-do-lote` (corpo
+`{ motivo? }`, até 500) e `DELETE /sispag/titulos/:filCod/:docCod/:titCod/retencao`. Admin, autor do
+JWT, 401 sem identidade. A `DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod`
 existente passa a reter quando o lote é **automático** (P1-1, respondida em 2026-09-22). O serviço lê
 `automatico` antes de `marcarManual` virar o lote para manual, na mesma transação; ler depois daria
 sempre `false`. Num lote manual, a remoção continua sem reter.
