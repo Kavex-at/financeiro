@@ -169,6 +169,38 @@ describe('ConexosNdeFiscalClient — (c) com194 + (poll) com297', () => {
         expect(s.vldTpNf).toBe('10'); // normalizado p/ string
         expect(getGeneric).toHaveBeenCalledWith('com297/18337', { filCod: 2 });
     });
+
+    it('campo null do com297 vira undefined — "não sei" deixa de virar 0', async () => {
+        // `z.coerce.number()` fazia `Number(null) === 0`, e nestes campos o 0 é um valor de
+        // domínio com significado próprio: `docVldNfehom: 0` é NAO_HOMOLOGADO (estado real,
+        // medido), `vldStatus: 0` não existe na máquina {1,2,3}, e `docMnyValor === 0` dispara
+        // um BUSINESS_WARN afirmando um fato financeiro sobre uma NDe já emitida.
+        const getGeneric = jest.fn().mockResolvedValue({
+            vldAutorizado: null,
+            docVldNfehom: null,
+            vldStatus: null,
+            docMnyValor: null,
+        });
+        const client = new ConexosNdeFiscalClient(buildBase({ getGeneric }));
+        const s = await client.lerDocParaPolling({ filCod: 2, docCod: 18337 });
+
+        expect(s.vldAutorizado).toBeUndefined();
+        expect(s.docVldNfehom).toBeUndefined();
+        expect(s.vldStatus).toBeUndefined();
+        expect(s.docMnyValor).toBeUndefined();
+        // Os guards que o serviço realmente escreve:
+        expect(s.docMnyValor === 0).toBe(false);
+        expect(s.vldAutorizado !== undefined).toBe(false);
+    });
+
+    it('o ZERO de verdade continua passando — 0 medido é um fato', async () => {
+        const getGeneric = jest.fn().mockResolvedValue({ vldAutorizado: 0, docMnyValor: 0 });
+        const client = new ConexosNdeFiscalClient(buildBase({ getGeneric }));
+        const s = await client.lerDocParaPolling({ filCod: 2, docCod: 18337 });
+
+        expect(s.vldAutorizado).toBe(0);
+        expect(s.docMnyValor).toBe(0);
+    });
 });
 
 describe('ConexosNdeFiscalClient — (d) com297 comDocProdutos (itens da NDe)', () => {

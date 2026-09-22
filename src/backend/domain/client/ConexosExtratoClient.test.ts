@@ -205,6 +205,56 @@ describe('ConexosExtratoClient.listLancamentos', () => {
         expect(lancamentos[0].exiCodSeq).toBe('128');
     });
 
+    it('linha com exiVldTipo null é DESCARTADA — não vira débito silencioso', async () => {
+        // `z.coerce.number()` fazia `Number(null) === 0`, e `0 !== EXI_VLD_TIPO.CREDITO` classifica
+        // como DÉBITO. Um crédito bancário reclassificado some da fila de conciliação — e some
+        // calado, porque 0 é um tipo plausível. Agora a linha não tem semântica e cai no descarte
+        // que o schema sempre prometeu ("nunca coalescida para zero").
+        const { legacy, client } = build();
+        legacy.listGenericPaginated.mockResolvedValue({
+            count: 2,
+            rows: [linhaCredito(), linhaCredito({ exiCodSeq: 555, exiVldTipo: null })],
+        });
+
+        const lancamentos = await client.listLancamentos({
+            filCod: 1,
+            gerNum: 38,
+            de: new Date(0),
+            ate: new Date(),
+        });
+
+        expect(lancamentos).toHaveLength(1);
+        expect(lancamentos.map((l) => l.exiCodSeq)).not.toContain('555');
+    });
+
+    it('linha com exiDtaLcto null é DESCARTADA — não vira 1970-01-01 no extrato', async () => {
+        const { legacy, client } = build();
+        legacy.listGenericPaginated.mockResolvedValue({
+            count: 2,
+            rows: [linhaCredito(), linhaCredito({ exiCodSeq: 556, exiDtaLcto: null })],
+        });
+
+        const lancamentos = await client.listLancamentos({
+            filCod: 1,
+            gerNum: 38,
+            de: new Date(0),
+            ate: new Date(),
+        });
+
+        expect(lancamentos.map((l) => l.exiCodSeq)).not.toContain('556');
+        expect(lancamentos.map((l) => l.dataLancamento?.getUTCFullYear())).not.toContain(1970);
+    });
+
+    it('conta com gerNum null é descartada — não vira a conta financeira 0', async () => {
+        const { legacy, client } = build();
+        legacy.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [{ gerNum: null, gerDes: 'CONTA SEM CHAVE' }],
+        });
+
+        await expect(client.listContas(1)).resolves.toEqual([]);
+    });
+
     it('lança ExtratoTruncadoError quando o paginate bate no teto de páginas', async () => {
         const { base, client } = build();
         // Simular 50 páginas cheias seria caríssimo — dispara o onCapHit direto.

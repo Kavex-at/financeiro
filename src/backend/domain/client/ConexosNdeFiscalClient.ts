@@ -1,5 +1,6 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
+import WireNumber from '../libs/zod/WireNumber.js';
 import ConexosError from '../errors/ConexosError.js';
 import {
     COM194_TIPOS_ERRO,
@@ -75,7 +76,9 @@ const DOC_FISCAL_SCHEMA = z
         docTip: z.coerce.number().int(),
         docCod: z.coerce.number().int(),
         fisCod: z.coerce.number().int(),
-        fisVldTipoNfDebito: z.coerce.number().int(),
+        // Eco de um PUT: se o ERP não devolveu o campo, a conferência do eco não pode inventar
+        // um `0` e reportar `eco=0` como se fosse o valor gravado. Sem ele, a linha é recusada.
+        fisVldTipoNfDebito: WireNumber.intRequired,
     })
     .passthrough();
 
@@ -88,16 +91,33 @@ const OBSERVACOES_SCHEMA = z
     })
     .passthrough();
 
-/** Boundary do poll com297 — todos opcionais/coeridos (só lemos status). */
+/**
+ * Boundary do poll com297 — só lemos status, mas "não sei" precisa sobreviver até o chamador.
+ *
+ * Os campos usam `WireNumber` e não `z.coerce.number()` porque um `null` do com297 virava **0**,
+ * e nestes quatro o `0` é um valor de domínio com significado próprio:
+ *   - `docVldNfehom: 0` é `NAO_HOMOLOGADO` — um estado REAL, medido (NDe 18771). Coagir null para
+ *     ele faz `RecebimentoNumerarioService` reprovar a homologação de uma NDe possivelmente
+ *     homologada, e torna inalcançável o ramo `?? 'ausente'` da própria mensagem de erro.
+ *   - `vldStatus: 0` não existe: a máquina medida é {1 ABERTO, 2 HOMOLOGADO, 3 AUTORIZADO}.
+ *     Fabricar 0 é registrar em log um estado que o ERP não tem.
+ *   - `vldAutorizado`: o consumidor escreve `vldAutorizado !== undefined && vldAutorizado !== 0`
+ *     — ele JÁ distingue "não respondeu" de "não autorizou". A coerção derrotava esse guard.
+ *   - `docMnyValor: 0` dispara um `BUSINESS_WARN` afirmando um fato financeiro sobre uma NDe
+ *     emitida. Um null nunca disse isso.
+ *
+ * `docVldConferencia`/`vldEnviarConferencia` ficam em `intOptional` por consistência, mas ali o
+ * teste é `=== 1`: para eles `0` e ausente sempre levaram ao mesmo ramo.
+ */
 const DOC_STATUS_SCHEMA = z
     .object({
-        vldAutorizado: z.coerce.number().int().optional(),
-        docVldNfehom: z.coerce.number().int().optional(),
-        vldStatus: z.coerce.number().int().optional(),
+        vldAutorizado: WireNumber.intOptional,
+        docVldNfehom: WireNumber.intOptional,
+        vldStatus: WireNumber.intOptional,
         vldTpNf: z.union([z.string(), z.number()]).optional(),
-        docVldConferencia: z.coerce.number().int().optional(),
-        vldEnviarConferencia: z.coerce.number().int().optional(),
-        docMnyValor: z.coerce.number().optional(),
+        docVldConferencia: WireNumber.intOptional,
+        vldEnviarConferencia: WireNumber.intOptional,
+        docMnyValor: WireNumber.optional,
         docEspNumero: z.union([z.string(), z.number()]).optional(),
     })
     .passthrough();

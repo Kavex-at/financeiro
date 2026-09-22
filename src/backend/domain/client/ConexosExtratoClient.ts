@@ -2,6 +2,7 @@ import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import ExtratoTruncadoError from '../errors/ExtratoTruncadoError.js';
 import Logger from '../libs/logger/Logger.js';
+import WireNumber from '../libs/zod/WireNumber.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
 /**
@@ -24,15 +25,12 @@ import ConexosBaseClient from './ConexosBaseClient.js';
 /**
  * Coerção tolerante (aceita string numérica; senão `undefined`).
  *
- * O `preprocess` é obrigatório: `z.coerce.number()` converte `null` em **0**, e o
- * `fin095` manda `exiMnyLctoCr: null` na maioria das linhas. Sem isso, o
- * `exiMnyLctoCr ?? exiMnyLcto` do mapper pegaria o zero e descartaria o
- * lançamento inteiro como "sem valor".
+ * Este arquivo foi o primeiro a precisar disto — `z.coerce.number()` converte `null` em **0**, e o
+ * `fin095` manda `exiMnyLctoCr: null` na maioria das linhas; sem o preprocess, o
+ * `exiMnyLctoCr ?? exiMnyLcto` do mapper pegava o zero e descartava o lançamento inteiro como
+ * "sem valor". O remédio virou `WireNumber`, para não depender de cada autor redescobrir.
  */
-const numOpt = z.preprocess(
-    (v) => (v === null || v === '' ? undefined : v),
-    z.coerce.number().optional().catch(undefined),
-);
+const numOpt = WireNumber.optional;
 const strOpt = z
     .union([z.string(), z.number()])
     .transform((v) => String(v))
@@ -47,7 +45,7 @@ const wireId = z.union([z.number(), z.string()]).transform((v) => String(v));
  */
 const contaRowSchema = z
     .object({
-        gerNum: z.coerce.number().int(),
+        gerNum: WireNumber.intRequired,
         gerDes: strOpt,
         bncCod: strOpt,
         bncDesNome: strOpt,
@@ -68,8 +66,8 @@ const lancamentoRowSchema = z
     .object({
         extCod: wireId,
         exiCodSeq: wireId,
-        exiDtaLcto: z.coerce.number(),
-        exiVldTipo: z.coerce.number().int(),
+        exiDtaLcto: WireNumber.required,
+        exiVldTipo: WireNumber.intRequired,
         exiMnyLcto: numOpt,
         exiMnyLctoCr: numOpt,
         exiMnyLctoDeb: numOpt,
