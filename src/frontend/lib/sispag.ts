@@ -36,6 +36,31 @@ export interface TituloAPagar {
   ativo?: boolean
   /** Já está num lote RASCUNHO — não pode ser atachado a outro (bloqueia a seleção). */
   emLote?: boolean
+  /** O lote RASCUNHO em que o título está (ADR-0050) — a linha mostra e linka o lote. */
+  loteRascunho?: LoteRascunhoRef
+  /** Retenção ativa da formação automática (ADR-0050): o cron não lota este título. */
+  retencaoFormacao?: RetencaoFormacao
+}
+
+/** Referência ao lote RASCUNHO que contém um título. */
+export interface LoteRascunhoRef {
+  id: string
+  automatico: boolean
+}
+
+/** Retenção de um título da formação automática (ADR-0050, I8). */
+export interface RetencaoFormacao {
+  marcadoPor: string
+  /** ISO-8601. */
+  marcadoEm: string
+  motivo?: string
+}
+
+/** Chave natural de um título a pagar. */
+export interface ChaveTitulo {
+  filCod: number
+  docCod: string
+  titCod: string
 }
 
 export interface LoteSispag {
@@ -262,6 +287,37 @@ export const removerItem = (
     `/sispag/lotes/${loteId}/itens/${input.filCod}/${encodeURIComponent(input.docCod)}/${encodeURIComponent(input.titCod)}`,
     { method: 'DELETE' },
   )
+
+const rotaTitulo = (c: ChaveTitulo) =>
+  `/sispag/titulos/${c.filCod}/${encodeURIComponent(c.docCod)}/${encodeURIComponent(c.titCod)}`
+
+/**
+ * "Retirar do lote" (ADR-0050): tira o título do lote RASCUNHO em que está e o retém da
+ * formação automática, numa transação no backend. Motivo em branco não é enviado.
+ */
+export const retirarDoLote = (chave: ChaveTitulo, motivo?: string) => {
+  const m = motivo?.trim()
+  return loteRequest(`${rotaTitulo(chave)}/retirar-do-lote`, {
+    method: 'POST',
+    body: JSON.stringify(m ? { motivo: m } : {}),
+  })
+}
+
+/** "Liberar" (ADR-0050): encerra a retenção; o título volta ao pool da formação automática. */
+export async function liberarRetencao(chave: ChaveTitulo): Promise<void> {
+  const res = await apiFetch(`${API}${rotaTitulo(chave)}/retencao`, {
+    method: 'DELETE',
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) {
+    let msg = `API ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+}
 
 export const finalizarLote = (loteId: string, versao: number) =>
   loteRequest(`/sispag/lotes/${loteId}/finalizar`, {
