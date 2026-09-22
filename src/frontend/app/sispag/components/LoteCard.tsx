@@ -306,11 +306,10 @@ export function LoteCard({
               title={`Arquivo ${l.remessaArquivo} (remessa nº ${l.remessaNum ?? '—'}), lote nativo ${l.nativeFlpCod ?? '—'}`}
               onClick={() =>
                 acao(async () => {
-                  const { nome, conteudo } = await baixarRemessa(l.id)
-                  // Blob local: o arquivo já veio do ERP, só entregamos ao navegador.
-                  const url = URL.createObjectURL(
-                    new Blob([conteudo], { type: 'text/plain;charset=latin1' }),
-                  )
+                  const { nome, arquivo } = await baixarRemessa(l.id)
+                  // Os bytes do ERP vão direto ao navegador — sem string no meio, que
+                  // reencodaria em UTF-8 e quebraria as colunas fixas do CNAB.
+                  const url = URL.createObjectURL(arquivo)
                   const a = document.createElement('a')
                   a.href = url
                   a.download = nome
