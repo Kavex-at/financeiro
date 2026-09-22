@@ -6,6 +6,8 @@ import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider
 import type { LoteSispag, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
+import type RetencaoFormacaoRepository from '../../repository/sispag/RetencaoFormacaoRepository.js';
+import type { RetencaoAtiva } from '../../repository/sispag/RetencaoFormacaoRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
 import SispagPainelService from './SispagPainelService.js';
@@ -40,12 +42,25 @@ const buildLog = () =>
         warn: jest.fn().mockResolvedValue(undefined),
     }) as unknown as LogService & { warn: jest.Mock; info: jest.Mock };
 
+/** Retenções ativas da formação automática (ADR-0050); vazio por padrão. */
+const buildRetencaoRepo = (retencoes: RetencaoAtiva[] = []) =>
+    ({
+        listAtivas: jest.fn().mockResolvedValue(retencoes),
+    }) as unknown as RetencaoFormacaoRepository;
+
 const make = (
     over: {
         titulosAtivos?: TituloAPagar[];
         listLotes?: jest.Mock;
         ultimaRun?: Date | null;
-        emRascunho?: Array<{ filCod: number; docCod: string; titCod: string }>;
+        emRascunho?: Array<{
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            loteId: string;
+            automatico: boolean;
+        }>;
+        retencoes?: RetencaoAtiva[];
         log?: LogService;
         retornoConfigs?: jest.Mock;
         retornoArquivos?: jest.Mock;
@@ -119,6 +134,7 @@ const make = (
         conciliacaoLedger,
         env,
         log,
+        buildRetencaoRepo(over.retencoes),
     );
     return { service, log, listChavesComBoleto, listarLinhasDigitaveisDoLote };
 };
@@ -145,11 +161,57 @@ describe('SispagPainelService.montarPainel', () => {
                 titulo({ docCod: '100', titCod: '1' }),
                 titulo({ docCod: '200', titCod: '1' }),
             ],
-            emRascunho: [{ filCod: 2, docCod: '100', titCod: '1' }],
+            emRascunho: [{ filCod: 2, docCod: '100', titCod: '1', loteId: 'L1', automatico: true }],
         });
         const painel = await service.montarPainel();
         expect(painel.titulos.find((t) => t.docCod === '100')?.emLote).toBe(true);
         expect(painel.titulos.find((t) => t.docCod === '200')?.emLote).toBe(false);
+    });
+
+    it('ADR-0050: a linha carrega o lote RASCUNHO e a retenção ativa do título', async () => {
+        const { service } = make({
+            titulosAtivos: [
+                titulo({ docCod: '100', titCod: '1' }),
+                titulo({ docCod: '200', titCod: '1' }),
+                titulo({ docCod: '300', titCod: '1' }),
+            ],
+            emRascunho: [
+                { filCod: 2, docCod: '100', titCod: '1', loteId: 'L1', automatico: false },
+            ],
+            retencoes: [
+                {
+                    filCod: 2,
+                    docCod: '200',
+                    titCod: '1',
+                    retencao: {
+                        marcadoPor: 'user-abc',
+                        marcadoEm: '2026-09-22T12:00:00.000Z',
+                        motivo: 'em negociação',
+                    },
+                },
+                // mesma chave de documento em OUTRA filial: não pode vazar para a filial 2
+                {
+                    filCod: 4,
+                    docCod: '300',
+                    titCod: '1',
+                    retencao: { marcadoPor: 'x', marcadoEm: '2026-09-22T12:00:00.000Z' },
+                },
+            ],
+        });
+
+        const painel = await service.montarPainel();
+        const porDoc = (d: string) => painel.titulos.find((t) => t.docCod === d);
+
+        expect(porDoc('100')?.loteRascunho).toEqual({ id: 'L1', automatico: false });
+        expect(porDoc('100')?.retencaoFormacao).toBeUndefined();
+        expect(porDoc('200')?.loteRascunho).toBeUndefined();
+        expect(porDoc('200')?.retencaoFormacao).toEqual({
+            marcadoPor: 'user-abc',
+            marcadoEm: '2026-09-22T12:00:00.000Z',
+            motivo: 'em negociação',
+        });
+        expect(porDoc('300')?.loteRascunho).toBeUndefined();
+        expect(porDoc('300')?.retencaoFormacao).toBeUndefined();
     });
 
     it('tolera falha de UMA leitura de contexto (loga warn e segue)', async () => {
