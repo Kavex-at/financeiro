@@ -4,17 +4,22 @@ type: business-rule
 entity: LotePagamento
 invariant: I8
 ontology_version: "0.27.0"
-implementation_status: planned
+implementation_status: implemented
 status: active
 owners: [yuri]
 related_files:
+  - src/backend/domain/libs/calendar/BankingCalendar.ts
+  - src/backend/domain/service/sispag/DebitDateService.ts
   - src/backend/domain/service/sispag/RemessaService.ts
   - src/backend/domain/client/ConexosSispagWriteClient.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
   - src/backend/domain/repository/sispag/RemessaExecucaoRepository.ts
+  - src/backend/migrations/0061_lote_data_debito.sql
+  - src/backend/routes/sispag.ts
+  - src/frontend/app/sispag/components/GerarRemessaDialog.tsx
   - src/frontend/app/sispag/components/LoteCard.tsx
 last_review: 2026-09-22
-has_canonical_test: false
+has_canonical_test: true
 ---
 
 # Business Rule — data de débito da remessa SISPAG (I8)
@@ -130,10 +135,12 @@ primeiro dia útil da janela.
 - **Não muda a formação automática.** `formarLotesAutomaticos` continua agrupando por filial e
   a-vencer ≤7d; a data só é escolhida no pedido de remessa.
 
-## Verificação (a implementar)
+## Verificação
 
-- Unitário: calendário (fixos, 20/11 antes/depois de 2024, Páscoa de anos conhecidos), janela
-  (vazia, limite num sábado, hoje não útil), fuso (23h de Brasília = mesmo dia), I8b (retry com data
-  diferente recusado; retry usa a persistida).
-- Ao vivo em HML: remessa com débito em D+1 útil finaliza no `fin015`; data > menor vencimento é
-  recusada **por nós**, antes do ERP.
+- Unitário (**feito**): calendário (fixos, 20/11 antes/depois de 2024, Páscoa de anos conhecidos) em
+  `BankingCalendar.test.ts`; janela (vazia, limite num sábado, hoje não útil, Carnaval) em
+  `DebitDateService.test.ts`; fuso (23h30 de Brasília = mesmo dia) e I8b (retry com data diferente
+  recusado; retry usa a persistida; data congelada no passado) em `RemessaService.test.ts`.
+- Ao vivo em HML (**pendente**, roteiro de QA manual no PR da branch `fix/sispag-data-pagamento`):
+  remessa com débito em D+1 útil finaliza no `fin015`; data > menor vencimento é recusada **por nós**,
+  antes do ERP.
