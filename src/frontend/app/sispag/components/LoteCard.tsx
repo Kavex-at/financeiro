@@ -7,6 +7,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -32,6 +40,7 @@ import {
   fetchContasPagadoras,
   finalizarLote,
   formatCivilDate,
+  type ItemLote,
   type LotePagamento,
   marcarRetorno,
   type Modalidade,
@@ -43,6 +52,7 @@ import {
 import { baixarBlob } from '@/lib/download'
 import { formatBRL } from '@/lib/utils'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
+import { mensagemRemocao } from './retencao'
 
 const fmtData = (ms?: number) =>
   ms != null ? new Date(ms).toLocaleDateString('pt-BR') : '—'
@@ -91,15 +101,46 @@ export function LoteCard({
   busy,
   acao,
   onAdicionar,
+  destacado = false,
 }: {
   lote: LotePagamento
   busy: boolean
   acao: Acao
   onAdicionar?: (lote: LotePagamento) => void
+  /**
+   * O usuário chegou aqui pelo link do lote na aba de títulos (ADR-0050): o card abre, rola até
+   * a vista e ganha um anel de foco para ser achado na lista.
+   */
+  destacado?: boolean
 }) {
   const [aberto, setAberto] = React.useState(false)
   // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
   const [gerandoRemessa, setGerandoRemessa] = React.useState(false)
+
+  const cardRef = React.useRef<HTMLDivElement>(null)
+  // Abrir ao ganhar o destaque é ajuste de estado durante o render (padrão do React para
+  // "reagir a uma prop"); só o scroll, que toca o DOM, fica no efeito.
+  const [destacadoAntes, setDestacadoAntes] = React.useState(destacado)
+  if (destacado !== destacadoAntes) {
+    setDestacadoAntes(destacado)
+    if (destacado) setAberto(true)
+  }
+  React.useEffect(() => {
+    if (destacado) cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [destacado])
+
+  // Lixeira: num lote automático a remoção também retém o título da formação automática
+  // (ADR-0050, P1-1) — por isso pede confirmação. Num lote manual segue direta, como antes.
+  const [remocaoPendente, setRemocaoPendente] = React.useState<ItemLote | null>(null)
+  const remover = (i: ItemLote) =>
+    acao(
+      () => removerItem(l.id, { filCod: i.filCod, docCod: i.docCod, titCod: i.titCod }),
+      l.automatico ? 'Título removido e retido da formação automática' : 'Título removido',
+    )
+  const pedirRemocao = (i: ItemLote) => {
+    if (mensagemRemocao(l) !== null) setRemocaoPendente(i)
+    else remover(i)
+  }
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
@@ -178,7 +219,11 @@ export function LoteCard({
   }
 
   return (
-    <Card>
+    <Card
+      ref={cardRef}
+      id={`lote-${l.id}`}
+      className={destacado ? 'scroll-mt-4 ring-2 ring-ring' : 'scroll-mt-4'}
+    >
       <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
         <button
           type="button"
@@ -496,17 +541,7 @@ export function LoteCard({
                             variant="ghost"
                             disabled={busy}
                             aria-label="remover título"
-                            onClick={() =>
-                              acao(
-                                () =>
-                                  removerItem(l.id, {
-                                    filCod: i.filCod,
-                                    docCod: i.docCod,
-                                    titCod: i.titCod,
-                                  }),
-                                'Título removido',
-                              )
-                            }
+                            onClick={() => pedirRemocao(i)}
                           >
                             <Trash2 className="size-4" />
                           </Button>
@@ -529,6 +564,34 @@ export function LoteCard({
           ) : null}
         </CardContent>
       ) : null}
+      <Dialog
+        open={remocaoPendente !== null}
+        onOpenChange={(open) => (!open ? setRemocaoPendente(null) : undefined)}
+      >
+        <DialogContent size="sm">
+          <DialogHeader>
+            <DialogTitle>
+              Remover {remocaoPendente?.docCod}/{remocaoPendente?.titCod} do lote automático?
+            </DialogTitle>
+            <DialogDescription>{mensagemRemocao(l)}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemocaoPendente(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => {
+                if (remocaoPendente) remover(remocaoPendente)
+                setRemocaoPendente(null)
+              }}
+            >
+              <Trash2 aria-hidden /> Remover e reter
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
