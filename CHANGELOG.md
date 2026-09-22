@@ -1,5 +1,31 @@
 # Columbia Financeiro — Changelog
 
+## v0.39.0 (2026-09-22) — a tela Métricas deixa de abrir vazia na primeira semana no ar
+
+A tela **Métricas** foi aberta em produção em 16/09 e mostrava `—` em tudo. Não era defeito: a série
+começava em 2026-09-11 18:00, então existia **uma** janela, ainda aberta, e sem execução de permuta
+ou SN desde sexta os quatro números saíam vazios. Uma tela de métricas que nasce em branco não é
+lida como "a série começou agora" — é lida como coisa quebrada.
+
+- **A tela passa a mostrar seis semanas**, a partir de 2026-08-07 18:00: cinco fechadas mais a em
+  curso. Os quatro números de cima voltam a ser os da última semana **fechada**, como sempre foi a
+  regra — antes não havia nenhuma fechada para eles mostrarem.
+- **O report semanal não muda.** `GET /metricas/ciclo` só recua quando recebe `?historico=true`, e
+  quem passa isso é a tela. O `kavex-report-ciclo` continua ancorado no ciclo 6 (2026-09-11 18:00),
+  com a mesma resposta de antes, byte a byte, e a view `vw_metricas_ciclo` segue intocada.
+- **Nenhum número já publicado muda.** As duas datas de corte são sexta 18:00 e distam exatamente 35
+  dias, então as janelas caem na **mesma grade semanal** — recuar acrescenta semanas à esquerda sem
+  mexer na fronteira de nenhuma que já existia. Isso é provado contra um Postgres real, não
+  argumentado: as linhas das janelas comuns aos dois cortes têm que sair idênticas, campo a campo.
+- **Ressalva que a tela não exibe:** o ledger de permutas apaga a linha quando o borderô é excluído,
+  então as semanas de agosto podem **subnotificar** Permutas — quanto mais antiga a semana, mais
+  exposta. As semanas recuperadas aparecem sem marca própria, por decisão de quem pediu; a marca de
+  *parcial* na semana em curso continua igual. O conserto de fundo continua sendo a tabela de eventos
+  append-only, follow-up aberto desde a ADR-0045.
+
+Emenda a ADR-0045 D4 ("sem backfill"), registrada na ADR-0048. O corte de 2026-08-07 é **fixo**, não
+deslizante: em dezembro a tela mostrará ~18 semanas, não 6.
+
 ## v0.38.0 (2026-09-15) — exceção manual: "permutado fora do painel"
 
 O adiantamento **8721** (processo 124, COPPER/CODELCO, R$ 20,37 mi) aparecia como **Bloqueada — Sem saldo
