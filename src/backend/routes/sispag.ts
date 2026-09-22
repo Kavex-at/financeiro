@@ -76,8 +76,11 @@ router.get(
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(SispagPainelService);
-        const itens = await service.linhasDigitaveisDoLote(String(req.params.id));
-        res.json({ itens });
+        const { itens, total, dropped } = await service.linhasDigitaveisDoLote(
+            String(req.params.id),
+        );
+        // `total`/`dropped` viajam junto para a tela poder dizer POR QUE faltou um botão.
+        res.json({ itens, total, dropped });
     }),
 );
 

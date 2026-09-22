@@ -6,6 +6,7 @@ import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
+import type { LinhasDigitaveisDoLote } from '../../interface/sispag/Fin015Write.js';
 import {
     type LoteSispag,
     MODALIDADE,
@@ -243,19 +244,34 @@ export default class SispagPainelService {
      * Conexos oscilou seria trocar uma conveniência por uma indisponibilidade. Falha vira
      * `BUSINESS_WARN` e lista vazia — a UI simplesmente não oferece o botão.
      */
-    public linhasDigitaveisDoLote = async (
-        loteId: string,
-    ): Promise<Array<{ docCod: string; titCod: string; linhaDigitavel: string }>> => {
+    public linhasDigitaveisDoLote = async (loteId: string): Promise<LinhasDigitaveisDoLote> => {
+        const vazio: LinhasDigitaveisDoLote = { itens: [], total: 0, dropped: 0 };
         const lote = await this.loteRepo.getLoteComItens(loteId);
-        if (!lote) return [];
+        if (!lote) return vazio;
         const { nativeFilCod, nativeBncCod, nativeFlpCod } = lote;
-        if (nativeFilCod == null || nativeBncCod == null || nativeFlpCod == null) return [];
+        if (nativeFilCod == null || nativeBncCod == null || nativeFlpCod == null) return vazio;
         try {
-            return await this.fin015.listarLinhasDigitaveisDoLote({
+            const resultado = await this.fin015.listarLinhasDigitaveisDoLote({
                 filCod: nativeFilCod,
                 bncCod: nativeBncCod,
                 flpCod: nativeFlpCod,
             });
+            if (resultado.dropped > 0) {
+                // Código de barras recusado é sinal de corrupção no caminho ERP→item, não
+                // ruído de UI: sem este log, a única testemunha seria a analista reparando
+                // num botão que faltou. Sem a linha em si (identifica beneficiário e valor).
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'linhasDigitaveisDoLote: linha digitável recusada no boundary',
+                    data: {
+                        loteId,
+                        flpCod: nativeFlpCod,
+                        total: resultado.total,
+                        dropped: resultado.dropped,
+                    },
+                });
+            }
+            return resultado;
         } catch (err) {
             // Sem a linha digitável em si no log — ela identifica beneficiário e valor.
             await this.logService.warn({
@@ -267,7 +283,7 @@ export default class SispagPainelService {
                     motivo: err instanceof Error ? err.message : 'desconhecido',
                 },
             });
-            return [];
+            return vazio;
         }
     };
 

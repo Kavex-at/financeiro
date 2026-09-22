@@ -7,6 +7,7 @@ import type {
     CriarLoteParams,
     GerarRemessaParams,
     ImportarTitulosParams,
+    LinhasDigitaveisDoLote,
     LoteNativoCriado,
     LoteNativoEstado,
     RemessaGerada,
@@ -84,8 +85,68 @@ const LINHA_DIGITAVEL_SCHEMA = z.object({
         .transform(String)
         .optional()
         .transform((v) => v ?? '1'),
-    itsNumCodbar: z.string().regex(/^\d{47}$/),
+    itsNumCodbar: z.string().refine(linhaDigitavelValida, {
+        message: 'linha digitável inválida (47 dígitos + 4 dígitos verificadores)',
+    }),
 });
+
+/**
+ * DV mod-10 dos três campos da linha digitável (FEBRABAN): pesos 2 e 1 alternados da DIREITA
+ * para a esquerda, produto > 9 somado como produto − 9, DV = 10 − (soma mod 10), com 10 → 0.
+ */
+const dvMod10 = (base: string): number => {
+    let soma = 0;
+    let peso = 2;
+    for (let i = base.length - 1; i >= 0; i -= 1) {
+        const produto = Number(base[i]) * peso;
+        soma += produto > 9 ? produto - 9 : produto;
+        peso = peso === 2 ? 1 : 2;
+    }
+    const resto = soma % 10;
+    return resto === 0 ? 0 : 10 - resto;
+};
+
+/**
+ * DV geral mod-11 do CÓDIGO DE BARRAS (posição 5 do barcode, 33ª da linha digitável): pesos
+ * 2..9 ciclando da direita para a esquerda sobre os 43 dígitos restantes. DV = 11 − (soma mod
+ * 11); 0, 10 e 11 valem 1.
+ */
+const dvMod11 = (base: string): number => {
+    let soma = 0;
+    let peso = 2;
+    for (let i = base.length - 1; i >= 0; i -= 1) {
+        soma += Number(base[i]) * peso;
+        peso = peso === 9 ? 2 : peso + 1;
+    }
+    const dv = 11 - (soma % 11);
+    return dv === 0 || dv === 10 || dv === 11 ? 1 : dv;
+};
+
+/**
+ * Valida a linha digitável de boleto bancário INTEIRA — 47 dígitos E os 4 verificadores.
+ *
+ * O `/^\d{47}$/` sozinho aceitava `'1'.repeat(47)`, e o comprimento é justamente o que um
+ * truncamento ou uma troca de dígito NÃO altera. Quem consome isto é a analista colando o
+ * código no app do banco: um dígito trocado que passa no length vira pagamento no beneficiário
+ * errado, e o erro só aparece depois de o dinheiro sair. Os DVs são a única defesa local — não
+ * dependem de ida ao ERP nem de cadastro nosso.
+ *
+ * Os quatro: mod-10 de cada um dos três campos + o mod-11 geral. O mod-11 se calcula sobre o
+ * CÓDIGO DE BARRAS (44), que se remonta a partir da linha digitável — daí a reordenação abaixo.
+ */
+function linhaDigitavelValida(linha: string): boolean {
+    if (!/^\d{47}$/.test(linha)) return false;
+    // Campo 1: 1-10 (DV na 10ª) · Campo 2: 11-21 (DV na 21ª) · Campo 3: 22-32 (DV na 32ª).
+    if (dvMod10(linha.slice(0, 9)) !== Number(linha[9])) return false;
+    if (dvMod10(linha.slice(10, 20)) !== Number(linha[20])) return false;
+    if (dvMod10(linha.slice(21, 31)) !== Number(linha[31])) return false;
+    // Barcode (44) = banco+moeda (1-4) + fator/valor (34-47) + campo livre (os 25 dígitos dos
+    // três campos, já sem os DVs). O DV geral (33ª da linha) é o que se confere, então fica de
+    // fora da base de cálculo.
+    const campoLivre = linha.slice(4, 9) + linha.slice(10, 20) + linha.slice(21, 31);
+    const base = linha.slice(0, 4) + linha.slice(33, 47) + campoLivre;
+    return dvMod11(base) === Number(linha[32]);
+}
 
 const PENDENTE_DDA_SCHEMA = z
     .object({ titVldReflexoDdaAssoc: z.union([z.literal(0), z.literal(1)]) })
@@ -244,53 +305,108 @@ export default class ConexosSispagWriteClient {
      *
      * Sem isto, a janela entre o ERP responder e o ledger gravar é a única falha
      * genuinamente irrecuperável — e ela não precisa ser.
+     *
+     * PAGINA DE VERDADE, pelo mesmo motivo que o `listarTitulosPendentes` — e com uma
+     * consequência pior se não paginar. A versão anterior fixava `pageNumber: 1` com
+     * `pageSize: 500`, o que só parecia bastar: os DOIS usos acima tratam o retorno como
+     * "o conjunto dos lotes que EXISTEM", e um conjunto incompleto não degrada de forma
+     * graciosa, ele mente nas duas direções:
+     *   1. marca d'água baixa demais (o maior `flpCod` ficou na página 2) → um lote alheio,
+     *      preexistente, entra na lista de candidatos a órfão e pode ser CANCELADO;
+     *   2. órfão invisível (ficou na página 2) → o retry cria um SEGUNDO lote, que é
+     *      exatamente a duplicação de pagamento que o mecanismo existe para evitar.
+     *
+     * Por isso o estouro de `maxPaginas` aqui LANÇA em vez de avisar, diferente do
+     * `listarTitulosPendentes` (onde uma varredura parcial só faz o chamador reler). Uma
+     * resposta parcial neste método é pior que resposta nenhuma. Na prática a guarda é
+     * folgada: 40 × 500 = 20.000 lotes por `(filial, banco)`, contra 74 medidos em PRD nas
+     * filiais 1, 2 e 7 somadas.
      */
     public listarLotesNativos = async (params: {
         filCod: number;
         bncCod: number;
+        pageSize?: number;
+        maxPaginas?: number;
     }): Promise<LoteNativoEstado[]> => {
-        const { filCod, bncCod } = params;
+        const { filCod, bncCod, pageSize = 500, maxPaginas = 40 } = params;
         const path = 'fin015/list';
+        const linhas: Record<string, unknown>[] = [];
+        const vistos = new Set<number>();
+        let total = Number.POSITIVE_INFINITY;
+        // `lidas` conta as linhas BRUTAS, não as únicas: `count` é o total do servidor, e
+        // comparar o deduplicado com ele faria uma repetição do ERP virar varredura infinita
+        // até `maxPaginas` — e daí um throw, por um grid que na verdade acabou.
+        let lidas = 0;
+        let pagina = 0;
         try {
-            const page = await this.base.runWithRetry(async () => {
-                await this.base.ensureSid();
-                return this.base.listGenericPaginated<Record<string, unknown>>(
-                    path,
-                    {
-                        fieldList: [],
-                        // `filCod#EQ` É OBRIGATÓRIO. O `filCod` de `opts` é o CONTEXTO da
-                        // sessão, não um filtro: sem isto o `fin015/list` devolve lotes de
-                        // TODAS as filiais (medido: 74 linhas das filiais 1, 2 e 7).
-                        //
-                        // Foi essa ausência que me fez concluir, erradamente, que
-                        // `(filCod, bncCod, flpCod)` não era única — os "gêmeos" eram lotes
-                        // de filiais diferentes. Com o filtro: 0 repetições. A chave é única.
-                        //
-                        // O dano real era na marca d'água: o conjunto de "lotes conhecidos"
-                        // vinha contaminado com flpCod de outras filiais, e um órfão cujo
-                        // número já existisse em outra filial ficava invisível — o retry
-                        // criava um segundo lote, que é exatamente o que o mecanismo evita.
-                        filterList: { 'bncCod#EQ': bncCod, 'filCod#EQ': filCod },
-                        serviceName: 'fin015',
-                        pageNumber: 1,
-                        pageSize: 500,
-                    },
-                    { filCod },
+            while (pagina < maxPaginas) {
+                pagina += 1;
+                const pageNumber = pagina;
+                const page = await this.base.runWithRetry(async () => {
+                    await this.base.ensureSid();
+                    return this.base.listGenericPaginated<Record<string, unknown>>(
+                        path,
+                        {
+                            fieldList: [],
+                            // `filCod#EQ` É OBRIGATÓRIO. O `filCod` de `opts` é o CONTEXTO da
+                            // sessão, não um filtro: sem isto o `fin015/list` devolve lotes de
+                            // TODAS as filiais (medido: 74 linhas das filiais 1, 2 e 7).
+                            //
+                            // Foi essa ausência que me fez concluir, erradamente, que
+                            // `(filCod, bncCod, flpCod)` não era única — os "gêmeos" eram lotes
+                            // de filiais diferentes. Com o filtro: 0 repetições. A chave é única.
+                            //
+                            // O dano real era na marca d'água: o conjunto de "lotes conhecidos"
+                            // vinha contaminado com flpCod de outras filiais, e um órfão cujo
+                            // número já existisse em outra filial ficava invisível — o retry
+                            // criava um segundo lote, que é exatamente o que o mecanismo evita.
+                            filterList: { 'bncCod#EQ': bncCod, 'filCod#EQ': filCod },
+                            serviceName: 'fin015',
+                            pageNumber,
+                            pageSize,
+                        },
+                        { filCod },
+                    );
+                });
+
+                const rows = page?.rows ?? [];
+                lidas += rows.length;
+                if (Number.isFinite(Number(page?.count))) total = Number(page.count);
+                for (const r of rows) {
+                    if (r.flpCod == null) continue;
+                    // Dedupe por `flpCod`: a chave é única dentro de `(filial, banco)` — está
+                    // medido — então uma repetição só pode vir de sobreposição de páginas.
+                    const flpCod = Number(r.flpCod);
+                    if (vistos.has(flpCod)) continue;
+                    vistos.add(flpCod);
+                    linhas.push(r);
+                }
+
+                // O grid acabou: página curta ou `count` alcançado.
+                if (rows.length < pageSize || lidas >= total) break;
+            }
+
+            if (pagina >= maxPaginas && lidas < total) {
+                // Parcial aqui não é "menos dados", é uma afirmação FALSA sobre quais lotes
+                // existem — e quem chama decide cancelar lote com base nela. Recusar é a
+                // resposta segura.
+                throw new Error(
+                    `fin015/list truncado em ${maxPaginas} páginas: ${lidas} de ${total} lotes ` +
+                        `(fil=${filCod} bnc=${bncCod}). A marca d'água e a busca de órfãos exigem a lista COMPLETA.`,
                 );
-            });
-            return (page.rows ?? [])
-                .filter((r) => r.flpCod != null)
-                .map((r) => ({
-                    filCod: Number(r.filCod ?? filCod),
-                    bncCod: Number(r.bncCod ?? bncCod),
-                    flpCod: Number(r.flpCod),
-                    status: Number(r.flpVldStatus ?? 0),
-                    titulosCount: Number(r.titulosCount ?? 0),
-                    soma: Number(r.soma ?? 0),
-                    ...(r.ccoCod != null ? { ccoCod: Number(r.ccoCod) } : {}),
-                    ...(r.flpDtaCredito != null ? { dataDebito: Number(r.flpDtaCredito) } : {}),
-                    ...(r.flpTimFinaliza != null ? { finalizadoEm: Number(r.flpTimFinaliza) } : {}),
-                }));
+            }
+
+            return linhas.map((r) => ({
+                filCod: Number(r.filCod ?? filCod),
+                bncCod: Number(r.bncCod ?? bncCod),
+                flpCod: Number(r.flpCod),
+                status: Number(r.flpVldStatus ?? 0),
+                titulosCount: Number(r.titulosCount ?? 0),
+                soma: Number(r.soma ?? 0),
+                ...(r.ccoCod != null ? { ccoCod: Number(r.ccoCod) } : {}),
+                ...(r.flpDtaCredito != null ? { dataDebito: Number(r.flpDtaCredito) } : {}),
+                ...(r.flpTimFinaliza != null ? { finalizadoEm: Number(r.flpTimFinaliza) } : {}),
+            }));
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }
@@ -398,12 +514,19 @@ export default class ConexosSispagWriteClient {
      * Item sem boleto é omitido. Falha de leitura NÃO vira lista vazia: `[]` afirmaria "nenhum
      * item tem boleto", e um grid que não pôde ser lido não afirma nada — por isso sobe
      * `ConexosError` e quem chama decide o que dizer à analista.
+     *
+     * Devolve CONTAGEM junto com os itens porque "omitir" e "sumir" não são a mesma coisa.
+     * Item sem `itsNumCodbar` não tem boleto e não entra em `total` — é o estágio normal. Já um
+     * item que TEM o campo mas cujo código não passa nos verificadores é uma ANOMALIA, e antes
+     * ele desaparecia calado: a analista via um botão de copiar a menos e não tinha como saber
+     * se era "esse título não é boleto" ou "o código veio corrompido". `dropped` é essa
+     * diferença. Invariante: `itens.length + dropped === total`.
      */
     public listarLinhasDigitaveisDoLote = async (params: {
         filCod: number;
         bncCod: number;
         flpCod: number;
-    }): Promise<Array<{ docCod: string; titCod: string; linhaDigitavel: string }>> => {
+    }): Promise<LinhasDigitaveisDoLote> => {
         const { filCod, bncCod, flpCod } = params;
         const path = `fin015/finItemSispag/list/${filCod}/${bncCod}/${flpCod}`;
         try {
@@ -422,7 +545,12 @@ export default class ConexosSispagWriteClient {
                 );
             });
             const itens: Array<{ docCod: string; titCod: string; linhaDigitavel: string }> = [];
+            let total = 0;
             for (const row of page.rows ?? []) {
+                // Sem o campo (ou vazio) = item que não é boleto. Não é anomalia, não conta.
+                const bruto = row.itsNumCodbar;
+                if (bruto === null || bruto === undefined || String(bruto).trim() === '') continue;
+                total += 1;
                 const parsed = LINHA_DIGITAVEL_SCHEMA.safeParse(row);
                 if (!parsed.success) continue;
                 itens.push({
@@ -431,7 +559,7 @@ export default class ConexosSispagWriteClient {
                     linhaDigitavel: parsed.data.itsNumCodbar,
                 });
             }
-            return itens;
+            return { itens, total, dropped: total - itens.length };
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }

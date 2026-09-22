@@ -678,23 +678,36 @@ export async function fetchRetornos(): Promise<ArquivoRetorno[]> {
   return j.arquivos ?? []
 }
 
+/** Uma linha digitável já conferida (47 dígitos + 4 verificadores) no backend. */
+export type ItemLinhaDigitavel = { docCod: string; titCod: string; linhaDigitavel: string }
+
+/** Resposta de `fetchLinhasDigitaveis`. Invariante: `itens.length + dropped === total`. */
+export type LinhasDigitaveis = {
+  itens: ItemLinhaDigitavel[]
+  /** Itens do lote que afirmam ter boleto (`itsNumCodbar` presente). */
+  total: number
+  /** Quantos desses foram recusados por dígito verificador inválido. */
+  dropped: number
+}
+
 /**
  * Linhas digitáveis dos boletos do lote (47 dígitos — o que se cola no app do banco).
  *
  * Só há dado depois da remessa gerada: o Conexos anexa o código ao item durante o import
  * (ADR-0040). Em rascunho volta lista vazia, e isso é o estágio, não uma falha.
+ *
+ * `total`/`dropped` contam os itens que afirmam ter boleto e quantos desses o backend recusou
+ * por dígito verificador inválido. É o que permite à tela distinguir "não é boleto" de "o
+ * código veio corrompido" em vez de só não mostrar o botão.
  */
-export async function fetchLinhasDigitaveis(
-  loteId: string,
-): Promise<Array<{ docCod: string; titCod: string; linhaDigitavel: string }>> {
+export async function fetchLinhasDigitaveis(loteId: string): Promise<LinhasDigitaveis> {
   const res = await apiFetch(`${API}/sispag/lotes/${loteId}/linhas-digitaveis`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) throw new Error(`API ${res.status}`)
-  const j = (await res.json()) as {
-    itens: Array<{ docCod: string; titCod: string; linhaDigitavel: string }>
-  }
-  return j.itens ?? []
+  const j = (await res.json()) as Partial<LinhasDigitaveis>
+  const itens = j.itens ?? []
+  return { itens, total: j.total ?? itens.length, dropped: j.dropped ?? 0 }
 }
 
 /** A2 opção B — formas de pagamento disponíveis (cadastro do favorecido) por item do lote, ao vivo. */

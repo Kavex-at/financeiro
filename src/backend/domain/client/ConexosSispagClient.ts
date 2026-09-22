@@ -28,8 +28,27 @@ import ConexosBaseClient from './ConexosBaseClient.js';
 
 const PAGE_SIZE = 200;
 
-/** Coerção tolerante de número (aceita string numérica; senão undefined). */
-const numOpt = z.coerce.number().optional().catch(undefined);
+/**
+ * Coerção tolerante de número (aceita string numérica; senão `undefined`).
+ *
+ * O `preprocess` é OBRIGATÓRIO e não cosmético: `z.coerce.number()` faz `Number(null) === 0`,
+ * e o `fin064` manda `null` — não ausente — nos campos que vêm do LEFT JOIN do item SISPAG.
+ * Sem ele, `null` vira um número VÁLIDO e dois defeitos nascem calados:
+ *
+ *   - `itsVldModalidade: null` → `0`, que passa em `!== undefined` → `temModalidade` sempre
+ *     true → `prontoParaRemessa` sempre true. O aviso "falta cadastro?" da tela NUNCA chegou
+ *     a aparecer em produção. Diagnóstico em `sispag-remessa-ground-truth-followups.md`.
+ *   - `titDtaVencimento: null` → `0` = epoch. Pior que feio: ordena no TOPO da carteira (e come
+ *     o cap de 5000 títulos), vira "vencido 20700d" na tela, infla o KPI de vencidos e — se a
+ *     analista incluir o título num lote à mão — sai como `itsDtaPgto: 0` na remessa, violando
+ *     a regra R2 do ERP (data de débito ≤ menor vencimento) com `MODEL_INCONSISTENCY`.
+ *
+ * É o mesmo `preprocess`, pela mesma razão medida, do `ConexosExtratoClient` (`fin095`).
+ */
+const numOpt = z.preprocess(
+    (v) => (v === null || v === '' ? undefined : v),
+    z.coerce.number().optional().catch(undefined),
+);
 const strOpt = z
     .union([z.string(), z.number()])
     .transform((v) => String(v))
@@ -102,15 +121,60 @@ export default class ConexosSispagClient {
     public constructor(@inject(ConexosBaseClient) private readonly base: ConexosBaseClient) {}
 
     /**
-     * `true` só quando o Conexos RECUSA o filtro de query (HTTP 400) — o único
-     * caso em que a leitura sem filtro é um fallback legítimo. `authenticatedPost`
-     * re-lança o erro axios cru, então `response.status` chega aqui intacto. Erros
-     * transitórios (5xx/timeout/rede → sem 400) NÃO são fallback: devem propagar.
+     * Marcadores MEDIDOS de recusa de FILTRO pelo Conexos. O ERP não tem um código próprio
+     * para "não entendi esse filtro"; o que ele tem, e está medido, é nomear o filtro em
+     * português no corpo do 400:
+     *   - `Generic.REQUIRED_FILTER_ERROR` (fin052, fin134, fin095, NdeFiscal);
+     *   - `"O filtro 'bncCod' é requerido"` / `"O filtro 'fbeEspCod' não foi encontrado,
+     *     ou seu tipo de filtro não é o especificado"` (probe fin052, 2026-07-11).
      */
-    private isFilterRejected = (err: unknown): boolean =>
-        typeof err === 'object' &&
-        err !== null &&
-        (err as { response?: { status?: number } }).response?.status === 400;
+    private static readonly MARCADORES_DE_FILTRO: readonly string[] = [
+        'required_filter_error',
+        'filtro',
+    ];
+
+    /** Texto do corpo do erro em minúsculas — `undefined` se não houver corpo legível. */
+    private static corpoDoErro = (data: unknown): string | undefined => {
+        if (data === null || data === undefined) return undefined;
+        try {
+            const texto = typeof data === 'string' ? data : JSON.stringify(data);
+            return texto !== undefined && texto.length > 0 ? texto.toLowerCase() : undefined;
+        } catch {
+            return undefined;
+        }
+    };
+
+    /**
+     * `true` só quando o corpo do 400 diz que o problema foi o FILTRO — o único caso em que
+     * reler sem filtro é um fallback legítimo. `authenticatedPost` re-lança o erro axios cru,
+     * então `response.status` e `response.data` chegam aqui intactos.
+     *
+     * ⚠️ Antes bastava `status === 400`, e isso era largo demais em cima de uma premissa que
+     * NUNCA foi observada. O que está medido sobre filtros no Conexos é:
+     *   - filtro DESCONHECIDO é silenciosamente IGNORADO (comportamento Hibernate) — não dá 400;
+     *   - coluna NÃO-FILTRÁVEL (`mnyTitAberto#GT`, `pago#NE`) responde **HTTP 500**, não 400;
+     *   - o único 400 de filtro medido é o filtro OBRIGATÓRIO ausente, e ele SE NOMEIA no corpo.
+     * Ou seja: a maioria dos 400 que chegavam aqui eram outra coisa (body malformado, drift de
+     * schema, sessão), e cada um deles virava uma releitura AMPLA — milhares de linhas sem o
+     * recorte de vencimento — apresentada como se fosse a carteira normal. Fail-closed: 400 sem
+     * corpo, ou com corpo que não fala de filtro, PROPAGA. Fecha o card `rh-1`.
+     *
+     * `camposFiltrados` são os campos que ESTA chamada mandou (sem o `#OP`): se o ERP nomear um
+     * deles, é recusa de filtro mesmo que a frase mude de forma numa versão futura.
+     */
+    private isFilterRejected = (err: unknown, camposFiltrados: readonly string[]): boolean => {
+        if (typeof err !== 'object' || err === null) return false;
+        const response = (err as { response?: { status?: number; data?: unknown } }).response;
+        if (response?.status !== 400) return false;
+        const corpo = ConexosSispagClient.corpoDoErro(response.data);
+        // 400 sem corpo legível não AFIRMA que o filtro foi recusado — e o fallback só se
+        // justifica por uma afirmação. Na dúvida, propaga.
+        if (corpo === undefined) return false;
+        return (
+            ConexosSispagClient.MARCADORES_DE_FILTRO.some((m) => corpo.includes(m)) ||
+            camposFiltrados.some((campo) => corpo.includes(campo.toLowerCase()))
+        );
+    };
 
     /** Body de query padrão do Conexos (`/list`). */
     private listBody = (
@@ -156,6 +220,23 @@ export default class ConexosSispagClient {
             modalidadesDisponiveis.push(MODALIDADE.TED, MODALIDADE.CREDITO_CONTA);
         }
         const temModalidade = r.itsVldModalidade !== undefined;
+        // `prontoParaRemessa` é TRI-ESTADO, e o terceiro estado é o que o `fin064` quase sempre
+        // tem a dizer: NÃO SEI. Desconhecido não é `false`.
+        //
+        // Com o `numOpt` consertado, os três termos de destino que este mapper enxerga são
+        // `temBoleto` (false fixo — ADR-0040), `temContaBanco` (false fixo — a conta mora em
+        // `cmn025/ctcorr`) e `temPix`/`temModalidade`, ambos do LEFT JOIN `its*`, medido em 0%
+        // de preenchimento no `fin064` (561 títulos HML, 2000 PRD). Ou seja: a expressão que
+        // antes era sempre `true` passaria a ser sempre `false` — e carimbar "falta cadastro?"
+        // em 100% da carteira de pagamentos é a mesma mentira com o sinal trocado, agora com
+        // fadiga de alarme numa tela onde o alarme deveria significar algo.
+        //
+        // Então: `true` quando este read de fato viu um destino; `undefined` quando não viu —
+        // e aí a tela fica calada (o badge dispara em `=== false`). Quem PODE afirmar é a
+        // leitura ao vivo do cadastro do favorecido (`modalidadesDisponiveisDoLote`) e a
+        // validação do envio, que é autoritativa.
+        const prontoParaRemessa =
+            temBoleto || temPix || temContaBanco || temModalidade ? true : undefined;
         return {
             docCod: r.docCod,
             titCod: r.titCod ?? '1',
@@ -170,7 +251,7 @@ export default class ConexosSispagClient {
             numRemessa: r.titNumRemessa,
             pesCod: r.pesCod,
             tpdCod: r.tpdCod,
-            prontoParaRemessa: temBoleto || temPix || temContaBanco || temModalidade,
+            prontoParaRemessa,
             temBoleto,
             modalidadesDisponiveis,
         };
@@ -181,9 +262,10 @@ export default class ConexosSispagClient {
      * NÃO-pago + vencimento numa janela (default: dos últimos 30 dias em diante),
      * para o painel focar no que é relevante (a vencer + vencidos recentes) — sem
      * o filtro, o `fin064` devolve stragglers de anos atrás. Se o Conexos recusar
-     * o filtro (400), cai para busca sem filtro (o serviço filtra em memória).
-     * Erro transitório (5xx/timeout/rede) NÃO cai no fallback — propaga (não
-     * mascarar uma falha do ERP com uma leitura ampla de milhares de linhas).
+     * o filtro — 400 cujo CORPO nomeia o filtro —, cai para busca sem filtro (o
+     * serviço filtra em memória). Qualquer outro erro, 400 genérico incluído,
+     * propaga: não mascarar uma falha do ERP com uma leitura ampla de milhares
+     * de linhas que parece a carteira normal. Ver `isFilterRejected`.
      */
     public listTitulosAPagar = async (
         filCod: number,
@@ -212,7 +294,9 @@ export default class ConexosSispagClient {
             );
             rows = res.rows;
         } catch (err) {
-            if (!this.isFilterRejected(err)) throw err;
+            // Os campos que mandamos, sem o `#OP` — é assim que o ERP os nomeia quando reclama.
+            const camposFiltrados = Object.keys(filtered).map((k) => k.split('#')[0] ?? k);
+            if (!this.isFilterRejected(err, camposFiltrados)) throw err;
             // Fallback NÃO-silencioso: se o Conexos passar a recusar o filtro de forma
             // sistemática (drift de schema no fin064), a leitura ampla vira sinal, não
             // um degrade oculto (o modo de falha que este fix fecha em 1º lugar).

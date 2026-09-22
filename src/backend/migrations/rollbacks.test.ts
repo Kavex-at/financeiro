@@ -42,7 +42,13 @@ describe('migrations — segurança do diretório', () => {
         const aplicaveis = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'));
 
         expect(reverses.sort()).toEqual(
-            ['0054_estado_ja_permutado.sql', '0055_guarda_estado_colapsado.sql'].sort(),
+            [
+                '0054_estado_ja_permutado.sql',
+                '0055_guarda_estado_colapsado.sql',
+                // A 0061 normaliza para NULL os `pronto_para_remessa = FALSE` existentes:
+                // perde a distinção no caminho de ida, então precisa do caminho de volta.
+                '0061_pronto_para_remessa_tri_estado.sql',
+            ].sort(),
         );
         for (const alvo of reverses) {
             expect(aplicaveis).toContain(alvo);

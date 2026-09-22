@@ -450,13 +450,21 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
                 .fn()
                 .mockResolvedValue(loteGerado({ status: 'RASCUNHO', nativeFlpCod: undefined })),
         });
-        await expect(service.linhasDigitaveisDoLote('lote-1')).resolves.toEqual([]);
+        await expect(service.linhasDigitaveisDoLote('lote-1')).resolves.toEqual({
+            itens: [],
+            total: 0,
+            dropped: 0,
+        });
         expect(listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
     });
 
     it('lote inexistente → lista vazia, sem exceção', async () => {
         const { service } = make({ getLoteComItens: jest.fn().mockResolvedValue(null) });
-        await expect(service.linhasDigitaveisDoLote('nao-existe')).resolves.toEqual([]);
+        await expect(service.linhasDigitaveisDoLote('nao-existe')).resolves.toEqual({
+            itens: [],
+            total: 0,
+            dropped: 0,
+        });
     });
 
     it('falha do ERP → lista vazia + BUSINESS_WARN (o card não quebra por um botão)', async () => {
@@ -464,7 +472,11 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
             getLoteComItens: jest.fn().mockResolvedValue(loteGerado()),
             listarLinhasDigitaveisDoLote: jest.fn().mockRejectedValue(new Error('erp fora')),
         });
-        await expect(service.linhasDigitaveisDoLote('lote-1')).resolves.toEqual([]);
+        await expect(service.linhasDigitaveisDoLote('lote-1')).resolves.toEqual({
+            itens: [],
+            total: 0,
+            dropped: 0,
+        });
         expect(log.warn).toHaveBeenCalled();
     });
 
@@ -472,13 +484,43 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
         const completa = '1'.repeat(47);
         const { service, log } = make({
             getLoteComItens: jest.fn().mockResolvedValue(loteGerado()),
-            listarLinhasDigitaveisDoLote: jest
-                .fn()
-                .mockResolvedValue([{ docCod: '1', titCod: '1', linhaDigitavel: completa }]),
+            listarLinhasDigitaveisDoLote: jest.fn().mockResolvedValue({
+                itens: [{ docCod: '1', titCod: '1', linhaDigitavel: completa }],
+                // `dropped > 0` para que o log NOVO (recusa no boundary) também entre na
+                // varredura: é um sítio a mais de onde a linha poderia vazar.
+                total: 2,
+                dropped: 1,
+            }),
         });
         await service.linhasDigitaveisDoLote('lote-1');
         const chamadas = (fn: unknown) => (fn as jest.Mock).mock.calls;
         const tudoQueFoiLogado = JSON.stringify([...chamadas(log.info), ...chamadas(log.warn)]);
         expect(tudoQueFoiLogado).not.toContain(completa);
+    });
+
+    it('linha recusada no boundary vira BUSINESS_WARN com a contagem', async () => {
+        // A recusa não pode morrer no client: sem este log, a única testemunha de um código
+        // corrompido seria a analista reparando num botão que faltou.
+        const { service, log } = make({
+            getLoteComItens: jest.fn().mockResolvedValue(loteGerado()),
+            listarLinhasDigitaveisDoLote: jest
+                .fn()
+                .mockResolvedValue({ itens: [], total: 3, dropped: 3 }),
+        });
+        await service.linhasDigitaveisDoLote('lote-1');
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ total: 3, dropped: 3 }) }),
+        );
+    });
+
+    it('sem recusa não há warn — o caminho normal é silencioso', async () => {
+        const { service, log } = make({
+            getLoteComItens: jest.fn().mockResolvedValue(loteGerado()),
+            listarLinhasDigitaveisDoLote: jest
+                .fn()
+                .mockResolvedValue({ itens: [], total: 0, dropped: 0 }),
+        });
+        await service.linhasDigitaveisDoLote('lote-1');
+        expect(log.warn).not.toHaveBeenCalled();
     });
 });
