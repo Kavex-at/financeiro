@@ -76,10 +76,14 @@ describe('ConexosFin014Client', () => {
         expect(postGenericOnce.mock.calls[0][0]).toBe('fin014/baixas');
     });
 
-    it('finalizarBordero: POST /fin014/finalizar/{borCod}', async () => {
+    // POST ÚNICO: o `postGeneric` re-posta após um 401, e um 401 que chega depois de o ERP já ter
+    // finalizado o borderô faria a segunda tentativa agir sobre um borderô já finalizado.
+    it('finalizarBordero: postGenericOnce /fin014/finalizar/{borCod} (sem 401-retry)', async () => {
         const postGeneric = jest.fn().mockResolvedValue({});
-        const client = new ConexosFin014Client(buildBase({ postGeneric }));
+        const postGenericOnce = jest.fn().mockResolvedValue({});
+        const client = new ConexosFin014Client(buildBase({ postGeneric, postGenericOnce }));
         await client.finalizarBordero({ filCod: 2, borCod: 7300 });
-        expect(postGeneric.mock.calls[0][0]).toBe('fin014/finalizar/7300');
+        expect(postGenericOnce.mock.calls[0][0]).toBe('fin014/finalizar/7300');
+        expect(postGeneric).not.toHaveBeenCalled();
     });
 });

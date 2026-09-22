@@ -191,13 +191,23 @@ export default class ConexosFin014Client {
         }
     };
 
-    /** Passo 4 — finaliza o borderô de recebimento. `POST /api/fin014/finalizar/{borCod}` (body vazio). */
+    /**
+     * Passo 4 — finaliza o borderô de recebimento. `POST /api/fin014/finalizar/{borCod}` (body vazio).
+     *
+     * `postGenericOnce` (NÃO `postGeneric`): a transição de estado do borderô é IRREVERSÍVEL do
+     * ponto de vista do re-envio. O `postGeneric` re-posta o request depois de um 401 — e um 401
+     * que chega DEPOIS de o ERP já ter aplicado a mudança faria a segunda tentativa agir sobre um
+     * borderô que já mudou de estado (e, no caso do estorno/cancelamento, sobre um ciclo inteiro
+     * de finalizar↔estornar). Mesma razão que moveu o `gravarBaixaPermuta` para `Once`: a falha
+     * (incl. 401) sobe para o serviço e o operador confere no ERP, em vez de o cliente decidir
+     * sozinho repetir uma escrita.
+     */
     public finalizarBordero = async (params: { filCod: number; borCod: number }): Promise<void> => {
         const { filCod, borCod } = params;
         const path = `fin014/finalizar/${borCod}`;
         try {
             await this.base.ensureSid();
-            await this.base.postGeneric<unknown>(path, {}, { filCod });
+            await this.base.postGenericOnce<unknown>(path, {}, { filCod });
         } catch (cause) {
             throw new ConexosError({ endpoint: path, cause });
         }

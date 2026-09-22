@@ -1609,15 +1609,31 @@ describe('ConexosClient — fin010 write contract (Fase 3.1)', () => {
         expect(legacy.deleteGeneric).toHaveBeenCalledWith('fin010/14709', { filCod: 4 });
     });
 
-    it('finalizar/cancelar/estornarBordero: POST fin010/{acao}/{borCod} body vazio + filCod header', async () => {
+    // `postGenericOnce`, NÃO `postGeneric`: o `postGeneric` re-posta depois de um 401, e um 401
+    // que chega DEPOIS de o ERP aplicar a transição faria a segunda tentativa agir sobre um
+    // borderô que já mudou de estado. Mesmo precedente do `gravarBaixaPermuta`.
+    it('finalizar/cancelar/estornarBordero: POST ÚNICO (sem 401-retry) fin010/{acao}/{borCod}', async () => {
         const legacy = buildLegacy();
         const client = buildClient(legacy);
         await client.finalizarBordero({ filCod: 2, borCod: 100 });
         await client.cancelarBordero({ filCod: 2, borCod: 101 });
         await client.estornarBordero({ filCod: 2, borCod: 102 });
-        expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/finalizar/100', {}, { filCod: 2 });
-        expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/cancelar/101', {}, { filCod: 2 });
-        expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/estornar/102', {}, { filCod: 2 });
+        expect(legacy.postGenericOnce).toHaveBeenCalledWith(
+            'fin010/finalizar/100',
+            {},
+            { filCod: 2 },
+        );
+        expect(legacy.postGenericOnce).toHaveBeenCalledWith(
+            'fin010/cancelar/101',
+            {},
+            { filCod: 2 },
+        );
+        expect(legacy.postGenericOnce).toHaveBeenCalledWith(
+            'fin010/estornar/102',
+            {},
+            { filCod: 2 },
+        );
+        expect(legacy.postGeneric).not.toHaveBeenCalled();
     });
 
     it('listBaixas: POST fin010/baixas/list/{borCod}; mapeia docTip/docCod/titCod/bxaCodSeq', async () => {
