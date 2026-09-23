@@ -1,4 +1,4 @@
-import type { LoteRascunhoRef } from '@/lib/sispag'
+import type { LotePagamento, LoteRascunhoRef } from '@/lib/sispag'
 
 /**
  * O lote em que um título está (ADR-0050): textos e cálculos puros da linha do título.
@@ -13,3 +13,15 @@ export const paginaDoLote = (ids: string[], id: string, pageSize: number): numbe
   const i = ids.indexOf(id)
   return i < 0 ? null : Math.floor(i / pageSize) + 1
 }
+
+/**
+ * Texto em que a busca das abas de lotes procura: filial, autor, credores e o documento de cada
+ * título no mesmo formato da aba de títulos (`docCod/titCod`), para o código que a analista usa lá
+ * achar o lote aqui.
+ */
+export const textoBuscaLote = (l: LotePagamento): string =>
+  [
+    l.filCod,
+    l.criadoPor,
+    ...l.itens.flatMap((i) => [i.credor ?? '', `${i.docCod}/${i.titCod}`]),
+  ].join(' ')
