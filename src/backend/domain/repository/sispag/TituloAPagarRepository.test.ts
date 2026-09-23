@@ -93,28 +93,4 @@ describe('TituloAPagarRepository', () => {
         });
         expect(typeof titulos[0].vencimento).toBe('number');
     });
-
-    describe('listElegiveisParaFormacao', () => {
-        const sqlDaFormacao = async () => {
-            const { client } = buildDb();
-            await new TituloAPagarRepository(client).listElegiveisParaFormacao(7);
-            const [sql, params] = (client.selectMany as jest.Mock).mock.calls[0];
-            return { sql: String(sql).replace(/\s+/g, ' '), params };
-        };
-
-        it('I9 (ADR-0050): exclui título com retenção ativa da formação automática', async () => {
-            const { sql } = await sqlDaFormacao();
-            expect(sql).toMatch(
-                /AND NOT EXISTS \( SELECT 1 FROM titulo_retencao_formacao r WHERE r\.removido_em IS NULL AND r\.fil_cod = t\.fil_cod AND r\.doc_cod = t\.doc_cod AND r\.tit_cod = t\.tit_cod\)/,
-            );
-        });
-
-        it('mantém o anti-join de lote RASCUNHO (I3) e a janela parametrizada', async () => {
-            const { sql, params } = await sqlDaFormacao();
-            expect(sql).toContain("WHERE l.status = 'RASCUNHO'");
-            expect(sql).toContain('make_interval(days => $maxDias)');
-            expect(sql).not.toMatch(/\$\{/);
-            expect(params).toEqual({ maxDias: 7 });
-        });
-    });
 });

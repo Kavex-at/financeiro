@@ -5,7 +5,6 @@ import {
   fetchJanelaDataDebito,
   formatCivilDate,
   gerarRemessa,
-  liberarRetencao,
   retirarDoLote,
 } from '@/lib/sispag'
 
@@ -152,7 +151,7 @@ describe('formatCivilDate', () => {
   })
 })
 
-// ─── Retenção da formação automática (ADR-0050) ──────────────────────────────
+// ─── Retirar do lote (ADR-0050) ──────────────────────────────────────────────
 
 const respostaOk = (corpo: unknown) =>
   ({ ok: true, status: 200, json: async () => corpo }) as unknown as Response
@@ -160,27 +159,15 @@ const respostaOk = (corpo: unknown) =>
 const ultimaChamadaComUrl = () => mockApiFetch.mock.calls.at(-1) as [string, RequestInit]
 
 describe('retirarDoLote', () => {
-  it('faz POST na rota do título, com a chave codificada e o motivo', async () => {
+  it('faz POST na rota do título, com a chave codificada', async () => {
     mockApiFetch.mockResolvedValueOnce(respostaOk({ lote: { id: 'L1' } }))
 
-    const lote = await retirarDoLote(
-      { filCod: 2, docCod: '81/3', titCod: '1' },
-      'fornecedor pediu para segurar',
-    )
+    const lote = await retirarDoLote({ filCod: 2, docCod: '81/3', titCod: '1' })
 
     expect(lote).toEqual({ id: 'L1' })
     const [url, init] = ultimaChamadaComUrl()
     expect(url).toMatch(/\/sispag\/titulos\/2\/81%2F3\/1\/retirar-do-lote$/)
     expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toEqual({ motivo: 'fornecedor pediu para segurar' })
-  })
-
-  it('não envia motivo em branco', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ lote: { id: 'L1' } }))
-
-    await retirarDoLote({ filCod: 2, docCod: '813', titCod: '1' }, '   ')
-
-    expect(JSON.parse(String(ultimaChamadaComUrl()[1].body))).toEqual({})
   })
 
   it('resposta não-ok lança a mensagem do backend', async () => {
@@ -192,30 +179,6 @@ describe('retirarDoLote', () => {
 
     await expect(retirarDoLote({ filCod: 2, docCod: '813', titCod: '1' })).rejects.toThrow(
       'Este título não está mais em nenhum lote em rascunho.',
-    )
-  })
-})
-
-describe('liberarRetencao', () => {
-  it('faz DELETE na retenção do título', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ liberado: true }))
-
-    await liberarRetencao({ filCod: 2, docCod: '813', titCod: '1' })
-
-    const [url, init] = ultimaChamadaComUrl()
-    expect(url).toMatch(/\/sispag\/titulos\/2\/813\/1\/retencao$/)
-    expect(init.method).toBe('DELETE')
-  })
-
-  it('resposta não-ok lança a mensagem do backend', async () => {
-    mockApiFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-      json: async () => ({ error: 'Este título não está retido da formação automática.' }),
-    } as unknown as Response)
-
-    await expect(liberarRetencao({ filCod: 2, docCod: '813', titCod: '1' })).rejects.toThrow(
-      'Este título não está retido da formação automática.',
     )
   })
 })

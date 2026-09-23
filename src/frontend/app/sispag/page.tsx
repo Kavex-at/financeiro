@@ -9,8 +9,7 @@ import {
   DatabaseZap,
   Layers,
   Lock,
-  PauseCircle,
-  PlayCircle,
+  LogOut,
   RefreshCcw,
   Trash2,
 } from 'lucide-react'
@@ -49,7 +48,6 @@ import {
   formarLotes,
   incluirTitulo,
   IngestaoPagamentosEmAndamentoError,
-  liberarRetencao,
   retirarDoLote,
   type PagamentoIngestaoRun,
   reabrirLote,
@@ -69,9 +67,8 @@ import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/componen
 import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
-import { RetencaoBadge } from './components/RetencaoBadge'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
-import { paginaDoLote, rotuloLote } from './components/retencao'
+import { paginaDoLote, rotuloLote } from './components/loteDoTitulo'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
@@ -180,7 +177,7 @@ function SispagPanel() {
   const [aba, setAba] = React.useState('titulos')
   const [loteEmFoco, setLoteEmFoco] = React.useState<string | null>(null)
   const [retirando, setRetirando] = React.useState<TituloAPagar | null>(null)
-  const [salvandoRetencao, setSalvandoRetencao] = React.useState(false)
+  const [salvandoRetirada, setSalvandoRetirada] = React.useState(false)
 
   // Os lotes vêm de outro endpoint (`/sispag/lotes`) e podem falhar sozinhos. Falha NÃO vira
   // lista vazia: em 2026-09-23 o endpoint quebrou (coluna da 0061 ainda sem migrar) e a tela
@@ -214,7 +211,7 @@ function SispagPanel() {
   }, [recarregarLotes])
 
   // Relê só o painel, sem o spinner de página inteira do `carregar` — a analista continua na
-  // aba em que estava depois de retirar/liberar um título.
+  // aba em que estava depois de retirar um título do lote.
   const recarregarPainel = React.useCallback(async () => {
     try {
       setPainel(await fetchSispagPainel())
@@ -353,13 +350,13 @@ function SispagPanel() {
 
   const chaveDe = (t: TituloAPagar) => ({ filCod: t.filCod, docCod: t.docCod, titCod: t.titCod })
 
-  const confirmarRetirada = async (motivo: string) => {
+  const confirmarRetirada = async () => {
     if (!retirando) return
-    setSalvandoRetencao(true)
+    setSalvandoRetirada(true)
     try {
-      await retirarDoLote(chaveDe(retirando), motivo)
+      await retirarDoLote(chaveDe(retirando))
       toast.success('Título retirado do lote', {
-        description: 'Ele não volta a entrar em lote automático até ser incluído à mão ou liberado.',
+        description: 'Ele já pode ser incluído em outro lote.',
       })
       setRetirando(null)
       await Promise.all([recarregarPainel(), recarregarLotes()])
@@ -369,27 +366,10 @@ function SispagPanel() {
         description: e instanceof Error ? e.message : undefined,
       })
     } finally {
-      setSalvandoRetencao(false)
+      setSalvandoRetirada(false)
     }
   }
 
-  const liberar = async (t: TituloAPagar) => {
-    setBusy(true)
-    try {
-      await liberarRetencao(chaveDe(t))
-      toast.success('Título liberado para lote automático', {
-        description: 'A próxima formação automática pode incluí-lo, se ele ainda for elegível.',
-      })
-      await recarregarPainel()
-    } catch (e) {
-      if (isSessionExpiredError(e)) return
-      toast.error('Não foi possível liberar o título', {
-        description: e instanceof Error ? e.message : undefined,
-      })
-    } finally {
-      setBusy(false)
-    }
-  }
   const finFiltrados = lotesFinalizados.filter((l) =>
     statusFin === 'aguardando'
       ? l.status === 'FINALIZADO'
@@ -473,7 +453,7 @@ function SispagPanel() {
     setBusy(true)
     try {
       const resultado = await fn()
-      // O painel também muda: a linha do título mostra o lote e a retenção (ADR-0050).
+      // O painel também muda: a linha do título mostra o lote em que está (ADR-0050).
       await Promise.all([recarregarLotes(), recarregarPainel()])
       if (typeof okMsg === 'string') {
         toast.success(okMsg)
@@ -640,8 +620,8 @@ function SispagPanel() {
       <RetirarDoLoteDialog
         titulo={retirando}
         onClose={() => setRetirando(null)}
-        salvando={salvandoRetencao}
-        onConfirmar={(motivo) => void confirmarRetirada(motivo)}
+        salvando={salvandoRetirada}
+        onConfirmar={() => void confirmarRetirada()}
       />
 
       <AdicionarTituloDialog
@@ -929,9 +909,6 @@ function SispagPanel() {
                               ) : (
                                 <Badge variant="outline">bloqueado</Badge>
                               )}
-                              {t.retencaoFormacao ? (
-                                <RetencaoBadge retencao={t.retencaoFormacao} />
-                              ) : null}
                               {t.prontoParaRemessa === false ? (
                                 <Badge
                                   variant="outline"
@@ -945,29 +922,16 @@ function SispagPanel() {
                           </TableCell>
                           <TableCell className="text-muted-foreground">{t.filCod}</TableCell>
                           <TableCell className="text-right">
-                            <div className="flex justify-end gap-1">
-                              {t.loteRascunho ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={busy || salvandoRetencao}
-                                  onClick={() => setRetirando(t)}
-                                >
-                                  <PauseCircle className="size-4" aria-hidden /> Retirar do lote
-                                </Button>
-                              ) : null}
-                              {t.retencaoFormacao ? (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  disabled={busy}
-                                  onClick={() => void liberar(t)}
-                                  title="Liberar para lote automático"
-                                >
-                                  <PlayCircle className="size-4" aria-hidden /> Liberar
-                                </Button>
-                              ) : null}
-                            </div>
+                            {t.loteRascunho ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy || salvandoRetirada}
+                                onClick={() => setRetirando(t)}
+                              >
+                                <LogOut className="size-4" aria-hidden /> Retirar do lote
+                              </Button>
+                            ) : null}
                           </TableCell>
                         </TableRow>
                       ))}

@@ -127,25 +127,6 @@ describe('LotePagamentoRepository', () => {
         expect((params as { vencimento: Date }).vencimento).toBeInstanceOf(Date);
     });
 
-    it('lerEstadoParaEdicao trava a linha do lote (FOR UPDATE) na transação do serviço', async () => {
-        const db = buildDb();
-        const tx = buildDb();
-        tx.selectFirst.mockResolvedValue({ status: 'RASCUNHO', automatico: true });
-        const estado = await make(db).lerEstadoParaEdicao('L1', tx as never);
-        expect(db.selectFirst).not.toHaveBeenCalled();
-        const [sql, params] = tx.selectFirst.mock.calls[0];
-        expect(sql).toMatch(
-            /SELECT status, automatico FROM lote_pagamento\s+WHERE id = \$loteId\s+FOR UPDATE/,
-        );
-        expect(params).toEqual({ loteId: 'L1' });
-        expect(estado).toEqual({ status: 'RASCUNHO', automatico: true });
-    });
-
-    it('lerEstadoParaEdicao devolve null quando o lote não existe', async () => {
-        const tx = buildDb();
-        expect(await make(buildDb()).lerEstadoParaEdicao('X', tx as never)).toBeNull();
-    });
-
     it('listTitulosEmRascunho traz o lote e se ele é automático (ADR-0050)', async () => {
         const db = buildDb();
         db.selectMany.mockResolvedValue([

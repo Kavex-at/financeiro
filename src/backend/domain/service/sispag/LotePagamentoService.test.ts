@@ -5,13 +5,11 @@ import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
-import RetencaoInexistenteError from '../../errors/RetencaoInexistenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import type { LotePagamento, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
-import type RetencaoFormacaoRepository from '../../repository/sispag/RetencaoFormacaoRepository.js';
 import type LogService from '../LogService.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LotePagamentoService from './LotePagamentoService.js';
@@ -64,7 +62,6 @@ interface RepoMock {
     atualizarContaPagadora: jest.Mock;
     contarItensSemModalidade: jest.Mock;
     atualizarModalidadeItem: jest.Mock;
-    lerEstadoParaEdicao: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -81,14 +78,6 @@ const buildRepo = (): RepoMock => ({
     atualizarContaPagadora: jest.fn().mockResolvedValue(1),
     contarItensSemModalidade: jest.fn().mockResolvedValue(0),
     atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
-    lerEstadoParaEdicao: jest.fn().mockResolvedValue({ status: 'RASCUNHO', automatico: false }),
-});
-
-/** Retenção da formação automática (ADR-0050): escrita sempre com o `tx` do serviço. */
-const buildRetencaoRepo = () => ({
-    insertAtiva: jest.fn().mockResolvedValue(undefined),
-    liberarAtiva: jest.fn().mockResolvedValue(0),
-    listAtivas: jest.fn().mockResolvedValue([]),
 });
 
 /** Carteira persistida: é DAQUI que sai o "tem boleto?" — nunca do `fin064`. */
@@ -100,7 +89,6 @@ const make = (
     repo: RepoMock,
     conexosTitulo: TituloAPagar | null = titulo(),
     tituloRepo = buildTituloRepo(),
-    retencaoRepo = buildRetencaoRepo(),
 ) => {
     const conexos = {
         getTituloAPagar: jest.fn().mockResolvedValue(conexosTitulo),
@@ -111,9 +99,8 @@ const make = (
         conexos,
         buildDb(),
         buildLog(),
-        retencaoRepo as unknown as RetencaoFormacaoRepository,
     );
-    return { service, conexos, tituloRepo, retencaoRepo };
+    return { service, conexos, tituloRepo };
 };
 
 describe('LotePagamentoService — invariantes', () => {
@@ -348,7 +335,6 @@ describe('LotePagamentoService — invariantes', () => {
         it('remover de um lote AUTOMÁTICO o adota (vira manual)', async () => {
             const repo = buildRepo();
             repo.getLoteComItens.mockResolvedValue(lote({ automatico: true }));
-            repo.lerEstadoParaEdicao.mockResolvedValue({ status: 'RASCUNHO', automatico: true });
             const { service } = make(repo);
             await service.removerTitulo({
                 loteId: 'L1',
@@ -397,7 +383,6 @@ describe('LotePagamentoService — invariantes', () => {
                 conexos,
                 dbBusy,
                 buildLog(),
-                buildRetencaoRepo() as unknown as RetencaoFormacaoRepository,
             );
             await expect(
                 service.incluirTitulo({
@@ -549,200 +534,39 @@ describe('LotePagamentoService — invariantes', () => {
             ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
         });
     });
-    describe('retenção da formação automática (ADR-0050, I9)', () => {
+
+    describe('retirarDoLote (aba de títulos, ADR-0050)', () => {
         const chave = { filCod: 2, docCod: '100', titCod: '1' };
-        const TX = expect.anything();
 
-        describe('removerTitulo (lixeira do lote)', () => {
-            it('lote AUTOMÁTICO: lê automatico ANTES do marcarManual e retém, na mesma transação', async () => {
-                const repo = buildRepo();
-                repo.lerEstadoParaEdicao.mockResolvedValue({
-                    status: 'RASCUNHO',
-                    automatico: true,
-                });
-                const { service, retencaoRepo } = make(repo);
-
-                await service.removerTitulo({ loteId: 'L1', ...chave, ator: 'u1' });
-
-                expect(repo.lerEstadoParaEdicao).toHaveBeenCalledWith('L1', TX);
-                expect(retencaoRepo.insertAtiva).toHaveBeenCalledWith(TX, {
-                    ...chave,
-                    marcadoPor: 'u1',
-                });
-                const leu = repo.lerEstadoParaEdicao.mock.invocationCallOrder[0];
-                const virouManual = repo.marcarManual.mock.invocationCallOrder[0];
-                expect(leu).toBeLessThan(virouManual);
-                // o MESMO tx em todas as escritas
-                const tx = repo.removerItem.mock.calls[0][1];
-                expect(retencaoRepo.insertAtiva.mock.calls[0][0]).toBe(tx);
-                expect(repo.marcarManual).toHaveBeenCalledWith('L1', tx);
-            });
-
-            it('lote MANUAL: remove sem reter', async () => {
-                const repo = buildRepo();
-                const { service, retencaoRepo } = make(repo);
-
-                await service.removerTitulo({ loteId: 'L1', ...chave, ator: 'u1' });
-
-                expect(repo.removerItem).toHaveBeenCalled();
-                expect(retencaoRepo.insertAtiva).not.toHaveBeenCalled();
-                expect(repo.marcarManual).not.toHaveBeenCalled();
-            });
-
-            it('item que já não estava no lote não gera retenção', async () => {
-                const repo = buildRepo();
-                repo.lerEstadoParaEdicao.mockResolvedValue({
-                    status: 'RASCUNHO',
-                    automatico: true,
-                });
-                repo.removerItem.mockResolvedValue(0);
-                const { service, retencaoRepo } = make(repo);
-
-                await service.removerTitulo({ loteId: 'L1', ...chave, ator: 'u1' });
-
-                expect(retencaoRepo.insertAtiva).not.toHaveBeenCalled();
-            });
-
-            it('lote que saiu de RASCUNHO entre a leitura e o lock é recusado', async () => {
-                const repo = buildRepo();
-                repo.lerEstadoParaEdicao.mockResolvedValue({
-                    status: 'FINALIZADO',
-                    automatico: true,
-                });
-                const { service, retencaoRepo } = make(repo);
-
-                await expect(
-                    service.removerTitulo({ loteId: 'L1', ...chave, ator: 'u1' }),
-                ).rejects.toBeInstanceOf(LoteEstadoInvalidoError);
-                expect(repo.removerItem).not.toHaveBeenCalled();
-                expect(retencaoRepo.insertAtiva).not.toHaveBeenCalled();
-            });
-        });
-
-        describe('retirarDoLote (aba de títulos)', () => {
-            it('acha o lote RASCUNHO do título, remove e retém com o motivo, numa transação', async () => {
-                const repo = buildRepo();
-                repo.loteRascunhoComTitulo.mockResolvedValue('L1');
-                const { service, retencaoRepo } = make(repo);
-
-                const l = await service.retirarDoLote({
-                    ...chave,
-                    motivo: 'fornecedor pediu para segurar',
-                    ator: 'u1',
-                });
-
-                expect(l.id).toBe('L1');
-                expect(repo.removerItem).toHaveBeenCalledWith({ loteId: 'L1', ...chave }, TX);
-                expect(retencaoRepo.insertAtiva).toHaveBeenCalledWith(TX, {
-                    ...chave,
-                    motivo: 'fornecedor pediu para segurar',
-                    marcadoPor: 'u1',
-                });
-                expect(repo.tocarLote).toHaveBeenCalledWith('L1', TX);
-            });
-
-            it('retém mesmo em lote MANUAL (a intenção é explícita)', async () => {
-                const repo = buildRepo();
-                repo.loteRascunhoComTitulo.mockResolvedValue('L1');
-                const { service, retencaoRepo } = make(repo);
-
-                await service.retirarDoLote({ ...chave, ator: 'u1' });
-
-                expect(retencaoRepo.insertAtiva).toHaveBeenCalledWith(TX, {
-                    ...chave,
-                    marcadoPor: 'u1',
-                });
-                expect(repo.marcarManual).not.toHaveBeenCalled();
-            });
-
-            it('lote automático vira manual', async () => {
-                const repo = buildRepo();
-                repo.loteRascunhoComTitulo.mockResolvedValue('L1');
-                repo.lerEstadoParaEdicao.mockResolvedValue({
-                    status: 'RASCUNHO',
-                    automatico: true,
-                });
-                const { service } = make(repo);
-
-                await service.retirarDoLote({ ...chave, ator: 'u1' });
-
-                expect(repo.marcarManual).toHaveBeenCalledWith('L1', TX);
-            });
-
-            it('título fora de lote RASCUNHO → TituloForaDeLoteError, nada gravado', async () => {
-                const repo = buildRepo();
-                repo.loteRascunhoComTitulo.mockResolvedValue(null);
-                const { service, retencaoRepo } = make(repo);
-
-                await expect(
-                    service.retirarDoLote({ ...chave, ator: 'u1' }),
-                ).rejects.toBeInstanceOf(TituloForaDeLoteError);
-                expect(repo.removerItem).not.toHaveBeenCalled();
-                expect(retencaoRepo.insertAtiva).not.toHaveBeenCalled();
-            });
-
-            it('item sumiu entre a busca e o lock → TituloForaDeLoteError, sem retenção', async () => {
-                const repo = buildRepo();
-                repo.loteRascunhoComTitulo.mockResolvedValue('L1');
-                repo.removerItem.mockResolvedValue(0);
-                const { service, retencaoRepo } = make(repo);
-
-                await expect(
-                    service.retirarDoLote({ ...chave, ator: 'u1' }),
-                ).rejects.toBeInstanceOf(TituloForaDeLoteError);
-                expect(retencaoRepo.insertAtiva).not.toHaveBeenCalled();
-            });
-
-            it('falha ao gravar a retenção propaga (a transação desfaz a remoção)', async () => {
-                const repo = buildRepo();
-                repo.loteRascunhoComTitulo.mockResolvedValue('L1');
-                const retencaoRepo = buildRetencaoRepo();
-                retencaoRepo.insertAtiva.mockRejectedValue(new Error('db down'));
-                const { service } = make(repo, titulo(), buildTituloRepo(), retencaoRepo);
-
-                await expect(service.retirarDoLote({ ...chave, ator: 'u1' })).rejects.toThrow(
-                    'db down',
-                );
-                expect(repo.tocarLote).not.toHaveBeenCalled();
-            });
-        });
-
-        it('incluirTitulo libera a retenção ativa na MESMA transação (incluido-no-lote)', async () => {
+        it('acha o lote RASCUNHO do título e o remove, como a lixeira', async () => {
             const repo = buildRepo();
-            const { service, retencaoRepo } = make(repo);
-
-            await service.incluirTitulo({ loteId: 'L1', ...chave, ator: 'u9' });
-
-            const tx = repo.adicionarItem.mock.calls[0][1];
-            expect(retencaoRepo.liberarAtiva).toHaveBeenCalledWith(tx, {
-                ...chave,
-                removidoPor: 'u9',
-                motivoRemocao: 'incluido-no-lote',
-            });
+            repo.loteRascunhoComTitulo.mockResolvedValue('L1');
+            const { service } = make(repo);
+            await service.retirarDoLote({ ...chave, ator: 'u1' });
+            expect(repo.loteRascunhoComTitulo).toHaveBeenCalledWith(chave);
+            expect(repo.removerItem).toHaveBeenCalledWith(
+                { loteId: 'L1', ...chave },
+                expect.anything(),
+            );
+            expect(repo.marcarManual).not.toHaveBeenCalled();
         });
 
-        describe('liberarRetencao', () => {
-            it('soft delete com motivo liberado e autor', async () => {
-                const repo = buildRepo();
-                const retencaoRepo = buildRetencaoRepo();
-                retencaoRepo.liberarAtiva.mockResolvedValue(1);
-                const { service } = make(repo, titulo(), buildTituloRepo(), retencaoRepo);
+        it('lote automático vira manual', async () => {
+            const repo = buildRepo();
+            repo.loteRascunhoComTitulo.mockResolvedValue('L1');
+            repo.getLoteComItens.mockResolvedValue(lote({ automatico: true }));
+            const { service } = make(repo);
+            await service.retirarDoLote({ ...chave, ator: 'u1' });
+            expect(repo.marcarManual).toHaveBeenCalledWith('L1', expect.anything());
+        });
 
-                await service.liberarRetencao({ ...chave, ator: 'u1' });
-
-                expect(retencaoRepo.liberarAtiva).toHaveBeenCalledWith(TX, {
-                    ...chave,
-                    removidoPor: 'u1',
-                    motivoRemocao: 'liberado',
-                });
-            });
-
-            it('sem retenção ativa → RetencaoInexistenteError', async () => {
-                const { service } = make(buildRepo());
-                await expect(
-                    service.liberarRetencao({ ...chave, ator: 'u1' }),
-                ).rejects.toBeInstanceOf(RetencaoInexistenteError);
-            });
+        it('título fora de lote RASCUNHO → TituloForaDeLoteError, nada removido', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo);
+            await expect(service.retirarDoLote({ ...chave, ator: 'u1' })).rejects.toBeInstanceOf(
+                TituloForaDeLoteError,
+            );
+            expect(repo.removerItem).not.toHaveBeenCalled();
         });
     });
 });

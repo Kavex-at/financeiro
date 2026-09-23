@@ -3,52 +3,20 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
-## v0.28.1 — ADR-0050 implementada (2026-09-22)
+## v0.28.0 — retirar título do lote pela aba de títulos (2026-09-23, ADR-0050)
 
-Feature: `sispag-reter-titulo-lote`. `reterTituloDaFormacao` e `retencao-formacao-automatica` (I9)
-passam de `planned` a `implemented`.
+Feature: `sispag-reter-titulo-lote` (branch `fix/sispag-reter-titulo-lote`).
 
-- **Renumeração:** a invariante da retenção, aceita como I8, virou **I9** no rebase sobre a `main`,
-  que já usa I8 para a data de débito (ADR-0049). Mesma regra, outro número.
-
-- Migration `0062_titulo_retencao_formacao.sql`: tabela própria, soft-delete, índice único parcial
-  (uma ativa por título), `motivo` ≤ 500, remoção pareada com `motivo_remocao`
-  (`liberado` | `incluido-no-lote`), sem FK.
-- `listElegiveisParaFormacao` ganha o `NOT EXISTS` de I9.
-- `LotePagamentoService`: `retirarDoLote` e `liberarRetencao`; `removerTitulo` retém em lote
-  automático (`automatico` lido com `FOR UPDATE` antes do `marcarManual`); `incluirTitulo` libera
-  na mesma transação.
-- Painel projeta `loteRascunho { id, automatico }` e `retencaoFormacao`; UI com link do lote,
-  "Retirar do lote", badge "Não lotar automaticamente", "Liberar" e confirmação da lixeira em lote
-  automático.
-- **Coverage:** `actions_implemented` 20→21, `planned` 7→6, pct 71→75; `business_rules_implemented`
-  13→14, `planned` 10→9, `with_tests` 9→10; `TituloAPagar.impl_pct` 90→100.
-
-## v0.28.0 — retirar título do lote e retê-lo da formação automática (2026-09-22, ADR-0050, aceita)
-
-Feature: `sispag-reter-titulo-lote` (branch `fix/sispag-reter-titulo-lote`). Vem depois da v0.27.0
-(`fix/sispag-data-pagamento`, ADR-0049).
-
-- **Defeito que motiva:** o título retirado de um lote e deixado solto volta no cron seguinte, porque
-  `listElegiveisParaFormacao` só exige ativo, aprovado, não pago, a vencer em até 7 dias e fora de lote
-  RASCUNHO.
-- **NEW propriedade `TituloAPagar.retencaoFormacao`** `{ marcadoPor, marcadoEm, motivo? }`, persistida
-  em **tabela própria** (chave `fil_cod, doc_cod, tit_cod`, soft-delete, uma ativa por título, sem FK).
-  Não é coluna de `titulo_a_pagar`: aquela tabela é espelho do ERP e já foi purgada (migration 0030).
-- **NEW invariante I9** (`business-rules/retencao-formacao-automatica.md`, planned): a formação
-  automática não lota título retido. A inclusão manual continua permitida e libera a retenção
-  (`incluido-no-lote`).
-- **NEW action `reterTituloDaFormacao`** (planned): `retirarDoLote` (remoção + retenção, atômicas) e
-  `liberar`. A lixeira dentro de um lote **automático** também retém (P1-1: `automatico` lido antes do
-  `marcarManual`, mesma transação); lote manual não retém. "Reter" num título solto foi proposto e
-  **rejeitado** pelo usuário (P1-2).
-- **Emendas:** ADR-0018 D2 (termo I9), `formarLotesAutomaticos`, `gerenciarLoteCandidato`,
-  `montarPainelPagamentos` (a linha carrega o lote RASCUNHO e o badge; substitui `emLote`),
-  `state-machines/lote-pagamento.md` L2 (sem estado novo).
-- **Coverage:** `actions_total` 27→28, `planned` 6→7, pct 74→71; `business_rules_total` 23→24,
-  `planned` 9→10; `TituloAPagar.impl_pct` 100→90 (ontologia à frente do código).
-- **Gap:** `_inbox/sispag-retirar-titulo-lote-gap.md` (P1-1 e P1-2 respondidas em 2026-09-22; P2-1
-  expiração e P2-2 universalidade com o Francinei seguem abertas, sem bloquear).
+- **Emenda `gerenciarLoteCandidato`:** `removerTituloDoLote` ganha uma segunda porta, "Retirar do
+  lote" na linha do título, que acha o lote RASCUNHO do título e aplica a mesma remoção da lixeira.
+- **Emenda `montarPainelPagamentos`:** a linha projeta `loteRascunho { id, automatico }`, com link
+  para o card do lote.
+- **Retenção da formação automática retirada antes do merge** (decisão do usuário, 2026-09-23): a
+  versão aceita em 2026-09-22 criava a propriedade `TituloAPagar.retencaoFormacao`, a invariante I9
+  (`retencao-formacao-automatica`) e a action `reterTituloDaFormacao`. Nenhuma chegou à `main`. O
+  cron é espaçado e o título voltar a um lote automático depois não é problema. Ver ADR-0050 e
+  `_inbox/_watchlist.md`.
+- **Coverage:** nenhum contador muda (emenda de actions já implementadas).
 
 ## v0.27.0 — data de débito da remessa SISPAG escolhível (2026-09-22, ADR-0049)
 

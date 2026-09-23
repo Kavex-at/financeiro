@@ -190,10 +190,6 @@ export default class TituloAPagarRepository {
      * Elegíveis para FORMAÇÃO AUTOMÁTICA de lote: ativos, aprovados, não-pagos, A VENCER
      * dentro de `maxDias` (vencidos NÃO entram), e que ainda NÃO estão em nenhum lote RASCUNHO
      * (anti-join — não duplica o que o analista já tem em montagem, manual ou automático).
-     *
-     * I9 (ADR-0050): nem título com retenção ativa. A analista o tirou de um lote e decidiu que o
-     * cron não o lota de novo; sem este filtro ele voltaria na rodada seguinte. A retenção vale
-     * só para este caminho — a inclusão manual continua permitida (e a libera).
      */
     public listElegiveisParaFormacao = async (maxDias: number): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(
@@ -210,10 +206,6 @@ export default class TituloAPagarRepository {
                  JOIN lote_pagamento l ON l.id = i.lote_id
                  WHERE l.status = 'RASCUNHO'
                    AND i.fil_cod = t.fil_cod AND i.doc_cod = t.doc_cod AND i.tit_cod = t.tit_cod)
-               AND NOT EXISTS (
-                 SELECT 1 FROM titulo_retencao_formacao r
-                 WHERE r.removido_em IS NULL
-                   AND r.fil_cod = t.fil_cod AND r.doc_cod = t.doc_cod AND r.tit_cod = t.tit_cod)
              ORDER BY t.fil_cod, t.banco, t.vencimento ASC`,
             { maxDias },
         )) as TituloRow[];

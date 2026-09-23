@@ -12,7 +12,7 @@ related_files:
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-09-22
+last_review: 2026-09-23
 preconditions:
   - "Leitura autenticada (qualquer usuário autenticado) — sem requireRole nas reads."
   - "ConexosSispagClient é só-leitura (nenhum verbo mutante importado) — I1."
@@ -51,10 +51,10 @@ side_effects:
 - **Contexto (abas):** os **lotes SISPAG nativos** (`fin015`) e os **borderôs a-pagar** (`fin010`)
   são lidos e exibidos como contexto — o que o ERP já executa. **Não** participam do nosso ciclo
   de vida de lote candidato (ver `state-machines/lote-pagamento.md`).
-- **Lote e retenção por título (ADR-0050):** cada linha carrega o lote RASCUNHO em que o título está
-  (id e rótulo, com link; substitui o booleano `emLote`) e a retenção da formação automática, se
-  ativa (badge "Não lotar automaticamente", autor, data, motivo). As ações "Retirar do lote" e
-  "Liberar para lote automático" da linha são [`reterTituloDaFormacao`](./reter-titulo-da-formacao.md).
+- **Lote por título (ADR-0050):** cada linha carrega o lote RASCUNHO em que o título está
+  (`loteRascunho { id, automatico }`, além de `emLote`), mostrado como link que abre o card do lote
+  na aba "Lotes candidatos". A ação "Retirar do lote" da linha é `removerTituloDoLote`
+  ([`gerenciarLoteCandidato`](./gerenciar-lote-candidato.md)).
 - **READ-ONLY:** nenhuma escrita no ERP (I1). O botão "montar lote" da tela dispara
   `criarLoteCandidato` (persistência **local**, ver `gerenciar-lote-candidato.md`), não uma
   escrita no Conexos.

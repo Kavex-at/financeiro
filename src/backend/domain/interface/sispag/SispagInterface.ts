@@ -35,8 +35,6 @@ export interface TituloAPagar {
     emLote?: boolean;
     /** O lote RASCUNHO em que o título está (ADR-0050) — a linha mostra e linka o lote. */
     loteRascunho?: LoteRascunhoRef;
-    /** Retenção ativa da formação automática (ADR-0050, I9): o cron não lota este título. */
-    retencaoFormacao?: RetencaoFormacao;
     // ---- campos da carteira PERSISTIDA (ingestão) ----
     pesCod?: string;
     tpdCod?: string;
@@ -52,25 +50,6 @@ export interface LoteRascunhoRef {
     id: string;
     automatico: boolean;
 }
-
-/**
- * Retenção de um título da formação automática de lotes (ADR-0050, I9). Decisão da analista,
- * persistida em `titulo_retencao_formacao` (migration 0062), NUNCA em `titulo_a_pagar`.
- */
-export interface RetencaoFormacao {
-    marcadoPor: string;
-    /** ISO-8601. */
-    marcadoEm: string;
-    motivo?: string;
-}
-
-/** Como uma retenção ativa foi encerrada (soft-delete). */
-export const MOTIVO_REMOCAO_RETENCAO = {
-    LIBERADO: 'liberado',
-    INCLUIDO_NO_LOTE: 'incluido-no-lote',
-} as const;
-export type MotivoRemocaoRetencao =
-    (typeof MOTIVO_REMOCAO_RETENCAO)[keyof typeof MOTIVO_REMOCAO_RETENCAO];
 
 /** Chave natural de um título a pagar. */
 export interface ChaveTitulo {

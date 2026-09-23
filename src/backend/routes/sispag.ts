@@ -89,41 +89,11 @@ router.get(
 
 const ator = (req: Request): string => req.user?.sub ?? req.user?.email ?? 'unknown';
 
-/**
- * Autor de uma escrita que fica na trilha da retenção (ADR-0050, ADR-0006): `sub` do JWT
- * verificado, com fallback no `email`. Sem nenhum dos dois devolve `undefined` e a rota recusa
- * com 401 — a retenção não aceita autor `'unknown'`. Mesmo contrato da exceção de Permutas.
- */
-const autorDoToken = (req: Request): string | undefined => {
-    const sub = req.user?.sub?.trim();
-    if (sub) return sub;
-    const email = req.user?.email?.trim();
-    return email ? email : undefined;
-};
-
-const IDENTIDADE_AUSENTE = {
-    error: 'IDENTIDADE_AUSENTE',
-    message: 'Não foi possível identificar o usuário no token. Entre de novo e repita a ação.',
-};
-
 /** Chave do título na URL (`/:filCod/:docCod/:titCod`) — Zod no boundary. */
 const chaveTituloSchema = z.object({
     filCod: z.coerce.number().int().positive(),
     docCod: z.string().trim().min(1),
     titCod: z.string().trim().min(1),
-});
-
-/**
- * Corpo do "Retirar do lote" (ADR-0050 D6): só o motivo, opcional, até 500 caracteres. Motivo em
- * branco vale como ausente. Autor e data vêm do JWT e do servidor, nunca do corpo.
- */
-const retirarDoLoteSchema = z.object({
-    motivo: z
-        .string()
-        .trim()
-        .max(500)
-        .optional()
-        .transform((m) => (m ? m : undefined)),
 });
 
 /** Mapeia um erro de domínio (HandlerError) para a resposta HTTP; senão devolve false. */
@@ -247,12 +217,6 @@ router.delete(
             res.status(400).json({ error: 'invalid filCod' });
             return;
         }
-        // Num lote automático a remoção grava a retenção (ADR-0050), que exige autor real.
-        const autor = autorDoToken(req);
-        if (autor === undefined) {
-            res.status(401).json(IDENTIDADE_AUSENTE);
-            return;
-        }
         const service = container.resolve(LotePagamentoService);
         try {
             const lote = await service.removerTitulo({
@@ -260,7 +224,7 @@ router.delete(
                 filCod,
                 docCod: String(req.params.docCod),
                 titCod: String(req.params.titCod),
-                ator: autor,
+                ator: ator(req),
             });
             res.json({ lote });
         } catch (err) {
@@ -270,46 +234,10 @@ router.delete(
 );
 
 // POST /sispag/titulos/:filCod/:docCod/:titCod/retirar-do-lote — "Retirar do lote" na aba de
-// títulos (ADR-0050 D3): remove o título do lote RASCUNHO em que está e o retém da formação
-// automática, numa transação. Admin. 400 chave/corpo inválido · 401 sem identidade · 409 título
-// fora de lote ou lote fora de RASCUNHO.
+// títulos (ADR-0050): remove o título do lote RASCUNHO em que está, com as regras da lixeira.
+// Admin. 400 chave inválida · 409 título fora de lote ou lote fora de RASCUNHO.
 router.post(
     '/titulos/:filCod/:docCod/:titCod/retirar-do-lote',
-    requireRole('admin'),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const chave = chaveTituloSchema.safeParse(req.params);
-        const corpo = retirarDoLoteSchema.safeParse(req.body ?? {});
-        if (!chave.success || !corpo.success) {
-            res.status(400).json({
-                error: 'invalid request',
-                details: (chave.success ? corpo : chave).error?.flatten(),
-            });
-            return;
-        }
-        const autor = autorDoToken(req);
-        if (autor === undefined) {
-            res.status(401).json(IDENTIDADE_AUSENTE);
-            return;
-        }
-        const service = container.resolve(LotePagamentoService);
-        try {
-            const lote = await service.retirarDoLote({
-                ...chave.data,
-                ...(corpo.data.motivo !== undefined ? { motivo: corpo.data.motivo } : {}),
-                ator: autor,
-            });
-            res.json({ lote });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// DELETE /sispag/titulos/:filCod/:docCod/:titCod/retencao — "Liberar" (ADR-0050 D5): encerra a
-// retenção ativa (soft delete, motivo 'liberado'). Admin. 400 · 401 · 404 sem retenção ativa.
-router.delete(
-    '/titulos/:filCod/:docCod/:titCod/retencao',
     requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -318,15 +246,10 @@ router.delete(
             res.status(400).json({ error: 'invalid request', details: chave.error.flatten() });
             return;
         }
-        const autor = autorDoToken(req);
-        if (autor === undefined) {
-            res.status(401).json(IDENTIDADE_AUSENTE);
-            return;
-        }
         const service = container.resolve(LotePagamentoService);
         try {
-            await service.liberarRetencao({ ...chave.data, ator: autor });
-            res.json({ liberado: true });
+            const lote = await service.retirarDoLote({ ...chave.data, ator: ator(req) });
+            res.json({ lote });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }

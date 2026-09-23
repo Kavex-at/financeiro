@@ -162,27 +162,6 @@ export default class LotePagamentoRepository {
     };
 
     /**
-     * Estado do lote para uma edição de itens, lido DENTRO da transação com `FOR UPDATE`.
-     *
-     * A remoção precisa saber se o lote era automático (ADR-0050: a lixeira de um lote
-     * automático retém o título) e essa leitura tem de acontecer ANTES do `marcarManual`, que
-     * vira o flag para `false`. Travar a linha também fecha a janela em que o lote sai de
-     * RASCUNHO entre a checagem do serviço e a escrita. `null` = lote inexistente.
-     */
-    public lerEstadoParaEdicao = async (
-        loteId: string,
-        tx: TransactionClient,
-    ): Promise<{ status: LotePagamentoStatus; automatico: boolean } | null> => {
-        const row = await tx.selectFirst<{ status: LotePagamentoStatus; automatico: boolean }>(
-            `SELECT status, automatico FROM lote_pagamento
-             WHERE id = $loteId
-             FOR UPDATE`,
-            { loteId },
-        );
-        return row ? { status: row.status, automatico: row.automatico === true } : null;
-    };
-
-    /**
      * Títulos já num lote RASCUNHO, com o lote e se ele é automático — o painel bloqueia a
      * seleção (I3) e mostra/linka o lote na linha do título (ADR-0050).
      */
