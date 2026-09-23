@@ -17,13 +17,6 @@ supersedes_decisions: []
 > (migration 0030). O restante do ADR-0018 (cron pós-ingestão + manual, a-vencer ≤7d, desfazer-vencidos,
 > anti-join, nasce RASCUNHO para revisão, cron nunca toca manual/finalizado) segue **vigente**.
 
-> ℹ️ **Amendado por [ADR-0050](./0050-retirar-titulo-do-lote-e-reter-da-formacao-automatica.md)
-> (2026-09-22):** a elegibilidade da **D2** ganha um termo. Além de a-vencer ≤7d, aprovado/não pago e
-> fora de lote RASCUNHO, o título precisa estar **sem retenção ativa** (invariante **I9**,
-> `business-rules/retencao-formacao-automatica.md`). A retenção é gravada quando a analista retira o
-> título do lote pela aba de títulos, e só vale para a formação automática; a inclusão manual continua
-> permitida e a libera. O resto da ADR-0018 não muda.
-
 # ADR 0018: Formação automática de lotes candidatos SISPAG
 
 **Cliente:** Columbia Trading · **Entrega:** Kavex (created by Clonex) · **Branch:** `feat/sispag-ingestao-pagamentos`

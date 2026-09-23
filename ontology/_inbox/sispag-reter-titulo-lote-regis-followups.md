@@ -8,8 +8,15 @@ consolidador. Relatório: `docs/regis-review/2026-09-22-2209-sispag-reter-titulo
 **Score geral 8,1/10** — Availability 8,3 · Deployability 8,2 · Integrability 8,6 · Modifiability 8,4
 · Performance 6,5 · Fault Tolerance 8,6 · Security 8,2 · Testability 7,9.
 
+> **Simplificação posterior (2026-09-23).** O usuário retirou a retenção da formação automática
+> antes do merge (ADR-0050). O código revisado era um superconjunto do que vai para a `main`: saíram a
+> migration 0062, `RetencaoFormacaoRepository`, a rota `DELETE .../retencao`, o badge e a confirmação
+> da lixeira. Cards que só existiam por causa da retenção foram removidos desta lista
+> (`availability-1`, `migration-0062-integration`, `modifiability-2`, `performance-2`,
+> `performance-3`); os demais foram ajustados ao escopo que ficou.
+
 **Nenhum P0.** Nada foi remediado neste ciclo; tudo abaixo é follow-up e **não** foi implementado.
-18 cards (2 P1 / 9 P2 / 7 P3), já deduplicados pelo consolidador — 3 fusões cross-QA registradas:
+18 cards na revisão original (2 P1 / 9 P2 / 7 P3; 13 restam após a simplificação), já deduplicados pelo consolidador — 3 fusões cross-QA registradas:
 - `[migration-0062-integration]` absorve os cards paralelos de Availability, Deployability e Testability
   (mesmo integration test da 0062 contra Postgres real).
 - `[audit-trail-lote]` absorve os cards paralelos de Fault Tolerance e Security (mesma causa raiz:
@@ -25,36 +32,23 @@ recarregarPainel()])` em `acaoLote`. `recarregarPainel` faz fan-out `listLotes` 
 (`CONEXOS_FANOUT_LIMIT=4`) e devolve ~410 KB de carteira — agora bloqueia toda ação de lote local
 (finalizar, cancelar, reabrir, marcar retorno, trocar conta pagadora, trocar modalidade, remover
 item), inclusive as 100% locais. Alternativa 1 (S): `recarregarPainel()` não-bloqueante.
-Alternativa 2 (M): rotas devolvem `emLote`/`retencaoFormacao` atualizados junto com o `lote`, e o
+Alternativa 2 (M): rotas devolvem `emLote`/`loteRascunho` atualizados junto com o `lote`, e o
 frontend faz patch otimista.
 
-### P1 — `security-1` — Aplicar `assertUserCanActOnFilial` às rotas de retenção do SISPAG
-As 2 rotas novas (`POST .../retirar-do-lote`, `DELETE .../retencao`) validam `role='admin'` mas
+### P1 — `security-1` — Aplicar `assertUserCanActOnFilial` às rotas mutantes do SISPAG
+A rota nova (`POST .../retirar-do-lote`) valida `role='admin'` mas
 não o escopo de filial — 0/11 rotas mutantes SISPAG usam o guard, contra 8/10 em `recebimentos.ts`.
 O próprio `filialAuthz.ts:19` já pedia paridade com SISPAG antes deste delta. Um admin de uma
-filial pode reter/liberar título de outra trocando `filCod` na URL. Esforço S para as 2 rotas do
-delta; M para as 9 rotas mutantes pré-existentes do mesmo arquivo (fora do escopo, mas mesma
+filial pode retirar título de lote de outra trocando `filCod` na URL (a lixeira do lote já permitia o
+mesmo). Esforço S para a rota do delta; M para as 9 rotas mutantes pré-existentes do mesmo arquivo (fora do escopo, mas mesma
 correção mecânica).
 
 ## P2
 
-- **`availability-1`** — trocar `Promise.all` por `Promise.allSettled` no `SispagPainelService.montarPainel`
-  para as leituras ornamentais (`retencaoRepo.listAtivas`, `runRepo.findLatestSuccessFinishedAt`);
-  hoje a nova leitura da retenção derruba o painel inteiro quando o Postgres saturar
-  transitoriamente. O padrão já existe no mesmo arquivo (`linhasDigitaveisDoLote`,
-  `contarExecucoesParadas`). S.
-
-- **`migration-0062-integration`** — integration test da migration 0062 e do
-  `RetencaoFormacaoRepository` contra Postgres real (`postgres:17-alpine` já em CI). Cobrir
-  índice único parcial (segunda ativa rejeitada, reter de novo após `removido_em IS NOT NULL`),
-  `ON CONFLICT DO NOTHING`, CHECK de `char_length` em code points (500 emojis passa; 501 falha),
-  pareamento de `removido_em`/`removido_por`/`motivo_remocao`. Reusa script `test:sql` já pronto.
-  Card mesclado — resolve F-availability-1, F-deployability-1, F-testability-2 simultaneamente. S.
-
 - **`audit-trail-lote`** — persistir a trilha de auditoria das transições de lote em tabela
   consultável (`sispag_lote_evento` com `lote_id`, `acao`, `ator`, `criado_em`, `dados` jsonb),
-  gravada dentro da MESMA transação de cada `withTransaction` do `LotePagamentoService`. Estende o
-  padrão que o delta introduziu para `titulo_retencao_formacao` às 5 transições restantes
+  gravada dentro da MESMA transação de cada `withTransaction` do `LotePagamentoService`. Cobre as
+  transições
   (`criarLote`, `finalizarLote`, `cancelarLote`, `atualizarContaPagadora`,
   `atualizarModalidadeItem`). Card mesclado — resolve F-fault-tolerance-2 e F-security-2. M.
 
@@ -62,7 +56,7 @@ correção mecânica).
   reduzindo `SispagPainelService` de 14 para ≤11 colaboradores injetados. Fazer ANTES do próximo
   `/feature-new` de Nexxera. M.
 
-- **`integrability-2`** — Zod validando `loteRascunho` e `retencaoFormacao` em `GET /sispag/painel`
+- **`integrability-2`** — Zod validando `loteRascunho` em `GET /sispag/painel`
   (0% de cobertura Zod no frontend antes/depois do delta; `body as T` sem checagem). S para os
   campos do delta; M para o arquivo inteiro.
 
@@ -79,8 +73,7 @@ correção mecânica).
   threshold). Dobra de valor quando combinado com `security-1` (também cobre
   `FILIAL_NAO_AUTORIZADA`). M.
 
-- **`testability-1`** — testar `RetirarDoLoteDialog.tsx` (reset por chave, limite 500, trim antes
-  de `onConfirmar`, aria-live) e `RetencaoBadge.tsx` (foco por teclado, aria-label). Padrão pronto
+- **`testability-1`** — testar `RetirarDoLoteDialog.tsx` (abre/fecha, desabilita durante o envio). Padrão pronto
   em `GerarRemessaDialog.test.tsx` (222 LOC) da feature-irmã ADR-0049. S.
 
 ## P3
@@ -97,16 +90,6 @@ correção mecânica).
   primeiro `await`) para eliminar o tick de render em que duplo-clique pode disparar 2 requests.
   Backend já neutraliza; o custo é só UX (toast espúrio). S.
 
-- **`modifiability-2`** — centralizar `MOTIVO_RETENCAO_MAX = 500` em `SispagInterface.ts` (backend)
-  e comentar as 3 fontes (Zod, frontend, CHECK 0062) apontando para ela. XS.
-
-- **`performance-2`** — `LIMIT` defensivo em `RetencaoFormacaoRepository.listAtivas()` (convenção
-  já usada no mesmo serviço para `TITULOS_CAP=5000`). S.
-
-- **`performance-3`** — política de purge unificada para as 3 tabelas soft-delete de decisão local
-  (`titulo_retencao_formacao`, `cliente_filtro`, `permuta_excecao_manual`). Decisão de produto/dados,
-  não só técnica. M.
-
 - **`testability-3`** — anexar cobertura % por diretório do delta ao `_shared-metrics.md` do
   próximo Regis-Review (`--coverage` já roda no CI, só recortar) e ratchetar o `coverageThreshold`
   do `domain/service/` para "medido menos 2 pontos". XS.
@@ -116,10 +99,6 @@ correção mecânica).
 - **DesignSystemReviewer** apontou drift do template: `DateFormatter` de `@/shared/lib/datetime`
   não existe no repo (referência do doc de design system). Não bloqueou a feature; corrigir o doc
   ou provisionar o helper num próximo `/feature-tweak` de UI SISPAG.
-- **`retencaoRepo.listAtivas()`** entra num `Promise.all` de 4 leituras em `SispagPainelService`
-  — o card `availability-1` (P2 acima) endereça, mas o padrão herdado (`Promise.all` sem
-  `allSettled`) já existia com 3 leituras. Se o próximo `/feature-tweak` do painel adicionar uma
-  5ª, revisitar o card antes de mesclar.
 - **9 rotas mutantes pré-existentes** de `routes/sispag.ts` sem `assertUserCanActOnFilial`
   (fora do escopo do delta, mas mesma correção mecânica que `security-1`). Abrir como
   `/feature-tweak sispag-filial-authz` dedicado.

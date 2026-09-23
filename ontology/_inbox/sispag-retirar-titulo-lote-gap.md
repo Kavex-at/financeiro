@@ -1,5 +1,9 @@
 # sispag-retirar-titulo-lote — perguntas em aberto
 
+> **Encerrado em 2026-09-23.** O usuário retirou a retenção da formação automática antes do merge
+> (ADR-0050): o problema era de UX, e o título voltar a um lote automático depois não é problema.
+> P1-1, P1-2, P2-1 e P2-2 perderam o objeto. Mantido como registro.
+
 > Aberto pelo OntologyCurator em 2026-09-22, junto com a ADR-0050. P1-1 e P1-2 respondidas pelo
 > usuário em 2026-09-22, na aprovação da ADR (agora `accepted`); P2-1 e P2-2 seguem abertas e não
 > bloqueiam. Implementação: feature `sispag-reter-titulo-lote`.

@@ -7,14 +7,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -40,7 +32,6 @@ import {
   fetchContasPagadoras,
   finalizarLote,
   formatCivilDate,
-  type ItemLote,
   type LotePagamento,
   marcarRetorno,
   type Modalidade,
@@ -52,7 +43,6 @@ import {
 import { baixarBlob } from '@/lib/download'
 import { formatBRL } from '@/lib/utils'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
-import { mensagemRemocao } from './retencao'
 
 const fmtData = (ms?: number) =>
   ms != null ? new Date(ms).toLocaleDateString('pt-BR') : '—'
@@ -128,19 +118,6 @@ export function LoteCard({
   React.useEffect(() => {
     if (destacado) cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [destacado])
-
-  // Lixeira: num lote automático a remoção também retém o título da formação automática
-  // (ADR-0050, P1-1) — por isso pede confirmação. Num lote manual segue direta, como antes.
-  const [remocaoPendente, setRemocaoPendente] = React.useState<ItemLote | null>(null)
-  const remover = (i: ItemLote) =>
-    acao(
-      () => removerItem(l.id, { filCod: i.filCod, docCod: i.docCod, titCod: i.titCod }),
-      l.automatico ? 'Título removido e retido da formação automática' : 'Título removido',
-    )
-  const pedirRemocao = (i: ItemLote) => {
-    if (mensagemRemocao(l) !== null) setRemocaoPendente(i)
-    else remover(i)
-  }
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
@@ -541,7 +518,17 @@ export function LoteCard({
                             variant="ghost"
                             disabled={busy}
                             aria-label="remover título"
-                            onClick={() => pedirRemocao(i)}
+                            onClick={() =>
+                              acao(
+                                () =>
+                                  removerItem(l.id, {
+                                    filCod: i.filCod,
+                                    docCod: i.docCod,
+                                    titCod: i.titCod,
+                                  }),
+                                'Título removido',
+                              )
+                            }
                           >
                             <Trash2 className="size-4" />
                           </Button>
@@ -564,34 +551,6 @@ export function LoteCard({
           ) : null}
         </CardContent>
       ) : null}
-      <Dialog
-        open={remocaoPendente !== null}
-        onOpenChange={(open) => (!open ? setRemocaoPendente(null) : undefined)}
-      >
-        <DialogContent size="sm">
-          <DialogHeader>
-            <DialogTitle>
-              Remover {remocaoPendente?.docCod}/{remocaoPendente?.titCod} do lote automático?
-            </DialogTitle>
-            <DialogDescription>{mensagemRemocao(l)}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRemocaoPendente(null)}>
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
-                if (remocaoPendente) remover(remocaoPendente)
-                setRemocaoPendente(null)
-              }}
-            >
-              <Trash2 aria-hidden /> Remover e reter
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Card>
   )
 }

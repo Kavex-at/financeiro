@@ -1,4 +1,10 @@
 ---
+
+> **Nota de 2026-09-23.** Esta revisão foi feita sobre a versão da feature que retinha o título da
+> formação automática. Antes do merge o usuário retirou a retenção (ADR-0050): saíram a migration
+> 0062, `RetencaoFormacaoRepository`, a rota `DELETE .../retencao`, o badge e a confirmação da
+> lixeira. O que vai para a `main` é um subconjunto do código revisado. Os cards que continuam
+> valendo estão em `ontology/_inbox/sispag-reter-titulo-lote-regis-followups.md`.
 type: regis-review-report
 run_id: 2026-09-22-2209-sispag-reter-titulo-lote
 generated_at: 2026-09-23T15:00:00-03:00
