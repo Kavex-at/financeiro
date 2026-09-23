@@ -96,6 +96,10 @@ correção mecânica).
 
 ## Fora do Regis, mas pendente desta feature
 
+- **DesignSystemReviewer (2026-09-23):** botões em carregamento usam `disabled` em vez de
+  `aria-busy="true"` (spec `feedback.md`). Padrão sistêmico do app, não só do
+  `RetirarDoLoteDialog`; corrigir de forma coordenada. (O outro achado, scroll suave ignorando
+  `prefers-reduced-motion` no `LoteCard`, foi corrigido nesta branch.)
 - **DesignSystemReviewer** apontou drift do template: `DateFormatter` de `@/shared/lib/datetime`
   não existe no repo (referência do doc de design system). Não bloqueou a feature; corrigir o doc
   ou provisionar o helper num próximo `/feature-tweak` de UI SISPAG.
