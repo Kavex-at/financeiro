@@ -1,5 +1,21 @@
 # Columbia Financeiro — Changelog
 
+## v0.40.1 (2026-09-23) — migração nova passa a entrar no deploy, e lote que não carrega avisa
+
+Logo depois do deploy da v0.40.0, as abas de lotes do SISPAG vieram vazias ("Lotes candidatos
+(0)"). Os lotes estavam no banco: a v0.40.0 lia a coluna `data_debito` (migração `0061`) e a
+coluna ainda não existia, porque a migração só foi aplicada ~25 min depois, pelo cron seguinte.
+
+- **O deploy passa a aplicar as migrações antes de servir tráfego.** O servidor procura os
+  `.sql` em `dist/migrations/`, e o build nunca os copiava para lá. O migrador do boot achava zero
+  arquivos e dizia "esquema em dia" desde que foi criado, e quem migrava de fato eram os crons do
+  GitHub Actions, minutos depois. O `npm run build` agora copia as migrações, e um diretório sem
+  migração falha o build e o boot em vez de passar em silêncio.
+- **Lista de lotes que não carrega agora diz que não carregou.** A tela transformava qualquer
+  falha do endpoint de lotes numa lista vazia. Agora o KPI e as abas mostram "—", e as abas
+  "Lotes candidatos" e "Finalizados" exibem o erro com um botão **Tentar de novo**. A aba de
+  títulos segue carregando normalmente.
+
 ## v0.40.0 (2026-09-22) — a analista escolhe a data de débito da remessa SISPAG
 
 A remessa SISPAG saía sempre com débito "hoje", e esse "hoje" era meia-noite UTC: das 21h às 24h
