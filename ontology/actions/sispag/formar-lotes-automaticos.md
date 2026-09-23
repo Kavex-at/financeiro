@@ -23,7 +23,7 @@ postconditions:
   - "Lotes automáticos RASCUNHO com ≥1 título VENCIDO são DESFEITOS (deletados) e seus títulos LIBERADOS (só a-vencer é elegível) — desfazerAutomaticosVencidos."
   - "Novos lotes automáticos RASCUNHO criados (criarLote(automatico=true)) agrupando títulos elegíveis por FILIAL (I4) — internacional fora do escopo (ADR-0021), sem divisão por classe."
   - "Só entram títulos A VENCER ≤ maxDias (7) — vencidos excluídos — e ainda não presentes em NENHUM lote RASCUNHO (anti-join)."
-  - "Título com retenção ativa (ADR-0050, I8) NÃO entra — a analista o tirou da formação automática; só a inclusão manual ou a liberação o devolvem."
+  - "Título com retenção ativa (ADR-0050, I9) NÃO entra — a analista o tirou da formação automática; só a inclusão manual ou a liberação o devolvem."
   - "Lotes manuais e lotes FINALIZADOS/CANCELADOS NUNCA são tocados — o cron só mexe nos automáticos RASCUNHO."
   - "Nenhuma escrita no ERP (I1) — leitura Conexos + escrita LOCAL (Postgres: lote_pagamento/_item)."
 side_effects:
@@ -67,7 +67,7 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
 3. **Eleger os títulos** — `TituloAPagarRepository.listElegiveisParaFormacao(maxDias=7)`: títulos
    **A VENCER** com vencimento ≤ 7 dias (vencidos **excluídos**), aprovados (alçada) e não pagos, que
    **ainda não estão em nenhum lote RASCUNHO** (**anti-join** — não rouba título de lote manual/auto
-   já existente; respeita a não-duplicação I3) **e sem retenção ativa** (I8, ADR-0050 — a analista
+   já existente; respeita a não-duplicação I3) **e sem retenção ativa** (I9, ADR-0050 — a analista
    retirou o título do lote ou o reteve; sem esse filtro ele voltaria na rodada seguinte).
 4. **Agrupar** os elegíveis por **filial** (I4) e **criar** um lote por grupo —
    `LotePagamentoRepository.criarLote(automatico=true)` + itens com snapshot (valor/venc/credor),
@@ -89,7 +89,7 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
   (passo 2). O horizonte de 7 dias é o valor do tenant (config) sobre a estrutura universal
   "montar o lote das obrigações que vencem em breve".
 - **Anti-join (I3):** título já em qualquer lote RASCUNHO (manual ou auto) não é re-agrupado.
-- **Retenção (I8, ADR-0050):** título com retenção ativa fica fora do pool. A retenção vale só para
+- **Retenção (I9, ADR-0050):** título com retenção ativa fica fora do pool. A retenção vale só para
   este caminho: a inclusão manual continua permitida e a libera. Ver
   `business-rules/retencao-formacao-automatica.md`.
 

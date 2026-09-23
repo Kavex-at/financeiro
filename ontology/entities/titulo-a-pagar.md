@@ -116,14 +116,14 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `ativo` | boolean | anti-fantasma: título fora da run mais recente → `ativo=false` | Título que **some** da run de ingestão mais recente é marcado **inativo** (some do painel). Ver "Anti-fantasma". |
 | `ingestaoRunId` | string? (UUID) | FK → `pagamento_ingestao_run.id` | A run que gravou/atualizou este título (auditoria de cadência). |
 | `atualizadoEm` | Date | `atualizado_em` (UPSERT) | Quando o registro foi atualizado pela última vez. |
-| `retencaoFormacao` | objeto? `{ marcadoPor, marcadoEm, motivo? }` | **tabela própria** (ADR-0050), chave `(fil_cod, doc_cod, tit_cod)`; **não** é coluna de `titulo_a_pagar` | **Decisão da analista**, não dado do ERP. Ativa = a formação automática não lota o título (I8); a inclusão manual continua permitida e libera a retenção. Ver "Retenção da formação automática". |
+| `retencaoFormacao` | objeto? `{ marcadoPor, marcadoEm, motivo? }` | **tabela própria** (ADR-0050), chave `(fil_cod, doc_cod, tit_cod)`; **não** é coluna de `titulo_a_pagar` | **Decisão da analista**, não dado do ERP. Ativa = a formação automática não lota o título (I9); a inclusão manual continua permitida e libera a retenção. Ver "Retenção da formação automática". |
 
 ## Retenção da formação automática (`retencaoFormacao`, ADR-0050)
 
 - **O que é:** a analista decidiu que o título não entra em lote automático. Nasce ao "Retirar do
   lote" na aba de títulos, ou ao remover o título pela lixeira de um lote **automático** (remoção +
   retenção, atômicas). Não se marca a retenção num título solto (P1-2, rejeitado).
-- **Efeito:** `formarLotesAutomaticos` o exclui do pool (I8,
+- **Efeito:** `formarLotesAutomaticos` o exclui do pool (I9,
   `business-rules/retencao-formacao-automatica.md`). Nada mais muda: I2/I3/I4 e a finalização ignoram
   a retenção.
 - **Como termina:** incluir o título num lote à mão (`motivoRemocao = 'incluido-no-lote'`) ou "Liberar

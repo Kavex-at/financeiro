@@ -191,7 +191,7 @@ export default class TituloAPagarRepository {
      * dentro de `maxDias` (vencidos NÃO entram), e que ainda NÃO estão em nenhum lote RASCUNHO
      * (anti-join — não duplica o que o analista já tem em montagem, manual ou automático).
      *
-     * I8 (ADR-0050): nem título com retenção ativa. A analista o tirou de um lote e decidiu que o
+     * I9 (ADR-0050): nem título com retenção ativa. A analista o tirou de um lote e decidiu que o
      * cron não o lota de novo; sem este filtro ele voltaria na rodada seguinte. A retenção vale
      * só para este caminho — a inclusão manual continua permitida (e a libera).
      */

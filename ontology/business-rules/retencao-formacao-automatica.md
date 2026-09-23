@@ -4,7 +4,7 @@ type: business-rule
 entity: TituloAPagar
 ontology_version: "0.28.1"
 implementation_status: implemented
-invariant: I8
+invariant: I9
 related_files:
   - src/backend/migrations/0062_titulo_retencao_formacao.sql
   - src/backend/domain/repository/sispag/RetencaoFormacaoRepository.ts
@@ -17,7 +17,7 @@ has_canonical_test: true
 
 # Regra: retencao-formacao-automatica (título retido não entra em lote automático)
 
-> **Invariante I8 (ADR-0050).** A formação automática de lotes (`formarLotesAutomaticos`) **nunca**
+> **Invariante I9 (ADR-0050).** A formação automática de lotes (`formarLotesAutomaticos`) **nunca**
 > inclui um `TituloAPagar` com retenção ativa. A inclusão **manual** continua permitida e, ao incluir,
 > libera a retenção.
 
@@ -28,10 +28,10 @@ elegivelParaFormacao(titulo) ⇔
     ativo ∧ aprovado ∧ ¬pago                        (I2)
   ∧ hoje ≤ vencimento ≤ hoje + maxDias              (ADR-0018 D2; maxDias = config, hoje 7)
   ∧ ¬∃ ItemLote em lote RASCUNHO para o título      (I3, anti-join)
-  ∧ ¬retencaoFormacao.ativa(titulo)                 (I8, NOVO)
+  ∧ ¬retencaoFormacao.ativa(titulo)                 (I9, NOVO)
 ```
 
-`elegivelParaLote` (I2, inclusão manual) **não** ganha o termo I8.
+`elegivelParaLote` (I2, inclusão manual) **não** ganha o termo I9.
 
 ## Ciclo da retenção
 
@@ -59,7 +59,7 @@ pelo usuário em 2026-09-22 (P1-2 em `_inbox/sispag-retirar-titulo-lote-gap.md`)
 
 ## Teste canônico
 
-`TituloAPagarRepository.test.ts` (termo I8 no SQL) e `LotePagamentoService.test.ts`
+`TituloAPagarRepository.test.ts` (termo I9 no SQL) e `LotePagamentoService.test.ts`
 (bloco "retenção da formação automática"). A re-ingestão não toca a tabela por construção: o UPSERT
 escreve só em `titulo_a_pagar`.
 

@@ -63,7 +63,7 @@ Ao `incluirTituloNoLote`, o título candidato é validado contra:
 Passando os três, cria-se um `ItemLote` com **snapshot** de `valor`/`vencimento`/`credor` (congela
 o que a analista viu) + `incluido_por` (auditoria).
 
-A retenção da formação automática (I8, ADR-0050) **não** barra a inclusão. Se o título estava retido,
+A retenção da formação automática (I9, ADR-0050) **não** barra a inclusão. Se o título estava retido,
 a inclusão libera a retenção na mesma transação: lotar à mão é a forma prevista de encerrá-la.
 
 ## Remoção a partir da aba de títulos (ADR-0050)

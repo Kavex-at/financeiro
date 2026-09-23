@@ -71,11 +71,15 @@ Sem FK para `titulo_a_pagar`, para que um rebuild da carteira não leve as decis
 título. É um fato sobre o título, e a ontologia prefere propriedade a entidade. A tabela própria é
 decisão de persistência, não de modelo.)*
 
-### D2: novo invariante I8, a formação automática não lota título retido
+### D2: novo invariante I9, a formação automática não lota título retido
 
 `formarLotesAutomaticos` exclui do pool todo título com retenção ativa. A inclusão manual
-(`incluirTituloNoLote`) **não** é barrada. I8 vale só para o caminho automático; I2, I3 e I4 não
+(`incluirTituloNoLote`) **não** é barrada. I9 vale só para o caminho automático; I2, I3 e I4 não
 mudam. Ver `business-rules/retencao-formacao-automatica.md`.
+
+> **Renumeração (2026-09-23, rebase sobre `main`):** aceita como I8, virou **I9**. A I8 já tinha
+> sido tomada na `main` pela data de débito da remessa (ADR-0049, `data-debito-remessa-sispag.md`).
+> Só o número mudou; a regra é a mesma. Os commits da branch ainda dizem I8.
 
 ### D3: "Retirar do lote" remove o item e retém o título na mesma transação
 

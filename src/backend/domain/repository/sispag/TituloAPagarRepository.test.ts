@@ -102,7 +102,7 @@ describe('TituloAPagarRepository', () => {
             return { sql: String(sql).replace(/\s+/g, ' '), params };
         };
 
-        it('I8 (ADR-0050): exclui título com retenção ativa da formação automática', async () => {
+        it('I9 (ADR-0050): exclui título com retenção ativa da formação automática', async () => {
             const { sql } = await sqlDaFormacao();
             expect(sql).toMatch(
                 /AND NOT EXISTS \( SELECT 1 FROM titulo_retencao_formacao r WHERE r\.removido_em IS NULL AND r\.fil_cod = t\.fil_cod AND r\.doc_cod = t\.doc_cod AND r\.tit_cod = t\.tit_cod\)/,

@@ -35,7 +35,7 @@ export interface TituloAPagar {
     emLote?: boolean;
     /** O lote RASCUNHO em que o título está (ADR-0050) — a linha mostra e linka o lote. */
     loteRascunho?: LoteRascunhoRef;
-    /** Retenção ativa da formação automática (ADR-0050, I8): o cron não lota este título. */
+    /** Retenção ativa da formação automática (ADR-0050, I9): o cron não lota este título. */
     retencaoFormacao?: RetencaoFormacao;
     // ---- campos da carteira PERSISTIDA (ingestão) ----
     pesCod?: string;
@@ -54,7 +54,7 @@ export interface LoteRascunhoRef {
 }
 
 /**
- * Retenção de um título da formação automática de lotes (ADR-0050, I8). Decisão da analista,
+ * Retenção de um título da formação automática de lotes (ADR-0050, I9). Decisão da analista,
  * persistida em `titulo_retencao_formacao` (migration 0062), NUNCA em `titulo_a_pagar`.
  */
 export interface RetencaoFormacao {

@@ -3,7 +3,7 @@
 > `/feature-tweak sispag "retirar um título do lote pela aba de títulos e impedir que o cron o
 > lote de novo"`
 > Branch: `fix/sispag-reter-titulo-lote`
-> Ontologia: v0.28.0, ADR-0050 (`accepted` em 2026-09-22), invariante I8
+> Ontologia: v0.28.0, ADR-0050 (`accepted` em 2026-09-22), invariante I9
 > (`business-rules/retencao-formacao-automatica.md`), action `reterTituloDaFormacao`.
 > `entity_changed = true` (propriedade nova `TituloAPagar.retencaoFormacao`); diff já commitado.
 
@@ -42,7 +42,7 @@
 
 **Dependencies:** none
 
-### Task 2: I8 na formação automática
+### Task 2: I9 na formação automática
 
 **Files to change:**
 - `src/backend/domain/repository/sispag/TituloAPagarRepository.ts`
@@ -51,7 +51,7 @@
 **Acceptance criteria:**
 - `listElegiveisParaFormacao` ganha `NOT EXISTS` contra `titulo_retencao_formacao` com `removido_em IS NULL`, casando `fil_cod`, `doc_cod` e `tit_cod`.
 - O anti-join de lote RASCUNHO (I3) e os demais filtros continuam na query.
-- Teste novo prova o termo I8 no SQL e que `maxDias` segue parametrizado.
+- Teste novo prova o termo I9 no SQL e que `maxDias` segue parametrizado.
 
 **Dependencies:** Task 1
 

@@ -24,7 +24,7 @@ export interface RetencaoAtiva extends ChaveTitulo {
 
 /**
  * RetencaoFormacaoRepository — retenção de um título da formação automática de lotes
- * (ADR-0050, I8), tabela `titulo_retencao_formacao` (migration 0062).
+ * (ADR-0050, I9), tabela `titulo_retencao_formacao` (migration 0062).
  *
  * Soft delete: a retenção é ativa enquanto `removido_em IS NULL`, e o índice parcial
  * `uq_titulo_retencao_formacao_ativa` garante no máximo uma ativa por título. As escritas
