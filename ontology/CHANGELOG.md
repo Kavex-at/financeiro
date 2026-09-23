@@ -5,13 +5,16 @@
 
 ## v0.28.1 — ADR-0050 implementada (2026-09-22)
 
-Feature: `sispag-reter-titulo-lote`. `reterTituloDaFormacao` e `retencao-formacao-automatica` (I8)
+Feature: `sispag-reter-titulo-lote`. `reterTituloDaFormacao` e `retencao-formacao-automatica` (I9)
 passam de `planned` a `implemented`.
+
+- **Renumeração:** a invariante da retenção, aceita como I8, virou **I9** no rebase sobre a `main`,
+  que já usa I8 para a data de débito (ADR-0049). Mesma regra, outro número.
 
 - Migration `0062_titulo_retencao_formacao.sql`: tabela própria, soft-delete, índice único parcial
   (uma ativa por título), `motivo` ≤ 500, remoção pareada com `motivo_remocao`
   (`liberado` | `incluido-no-lote`), sem FK.
-- `listElegiveisParaFormacao` ganha o `NOT EXISTS` de I8.
+- `listElegiveisParaFormacao` ganha o `NOT EXISTS` de I9.
 - `LotePagamentoService`: `retirarDoLote` e `liberarRetencao`; `removerTitulo` retém em lote
   automático (`automatico` lido com `FOR UPDATE` antes do `marcarManual`); `incluirTitulo` libera
   na mesma transação.
@@ -32,14 +35,14 @@ Feature: `sispag-reter-titulo-lote` (branch `fix/sispag-reter-titulo-lote`). Vem
 - **NEW propriedade `TituloAPagar.retencaoFormacao`** `{ marcadoPor, marcadoEm, motivo? }`, persistida
   em **tabela própria** (chave `fil_cod, doc_cod, tit_cod`, soft-delete, uma ativa por título, sem FK).
   Não é coluna de `titulo_a_pagar`: aquela tabela é espelho do ERP e já foi purgada (migration 0030).
-- **NEW invariante I8** (`business-rules/retencao-formacao-automatica.md`, planned): a formação
+- **NEW invariante I9** (`business-rules/retencao-formacao-automatica.md`, planned): a formação
   automática não lota título retido. A inclusão manual continua permitida e libera a retenção
   (`incluido-no-lote`).
 - **NEW action `reterTituloDaFormacao`** (planned): `retirarDoLote` (remoção + retenção, atômicas) e
   `liberar`. A lixeira dentro de um lote **automático** também retém (P1-1: `automatico` lido antes do
   `marcarManual`, mesma transação); lote manual não retém. "Reter" num título solto foi proposto e
   **rejeitado** pelo usuário (P1-2).
-- **Emendas:** ADR-0018 D2 (termo I8), `formarLotesAutomaticos`, `gerenciarLoteCandidato`,
+- **Emendas:** ADR-0018 D2 (termo I9), `formarLotesAutomaticos`, `gerenciarLoteCandidato`,
   `montarPainelPagamentos` (a linha carrega o lote RASCUNHO e o badge; substitui `emLote`),
   `state-machines/lote-pagamento.md` L2 (sem estado novo).
 - **Coverage:** `actions_total` 27→28, `planned` 6→7, pct 74→71; `business_rules_total` 23→24,

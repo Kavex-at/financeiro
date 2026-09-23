@@ -48,7 +48,7 @@ export interface LoteRascunhoRef {
   automatico: boolean
 }
 
-/** Retenção de um título da formação automática (ADR-0050, I8). */
+/** Retenção de um título da formação automática (ADR-0050, I9). */
 export interface RetencaoFormacao {
   marcadoPor: string
   /** ISO-8601. */

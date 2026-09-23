@@ -1,4 +1,4 @@
--- Migration 0062 — retenção de um título da formação automática de lotes (ADR-0050, I8).
+-- Migration 0062 — retenção de um título da formação automática de lotes (ADR-0050, I9).
 --
 -- ─── O caso ──────────────────────────────────────────────────────────────────
 -- A analista tira um título de um lote automático porque ele não deve sair no

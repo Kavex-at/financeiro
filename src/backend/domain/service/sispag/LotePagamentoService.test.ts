@@ -549,7 +549,7 @@ describe('LotePagamentoService — invariantes', () => {
             ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
         });
     });
-    describe('retenção da formação automática (ADR-0050, I8)', () => {
+    describe('retenção da formação automática (ADR-0050, I9)', () => {
         const chave = { filCod: 2, docCod: '100', titCod: '1' };
         const TX = expect.anything();
 

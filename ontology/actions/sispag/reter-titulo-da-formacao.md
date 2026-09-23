@@ -24,7 +24,7 @@ postconditions:
   - "retirarDoLote: ItemLote removido (L2, marcarManual se o lote era automático) E retenção ativa criada, na mesma transação."
   - "removerTituloDoLote (lixeira na tela do lote): se o lote era automático (lido ANTES do marcarManual), retenção ativa criada na mesma transação; lote manual não retém."
   - "liberar: retenção soft-deleted (removidoPor, removidoEm, motivoRemocao='liberado')."
-  - "Enquanto a retenção está ativa, formarLotesAutomaticos não inclui o título (I8)."
+  - "Enquanto a retenção está ativa, formarLotesAutomaticos não inclui o título (I9)."
 side_effects:
   - "Escrita LOCAL (Postgres): tabela de retenção (soft-delete) + lote_pagamento_item/lote_pagamento no caso retirarDoLote. Nenhuma escrita no ERP (I1)."
   - "Auditoria: LogService em português + trilha na própria tabela."
@@ -69,4 +69,4 @@ tabela de retenção. Ver [`montarPainelPagamentos`](./montar-painel-pagamentos.
 
 O *payment block* (SAP) e o *hold* (Oracle) são a mesma operação: tirar um item em aberto da proposta
 automática de pagamento sem proibir o pagamento manual. Ver
-`business-rules/retencao-formacao-automatica.md` (I8).
+`business-rules/retencao-formacao-automatica.md` (I9).
