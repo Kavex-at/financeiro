@@ -28,6 +28,11 @@ const LOCK_RETRY_DELAY_MS = 2000;
  * Migrar no boot elimina a corrida **por construção**: é o mesmo processo que vai servir tráfego
  * aplicando o esquema antes do `listen()`. Não existe janela de código novo com banco velho.
  *
+ * **Isso só vale se o build levar os `.sql` para `dist/migrations/`** (`copy-to-dist.ts`, último
+ * passo do `npm run build`). Até a v0.40.0 não levava: este migrator achava zero arquivos e
+ * dizia "esquema em dia" em todo boot, e a janela que ele existe para fechar ficou aberta
+ * (incidente 2026-09-23, ver `MigrationFiles`). Hoje diretório vazio lança.
+ *
  * Um job separado (GitHub Actions no push) foi descartado: o `autoDeploy` do Render dispara no
  * mesmo push e o build dele leva ~50s — um runner subindo com `npm ci` dificilmente ganha essa
  * corrida, e o resultado seria migrar DEPOIS do deploy. Mesmo problema, mais difícil de enxergar.

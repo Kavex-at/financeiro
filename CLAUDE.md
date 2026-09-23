@@ -327,6 +327,11 @@ Every feature or rule change goes through the pipeline. No exceptions.
   efeito colateral posto ali dispara falso-positivo em massa. Efeito de boot que dependa de
   configuração completa vai em `index.ts`, no boot do servidor. *(Lição do ciclo `painel-operacao`,
   2026-09-01: o ConfigDoctor ali teria emitido ~144 alertas falsos por dia.)*
+- **Produção roda `dist/`, e o `tsc` só emite `.js`.** Qualquer arquivo não-TS lido em runtime
+  (hoje: `migrations/*.sql`) precisa ser copiado no `npm run build`, senão some em produção e
+  continua funcionando em dev e nos crons (que rodam a árvore-fonte via `tsx`). Foi assim que o
+  `BootMigrator` passou semanas sem migrar nada, e a `0061` esvaziou as abas de lotes do SISPAG.
+  *(Incidente 2026-09-23; ver `migrations/MigrationFiles.ts` e `DEPLOY.md`.)*
 
 ## Inviolable Rules
 1. Never commit `.env`, AWS credentials, or `terraform.tfstate` **(alvo — quando a infra Terraform existir)**

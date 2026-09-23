@@ -69,6 +69,20 @@ Crie um **Web Service** apontando para o repositório.
 > Manter as duas fontes concordando importa: enquanto o blueprint dizia uma coisa e o código fazia
 > outra, o próximo dev que "limpasse" o boot poderia remover o `BootMigrator` acreditando que o
 > Render cobria.
+>
+> **O `npm run build` precisa levar os `.sql` para `dist/migrations/`** (passo
+> `migrations/copy-to-dist.ts`). O `tsc` só emite `.js`, e o runner compilado procura as migrações
+> ao lado de si mesmo. Até a v0.40.0 esse passo não existia: o `BootMigrator` achava zero arquivos,
+> logava `[boot-migrate] esquema em dia` e **nunca migrou nada em produção**. Quem aplicava as
+> migrações eram os crons do GitHub Actions (`npm run migrate`, via tsx, lendo a árvore-fonte),
+> minutos depois do deploy. Em 2026-09-23 isso deixou as abas de lotes do SISPAG vazias por
+> ~25 min (a `0061` só entrou no cron seguinte). Hoje diretório sem migração **falha o build e o
+> boot**, em vez de passar por "esquema em dia".
+>
+> Como conferir um deploy com migração nova: o log de boot do Render deve trazer
+> `[boot-migrate] aplicada(s) N: <nome>.sql`. Se trouxer `esquema em dia` num deploy que trouxe
+> migração, algo está errado. Em emergência, `npm run migrate` num checkout local contra o banco de
+> produção aplica o que faltar (é idempotente).
 
 **Deploy quebrou em produção?** → [`docs/runbooks/rollback.md`](docs/runbooks/rollback.md).
 
@@ -132,7 +146,9 @@ Importe o repositório como um projeto Vercel.
 4. **Setar credenciais Conexos** (`CONEXOS_*`) no Render.
 5. Após o primeiro deploy do frontend, **copiar o domínio Vercel** e colocá-lo em
    `ALLOWED_ORIGINS` no Render; e **copiar a URL do Render** para `NEXT_PUBLIC_API_URL` na Vercel.
-6. Confirmar que o Pre-Deploy do Render rodou `migrate` + `seed:admin` (logs do deploy).
+6. Confirmar nos logs do Render que o build copiou as migrações (`[build] N migração(ões)
+   copiada(s)`) e que o boot migrou (`[boot-migrate] ...`); rodar `npm run seed:admin` uma vez
+   (não há pre-deploy — ver seção 2).
 7. Acessar `https://<app>.vercel.app/login` e entrar com `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
 
 > Para trocar a senha do admin depois, ajuste `ADMIN_PASSWORD` e re-rode `npm run seed:admin`
