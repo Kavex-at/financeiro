@@ -88,6 +88,42 @@ function VencimentoBadge({ dias }: { dias?: number }) {
   return <Badge variant="outline">em {dias}d</Badge>
 }
 
+/**
+ * Estado de erro das abas de lotes. Existe para que "o endpoint falhou" nunca se pareça com
+ * "não há lote" — as duas coisas pedem ações opostas de quem opera.
+ */
+function LotesIndisponiveis({
+  erro,
+  onRecarregar,
+}: {
+  erro: string
+  onRecarregar: () => Promise<void>
+}) {
+  const [recarregando, setRecarregando] = React.useState(false)
+  const recarregar = async () => {
+    setRecarregando(true)
+    try {
+      await onRecarregar()
+    } finally {
+      setRecarregando(false)
+    }
+  }
+  return (
+    <EmptyState
+      role="alert"
+      icon={<AlertTriangle className="size-6 text-danger" />}
+      title="Não foi possível carregar os lotes"
+      description={`${erro} A lista não está vazia: ela não carregou. Tente de novo; se persistir, avise o time.`}
+      action={
+        <Button size="sm" variant="outline" onClick={recarregar} disabled={recarregando}>
+          <RefreshCcw className="size-4" />
+          {recarregando ? 'Recarregando…' : 'Tentar de novo'}
+        </Button>
+      }
+    />
+  )
+}
+
 
 /**
  * Guard de acesso (bloqueio via URL): quando o SISPAG está desligado (produção,
@@ -113,6 +149,7 @@ export default function SispagPage() {
 function SispagPanel() {
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
+  const [lotesErro, setLotesErro] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   // Default 'a-vencer' a pedido do financeiro: vencido não entra em lote (o ERP recusa
@@ -130,13 +167,27 @@ function SispagPanel() {
   const [runs, setRuns] = React.useState<PagamentoIngestaoRun[] | null>(null)
   const [runsLoading, setRunsLoading] = React.useState(false)
 
+  // Os lotes vêm de outro endpoint (`/sispag/lotes`) e podem falhar sozinhos. Falha NÃO vira
+  // lista vazia: em 2026-09-23 o endpoint quebrou (coluna da 0061 ainda sem migrar) e a tela
+  // mostrou "0 lotes" — indistinguível de "não há lote". O erro fica em `lotesErro` e as abas
+  // de lotes dizem que não carregaram; a lista anterior é mantida, mas não exibida.
+  const recarregarLotes = React.useCallback(async () => {
+    try {
+      setLotes(await fetchLotes())
+      setLotesErro(null)
+    } catch (e) {
+      if (isSessionExpiredError(e)) return
+      setLotesErro(e instanceof Error ? e.message : 'Falha ao carregar os lotes.')
+    }
+  }, [])
+
   const carregar = React.useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [p, ls] = await Promise.all([fetchSispagPainel(), fetchLotes().catch(() => [])])
+      // `recarregarLotes` não lança: a falha dos lotes não derruba o painel inteiro.
+      const [p] = await Promise.all([fetchSispagPainel(), recarregarLotes()])
       setPainel(p)
-      setLotes(ls)
     } catch (e) {
       // Sessão expirada tem dono: o SessionExpiredModal. Se renderizarmos o nosso
       // EmptyState aqui, ele cobre o modal e o usuário fica sem caminho para o login.
@@ -145,15 +196,7 @@ function SispagPanel() {
     } finally {
       setLoading(false)
     }
-  }, [])
-
-  const recarregarLotes = React.useCallback(async () => {
-    try {
-      setLotes(await fetchLotes())
-    } catch {
-      /* mantém a lista anterior */
-    }
-  }, [])
+  }, [recarregarLotes])
 
   const carregarRuns = React.useCallback(async () => {
     setRunsLoading(true)
@@ -596,9 +639,17 @@ function SispagPanel() {
             />
             <SimpleKPI
               label="Lotes candidatos"
-              value={lotes.filter((l) => l.status !== 'CANCELADO').length.toLocaleString('pt-BR')}
+              value={
+                lotesErro
+                  ? '—'
+                  : lotes.filter((l) => l.status !== 'CANCELADO').length.toLocaleString('pt-BR')
+              }
               color="info"
-              footer={`${lotes.filter((l) => l.status === 'FINALIZADO').length} finalizados`}
+              footer={
+                lotesErro
+                  ? 'não foi possível carregar'
+                  : `${lotes.filter((l) => l.status === 'FINALIZADO').length} finalizados`
+              }
             />
           </KPIGrid>
 
@@ -606,10 +657,10 @@ function SispagPanel() {
             <TabsList>
               <TabsTrigger value="titulos">Títulos a pagar</TabsTrigger>
               <TabsTrigger value="lotes-candidatos">
-                Lotes candidatos ({lotesRascunho.length})
+                Lotes candidatos ({lotesErro ? '—' : lotesRascunho.length})
               </TabsTrigger>
               <TabsTrigger value="lotes-finalizados">
-                Finalizados ({lotesFinalizados.length})
+                Finalizados ({lotesErro ? '—' : lotesFinalizados.length})
               </TabsTrigger>
               <TabsTrigger value="lotes">Lançamento Lote (REM) - Conexos</TabsTrigger>
               <TabsTrigger value="retornos">Retorno Lote (RET) - Conexos</TabsTrigger>
@@ -797,7 +848,9 @@ function SispagPanel() {
                 aba={abaCandidatos}
                 buscaPlaceholder="Buscar por filial, quem criou ou credor…"
               />
-              {abaCandidatos.total === 0 ? (
+              {lotesErro ? (
+                <LotesIndisponiveis erro={lotesErro} onRecarregar={recarregarLotes} />
+              ) : abaCandidatos.total === 0 ? (
                 <EmptyState
                   icon={<Layers className="size-6" />}
                   title="Nenhum lote candidato"
@@ -849,7 +902,9 @@ function SispagPanel() {
                   ))}
                 </div>
               </div>
-              {abaFinalizados.total === 0 ? (
+              {lotesErro ? (
+                <LotesIndisponiveis erro={lotesErro} onRecarregar={recarregarLotes} />
+              ) : abaFinalizados.total === 0 ? (
                 <EmptyState
                   icon={<Layers className="size-6" />}
                   title="Nenhum lote finalizado"
