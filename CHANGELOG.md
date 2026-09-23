@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.41.0 (2026-09-23) — tirar um título do lote SISPAG sem que o cron o devolva
+
+Um título retirado de um lote e deixado solto voltava sozinho na próxima formação automática: ele
+continuava ativo, aprovado, não pago e a vencer em até 7 dias, que é tudo o que o cron exige. A
+decisão da analista de "esse não sai agora" não ficava registrada em lugar nenhum (ADR-0050).
+
+- **"Retirar do lote" na aba Títulos a pagar.** Tira o título do lote em rascunho em que ele está e
+  o marca como **"Não lotar automaticamente"**, numa operação só. O motivo é opcional (até 500
+  caracteres). Autor e data vêm do login.
+- **A lixeira dentro de um lote automático também retém**, e agora pede confirmação dizendo isso.
+  Num lote manual a lixeira continua como antes, direta e sem retenção.
+- **A retenção acaba de dois jeitos:** "Liberar" na linha do título (ele volta ao pool na próxima
+  formação, se ainda for elegível) ou incluí-lo à mão num lote. A inclusão manual nunca é barrada.
+- **A linha do título mostra o lote em que ele está** ("Lote automático" / "Lote manual"); o link
+  abre a aba de lotes candidatos na página certa, com o lote aberto e destacado.
+- A retenção fica numa tabela própria (migration 0062), com histórico (quem reteve, quem liberou,
+  por quê). A carteira de títulos é espelho do ERP e é reescrita a cada ingestão, então não é lugar
+  para guardar decisão da analista.
+
 ## v0.40.1 (2026-09-23) — migração nova passa a entrar no deploy, e lote que não carrega avisa
 
 Logo depois do deploy da v0.40.0, as abas de lotes do SISPAG vieram vazias ("Lotes candidatos
