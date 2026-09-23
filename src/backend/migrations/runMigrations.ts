@@ -1,9 +1,15 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
+import MigrationFiles from './MigrationFiles.js';
 
+/**
+ * Diretório do próprio módulo: a árvore-fonte sob `tsx` (`npm run migrate`), `dist/migrations/`
+ * sob `node dist/index.js` (o boot em produção). O segundo só tem os `.sql` porque o
+ * `npm run build` os copia para lá (`copy-to-dist.ts`).
+ */
 const MIGRATIONS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -37,17 +43,23 @@ const LIMITES_DE_EXECUCAO = [
  * `PostgreeDatabaseClient` existente. SQL DDL é estático (não há input externo),
  * por isso roda como statement cru (não passa pelo SqlBuilder de `$nome`).
  *
- * **`readdirSync` NÃO é recursivo, e isso é load-bearing.** Scripts de reverse
+ * **A listagem NÃO é recursiva, e isso é load-bearing.** Scripts de reverse
  * vivem em `migrations/rollbacks/*.rollback.sql` justamente porque um arquivo
  * `.sql` solto neste diretório seria aplicado no boot seguinte — um rollback
  * auto-aplicável desfaria a própria migration que acabou de subir. Ver
  * `rollbacks/README.md` e a Regis-Review 2026-09-08 (card `rollback-0054`).
+ * A regra mora em `MigrationFiles`, compartilhada com a cópia do build.
+ *
+ * **Diretório sem migração é erro, não "esquema em dia".** Foi assim que o boot
+ * passou semanas sem migrar nada em produção (incidente 2026-09-23).
  */
 @injectable()
 export default class MigrationRunner {
     constructor(
         @inject(PostgreeDatabaseClient)
         private databaseClient: PostgreeDatabaseClient,
+        @inject(MigrationFiles)
+        private migrationFiles: MigrationFiles,
     ) {}
 
     public run = async (): Promise<string[]> => {
@@ -63,9 +75,7 @@ export default class MigrationRunner {
         );
         const applied = new Set(appliedRows.map((r) => String(r.name)));
 
-        const files = readdirSync(MIGRATIONS_DIR)
-            .filter((f) => f.endsWith('.sql'))
-            .sort();
+        const files = this.migrationFiles.listOrFail(MIGRATIONS_DIR);
 
         const newlyApplied: string[] = [];
         for (const file of files) {

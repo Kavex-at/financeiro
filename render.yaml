@@ -11,10 +11,13 @@ services:
     branch: main
     # Native auto-deploy on push to `main`. The gate is GitHub branch protection
     # (CI `Backend`/`Frontend` checks required to merge), so only tested code
-    # reaches `main` and gets deployed. `preDeployCommand` below runs the DB
-    # migrations before traffic switches; a failed build/migration is not
-    # promoted. See .github/workflows/ci.yml (gates only — no deploy job).
+    # reaches `main` and gets deployed. DB migrations run at BOOT (see below),
+    # before traffic switches; a failed build/migration is not promoted.
+    # See .github/workflows/ci.yml (gates only — no deploy job).
     autoDeploy: true
+    # `npm run build` = tsc + copia `migrations/*.sql` para `dist/migrations/`
+    # (`migrations/copy-to-dist.ts`). Sem a cópia o BootMigrator não acha migração nenhuma —
+    # foi assim até a v0.40.0 (ver DEPLOY.md, incidente 2026-09-23).
     buildCommand: npm ci && npm run build
     startCommand: npm start
     # SEM preDeployCommand — deliberado, não esquecimento.

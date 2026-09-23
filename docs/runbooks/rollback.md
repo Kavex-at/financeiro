@@ -40,6 +40,10 @@ anterior, ou olhe o `CHANGELOG.md` da versão.
 > As migrations rodam no **boot** do processo, via `BootMigrator` (ver `src/backend/index.ts`), não
 > em pre-deploy. Isso significa que a versão revertida também executa o `BootMigrator` ao subir —
 > outra razão para não mexer em migration destrutiva no meio de um rollback.
+>
+> Reverter para um commit **anterior à v0.40.1** sobe um build sem os `.sql` em `dist/` (ver
+> `DEPLOY.md`): o boot loga `esquema em dia` sem ter olhado nada. É inofensivo num rollback (a versão
+> antiga não traz migração nova), mas não tome esse log como prova de que o banco está em dia.
 
 ## 2. Reverter o frontend (Vercel), se necessário
 
