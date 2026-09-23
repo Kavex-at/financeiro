@@ -116,7 +116,12 @@ export function LoteCard({
     if (destacado) setAberto(true)
   }
   React.useEffect(() => {
-    if (destacado) cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!destacado) return
+    const reduzirMovimento = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    cardRef.current?.scrollIntoView({
+      behavior: reduzirMovimento ? 'auto' : 'smooth',
+      block: 'start',
+    })
   }, [destacado])
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
   const isRascunho = l.status === 'RASCUNHO'
