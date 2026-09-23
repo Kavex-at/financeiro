@@ -10,6 +10,8 @@ achar o título dentro dele. A aba de títulos só dizia "em lote", sem dizer qu
 - **"Retirar do lote" na linha do título**, com confirmação. É a mesma remoção da lixeira do lote:
   só em rascunho, e um lote automático passa a ser manual. O título fica livre para entrar em outro
   lote na hora.
+- **A busca das abas de lotes aceita o documento do título** (`813` ou `813/1`, o mesmo código da
+  aba de títulos), além de credor, filial e autor.
 
 ## v0.40.1 (2026-09-23) — migração nova passa a entrar no deploy, e lote que não carrega avisa
 

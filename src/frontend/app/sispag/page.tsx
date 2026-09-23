@@ -68,7 +68,7 @@ import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
-import { paginaDoLote, rotuloLote } from './components/loteDoTitulo'
+import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
@@ -314,8 +314,7 @@ function SispagPanel() {
     'todos' | 'aguardando' | 'remessa' | 'retornado'
   >('todos')
   const [adicionarLote, setAdicionarLote] = React.useState<LotePagamento | null>(null)
-  const buscaLote = (l: LotePagamento) =>
-    `${l.filCod} ${l.criadoPor} ${l.itens.map((i) => i.credor ?? '').join(' ')}`
+  const buscaLote = textoBuscaLote
   const abaCandidatos = useTabelaFiltro(
     lotesRascunho,
     (l) => l.filCod,
@@ -955,7 +954,7 @@ function SispagPanel() {
               </p>
               <FiltroBarra
                 aba={abaCandidatos}
-                buscaPlaceholder="Buscar por filial, quem criou ou credor…"
+                buscaPlaceholder="Buscar por documento, credor, filial ou quem criou…"
               />
               {lotesErro ? (
                 <LotesIndisponiveis erro={lotesErro} onRecarregar={recarregarLotes} />
@@ -990,7 +989,7 @@ function SispagPanel() {
               </p>
               <FiltroBarra
                 aba={abaFinalizados}
-                buscaPlaceholder="Buscar por filial, quem finalizou ou credor…"
+                buscaPlaceholder="Buscar por documento, credor, filial ou quem finalizou…"
               />
               <div className="flex flex-wrap gap-x-3 gap-y-2">
                 <div className="flex gap-1">
