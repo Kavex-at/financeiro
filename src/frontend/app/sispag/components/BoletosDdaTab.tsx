@@ -27,6 +27,12 @@ import {
   sincronizarBoletosDda,
 } from '@/lib/sispag'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
+import {
+  CandidatosBoletoDialog,
+  DiferencaBadge,
+  fmtCivil,
+  resumoCandidatos,
+} from './CandidatosBoletoDialog'
 
 type FiltroSituacao = 'todas' | BoletoDdaSituacao
 
@@ -62,13 +68,6 @@ const SITUACAO_BADGE: Record<BoletoDdaSituacao, { label: string; className: stri
     },
   }
 
-/** `YYYY-MM-DD` → `DD/MM/AAAA` sem passar por `Date` (data civil, sem fuso). */
-const fmtCivil = (civil?: string) => {
-  if (!civil) return '—'
-  const [a, m, d] = civil.split('-')
-  return `${d}/${m}/${a}`
-}
-
 /** Filial de um boleto: a do vínculo, ou a do único candidato. Pool DDA não tem filial própria. */
 const filialDe = (b: BoletoDda): number | undefined =>
   b.vinculo?.filCod ?? (b.candidatos.length === 1 ? b.candidatos[0]?.filCod : undefined)
@@ -87,26 +86,6 @@ const buscaDe = (b: BoletoDda): string =>
   ]
     .filter(Boolean)
     .join(' ')
-
-function DiferencaBadge({ dias }: { dias?: number }) {
-  if (dias === undefined) return null
-  if (dias === 0)
-    return (
-      <Badge variant="outline" className="border-success/40 text-success">
-        mesmo dia
-      </Badge>
-    )
-  const texto = `${dias > 0 ? '+' : ''}${dias} dia${Math.abs(dias) > 1 ? 's' : ''}`
-  return (
-    <Badge
-      variant="outline"
-      className="border-warning/40 text-warning"
-      title="Vencimento do boleto menos o do título. Diferente de zero, o Conexos não costuma associar."
-    >
-      {texto}
-    </Badge>
-  )
-}
 
 function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
   return (
@@ -138,6 +117,8 @@ export function BoletosDdaTab() {
   const [sincronizando, setSincronizando] = React.useState(false)
   /** Incrementado para recarregar a lista (depois de sincronizar) sem trocar o período. */
   const [recarga, setRecarga] = React.useState(0)
+  /** Boleto ambíguo cujos candidatos estão abertos no modal. */
+  const [candidatosDe, setCandidatosDe] = React.useState<BoletoDda | null>(null)
 
   // Estado só muda DEPOIS do fetch; `loading` volta a true nos handlers que disparam a recarga.
   React.useEffect(() => {
@@ -309,7 +290,10 @@ export function BoletosDdaTab() {
             <TableBody>
               {aba.slice.map((b) => {
                 const badge = SITUACAO_BADGE[b.situacao]
-                const titulos = b.vinculo ? [b.vinculo] : b.candidatos
+                // Na linha vai no máximo UM título (o vínculo ou o candidato mais próximo); o
+                // resto de um ambíguo abre no modal — senão a linha vira uma coluna de cartões.
+                const principal = b.vinculo ?? b.candidatos[0]
+                const extras = b.vinculo ? 0 : b.candidatos.length - 1
                 return (
                   <TableRow key={`${b.ddcCod}:${b.ditCod}`}>
                     <TableCell>
@@ -345,17 +329,22 @@ export function BoletosDdaTab() {
                       {b.bancoEmissor ?? '—'}
                     </TableCell>
                     <TableCell>
-                      {titulos.length === 0 ? (
+                      {principal === undefined ? (
                         <span className="text-muted-foreground">—</span>
                       ) : (
-                        <div className="flex flex-col gap-2">
-                          {titulos.map((t) => (
-                            <TituloLinha
-                              key={`${t.filCod}:${t.docCod}:${t.titCod}`}
-                              t={t}
-                              flpCod={b.vinculo?.flpCod}
-                            />
-                          ))}
+                        <div className="flex flex-col items-start gap-1">
+                          <TituloLinha t={principal} flpCod={b.vinculo?.flpCod} />
+                          {extras > 0 ? (
+                            <Button
+                              size="sm"
+                              variant="link"
+                              className="h-auto p-0 text-xs"
+                              onClick={() => setCandidatosDe(b)}
+                              aria-label={`Ver os ${b.candidatos.length} títulos candidatos do boleto ${b.numero ?? b.ditCod}`}
+                            >
+                              {resumoCandidatos(b.candidatos)}
+                            </Button>
+                          ) : null}
                         </div>
                       )}
                     </TableCell>
@@ -380,6 +369,7 @@ export function BoletosDdaTab() {
         </div>
       )}
       <Paginacao aba={aba} />
+      <CandidatosBoletoDialog boleto={candidatosDe} onClose={() => setCandidatosDe(null)} />
     </div>
   )
 }

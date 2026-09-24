@@ -104,6 +104,43 @@ describe('BoletosDdaTab', () => {
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3))
   })
 
+  it('ambíguo: a linha mostra só o candidato mais próximo; o resto abre no modal', async () => {
+    const pedroni = (docCod: string, vencimento: string, diferencaDias: number) => ({
+      filCod: 2,
+      docCod,
+      titCod: '1',
+      credor: 'PEDRONI LOGISTICA LTDA',
+      vencimento,
+      diferencaDias,
+    })
+    const AMBIGUO: BoletoDda = {
+      ddcCod: 162,
+      ditCod: 9,
+      numero: '329691',
+      valor: 1412,
+      vencimento: '2026-09-24',
+      vencido: false,
+      situacao: 'AMBIGUO',
+      candidatos: [
+        pedroni('34685', '2026-09-24', 0),
+        pedroni('34872', '2026-09-25', -1),
+        pedroni('36171', '2026-09-26', -2),
+      ],
+    }
+    mockFetch.mockResolvedValue(resposta([AMBIGUO]))
+    render(<BoletosDdaTab />)
+
+    expect(await screen.findByText(/34685\/1/)).toBeInTheDocument()
+    expect(screen.queryByText(/34872\/1/)).not.toBeInTheDocument()
+    const resumo = screen.getByRole('button', { name: /Ver os 3 títulos candidatos/ })
+    expect(resumo).toHaveTextContent('+2 títulos · 1 credor · 0 a -2 dias')
+
+    fireEvent.click(resumo)
+    expect(await screen.findByRole('dialog')).toHaveTextContent('3 títulos candidatos')
+    expect(screen.getByText('34872/1')).toBeInTheDocument()
+    expect(screen.getByText('36171/1')).toBeInTheDocument()
+  })
+
   it('sem sincronização ainda, orienta a clicar em "Atualizar DDA"', async () => {
     mockFetch.mockResolvedValue({ boletos: [], janelaDias: 3 })
     render(<BoletosDdaTab />)
