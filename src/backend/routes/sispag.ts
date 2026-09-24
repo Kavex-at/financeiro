@@ -9,6 +9,8 @@ import { isHandlerError } from '../domain/libs/handler/HandlerError.js';
 import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
 import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
+import { BOLETO_DDA_ESCOPO } from '../domain/interface/sispag/BoletoDda.js';
+import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
@@ -396,6 +398,47 @@ router.post(
         try {
             const result = await service.formar({ triggeredBy: ator(req) });
             res.json(result);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// ===================================================== Boletos DDA (fin124)
+// Snapshot local do pool DDA consolidado contra a carteira. READ-ONLY no ERP.
+
+const boletosDdaSchema = z.object({
+    escopo: z.enum([BOLETO_DDA_ESCOPO.A_VENCER, BOLETO_DDA_ESCOPO.TODOS]).default('a-vencer'),
+});
+
+// GET /sispag/boletos-dda?escopo=a-vencer|todos
+router.get(
+    '/boletos-dda',
+    // Mesmo guard das linhas digitáveis do lote: código de barras é destino de pagamento
+    // (banco, agência e conta do cedente no campo livre). LGPD Art. 6º e LC 105.
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = boletosDdaSchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid query', details: parsed.error.flatten() });
+            return;
+        }
+        const service = container.resolve(BoletoDdaService);
+        res.json(await service.listar(parsed.data));
+    }),
+);
+
+// POST /sispag/boletos-dda/sincronizar — relê o fin124 (incremental). `IngestLockBusyError` → 409.
+router.post(
+    '/boletos-dda/sincronizar',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(BoletoDdaService);
+        try {
+            res.json(await service.sincronizar({ triggeredBy: ator(req) }));
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
