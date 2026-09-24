@@ -1,5 +1,27 @@
 # Columbia Financeiro — Changelog
 
+## v0.42.0 (2026-09-24) — aba "Boletos DDA" para achar o boleto de um título
+
+Quando a remessa parava com "título marcado como BOLETO sem boleto DDA associado", achar o boleto
+certo exigia varrer os arquivos DDA do `fin124` um a um — são ~160 arquivos e ~24 mil boletos, e a
+tela do Conexos não mostra a qual título cada boleto pertence.
+
+- **Nova aba "Boletos DDA (fin124)" no SISPAG.** Lista os boletos do DDA com número, valor,
+  vencimento, banco emissor e arquivo de origem. Por padrão mostra só os que ainda vão vencer;
+  "Todos" inclui os vencidos. Busca por número, valor, credor, documento, código de barras ou
+  arquivo, e filtro por filial.
+- **Cada boleto diz onde está:** *vinculado* (o Conexos já ligou a um título), *candidato* (um
+  título em aberto com o mesmo valor e vencimento até 3 dias de diferença), *ambíguo* (mais de um
+  título casa — cobrança recorrente) ou *sem título*. O candidato é só sugestão: nada é gravado no
+  Conexos.
+- **A diferença de vencimento aparece na linha** (`mesmo dia`, `+1 dia`…), junto do lote em que o
+  título está. Nos dois casos investigados em 23/09 (PEDRONI e ADP) o boleto vencia um dia depois
+  do título, e o Conexos não fez a associação.
+- **Botão para copiar a linha digitável** de cada boleto.
+- **Atualização manual:** botão "Atualizar DDA" na aba, ou `npm run job:ingest-boletos-dda`. Lê
+  os arquivos novos e relê os dos últimos 60 dias. A primeira carga (pool inteiro) deve ser feita
+  pelo job. Acesso restrito a administradores, como as linhas digitáveis do lote.
+
 ## v0.41.0 (2026-09-23) — tirar um título do lote SISPAG direto da aba de títulos
 
 Para tirar um título de um lote, a analista precisava abrir a aba de lotes candidatos, achar o lote e
