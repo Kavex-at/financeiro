@@ -23,11 +23,17 @@ Barras dos dois boletos confirmam o vencimento pelo fator (1579 → 24/09; 1580 
 
 ## Hipótese aberta (P1)
 
-**O Conexos só associa boleto DDA a título com vencimento idêntico.** Indício novo, 2026-09-24:
-depois da conversa, a carteira ingerida mostra o **5046/1 com vencimento 25/09 e `tem_boleto = true`**
-— ou seja, com o vencimento alinhado ao do boleto, o Conexos passou a sinalizar o DDA. Falta
-confirmar gerando a remessa (deve passar) e, idealmente, comparando os boletos que o Conexos
-vinculou com os vencimentos dos seus títulos.
+**O Conexos só associa boleto DDA a título com vencimento idêntico.** Ainda NÃO confirmada.
+
+⚠️ **Discrepância a investigar (2026-09-24):** a carteira do banco compartilhado (`titulo_a_pagar`)
+mostrava o **5046/1 com vencimento 25/09 e `tem_boleto = true`**, mas o `fin064` lido direto do
+Conexos no mesmo dia diz **24/09** (`titDtaVencimento = 1790208000000`), e uma ingestão nova num
+banco local também gravou 24/09. Ou seja: o 25/09 NÃO é evidência de que o vencimento mudou no
+Conexos. Falta entender de onde veio o 25/09 da carteira compartilhada (ingestão antiga com o
+vencimento alterado e depois revertido? deslocamento de data em algum caminho?).
+
+Para confirmar a hipótese: alinhar o vencimento de um título ao do boleto no Conexos e gerar a
+remessa; e comparar os boletos que o Conexos vinculou com os vencimentos dos seus títulos.
 
 Se confirmada, a coluna "diferença" da aba vira o diagnóstico direto: `+N dias` = ajustar o
 vencimento do título no Conexos antes de gerar a remessa.
