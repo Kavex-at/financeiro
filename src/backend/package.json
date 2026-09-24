@@ -14,6 +14,7 @@
         "seed:admin": "tsx jobs/seed-admin.ts",
         "job:ingest-permutas": "tsx jobs/ingest-permutas.ts",
         "job:ingest-pagamentos": "tsx jobs/ingest-pagamentos.ts",
+        "job:ingest-boletos-dda": "tsx jobs/ingest-boletos-dda.ts",
         "job:formar-lotes": "tsx jobs/formar-lotes.ts",
         "job:ingest-extratos": "tsx jobs/ingest-extratos.ts",
         "job:detect-staleness": "tsx jobs/detect-staleness.ts",

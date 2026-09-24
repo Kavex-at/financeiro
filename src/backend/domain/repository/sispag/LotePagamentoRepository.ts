@@ -197,6 +197,35 @@ export default class LotePagamentoRepository {
     };
 
     /**
+     * Títulos em lotes NÃO cancelados, com o lote e o status — para a aba de boletos DDA dizer
+     * em que lote o título do boleto está. Lote mais recente primeiro (um título pode ter ficado
+     * num lote antigo que nunca gerou remessa).
+     */
+    public listTitulosEmLotesAbertos = async (): Promise<
+        Array<{ filCod: number; docCod: string; titCod: string; loteId: string; status: string }>
+    > => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT i.fil_cod, i.doc_cod, i.tit_cod, l.id AS lote_id, l.status
+             FROM lote_pagamento_item i JOIN lote_pagamento l ON l.id = i.lote_id
+             WHERE l.status <> 'CANCELADO'
+             ORDER BY l.criado_em DESC`,
+        )) as Array<{
+            fil_cod: number;
+            doc_cod: string;
+            tit_cod: string;
+            lote_id: string;
+            status: string;
+        }>;
+        return rows.map((r) => ({
+            filCod: r.fil_cod,
+            docCod: r.doc_cod,
+            titCod: r.tit_cod,
+            loteId: r.lote_id,
+            status: r.status,
+        }));
+    };
+
+    /**
      * Desfaz (DELETE) os lotes AUTOMÁTICOS em RASCUNHO que já contêm algum título VENCIDO —
      * só títulos a vencer são elegíveis. Os itens caem por CASCATA (títulos voltam a ficar
      * livres). NÃO toca em lotes manuais nem finalizados. Retorna quantos lotes foram desfeitos.
