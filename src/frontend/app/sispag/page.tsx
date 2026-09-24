@@ -65,6 +65,7 @@ import {
 } from '@/lib/sispag'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
+import { BoletosDdaTab } from './components/BoletosDdaTab'
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
@@ -746,7 +747,13 @@ function SispagPanel() {
               </TabsTrigger>
               <TabsTrigger value="lotes">Lançamento Lote (REM) - Conexos</TabsTrigger>
               <TabsTrigger value="retornos">Retorno Lote (RET) - Conexos</TabsTrigger>
+              <TabsTrigger value="boletos-dda">Boletos DDA (fin124)</TabsTrigger>
             </TabsList>
+
+            {/* ---- Boletos DDA (fin124) — carrega ao abrir a aba ---- */}
+            <TabsContent value="boletos-dda">
+              <BoletosDdaTab />
+            </TabsContent>
 
             {/* ---- Títulos a pagar ---- */}
             <TabsContent value="titulos" className="space-y-3">

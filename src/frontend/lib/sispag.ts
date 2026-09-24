@@ -754,3 +754,88 @@ export async function formarLotes(): Promise<FormacaoLotesResult> {
   if (!res.ok) throw new Error(`API ${res.status}`)
   return (await res.json()) as FormacaoLotesResult
 }
+
+// ============================================================ Boletos DDA (fin124)
+// Snapshot do pool DDA consolidado contra a carteira. Espelha
+// backend/domain/interface/sispag/BoletoDda.ts.
+
+export type BoletoDdaSituacao = 'VINCULADO' | 'CANDIDATO' | 'AMBIGUO' | 'SEM_TITULO'
+export type BoletoDdaEscopo = 'a-vencer' | 'todos'
+
+export interface BoletoDdaTitulo {
+  filCod: number
+  docCod: string
+  titCod: string
+  credor?: string
+  valor?: number
+  /** `YYYY-MM-DD` */
+  vencimento?: string
+  /** Vencimento do boleto − vencimento do título, em dias. */
+  diferencaDias?: number
+  temBoletoDda?: boolean
+  lote?: { loteId: string; status: string }
+}
+
+export interface BoletoDda {
+  ddcCod: number
+  ditCod: number
+  arquivo?: string
+  importadoEm?: number
+  numero?: string
+  valor: number
+  /** `YYYY-MM-DD` */
+  vencimento?: string
+  vencido: boolean
+  codbar?: string
+  linhaDigitavel?: string
+  bancoEmissor?: string
+  situacao: BoletoDdaSituacao
+  vinculo?: BoletoDdaTitulo & { flpCod?: number }
+  candidatos: BoletoDdaTitulo[]
+}
+
+export interface BoletosDdaResposta {
+  boletos: BoletoDda[]
+  sincronizadoEm?: number
+  janelaDias: number
+}
+
+export interface SincronizacaoDdaResultado {
+  arquivosNovos: number
+  arquivosRelidos: number
+  boletos: number
+  falhas: number
+}
+
+/** Lançado quando a sincronização devolve 409 — já existe uma rodando. */
+export class SincronizacaoDdaEmAndamentoError extends Error {
+  constructor(message = 'Já existe uma sincronização do DDA em andamento. Aguarde e tente de novo.') {
+    super(message)
+    this.name = 'SincronizacaoDdaEmAndamentoError'
+  }
+}
+
+export async function fetchBoletosDda(escopo: BoletoDdaEscopo): Promise<BoletosDdaResposta> {
+  const res = await apiFetch(`${API}/sispag/boletos-dda?escopo=${escopo}`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) {
+    let msg = `API ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+  return (await res.json()) as BoletosDdaResposta
+}
+
+export async function sincronizarBoletosDda(): Promise<SincronizacaoDdaResultado> {
+  const res = await apiFetch(`${API}/sispag/boletos-dda/sincronizar`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+  })
+  if (res.status === 409) throw new SincronizacaoDdaEmAndamentoError()
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  return (await res.json()) as SincronizacaoDdaResultado
+}
