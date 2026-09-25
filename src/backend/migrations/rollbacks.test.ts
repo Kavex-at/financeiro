@@ -45,9 +45,9 @@ describe('migrations — segurança do diretório', () => {
             [
                 '0054_estado_ja_permutado.sql',
                 '0055_guarda_estado_colapsado.sql',
-                // A 0061 normaliza para NULL os `pronto_para_remessa = FALSE` existentes:
+                // A 0063 normaliza para NULL os `pronto_para_remessa = FALSE` existentes:
                 // perde a distinção no caminho de ida, então precisa do caminho de volta.
-                '0061_pronto_para_remessa_tri_estado.sql',
+                '0063_pronto_para_remessa_tri_estado.sql',
             ].sort(),
         );
         for (const alvo of reverses) {

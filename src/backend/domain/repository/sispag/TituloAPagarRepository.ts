@@ -21,7 +21,7 @@ interface TituloRow {
     banco: string | null;
     num_remessa: string | null;
     tpd_cod: string | null;
-    /** NULL = o read da carteira não soube dizer (ver migration 0061). */
+    /** NULL = o read da carteira não soube dizer (ver migration 0063). */
     pronto_para_remessa: boolean | null;
     tem_boleto: boolean;
 }
