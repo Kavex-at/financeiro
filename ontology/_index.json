@@ -331,7 +331,7 @@
         "src/backend/jobs/ingest-boletos-dda.ts",
         "src/frontend/app/sispag/components/BoletosDdaTab.tsx"
       ],
-      "note": "v0.29.0 (2026-09-24, feature sispag-boletos-dda-tab): snapshot READ-ONLY do pool fin124 + consolidacao contra a carteira (VINCULADO/CANDIDATO/AMBIGUO/SEM_TITULO). Status draft ate aprovacao do Yuri."
+      "note": "v0.29.0 (2026-09-24, feature sispag-boletos-dda-tab): snapshot READ-ONLY do pool fin124 + consolidacao contra a carteira (VINCULADO/CANDIDATO/AMBIGUO/SEM_TITULO). Aprovada em 2026-09-25 na revisao do PR #85."
     }
   },
   "actions": {

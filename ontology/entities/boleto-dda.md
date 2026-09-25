@@ -35,7 +35,7 @@ relationships:
   - "BoletoDda N—1 ArquivoDda (via ddcCod — o arquivo DDA do banco importado no fin124)"
   - "BoletoDda 0..1—1 TituloAPagar (via filCod/docCod/titCod — vínculo gravado PELO CONEXOS na associação do fin015; nunca por nós)"
   - "BoletoDda 0..N—0..N TituloAPagar (candidatos — SUGESTÃO calculada, não persistida: mesmo valor, vencimento a ±3 dias)"
-last_review: 2026-09-24
+last_review: 2026-09-25
 universality_evidence:
   - "ontology/_inbox/sispag-boleto-dda-sondagem.md — pool fin124 medido em PRD: 100% dos itens com barras de 44 dígitos, ~0% com vínculo"
   - "ontology/_inbox/sispag-boleto-dda-tab.md — casos PEDRONI 34697/1 e ADP 5046/1 (2026-09-23): boleto 1 dia depois do título, Conexos não associou"
@@ -43,6 +43,8 @@ universality_evidence:
 ---
 
 # BoletoDda (pool de boletos DDA do `fin124` — snapshot local)
+
+> **Aprovada em 2026-09-25** na revisão do PR #85 (feature `sispag-boletos-dda-tab`).
 
 > Boleto registrado contra a Columbia no **DDA** do banco pagador e importado no Conexos pela tela
 > **`fin124` — Importação de Arquivo DDA**. É de onde vem o código de barras que o segmento J da
