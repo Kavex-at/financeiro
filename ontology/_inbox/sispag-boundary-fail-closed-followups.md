@@ -10,7 +10,7 @@ Fechados nesta tweak; `rh-1` (aberto desde o regis-review de read-harden) fecha 
 | # | Onde | Defeito | Correção |
 |---|------|---------|----------|
 | 1 | `ConexosSispagClient.ts:31` | `z.coerce.number()` fazia `Number(null) === 0` | `z.preprocess` mapeia `null`/`''` → `undefined`, como o `ConexosExtratoClient` já fazia |
-| 1b | `ConexosSispagClient.mapTitulo` | `prontoParaRemessa` sempre `true`; consertar só a coerção o tornaria sempre `false` | tri-estado: `true` quando o read viu destino, `undefined` quando não sabe (migration `0061` torna a coluna nullable) |
+| 1b | `ConexosSispagClient.mapTitulo` | `prontoParaRemessa` sempre `true`; consertar só a coerção o tornaria sempre `false` | tri-estado: `true` quando o read viu destino, `undefined` quando não sabe (migration `0063` torna a coluna nullable) |
 | 2 | `ConexosSispagWriteClient.listarLotesNativos` | lia só a página 1 (500 linhas) de uma lista usada como "os lotes que existem" | pagina de verdade; truncar **lança** (parcial aqui manda cancelar lote alheio ou duplicar pagamento) |
 | 3 | `ConexosSispagClient.isFilterRejected` | casava QUALQUER 400 → releitura ampla mascarando falha do ERP | exige corpo que nomeie o filtro; 400 mudo ou de outra causa propaga |
 | 4 | `LINHA_DIGITAVEL_SCHEMA` | só `/^\d{47}$/` | confere os 4 dígitos verificadores (3× mod-10 + mod-11 geral) e devolve `{total, dropped}` até a tela |
