@@ -6,7 +6,7 @@ Performance.
 
 | # | Card | Prioridade | Esforço | QA | Título |
 |---|---|---|---|---|---|
-| 1 | performance-1 **+ security-2** | **P1** | M | Performance, Security | Paginar/filtrar no servidor o `GET /sispag/boletos-dda?escopo=todos` (hoje 24.137 linhas com código de barras num só GET) |
+| 1 | performance-1 **+ security-2** | **P1** ✅ feito | M | Performance, Security | Paginar/filtrar no servidor o `GET /sispag/boletos-dda?escopo=todos` — **implementado em 2026-09-25 (PR #85): ~8,7 MB → 7,2 KB por página** |
 | 2 | security-1 | P2 | S | Security | Persistir cada sincronização DDA em `boleto_dda_sync_run` (+ `GET …/runs`), como `pagamento_ingestao_run` |
 | 3 | integrability-1 | P2 | S | Integrability | Reusar `ConexosBaseClient.paginate` no `ConexosDdaClient` e propagar `onCapHit` |
 | 4 | integrability-3 | P2 | S | Integrability | Telemetria de truncamento silencioso na paginação DDA (resolvido junto com #3) |

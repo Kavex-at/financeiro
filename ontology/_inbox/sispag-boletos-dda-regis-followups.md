@@ -6,10 +6,13 @@
 
 ## P1
 
-- **performance-1 + security-2 — paginação de "todos" no servidor.** `GET /sispag/boletos-dda?escopo=todos`
-  devolve 24.137 linhas com código de barras e linha digitável (~8,5 MB sem compressão, estimado).
-  Recomendado como primeiro follow-up. O padrão "a vencer" (1.665 linhas) pode seguir filtrado no
-  cliente.
+- ✅ **performance-1 + security-2 — paginação de "todos" no servidor. FEITO (2026-09-25, mesmo PR #85).**
+  `PaginacaoBoletoDda` filtra (situação, filial, busca) e pagina no backend; a rota aceita
+  `situacao`, `busca`, `filCod`, `pagina`, `tamanho` (teto 100, acima disso 400). Aplicado aos dois
+  escopos. Medido em dados reais (24.137 boletos): "todos" caiu de uma resposta de ~8,7 MB para
+  **7,2 KB** por página (286 ms, backend local). Efeito colateral útil: com o rate limit global
+  (100 req/min/IP), um cliente extrai no máximo ~10 mil boletos por minuto — antes, o pool inteiro
+  numa chamada.
 
 ## P2
 
