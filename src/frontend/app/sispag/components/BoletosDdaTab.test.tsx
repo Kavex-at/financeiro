@@ -1,6 +1,7 @@
 /**
- * Aba "Boletos DDA": a consolidação mora no backend — estes testes fixam que a tela mostra a
- * situação e a diferença de vencimento recebidas, filtra por situação/busca e troca o período.
+ * Aba "Boletos DDA": consolidação, filtro e paginação moram no backend — estes testes fixam que a
+ * tela manda os filtros certos (situação, busca com debounce, filial, página, período) e mostra o
+ * que recebe (situação, diferença de vencimento, lote, contagem dos chips).
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -40,22 +41,26 @@ const ADP: BoletoDda = {
     },
   ],
 }
-const LIVRE: BoletoDda = {
-  ddcCod: 161,
-  ditCod: 3,
-  numero: '7386000',
-  valor: 4838.32,
-  vencimento: '2026-10-07',
-  vencido: false,
-  situacao: 'SEM_TITULO',
-  candidatos: [],
-}
 
-const resposta = (boletos: BoletoDda[]): BoletosDdaResposta => ({
-  boletos,
-  sincronizadoEm: Date.parse('2026-09-24T12:00:00Z'),
-  janelaDias: 3,
-})
+/** Resposta de UMA página, como o backend devolve. */
+const pagina = (
+  boletos: BoletoDda[],
+  over: Partial<BoletosDdaResposta> = {},
+): BoletosDdaResposta => {
+  const contagem = { todas: boletos.length, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, SEM_TITULO: 0 }
+  for (const b of boletos) contagem[b.situacao] += 1
+  return {
+    boletos,
+    total: boletos.length,
+    pagina: 1,
+    tamanho: 20,
+    contagem,
+    filiais: [1, 2],
+    sincronizadoEm: Date.parse('2026-09-24T12:00:00Z'),
+    janelaDias: 3,
+    ...over,
+  }
+}
 
 beforeEach(() => {
   mockFetch.mockReset()
@@ -63,45 +68,81 @@ beforeEach(() => {
 })
 
 describe('BoletosDdaTab', () => {
-  it('carrega "a vencer" e mostra candidato com credor, diferença e lote', async () => {
-    mockFetch.mockResolvedValue(resposta([ADP, LIVRE]))
+  it('pede a 1ª página de "a vencer" e mostra candidato com credor, diferença e lote', async () => {
+    mockFetch.mockResolvedValue(pagina([ADP]))
     render(<BoletosDdaTab />)
 
     expect(await screen.findByText('ADP BRASIL LTDA')).toBeInTheDocument()
-    expect(mockFetch).toHaveBeenCalledWith('a-vencer')
+    expect(mockFetch).toHaveBeenCalledWith({ escopo: 'a-vencer', pagina: 1, tamanho: 20 })
     expect(screen.getByText('+1 dia')).toBeInTheDocument()
     expect(screen.getByText('lote finalizado')).toBeInTheDocument()
     expect(screen.getByText('25/09/2026')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Candidatos (1)' })).toBeInTheDocument()
   })
 
-  it('filtra por situação e por busca de valor', async () => {
-    mockFetch.mockResolvedValue(resposta([ADP, LIVRE]))
+  it('chip de situação vai ao servidor e volta para a página 1', async () => {
+    mockFetch.mockResolvedValue(pagina([ADP]))
     render(<BoletosDdaTab />)
     await screen.findByText('001532761')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sem título (1)' }))
-    expect(screen.queryByText('001532761')).not.toBeInTheDocument()
-    expect(screen.getByText('7386000')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Sem título (0)' }))
+    await waitFor(() =>
+      expect(mockFetch).toHaveBeenLastCalledWith({
+        escopo: 'a-vencer',
+        pagina: 1,
+        tamanho: 20,
+        situacao: 'SEM_TITULO',
+      }),
+    )
+  })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Todas (2)' }))
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: '4815' } })
-    expect(screen.getByText('001532761')).toBeInTheDocument()
-    expect(screen.queryByText('7386000')).not.toBeInTheDocument()
+  it('busca vai ao servidor depois do debounce — uma requisição, não uma por tecla', async () => {
+    mockFetch.mockResolvedValue(pagina([ADP]))
+    render(<BoletosDdaTab />)
+    await screen.findByText('001532761')
+    const antes = mockFetch.mock.calls.length
+
+    const campo = screen.getByRole('textbox')
+    fireEvent.change(campo, { target: { value: '48' } })
+    fireEvent.change(campo, { target: { value: '4815' } })
+
+    await waitFor(() =>
+      expect(mockFetch).toHaveBeenLastCalledWith({
+        escopo: 'a-vencer',
+        pagina: 1,
+        tamanho: 20,
+        busca: '4815',
+      }),
+    )
+    expect(mockFetch.mock.calls.length - antes).toBe(1)
+  })
+
+  it('paginação pede a próxima página ao servidor', async () => {
+    mockFetch.mockResolvedValue(pagina([ADP], { total: 45 }))
+    render(<BoletosDdaTab />)
+    expect(await screen.findByText('Página 1 de 3')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Próxima/ }))
+    await waitFor(() =>
+      expect(mockFetch).toHaveBeenLastCalledWith({ escopo: 'a-vencer', pagina: 2, tamanho: 20 }),
+    )
   })
 
   it('troca para "Todos" e recarrega depois de sincronizar', async () => {
-    mockFetch.mockResolvedValue(resposta([ADP]))
+    mockFetch.mockResolvedValue(pagina([ADP]))
     mockSync.mockResolvedValue({ arquivosNovos: 1, arquivosRelidos: 30, boletos: 3000, falhas: 0 })
     render(<BoletosDdaTab />)
     await screen.findByText('001532761')
 
     fireEvent.click(screen.getByRole('button', { name: 'Todos (inclui vencidos)' }))
-    await waitFor(() => expect(mockFetch).toHaveBeenLastCalledWith('todos'))
+    await waitFor(() =>
+      expect(mockFetch).toHaveBeenLastCalledWith({ escopo: 'todos', pagina: 1, tamanho: 20 }),
+    )
+    const antes = mockFetch.mock.calls.length
 
     fireEvent.click(screen.getByRole('button', { name: /Atualizar DDA/ }))
     await waitFor(() => expect(mockSync).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(mockFetch.mock.calls.length).toBe(antes + 1))
   })
 
   it('ambíguo: a linha mostra só o candidato mais próximo; o resto abre no modal', async () => {
@@ -127,7 +168,7 @@ describe('BoletosDdaTab', () => {
         pedroni('36171', '2026-09-26', -2),
       ],
     }
-    mockFetch.mockResolvedValue(resposta([AMBIGUO]))
+    mockFetch.mockResolvedValue(pagina([AMBIGUO]))
     render(<BoletosDdaTab />)
 
     expect(await screen.findByText(/34685\/1/)).toBeInTheDocument()
@@ -142,7 +183,7 @@ describe('BoletosDdaTab', () => {
   })
 
   it('sem sincronização ainda, orienta a clicar em "Atualizar DDA"', async () => {
-    mockFetch.mockResolvedValue({ boletos: [], janelaDias: 3 })
+    mockFetch.mockResolvedValue(pagina([], { sincronizadoEm: undefined }))
     render(<BoletosDdaTab />)
     expect(
       await screen.findByText('Clique em "Atualizar DDA" para trazer os boletos do fin124.'),

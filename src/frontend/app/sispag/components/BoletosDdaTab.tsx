@@ -22,11 +22,16 @@ import {
   type BoletoDdaSituacao,
   type BoletoDdaTitulo,
   type BoletosDdaResposta,
+  type FiltroBoletosDda,
   fetchBoletosDda,
   SincronizacaoDdaEmAndamentoError,
   sincronizarBoletosDda,
 } from '@/lib/sispag'
-import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
+import {
+  FiltroBarra,
+  Paginacao,
+  type TabelaFiltro,
+} from '@/app/permutas/components/tabela-filtro'
 import {
   CandidatosBoletoDialog,
   DiferencaBadge,
@@ -68,24 +73,10 @@ const SITUACAO_BADGE: Record<BoletoDdaSituacao, { label: string; className: stri
     },
   }
 
-/** Filial de um boleto: a do vínculo, ou a do único candidato. Pool DDA não tem filial própria. */
-const filialDe = (b: BoletoDda): number | undefined =>
-  b.vinculo?.filCod ?? (b.candidatos.length === 1 ? b.candidatos[0]?.filCod : undefined)
-
-const buscaDe = (b: BoletoDda): string =>
-  [
-    b.numero,
-    b.codbar,
-    b.linhaDigitavel,
-    b.arquivo,
-    b.valor.toFixed(2),
-    formatBRL(b.valor),
-    ...[b.vinculo, ...b.candidatos]
-      .filter((t): t is BoletoDdaTitulo => t !== undefined)
-      .flatMap((t) => [t.credor, `${t.docCod}/${t.titCod}`]),
-  ]
-    .filter(Boolean)
-    .join(' ')
+/** Linhas por página. O backend pagina e filtra — o pool inteiro nunca vem ao navegador. */
+const TAMANHO_PAGINA = 20
+/** Espera antes de mandar a busca: sem isto, cada tecla vira uma requisição. */
+const DEBOUNCE_BUSCA_MS = 300
 
 function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
   return (
@@ -111,62 +102,95 @@ function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
 export function BoletosDdaTab() {
   const [escopo, setEscopo] = React.useState<BoletoDdaEscopo>('a-vencer')
   const [situacao, setSituacao] = React.useState<FiltroSituacao>('todas')
-  const [dados, setDados] = React.useState<BoletosDdaResposta | null>(null)
-  const [loading, setLoading] = React.useState(true)
-  const [erro, setErro] = React.useState<string | null>(null)
+  const [filial, setFilial] = React.useState('todas')
+  /** O que está no campo de busca. */
+  const [busca, setBusca] = React.useState('')
+  /** A busca que de fato vai ao servidor (depois do debounce). */
+  const [buscaAplicada, setBuscaAplicada] = React.useState('')
+  const [pagina, setPagina] = React.useState(1)
   const [sincronizando, setSincronizando] = React.useState(false)
-  /** Incrementado para recarregar a lista (depois de sincronizar) sem trocar o período. */
+  /** Incrementado para recarregar a lista (depois de sincronizar) sem mudar nenhum filtro. */
   const [recarga, setRecarga] = React.useState(0)
   /** Boleto ambíguo cujos candidatos estão abertos no modal. */
   const [candidatosDe, setCandidatosDe] = React.useState<BoletoDda | null>(null)
+  /** Última resposta, com a chave da requisição que a produziu. */
+  const [resultado, setResultado] = React.useState<{
+    chave: string
+    dados?: BoletosDdaResposta
+    erro?: string
+  } | null>(null)
 
-  // Estado só muda DEPOIS do fetch; `loading` volta a true nos handlers que disparam a recarga.
+  React.useEffect(() => {
+    if (busca === buscaAplicada) return
+    const t = setTimeout(() => {
+      setBuscaAplicada(busca)
+      setPagina(1)
+    }, DEBOUNCE_BUSCA_MS)
+    return () => clearTimeout(t)
+  }, [busca, buscaAplicada])
+
+  const filtro = React.useMemo<FiltroBoletosDda>(
+    () => ({
+      escopo,
+      pagina,
+      tamanho: TAMANHO_PAGINA,
+      ...(situacao !== 'todas' ? { situacao } : {}),
+      ...(buscaAplicada.trim() ? { busca: buscaAplicada.trim() } : {}),
+      ...(filial !== 'todas' ? { filCod: Number(filial) } : {}),
+    }),
+    [escopo, pagina, situacao, buscaAplicada, filial],
+  )
+  const chave = `${JSON.stringify(filtro)}#${recarga}`
+
+  // Estado só muda DEPOIS do fetch. Resposta de requisição já superada é descartada (`vivo`).
   React.useEffect(() => {
     let vivo = true
-    fetchBoletosDda(escopo)
-      .then((d) => {
-        if (!vivo) return
-        setDados(d)
-        setErro(null)
+    fetchBoletosDda(filtro)
+      .then((dados) => {
+        if (vivo) setResultado({ chave, dados })
       })
       .catch((e: unknown) => {
-        if (vivo) setErro(e instanceof Error ? e.message : String(e))
-      })
-      .finally(() => {
-        if (vivo) setLoading(false)
+        if (vivo) setResultado({ chave, erro: e instanceof Error ? e.message : String(e) })
       })
     return () => {
       vivo = false
     }
-  }, [escopo, recarga])
+  }, [chave, filtro])
+
+  /** Carregando = a última resposta é de outra requisição. A página anterior fica visível, esmaecida. */
+  const carregando = resultado?.chave !== chave
+  const erro = carregando ? undefined : resultado?.erro
+  const dados = resultado?.dados
+  const boletos = dados?.boletos ?? []
+  const contagem = dados?.contagem
 
   const trocarEscopo = (e: BoletoDdaEscopo) => {
-    if (e === escopo) return
-    setLoading(true)
     setEscopo(e)
+    setPagina(1)
   }
-  const recarregar = () => {
-    setLoading(true)
-    setRecarga((n) => n + 1)
-  }
+  const recarregar = () => setRecarga((n) => n + 1)
 
-  const boletos = React.useMemo(() => dados?.boletos ?? [], [dados])
-  const contagem = React.useMemo(() => {
-    const c: Record<FiltroSituacao, number> = {
-      todas: boletos.length,
-      VINCULADO: 0,
-      CANDIDATO: 0,
-      AMBIGUO: 0,
-      SEM_TITULO: 0,
-    }
-    for (const b of boletos) c[b.situacao] += 1
-    return c
-  }, [boletos])
-  const filtradosSituacao = React.useMemo(
-    () => (situacao === 'todas' ? boletos : boletos.filter((b) => b.situacao === situacao)),
-    [boletos, situacao],
-  )
-  const aba = useTabelaFiltro(filtradosSituacao, filialDe, buscaDe)
+  // Mesmo formato que a `FiltroBarra` e a `Paginacao` das outras abas esperam — só que os dados
+  // já chegam filtrados e paginados pelo servidor.
+  const total = dados?.total ?? 0
+  const aba: TabelaFiltro<BoletoDda> = {
+    filial,
+    busca,
+    setFilial: (v) => {
+      setFilial(v)
+      setPagina(1)
+    },
+    setBusca,
+    pagina,
+    setPagina,
+    filiais: dados?.filiais ?? [],
+    slice: boletos,
+    total,
+    totalPaginas: Math.max(1, Math.ceil(total / TAMANHO_PAGINA)),
+    paginaAtual: dados?.pagina ?? pagina,
+    pageSize: dados?.tamanho ?? TAMANHO_PAGINA,
+  }
+  const filtrando = situacao !== 'todas' || filial !== 'todas' || buscaAplicada.trim() !== ''
 
   const sincronizar = async () => {
     setSincronizando(true)
@@ -237,11 +261,11 @@ export function BoletosDdaTab() {
             variant={situacao === s.value ? 'default' : 'outline'}
             onClick={() => {
               setSituacao(s.value)
-              aba.setPagina(1)
+              setPagina(1)
             }}
             aria-pressed={situacao === s.value}
           >
-            {s.label} ({contagem[s.value]})
+            {s.label} ({contagem ? contagem[s.value] : '—'})
           </Button>
         ))}
       </div>
@@ -251,7 +275,7 @@ export function BoletosDdaTab() {
         buscaPlaceholder="Buscar por número, valor, credor, documento, código de barras ou arquivo…"
       />
 
-      {loading ? (
+      {carregando && !dados ? (
         <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
           <Spinner /> Carregando boletos…
         </div>
@@ -261,20 +285,23 @@ export function BoletosDdaTab() {
           title="Não foi possível carregar os boletos"
           description={erro}
         />
-      ) : aba.total === 0 ? (
+      ) : total === 0 ? (
         <EmptyState
-          icon={boletos.length === 0 ? <DatabaseZap className="size-6" /> : undefined}
-          title={boletos.length === 0 ? 'Nenhum boleto DDA' : 'Nenhum boleto encontrado'}
+          icon={filtrando ? undefined : <DatabaseZap className="size-6" />}
+          title={filtrando ? 'Nenhum boleto encontrado' : 'Nenhum boleto DDA'}
           description={
             !dados?.sincronizadoEm
               ? 'Clique em "Atualizar DDA" para trazer os boletos do fin124.'
-              : boletos.length === 0
-                ? 'Nenhum boleto neste período. Veja "Todos" para incluir os vencidos.'
-                : 'Ajuste a situação, a filial ou a busca acima.'
+              : filtrando
+                ? 'Ajuste a situação, a filial ou a busca acima.'
+                : 'Nenhum boleto neste período. Veja "Todos" para incluir os vencidos.'
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <div
+          className={`overflow-x-auto rounded-lg border transition-opacity ${carregando ? 'opacity-60' : ''}`}
+          aria-busy={carregando}
+        >
           <Table>
             <TableHeader>
               <TableRow>

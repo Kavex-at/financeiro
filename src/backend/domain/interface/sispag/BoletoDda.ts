@@ -107,8 +107,17 @@ export const BOLETO_DDA_ESCOPO = {
 } as const;
 export type BoletoDdaEscopo = (typeof BOLETO_DDA_ESCOPO)[keyof typeof BOLETO_DDA_ESCOPO];
 
+/** Contagem por situação (chips da aba). `todas` = soma. */
+export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number>;
+
+/** Uma PÁGINA da aba — o pool inteiro nunca vai ao navegador. */
 export interface BoletosDdaResposta {
     boletos: BoletoDdaConsolidado[];
+    total: number;
+    pagina: number;
+    tamanho: number;
+    contagem: BoletoDdaContagem;
+    filiais: number[];
     /** epoch ms da última sincronização com o fin124; ausente = nunca sincronizado. */
     sincronizadoEm?: number;
     janelaDias: number;

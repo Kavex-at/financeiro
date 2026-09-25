@@ -12,6 +12,7 @@ import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRep
 import type LogService from '../LogService.js';
 import BoletoDdaService from './BoletoDdaService.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
+import PaginacaoBoletoDda from './PaginacaoBoletoDda.js';
 
 const HOJE = new Date('2026-09-23T15:00:00Z');
 const dia = (civil: string): number => Date.parse(`${civil}T08:30:00Z`);
@@ -44,6 +45,7 @@ const build = (lockLivre = true) => {
             listTitulosEmLotesAbertos: jest.fn().mockResolvedValue([]),
         } as unknown as LotePagamentoRepository,
         new ConsolidacaoBoletoDda(new CodigoBarrasBoleto(), calendar),
+        new PaginacaoBoletoDda(),
         calendar,
         new BoundedConcurrency(),
         db as unknown as PostgreeDatabaseClient,
@@ -103,9 +105,37 @@ describe('BoletoDdaService', () => {
 
         const r = await service.listar({ escopo: 'a-vencer' });
         expect(repo.listBoletos).toHaveBeenLastCalledWith({ vencimentoDesde: '2026-09-23' });
-        expect(r).toEqual({ boletos: [], sincronizadoEm: 123, janelaDias: 3 });
+        expect(r).toEqual({
+            boletos: [],
+            total: 0,
+            pagina: 1,
+            tamanho: 20,
+            contagem: { todas: 0, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, SEM_TITULO: 0 },
+            filiais: [],
+            sincronizadoEm: 123,
+            janelaDias: 3,
+        });
 
         await service.listar({ escopo: 'todos' });
         expect(repo.listBoletos).toHaveBeenLastCalledWith({});
+    });
+
+    it('listar devolve só a página pedida, com o total do escopo inteiro', async () => {
+        const { service, repo } = build();
+        repo.listBoletos.mockResolvedValue(
+            Array.from({ length: 45 }, (_, i) => ({
+                ddcCod: 1,
+                ditCod: i + 1,
+                valor: 10 + i,
+                vencimento: '2026-10-01',
+            })),
+        );
+
+        const r = await service.listar({ escopo: 'todos', pagina: 3, tamanho: 20 });
+
+        expect(r.total).toBe(45);
+        expect(r.pagina).toBe(3);
+        expect(r.boletos.map((b) => b.ditCod)).toEqual([41, 42, 43, 44, 45]);
+        expect(r.contagem.SEM_TITULO).toBe(45);
     });
 });
