@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.42.3 (2026-09-25) — borderô de Permutas para de apagar, repetir e esconder coisas
+
+Quatro defeitos de integridade no borderô de Permutas (fin010/fin014). A regra de negócio não muda;
+cada um fechava um caminho em que o sistema apagava, repetia ou escondia algo sem a analista saber.
+
+- **Borderô de uma filial não apaga mais o de outra.** O número do borderô recomeça em cada filial
+  (em 11/09 havia o 2436 na filial 1 e o 2771 na filial 4). Excluir um borderô apagava também a
+  trilha do homônimo de outra filial, que seguia vivo no ERP. As consultas agora filtram por filial
+  e borderô, e um número que existe em duas filiais faz a ação **parar** em vez de escolher uma.
+- **Erro do fin010 numa filial não apaga mais o histórico dela.** Uma leitura com erro virava lista
+  vazia, e a limpeza do cache removia todos os borderôs daquela filial. Agora só as filiais lidas
+  com sucesso entram na limpeza, e gravação e limpeza rodam na mesma transação.
+- **Finalizar, cancelar e estornar vão ao ERP uma vez só.** Antes, um 401 depois de o ERP já ter
+  aplicado a mudança fazia o sistema repetir o pedido sobre um borderô que já tinha mudado de
+  estado. Agora a falha sobe e a analista confere no Conexos.
+- **Falha ao ler o em-aberto da invoice fica visível.** O casamento continua com o valor de
+  reserva, mas agora há um aviso no log e a invoice sai marcada `valorAbertoNaoVerificado`, em vez
+  de "não consegui ler" parecer "não há em-aberto".
+
 ## v0.42.2 (2026-09-25) — `null` do ERP para de virar zero fora do SISPAG
 
 Mesma raiz da v0.39.2, agora nos clients fiscais e de rateio: `z.coerce.number()` roda a coerção
