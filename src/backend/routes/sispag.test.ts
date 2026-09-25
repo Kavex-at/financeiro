@@ -27,6 +27,7 @@ import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagament
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
+import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
 import sispagRouter from './sispag.js';
@@ -884,6 +885,64 @@ describe('GET /sispag/execucoes', () => {
 
         await comApp({ role: 'viewer' }, async (url) => {
             const res = await fetch(`${url}/sispag/execucoes?status=error`);
+            expect(res.status).toBe(403);
+        });
+    });
+});
+
+// ─────────────────────────────────────────────────────────── BOLETOS DDA
+
+describe('GET /sispag/boletos-dda', () => {
+    const registrar = () => {
+        const listar = jest.fn().mockResolvedValue({ boletos: [], total: 0 });
+        container.registerInstance(BoletoDdaService, { listar } as never);
+        return listar;
+    };
+
+    it('sem query: "a vencer", página 1 de 20', async () => {
+        const listar = registrar();
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/boletos-dda`);
+            expect(res.status).toBe(200);
+        });
+        expect(listar).toHaveBeenCalledWith({ escopo: 'a-vencer', pagina: 1, tamanho: 20 });
+    });
+
+    it('repassa filtros e página, com a busca aparada', async () => {
+        const listar = registrar();
+        await comApp({}, async (url) => {
+            const qs =
+                'escopo=todos&situacao=AMBIGUO&busca=%20pedroni%20&filCod=2&pagina=3&tamanho=50';
+            const res = await fetch(`${url}/sispag/boletos-dda?${qs}`);
+            expect(res.status).toBe(200);
+        });
+        expect(listar).toHaveBeenCalledWith({
+            escopo: 'todos',
+            situacao: 'AMBIGUO',
+            busca: 'pedroni',
+            filCod: 2,
+            pagina: 3,
+            tamanho: 50,
+        });
+    });
+
+    it.each([
+        ['página maior que o teto (limita o que sai por resposta)', 'tamanho=500'],
+        ['situação desconhecida', 'situacao=PAGO'],
+        ['página zero', 'pagina=0'],
+    ])('400 para %s', async (_caso, qs) => {
+        const listar = registrar();
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/boletos-dda?${qs}`);
+            expect(res.status).toBe(400);
+        });
+        expect(listar).not.toHaveBeenCalled();
+    });
+
+    it('exige role admin — código de barras é destino de pagamento', async () => {
+        registrar();
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/boletos-dda`);
             expect(res.status).toBe(403);
         });
     });

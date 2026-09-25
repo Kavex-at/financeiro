@@ -1,5 +1,6 @@
 import {
   baixarRemessa,
+  fetchBoletosDda,
   DebitDateFrozenError,
   DebitDateOutsideWindowError,
   fetchJanelaDataDebito,
@@ -180,5 +181,47 @@ describe('retirarDoLote', () => {
     await expect(retirarDoLote({ filCod: 2, docCod: '813', titCod: '1' })).rejects.toThrow(
       'Este título não está mais em nenhum lote em rascunho.',
     )
+  })
+})
+
+describe('fetchBoletosDda — filtros e página vão na query', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+
+  const urlChamada = (): URL => new URL(String(mockApiFetch.mock.calls.at(-1)?.[0]))
+
+  it('manda só os filtros presentes, com a busca aparada', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaJson(200, { boletos: [] }))
+    await fetchBoletosDda({
+      escopo: 'todos',
+      pagina: 3,
+      tamanho: 20,
+      situacao: 'AMBIGUO',
+      busca: '  pedroni ',
+      filCod: 2,
+    })
+    const url = urlChamada()
+    expect(url.pathname).toBe('/sispag/boletos-dda')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      escopo: 'todos',
+      pagina: '3',
+      tamanho: '20',
+      situacao: 'AMBIGUO',
+      busca: 'pedroni',
+      filCod: '2',
+    })
+  })
+
+  it('busca vazia e filtros ausentes não vão na query', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaJson(200, { boletos: [] }))
+    await fetchBoletosDda({ escopo: 'a-vencer', pagina: 1, busca: '   ' })
+    expect(Object.fromEntries(urlChamada().searchParams)).toEqual({
+      escopo: 'a-vencer',
+      pagina: '1',
+    })
+  })
+
+  it('erro do backend vira Error com a mensagem dele', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaJson(400, { error: 'invalid query' }))
+    await expect(fetchBoletosDda({ escopo: 'todos', pagina: 1 })).rejects.toThrow('invalid query')
   })
 })

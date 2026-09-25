@@ -11,6 +11,11 @@ import PagamentoIngestaoRunRepository from '../domain/repository/sispag/Pagament
 import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
 import { BOLETO_DDA_ESCOPO } from '../domain/interface/sispag/BoletoDda.js';
 import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
+import {
+    BOLETO_DDA_TAMANHO_MAX,
+    BOLETO_DDA_TAMANHO_PADRAO,
+    SITUACOES_FILTRAVEIS,
+} from '../domain/service/sispag/PaginacaoBoletoDda.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
@@ -409,9 +414,20 @@ router.post(
 
 const boletosDdaSchema = z.object({
     escopo: z.enum([BOLETO_DDA_ESCOPO.A_VENCER, BOLETO_DDA_ESCOPO.TODOS]).default('a-vencer'),
+    situacao: z.enum(SITUACOES_FILTRAVEIS).optional(),
+    busca: z.string().trim().max(100).optional(),
+    filCod: z.coerce.number().int().positive().optional(),
+    pagina: z.coerce.number().int().min(1).default(1),
+    tamanho: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(BOLETO_DDA_TAMANHO_MAX)
+        .default(BOLETO_DDA_TAMANHO_PADRAO),
 });
 
-// GET /sispag/boletos-dda?escopo=a-vencer|todos
+// GET /sispag/boletos-dda?escopo=&situacao=&busca=&filCod=&pagina=&tamanho=
+// Devolve UMA página (≤ 100 linhas) — nunca o pool inteiro (Regis-Review performance-1/security-2).
 router.get(
     '/boletos-dda',
     // Mesmo guard das linhas digitáveis do lote: código de barras é destino de pagamento

@@ -20,6 +20,10 @@ tela do Conexos não mostra a qual título cada boleto pertence.
 - **Boleto ambíguo ocupa uma linha só.** A linha mostra o título mais provável (menor diferença de
   vencimento) e um resumo como "+18 títulos · 1 credor · 0 a -2 dias"; clicar abre um modal com
   todos os candidatos numa tabela.
+- **A lista vem paginada do servidor.** Filtro de situação, filial, busca e paginação rodam no
+  backend; o navegador recebe 20 boletos por vez (no máximo 100 por requisição). Antes, "Todos"
+  mandava os 24.137 boletos — com código de barras — numa única resposta de ~8,7 MB; agora cada
+  página tem ~7 KB. A busca espera a digitação parar antes de consultar.
 - **Botão para copiar a linha digitável** de cada boleto.
 - **Atualização manual:** botão "Atualizar DDA" na aba, ou `npm run job:ingest-boletos-dda`. Lê
   os arquivos novos e relê os dos últimos 60 dias. A primeira carga (pool inteiro) deve ser feita

@@ -794,10 +794,29 @@ export interface BoletoDda {
   candidatos: BoletoDdaTitulo[]
 }
 
+export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number>
+
+/** Uma PÁGINA da aba — o backend filtra e pagina; o pool inteiro nunca vem ao navegador. */
 export interface BoletosDdaResposta {
   boletos: BoletoDda[]
+  /** Linhas depois de todos os filtros — base da paginação. */
+  total: number
+  pagina: number
+  tamanho: number
+  /** Por situação, depois de filial + busca e antes do filtro de situação (chips). */
+  contagem: BoletoDdaContagem
+  filiais: number[]
   sincronizadoEm?: number
   janelaDias: number
+}
+
+export interface FiltroBoletosDda {
+  escopo: BoletoDdaEscopo
+  situacao?: BoletoDdaSituacao
+  busca?: string
+  filCod?: number
+  pagina: number
+  tamanho?: number
 }
 
 export interface SincronizacaoDdaResultado {
@@ -815,8 +834,13 @@ export class SincronizacaoDdaEmAndamentoError extends Error {
   }
 }
 
-export async function fetchBoletosDda(escopo: BoletoDdaEscopo): Promise<BoletosDdaResposta> {
-  const res = await apiFetch(`${API}/sispag/boletos-dda?escopo=${escopo}`, {
+export async function fetchBoletosDda(filtro: FiltroBoletosDda): Promise<BoletosDdaResposta> {
+  const qs = new URLSearchParams({ escopo: filtro.escopo, pagina: String(filtro.pagina) })
+  if (filtro.situacao) qs.set('situacao', filtro.situacao)
+  if (filtro.busca?.trim()) qs.set('busca', filtro.busca.trim())
+  if (filtro.filCod != null) qs.set('filCod', String(filtro.filCod))
+  if (filtro.tamanho != null) qs.set('tamanho', String(filtro.tamanho))
+  const res = await apiFetch(`${API}/sispag/boletos-dda?${qs.toString()}`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) {

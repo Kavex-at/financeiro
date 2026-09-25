@@ -18,6 +18,10 @@ import LotePagamentoRepository from '../../repository/sispag/LotePagamentoReposi
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 import ConsolidacaoBoletoDda, { JANELA_CANDIDATO_DIAS } from './ConsolidacaoBoletoDda.js';
+import PaginacaoBoletoDda, {
+    BOLETO_DDA_TAMANHO_PADRAO,
+    type FiltroPaginaBoletoDda,
+} from './PaginacaoBoletoDda.js';
 
 /** Chave de advisory lock EXCLUSIVA da sincronização DDA (≠ das ingestões de permutas/pagamentos). */
 export const BOLETO_DDA_SYNC_LOCK_KEY = 726354820;
@@ -44,13 +48,20 @@ export default class BoletoDdaService {
         @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
         @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
         @inject(ConsolidacaoBoletoDda) private readonly consolidacao: ConsolidacaoBoletoDda,
+        @inject(PaginacaoBoletoDda) private readonly paginacao: PaginacaoBoletoDda,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
     ) {}
 
-    public listar = async (input: { escopo: BoletoDdaEscopo }): Promise<BoletosDdaResposta> => {
+    /**
+     * Uma página da aba. A consolidação roda sobre o escopo inteiro (a situação é derivada, não
+     * dá para filtrá-la em SQL), mas só a página filtrada sai para o navegador.
+     */
+    public listar = async (
+        input: { escopo: BoletoDdaEscopo } & Partial<FiltroPaginaBoletoDda>,
+    ): Promise<BoletosDdaResposta> => {
         const vencimentoDesde =
             input.escopo === BOLETO_DDA_ESCOPO.A_VENCER ? this.calendar.todayBrt() : undefined;
         const [boletos, titulos, titulosEmLote, sincronizadoEm] = await Promise.all([
@@ -59,8 +70,16 @@ export default class BoletoDdaService {
             this.loteRepo.listTitulosEmLotesAbertos(),
             this.repo.ultimaSincronizacao(),
         ]);
+        const consolidados = this.consolidacao.consolidar({ boletos, titulos, titulosEmLote });
+        const pagina = this.paginacao.paginar(consolidados, {
+            pagina: input.pagina ?? 1,
+            tamanho: input.tamanho ?? BOLETO_DDA_TAMANHO_PADRAO,
+            ...(input.situacao ? { situacao: input.situacao } : {}),
+            ...(input.busca ? { busca: input.busca } : {}),
+            ...(input.filCod !== undefined ? { filCod: input.filCod } : {}),
+        });
         return {
-            boletos: this.consolidacao.consolidar({ boletos, titulos, titulosEmLote }),
+            ...pagina,
             ...(sincronizadoEm != null ? { sincronizadoEm } : {}),
             janelaDias: JANELA_CANDIDATO_DIAS,
         };
