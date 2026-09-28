@@ -42,7 +42,9 @@ primeiro número de operação publicado à Columbia — saiu **R$ 0,00**. Medid
 ### D1 — Cada execução é datada por quando terminou
 
 A janela de cada linha passa a ser escolhida por `COALESCE(encerrado_em, criado_em)`, nas duas
-frentes. Linha em voo (sem encerramento) continua na semana em que nasceu. Vale para o numerador e
+frentes. Linha em voo que nunca encerrou continua na semana em que nasceu; linha `error` reaberta por
+retry mantém a data da última falha até o próximo terminal (uma retentativa presa conta onde falhou
+por último). Vale para o numerador e
 para o denominador: uma tentativa que falhou e depois liquidou é **uma** tentativa, na semana da
 liquidação.
 

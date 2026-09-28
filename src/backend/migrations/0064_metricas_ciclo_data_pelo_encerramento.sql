@@ -21,7 +21,9 @@
 --   * estado terminal de sucesso (`settled`/`parcial`) → carimbo do PRIMEIRO encerramento, que nunca
 --     mais anda (`COALESCE` quando a linha já era terminal);
 --   * `error` → o instante da falha; um retry que depois liquida sobrescreve com a liquidação.
--- Linha em voo (`pending`/`reconciling`) não tem `encerrado_em` e conta na semana do `criado_em`.
+-- Linha em voo que nunca encerrou não tem `encerrado_em` e conta na semana do `criado_em`. Uma linha
+-- `error` reaberta por retry (`beginExecution`) mantém a data da última falha até o próximo terminal —
+-- de propósito: uma retentativa presa conta onde falhou por último, não semanas atrás.
 --
 -- ── BACKFILL ─────────────────────────────────────────────────────────────────────────────────────
 --
