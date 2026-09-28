@@ -15,7 +15,8 @@ O auth é um **login simples usuário/senha** — o backend valida a senha (bcry
 3. Não é preciso configurar Supabase Auth — só o Postgres é usado.
 
 As tabelas são criadas pelas migrations (`npm run migrate`), incluindo `app_user`
-(`migrations/0007_app_user.sql`). O usuário admin é criado por `npm run seed:admin`.
+(`migrations/0007_app_user.sql`) e os papéis/permissões (`migrations/0066_auth_permissoes_modulo.sql`,
+ver seção 5). O usuário admin é criado por `npm run seed:admin`, já com o papel `Administrador`.
 
 ### Budget de sessões do pooler
 
@@ -155,5 +156,70 @@ Importe o repositório como um projeto Vercel.
    campo de login aceita **e-mail ou usuário**, sem distinção de maiúsculas.
 
 > Para trocar a senha do admin depois, ajuste `ADMIN_PASSWORD` e re-rode `npm run seed:admin`
-> (UPSERT idempotente por `username`). Novos usuários e o e-mail de cada um: tela `/usuarios`
-> (só admin), que grava o hash bcrypt e o e-mail de login.
+> (UPSERT idempotente por `username`). Novos usuários, o e-mail e o acesso de cada um: tela
+> `/usuarios` (quem tem a permissão `usuarios:gerenciar`), que grava o hash bcrypt, o e-mail de
+> login, o papel e as exceções de permissão.
+
+---
+
+## 5. Permissões por módulo (v0.44, ADR-0053)
+
+A autorização deixou de ser o `role` do token (`requireRole('admin')`, que não recortava nada: todo
+usuário era `admin`) e passou a ser **permissão lida do banco a cada requisição**. O token só
+identifica (`sub` = `username`); o backend consulta papel, pacote e exceções do usuário, com cache
+de 30 s em memória.
+
+**Catálogo (fixo no código):** `permutas:ver`, `permutas:executar`, `sispag:ver`,
+`sispag:executar`, `recebimentos:ver`, `recebimentos:executar`, `operacao:ver`, `metricas:ver`,
+`usuarios:gerenciar`. `executar` implica `ver` no mesmo módulo.
+
+**O que a migration 0066 faz** (aplicada pelo `BootMigrator` no boot, e também pelo
+`npm run migrate` dos crons do GitHub Actions — o que chegar primeiro):
+
+- cria `app_role`, `app_role_permission`, `user_permission` (exceções: conceder/revogar),
+  `app_user.role_id` e a trilha `app_user_access_event` (append-only);
+- semeia o papel **`Administrador` com as nove permissões** e o atribui a **todo usuário
+  existente**. No dia do deploy ninguém ganha nem perde acesso;
+- **aborta** (antes de qualquer DDL, com a lista dos usuários) se algum `app_user.role` for
+  diferente de `'admin'`. Produção tinha 15 usuários, todos `admin`, em 2026-09-28. Se abortar:
+  corrigir as linhas à mão (`role = 'admin'`) e subir de novo.
+
+**Usuário novo:** o papel é escolhido na criação (tela `/usuarios`), sem default. Ajustes finos por
+pessoa: "Editar acesso" na linha do usuário (conceder ou revogar permissões além do papel). Papéis
+novos (pacotes) entram por migration de dados; a tela só atribui papel e edita exceções.
+
+**Efeitos visíveis:**
+
+- usuário **desativado** perde o acesso na próxima requisição (401 "Sessão encerrada"), em vez de
+  seguir com o token por até 12 h;
+- sem a permissão, a API responde **403** `{ "error": "Você não tem permissão para esta ação.",
+  "permissao": "<código>" }`; o Painel de Operação responde **404** (como antes);
+- banco fora do ar: rotas autenticadas respondem **503** (fail-closed), `/health` segue no ar;
+- ninguém consegue tirar a própria `usuarios:gerenciar`, nem deixar a plataforma sem nenhum
+  usuário ativo com ela (409).
+
+**Ordem de deploy:** indiferente por desenho, mas o seguro é **backend primeiro**. O front novo
+entende o `/me/permissoes` antigo (cai no comportamento de hoje: tudo para `role = 'admin'`); o
+backend novo continua emitindo o claim `role` e aceitando o `POST /usuarios` do front antigo com
+`role: 'admin'` (o default antigo, "Operador", recebe 400 "Atualize a página para escolher o papel
+do usuário."). A instância antiga do Render, durante o switch, segue com `requireRole` — ninguém
+perde acesso.
+
+> **Janela de minutos a conhecer:** se um cron do GitHub Actions rodar `npm run migrate` depois do
+> merge e antes do Render publicar o backend novo, a 0066 fica aplicada com o backend antigo no ar.
+> Nesse intervalo só uma coisa quebra: **criar usuário** pela tela antiga (o INSERT antigo não passa
+> `role_id`, que agora é obrigatório). Login e todas as telas seguem funcionando.
+
+**Rollback:** voltar o backend para a v0.43.1 **e depois** aplicar à mão o reverse
+`src/backend/migrations/rollbacks/0066_auth_permissoes_modulo.rollback.sql` (ver
+`migrations/rollbacks/README.md`). Sem o reverse, o backend antigo não cria usuários. A trilha de
+acesso gravada no intervalo **se perde** (exporte `app_user_access_event` antes, se importar).
+
+**Pós-deploy:**
+
+- `OPERACAO_USUARIOS` foi **aposentada** (estava vazia em produção em 2026-09-28): quem vê o Painel
+  de Operação agora é quem tem `operacao:ver`. A var pode ser apagada do Render; o backend não a lê.
+- Antes de **desativar a conta compartilhada `admin`**, trocar `FINANCEIRO_API_USUARIO` do
+  `kavex-report-ciclo` para outra conta com `metricas:ver`: desativar `admin` quebra o report até lá.
+- A trilha de mudanças de acesso fica em `app_user_access_event` (leitura por SQL: `SELECT ator,
+  alvo_user_id, tipo, antes, depois, em FROM app_user_access_event ORDER BY id`).
