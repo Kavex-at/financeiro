@@ -41,8 +41,11 @@ export function NovoUsuarioDialog({
   const [conexosUser, setConexosUser] = useState('')
   const [conexosSenha, setConexosSenha] = useState('')
   const [saving, setSaving] = useState(false)
+  // Erro do backend (ex.: 409 "já identifica outro usuário") — inline, com o diálogo aberto.
+  const [erro, setErro] = useState<string | null>(null)
 
   const reset = () => {
+    setErro(null)
     setEmail('')
     setSenha('')
     setRole('operador')
@@ -54,10 +57,12 @@ export function NovoUsuarioDialog({
     e.preventDefault()
     if (saving) return
     setSaving(true)
+    setErro(null)
     try {
       const cxUser = conexosUser.trim()
+      // O backend grava username = email (ADR-0051).
       const criado = await criarUsuario({
-        username: email.trim(),
+        email: email.trim(),
         password: senha,
         role,
         // Vínculo Conexos só vai se AMBOS forem preenchidos (login + senha).
@@ -70,7 +75,7 @@ export function NovoUsuarioDialog({
       setOpen(false)
       onCreated()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Falha ao criar usuário.')
+      setErro(err instanceof Error ? err.message : 'Falha ao criar usuário.')
     } finally {
       setSaving(false)
     }
@@ -94,21 +99,32 @@ export function NovoUsuarioDialog({
           <DialogHeader>
             <DialogTitle>Novo usuário</DialogTitle>
             <DialogDescription>
-              Cadastre um acesso @kavex à plataforma. A senha pode ser redefinida depois.
+              Cadastre um acesso à plataforma. O e-mail é o login; a senha pode ser redefinida
+              depois.
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="novo-email">Email @kavex</Label>
+              <Label htmlFor="novo-email">E-mail da Columbia</Label>
               <Input
                 id="novo-email"
                 type="email"
                 autoComplete="off"
-                placeholder="nome.sobrenome@kavex.com"
+                placeholder="nome@columbiabr.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value)
+                  if (erro) setErro(null)
+                }}
+                aria-invalid={erro !== null}
+                aria-describedby={erro ? 'novo-email-erro' : undefined}
                 required
               />
+              {erro ? (
+                <p id="novo-email-erro" role="alert" className="text-xs text-destructive">
+                  {erro}
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="novo-senha">Senha (mín. 8 caracteres)</Label>
