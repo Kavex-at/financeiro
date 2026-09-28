@@ -1,5 +1,23 @@
 # Columbia Financeiro — Changelog
 
+## v0.42.6 (2026-09-28) — confirmação antes de escrever no ERP, Processar da Permuta diz a verdade
+
+- **"Processar e conciliar" do SISPAG pede confirmação.** O botão manda o Conexos ler o .RET e
+  gravar as baixas no fin010, e disparava no primeiro clique. Agora abre uma confirmação com o
+  arquivo, o banco e a filial. Finalizar, Cancelar e Reabrir lote também confirmam, com o resumo do
+  lote; o texto deixa claro que essas três não mexem no Conexos e avisa quando já existe lote nativo
+  no fin015, que cancelar ou reabrir aqui não desfaz.
+- **"Marcar retorno recebido" só aparece em dev local.** Era uma simulação que pulava o lote para
+  "de volta do Nexxera" sem remessa nem .RET. O caminho real (conciliação do .RET) não mudou.
+- **Processar da Permuta não reenvia adiantamento que já tem borderô.** O vínculo de borderô chega
+  depois da carteira, e o Processar podia filtrar contra a lista ainda vazia.
+- **Sucesso parcial não é mais anunciado como falha.** Se o 2º adiantamento de um processo falhava,
+  a tela dizia só "Falha ao processar", com a baixa do 1º já no fin010. Agora cada adiantamento é
+  reportado em separado: o que entrou, o que falhou e por quê, e a tela recarrega mesmo com falha.
+- **Painel de Operação: fonte ilegível não aparece mais como zero.** Complemento da v0.42.5: a fonte
+  que o backend não conseguiu ler mostra "—" e um aviso, em vez de "0 alertas" durante o incidente.
+- **CI builda o frontend.** Uma quebra do `next build` só aparecia no deploy da Vercel.
+
 ## v0.42.5 (2026-09-28) — entradas validadas, painel de operação resiliente, erros da Permuta com status certo
 
 - **Corpo malformado não cai mais no default da escrita real.** Na geração da remessa SISPAG,
