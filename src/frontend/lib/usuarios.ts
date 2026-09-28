@@ -16,6 +16,8 @@ export interface AppUser {
   createdAt: string
   /** Login Conexos vinculado (ex.: MARILYN_MUTAFCI). Ausente = sem vínculo (opera via robô). */
   conexosUsername?: string
+  /** E-mail de login (ADR-0051). Ausente = pendente de cadastro. */
+  email?: string
 }
 
 /** Erro de API com a mensagem do backend (ex.: 409 email duplicado). */
@@ -64,9 +66,12 @@ export async function fetchUsuarios(): Promise<AppUser[]> {
   return (await res.json()) as AppUser[]
 }
 
-/** POST /usuarios — cria um usuário (email + senha + papel + vínculo Conexos opcional). */
+/**
+ * POST /usuarios — cria um usuário (e-mail + senha + papel + vínculo Conexos opcional). O backend
+ * grava `username = email`.
+ */
 export async function criarUsuario(input: {
-  username: string
+  email: string
   password: string
   role: UserRole
   conexosUsername?: string
@@ -100,6 +105,19 @@ export async function removerVinculoConexos(id: number): Promise<void> {
     method: 'PATCH',
     headers: await withAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ remover: true }),
+  })
+  if (!res.ok) throw await errorFrom(res)
+}
+
+/**
+ * PATCH /usuarios/:id/email — grava o e-mail de login (admin). Fora de 2xx lança
+ * `UsuariosApiError` com a mensagem do backend e o status (409 = já identifica outro usuário).
+ */
+export async function definirEmail(id: number, email: string): Promise<void> {
+  const res = await apiFetch(`${API}/usuarios/${id}/email`, {
+    method: 'PATCH',
+    headers: await withAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ email }),
   })
   if (!res.ok) throw await errorFrom(res)
 }
