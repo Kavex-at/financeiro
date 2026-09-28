@@ -67,6 +67,7 @@ import {
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { BoletosDdaTab } from './components/BoletosDdaTab'
+import { ConfirmarProcessarRetornoDialog } from './components/ConfirmarAcaoDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
@@ -170,6 +171,8 @@ function SispagPanel() {
   const [ingestaoOpen, setIngestaoOpen] = React.useState(false)
   const [retornos, setRetornos] = React.useState<ArquivoRetorno[] | null>(null)
   const [retornosLoading, setRetornosLoading] = React.useState(false)
+  // "Processar e conciliar" faz o ERP gravar baixas no fin010: só depois da confirmação.
+  const [processarRetorno, setProcessarRetorno] = React.useState<ArquivoRetorno | null>(null)
   const [runs, setRuns] = React.useState<PagamentoIngestaoRun[] | null>(null)
   const [runsLoading, setRunsLoading] = React.useState(false)
   // Abas controladas: o link do lote na linha do título (ADR-0050) troca de aba.
@@ -1217,7 +1220,7 @@ function SispagPanel() {
                                       size="sm"
                                       disabled={busy}
                                       title="Manda o ERP parsear o .RET e gravar as baixas no fin010."
-                                      onClick={() => conciliar(r, true)}
+                                      onClick={() => setProcessarRetorno(r)}
                                     >
                                       Processar e conciliar
                                     </Button>
@@ -1240,6 +1243,16 @@ function SispagPanel() {
                     </div>
                   )}
                   <Paginacao aba={abaRetornos} />
+                  {processarRetorno ? (
+                    <ConfirmarProcessarRetornoDialog
+                      retorno={processarRetorno}
+                      onOpenChange={(open) => {
+                        if (!open) setProcessarRetorno(null)
+                      }}
+                      busy={busy}
+                      onConfirmar={() => void conciliar(processarRetorno, true)}
+                    />
+                  ) : null}
                 </>
               )}
             </TabsContent>

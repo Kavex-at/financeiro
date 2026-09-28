@@ -42,7 +42,9 @@ import {
   rotuloConta,
 } from '@/lib/sispag'
 import { baixarBlob } from '@/lib/download'
+import { isSimulationEnabled } from '@/lib/features'
 import { formatBRL } from '@/lib/utils'
+import { type AcaoLote, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
 
 function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
@@ -104,6 +106,14 @@ export function LoteCard({
   const [aberto, setAberto] = React.useState(false)
   // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
   const [gerandoRemessa, setGerandoRemessa] = React.useState(false)
+  // As demais transições também passam por uma confirmação que nomeia o lote.
+  const [confirmando, setConfirmando] = React.useState<AcaoLote | null>(null)
+  const executar: Record<AcaoLote, () => void> = {
+    finalizar: () => acao(() => finalizarLote(l.id, l.versao), 'Lote finalizado'),
+    cancelar: () => acao(() => cancelarLote(l.id, l.versao), 'Lote cancelado'),
+    reabrir: () => acao(() => reabrirLote(l.id, l.versao), 'Lote reaberto'),
+    retorno: () => acao(() => marcarRetorno(l.id, l.versao), 'Retorno do Nexxera registrado'),
+  }
 
   const cardRef = React.useRef<HTMLDivElement>(null)
   // Abrir ao ganhar o destaque é ajuste de estado durante o render (padrão do React para
@@ -260,7 +270,7 @@ export function LoteCard({
                     ? 'Defina a forma de pagamento de todos os títulos antes de finalizar.'
                     : undefined
                 }
-                onClick={() => acao(() => finalizarLote(l.id, l.versao), 'Lote finalizado')}
+                onClick={() => setConfirmando('finalizar')}
               >
                 <CheckCircle2 className="size-4" /> Finalizar
               </Button>
@@ -268,7 +278,7 @@ export function LoteCard({
                 size="sm"
                 variant="outline"
                 disabled={busy}
-                onClick={() => acao(() => cancelarLote(l.id, l.versao), 'Lote cancelado')}
+                onClick={() => setConfirmando('cancelar')}
               >
                 Cancelar
               </Button>
@@ -293,24 +303,38 @@ export function LoteCard({
                   acao={acao}
                 />
               ) : null}
+              {/* Simulação: só em dev local. Em produção o retorno vem da conciliação do .RET. */}
+              {isSimulationEnabled() ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  title="Simula o retorno do Nexxera (o gatilho real é a conciliação do .RET)."
+                  onClick={() => setConfirmando('retorno')}
+                >
+                  <CheckCircle2 className="size-4" /> Marcar retorno recebido
+                </Button>
+              ) : null}
               <Button
                 size="sm"
                 variant="outline"
                 disabled={busy}
-                title="Simula o retorno do Nexxera (o gatilho real é a conciliação do .RET)."
-                onClick={() => acao(() => marcarRetorno(l.id, l.versao), 'Retorno do Nexxera registrado')}
-              >
-                <CheckCircle2 className="size-4" /> Marcar retorno recebido
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => acao(() => reabrirLote(l.id, l.versao), 'Lote reaberto')}
+                onClick={() => setConfirmando('reabrir')}
               >
                 Reabrir
               </Button>
             </>
+          ) : null}
+          {confirmando ? (
+            <ConfirmarAcaoLoteDialog
+              lote={l}
+              acao={confirmando}
+              onOpenChange={(open) => {
+                if (!open) setConfirmando(null)
+              }}
+              busy={busy}
+              onConfirmar={executar[confirmando]}
+            />
           ) : null}
           {l.remessaArquivo ? (
             <Button
