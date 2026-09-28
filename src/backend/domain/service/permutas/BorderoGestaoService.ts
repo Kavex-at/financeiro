@@ -8,6 +8,11 @@ import PermutaExecucaoRepository, {
     type ExecucaoStatus,
 } from '../../repository/permutas/PermutaExecucaoRepository.js';
 import LogService from '../LogService.js';
+import BorderoAmbiguousError from '../../errors/BorderoAmbiguousError.js';
+import BorderoNotOwnedError from '../../errors/BorderoNotOwnedError.js';
+import BorderoStateConflictError from '../../errors/BorderoStateConflictError.js';
+import ConexosWriteDisabledError from '../../errors/ConexosWriteDisabledError.js';
+import PermutaNotFoundError from '../../errors/PermutaNotFoundError.js';
 
 /** Situação viva do borderô no ERP (derivada do `getBordero`). */
 export type BorderoSituacao =
@@ -119,14 +124,9 @@ export default class BorderoGestaoService {
             borCod,
             invoiceDocCod,
         );
-        if (!row)
-            throw new Error(
-                `baixa não encontrada na trilha: borderô ${borCod} / invoice ${invoiceDocCod}`,
-            );
+        if (!row) throw new PermutaNotFoundError({ recurso: 'baixa', borCod, invoiceDocCod });
         if (row.bxaCodSeq === undefined) {
-            throw new Error(
-                `baixa ${borCod}/${invoiceDocCod} sem bxaCodSeq — não dá para excluir no ERP`,
-            );
+            throw new BorderoStateConflictError({ motivo: 'baixa-sem-seq', borCod, invoiceDocCod });
         }
 
         await this.conexosBaixaClient.excluirBaixa({
@@ -294,10 +294,7 @@ export default class BorderoGestaoService {
     private assertBorderoTemItens = async (filCod: number, borCod: number): Promise<void> => {
         const baixas = await this.conexosBaixaClient.listBaixas({ filCod, borCod });
         if (baixas.length === 0) {
-            throw new Error(
-                `Borderô ${borCod} não possui baixas — não há o que aprovar. Ele ficou vazio porque ` +
-                    'a baixa falhou depois de criá-lo; use "Excluir" para removê-lo.',
-            );
+            throw new BorderoStateConflictError({ motivo: 'sem-baixas', borCod });
         }
     };
 
@@ -305,7 +302,7 @@ export default class BorderoGestaoService {
     private assertWriteEnabled = async (): Promise<void> => {
         const env = await this.environmentProvider.getEnvironmentVars();
         if (!env.conexosWriteEnabled) {
-            throw new Error('escrita no Conexos desabilitada (CONEXOS_WRITE_ENABLED=false)');
+            throw new ConexosWriteDisabledError();
         }
     };
 
@@ -314,7 +311,7 @@ export default class BorderoGestaoService {
      * CRIADOS POR ESTE SISTEMA (presentes na trilha `permuta_alocacao_execucao`). O `filCod` é
      * SEMPRE conferido contra a TRILHA: um `filCod` vindo do request só é aceito se a trilha
      * conhecer aquele par (filial, borderô), então um admin (ou JWT roubado) NÃO consegue mexer
-     * em borderô de terceiro passando um filCod arbitrário. Lança `FORBIDDEN:` (→ 403 no route).
+     * em borderô de terceiro passando um filCod arbitrário. Lança `BorderoNotOwnedError` (→ 403 no route).
      *
      * Ele existe porque a rota recebe só o NÚMERO do borderô, que é sequencial POR FILIAL: a
      * resolução número → filial pode ser ambígua, e nesse caso a ação PARA em vez de chutar.
@@ -325,16 +322,11 @@ export default class BorderoGestaoService {
     ): Promise<number> => {
         const filiais = await this.execucaoRepository.listFiliaisDaTrilha(borCod);
         if (filiais.length === 0) {
-            throw new Error(
-                `FORBIDDEN: borderô ${borCod} não foi criado por este sistema — ação não permitida`,
-            );
+            throw new BorderoNotOwnedError({ borCod });
         }
         if (filCodInformado !== undefined) {
             if (!filiais.includes(filCodInformado)) {
-                throw new Error(
-                    `FORBIDDEN: borderô ${borCod} da filial ${filCodInformado} não foi criado ` +
-                        'por este sistema — ação não permitida',
-                );
+                throw new BorderoNotOwnedError({ borCod, filCod: filCodInformado });
             }
             return filCodInformado;
         }
@@ -344,10 +336,7 @@ export default class BorderoGestaoService {
             // borderôs DIFERENTES compartilham este número, e agir no palpite errado escreve no
             // borderô de outra filial. Antes daqui a resolução era `baixas[0].filCod` — a linha
             // mais antiga da trilha, sem relação com o que o analista clicou.
-            throw new Error(
-                `Borderô ${borCod} existe na trilha em mais de uma filial (${filiais.join(', ')}) ` +
-                    '— informe a filial (`filCod`) para identificar qual deles.',
-            );
+            throw new BorderoAmbiguousError({ borCod, filiais });
         }
         return unica;
     };
