@@ -1,32 +1,14 @@
-'use client'
-
-import { useEffect, useState } from 'react'
 import { Info } from 'lucide-react'
-import { fetchTransicaoEmail } from '@/lib/auth/transicao'
 
 /**
  * Aviso da transição do acesso para o e-mail da Columbia (ADR-0051).
  *
- * Ligado pela chave manual do backend (`AUTH_TRANSICAO_EMAIL_BANNER`), lida em `GET
- * /auth/transicao`. Só aparece quando a resposta é `true`: enquanto a chamada está pendente, se ela
- * falha ou se a chave está desligada, não renderiza nada nem reserva espaço — o formulário abaixo
- * fica utilizável desde o primeiro render. `role="status"`: é informação, não erro.
+ * Apresentacional: quem decide se aparece é a página (`LoginForm`), que lê a chave manual do
+ * backend (`AUTH_TRANSICAO_EMAIL_BANNER`, via `GET /auth/transicao`) — mesmo desenho do
+ * `ReadonlyModeBanner` (patterns.md §19). Com `ativo = false` (pendente, falha ou chave desligada)
+ * não renderiza nada nem reserva espaço. `role="status"`: é informação, não erro.
  */
-export function TransicaoEmailBanner() {
-  const [ativo, setAtivo] = useState(false)
-
-  useEffect(() => {
-    let cancelado = false
-    fetchTransicaoEmail()
-      .then((valor) => {
-        if (!cancelado) setAtivo(valor)
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelado = true
-    }
-  }, [])
-
+export function TransicaoEmailBanner({ ativo }: { ativo: boolean }) {
   if (!ativo) return null
 
   return (
