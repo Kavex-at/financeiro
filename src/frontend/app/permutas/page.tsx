@@ -61,7 +61,6 @@ import {
   formatRunWhen,
   parseBrl,
   somaPorMoeda,
-  temAlgoAProcessar,
 } from './components/format'
 import { KpiFooter } from './components/ui'
 import { useTabelaFiltro } from './components/tabela-filtro'
@@ -71,6 +70,7 @@ import { usePermutasData } from './components/usePermutasData'
 import { useIngestao } from './components/useIngestao'
 import { useExcecaoManual } from './components/useExcecaoManual'
 import { useExportRelatorios } from './components/useExportRelatorios'
+import { useProcessarCasamento } from './components/useProcessarCasamento'
 import { VisaoGeralTable } from './components/VisaoGeralTable'
 import { AbaAutomaticas } from './components/AbaAutomaticas'
 import { AbaMultiplas } from './components/AbaMultiplas'
@@ -140,8 +140,6 @@ export default function GestaoPermutasPage() {
   // Exportação de relatórios (.xlsx).
   const { exportando, exportar } = useExportRelatorios()
 
-  const [processando, setProcessando] = React.useState<string | null>(null)
-
   // Execução em LOTE das automáticas (botão "Executar"): diálogo de confirmação + estado de execução.
   const [confirmLoteOpen, setConfirmLoteOpen] = React.useState(false)
   const [executandoLote, setExecutandoLote] = React.useState(false)
@@ -155,67 +153,13 @@ export default function GestaoPermutasPage() {
   const [valorAloc, setValorAloc] = React.useState<string>('')
   const [salvandoAloc, setSalvandoAloc] = React.useState(false)
 
-  // Processa o casamento confirmado = BAIXA REAL no fin010 (cria borderô), igual aos manuais.
-  // Para cada adiantamento do grupo, chama o reconciliar (que AUTO-ALOCA a partir do casamento) →
-  // borderô em CADASTRO. Os já processados são ignorados. (Regra 2026-06-24: Automáticas baixam.)
-  //
-  // REVERSÃO 2026-08-05 (ADR-0029): entre 2026-07-31 e 2026-08-05 este botão gerou a Solicitação de
-  // Numerário (com299) em vez da baixa. A SN da Frente I (Permutas) e a SN da Frente IV (Recebimentos)
-  // são processos DIFERENTES; a semelhança entre os serviços trocou os fios e o Processar quebrou em
-  // produção. A SN dos Recebimentos segue viva na sua própria página.
-  const confirmarProcessamento = React.useCallback(async () => {
-    if (!confirmacao) return
-    const c = confirmacao
-    // MESMO predicado do modal (`temAlgoAProcessar`): só dispara requisição para linha que tem de
-    // fato algo a baixar. Linha `valorASerUsado = 0` (adto já consumido, ou moeda diferente da
-    // invoice) não tem alocação no backend — mandá-la respondia HTTP 500 e a tela declarava a
-    // operação inteira falha, mesmo com a permuta que importava já liquidada (prod 2026-09-14,
-    // processo 173: adto 4471 baixou certo, adto 4742 `0,00 BRL` derrubou a tela).
-    const pendentes = c.adiantamentos.filter((a) => temAlgoAProcessar(a, statusPorAdto[a.docCod]))
-    setConfirmacao(null)
-    setProcessando(c.invoice.docCod)
-    try {
-      let settled = 0
-      let parciais = 0
-      let erros = 0
-      let dryRun = false
-      const borderos = new Set<number>()
-      for (const adto of pendentes) {
-        const r = await reconciliarAdiantamento(adto.docCod, { dryRun: false })
-        if (r.dryRun) dryRun = true
-        settled += r.resultados.filter((x) => x.status === 'settled').length
-        parciais += r.resultados.filter((x) => x.status === 'parcial').length
-        erros += r.resultados.filter((x) => x.status === 'error').length
-        if (r.borCod !== undefined) borderos.add(r.borCod)
-      }
-      if (dryRun) {
-        toast.info('Escrita desabilitada no servidor (dry-run). Payload validado, sem baixa real.')
-      } else {
-        if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja a aba Borderôs.`)
-        // `parcial` NÃO é sucesso nem erro: a baixa entrou, mas sobrou resíduo. Sem este toast ele
-        // não apareceria em lugar nenhum da tela — o silêncio que a ADR-0044 existe para acabar.
-        if (parciais > 0)
-          toast.warning(
-            `${parciais} baixa(s) PARCIAIS — entraram no Conexos sem fechar o valor alocado. ` +
-              'Re-aloque o par para lançar o restante.',
-          )
-        if (settled > 0)
-          toast.success(
-            `Processo ${c.priCod}: ${settled} baixa(s) no fin010 (borderô${
-              borderos.size === 1 ? ` ${[...borderos][0]}` : 's'
-            }, EM CADASTRO). Revise e aprove em Borderôs.`,
-          )
-      }
-      await load()
-    } catch (err) {
-      if (isSessionExpiredError(err)) return
-      toast.error(
-        `Falha ao processar o processo ${c.priCod}${err instanceof Error ? `: ${err.message}` : ''}`,
-      )
-    } finally {
-      setProcessando(null)
-    }
-  }, [confirmacao, load])
+  // "Processar" do casamento confirmado = BAIXA REAL no fin010 (ver o hook).
+  const { processando, confirmarProcessamento } = useProcessarCasamento({
+    confirmacao,
+    setConfirmacao,
+    statusPorAdto,
+    load,
+  })
 
   // Executa o PRÓXIMO LOTE de automáticas (até LOTE_MAX) — um request ao backend (`/reconciliar-lote`),
   // que itera server-side com continue-on-error e capa em LOTE_MAX. Manda os "próximos N" pendentes; ao
