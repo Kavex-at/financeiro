@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/table'
 import { isSessionExpiredError } from '@/lib/http'
 import {
+  type FontePainel,
   type OperacaoPainel,
   fetchOperacao,
   formatarDuracao,
@@ -90,6 +91,12 @@ export default function OperacaoPage() {
     }
   }
 
+  // Fonte que falhou volta vazia do backend: o número dela é DESCONHECIDO, não zero.
+  const erros = painel?.erros ?? []
+  const falhaDe = (fonte: FontePainel) => erros.find((e) => e.fonte === fonte)
+  const falhaPipelines = falhaDe('pipelines')
+  const falhaAlertas = falhaDe('alertas')
+  const falhaConfig = falhaDe('configuracao')
   const pipelines = painel?.pipelines ?? []
   const parados = pipelines.filter((p) => p.situacao === 'parado').length
   const cegos = pipelines.filter(
@@ -134,32 +141,58 @@ export default function OperacaoPage() {
         />
       ) : painel ? (
         <>
+          {erros.length > 0 ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-subtle/40 p-3 text-sm text-warning-foreground"
+            >
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <div className="space-y-1">
+                <p className="font-medium">
+                  Parte do painel não pôde ser lida — os números dessas partes não significam zero.
+                </p>
+                <ul className="list-disc pl-4">
+                  {erros.map((e) => (
+                    <li key={e.fonte}>{e.mensagem}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : null}
           <KPIGrid columns={4}>
             <SimpleKPI
               label="Pipelines parados"
-              value={parados}
-              color={parados > 0 ? 'danger' : 'success'}
-              footer="sem sucesso dentro do limite"
+              value={falhaPipelines ? '—' : parados}
+              color={falhaPipelines ? 'default' : parados > 0 ? 'danger' : 'success'}
+              footer={falhaPipelines ? 'não foi possível ler' : 'sem sucesso dentro do limite'}
               tooltip="Pipelines cuja última execução bem-sucedida é mais antiga que o limite da cadência."
             />
             <SimpleKPI
               label="Alertas abertos"
-              value={painel.alertas.length}
+              value={falhaAlertas ? '—' : painel.alertas.length}
               color={painel.alertas.length > 0 ? 'warning' : 'default'}
-              footer="ainda não reconhecidos"
+              footer={falhaAlertas ? 'não foi possível ler' : 'ainda não reconhecidos'}
             />
             <SimpleKPI
               label="Config a resolver"
-              value={configAusente}
-              color={painel.configuracao.totalAusentesObrigatorias > 0 ? 'danger' : configAusente > 0 ? 'warning' : 'success'}
-              footer="obrigatórias + silenciosas"
+              value={falhaConfig ? '—' : configAusente}
+              color={
+                falhaConfig
+                  ? 'default'
+                  : painel.configuracao.totalAusentesObrigatorias > 0
+                    ? 'danger'
+                    : configAusente > 0
+                      ? 'warning'
+                      : 'success'
+              }
+              footer={falhaConfig ? 'não foi possível ler' : 'obrigatórias + silenciosas'}
               tooltip="Vars ausentes que impedem o funcionamento ou degradam uma regra sem avisar."
             />
             <SimpleKPI
               label="Sem visibilidade"
-              value={cegos}
+              value={falhaPipelines ? '—' : cegos}
               color={cegos > 0 ? 'warning' : 'default'}
-              footer="sem trilha ou nunca executou"
+              footer={falhaPipelines ? 'não foi possível ler' : 'sem trilha ou nunca executou'}
               tooltip="Jobs que o painel NÃO consegue vigiar. Listados de propósito — omiti-los afirmaria cobertura que não existe."
             />
           </KPIGrid>
@@ -167,10 +200,10 @@ export default function OperacaoPage() {
           <Tabs value={aba} onValueChange={setAba}>
             <TabsList>
               <TabsTrigger value="pipelines">
-                <Activity className="size-4" aria-hidden /> Pipelines ({pipelines.length})
+                <Activity className="size-4" aria-hidden /> Pipelines ({falhaPipelines ? '—' : pipelines.length})
               </TabsTrigger>
               <TabsTrigger value="alertas">
-                <AlertTriangle className="size-4" aria-hidden /> Alertas ({painel.alertas.length})
+                <AlertTriangle className="size-4" aria-hidden /> Alertas ({falhaAlertas ? '—' : painel.alertas.length})
               </TabsTrigger>
               <TabsTrigger value="config">
                 <Settings2 className="size-4" aria-hidden /> Configuração
@@ -178,6 +211,9 @@ export default function OperacaoPage() {
             </TabsList>
 
             <TabsContent value="pipelines" className="space-y-3">
+              {falhaPipelines ? (
+                <FonteIndisponivel mensagem={falhaPipelines.mensagem} onRetry={carregar} />
+              ) : (
               <div className="overflow-x-auto rounded-lg border">
                 <Table aria-label="Saúde dos pipelines">
                   <TableHeader>
@@ -241,10 +277,13 @@ export default function OperacaoPage() {
                   </TableBody>
                 </Table>
               </div>
+              )}
             </TabsContent>
 
             <TabsContent value="alertas" className="space-y-3">
-              {painel.alertas.length === 0 ? (
+              {falhaAlertas ? (
+                <FonteIndisponivel mensagem={falhaAlertas.mensagem} onRetry={carregar} />
+              ) : painel.alertas.length === 0 ? (
                 <EmptyState
                   icon={<BellOff className="size-6" aria-hidden />}
                   title="Nenhum alerta aberto"
@@ -301,6 +340,9 @@ export default function OperacaoPage() {
             </TabsContent>
 
             <TabsContent value="config" className="space-y-3">
+              {falhaConfig ? (
+                <FonteIndisponivel mensagem={falhaConfig.mensagem} onRetry={carregar} />
+              ) : (
               <Card>
                 <CardHeader>
                   <CardTitle>Diagnóstico de configuração</CardTitle>
@@ -353,11 +395,28 @@ export default function OperacaoPage() {
                   </div>
                 </CardContent>
               </Card>
+              )}
             </TabsContent>
           </Tabs>
         </>
       ) : null}
     </div>
+  )
+}
+
+/** A fonte desta aba falhou: diz isso em vez de "Nenhum alerta aberto" ou uma tabela vazia. */
+function FonteIndisponivel({ mensagem, onRetry }: { mensagem: string; onRetry: () => Promise<void> }) {
+  return (
+    <EmptyState
+      icon={<AlertTriangle className="size-6" aria-hidden />}
+      title="Não foi possível ler esta parte do painel"
+      description={mensagem}
+      action={
+        <Button size="sm" variant="outline" onClick={() => void onRetry()}>
+          <RefreshCcw className="size-4" aria-hidden /> Tentar de novo
+        </Button>
+      }
+    />
   )
 }
 
