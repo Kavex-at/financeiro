@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { KeyRound, Link2, ShieldAlert, Users } from 'lucide-react'
+import { AlertTriangle, KeyRound, Link2, Mail, ShieldAlert, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ import {
   fetchUsuariosMeta,
   setUsuarioAtivo,
 } from '@/lib/usuarios'
+import { EditarEmailDialog } from './EditarEmailDialog'
 import { NovoUsuarioDialog } from './NovoUsuarioDialog'
 import { ResetSenhaDialog } from './ResetSenhaDialog'
 import { VinculoConexosDialog } from './VinculoConexosDialog'
@@ -40,6 +41,7 @@ export default function UsuariosPage() {
   const [loading, setLoading] = useState(true)
   const [resetAlvo, setResetAlvo] = useState<AppUser | null>(null)
   const [vinculoAlvo, setVinculoAlvo] = useState<AppUser | null>(null)
+  const [emailAlvo, setEmailAlvo] = useState<AppUser | null>(null)
   const [vinculoDisponivel, setVinculoDisponivel] = useState(false)
   const [togglingId, setTogglingId] = useState<number | null>(null)
 
@@ -95,7 +97,7 @@ export default function UsuariosPage() {
     <div className="space-y-6">
       <PageHeader
         title="Usuários"
-        subtitle="Cadastre e gerencie os acessos @kavex à plataforma."
+        subtitle="Cadastre e gerencie os acessos à plataforma e o e-mail de login de cada um."
         actions={<NovoUsuarioDialog onCreated={carregar} vinculoDisponivel={vinculoDisponivel} />}
       />
 
@@ -107,14 +109,15 @@ export default function UsuariosPage() {
         <EmptyState
           icon={<Users className="size-8" aria-hidden />}
           title="Nenhum usuário"
-          description="Cadastre o primeiro acesso @kavex pelo botão acima."
+          description="Cadastre o primeiro acesso pelo botão acima."
         />
       ) : (
         <div className="rounded-lg border overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Email</TableHead>
+                <TableHead>Usuário</TableHead>
+                <TableHead>E-mail</TableHead>
                 <TableHead>Papel</TableHead>
                 <TableHead>Acesso</TableHead>
                 {vinculoDisponivel ? <TableHead>Conexos</TableHead> : null}
@@ -131,6 +134,18 @@ export default function UsuariosPage() {
                     <TableCell className="font-medium">
                       {u.username}
                       {souEu ? <span className="ml-2 text-xs text-muted-foreground">(você)</span> : null}
+                    </TableCell>
+                    <TableCell>
+                      {u.email ? (
+                        u.email
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="border-warning/40 bg-warning-subtle text-warning-foreground"
+                        >
+                          <AlertTriangle className="size-3" aria-hidden /> Pendente
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={u.role === 'admin' ? 'default' : 'secondary'}>
@@ -167,6 +182,9 @@ export default function UsuariosPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => setEmailAlvo(u)}>
+                          <Mail className="size-4" aria-hidden /> Editar e-mail
+                        </Button>
                         {vinculoDisponivel ? (
                           <Button variant="ghost" size="sm" onClick={() => setVinculoAlvo(u)}>
                             <Link2 className="size-4" aria-hidden /> Conexos
@@ -185,6 +203,12 @@ export default function UsuariosPage() {
         </div>
       )}
 
+      <EditarEmailDialog
+        key={emailAlvo?.id ?? 'fechado'}
+        alvo={emailAlvo}
+        onClose={() => setEmailAlvo(null)}
+        onSaved={carregar}
+      />
       <ResetSenhaDialog alvo={resetAlvo} onClose={() => setResetAlvo(null)} />
       <VinculoConexosDialog
         alvo={vinculoAlvo}
