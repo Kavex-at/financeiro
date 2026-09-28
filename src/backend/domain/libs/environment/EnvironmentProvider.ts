@@ -208,6 +208,8 @@ export default class EnvironmentProvider {
             supabaseUrl: this.readEnv('SUPABASE_URL') || undefined,
             supabaseServiceRoleKey: this.readEnv('SUPABASE_SERVICE_ROLE_KEY') || undefined,
             authJwtSecret: this.readEnv('AUTH_JWT_SECRET') || undefined,
+            // Chave manual do banner (ADR-0051): só o valor exato 'true' liga.
+            authTransicaoEmailBanner: this.readEnv('AUTH_TRANSICAO_EMAIL_BANNER') === 'true',
             environment: this.readEnv('environment', 'local'),
             clientName: this.readEnv('client_name', 'local'),
             awsRegion: this.readEnv('aws_region', this.readEnv('AWS_REGION', 'us-east-1')),
@@ -309,6 +311,8 @@ export default class EnvironmentProvider {
             supabaseUrl: this.readCred(supabase, 'url') || undefined,
             supabaseServiceRoleKey: this.readCred(supabase, 'serviceRoleKey') || undefined,
             authJwtSecret: this.readEnv('AUTH_JWT_SECRET') || undefined,
+            // Chave manual do banner (ADR-0051): só o valor exato 'true' liga.
+            authTransicaoEmailBanner: this.readEnv('AUTH_TRANSICAO_EMAIL_BANNER') === 'true',
             environment: this.readEnv('environment'),
             clientName: this.readEnv('client_name'),
             awsRegion: this.readEnv('aws_region', this.readEnv('AWS_REGION', 'us-east-1')),
