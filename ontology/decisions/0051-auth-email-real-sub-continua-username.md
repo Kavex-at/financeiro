@@ -105,7 +105,7 @@ válida, o banner não aparece.
   para que dois admins que se desativam ao mesmo tempo não zerem os admins. Reativar não passa pela
   guarda.
 - **R12:** o `seed-admin` exige `ADMIN_EMAIL` e `ADMIN_PASSWORD`, sem default no código, e semeia
-  `username = email = ADMIN_EMAIL`. A var `ADMIN_USERNAME` sai de uso. O `admin` compartilhado de
+  `username = email = ADMIN_EMAIL`. A var antiga do nome de usuário do seed sai de uso. O `admin` compartilhado de
   hoje não é apagado pela migration: é aposentado pela tela, quando cada pessoa tiver o próprio
   acesso de admin (Q7).
 
