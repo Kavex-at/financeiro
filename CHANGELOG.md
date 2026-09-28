@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.42.5 (2026-09-28) — entradas validadas, painel de operação resiliente, erros da Permuta com status certo
+
+- **Corpo malformado não cai mais no default da escrita real.** Na geração da remessa SISPAG,
+  `dryRun` e `confirmarNovoLote` agora precisam ser booleanos de verdade, e chave desconhecida é
+  recusada: `"true"` em texto ou um `dry_run` digitado errado viram 400, em vez de sumirem calados e
+  deixarem valer o default do ambiente (que pode ser a escrita real). O mesmo vale para `remover` no
+  vínculo Conexos do usuário.
+- **Ação de borderô não segue mais com filial ilegível.** `?filCod=abc` era descartado em silêncio e
+  a escrita ia para a filial que a trilha resolvesse; `borCod` fracionário ou negativo passava. Agora
+  os dois precisam ser inteiros positivos (filial vazia continua valendo como ausente).
+- **O painel de Operação não cai inteiro por causa de uma fonte.** Pipelines, alertas e diagnóstico
+  de configuração são lidos um independente do outro; a fonte que falhar volta vazia e aparece em
+  `erros[]`, em vez de a tela de incidente inteira responder 500.
+- **Recusas da Permuta chegam à tela com o status e o texto certos.** 25 erros genéricos dos serviços
+  da Permuta viraram erros tipados: registro não encontrado (404), dado faltando no registro ou regra
+  da alocação (422), borderô fora da trilha (403), estado do borderô (409), escrita desligada (503).
+  Antes vários chegavam como "erro interno" (500). O texto técnico e o texto gravado na trilha das
+  baixas não mudaram; a recusa do ERP continua mostrando a razão real, como antes.
+
 ## v0.42.4 (2026-09-28) — vencimento do lote SISPAG deixa de aparecer um dia antes
 
 - **O vencimento no card do lote agora é o mesmo de Títulos a Pagar.** O Conexos grava o
