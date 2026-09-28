@@ -217,7 +217,8 @@ export default class ConexosSispagClient {
         if (temBoleto) modalidadesDisponiveis.push(MODALIDADE.BOLETO);
         if (temPix) modalidadesDisponiveis.push(MODALIDADE.PIX);
         if (temContaBanco) {
-            modalidadesDisponiveis.push(MODALIDADE.TED, MODALIDADE.CREDITO_CONTA);
+            // CRÉDITO EM CONTA fora da oferta (2026-09-28) — ver `modalidadesDisponiveisDoLote`.
+            modalidadesDisponiveis.push(MODALIDADE.TED);
         }
         const temModalidade = r.itsVldModalidade !== undefined;
         // `prontoParaRemessa` é TRI-ESTADO, e o terceiro estado é o que o `fin064` quase sempre
