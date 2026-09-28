@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, KeyRound, Link2, Mail, ShieldAlert, Users } from 'lucide-react'
+import { AlertTriangle, KeyRound, Link2, Mail, ShieldCheck, Users } from 'lucide-react'
 import { toast } from 'sonner'
+import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -17,43 +18,61 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useAuth, useIsAdmin } from '@/lib/auth/AuthProvider'
+import { useAuth } from '@/lib/auth/AuthProvider'
+import { PERMISSAO, type Permissao } from '@/lib/permissoes'
 import {
   type AppUser,
   fetchUsuarios,
   fetchUsuariosMeta,
+  listarPapeis,
+  type PapelComPermissoes,
   setUsuarioAtivo,
 } from '@/lib/usuarios'
+import { EditarAcessoDialog } from './EditarAcessoDialog'
 import { EditarEmailDialog } from './EditarEmailDialog'
 import { NovoUsuarioDialog } from './NovoUsuarioDialog'
 import { ResetSenhaDialog } from './ResetSenhaDialog'
 import { VinculoConexosDialog } from './VinculoConexosDialog'
 
 /**
- * Gestão de usuários da plataforma (Fatia A) — só admin. Substitui o cadastro
- * manual de usuários @kavex no banco. A autorização real é server-side
- * (`requireRole('admin')`); este guard client-side é só UX.
+ * Gestão de usuários da plataforma (Fatia A) e do acesso deles (ADR-0053) — quem tem
+ * `usuarios:gerenciar`. A autorização real é server-side (guard do router `/usuarios`); este guard
+ * de página é só UX: sem a permissão, a página mostra "Você não tem acesso a esta área." e nem
+ * busca a lista.
  */
 export default function UsuariosPage() {
-  const isAdmin = useIsAdmin()
+  return (
+    <ExigePermissao permissao={PERMISSAO.USUARIOS_GERENCIAR}>
+      <UsuariosPageConteudo />
+    </ExigePermissao>
+  )
+}
+
+function UsuariosPageConteudo() {
   const { username: eu } = useAuth()
   const [usuarios, setUsuarios] = useState<AppUser[]>([])
   const [loading, setLoading] = useState(true)
   const [resetAlvo, setResetAlvo] = useState<AppUser | null>(null)
   const [vinculoAlvo, setVinculoAlvo] = useState<AppUser | null>(null)
   const [emailAlvo, setEmailAlvo] = useState<AppUser | null>(null)
+  const [acessoAlvo, setAcessoAlvo] = useState<AppUser | null>(null)
+  const [papeis, setPapeis] = useState<PapelComPermissoes[]>([])
+  const [catalogo, setCatalogo] = useState<Permissao[]>([])
   const [vinculoDisponivel, setVinculoDisponivel] = useState(false)
   const [togglingId, setTogglingId] = useState<number | null>(null)
 
   const carregar = useCallback(async () => {
     setLoading(true)
     try {
-      const [lista, meta] = await Promise.all([
+      const [lista, meta, papeisECatalogo] = await Promise.all([
         fetchUsuarios(),
         fetchUsuariosMeta().catch(() => ({ vinculoDisponivel: false })),
+        listarPapeis(),
       ])
       setUsuarios(lista)
       setVinculoDisponivel(meta.vinculoDisponivel)
+      setPapeis(papeisECatalogo.papeis)
+      setCatalogo(papeisECatalogo.catalogo)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Falha ao carregar usuários.')
     } finally {
@@ -62,8 +81,8 @@ export default function UsuariosPage() {
   }, [])
 
   useEffect(() => {
-    if (isAdmin) void carregar()
-  }, [isAdmin, carregar])
+    void carregar()
+  }, [carregar])
 
   async function handleToggleAtivo(u: AppUser, ativo: boolean) {
     setTogglingId(u.id)
@@ -80,25 +99,18 @@ export default function UsuariosPage() {
     }
   }
 
-  if (!isAdmin) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Usuários" subtitle="Gestão de acessos da plataforma." />
-        <EmptyState
-          icon={<ShieldAlert className="size-8" aria-hidden />}
-          title="Acesso restrito"
-          description="Apenas administradores podem gerenciar usuários."
-        />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       <PageHeader
         title="Usuários"
         subtitle="Cadastre e gerencie os acessos à plataforma e o e-mail de login de cada um."
-        actions={<NovoUsuarioDialog onCreated={carregar} vinculoDisponivel={vinculoDisponivel} />}
+        actions={
+          <NovoUsuarioDialog
+            onCreated={carregar}
+            vinculoDisponivel={vinculoDisponivel}
+            papeis={papeis}
+          />
+        }
       />
 
       {loading ? (
@@ -148,9 +160,14 @@ export default function UsuariosPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={u.role === 'admin' ? 'default' : 'secondary'}>
-                        {u.role === 'admin' ? 'Administrador' : 'Operador'}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge variant="secondary">{u.papel?.nome ?? '—'}</Badge>
+                        {u.excecoes && u.excecoes.length > 0 ? (
+                          <Badge variant="outline" className="gap-1">
+                            <ShieldCheck className="size-3" aria-hidden /> com exceções
+                          </Badge>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -182,6 +199,9 @@ export default function UsuariosPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => setAcessoAlvo(u)}>
+                          <ShieldCheck className="size-4" aria-hidden /> Editar acesso
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => setEmailAlvo(u)}>
                           <Mail className="size-4" aria-hidden /> Editar e-mail
                         </Button>
@@ -207,6 +227,15 @@ export default function UsuariosPage() {
         key={emailAlvo?.id ?? 'fechado'}
         alvo={emailAlvo}
         onClose={() => setEmailAlvo(null)}
+        onSaved={carregar}
+      />
+      <EditarAcessoDialog
+        key={`acesso-${acessoAlvo?.id ?? 'fechado'}`}
+        alvo={acessoAlvo}
+        papeis={papeis}
+        catalogo={catalogo}
+        souEu={acessoAlvo != null && eu != null && acessoAlvo.username === eu}
+        onClose={() => setAcessoAlvo(null)}
         onSaved={carregar}
       />
       <ResetSenhaDialog alvo={resetAlvo} onClose={() => setResetAlvo(null)} />

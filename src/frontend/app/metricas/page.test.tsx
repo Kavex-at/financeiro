@@ -7,6 +7,11 @@ jest.mock('@/lib/metricas', () => {
   return { ...real, fetchMetricasCiclo: jest.fn() }
 })
 
+// Quem chega à tela tem `metricas:ver` (o guard de página tem teste próprio, ADR-0053).
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => ({ carregando: false, tem: () => true }),
+}))
+
 const linha = (over: Partial<MetricaCiclo>): MetricaCiclo => ({
   frente: 'Permutas (Frente I)',
   metrica: 'permutas_valor_baixado',

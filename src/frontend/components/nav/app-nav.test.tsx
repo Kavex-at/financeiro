@@ -1,22 +1,18 @@
 /**
- * Modelo de navegação do Financeiro — a regra de visibilidade.
+ * Modelo de navegação do Financeiro — a regra de visibilidade (ADR-0053).
  *
- * Cada item da sidebar herda o recorte que já governava o card equivalente na home. Estes testes
- * fixam o recorte item a item e, sobretudo, fixam que ele se expressa por AUSÊNCIA: o design system
- * (`docs/design-system/feedback.md`) proíbe usar `disabled` para permissão.
+ * Cada item aparece pela permissão correspondente, lida de `/me/permissoes` via `usePermissoes`.
+ * Estes testes fixam o recorte item a item e, sobretudo, fixam que ele se expressa por AUSÊNCIA: o
+ * design system (`docs/design-system/feedback.md`) proíbe usar `disabled` para permissão.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { buildAppNavGroups, useAppNavGroups } from '@/components/nav/app-nav'
 import type { SidebarGroup, SidebarItem } from '@/components/ui/sidebar'
+import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
 
-const fetchPermissoesMock = jest.fn()
-jest.mock('@/lib/operacao', () => ({
-  fetchPermissoes: () => fetchPermissoesMock(),
-}))
-
-const isAdminMock = jest.fn<boolean, []>()
-jest.mock('@/lib/auth/AuthProvider', () => ({
-  useIsAdmin: () => isAdminMock(),
+const permissoesMock = jest.fn<{ carregando: boolean; tem: (p: Permissao) => boolean }, []>()
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => permissoesMock(),
 }))
 
 const visiveis = (groups: SidebarGroup[]): string[] =>
@@ -24,18 +20,23 @@ const visiveis = (groups: SidebarGroup[]): string[] =>
 
 const todos = (groups: SidebarGroup[]): SidebarItem[] => groups.flatMap((g) => g.items)
 
-describe('buildAppNavGroups', () => {
-  const tudoLiberado = { sispagEnabled: true, isAdmin: true, operacaoEnabled: true }
+const com =
+  (...lista: Permissao[]) =>
+  (p: Permissao): boolean =>
+    lista.includes(p)
+const tudo = com(...CATALOGO_PERMISSOES)
+const nada = com()
 
+describe('buildAppNavGroups', () => {
   it('separa Frentes de Plataforma', () => {
-    const groups = buildAppNavGroups(tudoLiberado)
+    const groups = buildAppNavGroups({ sispagEnabled: true, tem: tudo })
     expect(groups.map((g) => g.label)).toEqual(['Frentes', 'Plataforma'])
     expect(visiveis([groups[0]])).toEqual(['Permutas', 'SISPAG', 'Adiantamentos'])
     expect(visiveis([groups[1]])).toEqual(['Operação', 'Métricas', 'Usuários'])
   })
 
   it('aponta para as rotas reais, incluindo as sub-rotas de Permutas', () => {
-    const groups = buildAppNavGroups(tudoLiberado)
+    const groups = buildAppNavGroups({ sispagEnabled: true, tem: tudo })
     const hrefs = todos(groups).flatMap((i) => [i.href, ...(i.children ?? []).map((c) => c.href)])
 
     expect(hrefs).toEqual(
@@ -52,38 +53,44 @@ describe('buildAppNavGroups', () => {
     )
   })
 
-  it('Métricas aparece para qualquer usuário autenticado — a rota só exige login', () => {
-    const groups = buildAppNavGroups({ sispagEnabled: false, isAdmin: false, operacaoEnabled: false })
-    expect(visiveis(groups)).toContain('Métricas')
+  it.each<[string, Permissao]>([
+    ['Permutas', 'permutas:ver'],
+    ['SISPAG', 'sispag:ver'],
+    ['Adiantamentos', 'recebimentos:ver'],
+    ['Operação', 'operacao:ver'],
+    ['Métricas', 'metricas:ver'],
+    ['Usuários', 'usuarios:gerenciar'],
+  ])('%s aparece com %s e some sem ela', (label, permissao) => {
+    expect(visiveis(buildAppNavGroups({ sispagEnabled: true, tem: com(permissao) }))).toContain(
+      label,
+    )
+    const semEla = CATALOGO_PERMISSOES.filter((p) => p !== permissao)
+    expect(
+      visiveis(buildAppNavGroups({ sispagEnabled: true, tem: com(...semEla) })),
+    ).not.toContain(label)
   })
 
-  it('esconde SISPAG quando a flag está desligada', () => {
-    const groups = buildAppNavGroups({ ...tudoLiberado, sispagEnabled: false })
-    expect(visiveis(groups)).not.toContain('SISPAG')
+  it('"executar" sozinho não mostra o item: a visibilidade é pelo :ver (o servidor manda o fecho)', () => {
+    expect(
+      visiveis(buildAppNavGroups({ sispagEnabled: true, tem: com('sispag:executar') })),
+    ).not.toContain('SISPAG')
   })
 
-  it('esconde Usuários para quem não é admin', () => {
-    const groups = buildAppNavGroups({ ...tudoLiberado, isAdmin: false })
-    expect(visiveis(groups)).not.toContain('Usuários')
-  })
-
-  it('esconde Operação para quem está fora do allow-list', () => {
-    const groups = buildAppNavGroups({ ...tudoLiberado, operacaoEnabled: false })
-    expect(visiveis(groups)).not.toContain('Operação')
+  it('SISPAG exige a flag E a permissão', () => {
+    expect(
+      visiveis(buildAppNavGroups({ sispagEnabled: false, tem: tudo })),
+    ).not.toContain('SISPAG')
   })
 
   it('nunca usa disabled para expressar permissão', () => {
-    const groups = buildAppNavGroups({
-      sispagEnabled: false,
-      isAdmin: false,
-      operacaoEnabled: false,
-    })
+    const groups = buildAppNavGroups({ sispagEnabled: false, tem: nada })
     expect(todos(groups).some((i) => i.disabled)).toBe(false)
-    expect(todos(groups).filter((i) => i.hidden).map((i) => i.label).sort()).toEqual([
-      'Operação',
-      'SISPAG',
-      'Usuários',
-    ])
+    expect(
+      todos(groups)
+        .filter((i) => i.hidden)
+        .map((i) => i.label)
+        .sort(),
+    ).toEqual(['Adiantamentos', 'Métricas', 'Operação', 'Permutas', 'SISPAG', 'Usuários'])
   })
 })
 
@@ -102,8 +109,7 @@ describe('useAppNavGroups', () => {
   const envOriginal = process.env.NEXT_PUBLIC_SISPAG_ENABLED
 
   beforeEach(() => {
-    fetchPermissoesMock.mockReset()
-    isAdminMock.mockReset().mockReturnValue(true)
+    permissoesMock.mockReset()
     process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
   })
 
@@ -111,37 +117,25 @@ describe('useAppNavGroups', () => {
     process.env.NEXT_PUBLIC_SISPAG_ENABLED = envOriginal
   })
 
-  it('mostra Operação quando o backend confirma a permissão', async () => {
-    fetchPermissoesMock.mockResolvedValue({ operacao: true })
+  it('mostra os itens das permissões que o usuário tem', () => {
+    permissoesMock.mockReturnValue({ carregando: false, tem: com('permutas:ver', 'operacao:ver') })
     render(<Probe />)
-    expect(await screen.findByText('Operação')).toBeInTheDocument()
-  })
-
-  it('falha fechada: consulta de permissão rejeitada mantém Operação escondida', async () => {
-    fetchPermissoesMock.mockRejectedValue(new Error('HTTP 500'))
-    render(<Probe />)
-
-    await waitFor(() => expect(fetchPermissoesMock).toHaveBeenCalled())
-    expect(screen.queryByText('Operação')).not.toBeInTheDocument()
-    // O resto da navegação continua de pé — a falha é local ao item.
     expect(screen.getByText('Permutas')).toBeInTheDocument()
-  })
-
-  it('respeita a flag do SISPAG lida do ambiente', async () => {
-    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'false'
-    fetchPermissoesMock.mockResolvedValue({ operacao: false })
-    render(<Probe />)
-
-    await waitFor(() => expect(fetchPermissoesMock).toHaveBeenCalled())
-    expect(screen.queryByText('SISPAG')).not.toBeInTheDocument()
-  })
-
-  it('esconde Usuários para não-admin', async () => {
-    isAdminMock.mockReturnValue(false)
-    fetchPermissoesMock.mockResolvedValue({ operacao: false })
-    render(<Probe />)
-
-    await waitFor(() => expect(fetchPermissoesMock).toHaveBeenCalled())
+    expect(screen.getByText('Operação')).toBeInTheDocument()
     expect(screen.queryByText('Usuários')).not.toBeInTheDocument()
+  })
+
+  it('enquanto carrega, nenhum item condicionado aparece (não aparece e some depois)', () => {
+    permissoesMock.mockReturnValue({ carregando: true, tem: tudo })
+    render(<Probe />)
+    expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
+  })
+
+  it('respeita a flag do SISPAG lida do ambiente', () => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'false'
+    permissoesMock.mockReturnValue({ carregando: false, tem: tudo })
+    render(<Probe />)
+    expect(screen.queryByText('SISPAG')).not.toBeInTheDocument()
+    expect(screen.getByText('Permutas')).toBeInTheDocument()
   })
 })

@@ -1,17 +1,37 @@
 import { withAuthHeaders } from './auth/token'
 import { apiFetch } from './http'
+import type { PapelRef, Permissao } from './permissoes'
 
 const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '')
 
-/** Papéis atribuíveis a um usuário da plataforma (espelha o backend). */
-export type UserRole = 'admin' | 'operador'
+/** Efeito de uma exceção por usuário: dar além do papel, ou tirar do papel (revogar vence). */
+export type EfeitoExcecao = 'conceder' | 'revogar'
+
+/** Exceção de permissão de um usuário. */
+export interface ExcecaoPermissao {
+  permissao: Permissao
+  efeito: EfeitoExcecao
+}
+
+/** Papel com o seu pacote de permissões. */
+export interface PapelComPermissoes extends PapelRef {
+  descricao?: string
+  permissoes: Permissao[]
+}
 
 /** Usuário da plataforma (sem senha) — o que a tela de gestão lista. */
 export interface AppUser {
   id: number
   username: string
-  role: UserRole
+  /** Coluna legada (passo 1). Não autoriza nada; a tela usa `papel` (ADR-0053). */
+  role: string
   ativo: boolean
+  /** Papel do usuário (do banco). Ausente só em backend anterior à ADR-0053. */
+  papel?: PapelRef
+  /** Exceções por usuário (conceder/revogar). */
+  excecoes?: ExcecaoPermissao[]
+  /** Permissões efetivas, calculadas no servidor. */
+  permissoesEfetivas?: Permissao[]
   createdBy?: string
   createdAt: string
   /** Login Conexos vinculado (ex.: MARILYN_MUTAFCI). Ausente = sem vínculo (opera via robô). */
@@ -73,7 +93,8 @@ export async function fetchUsuarios(): Promise<AppUser[]> {
 export async function criarUsuario(input: {
   email: string
   password: string
-  role: UserRole
+  /** Papel escolhido na criação — obrigatório, sem default (Q3). */
+  papelId: number
   conexosUsername?: string
   conexosPassword?: string
 }): Promise<AppUser> {
@@ -140,4 +161,52 @@ export async function resetarSenha(id: number, password: string): Promise<void> 
     body: JSON.stringify({ password }),
   })
   if (!res.ok) throw await errorFrom(res)
+}
+
+/** GET /usuarios/papeis — papéis (com pacote) para o seletor, e o catálogo de permissões. */
+export async function listarPapeis(): Promise<{
+  papeis: PapelComPermissoes[]
+  catalogo: Permissao[]
+}> {
+  const res = await apiFetch(`${API}/usuarios/papeis`, { headers: await withAuthHeaders() })
+  if (!res.ok) throw await errorFrom(res)
+  return (await res.json()) as { papeis: PapelComPermissoes[]; catalogo: Permissao[] }
+}
+
+/**
+ * PATCH /usuarios/:id/papel — troca o papel. Fora de 2xx lança `UsuariosApiError` com a mensagem
+ * e o status do backend (409 = guarda do último gestor / da própria permissão).
+ */
+export async function atribuirPapel(
+  id: number,
+  papelId: number,
+): Promise<{ id: number; papel: PapelRef }> {
+  const res = await apiFetch(`${API}/usuarios/${id}/papel`, {
+    method: 'PATCH',
+    headers: await withAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ papelId }),
+  })
+  if (!res.ok) throw await errorFrom(res)
+  return (await res.json()) as { id: number; papel: PapelRef }
+}
+
+/**
+ * PUT /usuarios/:id/permissoes — substitui o conjunto de exceções do usuário. Fora de 2xx lança
+ * `UsuariosApiError` (409 preservado).
+ */
+export async function definirExcecoes(
+  id: number,
+  excecoes: ExcecaoPermissao[],
+): Promise<{ id: number; excecoes: ExcecaoPermissao[]; permissoesEfetivas: Permissao[] }> {
+  const res = await apiFetch(`${API}/usuarios/${id}/permissoes`, {
+    method: 'PUT',
+    headers: await withAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ excecoes }),
+  })
+  if (!res.ok) throw await errorFrom(res)
+  return (await res.json()) as {
+    id: number
+    excecoes: ExcecaoPermissao[]
+    permissoesEfetivas: Permissao[]
+  }
 }

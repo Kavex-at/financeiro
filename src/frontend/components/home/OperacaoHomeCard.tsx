@@ -1,44 +1,26 @@
 'use client'
 
-import * as React from 'react'
 import Link from 'next/link'
 import { Activity } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { fetchPermissoes } from '@/lib/operacao'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
+import { PERMISSAO } from '@/lib/permissoes'
 
 /**
  * Card do Painel de Operação na home.
  *
- * Só aparece para os usuários do allow-list `OPERACAO_USUARIOS` — recorte por IDENTIDADE, não por
- * papel, porque `admin` hoje é todo mundo e portanto não recorta nada. Sem a env configurada, a
- * lista é vazia e todo admin vê (comportamento de hoje).
+ * Só aparece para quem tem `operacao:ver` (ADR-0053, que aposentou o allow-list por env da
+ * ADR-0042). Como em `AdminHomeCard`, **o gate real é server-side**: as rotas `/operacao`
+ * respondem 404 para quem não tem a permissão. Esconder o card é ergonomia — a tela é de quem
+ * opera a plataforma, não do analista financeiro.
  *
- * Como em `AdminHomeCard`, **o gate real é server-side**: as rotas `/operacao` respondem 404 para
- * quem está fora. Esconder o card é ergonomia — a tela é de quem opera a plataforma, não do
- * analista financeiro, e poluir a home dele com ela não ajuda ninguém.
- *
- * Falha fechada na dúvida: se a consulta de permissão não responde, o card não aparece. Um card
- * que some é irritante; um card que aparece e leva a um 404 parece defeito.
+ * Falha fechada na dúvida: enquanto as permissões carregam, ou se a consulta falhar, o card não
+ * aparece. Um card que some é irritante; um card que aparece e leva a um 404 parece defeito.
  */
 export function OperacaoHomeCard() {
-  const [podeVer, setPodeVer] = React.useState(false)
-
-  React.useEffect(() => {
-    let vivo = true
-    void fetchPermissoes()
-      .then((p) => {
-        if (vivo) setPodeVer(p.operacao)
-      })
-      .catch(() => {
-        if (vivo) setPodeVer(false)
-      })
-    return () => {
-      vivo = false
-    }
-  }, [])
-
-  if (!podeVer) return null
+  const { carregando, tem } = usePermissoes()
+  if (carregando || !tem(PERMISSAO.OPERACAO_VER)) return null
 
   return (
     <Card>

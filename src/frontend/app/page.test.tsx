@@ -1,11 +1,21 @@
 import { render, screen } from '@testing-library/react'
 import HomePage from '@/app/page'
+import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
 
-// O card de admin depende do AuthProvider (contexto + fetch). Ele não é o objeto
-// deste teste; stubar mantém o foco no card da Frente IV.
-jest.mock('@/components/home/AdminHomeCard', () => ({
-  AdminHomeCard: () => null,
+// ADR-0053: cada card aparece pela permissão, lida de `usePermissoes`. Por padrão, o Administrador
+// (as nove) — o que todo usuário tem no dia do deploy.
+const permissoesMock = jest.fn<{ carregando: boolean; tem: (p: Permissao) => boolean }, []>()
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => permissoesMock(),
 }))
+const com = (...lista: Permissao[]) => ({
+  carregando: false,
+  tem: (p: Permissao) => lista.includes(p),
+})
+
+beforeEach(() => {
+  permissoesMock.mockReset().mockReturnValue(com(...CATALOGO_PERMISSOES))
+})
 
 /**
  * Home (`/`) — o card da Frente IV. Estes testes existem por causa de um bug de
@@ -60,5 +70,44 @@ describe('HomePage — card da Gestão de Adiantamentos', () => {
 
     expect(screen.getByText('Gestão de Adiantamentos')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Painel de Recebimentos/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('HomePage — cards pela permissão (ADR-0053)', () => {
+  const orig = process.env.NEXT_PUBLIC_SISPAG_ENABLED
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+  })
+  afterAll(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = orig
+  })
+
+  it.each<[string, Permissao, RegExp]>([
+    ['Permutas', 'permutas:ver', /Abrir Gestão de Permutas/i],
+    ['SISPAG', 'sispag:ver', /Abrir Painel SISPAG/i],
+    ['Adiantamentos', 'recebimentos:ver', /Abrir Gestão de Adiantamentos/i],
+    ['Operação', 'operacao:ver', /Abrir Painel de Operação/i],
+    ['Usuários', 'usuarios:gerenciar', /Gerenciar usuários/i],
+  ])('card %s: aparece com %s e some sem ela', (_nome, permissao, link) => {
+    permissoesMock.mockReturnValue(com(permissao))
+    const { unmount } = render(<HomePage />)
+    expect(screen.getByRole('link', { name: link })).toBeInTheDocument()
+    unmount()
+
+    permissoesMock.mockReturnValue(com(...CATALOGO_PERMISSOES.filter((p) => p !== permissao)))
+    render(<HomePage />)
+    expect(screen.queryByRole('link', { name: link })).not.toBeInTheDocument()
+  })
+
+  it('o esmaecimento do SISPAG por flag continua como está (com sispag:ver)', () => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'false'
+    render(<HomePage />)
+    expect(screen.getByText(/Indisponível em produção/i)).toBeInTheDocument()
+  })
+
+  it('enquanto as permissões carregam, nenhum card condicionado aparece', () => {
+    permissoesMock.mockReturnValue({ carregando: true, tem: () => true })
+    render(<HomePage />)
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 })

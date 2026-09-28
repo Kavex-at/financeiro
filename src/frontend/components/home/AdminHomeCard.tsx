@@ -4,16 +4,18 @@ import Link from 'next/link'
 import { Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { useIsAdmin } from '@/lib/auth/AuthProvider'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
+import { PERMISSAO } from '@/lib/permissoes'
 
 /**
  * Card de administração na home (root da plataforma) — gerenciamento de usuários.
  * É um recurso de PLATAFORMA, não de um produto específico, então mora na home
- * e não no header dentro dos produtos. Só admins veem (o gate real é server-side).
+ * e não no header dentro dos produtos. Só quem tem `usuarios:gerenciar` vê (ADR-0053; o gate real
+ * é server-side).
  */
 export function AdminHomeCard() {
-  const isAdmin = useIsAdmin()
-  if (!isAdmin) return null
+  const { carregando, tem } = usePermissoes()
+  if (carregando || !tem(PERMISSAO.USUARIOS_GERENCIAR)) return null
 
   return (
     <Card>
