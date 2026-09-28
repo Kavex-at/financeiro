@@ -5,10 +5,10 @@
 --
 -- A 0058 atribui cada linha dos ledgers à semana do `criado_em`. Mas a linha é UPSERT por
 -- `idempotency_key`: uma permuta que falha e é reexecutada semanas depois mantém o `criado_em` da
--- primeira tentativa. A baixa de R$ 150.061,81 liquidada em 14/09 (id 341) nasceu em 10/08 — contou
--- em agosto, e a semana 11–18/09, o primeiro número de operação publicado à Columbia, saiu R$ 0,00.
--- Medido em 18/09: 2 linhas em 190, R$ 503.066,69 na série inteira (a outra: id 270, R$ 353.004,88,
--- criada 03/07, liquidada 14/08).
+-- primeira tentativa. A baixa de R$ 150.061,81 liquidada em 14/09 (id 341) nasceu em 10/08 e era
+-- atribuída a agosto. Medido em 18/09: 2 linhas em 190, R$ 503.066,69 na série inteira (a outra: id
+-- 270, R$ 353.004,88, criada 03/07, liquidada 14/08). A semana 11–18/09 saiu R$ 0,00 no report do
+-- ciclo 6 e CONTINUA R$ 0,00 depois desta migration: o borderô do id 341 não está finalizado (G2).
 --
 -- ── POR QUE UMA COLUNA NOVA, E NÃO `atualizado_em` ───────────────────────────────────────────────
 --
@@ -27,9 +27,10 @@
 --
 -- ── BACKFILL ─────────────────────────────────────────────────────────────────────────────────────
 --
--- Linhas terminais já gravadas recebem `encerrado_em = atualizado_em`. É uma APROXIMAÇÃO, a única
--- disponível: para uma linha `settled` re-clicada depois de liquidar, `atualizado_em` é o clique, não
--- a liquidação. Foi exatamente essa aproximação que mediu as 2 linhas / R$ 503 mil em 18/09. O
+-- Só Permutas. Linhas terminais já gravadas recebem `encerrado_em = atualizado_em` — APROXIMAÇÃO:
+-- para uma linha `settled` re-clicada depois de liquidar, `atualizado_em` é o clique. Conferido em
+-- produção em 2026-09-28: as únicas `settled` que mudam de semana são as duas retentativas reais
+-- (ids 270 e 341). A SN fica sem backfill (ver abaixo, antes do UPDATE). O
 -- backfill não toca `atualizado_em` nem `criado_em`, então é reconstruível: reverter é
 -- `UPDATE ... SET encerrado_em = NULL` (ou `DROP COLUMN`) e reaplicar a função da 0058. Centenas de
 -- linhas, abaixo do limiar de 1.000 que exige script de reverse (`rollbacks/README.md`).
@@ -38,9 +39,11 @@
 --
 -- A série é RECALCULADA, não remendada: a função lê o estado atual e toda janela reflete a nova regra
 -- de uma vez, na MESMA grade de sextas 18:00 (a 0058/0060 geram as janelas; nada aqui mexe nos pisos).
--- Muda o número já publicado da semana 11–18/09 (R$ 0,00 → R$ 150.061,81, e a linha de `%` passa a
--- existir) e, na tela de seis semanas, as semanas de agosto que continham essas baixas. O antes/depois
--- vai no report do ciclo em que este delta entra. As chaves de `metrica` NÃO mudam: a definição
+-- Medido em produção em 2026-09-28 (`ontology/_inbox/metricas-ciclo-data-encerramento-validacao.md`):
+-- a semana 07/08–14/08 ganha R$ 353.004,88 (id 270, liquidado 14/08 15:42); a 11–18/09 ganha a
+-- tentativa do id 341 (`0 de 1`) mas continua R$ 0,00 — o borderô 2466 da filial 1 NÃO está finalizado
+-- no cache, e R$ só conta com borderô finalizado (gap G2). O antes/depois vai no report do ciclo em que
+-- este delta entra. As chaves de `metrica` NÃO mudam: a definição
 -- ("baixas concluídas na semana") é a mesma — o que muda é a data que a responde corretamente.
 --
 -- Contrato (as 9 colunas + `parcial` e `apurado_ate`) idêntico ao da 0058. Sem GRANT, sem role, sem
@@ -63,10 +66,11 @@ UPDATE public.permuta_alocacao_execucao
  WHERE encerrado_em IS NULL
    AND status IN ('settled', 'parcial', 'error');
 
-UPDATE public.solicitacao_numerario_execucao
-   SET encerrado_em = atualizado_em
- WHERE encerrado_em IS NULL
-   AND status IN ('settled', 'error');
+-- A SN NÃO tem backfill. Medido em produção em 2026-09-28: as 11 linhas `settled` cuja semana de
+-- `atualizado_em` difere da de `criado_em` (ids 28–45) foram todas tocadas entre 18:15:08 e 18:15:14
+-- de 17/08, numa escrita em lote (`nde_autorizado`/`revisao_humana`), não na liquidação. Nenhuma SN do
+-- histórico foi de fato reexecutada. Backfill por `atualizado_em` moveria R$ 789.490,08 de semana
+-- sem motivo; sem backfill, a SN antiga continua datada pelo `criado_em` e só a nova ganha carimbo.
 
 -- Mesma função da 0058, com UMA diferença: a data que escolhe a janela é
 -- `COALESCE(encerrado_em, criado_em)`, nas duas frentes.

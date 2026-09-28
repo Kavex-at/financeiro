@@ -10,7 +10,7 @@ ordenada no `KANBAN.md` do run.
 | Card | P | O quê |
 |---|---|---|
 | `testability-1` (+ `fault-tolerance-2`) | P1 | Teste contra Postgres real chamando `markError → markSettled → markSettled` dos repositórios (hoje só regex em SQL mockado). Verificado à mão na revisão (T1 → T2 → T2 preservado; trigger 0057 recusa `markError` em baixa confirmada), não codificado. Estender `vwMetricasCiclo.integration.test.ts` — o glob do `test:sql` só cobre `migrations/`. |
-| `deployability-1` + `fault-tolerance-3` | P2 | Rodar a consulta antes/depois de `metricas-ciclo-data-encerramento-validacao.md` contra produção e colar o resultado (não rodada: leitura de produção negada ao agente). Medir quantas linhas terminais re-clicadas carregam o viés do backfill. |
+| `deployability-1` + `fault-tolerance-3` | P2 | ✅ Consulta rodada em produção em 2026-09-28 (resultado em `metricas-ciclo-data-encerramento-validacao.md`). Achou o lote de 17/08 na SN, e a SN ficou sem backfill. Resta automatizar a verificação (hoje é manual). |
 | `modifiability-1` (+ `integrability-1`) + `availability-1` | P2 | "Quais status são terminais" está em SQL literal em 5 escritas; um status terminal novo compila e regride o bug. Fonte única ligada às unions TS e/ou barreira no esquema. |
 | `security-1` | P2 | Marcar a procedência do `encerrado_em` (medido × backfill por `atualizado_em`). |
 | `performance-1` | P2 | Registrar no `performance-1` antigo (`metricas-historico-6-semanas-regis-followups.md`) que o índice futuro precisa ser de expressão `COALESCE(encerrado_em, criado_em) AT TIME ZONE 'America/Sao_Paulo'`. Custo inalterado pelo delta (medido: 12,8 ms / 6 janelas, 193 ms / 111 janelas, 5 mil linhas). |
