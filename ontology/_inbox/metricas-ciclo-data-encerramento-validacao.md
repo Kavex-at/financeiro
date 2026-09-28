@@ -103,3 +103,8 @@ O 2466 finalizado é o da **filial 4**, outro borderô. Pela regra G2 (2026-09-1
 finalizado é tentativa, não conclusão, e o R$ não entra. A premissa "11–18/09 vai de R$ 0,00 para
 R$ 150.061,81" só vale se esse borderô for finalizado no Conexos (ou se o cache estiver defasado:
 "Atualizar" na tela de Borderôs refaz a leitura).
+
+**Confirmado ao vivo no Conexos em 2026-09-28** (`GET /fin010/1/2466`, read-only): filial 1 borderô
+2466 `borVldFinalizado = 0`, sem data de finalização, cadastrado por MPS_FRANCINEI, movimento 14/09,
+uma baixa (invoice 4755, parcela 2, R$ 150.061,81). O cache está certo; o borderô não foi finalizado
+no ERP. (Filial 4 borderô 2466: finalizado por LUCILENE_SILVA em agosto — outro borderô.)
