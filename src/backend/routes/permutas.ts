@@ -696,6 +696,44 @@ router.get(
     }),
 );
 
+/** Códigos do ERP que chegam por path/query (`borCod`, `filCod`): sempre inteiros positivos. */
+const inteiroPositivoSchema = z.coerce.number().int().positive();
+
+/**
+ * `?filCod=` opcional das ações de borderô. O nº do borderô é sequencial POR FILIAL, então o
+ * número sozinho pode casar com dois borderôs diferentes; quando isso acontece o serviço RECUSA
+ * a ação e pede a filial. O valor é apenas um desempate: o serviço ainda confere o par
+ * (filial, borderô) contra a trilha antes de agir (`requireOwnBorderoFilCod`).
+ *
+ * Vazio conta como ausente; qualquer outro valor que não seja inteiro positivo é 400. Antes um
+ * `?filCod=abc` virava `undefined` em silêncio e a ESCRITA seguia na filial que a trilha resolvesse.
+ */
+const filCodQuerySchema = z.preprocess(
+    (raw) => (raw === '' ? undefined : raw),
+    inteiroPositivoSchema.optional(),
+);
+
+/**
+ * Valida `:borCod` + `?filCod=` de uma ação de borderô ANTES de chegar ao serviço. Responde 400 e
+ * devolve `undefined` quando algum é inválido.
+ */
+const parseAlvoBordero = (
+    req: import('express').Request,
+    res: import('express').Response,
+): { borCod: number; filCod?: number } | undefined => {
+    const borCod = inteiroPositivoSchema.safeParse(req.params.borCod);
+    if (!borCod.success) {
+        res.status(400).json({ error: 'borCod inválido' });
+        return undefined;
+    }
+    const filCod = filCodQuerySchema.safeParse(req.query.filCod);
+    if (!filCod.success) {
+        res.status(400).json({ error: 'filCod inválido' });
+        return undefined;
+    }
+    return { borCod: borCod.data, ...(filCod.data !== undefined ? { filCod: filCod.data } : {}) };
+};
+
 // GET /permutas/borderos/:borCod/baixas?filCod= — baixas DO ERP de um borderô (p/ ver o detalhe de
 // borderôs lançados direto no Conexos, sem trilha local). On-demand ao expandir.
 router.get(
@@ -703,28 +741,21 @@ router.get(
     requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const borCod = Number(req.params.borCod);
-        const filCod = Number(req.query.filCod);
-        if (!Number.isFinite(borCod) || !Number.isFinite(filCod)) {
+        const borCod = inteiroPositivoSchema.safeParse(req.params.borCod);
+        const filCod = inteiroPositivoSchema.safeParse(req.query.filCod);
+        if (!borCod.success || !filCod.success) {
             res.status(400).json({ error: 'borCod/filCod inválido' });
             return;
         }
         const service = container.resolve(BorderoGestaoService);
-        res.json({ baixas: await service.listarBaixasErp({ borCod, filCod }) });
+        res.json({
+            baixas: await service.listarBaixasErp({
+                borCod: borCod.data,
+                filCod: filCod.data,
+            }),
+        });
     }),
 );
-
-/**
- * `?filCod=` opcional das ações de borderô. O nº do borderô é sequencial POR FILIAL, então o
- * número sozinho pode casar com dois borderôs diferentes; quando isso acontece o serviço RECUSA
- * a ação e pede a filial. O valor é apenas um desempate: o serviço ainda confere o par
- * (filial, borderô) contra a trilha antes de agir (`requireOwnBorderoFilCod`).
- */
-const filCodDaQuery = (raw: unknown): number | undefined => {
-    if (raw === undefined || raw === null || raw === '') return undefined;
-    const filCod = Number(raw);
-    return Number.isFinite(filCod) ? filCod : undefined;
-};
 
 // POST /permutas/borderos/:borCod/finalizar — finaliza/aprova o borderô no ERP (admin, gated).
 router.post(
@@ -733,15 +764,12 @@ router.post(
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const borCod = Number(req.params.borCod);
-        if (!Number.isFinite(borCod)) {
-            res.status(400).json({ error: 'borCod inválido' });
-            return;
-        }
+        const alvo = parseAlvoBordero(req, res);
+        if (!alvo) return;
+        const { borCod, filCod } = alvo;
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            const filCod = filCodDaQuery(req.query.filCod);
             res.json(
                 await service.finalizarBordero({
                     borCod,
@@ -767,15 +795,12 @@ router.post(
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const borCod = Number(req.params.borCod);
-        if (!Number.isFinite(borCod)) {
-            res.status(400).json({ error: 'borCod inválido' });
-            return;
-        }
+        const alvo = parseAlvoBordero(req, res);
+        if (!alvo) return;
+        const { borCod, filCod } = alvo;
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            const filCod = filCodDaQuery(req.query.filCod);
             res.json(
                 await service.cancelarBordero({
                     borCod,
@@ -801,15 +826,12 @@ router.post(
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const borCod = Number(req.params.borCod);
-        if (!Number.isFinite(borCod)) {
-            res.status(400).json({ error: 'borCod inválido' });
-            return;
-        }
+        const alvo = parseAlvoBordero(req, res);
+        if (!alvo) return;
+        const { borCod, filCod } = alvo;
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            const filCod = filCodDaQuery(req.query.filCod);
             res.json(
                 await service.estornarBordero({
                     borCod,
@@ -835,15 +857,12 @@ router.delete(
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const borCod = Number(req.params.borCod);
-        if (!Number.isFinite(borCod)) {
-            res.status(400).json({ error: 'borCod inválido' });
-            return;
-        }
+        const alvo = parseAlvoBordero(req, res);
+        if (!alvo) return;
+        const { borCod, filCod } = alvo;
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            const filCod = filCodDaQuery(req.query.filCod);
             res.json(
                 await service.excluirBordero({
                     borCod,
@@ -870,16 +889,13 @@ router.delete(
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const borCod = Number(req.params.borCod);
-        if (!Number.isFinite(borCod)) {
-            res.status(400).json({ error: 'borCod inválido' });
-            return;
-        }
+        const alvo = parseAlvoBordero(req, res);
+        if (!alvo) return;
+        const { borCod, filCod } = alvo;
         const invoiceDocCod = String(req.params.invoiceDocCod);
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
-            const filCod = filCodDaQuery(req.query.filCod);
             res.json(
                 await service.excluirBaixa({
                     borCod,
