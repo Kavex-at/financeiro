@@ -1,5 +1,23 @@
 # Columbia Financeiro — Changelog
 
+## v0.43.0 (2026-09-28) — login por e-mail da Columbia (passo 1 de 3 da transição de acesso)
+
+- **Cada usuário ganha um e-mail de login, cadastrado pelo admin.** Nova coluna E-mail em
+  Usuários, com o selo "Pendente" para quem ainda não tem, e a ação "Editar e-mail". Ninguém recebe
+  e-mail automaticamente: o admin cadastra o e-mail da Columbia de cada um, e a coluna vira o placar
+  da transição. E-mail que já identifica outro usuário (como e-mail ou como usuário, sem distinção de
+  maiúsculas) é recusado.
+- **O login aceita e-mail ou o usuário atual, sem distinção de maiúsculas.** Antes
+  `Fulano@kavex.com` não entrava se o cadastro estava em minúsculas. A senha não muda, e a trilha de
+  auditoria (`executado_por`) continua gravando o usuário de sempre.
+- **Aviso de transição na tela de login**, ligado e desligado pela variável
+  `AUTH_TRANSICAO_EMAIL_BANNER` do backend (desligado por padrão).
+- **Nenhum admin desativa a si mesmo nem o último admin ativo.** Protege a aposentadoria da conta
+  compartilhada `admin`.
+- **`seed:admin` exige `ADMIN_EMAIL` e `ADMIN_PASSWORD`**; a senha padrão que estava no código saiu.
+  `ADMIN_USERNAME` deixa de existir.
+- Deploy: publicar o backend antes do frontend (a edição de e-mail só existe no backend novo).
+
 ## v0.42.6 (2026-09-28) — confirmação antes de escrever no ERP, Processar da Permuta diz a verdade
 
 - **"Processar e conciliar" do SISPAG pede confirmação.** O botão manda o Conexos ler o .RET e
