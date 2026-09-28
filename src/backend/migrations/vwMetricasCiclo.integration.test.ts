@@ -422,7 +422,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         expect(doHistorico(ls, 'permutas_valor_baixado', JANELA_B.inicio)?.valor).toBe('70.00');
     });
 
-    it('backfill da 0064: terminal ganha encerrado_em = atualizado_em; em voo segue NULL', async () => {
+    it('backfill da 0064: permuta terminal ganha encerrado_em = atualizado_em; em voo e SN seguem NULL', async () => {
         const linhas0064 = await emTransacao(async () => {
             await admin.query(`
                 INSERT INTO permuta_alocacao_execucao
@@ -432,6 +432,11 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
                     ('b-settled', 'B1', 'B1', 1, 'settled',     false, '2026-07-03 09:00-03', '2026-08-14 11:00-03'),
                     ('b-erro',    'B2', 'B2', 1, 'error',       false, '2026-07-03 09:00-03', '2026-07-04 11:00-03'),
                     ('b-em-voo',  'B3', 'B3', 1, 'reconciling', false, '2026-07-03 09:00-03', '2026-07-03 09:01-03')
+            `);
+            await admin.query(`
+                INSERT INTO solicitacao_numerario_execucao
+                    (idempotency_key, fil_cod, pri_cod, status, dry_run, valor, criado_em, atualizado_em)
+                VALUES ('b-sn', 2, 99, 'settled', false, 1.00, '2026-08-03 18:54-03', '2026-08-17 18:15-03')
             `);
             await admin.query(
                 readFileSync(
@@ -444,6 +449,10 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
                     SELECT idempotency_key AS k, encerrado_em = atualizado_em AS igual
                       FROM permuta_alocacao_execucao
                      WHERE idempotency_key LIKE 'b-%'
+                    UNION ALL
+                    SELECT idempotency_key, encerrado_em = atualizado_em
+                      FROM solicitacao_numerario_execucao
+                     WHERE idempotency_key LIKE 'b-%'
                      ORDER BY 1
                 `)
             ).rows;
@@ -453,6 +462,8 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             { k: 'b-em-voo', igual: null },
             { k: 'b-erro', igual: true },
             { k: 'b-settled', igual: true },
+            // SN sem backfill: o `atualizado_em` dela foi reescrito em lote em 17/08 (ADR-0051, D3).
+            { k: 'b-sn', igual: null },
         ]);
     });
 

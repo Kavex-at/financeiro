@@ -237,13 +237,11 @@ describe('0064_metricas_ciclo_data_pelo_encerramento — guardas estáticas', ()
         expect(SQL_0064).toMatch(/INTERVAL '7 days'/);
     });
 
-    it('a única escrita é o backfill de encerrado_em onde ainda é NULL, em linha terminal', () => {
+    it('a única escrita é o backfill de Permutas onde ainda é NULL, em linha terminal', () => {
         expect(SQL_0064).not.toMatch(/\b(INSERT\s+INTO|DELETE\s+FROM|TRUNCATE|DROP )\b/i);
         const updates = [...SQL_0064.matchAll(/UPDATE\s+([a-z_.]+)\s+SET\s+([\s\S]*?);/gi)];
-        expect(updates.map((u) => u[1])).toEqual([
-            'public.permuta_alocacao_execucao',
-            'public.solicitacao_numerario_execucao',
-        ]);
+        // Só Permutas: o `atualizado_em` da SN foi reescrito em lote em 17/08 (ADR-0051, D3).
+        expect(updates.map((u) => u[1])).toEqual(['public.permuta_alocacao_execucao']);
         for (const u of updates) {
             expect(u[2]).toMatch(/^encerrado_em = atualizado_em\s+WHERE encerrado_em IS NULL/);
             expect(u[2]).toMatch(/status IN \(/);
