@@ -1,5 +1,5 @@
--- 0064_metricas_ciclo_data_pelo_encerramento.sql
--- ADR-0051 — cada execução conta na semana em que TERMINOU, não na semana em que nasceu.
+-- 0065_metricas_ciclo_data_pelo_encerramento.sql
+-- ADR-0052 — cada execução conta na semana em que TERMINOU, não na semana em que nasceu.
 --
 -- ── O PROBLEMA ───────────────────────────────────────────────────────────────────────────────────
 --
@@ -57,9 +57,9 @@ ALTER TABLE public.solicitacao_numerario_execucao
     ADD COLUMN IF NOT EXISTS encerrado_em TIMESTAMPTZ;
 
 COMMENT ON COLUMN public.permuta_alocacao_execucao.encerrado_em IS
-    'ADR-0051 — quando a execução terminou (settled/parcial: 1º encerramento, imóvel; error: a falha). NULL = em voo. Data das métricas do ciclo.';
+    'ADR-0052 — quando a execução terminou (settled/parcial: 1º encerramento, imóvel; error: a falha). NULL = em voo. Data das métricas do ciclo.';
 COMMENT ON COLUMN public.solicitacao_numerario_execucao.encerrado_em IS
-    'ADR-0051 — quando a execução terminou (settled: 1º encerramento, imóvel; error: a falha). NULL = em voo. Data das métricas do ciclo.';
+    'ADR-0052 — quando a execução terminou (settled: 1º encerramento, imóvel; error: a falha). NULL = em voo. Data das métricas do ciclo.';
 
 UPDATE public.permuta_alocacao_execucao
    SET encerrado_em = atualizado_em

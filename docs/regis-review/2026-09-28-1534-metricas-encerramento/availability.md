@@ -16,21 +16,21 @@ cards_count: 3
 
 | Source | Stimulus | Artifact | Environment | Response | Response Measure |
 |---|---|---|---|---|---|
-| Deploy do backend (Render, via `BootMigrator`) carregando esta feature (ADR-0051) | Migração `0064` roda `ALTER TABLE` + backfill (`UPDATE ... WHERE encerrado_em IS NULL`) sobre `permuta_alocacao_execucao`/`solicitacao_numerario_execucao` — os mesmos ledgers que jobs de Permutas/Recebimentos podem estar escrevendo concorrentemente (`markSettled`/`markError`, mesmo `idempotency_key`) | Ledgers de execução das Frentes I e IV + processo de boot do Express | Produção, horário comercial, jobs diários possivelmente em voo | Migração aplica-se atomicamente (1 transação por arquivo + advisory lock, `runMigrations.ts:130-152`); se falhar, `BootMigrator` aborta o boot inteiro em vez de servir tráfego contra esquema incerto (`BootMigrator.ts:42-49`); se passar, o backfill não pisa em linha já carimbada (idempotente) e a função `metricas.metricas_ciclo` é substituída sem quebrar o contrato de colunas que o report já consome | 0 linhas de ledger corrompidas pelo backfill; reaplicar a `0064` é no-op (testado); boot só serve tráfego com o esquema em dia |
+| Deploy do backend (Render, via `BootMigrator`) carregando esta feature (ADR-0052) | Migração `0065` roda `ALTER TABLE` + backfill (`UPDATE ... WHERE encerrado_em IS NULL`) sobre `permuta_alocacao_execucao`/`solicitacao_numerario_execucao` — os mesmos ledgers que jobs de Permutas/Recebimentos podem estar escrevendo concorrentemente (`markSettled`/`markError`, mesmo `idempotency_key`) | Ledgers de execução das Frentes I e IV + processo de boot do Express | Produção, horário comercial, jobs diários possivelmente em voo | Migração aplica-se atomicamente (1 transação por arquivo + advisory lock, `runMigrations.ts:130-152`); se falhar, `BootMigrator` aborta o boot inteiro em vez de servir tráfego contra esquema incerto (`BootMigrator.ts:42-49`); se passar, o backfill não pisa em linha já carimbada (idempotente) e a função `metricas.metricas_ciclo` é substituída sem quebrar o contrato de colunas que o report já consome | 0 linhas de ledger corrompidas pelo backfill; reaplicar a `0065` é no-op (testado); boot só serve tráfego com o esquema em dia |
 
 ## 2. Métricas observadas
 
 | Métrica | Valor atual | Alvo | Status | Fonte |
 |---|---|---|---|---|
-| Migração 0064 idempotente (ADD COLUMN / backfill / função) | `IF NOT EXISTS`, backfill só `WHERE encerrado_em IS NULL`, `CREATE OR REPLACE FUNCTION` | Reaplicar sem efeito colateral | ✅ | `0064_metricas_ciclo_data_pelo_encerramento.sql:48-67,71`; testado em `vwMetricasCiclo.integration.test.ts` ("reaplicar a migration é no-op") |
+| Migração 0065 idempotente (ADD COLUMN / backfill / função) | `IF NOT EXISTS`, backfill só `WHERE encerrado_em IS NULL`, `CREATE OR REPLACE FUNCTION` | Reaplicar sem efeito colateral | ✅ | `0065_metricas_ciclo_data_pelo_encerramento.sql:48-67,71`; testado em `vwMetricasCiclo.integration.test.ts` ("reaplicar a migration é no-op") |
 | Linhas afetadas pelo backfill | ~190 (permuta + SN) | < 1.000 (limiar que exige script de reverse) | ✅ | `_shared-metrics.md` (Repo baselines); `migrations/rollbacks/README.md` |
 | Migração roda em transação isolada + advisory lock | 1 transação por arquivo (`applyOne`), `pg_advisory_xact_lock` transacional | Atômico, sem estado parcial em caso de falha | ✅ | `runMigrations.ts:130-152` |
-| Contrato da função de métricas preservado após `CREATE OR REPLACE` | 11 colunas idênticas (9 do contrato + `parcial` + `apurado_ate`) | Nenhuma quebra de "cached plan" para consumidores já rodando | ✅ | teste "a 0064 não altera o contrato" em `vwMetricasCiclo.integration.test.ts` |
+| Contrato da função de métricas preservado após `CREATE OR REPLACE` | 11 colunas idênticas (9 do contrato + `parcial` + `apurado_ate`) | Nenhuma quebra de "cached plan" para consumidores já rodando | ✅ | teste "a 0065 não altera o contrato" em `vwMetricasCiclo.integration.test.ts` |
 | Cobertura de teste dos cenários de retentativa/idempotência introduzidos | 5 casos de integração novos (retentativa permuta, retentativa SN, re-clique, backfill, contrato) + 5 guardas estáticas novas | Cenários de retry cobertos antes de produção | ✅ | `_shared-metrics.md` (Gates); `vwMetricasCiclo.integration.test.ts`, `vwMetricasCiclo.test.ts` |
-| Invariante "`encerrado_em` imóvel após 1º encerramento terminal" garantida em nível de banco (CHECK/TRIGGER) | 0 ocorrências de `CHECK`/`TRIGGER` sobre `encerrado_em` | ≥1 barreira em nível de esquema para uma coluna que alimenta número publicado à diretoria | ⚠️ | `grep -n "TRIGGER\|CHECK (" src/backend/migrations/0064_metricas_ciclo_data_pelo_encerramento.sql` → 0; `grep -rn encerrado_em src/backend` → só as 2 repositories + a função |
+| Invariante "`encerrado_em` imóvel após 1º encerramento terminal" garantida em nível de banco (CHECK/TRIGGER) | 0 ocorrências de `CHECK`/`TRIGGER` sobre `encerrado_em` | ≥1 barreira em nível de esquema para uma coluna que alimenta número publicado à diretoria | ⚠️ | `grep -n "TRIGGER\|CHECK (" src/backend/migrations/0065_metricas_ciclo_data_pelo_encerramento.sql` → 0; `grep -rn encerrado_em src/backend` → só as 2 repositories + a função |
 | Visibilidade de falha crônica (retentativa que nunca liquida) na métrica semanal | `markError` sempre grava `encerrado_em = now()`, sem teto de idade | Falha aberta há N semanas deveria ser rastreável, não "reaparecer" só na semana do último retry | ⚠️ | `PermutaExecucaoRepository.ts:536-544`, `SolicitacaoNumerarioExecucaoRepository.ts:349-356` |
 
-> ⚠️ **Não medível localmente**: impacto real de lock/contenção do backfill da `0064` contra tráfego de produção concorrente (duração de lock, deadlocks). Requer CloudWatch/logs de produção do momento do deploy. Recomendação: instrumentar o job de deploy com o tempo de execução de cada migração (`BootMigrator` já loga início/fim — agregar em dashboard).
+> ⚠️ **Não medível localmente**: impacto real de lock/contenção do backfill da `0065` contra tráfego de produção concorrente (duração de lock, deadlocks). Requer CloudWatch/logs de produção do momento do deploy. Recomendação: instrumentar o job de deploy com o tempo de execução de cada migração (`BootMigrator` já loga início/fim — agregar em dashboard).
 > ⚠️ **Não medível localmente**: MTTR real de um boot que falha por migração quebrada. Requer métrica de produção (tempo entre falha de boot e novo deploy verde). Recomendação: dashboard com duração de `[boot-migrate]` e alarme em falha de boot.
 
 ## 3. Tactics — Cobertura no nf-projects (avaliação restrita ao delta)
@@ -40,7 +40,7 @@ cards_count: 3
 | Ping/Echo | Não tocado pelo delta | N/A | — |
 | Heartbeat | Não tocado pelo delta | N/A | — |
 | Monitor | Sem CloudWatch/dashboard no repo (`infra/` não existe) | N/A | `_shared-metrics.md`: "Não medível: no `infra/`" |
-| Timestamp | `encerrado_em` é a tactic Timestamp aplicada ao domínio: separa "quando nasceu" (`criado_em`), "quando alguém tocou" (`atualizado_em`) e "quando terminou de fato" (`encerrado_em`), exatamente para atribuir corretamente o resultado de uma retentativa à janela em que ela concluiu | ✅ presente | `0064_metricas_ciclo_data_pelo_encerramento.sql:13-24` |
+| Timestamp | `encerrado_em` é a tactic Timestamp aplicada ao domínio: separa "quando nasceu" (`criado_em`), "quando alguém tocou" (`atualizado_em`) e "quando terminou de fato" (`encerrado_em`), exatamente para atribuir corretamente o resultado de uma retentativa à janela em que ela concluiu | ✅ presente | `0065_metricas_ciclo_data_pelo_encerramento.sql:13-24` |
 | Sanity Checking | Invariante "encerrado_em não anda para trás de um encerramento terminal" garantida só por `COALESCE` em SQL de aplicação, em 2 repositórios; nenhuma barreira de esquema (CHECK/TRIGGER) | ⚠️ parcial | F-availability-1 |
 | Condition Monitoring | Métrica semanal expõe `tentativas`/`concluidas`, mas uma execução que falha repetidamente perde a semana original a cada retry (F-availability-2) | ⚠️ parcial | F-availability-2 |
 | Voting | Fonte única (Postgres); não há computação redundante a arbitrar | N/A | — |
@@ -50,14 +50,14 @@ cards_count: 3
 | Passive Redundancy | Não tocado pelo delta | N/A | — |
 | Spare | Não tocado pelo delta | N/A | — |
 | Exception Handling | `markError` continua sendo 1 UPDATE parametrizado só; `encerrado_em` some na mesma escrita, sem passo extra que possa falhar parcialmente | ✅ presente | `SolicitacaoNumerarioExecucaoRepository.ts:349-356` |
-| Rollback | Migração roda em transação isolada por arquivo + advisory lock; idempotente (`IF NOT EXISTS`, backfill só onde NULL, `CREATE OR REPLACE`); abaixo do limiar de 1.000 linhas que exigiria script de reverse; reversão manual documentada no cabeçalho da própria migração | ✅ presente | `runMigrations.ts:130-152`; `0064_metricas_ciclo_data_pelo_encerramento.sql:29-33`; `migrations/rollbacks/README.md` |
-| Software Upgrade | `CREATE OR REPLACE FUNCTION` preserva o contrato de saída (mesmas 9 colunas + `parcial`+`apurado_ate`), evitando o erro do Postgres "cached plan must not change result type" para quem já chama a função | ✅ presente | teste "a 0064 não altera o contrato", `vwMetricasCiclo.integration.test.ts` |
+| Rollback | Migração roda em transação isolada por arquivo + advisory lock; idempotente (`IF NOT EXISTS`, backfill só onde NULL, `CREATE OR REPLACE`); abaixo do limiar de 1.000 linhas que exigiria script de reverse; reversão manual documentada no cabeçalho da própria migração | ✅ presente | `runMigrations.ts:130-152`; `0065_metricas_ciclo_data_pelo_encerramento.sql:29-33`; `migrations/rollbacks/README.md` |
+| Software Upgrade | `CREATE OR REPLACE FUNCTION` preserva o contrato de saída (mesmas 9 colunas + `parcial`+`apurado_ate`), evitando o erro do Postgres "cached plan must not change result type" para quem já chama a função | ✅ presente | teste "a 0065 não altera o contrato", `vwMetricasCiclo.integration.test.ts` |
 | Retry | Todo o recorte da feature existe para datar corretamente uma execução reexecutada (upsert por `idempotency_key`); testes cobrem retentativa de permuta e de SN explicitamente | ✅ presente | `PermutaExecucaoRepository.test.ts` ("markSettled/markParcial carimbam... só no 1º encerramento"), `vwMetricasCiclo.integration.test.ts` ("retentativa conta na semana em que liquidou") |
 | Ignore Faulty Behavior | Não tocado pelo delta | N/A | — |
 | Degradation | Delta não toca fila de exceção/itens bloqueados | N/A | — |
 | Reconfiguration | Não tocado pelo delta | N/A | — |
 | Shadow | Não tocado pelo delta | N/A | — |
-| State Resynchronization | Backfill da `0064` resincroniza `encerrado_em` para ~190 linhas terminais pré-existentes, alinhando histórico ao novo invariante | ✅ presente | `0064_metricas_ciclo_data_pelo_encerramento.sql:59-67`; teste "backfill da 0064" em `vwMetricasCiclo.integration.test.ts` |
+| State Resynchronization | Backfill da `0065` resincroniza `encerrado_em` para ~190 linhas terminais pré-existentes, alinhando histórico ao novo invariante | ✅ presente | `0065_metricas_ciclo_data_pelo_encerramento.sql:59-67`; teste "backfill da 0065" em `vwMetricasCiclo.integration.test.ts` |
 | Escalating Restart | `BootMigrator` (pré-existente, não alterado pelo delta) espera o lock com backoff fixo e falha após 30 tentativas — não escalona estratégia, mas não é alterado por este delta | N/A (fora do delta) | `BootMigrator.ts:119-150` |
 | Non-Stop Forwarding | Não tocado pelo delta | N/A | — |
 | Removal from Service | Não tocado pelo delta | N/A | — |
@@ -72,15 +72,15 @@ cards_count: 3
 
 - **Severidade**: P2
 - **Tactic violada**: Sanity Checking / Exception Prevention
-- **Localização**: `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts:454-458,509-513`; `src/backend/domain/repository/recebimentos/SolicitacaoNumerarioExecucaoRepository.ts:323-327`; `src/backend/migrations/0064_metricas_ciclo_data_pelo_encerramento.sql`
+- **Localização**: `src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts:454-458,509-513`; `src/backend/domain/repository/recebimentos/SolicitacaoNumerarioExecucaoRepository.ts:323-327`; `src/backend/migrations/0065_metricas_ciclo_data_pelo_encerramento.sql`
 - **Evidência (objetiva)**:
   ```
-  $ grep -c "TRIGGER\|CHECK (" src/backend/migrations/0064_metricas_ciclo_data_pelo_encerramento.sql
+  $ grep -c "TRIGGER\|CHECK (" src/backend/migrations/0065_metricas_ciclo_data_pelo_encerramento.sql
   0
   ```
   O invariante "uma vez `settled`/`parcial`, `encerrado_em` não anda mais" é garantido só pelo padrão `CASE WHEN status IN (...) THEN COALESCE(encerrado_em, now()) ELSE now() END`, repetido em 2 repositórios. Não há `CHECK` nem `TRIGGER` no esquema.
 - **Impacto técnico**: qualquer escrita futura a estas tabelas que não passe por `markSettled`/`markParcial` (um script de correção manual, uma migração de dados, um terceiro repositório) pode sobrescrever `encerrado_em` de uma linha já liquidada sem que nada no banco reclame.
-- **Impacto de negócio**: o número que vai para a diretoria (`permutas_valor_baixado`, `recebimentos_valor_alocado`) migraria de semana silenciosamente — o mesmo defeito que a ADR-0051 corrige, reintroduzido por um caminho de escrita que os testes atuais não cobrem porque não existe ainda.
+- **Impacto de negócio**: o número que vai para a diretoria (`permutas_valor_baixado`, `recebimentos_valor_alocado`) migraria de semana silenciosamente — o mesmo defeito que a ADR-0052 corrige, reintroduzido por um caminho de escrita que os testes atuais não cobrem porque não existe ainda.
 - **Métrica de baseline**: N/A (P2, dispensa baseline numérico pela regra de severidade).
 
 ### F-availability-2: Falha crônica em retentativa perde a semana original a cada novo erro
@@ -96,20 +96,20 @@ cards_count: 3
   ```
   Diferente de `markSettled`/`markParcial` (que travam `encerrado_em` no 1º encerramento via `COALESCE`), `markError` reescreve `encerrado_em` a CADA falha. Uma execução que falhou em 10/08, foi reexecutada e falhou de novo em 20/09 (ainda sem liquidar) conta como "tentativa" só na semana de 20/09 — a semana de 10/08, onde o problema de fato começou, fica muda sobre ela.
 - **Impacto técnico**: a série semanal não distingue "problema novo desta semana" de "problema antigo que só falhou de novo agora"; um item preso há meses em retry aparece e desaparece de semana em semana conforme o agendador tenta de novo.
-- **Impacto de negócio**: o indicador `permutas_baixas_concluidas_pct`/`recebimentos_alocacoes_concluidas_pct` pode mascarar quanto tempo uma falha está de fato aberta — o próprio problema que a Frente de métricas (ADR-0051) foi criada para não ter, agora do lado do `error` em vez do `settled`.
+- **Impacto de negócio**: o indicador `permutas_baixas_concluidas_pct`/`recebimentos_alocacoes_concluidas_pct` pode mascarar quanto tempo uma falha está de fato aberta — o próprio problema que a Frente de métricas (ADR-0052) foi criada para não ter, agora do lado do `error` em vez do `settled`.
 - **Métrica de baseline**: N/A (P2, comportamento é por design conforme o comentário do código — "um retry que liquide sobrescreve no markSettled" — mas o caso "nunca liquida" não tem tratamento nem teste).
 
 ### F-availability-3: Migração de métrica compartilha o boot fail-fast com migrações de escrita crítica
 
 - **Severidade**: P3
 - **Tactic violada**: Removal from Service (isolamento de blast radius entre mudança de baixo risco e caminho crítico)
-- **Localização**: `src/backend/migrations/0064_metricas_ciclo_data_pelo_encerramento.sql` executado por `src/backend/migrations/BootMigrator.ts:42-49` (pré-existente, não alterado pelo delta)
+- **Localização**: `src/backend/migrations/0065_metricas_ciclo_data_pelo_encerramento.sql` executado por `src/backend/migrations/BootMigrator.ts:42-49` (pré-existente, não alterado pelo delta)
 - **Evidência (objetiva)**:
   ```
   // BootMigrator.ts:42-43
   // Migração que falha derruba o boot. Servir contra um esquema desconhecido é pior que não servir
   ```
-  A `0064` faz `ALTER TABLE` + `UPDATE` de backfill sobre as mesmas tabelas que os jobs de Permutas/SN escrevem em produção. Se essa migração falhar por qualquer motivo (ex.: contenção de lock com uma execução concorrente), o `BootMigrator` aborta o boot inteiro — não só a feature de métricas, mas Permutas, SISPAG e Recebimentos ficam fora do ar até o próximo deploy.
+  A `0065` faz `ALTER TABLE` + `UPDATE` de backfill sobre as mesmas tabelas que os jobs de Permutas/SN escrevem em produção. Se essa migração falhar por qualquer motivo (ex.: contenção de lock com uma execução concorrente), o `BootMigrator` aborta o boot inteiro — não só a feature de métricas, mas Permutas, SISPAG e Recebimentos ficam fora do ar até o próximo deploy.
 - **Impacto técnico**: acoplamento de risco entre uma mudança de baixo valor de negócio (relatório de ciclo) e a disponibilidade do sistema de execução financeira inteiro.
 - **Impacto de negócio**: baixa probabilidade (backfill de ~190 linhas, testado, transacional) mas alto custo se ocorrer: indisponibilidade total do backend, não isolada à Frente que mudou.
 - **Métrica de baseline**: N/A (P3, dispensa baseline).
@@ -133,7 +133,7 @@ cards_count: 3
 - **Findings relacionados**: F-availability-1
 - **Métricas de sucesso**:
   - Barreiras de esquema sobre `encerrado_em`: 0 → ≥1
-- **Risco de não fazer**: um script de correção manual futuro (ou uma nova frente reaproveitando o padrão sem repetir o `CASE WHEN`) reintroduz silenciosamente o mesmo defeito que a ADR-0051 corrigiu, e ninguém percebe até o número publicado errar de novo.
+- **Risco de não fazer**: um script de correção manual futuro (ou uma nova frente reaproveitando o padrão sem repetir o `CASE WHEN`) reintroduz silenciosamente o mesmo defeito que a ADR-0052 corrigiu, e ninguém percebe até o número publicado errar de novo.
 - **Dependências**: nenhuma.
 
 ### [availability-2] Distinguir "falha nova" de "falha antiga que retentou" na métrica de ciclo
@@ -159,7 +159,7 @@ cards_count: 3
 ### [availability-3] Isolar migrações de baixo risco do boot fail-fast do caminho crítico
 
 - **Problema**
-  > O `BootMigrator` aborta o boot inteiro do backend se QUALQUER migração pendente falhar — incluindo a `0064`, que só ajusta uma coluna de relatório, mas roda `ALTER`/`UPDATE` sobre as mesmas tabelas de ledger que Permutas e Recebimentos escrevem em produção. Uma falha nessa migração de baixo valor de negócio derrubaria a disponibilidade de todo o sistema de execução financeira, não só do relatório.
+  > O `BootMigrator` aborta o boot inteiro do backend se QUALQUER migração pendente falhar — incluindo a `0065`, que só ajusta uma coluna de relatório, mas roda `ALTER`/`UPDATE` sobre as mesmas tabelas de ledger que Permutas e Recebimentos escrevem em produção. Uma falha nessa migração de baixo valor de negócio derrubaria a disponibilidade de todo o sistema de execução financeira, não só do relatório.
 
 - **Melhoria Proposta**
   > Tactic Bass alvo: Removal from Service (isolamento de blast radius). Não é urgente reescrever o `BootMigrator` agora — mas registrar a política explicitamente: migrações que só alimentam relatório/observabilidade (sem mudar contrato de escrita das Frentes) deveriam, quando praticável, ser aditivas e testadas para tolerar skip/retry sem exigir boot fail-fast, ou aplicadas fora do caminho de boot (job manual supervisionado, como já existe para os rollbacks).
@@ -179,5 +179,5 @@ cards_count: 3
 ## 6. Notas do agente
 
 - Escopo restrito ao delta (`git diff origin/main..HEAD`): a tabela de tactics marca N/A tudo que a feature não toca, em vez de reauditar o sistema inteiro (já coberto em ciclos anteriores).
-- F-availability-3 é sobre um componente pré-existente (`BootMigrator`) não alterado pelo delta; citado porque a `0064` é quem ativa esse caminho contra tabelas de ledger — não é uma regressão introduzida por este PR, é um trade-off de arquitetura exposto por ele.
+- F-availability-3 é sobre um componente pré-existente (`BootMigrator`) não alterado pelo delta; citado porque a `0065` é quem ativa esse caminho contra tabelas de ledger — não é uma regressão introduzida por este PR, é um trade-off de arquitetura exposto por ele.
 - Nenhum finding chegou a P0/P1: a migração é transacional, idempotente, testada (24/24 integração + 21/21 estático) e abaixo do limiar de linhas que exigiria script de reverse. Cross-QA: F-availability-1 e F-availability-2 têm sobreposição com Testability (ausência de teste para "terceiro escritor" e para "falha crônica") — vale o `qa-testability` conferir se já cobriu por outro ângulo.

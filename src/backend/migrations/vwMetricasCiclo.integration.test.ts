@@ -102,7 +102,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             .sort();
         expect(migrations).toContain('0058_vw_metricas_ciclo.sql');
         expect(migrations).toContain('0060_metricas_historico_inicio.sql');
-        expect(migrations).toContain('0064_metricas_ciclo_data_pelo_encerramento.sql');
+        expect(migrations).toContain('0065_metricas_ciclo_data_pelo_encerramento.sql');
         for (const arquivo of migrations) {
             await admin.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
         }
@@ -295,13 +295,13 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
     });
 
     it('reaplicar a migration é no-op', async () => {
-        // Numa transação desfeita: o backfill da 0064 carimbaria `encerrado_em = atualizado_em` (o
+        // Numa transação desfeita: o backfill da 0065 carimbaria `encerrado_em = atualizado_em` (o
         // instante do seed) nas linhas semeadas sem carimbo, e os casos seguintes perderiam a semana.
         await admin.query('BEGIN');
         try {
             for (const arquivo of [
                 '0058_vw_metricas_ciclo.sql',
-                '0064_metricas_ciclo_data_pelo_encerramento.sql',
+                '0065_metricas_ciclo_data_pelo_encerramento.sql',
             ]) {
                 const sql = readFileSync(path.join(__dirname, arquivo), 'utf8');
                 await expect(admin.query(sql)).resolves.toBeDefined();
@@ -340,7 +340,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         expect(rows[0].serie).toBe(SERIE);
     });
 
-    // --- Data pelo encerramento (ADR-0051) ---
+    // --- Data pelo encerramento (ADR-0052) ---
     //
     // Cada caso roda numa transação desfeita no fim: as linhas semeadas acima (todas com
     // `encerrado_em` NULL, logo datadas pelo `criado_em`) e as asserções delas não mudam.
@@ -422,8 +422,8 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         expect(doHistorico(ls, 'permutas_valor_baixado', JANELA_B.inicio)?.valor).toBe('70.00');
     });
 
-    it('backfill da 0064: permuta terminal ganha encerrado_em = atualizado_em; em voo e SN seguem NULL', async () => {
-        const linhas0064 = await emTransacao(async () => {
+    it('backfill da 0065: permuta terminal ganha encerrado_em = atualizado_em; em voo e SN seguem NULL', async () => {
+        const linhas0065 = await emTransacao(async () => {
             await admin.query(`
                 INSERT INTO permuta_alocacao_execucao
                     (idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status,
@@ -440,7 +440,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             `);
             await admin.query(
                 readFileSync(
-                    path.join(__dirname, '0064_metricas_ciclo_data_pelo_encerramento.sql'),
+                    path.join(__dirname, '0065_metricas_ciclo_data_pelo_encerramento.sql'),
                     'utf8',
                 ),
             );
@@ -458,16 +458,16 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             ).rows;
         });
 
-        expect(linhas0064).toEqual([
+        expect(linhas0065).toEqual([
             { k: 'b-em-voo', igual: null },
             { k: 'b-erro', igual: true },
             { k: 'b-settled', igual: true },
-            // SN sem backfill: o `atualizado_em` dela foi reescrito em lote em 17/08 (ADR-0051, D3).
+            // SN sem backfill: o `atualizado_em` dela foi reescrito em lote em 17/08 (ADR-0052, D3).
             { k: 'b-sn', igual: null },
         ]);
     });
 
-    it('a 0064 não altera o contrato: mesmas 11 colunas, e a view segue com as 9', async () => {
+    it('a 0065 não altera o contrato: mesmas 11 colunas, e a view segue com as 9', async () => {
         const { fields } = await admin.query(`${SELECT_LINHAS} LIMIT 0`, [SERIE, AGORA]);
         expect(fields.map((f) => f.name)).toEqual([
             'frente',

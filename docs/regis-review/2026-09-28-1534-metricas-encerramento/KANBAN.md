@@ -11,7 +11,7 @@ counts: { p0: 0, p1: 1, p2: 9, p3: 3 }
 > Esperado. Ordem: P0 (S → XL), depois P1, P2, P3, cada bloco ordenado por esforço (S < M < L < XL).
 >
 > Escopo desta revisão: DELTA da branch `worktree-metrica-ciclo-data-conclusao` vs. `origin/main`
-> (ADR-0051, migration `0064_metricas_ciclo_data_pelo_encerramento.sql`). Os 8 agentes de QA
+> (ADR-0052, migration `0065_metricas_ciclo_data_pelo_encerramento.sql`). Os 8 agentes de QA
 > produziram 16 cards ao todo; 2 pares foram consolidados por serem a mesma causa-raiz com a mesma
 > solução técnica (ver notas em cada card consolidado), e 1 card (`fault-tolerance-1`) foi removido
 > da lista ativa por decisão do orquestrador — ver seção "Resolvido nesta revisão" ao final.
@@ -30,13 +30,13 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-testability-1, F-fault-tolerance-2
 
 **Problema**
-> Os dois repositórios de ledger tocados pela delta (`PermutaExecucaoRepository`, `SolicitacaoNumerarioExecucaoRepository`) implementam a regra central da ADR-0051 — carimbar `encerrado_em` no primeiro encerramento e sobrescrevê-lo quando um retry de `error` liquida — mas os 5 testes novos só verificam que o texto do `UPDATE` contém o `CASE` esperado, via mock de `PostgreeDatabaseClient`. Nenhum teste, unitário ou de integração, executa essas queries contra um Postgres real; o único teste de integração que valida o comportamento (`vwMetricasCiclo.integration.test.ts`) insere `encerrado_em` diretamente via SQL, sem passar pelo repositório. Adicionalmente, a suíte que roda contra Postgres real aplica a migration do trigger `permuta_execucao_bloqueia_reabertura` (0057), mas nunca chama os métodos do repositório — a prova de que o `CASE WHEN status ...` lê o valor antigo da linha e não colide com o trigger existe apenas como verificação manual desta revisão.
+> Os dois repositórios de ledger tocados pela delta (`PermutaExecucaoRepository`, `SolicitacaoNumerarioExecucaoRepository`) implementam a regra central da ADR-0052 — carimbar `encerrado_em` no primeiro encerramento e sobrescrevê-lo quando um retry de `error` liquida — mas os 5 testes novos só verificam que o texto do `UPDATE` contém o `CASE` esperado, via mock de `PostgreeDatabaseClient`. Nenhum teste, unitário ou de integração, executa essas queries contra um Postgres real; o único teste de integração que valida o comportamento (`vwMetricasCiclo.integration.test.ts`) insere `encerrado_em` diretamente via SQL, sem passar pelo repositório. Adicionalmente, a suíte que roda contra Postgres real aplica a migration do trigger `permuta_execucao_bloqueia_reabertura` (0057), mas nunca chama os métodos do repositório — a prova de que o `CASE WHEN status ...` lê o valor antigo da linha e não colide com o trigger existe apenas como verificação manual desta revisão.
 
 **Melhoria Proposta**
 > Adicionar, dentro de `vwMetricasCiclo.integration.test.ts` (reaproveitando `describeComBanco` + `emTransacao`, assim o teste continua coberto pelo job `backend-sql`/`test:sql` sem mexer no glob), casos que instanciam `PermutaExecucaoRepository` e `SolicitacaoNumerarioExecucaoRepository` com um `PostgreeDatabaseClient` real e chamam: (a) `markSettled` duas vezes na mesma chave — preserva o `encerrado_em` do primeiro settle; (b) `beginExecution → markError → markSettled` — o `encerrado_em` nasce NULL, vira T1 no `markError`, vira T2 (≠ T1) no `markSettled` seguinte; (c) tentativa de reabrir/`markError` sobre uma linha com baixa já confirmada pelo trigger 0057 — deve ser recusada. Tactic alvo: Executable Assertions (tornar a garantia comportamental) e Sandbox (reusar a transação isolada já existente).
 
 **Resultado Esperado**
-> Testes de integração (Postgres real) exercitando `markSettled`/`markParcial`/`markError` dos dois repositórios: 0 → ≥3. Os 5 testes de regex existentes continuam como guarda estática rápida, agora suplementados por prova de execução real do ramo `error → settled` que é o motivo de existir da ADR-0051, e pela interação com o trigger 0057.
+> Testes de integração (Postgres real) exercitando `markSettled`/`markParcial`/`markError` dos dois repositórios: 0 → ≥3. Os 5 testes de regex existentes continuam como guarda estática rápida, agora suplementados por prova de execução real do ramo `error → settled` que é o motivo de existir da ADR-0052, e pela interação com o trigger 0057.
 
 **Métricas de sucesso**
 - Testes de integração (DB real) invocando `markSettled`/`markParcial`/`markError`: 0 → ≥3
@@ -70,7 +70,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 - Barreiras de esquema sobre encerrado_em: 0 → ≥1
 
 **Risco de não fazer**
-> Um script de correção manual futuro (ou uma nova frente reaproveitando o padrão sem repetir o CASE WHEN) reintroduz silenciosamente o mesmo defeito que a ADR-0051 corrigiu, e ninguém percebe até o número publicado errar de novo.
+> Um script de correção manual futuro (ou uma nova frente reaproveitando o padrão sem repetir o CASE WHEN) reintroduz silenciosamente o mesmo defeito que a ADR-0052 corrigiu, e ninguém percebe até o número publicado errar de novo.
 
 **Dependências**: nenhuma.
 
@@ -84,7 +84,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-deployability-1
 
 **Problema**
-> A migration 0064 recalcula um número já publicado à Columbia (R$ 503.066,69 conhecidos em 2 linhas), mas a única conferência prevista é uma query manual colada em ontology/_inbox/. Não há gate de CI nem cron que confirme, contra o banco real, que o recálculo saiu como o ADR-0051 previu.
+> A migration 0065 recalcula um número já publicado à Columbia (R$ 503.066,69 conhecidos em 2 linhas), mas a única conferência prevista é uma query manual colada em ontology/_inbox/. Não há gate de CI nem cron que confirme, contra o banco real, que o recálculo saiu como o ADR-0052 previu.
 
 **Melhoria Proposta**
 > Adicionar um passo (script npm run verify:metricas-ciclo ou job leve) que roda a consulta de ontology/_inbox/metricas-ciclo-data-encerramento-validacao.md contra produção logo após o boot aplicar uma migração em metricas.*, e publica o resultado (log estruturado ou anexo ao report do ciclo) em vez de depender de alguém copiar/colar à mão.
@@ -97,7 +97,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 - Tempo entre deploy e confirmação do número recalculado: indeterminado (manual) → < 1 execução de boot
 
 **Risco de não fazer**
-> Um próximo recálculo de série publicada (padrão já repetido entre 0058/0060 e 0064) some novamente na dependência de alguém lembrar de rodar a query manual antes do report do ciclo.
+> Um próximo recálculo de série publicada (padrão já repetido entre 0058/0060 e 0065) some novamente na dependência de alguém lembrar de rodar a query manual antes do report do ciclo.
 
 **Dependências**: nenhuma.
 
@@ -111,10 +111,10 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-modifiability-1, F-integrability-1
 
 **Problema**
-> O carimbo de encerrado_em decide quais status "congelam" a data usando 3 literais SQL independentes (PermutaExecucaoRepository.ts x2, SolicitacaoNumerarioExecucaoRepository.ts x1), nenhum derivado do union ExecucaoStatus/RecebimentoExecucaoStatus que já existe no mesmo arquivo — 5 sites de escrita ao todo (contando markError), 0 abstração compartilhada. Um novo status terminal futuro não quebra typecheck nem lint — só reabre silenciosamente o bug de R$ 503 mil que a ADR-0051 corrige agora. Cada integração de escrita futura no roadmap (Conexos fin010 write-side, Nexxera) que precisar contar para as mesmas métricas terá que replicar a expressão à mão, com o mesmo risco de drift.
+> O carimbo de encerrado_em decide quais status "congelam" a data usando 3 literais SQL independentes (PermutaExecucaoRepository.ts x2, SolicitacaoNumerarioExecucaoRepository.ts x1), nenhum derivado do union ExecucaoStatus/RecebimentoExecucaoStatus que já existe no mesmo arquivo — 5 sites de escrita ao todo (contando markError), 0 abstração compartilhada. Um novo status terminal futuro não quebra typecheck nem lint — só reabre silenciosamente o bug de R$ 503 mil que a ADR-0052 corrige agora. Cada integração de escrita futura no roadmap (Conexos fin010 write-side, Nexxera) que precisar contar para as mesmas métricas terá que replicar a expressão à mão, com o mesmo risco de drift.
 
 **Melhoria Proposta**
-> Extrair uma constante exportada por ledger (ex.: PERMUTA_ENCERRAMENTO_STATUSES: readonly ExecucaoStatus[] = ['settled', 'parcial'] ao lado do export type ExecucaoStatus em PermutaExecucaoRepository.ts, e equivalente em SolicitacaoNumerarioExecucaoRepository.ts), usada para montar o IN (...) nos métodos de escrita. Adicionar um teste que percorre ExecucaoStatus/RecebimentoExecucaoStatus garantindo que todo novo status seja classificado explicitamente (terminal ou não) antes de compilar, e 1 teste cruzando os dois repositórios provando que a doutrina do ADR-0051 é a mesma nos dois ledgers.
+> Extrair uma constante exportada por ledger (ex.: PERMUTA_ENCERRAMENTO_STATUSES: readonly ExecucaoStatus[] = ['settled', 'parcial'] ao lado do export type ExecucaoStatus em PermutaExecucaoRepository.ts, e equivalente em SolicitacaoNumerarioExecucaoRepository.ts), usada para montar o IN (...) nos métodos de escrita. Adicionar um teste que percorre ExecucaoStatus/RecebimentoExecucaoStatus garantindo que todo novo status seja classificado explicitamente (terminal ou não) antes de compilar, e 1 teste cruzando os dois repositórios provando que a doutrina do ADR-0052 é a mesma nos dois ledgers.
 
 **Resultado Esperado**
 > 5 sites de escrita com a expressão duplicada → 1 fonte compartilhada por ledger (2 no total), com teste de exaustividade e teste cross-repo. Métrica: sites com status terminal "solto" em string SQL sem referência ao tipo: 5 → 0; testes de consistência cross-repo (Permuta x SN): 0 → ≥1.
@@ -163,7 +163,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-fault-tolerance-3
 
 **Problema**
-> O backfill da 0064 (encerrado_em = atualizado_em) é uma aproximação declarada, com o mesmo viés conhecido do bug original para linhas terminais re-clicadas antes da migration. O tamanho desse viés residual pós-fix não foi medido (leitura de produção negada nesta sessão).
+> O backfill da 0065 (encerrado_em = atualizado_em) é uma aproximação declarada, com o mesmo viés conhecido do bug original para linhas terminais re-clicadas antes da migration. O tamanho desse viés residual pós-fix não foi medido (leitura de produção negada nesta sessão).
 
 **Melhoria Proposta**
 > Executar a consulta já preparada em ontology/_inbox/metricas-ciclo-data-encerramento-validacao.md contra produção, comparando encerrado_em pós-backfill com o instante real de liquidação reconstruído a partir de erp_response/histórico de auditoria disponível, e anexar o resultado ao report do ciclo em que este delta entra.
@@ -189,10 +189,10 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-security-1
 
 **Problema**
-> A migração 0064 backfilled ~190 linhas usando atualizado_em como proxy de encerrado_em, e a própria migração documenta que essa aproximação pode estar errada para linhas re-clicadas pós-liquidação. Hoje não há como, olhando a linha, saber se o encerrado_em é exato (gravado por markSettled/markParcial/markError depois da 0064) ou aproximado (backfill).
+> A migração 0065 backfilled ~190 linhas usando atualizado_em como proxy de encerrado_em, e a própria migração documenta que essa aproximação pode estar errada para linhas re-clicadas pós-liquidação. Hoje não há como, olhando a linha, saber se o encerrado_em é exato (gravado por markSettled/markParcial/markError depois da 0065) ou aproximado (backfill).
 
 **Melhoria Proposta**
-> Adicionar uma coluna booleana leve (encerrado_em_aproximado ou similar) gravada true só pelo backfill da 0064 e nunca pelas escritas normais dos repositórios, permitindo que o report do ciclo e qualquer auditoria futura filtrem/anotem os pontos de baixa confiança sem precisar reconstruir a lógica da migração. Arquivos: nova migration 006X, PermutaExecucaoRepository.ts, SolicitacaoNumerarioExecucaoRepository.ts.
+> Adicionar uma coluna booleana leve (encerrado_em_aproximado ou similar) gravada true só pelo backfill da 0065 e nunca pelas escritas normais dos repositórios, permitindo que o report do ciclo e qualquer auditoria futura filtrem/anotem os pontos de baixa confiança sem precisar reconstruir a lógica da migração. Arquivos: nova migration 006X, PermutaExecucaoRepository.ts, SolicitacaoNumerarioExecucaoRepository.ts.
 
 **Resultado Esperado**
 > A trilha de auditoria distingue explicitamente "encerramento medido" de "encerramento reconstruído por aproximação" — 0 linhas ambíguas hoje → 100% das linhas com proveniência marcada.
@@ -222,7 +222,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 > Atualizar o card performance-1 existente (em ontology/_inbox/metricas-historico-6-semanas-regis-followups.md) com a assinatura exata do índice necessário: CREATE INDEX ... ON permuta_alocacao_execucao ((COALESCE(encerrado_em, criado_em) AT TIME ZONE 'America/Sao_Paulo')) WHERE dry_run = false; e equivalente em solicitacao_numerario_execucao. Não implementar agora (ledger ainda pequeno, sem urgência) — só documentar.
 
 **Resultado Esperado**
-> Quando performance-1 for endereçado: tempo de implementação do índice reduzido (decisão de design já registrada), sem precisar re-derivar a expressão a partir do SQL da 0064.
+> Quando performance-1 for endereçado: tempo de implementação do índice reduzido (decisão de design já registrada), sem precisar re-derivar a expressão a partir do SQL da 0065.
 
 **Métricas de sucesso**
 - Anotação do índice de expressão presente no follow-up performance-1: ausente → presente
@@ -240,7 +240,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-availability-2
 
 **Problema**
-> markError carimba encerrado_em = now() a cada falha, sem limite. Uma execução presa em retry por semanas aparece só na semana do último erro, nunca nas semanas anteriores em que já estava falhando — a série perde a idade real do problema. Nota: este comportamento é intencional por decisão da ADR-0051 (D1); este card não o contraria, apenas adiciona a observabilidade que falta em cima da decisão já tomada.
+> markError carimba encerrado_em = now() a cada falha, sem limite. Uma execução presa em retry por semanas aparece só na semana do último erro, nunca nas semanas anteriores em que já estava falhando — a série perde a idade real do problema. Nota: este comportamento é intencional por decisão da ADR-0052 (D1); este card não o contraria, apenas adiciona a observabilidade que falta em cima da decisão já tomada.
 
 **Melhoria Proposta**
 > Preservar também o instante da PRIMEIRA falha (ex.: nova coluna primeiro_erro_em, carimbada só quando NULL) e expor no relatório de ciclo (ou num painel operacional separado) quantas execuções em error têm primeiro_erro_em mais antigo que N semanas — sinal de item cronicamente preso, hoje invisível na métrica agregada.
@@ -266,10 +266,10 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-modifiability-2
 
 **Problema**
-> A função metricas.metricas_ciclo (144 linhas) já foi redefinida por inteiro uma vez em 14 dias (0058 → 0064) para mudar ~5 linhas (~3,5% do corpo). Sem decomposição, toda futura mudança de regra de data/janela exige reescrever e revisar o corpo inteiro de novo, com risco de copy-paste divergente entre os ramos Permutas/Recebimentos.
+> A função metricas.metricas_ciclo (144 linhas) já foi redefinida por inteiro uma vez em 14 dias (0058 → 0065) para mudar ~5 linhas (~3,5% do corpo). Sem decomposição, toda futura mudança de regra de data/janela exige reescrever e revisar o corpo inteiro de novo, com risco de copy-paste divergente entre os ramos Permutas/Recebimentos.
 
 **Melhoria Proposta**
-> Extrair a resolução de data por execução (COALESCE(encerrado_em, criado_em) AT TIME ZONE 'America/Sao_Paulo') e a filtragem por janela em funções/CTEs menores e nomeadas por frente (ex.: metricas.execucoes_permutas_datadas(), metricas.execucoes_recebimentos_datadas()), de forma que metricas_ciclo apenas componha essas partes. Tocar: nova migration em cima da 0064, vwMetricasCiclo.test.ts (guards) e vwMetricasCiclo.integration.test.ts.
+> Extrair a resolução de data por execução (COALESCE(encerrado_em, criado_em) AT TIME ZONE 'America/Sao_Paulo') e a filtragem por janela em funções/CTEs menores e nomeadas por frente (ex.: metricas.execucoes_permutas_datadas(), metricas.execucoes_recebimentos_datadas()), de forma que metricas_ciclo apenas componha essas partes. Tocar: nova migration em cima da 0065, vwMetricasCiclo.test.ts (guards) e vwMetricasCiclo.integration.test.ts.
 
 **Resultado Esperado**
 > Próxima mudança de regra de data/janela toca uma função de ~10-20 linhas por frente, não a função de 144 linhas inteira.
@@ -293,10 +293,10 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-deployability-2
 
 **Problema**
-> docs/runbooks/rollback.md classifica migrações em "aditiva" (segura) ou "destrutiva, inclui backfill que sobrescreve" (não reverta sozinho), mas a 0064 — como a 0058/0060 antes dela — é as duas coisas: coluna nova + UPDATE que preenche linhas existentes. Sob a meta de "reverter em ≤5min sem consultar ninguém", a tabela não deixa claro que "backfill numa coluna recém-criada" pertence à linha segura.
+> docs/runbooks/rollback.md classifica migrações em "aditiva" (segura) ou "destrutiva, inclui backfill que sobrescreve" (não reverta sozinho), mas a 0065 — como a 0058/0060 antes dela — é as duas coisas: coluna nova + UPDATE que preenche linhas existentes. Sob a meta de "reverter em ≤5min sem consultar ninguém", a tabela não deixa claro que "backfill numa coluna recém-criada" pertence à linha segura.
 
 **Melhoria Proposta**
-> Acrescentar uma linha (ou nota) explícita: "coluna nova + backfill que só preenche a própria coluna nova, nunca sobrescreve dado existente em outra coluna → segura, mesma linha de 'aditiva'". Referenciar a 0064 como exemplo real.
+> Acrescentar uma linha (ou nota) explícita: "coluna nova + backfill que só preenche a própria coluna nova, nunca sobrescreve dado existente em outra coluna → segura, mesma linha de 'aditiva'". Referenciar a 0065 como exemplo real.
 
 **Resultado Esperado**
 > Um operador sob pressão decide em ≤5min sem precisar interpretar qual das duas linhas da tabela se aplica a uma migração no padrão coluna-nova-mais-backfill.
@@ -305,7 +305,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 - Ambiguidade da tabela de decisão para o padrão "coluna nova + backfill": presente → resolvida
 
 **Risco de não fazer**
-> MTTR maior num incidente futuro que reaproveite o mesmo padrão de migração (já seria o 3º caso: 0058/0060, 0064, e o próximo).
+> MTTR maior num incidente futuro que reaproveite o mesmo padrão de migração (já seria o 3º caso: 0058/0060, 0065, e o próximo).
 
 **Dependências**: nenhuma.
 
@@ -346,7 +346,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 **Findings**: F-availability-3
 
 **Problema**
-> O BootMigrator aborta o boot inteiro do backend se qualquer migração pendente falhar — incluindo a 0064, que só ajusta uma coluna de relatório, mas roda ALTER/UPDATE sobre as mesmas tabelas de ledger que Permutas e Recebimentos escrevem em produção. Uma falha nessa migração de baixo valor de negócio derrubaria a disponibilidade de todo o sistema de execução financeira, não só do relatório.
+> O BootMigrator aborta o boot inteiro do backend se qualquer migração pendente falhar — incluindo a 0065, que só ajusta uma coluna de relatório, mas roda ALTER/UPDATE sobre as mesmas tabelas de ledger que Permutas e Recebimentos escrevem em produção. Uma falha nessa migração de baixo valor de negócio derrubaria a disponibilidade de todo o sistema de execução financeira, não só do relatório.
 
 **Melhoria Proposta**
 > Não é urgente reescrever o BootMigrator agora — mas registrar a política explicitamente: migrações que só alimentam relatório/observabilidade (sem mudar contrato de escrita das Frentes) deveriam, quando praticável, ser aditivas e testadas para tolerar skip/retry sem exigir boot fail-fast, ou aplicadas fora do caminho de boot (job manual supervisionado, como já existe para os rollbacks).
@@ -375,7 +375,7 @@ Nenhum finding atingiu severidade P0 nesta revisão.
 > beginExecution reabre uma linha error para retry sem limpar encerrado_em, deixando uma execução genuinamente "em voo" (reconciling/pending) com um carimbo de encerramento stale de uma falha anterior. Reproduzido em Postgres 17 local: uma linha error reaberta fica status='reconciling' com encerrado_em não-nulo herdado da falha anterior.
 
 **Resolução (nota do orquestrador)**
-> Este comportamento foi avaliado e é intencional — já documentado no cabeçalho da migration 0064 e na Decisão D1 da ADR-0051 ("um retry preso conta na semana da sua última falha"). O card originalmente proposto pelo agente (adicionar `encerrado_em = CASE WHEN status IN (...) THEN encerrado_em ELSE NULL END` ao SET do beginExecution) foi descartado por contradizer essa decisão já tomada — implementá-lo mudaria o comportamento que a ADR-0051 optou por manter. O orquestrador validou adicionalmente, de forma manual contra Postgres 17 local, a sequência markError → markSettled → markSettled (T1 grava o carimbo do erro; o markSettled seguinte sobrescreve para T2; um segundo markSettled preserva T2) e confirmou que o trigger permuta_execucao_bloqueia_reabertura (0057) recusa corretamente uma tentativa de markError sobre uma baixa já confirmada. Nenhum P0/P1 foi encontrado nessa interação.
+> Este comportamento foi avaliado e é intencional — já documentado no cabeçalho da migration 0065 e na Decisão D1 da ADR-0052 ("um retry preso conta na semana da sua última falha"). O card originalmente proposto pelo agente (adicionar `encerrado_em = CASE WHEN status IN (...) THEN encerrado_em ELSE NULL END` ao SET do beginExecution) foi descartado por contradizer essa decisão já tomada — implementá-lo mudaria o comportamento que a ADR-0052 optou por manter. O orquestrador validou adicionalmente, de forma manual contra Postgres 17 local, a sequência markError → markSettled → markSettled (T1 grava o carimbo do erro; o markSettled seguinte sobrescreve para T2; um segundo markSettled preserva T2) e confirmou que o trigger permuta_execucao_bloqueia_reabertura (0057) recusa corretamente uma tentativa de markError sobre uma baixa já confirmada. Nenhum P0/P1 foi encontrado nessa interação.
 
 **Por que não vira card ativo**
 > O efeito é transitório e auto-corretivo (a próxima escrita terminal — settle ou novo erro — sobrescreve o carimbo), não duplica nenhuma escrita no ERP, e a decisão de design já foi tomada e documentada publicamente para a Columbia via ADR. Agir aqui seria reverter uma decisão arquitetural sem novo input que a justifique.

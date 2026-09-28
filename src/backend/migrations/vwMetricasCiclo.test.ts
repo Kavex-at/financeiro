@@ -195,15 +195,15 @@ describe('0060_metricas_historico_inicio — guardas estáticas', () => {
 });
 
 /**
- * Guardas estáticas da `0064_metricas_ciclo_data_pelo_encerramento.sql` (ADR-0051) — a execução conta
+ * Guardas estáticas da `0065_metricas_ciclo_data_pelo_encerramento.sql` (ADR-0052) — a execução conta
  * na semana em que TERMINOU. O comportamento (retentativa, re-clique, backfill) é provado no teste de
  * integração; aqui fica o que protege o contrato e a grade.
  */
-const MIGRATION_0064 = readFileSync(
-    path.join(__dirname, '0064_metricas_ciclo_data_pelo_encerramento.sql'),
+const MIGRATION_0065 = readFileSync(
+    path.join(__dirname, '0065_metricas_ciclo_data_pelo_encerramento.sql'),
     'utf8',
 );
-const SQL_0064 = MIGRATION_0064.replace(/--.*$/gm, '');
+const SQL_0065 = MIGRATION_0065.replace(/--.*$/gm, '');
 
 const colunasDoRetorno = (sql: string): string[] =>
     (/RETURNS TABLE \(([\s\S]*?)\)\s*LANGUAGE/.exec(sql)?.[1] ?? '')
@@ -211,36 +211,36 @@ const colunasDoRetorno = (sql: string): string[] =>
         .map((c) => c.trim().split(/\s+/)[0])
         .filter((c) => c !== '');
 
-describe('0064_metricas_ciclo_data_pelo_encerramento — guardas estáticas', () => {
+describe('0065_metricas_ciclo_data_pelo_encerramento — guardas estáticas', () => {
     it('devolve exatamente as mesmas colunas da 0058 (contrato intocado)', () => {
-        expect(colunasDoRetorno(SQL_0064)).toEqual(colunasDoRetorno(SQL));
+        expect(colunasDoRetorno(SQL_0065)).toEqual(colunasDoRetorno(SQL));
     });
 
     it('as duas frentes escolhem a janela por COALESCE(encerrado_em, criado_em)', () => {
-        expect(SQL_0064).toMatch(
+        expect(SQL_0065).toMatch(
             /COALESCE\(x\.encerrado_em, x\.criado_em\) AT TIME ZONE 'America\/Sao_Paulo'/,
         );
         expect(
-            SQL_0064.match(
+            SQL_0065.match(
                 /COALESCE\(s\.encerrado_em, s\.criado_em\) AT TIME ZONE 'America\/Sao_Paulo'/g,
             ),
         ).toHaveLength(2);
         // Nenhuma janela escolhida só pelo nascimento da linha.
-        expect(SQL_0064).not.toMatch(/[xs]\.criado_em AT TIME ZONE/);
+        expect(SQL_0065).not.toMatch(/[xs]\.criado_em AT TIME ZONE/);
         // Nem por `atualizado_em`, que anda com re-cliques depois do encerramento.
-        expect(SQL_0064).not.toMatch(/atualizado_em AT TIME ZONE/);
+        expect(SQL_0065).not.toMatch(/atualizado_em AT TIME ZONE/);
     });
 
     it('não mexe na grade: pisos e view ficam como a 0058/0060 deixaram', () => {
-        expect(SQL_0064).not.toMatch(/FUNCTION metricas\.(serie_inicio|historico_inicio)\(\)/);
-        expect(SQL_0064).not.toMatch(/VIEW metricas\.vw_metricas_ciclo/);
-        expect(SQL_0064).toMatch(/INTERVAL '7 days'/);
+        expect(SQL_0065).not.toMatch(/FUNCTION metricas\.(serie_inicio|historico_inicio)\(\)/);
+        expect(SQL_0065).not.toMatch(/VIEW metricas\.vw_metricas_ciclo/);
+        expect(SQL_0065).toMatch(/INTERVAL '7 days'/);
     });
 
     it('a única escrita é o backfill de Permutas onde ainda é NULL, em linha terminal', () => {
-        expect(SQL_0064).not.toMatch(/\b(INSERT\s+INTO|DELETE\s+FROM|TRUNCATE|DROP )\b/i);
-        const updates = [...SQL_0064.matchAll(/UPDATE\s+([a-z_.]+)\s+SET\s+([\s\S]*?);/gi)];
-        // Só Permutas: o `atualizado_em` da SN foi reescrito em lote em 17/08 (ADR-0051, D3).
+        expect(SQL_0065).not.toMatch(/\b(INSERT\s+INTO|DELETE\s+FROM|TRUNCATE|DROP )\b/i);
+        const updates = [...SQL_0065.matchAll(/UPDATE\s+([a-z_.]+)\s+SET\s+([\s\S]*?);/gi)];
+        // Só Permutas: o `atualizado_em` da SN foi reescrito em lote em 17/08 (ADR-0052, D3).
         expect(updates.map((u) => u[1])).toEqual(['public.permuta_alocacao_execucao']);
         for (const u of updates) {
             expect(u[2]).toMatch(/^encerrado_em = atualizado_em\s+WHERE encerrado_em IS NULL/);
@@ -249,12 +249,12 @@ describe('0064_metricas_ciclo_data_pelo_encerramento — guardas estáticas', ()
     });
 
     it('mantém borderô FINALIZADO, a trilha da SN e o acesso só da aplicação', () => {
-        expect(SQL_0064).toMatch(/b\.bor_vld_finalizado = 1\s+AND b\.bor_cod_estornado IS NULL/);
-        expect(SQL_0064).not.toMatch(
+        expect(SQL_0065).toMatch(/b\.bor_vld_finalizado = 1\s+AND b\.bor_cod_estornado IS NULL/);
+        expect(SQL_0065).not.toMatch(
             /public\.(recebimento|recebimento_execucao|rateio_recebimento)\b/,
         );
-        expect(SQL_0064).not.toMatch(/CREATE ROLE|ALTER ROLE|GRANT |SECURITY DEFINER|PASSWORD/i);
-        expect(SQL_0064).toMatch(
+        expect(SQL_0065).not.toMatch(/CREATE ROLE|ALTER ROLE|GRANT |SECURITY DEFINER|PASSWORD/i);
+        expect(SQL_0065).toMatch(
             /REVOKE ALL ON FUNCTION metricas\.metricas_ciclo\(timestamp, timestamp\) FROM PUBLIC;/,
         );
     });
