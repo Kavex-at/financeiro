@@ -3,10 +3,14 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
-import AlocacaoEmBorderoError from '../domain/errors/AlocacaoEmBorderoError.js';
-import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
+import BorderoAmbiguousError from '../domain/errors/BorderoAmbiguousError.js';
+import BorderoNotOwnedError from '../domain/errors/BorderoNotOwnedError.js';
+import BorderoStateConflictError from '../domain/errors/BorderoStateConflictError.js';
+import ConexosWriteDisabledError from '../domain/errors/ConexosWriteDisabledError.js';
 import ExcecaoPermutaRecusadaError from '../domain/errors/ExcecaoPermutaRecusadaError.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
+import PermutaNotFoundError from '../domain/errors/PermutaNotFoundError.js';
+import { type HandlerError, isHandlerError } from '../domain/libs/handler/HandlerError.js';
 import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento.js';
 import { LOG_TYPE } from '../domain/interface/log/LogInterface.js';
 import LogService from '../domain/service/LogService.js';
@@ -71,8 +75,26 @@ interface AcaoBorderoCtx {
 }
 
 /**
- * Mapeia erro de ação de borderô para a resposta HTTP. `FORBIDDEN:` (autorização — borderô não é da
- * trilha deste sistema) → 403; demais (recusa do ERP, validação) → 400 com mensagem traduzida.
+ * Recusas do PRÓPRIO serviço de borderô (autorização, estado, escrita desligada, filial ambígua, baixa
+ * fora da trilha): já trazem status e texto curados. Lista explícita, não `isHandlerError`: o
+ * `ConexosError` também é `HandlerError`, e a recusa do ERP tem de seguir pelo interpretador (400 +
+ * razão real + `erpDetail`), como sempre seguiu.
+ */
+const RECUSAS_DO_SERVICO_DE_BORDERO = [
+    BorderoNotOwnedError,
+    BorderoAmbiguousError,
+    BorderoStateConflictError,
+    ConexosWriteDisabledError,
+    PermutaNotFoundError,
+] as const;
+
+const isRecusaDoServicoDeBordero = (err: unknown): err is HandlerError & Error =>
+    RECUSAS_DO_SERVICO_DE_BORDERO.some((Tipo) => err instanceof Tipo);
+
+/**
+ * Mapeia erro de ação de borderô para a resposta HTTP. Recusa tipada do serviço → o status dela
+ * (403/400/404/409/503); `FORBIDDEN:` por texto → 403 (legado); demais (recusa do ERP) → 400 com
+ * mensagem traduzida.
  * SEMPRE devolve `requestId` (correlação com o log) e LOGA a resposta CRUA do ERP (status + messages)
  * via `LogService.error` — antes a causa real do ERP era descartada (cegueira de diagnóstico).
  */
@@ -81,6 +103,16 @@ const respondActionError = async (
     err: unknown,
     ctx: AcaoBorderoCtx,
 ): Promise<void> => {
+    if (isRecusaDoServicoDeBordero(err)) {
+        res.status(err.statusCode).json({
+            error: err.userMessage,
+            code: err.code,
+            retryable: err.retryable,
+            ...(err.details !== undefined ? { details: err.details } : {}),
+            requestId: ctx.requestId,
+        });
+        return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.startsWith('FORBIDDEN:')) {
         res.status(403).json({
@@ -388,7 +420,10 @@ router.post(
                 invoiceDocCod: parsed.data.invoiceDocCod,
             });
         } catch (error) {
-            if (error instanceof AlocacaoSaldoError) {
+            // Qualquer recusa tipada (saldo, par inválido, registro ausente/incompleto) sai com o
+            // status dela. Mesmo formato que esta rota sempre usou — `{ error: code, message }` —
+            // porque é dele que o front lê o texto (`message`) do 422.
+            if (isHandlerError(error)) {
                 res.status(error.statusCode).json({
                     error: error.code,
                     message: error.userMessage,
@@ -415,8 +450,9 @@ router.delete(
                 invoiceDocCod: String(req.params.invoiceDocCod),
             });
         } catch (error) {
-            // Trava de integridade: alocação já usada num borderô → 409, NÃO remove.
-            if (error instanceof AlocacaoEmBorderoError) {
+            // Trava de integridade: alocação já usada num borderô → 409, NÃO remove. Qualquer outra
+            // recusa tipada sai com o status dela, no mesmo formato (o front lê `message`).
+            if (isHandlerError(error)) {
                 res.status(error.statusCode).json({
                     error: error.code,
                     message: error.userMessage,
@@ -640,15 +676,24 @@ router.post(
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
         const service = container.resolve(GerarSolicitacaoNumerarioService);
         const hoje = todayUtcMidnightMs();
-        const result = await service.gerarNumerario({
-            adiantamentoDocCod: docCod,
-            executadoPor,
-            valor: parsed.data.valor,
-            dataEmissao: hoje,
-            numeroDocumento: ddmmyyyy(hoje),
-            ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
-        });
-        res.json(result);
+        try {
+            const result = await service.gerarNumerario({
+                adiantamentoDocCod: docCod,
+                executadoPor,
+                valor: parsed.data.valor,
+                dataEmissao: hoje,
+                numeroDocumento: ddmmyyyy(hoje),
+                ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
+            });
+            res.json(result);
+        } catch (err) {
+            // Pré-condições tipadas (adiantamento ausente/incompleto, valor inválido) e a leitura
+            // prévia do Conexos (`ConexosError`, 502/504) saem com o status delas em vez do 500
+            // genérico. Falha nas telas de escrita não chega aqui: o serviço a registra na trilha
+            // e devolve `status: 'error'` no corpo.
+            if (respondHandlerError(req, res, err)) return;
+            throw err;
+        }
     }),
 );
 

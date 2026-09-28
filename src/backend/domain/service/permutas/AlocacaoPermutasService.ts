@@ -12,6 +12,9 @@ import PermutaRelationalRepository from '../../repository/permutas/PermutaRelati
 import LogService from '../LogService.js';
 import SaldoAlocacaoAdiantamentoService from './SaldoAlocacaoAdiantamentoService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
+import InvalidAllocationError from '../../errors/InvalidAllocationError.js';
+import PermutaDataIncompleteError from '../../errors/PermutaDataIncompleteError.js';
+import PermutaNotFoundError from '../../errors/PermutaNotFoundError.js';
 
 /** Teto de invoices buscadas em paralelo no Conexos (3 chamadas/invoice). Cap = bound de I/O (performance-1). */
 const INVOICES_CONCURRENCY = 8;
@@ -201,31 +204,34 @@ export default class AlocacaoPermutasService {
         }
 
         const adto = await this.relationalRepository.findAdiantamento(adiantamentoDocCod);
-        if (!adto) throw new Error(`adiantamento ${adiantamentoDocCod} not found`);
+        if (!adto) throw new PermutaNotFoundError({ recurso: 'adiantamento', adiantamentoDocCod });
 
         // Múltiplas/cross-over (casamento-manual) só permutam no MESMO processo do
         // adiantamento; só cross-process (permuta-manual = cliente-filtro) casa com
         // invoice de OUTRO processo. Rede de segurança contra alocação cross-process indevida.
         if (adto.estadoElegibilidade === 'casamento-manual' && invoicePriCod !== adto.priCod) {
-            throw new Error(
-                `same-process allocation required: invoice process ${invoicePriCod} != adiantamento process ${adto.priCod}`,
-            );
+            throw new InvalidAllocationError({
+                motivo: 'processo-diferente',
+                invoicePriCod,
+                adiantamentoPriCod: adto.priCod,
+            });
         }
 
         // Invoice ao vivo — fonte confiável de saldo/taxa/D.I. Escopada à filial do
         // adiantamento (priCod não é único entre filiais).
         if (adto.filCod === undefined) {
-            throw new Error(`adiantamento ${adiantamentoDocCod} without filial`);
+            throw new PermutaDataIncompleteError({ campo: 'filial', adiantamentoDocCod });
         }
         // Reusa a lista pré-buscada quando o caller já a tem (auto-alocação em lote, mesmo processo) —
         // snapshot consistente E sem re-fetch O(N²). Senão busca ao vivo.
         const invoices =
             prefetchedInvoices ?? (await this.buscarInvoices(invoicePriCod, adto.filCod));
         const invoice = invoices.find((i) => i.docCod === invoiceDocCod);
-        if (!invoice)
-            throw new Error(`invoice ${invoiceDocCod} not found in process ${invoicePriCod}`);
+        if (!invoice) {
+            throw new PermutaNotFoundError({ recurso: 'invoice', invoiceDocCod, invoicePriCod });
+        }
         if (!invoice.temDi) {
-            throw new Error(`invoice ${invoiceDocCod} without D.I/DUIMP — cannot be permuted`);
+            throw new InvalidAllocationError({ motivo: 'sem-di-duimp', invoiceDocCod });
         }
 
         // Moeda negociada do adto e da invoice DEVEM coincidir — não se permuta um
@@ -236,9 +242,11 @@ export default class AlocacaoPermutasService {
             invoice.moeda !== undefined &&
             adto.moedaNegociada !== invoice.moeda
         ) {
-            throw new Error(
-                `currency mismatch: adiantamento ${adto.moedaNegociada} != invoice ${invoice.moeda}`,
-            );
+            throw new InvalidAllocationError({
+                motivo: 'moeda-diferente',
+                moedaAdiantamento: adto.moedaNegociada,
+                moedaInvoice: invoice.moeda,
+            });
         }
 
         // Saldo do ADIANTAMENTO (em moeda negociada): saldoPermutar(BRL) / taxaAdto, menos as

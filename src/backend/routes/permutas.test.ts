@@ -16,6 +16,16 @@ import ReconciliacaoEmAndamentoError from '../domain/errors/ReconciliacaoEmAndam
 import ExcecaoPermutaRecusadaError from '../domain/errors/ExcecaoPermutaRecusadaError.js';
 import ExcecaoPermutaService from '../domain/service/permutas/ExcecaoPermutaService.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
+import BorderoAmbiguousError from '../domain/errors/BorderoAmbiguousError.js';
+import BorderoNotOwnedError from '../domain/errors/BorderoNotOwnedError.js';
+import BorderoStateConflictError from '../domain/errors/BorderoStateConflictError.js';
+import ConexosError from '../domain/errors/ConexosError.js';
+import ConexosWriteDisabledError from '../domain/errors/ConexosWriteDisabledError.js';
+import InvalidAllocationError from '../domain/errors/InvalidAllocationError.js';
+import PermutaDataIncompleteError from '../domain/errors/PermutaDataIncompleteError.js';
+import PermutaNotFoundError from '../domain/errors/PermutaNotFoundError.js';
+import AlocacaoEmBorderoError from '../domain/errors/AlocacaoEmBorderoError.js';
+import GerarSolicitacaoNumerarioService from '../domain/service/permutas/GerarSolicitacaoNumerarioService.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
@@ -1271,6 +1281,213 @@ describe('ações de borderô — borCod/filCod validados no boundary', () => {
             const ok = await fetch(`${url}/permutas/borderos/14918/baixas?filCod=2`);
             expect(ok.status).toBe(200);
             expect(listarBaixasErp).toHaveBeenCalledWith({ borCod: 14918, filCod: 2 });
+        });
+    });
+});
+
+describe('ações de borderô — recusa tipada do serviço sai com o status dela', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it.each([
+        ['borderô fora da trilha', new BorderoNotOwnedError({ borCod: 14918 }), 403],
+        [
+            'borderô em duas filiais',
+            new BorderoAmbiguousError({ borCod: 14918, filiais: [2, 7] }),
+            400,
+        ],
+        [
+            'borderô sem baixas',
+            new BorderoStateConflictError({ motivo: 'sem-baixas', borCod: 14918 }),
+            409,
+        ],
+        ['escrita desligada', new ConexosWriteDisabledError(), 503],
+    ])('%s → status do erro, texto curado em `error`', async (_caso, err, status) => {
+        const finalizarBordero = jest.fn().mockRejectedValue(err);
+        const logError = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(BorderoGestaoService, { finalizarBordero } as never);
+        container.registerInstance(LogService, { error: logError } as never);
+
+        await comServidor(async (url) => {
+            const res = await fetch(`${url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+            });
+            expect(res.status).toBe(status);
+            const body = await readJson(res);
+            // `error` segue sendo o texto que a tela mostra (é dele que o front lê).
+            expect(body.error).toBe(err.userMessage);
+            expect(body.code).toBe(err.code);
+            expect(typeof body.requestId).toBe('string');
+            // Recusa NOSSA não é "borderô recusado pelo ERP": não polui o log de erro do ERP.
+            expect(logError).not.toHaveBeenCalled();
+        });
+    });
+
+    it('baixa fora da trilha → 404', async () => {
+        const excluirBaixa = jest
+            .fn()
+            .mockRejectedValue(
+                new PermutaNotFoundError({ recurso: 'baixa', borCod: 14918, invoiceDocCod: '777' }),
+            );
+        container.registerInstance(BorderoGestaoService, { excluirBaixa } as never);
+
+        await comServidor(async (url) => {
+            const res = await fetch(`${url}/permutas/borderos/14918/baixas/777`, {
+                method: 'DELETE',
+            });
+            expect(res.status).toBe(404);
+            expect((await readJson(res)).code).toBe('BAIXA_NAO_ENCONTRADA');
+        });
+    });
+
+    it('recusa do ERP (ConexosError, também HandlerError) continua 400 + razão real, não 502', async () => {
+        const erroDoErp = new ConexosError({
+            endpoint: 'fin014/finalizar',
+            cause: {
+                response: {
+                    status: 400,
+                    data: {
+                        messages: [
+                            {
+                                message: 'Generic.ERROR_MESSAGE',
+                                vars: { msg: 'CONTA DE DESCONTO NÃO INFORMADA!!!' },
+                            },
+                        ],
+                    },
+                },
+            },
+        });
+        container.registerInstance(BorderoGestaoService, {
+            finalizarBordero: jest.fn().mockRejectedValue(erroDoErp),
+        } as never);
+        container.registerInstance(LogService, {
+            error: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        await comServidor(async (url) => {
+            const res = await fetch(`${url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+            });
+            expect(res.status).toBe(400);
+            const body = await readJson(res);
+            expect(body.error).toBe('CONTA DE DESCONTO NÃO INFORMADA!!!');
+        });
+    });
+});
+
+describe('alocação manual — recusas tipadas no formato que o front lê', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    const postAlocacao = (url: string) =>
+        fetch(`${url}/permutas/adiantamentos/A9/alocacoes`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ invoiceDocCod: 'I7', invoicePriCod: '510', valorAlocado: 600 }),
+        });
+
+    it.each([
+        [
+            'moeda diferente',
+            new InvalidAllocationError({
+                motivo: 'moeda-diferente',
+                moedaAdiantamento: 'USD',
+                moedaInvoice: 'EUR',
+            }),
+            422,
+        ],
+        [
+            'adiantamento sem filial',
+            new PermutaDataIncompleteError({ campo: 'filial', adiantamentoDocCod: 'A9' }),
+            422,
+        ],
+        [
+            'invoice fora do processo',
+            new PermutaNotFoundError({
+                recurso: 'invoice',
+                invoiceDocCod: 'I7',
+                invoicePriCod: '510',
+            }),
+            404,
+        ],
+    ])('%s → status do erro, no formato { error: code, message }', async (_caso, err, status) => {
+        container.registerInstance(AlocacaoPermutasService, {
+            alocar: jest.fn().mockRejectedValue(err),
+        } as never);
+
+        await comServidor(async (url) => {
+            const res = await postAlocacao(url);
+            expect(res.status).toBe(status);
+            const body = await readJson(res);
+            // `{ error: code, message: userMessage }` — o front mostra `message` no toast do 422.
+            expect(body).toMatchObject({ error: err.code, message: err.userMessage });
+        });
+    });
+
+    it('DELETE mantém o 409 de alocação usada em borderô (mesmo formato)', async () => {
+        container.registerInstance(AlocacaoPermutasService, {
+            remover: jest.fn().mockRejectedValue(
+                new AlocacaoEmBorderoError({
+                    adiantamentoDocCod: 'A9',
+                    invoiceDocCod: 'I7',
+                    borCod: 14918,
+                }),
+            ),
+        } as never);
+
+        await comServidor(async (url) => {
+            const res = await fetch(`${url}/permutas/adiantamentos/A9/alocacoes/I7`, {
+                method: 'DELETE',
+            });
+            expect(res.status).toBe(409);
+            const body = await readJson(res);
+            expect(body.error).toBe('ALOCACAO_EM_BORDERO');
+            expect(body.message).toMatch(/borderô 14918/);
+        });
+    });
+});
+
+describe('POST /permutas/adiantamentos/:docCod/gerar-numerario — contrato de erro', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    const postNumerario = (url: string) =>
+        fetch(`${url}/permutas/adiantamentos/A9/gerar-numerario`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ valor: 100 }),
+        });
+
+    it('adiantamento ausente → 404 com userMessage em `error` (não 500)', async () => {
+        container.registerInstance(GerarSolicitacaoNumerarioService, {
+            gerarNumerario: jest
+                .fn()
+                .mockRejectedValue(
+                    new PermutaNotFoundError({ recurso: 'adiantamento', adiantamentoDocCod: 'A9' }),
+                ),
+        } as never);
+
+        await comServidor(async (url) => {
+            const res = await postNumerario(url);
+            expect(res.status).toBe(404);
+            const body = await readJson(res);
+            expect(body.code).toBe('ADIANTAMENTO_NAO_ENCONTRADO');
+            expect(body.error).toMatch(/Adiantamento A9 não encontrado/);
+        });
+    });
+
+    it('Error cru continua 500 genérico, sem vazar a mensagem', async () => {
+        container.registerInstance(GerarSolicitacaoNumerarioService, {
+            gerarNumerario: jest.fn().mockRejectedValue(new Error('pool exausto em 10.0.0.7')),
+        } as never);
+
+        await comServidor(async (url) => {
+            const res = await postNumerario(url);
+            expect(res.status).toBe(500);
+            expect(JSON.stringify(await readJson(res))).not.toContain('10.0.0.7');
         });
     });
 });

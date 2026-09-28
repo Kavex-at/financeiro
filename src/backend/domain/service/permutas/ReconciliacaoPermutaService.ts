@@ -18,6 +18,10 @@ import PermutaRelationalRepository from '../../repository/permutas/PermutaRelati
 import AlocacaoPermutasService from './AlocacaoPermutasService.js';
 import ErpErrorInterpreter, { type ErpMessage } from './ErpErrorInterpreter.js';
 import LogService from '../LogService.js';
+import ErpHandshakeError from '../../errors/ErpHandshakeError.js';
+import OpenBalanceMismatchError from '../../errors/OpenBalanceMismatchError.js';
+import PermutaDataIncompleteError from '../../errors/PermutaDataIncompleteError.js';
+import PermutaNotFoundError from '../../errors/PermutaNotFoundError.js';
 
 /** Conta gerencial do juros = VARIAÇÃO CAMBIAL PASSIVA REALIZADA (HAR + ontologia). */
 const CONTA_GER_JUROS = 131;
@@ -187,9 +191,9 @@ export default class ReconciliacaoPermutaService {
         const { adiantamentoDocCod, executadoPor, dataMovto } = input;
 
         const adto = await this.relationalRepository.findAdiantamento(adiantamentoDocCod);
-        if (!adto) throw new Error(`adiantamento ${adiantamentoDocCod} not found`);
+        if (!adto) throw new PermutaNotFoundError({ recurso: 'adiantamento', adiantamentoDocCod });
         if (adto.filCod === undefined) {
-            throw new Error(`adiantamento ${adiantamentoDocCod} without filial`);
+            throw new PermutaDataIncompleteError({ campo: 'filial', adiantamentoDocCod });
         }
         const filCod = adto.filCod;
 
@@ -480,9 +484,11 @@ export default class ReconciliacaoPermutaService {
         await this.execucaoRepository.setBorCod(key, borCod);
 
         if (aloc.taxaInvoice === undefined || !(aloc.taxaInvoice > 0)) {
-            throw new Error(
-                `alocação ${adiantamentoDocCod}→${invoiceDocCod} sem taxa da invoice — não dá para calcular o valor da baixa`,
-            );
+            throw new PermutaDataIncompleteError({
+                campo: 'taxa-invoice',
+                adiantamentoDocCod,
+                invoiceDocCod,
+            });
         }
 
         // Títulos (parcelas) da invoice — cada um com valor/taxa em moeda negociada. Ordena por titCod.
@@ -796,19 +802,26 @@ export default class ReconciliacaoPermutaService {
         this.assertNoErpError(val2, 'tituloBaixa');
         const emAbertoErp = val2.responseData?.bxaMnyValor;
         if (emAbertoErp === undefined || !(emAbertoErp > 0)) {
-            throw new Error(
-                `título ${invoiceDocCod}/${titCod} sem valor em aberto no ERP (bxaMnyValor=${String(emAbertoErp)})`,
-            );
+            throw new OpenBalanceMismatchError({
+                motivo: 'zerado',
+                invoiceDocCod,
+                titCod,
+                message: `título ${invoiceDocCod}/${titCod} sem valor em aberto no ERP (bxaMnyValor=${String(emAbertoErp)})`,
+            });
         }
 
         // I-Write-1 (anti-over-pay): a baixa do título NUNCA pode exceder o em-aberto vivo dele.
         const valorBaixaDesejado = round2(usdTitulo * p.taxaTitulo);
         const tolerancia = Math.max(0.01, emAbertoErp * 0.005);
         if (valorBaixaDesejado > emAbertoErp + tolerancia) {
-            throw new Error(
-                `anti-drift: baixa ${valorBaixaDesejado.toFixed(2)} (BRL) > em-aberto do ERP ${emAbertoErp} ` +
+            throw new OpenBalanceMismatchError({
+                motivo: 'excedido',
+                invoiceDocCod,
+                titCod,
+                message:
+                    `anti-drift: baixa ${valorBaixaDesejado.toFixed(2)} (BRL) > em-aberto do ERP ${emAbertoErp} ` +
                     `(título ${titCod}: ${usdTitulo} × taxa ${p.taxaTitulo}) — alocação maior que o saldo vivo do título; conferir manualmente`,
-            );
+            });
         }
         const bxaMnyValor = Math.min(valorBaixaDesejado, emAbertoErp);
 
@@ -830,8 +843,12 @@ export default class ReconciliacaoPermutaService {
         });
         this.assertNoErpError(val3, 'tituloPermuta');
         const perm = val3.responseData;
-        if (!perm)
-            throw new Error(`adiantamento ${adiantamentoDocCod} sem dados de permuta no ERP`);
+        if (!perm) {
+            throw new ErpHandshakeError({
+                passo: 'tituloPermuta',
+                message: `adiantamento ${adiantamentoDocCod} sem dados de permuta no ERP`,
+            });
+        }
 
         // ÂNCORA NO VALOR REAL DO ADIANTAMENTO (I-Write-6) — quando esta baixa consome o adto por
         // inteiro, fecha o líquido no `bxaMnyValorPermuta` do ERP (absorve o resíduo de arredondamento
@@ -1096,7 +1113,10 @@ export default class ReconciliacaoPermutaService {
         if (erro) {
             // Usa o interpretador → surface a razão real (`vars.msg`) do Generic.ERROR_MESSAGE.
             const detalhe = this.erpErrorInterpreter.describeMessage(erro);
-            throw new Error(`fin010 ${passo} retornou ERRO: ${detalhe}`);
+            throw new ErpHandshakeError({
+                passo,
+                message: `fin010 ${passo} retornou ERRO: ${detalhe}`,
+            });
         }
     };
 

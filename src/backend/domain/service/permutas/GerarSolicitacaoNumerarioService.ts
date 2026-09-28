@@ -28,6 +28,10 @@ import NumerarioExecucaoRepository, {
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import ErpErrorInterpreter, { type ErpMessage } from './ErpErrorInterpreter.js';
 import LogService from '../LogService.js';
+import ErpHandshakeError from '../../errors/ErpHandshakeError.js';
+import InvalidNumerarioValueError from '../../errors/InvalidNumerarioValueError.js';
+import PermutaDataIncompleteError from '../../errors/PermutaDataIncompleteError.js';
+import PermutaNotFoundError from '../../errors/PermutaNotFoundError.js';
 
 /** Arredonda para 2 casas — obrigatório em todo valor monetário do ERP (CnxValidatorMny). */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -86,20 +90,18 @@ export default class GerarSolicitacaoNumerarioService {
     public gerarNumerario = async (input: GerarNumerarioInput): Promise<GerarNumerarioResult> => {
         const { adiantamentoDocCod, executadoPor } = input;
         const valor = round2(input.valor);
-        if (!(valor > 0)) throw new Error(`invalid value for SN (${input.valor})`);
+        if (!(valor > 0)) throw new InvalidNumerarioValueError({ valor: input.valor });
 
         const adto = await this.relationalRepository.findAdiantamento(adiantamentoDocCod);
-        if (!adto) throw new Error(`adiantamento ${adiantamentoDocCod} not found`);
+        if (!adto) throw new PermutaNotFoundError({ recurso: 'adiantamento', adiantamentoDocCod });
         if (adto.filCod === undefined) {
-            throw new Error(`adiantamento ${adiantamentoDocCod} without filial`);
+            throw new PermutaDataIncompleteError({ campo: 'filial', adiantamentoDocCod });
         }
         const filCod = adto.filCod;
         const priCod = Number(adto.priCod);
         const pesCod = adto.pesCod !== undefined ? Number(adto.pesCod) : Number.NaN;
         if (!Number.isFinite(priCod) || !Number.isFinite(pesCod)) {
-            throw new Error(
-                `adiantamento ${adiantamentoDocCod} lacks numeric priCod/pesCod (SN requires both)`,
-            );
+            throw new PermutaDataIncompleteError({ campo: 'priCod-pesCod', adiantamentoDocCod });
         }
 
         const config = await this.gerDocClient.validaConfigDoc({
@@ -612,7 +614,10 @@ export default class GerarSolicitacaoNumerarioService {
         const erro = messages.find((m) => m?.valid === 'ERRO');
         if (erro) {
             const detalhe = this.erpErrorInterpreter.describeMessage(erro as ErpMessage);
-            throw new Error(`gerDocProcesso ${passo} returned ERRO: ${detalhe}`);
+            throw new ErpHandshakeError({
+                passo,
+                message: `gerDocProcesso ${passo} returned ERRO: ${detalhe}`,
+            });
         }
     };
 
