@@ -6,6 +6,7 @@ import { container } from 'tsyringe';
 import AlertaRepository from '../domain/repository/operacao/AlertaRepository.js';
 import ConfigDoctor from '../domain/service/operacao/ConfigDoctor.js';
 import JobRunReadModel from '../domain/service/operacao/JobRunReadModel.js';
+import LogService from '../domain/service/LogService.js';
 import { PIPELINE, SITUACAO_PIPELINE } from '../domain/interface/operacao/JobRun.js';
 
 // O bootstrap real importa migrations (usa `import.meta`, incompatível com o transform CJS).
@@ -67,24 +68,38 @@ let allowList: string[] = [];
 
 let srv: TestServer;
 let reconhecer: jest.Mock;
+/** Fontes do painel — mocks únicos, para um teste poder derrubar UMA delas. */
+let exporSaude: jest.Mock;
+let listarAbertos: jest.Mock;
+let diagnosticar: jest.Mock;
+let logError: jest.Mock;
 /** Tudo que a rota resolveu do container — a prova do I4. */
 let resolvidos: unknown[];
 
 beforeAll(async () => {
     reconhecer = jest.fn().mockResolvedValue(undefined);
+    exporSaude = jest.fn().mockResolvedValue(saudeFake);
+    listarAbertos = jest.fn().mockResolvedValue([alertaFake]);
+    diagnosticar = jest.fn().mockReturnValue({
+        geradoEm: '2026-09-01T12:00:00.000Z',
+        vars: [],
+        totalAusentesObrigatorias: 0,
+        totalAusentesSilenciosas: 1,
+    });
+    logError = jest.fn().mockResolvedValue(undefined);
     resolvidos = [];
 
     const real = container.resolve.bind(container);
     jest.spyOn(container, 'resolve').mockImplementation(((token: unknown) => {
         resolvidos.push(token);
         if (token === JobRunReadModel) {
-            return { exporSaude: jest.fn().mockResolvedValue(saudeFake) };
+            return { exporSaude };
         }
         if (token === AlertaRepository) {
-            return {
-                listarAbertos: jest.fn().mockResolvedValue([alertaFake]),
-                reconhecer,
-            };
+            return { listarAbertos, reconhecer };
+        }
+        if (token === LogService) {
+            return { error: logError };
         }
         if (typeof token === 'function' && token.name === 'EnvironmentProvider') {
             return {
@@ -94,14 +109,7 @@ beforeAll(async () => {
             };
         }
         if (token === ConfigDoctor) {
-            return {
-                diagnosticar: jest.fn().mockReturnValue({
-                    geradoEm: '2026-09-01T12:00:00.000Z',
-                    vars: [],
-                    totalAusentesObrigatorias: 0,
-                    totalAusentesSilenciosas: 1,
-                }),
-            };
+            return { diagnosticar };
         }
         return real(token as never);
     }) as never);
@@ -154,6 +162,71 @@ describe('GET /operacao', () => {
         expect(nomes).toEqual(
             expect.arrayContaining(['JobRunReadModel', 'AlertaRepository', 'ConfigDoctor']),
         );
+    });
+});
+
+describe('GET /operacao — uma fonte quebrada não derruba a tela de incidente', () => {
+    it('sem falha: `erros` vem vazio (campo aditivo, formato das fontes inalterado)', async () => {
+        const res = await fetch(`${srv.url}/operacao`);
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as Record<string, unknown>;
+        expect(body.erros).toEqual([]);
+        expect(Object.keys(body)).toEqual(
+            expect.arrayContaining(['geradoEm', 'pipelines', 'alertas', 'configuracao']),
+        );
+    });
+
+    it('pipelines falhando: 200, alertas e configuração seguem, a falha é nomeada em `erros`', async () => {
+        exporSaude.mockRejectedValueOnce(new Error('connection terminated unexpectedly'));
+        logError.mockClear();
+
+        const res = await fetch(`${srv.url}/operacao`);
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as Record<string, unknown>;
+        expect(body.pipelines).toEqual([]);
+        expect(body.alertas).toHaveLength(1);
+        expect(
+            (body.configuracao as { totalAusentesSilenciosas: number }).totalAusentesSilenciosas,
+        ).toBe(1);
+        expect(body.erros).toEqual([
+            { fonte: 'pipelines', mensagem: 'Não foi possível ler a saúde dos pipelines.' },
+        ]);
+        // O texto técnico vai para o log, nunca para o corpo.
+        expect(JSON.stringify(body)).not.toContain('connection terminated');
+        expect(logError).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    fonte: 'pipelines',
+                    erro: 'connection terminated unexpectedly',
+                }),
+            }),
+        );
+    });
+
+    it('alertas falhando e diagnóstico lançando: pipelines ainda chegam', async () => {
+        listarAbertos.mockRejectedValueOnce(new Error('statement timeout'));
+        diagnosticar.mockImplementationOnce(() => {
+            throw new Error('manifesto ilegível');
+        });
+
+        const res = await fetch(`${srv.url}/operacao`);
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as Record<string, unknown>;
+        expect(body.pipelines).toHaveLength(2);
+        expect(body.alertas).toEqual([]);
+        expect(body.configuracao).toMatchObject({ vars: [], totalAusentesObrigatorias: 0 });
+        expect((body.erros as { fonte: string }[]).map((e) => e.fonte)).toEqual([
+            'alertas',
+            'configuracao',
+        ]);
+    });
+
+    it('o log falhando não derruba a resposta', async () => {
+        exporSaude.mockRejectedValueOnce(new Error('db down'));
+        logError.mockRejectedValueOnce(new Error('log down'));
+
+        const res = await fetch(`${srv.url}/operacao`);
+        expect(res.status).toBe(200);
     });
 });
 
