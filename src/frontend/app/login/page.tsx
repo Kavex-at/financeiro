@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/lib/auth/AuthProvider'
 import { safeReturnTo } from '@/lib/auth/safe-return-to'
+import { fetchTransicaoEmail } from '@/lib/auth/transicao'
 import pkg from '../../package.json'
 import { TransicaoEmailBanner } from './TransicaoEmailBanner'
 
@@ -30,6 +31,21 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Banner de transição para e-mail (ADR-0051). A página é dona do estado; o banner só apresenta.
+  // Falha fechada: rejeição ou pendência mantêm `false`, e o formulário já funciona.
+  const [transicaoAtiva, setTransicaoAtiva] = useState(false)
+
+  useEffect(() => {
+    let cancelado = false
+    fetchTransicaoEmail()
+      .then((ativo) => {
+        if (!cancelado) setTransicaoAtiva(ativo)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelado = true
+    }
+  }, [])
 
   useEffect(() => {
     if (devBypass || token) {
@@ -82,7 +98,7 @@ function LoginForm() {
             </p>
           </div>
 
-          <TransicaoEmailBanner />
+          <TransicaoEmailBanner ativo={transicaoAtiva} />
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
