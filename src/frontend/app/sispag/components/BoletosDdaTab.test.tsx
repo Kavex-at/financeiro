@@ -5,8 +5,15 @@
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
 import type { BoletoDda, BoletosDdaResposta } from '@/lib/sispag'
 import { BoletosDdaTab } from './BoletosDdaTab'
+
+/** Permissões do usuário no teste (ADR-0053). Padrão: o Administrador (as nove). */
+let permissoes: Permissao[] = [...CATALOGO_PERMISSOES]
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => ({ carregando: false, tem: (p: Permissao) => permissoes.includes(p) }),
+}))
 
 jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }))
 jest.mock('@/lib/sispag', () => {
@@ -188,5 +195,25 @@ describe('BoletosDdaTab', () => {
     expect(
       await screen.findByText('Clique em "Atualizar DDA" para trazer os boletos do fin124.'),
     ).toBeInTheDocument()
+  })
+})
+
+/**
+ * ADR-0053: o `GET /sispag/boletos-dda` exige `sispag:executar` no backend (código de barras é
+ * destino de pagamento). A página já esconde a aba; aqui o componente, por conta própria, não lê
+ * nem oferece "Sincronizar" sem a permissão — defesa em profundidade contra um 403 na tela.
+ */
+describe('BoletosDdaTab — sem sispag:executar', () => {
+  afterEach(() => {
+    permissoes = [...CATALOGO_PERMISSOES]
+  })
+
+  it('não busca os boletos nem mostra "Sincronizar"', () => {
+    permissoes = ['sispag:ver']
+    mockFetch.mockClear()
+    render(<BoletosDdaTab />)
+    expect(mockFetch).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /atualizar dda|sincronizar/i })).not.toBeInTheDocument()
+    expect(mockSync).not.toHaveBeenCalled()
   })
 })

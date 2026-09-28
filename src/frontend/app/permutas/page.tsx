@@ -77,6 +77,9 @@ import { AbaMultiplas } from './components/AbaMultiplas'
 import { AbaCrossOver } from './components/AbaCrossOver'
 import { AbaCrossProcess } from './components/AbaCrossProcess'
 import { AbaHistorico } from './components/AbaHistorico'
+import { usePodeExecutarPermutas } from './components/usePodeExecutarPermutas'
+import { ExigePermissao } from '@/components/auth/ExigePermissao'
+import { PERMISSAO } from '@/lib/permissoes'
 
 // Modais — code-split (next/dynamic). Sempre montados (fechados) na árvore; o chunk carrega
 // no load da página, então estão prontos quando o analista abre — sem flash de loading visível.
@@ -102,8 +105,19 @@ const DesfazerExcecaoDialog = dynamic(() =>
   import('./components/DesfazerExcecaoDialog').then((m) => m.DesfazerExcecaoDialog),
 )
 
+/** Guard de página (ADR-0053): sem `permutas:ver`, só o estado "sem acesso"; os dados nem são buscados. */
 export default function GestaoPermutasPage() {
+  return (
+    <ExigePermissao permissao={PERMISSAO.PERMUTAS_VER}>
+      <GestaoPermutasPageConteudo />
+    </ExigePermissao>
+  )
+}
+
+function GestaoPermutasPageConteudo() {
   const { data, loading, error, statusPorAdto, carregarStatus, load } = usePermutasData()
+  // Ações (ingestão manual, processar, alocar, baixar…) só para `permutas:executar` (ADR-0053).
+  const podeExecutar = usePodeExecutarPermutas()
   const [filtro, setFiltro] = React.useState<FiltroStatus>('todos')
   // Filtro de filial (busca no Conexos é por filial — facilita conferir lá).
   const [filtroFilial, setFiltroFilial] = React.useState<string>('todas')
@@ -650,13 +664,15 @@ export default function GestaoPermutasPage() {
                 ))}
               </PopoverContent>
             </Popover>
-            <Button
-              size="sm"
-              onClick={abrirIngestao}
-              title="Rodar a ingestão de dados do Conexos agora (entre os horários do cron)"
-            >
-              <DatabaseZap aria-hidden /> Ingestão de dados
-            </Button>
+            {podeExecutar ? (
+              <Button
+                size="sm"
+                onClick={abrirIngestao}
+                title="Rodar a ingestão de dados do Conexos agora (entre os horários do cron)"
+              >
+                <DatabaseZap aria-hidden /> Ingestão de dados
+              </Button>
+            ) : null}
           </div>
         }
       />

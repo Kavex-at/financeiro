@@ -1,14 +1,27 @@
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SispagPage from '@/app/sispag/page'
+import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
 import {
   type ArquivoRetorno,
   conciliarRetorno,
+  fetchBoletosDda,
+  fetchContasPagadoras,
   fetchLotes,
   fetchRetornos,
   type LotePagamento,
   type SispagPainel,
+  type TituloAPagar,
 } from '@/lib/sispag'
+
+/** Permissões do usuário no teste (ADR-0053). Padrão: o Administrador (as nove). */
+let permissoes: Permissao[] = [...CATALOGO_PERMISSOES]
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => ({ carregando: false, tem: (p: Permissao) => permissoes.includes(p) }),
+}))
+beforeEach(() => {
+  permissoes = [...CATALOGO_PERMISSOES]
+})
 
 jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn(), warning: jest.fn() } }))
 
@@ -49,6 +62,9 @@ jest.mock('@/lib/sispag', () => {
     fetchLotes: jest.fn(),
     fetchRetornos: jest.fn(),
     conciliarRetorno: jest.fn(),
+    fetchContasPagadoras: jest.fn().mockResolvedValue([]),
+    fetchModalidadesDisponiveis: jest.fn().mockResolvedValue([]),
+    fetchBoletosDda: jest.fn(),
   }
 })
 
@@ -205,5 +221,119 @@ describe('SispagPage — Processar e conciliar pede confirmação', () => {
     await user.click(screen.getByRole('button', { name: 'Conciliar' }))
 
     expect(conciliarRetorno).toHaveBeenCalledWith(expect.objectContaining({ processar: false }))
+  })
+})
+
+/**
+ * ADR-0053 (Task 16): com só `sispag:ver`, nenhum botão de ação do SISPAG aparece — escondido,
+ * nunca desabilitado — e a tela não chama as leituras reservadas a `sispag:executar` (JC-3:
+ * contas pagadoras; boletos DDA e linhas digitáveis, ver `_inbox/auth-permissoes-modulo-gap.md`).
+ */
+describe('SispagPage — só sispag:ver', () => {
+  const tituloEmLote = {
+    docCod: '801',
+    titCod: '1',
+    filCod: 1,
+    credor: 'FORNECEDOR X',
+    valor: 100,
+    diasAteVencimento: 5,
+    liberado: true,
+    pago: false,
+    emLote: true,
+    loteRascunho: { id: 'lote-1', automatico: true },
+  } as unknown as TituloAPagar
+  const tituloLivre = {
+    ...tituloEmLote,
+    docCod: '802',
+    emLote: false,
+    loteRascunho: undefined,
+  } as unknown as TituloAPagar
+  const retorno: ArquivoRetorno = {
+    filCod: 7,
+    bncCod: 341,
+    gtbCodSeq: 2,
+    garCodSeq: 55,
+    arquivo: 'PG280901.RET',
+    banco: 'Itaú',
+  }
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+    permissoes = ['sispag:ver']
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockResolvedValue({ ...painel, titulos: [tituloEmLote, tituloLivre] })
+    lib.fetchLotes.mockReset()
+    lib.fetchLotes.mockResolvedValue([loteRascunho])
+    ;(fetchRetornos as jest.Mock).mockReset()
+    ;(fetchRetornos as jest.Mock).mockResolvedValue([retorno])
+    ;(fetchContasPagadoras as jest.Mock).mockClear()
+    ;(fetchBoletosDda as jest.Mock).mockClear()
+  })
+
+  const renderPainel = async () => {
+    await act(async () => {
+      render(<SispagPage />)
+    })
+  }
+
+  it.each([
+    ['Ingestão de dados', /ingestão de dados/i],
+    ['Formar lotes automáticos', /formar lotes/i],
+    ['Novo lote (Criar lote)', /criar lote/i],
+    ['Retirar do lote', /retirar do lote/i],
+  ])('aba de títulos: "%s" não aparece', async (_nome, rotulo) => {
+    await renderPainel()
+    expect(screen.queryByRole('button', { name: rotulo })).not.toBeInTheDocument()
+  })
+
+  it('aba de títulos: sem seleção para incluir em lote (nenhum checkbox)', async () => {
+    await renderPainel()
+    expect(screen.getAllByText('FORNECEDOR X', { exact: false }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('checkbox', { name: /selecionar título/i })).not.toBeInTheDocument()
+  })
+
+  it('a leitura continua: o link do lote na linha do título e as abas de consulta', async () => {
+    await renderPainel()
+    expect(screen.getByRole('tab', { name: 'Títulos a pagar' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Lotes candidatos (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Retorno Lote (RET) - Conexos' })).toBeInTheDocument()
+  })
+
+  it('aba Boletos DDA (sincronizar DDA incluso) não aparece, e o fin124 não é lido', async () => {
+    await renderPainel()
+    expect(screen.queryByRole('tab', { name: /boletos dda/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /atualizar dda|sincronizar/i })).not.toBeInTheDocument()
+    expect(fetchBoletosDda).not.toHaveBeenCalled()
+  })
+
+  it('lotes candidatos: sem ações no card e sem ler as contas pagadoras (JC-3)', async () => {
+    const user = userEvent.setup()
+    await renderPainel()
+    await user.click(screen.getByRole('tab', { name: 'Lotes candidatos (1)' }))
+    expect(screen.queryByRole('button', { name: /^finalizar$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /adicionar título/i })).not.toBeInTheDocument()
+    expect(fetchContasPagadoras).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['Processar e conciliar', /processar e conciliar/i],
+    ['Conciliar retorno', /^conciliar$/i],
+  ])('retornos: "%s" não aparece (a lista continua)', async (_nome, rotulo) => {
+    const user = userEvent.setup()
+    await renderPainel()
+    await user.click(screen.getByRole('tab', { name: 'Retorno Lote (RET) - Conexos' }))
+    await user.click(screen.getByRole('button', { name: 'Carregar retornos' }))
+    expect(await screen.findByText('PG280901.RET')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: rotulo })).not.toBeInTheDocument()
+  })
+
+  it('com sispag:executar, tudo como hoje', async () => {
+    permissoes = ['sispag:ver', 'sispag:executar']
+    await renderPainel()
+    expect(screen.getByRole('button', { name: /ingestão de dados/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /formar lotes/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /criar lote/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retirar do lote/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /boletos dda/i })).toBeInTheDocument()
   })
 })

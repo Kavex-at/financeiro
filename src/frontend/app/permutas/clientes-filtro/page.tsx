@@ -35,6 +35,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { ExigePermissao } from '@/components/auth/ExigePermissao'
+import { PERMISSAO } from '@/lib/permissoes'
+import { usePodeExecutarPermutas } from '../components/usePodeExecutarPermutas'
+
+/** Guard de página (ADR-0053): sem `permutas:ver`, só o estado "sem acesso"; os dados nem são buscados. */
+export default function ClientesFiltroPage() {
+  return (
+    <ExigePermissao permissao={PERMISSAO.PERMUTAS_VER}>
+      <ClientesFiltroPageConteudo />
+    </ExigePermissao>
+  )
+}
 
 /**
  * Cadastro de "clientes filtro" (Fase 1): importadores cujos adiantamentos vão
@@ -42,8 +54,10 @@ import {
  * analista escolhe um importador do backlog e adiciona; a pipeline passa a
  * rotear os adtos dele ao estado `permuta-manual`.
  */
-export default function ClientesFiltroPage() {
+function ClientesFiltroPageConteudo() {
   const [clientes, setClientes] = React.useState<ClienteFiltro[]>([])
+  // Adicionar/remover cliente-filtro só para `permutas:executar` (ADR-0053); a lista é leitura.
+  const podeExecutar = usePodeExecutarPermutas()
   const [importadores, setImportadores] = React.useState<Importador[]>([])
   const [loading, setLoading] = React.useState(true)
   const [selecionado, setSelecionado] = React.useState<string>('')
@@ -184,6 +198,7 @@ export default function ClientesFiltroPage() {
         }
       />
 
+      {podeExecutar ? (
       <Card>
         <CardHeader>
           <CardTitle>Adicionar importador</CardTitle>
@@ -221,6 +236,7 @@ export default function ClientesFiltroPage() {
           ) : null}
         </CardContent>
       </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -243,7 +259,7 @@ export default function ClientesFiltroPage() {
                 <TableRow>
                   <TableHead>Importador</TableHead>
                   <TableHead>Código (pesCod)</TableHead>
-                  <TableHead className="text-right">Ação</TableHead>
+                  {podeExecutar ? <TableHead className="text-right">Ação</TableHead> : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -251,6 +267,7 @@ export default function ClientesFiltroPage() {
                   <TableRow key={c.pesCod}>
                     <TableCell className="font-medium">{c.importador ?? '—'}</TableCell>
                     <TableCell className="text-muted-foreground">{c.pesCod}</TableCell>
+                    {podeExecutar ? (
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
@@ -263,6 +280,7 @@ export default function ClientesFiltroPage() {
                         {removing === c.pesCod ? <Spinner /> : <Trash2 aria-hidden />}
                       </Button>
                     </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>

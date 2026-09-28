@@ -15,6 +15,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
+import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
 import {
   type BoletoDda,
@@ -100,6 +102,11 @@ function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
 }
 
 export function BoletosDdaTab() {
+  // ADR-0053: o `GET /sispag/boletos-dda` exige `sispag:executar` (código de barras é destino de
+  // pagamento). A página já esconde a aba de quem não tem; aqui, por defesa, sem a permissão o
+  // componente não lê nem oferece a sincronização.
+  const { carregando: carregandoPermissoes, tem } = usePermissoes()
+  const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
   const [escopo, setEscopo] = React.useState<BoletoDdaEscopo>('a-vencer')
   const [situacao, setSituacao] = React.useState<FiltroSituacao>('todas')
   const [filial, setFilial] = React.useState('todas')
@@ -144,6 +151,7 @@ export function BoletosDdaTab() {
 
   // Estado só muda DEPOIS do fetch. Resposta de requisição já superada é descartada (`vivo`).
   React.useEffect(() => {
+    if (!podeExecutar) return
     let vivo = true
     fetchBoletosDda(filtro)
       .then((dados) => {
@@ -155,7 +163,7 @@ export function BoletosDdaTab() {
     return () => {
       vivo = false
     }
-  }, [chave, filtro])
+  }, [chave, filtro, podeExecutar])
 
   /** Carregando = a última resposta é de outra requisição. A página anterior fica visível, esmaecida. */
   const carregando = resultado?.chave !== chave
@@ -222,6 +230,8 @@ export function BoletosDdaTab() {
       toast.error('Não foi possível copiar')
     }
   }
+
+  if (!podeExecutar) return null
 
   return (
     <div className="space-y-3">

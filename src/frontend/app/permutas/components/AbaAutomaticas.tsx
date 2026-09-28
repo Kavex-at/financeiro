@@ -25,6 +25,7 @@ import {
 } from './format'
 import { FiltroBarra, Paginacao, type TabelaFiltro } from './tabela-filtro'
 import { BotaoAtualizar, Campo, Moeda, PermutaBorderoBadge } from './ui'
+import { usePodeExecutarPermutas } from './usePodeExecutarPermutas'
 
 /**
  * Aba "Automáticas": casamento direto (1 invoice ← N adiantamentos) + múltiplas onde o
@@ -55,6 +56,7 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
   loading: boolean
   onAtualizar: () => void
 }) {
+  const podeExecutar = usePodeExecutarPermutas()
   return (
     <>
       <p className="text-sm text-muted-foreground">
@@ -67,6 +69,7 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
         <FiltroBarra aba={aba} buscaPlaceholder="Buscar processo ou cliente…" />
         <div className="flex items-end gap-2">
           <BotaoAtualizar loading={loading} onClick={onAtualizar} />
+          {podeExecutar ? (
           <Button
             onClick={() => setConfirmLoteOpen(true)}
             disabled={
@@ -78,6 +81,7 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
             Executar próximas {loteResumo.proximosN}
             {loteResumo.adtos > loteResumo.proximosN ? ` de ${loteResumo.adtos}` : ''}
           </Button>
+          ) : null}
         </div>
       </div>
       {aba.total === 0 ? (
@@ -168,7 +172,7 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
                     <TableCell className="text-right">
                       {todosProcessados ? (
                         <PermutaBorderoBadge vinculo={vinculoGrupo} />
-                      ) : c.adiantamentos.length > 0 ? (
+                      ) : podeExecutar && c.adiantamentos.length > 0 ? (
                         <Button
                           size="sm"
                           disabled={

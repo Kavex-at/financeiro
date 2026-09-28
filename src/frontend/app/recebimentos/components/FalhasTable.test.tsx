@@ -128,4 +128,12 @@ describe('FalhasTable (ADR-0034)', () => {
     await renderTabela({ onAlocar: jest.fn() })
     expect(screen.getByRole('button', { name: /Tentar de novo a alocação/ })).toBeInTheDocument()
   })
+
+  // ADR-0053: a página só passa `onAlocar` para quem tem `recebimentos:executar`. Sem handler, a
+  // ação some (nunca desabilitada) e a leitura da falha continua.
+  it('sem handler (quem só vê): nenhuma ação de alocar na linha, só a leitura', async () => {
+    mockPainel([falhaRegistrada])
+    await renderTabela()
+    expect(screen.queryByRole('button', { name: /Tentar de novo a alocação/ })).not.toBeInTheDocument()
+  })
 })

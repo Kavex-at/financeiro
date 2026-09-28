@@ -6,9 +6,22 @@
 
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
 import type { LotePagamento } from '@/lib/sispag'
 import type { Acao } from './GerarRemessaDialog'
 import { LoteCard } from './LoteCard'
+
+/** Permissões do usuário no teste (ADR-0053). Padrão: o Administrador (as nove). */
+let permissoes: { carregando: boolean; lista: Permissao[] } = {
+  carregando: false,
+  lista: [...CATALOGO_PERMISSOES],
+}
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => ({
+    carregando: permissoes.carregando,
+    tem: (p: Permissao) => !permissoes.carregando && permissoes.lista.includes(p),
+  }),
+}))
 
 jest.mock('@/lib/sispag', () => {
   const real = jest.requireActual('@/lib/sispag')
@@ -21,10 +34,21 @@ jest.mock('@/lib/sispag', () => {
     cancelarLote: jest.fn(),
     reabrirLote: jest.fn(),
     marcarRetorno: jest.fn(),
+    baixarRemessa: jest.fn(),
+    removerItem: jest.fn(),
   }
 })
 
-import { cancelarLote, finalizarLote, marcarRetorno, reabrirLote } from '@/lib/sispag'
+import {
+  baixarRemessa,
+  cancelarLote,
+  fetchContasPagadoras,
+  fetchLinhasDigitaveis,
+  fetchModalidadesDisponiveis,
+  finalizarLote,
+  marcarRetorno,
+  reabrirLote,
+} from '@/lib/sispag'
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
   id: 'L1',
@@ -59,7 +83,10 @@ const renderCard = (l: LotePagamento, acao: Acao = acaoQueExecuta()) => {
 
 describe('LoteCard — confirmação das transições', () => {
   const envOriginal = process.env.NEXT_PUBLIC_ENV
-  beforeEach(() => jest.clearAllMocks())
+  beforeEach(() => {
+    jest.clearAllMocks()
+    permissoes = { carregando: false, lista: [...CATALOGO_PERMISSOES] }
+  })
   afterEach(() => {
     process.env.NEXT_PUBLIC_ENV = envOriginal
   })
@@ -138,5 +165,94 @@ describe('LoteCard — confirmação das transições', () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'Marcar retorno recebido' }))
     expect(marcarRetorno).toHaveBeenCalledWith('L1', 3)
+  })
+})
+
+/**
+ * ADR-0053: com só `sispag:ver`, nenhuma ação do lote aparece (escondida, nunca desabilitada), e a
+ * tela não chama as leituras que o backend reserva a `sispag:executar` (JC-3: contas pagadoras e
+ * arquivo `.REM`; linhas digitáveis, ver `_inbox/auth-permissoes-modulo-gap.md`).
+ */
+describe('LoteCard — só sispag:ver', () => {
+  const envOriginal = process.env.NEXT_PUBLIC_ENV
+  beforeEach(() => {
+    jest.clearAllMocks()
+    permissoes = { carregando: false, lista: ['sispag:ver'] }
+    process.env.NEXT_PUBLIC_ENV = 'local'
+  })
+  afterEach(() => {
+    process.env.NEXT_PUBLIC_ENV = envOriginal
+    permissoes = { carregando: false, lista: [...CATALOGO_PERMISSOES] }
+  })
+
+  const renderRascunhoAberto = async () => {
+    const user = userEvent.setup()
+    render(<LoteCard lote={lote()} busy={false} acao={acaoQueExecuta()} onAdicionar={jest.fn()} />)
+    await user.click(screen.getByRole('button', { expanded: false }))
+  }
+
+  it.each([
+    ['Adicionar título', /adicionar título/i],
+    ['Finalizar', /^finalizar$/i],
+    ['Cancelar', /^cancelar$/i],
+    ['Remover item', /remover título/i],
+  ])('rascunho: "%s" não aparece', async (_nome, rotulo) => {
+    await renderRascunhoAberto()
+    expect(screen.queryByRole('button', { name: rotulo })).not.toBeInTheDocument()
+  })
+
+  it('rascunho: escolher conta não aparece e as contas pagadoras NÃO são buscadas (JC-3)', async () => {
+    await renderRascunhoAberto()
+    expect(screen.queryByRole('combobox', { name: /conta pagadora/i })).not.toBeInTheDocument()
+    expect(fetchContasPagadoras).not.toHaveBeenCalled()
+  })
+
+  it('rascunho: a modalidade vira texto (sem seletor) e as disponíveis não são buscadas', async () => {
+    await renderRascunhoAberto()
+    expect(
+      screen.queryByRole('combobox', { name: /forma de pagamento/i }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('PIX')).toBeInTheDocument()
+    expect(fetchModalidadesDisponiveis).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['Gerar remessa', /gerar remessa/i],
+    ['Reabrir', /^reabrir$/i],
+    ['Marcar retorno (simulação, mesmo em dev local)', /marcar retorno/i],
+  ])('finalizado: "%s" não aparece', (_nome, rotulo) => {
+    renderCard(lote({ status: 'FINALIZADO' }))
+    expect(screen.queryByRole('button', { name: rotulo })).not.toBeInTheDocument()
+  })
+
+  it('remessa gerada: "Baixar .REM" não aparece e o arquivo não é pedido (JC-3)', () => {
+    renderCard(lote({ status: 'REMESSA_GERADA', remessaArquivo: 'PG280901.REM' }))
+    expect(screen.queryByRole('button', { name: /baixar/i })).not.toBeInTheDocument()
+    expect(baixarRemessa).not.toHaveBeenCalled()
+  })
+
+  it('remessa gerada com boleto: as linhas digitáveis NÃO são buscadas', async () => {
+    const user = userEvent.setup()
+    const l = lote({ status: 'REMESSA_GERADA' })
+    l.itens[0].modalidade = 'BOLETO'
+    render(<LoteCard lote={l} busy={false} acao={acaoQueExecuta()} />)
+    await user.click(screen.getByRole('button', { expanded: false }))
+    expect(fetchLinhasDigitaveis).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /copiar linha digitável/i })).not.toBeInTheDocument()
+  })
+
+  it('enquanto as permissões carregam, nenhuma ação aparece (nada pisca)', () => {
+    permissoes = { carregando: true, lista: [...CATALOGO_PERMISSOES] }
+    renderCard(lote())
+    expect(screen.queryByRole('button', { name: /^finalizar$/i })).not.toBeInTheDocument()
+    expect(fetchContasPagadoras).not.toHaveBeenCalled()
+  })
+
+  it('com sispag:executar tudo volta como hoje (e as contas são buscadas)', () => {
+    permissoes = { carregando: false, lista: ['sispag:ver', 'sispag:executar'] }
+    renderCard(lote())
+    expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^cancelar$/i })).toBeInTheDocument()
+    expect(fetchContasPagadoras).toHaveBeenCalledWith(7)
   })
 })
