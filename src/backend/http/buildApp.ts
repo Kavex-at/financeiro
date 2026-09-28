@@ -7,13 +7,18 @@
  * disparava o boot no import — e por isso nada ali podia ser exercitado por teste.
  *
  * **A ordem dos `app.use` é o contrato deste módulo**: CORS antes do rate-limit, requestId antes do
- * logger, auth depois das rotas públicas (`/health`, `/auth`) e antes de todas as outras,
- * identidade Conexos depois do auth. Trocar duas linhas de lugar aqui é mudança de segurança, não
- * de estilo.
+ * logger, e depois das rotas públicas (`/health`, `/auth`) a cadeia de acesso, nesta ordem:
+ *
+ *     auth (token válido)  →  resolverAcesso (existe, ativo, permissões)  →  identidade Conexos
+ *
+ * e só então os routers, cada rota com UM guard explícito (`exigirPermissao` ou
+ * `somenteAutenticado`, ADR-0053; conferido por `routePermissions.test.ts`). Trocar duas linhas de
+ * lugar aqui é mudança de segurança, não de estilo.
  */
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import healthRouter from '../routes/health.js';
+import { resolverAcesso } from './acesso.js';
 import { buildAuthMiddleware } from './auth.js';
 import { isDraining } from './readinessState.js';
 import { loadAuthEnv } from './authEnv.js';
@@ -113,7 +118,13 @@ export const buildApp = () => {
     // boundary; `DEV_AUTH_BYPASS=true` skips it for local development. Tokens are
     // the app's own HS256 JWTs (signed by AuthService with AUTH_JWT_SECRET).
     // Arch-review cards security-1 / security-7.
-    app.use(buildAuthMiddleware(loadAuthEnv()));
+    const authEnv = loadAuthEnv();
+    app.use(buildAuthMiddleware(authEnv));
+
+    // Acesso (ADR-0053): o token só identifica; o banco autoriza. Resolve `sub → app_user →
+    // permissões efetivas` (cache de 30 s), recusa inexistente/inativo com 401 e banco fora com
+    // 503 (fail-closed). Depois do auth, ANTES da identidade Conexos e de todo router.
+    app.use(resolverAcesso({ devBypass: authEnv.devBypass }));
 
     // Identidade Conexos (Fatia B): coloca o usuário logado no contexto da request
     // (AsyncLocalStorage) para que as chamadas ao ERP usem a sessão dele (a baixa sai
@@ -145,7 +156,7 @@ export const buildApp = () => {
     // ontology/_inbox/frente-iv-*.md.
     app.use('/recebimentos', recebimentosGate, recebimentosRouter);
 
-    // Gestão de usuários da plataforma — só `admin` (guard no próprio router). Fica
+    // Gestão de usuários da plataforma — `usuarios:gerenciar` (guard no próprio router). Fica
     // no `globalLimiter`; substitui o cadastro manual de usuários @kavex no banco.
     app.use('/usuarios', usuariosRouter);
 
@@ -156,7 +167,7 @@ export const buildApp = () => {
     app.use('/operacao', operacaoRouter);
 
     // Métricas do ciclo (ADR-0045) — tela Métricas e `kavex-report-ciclo`. Leitura de agregados do
-    // Postgres, sem ERP; aberta a qualquer usuário autenticado, como as demais leituras.
+    // Postgres, sem ERP; exige `metricas:ver` (a conta do `kavex-report-ciclo` precisa dela).
     app.use('/metricas', metricasRouter);
 
     // Rotas do próprio usuário (status do vínculo Conexos p/ o aviso no login).

@@ -8,6 +8,11 @@ import ConfigDoctor from '../domain/service/operacao/ConfigDoctor.js';
 import JobRunReadModel from '../domain/service/operacao/JobRunReadModel.js';
 import LogService from '../domain/service/LogService.js';
 import { PIPELINE, SITUACAO_PIPELINE } from '../domain/interface/operacao/JobRun.js';
+import {
+    PERMISSION,
+    PERMISSION_CATALOG,
+    type Permission,
+} from '../domain/interface/auth/Permission.js';
 
 // O bootstrap real importa migrations (usa `import.meta`, incompatível com o transform CJS).
 jest.mock('../domain/appContainer.js', () => ({
@@ -63,8 +68,8 @@ const listen = (app: express.Express): Promise<TestServer> =>
 const getJson = async (url: string, init?: RequestInit): Promise<Record<string, never>> =>
     (await (await fetch(url, init)).json()) as Record<string, never>;
 
-/** Allow-list vigente no teste — mutável para exercitar dentro e fora do recorte. */
-let allowList: string[] = [];
+/** Permissões efetivas do usuário no teste — mutável para exercitar com e sem `operacao:ver`. */
+let permissoesAtuais: Permission[] = [...PERMISSION_CATALOG];
 
 let srv: TestServer;
 let reconhecer: jest.Mock;
@@ -101,13 +106,6 @@ beforeAll(async () => {
         if (token === LogService) {
             return { error: logError };
         }
-        if (typeof token === 'function' && token.name === 'EnvironmentProvider') {
-            return {
-                getEnvironmentVars: jest.fn().mockResolvedValue({
-                    operacaoUsuarios: allowList,
-                }),
-            };
-        }
         if (token === ConfigDoctor) {
             return { diagnosticar };
         }
@@ -117,9 +115,15 @@ beforeAll(async () => {
     const { default: operacaoRouter } = await import('./operacao.js');
     const app = express();
     app.use(express.json());
-    // Autenticação já resolvida a montante no app real; aqui injetamos o usuário.
+    // Autenticação e acesso já resolvidos a montante no app real (auth → resolverAcesso);
+    // aqui injetamos o usuário e as permissões efetivas.
     app.use((req, _res, next) => {
-        (req as express.Request & { user?: unknown }).user = { sub: 'yuri', role: 'admin' };
+        req.user = { sub: 'yuri' };
+        req.acesso = {
+            userId: 1,
+            papel: { id: 1, nome: 'Administrador' },
+            permissoes: new Set(permissoesAtuais),
+        };
         next();
     });
     app.use('/operacao', operacaoRouter);
@@ -248,34 +252,41 @@ describe('POST /operacao/alertas/:id/reconhecer', () => {
     });
 });
 
-describe('recorte por identidade (OPERACAO_USUARIOS)', () => {
+describe('acesso por permissão operacao:ver (ADR-0053; allow-list aposentado)', () => {
     afterEach(() => {
-        allowList = [];
+        permissoesAtuais = [...PERMISSION_CATALOG];
     });
 
-    it('lista vazia: admin entra — comportamento de hoje preservado', async () => {
-        allowList = [];
+    it('com operacao:ver: entra (o Administrador tem, como todo admin via hoje)', async () => {
         expect((await fetch(`${srv.url}/operacao`)).status).toBe(200);
     });
 
-    it('usuário FORA do recorte recebe 404, não 403', async () => {
-        // 403 confirmaria que a rota existe. Como o recorte é obscuridade deliberada — o pedido
-        // é que o painel não apareça para quem não opera —, confirmar a rota entregaria metade
-        // do que ele quer esconder.
-        allowList = ['outra-pessoa'];
+    it('sem operacao:ver: 404 { error: "Not found" }, não 403 (ADR-0042)', async () => {
+        // 403 confirmaria que a rota existe. O recorte é obscuridade deliberada: para quem não
+        // opera, o painel simplesmente não existe.
+        permissoesAtuais = PERMISSION_CATALOG.filter((p) => p !== PERMISSION.OPERACAO_VER);
         const res = await fetch(`${srv.url}/operacao`);
         expect(res.status).toBe(404);
         expect(await res.json()).toEqual({ error: 'Not found' });
     });
 
-    it('usuário DENTRO do recorte entra normalmente', async () => {
-        allowList = ['yuri'];
-        expect((await fetch(`${srv.url}/operacao`)).status).toBe(200);
+    it('reconhecer exige só operacao:ver (JC-5): sem ela, 404; com ela, segue', async () => {
+        permissoesAtuais = PERMISSION_CATALOG.filter((p) => p !== PERMISSION.OPERACAO_VER);
+        const negado = await fetch(`${srv.url}/operacao/alertas/3/reconhecer`, {
+            method: 'POST',
+        });
+        expect(negado.status).toBe(404);
+        expect(await negado.json()).toEqual({ error: 'Not found' });
+
+        permissoesAtuais = [PERMISSION.OPERACAO_VER];
+        const ok = await fetch(`${srv.url}/operacao/alertas/3/reconhecer`, { method: 'POST' });
+        expect(ok.status).toBe(200);
     });
 
-    it('o recorte vale também para o POST de reconhecer', async () => {
-        allowList = ['outra-pessoa'];
-        const res = await fetch(`${srv.url}/operacao/alertas/3/reconhecer`, { method: 'POST' });
-        expect(res.status).toBe(404);
+    it('o allow-list por env não é mais lido: nenhum EnvironmentProvider resolvido', async () => {
+        resolvidos.length = 0;
+        await fetch(`${srv.url}/operacao`);
+        const nomes = resolvidos.map((t) => (typeof t === 'function' ? t.name : String(t)));
+        expect(nomes).not.toContain('EnvironmentProvider');
     });
 });

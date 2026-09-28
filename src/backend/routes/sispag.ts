@@ -23,8 +23,9 @@ import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetor
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { requireRole } from '../http/auth.js';
+import { exigirPermissao } from '../http/acesso.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
 
 /**
@@ -41,6 +42,7 @@ const router = Router();
 // GET /sispag/painel — painel diário read-only (dados ao vivo do Conexos).
 router.get(
     '/painel',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(SispagPainelService);
@@ -52,6 +54,7 @@ router.get(
 // GET /sispag/retornos — arquivos de retorno (.RET) do fin052, ao vivo. READ-ONLY.
 router.get(
     '/retornos',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(SispagPainelService);
@@ -72,7 +75,7 @@ router.get(
     // Mesmo raciocínio do download do `.REM`: a linha digitável é destino de pagamento —
     // carrega banco, agência e conta do cedente no campo livre, além do valor. Sem o guard,
     // um loop de `curl` extrai a carteira de boletos da Columbia. LGPD Art. 6º e LC 105.
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(SispagPainelService);
@@ -86,6 +89,7 @@ router.get(
 
 router.get(
     '/lotes/:id/modalidades-disponiveis',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(SispagPainelService);
@@ -147,6 +151,7 @@ const modalidadeSchema = z.object({
 // GET /sispag/lotes — lista lotes candidatos (?status=&filCod=). Leitura.
 router.get(
     '/lotes',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = listLotesSchema.safeParse(req.query);
@@ -162,6 +167,7 @@ router.get(
 // GET /sispag/lotes/:id — um lote com itens.
 router.get(
     '/lotes/:id',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(LotePagamentoService);
@@ -177,7 +183,7 @@ router.get(
 // POST /sispag/lotes — cria um lote candidato (RASCUNHO). admin.
 router.post(
     '/lotes',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = criarLoteSchema.safeParse(req.body);
@@ -194,7 +200,7 @@ router.post(
 // POST /sispag/lotes/:id/itens — inclui um título no lote. admin.
 router.post(
     '/lotes/:id/itens',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = incluirTituloSchema.safeParse(req.body);
@@ -219,7 +225,7 @@ router.post(
 // DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod — remove um título. admin.
 router.delete(
     '/lotes/:id/itens/:filCod/:docCod/:titCod',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const filCod = Number(req.params.filCod);
@@ -248,7 +254,7 @@ router.delete(
 // Admin. 400 chave inválida · 409 título fora de lote ou lote fora de RASCUNHO.
 router.post(
     '/titulos/:filCod/:docCod/:titCod/retirar-do-lote',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const chave = chaveTituloSchema.safeParse(req.params);
@@ -270,7 +276,7 @@ router.post(
 for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
     router.post(
         `/lotes/:id/${acao}`,
-        requireRole('admin'),
+        exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
         asyncHandler(async (req, res) => {
             await bootstrapAppContainer();
             const parsed = versaoSchema.safeParse(req.body);
@@ -308,7 +314,7 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
 // pagamento de um item (A2, só RASCUNHO; optimistic lock). admin.
 router.post(
     '/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const filCod = Number(req.params.filCod);
@@ -345,7 +351,7 @@ router.post(
 // POST /sispag/lotes/:id/conta — troca a conta pagadora do lote (A3, só RASCUNHO). admin.
 router.post(
     '/lotes/:id/conta',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = contaPagadoraSchema.safeParse(req.body);
@@ -379,7 +385,7 @@ router.post(
 // Honra o header `Idempotency-Key`; `IngestLockBusyError` → 409 (já rodando).
 router.post(
     '/ingestao',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -398,7 +404,7 @@ router.post(
 // Mesmas regras da montagem (I4, só a vencer ≤7d). `IngestLockBusyError` → 409.
 router.post(
     '/lotes/formar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -435,7 +441,7 @@ router.get(
     '/boletos-dda',
     // Mesmo guard das linhas digitáveis do lote: código de barras é destino de pagamento
     // (banco, agência e conta do cedente no campo livre). LGPD Art. 6º e LC 105.
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = boletosDdaSchema.safeParse(req.query);
@@ -451,7 +457,7 @@ router.get(
 // POST /sispag/boletos-dda/sincronizar — relê o fin124 (incremental). `IngestLockBusyError` → 409.
 router.post(
     '/boletos-dda/sincronizar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -473,6 +479,7 @@ const runsLimitSchema = z.coerce.number().int().positive().catch(10);
 // GET /sispag/ingestao/runs — trilha de auditoria das ingestões (?limit=).
 router.get(
     '/ingestao/runs',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const limit = Math.min(runsLimitSchema.parse(req.query.limit), 50);
@@ -490,7 +497,7 @@ router.get(
     // Dado bancário da EMPRESA (17 contas na filial 2). As rotas irmãs de escrita já exigem
     // admin; a assimetria era o defeito — leitura de conta corrente não é menos sensível que
     // escrita. Quando existir um papel `viewer`, reavaliar se esta rota o aceita.
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const filCod = Number(req.query.filCod);
@@ -551,6 +558,7 @@ const gerarRemessaSchema = z
 // Mesma autenticação das outras leituras de lote. Não consulta o ERP: usa o snapshot do lote.
 router.get(
     '/lotes/:id/remessa/janela',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(DebitDateService);
@@ -567,7 +575,7 @@ router.get(
 // de propósito — é o que impede duas remessas para o mesmo lote).
 router.post(
     '/lotes/:id/remessa',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -609,7 +617,7 @@ router.get(
     // O `.REM` é um CNAB 240 com CNPJ, banco, agência e conta de CADA FORNECEDOR pago.
     // Sem este guard, qualquer usuário autenticado extraía a carteira de fornecedores da
     // Columbia com um loop de `curl` — LGPD Art. 6º e sigilo bancário (LC 105).
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(RemessaService);
@@ -633,7 +641,7 @@ router.get(
 // que é a identidade certa: o risco é reprocessar o MESMO arquivo, não a mesma requisição.
 router.post(
     '/retornos/conciliar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -685,7 +693,7 @@ const execucoesSchema = z.object({
 
 router.get(
     '/execucoes',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = execucoesSchema.safeParse(req.query);

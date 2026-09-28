@@ -31,6 +31,7 @@ import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
 import sispagRouter from './sispag.js';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 interface TestServer {
     url: string;
@@ -41,10 +42,9 @@ const readJson = async (res: Response): Promise<Record<string, any>> =>
     (await res.json()) as Record<string, any>;
 
 /**
- * Auth falsa. NOTA: hoje todo usuário nasce `admin` (`app_user.role DEFAULT 'admin'`,
- * decisão explícita do produto), então na prática o `requireRole('admin')` não separa
- * ninguém em produção. Estes testes exercitam o gate mesmo assim — ele é o que vai valer
- * no dia em que existir um papel `viewer`, e uma remoção acidental precisa quebrar algo.
+ * Auth falsa. `role` é a ponte dos testes anteriores à ADR-0053: `admin` (default) vira o
+ * Administrador (as nove permissões); `viewer` vira só leitura, sem `sispag:executar`. O gate real
+ * é o guard `exigirPermissao` de cada rota; a tabela completa está em `http/routePermissions.test.ts`.
  */
 const buildApp = (opts: { authenticated: boolean; role?: string }): express.Express => {
     const app = express();
@@ -56,6 +56,8 @@ const buildApp = (opts: { authenticated: boolean; role?: string }): express.Expr
             return;
         }
         req.user = { sub: 'user-abc', email: 'a@b.com', role: opts.role ?? 'admin' };
+        // `admin` = Administrador; `viewer` = só leitura (sem `sispag:executar`), ADR-0053.
+        req.acesso = AcessoFixture.porPapelLegado(opts.role);
         next();
     });
     // Sem `sispagGate`: o gate tem teste próprio; aqui o alvo são os handlers.
@@ -158,7 +160,7 @@ describe('GET /sispag/retornos', () => {
         expect(linhasDigitaveisDoLote).toHaveBeenCalledWith('lote-1');
     });
 
-    it('GET /lotes/:id/linhas-digitaveis exige role admin', async () => {
+    it('GET /lotes/:id/linhas-digitaveis exige sispag:executar', async () => {
         // A linha digitável é destino de pagamento (banco/agência/conta do cedente no campo
         // livre, mais o valor). Sem o guard, um loop de `curl` extrai a carteira de boletos.
         const linhasDigitaveisDoLote = jest.fn();
@@ -277,7 +279,7 @@ describe('GET /sispag/ingestao/runs', () => {
 // ─────────────────────────────────────────────── DADO BANCÁRIO (role)
 
 describe('GET /sispag/contas-pagadoras', () => {
-    it('exige role admin — é conta corrente da empresa', async () => {
+    it('exige sispag:executar — é conta corrente da empresa', async () => {
         container.registerInstance(ConexosSispagClient, {
             listContasCorrentes: jest.fn(),
         } as never);
@@ -332,7 +334,7 @@ describe('POST /sispag/lotes', () => {
         });
     });
 
-    it('exige role admin', async () => {
+    it('exige sispag:executar', async () => {
         container.registerInstance(LotePagamentoService, { criarLote: jest.fn() } as never);
 
         await comApp({ role: 'viewer' }, async (url) => {
@@ -458,7 +460,7 @@ describe('POST /sispag/titulos/:filCod/:docCod/:titCod/retirar-do-lote', () => {
         });
     });
 
-    it('exige role admin', async () => {
+    it('exige sispag:executar', async () => {
         const retirarDoLote = jest.fn();
         container.registerInstance(LotePagamentoService, { retirarDoLote } as never);
 
@@ -515,7 +517,7 @@ describe('POST /sispag/lotes/formar', () => {
         });
     });
 
-    it('exige role admin', async () => {
+    it('exige sispag:executar', async () => {
         container.registerInstance(FormacaoLotesService, { formar: jest.fn() } as never);
 
         await comApp({ role: 'viewer' }, async (url) => {
@@ -583,7 +585,7 @@ describe('POST /sispag/lotes/:id/remessa', () => {
         });
     });
 
-    it('exige role admin', async () => {
+    it('exige sispag:executar', async () => {
         container.registerInstance(RemessaService, { gerarRemessa: jest.fn() } as never);
 
         await comApp({ role: 'viewer' }, async (url) => {
@@ -782,7 +784,7 @@ describe('GET /sispag/lotes/:id/remessa/janela', () => {
 });
 
 describe('GET /sispag/lotes/:id/remessa/arquivo', () => {
-    it('exige role admin — o CNAB traz banco/agência/conta de cada fornecedor', async () => {
+    it('exige sispag:executar — o CNAB traz banco/agência/conta de cada fornecedor', async () => {
         container.registerInstance(RemessaService, { baixarArquivo: jest.fn() } as never);
 
         await comApp({ role: 'viewer' }, async (url) => {
@@ -869,7 +871,7 @@ describe('POST /sispag/retornos/conciliar', () => {
         });
     });
 
-    it('exige role admin', async () => {
+    it('exige sispag:executar', async () => {
         container.registerInstance(ConciliacaoRetornoService, { conciliar: jest.fn() } as never);
 
         await comApp({ role: 'viewer' }, async (url) => {
@@ -944,7 +946,7 @@ describe('GET /sispag/execucoes', () => {
         });
     });
 
-    it('exige role admin — é trilha de execução financeira', async () => {
+    it('exige sispag:executar — é trilha de execução financeira', async () => {
         registrarLedgers();
 
         await comApp({ role: 'viewer' }, async (url) => {
@@ -1003,7 +1005,7 @@ describe('GET /sispag/boletos-dda', () => {
         expect(listar).not.toHaveBeenCalled();
     });
 
-    it('exige role admin — código de barras é destino de pagamento', async () => {
+    it('exige sispag:executar — código de barras é destino de pagamento', async () => {
         registrar();
         await comApp({ role: 'viewer' }, async (url) => {
             const res = await fetch(`${url}/sispag/boletos-dda`);

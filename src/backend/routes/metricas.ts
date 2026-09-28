@@ -4,6 +4,8 @@ import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import MetricasCicloService from '../domain/service/metricas/MetricasCicloService.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
+import { exigirPermissao } from '../http/acesso.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 
 /** `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM` ou `YYYY-MM-DDTHH:MM:SS` — horário de São Paulo, sem fuso. */
@@ -26,8 +28,8 @@ const cicloQuerySchema = z.object({
  * Métricas do ciclo (ADR-0045) — quanto trabalho o sistema fez pela operação, por semana.
  *
  * Consumida pela tela Métricas e pelo `kavex-report-ciclo` (que faz login na API como qualquer
- * usuário). Leitura aberta a quem está autenticado, como as demais leituras da plataforma: os números
- * são agregados semanais, sem dado de cliente.
+ * usuário). Exige `metricas:ver` (ADR-0053) — a conta do report precisa mantê-la quando os papéis
+ * da Columbia chegarem. Os números são agregados semanais, sem dado de cliente.
  *
  * **Não toca o Conexos.** Tudo vem de `metricas.vw_metricas_ciclo`, com o valor gravado no momento do
  * fato — reconsultar o ERP traria câmbio e reprocessamento para dentro do número.
@@ -42,6 +44,7 @@ const router = Router();
 // GET /metricas/ciclo?inicio=&fim= — janelas fechadas da série, mais recente primeiro.
 router.get(
     '/ciclo',
+    exigirPermissao(PERMISSION.METRICAS_VER),
     asyncHandler(async (req, res) => {
         const parsed = cicloQuerySchema.safeParse(req.query);
         if (!parsed.success) {

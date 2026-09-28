@@ -235,7 +235,6 @@ export default class EnvironmentProvider {
             recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
             recebimentoTitularesInternos: this.resolveTitularesInternos(),
-            operacaoUsuarios: this.resolveOperacaoUsuarios(),
             fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
                 ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
                 : undefined,
@@ -269,21 +268,6 @@ export default class EnvironmentProvider {
      * declara quem é a própria casa — e ausência de configuração nunca esconde
      * dinheiro de ninguém.
      */
-    /**
-     * Allow-list de usuários do Painel de Operação (`OPERACAO_USUARIOS`, CSV).
-     * Vazio/ausente = sem restrição por identidade (cai no papel). Normaliza para minúsculas:
-     * username no `app_user` é case-sensitive, mas exigir capitalização exata de quem escreve a
-     * env transformaria um erro de digitação em "ninguém acessa" — e sem mensagem.
-     */
-    private resolveOperacaoUsuarios = (): string[] => {
-        const bruto = process.env.OPERACAO_USUARIOS;
-        if (bruto === undefined) return [];
-        return bruto
-            .split(',')
-            .map((u) => u.trim().toLowerCase())
-            .filter((u) => u !== '');
-    };
-
     private resolveTitularesInternos = (): string[] => {
         const bruto = process.env.RECEBIMENTO_TITULARES_INTERNOS;
         if (bruto === undefined) return [];
@@ -341,7 +325,6 @@ export default class EnvironmentProvider {
             recebimentoIngestStartDate: this.resolveIngestStartDate(),
             recebimentoIngestFilCods: this.resolveIngestFilCods(),
             recebimentoTitularesInternos: this.resolveTitularesInternos(),
-            operacaoUsuarios: this.resolveOperacaoUsuarios(),
             fin014ContaFinanceira: this.readEnv('FIN014_CONTA_FINANCEIRA')
                 ? Number(this.readEnv('FIN014_CONTA_FINANCEIRA'))
                 : undefined,

@@ -3,14 +3,13 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosSessionResolver from '../domain/client/ConexosSessionResolver.js';
-import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
+import { somenteAutenticado } from '../http/acesso.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { usuarioPodeVerOperacao } from '../http/operacaoAcesso.js';
 
 /**
- * Rotas do PRÓPRIO usuário autenticado (não-admin). Montado após o middleware de
- * auth. Hoje expõe só o status do vínculo Conexos, consumido pelo front logo após
- * o login para avisar quando o usuário está operando via robô (Fatia B).
+ * Rotas do PRÓPRIO usuário autenticado. Montado após o auth e o `resolverAcesso`; as duas rotas
+ * exigem só usuário existente e ativo (JC-6), com o guard explícito `somenteAutenticado()`.
  */
 const router = Router();
 
@@ -20,6 +19,7 @@ const router = Router();
 //   ausente = sem vínculo → opera via robô (normal, sem alarde).
 router.get(
     '/conexos-status',
+    somenteAutenticado(),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const resolver = container.resolve(ConexosSessionResolver);
@@ -29,16 +29,25 @@ router.get(
     }),
 );
 
-// GET /me/permissoes — o que ESTE usuário enxerga. Existe para a home não ter de reimplementar
-// a regra do allow-list no front: a fonte é uma só, e o gate real continua sendo o do servidor.
-// Um front desatualizado esconde ou mostra um card; ele não abre porta nenhuma.
+// GET /me/permissoes — o que ESTE usuário pode, calculado no servidor (ADR-0053). É a fonte única
+// do front (`usePermissoes`): nav, cards, páginas e botões se escondem por aqui. Esconder é
+// ergonomia; o gate real continua sendo o guard de cada rota (I2).
+//
+// `operacao` é compatibilidade com o front da v0.43 na janela de deploy (R10): deriva de
+// `operacao:ver` e sai num tweak posterior. `no-store` porque a permissão muda sem o token mudar.
 router.get(
     '/permissoes',
+    somenteAutenticado(),
     asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
-        const username = req.user?.sub ?? req.user?.email;
-        res.json({ operacao: usuarioPodeVerOperacao(username, env.operacaoUsuarios) });
+        const acesso = req.acesso;
+        if (!acesso) throw new Error('GET /me/permissoes sem req.acesso: resolverAcesso não rodou');
+        const permissoes = [...acesso.permissoes].sort();
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({
+            permissoes,
+            papel: acesso.papel,
+            operacao: acesso.permissoes.has(PERMISSION.OPERACAO_VER),
+        });
     }),
 );
 

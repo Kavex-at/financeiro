@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import ConexosCadastroClient from '../domain/client/ConexosCadastroClient.js';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
+import { somenteAutenticado } from '../http/acesso.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 
 /**
@@ -15,6 +16,8 @@ const router = Router();
 // GET /conexos/filiais — lists the tenant's branches + the default filCod.
 router.get(
     '/filiais',
+    // JC-6: seletor de filial das três frentes — basta estar autenticado e ativo (ADR-0053).
+    somenteAutenticado(),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
         const client = container.resolve(ConexosCadastroClient);

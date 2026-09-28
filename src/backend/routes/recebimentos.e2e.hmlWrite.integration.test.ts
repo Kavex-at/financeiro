@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import express from 'express';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 /**
  * FASE B — E2E com ESCRITA REAL no Conexos de HOMOLOGAÇÃO (columbiatrading-hml).
@@ -314,6 +315,7 @@ describe('FASE B — E2E ESCRITA REAL no Conexos HML (SN → fin014 → NDe → 
         app.use(express.json());
         app.use((req, _res, next) => {
             req.user = { sub: 'e2e-hml-fase-b', role: 'admin', email: 'e2e@columbia.test' };
+            req.acesso = AcessoFixture.administrador();
             next();
         });
         app.use('/recebimentos', recebimentosRouter);

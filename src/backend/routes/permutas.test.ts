@@ -42,6 +42,7 @@ import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnap
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
 import permutasRouter from './permutas.js';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 interface TestServer {
     url: string;
@@ -66,11 +67,12 @@ const buildApp = (opts: {
             res.status(401).json({ error: 'Missing or malformed Authorization header' });
             return;
         }
-        // role 'admin' por padrão (rotas de mutação exigem requireRole('admin')).
+        // Administrador por padrão (as nove permissões); outro `role` = só leitura (ADR-0053).
         req.user = {
             ...(opts.identidade ?? { sub: 'user-abc', email: 'a@b.com' }),
             role: opts.role ?? 'admin',
         };
+        req.acesso = AcessoFixture.porPapelLegado(opts.role);
         next();
     });
     app.use('/permutas', permutasRouter);
@@ -798,9 +800,9 @@ describe('exceção manual de permuta (ADR-0047)', () => {
     });
 });
 
-describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
-    it('role não-admin → 403 nas mutações; leituras seguem abertas', async () => {
-        // Usuário autenticado mas role 'authenticated' (não admin).
+describe('RBAC — permissão nas rotas de mutação (security-1, ADR-0053)', () => {
+    it('só permutas:ver → 403 nas mutações; as leituras passam', async () => {
+        // Usuário autenticado só com leitura (`role` não-admin vira `AcessoFixture.somenteLeitura`).
         const server = await listen(buildApp({ authenticated: true, role: 'authenticated' }));
         try {
             const mutacoes: Array<[string, string]> = [
@@ -822,7 +824,7 @@ describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
                 });
                 expect(res.status).toBe(403);
             }
-            // Leitura NÃO é gateada por role. A sonda anterior era `GET /painel`
+            // Leitura exige só `permutas:ver`. A sonda anterior era `GET /painel`
             // (removida em ADR-0043 §5) e registrava um mock com o método ERRADO
             // (`montarPainel` em vez de `exporNoPainel`), então a rota estourava
             // 500 e o `not.toBe(403)` passava POR ACIDENTE, sem exercitar o
