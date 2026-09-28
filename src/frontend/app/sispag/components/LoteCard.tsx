@@ -41,8 +41,10 @@ import {
   removerItem,
   rotuloConta,
 } from '@/lib/sispag'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { baixarBlob } from '@/lib/download'
 import { isSimulationEnabled } from '@/lib/features'
+import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
 import { type AcaoLote, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
@@ -104,6 +106,11 @@ export function LoteCard({
   destacado?: boolean
 }) {
   const [aberto, setAberto] = React.useState(false)
+  // ADR-0053: toda ação do lote exige `sispag:executar`. Sem ela (ou enquanto carrega), as ações
+  // SOMEM — nunca ficam desabilitadas (R11) — e as leituras reservadas a quem executa (contas
+  // pagadoras, modalidades do favorecido, linhas digitáveis, arquivo .REM) nem são pedidas.
+  const { carregando: carregandoPermissoes, tem } = usePermissoes()
+  const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
   // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
   const [gerandoRemessa, setGerandoRemessa] = React.useState(false)
   // As demais transições também passam por uma confirmação que nomeia o lote.
@@ -141,7 +148,7 @@ export function LoteCard({
   // tornava impossível pagar favorecido de qualquer outro banco pela tela.
   const [contas, setContas] = React.useState<ContaPagadora[]>([])
   React.useEffect(() => {
-    if (!isRascunho) return
+    if (!isRascunho || !podeExecutar) return
     let vivo = true
     fetchContasPagadoras(l.filCod)
       .then((cs) => {
@@ -153,7 +160,7 @@ export function LoteCard({
     return () => {
       vivo = false
     }
-  }, [isRascunho, l.filCod])
+  }, [isRascunho, l.filCod, podeExecutar])
 
   const temConciliacao = l.itens.some((i) => i.retornoEvento != null)
   const faltaModalidade = l.itens.some((i) => !i.modalidade)
@@ -162,7 +169,7 @@ export function LoteCard({
   // expandir um RASCUNHO. Chave = docCod:titCod. Enquanto não carrega, o seletor oferece todas.
   const [disponiveis, setDisponiveis] = React.useState<Map<string, Modalidade[]> | null>(null)
   React.useEffect(() => {
-    if (!aberto || !isRascunho) return
+    if (!aberto || !isRascunho || !podeExecutar) return
     let vivo = true
     fetchModalidadesDisponiveis(l.id)
       .then((itens) => {
@@ -175,7 +182,7 @@ export function LoteCard({
     return () => {
       vivo = false
     }
-  }, [aberto, isRascunho, l.id])
+  }, [aberto, isRascunho, l.id, podeExecutar])
 
   // Linha digitável do boleto por item, para a analista conferir com o banco. Só existe
   // depois da remessa gerada — o ERP anexa o código no import (ADR-0040), então em rascunho
@@ -186,7 +193,8 @@ export function LoteCard({
   // corrompido é indistinguível de "este título não é boleto": nos dois casos o botão some.
   const [linhasRecusadas, setLinhasRecusadas] = React.useState(0)
   React.useEffect(() => {
-    if (!aberto || isRascunho) return
+    // `GET .../linhas-digitaveis` exige `sispag:executar` no backend (destino de pagamento).
+    if (!aberto || isRascunho || !podeExecutar) return
     let vivo = true
     fetchLinhasDigitaveis(l.id)
       .then(({ itens, dropped }) => {
@@ -202,7 +210,7 @@ export function LoteCard({
     return () => {
       vivo = false
     }
-  }, [aberto, isRascunho, l.id])
+  }, [aberto, isRascunho, l.id, podeExecutar])
 
   /** Copia a linha digitável. O toast confirma sem repetir os 47 dígitos na tela. */
   const copiarLinha = async (linhaDigitavel: string, docCod: string, titCod: string) => {
@@ -249,7 +257,7 @@ export function LoteCard({
           </CardTitle>
         </button>
         <div className="flex shrink-0 flex-wrap gap-1">
-          {isRascunho ? (
+          {isRascunho && podeExecutar ? (
             <>
               {onAdicionar ? (
                 <Button
@@ -284,7 +292,7 @@ export function LoteCard({
               </Button>
             </>
           ) : null}
-          {isFinalizado ? (
+          {isFinalizado && podeExecutar ? (
             <>
               <Button
                 size="sm"
@@ -336,7 +344,7 @@ export function LoteCard({
               onConfirmar={executar[confirmando]}
             />
           ) : null}
-          {l.remessaArquivo ? (
+          {l.remessaArquivo && podeExecutar ? (
             <Button
               size="sm"
               variant="outline"
@@ -358,7 +366,7 @@ export function LoteCard({
       </CardHeader>
       {aberto ? (
         <CardContent>
-          {isRascunho ? (
+          {isRascunho && podeExecutar ? (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">Conta pagadora:</span>
               <Select
@@ -413,7 +421,7 @@ export function LoteCard({
                     <TableHead>Vencimento</TableHead>
                     <TableHead>Forma de pgto.</TableHead>
                     {temConciliacao ? <TableHead>Retorno do banco</TableHead> : null}
-                    {isRascunho ? <TableHead className="w-10" /> : null}
+                    {isRascunho && podeExecutar ? <TableHead className="w-10" /> : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -446,7 +454,7 @@ export function LoteCard({
                         {formatErpDay(i.vencimento)}
                       </TableCell>
                       <TableCell>
-                        {isRascunho ? (
+                        {isRascunho && podeExecutar ? (
                           <div className="flex flex-col gap-0.5">
                             <Select
                               value={i.modalidade ?? undefined}
@@ -544,7 +552,7 @@ export function LoteCard({
                           )}
                         </TableCell>
                       ) : null}
-                      {isRascunho ? (
+                      {isRascunho && podeExecutar ? (
                         <TableCell>
                           <Button
                             size="icon"

@@ -6,6 +6,22 @@ import {
   fetchPainelRecebimentos,
   recebimentosPainelFixture,
 } from '@/lib/recebimentos'
+import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
+
+// ADR-0053: a página e as ações leem `usePermissoes`. Por padrão, o Administrador (as nove).
+let permissoesAtuais: Permissao[] = [...CATALOGO_PERMISSOES]
+let permissoesCarregando = false
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => ({
+    carregando: permissoesCarregando,
+    tem: (p: Permissao) => !permissoesCarregando && permissoesAtuais.includes(p),
+  }),
+}))
+
+beforeEach(() => {
+  permissoesAtuais = [...CATALOGO_PERMISSOES]
+  permissoesCarregando = false
+})
 
 // O painel busca a carteira no mount; o objeto deste teste é o cabeçalho, não os
 // dados. Reaproveita o `recebimentosPainelFixture` já exportado pela lib — montar
@@ -298,5 +314,52 @@ describe('RecebimentosPage — estados de carregamento', () => {
 
     expect(screen.queryByText('~ POR ENCOMENDA')).not.toBeInTheDocument()
     expect(screen.queryByText('99')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * ADR-0053 (Task 17): as ações de Adiantamentos exigem `recebimentos:executar`. Quem só vê
+ * (`recebimentos:ver`) não vê o botão — escondido, nunca desabilitado (R11). As leituras seguem.
+ */
+describe('RecebimentosPage — ações por permissão (ADR-0053)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    ;(fetchPainelRecebimentos as jest.Mock).mockResolvedValue(recebimentosPainelFixture)
+    ;(fetchPainelEnriquecimento as jest.Mock).mockResolvedValue({
+      geradoEm: '2026-08-19T12:00:00.000Z',
+      modalidades: {},
+      ndes: [],
+      ndePendentes: 0,
+    })
+  })
+
+  const renderComo = async (permissoes: Permissao[]) => {
+    permissoesAtuais = permissoes
+    await act(async () => {
+      render(<RecebimentosPage />)
+    })
+  }
+
+  const ACOES: Array<[string, () => HTMLElement[]]> = [
+    ['upload de extrato (Importar extrato, com o preview)', () => screen.queryAllByRole('button', { name: /Importar extrato/i })],
+    ['alocar processos / solicitação de numerário', () => screen.queryAllByRole('button', { name: /Alocar processos/i })],
+    ['arquivar/desarquivar (menu da linha)', () => screen.queryAllByRole('button', { name: /Mais ações para/i })],
+  ]
+
+  it.each(ACOES)('só recebimentos:ver: %s NÃO aparece', async (_acao, buscar) => {
+    await renderComo(['recebimentos:ver'])
+    expect(screen.getAllByRole('columnheader').length).toBeGreaterThan(0) // a leitura segue
+    expect(buscar()).toHaveLength(0)
+  })
+
+  it.each(ACOES)('com recebimentos:executar: %s aparece como hoje', async (_acao, buscar) => {
+    await renderComo(['recebimentos:ver', 'recebimentos:executar'])
+    expect(buscar().length).toBeGreaterThan(0)
+    for (const el of buscar()) expect(el).not.toBeDisabled()
+  })
+
+  it('só recebimentos:ver: nada de ação aparece desabilitado no lugar', async () => {
+    await renderComo(['recebimentos:ver'])
+    expect(screen.queryByText(/Importar extrato/i)).not.toBeInTheDocument()
   })
 })

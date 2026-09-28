@@ -72,6 +72,9 @@ import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
+import { ExigePermissao } from '@/components/auth/ExigePermissao'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
+import { PERMISSAO } from '@/lib/permissoes'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
@@ -150,10 +153,20 @@ export default function SispagPage() {
       </div>
     )
   }
-  return <SispagPanel />
+  // Flag primeiro (I8), permissão depois: com a frente desligada, ninguém vê o painel.
+  return (
+    <ExigePermissao permissao={PERMISSAO.SISPAG_VER}>
+      <SispagPanel />
+    </ExigePermissao>
+  )
 }
 
 function SispagPanel() {
+  // ADR-0053: toda ação da tela exige `sispag:executar`. Sem ela (ou enquanto carrega), os botões
+  // SOMEM — nunca ficam desabilitados (R11). A aba Boletos DDA também some: o backend reserva o
+  // fin124 a quem executa (ver `_inbox/auth-permissoes-modulo-gap.md`).
+  const { carregando: carregandoPermissoes, tem } = usePermissoes()
+  const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
   const [lotesErro, setLotesErro] = React.useState<string | null>(null)
@@ -595,13 +608,15 @@ function SispagPanel() {
         subtitle="Escopo II · Frente II. Painel, montagem do lote, geração da remessa e conciliação do retorno. O arquivo não é transmitido ao banco."
         actions={
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={abrirIngestao}
-              title="Ver as últimas ingestões (cron/manual) e rodar sob demanda"
-            >
-              <DatabaseZap aria-hidden /> Ingestão de dados
-            </Button>
+            {podeExecutar ? (
+              <Button
+                size="sm"
+                onClick={abrirIngestao}
+                title="Ver as últimas ingestões (cron/manual) e rodar sob demanda"
+              >
+                <DatabaseZap aria-hidden /> Ingestão de dados
+              </Button>
+            ) : null}
             <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
               <RefreshCcw className="size-4" /> Recarregar
             </Button>
@@ -748,13 +763,17 @@ function SispagPanel() {
               </TabsTrigger>
               <TabsTrigger value="lotes">Lançamento Lote (REM) - Conexos</TabsTrigger>
               <TabsTrigger value="retornos">Retorno Lote (RET) - Conexos</TabsTrigger>
-              <TabsTrigger value="boletos-dda">Boletos DDA (fin124)</TabsTrigger>
+              {podeExecutar ? (
+                <TabsTrigger value="boletos-dda">Boletos DDA (fin124)</TabsTrigger>
+              ) : null}
             </TabsList>
 
-            {/* ---- Boletos DDA (fin124) — carrega ao abrir a aba ---- */}
-            <TabsContent value="boletos-dda">
-              <BoletosDdaTab />
-            </TabsContent>
+            {/* ---- Boletos DDA (fin124) — carrega ao abrir a aba; só para quem executa ---- */}
+            {podeExecutar ? (
+              <TabsContent value="boletos-dda">
+                <BoletosDdaTab />
+              </TabsContent>
+            ) : null}
 
             {/* ---- Títulos a pagar ---- */}
             <TabsContent value="titulos" className="space-y-3">
@@ -798,13 +817,17 @@ function SispagPanel() {
                       {selecionados.size} sel. · {formatBRL(totalSelecionado)}
                     </span>
                   ) : null}
-                  <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
-                    <Layers className="size-4" />{' '}
-                    {formando ? 'Formando…' : 'Formar lotes automáticos'}
-                  </Button>
-                  <Button size="sm" disabled={selecionados.size === 0 || busy} onClick={criarLoteComSelecionados}>
-                    <Layers className="size-4" /> Criar lote ({selecionados.size})
-                  </Button>
+                  {podeExecutar ? (
+                    <>
+                      <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
+                        <Layers className="size-4" />{' '}
+                        {formando ? 'Formando…' : 'Formar lotes automáticos'}
+                      </Button>
+                      <Button size="sm" disabled={selecionados.size === 0 || busy} onClick={criarLoteComSelecionados}>
+                        <Layers className="size-4" /> Criar lote ({selecionados.size})
+                      </Button>
+                    </>
+                  ) : null}
                 </div>
               </div>
 
@@ -823,7 +846,7 @@ function SispagPanel() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-10" />
+                        {podeExecutar ? <TableHead className="w-10" /> : null}
                         <TableHead>Credor</TableHead>
                         <TableHead>Documento</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
@@ -839,15 +862,17 @@ function SispagPanel() {
                     <TableBody>
                       {abaTitulos.slice.map((t) => (
                         <TableRow key={keyOf(t)}>
-                          <TableCell>
-                            <Checkbox
-                              checked={selecionados.has(keyOf(t))}
-                              onCheckedChange={() => toggle(t)}
-                              disabled={t.emLote}
-                              aria-label="selecionar título"
-                              title={t.emLote ? 'Já está num lote — não pode ser atachado a outro.' : undefined}
-                            />
-                          </TableCell>
+                          {podeExecutar ? (
+                            <TableCell>
+                              <Checkbox
+                                checked={selecionados.has(keyOf(t))}
+                                onCheckedChange={() => toggle(t)}
+                                disabled={t.emLote}
+                                aria-label="selecionar título"
+                                title={t.emLote ? 'Já está num lote — não pode ser atachado a outro.' : undefined}
+                              />
+                            </TableCell>
+                          ) : null}
                           <TableCell className="max-w-[18rem] truncate font-medium">
                             <span className={t.emLote ? 'text-muted-foreground' : undefined}>
                               {t.credor ?? '—'}
@@ -929,7 +954,7 @@ function SispagPanel() {
                           </TableCell>
                           <TableCell className="text-muted-foreground">{t.filCod}</TableCell>
                           <TableCell className="text-right">
-                            {t.loteRascunho ? (
+                            {t.loteRascunho && podeExecutar ? (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -980,7 +1005,7 @@ function SispagPanel() {
                       lote={l}
                       busy={busy}
                       acao={acaoLote}
-                      onAdicionar={setAdicionarLote}
+                      {...(podeExecutar ? { onAdicionar: setAdicionarLote } : {})}
                       destacado={loteEmFoco === l.id}
                     />
                   ))}
@@ -1211,6 +1236,7 @@ function SispagPanel() {
                               </TableCell>
                               <TableCell className="text-muted-foreground">{r.filCod}</TableCell>
                               <TableCell className="text-right">
+                                {podeExecutar ? (
                                 <div className="flex justify-end gap-2">
                                   {/* Arquivo apenas CARREGADO não tem linha de detalhe: só
                                       depois de processado. Por isso "Processar" some quando
@@ -1235,6 +1261,7 @@ function SispagPanel() {
                                     Conciliar
                                   </Button>
                                 </div>
+                                ) : null}
                               </TableCell>
                             </TableRow>
                           ))}

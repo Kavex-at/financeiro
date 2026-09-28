@@ -23,6 +23,16 @@ import { PermutaPendenteTable } from '@/app/permutas/components/PermutaPendenteT
 import { AbaHistorico } from '@/app/permutas/components/AbaHistorico'
 import type { PermutaPendente } from '@/lib/types'
 import { useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
+import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
+
+// Estes testes exercitam as tabelas com quem EXECUTA (o Administrador do dia do deploy). O recorte
+// por `permutas:executar` tem teste próprio em `permutas-executar.test.tsx` (ADR-0053).
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => ({
+    carregando: false,
+    tem: (p: Permissao) => CATALOGO_PERMISSOES.includes(p),
+  }),
+}))
 
 // Pure helpers extracted from the god-component during the CC-1 split.
 describe('permutas format helpers', () => {

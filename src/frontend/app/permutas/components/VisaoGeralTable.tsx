@@ -26,6 +26,7 @@ import {
   tagExcecao,
 } from './format'
 import { Campo, ExcecaoManualTag, Moeda, ProcessamentoBadge, StatusBadge } from './ui'
+import { usePodeExecutarPermutas } from './usePodeExecutarPermutas'
 
 /**
  * Visão geral — adiantamentos pendentes OU invoices em aberto (dirigida pela `vista`).
@@ -68,6 +69,7 @@ export function VisaoGeralTable({
   totalPaginas: number
   setPagina: React.Dispatch<React.SetStateAction<number>>
 }) {
+  const podeExecutar = usePodeExecutarPermutas()
   return listaFiltrada.length === 0 ? (
     <EmptyState
       title={
@@ -422,13 +424,15 @@ export function VisaoGeralTable({
                                 Exceção manual
                                 <ExcecaoManualTag ativa={p.excecaoManual.ativa} />
                               </span>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => abrirDesfazerExcecao(p)}
-                              >
-                                <Undo2 aria-hidden /> Desfazer exceção
-                              </Button>
+                              {podeExecutar ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => abrirDesfazerExcecao(p)}
+                                >
+                                  <Undo2 aria-hidden /> Desfazer exceção
+                                </Button>
+                              ) : null}
                             </div>
                             {!p.excecaoManual.ativa ? (
                               <p className="mb-2 text-xs text-warning-foreground">
@@ -445,7 +449,7 @@ export function VisaoGeralTable({
                               <Campo label="Data">{fmtData(p.excecaoManual.criadoEm)}</Campo>
                             </dl>
                           </div>
-                        ) : podeMarcarExcecao(p) ? (
+                        ) : podeExecutar && podeMarcarExcecao(p) ? (
                           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background/60 px-3 py-2">
                             <span className="text-xs text-muted-foreground">
                               Permuta feita por baixas manuais no Conexos, fora do fluxo de
@@ -492,13 +496,15 @@ export function VisaoGeralTable({
                                 Nenhuma alocação ainda.
                               </p>
                             )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => abrirAlocar(p)}
-                            >
-                              <ArrowLeftRight aria-hidden /> Alocar invoice
-                            </Button>
+                            {podeExecutar ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => abrirAlocar(p)}
+                              >
+                                <ArrowLeftRight aria-hidden /> Alocar invoice
+                              </Button>
+                            ) : null}
                           </div>
                         ) : null}
                       </TableCell>

@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/table'
 import { SALDO_TOL, fmtData, moedaCodigo } from './format'
 import { Moeda, PermutaBorderoBadge } from './ui'
+import { usePodeExecutarPermutas } from './usePodeExecutarPermutas'
 
 /**
  * Tabela de alocação manual (1 adto → N invoices) — compartilhada pelas abas
@@ -33,6 +34,7 @@ export function PermutaPendenteTable({
   abrirAlocar: (p: PermutaPendente) => void
   abrirReconciliar: (p: PermutaPendente) => void
 }) {
+  const podeExecutar = usePodeExecutarPermutas()
   return list.length === 0 ? (
     <EmptyState
       title="Nenhuma permuta cross-process"
@@ -50,7 +52,7 @@ export function PermutaPendenteTable({
           <TableHead className="text-right">Saldo restante</TableHead>
           <TableHead className="text-right">Alocações</TableHead>
           <TableHead>Status</TableHead>
-          <TableHead className="text-right">Ação</TableHead>
+          {podeExecutar ? <TableHead className="text-right">Ação</TableHead> : null}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -92,6 +94,8 @@ export function PermutaPendenteTable({
                   <PermutaBorderoBadge vinculo={vinculo} />
                 )}
               </TableCell>
+              {/* Alocar/Baixar só para quem executa (`permutas:executar`, ADR-0053): some, não desabilita. */}
+              {podeExecutar ? (
               <TableCell className="text-right">
                 <div className="flex justify-end gap-2">
                   <Button
@@ -131,6 +135,7 @@ export function PermutaPendenteTable({
                   </Button>
                 </div>
               </TableCell>
+              ) : null}
             </TableRow>
           )
         })}

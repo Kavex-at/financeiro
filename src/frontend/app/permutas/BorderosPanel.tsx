@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn, formatNumber, ordenarBorderosPainel } from '@/lib/utils'
+import { usePodeExecutarPermutas } from './components/usePodeExecutarPermutas'
 
 type FiltroSituacao = 'todos' | 'abertos' | 'finalizados' | 'cancelados'
 
@@ -86,6 +87,8 @@ const formatWhen = (iso: string) => {
  * Permutas (`embedded=true`, só a toolbar de Atualizar).
  */
 export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
+  // Aprovar/cancelar/excluir borderô e excluir baixa só para `permutas:executar` (ADR-0053).
+  const podeExecutar = usePodeExecutarPermutas()
   const [borderos, setBorderos] = React.useState<BorderoResumo[] | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [filtro, setFiltro] = React.useState<FiltroSituacao>('todos')
@@ -427,7 +430,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
               <TableHead className="text-right">Total baixado</TableHead>
               <TableHead>Criado por</TableHead>
               <TableHead>Data</TableHead>
-              <TableHead className="text-right">Ações</TableHead>
+              {podeExecutar ? <TableHead className="text-right">Ações</TableHead> : null}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -459,6 +462,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                     </TableCell>
                     <TableCell className="text-muted-foreground">{b.criadoPor ?? '—'}</TableCell>
                     <TableCell className="text-muted-foreground">{formatWhen(b.criadoEm)}</TableCell>
+                    {podeExecutar ? (
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       {(() => {
                         // Ações só nos borderôs criados por ESTE sistema (têm trilha). Os demais
@@ -528,6 +532,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                         )
                       })()}
                     </TableCell>
+                    ) : null}
                   </TableRow>
                   {aberto ? (
                     <TableRow className="bg-muted/30 hover:bg-muted/30">
@@ -586,6 +591,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                                   <TableCell className="text-right tabular-nums">
                                     {x.bxaCodSeq ?? '—'}
                                   </TableCell>
+                                  {podeExecutar ? (
                                   <TableCell className="text-right">
                                     <Button
                                       size="sm"
@@ -607,6 +613,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                                       <Trash2 aria-hidden /> Excluir
                                     </Button>
                                   </TableCell>
+                                  ) : null}
                                 </TableRow>
                                 {x.status === 'error' && x.erroMensagem ? (
                                   <TableRow className="hover:bg-transparent">

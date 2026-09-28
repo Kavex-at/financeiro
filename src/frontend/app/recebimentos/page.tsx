@@ -49,6 +49,9 @@ import { FalhasTable } from './components/FalhasTable'
 import { NdeTable } from './components/NdeTable'
 import { AlocarProcessosDialog } from './components/AlocarProcessosDialog'
 import { ImportarExtratoDialog } from './components/ImportarExtratoDialog'
+import { ExigePermissao } from '@/components/auth/ExigePermissao'
+import { PERMISSAO } from '@/lib/permissoes'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 
 /** Formata uma data ISO (ou undefined) para pt-BR curta (UTC — dia estável). */
 const fmtData = (iso?: string) =>
@@ -90,7 +93,11 @@ const STATUS_BOTOES: readonly StatusFiltro[] = [
  * mostra como erro de carregamento em vez de esconder a frente inteira.
  */
 export default function RecebimentosPage() {
-  return <RecebimentosPanel />
+  return (
+    <ExigePermissao permissao={PERMISSAO.RECEBIMENTOS_VER}>
+      <RecebimentosPanel />
+    </ExigePermissao>
+  )
 }
 
 /**
@@ -164,6 +171,10 @@ type AcaoEmVoo =
   | { tipo: 'arquivadas' }
 
 function RecebimentosPanel() {
+  // ADR-0053: ações (importar extrato, alocar/solicitação de numerário, arquivar) exigem
+  // `recebimentos:executar`. Sem ela, somem — nunca desabilitam (R11); a API recusa com 403 igual.
+  const permissoes = usePermissoes()
+  const podeExecutar = !permissoes.carregando && permissoes.tem(PERMISSAO.RECEBIMENTOS_EXECUTAR)
   const [painel, setPainel] = React.useState<RecebimentosPainel | null>(null)
   const [carregando, setCarregando] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -357,9 +368,11 @@ function RecebimentosPanel() {
         }
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-              <Upload className="size-4" aria-hidden /> Importar extrato
-            </Button>
+            {podeExecutar ? (
+              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                <Upload className="size-4" aria-hidden /> Importar extrato
+              </Button>
+            ) : null}
             <Button
               variant="outline"
               size="sm"
@@ -646,7 +659,7 @@ function RecebimentosPanel() {
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
                               {/* Crédito já processado não se aloca de novo — o botão sai, o menu fica. */}
-                              {t.status !== 'processada' && !t.arquivadaEm ? (
+                              {podeExecutar && t.status !== 'processada' && !t.arquivadaEm ? (
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -656,13 +669,15 @@ function RecebimentosPanel() {
                                   <Coins className="size-4" aria-hidden /> Alocar
                                 </Button>
                               ) : null}
-                              <AcoesLinhaMenu
-                                rotuloLinha={`a transação de ${t.contraparte ?? t.id}`}
-                                arquivada={Boolean(t.arquivadaEm)}
-                                emAndamento={arquivando === t.id}
-                                onArquivar={() => void alternarArquivo(t, true)}
-                                onDesarquivar={() => void alternarArquivo(t, false)}
-                              />
+                              {podeExecutar ? (
+                                <AcoesLinhaMenu
+                                  rotuloLinha={`a transação de ${t.contraparte ?? t.id}`}
+                                  arquivada={Boolean(t.arquivadaEm)}
+                                  emAndamento={arquivando === t.id}
+                                  onArquivar={() => void alternarArquivo(t, true)}
+                                  onDesarquivar={() => void alternarArquivo(t, false)}
+                                />
+                              ) : null}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -688,7 +703,9 @@ function RecebimentosPanel() {
             <TabsContent value="falhas" className="space-y-3">
               {/* Monta só quando a aba abre: a busca é própria (sem o teto da carteira) e o painel
                   normal não deve pagá-la enquanto ninguém olha. */}
-              {aba === 'falhas' ? <FalhasTable onAlocar={setAlocarTxn} /> : null}
+              {aba === 'falhas' ? (
+                <FalhasTable onAlocar={podeExecutar ? setAlocarTxn : undefined} />
+              ) : null}
             </TabsContent>
 
             {/* ---- NDe ---- */}
@@ -708,20 +725,24 @@ function RecebimentosPanel() {
         </>
       ) : null}
 
-      <AlocarProcessosDialog
-        transacao={alocarTxn}
-        open={alocarTxn !== null}
-        onOpenChange={(o) => {
-          if (!o) setAlocarTxn(null)
-        }}
-        onProcessado={() => void carregar()}
-      />
+      {podeExecutar ? (
+        <>
+          <AlocarProcessosDialog
+            transacao={alocarTxn}
+            open={alocarTxn !== null}
+            onOpenChange={(o) => {
+              if (!o) setAlocarTxn(null)
+            }}
+            onProcessado={() => void carregar()}
+          />
 
-      <ImportarExtratoDialog
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        onImported={() => void carregar()}
-      />
+          <ImportarExtratoDialog
+            open={importOpen}
+            onOpenChange={setImportOpen}
+            onImported={() => void carregar()}
+          />
+        </>
+      ) : null}
     </div>
   )
 }
