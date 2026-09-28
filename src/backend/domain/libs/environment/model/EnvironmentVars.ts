@@ -22,6 +22,13 @@ export default class EnvironmentVars {
      */
     public authJwtSecret?: string;
 
+    /**
+     * Banner de transição para e-mail na tela de login (`AUTH_TRANSICAO_EMAIL_BANNER`, ADR-0051).
+     * Chave MANUAL: só o valor exato `'true'` liga; ausente, vazio ou qualquer outro valor desliga.
+     * Exposta pelo `GET /auth/transicao` público como `{ ativo }`.
+     */
+    public authTransicaoEmailBanner: boolean;
+
     public environment: string;
     public clientName: string;
     public awsRegion: string;
@@ -229,6 +236,7 @@ export default class EnvironmentVars {
         supabaseUrl,
         supabaseServiceRoleKey,
         authJwtSecret,
+        authTransicaoEmailBanner,
         environment,
         clientName,
         awsRegion,
@@ -266,6 +274,7 @@ export default class EnvironmentVars {
         supabaseUrl?: string;
         supabaseServiceRoleKey?: string;
         authJwtSecret?: string;
+        authTransicaoEmailBanner: boolean;
         environment: string;
         clientName: string;
         awsRegion: string;
@@ -303,6 +312,7 @@ export default class EnvironmentVars {
         this.supabaseUrl = supabaseUrl;
         this.supabaseServiceRoleKey = supabaseServiceRoleKey;
         this.authJwtSecret = authJwtSecret;
+        this.authTransicaoEmailBanner = authTransicaoEmailBanner;
         this.environment = environment;
         this.clientName = clientName;
         this.awsRegion = awsRegion;

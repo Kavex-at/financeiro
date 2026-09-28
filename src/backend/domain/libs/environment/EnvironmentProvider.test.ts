@@ -149,6 +149,25 @@ describe('EnvironmentProvider', () => {
             delete process.env.CONEXOS_EXTRATO_SYNC_START_DATE;
         });
 
+        it('authTransicaoEmailBanner: só o valor exato "true" liga (ADR-0051)', async () => {
+            const resolve = async () => {
+                const p = new EnvironmentProvider();
+                return (await p.getEnvironmentVars()).authTransicaoEmailBanner;
+            };
+            delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
+            expect(await resolve()).toBe(false); // ausente = desligado
+            for (const [valor, esperado] of [
+                ['true', true],
+                ['false', false],
+                ['', false],
+                ['TRUE ', false],
+            ] as const) {
+                process.env.AUTH_TRANSICAO_EMAIL_BANNER = valor;
+                expect(await resolve()).toBe(esperado);
+            }
+            delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
+        });
+
         it('does not call SSM in local mode', async () => {
             const provider = new EnvironmentProvider();
             await provider.getEnvironmentVars();
@@ -213,6 +232,18 @@ describe('EnvironmentProvider', () => {
 
             expect(env.supabaseUrl).toBeUndefined();
             expect(env.supabaseServiceRoleKey).toBeUndefined();
+        });
+
+        it('authTransicaoEmailBanner: mesma regra no caminho SSM/Lambda', async () => {
+            ssmSendMock.mockImplementation(async () => ({ Parameter: { Value: '{}' } }));
+            process.env.AUTH_TRANSICAO_EMAIL_BANNER = 'true';
+            expect(
+                (await new EnvironmentProvider().getEnvironmentVars()).authTransicaoEmailBanner,
+            ).toBe(true);
+            delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
+            expect(
+                (await new EnvironmentProvider().getEnvironmentVars()).authTransicaoEmailBanner,
+            ).toBe(false);
         });
     });
     describe('CONEXOS_WRITE_ENABLED em máquina local', () => {

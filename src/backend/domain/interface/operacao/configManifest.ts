@@ -117,6 +117,16 @@ export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
             'plataforma (12 de 12 contas). Sem a lista, o recorte por identidade não existe.',
         segredo: false,
     },
+    {
+        nome: 'AUTH_TRANSICAO_EMAIL_BANNER',
+        frente: FRENTE.NUCLEO,
+        criticidade: CRITICIDADE.OPCIONAL,
+        consequenciaSeAusente:
+            'Ausente = banner de transição para e-mail DESLIGADO na tela de login. Só `true` liga ' +
+            '(ADR-0051); vale sem redeploy do front, após reiniciar o backend.',
+        segredo: false,
+        default: 'false',
+    },
 
     // --- Recebimentos (Frente IV) ---
     {
