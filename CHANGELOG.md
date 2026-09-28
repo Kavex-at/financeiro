@@ -1,5 +1,25 @@
 # Columbia Financeiro — Changelog
 
+## v0.44.0 (2026-09-28) — permissões por módulo (passo 2 de 3 da transição de acesso)
+
+- **Acesso por módulo, não mais "todo mundo é admin".** Nove permissões: `ver` e `executar` para
+  Permutas, SISPAG e Adiantamentos; `ver` para Operação e Métricas; `gerenciar` para Usuários.
+  Cada usuário tem um papel (pacote de permissões) e, se preciso, exceções que concedem ou retiram
+  uma permissão. No deploy todos recebem o papel **Administrador**, com tudo: ninguém perde nem
+  ganha acesso.
+- **Quem não tem a permissão não vê.** Menu, cards da home, páginas e botões de ação somem para
+  quem não tem `ver` ou `executar` do módulo; o servidor recusa com "Você não tem permissão para
+  esta ação." e o código da permissão.
+- **Desativar alguém derruba o acesso em até 30 s**, não mais em até 12 h: a permissão é lida do
+  banco a cada requisição (com cache curto), nunca do token.
+- **Nova ação "Editar acesso" em Usuários**, com papel, exceções e o acesso efetivo de cada um.
+  Toda mudança de acesso fica registrada (quem, quando, antes e depois). Ninguém pode deixar a
+  plataforma sem um usuário capaz de gerenciar usuários, nem tirar o próprio acesso.
+- **O Painel de Operação passa a ser a permissão `operacao:ver`.** A variável
+  `OPERACAO_USUARIOS` (vazia em produção) foi aposentada e pode ser apagada do Render.
+- Deploy e rollback da migration `0066` em `DEPLOY.md` §5. Antes de desativar a conta `admin`,
+  trocar a credencial do report de ciclo (`FINANCEIRO_API_USUARIO`).
+
 ## v0.43.1 (2026-09-28) — métricas do ciclo contam a baixa na semana em que ela aconteceu
 
 - **Permuta reexecutada passa a contar na semana da liquidação, não na da 1ª tentativa.** Uma
