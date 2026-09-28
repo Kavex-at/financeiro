@@ -72,8 +72,9 @@ dois casos.
 | Trilha | no ERP (`ctcorr/log`, `cmnPessoasPix/log`) | só a nossa |
 | Incógnita | o robô tem permissão de escrita no `cmn025`? | o `fin015` aceita item sem `pctCodSeq`? |
 
-**Recomendação: A.** Segue o modelo que o ERP já usa e deixa o dado reaproveitável. Validar
-antes em HML: permissão do robô no `cmn025` e o formato que o `cmn025` exige.
+**Decisão (Yuri, 2026-09-28): opção A.** Segue o modelo que o ERP já usa e deixa o dado
+reaproveitável. A opção B sai do plano (o H3 deixa de bloquear). Validar antes em HML: permissão
+do robô no `cmn025` e o formato que o `cmn025` exige. Pendente: validação com a Columbia.
 
 **Controle obrigatório, qualquer que seja a forma.** Trocar o destino de um pagamento é o vetor
 clássico de fraude. A entrada manual precisa de:
@@ -132,7 +133,7 @@ clássico de fraude. A entrada manual precisa de:
 |---|---|---|
 | H1 | `validacao/modalidadeTed` e `validacao/modalidadePix` têm efeito colateral? O que devolvem? | 1, 3 |
 | H2 | O robô consegue `POST cmn025/ctcorr` e `POST cmn025/cmnPessoasPix`? | 2, 3 |
-| H3 | O `fin015` aceita item com destino digitado, sem `pctCodSeq`? (define se a opção B existe) | 2 |
+| H3 | ~~O `fin015` aceita item com destino digitado, sem `pctCodSeq`?~~ Fora: opção A decidida | — |
 | H4 | Que campos o item PIX exige, e que forma/segmentos o `.REM` gerado traz? | 3 |
 
 ## 7. Incidente — sessões derrubadas pela sonda
