@@ -3,8 +3,13 @@ import { SignJWT } from 'jose';
 import { inject, injectable } from 'tsyringe';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import UserRepository from '../../repository/auth/UserRepository.js';
+import LogService from '../LogService.js';
 
-/** Credenciais recebidas no `POST /auth/login`. */
+/**
+ * Credenciais recebidas no `POST /auth/login`. `username` é o IDENTIFICADOR digitado: e-mail ou
+ * usuário legado, já normalizado pela rota. O nome do campo não muda (ADR-0051): front e back sobem
+ * em momentos diferentes, e renomear quebraria o login na janela entre os dois deploys.
+ */
 export interface LoginInput {
     username: string;
     password: string;
@@ -13,8 +18,11 @@ export interface LoginInput {
 /** Resultado de um login bem-sucedido. */
 export interface LoginResult {
     token: string;
+    /** `username` CANÔNICO do banco (o `sub`), nunca o identificador digitado. */
     username: string;
     role: string;
+    /** E-mail cadastrado, para exibição. Nunca vai para o token (ADR-0051, Q1). */
+    email?: string;
 }
 
 /** Audiência exigida pelo middleware de auth (espelha o legado Supabase). */
@@ -24,12 +32,15 @@ const AUTHENTICATED_AUDIENCE = 'authenticated';
 const TOKEN_EXPIRATION = '12h';
 
 /**
- * AuthService — login simples por usuário/senha.
+ * AuthService — login simples por e-mail ou usuário + senha.
  *
- * Valida a senha (bcrypt) contra `app_user` e, em caso de sucesso, assina um
- * JWT HS256 PRÓPRIO (`sub`=username, `aud`='authenticated') com o
- * `AUTH_JWT_SECRET`. O mesmo segredo é usado pelo middleware (`http/auth.ts`)
- * para validar o token — sem alterar o middleware.
+ * O identificador casa, sem distinção de caixa, com o `email` OU o `username` de um usuário.
+ * Valida a senha (bcrypt) e, em caso de sucesso, assina um JWT HS256 PRÓPRIO (`sub`=username
+ * canônico, `aud`='authenticated') com o `AUTH_JWT_SECRET`. O mesmo segredo é usado pelo
+ * middleware (`http/auth.ts`) para validar o token — sem alterar o middleware.
+ *
+ * `sub` continua sendo o `username` até o passo 3 do plano de auth (ADR-0051): é a identidade de
+ * auditoria gravada nos ledgers, a chave do vínculo Conexos e do allow-list do Painel.
  */
 @injectable()
 export default class AuthService {
@@ -38,15 +49,32 @@ export default class AuthService {
         private userRepository: UserRepository,
         @inject(EnvironmentProvider)
         private environmentProvider: EnvironmentProvider,
+        @inject(LogService)
+        private logService: LogService,
     ) {}
 
     /**
-     * Autentica e devolve `{ token, username, role }`, ou `null` quando o
-     * usuário não existe / a senha não confere. Lança erro claro se o
-     * `AUTH_JWT_SECRET` não estiver configurado (não há como assinar o token).
+     * Autentica e devolve `{ token, username, role, email? }`, ou `null` quando nenhum usuário
+     * casa, o usuário está inativo ou a senha não confere — os três com a mesma resposta, para não
+     * revelar se a conta existe (I2). Lança erro claro se o `AUTH_JWT_SECRET` não estiver
+     * configurado (não há como assinar o token).
      */
     public login = async ({ username, password }: LoginInput): Promise<LoginResult | null> => {
-        const user = await this.userRepository.findByUsername(username);
+        const candidates = await this.userRepository.findByLoginIdentifier(username);
+        if (candidates.length > 1) {
+            // Duas linhas para um identificador violam I3 (a escrita deveria ter recusado). O
+            // sistema nunca escolhe uma: recusa, e avisa quem opera.
+            await this.logService.error({
+                type: 'BUSINESS_ERROR',
+                message:
+                    `login recusado: o identificador casa com ${candidates.length} usuários ` +
+                    '(o e-mail de um, o usuário de outro). Corrija o cadastro em /usuarios.',
+                statusCode: 401,
+                data: { ids: candidates.map((c) => c.id) },
+            });
+            return null;
+        }
+        const [user] = candidates;
         if (!user) return null;
         // Usuário desativado pela gestão (soft-disable): recusa o login como se a
         // credencial fosse inválida (não revela que a conta existe).
@@ -56,7 +84,12 @@ export default class AuthService {
         if (!passwordMatches) return null;
 
         const token = await this.signToken(user.username, user.role);
-        return { token, username: user.username, role: user.role };
+        return {
+            token,
+            username: user.username,
+            role: user.role,
+            ...(user.email !== undefined ? { email: user.email } : {}),
+        };
     };
 
     private signToken = async (username: string, role: string): Promise<string> => {
