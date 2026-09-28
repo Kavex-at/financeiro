@@ -22,7 +22,7 @@ export function AdminHomeCard() {
           <Users className="size-4" aria-hidden /> Usuários
         </CardTitle>
         <CardDescription>
-          Acessos @kavex da plataforma: cadastro, papéis e vínculo do acesso Conexos de cada usuário.
+          Acessos à plataforma: cadastro, e-mail de login, papéis e vínculo do acesso Conexos de cada usuário.
         </CardDescription>
       </CardHeader>
       <CardContent>
