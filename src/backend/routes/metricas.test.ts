@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { container } from 'tsyringe';
 import MetricasCicloService from '../domain/service/metricas/MetricasCicloService.js';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 // O bootstrap real importa migrations (usa `import.meta`, incompatível com o transform CJS).
 jest.mock('../domain/appContainer.js', () => ({
@@ -61,6 +62,11 @@ beforeAll(async () => {
     const { default: metricasRouter } = await import('./metricas.js');
     const app = express();
     app.use(express.json());
+    // `resolverAcesso` roda a montante no app real: aqui, o acesso do Administrador.
+    app.use((req, _res, next) => {
+        req.acesso = AcessoFixture.administrador();
+        next();
+    });
     app.use('/metricas', metricasRouter);
     srv = await listen(app);
 });

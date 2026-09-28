@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 /**
  * E2E REAL da Frente IV — extrato novo → painel → alocar → SN → fin014 → NDe → fiscal → obs →
@@ -754,6 +755,7 @@ describe('E2E Recebimentos — extrato novo → NDe emitida (ERP fake, escrita l
         app.use(express.json());
         app.use((req, _res, next) => {
             req.user = { sub: 'e2e-auditor', role: 'admin', email: 'e2e@columbia.test' };
+            req.acesso = AcessoFixture.administrador();
             next();
         });
         app.use('/recebimentos', recebimentosRouter);

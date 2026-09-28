@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import express from 'express';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 /**
  * E2E REAL contra o Conexos de HOMOLOGAÇÃO (columbiatrading-hml) — Fase A: SEM ESCRITA no ERP.
@@ -340,6 +341,7 @@ describe('E2E HML (Fase A — SEM escrita): ingestão real → painel → alocar
         app.use(express.json());
         app.use((req, _res, next) => {
             req.user = { sub: 'e2e-hml-fase-a', role: 'admin', email: 'e2e@columbia.test' };
+            req.acesso = AcessoFixture.administrador();
             next();
         });
         app.use('/recebimentos', recebimentosRouter);

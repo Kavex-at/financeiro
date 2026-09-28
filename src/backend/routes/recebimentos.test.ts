@@ -21,6 +21,7 @@ import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import type { FilialScopedUser } from '../http/filialAuthz.js';
 import recebimentosRouter from './recebimentos.js';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 interface TestServer {
     url: string;
@@ -37,6 +38,7 @@ const buildApp = (user: FilialScopedUser): express.Express => {
     app.use(express.json());
     app.use((req, _res, next) => {
         req.user = user;
+        req.acesso = AcessoFixture.porPapelLegado(user.role);
         next();
     });
     app.use('/recebimentos', recebimentosRouter);

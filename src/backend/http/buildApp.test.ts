@@ -1,6 +1,11 @@
 import 'reflect-metadata';
 import type { Server } from 'node:http';
+import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import path from 'node:path';
+import { SignJWT } from 'jose';
+import { container } from 'tsyringe';
+import AccessService from '../domain/service/auth/AccessService.js';
 import { buildApp } from './buildApp.js';
 import { markDraining, resetReadinessForTests } from './readinessState.js';
 
@@ -108,5 +113,66 @@ describe('buildApp (modifiability-3)', () => {
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ ativo: expect.any(Boolean) });
         server.close();
+    });
+
+    /** ADR-0053: rotas públicas continuam sem passar pelo `resolverAcesso`. */
+    it('/health/pipelines continua público: nunca 401', async () => {
+        const { server, base } = await subir();
+        const res = await fetch(`${base}/health/pipelines`);
+
+        expect(res.status).not.toBe(401);
+        server.close();
+    });
+
+    /**
+     * ADR-0053: token válido não basta. Um usuário desativado depois de logar tem token por até
+     * 12 h; o `resolverAcesso` consulta o banco e o recusa na próxima requisição.
+     */
+    it('token válido de usuário INATIVO recebe 401 em rota montada depois do auth', async () => {
+        const inativo = {
+            resolver: jest.fn().mockResolvedValue({
+                userId: 9,
+                username: 'saiu@columbiabr.com',
+                ativo: false,
+                papel: { id: 1, nome: 'Administrador' },
+                permissoes: new Set(),
+            }),
+        };
+        const real = container.resolve.bind(container);
+        jest.spyOn(container, 'resolve').mockImplementation(((token: unknown) =>
+            token === AccessService ? inativo : real(token as never)) as never);
+
+        const token = await new SignJWT({ role: 'admin' })
+            .setProtectedHeader({ alg: 'HS256' })
+            .setSubject('saiu@columbiabr.com')
+            .setAudience('authenticated')
+            .setIssuedAt()
+            .setExpirationTime('1h')
+            .sign(new TextEncoder().encode(process.env.AUTH_JWT_SECRET));
+
+        const { server, base } = await subir();
+        const res = await fetch(`${base}/metricas/ciclo`, {
+            headers: { authorization: `Bearer ${token}` },
+        });
+
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({
+            error: 'Sessão encerrada: seu acesso foi desativado ou não existe mais.',
+        });
+        expect(inativo.resolver).toHaveBeenCalledWith('saiu@columbiabr.com');
+        server.close();
+    });
+
+    it('a ordem é auth → resolverAcesso → identidade Conexos, antes de qualquer router protegido', () => {
+        const fonte = readFileSync(path.join(__dirname, 'buildApp.ts'), 'utf8');
+        const auth = fonte.indexOf('app.use(buildAuthMiddleware(');
+        const acesso = fonte.indexOf('app.use(resolverAcesso(');
+        const identidade = fonte.indexOf('app.use(conexosIdentityMiddleware)');
+        const primeiroRouterProtegido = fonte.indexOf("app.use('/conexos'");
+
+        expect(auth).toBeGreaterThan(fonte.indexOf("app.use('/auth', authRouter)"));
+        expect(acesso).toBeGreaterThan(auth);
+        expect(identidade).toBeGreaterThan(acesso);
+        expect(primeiroRouterProtegido).toBeGreaterThan(identidade);
     });
 });

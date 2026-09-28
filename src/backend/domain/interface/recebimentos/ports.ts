@@ -419,7 +419,7 @@ export interface SolicitacaoNumerarioExecucaoRepositoryInterface {
  *
  * Deliberadamente SEM `erpResponse`/`requestPayload`: a aba pendura no `/painel`, que não é
  * admin-only, e esses campos são corpos crus do ERP sem redação. Quem precisa deles usa
- * `GET /recebimentos/execucoes`, que é `requireRole('admin')`. `mensagem` é segura por construção —
+ * `GET /recebimentos/execucoes`, que exige `recebimentos:executar`. `mensagem` é segura por construção —
  * `registrarFalha` grava a frase amigável do `ErpErrorInterpreter`, nunca o 400 cru.
  */
 export interface UltimaFalhaExecucao {

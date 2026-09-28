@@ -10,9 +10,9 @@ import AlertaRepository from '../domain/repository/operacao/AlertaRepository.js'
 import ConfigDoctor, { type DiagnosticoConfig } from '../domain/service/operacao/ConfigDoctor.js';
 import JobRunReadModel from '../domain/service/operacao/JobRunReadModel.js';
 import LogService from '../domain/service/LogService.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
+import { exigirPermissao } from '../http/acesso.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { requireRole } from '../http/auth.js';
-import { requireOperacaoAcesso } from '../http/operacaoAcesso.js';
 
 /** Quantos alertas abertos a tela lista. */
 const ALERTAS_LIMIT = 50;
@@ -29,6 +29,10 @@ const reconhecerParamsSchema = z.object({ id: z.coerce.number().int().positive()
  * do Postgres (`JobRunReadModel`, `AlertaRepository`) e do ambiente do processo (`ConfigDoctor`).
  * Isto a distingue do painel de Recebimentos, que legitimamente enriquece contra o ERP (ADR-0038):
  * lá o ERP acrescenta informação a uma tela já útil sem ele; aqui o ERP não tem nada a dizer.
+ *
+ * **Acesso:** as duas rotas exigem `operacao:ver` (ADR-0053, que aposentou o allow-list por env da
+ * ADR-0042). Sem ela, 404 sem corpo explicativo (ADR-0042): para quem não opera, o
+ * painel não existe. Reconhecer alerta também é `operacao:ver` (JC-5 — não há `operacao:executar`).
  */
 const router = Router();
 
@@ -73,8 +77,7 @@ const logarFalhaFonte = async (fonte: FontePainel, err: unknown): Promise<void> 
 // `erros[]`. O formato de `pipelines`/`alertas`/`configuracao` não muda — `erros` é aditivo.
 router.get(
     '/',
-    requireRole('admin'),
-    requireOperacaoAcesso(),
+    exigirPermissao(PERMISSION.OPERACAO_VER),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
 
@@ -114,8 +117,7 @@ router.get(
 // POST /operacao/alertas/:id/reconhecer — tira o alerta da lista de abertos.
 router.post(
     '/alertas/:id/reconhecer',
-    requireRole('admin'),
-    requireOperacaoAcesso(),
+    exigirPermissao(PERMISSION.OPERACAO_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = reconhecerParamsSchema.safeParse(req.params);

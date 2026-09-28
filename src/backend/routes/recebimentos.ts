@@ -41,8 +41,9 @@ import NumerarioAclChecker from '../domain/service/recebimentos/NumerarioAclChec
 import RecebimentoNumerarioService from '../domain/service/recebimentos/RecebimentoNumerarioService.js';
 import TransacaoRepository from '../domain/repository/recebimentos/TransacaoRepository.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { requireRole } from '../http/auth.js';
+import { exigirPermissao } from '../http/acesso.js';
 import {
     FilialForbiddenError,
     type FilialScopedUser,
@@ -179,6 +180,7 @@ const recorteDoPainel = (
  */
 router.get(
     '/painel',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const input = recorteDoPainel(req, res);
@@ -196,7 +198,7 @@ router.get(
  * PREVISTA por transação, a aba NDe hidratada e o KPI de pendentes corrigido. A tela chama esta rota
  * depois de já ter renderizado a carteira, e SUBSTITUI o que recebe — falhar aqui não apaga nada.
  *
- * Sem `requireRole('admin')`: é a mesma leitura que vivia dentro de `/painel`, disponível para quem
+ * Guard de leitura (`recebimentos:ver`): é a mesma leitura que vivia dentro de `/painel`, disponível para quem
  * enxerga a carteira.
  *
  * **Sem `heavyRouteLimiter`, deliberadamente.** A tentação é óbvia — cada chamada custa um grid do
@@ -210,6 +212,7 @@ router.get(
  */
 router.get(
     '/painel/enriquecimento',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const input = recorteDoPainel(req, res);
@@ -232,11 +235,11 @@ const runPipelineSchema = z.object({
 });
 
 // POST /recebimentos/pipeline/run — dispara o coordinator stubbed. `Idempotency-Key` honrado
-// downstream pelo ledger (recebimento_execucao). Write-ish → requireRole('admin') + heavyRouteLimiter.
+// downstream pelo ledger (recebimento_execucao). Write-ish → `recebimentos:executar` + heavyRouteLimiter.
 router.post(
     '/pipeline/run',
     heavyRouteLimiter,
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = runPipelineSchema.safeParse(req.body);
@@ -245,7 +248,7 @@ router.post(
             return;
         }
         // Authz por-filial (Regis security-1): valida o `filCod` do body contra a filial-permitida do
-        // usuário ANTES de agir (borderô/baixa/NDe). Sem isso, `requireRole('admin')` sozinho deixa um
+        // usuário ANTES de agir (borderô/baixa/NDe). Sem isso, o guard de permissão sozinho deixa um
         // analista mover dinheiro de outra filial só mudando o número.
         try {
             assertUserCanActOnFilial(req.user, parsed.data.filCod);
@@ -348,6 +351,7 @@ const listClientesQuerySchema = z.object({
  */
 router.get(
     '/clientes',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = listClientesQuerySchema.safeParse(req.query);
@@ -397,6 +401,7 @@ router.get(
  */
 router.get(
     '/transacoes/:txnId/processos',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = listCandidatosQuerySchema.safeParse(req.query);
@@ -454,6 +459,7 @@ const listSNsQuerySchema = z.object({
  */
 router.get(
     '/processos/:priCod/sns',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const priCod = z.coerce.number().int().positive().safeParse(req.params.priCod);
@@ -522,7 +528,7 @@ const solicitacaoNumerarioSchema = z.object({
  * chamada aloca um `valor` a um `priCod`.
  *
  * Carrega a transação (`TransacaoRepository.findById`) → `gerNum`/`valor`; **422 se `gerNum` ausente**
- * (o pagamento sem conta financeira não pode baixar). Authz: `heavyRouteLimiter` + `requireRole('admin')`
+ * (o pagamento sem conta financeira não pode baixar). Authz: `heavyRouteLimiter` + `recebimentos:executar`
  * + `assertUserCanActOnFilial` (filial DO PROCESSO). Antes de qualquer escrita (não-dry-run), pré-flight
  * de ACL da conta de serviço (fail-closed, gated por `NDE_ACL_PREFLIGHT`). HTTP 200 mesmo em erro de
  * etapa (o `status` carrega o resultado); um re-POST com o mesmo corpo RETOMA (idempotência por alocação).
@@ -530,7 +536,7 @@ const solicitacaoNumerarioSchema = z.object({
 router.post(
     '/transacoes/:txnId/solicitacao-numerario',
     heavyRouteLimiter,
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = solicitacaoNumerarioSchema.safeParse(req.body);
@@ -642,7 +648,7 @@ const execucoesQuerySchema = z
 
 router.get(
     '/execucoes',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = execucoesQuerySchema.safeParse(req.query);
@@ -687,7 +693,7 @@ const ingestaoSchema = z.object({
 router.post(
     '/ingestao',
     heavyRouteLimiter,
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = ingestaoSchema.safeParse(req.body ?? {});
@@ -750,6 +756,7 @@ const runsQuerySchema = z.object({
 /** GET /recebimentos/ingestao/runs — trilha de auditoria das ingestões. */
 router.get(
     '/ingestao/runs',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = runsQuerySchema.safeParse(req.query);
@@ -773,6 +780,7 @@ const contasQuerySchema = z.object({
  */
 router.get(
     '/contas',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = contasQuerySchema.safeParse(req.query);
@@ -892,7 +900,7 @@ const resolverUpload = <TSchema extends z.ZodType<{ filCod: number }>>(
 router.post(
     '/ingestao/upload/preview',
     heavyRouteLimiter,
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
     comUploadExtrato,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -913,7 +921,7 @@ router.post(
 router.post(
     '/ingestao/upload',
     heavyRouteLimiter,
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
     comUploadExtrato,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -942,7 +950,7 @@ router.post(
  * Serve para o RUÍDO DE TESOURARIA (resgate de aplicação, transferência entre contas): crédito que
  * nunca será conciliado contra processo e que hoje infla o KPI "a distribuir".
  *
- * `requireRole('admin')` como o resto da tela. NÃO leva `heavyRouteLimiter`: não move dinheiro nem
+ * `recebimentos:executar` como o resto da tela. NÃO leva `heavyRouteLimiter`: não move dinheiro nem
  * toca o ERP — é um UPDATE local, e limitar o gesto de limpeza puniria justamente quem está fazendo
  * a faxina da carteira, que é um lote de cliques seguidos.
  *
@@ -978,7 +986,15 @@ const arquivarHandler = (arquivar: boolean) =>
         res.json({ txnId, arquivada: arquivar, ator });
     });
 
-router.post('/transacoes/:txnId/arquivar', requireRole('admin'), arquivarHandler(true));
-router.post('/transacoes/:txnId/desarquivar', requireRole('admin'), arquivarHandler(false));
+router.post(
+    '/transacoes/:txnId/arquivar',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
+    arquivarHandler(true),
+);
+router.post(
+    '/transacoes/:txnId/desarquivar',
+    exigirPermissao(PERMISSION.RECEBIMENTOS_EXECUTAR),
+    arquivarHandler(false),
+);
 
 export default router;

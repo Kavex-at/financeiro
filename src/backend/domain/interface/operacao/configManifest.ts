@@ -109,15 +109,6 @@ export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
     },
 
     {
-        nome: 'OPERACAO_USUARIOS',
-        frente: FRENTE.NUCLEO,
-        criticidade: CRITICIDADE.DEGRADA_SILENCIOSAMENTE,
-        consequenciaSeAusente:
-            'O Painel de Operação fica visível para QUALQUER admin — e admin hoje é toda a ' +
-            'plataforma (12 de 12 contas). Sem a lista, o recorte por identidade não existe.',
-        segredo: false,
-    },
-    {
         nome: 'AUTH_TRANSICAO_EMAIL_BANNER',
         frente: FRENTE.NUCLEO,
         criticidade: CRITICIDADE.OPCIONAL,

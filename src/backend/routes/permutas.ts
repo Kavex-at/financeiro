@@ -31,9 +31,10 @@ import ReconciliacaoPermutaService from '../domain/service/permutas/Reconciliaca
 import GerarSolicitacaoNumerarioService from '../domain/service/permutas/GerarSolicitacaoNumerarioService.js';
 import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { respondHandlerError } from '../http/respondHandlerError.js';
-import { requireRole } from '../http/auth.js';
+import { exigirPermissao } from '../http/acesso.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
 
 /** Zod no boundary — corpo do POST /processar (Rule: validar inputs externos). */
@@ -228,7 +229,7 @@ const router = Router();
 router.post(
     '/eleicao',
     heavyRouteLimiter,
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(EleicaoPermutasService);
@@ -263,7 +264,7 @@ router.post(
 router.post(
     '/ingestao',
     heavyRouteLimiter,
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(IngestaoCoalescerService);
@@ -295,6 +296,7 @@ router.post(
 // para o modal de ingestão manual (ADR-0006). READ-ONLY.
 router.get(
     '/runs',
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = runsQuerySchema.safeParse(req.query);
@@ -312,6 +314,7 @@ router.get(
 // GET /permutas/cliente-filtro — lista os clientes-filtro (importadores) ativos.
 router.get(
     '/cliente-filtro',
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
         const repository = container.resolve(ClienteFiltroRepository);
@@ -324,7 +327,7 @@ router.get(
 // UPSERT por pesCod; `criado_por` = username autenticado (auditoria O6).
 router.post(
     '/cliente-filtro',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = clienteFiltroBodySchema.safeParse(req.body ?? {});
@@ -346,7 +349,7 @@ router.post(
 // DELETE /permutas/cliente-filtro/:pesCod — remove um cliente-filtro.
 router.delete(
     '/cliente-filtro/:pesCod',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const pesCod = String(req.params.pesCod);
@@ -360,6 +363,7 @@ router.delete(
 // cadastro de cliente-filtro). READ-ONLY.
 router.get(
     '/importadores',
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
         const repository = container.resolve(PermutaRelationalRepository);
@@ -373,6 +377,7 @@ router.get(
 // READ-ONLY no ERP.
 router.get(
     '/invoices/buscar',
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = buscarInvoicesQuerySchema.safeParse(req.query);
@@ -394,7 +399,7 @@ router.get(
 // manual N:M cross-process (rascunho). 422 quando excede o saldo de algum lado.
 router.post(
     '/adiantamentos/:docCod/alocacoes',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = alocacaoBodySchema.safeParse(req.body ?? {});
@@ -439,7 +444,7 @@ router.post(
 // DELETE /permutas/adiantamentos/:docCod/alocacoes/:invoiceDocCod — remove alocação.
 router.delete(
     '/adiantamentos/:docCod/alocacoes/:invoiceDocCod',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(AlocacaoPermutasService);
@@ -487,7 +492,7 @@ const IDENTIDADE_AUSENTE = {
 // backlog · 409 já ativa · 422 guarda (só `bloqueada/sem-saldo-permutar`).
 router.post(
     '/adiantamentos/:docCod/excecao-manual',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = excecaoManualBodySchema.safeParse(req.body ?? {});
@@ -522,7 +527,7 @@ router.post(
 // delete com autor e data). Admin. 401 sem identidade · 404 sem exceção ativa.
 router.delete(
     '/adiantamentos/:docCod/excecao-manual',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const removidoPor = autorDoToken(req.user);
@@ -553,6 +558,7 @@ router.delete(
 // fixture quando o backend não responde.
 router.get(
     '/gestao',
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(GestaoPermutasService);
@@ -568,6 +574,7 @@ const CONTENT_TYPE_XLSX = 'application/vnd.openxmlformats-officedocument.spreads
 router.get(
     '/relatorios/:tipo',
     heavyRouteLimiter,
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const tipo = String(req.params.tipo);
@@ -587,7 +594,7 @@ router.get(
 // (botão "Processar"). UPSERT status='processado'; sobrevive à re-ingestão.
 router.post(
     '/adiantamentos/:docCod/processar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = processarBodySchema.safeParse(req.body ?? {});
@@ -617,7 +624,7 @@ router.post(
 // é dry-run (monta/loga o payload, sem POST). Ver business-rules/fin010-write-contract.md.
 router.post(
     '/adiantamentos/:docCod/reconciliar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -663,7 +670,7 @@ router.post(
 // Ver ontology/actions/permuta/gerar-solicitacao-numerario.md + ontology/decisions/0029-*.md.
 router.post(
     '/adiantamentos/:docCod/gerar-numerario',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -703,7 +710,7 @@ router.post(
 // (CONEXOS_WRITE_ENABLED/DRY_RUN) — o lote reusa o ReconciliacaoPermutaService integralmente.
 router.post(
     '/reconciliar-lote',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -731,7 +738,7 @@ router.post(
 // (botão Atualizar) faz refresh ao vivo no ERP antes de ler. Enriquece com a trilha local.
 router.get(
     '/borderos',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(BorderoGestaoService);
@@ -783,7 +790,7 @@ const parseAlvoBordero = (
 // borderôs lançados direto no Conexos, sem trilha local). On-demand ao expandir.
 router.get(
     '/borderos/:borCod/baixas',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const borCod = inteiroPositivoSchema.safeParse(req.params.borCod);
@@ -805,7 +812,7 @@ router.get(
 // POST /permutas/borderos/:borCod/finalizar — finaliza/aprova o borderô no ERP (admin, gated).
 router.post(
     '/borderos/:borCod/finalizar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -836,7 +843,7 @@ router.post(
 // POST /permutas/borderos/:borCod/cancelar — cancela o borderô (em cadastro) no ERP (admin, gated).
 router.post(
     '/borderos/:borCod/cancelar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -867,7 +874,7 @@ router.post(
 // POST /permutas/borderos/:borCod/estornar — estorna o borderô finalizado (volta p/ em cadastro).
 router.post(
     '/borderos/:borCod/estornar',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -898,7 +905,7 @@ router.post(
 // DELETE /permutas/borderos/:borCod — exclui o borderô INTEIRO (em cadastro) + todas as baixas.
 router.delete(
     '/borderos/:borCod',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -930,7 +937,7 @@ router.delete(
 // antes de aprovar. Escreve no ERP (fin010) + remove da trilha. Admin + gated por CONEXOS_WRITE_ENABLED.
 router.delete(
     '/borderos/:borCod/baixas/:invoiceDocCod',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_EXECUTAR),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -963,6 +970,7 @@ router.delete(
 // GET /permutas/adiantamentos/:docCod/execucoes — trilha de execução da baixa (status por par).
 router.get(
     '/adiantamentos/:docCod/execucoes',
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const docCod = String(req.params.docCod);
@@ -976,7 +984,7 @@ router.get(
 // fin010). Mantém o /gestao rápido (sem ERP) e enriquece os badges da tela depois do load.
 router.get(
     '/status',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.PERMUTAS_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(BorderoGestaoService);

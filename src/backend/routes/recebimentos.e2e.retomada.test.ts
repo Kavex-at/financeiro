@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 /**
  * E2E de RETOMADA ANTI-DUPLICAÇÃO da Frente IV — falha parcial do ERP no meio do fluxo de
@@ -773,6 +774,7 @@ describe('E2E Recebimentos — RETOMADA anti-duplicação após falha parcial do
         app.use(express.json());
         app.use((req, _res, next) => {
             req.user = { sub: 'e2e-auditor', role: 'admin', email: 'e2e@columbia.test' };
+            req.acesso = AcessoFixture.administrador();
             next();
         });
         app.use('/recebimentos', recebimentosRouter);

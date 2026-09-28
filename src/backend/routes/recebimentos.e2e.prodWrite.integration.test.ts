@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import express from 'express';
+import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 
 /**
  * EXECUÇÃO REAL EM PRODUÇÃO — **um** caso, ponta a ponta.
@@ -384,6 +385,7 @@ describe('PRODUÇÃO — uma execução real, do crédito à NDe', () => {
         app.use(express.json());
         app.use((req, _res, next) => {
             req.user = { sub: 'prod-e2e', role: 'admin', email: 'tech@kavex.at' };
+            req.acesso = AcessoFixture.administrador();
             next();
         });
         app.use('/recebimentos', recebimentosRouter);
