@@ -4,11 +4,16 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
-import { UsernameAlreadyExistsError } from '../domain/repository/auth/UserRepository.js';
 import { MissingEncryptionKeyError } from '../domain/libs/crypto/SecretCipher.js';
+import {
+    EmailAlreadyInUseError,
+    LastActiveAdminError,
+    SelfDeactivationError,
+} from '../domain/repository/auth/UserRepository.js';
 import UserAdminService, {
     createUserSchema,
     resetPasswordSchema,
+    setEmailSchema,
     vinculoConexosSchema,
 } from '../domain/service/auth/UserAdminService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
@@ -42,8 +47,16 @@ const removerVinculoSchema = z.object({ remover: z.boolean().optional() }).passt
  * false se não reconhecer o erro (deixa o middleware central tratar).
  */
 const respondError = (res: Response, err: unknown): boolean => {
-    if (err instanceof UsernameAlreadyExistsError) {
-        res.status(409).json({ error: 'Já existe um usuário com este email.' });
+    if (err instanceof EmailAlreadyInUseError) {
+        res.status(409).json({ error: 'Este e-mail já identifica outro usuário.' });
+        return true;
+    }
+    if (err instanceof SelfDeactivationError) {
+        res.status(409).json({ error: 'Você não pode desativar o próprio acesso.' });
+        return true;
+    }
+    if (err instanceof LastActiveAdminError) {
+        res.status(409).json({ error: 'Não é possível desativar o último administrador ativo.' });
         return true;
     }
     if (err instanceof MissingEncryptionKeyError) {
@@ -81,7 +94,8 @@ router.get(
     }),
 );
 
-// POST /usuarios — cria um novo usuário (email + senha + papel).
+// POST /usuarios — cria um novo usuário (e-mail + senha + papel), com username = e-mail.
+// `username` no corpo ainda é aceito como alias de `email` (front antigo durante o deploy).
 router.post(
     '/',
     asyncHandler(async (req, res) => {
@@ -103,7 +117,40 @@ router.post(
     }),
 );
 
-// PATCH /usuarios/:id/ativo — ativa/desativa o acesso de um usuário.
+// PATCH /usuarios/:id/email — grava o e-mail de login (ADR-0051). Nunca edita `username` (I1):
+// o schema só lê `email`. O autor da edição vem do token verificado (`req.user.sub`).
+router.patch(
+    '/:id/email',
+    asyncHandler(async (req, res) => {
+        const id = idParamSchema.safeParse(req.params);
+        if (!id.success) {
+            res.status(400).json({ error: 'Requisição inválida' });
+            return;
+        }
+        const body = setEmailSchema.safeParse(req.body);
+        if (!body.success) {
+            res.status(400).json({ error: 'E-mail inválido.' });
+            return;
+        }
+        const actor = req.user?.sub;
+        if (!actor) {
+            res.status(401).json({ error: 'Não foi possível identificar quem está editando.' });
+            return;
+        }
+        await bootstrapAppContainer();
+        const service = container.resolve(UserAdminService);
+        try {
+            await service.setEmail(id.data.id, body.data.email, actor);
+            res.json({ id: id.data.id, email: body.data.email });
+        } catch (err) {
+            if (!respondError(res, err)) throw err;
+        }
+    }),
+);
+
+// PATCH /usuarios/:id/ativo — ativa/desativa o acesso de um usuário. Desativar passa pela guarda
+// da R11 (nem o próprio acesso, nem o último admin ativo), e por isso exige saber QUEM pede:
+// sem `req.user.sub`, recusa em vez de desativar às cegas.
 router.patch(
     '/:id/ativo',
     asyncHandler(async (req, res) => {
@@ -113,10 +160,15 @@ router.patch(
             res.status(400).json({ error: 'Requisição inválida' });
             return;
         }
+        const actor = req.user?.sub;
+        if (!actor) {
+            res.status(401).json({ error: 'Não foi possível identificar quem está alterando.' });
+            return;
+        }
         await bootstrapAppContainer();
         const service = container.resolve(UserAdminService);
         try {
-            await service.setAtivo(id.data.id, body.data.ativo);
+            await service.setAtivo(id.data.id, body.data.ativo, actor);
             res.json({ id: id.data.id, ativo: body.data.ativo });
         } catch (err) {
             if (!respondError(res, err)) throw err;
