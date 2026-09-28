@@ -1,5 +1,7 @@
 # ADR-0011 — API hardening: RBAC server-side + redação de log (Lote A dos P0 do Regis 2026-06-22-1658)
 
+> **Emendada pela ADR-0053 (2026-09-28).** A seção 1 (RBAC por `requireRole`) não vale mais: ver a Emenda ao fim.
+
 - **Status:** aceito
 - **Data:** 2026-06-22
 - **Contexto:** remediação dos P0 de Security do Regis-Review `2026-06-22-1658` (cards security-1, security-3). READ-ONLY no Conexos; backend Express (legado).
@@ -25,3 +27,13 @@ Middleware `requireRole(...allowed)` em `src/backend/http/auth.ts` gateia as **r
 ## Consequências
 - Toda nova rota de **mutação** deve usar `requireRole('admin')` explicitamente (não há gate global por verbo). Documentar ao adicionar rotas.
 - Quando surgir um segundo role (ex.: `analyst`), revisar a lista `allowed` por rota.
+
+## Emenda (2026-09-28, ADR-0053)
+
+`requireRole` deixou de existir no código, e o `role` do token não é mais fonte de autorização. A
+regra "toda nova rota de mutação usa `requireRole('admin')`; leituras ficam abertas a qualquer
+autenticado" é substituída por: **toda rota autenticada tem exatamente um guard explícito**,
+`exigirPermissao(p)` (permissão por módulo lida do banco a cada requisição) ou `somenteAutenticado()`,
+conferido por um teste de cobertura por introspecção (`http/routePermissions.test.ts`). Sem a
+permissão, 403 `{ error: 'Você não tem permissão para esta ação.', permissao }` em português, no lugar
+de `Forbidden: insufficient role`. A seção 2 (redação de log) permanece válida e inalterada.

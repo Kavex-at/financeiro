@@ -14,7 +14,8 @@
 -- das duas colunas `permission` repete a lista (R4); o teste da 0066 compara os dois lados.
 --
 -- Dia do deploy sem mudança de comportamento (I6): papel `Administrador` com as NOVE permissões,
--- inclusive `operacao:ver` (`OPERACAO_USUARIOS` estava vazia em produção em 2026-09-28), e todo
+-- inclusive `operacao:ver` (o allow-list por env do Painel de Operação, ADR-0042, estava vazio em
+-- produção em 2026-09-28, então todo admin já via o painel), e todo
 -- usuário existente recebe esse papel. A coluna `role` fica como está (R8), sem uso para
 -- autorização, até o passo 3.
 --

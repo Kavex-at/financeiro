@@ -13,6 +13,8 @@ amends_decisions: [0038]
 
 # ADR 0042: o sistema relata a própria execução
 
+> **Emendada pela ADR-0053 (2026-09-28).** O recorte do Painel de Operação por `OPERACAO_USUARIOS` foi substituído pela permissão `operacao:ver`: ver a Emenda ao fim.
+
 **Cliente:** Columbia Trading · **Entrega:** Kavex (created by Clonex) · **Branch:**
 `feat/painel-operacao` (worktree, base `main`). **Fonte:** `/feature-new` com o Yuri (2026-09-01), a
 partir de uma revisão de produto das telas de Permutas e Recebimentos. **`entity_changed = true`.**
@@ -162,3 +164,17 @@ abre porta.
 
 A sonda `GET /health/pipelines` **continua pública**: ela é para máquina, não para gente, e já
 devolve o mínimo (status e contagens, sem nomes).
+
+## Emenda (2026-09-28, ADR-0053)
+
+O allow-list `OPERACAO_USUARIOS` foi aposentado, junto com `requireOperacaoAcesso()` e
+`http/operacaoAcesso.ts`. As duas rotas de `/operacao` exigem a permissão **`operacao:ver`**, lida do
+banco a cada requisição. A env estava **vazia em produção em 2026-09-28**; vazia, o allow-list era
+fail-open e todo admin via o painel. Como todo usuário recebeu o papel Administrador, que inclui
+`operacao:ver`, quem vê o painel depois da troca é exatamente quem via antes.
+
+Permanecem desta ADR: o **404 sem corpo explicativo** para quem não tem a permissão, o gate
+server-side nas duas rotas e `GET /health/pipelines` público. Reconhecer alerta exige só
+`operacao:ver` (não existe `operacao:executar`). `GET /me/permissoes` passa a devolver a lista de
+permissões efetivas; a chave `operacao` fica só por compatibilidade com o front antigo. O fail-open
+por lista vazia deixa de existir: sem a permissão, o painel não aparece.
