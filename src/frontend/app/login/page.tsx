@@ -2,17 +2,18 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
-import { Eye, EyeOff, Lock, LogIn, User } from 'lucide-react'
+import { AtSign, Eye, EyeOff, Lock, LogIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/lib/auth/AuthProvider'
 import { safeReturnTo } from '@/lib/auth/safe-return-to'
 import pkg from '../../package.json'
+import { TransicaoEmailBanner } from './TransicaoEmailBanner'
 
 /**
- * Sign-in page. Simple username/password form posted to the backend
- * (`POST /auth/login`). On success the token is stored and the user is sent to
+ * Sign-in page. E-mail-or-username + password form posted to the backend
+ * (`POST /auth/login`, body still `{ username, password }` — ADR-0051). On success the token is stored and the user is sent to
  * the app root. Already-authenticated visitors (or dev-bypass) are bounced
  * straight to `/`. Public route (excluded from the `RouteGate` guard); the app
  * header is hidden here (see `AppShell`) for a clean full-screen experience.
@@ -81,13 +82,15 @@ function LoginForm() {
             </p>
           </div>
 
+          <TransicaoEmailBanner />
+
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <label htmlFor="username" className="text-sm font-medium">
-                Usuário
+                E-mail ou usuário
               </label>
               <div className="relative">
-                <User
+                <AtSign
                   className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
                   aria-hidden
                 />
@@ -97,7 +100,7 @@ function LoginForm() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   autoComplete="username"
-                  placeholder="seu usuário"
+                  placeholder="nome@columbiabr.com ou seu usuário"
                   required
                   autoFocus
                   data-testid="login-username"
