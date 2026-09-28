@@ -45,7 +45,12 @@ export function ConfirmarAcaoDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>{titulo}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {destrutivo ? (
+              <AlertTriangle className="size-5 shrink-0 text-destructive" aria-hidden />
+            ) : null}
+            {titulo}
+          </DialogTitle>
           <DialogDescription>{descricao}</DialogDescription>
         </DialogHeader>
         {children ? <DialogBody className="space-y-3 text-sm">{children}</DialogBody> : null}
