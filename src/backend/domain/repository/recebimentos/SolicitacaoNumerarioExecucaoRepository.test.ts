@@ -219,6 +219,35 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
         expect(params.erpResponse).toBe(JSON.stringify({ docVldComvalidacoes: 3 }));
     });
 
+    // ADR-0051 — data das métricas do ciclo. `setEtapa`/`setNdeAutorizado` rodam DEPOIS do settle
+    // (SEFAZ é assíncrona), por isso a data não pode ser `atualizado_em`.
+    it('markSettled carimba encerrado_em só no 1º encerramento; markError, a falha', async () => {
+        const db = buildDb();
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
+
+        await repo.markSettled('sn:u:1', { docCod: 1 });
+        await repo.markError('sn:u:2', { erroMensagem: 'ERP 500' });
+
+        const [settle, erro] = (db.update as jest.Mock).mock.calls.map((c) => String(c[0]));
+        expect(settle).toMatch(
+            /encerrado_em = CASE WHEN status = 'settled'\s+THEN COALESCE\(encerrado_em, now\(\)\) ELSE now\(\) END/,
+        );
+        expect(erro).toContain('encerrado_em = now()');
+    });
+
+    it('escritas pós-settle (etapa, NDe autorizada, revisão) não mexem em encerrado_em', async () => {
+        const db = buildDb();
+        const repo = new SolicitacaoNumerarioExecucaoRepository(db, buildIdentity());
+
+        await repo.setEtapa('sn:u:1', 'concluido');
+        await repo.setNdeAutorizado('sn:u:1', true);
+        await repo.setRevisaoHumana('sn:u:1', false);
+
+        for (const c of (db.update as jest.Mock).mock.calls) {
+            expect(String(c[0])).not.toContain('encerrado_em');
+        }
+    });
+
     it('findByIdempotencyKey: mapeia a linha (camelCase + tipos); null quando ausente', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({
