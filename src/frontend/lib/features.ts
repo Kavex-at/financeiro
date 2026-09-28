@@ -16,6 +16,13 @@ export const isSispagEnabled = (): boolean => {
 }
 
 /**
+ * Botões de SIMULAÇÃO — hoje só o "Marcar retorno recebido" do SISPAG, que muda o estado do lote
+ * sem o evento real (o .RET). Só em dev local (`NEXT_PUBLIC_ENV=local`), mesmo critério do default
+ * de `isSispagEnabled()`, e sem env para forçar: simulação num build deployado nunca é desejada.
+ */
+export const isSimulationEnabled = (): boolean => process.env.NEXT_PUBLIC_ENV === 'local'
+
+/**
  * A Frente IV (Recebimentos / Gestão de Adiantamentos) NÃO tem flag no frontend:
  * está liberada em produção (ADR-0028). O kill-switch de emergência é só do
  * backend (`RECEBIMENTOS_ENABLED=false` → `recebimentosGate` responde 403), e é
