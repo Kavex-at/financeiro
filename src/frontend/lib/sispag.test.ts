@@ -155,14 +155,7 @@ describe('formatCivilDate', () => {
 })
 
 describe('formatErpDay', () => {
-  const tzOriginal = process.env.TZ
-  beforeAll(() => {
-    process.env.TZ = 'America/Sao_Paulo'
-  })
-  afterAll(() => {
-    process.env.TZ = tzOriginal
-  })
-
+  // A suíte roda em America/Sao_Paulo (jest.globalSetup.js).
   it('exibe o dia UTC do vencimento do ERP, mesmo com o navegador em Brasília', () => {
     // Título 5046/1: vencimento 24/09 gravado pelo ERP como 2026-09-24T00:00Z (= 23/09 21h BRT).
     expect(new Date(1790208000000).getDate()).toBe(23) // sanidade: o fuso local é BRT

@@ -5,6 +5,7 @@ module.exports = {
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
     testMatch: ['<rootDir>/**/*.test.ts', '<rootDir>/**/*.test.tsx'],
     testPathIgnorePatterns: ['/node_modules/', '/.next/'],
+    globalSetup: '<rootDir>/jest.globalSetup.js',
     setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
     moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/$1',
