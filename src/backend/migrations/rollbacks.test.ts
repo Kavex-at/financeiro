@@ -48,6 +48,9 @@ describe('migrations — segurança do diretório', () => {
                 // A 0063 normaliza para NULL os `pronto_para_remessa = FALSE` existentes:
                 // perde a distinção no caminho de ida, então precisa do caminho de volta.
                 '0063_pronto_para_remessa_tri_estado.sql',
+                // A 0066 põe `role_id NOT NULL`: sem o reverse, o backend da v0.43 não cria usuário
+                // (o INSERT antigo não passa `role_id`). Ver D7 da ADR-0053.
+                '0066_auth_permissoes_modulo.sql',
             ].sort(),
         );
         for (const alvo of reverses) {
