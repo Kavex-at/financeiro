@@ -51,7 +51,7 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
   if (status === 'FINALIZADO')
     return (
       <Badge variant="outline" className="border-warning/40 text-warning">
-        aguardando retorno
+        aguardando remessa
       </Badge>
     )
   if (status === 'REMESSA_GERADA')
@@ -595,7 +595,7 @@ export function LoteCard({
             <p className="mt-2 text-xs text-muted-foreground">
               Finalizado por {l.finalizadoPor}
               {l.finalizadoEm ? ` em ${new Date(l.finalizadoEm).toLocaleString('pt-BR')}` : ''}.
-              {isFinalizado ? ' Aguardando retorno do Nexxera.' : ''}
+              {isFinalizado ? ' Aguardando a geração da remessa.' : ''}
               {l.status === 'RETORNADO' ? ' Retorno do Nexxera recebido.' : ''}
             </p>
           ) : null}

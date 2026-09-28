@@ -989,7 +989,7 @@ function SispagPanel() {
               <Paginacao aba={abaCandidatos} />
             </TabsContent>
 
-            {/* ---- Lotes finalizados (aguardando retorno / de volta do Nexxera) ---- */}
+            {/* ---- Lotes finalizados (a gerar remessa / remessa gerada / conciliados) ---- */}
             <TabsContent value="lotes-finalizados" className="space-y-3">
               <p className="text-xs text-muted-foreground">
                 Lotes finalizados — prontos para virar remessa, com remessa gerada aguardando o
@@ -1025,7 +1025,7 @@ function SispagPanel() {
                 <EmptyState
                   icon={<Layers className="size-6" />}
                   title="Nenhum lote finalizado"
-                  description="Finalize um lote candidato para ele aparecer aqui, aguardando o retorno do Nexxera."
+                  description="Finalize um lote candidato para ele aparecer aqui, pronto para gerar a remessa."
                 />
               ) : (
                 <div className="space-y-3">

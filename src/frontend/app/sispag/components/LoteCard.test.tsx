@@ -111,6 +111,13 @@ describe('LoteCard — confirmação das transições', () => {
     expect(reabrirLote).toHaveBeenCalledWith('L1', 3)
   })
 
+  it('lote FINALIZADO ainda não tem remessa: o badge diz "aguardando remessa"', () => {
+    renderCard(lote({ status: 'FINALIZADO' }))
+
+    expect(screen.getByText('aguardando remessa')).toBeInTheDocument()
+    expect(screen.queryByText('aguardando retorno')).not.toBeInTheDocument()
+  })
+
   it('"Marcar retorno recebido" (simulação) não aparece fora de dev local', () => {
     process.env.NEXT_PUBLIC_ENV = 'prd'
     renderCard(lote({ status: 'FINALIZADO' }))

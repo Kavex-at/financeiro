@@ -9,6 +9,9 @@
   no fin015, que cancelar ou reabrir aqui não desfaz.
 - **"Marcar retorno recebido" só aparece em dev local.** Era uma simulação que pulava o lote para
   "de volta do Nexxera" sem remessa nem .RET. O caminho real (conciliação do .RET) não mudou.
+- **Lote finalizado diz "aguardando remessa", não "aguardando retorno".** Um lote FINALIZADO ainda
+  não tem remessa gerada; o rótulo antigo fazia parecer que ele esperava o banco. O filtro da aba
+  já dizia "A gerar remessa".
 - **Processar da Permuta não reenvia adiantamento que já tem borderô.** O vínculo de borderô chega
   depois da carteira, e o Processar podia filtrar contra a lista ainda vazia.
 - **Sucesso parcial não é mais anunciado como falha.** Se o 2º adiantamento de um processo falhava,
