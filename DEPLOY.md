@@ -96,8 +96,9 @@ Crie um **Web Service** apontando para o repositório.
 | `CONEXOS_PASSWORD` | senha Conexos |
 | `CONEXOS_FIL_COD` | filial padrão (ex.: `2`) |
 | `AUTH_JWT_SECRET` | **gerar forte** — ver abaixo. Assina/valida os tokens de login |
-| `ADMIN_USERNAME` | `admin` (ou outro) |
-| `ADMIN_PASSWORD` | **senha forte** — credencial inicial do admin |
+| `ADMIN_EMAIL` | **obrigatória** para o `npm run seed:admin`: e-mail do admin semeado (vira `username` = `email`). Sem default no código. |
+| `ADMIN_PASSWORD` | **obrigatória** para o `npm run seed:admin`: senha forte, mínimo 8 caracteres. Sem default no código. |
+| `AUTH_TRANSICAO_EMAIL_BANNER` | *(opcional)* banner "Estamos migrando o acesso para o seu e-mail da Columbia" na tela de login. Só `true` liga; ausente = desligado. Vale sem redeploy do front (após reiniciar o backend). |
 | `ALLOWED_ORIGINS` | `https://<app>.vercel.app` (domínio do frontend na Vercel) |
 | `DEV_AUTH_BYPASS` | `false` |
 | `environment` | `production` |
@@ -141,15 +142,18 @@ Importe o repositório como um projeto Vercel.
 ## 4. Checklist de operador (passos manuais)
 
 1. **Gerar `AUTH_JWT_SECRET`** (`openssl rand -base64 48`) e colar no Render.
-2. **Definir `ADMIN_PASSWORD`** forte no Render (a credencial inicial do admin).
+2. **Definir `ADMIN_EMAIL` e `ADMIN_PASSWORD`** (forte) no Render: a credencial inicial do admin.
+   As duas são obrigatórias; sem elas o `seed:admin` falha com código 1.
 3. **Setar `databaseConnectionString`** (Session pooler do Supabase) no Render.
 4. **Setar credenciais Conexos** (`CONEXOS_*`) no Render.
 5. Após o primeiro deploy do frontend, **copiar o domínio Vercel** e colocá-lo em
    `ALLOWED_ORIGINS` no Render; e **copiar a URL do Render** para `NEXT_PUBLIC_API_URL` na Vercel.
 6. Confirmar nos logs do Render que o build copiou as migrações (`[build] N migração(ões)
    copiada(s)`) e que o boot migrou (`[boot-migrate] ...`); rodar `npm run seed:admin` uma vez
-   (não há pre-deploy — ver seção 2).
-7. Acessar `https://<app>.vercel.app/login` e entrar com `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+   com `ADMIN_EMAIL` e `ADMIN_PASSWORD` definidas (não há pre-deploy — ver seção 2).
+7. Acessar `https://<app>.vercel.app/login` e entrar com `ADMIN_EMAIL` / `ADMIN_PASSWORD`. O
+   campo de login aceita **e-mail ou usuário**, sem distinção de maiúsculas.
 
 > Para trocar a senha do admin depois, ajuste `ADMIN_PASSWORD` e re-rode `npm run seed:admin`
-> (UPSERT idempotente por `username`). Novos usuários: insira em `app_user` com hash bcrypt.
+> (UPSERT idempotente por `username`). Novos usuários e o e-mail de cada um: tela `/usuarios`
+> (só admin), que grava o hash bcrypt e o e-mail de login.
