@@ -242,7 +242,7 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
         const listContasFavorecido = jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 341 }]);
         const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
         const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(itens[0].modalidades).toEqual(['TED', 'CREDITO_CONTA']);
+        expect(itens[0].modalidades).toEqual(['TED']);
         expect(listContasFavorecido).toHaveBeenCalledWith('P1', 2);
     });
 
@@ -311,7 +311,7 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
         const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
         const itens = await service.modalidadesDisponiveisDoLote('L1');
         expect(itens[0]).toEqual({ docCod: '100', titCod: '1', modalidades: [] });
-        expect(itens[1].modalidades).toEqual(['BOLETO', 'TED', 'CREDITO_CONTA']);
+        expect(itens[1].modalidades).toEqual(['BOLETO', 'TED']);
     });
     describe('execuções presas (aviso na tela)', () => {
         it('reporta zero quando não há órfão', async () => {

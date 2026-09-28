@@ -37,6 +37,7 @@ import {
   marcarRetorno,
   type Modalidade,
   MODALIDADES,
+  MODALIDADES_OFERECIDAS,
   reabrirLote,
   removerItem,
   rotuloConta,
@@ -434,8 +435,8 @@ export function LoteCard({
                     const semCadastro = carregou && avail.length === 0
                     // Opções: se carregou e há disponíveis, só essas; senão todas (fallback).
                     const base = carregou && avail.length > 0
-                      ? MODALIDADES.filter((m) => avail.includes(m.value))
-                      : MODALIDADES
+                      ? MODALIDADES_OFERECIDAS.filter((m) => avail.includes(m.value))
+                      : MODALIDADES_OFERECIDAS
                     // Garante que a modalidade já escolhida apareça mesmo se ficou indisponível.
                     const opcoes =
                       i.modalidade && !base.some((m) => m.value === i.modalidade)

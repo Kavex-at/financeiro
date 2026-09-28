@@ -378,8 +378,10 @@ export default class SispagPainelService {
             if (comBoleto.has(`${it.filCod}:${it.docCod}:${it.titCod}`)) {
                 modalidades.push(MODALIDADE.BOLETO);
             }
+            // CRÉDITO EM CONTA fica fora da oferta: não foi testado ponta a ponta e não é
+            // prioridade agora (decisão de 2026-09-28). Item que já o tem continua válido.
             if (titulo?.pesCod && temConta.get(chaveFavorecido(it.filCod, titulo.pesCod))) {
-                modalidades.push(MODALIDADE.TED, MODALIDADE.CREDITO_CONTA);
+                modalidades.push(MODALIDADE.TED);
             }
             return { docCod: it.docCod, titCod: it.titCod, modalidades };
         });

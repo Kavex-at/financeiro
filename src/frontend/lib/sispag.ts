@@ -160,13 +160,20 @@ export type LotePagamentoStatus =
 
 export type Modalidade = 'BOLETO' | 'TED' | 'PIX' | 'CREDITO_CONTA'
 
-/** Rótulos das formas de pagamento (A2) para o seletor da revisão. */
-export const MODALIDADES: { value: Modalidade; label: string }[] = [
+/**
+ * Rótulos das formas de pagamento (A2) para o seletor da revisão. `oculta` = não é oferecida
+ * para escolha, mas o rótulo continua aqui para exibir item que já a tem. Crédito em conta está
+ * oculto: não foi testado ponta a ponta e não é prioridade agora (2026-09-28).
+ */
+export const MODALIDADES: { value: Modalidade; label: string; oculta?: boolean }[] = [
   { value: 'BOLETO', label: 'Boleto' },
   { value: 'TED', label: 'TED' },
   { value: 'PIX', label: 'PIX' },
-  { value: 'CREDITO_CONTA', label: 'Crédito em conta' },
+  { value: 'CREDITO_CONTA', label: 'Crédito em conta', oculta: true },
 ]
+
+/** Formas que o seletor oferece (exclui as ocultas). */
+export const MODALIDADES_OFERECIDAS = MODALIDADES.filter((m) => !m.oculta)
 
 export interface ItemLote {
   loteId: string
