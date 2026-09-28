@@ -1,35 +1,37 @@
 import 'reflect-metadata';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { MissingEncryptionKeyError } from '../domain/libs/crypto/SecretCipher.js';
 import EmailAlreadyInUseError from '../domain/errors/EmailAlreadyInUseError.js';
-import LastActiveAdminError from '../domain/errors/LastActiveAdminError.js';
+import LastUserManagerError from '../domain/errors/LastUserManagerError.js';
+import RoleNotFoundError from '../domain/errors/RoleNotFoundError.js';
+import SelfAccessRemovalError from '../domain/errors/SelfAccessRemovalError.js';
 import SelfDeactivationError from '../domain/errors/SelfDeactivationError.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import UserAdminService, {
     createUserSchema,
+    exceptionsBodySchema,
     resetPasswordSchema,
     setEmailSchema,
+    setRoleSchema,
     vinculoConexosSchema,
 } from '../domain/service/auth/UserAdminService.js';
+import { exigirPermissao } from '../http/acesso.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { requireRole } from '../http/auth.js';
 
 /**
- * Gestão de usuários da plataforma (Fatia A) — só `admin`.
+ * Gestão de usuários da plataforma (Fatia A) e do acesso deles (ADR-0053).
  *
- * Montado APÓS o middleware de auth (já há `req.user`) e protegido por
- * `requireRole('admin')` no router inteiro: um operador autenticado recebe 403.
- * Substitui o cadastro manual de usuários @kavex direto no banco.
+ * Montado APÓS o auth e o `resolverAcesso` e protegido por `usuarios:gerenciar` no router inteiro:
+ * quem não a tem recebe 403 com o código da permissão, em qualquer rota daqui.
  */
 const router = Router();
 
-// Autorização: todas as rotas de gestão exigem papel admin.
-router.use(requireRole('admin'));
-
-const ator = (req: Request): string | undefined => req.user?.sub ?? req.user?.email;
+// Autorização: todas as rotas de gestão exigem `usuarios:gerenciar`.
+router.use(exigirPermissao(PERMISSION.USUARIOS_GERENCIAR));
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 const setAtivoSchema = z.object({ ativo: z.boolean() });
@@ -53,8 +55,20 @@ const respondError = (res: Response, err: unknown): boolean => {
         res.status(409).json({ error: 'Você não pode desativar o próprio acesso.' });
         return true;
     }
-    if (err instanceof LastActiveAdminError) {
-        res.status(409).json({ error: 'Não é possível desativar o último administrador ativo.' });
+    if (err instanceof LastUserManagerError) {
+        res.status(409).json({
+            error: 'Não é possível remover o último usuário com permissão de gerenciar usuários.',
+        });
+        return true;
+    }
+    if (err instanceof SelfAccessRemovalError) {
+        res.status(409).json({
+            error: 'Você não pode remover a sua própria permissão de gerenciar usuários.',
+        });
+        return true;
+    }
+    if (err instanceof RoleNotFoundError) {
+        res.status(404).json({ error: 'Papel não encontrado.' });
         return true;
     }
     if (err instanceof MissingEncryptionKeyError) {
@@ -82,7 +96,18 @@ router.get(
     }),
 );
 
-// GET /usuarios — lista todos os usuários (sem hash de senha).
+// GET /usuarios/papeis — papéis (com pacote) para o seletor, e o catálogo de permissões (D6).
+router.get(
+    '/papeis',
+    asyncHandler(async (_req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(UserAdminService);
+        res.json(await service.listarPapeis());
+    }),
+);
+
+// GET /usuarios — lista todos os usuários (sem hash de senha), cada um com papel, exceções e
+// permissões efetivas calculadas no servidor (D6). `role` continua no JSON (front antigo).
 router.get(
     '/',
     asyncHandler(async (_req, res) => {
@@ -93,7 +118,8 @@ router.get(
 );
 
 // POST /usuarios — cria um novo usuário (e-mail + senha + papel), com username = e-mail.
-// `username` no corpo ainda é aceito como alias de `email` (front antigo durante o deploy).
+// `papelId` é obrigatório (Q3). Na janela de deploy (D2), o front antigo ainda manda `username`
+// (alias de `email`) e `role`: `'admin'` vira Administrador; o resto pede para atualizar a página.
 router.post(
     '/',
     asyncHandler(async (req, res) => {
@@ -104,10 +130,15 @@ router.post(
             });
             return;
         }
+        const actor = req.user?.sub;
+        if (!actor) {
+            res.status(401).json({ error: 'Não foi possível identificar quem está criando.' });
+            return;
+        }
         await bootstrapAppContainer();
         const service = container.resolve(UserAdminService);
         try {
-            const created = await service.create(parsed.data, ator(req));
+            const created = await service.create(parsed.data, actor);
             res.status(201).json(created);
         } catch (err) {
             if (!respondError(res, err)) throw err;
@@ -146,9 +177,66 @@ router.patch(
     }),
 );
 
+// PATCH /usuarios/:id/papel — troca o papel (ADR-0053). Guarda R9/R-extra: nem a própria
+// `usuarios:gerenciar`, nem deixar zero gestores ativos (409). Mesmo papel = 200 sem mudança.
+router.patch(
+    '/:id/papel',
+    asyncHandler(async (req, res) => {
+        const id = idParamSchema.safeParse(req.params);
+        const body = setRoleSchema.safeParse(req.body);
+        if (!id.success || !body.success) {
+            res.status(400).json({ error: 'Requisição inválida' });
+            return;
+        }
+        const actor = req.user?.sub;
+        if (!actor) {
+            res.status(401).json({ error: 'Não foi possível identificar quem está alterando.' });
+            return;
+        }
+        await bootstrapAppContainer();
+        const service = container.resolve(UserAdminService);
+        try {
+            res.json(await service.atribuirPapel(id.data.id, body.data.papelId, actor));
+        } catch (err) {
+            if (!respondError(res, err)) throw err;
+        }
+    }),
+);
+
+// PUT /usuarios/:id/permissoes — substitui o conjunto de exceções (conceder/revogar) do usuário.
+// Permissão fora do catálogo ou repetida = 400. Mesma guarda do papel.
+router.put(
+    '/:id/permissoes',
+    asyncHandler(async (req, res) => {
+        const id = idParamSchema.safeParse(req.params);
+        if (!id.success) {
+            res.status(400).json({ error: 'Requisição inválida' });
+            return;
+        }
+        const body = exceptionsBodySchema.safeParse(req.body);
+        if (!body.success) {
+            const mensagem = body.error.issues.find((i) => i.code === 'custom')?.message;
+            res.status(400).json({ error: mensagem ?? 'Requisição inválida' });
+            return;
+        }
+        const actor = req.user?.sub;
+        if (!actor) {
+            res.status(401).json({ error: 'Não foi possível identificar quem está alterando.' });
+            return;
+        }
+        await bootstrapAppContainer();
+        const service = container.resolve(UserAdminService);
+        try {
+            res.json(await service.definirExcecoes(id.data.id, body.data.excecoes, actor));
+        } catch (err) {
+            if (!respondError(res, err)) throw err;
+        }
+    }),
+);
+
 // PATCH /usuarios/:id/ativo — ativa/desativa o acesso de um usuário. Desativar passa pela guarda
-// da R11 (nem o próprio acesso, nem o último admin ativo), e por isso exige saber QUEM pede:
-// sem `req.user.sub`, recusa em vez de desativar às cegas.
+// R9/R-extra (nem o próprio acesso, nem o último usuário ativo com `usuarios:gerenciar`), e por
+// isso exige saber QUEM pede: sem `req.user.sub`, recusa em vez de desativar às cegas.
 router.patch(
     '/:id/ativo',
     asyncHandler(async (req, res) => {

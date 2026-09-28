@@ -1,20 +1,46 @@
 import bcrypt from 'bcryptjs';
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
+import RoleNotFoundError from '../../errors/RoleNotFoundError.js';
+import {
+    ADMIN_ROLE_NAME,
+    PERMISSION_CATALOG,
+    type Permission,
+    type PermissionException,
+    type RoleRef,
+    type ValidPermissionException,
+    exceptionEffectSchema,
+    isPermission,
+} from '../../interface/auth/Permission.js';
+import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import SecretCipher from '../../libs/crypto/SecretCipher.js';
+import AccessRepository, {
+    ACCESS_EVENT_TYPE,
+    type AccessEventType,
+    REPLACE_EXCEPTIONS_RESULT,
+    type RoleWithPermissions,
+    SET_ROLE_RESULT,
+} from '../../repository/auth/AccessRepository.js';
 import UserRepository, {
     type AppUserPublic,
     DEACTIVATE_RESULT,
+    REACTIVATE_RESULT,
     SET_EMAIL_RESULT,
 } from '../../repository/auth/UserRepository.js';
 import LogService from '../LogService.js';
+import AccessService from './AccessService.js';
+import EffectivePermissionCalculator from './EffectivePermissionCalculator.js';
 
 /** Custo do bcrypt — espelha o `seed-admin` (BCRYPT_ROUNDS = 12). */
 const BCRYPT_ROUNDS = 12;
 
-/** Papéis válidos na plataforma. `admin` gere usuários; `operador` só opera. */
-export const USER_ROLES = ['admin', 'operador'] as const;
-export type UserRole = (typeof USER_ROLES)[number];
+/**
+ * Valor do `role` que o front da v0.43 manda ao criar um admin (D2). Aceito como alias do papel
+ * `Administrador` só na janela de deploy; sai com a coluna `role` no passo 3.
+ */
+const LEGACY_ADMIN_ROLE = 'admin';
+
+const MENSAGEM_PAPEL_OBRIGATORIO = 'Atualize a página para escolher o papel do usuário.';
 
 /** E-mail no boundary: aparado, minúsculo e válido (I4). */
 const emailField = z.string().trim().toLowerCase().email('E-mail inválido.');
@@ -28,19 +54,34 @@ export const vinculoConexosSchema = z.object({
     conexosPassword: z.string().min(1),
 });
 
+/** Entrada validada da criação. `papelId` OU `usarAdministrador` (alias do front antigo, D2). */
+export interface CreateUserInput {
+    email: string;
+    password: string;
+    papelId?: number;
+    usarAdministrador?: boolean;
+    conexosUsername?: string;
+    conexosPassword?: string;
+}
+
 /**
  * Zod no boundary — criação de usuário (e-mail + senha + papel + vínculo opcional).
  *
- * O usuário novo nasce com `username = email` (R6). `username` continua aceito como ALIAS de
- * `email`: o front antigo (Vercel) ainda o envia na janela entre os dois deploys. Os dois juntos
- * com valores diferentes são recusados — não há como saber qual o admin quis.
+ * O usuário novo nasce com `username = email` (R6) e o papel ESCOLHIDO (`papelId`, sem default —
+ * Q3). `username` continua aceito como ALIAS de `email`: o front antigo (Vercel) ainda o envia na
+ * janela entre os dois deploys. Os dois juntos com valores diferentes são recusados — não há como
+ * saber qual o admin quis.
+ *
+ * Janela de deploy (D2): sem `papelId`, `role: 'admin'` vira o papel `Administrador`; qualquer
+ * outra coisa (o default do diálogo antigo, ou nada) é 400 pedindo para atualizar.
  */
 export const createUserSchema = z
     .object({
         email: emailField.optional(),
         username: emailField.optional(),
         password: z.string().min(8, 'a senha deve ter ao menos 8 caracteres'),
-        role: z.enum(USER_ROLES).default('operador'),
+        papelId: z.number().int().positive().optional(),
+        role: z.string().optional(),
         conexosUsername: z.string().trim().min(1).optional(),
         conexosPassword: z.string().min(1).optional(),
     })
@@ -58,13 +99,60 @@ export const createUserSchema = z
                 message: 'E-mail e usuário informados são diferentes.',
             });
         }
+        if (input.papelId === undefined && input.role !== LEGACY_ADMIN_ROLE) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: MENSAGEM_PAPEL_OBRIGATORIO });
+        }
     })
-    .transform(({ email, username, ...rest }) => ({
-        ...rest,
-        // O refine garante que ao menos um existe; `?? ''` só satisfaz o tipo.
-        email: email ?? username ?? '',
+    .transform(
+        ({ email, username, role: _role, papelId, ...rest }): CreateUserInput => ({
+            ...rest,
+            // O refine garante que ao menos um existe; `?? ''` só satisfaz o tipo.
+            email: email ?? username ?? '',
+            ...(papelId !== undefined ? { papelId } : { usarAdministrador: true }),
+        }),
+    );
+
+/** Zod no boundary — troca de papel. */
+export const setRoleSchema = z.object({ papelId: z.number().int().positive() });
+
+/**
+ * Zod no boundary — conjunto de exceções do usuário. `permissao` validada contra o catálogo
+ * (R4) e cada uma no máximo uma vez (a PK do banco é `(user_id, permission)`).
+ */
+export const exceptionsBodySchema = z
+    .object({
+        excecoes: z.array(z.object({ permissao: z.string(), efeito: exceptionEffectSchema })),
+    })
+    .superRefine((body, ctx) => {
+        if (body.excecoes.some((e) => !isPermission(e.permissao))) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Permissão desconhecida.' });
+            return;
+        }
+        const vistas = new Set(body.excecoes.map((e) => e.permissao));
+        if (vistas.size !== body.excecoes.length) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Cada permissão pode aparecer uma vez só.',
+            });
+        }
+    })
+    .transform((body) => ({
+        excecoes: body.excecoes.flatMap((e): ValidPermissionException[] =>
+            isPermission(e.permissao) ? [{ permissao: e.permissao, efeito: e.efeito }] : [],
+        ),
     }));
-export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+/** Usuário para a tela de gestão: o público + papel, exceções e efetivas (D6). */
+export interface AppUserWithAccess extends AppUserPublic {
+    excecoes?: PermissionException[];
+    permissoesEfetivas?: Permission[];
+}
+
+/** Papéis para o seletor da tela, mais o catálogo (o front não duplica a lista). */
+export interface RolesListing {
+    papeis: RoleWithPermissions[];
+    catalogo: Permission[];
+}
 
 /**
  * Zod no boundary — edição do e-mail de login. Só `email`: campos extras (ex.: `username`) são
@@ -78,40 +166,158 @@ export const resetPasswordSchema = z.object({
 });
 
 /**
- * UserAdminService — gestão de usuários da plataforma (Fatia A).
+ * UserAdminService — gestão de usuários da plataforma (Fatia A) e do acesso deles (ADR-0053).
  *
- * Encapsula as regras de cadastro: valida o input (Zod), gera o hash bcrypt da
- * senha (nunca guarda a senha em claro) e delega a persistência ao
- * `UserRepository`. A AUTORIZAÇÃO (só admin) é feita no route (guard de papel);
- * este service assume que o chamador já foi autorizado.
+ * Encapsula as regras de cadastro: valida o input (Zod), gera o hash bcrypt da senha (nunca guarda
+ * a senha em claro) e delega a persistência aos repositórios. A AUTORIZAÇÃO (`usuarios:gerenciar`)
+ * é feita no route; este service assume que o chamador já foi autorizado.
+ *
+ * Toda escrita que muda acesso (papel, exceções, ativo, criação) chama `AccessService.invalidar`
+ * DEPOIS do commit — a próxima requisição do alvo relê o banco — e emite uma linha de log em
+ * português com ator, alvo, tipo e antes → depois (R12). A trilha durável é o
+ * `app_user_access_event`, gravado pelos repositórios na transação da escrita.
  */
 @injectable()
 export default class UserAdminService {
     constructor(
         @inject(UserRepository)
         private userRepository: UserRepository,
+        @inject(AccessRepository)
+        private accessRepository: AccessRepository,
+        @inject(EffectivePermissionCalculator)
+        private calculator: EffectivePermissionCalculator,
+        @inject(AccessService)
+        private accessService: AccessService,
         @inject(SecretCipher)
         private secretCipher: SecretCipher,
         @inject(LogService)
         private logService: LogService,
     ) {}
 
-    /** Lista todos os usuários (sem hash de senha). */
-    public list = async (): Promise<AppUserPublic[]> => this.userRepository.listAll();
+    /**
+     * Lista todos os usuários (sem hash de senha), cada um com papel, exceções e permissões
+     * efetivas calculadas aqui (D6). Uma consulta de usuários e UMA de acesso, sem N+1. `role`
+     * continua no JSON para o front antigo.
+     */
+    public list = async (): Promise<AppUserWithAccess[]> => {
+        const [users, accessById] = await Promise.all([
+            this.userRepository.listAll(),
+            this.accessRepository.listAccessForUsers(),
+        ]);
+        return users.map((user) => {
+            const access = accessById.get(user.id);
+            if (!access) return user;
+            return {
+                ...user,
+                papel: access.papel,
+                excecoes: access.excecoes,
+                permissoesEfetivas: this.efetivas(access.pacote, access.excecoes),
+            };
+        });
+    };
+
+    /** Papéis com seus pacotes, e o catálogo inteiro. */
+    public listarPapeis = async (): Promise<RolesListing> => ({
+        papeis: await this.accessRepository.listRoles(),
+        catalogo: [...PERMISSION_CATALOG],
+    });
 
     /**
-     * Cria um usuário com `username = email`. `createdBy` = username do admin (auditoria). Se o
-     * input trouxer `conexosUsername` + `conexosPassword`, grava o vínculo Conexos já na criação
-     * (senha cifrada). Ambos juntos, ou nenhum. Colisão com o e-mail ou o usuário de outro:
+     * Troca o papel do usuário (guarda R9/R-extra no repositório). Mesmo papel = sucesso sem
+     * mudança. Lança `RoleNotFoundError`, NOT_FOUND (usuário), `LastUserManagerError` ou
+     * `SelfAccessRemovalError`.
+     */
+    public atribuirPapel = async (
+        id: number,
+        papelId: number,
+        ator: string,
+    ): Promise<{ id: number; papel: RoleRef }> => {
+        const outcome = await this.accessRepository.setRole(id, papelId, ator);
+        if (outcome.result === SET_ROLE_RESULT.ROLE_NOT_FOUND) throw new RoleNotFoundError(papelId);
+        if (outcome.result === SET_ROLE_RESULT.USER_NOT_FOUND || !outcome.after) {
+            throw new Error(`NOT_FOUND: user ${id} not found`);
+        }
+        if (outcome.result === SET_ROLE_RESULT.UPDATED) {
+            this.accessService.invalidar(id);
+            await this.logarMudanca(
+                ator,
+                id,
+                ACCESS_EVENT_TYPE.PAPEL,
+                outcome.before,
+                outcome.after,
+            );
+        }
+        return { id, papel: outcome.after };
+    };
+
+    /**
+     * Substitui o conjunto de exceções do usuário (guarda R9/R-extra no repositório). Devolve as
+     * exceções gravadas e as efetivas relidas depois do commit.
+     */
+    public definirExcecoes = async (
+        id: number,
+        excecoes: ValidPermissionException[],
+        ator: string,
+    ): Promise<{
+        id: number;
+        excecoes: PermissionException[];
+        permissoesEfetivas: Permission[];
+    }> => {
+        const outcome = await this.accessRepository.replaceExceptions(id, excecoes, ator);
+        if (outcome.result === REPLACE_EXCEPTIONS_RESULT.NOT_FOUND) {
+            throw new Error(`NOT_FOUND: user ${id} not found`);
+        }
+        if (outcome.result === REPLACE_EXCEPTIONS_RESULT.UPDATED) {
+            this.accessService.invalidar(id);
+            await this.logarMudanca(
+                ator,
+                id,
+                ACCESS_EVENT_TYPE.EXCECAO,
+                outcome.before,
+                outcome.after,
+            );
+        }
+        const access = await this.accessRepository.findAccessByUserId(id);
+        if (!access) throw new Error(`NOT_FOUND: user ${id} not found`);
+        return {
+            id,
+            excecoes: access.excecoes,
+            permissoesEfetivas: this.efetivas(access.pacote, access.excecoes),
+        };
+    };
+
+    /**
+     * Cria um usuário com `username = email` e o papel escolhido. `createdBy` = username de quem
+     * cria (auditoria e ator do evento). Papel inexistente: `RoleNotFoundError`, antes de gravar.
+     * Se o input trouxer `conexosUsername` + `conexosPassword`, grava o vínculo Conexos já na
+     * criação (senha cifrada). Ambos juntos, ou nenhum. Colisão com o e-mail ou o usuário de outro:
      * `EmailAlreadyInUseError`.
      */
-    public create = async (input: CreateUserInput, createdBy?: string): Promise<AppUserPublic> => {
+    public create = async (input: CreateUserInput, createdBy: string): Promise<AppUserPublic> => {
+        const role =
+            input.papelId !== undefined
+                ? await this.accessRepository.findRoleById(input.papelId)
+                : await this.accessRepository.findRoleByName(ADMIN_ROLE_NAME);
+        if (!role) throw new RoleNotFoundError(input.papelId ?? 0);
+
         const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
         const created = await this.userRepository.create({
             email: input.email,
             passwordHash,
-            role: input.role,
-            ...(createdBy !== undefined ? { createdBy } : {}),
+            roleId: role.id,
+            createdBy,
+        });
+        this.accessService.invalidar(created.id);
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'usuário criado com papel',
+            data: {
+                ator: createdBy,
+                alvo: created.id,
+                tipo: ACCESS_EVENT_TYPE.PAPEL,
+                antes: null,
+                depois: { id: role.id, nome: role.nome },
+            },
         });
         if (input.conexosUsername && input.conexosPassword) {
             await this.setVinculo(created.id, {
@@ -169,9 +375,10 @@ export default class UserAdminService {
     public vinculoDisponivel = async (): Promise<boolean> => this.secretCipher.isEnabled();
 
     /**
-     * Ativa/desativa o acesso de um usuário. Desativar passa pela guarda da R11 (nem o próprio
-     * acesso, nem o último admin ativo), com `actorUsername` = quem pede. Reativar não passa.
-     * Lança NOT_FOUND se o id não existir.
+     * Ativa/desativa o acesso de um usuário. Desativar passa pela guarda R9/R-extra (nem o próprio
+     * acesso, nem o último usuário ativo com `usuarios:gerenciar`), com `actorUsername` = quem
+     * pede. Reativar não passa, mas grava o evento. Nas duas direções o cache do alvo é invalidado:
+     * desativado, a próxima requisição dele já dá 401. Lança NOT_FOUND se o id não existir.
      */
     public setAtivo = async (id: number, ativo: boolean, actorUsername: string): Promise<void> => {
         if (!ativo) {
@@ -179,10 +386,17 @@ export default class UserAdminService {
             if (result === DEACTIVATE_RESULT.NOT_FOUND) {
                 throw new Error(`NOT_FOUND: user ${id} not found`);
             }
+            this.accessService.invalidar(id);
+            await this.logarMudanca(actorUsername, id, ACCESS_EVENT_TYPE.ATIVO, true, false);
             return;
         }
-        const ok = await this.userRepository.setAtivo(id, true);
-        if (!ok) throw new Error(`NOT_FOUND: user ${id} not found`);
+        const result = await this.userRepository.reactivate(id, actorUsername);
+        if (result === REACTIVATE_RESULT.NOT_FOUND)
+            throw new Error(`NOT_FOUND: user ${id} not found`);
+        this.accessService.invalidar(id);
+        if (result === REACTIVATE_RESULT.REACTIVATED) {
+            await this.logarMudanca(actorUsername, id, ACCESS_EVENT_TYPE.ATIVO, false, true);
+        }
     };
 
     /** Redefine a senha de um usuário. Lança se o id não existir. */
@@ -190,5 +404,26 @@ export default class UserAdminService {
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const ok = await this.userRepository.updatePassword(id, passwordHash);
         if (!ok) throw new Error(`NOT_FOUND: user ${id} not found`);
+    };
+
+    /** Efetivas ordenadas — sempre pelo `EffectivePermissionCalculator` (I7). */
+    private efetivas = (
+        pacote: readonly string[],
+        excecoes: readonly PermissionException[],
+    ): Permission[] => [...this.calculator.calcular(pacote, excecoes).permissoes].sort();
+
+    /** Uma linha de log por mudança de acesso, em português (R12). */
+    private logarMudanca = async (
+        ator: string,
+        alvo: number,
+        tipo: AccessEventType,
+        antes: unknown,
+        depois: unknown,
+    ): Promise<void> => {
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: `acesso do usuário alterado: ${tipo}`,
+            data: { ator, alvo, tipo, antes, depois },
+        });
     };
 }

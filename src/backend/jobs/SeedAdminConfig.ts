@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import AdminRoleMissingError from '../domain/errors/AdminRoleMissingError.js';
 
 /** Credenciais do admin semeado, já validadas. */
 export interface SeedAdminCredentials {
@@ -46,5 +47,19 @@ export default class SeedAdminConfig {
             throw new MissingSeedAdminEnvError(parsed.error.issues.map((i) => i.message));
         }
         return { email: parsed.data.ADMIN_EMAIL, password: parsed.data.ADMIN_PASSWORD };
+    };
+
+    /**
+     * Mensagem ao operador quando o seed falha. O papel `Administrador` ausente é a 0066 não
+     * aplicada neste banco (ADR-0053): o texto diz o que fazer, em vez do erro técnico.
+     */
+    public mensagemDeFalha = (error: unknown): string => {
+        if (error instanceof AdminRoleMissingError) {
+            return (
+                'o papel "Administrador" não existe neste banco: aplique as migrations ' +
+                '(npm run migrate) antes de rodar o seed.'
+            );
+        }
+        return error instanceof Error ? error.message : String(error);
     };
 }
