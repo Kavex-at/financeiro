@@ -464,12 +464,18 @@ router.post(
     }),
 );
 
+/**
+ * `?limit=` da trilha de ingestões. Leitura, então lixo cai no default 10 (contrato já testado)
+ * em vez de 400 — mas nunca chega ao `LIMIT` do SQL como negativo, fracionário ou NaN.
+ */
+const runsLimitSchema = z.coerce.number().int().positive().catch(10);
+
 // GET /sispag/ingestao/runs — trilha de auditoria das ingestões (?limit=).
 router.get(
     '/ingestao/runs',
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const limit = Math.min(Number(req.query.limit) || 10, 50);
+        const limit = Math.min(runsLimitSchema.parse(req.query.limit), 50);
         const repo = container.resolve(PagamentoIngestaoRunRepository);
         res.json({ runs: await repo.listRecentRuns(limit) });
     }),
@@ -527,7 +533,19 @@ const civilDateSchema = z
  * Só `dataDebito` é validado aqui. `dryRun`/`confirmarNovoLote` seguem com a leitura estrita
  * `=== true` de antes (passthrough): mudar o contrato deles não é escopo da ADR-0049.
  */
-const gerarRemessaSchema = z.object({ dataDebito: civilDateSchema.optional() }).passthrough();
+/**
+ * `dryRun` e `confirmarNovoLote` decidem se a remessa é ESCRITA de verdade no ERP, então passam
+ * pelo schema como booleanos estritos: `"true"` (string) ou uma chave com erro de digitação vira
+ * 400, em vez de cair calada no default (que pode ser a escrita real). `false` e ausente seguem
+ * iguais — o serviço usa o `conexosDryRun` do ambiente.
+ */
+const gerarRemessaSchema = z
+    .object({
+        dataDebito: civilDateSchema.optional(),
+        dryRun: z.boolean().optional(),
+        confirmarNovoLote: z.boolean().optional(),
+    })
+    .strict();
 
 // GET /sispag/lotes/:id/remessa/janela — janela permitida da data de débito (I8). Leitura.
 // Mesma autenticação das outras leituras de lote. Não consulta o ERP: usa o snapshot do lote.
@@ -573,10 +591,10 @@ router.post(
                 ...(req.header('x-request-id')
                     ? { correlationId: req.header('x-request-id') as string }
                     : {}),
-                ...(req.body?.dryRun === true ? { dryRunOverride: true } : {}),
+                ...(parsed.data.dryRun === true ? { dryRunOverride: true } : {}),
                 // Segundo clique da tela quando o lote anterior foi cancelado no ERP.
                 // Deliberadamente NÃO tem default: a confirmação tem que ser explícita.
-                ...(req.body?.confirmarNovoLote === true ? { confirmarNovoLote: true } : {}),
+                ...(parsed.data.confirmarNovoLote === true ? { confirmarNovoLote: true } : {}),
             });
             res.json(result);
         } catch (err) {

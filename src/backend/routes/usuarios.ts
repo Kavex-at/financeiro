@@ -30,6 +30,11 @@ const ator = (req: Request): string | undefined => req.user?.sub ?? req.user?.em
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 const setAtivoSchema = z.object({ ativo: z.boolean() });
+/**
+ * `remover` decide se o vínculo Conexos é APAGADO; só o booleano `true` apaga. Qualquer outro
+ * tipo (ex.: `"true"`) é 400 explícito — não cai no ramo de gravar login/senha nem é ignorado.
+ */
+const removerVinculoSchema = z.object({ remover: z.boolean().optional() }).passthrough();
 
 /**
  * Mapeia erros de domínio (mensagens internas em inglês) para a resposta HTTP
@@ -155,7 +160,12 @@ router.patch(
         await bootstrapAppContainer();
         const service = container.resolve(UserAdminService);
         try {
-            if (req.body?.remover === true) {
+            const remocao = removerVinculoSchema.safeParse(req.body ?? {});
+            if (!remocao.success) {
+                res.status(400).json({ error: 'Campo "remover" deve ser verdadeiro ou falso.' });
+                return;
+            }
+            if (remocao.data.remover === true) {
                 await service.setVinculo(id.data.id, null);
                 res.json({ id: id.data.id, vinculo: null });
                 return;

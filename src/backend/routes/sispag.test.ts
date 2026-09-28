@@ -247,6 +247,22 @@ describe('GET /sispag/ingestao/runs', () => {
         });
     });
 
+    it.each([
+        '-5',
+        '0',
+        '1.5',
+    ])('limit %s cai no default 10 — nunca chega ao LIMIT do SQL', async (limit) => {
+        const listRecentRuns = jest.fn().mockResolvedValue([]);
+        container.registerInstance(PagamentoIngestaoRunRepository, {
+            listRecentRuns,
+        } as never);
+
+        await comApp({}, async (url) => {
+            await fetch(`${url}/sispag/ingestao/runs?limit=${limit}`);
+            expect(listRecentRuns).toHaveBeenCalledWith(10);
+        });
+    });
+
     it('cai no default 10 quando o limit não é número', async () => {
         const listRecentRuns = jest.fn().mockResolvedValue([]);
         container.registerInstance(PagamentoIngestaoRunRepository, { listRecentRuns } as never);
@@ -573,6 +589,48 @@ describe('POST /sispag/lotes/:id/remessa', () => {
         await comApp({ role: 'viewer' }, async (url) => {
             const res = await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' });
             expect(res.status).toBe(403);
+        });
+    });
+
+    describe('dryRun / confirmarNovoLote — booleanos que decidem escrita real', () => {
+        const post = (url: string, body: unknown) =>
+            fetch(`${url}/sispag/lotes/L1/remessa`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+        it('dryRun false NÃO força escrita: sem override, o serviço usa o default do ambiente', async () => {
+            const gerarRemessa = jest.fn().mockResolvedValue({ dryRun: true });
+            container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+            await comApp({}, async (url) => {
+                const res = await post(url, { dryRun: false });
+                expect(res.status).toBe(200);
+                const arg = gerarRemessa.mock.calls[0]?.[0] ?? {};
+                expect(arg).not.toHaveProperty('dryRunOverride');
+                expect(arg).not.toHaveProperty('confirmarNovoLote');
+            });
+        });
+
+        it.each([
+            ['dryRun como string', { dryRun: 'true' }],
+            ['dryRun como número', { dryRun: 1 }],
+            ['dryRun nulo', { dryRun: null }],
+            ['confirmarNovoLote como string', { confirmarNovoLote: 'true' }],
+            ['confirmarNovoLote como número', { confirmarNovoLote: 1 }],
+            // Antes a chave com erro de digitação era ignorada: a simulação pedida sumia e o
+            // serviço caía no default, que pode ser a escrita real.
+            ['chave com erro de digitação', { dry_run: true }],
+        ])('%s → 400 e o serviço não é chamado', async (_caso, body) => {
+            const gerarRemessa = jest.fn();
+            container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+            await comApp({}, async (url) => {
+                const res = await post(url, body);
+                expect(res.status).toBe(400);
+                expect(gerarRemessa).not.toHaveBeenCalled();
+            });
         });
     });
 

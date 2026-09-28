@@ -1188,3 +1188,89 @@ describe('POST /permutas/adiantamentos/:docCod/reconciliar — contrato de erro'
         }
     });
 });
+
+/** Sobe o app, roda o corpo e sempre fecha o servidor. */
+const comServidor = async (fn: (url: string) => Promise<void>): Promise<void> => {
+    const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+    try {
+        await fn(server.url);
+    } finally {
+        await server.close();
+    }
+};
+
+/**
+ * `:borCod` e `?filCod=` das ações de borderô chegam ao serviço que ESCREVE no ERP. Antes, `Number()`
+ * + `isFinite` aceitava `1.5`, `-3` e `?filCod=` vazio virando 0; e um `?filCod=abc` era descartado em
+ * silêncio, deixando a escrita seguir na filial que a trilha resolvesse.
+ */
+describe('ações de borderô — borCod/filCod validados no boundary', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it.each([
+        ['borCod não numérico', 'abc', ''],
+        ['borCod fracionário', '1.5', ''],
+        ['borCod negativo', '-3', ''],
+        ['filCod não numérico', '14918', '?filCod=abc'],
+        ['filCod fracionário', '14918', '?filCod=2.5'],
+        ['filCod zero', '14918', '?filCod=0'],
+    ])('%s → 400 e o serviço não é chamado', async (_caso, borCod, qs) => {
+        const finalizarBordero = jest.fn();
+        container.registerInstance(BorderoGestaoService, { finalizarBordero } as never);
+
+        await comServidor(async (url) => {
+            const res = await fetch(`${url}/permutas/borderos/${borCod}/finalizar${qs}`, {
+                method: 'POST',
+            });
+            expect(res.status).toBe(400);
+            expect(finalizarBordero).not.toHaveBeenCalled();
+        });
+    });
+
+    it('filCod válido é repassado; vazio conta como ausente', async () => {
+        const cancelarBordero = jest.fn().mockResolvedValue({ ok: true });
+        container.registerInstance(BorderoGestaoService, { cancelarBordero } as never);
+
+        await comServidor(async (url) => {
+            await fetch(`${url}/permutas/borderos/14918/cancelar?filCod=2`, { method: 'POST' });
+            expect(cancelarBordero).toHaveBeenLastCalledWith(
+                expect.objectContaining({ borCod: 14918, filCod: 2 }),
+            );
+
+            await fetch(`${url}/permutas/borderos/14918/cancelar?filCod=`, { method: 'POST' });
+            expect(cancelarBordero.mock.calls[1]?.[0]).not.toHaveProperty('filCod');
+        });
+    });
+
+    it('vale para todas as ações de escrita (excluir borderô e excluir baixa)', async () => {
+        const excluirBordero = jest.fn();
+        const excluirBaixa = jest.fn();
+        container.registerInstance(BorderoGestaoService, {
+            excluirBordero,
+            excluirBaixa,
+        } as never);
+
+        await comServidor(async (url) => {
+            const a = await fetch(`${url}/permutas/borderos/14918?filCod=x`, { method: 'DELETE' });
+            const b = await fetch(`${url}/permutas/borderos/0/baixas/777`, { method: 'DELETE' });
+            expect([a.status, b.status]).toEqual([400, 400]);
+            expect(excluirBordero).not.toHaveBeenCalled();
+            expect(excluirBaixa).not.toHaveBeenCalled();
+        });
+    });
+
+    it('GET /borderos/:borCod/baixas exige filCod inteiro positivo', async () => {
+        const listarBaixasErp = jest.fn().mockResolvedValue([]);
+        container.registerInstance(BorderoGestaoService, { listarBaixasErp } as never);
+
+        await comServidor(async (url) => {
+            const bad = await fetch(`${url}/permutas/borderos/14918/baixas?filCod=-2`);
+            expect(bad.status).toBe(400);
+            const ok = await fetch(`${url}/permutas/borderos/14918/baixas?filCod=2`);
+            expect(ok.status).toBe(200);
+            expect(listarBaixasErp).toHaveBeenCalledWith({ borCod: 14918, filCod: 2 });
+        });
+    });
+});
