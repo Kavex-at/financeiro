@@ -1,4 +1,4 @@
-# Regis-Review — métricas do ciclo datadas pelo encerramento (ADR-0051) — follow-ups
+# Regis-Review — métricas do ciclo datadas pelo encerramento (ADR-0052) — follow-ups
 
 Run: `docs/regis-review/2026-09-28-1534-metricas-encerramento/` (REPORT.md, KANBAN.md).
 Escopo: delta da branch `worktree-metrica-ciclo-data-conclusao`. **0 P0** — nada re-entrou no loop.
@@ -18,5 +18,5 @@ ordenada no `KANBAN.md` do run.
 ## Resolvido nesta revisão, sem código
 
 - `fault-tolerance-1`: linha `error` reaberta por retry mantém o `encerrado_em` da falha enquanto em
-  voo. Documentado como intencional (cabeçalho da 0064 e ADR-0051 D1): retentativa presa conta onde
+  voo. Documentado como intencional (cabeçalho da 0065 e ADR-0052 D1): retentativa presa conta onde
   falhou por último.

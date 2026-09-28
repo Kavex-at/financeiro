@@ -16,7 +16,7 @@ cards_count: 2
 
 | Source | Stimulus | Artifact | Environment | Response | Response Measure |
 |---|---|---|---|---|---|
-| Analista/robô CLONEX reexecuta uma baixa de permuta ou uma SN que falhou e só liquida semanas depois (retry sobre a mesma `idempotency_key`) | Escrita write-ahead (`markSettled`/`markParcial`/`markError`) grava o carimbo de encerramento e a função `metricas.metricas_ciclo` recalcula a série a partir dele | `permuta_alocacao_execucao.encerrado_em`, `solicitacao_numerario_execucao.encerrado_em`, função `metricas.metricas_ciclo(timestamp, timestamp)` | Produção, Postgres/Supabase, acesso só pela aplicação (sem role dedicado) | A trilha de auditoria financeira registra o **primeiro** encerramento real de forma imóvel, sem caminho de escrita paralelo e sem exposição a `PUBLIC` | 0 linhas com semana de encerramento incorreta na série publicada (baseline pré-delta: 2 de 190, R$ 503.066,69 — ADR-0051); função permanece com `REVOKE ALL ... FROM PUBLIC` e `SET search_path = ''`; 100% do SQL novo parametrizado |
+| Analista/robô CLONEX reexecuta uma baixa de permuta ou uma SN que falhou e só liquida semanas depois (retry sobre a mesma `idempotency_key`) | Escrita write-ahead (`markSettled`/`markParcial`/`markError`) grava o carimbo de encerramento e a função `metricas.metricas_ciclo` recalcula a série a partir dele | `permuta_alocacao_execucao.encerrado_em`, `solicitacao_numerario_execucao.encerrado_em`, função `metricas.metricas_ciclo(timestamp, timestamp)` | Produção, Postgres/Supabase, acesso só pela aplicação (sem role dedicado) | A trilha de auditoria financeira registra o **primeiro** encerramento real de forma imóvel, sem caminho de escrita paralelo e sem exposição a `PUBLIC` | 0 linhas com semana de encerramento incorreta na série publicada (baseline pré-delta: 2 de 190, R$ 503.066,69 — ADR-0052); função permanece com `REVOKE ALL ... FROM PUBLIC` e `SET search_path = ''`; 100% do SQL novo parametrizado |
 
 ## 2. Métricas observadas
 
@@ -24,10 +24,10 @@ cards_count: 2
 |---|---|---|---|---|
 | SQL não-parametrizado no delta (repositórios) | 0 ocorrências | 0 | ✅ | Leitura de `PermutaExecucaoRepository.ts` / `SolicitacaoNumerarioExecucaoRepository.ts` — todas as novas cláusulas `encerrado_em = ...` usam apenas literais SQL (`now()`, `CASE`) ou colunas, sem interpolação de variável |
 | Segredos hardcoded no delta | 0 ocorrências | 0 | ✅ | `grep -rEn "(password\|secret\|token\|api[_-]?key\|credential)\s*[:=]" ` nos 6 arquivos do diff — nenhum hit |
-| `GRANT`/`CREATE ROLE`/`SECURITY DEFINER`/`PASSWORD` na migração 0064 | 0 ocorrências | 0 | ✅ | `vwMetricasCiclo.test.ts:258` (`expect(SQL_0064).not.toMatch(/CREATE ROLE\|ALTER ROLE\|GRANT \|SECURITY DEFINER\|PASSWORD/i)`) |
-| `REVOKE ALL ... FROM PUBLIC` na função redefinida | Presente | Presente | ✅ | `0064_metricas_ciclo_data_pelo_encerramento.sql:216`; asserção em `vwMetricasCiclo.test.ts:258-259` |
-| `SET search_path` na função | `SET search_path = ''` | Definido (não vazio implícito) | ✅ | `0064_metricas_ciclo_data_pelo_encerramento.sql:87` |
-| Contrato de colunas devolvidas pela função | Idêntico ao da 0058 (9 colunas + `parcial`/`apurado_ate`) | Sem regressão de superfície de dados exposta | ✅ | `vwMetricasCiclo.test.ts:215-217` (`colunasDoRetorno(SQL_0064)).toEqual(colunasDoRetorno(SQL))`) |
+| `GRANT`/`CREATE ROLE`/`SECURITY DEFINER`/`PASSWORD` na migração 0065 | 0 ocorrências | 0 | ✅ | `vwMetricasCiclo.test.ts:258` (`expect(SQL_0065).not.toMatch(/CREATE ROLE\|ALTER ROLE\|GRANT \|SECURITY DEFINER\|PASSWORD/i)`) |
+| `REVOKE ALL ... FROM PUBLIC` na função redefinida | Presente | Presente | ✅ | `0065_metricas_ciclo_data_pelo_encerramento.sql:216`; asserção em `vwMetricasCiclo.test.ts:258-259` |
+| `SET search_path` na função | `SET search_path = ''` | Definido (não vazio implícito) | ✅ | `0065_metricas_ciclo_data_pelo_encerramento.sql:87` |
+| Contrato de colunas devolvidas pela função | Idêntico ao da 0058 (9 colunas + `parcial`/`apurado_ate`) | Sem regressão de superfície de dados exposta | ✅ | `vwMetricasCiclo.test.ts:215-217` (`colunasDoRetorno(SQL_0065)).toEqual(colunasDoRetorno(SQL))`) |
 | Cobertura de teste do novo comportamento (`encerrado_em`) | 14 asserções novas (5 unit repo + 5 integration Postgres + 4 guardas estáticas) | 100% dos caminhos de escrita cobertos | ✅ | `_shared-metrics.md` (24/24 integration, 21/21 static guards); diffs de `*.test.ts` |
 | Linhas afetadas pelo backfill (aproximação `encerrado_em = atualizado_em`) | ~190 (permuta + SN) | Drift quantificado | ⚠️ Não medível nesta sessão | Leitura de produção negada ao agente (mesma limitação registrada em `_shared-metrics.md`); consulta pronta em `ontology/_inbox/metricas-ciclo-data-encerramento-validacao.md` |
 | Guarda de estado terminal em `markError` (status/`encerrado_em`) | 0 de 1 (sem `CASE` como em `markSettled`/`markParcial`) | Simetria com os irmãos `markSettled`/`markParcial` | ⚠️ Parcial (padrão pré-existente, delta apenas estende) | `PermutaExecucaoRepository.ts:539-542`, `SolicitacaoNumerarioExecucaoRepository.ts:352-354` |
@@ -43,16 +43,16 @@ cards_count: 2
 | Identify Actors | ✅ presente (herdado) — `conexos_username`/`conexos_usn_cod` seguem gravados via `ConexosIdentityProvider.currentParams()` em toda escrita nova | ✅ | `PermutaExecucaoRepository.ts:450-451,505-506`; `SolicitacaoNumerarioExecucaoRepository.ts:319-320` |
 | Authenticate Actors | N/A — rota `GET /metricas/ciclo` e middlewares de sessão não fazem parte do diff | N/A | `src/backend/routes/metricas.ts` não está no `git diff --stat` |
 | Authorize Actors | N/A — mesma razão acima | N/A | idem |
-| Limit Access | ✅ presente — `REVOKE ALL ON FUNCTION metricas.metricas_ciclo(...) FROM PUBLIC` reafirmado na redefinição da função (mesma doutrina da 0058) | ✅ | `0064...sql:216`; `vwMetricasCiclo.test.ts:258-259` |
+| Limit Access | ✅ presente — `REVOKE ALL ON FUNCTION metricas.metricas_ciclo(...) FROM PUBLIC` reafirmado na redefinição da função (mesma doutrina da 0058) | ✅ | `0065...sql:216`; `vwMetricasCiclo.test.ts:258-259` |
 | Limit Exposure | ✅ presente — contrato de saída (9 colunas + `parcial`/`apurado_ate`) mantido idêntico; nenhuma coluna de CNPJ/fornecedor/valor individual exposta, só agregados semanais | ✅ | `vwMetricasCiclo.test.ts:215-217` |
 | Encrypt Data | N/A — delta não toca TLS/SSM/at-rest | N/A | fora do diff |
 | Separate Entities | N/A — sem `infra/`/multi-tenant nesta base (estado atual, ver CLAUDE.md); delta é de único schema/aplicação | N/A | CLAUDE.md — "Estado Atual vs. Alvo" |
-| Change Default Settings | ✅ presente — `SET search_path = ''` na função, blindando contra hijack de objetos por `search_path` malicioso | ✅ | `0064...sql:87` |
+| Change Default Settings | ✅ presente — `SET search_path = ''` na função, blindando contra hijack de objetos por `search_path` malicioso | ✅ | `0065...sql:87` |
 | Validate Input | ✅ presente — 100% do SQL novo é parametrizado (`$key`, `$borCod`, ...); zero interpolação de string nas cláusulas `encerrado_em` adicionadas. Boundary HTTP (Zod em `routes/metricas.ts`) não foi tocado pelo delta | ✅ | diff de `PermutaExecucaoRepository.ts` / `SolicitacaoNumerarioExecucaoRepository.ts` |
 | Revoke Access | N/A — nenhuma lógica de sessão/revogação no diff | N/A | fora do diff |
 | Lock Computer | N/A — tactic não aplicável a este backend | N/A | — |
 | Inform Actors | N/A — nenhum alerta/notificação no diff | N/A | fora do diff |
-| Restore | ✅ parcial — a própria migração documenta o rollback (`UPDATE ... SET encerrado_em = NULL` ou `DROP COLUMN`), reconstruível porque o backfill não toca `atualizado_em`/`criado_em`; ~190 linhas, abaixo do limiar de 1.000 que exigiria script formal | ✅ | `0064...sql:31-33`; `migrations/rollbacks/README.md` (limiar) |
+| Restore | ✅ parcial — a própria migração documenta o rollback (`UPDATE ... SET encerrado_em = NULL` ou `DROP COLUMN`), reconstruível porque o backfill não toca `atualizado_em`/`criado_em`; ~190 linhas, abaixo do limiar de 1.000 que exigiria script formal | ✅ | `0065...sql:31-33`; `migrations/rollbacks/README.md` (limiar) |
 | Audit Trail | ⚠️ parcial — o delta É uma melhoria de audit trail (carimba o 1º encerramento real, imóvel, em vez de depender de `criado_em`/`atualizado_em` que mentiam a data da liquidação); mas o backfill histórico é uma aproximação declarada, e `markError` grava sobre o mesmo campo sem a guarda de terminal que `markSettled`/`markParcial` têm | ⚠️ | F-security-1, F-security-2 abaixo |
 
 ## 4. Findings (achados)
@@ -61,7 +61,7 @@ cards_count: 2
 
 - **Severidade**: P2
 - **Tactic violada**: Audit Trail
-- **Localização**: `src/backend/migrations/0064_metricas_ciclo_data_pelo_encerramento.sql:26-33,59-67`
+- **Localização**: `src/backend/migrations/0065_metricas_ciclo_data_pelo_encerramento.sql:26-33,59-67`
 - **Evidência (objetiva)**:
   ```sql
   -- Linhas terminais já gravadas recebem `encerrado_em = atualizado_em`. É uma APROXIMAÇÃO, a única
@@ -72,7 +72,7 @@ cards_count: 2
    WHERE encerrado_em IS NULL
      AND status IN ('settled', 'parcial', 'error');
   ```
-  A própria migração reconhece que, para uma linha já `settled`/`parcial` antes da 0064 que sofreu qualquer escrita pós-liquidação (`clearBorCod`, re-clique via `beginExecution` preservado, `setBorCod`), o `atualizado_em` usado como proxy pode não ser o instante real do encerramento.
+  A própria migração reconhece que, para uma linha já `settled`/`parcial` antes da 0065 que sofreu qualquer escrita pós-liquidação (`clearBorCod`, re-clique via `beginExecution` preservado, `setBorCod`), o `atualizado_em` usado como proxy pode não ser o instante real do encerramento.
 - **Impacto técnico**: até ~190 linhas (`permuta_alocacao_execucao` + `solicitacao_numerario_execucao`) carregam uma data de auditoria aproximada em vez de exata; a série de métricas publicada a partir delas herda o mesmo desvio.
 - **Impacto de negócio**: o campo que agora é a fonte de verdade de "quando o sistema executou este pagamento/permuta" — usado em relatório de ciclo para a Columbia — pode subestimar/deslocar valores em semanas específicas de forma não quantificada; um auditor ou o cliente que reconte manualmente pode encontrar divergência sem explicação disponível no sistema.
 - **Métrica de baseline**: ~190 linhas backfilled (fonte: `_shared-metrics.md`); quantas delas tiveram escrita pós-settle não é medível nesta sessão (leitura de produção negada ao agente — mesma limitação documentada em `ontology/_inbox/metricas-ciclo-data-encerramento-validacao.md`).
@@ -102,10 +102,10 @@ cards_count: 2
 ### [security-1] Registrar a origem do carimbo de `encerrado_em` para distinguir backfill aproximado de encerramento real
 
 - **Problema**
-  > A migração 0064 backfilled ~190 linhas usando `atualizado_em` como proxy de `encerrado_em`, e a própria migração documenta que essa aproximação pode estar errada para linhas re-clicadas pós-liquidação (F-security-1). Hoje não há como, olhando a linha, saber se o `encerrado_em` é exato (gravado por `markSettled`/`markParcial`/`markError` depois da 0064) ou aproximado (backfill).
+  > A migração 0065 backfilled ~190 linhas usando `atualizado_em` como proxy de `encerrado_em`, e a própria migração documenta que essa aproximação pode estar errada para linhas re-clicadas pós-liquidação (F-security-1). Hoje não há como, olhando a linha, saber se o `encerrado_em` é exato (gravado por `markSettled`/`markParcial`/`markError` depois da 0065) ou aproximado (backfill).
 
 - **Melhoria Proposta**
-  > Tactic alvo: Audit Trail. Adicionar uma coluna booleana leve (`encerrado_em_aproximado` ou similar) gravada `true` só pelo backfill da 0064 e nunca pelas escritas normais dos repositórios (`markSettled`/`markParcial`/`markError`), permitindo que o report do ciclo e qualquer auditoria futura filtrem/anotem os pontos de baixa confiança sem precisar reconstruir a lógica da migração. Arquivos: nova migration `006X`, `PermutaExecucaoRepository.ts`, `SolicitacaoNumerarioExecucaoRepository.ts`.
+  > Tactic alvo: Audit Trail. Adicionar uma coluna booleana leve (`encerrado_em_aproximado` ou similar) gravada `true` só pelo backfill da 0065 e nunca pelas escritas normais dos repositórios (`markSettled`/`markParcial`/`markError`), permitindo que o report do ciclo e qualquer auditoria futura filtrem/anotem os pontos de baixa confiança sem precisar reconstruir a lógica da migração. Arquivos: nova migration `006X`, `PermutaExecucaoRepository.ts`, `SolicitacaoNumerarioExecucaoRepository.ts`.
 
 - **Resultado Esperado**
   > A trilha de auditoria distingue explicitamente "encerramento medido" de "encerramento reconstruído por aproximação" — 0 linhas ambíguas hoje → 100% das linhas com proveniência marcada. O report do ciclo pode citar a ressalva apenas nas semanas efetivamente afetadas, em vez de uma nota genérica.
@@ -143,6 +143,6 @@ cards_count: 2
 
 ## 6. Notas do agente
 
-- Escopo estritamente delta (ADR-0051): migração 0064, os dois repositórios de ledger e seus testes. Rota HTTP, autenticação, autorização, IAM, secrets/SSM e dependências (`npm audit`, pulado por `--quick`) não fazem parte deste diff e não foram medidos.
+- Escopo estritamente delta (ADR-0052): migração 0065, os dois repositórios de ledger e seus testes. Rota HTTP, autenticação, autorização, IAM, secrets/SSM e dependências (`npm audit`, pulado por `--quick`) não fazem parte deste diff e não foram medidos.
 - Achado F-security-2 é majoritariamente débito pré-existente (o padrão de `markError` sem guarda de terminal já existia antes da 0051); mantido como P3/contexto por tocar diretamente o novo campo de auditoria, não como reabertura de dívida fora de escopo.
 - Cross-QA: F-security-1 e F-security-2 tangenciam Fault Tolerance (mesma doutrina de idempotência/corrida write-ahead) e Availability (nenhum achado de blast-radius multi-tenant aqui — este repo ainda não tem `infra/`/isolamento por conta AWS, ver CLAUDE.md "Estado Atual vs. Alvo").

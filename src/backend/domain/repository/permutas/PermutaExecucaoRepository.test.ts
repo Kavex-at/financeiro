@@ -272,7 +272,7 @@ describe('PermutaExecucaoRepository', () => {
         expect(params.erpResponse).toBe(JSON.stringify({ type: 'VALIDATION' }));
     });
 
-    // ADR-0051 — as métricas do ciclo datam a execução pelo ENCERRAMENTO. Um retry reusa a linha
+    // ADR-0052 — as métricas do ciclo datam a execução pelo ENCERRAMENTO. Um retry reusa a linha
     // (upsert por chave), então o `criado_em` é o da 1ª tentativa; `atualizado_em` anda com re-cliques.
     it('markSettled/markParcial carimbam encerrado_em só no 1º encerramento (imóvel depois)', async () => {
         for (const marcar of ['markSettled', 'markParcial'] as const) {

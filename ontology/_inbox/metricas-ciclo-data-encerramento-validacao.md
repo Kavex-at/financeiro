@@ -1,4 +1,4 @@
-# Métricas do ciclo — antes/depois da data pelo encerramento (ADR-0051)
+# Métricas do ciclo — antes/depois da data pelo encerramento (ADR-0052)
 
 **Status:** rodada contra produção em 2026-09-28 (read-only, a pedido do usuário). Resultado no fim.
 Mudou o delta: a SN ficou **sem backfill** (ver "Resultado").
@@ -13,10 +13,10 @@ Mudou o delta: a SN ficou **sem backfill** (ver "Resultado").
    (esperado em 18/09: 2 linhas settled, R$ 503.066,69 — pode ter crescido desde então).
 5. Linhas de `%`: registrar as que mudam — nenhuma delas é "chave nova".
 
-## Consulta (read-only, roda ANTES ou DEPOIS da 0064)
+## Consulta (read-only, roda ANTES ou DEPOIS da 0065)
 
 Antes da migration, `encerrado_em` não existe: a consulta usa a mesma regra do backfill
-(`atualizado_em` das permutas terminais; SN sem backfill), então o "depois" dela é o que a 0064 vai
+(`atualizado_em` das permutas terminais; SN sem backfill), então o "depois" dela é o que a 0065 vai
 produzir.
 
 ```sql
@@ -94,7 +94,7 @@ Os deslocamentos de `%` em 07/08 e 21/08 são linhas `error` que passam para a s
   15:42) e id 341 (R$ 150.061,81; nasceu 10/08, liquidou 14/09 12:43).
 - SN: 11 linhas (ids 28–45, R$ 1.025.490,08). **Todas** com `atualizado_em` entre 18:15:08 e
   18:15:14 de 17/08: uma escrita em lote (`nde_autorizado`/`revisao_humana` = true), não a
-  liquidação. Nenhuma SN foi reexecutada de fato. **Decisão: a SN fica sem backfill** (0064 corrigida).
+  liquidação. Nenhuma SN foi reexecutada de fato. **Decisão: a SN fica sem backfill** (0065 corrigida).
   O backfill por `atualizado_em` teria movido R$ 789.490,08 de 07/08 para 14/08 sem motivo.
 
 **Por que 11–18/09 continua R$ 0,00:** o id 341 está no borderô **2466 da filial 1**, e o cache

@@ -1,5 +1,5 @@
 ---
-adr_number: 0051
+adr_number: 0052
 title: As métricas do ciclo datam cada execução pelo encerramento, não pela criação — e a série é recalculada, não remendada
 date: 2026-09-28
 status: accepted
@@ -8,7 +8,7 @@ related_entities: [Permuta, SolicitacaoNumerario]
 related_actions: []
 related_integrations: [kavex-report-ciclo]
 evidence:
-  - src/backend/migrations/0064_metricas_ciclo_data_pelo_encerramento.sql
+  - src/backend/migrations/0065_metricas_ciclo_data_pelo_encerramento.sql
   - src/backend/migrations/vwMetricasCiclo.integration.test.ts
   - src/backend/migrations/vwMetricasCiclo.test.ts
   - src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts
@@ -18,7 +18,7 @@ supersedes_decisions: []
 amends_decisions: [0045]
 ---
 
-# ADR 0051: uma baixa conta na semana em que aconteceu
+# ADR 0052: uma baixa conta na semana em que aconteceu
 
 **Cliente:** Columbia Trading · **Entrega:** Kavex · **Branch:** `worktree-metrica-ciclo-data-conclusao`
 (`/feature-tweak`). **Emenda a ADR-0045** (a regra "tentativa atribuída à semana do `criado_em`").

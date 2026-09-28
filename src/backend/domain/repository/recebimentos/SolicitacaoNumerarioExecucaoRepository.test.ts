@@ -219,7 +219,7 @@ describe('SolicitacaoNumerarioExecucaoRepository — write-ahead ledger da SN (c
         expect(params.erpResponse).toBe(JSON.stringify({ docVldComvalidacoes: 3 }));
     });
 
-    // ADR-0051 — data das métricas do ciclo. `setEtapa`/`setNdeAutorizado` rodam DEPOIS do settle
+    // ADR-0052 — data das métricas do ciclo. `setEtapa`/`setNdeAutorizado` rodam DEPOIS do settle
     // (SEFAZ é assíncrona), por isso a data não pode ser `atualizado_em`.
     it('markSettled carimba encerrado_em só no 1º encerramento; markError, a falha', async () => {
         const db = buildDb();
