@@ -99,4 +99,14 @@ describe('buildApp (modifiability-3)', () => {
         expect(res.status).not.toBe(401);
         server.close();
     });
+
+    /** ADR-0051: a tela de login consulta o banner ANTES de existir token. */
+    it('serve GET /auth/transicao publicamente, sem token', async () => {
+        const { server, base } = await subir();
+        const res = await fetch(`${base}/auth/transicao`);
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ ativo: expect.any(Boolean) });
+        server.close();
+    });
 });
