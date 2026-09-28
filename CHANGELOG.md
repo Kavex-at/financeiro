@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.43.1 (2026-09-28) — métricas do ciclo contam a baixa na semana em que ela aconteceu
+
+- **Permuta reexecutada passa a contar na semana da liquidação, não na da 1ª tentativa.** Uma
+  permuta que falha e é reexecutada reaproveita a mesma linha do ledger, e a medição a contava na
+  semana em que a linha nasceu. A baixa de R$ 150.061,81 liquidada em 14/09 teve a 1ª tentativa em
+  10/08 e era atribuída a agosto. Em produção, só duas baixas estavam nessa situação (R$ 503.066,69).
+- **Cada execução agora é datada por quando terminou** (coluna nova `encerrado_em`, carimbada no
+  1º encerramento e imóvel depois). Permutas antigas preenchidas pelo último `atualizado_em`; a
+  trilha da SN antiga fica como estava, porque o `atualizado_em` dela foi reescrito em lote em 17/08.
+- **A série é recalculada, na mesma grade de sextas 18:00.** Medido em produção: a semana 07/08–14/08
+  ganha R$ 353.004,88 (baixa criada em 03/07, liquidada em 14/08). A semana 11–18/09 ganha a
+  tentativa da baixa de R$ 150.061,81 (`0 de 1`), mas o valor segue R$ 0,00: o borderô dela (2466,
+  filial 1) não está finalizado no Conexos, e só baixa com borderô finalizado conta (ADR-0052).
+
 ## v0.43.0 (2026-09-28) — login por e-mail da Columbia (passo 1 de 3 da transição de acesso)
 
 - **Cada usuário ganha um e-mail de login, cadastrado pelo admin.** Nova coluna E-mail em
