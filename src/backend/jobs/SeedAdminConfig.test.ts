@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import AdminRoleMissingError from '../domain/errors/AdminRoleMissingError.js';
 import SeedAdminConfig, { MissingSeedAdminEnvError } from './SeedAdminConfig.js';
 
 const SENHA = 'uma-senha-forte';
@@ -61,5 +62,29 @@ describe('seed-admin — sem credencial default no código (I6)', () => {
         [varAposentada, varAposentada],
     ])('não contém %s', (_rotulo, trecho) => {
         for (const fonte of fontes) expect(fonte).not.toContain(trecho);
+    });
+});
+
+describe('SeedAdminConfig.mensagemDeFalha (ADR-0053)', () => {
+    const config = new SeedAdminConfig();
+
+    it('sem o papel Administrador: manda rodar as migrations, em português', () => {
+        const msg = config.mensagemDeFalha(new AdminRoleMissingError());
+        expect(msg).toMatch(/Administrador/);
+        expect(msg).toMatch(/migra/i);
+        expect(msg).toMatch(/npm run migrate/);
+    });
+
+    it('outro erro: devolve a mensagem dele', () => {
+        expect(config.mensagemDeFalha(new Error('conexão recusada'))).toBe('conexão recusada');
+        expect(config.mensagemDeFalha('x')).toBe('x');
+    });
+
+    it('o job grava o papel via upsertAdmin e sai com 1 na falha, pela mensagem traduzida', () => {
+        const fonte = readFileSync(path.join(__dirname, 'seed-admin.ts'), 'utf8');
+        expect(fonte).toContain('upsertAdmin(');
+        expect(fonte).toContain('mensagemDeFalha(');
+        expect(fonte).toContain('process.exit(1)');
+        expect(fonte).toMatch(/papel "Administrador"/);
     });
 });

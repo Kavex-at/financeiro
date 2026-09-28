@@ -104,6 +104,19 @@ describe('AuthService.login', () => {
         expect(payload).not.toHaveProperty('email');
     });
 
+    it('ADR-0053 (I1/I5): o token não carrega permissão, papel novo nem id — só identifica', async () => {
+        const { service } = build([usuario()]);
+        const out = await service.login({ username: 'admin', password: SENHA });
+        if (!out) throw new Error('login deveria ter passado');
+
+        const payload = decodeJwt(out.token);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'exp', 'iat', 'role', 'sub']);
+        for (const proibida of ['permissoes', 'permissions', 'papel', 'role_id', 'id', 'filiais']) {
+            expect(payload).not.toHaveProperty(proibida);
+        }
+        expect(payload.sub).toBe('admin');
+    });
+
     it('a resposta traz o username canônico (e o e-mail, fora do token)', async () => {
         const { service } = build([usuario()]);
         const out = await service.login({ username: 'ti@columbiabr.com', password: SENHA });

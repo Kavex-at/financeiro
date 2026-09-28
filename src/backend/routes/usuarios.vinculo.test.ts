@@ -9,6 +9,7 @@ jest.mock('../domain/appContainer.js', () => ({
     bootstrapAppContainer: jest.fn().mockResolvedValue(undefined),
 }));
 
+import { PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
 import UserAdminService from '../domain/service/auth/UserAdminService.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import usuariosRouter from './usuarios.js';
@@ -22,7 +23,13 @@ const buildApp = (): express.Express => {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-        req.user = { sub: 'admin-1', email: 'a@b.com', role: 'admin' };
+        req.user = { sub: 'admin-1', email: 'a@b.com' };
+        // resolverAcesso roda a montante no app real; aqui, o acesso do Administrador.
+        req.acesso = {
+            userId: 1,
+            papel: { id: 1, nome: 'Administrador' },
+            permissoes: new Set(PERMISSION_CATALOG),
+        };
         next();
     });
     app.use('/usuarios', usuariosRouter);
