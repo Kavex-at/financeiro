@@ -365,6 +365,15 @@ export function formatCivilDate(civil: string): string {
   return `${dia}/${mes}`
 }
 
+/**
+ * Vencimento do ERP (epoch-ms) → `'24/09/2026'`. O Conexos grava 00:00Z do dia pretendido; lido
+ * no fuso do navegador (Brasília, UTC-3), esse instante vira 21h do dia anterior. Por isso o dia
+ * sai sempre em UTC — a mesma regra do `BankingCalendar.fromErpEpoch` no backend.
+ */
+export function formatErpDay(ms?: number): string {
+  return ms == null ? '—' : new Date(ms).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
+}
+
 export interface ItemConciliado {
   loteId?: string
   docCod?: string

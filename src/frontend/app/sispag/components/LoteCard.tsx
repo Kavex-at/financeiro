@@ -32,6 +32,7 @@ import {
   fetchContasPagadoras,
   finalizarLote,
   formatCivilDate,
+  formatErpDay,
   type LotePagamento,
   marcarRetorno,
   type Modalidade,
@@ -43,9 +44,6 @@ import {
 import { baixarBlob } from '@/lib/download'
 import { formatBRL } from '@/lib/utils'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
-
-const fmtData = (ms?: number) =>
-  ms != null ? new Date(ms).toLocaleDateString('pt-BR') : '—'
 
 function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
   if (status === 'FINALIZADO')
@@ -421,7 +419,7 @@ export function LoteCard({
                         {i.valor != null ? formatBRL(i.valor) : '—'}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {fmtData(i.vencimento)}
+                        {formatErpDay(i.vencimento)}
                       </TableCell>
                       <TableCell>
                         {isRascunho ? (

@@ -46,6 +46,7 @@ import {
   fetchIngestaoRuns,
   finalizarLote,
   formarLotes,
+  formatErpDay,
   incluirTitulo,
   IngestaoPagamentosEmAndamentoError,
   retirarDoLote,
@@ -75,9 +76,6 @@ const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
 /** Lotes candidatos por página na aba "Lotes candidatos" (o link da linha do título usa). */
 const LOTES_POR_PAGINA = 8
-
-const fmtData = (ms?: number) =>
-  ms === undefined ? '—' : new Date(ms).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
 
 function VencimentoBadge({ dias }: { dias?: number }) {
   if (dias === undefined) return <span className="text-muted-foreground">—</span>
@@ -879,7 +877,7 @@ function SispagPanel() {
                           <TableCell>
                             <div className="flex flex-col gap-0.5">
                               <span className="text-xs text-muted-foreground">
-                                {fmtData(t.vencimento)}
+                                {formatErpDay(t.vencimento)}
                               </span>
                               <VencimentoBadge dias={t.diasAteVencimento} />
                             </div>

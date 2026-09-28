@@ -6,6 +6,7 @@ import {
   fetchJanelaDataDebito,
   fetchLinhasDigitaveis,
   formatCivilDate,
+  formatErpDay,
   gerarRemessa,
   retirarDoLote,
 } from '@/lib/sispag'
@@ -150,6 +151,30 @@ describe('formatCivilDate', () => {
   it('formata dd/mm por split, sem fuso', () => {
     expect(formatCivilDate('2026-09-22')).toBe('22/09')
     expect(formatCivilDate('2026-01-01')).toBe('01/01')
+  })
+})
+
+describe('formatErpDay', () => {
+  const tzOriginal = process.env.TZ
+  beforeAll(() => {
+    process.env.TZ = 'America/Sao_Paulo'
+  })
+  afterAll(() => {
+    process.env.TZ = tzOriginal
+  })
+
+  it('exibe o dia UTC do vencimento do ERP, mesmo com o navegador em Brasília', () => {
+    // Título 5046/1: vencimento 24/09 gravado pelo ERP como 2026-09-24T00:00Z (= 23/09 21h BRT).
+    expect(new Date(1790208000000).getDate()).toBe(23) // sanidade: o fuso local é BRT
+    expect(formatErpDay(1790208000000)).toBe('24/09/2026')
+  })
+
+  it('aceita o carimbo das 15:00Z que o ERP também usa', () => {
+    expect(formatErpDay(Date.UTC(2026, 8, 24, 15))).toBe('24/09/2026')
+  })
+
+  it('devolve "—" sem vencimento', () => {
+    expect(formatErpDay(undefined)).toBe('—')
   })
 })
 
