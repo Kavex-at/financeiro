@@ -77,9 +77,14 @@ services:
         sync: false
       - key: AUTH_JWT_SECRET
         sync: false
-      - key: ADMIN_USERNAME
+      # Obrigatórias para o `npm run seed:admin` (sem default no código, ADR-0051).
+      - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
+        sync: false
+      # Banner de transição para e-mail no login: só `true` liga; ausente = desligado.
+      # Vale sem redeploy do front (após reiniciar o backend).
+      - key: AUTH_TRANSICAO_EMAIL_BANNER
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
