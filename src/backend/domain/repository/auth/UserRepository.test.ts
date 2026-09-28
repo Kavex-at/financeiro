@@ -1,12 +1,9 @@
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
-import UserRepository, {
-    DEACTIVATE_RESULT,
-    EmailAlreadyInUseError,
-    LastActiveAdminError,
-    SET_EMAIL_RESULT,
-    SelfDeactivationError,
-} from './UserRepository.js';
+import EmailAlreadyInUseError from '../../errors/EmailAlreadyInUseError.js';
+import LastActiveAdminError from '../../errors/LastActiveAdminError.js';
+import SelfDeactivationError from '../../errors/SelfDeactivationError.js';
+import UserRepository, { DEACTIVATE_RESULT, SET_EMAIL_RESULT } from './UserRepository.js';
 
 /** Cliente de transação isolado: prova que o que roda nele NÃO roda no pool. */
 const buildTx = () => ({
