@@ -78,6 +78,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test -- --coverage
+      # Sem o build, uma quebra do `next build` (import de server em client, rota inválida…) só
+      # aparecia no deploy da Vercel. O job do backend já builda.
+      - run: npm run build
 
   tag-release:
     name: Tag Release
