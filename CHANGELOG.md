@@ -1,5 +1,14 @@
 # Columbia Financeiro — Changelog
 
+## v0.42.4 (2026-09-28) — vencimento do lote SISPAG deixa de aparecer um dia antes
+
+- **O vencimento no card do lote agora é o mesmo de Títulos a Pagar.** O Conexos grava o
+  vencimento como meia-noite UTC do dia (24/09 → `2026-09-24T00:00Z`). O card do lote exibia esse
+  instante no fuso do navegador, e em Brasília ele vira 23/09 às 21h. Por isso o título 5046/1
+  (ADP Brasil) aparecia com vencimento 23/09 no lote finalizado e 24/09 em Títulos a Pagar. Era só
+  exibição: o valor gravado, a janela da data de débito e a remessa (.REM) já usavam o dia certo.
+  As duas telas agora usam o mesmo formatador (`formatErpDay`), que lê o dia sempre em UTC.
+
 ## v0.42.3 (2026-09-25) — borderô de Permutas para de apagar, repetir e esconder coisas
 
 Quatro defeitos de integridade no borderô de Permutas (fin010/fin014). A regra de negócio não muda;
