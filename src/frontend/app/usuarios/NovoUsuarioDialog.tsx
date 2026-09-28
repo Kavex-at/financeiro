@@ -24,20 +24,27 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { criarUsuario, type UserRole } from '@/lib/usuarios'
+import { criarUsuario, type PapelComPermissoes } from '@/lib/usuarios'
 
-/** Dialog de criação de usuário. Chama `onCreated` após sucesso p/ recarregar a lista. */
+/**
+ * Dialog de criação de usuário. Chama `onCreated` após sucesso p/ recarregar a lista.
+ *
+ * O papel vem do banco (`GET /usuarios/papeis`) e é escolha OBRIGATÓRIA, sem valor pré-selecionado
+ * (Q3, ADR-0053): "Criar" fica bloqueado até escolher.
+ */
 export function NovoUsuarioDialog({
   onCreated,
   vinculoDisponivel,
+  papeis,
 }: {
   onCreated: () => void
   vinculoDisponivel: boolean
+  papeis: PapelComPermissoes[]
 }) {
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
-  const [role, setRole] = useState<UserRole>('operador')
+  const [papelId, setPapelId] = useState<number | undefined>(undefined)
   const [conexosUser, setConexosUser] = useState('')
   const [conexosSenha, setConexosSenha] = useState('')
   const [saving, setSaving] = useState(false)
@@ -48,14 +55,14 @@ export function NovoUsuarioDialog({
     setErro(null)
     setEmail('')
     setSenha('')
-    setRole('operador')
+    setPapelId(undefined)
     setConexosUser('')
     setConexosSenha('')
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (saving) return
+    if (saving || papelId === undefined) return
     setSaving(true)
     setErro(null)
     try {
@@ -64,7 +71,7 @@ export function NovoUsuarioDialog({
       const criado = await criarUsuario({
         email: email.trim(),
         password: senha,
-        role,
+        papelId,
         // Vínculo Conexos só vai se AMBOS forem preenchidos (login + senha).
         ...(vinculoDisponivel && cxUser && conexosSenha
           ? { conexosUsername: cxUser, conexosPassword: conexosSenha }
@@ -139,14 +146,20 @@ export function NovoUsuarioDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="novo-role">Papel</Label>
-              <Select value={role} onValueChange={(v) => setRole(v as UserRole)}>
-                <SelectTrigger id="novo-role">
-                  <SelectValue />
+              <Label htmlFor="novo-papel">Papel</Label>
+              <Select
+                value={papelId !== undefined ? String(papelId) : undefined}
+                onValueChange={(v) => setPapelId(Number(v))}
+              >
+                <SelectTrigger id="novo-papel">
+                  <SelectValue placeholder="Escolha o papel" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="operador">Operador — opera Permutas e SISPAG</SelectItem>
-                  <SelectItem value="admin">Administrador — também gerencia usuários</SelectItem>
+                  {papeis.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.nome}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -184,7 +197,7 @@ export function NovoUsuarioDialog({
             ) : null}
           </DialogBody>
           <DialogFooter>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || papelId === undefined}>
               {saving ? <Spinner /> : <UserPlus className="size-4" aria-hidden />} Criar usuário
             </Button>
           </DialogFooter>

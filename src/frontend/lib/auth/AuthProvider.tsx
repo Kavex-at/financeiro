@@ -223,17 +223,13 @@ export function useIsAuthenticated(): { authenticated: boolean; loading: boolean
 }
 
 /**
- * The current user's role, read from the JWT (`null` when unknown). In
- * dev-bypass there is no token, so it reports `'admin'` so local dev can see
- * the admin-only UI. This is a UI hint only — the real gate is server-side.
+ * The `role` claim of the JWT (`null` when unknown). Kept ONLY for the deploy-window fallback of
+ * `PermissoesProvider` (D4, ADR-0053): when the backend is still the old one, `/me/permissoes` has
+ * no permission list and the UI falls back to `role === 'admin'`. Visibility decisions use
+ * `usePermissoes()`; the real gate is server-side.
  */
 export function useRole(): string | null {
   const { token, devBypass } = useAuth()
   if (devBypass) return 'admin'
   return token ? decodeJwtRole(token) : null
-}
-
-/** True when the signed-in user may manage other users (role `admin`). */
-export function useIsAdmin(): boolean {
-  return useRole() === 'admin'
 }

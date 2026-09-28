@@ -224,8 +224,8 @@ export function AppShellMain({
  * Sidebar (≥ `md`) e BottomNav (< `md`) a partir de UM modelo de itens. A troca é por CSS e não por
  * hook de breakpoint — ver o comentário em `bottom-nav.tsx`.
  *
- * Componente separado de propósito: `useAppNavGroups` consulta o allow-list de Operação, e não se
- * consulta permissão de quem ainda não tem sessão (`/login`, `/docs` público).
+ * Componente separado de propósito: `useAppNavGroups` lê as permissões do usuário (ADR-0053), e
+ * não se consulta permissão de quem ainda não tem sessão (`/login`, `/docs` público).
  */
 function AppNavigation() {
   const groups = useAppNavGroups()

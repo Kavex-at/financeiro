@@ -3,9 +3,9 @@
 import * as React from 'react'
 import { Activity, ArrowLeftRight, Banknote, BarChart3, Landmark, Users } from 'lucide-react'
 import type { SidebarGroup } from '@/components/ui/sidebar'
-import { useIsAdmin } from '@/lib/auth/AuthProvider'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { isSispagEnabled } from '@/lib/features'
-import { fetchPermissoes } from '@/lib/operacao'
+import { PERMISSAO, type Permissao } from '@/lib/permissoes'
 
 /**
  * O modelo de navegação do Financeiro — fonte única, consumida pela `Sidebar` (desktop) e pelo
@@ -17,29 +17,26 @@ import { fetchPermissoes } from '@/lib/operacao'
  *
  * ## Visibilidade
  *
- * Cada item herda o MESMO recorte que já governa o card correspondente na home. A regra do design
- * system (`docs/design-system/feedback.md`) é categórica: **permissão ausente esconde, nunca
- * desabilita** — "por que esse item está cinza?" é uma pergunta que o usuário não deveria precisar
- * fazer. Nenhum destes gates é segurança: o gate real é server-side em todos os três casos
- * (`SISPAG_ENABLED` no backend, 404 nas rotas `/operacao`, `requireRole('admin')` em `/usuarios`).
- * Esconder é ergonomia.
+ * Cada item aparece pela permissão do módulo (ADR-0053), a MESMA que governa o card correspondente
+ * na home: Permutas ⇐ `permutas:ver`, SISPAG ⇐ flag E `sispag:ver`, Adiantamentos ⇐
+ * `recebimentos:ver`, Operação ⇐ `operacao:ver`, Métricas ⇐ `metricas:ver`, Usuários ⇐
+ * `usuarios:gerenciar`. A regra do design system (`docs/design-system/feedback.md`) é categórica:
+ * **permissão ausente esconde, nunca desabilita** — "por que esse item está cinza?" é uma pergunta
+ * que o usuário não deveria precisar fazer. Nenhum destes gates é segurança: o gate real é o guard
+ * de permissão de cada rota no servidor (e o `SISPAG_ENABLED` do backend). Esconder é ergonomia.
  */
 
 export interface AppNavPermissions {
   sispagEnabled: boolean
-  isAdmin: boolean
-  operacaoEnabled: boolean
+  /** A permissão está entre as efetivas do usuário (false enquanto carrega). */
+  tem: (permissao: Permissao) => boolean
 }
 
 /**
  * Projeção pura das permissões → grupos de navegação. Sem hooks, sem fetch: é isto que torna a
  * regra de visibilidade testável sem montar a árvore inteira.
  */
-export function buildAppNavGroups({
-  sispagEnabled,
-  isAdmin,
-  operacaoEnabled,
-}: AppNavPermissions): SidebarGroup[] {
+export function buildAppNavGroups({ sispagEnabled, tem }: AppNavPermissions): SidebarGroup[] {
   return [
     {
       id: 'frentes',
@@ -50,6 +47,7 @@ export function buildAppNavGroups({
           label: 'Permutas',
           icon: <ArrowLeftRight />,
           href: '/permutas',
+          hidden: !tem(PERMISSAO.PERMUTAS_VER),
           tooltip: {
             title: 'Permutas',
             description: 'Adiantamentos PROFORMA ↔ invoices: elegibilidade, casamento e baixa.',
@@ -68,7 +66,7 @@ export function buildAppNavGroups({
           label: 'SISPAG',
           icon: <Banknote />,
           href: '/sispag',
-          hidden: !sispagEnabled,
+          hidden: !(sispagEnabled && tem(PERMISSAO.SISPAG_VER)),
           tooltip: {
             title: 'SISPAG — Pagamentos',
             description: 'Títulos a pagar: ingestão, montagem do lote, remessa e retorno.',
@@ -79,6 +77,7 @@ export function buildAppNavGroups({
           label: 'Adiantamentos',
           icon: <Landmark />,
           href: '/recebimentos',
+          hidden: !tem(PERMISSAO.RECEBIMENTOS_VER),
           tooltip: {
             title: 'Gestão de Adiantamentos',
             description: 'Conciliação de créditos bancários, rateio, baixa assistida e NDe.',
@@ -95,7 +94,7 @@ export function buildAppNavGroups({
           label: 'Operação',
           icon: <Activity />,
           href: '/operacao',
-          hidden: !operacaoEnabled,
+          hidden: !tem(PERMISSAO.OPERACAO_VER),
           tooltip: {
             title: 'Painel de Operação',
             description: 'Saúde dos pipelines, alertas abertos e diagnóstico de configuração.',
@@ -106,6 +105,7 @@ export function buildAppNavGroups({
           label: 'Métricas',
           icon: <BarChart3 />,
           href: '/metricas',
+          hidden: !tem(PERMISSAO.METRICAS_VER),
           tooltip: {
             title: 'Métricas',
             description: 'Quanto trabalho o sistema fez pela operação, por semana.',
@@ -116,7 +116,7 @@ export function buildAppNavGroups({
           label: 'Usuários',
           icon: <Users />,
           href: '/usuarios',
-          hidden: !isAdmin,
+          hidden: !tem(PERMISSAO.USUARIOS_GERENCIAR),
           tooltip: {
             title: 'Usuários',
             description: 'Acessos da plataforma, papéis e vínculo do acesso Conexos.',
@@ -128,38 +128,20 @@ export function buildAppNavGroups({
 }
 
 /**
- * Consulta o allow-list de Operação (`OPERACAO_USUARIOS`, recorte por identidade e não por papel —
- * ADR-0042). Falha **fechada**: se a consulta não responde, o item não aparece. Um item que some é
- * irritante; um item que aparece e leva a um 404 parece defeito.
+ * Os grupos de navegação já recortados para o usuário atual. Enquanto as permissões carregam,
+ * nenhum item condicionado aparece — um item que aparece e some parece defeito; um que só aparece
+ * quando a resposta chega, não.
  */
-function usePermissaoOperacao(): boolean {
-  const [permitido, setPermitido] = React.useState(false)
-
-  React.useEffect(() => {
-    let vivo = true
-    void fetchPermissoes()
-      .then((p) => {
-        if (vivo) setPermitido(p.operacao)
-      })
-      .catch(() => {
-        if (vivo) setPermitido(false)
-      })
-    return () => {
-      vivo = false
-    }
-  }, [])
-
-  return permitido
-}
-
-/** Os grupos de navegação já recortados para o usuário atual. */
 export function useAppNavGroups(): SidebarGroup[] {
-  const isAdmin = useIsAdmin()
-  const operacaoEnabled = usePermissaoOperacao()
+  const { carregando, tem } = usePermissoes()
   const sispagEnabled = isSispagEnabled()
 
   return React.useMemo(
-    () => buildAppNavGroups({ sispagEnabled, isAdmin, operacaoEnabled }),
-    [sispagEnabled, isAdmin, operacaoEnabled],
+    () =>
+      buildAppNavGroups({
+        sispagEnabled,
+        tem: (p) => !carregando && tem(p),
+      }),
+    [sispagEnabled, carregando, tem],
   )
 }

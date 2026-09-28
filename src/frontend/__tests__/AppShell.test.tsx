@@ -18,13 +18,12 @@ jest.mock('next/navigation', () => ({
 const authenticatedMock = jest.fn<boolean, []>()
 jest.mock('@/lib/auth/AuthProvider', () => ({
   useIsAuthenticated: () => ({ authenticated: authenticatedMock(), loading: false }),
-  useIsAdmin: () => true,
 }))
 
-// Promessa que nunca resolve: o item de Operação tem teste próprio em `components/nav`, e aqui
-// uma resolução assíncrona só produziria atualização de estado fora do `act`.
-jest.mock('@/lib/operacao', () => ({
-  fetchPermissoes: () => new Promise(() => {}),
+// A visibilidade de cada item tem teste próprio em `components/nav`; aqui, o Administrador (as nove,
+// menos Operação — como antes, quando a consulta de Operação nunca resolvia neste teste).
+jest.mock('@/lib/auth/PermissoesProvider', () => ({
+  usePermissoes: () => ({ carregando: false, tem: (p: string) => p !== 'operacao:ver' }),
 }))
 
 // Nem o menu de usuário nem o banner do Conexos são o objeto deste teste, e ambos dependem do

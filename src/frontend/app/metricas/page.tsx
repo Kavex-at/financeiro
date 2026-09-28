@@ -27,6 +27,17 @@ import {
   formatarMetrica,
   formatarMomentoLocal,
 } from '@/lib/metricas'
+import { ExigePermissao } from '@/components/auth/ExigePermissao'
+import { PERMISSAO } from '@/lib/permissoes'
+
+/** Guard de página (ADR-0053): sem `metricas:ver`, só o estado "sem acesso"; os dados nem são buscados. */
+export default function MetricasPage() {
+  return (
+    <ExigePermissao permissao={PERMISSAO.METRICAS_VER}>
+      <MetricasPageConteudo />
+    </ExigePermissao>
+  )
+}
 
 /**
  * `/metricas` — quanto trabalho o sistema fez pela operação, por semana (ADR-0045).
@@ -40,7 +51,7 @@ import {
  * 2. **O percentual nunca aparece sozinho.** O absoluto ("12 de 13 tentativas") vem junto: "100%"
  *    de uma tentativa conta outra história que "100%" de cinquenta.
  */
-export default function MetricasPage() {
+function MetricasPageConteudo() {
   const [leitura, setLeitura] = React.useState<MetricasCicloLeitura | null>(null)
   const [carregando, setCarregando] = React.useState(true)
   const [erro, setErro] = React.useState<string | null>(null)

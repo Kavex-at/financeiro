@@ -51,9 +51,9 @@ export const decodeJwtExp = (token: string): number | null => {
 
 /**
  * Reads the `role` claim from a JWT WITHOUT verifying the signature — the
- * backend already verifies it on every request. Used only to show/hide the
- * admin-only UI (the real authorization is server-side, `requireRole`).
- * Returns `null` for any malformed token.
+ * backend already verifies it on every request. Used only by the deploy-window
+ * fallback of `PermissoesProvider` (D4, ADR-0053); authorization is server-side,
+ * read from the database. Returns `null` for any malformed token.
  */
 export const decodeJwtRole = (token: string): string | null => {
   try {
