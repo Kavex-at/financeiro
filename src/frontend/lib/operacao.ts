@@ -79,11 +79,26 @@ export interface DiagnosticoConfig {
   totalAusentesSilenciosas: number
 }
 
+/** Fontes do painel — cada uma pode falhar sozinha sem derrubar as outras. */
+export type FontePainel = 'pipelines' | 'alertas' | 'configuracao'
+
+/** Uma fonte que o backend não conseguiu ler nesta resposta. `mensagem` já é texto ao operador. */
+export interface ErroFontePainel {
+  fonte: FontePainel
+  mensagem: string
+}
+
 export interface OperacaoPainel {
   geradoEm: string
   pipelines: PipelineSaude[]
   alertas: Alerta[]
   configuracao: DiagnosticoConfig
+  /**
+   * Fontes que falharam. A fonte que falha volta VAZIA no seu campo, então sem olhar isto a tela
+   * mostraria "0 alertas" durante um incidente. Opcional: backends anteriores à v0.42.5 não o
+   * mandam (e respondiam 500 no lugar).
+   */
+  erros?: ErroFontePainel[]
 }
 
 export async function fetchOperacao(): Promise<OperacaoPainel> {

@@ -1,4 +1,5 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import OperacaoPage from '@/app/operacao/page'
 import { type OperacaoPainel, fetchOperacao } from '@/lib/operacao'
 
@@ -130,5 +131,60 @@ describe('OperacaoPage', () => {
     expect(screen.getByText('backend fora')).toBeInTheDocument()
     // O ponto: nenhum KPI verde aparece para encobrir a falha.
     expect(screen.queryByText('Pipelines parados')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * Desde a v0.42.5 o `GET /operacao` usa `allSettled`: a fonte que falha volta VAZIA (HTTP 200) e é
+ * nomeada em `erros[]`. Sem ler `erros`, a tela de incidente mostrava "0 alertas" com a leitura
+ * dos alertas quebrada.
+ */
+describe('OperacaoPage — fonte que falhou não vira zero', () => {
+  const comFalha = (over: Partial<OperacaoPainel>): OperacaoPainel => ({ ...painelFake, ...over })
+
+  it('alertas ilegíveis: "—" no KPI e na aba, e a aba diz que falhou', async () => {
+    ;(fetchOperacao as jest.Mock).mockResolvedValue(
+      comFalha({
+        alertas: [],
+        erros: [{ fonte: 'alertas', mensagem: 'Não foi possível ler os alertas abertos.' }],
+      }),
+    )
+    await renderPainel()
+
+    const banner = screen.getAllByRole('alert')[0]
+    expect(within(banner).getByText(/não significam zero/)).toBeInTheDocument()
+    expect(within(banner).getByText('Não foi possível ler os alertas abertos.')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Alertas \(—\)/ })).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: /Alertas/ }))
+    expect(screen.getByText('Não foi possível ler esta parte do painel')).toBeInTheDocument()
+    expect(screen.queryByText('Nenhum alerta aberto')).not.toBeInTheDocument()
+    // As outras fontes seguem de pé.
+    expect(screen.getByRole('tab', { name: /Pipelines \(3\)/ })).toBeInTheDocument()
+  })
+
+  it('pipelines ilegíveis: os KPIs derivados deles não aparecem como 0 verde', async () => {
+    ;(fetchOperacao as jest.Mock).mockResolvedValue(
+      comFalha({
+        pipelines: [],
+        erros: [{ fonte: 'pipelines', mensagem: 'Não foi possível ler a saúde dos pipelines.' }],
+      }),
+    )
+    await renderPainel()
+
+    expect(screen.getByRole('tab', { name: /Pipelines \(—\)/ })).toBeInTheDocument()
+    expect(screen.getAllByText('não foi possível ler')).toHaveLength(2)
+    expect(screen.queryByText('sem sucesso dentro do limite')).not.toBeInTheDocument()
+    expect(screen.getByText('Não foi possível ler esta parte do painel')).toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Saúde dos pipelines' })).not.toBeInTheDocument()
+  })
+
+  it('sem `erros` (ou vazio) nada muda: nenhum banner', async () => {
+    ;(fetchOperacao as jest.Mock).mockResolvedValue(comFalha({ erros: [] }))
+    await renderPainel()
+
+    expect(screen.queryByText(/não significam zero/)).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Alertas \(1\)/ })).toBeInTheDocument()
   })
 })
