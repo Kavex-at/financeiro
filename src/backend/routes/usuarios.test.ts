@@ -4,13 +4,10 @@ import type { AddressInfo } from 'node:net';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { container } from 'tsyringe';
 import type SecretCipher from '../domain/libs/crypto/SecretCipher.js';
-import {
-    DEACTIVATE_RESULT,
-    EmailAlreadyInUseError,
-    LastActiveAdminError,
-    SET_EMAIL_RESULT,
-    SelfDeactivationError,
-} from '../domain/repository/auth/UserRepository.js';
+import EmailAlreadyInUseError from '../domain/errors/EmailAlreadyInUseError.js';
+import LastActiveAdminError from '../domain/errors/LastActiveAdminError.js';
+import SelfDeactivationError from '../domain/errors/SelfDeactivationError.js';
+import { DEACTIVATE_RESULT, SET_EMAIL_RESULT } from '../domain/repository/auth/UserRepository.js';
 import type UserRepository from '../domain/repository/auth/UserRepository.js';
 import type LogService from '../domain/service/LogService.js';
 import UserAdminService from '../domain/service/auth/UserAdminService.js';

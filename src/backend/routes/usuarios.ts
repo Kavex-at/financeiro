@@ -5,11 +5,9 @@ import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { MissingEncryptionKeyError } from '../domain/libs/crypto/SecretCipher.js';
-import {
-    EmailAlreadyInUseError,
-    LastActiveAdminError,
-    SelfDeactivationError,
-} from '../domain/repository/auth/UserRepository.js';
+import EmailAlreadyInUseError from '../domain/errors/EmailAlreadyInUseError.js';
+import LastActiveAdminError from '../domain/errors/LastActiveAdminError.js';
+import SelfDeactivationError from '../domain/errors/SelfDeactivationError.js';
 import UserAdminService, {
     createUserSchema,
     resetPasswordSchema,

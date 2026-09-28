@@ -1,5 +1,8 @@
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import EmailAlreadyInUseError from '../../errors/EmailAlreadyInUseError.js';
+import LastActiveAdminError from '../../errors/LastActiveAdminError.js';
+import SelfDeactivationError from '../../errors/SelfDeactivationError.js';
 
 /** Linha de `app_user` mapeada para o domínio (camelCase). */
 export interface AppUser {
@@ -50,34 +53,6 @@ export const DEACTIVATE_RESULT = {
     NOT_FOUND: 'not_found',
 } as const;
 export type DeactivateResult = (typeof DEACTIVATE_RESULT)[keyof typeof DEACTIVATE_RESULT];
-
-/**
- * O valor já identifica OUTRO usuário — como `email` ou como `username`, sem distinção de caixa.
- * O route traduz para 409. Sem essa recusa, o login por "e-mail ou usuário" poderia casar duas
- * linhas (I3).
- */
-export class EmailAlreadyInUseError extends Error {
-    constructor(email: string) {
-        super(`CONFLICT: ${email} already identifies another user`);
-        this.name = 'EmailAlreadyInUseError';
-    }
-}
-
-/** Um admin tentou desativar o próprio acesso (R11). */
-export class SelfDeactivationError extends Error {
-    constructor() {
-        super('CONFLICT: a user cannot deactivate their own access');
-        this.name = 'SelfDeactivationError';
-    }
-}
-
-/** Desativar o alvo deixaria a plataforma sem nenhum admin ativo (R11). */
-export class LastActiveAdminError extends Error {
-    constructor() {
-        super('CONFLICT: cannot deactivate the last active admin');
-        this.name = 'LastActiveAdminError';
-    }
-}
 
 /** Papel que a guarda de desativação protege. */
 const ADMIN_ROLE = 'admin';

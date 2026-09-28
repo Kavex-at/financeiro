@@ -2,13 +2,10 @@ import 'reflect-metadata';
 import bcrypt from 'bcryptjs';
 import type SecretCipher from '../../libs/crypto/SecretCipher.js';
 import type UserRepository from '../../repository/auth/UserRepository.js';
-import {
-    DEACTIVATE_RESULT,
-    EmailAlreadyInUseError,
-    LastActiveAdminError,
-    SET_EMAIL_RESULT,
-    SelfDeactivationError,
-} from '../../repository/auth/UserRepository.js';
+import EmailAlreadyInUseError from '../../errors/EmailAlreadyInUseError.js';
+import LastActiveAdminError from '../../errors/LastActiveAdminError.js';
+import SelfDeactivationError from '../../errors/SelfDeactivationError.js';
+import { DEACTIVATE_RESULT, SET_EMAIL_RESULT } from '../../repository/auth/UserRepository.js';
 import type LogService from '../LogService.js';
 import UserAdminService, { createUserSchema, setEmailSchema } from './UserAdminService.js';
 
