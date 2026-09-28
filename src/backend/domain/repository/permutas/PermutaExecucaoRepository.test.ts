@@ -272,6 +272,56 @@ describe('PermutaExecucaoRepository', () => {
         expect(params.erpResponse).toBe(JSON.stringify({ type: 'VALIDATION' }));
     });
 
+    // ADR-0051 — as métricas do ciclo datam a execução pelo ENCERRAMENTO. Um retry reusa a linha
+    // (upsert por chave), então o `criado_em` é o da 1ª tentativa; `atualizado_em` anda com re-cliques.
+    it('markSettled/markParcial carimbam encerrado_em só no 1º encerramento (imóvel depois)', async () => {
+        for (const marcar of ['markSettled', 'markParcial'] as const) {
+            const db = buildDb();
+            const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+            if (marcar === 'markSettled') await repo.markSettled('permuta:A:I', { bxaCodSeq: 1 });
+            else await repo.markParcial('permuta:A:I', { bxaCodSeq: 1, valorResidualUsd: 10 });
+
+            const [sql] = (db.update as jest.Mock).mock.calls[0];
+            expect(sql).toMatch(
+                /encerrado_em = CASE WHEN status IN \('settled', 'parcial'\)\s+THEN COALESCE\(encerrado_em, now\(\)\) ELSE now\(\) END/,
+            );
+        }
+    });
+
+    it('markError carimba encerrado_em com o instante da falha', async () => {
+        const db = buildDb();
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        await repo.markError('permuta:A:I', { erroMensagem: 'ERP 500' });
+
+        const [sql] = (db.update as jest.Mock).mock.calls[0];
+        expect(sql).toContain('encerrado_em = now()');
+    });
+
+    it('re-clique (beginExecution) e demais escritas não mexem em encerrado_em', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'settled' });
+        const repo = new PermutaExecucaoRepository(db, buildIdentity());
+
+        await repo.beginExecution({
+            idempotencyKey: 'permuta:A:I',
+            adiantamentoDocCod: 'A',
+            invoiceDocCod: 'I',
+            filCod: 1,
+            dryRun: false,
+            executadoPor: 'u',
+        });
+        await repo.setBorCod('permuta:A:I', 1);
+        await repo.setRequestPayload('permuta:A:I', {});
+
+        const sqls = [
+            ...(db.selectFirst as jest.Mock).mock.calls,
+            ...(db.update as jest.Mock).mock.calls,
+        ].map((c) => String(c[0]));
+        for (const sql of sqls) expect(sql).not.toContain('encerrado_em');
+    });
+
     it('setBorCod: UPDATE parametrizado do bor_cod', async () => {
         const db = buildDb();
         const repo = new PermutaExecucaoRepository(db, buildIdentity());

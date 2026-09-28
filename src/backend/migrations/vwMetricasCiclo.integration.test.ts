@@ -102,6 +102,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             .sort();
         expect(migrations).toContain('0058_vw_metricas_ciclo.sql');
         expect(migrations).toContain('0060_metricas_historico_inicio.sql');
+        expect(migrations).toContain('0064_metricas_ciclo_data_pelo_encerramento.sql');
         for (const arquivo of migrations) {
             await admin.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
         }
@@ -294,9 +295,20 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
     });
 
     it('reaplicar a migration é no-op', async () => {
-        const sql = readFileSync(path.join(__dirname, '0058_vw_metricas_ciclo.sql'), 'utf8');
-
-        await expect(admin.query(sql)).resolves.toBeDefined();
+        // Numa transação desfeita: o backfill da 0064 carimbaria `encerrado_em = atualizado_em` (o
+        // instante do seed) nas linhas semeadas sem carimbo, e os casos seguintes perderiam a semana.
+        await admin.query('BEGIN');
+        try {
+            for (const arquivo of [
+                '0058_vw_metricas_ciclo.sql',
+                '0064_metricas_ciclo_data_pelo_encerramento.sql',
+            ]) {
+                const sql = readFileSync(path.join(__dirname, arquivo), 'utf8');
+                await expect(admin.query(sql)).resolves.toBeDefined();
+            }
+        } finally {
+            await admin.query('ROLLBACK');
+        }
     });
 
     it('o repositório da API roda contra o banco real: SQL, casts e formato de data', async () => {
@@ -326,6 +338,139 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         );
 
         expect(rows[0].serie).toBe(SERIE);
+    });
+
+    // --- Data pelo encerramento (ADR-0051) ---
+    //
+    // Cada caso roda numa transação desfeita no fim: as linhas semeadas acima (todas com
+    // `encerrado_em` NULL, logo datadas pelo `criado_em`) e as asserções delas não mudam.
+
+    const emTransacao = async <T>(fn: () => Promise<T>): Promise<T> => {
+        await admin.query('BEGIN');
+        try {
+            return await fn();
+        } finally {
+            await admin.query('ROLLBACK');
+        }
+    };
+
+    const linhasDoHistorico = async (): Promise<Linha[]> =>
+        (await admin.query<Linha>(SELECT_LINHAS, [HISTORICO, AGORA])).rows;
+
+    const doHistorico = (ls: Linha[], metrica: string, janelaInicio: string): Linha | undefined =>
+        ls.find((l) => l.metrica === metrica && l.janela_inicio === janelaInicio);
+
+    it('retentativa conta na semana em que liquidou, não na da 1ª tentativa', async () => {
+        // O caso real (id 341): nasceu 10/08, falhou, foi reexecutada e liquidou 14/09 12:43.
+        const ls = await emTransacao(async () => {
+            await admin.query(`
+                INSERT INTO permuta_alocacao_execucao
+                    (idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status,
+                     dry_run, bor_cod, valor_baixado, criado_em, encerrado_em)
+                VALUES ('p-retentativa', 'R1', 'R1', 1, 'settled', false, 100, 150061.81,
+                        '2026-08-10 09:00:00-03', '2026-09-14 12:43:00-03')
+            `);
+            return linhasDoHistorico();
+        });
+
+        // Semana A: 1350 do seed + 150.061,81; 3 de 11 tentativas.
+        expect(doHistorico(ls, 'permutas_valor_baixado', JANELA_A.inicio)?.valor).toBe('151411.81');
+        expect(doHistorico(ls, 'permutas_baixas_concluidas_pct', JANELA_A.inicio)?.rotulo).toBe(
+            'baixas de adiantamento concluídas, com borderô finalizado — 3 de 11 tentativas',
+        );
+        // A semana de 07/08 → 14/08, onde ela nasceu, não a vê.
+        expect(doHistorico(ls, 'permutas_valor_baixado', '2026-08-07 18:00:00')?.valor).toBe(
+            '0.00',
+        );
+        expect(
+            doHistorico(ls, 'permutas_baixas_concluidas_pct', '2026-08-07 18:00:00'),
+        ).toBeUndefined();
+    });
+
+    it('SN reexecutada também conta na semana do encerramento', async () => {
+        const ls = await emTransacao(async () => {
+            await admin.query(`
+                INSERT INTO solicitacao_numerario_execucao
+                    (idempotency_key, fil_cod, pri_cod, status, dry_run, valor, criado_em, encerrado_em)
+                VALUES ('s-retentativa', 2, 13, 'settled', false, 300.00,
+                        '2026-08-20 09:00:00-03', '2026-09-16 15:00:00-03')
+            `);
+            return linhasDoHistorico();
+        });
+
+        expect(doHistorico(ls, 'recebimentos_valor_alocado', JANELA_A.inicio)?.valor).toBe(
+            '500.00',
+        );
+        expect(doHistorico(ls, 'recebimentos_valor_alocado', '2026-08-14 18:00:00')?.valor).toBe(
+            '0.00',
+        );
+    });
+
+    it('re-clique depois de liquidar (só `atualizado_em` anda) não muda a semana', async () => {
+        const ls = await emTransacao(async () => {
+            await admin.query(`
+                INSERT INTO permuta_alocacao_execucao
+                    (idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status,
+                     dry_run, bor_cod, valor_baixado, criado_em, encerrado_em, atualizado_em)
+                VALUES ('p-reclique', 'R2', 'R2', 1, 'settled', false, 100, 10.00,
+                        '2026-09-12 09:00:00-03', '2026-09-12 09:05:00-03', '2026-09-20 10:00:00-03')
+            `);
+            return linhasDoHistorico();
+        });
+
+        expect(doHistorico(ls, 'permutas_valor_baixado', JANELA_A.inicio)?.valor).toBe('1360.00');
+        expect(doHistorico(ls, 'permutas_valor_baixado', JANELA_B.inicio)?.valor).toBe('70.00');
+    });
+
+    it('backfill da 0064: terminal ganha encerrado_em = atualizado_em; em voo segue NULL', async () => {
+        const linhas0064 = await emTransacao(async () => {
+            await admin.query(`
+                INSERT INTO permuta_alocacao_execucao
+                    (idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status,
+                     dry_run, criado_em, atualizado_em)
+                VALUES
+                    ('b-settled', 'B1', 'B1', 1, 'settled',     false, '2026-07-03 09:00-03', '2026-08-14 11:00-03'),
+                    ('b-erro',    'B2', 'B2', 1, 'error',       false, '2026-07-03 09:00-03', '2026-07-04 11:00-03'),
+                    ('b-em-voo',  'B3', 'B3', 1, 'reconciling', false, '2026-07-03 09:00-03', '2026-07-03 09:01-03')
+            `);
+            await admin.query(
+                readFileSync(
+                    path.join(__dirname, '0064_metricas_ciclo_data_pelo_encerramento.sql'),
+                    'utf8',
+                ),
+            );
+            return (
+                await admin.query<{ k: string; igual: boolean | null }>(`
+                    SELECT idempotency_key AS k, encerrado_em = atualizado_em AS igual
+                      FROM permuta_alocacao_execucao
+                     WHERE idempotency_key LIKE 'b-%'
+                     ORDER BY 1
+                `)
+            ).rows;
+        });
+
+        expect(linhas0064).toEqual([
+            { k: 'b-em-voo', igual: null },
+            { k: 'b-erro', igual: true },
+            { k: 'b-settled', igual: true },
+        ]);
+    });
+
+    it('a 0064 não altera o contrato: mesmas 11 colunas, e a view segue com as 9', async () => {
+        const { fields } = await admin.query(`${SELECT_LINHAS} LIMIT 0`, [SERIE, AGORA]);
+        expect(fields.map((f) => f.name)).toEqual([
+            'frente',
+            'metrica',
+            'rotulo',
+            'valor',
+            'unidade',
+            'janela_inicio',
+            'janela_fim',
+            'baseline',
+            'baseline_desc',
+            'parcial',
+            'apurado_ate',
+        ]);
     });
 
     // --- O piso do histórico (ADR-0048) ---

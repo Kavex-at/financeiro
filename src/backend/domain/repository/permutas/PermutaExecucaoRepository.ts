@@ -449,6 +449,10 @@ export default class PermutaExecucaoRepository {
                 -- aqui já foi. Nunca sobrescreve uma identidade já registrada (ADR-0041).
                 conexos_username = COALESCE(conexos_username, $conexosUsername),
                 conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                -- ADR-0051: data das métricas do ciclo. Carimba o 1º encerramento e não anda mais —
+                -- o status à direita do SET é o valor ANTERIOR da linha.
+                encerrado_em = CASE WHEN status IN ('settled', 'parcial')
+                                    THEN COALESCE(encerrado_em, now()) ELSE now() END,
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -500,6 +504,10 @@ export default class PermutaExecucaoRepository {
                 -- Mesma doutrina do markSettled: nunca sobrescreve identidade já registrada (ADR-0041).
                 conexos_username = COALESCE(conexos_username, $conexosUsername),
                 conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                -- ADR-0051: data das métricas do ciclo. Carimba o 1º encerramento e não anda mais —
+                -- o status à direita do SET é o valor ANTERIOR da linha.
+                encerrado_em = CASE WHEN status IN ('settled', 'parcial')
+                                    THEN COALESCE(encerrado_em, now()) ELSE now() END,
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -528,6 +536,8 @@ export default class PermutaExecucaoRepository {
                 bor_cod = COALESCE($borCod, bor_cod),
                 conexos_username = COALESCE(conexos_username, $conexosUsername),
                 conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                -- ADR-0051: instante da falha; um retry que liquide sobrescreve no markSettled.
+                encerrado_em = now(),
                 atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
