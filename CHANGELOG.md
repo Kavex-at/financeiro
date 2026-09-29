@@ -1,5 +1,25 @@
 # Columbia Financeiro — Changelog
 
+## v0.46.0 (2026-09-29) — o status do lote SISPAG segue a baixa do título
+
+- **O lote fecha quando o título está pago no Conexos, de qualquer jeito que tenha sido pago.**
+  Retorno do banco, baixa manual no fin010 ou processamento nativo do fin052 valem igual: com todos
+  os títulos pagos no `fin064`, o lote vai a **baixado**. Antes ele só fechava com o vínculo do
+  retorno, que a baixa manual não produz, e ficava parado em "remessa gerada" (caso PG230901.REM).
+  Ver ADR-0055.
+- **Rejeição do banco continua mandando.** Um item rejeitado no retorno leva o lote a
+  **rejeitado pelo banco**, destacado na tela e com alerta. Item rejeitado com título pago, ou título
+  pago que volta a aberto, fica marcado como **divergência** para alguém olhar.
+- **Falha de leitura não decide nada.** Se o Conexos não responder para um título, o lote fica onde
+  está; nunca vira "pago" nem "não pago" por falta de resposta.
+- **Sincronização de hora em hora, nos dias úteis, e botão "Sincronizar agora"** no card do lote.
+  Só lê o Conexos; nunca baixa, processa ou carrega nada lá. Se nenhum título puder ser lido
+  (ex.: senha do robô desatualizada), o job fica vermelho em vez de "sucesso com zero".
+- **Cada item mostra a situação:** agendado, pago, rejeitado ou sem retorno, com o borderô da baixa
+  quando o Conexos deixa ler.
+- **"Marcar retorno recebido" saiu.** O botão de simulação foi removido e a rota antiga responde 410.
+- Migration `0069` (colunas da situação do item e dois tipos de alerta), aditiva, com reverse.
+
 ## v0.45.0 (2026-09-29) — SISPAG por TED e PIX, com destino digitado e aprovação (tudo desligado)
 
 - **Tudo sai atrás de três chaves, desligadas.** `SISPAG_TED_ENABLED`, `SISPAG_PIX_ENABLED` e
