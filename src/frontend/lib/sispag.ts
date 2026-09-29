@@ -175,6 +175,28 @@ export const MODALIDADES: { value: Modalidade; label: string; oculta?: boolean }
 /** Formas que o seletor oferece (exclui as ocultas). */
 export const MODALIDADES_OFERECIDAS = MODALIDADES.filter((m) => !m.oculta)
 
+/** Situação derivada de um item do lote pela sincronização (ADR-0055, I11d). */
+export type ItemSituacao = 'AGENDADO' | 'PAGO' | 'REJEITADO' | 'SEM_RETORNO'
+
+/** De onde veio a baixa de um item pago (ADR-0055). */
+export type OrigemBaixa = 'REMESSA' | 'FORA_DO_RETORNO' | 'NAO_IDENTIFICADA'
+
+/** Estados em que o lote pode ser sincronizado ("Sincronizar agora"). */
+export const STATUS_SINCRONIZAVEIS: readonly LotePagamentoStatus[] = [
+  'REMESSA_GERADA',
+  'RETORNADO',
+  'BAIXADO',
+]
+
+/** Última leitura bem-sucedida entre os itens do lote (ISO) — o "sincronizado em" do card. */
+export function ultimaSincronizacao(lote: LotePagamento): string | undefined {
+  const datas = lote.itens
+    .map((i) => i.sincronizadoEm)
+    .filter((d): d is string => typeof d === 'string')
+    .sort()
+  return datas[datas.length - 1]
+}
+
 export interface ItemLote {
   loteId: string
   filCod: number
@@ -197,6 +219,21 @@ export interface ItemLote {
   borCod?: number
   bxaCodSeq?: number
   conciliadoEm?: string
+  // ── sincronização pelo título (ADR-0055) ──
+  /** Situação derivada do item. Ausente = nunca sincronizado. */
+  situacao?: ItemSituacao
+  /** Data (ISO) da baixa, das baixas do título no Conexos quando legíveis. */
+  pagoEm?: string
+  /** Primeira sincronização (ISO) que viu o título pago. */
+  pagoObservadoEm?: string
+  valorPago?: number
+  origemBaixa?: OrigemBaixa
+  baixaFonte?: 'RETORNO' | 'TITULO'
+  /** Contradição que a máquina não resolve (estorno, rejeitado com título pago). */
+  divergencia?: boolean
+  divergenciaDetalhe?: string
+  /** Última leitura bem-sucedida do título (ISO). */
+  sincronizadoEm?: string
   /**
    * Destino digitado pela analista (ADR-0054), SÓ mascarado — a API nunca manda o valor inteiro,
    * e a tela exibe este texto como veio (não re-mascara).
@@ -354,12 +391,12 @@ export const cancelarLote = (loteId: string, versao: number) =>
     body: JSON.stringify({ versao }),
   })
 
-/** FINALIZADO → RETORNADO ("de volta do Nexxera"). Hoje manual; futuro = robô-poller. */
-export const marcarRetorno = (loteId: string, versao: number) =>
-  loteRequest(`/sispag/lotes/${loteId}/retorno`, {
-    method: 'POST',
-    body: JSON.stringify({ versao }),
-  })
+/**
+ * "Sincronizar agora" (ADR-0055): relê no Conexos a baixa dos títulos do lote e atualiza a
+ * situação de cada item e o status do lote. Só leitura no ERP. Devolve o lote atualizado.
+ */
+export const sincronizarLote = (loteId: string) =>
+  loteRequest(`/sispag/lotes/${loteId}/sincronizar`, { method: 'POST' })
 
 // ══════════════════════════════════════════ Fatia 3 — remessa e conciliação
 

@@ -87,7 +87,7 @@ function Aviso({ children }: { children: React.ReactNode }) {
 }
 
 /** Transições do lote que pedem confirmação no card. */
-export type AcaoLote = 'finalizar' | 'cancelar' | 'reabrir' | 'retorno'
+export type AcaoLote = 'finalizar' | 'cancelar' | 'reabrir'
 
 /** O lote como a analista o reconhece na lista — a mesma linha do título do card. */
 const resumoLote = (l: LotePagamento): string => {
@@ -151,28 +151,14 @@ export function ConfirmarAcaoLoteDialog({
         {idLote}
       </ConfirmarAcaoDialog>
     )
-  if (acao === 'reabrir')
-    return (
-      <ConfirmarAcaoDialog {...comum} titulo="Reabrir lote" rotuloConfirmar="Reabrir lote">
-        <p>
-          O lote volta a rascunho para editar títulos e formas de pagamento; depois, será preciso
-          finalizá-lo de novo. Nada é enviado ao Conexos.
-        </p>
-        {nativo}
-        {idLote}
-      </ConfirmarAcaoDialog>
-    )
+  // 'reabrir' — a simulação "Marcar retorno recebido" foi aposentada (ADR-0055).
   return (
-    <ConfirmarAcaoDialog
-      {...comum}
-      titulo="Simular retorno do Nexxera"
-      rotuloConfirmar="Marcar retorno recebido"
-    >
-      <Aviso>
-        Isto é uma <strong>simulação</strong>: marca o lote como “de volta do Nexxera” sem ler
-        nenhum arquivo .RET e sem dar baixa no Conexos. O retorno real vem da aba{' '}
-        <strong>Retorno Lote (RET)</strong>.
-      </Aviso>
+    <ConfirmarAcaoDialog {...comum} titulo="Reabrir lote" rotuloConfirmar="Reabrir lote">
+      <p>
+        O lote volta a rascunho para editar títulos e formas de pagamento; depois, será preciso
+        finalizá-lo de novo. Nada é enviado ao Conexos.
+      </p>
+      {nativo}
       {idLote}
     </ConfirmarAcaoDialog>
   )
