@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { redactBody } from './redact.js';
 
 /**
  * Central Express error-handling middleware. Logs the full error detail
@@ -25,7 +26,8 @@ export const errorMiddleware = (
         conexosStatus ? `(Conexos HTTP ${conexosStatus})` : '',
     );
     if (conexosBody !== undefined) {
-        console.error('[error] Conexos body:', JSON.stringify(conexosBody));
+        // Redigido: o ERP pode ecoar o item enviado (conta/chave do destino — ADR-0054 I10h).
+        console.error('[error] Conexos body:', JSON.stringify(redactBody(conexosBody)));
     }
 
     if (res.headersSent) {

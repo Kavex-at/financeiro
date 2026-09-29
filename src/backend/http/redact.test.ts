@@ -47,6 +47,43 @@ describe('redactBody', () => {
     });
 });
 
+describe('redactBody — destino de pagamento SISPAG (ADR-0054 I10h)', () => {
+    it('redige o destino digitado inteiro no body de POST .../destino', () => {
+        const body = {
+            versao: 3,
+            destino: {
+                tipo: 'CONTA',
+                bancoCod: '237',
+                agencia: '1234',
+                conta: '99887766',
+                contaDv: '1',
+                titularDocumento: '11144477735',
+            },
+        };
+        const out = JSON.stringify(redactBody(body));
+        for (const v of ['99887766', '11144477735']) expect(out).not.toContain(v);
+        expect(out).toContain('"versao":3');
+    });
+
+    it('redige campos de conta, chave e documento soltos em qualquer nível (payload do fin015 ecoado)', () => {
+        const eco = {
+            items: [
+                {
+                    itsDesChavePix: 'fornecedor@x.com.br',
+                    pctEspNumContaBanc: '55554444',
+                    pctEspDvconta: '9',
+                    chavePix: '+5511987654321',
+                    titularDocumento: '12345678000195',
+                },
+            ],
+        };
+        const out = JSON.stringify(redactBody(eco));
+        for (const v of ['fornecedor@x.com.br', '55554444', '+5511987654321', '12345678000195']) {
+            expect(out).not.toContain(v);
+        }
+    });
+});
+
 describe('redactErrorMessage — mensagem de erro livre (ADR-0042)', () => {
     it('redige connection string com credencial embutida', () => {
         const r = redactErrorMessage(

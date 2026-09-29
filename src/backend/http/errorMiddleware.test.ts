@@ -58,6 +58,21 @@ describe('errorMiddleware', () => {
         expect(logged).toMatch(/internal/);
     });
 
+    it('redige conta/chave/documento no corpo do Conexos antes de logar (ADR-0054 I10h)', () => {
+        const res = buildRes();
+        const err = {
+            message: 'Request failed',
+            response: {
+                status: 400,
+                data: { items: [{ itsDesChavePix: 'fornecedor@x.com.br', conta: '99887766' }] },
+            },
+        };
+        errorMiddleware(err, req, res, next);
+        const logged = consoleError.mock.calls.flat().join(' ');
+        expect(logged).not.toContain('fornecedor@x.com.br');
+        expect(logged).not.toContain('99887766');
+    });
+
     it('does not write a body when headers were already sent', () => {
         const res = buildRes();
         res.headersSent = true;

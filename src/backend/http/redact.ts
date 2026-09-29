@@ -18,6 +18,21 @@ const DEFAULT_SENSITIVE_KEYS: ReadonlyArray<string> = [
     'api_key',
     'apikey',
     'jwt',
+    // ADR-0054 I10h — destino de pagamento SISPAG (conta, chave PIX, CPF/CNPJ). O body de
+    // `POST /sispag/lotes/:id/itens/.../destino` e um eventual eco do payload do fin015 no erro
+    // do Conexos passariam inteiros pelo logger de request/erro sem isto.
+    'destino',
+    'conta',
+    'contadv',
+    'agencia',
+    'agenciadv',
+    'chavepix',
+    'titulardocumento',
+    'itsdeschavepix',
+    'pctespnumcontabanc',
+    'pctespdvconta',
+    'pctespnumagencia',
+    'pctespdvagencia',
 ];
 
 const REDACTED = '[REDACTED]';
