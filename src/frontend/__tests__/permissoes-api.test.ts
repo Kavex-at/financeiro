@@ -24,7 +24,7 @@ describe('lib/permissoes', () => {
     global.fetch = fetchMock as unknown as typeof fetch
   })
 
-  it('o catálogo espelha as nove permissões do backend', async () => {
+  it('o catálogo espelha as permissões do backend (as nove + sispag:aprovar_destino)', async () => {
     const { CATALOGO_PERMISSOES } = await import('@/lib/permissoes')
     expect([...CATALOGO_PERMISSOES].sort()).toEqual(
       [
@@ -34,6 +34,7 @@ describe('lib/permissoes', () => {
         'permutas:ver',
         'recebimentos:executar',
         'recebimentos:ver',
+        'sispag:aprovar_destino',
         'sispag:executar',
         'sispag:ver',
         'usuarios:gerenciar',
