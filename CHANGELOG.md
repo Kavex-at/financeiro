@@ -1,5 +1,31 @@
 # Columbia Financeiro — Changelog
 
+## v0.45.0 (2026-09-29) — SISPAG por TED e PIX, com destino digitado e aprovação (tudo desligado)
+
+- **Tudo sai atrás de três chaves, desligadas.** `SISPAG_TED_ENABLED`, `SISPAG_PIX_ENABLED` e
+  `SISPAG_DESTINO_MANUAL_ENABLED`. Com as três desligadas a remessa sai exatamente como antes; elas
+  só são ligadas no teste supervisionado em produção (roteiro em
+  `ontology/_inbox/sispag-ted-pix-tasks.md`). Ver ADR-0054 e `DEPLOY.md`.
+- **TED de verdade.** Com a chave ligada, o TED vai ao Conexos como TED (modalidade 5, antes ia
+  como crédito em conta) e aceita conta ativa do favorecido em **qualquer banco**, não só no banco do
+  lote. A tela e o envio passam a usar a mesma regra para oferecer e mandar TED.
+- **PIX pela chave do cadastro.** Com a chave ligada, o PIX usa a chave ativa do favorecido no
+  Conexos; a chave do tipo CPF/CNPJ do próprio favorecido vem primeiro, e a tela sugere PIX antes
+  de TED quando ela existe.
+- **Destino digitado por item do lote.** Quando o cadastro do Conexos está desatualizado, a
+  analista informa a conta (TED) ou a chave PIX CPF/CNPJ só para aquele pagamento, sem gravar no
+  cadastro. O CPF/CNPJ do titular tem de ser o do favorecido; tudo fica mascarado na tela e
+  registrado (quem, quando, antes e depois).
+- **Conta digitada precisa de aprovação.** Nova permissão **Aprovar destino manual (SISPAG)**
+  (papel Administrador). A conta nasce pendente, o lote não finaliza nem envia enquanto houver
+  pendência, e editar a conta volta a pedir aprovação. Chave PIX CPF/CNPJ não precisa.
+- **Crédito em conta sai da lista de formas de pagamento** (não testado, não é prioridade). Item
+  que já o tem continua valendo.
+- **Correções que valem mesmo com as chaves desligadas:** o favorecido do título passa a ser lido
+  de `pesCodFor` (o `fin064` devolve `pesCod` vazio), e logs de requisição, de erro do Conexos e dos
+  jobs deixam de expor conta, chave, CPF/CNPJ e senha.
+- Migrations `0067` (destino digitado e trilha) e `0068` (permissão e aprovação), aditivas.
+
 ## v0.44.0 (2026-09-28) — permissões por módulo (passo 2 de 3 da transição de acesso)
 
 - **Acesso por módulo, não mais "todo mundo é admin".** Nove permissões: `ver` e `executar` para
