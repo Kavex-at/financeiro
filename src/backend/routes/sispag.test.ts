@@ -30,6 +30,7 @@ import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagament
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
+import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
@@ -1282,5 +1283,141 @@ describe('GET /sispag/recursos', () => {
                 pixEnabled: false,
             });
         });
+    });
+});
+
+// ─────────────────────────────────────────── SINCRONIZAÇÃO PELO TÍTULO (ADR-0055)
+
+describe('POST /sispag/lotes/:id/sincronizar', () => {
+    const ID = '3f1c2b9e-4d8a-4c1e-9f7a-2b6d8e0a1c55';
+    const LOTE_SINC = {
+        id: ID,
+        filCod: 2,
+        status: 'BAIXADO',
+        criadoPor: 'u',
+        versao: 6,
+        itens: [
+            {
+                loteId: ID,
+                filCod: 2,
+                docCod: '38682',
+                titCod: '1',
+                incluidoPor: 'u',
+                situacao: 'PAGO',
+                pagoEm: '2026-09-24T15:00:00.000Z',
+                valorPago: 275,
+                origemBaixa: 'FORA_DO_RETORNO',
+                baixaFonte: 'TITULO',
+                borCod: 22320,
+                divergencia: false,
+                sincronizadoEm: '2026-09-29T14:35:00.000Z',
+            },
+        ],
+    };
+    const RESULTADO = {
+        loteId: ID,
+        filCod: 2,
+        resultado: 'TRANSICIONOU',
+        statusAntes: 'REMESSA_GERADA',
+        statusDepois: 'BAIXADO',
+        itens: 1,
+        itensIlegiveis: 0,
+        divergenciasNovas: 0,
+    };
+
+    it('devolve o lote atualizado (com os campos novos do item) e o resumo da passada', async () => {
+        const sincronizarLote = jest
+            .fn()
+            .mockResolvedValue({ lote: LOTE_SINC, resultado: RESULTADO });
+        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
+            expect(res.status).toBe(200);
+            const body = await readJson(res);
+            expect(body.resumo).toEqual(RESULTADO);
+            expect(body.lote.itens[0]).toEqual(
+                expect.objectContaining({
+                    situacao: 'PAGO',
+                    pagoEm: '2026-09-24T15:00:00.000Z',
+                    valorPago: 275,
+                    origemBaixa: 'FORA_DO_RETORNO',
+                    borCod: 22320,
+                    divergencia: false,
+                    sincronizadoEm: '2026-09-29T14:35:00.000Z',
+                }),
+            );
+        });
+        expect(sincronizarLote).toHaveBeenCalledWith(ID);
+    });
+
+    it('400 quando o :id não é um UUID — sem chamar o serviço', async () => {
+        const sincronizarLote = jest.fn();
+        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/nao-e-uuid/sincronizar`, {
+                method: 'POST',
+            });
+            expect(res.status).toBe(400);
+        });
+        expect(sincronizarLote).not.toHaveBeenCalled();
+    });
+
+    it('404 quando o lote não existe', async () => {
+        container.registerInstance(SincronizacaoLoteService, {
+            sincronizarLote: jest.fn().mockResolvedValue(null),
+        } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
+            expect(res.status).toBe(404);
+        });
+    });
+
+    it('409 em conflito de versão e 409 em estado não sincronizável (convenção do lote)', async () => {
+        const sincronizarLote = jest
+            .fn()
+            .mockRejectedValueOnce(new LoteVersaoConflitoError({ loteId: ID, versaoEsperada: 6 }))
+            .mockRejectedValueOnce(
+                new LoteEstadoInvalidoError({
+                    loteId: ID,
+                    statusAtual: 'RASCUNHO',
+                    acao: 'sincronizar',
+                }),
+            );
+        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
+        await comApp({}, async (url) => {
+            const a = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
+            expect(a.status).toBe(409);
+            expect((await readJson(a)).code).toBe('LOTE_VERSAO_CONFLITO');
+            const b = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
+            expect(b.status).toBe(409);
+            expect((await readJson(b)).code).toBe('LOTE_ESTADO_INVALIDO');
+        });
+    });
+
+    it('exige sispag:executar', async () => {
+        const sincronizarLote = jest.fn();
+        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
+            expect(res.status).toBe(403);
+        });
+        expect(sincronizarLote).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /sispag/lotes/:id/retorno — L7 aposentada (ADR-0055)', () => {
+    it('responde 410 Gone apontando para "Sincronizar agora", sem tocar o lote', async () => {
+        const service = { marcarRetorno: jest.fn(), getLote: jest.fn() };
+        container.registerInstance(LotePagamentoService, service as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/retorno`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ versao: 1 }),
+            });
+            expect(res.status).toBe(410);
+            expect((await readJson(res)).error).toMatch(/Sincronizar agora/);
+        });
+        expect(service.marcarRetorno).not.toHaveBeenCalled();
     });
 });

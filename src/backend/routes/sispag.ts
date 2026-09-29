@@ -25,6 +25,7 @@ import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetor
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
+import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { exigirPermissao } from '../http/acesso.js';
@@ -282,7 +283,7 @@ router.post(
 );
 
 // POST /sispag/lotes/:id/{finalizar|reabrir|cancelar} — transições (gate). admin.
-for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
+for (const acao of ['finalizar', 'reabrir', 'cancelar'] as const) {
     router.post(
         `/lotes/:id/${acao}`,
         exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
@@ -308,9 +309,7 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
                         ? await service.finalizarLote(input)
                         : acao === 'reabrir'
                           ? await service.reabrirLote(input)
-                          : acao === 'retorno'
-                            ? await service.marcarRetorno(input)
-                            : await service.cancelarLote(input);
+                          : await service.cancelarLote(input);
                 res.json({ lote: apiView().lote(lote) });
             } catch (err) {
                 if (!respondLoteError(req, res, err)) throw err;
@@ -318,6 +317,53 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
         }),
     );
 }
+
+// POST /sispag/lotes/:id/retorno — L7 `marcarRetorno` APOSENTADA (ADR-0055). Levava o lote a
+// RETORNADO sem .RET, sem chave nativa e sem baixa, e dali nada o tirava. O retorno real chega
+// pela sincronização. 410 (e não 404) para quem ainda tiver a tela antiga em cache saber o motivo.
+router.post(
+    '/lotes/:id/retorno',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    (_req: Request, res: Response) => {
+        res.status(410).json({
+            error: 'A marcação manual de retorno foi descontinuada. Use "Sincronizar agora" no card do lote: o status passa a seguir a baixa dos títulos no Conexos.',
+            code: 'LOTE_RETORNO_MANUAL_APOSENTADO',
+        });
+    },
+);
+
+// POST /sispag/lotes/:id/sincronizar — "Sincronizar agora" (L11, ADR-0055). admin.
+// READ-ONLY no ERP: lê o título (fin064), o retorno (fin052) e as baixas (PSQ_018) e grava só o
+// que observou. 404 lote inexistente · 409 conflito de versão ou lote fora de REMESSA_GERADA/
+// RETORNADO/BAIXADO (convenção dos erros de lote).
+const loteIdSchema = z.object({ id: z.string().uuid() });
+router.post(
+    '/lotes/:id/sincronizar',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = loteIdSchema.safeParse(req.params);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid lote id', details: parsed.error.flatten() });
+            return;
+        }
+        const service = container.resolve(SincronizacaoLoteService);
+        try {
+            const sincronizado = await service.sincronizarLote(parsed.data.id);
+            if (!sincronizado) {
+                res.status(404).json({ error: 'lote not found' });
+                return;
+            }
+            res.json({
+                lote: apiView().lote(sincronizado.lote),
+                resumo: sincronizado.resultado,
+            });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
 
 // POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade — define a forma de
 // pagamento de um item (A2, só RASCUNHO; optimistic lock). admin.
