@@ -163,8 +163,8 @@ export default function SispagPage() {
 
 function SispagPanel() {
   // ADR-0053: toda ação da tela exige `sispag:executar`. Sem ela (ou enquanto carrega), os botões
-  // SOMEM — nunca ficam desabilitados (R11). A aba Boletos DDA também some: o backend reserva o
-  // fin124 a quem executa (ver `_inbox/auth-permissoes-modulo-gap.md`).
+  // SOMEM — nunca ficam desabilitados (R11). A aba Boletos DDA fica para quem vê a página
+  // (`sispag:ver`); só o "Atualizar DDA" dentro dela exige executar.
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
@@ -763,17 +763,13 @@ function SispagPanel() {
               </TabsTrigger>
               <TabsTrigger value="lotes">Lançamento Lote (REM) - Conexos</TabsTrigger>
               <TabsTrigger value="retornos">Retorno Lote (RET) - Conexos</TabsTrigger>
-              {podeExecutar ? (
-                <TabsTrigger value="boletos-dda">Boletos DDA (fin124)</TabsTrigger>
-              ) : null}
+              <TabsTrigger value="boletos-dda">Boletos DDA (fin124)</TabsTrigger>
             </TabsList>
 
-            {/* ---- Boletos DDA (fin124) — carrega ao abrir a aba; só para quem executa ---- */}
-            {podeExecutar ? (
-              <TabsContent value="boletos-dda">
-                <BoletosDdaTab />
-              </TabsContent>
-            ) : null}
+            {/* ---- Boletos DDA (fin124) — carrega ao abrir a aba; basta `sispag:ver` ---- */}
+            <TabsContent value="boletos-dda">
+              <BoletosDdaTab />
+            </TabsContent>
 
             {/* ---- Títulos a pagar ---- */}
             <TabsContent value="titulos" className="space-y-3">

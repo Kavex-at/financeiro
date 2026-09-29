@@ -31,3 +31,11 @@ abrir para `sispag:ver` (quem só consulta passa a ver código de barras / linha
 - Se confirmar: nada a fazer.
 - Se quiser `ver`: trocar as duas linhas em `src/backend/routes/sispag.ts`, a tabela de
   `src/backend/http/routePermissions.test.ts` e o gate do front em `app/sispag` (é um tweak pequeno).
+
+## Resposta (2026-09-29, dono do ciclo)
+
+**Abrir para `sispag:ver`.** As duas rotas passam a exigir `sispag:ver`; a aba Boletos DDA e o
+"Copiar linha digitável" aparecem para quem só vê. "Atualizar DDA", o `.REM` e as contas pagadoras
+seguem em `sispag:executar`. Aplicado em `routes/sispag.ts`, `http/routePermissions.test.ts`,
+`routes/sispag.test.ts`, `app/sispag/page.tsx`, `BoletosDdaTab.tsx`, `LoteCard.tsx` e testes; ADR-0053
+atualizada.

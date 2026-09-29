@@ -4,7 +4,7 @@
  * simulação, só aparece em dev local.
  */
 
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
 import type { LotePagamento } from '@/lib/sispag'
@@ -231,14 +231,13 @@ describe('LoteCard — só sispag:ver', () => {
     expect(baixarRemessa).not.toHaveBeenCalled()
   })
 
-  it('remessa gerada com boleto: as linhas digitáveis NÃO são buscadas', async () => {
+  it('remessa gerada com boleto: as linhas digitáveis são buscadas (basta sispag:ver)', async () => {
     const user = userEvent.setup()
     const l = lote({ status: 'REMESSA_GERADA' })
     l.itens[0].modalidade = 'BOLETO'
     render(<LoteCard lote={l} busy={false} acao={acaoQueExecuta()} />)
     await user.click(screen.getByRole('button', { expanded: false }))
-    expect(fetchLinhasDigitaveis).not.toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: /copiar linha digitável/i })).not.toBeInTheDocument()
+    await waitFor(() => expect(fetchLinhasDigitaveis).toHaveBeenCalledWith(l.id))
   })
 
   it('enquanto as permissões carregam, nenhuma ação aparece (nada pisca)', () => {

@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SispagPage from '@/app/sispag/page'
 import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
@@ -299,11 +299,13 @@ describe('SispagPage — só sispag:ver', () => {
     expect(screen.getByRole('tab', { name: 'Retorno Lote (RET) - Conexos' })).toBeInTheDocument()
   })
 
-  it('aba Boletos DDA (sincronizar DDA incluso) não aparece, e o fin124 não é lido', async () => {
+  it('aba Boletos DDA aparece para quem só vê, mas sem "Atualizar DDA" (ADR-0053)', async () => {
+    ;(fetchBoletosDda as jest.Mock).mockResolvedValue({ boletos: [], total: 0, janelaDias: 3 })
+    const user = userEvent.setup()
     await renderPainel()
-    expect(screen.queryByRole('tab', { name: /boletos dda/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /boletos dda/i }))
+    await waitFor(() => expect(fetchBoletosDda).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: /atualizar dda|sincronizar/i })).not.toBeInTheDocument()
-    expect(fetchBoletosDda).not.toHaveBeenCalled()
   })
 
   it('lotes candidatos: sem ações no card e sem ler as contas pagadoras (JC-3)', async () => {

@@ -183,7 +183,7 @@ Mapeamento (85 rotas autenticadas; "hoje" = antes desta ADR):
 | Área | `ver` / autenticado | `executar` / gerenciar |
 |---|---|---|
 | `/permutas` (27) | leituras: `runs`, `cliente-filtro`, `importadores`, `invoices/buscar`, `gestao`, `relatorios/:tipo`, `adiantamentos/:docCod/execucoes`, e (JC-2) `borderos`, `borderos/:borCod/baixas`, `status` | toda mutação (alocar, exceção manual, processar, reconciliar, gerar numerário, reconciliar lote, borderôs, cliente-filtro) e (JC-1) `eleicao`, `ingestao` |
-| `/sispag` (27) | `painel`, `retornos`, `lotes`, `lotes/:id`, `lotes/:id/modalidades-disponiveis`, `ingestao/runs`, `lotes/:id/remessa/janela` | toda mutação de lote, remessa e retorno; (JC-1) `ingestao`, `boletos-dda/sincronizar`; (JC-3) `contas-pagadoras`, `lotes/:id/remessa/arquivo`; (JC-4) `execucoes`; e (desvio abaixo) `lotes/:id/linhas-digitaveis`, `boletos-dda` |
+| `/sispag` (27) | `painel`, `retornos`, `lotes`, `lotes/:id`, `lotes/:id/modalidades-disponiveis`, `ingestao/runs`, `lotes/:id/remessa/janela`, e (decisão abaixo) `lotes/:id/linhas-digitaveis`, `boletos-dda` | toda mutação de lote, remessa e retorno; (JC-1) `ingestao`, `boletos-dda/sincronizar`; (JC-3) `contas-pagadoras`, `lotes/:id/remessa/arquivo`; (JC-4) `execucoes` |
 | `/recebimentos` (15) | `painel`, `painel/enriquecimento`, `clientes`, `transacoes/:txnId/processos`, `processos/:priCod/sns`, `ingestao/runs`, (JC-3) `contas` | `pipeline/run`, `ingestao`, `ingestao/upload/preview`, `ingestao/upload`, `solicitacao-numerario`, `arquivar`, `desarquivar`; (JC-4) `execucoes` |
 | `/usuarios` (10) | | todas em `usuarios:gerenciar` (as 7 de antes + `GET /papeis`, `PATCH /:id/papel`, `PUT /:id/permissoes`) |
 | `/operacao` (2) | `GET /` e (JC-5) `POST /alertas/:id/reconhecer` em `operacao:ver` | |
@@ -210,14 +210,14 @@ Chamadas de julgamento, aprovadas pelo dono do ciclo:
 - **JC-6:** `/me/*` e `/conexos/filiais` exigem só usuário existente e ativo, sem permissão de
   módulo: são sobre o próprio usuário, ou o seletor de filial usado pelas três frentes.
 
-**Desvio da tabela da entrevista.** A entrevista listou `GET /sispag/lotes/:id/linhas-digitaveis` e
-`GET /sispag/boletos-dda` como "hoje: aberta → `sispag:ver`". A premissa estava errada: o código da
-`main` (v0.43.1) já as protegia com `requireRole('admin')`, com comentário de LGPD (linha digitável e
-código de barras são destino de pagamento: banco, agência e conta do cedente no campo livre, mais o
-valor). Como a tabela inteira foi desenhada como equivalente ao comportamento de hoje (I6), as duas
-ficam em **`sispag:executar`**, pelo mesmo raciocínio da JC-3. A pergunta "abrir para `sispag:ver`?"
-está registrada para o dono do ciclo em `ontology/_inbox/auth-permissoes-modulo-gap.md`; se a
-resposta for abrir, é um tweak de duas linhas mais a tabela do teste.
+**Linhas digitáveis e boletos DDA em `sispag:ver`.** A entrevista listou
+`GET /sispag/lotes/:id/linhas-digitaveis` e `GET /sispag/boletos-dda` como "hoje: aberta →
+`sispag:ver`", mas o código da `main` (v0.43.1) já as protegia com `requireRole('admin')`, com
+comentário de LGPD (linha digitável e código de barras carregam banco, agência e conta do cedente no
+campo livre, mais o valor). A pergunta foi ao dono do ciclo, que decidiu em 2026-09-29: **basta
+`sispag:ver`** — conferir boleto faz parte de acompanhar o lote. Continuam em `sispag:executar` o
+download do `.REM`, as contas pagadoras e o "Atualizar DDA" (sincronizar com o fin124). Registro em
+`ontology/_inbox/auth-permissoes-modulo-gap.md`.
 
 ### D9. `DEV_AUTH_BYPASS` é um usuário fictício com as nove permissões
 

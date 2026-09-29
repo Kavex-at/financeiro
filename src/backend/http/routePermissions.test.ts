@@ -43,10 +43,9 @@ const AUT = GUARD_AUTENTICADO;
  * A tabela da entrevista (`auth-permissoes-modulo-interview.md`, "Mapeamento por rota"), linha por
  * linha, já prefixada pelo mount. Rota nova sem linha aqui, ou linha sem rota, falha o teste.
  *
- * Duas linhas divergem da coluna "Proposta" da entrevista, que partiu de "hoje: aberta" quando o
- * código já as protegia com `requireRole('admin')` por LGPD: `GET /sispag/lotes/:id/linhas-digitaveis`
- * e `GET /sispag/boletos-dda` ficam em `sispag:executar` (equivalência com hoje, como a JC-3).
- * Registrado em `ontology/_inbox/auth-permissoes-modulo-gap.md`.
+ * `GET /sispag/lotes/:id/linhas-digitaveis` e `GET /sispag/boletos-dda` eram `requireRole('admin')`
+ * no main; o dono do ciclo decidiu que ficam em `sispag:ver`, como a tabela da entrevista propunha
+ * (ver `ontology/_inbox/auth-permissoes-modulo-gap.md`).
  */
 const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     // /permutas (27)
@@ -80,7 +79,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     // /sispag (27; as quatro do laço contam separadas)
     ['GET /sispag/painel', P.SISPAG_VER],
     ['GET /sispag/retornos', P.SISPAG_VER],
-    ['GET /sispag/lotes/:id/linhas-digitaveis', P.SISPAG_EXECUTAR],
+    ['GET /sispag/lotes/:id/linhas-digitaveis', P.SISPAG_VER],
     ['GET /sispag/lotes/:id/modalidades-disponiveis', P.SISPAG_VER],
     ['GET /sispag/lotes', P.SISPAG_VER],
     ['GET /sispag/lotes/:id', P.SISPAG_VER],
@@ -96,7 +95,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['POST /sispag/lotes/:id/conta', P.SISPAG_EXECUTAR],
     ['POST /sispag/ingestao', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/formar', P.SISPAG_EXECUTAR],
-    ['GET /sispag/boletos-dda', P.SISPAG_EXECUTAR],
+    ['GET /sispag/boletos-dda', P.SISPAG_VER],
     ['POST /sispag/boletos-dda/sincronizar', P.SISPAG_EXECUTAR],
     ['GET /sispag/ingestao/runs', P.SISPAG_VER],
     ['GET /sispag/contas-pagadoras', P.SISPAG_EXECUTAR],
