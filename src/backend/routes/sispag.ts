@@ -448,6 +448,42 @@ router.delete(
     }),
 );
 
+// POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino/aprovar — aprova a conta (TED)
+// digitada do item (ADR-0054 D10). Só RASCUNHO; optimistic lock pela `versao` do body. Exige
+// `sispag:aprovar_destino` (quem digitou pode aprovar a própria, se a tiver). O body só tem a
+// versão; a resposta, o lote mascarado. 403 flag/permissão · 409 estado/versão/sem conta.
+router.post(
+    '/lotes/:id/itens/:filCod/:docCod/:titCod/destino/aprovar',
+    exigirPermissao(PERMISSION.SISPAG_APROVAR_DESTINO),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const chave = chaveTituloSchema.safeParse(req.params);
+        const parsed = versaoDestinoSchema.safeParse(req.body ?? {});
+        if (!chave.success || !parsed.success) {
+            res.status(400).json({
+                error: 'invalid request (versao)',
+                details: [
+                    ...(chave.success ? [] : detalhesSemValor(chave.error)),
+                    ...(parsed.success ? [] : detalhesSemValor(parsed.error)),
+                ],
+            });
+            return;
+        }
+        const service = container.resolve(LotePagamentoService);
+        try {
+            const lote = await service.aprovarDestinoManualItem({
+                loteId: String(req.params.id),
+                ...chave.data,
+                versao: parsed.data.versao,
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(lote) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
 // GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054), SÓ como booleanos.
 router.get(
     '/recursos',

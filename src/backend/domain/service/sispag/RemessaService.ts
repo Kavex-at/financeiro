@@ -31,7 +31,9 @@ import DebitDateService from './DebitDateService.js';
 import DestinoCongeladoError, {
     MOTIVO_DESTINO_CONGELADO,
 } from '../../errors/DestinoCongeladoError.js';
+import DestinoAprovacaoPendenteError from '../../errors/DestinoAprovacaoPendenteError.js';
 import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
+import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
 import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
 import DestinoPagamentoResolver, {
     type ContextoDestino,
@@ -175,6 +177,7 @@ export default class RemessaService {
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
         @inject(DestinoManualValidator) private readonly destinoValidator: DestinoManualValidator,
+        @inject(DestinoAprovacaoRule) private readonly aprovacao: DestinoAprovacaoRule,
     ) {}
 
     /**
@@ -1077,6 +1080,7 @@ export default class RemessaService {
                       filCod: lote.filCod,
                       ...(pesCod != null ? { pesCod: String(pesCod) } : {}),
                   })));
+            this.exigirContaAprovada(item, destino, flags);
             if (destino?.origem === DESTINO_ORIGEM.NENHUM) {
                 if (this.usaRegraNova(item.modalidade, flags)) {
                     throw new DestinoPagamentoAusenteError({
@@ -1165,6 +1169,34 @@ export default class RemessaService {
         if (modalidade === MODALIDADE.PIX && flags.pix) return MODALIDADE_PIX_NATIVA;
         return MODALIDADE_NATIVA[modalidade ?? 'CREDITO_CONTA'] ?? 1;
     };
+
+    /**
+     * D10: o destino que vai sair é a conta DIGITADA e ela não foi aprovada. Só vale para o
+     * destino MANUAL resolvido — com as flags desligadas o resolver nunca o devolve.
+     */
+    private contaDigitadaPendente = (
+        item: ItemLote,
+        d: DestinoResolvido,
+        flags: FlagsDestino,
+    ): boolean => d.origem === DESTINO_ORIGEM.MANUAL && this.aprovacao.bloqueia(item, flags);
+
+    /** Defesa em profundidade do D10 no montar do import (o pré-voo já barrou antes). */
+    private exigirContaAprovada = (
+        item: ItemLote,
+        d: DestinoResolvido | undefined,
+        flags: FlagsDestino,
+    ): void => {
+        if (d && this.contaDigitadaPendente(item, d, flags)) {
+            throw new DestinoAprovacaoPendenteError({ itens: [this.refDoItem(item)] });
+        }
+    };
+
+    /** O item como aparece em mensagem ao operador: título e credor, nunca o destino (I10h). */
+    private refDoItem = (item: ItemLote): { docCod: string; titCod: string; credor?: string } => ({
+        docCod: item.docCod,
+        titCod: item.titCod,
+        ...(item.credor ? { credor: item.credor } : {}),
+    });
 
     private ehContaDoCadastro = (d: DestinoResolvido): boolean =>
         d.origem === DESTINO_ORIGEM.CADASTRO && d.tipo === DESTINO_CADASTRO_TIPO.CONTA;
@@ -1454,6 +1486,7 @@ export default class RemessaService {
             credor?: string;
             modalidade?: string;
         }> = [];
+        const pendentes: Array<{ docCod: string; titCod: string; credor?: string }> = [];
         const fixadoPor = new Map((p.fixados ?? []).map((f) => [f.item, f]));
         const cache = this.resolver.novoCache();
 
@@ -1472,17 +1505,22 @@ export default class RemessaService {
             });
             if (resolvido.origem === DESTINO_ORIGEM.NENHUM) {
                 ausentes.push({
-                    docCod: item.docCod,
-                    titCod: item.titCod,
-                    ...(item.credor ? { credor: item.credor } : {}),
+                    ...this.refDoItem(item),
                     ...(item.modalidade ? { modalidade: item.modalidade } : {}),
                 });
+                continue;
+            }
+            if (this.contaDigitadaPendente(item, resolvido, p.flags)) {
+                pendentes.push(this.refDoItem(item));
                 continue;
             }
             destinos.set(chave, resolvido);
             assinatura.push(this.assinar(chave, resolvido, item));
         }
         if (ausentes.length > 0) throw new DestinoPagamentoAusenteError({ itens: ausentes });
+        // D10 — o envio confere de novo: conta digitada sem aprovação não sai (falha fechada),
+        // mesmo que o lote tenha sido finalizado antes da regra existir.
+        if (pendentes.length > 0) throw new DestinoAprovacaoPendenteError({ itens: pendentes });
         return { destinos, assinatura };
     };
 

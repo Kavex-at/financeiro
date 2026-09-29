@@ -12,6 +12,7 @@ import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import DestinoCongeladoError, {
     MOTIVO_DESTINO_CONGELADO,
 } from '../../errors/DestinoCongeladoError.js';
+import DestinoAprovacaoPendenteError from '../../errors/DestinoAprovacaoPendenteError.js';
 import DestinoManualDesabilitadoError from '../../errors/DestinoManualDesabilitadoError.js';
 import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
@@ -19,6 +20,7 @@ import {
     type ChaveTitulo,
     CONTA_PAGADORA_DEFAULT,
     type CriarLoteInput,
+    DESTINO_APROVACAO,
     DESTINO_MANUAL_TIPO,
     type DestinoManual,
     type IncluirTituloInput,
@@ -32,6 +34,7 @@ import {
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
 import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
 import LogService from '../LogService.js';
 import SispagPainelService from './SispagPainelService.js';
@@ -74,6 +77,7 @@ export default class LotePagamentoService {
         @inject(DestinoManualValidator) private readonly destinoValidator: DestinoManualValidator,
         @inject(SispagPainelService) private readonly painel: SispagPainelService,
         @inject(ConexosSispagWriteClient) private readonly fin015: ConexosSispagWriteClient,
+        @inject(DestinoAprovacaoRule) private readonly aprovacao: DestinoAprovacaoRule,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -359,6 +363,8 @@ export default class LotePagamentoService {
         if (semModalidade > 0) {
             throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
+        // ADR-0054 D10 — conta digitada pendente de aprovação barra (local, sem ERP).
+        await this.exigirDestinoAprovado(lote);
         // ADR-0054 (Adendo) — checagem LEVE: TED/PIX sem opção ofertada nem destino digitado.
         await this.exigirDestinoOfertado(lote);
         return this.transicionar(input, {
@@ -406,6 +412,68 @@ export default class LotePagamentoService {
             throw new DestinoManualDesabilitadoError({ recurso: 'destino_manual' });
         const lote = await this.exigirItemEditavel(input, 'remover destino');
         return this.gravarDestino(lote, input, undefined);
+    };
+
+    /**
+     * Aprova a conta (TED) digitada VIGENTE do item (ADR-0054 D10). Quem autoriza é a rota
+     * (`sispag:aprovar_destino`); quem digitou pode aprovar a própria, se tiver a permissão.
+     *
+     * Guardas, todas antes de escrever:
+     *   1. flags manual + TED (sem elas o destino digitado nem vale) — 403;
+     *   2. lote em RASCUNHO, item no lote e não congelado no fin015 (I10e/I10f) — 409;
+     *   3. o item tem conta digitada (chave PIX CPF/CNPJ não exige aprovação, D11) — 409;
+     *   4. grava a linha APROVACAO sob `versao` (I6) — 409 se a versão mudou.
+     *
+     * Já aprovada: devolve o lote sem escrever (a trilha não ganha aprovação repetida).
+     */
+    public aprovarDestinoManualItem = async (input: DestinoItemInput): Promise<LotePagamento> => {
+        const flags = await this.flagsDestino();
+        if (!flags.destinoManual)
+            throw new DestinoManualDesabilitadoError({ recurso: 'destino_manual' });
+        if (!flags.ted) throw new DestinoManualDesabilitadoError({ recurso: 'ted' });
+        const lote = await this.exigirItemEditavel(input, 'aprovar destino');
+        const item = lote.itens.find(
+            (i) =>
+                i.filCod === input.filCod && i.docCod === input.docCod && i.titCod === input.titCod,
+        );
+        if (!item?.destinoManual || !this.aprovacao.exige(item.destinoManual)) {
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao: 'aprovar destino',
+                motivo: `O título ${input.docCod}/${input.titCod} não tem conta digitada aguardando aprovação.`,
+            });
+        }
+        if (this.aprovacao.estado(item) === DESTINO_APROVACAO.APROVADO) return lote;
+        const r = await this.repo.aprovarDestinoManualItem({
+            loteId: input.loteId,
+            filCod: input.filCod,
+            docCod: input.docCod,
+            titCod: input.titCod,
+            versaoEsperada: input.versao,
+            usuario: input.ator,
+        });
+        if (!r.atualizado) {
+            const atual = await this.exigirLote(input.loteId);
+            if (atual.versao !== input.versao) {
+                throw new LoteVersaoConflitoError({
+                    loteId: input.loteId,
+                    versaoEsperada: input.versao,
+                });
+            }
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: atual.status,
+                acao: 'aprovar destino',
+            });
+        }
+        // I10h: o log leva só o item e o id da linha de trilha — nunca banco/agência/conta/CPF.
+        await this.audit('aprovarDestinoManualItem', input.loteId, input.ator, {
+            docCod: input.docCod,
+            titCod: input.titCod,
+            ...(r.auditId ? { auditId: r.auditId } : {}),
+        });
+        return this.exigirLote(input.loteId);
     };
 
     public reabrirLote = (input: TransicaoInput): Promise<LotePagamento> =>
@@ -478,6 +546,23 @@ export default class LotePagamentoService {
                 })),
             });
         }
+    };
+
+    /**
+     * D10: conta digitada que VALE (flags manual + TED, item TED) e ainda não foi aprovada barra
+     * o finalizar. Leitura local, sem ERP. A mensagem nomeia os itens, nunca o destino.
+     */
+    private exigirDestinoAprovado = async (lote: LotePagamento): Promise<void> => {
+        const flags = await this.flagsDestino();
+        const pendentes = lote.itens.filter((i) => this.aprovacao.bloqueia(i, flags));
+        if (pendentes.length === 0) return;
+        throw new DestinoAprovacaoPendenteError({
+            itens: pendentes.map((i) => ({
+                docCod: i.docCod,
+                titCod: i.titCod,
+                ...(i.credor ? { credor: i.credor } : {}),
+            })),
+        });
     };
 
     /** I10e + I10f: lote em RASCUNHO, item no lote e destino ainda não importado no fin015. */

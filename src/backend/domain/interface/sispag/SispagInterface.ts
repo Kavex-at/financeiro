@@ -144,12 +144,29 @@ export interface DestinoManualChavePix {
 
 export type DestinoManual = DestinoManualConta | DestinoManualChavePix;
 
+/**
+ * Estado de aprovação do destino digitado (ADR-0054 D10/D11). Conta (TED) digitada exige
+ * aprovação por quem tem `sispag:aprovar_destino`; chave PIX CPF/CNPJ não exige (D11).
+ */
+export const DESTINO_APROVACAO = {
+    NAO_EXIGIDA: 'NAO_EXIGIDA',
+    PENDENTE: 'PENDENTE',
+    APROVADO: 'APROVADO',
+} as const;
+
+export type DestinoAprovacao = (typeof DESTINO_APROVACAO)[keyof typeof DESTINO_APROVACAO];
+
 /** Projeção SEGURA do destino manual para a API/tela: só a máscara (I10h). */
 export interface DestinoManualResumo {
     tipo: DestinoManualTipo;
     destinoMascarado: string;
+    /** CPF/CNPJ do titular, MASCARADO (`MaskDestino.documento`) — é o que o aprovador confere. */
+    titularDocumentoMascarado: string;
     informadoPor?: string;
     informadoEm?: string;
+    aprovacao: DestinoAprovacao;
+    aprovadoPor?: string;
+    aprovadoEm?: string;
 }
 
 /**
@@ -331,6 +348,13 @@ export interface ItemLote {
      * é o que entra na assinatura do ledger da remessa (I10f), no lugar da conta/chave.
      */
     destinoManualAuditId?: string;
+    /**
+     * Quem aprovou o destino manual VIGENTE e quando (ADR-0054 D10) — a linha `APROVACAO` da
+     * trilha que aponta para a gravação vigente. Ausente = não aprovado (outra gravação depois da
+     * aprovação também cai aqui).
+     */
+    destinoManualAprovadoPor?: string;
+    destinoManualAprovadoEm?: string;
     // ── resultado da conciliação do retorno (fin052/arquivosRetornoDetalhe) ──
     /** Código do evento bancário. Itaú: `00` = PAGAMENTO EFETUADO. */
     retornoEvento?: string;
