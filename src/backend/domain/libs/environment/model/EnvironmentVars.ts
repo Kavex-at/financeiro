@@ -139,6 +139,23 @@ export default class EnvironmentVars {
      * go-live — quem faz o gate de go-live é o `sispagLiveWriteEnabled`.
      */
     public sispagDdaAssocEnabled: boolean;
+
+    /**
+     * SISPAG TED/PIX (ADR-0054, Adendo). Três flags de go-live, **default false**, lidas só do
+     * `EnvironmentProvider`. Nada disto foi provado sem HML; com as três desligadas o envio e a
+     * tela são idênticos ao `main`. Só o valor exato `'true'` liga.
+     *
+     * - `sispagTedEnabled` (`SISPAG_TED_ENABLED`): TED sai como `itsVldModalidade = 5`, para
+     *   conta ativa do favorecido em QUALQUER banco (I10c), e a oferta usa o mesmo resolver do
+     *   envio (I10b). Desligado: regra antiga (conta no banco do lote, modalidade 1).
+     * - `sispagDestinoManualEnabled` (`SISPAG_DESTINO_MANUAL_ENABLED`): a analista pode digitar o
+     *   destino no item (ADR-0054 D1/D2). Desligado: rota recusa e destino persistido é ignorado.
+     * - `sispagPixEnabled` (`SISPAG_PIX_ENABLED`): PIX pela chave do `cmn025/cmnPessoasPix` ou
+     *   digitada (I10d). Desligado: PIX nunca resolve por chave.
+     */
+    public sispagTedEnabled: boolean;
+    public sispagDestinoManualEnabled: boolean;
+    public sispagPixEnabled: boolean;
     public solicitacaoNumerarioGcdCod: number;
 
     /**
@@ -234,6 +251,9 @@ export default class EnvironmentVars {
         snLiveWriteEnabled,
         sispagLiveWriteEnabled,
         sispagDdaAssocEnabled,
+        sispagTedEnabled,
+        sispagDestinoManualEnabled,
+        sispagPixEnabled,
         solicitacaoNumerarioGcdCod,
         solicitacaoNumerarioGcdCodPorFilial,
         conexosCredEncKey,
@@ -271,6 +291,9 @@ export default class EnvironmentVars {
         snLiveWriteEnabled: boolean;
         sispagLiveWriteEnabled: boolean;
         sispagDdaAssocEnabled: boolean;
+        sispagTedEnabled?: boolean;
+        sispagDestinoManualEnabled?: boolean;
+        sispagPixEnabled?: boolean;
         solicitacaoNumerarioGcdCod: number;
         solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
         conexosCredEncKey?: string;
@@ -308,6 +331,9 @@ export default class EnvironmentVars {
         this.snLiveWriteEnabled = snLiveWriteEnabled;
         this.sispagLiveWriteEnabled = sispagLiveWriteEnabled;
         this.sispagDdaAssocEnabled = sispagDdaAssocEnabled;
+        this.sispagTedEnabled = sispagTedEnabled ?? false;
+        this.sispagDestinoManualEnabled = sispagDestinoManualEnabled ?? false;
+        this.sispagPixEnabled = sispagPixEnabled ?? false;
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};
         this.conexosCredEncKey = conexosCredEncKey;

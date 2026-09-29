@@ -168,6 +168,45 @@ describe('EnvironmentProvider', () => {
             delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
         });
 
+        const FLAGS_TED_PIX = [
+            'SISPAG_TED_ENABLED',
+            'SISPAG_DESTINO_MANUAL_ENABLED',
+            'SISPAG_PIX_ENABLED',
+        ] as const;
+        const setFlagsTedPix = (valor: string | undefined): void => {
+            for (const n of FLAGS_TED_PIX) {
+                if (valor === undefined) delete process.env[n];
+                else process.env[n] = valor;
+            }
+        };
+        const flagsTedPix = async (): Promise<boolean[]> => {
+            const v = await new EnvironmentProvider().getEnvironmentVars();
+            return [v.sispagTedEnabled, v.sispagDestinoManualEnabled, v.sispagPixEnabled];
+        };
+
+        it('flags TED/PIX/destino manual do SISPAG: default OFF, só "true" exato liga (ADR-0054)', async () => {
+            setFlagsTedPix(undefined);
+            expect(await flagsTedPix()).toEqual([false, false, false]); // ausente = desligado
+            for (const [valor, esperado] of [
+                ['true', true],
+                ['1', false],
+                ['yes', false],
+                ['', false],
+                ['TRUE', false],
+            ] as const) {
+                setFlagsTedPix(valor);
+                expect(await flagsTedPix()).toEqual([esperado, esperado, esperado]);
+            }
+            setFlagsTedPix(undefined);
+        });
+
+        it('flags TED/PIX/destino manual são independentes entre si', async () => {
+            setFlagsTedPix(undefined);
+            process.env.SISPAG_PIX_ENABLED = 'true';
+            expect(await flagsTedPix()).toEqual([false, false, true]);
+            setFlagsTedPix(undefined);
+        });
+
         it('does not call SSM in local mode', async () => {
             const provider = new EnvironmentProvider();
             await provider.getEnvironmentVars();
@@ -244,6 +283,16 @@ describe('EnvironmentProvider', () => {
             expect(
                 (await new EnvironmentProvider().getEnvironmentVars()).authTransicaoEmailBanner,
             ).toBe(false);
+        });
+
+        it('flags TED/PIX/destino manual do SISPAG: mesma regra no caminho SSM/Lambda', async () => {
+            ssmSendMock.mockImplementation(async () => ({ Parameter: { Value: '{}' } }));
+            process.env.SISPAG_TED_ENABLED = 'true';
+            const v = await new EnvironmentProvider().getEnvironmentVars();
+            expect(v.sispagTedEnabled).toBe(true);
+            expect(v.sispagDestinoManualEnabled).toBe(false);
+            expect(v.sispagPixEnabled).toBe(false);
+            delete process.env.SISPAG_TED_ENABLED;
         });
     });
     describe('CONEXOS_WRITE_ENABLED em máquina local', () => {

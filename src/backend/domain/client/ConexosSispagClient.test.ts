@@ -1,6 +1,9 @@
 import 'reflect-metadata';
 import type ConexosBaseClient from './ConexosBaseClient.js';
-import ConexosSispagClient from './ConexosSispagClient.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import Logger from '../libs/logger/Logger.js';
+import ConexosSispagClient, { CAMPO_DOCUMENTO_FAVORECIDO } from './ConexosSispagClient.js';
 
 const buildBase = () => ({
     listGenericPaginated: jest.fn(),
@@ -300,5 +303,148 @@ describe('ConexosSispagClient (read-only)', () => {
             });
             if (lotes.length > 0) expect(lotes[0]?.filCod).toBe(1);
         });
+    });
+    // ── ADR-0054 — destino de TED/PIX lido do cadastro da pessoa (cmn025) ─────────────
+    describe('listChavesPixFavorecido (cmn025/cmnPessoasPix)', () => {
+        const chave = (over: Record<string, unknown> = {}) => ({
+            cixCod: 1,
+            cixDesChave: 'fornecedor@exemplo.com',
+            cixVldTipo: 2,
+            cixVldSituacao: 1,
+            cixVldDefault: 0,
+            pesCod: 77,
+            ...over,
+        });
+
+        it('lê por pesCod na filial e devolve só as ativas, default primeiro', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 3,
+                rows: [
+                    chave({ cixCod: 1 }),
+                    chave({ cixCod: 2, cixVldSituacao: 0 }),
+                    chave({ cixCod: 3, cixVldTipo: 4, cixVldDefault: 1, cixDesChave: 'aa-bb' }),
+                ],
+            });
+            const chaves = await make(base).listChavesPixFavorecido('77', 2);
+            const [path, body, opts] = base.listGenericPaginated.mock.calls[0];
+            expect(path).toBe('cmn025/cmnPessoasPix/list');
+            expect((body as { filterList: Record<string, unknown> }).filterList).toEqual({
+                'pesCod#EQ': '77',
+            });
+            // `filCod` em opts é o que vira o header `Cnx-filCod` no ConexosBaseClient.
+            expect(opts).toEqual({ filCod: 2 });
+            expect(chaves.map((c) => c.cixCod)).toEqual([3, 1]);
+            expect(chaves[0]).toMatchObject({ tipo: 'ALEATORIA', padrao: true, pesCod: '77' });
+            expect(chaves[1]).toMatchObject({ tipo: 'EMAIL', padrao: false });
+        });
+
+        it('linha fora do schema é descartada sem derrubar a lista', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 2,
+                rows: [chave({ cixCod: 'x', cixDesChave: null }), chave({ cixCod: 9 })],
+            });
+            const chaves = await make(base).listChavesPixFavorecido(77, 1);
+            expect(chaves.map((c) => c.cixCod)).toEqual([9]);
+        });
+
+        it('tipo desconhecido não vira tipo inventado', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [chave({ cixVldTipo: 9 })],
+            });
+            const [c] = await make(base).listChavesPixFavorecido(77, 1);
+            expect(c?.tipo).toBeUndefined();
+        });
+
+        it('nunca loga a chave em claro', async () => {
+            const spies = [
+                jest.spyOn(Logger, 'info').mockImplementation(() => undefined),
+                jest.spyOn(Logger, 'warn').mockImplementation(() => undefined),
+                jest.spyOn(Logger, 'error').mockImplementation(() => undefined),
+            ];
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 2,
+                rows: [chave({ cixCod: 'x' }), chave({ cixCod: 5 })],
+            });
+            await make(base).listChavesPixFavorecido(77, 1);
+            const logado = JSON.stringify(spies.map((s) => s.mock.calls));
+            expect(logado).not.toContain('fornecedor@exemplo.com');
+            for (const s of spies) s.mockRestore();
+        });
+    });
+
+    describe('getDocumentoFavorecido (cmn025, campo a confirmar)', () => {
+        it('devolve só dígitos do CPF/CNPJ lido do campo nomeado', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [{ pesCod: 77, [CAMPO_DOCUMENTO_FAVORECIDO]: '12.345.678/0001-95' }],
+            });
+            const doc = await make(base).getDocumentoFavorecido('77', 2);
+            expect(doc).toBe('12345678000195');
+            const [path, body, opts] = base.listGenericPaginated.mock.calls[0];
+            expect(path).toBe('cmn025/list');
+            expect((body as { filterList: Record<string, unknown> }).filterList).toEqual({
+                'pesCod#EQ': '77',
+            });
+            expect(opts).toEqual({ filCod: 2 });
+        });
+
+        it('sem o campo, com valor inválido ou sem linha → undefined, nunca throw', async () => {
+            for (const rows of [
+                [{ pesCod: 77 }],
+                [{ pesCod: 77, [CAMPO_DOCUMENTO_FAVORECIDO]: '123' }],
+                [{ pesCod: 77, [CAMPO_DOCUMENTO_FAVORECIDO]: null }],
+                [{ pesCod: 88, [CAMPO_DOCUMENTO_FAVORECIDO]: '12345678000195' }],
+                [],
+            ]) {
+                const base = buildBase();
+                base.listGenericPaginated.mockResolvedValue({ count: rows.length, rows });
+                await expect(make(base).getDocumentoFavorecido('77', 2)).resolves.toBeUndefined();
+            }
+        });
+
+        it('nunca loga o documento em claro', async () => {
+            const spies = [
+                jest.spyOn(Logger, 'info').mockImplementation(() => undefined),
+                jest.spyOn(Logger, 'warn').mockImplementation(() => undefined),
+            ];
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [{ pesCod: 77, [CAMPO_DOCUMENTO_FAVORECIDO]: '12345678000195' }],
+            });
+            await make(base).getDocumentoFavorecido('77', 2);
+            expect(JSON.stringify(spies.map((s) => s.mock.calls))).not.toContain('12345678000195');
+            for (const s of spies) s.mockRestore();
+        });
+    });
+
+    describe('listContasFavorecido', () => {
+        it('não filtra por banco dentro do client (regressão: TED para qualquer banco)', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 3,
+                rows: [
+                    { pctCodSeq: 1, pctNumBanco: 341, pctVldStatus: 1, pctVldDefault: 0 },
+                    { pctCodSeq: 2, pctNumBanco: 237, pctVldStatus: 1, pctVldDefault: 1 },
+                    { pctCodSeq: 3, pctNumBanco: 1, pctVldStatus: 0, pctVldDefault: 0 },
+                ],
+            });
+            const contas = await make(base).listContasFavorecido('77', 2);
+            expect(contas.map((c) => [c.pctCodSeq, c.banco])).toEqual([
+                [2, 237],
+                [1, 341],
+            ]);
+        });
+    });
+
+    it('não chama as validações do ERP (H1 não provado)', () => {
+        const fonte = readFileSync(join(__dirname, 'ConexosSispagClient.ts'), 'utf8');
+        expect(fonte).not.toMatch(/validacao\/modalidade/);
     });
 });
