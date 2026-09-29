@@ -285,6 +285,7 @@ describe('JobRunReadModel — o reaper deixou de ser cego (ADR-0042, follow-up 2
                 PIPELINE.RECEBIMENTOS_NDE_SEFAZ,
                 PIPELINE.SISPAG_PAGAMENTOS,
                 PIPELINE.SISPAG_REAPER,
+                PIPELINE.SISPAG_SINCRONIZACAO,
             ].sort(),
         );
     });

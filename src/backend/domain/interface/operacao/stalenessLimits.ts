@@ -96,6 +96,17 @@ export const LIMITES_STALENESS: Readonly<Record<MonitoravelPipeline, LimiteStale
         limiteMs: HORA_MS,
         distinguePartial: true,
     },
+    [PIPELINE.SISPAG_SINCRONIZACAO]: {
+        pipeline: PIPELINE.SISPAG_SINCRONIZACAO,
+        rotulo: 'SISPAG — sincronização do status dos lotes',
+        cadencia: '35 11-22 * * 1-5 (de hora em hora, dias úteis)',
+        // O maior gap NORMAL é o fim de semana: sexta 22:35 UTC → segunda 11:35 UTC = 61h. Um
+        // limite menor alertaria todo domingo — e canal que alerta toda semana à toa é canal
+        // ignorado. O custo é que uma parada numa terça só aparece na quinta; a falha TOTAL de
+        // leitura (credencial) já fecha a run em `error` e alerta por `job-falhou` na hora.
+        limiteMs: 64 * HORA_MS,
+        distinguePartial: true,
+    },
     [PIPELINE.SISPAG_PAGAMENTOS]: {
         pipeline: PIPELINE.SISPAG_PAGAMENTOS,
         rotulo: 'SISPAG — ingestão de pagamentos',
