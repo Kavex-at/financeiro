@@ -22,8 +22,9 @@ evidence:
 
 ## Contexto
 
-A remessa `PG230901.REM` teve dois itens: fil 2/flp 24 ATLANTIS 38682/1 (R$ 275,00) e fil 1/flp 8
-LATTINE 4030/7 (R$ 1.856,16), Itaú, débito em 24/09.
+Dois lotes locais (um por filial, I4), cada um com um item e cada um com o seu arquivo
+`PG230901.REM` (mesmo nome, remessas nº 17 e nº 10): fil 2/flp 24 ATLANTIS 38682/1 (R$ 275,00) e
+fil 1/flp 8 LATTINE 4030/7 (R$ 1.856,16), Itaú, débito em 24/09.
 
 - O retorno `PAG_341_557954_260924_00000.RET` (gar 9) foi **processado nativamente** em 24/09 às
   08:33, só com o evento `BD` ("PAGAMENTO AGENDADO"), **sem borderô**.

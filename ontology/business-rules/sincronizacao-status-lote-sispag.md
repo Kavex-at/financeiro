@@ -89,4 +89,5 @@ sanear cadastro e reenviar em lote novo.
   título pago (I11f) e sincronização sem mudança sem bump de `versao` (I11h).
 - **Ao vivo (ground truth):** PG230901.REM. O 38682/1 (fil 2/flp 24) deve sair `PAGO` com
   `origemBaixa = FORA_DO_RETORNO` (borderô 22320 se o PSQ_018 for legível); o 4030/7 (fil 1/flp 8)
-  conforme o `fin064` do dia; o lote só vai a `BAIXADO` se os dois estiverem pagos.
+  conforme o `fin064` do dia. São **dois lotes locais** (um por filial, I4 — `635d9c77`
+  fil 2 e `3ea0f6ef` fil 1), cada um com um item: cada lote vai a `BAIXADO` quando o seu título está pago.
