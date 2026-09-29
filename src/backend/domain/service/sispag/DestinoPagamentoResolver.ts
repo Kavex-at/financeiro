@@ -1,6 +1,7 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import {
+    CHAVE_PIX_TIPO,
     type ChavePixFavorecido,
     type ContaFavorecido,
     DESTINO_MANUAL_TIPO,
@@ -40,6 +41,11 @@ export type DestinoResolvido =
           origem: typeof DESTINO_ORIGEM.CADASTRO;
           tipo: typeof DESTINO_CADASTRO_TIPO.CHAVE_PIX;
           chave: ChavePixFavorecido;
+          /**
+           * D12: a chave escolhida é do tipo CPF/CNPJ e é o PRÓPRIO documento do favorecido — a
+           * única que o banco amarra ao favorecido. A tela sugere PIX antes de TED quando `true`.
+           */
+          chaveDoDocumentoDoFavorecido?: boolean;
       }
     | { origem: typeof DESTINO_ORIGEM.MANUAL; destino: DestinoManual };
 
@@ -79,7 +85,9 @@ const NENHUM: DestinoResolvido = { origem: DESTINO_ORIGEM.NENHUM };
  * destino(item) =
  *     destinoManual (flag manual + flag da modalidade)       → MANUAL   (vence o cadastro, D2)
  *     TED  (flag TED):  conta ativa em QUALQUER banco, default 1º → CADASTRO (I10c)
- *     PIX  (flag PIX):  chave ativa do cmnPessoasPix, default 1º  → CADASTRO (I10d)
+ *     PIX  (flag PIX):  chave ativa do cmnPessoasPix               → CADASTRO (I10d)
+ *                       ordem: CPF/CNPJ = documento do favorecido (D12), depois default, depois
+ *                       as demais. Documento indisponível = ordem de antes (default 1º).
  *     senão (flag da modalidade desligada, ou CRÉDITO EM CONTA legado):
  *          regra do `main` — conta ativa NO BANCO DO LOTE, default 1º
  *     nada → NENHUM
@@ -130,13 +138,14 @@ export default class DestinoPagamentoResolver {
                 : NENHUM;
         }
         if (modalidade === MODALIDADE.PIX && flags.pix) {
-            const chaves = await this.chaves(contexto);
+            const { chaves, doDocumento } = await this.chavesEmOrdem(contexto);
             const escolhida = chaves[0];
             return escolhida
                 ? {
                       origem: DESTINO_ORIGEM.CADASTRO,
                       tipo: DESTINO_CADASTRO_TIPO.CHAVE_PIX,
                       chave: escolhida,
+                      ...(doDocumento.has(escolhida) ? { chaveDoDocumentoDoFavorecido: true } : {}),
                   }
                 : NENHUM;
         }
@@ -205,6 +214,42 @@ export default class DestinoPagamentoResolver {
         if (!pesCod) return Promise.resolve([]);
         return this.memo(contexto, `contas:${filCod}:${pesCod}`, () =>
             this.sispag.listContasFavorecido(pesCod, filCod),
+        );
+    };
+
+    /**
+     * D12: entre as chaves ativas (já com a default primeiro, pelo client), as de tipo CPF/CNPJ
+     * iguais ao documento do favorecido vêm antes. O documento só é lido quando existe alguma
+     * chave CPF/CNPJ (sem ela a ordem não muda e nada novo é consultado). Documento ausente ou
+     * inválido = ordem de antes. Falha de rede sobe, como a das chaves: quem oferta trata como
+     * "não oferece"; quem envia, como erro.
+     */
+    private chavesEmOrdem = async (
+        contexto: ContextoDestino,
+    ): Promise<{ chaves: ChavePixFavorecido[]; doDocumento: ReadonlySet<ChavePixFavorecido> }> => {
+        const chaves = await this.chaves(contexto);
+        const cpfCnpj = chaves.filter((c) => c.tipo === CHAVE_PIX_TIPO.CPF_CNPJ);
+        if (cpfCnpj.length === 0) return { chaves, doDocumento: new Set() };
+        const documento = await this.documento(contexto);
+        if (!documento) return { chaves, doDocumento: new Set() };
+        const doDocumento = new Set(
+            cpfCnpj.filter((c) => c.chave.replace(/\D/g, '') === documento),
+        );
+        if (doDocumento.size === 0) return { chaves, doDocumento };
+        return {
+            chaves: [
+                ...chaves.filter((c) => doDocumento.has(c)),
+                ...chaves.filter((c) => !doDocumento.has(c)),
+            ],
+            doDocumento,
+        };
+    };
+
+    private documento = (contexto: ContextoDestino): Promise<string | undefined> => {
+        const { pesCod, filCod } = contexto;
+        if (!pesCod) return Promise.resolve(undefined);
+        return this.memo(contexto, `documento:${filCod}:${pesCod}`, () =>
+            this.sispag.getDocumentoFavorecido(pesCod, filCod),
         );
     };
 

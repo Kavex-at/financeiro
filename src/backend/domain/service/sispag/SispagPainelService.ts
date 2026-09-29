@@ -8,6 +8,8 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
 import type { LinhasDigitaveisDoLote } from '../../interface/sispag/Fin015Write.js';
 import {
+    CHAVE_PIX_TIPO,
+    DESTINO_MANUAL_TIPO,
     type ItemLote,
     type LoteSispag,
     MODALIDADE,
@@ -26,6 +28,7 @@ import TituloAPagarRepository from '../../repository/sispag/TituloAPagarReposito
 import LogService from '../LogService.js';
 import DestinoPagamentoResolver, {
     type CacheCadastroDestino,
+    DESTINO_CADASTRO_TIPO,
     DESTINO_ORIGEM,
     type DestinoOrigem,
     type DestinoResolvido,
@@ -60,6 +63,12 @@ const CONEXOS_FANOUT_LIMIT = 4;
 export interface DestinoOfertado {
     origem: DestinoOrigem;
     destinoMascarado?: string;
+    /**
+     * Só no PIX (ADR-0054 D12): o destino é uma chave CPF/CNPJ que é o próprio documento do
+     * favorecido — do cadastro (conferida contra o `cmn025`) ou digitada (titularidade I10i). A
+     * tela lista PIX antes de TED e abre "Informar destino" na aba PIX. Ausente = sem preferência.
+     */
+    chaveCpfCnpjDoFavorecido?: true;
 }
 
 /** Uma linha da oferta de formas de pagamento de um item do lote. */
@@ -486,10 +495,27 @@ export default class SispagPainelService {
                 destinos[modalidade] = {
                     origem: r.origem,
                     ...(mascara !== undefined ? { destinoMascarado: mascara } : {}),
+                    ...(this.chaveCpfCnpjDoFavorecido(r) ? { chaveCpfCnpjDoFavorecido: true } : {}),
                 };
             }
             return { docCod: it.docCod, titCod: it.titCod, modalidades, destinos };
         });
+    };
+
+    /** D12: PIX resolvido por chave CPF/CNPJ que é o documento do favorecido. */
+    private chaveCpfCnpjDoFavorecido = (r: DestinoResolvido): boolean => {
+        if (r.origem === DESTINO_ORIGEM.CADASTRO) {
+            return (
+                r.tipo === DESTINO_CADASTRO_TIPO.CHAVE_PIX &&
+                r.chaveDoDocumentoDoFavorecido === true
+            );
+        }
+        // Digitada: só CPF/CNPJ passa, e a titularidade (I10i) já exigiu que seja o documento.
+        return (
+            r.origem === DESTINO_ORIGEM.MANUAL &&
+            r.destino.tipo === DESTINO_MANUAL_TIPO.CHAVE_PIX &&
+            r.destino.chavePixTipo === CHAVE_PIX_TIPO.CPF_CNPJ
+        );
     };
 
     /**

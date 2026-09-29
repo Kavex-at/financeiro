@@ -62,6 +62,7 @@ const make = (
         listContasFavorecido?: jest.Mock;
         listContasCorrentes?: jest.Mock;
         listChavesPixFavorecido?: jest.Mock;
+        getDocumentoFavorecido?: jest.Mock;
         /** Variáveis extras do ambiente (as flags do ADR-0054). */
         envVars?: Record<string, unknown>;
         listChavesComBoleto?: jest.Mock;
@@ -78,6 +79,8 @@ const make = (
         listContasCorrentes:
             over.listContasCorrentes ?? jest.fn().mockResolvedValue([{ ccoCod: 1, bncCod: 4 }]),
         listChavesPixFavorecido,
+        getDocumentoFavorecido:
+            over.getDocumentoFavorecido ?? jest.fn().mockResolvedValue(undefined),
     } as unknown as ConexosSispagClient;
     const retorno = {
         listConfigsRetorno: over.retornoConfigs ?? jest.fn().mockResolvedValue([]),
@@ -609,6 +612,57 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
         for (const v of ['99887766', '55554444', 'pix.secreto@x.com.br', '11144477735']) {
             expect(json).not.toContain(v);
         }
+    });
+
+    it('D12 — PIX por chave CPF/CNPJ do favorecido vem marcado (campo aditivo)', async () => {
+        const { service } = make({
+            envVars: FLAGS,
+            getLoteComItens: loteCom([item]),
+            getTituloAPagar: jest
+                .fn()
+                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
+            listContasFavorecido: jest
+                .fn()
+                .mockResolvedValue([{ pctCodSeq: 9, banco: 237, conta: '55554444', padrao: true }]),
+            listChavesPixFavorecido: jest.fn().mockResolvedValue([
+                { cixCod: 3, chave: 'a@x.com.br', tipo: 'EMAIL', padrao: true, pesCod: 'P1' },
+                { cixCod: 4, chave: '11144477735', tipo: 'CPF_CNPJ', padrao: false, pesCod: 'P1' },
+            ]),
+            getDocumentoFavorecido: jest.fn().mockResolvedValue('11144477735'),
+        });
+        const [r] = await service.modalidadesDisponiveisDoLote('L1');
+        expect(r?.destinos?.PIX).toEqual({
+            origem: 'CADASTRO',
+            destinoMascarado: 'PIX CPF/CNPJ ***.444.777-**',
+            chaveCpfCnpjDoFavorecido: true,
+        });
+        expect(r?.destinos?.TED).not.toHaveProperty('chaveCpfCnpjDoFavorecido');
+        expect(JSON.stringify(r)).not.toContain('11144477735');
+    });
+
+    it('D12 — chave PIX CPF/CNPJ digitada também conta como do favorecido', async () => {
+        const { service } = make({
+            envVars: FLAGS,
+            getLoteComItens: loteCom([
+                {
+                    ...item,
+                    destinoManual: {
+                        tipo: 'CHAVE_PIX',
+                        chavePixTipo: 'CPF_CNPJ',
+                        chavePix: '11144477735',
+                        titularDocumento: '11144477735',
+                    },
+                },
+            ]),
+            getTituloAPagar: jest
+                .fn()
+                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
+        });
+        const [r] = await service.modalidadesDisponiveisDoLote('L1');
+        expect(r?.destinos?.PIX).toMatchObject({
+            origem: 'MANUAL',
+            chaveCpfCnpjDoFavorecido: true,
+        });
     });
 
     it('leitura de cadastro que falha não oferece (na dúvida, não promete destino)', async () => {
