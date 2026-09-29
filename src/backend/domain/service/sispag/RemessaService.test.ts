@@ -2017,3 +2017,41 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         expect(fonte).not.toMatch(/validacao\/modalidade/);
     });
 });
+
+describe('RemessaService — validador do .REM com TED/PIX (caso 8, só aviso)', () => {
+    it('PIX que o arquivo não mostra como PIX: loga FORMA_DIVERGENTE_A_CONFIRMAR e NÃO bloqueia', async () => {
+        const write = buildWrite();
+        write.listarArquivosRemessa.mockResolvedValue([
+            { gabCod: 52, nomeArquivo: 'PG210801.REM', conteudo: 'CNAB DO LOTE' },
+        ]);
+        const sispag = buildSispag();
+        sispag.listChavesPixFavorecido.mockResolvedValue([
+            { cixCod: 1, chave: 'x@y.com.br', tipo: 'EMAIL', padrao: true, pesCod: '1161' },
+        ]);
+        const log = buildLog();
+        const l = lote({ itens: [{ ...lote().itens[0], modalidade: 'PIX' as const }] });
+        const res = await make({
+            write,
+            sispag,
+            log,
+            lote: l,
+            env: buildEnv({ sispagPixEnabled: true }),
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(res.status).toBe('gerada');
+        const integridade = (log.info as jest.Mock).mock.calls.find(
+            ([e]) => e.message === 'remessa: verificação de integridade do .REM',
+        );
+        expect(JSON.stringify(integridade?.[0].data.avisos)).toContain(
+            'FORMA_DIVERGENTE_A_CONFIRMAR',
+        );
+    });
+
+    it('flags desligadas: o validador roda como antes (sem comparação de forma)', async () => {
+        const log = buildLog();
+        await make({ log }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        const integridade = (log.info as jest.Mock).mock.calls.find(
+            ([e]) => e.message === 'remessa: verificação de integridade do .REM',
+        );
+        expect(integridade?.[0].data.avisos).toEqual([]);
+    });
+});

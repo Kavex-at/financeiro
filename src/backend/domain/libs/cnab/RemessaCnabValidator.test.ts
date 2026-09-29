@@ -148,3 +148,97 @@ describe('RemessaCnabValidator', () => {
         expect(make().valorDasBarras(BARRAS_OK)).toBe(5720.68);
     });
 });
+
+describe('RemessaCnabValidator — segmento B e forma de lançamento (ADR-0054, só AVISO)', () => {
+    /** Header de lote CNAB 240: registro '1' na pos 8, forma de lançamento nas pos 12–13. */
+    const headerLote = (forma: string, lote = '0001'): string => {
+        const buf = ' '.repeat(240).split('');
+        `341${lote}1C20${forma}040`.split('').forEach((c, i) => {
+            buf[i] = c;
+        });
+        return buf.join('');
+    };
+    /** Registro de detalhe de um lote específico (o `linha` global é sempre do lote 0001). */
+    const detalhe = (segmento: string, lote = '0001'): string => {
+        const buf = linha(segmento).split('');
+        lote.split('').forEach((c, i) => {
+            buf[3 + i] = c;
+        });
+        return buf.join('');
+    };
+
+    it('conta segmentos B por lote e lê a forma de lançamento do header', () => {
+        const conteudo = [
+            headerLote('41', '0001'),
+            detalhe('A', '0001'),
+            detalhe('B', '0001'),
+            headerLote('01', '0002'),
+            detalhe('A', '0002'),
+            detalhe('B', '0002'),
+            detalhe('A', '0002'),
+            detalhe('B', '0002'),
+        ].join('\n');
+        const r = make().validar(conteudo);
+        expect(r.segmentosB).toBe(3);
+        expect(r.lotes).toEqual([
+            { lote: '0001', formaLancamento: '41', segmentosA: 1, segmentosB: 1 },
+            { lote: '0002', formaLancamento: '01', segmentosA: 2, segmentosB: 2 },
+        ]);
+        expect(r.invalidos).toEqual([]);
+    });
+
+    it('códigos hipotéticos de TED/PIX (41/43/45) viram AVISO, nunca erro', () => {
+        for (const forma of ['41', '43', '45']) {
+            const r = make().validar([headerLote(forma), detalhe('A'), detalhe('B')].join('\n'));
+            expect(r.invalidos).toEqual([]);
+            expect(r.avisos.some((a) => a.startsWith('FORMA_A_CONFIRMAR'))).toBe(true);
+        }
+    });
+
+    it('segmento A de TED/PIX sem segmento B → aviso', () => {
+        const r = make().validar([headerLote('45'), detalhe('A')].join('\n'));
+        expect(r.invalidos).toEqual([]);
+        expect(r.avisos.some((a) => a.startsWith('SEGMENTO_B_AUSENTE'))).toBe(true);
+    });
+
+    it('caso 8: PIX esperado sem nenhum lote de forma PIX → FORMA_DIVERGENTE_A_CONFIRMAR (aviso)', () => {
+        // Um PIX que saísse como crédito em conta (forma 01). Vira RemessaCorrompidaError só
+        // depois do teste supervisionado confirmar o código real (checklist, passo 12).
+        const r = make().validar([headerLote('01'), detalhe('A'), detalhe('B')].join('\n'), {
+            pix: 1,
+            ted: 0,
+        });
+        expect(r.invalidos).toEqual([]);
+        expect(r.avisos.some((a) => a.startsWith('FORMA_DIVERGENTE_A_CONFIRMAR'))).toBe(true);
+    });
+
+    it('TED esperado sem lote de forma TED → mesmo aviso; com lote 41, nada divergente', () => {
+        const sem = make().validar([headerLote('01'), detalhe('A'), detalhe('B')].join('\n'), {
+            pix: 0,
+            ted: 1,
+        });
+        expect(sem.avisos.some((a) => a.startsWith('FORMA_DIVERGENTE_A_CONFIRMAR'))).toBe(true);
+        const com = make().validar([headerLote('41'), detalhe('A'), detalhe('B')].join('\n'), {
+            pix: 0,
+            ted: 1,
+        });
+        expect(com.avisos.some((a) => a.startsWith('FORMA_DIVERGENTE_A_CONFIRMAR'))).toBe(false);
+    });
+
+    it('fixture de boleto/crédito de antes: sem avisos novos', () => {
+        const r = make().validar(
+            [headerLote('01'), detalhe('A'), detalhe('B'), headerLote('31', '0002')].join('\n'),
+        );
+        expect(r.avisos).toEqual([]);
+        expect(make().validar(linha('J', BARRAS_OK)).avisos).toEqual([]);
+    });
+
+    it('relatório só com códigos e contagens — nada do conteúdo do registro', () => {
+        const comDado = detalhe('B').split('');
+        '12345678909'.split('').forEach((c, i) => {
+            comDado[20 + i] = c;
+        });
+        const r = make().validar([headerLote('45'), detalhe('A'), comDado.join('')].join('\n'));
+        expect(JSON.stringify(r)).not.toContain('12345678909');
+    });
+});
