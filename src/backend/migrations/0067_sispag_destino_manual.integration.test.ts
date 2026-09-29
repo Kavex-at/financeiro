@@ -4,7 +4,7 @@ import { Client } from 'pg';
 import 'reflect-metadata';
 
 /**
- * 0066 contra um Postgres DE VERDADE: a trilha do destino manual (I10g) é só-inclusão.
+ * 0067 contra um Postgres DE VERDADE: a trilha do destino manual (I10g) é só-inclusão.
  *
  * Não roda no `npm test` (padrão `*.integration.test.ts`). Roda no `npm run test:sql` (job
  * `backend-sql` do CI) com o mesmo DSN do teste de métricas:
@@ -33,7 +33,7 @@ const dsnPara = (dsn: string, banco: string): string => {
 
 const describeComBanco = ADMIN_DSN ? describe : describe.skip;
 
-describeComBanco('0066 — trilha do destino manual (integração)', () => {
+describeComBanco('0067 — trilha do destino manual (integração)', () => {
     let db: Client;
 
     beforeAll(async () => {
@@ -53,13 +53,13 @@ describeComBanco('0066 — trilha do destino manual (integração)', () => {
         const migrations = readdirSync(__dirname)
             .filter((f) => /^\d{4}_.*\.sql$/.test(f))
             .sort();
-        expect(migrations).toContain('0066_sispag_destino_manual.sql');
+        expect(migrations).toContain('0067_sispag_destino_manual.sql');
         for (const arquivo of migrations) {
             await db.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
         }
         // Idempotente: aplicar de novo não quebra.
         await db.query(
-            readFileSync(path.join(__dirname, '0066_sispag_destino_manual.sql'), 'utf8'),
+            readFileSync(path.join(__dirname, '0067_sispag_destino_manual.sql'), 'utf8'),
         );
 
         await db.query(

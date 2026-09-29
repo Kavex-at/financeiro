@@ -1138,7 +1138,7 @@
         "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
         "src/backend/domain/client/ConexosSispagClient.ts",
         "src/backend/domain/libs/cnab/RemessaCnabValidator.ts",
-        "src/backend/migrations/0066_sispag_destino_manual.sql",
+        "src/backend/migrations/0067_sispag_destino_manual.sql",
         "src/backend/routes/sispag.ts",
         "src/frontend/app/sispag/components/InformarDestinoDialog.tsx",
         "src/frontend/app/sispag/components/LoteCard.tsx",

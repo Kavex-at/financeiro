@@ -2,19 +2,19 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * 0066 — destino de pagamento digitado no item do lote (ADR-0054 D1) + trilha só-inclusão (I10g).
+ * 0067 — destino de pagamento digitado no item do lote (ADR-0054 D1) + trilha só-inclusão (I10g).
  *
  * Asserções sobre o FONTE (mesmo padrão da 0064: o `MigrationRunner` usa `import.meta` e não roda
  * sob Jest). O comportamento contra um Postgres de verdade (UPDATE/DELETE recusados) está em
- * `0066_sispag_destino_manual.integration.test.ts`, que roda no `npm run test:sql`.
+ * `0067_sispag_destino_manual.integration.test.ts`, que roda no `npm run test:sql`.
  */
-const SQL = readFileSync(path.join(__dirname, '0066_sispag_destino_manual.sql'), 'utf8');
+const SQL = readFileSync(path.join(__dirname, '0067_sispag_destino_manual.sql'), 'utf8');
 
 const CODIGO = SQL.split('\n')
     .map((linha) => linha.replace(/--.*$/, ''))
     .join('\n');
 
-describe('migration 0066 — destino manual do item SISPAG', () => {
+describe('migration 0067 — destino manual do item SISPAG', () => {
     it('adiciona destino_manual jsonb anulável em lote_pagamento_item, idempotente', () => {
         expect(CODIGO).toMatch(
             /ALTER TABLE lote_pagamento_item\s+ADD COLUMN IF NOT EXISTS destino_manual JSONB NULL/i,

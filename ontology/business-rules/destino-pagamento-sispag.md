@@ -21,7 +21,7 @@ related_files:
   - src/backend/domain/libs/sispag/DestinoManualValidator.ts
   - src/backend/domain/libs/sispag/MaskDestino.ts
   - src/backend/domain/service/sispag/LotePagamentoApiView.ts
-  - src/backend/migrations/0066_sispag_destino_manual.sql
+  - src/backend/migrations/0067_sispag_destino_manual.sql
 last_review: 2026-09-28
 has_canonical_test: true
 ---

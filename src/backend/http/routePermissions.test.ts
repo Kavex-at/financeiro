@@ -76,7 +76,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['DELETE /permutas/borderos/:borCod/baixas/:invoiceDocCod', P.PERMUTAS_EXECUTAR],
     ['GET /permutas/adiantamentos/:docCod/execucoes', P.PERMUTAS_VER],
     ['GET /permutas/status', P.PERMUTAS_VER],
-    // /sispag (27; as quatro do laço contam separadas)
+    // /sispag (30; as quatro do laço contam separadas)
     ['GET /sispag/painel', P.SISPAG_VER],
     ['GET /sispag/retornos', P.SISPAG_VER],
     ['GET /sispag/lotes/:id/linhas-digitaveis', P.SISPAG_VER],
@@ -104,6 +104,10 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['GET /sispag/lotes/:id/remessa/arquivo', P.SISPAG_EXECUTAR],
     ['POST /sispag/retornos/conciliar', P.SISPAG_EXECUTAR],
     ['GET /sispag/execucoes', P.SISPAG_EXECUTAR],
+    // ADR-0054: destino digitado do item e as flags de TED/PIX
+    ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino', P.SISPAG_EXECUTAR],
+    ['DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino', P.SISPAG_EXECUTAR],
+    ['GET /sispag/recursos', P.SISPAG_VER],
     // /recebimentos (15)
     ['GET /recebimentos/painel', P.RECEBIMENTOS_VER],
     ['GET /recebimentos/painel/enriquecimento', P.RECEBIMENTOS_VER],
@@ -198,7 +202,7 @@ describe('cobertura de guard por rota (introspecção)', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(27);
+        expect(porMount('sispag')).toBe(30);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);
