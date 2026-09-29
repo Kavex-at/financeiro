@@ -76,6 +76,9 @@ const tituloRowSchema = z
         bncDesNome: strOpt,
         titNumRemessa: strOpt,
         pesCod: strOpt,
+        // O `fin064` devolve `pesCod` VAZIO e o favorecido em `pesCodFor` (fixtures reais de
+        // 2026-08-24/25). Sem o fallback, oferta de TED/PIX e titularidade não acham ninguém.
+        pesCodFor: strOpt,
         tpdCod: strOpt,
         // sinais de "pronto para remessa" (informativo) — o que o fin064 já traz.
         itsVldModalidade: numOpt,
@@ -284,7 +287,7 @@ export default class ConexosSispagClient {
             pago: r.vldPago ?? false,
             banco: r.bncDesNome,
             numRemessa: r.titNumRemessa,
-            pesCod: r.pesCod,
+            pesCod: r.pesCod ?? r.pesCodFor,
             tpdCod: r.tpdCod,
             prontoParaRemessa,
             temBoleto,
