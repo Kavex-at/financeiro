@@ -4,6 +4,7 @@ import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ProcessoProviderConexos from '../domain/service/recebimentos/ProcessoProviderConexos.js';
 import { previsaoNdeDoProcesso } from '../domain/interface/recebimentos/constants.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /** Sonda READ-ONLY: repete a cadeia provider → rota para um pesCod/filial. */
 const FIL = Number(process.env.FIL ?? '2');
@@ -25,7 +26,7 @@ const main = async () => {
 main().then(
     () => process.exit(0),
     (e) => {
-        console.error(e);
+        console.error(redactErrorMessage(e instanceof Error ? e.message : String(e)));
         process.exit(1);
     },
 );

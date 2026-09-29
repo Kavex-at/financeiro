@@ -7,6 +7,7 @@ import ConexosBaseClient, { LEGACY_CONEXOS_TOKEN } from '../domain/client/Conexo
 import ConexosSessionResolver from '../domain/client/ConexosSessionResolver.js';
 import { buildLegacyConexosAdapter } from '../domain/client/legacyConexosAdapter.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * H2 — Antecipação / atraso de pagamento (READ-ONLY, PRD).
@@ -167,6 +168,6 @@ async function main(): Promise<void> {
 main()
     .then(() => process.exit(0))
     .catch((error) => {
-        console.error(error);
+        console.error(redactErrorMessage(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     });

@@ -5,6 +5,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { PIPELINE } from '../domain/interface/operacao/JobRun.js';
 import JobExecucaoRepository from '../domain/repository/operacao/JobExecucaoRepository.js';
 import RecebimentosPainelService from '../domain/service/recebimentos/RecebimentosPainelService.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * Job de reconciliação da NDe com o SEFAZ (ADR-0042, fecha os follow-ups F1 e F3).
@@ -79,6 +80,9 @@ const main = async (): Promise<void> => {
 main()
     .then(() => process.exit(0))
     .catch((error: unknown) => {
-        console.error('[reconciliar-nde-sefaz] falhou:', error);
+        console.error(
+            '[reconciliar-nde-sefaz] falhou:',
+            redactErrorMessage(error instanceof Error ? error.message : String(error)),
+        );
         process.exit(1);
     });

@@ -17,6 +17,20 @@ Os itens abaixo **não** foram implementados.
 `fault-tolerance-1` é o de maior impacto potencial: se a flag for desligada no meio de uma
 retomada parcial, os itens restantes voltam à regra do `main` sem conferir o destino já enviado.
 
+## Resolvidos no mesmo ciclo, depois do gate (a pedido: "continue")
+
+Os três itens "antes de ligar qualquer flag" foram implementados na branch; os cards do quadro
+correspondentes podem ser fechados no merge:
+
+- `fault-tolerance-1` — commit `87b0187`: o pin do ledger é lido antes das flags; item fixado com a
+  flag da modalidade desligada falha fechado; assinatura ilegível falha fechado; retomada parcial
+  mescla a assinatura. 4 testes novos.
+- `deployability-1` — commit `4c427d5`: as 3 flags em `render.yaml` (`sync: false`), `DEPLOY.md` e
+  `.env.example`, com a ordem de ligação.
+- `security-1` — commit da limpeza dos jobs: 25 sítios em 25 arquivos de `src/backend/jobs`
+  (não 11 nem 10: a busca ampla pegou também `console.error('texto:', e)`), agora com
+  `redactErrorMessage(e.message)`; teste `jobs/jobsNaoLogamErroCru.test.ts` reprova o padrão.
+
 ## P1
 
 ### P1 — security-1 — Jobs com `console.error(e)` cru podem vazar a senha do Conexos

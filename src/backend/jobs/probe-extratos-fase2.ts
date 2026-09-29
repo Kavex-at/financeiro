@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * Fase 2 da sonda de EXTRATOS (Frente IV, Módulo 1) — READ-ONLY.
@@ -213,6 +214,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-    console.error('[extratos2] FALHOU:', e);
+    console.error(
+        '[extratos2] FALHOU:',
+        redactErrorMessage(e instanceof Error ? e.message : String(e)),
+    );
     process.exit(1);
 });

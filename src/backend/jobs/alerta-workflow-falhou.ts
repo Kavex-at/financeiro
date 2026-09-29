@@ -4,6 +4,7 @@ import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { ALERTA_SEVERIDADE, ALERTA_TIPO } from '../domain/interface/operacao/Alerta.js';
 import NotificacaoService from '../domain/service/operacao/NotificacaoService.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * Emite `job-falhou` a partir do `if: failure()` de um workflow (ADR-0042).
@@ -59,6 +60,9 @@ main()
     .catch((error: unknown) => {
         // Sai 0 DE PROPÓSITO: o workflow já está falhando, e o passo de alerta não pode
         // mascarar nem duplicar essa falha (I5 no nível do CI).
-        console.error('[alerta-workflow-falhou] não foi possível emitir o alerta:', error);
+        console.error(
+            '[alerta-workflow-falhou] não foi possível emitir o alerta:',
+            redactErrorMessage(error instanceof Error ? error.message : String(error)),
+        );
         process.exit(0);
     });

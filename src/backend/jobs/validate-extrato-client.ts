@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosExtratoClient from '../domain/client/ConexosExtratoClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * Validação READ-ONLY do `ConexosExtratoClient` contra o Conexos real.
@@ -78,6 +79,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-    console.error('[validate] FALHOU:', e);
+    console.error(
+        '[validate] FALHOU:',
+        redactErrorMessage(e instanceof Error ? e.message : String(e)),
+    );
     process.exit(1);
 });
