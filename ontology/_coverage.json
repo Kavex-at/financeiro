@@ -21,9 +21,9 @@
     "actions_partial": 1,
     "actions_planned": 6,
     "actions_coverage_pct": 74,
-    "business_rules_total": 24,
+    "business_rules_total": 25,
     "business_rules_implemented": 14,
-    "business_rules_planned": 10,
+    "business_rules_planned": 11,
     "business_rules_with_tests": 10,
     "business_rules_retired": 1,
     "state_machines_total": 5,
@@ -150,12 +150,14 @@
         "ADR-0018",
         "ADR-0019",
         "ADR-0049",
-        "ADR-0054"
+        "ADR-0054",
+        "ADR-0055"
       ],
-      "note": "SISPAG (Escopo II): agregado LOCAL (lote_pagamento + lote_pagamento_item/ItemLote). Estados RASCUNHO|FINALIZADO|RETORNADO|CANCELADO; invariantes I2/I3/I4. ADR-0019: NEW status RETORNADO ('de volta do Nexxera') + transição L7 marcarRetorno (FINALIZADO→RETORNADO, manual hoje/robô-poller fin052 na Fatia 3, optimistic-lock); FINALIZADO = 'aguardando o retorno do Nexxera'; RETORNADO terminal por ora (baixa fin010 = Fatia 3); migration 0027; POST /sispag/lotes/:id/retorno. ADR-0017: NEW invariante I7 (lote uniforme nacional × internacional) enforce em LotePagamentoService.incluirTitulo (item divergente → LoteTipoConflitoError 422; classe autoritativa via com298, anti-drift); NEW field internacional em lote_pagamento_item (migration 0025). planned. ZERO escrita no ERP (I1). ADR-0018: NEW action formarLotesAutomaticos (implemented) — cron pós-ingestão + manual montam lotes candidatos (a-vencer ≤7d, filial×classe×banco); auto-lote RASCUNHO vencido é DESFEITO/liberado (sem status VENCIDO); cron nunca toca lote manual/finalizado. NEW field lote_pagamento.automatico (migration 0026). CAVEAT: banco NULL nos títulos a-pagar → agrupamento degenera p/ filial×classe.",
+      "note": "SISPAG (Escopo II): agregado LOCAL (lote_pagamento + lote_pagamento_item/ItemLote). Estados RASCUNHO|FINALIZADO|REMESSA_GERADA|RETORNADO|BAIXADO|CANCELADO (ADR-0055: status segue a baixa do título; L7 aposentada); invariantes I2/I3/I4. ADR-0019: NEW status RETORNADO ('de volta do Nexxera') + transição L7 marcarRetorno (FINALIZADO→RETORNADO, manual hoje/robô-poller fin052 na Fatia 3, optimistic-lock); FINALIZADO = 'aguardando o retorno do Nexxera'; RETORNADO terminal por ora (baixa fin010 = Fatia 3); migration 0027; POST /sispag/lotes/:id/retorno. ADR-0017: NEW invariante I7 (lote uniforme nacional × internacional) enforce em LotePagamentoService.incluirTitulo (item divergente → LoteTipoConflitoError 422; classe autoritativa via com298, anti-drift); NEW field internacional em lote_pagamento_item (migration 0025). planned. ZERO escrita no ERP (I1). ADR-0018: NEW action formarLotesAutomaticos (implemented) — cron pós-ingestão + manual montam lotes candidatos (a-vencer ≤7d, filial×classe×banco); auto-lote RASCUNHO vencido é DESFEITO/liberado (sem status VENCIDO); cron nunca toca lote manual/finalizado. NEW field lote_pagamento.automatico (migration 0026). CAVEAT: banco NULL nos títulos a-pagar → agrupamento degenera p/ filial×classe. (Histórico: ADR-0017/I7 aposentados pela ADR-0021; ver entities/lote-pagamento.md.)",
       "open_gaps": [
         "ADR-0049 à frente do código (dataDebito + I8 planned; sispag-data-pagamento-gap.md P1-1..3)",
-        "ADR-0054 à frente do código (modalidade TED=5, destinoManual + I10 planned; H3/H5 bloqueiam o destino manual)"
+        "ADR-0054 à frente do código (modalidade TED=5, destinoManual + I10 planned; H3/H5 bloqueiam o destino manual)",
+        "ADR-0055 à frente do código (L11 sincronizarStatus + I11 planned; colunas novas do item a criar)"
       ]
     },
     "TransacaoBancaria": {
@@ -460,6 +462,13 @@
       "has_test": false,
       "note": "ADR-0054 — destino TED/PIX: manual (só no item, precede o cadastro) ou cmn025; oferta = envio; titularidade, trilha, mascaramento, congelamento no import.",
       "open_gap": "H3/H5 (fin015 aceita destino digitado sem pctCodSeq?) — se falhar, parar e falar com o usuário; H1/H4/H6/H7 no HML"
+    },
+    "sincronizacao-status-lote-sispag": {
+      "invariant": "I11",
+      "status": "planned",
+      "has_test": false,
+      "note": "ADR-0055 — status do lote SISPAG segue a baixa do título (fin064 por docCod, qualquer origem); fin052 enriquece e veta por rejeição lida; falha de leitura não decide; precedência REJEITADO > 00 > BD > outro; BAIXADO terminal com divergência + Alerta; escrita local sem gate de ERP; sem mudança, sem versao.",
+      "open_gap": "implementação (SincronizacaoLoteService, job, migration das colunas do item) e ground truth ao vivo PG230901.REM"
     }
   },
   "health_flags": {

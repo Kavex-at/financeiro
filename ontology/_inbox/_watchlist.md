@@ -127,3 +127,9 @@
   significam. REJECT-PREMATURE.
 - **Precedência do digitado sobre o cadastro:** decisão da Columbia (cadastro desatualizado).
   Candidata a **configuração do cliente** se um 2º cliente quiser "manual só com cadastro vazio".
+
+## SISPAG — sincronização do status do lote (curadoria 2026-09-29, ADR-0055)
+
+- **Baixa manual × processamento nativo do `fin052`:** hoje não distinguíveis com segurança
+  (`origemBaixa = FORA_DO_RETORNO` cobre os dois). Revisitar se o PSQ_018 voltar a ser legível para
+  o robô e trouxer o canal da baixa. REJECT-PREMATURE.
