@@ -72,14 +72,27 @@ dois casos.
 | Trilha | no ERP (`ctcorr/log`, `cmnPessoasPix/log`) | só a nossa |
 | Incógnita | o robô tem permissão de escrita no `cmn025`? | o `fin015` aceita item sem `pctCodSeq`? |
 
-**Decisão (Yuri, 2026-09-28): opção A.** Segue o modelo que o ERP já usa e deixa o dado
+~~**Decisão (Yuri, 2026-09-28): opção A.** Segue o modelo que o ERP já usa e deixa o dado
 reaproveitável. A opção B sai do plano (o H3 deixa de bloquear). Validar antes em HML: permissão
-do robô no `cmn025` e o formato que o `cmn025` exige. Pendente: validação com a Columbia.
+do robô no `cmn025` e o formato que o `cmn025` exige. Pendente: validação com a Columbia.~~
+
+**Decisão revista (Yuri, 2026-09-28, tarde; ADR-0054): opção B.** O destino digitado vale **só
+para o item do lote**, fica no nosso Postgres (`ItemLote.destinoManual`) e vai no payload do
+`fin015` **sem `pctCodSeq`**. **Nada é escrito no cadastro do Conexos agora**; "atualizar o
+cadastro" pode vir depois. Com isso o **H3 volta a bloquear** e o H2 sai do caminho crítico.
+
+- **O digitado pode substituir o do cadastro** (Q2): o cadastro do Conexos está desatualizado e é
+  uma das causas de erro. Isso alarga o risco de desvio; a mitigação é a titularidade bloqueante e
+  a trilha.
+- **Se o HML rejeitar item com destino digitado sem `pctCodSeq` (H3/H5), o pipeline PARA e fala
+  com o usuário** antes de qualquer fallback para a opção A.
+- Testes em HML com o **mesmo usuário Conexos do `.env` local**.
 
 **Controle obrigatório, qualquer que seja a forma.** Trocar o destino de um pagamento é o vetor
 clássico de fraude. A entrada manual precisa de:
 - **titularidade**: o CPF/CNPJ da conta ou da chave é o do favorecido do título;
-- **quatro olhos**: quem digita não é quem aprova;
+- ~~**quatro olhos**: quem digita não é quem aprova;~~ **retirado** (Yuri, 2026-09-28): travaria a
+  operação com duas analistas. Uma permissão específica pode vir depois (follow-up);
 - **trilha**: quem, quando, valor anterior e novo;
 - conferir se `validacao/modalidadePix` devolve o nome do titular (consulta ao DICT) — se
   devolver, mostrar na tela antes de aprovar.
@@ -101,14 +114,18 @@ clássico de fraude. A entrada manual precisa de:
 - HML ponta a ponta → primeiro TED de valor baixo em PRD.
 
 ### Fase 2 — destino manual (conta)
-- Tela de "cadastrar conta do favorecido" no item sem conta, gravando no `cmn025/ctcorr`
-  (opção A), com titularidade, quatro olhos e trilha.
-- Entidade/ADR na ontologia para o destino manual.
+- ~~Tela de "cadastrar conta do favorecido" no item sem conta, gravando no `cmn025/ctcorr`
+  (opção A), com titularidade, quatro olhos e trilha.~~
+- Diálogo "Informar destino" na linha do item do `LoteCard`, ao lado da modalidade, só em
+  RASCUNHO; destino mascarado com selo "manual"; finalizar barrado com TED/PIX sem destino. Grava
+  no `ItemLote` (opção B), com titularidade e trilha. Sem quatro olhos.
+- Ontologia: `ItemLote.destinoManual`, I10, ADR-0054 (feito em 2026-09-28).
 
 ### Fase 3 — PIX
 - Ler chaves do `cmn025/cmnPessoasPix` (Zod no boundary); oferecer PIX só com chave ativa;
   chave mascarada na tela.
-- Cadastro manual de chave (mesmo fluxo da Fase 2, gravando no `cmnPessoasPix`).
+- Chave digitada no item (mesmo fluxo da Fase 2, **sem** gravar no `cmnPessoasPix`), tipo escolhido
+  pela analista e formato validado por tipo.
 - Item: `itsVldChavePix=1`, `itsDesChavePix`, e `itsVldModalidade` / `itsEspLocPix` /
   `itsEspTxidPix` como o HML mostrar — não há item PIX histórico para copiar.
 - `validacao/modalidadePix` antes do import.
@@ -132,9 +149,12 @@ clássico de fraude. A entrada manual precisa de:
 | # | Pergunta | Fase |
 |---|---|---|
 | H1 | `validacao/modalidadeTed` e `validacao/modalidadePix` têm efeito colateral? O que devolvem? | 1, 3 |
-| H2 | O robô consegue `POST cmn025/ctcorr` e `POST cmn025/cmnPessoasPix`? | 2, 3 |
-| H3 | ~~O `fin015` aceita item com destino digitado, sem `pctCodSeq`?~~ Fora: opção A decidida | — |
+| H2 | O robô consegue `POST cmn025/ctcorr` e `POST cmn025/cmnPessoasPix`? **Fora do caminho crítico** desde a opção B; só volta se o H3 falhar e o usuário escolher a opção A | — |
+| **H3** | O `fin015` aceita item TED com banco/agência/conta digitados, **sem `pctCodSeq`**? **Volta a bloquear** (opção B, ADR-0054). Nunca observado (19/19 com `pctCodSeq`). Se falhar: **parar e falar com o usuário** | 2 |
 | H4 | Que campos o item PIX exige, e que forma/segmentos o `.REM` gerado traz? | 3 |
+| H5 | O `fin015` aceita chave PIX digitada que não está no `cmnPessoasPix`? Se falhar: idem H3 | 3 |
+| H6 | O ERP mantém `itsVldModalidade = 5` (não sobrescreve, como faz no boleto DDA)? | 1 |
+| H7 | `fbtCod`/`fbtDesDescr`/`fbtEspCodbanco` do item (tabela `FinBancosTpcontrib`, `fin055/{bncCod}/{fbtCod}`) são a **finalidade do TED**? Ideia: copiar o valor dos 3 TEDs históricos como constante, sem expor na tela. **Hipótese, não fato**: verificar na etapa de ground truth/HML (sonda `jobs/probe-fin055-tpcontrib.ts`) | 1 |
 
 ## 7. Incidente — sessões derrubadas pela sonda
 

@@ -3,6 +3,26 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.30.0 — TED e PIX na remessa SISPAG, com destino digitado por item (2026-09-28, ADR-0054)
+
+Feature: `sispag-ted-pix` (branch `feat/sispag-ted-pix`, `/feature-tweak entities/lote-pagamento`).
+
+- **`ItemLote.modalidade` documentada** (existia desde a migration `0031` e faltava na doc).
+  `CREDITO_CONTA` segue no enum, fora da oferta (commit `fc22dcd`).
+- **NEW value object `ItemLote.destinoManual`** (conta ou chave PIX, titular obrigatório,
+  `informadoPor/Em`) e `destinoOrigem` derivado (`MANUAL | CADASTRO`). Vale só para o item, **prevalece
+  sobre o cadastro** e **não** é escrito no Conexos.
+- **NEW business rule `destino-pagamento-sispag`** (invariante **I10a–i**): destino resolvível antes do
+  `criarLote`; oferta = envio; TED em qualquer banco (`itsVldModalidade = 5`); PIX só com chave; edição
+  só em RASCUNHO; congelamento no import; trilha; mascaramento; titularidade bloqueante. I9 não é
+  reaproveitado (retirado na ADR-0050).
+- **Emendas:** `state-machines/lote-pagamento` (L2 `informarDestinoItem`, L3 exige destino) e
+  `finalizarLote` (pré-condição). Plano `_inbox/sispag-ted-pix-plan.md` §3/§4/§6: opção A trocada pela B,
+  H3 volta a bloquear, H5/H6/H7 registrados, quatro olhos retirado.
+- **Rejeitados/adiados:** quatro olhos; escrita no `cmn025`; finalidade do TED como constante (H7). Ver
+  `_inbox/_watchlist.md`.
+- **Coverage:** `business_rules_total` 23 → 24, `planned` 9 → 10.
+
 ## v0.28.0 — retirar título do lote pela aba de títulos (2026-09-23, ADR-0050)
 
 Feature: `sispag-reter-titulo-lote` (branch `fix/sispag-reter-titulo-lote`).
