@@ -316,6 +316,13 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         expect(s.logService.warn).toHaveBeenCalledWith(
             expect.objectContaining({ message: 'leitura do fin064 falhou' }),
         );
+        // e um evento POR LOTE, para o operador não reconstruir a falha a partir dos itens
+        expect(s.logService.error).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'leitura do lote falhou — nenhum título pôde ser lido',
+                data: expect.objectContaining({ loteId: 'L-fil2', filCod: 2 }),
+            }),
+        );
     });
 
     it('T6: PSQ_018 403 com fin064 pago → ainda BAIXADO, enriquecimento nulo, NAO_IDENTIFICADA', async () => {
