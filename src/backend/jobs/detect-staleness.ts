@@ -5,6 +5,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { PIPELINE } from '../domain/interface/operacao/JobRun.js';
 import JobExecucaoRepository from '../domain/repository/operacao/JobExecucaoRepository.js';
 import StalenessDetector from '../domain/service/operacao/StalenessDetector.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * Job detector de staleness (ADR-0042).
@@ -113,6 +114,9 @@ const pingDeadManSwitch = async (): Promise<void> => {
 main()
     .then(() => process.exit(0))
     .catch((error: unknown) => {
-        console.error('[detect-staleness] falhou:', error);
+        console.error(
+            '[detect-staleness] falhou:',
+            redactErrorMessage(error instanceof Error ? error.message : String(error)),
+        );
         process.exit(1);
     });

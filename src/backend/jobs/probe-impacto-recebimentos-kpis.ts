@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import { Pool } from 'pg';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * H0 — Indicadores de impacto da Frente IV (Recebimentos / "Gestão de Adiantamentos").
@@ -236,6 +237,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-    console.error(error);
+    console.error(redactErrorMessage(error instanceof Error ? error.message : String(error)));
     process.exit(1);
 });

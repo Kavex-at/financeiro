@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * SONDA READ-ONLY — de ONDE vem o código de barras que o `.REM` usa?
@@ -147,6 +148,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-    console.error(e);
+    console.error(redactErrorMessage(e instanceof Error ? e.message : String(e)));
     process.exit(1);
 });

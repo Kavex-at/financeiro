@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosSispagWriteClient from '../domain/client/ConexosSispagWriteClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * SONDA READ-ONLY — o código de barras aparece de fato no SEGMENTO J do `.REM`?
@@ -168,6 +169,6 @@ async function main(): Promise<void> {
     console.log('='.repeat(78));
 }
 main().catch((e) => {
-    console.error(e);
+    console.error(redactErrorMessage(e instanceof Error ? e.message : String(e)));
     process.exit(1);
 });

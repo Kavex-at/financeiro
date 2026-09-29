@@ -8,6 +8,7 @@ import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseCl
 import PermutaAlocacaoRepository from '../domain/repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRelationalRepository.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * RETENTATIVA ASSISTIDA de uma permuta que falhou — com PRÉ-VOO read-only.
@@ -195,6 +196,9 @@ const main = async (): Promise<void> => {
 };
 
 main().catch((err) => {
-    console.error('falha na retentativa:', err);
+    console.error(
+        'falha na retentativa:',
+        redactErrorMessage(err instanceof Error ? err.message : String(err)),
+    );
     process.exit(1);
 });

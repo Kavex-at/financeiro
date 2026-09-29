@@ -8,6 +8,7 @@ import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
 import ConexosBaixaClient from '../domain/client/ConexosBaixaClient.js';
 import ConexosTitulosClient from '../domain/client/ConexosTitulosClient.js';
 import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * SONDA READ-ONLY — por que o 2º adiantamento de um grupo falha com
@@ -453,6 +454,9 @@ const main = async (): Promise<void> => {
 };
 
 main().catch((err) => {
-    console.error('falha na sonda:', err);
+    console.error(
+        'falha na sonda:',
+        redactErrorMessage(err instanceof Error ? err.message : String(err)),
+    );
     process.exit(1);
 });

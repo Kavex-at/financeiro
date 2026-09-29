@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /** Envelope do grid: `{count, pageNumber, rows}`. */
 interface PagedRaw {
@@ -258,7 +259,10 @@ const main = async (): Promise<void> => {
 void main().then(
     () => process.exit(0),
     (e: unknown) => {
-        console.error('PROBE FALHOU:', e);
+        console.error(
+            'PROBE FALHOU:',
+            redactErrorMessage(e instanceof Error ? e.message : String(e)),
+        );
         process.exit(1);
     },
 );

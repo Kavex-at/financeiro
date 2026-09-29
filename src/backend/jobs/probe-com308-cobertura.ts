@@ -7,6 +7,7 @@ import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
 import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * Sonda READ-ONLY do `com308/financeiroAPagar/list/{docCod}` — decide a forma do invariante
@@ -265,6 +266,9 @@ const main = async (): Promise<void> => {
 };
 
 main().catch((err) => {
-    console.error('probe falhou:', err);
+    console.error(
+        'probe falhou:',
+        redactErrorMessage(err instanceof Error ? err.message : String(err)),
+    );
     process.exit(1);
 });

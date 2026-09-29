@@ -6,6 +6,7 @@ import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
+import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
  * SONDA READ-ONLY — o CÓDIGO DE BARRAS do boleto mora no `fin124` (Importação de Arquivo DDA)?
@@ -254,6 +255,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-    console.error(err);
+    console.error(redactErrorMessage(err instanceof Error ? err.message : String(err)));
     process.exit(1);
 });
