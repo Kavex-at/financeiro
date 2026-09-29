@@ -54,6 +54,8 @@ const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = [
     itens: [
       { permissao: PERMISSAO.SISPAG_VER, acao: 'ver' },
       { permissao: PERMISSAO.SISPAG_EXECUTAR, acao: 'executar' },
+      // ADR-0054 D10: aprova a conta digitada no item do lote. Não implica nem é implicada.
+      { permissao: PERMISSAO.SISPAG_APROVAR_DESTINO, acao: 'aprovar destino manual' },
     ],
   },
   {

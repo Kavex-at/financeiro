@@ -14,6 +14,8 @@ export const PERMISSAO = {
   PERMUTAS_EXECUTAR: 'permutas:executar',
   SISPAG_VER: 'sispag:ver',
   SISPAG_EXECUTAR: 'sispag:executar',
+  /** Aprovar a conta (TED) digitada no item do lote (ADR-0054 D10). Avulsa, sem implicações. */
+  SISPAG_APROVAR_DESTINO: 'sispag:aprovar_destino',
   RECEBIMENTOS_VER: 'recebimentos:ver',
   RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
   OPERACAO_VER: 'operacao:ver',
@@ -29,6 +31,7 @@ export const CATALOGO_PERMISSOES: readonly Permissao[] = [
   PERMISSAO.PERMUTAS_EXECUTAR,
   PERMISSAO.SISPAG_VER,
   PERMISSAO.SISPAG_EXECUTAR,
+  PERMISSAO.SISPAG_APROVAR_DESTINO,
   PERMISSAO.RECEBIMENTOS_VER,
   PERMISSAO.RECEBIMENTOS_EXECUTAR,
   PERMISSAO.OPERACAO_VER,

@@ -103,6 +103,18 @@ describe('EditarAcessoDialog', () => {
     expect(within(screen.getByRole('group', { name: 'Métricas' })).getByText('concedida')).toBeInTheDocument()
   })
 
+  it('ADR-0054 D10: "Aprovar destino manual" aparece no SISPAG e não arrasta ver/executar', () => {
+    abrir(alvo({ papel: { id: 2, nome: 'Consulta' } }))
+    const aprovar = caixa(/SISPAG — aprovar destino manual/)
+    expect(aprovar).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(aprovar)
+    expect(aprovar).toHaveAttribute('aria-checked', 'true')
+    expect(caixa(/SISPAG — executar/)).toHaveAttribute('aria-checked', 'false')
+    expect(caixa(/SISPAG — ver/)).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(caixa(/SISPAG — ver/))
+    expect(aprovar).toHaveAttribute('aria-checked', 'true')
+  })
+
   it('Q8: marcar "executar" marca "ver"', () => {
     abrir(alvo({ papel: { id: 2, nome: 'Consulta' } }))
     fireEvent.click(caixa(/SISPAG — ver/)) // desmarca o ver que vinha do papel
