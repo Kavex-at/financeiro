@@ -262,7 +262,8 @@ const main = async (): Promise<void> => {
     await bootstrapAppContainer();
     await new ProbeDestinoFavorecido().run();
 };
+// Só a mensagem: o erro do axios carrega o `config` inteiro, e o body do `/login` tem a senha.
 main().catch((e) => {
-    console.error(e);
+    console.error((e as Error).message);
     process.exit(1);
 });

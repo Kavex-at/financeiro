@@ -12,10 +12,12 @@ related_files:
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-07-07
+last_review: 2026-09-28
 preconditions:
   - "Requer papel admin (requireRole('admin'))."
   - "Lote em RASCUNHO com ≥1 item; todos os itens ainda elegíveis (liberado + não pago)."
+  - "Todo item com modalidade definida (ModalidadePendenteError, migration 0031)."
+  - "Todo item TED/PIX com destino resolvível — destinoManual ou conta/chave ativa do cadastro cmn025 (I10a, ADR-0054; business-rules/destino-pagamento-sispag)."
 postconditions:
   - "Lote RASCUNHO → FINALIZADO (L3): registra finalizadoPor + finalizadoEm; incrementa versao."
   - "O lote FINALIZADO é o 'pronto para processar' — gatilho CONCEITUAL, SEM downstream nesta fatia (I1)."

@@ -113,3 +113,17 @@
   a lote automático antes de ela decidir o que fazer com ele. O desenho completo (tabela própria com
   soft-delete, invariante na formação, badge e "Liberar") está no histórico da branch
   `fix/sispag-reter-titulo-lote` (commits até `6d1603d`).
+
+## SISPAG — destino de TED e PIX (curadoria 2026-09-28, ADR-0054)
+
+- **Quatro olhos no destino manual** ("quem digitou não finaliza"): **retirado** pelo usuário
+  (REJECT-VOLATILE para a operação de hoje: duas analistas). **Revisitar** quando existir
+  permissão por módulo (branch `feat/auth-permissoes-modulo`, ADR-0053): a forma provável é uma
+  permissão específica para informar ou substituir destino, não uma regra de pessoa diferente.
+- **Atualizar o cadastro `cmn025` com o destino digitado** (opção A do plano): fora agora. Volta
+  se o H3/H5 falhar (e o usuário escolher) ou se a analista pedir para não redigitar a cada lote.
+- **Finalidade do TED como constante (H7):** não entra na ontologia até a sonda
+  `jobs/probe-fin055-tpcontrib.ts` / HML provar o que `fbtCod`/`fbtDesDescr`/`fbtEspCodbanco`
+  significam. REJECT-PREMATURE.
+- **Precedência do digitado sobre o cadastro:** decisão da Columbia (cadastro desatualizado).
+  Candidata a **configuração do cliente** se um 2º cliente quiser "manual só com cadastro vazio".
