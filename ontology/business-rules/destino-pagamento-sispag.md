@@ -22,7 +22,11 @@ related_files:
   - src/backend/domain/libs/sispag/MaskDestino.ts
   - src/backend/domain/service/sispag/LotePagamentoApiView.ts
   - src/backend/migrations/0067_sispag_destino_manual.sql
-last_review: 2026-09-28
+  - src/backend/migrations/0068_sispag_aprovar_destino.sql
+  - src/backend/domain/libs/sispag/DestinoAprovacaoRule.ts
+  - src/backend/domain/errors/DestinoAprovacaoPendenteError.ts
+  - src/backend/domain/interface/auth/Permission.ts
+last_review: 2026-09-29
 has_canonical_test: true
 ---
 
@@ -44,7 +48,11 @@ de barras; ver `boleto-exige-codigo-de-barras`). **Crédito em conta** não é o
 destino(item) =
     item.destinoManual                              se existe     → origem MANUAL
     senão, TED: conta ATIVA do favorecido no cmn025/ctcorr, qualquer banco, default primeiro
-           PIX: chave ATIVA do favorecido no cmn025/cmnPessoasPix, default primeiro
+           PIX: chave ATIVA do favorecido no cmn025/cmnPessoasPix, nesta ordem (I10k):
+                1. tipo CPF/CNPJ igual ao documento do favorecido (pdcDocFederal)
+                2. a default
+                3. as demais
+                documento indisponível = ordem de antes (default primeiro)
                                                                    → origem CADASTRO
     senão: nenhum
 ```
@@ -67,6 +75,9 @@ destino(item) =
 | **I10g** (D7) | **Trilha:** toda gravação de destino manual registra quem, quando, valor anterior e valor novo, em registro só de inclusão, na nossa base. | edição |
 | **I10h** (D8) | **Proteção do dado:** conta e chave são gravadas completas (vão ao ERP) e aparecem **mascaradas** na tela. **Nunca** saem inteiras em log, `LogService.data`, ledger (`remessa_execucao.requestPayload`) ou mensagem de erro. Revelar só para quem está editando. | sempre |
 | **I10i** (D9) | **Titularidade (bloqueante):** o `titularDocumento` digitado é **igual** ao CPF/CNPJ do favorecido do título (`pdcDocFederal`, lido ao vivo do `cmn025` por `pesCod`); diferente = gravação recusada. Chave PIX do tipo CPF/CNPJ: **a própria chave** tem de ser igual. **Chave digitada e-mail/telefone/aleatória: recusada** (titular não conferível — só o DICT sabe; ADR-0054, adendo de 2026-09-29). Reabrir se o H1 provar que `validacao/modalidadePix` devolve o titular. | edição |
+
+| **I10j** (ADR-0054 D10/D11) | **Aprovação da conta digitada:** conta (TED) digitada nasce **pendente de aprovação**; só quem tem `sispag:aprovar_destino` aprova (quem digitou pode aprovar a própria, se tiver a permissão — não é quatro-olhos). A aprovação é uma linha `APROVACAO` da trilha só-inclusão (I10g) que aponta para a gravação vigente; editar ou limpar o destino cria outra gravação e a aprovação anterior deixa de valer. `finalizarLote` barra conta digitada pendente (`DestinoAprovacaoPendenteError`, nomeia os itens, sem valores) e o envio confere de novo antes do `criarLote` (falha fechada). **Chave PIX CPF/CNPJ digitada não exige aprovação** (D11). Só vale quando o destino digitado vale (flags manual + TED, item TED). | edição, finalizar e envio |
+| **I10k** (ADR-0054 D12) | **Preferência pela chave CPF/CNPJ:** entre as chaves ativas do cadastro, a do tipo CPF/CNPJ igual ao documento do favorecido vem antes da default. A oferta marca esse PIX (`destinos.PIX.chaveCpfCnpjDoFavorecido`) e a tela sugere PIX antes de TED e abre "Informar destino" na aba PIX; a analista continua podendo escolher TED. | tela e envio |
 
 > **I10h é requisito de proteção, não estado de domínio.** Está aqui porque sem ele a entrada manual
 > não pode existir; a forma (máscara, redação de log) é decisão de implementação.
@@ -119,6 +130,18 @@ Decisões de implementação a registrar:
   cedo que o import. Destino diferente = `DestinoCongeladoError` (cancelar o lote nativo).
 - Na edição, o congelamento consulta o lote nativo ao vivo (`getLoteNativo` + itens); leitura
   que falha recusa a edição.
+
+### Adendo (2026-09-29, tarde) — D10–D12
+
+- Permissão `sispag:aprovar_destino` no catálogo (ADR-0053) pela migration `0068`, que troca o
+  `CHECK` das duas tabelas de permissão; só o papel `Administrador` a recebe. É avulsa: não implica
+  nem é implicada por `sispag:ver`/`sispag:executar` (quem só aprova precisa de `sispag:ver` para
+  chegar à tela).
+- Rota `POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino/aprovar` (só RASCUNHO, `versao`).
+  O body leva só a versão; a resposta traz o resumo mascarado, com `aprovacao`
+  (`NAO_EXIGIDA`/`PENDENTE`/`APROVADO`), `aprovadoPor`/`aprovadoEm` e o CPF/CNPJ do titular
+  **mascarado** (é o que o aprovador confere; o valor inteiro não sai da API, I10h).
+- Na tela, o botão "Aprovar destino" só existe para quem tem a permissão (ADR-0053 R11).
 
 ## Ver também
 

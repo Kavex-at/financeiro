@@ -169,3 +169,26 @@ continua válido), mas não é oferecido.
   (`ChavePixTitularNaoVerificavelError`). Chave vinda do cadastro do Conexos segue aceita em
   qualquer tipo. Reabrir se o `validacao/modalidadePix` (H1) ou uma consulta de chave do banco
   devolver o titular.
+
+## Adendo (2026-09-29, tarde) — aprovação da conta digitada e preferência pela chave CPF/CNPJ
+
+Decisões do usuário depois de revisar o risco de fraude (o CPF/CNPJ digitado junto com a conta é
+declaração, não prova; só a chave PIX CPF/CNPJ é amarrada ao favorecido pelo próprio banco). O
+restante dos controles (limite de valor, observação do retorno do banco) fica para a conversa com a
+Columbia.
+
+- **D10 — Conta digitada (TED) exige aprovação.** Nova permissão de catálogo
+  `sispag:aprovar_destino` (ADR-0053: permissão fixa no código + migration que atualiza o
+  `CHECK`). A conta digitada nasce **pendente de aprovação**; só quem tem a permissão aprova.
+  **Quem digitou pode aprovar a própria conta** se tiver a permissão (decisão explícita: não é
+  quatro-olhos, é um passo de confirmação por quem está habilitado). Finalizar o lote é barrado
+  enquanto houver conta digitada pendente; o envio confere de novo. Editar ou limpar a conta
+  aprovada volta a exigir aprovação. Aprovação vai para a trilha só-inclusão (quem, quando).
+- **D11 — Chave PIX CPF/CNPJ digitada não exige aprovação.** A chave CPF/CNPJ só pode ser
+  registrada pelo dono do documento, e a titularidade (I10i) já exige que seja o documento do
+  favorecido.
+- **D12 — Preferir a chave PIX CPF/CNPJ.** Entre as chaves ativas do cadastro, a de tipo CPF/CNPJ
+  **igual ao documento do favorecido** vem antes da default. Na tela, quando o favorecido tem essa
+  chave, PIX é sugerido antes de TED e o diálogo "Informar destino" abre na aba PIX. A analista
+  continua podendo escolher TED.
+- O papel semeado `Administrador` ganha a nova permissão; os demais papéis não.

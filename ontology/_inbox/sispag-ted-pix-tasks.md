@@ -218,6 +218,43 @@
 
 ---
 
+### Task 9: D10 — permissão `sispag:aprovar_destino` e aprovação da conta digitada (Adendo 2026-09-29, tarde)
+
+**Files:** `domain/interface/auth/Permission.ts`, `migrations/0068_sispag_aprovar_destino.sql` (+ teste),
+`LotePagamentoRepository`, `LotePagamentoService`, `RemessaService`, `LotePagamentoApiView`,
+`routes/sispag.ts`, `http/routePermissions.test.ts`, frontend `lib/permissoes.ts` + `EditarAcessoDialog`.
+
+**Acceptance criteria:**
+- [ ] `sispag:aprovar_destino` no catálogo do código (backend e frontend) e na tela Usuários com rótulo em PT ("Aprovar destino manual" sob SISPAG).
+- [ ] Migration nova (0068) troca o `CHECK (permission IN (...))` de `app_role_permission` e `user_permission`; teste de paridade com o catálogo; `Administrador` recebe a permissão e nenhum outro papel.
+- [ ] Conta (TED) digitada é gravada PENDENTE de aprovação; o estado de aprovação é persistido (quem/quando); editar ou limpar o destino volta a pendente.
+- [ ] Rota nova para aprovar o destino digitado de um item, guardada por `exigirPermissao(sispag:aprovar_destino)`, só RASCUNHO, com `versao` (optimistic lock) como as rotas de destino existentes; quem digitou pode aprovar a própria se tiver a permissão.
+- [ ] Aprovação gravada na trilha só-inclusão.
+- [ ] `finalizarLote` barra enquanto houver conta digitada pendente, com mensagem em PT que nomeia os itens sem valores sensíveis.
+- [ ] O envio (`RemessaService`) confere de novo e falha fechado se a conta digitada não foi aprovada.
+- [ ] A rota nova está na tabela de `routePermissions.test.ts`.
+- [ ] Com as três flags desligadas o comportamento é idêntico ao `main`.
+
+### Task 10: D11 — chave PIX CPF/CNPJ digitada não exige aprovação
+
+**Acceptance criteria:**
+- [ ] Chave PIX CPF/CNPJ digitada não fica pendente, não barra o finalizar nem o envio, e a rota de aprovação a recusa (nada a aprovar).
+
+### Task 11: D12 — preferir a chave PIX CPF/CNPJ do favorecido
+
+**Acceptance criteria:**
+- [ ] No resolver, entre as chaves ativas do cadastro, a de tipo CPF_CNPJ igual ao documento do favorecido (via `getDocumentoFavorecido`) vem antes da default; documento indisponível mantém a ordem de antes.
+- [ ] A resposta de `modalidades-disponiveis` ganha campo aditivo que diz quando o PIX é dessa chave (sem endpoint novo).
+- [ ] Na tela, com essa chave, PIX é listado antes de TED e "Informar destino" abre na aba PIX; a analista continua podendo escolher TED.
+
+### Task 12: UI da aprovação no item do lote
+
+**Acceptance criteria:**
+- [ ] Selo "pendente de aprovação" ao lado do selo "manual".
+- [ ] Ação "Aprovar destino" visível só com a permissão (escondida, não desabilitada — ADR-0053 R11), que mostra o destino mascarado e o CPF/CNPJ do titular e pede confirmação.
+- [ ] A mensagem de bloqueio do Finalizar menciona aprovações pendentes.
+- [ ] Nenhum log/armazenamento novo de conta, chave ou CPF/CNPJ em claro.
+
 ## Definition of Done
 
 All tasks complete AND:
