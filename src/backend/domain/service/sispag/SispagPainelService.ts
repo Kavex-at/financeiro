@@ -8,6 +8,7 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
 import type { LinhasDigitaveisDoLote } from '../../interface/sispag/Fin015Write.js';
 import {
+    type ItemLote,
     type LoteSispag,
     MODALIDADE,
     type Modalidade,
@@ -23,6 +24,13 @@ import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRe
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
+import DestinoPagamentoResolver, {
+    type CacheCadastroDestino,
+    DESTINO_ORIGEM,
+    type DestinoOrigem,
+    type DestinoResolvido,
+    type FlagsDestino,
+} from './DestinoPagamentoResolver.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Nº máx. de títulos devolvidos ao painel (evita payload gigante). */
@@ -47,6 +55,21 @@ const MINUTOS_ORFAO = 15;
  * Evita o burst que pressiona o pool de sessões do Conexos (`LOGIN_ERROR_MAX_SESSIONS`).
  */
 const CONEXOS_FANOUT_LIMIT = 4;
+
+/** O destino que a oferta mostra para uma modalidade: origem + máscara, nunca o valor (I10h). */
+export interface DestinoOfertado {
+    origem: DestinoOrigem;
+    destinoMascarado?: string;
+}
+
+/** Uma linha da oferta de formas de pagamento de um item do lote. */
+export interface OfertaModalidadesItem {
+    docCod: string;
+    titCod: string;
+    modalidades: Modalidade[];
+    /** Só com TED/PIX ligados (ADR-0054). Com as flags desligadas o campo não existe. */
+    destinos?: Partial<Record<'TED' | 'PIX', DestinoOfertado>>;
+}
 
 /**
  * SispagPainelService — monta o painel READ-ONLY do Escopo II (spike / Fatia 1).
@@ -75,6 +98,7 @@ export default class SispagPainelService {
         private readonly conciliacaoLedger: ConciliacaoExecucaoRepository,
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
+        @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
     ) {}
 
     public montarPainel = async (): Promise<SispagPainelResponse> => {
@@ -304,9 +328,17 @@ export default class SispagPainelService {
      */
     public modalidadesDisponiveisDoLote = async (
         loteId: string,
-    ): Promise<Array<{ docCod: string; titCod: string; modalidades: Modalidade[] }>> => {
+    ): Promise<OfertaModalidadesItem[]> => {
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote) return [];
+        const envVars = await this.env.getEnvironmentVars();
+        // ADR-0054 — com TED/PIX ligados, a oferta dessas duas passa pelo MESMO resolver do
+        // envio (I10b). Desligados, nada muda: é o código de antes, linha por linha.
+        const flags: FlagsDestino = {
+            ted: envVars.sispagTedEnabled === true,
+            pix: envVars.sispagPixEnabled === true,
+            destinoManual: envVars.sispagDestinoManualEnabled === true,
+        };
         // Duas fontes, porque o ERP as guarda em lugares diferentes:
         //   boleto/PIX  → do TÍTULO (`fin064`, via `getTituloAPagar`)
         //   TED/crédito → da CONTA DO FAVORECIDO (`cmn025/ctcorr`)
@@ -337,7 +369,9 @@ export default class SispagPainelService {
             });
         });
 
-        const distintos = [...favorecidos.values()];
+        // Com a flag TED ligada o TED sai do resolver (que lê as contas com cache próprio); a
+        // leitura antiga só roda quando é ela que decide.
+        const distintos = flags.ted ? [] : [...favorecidos.values()];
         const contasSettled = await this.bounded.run(
             distintos,
             (f) => this.sispag.listContasFavorecido(f.pesCod, f.filCod),
@@ -372,6 +406,10 @@ export default class SispagPainelService {
             }
         }
 
+        if (flags.ted || flags.pix) {
+            return this.ofertaComResolver(lote.itens, titulos, comBoleto, temConta, flags);
+        }
+
         return lote.itens.map((it, i) => {
             const titulo = titulos[i];
             const modalidades = [...(titulo?.modalidadesDisponiveis ?? [])];
@@ -385,6 +423,98 @@ export default class SispagPainelService {
             }
             return { docCod: it.docCod, titCod: it.titCod, modalidades };
         });
+    };
+
+    /**
+     * Oferta com TED e/ou PIX ligados (ADR-0054). A modalidade ligada só aparece quando o
+     * `DestinoPagamentoResolver` resolve — o MESMO que o envio chama (I10b, caso 3) —, e cada
+     * uma vem com a origem e a máscara do destino. A desligada segue a regra antiga.
+     *
+     * PIX do `fin064` (`itsDesChavePix`) deixa de valer com a flag ligada: é LEFT JOIN no item
+     * SISPAG, 0% preenchido; a fonte certa é o `cmnPessoasPix`.
+     *
+     * Leitura que falha = não oferece (na dúvida, não promete um destino que o envio recusaria).
+     */
+    private ofertaComResolver = async (
+        itens: ItemLote[],
+        titulos: Array<TituloAPagar | null>,
+        comBoleto: ReadonlySet<string>,
+        temContaLegado: ReadonlyMap<string, boolean>,
+        flags: FlagsDestino,
+    ): Promise<OfertaModalidadesItem[]> => {
+        const cache: CacheCadastroDestino = this.resolver.novoCache();
+        const modalidadesNovas = [
+            ...(flags.ted ? [MODALIDADE.TED] : []),
+            ...(flags.pix ? [MODALIDADE.PIX] : []),
+        ] as const;
+        const settled = await this.bounded.run(
+            itens.map((it, i) => ({ it, pesCod: titulos[i]?.pesCod })),
+            async ({ it, pesCod }) => {
+                const out: Partial<Record<'TED' | 'PIX', DestinoResolvido>> = {};
+                for (const modalidade of modalidadesNovas) {
+                    out[modalidade] = await this.resolver
+                        .resolve(
+                            {
+                                modalidade,
+                                ...(it.destinoManual ? { destinoManual: it.destinoManual } : {}),
+                            },
+                            { flags, filCod: it.filCod, cache, ...(pesCod ? { pesCod } : {}) },
+                        )
+                        .catch((): DestinoResolvido => ({ origem: DESTINO_ORIGEM.NENHUM }));
+                }
+                return out;
+            },
+            CONEXOS_FANOUT_LIMIT,
+        );
+
+        return itens.map((it, i) => {
+            const titulo = titulos[i];
+            const resolvidos = settled[i]?.status === 'fulfilled' ? settled[i].value : {};
+            const modalidades = this.modalidadesSemResolver(
+                it,
+                titulo,
+                comBoleto,
+                temContaLegado,
+                flags,
+            );
+            const destinos: Partial<Record<'TED' | 'PIX', DestinoOfertado>> = {};
+            for (const modalidade of modalidadesNovas) {
+                const r = resolvidos[modalidade];
+                if (!r || r.origem === DESTINO_ORIGEM.NENHUM) continue;
+                modalidades.push(modalidade);
+                const mascara = this.resolver.mascarar(r);
+                destinos[modalidade] = {
+                    origem: r.origem,
+                    ...(mascara !== undefined ? { destinoMascarado: mascara } : {}),
+                };
+            }
+            return { docCod: it.docCod, titCod: it.titCod, modalidades, destinos };
+        });
+    };
+
+    /**
+     * A parte da oferta que NÃO passa pelo resolver: o que o `fin064` traz (sem o PIX dele, se a
+     * flag PIX estiver ligada), BOLETO da carteira persistida e, com a flag TED desligada, o TED
+     * pela regra antiga.
+     */
+    private modalidadesSemResolver = (
+        it: ItemLote,
+        titulo: TituloAPagar | null | undefined,
+        comBoleto: ReadonlySet<string>,
+        temContaLegado: ReadonlyMap<string, boolean>,
+        flags: FlagsDestino,
+    ): Modalidade[] => {
+        const modalidades = (titulo?.modalidadesDisponiveis ?? []).filter(
+            (m) => !(flags.pix && m === MODALIDADE.PIX),
+        );
+        if (comBoleto.has(`${it.filCod}:${it.docCod}:${it.titCod}`)) {
+            modalidades.push(MODALIDADE.BOLETO);
+        }
+        const pesCod = titulo?.pesCod;
+        if (!flags.ted && pesCod && temContaLegado.get(`${it.filCod}:${pesCod}`)) {
+            modalidades.push(MODALIDADE.TED);
+        }
+        return modalidades;
     };
 
     /** Filtra não-pagos, deriva aging e ordena por vencimento (mais urgente 1º). */

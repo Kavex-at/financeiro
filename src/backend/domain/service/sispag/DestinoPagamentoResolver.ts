@@ -1,4 +1,4 @@
-import { inject, injectable } from 'tsyringe';
+import { inject, injectable, singleton } from 'tsyringe';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import {
     type ChavePixFavorecido,
@@ -51,8 +51,12 @@ export type CacheCadastroDestino = Map<string, Promise<unknown>>;
 
 export interface ContextoDestino {
     flags: FlagsDestino;
-    /** FEBRABAN do banco do lote — só a regra antiga (flag TED desligada) usa. */
-    febrabanLote: number;
+    /**
+     * FEBRABAN do banco do lote — só a regra antiga (flag da modalidade desligada) usa. A oferta
+     * não conhece o banco do lote e só pergunta por modalidades ligadas: ausente = regra antiga
+     * não resolve nada.
+     */
+    febrabanLote?: number;
     filCod: number;
     /** Favorecido do título. Ausente = nada a ler, destino do cadastro não existe. */
     pesCod?: string;
@@ -87,6 +91,7 @@ const NENHUM: DestinoResolvido = { origem: DESTINO_ORIGEM.NENHUM };
  *
  * Não valida titularidade nem formato (isso é do `DestinoManualValidator`) e não escreve nada.
  */
+@singleton()
 @injectable()
 export default class DestinoPagamentoResolver {
     public constructor(

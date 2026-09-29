@@ -8,6 +8,8 @@ import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoR
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
+import MaskDestino from '../../libs/sispag/MaskDestino.js';
+import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
 import SispagPainelService from './SispagPainelService.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -59,18 +61,23 @@ const make = (
         getTituloAPagar?: jest.Mock;
         listContasFavorecido?: jest.Mock;
         listContasCorrentes?: jest.Mock;
+        listChavesPixFavorecido?: jest.Mock;
+        /** Variáveis extras do ambiente (as flags do ADR-0054). */
+        envVars?: Record<string, unknown>;
         listChavesComBoleto?: jest.Mock;
         listarLinhasDigitaveisDoLote?: jest.Mock;
         remessaLedger?: { listReconcilingParadas: jest.Mock };
         conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
     } = {},
 ) => {
+    const { listChavesPixFavorecido = jest.fn().mockResolvedValue([]), envVars = {} } = over;
     const sispag = {
         listLotes: over.listLotes ?? jest.fn().mockResolvedValue([loteNativo()]),
         getTituloAPagar: over.getTituloAPagar ?? jest.fn().mockResolvedValue(null),
         listContasFavorecido: over.listContasFavorecido ?? jest.fn().mockResolvedValue([]),
         listContasCorrentes:
             over.listContasCorrentes ?? jest.fn().mockResolvedValue([{ ccoCod: 1, bncCod: 4 }]),
+        listChavesPixFavorecido,
     } as unknown as ConexosSispagClient;
     const retorno = {
         listConfigsRetorno: over.retornoConfigs ?? jest.fn().mockResolvedValue([]),
@@ -100,9 +107,11 @@ const make = (
         listarLinhasDigitaveisDoLote,
     } as unknown as import('../../client/ConexosSispagWriteClient.js').default;
     const env = {
-        getEnvironmentVars: jest
-            .fn()
-            .mockResolvedValue({ conexosWriteEnabled: false, conexosDryRun: true }),
+        getEnvironmentVars: jest.fn().mockResolvedValue({
+            conexosWriteEnabled: false,
+            conexosDryRun: true,
+            ...envVars,
+        }),
     } as unknown as EnvironmentProvider;
     const log = over.log ?? buildLog();
     // Ledgers: por padrão sem nenhuma execução presa. Um teste específico injeta órfãos.
@@ -112,6 +121,7 @@ const make = (
     const conciliacaoLedger = (over.conciliacaoLedger ?? {
         listReconcilingParadas: jest.fn().mockResolvedValue([]),
     }) as never;
+    const resolver = new DestinoPagamentoResolver(sispag, new MaskDestino());
     const service = new SispagPainelService(
         sispag,
         fin015,
@@ -125,8 +135,9 @@ const make = (
         conciliacaoLedger,
         env,
         log,
+        resolver,
     );
-    return { service, log, listChavesComBoleto, listarLinhasDigitaveisDoLote };
+    return { service, log, listChavesComBoleto, listarLinhasDigitaveisDoLote, resolver };
 };
 
 describe('SispagPainelService.montarPainel', () => {
@@ -523,4 +534,152 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
         await service.linhasDigitaveisDoLote('lote-1');
         expect(log.warn).not.toHaveBeenCalled();
     });
+});
+
+describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054)', () => {
+    const FLAGS = {
+        sispagTedEnabled: true,
+        sispagPixEnabled: true,
+        sispagDestinoManualEnabled: true,
+    };
+    const MANUAL_CONTA = {
+        tipo: 'CONTA' as const,
+        bancoCod: '001',
+        agencia: '4321',
+        conta: '99887766',
+        contaDv: '5',
+        titularDocumento: '11144477735',
+    };
+    const loteCom = (itens: Array<Record<string, unknown>>) =>
+        jest.fn().mockResolvedValue({ id: 'L1', itens });
+    const item = { filCod: 2, docCod: '100', titCod: '1' };
+
+    it('flags desligadas: a resposta não ganha o campo `destinos` (igual ao main)', async () => {
+        const { service } = make({
+            getLoteComItens: loteCom([item]),
+            getTituloAPagar: jest
+                .fn()
+                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
+            listContasFavorecido: jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 237 }]),
+        });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: ['TED'] }]);
+    });
+
+    it('PIX do fin064 deixa de valer com a flag PIX ligada (fonte certa é o cmnPessoasPix)', async () => {
+        const { service } = make({
+            envVars: { sispagPixEnabled: true },
+            getLoteComItens: loteCom([item]),
+            getTituloAPagar: jest
+                .fn()
+                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: ['PIX'] }),
+            listChavesPixFavorecido: jest.fn().mockResolvedValue([]),
+        });
+        const [r] = await service.modalidadesDisponiveisDoLote('L1');
+        expect(r?.modalidades).not.toContain('PIX');
+    });
+
+    it('devolve origem e destino MASCARADO por modalidade, nunca o valor completo', async () => {
+        const { service } = make({
+            envVars: FLAGS,
+            getLoteComItens: loteCom([{ ...item, destinoManual: MANUAL_CONTA }]),
+            getTituloAPagar: jest
+                .fn()
+                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
+            listContasFavorecido: jest
+                .fn()
+                .mockResolvedValue([{ pctCodSeq: 9, banco: 237, conta: '55554444', padrao: true }]),
+            listChavesPixFavorecido: jest.fn().mockResolvedValue([
+                {
+                    cixCod: 3,
+                    chave: 'pix.secreto@x.com.br',
+                    tipo: 'EMAIL',
+                    padrao: true,
+                    pesCod: 'P1',
+                },
+            ]),
+        });
+        const [r] = await service.modalidadesDisponiveisDoLote('L1');
+        expect(r?.modalidades).toEqual(['TED', 'PIX']);
+        expect(r?.destinos).toEqual({
+            TED: { origem: 'MANUAL', destinoMascarado: 'banco 001 · ag. 4321 · cc ****7766-5' },
+            PIX: { origem: 'CADASTRO', destinoMascarado: 'PIX e-mail p***@x.com.br' },
+        });
+        const json = JSON.stringify(r);
+        for (const v of ['99887766', '55554444', 'pix.secreto@x.com.br', '11144477735']) {
+            expect(json).not.toContain(v);
+        }
+    });
+
+    it('leitura de cadastro que falha não oferece (na dúvida, não promete destino)', async () => {
+        const { service } = make({
+            envVars: FLAGS,
+            getLoteComItens: loteCom([item]),
+            getTituloAPagar: jest
+                .fn()
+                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
+            listContasFavorecido: jest.fn().mockRejectedValue(new Error('504')),
+            listChavesPixFavorecido: jest.fn().mockRejectedValue(new Error('504')),
+        });
+        const [r] = await service.modalidadesDisponiveisDoLote('L1');
+        expect(r?.modalidades).toEqual([]);
+    });
+
+    // Caso 3 (I10b): oferta = envio. Para cada fixture, a oferta diz TED/PIX SE E SÓ SE o
+    // resolver — o mesmo que o envio usa — resolve.
+    const fixtures: Array<{
+        nome: string;
+        contas: unknown[];
+        chaves: unknown[];
+        destinoManual?: typeof MANUAL_CONTA;
+    }> = [
+        {
+            nome: 'conta em outro banco',
+            contas: [{ pctCodSeq: 1, banco: 237, padrao: true }],
+            chaves: [],
+        },
+        { nome: 'sem conta (só inativa, já filtrada)', contas: [], chaves: [] },
+        {
+            nome: 'duas contas',
+            contas: [
+                { pctCodSeq: 1, banco: 1 },
+                { pctCodSeq: 2, banco: 341, padrao: true },
+            ],
+            chaves: [],
+        },
+        {
+            nome: 'só chave PIX',
+            contas: [],
+            chaves: [{ cixCod: 1, chave: 'a@b.com', tipo: 'EMAIL', padrao: true, pesCod: 'P1' }],
+        },
+        { nome: 'manual sem cadastro', contas: [], chaves: [], destinoManual: MANUAL_CONTA },
+    ];
+    for (const f of fixtures) {
+        it(`oferta = envio: ${f.nome}`, async () => {
+            const listContasFavorecido = jest.fn().mockResolvedValue(f.contas);
+            const listChavesPixFavorecido = jest.fn().mockResolvedValue(f.chaves);
+            const itemLote = {
+                ...item,
+                ...(f.destinoManual ? { destinoManual: f.destinoManual } : {}),
+            };
+            const { service, resolver } = make({
+                envVars: FLAGS,
+                getLoteComItens: loteCom([itemLote]),
+                getTituloAPagar: jest
+                    .fn()
+                    .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
+                listContasFavorecido,
+                listChavesPixFavorecido,
+            });
+            const [oferta] = await service.modalidadesDisponiveisDoLote('L1');
+            const flags = { ted: true, pix: true, destinoManual: true };
+            for (const modalidade of ['TED', 'PIX'] as const) {
+                const envio = await resolver.resolve(
+                    { modalidade, ...(f.destinoManual ? { destinoManual: f.destinoManual } : {}) },
+                    { flags, febrabanLote: 341, filCod: 2, pesCod: 'P1' },
+                );
+                expect(oferta?.modalidades.includes(modalidade)).toBe(envio.origem !== 'NENHUM');
+            }
+        });
+    }
 });

@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
@@ -8,11 +9,18 @@ import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
+import DestinoCongeladoError, {
+    MOTIVO_DESTINO_CONGELADO,
+} from '../../errors/DestinoCongeladoError.js';
+import DestinoManualDesabilitadoError from '../../errors/DestinoManualDesabilitadoError.js';
+import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     type ChaveTitulo,
     CONTA_PAGADORA_DEFAULT,
     type CriarLoteInput,
+    DESTINO_MANUAL_TIPO,
+    type DestinoManual,
     type IncluirTituloInput,
     type ListarLotesFiltro,
     type LotePagamento,
@@ -23,13 +31,29 @@ import {
 } from '../../interface/sispag/SispagInterface.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
 import LogService from '../LogService.js';
+import SispagPainelService from './SispagPainelService.js';
 
 interface TransicaoInput {
     loteId: string;
     versao: number;
     ator: string;
 }
+
+/** Item do lote + versão esperada + quem pede (ADR-0054 — edição do destino manual). */
+interface DestinoItemInput {
+    loteId: string;
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    versao: number;
+    ator: string;
+}
+
+/** Status do lote nativo no fin015 que não segura mais nada (cancelado / terminal sem itens). */
+const STATUS_NATIVO_LIBERADO: ReadonlySet<number> = new Set([2, 3]);
 
 /**
  * LotePagamentoService — montagem assistida + gate do lote candidato SISPAG
@@ -46,6 +70,10 @@ export default class LotePagamentoService {
         @inject(ConexosSispagClient) private readonly conexos: ConexosSispagClient,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
+        @inject(DestinoManualValidator) private readonly destinoValidator: DestinoManualValidator,
+        @inject(SispagPainelService) private readonly painel: SispagPainelService,
+        @inject(ConexosSispagWriteClient) private readonly fin015: ConexosSispagWriteClient,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -331,12 +359,53 @@ export default class LotePagamentoService {
         if (semModalidade > 0) {
             throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
+        // ADR-0054 (Adendo) — checagem LEVE: TED/PIX sem opção ofertada nem destino digitado.
+        await this.exigirDestinoOfertado(lote);
         return this.transicionar(input, {
             de: [LOTE_STATUS.RASCUNHO],
             para: LOTE_STATUS.FINALIZADO,
             acao: 'finalizar',
             finalizadoPor: input.ator,
         });
+    };
+
+    /**
+     * Grava o destino DIGITADO pela analista num item (ADR-0054 D1/D2). Vale só para aquele item,
+     * vence o cadastro e não é escrito no Conexos.
+     *
+     * Ordem das guardas — tudo o que recusa vem antes de qualquer escrita:
+     *   1. flags (manual + a da modalidade: conta→TED, chave→PIX) — 403;
+     *   2. formato (`DestinoManualValidator.validar`) — 400, sem ecoar valores;
+     *   3. lote em RASCUNHO e item no lote (I10e) — 409;
+     *   4. congelamento (I10f): o item não pode estar num lote nativo vivo — 409;
+     *   5. titularidade (I10i) com o CPF/CNPJ do favorecido lido AO VIVO — 422, falha fechada;
+     *   6. grava + trilha numa transação, sob `versao` (I6/I10g) — 409 se a versão mudou.
+     */
+    public definirDestinoManualItem = async (
+        input: DestinoItemInput & { destino: unknown },
+    ): Promise<LotePagamento> => {
+        const flags = await this.flagsDestino();
+        if (!flags.destinoManual)
+            throw new DestinoManualDesabilitadoError({ recurso: 'destino_manual' });
+        const destino = this.destinoValidator.validar(input.destino);
+        if (destino.tipo === DESTINO_MANUAL_TIPO.CONTA && !flags.ted) {
+            throw new DestinoManualDesabilitadoError({ recurso: 'ted' });
+        }
+        if (destino.tipo === DESTINO_MANUAL_TIPO.CHAVE_PIX && !flags.pix) {
+            throw new DestinoManualDesabilitadoError({ recurso: 'pix' });
+        }
+        const lote = await this.exigirItemEditavel(input, 'informar destino');
+        await this.exigirTitularidade(input, destino);
+        return this.gravarDestino(lote, input, destino);
+    };
+
+    /** Remove o destino digitado do item (volta a valer o cadastro). Mesmas guardas de estado. */
+    public limparDestinoManualItem = async (input: DestinoItemInput): Promise<LotePagamento> => {
+        const flags = await this.flagsDestino();
+        if (!flags.destinoManual)
+            throw new DestinoManualDesabilitadoError({ recurso: 'destino_manual' });
+        const lote = await this.exigirItemEditavel(input, 'remover destino');
+        return this.gravarDestino(lote, input, undefined);
     };
 
     public reabrirLote = (input: TransicaoInput): Promise<LotePagamento> =>
@@ -365,6 +434,175 @@ export default class LotePagamentoService {
         });
 
     // -------------------------------------------------------------- internals
+
+    private flagsDestino = async (): Promise<{
+        ted: boolean;
+        pix: boolean;
+        destinoManual: boolean;
+    }> => {
+        const env = await this.environmentProvider.getEnvironmentVars();
+        return {
+            ted: env.sispagTedEnabled === true,
+            pix: env.sispagPixEnabled === true,
+            destinoManual: env.sispagDestinoManualEnabled === true,
+        };
+    };
+
+    /**
+     * Checagem LEVE do finalizar (ADR-0054, Adendo): item TED/PIX — com a flag da modalidade
+     * ligada — sem a modalidade na OFERTA do painel. A oferta já inclui o destino digitado
+     * (precedência do resolver), então "ofertado" cobre cadastro e manual. A checagem estrita,
+     * autoritativa, continua no envio. Com as flags desligadas não consulta nada.
+     */
+    private exigirDestinoOfertado = async (lote: LotePagamento): Promise<void> => {
+        const flags = await this.flagsDestino();
+        const alvo = lote.itens.filter(
+            (i) =>
+                (i.modalidade === MODALIDADE.TED && flags.ted) ||
+                (i.modalidade === MODALIDADE.PIX && flags.pix),
+        );
+        if (alvo.length === 0) return;
+        const oferta = await this.painel.modalidadesDisponiveisDoLote(lote.id);
+        const ofertadas = new Map(oferta.map((o) => [`${o.docCod}:${o.titCod}`, o.modalidades]));
+        const semDestino = alvo.filter((i) => {
+            const modalidade = i.modalidade;
+            return !modalidade || !ofertadas.get(`${i.docCod}:${i.titCod}`)?.includes(modalidade);
+        });
+        if (semDestino.length > 0) {
+            throw new DestinoPagamentoAusenteError({
+                itens: semDestino.map((i) => ({
+                    docCod: i.docCod,
+                    titCod: i.titCod,
+                    ...(i.credor ? { credor: i.credor } : {}),
+                    ...(i.modalidade ? { modalidade: i.modalidade } : {}),
+                })),
+            });
+        }
+    };
+
+    /** I10e + I10f: lote em RASCUNHO, item no lote e destino ainda não importado no fin015. */
+    private exigirItemEditavel = async (
+        input: DestinoItemInput,
+        acao: string,
+    ): Promise<LotePagamento> => {
+        const lote = await this.exigirLote(input.loteId);
+        if (lote.status !== LOTE_STATUS.RASCUNHO) {
+            throw new LoteEstadoInvalidoError({ loteId: lote.id, statusAtual: lote.status, acao });
+        }
+        const noLote = lote.itens.some(
+            (i) =>
+                i.filCod === input.filCod && i.docCod === input.docCod && i.titCod === input.titCod,
+        );
+        if (!noLote) {
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao,
+                motivo: `O título ${input.docCod}/${input.titCod} não está neste lote.`,
+            });
+        }
+        await this.exigirNaoImportado(lote, input);
+        return lote;
+    };
+
+    /**
+     * Congelamento (I10f): o destino de um item que JÁ ESTÁ num lote nativo vivo não muda —
+     * mesmo que o lote local tenha sido reaberto. Volta a ser editável quando aquele lote nativo
+     * deixou de existir ou foi cancelado. Não saber (leitura falhou) = recusa.
+     */
+    private exigirNaoImportado = async (
+        lote: LotePagamento,
+        input: DestinoItemInput,
+    ): Promise<void> => {
+        const { nativeFlpCod, nativeBncCod } = lote;
+        if (nativeFlpCod === undefined || nativeBncCod === undefined) return;
+        const filCod = lote.nativeFilCod ?? lote.filCod;
+        const titulo = `${input.docCod}/${input.titCod}`;
+        const indeterminado = (): DestinoCongeladoError =>
+            new DestinoCongeladoError({
+                motivo: MOTIVO_DESTINO_CONGELADO.INDETERMINADO,
+                titulo,
+                nativeFlpCod,
+            });
+        const estado = await this.fin015
+            .getLoteNativo({ filCod, bncCod: nativeBncCod, flpCod: nativeFlpCod })
+            .catch(() => {
+                throw indeterminado();
+            });
+        if (!estado || STATUS_NATIVO_LIBERADO.has(estado.status)) return;
+        const chaves = await this.fin015.listarChavesDoLote({
+            filCod,
+            bncCod: nativeBncCod,
+            flpCod: nativeFlpCod,
+        });
+        if (!chaves) throw indeterminado();
+        if (chaves.has(`${input.filCod}:${input.docCod}:${input.titCod}`)) {
+            throw new DestinoCongeladoError({
+                motivo: MOTIVO_DESTINO_CONGELADO.JA_IMPORTADO,
+                titulo,
+                nativeFlpCod,
+            });
+        }
+    };
+
+    /** I10i: favorecido lido AO VIVO do título, documento do cadastro, conferência bloqueante. */
+    private exigirTitularidade = async (
+        input: DestinoItemInput,
+        destino: DestinoManual,
+    ): Promise<void> => {
+        const titulo = await this.conexos.getTituloAPagar(input.filCod, input.docCod, input.titCod);
+        const documento = titulo?.pesCod
+            ? await this.conexos.getDocumentoFavorecido(titulo.pesCod, input.filCod)
+            : undefined;
+        this.destinoValidator.conferirTitularidade(
+            destino,
+            documento,
+            `${input.docCod}/${input.titCod}`,
+        );
+    };
+
+    private gravarDestino = async (
+        lote: LotePagamento,
+        input: DestinoItemInput,
+        destino: DestinoManual | undefined,
+    ): Promise<LotePagamento> => {
+        const r = await this.repo.setDestinoManualItem({
+            loteId: input.loteId,
+            filCod: input.filCod,
+            docCod: input.docCod,
+            titCod: input.titCod,
+            versaoEsperada: input.versao,
+            ...(destino !== undefined ? { destino } : {}),
+            usuario: input.ator,
+        });
+        if (!r.atualizado) {
+            const atual = await this.exigirLote(input.loteId);
+            if (atual.versao !== input.versao) {
+                throw new LoteVersaoConflitoError({
+                    loteId: input.loteId,
+                    versaoEsperada: input.versao,
+                });
+            }
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: atual.status,
+                acao: destino ? 'informar destino' : 'remover destino',
+            });
+        }
+        // I10h: a trilha completa está na tabela só-inclusão; o log leva só o tipo e o id dela.
+        await this.audit(
+            destino ? 'definirDestinoManualItem' : 'limparDestinoManualItem',
+            input.loteId,
+            input.ator,
+            {
+                docCod: input.docCod,
+                titCod: input.titCod,
+                ...(destino ? { tipo: destino.tipo } : {}),
+                ...(r.auditId ? { auditId: r.auditId } : {}),
+            },
+        );
+        return this.exigirLote(input.loteId);
+    };
 
     private transicionar = async (
         input: TransicaoInput,
