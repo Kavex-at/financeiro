@@ -5,10 +5,14 @@ import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
-import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import type LogService from '../LogService.js';
+import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import type ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
+import type NotificacaoService from '../operacao/NotificacaoService.js';
 import ConciliacaoRetornoService from './ConciliacaoRetornoService.js';
+import DecisaoStatusLote from './DecisaoStatusLote.js';
+import SincronizacaoLoteService from './SincronizacaoLoteService.js';
 
 const CHAVE = { filCod: 2, bncCod: 4, gtbCodSeq: 1, garCodSeq: 5 };
 
@@ -54,6 +58,7 @@ const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
             docCod: '813',
             titCod: '1',
             incluidoPor: 'u1',
+            divergencia: false,
             bxaCodSeq: 1,
         },
     ],
@@ -90,13 +95,9 @@ const buildRetorno = (
     listDetalhe: jest.fn(async (p: { eventoCod: string }) => porCodigo[p.eventoCod] ?? []),
 });
 
-/**
- * `withTransaction` que apenas executa o callback com um `tx` sentinela — o objetivo dos
- * testes aqui é provar que o `tx` CHEGA nos repositórios, não reimplementar Postgres.
- */
-const TX = { marcador: 'tx' };
-const buildDb = () => ({
-    withTransaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(TX)),
+/** O fechamento é do `SincronizacaoLoteService` (ADR-0055): aqui só se prova a delegação. */
+const buildSinc = () => ({
+    aplicarEventosRetorno: jest.fn().mockResolvedValue(null),
 });
 
 const buildLedger = (anterior: Record<string, unknown> | null = null) => ({
@@ -109,9 +110,7 @@ const buildLedger = (anterior: Record<string, unknown> | null = null) => ({
 
 const buildRepo = (l: LotePagamento | null = lote()) => ({
     findByChaveNativa: jest.fn().mockResolvedValue(l ? l.id : null),
-    registrarConciliacaoItem: jest.fn().mockResolvedValue(undefined),
     getLoteComItens: jest.fn().mockResolvedValue(l),
-    transicionarStatus: jest.fn().mockResolvedValue(1),
 });
 
 const make = (o: {
@@ -119,7 +118,7 @@ const make = (o: {
     repo?: ReturnType<typeof buildRepo>;
     env?: EnvironmentProvider;
     ledger?: ReturnType<typeof buildLedger>;
-    db?: ReturnType<typeof buildDb>;
+    sinc?: ReturnType<typeof buildSinc> | SincronizacaoLoteService;
 }) =>
     new ConciliacaoRetornoService(
         (o.retorno ?? buildRetorno()) as unknown as ConexosSispagRetornoClient,
@@ -128,8 +127,14 @@ const make = (o: {
         buildLog(),
         new BoundedConcurrency(),
         (o.ledger ?? buildLedger()) as unknown as ConciliacaoExecucaoRepository,
-        (o.db ?? buildDb()) as unknown as PostgreeDatabaseClient,
+        (o.sinc ?? buildSinc()) as unknown as SincronizacaoLoteService,
     );
+
+/** Eventos que chegaram ao fechamento de um lote, por item. */
+const eventosEnviados = (sinc: ReturnType<typeof buildSinc>, loteId: string) =>
+    sinc.aplicarEventosRetorno.mock.calls.find((c) => c[0] === loteId)?.[1] as
+        | Map<string, Array<{ eventoCod: string; rejeitado: boolean }>>
+        | undefined;
 
 describe('ConciliacaoRetornoService', () => {
     describe('leitura do detalhe', () => {
@@ -163,29 +168,35 @@ describe('ConciliacaoRetornoService', () => {
             expect(res.eventosNaoLidos).toEqual([{ evento: 'NA', motivo: 'socket hang up' }]);
         });
 
-        it('varredura incompleta NÃO fecha o lote em BAIXADO', async () => {
-            // O caso caro: o código de REJEIÇÃO é justamente o que falhou. Sem ele,
-            // "não vi rejeição" viraria "não houve rejeição" e o lote fecharia como pago.
-            const repo = buildRepo();
+        it('varredura incompleta entrega o que FOI lido ao fechamento — o título decide (I11b/I11c)', async () => {
+            // Desde a ADR-0055 a prova de pagamento é o fin064. O código de rejeição que falhou
+            // não vira rejeição (nada não lido decide), e o ledger fica aberto para a 2ª passada.
+            const sinc = buildSinc();
             const retorno = buildRetorno();
             retorno.listDetalhe.mockImplementation(async (p: { eventoCod: string }) => {
                 if (p.eventoCod === 'NA') throw new Error('ETIMEDOUT');
                 return [detalhe()];
             });
-            await make({ retorno, repo }).conciliar({ ...CHAVE, ator: 'u' });
-            expect(repo.transicionarStatus).toHaveBeenCalledWith(
-                expect.objectContaining({ para: 'RETORNADO' }),
-                TX,
-            );
+            await make({ retorno, sinc }).conciliar({ ...CHAVE, ator: 'u' });
+            const eventos = eventosEnviados(sinc, 'L1');
+            expect(eventos?.get('813:1')).toEqual([
+                expect.objectContaining({ eventoCod: '00', rejeitado: false }),
+            ]);
         });
 
-        it('varredura completa e sem rejeição fecha o lote em BAIXADO', async () => {
-            const repo = buildRepo();
-            await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
-            expect(repo.transicionarStatus).toHaveBeenCalledWith(
-                expect.objectContaining({ para: 'BAIXADO' }),
-                TX,
-            );
+        it('o fechamento é DELEGADO ao mesmo de L11 (DecisaoStatusLote via sincronização)', async () => {
+            const sinc = buildSinc();
+            await make({ sinc }).conciliar({ ...CHAVE, ator: 'u' });
+            expect(sinc.aplicarEventosRetorno).toHaveBeenCalledTimes(1);
+            expect(eventosEnviados(sinc, 'L1')?.get('813:1')).toEqual([
+                {
+                    eventoCod: '00',
+                    descricao: 'PAGAMENTO EFETUADO',
+                    rejeitado: false,
+                    borCod: 249,
+                    bxaCodSeq: 1,
+                },
+            ]);
         });
     });
 
@@ -208,109 +219,143 @@ describe('ConciliacaoRetornoService', () => {
     });
 
     describe('casamento com o lote local', () => {
-        it('grava a conciliação no item usando a chave nativa do arquivo', async () => {
+        it('REGRESSÃO (ADR-0055): .RET com duas filiais casa cada linha pelo filCod DA LINHA', async () => {
+            // gar 9 (PG230901.REM): fil 1/flp 8 e fil 2/flp 24 no MESMO arquivo.
             const repo = buildRepo();
-            await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
+            const retorno = buildRetorno({
+                '00': [
+                    detalhe({ filCod: 1, flpCod: 8, docCod: '4030', titCod: '7' }),
+                    detalhe({ filCod: 2, flpCod: 24, docCod: '38682', titCod: '1' }),
+                ],
+            });
+            await make({ repo, retorno }).conciliar({ ...CHAVE, filCod: 1, ator: 'u' });
+            expect(repo.findByChaveNativa).toHaveBeenCalledWith({
+                nativeFilCod: 1,
+                nativeBncCod: 4,
+                nativeFlpCod: 8,
+            });
+            expect(repo.findByChaveNativa).toHaveBeenCalledWith({
+                nativeFilCod: 2,
+                nativeBncCod: 4,
+                nativeFlpCod: 24,
+            });
+        });
+
+        it('casa pela chave nativa (filial, banco e flp DA LINHA) e entrega ao fechamento', async () => {
+            const repo = buildRepo();
+            const sinc = buildSinc();
+            await make({ repo, sinc }).conciliar({ ...CHAVE, ator: 'u' });
             expect(repo.findByChaveNativa).toHaveBeenCalledWith({
                 nativeFilCod: 2,
                 nativeBncCod: 4,
                 nativeFlpCod: 13,
             });
-            expect(repo.registrarConciliacaoItem).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    loteId: 'L1',
-                    docCod: '813',
-                    evento: '00',
-                    rejeitado: false,
-                    borCod: 249,
-                    bxaCodSeq: 1,
-                }),
-                TX,
-            );
+            expect(sinc.aplicarEventosRetorno).toHaveBeenCalledWith('L1', expect.any(Map));
         });
 
         it('linha de lote que não é nosso é reportada, não gravada', async () => {
             const repo = buildRepo(null);
-            const res = await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
+            const sinc = buildSinc();
+            const res = await make({ repo, sinc }).conciliar({ ...CHAVE, ator: 'u' });
             expect(res.naoReconhecidos).toBe(1);
             expect(res.itens[0].reconhecido).toBe(false);
-            expect(repo.registrarConciliacaoItem).not.toHaveBeenCalled();
+            expect(sinc.aplicarEventosRetorno).not.toHaveBeenCalled();
         });
     });
 
-    describe('transição do lote', () => {
-        it('BAIXADO quando todos os itens têm baixa e nenhum foi rejeitado', async () => {
-            const repo = buildRepo();
-            await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
-            expect(repo.transicionarStatus).toHaveBeenCalledWith(
-                expect.objectContaining({ para: 'BAIXADO' }),
-                TX,
+    describe('precedência por item (I11d) — com o fechamento de verdade', () => {
+        /** `SincronizacaoLoteService` real, com os clients mockados: fin064 diz "em aberto". */
+        const sincReal = (l: LotePagamento) => {
+            const loteRepo = {
+                getLoteComItens: jest.fn().mockResolvedValue(l),
+                aplicarSincronizacao: jest.fn().mockResolvedValue('APLICADO'),
+                tocarSincronizacao: jest.fn().mockResolvedValue(undefined),
+            };
+            const sinc = new SincronizacaoLoteService(
+                loteRepo as unknown as LotePagamentoRepository,
+                {
+                    lerSituacaoTitulo: jest
+                        .fn()
+                        .mockResolvedValue({ legivel: true, vldPago: false, aberto: 258.4 }),
+                } as unknown as ConexosSispagClient,
+                { lerBaixasTitulo: jest.fn() } as unknown as ConexosTitulosClient,
+                {} as unknown as ConexosSispagRetornoClient,
+                new DecisaoStatusLote(),
+                { emitir: jest.fn().mockResolvedValue(null) } as unknown as NotificacaoService,
+                buildLog(),
+                new BoundedConcurrency(),
             );
-        });
+            return { sinc, loteRepo };
+        };
 
-        it('fica em RETORNADO quando houve rejeição — exige tratamento humano', async () => {
-            const repo = buildRepo(
-                lote({
-                    itens: [
-                        {
-                            loteId: 'L1',
-                            filCod: 2,
-                            docCod: '813',
-                            titCod: '1',
-                            incluidoPor: 'u',
-                            rejeitado: true,
-                        },
-                    ],
+        it.each([
+            ['REJEITADO lido por último', ['00', 'NA']],
+            ['REJEITADO lido primeiro', ['NA', '00']],
+        ])('REJEITADO e 00 no mesmo item → REJEITADO, não last-write-wins (%s)', async (_n, ordem) => {
+            const l = lote({ nativeFilCod: 2, nativeBncCod: 4, nativeFlpCod: 13 });
+            const { sinc, loteRepo } = sincReal(l);
+            const retorno = buildRetorno();
+            retorno.listEventosBancarios.mockResolvedValue(
+                ordem.map((cod) => EVENTOS.find((e) => e.cod === cod)),
+            );
+            retorno.listDetalhe.mockImplementation(async (p: { eventoCod: string }) => [
+                detalhe({ eventoCod: p.eventoCod, borCod: undefined, bxaCodSeq: undefined }),
+            ]);
+            await make({ retorno, repo: buildRepo(l), sinc }).conciliar({ ...CHAVE, ator: 'u' });
+            const aplicado = loteRepo.aplicarSincronizacao.mock.calls[0]?.[0];
+            expect(aplicado.itens[0]).toEqual(
+                expect.objectContaining({
+                    situacao: 'REJEITADO',
+                    retornoEvento: 'NA',
+                    rejeitado: true,
                 }),
             );
-            await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
-            expect(repo.transicionarStatus).toHaveBeenCalledWith(
-                expect.objectContaining({ para: 'RETORNADO' }),
-                TX,
-            );
-        });
-
-        it('fica em RETORNADO quando algum item ainda não tem baixa', async () => {
-            const repo = buildRepo(
-                lote({
-                    itens: [
-                        {
-                            loteId: 'L1',
-                            filCod: 2,
-                            docCod: '813',
-                            titCod: '1',
-                            incluidoPor: 'u',
-                            bxaCodSeq: 1,
-                        },
-                        { loteId: 'L1', filCod: 2, docCod: '814', titCod: '1', incluidoPor: 'u' },
-                    ],
-                }),
-            );
-            await make({ repo }).conciliar({ ...CHAVE, ator: 'u' });
-            expect(repo.transicionarStatus).toHaveBeenCalledWith(
-                expect.objectContaining({ para: 'RETORNADO' }),
-                TX,
-            );
+            expect(aplicado.para).toBe('RETORNADO');
         });
     });
 
     describe('gating', () => {
-        it('dry-run não chama `processar` nem grava nada', async () => {
+        it('dry-run do ERP não chama `processar`, mas grava o que OBSERVOU (I11g)', async () => {
             const retorno = buildRetorno();
-            const repo = buildRepo();
+            const sinc = buildSinc();
             const res = await make({
                 retorno,
-                repo,
+                sinc,
                 env: buildEnv({ conexosDryRun: true }),
             }).conciliar({ ...CHAVE, ator: 'u', processar: true });
 
             expect(res.dryRun).toBe(true);
             expect(res.processado).toBe(false);
             expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
-            expect(repo.registrarConciliacaoItem).not.toHaveBeenCalled();
-            expect(repo.transicionarStatus).not.toHaveBeenCalled();
-            // Mesmo em dry-run a LEITURA acontece: é o preview do que seria conciliado.
+            expect(sinc.aplicarEventosRetorno).toHaveBeenCalledTimes(1);
             expect(res.totalLinhas).toBe(1);
+        });
+
+        it('kill-switches todos desligados: processar bloqueado, gravação local acontece', async () => {
+            const retorno = buildRetorno();
+            const sinc = buildSinc();
+            await make({
+                retorno,
+                sinc,
+                env: buildEnv({
+                    conexosWriteEnabled: false,
+                    sispagLiveWriteEnabled: false,
+                    conexosDryRun: true,
+                }),
+            }).conciliar({ ...CHAVE, ator: 'u', processar: true });
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
+            expect(sinc.aplicarEventosRetorno).toHaveBeenCalledTimes(1);
+        });
+
+        it('simulação explícita (`dryRun` do corpo) não grava nada', async () => {
+            const sinc = buildSinc();
+            const res = await make({ sinc }).conciliar({
+                ...CHAVE,
+                ator: 'u',
+                dryRunOverride: true,
+            });
+            expect(res.dryRun).toBe(true);
+            expect(sinc.aplicarEventosRetorno).not.toHaveBeenCalled();
         });
 
         it('`processar` só é chamado quando pedido explicitamente', async () => {
@@ -326,15 +371,14 @@ describe('ConciliacaoRetornoService', () => {
         it('SISPAG_LIVE_WRITE_ENABLED=false força dry-run sem tocar Permutas/Recebimentos', async () => {
             // O `conexosDryRun` global segue true aqui: conter o SISPAG não pode exigir
             // desligar as outras frentes.
-            const repo = buildRepo();
+            const retorno = buildRetorno();
             const res = await make({
-                repo,
+                retorno,
                 env: buildEnv({ sispagLiveWriteEnabled: false }),
-            }).conciliar({ ...CHAVE, ator: 'u' });
+            }).conciliar({ ...CHAVE, ator: 'u', processar: true });
 
             expect(res.dryRun).toBe(true);
-            expect(repo.registrarConciliacaoItem).not.toHaveBeenCalled();
-            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+            expect(retorno.processarArquivoRetorno).not.toHaveBeenCalled();
         });
     });
 
@@ -430,45 +474,17 @@ describe('ConciliacaoRetornoService', () => {
         });
     });
 
-    describe('transação por arquivo (fault-tolerance-4)', () => {
-        it('itens e transição rodam DENTRO da mesma transação', async () => {
-            const db = buildDb();
-            const repo = buildRepo();
-            await make({ db, repo }).conciliar({ ...CHAVE, ator: 'u' });
-
-            expect(db.withTransaction).toHaveBeenCalledTimes(1);
-            // Ambos recebem o MESMO `tx` — é isso que faz o rollback ser total.
-            expect(repo.registrarConciliacaoItem).toHaveBeenCalledWith(expect.anything(), TX);
-            expect(repo.transicionarStatus).toHaveBeenCalledWith(expect.anything(), TX);
-        });
-
-        it('falha no meio do loop propaga — a transação inteira desfaz', async () => {
-            // Sem transação, uma queda aqui deixava parte dos itens com baixa gravada e o
-            // lote ainda em REMESSA_GERADA: estado que nenhum código sabe ler, e que a
-            // conciliação seguinte não corrige sozinha.
-            const db = buildDb();
-            const repo = buildRepo();
-            repo.registrarConciliacaoItem.mockRejectedValue(new Error('conexão caiu'));
-
-            await expect(make({ db, repo }).conciliar({ ...CHAVE, ator: 'u' })).rejects.toThrow(
+    describe('fechamento por lote (fault-tolerance-4)', () => {
+        it('falha ao fechar um lote propaga e o ledger não fecha em settled', async () => {
+            // Itens + transição de CADA lote são uma transação no repositório (I6); uma queda aqui
+            // não deixa lote meio gravado, e o arquivo continua reconciliável.
+            const sinc = buildSinc();
+            const ledger = buildLedger();
+            sinc.aplicarEventosRetorno.mockRejectedValue(new Error('conexão caiu'));
+            await expect(make({ sinc, ledger }).conciliar({ ...CHAVE, ator: 'u' })).rejects.toThrow(
                 'conexão caiu',
             );
-
-            // O erro sai de dentro do withTransaction (o driver dá ROLLBACK) e o lote
-            // NÃO chega a ser transicionado.
-            expect(repo.transicionarStatus).not.toHaveBeenCalled();
-        });
-
-        it('dry-run não abre escrita nenhuma dentro da transação', async () => {
-            const db = buildDb();
-            const repo = buildRepo();
-            await make({ db, repo, env: buildEnv({ conexosDryRun: true }) }).conciliar({
-                ...CHAVE,
-                ator: 'u',
-            });
-
-            expect(repo.registrarConciliacaoItem).not.toHaveBeenCalled();
-            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+            expect(ledger.settle).not.toHaveBeenCalled();
         });
     });
 
