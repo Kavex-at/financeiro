@@ -196,14 +196,14 @@ function SituacaoDoItem({ item }: { item: ItemLote }) {
         {rotulo}
       </Badge>
       {item.situacao === 'PAGO' && item.origemBaixa ? (
-        <span className="text-[11px] text-muted-foreground tabular-nums">
+        <span className="text-xs text-muted-foreground tabular-nums">
           {ORIGEM_BAIXA_ROTULO[item.origemBaixa]}
           {item.borCod ? ` · borderô ${item.borCod}` : ''}
           {item.pagoEm ? ` · ${new Date(item.pagoEm).toLocaleDateString('pt-BR')}` : ''}
         </span>
       ) : null}
       {item.divergencia ? (
-        <span className="flex items-start gap-1 text-[11px] font-medium text-danger">
+        <span className="flex items-start gap-1 text-xs font-medium text-danger">
           <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
           <span>Divergência: {item.divergenciaDetalhe ?? 'confira no Conexos'}</span>
         </span>
@@ -537,7 +537,7 @@ export function LoteCard({
             {l.dataDebito ? ` · débito em ${formatCivilDate(l.dataDebito)}` : ''}
           </CardTitle>
           {sincronizavel && sincronizadoEm ? (
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               sincronizado em {new Date(sincronizadoEm).toLocaleString('pt-BR')}
             </span>
           ) : null}
