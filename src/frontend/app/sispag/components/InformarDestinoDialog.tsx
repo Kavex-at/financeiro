@@ -68,7 +68,7 @@ function Campo({
         className="aria-invalid:border-destructive"
       />
       {erro ? (
-        <p id={erroId} className="text-xs text-destructive">
+        <p id={erroId} role="alert" className="text-xs text-destructive">
           {erro}
         </p>
       ) : descricao ? (

@@ -4,7 +4,7 @@ type: business-rule
 entity: LotePagamento
 invariant: I10
 ontology_version: "0.30.0"
-implementation_status: planned
+implementation_status: partial
 status: active
 owners: [yuri]
 related_files:
@@ -16,8 +16,14 @@ related_files:
   - src/backend/domain/client/ConexosSispagClient.ts
   - src/backend/domain/client/ConexosSispagWriteClient.ts
   - src/frontend/app/sispag/components/LoteCard.tsx
+  - src/frontend/app/sispag/components/InformarDestinoDialog.tsx
+  - src/backend/domain/service/sispag/DestinoPagamentoResolver.ts
+  - src/backend/domain/libs/sispag/DestinoManualValidator.ts
+  - src/backend/domain/libs/sispag/MaskDestino.ts
+  - src/backend/domain/service/sispag/LotePagamentoApiView.ts
+  - src/backend/migrations/0066_sispag_destino_manual.sql
 last_review: 2026-09-28
-has_canonical_test: false
+has_canonical_test: true
 ---
 
 # Business Rule — destino de pagamento SISPAG (TED e PIX) (I10)
@@ -94,6 +100,25 @@ também no PIX, para a checagem de I10i.
 A forma de lançamento do segmento A tem de condizer com a modalidade (TED × crédito × PIX; códigos a
 confirmar no fixture), com segmento B presente. Um PIX que saísse como crédito em conta é
 `RemessaCorrompidaError`.
+
+## Estado da implementação (2026-09-28, `feat/sispag-ted-pix`)
+
+**partial** — implementado e testado ATRÁS DE FLAGS desligadas por padrão (`SISPAG_TED_ENABLED`,
+`SISPAG_DESTINO_MANUAL_ENABLED`, `SISPAG_PIX_ENABLED`). Com as três desligadas o envio e a tela
+são idênticos ao `main` (testes de paridade no `RemessaService`, `SispagPainelService` e
+`LoteCard`). Nada foi provado em produção: H1, H3–H7 e o nome do campo de CPF/CNPJ no `cmn025`
+(`CAMPO_DOCUMENTO_FAVORECIDO`) dependem do teste supervisionado do
+`ontology/_inbox/sispag-ted-pix-tasks.md`.
+
+Decisões de implementação a registrar:
+- Com a flag da modalidade desligada, o item TED/PIX segue a regra do `main` (conta no banco do
+  lote, modalidade 1). "PIX nunca resolve" = nunca resolve por **chave**.
+- O destino digitado só vale com a flag manual **e** a da modalidade (conta → TED, chave → PIX).
+- Congelamento (I10f) no envio: a retomada fixa as referências gravadas no ledger (`pctCodSeq`,
+  `cixCod`, id da trilha) desde a marca d'água, ou seja, a partir do `criarLote` — um pouco mais
+  cedo que o import. Destino diferente = `DestinoCongeladoError` (cancelar o lote nativo).
+- Na edição, o congelamento consulta o lote nativo ao vivo (`getLoteNativo` + itens); leitura
+  que falha recusa a edição.
 
 ## Ver também
 
