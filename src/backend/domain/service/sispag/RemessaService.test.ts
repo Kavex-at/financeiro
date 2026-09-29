@@ -1902,6 +1902,118 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         expect(write.importarTitulos).not.toHaveBeenCalled();
     });
 
+    // ── fault-tolerance-1 (Regis-Review 2026-09-29): o pin sobrevive a flag desligada, a
+    // assinatura ilegível e a retomada parcial ─────────────────────────────────────────
+    const ledgerComPin = (destinos: unknown, over: Record<string, unknown> = {}) =>
+        buildLedger({
+            status: 'error',
+            dryRun: false,
+            nativeFlpCod: 12,
+            etapa: 'importar',
+            requestPayload: { itens: 1, flpCod: 12, destinos },
+            ...over,
+        });
+
+    it('flag TED desligada numa retomada com destino fixado → falha fechada, sem import', async () => {
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                ledger: ledgerComPin([{ item: '2:801:1', origem: 'CADASTRO', pctCodSeq: 42 }]),
+                write,
+                lote: l,
+                sispag: sispagCom({}),
+                env: buildEnv({}),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('flag só do PIX ligada e item TED fixado → também falha fechada', async () => {
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                ledger: ledgerComPin([{ item: '2:801:1', origem: 'CADASTRO', pctCodSeq: 42 }]),
+                write,
+                lote: l,
+                sispag: sispagCom({}),
+                env: buildEnv({ sispagPixEnabled: true }),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('assinatura de destinos ilegível no ledger → falha fechada (não segue sem pin)', async () => {
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                ledger: ledgerComPin([{ item: 7 }]),
+                write,
+                lote: l,
+                sispag: sispagCom({}),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('retomada parcial: a assinatura regravada MESCLA a anterior (não perde o item já importado)', async () => {
+        const write = buildWrite();
+        write.getLoteNativo.mockResolvedValue({
+            filCod: 2,
+            bncCod: 4,
+            flpCod: 12,
+            status: 0,
+            titulosCount: 1,
+            soma: 1,
+        });
+        write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1']));
+        write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
+        const ledger = buildLedger({
+            status: 'reconciling',
+            dryRun: false,
+            nativeFlpCod: 12,
+            etapa: 'importar',
+            filCod: 2,
+            bncCod: 4,
+            requestPayload: {
+                destinos: [
+                    { item: '2:801:1', origem: 'CADASTRO', pctCodSeq: 42 },
+                    { item: '2:802:1', origem: 'CADASTRO', pctCodSeq: 42 },
+                ],
+            },
+        });
+        const l = lote({
+            dataDebito: '2026-09-23',
+            itens: [
+                itemCom({ modalidade: 'TED' }),
+                { ...itemCom({ modalidade: 'TED' }), docCod: '802' },
+            ],
+        });
+        await make({
+            ledger,
+            write,
+            lote: l,
+            sispag: sispagCom({}),
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        // Só o 802 foi importado agora…
+        expect(write.importarTitulos.mock.calls.flatMap(([p]) => p.itens)).toHaveLength(1);
+        // …mas toda gravação do payload segue com os DOIS destinos fixados.
+        for (const [, payload] of ledger.setRequestPayload.mock.calls) {
+            expect(
+                (payload as { destinos: Array<{ item: string }> }).destinos
+                    .map((d) => d.item)
+                    .sort(),
+            ).toEqual(['2:801:1', '2:802:1']);
+        }
+    });
+
     it('I10h: ledger, logs e erros nunca carregam conta, chave ou documento', async () => {
         const ledger = buildLedger();
         const log = buildLog();

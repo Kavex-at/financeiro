@@ -654,16 +654,7 @@ export default class RemessaService {
                 // arquivo com o que o lote mandou (caso 8) — só AVISO até o teste supervisionado.
                 const validacao = this.cnab.validar(
                     arquivo.conteudo,
-                    flags.ted || flags.pix
-                        ? {
-                              ted: lote.itens.filter(
-                                  (i) => i.modalidade === MODALIDADE.TED && flags.ted,
-                              ).length,
-                              pix: lote.itens.filter(
-                                  (i) => i.modalidade === MODALIDADE.PIX && flags.pix,
-                              ).length,
-                          }
-                        : undefined,
+                    this.esperadoNoArquivo(lote, flags),
                 );
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
@@ -1147,6 +1138,20 @@ export default class RemessaService {
         return itens;
     };
 
+    /**
+     * O que o lote mandou de TED/PIX (regra nova), para o validador comparar com a forma de
+     * lançamento do arquivo (caso 8). Flags desligadas = `undefined` (validação de antes).
+     */
+    private esperadoNoArquivo = (
+        lote: LotePagamento,
+        flags: FlagsDestino,
+    ): { ted: number; pix: number } | undefined => {
+        if (!flags.ted && !flags.pix) return undefined;
+        const conta = (m: Modalidade): number =>
+            lote.itens.filter((i) => i.modalidade === m && this.usaRegraNova(m, flags)).length;
+        return { ted: conta(MODALIDADE.TED), pix: conta(MODALIDADE.PIX) };
+    };
+
     /** TED/PIX com a flag da modalidade ligada seguem a regra nova (ADR-0054). */
     private usaRegraNova = (modalidade: Modalidade | undefined, flags: FlagsDestino): boolean =>
         (modalidade === MODALIDADE.TED && flags.ted) ||
@@ -1206,14 +1211,62 @@ export default class RemessaService {
         return { itsVldChavePix: 1, itsDesChavePix: m.chavePix };
     };
 
-    /** A assinatura que a tentativa anterior gravou no ledger, se houver e for legível. */
+    /**
+     * A assinatura que a tentativa anterior gravou no ledger. Ausente = não havia pin. Presente e
+     * ILEGÍVEL = falha fechada: seguir sem pin reenviaria o destino que o cadastro disser hoje.
+     */
     private destinosDoLedger = (
         anterior: RemessaExecucaoRow | null | undefined,
+        loteId: string,
+        nativeFlpCod: number,
     ): AssinaturaDestino[] | undefined => {
         const bruto = (anterior?.requestPayload as { destinos?: unknown } | undefined)?.destinos;
         if (bruto === undefined) return undefined;
         const parsed = z.array(assinaturaDestinoSchema).safeParse(bruto);
-        return parsed.success ? parsed.data : undefined;
+        if (!parsed.success) {
+            throw new DestinoCongeladoError({
+                motivo: MOTIVO_DESTINO_CONGELADO.DIVERGE_DO_ENVIADO,
+                titulo: `do lote ${loteId} (registro de destinos ilegível)`,
+                nativeFlpCod,
+            });
+        }
+        return parsed.data.length > 0 ? parsed.data : undefined;
+    };
+
+    /**
+     * Todo item a importar que tem destino FIXADO por uma tentativa anterior precisa seguir pela
+     * regra nova (flag da modalidade ligada). Se a flag foi desligada no meio da retomada, o item
+     * cairia na regra do `main` e poderia sair para outra conta: falha fechada.
+     */
+    private exigirRegraNovaNosFixados = (
+        alvo: ItemLote[],
+        fixados: AssinaturaDestino[],
+        o: { flags: FlagsDestino; flpCodExistente?: number },
+    ): void => {
+        const fixadosPor = new Set(fixados.map((f) => f.item));
+        const semRegra = alvo.find(
+            (i) =>
+                fixadosPor.has(`${i.filCod}:${i.docCod}:${i.titCod}`) &&
+                !this.usaRegraNova(i.modalidade, o.flags),
+        );
+        if (semRegra) {
+            throw new DestinoCongeladoError({
+                motivo: MOTIVO_DESTINO_CONGELADO.DIVERGE_DO_ENVIADO,
+                titulo: `${semRegra.docCod}/${semRegra.titCod}`,
+                ...(o.flpCodExistente !== undefined ? { nativeFlpCod: o.flpCodExistente } : {}),
+            });
+        }
+    };
+
+    private mesclarAssinaturas = (
+        anteriores: AssinaturaDestino[] | undefined,
+        novas: AssinaturaDestino[] | undefined,
+    ): AssinaturaDestino[] | undefined => {
+        if (!anteriores) return novas;
+        if (!novas) return anteriores;
+        const porItem = new Map(anteriores.map((a) => [a.item, a]));
+        for (const n of novas) porItem.set(n.item, n);
+        return [...porItem.values()];
     };
 
     private assinar = (chave: string, d: DestinoResolvido, item: ItemLote): AssinaturaDestino => {
@@ -1301,25 +1354,37 @@ export default class RemessaService {
         preflight?: { destinos: Map<string, DestinoResolvido>; assinatura: AssinaturaDestino[] };
         comDestinos: <T extends object>(payload: T) => T;
     }> => {
-        if (!o.flags.ted && !o.flags.pix) return { comDestinos: (payload) => payload };
+        // A assinatura da tentativa anterior só vale se há um lote nativo sendo reusado. Lida
+        // ANTES de olhar as flags: desligar TED/PIX no meio de uma retomada não pode apagar o pin.
         const anteriores =
-            o.flpCodExistente !== undefined ? this.destinosDoLedger(o.anterior) : undefined;
+            o.flpCodExistente !== undefined
+                ? this.destinosDoLedger(o.anterior, o.lote.id, o.flpCodExistente)
+                : undefined;
         const apenas = o.apenasChaves;
+        const alvo = apenas
+            ? o.lote.itens.filter((i) => apenas.has(`${i.filCod}:${i.docCod}:${i.titCod}`))
+            : o.lote.itens;
+        if (o.importar && anteriores) this.exigirRegraNovaNosFixados(alvo, anteriores, o);
+        if (!o.flags.ted && !o.flags.pix) {
+            // Nada a resolver pela regra nova; o pin anterior (se houver) segue carimbado.
+            return {
+                comDestinos: (payload) =>
+                    anteriores ? { ...payload, destinos: anteriores } : payload,
+            };
+        }
         const preflight = o.importar
             ? await this.resolverDestinosAntesDaEscrita({
                   lote: o.lote,
                   febraban: FEBRABAN_POR_BNCCOD[o.bncCod] ?? 341,
                   flags: o.flags,
-                  itens: apenas
-                      ? o.lote.itens.filter((i) =>
-                            apenas.has(`${i.filCod}:${i.docCod}:${i.titCod}`),
-                        )
-                      : o.lote.itens,
+                  itens: alvo,
                   ...(anteriores ? { fixados: anteriores } : {}),
                   ...(o.flpCodExistente !== undefined ? { nativeFlpCod: o.flpCodExistente } : {}),
               })
             : undefined;
-        const assinatura = preflight?.assinatura ?? anteriores;
+        // MESCLA: numa retomada parcial o pré-voo só vê os itens que faltam; os já importados
+        // continuam fixados pela assinatura anterior (o payload é substituído a cada gravação).
+        const assinatura = this.mesclarAssinaturas(anteriores, preflight?.assinatura);
         return {
             ...(preflight ? { preflight } : {}),
             comDestinos: (payload) => (assinatura ? { ...payload, destinos: assinatura } : payload),
