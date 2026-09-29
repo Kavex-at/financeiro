@@ -1,7 +1,7 @@
 ---
 name: Alerta
 type: entity
-ontology_version: "0.22"
+ontology_version: "0.31.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -12,6 +12,7 @@ related_files:
   - src/backend/domain/repository/operacao/AlertaRepository.ts
   - src/backend/domain/service/operacao/NotificacaoService.ts
   - src/backend/domain/service/operacao/DbAlertSink.ts
+last_review: 2026-09-29
 properties:
   - id
   - tipo
@@ -54,6 +55,8 @@ de novo.
 | `job-parcial` | `pipeline` | run terminou `partial` (contas/filiais falhadas) |
 | `job-parado` | `pipeline` | `detectarStaleness` — sem `success` dentro do limite |
 | `config-ausente` | nome da var | `validarConfiguracao` — var obrigatória não configurada |
+| `sispag-baixa-divergente` | id do lote | `sincronizarStatus` — título antes pago voltou a aberto, ou item `REJEITADO` com título pago (I11f, ADR-0055) |
+| `sispag-lote-retornado` | id do lote | transição para `RETORNADO` (L10/L11, ADR-0055) |
 
 ## Teto conhecido deste desenho
 

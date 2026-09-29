@@ -2,7 +2,7 @@
 name: lote-pagamento
 type: state-machine
 entity: LotePagamento
-ontology_version: "0.19.1"
+ontology_version: "0.31.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -21,15 +21,19 @@ related_files:
   - src/backend/domain/service/sispag/ConciliacaoRetornoService.ts
   - src/backend/domain/client/ConexosSispagWriteClient.ts
   - src/backend/domain/client/ConexosSispagRetornoClient.ts
+  - src/backend/domain/client/ConexosSispagClient.ts
+  - src/backend/domain/client/ConexosTitulosClient.ts
+  - src/backend/domain/service/sispag/SincronizacaoLoteService.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
   - src/backend/domain/repository/sispag/RemessaExecucaoRepository.ts
   - src/backend/domain/repository/sispag/ConciliacaoExecucaoRepository.ts
   - src/backend/jobs/formar-lotes.ts
   - src/backend/jobs/reaper-sispag-reconciling.ts
+  - src/backend/jobs/sincronizar-lotes-sispag.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
   - src/frontend/app/sispag/components/LoteCard.tsx
-last_review: 2026-09-28
+last_review: 2026-09-29
 states: [RASCUNHO, FINALIZADO, REMESSA_GERADA, RETORNADO, BAIXADO, CANCELADO]
 out_of_scope_states: [ENVIADO, PROCESSANDO]
 ---
@@ -42,6 +46,9 @@ out_of_scope_states: [ENVIADO, PROCESSANDO]
 > CONCILIAÇÃO, migrations `0049`/`0050`): novos estados `REMESSA_GERADA` e `BAIXADO`, novas
 > transições L8 `gerarRemessa` e L9/L10 `conciliarRetorno`; ADR-0039 — a retomada de uma execução
 > órfã consulta o estado no ERP em vez de exigir conserto manual no `fin015`.**
+> **2026-09-29 (ADR-0055) — o status do lote passa a seguir a baixa do título.** Nova transição L11
+> `sincronizarStatus` (read-only no ERP); o fechamento de L9/L10/L11 é uma **única** função
+> (`business-rules/sincronizacao-status-lote-sispag.md`, I11); L7 `marcarRetorno` **aposentada**.
 >
 > **O que mudou de essencial na Fatia 3:** até a v0.9 esta máquina era **puramente local** — o
 > invariante I1 dizia que ela **não tocava o ERP**. Isso acabou. De `FINALIZADO` em diante cada
@@ -60,8 +67,8 @@ Fonte: `LOTE_STATUS` em `src/backend/domain/interface/sispag/SispagInterface.ts`
 | `RASCUNHO` | `RASCUNHO` | Lote em montagem — a analista inclui/remove títulos, define a forma de pagamento de cada item e a conta pagadora. Aberto para edição. Estado inicial. |
 | `FINALIZADO` | `FINALIZADO` | A analista finalizou o lote (gate). Registra `finalizadoPor`/`finalizadoEm`. **Reversível** por `reabrirLote` (L4) — e só aqui: depois da remessa não há volta local. É o **único** estado do qual `gerarRemessa` (L8) parte. |
 | `REMESSA_GERADA` | `REMESSA_GERADA` | O `.REM` (CNAB 240) existe no Conexos: o lote nativo do `fin015` foi criado, os títulos importados, o lote nativo finalizado e o arquivo gerado. Guarda `native_fil_cod`/`native_bnc_cod`/`native_flp_cod`, `native_gab_cod`, `remessa_arquivo`, `remessa_num`, `remessa_gerada_em`. **Não é "enviado"** — ver nota abaixo. |
-| `RETORNADO` | `RETORNADO` | O `.RET` foi conciliado, mas o lote **não fechou**: houve rejeição, ou algum item não tem baixa, ou a varredura de eventos veio incompleta. **Exige tratamento humano** (sanear cadastro e reenviar). É re-conciliável (L9/L10 partem dele também). |
-| `BAIXADO` | `BAIXADO` | Todo item não-rejeitado tem baixa confirmada no `fin010` (`bxa_cod_seq`), sem nenhuma rejeição e com varredura completa. **Terminal.** |
+| `RETORNADO` | `RETORNADO` | Algum item tem **rejeição lida** no `fin052` (`fbeVldTpret = 2`). **Exige tratamento humano** (sanear cadastro e reenviar). Item sem baixa e varredura incompleta **não** levam mais a `RETORNADO` (ADR-0055): o lote espera em `REMESSA_GERADA`. Re-sincronizável (L9/L10/L11 partem dele). |
+| `BAIXADO` | `BAIXADO` | **Todo** item tem o título pago no `fin064` (`vldPago = 1` e `aberto = 0`), **qualquer que seja a origem da baixa** (remessa, `fin010` manual, processamento nativo do `fin052`), e nenhum item tem rejeição lida. **Terminal**: estorno posterior não reabre, vira divergência no item (I11f). |
 | `CANCELADO` | `CANCELADO` | Lote descartado pela analista **antes da remessa**. Libera os títulos (deixam de ocupar a chave UNIQUE de I3). **Terminal.** |
 
 Tipo: `LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'REMESSA_GERADA' | 'RETORNADO' | 'BAIXADO' | 'CANCELADO'`
@@ -91,10 +98,11 @@ grava ator + timestamp (auditoria, I5) e é feita sob **optimistic lock** por `v
 | L4 | `FINALIZADO → RASCUNHO` | `reabrirLote` | Reversão do gate. **Só a partir de FINALIZADO** — uma vez gerada a remessa não há reabertura local (o `.REM` já existe no ERP; desfazer é decisão humana no `fin015`). | 2026-07-07 |
 | L5 | `{RASCUNHO, FINALIZADO} → CANCELADO` | `cancelarLote` | Descarta o lote candidato (decisão da analista). Libera os títulos (saem da UNIQUE de I3). **Terminal.** **Não alcança `REMESSA_GERADA`/`RETORNADO`/`BAIXADO`**: cancelar depois da remessa exigiria desfazer o lote nativo e o arquivo, e isso não é uma transição nossa. | 2026-07-07 |
 | L6 | `RASCUNHO → (deletado)` | `formarLotesAutomaticos` (desfazer-vencidos) | **Só lote `automatico=true` em RASCUNHO.** Um auto-lote que passou a conter **≥1 título VENCIDO** é **DESFEITO (deletado)** e seus títulos liberados (`desfazerAutomaticosVencidos`). **Distinto de `CANCELADO`.** Nunca atinge lote **manual** nem estados posteriores. Ver ADR-0018. | 2026-07-08 |
-| L7 | `FINALIZADO → RETORNADO` | `marcarRetorno` **(LEGADO — ver aviso)** | Marca manualmente "retorno do Nexxera recebido". Nasceu como **simulação** (ADR-0019), quando a conciliação real ainda não existia. Continua exposta (`POST /sispag/lotes/:id/retorno`, botão "Marcar retorno recebido" no `LoteCard`) e **pula `REMESSA_GERADA`** — nenhum arquivo, nenhuma baixa, nenhum vínculo com o `fin010`. | 2026-07-08 (obsoleta desde 2026-08-25) |
+| ~~L7~~ | ~~`FINALIZADO → RETORNADO`~~ | ~~`marcarRetorno`~~ **APOSENTADA** | Botão removido do `LoteCard`; `POST /sispag/lotes/:id/retorno` responde **410 Gone**. Nenhum lote em `RETORNADO` em produção (2026-09-29), então sem limpeza de dados. O número L7 não é reaproveitado. | 2026-07-08; aposentada em 2026-09-29 (ADR-0055) |
 | L8 | `FINALIZADO → REMESSA_GERADA` | `gerarRemessa` (`RemessaService`) | **Primeira escrita no ERP.** Dirige o lote nativo do `fin015` na ordem `criarLote → importarTitulos → finalizarLote → gerarRemessa`, e persiste as chaves nativas. Serializada por **advisory lock por lote** + ledger `remessa_execucao` (write-ahead). Gated por `conexosWriteEnabled`/`sispagLiveWriteEnabled`/`conexosDryRun` — dry-run monta e loga o payload sem POST, e **não** transiciona. Ver `business-rules/retomada-remessa-sispag.md` e ADR-0039. **Desde 2026-09-22 (ADR-0049) recebe a `dataDebito`** escolhida pela analista (default hoje BRT), validada contra I8a **antes** de qualquer escrita e persistida no write-ahead; com lote nativo já existente, a data é a persistida (I8b) e não se aceita outra. Ver `business-rules/data-debito-remessa-sispag.md`. | 2026-08-25; data de débito escolhível em 2026-09-22 |
-| L9 | `{REMESSA_GERADA, RETORNADO} → BAIXADO` | `conciliarRetorno` (`ConciliacaoRetornoService`) | Fecha o lote **somente se**: todo item não-rejeitado tem `bxa_cod_seq`, **nenhum** item rejeitado e a **varredura de eventos foi completa**. Ver o quadro de fechamento abaixo. | 2026-08-25 |
-| L10 | `{REMESSA_GERADA, RETORNADO} → RETORNADO` | `conciliarRetorno` (`ConciliacaoRetornoService`) | Mesma chamada de L9, destino diferente: qualquer rejeição, item sem baixa **ou varredura incompleta** para o lote em `RETORNADO`. `RETORNADO → RETORNADO` é legítimo — é a **segunda passada** depois de refazer uma varredura que falhou. | 2026-08-25 |
+| L9 | `{REMESSA_GERADA, RETORNADO} → BAIXADO` | `conciliarRetorno` (`ConciliacaoRetornoService`, admin, `processar=true`) | **Escreve no ERP** (`processar` do `fin052`) e em seguida aplica o **mesmo fechamento de L11** (I11). Mantida como caminho administrativo. | 2026-08-25; fechamento por I11 em 2026-09-29 |
+| L10 | `{REMESSA_GERADA, RETORNADO} → RETORNADO` | `conciliarRetorno` (`ConciliacaoRetornoService`, admin) | Idem L9, destino `RETORNADO` quando há rejeição lida. | 2026-08-25; fechamento por I11 em 2026-09-29 |
+| L11 | `{REMESSA_GERADA, RETORNADO} → BAIXADO \| RETORNADO \| (mesmo)` | `sincronizarStatus` (cron agendado + "Sincronizar agora") | **Read-only no ERP**: nunca chama `carregar`/`processar`. Lê o título no `fin064` por `docCod`, os eventos do `fin052` e, se legível, as baixas do título (`com308`, PSQ_018); deriva a `situacao` de cada item e decide o destino pelo quadro abaixo. Falha de leitura **não decide** (I11c). Sem mudança observada, **não** incrementa `versao` (I11h). Escritas locais **não** passam por `conexosWriteEnabled`/`sispagLiveWriteEnabled`/`conexosDryRun` (I11g). | 2026-09-29 (ADR-0055) |
 
 ```
           L1  criarLoteCandidato (manual) / formarLotesAutomaticos (cron)
@@ -110,26 +118,27 @@ grava ator + timestamp (auditoria, I5) e é feita sob **optimistic lock** por `v
                      ┌──────────────┐
                      │  FINALIZADO  │
                      └──────────────┘
-                        │        │
-      L8 gerarRemessa   │        │  L7 marcarRetorno  ⚠ LEGADO — beco sem saída
-      (fin015 + ledger) │        └───────────────────────────────────┐
-                        ▼                                            │
-                ┌────────────────┐                                   │
-                │ REMESSA_GERADA │                                   │
-                └────────────────┘                                   │
-                        │                                            │
-   ┄┄ transporte ao banco (pasta de rede → VAN Nexxera): EXTERNO ┄┄   │
-      e MANUAL. O Conexos NÃO transmite → não existe estado ENVIADO   │
-                        │                                            │
-      L9 / L10  conciliarRetorno (fin052 → baixas no fin010)          │
-                  ┌─────┴─────┐                                      │
-   tudo baixado,  │           │  rejeição / item sem baixa /         │
-   sem rejeição,  │           │  varredura INCOMPLETA                │
-   varredura ok   ▼           ▼                                      ▼
-            ┌───────────┐   ┌───────────────┐ ◀──────────────────────┘
-            │  BAIXADO  │◀──│   RETORNADO   │──┐  L10: RETORNADO → RETORNADO
-            │ (terminal)│L9 │ (exige olho   │◀─┘  é a 2ª passada (refazer a
-            └───────────┘   │    humano)    │     varredura que falhou)
+                        │
+      L8 gerarRemessa   │   (L7 marcarRetorno: APOSENTADA em 2026-09-29)
+      (fin015 + ledger) │
+                        ▼
+                ┌────────────────┐
+                │ REMESSA_GERADA │◀─┐  permanece enquanto há item sem baixa
+                └────────────────┘──┘  (AGENDADO / SEM_RETORNO)
+                        │
+   ┄┄ transporte ao banco (pasta de rede → VAN Nexxera): EXTERNO
+      e MANUAL. O Conexos NÃO transmite → não existe estado ENVIADO
+                        │
+      L11 sincronizarStatus (read-only)  ·  L9/L10 conciliarRetorno (admin, processa)
+      mesmo fechamento I11
+                  ┌─────┴─────┐
+   todo título    │           │  rejeição LIDA no fin052
+   pago (fin064), │           │  (fbeVldTpret = 2)
+   sem rejeição   ▼           ▼
+            ┌───────────┐   ┌───────────────┐
+            │  BAIXADO  │◀──│   RETORNADO   │──┐  RETORNADO → RETORNADO
+            │ (terminal)│   │ (exige olho   │◀─┘  (nova sincronização)
+            └───────────┘   │    humano)    │
                             └───────────────┘
 
    L5 cancelarLote: {RASCUNHO, FINALIZADO} → CANCELADO (terminal).
@@ -137,41 +146,47 @@ grava ator + timestamp (auditoria, I5) e é feita sob **optimistic lock** por `v
       desfazer é decisão humana no fin015, não transição nossa.
 ```
 
-> ⚠️ **L7 é dívida viva, e é um beco sem saída.** O caminho correto hoje é
-> `FINALIZADO → REMESSA_GERADA → RETORNADO/BAIXADO`. O botão "Marcar retorno recebido" ainda
-> aparece na tela **ao lado** de "Gerar remessa (.REM)" — ambos condicionados a
-> `status === FINALIZADO` em `LoteCard.tsx` — e leva o lote a `RETORNADO` **sem** que exista
-> `.REM`, `borCod` ou `bxa_cod_seq`.
->
-> O lote resultante *parece* conciliado e não tem rastreabilidade nenhuma. Pior: dali **não sai
-> mais**. `gerarRemessa` (L8), `reabrirLote` (L4) e `cancelarLote` (L5) exigem todos `FINALIZADO`;
-> e L9/L10 nunca o alcançam, porque sem remessa ele não tem chave nativa
-> (`native_flp_cod` nulo) e `findByChaveNativa` jamais casa uma linha do `.RET` com ele. Um clique
-> no botão errado tranca o lote em `RETORNADO` para sempre, e a única saída é SQL na mão.
->
-> **Follow-up aberto:** remover a ação, ou restringi-la a ambiente de teste.
+> **L7 aposentada (ADR-0055, 2026-09-29).** Era um beco sem saída: levava o lote a `RETORNADO` sem
+> `.REM`, sem chave nativa e sem baixa, e dali nenhuma transição o tirava. O botão saiu e a rota
+> responde `410`. O retorno real chega por L11 (e, administrativamente, por L9/L10).
 
-## Quando a conciliação FECHA o lote (L9 vs. L10)
+## Quando o lote FECHA (L9 / L10 / L11 — uma só função, I11)
 
-`transicionarLote` decide o destino por três perguntas, nesta ordem:
+A decisão é por **item** primeiro, depois por lote. Situação do item (derivada; precedência de cima
+para baixo, I11d):
 
-| Condição observada | Destino |
-|--------------------|---------|
-| Todo item não-rejeitado tem `bxaCodSeq` **e** nenhum item rejeitado **e** varredura completa | `BAIXADO` |
-| Algum item rejeitado (`fbeVldTpret = 2`) | `RETORNADO` |
-| Algum item não-rejeitado **sem** `bxaCodSeq` | `RETORNADO` |
-| **Varredura incompleta** (algum código de evento não pôde ser lido) | `RETORNADO` |
+| Evidência lida | `situacao` do item |
+|---|---|
+| Algum evento do `fin052` com `fbeVldTpret = 2` para o item | `REJEITADO` |
+| Título no `fin064` com `vldPago = 1` **e** `aberto = 0` | `PAGO` |
+| Evento `BD` (agendado) ou `00` (efetuado) no `fin052`, título ainda não pago | `AGENDADO` |
+| Nenhuma das anteriores | `SEM_RETORNO` |
 
-A quarta linha é a que não é óbvia e é a que custa dinheiro: o `fin052` exige o código do evento
-**exato** como filtro (não aceita `#IN` nem `#LIKE`), então a leitura do detalhe é uma varredura
-código a código. Se uma dessas leituras falha, **"não vi rejeição" não é "não houve rejeição"** — a
-linha perdida pode ser justamente a da recusa do banco, e fechar o lote em `BAIXADO` reportaria
-como pago um dinheiro que não saiu. Por isso o teto vira `RETORNADO` e o ledger fica em `error`
-(não `settled`), para que a segunda passada seja permitida.
+| Situação dos itens | Destino do lote |
+|---|---|
+| Algum `REJEITADO` | `RETORNADO` |
+| **Todos** `PAGO` | `BAIXADO` |
+| Qualquer outra combinação | **permanece** onde está (`REMESSA_GERADA`, ou `RETORNADO` se já estava) |
+| Leitura do `fin064` de algum item falhou | **permanece** (I11c); o item guarda a última situação observada |
 
-**A transição acontece na MESMA transação de banco** que grava o resultado dos itens
-(`registrarConciliacaoItem`). Sem isso, uma queda no meio do laço deixava parte dos itens com baixa
-gravada e o lote ainda em `REMESSA_GERADA` — um estado que nenhum código sabe ler.
+Item `REJEITADO` cujo título aparece pago (pago à mão fora da remessa) **continua `REJEITADO`** e o
+lote fica em `RETORNADO`; o item é marcado com `divergencia` e gera `Alerta`
+`sispag-baixa-divergente` (decisão do usuário, 2026-09-29; ADR-0055 D5).
+
+**O que mudou (ADR-0055).** Antes, o lote só fechava com `bxa_cod_seq` copiado da linha de detalhe
+do `fin052` **e** varredura completa de eventos; qualquer lacuna o mandava para `RETORNADO`. Em
+produção isso nunca fechou nada: o retorno de 24/09 foi processado nativamente só com o evento
+`BD`, e a baixa foi feita à mão no `fin010` horas depois. Agora a evidência de pagamento é o
+**título**, não o arquivo. A varredura incompleta do `fin052` perde o poder de bloquear `BAIXADO`
+**quando a baixa está confirmada no título**: o dinheiro saiu, qualquer que tenha sido o caminho.
+Ela continua sem poder afirmar *ausência* de rejeição; por isso só a rejeição **lida** veta, e o que
+não foi lido não produz `REJEITADO` nem `PAGO`.
+
+`00` sem baixa no título é `AGENDADO`, não `PAGO`: o banco confirmou, o ERP ainda não baixou, e a
+ontologia não afirma pagamento que o ERP não registra.
+
+**A transição acontece na MESMA transação de banco** que grava a situação dos itens (herdado de
+L9/L10). Sem isso, uma queda no meio do laço deixaria itens atualizados e o lote no estado anterior.
 
 ## Auto-lotes: criados e desfeitos pelo cron (ADR-0018)
 
@@ -211,24 +226,28 @@ Ledger e máquina de estados são ortogonais de propósito: transicionar o lote 
 pagamento; o ledger sem a máquina não diria à analista onde o lote está. Trilha visível em
 `GET /sispag/execucoes` e no job `reaper-sispag-reconciling`.
 
-## Decisões de modelagem (ADR-0015, ADR-0018, ADR-0019, ADR-0039)
+## Decisões de modelagem (ADR-0015, ADR-0018, ADR-0019, ADR-0039, ADR-0055)
 
 - **Reversibilidade acabou onde nasceu o downstream.** A v0.5 registrou que `finalizarLote` era
   reversível *"porque não há downstream nesta fatia"* e que isso ficaria gated quando o transporte
   chegasse. Chegou: `reabrirLote` (L4) e `cancelarLote` (L5) param em `FINALIZADO`. De
   `REMESSA_GERADA` em diante o artefato existe no ERP e desfazê-lo é decisão humana, não transição.
-- **`BAIXADO` é terminal e conservador.** Fecha só com evidência positiva de baixa (`bxa_cod_seq`)
-  para **todos** os itens não-rejeitados. Lote com rejeição fica em `RETORNADO` de propósito: exige
-  sanear cadastro e reenviar, e não é uma conciliação concluída.
+- **`BAIXADO` é terminal e conservador.** Fecha só com evidência positiva de pagamento no **título**
+  (`fin064`) para **todos** os itens. Estorno posterior não reabre: vira `divergencia` no item e
+  `Alerta` (ADR-0055, I11f). Lote com rejeição fica em `RETORNADO` de propósito: exige sanear
+  cadastro e reenviar, e não é uma conciliação concluída.
 - **Não se criou um estado para "parcialmente pago".** Um lote com rejeição *é* `RETORNADO`; qual
   item caiu está no item (`rejeitado`, `retorno_evento`, `retorno_descricao`), não no lote. Promover
-  isso a estado do agregado duplicaria informação que já é derivável.
+  isso a estado do agregado duplicaria informação que já é derivável. Reafirmado na ADR-0055:
+  "agendado no banco, aguardando baixa" também é situação do item, não estado do lote.
 - **Agrupamento por filial (I4)** segue valendo, agora com força de invariante de conciliação: o
   parser do `.RET` exige filial do título = filial do lote, e item cross-filial **nunca** concilia
   (provado em HML, lote 26). O que era compatibilidade com o `fin015` virou requisito duro.
 - **Chave nativa é composta, sempre.** O ERP **recicla** `flpCod` de lotes que deixaram de existir;
   o número sozinho não identifica nada de forma estável. A busca do lote local pelo retorno é por
-  `(native_fil_cod, native_bnc_cod, native_flp_cod)`.
+  `(native_fil_cod, native_bnc_cod, native_flp_cod)`. A filial da chave é a **da linha do `.RET`**,
+  não a do arquivo: um mesmo arquivo de retorno mistura filiais (gar 9: fil 1/flp 8 e fil 2/flp 24,
+  ADR-0055).
 
 ## Relação com o painel e o ERP
 
@@ -236,8 +255,11 @@ O invariante I1 da v0.5 (*"esta máquina é puramente local, não toca o ERP"*) 
 `FINALIZADO`**. A montagem (L1–L6) continua 100% local: nenhuma escrita no Conexos, e o painel
 (`montarPainelPagamentos`) mostra os lotes nativos apenas como **contexto**.
 
-De L8 em diante a máquina passa a **dirigir** o lote nativo do `fin015` e a **absorver** o resultado
-do `fin052`/`fin010`. Ela não *espelha* o estado do ERP — ela guarda o que o ERP não guarda: o elo
-lote → borderô → baixa. Medido em produção (2026-08-20): nos lotes com retorno processado, todos os
-itens têm `borCod` nulo no `finItemSispag`, e `vldHasRemessaPgto` do borderô vem 0 mesmo para baixa
-originada de remessa. O vínculo só existe na linha de detalhe do retorno — e some se ninguém copiar.
+De L8 em diante a máquina **dirige** o lote nativo do `fin015` e **observa** o resultado no ERP.
+O que ela guarda que o ERP não guarda é o elo **lote → item → título**; o elo **título → borderô →
+baixa** o ERP guarda, e é legível por título no `com308` (PSQ_018, `listBaixasTitulo`) quando o
+usuário tem permissão. Medido em 2026-08-20: `borCod` nulo no `finItemSispag` e
+`vldHasRemessaPgto = 0` mesmo em baixa de remessa, então o `fin015` não serve de ponte, mas o
+título serve. Em 2026-09-24 a baixa do 38682/1 (borderô 22320) não passou por retorno nenhum: o
+`fin052` não teria o vínculo para copiar. Por isso `borCod`/`bxaCodSeq` no item são
+**enriquecimento** com fonte registrada (`baixaFonte`), nunca a prova de pagamento.

@@ -1,7 +1,7 @@
 ---
 name: TituloAPagar
 type: entity
-ontology_version: "0.10"
+ontology_version: "0.31.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -42,7 +42,7 @@ relationships:
   - "TituloAPagar N—1 PagamentoIngestaoRun (via ingestaoRunId — a run que gravou/atualizou este título)"
   - "TituloAPagar N—1 LotePagamento (via ItemLote — um título elegível pode ser incluído em um lote candidato RASCUNHO)"
   - "TituloAPagar 1—1 (contexto) Borderô a-pagar / Lote SISPAG nativos (fin010/fin015 — leitura de contexto no painel, não vínculo próprio)"
-last_review: 2026-08-27
+last_review: 2026-09-29
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -98,21 +98,21 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `moeda` | string? | `com298.moeEspSigla` | Moeda do título. |
 | `vencimento` | Date? | `fin064`/`com308` → `titDtaVencimento` | Data de vencimento — base do aging e da janela do painel (−15d..+45d). |
 | `aprovado` | boolean | derivado na ingestão: `titVld1libera ∧ titVld2libera ∧ titVld3libera` (`com308`, alçada) → `aprovado` | **"Aprovado para baixa"** — passou por **todos os níveis de alçada** que a Columbia usa. Gate de elegibilidade do lote (I2). **Persistido** (era o derivado `liberado` no read model do ADR-0015). Ver `business-rules/elegibilidade-titulo-lote.md`. |
-| `pago` | boolean | derivado: título já quitado (`vldPago`/baixa `fin010`) ou saldo = 0 → `pago` | Título já pago **não** entra no lote (I2). |
+| `pago` | boolean | derivado: `fin064.vldPago = 1` e `aberto = 0` | Título já pago **não** entra no lote (I2). **Duas leituras distintas:** na carteira, é o snapshot da ingestão (que filtra `vldPago = 0`, então título pago some); **depois da remessa**, a sincronização lê o título ao vivo no `fin064` **por `docCod`, sem filtro de `vldPago`** (`getTituloAPagar`): o snapshot da carteira nunca prova pagamento de item de lote (I11b). Campo ilegível ≠ `false` (I11c). |
 | `banco` | string? | `fin064` → banco/conta do título (`bncCod`/`ccoCod`) → `banco` | Banco/conta destino. **Metadado** nesta fatia (o agrupamento é por filial; ver ADR-0015). |
 | `numRemessa` | string? | `fin064` → `titNumRemessa` → `num_remessa` | Nº da remessa quando o título já saiu (contexto). |
 | `tpdCod` | string? | `com298` → `tpd_cod` | Tipo de documento. |
 | `prontoParaRemessa` | boolean | **heurística** da ingestão (ver abaixo) → `pronto_para_remessa` | **INFORMATIVO** — tem modalidade + destino (banco/conta, barras ou PIX)? Palpite de completude. A **validação autoritativa** acontece **no envio, ao vivo** (Fatia 3). **Não** é gate de elegibilidade. |
 | `temBoleto` | boolean | **flag de DDA** do grid de pendentes (`fin015` → `titVldReflexoDdaAssoc`) → `tem_boleto` | O Conexos tem um **boleto DDA** (`fin124`) casado com este título. É o único vínculo pagamento↔boleto que existe — o código de barras **não está no título**. Alimenta a coluna "Boleto" do painel e habilita a modalidade BOLETO. Ver ADR-0040. |
+| `ativo` | boolean | anti-fantasma: título fora da run mais recente → `ativo=false` | Título que **some** da run de ingestão mais recente é marcado **inativo** (some do painel). Ver "Anti-fantasma". |
+| `ingestaoRunId` | string? (UUID) | FK → `pagamento_ingestao_run.id` | A run que gravou/atualizou este título (auditoria de cadência). |
+| `atualizadoEm` | Date | `atualizado_em` (UPSERT) | Quando o registro foi atualizado pela última vez. |
 
 > **`internacional` REMOVIDO (ADR-0021, 2026-07-18).** O SISPAG é **doméstico**: pagamento ao exterior é
 > **câmbio manual da tesouraria** (Itaú→BB), não passa pelo SISPAG. Títulos internacionais são
 > **filtrados na ingestão** (`com298.ufEspSigla='EX'`) e **nunca entram** na carteira — logo não há mais
 > classe/coluna `internacional`. Ver "Internacional fora do escopo" abaixo e a migration
 > `0030_remove_internacional.sql`.
-| `ativo` | boolean | anti-fantasma: título fora da run mais recente → `ativo=false` | Título que **some** da run de ingestão mais recente é marcado **inativo** (some do painel). Ver "Anti-fantasma". |
-| `ingestaoRunId` | string? (UUID) | FK → `pagamento_ingestao_run.id` | A run que gravou/atualizou este título (auditoria de cadência). |
-| `atualizadoEm` | Date | `atualizado_em` (UPSERT) | Quando o registro foi atualizado pela última vez. |
 
 ## `aprovado` (aprovado pela alçada) — evidência
 
@@ -189,7 +189,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 
 ## Fora de escopo (esta fatia)
 
-- Nenhuma escrita no ERP. O título nunca é liberado/baixado/enviado por nós aqui — isso é a Fatia de
-  transporte (`fin015` gerar remessa / `fin052` retorno / `fin010` baixa), gated como em Permutas.
+- Nenhuma escrita no ERP a partir desta entidade. A baixa do título é **observada** (L11, ADR-0055),
+  nunca feita por nós fora de L9 (`processar` administrativo do `fin052`).
   Ver ADR-0015 e ADR-0016.
 - O **detalhe de remessa** não é persistido (anti-drift) — lido ao vivo só no envio.

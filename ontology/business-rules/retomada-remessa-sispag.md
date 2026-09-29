@@ -2,7 +2,7 @@
 name: retomada-remessa-sispag
 type: business-rule
 entity: LotePagamento
-ontology_version: "0.5"
+ontology_version: "0.31.0"
 implementation_status: implemented
 related_files:
   - src/backend/domain/service/sispag/RemessaService.ts
@@ -14,7 +14,8 @@ related_files:
   - src/backend/domain/errors/LoteAnteriorCanceladoError.ts
   - src/backend/domain/errors/RemessaEmDuvidaError.ts
   - src/backend/domain/errors/ConciliacaoEmDuvidaError.ts
-last_review: 2026-09-22
+  - src/backend/domain/service/sispag/SincronizacaoLoteService.ts
+last_review: 2026-09-29
 has_canonical_test: true
 ---
 
@@ -86,6 +87,12 @@ No `fin052`, `processadoEm` (`garTimProcessamento`) responde "o `processar` já 
 | Arquivo existe, sem `processadoEm` | refaz (não há baixa no fin010 para duplicar) |
 | Arquivo não pôde ser lido | fail-closed (`ConciliacaoEmDuvidaError`) |
 
+> **A sincronização (L11, ADR-0055) não entra nesta máquina.** Ela é read-only no ERP: nunca
+> `carregar`, nunca `processar`, não abre linha em `conciliacao_execucao`. Um arquivo sem
+> `processadoEm` continua sendo decisão do caminho administrativo (`conciliarRetorno`,
+> `processar=true`), que segue mantido. Consequência: um `.RET` carregado e nunca processado
+> (gar 10, 25/09) não bloqueia `BAIXADO` se os títulos estão baixados por outra via.
+
 ## O que continua travando — e por quê
 
 Três casos. Nenhum é limitação técnica; cada um é uma escolha.
@@ -107,7 +114,9 @@ o sistema não distingue a intenção, a tela pergunta e um segundo clique decid
 Invariante que aparece três vezes na implementação e vale registrar: **uma leitura que falha
 nunca é tratada como "não existe"**. `listarChavesDoLote` devolve `undefined` (não `Set` vazio)
 quando falha, porque vazio mandaria reimportar tudo; `getArquivoRetorno` devolve `undefined` em
-vez de "não processado", porque isso mandaria reprocessar.
+vez de "não processado", porque isso mandaria reprocessar. Na sincronização (ADR-0055),
+`getTituloAPagar` e `listBaixasTitulo` seguem a mesma regra: falha de leitura nunca vira "pago" nem
+"não pago", e o lote fica onde está (I11c).
 
 ## Verificação
 
