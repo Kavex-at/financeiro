@@ -336,7 +336,7 @@ describe('UserAdminService', () => {
                 papel: { id: 1, nome: 'Administrador' },
                 excecoes: [],
             });
-            expect(out[0].permissoesEfetivas).toHaveLength(9);
+            expect(out[0].permissoesEfetivas).toHaveLength(PERMISSION_CATALOG.length);
             expect(out[1]).toMatchObject({
                 papel: { id: 2, nome: 'Consulta' },
                 excecoes: [{ permissao: 'sispag:executar', efeito: 'revogar' }],
