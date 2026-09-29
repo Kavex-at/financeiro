@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import { z } from 'zod';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
@@ -10,9 +11,12 @@ import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin01
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type { RemessaExecucaoRow } from '../../interface/sispag/RemessaExecucao.js';
 import {
+    DESTINO_MANUAL_TIPO,
+    type ItemLote,
     LOTE_STATUS,
     MODALIDADE,
     type LotePagamento,
+    type Modalidade,
 } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
@@ -24,6 +28,18 @@ import DebitDateFrozenError, { MOTIVO_CONGELADA } from '../../errors/DebitDateFr
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import LogService from '../LogService.js';
 import DebitDateService from './DebitDateService.js';
+import DestinoCongeladoError, {
+    MOTIVO_DESTINO_CONGELADO,
+} from '../../errors/DestinoCongeladoError.js';
+import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
+import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
+import DestinoPagamentoResolver, {
+    type ContextoDestino,
+    DESTINO_CADASTRO_TIPO,
+    DESTINO_ORIGEM,
+    type DestinoResolvido,
+    type FlagsDestino,
+} from './DestinoPagamentoResolver.js';
 
 /** Código FEBRABAN a partir do `bncCod` interno do Conexos. */
 const FEBRABAN_POR_BNCCOD: Record<number, number> = { 3: 1, 4: 341, 7: 237, 10: 33 };
@@ -44,6 +60,36 @@ const MODALIDADE_NATIVA: Record<string, number> = {
     PIX: 1,
     BOLETO: 7,
 };
+
+/**
+ * TED no fin015 (`FinItemSispag.itsVldModalidade`): `5`. Medido nos 3 TEDs históricos de PRD
+ * (plano §2). Só é mandado com `SISPAG_TED_ENABLED`; desligado, TED segue saindo como `1` (o
+ * `MODALIDADE_NATIVA` acima), idêntico ao `main`. ⚠️ H6: não sabemos se o ERP sobrescreve o
+ * valor (como faz no boleto DDA) — a sonda do teste supervisionado confere.
+ */
+const MODALIDADE_TED_NATIVA = 5;
+
+/**
+ * PIX no fin015. ⚠️ H4 — valor a confirmar no teste supervisionado. O schema do item não tem um
+ * código de PIX: o PIX é o conjunto `itsVldChavePix`/`itsDesChavePix`. Não há item PIX histórico
+ * para copiar; `1` é o palpite de "transferência" até a sonda mostrar o que o ERP grava.
+ */
+const MODALIDADE_PIX_NATIVA = 1;
+
+/**
+ * Assinatura do destino de cada item no ledger (ADR-0054 I10f): SÓ referências — `pctCodSeq` da
+ * conta do cadastro, `cixCod` da chave do cadastro, ou o id da linha de trilha do destino digitado.
+ * Nunca conta, chave ou documento (I10h): o `request_payload` é lido por gente e por jobs.
+ */
+const assinaturaDestinoSchema = z.object({
+    item: z.string(),
+    origem: z.enum([DESTINO_ORIGEM.CADASTRO, DESTINO_ORIGEM.MANUAL]),
+    pctCodSeq: z.number().optional(),
+    cixCod: z.number().optional(),
+    auditId: z.string().optional(),
+});
+
+type AssinaturaDestino = z.infer<typeof assinaturaDestinoSchema>;
 
 /**
  * Ordem canônica da sequência. Retomar numa etapa significa que todas as anteriores já
@@ -127,6 +173,8 @@ export default class RemessaService {
         @inject(RemessaCnabValidator) private readonly cnab: RemessaCnabValidator,
         @inject(DebitDateService) private readonly debitDate: DebitDateService,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
+        @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
+        @inject(DestinoManualValidator) private readonly destinoValidator: DestinoManualValidator,
     ) {}
 
     /**
@@ -194,6 +242,13 @@ export default class RemessaService {
 
         const env = await this.environmentProvider.getEnvironmentVars();
         const writeEnabled = env.conexosWriteEnabled;
+        // ADR-0054 — as três desligadas (default) = envio idêntico ao `main`. `=== true` porque
+        // ausência nunca liga nada.
+        const flags: FlagsDestino = {
+            ted: env.sispagTedEnabled === true,
+            pix: env.sispagPixEnabled === true,
+            destinoManual: env.sispagDestinoManualEnabled === true,
+        };
         // `sispagLiveWriteEnabled` é o kill-switch DESTA frente: conter um bug do SISPAG
         // pelo `conexosDryRun` global desligaria Permutas e Recebimentos junto.
         const dryRun =
@@ -424,7 +479,28 @@ export default class RemessaService {
         // lote do ledger não serve mais (não existe no ERP, ou foi cancelado). Reusar o
         // `nativeFlpCod` antigo aqui mandaria títulos para um lote morto.
         let flpCod: number | undefined = flpCodExistente;
+        // Cada passo abaixo é pulado quando o ERP já mostrou que ele valeu. `pular`
+        // compara com a ordem canônica da sequência: retomar em 'finalizar' significa
+        // que criar e importar já aconteceram lá.
+        const pular = (etapa: (typeof ORDEM_ETAPAS)[number]): boolean =>
+            retomarDe !== undefined &&
+            retomarDe !== 'indeterminado' &&
+            ORDEM_ETAPAS.indexOf(etapa) < ORDEM_ETAPAS.indexOf(retomarDe);
         try {
+            // ── Destino de TED/PIX (ADR-0054 I10a) — resolvido ANTES de qualquer escrita ──
+            // Item sem destino, titular divergente ou destino diferente do já enviado barra
+            // aqui, antes do `criarLote`: nada de lote nativo pela metade. Com as flags
+            // desligadas nada disto roda (paridade com o `main`).
+            const { preflight, comDestinos } = await this.prepararDestinos({
+                lote,
+                bncCod,
+                flags,
+                importar: !pular('importar'),
+                ...(apenasChaves ? { apenasChaves } : {}),
+                ...(flpCodExistente !== undefined ? { flpCodExistente } : {}),
+                anterior,
+            });
+
             if (flpCod !== undefined) {
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
@@ -452,11 +528,15 @@ export default class RemessaService {
                 // I8b — a data persistida junto da marca d'água, ANTES do POST: a partir do
                 // `criarLote` ela está no lote nativo e não muda mais.
                 await this.loteRepo.setDataDebito({ loteId: lote.id, dataDebito });
-                await this.ledger.setRequestPayload(key, {
-                    marcaFlpCods: anteriores.map((l) => l.flpCod),
-                    ccoCod: escolhida.ccoCod,
-                    dataDebito: dataDebitoErp,
-                });
+                // I10f — o destino de cada item entra na assinatura, junto da data (I8b).
+                await this.ledger.setRequestPayload(
+                    key,
+                    comDestinos({
+                        marcaFlpCods: anteriores.map((l) => l.flpCod),
+                        ccoCod: escolhida.ccoCod,
+                        dataDebito: dataDebitoErp,
+                    }),
+                );
 
                 // (1) lote nativo
                 const criado = await this.write.criarLote({
@@ -477,14 +557,6 @@ export default class RemessaService {
                 ...(escolhida.gerNum !== undefined ? { gerNum: escolhida.gerNum } : {}),
             });
 
-            // Cada passo abaixo é pulado quando o ERP já mostrou que ele valeu. `pular`
-            // compara com a ordem canônica da sequência: retomar em 'finalizar' significa
-            // que criar e importar já aconteceram lá.
-            const pular = (etapa: (typeof ORDEM_ETAPAS)[number]): boolean =>
-                retomarDe !== undefined &&
-                retomarDe !== 'indeterminado' &&
-                ORDEM_ETAPAS.indexOf(etapa) < ORDEM_ETAPAS.indexOf(retomarDe);
-
             // (2) importar: identidade VERBATIM do grid de pendentes do ERP.
             // Se algum título não for elegível, isto lança ANTES de qualquer escrita no
             // lote — e o lote nativo vazio fica registrado no ledger para ser reusado na
@@ -498,8 +570,13 @@ export default class RemessaService {
                     flpCod,
                     apenasChaves,
                     env.sispagDdaAssocEnabled,
+                    flags,
+                    preflight?.destinos,
                 );
-                await this.ledger.setRequestPayload(key, { itens: montados.length, flpCod });
+                await this.ledger.setRequestPayload(
+                    key,
+                    comDestinos({ itens: montados.length, flpCod }),
+                );
                 // Duas chamadas, não uma: `titVldReflexoDdaAssoc` é campo da SELEÇÃO (vale para
                 // a requisição inteira), e só os títulos que o ERP casou com um boleto DDA
                 // podem pedir a associação. O client já quebra cada grupo em um POST por item.
@@ -536,11 +613,14 @@ export default class RemessaService {
             // final determinável depois de uma queda — sem isso, uma retomada não saberia
             // QUAL arquivo procurar, e o ERP recicla `flpCod`, então "o primeiro com
             // conteúdo" pode ser de outro lote (foi assim que cancelei o gabCod 16).
-            await this.ledger.setRequestPayload(key, {
-                flpCod,
-                nomeArquivo: sugerido.nomeArquivo,
-                numRemessa: sugerido.numRemessa,
-            });
+            await this.ledger.setRequestPayload(
+                key,
+                comDestinos({
+                    flpCod,
+                    nomeArquivo: sugerido.nomeArquivo,
+                    numRemessa: sugerido.numRemessa,
+                }),
+            );
             await this.write.gerarRemessa({
                 filCod: lote.filCod,
                 bncCod,
@@ -910,6 +990,10 @@ export default class RemessaService {
         apenas?: ReadonlySet<string>,
         /** `false` = freio de incidente ligado (`SISPAG_DDA_ASSOC_ENABLED=false`). */
         ddaHabilitado = true,
+        /** Flags TED/PIX/manual (ADR-0054). Ausente = todas desligadas (regra do `main`). */
+        flags: FlagsDestino = { ted: false, pix: false, destinoManual: false },
+        /** Destinos já resolvidos e conferidos no pré-voo — a fonte, quando existe. */
+        preResolvidos?: ReadonlyMap<string, DestinoResolvido>,
     ): Promise<Array<{ payload: Record<string, unknown>; associarDda: boolean }>> => {
         // A chave inclui a FILIAL. O grid de pendentes cruza filiais e `docCod` NÃO é único
         // entre elas: medido em HML, o doc 285 existe na filial 2 E na 4. Com a chave só
@@ -974,18 +1058,42 @@ export default class RemessaService {
             // Boleto é pago pelo código de barras — não tem favorecido com conta corrente.
             // Exigir conta aqui rejeitaria todo boleto de fornecedor sem cadastro bancário,
             // que é justamente o caso em que o boleto existe.
+            //
+            // O destino de TED/PIX/crédito vem do `DestinoPagamentoResolver` — a MESMA regra da
+            // oferta (I10b). Com as flags desligadas ela é a regra do `main`: conta ativa no
+            // banco do lote.
             const pesCod = pendente.raw.pesCod;
-            const contas =
-                pesCod != null && !associarDda
-                    ? await this.sispag.listContasFavorecido(String(pesCod), lote.filCod)
-                    : [];
-            const noBanco = contas.filter((c) => c.banco === febraban);
-            const destino = noBanco.find((c) => c.padrao) ?? noBanco[0];
-            if (!destino && !associarDda) {
+            const destino = associarDda
+                ? undefined
+                : (preResolvidos?.get(chaveDe(item)) ??
+                  (await this.resolver.resolve(item, {
+                      flags,
+                      febrabanLote: febraban,
+                      filCod: lote.filCod,
+                      ...(pesCod != null ? { pesCod: String(pesCod) } : {}),
+                  })));
+            if (destino?.origem === DESTINO_ORIGEM.NENHUM) {
+                if (this.usaRegraNova(item.modalidade, flags)) {
+                    throw new DestinoPagamentoAusenteError({
+                        itens: [
+                            {
+                                docCod: item.docCod,
+                                titCod: item.titCod,
+                                ...(item.credor ? { credor: item.credor } : {}),
+                            },
+                        ],
+                    });
+                }
                 throw new Error(
                     `favorecido de ${item.docCod}/${item.titCod} não tem conta ativa no banco ${febraban}. Cadastre a conta ou escolha outra forma de pagamento.`,
                 );
             }
+            // Destino que NÃO é conta do cadastro vai sem `pctCodSeq` (ADR-0054 D1): a referência
+            // ao cadastro seria outra conta, não a digitada.
+            const raw =
+                destino && !this.ehContaDoCadastro(destino)
+                    ? this.semReferenciaDeConta(pendente.raw)
+                    : pendente.raw;
 
             const valor = Number(pendente.raw.titMnyValor ?? item.valor ?? 0);
             const selecao = {
@@ -997,24 +1105,16 @@ export default class RemessaService {
             itens.push({
                 associarDda,
                 payload: {
-                    ...pendente.raw,
+                    ...raw,
                     filCodLote: lote.filCod,
                     bncCod,
                     flpCod,
                     // Para o boleto DDA o ERP deriva a modalidade do banco emissor do barcode e
                     // sobrescreve o que mandarmos (medido em HML: mandamos 6, gravou 7). Mandar
                     // o palpite mesmo assim mantém o payload válido caso o ERP mude de ideia.
-                    itsVldModalidade: MODALIDADE_NATIVA[item.modalidade ?? 'CREDITO_CONTA'] ?? 1,
+                    itsVldModalidade: this.modalidadeNativa(item.modalidade, flags),
                     // Boleto não tem conta de favorecido — o destino é o próprio código de barras.
-                    ...(destino
-                        ? {
-                              pctCodSeq: destino.pctCodSeq,
-                              itsNumBanco: destino.banco,
-                              agencia: destino.agencia ?? '',
-                              pctEspNumAgencia: destino.agencia ?? '',
-                              conta: destino.conta ?? '',
-                          }
-                        : {}),
+                    ...this.camposDoDestino(destino),
                     itsEspNomeFav: pendente.raw.dpeNomPessoa ?? item.credor,
                     itsMnyValor: valor,
                     itsMnyVlrPgto: valor,
@@ -1031,6 +1131,280 @@ export default class RemessaService {
             });
         }
         return itens;
+    };
+
+    /** TED/PIX com a flag da modalidade ligada seguem a regra nova (ADR-0054). */
+    private usaRegraNova = (modalidade: Modalidade | undefined, flags: FlagsDestino): boolean =>
+        (modalidade === MODALIDADE.TED && flags.ted) ||
+        (modalidade === MODALIDADE.PIX && flags.pix);
+
+    private modalidadeNativa = (
+        modalidade: Modalidade | undefined,
+        flags: FlagsDestino,
+    ): number => {
+        if (modalidade === MODALIDADE.TED && flags.ted) return MODALIDADE_TED_NATIVA;
+        if (modalidade === MODALIDADE.PIX && flags.pix) return MODALIDADE_PIX_NATIVA;
+        return MODALIDADE_NATIVA[modalidade ?? 'CREDITO_CONTA'] ?? 1;
+    };
+
+    private ehContaDoCadastro = (d: DestinoResolvido): boolean =>
+        d.origem === DESTINO_ORIGEM.CADASTRO && d.tipo === DESTINO_CADASTRO_TIPO.CONTA;
+
+    /** A linha do grid, sem a referência a conta do cadastro (`pctCodSeq`). */
+    private semReferenciaDeConta = (raw: Record<string, unknown>): Record<string, unknown> =>
+        Object.fromEntries(Object.entries(raw).filter(([k]) => k !== 'pctCodSeq'));
+
+    /**
+     * Campos do destino no item do fin015.
+     *
+     * - Conta do cadastro: `pctCodSeq` + os dados da conta, exatamente como o `main` mandava.
+     * - Conta digitada: SEM `pctCodSeq`, com banco/agência/conta/DV. ⚠️ H3 — nunca observado:
+     *   19/19 itens históricos tinham `pctCodSeq`. Se o fin015 recusar no teste supervisionado,
+     *   PARAR e falar com o usuário (ADR-0054 D6). Os nomes seguem o `CmnPessoasCtcorr`.
+     * - Chave PIX (cadastro ou digitada): `itsVldChavePix = 1` + `itsDesChavePix`. ⚠️ H4/H5.
+     */
+    private camposDoDestino = (d: DestinoResolvido | undefined): Record<string, unknown> => {
+        if (!d || d.origem === DESTINO_ORIGEM.NENHUM) return {};
+        if (d.origem === DESTINO_ORIGEM.CADASTRO) {
+            if (d.tipo === DESTINO_CADASTRO_TIPO.CONTA) {
+                return {
+                    pctCodSeq: d.conta.pctCodSeq,
+                    itsNumBanco: d.conta.banco,
+                    agencia: d.conta.agencia ?? '',
+                    pctEspNumAgencia: d.conta.agencia ?? '',
+                    conta: d.conta.conta ?? '',
+                };
+            }
+            return { itsVldChavePix: 1, itsDesChavePix: d.chave.chave };
+        }
+        const m = d.destino;
+        if (m.tipo === DESTINO_MANUAL_TIPO.CONTA) {
+            return {
+                itsNumBanco: Number(m.bancoCod),
+                agencia: m.agencia,
+                pctEspNumAgencia: m.agencia,
+                ...(m.agenciaDv !== undefined ? { pctEspDvAgencia: m.agenciaDv } : {}),
+                conta: m.conta,
+                pctEspNumContaBanc: m.conta,
+                pctEspDvconta: m.contaDv,
+            };
+        }
+        return { itsVldChavePix: 1, itsDesChavePix: m.chavePix };
+    };
+
+    /** A assinatura que a tentativa anterior gravou no ledger, se houver e for legível. */
+    private destinosDoLedger = (
+        anterior: RemessaExecucaoRow | null | undefined,
+    ): AssinaturaDestino[] | undefined => {
+        const bruto = (anterior?.requestPayload as { destinos?: unknown } | undefined)?.destinos;
+        if (bruto === undefined) return undefined;
+        const parsed = z.array(assinaturaDestinoSchema).safeParse(bruto);
+        return parsed.success ? parsed.data : undefined;
+    };
+
+    private assinar = (chave: string, d: DestinoResolvido, item: ItemLote): AssinaturaDestino => {
+        if (d.origem === DESTINO_ORIGEM.MANUAL) {
+            return {
+                item: chave,
+                origem: DESTINO_ORIGEM.MANUAL,
+                ...(item.destinoManualAuditId !== undefined
+                    ? { auditId: item.destinoManualAuditId }
+                    : {}),
+            };
+        }
+        if (d.origem === DESTINO_ORIGEM.CADASTRO && d.tipo === DESTINO_CADASTRO_TIPO.CONTA) {
+            return { item: chave, origem: DESTINO_ORIGEM.CADASTRO, pctCodSeq: d.conta.pctCodSeq };
+        }
+        if (d.origem === DESTINO_ORIGEM.CADASTRO) {
+            return { item: chave, origem: DESTINO_ORIGEM.CADASTRO, cixCod: d.chave.cixCod };
+        }
+        return { item: chave, origem: DESTINO_ORIGEM.CADASTRO };
+    };
+
+    /**
+     * Retomada (I10f): o destino que vale é o que a tentativa anterior registrou, não o que o
+     * cadastro diz hoje. Conta/chave do cadastro é fixada pela referência (`pctCodSeq`/`cixCod`);
+     * destino digitado, pela linha de trilha. Qualquer divergência falha FECHADA — reenviar um
+     * destino diferente para um lote nativo que já existe é o que o congelamento proíbe.
+     *
+     * A conta fixada é relida do cadastro só para montar os campos do item (o ledger não guarda
+     * conta, I10h); o que decide QUAL conta é a referência gravada, nunca a default de hoje.
+     */
+    private aplicarFixado = async (
+        atual: DestinoResolvido,
+        fixado: AssinaturaDestino,
+        item: ItemLote,
+        contexto: ContextoDestino,
+        nativeFlpCod: number | undefined,
+    ): Promise<DestinoResolvido> => {
+        const diverge = (): DestinoCongeladoError =>
+            new DestinoCongeladoError({
+                motivo: MOTIVO_DESTINO_CONGELADO.DIVERGE_DO_ENVIADO,
+                titulo: `${item.docCod}/${item.titCod}`,
+                ...(nativeFlpCod !== undefined ? { nativeFlpCod } : {}),
+            });
+        if (fixado.origem === DESTINO_ORIGEM.MANUAL) {
+            if (atual.origem !== DESTINO_ORIGEM.MANUAL) throw diverge();
+            if (item.destinoManualAuditId !== fixado.auditId) throw diverge();
+            return atual;
+        }
+        if (atual.origem === DESTINO_ORIGEM.MANUAL) throw diverge();
+        const { pesCod, filCod } = contexto;
+        if (!pesCod) throw diverge();
+        if (fixado.pctCodSeq !== undefined) {
+            const contas = await this.sispag.listContasFavorecido(pesCod, filCod);
+            const conta = contas.find((c) => c.pctCodSeq === fixado.pctCodSeq);
+            if (!conta) throw diverge();
+            return { origem: DESTINO_ORIGEM.CADASTRO, tipo: DESTINO_CADASTRO_TIPO.CONTA, conta };
+        }
+        if (fixado.cixCod !== undefined) {
+            const chaves = await this.sispag.listChavesPixFavorecido(pesCod, filCod);
+            const chave = chaves.find((c) => c.cixCod === fixado.cixCod);
+            if (!chave) throw diverge();
+            return {
+                origem: DESTINO_ORIGEM.CADASTRO,
+                tipo: DESTINO_CADASTRO_TIPO.CHAVE_PIX,
+                chave,
+            };
+        }
+        throw diverge();
+    };
+
+    /**
+     * Pré-voo + a função que carimba a assinatura dos destinos em cada gravação do payload do
+     * ledger (ela é SUBSTITUÍDA a cada passo, então a assinatura tem de ir em todas). Com as
+     * flags TED/PIX desligadas não lê nada e devolve o payload intacto (paridade com o `main`).
+     */
+    private prepararDestinos = async (o: {
+        lote: LotePagamento;
+        bncCod: number;
+        flags: FlagsDestino;
+        importar: boolean;
+        apenasChaves?: ReadonlySet<string>;
+        flpCodExistente?: number;
+        anterior: RemessaExecucaoRow | null | undefined;
+    }): Promise<{
+        preflight?: { destinos: Map<string, DestinoResolvido>; assinatura: AssinaturaDestino[] };
+        comDestinos: <T extends object>(payload: T) => T;
+    }> => {
+        if (!o.flags.ted && !o.flags.pix) return { comDestinos: (payload) => payload };
+        const anteriores =
+            o.flpCodExistente !== undefined ? this.destinosDoLedger(o.anterior) : undefined;
+        const apenas = o.apenasChaves;
+        const preflight = o.importar
+            ? await this.resolverDestinosAntesDaEscrita({
+                  lote: o.lote,
+                  febraban: FEBRABAN_POR_BNCCOD[o.bncCod] ?? 341,
+                  flags: o.flags,
+                  itens: apenas
+                      ? o.lote.itens.filter((i) =>
+                            apenas.has(`${i.filCod}:${i.docCod}:${i.titCod}`),
+                        )
+                      : o.lote.itens,
+                  ...(anteriores ? { fixados: anteriores } : {}),
+                  ...(o.flpCodExistente !== undefined ? { nativeFlpCod: o.flpCodExistente } : {}),
+              })
+            : undefined;
+        const assinatura = preflight?.assinatura ?? anteriores;
+        return {
+            ...(preflight ? { preflight } : {}),
+            comDestinos: (payload) => (assinatura ? { ...payload, destinos: assinatura } : payload),
+        };
+    };
+
+    /**
+     * Um item do pré-voo: favorecido lido ao vivo, destino resolvido, fixado à tentativa anterior
+     * (se houver) e, se digitado, conferido na titularidade.
+     */
+    private destinoConferidoDoItem = async (
+        item: ItemLote,
+        o: {
+            contexto: Omit<ContextoDestino, 'pesCod'>;
+            fixado?: AssinaturaDestino;
+            nativeFlpCod?: number;
+        },
+    ): Promise<DestinoResolvido> => {
+        const lido = await this.sispag.getTituloAPagar(item.filCod, item.docCod, item.titCod);
+        const contexto: ContextoDestino = {
+            ...o.contexto,
+            ...(lido?.pesCod ? { pesCod: lido.pesCod } : {}),
+        };
+        const atual = await this.resolver.resolve(item, contexto);
+        const resolvido = o.fixado
+            ? await this.aplicarFixado(atual, o.fixado, item, contexto, o.nativeFlpCod)
+            : atual;
+        if (resolvido.origem === DESTINO_ORIGEM.MANUAL) {
+            const documento = contexto.pesCod
+                ? await this.sispag.getDocumentoFavorecido(contexto.pesCod, item.filCod)
+                : undefined;
+            this.destinoValidator.conferirTitularidade(
+                resolvido.destino,
+                documento,
+                `${item.docCod}/${item.titCod}`,
+            );
+        }
+        return resolvido;
+    };
+
+    /**
+     * Pré-voo do destino de TED/PIX (ADR-0054 I10a, I10f, I10i). Roda ANTES do `criarLote` e
+     * não escreve nada:
+     *
+     *   1. o favorecido de cada item TED/PIX sai da leitura AO VIVO do título (`fin064`);
+     *   2. o destino sai do `DestinoPagamentoResolver` (a mesma regra da oferta);
+     *   3. numa retomada, o destino é fixado ao que a tentativa anterior registrou;
+     *   4. destino digitado passa pela titularidade, com o CPF/CNPJ do favorecido lido ao vivo
+     *      (`cmn025`). Documento indisponível = falha fechada.
+     *
+     * Todo item sem destino entra numa ÚNICA `DestinoPagamentoAusenteError`, para a analista ver
+     * a lista inteira de uma vez.
+     */
+    private resolverDestinosAntesDaEscrita = async (p: {
+        lote: LotePagamento;
+        febraban: number;
+        flags: FlagsDestino;
+        itens: ItemLote[];
+        fixados?: AssinaturaDestino[];
+        nativeFlpCod?: number;
+    }): Promise<{ destinos: Map<string, DestinoResolvido>; assinatura: AssinaturaDestino[] }> => {
+        const destinos = new Map<string, DestinoResolvido>();
+        const assinatura: AssinaturaDestino[] = [];
+        const ausentes: Array<{
+            docCod: string;
+            titCod: string;
+            credor?: string;
+            modalidade?: string;
+        }> = [];
+        const fixadoPor = new Map((p.fixados ?? []).map((f) => [f.item, f]));
+        const cache = this.resolver.novoCache();
+
+        for (const item of p.itens) {
+            if (!this.usaRegraNova(item.modalidade, p.flags)) continue;
+            const chave = `${item.filCod}:${item.docCod}:${item.titCod}`;
+            const resolvido = await this.destinoConferidoDoItem(item, {
+                contexto: {
+                    flags: p.flags,
+                    febrabanLote: p.febraban,
+                    filCod: p.lote.filCod,
+                    cache,
+                },
+                fixado: fixadoPor.get(chave),
+                nativeFlpCod: p.nativeFlpCod,
+            });
+            if (resolvido.origem === DESTINO_ORIGEM.NENHUM) {
+                ausentes.push({
+                    docCod: item.docCod,
+                    titCod: item.titCod,
+                    ...(item.credor ? { credor: item.credor } : {}),
+                    ...(item.modalidade ? { modalidade: item.modalidade } : {}),
+                });
+                continue;
+            }
+            destinos.set(chave, resolvido);
+            assinatura.push(this.assinar(chave, resolvido, item));
+        }
+        if (ausentes.length > 0) throw new DestinoPagamentoAusenteError({ itens: ausentes });
+        return { destinos, assinatura };
     };
 
     /**
