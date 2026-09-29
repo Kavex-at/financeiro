@@ -7,7 +7,7 @@
  */
 
 /** Frente de negócio à qual o nó pertence. */
-export type Frente = 'permutas' | 'sispag' | 'ged' | 'plataforma'
+export type Frente = 'permutas' | 'sispag' | 'recebimentos' | 'plataforma'
 
 /** Camada arquitetural — usada para o layout em colunas da vista técnica. */
 export type Camada =
@@ -24,8 +24,8 @@ export type Camada =
     | 'humano'
 
 /**
- * Maturidade real do nó — o eixo mais importante do diagrama, porque as três
- * frentes estão em estágios incomparáveis e renderizá-las com o mesmo peso
+ * Maturidade real do nó — o eixo mais importante do diagrama, porque as
+ * frentes estão em estágios diferentes e renderizá-las com o mesmo peso
  * visual seria enganoso.
  */
 export type Maturidade =
@@ -112,7 +112,7 @@ export const MATURIDADE_LABEL: Record<Maturidade, string> = {
 export const FRENTE_LABEL: Record<Frente, string> = {
     permutas: 'Frente I — Permutas',
     sispag: 'Frente II — SISPAG',
-    ged: 'Frente III — Popula GED',
+    recebimentos: 'Frente IV — Conciliação de Recebimentos',
     plataforma: 'Plataforma',
 }
 

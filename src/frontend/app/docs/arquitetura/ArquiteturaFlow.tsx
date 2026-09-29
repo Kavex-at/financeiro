@@ -139,7 +139,7 @@ function Diagrama() {
                         setSelecionado(null)
                     }}
                     options={[
-                        { value: 'macro', label: 'Negócio', hint: 'As três frentes, ponta a ponta' },
+                        { value: 'macro', label: 'Negócio', hint: 'As frentes do contrato, ponta a ponta' },
                         { value: 'tecnica', label: 'Técnica', hint: 'Camadas, clientes e infraestrutura' },
                     ]}
                 />

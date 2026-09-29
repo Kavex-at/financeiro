@@ -28,16 +28,18 @@ export default function ArquiteturaPage() {
                 <p>
                     A plataforma automatiza três frentes do financeiro, todas girando em torno do ERP
                     Conexos: <strong className="text-foreground">Permutas</strong>, que reconcilia
-                    adiantamentos contra invoices na baixa;{' '}
-                    <strong className="text-foreground">SISPAG</strong>, que monta e executa os lotes de
-                    pagamento; e <strong className="text-foreground">Popula GED</strong>, que destravaria
-                    as notas de crédito e débito presas por falta de documento anexado.
+                    adiantamentos contra invoices e grava a baixa;{' '}
+                    <strong className="text-foreground">SISPAG</strong>, que monta os lotes de pagamento
+                    e gera a remessa bancária; e{' '}
+                    <strong className="text-foreground">Conciliação de Recebimentos</strong>, que casa os
+                    créditos do extrato com os processos, baixa o recebimento e emite a Nota de Débito
+                    Eletrônica.
                 </p>
                 <p>
-                    As três estão em estágios muito diferentes, e o diagrama mostra isso: Permutas roda em
-                    produção, SISPAG tem tudo construído menos o transporte do arquivo até o banco, e a
-                    frente de GED ainda é só especificação comercial. O contorno tracejado marca o que não
-                    existe.
+                    As três escrevem no ERP em produção, sempre com um registro gravado antes da chamada
+                    e com uma pessoa decidindo o passo que move dinheiro. O que falta está marcado com
+                    contorno tracejado: o transporte da remessa até o banco, que ainda é manual; o
+                    casamento automático dos recebimentos; e o alerta que saia da própria plataforma.
                 </p>
             </section>
 
