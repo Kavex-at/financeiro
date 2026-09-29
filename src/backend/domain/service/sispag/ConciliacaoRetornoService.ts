@@ -2,16 +2,14 @@ import { inject, injectable } from 'tsyringe';
 import ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetornoDetalhe } from '../../interface/sispag/Fin052Retorno.js';
-import { LOTE_STATUS } from '../../interface/sispag/SispagInterface.js';
+import type { EventoRetornoItem } from '../../interface/sispag/SincronizacaoLote.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
-import PostgreeDatabaseClient, {
-    type TransactionClient,
-} from '../../client/database/PostgreeDatabaseClient.js';
 import ConciliacaoEmDuvidaError from '../../errors/ConciliacaoEmDuvidaError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import LogService from '../LogService.js';
+import SincronizacaoLoteService from './SincronizacaoLoteService.js';
 
 export interface ConciliarInput {
     filCod: number;
@@ -61,9 +59,10 @@ export interface ConciliarResult {
     lotesAfetados: string[];
     itens: ItemConciliado[];
     /**
-     * `true` quando algum código de evento não pôde ser lido. A conciliação é PARCIAL:
-     * pode haver rejeição ou pagamento que não apareceu. Nenhum lote fecha em BAIXADO
-     * nessa condição.
+     * `true` quando algum código de evento não pôde ser lido. A conciliação é PARCIAL: pode
+     * haver rejeição que não apareceu. Desde a ADR-0055 isso não impede `BAIXADO` de título
+     * PAGO no fin064 (I11b) — a prova é o título —, mas o ledger não fecha (`fail`) para que
+     * uma segunda passada releia o arquivo.
      */
     varreduraIncompleta: boolean;
     /** Códigos que falharam, com o motivo — para o operador saber o que refazer. */
@@ -98,7 +97,7 @@ export default class ConciliacaoRetornoService {
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
         @inject(ConciliacaoExecucaoRepository)
         private readonly ledger: ConciliacaoExecucaoRepository,
-        @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
+        @inject(SincronizacaoLoteService) private readonly sincronizacao: SincronizacaoLoteService,
     ) {}
 
     public conciliar = async (input: ConciliarInput): Promise<ConciliarResult> => {
@@ -251,8 +250,8 @@ export default class ConciliacaoRetornoService {
         // que não está no arquivo devolve `rows: []`, sem exceção. O `catch` anterior dizia
         // "código não presente neste arquivo — segue" e engolia timeout, 5xx e 401 junto —
         // uma varredura pela metade saía como conciliação bem-sucedida. O caso caro é a
-        // linha de REJEIÇÃO perdida: sem ela, `transicionarLote` não vê rejeição nenhuma e
-        // marca o lote como BAIXADO. Dinheiro que o banco recusou, reportado como pago.
+        // linha de REJEIÇÃO perdida. Desde a ADR-0055 quem fecha o lote é o título (fin064),
+        // não a ausência de rejeição; ainda assim a falha fica registrada e o ledger não fecha.
         const eventosNaoLidos: Array<{ evento: string; motivo: string }> = [];
         // Em série isso custava ~92 s p50 no Bradesco (153 códigos × runWithRetry) — acima do
         // timeout do proxy do Render. O pool é o mesmo já usado no painel; o limite é baixo
@@ -293,76 +292,50 @@ export default class ConciliacaoRetornoService {
         // `fbeVldTpret = 2` marca rejeição; `1` é pagamento efetuado.
         const rejeicaoPorCodigo = new Map(eventos.map((e) => [e.cod, e.tipoRetorno === 2]));
 
-        // ── 3) casar cada linha com o lote local e gravar ───────────────────
-        // Um arquivo de retorno = UMA transação. Sem isto, uma queda no meio do loop deixava
-        // parte dos itens com baixa gravada e o lote ainda em REMESSA_GERADA: um estado que
-        // nenhum código sabe ler, e que a próxima conciliação não corrige sozinha.
+        // ── 3) casar cada linha com o lote local ───────────────────────────
+        // A chave nativa é composta, e a FILIAL é a da LINHA, não a do arquivo: um mesmo `.RET`
+        // mistura filiais (gar 9 do PG230901.REM: fil 1/flp 8 e fil 2/flp 24 — ADR-0055).
         const itens: ItemConciliado[] = [];
-        const lotesAfetados = new Set<string>();
-        await this.db.withTransaction(async (tx) => {
-            for (const l of linhas) {
-                const rejeitado = rejeicaoPorCodigo.get(l.eventoCod ?? '') ?? false;
-                const base: ItemConciliado = {
-                    ...(l.flpCod !== undefined ? { flpCod: l.flpCod } : {}),
-                    ...(l.itsCodSeq !== undefined ? { itsCodSeq: l.itsCodSeq } : {}),
-                    ...(l.docCod !== undefined ? { docCod: l.docCod } : {}),
-                    ...(l.titCod !== undefined ? { titCod: l.titCod } : {}),
-                    ...(l.eventoCod !== undefined ? { evento: l.eventoCod } : {}),
-                    ...(l.eventoDescricao !== undefined ? { descricao: l.eventoDescricao } : {}),
-                    rejeitado,
-                    ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
-                    ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
-                    ...(l.gerNum !== undefined ? { contaFinanceira: l.gerNum } : {}),
-                    ...(l.valorPago !== undefined ? { valorPago: l.valorPago } : {}),
-                    reconhecido: false,
-                };
-
-                if (l.flpCod === undefined || l.docCod === undefined) {
-                    itens.push(base);
-                    continue;
-                }
-                const loteId = await this.loteRepo.findByChaveNativa({
-                    nativeFilCod: input.filCod,
-                    nativeBncCod: input.bncCod,
-                    nativeFlpCod: l.flpCod,
-                });
-                if (!loteId) {
-                    // Retorno de um lote montado direto no ERP, fora da nossa aplicação. Não é
-                    // erro — é informação: mostramos, mas não temos onde gravar.
-                    itens.push(base);
-                    continue;
-                }
-
-                if (!dryRun) {
-                    await this.loteRepo.registrarConciliacaoItem(
-                        {
-                            loteId,
-                            filCod: l.filCod,
-                            docCod: l.docCod,
-                            titCod: l.titCod ?? '1',
-                            evento: l.eventoCod ?? '',
-                            ...(l.eventoDescricao !== undefined
-                                ? { descricao: l.eventoDescricao }
-                                : {}),
-                            rejeitado,
-                            ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
-                            ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
-                        },
-                        tx,
-                    );
-                }
-                lotesAfetados.add(loteId);
-                itens.push({ ...base, loteId, reconhecido: true });
+        const eventosPorLote = new Map<string, Map<string, EventoRetornoItem[]>>();
+        for (const l of linhas) {
+            const rejeitado = rejeicaoPorCodigo.get(l.eventoCod ?? '') ?? false;
+            const base = this.itemConciliado(l, rejeitado);
+            if (l.flpCod === undefined || l.docCod === undefined) {
+                itens.push(base);
+                continue;
             }
-
-            // ── 4) transicionar os lotes (MESMA transação do passo 3) ───────────
-            // Varredura incompleta NÃO fecha lote: o teto vira RETORNADO (exige olho humano).
-            if (!dryRun) {
-                for (const loteId of lotesAfetados) {
-                    await this.transicionarLote(loteId, varreduraIncompleta, tx);
-                }
+            const loteId = await this.loteRepo.findByChaveNativa({
+                nativeFilCod: l.filCod,
+                nativeBncCod: l.bncCod,
+                nativeFlpCod: l.flpCod,
+            });
+            if (!loteId) {
+                // Retorno de um lote montado direto no ERP, fora da nossa aplicação. Não é
+                // erro — é informação: mostramos, mas não temos onde gravar.
+                itens.push(base);
+                continue;
             }
-        });
+            const doLote = eventosPorLote.get(loteId) ?? new Map<string, EventoRetornoItem[]>();
+            const chave = `${l.docCod}:${l.titCod ?? '1'}`;
+            doLote.set(chave, [...(doLote.get(chave) ?? []), this.eventoDaLinha(l, rejeitado)]);
+            eventosPorLote.set(loteId, doLote);
+            itens.push({ ...base, loteId, reconhecido: true });
+        }
+
+        // ── 4) fechar os lotes pelo MESMO fechamento de L11 (I11) ───────────
+        // Todas as linhas do item entram, e a precedência `REJEITADO > 00 > BD` decide — não a
+        // última lida. A prova de pagamento é o título (fin064), então uma varredura incompleta
+        // não impede `BAIXADO` de título pago (I11b), e o que não foi lido não vira rejeição
+        // (I11c). Itens + transição vão numa transação por lote, sob optimistic lock.
+        //
+        // Gravar o que se OBSERVOU não é escrever no ERP (I11g): os kill-switches de escrita não
+        // bloqueiam este passo. Só a simulação explícita (`dryRunOverride`) deixa de gravar.
+        const lotesAfetados = new Set(eventosPorLote.keys());
+        if (input.dryRunOverride !== true) {
+            for (const [loteId, eventos] of eventosPorLote) {
+                await this.sincronizacao.aplicarEventosRetorno(loteId, eventos);
+            }
+        }
 
         const pagos = itens.filter((i) => !i.rejeitado && i.reconhecido).length;
         const rejeitados = itens.filter((i) => i.rejeitado).length;
@@ -416,45 +389,29 @@ export default class ConciliacaoRetornoService {
         };
     };
 
-    /**
-     * BAIXADO quando todo item não-rejeitado tem baixa (`bxa_cod_seq`); senão RETORNADO.
-     * Um lote com rejeição fica em RETORNADO de propósito: exige tratamento humano
-     * (sanear cadastro e reenviar), e não é uma conciliação concluída.
-     */
-    private transicionarLote = async (
-        loteId: string,
-        varreduraIncompleta = false,
-        tx?: TransactionClient,
-    ): Promise<void> => {
-        const lote = await this.loteRepo.getLoteComItens(loteId, tx);
-        if (!lote) return;
-        const conciliaveis = lote.itens.filter((i) => !i.rejeitado);
-        const todosBaixados =
-            conciliaveis.length > 0 && conciliaveis.every((i) => i.bxaCodSeq !== undefined);
-        const houveRejeicao = lote.itens.some((i) => i.rejeitado);
-        // Se algum código não pôde ser lido, "não vi rejeição" não é "não houve rejeição".
-        const destino =
-            todosBaixados && !houveRejeicao && !varreduraIncompleta
-                ? LOTE_STATUS.BAIXADO
-                : LOTE_STATUS.RETORNADO;
+    /** A linha do detalhe como ela sai na resposta (inclusive a não reconhecida). */
+    private itemConciliado = (l: ArquivoRetornoDetalhe, rejeitado: boolean): ItemConciliado => ({
+        ...(l.flpCod !== undefined ? { flpCod: l.flpCod } : {}),
+        ...(l.itsCodSeq !== undefined ? { itsCodSeq: l.itsCodSeq } : {}),
+        ...(l.docCod !== undefined ? { docCod: l.docCod } : {}),
+        ...(l.titCod !== undefined ? { titCod: l.titCod } : {}),
+        ...(l.eventoCod !== undefined ? { evento: l.eventoCod } : {}),
+        ...(l.eventoDescricao !== undefined ? { descricao: l.eventoDescricao } : {}),
+        rejeitado,
+        ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
+        ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
+        ...(l.gerNum !== undefined ? { contaFinanceira: l.gerNum } : {}),
+        ...(l.valorPago !== undefined ? { valorPago: l.valorPago } : {}),
+        reconhecido: false,
+    });
 
-        const afetadas = await this.loteRepo.transicionarStatus(
-            {
-                id: lote.id,
-                de: [LOTE_STATUS.REMESSA_GERADA, LOTE_STATUS.RETORNADO],
-                para: destino,
-                versaoEsperada: lote.versao,
-            },
-            tx,
-        );
-        if (afetadas === 0) {
-            await this.logService.warn({
-                type: LOG_TYPE.BUSINESS_WARN,
-                message: 'conciliação não transicionou o lote (estado ou versão inesperados)',
-                data: { loteId, statusAtual: lote.status, destino },
-            });
-        }
-    };
+    private eventoDaLinha = (l: ArquivoRetornoDetalhe, rejeitado: boolean): EventoRetornoItem => ({
+        eventoCod: l.eventoCod ?? '',
+        ...(l.eventoDescricao !== undefined ? { descricao: l.eventoDescricao } : {}),
+        rejeitado,
+        ...(l.borCod !== undefined ? { borCod: l.borCod } : {}),
+        ...(l.bxaCodSeq !== undefined ? { bxaCodSeq: l.bxaCodSeq } : {}),
+    });
 
     private chave = (
         i: ConciliarInput,
