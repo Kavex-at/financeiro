@@ -134,6 +134,13 @@ export default class SincronizacaoLoteService {
     /** Passada do cron: todos os lotes sincronizáveis, um de cada vez. */
     public sincronizarTodos = async (agora: Date = new Date()): Promise<ResumoSincronizacao> => {
         const ids = await this.loteRepo.listLotesSincronizaveis(JANELA_ESTORNO_DIAS);
+        if (ids.length === 0) {
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'nenhum lote elegível para sincronização nesta passada',
+                data: { janelaEstornoDias: JANELA_ESTORNO_DIAS },
+            });
+        }
         const lotes: LotePagamento[] = [];
         for (const id of ids) {
             const lote = await this.loteRepo.getLoteComItens(id);
@@ -210,6 +217,11 @@ export default class SincronizacaoLoteService {
         };
 
         if (lote.itens.length > 0 && decisao.itens.every((i) => !i.tituloLido)) {
+            await this.logService.error({
+                type: LOG_TYPE.FLOW_ERROR,
+                message: 'leitura do lote falhou — nenhum título pôde ser lido',
+                data: { loteId: lote.id, filCod: lote.filCod, itens: lote.itens.length },
+            });
             return {
                 ...base,
                 resultado: RESULTADO_SINCRONIZACAO.FALHA_LEITURA,
