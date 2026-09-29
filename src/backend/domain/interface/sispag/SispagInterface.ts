@@ -323,8 +323,14 @@ export interface ItemLote {
      * devolve: as rotas projetam para `destinoManualResumo` (ver `LotePagamentoApiView`).
      */
     destinoManual?: DestinoManual;
-    /** Máscara do destino manual — o único formato que sai para a tela. */
-    destinoManualResumo?: DestinoManualResumo;
+    /** Quem gravou o destino manual vigente e quando (da trilha só-inclusão, I10g). */
+    destinoManualInformadoPor?: string;
+    destinoManualInformadoEm?: string;
+    /**
+     * Id da linha de trilha que gravou o destino vigente. Identifica o valor SEM revelá-lo:
+     * é o que entra na assinatura do ledger da remessa (I10f), no lugar da conta/chave.
+     */
+    destinoManualAuditId?: string;
     // ── resultado da conciliação do retorno (fin052/arquivosRetornoDetalhe) ──
     /** Código do evento bancário. Itaú: `00` = PAGAMENTO EFETUADO. */
     retornoEvento?: string;

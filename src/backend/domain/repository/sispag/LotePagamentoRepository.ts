@@ -3,7 +3,9 @@ import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient, {
     type TransactionClient,
 } from '../../client/database/PostgreeDatabaseClient.js';
+import { destinoManualSchema } from '../../interface/sispag/DestinoManualSchema.js';
 import {
+    type DestinoManual,
     type ItemLote,
     type LotePagamento,
     type LotePagamentoStatus,
@@ -11,6 +13,7 @@ import {
     type ListarLotesFiltro,
     type Modalidade,
 } from '../../interface/sispag/SispagInterface.js';
+import Logger from '../../libs/logger/Logger.js';
 
 /** Superfície de query comum ao pool e ao cliente transacional (mesmos 4 métodos). */
 type QueryRunner = Pick<PostgreeDatabaseClient, 'selectMany' | 'selectFirst' | 'insert' | 'update'>;
@@ -59,6 +62,11 @@ interface ItemRow {
     bor_cod: number | null;
     bxa_cod_seq: number | null;
     conciliado_em: Date | null;
+    // ── 0066: destino manual (ADR-0054) + a linha de trilha vigente ──
+    destino_manual?: unknown;
+    destino_audit_id?: string | null;
+    destino_informado_por?: string | null;
+    destino_informado_em?: Date | null;
 }
 
 /**
@@ -94,7 +102,42 @@ export default class LotePagamentoRepository {
         ...(r.bor_cod != null ? { borCod: Number(r.bor_cod) } : {}),
         ...(r.bxa_cod_seq != null ? { bxaCodSeq: Number(r.bxa_cod_seq) } : {}),
         ...(r.conciliado_em != null ? { conciliadoEm: String(r.conciliado_em) } : {}),
+        ...this.mapDestinoManual(r),
     });
+
+    /**
+     * Destino manual do item, validado por Zod na leitura. JSON que não passa vira "sem destino"
+     * — o item cai na regra do cadastro, e o envio/finalizar barram se nada resolver (fail
+     * closed). O aviso diz QUAL item, nunca o conteúdo (I10h).
+     */
+    private mapDestinoManual = (
+        r: ItemRow,
+    ): Pick<
+        ItemLote,
+        | 'destinoManual'
+        | 'destinoManualAuditId'
+        | 'destinoManualInformadoPor'
+        | 'destinoManualInformadoEm'
+    > => {
+        if (r.destino_manual == null) return {};
+        const parsed = destinoManualSchema.safeParse(r.destino_manual);
+        if (!parsed.success) {
+            Logger.warn(
+                `[SISPAG] destino_manual inválido no item ${r.fil_cod}:${r.doc_cod}:${r.tit_cod} do lote ${r.lote_id} — ignorado`,
+            );
+            return {};
+        }
+        return {
+            destinoManual: parsed.data,
+            ...(r.destino_audit_id != null ? { destinoManualAuditId: r.destino_audit_id } : {}),
+            ...(r.destino_informado_por != null
+                ? { destinoManualInformadoPor: r.destino_informado_por }
+                : {}),
+            ...(r.destino_informado_em != null
+                ? { destinoManualInformadoEm: r.destino_informado_em.toISOString() }
+                : {}),
+        };
+    };
 
     private mapLote = (h: LoteHeaderRow, itens: ItemLote[]): LotePagamento => ({
         id: h.id,
@@ -253,11 +296,26 @@ export default class LotePagamentoRepository {
             { id },
         );
         if (!header) return null;
+        // A trilha vigente (a gravação mais recente) só entra quando HÁ destino: é ela que diz
+        // quem informou, e o id dela identifica o valor no ledger sem revelá-lo (I10f/I10h).
         const itens = await this.db(tx).selectMany(
-            `SELECT lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
-                    modalidade, incluido_por, incluido_em, native_its_cod_seq,
-                    retorno_evento, retorno_descricao, rejeitado, bor_cod, bxa_cod_seq, conciliado_em
-             FROM lote_pagamento_item WHERE lote_id = $id ORDER BY incluido_em ASC, id ASC`,
+            `SELECT i.lote_id, i.fil_cod, i.doc_cod, i.tit_cod, i.credor, i.valor, i.vencimento,
+                    i.modalidade, i.incluido_por, i.incluido_em, i.native_its_cod_seq,
+                    i.retorno_evento, i.retorno_descricao, i.rejeitado, i.bor_cod, i.bxa_cod_seq,
+                    i.conciliado_em, i.destino_manual,
+                    a.id AS destino_audit_id, a.alterado_por AS destino_informado_por,
+                    a.alterado_em AS destino_informado_em
+             FROM lote_pagamento_item i
+             LEFT JOIN LATERAL (
+                 SELECT d.id, d.alterado_por, d.alterado_em
+                 FROM lote_pagamento_item_destino_audit d
+                 WHERE i.destino_manual IS NOT NULL
+                   AND d.lote_id = i.lote_id AND d.fil_cod = i.fil_cod
+                   AND d.doc_cod = i.doc_cod AND d.tit_cod = i.tit_cod
+                 ORDER BY d.alterado_em DESC
+                 LIMIT 1
+             ) a ON TRUE
+             WHERE i.lote_id = $id ORDER BY i.incluido_em ASC, i.id ASC`,
             { id },
         );
         return this.mapLote(header, (itens as ItemRow[]).map(this.mapItem));
@@ -445,6 +503,76 @@ export default class LotePagamentoRepository {
             },
         );
     };
+
+    /**
+     * Grava (ou limpa, com `destino` ausente) o destino manual de UM item — ADR-0054 I10e/I10g.
+     *
+     * UMA transação, nesta ordem:
+     *   1. trava item e lote (`FOR UPDATE`) SÓ se o lote está em RASCUNHO e na `versaoEsperada`
+     *      (I6). Nada travado = conflito de versão, estado inválido ou item inexistente: zero
+     *      escrita, nenhuma trilha, e o serviço distingue relendo;
+     *   2. grava o destino no item;
+     *   3. bumpa a versão do lote (a edição é uma mudança do agregado, como a modalidade);
+     *   4. insere a linha de trilha com antes/depois COMPLETOS (a tabela é só-inclusão, 0066).
+     *
+     * SQL só com parâmetros nomeados: o destino viaja como `$destino::jsonb`, nunca no texto.
+     */
+    public setDestinoManualItem = async (params: {
+        loteId: string;
+        filCod: number;
+        docCod: string;
+        titCod: string;
+        versaoEsperada: number;
+        destino?: DestinoManual;
+        usuario: string;
+    }): Promise<{ atualizado: boolean; auditId?: string }> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const chave = {
+                loteId: params.loteId,
+                filCod: params.filCod,
+                docCod: params.docCod,
+                titCod: params.titCod,
+            };
+            const atual = await tx.selectFirst<{ destino_manual: unknown }>(
+                `SELECT i.destino_manual
+                 FROM lote_pagamento_item i
+                 JOIN lote_pagamento l ON l.id = i.lote_id
+                 WHERE l.id = $loteId AND l.status = 'RASCUNHO' AND l.versao = $versaoEsperada
+                   AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod
+                 FOR UPDATE OF i, l`,
+                { ...chave, versaoEsperada: params.versaoEsperada },
+            );
+            if (!atual) return { atualizado: false };
+
+            const depois = params.destino !== undefined ? JSON.stringify(params.destino) : null;
+            await tx.update(
+                `UPDATE lote_pagamento_item SET destino_manual = $destino::jsonb
+                 WHERE lote_id = $loteId AND fil_cod = $filCod
+                   AND doc_cod = $docCod AND tit_cod = $titCod`,
+                { ...chave, destino: depois },
+            );
+            await tx.update(
+                `UPDATE lote_pagamento SET versao = versao + 1, atualizado_em = now()
+                 WHERE id = $loteId`,
+                { loteId: params.loteId },
+            );
+            const auditId = randomUUID();
+            await tx.insert(
+                `INSERT INTO lote_pagamento_item_destino_audit
+                    (id, lote_id, fil_cod, doc_cod, tit_cod, alterado_por, antes, depois)
+                 VALUES ($auditId, $loteId, $filCod, $docCod, $titCod, $alteradoPor,
+                         $antes::jsonb, $depois::jsonb)`,
+                {
+                    auditId,
+                    ...chave,
+                    alteradoPor: params.usuario,
+                    antes:
+                        atual.destino_manual != null ? JSON.stringify(atual.destino_manual) : null,
+                    depois,
+                },
+            );
+            return { atualizado: true, auditId };
+        });
 
     /** Marca o lote como "tocado" (bump de versão) — usado em incluir/remover item. */
     public tocarLote = async (loteId: string, tx?: TransactionClient): Promise<void> => {

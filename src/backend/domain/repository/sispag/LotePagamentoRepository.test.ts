@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import Logger from '../../libs/logger/Logger.js';
 import LotePagamentoRepository from './LotePagamentoRepository.js';
 
 interface DbMock {
@@ -9,12 +10,18 @@ interface DbMock {
     update: jest.Mock;
 }
 
-const buildDb = (): DbMock => ({
-    selectMany: jest.fn().mockResolvedValue([]),
-    selectFirst: jest.fn().mockResolvedValue(null),
-    insert: jest.fn().mockResolvedValue(1),
-    update: jest.fn().mockResolvedValue(1),
-});
+const buildDb = (): DbMock & { withTransaction: jest.Mock } => {
+    const db = {
+        selectMany: jest.fn().mockResolvedValue([]),
+        selectFirst: jest.fn().mockResolvedValue(null),
+        insert: jest.fn().mockResolvedValue(1),
+        update: jest.fn().mockResolvedValue(1),
+        withTransaction: jest.fn(),
+    };
+    // A transação roda sobre o MESMO mock: as asserções enxergam as queries de dentro dela.
+    db.withTransaction.mockImplementation(async (fn: (tx: DbMock) => unknown) => fn(db));
+    return db;
+};
 
 const header = (over: Record<string, unknown> = {}) => ({
     id: 'L1',
@@ -242,5 +249,125 @@ describe('LotePagamentoRepository', () => {
         const [sql, params] = db.update.mock.calls[0];
         expect(sql).toContain('finalizado_por');
         expect(params).not.toHaveProperty('finalizadoPor');
+    });
+    // ── ADR-0054 — destino manual do item (I10e, I10g, I10h) ─────────────────────────────
+    describe('destino manual', () => {
+        const CONTA = {
+            tipo: 'CONTA',
+            bancoCod: '237',
+            agencia: '1234',
+            conta: '9876543',
+            contaDv: '1',
+            titularDocumento: '11144477735',
+        } as const;
+        const chave = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1' };
+
+        it('setDestinoManualItem é UMA transação: trava, grava, bumpa a versão e grava a trilha', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValueOnce({ destino_manual: null });
+            const r = await make(db).setDestinoManualItem({
+                ...chave,
+                versaoEsperada: 3,
+                destino: CONTA,
+                usuario: 'ana',
+            });
+            expect(db.withTransaction).toHaveBeenCalledTimes(1);
+            expect(r.atualizado).toBe(true);
+            expect(r.auditId).toMatch(/^[0-9a-f-]{36}$/);
+
+            const [sqlTrava, pTrava] = db.selectFirst.mock.calls[0];
+            expect(sqlTrava).toMatch(/l\.status = 'RASCUNHO'/);
+            expect(sqlTrava).toMatch(/l\.versao = \$versaoEsperada/);
+            expect(sqlTrava).toMatch(/FOR UPDATE/);
+            expect(pTrava).toMatchObject({ ...chave, versaoEsperada: 3 });
+
+            const updates = db.update.mock.calls.map(([sql]) => String(sql));
+            expect(updates.some((q) => /SET destino_manual = \$destino::jsonb/.test(q))).toBe(true);
+            expect(updates.some((q) => /versao = versao \+ 1/.test(q))).toBe(true);
+
+            const [sqlAudit, pAudit] = db.insert.mock.calls[0];
+            expect(sqlAudit).toMatch(/INSERT INTO lote_pagamento_item_destino_audit/);
+            expect(pAudit).toMatchObject({ ...chave, alteradoPor: 'ana', antes: null });
+            // A trilha guarda o valor completo (é a prova do I10g).
+            expect(JSON.parse(String(pAudit.depois))).toEqual(CONTA);
+
+            // Parametrizado: nenhum valor do destino dentro do texto SQL.
+            const todoSql = [
+                ...db.selectFirst.mock.calls,
+                ...db.update.mock.calls,
+                ...db.insert.mock.calls,
+            ]
+                .map(([sql]) => String(sql))
+                .join('\n');
+            expect(todoSql).not.toContain('9876543');
+            expect(todoSql).not.toContain('11144477735');
+            expect(todoSql).toMatch(/\$depois/);
+        });
+
+        it('versão errada ou lote fora de RASCUNHO: zero escrita e nenhuma trilha', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValueOnce(null);
+            const r = await make(db).setDestinoManualItem({
+                ...chave,
+                versaoEsperada: 9,
+                destino: CONTA,
+                usuario: 'ana',
+            });
+            expect(r).toEqual({ atualizado: false });
+            expect(db.update).not.toHaveBeenCalled();
+            expect(db.insert).not.toHaveBeenCalled();
+        });
+
+        it('limpar (destino undefined) grava NULL e a trilha com o antes', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValueOnce({ destino_manual: CONTA });
+            const r = await make(db).setDestinoManualItem({
+                ...chave,
+                versaoEsperada: 3,
+                usuario: 'ana',
+            });
+            expect(r.atualizado).toBe(true);
+            const upd = db.update.mock.calls.find(([q]) => /destino_manual/.test(String(q)));
+            expect(upd?.[1]).toMatchObject({ destino: null });
+            const [, pAudit] = db.insert.mock.calls[0];
+            expect(JSON.parse(String(pAudit.antes))).toEqual(CONTA);
+            expect(pAudit.depois).toBeNull();
+        });
+
+        it('getLoteComItens devolve destinoManual parseado + quem informou (trilha mais recente)', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header());
+            db.selectMany.mockResolvedValue([
+                itemRow({
+                    destino_manual: CONTA,
+                    destino_audit_id: 'a-1',
+                    destino_informado_por: 'ana',
+                    destino_informado_em: new Date('2026-09-28T12:00:00Z'),
+                }),
+            ]);
+            const lote = await make(db).getLoteComItens('L1');
+            expect(lote?.itens[0]).toMatchObject({
+                destinoManual: CONTA,
+                destinoManualAuditId: 'a-1',
+                destinoManualInformadoPor: 'ana',
+                destinoManualInformadoEm: '2026-09-28T12:00:00.000Z',
+            });
+            const [sqlItens] = db.selectMany.mock.calls[0];
+            expect(String(sqlItens)).toMatch(/destino_manual/);
+        });
+
+        it('JSON inválido no banco: item sem destino + aviso SEM o conteúdo', async () => {
+            const warn = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header());
+            db.selectMany.mockResolvedValue([
+                itemRow({ destino_manual: { tipo: 'CONTA', conta: '5550001' } }),
+            ]);
+            const lote = await make(db).getLoteComItens('L1');
+            expect(lote?.itens[0]?.destinoManual).toBeUndefined();
+            expect(warn).toHaveBeenCalled();
+            expect(JSON.stringify(warn.mock.calls)).not.toContain('5550001');
+            warn.mockRestore();
+        });
     });
 });
