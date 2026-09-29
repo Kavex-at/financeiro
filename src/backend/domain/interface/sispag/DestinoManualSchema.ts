@@ -20,16 +20,12 @@ export const destinoManualSchema = z.discriminatedUnion('tipo', [
             tipo: z.literal(DESTINO_MANUAL_TIPO.CONTA),
             bancoCod: digitos(3, 3),
             agencia: digitos(1, 5),
-            agenciaDv: z
-                .string()
-                .trim()
-                .regex(/^[0-9Xx]$/)
-                .optional(),
+            agenciaDv: z.string().trim().regex(/^\d$/).optional(),
             conta: digitos(1, 12),
             contaDv: z
                 .string()
                 .trim()
-                .regex(/^[0-9Xx]{1,2}$/),
+                .regex(/^\d{1,2}$/),
             titularDocumento: z
                 .string()
                 .trim()
