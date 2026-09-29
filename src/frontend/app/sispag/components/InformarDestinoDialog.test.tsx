@@ -120,13 +120,16 @@ describe('InformarDestinoDialog', () => {
     expect(screen.queryByRole('tab', { name: 'PIX' })).not.toBeInTheDocument()
   })
 
-  it('PIX: o tipo é escolhido pela analista (não inferido) e a chave é validada por ele', async () => {
+  it('PIX digitado: só o tipo CPF/CNPJ é oferecido (titular conferível)', async () => {
     const user = userEvent.setup()
     mockDefinir.mockResolvedValueOnce(lote)
     renderDialog({ pixEnabled: true, tedEnabled: false })
     // Sem TED, o diálogo abre direto no PIX.
-    await user.click(screen.getByRole('radio', { name: 'Telefone' }))
-    await user.type(screen.getByLabelText('Chave PIX'), '11144477735')
+    expect(screen.getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual([
+      'CPF/CNPJ',
+    ])
+    expect(screen.queryByRole('radio', { name: 'Telefone' })).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('Chave PIX'), '111.444.777-35')
     await user.type(screen.getByLabelText('CPF/CNPJ do titular'), '11144477735')
     await user.click(screen.getByRole('button', { name: 'Salvar destino' }))
 
@@ -135,8 +138,8 @@ describe('InformarDestinoDialog', () => {
       expect.objectContaining({
         destino: {
           tipo: 'CHAVE_PIX',
-          chavePixTipo: 'TELEFONE',
-          chavePix: '+5511144477735',
+          chavePixTipo: 'CPF_CNPJ',
+          chavePix: '11144477735',
           titularDocumento: '11144477735',
         },
       }),

@@ -1,5 +1,6 @@
 import { injectable } from 'tsyringe';
 import { z } from 'zod';
+import ChavePixTitularNaoVerificavelError from '../../errors/ChavePixTitularNaoVerificavelError.js';
 import DestinoManualInvalidoError from '../../errors/DestinoManualInvalidoError.js';
 import DestinoTitularDivergenteError from '../../errors/DestinoTitularDivergenteError.js';
 import DocumentoFavorecidoIndisponivelError from '../../errors/DocumentoFavorecidoIndisponivelError.js';
@@ -9,6 +10,9 @@ import {
     DESTINO_MANUAL_TIPO,
     type DestinoManual,
 } from '../../interface/sispag/SispagInterface.js';
+
+/** Tipos de chave PIX que a analista pode DIGITAR — os de titular conferível (I10i). */
+const CHAVE_PIX_TIPOS_DIGITAVEIS: readonly string[] = [CHAVE_PIX_TIPO.CPF_CNPJ];
 
 const soDigitos = (v: unknown): unknown => (typeof v === 'string' ? v.replace(/\D/g, '') : v);
 
@@ -106,6 +110,14 @@ export default class DestinoManualValidator {
         }
         if (destino.titularDocumento !== documentoFavorecido) {
             throw new DestinoTitularDivergenteError({ campo: 'titularDocumento', ...ref });
+        }
+        // Só a chave CPF/CNPJ tem titular conferível daqui: o dono das outras está no DICT, que
+        // só banco consulta. Decisão de 2026-09-29 — ver ChavePixTitularNaoVerificavelError.
+        if (
+            destino.tipo === DESTINO_MANUAL_TIPO.CHAVE_PIX &&
+            !CHAVE_PIX_TIPOS_DIGITAVEIS.includes(destino.chavePixTipo)
+        ) {
+            throw new ChavePixTitularNaoVerificavelError(ref);
         }
         if (
             destino.tipo === DESTINO_MANUAL_TIPO.CHAVE_PIX &&

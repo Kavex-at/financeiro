@@ -974,6 +974,13 @@ export const TIPOS_CHAVE_PIX: { value: ChavePixTipo; label: string }[] = [
   { value: 'ALEATORIA', label: 'Chave aleatória' },
 ]
 
+/**
+ * Tipos de chave que a analista pode DIGITAR. Só CPF/CNPJ: é o único em que dá para conferir o
+ * titular (a chave é o próprio documento). O dono das outras está no DICT, que só banco consulta.
+ * Chave que vem do cadastro do Conexos pode ser de qualquer tipo.
+ */
+export const TIPOS_CHAVE_PIX_DIGITAVEIS = TIPOS_CHAVE_PIX.filter((t) => t.value === 'CPF_CNPJ')
+
 export type DestinoManual =
   | {
       tipo: 'CONTA'

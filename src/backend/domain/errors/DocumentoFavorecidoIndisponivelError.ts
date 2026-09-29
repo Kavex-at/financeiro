@@ -5,9 +5,9 @@ import type { HandlerError } from '../libs/handler/HandlerError.js';
  * titularidade do destino digitado (I10i) não pode ser conferida. FALHA FECHADA: sem a
  * conferência, o destino não é gravado nem enviado. HTTP 422.
  *
- * O nome do campo do documento no `cmn025` ainda é hipótese (`CAMPO_DOCUMENTO_FAVORECIDO`,
- * checklist do teste supervisionado). Até ser confirmado, este erro pode aparecer para todo
- * destino digitado — é o comportamento seguro, não um defeito.
+ * O campo é `pdcDocFederal` (`CAMPO_DOCUMENTO_FAVORECIDO`, tirado do schema do `cmn025`; valor vivo
+ * a conferir no teste supervisionado). Pessoa sem documento cadastrado cai aqui — é o
+ * comportamento seguro, não um defeito.
  */
 export default class DocumentoFavorecidoIndisponivelError extends Error implements HandlerError {
     public readonly code = 'DOCUMENTO_FAVORECIDO_INDISPONIVEL';

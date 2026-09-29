@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import ChavePixTitularNaoVerificavelError from '../../errors/ChavePixTitularNaoVerificavelError.js';
 import DestinoManualInvalidoError from '../../errors/DestinoManualInvalidoError.js';
 import DestinoTitularDivergenteError from '../../errors/DestinoTitularDivergenteError.js';
 import DocumentoFavorecidoIndisponivelError from '../../errors/DocumentoFavorecidoIndisponivelError.js';
@@ -171,6 +172,26 @@ describe('DestinoManualValidator — titularidade (I10i, bloqueante)', () => {
         const e = falha(() => v.conferirTitularidade(destino, CNPJ));
         expect(e).toBeInstanceOf(DestinoTitularDivergenteError);
         semValores(e, [CPF, CNPJ]);
+    });
+
+    it('chave CPF_CNPJ do próprio favorecido passa', () => {
+        const destino = v.validar(
+            pix({ chavePixTipo: 'CPF_CNPJ', chavePix: CNPJ, titularDocumento: CNPJ }),
+        );
+        expect(() => v.conferirTitularidade(destino, CNPJ)).not.toThrow();
+    });
+
+    it.each([
+        ['EMAIL', 'Fornecedor@Empresa.com.br'],
+        ['TELEFONE', '+55 (11) 98765-4321'],
+        ['ALEATORIA', '123e4567-e89b-12d3-a456-426614174000'],
+    ])('chave digitada %s → recusada: titular não conferível (só CPF/CNPJ)', (tipo, chave) => {
+        const destino = v.validar(pix({ chavePixTipo: tipo, chavePix: chave }));
+        const e = falha(() => v.conferirTitularidade(destino, CNPJ, '10400/1'));
+        expect(e).toBeInstanceOf(ChavePixTitularNaoVerificavelError);
+        expect((e as ChavePixTitularNaoVerificavelError).statusCode).toBe(422);
+        expect((e as ChavePixTitularNaoVerificavelError).userMessage).toMatch(/CPF\/CNPJ/);
+        semValores(e, [chave, CNPJ]);
     });
 
     it('documento do favorecido indisponível → falha FECHADA com mensagem clara', () => {

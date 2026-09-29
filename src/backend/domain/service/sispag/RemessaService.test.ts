@@ -1559,8 +1559,9 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
     };
     const MANUAL_PIX = {
         tipo: 'CHAVE_PIX' as const,
-        chavePixTipo: 'EMAIL' as const,
-        chavePix: 'segredo.pix@fornecedor.com.br',
+        // Chave digitada só do tipo CPF/CNPJ (a única de titular conferível): é o documento.
+        chavePixTipo: 'CPF_CNPJ' as const,
+        chavePix: DOC_FAV,
         titularDocumento: DOC_FAV,
     };
     const CHAVE_CADASTRO = {
@@ -1571,13 +1572,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         pesCod: '1161',
     };
     /** Valores que NUNCA podem aparecer em ledger, log ou mensagem de erro (I10h). */
-    const SENSIVEIS = [
-        '99887766',
-        'segredo.pix@fornecedor.com.br',
-        'cadastro.pix@fornecedor.com.br',
-        DOC_FAV,
-        '87654321',
-    ];
+    const SENSIVEIS = ['99887766', 'cadastro.pix@fornecedor.com.br', DOC_FAV, '87654321'];
 
     const itemCom = (over: Record<string, unknown>) => ({ ...lote().itens[0], ...over });
     const sispagCom = (o: {
@@ -1686,7 +1681,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         });
         expect(payloadDe(write)).toMatchObject({
             itsVldChavePix: 1,
-            itsDesChavePix: 'segredo.pix@fornecedor.com.br',
+            itsDesChavePix: DOC_FAV,
         });
     });
 
