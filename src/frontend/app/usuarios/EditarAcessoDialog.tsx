@@ -215,7 +215,9 @@ export function EditarAcessoDialog({
       }}
     >
       <DialogContent>
-        <form onSubmit={handleSubmit}>
+        {/* O form entra na coluna flex do DialogContent (teto de 85vh): sem isso o DialogBody não
+            encolhe nem rola, e em telas baixas o "Salvar" é empurrado para fora do diálogo. */}
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <DialogHeader>
             <DialogTitle>Editar acesso</DialogTitle>
             <DialogDescription>
