@@ -50,10 +50,15 @@ const MANUAL_PIX: DestinoManual = {
 const TODAS: FlagsDestino = { ted: true, pix: true, destinoManual: true };
 const NENHUMA: FlagsDestino = { ted: false, pix: false, destinoManual: false };
 
-const build = (contas: ContaFavorecido[] = [], chaves: ChavePixFavorecido[] = []) => {
+const build = (
+    contas: ContaFavorecido[] = [],
+    chaves: ChavePixFavorecido[] = [],
+    documento: string | undefined = undefined,
+) => {
     const sispag = {
         listContasFavorecido: jest.fn().mockResolvedValue(contas),
         listChavesPixFavorecido: jest.fn().mockResolvedValue(chaves),
+        getDocumentoFavorecido: jest.fn().mockResolvedValue(documento),
     };
     const resolver = new DestinoPagamentoResolver(
         sispag as unknown as ConexosSispagClient,
@@ -196,6 +201,67 @@ describe('DestinoPagamentoResolver — PIX (flag ligada, I10d)', () => {
         const { resolver } = build([], [chave()]);
         const r = await resolver.resolve(item('PIX', MANUAL_PIX), ctx(TODAS));
         expect(r.origem).toBe(DESTINO_ORIGEM.MANUAL);
+    });
+});
+
+describe('DestinoPagamentoResolver — D12: chave CPF/CNPJ do favorecido antes da default', () => {
+    const DOC = '11144477735';
+    const cpfDoFavorecido = chave({ cixCod: 7, tipo: 'CPF_CNPJ', chave: '111.444.777-35' });
+
+    it('CPF/CNPJ igual ao documento vence a default e vem marcada', async () => {
+        const { resolver } = build([], [chave({ cixCod: 9, padrao: true }), cpfDoFavorecido], DOC);
+        const r = await resolver.resolve(item('PIX'), ctx(TODAS));
+        expect(r).toMatchObject({
+            origem: 'CADASTRO',
+            tipo: 'CHAVE_PIX',
+            chave: { cixCod: 7 },
+            chaveDoDocumentoDoFavorecido: true,
+        });
+    });
+
+    it('CPF/CNPJ de OUTRO documento não sobe: vale a default, sem marca', async () => {
+        const { resolver } = build(
+            [],
+            [
+                chave({ cixCod: 9, padrao: true }),
+                chave({ cixCod: 7, tipo: 'CPF_CNPJ', chave: '52998224725' }),
+            ],
+            DOC,
+        );
+        const r = await resolver.resolve(item('PIX'), ctx(TODAS));
+        expect(r.origem === 'CADASTRO' && r.tipo === 'CHAVE_PIX' && r.chave.cixCod).toBe(9);
+        expect(r).not.toHaveProperty('chaveDoDocumentoDoFavorecido');
+    });
+
+    it('documento indisponível: ordem de antes (default primeiro)', async () => {
+        const { resolver } = build(
+            [],
+            [chave({ cixCod: 9, padrao: true }), cpfDoFavorecido],
+            undefined,
+        );
+        const r = await resolver.resolve(item('PIX'), ctx(TODAS));
+        expect(r.origem === 'CADASTRO' && r.tipo === 'CHAVE_PIX' && r.chave.cixCod).toBe(9);
+    });
+
+    it('sem chave CPF/CNPJ no cadastro, o documento nem é lido', async () => {
+        const { resolver, sispag } = build([], [chave({ cixCod: 9, padrao: true })], DOC);
+        await resolver.resolve(item('PIX'), ctx(TODAS));
+        expect(sispag.getDocumentoFavorecido).not.toHaveBeenCalled();
+    });
+
+    it('flag PIX desligada: nada de chave nem documento (regra do main)', async () => {
+        const { resolver, sispag } = build([], [cpfDoFavorecido], DOC);
+        await resolver.resolve(item('PIX'), ctx(NENHUMA));
+        expect(sispag.getDocumentoFavorecido).not.toHaveBeenCalled();
+        expect(sispag.listChavesPixFavorecido).not.toHaveBeenCalled();
+    });
+
+    it('o documento entra no cache do fluxo (lido uma vez por favorecido)', async () => {
+        const { resolver, sispag } = build([], [cpfDoFavorecido], DOC);
+        const cache = resolver.novoCache();
+        await resolver.resolve(item('PIX'), ctx(TODAS, { cache }));
+        await resolver.resolve(item('PIX'), ctx(TODAS, { cache }));
+        expect(sispag.getDocumentoFavorecido).toHaveBeenCalledTimes(1);
     });
 });
 
