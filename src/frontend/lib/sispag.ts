@@ -197,6 +197,33 @@ export interface ItemLote {
   borCod?: number
   bxaCodSeq?: number
   conciliadoEm?: string
+  /**
+   * Destino digitado pela analista (ADR-0054), SÓ mascarado — a API nunca manda o valor inteiro,
+   * e a tela exibe este texto como veio (não re-mascara).
+   */
+  destinoManualResumo?: DestinoManualResumo
+}
+
+/** Máscara do destino digitado + quem informou. */
+export interface DestinoManualResumo {
+  tipo: 'CONTA' | 'CHAVE_PIX'
+  destinoMascarado: string
+  informadoPor?: string
+  informadoEm?: string
+}
+
+/** Destino que a oferta mostra para TED/PIX: origem + máscara (só com as flags ligadas). */
+export interface DestinoOfertado {
+  origem: 'CADASTRO' | 'MANUAL' | 'NENHUM'
+  destinoMascarado?: string
+}
+
+/** Uma linha da oferta de formas de pagamento de um item. */
+export interface OfertaModalidadesItem {
+  docCod: string
+  titCod: string
+  modalidades: Modalidade[]
+  destinos?: Partial<Record<'TED' | 'PIX', DestinoOfertado>>
 }
 
 export interface LotePagamento {
@@ -729,14 +756,12 @@ export async function fetchLinhasDigitaveis(loteId: string): Promise<LinhasDigit
 /** A2 opção B — formas de pagamento disponíveis (cadastro do favorecido) por item do lote, ao vivo. */
 export async function fetchModalidadesDisponiveis(
   loteId: string,
-): Promise<Array<{ docCod: string; titCod: string; modalidades: Modalidade[] }>> {
+): Promise<OfertaModalidadesItem[]> {
   const res = await apiFetch(`${API}/sispag/lotes/${loteId}/modalidades-disponiveis`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) throw new Error(`API ${res.status}`)
-  const j = (await res.json()) as {
-    itens: Array<{ docCod: string; titCod: string; modalidades: Modalidade[] }>
-  }
+  const j = (await res.json()) as { itens: OfertaModalidadesItem[] }
   return j.itens ?? []
 }
 
@@ -892,3 +917,203 @@ export async function sincronizarBoletosDda(): Promise<SincronizacaoDdaResultado
   if (!res.ok) throw new Error(`API ${res.status}`)
   return (await res.json()) as SincronizacaoDdaResultado
 }
+
+// ============================================================ ADR-0054 — destino de TED/PIX
+
+/** Flags de TED/PIX/destino manual expostas pelo backend (`GET /sispag/recursos`). */
+export interface RecursosSispag {
+  tedEnabled: boolean
+  destinoManualEnabled: boolean
+  pixEnabled: boolean
+}
+
+const RECURSOS_DESLIGADOS: RecursosSispag = {
+  tedEnabled: false,
+  destinoManualEnabled: false,
+  pixEnabled: false,
+}
+
+let recursosEmCache: Promise<RecursosSispag> | null = null
+
+/** Só para testes: esquece o cache de `getRecursos`. */
+export function __limparCacheRecursos(): void {
+  recursosEmCache = null
+}
+
+/**
+ * Flags do SISPAG para a tela. Lidas uma vez por carga de página (vários cards de lote pedem).
+ * Falha de leitura = tudo desligado: a tela fica idêntica à de antes do TED/PIX.
+ */
+export function getRecursos(): Promise<RecursosSispag> {
+  if (!recursosEmCache) {
+    recursosEmCache = (async () => {
+      try {
+        const res = await apiFetch(`${API}/sispag/recursos`, { headers: await withAuthHeaders() })
+        if (!res.ok) throw new Error(`API ${res.status}`)
+        const j = (await res.json()) as Partial<Record<keyof RecursosSispag, unknown>>
+        return {
+          tedEnabled: j.tedEnabled === true,
+          destinoManualEnabled: j.destinoManualEnabled === true,
+          pixEnabled: j.pixEnabled === true,
+        }
+      } catch {
+        recursosEmCache = null
+        return RECURSOS_DESLIGADOS
+      }
+    })()
+  }
+  return recursosEmCache
+}
+
+export type ChavePixTipo = 'CPF_CNPJ' | 'EMAIL' | 'TELEFONE' | 'ALEATORIA'
+
+export const TIPOS_CHAVE_PIX: { value: ChavePixTipo; label: string }[] = [
+  { value: 'CPF_CNPJ', label: 'CPF/CNPJ' },
+  { value: 'EMAIL', label: 'E-mail' },
+  { value: 'TELEFONE', label: 'Telefone' },
+  { value: 'ALEATORIA', label: 'Chave aleatória' },
+]
+
+export type DestinoManual =
+  | {
+      tipo: 'CONTA'
+      bancoCod: string
+      agencia: string
+      agenciaDv?: string
+      conta: string
+      contaDv: string
+      titularDocumento: string
+    }
+  | { tipo: 'CHAVE_PIX'; chavePixTipo: ChavePixTipo; chavePix: string; titularDocumento: string }
+
+/** O que o formulário digita — tudo texto, antes de normalizar. */
+export type DestinoManualEntrada =
+  | {
+      tipo: 'CONTA'
+      bancoCod: string
+      agencia: string
+      agenciaDv: string
+      conta: string
+      contaDv: string
+      titularDocumento: string
+    }
+  | { tipo: 'CHAVE_PIX'; chavePixTipo: ChavePixTipo; chavePix: string; titularDocumento: string }
+
+const soDigitos = (v: string): string => v.replace(/\D/g, '')
+
+/** CPF (11) ou CNPJ (14) com DV válido — a mesma conta do backend. */
+export function documentoValido(doc: string): boolean {
+  if (!/^(\d{11}|\d{14})$/.test(doc) || /^(\d)\1+$/.test(doc)) return false
+  const n = doc.split('').map(Number)
+  if (doc.length === 11) {
+    const dv = (ate: number) => {
+      let soma = 0
+      for (let i = 0; i < ate; i += 1) soma += (n[i] ?? 0) * (ate + 1 - i)
+      const r = (soma * 10) % 11
+      return r === 10 ? 0 : r
+    }
+    return dv(9) === n[9] && dv(10) === n[10]
+  }
+  const dv = (ate: number) => {
+    const pesos =
+      ate === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    let soma = 0
+    for (let i = 0; i < ate; i += 1) soma += (n[i] ?? 0) * (pesos[i] ?? 0)
+    const r = soma % 11
+    return r < 2 ? 0 : 11 - r
+  }
+  return dv(12) === n[12] && dv(13) === n[13]
+}
+
+const normalizarChave = (tipo: ChavePixTipo, chave: string): string => {
+  const c = chave.trim()
+  if (tipo === 'CPF_CNPJ') return soDigitos(c)
+  if (tipo === 'TELEFONE') {
+    const d = soDigitos(c)
+    return !c.startsWith('+') && (d.length === 10 || d.length === 11) ? `+55${d}` : `+${d}`
+  }
+  return c.toLowerCase()
+}
+
+const chaveValida = (tipo: ChavePixTipo, chave: string): boolean => {
+  if (tipo === 'CPF_CNPJ') return documentoValido(chave)
+  if (tipo === 'EMAIL')
+    return chave.length <= 77 && /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(chave)
+  if (tipo === 'TELEFONE') return /^\+55[1-9][1-9]\d{8,9}$/.test(chave)
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(chave)
+}
+
+/**
+ * Validação de FORMATO no cliente, espelhando o `DestinoManualValidator` do backend (que é quem
+ * decide — e confere a titularidade). As mensagens nunca repetem o valor digitado.
+ */
+export function validarDestinoManual(e: DestinoManualEntrada): {
+  destino?: DestinoManual
+  erros: Partial<Record<string, string>>
+} {
+  const erros: Partial<Record<string, string>> = {}
+  const titular = soDigitos(e.titularDocumento)
+  if (!documentoValido(titular)) erros.titularDocumento = 'CPF/CNPJ inválido.'
+  if (e.tipo === 'CONTA') {
+    const v = {
+      bancoCod: e.bancoCod.trim(),
+      agencia: e.agencia.trim(),
+      agenciaDv: e.agenciaDv.trim(),
+      conta: e.conta.trim(),
+      contaDv: e.contaDv.trim(),
+    }
+    if (!/^\d{3}$/.test(v.bancoCod)) erros.bancoCod = 'Use o código FEBRABAN de 3 dígitos.'
+    if (!/^\d{1,5}$/.test(v.agencia)) erros.agencia = 'Só dígitos.'
+    if (v.agenciaDv !== '' && !/^\d$/.test(v.agenciaDv)) erros.agenciaDv = 'Um dígito.'
+    if (!/^\d{1,12}$/.test(v.conta)) erros.conta = 'Só dígitos.'
+    if (!/^\d{1,2}$/.test(v.contaDv)) erros.contaDv = 'Só dígitos.'
+    if (Object.keys(erros).length > 0) return { erros }
+    return {
+      erros,
+      destino: {
+        tipo: 'CONTA',
+        bancoCod: v.bancoCod,
+        agencia: v.agencia,
+        ...(v.agenciaDv !== '' ? { agenciaDv: v.agenciaDv } : {}),
+        conta: v.conta,
+        contaDv: v.contaDv,
+        titularDocumento: titular,
+      },
+    }
+  }
+  const chave = normalizarChave(e.chavePixTipo, e.chavePix)
+  if (!chaveValida(e.chavePixTipo, chave)) erros.chavePix = 'Chave inválida para o tipo escolhido.'
+  if (Object.keys(erros).length > 0) return { erros }
+  return {
+    erros,
+    destino: {
+      tipo: 'CHAVE_PIX',
+      chavePixTipo: e.chavePixTipo,
+      chavePix: chave,
+      titularDocumento: titular,
+    },
+  }
+}
+
+const rotaDestino = (loteId: string, c: { filCod: number; docCod: string; titCod: string }) =>
+  `/sispag/lotes/${loteId}/itens/${c.filCod}/${encodeURIComponent(c.docCod)}/${encodeURIComponent(c.titCod)}/destino`
+
+/** Grava o destino digitado do item (só RASCUNHO; optimistic lock). 409/422 → mensagem do backend. */
+export const definirDestinoItem = (
+  loteId: string,
+  input: { filCod: number; docCod: string; titCod: string; versao: number; destino: DestinoManual },
+) =>
+  loteRequest(rotaDestino(loteId, input), {
+    method: 'POST',
+    body: JSON.stringify({ versao: input.versao, destino: input.destino }),
+  })
+
+/** Remove o destino digitado (volta a valer o cadastro do Conexos). */
+export const limparDestinoItem = (
+  loteId: string,
+  input: { filCod: number; docCod: string; titCod: string; versao: number },
+) =>
+  loteRequest(rotaDestino(loteId, input), {
+    method: 'DELETE',
+    body: JSON.stringify({ versao: input.versao }),
+  })

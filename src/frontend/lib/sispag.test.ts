@@ -9,6 +9,11 @@ import {
   formatErpDay,
   gerarRemessa,
   retirarDoLote,
+  __limparCacheRecursos,
+  definirDestinoItem,
+  getRecursos,
+  limparDestinoItem,
+  validarDestinoManual,
 } from '@/lib/sispag'
 
 // `apiFetch` é o boundary HTTP — mockado para controlar os bytes que "chegam do backend".
@@ -281,5 +286,139 @@ describe('fetchLinhasDigitaveis', () => {
     mockApiFetch.mockResolvedValue({ ok: false, status: 500 } as unknown as Response)
 
     await expect(fetchLinhasDigitaveis('lote-1')).rejects.toThrow('API 500')
+  })
+})
+
+// ─────────────────────────────────────────────── ADR-0054 — destino de TED/PIX
+
+describe('getRecursos', () => {
+  beforeEach(() => {
+    mockApiFetch.mockReset()
+    __limparCacheRecursos()
+  })
+
+  it('lê as flags como booleanos', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      respostaOk({ tedEnabled: true, destinoManualEnabled: 'sim', pixEnabled: false }),
+    )
+    expect(await getRecursos()).toEqual({
+      tedEnabled: true,
+      destinoManualEnabled: false,
+      pixEnabled: false,
+    })
+    expect(String(mockApiFetch.mock.calls[0]?.[0])).toMatch(/\/sispag\/recursos$/)
+  })
+
+  it('falha de leitura = tudo desligado (a tela fica igual à de antes)', async () => {
+    mockApiFetch.mockRejectedValueOnce(new Error('rede'))
+    expect(await getRecursos()).toEqual({
+      tedEnabled: false,
+      destinoManualEnabled: false,
+      pixEnabled: false,
+    })
+  })
+})
+
+describe('definirDestinoItem / limparDestinoItem', () => {
+  beforeEach(() => mockApiFetch.mockReset())
+  const chave = { filCod: 2, docCod: '81/3', titCod: '1', versao: 4 }
+  const destino = {
+    tipo: 'CONTA' as const,
+    bancoCod: '237',
+    agencia: '1234',
+    conta: '99887766',
+    contaDv: '1',
+    titularDocumento: '11144477735',
+  }
+
+  it('POST com versao e destino na rota do item', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ lote: { id: 'L1' } }))
+    await definirDestinoItem('L1', { ...chave, destino })
+    const [url, init] = ultimaChamadaComUrl()
+    expect(url).toMatch(/\/sispag\/lotes\/L1\/itens\/2\/81%2F3\/1\/destino$/)
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ versao: 4, destino })
+  })
+
+  it('DELETE com a versao', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ lote: { id: 'L1' } }))
+    await limparDestinoItem('L1', chave)
+    const [url, init] = ultimaChamadaComUrl()
+    expect(url).toMatch(/\/destino$/)
+    expect(init.method).toBe('DELETE')
+    expect(JSON.parse(String(init.body))).toEqual({ versao: 4 })
+  })
+
+  it('409 vira a mensagem de conflito do backend, como nas outras edições', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: 'O lote foi alterado por outra pessoa. Recarregue.' }),
+    } as unknown as Response)
+    await expect(definirDestinoItem('L1', { ...chave, destino })).rejects.toThrow(
+      'O lote foi alterado por outra pessoa. Recarregue.',
+    )
+  })
+})
+
+describe('validarDestinoManual — espelho da validação do backend', () => {
+  const conta = {
+    tipo: 'CONTA' as const,
+    bancoCod: '237',
+    agencia: '1234',
+    agenciaDv: '',
+    conta: '9876543',
+    contaDv: '1',
+    titularDocumento: '111.444.777-35',
+  }
+  const pix = {
+    tipo: 'CHAVE_PIX' as const,
+    chavePixTipo: 'EMAIL' as const,
+    chavePix: 'a@b.com.br',
+    titularDocumento: '11.222.333/0001-81',
+  }
+
+  it('conta válida → sem erros e normalizada', () => {
+    const r = validarDestinoManual(conta)
+    expect(r.erros).toEqual({})
+    expect(r.destino).toEqual({
+      tipo: 'CONTA',
+      bancoCod: '237',
+      agencia: '1234',
+      conta: '9876543',
+      contaDv: '1',
+      titularDocumento: '11144477735',
+    })
+  })
+
+  it('banco com 3 dígitos, agência/conta/DV só dígitos, CPF/CNPJ com DV', () => {
+    const r = validarDestinoManual({
+      ...conta,
+      bancoCod: '37',
+      agencia: '12a',
+      contaDv: 'X',
+      titularDocumento: '11144477736',
+    })
+    expect(Object.keys(r.erros).sort()).toEqual(['agencia', 'bancoCod', 'contaDv', 'titularDocumento'])
+    expect(r.destino).toBeUndefined()
+  })
+
+  it('chave por tipo, sem inferir: 11 dígitos como TELEFONE valem como telefone', () => {
+    expect(validarDestinoManual({ ...pix, chavePixTipo: 'TELEFONE', chavePix: '11144477735' }).destino).toMatchObject({
+      chavePix: '+5511144477735',
+    })
+    expect(validarDestinoManual({ ...pix, chavePixTipo: 'CPF_CNPJ', chavePix: '11987654321' }).erros).toHaveProperty(
+      'chavePix',
+    )
+    expect(validarDestinoManual({ ...pix, chavePixTipo: 'ALEATORIA', chavePix: 'abc' }).erros).toHaveProperty(
+      'chavePix',
+    )
+    expect(validarDestinoManual({ ...pix, chavePix: 'sem-arroba' }).erros).toHaveProperty('chavePix')
+    expect(validarDestinoManual(pix).destino).toMatchObject({ chavePix: 'a@b.com.br' })
+  })
+
+  it('mensagens de erro não repetem o valor digitado', () => {
+    const r = validarDestinoManual({ ...conta, titularDocumento: '11144477736' })
+    expect(JSON.stringify(r.erros)).not.toContain('11144477736')
   })
 })

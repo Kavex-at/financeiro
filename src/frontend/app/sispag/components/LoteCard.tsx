@@ -1,6 +1,17 @@
 'use client'
 
-import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Download, FileText, Plus, Trash2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  Copy,
+  Download,
+  FileText,
+  Landmark,
+  Plus,
+  Trash2,
+  X,
+} from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -33,12 +44,17 @@ import {
   finalizarLote,
   formatCivilDate,
   formatErpDay,
+  getRecursos,
+  type ItemLote,
+  limparDestinoItem,
   type LotePagamento,
   marcarRetorno,
   type Modalidade,
   MODALIDADES,
   MODALIDADES_OFERECIDAS,
+  type OfertaModalidadesItem,
   reabrirLote,
+  type RecursosSispag,
   removerItem,
   rotuloConta,
 } from '@/lib/sispag'
@@ -49,6 +65,39 @@ import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
 import { type AcaoLote, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
+import { InformarDestinoDialog } from './InformarDestinoDialog'
+
+const RECURSOS_DESLIGADOS: RecursosSispag = {
+  tedEnabled: false,
+  destinoManualEnabled: false,
+  pixEnabled: false,
+}
+
+/**
+ * Itens TED/PIX (com a flag da modalidade ligada) que a oferta já carregada NÃO cobre — nem
+ * cadastro, nem destino digitado. Mesma checagem leve do `finalizarLote` no backend (ADR-0054,
+ * Adendo); a mensagem é a mesma para a analista não ver dois textos para um problema.
+ */
+function itensSemDestino(
+  itens: ItemLote[],
+  oferta: Map<string, OfertaModalidadesItem> | null,
+  recursos: RecursosSispag,
+): ItemLote[] {
+  if (!oferta || oferta.size === 0) return []
+  return itens.filter((i) => {
+    const alvo =
+      (i.modalidade === 'TED' && recursos.tedEnabled) ||
+      (i.modalidade === 'PIX' && recursos.pixEnabled)
+    if (!alvo || !i.modalidade) return false
+    const o = oferta.get(`${i.docCod}:${i.titCod}`)
+    return o !== undefined && !o.modalidades.includes(i.modalidade)
+  })
+}
+
+const mensagemSemDestino = (itens: ItemLote[]): string =>
+  `Sem destino de pagamento para: ${itens
+    .map((i) => `${i.docCod}/${i.titCod}${i.credor ? ` (${i.credor})` : ''}`)
+    .join('; ')}. Informe o destino ou troque a forma de pagamento.`
 
 function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
   if (status === 'FINALIZADO')
@@ -88,6 +137,82 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
   )
 }
 
+/**
+ * Destino de TED/PIX de um item (ADR-0054). Mostra a MÁSCARA que veio do backend — digitado,
+ * com o selo "manual"; ou do cadastro, pela oferta — e, em RASCUNHO, os botões para informar,
+ * trocar ou remover. Nunca recebe nem exibe o valor completo.
+ */
+function DestinoDoItem({
+  item,
+  oferta,
+  editavel,
+  busy,
+  onInformar,
+  onRemover,
+}: {
+  item: ItemLote
+  oferta?: OfertaModalidadesItem
+  editavel: boolean
+  busy: boolean
+  onInformar?: () => void
+  onRemover?: () => void
+}) {
+  const resumo = item.destinoManualResumo
+  const modalidade = item.modalidade === 'TED' || item.modalidade === 'PIX' ? item.modalidade : null
+  const doCadastro = modalidade ? oferta?.destinos?.[modalidade] : undefined
+  const titulo = `${item.docCod}/${item.titCod}`
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {resumo ? (
+        <>
+          <Badge
+            variant="outline"
+            className="border-warning/40 text-warning"
+            title={`Destino digitado${resumo.informadoPor ? ` por ${resumo.informadoPor}` : ''} — não veio do cadastro do Conexos.`}
+          >
+            manual
+          </Badge>
+          <span className="text-xs tabular-nums text-muted-foreground">{resumo.destinoMascarado}</span>
+        </>
+      ) : doCadastro?.origem === 'CADASTRO' && doCadastro.destinoMascarado ? (
+        <span className="text-xs tabular-nums text-muted-foreground">
+          cadastro: {doCadastro.destinoMascarado}
+        </span>
+      ) : null}
+      {editavel ? (
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs"
+            disabled={busy}
+            onClick={onInformar}
+            aria-label={`${resumo ? 'Trocar' : 'Informar'} destino do título ${titulo}`}
+          >
+            <Landmark className="size-3" aria-hidden />
+            {resumo ? 'Trocar destino' : 'Informar destino'}
+          </Button>
+          {resumo ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              disabled={busy}
+              onClick={onRemover}
+              aria-label={`Remover o destino digitado do título ${titulo}`}
+              title="Remover o destino digitado (volta a valer o cadastro)"
+            >
+              <X className="size-3" aria-hidden />
+            </Button>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 /** Card de lote (colapsável): resumo sempre visível; os títulos expandem sob demanda. */
 export function LoteCard({
   lote: l,
@@ -114,6 +239,21 @@ export function LoteCard({
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
+  // ADR-0054: flags de TED/PIX/destino manual. Desligadas (default e em falha) = tela de antes.
+  const [recursos, setRecursos] = React.useState<RecursosSispag>(RECURSOS_DESLIGADOS)
+  React.useEffect(() => {
+    let vivo = true
+    void getRecursos().then((r) => {
+      if (vivo) setRecursos(r)
+    })
+    return () => {
+      vivo = false
+    }
+  }, [])
+  const [destinoDe, setDestinoDe] = React.useState<ItemLote | null>(null)
+  const podeInformarDestino =
+    podeExecutar &&
+    recursos.destinoManualEnabled && (recursos.tedEnabled || recursos.pixEnabled)
   // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
   const [gerandoRemessa, setGerandoRemessa] = React.useState(false)
   // As demais transições também passam por uma confirmação que nomeia o lote.
@@ -170,22 +310,29 @@ export function LoteCard({
 
   // A2 opção B: formas disponíveis (cadastro do favorecido) por item, lidas ao vivo ao
   // expandir um RASCUNHO. Chave = docCod:titCod. Enquanto não carrega, o seletor oferece todas.
-  const [disponiveis, setDisponiveis] = React.useState<Map<string, Modalidade[]> | null>(null)
+  const [oferta, setOferta] = React.useState<Map<string, OfertaModalidadesItem> | null>(null)
+  const disponiveis = React.useMemo(
+    () =>
+      oferta ? new Map([...oferta].map(([k, o]) => [k, o.modalidades] as [string, Modalidade[]])) : null,
+    [oferta],
+  )
   React.useEffect(() => {
     if (!aberto || !isRascunho || !podeExecutar) return
     let vivo = true
     fetchModalidadesDisponiveis(l.id)
       .then((itens) => {
         if (!vivo) return
-        setDisponiveis(new Map(itens.map((i) => [`${i.docCod}:${i.titCod}`, i.modalidades])))
+        setOferta(new Map(itens.map((i) => [`${i.docCod}:${i.titCod}`, i])))
       })
       .catch(() => {
-        if (vivo) setDisponiveis(new Map()) // falhou → oferece todas (fallback)
+        if (vivo) setOferta(new Map()) // falhou → oferece todas (fallback)
       })
     return () => {
       vivo = false
     }
   }, [aberto, isRascunho, l.id, podeExecutar])
+
+  const semDestino = itensSemDestino(l.itens, oferta, recursos)
 
   // Linha digitável do boleto por item, para a analista conferir com o banco. Só existe
   // depois da remessa gerada — o ERP anexa o código no import (ADR-0040), então em rascunho
@@ -275,11 +422,13 @@ export function LoteCard({
               ) : null}
               <Button
                 size="sm"
-                disabled={busy || l.itens.length === 0 || faltaModalidade}
+                disabled={busy || l.itens.length === 0 || faltaModalidade || semDestino.length > 0}
                 title={
                   faltaModalidade
                     ? 'Defina a forma de pagamento de todos os títulos antes de finalizar.'
-                    : undefined
+                    : semDestino.length > 0
+                      ? mensagemSemDestino(semDestino)
+                      : undefined
                 }
                 onClick={() => setConfirmando('finalizar')}
               >
@@ -335,6 +484,22 @@ export function LoteCard({
                 Reabrir
               </Button>
             </>
+          ) : null}
+          {destinoDe ? (
+            <InformarDestinoDialog
+              lote={l}
+              item={destinoDe}
+              tedEnabled={recursos.tedEnabled}
+              pixEnabled={recursos.pixEnabled}
+              onOpenChange={(open) => {
+                if (!open) setDestinoDe(null)
+              }}
+              onSalvo={(atualizado) => {
+                setDestinoDe(null)
+                // Recarrega a lista pelo mesmo caminho das outras ações (e mostra o toast).
+                acao(async () => atualizado, 'Destino informado')
+              }}
+            />
           ) : null}
           {confirmando ? (
             <ConfirmarAcaoLoteDialog
@@ -499,12 +664,36 @@ export function LoteCard({
                                   : 'forma não cadastrada'}
                               </span>
                             ) : null}
+                            {podeInformarDestino ? (
+                              <DestinoDoItem
+                                item={i}
+                                oferta={oferta?.get(`${i.docCod}:${i.titCod}`)}
+                                editavel
+                                busy={busy}
+                                onInformar={() => setDestinoDe(i)}
+                                onRemover={() =>
+                                  acao(
+                                    () =>
+                                      limparDestinoItem(l.id, {
+                                        filCod: i.filCod,
+                                        docCod: i.docCod,
+                                        titCod: i.titCod,
+                                        versao: l.versao,
+                                      }),
+                                    'Destino removido — vale o cadastro do Conexos',
+                                  )
+                                }
+                              />
+                            ) : null}
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1">
+                          <div className="flex flex-wrap items-center gap-1">
                             <span className="text-xs text-muted-foreground">
                               {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
                             </span>
+                            {recursos.destinoManualEnabled && i.destinoManualResumo ? (
+                              <DestinoDoItem item={i} editavel={false} busy={busy} />
+                            ) : null}
                             {i.modalidade === 'BOLETO' &&
                             linhas.get(`${i.docCod}:${i.titCod}`) ? (
                               <Button

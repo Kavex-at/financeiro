@@ -36,6 +36,11 @@ jest.mock('@/lib/sispag', () => {
     marcarRetorno: jest.fn(),
     baixarRemessa: jest.fn(),
     removerItem: jest.fn(),
+    // ADR-0054: por padrão as flags estão desligadas — a tela de antes.
+    getRecursos: jest
+      .fn()
+      .mockResolvedValue({ tedEnabled: false, destinoManualEnabled: false, pixEnabled: false }),
+    limparDestinoItem: jest.fn(),
   }
 })
 
@@ -46,6 +51,7 @@ import {
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   finalizarLote,
+  getRecursos,
   marcarRetorno,
   reabrirLote,
 } from '@/lib/sispag'
@@ -253,5 +259,116 @@ describe('LoteCard — só sispag:ver', () => {
     expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^cancelar$/i })).toBeInTheDocument()
     expect(fetchContasPagadoras).toHaveBeenCalledWith(7)
+  })
+})
+
+describe('LoteCard — destino de TED/PIX (ADR-0054)', () => {
+  const ligado = { tedEnabled: true, destinoManualEnabled: true, pixEnabled: false }
+  const desligado = { tedEnabled: false, destinoManualEnabled: false, pixEnabled: false }
+  const itemTed = (over: Partial<LotePagamento['itens'][number]> = {}) =>
+    ({
+      loteId: 'L1',
+      filCod: 7,
+      docCod: '801',
+      titCod: '1',
+      valor: 100,
+      modalidade: 'TED',
+      incluidoPor: 'u1',
+      ...over,
+    }) as LotePagamento['itens'][number]
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    ;(getRecursos as jest.Mock).mockResolvedValue(desligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([])
+  })
+
+  const abrir = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('button', { name: /filial 7/i }))
+  }
+
+  it('flags desligadas: nenhum botão de destino, nenhum selo — igual ao main', async () => {
+    const user = userEvent.setup()
+    renderCard(
+      lote({
+        itens: [
+          itemTed({
+            destinoManualResumo: { tipo: 'CONTA', destinoMascarado: 'banco 237 · cc ****7766-1' },
+          }),
+        ],
+      }),
+    )
+    await abrir(user)
+    await waitFor(() => expect(getRecursos).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: /informar destino/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('manual')).not.toBeInTheDocument()
+    expect(screen.queryByText(/\*\*\*\*7766/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled()
+  })
+
+  it('flag manual ligada e RASCUNHO: botão "Informar destino" ao lado da forma de pagamento', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed()] }))
+    await abrir(user)
+    await user.click(await screen.findByRole('button', { name: /informar destino do título 801\/1/i }))
+    expect(screen.getByRole('dialog', { name: 'Informar destino' })).toBeInTheDocument()
+  })
+
+  it('destino manual aparece MASCARADO como veio do backend, com o selo "manual"', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      { docCod: '801', titCod: '1', modalidades: ['TED'] },
+    ])
+    const user = userEvent.setup()
+    renderCard(
+      lote({
+        itens: [
+          itemTed({
+            destinoManualResumo: {
+              tipo: 'CONTA',
+              destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1',
+              informadoPor: 'ana',
+            },
+          }),
+        ],
+      }),
+    )
+    await abrir(user)
+    expect(await screen.findByText('banco 237 · ag. 1234 · cc ****7766-1')).toBeInTheDocument()
+    expect(screen.getByText('manual')).toBeInTheDocument()
+  })
+
+  it('fora de RASCUNHO o destino é só leitura (sem botão)', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    const user = userEvent.setup()
+    renderCard(
+      lote({
+        status: 'FINALIZADO',
+        itens: [
+          itemTed({ destinoManualResumo: { tipo: 'CONTA', destinoMascarado: 'banco 237 · cc ****7766-1' } }),
+        ],
+      }),
+    )
+    await abrir(user)
+    expect(await screen.findByText('banco 237 · cc ****7766-1')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /informar destino/i })).not.toBeInTheDocument()
+  })
+
+  it('item TED sem destino: Finalizar desabilitado com a mensagem do backend', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      { docCod: '801', titCod: '1', modalidades: [] },
+    ])
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed({ credor: 'ACME' })] }))
+    await abrir(user)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeDisabled(),
+    )
+    expect(screen.getByRole('button', { name: /^finalizar$/i })).toHaveAttribute(
+      'title',
+      expect.stringContaining('Sem destino de pagamento para: 801/1 (ACME)'),
+    )
   })
 })
