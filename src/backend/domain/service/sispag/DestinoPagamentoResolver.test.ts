@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import { container } from 'tsyringe';
+import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type {
     ChavePixFavorecido,
     ContaFavorecido,
@@ -236,5 +237,15 @@ describe('DestinoPagamentoResolver — bordas', () => {
         expect(resolver.mascarar(pix)).toBe('PIX e-mail f***@empresa.com.br');
         expect(resolver.mascarar(manual)).toBe('banco 001 · ag. 4321 · cc ****2334-5');
         expect(resolver.mascarar({ origem: DESTINO_ORIGEM.NENHUM })).toBeUndefined();
+    });
+});
+
+describe('DestinoPagamentoResolver — uma instância só (I10b)', () => {
+    it('é singleton: oferta (painel) e envio (remessa) recebem a MESMA instância', () => {
+        container.registerInstance(ConexosSispagClient, {} as never);
+        const a = container.resolve(DestinoPagamentoResolver);
+        const b = container.resolve(DestinoPagamentoResolver);
+        expect(a).toBe(b);
+        container.clearInstances();
     });
 });

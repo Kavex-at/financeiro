@@ -5,6 +5,7 @@ import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
+import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import { isHandlerError } from '../domain/libs/handler/HandlerError.js';
 import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
@@ -18,6 +19,7 @@ import {
 } from '../domain/service/sispag/PaginacaoBoletoDda.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
+import LotePagamentoApiView from '../domain/service/sispag/LotePagamentoApiView.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
@@ -104,6 +106,12 @@ router.get(
 
 const ator = (req: Request): string => req.user?.sub ?? req.user?.email ?? 'unknown';
 
+/**
+ * Toda resposta com lote passa por aqui (ADR-0054 I10h): o destino digitado sai só mascarado.
+ * Resolvido por chamada — o container dos testes troca instâncias entre casos.
+ */
+const apiView = (): LotePagamentoApiView => container.resolve(LotePagamentoApiView);
+
 /** Chave do título na URL (`/:filCod/:docCod/:titCod`) — Zod no boundary. */
 const chaveTituloSchema = z.object({
     filCod: z.coerce.number().int().positive(),
@@ -161,7 +169,7 @@ router.get(
             return;
         }
         const service = container.resolve(LotePagamentoService);
-        res.json({ lotes: await service.listarLotes(parsed.data) });
+        res.json({ lotes: apiView().lotes(await service.listarLotes(parsed.data)) });
     }),
 );
 
@@ -177,7 +185,7 @@ router.get(
             res.status(404).json({ error: 'lote not found' });
             return;
         }
-        res.json({ lote });
+        res.json({ lote: apiView().lote(lote) });
     }),
 );
 
@@ -194,7 +202,7 @@ router.post(
         }
         const service = container.resolve(LotePagamentoService);
         const lote = await service.criarLote({ ...parsed.data, ator: ator(req) });
-        res.status(201).json({ lote });
+        res.status(201).json({ lote: apiView().lote(lote) });
     }),
 );
 
@@ -216,7 +224,7 @@ router.post(
                 ...parsed.data,
                 ator: ator(req),
             });
-            res.json({ lote });
+            res.json({ lote: apiView().lote(lote) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
@@ -243,7 +251,7 @@ router.delete(
                 titCod: String(req.params.titCod),
                 ator: ator(req),
             });
-            res.json({ lote });
+            res.json({ lote: apiView().lote(lote) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
@@ -266,7 +274,7 @@ router.post(
         const service = container.resolve(LotePagamentoService);
         try {
             const lote = await service.retirarDoLote({ ...chave.data, ator: ator(req) });
-            res.json({ lote });
+            res.json({ lote: apiView().lote(lote) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
@@ -303,7 +311,7 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
                           : acao === 'retorno'
                             ? await service.marcarRetorno(input)
                             : await service.cancelarLote(input);
-                res.json({ lote });
+                res.json({ lote: apiView().lote(lote) });
             } catch (err) {
                 if (!respondLoteError(req, res, err)) throw err;
             }
@@ -342,10 +350,115 @@ router.post(
                 versao: parsed.data.versao,
                 ator: ator(req),
             });
-            res.json({ lote });
+            res.json({ lote: apiView().lote(lote) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
+    }),
+);
+
+// ===================================================== ADR-0054 — destino de TED/PIX
+
+/**
+ * Body do destino digitado. Só a forma da requisição (`versao` + presença do destino): o
+ * formato e a titularidade são do serviço (`DestinoManualValidator`, 400/422).
+ */
+const destinoBodySchema = z.object({
+    versao: z.coerce.number().int().min(1),
+    destino: z.record(z.unknown()),
+});
+const versaoDestinoSchema = z.object({ versao: z.coerce.number().int().min(1) });
+
+/**
+ * `details` do Zod SEM o valor enviado (I10h): só caminho e código de cada problema. O
+ * `flatten()` padrão pode repetir o valor recebido na mensagem (enum, literal).
+ */
+const detalhesSemValor = (erro: z.ZodError): Array<{ campo: string; codigo: string }> =>
+    erro.issues.map((i) => ({ campo: i.path.join('.') || '(body)', codigo: i.code }));
+
+// POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino — informa o destino TED/PIX do
+// item (só RASCUNHO; optimistic lock). admin. 400 formato · 403 flag · 409 estado/versão/
+// congelado · 422 titularidade.
+router.post(
+    '/lotes/:id/itens/:filCod/:docCod/:titCod/destino',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const chave = chaveTituloSchema.safeParse(req.params);
+        const parsed = destinoBodySchema.safeParse(req.body);
+        if (!chave.success || !parsed.success) {
+            res.status(400).json({
+                error: 'invalid request (versao, destino)',
+                details: [
+                    ...(chave.success ? [] : detalhesSemValor(chave.error)),
+                    ...(parsed.success ? [] : detalhesSemValor(parsed.error)),
+                ],
+            });
+            return;
+        }
+        const service = container.resolve(LotePagamentoService);
+        try {
+            const lote = await service.definirDestinoManualItem({
+                loteId: String(req.params.id),
+                ...chave.data,
+                versao: parsed.data.versao,
+                destino: parsed.data.destino,
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(lote) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino — remove o destino digitado
+// (volta a valer o cadastro). `versao` no body ou na query. admin.
+router.delete(
+    '/lotes/:id/itens/:filCod/:docCod/:titCod/destino',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const chave = chaveTituloSchema.safeParse(req.params);
+        const parsed = versaoDestinoSchema.safeParse({
+            versao: (req.body as { versao?: unknown } | undefined)?.versao ?? req.query.versao,
+        });
+        if (!chave.success || !parsed.success) {
+            res.status(400).json({
+                error: 'invalid request (versao)',
+                details: [
+                    ...(chave.success ? [] : detalhesSemValor(chave.error)),
+                    ...(parsed.success ? [] : detalhesSemValor(parsed.error)),
+                ],
+            });
+            return;
+        }
+        const service = container.resolve(LotePagamentoService);
+        try {
+            const lote = await service.limparDestinoManualItem({
+                loteId: String(req.params.id),
+                ...chave.data,
+                versao: parsed.data.versao,
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(lote) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054), SÓ como booleanos.
+router.get(
+    '/recursos',
+    asyncHandler(async (_req, res) => {
+        await bootstrapAppContainer();
+        const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
+        res.json({
+            tedEnabled: env.sispagTedEnabled === true,
+            destinoManualEnabled: env.sispagDestinoManualEnabled === true,
+            pixEnabled: env.sispagPixEnabled === true,
+        });
     }),
 );
 
@@ -372,7 +485,7 @@ router.post(
                 conta: parsed.data.conta,
                 ator: ator(req),
             });
-            res.json({ lote });
+            res.json({ lote: apiView().lote(lote) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }

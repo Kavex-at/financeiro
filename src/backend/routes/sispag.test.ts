@@ -12,6 +12,8 @@ jest.mock('../domain/appContainer.js', () => ({
 
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import DebitDateFrozenError from '../domain/errors/DebitDateFrozenError.js';
+import DestinoTitularDivergenteError from '../domain/errors/DestinoTitularDivergenteError.js';
+import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindowError.js';
 import ErpPerguntaError from '../domain/errors/ErpPerguntaError.js';
 import LoteEstadoInvalidoError from '../domain/errors/LoteEstadoInvalidoError.js';
@@ -1012,5 +1014,181 @@ describe('GET /sispag/boletos-dda', () => {
             expect(res.status).toBe(200);
         });
         expect(listar).toHaveBeenCalled();
+    });
+});
+
+// ─────────────────────────────────────────────────────────── ADR-0054 — destino manual
+
+describe('destino manual do item (ADR-0054)', () => {
+    const DESTINO = {
+        tipo: 'CONTA',
+        bancoCod: '237',
+        agencia: '1234',
+        conta: '99887766',
+        contaDv: '1',
+        titularDocumento: '11144477735',
+    };
+    const LOTE_COM_DESTINO = {
+        ...LOTE,
+        itens: [
+            {
+                loteId: 'L1',
+                filCod: 2,
+                docCod: '100',
+                titCod: '1',
+                modalidade: 'TED',
+                incluidoPor: 'u1',
+                destinoManual: DESTINO,
+                destinoManualAuditId: 'aud-1',
+                destinoManualInformadoPor: 'user-abc',
+                destinoManualInformadoEm: '2026-09-28T12:00:00.000Z',
+            },
+        ],
+    };
+    const PATH = '/sispag/lotes/L1/itens/2/100/1/destino';
+    const semSensivel = (json: unknown): void => {
+        const s = JSON.stringify(json);
+        for (const v of ['99887766', '11144477735', 'aud-1']) expect(s).not.toContain(v);
+    };
+
+    it('POST grava via serviço e devolve o lote com o destino MASCARADO', async () => {
+        const definirDestinoManualItem = jest.fn().mockResolvedValue(LOTE_COM_DESTINO);
+        container.registerInstance(LotePagamentoService, { definirDestinoManualItem } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}${PATH}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ versao: 3, destino: DESTINO }),
+            });
+            expect(res.status).toBe(200);
+            const body = await readJson(res);
+            expect(body.lote.itens[0].destinoManualResumo).toEqual({
+                tipo: 'CONTA',
+                destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1',
+                informadoPor: 'user-abc',
+                informadoEm: '2026-09-28T12:00:00.000Z',
+            });
+            expect(body.lote.itens[0]).not.toHaveProperty('destinoManual');
+            semSensivel(body);
+        });
+        expect(definirDestinoManualItem).toHaveBeenCalledWith({
+            loteId: 'L1',
+            filCod: 2,
+            docCod: '100',
+            titCod: '1',
+            versao: 3,
+            destino: DESTINO,
+            ator: 'user-abc',
+        });
+    });
+
+    it('POST com body inválido → 400 com details do Zod, sem ecoar o valor enviado', async () => {
+        const definirDestinoManualItem = jest.fn();
+        container.registerInstance(LotePagamentoService, { definirDestinoManualItem } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}${PATH}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ versao: 'x99887766', destino: DESTINO }),
+            });
+            expect(res.status).toBe(400);
+            const body = await readJson(res);
+            expect(body.details).toBeDefined();
+            semSensivel(body);
+        });
+        expect(definirDestinoManualItem).not.toHaveBeenCalled();
+    });
+
+    it('erro de titularidade do serviço → 422 com a mensagem em PT', async () => {
+        const definirDestinoManualItem = jest
+            .fn()
+            .mockRejectedValue(
+                new DestinoTitularDivergenteError({ campo: 'titularDocumento', titulo: '100/1' }),
+            );
+        container.registerInstance(LotePagamentoService, { definirDestinoManualItem } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}${PATH}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ versao: 1, destino: DESTINO }),
+            });
+            expect(res.status).toBe(422);
+            expect((await readJson(res)).error).toMatch(/titular/i);
+        });
+    });
+
+    it('DELETE limpa o destino com a versão', async () => {
+        const limparDestinoManualItem = jest.fn().mockResolvedValue(LOTE);
+        container.registerInstance(LotePagamentoService, { limparDestinoManualItem } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}${PATH}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ versao: 4 }),
+            });
+            expect(res.status).toBe(200);
+        });
+        expect(limparDestinoManualItem).toHaveBeenCalledWith(
+            expect.objectContaining({ loteId: 'L1', docCod: '100', versao: 4, ator: 'user-abc' }),
+        );
+    });
+
+    it('POST e DELETE exigem admin', async () => {
+        container.registerInstance(LotePagamentoService, {
+            definirDestinoManualItem: jest.fn(),
+            limparDestinoManualItem: jest.fn(),
+        } as never);
+        await comApp({ role: 'viewer' }, async (url) => {
+            for (const method of ['POST', 'DELETE']) {
+                const res = await fetch(`${url}${PATH}`, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ versao: 1, destino: DESTINO }),
+                });
+                expect(res.status).toBe(403);
+            }
+        });
+    });
+
+    it('GET /lotes/:id nunca devolve o destino completo', async () => {
+        const getLote = jest.fn().mockResolvedValue(LOTE_COM_DESTINO);
+        container.registerInstance(LotePagamentoService, { getLote } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1`);
+            const body = await readJson(res);
+            expect(body.lote.itens[0].destinoManualResumo.tipo).toBe('CONTA');
+            semSensivel(body);
+        });
+    });
+
+    it('GET /lotes também projeta a lista', async () => {
+        const listarLotes = jest.fn().mockResolvedValue([LOTE_COM_DESTINO]);
+        container.registerInstance(LotePagamentoService, { listarLotes } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes`);
+            semSensivel(await readJson(res));
+        });
+    });
+});
+
+describe('GET /sispag/recursos', () => {
+    it('expõe as flags TED/PIX/destino manual só como booleanos', async () => {
+        container.registerInstance(EnvironmentProvider, {
+            getEnvironmentVars: jest.fn().mockResolvedValue({
+                sispagTedEnabled: true,
+                sispagDestinoManualEnabled: false,
+                sispagPixEnabled: undefined,
+                conexosPassword: 'segredo',
+            }),
+        } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/recursos`);
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toEqual({
+                tedEnabled: true,
+                destinoManualEnabled: false,
+                pixEnabled: false,
+            });
+        });
     });
 });
