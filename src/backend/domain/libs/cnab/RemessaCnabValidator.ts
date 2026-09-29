@@ -19,14 +19,57 @@ export interface SegmentoJInvalido {
     barrasMascarada: string;
 }
 
+/**
+ * Códigos de AVISO do segmento A/B (ADR-0054). Nenhum bloqueia: os códigos de forma de
+ * lançamento de TED/PIX são hipótese até o teste supervisionado em produção (checklist do
+ * `sispag-ted-pix-tasks.md`, passos 6 e 10). Cada aviso começa pelo código.
+ */
+export const AVISO_CNAB = {
+    /** Lote com forma de lançamento hipotética de TED/PIX (41/43/45) — confirmar o código real. */
+    FORMA_A_CONFIRMAR: 'FORMA_A_CONFIRMAR',
+    /** Segmento A de TED/PIX sem o segmento B logo depois. */
+    SEGMENTO_B_AUSENTE: 'SEGMENTO_B_AUSENTE',
+    /**
+     * O lote local tem PIX (ou TED) e nenhum lote CNAB saiu com a forma correspondente — o caso 8
+     * (PIX saindo como crédito em conta). ⚠️ Vira `RemessaCorrompidaError` só DEPOIS do teste
+     * supervisionado confirmar os códigos (checklist, passo 12).
+     */
+    FORMA_DIVERGENTE_A_CONFIRMAR: 'FORMA_DIVERGENTE_A_CONFIRMAR',
+} as const;
+
+/**
+ * Formas de lançamento (header de lote, pos 12–13) HIPOTÉTICAS para TED e PIX no layout Itaú
+ * SISPAG. Medidas: nenhuma. 01 = crédito em conta e 30/31 = boleto são as que já aparecem nos
+ * `.REM` reais. Confirmar no primeiro TED/PIX supervisionado antes de endurecer.
+ */
+const FORMAS_TED_HIPOTESE: ReadonlySet<string> = new Set(['41', '43']);
+const FORMAS_PIX_HIPOTESE: ReadonlySet<string> = new Set(['45']);
+
+/** Um lote CNAB do arquivo: só códigos e contagens (sem dado de conta ou chave). */
+export interface LoteCnab {
+    lote: string;
+    formaLancamento: string;
+    segmentosA: number;
+    segmentosB: number;
+}
+
+/** O que o lote local mandou, para comparar com a forma que o ERP gravou (caso 8). */
+export interface EsperadoRemessa {
+    ted: number;
+    pix: number;
+}
+
 export interface ResultadoValidacaoRemessa {
     totalLinhas: number;
     segmentosJ: number;
     segmentosJ52: number;
     segmentosA: number;
+    segmentosB: number;
     segmentosO: number;
+    /** Lotes CNAB com header (registro tipo 1), na ordem do arquivo. */
+    lotes: LoteCnab[];
     invalidos: SegmentoJInvalido[];
-    /** Observações que NÃO bloqueiam (ver `valor` abaixo). */
+    /** Observações que NÃO bloqueiam (ver `valor` abaixo e `AVISO_CNAB`). */
     avisos: string[];
 }
 
@@ -35,7 +78,15 @@ export interface ResultadoValidacaoRemessa {
  * Medidas contra `.REM` reais da Columbia (61 segmentos J de produção, 2026-08-31).
  */
 const POS = {
-    /** pos 14 — código do segmento ('A' crédito/TED, 'J' boleto, 'O' tributo). */
+    /** pos 4-7 — número do lote de serviço. */
+    LOTE_INI: 3,
+    LOTE_FIM: 7,
+    /** pos 8 — tipo de registro ('1' header de lote, '3' detalhe). */
+    REGISTRO: 7,
+    /** pos 12-13 — forma de lançamento, no header de lote. */
+    FORMA_INI: 11,
+    FORMA_FIM: 13,
+    /** pos 14 — código do segmento ('A' crédito/TED, 'B' complemento, 'J' boleto, 'O' tributo). */
     SEGMENTO: 13,
     /** pos 18-19 — no segmento J, '52' marca o registro COMPLEMENTAR (J-52), sem barras. */
     SUBTIPO_INI: 17,
@@ -124,7 +175,7 @@ export default class RemessaCnabValidator {
         return undefined;
     };
 
-    public validar = (conteudo: string): ResultadoValidacaoRemessa => {
+    public validar = (conteudo: string, esperado?: EsperadoRemessa): ResultadoValidacaoRemessa => {
         const linhas = conteudo.split(/\r?\n/).filter((l) => l.length >= LINHA_MINIMA);
         const invalidos: SegmentoJInvalido[] = [];
         const avisos: string[] = [];
@@ -160,14 +211,115 @@ export default class RemessaCnabValidator {
             }
         });
 
+        // ADR-0054 — segunda passada, só de AVISO: forma de lançamento por lote e segmento B.
+        const ab = this.varrerLotesAB(conteudo);
+        avisos.push(...ab.avisos, ...this.avisosDeForma(ab.lotes, esperado));
+
         return {
             totalLinhas: linhas.length,
             segmentosJ: contagem.J,
             segmentosJ52: contagem.J52,
             segmentosA: contagem.A,
+            segmentosB: ab.segmentosB,
             segmentosO: contagem.O,
+            lotes: ab.lotes,
             invalidos,
             avisos,
         };
+    };
+
+    /**
+     * Lotes CNAB (header tipo 1, forma de lançamento nas pos 12–13) com a contagem de segmentos
+     * A e B de cada um, e o aviso de segmento A de TED/PIX que não veio seguido de B.
+     */
+    private varrerLotesAB = (
+        conteudo: string,
+    ): { lotes: LoteCnab[]; segmentosB: number; avisos: string[] } => {
+        const lotes: LoteCnab[] = [];
+        const porNumero = new Map<string, LoteCnab>();
+        const avisos: string[] = [];
+        let segmentosB = 0;
+        let aSemB: { linha: number; lote: string } | undefined;
+
+        conteudo.split(/\r?\n/).forEach((linha, idx) => {
+            if (linha.length < LINHA_MINIMA) return;
+            const numeroLote = linha.slice(POS.LOTE_INI, POS.LOTE_FIM);
+            const segmento = linha[POS.SEGMENTO];
+            const ehB = linha[POS.REGISTRO] !== '1' && segmento === 'B';
+            if (aSemB && !ehB) avisos.push(this.avisoASemB(aSemB));
+            aSemB = undefined;
+            if (linha[POS.REGISTRO] === '1') {
+                const novo = this.loteDoHeader(linha, numeroLote);
+                lotes.push(novo);
+                porNumero.set(numeroLote, novo);
+                return;
+            }
+            const lote = porNumero.get(numeroLote);
+            if (ehB) segmentosB += 1;
+            if (this.contarDetalhe(lote, ehB, segmento)) {
+                aSemB = { linha: idx + 1, lote: numeroLote };
+            }
+        });
+        if (aSemB) avisos.push(this.avisoASemB(aSemB));
+        return { lotes, segmentosB, avisos };
+    };
+
+    /** Conta A/B no lote. `true` = segmento A de TED/PIX, que precisa de um B logo depois. */
+    private contarDetalhe = (
+        lote: LoteCnab | undefined,
+        ehB: boolean,
+        segmento: string | undefined,
+    ): boolean => {
+        if (!lote) return false;
+        if (ehB) {
+            lote.segmentosB += 1;
+            return false;
+        }
+        if (segmento !== 'A') return false;
+        lote.segmentosA += 1;
+        return this.ehFormaTedOuPix(lote.formaLancamento);
+    };
+
+    private loteDoHeader = (linha: string, numeroLote: string): LoteCnab => ({
+        lote: numeroLote,
+        formaLancamento: linha.slice(POS.FORMA_INI, POS.FORMA_FIM),
+        segmentosA: 0,
+        segmentosB: 0,
+    });
+
+    private avisoASemB = (a: { linha: number; lote: string }): string =>
+        `${AVISO_CNAB.SEGMENTO_B_AUSENTE}: linha ${a.linha} (lote ${a.lote}) — segmento A de TED/PIX sem segmento B`;
+
+    private ehFormaTedOuPix = (forma: string): boolean =>
+        FORMAS_TED_HIPOTESE.has(forma) || FORMAS_PIX_HIPOTESE.has(forma);
+
+    /**
+     * Avisos de forma de lançamento (ADR-0054). Só códigos e contagens: o validador nunca
+     * copia conteúdo do registro para o relatório (I10h).
+     */
+    private avisosDeForma = (lotes: LoteCnab[], esperado?: EsperadoRemessa): string[] => {
+        const avisos: string[] = [];
+        for (const l of lotes) {
+            if (this.ehFormaTedOuPix(l.formaLancamento)) {
+                avisos.push(
+                    `${AVISO_CNAB.FORMA_A_CONFIRMAR}: lote ${l.lote} forma ${l.formaLancamento} (${l.segmentosA} A, ${l.segmentosB} B) — código hipotético, confirmar no teste supervisionado`,
+                );
+            }
+        }
+        if (!esperado) return avisos;
+        const formas = new Set(lotes.map((l) => l.formaLancamento));
+        const temForma = (alvo: ReadonlySet<string>): boolean =>
+            [...alvo].some((f) => formas.has(f));
+        if (esperado.pix > 0 && !temForma(FORMAS_PIX_HIPOTESE)) {
+            avisos.push(
+                `${AVISO_CNAB.FORMA_DIVERGENTE_A_CONFIRMAR}: ${esperado.pix} item(ns) PIX e nenhum lote CNAB com forma PIX (${[...FORMAS_PIX_HIPOTESE].join('/')}); formas no arquivo: ${[...formas].join(', ') || 'nenhuma'}`,
+            );
+        }
+        if (esperado.ted > 0 && !temForma(FORMAS_TED_HIPOTESE)) {
+            avisos.push(
+                `${AVISO_CNAB.FORMA_DIVERGENTE_A_CONFIRMAR}: ${esperado.ted} item(ns) TED e nenhum lote CNAB com forma TED (${[...FORMAS_TED_HIPOTESE].join('/')}); formas no arquivo: ${[...formas].join(', ') || 'nenhuma'}`,
+            );
+        }
+        return avisos;
     };
 }

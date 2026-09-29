@@ -650,7 +650,21 @@ export default class RemessaService {
             // layout é posicional. Falhou aqui, o lote NÃO vai para REMESSA_GERADA e o
             // `baixarArquivo` não serve nada — o arquivo fica no ERP para cancelamento manual.
             if (arquivo.conteudo) {
-                const validacao = this.cnab.validar(arquivo.conteudo);
+                // ADR-0054: com TED/PIX ligados, o validador compara a forma de lançamento do
+                // arquivo com o que o lote mandou (caso 8) — só AVISO até o teste supervisionado.
+                const validacao = this.cnab.validar(
+                    arquivo.conteudo,
+                    flags.ted || flags.pix
+                        ? {
+                              ted: lote.itens.filter(
+                                  (i) => i.modalidade === MODALIDADE.TED && flags.ted,
+                              ).length,
+                              pix: lote.itens.filter(
+                                  (i) => i.modalidade === MODALIDADE.PIX && flags.pix,
+                              ).length,
+                          }
+                        : undefined,
+                );
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
                     message: 'remessa: verificação de integridade do .REM',
