@@ -160,17 +160,17 @@ describe('GET /sispag/retornos', () => {
         expect(linhasDigitaveisDoLote).toHaveBeenCalledWith('lote-1');
     });
 
-    it('GET /lotes/:id/linhas-digitaveis exige sispag:executar', async () => {
-        // A linha digitável é destino de pagamento (banco/agência/conta do cedente no campo
-        // livre, mais o valor). Sem o guard, um loop de `curl` extrai a carteira de boletos.
-        const linhasDigitaveisDoLote = jest.fn();
+    it('GET /lotes/:id/linhas-digitaveis basta sispag:ver (só leitura também confere boleto)', async () => {
+        // Decisão do dono do ciclo (ADR-0053): conferir a linha digitável é acompanhar o lote.
+        // Sem `sispag:ver` o guard recusa; a tabela completa está em `http/routePermissions.test.ts`.
+        const linhasDigitaveisDoLote = jest.fn().mockResolvedValue([]);
         container.registerInstance(SispagPainelService, { linhasDigitaveisDoLote } as never);
 
         await comApp({ role: 'viewer' }, async (url) => {
             const res = await fetch(`${url}/sispag/lotes/lote-1/linhas-digitaveis`);
-            expect(res.status).toBe(403);
+            expect(res.status).toBe(200);
         });
-        expect(linhasDigitaveisDoLote).not.toHaveBeenCalled();
+        expect(linhasDigitaveisDoLote).toHaveBeenCalledWith('lote-1');
     });
 
     it('GET /lotes/:id/linhas-digitaveis em rascunho devolve lista vazia, não erro', async () => {
@@ -1005,11 +1005,12 @@ describe('GET /sispag/boletos-dda', () => {
         expect(listar).not.toHaveBeenCalled();
     });
 
-    it('exige sispag:executar — código de barras é destino de pagamento', async () => {
-        registrar();
+    it('basta sispag:ver — só leitura também consulta os boletos DDA (ADR-0053)', async () => {
+        const listar = registrar();
         await comApp({ role: 'viewer' }, async (url) => {
             const res = await fetch(`${url}/sispag/boletos-dda`);
-            expect(res.status).toBe(403);
+            expect(res.status).toBe(200);
         });
+        expect(listar).toHaveBeenCalled();
     });
 });

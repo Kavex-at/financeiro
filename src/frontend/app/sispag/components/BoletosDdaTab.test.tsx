@@ -199,21 +199,28 @@ describe('BoletosDdaTab', () => {
 })
 
 /**
- * ADR-0053: o `GET /sispag/boletos-dda` exige `sispag:executar` no backend (código de barras é
- * destino de pagamento). A página já esconde a aba; aqui o componente, por conta própria, não lê
- * nem oferece "Sincronizar" sem a permissão — defesa em profundidade contra um 403 na tela.
+ * ADR-0053: consultar os boletos (`GET /sispag/boletos-dda`) basta `sispag:ver`; sincronizar com o
+ * fin124 exige `sispag:executar`. Sem `ver`, por defesa, o componente não lê nada.
  */
-describe('BoletosDdaTab — sem sispag:executar', () => {
+describe('BoletosDdaTab — permissões', () => {
   afterEach(() => {
     permissoes = [...CATALOGO_PERMISSOES]
   })
 
-  it('não busca os boletos nem mostra "Sincronizar"', () => {
+  it('só sispag:ver: busca os boletos, mas não mostra "Atualizar DDA"', async () => {
     permissoes = ['sispag:ver']
+    mockFetch.mockResolvedValue(pagina([ADP]))
+    render(<BoletosDdaTab />)
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: /atualizar dda|sincronizar/i })).not.toBeInTheDocument()
+    expect(mockSync).not.toHaveBeenCalled()
+  })
+
+  it('sem sispag:ver: não busca nada nem mostra "Atualizar DDA"', () => {
+    permissoes = []
     mockFetch.mockClear()
     render(<BoletosDdaTab />)
     expect(mockFetch).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /atualizar dda|sincronizar/i })).not.toBeInTheDocument()
-    expect(mockSync).not.toHaveBeenCalled()
   })
 })

@@ -102,10 +102,11 @@ function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
 }
 
 export function BoletosDdaTab() {
-  // ADR-0053: o `GET /sispag/boletos-dda` exige `sispag:executar` (código de barras é destino de
-  // pagamento). A página já esconde a aba de quem não tem; aqui, por defesa, sem a permissão o
-  // componente não lê nem oferece a sincronização.
+  // ADR-0053: consultar os boletos (`GET /sispag/boletos-dda`) basta `sispag:ver`; sincronizar
+  // com o fin124 ("Atualizar DDA") exige `sispag:executar` e some sem ela (R11). Sem `ver`, por
+  // defesa, o componente não lê nada.
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
+  const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
   const [escopo, setEscopo] = React.useState<BoletoDdaEscopo>('a-vencer')
   const [situacao, setSituacao] = React.useState<FiltroSituacao>('todas')
@@ -151,7 +152,7 @@ export function BoletosDdaTab() {
 
   // Estado só muda DEPOIS do fetch. Resposta de requisição já superada é descartada (`vivo`).
   React.useEffect(() => {
-    if (!podeExecutar) return
+    if (!podeVer) return
     let vivo = true
     fetchBoletosDda(filtro)
       .then((dados) => {
@@ -163,7 +164,7 @@ export function BoletosDdaTab() {
     return () => {
       vivo = false
     }
-  }, [chave, filtro, podeExecutar])
+  }, [chave, filtro, podeVer])
 
   /** Carregando = a última resposta é de outra requisição. A página anterior fica visível, esmaecida. */
   const carregando = resultado?.chave !== chave
@@ -231,7 +232,7 @@ export function BoletosDdaTab() {
     }
   }
 
-  if (!podeExecutar) return null
+  if (!podeVer) return null
 
   return (
     <div className="space-y-3">
@@ -257,10 +258,12 @@ export function BoletosDdaTab() {
             {dados ? ` · candidato = mesmo valor e vencimento em ±${dados.janelaDias} dias` : ''}
           </span>
         </div>
-        <Button size="sm" variant="outline" onClick={sincronizar} disabled={sincronizando}>
-          <RefreshCcw className={`size-4 ${sincronizando ? 'animate-spin' : ''}`} />{' '}
-          {sincronizando ? 'Atualizando…' : 'Atualizar DDA'}
-        </Button>
+        {podeExecutar ? (
+          <Button size="sm" variant="outline" onClick={sincronizar} disabled={sincronizando}>
+            <RefreshCcw className={`size-4 ${sincronizando ? 'animate-spin' : ''}`} />{' '}
+            {sincronizando ? 'Atualizando…' : 'Atualizar DDA'}
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-1" role="group" aria-label="Situação">

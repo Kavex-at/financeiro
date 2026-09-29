@@ -72,10 +72,11 @@ router.get(
  */
 router.get(
     '/lotes/:id/linhas-digitaveis',
-    // Mesmo raciocínio do download do `.REM`: a linha digitável é destino de pagamento —
-    // carrega banco, agência e conta do cedente no campo livre, além do valor. Sem o guard,
-    // um loop de `curl` extrai a carteira de boletos da Columbia. LGPD Art. 6º e LC 105.
-    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    // A linha digitável é destino de pagamento (banco, agência e conta do cedente no campo livre,
+    // além do valor), mas conferir boleto faz parte de acompanhar o lote: basta `sispag:ver`
+    // (decisão do dono do ciclo, ADR-0053). Quem não tem `ver` não passa; o download do `.REM`
+    // continua em `sispag:executar`.
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(SispagPainelService);
@@ -439,9 +440,9 @@ const boletosDdaSchema = z.object({
 // Devolve UMA página (≤ 100 linhas) — nunca o pool inteiro (Regis-Review performance-1/security-2).
 router.get(
     '/boletos-dda',
-    // Mesmo guard das linhas digitáveis do lote: código de barras é destino de pagamento
-    // (banco, agência e conta do cedente no campo livre). LGPD Art. 6º e LC 105.
-    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    // Mesmo guard das linhas digitáveis do lote: `sispag:ver` basta para consultar os boletos
+    // DDA (decisão do dono do ciclo, ADR-0053). Sincronizar continua em `sispag:executar`.
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = boletosDdaSchema.safeParse(req.query);

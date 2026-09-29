@@ -108,8 +108,10 @@ export function LoteCard({
   const [aberto, setAberto] = React.useState(false)
   // ADR-0053: toda ação do lote exige `sispag:executar`. Sem ela (ou enquanto carrega), as ações
   // SOMEM — nunca ficam desabilitadas (R11) — e as leituras reservadas a quem executa (contas
-  // pagadoras, modalidades do favorecido, linhas digitáveis, arquivo .REM) nem são pedidas.
+  // pagadoras, modalidades do favorecido, arquivo .REM) nem são pedidas. As linhas digitáveis
+  // (conferir boleto) bastam `sispag:ver`.
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
+  const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
   // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
   const [gerandoRemessa, setGerandoRemessa] = React.useState(false)
@@ -193,8 +195,8 @@ export function LoteCard({
   // corrompido é indistinguível de "este título não é boleto": nos dois casos o botão some.
   const [linhasRecusadas, setLinhasRecusadas] = React.useState(0)
   React.useEffect(() => {
-    // `GET .../linhas-digitaveis` exige `sispag:executar` no backend (destino de pagamento).
-    if (!aberto || isRascunho || !podeExecutar) return
+    // `GET .../linhas-digitaveis` basta `sispag:ver` no backend (ADR-0053).
+    if (!aberto || isRascunho || !podeVer) return
     let vivo = true
     fetchLinhasDigitaveis(l.id)
       .then(({ itens, dropped }) => {
@@ -210,7 +212,7 @@ export function LoteCard({
     return () => {
       vivo = false
     }
-  }, [aberto, isRascunho, l.id, podeExecutar])
+  }, [aberto, isRascunho, l.id, podeVer])
 
   /** Copia a linha digitável. O toast confirma sem repetir os 47 dígitos na tela. */
   const copiarLinha = async (linhaDigitavel: string, docCod: string, titCod: string) => {
