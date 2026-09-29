@@ -1125,9 +1125,25 @@
       "file": "business-rules/destino-pagamento-sispag.md",
       "entity": "LotePagamento",
       "invariant": "I10",
-      "status": "planned",
-      "has_canonical_test": false,
-      "impl_files": [],
+      "status": "partial",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/service/sispag/DestinoPagamentoResolver.ts",
+        "src/backend/domain/libs/sispag/DestinoManualValidator.ts",
+        "src/backend/domain/libs/sispag/MaskDestino.ts",
+        "src/backend/domain/service/sispag/RemessaService.ts",
+        "src/backend/domain/service/sispag/SispagPainelService.ts",
+        "src/backend/domain/service/sispag/LotePagamentoService.ts",
+        "src/backend/domain/service/sispag/LotePagamentoApiView.ts",
+        "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
+        "src/backend/domain/client/ConexosSispagClient.ts",
+        "src/backend/domain/libs/cnab/RemessaCnabValidator.ts",
+        "src/backend/migrations/0066_sispag_destino_manual.sql",
+        "src/backend/routes/sispag.ts",
+        "src/frontend/app/sispag/components/InformarDestinoDialog.tsx",
+        "src/frontend/app/sispag/components/LoteCard.tsx",
+        "src/backend/jobs/probe-sispag-ted-pix-supervisionado.ts"
+      ],
       "decided_by": [
         "ADR-0054"
       ],
@@ -1139,7 +1155,7 @@
         "H6 — ERP mantém itsVldModalidade=5",
         "H7 — fbtCod/fbtDesDescr/fbtEspCodbanco = finalidade do TED?"
       ],
-      "note": "SISPAG TED/PIX: resolução única do destino (manual > cadastro cmn025/ctcorr em qualquer banco ou cmnPessoasPix, default primeiro) para oferta e envio; I10a-i. Destino digitado só no item, sem escrita no Conexos. Sem quatro olhos (follow-up: permissão específica)."
+      "note": "SISPAG TED/PIX: resolução única do destino (manual > cadastro cmn025/ctcorr em qualquer banco ou cmnPessoasPix, default primeiro) para oferta e envio; I10a-i. Destino digitado só no item, sem escrita no Conexos. Sem quatro olhos (follow-up: permissão específica). 2026-09-28 (branch feat/sispag-ted-pix): implementado ATRÁS DE FLAGS desligadas por padrão (SISPAG_TED_ENABLED, SISPAG_DESTINO_MANUAL_ENABLED, SISPAG_PIX_ENABLED); com as três desligadas o envio é idêntico ao main (testes de paridade). partial = código pronto e testado, nada provado em produção: H1/H3-H7 e o nome do campo de CPF/CNPJ no cmn025 (CAMPO_DOCUMENTO_FAVORECIDO) dependem do teste supervisionado do tasks.md. Os avisos do RemessaCnabValidator (forma de lançamento 41/43/45) só viram erro depois dele."
     }
   },
   "state_machines": {
