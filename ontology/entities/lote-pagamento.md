@@ -42,7 +42,7 @@ relationships:
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
   - "ItemLote 0..1—1 DestinoManual (value object: conta ou chave PIX digitada para aquele item; ADR-0054)"
-last_review: 2026-09-28
+last_review: 2026-09-29
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
   - "ADR-0018 — formação AUTOMÁTICA de lotes candidatos (cron pós-ingestão + manual): pré-montar os lotes das obrigações a-vencer é a automação natural sobre a montagem manual; universal em contas-a-pagar de trading com comex"
@@ -149,7 +149,9 @@ fora de um lote.
 | `chavePix` | string | Formato validado por tipo. Gravada completa, exibida mascarada (I10h). |
 | `titularDocumento` | string (CPF/CNPJ, dígitos) | **Obrigatório nos dois tipos.** Tem de ser igual ao CPF/CNPJ do favorecido do título (I10i). |
 | `titularNomeDict?` | string | Só se o H1 provar que `validacao/modalidadePix` devolve o nome. |
-| `informadoPor` / `informadoEm` | string / Date | Autor (do JWT) e momento da última gravação. O histórico completo (anterior → novo) fica na trilha só de inclusão (I10g, tabela *a criar*). |
+| `informadoPor` / `informadoEm` | string / Date | Autor (do JWT) e momento da última gravação. O histórico completo (anterior → novo) fica na trilha só de inclusão (I10g, `lote_pagamento_item_destino_audit`, 0067). |
+| `aprovacao` | enum (derivado) | `NAO_EXIGIDA` (chave PIX CPF/CNPJ, D11) · `PENDENTE` · `APROVADO` (I10j, ADR-0054 D10). Derivado da trilha: aprovado = há linha `APROVACAO` apontando para a gravação vigente (0068). Editar ou limpar volta a `PENDENTE`. |
+| `aprovadoPor` / `aprovadoEm` | string / Date | Quem tem `sispag:aprovar_destino` e aprovou a conta vigente, e quando. Pode ser quem digitou. |
 
 > **Por que snapshot no item:** o `TituloAPagar` é read-through (muda no ERP entre leituras); o
 > `ItemLote` congela valor/venc/credor no instante da inclusão, preservando o que a analista viu
@@ -193,7 +195,10 @@ fora de um lote.
   resolvível antes de qualquer escrita (I10a); a tela oferece com a mesma função que o envio usa
   (I10b); TED em qualquer banco (I10c); PIX só com chave (I10d); `destinoManual` editável só em
   RASCUNHO (I10e) e congelado depois do import no `fin015` (I10f); trilha (I10g); mascaramento
-  (I10h); titularidade bloqueante (I10i). O digitado **prevalece** sobre o cadastro. Ver
+  (I10h); titularidade bloqueante (I10i); conta digitada só sai aprovada por quem tem
+  `sispag:aprovar_destino` — `finalizarLote` barra e o envio confere de novo (I10j, D10; chave PIX
+  CPF/CNPJ digitada não exige, D11); chave PIX CPF/CNPJ do favorecido tem preferência sobre a
+  default (I10k, D12). O digitado **prevalece** sobre o cadastro. Ver
   `business-rules/destino-pagamento-sispag.md`. *(I9 foi proposto e retirado na ADR-0050; o
   número não é reaproveitado.)*
 

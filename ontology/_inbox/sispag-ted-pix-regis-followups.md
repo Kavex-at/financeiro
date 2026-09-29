@@ -117,3 +117,25 @@ PRE_EXISTING.
 ### P3 — testability-5 — Pisos de cobertura por arquivo e testes de propriedade nos módulos de destino
 
 ### P3 — deployability-3 — Smoke check pós-deploy que confirma versão e última migration
+
+## Adendo D10–D12 (2026-09-29, tarde) — Regis-Review DISPENSADO
+
+O delta do Adendo da ADR-0054 (D10 aprovação da conta digitada, D11 chave CPF/CNPJ sem aprovação, D12
+preferência pela chave CPF/CNPJ; migration `0068`, rota `POST .../destino/aprovar`) **não** passou por
+um novo Regis-Review, por decisão explícita do dono do ciclo (delta pequeno; o Regis-Review da feature
+já rodou). O run acima (`2026-09-29-0104-sispag-ted-pix`) segue sendo o Regis-Review da feature. Os
+gates do delta rodaram normalmente: typecheck, lint, testes (backend e frontend), PatternGuardian,
+SpecVerifier e DesignSystemReviewer.
+
+Pontos que um Regis-Review futuro deveria olhar (não implementados aqui):
+
+- **security** — a aprovação não é quatro-olhos (D10: quem digitou pode aprovar a própria). Se a
+  Columbia pedir segregação, é uma guarda curta no `LotePagamentoService.aprovarDestinoManualItem`
+  (comparar o ator com `destinoManualInformadoPor`).
+- **deployability** — a `0068` não tem reverse em `rollbacks/` (não é destrutiva). Voltar o backend
+  para antes dela mantém a coluna `evento`; o backend antigo passaria a ver a linha `APROVACAO` como a
+  "gravação mais recente" no `LEFT JOIN LATERAL` e o `auditId` do ledger mudaria (só afeta itens com
+  destino digitado e as flags ligadas, que seguem desligadas em produção).
+- **testability** — coberto no próprio ciclo: `0068_sispag_aprovar_destino.integration.test.ts` roda o
+  `LotePagamentoRepository` real contra Postgres 17 (gravar → pendente; aprovar → aprovado sem mudar a
+  gravação vigente; regravar → pendente; CHECKs novos). 6/6 verdes localmente; roda no job `backend-sql`.
