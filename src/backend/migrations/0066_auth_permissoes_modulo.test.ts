@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
 
 /**
  * 0066 — permissões por módulo lidas do banco (passo 2 de 3 do plano de auth, ADR-0053).
@@ -23,6 +22,23 @@ const semComentarios = (texto: string): string =>
         .join('\n');
 
 const CODIGO = semComentarios(SQL);
+
+/**
+ * O catálogo COMO ERA quando a 0066 subiu. Migration aplicada não muda; a paridade com o catálogo
+ * ATUAL do código é da migration mais recente que troca o `CHECK` (hoje a 0068, e o teste dela
+ * cobre "a última lista do diretório = `PERMISSION_CATALOG`").
+ */
+const CATALOGO_DA_0066 = [
+    'permutas:ver',
+    'permutas:executar',
+    'sispag:ver',
+    'sispag:executar',
+    'recebimentos:ver',
+    'recebimentos:executar',
+    'operacao:ver',
+    'metricas:ver',
+    'usuarios:gerenciar',
+].sort();
 const CODIGO_REVERSE = semComentarios(REVERSE);
 
 /** Os valores de TODO `CHECK (permission IN (...))` da migration. */
@@ -75,11 +91,11 @@ describe('migration 0066 — papéis, exceções e trilha de acesso', () => {
         expect(CODIGO).toMatch(/PRIMARY KEY \(user_id, permission\)/i);
     });
 
-    it('as DUAS colunas permission têm CHECK igual ao catálogo do código (R4, paridade)', () => {
+    it('as DUAS colunas permission têm CHECK igual ao catálogo da época (R4, paridade)', () => {
         const listas = listasDoCheck();
         expect(listas).toHaveLength(2);
         for (const lista of listas) {
-            expect(lista).toEqual([...PERMISSION_CATALOG].sort());
+            expect(lista).toEqual(CATALOGO_DA_0066);
         }
     });
 
@@ -106,7 +122,7 @@ describe('migration 0066 — papéis, exceções e trilha de acesso', () => {
         )?.[0];
         expect(seedPermissoes).toBeDefined();
         const valores = [...(seedPermissoes ?? '').matchAll(/'([a-z]+:[a-z]+)'/g)].map((m) => m[1]);
-        expect(valores.sort()).toEqual([...PERMISSION_CATALOG].sort());
+        expect(valores.sort()).toEqual(CATALOGO_DA_0066);
         expect((CODIGO.match(/ON CONFLICT/gi) ?? []).length).toBeGreaterThanOrEqual(2);
     });
 

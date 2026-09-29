@@ -3,7 +3,7 @@ import { z } from 'zod';
 /**
  * Catálogo de permissões da plataforma (ADR-0053) — FIXO no código, sem tabela.
  *
- * Grossas, por módulo, em dois níveis (`ver` / `executar`), mais três avulsas. Um valor novo aqui
+ * Grossas, por módulo, em dois níveis (`ver` / `executar`), mais quatro avulsas. Um valor novo aqui
  * exige também uma migration que troque o `CHECK (permission IN (...))` das tabelas
  * `app_role_permission` e `user_permission` (R4); o teste de paridade da 0066 falha se só um dos
  * lados mudar.
@@ -15,6 +15,11 @@ export const PERMISSION = {
     PERMUTAS_EXECUTAR: 'permutas:executar',
     SISPAG_VER: 'sispag:ver',
     SISPAG_EXECUTAR: 'sispag:executar',
+    /**
+     * Aprovar a conta (TED) digitada no item do lote antes de finalizar (ADR-0054 D10, 0068).
+     * Avulsa: não implica nem é implicada por `sispag:ver`/`sispag:executar`.
+     */
+    SISPAG_APROVAR_DESTINO: 'sispag:aprovar_destino',
     RECEBIMENTOS_VER: 'recebimentos:ver',
     RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
     OPERACAO_VER: 'operacao:ver',
@@ -30,6 +35,7 @@ export const PERMISSION_CATALOG: readonly Permission[] = [
     PERMISSION.PERMUTAS_EXECUTAR,
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
+    PERMISSION.SISPAG_APROVAR_DESTINO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
@@ -43,6 +49,7 @@ export const permissionSchema = z.enum([
     PERMISSION.PERMUTAS_EXECUTAR,
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
+    PERMISSION.SISPAG_APROVAR_DESTINO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
@@ -91,7 +98,7 @@ export interface RoleRef {
     nome: string;
 }
 
-/** Nome do papel semeado pela 0066 com as nove permissões. */
+/** Nome do papel semeado pela 0066 (nove permissões; a 0068 acrescenta a décima). */
 export const ADMIN_ROLE_NAME = 'Administrador';
 
 /** `true` quando o valor é uma permissão do catálogo. */

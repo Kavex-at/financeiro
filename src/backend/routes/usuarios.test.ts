@@ -495,7 +495,7 @@ describe('GET /usuarios — papel, exceções e efetivas por usuário (D6)', () 
             papel: { id: 1, nome: 'Administrador' },
             excecoes: [{ permissao: 'usuarios:gerenciar', efeito: 'revogar' }],
         });
-        expect(u.permissoesEfetivas).toHaveLength(8);
+        expect(u.permissoesEfetivas).toHaveLength(PERMISSION_CATALOG.length - 1);
         expect(u.permissoesEfetivas).not.toContain('usuarios:gerenciar');
     });
 });
@@ -594,7 +594,7 @@ describe('PUT /usuarios/:id/permissoes', () => {
         const body = await json(res);
         expect(body.id).toBe(7);
         expect(body.excecoes).toEqual([{ permissao: 'sispag:executar', efeito: 'revogar' }]);
-        expect(body.permissoesEfetivas).toHaveLength(8);
+        expect(body.permissoesEfetivas).toHaveLength(PERMISSION_CATALOG.length - 1);
         expect(accessRepo.replaceExceptions).toHaveBeenCalledWith(
             7,
             [{ permissao: 'sispag:executar', efeito: 'revogar' }],

@@ -23,7 +23,7 @@ const efetivas = (pacote: string[], excecoes: PermissionException[] = []): strin
     [...calc.calcular(pacote, excecoes).permissoes].sort();
 
 describe('catálogo de permissões', () => {
-    it('tem exatamente as nove permissões da entrevista (mudar o catálogo exige mudar este teste)', () => {
+    it('tem exatamente as permissões decididas (nove da entrevista + a do ADR-0054 D10; mudar o catálogo exige mudar este teste)', () => {
         expect([...PERMISSION_CATALOG].sort()).toEqual(
             [
                 'metricas:ver',
@@ -32,6 +32,7 @@ describe('catálogo de permissões', () => {
                 'permutas:ver',
                 'recebimentos:executar',
                 'recebimentos:ver',
+                'sispag:aprovar_destino',
                 'sispag:executar',
                 'sispag:ver',
                 'usuarios:gerenciar',
