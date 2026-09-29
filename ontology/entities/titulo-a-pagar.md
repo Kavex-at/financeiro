@@ -93,7 +93,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `titCod` | string | `fin064`/`com308` → `tit_cod` | Código do título dentro do documento (um doc pode ter N títulos/parcelas). |
 | `filCod` | number | `fin064` → `fil_cod` | **Invariante multi-filial** — filial que originou o título. Chave do agrupamento de lote (I4). Nunca `null`. |
 | `credor` | string? | `fin064` → nome do fornecedor/credor | Exibição. A quem se paga. |
-| `pesCod` | string? | `fin064`/`imp021` → `pes_cod` | Código da pessoa (fornecedor/credor). Roteamento/identidade. |
+| `pesCod` | string? | `fin064` `pesCod`, **senão `pesCodFor`** / `imp021` → `pes_cod` | Código da pessoa (fornecedor/credor). Roteamento/identidade. No `fin064` o `pesCod` chega vazio e o favorecido vem em `pesCodFor` (fixtures reais 2026-08-24/25). O título **não traz o CPF/CNPJ** (`pdcDocFederal` vazio); o documento vem do cadastro (`cmn025`). |
 | `valor` | number? | `fin064`/`com308` → `titMnyValor` (ou saldo a pagar) | Valor do título (moeda em `moeda`). Snapshot no `ItemLote` no momento da inclusão. |
 | `moeda` | string? | `com298.moeEspSigla` | Moeda do título. |
 | `vencimento` | Date? | `fin064`/`com308` → `titDtaVencimento` | Data de vencimento — base do aging e da janela do painel (−15d..+45d). |

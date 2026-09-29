@@ -62,6 +62,21 @@ describe('ConexosSispagClient (read-only)', () => {
         });
     });
 
+    it('favorecido do fin064 vem de pesCodFor quando pesCod chega vazio (forma real do ERP)', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 2,
+            rows: [
+                fin064Row({ pesCod: null, pesCodFor: 1161 }),
+                fin064Row({ docCod: 101, pesCod: 384, pesCodFor: 1161 }),
+            ],
+        });
+        const [semPesCod, comPesCod] = await make(base).listTitulosAPagar(2);
+        expect(semPesCod.pesCod).toBe('1161');
+        // `pesCod` preenchido continua mandando.
+        expect(comPesCod.pesCod).toBe('384');
+    });
+
     it('listTitulosAPagar cai para busca sem filtro quando o Conexos recusa o filtro (400)', async () => {
         const base = buildBase();
         base.listGenericPaginated.mockRejectedValueOnce(filtroRecusado()).mockResolvedValueOnce({
