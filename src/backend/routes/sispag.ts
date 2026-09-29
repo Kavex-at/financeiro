@@ -381,7 +381,7 @@ const detalhesSemValor = (erro: z.ZodError): Array<{ campo: string; codigo: stri
 // congelado · 422 titularidade.
 router.post(
     '/lotes/:id/itens/:filCod/:docCod/:titCod/destino',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const chave = chaveTituloSchema.safeParse(req.params);
@@ -416,7 +416,7 @@ router.post(
 // (volta a valer o cadastro). `versao` no body ou na query. admin.
 router.delete(
     '/lotes/:id/itens/:filCod/:docCod/:titCod/destino',
-    requireRole('admin'),
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const chave = chaveTituloSchema.safeParse(req.params);
@@ -451,6 +451,7 @@ router.delete(
 // GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054), SÓ como booleanos.
 router.get(
     '/recursos',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
         const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();

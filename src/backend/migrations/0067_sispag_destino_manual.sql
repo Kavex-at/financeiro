@@ -1,4 +1,4 @@
--- 0066_sispag_destino_manual.sql
+-- 0067_sispag_destino_manual.sql
 -- ADR-0054 — destino de TED/PIX digitado pela analista NO ITEM do lote (D1), com precedência sobre
 -- o cadastro do Conexos (D2), e a trilha só-inclusão que a acompanha (I10g).
 --

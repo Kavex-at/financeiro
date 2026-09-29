@@ -62,7 +62,7 @@ interface ItemRow {
     bor_cod: number | null;
     bxa_cod_seq: number | null;
     conciliado_em: Date | null;
-    // ── 0066: destino manual (ADR-0054) + a linha de trilha vigente ──
+    // ── 0067: destino manual (ADR-0054) + a linha de trilha vigente ──
     destino_manual?: unknown;
     destino_audit_id?: string | null;
     destino_informado_por?: string | null;
@@ -513,7 +513,7 @@ export default class LotePagamentoRepository {
      *      escrita, nenhuma trilha, e o serviço distingue relendo;
      *   2. grava o destino no item;
      *   3. bumpa a versão do lote (a edição é uma mudança do agregado, como a modalidade);
-     *   4. insere a linha de trilha com antes/depois COMPLETOS (a tabela é só-inclusão, 0066).
+     *   4. insere a linha de trilha com antes/depois COMPLETOS (a tabela é só-inclusão, 0067).
      *
      * SQL só com parâmetros nomeados: o destino viaja como `$destino::jsonb`, nunca no texto.
      */
