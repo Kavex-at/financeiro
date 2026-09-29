@@ -93,6 +93,7 @@ export function InformarDestinoDialog({
   item,
   tedEnabled,
   pixEnabled,
+  preferirPix = false,
   onOpenChange,
   onSalvo,
 }: {
@@ -100,11 +101,21 @@ export function InformarDestinoDialog({
   item: ItemLote
   tedEnabled: boolean
   pixEnabled: boolean
+  /**
+   * ADR-0054 D12: o favorecido tem chave PIX CPF/CNPJ que é o próprio documento — a aba PIX vem
+   * primeiro e o diálogo abre nela. A analista continua podendo escolher TED.
+   */
+  preferirPix?: boolean
   onOpenChange: (open: boolean) => void
   onSalvo: (lote: LotePagamento) => void
 }) {
+  const pixPrimeiro = pixEnabled && preferirPix
   const inicial: Aba =
-    item.modalidade === 'PIX' && pixEnabled ? 'CHAVE_PIX' : tedEnabled ? 'CONTA' : 'CHAVE_PIX'
+    (item.modalidade === 'PIX' || pixPrimeiro) && pixEnabled
+      ? 'CHAVE_PIX'
+      : tedEnabled
+        ? 'CONTA'
+        : 'CHAVE_PIX'
   const [aba, setAba] = React.useState<Aba>(inicial)
   const [conta, setConta] = React.useState({
     bancoCod: '',
@@ -171,9 +182,17 @@ export function InformarDestinoDialog({
           <DialogBody className="space-y-4">
             <Tabs value={aba} onValueChange={(v) => setAba(v as Aba)}>
               <TabsList aria-label="Tipo de destino">
+                {pixPrimeiro ? <TabsTrigger value="CHAVE_PIX">PIX</TabsTrigger> : null}
                 {tedEnabled ? <TabsTrigger value="CONTA">TED</TabsTrigger> : null}
-                {pixEnabled ? <TabsTrigger value="CHAVE_PIX">PIX</TabsTrigger> : null}
+                {pixEnabled && !pixPrimeiro ? (
+                  <TabsTrigger value="CHAVE_PIX">PIX</TabsTrigger>
+                ) : null}
               </TabsList>
+              {pixPrimeiro ? (
+                <p className="pt-2 text-xs text-muted-foreground">
+                  O favorecido tem chave PIX CPF/CNPJ no próprio documento: é o destino mais seguro.
+                </p>
+              ) : null}
               {tedEnabled ? (
                 <TabsContent value="CONTA" className="grid grid-cols-6 gap-3 pt-2">
                   <Campo
@@ -217,6 +236,10 @@ export function InformarDestinoDialog({
                     erro={erros.contaDv}
                     className="col-span-2"
                   />
+                  <p className="col-span-6 text-xs text-muted-foreground">
+                    Conta digitada fica pendente de aprovação: quem tem a permissão aprova antes de
+                    o lote ser finalizado.
+                  </p>
                 </TabsContent>
               ) : null}
               {pixEnabled ? (

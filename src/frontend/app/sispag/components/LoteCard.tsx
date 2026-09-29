@@ -9,6 +9,7 @@ import {
   FileText,
   Landmark,
   Plus,
+  ShieldCheck,
   Trash2,
   X,
 } from 'lucide-react'
@@ -33,11 +34,13 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  aprovarDestinoItem,
   atualizarContaPagadora,
   atualizarModalidadeItem,
   baixarRemessa,
   cancelarLote,
   type ContaPagadora,
+  destinoPendenteDeAprovacao,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   fetchContasPagadoras,
@@ -53,6 +56,7 @@ import {
   MODALIDADES,
   MODALIDADES_OFERECIDAS,
   type OfertaModalidadesItem,
+  pixPreferido,
   reabrirLote,
   type RecursosSispag,
   removerItem,
@@ -63,7 +67,7 @@ import { baixarBlob } from '@/lib/download'
 import { isSimulationEnabled } from '@/lib/features'
 import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
-import { type AcaoLote, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
+import { type AcaoLote, ConfirmarAcaoDialog, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
 import { InformarDestinoDialog } from './InformarDestinoDialog'
 
@@ -92,6 +96,31 @@ function itensSemDestino(
     const o = oferta.get(`${i.docCod}:${i.titCod}`)
     return o !== undefined && !o.modalidades.includes(i.modalidade)
   })
+}
+
+/**
+ * Itens com conta (TED) digitada aguardando aprovação que BARRAM o finalizar (ADR-0054 D10) — a
+ * mesma condição do backend: item TED, flags manual + TED ligadas, conta digitada pendente.
+ */
+function itensPendentesDeAprovacao(itens: ItemLote[], recursos: RecursosSispag): ItemLote[] {
+  if (!recursos.destinoManualEnabled || !recursos.tedEnabled) return []
+  return itens.filter((i) => i.modalidade === 'TED' && destinoPendenteDeAprovacao(i))
+}
+
+const nomesDosItens = (itens: ItemLote[]): string =>
+  itens.map((i) => `${i.docCod}/${i.titCod}${i.credor ? ` (${i.credor})` : ''}`).join('; ')
+
+const mensagemPendentesAprovacao = (itens: ItemLote[]): string =>
+  `Conta digitada aguardando aprovação: ${nomesDosItens(itens)}. Quem tem a permissão "Aprovar destino manual (SISPAG)" precisa aprovar antes de finalizar.`
+
+/** D12: PIX antes de TED quando o favorecido tem chave CPF/CNPJ que é o próprio documento. */
+function ordenarPixPrimeiro<T extends { value: Modalidade }>(opcoes: T[]): T[] {
+  const pix = opcoes.filter((m) => m.value === 'PIX')
+  if (pix.length === 0) return opcoes
+  const resto = opcoes.filter((m) => m.value !== 'PIX')
+  const iTed = resto.findIndex((m) => m.value === 'TED')
+  if (iTed < 0) return opcoes
+  return [...resto.slice(0, iTed), ...pix, ...resto.slice(iTed)]
 }
 
 const mensagemSemDestino = (itens: ItemLote[]): string =>
@@ -149,6 +178,7 @@ function DestinoDoItem({
   busy,
   onInformar,
   onRemover,
+  onAprovar,
 }: {
   item: ItemLote
   oferta?: OfertaModalidadesItem
@@ -156,8 +186,14 @@ function DestinoDoItem({
   busy: boolean
   onInformar?: () => void
   onRemover?: () => void
+  /**
+   * ADR-0054 D10: presente só para quem tem `sispag:aprovar_destino`, com o lote em RASCUNHO.
+   * Sem a permissão o botão NÃO é renderizado (R11 da ADR-0053: esconder, não desabilitar).
+   */
+  onAprovar?: () => void
 }) {
   const resumo = item.destinoManualResumo
+  const pendente = destinoPendenteDeAprovacao(item)
   const modalidade = item.modalidade === 'TED' || item.modalidade === 'PIX' ? item.modalidade : null
   const doCadastro = modalidade ? oferta?.destinos?.[modalidade] : undefined
   const titulo = `${item.docCod}/${item.titCod}`
@@ -172,7 +208,38 @@ function DestinoDoItem({
           >
             manual
           </Badge>
+          {pendente ? (
+            <Badge
+              variant="outline"
+              className="border-warning/40 text-warning"
+              title="Conta digitada: precisa ser aprovada por quem tem a permissão antes de finalizar o lote."
+            >
+              pendente de aprovação
+            </Badge>
+          ) : resumo.aprovacao === 'APROVADO' ? (
+            <Badge
+              variant="outline"
+              className="border-success/40 text-success"
+              title={`Aprovado${resumo.aprovadoPor ? ` por ${resumo.aprovadoPor}` : ''}.`}
+            >
+              aprovado
+            </Badge>
+          ) : null}
           <span className="text-xs tabular-nums text-muted-foreground">{resumo.destinoMascarado}</span>
+          {pendente && onAprovar ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              disabled={busy}
+              onClick={onAprovar}
+              aria-label={`Aprovar destino do título ${titulo}`}
+            >
+              <ShieldCheck className="size-3" aria-hidden />
+              Aprovar destino
+            </Button>
+          ) : null}
         </>
       ) : doCadastro?.origem === 'CADASTRO' && doCadastro.destinoMascarado ? (
         <span className="text-xs tabular-nums text-muted-foreground">
@@ -239,6 +306,8 @@ export function LoteCard({
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
+  // ADR-0054 D10: aprovar a conta digitada é permissão própria (quem digitou pode aprovar a sua).
+  const podeAprovarDestino = !carregandoPermissoes && tem(PERMISSAO.SISPAG_APROVAR_DESTINO)
   // ADR-0054: flags de TED/PIX/destino manual. Desligadas (default e em falha) = tela de antes.
   const [recursos, setRecursos] = React.useState<RecursosSispag>(RECURSOS_DESLIGADOS)
   React.useEffect(() => {
@@ -251,6 +320,7 @@ export function LoteCard({
     }
   }, [])
   const [destinoDe, setDestinoDe] = React.useState<ItemLote | null>(null)
+  const [aprovandoDe, setAprovandoDe] = React.useState<ItemLote | null>(null)
   const podeInformarDestino =
     podeExecutar &&
     recursos.destinoManualEnabled && (recursos.tedEnabled || recursos.pixEnabled)
@@ -333,6 +403,12 @@ export function LoteCard({
   }, [aberto, isRascunho, l.id, podeExecutar])
 
   const semDestino = itensSemDestino(l.itens, oferta, recursos)
+  const pendentesAprovacao = isRascunho ? itensPendentesDeAprovacao(l.itens, recursos) : []
+  // Só RASCUNHO: a rota de aprovação recusa qualquer outro estado.
+  const aprovarDe = (i: ItemLote) =>
+    isRascunho && podeAprovarDestino && recursos.destinoManualEnabled && recursos.tedEnabled
+      ? () => setAprovandoDe(i)
+      : undefined
 
   // Linha digitável do boleto por item, para a analista conferir com o banco. Só existe
   // depois da remessa gerada — o ERP anexa o código no import (ADR-0040), então em rascunho
@@ -422,13 +498,21 @@ export function LoteCard({
               ) : null}
               <Button
                 size="sm"
-                disabled={busy || l.itens.length === 0 || faltaModalidade || semDestino.length > 0}
+                disabled={
+                  busy ||
+                  l.itens.length === 0 ||
+                  faltaModalidade ||
+                  semDestino.length > 0 ||
+                  pendentesAprovacao.length > 0
+                }
                 title={
                   faltaModalidade
                     ? 'Defina a forma de pagamento de todos os títulos antes de finalizar.'
-                    : semDestino.length > 0
-                      ? mensagemSemDestino(semDestino)
-                      : undefined
+                    : pendentesAprovacao.length > 0
+                      ? mensagemPendentesAprovacao(pendentesAprovacao)
+                      : semDestino.length > 0
+                        ? mensagemSemDestino(semDestino)
+                        : undefined
                 }
                 onClick={() => setConfirmando('finalizar')}
               >
@@ -491,6 +575,7 @@ export function LoteCard({
               item={destinoDe}
               tedEnabled={recursos.tedEnabled}
               pixEnabled={recursos.pixEnabled}
+              preferirPix={pixPreferido(oferta?.get(`${destinoDe.docCod}:${destinoDe.titCod}`))}
               onOpenChange={(open) => {
                 if (!open) setDestinoDe(null)
               }}
@@ -500,6 +585,47 @@ export function LoteCard({
                 acao(async () => atualizado, 'Destino informado')
               }}
             />
+          ) : null}
+          {aprovandoDe?.destinoManualResumo ? (
+            <ConfirmarAcaoDialog
+              open
+              onOpenChange={(open) => {
+                if (!open) setAprovandoDe(null)
+              }}
+              titulo="Aprovar destino"
+              descricao={`Título ${aprovandoDe.docCod}/${aprovandoDe.titCod}${aprovandoDe.credor ? ` · ${aprovandoDe.credor}` : ''}. Confira a conta e o titular antes de aprovar: o pagamento vai para esta conta, não para a do cadastro do Conexos.`}
+              rotuloConfirmar="Aprovar destino"
+              busy={busy}
+              onConfirmar={() => {
+                const i = aprovandoDe
+                setAprovandoDe(null)
+                acao(
+                  () =>
+                    aprovarDestinoItem(l.id, {
+                      filCod: i.filCod,
+                      docCod: i.docCod,
+                      titCod: i.titCod,
+                      versao: l.versao,
+                    }),
+                  'Destino aprovado',
+                )
+              }}
+            >
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt className="text-muted-foreground">Conta</dt>
+                <dd className="tabular-nums">{aprovandoDe.destinoManualResumo.destinoMascarado}</dd>
+                <dt className="text-muted-foreground">CPF/CNPJ do titular</dt>
+                <dd className="tabular-nums">
+                  {aprovandoDe.destinoManualResumo.titularDocumentoMascarado ?? '—'}
+                </dd>
+                {aprovandoDe.destinoManualResumo.informadoPor ? (
+                  <>
+                    <dt className="text-muted-foreground">Informado por</dt>
+                    <dd>{aprovandoDe.destinoManualResumo.informadoPor}</dd>
+                  </>
+                ) : null}
+              </dl>
+            </ConfirmarAcaoDialog>
           ) : null}
           {confirmando ? (
             <ConfirmarAcaoLoteDialog
@@ -603,10 +729,13 @@ export function LoteCard({
                       ? MODALIDADES_OFERECIDAS.filter((m) => avail.includes(m.value))
                       : MODALIDADES_OFERECIDAS
                     // Garante que a modalidade já escolhida apareça mesmo se ficou indisponível.
-                    const opcoes =
+                    const ofertaDoItem = oferta?.get(`${i.docCod}:${i.titCod}`)
+                    const comAtual =
                       i.modalidade && !base.some((m) => m.value === i.modalidade)
                         ? [...base, ...MODALIDADES.filter((m) => m.value === i.modalidade)]
                         : base
+                    // D12: chave CPF/CNPJ do favorecido → PIX sugerido antes de TED.
+                    const opcoes = pixPreferido(ofertaDoItem) ? ordenarPixPrimeiro(comAtual) : comAtual
                     const indisponivel =
                       carregou && !!i.modalidade && !!avail && !avail.includes(i.modalidade)
                     return (
@@ -667,9 +796,10 @@ export function LoteCard({
                             {podeInformarDestino ? (
                               <DestinoDoItem
                                 item={i}
-                                oferta={oferta?.get(`${i.docCod}:${i.titCod}`)}
+                                oferta={ofertaDoItem}
                                 editavel
                                 busy={busy}
+                                onAprovar={aprovarDe(i)}
                                 onInformar={() => setDestinoDe(i)}
                                 onRemover={() =>
                                   acao(
@@ -692,7 +822,12 @@ export function LoteCard({
                               {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
                             </span>
                             {recursos.destinoManualEnabled && i.destinoManualResumo ? (
-                              <DestinoDoItem item={i} editavel={false} busy={busy} />
+                              <DestinoDoItem
+                                item={i}
+                                editavel={false}
+                                busy={busy}
+                                onAprovar={aprovarDe(i)}
+                              />
                             ) : null}
                             {i.modalidade === 'BOLETO' &&
                             linhas.get(`${i.docCod}:${i.titCod}`) ? (
@@ -774,6 +909,15 @@ export function LoteCard({
               </Table>
             </div>
           )}
+          {pendentesAprovacao.length > 0 ? (
+            <div
+              role="status"
+              className="mt-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning-subtle px-4 py-3 text-sm text-warning-foreground"
+            >
+              <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <p>{mensagemPendentesAprovacao(pendentesAprovacao)}</p>
+            </div>
+          ) : null}
           {linhasRecusadas > 0 ? (
             // `aria-live`: o aviso só aparece quando o fetch volta, depois de a expansão já
             // ter sido lida. Sem isso, quem usa leitor de tela não fica sabendo.

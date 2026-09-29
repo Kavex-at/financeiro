@@ -41,10 +41,12 @@ jest.mock('@/lib/sispag', () => {
       .fn()
       .mockResolvedValue({ tedEnabled: false, destinoManualEnabled: false, pixEnabled: false }),
     limparDestinoItem: jest.fn(),
+    aprovarDestinoItem: jest.fn(),
   }
 })
 
 import {
+  aprovarDestinoItem,
   baixarRemessa,
   cancelarLote,
   fetchContasPagadoras,
@@ -370,5 +372,161 @@ describe('LoteCard — destino de TED/PIX (ADR-0054)', () => {
       'title',
       expect.stringContaining('Sem destino de pagamento para: 801/1 (ACME)'),
     )
+  })
+})
+
+describe('LoteCard — aprovação da conta digitada (ADR-0054 D10) e PIX preferido (D12)', () => {
+  const ligado = { tedEnabled: true, destinoManualEnabled: true, pixEnabled: true }
+  const pendente = {
+    tipo: 'CONTA' as const,
+    destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1',
+    titularDocumentoMascarado: '***.444.777-**',
+    informadoPor: 'ana',
+    aprovacao: 'PENDENTE' as const,
+  }
+  const itemTed = (over: Partial<LotePagamento['itens'][number]> = {}) =>
+    ({
+      loteId: 'L1',
+      filCod: 7,
+      docCod: '801',
+      titCod: '1',
+      valor: 100,
+      credor: 'ACME',
+      modalidade: 'TED',
+      incluidoPor: 'u1',
+      ...over,
+    }) as LotePagamento['itens'][number]
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    permissoes = { carregando: false, lista: [...CATALOGO_PERMISSOES] }
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      { docCod: '801', titCod: '1', modalidades: ['TED'] },
+    ])
+  })
+
+  const abrir = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('button', { name: /filial 7/i }))
+  }
+
+  it('conta pendente: selo "pendente de aprovação" ao lado do "manual"', async () => {
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    await abrir(user)
+    expect(await screen.findByText('pendente de aprovação')).toBeInTheDocument()
+    expect(screen.getByText('manual')).toBeInTheDocument()
+  })
+
+  it('Finalizar fica desabilitado e a mensagem cita a aprovação pendente', async () => {
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    await abrir(user)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeDisabled(),
+    )
+    expect(screen.getByRole('button', { name: /^finalizar$/i })).toHaveAttribute(
+      'title',
+      expect.stringContaining('aguardando aprovação: 801/1 (ACME)'),
+    )
+    expect(screen.getByRole('status')).toHaveTextContent(/aguardando aprovação/)
+  })
+
+  it('"Aprovar destino" mostra conta e titular MASCARADOS e só chama a API ao confirmar', async () => {
+    ;(aprovarDestinoItem as jest.Mock).mockResolvedValue(lote())
+    const user = userEvent.setup()
+    const acao = renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    await abrir(user)
+    await user.click(await screen.findByRole('button', { name: /aprovar destino do título 801\/1/i }))
+    const dialog = screen.getByRole('dialog', { name: 'Aprovar destino' })
+    expect(within(dialog).getByText('banco 237 · ag. 1234 · cc ****7766-1')).toBeInTheDocument()
+    expect(within(dialog).getByText('***.444.777-**')).toBeInTheDocument()
+    expect(within(dialog).getByText('ana')).toBeInTheDocument()
+    expect(aprovarDestinoItem).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole('button', { name: 'Aprovar destino' }))
+    expect(aprovarDestinoItem).toHaveBeenCalledWith('L1', {
+      filCod: 7,
+      docCod: '801',
+      titCod: '1',
+      versao: 3,
+    })
+    expect(acao).toHaveBeenCalledWith(expect.any(Function), 'Destino aprovado')
+  })
+
+  it('sem sispag:aprovar_destino o botão NÃO existe (esconder, não desabilitar)', async () => {
+    permissoes = {
+      carregando: false,
+      lista: CATALOGO_PERMISSOES.filter((p) => p !== 'sispag:aprovar_destino'),
+    }
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    await abrir(user)
+    expect(await screen.findByText('pendente de aprovação')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /aprovar destino/i })).not.toBeInTheDocument()
+  })
+
+  it('só sispag:ver + sispag:aprovar_destino: aprova sem ver as ações de execução', async () => {
+    permissoes = { carregando: false, lista: ['sispag:ver', 'sispag:aprovar_destino'] }
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    await abrir(user)
+    expect(
+      await screen.findByRole('button', { name: /aprovar destino do título 801\/1/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^finalizar$/i })).not.toBeInTheDocument()
+  })
+
+  it('aprovada: selo "aprovado", sem botão de aprovar e Finalizar liberado', async () => {
+    const user = userEvent.setup()
+    renderCard(
+      lote({
+        itens: [
+          itemTed({
+            destinoManualResumo: { ...pendente, aprovacao: 'APROVADO', aprovadoPor: 'bia' },
+          }),
+        ],
+      }),
+    )
+    await abrir(user)
+    expect(await screen.findByText('aprovado')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /aprovar destino/i })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled())
+  })
+
+  it('fora de RASCUNHO não há botão de aprovar', async () => {
+    const user = userEvent.setup()
+    renderCard(
+      lote({ status: 'FINALIZADO', itens: [itemTed({ destinoManualResumo: pendente })] }),
+    )
+    await abrir(user)
+    await waitFor(() => expect(getRecursos).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: /aprovar destino/i })).not.toBeInTheDocument()
+  })
+
+  it('D12: com chave CPF/CNPJ do favorecido, o diálogo "Informar destino" abre na aba PIX', async () => {
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      {
+        docCod: '801',
+        titCod: '1',
+        modalidades: ['TED', 'PIX'],
+        destinos: {
+          TED: { origem: 'CADASTRO', destinoMascarado: 'banco 237 · cc ****1111-0' },
+          PIX: {
+            origem: 'CADASTRO',
+            destinoMascarado: 'PIX CPF/CNPJ ***.444.777-**',
+            chaveCpfCnpjDoFavorecido: true,
+          },
+        },
+      },
+    ])
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed()] }))
+    await abrir(user)
+    await waitFor(() => expect(fetchModalidadesDisponiveis).toHaveBeenCalled())
+    await user.click(await screen.findByRole('button', { name: /informar destino do título 801\/1/i }))
+    const dialog = screen.getByRole('dialog', { name: 'Informar destino' })
+    const abas = within(dialog).getAllByRole('tab')
+    expect(abas.map((a) => a.textContent)).toEqual(['PIX', 'TED'])
+    expect(within(dialog).getByRole('tab', { name: 'PIX' })).toHaveAttribute('aria-selected', 'true')
   })
 })
