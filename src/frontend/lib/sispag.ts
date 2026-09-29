@@ -204,18 +204,35 @@ export interface ItemLote {
   destinoManualResumo?: DestinoManualResumo
 }
 
-/** Máscara do destino digitado + quem informou. */
+/**
+ * Aprovação do destino digitado (ADR-0054 D10/D11): conta (TED) digitada nasce `PENDENTE` e só
+ * quem tem `sispag:aprovar_destino` aprova; chave PIX CPF/CNPJ é `NAO_EXIGIDA`.
+ */
+export type DestinoAprovacao = 'NAO_EXIGIDA' | 'PENDENTE' | 'APROVADO'
+
+/** Máscara do destino digitado + quem informou + estado da aprovação. */
 export interface DestinoManualResumo {
   tipo: 'CONTA' | 'CHAVE_PIX'
   destinoMascarado: string
+  /** CPF/CNPJ do titular, já mascarado pelo backend — é o que o aprovador confere. */
+  titularDocumentoMascarado?: string
   informadoPor?: string
   informadoEm?: string
+  /** Ausente = backend anterior ao D10: tratado como não exigida. */
+  aprovacao?: DestinoAprovacao
+  aprovadoPor?: string
+  aprovadoEm?: string
 }
 
 /** Destino que a oferta mostra para TED/PIX: origem + máscara (só com as flags ligadas). */
 export interface DestinoOfertado {
   origem: 'CADASTRO' | 'MANUAL' | 'NENHUM'
   destinoMascarado?: string
+  /**
+   * Só no PIX (D12): chave CPF/CNPJ que é o próprio documento do favorecido. A tela lista PIX
+   * antes de TED e abre "Informar destino" na aba PIX.
+   */
+  chaveCpfCnpjDoFavorecido?: boolean
 }
 
 /** Uma linha da oferta de formas de pagamento de um item. */
@@ -1124,3 +1141,24 @@ export const limparDestinoItem = (
     method: 'DELETE',
     body: JSON.stringify({ versao: input.versao }),
   })
+
+/**
+ * Aprova a conta (TED) digitada do item (ADR-0054 D10). Exige `sispag:aprovar_destino`; só
+ * RASCUNHO; optimistic lock pela `versao`. O body leva só a versão.
+ */
+export const aprovarDestinoItem = (
+  loteId: string,
+  input: { filCod: number; docCod: string; titCod: string; versao: number },
+) =>
+  loteRequest(`${rotaDestino(loteId, input)}/aprovar`, {
+    method: 'POST',
+    body: JSON.stringify({ versao: input.versao }),
+  })
+
+/** D10: o item tem conta digitada aguardando aprovação. */
+export const destinoPendenteDeAprovacao = (item: ItemLote): boolean =>
+  item.destinoManualResumo?.aprovacao === 'PENDENTE'
+
+/** D12: a oferta do item traz PIX por chave CPF/CNPJ do favorecido. */
+export const pixPreferido = (oferta: OfertaModalidadesItem | undefined): boolean =>
+  oferta?.destinos?.PIX?.chaveCpfCnpjDoFavorecido === true
