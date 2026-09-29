@@ -4,10 +4,11 @@ type: business-rule
 entity: LotePagamento
 invariant: I11
 ontology_version: "0.31.0"
-implementation_status: planned
+implementation_status: implemented
 status: active
 owners: [yuri]
 related_files:
+  - src/backend/domain/service/sispag/DecisaoStatusLote.ts
   - src/backend/domain/service/sispag/SincronizacaoLoteService.ts
   - src/backend/domain/service/sispag/ConciliacaoRetornoService.ts
   - src/backend/domain/client/ConexosSispagClient.ts
@@ -15,9 +16,11 @@ related_files:
   - src/backend/domain/client/ConexosSispagRetornoClient.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
   - src/backend/jobs/sincronizar-lotes-sispag.ts
+  - src/backend/migrations/0069_sispag_item_situacao_sincronizacao.sql
   - src/frontend/app/sispag/components/LoteCard.tsx
 last_review: 2026-09-29
-has_canonical_test: false
+has_canonical_test: true
+canonical_test: src/backend/domain/service/sispag/DecisaoStatusLote.test.ts
 ---
 
 # Business Rule — o status do lote SISPAG segue a baixa do título (I11)
