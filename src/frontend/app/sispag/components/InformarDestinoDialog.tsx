@@ -22,7 +22,7 @@ import {
   type DestinoManualEntrada,
   type ItemLote,
   type LotePagamento,
-  TIPOS_CHAVE_PIX,
+  TIPOS_CHAVE_PIX_DIGITAVEIS,
   validarDestinoManual,
 } from '@/lib/sispag'
 
@@ -224,7 +224,7 @@ export function InformarDestinoDialog({
                   <fieldset>
                     <legend className="mb-1.5 text-sm font-medium">Tipo da chave</legend>
                     <div className="flex flex-wrap gap-4">
-                      {TIPOS_CHAVE_PIX.map((t) => (
+                      {TIPOS_CHAVE_PIX_DIGITAVEIS.map((t) => (
                         <label key={t.value} className="flex items-center gap-2 text-sm">
                           <input
                             type="radio"
@@ -240,6 +240,10 @@ export function InformarDestinoDialog({
                         </label>
                       ))}
                     </div>
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      Por enquanto só chave CPF/CNPJ, a única em que conseguimos conferir o
+                      titular. Outros tipos: cadastre a chave no Conexos.
+                    </p>
                   </fieldset>
                   <Campo
                     id={`${prefixo}-chave`}

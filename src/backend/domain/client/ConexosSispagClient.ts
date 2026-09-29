@@ -135,12 +135,13 @@ const chavePixRowSchema = z
 /**
  * Nome do campo do CPF/CNPJ na linha da pessoa do `cmn025/list`.
  *
- * ⚠️ HIPÓTESE — a confirmar no teste supervisionado (checklist do tasks, passo 7; a sonda
- * `jobs/probe-sispag-ted-pix-supervisionado.ts` lista os campos candidatos). Nenhuma leitura
- * de produção mostrou esse campo ainda. Enquanto não confirmado, campo ausente devolve
- * `undefined` e a titularidade (I10i) falha FECHADA.
+ * `pdcDocFederal` ("Doc. Federal") é o campo do schema `CmnPessoas` (`docs/conexos-api/020-cmn0.json`)
+ * e o mesmo que `FinTitulo` e `CmnPessoasCtcorr` usam para o documento da pessoa. O palpite
+ * anterior (`pesNumCpfCnpj`) não existe no schema. Falta ver o valor vivo no teste
+ * supervisionado (checklist, passo 7). Campo ausente devolve `undefined` e a titularidade
+ * (I10i) falha FECHADA.
  */
-export const CAMPO_DOCUMENTO_FAVORECIDO = 'pesNumCpfCnpj';
+export const CAMPO_DOCUMENTO_FAVORECIDO = 'pdcDocFederal';
 
 /** CPF (11) ou CNPJ (14) só dígitos. Qualquer outra coisa não é documento. */
 const documentoSchema = z.preprocess(

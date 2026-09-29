@@ -157,3 +157,15 @@ continua válido), mas não é oferecido.
   produção antes do teste supervisionado.
 - **As validações do ERP (`validacao/modalidadeTed`, `validacao/modalidadePix`) ficam FORA do fluxo**
   até o H1 provar que não têm efeito colateral.
+
+## Adendo (2026-09-29) — documento do favorecido e tipos de chave digitáveis
+
+- **Documento do favorecido = `pdcDocFederal`** do `cmn025` (schema `CmnPessoas`; o mesmo campo de
+  `FinTitulo` e `CmnPessoasCtcorr`). O palpite `pesNumCpfCnpj` não existe no schema. Fonte única:
+  o cadastro do Conexos. Falta conferir o valor vivo no teste supervisionado.
+- **Chave PIX digitada só do tipo CPF/CNPJ.** O titular de uma chave só está no DICT do Banco
+  Central, que só banco consulta. Na chave CPF/CNPJ a própria chave é o documento, e a titularidade
+  (I10i) é completa; telefone, e-mail e aleatória não têm titular conferível daqui e são recusadas
+  (`ChavePixTitularNaoVerificavelError`). Chave vinda do cadastro do Conexos segue aceita em
+  qualquer tipo. Reabrir se o `validacao/modalidadePix` (H1) ou uma consulta de chave do banco
+  devolver o titular.
