@@ -76,7 +76,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['DELETE /permutas/borderos/:borCod/baixas/:invoiceDocCod', P.PERMUTAS_EXECUTAR],
     ['GET /permutas/adiantamentos/:docCod/execucoes', P.PERMUTAS_VER],
     ['GET /permutas/status', P.PERMUTAS_VER],
-    // /sispag (30; as quatro do laço contam separadas)
+    // /sispag (31; as quatro do laço contam separadas)
     ['GET /sispag/painel', P.SISPAG_VER],
     ['GET /sispag/retornos', P.SISPAG_VER],
     ['GET /sispag/lotes/:id/linhas-digitaveis', P.SISPAG_VER],
@@ -107,6 +107,11 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     // ADR-0054: destino digitado do item e as flags de TED/PIX
     ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino', P.SISPAG_EXECUTAR],
     ['DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino', P.SISPAG_EXECUTAR],
+    // ADR-0054 D10: aprovar a conta digitada é permissão própria
+    [
+        'POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino/aprovar',
+        P.SISPAG_APROVAR_DESTINO,
+    ],
     ['GET /sispag/recursos', P.SISPAG_VER],
     // /recebimentos (15)
     ['GET /recebimentos/painel', P.RECEBIMENTOS_VER],
@@ -198,11 +203,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista: 27/27/15/10/2/1/2/1', () => {
+    it('a tabela tem as contagens da entrevista: 27/31/15/10/2/1/2/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(30);
+        expect(porMount('sispag')).toBe(31);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);
@@ -376,7 +381,7 @@ describe('comportamento por linha: sem a permissão → recusa; só com ela → 
         expect((await chamar(rota)).status).toBe(SENTINELA);
     });
 
-    it.each(TABELA)('I6 — o Administrador (as nove) passa de %s', async (rota) => {
+    it.each(TABELA)('I6 — o Administrador (o catálogo inteiro) passa de %s', async (rota) => {
         acessoAtual = acessoCom(PERMISSION_CATALOG);
         expect((await chamar(rota)).status).toBe(SENTINELA);
     });

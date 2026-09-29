@@ -16,6 +16,7 @@ import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import DebitDateFrozenError from '../../errors/DebitDateFrozenError.js';
 import DebitDateOutsideWindowError from '../../errors/DebitDateOutsideWindowError.js';
 import DebitDateService from './DebitDateService.js';
+import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
 import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
 import MaskDestino from '../../libs/sispag/MaskDestino.js';
 import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
@@ -217,6 +218,7 @@ const make = (o: {
         calendar,
         new DestinoPagamentoResolver(sispag as unknown as ConexosSispagClient, new MaskDestino()),
         new DestinoManualValidator(),
+        new DestinoAprovacaoRule(),
     );
 };
 
@@ -1639,6 +1641,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
                     modalidade: 'TED',
                     destinoManual: MANUAL_CONTA,
                     destinoManualAuditId: 'aud-1',
+                    destinoManualAprovadoPor: 'bia',
                 }),
             ],
         });
@@ -1657,6 +1660,49 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
             pctEspNumContaBanc: '99887766',
             pctEspDvconta: '5',
         });
+    });
+
+    it('D10 — conta digitada SEM aprovação: o envio falha fechado ANTES de criar o lote nativo', async () => {
+        const write = buildWrite();
+        const l = lote({
+            itens: [
+                itemCom({
+                    modalidade: 'TED',
+                    credor: 'ACME',
+                    destinoManual: MANUAL_CONTA,
+                    destinoManualAuditId: 'aud-1',
+                }),
+            ],
+        });
+        const err = await make({ write, lote: l, sispag: sispagCom({}), env: buildEnv(FLAGS) })
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: 'DESTINO_APROVACAO_PENDENTE', statusCode: 409 });
+        expect(String((err as { userMessage?: string }).userMessage)).not.toContain('99887766');
+        expect(write.criarLote).not.toHaveBeenCalled();
+    });
+
+    it('D11 — chave PIX CPF/CNPJ digitada sai sem aprovação', async () => {
+        const write = buildWrite();
+        const l = lote({
+            itens: [
+                itemCom({
+                    modalidade: 'PIX',
+                    destinoManual: {
+                        tipo: 'CHAVE_PIX',
+                        chavePixTipo: 'CPF_CNPJ',
+                        chavePix: MANUAL_CONTA.titularDocumento,
+                        titularDocumento: MANUAL_CONTA.titularDocumento,
+                    },
+                    destinoManualAuditId: 'aud-3',
+                }),
+            ],
+        });
+        await make({ write, lote: l, sispag: sispagCom({}), env: buildEnv(FLAGS) }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        expect(payloadDe(write)).toMatchObject({ itsVldChavePix: 1 });
     });
 
     it('PIX manual vai com a chave digitada', async () => {
@@ -1724,6 +1770,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
                     modalidade: 'TED',
                     destinoManual: MANUAL_CONTA,
                     destinoManualAuditId: 'aud-1',
+                    destinoManualAprovadoPor: 'bia',
                 }),
             ],
         });
@@ -1750,6 +1797,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
                     modalidade: 'TED',
                     destinoManual: MANUAL_CONTA,
                     destinoManualAuditId: 'aud-1',
+                    destinoManualAprovadoPor: 'bia',
                 }),
             ],
         });
@@ -1777,6 +1825,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
                         modalidade: 'TED',
                         destinoManual: MANUAL_CONTA,
                         destinoManualAuditId: 'aud-9',
+                        destinoManualAprovadoPor: 'bia',
                     }),
                     docCod: '802',
                 },
@@ -1879,6 +1928,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
                     modalidade: 'TED',
                     destinoManual: MANUAL_CONTA,
                     destinoManualAuditId: 'aud-novo',
+                    destinoManualAprovadoPor: 'bia',
                 }),
             ],
         });
@@ -2026,6 +2076,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
                         modalidade: 'TED',
                         destinoManual: MANUAL_CONTA,
                         destinoManualAuditId: 'a1',
+                        destinoManualAprovadoPor: 'bia',
                     }),
                     docCod: '802',
                 },

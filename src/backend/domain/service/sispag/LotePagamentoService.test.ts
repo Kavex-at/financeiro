@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import DestinoAprovacaoPendenteError from '../../errors/DestinoAprovacaoPendenteError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
@@ -14,6 +15,7 @@ import type LogService from '../LogService.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
 import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
 import LotePagamentoService from './LotePagamentoService.js';
 import type SispagPainelService from './SispagPainelService.js';
@@ -67,6 +69,7 @@ interface RepoMock {
     contarItensSemModalidade: jest.Mock;
     atualizarModalidadeItem: jest.Mock;
     setDestinoManualItem: jest.Mock;
+    aprovarDestinoManualItem: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -84,6 +87,7 @@ const buildRepo = (): RepoMock => ({
     contarItensSemModalidade: jest.fn().mockResolvedValue(0),
     atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
     setDestinoManualItem: jest.fn().mockResolvedValue({ atualizado: true, auditId: 'a-1' }),
+    aprovarDestinoManualItem: jest.fn().mockResolvedValue({ atualizado: true, auditId: 'ap-1' }),
 });
 
 /**
@@ -129,6 +133,7 @@ const make = (
         new DestinoManualValidator(),
         deps.painel as unknown as SispagPainelService,
         deps.write as unknown as ConexosSispagWriteClient,
+        new DestinoAprovacaoRule(),
     );
     return { service, conexos, tituloRepo };
 };
@@ -417,6 +422,7 @@ describe('LotePagamentoService — invariantes', () => {
                 new DestinoManualValidator(),
                 buildDestinoDeps().painel as unknown as SispagPainelService,
                 buildDestinoDeps().write as unknown as ConexosSispagWriteClient,
+                new DestinoAprovacaoRule(),
             );
             await expect(
                 service.incluirTitulo({
@@ -868,5 +874,188 @@ describe('LotePagamentoService.finalizarLote — checagem LEVE do destino (Adend
         ]);
         await service.finalizarLote(input);
         expect(repo.transicionarStatus).toHaveBeenCalled();
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// ADR-0054 D10/D11 — aprovação da conta digitada
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+describe('LotePagamentoService — aprovação do destino digitado (D10/D11)', () => {
+    const FLAGS = {
+        sispagTedEnabled: true,
+        sispagPixEnabled: true,
+        sispagDestinoManualEnabled: true,
+    };
+    const CONTA = {
+        tipo: 'CONTA' as const,
+        bancoCod: '237',
+        agencia: '1234',
+        conta: '99887766',
+        contaDv: '1',
+        titularDocumento: '11144477735',
+    };
+    const CHAVE_CPF = {
+        tipo: 'CHAVE_PIX' as const,
+        chavePixTipo: 'CPF_CNPJ' as const,
+        chavePix: '11144477735',
+        titularDocumento: '11144477735',
+    };
+    const itemTed = {
+        loteId: 'L1',
+        filCod: 2,
+        docCod: '100',
+        titCod: '1',
+        credor: 'ACME',
+        modalidade: 'TED' as const,
+        incluidoPor: 'u1',
+        destinoManual: CONTA,
+        destinoManualAuditId: 'grav-1',
+        destinoManualInformadoPor: 'ana',
+    };
+    const input = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', versao: 1, ator: 'ana' };
+
+    const montar = (env: Record<string, unknown>, itens: LotePagamento['itens']) => {
+        const repo = buildRepo();
+        repo.getLoteComItens.mockResolvedValue(lote({ itens }));
+        const deps = buildDestinoDeps(env);
+        deps.painel.modalidadesDisponiveisDoLote.mockResolvedValue(
+            itens.map((i) => ({ docCod: i.docCod, titCod: i.titCod, modalidades: ['TED', 'PIX'] })),
+        );
+        const { service } = make(repo, titulo({ pesCod: 'P1' }), buildTituloRepo(), deps);
+        return { service, repo, deps };
+    };
+
+    describe('aprovarDestinoManualItem', () => {
+        it('quem digitou pode aprovar a própria conta: grava APROVACAO com o ator; log sem o valor', async () => {
+            const { service, repo, deps } = montar(FLAGS, [itemTed]);
+            await service.aprovarDestinoManualItem(input);
+            expect(repo.aprovarDestinoManualItem).toHaveBeenCalledWith({
+                loteId: 'L1',
+                filCod: 2,
+                docCod: '100',
+                titCod: '1',
+                versaoEsperada: 1,
+                usuario: 'ana',
+            });
+            const logado = JSON.stringify((deps.log.info as jest.Mock).mock.calls);
+            expect(logado).toContain('aprovarDestinoManualItem');
+            expect(logado).not.toContain('99887766');
+            expect(logado).not.toContain('11144477735');
+        });
+
+        it('flags manual ou TED desligadas → 403, nada gravado', async () => {
+            for (const env of [
+                { sispagTedEnabled: true },
+                { sispagDestinoManualEnabled: true, sispagPixEnabled: true },
+            ]) {
+                const { service, repo } = montar(env, [itemTed]);
+                await expect(service.aprovarDestinoManualItem(input)).rejects.toMatchObject({
+                    code: 'DESTINO_MANUAL_DESABILITADO',
+                    statusCode: 403,
+                });
+                expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
+            }
+        });
+
+        it('só RASCUNHO', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(
+                lote({ status: 'FINALIZADO', itens: [itemTed] }),
+            );
+            const { service } = make(repo, titulo(), buildTituloRepo(), buildDestinoDeps(FLAGS));
+            await expect(service.aprovarDestinoManualItem(input)).rejects.toBeInstanceOf(
+                LoteEstadoInvalidoError,
+            );
+            expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
+        });
+
+        it('D11 — chave PIX CPF/CNPJ digitada não tem o que aprovar; item sem destino idem', async () => {
+            for (const itens of [
+                [{ ...itemTed, modalidade: 'PIX' as const, destinoManual: CHAVE_CPF }],
+                [{ ...itemTed, destinoManual: undefined }],
+            ]) {
+                const { service, repo } = montar(FLAGS, itens);
+                await expect(service.aprovarDestinoManualItem(input)).rejects.toBeInstanceOf(
+                    LoteEstadoInvalidoError,
+                );
+                expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
+            }
+        });
+
+        it('já aprovada → devolve o lote sem nova linha na trilha', async () => {
+            const { service, repo } = montar(FLAGS, [
+                { ...itemTed, destinoManualAprovadoPor: 'bia' },
+            ]);
+            const r = await service.aprovarDestinoManualItem(input);
+            expect(r.id).toBe('L1');
+            expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
+        });
+
+        it('versão mudou → 409 de conflito', async () => {
+            const { service, repo } = montar(FLAGS, [itemTed]);
+            repo.aprovarDestinoManualItem.mockResolvedValue({ atualizado: false });
+            repo.getLoteComItens.mockResolvedValue(lote({ versao: 2, itens: [itemTed] }));
+            await expect(service.aprovarDestinoManualItem(input)).rejects.toBeInstanceOf(
+                LoteVersaoConflitoError,
+            );
+        });
+
+        it('I10f — item congelado num lote nativo vivo → recusa', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(
+                lote({ nativeFilCod: 2, nativeBncCod: 4, nativeFlpCod: 12, itens: [itemTed] }),
+            );
+            const deps = buildDestinoDeps(FLAGS);
+            deps.write.getLoteNativo.mockResolvedValue({ status: 0, titulosCount: 1 });
+            deps.write.listarChavesDoLote.mockResolvedValue(new Set(['2:100:1']));
+            const { service } = make(repo, titulo(), buildTituloRepo(), deps);
+            await expect(service.aprovarDestinoManualItem(input)).rejects.toMatchObject({
+                code: 'DESTINO_CONGELADO',
+            });
+        });
+    });
+
+    describe('finalizarLote barra conta digitada pendente', () => {
+        const fin = { loteId: 'L1', versao: 1, ator: 'u1' };
+
+        it('pendente → 409 nomeando o item, sem banco/conta/CPF na mensagem', async () => {
+            const { service, repo } = montar(FLAGS, [itemTed]);
+            const err = await service.finalizarLote(fin).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(DestinoAprovacaoPendenteError);
+            expect(err).toMatchObject({
+                code: 'DESTINO_APROVACAO_PENDENTE',
+                statusCode: 409,
+                userMessage: expect.stringContaining('100/1 (ACME)'),
+            });
+            const texto = JSON.stringify(err) + String((err as Error).message);
+            expect(texto).not.toContain('99887766');
+            expect(texto).not.toContain('11144477735');
+            expect(texto).not.toContain('237');
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
+        it('aprovada → finaliza', async () => {
+            const { service, repo } = montar(FLAGS, [
+                { ...itemTed, destinoManualAprovadoPor: 'bia' },
+            ]);
+            await service.finalizarLote(fin);
+            expect(repo.transicionarStatus).toHaveBeenCalled();
+        });
+
+        it('D11 — chave PIX CPF/CNPJ digitada não bloqueia', async () => {
+            const { service, repo } = montar(FLAGS, [
+                { ...itemTed, modalidade: 'PIX' as const, destinoManual: CHAVE_CPF },
+            ]);
+            await service.finalizarLote(fin);
+            expect(repo.transicionarStatus).toHaveBeenCalled();
+        });
+
+        it('flags desligadas: a conta persistida é ignorada e nada bloqueia (paridade com o main)', async () => {
+            const { service, repo, deps } = montar({}, [itemTed]);
+            await service.finalizarLote(fin);
+            expect(repo.transicionarStatus).toHaveBeenCalled();
+            expect(deps.painel.modalidadesDisponiveisDoLote).not.toHaveBeenCalled();
+        });
     });
 });

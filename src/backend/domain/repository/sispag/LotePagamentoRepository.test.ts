@@ -356,6 +356,119 @@ describe('LotePagamentoRepository', () => {
             expect(String(sqlItens)).toMatch(/destino_manual/);
         });
 
+        it('D10 — a trilha vigente é a GRAVAÇÃO mais recente; a aprovação é a que aponta para ela', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header());
+            db.selectMany.mockResolvedValue([
+                itemRow({
+                    destino_manual: CONTA,
+                    destino_audit_id: 'a-1',
+                    destino_informado_por: 'ana',
+                    destino_informado_em: new Date('2026-09-28T12:00:00Z'),
+                    destino_aprovado_por: 'bia',
+                    destino_aprovado_em: new Date('2026-09-28T13:00:00Z'),
+                }),
+            ]);
+            const lote = await make(db).getLoteComItens('L1');
+            expect(lote?.itens[0]).toMatchObject({
+                destinoManualAuditId: 'a-1',
+                destinoManualAprovadoPor: 'bia',
+                destinoManualAprovadoEm: '2026-09-28T13:00:00.000Z',
+            });
+            const sqlItens = String(db.selectMany.mock.calls[0]?.[0]);
+            expect(sqlItens).toMatch(/d\.evento = 'GRAVACAO'/);
+            expect(sqlItens).toMatch(/ap\.evento = 'APROVACAO' AND ap\.aprova_audit_id = a\.id/);
+        });
+
+        it('D10 — sem linha de aprovação: item sem aprovadoPor (pendente)', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header());
+            db.selectMany.mockResolvedValue([
+                itemRow({
+                    destino_manual: CONTA,
+                    destino_audit_id: 'a-2',
+                    destino_aprovado_por: null,
+                }),
+            ]);
+            const lote = await make(db).getLoteComItens('L1');
+            expect(lote?.itens[0]).not.toHaveProperty('destinoManualAprovadoPor');
+        });
+
+        it('setDestinoManualItem grava a linha como GRAVACAO', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValueOnce({ destino_manual: null });
+            await make(db).setDestinoManualItem({
+                ...chave,
+                versaoEsperada: 3,
+                destino: CONTA,
+                usuario: 'ana',
+            });
+            expect(String(db.insert.mock.calls[0]?.[0])).toMatch(/'GRAVACAO'/);
+        });
+
+        describe('aprovarDestinoManualItem (D10)', () => {
+            it('UMA transação: trava sob versão/RASCUNHO, insere APROVACAO da gravação vigente e bumpa', async () => {
+                const db = buildDb();
+                db.selectFirst
+                    .mockResolvedValueOnce({ tem_destino: true })
+                    .mockResolvedValueOnce({ id: 'grav-1' });
+                const r = await make(db).aprovarDestinoManualItem({
+                    ...chave,
+                    versaoEsperada: 4,
+                    usuario: 'bia',
+                });
+                expect(db.withTransaction).toHaveBeenCalledTimes(1);
+                expect(r.atualizado).toBe(true);
+                expect(r.auditId).toMatch(/^[0-9a-f-]{36}$/);
+                const [sqlTrava, pTrava] = db.selectFirst.mock.calls[0];
+                expect(sqlTrava).toMatch(/l\.status = 'RASCUNHO'/);
+                expect(sqlTrava).toMatch(/l\.versao = \$versaoEsperada/);
+                expect(sqlTrava).toMatch(/FOR UPDATE/);
+                expect(pTrava).toMatchObject({ ...chave, versaoEsperada: 4 });
+                expect(String(db.selectFirst.mock.calls[1]?.[0])).toMatch(/evento = 'GRAVACAO'/);
+                const [sqlIns, pIns] = db.insert.mock.calls[0];
+                expect(sqlIns).toMatch(/'APROVACAO'/);
+                expect(pIns).toMatchObject({
+                    ...chave,
+                    alteradoPor: 'bia',
+                    aprovaAuditId: 'grav-1',
+                });
+                // A aprovação não copia o destino.
+                expect(pIns).not.toHaveProperty('depois');
+                expect(
+                    db.update.mock.calls.some(([q]) => /versao = versao \+ 1/.test(String(q))),
+                ).toBe(true);
+                expect(db.update.mock.calls.some(([q]) => /destino_audit/.test(String(q)))).toBe(
+                    false,
+                );
+            });
+
+            it('versão errada ou fora de RASCUNHO: nada escrito', async () => {
+                const db = buildDb();
+                db.selectFirst.mockResolvedValueOnce(null);
+                const r = await make(db).aprovarDestinoManualItem({
+                    ...chave,
+                    versaoEsperada: 9,
+                    usuario: 'bia',
+                });
+                expect(r).toEqual({ atualizado: false });
+                expect(db.insert).not.toHaveBeenCalled();
+                expect(db.update).not.toHaveBeenCalled();
+            });
+
+            it('item sem destino digitado: semDestino, nada escrito', async () => {
+                const db = buildDb();
+                db.selectFirst.mockResolvedValueOnce({ tem_destino: false });
+                const r = await make(db).aprovarDestinoManualItem({
+                    ...chave,
+                    versaoEsperada: 4,
+                    usuario: 'bia',
+                });
+                expect(r).toEqual({ atualizado: false, semDestino: true });
+                expect(db.insert).not.toHaveBeenCalled();
+            });
+        });
+
         it('JSON inválido no banco: item sem destino + aviso SEM o conteúdo', async () => {
             const warn = jest.spyOn(Logger, 'warn').mockImplementation(() => undefined);
             const db = buildDb();

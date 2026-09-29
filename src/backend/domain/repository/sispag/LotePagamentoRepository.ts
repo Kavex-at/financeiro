@@ -67,6 +67,9 @@ interface ItemRow {
     destino_audit_id?: string | null;
     destino_informado_por?: string | null;
     destino_informado_em?: Date | null;
+    // ── 0068: a aprovação (linha APROVACAO) da gravação vigente ──
+    destino_aprovado_por?: string | null;
+    destino_aprovado_em?: Date | null;
 }
 
 /**
@@ -118,6 +121,8 @@ export default class LotePagamentoRepository {
         | 'destinoManualAuditId'
         | 'destinoManualInformadoPor'
         | 'destinoManualInformadoEm'
+        | 'destinoManualAprovadoPor'
+        | 'destinoManualAprovadoEm'
     > => {
         if (r.destino_manual == null) return {};
         const parsed = destinoManualSchema.safeParse(r.destino_manual);
@@ -135,6 +140,12 @@ export default class LotePagamentoRepository {
                 : {}),
             ...(r.destino_informado_em != null
                 ? { destinoManualInformadoEm: r.destino_informado_em.toISOString() }
+                : {}),
+            ...(r.destino_aprovado_por != null
+                ? { destinoManualAprovadoPor: r.destino_aprovado_por }
+                : {}),
+            ...(r.destino_aprovado_em != null
+                ? { destinoManualAprovadoEm: r.destino_aprovado_em.toISOString() }
                 : {}),
         };
     };
@@ -296,25 +307,36 @@ export default class LotePagamentoRepository {
             { id },
         );
         if (!header) return null;
-        // A trilha vigente (a gravação mais recente) só entra quando HÁ destino: é ela que diz
-        // quem informou, e o id dela identifica o valor no ledger sem revelá-lo (I10f/I10h).
+        // A trilha vigente (a GRAVAÇÃO mais recente) só entra quando HÁ destino: é ela que diz
+        // quem informou, e o id dela identifica o valor no ledger sem revelá-lo (I10f/I10h). A
+        // aprovação (0068, D10) é a linha APROVACAO que aponta para ESSA gravação — uma gravação
+        // posterior não tem aprovação, e o item volta a pendente sem nada ser apagado.
         const itens = await this.db(tx).selectMany(
             `SELECT i.lote_id, i.fil_cod, i.doc_cod, i.tit_cod, i.credor, i.valor, i.vencimento,
                     i.modalidade, i.incluido_por, i.incluido_em, i.native_its_cod_seq,
                     i.retorno_evento, i.retorno_descricao, i.rejeitado, i.bor_cod, i.bxa_cod_seq,
                     i.conciliado_em, i.destino_manual,
                     a.id AS destino_audit_id, a.alterado_por AS destino_informado_por,
-                    a.alterado_em AS destino_informado_em
+                    a.alterado_em AS destino_informado_em,
+                    p.alterado_por AS destino_aprovado_por, p.alterado_em AS destino_aprovado_em
              FROM lote_pagamento_item i
              LEFT JOIN LATERAL (
                  SELECT d.id, d.alterado_por, d.alterado_em
                  FROM lote_pagamento_item_destino_audit d
                  WHERE i.destino_manual IS NOT NULL
+                   AND d.evento = 'GRAVACAO'
                    AND d.lote_id = i.lote_id AND d.fil_cod = i.fil_cod
                    AND d.doc_cod = i.doc_cod AND d.tit_cod = i.tit_cod
                  ORDER BY d.alterado_em DESC
                  LIMIT 1
              ) a ON TRUE
+             LEFT JOIN LATERAL (
+                 SELECT ap.alterado_por, ap.alterado_em
+                 FROM lote_pagamento_item_destino_audit ap
+                 WHERE ap.evento = 'APROVACAO' AND ap.aprova_audit_id = a.id
+                 ORDER BY ap.alterado_em DESC
+                 LIMIT 1
+             ) p ON TRUE
              WHERE i.lote_id = $id ORDER BY i.incluido_em ASC, i.id ASC`,
             { id },
         );
@@ -559,9 +581,9 @@ export default class LotePagamentoRepository {
             const auditId = randomUUID();
             await tx.insert(
                 `INSERT INTO lote_pagamento_item_destino_audit
-                    (id, lote_id, fil_cod, doc_cod, tit_cod, alterado_por, antes, depois)
+                    (id, lote_id, fil_cod, doc_cod, tit_cod, alterado_por, evento, antes, depois)
                  VALUES ($auditId, $loteId, $filCod, $docCod, $titCod, $alteradoPor,
-                         $antes::jsonb, $depois::jsonb)`,
+                         'GRAVACAO', $antes::jsonb, $depois::jsonb)`,
                 {
                     auditId,
                     ...chave,
@@ -570,6 +592,75 @@ export default class LotePagamentoRepository {
                         atual.destino_manual != null ? JSON.stringify(atual.destino_manual) : null,
                     depois,
                 },
+            );
+            return { atualizado: true, auditId };
+        });
+
+    /**
+     * Aprova a conta digitada VIGENTE de um item (ADR-0054 D10). UMA transação:
+     *   1. trava item e lote SÓ com o lote em RASCUNHO na `versaoEsperada` (I6); nada travado =
+     *      `atualizado: false` e o serviço distingue relendo;
+     *   2. acha a gravação vigente (a linha GRAVACAO mais recente do item com destino);
+     *   3. insere a linha APROVACAO apontando para ela (trilha só-inclusão: quem e quando);
+     *   4. bumpa a versão do lote (a aprovação muda o que o finalizar aceita).
+     *
+     * Sem destino digitado, ou sem gravação na trilha: `semDestino: true`, nada escrito. O valor
+     * do destino não é relido nem copiado: a aprovação referencia a gravação pelo id.
+     */
+    public aprovarDestinoManualItem = async (params: {
+        loteId: string;
+        filCod: number;
+        docCod: string;
+        titCod: string;
+        versaoEsperada: number;
+        usuario: string;
+    }): Promise<{ atualizado: boolean; semDestino?: boolean; auditId?: string }> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const chave = {
+                loteId: params.loteId,
+                filCod: params.filCod,
+                docCod: params.docCod,
+                titCod: params.titCod,
+            };
+            const travado = await tx.selectFirst<{ tem_destino: boolean }>(
+                `SELECT (i.destino_manual IS NOT NULL) AS tem_destino
+                 FROM lote_pagamento_item i
+                 JOIN lote_pagamento l ON l.id = i.lote_id
+                 WHERE l.id = $loteId AND l.status = 'RASCUNHO' AND l.versao = $versaoEsperada
+                   AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod
+                 FOR UPDATE OF i, l`,
+                { ...chave, versaoEsperada: params.versaoEsperada },
+            );
+            if (!travado) return { atualizado: false };
+            if (!travado.tem_destino) return { atualizado: false, semDestino: true };
+            const gravacao = await tx.selectFirst<{ id: string }>(
+                `SELECT d.id
+                 FROM lote_pagamento_item_destino_audit d
+                 WHERE d.evento = 'GRAVACAO'
+                   AND d.lote_id = $loteId AND d.fil_cod = $filCod
+                   AND d.doc_cod = $docCod AND d.tit_cod = $titCod
+                 ORDER BY d.alterado_em DESC
+                 LIMIT 1`,
+                chave,
+            );
+            if (!gravacao) return { atualizado: false, semDestino: true };
+            const auditId = randomUUID();
+            await tx.insert(
+                `INSERT INTO lote_pagamento_item_destino_audit
+                    (id, lote_id, fil_cod, doc_cod, tit_cod, alterado_por, evento, aprova_audit_id)
+                 VALUES ($auditId, $loteId, $filCod, $docCod, $titCod, $alteradoPor,
+                         'APROVACAO', $aprovaAuditId)`,
+                {
+                    auditId,
+                    ...chave,
+                    alteradoPor: params.usuario,
+                    aprovaAuditId: gravacao.id,
+                },
+            );
+            await tx.update(
+                `UPDATE lote_pagamento SET versao = versao + 1, atualizado_em = now()
+                 WHERE id = $loteId`,
+                { loteId: params.loteId },
             );
             return { atualizado: true, auditId };
         });

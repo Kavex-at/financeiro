@@ -12,6 +12,7 @@ jest.mock('../domain/appContainer.js', () => ({
 
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import DebitDateFrozenError from '../domain/errors/DebitDateFrozenError.js';
+import LoteVersaoConflitoError from '../domain/errors/LoteVersaoConflitoError.js';
 import DestinoTitularDivergenteError from '../domain/errors/DestinoTitularDivergenteError.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindowError.js';
@@ -1065,8 +1066,11 @@ describe('destino manual do item (ADR-0054)', () => {
             expect(body.lote.itens[0].destinoManualResumo).toEqual({
                 tipo: 'CONTA',
                 destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1',
+                titularDocumentoMascarado: '***.444.777-**',
                 informadoPor: 'user-abc',
                 informadoEm: '2026-09-28T12:00:00.000Z',
+                // D10: conta digitada nasce pendente de aprovação.
+                aprovacao: 'PENDENTE',
             });
             expect(body.lote.itens[0]).not.toHaveProperty('destinoManual');
             semSensivel(body);
@@ -1147,6 +1151,94 @@ describe('destino manual do item (ADR-0054)', () => {
                 });
                 expect(res.status).toBe(403);
             }
+        });
+    });
+
+    describe('POST .../destino/aprovar (D10)', () => {
+        const APROVAR = `${PATH}/aprovar`;
+        const APROVADO = {
+            ...LOTE_COM_DESTINO,
+            itens: [
+                {
+                    ...LOTE_COM_DESTINO.itens[0],
+                    destinoManualAprovadoPor: 'user-abc',
+                    destinoManualAprovadoEm: '2026-09-28T13:00:00.000Z',
+                },
+            ],
+        };
+
+        it('aprova via serviço com a versão e o ator; devolve o lote mascarado e aprovado', async () => {
+            const aprovarDestinoManualItem = jest.fn().mockResolvedValue(APROVADO);
+            container.registerInstance(LotePagamentoService, { aprovarDestinoManualItem } as never);
+            await comApp({}, async (url) => {
+                const res = await fetch(`${url}${APROVAR}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ versao: 5 }),
+                });
+                expect(res.status).toBe(200);
+                const body = await readJson(res);
+                expect(body.lote.itens[0].destinoManualResumo).toMatchObject({
+                    aprovacao: 'APROVADO',
+                    aprovadoPor: 'user-abc',
+                    aprovadoEm: '2026-09-28T13:00:00.000Z',
+                });
+                semSensivel(body);
+            });
+            expect(aprovarDestinoManualItem).toHaveBeenCalledWith({
+                loteId: 'L1',
+                filCod: 2,
+                docCod: '100',
+                titCod: '1',
+                versao: 5,
+                ator: 'user-abc',
+            });
+        });
+
+        it('sem versão → 400, serviço não chamado', async () => {
+            const aprovarDestinoManualItem = jest.fn();
+            container.registerInstance(LotePagamentoService, { aprovarDestinoManualItem } as never);
+            await comApp({}, async (url) => {
+                const res = await fetch(`${url}${APROVAR}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                });
+                expect(res.status).toBe(400);
+            });
+            expect(aprovarDestinoManualItem).not.toHaveBeenCalled();
+        });
+
+        it('conflito de versão do serviço → 409', async () => {
+            const aprovarDestinoManualItem = jest
+                .fn()
+                .mockRejectedValue(
+                    new LoteVersaoConflitoError({ loteId: 'L1', versaoEsperada: 5 }),
+                );
+            container.registerInstance(LotePagamentoService, { aprovarDestinoManualItem } as never);
+            await comApp({}, async (url) => {
+                const res = await fetch(`${url}${APROVAR}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ versao: 5 }),
+                });
+                expect(res.status).toBe(409);
+            });
+        });
+
+        it('sem sispag:aprovar_destino → 403 com o código da permissão', async () => {
+            const aprovarDestinoManualItem = jest.fn();
+            container.registerInstance(LotePagamentoService, { aprovarDestinoManualItem } as never);
+            await comApp({ role: 'viewer' }, async (url) => {
+                const res = await fetch(`${url}${APROVAR}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ versao: 5 }),
+                });
+                expect(res.status).toBe(403);
+                expect((await readJson(res)).permissao).toBe('sispag:aprovar_destino');
+            });
+            expect(aprovarDestinoManualItem).not.toHaveBeenCalled();
         });
     });
 
