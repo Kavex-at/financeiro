@@ -46,7 +46,7 @@ Roda o `SincronizacaoLoteService` real com repositório em memória: nada é gra
 ## Tolerância
 
 Zero divergência em situação e destino do lote; valor pago exato ao centavo quando lido.
-Divergência = P0 que volta ao loop.
+Divergência, quando a validação rodar, reabre o loop como defeito crítico. Este arquivo NÃO é pergunta de domínio em aberto: é validação ao vivo adiada (não bloqueia o PR).
 
 ## Observação sobre a amostra
 

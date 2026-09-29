@@ -195,7 +195,13 @@
         "src/backend/migrations/0031_sispag_modalidade.sql",
         "src/frontend/app/sispag/components/LoteCard.tsx",
         "src/backend/migrations/0068_sispag_aprovar_destino.sql",
-        "src/backend/domain/libs/sispag/DestinoAprovacaoRule.ts"
+        "src/backend/domain/libs/sispag/DestinoAprovacaoRule.ts",
+        "src/backend/domain/service/sispag/DecisaoStatusLote.ts",
+        "src/backend/domain/service/sispag/SincronizacaoLoteService.ts",
+        "src/backend/domain/interface/sispag/SincronizacaoLote.ts",
+        "src/backend/jobs/sincronizar-lotes-sispag.ts",
+        "src/backend/jobs/SincronizarLotesSispagJob.ts",
+        "src/backend/migrations/0069_sispag_item_situacao_sincronizacao.sql"
       ],
       "note": "ADR-0015 (Escopo II/SISPAG): agregado LOCAL persistido (lote_pagamento raiz + lote_pagamento_item membro; ItemLote guarda snapshot valor/venc/credor). Lote candidato montado pela analista. Estados RASCUNHO|FINALIZADO|RETORNADO|CANCELADO (state-machines/lote-pagamento). ADR-0019: NEW status RETORNADO ('de volta do Nexxera') + transição L7 marcarRetorno (FINALIZADO→RETORNADO); FINALIZADO passa a significar 'aguardando o retorno do Nexxera'; marcarRetorno MANUAL hoje (simula o retorno; robô-poller fin052 = Fatia 3), optimistic-lock (versao); RETORNADO terminal por ora (baixa fin010 = Fatia 3). Migration 0027_lote_retornado.sql recria o CHECK de status; POST /sispag/lotes/:id/retorno → LotePagamentoService.marcarRetorno. Invariantes vigentes I2 (elegibilidade), I3 (não-duplicação UNIQUE parcial), I4 (uma filial), I5 (gate reversível), I6 (concorrência). ADR-0021 (INTERNACIONAL FORA DO ESCOPO, supersede ADR-0017): invariante I7 APOSENTADO — o SISPAG é doméstico, internacional é câmbio manual da tesouraria (filtrado na ingestão, nunca entra na carteira), então não há mistura possível. REMOVIDOS: field internacional em lote_pagamento_item (migration 0030_remove_internacional.sql purga + dropa a coluna da migration 0025), erro LoteTipoConflitoError (422), reconfirmação de classe em incluirTitulo. planned. ZERO escrita no ERP (I1) — FINALIZADO é gatilho conceitual, sem downstream nesta fatia. ADR-0018: NEW propriedade automatico (formado pelo cron formarLotesAutomaticos vs. montado à mão) — migration 0026. O cron (pós-ingestão) + manual POST /sispag/lotes/formar pré-montam lotes candidatos (a-vencer ≤7d, agrupados SÓ por filial I4 — classe saiu com ADR-0021) que nascem RASCUNHO p/ revisão; auto-lote RASCUNHO com título vencido é DESFEITO/liberado (desfazerAutomaticosVencidos, sem status VENCIDO). Cron nunca toca lote manual/finalizado. CAVEAT: banco NULL nos títulos a-pagar → agrupamento degenera p/ filial. READ-only no ERP (I1). ADR-0049 (2026-09-22, sispag-data-pagamento): NEW property dataDebito (lote_pagamento.data_debito, a criar; vai ao fin015 como flpDtaCredito) + NEW invariante I8 (business-rules/data-debito-remessa-sispag): I8a janela [hoje America/Sao_Paulo, min(itsDtaPgto)] ∩ dias úteis bancários (fim de semana + feriados nacionais fixos/20-11 desde 2024/móveis da Páscoa), bloqueada antes de escrever, sem remoção automática; I8b congelada a partir do criarLote (retry/retomada reutilizam). Reverte a resposta A5 (débito = hoje sempre). ADR-0054 (2026-09-28, sispag-ted-pix): ItemLote.modalidade documentada (BOLETO|TED|PIX|CREDITO_CONTA, null = a definir; CREDITO_CONTA fora da oferta) + NEW value object ItemLote.destinoManual (tipo CONTA|CHAVE_PIX, bancoCod/agencia/conta/DV ou chavePixTipo/chavePix, titularDocumento obrigatório, informadoPor/Em; colunas destino_* a criar) + destinoOrigem derivado (MANUAL|CADASTRO). Invariante I10 (business-rules/destino-pagamento-sispag). Não escreve no cmn025. ADR-0054 Adendo (2026-09-29, tarde): ItemLote.destinoManual ganha aprovacao derivada (NAO_EXIGIDA|PENDENTE|APROVADO) e aprovadoPor/Em (I10j); migration 0068. ADR-0055 (2026-09-29, sync-status-lote-sispag): status enum corrigido (inclui REMESSA_GERADA/BAIXADO); ItemLote ganha situacao derivada (AGENDADO|PAGO|REJEITADO|SEM_RETORNO) + pagoEm/pagoObservadoEm/valorPago/origemBaixa/baixaFonte/divergencia/sincronizadoEm (a criar) e documenta rejeitado/retornoEvento/retornoDescricao/borCod/bxaCodSeq (0049). Invariante I11 (business-rules/sincronizacao-status-lote-sispag). L7 marcarRetorno aposentada."
     },
@@ -1166,18 +1172,26 @@
     },
     "sincronizacao-status-lote-sispag": {
       "file": "business-rules/sincronizacao-status-lote-sispag.md",
-      "status": "planned",
-      "has_canonical_test": false,
+      "status": "implemented",
+      "has_canonical_test": true,
       "impl_files": [
         "src/backend/domain/service/sispag/SincronizacaoLoteService.ts",
         "src/backend/domain/service/sispag/ConciliacaoRetornoService.ts",
         "src/backend/domain/client/ConexosSispagClient.ts",
         "src/backend/domain/client/ConexosTitulosClient.ts",
-        "src/backend/jobs/sincronizar-lotes-sispag.ts"
+        "src/backend/jobs/sincronizar-lotes-sispag.ts",
+        "src/backend/domain/service/sispag/DecisaoStatusLote.ts",
+        "src/backend/domain/interface/sispag/SincronizacaoLote.ts",
+        "src/backend/jobs/SincronizarLotesSispagJob.ts",
+        "src/backend/migrations/0069_sispag_item_situacao_sincronizacao.sql",
+        "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
+        "src/backend/domain/client/ConexosSispagRetornoClient.ts",
+        "src/frontend/app/sispag/components/LoteCard.tsx"
       ],
       "resolved_by": [
         "ADR-0055"
-      ]
+      ],
+      "canonical_test": "src/backend/domain/service/sispag/DecisaoStatusLote.test.ts"
     }
   },
   "state_machines": {
