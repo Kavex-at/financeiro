@@ -1,7 +1,7 @@
 /**
  * Transições do lote passam por uma confirmação que nomeia o lote (filial, títulos, total) antes
- * de chamar a API — antes disparavam no primeiro clique. E o "Marcar retorno recebido", que é
- * simulação, só aparece em dev local.
+ * de chamar a API — antes disparavam no primeiro clique. O "Marcar retorno recebido" foi
+ * aposentado (ADR-0055): o status segue a baixa dos títulos, via "Sincronizar agora".
  */
 
 import { render, screen, waitFor, within } from '@testing-library/react'
@@ -33,7 +33,7 @@ jest.mock('@/lib/sispag', () => {
     finalizarLote: jest.fn(),
     cancelarLote: jest.fn(),
     reabrirLote: jest.fn(),
-    marcarRetorno: jest.fn(),
+    sincronizarLote: jest.fn(),
     baixarRemessa: jest.fn(),
     removerItem: jest.fn(),
     // ADR-0054: por padrão as flags estão desligadas — a tela de antes.
@@ -54,8 +54,8 @@ import {
   fetchModalidadesDisponiveis,
   finalizarLote,
   getRecursos,
-  marcarRetorno,
   reabrirLote,
+  sincronizarLote,
 } from '@/lib/sispag'
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
@@ -153,27 +153,15 @@ describe('LoteCard — confirmação das transições', () => {
     expect(screen.queryByText('aguardando retorno')).not.toBeInTheDocument()
   })
 
-  it('"Marcar retorno recebido" (simulação) não aparece fora de dev local', () => {
-    process.env.NEXT_PUBLIC_ENV = 'prd'
-    renderCard(lote({ status: 'FINALIZADO' }))
-
-    expect(screen.getByRole('button', { name: /reabrir/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /marcar retorno/i })).not.toBeInTheDocument()
-  })
-
-  it('em dev local, "Marcar retorno recebido" aparece e confirma que é simulação', async () => {
-    process.env.NEXT_PUBLIC_ENV = 'local'
-    const user = userEvent.setup()
-    renderCard(lote({ status: 'FINALIZADO' }))
-
-    await user.click(screen.getByRole('button', { name: /marcar retorno recebido/i }))
-    const dialog = screen.getByRole('dialog', { name: 'Simular retorno do Nexxera' })
-    expect(within(dialog).getByRole('alert')).toHaveTextContent(/simulação/)
-    expect(marcarRetorno).not.toHaveBeenCalled()
-
-    await user.click(within(dialog).getByRole('button', { name: 'Marcar retorno recebido' }))
-    expect(marcarRetorno).toHaveBeenCalledWith('L1', 3)
-  })
+  it.each(['local', 'prd'])(
+    '"Marcar retorno recebido" não existe mais, nem em dev local (%s) — ADR-0055',
+    (env) => {
+      process.env.NEXT_PUBLIC_ENV = env
+      renderCard(lote({ status: 'FINALIZADO' }))
+      expect(screen.getByRole('button', { name: /reabrir/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /marcar retorno/i })).not.toBeInTheDocument()
+    },
+  )
 })
 
 /**
@@ -227,10 +215,14 @@ describe('LoteCard — só sispag:ver', () => {
   it.each([
     ['Gerar remessa', /gerar remessa/i],
     ['Reabrir', /^reabrir$/i],
-    ['Marcar retorno (simulação, mesmo em dev local)', /marcar retorno/i],
   ])('finalizado: "%s" não aparece', (_nome, rotulo) => {
     renderCard(lote({ status: 'FINALIZADO' }))
     expect(screen.queryByRole('button', { name: rotulo })).not.toBeInTheDocument()
+  })
+
+  it('remessa gerada: "Sincronizar agora" não aparece sem sispag:executar', () => {
+    renderCard(lote({ status: 'REMESSA_GERADA' }))
+    expect(screen.queryByRole('button', { name: /sincronizar agora/i })).not.toBeInTheDocument()
   })
 
   it('remessa gerada: "Baixar .REM" não aparece e o arquivo não é pedido (JC-3)', () => {
@@ -528,5 +520,124 @@ describe('LoteCard — aprovação da conta digitada (ADR-0054 D10) e PIX prefer
     const abas = within(dialog).getAllByRole('tab')
     expect(abas.map((a) => a.textContent)).toEqual(['PIX', 'TED'])
     expect(within(dialog).getByRole('tab', { name: 'PIX' })).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+/** ADR-0055: o status do lote segue a baixa do título — "Sincronizar agora" e situação por item. */
+describe('LoteCard — sincronização pelo título (ADR-0055)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    permissoes = { carregando: false, lista: [...CATALOGO_PERMISSOES] }
+  })
+
+  const itemSinc = (over: Partial<LotePagamento['itens'][number]> = {}) =>
+    ({
+      loteId: 'L1',
+      filCod: 7,
+      docCod: '801',
+      titCod: '1',
+      valor: 100,
+      modalidade: 'PIX',
+      incluidoPor: 'u1',
+      ...over,
+    }) as LotePagamento['itens'][number]
+
+  it.each(['REMESSA_GERADA', 'RETORNADO', 'BAIXADO'] as const)(
+    '"Sincronizar agora" aparece em %s e chama a API pelo caminho das ações',
+    async (status) => {
+      const user = userEvent.setup()
+      const acao = renderCard(lote({ status }))
+      await user.click(screen.getByRole('button', { name: /sincronizar agora/i }))
+      expect(sincronizarLote).toHaveBeenCalledWith('L1')
+      expect(acao).toHaveBeenCalledWith(expect.any(Function), 'Lote sincronizado')
+    },
+  )
+
+  it.each(['RASCUNHO', 'FINALIZADO', 'CANCELADO'] as const)(
+    '"Sincronizar agora" NÃO aparece em %s (não há remessa para acompanhar)',
+    (status) => {
+      renderCard(lote({ status }))
+      expect(screen.queryByRole('button', { name: /sincronizar agora/i })).not.toBeInTheDocument()
+    },
+  )
+
+  it('o botão fica desabilitado enquanto uma ação está em curso (carregando)', () => {
+    render(<LoteCard lote={lote({ status: 'REMESSA_GERADA' })} busy acao={acaoQueExecuta()} />)
+    expect(screen.getByRole('button', { name: /sincronizar agora/i })).toBeDisabled()
+  })
+
+  it('cada item mostra a situação (PAGO/AGENDADO/REJEITADO/SEM_RETORNO)', async () => {
+    const user = userEvent.setup()
+    renderCard(
+      lote({
+        status: 'REMESSA_GERADA',
+        itens: [
+          itemSinc({ docCod: '1', situacao: 'PAGO' }),
+          itemSinc({ docCod: '2', situacao: 'AGENDADO' }),
+          itemSinc({ docCod: '3', situacao: 'REJEITADO' }),
+          itemSinc({ docCod: '4', situacao: 'SEM_RETORNO' }),
+        ],
+      }),
+    )
+    await user.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByText('pago')).toBeInTheDocument()
+    expect(screen.getByText('agendado')).toBeInTheDocument()
+    expect(screen.getByText('rejeitado')).toBeInTheDocument()
+    expect(screen.getByText('sem retorno')).toBeInTheDocument()
+  })
+
+  it('divergência aparece com o detalhe no item', async () => {
+    const user = userEvent.setup()
+    renderCard(
+      lote({
+        status: 'BAIXADO',
+        itens: [
+          itemSinc({
+            situacao: 'PAGO',
+            divergencia: true,
+            divergenciaDetalhe: 'título pago voltou a aberto no fin064 (estorno?)',
+          }),
+        ],
+      }),
+    )
+    await user.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByText(/divergência/i)).toBeInTheDocument()
+    expect(screen.getByText(/voltou a aberto/)).toBeInTheDocument()
+  })
+
+  it('pago fora do retorno mostra o borderô da baixa', async () => {
+    const user = userEvent.setup()
+    renderCard(
+      lote({
+        status: 'BAIXADO',
+        itens: [
+          itemSinc({
+            situacao: 'PAGO',
+            origemBaixa: 'FORA_DO_RETORNO',
+            borCod: 22320,
+            pagoEm: '2026-09-24T15:00:00.000Z',
+          }),
+        ],
+      }),
+    )
+    await user.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByText(/borderô 22320/)).toBeInTheDocument()
+    expect(screen.getByText(/fora do retorno/i)).toBeInTheDocument()
+  })
+
+  it('o card mostra "sincronizado em" (a leitura mais recente)', () => {
+    renderCard(
+      lote({
+        status: 'REMESSA_GERADA',
+        itens: [itemSinc({ situacao: 'AGENDADO', sincronizadoEm: '2026-09-29T14:35:00.000Z' })],
+      }),
+    )
+    expect(screen.getByText(/sincronizado em/i)).toBeInTheDocument()
+  })
+
+  it('lote RETORNADO fica destacado e diz que exige tratamento', () => {
+    renderCard(lote({ status: 'RETORNADO' }))
+    expect(screen.getByText(/rejeitado pelo banco/i)).toBeInTheDocument()
+    expect(document.getElementById('lote-L1')?.className).toMatch(/border-danger/)
   })
 })

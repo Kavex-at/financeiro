@@ -20,7 +20,14 @@ export type JobRunStatus = 'running' | 'success' | 'partial' | 'error'
 /** `sem-trilha` = o job roda mas não escreve linha de run (hoje o reaper do SISPAG). */
 export type SituacaoPipeline = 'ok' | 'parado' | 'nunca-executou' | 'sem-trilha'
 
-export type AlertaTipo = 'job-falhou' | 'job-parcial' | 'job-parado' | 'config-ausente'
+export type AlertaTipo =
+  | 'job-falhou'
+  | 'job-parcial'
+  | 'job-parado'
+  | 'config-ausente'
+  // ADR-0055: rejeição lida no retorno e contradição na baixa de um item do lote SISPAG.
+  | 'sispag-lote-retornado'
+  | 'sispag-baixa-divergente'
 export type AlertaSeveridade = 'aviso' | 'erro'
 
 export type EstadoConfig = 'configurado' | 'ausente' | 'usando-default'

@@ -9,6 +9,7 @@ import {
   FileText,
   Landmark,
   Plus,
+  RefreshCcw,
   ShieldCheck,
   Trash2,
   X,
@@ -50,8 +51,8 @@ import {
   getRecursos,
   type ItemLote,
   limparDestinoItem,
+  type ItemSituacao,
   type LotePagamento,
-  marcarRetorno,
   type Modalidade,
   MODALIDADES,
   MODALIDADES_OFERECIDAS,
@@ -61,10 +62,12 @@ import {
   type RecursosSispag,
   removerItem,
   rotuloConta,
+  STATUS_SINCRONIZAVEIS,
+  sincronizarLote,
+  ultimaSincronizacao,
 } from '@/lib/sispag'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { baixarBlob } from '@/lib/download'
-import { isSimulationEnabled } from '@/lib/features'
 import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
 import { type AcaoLote, ConfirmarAcaoDialog, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
@@ -149,8 +152,8 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
     )
   if (status === 'RETORNADO')
     return (
-      <Badge variant="outline" className="border-success/40 text-success">
-        de volta do Nexxera
+      <Badge variant="outline" className="border-danger/40 bg-danger-subtle text-danger-foreground">
+        rejeitado pelo banco
       </Badge>
     )
   if (status === 'CANCELADO')
@@ -163,6 +166,49 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
     <Badge variant="outline" className="border-info/40 text-info">
       rascunho
     </Badge>
+  )
+}
+
+/** Rótulo e tom de cada situação do item (ADR-0055) — tokens semânticos do design system. */
+const SITUACAO_ITEM: Record<ItemSituacao, { rotulo: string; classe: string }> = {
+  PAGO: { rotulo: 'pago', classe: 'border-success/40 text-success' },
+  AGENDADO: { rotulo: 'agendado', classe: 'border-info/40 text-info' },
+  REJEITADO: { rotulo: 'rejeitado', classe: 'border-danger/40 text-danger' },
+  SEM_RETORNO: { rotulo: 'sem retorno', classe: 'text-muted-foreground' },
+}
+
+const ORIGEM_BAIXA_ROTULO: Record<NonNullable<ItemLote['origemBaixa']>, string> = {
+  REMESSA: 'pela remessa',
+  FORA_DO_RETORNO: 'fora do retorno',
+  NAO_IDENTIFICADA: 'origem não identificada',
+}
+
+/**
+ * Situação do item derivada da baixa do título no Conexos (ADR-0055): pago, agendado no banco,
+ * rejeitado ou ainda sem retorno — mais a trilha da baixa e a divergência, quando houver.
+ */
+function SituacaoDoItem({ item }: { item: ItemLote }) {
+  if (!item.situacao) return <span className="text-xs text-muted-foreground">não sincronizado</span>
+  const { rotulo, classe } = SITUACAO_ITEM[item.situacao]
+  return (
+    <div className="flex flex-col gap-0.5">
+      <Badge variant="outline" className={`w-fit ${classe}`}>
+        {rotulo}
+      </Badge>
+      {item.situacao === 'PAGO' && item.origemBaixa ? (
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {ORIGEM_BAIXA_ROTULO[item.origemBaixa]}
+          {item.borCod ? ` · borderô ${item.borCod}` : ''}
+          {item.pagoEm ? ` · ${new Date(item.pagoEm).toLocaleDateString('pt-BR')}` : ''}
+        </span>
+      ) : null}
+      {item.divergencia ? (
+        <span className="flex items-start gap-1 text-[11px] font-medium text-danger">
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+          <span>Divergência: {item.divergenciaDetalhe ?? 'confira no Conexos'}</span>
+        </span>
+      ) : null}
+    </div>
   )
 }
 
@@ -332,7 +378,6 @@ export function LoteCard({
     finalizar: () => acao(() => finalizarLote(l.id, l.versao), 'Lote finalizado'),
     cancelar: () => acao(() => cancelarLote(l.id, l.versao), 'Lote cancelado'),
     reabrir: () => acao(() => reabrirLote(l.id, l.versao), 'Lote reaberto'),
-    retorno: () => acao(() => marcarRetorno(l.id, l.versao), 'Retorno do Nexxera registrado'),
   }
 
   const cardRef = React.useRef<HTMLDivElement>(null)
@@ -354,6 +399,10 @@ export function LoteCard({
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
+  // ADR-0055: depois da remessa, o lote acompanha a baixa dos títulos no Conexos.
+  const sincronizavel = STATUS_SINCRONIZAVEIS.includes(l.status)
+  const isRetornado = l.status === 'RETORNADO'
+  const sincronizadoEm = ultimaSincronizacao(l)
   // A2: revisão obrigatória — não finaliza enquanto houver item "a definir".
   // A coluna de retorno só aparece depois que houve conciliação — antes disso seria
   // uma coluna vazia em todo lote, ruído puro.
@@ -452,7 +501,13 @@ export function LoteCard({
     <Card
       ref={cardRef}
       id={`lote-${l.id}`}
-      className={destacado ? 'scroll-mt-4 ring-2 ring-ring' : 'scroll-mt-4'}
+      className={[
+        'scroll-mt-4',
+        destacado ? 'ring-2 ring-ring' : '',
+        isRetornado ? 'border-danger/40 bg-danger-subtle/30' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
     >
       <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
         <button
@@ -481,6 +536,11 @@ export function LoteCard({
             {l.conta ? ` · paga por ${l.banco ?? ''} ${l.conta}`.trimEnd() : ''}
             {l.dataDebito ? ` · débito em ${formatCivilDate(l.dataDebito)}` : ''}
           </CardTitle>
+          {sincronizavel && sincronizadoEm ? (
+            <span className="text-[11px] text-muted-foreground">
+              sincronizado em {new Date(sincronizadoEm).toLocaleString('pt-BR')}
+            </span>
+          ) : null}
         </button>
         <div className="flex shrink-0 flex-wrap gap-1">
           {isRascunho && podeExecutar ? (
@@ -546,18 +606,6 @@ export function LoteCard({
                   busy={busy}
                   acao={acao}
                 />
-              ) : null}
-              {/* Simulação: só em dev local. Em produção o retorno vem da conciliação do .RET. */}
-              {isSimulationEnabled() ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  title="Simula o retorno do Nexxera (o gatilho real é a conciliação do .RET)."
-                  onClick={() => setConfirmando('retorno')}
-                >
-                  <CheckCircle2 className="size-4" /> Marcar retorno recebido
-                </Button>
               ) : null}
               <Button
                 size="sm"
@@ -638,6 +686,17 @@ export function LoteCard({
               onConfirmar={executar[confirmando]}
             />
           ) : null}
+          {sincronizavel && podeExecutar ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              title="Relê no Conexos a baixa dos títulos deste lote e atualiza a situação de cada item. Só leitura no ERP."
+              onClick={() => acao(() => sincronizarLote(l.id), 'Lote sincronizado')}
+            >
+              <RefreshCcw className="size-4" aria-hidden /> Sincronizar agora
+            </Button>
+          ) : null}
           {l.remessaArquivo && podeExecutar ? (
             <Button
               size="sm"
@@ -714,6 +773,7 @@ export function LoteCard({
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead>Vencimento</TableHead>
                     <TableHead>Forma de pgto.</TableHead>
+                    {sincronizavel ? <TableHead>Situação</TableHead> : null}
                     {temConciliacao ? <TableHead>Retorno do banco</TableHead> : null}
                     {isRascunho && podeExecutar ? <TableHead className="w-10" /> : null}
                   </TableRow>
@@ -851,6 +911,11 @@ export function LoteCard({
                           </div>
                         )}
                       </TableCell>
+                      {sincronizavel ? (
+                        <TableCell>
+                          <SituacaoDoItem item={i} />
+                        </TableCell>
+                      ) : null}
                       {temConciliacao ? (
                         <TableCell>
                           {i.retornoEvento ? (
@@ -909,6 +974,18 @@ export function LoteCard({
               </Table>
             </div>
           )}
+          {isRetornado ? (
+            <div
+              role="alert"
+              className="mt-3 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger-subtle px-4 py-3 text-sm text-danger-foreground"
+            >
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <p>
+                O banco rejeitou ao menos um título deste lote. Saneie o cadastro do favorecido e
+                reenvie o título num lote novo.
+              </p>
+            </div>
+          ) : null}
           {pendentesAprovacao.length > 0 ? (
             <div
               role="status"
@@ -940,7 +1017,7 @@ export function LoteCard({
               Finalizado por {l.finalizadoPor}
               {l.finalizadoEm ? ` em ${new Date(l.finalizadoEm).toLocaleString('pt-BR')}` : ''}.
               {isFinalizado ? ' Aguardando a geração da remessa.' : ''}
-              {l.status === 'RETORNADO' ? ' Retorno do Nexxera recebido.' : ''}
+              {isRetornado ? ' O banco rejeitou ao menos um título.' : ''}
             </p>
           ) : null}
         </CardContent>
