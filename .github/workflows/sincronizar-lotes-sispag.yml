@@ -1,0 +1,73 @@
+name: Sincronização de status dos lotes SISPAG
+
+# L11 `sincronizarStatus` (ADR-0055): o status do lote segue a BAIXA DO TÍTULO no Conexos, de
+# qualquer origem (retorno do banco, fin010 manual, processamento nativo do fin052). O job lê o
+# fin064 (prova de pagamento), o fin052 (agenda/rejeição) e as baixas do título (PSQ_018, trilha)
+# e grava só no nosso Postgres.
+#
+# READ-ONLY no ERP: nunca carrega, processa nem baixa nada (I11a). Por isso não depende de
+# CONEXOS_WRITE_ENABLED / SISPAG_LIVE_WRITE_ENABLED / CONEXOS_DRY_RUN (I11g).
+#
+# Cadência: de hora em hora, dias úteis, no minuto :35, 11–22 UTC (08–19 BRT) — a janela em que a
+# analista baixa títulos e os retornos chegam. Cadência é configuração operacional, não regra.
+#
+# ⚠️ Credenciais: usa os MESMOS secrets CONEXOS_* dos outros crons. Em 23/09 eles estavam
+# desatualizados (Bad Credentials) e a ingestão fechou "success" com 0 títulos. Este job sai com
+# exit ≠ 0 quando nenhum título pôde ser lido, então o mesmo problema aqui fica VERMELHO.
+#
+# ⚠️ Sessões: o Conexos limita sessões simultâneas por usuário (`LOGIN_ERROR_MAX_SESSIONS`). O
+# :35 coincide com o `reconciliar-nde`; se houver disputa de sessão, desloque um dos dois.
+#
+# ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main). Enquanto este
+# arquivo não estiver em `main`, use o "Run workflow" manual na aba Actions.
+on:
+  schedule:
+    - cron: '35 11-22 * * 1-5'
+  workflow_dispatch: {}
+
+concurrency:
+  group: sincronizar-lotes-sispag
+  cancel-in-progress: false
+
+jobs:
+  sincronizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      # Nomes EXATOS lidos pelo EnvironmentProvider/Conexos (iguais aos de ingest-sispag.yml).
+      databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      CONEXOS_BASE_URL: ${{ secrets.CONEXOS_BASE_URL }}
+      CONEXOS_USERNAME: ${{ secrets.CONEXOS_USERNAME }}
+      CONEXOS_PASSWORD: ${{ secrets.CONEXOS_PASSWORD }}
+      CONEXOS_FIL_COD: ${{ vars.CONEXOS_FIL_COD }}
+      environment: production
+      client_name: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependências (com devDeps p/ tsx)
+        run: npm ci --include=dev
+      - name: Aplicar migrations pendentes (idempotente)
+        run: npm run migrate
+      - name: Sincronizar status dos lotes (read-only no ERP)
+        run: npm run job:sincronizar-lotes-sispag
+
+      # ⚠️ Passo de ALERTA — ADR-0042. Roda SÓ quando algo acima falhou (inclusive o exit 1 de
+      # "nenhum título lido"). `continue-on-error` + exit 0 no script: não mascara nem duplica a
+      # falha do workflow.
+      - name: Alertar falha (ADR-0042)
+        if: failure()
+        continue-on-error: true
+        env:
+          databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          PIPELINE_ALVO: sispag-sincronizacao
+          WORKFLOW_NOME: Sincronização de lotes SISPAG
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          environment: production
+          client_name: local
+        run: npm run job:alerta-workflow-falhou

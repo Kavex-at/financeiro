@@ -88,14 +88,16 @@ export default class JobRunReadModel {
      * a fronteira do limite sem depender do relógio real.
      */
     public exporSaude = async (agora: Date = new Date()): Promise<PipelineSaude[]> => {
-        const [permutas, recebimentos, sispag, ndeSefaz, detector, reaper] = await Promise.all([
-            this.lerPermutas(),
-            this.lerRecebimentos(),
-            this.lerSispag(),
-            this.lerJobExecucao(PIPELINE.RECEBIMENTOS_NDE_SEFAZ),
-            this.lerJobExecucao(PIPELINE.OPERACAO_DETECTOR),
-            this.lerJobExecucao(PIPELINE.SISPAG_REAPER),
-        ]);
+        const [permutas, recebimentos, sispag, ndeSefaz, detector, reaper, sincronizacao] =
+            await Promise.all([
+                this.lerPermutas(),
+                this.lerRecebimentos(),
+                this.lerSispag(),
+                this.lerJobExecucao(PIPELINE.RECEBIMENTOS_NDE_SEFAZ),
+                this.lerJobExecucao(PIPELINE.OPERACAO_DETECTOR),
+                this.lerJobExecucao(PIPELINE.SISPAG_REAPER),
+                this.lerJobExecucao(PIPELINE.SISPAG_SINCRONIZACAO),
+            ]);
 
         const monitoraveis = [
             this.montarSaude(PIPELINE.PERMUTAS_ELEICAO, permutas, agora),
@@ -106,6 +108,7 @@ export default class JobRunReadModel {
             // ambíguo entre "nada a reportar" e "o detector morreu".
             this.montarSaude(PIPELINE.OPERACAO_DETECTOR, detector, agora),
             this.montarSaude(PIPELINE.SISPAG_REAPER, reaper, agora),
+            this.montarSaude(PIPELINE.SISPAG_SINCRONIZACAO, sincronizacao, agora),
         ];
 
         // Os cegos entram na lista de propósito — omiti-los afirmaria cobertura que não existe.

@@ -24,6 +24,11 @@ export const PIPELINE = {
      * painel não vigiava — ganhou uma em 2026-09-01 (ADR-0042, follow-up 2).
      */
     SISPAG_REAPER: 'sispag-reaper',
+    /**
+     * Sincronização do status dos lotes SISPAG pela baixa do título (L11, ADR-0055). Nasce COM
+     * trilha em `job_execucao` — lição do reaper, que nasceu cego.
+     */
+    SISPAG_SINCRONIZACAO: 'sispag-sincronizacao',
 } as const;
 
 export type Pipeline = (typeof PIPELINE)[keyof typeof PIPELINE];
