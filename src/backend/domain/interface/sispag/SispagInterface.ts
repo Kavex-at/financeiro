@@ -76,6 +76,83 @@ export interface ContaFavorecido {
 }
 
 /**
+ * Tipos de chave PIX (ADR-0054 D4). O tipo NUNCA é inferido: 11 dígitos são CPF ou celular.
+ * Na chave digitada quem escolhe é a analista; na do cadastro vem de `cixVldTipo`.
+ */
+export const CHAVE_PIX_TIPO = {
+    TELEFONE: 'TELEFONE',
+    EMAIL: 'EMAIL',
+    CPF_CNPJ: 'CPF_CNPJ',
+    ALEATORIA: 'ALEATORIA',
+} as const;
+
+export type ChavePixTipo = (typeof CHAVE_PIX_TIPO)[keyof typeof CHAVE_PIX_TIPO];
+
+/**
+ * `cixVldTipo` do `cmn025/cmnPessoasPix` → tipo da chave. Encoding medido no schema do ERP
+ * (plano §2: 1 telefone, 2 e-mail, 3 CPF/CNPJ, 4 aleatória). Código fora do mapa = tipo
+ * desconhecido (`undefined`), nunca um palpite.
+ */
+export const CHAVE_PIX_TIPO_POR_CIX_VLD_TIPO: Readonly<Record<number, ChavePixTipo>> = {
+    1: CHAVE_PIX_TIPO.TELEFONE,
+    2: CHAVE_PIX_TIPO.EMAIL,
+    3: CHAVE_PIX_TIPO.CPF_CNPJ,
+    4: CHAVE_PIX_TIPO.ALEATORIA,
+};
+
+/**
+ * Uma chave PIX ATIVA do favorecido (`cmn025/cmnPessoasPix`, por `pesCod`). É a chave do
+ * FORNECEDOR — a do `fin005/cmnPessoasPix` é da própria Columbia e não serve de destino.
+ * `chave` é dado sensível (I10h): nunca em log, ledger ou mensagem de erro.
+ */
+export interface ChavePixFavorecido {
+    cixCod: number;
+    chave: string;
+    tipo?: ChavePixTipo;
+    /** `cixVldDefault === 1`. */
+    padrao: boolean;
+    pesCod: string;
+}
+
+/**
+ * Destino digitado pela analista no item do lote (ADR-0054 D1, `lote_pagamento_item.destino_manual`).
+ * Vale só para aquele item, não é escrito no cadastro do Conexos e vence o do cadastro (D2).
+ * Gravado completo (vai ao ERP), mas NUNCA sai inteiro em log, ledger, API ou erro (I10h).
+ */
+export const DESTINO_MANUAL_TIPO = { CONTA: 'CONTA', CHAVE_PIX: 'CHAVE_PIX' } as const;
+
+export type DestinoManualTipo = (typeof DESTINO_MANUAL_TIPO)[keyof typeof DESTINO_MANUAL_TIPO];
+
+export interface DestinoManualConta {
+    tipo: typeof DESTINO_MANUAL_TIPO.CONTA;
+    /** FEBRABAN, 3 dígitos. */
+    bancoCod: string;
+    agencia: string;
+    agenciaDv?: string;
+    conta: string;
+    contaDv: string;
+    /** CPF/CNPJ do titular, só dígitos — tem de ser o do favorecido (I10i). */
+    titularDocumento: string;
+}
+
+export interface DestinoManualChavePix {
+    tipo: typeof DESTINO_MANUAL_TIPO.CHAVE_PIX;
+    chavePixTipo: ChavePixTipo;
+    chavePix: string;
+    titularDocumento: string;
+}
+
+export type DestinoManual = DestinoManualConta | DestinoManualChavePix;
+
+/** Projeção SEGURA do destino manual para a API/tela: só a máscara (I10h). */
+export interface DestinoManualResumo {
+    tipo: DestinoManualTipo;
+    destinoMascarado: string;
+    informadoPor?: string;
+    informadoEm?: string;
+}
+
+/**
  * Conta corrente PAGADORA da Columbia (`fin005`) — de onde o dinheiro sai.
  *
  * ⚠️ `ccoCod` NÃO é global: o mesmo código aponta para contas DIFERENTES em cada filial.
@@ -241,6 +318,13 @@ export interface ItemLote {
     incluidoEm?: string;
     /** Sequencial do item no lote NATIVO — 4ª parte da chave que viaja no `.REM`/`.RET`. */
     nativeItsCodSeq?: number;
+    /**
+     * Destino digitado (ADR-0054). COMPLETO — uso interno (resolver/envio). A API nunca o
+     * devolve: as rotas projetam para `destinoManualResumo` (ver `LotePagamentoApiView`).
+     */
+    destinoManual?: DestinoManual;
+    /** Máscara do destino manual — o único formato que sai para a tela. */
+    destinoManualResumo?: DestinoManualResumo;
     // ── resultado da conciliação do retorno (fin052/arquivosRetornoDetalhe) ──
     /** Código do evento bancário. Itaú: `00` = PAGAMENTO EFETUADO. */
     retornoEvento?: string;

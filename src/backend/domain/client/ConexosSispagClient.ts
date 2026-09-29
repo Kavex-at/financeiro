@@ -2,6 +2,8 @@ import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import {
     type BorderoAPagar,
+    CHAVE_PIX_TIPO_POR_CIX_VLD_TIPO,
+    type ChavePixFavorecido,
     type LoteSispag,
     MODALIDADE,
     type Modalidade,
@@ -114,6 +116,37 @@ const borderoRowSchema = z
         vldHasBaixa: boolFromFlag,
     })
     .passthrough();
+
+/**
+ * Chave PIX do cadastro da pessoa (`cmn025/cmnPessoasPix`). Linha sem `cixCod` numérico ou
+ * sem chave é descartada: um destino de pagamento sem identidade não é um destino.
+ */
+const chavePixRowSchema = z
+    .object({
+        cixCod: z.coerce.number().int(),
+        cixDesChave: z.string().trim().min(1),
+        cixVldTipo: numOpt,
+        cixVldSituacao: numOpt,
+        cixVldDefault: numOpt,
+        pesCod: z.union([z.string(), z.number()]).transform(String).optional(),
+    })
+    .passthrough();
+
+/**
+ * Nome do campo do CPF/CNPJ na linha da pessoa do `cmn025/list`.
+ *
+ * ⚠️ HIPÓTESE — a confirmar no teste supervisionado (checklist do tasks, passo 7; a sonda
+ * `jobs/probe-sispag-ted-pix-supervisionado.ts` lista os campos candidatos). Nenhuma leitura
+ * de produção mostrou esse campo ainda. Enquanto não confirmado, campo ausente devolve
+ * `undefined` e a titularidade (I10i) falha FECHADA.
+ */
+export const CAMPO_DOCUMENTO_FAVORECIDO = 'pesNumCpfCnpj';
+
+/** CPF (11) ou CNPJ (14) só dígitos. Qualquer outra coisa não é documento. */
+const documentoSchema = z.preprocess(
+    (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/\D/g, '') : v),
+    z.string().regex(/^(\d{11}|\d{14})$/),
+);
 
 @singleton()
 @injectable()
@@ -406,6 +439,79 @@ export default class ConexosSispagClient {
                 padrao: Number(c.pctVldDefault) === 1,
             }))
             .sort((a, b) => Number(b.padrao) - Number(a.padrao));
+    };
+
+    /**
+     * Chaves PIX ATIVAS do favorecido (`cmn025/cmnPessoasPix/list`, por `pesCod`), a DEFAULT
+     * primeiro (ADR-0054 D4). É a fonte do PIX do cadastro — o `itsDesChavePix` do `fin064`
+     * é LEFT JOIN no item SISPAG e vem vazio (0% medido).
+     *
+     * I10h: a chave é dado sensível. Linha descartada no boundary é CONTADA no log, nunca
+     * ecoada.
+     */
+    public listChavesPixFavorecido = async (
+        pesCod: string | number,
+        filCod: number,
+    ): Promise<ChavePixFavorecido[]> => {
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'cmn025/cmnPessoasPix/list',
+                this.listBody('cmn025', { 'pesCod#EQ': pesCod }, 50),
+                { filCod },
+            ),
+        );
+        let descartadas = 0;
+        const chaves: ChavePixFavorecido[] = [];
+        for (const row of rows) {
+            const parsed = chavePixRowSchema.safeParse(row);
+            if (!parsed.success) {
+                descartadas += 1;
+                continue;
+            }
+            const r = parsed.data;
+            if (r.cixVldSituacao !== 1) continue;
+            chaves.push({
+                cixCod: r.cixCod,
+                chave: r.cixDesChave,
+                ...(r.cixVldTipo !== undefined &&
+                CHAVE_PIX_TIPO_POR_CIX_VLD_TIPO[r.cixVldTipo] !== undefined
+                    ? { tipo: CHAVE_PIX_TIPO_POR_CIX_VLD_TIPO[r.cixVldTipo] }
+                    : {}),
+                padrao: r.cixVldDefault === 1,
+                pesCod: r.pesCod ?? String(pesCod),
+            });
+        }
+        if (descartadas > 0) {
+            Logger.warn(
+                `[SISPAG] cmn025/cmnPessoasPix: ${descartadas} linha(s) fora do schema descartada(s) na filial ${filCod}`,
+            );
+        }
+        return chaves.sort((a, b) => Number(b.padrao) - Number(a.padrao));
+    };
+
+    /**
+     * CPF/CNPJ do favorecido (só dígitos), lido AO VIVO do cadastro da pessoa (`cmn025/list`,
+     * por `pesCod`) para a titularidade do destino digitado (I10i). O `TituloAPagar` não o guarda.
+     *
+     * Nunca lança por dado: linha ausente, campo ausente ou valor que não é CPF/CNPJ devolve
+     * `undefined` — e quem chama FALHA FECHADO (`DocumentoFavorecidoIndisponivelError`). Falha
+     * de rede sobe normalmente.
+     */
+    public getDocumentoFavorecido = async (
+        pesCod: string | number,
+        filCod: number,
+    ): Promise<string | undefined> => {
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'cmn025/list',
+                this.listBody('cmn025', { 'pesCod#EQ': pesCod }, 5),
+                { filCod },
+            ),
+        );
+        const pessoa = rows.find((r) => String(r.pesCod ?? '') === String(pesCod));
+        if (!pessoa) return undefined;
+        const parsed = documentoSchema.safeParse(pessoa[CAMPO_DOCUMENTO_FAVORECIDO]);
+        return parsed.success ? parsed.data : undefined;
     };
 
     /**

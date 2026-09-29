@@ -224,6 +224,10 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
+            // ADR-0054: gates de go-live de TED/PIX/destino manual — default OFF.
+            sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
+            sispagDestinoManualEnabled: this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED') === 'true',
+            sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
@@ -311,6 +315,10 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
+            // ADR-0054: gates de go-live de TED/PIX/destino manual — default OFF.
+            sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
+            sispagDestinoManualEnabled: this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED') === 'true',
+            sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
