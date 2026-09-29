@@ -8,6 +8,10 @@ export const ALERTA_TIPO = {
     JOB_PARCIAL: 'job-parcial',
     JOB_PARADO: 'job-parado',
     CONFIG_AUSENTE: 'config-ausente',
+    /** Lote SISPAG transicionou para RETORNADO: rejeição lida no fin052 (ADR-0055). */
+    SISPAG_LOTE_RETORNADO: 'sispag-lote-retornado',
+    /** Estorno de título pago, ou item rejeitado com título pago (ADR-0055, I11f). */
+    SISPAG_BAIXA_DIVERGENTE: 'sispag-baixa-divergente',
 } as const;
 
 export type AlertaTipo = (typeof ALERTA_TIPO)[keyof typeof ALERTA_TIPO];

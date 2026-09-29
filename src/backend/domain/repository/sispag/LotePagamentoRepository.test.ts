@@ -483,4 +483,210 @@ describe('LotePagamentoRepository', () => {
             warn.mockRestore();
         });
     });
+
+    describe('sincronização pelo título (ADR-0055, I11)', () => {
+        const itemPersistir = (over: Record<string, unknown> = {}) => ({
+            filCod: 2,
+            docCod: '38682',
+            titCod: '1',
+            situacao: 'PAGO' as const,
+            rejeitado: false,
+            divergencia: false,
+            retornoEvento: 'BD',
+            borCod: 22320,
+            baixaFonte: 'TITULO' as const,
+            origemBaixa: 'FORA_DO_RETORNO' as const,
+            sincronizadoEm: '2026-09-29T15:35:00.000Z',
+            ...over,
+        });
+
+        it('getLoteComItens devolve os campos novos do item (API/UI)', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header({ status: 'BAIXADO' }));
+            db.selectMany.mockResolvedValue([
+                itemRow({
+                    situacao: 'PAGO',
+                    pago_em: new Date('2026-09-24T15:00:00Z'),
+                    pago_observado_em: new Date('2026-09-29T15:35:00Z'),
+                    valor_pago: '275.00',
+                    origem_baixa: 'FORA_DO_RETORNO',
+                    baixa_fonte: 'TITULO',
+                    divergencia: false,
+                    sincronizado_em: new Date('2026-09-29T15:35:00Z'),
+                    bor_cod: 22320,
+                }),
+            ]);
+            const lote = await make(db).getLoteComItens('L1');
+            expect(lote?.itens[0]).toEqual(
+                expect.objectContaining({
+                    situacao: 'PAGO',
+                    pagoEm: '2026-09-24T15:00:00.000Z',
+                    pagoObservadoEm: '2026-09-29T15:35:00.000Z',
+                    valorPago: 275,
+                    origemBaixa: 'FORA_DO_RETORNO',
+                    baixaFonte: 'TITULO',
+                    divergencia: false,
+                    sincronizadoEm: '2026-09-29T15:35:00.000Z',
+                    borCod: 22320,
+                }),
+            );
+            const sql = db.selectMany.mock.calls[0][0] as string;
+            expect(sql).toMatch(/i\.situacao/);
+            expect(sql).toMatch(/i\.sincronizado_em/);
+        });
+
+        it('item nunca sincronizado: divergencia=false e sem situacao', async () => {
+            const db = buildDb();
+            db.selectFirst.mockResolvedValue(header());
+            db.selectMany.mockResolvedValue([itemRow()]);
+            const lote = await make(db).getLoteComItens('L1');
+            expect(lote?.itens[0]?.divergencia).toBe(false);
+            expect(lote?.itens[0]?.situacao).toBeUndefined();
+        });
+
+        it('listLotes também traz situação/divergência dos itens', async () => {
+            const db = buildDb();
+            db.selectMany
+                .mockResolvedValueOnce([header({ status: 'RETORNADO' })])
+                .mockResolvedValueOnce([
+                    itemRow({ situacao: 'REJEITADO', divergencia: true, divergencia_detalhe: 'x' }),
+                ]);
+            const [lote] = await make(db).listLotes({});
+            expect(lote?.itens[0]).toEqual(
+                expect.objectContaining({
+                    situacao: 'REJEITADO',
+                    divergencia: true,
+                    divergenciaDetalhe: 'x',
+                }),
+            );
+        });
+
+        it('listLotesSincronizaveis: REMESSA_GERADA/RETORNADO + BAIXADO na janela, parametrizado', async () => {
+            const db = buildDb();
+            db.selectMany.mockResolvedValue([{ id: 'L1' }, { id: 'L2' }]);
+            const ids = await make(db).listLotesSincronizaveis(30);
+            expect(ids).toEqual(['L1', 'L2']);
+            const [sql, params] = db.selectMany.mock.calls[0];
+            expect(params).toEqual({
+                ativos: ['REMESSA_GERADA', 'RETORNADO'],
+                baixado: 'BAIXADO',
+                dias: 30,
+            });
+            expect(sql).toMatch(/native_fil_cod IS NOT NULL/);
+            expect(sql).not.toMatch(/\$\{/);
+        });
+
+        it('aplicarSincronizacao: trava + itens + transição numa ÚNICA transação', async () => {
+            const db = buildDb();
+            db.update.mockResolvedValue(1);
+            const r = await make(db).aplicarSincronizacao({
+                loteId: 'L1',
+                versaoEsperada: 7,
+                statusAtual: 'REMESSA_GERADA',
+                para: 'BAIXADO',
+                itens: [itemPersistir()],
+            });
+            expect(r).toBe('APLICADO');
+            expect(db.withTransaction).toHaveBeenCalledTimes(1);
+            const [lockSql, lockParams] = db.update.mock.calls[0];
+            expect(lockSql).toMatch(/versao = versao \+ 1/);
+            expect(lockSql).toMatch(/WHERE id = \$loteId AND versao = \$versaoEsperada/);
+            expect(lockParams).toEqual({
+                loteId: 'L1',
+                versaoEsperada: 7,
+                statusAtual: 'REMESSA_GERADA',
+                para: 'BAIXADO',
+            });
+            const [itemSql, itemParams] = db.update.mock.calls[1];
+            expect(itemSql).toMatch(/UPDATE lote_pagamento_item/);
+            expect(itemParams).toEqual(
+                expect.objectContaining({
+                    situacao: 'PAGO',
+                    borCod: 22320,
+                    bxaCodSeq: null,
+                    pagoEm: null,
+                    baixaFonte: 'TITULO',
+                    origemBaixa: 'FORA_DO_RETORNO',
+                    divergencia: false,
+                }),
+            );
+        });
+
+        it('aplicarSincronizacao: conflito de versão → CONFLITO e NENHUM item gravado', async () => {
+            const db = buildDb();
+            db.update.mockResolvedValueOnce(0);
+            const r = await make(db).aplicarSincronizacao({
+                loteId: 'L1',
+                versaoEsperada: 7,
+                statusAtual: 'REMESSA_GERADA',
+                itens: [itemPersistir()],
+            });
+            expect(r).toBe('CONFLITO');
+            expect(db.update).toHaveBeenCalledTimes(1);
+        });
+
+        it('aplicarSincronizacao sem transição mantém o status (COALESCE com NULL)', async () => {
+            const db = buildDb();
+            await make(db).aplicarSincronizacao({
+                loteId: 'L1',
+                versaoEsperada: 2,
+                statusAtual: 'REMESSA_GERADA',
+                itens: [itemPersistir({ situacao: 'AGENDADO' })],
+            });
+            expect(db.update.mock.calls[0][1]).toEqual(expect.objectContaining({ para: null }));
+        });
+
+        it('tocarSincronizacao só mexe em sincronizado_em — nunca em versao (I11h)', async () => {
+            const db = buildDb();
+            await make(db).tocarSincronizacao({
+                loteId: 'L1',
+                itens: [{ filCod: 1, docCod: '4030', titCod: '7' }],
+                em: '2026-09-29T15:35:00.000Z',
+            });
+            const [sql, params] = db.update.mock.calls[0];
+            expect(sql).toMatch(/SET sincronizado_em = \$em/);
+            expect(sql).not.toMatch(/versao/);
+            expect(sql).not.toMatch(/UPDATE lote_pagamento\s/);
+            expect(params).toEqual({
+                loteId: 'L1',
+                em: '2026-09-29T15:35:00.000Z',
+                chaves: ['1:4030:7'],
+            });
+        });
+
+        it('tocarSincronizacao sem itens não faz query', async () => {
+            const db = buildDb();
+            await make(db).tocarSincronizacao({ loteId: 'L1', itens: [], em: 'x' });
+            expect(db.update).not.toHaveBeenCalled();
+        });
+
+        it('findByChaveNativa usa a filial PASSADA (a da linha do .RET), não outra (T3)', async () => {
+            const db = buildDb();
+            db.selectFirst
+                .mockResolvedValueOnce({ id: 'L-fil1' })
+                .mockResolvedValueOnce({ id: 'L-fil2' });
+            const repo = make(db);
+            // Mesmo arquivo (gar 9) com linhas de fil 1/flp 8 e fil 2/flp 24.
+            expect(
+                await repo.findByChaveNativa({ nativeFilCod: 1, nativeBncCod: 4, nativeFlpCod: 8 }),
+            ).toBe('L-fil1');
+            expect(
+                await repo.findByChaveNativa({
+                    nativeFilCod: 2,
+                    nativeBncCod: 4,
+                    nativeFlpCod: 24,
+                }),
+            ).toBe('L-fil2');
+            expect(db.selectFirst.mock.calls[0][1]).toEqual({
+                nativeFilCod: 1,
+                nativeBncCod: 4,
+                nativeFlpCod: 8,
+            });
+            expect(db.selectFirst.mock.calls[1][1]).toEqual({
+                nativeFilCod: 2,
+                nativeBncCod: 4,
+                nativeFlpCod: 24,
+            });
+        });
+    });
 });

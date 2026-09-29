@@ -291,13 +291,86 @@ export const LOTE_STATUS = {
      * remessa de pagamento — o transporte ao banco é externo e manual.
      */
     REMESSA_GERADA: 'REMESSA_GERADA',
-    /** Retorno do banco (`.RET`) processado no fin052. */
+    /** Rejeição LIDA no fin052 (`fbeVldTpret = 2`) em algum item — exige olho humano (ADR-0055). */
     RETORNADO: 'RETORNADO',
-    /** Baixa confirmada no fin010 para todos os itens não rejeitados. */
+    /** Todo título do lote pago no fin064, de qualquer origem (ADR-0055). Terminal. */
     BAIXADO: 'BAIXADO',
 } as const;
 
 export type LotePagamentoStatus = (typeof LOTE_STATUS)[keyof typeof LOTE_STATUS];
+
+/**
+ * Situação DERIVADA de um item do lote pela sincronização (I11d, ADR-0055). Não é estado do lote:
+ * o lote espera em `REMESSA_GERADA` enquanto os itens caminham. Precedência de cima para baixo.
+ */
+export const ITEM_SITUACAO = {
+    /** Rejeição lida no fin052 (`fbeVldTpret = 2`). Vence tudo, inclusive o título pago (I11f). */
+    REJEITADO: 'REJEITADO',
+    /** Título pago no fin064 (`vldPago = 1 ∧ aberto = 0`), de qualquer origem (I11b). */
+    PAGO: 'PAGO',
+    /** Evento `BD` (agendado) ou `00` (efetuado) no fin052, título ainda não baixado no ERP. */
+    AGENDADO: 'AGENDADO',
+    /** Nada lido ainda. */
+    SEM_RETORNO: 'SEM_RETORNO',
+} as const;
+
+export type ItemSituacao = (typeof ITEM_SITUACAO)[keyof typeof ITEM_SITUACAO];
+
+/**
+ * Origem da baixa de um item pago. Manual × nativo NÃO é distinguido: não é observável com
+ * segurança (ADR-0055, alternativas).
+ */
+export const ORIGEM_BAIXA = {
+    /** A baixa está ligada a um retorno deste lote (linha do fin052 com borderô/baixa). */
+    REMESSA: 'REMESSA',
+    /** Baixa no título sem vínculo com o retorno: fin010 manual ou processamento nativo. */
+    FORA_DO_RETORNO: 'FORA_DO_RETORNO',
+    /** Pago no fin064, mas as baixas do título (PSQ_018) não puderam ser lidas. */
+    NAO_IDENTIFICADA: 'NAO_IDENTIFICADA',
+} as const;
+
+export type OrigemBaixa = (typeof ORIGEM_BAIXA)[keyof typeof ORIGEM_BAIXA];
+
+/** De onde vieram `borCod`/`bxaCodSeq` do item. Enriquecimento, nunca prova de pagamento. */
+export const BAIXA_FONTE = {
+    /** Linha de detalhe do retorno (`fin052/arquivosRetornoDetalhe`). */
+    RETORNO: 'RETORNO',
+    /** Baixas do título (`com308/financeiroAPagar/baixas`, PSQ_018). */
+    TITULO: 'TITULO',
+} as const;
+
+export type BaixaFonte = (typeof BAIXA_FONTE)[keyof typeof BAIXA_FONTE];
+
+/**
+ * Leitura do título no fin064 para a sincronização (I11c): TRI-ESTADO. `legivel: false` não é
+ * "não pago" — é "não sei", e a sincronização não decide nada com isso.
+ */
+export type LeituraTitulo =
+    | {
+          legivel: true;
+          /** `vldPago` lido e reconhecido (1/'1'/true → true; 0/'0'/false → false). */
+          vldPago: boolean;
+          /** Valor em aberto (`totalAberto`, com `titMnyAberto` como reserva). */
+          aberto: number;
+          /** Valor pago segundo o fin064 (`totalPago`/`titMnyTotPago`), quando presente. */
+          valorPagoTitulo?: number;
+      }
+    | { legivel: false; motivo: string };
+
+/** Uma baixa do título lida no PSQ_018 (com308). Enriquecimento. */
+export interface BaixaDoTitulo {
+    borCod: number;
+    bxaCodSeq?: number;
+    /** ISO-8601 da data de movimento do borderô. */
+    data?: string;
+    usuario?: string;
+    valor?: number;
+}
+
+/** Leitura das baixas do título (PSQ_018). 403 do robô = ilegível, não "sem baixa" (I11c). */
+export type LeituraBaixas =
+    | { legivel: true; baixas: BaixaDoTitulo[] }
+    | { legivel: false; motivo: string; status?: number };
 
 /**
  * Conta pagadora DEFAULT do lote (A3): tudo sai pelo Itaú; o analista troca na
@@ -365,6 +438,22 @@ export interface ItemLote {
     borCod?: number;
     bxaCodSeq?: number;
     conciliadoEm?: string;
+    // ── sincronização pelo título (0069, ADR-0055, I11) ──
+    /** Situação derivada (I11d). Ausente = nunca sincronizado. */
+    situacao?: ItemSituacao;
+    /** Data (ISO) da baixa, do PSQ_018 quando legível. */
+    pagoEm?: string;
+    /** Primeira sincronização (ISO) que viu o título pago no fin064. */
+    pagoObservadoEm?: string;
+    /** Valor da baixa, do PSQ_018 quando legível. */
+    valorPago?: number;
+    origemBaixa?: OrigemBaixa;
+    baixaFonte?: BaixaFonte;
+    /** Contradição que a máquina não resolve (estorno, rejeitado com título pago) — I11f. */
+    divergencia: boolean;
+    divergenciaDetalhe?: string;
+    /** Última leitura bem-sucedida do título (ISO). Não mexe em `versao` (I11h). */
+    sincronizadoEm?: string;
 }
 
 /** Lote candidato (raiz do agregado). */
