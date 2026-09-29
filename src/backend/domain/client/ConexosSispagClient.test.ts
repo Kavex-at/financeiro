@@ -463,3 +463,102 @@ describe('ConexosSispagClient (read-only)', () => {
         expect(fonte).not.toMatch(/validacao\/modalidade/);
     });
 });
+
+describe('ConexosSispagClient.lerSituacaoTitulo — fin064 tri-estado (I11c, ADR-0055)', () => {
+    const linha = (over: Record<string, unknown> = {}) =>
+        fin064Row({
+            docCod: '38682',
+            titCod: '1',
+            vldPago: 1,
+            totalAberto: 0,
+            totalPago: 275,
+            ...over,
+        });
+
+    it('lê por docCod SEM o filtro vldPago#EQ:0 da carteira', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({ count: 1, rows: [linha()] });
+        await make(base).lerSituacaoTitulo(2, '38682', '1');
+        const [endpoint, body, opts] = base.listGenericPaginated.mock.calls[0];
+        expect(endpoint).toBe('fin064/list');
+        expect(body.filterList).toEqual({ 'docCod#EQ': '38682' });
+        expect(opts).toEqual({ filCod: 2 });
+    });
+
+    it.each([
+        [1, true],
+        ['1', true],
+        [true, true],
+        [0, false],
+        ['0', false],
+        [false, false],
+    ])('vldPago %p → %p', async (valor, esperado) => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [linha({ vldPago: valor })],
+        });
+        const r = await make(base).lerSituacaoTitulo(2, '38682', '1');
+        expect(r).toEqual({ legivel: true, vldPago: esperado, aberto: 0, valorPagoTitulo: 275 });
+    });
+
+    it.each([
+        ['ausente', undefined],
+        ['null', null],
+        ['texto', 'SIM'],
+        ['número estranho', 2],
+    ])('vldPago %s NÃO vira "não pago": leitura ilegível', async (_n, valor) => {
+        const base = buildBase();
+        const row = linha({ vldPago: valor });
+        if (valor === undefined) delete (row as Record<string, unknown>).vldPago;
+        base.listGenericPaginated.mockResolvedValue({ count: 1, rows: [row] });
+        const r = await make(base).lerSituacaoTitulo(2, '38682', '1');
+        expect(r.legivel).toBe(false);
+    });
+
+    it('aberto: totalAberto primeiro, titMnyAberto como reserva; ausente nos dois → ilegível', async () => {
+        const base = buildBase();
+        base.listGenericPaginated
+            .mockResolvedValueOnce({
+                count: 1,
+                rows: [linha({ totalAberto: null, titMnyAberto: 12.5 })],
+            })
+            .mockResolvedValueOnce({
+                count: 1,
+                rows: [linha({ totalAberto: null, titMnyAberto: null })],
+            });
+        const client = make(base);
+        expect(await client.lerSituacaoTitulo(2, '38682', '1')).toEqual(
+            expect.objectContaining({ legivel: true, aberto: 12.5 }),
+        );
+        expect((await client.lerSituacaoTitulo(2, '38682', '1')).legivel).toBe(false);
+    });
+
+    it('título ausente da leitura → ilegível (não "não pago")', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({ count: 1, rows: [linha({ titCod: '2' })] });
+        const r = await make(base).lerSituacaoTitulo(2, '38682', '1');
+        expect(r).toEqual({ legivel: false, motivo: expect.stringMatching(/não encontrado/) });
+    });
+
+    it.each([
+        ['rede', new Error('socket hang up')],
+        ['403', httpError(403, { message: 'forbidden' })],
+        ['500', httpError(500)],
+    ])('falha HTTP (%s) → ilegível, sem lançar', async (_n, erro) => {
+        const base = buildBase();
+        base.listGenericPaginated.mockRejectedValue(erro);
+        const r = await make(base).lerSituacaoTitulo(2, '38682', '1');
+        expect(r.legivel).toBe(false);
+    });
+
+    it('getTituloAPagar existente continua coagindo vldPago ilegível a false (carteira intocada)', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [linha({ vldPago: 'SIM' })],
+        });
+        const t = await make(base).getTituloAPagar(2, '38682', '1');
+        expect(t?.pago).toBe(false);
+    });
+});

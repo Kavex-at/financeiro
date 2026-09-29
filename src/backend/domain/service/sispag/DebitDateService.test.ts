@@ -19,6 +19,7 @@ const item = (over: Partial<ItemLote> = {}): ItemLote => ({
     vencimento: venc('2026-09-30'),
     modalidade: 'CREDITO_CONTA',
     incluidoPor: 'u1',
+    divergencia: false,
     ...over,
 });
 

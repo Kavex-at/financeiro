@@ -45,6 +45,7 @@ const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
             vencimento: VENC,
             modalidade: 'CREDITO_CONTA',
             incluidoPor: 'u1',
+            divergencia: false,
         },
     ],
     ...over,
@@ -68,6 +69,7 @@ const loteCom2Itens = (): LotePagamento =>
                 vencimento: VENC,
                 modalidade: 'CREDITO_CONTA',
                 incluidoPor: 'u1',
+                divergencia: false,
             },
         ],
     });
@@ -1033,6 +1035,7 @@ describe('RemessaService — boleto (código de barras via DDA)', () => {
                     vencimento: VENC,
                     modalidade: 'BOLETO' as const,
                     incluidoPor: 'u1',
+                    divergencia: false,
                 },
             ],
         });

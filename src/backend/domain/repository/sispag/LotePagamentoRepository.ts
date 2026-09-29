@@ -4,14 +4,18 @@ import PostgreeDatabaseClient, {
     type TransactionClient,
 } from '../../client/database/PostgreeDatabaseClient.js';
 import { destinoManualSchema } from '../../interface/sispag/DestinoManualSchema.js';
+import type { EstadoSincronizacaoItem } from '../../interface/sispag/SincronizacaoLote.js';
 import {
+    type BaixaFonte,
     type DestinoManual,
     type ItemLote,
+    type ItemSituacao,
     type LotePagamento,
     type LotePagamentoStatus,
     LOTE_STATUS,
     type ListarLotesFiltro,
     type Modalidade,
+    type OrigemBaixa,
 } from '../../interface/sispag/SispagInterface.js';
 import Logger from '../../libs/logger/Logger.js';
 
@@ -62,6 +66,16 @@ interface ItemRow {
     bor_cod: number | null;
     bxa_cod_seq: number | null;
     conciliado_em: Date | null;
+    // ── 0069: sincronização pelo título (ADR-0055) ──
+    situacao?: string | null;
+    pago_em?: Date | null;
+    pago_observado_em?: Date | null;
+    valor_pago?: string | null;
+    origem_baixa?: string | null;
+    baixa_fonte?: string | null;
+    divergencia?: boolean | null;
+    divergencia_detalhe?: string | null;
+    sincronizado_em?: Date | null;
     // ── 0067: destino manual (ADR-0054) + a linha de trilha vigente ──
     destino_manual?: unknown;
     destino_audit_id?: string | null;
@@ -71,6 +85,15 @@ interface ItemRow {
     destino_aprovado_por?: string | null;
     destino_aprovado_em?: Date | null;
 }
+
+export const RESULTADO_APLICAR_SINCRONIZACAO = {
+    APLICADO: 'APLICADO',
+    /** `versao` ou `status` mudaram desde a leitura: nada gravado (I6). */
+    CONFLITO: 'CONFLITO',
+} as const;
+
+export type ResultadoAplicarSincronizacao =
+    (typeof RESULTADO_APLICAR_SINCRONIZACAO)[keyof typeof RESULTADO_APLICAR_SINCRONIZACAO];
 
 /**
  * LotePagamentoRepository — persistência do lote candidato SISPAG (Fatia 2).
@@ -105,7 +128,41 @@ export default class LotePagamentoRepository {
         ...(r.bor_cod != null ? { borCod: Number(r.bor_cod) } : {}),
         ...(r.bxa_cod_seq != null ? { bxaCodSeq: Number(r.bxa_cod_seq) } : {}),
         ...(r.conciliado_em != null ? { conciliadoEm: String(r.conciliado_em) } : {}),
+        ...this.mapSincronizacao(r),
         ...this.mapDestinoManual(r),
+    });
+
+    /**
+     * Campos da sincronização pelo título (0069, ADR-0055). `divergencia` é sempre definido: a
+     * coluna é NOT NULL, e uma leitura que não a trouxe (listagem antiga) vale `false`.
+     */
+    private mapSincronizacao = (
+        r: ItemRow,
+    ): Pick<
+        ItemLote,
+        | 'situacao'
+        | 'pagoEm'
+        | 'pagoObservadoEm'
+        | 'valorPago'
+        | 'origemBaixa'
+        | 'baixaFonte'
+        | 'divergencia'
+        | 'divergenciaDetalhe'
+        | 'sincronizadoEm'
+    > => ({
+        ...(r.situacao != null ? { situacao: r.situacao as ItemSituacao } : {}),
+        ...(r.pago_em != null ? { pagoEm: new Date(r.pago_em).toISOString() } : {}),
+        ...(r.pago_observado_em != null
+            ? { pagoObservadoEm: new Date(r.pago_observado_em).toISOString() }
+            : {}),
+        ...(r.valor_pago != null ? { valorPago: Number(r.valor_pago) } : {}),
+        ...(r.origem_baixa != null ? { origemBaixa: r.origem_baixa as OrigemBaixa } : {}),
+        ...(r.baixa_fonte != null ? { baixaFonte: r.baixa_fonte as BaixaFonte } : {}),
+        divergencia: r.divergencia === true,
+        ...(r.divergencia_detalhe != null ? { divergenciaDetalhe: r.divergencia_detalhe } : {}),
+        ...(r.sincronizado_em != null
+            ? { sincronizadoEm: new Date(r.sincronizado_em).toISOString() }
+            : {}),
     });
 
     /**
@@ -316,6 +373,8 @@ export default class LotePagamentoRepository {
                     i.modalidade, i.incluido_por, i.incluido_em, i.native_its_cod_seq,
                     i.retorno_evento, i.retorno_descricao, i.rejeitado, i.bor_cod, i.bxa_cod_seq,
                     i.conciliado_em, i.destino_manual,
+                    i.situacao, i.pago_em, i.pago_observado_em, i.valor_pago, i.origem_baixa,
+                    i.baixa_fonte, i.divergencia, i.divergencia_detalhe, i.sincronizado_em,
                     a.id AS destino_audit_id, a.alterado_por AS destino_informado_por,
                     a.alterado_em AS destino_informado_em,
                     p.alterado_por AS destino_aprovado_por, p.alterado_em AS destino_aprovado_em
@@ -358,7 +417,10 @@ export default class LotePagamentoRepository {
         const ids = headers.map((h) => h.id);
         const itens = (await this.databaseClient.selectMany(
             `SELECT lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
-                    modalidade, incluido_por, incluido_em
+                    modalidade, incluido_por, incluido_em,
+                    retorno_evento, retorno_descricao, rejeitado, bor_cod, bxa_cod_seq,
+                    situacao, pago_em, valor_pago, origem_baixa, baixa_fonte,
+                    divergencia, divergencia_detalhe, sincronizado_em
              FROM lote_pagamento_item WHERE lote_id = ANY($ids) ORDER BY incluido_em ASC, id ASC`,
             { ids },
         )) as ItemRow[];
@@ -854,6 +916,131 @@ export default class LotePagamentoRepository {
                 descricao: input.descricao ?? null,
                 borCod: input.borCod ?? null,
                 bxaCodSeq: input.bxaCodSeq ?? null,
+            },
+        );
+    };
+
+    /**
+     * Lotes que a sincronização (L11, ADR-0055) visita: `REMESSA_GERADA` e `RETORNADO` sempre;
+     * `BAIXADO` só dentro da janela de checagem de estorno (I11f) — um lote baixado há meses não
+     * precisa custar uma leitura do fin064 por item a cada hora. Só lotes com chave nativa: sem
+     * ela não há o que ler no ERP.
+     */
+    public listLotesSincronizaveis = async (janelaBaixadoDias: number): Promise<string[]> => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT id FROM lote_pagamento
+             WHERE native_fil_cod IS NOT NULL AND native_bnc_cod IS NOT NULL
+               AND native_flp_cod IS NOT NULL
+               AND (status = ANY($ativos)
+                    OR (status = $baixado
+                        AND remessa_gerada_em > now() - make_interval(days => $dias::int)))
+             ORDER BY remessa_gerada_em ASC NULLS LAST, id ASC`,
+            {
+                ativos: [LOTE_STATUS.REMESSA_GERADA, LOTE_STATUS.RETORNADO],
+                baixado: LOTE_STATUS.BAIXADO,
+                dias: janelaBaixadoDias,
+            },
+        )) as Array<{ id: string }>;
+        return rows.map((r) => r.id);
+    };
+
+    /**
+     * Grava o resultado de uma passada de sincronização que MUDOU algo (I11h): os campos dos
+     * itens e, se houver, a transição do lote — numa ÚNICA transação, sob optimistic lock (I6).
+     *
+     * A trava é a primeira escrita: se `versao`/`status` não batem, nada é gravado e devolve
+     * `CONFLITO` (o chamador pula o lote nesta passada). Não lança erro genérico por conflito.
+     *
+     * Os itens chegam com o estado COMPLETO decidido por `DecisaoStatusLote` — campo ausente é
+     * gravado como NULL de propósito, não preservado.
+     */
+    public aplicarSincronizacao = async (input: {
+        loteId: string;
+        versaoEsperada: number;
+        statusAtual: LotePagamentoStatus;
+        para?: LotePagamentoStatus;
+        itens: EstadoSincronizacaoItem[];
+    }): Promise<ResultadoAplicarSincronizacao> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const afetadas = await tx.update(
+                `UPDATE lote_pagamento
+                 SET status = COALESCE($para, status), versao = versao + 1, atualizado_em = now()
+                 WHERE id = $loteId AND versao = $versaoEsperada AND status = $statusAtual`,
+                {
+                    loteId: input.loteId,
+                    versaoEsperada: input.versaoEsperada,
+                    statusAtual: input.statusAtual,
+                    para: input.para ?? null,
+                },
+            );
+            if (afetadas === 0) return RESULTADO_APLICAR_SINCRONIZACAO.CONFLITO;
+            for (const item of input.itens) {
+                await tx.update(
+                    `UPDATE lote_pagamento_item
+                     SET situacao = $situacao,
+                         conciliado_em = CASE
+                             WHEN $retornoEvento::text IS DISTINCT FROM retorno_evento THEN now()
+                             ELSE conciliado_em END,
+                         retorno_evento = $retornoEvento, retorno_descricao = $retornoDescricao,
+                         rejeitado = $rejeitado, bor_cod = $borCod, bxa_cod_seq = $bxaCodSeq,
+                         baixa_fonte = $baixaFonte, origem_baixa = $origemBaixa,
+                         pago_em = $pagoEm, valor_pago = $valorPago,
+                         pago_observado_em = $pagoObservadoEm,
+                         divergencia = $divergencia, divergencia_detalhe = $divergenciaDetalhe,
+                         sincronizado_em = $sincronizadoEm
+                     WHERE lote_id = $loteId AND fil_cod = $filCod
+                       AND doc_cod = $docCod AND tit_cod = $titCod`,
+                    this.paramsItemSincronizado(input.loteId, item),
+                );
+            }
+            return RESULTADO_APLICAR_SINCRONIZACAO.APLICADO;
+        });
+
+    /** Parâmetros nomeados do UPDATE de um item sincronizado — ausente vira NULL. */
+    private paramsItemSincronizado = (
+        loteId: string,
+        item: EstadoSincronizacaoItem,
+    ): Record<string, unknown> => ({
+        loteId,
+        filCod: item.filCod,
+        docCod: item.docCod,
+        titCod: item.titCod,
+        situacao: item.situacao ?? null,
+        retornoEvento: item.retornoEvento ?? null,
+        retornoDescricao: item.retornoDescricao ?? null,
+        rejeitado: item.rejeitado,
+        borCod: item.borCod ?? null,
+        bxaCodSeq: item.bxaCodSeq ?? null,
+        baixaFonte: item.baixaFonte ?? null,
+        origemBaixa: item.origemBaixa ?? null,
+        pagoEm: item.pagoEm ?? null,
+        valorPago: item.valorPago ?? null,
+        pagoObservadoEm: item.pagoObservadoEm ?? null,
+        divergencia: item.divergencia,
+        divergenciaDetalhe: item.divergenciaDetalhe ?? null,
+        sincronizadoEm: item.sincronizadoEm ?? null,
+    });
+
+    /**
+     * Passada sem mudança (I11h): só `sincronizado_em` dos itens lidos com sucesso. NÃO toca
+     * `versao` nem `lote_pagamento` — sem isso a tela veria o lote "alterado por outra pessoa" a
+     * cada hora, e o optimistic lock de quem estivesse editando falharia à toa.
+     */
+    public tocarSincronizacao = async (input: {
+        loteId: string;
+        itens: Array<{ filCod: number; docCod: string; titCod: string }>;
+        em: string;
+    }): Promise<void> => {
+        if (input.itens.length === 0) return;
+        await this.databaseClient.update(
+            `UPDATE lote_pagamento_item
+             SET sincronizado_em = $em
+             WHERE lote_id = $loteId
+               AND (fil_cod::text || ':' || doc_cod || ':' || tit_cod) = ANY($chaves)`,
+            {
+                loteId: input.loteId,
+                em: input.em,
+                chaves: input.itens.map((i) => `${i.filCod}:${i.docCod}:${i.titCod}`),
             },
         );
     };

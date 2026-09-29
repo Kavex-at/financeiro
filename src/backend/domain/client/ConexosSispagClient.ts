@@ -4,6 +4,7 @@ import {
     type BorderoAPagar,
     CHAVE_PIX_TIPO_POR_CIX_VLD_TIPO,
     type ChavePixFavorecido,
+    type LeituraTitulo,
     type LoteSispag,
     MODALIDADE,
     type Modalidade,
@@ -90,6 +91,36 @@ const tituloRowSchema = z
     .passthrough();
 
 type TituloRow = z.infer<typeof tituloRowSchema>;
+
+/**
+ * `vldPago` ESTRITO para a sincronização do lote (I11c, ADR-0055). O `boolFromFlag` da carteira
+ * faz `.catch(false)` — campo ilegível vira "não pago" —, o que lá é inofensivo (o título some da
+ * carteira de qualquer jeito) e aqui seria errado: "não sei" viraria "não pago" e decidiria o
+ * lote. Aqui só 1/'1'/true e 0/'0'/false são reconhecidos; o resto é ilegível.
+ */
+const vldPagoEstrito = z.union([
+    z.literal(1).transform(() => true),
+    z.literal('1').transform(() => true),
+    z.literal(true),
+    z.literal(0).transform(() => false),
+    z.literal('0').transform(() => false),
+    z.literal(false),
+]);
+
+/** Linha do fin064 lida pela sincronização: só o que prova (ou não) o pagamento. */
+const situacaoTituloSchema = z
+    .object({
+        docCod: z.union([z.string(), z.number()]).transform(String),
+        titCod: z.union([z.string(), z.number()]).transform(String).optional().catch('1'),
+        vldPago: z.unknown(),
+        // "Valor em Aberto"/"Valor Pago" por linha. Nos fixtures reais de 2026-08-24/25 os
+        // `titMny*` vêm NULL e os `total*` vêm preenchidos — daí a ordem de preferência.
+        totalAberto: numOpt,
+        titMnyAberto: numOpt,
+        totalPago: numOpt,
+        titMnyTotPago: numOpt,
+    })
+    .passthrough();
 
 const loteRowSchema = z
     .object({
@@ -383,6 +414,70 @@ export default class ConexosSispagClient {
             return this.mapTitulo(r, filCod);
         }
         return null;
+    };
+
+    /**
+     * Situação de pagamento de UM título para a sincronização do lote (L11, ADR-0055) — a prova
+     * de nível 1: `vldPago = 1 ∧ aberto = 0`, de qualquer origem.
+     *
+     * Difere de `getTituloAPagar` em duas coisas, ambas de propósito:
+     *   - **tri-estado**: campo ausente/ilegível, título que não veio, falha HTTP (rede, 4xx, 5xx)
+     *     ou schema inválido devolvem `{ legivel: false }` — nunca "não pago" (I11c);
+     *   - **não lança**: uma falha num título não derruba a sincronização do lote inteiro.
+     *
+     * Lê por `docCod` SEM o `vldPago#EQ: 0` da carteira — senão o título pago sumiria da resposta
+     * justamente quando importa.
+     */
+    public lerSituacaoTitulo = async (
+        filCod: number,
+        docCod: string,
+        titCod: string,
+    ): Promise<LeituraTitulo> => {
+        let rows: Record<string, unknown>[];
+        try {
+            const res = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'fin064/list',
+                    this.listBody('fin064', { 'docCod#EQ': docCod }, 200),
+                    { filCod },
+                ),
+            );
+            rows = res.rows ?? [];
+        } catch (err) {
+            return { legivel: false, motivo: this.motivoDeFalha(err) };
+        }
+        const linha = rows
+            .map((row) => situacaoTituloSchema.safeParse(row))
+            .find(
+                (p) => p.success && p.data.docCod === docCod && (p.data.titCod ?? '1') === titCod,
+            );
+        if (linha?.success) return this.situacaoDaLinha(linha.data);
+        return { legivel: false, motivo: `título ${docCod}/${titCod} não encontrado no fin064` };
+    };
+
+    /** Tri-estado de UMA linha: campo ilegível ou ausente é "não sei", nunca "não pago". */
+    private situacaoDaLinha = (r: z.infer<typeof situacaoTituloSchema>): LeituraTitulo => {
+        const vldPago = vldPagoEstrito.safeParse(r.vldPago);
+        if (!vldPago.success) return { legivel: false, motivo: 'vldPago ilegível no fin064' };
+        const aberto = r.totalAberto ?? r.titMnyAberto;
+        if (aberto === undefined) {
+            return { legivel: false, motivo: 'valor em aberto ausente no fin064' };
+        }
+        const valorPagoTitulo = r.totalPago ?? r.titMnyTotPago;
+        return {
+            legivel: true,
+            vldPago: vldPago.data,
+            aberto,
+            ...(valorPagoTitulo !== undefined ? { valorPagoTitulo } : {}),
+        };
+    };
+
+    /** Motivo legível de uma falha de leitura — só status e mensagem, nunca o erro cru. */
+    private motivoDeFalha = (err: unknown): string => {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        const mensagem = err instanceof Error ? err.message : undefined;
+        if (status !== undefined) return `HTTP ${status}${mensagem ? ` — ${mensagem}` : ''}`;
+        return mensagem ?? 'falha de leitura';
     };
 
     /**

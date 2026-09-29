@@ -1,5 +1,7 @@
 import { inject, injectable, singleton } from 'tsyringe';
+import { z } from 'zod';
 import ConexosError from '../errors/ConexosError.js';
+import type { BaixaDoTitulo, LeituraBaixas } from '../interface/sispag/SispagInterface.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
 export interface TituloAPagar {
@@ -131,6 +133,27 @@ export interface BaixaTitulo {
      */
     gerNum: number;
 }
+
+/** Número opcional nullable-safe: `null`/`''`/não-numérico → `undefined` (nunca `0`). */
+const numeroOpcional = z.preprocess(
+    (v) => (v === null || v === '' ? undefined : v),
+    z.coerce.number().finite().optional().catch(undefined),
+);
+
+/**
+ * Uma baixa do PSQ_018 (schema `FinBaixa`, `docs/conexos-api/070-com3.json`). Só o que a
+ * sincronização do lote usa como TRILHA: borderô, sequencial, data, usuário e valor.
+ */
+const baixaTituloSchema = z
+    .object({
+        borCod: z.coerce.number().int().positive(),
+        bxaCodSeq: numeroOpcional,
+        borDtaMvto: z.union([z.string(), z.number()]).nullish().catch(undefined),
+        usnDesNomeFin: z.string().nullish().catch(undefined),
+        bxaMnyLiquido: numeroOpcional,
+        bxaMnyValor: numeroOpcional,
+    })
+    .passthrough();
 
 /**
  * Conexos ERP títulos / variação-cambial family (`com308` + the per-document
@@ -345,6 +368,64 @@ export default class ConexosTitulosClient {
             bxaMnyValor: Number(r.bxaMnyValor ?? 0),
             gerNum: Number(r.gerNum ?? 0),
         }));
+    };
+
+    /**
+     * Baixas de UM título para ENRIQUECER a sincronização do lote SISPAG (PSQ_018, ADR-0055):
+     * borderô, sequencial, data, usuário e valor. Nunca decide status — é trilha.
+     *
+     * Diferente de `listBaixasTitulo` (Permutas/VC, que lança): aqui nada lança. O robô CLONEX
+     * recebeu 403 neste endpoint em 2026-09-22; 403, 5xx e rede viram `{ legivel: false }` com o
+     * status quando houver — "não consegui ler", nunca "o título não tem baixa" (I11c).
+     */
+    public lerBaixasTitulo = async (params: {
+        docCod: string;
+        titCod: string;
+        filCod: number;
+    }): Promise<LeituraBaixas> => {
+        const { docCod, titCod, filCod } = params;
+        let rows: Record<string, unknown>[];
+        try {
+            rows = await this.base.paginate<Record<string, unknown>>({
+                endpoint: `com308/financeiroAPagar/baixas/list/${docCod}/${titCod}/0`,
+                bodyBase: {
+                    fieldList: [],
+                    filterList: { 'borVldFinalizado#IN': [1] },
+                    orderList: { orderList: [{ propertyName: 'borCod', order: 'asc' }] },
+                },
+                opts: { filCod },
+            });
+        } catch (err) {
+            const status = this.statusDe(err);
+            const motivo = err instanceof Error ? err.message : 'falha de leitura';
+            return { legivel: false, motivo, ...(status !== undefined ? { status } : {}) };
+        }
+        const baixas = rows.flatMap((row) => {
+            const parsed = baixaTituloSchema.safeParse(row);
+            return parsed.success ? [this.mapBaixa(parsed.data)] : [];
+        });
+        return { legivel: true, baixas };
+    };
+
+    private mapBaixa = (r: z.infer<typeof baixaTituloSchema>): BaixaDoTitulo => {
+        const valor = r.bxaMnyLiquido ?? r.bxaMnyValor;
+        return {
+            borCod: r.borCod,
+            ...(r.bxaCodSeq !== undefined ? { bxaCodSeq: r.bxaCodSeq } : {}),
+            ...(r.borDtaMvto != null
+                ? { data: this.base.parseDate(r.borDtaMvto).toISOString() }
+                : {}),
+            ...(r.usnDesNomeFin != null ? { usuario: r.usnDesNomeFin } : {}),
+            ...(valor !== undefined ? { valor } : {}),
+        };
+    };
+
+    /** Status HTTP da falha, direto ou dentro do `ConexosError` que o `paginate` lança. */
+    private statusDe = (err: unknown): number | undefined => {
+        const direto = (err as { response?: { status?: number } })?.response?.status;
+        if (direto !== undefined) return direto;
+        const causa = (err as { cause?: { response?: { status?: number } } })?.cause;
+        return causa?.response?.status;
     };
 
     /**
