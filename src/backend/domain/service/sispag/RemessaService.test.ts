@@ -1,4 +1,6 @@
 import 'reflect-metadata';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
@@ -14,6 +16,9 @@ import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import DebitDateFrozenError from '../../errors/DebitDateFrozenError.js';
 import DebitDateOutsideWindowError from '../../errors/DebitDateOutsideWindowError.js';
 import DebitDateService from './DebitDateService.js';
+import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
+import MaskDestino from '../../libs/sispag/MaskDestino.js';
+import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
 import RemessaService from './RemessaService.js';
 
 /** Relógio default dos testes: terça 2026-09-22, meio-dia de Brasília. */
@@ -167,6 +172,10 @@ const buildSispag = () => ({
         .mockResolvedValue([
             { pctCodSeq: 1, banco: 341, agencia: '292', conta: '31404', padrao: true },
         ]),
+    // ADR-0054 — só são chamados com alguma flag TED/PIX/manual ligada.
+    listChavesPixFavorecido: jest.fn().mockResolvedValue([]),
+    getTituloAPagar: jest.fn().mockResolvedValue({ pesCod: '1161' }),
+    getDocumentoFavorecido: jest.fn().mockResolvedValue(undefined),
 });
 
 /**
@@ -194,17 +203,20 @@ const make = (o: {
 }) => {
     const loteRepo = o.loteRepo ?? buildLoteRepo(o.lote);
     const calendar = BankingCalendar.withClock(() => new Date(o.agora ?? AGORA));
+    const sispag = o.sispag ?? buildSispag();
     return new RemessaService(
         loteRepo as unknown as LotePagamentoRepository,
         (o.ledger ?? buildLedger()) as unknown as RemessaExecucaoRepository,
         (o.write ?? buildWrite()) as unknown as ConexosSispagWriteClient,
-        (o.sispag ?? buildSispag()) as unknown as ConexosSispagClient,
+        sispag as unknown as ConexosSispagClient,
         o.env ?? buildEnv(),
         o.log ?? buildLog(),
         (o.db ?? buildDb()) as unknown as PostgreeDatabaseClient,
         new RemessaCnabValidator(),
         new DebitDateService(loteRepo as unknown as LotePagamentoRepository, calendar),
         calendar,
+        new DestinoPagamentoResolver(sispag as unknown as ConexosSispagClient, new MaskDestino()),
+        new DestinoManualValidator(),
     );
 };
 
@@ -1448,5 +1460,560 @@ describe('data de débito (I8, ADR-0049)', () => {
                 }),
             );
         });
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// ADR-0054 — TED/PIX e destino manual (tweak sispag-ted-pix)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+/** Payload do import que o `main` montava para o fixture default (crédito em conta, Itaú). */
+const PAYLOAD_MAIN_CREDITO = {
+    ...pendente().raw,
+    filCodLote: 2,
+    bncCod: 4,
+    flpCod: 12,
+    itsVldModalidade: 1,
+    pctCodSeq: 1,
+    itsNumBanco: 341,
+    agencia: '292',
+    pctEspNumAgencia: '292',
+    conta: '31404',
+    itsEspNomeFav: 'CRONOS LOGISTICA LTDA',
+    itsMnyValor: 258.4,
+    itsMnyVlrPgto: 258.4,
+    titMnyLiquido: 258.4,
+    itsDtaPgto: 1_790_000_000_000,
+    vldOk: 1,
+    vldImporta: 1,
+    avisos: '[]',
+    op: 1,
+    bncCodFin015: 4,
+    titVldReflexoDdaAssoc: 0,
+    titVldReflexoDdaDesassoc: 0,
+};
+
+describe('RemessaService — paridade com as flags TED/PIX desligadas', () => {
+    it('crédito em conta: payload idêntico ao do main', async () => {
+        const write = buildWrite();
+        await make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        const [{ itens }] = write.importarTitulos.mock.calls[0];
+        expect(itens).toEqual([PAYLOAD_MAIN_CREDITO]);
+    });
+
+    it('TED com flags desligadas: modalidade 1 e conta do banco do lote, como no main', async () => {
+        const write = buildWrite();
+        const l = lote({ itens: [{ ...lote().itens[0], modalidade: 'TED' as const }] });
+        await make({ write, lote: l }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        const [{ itens }] = write.importarTitulos.mock.calls[0];
+        expect(itens).toEqual([PAYLOAD_MAIN_CREDITO]);
+    });
+
+    it('PIX com flags desligadas: igual ao main (conta do banco do lote, modalidade 1)', async () => {
+        const write = buildWrite();
+        const l = lote({ itens: [{ ...lote().itens[0], modalidade: 'PIX' as const }] });
+        await make({ write, lote: l }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        const [{ itens }] = write.importarTitulos.mock.calls[0];
+        expect(itens).toEqual([PAYLOAD_MAIN_CREDITO]);
+    });
+
+    it('TED com flags desligadas mantém a guarda de mesmo banco (mensagem do main)', async () => {
+        const sispag = buildSispag();
+        sispag.listContasFavorecido.mockResolvedValue([
+            { pctCodSeq: 7, banco: 237, agencia: '1', conta: '2', padrao: true },
+        ]);
+        const write = buildWrite();
+        const l = lote({ itens: [{ ...lote().itens[0], modalidade: 'TED' as const }] });
+        await expect(
+            make({ write, sispag, lote: l }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toThrow(
+            'favorecido de 801/1 não tem conta ativa no banco 341. Cadastre a conta ou escolha outra forma de pagamento.',
+        );
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('ledger sem chave nova quando as flags estão desligadas', async () => {
+        const ledger = buildLedger();
+        await make({ ledger }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(ledger.setRequestPayload).toHaveBeenCalled();
+        for (const [, payload] of ledger.setRequestPayload.mock.calls) {
+            expect(payload).not.toHaveProperty('destinos');
+        }
+    });
+});
+
+describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
+    const FLAGS = {
+        sispagTedEnabled: true,
+        sispagPixEnabled: true,
+        sispagDestinoManualEnabled: true,
+    };
+    const DOC_FAV = '11144477735';
+    const MANUAL_CONTA = {
+        tipo: 'CONTA' as const,
+        bancoCod: '001',
+        agencia: '4321',
+        conta: '99887766',
+        contaDv: '5',
+        titularDocumento: DOC_FAV,
+    };
+    const MANUAL_PIX = {
+        tipo: 'CHAVE_PIX' as const,
+        chavePixTipo: 'EMAIL' as const,
+        chavePix: 'segredo.pix@fornecedor.com.br',
+        titularDocumento: DOC_FAV,
+    };
+    const CHAVE_CADASTRO = {
+        cixCod: 31,
+        chave: 'cadastro.pix@fornecedor.com.br',
+        tipo: 'EMAIL' as const,
+        padrao: true,
+        pesCod: '1161',
+    };
+    /** Valores que NUNCA podem aparecer em ledger, log ou mensagem de erro (I10h). */
+    const SENSIVEIS = [
+        '99887766',
+        'segredo.pix@fornecedor.com.br',
+        'cadastro.pix@fornecedor.com.br',
+        DOC_FAV,
+        '87654321',
+    ];
+
+    const itemCom = (over: Record<string, unknown>) => ({ ...lote().itens[0], ...over });
+    const sispagCom = (o: {
+        contas?: unknown[];
+        chaves?: unknown[];
+        documento?: string | undefined;
+    }) => {
+        const s = buildSispag();
+        s.listContasFavorecido.mockResolvedValue(
+            o.contas ?? [
+                { pctCodSeq: 42, banco: 237, agencia: '1234', conta: '87654321', padrao: true },
+            ],
+        );
+        s.listChavesPixFavorecido.mockResolvedValue(o.chaves ?? []);
+        s.getDocumentoFavorecido.mockResolvedValue('documento' in o ? o.documento : DOC_FAV);
+        return s;
+    };
+    const payloadDe = (write: ReturnType<typeof buildWrite>, i = 0) =>
+        write.importarTitulos.mock.calls.flatMap(([p]) => p.itens)[i] as Record<string, unknown>;
+
+    it('caso 1 (regressão do bug): TED para OUTRO banco sai com modalidade 5 e o pctCodSeq', async () => {
+        const write = buildWrite();
+        const l = lote({ itens: [itemCom({ modalidade: 'TED' })] });
+        await make({
+            write,
+            lote: l,
+            sispag: sispagCom({}),
+            env: buildEnv({ sispagTedEnabled: true }),
+        }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        expect(payloadDe(write)).toMatchObject({
+            itsVldModalidade: 5,
+            pctCodSeq: 42,
+            itsNumBanco: 237,
+        });
+    });
+
+    it('caso 5: PIX do cadastro vai com itsVldChavePix=1 e a chave, sem pctCodSeq', async () => {
+        const write = buildWrite();
+        const l = lote({ itens: [itemCom({ modalidade: 'PIX' })] });
+        await make({
+            write,
+            lote: l,
+            sispag: sispagCom({ chaves: [CHAVE_CADASTRO] }),
+            env: buildEnv({ sispagPixEnabled: true }),
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        const p = payloadDe(write);
+        expect(p).toMatchObject({
+            itsVldChavePix: 1,
+            itsDesChavePix: 'cadastro.pix@fornecedor.com.br',
+            // H4 — `MODALIDADE_PIX_NATIVA`, valor a confirmar no teste supervisionado.
+            itsVldModalidade: 1,
+        });
+        expect(p.pctCodSeq).toBeUndefined();
+    });
+
+    it('caso 4: TED manual vai SEM pctCodSeq, com banco/agência/conta/DV digitados', async () => {
+        const write = buildWrite();
+        const l = lote({
+            itens: [
+                itemCom({
+                    modalidade: 'TED',
+                    destinoManual: MANUAL_CONTA,
+                    destinoManualAuditId: 'aud-1',
+                }),
+            ],
+        });
+        await make({ write, lote: l, sispag: sispagCom({}), env: buildEnv(FLAGS) }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        const p = payloadDe(write);
+        expect(p).not.toHaveProperty('pctCodSeq');
+        expect(p).toMatchObject({
+            itsVldModalidade: 5,
+            itsNumBanco: 1,
+            agencia: '4321',
+            pctEspNumAgencia: '4321',
+            conta: '99887766',
+            pctEspNumContaBanc: '99887766',
+            pctEspDvconta: '5',
+        });
+    });
+
+    it('PIX manual vai com a chave digitada', async () => {
+        const write = buildWrite();
+        const l = lote({
+            itens: [
+                itemCom({
+                    modalidade: 'PIX',
+                    destinoManual: MANUAL_PIX,
+                    destinoManualAuditId: 'aud-2',
+                }),
+            ],
+        });
+        await make({
+            write,
+            lote: l,
+            sispag: sispagCom({ chaves: [CHAVE_CADASTRO] }),
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        expect(payloadDe(write)).toMatchObject({
+            itsVldChavePix: 1,
+            itsDesChavePix: 'segredo.pix@fornecedor.com.br',
+        });
+    });
+
+    it('caso 6 forçado: TED/PIX sem destino → DestinoPagamentoAusenteError ANTES do criarLote', async () => {
+        const write = buildWrite();
+        const l = lote({
+            itens: [
+                itemCom({ modalidade: 'PIX' }),
+                { ...itemCom({ modalidade: 'TED' }), docCod: '802', credor: 'OUTRO' },
+            ],
+        });
+        write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
+        const ledger = buildLedger();
+        await expect(
+            make({
+                write,
+                ledger,
+                lote: l,
+                sispag: sispagCom({ contas: [], chaves: [] }),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            }),
+        ).rejects.toMatchObject({
+            code: 'DESTINO_PAGAMENTO_AUSENTE',
+            userMessage: expect.stringMatching(/801\/1.*802\/1/s),
+        });
+        expect(write.criarLote).not.toHaveBeenCalled();
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+        // Falhou dentro da execução: o ledger fica em `error` (retry permitido), não órfão.
+        expect(ledger.fail).toHaveBeenCalled();
+    });
+
+    it('documento do favorecido indisponível com destino manual → falha fechada antes de qualquer escrita', async () => {
+        const write = buildWrite();
+        const l = lote({
+            itens: [
+                itemCom({
+                    modalidade: 'TED',
+                    destinoManual: MANUAL_CONTA,
+                    destinoManualAuditId: 'aud-1',
+                }),
+            ],
+        });
+        await expect(
+            make({
+                write,
+                lote: l,
+                sispag: sispagCom({ documento: undefined }),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            }),
+        ).rejects.toMatchObject({ code: 'DOCUMENTO_FAVORECIDO_INDISPONIVEL' });
+        expect(write.criarLote).not.toHaveBeenCalled();
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('titular divergente no envio → recusa antes de qualquer escrita', async () => {
+        const write = buildWrite();
+        const l = lote({
+            itens: [
+                itemCom({
+                    modalidade: 'TED',
+                    destinoManual: MANUAL_CONTA,
+                    destinoManualAuditId: 'aud-1',
+                }),
+            ],
+        });
+        await expect(
+            make({
+                write,
+                lote: l,
+                sispag: sispagCom({ documento: '11222333000181' }),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            }),
+        ).rejects.toMatchObject({ code: 'DESTINO_TITULAR_DIVERGENTE' });
+        expect(write.criarLote).not.toHaveBeenCalled();
+    });
+
+    it('caso 7: o destino entra na assinatura da marca d’água — só referências, nunca o valor', async () => {
+        const ledger = buildLedger();
+        const l = lote({
+            itens: [
+                itemCom({ modalidade: 'TED' }),
+                {
+                    ...itemCom({
+                        modalidade: 'TED',
+                        destinoManual: MANUAL_CONTA,
+                        destinoManualAuditId: 'aud-9',
+                    }),
+                    docCod: '802',
+                },
+            ],
+        });
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
+        await make({
+            ledger,
+            write,
+            lote: l,
+            sispag: sispagCom({}),
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        const [, marca] = ledger.setRequestPayload.mock.calls[0];
+        expect(marca).toMatchObject({
+            marcaFlpCods: [98],
+            destinos: [
+                { item: '2:801:1', origem: 'CADASTRO', pctCodSeq: 42 },
+                { item: '2:802:1', origem: 'MANUAL', auditId: 'aud-9' },
+            ],
+        });
+        // Todas as gravações seguintes carregam a assinatura (o payload é substituído a cada passo).
+        for (const [, payload] of ledger.setRequestPayload.mock.calls) {
+            expect(payload).toHaveProperty('destinos');
+        }
+    });
+
+    it('caso 7: a retomada reenvia o destino PERSISTIDO (pctCodSeq fixado), não a nova default do cadastro', async () => {
+        const ledger = buildLedger({
+            status: 'error',
+            dryRun: false,
+            nativeFlpCod: 12,
+            etapa: 'importar',
+            requestPayload: {
+                itens: 1,
+                flpCod: 12,
+                destinos: [{ item: '2:801:1', origem: 'CADASTRO', pctCodSeq: 7 }],
+            },
+        });
+        const write = buildWrite();
+        const sispag = sispagCom({
+            contas: [
+                { pctCodSeq: 9, banco: 1, agencia: '1', conta: '11110000', padrao: true },
+                { pctCodSeq: 7, banco: 237, agencia: '2', conta: '22220000', padrao: false },
+            ],
+        });
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await make({ ledger, write, lote: l, sispag, env: buildEnv(FLAGS) }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        expect(write.criarLote).not.toHaveBeenCalled();
+        expect(payloadDe(write)).toMatchObject({ pctCodSeq: 7, itsNumBanco: 237 });
+    });
+
+    it('caso 7: conta persistida sumiu do cadastro → falha fechada, sem import', async () => {
+        const ledger = buildLedger({
+            status: 'error',
+            dryRun: false,
+            nativeFlpCod: 12,
+            etapa: 'importar',
+            requestPayload: { destinos: [{ item: '2:801:1', origem: 'CADASTRO', pctCodSeq: 7 }] },
+        });
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                ledger,
+                write,
+                lote: l,
+                sispag: sispagCom({}),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('caso 7: destino manual trocado depois do envio → falha fechada, sem import', async () => {
+        const ledger = buildLedger({
+            status: 'error',
+            dryRun: false,
+            nativeFlpCod: 12,
+            etapa: 'importar',
+            requestPayload: {
+                destinos: [{ item: '2:801:1', origem: 'MANUAL', auditId: 'aud-antigo' }],
+            },
+        });
+        const write = buildWrite();
+        const l = lote({
+            dataDebito: '2026-09-23',
+            itens: [
+                itemCom({
+                    modalidade: 'TED',
+                    destinoManual: MANUAL_CONTA,
+                    destinoManualAuditId: 'aud-novo',
+                }),
+            ],
+        });
+        await expect(
+            make({
+                ledger,
+                write,
+                lote: l,
+                sispag: sispagCom({}),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('I10h: ledger, logs e erros nunca carregam conta, chave ou documento', async () => {
+        const ledger = buildLedger();
+        const log = buildLog();
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([
+            pendente(),
+            pendente802(),
+            { ...pendente({ docCod: 803 }), docCod: '803' },
+        ]);
+        const l = lote({
+            itens: [
+                itemCom({ modalidade: 'TED' }),
+                {
+                    ...itemCom({
+                        modalidade: 'TED',
+                        destinoManual: MANUAL_CONTA,
+                        destinoManualAuditId: 'a1',
+                    }),
+                    docCod: '802',
+                },
+                {
+                    ...itemCom({
+                        modalidade: 'PIX',
+                        destinoManual: MANUAL_PIX,
+                        destinoManualAuditId: 'a2',
+                    }),
+                    docCod: '803',
+                },
+            ],
+        });
+        await make({
+            ledger,
+            log,
+            write,
+            lote: l,
+            sispag: sispagCom({ chaves: [CHAVE_CADASTRO] }),
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        const registrado = JSON.stringify([
+            ledger.setRequestPayload.mock.calls,
+            ledger.beginExecution.mock.calls,
+            ledger.settle.mock.calls,
+            (log.info as jest.Mock).mock.calls,
+            (log.warn as jest.Mock).mock.calls,
+            (log.error as jest.Mock).mock.calls,
+        ]);
+        for (const v of SENSIVEIS) expect(registrado).not.toContain(v);
+
+        // E no caminho de erro: a mensagem gravada no ledger também não.
+        const ledger2 = buildLedger();
+        await expect(
+            make({
+                ledger: ledger2,
+                lote: l,
+                write,
+                sispag: sispagCom({ chaves: [CHAVE_CADASTRO], documento: '11222333000181' }),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toBeDefined();
+        const erro = JSON.stringify(ledger2.fail.mock.calls);
+        for (const v of SENSIVEIS) expect(erro).not.toContain(v);
+    });
+
+    it('caso 9: lote misto boleto + TED + PIX — cada item com a sua modalidade, boleto inalterado', async () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([
+            pendente({}, true),
+            pendente802(),
+            { ...pendente({ docCod: 803 }), docCod: '803' },
+        ]);
+        const l = lote({
+            itens: [
+                itemCom({ modalidade: 'BOLETO' }),
+                { ...itemCom({ modalidade: 'TED' }), docCod: '802' },
+                { ...itemCom({ modalidade: 'PIX' }), docCod: '803' },
+            ],
+        });
+        await make({
+            write,
+            lote: l,
+            sispag: sispagCom({ chaves: [CHAVE_CADASTRO] }),
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({
+            loteId: 'L1',
+            ator: 'u',
+        });
+        const porDoc = new Map(
+            write.importarTitulos.mock.calls
+                .flatMap(([p]) => p.itens as Array<Record<string, unknown>>)
+                .map((p) => [String(p.docCod), p]),
+        );
+        // Boleto DDA: exatamente o payload de antes (sem destino, modalidade 7 como palpite).
+        const boletoMain = { ...PAYLOAD_MAIN_CREDITO, itsVldModalidade: 7 };
+        for (const k of [
+            'pctCodSeq',
+            'itsNumBanco',
+            'agencia',
+            'pctEspNumAgencia',
+            'conta',
+        ] as const) {
+            delete (boletoMain as Record<string, unknown>)[k];
+        }
+        expect(porDoc.get('801')).toEqual(boletoMain);
+        expect(porDoc.get('802')).toMatchObject({ itsVldModalidade: 5, pctCodSeq: 42 });
+        expect(porDoc.get('803')).toMatchObject({ itsVldChavePix: 1 });
+    });
+
+    it('não chama validacao/modalidadeTed|Pix (H1 não provado)', () => {
+        const fonte = readFileSync(join(__dirname, 'RemessaService.ts'), 'utf8');
+        expect(fonte).not.toMatch(/validacao\/modalidade/);
     });
 });
