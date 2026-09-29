@@ -91,9 +91,11 @@ export const LIMITES_STALENESS: Readonly<Record<MonitoravelPipeline, LimiteStale
         pipeline: PIPELINE.SISPAG_REAPER,
         rotulo: 'SISPAG — reaper de reconciliação',
         cadencia: '10,25,40,55 * * * * (a cada 15min, todos os dias)',
-        // Roda a cada 15min: 1h tolera TRÊS execuções perdidas antes de reclamar. Schedules do
-        // GitHub são best-effort, e uma perdida é comportamento esperado, não incidente.
-        limiteMs: HORA_MS,
+        // O cron pede 15min, mas o GitHub dispara este schedule 5–7× por dia: medido de 15 a
+        // 29/09/2026, 90 runs, gap mediano de 4h e máximo de 8,4h. O limite antigo de 1h fazia o
+        // painel mostrar "Parado" e emitir `job-parado` quase o dia todo por puro throttling.
+        // 12h cobre o pior gap observado com folga e ainda pega um reaper morto em meio dia.
+        limiteMs: 12 * HORA_MS,
         distinguePartial: true,
     },
     [PIPELINE.SISPAG_SINCRONIZACAO]: {

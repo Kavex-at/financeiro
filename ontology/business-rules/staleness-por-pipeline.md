@@ -23,7 +23,7 @@ has_canonical_test: false
 | `recebimentos-extratos` | `20 * * * *` | 1h | **3h** | 2 execuções perdidas |
 | `permutas-eleicao` | `0 9,15,21 * * *` | 12h (21h→9h) | **18h** | 1 execução perdida |
 | `sispag-pagamentos` | `0 10 * * *` | 24h | **30h** | 6h |
-| `sispag-reaper` | `10,25,40,55 * * * *` | 15min | **1h** | 3 execuções perdidas |
+| `sispag-reaper` | `10,25,40,55 * * * *` | 8,4h medido (cron pede 15min) | **12h** | ~3,6h sobre o pior gap |
 
 ## O reaper ganhou trilha (2026-09-01)
 
@@ -32,9 +32,15 @@ Ele nasceu sem escrever linha de run, e por isso era o único job que o painel n
 sexta à noite ficaria invisível até segunda"*). A ironia era completa: o job que existe para tornar
 visível o que ninguém vê era o invisível.
 
-Agora escreve em `job_execucao` como qualquer outro (ADR-0042, follow-up 2), e o limite de 1h
-tolera três execuções perdidas — ele roda a cada 15 minutos, **todos os dias**, inclusive fins de
-semana.
+Agora escreve em `job_execucao` como qualquer outro (ADR-0042, follow-up 2). O limite nasceu
+em 1h (três execuções de 15min perdidas), mas a cadência do cron não é a cadência real.
+
+**Revisto em 2026-09-29: 1h → 12h.** O GitHub dispara este schedule só 5–7× por dia. Medido de 15
+a 29/09/2026 (90 runs): gap mediano de 4h, máximo de 8,4h. Com 1h o painel mostrava o reaper
+"Parado" quase o dia todo e o detector emitia `job-parado` a cada hora, ruído que treina o time a
+ignorar o canal. 12h cobre o pior gap observado com folga e ainda denuncia um reaper morto em meio
+dia. Se o reaper sair do GitHub Actions para um scheduler que respeite 15min, o limite volta a ser
+derivado do cron.
 
 **Nenhum pipeline resta como `sem-trilha`.** A lista `PIPELINES_SEM_TRILHA` continua existindo, e
 vazia, porque o problema volta: todo job novo que nascer sem trilha entra ali para ser LISTADO como

@@ -266,8 +266,34 @@ describe('JobRunReadModel — o reaper deixou de ser cego (ADR-0042, follow-up 2
 
         const reaper = acharPipeline(saude, PIPELINE.SISPAG_REAPER);
         expect(reaper.situacao).toBe(SITUACAO_PIPELINE.OK);
-        expect(reaper.limiteStalenessMs).toBe(60 * 60 * 1000);
+        expect(reaper.limiteStalenessMs).toBe(12 * 60 * 60 * 1000);
         expect(reaper.ultimaRun?.metricas).toEqual({ paradas: 0, remessas: 0, conciliacoes: 0 });
+    });
+
+    it.each([
+        // Pior gap medido no GitHub Actions (15–29/09/2026): throttling, não incidente.
+        { idade: '8,4h', startedAt: '2026-09-01T03:36:00.000Z', esperado: SITUACAO_PIPELINE.OK },
+        {
+            idade: '12h01',
+            startedAt: '2026-08-31T23:59:00.000Z',
+            esperado: SITUACAO_PIPELINE.PARADO,
+        },
+    ])('reaper com último sucesso há $idade fica $esperado', async ({ startedAt, esperado }) => {
+        const saude = await build({
+            jobExecucao: [
+                {
+                    id: 'reap-gap',
+                    pipeline: PIPELINE.SISPAG_REAPER,
+                    triggeredBy: 'cron',
+                    status: 'success',
+                    metricas: { paradas: 0, remessas: 0, conciliacoes: 0 },
+                    startedAt,
+                    finishedAt: startedAt,
+                },
+            ],
+        }).exporSaude(AGORA);
+
+        expect(acharPipeline(saude, PIPELINE.SISPAG_REAPER).situacao).toBe(esperado);
     });
 
     it('nenhum pipeline sobra como sem-trilha — a lista de cegos está vazia', async () => {
