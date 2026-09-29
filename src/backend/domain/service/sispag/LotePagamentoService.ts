@@ -490,17 +490,6 @@ export default class LotePagamentoService {
             acao: 'cancelar',
         });
 
-    /**
-     * Retorno do Nexxera recebido: FINALIZADO (aguardando) → RETORNADO ("de volta do Nexxera").
-     * Hoje é acionado manualmente (simula o retorno); o gatilho real é o robô-poller (Fatia 3).
-     */
-    public marcarRetorno = (input: TransicaoInput): Promise<LotePagamento> =>
-        this.transicionar(input, {
-            de: [LOTE_STATUS.FINALIZADO],
-            para: LOTE_STATUS.RETORNADO,
-            acao: 'marcar retorno',
-        });
-
     // -------------------------------------------------------------- internals
 
     private flagsDestino = async (): Promise<{

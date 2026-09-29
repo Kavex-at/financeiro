@@ -76,7 +76,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['DELETE /permutas/borderos/:borCod/baixas/:invoiceDocCod', P.PERMUTAS_EXECUTAR],
     ['GET /permutas/adiantamentos/:docCod/execucoes', P.PERMUTAS_VER],
     ['GET /permutas/status', P.PERMUTAS_VER],
-    // /sispag (31; as quatro do laço contam separadas)
+    // /sispag (32; as três do laço contam separadas, a de retorno é 410 desde a ADR-0055)
     ['GET /sispag/painel', P.SISPAG_VER],
     ['GET /sispag/retornos', P.SISPAG_VER],
     ['GET /sispag/lotes/:id/linhas-digitaveis', P.SISPAG_VER],
@@ -90,7 +90,10 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['POST /sispag/lotes/:id/finalizar', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/:id/reabrir', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/:id/cancelar', P.SISPAG_EXECUTAR],
+    // L7 aposentada (ADR-0055): a rota continua montada, guardada, e responde 410 Gone.
     ['POST /sispag/lotes/:id/retorno', P.SISPAG_EXECUTAR],
+    // L11 "Sincronizar agora" (ADR-0055): mesmo nível de finalizar/reabrir.
+    ['POST /sispag/lotes/:id/sincronizar', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/:id/conta', P.SISPAG_EXECUTAR],
     ['POST /sispag/ingestao', P.SISPAG_EXECUTAR],
@@ -203,11 +206,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista: 27/31/15/10/2/1/2/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055): 27/32/15/10/2/1/2/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(31);
+        expect(porMount('sispag')).toBe(32);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);

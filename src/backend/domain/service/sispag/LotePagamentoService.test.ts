@@ -234,7 +234,14 @@ describe('LotePagamentoService — invariantes', () => {
             repo.getLoteComItens.mockResolvedValue(
                 lote({
                     itens: [
-                        { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', incluidoPor: 'u1' },
+                        {
+                            loteId: 'L1',
+                            filCod: 2,
+                            docCod: '100',
+                            titCod: '1',
+                            incluidoPor: 'u1',
+                            divergencia: false,
+                        },
                     ],
                 }),
             );
@@ -283,19 +290,9 @@ describe('LotePagamentoService — invariantes', () => {
         });
     });
 
-    describe('marcarRetorno', () => {
-        it('chama transição FINALIZADO→RETORNADO (de volta do Nexxera)', async () => {
-            const repo = buildRepo();
-            const { service } = make(repo);
-            await service.marcarRetorno({ loteId: 'L1', versao: 2, ator: 'u1' });
-            expect(repo.transicionarStatus).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    para: 'RETORNADO',
-                    de: ['FINALIZADO'],
-                    versaoEsperada: 2,
-                }),
-            );
-        });
+    it('L7 `marcarRetorno` foi aposentada (ADR-0055) — o serviço não a expõe mais', () => {
+        const { service } = make(buildRepo());
+        expect((service as unknown as Record<string, unknown>).marcarRetorno).toBeUndefined();
     });
 
     describe('reabrir / cancelar', () => {
@@ -643,6 +640,7 @@ describe('LotePagamentoService — destino manual (ADR-0054)', () => {
         titCod: '1',
         modalidade: 'TED' as const,
         incluidoPor: 'u1',
+        divergencia: false,
     };
     const input = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', versao: 1, ator: 'ana' };
 
@@ -830,6 +828,7 @@ describe('LotePagamentoService.finalizarLote — checagem LEVE do destino (Adend
         credor: 'ACME',
         modalidade: 'TED' as const,
         incluidoPor: 'u1',
+        divergencia: false,
     };
     const input = { loteId: 'L1', versao: 1, ator: 'u1' };
 
@@ -909,6 +908,7 @@ describe('LotePagamentoService — aprovação do destino digitado (D10/D11)', (
         credor: 'ACME',
         modalidade: 'TED' as const,
         incluidoPor: 'u1',
+        divergencia: false,
         destinoManual: CONTA,
         destinoManualAuditId: 'grav-1',
         destinoManualInformadoPor: 'ana',
