@@ -12,14 +12,14 @@ import { cn } from '@/lib/utils'
 const ACENTO_FRENTE: Record<Frente, string> = {
     permutas: 'bg-primary',
     sispag: 'bg-origem-adto-forn-int',
-    ged: 'bg-origem-adto-cli-nac',
+    recebimentos: 'bg-origem-adto-cli-nac',
     plataforma: 'bg-muted-foreground',
 }
 
 /**
  * Tratamento visual por maturidade. Traço contínuo = existe e roda; tracejado =
- * não existe ainda. É a distinção mais importante da página, porque as três
- * frentes estão em estágios incomparáveis.
+ * não existe ainda. É a distinção mais importante da página, porque as
+ * frentes estão em estágios diferentes.
  */
 const ESTILO_MATURIDADE: Record<Maturidade, string> = {
     implementado: 'border-border bg-card',

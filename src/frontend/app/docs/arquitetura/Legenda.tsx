@@ -90,7 +90,7 @@ export function Legenda() {
                     </li>
                     <li className="flex items-center gap-2">
                         <span className="h-3 w-1.5 shrink-0 rounded-sm bg-origem-adto-cli-nac" />
-                        III — Popula GED
+                        IV — Recebimentos
                     </li>
                     <li className="flex items-center gap-2">
                         <span className="h-3 w-1.5 shrink-0 rounded-sm bg-muted-foreground" />
