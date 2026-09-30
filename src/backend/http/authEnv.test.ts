@@ -1,6 +1,6 @@
 import { loadAuthEnv } from './authEnv.js';
 
-/** A var legada do template, que saiu (ADR-0054). Montada para o grep de remoção. */
+/** A var legada do template, que saiu (ADR-0056). Montada para o grep de remoção. */
 const SEGREDO_LEGADO = ['SUPABASE', 'JWT', 'SECRET'].join('_');
 const URL = 'https://uvfcziscjpapjzpzlzuk.supabase.co';
 

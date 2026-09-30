@@ -7,7 +7,7 @@ export const TOKEN_STORAGE_KEY = 'auth_token'
 /** localStorage key holding the signed-in username (for the header menu). */
 export const USERNAME_STORAGE_KEY = 'auth_username'
 /**
- * localStorage key do refresh token da sessão Supabase (ADR-0054). Ausente = backend antigo ou
+ * localStorage key do refresh token da sessão Supabase (ADR-0056). Ausente = backend antigo ou
  * modo `local`: sem renovação, o modal aparece no `exp` como antes.
  */
 export const REFRESH_TOKEN_STORAGE_KEY = 'auth_refresh_token'

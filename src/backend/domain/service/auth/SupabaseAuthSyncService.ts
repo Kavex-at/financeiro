@@ -66,7 +66,7 @@ const SENHA_MANTIDA = 'senha do Supabase Auth mantida; se não entrar, redefina 
 
 /**
  * SupabaseAuthSyncService — importação dos ativos para o Supabase Auth e reparo de divergência
- * (ADR-0054, R9). É a lógica do `jobs/sync-supabase-auth.ts`.
+ * (ADR-0056, R9). É a lógica do `jobs/sync-supabase-auth.ts`.
  *
  * `app_user` é a fonte da verdade de e-mail e `ativo`. Por usuário:
  * - ativo, com e-mail, sem vínculo → acha no GoTrue pelo e-mail: existe e não é de outro

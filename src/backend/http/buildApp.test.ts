@@ -105,7 +105,7 @@ describe('buildApp (modifiability-3)', () => {
         server.close();
     });
 
-    /** ADR-0054: o banner de transição saiu; a rota antiga cai no auth como qualquer outra. */
+    /** ADR-0056: o banner de transição saiu; a rota antiga cai no auth como qualquer outra. */
     it('GET /auth/transicao não existe mais: sem token, 401', async () => {
         const { server, base } = await subir();
         const res = await fetch(`${base}/auth/transicao`);

@@ -29,7 +29,7 @@ import { buildAuthMiddleware } from './auth.js';
 import { conexosIdentityMiddleware } from './conexosIdentity.js';
 
 /**
- * Gate de identidade I2 (ADR-0054): com um token do SUPABASE (ES256, `sub = <uuid>`,
+ * Gate de identidade I2 (ADR-0056): com um token do SUPABASE (ES256, `sub = <uuid>`,
  * `email = x@columbiabr.com`), toda a cadeia auth → resolverAcesso → identidade Conexos → rotas
  * enxerga `sub = 'fulano'` (o `app_user.username`). Nenhuma trilha grava o UUID nem o e-mail.
  */

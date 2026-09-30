@@ -144,7 +144,7 @@ describe('ConfigDoctor — alerta no boot', () => {
     });
 });
 
-describe('ConfigDoctor — autenticação (ADR-0054)', () => {
+describe('ConfigDoctor — autenticação (ADR-0056)', () => {
     const alvosDoBoot = async (ambiente: NodeJS.ProcessEnv) => {
         const { instancia, notif } = doctor();
         await instancia.verificarNoBoot(ambiente);

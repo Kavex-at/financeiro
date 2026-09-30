@@ -110,7 +110,7 @@ export const buildApp = () => {
 
     // Sessão — PÚBLICA, montada ANTES do middleware de auth (senão ninguém loga). `POST /auth/login`
     // emite o token do modo em vigor (`AUTH_PROVIDER`: HS256 próprio ou Supabase Auth por proxy),
-    // `/auth/refresh` renova a sessão Supabase e `/auth/logout` a encerra (ADR-0054). O logout usa
+    // `/auth/refresh` renova a sessão Supabase e `/auth/logout` a encerra (ADR-0056). O logout usa
     // o MESMO verificador do middleware, sem `resolverAcesso` (D2).
     const authEnv = loadAuthEnv();
     const verifyAccessToken = authEnv.devBypass ? undefined : buildVerifyAccessToken(authEnv);
@@ -123,7 +123,7 @@ export const buildApp = () => {
     );
 
     // Validação do token — depois de CORS/rate-limit e das rotas públicas, antes de toda rota
-    // abaixo. Dois emissores com opções separadas (ADR-0054, I8); `DEV_AUTH_BYPASS=true` pula (só
+    // abaixo. Dois emissores com opções separadas (ADR-0056, I8); `DEV_AUTH_BYPASS=true` pula (só
     // local/dev). Arch-review cards security-1 / security-7.
     app.use(buildAuthMiddleware(authEnv));
 

@@ -36,7 +36,7 @@ const comToken = (init: RequestInit | undefined, token: string): RequestInit => 
 /**
  * Thin `fetch` wrapper that centralises 401 handling for the whole API layer.
  *
- * On 401 it tries ONE session renewal (`refreshSession`, ADR-0054) and resends the request ONCE
+ * On 401 it tries ONE session renewal (`refreshSession`, ADR-0056) and resends the request ONCE
  * with the new `Authorization`. If there is no way to renew (old backend / local mode: no refresh
  * token), the renewal fails, or the resend is 401 again, it fires the session-expired bus (opens
  * the modal) and throws `SessionExpiredError` — the behaviour before the renewal existed. Every

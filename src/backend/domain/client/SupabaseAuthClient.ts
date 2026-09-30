@@ -46,7 +46,7 @@ interface RespostaBruta {
 
 /**
  * SupabaseAuthClient — HTTP simples para o Supabase Auth (GoTrue) do projeto, sem
- * `@supabase/supabase-js` (ADR-0054, Q8). Zod em toda resposta.
+ * `@supabase/supabase-js` (ADR-0056, Q8). Zod em toda resposta.
  *
  * - **Público** (login por senha, refresh, logout): cabeçalho `apikey` com a chave publicável.
  *   Chamado PELO BACKEND (proxy); o front não conhece chave nenhuma (I6).

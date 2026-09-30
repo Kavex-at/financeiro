@@ -118,7 +118,7 @@ describe('PermissoesProvider / usePermissoes', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('ADR-0054: resposta sem o array de permissões = conjunto vazio (fail-closed), nunca "tudo para admin"', async () => {
+  it('ADR-0056: resposta sem o array de permissões = conjunto vazio (fail-closed), nunca "tudo para admin"', async () => {
     fetchMock.mockResolvedValue({ permissoes: new Set() })
     renderProvider()
     await waitFor(() => expect(screen.getByTestId('carregando')).toHaveTextContent('false'))

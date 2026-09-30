@@ -49,7 +49,7 @@ export interface VarManifesto {
     default?: string;
     /**
      * A var passa a ser OBRIGATÓRIA quando outra var tem este valor (considerando o default dela).
-     * Ex.: as chaves do Supabase só são exigidas com `AUTH_PROVIDER=supabase` (ADR-0054, D7).
+     * Ex.: as chaves do Supabase só são exigidas com `AUTH_PROVIDER=supabase` (ADR-0056, D7).
      */
     obrigatoriaQuando?: { nome: string; valor: string };
 }
@@ -91,7 +91,7 @@ export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
         criticidade: CRITICIDADE.OPCIONAL,
         consequenciaSeAusente:
             'Ausente = modo local: o login assina o token próprio (HS256). `supabase` passa o ' +
-            'login ao Supabase Auth (ADR-0054); voltar para `local` é o rollback do corte.',
+            'login ao Supabase Auth (ADR-0056); voltar para `local` é o rollback do corte.',
         segredo: false,
         default: 'local',
     },

@@ -193,7 +193,7 @@ describe('GET /usuarios', () => {
     });
 });
 
-describe('Supabase Auth (ADR-0054) — mapeamento de erros e vínculo fora do alcance da tela', () => {
+describe('Supabase Auth (ADR-0056) — mapeamento de erros e vínculo fora do alcance da tela', () => {
     it('GoTrue indisponível numa escrita de credencial: 503 "nada foi alterado"', async () => {
         repo.updatePassword.mockRejectedValue(new SupabaseAuthUnavailableError('x', 'timeout'));
         const res = await send('POST', '/7/reset-senha', { password: 'nova-senha-1' });
