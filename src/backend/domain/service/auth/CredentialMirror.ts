@@ -221,7 +221,7 @@ export default class CredentialMirror {
             banned: false,
         });
         if (senha === undefined) {
-            await this.logService.warn({
+            await this.logService.error({
                 type: LOG_TYPE.AUTH_DIVERGENCIA,
                 message:
                     'vinculado a um usuário que já existia no Supabase Auth; senha do Supabase Auth ' +

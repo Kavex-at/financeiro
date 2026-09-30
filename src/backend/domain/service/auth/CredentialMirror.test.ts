@@ -194,7 +194,7 @@ describe('CredentialMirror — senha, e-mail, ativo', () => {
         await p.antesDoCommit?.(TX, linha({ authUserId: undefined }));
         expect(client.adminUpdateUser).toHaveBeenCalledWith(OUTRO_UUID, { banned: false });
         expect(repo.setAuthUserId).toHaveBeenCalledWith(TX, 4, OUTRO_UUID);
-        expect(log.warn).toHaveBeenCalledWith(
+        expect(log.error).toHaveBeenCalledWith(
             expect.objectContaining({
                 message: expect.stringMatching(/senha do Supabase Auth mantida/),
             }),

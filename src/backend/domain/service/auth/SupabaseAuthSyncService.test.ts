@@ -179,7 +179,7 @@ describe('SupabaseAuthSyncService — execução', () => {
 
     it('vínculo órfão e e-mail vinculado a outro: reportados, não corrigidos; saída 1', async () => {
         const [orfao, doOutro] = [novoUuid(), novoUuid()];
-        const { service, client } = montar(
+        const { service, client, log } = montar(
             [
                 usuario({ id: 1, username: 'orfa', authUserId: orfao, email: 'o@qa.local' }),
                 usuario({ id: 2, username: 'dono', authUserId: doOutro, email: 'x@qa.local' }),
@@ -194,6 +194,12 @@ describe('SupabaseAuthSyncService — execução', () => {
         });
         expect(r.resumo.conflitos).toBe(2);
         expect(r.codigoSaida).toBe(1);
+        expect(log.error).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'AUTH_DIVERGENCIA',
+                data: expect.objectContaining({ userId: 1, usuario: 'orfa' }),
+            }),
+        );
         expect(client.adminCreateUser).not.toHaveBeenCalled();
     });
 

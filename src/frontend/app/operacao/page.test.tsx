@@ -58,6 +58,7 @@ const painelFake: OperacaoPainel = {
   ],
   configuracao: {
     geradoEm: '2026-09-01T12:00:00.000Z',
+    modoAutenticacao: 'supabase',
     vars: [
       {
         nome: 'RECEBIMENTO_TITULARES_INTERNOS',
@@ -95,6 +96,14 @@ const renderPainel = async () => {
 describe('OperacaoPage', () => {
   beforeEach(() => {
     ;(fetchOperacao as jest.Mock).mockResolvedValue(painelFake)
+  })
+
+  it('a aba Configuração diz o modo de autenticação em vigor (AUTH_PROVIDER), sem segredo', async () => {
+    await renderPainel()
+    await userEvent.click(screen.getByRole('tab', { name: /Configuração/ }))
+    const modo = await screen.findByTestId('modo-autenticacao')
+    expect(modo).toHaveTextContent('Supabase Auth')
+    expect(modo).toHaveTextContent('AUTH_PROVIDER')
   })
 
   it('mostra o título e o subtítulo que declara a independência do ERP', async () => {
