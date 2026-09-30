@@ -5,7 +5,10 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { container } from 'tsyringe';
 import type SecretCipher from '../domain/libs/crypto/SecretCipher.js';
 import type Clock from '../domain/libs/clock/Clock.js';
+import AuthEmailInUseError from '../domain/errors/AuthEmailInUseError.js';
 import EmailAlreadyInUseError from '../domain/errors/EmailAlreadyInUseError.js';
+import ReactivationRequiresEmailError from '../domain/errors/ReactivationRequiresEmailError.js';
+import SupabaseAuthUnavailableError from '../domain/errors/SupabaseAuthUnavailableError.js';
 import LastUserManagerError from '../domain/errors/LastUserManagerError.js';
 import SelfAccessRemovalError from '../domain/errors/SelfAccessRemovalError.js';
 import SelfDeactivationError from '../domain/errors/SelfDeactivationError.js';
@@ -28,6 +31,7 @@ import type UserRepository from '../domain/repository/auth/UserRepository.js';
 import type LogService from '../domain/service/LogService.js';
 import AccessService from '../domain/service/auth/AccessService.js';
 import EffectivePermissionCalculator from '../domain/service/auth/EffectivePermissionCalculator.js';
+import type CredentialMirror from '../domain/service/auth/CredentialMirror.js';
 import UserAdminService from '../domain/service/auth/UserAdminService.js';
 
 // O bootstrap real importa migrations (usa `import.meta`, incompatível com o transform CJS).
@@ -86,6 +90,15 @@ const cipher = {
     isEnabled: jest.fn().mockResolvedValue(true),
 };
 
+/** Espelho sem Supabase (D3): as escritas passam pelo repositório falso, sem passo. */
+const mirror = {
+    preparar: jest.fn(async (op: { tipo: string }) => ({
+        operacao: op.tipo,
+        estado: { supabaseAlterado: false },
+    })),
+    aposFalha: jest.fn().mockResolvedValue(undefined),
+};
+
 let srv: TestServer;
 
 beforeAll(async () => {
@@ -103,6 +116,7 @@ beforeAll(async () => {
         accessService,
         cipher as unknown as SecretCipher,
         log as unknown as LogService,
+        mirror as unknown as CredentialMirror,
     );
     const real = container.resolve.bind(container);
     jest.spyOn(container, 'resolve').mockImplementation(((token: unknown) => {
@@ -179,13 +193,66 @@ describe('GET /usuarios', () => {
     });
 });
 
+describe('Supabase Auth (ADR-0054) — mapeamento de erros e vínculo fora do alcance da tela', () => {
+    it('GoTrue indisponível numa escrita de credencial: 503 "nada foi alterado"', async () => {
+        repo.updatePassword.mockRejectedValue(new SupabaseAuthUnavailableError('x', 'timeout'));
+        const res = await send('POST', '/7/reset-senha', { password: 'nova-senha-1' });
+        expect(res.status).toBe(503);
+        expect(await json(res)).toEqual({
+            error: 'Serviço de autenticação indisponível; nada foi alterado.',
+        });
+    });
+
+    it('e-mail já usado por outro login no Supabase Auth: 409', async () => {
+        repo.setEmail.mockRejectedValue(new AuthEmailInUseError());
+        const res = await send('PATCH', '/7/email', { email: 'b@columbiabr.com' });
+        expect(res.status).toBe(409);
+        expect(await json(res)).toEqual({ error: 'Já existe um acesso com este e-mail.' });
+    });
+
+    it('reativar sem vínculo e sem e-mail: 400 pedindo o e-mail', async () => {
+        repo.reactivate.mockRejectedValue(new ReactivationRequiresEmailError(7));
+        const res = await send('PATCH', '/7/ativo', { ativo: true });
+        expect(res.status).toBe(400);
+        expect(await json(res)).toEqual({
+            error: 'Cadastre um e-mail antes de reativar este usuário.',
+        });
+    });
+
+    it('auth_user_id no corpo é ignorado: nenhuma rota o escreve', async () => {
+        repo.setEmail.mockResolvedValue(SET_EMAIL_RESULT.UPDATED);
+        const res = await send('PATCH', '/7/email', {
+            email: 'a@columbiabr.com',
+            auth_user_id: '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60',
+            authUserId: '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60',
+        });
+        expect(res.status).toBe(200);
+        expect(JSON.stringify(repo.setEmail.mock.calls)).not.toContain('0b5c2d0e');
+    });
+
+    it('GET /usuarios expõe exatamente as chaves públicas: nem auth_user_id nem password_hash', async () => {
+        repo.listAll.mockResolvedValue([
+            { id: 1, username: 'admin', role: 'admin', ativo: true, createdAt: 'x' },
+        ]);
+        accessRepo.listAccessForUsers.mockResolvedValue(new Map());
+        const res = await send('GET', '/');
+        const [linha] = (await res.json()) as Record<string, unknown>[];
+        expect(Object.keys(linha).sort()).toEqual(['ativo', 'createdAt', 'id', 'role', 'username']);
+    });
+});
+
 describe('PATCH /usuarios/:id/email', () => {
     it('200 { id, email } com o e-mail normalizado e o ator = req.user.sub', async () => {
         repo.setEmail.mockResolvedValue(SET_EMAIL_RESULT.UPDATED);
         const res = await send('PATCH', '/7/email', { email: ' Maria@ColumbiaBR.com ' });
         expect(res.status).toBe(200);
         expect(await json(res)).toEqual({ id: 7, email: 'maria@columbiabr.com' });
-        expect(repo.setEmail).toHaveBeenCalledWith(7, 'maria@columbiabr.com', 'simone@kavex.com');
+        expect(repo.setEmail).toHaveBeenCalledWith(
+            7,
+            'maria@columbiabr.com',
+            'simone@kavex.com',
+            undefined,
+        );
     });
 
     it('loga a edição em português com o id e o ator, sem senha', async () => {
@@ -222,7 +289,7 @@ describe('PATCH /usuarios/:id/email', () => {
         repo.setEmail.mockRejectedValue(new EmailAlreadyInUseError('maria@x.com'));
         const res = await send('PATCH', '/7/email', { email: 'Maria@X.com' });
         expect(res.status).toBe(409);
-        expect(repo.setEmail).toHaveBeenCalledWith(7, 'maria@x.com', 'simone@kavex.com');
+        expect(repo.setEmail).toHaveBeenCalledWith(7, 'maria@x.com', 'simone@kavex.com', undefined);
     });
 
     it('sem usuarios:gerenciar: 403 com o código da permissão (o guard do router cobre a rota)', async () => {
@@ -243,7 +310,12 @@ describe('PATCH /usuarios/:id/email', () => {
             username: 'outro',
         });
         expect(res.status).toBe(200);
-        expect(repo.setEmail).toHaveBeenCalledWith(7, 'a@columbiabr.com', 'simone@kavex.com');
+        expect(repo.setEmail).toHaveBeenCalledWith(
+            7,
+            'a@columbiabr.com',
+            'simone@kavex.com',
+            undefined,
+        );
         expect(repo.reactivate).not.toHaveBeenCalled();
         expect(repo.create).not.toHaveBeenCalled();
     });
@@ -319,7 +391,7 @@ describe('PATCH /usuarios/:id/ativo', () => {
         repo.deactivateGuarded.mockResolvedValue(DEACTIVATE_RESULT.DEACTIVATED);
         const res = await send('PATCH', '/2/ativo', { ativo: false });
         expect(res.status).toBe(200);
-        expect(repo.deactivateGuarded).toHaveBeenCalledWith(2, 'simone@kavex.com');
+        expect(repo.deactivateGuarded).toHaveBeenCalledWith(2, 'simone@kavex.com', undefined);
         expect(repo.reactivate).not.toHaveBeenCalled();
     });
 
@@ -372,7 +444,7 @@ describe('PATCH /usuarios/:id/ativo', () => {
         repo.reactivate.mockResolvedValue(REACTIVATE_RESULT.REACTIVATED);
         const res = await send('PATCH', '/2/ativo', { ativo: true });
         expect(res.status).toBe(200);
-        expect(repo.reactivate).toHaveBeenCalledWith(2, 'simone@kavex.com');
+        expect(repo.reactivate).toHaveBeenCalledWith(2, 'simone@kavex.com', undefined);
         expect(repo.deactivateGuarded).not.toHaveBeenCalled();
     });
 

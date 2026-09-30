@@ -5,11 +5,15 @@ import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { MissingEncryptionKeyError } from '../domain/libs/crypto/SecretCipher.js';
+import AuthEmailInUseError from '../domain/errors/AuthEmailInUseError.js';
 import EmailAlreadyInUseError from '../domain/errors/EmailAlreadyInUseError.js';
 import LastUserManagerError from '../domain/errors/LastUserManagerError.js';
 import RoleNotFoundError from '../domain/errors/RoleNotFoundError.js';
 import SelfAccessRemovalError from '../domain/errors/SelfAccessRemovalError.js';
+import ReactivationRequiresEmailError from '../domain/errors/ReactivationRequiresEmailError.js';
 import SelfDeactivationError from '../domain/errors/SelfDeactivationError.js';
+import SupabaseAuthRejectedError from '../domain/errors/SupabaseAuthRejectedError.js';
+import SupabaseAuthUnavailableError from '../domain/errors/SupabaseAuthUnavailableError.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import UserAdminService, {
     createUserSchema,
@@ -47,6 +51,19 @@ const removerVinculoSchema = z.object({ remover: z.boolean().optional() }).passt
  * false se não reconhecer o erro (deixa o middleware central tratar).
  */
 const respondError = (res: Response, err: unknown): boolean => {
+    // R6 (ADR-0054): o Supabase Auth falhou dentro da transação, então ela foi desfeita.
+    if (err instanceof SupabaseAuthUnavailableError || err instanceof SupabaseAuthRejectedError) {
+        res.status(503).json({ error: 'Serviço de autenticação indisponível; nada foi alterado.' });
+        return true;
+    }
+    if (err instanceof AuthEmailInUseError) {
+        res.status(409).json({ error: 'Já existe um acesso com este e-mail.' });
+        return true;
+    }
+    if (err instanceof ReactivationRequiresEmailError) {
+        res.status(400).json({ error: 'Cadastre um e-mail antes de reativar este usuário.' });
+        return true;
+    }
     if (err instanceof EmailAlreadyInUseError) {
         res.status(409).json({ error: 'Este e-mail já identifica outro usuário.' });
         return true;

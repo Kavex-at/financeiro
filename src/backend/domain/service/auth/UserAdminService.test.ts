@@ -15,6 +15,8 @@ import {
     type UserAccess,
 } from '../../repository/auth/AccessRepository.js';
 import type UserRepository from '../../repository/auth/UserRepository.js';
+import type { AntesDoCommit, CredencialLinha } from '../../repository/auth/UserRepository.js';
+import SupabaseAuthUnavailableError from '../../errors/SupabaseAuthUnavailableError.js';
 import {
     DEACTIVATE_RESULT,
     REACTIVATE_RESULT,
@@ -22,6 +24,7 @@ import {
 } from '../../repository/auth/UserRepository.js';
 import type LogService from '../LogService.js';
 import type AccessService from './AccessService.js';
+import CredentialMirror from './CredentialMirror.js';
 import EffectivePermissionCalculator from './EffectivePermissionCalculator.js';
 import UserAdminService, {
     createUserSchema,
@@ -103,7 +106,17 @@ const buildLog = () =>
         warn: jest.fn().mockResolvedValue(undefined),
     }) as unknown as jest.Mocked<LogService>;
 
-const montar = () => {
+/** Espelho "sem Supabase configurado" (D3): nenhum passo, escrita só local. */
+const buildMirrorLocal = () =>
+    ({
+        preparar: jest.fn(async (op: { tipo: string }) => ({
+            operacao: op.tipo,
+            estado: { supabaseAlterado: false },
+        })),
+        aposFalha: jest.fn().mockResolvedValue(undefined),
+    }) as unknown as jest.Mocked<CredentialMirror>;
+
+const montar = (mirror: CredentialMirror = buildMirrorLocal()) => {
     const repo = buildRepo();
     const accessRepo = buildAccessRepo();
     const accessService = buildAccessService();
@@ -116,8 +129,9 @@ const montar = () => {
         accessService,
         cipher,
         log,
+        mirror,
     );
-    return { service, repo, accessRepo, accessService, cipher, log };
+    return { service, repo, accessRepo, accessService, cipher, log, mirror };
 };
 
 describe('createUserSchema', () => {
@@ -458,7 +472,7 @@ describe('UserAdminService', () => {
         it('desativar passa pela guarda com o ator, invalida DEPOIS e loga', async () => {
             const { service, repo, accessService, log } = montar();
             await service.setAtivo(6, false, 'a@kavex.com');
-            expect(repo.deactivateGuarded).toHaveBeenCalledWith(6, 'a@kavex.com');
+            expect(repo.deactivateGuarded).toHaveBeenCalledWith(6, 'a@kavex.com', undefined);
             expect(repo.reactivate).not.toHaveBeenCalled();
             expect(accessService.invalidar).toHaveBeenCalledWith(6);
             expect(log.info).toHaveBeenCalledWith(
@@ -471,7 +485,7 @@ describe('UserAdminService', () => {
         it('reativar não passa pela guarda, grava o evento pelo repositório e invalida', async () => {
             const { service, repo, accessService } = montar();
             await service.setAtivo(6, true, 'a@kavex.com');
-            expect(repo.reactivate).toHaveBeenCalledWith(6, 'a@kavex.com');
+            expect(repo.reactivate).toHaveBeenCalledWith(6, 'a@kavex.com', undefined);
             expect(repo.deactivateGuarded).not.toHaveBeenCalled();
             expect(accessService.invalidar).toHaveBeenCalledWith(6);
         });
@@ -519,6 +533,7 @@ describe('UserAdminService', () => {
                 7,
                 'maria@columbiabr.com',
                 'simone@kavex.com',
+                undefined,
             );
             expect(log.info).toHaveBeenCalledTimes(1);
             const params = (log.info as jest.Mock).mock.calls[0][0];
@@ -544,5 +559,126 @@ describe('UserAdminService', () => {
                 EmailAlreadyInUseError,
             );
         });
+    });
+});
+
+/**
+ * R6 com o espelho REAL (`CredentialMirror`) e um repositório com estado que imita a transação:
+ * a escrita local é aplicada, o passo roda, e uma falha no passo DESFAZ a escrita (ROLLBACK). Assim
+ * o teste lê o banco de volta. A ordem BEGIN → trava → escrita → admin → COMMIT está provada no
+ * `UserRepository.test.ts`.
+ */
+describe('UserAdminService — escritas de credencial espelhadas no Supabase Auth (R6)', () => {
+    const UUID = '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60';
+
+    const montarComEstado = (commitFalha = false) => {
+        const linhas = new Map<number, CredencialLinha>([
+            [
+                4,
+                {
+                    id: 4,
+                    username: 'beto',
+                    email: 'beto@qa.local',
+                    authUserId: UUID,
+                    ativo: true,
+                    passwordHash: 'hash-antigo',
+                },
+            ],
+        ]);
+        const transacao = async (
+            id: number,
+            mudanca: Partial<CredencialLinha>,
+            antesDoCommit?: AntesDoCommit,
+        ): Promise<void> => {
+            const antes = linhas.get(id);
+            if (!antes) throw new Error(`NOT_FOUND: user ${id} not found`);
+            const nova = { ...antes, ...mudanca };
+            linhas.set(id, nova);
+            try {
+                await antesDoCommit?.({} as never, nova);
+                if (commitFalha) throw new Error('commit falhou');
+            } catch (error) {
+                linhas.set(id, antes);
+                throw error;
+            }
+        };
+        const client = {
+            isAdminConfigured: jest.fn().mockResolvedValue(true),
+            adminUpdateUser: jest.fn().mockResolvedValue({ id: UUID, banned: false }),
+            adminCreateUser: jest.fn(),
+            adminFindUserByEmail: jest.fn(),
+        };
+        const log = buildLog();
+        const mirror = new CredentialMirror(
+            client as never,
+            { setAuthUserId: jest.fn(), findIdByAuthUserId: jest.fn() } as never,
+            log,
+        );
+        const m = montar(mirror);
+        Object.assign(m.repo, {
+            updatePassword: jest.fn(async (id: number, hash: string, a?: AntesDoCommit) => {
+                await transacao(id, { passwordHash: hash }, a);
+                return true;
+            }),
+            deactivateGuarded: jest.fn(async (id: number, _ator: string, a?: AntesDoCommit) => {
+                await transacao(id, { ativo: false }, a);
+                return DEACTIVATE_RESULT.DEACTIVATED;
+            }),
+            setEmail: jest.fn(
+                async (id: number, email: string, _por: string, a?: AntesDoCommit) => {
+                    await transacao(id, { email }, a);
+                    return SET_EMAIL_RESULT.UPDATED;
+                },
+            ),
+        });
+        return { ...m, linhas, client, logEspelho: log };
+    };
+
+    it('GoTrue indisponível na troca de senha: erro sobe e o banco fica como estava', async () => {
+        const { service, linhas, client } = montarComEstado();
+        client.adminUpdateUser.mockRejectedValue(new SupabaseAuthUnavailableError('x', 'timeout'));
+        await expect(service.resetPassword(4, 'nova-senha-1')).rejects.toBeInstanceOf(
+            SupabaseAuthUnavailableError,
+        );
+        expect(linhas.get(4)?.passwordHash).toBe('hash-antigo');
+    });
+
+    it('troca de senha: bcrypt local novo e a MESMA senha no GoTrue (R7)', async () => {
+        const { service, linhas, client } = montarComEstado();
+        await service.resetPassword(4, 'nova-senha-1');
+        expect(await bcrypt.compare('nova-senha-1', linhas.get(4)?.passwordHash ?? '')).toBe(true);
+        expect(client.adminUpdateUser).toHaveBeenCalledWith(UUID, { password: 'nova-senha-1' });
+    });
+
+    it('GoTrue indisponível na troca de e-mail: nada muda', async () => {
+        const { service, linhas, client } = montarComEstado();
+        client.adminUpdateUser.mockRejectedValue(new SupabaseAuthUnavailableError('x', 'timeout'));
+        await expect(service.setEmail(4, 'novo@qa.local', 'adm')).rejects.toBeInstanceOf(
+            SupabaseAuthUnavailableError,
+        );
+        expect(linhas.get(4)?.email).toBe('beto@qa.local');
+    });
+
+    it('desativar com o ban falhando: ativo = false lido de volta, AUTH_DIVERGENCIA, sem erro (exceção à R6)', async () => {
+        const { service, linhas, client, logEspelho, accessService } = montarComEstado();
+        client.adminUpdateUser.mockRejectedValue(new SupabaseAuthUnavailableError('x', 'timeout'));
+        await expect(service.setAtivo(4, false, 'adm')).resolves.toBeUndefined();
+        expect(linhas.get(4)?.ativo).toBe(false);
+        expect(accessService.invalidar).toHaveBeenCalledWith(4);
+        expect(logEspelho.error).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'AUTH_DIVERGENCIA' }),
+        );
+    });
+
+    it('commit falha depois do sucesso no GoTrue: AUTH_DIVERGENCIA com ids e operação, e o erro sobe', async () => {
+        const { service, logEspelho } = montarComEstado(true);
+        await expect(service.resetPassword(4, 'nova-senha-1')).rejects.toThrow('commit falhou');
+        expect(logEspelho.error).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'AUTH_DIVERGENCIA',
+                message: expect.stringMatching(/o sync-supabase-auth repara/),
+                data: expect.objectContaining({ userId: 4, authUserId: UUID, operacao: 'senha' }),
+            }),
+        );
     });
 });

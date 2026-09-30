@@ -29,6 +29,7 @@ import UserRepository, {
 } from '../../repository/auth/UserRepository.js';
 import LogService from '../LogService.js';
 import AccessService from './AccessService.js';
+import CredentialMirror, { type PassoEspelho } from './CredentialMirror.js';
 import EffectivePermissionCalculator from './EffectivePermissionCalculator.js';
 
 /** Custo do bcrypt — espelha o `seed-admin` (BCRYPT_ROUNDS = 12). */
@@ -172,6 +173,9 @@ export const resetPasswordSchema = z.object({
  * a senha em claro) e delega a persistência aos repositórios. A AUTORIZAÇÃO (`usuarios:gerenciar`)
  * é feita no route; este service assume que o chamador já foi autorizado.
  *
+ * Escritas de CREDENCIAL (criar, senha, e-mail, ativo) são espelhadas no Supabase Auth pelo
+ * `CredentialMirror` (R6, ADR-0054): o passo roda dentro da transação local, antes do commit.
+ *
  * Toda escrita que muda acesso (papel, exceções, ativo, criação) chama `AccessService.invalidar`
  * DEPOIS do commit — a próxima requisição do alvo relê o banco — e emite uma linha de log em
  * português com ator, alvo, tipo e antes → depois (R12). A trilha durável é o
@@ -192,6 +196,8 @@ export default class UserAdminService {
         private secretCipher: SecretCipher,
         @inject(LogService)
         private logService: LogService,
+        @inject(CredentialMirror)
+        private credentialMirror: CredentialMirror,
     ) {}
 
     /**
@@ -301,12 +307,16 @@ export default class UserAdminService {
         if (!role) throw new RoleNotFoundError(input.papelId ?? 0);
 
         const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
-        const created = await this.userRepository.create({
-            email: input.email,
-            passwordHash,
-            roleId: role.id,
-            createdBy,
+        const passo = await this.credentialMirror.preparar({
+            tipo: 'criar',
+            senha: input.password,
         });
+        const created = await this.comEspelho(passo, undefined, () =>
+            this.userRepository.create(
+                { email: input.email, passwordHash, roleId: role.id, createdBy },
+                passo.antesDoCommit,
+            ),
+        );
         this.accessService.invalidar(created.id);
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -335,7 +345,10 @@ export default class UserAdminService {
      * quando o valor já identifica outro usuário.
      */
     public setEmail = async (id: number, email: string, updatedBy: string): Promise<void> => {
-        const result = await this.userRepository.setEmail(id, email, updatedBy);
+        const passo = await this.credentialMirror.preparar({ tipo: 'email' });
+        const result = await this.comEspelho(passo, id, () =>
+            this.userRepository.setEmail(id, email, updatedBy, passo.antesDoCommit),
+        );
         if (result === SET_EMAIL_RESULT.NOT_FOUND) {
             throw new Error(`NOT_FOUND: user ${id} not found`);
         }
@@ -382,7 +395,10 @@ export default class UserAdminService {
      */
     public setAtivo = async (id: number, ativo: boolean, actorUsername: string): Promise<void> => {
         if (!ativo) {
-            const result = await this.userRepository.deactivateGuarded(id, actorUsername);
+            const passo = await this.credentialMirror.preparar({ tipo: 'desativar' });
+            const result = await this.comEspelho(passo, id, () =>
+                this.userRepository.deactivateGuarded(id, actorUsername, passo.antesDoCommit),
+            );
             if (result === DEACTIVATE_RESULT.NOT_FOUND) {
                 throw new Error(`NOT_FOUND: user ${id} not found`);
             }
@@ -390,7 +406,10 @@ export default class UserAdminService {
             await this.logarMudanca(actorUsername, id, ACCESS_EVENT_TYPE.ATIVO, true, false);
             return;
         }
-        const result = await this.userRepository.reactivate(id, actorUsername);
+        const passo = await this.credentialMirror.preparar({ tipo: 'reativar' });
+        const result = await this.comEspelho(passo, id, () =>
+            this.userRepository.reactivate(id, actorUsername, passo.antesDoCommit),
+        );
         if (result === REACTIVATE_RESULT.NOT_FOUND)
             throw new Error(`NOT_FOUND: user ${id} not found`);
         this.accessService.invalidar(id);
@@ -399,11 +418,34 @@ export default class UserAdminService {
         }
     };
 
-    /** Redefine a senha de um usuário. Lança se o id não existir. */
+    /**
+     * Redefine a senha de um usuário. Lança se o id não existir. Grava o bcrypt local e, com vínculo,
+     * a mesma senha no Supabase Auth (R7; em claro, porque o update ignora `password_hash` — T-1).
+     */
     public resetPassword = async (id: number, password: string): Promise<void> => {
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-        const ok = await this.userRepository.updatePassword(id, passwordHash);
+        const passo = await this.credentialMirror.preparar({ tipo: 'senha', senha: password });
+        const ok = await this.comEspelho(passo, id, () =>
+            this.userRepository.updatePassword(id, passwordHash, passo.antesDoCommit),
+        );
         if (!ok) throw new Error(`NOT_FOUND: user ${id} not found`);
+    };
+
+    /**
+     * Roda a escrita local com o passo de espelhamento (R6). Se ela falhar DEPOIS de o Supabase Auth
+     * ter mudado (commit, vínculo), deixa o `AUTH_DIVERGENCIA` para o sync reparar, e o erro sobe.
+     */
+    private comEspelho = async <T>(
+        passo: PassoEspelho,
+        userId: number | undefined,
+        escrita: () => Promise<T>,
+    ): Promise<T> => {
+        try {
+            return await escrita();
+        } catch (error) {
+            await this.credentialMirror.aposFalha(passo, userId, error);
+            throw error;
+        }
     };
 
     /** Efetivas ordenadas — sempre pelo `EffectivePermissionCalculator` (I7). */

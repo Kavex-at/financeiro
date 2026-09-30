@@ -1,6 +1,8 @@
 import { inject, injectable } from 'tsyringe';
 import { z } from 'zod';
-import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import PostgreeDatabaseClient, {
+    type TransactionClient,
+} from '../../client/database/PostgreeDatabaseClient.js';
 import AdminRoleMissingError from '../../errors/AdminRoleMissingError.js';
 import EmailAlreadyInUseError from '../../errors/EmailAlreadyInUseError.js';
 import { ADMIN_ROLE_NAME, type RoleRef } from '../../interface/auth/Permission.js';
@@ -38,6 +40,23 @@ export interface AppUserPublic {
     /** Papel do usuário (ADR-0053). Presente na criação; a lista o acrescenta no service (D6). */
     papel?: RoleRef;
 }
+
+/** A linha de credencial que o passo "antes do commit" recebe (já com o valor novo gravado). */
+export interface CredencialLinha {
+    id: number;
+    username: string;
+    email?: string;
+    authUserId?: string;
+    ativo: boolean;
+    passwordHash: string;
+}
+
+/**
+ * Passo que roda DENTRO da transação de uma escrita de credencial, depois da escrita local com a
+ * linha travada e antes do COMMIT (R6, ADR-0054): é onde o Supabase Auth é chamado. Lançar aqui =
+ * ROLLBACK: o banco fica como estava.
+ */
+export type AntesDoCommit = (tx: TransactionClient, linha: CredencialLinha) => Promise<void>;
 
 /** Vínculo Conexos do usuário — login + senha CIFRADA (nunca em claro). */
 export interface ConexosVinculo {
@@ -178,12 +197,15 @@ export default class UserRepository {
      * Grava, na mesma transação, o evento `papel` com `antes = null` (D5): criar é mudança de
      * acesso (R12).
      */
-    public create = async (input: {
-        email: string;
-        passwordHash: string;
-        roleId: number;
-        createdBy: string;
-    }): Promise<AppUserPublic> =>
+    public create = async (
+        input: {
+            email: string;
+            passwordHash: string;
+            roleId: number;
+            createdBy: string;
+        },
+        antesDoCommit?: AntesDoCommit,
+    ): Promise<AppUserPublic> =>
         this.databaseClient.withTransaction(async (tx) => {
             const row = await tx
                 .selectFirst<{
@@ -229,6 +251,16 @@ export default class UserRepository {
                 after: papel,
             });
 
+            if (antesDoCommit) {
+                await antesDoCommit(tx, {
+                    id: Number(row.id),
+                    username: String(row.username),
+                    email: input.email,
+                    ativo: Boolean(row.ativo),
+                    passwordHash: input.passwordHash,
+                });
+            }
+
             return {
                 id: Number(row.id),
                 username: String(row.username),
@@ -254,7 +286,9 @@ export default class UserRepository {
         id: number,
         email: string,
         updatedBy: string,
+        antesDoCommit?: AntesDoCommit,
     ): Promise<SetEmailResult> => {
+        if (antesDoCommit) return this.setEmailEspelhado(id, email, updatedBy, antesDoCommit);
         const affected = await this.databaseClient
             .update(
                 `UPDATE app_user
@@ -286,10 +320,73 @@ export default class UserRepository {
     };
 
     /**
+     * `setEmail` com o passo de espelhamento (R6): trava a linha, grava com a MESMA checagem cruzada,
+     * roda o passo com o e-mail novo e só então commita. Mesmo e-mail = UNCHANGED sem chamar o passo.
+     */
+    private setEmailEspelhado = async (
+        id: number,
+        email: string,
+        updatedBy: string,
+        antesDoCommit: AntesDoCommit,
+    ): Promise<SetEmailResult> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const atual = await this.lerCredencial(tx, id, true);
+            if (!atual) return SET_EMAIL_RESULT.NOT_FOUND;
+            const affected = await tx
+                .update(
+                    `UPDATE app_user
+                     SET email = $email, email_updated_by = $updatedBy, email_updated_at = now()
+                     WHERE id = $id
+                       AND email IS DISTINCT FROM $email
+                       AND NOT EXISTS (
+                           SELECT 1 FROM app_user o
+                           WHERE o.id <> $id
+                             AND (lower(o.email) = $email OR lower(o.username) = $email)
+                       )`,
+                    { id, email, updatedBy },
+                )
+                .catch((error: unknown) => this.rethrowUniqueViolation(error, email));
+            if (affected === 0) {
+                if (atual.email === email) return SET_EMAIL_RESULT.UNCHANGED;
+                throw new EmailAlreadyInUseError(email);
+            }
+            await antesDoCommit(tx, { ...atual, email });
+            return SET_EMAIL_RESULT.UPDATED;
+        });
+
+    /** Grava o vínculo com o Supabase Auth, na transação da escrita que o criou (R6). */
+    public setAuthUserId = async (
+        tx: TransactionClient,
+        id: number,
+        authUserId: string,
+    ): Promise<void> => {
+        await tx.update(`UPDATE app_user SET auth_user_id = $authUserId WHERE id = $id`, {
+            id,
+            authUserId,
+        });
+    };
+
+    /** `id` do `app_user` que já aponta para este usuário do Supabase Auth, se houver. */
+    public findIdByAuthUserId = async (
+        tx: TransactionClient,
+        authUserId: string,
+    ): Promise<number | undefined> => {
+        const row = await tx.selectFirst<{ id: number }>(
+            `SELECT id FROM app_user WHERE auth_user_id = $authUserId`,
+            { authUserId },
+        );
+        return row ? Number(row.id) : undefined;
+    };
+
+    /**
      * Reativa um usuário (soft-enable). Não passa pela guarda — só acrescenta acesso —, mas grava o
      * evento `ativo` `false → true` na mesma transação (D5). Já ativo = no-op sem evento.
      */
-    public reactivate = async (id: number, actor: string): Promise<ReactivateResult> =>
+    public reactivate = async (
+        id: number,
+        actor: string,
+        antesDoCommit?: AntesDoCommit,
+    ): Promise<ReactivateResult> =>
         this.databaseClient.withTransaction(async (tx) => {
             const affected = await tx.update(
                 `UPDATE app_user SET ativo = true WHERE id = $id AND ativo = false`,
@@ -303,6 +400,7 @@ export default class UserRepository {
                     before: false,
                     after: true,
                 });
+                await this.rodarPasso(tx, id, antesDoCommit);
                 return REACTIVATE_RESULT.REACTIVATED;
             }
             const exists = await tx.selectFirst<{ id: number }>(
@@ -323,6 +421,7 @@ export default class UserRepository {
     public deactivateGuarded = async (
         id: number,
         actorUsername: string,
+        antesDoCommit?: AntesDoCommit,
     ): Promise<DeactivateResult> =>
         this.databaseClient.withTransaction(async (tx) => {
             const change = await this.accessRepository.lockAndCheck(tx, {
@@ -341,11 +440,34 @@ export default class UserRepository {
                 before: true,
                 after: false,
             });
+            await this.rodarPasso(tx, id, antesDoCommit);
             return DEACTIVATE_RESULT.DEACTIVATED;
         });
 
-    /** Redefine a senha (hash) de um usuário. Retorna false se o id não existe. */
-    public updatePassword = async (id: number, passwordHash: string): Promise<boolean> => {
+    /**
+     * Redefine a senha (hash) de um usuário. Retorna false se o id não existe. Com o passo de
+     * espelhamento (R6): trava a linha, grava o hash, roda o passo, e só então commita.
+     */
+    public updatePassword = async (
+        id: number,
+        passwordHash: string,
+        antesDoCommit?: AntesDoCommit,
+    ): Promise<boolean> => {
+        if (antesDoCommit) {
+            return this.databaseClient.withTransaction(async (tx) => {
+                const atual = await this.lerCredencial(tx, id, true);
+                if (!atual) return false;
+                await tx.update(
+                    `UPDATE app_user SET password_hash = $passwordHash WHERE id = $id`,
+                    {
+                        id,
+                        passwordHash,
+                    },
+                );
+                await antesDoCommit(tx, { ...atual, passwordHash });
+                return true;
+            });
+        }
         const affected = await this.databaseClient.update(
             `UPDATE app_user SET password_hash = $passwordHash WHERE id = $id`,
             { id, passwordHash },
@@ -417,6 +539,43 @@ export default class UserRepository {
                 ativo = true`,
             { email, passwordHash, roleId: role.id },
         );
+    };
+
+    /** A linha de credencial de um usuário, na transação; `travar` = `FOR UPDATE`. */
+    private lerCredencial = async (
+        tx: TransactionClient,
+        id: number,
+        travar: boolean,
+    ): Promise<CredencialLinha | null> => {
+        const row = await tx.selectFirst<AppUserRow>(
+            travar
+                ? `SELECT id, username, password_hash, role, ativo, email, auth_user_id
+                   FROM app_user WHERE id = $id FOR UPDATE`
+                : `SELECT id, username, password_hash, role, ativo, email, auth_user_id
+                   FROM app_user WHERE id = $id`,
+            { id },
+        );
+        if (!row) return null;
+        const user = this.toAppUser(row);
+        return {
+            id: user.id,
+            username: user.username,
+            ativo: user.ativo,
+            passwordHash: user.passwordHash,
+            ...(user.email !== undefined ? { email: user.email } : {}),
+            ...(user.authUserId !== undefined ? { authUserId: user.authUserId } : {}),
+        };
+    };
+
+    /** Roda o passo de espelhamento com a linha já atualizada (a linha foi travada pela escrita). */
+    private rodarPasso = async (
+        tx: TransactionClient,
+        id: number,
+        antesDoCommit?: AntesDoCommit,
+    ): Promise<void> => {
+        if (!antesDoCommit) return;
+        const linha = await this.lerCredencial(tx, id, false);
+        if (linha) await antesDoCommit(tx, linha);
     };
 
     private toAppUser = (row: AppUserRow): AppUser => ({
