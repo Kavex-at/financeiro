@@ -4,7 +4,7 @@ Não implementados nesta feature. Origem indicada em cada bloco.
 
 ## Regis-Review 2026-09-30-1554 (`docs/regis-review/2026-09-30-1554/`, 0 P0, score 7,6)
 
-- [P1] availability-1 — Distinguir indisponibilidade de expiração na renovação de sessão do front (503/429/rede não devem abrir o modal; timeout no fetch do refresh)
+- [P1] (RESOLVIDO em fix(auth) availability-1, 2026-09-30) availability-1 — Distinguir indisponibilidade de expiração na renovação de sessão do front (503/429/rede não devem abrir o modal; timeout no fetch do refresh)
 - [P2] availability-3 — Formalizar e ensaiar o fallback de login para `AUTH_PROVIDER=local`
 - [P2] deployability-1 — Tornar o rollback de código à prova da armadilha D14
 - [P2] fault-tolerance-1 — Agendar o `sync-supabase-auth` e alertar em `AUTH_DIVERGENCIA`

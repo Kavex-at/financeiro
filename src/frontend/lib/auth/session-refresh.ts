@@ -29,8 +29,27 @@ export const onSessaoRenovada = (fn: OuvinteRenovacao): (() => void) => {
   }
 }
 
+/**
+ * Resultado de uma tentativa de renovação (Regis `availability-1`):
+ * - `renovada`: token novo gravado;
+ * - `recusada`: a sessão acabou de verdade (backend recusou com 400/401/403, não há refresh token,
+ *   resposta sem os campos, dev-bypass) → quem chama abre o modal de sessão expirada;
+ * - `indisponivel`: falha passageira (GoTrue fora → 503, limite → 429, outro 5xx, rede fora) → a
+ *   sessão continua; quem chama tenta de novo depois, sem mandar o usuário para o login.
+ */
+export type ResultadoRenovacao =
+  | { tipo: 'renovada'; token: string }
+  | { tipo: 'recusada' }
+  | { tipo: 'indisponivel' }
+
+const RECUSADA: ResultadoRenovacao = { tipo: 'recusada' }
+const INDISPONIVEL: ResultadoRenovacao = { tipo: 'indisponivel' }
+
+/** Status que dizem "a sessão acabou"; qualquer outra falha é passageira. */
+const STATUS_DEFINITIVOS = new Set([400, 401, 403])
+
 /** Renovação em voo nesta aba (single-flight). */
-let emVoo: Promise<string | null> | null = null
+let emVoo: Promise<ResultadoRenovacao> | null = null
 
 interface LocksApi {
   request: (nome: string, fn: () => Promise<unknown>) => Promise<unknown>
@@ -55,16 +74,16 @@ const locks = (): LocksApi | undefined =>
  * `tokenQueFalhou`: o token que acabou de levar 401 (o `apiFetch` passa); se o storage já tem
  * outro, é de outra aba e serve.
  */
-export const refreshSession = (tokenQueFalhou?: string): Promise<string | null> => {
-  if (isDevAuthBypass() || typeof window === 'undefined') return Promise.resolve(null)
+export const renovarSessao = (tokenQueFalhou?: string): Promise<ResultadoRenovacao> => {
+  if (isDevAuthBypass() || typeof window === 'undefined') return Promise.resolve(RECUSADA)
   if (emVoo) return emVoo
   const expiraAntes = lerExpiresAt()
-  const tarefa = async (): Promise<string | null> => {
+  const tarefa = async (): Promise<ResultadoRenovacao> => {
     const lock = locks()
     const resultado = lock
       ? await lock.request(LOCK_RENOVACAO, () => renovar(expiraAntes, tokenQueFalhou))
       : await Promise.resolve().then(() => renovar(expiraAntes, tokenQueFalhou))
-    return (resultado as string | null) ?? null
+    return (resultado as ResultadoRenovacao | undefined) ?? RECUSADA
   }
   emVoo = tarefa().finally(() => {
     emVoo = null
@@ -72,20 +91,26 @@ export const refreshSession = (tokenQueFalhou?: string): Promise<string | null> 
   return emVoo
 }
 
+/** Atalho: o token novo, ou `null` em qualquer falha (recusa ou indisponibilidade). */
+export const refreshSession = async (tokenQueFalhou?: string): Promise<string | null> => {
+  const r = await renovarSessao(tokenQueFalhou)
+  return r.tipo === 'renovada' ? r.token : null
+}
+
 const renovar = async (
   expiraAntes: number | null,
   tokenQueFalhou: string | undefined,
-): Promise<string | null> => {
+): Promise<ResultadoRenovacao> => {
   const atual = window.localStorage.getItem(TOKEN_STORAGE_KEY)
   const expiraAgora = lerExpiresAt()
   const outraAbaRenovou =
     atual !== null &&
     ((expiraAgora !== null && expiraAntes !== null && expiraAgora > expiraAntes) ||
       (tokenQueFalhou !== undefined && atual !== tokenQueFalhou))
-  if (outraAbaRenovou) return atual
+  if (outraAbaRenovou) return { tipo: 'renovada', token: atual }
 
   const refreshToken = window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)
-  if (!refreshToken) return null
+  if (!refreshToken) return RECUSADA
 
   try {
     const res = await fetch(`${API}/auth/refresh`, {
@@ -93,13 +118,14 @@ const renovar = async (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
     })
-    if (!res.ok) return null
+    if (!res.ok) return STATUS_DEFINITIVOS.has(res.status) ? RECUSADA : INDISPONIVEL
     const sessao = (await res.json()) as SessaoRecebida
-    if (!sessao?.token || !sessao.refreshToken) return null
+    if (!sessao?.token || !sessao.refreshToken) return RECUSADA
     salvarSessao(sessao)
     for (const ouvinte of ouvintes) ouvinte({ token: sessao.token, username: sessao.username })
-    return sessao.token
+    return { tipo: 'renovada', token: sessao.token }
   } catch {
-    return null
+    // Rede fora / CORS / timeout: passageiro — a sessão não acabou.
+    return INDISPONIVEL
   }
 }
