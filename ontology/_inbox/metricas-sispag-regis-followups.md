@@ -3,11 +3,10 @@
 Run: `docs/regis-review/2026-09-30-1459-metricas-sispag/` (REPORT.md + KANBAN.md). Overall **8.0**,
 **0 P0** (gate não reabre o loop), 0 P1, 8 P2, 5 P3 — 13 cards únicos. Nada abaixo foi implementado.
 
-## Decisão pendente do Yuri
+## Decidido
 
-- **security-1 (P2):** o valor e o % semanais do SISPAG saem para quem tem `metricas:ver`, mesmo sem
-  `sispag:ver`. São só agregados (sem título, fornecedor ou CNPJ). Aceitar por escrito na ADR-0056, ou
-  omitir as chaves `sispag_*` para quem não tem `sispag:ver`?
+- **security-1 (P2) — aceito pelo Yuri em 30/09**, registrado na ADR-0056 (D7): quem tem
+  `metricas:ver` vê o agregado semanal do SISPAG, mesmo sem `sispag:ver`. Card fechado.
 
 ## Primeira sprint pós-merge (S, P2)
 

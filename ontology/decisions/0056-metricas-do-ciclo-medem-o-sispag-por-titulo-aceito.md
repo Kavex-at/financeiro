@@ -55,6 +55,13 @@ medição pode ler a resposta do banco sem integração nova.
 - **D6 — Lote `CANCELADO` fica fora** (sai a `PG160901.REM` de 16/09). Execução `error` e dry-run
   também: o denominador são títulos que de fato foram ao banco.
 
+- **D7 — Audiência: quem tem `metricas:ver` vê o SISPAG, mesmo sem `sispag:ver`.** Aceito pelo Yuri em
+  30/09 (Regis-Review, card security-1). A rota `/metricas/ciclo` exige só `metricas:ver` (ADR-0053) e
+  as duas chaves `sispag_*` saem na mesma resposta, sem filtro por módulo. O que se expõe é agregado
+  semanal (% e R$ dos títulos aceitos); nenhum título, credor, CNPJ ou conta sai por esta rota. É o
+  mesmo tratamento que Permutas e Recebimentos já tinham. Se um dia a tela passar a mostrar dado por
+  título, a decisão volta a ser revista.
+
 ## Consequências
 
 - `remessa_execucao.encerrado_em` (migration 0070), carimbado por `settle` (1º encerramento, imóvel)
