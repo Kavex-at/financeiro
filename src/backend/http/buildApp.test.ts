@@ -158,7 +158,10 @@ describe('buildApp (modifiability-3)', () => {
         expect(await res.json()).toEqual({
             error: 'Sessão encerrada: seu acesso foi desativado ou não existe mais.',
         });
-        expect(inativo.resolver).toHaveBeenCalledWith('saiu@columbiabr.com');
+        expect(inativo.resolver).toHaveBeenCalledWith({
+            tipo: 'username',
+            valor: 'saiu@columbiabr.com',
+        });
         server.close();
     });
 

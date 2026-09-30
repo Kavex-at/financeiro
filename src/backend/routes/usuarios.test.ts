@@ -332,15 +332,15 @@ describe('PATCH /usuarios/:id/ativo', () => {
             pacote: [...PERMISSION_CATALOG],
             excecoes: [],
         });
-        await accessService.resolver('b@kavex.com');
-        await accessService.resolver('b@kavex.com');
+        await accessService.resolver({ tipo: 'username', valor: 'b@kavex.com' });
+        await accessService.resolver({ tipo: 'username', valor: 'b@kavex.com' });
         expect(accessRepo.findAccessBySub).toHaveBeenCalledTimes(1);
 
         repo.deactivateGuarded.mockResolvedValue(DEACTIVATE_RESULT.DEACTIVATED);
         expect((await send('PATCH', '/2/ativo', { ativo: false })).status).toBe(200);
 
         accessRepo.findAccessBySub.mockResolvedValue(null);
-        expect(await accessService.resolver('b@kavex.com')).toBeNull();
+        expect(await accessService.resolver({ tipo: 'username', valor: 'b@kavex.com' })).toBeNull();
         expect(accessRepo.findAccessBySub).toHaveBeenCalledTimes(2);
     });
 

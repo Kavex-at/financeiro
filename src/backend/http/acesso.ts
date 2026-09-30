@@ -10,13 +10,18 @@ import {
 } from '../domain/interface/auth/Permission.js';
 import { LOG_TYPE } from '../domain/interface/log/LogInterface.js';
 import LogService from '../domain/service/LogService.js';
-import AccessService, { type ResolvedAccess } from '../domain/service/auth/AccessService.js';
+import AccessService, {
+    type ChaveAcesso,
+    type ResolvedAccess,
+} from '../domain/service/auth/AccessService.js';
+import { z } from 'zod';
 
 /**
  * Autorização por permissão lida do banco (ADR-0053). Três peças, nesta ordem no `buildApp`:
  *
- *     buildAuthMiddleware  → quem é (token válido; `req.user.sub`)
- *     resolverAcesso       → existe, está ativo, e o que pode (`req.acesso`)
+ *     buildAuthMiddleware  → token válido de um dos emissores (`req.user.sub` + `emissor`)
+ *     resolverAcesso       → existe, está ativo, e o que pode (`req.acesso`); REESCREVE
+ *                            `req.user` para `{ sub: username, authUserId?, filiais? }` (I2)
  *     conexosIdentity      → com que sessão fala com o ERP
  *
  * e, em cada rota, UM guard: `exigirPermissao(p)` ou `somenteAutenticado()`. O token nunca carrega
@@ -79,12 +84,15 @@ const MENSAGEM = {
 
 /** O que o middleware precisa do `AccessService` — permite injetar um falso no teste. */
 interface AccessResolver {
-    resolver: (sub: string) => Promise<ResolvedAccess | null>;
+    resolver: (chave: ChaveAcesso) => Promise<ResolvedAccess | null>;
 }
 
 interface ErrorLogger {
     error: LogService['error'];
 }
+
+/** O `sub` de um token do Supabase é o UUID do `auth.users` (Zod antes de qualquer consulta). */
+const uuidSchema = z.string().uuid();
 
 export interface ResolverAcessoOptions {
     devBypass: boolean;
@@ -122,15 +130,27 @@ export const resolverAcesso = (options: ResolverAcessoOptions): RequestHandler =
             return;
         }
 
-        const sub = req.user?.sub;
-        if (!sub) {
+        const user = req.user;
+        const sub = user?.sub;
+        if (!user || !sub) {
             res.status(401).json({ error: MENSAGEM.NAO_AUTENTICADO });
             return;
         }
 
+        // Emissor `supabase`: o `sub` é o UUID do GoTrue e o dono é achado pelo vínculo
+        // `auth_user_id`. Emissor `app` (ou ausente): o `sub` é o username, como sempre.
+        const porVinculo = user.emissor === 'supabase';
+        if (porVinculo && !uuidSchema.safeParse(sub).success) {
+            res.status(401).json({ error: MENSAGEM.SESSAO_ENCERRADA });
+            return;
+        }
+        const chave: ChaveAcesso = porVinculo
+            ? { tipo: 'authUserId', valor: sub }
+            : { tipo: 'username', valor: sub };
+
         let acesso: ResolvedAccess | null;
         try {
-            acesso = await (await obterServico()).resolver(sub);
+            acesso = await (await obterServico()).resolver(chave);
         } catch (err: unknown) {
             try {
                 await obterLog().error({
@@ -150,11 +170,34 @@ export const resolverAcesso = (options: ResolverAcessoOptions): RequestHandler =
             return;
         }
 
+        if (!acesso && porVinculo) {
+            // I3: token válido do Supabase sem `app_user` vinculado. Nunca "cria na hora": recusa e
+            // avisa quem opera, porque o reparo é o job de sync.
+            try {
+                await obterLog().error({
+                    type: LOG_TYPE.AUTH_DIVERGENCIA,
+                    message:
+                        'divergência de vínculo: token do Supabase sem app_user correspondente; ' +
+                        'rode o sync-supabase-auth',
+                    data: { requestId: req.requestId, authUserId: sub },
+                });
+            } catch {
+                // best-effort, como acima.
+            }
+        }
+
         if (!acesso?.ativo) {
             res.status(401).json({ error: MENSAGEM.SESSAO_ENCERRADA });
             return;
         }
 
+        // I2: daqui em diante a identidade é o `username` do banco, nunca o UUID nem o e-mail do
+        // token. `email`/`role` do token não passam; `filiais` (claim de topo) é preservado.
+        req.user = {
+            sub: acesso.username,
+            ...(acesso.authUserId !== undefined ? { authUserId: acesso.authUserId } : {}),
+            ...(user.filiais !== undefined ? { filiais: user.filiais } : {}),
+        };
         req.acesso = { userId: acesso.userId, papel: acesso.papel, permissoes: acesso.permissoes };
         next();
     };

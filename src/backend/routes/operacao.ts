@@ -125,7 +125,7 @@ router.post(
             res.status(400).json({ error: 'invalid id', details: parsed.error.flatten() });
             return;
         }
-        const por = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const por = req.user?.sub ?? 'unknown';
         await container.resolve(AlertaRepository).reconhecer(parsed.data.id, por);
         res.json({ ok: true });
     }),

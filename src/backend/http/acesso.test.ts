@@ -16,6 +16,7 @@ import {
     resolverAcesso,
     somenteAutenticado,
 } from './acesso.js';
+import type { AuthUser } from './auth.js';
 import { loadAuthEnv } from './authEnv.js';
 
 jest.mock('../domain/appContainer.js', () => ({
@@ -33,7 +34,7 @@ const resolvido = (over: Partial<ResolvedAccess> = {}): ResolvedAccess => ({
 
 interface Montagem {
     devBypass?: boolean;
-    user?: { sub: string };
+    user?: AuthUser;
     resolver?: jest.Mock;
     rota?: express.RequestHandler[];
 }
@@ -41,7 +42,10 @@ interface Montagem {
 /** App mínimo: [auth falso] → resolverAcesso → [guards] → handler que ecoa `req.acesso`. */
 const subir = async (m: Montagem) => {
     const resolver = m.resolver ?? jest.fn().mockResolvedValue(resolvido());
-    const log = { error: jest.fn().mockResolvedValue(undefined) };
+    const log = {
+        error: jest.fn().mockResolvedValue(undefined),
+        warn: jest.fn().mockResolvedValue(undefined),
+    };
     const app = express();
     app.use((req: Request, _res: Response, next: NextFunction) => {
         if (m.user) req.user = m.user;
@@ -83,7 +87,7 @@ describe('resolverAcesso', () => {
         const out = await get();
         server.close();
         expect(out.status).toBe(200);
-        expect(resolver).toHaveBeenCalledWith('maria@columbiabr.com');
+        expect(resolver).toHaveBeenCalledWith({ tipo: 'username', valor: 'maria@columbiabr.com' });
         expect(out.body).toMatchObject({
             userId: 7,
             papel: { id: 1, nome: 'Administrador' },
@@ -168,6 +172,83 @@ describe('resolverAcesso', () => {
         expect(() =>
             loadAuthEnv({ DEV_AUTH_BYPASS: 'true', environment: 'prd' } as NodeJS.ProcessEnv),
         ).toThrow(/DEV_AUTH_BYPASS/);
+    });
+});
+
+describe('resolverAcesso — identidade por emissor (ADR-0054, I2/I3)', () => {
+    const UUID = '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60';
+
+    it('emissor app: busca por username e reescreve req.user = { sub: username }', async () => {
+        const { server, get, resolver } = await subir({
+            user: { sub: 'Maria@Columbiabr.com', emissor: 'app', role: 'admin', email: 'x@y' },
+            resolver: jest.fn().mockResolvedValue(resolvido({ username: 'maria@columbiabr.com' })),
+        });
+        const out = await get();
+        server.close();
+        expect(resolver).toHaveBeenCalledWith({ tipo: 'username', valor: 'Maria@Columbiabr.com' });
+        expect(out.body.user).toEqual({ sub: 'maria@columbiabr.com' });
+    });
+
+    it('emissor supabase: busca por auth_user_id; sub vira o username, sem email/role/UUID no sub', async () => {
+        const { server, get, resolver } = await subir({
+            user: { sub: UUID, emissor: 'supabase', filiais: [1, 3] },
+            resolver: jest
+                .fn()
+                .mockResolvedValue(resolvido({ username: 'fulano', authUserId: UUID })),
+        });
+        const out = await get();
+        server.close();
+        expect(out.status).toBe(200);
+        expect(resolver).toHaveBeenCalledWith({ tipo: 'authUserId', valor: UUID });
+        expect(out.body.user).toEqual({ sub: 'fulano', authUserId: UUID, filiais: [1, 3] });
+    });
+
+    it('token supabase sem app_user vinculado: 401 + LogService.error de divergência (nunca cria)', async () => {
+        const { server, get, log } = await subir({
+            user: { sub: UUID, emissor: 'supabase' },
+            resolver: jest.fn().mockResolvedValue(null),
+        });
+        const out = await get();
+        server.close();
+        expect(out.status).toBe(401);
+        expect(out.body.error).toMatch(/Sessão encerrada/);
+        expect(log.error).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'AUTH_DIVERGENCIA',
+                message: expect.stringMatching(/diverg[êe]ncia de v[íi]nculo.*sync-supabase-auth/),
+                data: expect.objectContaining({ authUserId: UUID }),
+            }),
+        );
+    });
+
+    it('token supabase com sub que não é UUID: 401 sem consultar o banco', async () => {
+        const { server, get, resolver } = await subir({
+            user: { sub: 'nao-e-uuid', emissor: 'supabase' },
+        });
+        const out = await get();
+        server.close();
+        expect(out.status).toBe(401);
+        expect(resolver).not.toHaveBeenCalled();
+    });
+
+    it('inativo pelo caminho supabase: 401', async () => {
+        const { server, get } = await subir({
+            user: { sub: UUID, emissor: 'supabase' },
+            resolver: jest.fn().mockResolvedValue(resolvido({ ativo: false, authUserId: UUID })),
+        });
+        const out = await get();
+        server.close();
+        expect(out.status).toBe(401);
+    });
+
+    it('banco fora pelo caminho supabase: 503 fail-closed', async () => {
+        const { server, get } = await subir({
+            user: { sub: UUID, emissor: 'supabase' },
+            resolver: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+        });
+        const out = await get();
+        server.close();
+        expect(out.status).toBe(503);
     });
 });
 

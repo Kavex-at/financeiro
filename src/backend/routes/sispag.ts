@@ -105,7 +105,7 @@ router.get(
 // ===================================================== Fatia 2 — Lotes candidatos
 // Montagem assistida + gate. Estado LOCAL — NENHUMA escrita no Conexos (I1).
 
-const ator = (req: Request): string => req.user?.sub ?? req.user?.email ?? 'unknown';
+const ator = (req: Request): string => req.user?.sub ?? 'unknown';
 
 /**
  * Toda resposta com lote passa por aqui (ADR-0054 I10h): o destino digitado sai só mascarado.
