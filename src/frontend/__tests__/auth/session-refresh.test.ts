@@ -107,6 +107,16 @@ describe('refreshSession', () => {
     expect(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBe('refresh-velho')
   })
 
+  it('a chamada de renovação leva um timeout (AbortSignal); abortar conta como indisponivel', async () => {
+    const { renovarSessao, TIMEOUT_RENOVACAO_MS } = await import('@/lib/auth/session-refresh')
+    expect(TIMEOUT_RENOVACAO_MS).toBe(10_000)
+    fetchMock.mockRejectedValueOnce(new DOMException('The operation was aborted.', 'TimeoutError'))
+    expect(await renovarSessao()).toEqual({ tipo: 'indisponivel' })
+    if (typeof AbortSignal.timeout === 'function') {
+      expect(fetchMock.mock.calls[0][1].signal).toBeDefined()
+    }
+  })
+
   it('renovarSessao: rede fora = indisponivel; sem refresh token = recusada; sucesso = renovada', async () => {
     const { renovarSessao } = await import('@/lib/auth/session-refresh')
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))

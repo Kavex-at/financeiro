@@ -15,6 +15,9 @@ const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace
 /** Renovação proativa: quanto antes do `expiresAt` o `AuthProvider` renova (≈ 5 min). */
 export const RENOVAR_ANTES_MS = 5 * 60_000
 
+/** Tempo máximo de uma chamada a `/auth/refresh` antes de contar como indisponível. */
+export const TIMEOUT_RENOVACAO_MS = 10_000
+
 /** Nome do lock (Web Locks API) que serializa a renovação entre as abas. */
 const LOCK_RENOVACAO = 'financeiro-auth-refresh'
 
@@ -117,6 +120,11 @@ const renovar = async (
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
+      // Uma renovação pendurada seguraria a aba em "renovando" para sempre: 10 s e vira
+      // `indisponivel` (o abort cai no catch abaixo).
+      ...(typeof AbortSignal.timeout === 'function'
+        ? { signal: AbortSignal.timeout(TIMEOUT_RENOVACAO_MS) }
+        : {}),
     })
     if (!res.ok) return STATUS_DEFINITIVOS.has(res.status) ? RECUSADA : INDISPONIVEL
     const sessao = (await res.json()) as SessaoRecebida
