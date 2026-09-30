@@ -13,6 +13,15 @@ export const LOG_TYPE = {
     BUSINESS_WARN: 'BUSINESS_WARN',
     CONEXOS_ERROR: 'CONEXOS_ERROR',
     CONEXOS_DEBUG: 'CONEXOS_DEBUG',
+    /**
+     * Supabase Auth (ADR-0054). `AUTH_DIVERGENCIA`: o `app_user` e o GoTrue discordam (vínculo sem
+     * usuário, banido com `ativo = true`, commit que falhou depois do GoTrue, desativado sem ban) —
+     * o reparo é o job `sync-supabase-auth`. `AUTH_INDISPONIVEL`: o GoTrue não respondeu.
+     * `AUTH_SESSAO`: login, renovação e logout.
+     */
+    AUTH_DIVERGENCIA: 'AUTH_DIVERGENCIA',
+    AUTH_INDISPONIVEL: 'AUTH_INDISPONIVEL',
+    AUTH_SESSAO: 'AUTH_SESSAO',
 } as const;
 
 export type LogType =
