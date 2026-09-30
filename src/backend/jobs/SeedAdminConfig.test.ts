@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import AdminRoleMissingError from '../domain/errors/AdminRoleMissingError.js';
+import SupabaseAuthNotConfiguredError from '../domain/errors/SupabaseAuthNotConfiguredError.js';
+import SupabaseAuthUnavailableError from '../domain/errors/SupabaseAuthUnavailableError.js';
 import SeedAdminConfig, { MissingSeedAdminEnvError } from './SeedAdminConfig.js';
 
 const SENHA = 'uma-senha-forte';
@@ -80,9 +82,27 @@ describe('SeedAdminConfig.mensagemDeFalha (ADR-0053)', () => {
         expect(config.mensagemDeFalha('x')).toBe('x');
     });
 
-    it('o job grava o papel via upsertAdmin e sai com 1 na falha, pela mensagem traduzida', () => {
+    it('Supabase Auth fora: diz que o admin ficou no banco e manda rodar de novo', () => {
+        const msg = config.mensagemDeFalha(new SupabaseAuthUnavailableError('x', 'unreachable'));
+        expect(msg).toMatch(/Supabase Auth indispon[íi]vel/);
+        expect(msg).toMatch(/gravado no banco/);
+        expect(msg).toMatch(/rode o seed de novo/i);
+    });
+
+    it('modo supabase sem a API admin: a mensagem nomeia as variáveis', () => {
+        const msg = config.mensagemDeFalha(new SupabaseAuthNotConfiguredError('seed-admin'));
+        expect(msg).toMatch(/SUPABASE_URL/);
+        expect(msg).toMatch(/SUPABASE_SECRET_KEY/);
+    });
+
+    it('o job grava o papel via AdminSeeder (upsertAdmin) e sai com 1 na falha, pela mensagem traduzida', () => {
         const fonte = readFileSync(path.join(__dirname, 'seed-admin.ts'), 'utf8');
-        expect(fonte).toContain('upsertAdmin(');
+        const seeder = readFileSync(
+            path.join(__dirname, '..', 'domain', 'service', 'auth', 'AdminSeeder.ts'),
+            'utf8',
+        );
+        expect(fonte).toContain('.semear(');
+        expect(seeder).toContain('upsertAdmin(');
         expect(fonte).toContain('mensagemDeFalha(');
         expect(fonte).toContain('process.exit(1)');
         expect(fonte).toMatch(/papel "Administrador"/);

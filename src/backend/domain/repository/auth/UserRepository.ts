@@ -123,7 +123,7 @@ export default class UserRepository {
     /** Busca um usuário pelo `username` EXATO. `null` quando não existe. */
     public findByUsername = async (username: string): Promise<AppUser | null> => {
         const row = await this.databaseClient.selectFirst<AppUserRow>(
-            `SELECT id, username, password_hash, role, ativo
+            `SELECT id, username, password_hash, role, ativo, email, auth_user_id
              FROM app_user
              WHERE username = $username`,
             { username },
@@ -364,6 +364,17 @@ export default class UserRepository {
             id,
             authUserId,
         });
+    };
+
+    /**
+     * Grava o vínculo fora de uma escrita de credencial (seed e sync, ADR-0054). O índice único
+     * parcial recusa (23505) um UUID que já pertence a outro usuário (I3).
+     */
+    public linkAuthUser = async (id: number, authUserId: string): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE app_user SET auth_user_id = $authUserId WHERE id = $id`,
+            { id, authUserId },
+        );
     };
 
     /** `id` do `app_user` que já aponta para este usuário do Supabase Auth, se houver. */

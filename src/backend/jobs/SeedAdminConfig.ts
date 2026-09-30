@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import AdminRoleMissingError from '../domain/errors/AdminRoleMissingError.js';
+import SupabaseAuthRejectedError from '../domain/errors/SupabaseAuthRejectedError.js';
+import SupabaseAuthUnavailableError from '../domain/errors/SupabaseAuthUnavailableError.js';
 
 /** Credenciais do admin semeado, já validadas. */
 export interface SeedAdminCredentials {
@@ -58,6 +60,15 @@ export default class SeedAdminConfig {
             return (
                 'o papel "Administrador" não existe neste banco: aplique as migrations ' +
                 '(npm run migrate) antes de rodar o seed.'
+            );
+        }
+        if (
+            error instanceof SupabaseAuthUnavailableError ||
+            error instanceof SupabaseAuthRejectedError
+        ) {
+            return (
+                `Supabase Auth indisponível (${error.message}): o admin ficou gravado no banco, ` +
+                'mas não no Supabase Auth. Rode o seed de novo.'
             );
         }
         return error instanceof Error ? error.message : String(error);
