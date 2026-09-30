@@ -871,6 +871,14 @@ describe('UserRepository — passo antes do commit (R6)', () => {
         );
     });
 
+    it('linkAuthUser: fora de transação, parametrizado', async () => {
+        const db = buildDb();
+        await repoOf(db).linkAuthUser(4, UUID_VINCULO);
+        const [sql, params] = (db.update as jest.Mock).mock.calls[0];
+        expect(sql).toContain('SET auth_user_id = $authUserId WHERE id = $id');
+        expect(params).toEqual({ id: 4, authUserId: UUID_VINCULO });
+    });
+
     it('setAuthUserId e findIdByAuthUserId: parametrizados, na transação recebida', async () => {
         const { db, tx } = bancoComOrdem({ id: 4 });
         const repo = repoOf(db);
