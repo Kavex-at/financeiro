@@ -1,17 +1,18 @@
 /**
  * `apiFetch` em 401 (ADR-0056): UMA renovação e UM novo envio com o `Authorization` trocado. Se a
- * renovação falha ou o reenvio volta 401, cai no comportamento de antes (modal + erro).
+ * renovação é RECUSADA ou o reenvio volta 401, cai no comportamento de antes (modal + erro). Se é
+ * só INDISPONÍVEL (503/429/rede), erro sem modal (Regis `availability-1`).
  */
 const refreshSessionMock = jest.fn()
 jest.mock('@/lib/auth/session-refresh', () => ({
-  refreshSession: (...args: unknown[]) => refreshSessionMock(...args),
+  renovarSessao: (...args: unknown[]) => refreshSessionMock(...args),
 }))
 const emitMock = jest.fn()
 jest.mock('@/lib/auth/session-events', () => ({
   emitSessionExpired: () => emitMock(),
 }))
 
-import { apiFetch, SessionExpiredError } from '@/lib/http'
+import { AuthUnavailableError, apiFetch, SessionExpiredError } from '@/lib/http'
 
 const resposta = (status: number) => ({ status, ok: status < 400 }) as Response
 
@@ -33,7 +34,7 @@ describe('apiFetch — renovação em 401', () => {
 
   it('401 → renova UMA vez e reenvia UMA vez com o Authorization novo (substituindo o antigo)', async () => {
     fetchMock.mockResolvedValueOnce(resposta(401)).mockResolvedValueOnce(resposta(200))
-    refreshSessionMock.mockResolvedValue('token-novo')
+    refreshSessionMock.mockResolvedValue({ tipo: 'renovada', token: 'token-novo' })
 
     const res = await apiFetch('/x', {
       method: 'POST',
@@ -53,9 +54,9 @@ describe('apiFetch — renovação em 401', () => {
     expect(emitMock).not.toHaveBeenCalled()
   })
 
-  it('renovação falha: modal + SessionExpiredError (comportamento de hoje)', async () => {
+  it('renovação RECUSADA: modal + SessionExpiredError (comportamento de hoje)', async () => {
     fetchMock.mockResolvedValue(resposta(401))
-    refreshSessionMock.mockResolvedValue(null)
+    refreshSessionMock.mockResolvedValue({ tipo: 'recusada' })
     await expect(apiFetch('/x', { headers: { Authorization: 'Bearer t' } })).rejects.toBeInstanceOf(
       SessionExpiredError,
     )
@@ -63,9 +64,19 @@ describe('apiFetch — renovação em 401', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('renovação só INDISPONÍVEL (503/429/rede): AuthUnavailableError, SEM modal e sem reenvio', async () => {
+    fetchMock.mockResolvedValue(resposta(401))
+    refreshSessionMock.mockResolvedValue({ tipo: 'indisponivel' })
+    const erro = await apiFetch('/x', { headers: { Authorization: 'Bearer t' } }).catch((e) => e)
+    expect(erro).toBeInstanceOf(AuthUnavailableError)
+    expect((erro as Error).message).toMatch(/instável/)
+    expect(emitMock).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('segundo 401 depois de renovar: modal + erro, sem nova renovação', async () => {
     fetchMock.mockResolvedValue(resposta(401))
-    refreshSessionMock.mockResolvedValue('token-novo')
+    refreshSessionMock.mockResolvedValue({ tipo: 'renovada', token: 'token-novo' })
     await expect(apiFetch('/x', { headers: { Authorization: 'Bearer t' } })).rejects.toBeInstanceOf(
       SessionExpiredError,
     )
@@ -81,11 +92,11 @@ describe('apiFetch — renovação em 401', () => {
         : resposta(401),
     )
     let chamadas = 0
-    let promessa: Promise<string> | null = null
+    let promessa: Promise<unknown> | null = null
     refreshSessionMock.mockImplementation(() => {
       if (!promessa) {
         chamadas++
-        promessa = new Promise((r) => setTimeout(() => r('novo'), 5))
+        promessa = new Promise((r) => setTimeout(() => r({ tipo: 'renovada', token: 'novo' }), 5))
       }
       return promessa
     })

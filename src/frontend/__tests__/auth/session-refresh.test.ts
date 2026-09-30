@@ -91,6 +91,32 @@ describe('refreshSession', () => {
     expect(await refreshSession()).toBeNull()
   })
 
+  it.each([
+    [503, 'indisponivel'],
+    [429, 'indisponivel'],
+    [500, 'indisponivel'],
+    [502, 'indisponivel'],
+    [400, 'recusada'],
+    [401, 'recusada'],
+    [403, 'recusada'],
+  ])('renovarSessao classifica %s como %s (availability-1); nada gravado', async (status, tipo) => {
+    fetchMock.mockResolvedValue({ ok: false, status, json: async () => ({}) })
+    const { renovarSessao } = await import('@/lib/auth/session-refresh')
+    expect(await renovarSessao()).toEqual({ tipo })
+    expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBe('access-velho')
+    expect(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBe('refresh-velho')
+  })
+
+  it('renovarSessao: rede fora = indisponivel; sem refresh token = recusada; sucesso = renovada', async () => {
+    const { renovarSessao } = await import('@/lib/auth/session-refresh')
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    expect(await renovarSessao()).toEqual({ tipo: 'indisponivel' })
+    fetchMock.mockResolvedValueOnce(okJson(RESPOSTA))
+    expect(await renovarSessao()).toEqual({ tipo: 'renovada', token: 'access-novo' })
+    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY)
+    expect(await renovarSessao()).toEqual({ tipo: 'recusada' })
+  })
+
   it('dev-bypass: nenhuma renovação, nenhum storage novo', async () => {
     process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS = 'true'
     localStorage.clear()

@@ -8,9 +8,14 @@ import { act, render, screen } from '@testing-library/react'
 import { useEffect } from 'react'
 
 const refreshSessionMock = jest.fn()
+const renovarSessaoMock = jest.fn()
 jest.mock('@/lib/auth/session-refresh', () => {
   const real = jest.requireActual('@/lib/auth/session-refresh')
-  return { ...real, refreshSession: (...a: unknown[]) => refreshSessionMock(...a) }
+  return {
+    ...real,
+    refreshSession: (...a: unknown[]) => refreshSessionMock(...a),
+    renovarSessao: (...a: unknown[]) => renovarSessaoMock(...a),
+  }
 })
 jest.mock('@/lib/usuarios', () => ({ fetchConexosStatus: jest.fn().mockResolvedValue('ok') }))
 
@@ -61,6 +66,7 @@ describe('AuthProvider — sessão renovável', () => {
     localStorage.clear()
     fetchMock.mockReset()
     refreshSessionMock.mockReset()
+    renovarSessaoMock.mockReset()
     global.fetch = fetchMock as unknown as typeof fetch
   })
 
@@ -114,13 +120,60 @@ describe('AuthProvider — sessão renovável', () => {
     expect(refreshSessionMock).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('expirada')).toHaveTextContent('false')
 
-    // No exp de fato, tenta de novo; falhando, aí sim o modal.
+    // No exp de fato, tenta de novo; RECUSADA, aí sim o modal.
+    renovarSessaoMock.mockResolvedValue({ tipo: 'recusada' })
     await act(async () => {
       jest.advanceTimersByTime(5 * 60_000)
     })
-    expect(refreshSessionMock).toHaveBeenCalledTimes(2)
+    expect(renovarSessaoMock).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('expirada')).toHaveTextContent('true')
     expect(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
+  })
+
+  it('no exp com o serviço INDISPONÍVEL: sem modal, tenta de novo em 15 s, 30 s, 60 s; modal só na recusa (availability-1)', async () => {
+    const exp = AGORA / 1000 + 600
+    localStorage.setItem(TOKEN_STORAGE_KEY, jwt(exp))
+    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'rt')
+    localStorage.setItem(EXPIRES_AT_STORAGE_KEY, String(exp))
+    localStorage.setItem(USERNAME_STORAGE_KEY, 'fulano')
+    refreshSessionMock.mockResolvedValue(null)
+    renovarSessaoMock.mockResolvedValue({ tipo: 'indisponivel' })
+    montar()
+
+    await act(async () => {
+      jest.advanceTimersByTime(600_000) // o exp
+    })
+    expect(renovarSessaoMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('expirada')).toHaveTextContent('false')
+
+    await act(async () => {
+      jest.advanceTimersByTime(15_000 - 1)
+    })
+    expect(renovarSessaoMock).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      jest.advanceTimersByTime(1)
+    })
+    expect(renovarSessaoMock).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      jest.advanceTimersByTime(30_000)
+    })
+    expect(renovarSessaoMock).toHaveBeenCalledTimes(3)
+    await act(async () => {
+      jest.advanceTimersByTime(60_000)
+    })
+    expect(renovarSessaoMock).toHaveBeenCalledTimes(4)
+    await act(async () => {
+      jest.advanceTimersByTime(60_000) // teto: continua a cada 60 s
+    })
+    expect(renovarSessaoMock).toHaveBeenCalledTimes(5)
+    expect(screen.getByTestId('expirada')).toHaveTextContent('false')
+    expect(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBe('rt')
+
+    renovarSessaoMock.mockResolvedValue({ tipo: 'recusada' })
+    await act(async () => {
+      jest.advanceTimersByTime(60_000)
+    })
+    expect(screen.getByTestId('expirada')).toHaveTextContent('true')
   })
 
   it('evento storage: token renovado por outra aba é adotado; logout em outra aba desloga esta', async () => {

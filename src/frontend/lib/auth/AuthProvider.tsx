@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { type ConexosStatus, fetchConexosStatus } from '../usuarios'
 import { assertAuthEnv, isDevAuthBypass } from './env'
 import { registerSessionExpiredHandler } from './session-events'
-import { onSessaoRenovada, RENOVAR_ANTES_MS, refreshSession } from './session-refresh'
+import { onSessaoRenovada, RENOVAR_ANTES_MS, refreshSession, renovarSessao } from './session-refresh'
 import {
   decodeJwtExp,
   limparSessao,
@@ -22,6 +22,10 @@ assertAuthEnv()
 
 /** Backend API base URL (same default as `lib/api.ts`). */
 const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '')
+
+/** Renovação no `exp` com o serviço de auth indisponível: 15 s, 30 s, depois a cada 60 s. */
+const RETENTAR_MIN_MS = 15_000
+const RETENTAR_MAX_MS = 60_000
 
 /**
  * Authentication context for the app. Holds a backend-issued JWT in
@@ -163,8 +167,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [devBypass])
 
   // Caminho proativo. Com refresh token (sessão Supabase): renova ~5 min antes do `exp` sem nada
-  // visível — falhar aqui NÃO abre o modal —, e no `exp` tenta de novo; só se essa última falhar
-  // o modal aparece. Sem refresh token (backend antigo ou modo local): o modal no `exp`, como antes.
+  // visível — falhar aqui NÃO abre o modal —, e no `exp` tenta de novo. No `exp`, o modal só abre
+  // se a renovação for RECUSADA (sessão acabou de verdade); se o serviço estiver só indisponível
+  // (503/429/rede), tenta de novo com espera crescente (15 s, 30 s, depois a cada 60 s) sem tirar
+  // ninguém da tela (Regis `availability-1`). Sem refresh token (backend antigo ou modo local): o
+  // modal no `exp`, como antes.
   useEffect(() => {
     if (devBypass || !token) return
     const exp = lerExpiresAt() ?? decodeJwtExp(token)
@@ -177,13 +184,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       timers.push(
         setTimeout(() => void refreshSession(token), Math.max(0, msAteExp - RENOVAR_ANTES_MS)),
       )
-      timers.push(
-        setTimeout(() => {
-          void refreshSession(token).then((novo) => {
-            if (!novo) notifySessionExpired()
-          })
-        }, Math.max(0, msAteExp)),
-      )
+      const tentarNoExp = (esperaMs: number) => {
+        timers.push(
+          setTimeout(() => {
+            void renovarSessao(token).then((r) => {
+              if (r.tipo === 'recusada') notifySessionExpired()
+              else if (r.tipo === 'indisponivel') {
+                tentarNoExp(Math.min(esperaMs === 0 ? RETENTAR_MIN_MS : esperaMs * 2, RETENTAR_MAX_MS))
+              }
+              // 'renovada': o ouvinte troca o token e este efeito é refeito com os timers novos.
+            })
+          }, esperaMs === 0 ? Math.max(0, msAteExp) : esperaMs),
+        )
+      }
+      tentarNoExp(0)
     } else {
       timers.push(setTimeout(notifySessionExpired, Math.max(0, msAteExp)))
     }
