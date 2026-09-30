@@ -25,6 +25,10 @@ amends_decisions: [0011, 0042]
 
 # ADR 0053: permissões por módulo no banco, nunca no token
 
+> **Continuada pela ADR-0056 (2026-09-30):** com o Supabase Auth, a chave de lookup muda só na
+> metade `token → app_user` (`app_user.auth_user_id` para o emissor `supabase`); as permissões
+> continuam no banco, lidas a cada requisição (I1).
+
 **Cliente:** Columbia Trading · **Entrega:** Kavex · **Branch:** `feat/auth-permissoes-modulo`.
 Passo 2 de 3 do plano de auth da ADR-0051 (e-mails reais → **permissões no banco** → Supabase Auth).
 `entity_changed = false`: papéis e permissões são infraestrutura de acesso, na mesma prateleira do
