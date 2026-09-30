@@ -1,5 +1,28 @@
 # Columbia Financeiro — Changelog
 
+## v0.48.0 (2026-09-30) — login pelo Supabase Auth, pronto para o corte (passo 3 de 3 da transição de acesso)
+
+- **Nada muda no merge.** `AUTH_PROVIDER` nasce `local`: o login continua o de hoje. A troca para o
+  Supabase Auth é uma mudança de configuração, feita pelo roteiro de corte de `DEPLOY.md` §6, e
+  volta por configuração se preciso.
+- **Com `AUTH_PROVIDER=supabase`, o login passa pelo Supabase Auth do mesmo projeto do banco**, com
+  a mesma senha de cada um (o hash bcrypt é importado como está). O `POST /auth/login` continua com
+  o mesmo contrato (o report de ciclo não muda), agora com renovação automática da sessão
+  (`/auth/refresh`) e "Sair" que encerra a sessão de verdade (`/auth/logout`). Entrar pelo usuário
+  antigo continua valendo.
+- **A trilha de auditoria continua gravando o usuário**, nunca o e-mail nem o id do Supabase; a
+  sessão do Conexos por usuário segue igual.
+- **Criar usuário, redefinir senha, trocar e-mail e desativar** passam a valer também no Supabase
+  Auth. Desativar nunca fica bloqueado por pane do Supabase: corta pelo nosso banco em até 30 s e o
+  sync aplica o bloqueio depois.
+- **Novo job `sync-supabase-auth`** (simulação por padrão) importa os usuários ativos e repara
+  divergências. **Limite de tentativas** próprio em login e renovação.
+- **Migration `0070`:** coluna `app_user.auth_user_id` e remoção de privilégios que o Supabase dá
+  por padrão a `anon`/`authenticated` (`TRUNCATE`, `REFERENCES`, `TRIGGER`).
+- Sai o aviso de transição para e-mail no login (`AUTH_TRANSICAO_EMAIL_BANNER`).
+- **Nunca definir `SUPABASE_URL` no Render com um backend anterior a esta versão**: ele recusaria
+  todos os logins atuais. Ver `DEPLOY.md` §6.
+
 ## v0.47.0 (2026-09-30) — o SISPAG entra nas métricas do ciclo
 
 - **Nova frente em Métricas: pagamentos aceitos pelo banco.** Para cada semana, quantos títulos das
