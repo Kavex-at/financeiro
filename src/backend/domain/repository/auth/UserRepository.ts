@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import { z } from 'zod';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import AdminRoleMissingError from '../../errors/AdminRoleMissingError.js';
 import EmailAlreadyInUseError from '../../errors/EmailAlreadyInUseError.js';
@@ -14,6 +15,8 @@ export interface AppUser {
     ativo: boolean;
     /** E-mail de login (ADR-0051). Ausente = pendente de cadastro pelo admin. */
     email?: string;
+    /** `auth.users.id` do usuário no Supabase Auth (ADR-0054). Ausente = ainda sem vínculo. */
+    authUserId?: string;
 }
 
 /** Usuário para exibição/gestão (SEM o hash de senha — nunca sai do backend). */
@@ -65,6 +68,9 @@ export const REACTIVATE_RESULT = {
 } as const;
 export type ReactivateResult = (typeof REACTIVATE_RESULT)[keyof typeof REACTIVATE_RESULT];
 
+/** `auth.users.id` é UUID; qualquer outra coisa nem chega ao SQL. */
+const uuidSchema = z.string().uuid();
+
 /** SQLSTATE de violação de unicidade (`uq_app_user_email_lower` / `uq_app_user_username_lower`). */
 const UNIQUE_VIOLATION = '23505';
 
@@ -78,6 +84,7 @@ interface AppUserRow {
     role: string;
     ativo: boolean;
     email?: string | null;
+    auth_user_id?: string | null;
 }
 
 /**
@@ -114,12 +121,27 @@ export default class UserRepository {
      */
     public findByLoginIdentifier = async (identifier: string): Promise<AppUser[]> => {
         const rows: AppUserRow[] = await this.databaseClient.selectMany(
-            `SELECT id, username, password_hash, role, ativo, email
+            `SELECT id, username, password_hash, role, ativo, email, auth_user_id
              FROM app_user
              WHERE lower(username) = $identifier OR lower(email) = $identifier`,
             { identifier: identifier.toLowerCase() },
         );
         return rows.map(this.toAppUser);
+    };
+
+    /**
+     * O usuário vinculado a um usuário do Supabase Auth (`auth_user_id`, ADR-0054). UUID malformado
+     * = `null` sem consultar o banco. Não filtra `ativo`: quem chama decide.
+     */
+    public findByAuthUserId = async (authUserId: string): Promise<AppUser | null> => {
+        if (!uuidSchema.safeParse(authUserId).success) return null;
+        const row = await this.databaseClient.selectFirst<AppUserRow>(
+            `SELECT id, username, password_hash, role, ativo, email, auth_user_id
+             FROM app_user
+             WHERE auth_user_id = $authUserId`,
+            { authUserId },
+        );
+        return row ? this.toAppUser(row) : null;
     };
 
     /** Lista todos os usuários (sem o hash) — mais recentes primeiro. Gestão pela UI. */
@@ -404,6 +426,7 @@ export default class UserRepository {
         role: String(row.role),
         ativo: Boolean(row.ativo),
         ...(row.email != null ? { email: String(row.email) } : {}),
+        ...(row.auth_user_id != null ? { authUserId: String(row.auth_user_id) } : {}),
     });
 
     /** `app_role` inexistente é a 0066 não aplicada; qualquer outro erro sobe como está. */

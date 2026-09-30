@@ -123,6 +123,14 @@ describe('AuthService.login', () => {
         expect(out).toMatchObject({ username: 'admin', role: 'admin', email: 'ti@columbiabr.com' });
     });
 
+    it('modo local: resposta no formato de hoje, sem refreshToken nem expiresAt (D10)', async () => {
+        const { service } = build([usuario()]);
+        const out = await service.login({ username: 'admin', password: SENHA });
+        expect(out).not.toHaveProperty('refreshToken');
+        expect(out).not.toHaveProperty('expiresAt');
+        expect(Object.keys(out ?? {}).sort()).toEqual(['email', 'role', 'token', 'username']);
+    });
+
     it('sem e-mail cadastrado, a resposta omite a chave email', async () => {
         const { service } = build([usuario({ email: undefined })]);
         const out = await service.login({ username: 'admin', password: SENHA });

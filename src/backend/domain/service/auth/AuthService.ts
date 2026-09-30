@@ -15,9 +15,16 @@ export interface LoginInput {
     password: string;
 }
 
-/** Resultado de um login bem-sucedido. */
+/**
+ * Resultado de um login bem-sucedido (D10). Modo `local`: `{ token, username, role, email? }`, o
+ * formato de hoje. Modo `supabase` (e `/auth/refresh`): também `refreshToken` e `expiresAt`.
+ */
 export interface LoginResult {
     token: string;
+    /** Só no modo `supabase`: o front o usa para renovar a sessão. */
+    refreshToken?: string;
+    /** Só no modo `supabase`: expiração do `token`, em segundos desde a época. */
+    expiresAt?: number;
     /** `username` CANÔNICO do banco (o `sub`), nunca o identificador digitado. */
     username: string;
     role: string;

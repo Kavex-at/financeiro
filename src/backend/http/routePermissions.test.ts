@@ -14,6 +14,7 @@ import {
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import type { ResolvedAccess } from '../domain/service/auth/AccessService.js';
 import conexosRouter from '../routes/conexos.js';
+import { buildAuthRouter } from '../routes/auth.js';
 import meRouter from '../routes/me.js';
 import metricasRouter from '../routes/metricas.js';
 import operacaoRouter from '../routes/operacao.js';
@@ -32,6 +33,7 @@ jest.mock('../domain/appContainer.js', () => ({
 // Os limiters são estado compartilhado por IP: centenas de requisições do teste estourariam o 429
 // antes de chegar ao guard. O guard é o alvo aqui; o rate-limit tem teste próprio.
 jest.mock('./rateLimit.js', () => ({
+    ...jest.requireActual('./rateLimit.js'),
     globalLimiter: (_req: unknown, _res: unknown, next: () => void) => next(),
     heavyRouteLimiter: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
@@ -156,6 +158,12 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
 /** Rotas montadas ANTES do auth, fora da cadeia de acesso (sem guard, de propósito). */
 const PUBLICAS = ['/health', '/auth'];
 
+/**
+ * As rotas públicas de sessão (ADR-0054): login, refresh e logout. `GET /auth/transicao` saiu com
+ * o banner de transição.
+ */
+const PUBLICAS_AUTH = ['POST /auth/login', 'POST /auth/logout', 'POST /auth/refresh'];
+
 const ROUTERS: ReadonlyArray<readonly [string, Router]> = [
     ['/permutas', permutasRouter],
     ['/sispag', sispagRouter],
@@ -236,6 +244,15 @@ describe('cobertura de guard por rota (introspecção)', () => {
             [...fonte.matchAll(/app\.use\(\s*'(\/[^']*)'/g)].map((m) => m[1] as string),
         );
         expect([...montados].sort()).toEqual([...PUBLICAS, ...ROUTERS.map(([m]) => m)].sort());
+    });
+
+    it('/auth expõe exatamente login, refresh e logout, todas públicas e sem guard', () => {
+        const rotas = introspectar(
+            '/auth',
+            buildAuthRouter({ verifyAccessToken: async () => Promise.reject(new Error('x')) }),
+        );
+        expect([...rotas.keys()].sort()).toEqual(PUBLICAS_AUTH);
+        for (const guards of rotas.values()) expect(guards).toEqual([]);
     });
 
     it('filialAuthz da solicitação de numerário continua DEPOIS do guard e sem mudança (Q12)', () => {
