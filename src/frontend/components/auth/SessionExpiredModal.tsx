@@ -16,7 +16,9 @@ import {
 import { useAuth } from '@/lib/auth/AuthProvider'
 
 /**
- * Blocking modal shown when the 12h app JWT expires. It is non-dismissable
+ * Blocking modal shown when the session expired AND could not be renewed (ADR-0054: a Supabase
+ * session renews silently before `exp` and once on a 401; only a failed renewal, or a token
+ * without refresh — local mode —, reaches this modal). It is non-dismissable
  * (no X, ESC and overlay-click are prevented) — the only way out is to log in
  * again, so the user never keeps operating against a dead (zombie) token.
  *

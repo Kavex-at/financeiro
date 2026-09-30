@@ -58,6 +58,17 @@ export interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
+/**
+ * Texto da tela de login para uma recusa do `/auth/login`: 401 = credencial (o mesmo texto para
+ * qualquer causa, sem revelar se a conta existe); 429 (muitas tentativas) e 503 (autenticação
+ * indisponível) mostram a mensagem do backend, que já é em português.
+ */
+export const mensagemDeLogin = (status: number, erroDoBackend?: string): string => {
+  if (status === 401) return 'E-mail/usuário ou senha inválidos.'
+  if ((status === 429 || status === 503) && erroDoBackend) return erroDoBackend
+  return erroDoBackend ?? 'Falha ao entrar.'
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const devBypass = isDevAuthBypass()
   const [token, setToken] = useState<string | null>(null)
@@ -190,12 +201,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ username: user, password }),
       })
       if (!res.ok) {
-        let message = 'Falha ao entrar.'
+        let erroDoBackend: string | undefined
         try {
           const body = await res.json()
-          if (body?.error) message = body.error
+          if (typeof body?.error === 'string') erroDoBackend = body.error
         } catch {}
-        throw new Error(message)
+        throw new Error(mensagemDeLogin(res.status, erroDoBackend))
       }
       // Resposta do modo supabase traz `refreshToken`/`expiresAt`; a do modo local (ou do backend
       // antigo), não — e aí nada de renovação, como antes.

@@ -1,9 +1,8 @@
 /**
- * Tela de login (ADR-0051): o campo aceita "E-mail ou usuário", e o banner de transição para o
- * e-mail da Columbia aparece só quando a chave do backend responde `true`. Falhou, está pendente
- * ou respondeu `false`: nada aparece, e o formulário já funciona.
+ * Tela de login (ADR-0051/0054): o campo aceita "E-mail ou usuário"; o banner de transição saiu;
+ * as recusas mostram 401 genérico, e 429/503 com a mensagem do backend.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const replaceMock = jest.fn()
 jest.mock('next/navigation', () => ({
@@ -13,89 +12,79 @@ jest.mock('next/navigation', () => ({
 
 const signInMock = jest.fn()
 jest.mock('@/lib/auth/AuthProvider', () => ({
+  ...jest.requireActual('@/lib/auth/AuthProvider'),
   useAuth: () => ({ signIn: signInMock, token: null, devBypass: false, loading: false }),
 }))
 
-const fetchTransicaoEmailMock = jest.fn()
-jest.mock('@/lib/auth/transicao', () => ({
-  fetchTransicaoEmail: () => fetchTransicaoEmailMock(),
-}))
-
 import LoginPage from '@/app/login/page'
+import { mensagemDeLogin } from '@/lib/auth/AuthProvider'
 
-const TITULO = 'Estamos migrando o acesso para o seu e-mail da Columbia.'
-const CORPO =
-  'Durante a transição, você continua entrando com seu usuário atual. Quando seu e-mail da ' +
-  'Columbia for cadastrado, ele também passa a valer, com a mesma senha.'
+const enviar = () => {
+  fireEvent.change(screen.getByTestId('login-username'), { target: { value: 'beto' } })
+  fireEvent.change(screen.getByTestId('login-password'), { target: { value: 'segredo12' } })
+  fireEvent.click(screen.getByTestId('login-submit'))
+}
 
 describe('LoginPage', () => {
+  const fetchMock = jest.fn()
+
   beforeEach(() => {
     replaceMock.mockReset()
     signInMock.mockReset()
-    fetchTransicaoEmailMock.mockReset()
+    fetchMock.mockReset()
+    global.fetch = fetchMock as unknown as typeof fetch
   })
 
-  it('rotula o campo como "E-mail ou usuário", mantendo autoComplete e data-testid', async () => {
-    fetchTransicaoEmailMock.mockResolvedValue(false)
+  it('rotula o campo como "E-mail ou usuário", mantendo autoComplete e data-testid', () => {
     render(<LoginPage />)
-
     const campo = screen.getByLabelText('E-mail ou usuário')
     expect(campo).toHaveAttribute('autocomplete', 'username')
     expect(campo).toHaveAttribute('data-testid', 'login-username')
-    // Placeholder coerente com o rótulo: sugere um e-mail e o usuário legado.
     expect(campo.getAttribute('placeholder')).toMatch(/@.*usuário/i)
-    await waitFor(() => expect(fetchTransicaoEmailMock).toHaveBeenCalled())
   })
 
-  it('chave ligada: mostra o banner com o texto aprovado, literal, como status', async () => {
-    fetchTransicaoEmailMock.mockResolvedValue(true)
+  it('o banner de transição para e-mail e a consulta dele ao backend sumiram', () => {
     render(<LoginPage />)
-
-    const banner = await screen.findByRole('status')
-    expect(banner).toHaveTextContent(TITULO)
-    expect(banner).toHaveTextContent(CORPO)
-    expect(screen.getByText(TITULO)).toBeInTheDocument()
-    expect(screen.getByText(CORPO)).toBeInTheDocument()
-    // Tokens semânticos de info, sem cor crua.
-    expect(banner.className).toMatch(/bg-info-subtle/)
-    expect(banner.className).not.toMatch(/#[0-9a-f]{3,6}|bg-blue-/i)
-    // Ícone decorativo.
-    expect(banner.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
-  })
-
-  it('chave desligada: sem banner', async () => {
-    fetchTransicaoEmailMock.mockResolvedValue(false)
-    render(<LoginPage />)
-    await waitFor(() => expect(fetchTransicaoEmailMock).toHaveBeenCalled())
-    await act(async () => undefined)
+    expect(screen.queryByText(/migrando o acesso/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.queryByText(TITULO)).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('chamada rejeitada: sem banner e sem erro visível', async () => {
-    fetchTransicaoEmailMock.mockRejectedValue(new Error('rede'))
-    render(<LoginPage />)
-    await waitFor(() => expect(fetchTransicaoEmailMock).toHaveBeenCalled())
-    await act(async () => undefined)
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('chamada pendente: sem banner, sem espaço reservado, e o formulário já envia', async () => {
-    fetchTransicaoEmailMock.mockReturnValue(new Promise(() => undefined))
+  it('login por username continua: o que foi digitado vai como username', async () => {
     signInMock.mockResolvedValue(undefined)
     render(<LoginPage />)
+    enviar()
+    await waitFor(() => expect(signInMock).toHaveBeenCalledWith('beto', 'segredo12'))
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith('/'))
+  })
 
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('login-transicao-banner')).not.toBeInTheDocument()
+  it('recusa: mostra a mensagem que o AuthProvider montou, como alerta', async () => {
+    signInMock.mockRejectedValue(new Error('E-mail/usuário ou senha inválidos.'))
+    render(<LoginPage />)
+    enviar()
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'E-mail/usuário ou senha inválidos.',
+    )
+  })
+})
 
-    fireEvent.change(screen.getByTestId('login-username'), {
-      target: { value: 'ti@columbiabr.com' },
-    })
-    fireEvent.change(screen.getByTestId('login-password'), { target: { value: 'segredo12' } })
-    fireEvent.click(screen.getByTestId('login-submit'))
+describe('mensagemDeLogin (por status)', () => {
+  it('401: texto genérico de credencial, igual para qualquer causa', () => {
+    expect(mensagemDeLogin(401, 'Credenciais inválidas')).toBe('E-mail/usuário ou senha inválidos.')
+    expect(mensagemDeLogin(401)).toBe('E-mail/usuário ou senha inválidos.')
+  })
 
-    // O fluxo de signIn não muda: o que foi digitado vai como `username`.
-    await waitFor(() => expect(signInMock).toHaveBeenCalledWith('ti@columbiabr.com', 'segredo12'))
+  it('429: a mensagem do backend', () => {
+    const msg = 'Muitas tentativas. Aguarde alguns minutos e tente de novo.'
+    expect(mensagemDeLogin(429, msg)).toBe(msg)
+  })
+
+  it('503: a mensagem do backend', () => {
+    const msg = 'Serviço de autenticação indisponível. Tente novamente em instantes.'
+    expect(mensagemDeLogin(503, msg)).toBe(msg)
+  })
+
+  it('outro status sem corpo: "Falha ao entrar."', () => {
+    expect(mensagemDeLogin(500)).toBe('Falha ao entrar.')
   })
 })
