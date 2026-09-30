@@ -262,7 +262,7 @@ router.post(
             }
             throw err;
         }
-        const ator = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const ator = req.user?.sub ?? 'unknown';
         // Idempotency-key namespaced pelo ator (Regis security-2): a colisão exige colisão de `sub`
         // também — impede denial-of-execution / carona no ledger money-moving de outro ator. Um
         // `Idempotency-Key` de header explícito também é namespaced pelo sub.
@@ -576,7 +576,7 @@ router.post(
             throw err;
         }
 
-        const ator = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const ator = req.user?.sub ?? 'unknown';
         const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
         const dryRun = parsed.data.dryRun === true || !env.conexosWriteEnabled || env.conexosDryRun;
 
@@ -732,7 +732,7 @@ router.post(
                 filCods,
                 periodo,
                 correlationId: randomUUID(),
-                triggeredBy: req.user?.email ?? req.user?.sub ?? 'manual',
+                triggeredBy: req.user?.sub ?? 'manual',
             });
             if (idempotencyKey) await runRepo.recordIdempotencyKey(idempotencyKey, result.runId);
             res.json({
@@ -932,7 +932,7 @@ router.post(
         try {
             const result = await service.importar({
                 ...ctx,
-                triggeredBy: req.user?.email ?? req.user?.sub ?? 'manual',
+                triggeredBy: req.user?.sub ?? 'manual',
                 ...(idempotencyKey ? { idempotencyKey } : {}),
             });
             res.json(result);
@@ -972,7 +972,7 @@ const arquivarHandler = (arquivar: boolean) =>
             return;
         }
 
-        const ator = req.user?.email ?? req.user?.sub ?? 'unknown';
+        const ator = req.user?.sub ?? 'unknown';
         const mudou = arquivar ? await repo.arquivar(txnId, ator) : await repo.desarquivar(txnId);
         if (!mudou) {
             res.status(409).json({

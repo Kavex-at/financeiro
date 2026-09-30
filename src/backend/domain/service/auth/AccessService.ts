@@ -6,11 +6,21 @@ import AccessRepository from '../../repository/auth/AccessRepository.js';
 import LogService from '../LogService.js';
 import EffectivePermissionCalculator from './EffectivePermissionCalculator.js';
 
+/**
+ * Como o dono do token é procurado (ADR-0054): pelo `username` (token próprio, `sub = username`) ou
+ * pelo `auth_user_id` (token do Supabase, `sub = UUID`).
+ */
+export interface ChaveAcesso {
+    tipo: 'username' | 'authUserId';
+    valor: string;
+}
+
 /** O acesso de quem faz a requisição, já calculado. */
 export interface ResolvedAccess {
     userId: number;
     username: string;
     ativo: boolean;
+    authUserId?: string;
     papel: RoleRef;
     permissoes: ReadonlySet<Permission>;
 }
@@ -23,7 +33,8 @@ interface CacheEntry {
 /**
  * AccessService — resolve, a cada requisição, QUEM é o dono do token e o que ele pode (ADR-0053).
  *
- * O token só identifica (`sub = username`); a permissão vem do banco (I1), calculada pelo
+ * O token só identifica (`username` no token próprio, `auth_user_id` no do Supabase — ADR-0054);
+ * a permissão vem do banco (I1), calculada pelo
  * `EffectivePermissionCalculator`. Para não pagar uma consulta por requisição, guarda o resultado
  * em memória por **30 s** (R7), e toda escrita de acesso feita pela tela chama `invalidar(userId)`
  * no próprio processo. O TTL é a rede de segurança para o que não passa pela tela (SQL manual) e
@@ -55,17 +66,22 @@ export default class AccessService {
     ) {}
 
     /**
-     * Acesso do dono do `sub` (casado sem distinção de caixa). `null` = não existe (não cacheado,
-     * para um usuário recém-criado não ficar 30 s sem entrar). Inativo é devolvido e cacheado; quem
-     * responde 401 é o middleware.
+     * Acesso do dono do token, por `username` (casado sem distinção de caixa) ou por
+     * `auth_user_id`. O cache é por chave PREFIXADA pelo tipo (`username:<lower>` /
+     * `auth:<uuid lower>`, D13), para que um texto igual nos dois tipos nunca se confunda. `null` =
+     * não existe (não cacheado, para um usuário recém-criado ou recém-vinculado não ficar 30 s sem
+     * entrar). Inativo é devolvido e cacheado; quem responde 401 é o middleware.
      */
-    public resolver = async (sub: string): Promise<ResolvedAccess | null> => {
-        const key = sub.toLowerCase();
+    public resolver = async (chave: ChaveAcesso): Promise<ResolvedAccess | null> => {
+        const key = `${chave.tipo === 'username' ? 'username' : 'auth'}:${chave.valor.toLowerCase()}`;
         const now = this.clock.now();
         const hit = this.cache.get(key);
         if (hit && hit.expiresAt > now) return hit.value;
 
-        const access = await this.accessRepository.findAccessBySub(sub);
+        const access =
+            chave.tipo === 'username'
+                ? await this.accessRepository.findAccessBySub(chave.valor)
+                : await this.accessRepository.findAccessByAuthUserId(chave.valor);
         if (!access) {
             this.cache.delete(key);
             return null;
@@ -84,6 +100,7 @@ export default class AccessService {
             userId: access.userId,
             username: access.username,
             ativo: access.ativo,
+            ...(access.authUserId !== undefined ? { authUserId: access.authUserId } : {}),
             papel: access.papel,
             permissoes,
         };
@@ -91,7 +108,10 @@ export default class AccessService {
         return value;
     };
 
-    /** Esquece o acesso cacheado de um usuário: a próxima requisição dele relê o banco. */
+    /**
+     * Esquece o acesso cacheado de um usuário — as entradas dos DOIS tipos de chave (D13): a próxima
+     * requisição dele relê o banco.
+     */
     public invalidar = (userId: number): void => {
         for (const [key, entry] of this.cache) {
             if (entry.value.userId === userId) this.cache.delete(key);

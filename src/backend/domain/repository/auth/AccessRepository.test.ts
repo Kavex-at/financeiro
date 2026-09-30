@@ -159,6 +159,33 @@ describe('AccessRepository — leituras', () => {
         expect(await repo.findAccessBySub('ninguem')).toBeNull();
     });
 
+    it('findAccessByAuthUserId: UMA ida ao banco, parametrizada por auth_user_id, mesmo formato', async () => {
+        const uuid = '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60';
+        const db = buildDb({});
+        (db.selectFirst as jest.Mock).mockResolvedValue({
+            ...linha(6, 'fulano', { papel: CONSULTA }),
+            auth_user_id: uuid,
+        });
+        const out = await new AccessRepository(
+            db,
+            new EffectivePermissionCalculator(),
+        ).findAccessByAuthUserId(uuid);
+
+        expect(db.selectFirst).toHaveBeenCalledTimes(1);
+        const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(sql).toContain('u.auth_user_id = $authUserId');
+        expect(sql).not.toContain(uuid);
+        expect(params).toEqual({ authUserId: uuid });
+        expect(out).toMatchObject({ userId: 6, username: 'fulano', authUserId: uuid });
+    });
+
+    it('findAccessByAuthUserId: UUID malformado é recusado (Zod) antes do SQL', async () => {
+        const db = buildDb({});
+        const repo = new AccessRepository(db, new EffectivePermissionCalculator());
+        expect(await repo.findAccessByAuthUserId("x' OR '1'='1")).toBeNull();
+        expect(db.selectFirst).not.toHaveBeenCalled();
+    });
+
     it('findAccessBySub: linha inválida do banco é recusada (Zod), nunca mapeada às cegas', async () => {
         const db = buildDb({});
         (db.selectFirst as jest.Mock).mockResolvedValue({ ...linha(1, 'a'), pacote: null });

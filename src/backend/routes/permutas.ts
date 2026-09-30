@@ -234,7 +234,7 @@ router.post(
         await bootstrapAppContainer();
         const service = container.resolve(EleicaoPermutasService);
         // `triggered_by` = identidade do usuário autenticado (auditoria O6).
-        const triggeredBy = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const triggeredBy = req.user?.sub ?? 'unknown';
         // Idempotency-Key (P0-6) — duplo-clique/retry com a mesma key reaproveita
         // a run existente em vez de disparar outro fan-out Conexos.
         const rawKey = req.header('Idempotency-Key');
@@ -268,7 +268,7 @@ router.post(
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(IngestaoCoalescerService);
-        const triggeredBy = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const triggeredBy = req.user?.sub ?? 'unknown';
         try {
             const result = await service.request({ triggeredBy });
             res.json({
@@ -335,7 +335,7 @@ router.post(
             res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
             return;
         }
-        const criadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const criadoPor = req.user?.sub ?? 'unknown';
         const repository = container.resolve(ClienteFiltroRepository);
         await repository.upsertClienteFiltro({
             pesCod: parsed.data.pesCod,
@@ -407,7 +407,7 @@ router.post(
             res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
             return;
         }
-        const criadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const criadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(AlocacaoPermutasService);
         try {
             await service.alocar({
@@ -603,7 +603,7 @@ router.post(
             return;
         }
         const docCod = String(req.params.docCod);
-        const processadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const processadoPor = req.user?.sub ?? 'unknown';
         const repository = container.resolve(PermutaProcessamentoRepository);
         await repository.upsertProcessamento({
             adiantamentoDocCod: docCod,
@@ -634,7 +634,7 @@ router.post(
             return;
         }
         const docCod = String(req.params.docCod);
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(ReconciliacaoPermutaService);
         try {
             const result = await service.reconciliar({
@@ -680,7 +680,7 @@ router.post(
             return;
         }
         const docCod = String(req.params.docCod);
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(GerarSolicitacaoNumerarioService);
         const hoje = todayUtcMidnightMs();
         try {
@@ -719,7 +719,7 @@ router.post(
             res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
             return;
         }
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(ReconciliacaoLotePermutaService);
         const result = await service.reconciliarLote({
             executadoPor,
@@ -819,7 +819,7 @@ router.post(
         const alvo = parseAlvoBordero(req, res);
         if (!alvo) return;
         const { borCod, filCod } = alvo;
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(
@@ -850,7 +850,7 @@ router.post(
         const alvo = parseAlvoBordero(req, res);
         if (!alvo) return;
         const { borCod, filCod } = alvo;
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(
@@ -881,7 +881,7 @@ router.post(
         const alvo = parseAlvoBordero(req, res);
         if (!alvo) return;
         const { borCod, filCod } = alvo;
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(
@@ -912,7 +912,7 @@ router.delete(
         const alvo = parseAlvoBordero(req, res);
         if (!alvo) return;
         const { borCod, filCod } = alvo;
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(
@@ -945,7 +945,7 @@ router.delete(
         if (!alvo) return;
         const { borCod, filCod } = alvo;
         const invoiceDocCod = String(req.params.invoiceDocCod);
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const executadoPor = req.user?.sub ?? 'unknown';
         const service = container.resolve(BorderoGestaoService);
         try {
             res.json(

@@ -19,6 +19,8 @@ export interface UserAccess {
     userId: number;
     username: string;
     ativo: boolean;
+    /** `app_user.auth_user_id` (ADR-0054). Ausente = ainda sem vínculo com o Supabase Auth. */
+    authUserId?: string;
     papel: RoleRef;
     /** Pacote do papel, cru (pode ter valor antigo fora do catálogo — R4). */
     pacote: string[];
@@ -90,7 +92,7 @@ export interface GuardedChange {
  * Constante estática; nenhum valor de entrada entra no texto (Rule #5 — o filtro vem por `$nome`).
  */
 const ACCESS_STATE_SELECT = `
-    SELECT u.id, u.username, u.ativo, u.role_id, r.nome AS role_nome,
+    SELECT u.id, u.username, u.ativo, u.auth_user_id, u.role_id, r.nome AS role_nome,
            COALESCE(
                (SELECT array_agg(rp.permission ORDER BY rp.permission)
                   FROM app_role_permission rp
@@ -124,11 +126,15 @@ const accessRowSchema = z.object({
     id: z.coerce.number().int(),
     username: z.string(),
     ativo: z.boolean(),
+    auth_user_id: z.string().nullable().optional(),
     role_id: z.coerce.number().int(),
     role_nome: z.string(),
     pacote: z.array(z.string()),
     excecoes: z.array(z.object({ permissao: z.string(), efeito: z.string() })),
 });
+
+/** O `sub` de um token do Supabase é o UUID do `auth.users`. */
+const uuidSchema = z.string().uuid();
 
 const roleRowSchema = z.object({
     id: z.coerce.number().int(),
@@ -164,6 +170,20 @@ export default class AccessRepository {
             `${ACCESS_STATE_SELECT}
              WHERE lower(u.username) = lower($sub)`,
             { sub },
+        );
+        return row ? this.toUserAccess(row) : null;
+    };
+
+    /**
+     * Acesso do dono de um token do Supabase Auth, pelo vínculo `auth_user_id` (ADR-0054). UUID
+     * malformado é recusado (Zod) antes do SQL: `null`, sem consulta. `null` também = sem vínculo.
+     */
+    public findAccessByAuthUserId = async (authUserId: string): Promise<UserAccess | null> => {
+        if (!uuidSchema.safeParse(authUserId).success) return null;
+        const row = await this.databaseClient.selectFirst<unknown>(
+            `${ACCESS_STATE_SELECT}
+             WHERE u.auth_user_id = $authUserId`,
+            { authUserId },
         );
         return row ? this.toUserAccess(row) : null;
     };
@@ -411,6 +431,7 @@ export default class AccessRepository {
             userId: row.id,
             username: row.username,
             ativo: row.ativo,
+            ...(row.auth_user_id != null ? { authUserId: row.auth_user_id } : {}),
             papel: { id: row.role_id, nome: row.role_nome },
             pacote: row.pacote,
             excecoes: row.excecoes,
