@@ -8,13 +8,14 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/lib/auth/AuthProvider'
 import { safeReturnTo } from '@/lib/auth/safe-return-to'
-import { fetchTransicaoEmail } from '@/lib/auth/transicao'
 import pkg from '../../package.json'
-import { TransicaoEmailBanner } from './TransicaoEmailBanner'
 
 /**
  * Sign-in page. E-mail-or-username + password form posted to the backend
- * (`POST /auth/login`, body still `{ username, password }` — ADR-0051). On success the token is stored and the user is sent to
+ * (`POST /auth/login`, body still `{ username, password }` — ADR-0051; the backend resolves the
+ * identifier and, in Supabase mode, signs in with the e-mail — ADR-0054). Errors: 401 shows the
+ * generic credential message; 429 and 503 show the backend's message. On success the token is
+ * stored and the user is sent to
  * the app root. Already-authenticated visitors (or dev-bypass) are bounced
  * straight to `/`. Public route (excluded from the `RouteGate` guard); the app
  * header is hidden here (see `AppShell`) for a clean full-screen experience.
@@ -31,22 +32,6 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Banner de transição para e-mail (ADR-0051). A página é dona do estado; o banner só apresenta.
-  // Falha fechada: rejeição ou pendência mantêm `false`, e o formulário já funciona.
-  const [transicaoAtiva, setTransicaoAtiva] = useState(false)
-
-  useEffect(() => {
-    let cancelado = false
-    fetchTransicaoEmail()
-      .then((ativo) => {
-        if (!cancelado) setTransicaoAtiva(ativo)
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelado = true
-    }
-  }, [])
-
   useEffect(() => {
     if (devBypass || token) {
       router.replace(returnTo)
@@ -97,8 +82,6 @@ function LoginForm() {
               Entre com suas credenciais para continuar
             </p>
           </div>
-
-          <TransicaoEmailBanner ativo={transicaoAtiva} />
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
