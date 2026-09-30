@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.47.0 (2026-09-30) — o SISPAG entra nas métricas do ciclo
+
+- **Nova frente em Métricas: pagamentos aceitos pelo banco.** Para cada semana, quantos títulos das
+  remessas SISPAG geradas o banco agendou ou pagou, sobre todos os que foram enviados ("2 de 5
+  títulos, 2 aguardando retorno"), e o valor desses títulos. O número aparece na tela e no report do
+  ciclo. Ver ADR-0056.
+- **A semana é a da geração da remessa.** Quando o aceite do banco chega depois, ele atualiza a
+  semana em que a remessa foi gerada. Lotes cancelados e testes em modo simulação não contam.
+- **Título ainda não conferido aparece como "aguardando retorno", nunca como recusado.** Os números
+  do SISPAG só ficam completos depois que a sincronização de lotes (v0.46.0) roda em produção.
+- **Permutas e Recebimentos não mudam.** A tela passa a mostrar os cartões em duas colunas, uma
+  linha por frente, para os valores em R$ caberem.
+
 ## v0.46.1 (2026-09-30) — Reaper do SISPAG para de alertar à toa
 
 - **Limite de "parado" do reaper: 1h → 12h.** O cron pede a cada 15 minutos, mas o GitHub só
