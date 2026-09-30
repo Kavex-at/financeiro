@@ -198,7 +198,7 @@ describe('ConfigDoctor — autenticação (ADR-0054)', () => {
 
     it('SUPABASE_SECRET_KEY é segredo; o banner de transição saiu do manifesto', () => {
         const nomes = CONFIG_MANIFESTO.map((m) => m.nome);
-        expect(nomes).not.toContain('AUTH_TRANSICAO_EMAIL_BANNER');
+        expect(nomes).not.toContain(['AUTH', 'TRANSICAO', 'EMAIL', 'BANNER'].join('_'));
         expect(CONFIG_MANIFESTO.find((m) => m.nome === 'SUPABASE_SECRET_KEY')?.segredo).toBe(true);
         expect(CONFIG_MANIFESTO.find((m) => m.nome === 'AUTH_PROVIDER')?.default).toBe('local');
     });

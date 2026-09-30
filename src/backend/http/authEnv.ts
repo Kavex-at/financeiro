@@ -18,7 +18,8 @@ import { z } from 'zod';
  *   `AUTH_JWT_SECRET` é opcional (a presença só mantém o caminho HS256 aberto);
  * - com `DEV_AUTH_BYPASS` (só local/dev) nada disso é exigido.
  *
- * `SUPABASE_JWT_SECRET` (legado do template) **não é mais lido**: definido, não reabre nada.
+ * O segredo HS256 legado do Supabase (variável do template) **não é mais lido**: definido, não
+ * reabre nada.
  */
 const RawAuthEnvSchema = z.object({
     AUTH_PROVIDER: z

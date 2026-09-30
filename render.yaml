@@ -89,16 +89,25 @@ services:
       # Secrets / per-deploy values — set in the Render dashboard.
       - key: databaseConnectionString
         sync: false
+      # Assina o token próprio (modo local). Apagar no passo 8 do corte do Supabase Auth (DEPLOY.md §6).
       - key: AUTH_JWT_SECRET
+        sync: false
+      # Supabase Auth (ADR-0054): `local` até o passo 5 do corte; `supabase` depois. Rollback = `local`.
+      - key: AUTH_PROVIDER
+        value: local
+      # Só a partir do passo 2 do corte (DEPLOY.md §6): com o backend <= v0.44 no ar, SUPABASE_URL
+      # desloga todo mundo (D14).
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      # Poder de admin sobre todos os logins: só aqui e nos jobs manuais; nunca no Vercel.
+      - key: SUPABASE_SECRET_KEY
         sync: false
       # Obrigatórias para o `npm run seed:admin` (sem default no código, ADR-0051).
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
-        sync: false
-      # Banner de transição para e-mail no login: só `true` liga; ausente = desligado.
-      # Vale sem redeploy do front (após reiniciar o backend).
-      - key: AUTH_TRANSICAO_EMAIL_BANNER
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false

@@ -96,10 +96,11 @@ Crie um **Web Service** apontando para o repositório.
 | `CONEXOS_USERNAME` | usuário Conexos |
 | `CONEXOS_PASSWORD` | senha Conexos |
 | `CONEXOS_FIL_COD` | filial padrão (ex.: `2`) |
-| `AUTH_JWT_SECRET` | **gerar forte** — ver abaixo. Assina/valida os tokens de login |
+| `AUTH_JWT_SECRET` | **gerar forte** — ver abaixo. Assina/valida os tokens de login próprios (modo `local`). Apagar no passo 8 do corte do Supabase Auth (seção 6) |
+| `AUTH_PROVIDER` | `local` (default) ou `supabase` — ver seção 6 |
+| `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY` | só a partir do passo 2 da seção 6 (**nunca** com o backend ≤ v0.44 no ar) |
 | `ADMIN_EMAIL` | **obrigatória** para o `npm run seed:admin`: e-mail do admin semeado (vira `username` = `email`). Sem default no código. |
 | `ADMIN_PASSWORD` | **obrigatória** para o `npm run seed:admin`: senha forte, mínimo 8 caracteres. Sem default no código. |
-| `AUTH_TRANSICAO_EMAIL_BANNER` | *(opcional)* banner "Estamos migrando o acesso para o seu e-mail da Columbia" na tela de login. Só `true` liga; ausente = desligado. Vale sem redeploy do front (após reiniciar o backend). |
 | `ALLOWED_ORIGINS` | `https://<app>.vercel.app` (domínio do frontend na Vercel) |
 | `DEV_AUTH_BYPASS` | `false` |
 | `environment` | `production` |
@@ -224,3 +225,117 @@ acesso gravada no intervalo **se perde** (exporte `app_user_access_event` antes,
   `kavex-report-ciclo` para outra conta com `metricas:ver`: desativar `admin` quebra o report até lá.
 - A trilha de mudanças de acesso fica em `app_user_access_event` (leitura por SQL: `SELECT ator,
   alvo_user_id, tipo, antes, depois, em FROM app_user_access_event ORDER BY id`).
+
+---
+
+## 6. Supabase Auth (v0.45, ADR-0054)
+
+O login passa a ser do **Supabase Auth do mesmo projeto do banco**, por **proxy no backend**: o
+front continua falando só com `POST /auth/login` (mesmo corpo `{ username, password }`, mesmo
+campo `token`), e ganha `POST /auth/refresh` e `POST /auth/logout`. O token só prova identidade;
+permissões continuam no banco. A identidade de auditoria continua sendo o `username`, para sempre.
+Mesmas senhas (os hashes bcrypt são importados como estão), sem SMTP, sem cadastro público.
+
+**O merge não liga nada.** `AUTH_PROVIDER` ausente = `local` (o login de hoje). O corte é a
+sequência manual abaixo, do dono do ciclo.
+
+> ⚠️ **ARMADILHA DO CORTE (D14): `SUPABASE_URL` nunca pode estar definida com um backend ≤ v0.44 no
+> ar.** O código antigo aplica o `issuer` do Supabase também aos tokens HS256 próprios (que não têm
+> `iss`): com a variável definida, **todo mundo é deslogado**. Por isso `SUPABASE_URL` só entra no
+> Render **depois** que o backend novo está no ar, e **todo rollback de código para ≤ v0.44 exige
+> remover `SUPABASE_URL` antes**.
+
+**Variáveis** (Render; nada muda no Vercel, e nenhum cron do GitHub Actions precisa delas):
+
+| Var | Quando | Observação |
+|-----|--------|------------|
+| `SUPABASE_URL` | passo 2 | `https://kngrpoqzaxtuzkcugsyl.supabase.co`, sem barra final. **Nunca** com o código antigo no ar (D14) |
+| `SUPABASE_PUBLISHABLE_KEY` | passo 2 | chave publicável (`sb_publishable_…`); o backend a usa nas chamadas públicas do Supabase Auth |
+| `SUPABASE_SECRET_KEY` | passo 2 | chave secreta dedicada (`sb_secret_…`, `sync: false`): **poder de admin sobre todos os logins**. Nunca no front, nunca no Vercel, nunca em chat |
+| `AUTH_PROVIDER` | passo 2 (`local`), passo 5 (`supabase`) | quem emite o token no login. Rollback = voltar para `local` |
+| `AUTH_TRANSICAO_EMAIL_BANNER` | remover no passo 2 | não é mais lida |
+| `AUTH_JWT_SECRET` | remover no passo 8 | recriar só em rollback. Em modo `supabase` o boot não a exige |
+| `SUPABASE_JWT_SECRET` | remover se existir | não é mais lida |
+
+**Jobs manuais** (`seed-admin`, `sync-supabase-auth`): precisam de `databaseConnectionString`,
+`SUPABASE_URL` e `SUPABASE_SECRET_KEY`. Preferir o Render Shell (o env já está lá); nunca misturar
+um `.env` de dev com o banco de produção.
+
+- `node dist/jobs/sync-supabase-auth.js` → **dry-run** (default): imprime a URL alvo no topo, uma
+  linha por usuário (`criar`, `vincular`, `reconciliar`, `ignorado: inativo`, `ignorado: sem e-mail`,
+  `conflito`, `divergência: vínculo órfão`) e o resumo planejado. Nada é alterado.
+- `node dist/jobs/sync-supabase-auth.js --execute` → aplica. Idempotente: rodar de novo dá 0 ações.
+  Saída 1 se houver falha ou conflito. É também a ferramenta de reparo de divergência (procure
+  `AUTH_DIVERGENCIA` no log).
+- Só usuários **ativos** são importados. Os 3 inativos de produção ficam de fora; reativar um deles
+  pela tela cria o login no Supabase na hora (exige e-mail). Apagá-los é operação à parte.
+
+**`kavex-report-ciclo`:** não muda. Continua fazendo `POST /auth/login` com
+`FINANCEIRO_API_USUARIO`/`SENHA` (login por **username** continua valendo: o backend resolve o
+e-mail); o token do Supabase dura 1 h, suficiente para a execução semanal. Aposentar a conta
+`admin` continua exigindo trocar `FINANCEIRO_API_USUARIO` antes.
+
+### Runbook de corte
+
+Projeto: `kngrpoqzaxtuzkcugsyl` (sa-east-1). Quem executa: dono do ciclo. Cada passo tem uma verificação; verificação falhando = parar e seguir o rollback da fase.
+
+**Passo 0 — Painel do Supabase (antes do merge, não muda nada para ninguém)**
+1. Authentication → Sign In / Providers: **"Allow new users to sign up" = OFF**; **"Allow anonymous sign-ins" = OFF**; provedor **Email = ON** (é o que aceita senha). "Confirm email" pode ficar como está (a importação cria e-mails já confirmados).
+2. Authentication → Sessions / JWT: validade do access token **3600 s** (default); **rotação de refresh token ON**, intervalo de reuso no default (10 s).
+3. Authentication → Rate Limits: limites de sign-in e de refresh de token por IP **acima** dos nossos (todo tráfego vem do IP do Render): no mínimo 150 sign-ins / 5 min e 300 refreshes / 5 min. Anotar os valores antigos.
+4. Settings → API Keys: copiar a **publishable key** (`sb_publishable_…`); criar uma **secret key** dedicada `financeiro-backend-render` (`sb_secret_…`). Ela vai só para o Render e para quem roda os jobs manuais; nunca para o Vercel, nunca em chat.
+5. (Recomendado, defesa em profundidade) Settings → Data API: desligar a Data API, ou tirar `public` de "Exposed schemas". O código não usa `/rest/v1` em lugar nenhum. A verificação do Q1 mostrou que ela já não lê nada das nossas tabelas.
+6. Conferir: `SUPABASE_URL`, `SUPABASE_JWT_SECRET` **não** estão definidas no Render hoje (D14). Se `SUPABASE_URL` estiver, **não mexer antes do passo 2**.
+
+**Passo 1 — Merge e deploy, sem nenhuma env nova (modo `local`)**
+- Merge do PR. O Render sobe o backend novo (o `BootMigrator` aplica a 0067 se um cron não a tiver aplicado antes; os dois caminhos são seguros para o código antigo). O Vercel sobe o front novo (tolera o backend antigo: resposta sem `refreshToken`).
+- `AUTH_PROVIDER` ausente = `local`. **Não** adicionar `SUPABASE_URL` ainda.
+- Verificar: `/health` 200; login por e-mail e por username entram (token HS256 como hoje); `SELECT count(*) FROM app_user WHERE auth_user_id IS NOT NULL` = 0; `kavex-report-ciclo` roda (ou `curl` equivalente); `anon`/`authenticated` sem `TRUNCATE` em `public` (`SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee IN ('anon','authenticated')` vazio).
+
+**Passo 2 — Env do Supabase no Render, ainda em modo `local`**
+- Adicionar `SUPABASE_URL=https://kngrpoqzaxtuzkcugsyl.supabase.co`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `AUTH_PROVIDER=local` (explícito). Remover `AUTH_TRANSICAO_EMAIL_BANNER`. Salvar e fazer deploy.
+- Agora o backend novo verifica os dois emissores e espelha as escritas de credencial no GoTrue (D3), mas todo login ainda é local.
+- Verificar: tokens HS256 emitidos antes do passo 2 **continuam** valendo (regressão do defeito do `issuer`); ConfigDoctor sem alerta de auth; o painel de Operação mostra `AUTH_PROVIDER = local`.
+
+**Passo 3 — Sync em dry-run**
+- No Render Shell do serviço (env já presente): `cd src/backend && node dist/jobs/sync-supabase-auth.js`.
+- Conferir o relatório: URL alvo = o projeto certo; **12 "criar"** (os ativos), **3 "ignorado: inativo"**, 0 "sem e-mail", 0 conflitos, 0 falhas. Qualquer outra coisa: parar e investigar.
+
+**Passo 4 — Sync de verdade**
+- `node dist/jobs/sync-supabase-auth.js --execute`. Saída 0.
+- Verificar: `SELECT count(*) FROM app_user WHERE ativo AND auth_user_id IS NOT NULL` = **12**; inativos com vínculo = 0; rodar o dry-run de novo → **0 ações** (idempotente). No painel, Authentication → Users lista 12 usuários, e-mails confirmados, nenhum banido.
+- **Prova do T-1 na versão do projeto** (a versão do GoTrue do projeto não é visível sem chave): o
+  dono entra direto no Supabase Auth com a PRÓPRIA senha, sem mudar nada para ninguém:
+  `curl -s -o /dev/null -w '%{http_code}\n' -X POST 'https://kngrpoqzaxtuzkcugsyl.supabase.co/auth/v1/token?grant_type=password' -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H 'content-type: application/json' -d '{"email":"<seu e-mail>","password":"<sua senha>"}'`
+  → **200** prova que o `password_hash` importado foi aceito. Qualquer outra coisa: **não** fazer o
+  passo 5 (o login continua local; investigar antes).
+
+**Passo 5 — Virar a chave: `AUTH_PROVIDER=supabase`**
+- Render: `AUTH_PROVIDER=supabase`, deploy. Anotar a **hora exata** (H).
+- Logins novos recebem token Supabase (ES256, 1 h) + refresh token. Tokens HS256 antigos continuam valendo até expirar (≤ 12 h).
+- Verificar com um usuário real (o dono): login por e-mail; login por username; recarregar a página depois de 1 h sem modal (renovação); "Sair" e tentar reusar o refresh token (401); uma ação de escrita qualquer grava o `username` como ator (conferir a última linha da trilha correspondente); `GET /me/conexos-status` = `vinculado` para quem tem vínculo. `kavex-report-ciclo` roda.
+
+**Passo 6 — Observar**
+- Durante as próximas horas: log sem `AUTH_DIVERGENCIA`, sem 503 de auth, sem 429 inesperado.
+
+**Passo 7 — Esperar ≥ 12 h a partir de H**
+- É a vida máxima de um token HS256 emitido antes do passo 5.
+
+**Passo 8 — Fechar a janela: apagar `AUTH_JWT_SECRET`**
+- Render: remover `AUTH_JWT_SECRET`, deploy. O boot em modo `supabase` não exige a variável (D7).
+- Verificar: login e navegação normais; um token HS256 guardado de antes → 401.
+
+**Depois (fora desta feature):** uma semana estável → `/feature-tweak` de limpeza (ver "Fora de escopo"). Apagar os 3 inativos de `app_user` é operação à parte, com OK explícito.
+
+### Runbook de rollback
+
+| Fase em que o problema aparece | O que fazer | Efeito para o usuário |
+|---|---|---|
+| Passo 1 (código novo, sem env) | Render → "Rollback" para o deploy anterior. A 0067 é aditiva e anulável; o código antigo a ignora. `SUPABASE_URL` não está definida, então o defeito do `issuer` não dispara | Nenhum (tokens HS256 continuam válidos) |
+| Passos 2–4 (env do Supabase, modo `local`) | Problema de config: corrigir a env. Problema de código: **remover `SUPABASE_URL` primeiro** (D14) e então fazer rollback do deploy. Usuários criados no GoTrue pelo sync ficam lá, inofensivos (cadastro desligado, sem acesso a dados); o `auth_user_id` preenchido é ignorado pelo código antigo | Nenhum |
+| Passos 5–7 (modo `supabase`, `AUTH_JWT_SECRET` ainda existe) | `AUTH_PROVIDER=local`, deploy. Login volta ao bcrypt local com as mesmas senhas (R7: toda troca de senha depois do corte gravou os dois lados). Tokens Supabase já emitidos verificam até o `exp` (≤ 1 h); `/auth/refresh` responde 401 (D1), então cada pessoa faz **um** login novo quando o token vence | Um login por pessoa em até 1 h |
+| Depois do passo 8 (sem `AUTH_JWT_SECRET`) | Gerar um valor novo (`openssl rand -base64 48`), definir `AUTH_JWT_SECRET` **e** `AUTH_PROVIDER=local`, deploy | Um login por pessoa em até 1 h |
+| Rollback de código depois do passo 5 | Primeiro `AUTH_PROVIDER=local` (linha acima) e esperar 1 h; depois **remover `SUPABASE_URL`** e fazer rollback do deploy. O código antigo só entende HS256 | Um login por pessoa |
+| Divergência pontual (um usuário não entra) | Não é rollback: rodar `sync-supabase-auth` em dry-run, ler a linha do usuário, rodar com `--execute` | Só aquele usuário |
+
+Nunca: apagar usuários no painel do Supabase para "recomeçar" com o modo `supabase` ligado (quebra o vínculo de quem está logado; o sync recria e vincula, mas as sessões caem). Nunca: `SUPABASE_URL` definida com o backend ≤ v0.44 no ar.

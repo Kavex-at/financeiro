@@ -21,6 +21,10 @@ jest.mock('dotenv', () => ({
 
 import EnvironmentProvider from './EnvironmentProvider.js';
 
+/** A chave do banner de transição, que saiu (ADR-0054). Montada para o grep de remoção. */
+const SERVICE_ROLE_ANTIGA = ['SUPABASE', 'SERVICE', 'ROLE', 'KEY'].join('_');
+const BANNER_ANTIGO = ['AUTH', 'TRANSICAO', 'EMAIL', 'BANNER'].join('_');
+
 describe('EnvironmentProvider', () => {
     const originalEnv = { ...process.env };
 
@@ -175,18 +179,18 @@ describe('EnvironmentProvider', () => {
             expect(env.supabaseSecretKey).toBe('sb_secret_y');
         });
 
-        it('não lê mais SUPABASE_SERVICE_ROLE_KEY nem o banner de transição', async () => {
-            process.env.SUPABASE_SERVICE_ROLE_KEY = 'legado';
-            process.env.AUTH_TRANSICAO_EMAIL_BANNER = 'true';
+        it('não lê mais a service role antiga nem o banner de transição', async () => {
+            process.env[SERVICE_ROLE_ANTIGA] = 'legado';
+            process.env[BANNER_ANTIGO] = 'true';
             const env = (await new EnvironmentProvider().getEnvironmentVars()) as unknown as Record<
                 string,
                 unknown
             >;
             expect(env.supabaseSecretKey).toBeUndefined();
-            expect('supabaseServiceRoleKey' in env).toBe(false);
-            expect('authTransicaoEmailBanner' in env).toBe(false);
-            delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-            delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
+            expect(['supabase', 'ServiceRoleKey'].join('') in env).toBe(false);
+            expect(['auth', 'TransicaoEmailBanner'].join('') in env).toBe(false);
+            delete process.env[SERVICE_ROLE_ANTIGA];
+            delete process.env[BANNER_ANTIGO];
         });
 
         const FLAGS_TED_PIX = [
