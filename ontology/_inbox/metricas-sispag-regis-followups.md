@@ -5,7 +5,7 @@ Run: `docs/regis-review/2026-09-30-1459-metricas-sispag/` (REPORT.md + KANBAN.md
 
 ## Decidido
 
-- **security-1 (P2) — aceito pelo Yuri em 30/09**, registrado na ADR-0056 (D7): quem tem
+- **security-1 (P2) — aceito pelo ColettoG em 30/09**, registrado na ADR-0056 (D7): quem tem
   `metricas:ver` vê o agregado semanal do SISPAG, mesmo sem `sispag:ver`. Card fechado.
 
 ## Primeira sprint pós-merge (S, P2)

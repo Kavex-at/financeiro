@@ -1,7 +1,7 @@
 -- 0070_metricas_ciclo_sispag.sql
 -- SISPAG (Frente II) entra nas métricas do ciclo. Continuação das ADR-0045/0048/0052; ver ADR-0056.
 --
--- ── O QUE SE MEDE (decisões do Yuri, 2026-09-29/30) ──────────────────────────────────────────────
+-- ── O QUE SE MEDE (decisões do ColettoG, 2026-09-29/30) ──────────────────────────────────────────
 --
 -- Evento: remessa gerada por nós E aceita pelo banco. Unidade: o TÍTULO (o CNAB aceita e rejeita
 -- título a título, não arquivo). Aceito = `lote_pagamento_item.situacao` ∈ {AGENDADO, PAGO}: PAGO

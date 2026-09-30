@@ -98,7 +98,7 @@ Escopo: delta de `fix/metricas-sispag` vs `origin/main`. Problemas pré-existent
 - **Severidade**: P3
 - **Tactic violada**: Defer Binding
 - **Localização**: `0070_metricas_ciclo_sispag.sql` (CTE SISPAG)
-- **Evidência (objetiva)**: `situacao` em {AGENDADO, PAGO} como literal; mudar exige nova migration (F-1). Rigidez intencional (ADR-0056: série recalculável, decisão do Yuri).
+- **Evidência (objetiva)**: `situacao` em {AGENDADO, PAGO} como literal; mudar exige nova migration (F-1). Rigidez intencional (ADR-0056: série recalculável, decisão do ColettoG).
 - **Impacto técnico**: mudança de regra = nova migration com recópia.
 - **Impacto de negócio**: raro.
 - **Métrica de baseline**: 2 literais de status; 0 configuráveis.

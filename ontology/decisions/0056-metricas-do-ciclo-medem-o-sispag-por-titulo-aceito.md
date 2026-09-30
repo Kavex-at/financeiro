@@ -37,7 +37,7 @@ nativamente do lado da Columbia. Agora a sincronização de lotes grava
 `lote_pagamento_item.situacao` ∈ `AGENDADO | PAGO | REJEITADO | SEM_RETORNO` (invariante I11), e a
 medição pode ler a resposta do banco sem integração nova.
 
-## Decisões (Yuri, entrevista de 29/09 e 30/09)
+## Decisões (ColettoG, entrevista de 29/09 e 30/09)
 
 - **D1 — Evento: remessa gerada E aceita pelo banco.** O que o nosso ledger sozinho sabe (remessa
   gerada) não basta.
@@ -55,7 +55,7 @@ medição pode ler a resposta do banco sem integração nova.
 - **D6 — Lote `CANCELADO` fica fora** (sai a `PG160901.REM` de 16/09). Execução `error` e dry-run
   também: o denominador são títulos que de fato foram ao banco.
 
-- **D7 — Audiência: quem tem `metricas:ver` vê o SISPAG, mesmo sem `sispag:ver`.** Aceito pelo Yuri em
+- **D7 — Audiência: quem tem `metricas:ver` vê o SISPAG, mesmo sem `sispag:ver`.** Aceito pelo ColettoG em
   30/09 (Regis-Review, card security-1). A rota `/metricas/ciclo` exige só `metricas:ver` (ADR-0053) e
   as duas chaves `sispag_*` saem na mesma resposta, sem filtro por módulo. O que se expõe é agregado
   semanal (% e R$ dos títulos aceitos); nenhum título, credor, CNPJ ou conta sai por esta rota. É o
