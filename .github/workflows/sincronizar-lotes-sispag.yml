@@ -8,21 +8,24 @@ name: Sincronização de status dos lotes SISPAG
 # READ-ONLY no ERP: nunca carrega, processa nem baixa nada (I11a). Por isso não depende de
 # CONEXOS_WRITE_ENABLED / SISPAG_LIVE_WRITE_ENABLED / CONEXOS_DRY_RUN (I11g).
 #
-# Cadência: de hora em hora, dias úteis, no minuto :35, 11–22 UTC (08–19 BRT) — a janela em que a
+# Cadência: de hora em hora, dias úteis, no minuto :48, 11–22 UTC (08–19 BRT) — a janela em que a
 # analista baixa títulos e os retornos chegam. Cadência é configuração operacional, não regra.
 #
 # ⚠️ Credenciais: usa os MESMOS secrets CONEXOS_* dos outros crons. Em 23/09 eles estavam
 # desatualizados (Bad Credentials) e a ingestão fechou "success" com 0 títulos. Este job sai com
 # exit ≠ 0 quando nenhum título pôde ser lido, então o mesmo problema aqui fica VERMELHO.
 #
-# ⚠️ Sessões: o Conexos limita sessões simultâneas por usuário (`LOGIN_ERROR_MAX_SESSIONS`). O
-# :35 coincide com o `reconciliar-nde`; se houver disputa de sessão, desloque um dos dois.
+# ⚠️ Sessões: o Conexos limita sessões simultâneas por usuário (`LOGIN_ERROR_MAX_SESSIONS`) e
+# todos os crons usam o MESMO usuário. Minutos já ocupados por jobs que leem o ERP: :00
+# (permutas), :10/:25/:40/:55 (reaper), :20 (extratos, ~4 min) e :35 (reconciliar-nde). O :48 é a
+# janela mais distante de todos (o :45 do detect-staleness só lê o Postgres). O GitHub atrasa
+# schedules em até dezenas de minutos, então o minuto reduz, mas não elimina, a sobreposição.
 #
 # ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main). Enquanto este
 # arquivo não estiver em `main`, use o "Run workflow" manual na aba Actions.
 on:
   schedule:
-    - cron: '35 11-22 * * 1-5'
+    - cron: '48 11-22 * * 1-5'
   workflow_dispatch: {}
 
 concurrency:

@@ -11,7 +11,7 @@ import SincronizarLotesSispagJob from './SincronizarLotesSispagJob.js';
  * READ-ONLY no ERP (I11a): lê o fin064 (prova de pagamento), o fin052 (agenda/rejeição) e o
  * PSQ_018 (trilha do borderô); grava só no nosso Postgres. Nunca carrega, processa nem baixa.
  *
- * CRON: `.github/workflows/sincronizar-lotes-sispag.yml` (de hora em hora, dias úteis, :35).
+ * CRON: `.github/workflows/sincronizar-lotes-sispag.yml` (de hora em hora, dias úteis, :48).
  * Trilha em `job_execucao` (pipeline `sispag-sincronizacao`) — o Painel de Operação a vigia.
  *
  * Nada deste job vai para o `bootstrapAppContainer`: ele é compartilhado por ~58 jobs.

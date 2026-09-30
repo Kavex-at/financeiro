@@ -199,7 +199,7 @@
 - [ ] Job resolve `SincronizacaoLoteService` via container e chama `sincronizarTodos()`; loga em pt-BR `início`, `lotes lidos`, `transicionados`, `sem mudança`, `pulados`, `falhas de leitura`
 - [ ] Exit code ≠ 0 quando **todas** as leituras falham (ex.: Bad Credentials) — evita o "success com 0" visto em 23/09
 - [ ] Nada adicionado a `bootstrapAppContainer` (compartilhado por ~58 jobs)
-- [ ] Workflow: `cron: '35 11-22 * * 1-5'` (de hora em hora, dias úteis, minuto :35, janela BRT comercial — ajustar faixa UTC se a spec disser outra), `workflow_dispatch`, `concurrency` própria, mesmos secrets/vars de `ingest-sispag.yml` (`DATABASE_CONNECTION_STRING`, `CONEXOS_*`), passo `npm run migrate` antes do job como nos demais
+- [ ] Workflow: `cron: '48 11-22 * * 1-5'` (de hora em hora, dias úteis, minuto :48 — movido do :35 em 30/09 para não coincidir com o `reconciliar-nde`, janela BRT comercial — ajustar faixa UTC se a spec disser outra), `workflow_dispatch`, `concurrency` própria, mesmos secrets/vars de `ingest-sispag.yml` (`DATABASE_CONNECTION_STRING`, `CONEXOS_*`), passo `npm run migrate` antes do job como nos demais
 - [ ] Notificação de falha do workflow via padrão existente (`alerta-workflow-falhou.ts`)
 - [ ] Teste do job com service mockado passa
 

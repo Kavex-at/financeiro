@@ -19,7 +19,7 @@ nenhum título pôde ser lido) e 3 `text-[11px]` novos do DesignSystemReviewer.
 - [P1] Gravar trilha de auditoria da transição de lote e da situação dos itens (`fault-tolerance-3`)
 - [P1] Iniciar cobertura dos jobs de cron e quebrar RemessaService.test.ts [pré-existente] (`testability-5`)
 - [P2] Isolar falha por lote na passada de sincronização (`availability-1`)
-- [P2] Desacoplar o minuto do cron das demais rotinas que usam a sessão Conexos (`availability-4`)
+- [P2] ~~Desacoplar o minuto do cron das demais rotinas que usam a sessão Conexos (`availability-4`)~~ — resolvido no PR #97: cron movido de :35 para :48 (30/09)
 - [P2] Atualizar o orçamento de sessões do DEPLOY.md e ler o teto do Supavisor (`deployability-1`)
 - [P2] Documentar deploy e rollback da 0069 no DEPLOY.md (`deployability-3`)
 - [P2] Devolver `legivel:false` quando linhas de baixa falham no schema (`integrability-1`)
