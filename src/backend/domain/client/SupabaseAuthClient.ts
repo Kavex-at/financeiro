@@ -367,7 +367,7 @@ export default class SupabaseAuthClient {
                 message: `falha ao chamar o Supabase Auth (${req.operacao}): ${motivo}`,
                 data: {
                     operacao: req.operacao,
-                    status,
+                    ...(status !== undefined ? { status } : {}),
                     duracaoMs: Date.now() - inicio,
                     motivo,
                     ...(codigo !== undefined ? { codigo } : {}),

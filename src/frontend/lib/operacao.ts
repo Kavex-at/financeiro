@@ -81,6 +81,8 @@ export interface DiagnosticoVar {
 
 export interface DiagnosticoConfig {
   geradoEm: string
+  /** Quem emite o token no login (`AUTH_PROVIDER`, ADR-0054). Ausente = backend antigo. */
+  modoAutenticacao?: 'local' | 'supabase'
   vars: DiagnosticoVar[]
   totalAusentesObrigatorias: number
   totalAusentesSilenciosas: number

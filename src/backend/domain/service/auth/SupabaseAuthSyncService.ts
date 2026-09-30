@@ -214,6 +214,16 @@ export default class SupabaseAuthSyncService {
         }
         if (item.acao === ACAO_SYNC.ORFAO || item.acao === ACAO_SYNC.CONFLITO) {
             resumo.conflitos++;
+            // Uma linha buscável por usuário: o resumo sozinho não diz QUEM diverge.
+            await this.logService.error({
+                type: LOG_TYPE.AUTH_DIVERGENCIA,
+                message: `sync-supabase-auth: ${item.acao} (não corrigido sozinho)`,
+                data: {
+                    userId: item.usuario.id,
+                    usuario: item.usuario.username,
+                    ...(item.usuario.authUserId ? { authUserId: item.usuario.authUserId } : {}),
+                },
+            });
             return linha;
         }
         if (item.acao === ACAO_SYNC.OK) return linha;

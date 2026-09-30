@@ -191,10 +191,11 @@ describe('SupabaseAuthClient — mapeamento de erros', () => {
         expect(erro.status).toBe(503);
     });
 
-    it('rede fora → indisponível', async () => {
+    it('rede fora → indisponível; o log não leva status (não houve resposta)', async () => {
         fetchMock.mockRejectedValue(new TypeError('fetch failed'));
-        const { client } = criar();
+        const { client, log } = criar();
         await expect(client.refresh('rt')).rejects.toBeInstanceOf(SupabaseAuthUnavailableError);
+        expect(log.warn.mock.calls[0][0].data).not.toHaveProperty('status');
     });
 
     it('timeout (AbortSignal) → indisponível, com o limite nomeado', async () => {

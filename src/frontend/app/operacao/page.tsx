@@ -352,6 +352,17 @@ export default function OperacaoPage() {
                     Só a classificação — nenhum valor é lido ou exibido, nem para vars que não são
                     segredo.
                   </p>
+                  {painel.configuracao.modoAutenticacao ? (
+                    <p className="mb-3 text-sm" data-testid="modo-autenticacao">
+                      Autenticação:{' '}
+                      <strong>
+                        {painel.configuracao.modoAutenticacao === 'supabase'
+                          ? 'Supabase Auth'
+                          : 'login próprio (local)'}
+                      </strong>{' '}
+                      <span className="text-muted-foreground">(AUTH_PROVIDER)</span>
+                    </p>
+                  ) : null}
                   <div className="overflow-x-auto rounded-lg border">
                     <Table aria-label="Diagnóstico de configuração">
                       <TableHeader>
