@@ -408,7 +408,7 @@ export default class UserRepository {
         });
     };
 
-    /** A migration 0067 foi aplicada neste banco? (pré-checagem do sync). */
+    /** A migration 0070 foi aplicada neste banco? (pré-checagem do sync). */
     public hasAuthUserIdColumn = async (): Promise<boolean> => {
         const row = await this.databaseClient.selectFirst<{ existe: boolean }>(
             `SELECT EXISTS (

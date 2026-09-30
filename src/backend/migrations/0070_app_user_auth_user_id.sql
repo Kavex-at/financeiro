@@ -1,4 +1,4 @@
--- 0067 — `app_user.auth_user_id` + limpeza de grants do `public`: passo 3 de 3 do plano de auth
+-- 0070 — `app_user.auth_user_id` + limpeza de grants do `public`: passo 3 de 3 do plano de auth
 -- (ADR-0054, Supabase Auth no mesmo projeto do banco).
 --
 -- 1) `auth_user_id`: o `id` do usuário correspondente no Supabase Auth (GoTrue). Preenchido pelo
