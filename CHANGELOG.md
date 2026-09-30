@@ -1,5 +1,12 @@
 # Columbia Financeiro — Changelog
 
+## v0.46.1 (2026-09-30) — Reaper do SISPAG para de alertar à toa
+
+- **Limite de "parado" do reaper: 1h → 12h.** O cron pede a cada 15 minutos, mas o GitHub só
+  dispara esse agendamento 5–7 vezes por dia (medido de 15 a 29/09: intervalo típico de 4h, pior
+  caso 8,4h). Com 1h o painel de Operação mostrava o reaper "Parado" quase o dia todo e abria um
+  alerta novo a cada hora. Com 12h ele só alerta se ficar meio dia sem rodar.
+
 ## v0.46.0 (2026-09-29) — o status do lote SISPAG segue a baixa do título
 
 - **O lote fecha quando o título está pago no Conexos, de qualquer jeito que tenha sido pago.**
