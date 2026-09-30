@@ -98,7 +98,7 @@ Crie um **Web Service** apontando para o repositório.
 | `CONEXOS_FIL_COD` | filial padrão (ex.: `2`) |
 | `AUTH_JWT_SECRET` | **gerar forte** — ver abaixo. Assina/valida os tokens de login próprios (modo `local`). Apagar no passo 8 do corte do Supabase Auth (seção 6) |
 | `AUTH_PROVIDER` | `local` (default) ou `supabase` — ver seção 6 |
-| `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY` | só a partir do passo 2 da seção 6 (**nunca** com o backend ≤ v0.44 no ar) |
+| `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY` | só a partir do passo 2 da seção 6 (**nunca** com o backend anterior a esta feature (≤ v0.46) no ar) |
 | `ADMIN_EMAIL` | **obrigatória** para o `npm run seed:admin`: e-mail do admin semeado (vira `username` = `email`). Sem default no código. |
 | `ADMIN_PASSWORD` | **obrigatória** para o `npm run seed:admin`: senha forte, mínimo 8 caracteres. Sem default no código. |
 | `ALLOWED_ORIGINS` | `https://<app>.vercel.app` (domínio do frontend na Vercel) |
@@ -228,7 +228,7 @@ acesso gravada no intervalo **se perde** (exporte `app_user_access_event` antes,
 
 ---
 
-## 6. Supabase Auth (v0.45, ADR-0054)
+## 6. Supabase Auth (ADR-0056)
 
 O login passa a ser do **Supabase Auth do mesmo projeto do banco**, por **proxy no backend**: o
 front continua falando só com `POST /auth/login` (mesmo corpo `{ username, password }`, mesmo
@@ -239,10 +239,10 @@ Mesmas senhas (os hashes bcrypt são importados como estão), sem SMTP, sem cada
 **O merge não liga nada.** `AUTH_PROVIDER` ausente = `local` (o login de hoje). O corte é a
 sequência manual abaixo, do dono do ciclo.
 
-> ⚠️ **ARMADILHA DO CORTE (D14): `SUPABASE_URL` nunca pode estar definida com um backend ≤ v0.44 no
+> ⚠️ **ARMADILHA DO CORTE (D14): `SUPABASE_URL` nunca pode estar definida com um backend anterior a esta feature (≤ v0.46) no
 > ar.** O código antigo aplica o `issuer` do Supabase também aos tokens HS256 próprios (que não têm
 > `iss`): com a variável definida, **todo mundo é deslogado**. Por isso `SUPABASE_URL` só entra no
-> Render **depois** que o backend novo está no ar, e **todo rollback de código para ≤ v0.44 exige
+> Render **depois** que o backend novo está no ar, e **todo rollback de código para anterior a esta feature (≤ v0.46) exige
 > remover `SUPABASE_URL` antes**.
 
 **Variáveis** (Render; nada muda no Vercel, e nenhum cron do GitHub Actions precisa delas):
@@ -338,4 +338,4 @@ Projeto: `kngrpoqzaxtuzkcugsyl` (sa-east-1). Quem executa: dono do ciclo. Cada p
 | Rollback de código depois do passo 5 | Primeiro `AUTH_PROVIDER=local` (linha acima) e esperar 1 h; depois **remover `SUPABASE_URL`** e fazer rollback do deploy. O código antigo só entende HS256 | Um login por pessoa |
 | Divergência pontual (um usuário não entra) | Não é rollback: rodar `sync-supabase-auth` em dry-run, ler a linha do usuário, rodar com `--execute` | Só aquele usuário |
 
-Nunca: apagar usuários no painel do Supabase para "recomeçar" com o modo `supabase` ligado (quebra o vínculo de quem está logado; o sync recria e vincula, mas as sessões caem). Nunca: `SUPABASE_URL` definida com o backend ≤ v0.44 no ar.
+Nunca: apagar usuários no painel do Supabase para "recomeçar" com o modo `supabase` ligado (quebra o vínculo de quem está logado; o sync recria e vincula, mas as sessões caem). Nunca: `SUPABASE_URL` definida com o backend anterior a esta feature (≤ v0.46) no ar.

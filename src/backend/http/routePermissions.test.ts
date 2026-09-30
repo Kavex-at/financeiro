@@ -159,7 +159,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
 const PUBLICAS = ['/health', '/auth'];
 
 /**
- * As rotas públicas de sessão (ADR-0054): login, refresh e logout. `GET /auth/transicao` saiu com
+ * As rotas públicas de sessão (ADR-0056): login, refresh e logout. `GET /auth/transicao` saiu com
  * o banner de transição.
  */
 const PUBLICAS_AUTH = ['POST /auth/login', 'POST /auth/logout', 'POST /auth/refresh'];

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 /**
  * 0070 — `app_user.auth_user_id` + limpeza de grants do `public` (passo 3 de 3 do plano de auth,
- * ADR-0054).
+ * ADR-0056).
  *
  * Asserções sobre o FONTE, no padrão de `0064_app_user_email.test.ts`: o `MigrationRunner` usa
  * `import.meta` e não roda sob Jest. A execução real (Postgres puro sem os roles e o Postgres do

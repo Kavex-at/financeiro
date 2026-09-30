@@ -137,7 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return registerSessionExpiredHandler(notifySessionExpired)
   }, [devBypass, notifySessionExpired])
 
-  // Renovação silenciosa (ADR-0054): outra aba ou o `apiFetch` renovou → troca o token desta aba.
+  // Renovação silenciosa (ADR-0056): outra aba ou o `apiFetch` renovou → troca o token desta aba.
   useEffect(() => {
     if (devBypass) return
     return onSessaoRenovada((sessao) => {
@@ -221,7 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const signOut = useCallback(() => {
-    // "Sair" encerra a sessão no servidor (ADR-0054, D2) em melhor esforço: sem esperar e sem
+    // "Sair" encerra a sessão no servidor (ADR-0056, D2) em melhor esforço: sem esperar e sem
     // bloquear — falha de rede não impede sair. O backend responde 204 em qualquer caso.
     const atual =
       typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null

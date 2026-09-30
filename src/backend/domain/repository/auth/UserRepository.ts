@@ -17,7 +17,7 @@ export interface AppUser {
     ativo: boolean;
     /** E-mail de login (ADR-0051). Ausente = pendente de cadastro pelo admin. */
     email?: string;
-    /** `auth.users.id` do usuário no Supabase Auth (ADR-0054). Ausente = ainda sem vínculo. */
+    /** `auth.users.id` do usuário no Supabase Auth (ADR-0056). Ausente = ainda sem vínculo. */
     authUserId?: string;
 }
 
@@ -53,12 +53,12 @@ export interface CredencialLinha {
 
 /**
  * Passo que roda DENTRO da transação de uma escrita de credencial, depois da escrita local com a
- * linha travada e antes do COMMIT (R6, ADR-0054): é onde o Supabase Auth é chamado. Lançar aqui =
+ * linha travada e antes do COMMIT (R6, ADR-0056): é onde o Supabase Auth é chamado. Lançar aqui =
  * ROLLBACK: o banco fica como estava.
  */
 export type AntesDoCommit = (tx: TransactionClient, linha: CredencialLinha) => Promise<void>;
 
-/** Um usuário como o job `sync-supabase-auth` precisa dele (ADR-0054). */
+/** Um usuário como o job `sync-supabase-auth` precisa dele (ADR-0056). */
 export interface UsuarioParaSync {
     id: number;
     username: string;
@@ -160,7 +160,7 @@ export default class UserRepository {
     };
 
     /**
-     * O usuário vinculado a um usuário do Supabase Auth (`auth_user_id`, ADR-0054). UUID malformado
+     * O usuário vinculado a um usuário do Supabase Auth (`auth_user_id`, ADR-0056). UUID malformado
      * = `null` sem consultar o banco. Não filtra `ativo`: quem chama decide.
      */
     public findByAuthUserId = async (authUserId: string): Promise<AppUser | null> => {
@@ -378,7 +378,7 @@ export default class UserRepository {
     };
 
     /**
-     * Grava o vínculo fora de uma escrita de credencial (seed e sync, ADR-0054). O índice único
+     * Grava o vínculo fora de uma escrita de credencial (seed e sync, ADR-0056). O índice único
      * parcial recusa (23505) um UUID que já pertence a outro usuário (I3).
      */
     public linkAuthUser = async (id: number, authUserId: string): Promise<void> => {

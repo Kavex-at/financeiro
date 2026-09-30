@@ -4,7 +4,7 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import SupabaseAuthSyncService from '../domain/service/auth/SupabaseAuthSyncService.js';
 
 /**
- * Importa os usuários ATIVOS do `app_user` para o Supabase Auth e repara divergências (ADR-0054).
+ * Importa os usuários ATIVOS do `app_user` para o Supabase Auth e repara divergências (ADR-0056).
  *
  *   npm run job:sync-supabase-auth              → dry-run: imprime o plano, não escreve nada
  *   npm run job:sync-supabase-auth -- --execute → aplica

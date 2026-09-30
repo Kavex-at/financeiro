@@ -19,7 +19,7 @@ export interface UserAccess {
     userId: number;
     username: string;
     ativo: boolean;
-    /** `app_user.auth_user_id` (ADR-0054). Ausente = ainda sem vínculo com o Supabase Auth. */
+    /** `app_user.auth_user_id` (ADR-0056). Ausente = ainda sem vínculo com o Supabase Auth. */
     authUserId?: string;
     papel: RoleRef;
     /** Pacote do papel, cru (pode ter valor antigo fora do catálogo — R4). */
@@ -175,7 +175,7 @@ export default class AccessRepository {
     };
 
     /**
-     * Acesso do dono de um token do Supabase Auth, pelo vínculo `auth_user_id` (ADR-0054). UUID
+     * Acesso do dono de um token do Supabase Auth, pelo vínculo `auth_user_id` (ADR-0056). UUID
      * malformado é recusado (Zod) antes do SQL: `null`, sem consulta. `null` também = sem vínculo.
      */
     public findAccessByAuthUserId = async (authUserId: string): Promise<UserAccess | null> => {

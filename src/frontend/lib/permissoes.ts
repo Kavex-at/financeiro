@@ -62,7 +62,7 @@ export async function fetchMinhasPermissoes(): Promise<MinhasPermissoes> {
   const res = await apiFetch(`${API}/me/permissoes`, { headers: await withAuthHeaders() })
   if (!res.ok) throw new Error(`Falha ao consultar permissões (HTTP ${res.status}).`)
   const body = (await res.json()) as { permissoes?: unknown; papel?: PapelRef }
-  // Sem o array (resposta fora do contrato): conjunto vazio, fail-closed (ADR-0054 removeu o
+  // Sem o array (resposta fora do contrato): conjunto vazio, fail-closed (ADR-0056 removeu o
   // fallback por `role` do token).
   if (!Array.isArray(body.permissoes)) return { permissoes: new Set() }
   return {

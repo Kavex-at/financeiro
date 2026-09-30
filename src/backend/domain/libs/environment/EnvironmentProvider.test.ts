@@ -21,7 +21,7 @@ jest.mock('dotenv', () => ({
 
 import EnvironmentProvider from './EnvironmentProvider.js';
 
-/** A chave do banner de transição, que saiu (ADR-0054). Montada para o grep de remoção. */
+/** A chave do banner de transição, que saiu (ADR-0056). Montada para o grep de remoção. */
 const SERVICE_ROLE_ANTIGA = ['SUPABASE', 'SERVICE', 'ROLE', 'KEY'].join('_');
 const BANNER_ANTIGO = ['AUTH', 'TRANSICAO', 'EMAIL', 'BANNER'].join('_');
 
@@ -153,7 +153,7 @@ describe('EnvironmentProvider', () => {
             delete process.env.CONEXOS_EXTRATO_SYNC_START_DATE;
         });
 
-        it('authProvider: só "supabase" liga o modo Supabase; ausente ou outro = local (ADR-0054)', async () => {
+        it('authProvider: só "supabase" liga o modo Supabase; ausente ou outro = local (ADR-0056)', async () => {
             const resolve = async () =>
                 (await new EnvironmentProvider().getEnvironmentVars()).authProvider;
             delete process.env.AUTH_PROVIDER;

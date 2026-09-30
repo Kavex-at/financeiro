@@ -1,5 +1,5 @@
 /**
- * `apiFetch` em 401 (ADR-0054): UMA renovação e UM novo envio com o `Authorization` trocado. Se a
+ * `apiFetch` em 401 (ADR-0056): UMA renovação e UM novo envio com o `Authorization` trocado. Se a
  * renovação falha ou o reenvio volta 401, cai no comportamento de antes (modal + erro).
  */
 const refreshSessionMock = jest.fn()

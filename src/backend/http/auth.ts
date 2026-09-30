@@ -18,7 +18,7 @@ export type TokenIssuer = 'app' | 'supabase';
  * Depois do `buildAuthMiddleware`: `sub` é o do TOKEN (username no emissor `app`, UUID do Supabase
  * no emissor `supabase`) e `emissor` diz qual verificador o aceitou.
  *
- * Depois do `resolverAcesso` (ADR-0054, I2): o `req.user` é REESCRITO a partir do banco para
+ * Depois do `resolverAcesso` (ADR-0056, I2): o `req.user` é REESCRITO a partir do banco para
  * `{ sub: app_user.username, authUserId?, filiais? }`. Tudo o que roda depois dele (identidade
  * Conexos, trilhas de auditoria, guards) lê `sub = username`, para sempre. `email` e `role` do
  * token nunca entram aqui; nenhum guard lê papel do token (ADR-0053, I1).
@@ -29,7 +29,7 @@ export interface AuthUser {
     /** UUID do usuário no Supabase Auth, quando o token veio do GoTrue. */
     authUserId?: string;
     /**
-     * Legado: nunca é preenchido desde a ADR-0054. Mantido só para os sítios `sub ?? email` que
+     * Legado: nunca é preenchido desde a ADR-0056. Mantido só para os sítios `sub ?? email` que
      * ainda o citam como segundo recurso.
      */
     email?: string;
@@ -109,7 +109,7 @@ const toVerified = (payload: JWTPayload, emissor: TokenIssuer): VerifiedToken =>
 const isSymmetricAlg = (alg?: string): boolean => alg?.startsWith('HS') ?? false;
 
 /**
- * Monta o verificador de access token com **opções separadas por emissor** (ADR-0054, I8). O
+ * Monta o verificador de access token com **opções separadas por emissor** (ADR-0056, I8). O
  * verificador é escolhido pelo `alg` do cabeçalho; cada caminho só existe se a sua configuração
  * existir:
  *

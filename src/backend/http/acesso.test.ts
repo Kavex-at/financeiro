@@ -175,7 +175,7 @@ describe('resolverAcesso', () => {
     });
 });
 
-describe('resolverAcesso — identidade por emissor (ADR-0054, I2/I3)', () => {
+describe('resolverAcesso — identidade por emissor (ADR-0056, I2/I3)', () => {
     const UUID = '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60';
 
     it('emissor app: busca por username e reescreve req.user = { sub: username }', async () => {
