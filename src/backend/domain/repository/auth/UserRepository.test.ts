@@ -400,6 +400,26 @@ describe('UserRepository', () => {
         }
     });
 
+    it('listAll: nunca expõe auth_user_id nem password_hash, mesmo se vierem na linha', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            {
+                id: 1,
+                username: 'a',
+                role: 'admin',
+                ativo: true,
+                created_at: '2026-09-30T00:00:00Z',
+                auth_user_id: UUID_VINCULO,
+                password_hash: 'h',
+            },
+        ]);
+        const [linha] = await repoOf(db).listAll();
+        const [sql] = (db.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).not.toContain('auth_user_id');
+        expect(sql).not.toContain('password_hash');
+        expect(Object.keys(linha).sort()).toEqual(['ativo', 'createdAt', 'id', 'role', 'username']);
+    });
+
     it('listAll: mapeia email e a trilha de edição, omitindo os nulos; nunca o hash', async () => {
         const db = buildDb();
         const base = {
@@ -712,5 +732,162 @@ describe('UserRepository', () => {
         expect(fonte).not.toContain('role = $role');
         expect(fonte).not.toMatch(/role\s*=\s*'admin'/);
         expect(fonte).not.toContain('ADMIN_ROLE =');
+    });
+});
+
+/**
+ * R6 (ADR-0054): escrita de credencial espelhada no Supabase Auth. O passo "antes do commit" roda
+ * DENTRO da transação, depois da escrita local com a linha travada: BEGIN → trava → escrita →
+ * chamada admin → COMMIT. Falha no passo = ROLLBACK (nada muda no banco).
+ */
+describe('UserRepository — passo antes do commit (R6)', () => {
+    const LINHA = {
+        id: 4,
+        username: 'beto',
+        email: 'beto@qa.local',
+        auth_user_id: UUID_VINCULO,
+        ativo: true,
+        password_hash: '$2a$12$velho',
+    };
+
+    /** Banco falso que registra BEGIN/COMMIT/ROLLBACK e cada statement da transação. */
+    const bancoComOrdem = (linha: Record<string, unknown> | null = LINHA) => {
+        const ordem: string[] = [];
+        const tx = {
+            selectFirst: jest.fn(async (sql: string) => {
+                ordem.push(/FOR UPDATE/.test(sql) ? 'trava' : 'le');
+                return linha;
+            }),
+            selectMany: jest.fn(async () => []),
+            update: jest.fn(async () => {
+                ordem.push('escrita');
+                return 1;
+            }),
+            insert: jest.fn(async () => {
+                ordem.push('evento');
+                return 1;
+            }),
+        };
+        const db = buildDb(tx);
+        (db.withTransaction as jest.Mock).mockImplementation(async (fn) => {
+            ordem.push('BEGIN');
+            try {
+                const out = await fn(tx);
+                ordem.push('COMMIT');
+                return out;
+            } catch (error) {
+                ordem.push('ROLLBACK');
+                throw error;
+            }
+        });
+        return { db, tx, ordem };
+    };
+
+    const passo = (ordem: string[], falha?: Error) =>
+        jest.fn(async () => {
+            ordem.push('admin');
+            if (falha) throw falha;
+        });
+
+    it('updatePassword: BEGIN → trava → escrita → admin → COMMIT, com a linha travada', async () => {
+        const { db, ordem } = bancoComOrdem();
+        const antes = passo(ordem);
+        expect(await repoOf(db).updatePassword(4, '$2a$12$novo', antes)).toBe(true);
+        expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'admin', 'COMMIT']);
+        expect(antes).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                id: 4,
+                authUserId: UUID_VINCULO,
+                passwordHash: '$2a$12$novo',
+            }),
+        );
+    });
+
+    it('updatePassword: falha no admin → ROLLBACK e o erro sobe', async () => {
+        const { db, ordem } = bancoComOrdem();
+        await expect(
+            repoOf(db).updatePassword(4, 'h', passo(ordem, new Error('gotrue fora'))),
+        ).rejects.toThrow('gotrue fora');
+        expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'admin', 'ROLLBACK']);
+    });
+
+    it('updatePassword com passo: id inexistente → false, sem escrita nem admin', async () => {
+        const { db, ordem } = bancoComOrdem(null);
+        const antes = passo(ordem);
+        expect(await repoOf(db).updatePassword(99, 'h', antes)).toBe(false);
+        expect(antes).not.toHaveBeenCalled();
+    });
+
+    it('setEmail com passo: trava, grava, chama o admin com o e-mail NOVO, e só então commita', async () => {
+        const { db, ordem } = bancoComOrdem();
+        const antes = passo(ordem);
+        expect(await repoOf(db).setEmail(4, 'beto2@qa.local', 'adm', antes)).toBe(
+            SET_EMAIL_RESULT.UPDATED,
+        );
+        expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'admin', 'COMMIT']);
+        expect(antes).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ email: 'beto2@qa.local', authUserId: UUID_VINCULO }),
+        );
+    });
+
+    it('setEmail com passo: mesmo e-mail = UNCHANGED sem chamar o admin', async () => {
+        const { db, tx, ordem } = bancoComOrdem();
+        (tx.update as jest.Mock).mockResolvedValue(0);
+        const antes = passo(ordem);
+        expect(await repoOf(db).setEmail(4, 'beto@qa.local', 'adm', antes)).toBe(
+            SET_EMAIL_RESULT.UNCHANGED,
+        );
+        expect(antes).not.toHaveBeenCalled();
+    });
+
+    it('create com passo: o admin roda DENTRO da transação da criação, com o hash gravado', async () => {
+        const { db, tx, ordem } = bancoComOrdem();
+        (tx.selectFirst as jest.Mock).mockImplementation(async (sql: string) => {
+            if (/INSERT INTO app_user/.test(sql)) {
+                ordem.push('escrita');
+                return {
+                    id: 9,
+                    username: 'ana@qa.local',
+                    email: 'ana@qa.local',
+                    role: 'admin',
+                    ativo: true,
+                    created_by: 'adm',
+                    created_at: '2026-09-30T00:00:00Z',
+                };
+            }
+            return { id: 2, nome: 'Consulta' };
+        });
+        const antes = passo(ordem);
+        await repoOf(db).create(
+            { email: 'ana@qa.local', passwordHash: 'h', roleId: 2, createdBy: 'adm' },
+            antes,
+        );
+        expect(ordem).toEqual(['BEGIN', 'escrita', 'evento', 'admin', 'COMMIT']);
+        expect(antes).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ id: 9, email: 'ana@qa.local', passwordHash: 'h' }),
+        );
+    });
+
+    it('setAuthUserId e findIdByAuthUserId: parametrizados, na transação recebida', async () => {
+        const { db, tx } = bancoComOrdem({ id: 4 });
+        const repo = repoOf(db);
+        await repo.setAuthUserId(tx as never, 4, UUID_VINCULO);
+        const [sql, params] = (tx.update as jest.Mock).mock.calls[0];
+        expect(sql).toContain('SET auth_user_id = $authUserId');
+        expect(params).toEqual({ id: 4, authUserId: UUID_VINCULO });
+        expect(await repo.findIdByAuthUserId(tx as never, UUID_VINCULO)).toBe(4);
+        expect((tx.selectFirst as jest.Mock).mock.calls[0][1]).toEqual({
+            authUserId: UUID_VINCULO,
+        });
+    });
+
+    it('reactivate com passo: o admin roda depois do UPDATE e antes do COMMIT', async () => {
+        const { db, ordem } = bancoComOrdem({ ...LINHA, ativo: true });
+        const antes = passo(ordem);
+        expect(await repoOf(db).reactivate(4, 'adm', antes)).toBe(REACTIVATE_RESULT.REACTIVATED);
+        expect(ordem).toEqual(['BEGIN', 'escrita', 'evento', 'le', 'admin', 'COMMIT']);
     });
 });
