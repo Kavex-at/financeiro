@@ -102,6 +102,8 @@ const buildGuardTx = (pessoas: Pessoa[]) => {
     return { tx, chamadas };
 };
 
+const UUID_VINCULO = '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60';
+
 describe('UserRepository', () => {
     it('findByUsername: mapeia ativo e é parametrizado', async () => {
         const db = buildDb();
@@ -336,6 +338,52 @@ describe('UserRepository', () => {
         it('sem linha: lista vazia', async () => {
             const db = buildDb();
             expect(await repoOf(db).findByLoginIdentifier('ninguem')).toEqual([]);
+        });
+
+        it('devolve também o auth_user_id (vínculo com o Supabase Auth, ADR-0054)', async () => {
+            const db = buildDb();
+            (db.selectMany as jest.Mock).mockResolvedValue([
+                {
+                    id: 1,
+                    username: 'fulano',
+                    password_hash: 'h',
+                    role: 'admin',
+                    ativo: true,
+                    email: 'f@columbiabr.com',
+                    auth_user_id: UUID_VINCULO,
+                },
+            ]);
+            const [out] = await repoOf(db).findByLoginIdentifier('fulano');
+            const [sql] = (db.selectMany as jest.Mock).mock.calls[0];
+            expect(sql).toContain('auth_user_id');
+            expect(out).toMatchObject({ email: 'f@columbiabr.com', authUserId: UUID_VINCULO });
+        });
+    });
+
+    describe('findByAuthUserId', () => {
+        it('parametrizado por auth_user_id; devolve o usuário com o vínculo', async () => {
+            const db = buildDb();
+            (db.selectFirst as jest.Mock).mockResolvedValue({
+                id: 3,
+                username: 'fulano',
+                password_hash: 'h',
+                role: 'admin',
+                ativo: false,
+                email: 'f@columbiabr.com',
+                auth_user_id: UUID_VINCULO,
+            });
+            const out = await repoOf(db).findByAuthUserId(UUID_VINCULO);
+            const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+            expect(sql).toContain('WHERE auth_user_id = $authUserId');
+            expect(sql).not.toContain(UUID_VINCULO);
+            expect(params).toEqual({ authUserId: UUID_VINCULO });
+            expect(out).toMatchObject({ id: 3, username: 'fulano', ativo: false });
+        });
+
+        it('UUID malformado: null sem consultar o banco', async () => {
+            const db = buildDb();
+            expect(await repoOf(db).findByAuthUserId('lixo')).toBeNull();
+            expect(db.selectFirst).not.toHaveBeenCalled();
         });
     });
 

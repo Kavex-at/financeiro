@@ -14,6 +14,10 @@ import rateLimit, { type RateLimitRequestHandler } from 'express-rate-limit';
  */
 const skipInTest = (): boolean => process.env.NODE_ENV === 'test';
 
+/** Resposta dos limitadores de sessão e do 429 do GoTrue (D4/D5). */
+export const MENSAGEM_MUITAS_TENTATIVAS =
+    'Muitas tentativas. Aguarde alguns minutos e tente de novo.';
+
 /** Global limiter — ~100 requests per minute per IP. */
 export const globalLimiter: RateLimitRequestHandler = rateLimit({
     windowMs: 60_000,

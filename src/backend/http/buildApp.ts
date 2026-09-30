@@ -19,7 +19,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import healthRouter from '../routes/health.js';
 import { resolverAcesso } from './acesso.js';
-import { buildAuthMiddleware } from './auth.js';
+import { buildAuthMiddleware, buildVerifyAccessToken } from './auth.js';
 import { isDraining } from './readinessState.js';
 import { loadAuthEnv } from './authEnv.js';
 import { conexosIdentityMiddleware } from './conexosIdentity.js';
@@ -30,7 +30,7 @@ import { errorMiddleware } from './errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './rateLimit.js';
 import { redactBody } from './redact.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
-import authRouter from '../routes/auth.js';
+import { buildAuthRouter } from '../routes/auth.js';
 import conexosRouter from '../routes/conexos.js';
 import permutasRouter from '../routes/permutas.js';
 import meRouter from '../routes/me.js';
@@ -108,17 +108,23 @@ export const buildApp = () => {
     // transforma um uptime checker gratuito em alerta. Ver `routes/health.ts`.
     app.use('/health', healthRouter);
 
-    // Login route — PUBLIC, mounted BEFORE the auth middleware so unauthenticated
-    // users can obtain a token. `POST /auth/login` validates username/password
-    // against `app_user` and returns a self-signed HS256 JWT.
-    app.use('/auth', authRouter);
-
-    // JWT validation — applied after CORS/rate-limit, before every API route below.
-    // Unauthenticated requests are rejected with HTTP 401. Validated env (Zod) at
-    // boundary; `DEV_AUTH_BYPASS=true` skips it for local development. Tokens are
-    // the app's own HS256 JWTs (signed by AuthService with AUTH_JWT_SECRET).
-    // Arch-review cards security-1 / security-7.
+    // Sessão — PÚBLICA, montada ANTES do middleware de auth (senão ninguém loga). `POST /auth/login`
+    // emite o token do modo em vigor (`AUTH_PROVIDER`: HS256 próprio ou Supabase Auth por proxy),
+    // `/auth/refresh` renova a sessão Supabase e `/auth/logout` a encerra (ADR-0054). O logout usa
+    // o MESMO verificador do middleware, sem `resolverAcesso` (D2).
     const authEnv = loadAuthEnv();
+    const verifyAccessToken = authEnv.devBypass ? undefined : buildVerifyAccessToken(authEnv);
+    app.use(
+        '/auth',
+        buildAuthRouter({
+            verifyAccessToken:
+                verifyAccessToken ?? (async () => Promise.reject(new Error('DEV_AUTH_BYPASS'))),
+        }),
+    );
+
+    // Validação do token — depois de CORS/rate-limit e das rotas públicas, antes de toda rota
+    // abaixo. Dois emissores com opções separadas (ADR-0054, I8); `DEV_AUTH_BYPASS=true` pula (só
+    // local/dev). Arch-review cards security-1 / security-7.
     app.use(buildAuthMiddleware(authEnv));
 
     // Acesso (ADR-0053): o token só identifica; o banco autoriza. Resolve `sub → app_user →
