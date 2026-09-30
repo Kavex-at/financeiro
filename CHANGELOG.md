@@ -17,7 +17,7 @@
   sync aplica o bloqueio depois.
 - **Novo job `sync-supabase-auth`** (simulação por padrão) importa os usuários ativos e repara
   divergências. **Limite de tentativas** próprio em login e renovação.
-- **Migration `0070`:** coluna `app_user.auth_user_id` e remoção de privilégios que o Supabase dá
+- **Migration `0071`:** coluna `app_user.auth_user_id` e remoção de privilégios que o Supabase dá
   por padrão a `anon`/`authenticated` (`TRUNCATE`, `REFERENCES`, `TRIGGER`).
 - Sai o aviso de transição para e-mail no login (`AUTH_TRANSICAO_EMAIL_BANNER`).
 - **Nunca definir `SUPABASE_URL` no Render com um backend anterior a esta versão**: ele recusaria

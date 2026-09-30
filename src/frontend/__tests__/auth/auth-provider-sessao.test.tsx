@@ -1,5 +1,5 @@
 /**
- * `AuthProvider` com a sessão do Supabase Auth (ADR-0056): guarda `refreshToken`/`expiresAt`,
+ * `AuthProvider` com a sessão do Supabase Auth (ADR-0057): guarda `refreshToken`/`expiresAt`,
  * renova ~5 min antes do `exp` sem nada visível, só abre o modal quando a sessão não se renova,
  * sincroniza abas pelo evento `storage` e "Sair" chama `/auth/logout` em melhor esforço.
  * Resposta sem `refreshToken` (backend antigo, modo local) = comportamento de antes.

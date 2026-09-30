@@ -7,7 +7,7 @@ import LogService from '../LogService.js';
 import EffectivePermissionCalculator from './EffectivePermissionCalculator.js';
 
 /**
- * Como o dono do token é procurado (ADR-0056): pelo `username` (token próprio, `sub = username`) ou
+ * Como o dono do token é procurado (ADR-0057): pelo `username` (token próprio, `sub = username`) ou
  * pelo `auth_user_id` (token do Supabase, `sub = UUID`).
  */
 export interface ChaveAcesso {
@@ -33,7 +33,7 @@ interface CacheEntry {
 /**
  * AccessService — resolve, a cada requisição, QUEM é o dono do token e o que ele pode (ADR-0053).
  *
- * O token só identifica (`username` no token próprio, `auth_user_id` no do Supabase — ADR-0056);
+ * O token só identifica (`username` no token próprio, `auth_user_id` no do Supabase — ADR-0057);
  * a permissão vem do banco (I1), calculada pelo
  * `EffectivePermissionCalculator`. Para não pagar uma consulta por requisição, guarda o resultado
  * em memória por **30 s** (R7), e toda escrita de acesso feita pela tela chama `invalidar(userId)`

@@ -35,7 +35,7 @@ export interface DiagnosticoVar {
 export interface DiagnosticoConfig {
     geradoEm: string;
     /**
-     * Modo de autenticação em vigor (ADR-0056), para o operador saber quem emite o token. É o
+     * Modo de autenticação em vigor (ADR-0057), para o operador saber quem emite o token. É o
      * valor enumerado, não o texto bruto do ambiente: qualquer coisa fora de `supabase` é `local`.
      * Ausente só no fallback do painel, quando o próprio diagnóstico falhou.
      */

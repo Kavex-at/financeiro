@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 
 /**
- * Sonda do spike T-1 (feature `auth-supabase`, ADR-0056): a API admin do GoTrue aceita
+ * Sonda do spike T-1 (feature `auth-supabase`, ADR-0057): a API admin do GoTrue aceita
  * `password_hash` no create e no update? Também serve de fumaça para o roteiro de QA local.
  *
  * SEGURANÇA: roda SÓ contra o GoTrue de um `supabase start` local. Recusa qualquer

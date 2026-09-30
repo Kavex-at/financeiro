@@ -25,7 +25,7 @@ amends_decisions: [0011, 0042]
 
 # ADR 0053: permissões por módulo no banco, nunca no token
 
-> **Continuada pela ADR-0056 (2026-09-30):** com o Supabase Auth, a chave de lookup muda só na
+> **Continuada pela ADR-0057 (2026-09-30):** com o Supabase Auth, a chave de lookup muda só na
 > metade `token → app_user` (`app_user.auth_user_id` para o emissor `supabase`); as permissões
 > continuam no banco, lidas a cada requisição (I1).
 

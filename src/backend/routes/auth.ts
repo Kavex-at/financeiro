@@ -59,7 +59,7 @@ const modoAtual = async (): Promise<'local' | 'supabase'> =>
     (await container.resolve(EnvironmentProvider).getEnvironmentVars()).authProvider;
 
 /**
- * Rotas de sessão — PÚBLICAS, montadas ANTES do middleware de auth (ADR-0056).
+ * Rotas de sessão — PÚBLICAS, montadas ANTES do middleware de auth (ADR-0057).
  *
  * - `POST /auth/login`: modo `local` (default) → `AuthService` (bcrypt + HS256 próprio, formato de
  *   hoje); modo `supabase` → `SupabaseSessionService` (proxy para o GoTrue; o identificador é

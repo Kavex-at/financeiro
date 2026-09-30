@@ -340,7 +340,7 @@ describe('UserRepository', () => {
             expect(await repoOf(db).findByLoginIdentifier('ninguem')).toEqual([]);
         });
 
-        it('devolve também o auth_user_id (vínculo com o Supabase Auth, ADR-0056)', async () => {
+        it('devolve também o auth_user_id (vínculo com o Supabase Auth, ADR-0057)', async () => {
             const db = buildDb();
             (db.selectMany as jest.Mock).mockResolvedValue([
                 {
@@ -736,7 +736,7 @@ describe('UserRepository', () => {
 });
 
 /**
- * R6 (ADR-0056): escrita de credencial espelhada no Supabase Auth. O passo "antes do commit" roda
+ * R6 (ADR-0057): escrita de credencial espelhada no Supabase Auth. O passo "antes do commit" roda
  * DENTRO da transação, depois da escrita local com a linha travada: BEGIN → trava → escrita →
  * chamada admin → COMMIT. Falha no passo = ROLLBACK (nada muda no banco).
  */

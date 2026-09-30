@@ -11,7 +11,7 @@ export default class EnvironmentVars {
      */
     public conexosUsnCod: string;
 
-    /** URL do projeto Supabase, sem barra final (ADR-0056). Ausente = Supabase Auth desligado. */
+    /** URL do projeto Supabase, sem barra final (ADR-0057). Ausente = Supabase Auth desligado. */
     public supabaseUrl?: string;
     /**
      * Chave publicável do Supabase (`sb_publishable_…` ou a `anon` legada). Vai no `apikey` das
@@ -25,7 +25,7 @@ export default class EnvironmentVars {
     public supabaseSecretKey?: string;
 
     /**
-     * Quem emite o token no login (`AUTH_PROVIDER`, ADR-0056): `local` (HS256 próprio, default) ou
+     * Quem emite o token no login (`AUTH_PROVIDER`, ADR-0057): `local` (HS256 próprio, default) ou
      * `supabase` (GoTrue). O rollback do corte é voltar para `local`.
      */
     public authProvider: 'local' | 'supabase';

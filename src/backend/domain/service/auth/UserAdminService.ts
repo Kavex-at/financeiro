@@ -174,7 +174,7 @@ export const resetPasswordSchema = z.object({
  * é feita no route; este service assume que o chamador já foi autorizado.
  *
  * Escritas de CREDENCIAL (criar, senha, e-mail, ativo) são espelhadas no Supabase Auth pelo
- * `CredentialMirror` (R6, ADR-0056): o passo roda dentro da transação local, antes do commit.
+ * `CredentialMirror` (R6, ADR-0057): o passo roda dentro da transação local, antes do commit.
  *
  * Toda escrita que muda acesso (papel, exceções, ativo, criação) chama `AccessService.invalidar`
  * DEPOIS do commit — a próxima requisição do alvo relê o banco — e emite uma linha de log em

@@ -22,7 +22,7 @@ amends_decisions: []
 
 # ADR 0051: e-mail real para todo usuário, sem mexer na identidade de auditoria
 
-> **D2 emendada pela ADR-0056 (2026-09-30):** "`sub = username` até o passo 3" vira
+> **D2 emendada pela ADR-0057 (2026-09-30):** "`sub = username` até o passo 3" vira
 > **"`req.user.sub = username` para sempre"**. O `sub` do token do Supabase Auth é o UUID do
 > `auth.users` e é traduzido para o `username` no `resolverAcesso`.
 

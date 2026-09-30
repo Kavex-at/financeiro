@@ -11,7 +11,7 @@ export type ResultadoSeed =
     | { supabase: 'nao-configurado'; aviso: string };
 
 /**
- * AdminSeeder — a lógica testável do `jobs/seed-admin.ts` (ADR-0056, Task 10).
+ * AdminSeeder — a lógica testável do `jobs/seed-admin.ts` (ADR-0057, Task 10).
  *
  * 1. Upsert local do admin (como sempre: `username = email`, papel Administrador, ativo).
  * 2. Com a API admin configurada: acha o usuário no Supabase Auth pelo vínculo ou pelo e-mail;

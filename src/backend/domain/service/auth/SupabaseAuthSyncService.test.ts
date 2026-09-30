@@ -225,11 +225,11 @@ describe('SupabaseAuthSyncService — execução', () => {
 });
 
 describe('SupabaseAuthSyncService — pré-checagens', () => {
-    it('coluna auth_user_id ausente: erro mandando aplicar a 0070', async () => {
+    it('coluna auth_user_id ausente: erro mandando aplicar a 0071', async () => {
         const { service, repo } = montar([]);
         repo.hasAuthUserIdColumn.mockResolvedValue(false);
         await expect(service.executar({ execute: false })).rejects.toThrow(
-            /aplique a migration 0070/,
+            /aplique a migration 0071/,
         );
     });
 

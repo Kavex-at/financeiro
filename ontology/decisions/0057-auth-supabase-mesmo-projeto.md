@@ -1,5 +1,5 @@
 ---
-adr_number: 0056
+adr_number: 0057
 title: Supabase Auth do mesmo projeto do banco, por proxy no backend; `req.user.sub = username` para sempre
 date: 2026-09-30
 status: accepted
@@ -22,7 +22,7 @@ evidence:
   - src/backend/http/rateLimit.ts
   - src/backend/jobs/sync-supabase-auth.ts
   - src/backend/jobs/probe-gotrue-local.ts
-  - src/backend/migrations/0070_app_user_auth_user_id.sql
+  - src/backend/migrations/0071_app_user_auth_user_id.sql
   - src/frontend/lib/auth/session-refresh.ts
   - src/frontend/lib/http.ts
   - DEPLOY.md (seção 6)
@@ -30,10 +30,13 @@ evidence:
   - ontology/_inbox/auth-supabase-tasks.md
 ---
 
-# ADR-0056 — Supabase Auth do mesmo projeto, por proxy no backend; `username` como identidade para sempre
+# ADR-0057 — Supabase Auth do mesmo projeto, por proxy no backend; `username` como identidade para sempre
 
 > Número provisório no scoping: **0054**. A `main` já tinha 0054 e 0055 (SISPAG) quando esta ADR
-> foi escrita; ficou **0056**. A migration provisória 0067 virou **0070** pelo mesmo motivo.
+> foi escrita, e ela nasceu **0056**; no rebase final a `main` também tinha tomado a 0056 (métricas do
+> SISPAG), e esta ficou **0057**. A migration seguiu o mesmo caminho: provisória 0067 → 0070 → **0071**
+> (a `main` tem `0070_metricas_ciclo_sispag.sql`). O relatório do Regis-Review de 2026-09-30-1554 é
+> registro datado e cita os números da época (0056 / 0070).
 
 ## Contexto
 
@@ -80,7 +83,7 @@ estão), sem SMTP, sem cadastro público, chave secreta só no backend, permiss�
    funcionando com senhas trocadas depois do corte.
 8. **Higiene de grants (verificação do Q1).** Em produção as 44 tabelas de `public` têm RLS ligada,
    0 políticas, e `anon`/`authenticated` não têm SELECT/INSERT/UPDATE/DELETE: a Data API não lê nada
-   nosso. Tinham TRUNCATE/REFERENCES/TRIGGER herdados do default privilege do `postgres`; a 0070
+   nosso. Tinham TRUNCATE/REFERENCES/TRIGGER herdados do default privilege do `postgres`; a 0071
    os revoga de todas as tabelas e do default das futuras, condicionada à existência dos roles (D8).
 9. **Só usuários ativos são importados (Q4 alterada).** Os 3 inativos de produção ficam de fora;
    reativar um deles cria o login na hora (exige e-mail). Apagá-los é operação à parte.

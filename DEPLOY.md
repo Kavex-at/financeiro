@@ -228,7 +228,7 @@ acesso gravada no intervalo **se perde** (exporte `app_user_access_event` antes,
 
 ---
 
-## 6. Supabase Auth (ADR-0056)
+## 6. Supabase Auth (ADR-0057)
 
 O login passa a ser do **Supabase Auth do mesmo projeto do banco**, por **proxy no backend**: o
 front continua falando só com `POST /auth/login` (mesmo corpo `{ username, password }`, mesmo
@@ -288,7 +288,7 @@ Projeto: `kngrpoqzaxtuzkcugsyl` (sa-east-1). Quem executa: dono do ciclo. Cada p
 6. Conferir: `SUPABASE_URL`, `SUPABASE_JWT_SECRET` **não** estão definidas no Render hoje (D14). Se `SUPABASE_URL` estiver, **não mexer antes do passo 2**.
 
 **Passo 1 — Merge e deploy, sem nenhuma env nova (modo `local`)**
-- Merge do PR. O Render sobe o backend novo (o `BootMigrator` aplica a 0070 se um cron não a tiver aplicado antes; os dois caminhos são seguros para o código antigo). O Vercel sobe o front novo (tolera o backend antigo: resposta sem `refreshToken`).
+- Merge do PR. O Render sobe o backend novo (o `BootMigrator` aplica a 0071 se um cron não a tiver aplicado antes; os dois caminhos são seguros para o código antigo). O Vercel sobe o front novo (tolera o backend antigo: resposta sem `refreshToken`).
 - `AUTH_PROVIDER` ausente = `local`. **Não** adicionar `SUPABASE_URL` ainda.
 - Verificar: `/health` 200; login por e-mail e por username entram (token HS256 como hoje); `SELECT count(*) FROM app_user WHERE auth_user_id IS NOT NULL` = 0; `kavex-report-ciclo` roda (ou `curl` equivalente); `anon`/`authenticated` sem `TRUNCATE` em `public` (`SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee IN ('anon','authenticated')` vazio).
 
@@ -331,7 +331,7 @@ Projeto: `kngrpoqzaxtuzkcugsyl` (sa-east-1). Quem executa: dono do ciclo. Cada p
 
 | Fase em que o problema aparece | O que fazer | Efeito para o usuário |
 |---|---|---|
-| Passo 1 (código novo, sem env) | Render → "Rollback" para o deploy anterior. A 0070 é aditiva e anulável; o código antigo a ignora. `SUPABASE_URL` não está definida, então o defeito do `issuer` não dispara | Nenhum (tokens HS256 continuam válidos) |
+| Passo 1 (código novo, sem env) | Render → "Rollback" para o deploy anterior. A 0071 é aditiva e anulável; o código antigo a ignora. `SUPABASE_URL` não está definida, então o defeito do `issuer` não dispara | Nenhum (tokens HS256 continuam válidos) |
 | Passos 2–4 (env do Supabase, modo `local`) | Problema de config: corrigir a env. Problema de código: **remover `SUPABASE_URL` primeiro** (D14) e então fazer rollback do deploy. Usuários criados no GoTrue pelo sync ficam lá, inofensivos (cadastro desligado, sem acesso a dados); o `auth_user_id` preenchido é ignorado pelo código antigo | Nenhum |
 | Passos 5–7 (modo `supabase`, `AUTH_JWT_SECRET` ainda existe) | `AUTH_PROVIDER=local`, deploy. Login volta ao bcrypt local com as mesmas senhas (R7: toda troca de senha depois do corte gravou os dois lados). Tokens Supabase já emitidos verificam até o `exp` (≤ 1 h); `/auth/refresh` responde 401 (D1), então cada pessoa faz **um** login novo quando o token vence | Um login por pessoa em até 1 h |
 | Depois do passo 8 (sem `AUTH_JWT_SECRET`) | Gerar um valor novo (`openssl rand -base64 48`), definir `AUTH_JWT_SECRET` **e** `AUTH_PROVIDER=local`, deploy | Um login por pessoa em até 1 h |

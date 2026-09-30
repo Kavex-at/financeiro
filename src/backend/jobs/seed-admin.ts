@@ -12,7 +12,7 @@ import SeedAdminConfig from './SeedAdminConfig.js';
  * O admin nasce (ou é atualizado) com o papel `Administrador` (`role_id`, ADR-0053). Sem o papel —
  * a migration 0066 não aplicada —, sai com 1 e manda rodar as migrations.
  *
- * Com a API admin do Supabase configurada (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`, ADR-0056), o
+ * Com a API admin do Supabase configurada (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`, ADR-0057), o
  * admin também é criado/atualizado no Supabase Auth, com a mesma senha, e vinculado. Sem ela, em
  * `AUTH_PROVIDER=local`, fica só no banco (com aviso); em `AUTH_PROVIDER=supabase`, sai com 1.
  * O `SupabaseAuthClient` é resolvido sob demanda aqui — o `bootstrapAppContainer` continua só o do

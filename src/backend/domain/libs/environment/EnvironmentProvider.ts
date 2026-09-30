@@ -180,7 +180,7 @@ export default class EnvironmentProvider {
     private readCred = (obj: Record<string, any>, key: string): string => obj[key] || '';
 
     /**
-     * `AUTH_PROVIDER` (ADR-0056): só `supabase` liga o login pelo GoTrue; ausente ou qualquer outro
+     * `AUTH_PROVIDER` (ADR-0057): só `supabase` liga o login pelo GoTrue; ausente ou qualquer outro
      * valor = `local`. Valor inválido não chega aqui no servidor: o `loadAuthEnv` derruba o boot.
      */
     private resolveAuthProvider = (): 'local' | 'supabase' =>

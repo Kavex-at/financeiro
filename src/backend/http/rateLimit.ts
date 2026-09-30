@@ -20,7 +20,7 @@ export const MENSAGEM_MUITAS_TENTATIVAS =
     'Muitas tentativas. Aguarde alguns minutos e tente de novo.';
 
 /**
- * Limites das rotas de sessão (D4, ADR-0056). Pelo proxy, o Supabase Auth vê todo login e refresh
+ * Limites das rotas de sessão (D4, ADR-0057). Pelo proxy, o Supabase Auth vê todo login e refresh
  * vindo do IP do Render: sem um limitador NOSSO, uma força bruta em `/auth/login` esgotaria o balde
  * de login do projeto e trancaria todo mundo. Os números comportam o escritório da Columbia, que sai
  * por um IP só (NAT): meia dúzia de pessoas logando no mesmo minuto não pode dar 429.

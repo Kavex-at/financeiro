@@ -12,7 +12,7 @@ const GOTRUE_USER_BANNED = 'user_banned';
 
 /**
  * SupabaseSessionService — login, renovação e logout em modo `AUTH_PROVIDER=supabase`, por PROXY
- * no backend (ADR-0056, Q2): o front continua falando só com o nosso `/auth/*`.
+ * no backend (ADR-0057, Q2): o front continua falando só com o nosso `/auth/*`.
  *
  * **Login (R4).** O identificador (e-mail ou username) é resolvido NO NOSSO BANCO antes de qualquer
  * chamada ao GoTrue: nenhum, ambíguo, inativo, sem vínculo (`auth_user_id`) ou sem e-mail → `null`

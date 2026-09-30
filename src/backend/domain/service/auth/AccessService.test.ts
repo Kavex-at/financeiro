@@ -168,7 +168,7 @@ describe('AccessService.resolver', () => {
     });
 });
 
-describe('AccessService.resolver — emissor supabase (ADR-0056, D13)', () => {
+describe('AccessService.resolver — emissor supabase (ADR-0057, D13)', () => {
     const UUID = '0b5c2d0e-6a0c-4c8e-9b8e-2b1d3c4e5f60';
 
     it('tipo authUserId busca por auth_user_id e devolve o username e o authUserId', async () => {

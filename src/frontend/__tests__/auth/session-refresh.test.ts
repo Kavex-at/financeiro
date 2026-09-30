@@ -1,5 +1,5 @@
 /**
- * `refreshSession()` — renovação da sessão Supabase pelo nosso `/auth/refresh` (ADR-0056, D12):
+ * `refreshSession()` — renovação da sessão Supabase pelo nosso `/auth/refresh` (ADR-0057, D12):
  * single-flight na aba e entre abas, adoção do token que outra aba já renovou, e `fetch` puro
  * (nunca `apiFetch`, para não entrar em laço de 401 → refresh → 401).
  */

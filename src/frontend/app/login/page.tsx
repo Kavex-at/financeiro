@@ -13,7 +13,7 @@ import pkg from '../../package.json'
 /**
  * Sign-in page. E-mail-or-username + password form posted to the backend
  * (`POST /auth/login`, body still `{ username, password }` — ADR-0051; the backend resolves the
- * identifier and, in Supabase mode, signs in with the e-mail — ADR-0056). Errors: 401 shows the
+ * identifier and, in Supabase mode, signs in with the e-mail — ADR-0057). Errors: 401 shows the
  * generic credential message; 429 and 503 show the backend's message. On success the token is
  * stored and the user is sent to
  * the app root. Already-authenticated visitors (or dev-bypass) are bounced
