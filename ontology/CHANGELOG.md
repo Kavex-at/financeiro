@@ -3,6 +3,15 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## ADR-0056 — Supabase Auth no mesmo projeto (2026-09-30, sem diff de entidade)
+
+Feature: `auth-supabase` (branch `feat/auth-supabase`). Passo 3 de 3 do plano de auth.
+
+- **Nenhuma entidade, action, state machine ou regra de negócio muda** (`entity_changed = false`):
+  `app_user.auth_user_id` e a troca do emissor do token são infraestrutura de acesso.
+- **Emenda a ADR-0051 D2** (`req.user.sub = username` para sempre) e **continua a ADR-0053**.
+- **Coverage:** nenhum contador muda. A versão da ontologia não sobe.
+
 ## v0.31.0 — SISPAG entra nas métricas do ciclo (2026-09-30, ADR-0056)
 
 Feature: `metricas-sispag` (branch `fix/metricas-sispag`). `entity_changed = false`.
