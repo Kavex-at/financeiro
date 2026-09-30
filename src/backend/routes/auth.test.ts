@@ -27,8 +27,6 @@ const listen = (app: express.Express): Promise<TestServer> =>
 
 let srv: TestServer;
 let login: jest.Mock;
-/** Valor da chave do banner no teste — mutável por caso. */
-let bannerAtivo = false;
 /** Tudo que a rota resolveu do container. */
 let resolvidos: unknown[];
 
@@ -40,13 +38,6 @@ beforeAll(async () => {
         resolvidos.push(token);
         if (token === AuthService) return { login };
         if (token === UserRepository) throw new Error('a rota não deveria tocar o banco');
-        if (typeof token === 'function' && token.name === 'EnvironmentProvider') {
-            return {
-                getEnvironmentVars: jest.fn().mockImplementation(async () => ({
-                    authTransicaoEmailBanner: bannerAtivo,
-                })),
-            };
-        }
         return real(token as never);
     }) as never);
 
@@ -110,34 +101,5 @@ describe('POST /auth/login', () => {
         const res = await postLogin({ username: '   ' });
         expect(res.status).toBe(400);
         expect(login).not.toHaveBeenCalled();
-    });
-});
-
-describe('GET /auth/transicao', () => {
-    it('chave ligada: 200 com exatamente { ativo: true }', async () => {
-        bannerAtivo = true;
-        const res = await fetch(`${srv.url}/auth/transicao`);
-        expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ ativo: true });
-    });
-
-    it('chave desligada: 200 com exatamente { ativo: false } (I5: sem contagem, nomes ou e-mails)', async () => {
-        bannerAtivo = false;
-        const res = await fetch(`${srv.url}/auth/transicao`);
-        expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ ativo: false });
-    });
-
-    it('não toca o banco: sem bootstrapAppContainer e sem UserRepository', async () => {
-        await fetch(`${srv.url}/auth/transicao`);
-        expect(bootstrapAppContainer).not.toHaveBeenCalled();
-        expect(resolvidos).not.toContain(UserRepository);
-        const nomes = resolvidos.map((t) => (typeof t === 'function' ? t.name : String(t)));
-        expect(nomes).toEqual(['EnvironmentProvider']);
-    });
-
-    it('responde com Cache-Control: no-store (desligar a chave vale no próximo carregamento)', async () => {
-        const res = await fetch(`${srv.url}/auth/transicao`);
-        expect(res.headers.get('cache-control')).toBe('no-store');
     });
 });

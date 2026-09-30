@@ -1,38 +1,40 @@
 import { z } from 'zod';
 
 /**
- * Zod schema for the authentication-related environment variables. Validated
- * once at boundary (per repo convention: external inputs — including
- * `process.env` — are parsed with Zod, never read raw).
+ * Variáveis de autenticação, validadas UMA vez no boundary (Zod) — o `process.env` é entrada
+ * externa e não é lido cru fora daqui e do `EnvironmentProvider`.
  *
- * Arch-review cards security-1 (Microsoft/Azure AD auth via Supabase) and
- * security-7 (backend JWT validation on every API route).
+ * Dois emissores de token convivem durante o corte para o Supabase Auth (ADR-0054, I8):
+ * - **app** (HS256): o token próprio que o `AuthService` assina com `AUTH_JWT_SECRET`. Aceito
+ *   **enquanto `AUTH_JWT_SECRET` existir**; apagar a variável fecha a janela de convivência.
+ * - **supabase** (ES256): o token do GoTrue do projeto, verificado pelo JWKS de
+ *   `${SUPABASE_URL}/auth/v1`. Aceito **sempre que `SUPABASE_URL` existir**, em qualquer modo.
  *
- * The middleware picks the verifier PER TOKEN by its `alg` header, so BOTH
- * vars may be set at once — the project can sign HS256 today and ES256
- * tomorrow (a Supabase signing-key rotation) without a redeploy:
- * - `SUPABASE_URL` — the Supabase project URL (e.g. `https://<ref>.supabase.co`).
- *   Enables ASYMMETRIC (ES256/RS256) verification against the project's JWKS
- *   (`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`), with issuer
- *   `${SUPABASE_URL}/auth/v1`. Also supplies the issuer enforced on the HS256
- *   path. Required for projects whose current signing key is asymmetric.
- * - `SUPABASE_JWT_SECRET` — the HS256 shared signing secret (Supabase →
- *   Settings → API → JWT Keys / Legacy JWT Secret). Enables SYMMETRIC (HS256)
- *   verification. HS256 keys are never published in a JWKS, so this is the only
- *   way to verify HS256 login tokens. Can be set ALONGSIDE `SUPABASE_URL`.
- * - `DEV_AUTH_BYPASS` — when `'true'`, the JWT middleware is skipped. Default
- *   off; must never be `'true'` in a deployed environment.
+ * `AUTH_PROVIDER` (`local` | `supabase`, default `local`) decide só QUEM emite no login; o
+ * rollback é trocar o valor e reiniciar. Matriz do boot (D7, fail-fast, mensagem em português que
+ * nomeia a variável e nunca o valor):
+ * - `local` exige `AUTH_JWT_SECRET` (é quem assina);
+ * - `supabase` exige `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` e `SUPABASE_SECRET_KEY`;
+ *   `AUTH_JWT_SECRET` é opcional (a presença só mantém o caminho HS256 aberto);
+ * - com `DEV_AUTH_BYPASS` (só local/dev) nada disso é exigido.
  *
- * At least one of `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is required UNLESS
- * `DEV_AUTH_BYPASS` is on, so local dev can run before credentials are
- * provisioned. Set BOTH to accept either signing scheme.
+ * `SUPABASE_JWT_SECRET` (legado do template) **não é mais lido**: definido, não reabre nada.
  */
 const RawAuthEnvSchema = z.object({
-    SUPABASE_URL: z.string().url().optional(),
-    SUPABASE_JWT_SECRET: z.string().min(1).optional(),
-    // HS256 secret for the app's own login JWTs (simple username/password auth,
-    // no Supabase). Preferred over SUPABASE_JWT_SECRET when both are set. The
-    // AuthService signs with it; the middleware verifies HS256 tokens with it.
+    AUTH_PROVIDER: z
+        .enum(['local', 'supabase'], {
+            errorMap: () => ({
+                message: 'AUTH_PROVIDER inválida: use "local" ou "supabase".',
+            }),
+        })
+        .optional(),
+    SUPABASE_URL: z
+        .string()
+        .url('SUPABASE_URL inválida: precisa ser uma URL.')
+        .transform((url) => url.replace(/\/+$/, ''))
+        .optional(),
+    SUPABASE_PUBLISHABLE_KEY: z.string().min(1).optional(),
+    SUPABASE_SECRET_KEY: z.string().min(1).optional(),
     AUTH_JWT_SECRET: z.string().min(1).optional(),
     DEV_AUTH_BYPASS: z
         .enum(['true', 'false'])
@@ -44,47 +46,57 @@ const RawAuthEnvSchema = z.object({
     environment: z.string().optional(),
 });
 
-/**
- * Deployed (non-local) environments where authentication must always be
- * enforced. If `DEV_AUTH_BYPASS=true` reaches any of these, startup must fail
- * loudly instead of booting an unauthenticated API. Arch-review card security-1.
- */
 // Ambientes LOCAIS/DEV onde o bypass de auth é tolerável. DENY-BY-DEFAULT (security-1/R-5): QUALQUER
 // outro nome — incl. 'production' (o que o Render seta!), 'prd'/'stg'/'hml', ou um typo — é tratado como
 // DEPLOYED, então o boot FALHA se o bypass estiver ligado. A allow-list anterior (['prd','stg','hml'])
 // deixava 'production' ESCAPAR → a API financeira poderia subir sem JWT em produção.
 const LOCAL_ENVIRONMENTS = ['local', 'dev', 'development', 'test'];
 
+export type AuthProvider = 'local' | 'supabase';
+
 export interface AuthEnv {
-    /**
-     * Supabase project URL used to derive the JWKS URI and issuer for
-     * asymmetric (ES256) verification. Preferred over `jwtSecret`.
-     */
+    /** Quem emite o token no `POST /auth/login`. Default `local`. */
+    provider: AuthProvider;
+    /** Segredo HS256 do token próprio. Ausente = caminho HS256 fechado (nenhum token app passa). */
+    appJwtSecret?: string;
+    /** URL do projeto Supabase (sem barra final). Ausente = caminho ES256 fechado. */
     supabaseUrl?: string;
-    /** Legacy HS256 secret used to verify Supabase-issued JWTs. */
-    jwtSecret?: string;
     /** When true, JWT validation is skipped entirely (local dev only). */
     devBypass: boolean;
 }
 
+/** Erro de configuração de boot: a mensagem nomeia as variáveis, nunca os valores. */
+export class AuthEnvConfigError extends Error {
+    constructor(problemas: string[]) {
+        super(`Configuração de autenticação inválida: ${problemas.join('; ')}`);
+        this.name = 'AuthEnvConfigError';
+    }
+}
+
 /**
- * Parses and validates the auth env vars. Throws (fail-fast at startup) when
- * the configuration is incoherent — e.g. JWT validation is enabled but neither
- * a JWKS URL nor a legacy secret was provided.
+ * Parses and validates the auth env vars. Throws (fail-fast at startup) when the configuration is
+ * incoherent for the chosen `AUTH_PROVIDER` (D7).
  */
 export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
-    const parsed = RawAuthEnvSchema.parse({
-        SUPABASE_URL: env.SUPABASE_URL,
-        SUPABASE_JWT_SECRET: env.SUPABASE_JWT_SECRET,
-        AUTH_JWT_SECRET: env.AUTH_JWT_SECRET,
+    const result = RawAuthEnvSchema.safeParse({
+        AUTH_PROVIDER: env.AUTH_PROVIDER === '' ? undefined : env.AUTH_PROVIDER,
+        SUPABASE_URL: env.SUPABASE_URL === '' ? undefined : env.SUPABASE_URL,
+        SUPABASE_PUBLISHABLE_KEY: env.SUPABASE_PUBLISHABLE_KEY || undefined,
+        SUPABASE_SECRET_KEY: env.SUPABASE_SECRET_KEY || undefined,
+        AUTH_JWT_SECRET: env.AUTH_JWT_SECRET || undefined,
         DEV_AUTH_BYPASS: env.DEV_AUTH_BYPASS,
         environment: env.environment,
     });
-
-    // The app signs its own login tokens with AUTH_JWT_SECRET (simple
-    // username/password auth). It is the HS256 secret used to BOTH sign and
-    // verify those tokens; SUPABASE_JWT_SECRET is the legacy fallback.
-    const jwtSecret = parsed.AUTH_JWT_SECRET ?? parsed.SUPABASE_JWT_SECRET;
+    if (!result.success) {
+        // Só as mensagens (fixas) e os caminhos: nenhum valor lido do env entra aqui.
+        throw new AuthEnvConfigError(
+            result.error.issues.map((i) =>
+                i.message.includes(String(i.path[0])) ? i.message : `${i.path[0]}: ${i.message}`,
+            ),
+        );
+    }
+    const parsed = result.data;
+    const provider: AuthProvider = parsed.AUTH_PROVIDER ?? 'local';
 
     // Fail-fast: DEV_AUTH_BYPASS disables JWT validation entirely, so it must never reach a deployed
     // environment. Crossing the bypass flag with the running environment turns a silent unauthenticated
@@ -100,16 +112,35 @@ export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
         );
     }
 
-    if (!parsed.DEV_AUTH_BYPASS && !parsed.SUPABASE_URL && !jwtSecret) {
-        throw new Error(
-            'AUTH_JWT_SECRET (app login HS256) or SUPABASE_URL (JWKS/ES256) or ' +
-                'SUPABASE_JWT_SECRET (legacy HS256) is required unless DEV_AUTH_BYPASS=true.',
-        );
+    if (!parsed.DEV_AUTH_BYPASS) {
+        const faltando = obrigatoriasAusentes(provider, parsed);
+        if (faltando.length > 0) {
+            throw new AuthEnvConfigError(
+                faltando.map((nome) => `${nome} é obrigatória com AUTH_PROVIDER=${provider}`),
+            );
+        }
     }
 
     return {
+        provider,
+        appJwtSecret: parsed.AUTH_JWT_SECRET,
         supabaseUrl: parsed.SUPABASE_URL,
-        jwtSecret,
         devBypass: parsed.DEV_AUTH_BYPASS,
     };
+};
+
+/** D7: as variáveis que o modo exige e que não vieram (nomes, nunca valores). */
+const obrigatoriasAusentes = (
+    provider: AuthProvider,
+    parsed: z.infer<typeof RawAuthEnvSchema>,
+): string[] => {
+    if (provider === 'local') {
+        return parsed.AUTH_JWT_SECRET ? [] : ['AUTH_JWT_SECRET'];
+    }
+    const exigidas: Array<[string, string | undefined]> = [
+        ['SUPABASE_URL', parsed.SUPABASE_URL],
+        ['SUPABASE_PUBLISHABLE_KEY', parsed.SUPABASE_PUBLISHABLE_KEY],
+        ['SUPABASE_SECRET_KEY', parsed.SUPABASE_SECRET_KEY],
+    ];
+    return exigidas.filter(([, valor]) => !valor).map(([nome]) => nome);
 };

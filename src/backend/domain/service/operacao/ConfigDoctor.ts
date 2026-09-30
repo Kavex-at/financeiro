@@ -34,6 +34,12 @@ export interface DiagnosticoVar {
 
 export interface DiagnosticoConfig {
     geradoEm: string;
+    /**
+     * Modo de autenticação em vigor (ADR-0054), para o operador saber quem emite o token. É o
+     * valor enumerado, não o texto bruto do ambiente: qualquer coisa fora de `supabase` é `local`.
+     * Ausente só no fallback do painel, quando o próprio diagnóstico falhou.
+     */
+    modoAutenticacao?: 'local' | 'supabase';
     vars: DiagnosticoVar[];
     totalAusentesObrigatorias: number;
     totalAusentesSilenciosas: number;
@@ -66,6 +72,7 @@ export default class ConfigDoctor {
 
         return {
             geradoEm: new Date().toISOString(),
+            modoAutenticacao: ambiente.AUTH_PROVIDER?.trim() === 'supabase' ? 'supabase' : 'local',
             vars,
             totalAusentesObrigatorias: ausente(CRITICIDADE.OBRIGATORIA),
             totalAusentesSilenciosas: ausente(CRITICIDADE.DEGRADA_SILENCIOSAMENTE),
@@ -75,12 +82,28 @@ export default class ConfigDoctor {
     private diagnosticarVar = (m: VarManifesto, ambiente: NodeJS.ProcessEnv): DiagnosticoVar => ({
         nome: m.nome,
         frente: m.frente,
-        criticidade: m.criticidade,
+        criticidade: this.criticidadeEfetiva(m, ambiente),
         estado: this.estado(m, ambiente),
         consequenciaSeAusente: m.consequenciaSeAusente,
         segredo: m.segredo,
         ...(m.default !== undefined ? { default: m.default } : {}),
     });
+
+    /**
+     * `obrigatoriaQuando`: a var vira obrigatória quando a outra tem o valor indicado. A outra é
+     * lida com o default do manifesto (ex.: `AUTH_PROVIDER` ausente = `local`). Só se compara com
+     * um literal do manifesto; nada do ambiente sai daqui.
+     */
+    private criticidadeEfetiva = (m: VarManifesto, ambiente: NodeJS.ProcessEnv): Criticidade => {
+        if (m.obrigatoriaQuando === undefined) return m.criticidade;
+        const { nome, valor } = m.obrigatoriaQuando;
+        const bruto = ambiente[nome]?.trim();
+        const efetivo =
+            bruto !== undefined && bruto !== ''
+                ? bruto
+                : CONFIG_MANIFESTO.find((outra) => outra.nome === nome)?.default;
+        return efetivo === valor ? CRITICIDADE.OBRIGATORIA : m.criticidade;
+    };
 
     /**
      * Vazio conta como AUSENTE, não como configurado.

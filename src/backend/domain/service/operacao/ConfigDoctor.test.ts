@@ -144,6 +144,66 @@ describe('ConfigDoctor — alerta no boot', () => {
     });
 });
 
+describe('ConfigDoctor — autenticação (ADR-0054)', () => {
+    const alvosDoBoot = async (ambiente: NodeJS.ProcessEnv) => {
+        const { instancia, notif } = doctor();
+        await instancia.verificarNoBoot(ambiente);
+        return notif.emitir.mock.calls.map(([a]: [{ alvo: string; severidade: string }]) => a);
+    };
+
+    it('AUTH_PROVIDER=supabase sem as chaves: acusa as três como obrigatórias (ERRO)', async () => {
+        const alertas = await alvosDoBoot({ AUTH_PROVIDER: 'supabase' });
+        for (const nome of ['SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_SECRET_KEY']) {
+            expect(alertas.find((a) => a.alvo === nome)?.severidade).toBe(ALERTA_SEVERIDADE.ERRO);
+        }
+        const d = doctor().instancia.diagnosticar({ AUTH_PROVIDER: 'supabase' });
+        expect(acharVar(d, 'SUPABASE_SECRET_KEY').criticidade).toBe(CRITICIDADE.OBRIGATORIA);
+    });
+
+    it('modo local (default) sem Supabase: nenhuma chave do Supabase é cobrada', async () => {
+        const alvos = (await alvosDoBoot({ AUTH_JWT_SECRET: 's' })).map((a) => a.alvo);
+        expect(alvos).not.toContain('SUPABASE_URL');
+        expect(alvos).not.toContain('SUPABASE_SECRET_KEY');
+        expect(alvos).not.toContain('AUTH_JWT_SECRET');
+    });
+
+    it('modo local sem AUTH_JWT_SECRET: ERRO (é quem assina o token)', async () => {
+        const alertas = await alvosDoBoot({});
+        expect(alertas.find((a) => a.alvo === 'AUTH_JWT_SECRET')?.severidade).toBe(
+            ALERTA_SEVERIDADE.ERRO,
+        );
+    });
+
+    it('modo supabase sem AUTH_JWT_SECRET: não alerta (janela de convivência fechada)', async () => {
+        const alvos = (
+            await alvosDoBoot({
+                AUTH_PROVIDER: 'supabase',
+                SUPABASE_URL: 'https://x.supabase.co',
+                SUPABASE_PUBLISHABLE_KEY: 'p',
+                SUPABASE_SECRET_KEY: 's',
+            })
+        ).map((a) => a.alvo);
+        expect(alvos).not.toContain('AUTH_JWT_SECRET');
+    });
+
+    it('o diagnóstico diz o modo de autenticação atual, sem expor nada do ambiente', () => {
+        expect(doctor().instancia.diagnosticar({}).modoAutenticacao).toBe('local');
+        expect(
+            doctor().instancia.diagnosticar({ AUTH_PROVIDER: 'supabase' }).modoAutenticacao,
+        ).toBe('supabase');
+        expect(doctor().instancia.diagnosticar({ AUTH_PROVIDER: 'lixo' }).modoAutenticacao).toBe(
+            'local',
+        );
+    });
+
+    it('SUPABASE_SECRET_KEY é segredo; o banner de transição saiu do manifesto', () => {
+        const nomes = CONFIG_MANIFESTO.map((m) => m.nome);
+        expect(nomes).not.toContain('AUTH_TRANSICAO_EMAIL_BANNER');
+        expect(CONFIG_MANIFESTO.find((m) => m.nome === 'SUPABASE_SECRET_KEY')?.segredo).toBe(true);
+        expect(CONFIG_MANIFESTO.find((m) => m.nome === 'AUTH_PROVIDER')?.default).toBe('local');
+    });
+});
+
 describe('CONFIG_MANIFESTO — sanidade do próprio manifesto', () => {
     it('não tem nome duplicado (duplicata alertaria duas vezes o mesmo problema)', () => {
         const nomes = CONFIG_MANIFESTO.map((m) => m.nome);

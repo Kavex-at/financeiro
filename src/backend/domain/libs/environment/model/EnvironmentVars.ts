@@ -11,23 +11,31 @@ export default class EnvironmentVars {
      */
     public conexosUsnCod: string;
 
+    /** URL do projeto Supabase, sem barra final (ADR-0054). Ausente = Supabase Auth desligado. */
     public supabaseUrl?: string;
-    public supabaseServiceRoleKey?: string;
+    /**
+     * Chave publicável do Supabase (`sb_publishable_…` ou a `anon` legada). Vai no `apikey` das
+     * chamadas públicas do GoTrue (login, refresh, logout) feitas PELO BACKEND; o front não a usa.
+     */
+    public supabasePublishableKey?: string;
+    /**
+     * Chave secreta do Supabase (`sb_secret_…` ou a `service_role` legada): poder de admin sobre
+     * todos os logins. Só no backend e nos jobs manuais; nunca no front (I6), nunca em log.
+     */
+    public supabaseSecretKey?: string;
 
     /**
-     * HS256 secret used to SIGN the app's own login JWTs (read from
-     * `AUTH_JWT_SECRET`). The auth middleware validates these tokens with the
-     * same secret (`SUPABASE_JWT_SECRET`/`AUTH_JWT_SECRET`). Optional so local
-     * dev (DEV_AUTH_BYPASS) can boot before it is provisioned.
+     * Quem emite o token no login (`AUTH_PROVIDER`, ADR-0054): `local` (HS256 próprio, default) ou
+     * `supabase` (GoTrue). O rollback do corte é voltar para `local`.
+     */
+    public authProvider: 'local' | 'supabase';
+
+    /**
+     * HS256 secret used to SIGN the app's own login JWTs (read from `AUTH_JWT_SECRET`). The auth
+     * middleware validates these tokens with the same secret. Optional: em modo `supabase` a
+     * ausência fecha o caminho HS256 (fim da janela de convivência).
      */
     public authJwtSecret?: string;
-
-    /**
-     * Banner de transição para e-mail na tela de login (`AUTH_TRANSICAO_EMAIL_BANNER`, ADR-0051).
-     * Chave MANUAL: só o valor exato `'true'` liga; ausente, vazio ou qualquer outro valor desliga.
-     * Exposta pelo `GET /auth/transicao` público como `{ ativo }`.
-     */
-    public authTransicaoEmailBanner: boolean;
 
     public environment: string;
     public clientName: string;
@@ -240,9 +248,10 @@ export default class EnvironmentVars {
         conexosFilCod,
         conexosUsnCod,
         supabaseUrl,
-        supabaseServiceRoleKey,
+        supabasePublishableKey,
+        supabaseSecretKey,
+        authProvider,
         authJwtSecret,
-        authTransicaoEmailBanner,
         environment,
         clientName,
         awsRegion,
@@ -280,9 +289,10 @@ export default class EnvironmentVars {
         conexosFilCod: number;
         conexosUsnCod: string;
         supabaseUrl?: string;
-        supabaseServiceRoleKey?: string;
+        supabasePublishableKey?: string;
+        supabaseSecretKey?: string;
+        authProvider: 'local' | 'supabase';
         authJwtSecret?: string;
-        authTransicaoEmailBanner: boolean;
         environment: string;
         clientName: string;
         awsRegion: string;
@@ -320,9 +330,10 @@ export default class EnvironmentVars {
         this.conexosFilCod = conexosFilCod;
         this.conexosUsnCod = conexosUsnCod;
         this.supabaseUrl = supabaseUrl;
-        this.supabaseServiceRoleKey = supabaseServiceRoleKey;
+        this.supabasePublishableKey = supabasePublishableKey;
+        this.supabaseSecretKey = supabaseSecretKey;
+        this.authProvider = authProvider;
         this.authJwtSecret = authJwtSecret;
-        this.authTransicaoEmailBanner = authTransicaoEmailBanner;
         this.environment = environment;
         this.clientName = clientName;
         this.awsRegion = awsRegion;

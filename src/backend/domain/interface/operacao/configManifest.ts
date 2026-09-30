@@ -47,6 +47,11 @@ export interface VarManifesto {
     segredo: boolean;
     /** Default aplicado pelo provider quando ausente, para a tela distinguir de "sem valor". */
     default?: string;
+    /**
+     * A var passa a ser OBRIGATÓRIA quando outra var tem este valor (considerando o default dela).
+     * Ex.: as chaves do Supabase só são exigidas com `AUTH_PROVIDER=supabase` (ADR-0054, D7).
+     */
+    obrigatoriaQuando?: { nome: string; valor: string };
 }
 
 export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
@@ -81,12 +86,55 @@ export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
         segredo: false,
     },
     {
+        nome: 'AUTH_PROVIDER',
+        frente: FRENTE.NUCLEO,
+        criticidade: CRITICIDADE.OPCIONAL,
+        consequenciaSeAusente:
+            'Ausente = modo local: o login assina o token próprio (HS256). `supabase` passa o ' +
+            'login ao Supabase Auth (ADR-0054); voltar para `local` é o rollback do corte.',
+        segredo: false,
+        default: 'local',
+    },
+    {
         nome: 'AUTH_JWT_SECRET',
         frente: FRENTE.NUCLEO,
-        criticidade: CRITICIDADE.DEGRADA_SILENCIOSAMENTE,
+        criticidade: CRITICIDADE.OPCIONAL,
         consequenciaSeAusente:
-            'Login próprio indisponível; só o caminho Supabase/bypass de dev funciona.',
+            'Em modo local, ninguém consegue logar (é quem assina o token) e o boot falha. Em modo ' +
+            'supabase, a ausência fecha a janela de convivência: tokens próprios antigos viram 401.',
         segredo: true,
+        obrigatoriaQuando: { nome: 'AUTH_PROVIDER', valor: 'local' },
+    },
+    {
+        nome: 'SUPABASE_URL',
+        frente: FRENTE.NUCLEO,
+        criticidade: CRITICIDADE.OPCIONAL,
+        consequenciaSeAusente:
+            'Supabase Auth desligado: tokens do Supabase são recusados e as escritas de ' +
+            'credencial ficam só no banco. Em modo supabase, o boot falha.',
+        segredo: false,
+        obrigatoriaQuando: { nome: 'AUTH_PROVIDER', valor: 'supabase' },
+    },
+    {
+        nome: 'SUPABASE_PUBLISHABLE_KEY',
+        frente: FRENTE.NUCLEO,
+        criticidade: CRITICIDADE.OPCIONAL,
+        consequenciaSeAusente:
+            'O backend não consegue chamar o login, a renovação e o logout do Supabase Auth. Em ' +
+            'modo supabase, o boot falha.',
+        segredo: false,
+        obrigatoriaQuando: { nome: 'AUTH_PROVIDER', valor: 'supabase' },
+    },
+    {
+        nome: 'SUPABASE_SECRET_KEY',
+        frente: FRENTE.NUCLEO,
+        criticidade: CRITICIDADE.OPCIONAL,
+        consequenciaSeAusente:
+            'Criar usuário, trocar senha/e-mail e desativar não chegam ao Supabase Auth, e o job ' +
+            'sync-supabase-auth não roda. Em modo supabase, o boot falha. Poder de admin sobre ' +
+            'todos os logins: nunca vai para o front.',
+        segredo: true,
+        obrigatoriaQuando: { nome: 'AUTH_PROVIDER', valor: 'supabase' },
     },
     {
         nome: 'CONEXOS_CRED_ENC_KEY',
@@ -106,17 +154,6 @@ export const CONFIG_MANIFESTO: readonly VarManifesto[] = [
             "O dead-man's switch fica desligado: ninguém detecta o GitHub Actions parar de " +
             'disparar, porque nenhuma sonda hospedada aqui enxerga a própria ausência de execução.',
         segredo: false,
-    },
-
-    {
-        nome: 'AUTH_TRANSICAO_EMAIL_BANNER',
-        frente: FRENTE.NUCLEO,
-        criticidade: CRITICIDADE.OPCIONAL,
-        consequenciaSeAusente:
-            'Ausente = banner de transição para e-mail DESLIGADO na tela de login. Só `true` liga ' +
-            '(ADR-0051); vale sem redeploy do front, após reiniciar o backend.',
-        segredo: false,
-        default: 'false',
     },
 
     // --- Recebimentos (Frente IV) ---
