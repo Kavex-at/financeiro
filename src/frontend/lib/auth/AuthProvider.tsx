@@ -4,7 +4,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { type ConexosStatus, fetchConexosStatus } from '../usuarios'
 import { assertAuthEnv, isDevAuthBypass } from './env'
 import { registerSessionExpiredHandler } from './session-events'
-import { decodeJwtExp, decodeJwtRole, TOKEN_STORAGE_KEY, USERNAME_STORAGE_KEY } from './token'
+import { onSessaoRenovada, RENOVAR_ANTES_MS, refreshSession } from './session-refresh'
+import {
+  decodeJwtExp,
+  limparSessao,
+  lerExpiresAt,
+  REFRESH_TOKEN_STORAGE_KEY,
+  type SessaoRecebida,
+  salvarSessao,
+  TOKEN_STORAGE_KEY,
+  USERNAME_STORAGE_KEY,
+} from './token'
 
 // Fail-fast: crash on import if dev-bypass is on in a non-local build, instead
 // of silently rendering an unauthenticated app.
@@ -28,7 +38,7 @@ export interface AuthContextValue {
   loading: boolean
   /** True when bypass mode is active (no real token). */
   devBypass: boolean
-  /** True when the 12h JWT has expired — drives the blocking re-login modal. */
+  /** True when the session expired and could not be renewed — drives the blocking re-login modal. */
   sessionExpired: boolean
   /** Epoch ms of the token's `exp` (the moment it expired), for the modal copy. */
   sessionExpiredAt: number | null
@@ -97,10 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Não basta confiar no modal: se uma tela engolir o erro e renderizar o próprio
     // estado de falha, ninguém chama `signOut()`. Aconteceu — token ainda válido por
     // `exp` mas rejeitado pelo backend deixou a aplicação inacessível.
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-      window.localStorage.removeItem(USERNAME_STORAGE_KEY)
-    }
+    limparSessao()
     setToken(null)
     setUsername(null)
 
@@ -119,15 +126,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return registerSessionExpiredHandler(notifySessionExpired)
   }, [devBypass, notifySessionExpired])
 
-  // Proactive path: fire the modal exactly at the token's `exp`, even if the
-  // user is idle (no failed request needed). Reset whenever the token changes.
+  // Renovação silenciosa (ADR-0054): outra aba ou o `apiFetch` renovou → troca o token desta aba.
+  useEffect(() => {
+    if (devBypass) return
+    return onSessaoRenovada((sessao) => {
+      setToken(sessao.token)
+      setUsername(sessao.username)
+    })
+  }, [devBypass])
+
+  // Entre abas (D12): o evento `storage` traz o token renovado por outra aba, e o logout de uma
+  // aba (token removido) desloga as outras.
+  useEffect(() => {
+    if (devBypass || typeof window === 'undefined') return
+    const aoMudar = (e: StorageEvent) => {
+      if (e.key === TOKEN_STORAGE_KEY || e.key === null) {
+        setToken(window.localStorage.getItem(TOKEN_STORAGE_KEY))
+      }
+      if (e.key === USERNAME_STORAGE_KEY || e.key === null) {
+        setUsername(window.localStorage.getItem(USERNAME_STORAGE_KEY))
+      }
+    }
+    window.addEventListener('storage', aoMudar)
+    return () => window.removeEventListener('storage', aoMudar)
+  }, [devBypass])
+
+  // Caminho proativo. Com refresh token (sessão Supabase): renova ~5 min antes do `exp` sem nada
+  // visível — falhar aqui NÃO abre o modal —, e no `exp` tenta de novo; só se essa última falhar
+  // o modal aparece. Sem refresh token (backend antigo ou modo local): o modal no `exp`, como antes.
   useEffect(() => {
     if (devBypass || !token) return
-    const exp = decodeJwtExp(token)
+    const exp = lerExpiresAt() ?? decodeJwtExp(token)
     if (exp == null) return
-    const ms = exp * 1000 - Date.now()
-    const id = setTimeout(notifySessionExpired, Math.max(0, ms))
-    return () => clearTimeout(id)
+    const renovavel =
+      typeof window !== 'undefined' && window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) != null
+    const msAteExp = exp * 1000 - Date.now()
+    const timers: ReturnType<typeof setTimeout>[] = []
+    if (renovavel) {
+      timers.push(
+        setTimeout(() => void refreshSession(token), Math.max(0, msAteExp - RENOVAR_ANTES_MS)),
+      )
+      timers.push(
+        setTimeout(() => {
+          void refreshSession(token).then((novo) => {
+            if (!novo) notifySessionExpired()
+          })
+        }, Math.max(0, msAteExp)),
+      )
+    } else {
+      timers.push(setTimeout(notifySessionExpired, Math.max(0, msAteExp)))
+    }
+    return () => {
+      for (const id of timers) clearTimeout(id)
+    }
   }, [token, devBypass, notifySessionExpired])
 
   const signIn = useCallback(
@@ -146,11 +197,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch {}
         throw new Error(message)
       }
-      const body = (await res.json()) as { token: string; username: string }
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(TOKEN_STORAGE_KEY, body.token)
-        window.localStorage.setItem(USERNAME_STORAGE_KEY, body.username)
-      }
+      // Resposta do modo supabase traz `refreshToken`/`expiresAt`; a do modo local (ou do backend
+      // antigo), não — e aí nada de renovação, como antes.
+      const body = (await res.json()) as SessaoRecebida
+      salvarSessao(body)
       setToken(body.token)
       setUsername(body.username)
       // Verifica o vínculo Conexos logo após o login (avisa se cai no robô).
@@ -160,16 +210,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const signOut = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-      window.localStorage.removeItem(USERNAME_STORAGE_KEY)
+    // "Sair" encerra a sessão no servidor (ADR-0054, D2) em melhor esforço: sem esperar e sem
+    // bloquear — falha de rede não impede sair. O backend responde 204 em qualquer caso.
+    const atual =
+      typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null
+    if (atual && !devBypass) {
+      void fetch(`${API}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${atual}` },
+        keepalive: true,
+      }).catch(() => undefined)
     }
+    limparSessao()
     setToken(null)
     setUsername(null)
     setSessionExpired(false)
     setSessionExpiredAt(null)
     setConexosStatus(null)
-  }, [])
+  }, [devBypass])
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -220,16 +278,4 @@ export function useIsAuthenticated(): { authenticated: boolean; loading: boolean
   const { token, loading, devBypass } = useAuth()
   if (devBypass) return { authenticated: true, loading: false }
   return { authenticated: token != null, loading }
-}
-
-/**
- * The `role` claim of the JWT (`null` when unknown). Kept ONLY for the deploy-window fallback of
- * `PermissoesProvider` (D4, ADR-0053): when the backend is still the old one, `/me/permissoes` has
- * no permission list and the UI falls back to `role === 'admin'`. Visibility decisions use
- * `usePermissoes()`; the real gate is server-side.
- */
-export function useRole(): string | null {
-  const { token, devBypass } = useAuth()
-  if (devBypass) return 'admin'
-  return token ? decodeJwtRole(token) : null
 }

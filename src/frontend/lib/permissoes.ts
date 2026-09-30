@@ -52,14 +52,6 @@ export interface PapelRef {
 export interface MinhasPermissoes {
   permissoes: Set<Permissao>
   papel?: PapelRef
-  /**
-   * `true` quando a resposta veio de um backend anterior à ADR-0053 (só `{ operacao }`, sem o
-   * array `permissoes`) — janela de deploy (D4). Quem decide o que mostrar é o provider, pelo
-   * `role` do token. Sai no tweak que remover a chave `operacao`.
-   */
-  legado: boolean
-  /** A chave `operacao` do backend antigo, preservada para o fallback legado. */
-  operacaoLegado?: boolean
 }
 
 /**
@@ -69,17 +61,12 @@ export interface MinhasPermissoes {
 export async function fetchMinhasPermissoes(): Promise<MinhasPermissoes> {
   const res = await apiFetch(`${API}/me/permissoes`, { headers: await withAuthHeaders() })
   if (!res.ok) throw new Error(`Falha ao consultar permissões (HTTP ${res.status}).`)
-  const body = (await res.json()) as {
-    permissoes?: unknown
-    papel?: PapelRef
-    operacao?: unknown
-  }
-  if (!Array.isArray(body.permissoes)) {
-    return { permissoes: new Set(), legado: true, operacaoLegado: body.operacao === true }
-  }
+  const body = (await res.json()) as { permissoes?: unknown; papel?: PapelRef }
+  // Sem o array (resposta fora do contrato): conjunto vazio, fail-closed (ADR-0054 removeu o
+  // fallback por `role` do token).
+  if (!Array.isArray(body.permissoes)) return { permissoes: new Set() }
   return {
     permissoes: new Set(body.permissoes.filter(isPermissao)),
     ...(body.papel ? { papel: body.papel } : {}),
-    legado: false,
   }
 }

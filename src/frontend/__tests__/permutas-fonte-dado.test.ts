@@ -13,6 +13,7 @@
  */
 
 jest.mock('@/lib/auth/token', () => ({
+  ...jest.requireActual('@/lib/auth/token'),
   withAuthHeaders: jest.fn(async (base: Record<string, string> = {}) => ({
     Authorization: 'Bearer test-token',
     ...base,

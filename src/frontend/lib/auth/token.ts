@@ -6,6 +6,55 @@ import { isDevAuthBypass } from './env'
 export const TOKEN_STORAGE_KEY = 'auth_token'
 /** localStorage key holding the signed-in username (for the header menu). */
 export const USERNAME_STORAGE_KEY = 'auth_username'
+/**
+ * localStorage key do refresh token da sessão Supabase (ADR-0054). Ausente = backend antigo ou
+ * modo `local`: sem renovação, o modal aparece no `exp` como antes.
+ */
+export const REFRESH_TOKEN_STORAGE_KEY = 'auth_refresh_token'
+/** localStorage key da expiração do access token, em segundos desde a época (D10). */
+export const EXPIRES_AT_STORAGE_KEY = 'auth_expires_at'
+
+/** Resposta de `/auth/login` e `/auth/refresh` (D10); `refreshToken`/`expiresAt` só em modo supabase. */
+export interface SessaoRecebida {
+  token: string
+  username: string
+  refreshToken?: string
+  expiresAt?: number
+}
+
+/** Grava a sessão recebida. Sem `refreshToken`, apaga os campos de renovação (comportamento antigo). */
+export const salvarSessao = (sessao: SessaoRecebida): void => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(TOKEN_STORAGE_KEY, sessao.token)
+  window.localStorage.setItem(USERNAME_STORAGE_KEY, sessao.username)
+  if (sessao.refreshToken && typeof sessao.expiresAt === 'number') {
+    window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, sessao.refreshToken)
+    window.localStorage.setItem(EXPIRES_AT_STORAGE_KEY, String(sessao.expiresAt))
+  } else {
+    window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY)
+    window.localStorage.removeItem(EXPIRES_AT_STORAGE_KEY)
+  }
+}
+
+/** Apaga toda a sessão da aba (e, pelo evento `storage`, das outras). */
+export const limparSessao = (): void => {
+  if (typeof window === 'undefined') return
+  for (const k of [
+    TOKEN_STORAGE_KEY,
+    USERNAME_STORAGE_KEY,
+    REFRESH_TOKEN_STORAGE_KEY,
+    EXPIRES_AT_STORAGE_KEY,
+  ]) {
+    window.localStorage.removeItem(k)
+  }
+}
+
+/** `expiresAt` guardado (segundos), ou `null`. */
+export const lerExpiresAt = (): number | null => {
+  if (typeof window === 'undefined') return null
+  const bruto = Number(window.localStorage.getItem(EXPIRES_AT_STORAGE_KEY))
+  return Number.isFinite(bruto) && bruto > 0 ? bruto : null
+}
 
 /**
  * Returns the current access token from `localStorage`, or `undefined` when
@@ -44,24 +93,6 @@ export const decodeJwtExp = (token: string): number | null => {
     const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
     const json = JSON.parse(atob(base64)) as { exp?: unknown }
     return typeof json.exp === 'number' && Number.isFinite(json.exp) ? json.exp : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Reads the `role` claim from a JWT WITHOUT verifying the signature — the
- * backend already verifies it on every request. Used only by the deploy-window
- * fallback of `PermissoesProvider` (D4, ADR-0053); authorization is server-side,
- * read from the database. Returns `null` for any malformed token.
- */
-export const decodeJwtRole = (token: string): string | null => {
-  try {
-    const payload = token.split('.')[1]
-    if (!payload) return null
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-    const json = JSON.parse(atob(base64)) as { role?: unknown }
-    return typeof json.role === 'string' ? json.role : null
   } catch {
     return null
   }

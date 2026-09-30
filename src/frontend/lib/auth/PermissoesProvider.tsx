@@ -5,11 +5,10 @@ import {
   CATALOGO_PERMISSOES,
   fetchMinhasPermissoes,
   type MinhasPermissoes,
-  PERMISSAO,
   type PapelRef,
   type Permissao,
 } from '../permissoes'
-import { useAuth, useRole } from './AuthProvider'
+import { useAuth } from './AuthProvider'
 
 /**
  * O que o usuário logado pode, para ESCONDER nav, cards, páginas e botões (ADR-0053). Esconder é
@@ -35,29 +34,14 @@ interface Resposta {
 }
 
 /**
- * D4 — janela de deploy: backend anterior à ADR-0053 responde só `{ operacao }`. O front cai no
- * comportamento de hoje (catálogo inteiro para `role = 'admin'`, e Operação conforme a chave). Sai
- * no tweak que remover a chave `operacao` de `/me/permissoes`.
- */
-const permissoesLegadas = (role: string | null, operacao: boolean): Set<Permissao> => {
-  const base =
-    role === 'admin'
-      ? new Set<Permissao>(CATALOGO_PERMISSOES.filter((p) => p !== PERMISSAO.OPERACAO_VER))
-      : new Set<Permissao>()
-  if (operacao) base.add(PERMISSAO.OPERACAO_VER)
-  return base
-}
-
-/**
  * Busca `/me/permissoes` UMA vez por sessão, e de novo quando o token muda (login / troca de
  * usuário) — não a cada navegação. Mora no layout raiz, dentro do `AuthProvider`.
  *
  * - `DEV_AUTH_BYPASS` (D1): catálogo inteiro, sem consulta (o backend faz o mesmo);
- * - erro: conjunto vazio (fail-closed), sem quebrar a tela.
+ * - erro, ou resposta sem o array de permissões: conjunto vazio (fail-closed), sem quebrar a tela.
  */
 export function PermissoesProvider({ children }: { children: React.ReactNode }) {
   const { token, devBypass } = useAuth()
-  const role = useRole()
   const [resposta, setResposta] = useState<Resposta | null>(null)
 
   useEffect(() => {
@@ -82,9 +66,8 @@ export function PermissoesProvider({ children }: { children: React.ReactNode }) 
     if (devBypass) return CATALOGO
     const dados = atual?.dados
     if (!dados) return NENHUMA
-    if (dados.legado) return permissoesLegadas(role, dados.operacaoLegado === true)
     return dados.permissoes
-  }, [devBypass, atual, role])
+  }, [devBypass, atual])
 
   const tem = useCallback((p: Permissao) => permissoes.has(p), [permissoes])
   const papel = atual?.dados?.papel
