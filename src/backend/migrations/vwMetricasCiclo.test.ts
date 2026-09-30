@@ -259,3 +259,62 @@ describe('0065_metricas_ciclo_data_pelo_encerramento — guardas estáticas', ()
         );
     });
 });
+
+/**
+ * 0070 — SISPAG (Frente II) entra nas métricas do ciclo (ADR-0056). O comportamento (quem conta,
+ * em que semana) mora na integração; aqui fica o que protege as outras frentes e o contrato.
+ */
+const MIGRATION_0070 = readFileSync(path.join(__dirname, '0070_metricas_ciclo_sispag.sql'), 'utf8');
+const SQL_0070 = MIGRATION_0070.replace(/--.*$/gm, '');
+
+/** Corpo da função, do `CREATE OR REPLACE` ao fim. */
+const corpoDaFuncao = (sql: string): string => sql.slice(sql.indexOf('CREATE OR REPLACE FUNCTION'));
+
+describe('0070_metricas_ciclo_sispag — guardas estáticas', () => {
+    it('devolve exatamente as mesmas colunas da 0058 (contrato intocado)', () => {
+        expect(colunasDoRetorno(SQL_0070)).toEqual(colunasDoRetorno(SQL));
+    });
+
+    it('é a função da 0065 com linhas ACRESCENTADAS: nenhuma linha de Permutas/Recebimentos muda', () => {
+        const antes = corpoDaFuncao(SQL_0065).split('\n');
+        const depois = corpoDaFuncao(SQL_0070).split('\n');
+        // Toda linha da 0065 aparece na 0070, na mesma ordem (subsequência).
+        let i = 0;
+        for (const l of depois) if (i < antes.length && l === antes[i]) i++;
+        expect(i).toBe(antes.length);
+    });
+
+    it('a semana do SISPAG é a da GERAÇÃO: COALESCE(encerrado_em, criado_em) da remessa settled', () => {
+        expect(SQL_0070).toMatch(
+            /COALESCE\(r\.encerrado_em, r\.criado_em\) AT TIME ZONE 'America\/Sao_Paulo'/,
+        );
+        expect(SQL_0070).toMatch(/x\.dry_run = false\s+AND x\.status = 'settled'/);
+        expect(SQL_0070).not.toMatch(/atualizado_em AT TIME ZONE/);
+    });
+
+    it('lote CANCELADO fica fora; aceito é AGENDADO ou PAGO; R$ é o snapshot do item', () => {
+        expect(SQL_0070).toMatch(/l\.status <> 'CANCELADO'/);
+        expect(SQL_0070.match(/s\.situacao IN \('AGENDADO', 'PAGO'\)/g)).toHaveLength(2);
+        expect(SQL_0070).toMatch(/SUM\(s\.valor\)/);
+        expect(SQL_0070).not.toMatch(/valor_pago/);
+    });
+
+    it('a única escrita é o backfill de remessa_execucao onde ainda é NULL, em linha terminal', () => {
+        expect(SQL_0070).not.toMatch(/\b(INSERT\s+INTO|DELETE\s+FROM|TRUNCATE|DROP )\b/i);
+        const updates = [...SQL_0070.matchAll(/UPDATE\s+([a-z_.]+)\s+SET\s+([\s\S]*?);/gi)];
+        expect(updates.map((u) => u[1])).toEqual(['public.remessa_execucao']);
+        expect(updates[0]?.[2]).toMatch(
+            /^encerrado_em = atualizado_em\s+WHERE encerrado_em IS NULL/,
+        );
+        expect(updates[0]?.[2]).toMatch(/status IN \('settled', 'error'\)/);
+    });
+
+    it('não mexe na grade nem no acesso', () => {
+        expect(SQL_0070).not.toMatch(/FUNCTION metricas\.(serie_inicio|historico_inicio)\(\)/);
+        expect(SQL_0070).not.toMatch(/VIEW metricas\.vw_metricas_ciclo/);
+        expect(SQL_0070).not.toMatch(/CREATE ROLE|ALTER ROLE|GRANT |SECURITY DEFINER|PASSWORD/i);
+        expect(SQL_0070).toMatch(
+            /REVOKE ALL ON FUNCTION metricas\.metricas_ciclo\(timestamp, timestamp\) FROM PUBLIC;/,
+        );
+    });
+});

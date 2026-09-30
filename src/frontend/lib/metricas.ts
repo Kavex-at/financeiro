@@ -41,6 +41,9 @@ export const METRICA = {
   PERMUTAS_RS: 'permutas_valor_baixado',
   RECEBIMENTOS_PCT: 'recebimentos_alocacoes_concluidas_pct',
   RECEBIMENTOS_RS: 'recebimentos_valor_alocado',
+  /** SISPAG (Frente II), ADR-0056: títulos de remessa gerada aceitos pelo banco (AGENDADO ou PAGO). */
+  SISPAG_PCT: 'sispag_titulos_aceitos_pct',
+  SISPAG_RS: 'sispag_valor_aceito',
 } as const
 
 /**

@@ -51,6 +51,19 @@ const leituraFake: MetricasCicloLeitura = {
       rotulo: 'valor de créditos de cliente alocados',
     }),
     linha({
+      frente: 'SISPAG (Frente II)',
+      metrica: 'sispag_titulos_aceitos_pct',
+      rotulo: 'títulos aceitos pelo banco em remessa gerada — 2 de 5 títulos, 2 aguardando retorno',
+      valor: 40,
+      unidade: '%',
+    }),
+    linha({
+      frente: 'SISPAG (Frente II)',
+      metrica: 'sispag_valor_aceito',
+      rotulo: 'valor de títulos aceitos pelo banco',
+      valor: 2131.16,
+    }),
+    linha({
       janela_inicio: '2026-09-11T18:00:00',
       janela_fim: '2026-09-18T18:00:00',
       apurado_ate: '2026-09-18T18:00:00',
@@ -87,6 +100,28 @@ describe('MetricasPage', () => {
     await renderPagina()
 
     expect(screen.getAllByText('sem tentativas na semana').length).toBeGreaterThan(0)
+    expect(screen.queryByText('0,0%')).not.toBeInTheDocument()
+  })
+
+  it('SISPAG (Frente II): títulos aceitos pelo banco, com o absoluto e o valor', async () => {
+    await renderPagina()
+
+    expect(screen.getByText('Pagamentos aceitos pelo banco')).toBeInTheDocument()
+    expect(screen.getAllByText('40,0%').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('2 de 5 títulos, 2 aguardando retorno').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/R\$\s2\.131,16/).length).toBeGreaterThan(0)
+    expect(screen.getByRole('columnheader', { name: 'Pagamentos aceitos' })).toBeInTheDocument()
+  })
+
+  it('semana sem remessa gerada mostra travessão no SISPAG, não 0%', async () => {
+    ;(fetchMetricasCiclo as jest.Mock).mockResolvedValue({
+      serieInicio: '2026-09-11T18:00:00',
+      metricas: [linha({ frente: 'SISPAG (Frente II)', metrica: 'sispag_valor_aceito', valor: 0 })],
+    })
+
+    await renderPagina()
+
+    expect(screen.getByText('sem remessa na semana')).toBeInTheDocument()
     expect(screen.queryByText('0,0%')).not.toBeInTheDocument()
   })
 

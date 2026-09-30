@@ -177,6 +177,10 @@ export default class RemessaExecucaoRepository {
                  -- COALESCE: no write-ahead a sessão podia não estar resolvida; aqui já está.
                  conexos_username = COALESCE(conexos_username, $conexosUsername),
                  conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                 -- ADR-0052: data das métricas do ciclo. Carimba o 1º encerramento e não anda mais —
+                 -- o status à direita do SET é o valor ANTERIOR da linha.
+                 encerrado_em = CASE WHEN status = 'settled'
+                                     THEN COALESCE(encerrado_em, now()) ELSE now() END,
                  atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
@@ -199,6 +203,8 @@ export default class RemessaExecucaoRepository {
                  erp_response = COALESCE($erpResponse::jsonb, erp_response),
                  conexos_username = COALESCE(conexos_username, $conexosUsername),
                  conexos_usn_cod = COALESCE(conexos_usn_cod, $conexosUsnCod),
+                 -- ADR-0052: a falha data a tentativa; um retry que liquide sobrescreve.
+                 encerrado_em = now(),
                  atualizado_em = now()
              WHERE idempotency_key = $key`,
             {
