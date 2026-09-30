@@ -8,7 +8,10 @@ import { AcessoNegado } from '@/components/auth/AcessoNegado'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import type { Permissao } from '@/lib/permissoes'
 
-const permissoesMock = jest.fn<{ carregando: boolean; tem: (p: Permissao) => boolean }, []>()
+const permissoesMock = jest.fn<
+  { carregando: boolean; tem: (p: Permissao) => boolean; falhou?: boolean; recarregar?: () => void },
+  []
+>()
 jest.mock('@/lib/auth/PermissoesProvider', () => ({
   usePermissoes: () => permissoesMock(),
 }))
@@ -41,6 +44,18 @@ describe('ExigePermissao', () => {
     carregarDados.mockReset()
     replaceMock.mockReset()
     pushMock.mockReset()
+  })
+
+  it('verificação FALHOU (auth instável): "Não foi possível verificar…" com "Tentar de novo", nunca "sem acesso" (availability-1)', () => {
+    const recarregar = jest.fn()
+    permissoesMock.mockReturnValue({ carregando: false, tem: () => false, falhou: true, recarregar })
+    renderGuard()
+    expect(screen.getByText('Não foi possível verificar suas permissões agora.')).toBeInTheDocument()
+    expect(screen.queryByText('Você não tem acesso a esta área.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Conteúdo da página')).not.toBeInTheDocument()
+    expect(carregarDados).not.toHaveBeenCalled()
+    screen.getByRole('button', { name: 'Tentar de novo' }).click()
+    expect(recarregar).toHaveBeenCalledTimes(1)
   })
 
   it('sem a permissão: só o estado vazio, com link para a home, sem redirecionar nem buscar dados', () => {

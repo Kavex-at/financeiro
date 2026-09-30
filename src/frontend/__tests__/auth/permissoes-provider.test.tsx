@@ -2,7 +2,7 @@
  * `usePermissoes` (ADR-0053) — a fonte única do front para esconder nav, cards, páginas e botões.
  * Substitui o antigo hook de admin por papel. Esconder é ergonomia; o gate real é o servidor (I2).
  */
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { PermissoesProvider, usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { CATALOGO_PERMISSOES, type MinhasPermissoes, type Permissao } from '@/lib/permissoes'
 
@@ -18,12 +18,16 @@ jest.mock('@/lib/permissoes', () => {
 })
 
 function Probe() {
-  const { carregando, tem } = usePermissoes()
+  const { carregando, tem, falhou, recarregar } = usePermissoes()
   const lista = CATALOGO_PERMISSOES.filter((p) => tem(p))
   return (
     <div>
       <span data-testid="carregando">{String(carregando)}</span>
+      <span data-testid="falhou">{String(falhou)}</span>
       <span data-testid="permissoes">{lista.join(',')}</span>
+      <button type="button" onClick={recarregar}>
+        recarregar
+      </button>
     </div>
   )
 }
@@ -95,11 +99,31 @@ describe('PermissoesProvider / usePermissoes', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('erro: conjunto vazio (fail-closed), sem quebrar a tela', async () => {
+  it('erro: conjunto vazio (fail-closed), sem quebrar a tela, e marca falhou (não é "sem permissão")', async () => {
     fetchMock.mockRejectedValue(new Error('HTTP 503'))
     renderProvider()
     await waitFor(() => expect(screen.getByTestId('carregando')).toHaveTextContent('false'))
     expect(screen.getByTestId('permissoes')).toHaveTextContent('')
+    expect(screen.getByTestId('falhou')).toHaveTextContent('true')
+  })
+
+  it('recarregar(): refaz a consulta e, dando certo, limpa o falhou (availability-1)', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error('instável'))
+      .mockResolvedValueOnce(resposta(['sispag:ver']))
+    renderProvider()
+    await waitFor(() => expect(screen.getByTestId('falhou')).toHaveTextContent('true'))
+    fireEvent.click(screen.getByRole('button', { name: 'recarregar' }))
+    await waitFor(() => expect(screen.getByTestId('permissoes')).toHaveTextContent('sispag:ver'))
+    expect(screen.getByTestId('falhou')).toHaveTextContent('false')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('sucesso: falhou = false', async () => {
+    fetchMock.mockResolvedValue(resposta(['permutas:ver']))
+    renderProvider()
+    await waitFor(() => expect(screen.getByTestId('permissoes')).toHaveTextContent('permutas:ver'))
+    expect(screen.getByTestId('falhou')).toHaveTextContent('false')
   })
 
   it('DEV_AUTH_BYPASS (D1): catálogo inteiro, sem consultar o backend', () => {
