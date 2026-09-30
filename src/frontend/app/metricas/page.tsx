@@ -123,7 +123,8 @@ function MetricasPageConteudo() {
                 sexta às 18:00.
               </p>
             ) : null}
-            <KPIGrid columns={4}>
+            {/* Duas colunas = uma linha por frente (% e R$). Seis lado a lado estouravam o valor em R$. */}
+            <KPIGrid columns={2}>
               <SimpleKPI
                 label="Permutas concluídas"
                 value={formatarMetrica(ultima.porChave[METRICA.PERMUTAS_PCT])}
@@ -152,6 +153,20 @@ function MetricasPageConteudo() {
                 value={formatarMetrica(ultima.porChave[METRICA.RECEBIMENTOS_RS])}
                 footer="créditos de cliente"
               />
+              <SimpleKPI
+                label="Pagamentos aceitos pelo banco"
+                value={formatarMetrica(ultima.porChave[METRICA.SISPAG_PCT])}
+                footer={
+                  absolutoDoRotulo(ultima.porChave[METRICA.SISPAG_PCT]?.rotulo ?? '') ??
+                  'sem remessa na semana'
+                }
+                tooltip="Títulos de remessa SISPAG gerada na semana que o banco agendou ou pagou, sobre todos os títulos enviados. Aceite que chega depois atualiza a semana da remessa."
+              />
+              <SimpleKPI
+                label="Valor aceito em pagamentos"
+                value={formatarMetrica(ultima.porChave[METRICA.SISPAG_RS])}
+                footer="títulos agendados ou pagos"
+              />
             </KPIGrid>
           </section>
 
@@ -159,7 +174,12 @@ function MetricasPageConteudo() {
             <h2 id="historico" className="text-2xl font-semibold leading-tight">
               Histórico
             </h2>
-            <div className="overflow-x-auto rounded-lg border">
+            <div
+              className="overflow-x-auto rounded-lg border"
+              role="region"
+              aria-label="Histórico de métricas"
+              tabIndex={0}
+            >
               <Table aria-label="Métricas por semana">
                 <TableHeader>
                   <TableRow>
@@ -168,6 +188,8 @@ function MetricasPageConteudo() {
                     <TableHead className="text-right">Valor baixado</TableHead>
                     <TableHead className="text-right">Adiantamentos concluídos</TableHead>
                     <TableHead className="text-right">Valor alocado</TableHead>
+                    <TableHead className="text-right">Pagamentos aceitos</TableHead>
+                    <TableHead className="text-right">Valor aceito</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -188,6 +210,10 @@ function MetricasPageConteudo() {
                       <CelulaPercentual metrica={s.porChave[METRICA.RECEBIMENTOS_PCT]} />
                       <TableCell className="text-right tabular-nums">
                         {formatarMetrica(s.porChave[METRICA.RECEBIMENTOS_RS])}
+                      </TableCell>
+                      <CelulaPercentual metrica={s.porChave[METRICA.SISPAG_PCT]} />
+                      <TableCell className="text-right tabular-nums">
+                        {formatarMetrica(s.porChave[METRICA.SISPAG_RS])}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -217,12 +243,12 @@ function CelulaPercentual({ metrica }: { metrica: Parameters<typeof formatarMetr
 function MetricasSkeleton() {
   return (
     <div className="space-y-6" role="status" aria-busy="true" aria-label="Carregando as métricas">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-24 w-full" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-28 w-full" />
         ))}
       </div>
-      <TableSkeleton columns={5} rows={4} aria-label="Carregando o histórico" />
+      <TableSkeleton columns={7} rows={4} aria-label="Carregando o histórico" />
     </div>
   )
 }

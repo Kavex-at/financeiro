@@ -266,7 +266,8 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         ]);
         const soData = await admin.query(filtro, [SERIE, AGORA, '2026-09-11', '2026-09-18']);
 
-        expect(comHora.rows).toHaveLength(4);
+        // 2 de Permutas + 2 de Recebimentos + o R$ do SISPAG, emitido em toda semana (0070).
+        expect(comHora.rows).toHaveLength(5);
         expect(soData.rows).toHaveLength(0);
     });
 
@@ -302,6 +303,7 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
             for (const arquivo of [
                 '0058_vw_metricas_ciclo.sql',
                 '0065_metricas_ciclo_data_pelo_encerramento.sql',
+                '0070_metricas_ciclo_sispag.sql',
             ]) {
                 const sql = readFileSync(path.join(__dirname, arquivo), 'utf8');
                 await expect(admin.query(sql)).resolves.toBeDefined();
@@ -571,5 +573,168 @@ describeComBanco('vw_metricas_ciclo — integração', () => {
         // A janela de agosto existe no recuado e não existe na série.
         expect(comHistorico.some((l) => l.janela_inicio.startsWith('2026-08-07'))).toBe(true);
         expect(semHistorico.some((l) => l.janela_inicio.startsWith('2026-08'))).toBe(false);
+    });
+
+    // --- SISPAG (Frente II), ADR-0056 ---
+    //
+    // Numa transação desfeita, como os casos da ADR-0052: o seed acima não tem SISPAG, e as
+    // asserções de Permutas/Recebimentos não podem depender destes lotes.
+
+    const semearSispag = async (): Promise<void> => {
+        await admin.query(`
+            INSERT INTO lote_pagamento (id, fil_cod, status, criado_por) VALUES
+                ('00000000-0000-0000-0000-00000000a001', 2, 'REMESSA_GERADA', 't'),
+                ('00000000-0000-0000-0000-00000000a002', 2, 'CANCELADO',      't'),
+                ('00000000-0000-0000-0000-00000000a003', 2, 'REMESSA_GERADA', 't'),
+                ('00000000-0000-0000-0000-00000000a004', 2, 'FINALIZADO',     't'),
+                ('00000000-0000-0000-0000-00000000a005', 1, 'BAIXADO',        't')
+        `);
+        await admin.query(`
+            INSERT INTO lote_pagamento_item
+                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, incluido_por, situacao)
+            VALUES
+                ('00000000-0000-0000-0000-00000000a001', 2, 'D1', '1', 'c',  275.00, 't', 'AGENDADO'),
+                ('00000000-0000-0000-0000-00000000a001', 2, 'D2', '1', 'c', 1856.16, 't', 'PAGO'),
+                ('00000000-0000-0000-0000-00000000a001', 2, 'D3', '1', 'c',  100.00, 't', 'REJEITADO'),
+                ('00000000-0000-0000-0000-00000000a001', 2, 'D4', '1', 'c',   50.00, 't', 'SEM_RETORNO'),
+                ('00000000-0000-0000-0000-00000000a001', 2, 'D5', '1', 'c',   25.00, 't', NULL),
+                ('00000000-0000-0000-0000-00000000a002', 2, 'D6', '1', 'c', 9999.00, 't', 'AGENDADO'),
+                ('00000000-0000-0000-0000-00000000a003', 2, 'D7', '1', 'c', 8888.00, 't', 'PAGO'),
+                ('00000000-0000-0000-0000-00000000a004', 2, 'D8', '1', 'c', 7777.00, 't', 'AGENDADO'),
+                ('00000000-0000-0000-0000-00000000a005', 1, 'D9', '1', 'c',   10.00, 't', 'PAGO')
+        `);
+        await admin.query(`
+            INSERT INTO remessa_execucao
+                (idempotency_key, lote_id, fil_cod, bnc_cod, status, dry_run, criado_em, encerrado_em)
+            VALUES
+                -- Nasceu antes da série e encerrou na semana B: vale o encerramento.
+                ('r-real',     '00000000-0000-0000-0000-00000000a001', 2, 341, 'settled', false,
+                 '2026-09-10 10:00:00-03', '2026-09-23 16:08:00-03'),
+                ('r-cancelado','00000000-0000-0000-0000-00000000a002', 2, 341, 'settled', false,
+                 '2026-09-21 10:00:00-03', '2026-09-21 10:00:05-03'),
+                ('r-dry-run',  '00000000-0000-0000-0000-00000000a003', 2, 341, 'settled', true,
+                 '2026-09-21 11:00:00-03', '2026-09-21 11:00:05-03'),
+                ('r-erro',     '00000000-0000-0000-0000-00000000a004', 2, 341, 'error',   false,
+                 '2026-09-21 12:00:00-03', '2026-09-21 12:00:05-03'),
+                -- Duas execuções settled do mesmo lote: o título conta UMA vez, na semana da 1ª.
+                ('r-dupla-1',  '00000000-0000-0000-0000-00000000a005', 1, 341, 'settled', false,
+                 '2026-09-17 10:00:00-03', '2026-09-17 10:00:05-03'),
+                ('r-dupla-2',  '00000000-0000-0000-0000-00000000a005', 1, 341, 'settled', false,
+                 '2026-09-25 20:00:00-03', '2026-09-25 20:00:05-03')
+        `);
+    };
+
+    it('SISPAG: aceitos (AGENDADO + PAGO) ÷ títulos enviados, com os aguardando no rótulo', async () => {
+        const ls = await emTransacao(async () => {
+            await semearSispag();
+            return (await admin.query<Linha>(SELECT_LINHAS, [SERIE, AGORA])).rows;
+        });
+        const achar = (metrica: string, janela: string) =>
+            ls.find((l) => l.metrica === metrica && l.janela_inicio === janela);
+
+        // Semana B: só o lote real. REJEITADO conta no denominador; NULL e SEM_RETORNO aguardam.
+        // Fora: cancelado 9999, dry-run 8888, só-erro 7777.
+        expect(achar('sispag_titulos_aceitos_pct', JANELA_B.inicio)).toEqual({
+            frente: 'SISPAG (Frente II)',
+            metrica: 'sispag_titulos_aceitos_pct',
+            rotulo: 'títulos aceitos pelo banco em remessa gerada — 2 de 5 títulos, 2 aguardando retorno',
+            valor: '40.0',
+            unidade: '%',
+            janela_inicio: JANELA_B.inicio,
+            janela_fim: JANELA_B.fim,
+            baseline: null,
+            baseline_desc: 'sem medição do processo manual',
+            parcial: false,
+            apurado_ate: JANELA_B.fim,
+        });
+        expect(achar('sispag_valor_aceito', JANELA_B.inicio)).toMatchObject({
+            valor: '2131.16',
+            unidade: 'R$',
+            rotulo: 'valor de títulos aceitos pelo banco',
+        });
+
+        // Semana A: o lote de duas execuções, contado uma vez, na da 1ª.
+        expect(achar('sispag_titulos_aceitos_pct', JANELA_A.inicio)).toMatchObject({
+            valor: '100.0',
+            rotulo: 'títulos aceitos pelo banco em remessa gerada — 1 de 1 títulos, 0 aguardando retorno',
+        });
+        expect(achar('sispag_valor_aceito', JANELA_A.inicio)?.valor).toBe('10.00');
+
+        // Semana C: a 2ª execução do lote duplo NÃO recontou. Sem título, sem % (nunca 0/0); R$ zero.
+        expect(achar('sispag_titulos_aceitos_pct', JANELA_C.inicio)).toBeUndefined();
+        expect(achar('sispag_valor_aceito', JANELA_C.inicio)).toMatchObject({
+            valor: '0.00',
+            parcial: true,
+        });
+    });
+
+    it('SISPAG: aceite que chega depois recalcula a semana da GERAÇÃO', async () => {
+        const [antes, depois] = await emTransacao(async () => {
+            await semearSispag();
+            const a = (await admin.query<Linha>(SELECT_LINHAS, [SERIE, AGORA])).rows;
+            await admin.query(
+                `UPDATE lote_pagamento_item SET situacao = 'AGENDADO'
+                  WHERE lote_id = '00000000-0000-0000-0000-00000000a001' AND situacao IS NULL`,
+            );
+            const d = (await admin.query<Linha>(SELECT_LINHAS, [SERIE, AGORA])).rows;
+            return [a, d];
+        });
+        const pct = (ls: Linha[]) =>
+            ls.find(
+                (l) =>
+                    l.metrica === 'sispag_titulos_aceitos_pct' &&
+                    l.janela_inicio === JANELA_B.inicio,
+            );
+
+        expect(pct(antes)?.valor).toBe('40.0');
+        expect(pct(depois)).toMatchObject({
+            valor: '60.0',
+            rotulo: 'títulos aceitos pelo banco em remessa gerada — 3 de 5 títulos, 1 aguardando retorno',
+        });
+    });
+
+    it('SISPAG não move uma vírgula de Permutas nem de Recebimentos', async () => {
+        const outras = (ls: Linha[]) => ls.filter((l) => !l.metrica.startsWith('sispag_'));
+        const com = await emTransacao(async () => {
+            await semearSispag();
+            return (await admin.query<Linha>(SELECT_LINHAS, [SERIE, AGORA])).rows;
+        });
+
+        expect(outras(com)).toEqual(outras(linhas));
+    });
+
+    it('backfill da 0070: remessa terminal ganha encerrado_em = atualizado_em; em voo segue NULL', async () => {
+        const rows = await emTransacao(async () => {
+            await admin.query(`
+                INSERT INTO lote_pagamento (id, fil_cod, status, criado_por) VALUES
+                    ('00000000-0000-0000-0000-00000000b001', 2, 'REMESSA_GERADA', 't')
+            `);
+            await admin.query(`
+                INSERT INTO remessa_execucao
+                    (idempotency_key, lote_id, fil_cod, bnc_cod, status, dry_run, criado_em, atualizado_em)
+                VALUES
+                    ('bf-ok',   '00000000-0000-0000-0000-00000000b001', 2, 341, 'settled',     false,
+                     '2026-09-23 10:00:00-03', '2026-09-23 10:00:07-03'),
+                    ('bf-erro', '00000000-0000-0000-0000-00000000b001', 2, 341, 'error',       false,
+                     '2026-09-22 10:00:00-03', '2026-09-23 11:42:40-03'),
+                    ('bf-voo',  '00000000-0000-0000-0000-00000000b001', 2, 341, 'reconciling', false,
+                     '2026-09-24 10:00:00-03', '2026-09-24 10:00:03-03')
+            `);
+            await admin.query(
+                readFileSync(path.join(__dirname, '0070_metricas_ciclo_sispag.sql'), 'utf8'),
+            );
+            return (
+                await admin.query<{ k: string; e: string | null }>(
+                    `SELECT idempotency_key AS k, (encerrado_em = atualizado_em)::text AS e
+                       FROM remessa_execucao WHERE idempotency_key LIKE 'bf-%' ORDER BY 1`,
+                )
+            ).rows;
+        });
+
+        expect(rows).toEqual([
+            { k: 'bf-erro', e: 'true' },
+            { k: 'bf-ok', e: 'true' },
+            { k: 'bf-voo', e: null },
+        ]);
     });
 });

@@ -3,6 +3,16 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.31.0 — SISPAG entra nas métricas do ciclo (2026-09-30, ADR-0056)
+
+Feature: `metricas-sispag` (branch `fix/metricas-sispag`). `entity_changed = false`.
+
+- **Métricas do ciclo medem a Frente II**: títulos de remessa gerada aceitos pelo banco
+  (`situacao` ∈ AGENDADO/PAGO, gravada pela sincronização da ADR-0055), na semana da geração, com
+  R$ do snapshot do item. Lote CANCELADO, dry-run e execução `error` ficam fora.
+- **`remessa_execucao.encerrado_em`**: a ADR-0052 estendida ao ledger da remessa.
+- Emenda as ADR-0045 e ADR-0052. Nenhum número de Permutas/Recebimentos muda.
+
 ## v0.30.0 — TED e PIX na remessa SISPAG, com destino digitado por item (2026-09-28, ADR-0054)
 
 Feature: `sispag-ted-pix` (branch `feat/sispag-ted-pix`, `/feature-tweak entities/lote-pagamento`).

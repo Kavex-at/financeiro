@@ -142,6 +142,40 @@ describe('RemessaExecucaoRepository', () => {
             expect(sql).not.toContain('native_flp_cod = NULL');
             expect(params).toMatchObject({ mensagem: 'timeout no fin015' });
         });
+
+        // ADR-0052 estendida ao SISPAG — as métricas do ciclo datam a remessa pelo ENCERRAMENTO.
+        // A linha é upsert por chave: um retry reusa a linha e o `criado_em` é o da 1ª tentativa.
+        it('settle carimba encerrado_em só no 1º encerramento (imóvel depois)', async () => {
+            const db = buildDb();
+            await new RemessaExecucaoRepository(db, buildIdentity()).settle('remessa:L1', {});
+
+            const [sql] = (db.update as jest.Mock).mock.calls[0];
+            expect(sql).toMatch(
+                /encerrado_em = CASE WHEN status = 'settled'\s+THEN COALESCE\(encerrado_em, now\(\)\) ELSE now\(\) END/,
+            );
+        });
+
+        it('fail carimba encerrado_em com o instante da falha', async () => {
+            const db = buildDb();
+            await new RemessaExecucaoRepository(db, buildIdentity()).fail('remessa:L1', {
+                mensagem: 'timeout no fin015',
+            });
+
+            const [sql] = (db.update as jest.Mock).mock.calls[0];
+            expect(sql).toContain('encerrado_em = now()');
+        });
+
+        it('as escritas intermediárias não mexem em encerrado_em', async () => {
+            const db = buildDb();
+            const repo = new RemessaExecucaoRepository(db, buildIdentity());
+            await repo.setNativeFlpCod('remessa:L1', 42);
+            await repo.setEtapa('remessa:L1', 'gerar_remessa');
+            await repo.setRequestPayload('remessa:L1', { a: 1 });
+
+            for (const [sql] of (db.update as jest.Mock).mock.calls) {
+                expect(sql).not.toContain('encerrado_em');
+            }
+        });
     });
 
     describe('leitura', () => {
