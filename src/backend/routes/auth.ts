@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { type Response, Router } from 'express';
+import { type NextFunction, type Request, type Response, Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
@@ -9,7 +9,12 @@ import AuthService from '../domain/service/auth/AuthService.js';
 import SupabaseSessionService from '../domain/service/auth/SupabaseSessionService.js';
 import { type VerifyAccessToken, extractBearerToken } from '../http/auth.js';
 import { asyncHandler } from '../http/asyncHandler.js';
-import { MENSAGEM_MUITAS_TENTATIVAS } from '../http/rateLimit.js';
+import {
+    MENSAGEM_MUITAS_TENTATIVAS,
+    type SessionLimiterOptions,
+    buildLoginLimiters,
+    buildRefreshLimiter,
+} from '../http/rateLimit.js';
 
 /**
  * Zod no boundary — corpo do POST /login (Rule: validar inputs externos).
@@ -35,6 +40,8 @@ const MENSAGEM = {
 export interface AuthRouterOptions {
     /** O mesmo verificador do middleware de auth (D2): o logout aceita os dois emissores. */
     verifyAccessToken: VerifyAccessToken;
+    /** Só no teste: `skip: () => false` liga os limitadores sob o Jest. */
+    limiters?: SessionLimiterOptions;
 }
 
 /** GoTrue fora/5xx/timeout → 503; GoTrue 429 → o mesmo 429 do nosso limitador (D5). */
@@ -63,24 +70,36 @@ const modoAtual = async (): Promise<'local' | 'supabase'> =>
  *   middleware, sem `resolverAcesso` (desativado também encerra a sessão); só o token do Supabase
  *   tem o que revogar.
  */
-export const buildAuthRouter = ({ verifyAccessToken }: AuthRouterOptions): Router => {
+export const buildAuthRouter = ({
+    verifyAccessToken,
+    limiters = {},
+}: AuthRouterOptions): Router => {
     const router = Router();
+    const login = buildLoginLimiters(limiters);
 
     router.post(
         '/login',
-        asyncHandler(async (req, res) => {
+        login.porIp,
+        // Parse ANTES do limitador por identificador: corpo inválido não gasta o balde de ninguém.
+        (req: Request, res: Response, next: NextFunction) => {
             const parsed = loginBodySchema.safeParse(req.body);
             if (!parsed.success) {
                 res.status(400).json({ error: MENSAGEM.INVALIDA });
                 return;
             }
-
+            res.locals.login = parsed.data;
+            next();
+        },
+        // Antes de chamar o GoTrue: o balde do projeto fica protegido (D4).
+        login.porIdentificador,
+        asyncHandler(async (_req, res) => {
+            const credenciais = loginBodySchema.parse(res.locals.login);
             await bootstrapAppContainer();
             try {
                 const result =
                     (await modoAtual()) === 'supabase'
-                        ? await container.resolve(SupabaseSessionService).login(parsed.data)
-                        : await container.resolve(AuthService).login(parsed.data);
+                        ? await container.resolve(SupabaseSessionService).login(credenciais)
+                        : await container.resolve(AuthService).login(credenciais);
                 if (!result) {
                     res.status(401).json({ error: MENSAGEM.CREDENCIAIS });
                     return;
@@ -94,6 +113,7 @@ export const buildAuthRouter = ({ verifyAccessToken }: AuthRouterOptions): Route
 
     router.post(
         '/refresh',
+        buildRefreshLimiter(limiters),
         asyncHandler(async (req, res) => {
             const parsed = refreshBodySchema.safeParse(req.body);
             if (!parsed.success) {

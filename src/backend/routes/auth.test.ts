@@ -249,6 +249,30 @@ describe('POST /auth/logout (D2)', () => {
     });
 });
 
+describe('limitadores montados nas rotas (D4)', () => {
+    it('login: a 11ª falha do mesmo identificador recebe 429 ANTES de chamar o service', async () => {
+        const app = express();
+        app.set('trust proxy', 1);
+        app.use(express.json());
+        app.use('/auth', buildAuthRouter({ verifyAccessToken, limiters: { skip: () => false } }));
+        const local = await listen(app);
+        localLogin.mockResolvedValue(null);
+        const statuses: number[] = [];
+        for (let i = 0; i < 11; i++) {
+            const res = await fetch(`${local.url}/auth/login`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', 'x-forwarded-for': `10.9.0.${i}` },
+                body: JSON.stringify({ username: 'Beto', password: 'errada' }),
+            });
+            statuses.push(res.status);
+        }
+        await new Promise((r) => local.server.close(r));
+        expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+        expect(statuses[10]).toBe(429);
+        expect(localLogin).toHaveBeenCalledTimes(10);
+    });
+});
+
 describe('GET /auth/transicao', () => {
     it('não existe mais: 404 no router', async () => {
         const res = await fetch(`${srv.url}/auth/transicao`);
