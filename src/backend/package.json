@@ -28,7 +28,8 @@
         "job:reaper-sispag": "tsx jobs/reaper-sispag-reconciling.ts",
         "job:sincronizar-lotes-sispag": "tsx jobs/sincronizar-lotes-sispag.ts",
         "job:capture-fixtures": "tsx jobs/capture-fixtures-sispag.ts",
-        "job:reconciliar-nde-sefaz": "tsx jobs/reconciliar-nde-sefaz.ts"
+        "job:reconciliar-nde-sefaz": "tsx jobs/reconciliar-nde-sefaz.ts",
+        "job:sync-supabase-auth": "tsx jobs/sync-supabase-auth.ts"
     },
     "keywords": [],
     "author": "",
