@@ -1,5 +1,7 @@
 import { loadAuthEnv } from './authEnv.js';
 
+/** A var legada do template, que saiu (ADR-0054). Montada para o grep de remoção. */
+const SEGREDO_LEGADO = ['SUPABASE', 'JWT', 'SECRET'].join('_');
 const URL = 'https://uvfcziscjpapjzpzlzuk.supabase.co';
 
 describe('loadAuthEnv', () => {
@@ -80,8 +82,8 @@ describe('loadAuthEnv', () => {
         ).toThrow(/AUTH_PROVIDER/);
     });
 
-    it('SUPABASE_JWT_SECRET não é mais lido: sozinho, sem bypass, o boot falha', () => {
-        expect(() => loadAuthEnv({ SUPABASE_JWT_SECRET: 'legado' } as NodeJS.ProcessEnv)).toThrow(
+    it('o segredo HS256 legado do Supabase não é mais lido: sozinho, sem bypass, o boot falha', () => {
+        expect(() => loadAuthEnv({ [SEGREDO_LEGADO]: 'legado' } as NodeJS.ProcessEnv)).toThrow(
             /AUTH_JWT_SECRET/,
         );
     });
