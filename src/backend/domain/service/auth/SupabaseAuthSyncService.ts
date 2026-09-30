@@ -129,7 +129,7 @@ export default class SupabaseAuthSyncService {
     private preChecar = async (): Promise<void> => {
         if (!(await this.userRepository.hasAuthUserIdColumn())) {
             throw new Error(
-                'sync-supabase-auth: a coluna app_user.auth_user_id não existe; aplique a migration 0067.',
+                'sync-supabase-auth: a coluna app_user.auth_user_id não existe; aplique a migration 0070.',
             );
         }
         if (!(await this.supabaseAuthClient.isAdminConfigured())) {
