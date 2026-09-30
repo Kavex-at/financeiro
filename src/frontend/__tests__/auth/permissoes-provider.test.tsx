@@ -7,10 +7,8 @@ import { PermissoesProvider, usePermissoes } from '@/lib/auth/PermissoesProvider
 import { CATALOGO_PERMISSOES, type MinhasPermissoes, type Permissao } from '@/lib/permissoes'
 
 const authMock = jest.fn<{ token: string | null; devBypass: boolean }, []>()
-const roleMock = jest.fn<string | null, []>()
 jest.mock('@/lib/auth/AuthProvider', () => ({
   useAuth: () => authMock(),
-  useRole: () => roleMock(),
 }))
 
 const fetchMock = jest.fn<Promise<MinhasPermissoes>, []>()
@@ -40,13 +38,11 @@ const renderProvider = () =>
 const resposta = (permissoes: Permissao[]): MinhasPermissoes => ({
   permissoes: new Set(permissoes),
   papel: { id: 2, nome: 'Consulta' },
-  legado: false,
 })
 
 describe('PermissoesProvider / usePermissoes', () => {
   beforeEach(() => {
     authMock.mockReset().mockReturnValue({ token: 'tok-1', devBypass: false })
-    roleMock.mockReset().mockReturnValue('admin')
     fetchMock.mockReset()
   })
 
@@ -122,32 +118,11 @@ describe('PermissoesProvider / usePermissoes', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  describe('D4 — backend antigo (resposta só com { operacao })', () => {
-    it('role admin: catálogo inteiro, com operacao:ver conforme a chave', async () => {
-      fetchMock.mockResolvedValue({ permissoes: new Set(), legado: true, operacaoLegado: false })
-      renderProvider()
-      await waitFor(() => expect(screen.getByTestId('carregando')).toHaveTextContent('false'))
-      const texto = screen.getByTestId('permissoes').textContent ?? ''
-      expect(texto).toContain('usuarios:gerenciar')
-      expect(texto).toContain('sispag:executar')
-      expect(texto).not.toContain('operacao:ver')
-    })
-
-    it('role admin + operacao: true: inclui operacao:ver', async () => {
-      fetchMock.mockResolvedValue({ permissoes: new Set(), legado: true, operacaoLegado: true })
-      renderProvider()
-      await waitFor(() =>
-        expect(screen.getByTestId('permissoes')).toHaveTextContent(CATALOGO_PERMISSOES.join(',')),
-      )
-    })
-
-    it('role não-admin: só operacao:ver se a chave vier true', async () => {
-      roleMock.mockReturnValue('operador')
-      fetchMock.mockResolvedValue({ permissoes: new Set(), legado: true, operacaoLegado: true })
-      renderProvider()
-      await waitFor(() => expect(screen.getByTestId('permissoes')).toHaveTextContent('operacao:ver'))
-      expect(screen.getByTestId('permissoes').textContent).toBe('operacao:ver')
-    })
+  it('ADR-0054: resposta sem o array de permissões = conjunto vazio (fail-closed), nunca "tudo para admin"', async () => {
+    fetchMock.mockResolvedValue({ permissoes: new Set() })
+    renderProvider()
+    await waitFor(() => expect(screen.getByTestId('carregando')).toHaveTextContent('false'))
+    expect(screen.getByTestId('permissoes').textContent).toBe('')
   })
 
   it('fora do provider: erro explícito (o provider mora no layout raiz)', () => {

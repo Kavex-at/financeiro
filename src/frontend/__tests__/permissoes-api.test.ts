@@ -4,6 +4,7 @@
  */
 
 jest.mock('@/lib/auth/token', () => ({
+  ...jest.requireActual('@/lib/auth/token'),
   withAuthHeaders: jest.fn(async (base: Record<string, string> = {}) => ({
     Authorization: 'Bearer test-token',
     ...base,
@@ -59,7 +60,6 @@ describe('lib/permissoes', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toMatch(/\/me\/permissoes$/)
     expect(init.headers.Authorization).toBe('Bearer test-token')
-    expect(out.legado).toBe(false)
     expect([...out.permissoes].sort()).toEqual(['permutas:ver', 'sispag:ver'])
     expect(out.papel).toEqual({ id: 2, nome: 'Consulta' })
   })
@@ -74,15 +74,14 @@ describe('lib/permissoes', () => {
     expect([...(await fetchMinhasPermissoes()).permissoes]).toEqual(['permutas:ver'])
   })
 
-  it('D4: corpo do backend antigo ({ operacao }) → legado: true, com a chave operacao preservada', async () => {
+  it('corpo sem o array (ex.: { operacao } do backend antigo) → conjunto vazio, fail-closed', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ operacao: true }) })
     const { fetchMinhasPermissoes } = await import('@/lib/permissoes')
 
     const out = await fetchMinhasPermissoes()
 
-    expect(out.legado).toBe(true)
-    expect(out.operacaoLegado).toBe(true)
     expect(out.permissoes.size).toBe(0)
+    expect(out).toEqual({ permissoes: new Set() })
   })
 
   it('5xx: rejeita (o provider trata como fail-closed)', async () => {

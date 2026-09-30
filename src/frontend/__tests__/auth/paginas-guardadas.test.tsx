@@ -13,7 +13,6 @@ jest.mock('@/lib/auth/PermissoesProvider', () => ({
 
 jest.mock('@/lib/auth/AuthProvider', () => ({
   useAuth: () => ({ username: 'maria@columbiabr.com', token: 't', devBypass: false }),
-  useRole: () => 'admin',
 }))
 
 const replaceMock = jest.fn()
