@@ -149,22 +149,43 @@ describe('EnvironmentProvider', () => {
             delete process.env.CONEXOS_EXTRATO_SYNC_START_DATE;
         });
 
-        it('authTransicaoEmailBanner: só o valor exato "true" liga (ADR-0051)', async () => {
-            const resolve = async () => {
-                const p = new EnvironmentProvider();
-                return (await p.getEnvironmentVars()).authTransicaoEmailBanner;
-            };
-            delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
-            expect(await resolve()).toBe(false); // ausente = desligado
+        it('authProvider: só "supabase" liga o modo Supabase; ausente ou outro = local (ADR-0054)', async () => {
+            const resolve = async () =>
+                (await new EnvironmentProvider().getEnvironmentVars()).authProvider;
+            delete process.env.AUTH_PROVIDER;
+            expect(await resolve()).toBe('local');
             for (const [valor, esperado] of [
-                ['true', true],
-                ['false', false],
-                ['', false],
-                ['TRUE ', false],
+                ['supabase', 'supabase'],
+                ['local', 'local'],
+                ['', 'local'],
             ] as const) {
-                process.env.AUTH_TRANSICAO_EMAIL_BANNER = valor;
+                process.env.AUTH_PROVIDER = valor;
                 expect(await resolve()).toBe(esperado);
             }
+            delete process.env.AUTH_PROVIDER;
+        });
+
+        it('lê SUPABASE_URL (sem barra final), SUPABASE_PUBLISHABLE_KEY e SUPABASE_SECRET_KEY', async () => {
+            process.env.SUPABASE_URL = 'http://127.0.0.1:54321/';
+            process.env.SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_x';
+            process.env.SUPABASE_SECRET_KEY = 'sb_secret_y';
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+            expect(env.supabaseUrl).toBe('http://127.0.0.1:54321');
+            expect(env.supabasePublishableKey).toBe('sb_publishable_x');
+            expect(env.supabaseSecretKey).toBe('sb_secret_y');
+        });
+
+        it('não lê mais SUPABASE_SERVICE_ROLE_KEY nem o banner de transição', async () => {
+            process.env.SUPABASE_SERVICE_ROLE_KEY = 'legado';
+            process.env.AUTH_TRANSICAO_EMAIL_BANNER = 'true';
+            const env = (await new EnvironmentProvider().getEnvironmentVars()) as unknown as Record<
+                string,
+                unknown
+            >;
+            expect(env.supabaseSecretKey).toBeUndefined();
+            expect('supabaseServiceRoleKey' in env).toBe(false);
+            expect('authTransicaoEmailBanner' in env).toBe(false);
+            delete process.env.SUPABASE_SERVICE_ROLE_KEY;
             delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
         });
 
@@ -270,19 +291,33 @@ describe('EnvironmentProvider', () => {
             const env = await provider.getEnvironmentVars();
 
             expect(env.supabaseUrl).toBeUndefined();
-            expect(env.supabaseServiceRoleKey).toBeUndefined();
+            expect(env.supabasePublishableKey).toBeUndefined();
+            expect(env.supabaseSecretKey).toBeUndefined();
         });
 
-        it('authTransicaoEmailBanner: mesma regra no caminho SSM/Lambda', async () => {
-            ssmSendMock.mockImplementation(async () => ({ Parameter: { Value: '{}' } }));
-            process.env.AUTH_TRANSICAO_EMAIL_BANNER = 'true';
-            expect(
-                (await new EnvironmentProvider().getEnvironmentVars()).authTransicaoEmailBanner,
-            ).toBe(true);
-            delete process.env.AUTH_TRANSICAO_EMAIL_BANNER;
-            expect(
-                (await new EnvironmentProvider().getEnvironmentVars()).authTransicaoEmailBanner,
-            ).toBe(false);
+        it('lê url, publishableKey e secretKey do SSM e AUTH_PROVIDER do env', async () => {
+            process.env.ssm_supabase_credentials = '/tenants/dev/columbia/supabase_credentials';
+            process.env.AUTH_PROVIDER = 'supabase';
+            ssmSendMock.mockImplementation(async (cmd: { Name?: string }) => {
+                if (cmd.Name === '/tenants/dev/columbia/supabase_credentials') {
+                    return {
+                        Parameter: {
+                            Value: JSON.stringify({
+                                url: 'https://ref.supabase.co/',
+                                publishableKey: 'sb_publishable_ssm',
+                                secretKey: 'sb_secret_ssm',
+                            }),
+                        },
+                    };
+                }
+                return { Parameter: { Value: '{}' } };
+            });
+            const env = await new EnvironmentProvider().getEnvironmentVars();
+            expect(env.supabaseUrl).toBe('https://ref.supabase.co');
+            expect(env.supabasePublishableKey).toBe('sb_publishable_ssm');
+            expect(env.supabaseSecretKey).toBe('sb_secret_ssm');
+            expect(env.authProvider).toBe('supabase');
+            delete process.env.AUTH_PROVIDER;
         });
 
         it('flags TED/PIX/destino manual do SISPAG: mesma regra no caminho SSM/Lambda', async () => {

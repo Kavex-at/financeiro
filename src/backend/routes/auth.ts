@@ -3,7 +3,6 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
-import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import AuthService from '../domain/service/auth/AuthService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 
@@ -46,20 +45,6 @@ router.post(
             return;
         }
         res.status(200).json(result);
-    }),
-);
-
-// GET /auth/transicao — o banner de transição para e-mail na tela de login está ligado?
-// PÚBLICA (a tela de login não tem token). Devolve SÓ `{ ativo: boolean }` (I5): nada de contagem,
-// nomes ou e-mails. Vem da chave manual `AUTH_TRANSICAO_EMAIL_BANNER`, não do banco — por isso não
-// chama `bootstrapAppContainer` nem resolve repositório nenhum. `no-store` para que desligar a
-// chave valha no próximo carregamento da tela.
-router.get(
-    '/transicao',
-    asyncHandler(async (_req, res) => {
-        const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
-        res.set('Cache-Control', 'no-store');
-        res.status(200).json({ ativo: env.authTransicaoEmailBanner === true });
     }),
 );
 

@@ -3,61 +3,130 @@ import { loadAuthEnv } from './authEnv.js';
 const URL = 'https://uvfcziscjpapjzpzlzuk.supabase.co';
 
 describe('loadAuthEnv', () => {
-    it('parses SUPABASE_URL (preferred, JWKS/ES256) with bypass off', () => {
-        const env = loadAuthEnv({ SUPABASE_URL: URL } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: URL, jwtSecret: undefined, devBypass: false });
-    });
+    const SUPABASE_COMPLETO = {
+        SUPABASE_URL: URL,
+        SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_x',
+        SUPABASE_SECRET_KEY: 'sb_secret_y',
+    };
 
-    it('parses AUTH_JWT_SECRET (app login HS256) with bypass off', () => {
+    it('modo local (default): AUTH_JWT_SECRET assina e verifica; sem Supabase', () => {
         const env = loadAuthEnv({ AUTH_JWT_SECRET: 'app-secret' } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: 'app-secret', devBypass: false });
+        expect(env).toEqual({
+            provider: 'local',
+            appJwtSecret: 'app-secret',
+            supabaseUrl: undefined,
+            devBypass: false,
+        });
     });
 
-    it('prefers AUTH_JWT_SECRET over SUPABASE_JWT_SECRET', () => {
+    it('modo local com SUPABASE_URL: os dois verificadores ficam abertos (convivência)', () => {
         const env = loadAuthEnv({
+            AUTH_PROVIDER: 'local',
             AUTH_JWT_SECRET: 'app-secret',
-            SUPABASE_JWT_SECRET: 'legacy',
+            SUPABASE_URL: `${URL}/`,
         } as NodeJS.ProcessEnv);
-        expect(env.jwtSecret).toBe('app-secret');
+        expect(env).toEqual({
+            provider: 'local',
+            appJwtSecret: 'app-secret',
+            supabaseUrl: URL,
+            devBypass: false,
+        });
     });
 
-    it('parses a legacy HS256 secret with bypass off', () => {
-        const env = loadAuthEnv({ SUPABASE_JWT_SECRET: 'shhh' } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: 'shhh', devBypass: false });
+    it('D7: modo local sem AUTH_JWT_SECRET → erro que nomeia a variável', () => {
+        expect(() => loadAuthEnv({ AUTH_PROVIDER: 'local' } as NodeJS.ProcessEnv)).toThrow(
+            /AUTH_JWT_SECRET/,
+        );
+        expect(() => loadAuthEnv({} as NodeJS.ProcessEnv)).toThrow(/AUTH_JWT_SECRET/);
     });
 
-    it('keeps both when SUPABASE_URL and SUPABASE_JWT_SECRET are set', () => {
+    it('D7: modo supabase completo, sem AUTH_JWT_SECRET → ok (caminho HS256 fechado)', () => {
         const env = loadAuthEnv({
-            SUPABASE_URL: URL,
-            SUPABASE_JWT_SECRET: 'shhh',
+            AUTH_PROVIDER: 'supabase',
+            ...SUPABASE_COMPLETO,
         } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: URL, jwtSecret: 'shhh', devBypass: false });
+        expect(env).toEqual({
+            provider: 'supabase',
+            appJwtSecret: undefined,
+            supabaseUrl: URL,
+            devBypass: false,
+        });
     });
 
-    it('allows missing url/secret when DEV_AUTH_BYPASS=true', () => {
-        const env = loadAuthEnv({ DEV_AUTH_BYPASS: 'true' } as NodeJS.ProcessEnv);
-        expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: undefined, devBypass: true });
+    it('D7: modo supabase com AUTH_JWT_SECRET → caminho HS256 continua aberto (janela)', () => {
+        const env = loadAuthEnv({
+            AUTH_PROVIDER: 'supabase',
+            AUTH_JWT_SECRET: 'app-secret',
+            ...SUPABASE_COMPLETO,
+        } as NodeJS.ProcessEnv);
+        expect(env.appJwtSecret).toBe('app-secret');
     });
 
-    it('throws when neither url nor secret and bypass off', () => {
-        expect(() => loadAuthEnv({} as NodeJS.ProcessEnv)).toThrow(
-            /SUPABASE_URL .* or SUPABASE_JWT_SECRET/,
+    for (const falta of ['SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_SECRET_KEY']) {
+        it(`D7: modo supabase sem ${falta} → erro que nomeia a variável`, () => {
+            const env: Record<string, string> = {
+                AUTH_PROVIDER: 'supabase',
+                AUTH_JWT_SECRET: 'app-secret',
+                ...SUPABASE_COMPLETO,
+            };
+            delete env[falta];
+            expect(() => loadAuthEnv(env as NodeJS.ProcessEnv)).toThrow(new RegExp(falta));
+        });
+    }
+
+    it('D7: AUTH_PROVIDER fora de local|supabase derruba o boot', () => {
+        expect(() =>
+            loadAuthEnv({ AUTH_PROVIDER: 'xyz', AUTH_JWT_SECRET: 's' } as NodeJS.ProcessEnv),
+        ).toThrow(/AUTH_PROVIDER/);
+    });
+
+    it('SUPABASE_JWT_SECRET não é mais lido: sozinho, sem bypass, o boot falha', () => {
+        expect(() => loadAuthEnv({ SUPABASE_JWT_SECRET: 'legado' } as NodeJS.ProcessEnv)).toThrow(
+            /AUTH_JWT_SECRET/,
         );
     });
 
+    it('as mensagens de erro são em português e não imprimem valores', () => {
+        const segredo = 'valor-que-nao-pode-vazar';
+        try {
+            loadAuthEnv({
+                AUTH_PROVIDER: 'supabase',
+                AUTH_JWT_SECRET: segredo,
+                SUPABASE_SECRET_KEY: segredo,
+            } as NodeJS.ProcessEnv);
+            throw new Error('deveria ter falhado');
+        } catch (error) {
+            const mensagem = (error as Error).message;
+            expect(mensagem).toMatch(/obrigat[óo]ria/i);
+            expect(mensagem).not.toContain(segredo);
+        }
+    });
+
+    it('com DEV_AUTH_BYPASS nada é exigido', () => {
+        const env = loadAuthEnv({ DEV_AUTH_BYPASS: 'true' } as NodeJS.ProcessEnv);
+        expect(env).toEqual({
+            provider: 'local',
+            appJwtSecret: undefined,
+            supabaseUrl: undefined,
+            devBypass: true,
+        });
+    });
+
     it('throws when SUPABASE_URL is not a valid URL', () => {
-        expect(() => loadAuthEnv({ SUPABASE_URL: 'not-a-url' } as NodeJS.ProcessEnv)).toThrow();
+        expect(() =>
+            loadAuthEnv({ SUPABASE_URL: 'not-a-url', AUTH_JWT_SECRET: 's' } as NodeJS.ProcessEnv),
+        ).toThrow();
     });
 
     it('throws when DEV_AUTH_BYPASS has an invalid value', () => {
         expect(() =>
-            loadAuthEnv({ DEV_AUTH_BYPASS: 'yes', SUPABASE_URL: URL } as NodeJS.ProcessEnv),
+            loadAuthEnv({ DEV_AUTH_BYPASS: 'yes', AUTH_JWT_SECRET: 's' } as NodeJS.ProcessEnv),
         ).toThrow();
     });
 
     it('treats DEV_AUTH_BYPASS=false as bypass off', () => {
         const env = loadAuthEnv({
-            SUPABASE_URL: URL,
+            AUTH_JWT_SECRET: 's',
             DEV_AUTH_BYPASS: 'false',
         } as NodeJS.ProcessEnv);
         expect(env.devBypass).toBe(false);
@@ -110,7 +179,7 @@ describe('loadAuthEnv', () => {
 
         it('does NOT throw in prd when bypass is off and credentials are present', () => {
             const env = loadAuthEnv({
-                SUPABASE_URL: URL,
+                AUTH_JWT_SECRET: 's',
                 environment: 'prd',
             } as NodeJS.ProcessEnv);
             expect(env.devBypass).toBe(false);
