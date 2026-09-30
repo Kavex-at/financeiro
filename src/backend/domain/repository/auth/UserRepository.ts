@@ -58,6 +58,17 @@ export interface CredencialLinha {
  */
 export type AntesDoCommit = (tx: TransactionClient, linha: CredencialLinha) => Promise<void>;
 
+/** Um usuário como o job `sync-supabase-auth` precisa dele (ADR-0054). */
+export interface UsuarioParaSync {
+    id: number;
+    username: string;
+    email?: string;
+    ativo: boolean;
+    authUserId?: string;
+    /** Vai para o create do GoTrue como está; nunca é impresso. */
+    passwordHash: string;
+}
+
 /** Vínculo Conexos do usuário — login + senha CIFRADA (nunca em claro). */
 export interface ConexosVinculo {
     conexosUsername: string;
@@ -375,6 +386,39 @@ export default class UserRepository {
             `UPDATE app_user SET auth_user_id = $authUserId WHERE id = $id`,
             { id, authUserId },
         );
+    };
+
+    /** Todos os usuários, com vínculo e hash, para o `sync-supabase-auth` planejar. */
+    public listForAuthSync = async (): Promise<UsuarioParaSync[]> => {
+        const rows: AppUserRow[] = await this.databaseClient.selectMany(
+            `SELECT id, username, password_hash, role, ativo, email, auth_user_id
+             FROM app_user
+             ORDER BY id`,
+        );
+        return rows.map((row) => {
+            const u = this.toAppUser(row);
+            return {
+                id: u.id,
+                username: u.username,
+                ativo: u.ativo,
+                passwordHash: u.passwordHash,
+                ...(u.email !== undefined ? { email: u.email } : {}),
+                ...(u.authUserId !== undefined ? { authUserId: u.authUserId } : {}),
+            };
+        });
+    };
+
+    /** A migration 0067 foi aplicada neste banco? (pré-checagem do sync). */
+    public hasAuthUserIdColumn = async (): Promise<boolean> => {
+        const row = await this.databaseClient.selectFirst<{ existe: boolean }>(
+            `SELECT EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = current_schema()
+                   AND table_name = $tabela AND column_name = $coluna
+             ) AS existe`,
+            { tabela: 'app_user', coluna: 'auth_user_id' },
+        );
+        return row?.existe === true;
     };
 
     /** `id` do `app_user` que já aponta para este usuário do Supabase Auth, se houver. */

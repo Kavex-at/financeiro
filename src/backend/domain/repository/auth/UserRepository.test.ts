@@ -871,6 +871,23 @@ describe('UserRepository — passo antes do commit (R6)', () => {
         );
     });
 
+    it('listForAuthSync e hasAuthUserIdColumn: parametrizados, mapeiam o vínculo', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            { ...LINHA, email: null, auth_user_id: null },
+        ]);
+        (db.selectFirst as jest.Mock).mockResolvedValue({ existe: true });
+        const repo = repoOf(db);
+        expect(await repo.listForAuthSync()).toEqual([
+            { id: 4, username: 'beto', ativo: true, passwordHash: '$2a$12$velho' },
+        ]);
+        expect(await repo.hasAuthUserIdColumn()).toBe(true);
+        expect((db.selectFirst as jest.Mock).mock.calls[0][1]).toEqual({
+            tabela: 'app_user',
+            coluna: 'auth_user_id',
+        });
+    });
+
     it('linkAuthUser: fora de transação, parametrizado', async () => {
         const db = buildDb();
         await repoOf(db).linkAuthUser(4, UUID_VINCULO);
