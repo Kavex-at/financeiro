@@ -66,7 +66,7 @@ const SENHA_MANTIDA = 'senha do Supabase Auth mantida; se não entrar, redefina 
 
 /**
  * SupabaseAuthSyncService — importação dos ativos para o Supabase Auth e reparo de divergência
- * (ADR-0056, R9). É a lógica do `jobs/sync-supabase-auth.ts`.
+ * (ADR-0057, R9). É a lógica do `jobs/sync-supabase-auth.ts`.
  *
  * `app_user` é a fonte da verdade de e-mail e `ativo`. Por usuário:
  * - ativo, com e-mail, sem vínculo → acha no GoTrue pelo e-mail: existe e não é de outro
@@ -129,7 +129,7 @@ export default class SupabaseAuthSyncService {
     private preChecar = async (): Promise<void> => {
         if (!(await this.userRepository.hasAuthUserIdColumn())) {
             throw new Error(
-                'sync-supabase-auth: a coluna app_user.auth_user_id não existe; aplique a migration 0070.',
+                'sync-supabase-auth: a coluna app_user.auth_user_id não existe; aplique a migration 0071.',
             );
         }
         if (!(await this.supabaseAuthClient.isAdminConfigured())) {

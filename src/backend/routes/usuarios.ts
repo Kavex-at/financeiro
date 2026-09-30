@@ -51,7 +51,7 @@ const removerVinculoSchema = z.object({ remover: z.boolean().optional() }).passt
  * false se não reconhecer o erro (deixa o middleware central tratar).
  */
 const respondError = (res: Response, err: unknown): boolean => {
-    // R6 (ADR-0056): o Supabase Auth falhou dentro da transação, então ela foi desfeita.
+    // R6 (ADR-0057): o Supabase Auth falhou dentro da transação, então ela foi desfeita.
     if (err instanceof SupabaseAuthUnavailableError || err instanceof SupabaseAuthRejectedError) {
         res.status(503).json({ error: 'Serviço de autenticação indisponível; nada foi alterado.' });
         return true;

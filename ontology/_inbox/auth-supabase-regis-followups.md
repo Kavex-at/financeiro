@@ -23,7 +23,7 @@ Não implementados nesta feature. Origem indicada em cada bloco.
 - [P2] deployability-2 — Scriptar as verificações do corte
 - [P2] modifiability-3 — Dividir `UserRepository` por responsabilidade
 - [P2] security-2 — Endurecer a sessão do navegador (CSP e escopo do refresh token)
-- [P2] testability-3 — Testes de integração contra `supabase start` e Postgres real para a 0070
+- [P2] testability-3 — Testes de integração contra `supabase start` e Postgres real para a 0071
 - [P3] deployability-3 — Cobrir indisponibilidade do Supabase Auth no runbook (a correção do ADR citado já foi feita)
 - [P3] fault-tolerance-3 — Limitar a exposição do pool durante a espera do GoTrue
 - [P3] fault-tolerance-4 — Distinguir falha transitória de recusa na renovação de sessão do front

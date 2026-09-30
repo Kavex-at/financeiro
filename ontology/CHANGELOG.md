@@ -3,7 +3,7 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
-## ADR-0056 — Supabase Auth no mesmo projeto (2026-09-30, sem diff de entidade)
+## ADR-0057 — Supabase Auth no mesmo projeto (2026-09-30, sem diff de entidade)
 
 Feature: `auth-supabase` (branch `feat/auth-supabase`). Passo 3 de 3 do plano de auth.
 

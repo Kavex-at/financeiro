@@ -4,7 +4,7 @@ import { z } from 'zod';
  * Variáveis de autenticação, validadas UMA vez no boundary (Zod) — o `process.env` é entrada
  * externa e não é lido cru fora daqui e do `EnvironmentProvider`.
  *
- * Dois emissores de token convivem durante o corte para o Supabase Auth (ADR-0056, I8):
+ * Dois emissores de token convivem durante o corte para o Supabase Auth (ADR-0057, I8):
  * - **app** (HS256): o token próprio que o `AuthService` assina com `AUTH_JWT_SECRET`. Aceito
  *   **enquanto `AUTH_JWT_SECRET` existir**; apagar a variável fecha a janela de convivência.
  * - **supabase** (ES256): o token do GoTrue do projeto, verificado pelo JWKS de

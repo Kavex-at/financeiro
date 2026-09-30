@@ -3,7 +3,7 @@ import { z } from 'zod';
 /**
  * Contratos do Supabase Auth (GoTrue) que o `SupabaseAuthClient` aceita — Zod na borda: resposta
  * 2xx fora deste formato vira erro, nunca "sucesso parcial". Formatos conferidos no GoTrue v2.197
- * pelo spike T-1 (`jobs/probe-gotrue-local.ts`, ADR-0056).
+ * pelo spike T-1 (`jobs/probe-gotrue-local.ts`, ADR-0057).
  */
 
 /** `POST /token?grant_type=password|refresh_token` → sessão. */

@@ -1,5 +1,5 @@
 /**
- * `apiFetch` em 401 (ADR-0056): UMA renovação e UM novo envio com o `Authorization` trocado. Se a
+ * `apiFetch` em 401 (ADR-0057): UMA renovação e UM novo envio com o `Authorization` trocado. Se a
  * renovação é RECUSADA ou o reenvio volta 401, cai no comportamento de antes (modal + erro). Se é
  * só INDISPONÍVEL (503/429/rede), erro sem modal (Regis `availability-1`).
  */

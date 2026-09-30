@@ -39,7 +39,7 @@ export interface PassoEspelho {
 
 /**
  * CredentialMirror — a ÚNICA classe que decide se uma escrita de credencial é espelhada no Supabase
- * Auth (D3) e a traduz para o `SupabaseAuthClient` (ADR-0056, R6/R7).
+ * Auth (D3) e a traduz para o `SupabaseAuthClient` (ADR-0057, R6/R7).
  *
  * `app_user` é a fonte da verdade; o GoTrue é projeção da credencial. O passo devolvido roda dentro
  * da transação da escrita local (depois da linha travada e gravada, antes do COMMIT): erro aqui =

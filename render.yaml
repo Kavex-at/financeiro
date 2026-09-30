@@ -92,7 +92,7 @@ services:
       # Assina o token próprio (modo local). Apagar no passo 8 do corte do Supabase Auth (DEPLOY.md §6).
       - key: AUTH_JWT_SECRET
         sync: false
-      # Supabase Auth (ADR-0056): `local` até o passo 5 do corte; `supabase` depois. Rollback = `local`.
+      # Supabase Auth (ADR-0057): `local` até o passo 5 do corte; `supabase` depois. Rollback = `local`.
       - key: AUTH_PROVIDER
         value: local
       # Só a partir do passo 2 do corte (DEPLOY.md §6): com o backend anterior a esta feature (<= v0.46) no ar, SUPABASE_URL
