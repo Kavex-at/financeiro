@@ -9,8 +9,15 @@ import CurrentPasswordInvalidError from '../domain/errors/CurrentPasswordInvalid
 import PasswordPolicyError from '../domain/errors/PasswordPolicyError.js';
 import SupabaseAuthUnavailableError from '../domain/errors/SupabaseAuthUnavailableError.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
+import type { AlvoPerfil } from '../domain/interface/perfil/AtividadeUsuarioInterface.js';
+import {
+    atividadeQuerySchema,
+    historicoQuerySchema,
+    perfilQuerySchema,
+} from '../domain/interface/perfil/PerfilQuerySchemas.js';
 import OwnPasswordService from '../domain/service/auth/OwnPasswordService.js';
 import PasswordPolicy from '../domain/service/auth/PasswordPolicy.js';
+import PerfilService from '../domain/service/perfil/PerfilService.js';
 import { somenteAutenticado } from '../http/acesso.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { extractBearerToken } from '../http/auth.js';
@@ -87,6 +94,28 @@ const responderErroDeSenha = (res: Response, error: unknown): boolean => {
         return true;
     }
     return false;
+};
+
+// ─── Perfil pessoal (ADR-0058) ───────────────────────────────────────────────────────────────────
+//
+// Três leituras do PRÓPRIO usuário. O alvo vem EXCLUSIVAMENTE da identidade autenticada
+// (`req.acesso.userId` + `req.user.sub`); nenhuma query escolhe o alvo, e parâmetro desconhecido
+// (`userId`, `username`, …) é recusado com 400 pelo Zod `.strict()` (I1). Só leitura, sem ERP.
+// `PerfilService` é resolvido sob demanda aqui — nada novo no `bootstrapAppContainer` (Gotchas).
+
+/** O alvo da leitura. Sem `req.acesso` a cadeia de acesso não rodou: erro interno explícito. */
+const alvoDaSessao = (req: Request, rota: string): AlvoPerfil => {
+    const acesso = req.acesso;
+    const username = req.user?.sub;
+    if (!acesso || !username) {
+        throw new Error(`GET ${rota} sem req.acesso: resolverAcesso não rodou`);
+    }
+    return { userId: acesso.userId, username };
+};
+
+/** 400 no formato de `routes/metricas.ts` (`{ error, details }`). */
+const recusar = (res: Response, error: string, details: unknown): void => {
+    res.status(400).json({ error, details });
 };
 
 /**
@@ -175,6 +204,82 @@ export const buildMeRouter = ({ limiters = {} }: MeRouterOptions = {}): Router =
             } catch (error) {
                 if (!responderErroDeSenha(res, error)) throw error;
             }
+        }),
+    );
+
+    // GET /me — identidade, papel, vínculo Conexos e permissões com a origem de cada uma.
+    router.get(
+        '/',
+        somenteAutenticado(),
+        asyncHandler(async (req, res) => {
+            const parsed = perfilQuerySchema.safeParse(req.query);
+            if (!parsed.success) {
+                recusar(res, 'GET /me não aceita parâmetros', parsed.error.flatten());
+                return;
+            }
+            const alvo = alvoDaSessao(req, '/me');
+            await bootstrapAppContainer();
+            const perfil = await container.resolve(PerfilService).perfil(alvo);
+            res.setHeader('Cache-Control', 'no-store');
+            res.json(perfil);
+        }),
+    );
+
+    // GET /me/atividade?periodo=hoje|semana|mes|personalizado&inicio&fim — KPIs por frente, com o
+    // período anterior para a comparação. Default: semana (a grade sexta 18:00 de /metricas).
+    router.get(
+        '/atividade',
+        somenteAutenticado(),
+        asyncHandler(async (req, res) => {
+            const parsed = atividadeQuerySchema.safeParse(req.query);
+            if (!parsed.success) {
+                recusar(
+                    res,
+                    'periodo deve ser hoje, semana, mes ou personalizado (com inicio e fim AAAA-MM-DD); nenhum outro parâmetro é aceito',
+                    parsed.error.flatten(),
+                );
+                return;
+            }
+            const alvo = alvoDaSessao(req, '/me/atividade');
+            const { periodo, inicio, fim } = parsed.data;
+            await bootstrapAppContainer();
+            const atividade = await container.resolve(PerfilService).atividade({
+                alvo,
+                periodo: {
+                    tipo: periodo,
+                    ...(inicio !== undefined ? { inicio } : {}),
+                    ...(fim !== undefined ? { fim } : {}),
+                },
+            });
+            res.setHeader('Cache-Control', 'no-store');
+            res.json(atividade);
+        }),
+    );
+
+    // GET /me/historico?cursor&frente&tipo&status&inicio&fim — keyset, 25 por página, default 30 dias.
+    router.get(
+        '/historico',
+        somenteAutenticado(),
+        asyncHandler(async (req, res) => {
+            const parsed = historicoQuerySchema.safeParse(req.query);
+            if (!parsed.success) {
+                recusar(
+                    res,
+                    'filtros do histórico inválidos (frente, tipo, status, inicio/fim AAAA-MM-DD, cursor); nenhum outro parâmetro é aceito',
+                    parsed.error.flatten(),
+                );
+                return;
+            }
+            const alvo = alvoDaSessao(req, '/me/historico');
+            const { cursor, ...filtros } = parsed.data;
+            await bootstrapAppContainer();
+            const pagina = await container.resolve(PerfilService).historico({
+                alvo,
+                filtros,
+                ...(cursor !== undefined ? { cursor } : {}),
+            });
+            res.setHeader('Cache-Control', 'no-store');
+            res.json(pagina);
         }),
     );
 
