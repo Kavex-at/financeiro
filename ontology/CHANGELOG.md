@@ -3,6 +3,18 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.32.0 — Usuário e atividade do usuário (2026-10-01, ADR-0058)
+
+Feature: `perfil-usuario` (branch `feat/perfil-usuario`). `entity_changed = true`.
+
+- **NEW entity de plataforma `Usuario`** (implemented): consolida as ADRs 0051/0053/0057
+  (identidade = username, papel + exceções com "revogar vence", origem da permissão em 4 valores,
+  trilha de acesso, vínculo Conexos). Nenhuma decisão nova de acesso.
+- **NEW read model `AtividadeUsuario`** (planned): projeção só leitura de 9 ledgers, sem tabela.
+  KPIs com a grade e as regras de `metricas_ciclo` (Permutas só com borderô finalizado), SISPAG
+  atribuído ao finalizador, R$ remessado, "pago" só com `situacao = 'PAGO'`.
+- **Coverage:** entities_total 19 → 21, implemented 12 → 13, planned 5 → 6.
+
 ## ADR-0059 — Troca da própria senha (2026-10-02, sem diff de entidade)
 
 Feature: `auth-senha-propria` (branch `feat/auth-senha-propria`). `GET /me/senha/politica` e
