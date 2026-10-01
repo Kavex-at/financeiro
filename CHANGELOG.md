@@ -1,5 +1,15 @@
 # Columbia Financeiro — Changelog
 
+## v0.49.0 (2026-10-01) — tela de Métricas mais enxuta: um card por frente
+
+- **Os KPIs viram três cards, um por frente** (Permutas, Adiantamentos, Pagamentos SISPAG), lado a
+  lado. Em cada um, o valor em R$ é o número grande e a taxa de conclusão vem logo abaixo, com o
+  absoluto ("12 de 13 tentativas") e uma barra fina. Antes eram seis cards largos, em duas colunas,
+  com muito espaço vazio.
+- **O histórico agrupa as colunas pelas mesmas três frentes**, com cabeçalhos mais curtos. A tabela
+  cabe em telas de ~1100px sem rolagem lateral.
+- Nada muda nos números nem no report do ciclo: só a apresentação.
+
 ## v0.48.0 (2026-09-30) — login pelo Supabase Auth, pronto para o corte (passo 3 de 3 da transição de acesso)
 
 - **Nada muda no merge.** `AUTH_PROVIDER` nasce `local`: o login continua o de hoje. A troca para o
