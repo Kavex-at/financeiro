@@ -267,7 +267,7 @@ describe('/perfil — Minha atividade', () => {
     render(<PerfilPage />)
     await user.click(within(secao(/minha atividade/i)).getByRole('button', { name: /este mês/i }))
     await waitFor(() => expect(getAtividade).toHaveBeenLastCalledWith({ periodo: 'mes' }))
-    expect(window.localStorage.getItem('perfil.atividade.periodo')).toContain('mes')
+    expect(window.localStorage.getItem('ds:perfil:ana.souza:atividade-periodo:v1')).toContain('mes')
   })
 
   it('localStorage que lança não quebra a página', async () => {

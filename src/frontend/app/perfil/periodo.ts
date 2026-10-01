@@ -1,7 +1,15 @@
 import type { ConsultaAtividade, TipoPeriodo } from '@/lib/api/perfil'
 
-/** Chave do período escolhido em "Minha atividade" (preferência por navegador). */
-export const CHAVE_PERIODO = 'perfil.atividade.periodo'
+/**
+ * Chave do período escolhido em "Minha atividade" — padrão `ds:<scope>:<userId>:<resource>:v<N>`
+ * do DS (`patterns.md` §4): por usuário, para quem divide o navegador não herdar a preferência.
+ */
+export const chavePeriodo = (username: string): string => `ds:perfil:${username}:atividade-periodo:v1`
+
+/** Payload versionado: versão diferente é descartada em silêncio (volta ao padrão). */
+interface PeriodoPersistido extends Partial<ConsultaAtividade> {
+  v?: number
+}
 
 export const ROTULO_PERIODO: Record<TipoPeriodo, string> = {
   hoje: 'Hoje',
@@ -18,11 +26,12 @@ const TIPOS: readonly TipoPeriodo[] = ['hoje', 'semana', 'mes', 'personalizado']
 const DIA = /^\d{4}-\d{2}-\d{2}$/
 
 /** Lê a preferência. `localStorage` falha em modo privado e com storage bloqueado: nunca derruba. */
-export const lerPeriodo = (): ConsultaAtividade => {
+export const lerPeriodo = (username: string): ConsultaAtividade => {
   try {
-    const raw = window.localStorage.getItem(CHAVE_PERIODO)
+    const raw = window.localStorage.getItem(chavePeriodo(username))
     if (!raw) return PERIODO_PADRAO
-    const v = JSON.parse(raw) as Partial<ConsultaAtividade>
+    const v = JSON.parse(raw) as PeriodoPersistido
+    if (v.v !== 1) return PERIODO_PADRAO
     if (!v.periodo || !TIPOS.includes(v.periodo)) return PERIODO_PADRAO
     if (v.periodo !== 'personalizado') return { periodo: v.periodo }
     if (v.inicio && v.fim && DIA.test(v.inicio) && DIA.test(v.fim)) {
@@ -34,9 +43,10 @@ export const lerPeriodo = (): ConsultaAtividade => {
   return PERIODO_PADRAO
 }
 
-export const gravarPeriodo = (consulta: ConsultaAtividade): void => {
+export const gravarPeriodo = (username: string, consulta: ConsultaAtividade): void => {
   try {
-    window.localStorage.setItem(CHAVE_PERIODO, JSON.stringify(consulta))
+    const payload: PeriodoPersistido = { v: 1, ...consulta }
+    window.localStorage.setItem(chavePeriodo(username), JSON.stringify(payload))
   } catch {
     /* storage indisponível — a escolha vale só para esta visita */
   }

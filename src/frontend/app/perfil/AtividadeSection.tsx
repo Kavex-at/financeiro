@@ -13,6 +13,7 @@ import {
   getAtividade,
   type TipoPeriodo,
 } from '@/lib/api/perfil'
+import { useAuth } from '@/lib/auth/AuthProvider'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { isSessionExpiredError } from '@/lib/http'
 import { PERMISSAO } from '@/lib/permissoes'
@@ -95,6 +96,8 @@ export function AtividadeSection({
   onVerErros: (frente: FrenteAtividade) => void
 }) {
   const { tem, falhou, carregando: carregandoPermissoes, recarregar } = usePermissoes()
+  // A preferência é por usuário (DS §4); sem sessão não há página, mas o tipo pede um fallback.
+  const usuario = useAuth().username ?? 'anonimo'
   const [consulta, setConsulta] = React.useState<ConsultaAtividade>(PERIODO_PADRAO)
   const [rascunho, setRascunho] = React.useState({ inicio: '', fim: '' })
   const [tentativa, setTentativa] = React.useState(0)
@@ -108,14 +111,14 @@ export function AtividadeSection({
 
   // Preferência lida DEPOIS da montagem (ler no render quebraria a hidratação do SSR).
   React.useEffect(() => {
-    const salvo = lerPeriodo()
+    const salvo = lerPeriodo(usuario)
     // Mesmo período do padrão: mantém a referência e não dispara uma segunda consulta.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- o localStorage só existe no cliente; mesmo padrão de components/ui/sidebar.tsx
     setConsulta((atual) => (JSON.stringify(atual) === JSON.stringify(salvo) ? atual : salvo))
     if (salvo.periodo === 'personalizado') {
       setRascunho({ inicio: salvo.inicio ?? '', fim: salvo.fim ?? '' })
     }
-  }, [])
+  }, [usuario])
 
   const frentes = {
     permutas: tem(PERMISSAO.PERMUTAS_VER),
@@ -158,7 +161,7 @@ export function AtividadeSection({
     }
     const nova = { periodo: tipo }
     setConsulta(nova)
-    gravarPeriodo(nova)
+    gravarPeriodo(usuario, nova)
   }
 
   const aplicarPersonalizado = (e: React.FormEvent) => {
@@ -166,7 +169,7 @@ export function AtividadeSection({
     if (!rascunho.inicio || !rascunho.fim) return
     const nova: ConsultaAtividade = { periodo: 'personalizado', ...rascunho }
     setConsulta(nova)
-    gravarPeriodo(nova)
+    gravarPeriodo(usuario, nova)
   }
 
   const seletor = (
