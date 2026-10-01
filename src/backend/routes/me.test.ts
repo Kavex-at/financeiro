@@ -7,9 +7,17 @@ import { container } from 'tsyringe';
 import ConexosSessionResolver from '../domain/client/ConexosSessionResolver.js';
 import CurrentPasswordInvalidError from '../domain/errors/CurrentPasswordInvalidError.js';
 import PasswordPolicyError from '../domain/errors/PasswordPolicyError.js';
+import PerfilQueryInvalidError from '../domain/errors/PerfilQueryInvalidError.js';
 import SupabaseAuthUnavailableError from '../domain/errors/SupabaseAuthUnavailableError.js';
 import { PERMISSION_CATALOG, type Permission } from '../domain/interface/auth/Permission.js';
+import Clock from '../domain/libs/clock/Clock.js';
+import AtividadeUsuarioRepository from '../domain/repository/perfil/AtividadeUsuarioRepository.js';
+import PerfilRepository from '../domain/repository/perfil/PerfilRepository.js';
+import EffectivePermissionCalculator from '../domain/service/auth/EffectivePermissionCalculator.js';
 import OwnPasswordService from '../domain/service/auth/OwnPasswordService.js';
+import HistoricoCursor from '../domain/service/perfil/HistoricoCursor.js';
+import PerfilService from '../domain/service/perfil/PerfilService.js';
+import PeriodoPerfil from '../domain/service/perfil/PeriodoPerfil.js';
 
 jest.mock('../domain/appContainer.js', () => ({
     bootstrapAppContainer: jest.fn().mockResolvedValue(undefined),
@@ -19,12 +27,29 @@ let acessoAtual: Request['acesso'];
 let srv: { server: Server; url: string };
 const testarVinculo = jest.fn();
 const alterarSenha = jest.fn();
+const perfilFake = {
+    perfil: jest.fn(),
+    atividade: jest.fn(),
+    historico: jest.fn(),
+};
+/** `fake` = serviço dublê; `real` = PerfilService de verdade sobre um banco dublê (isolamento). */
+let modoPerfil: 'fake' | 'real' = 'fake';
+const dbFake = { selectFirst: jest.fn(), selectMany: jest.fn() };
+const perfilReal = (): PerfilService =>
+    new PerfilService(
+        new PerfilRepository(dbFake as never),
+        new AtividadeUsuarioRepository(dbFake as never),
+        new PeriodoPerfil(new Clock()),
+        new HistoricoCursor(),
+        new EffectivePermissionCalculator(),
+    );
 
 beforeAll(async () => {
     const real = container.resolve.bind(container);
     jest.spyOn(container, 'resolve').mockImplementation(((token: unknown) => {
         if (token === ConexosSessionResolver) return { testarVinculo };
         if (token === OwnPasswordService) return { alterar: alterarSenha };
+        if (token === PerfilService) return modoPerfil === 'fake' ? perfilFake : perfilReal();
         return real(token as never);
     }) as never);
 
@@ -36,8 +61,12 @@ beforeAll(async () => {
         next();
     });
     app.use('/me', meRouter);
-    app.use((_err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-        res.status(500).json({ error: 'erro interno' });
+    app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+        // Espelha o handler central: erro de domínio com statusCode responde com ele.
+        const status = (err as { statusCode?: number }).statusCode ?? 500;
+        res.status(status).json({
+            error: status === 500 ? 'erro interno' : (err as Error).message,
+        });
     });
     srv = await new Promise((resolve) => {
         const server: Server = app.listen(0, '127.0.0.1', () => {
@@ -306,5 +335,232 @@ describe('GET /me/conexos-status', () => {
         const res = await fetch(`${srv.url}/me/conexos-status`);
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ status: 'ausente' });
+    });
+});
+
+// ─── Perfil (ADR-0058) ───────────────────────────────────────────────────────────────────────────
+
+const ALVO_ESPERADO = { userId: 7, username: 'maria@columbiabr.com' };
+
+describe('GET /me (perfil)', () => {
+    beforeEach(() => {
+        modoPerfil = 'fake';
+        acessoAtual = acesso(['permutas:ver']);
+        perfilFake.perfil.mockReset().mockResolvedValue({
+            username: 'maria@columbiabr.com',
+            email: null,
+            ativo: true,
+            membroDesde: '2026-08-01T12:00:00.000Z',
+            criadoPor: null,
+            papel: { id: 1, nome: 'Administrador', descricao: null },
+            conexos: { vinculado: false, conexosUsername: null },
+            permissoes: [{ codigo: 'permutas:ver', efetiva: true, origem: 'papel' }],
+        });
+    });
+
+    it('o alvo vem só de req.acesso.userId + req.user.sub; responde no-store', async () => {
+        const res = await fetch(`${srv.url}/me`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('cache-control')).toBe('no-store');
+        expect(perfilFake.perfil).toHaveBeenCalledWith(ALVO_ESPERADO);
+    });
+
+    it('query desconhecida (userId) → 400, sem chamar o serviço', async () => {
+        const res = await fetch(`${srv.url}/me?userId=2`);
+        expect(res.status).toBe(400);
+        expect(perfilFake.perfil).not.toHaveBeenCalled();
+    });
+
+    it('com o serviço real: o JSON nunca tem password_hash, conexos_password_enc nem auth_user_id', async () => {
+        modoPerfil = 'real';
+        dbFake.selectFirst.mockReset();
+        dbFake.selectFirst
+            .mockResolvedValueOnce({
+                id: 7,
+                username: 'maria@columbiabr.com',
+                email: 'maria@columbiabr.com',
+                ativo: true,
+                created_at: new Date('2026-08-01T12:00:00.000Z'),
+                created_by: 'admin',
+                conexos_username: 'MARIA',
+                role_id: 1,
+                role_nome: 'Administrador',
+                role_descricao: 'tudo',
+                // Mesmo que o banco devolvesse, o mapeamento não deixa passar.
+                password_hash: 'x',
+                conexos_password_enc: 'y',
+                auth_user_id: '7b0c2a1e-5f1c-4c5e-9d55-2b5c1a7e3f00',
+            })
+            .mockResolvedValueOnce({ pacote: ['permutas:executar'], excecoes: [] });
+        const res = await fetch(`${srv.url}/me`);
+        const corpo = await res.text();
+        expect(res.status).toBe(200);
+        expect(corpo).not.toMatch(/password_hash|conexos_password_enc|auth_user_id/);
+        expect(JSON.parse(corpo)).toEqual({
+            username: 'maria@columbiabr.com',
+            email: 'maria@columbiabr.com',
+            ativo: true,
+            membroDesde: '2026-08-01T12:00:00.000Z',
+            criadoPor: 'admin',
+            papel: { id: 1, nome: 'Administrador', descricao: 'tudo' },
+            conexos: { vinculado: true, conexosUsername: 'MARIA' },
+            permissoes: [
+                {
+                    codigo: 'permutas:ver',
+                    efetiva: true,
+                    origem: 'implicada',
+                    implicadaPor: 'permutas:executar',
+                },
+                { codigo: 'permutas:executar', efetiva: true, origem: 'papel' },
+            ],
+        });
+        for (const [, params] of dbFake.selectFirst.mock.calls) {
+            expect(params).toEqual({ userId: 7 });
+        }
+    });
+
+    it('sem req.acesso: erro, nunca um perfil inventado', async () => {
+        acessoAtual = undefined;
+        const res = await fetch(`${srv.url}/me`);
+        expect(res.status).toBe(500);
+        expect(perfilFake.perfil).not.toHaveBeenCalled();
+    });
+});
+
+describe('GET /me/atividade', () => {
+    beforeEach(() => {
+        modoPerfil = 'fake';
+        acessoAtual = acesso(['permutas:ver']);
+        perfilFake.atividade.mockReset().mockResolvedValue({ ok: true });
+    });
+
+    it('chama o serviço com o alvo da sessão e o período pedido; no-store', async () => {
+        const res = await fetch(`${srv.url}/me/atividade?periodo=mes`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('cache-control')).toBe('no-store');
+        expect(perfilFake.atividade).toHaveBeenCalledWith({
+            alvo: ALVO_ESPERADO,
+            periodo: { tipo: 'mes' },
+        });
+    });
+
+    it('sem período: semana (a grade de /metricas)', async () => {
+        await fetch(`${srv.url}/me/atividade`);
+        expect(perfilFake.atividade).toHaveBeenCalledWith({
+            alvo: ALVO_ESPERADO,
+            periodo: { tipo: 'semana' },
+        });
+    });
+
+    it('personalizado repassa as datas locais', async () => {
+        await fetch(
+            `${srv.url}/me/atividade?periodo=personalizado&inicio=2026-09-01&fim=2026-09-30`,
+        );
+        expect(perfilFake.atividade).toHaveBeenCalledWith({
+            alvo: ALVO_ESPERADO,
+            periodo: { tipo: 'personalizado', inicio: '2026-09-01', fim: '2026-09-30' },
+        });
+    });
+
+    it.each([
+        ['userId', 'userId=2'],
+        ['username', 'username=x'],
+        ['período desconhecido', 'periodo=ano'],
+        ['data malformada', 'periodo=personalizado&inicio=01/09/2026&fim=2026-09-30'],
+        ['personalizado sem datas', 'periodo=personalizado'],
+    ])('%s → 400 com { error, details }, sem chamar o serviço', async (_caso, qs) => {
+        const res = await fetch(`${srv.url}/me/atividade?${qs}`);
+        expect(res.status).toBe(400);
+        const corpo = (await res.json()) as { error?: string; details?: unknown };
+        expect(typeof corpo.error).toBe('string');
+        expect(corpo.details).toBeDefined();
+        expect(perfilFake.atividade).not.toHaveBeenCalled();
+    });
+
+    it('erro de validação do serviço (intervalo > 366 dias) → 400', async () => {
+        perfilFake.atividade.mockRejectedValue(
+            new PerfilQueryInvalidError('O período pode ter no máximo 366 dias.'),
+        );
+        const res = await fetch(
+            `${srv.url}/me/atividade?periodo=personalizado&inicio=2024-01-01&fim=2026-01-01`,
+        );
+        expect(res.status).toBe(400);
+    });
+});
+
+describe('GET /me/historico', () => {
+    beforeEach(() => {
+        modoPerfil = 'fake';
+        acessoAtual = acesso(['permutas:ver']);
+        perfilFake.historico.mockReset().mockResolvedValue({ itens: [] });
+    });
+
+    it('filtros válidos chegam ao serviço com o alvo da sessão; no-store', async () => {
+        const res = await fetch(
+            `${srv.url}/me/historico?frente=sispag&status=erro&tipo=remessa_gerada&inicio=2026-09-01&fim=2026-09-30&cursor=abc`,
+        );
+        expect(res.status).toBe(200);
+        expect(res.headers.get('cache-control')).toBe('no-store');
+        expect(perfilFake.historico).toHaveBeenCalledWith({
+            alvo: ALVO_ESPERADO,
+            filtros: {
+                frente: 'sispag',
+                status: 'erro',
+                tipo: 'remessa_gerada',
+                inicio: '2026-09-01',
+                fim: '2026-09-30',
+            },
+            cursor: 'abc',
+        });
+    });
+
+    it.each([
+        ['userId', 'userId=2'],
+        ['username', 'username=x'],
+        ['status fora do enum', 'status=pago'],
+        ['frente fora do enum', 'frente=x'],
+        ['tipo fora do enum', 'tipo=apagar'],
+        ['data malformada', 'inicio=2026-9-1'],
+        ['parâmetro repetido', 'frente=sispag&frente=permutas'],
+    ])('%s → 400, sem chamar o serviço', async (_caso, qs) => {
+        const res = await fetch(`${srv.url}/me/historico?${qs}`);
+        expect(res.status).toBe(400);
+        expect(perfilFake.historico).not.toHaveBeenCalled();
+    });
+
+    it('cursor adulterado (erro de validação do serviço) → 400', async () => {
+        perfilFake.historico.mockRejectedValue(new PerfilQueryInvalidError('Cursor inválido.'));
+        const res = await fetch(`${srv.url}/me/historico?cursor=lixo`);
+        expect(res.status).toBe(400);
+    });
+
+    it('isolamento: com serviço e repositório reais, a única identidade que chega ao banco é a da sessão', async () => {
+        modoPerfil = 'real';
+        dbFake.selectMany.mockReset().mockResolvedValue([]);
+        dbFake.selectFirst.mockReset().mockResolvedValue({
+            permutas_concluidas: '0',
+            permutas_parciais: '0',
+            permutas_valor_baixado: '0',
+            permutas_aguardando_bordero: '0',
+            permutas_com_erro: '0',
+            sispag_lotes_finalizados: '0',
+            sispag_remessas_geradas: '0',
+            sispag_valor_remessado: '0',
+            sispag_valor_agendado: '0',
+            sispag_valor_pago_confirmado: '0',
+            sispag_retornos_conciliados: '0',
+            sispag_com_erro: '0',
+            recebimentos_concluidas: '0',
+            recebimentos_valor: '0',
+            recebimentos_com_erro: '0',
+        });
+        expect((await fetch(`${srv.url}/me/historico`)).status).toBe(200);
+        expect((await fetch(`${srv.url}/me/atividade?periodo=hoje`)).status).toBe(200);
+        expect(dbFake.selectMany).toHaveBeenCalledTimes(1);
+        expect(dbFake.selectMany.mock.calls[0][1]).toMatchObject(ALVO_ESPERADO);
+        expect(dbFake.selectFirst).toHaveBeenCalledTimes(2);
+        for (const [, params] of dbFake.selectFirst.mock.calls) {
+            expect(params.username).toBe(ALVO_ESPERADO.username);
+        }
     });
 });
