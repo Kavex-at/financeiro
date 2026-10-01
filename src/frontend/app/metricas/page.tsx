@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { AlertTriangle, BarChart3, RefreshCcw } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
-import { KPICard } from '@/components/ui/kpi-card'
+import { KPICard, KPIGrid } from '@/components/ui/kpi-card'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton, TableSkeleton } from '@/components/ui/skeleton'
@@ -124,7 +124,7 @@ function MetricasPageConteudo() {
               </p>
             ) : null}
             {/* Uma coluna por frente: o valor em R$ em destaque e a taxa de conclusão logo abaixo. */}
-            <div data-slot="kpi-grid" className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <KPIGrid columns={3} className="sm:grid-cols-1 md:grid-cols-3">
               <FrenteKPI
                 frente="Permutas"
                 color="permuta"
@@ -158,7 +158,7 @@ function MetricasPageConteudo() {
                 semTaxa="sem remessa na semana"
                 tooltip="Títulos de remessa SISPAG gerada na semana que o banco agendou ou pagou, sobre todos os títulos enviados. Aceite que chega depois atualiza a semana da remessa."
               />
-            </div>
+            </KPIGrid>
           </section>
 
           <section aria-labelledby="historico" className="space-y-3">
@@ -270,7 +270,7 @@ function FrenteKPI({
   const absoluto = taxa ? absolutoDoRotulo(taxa.rotulo) : undefined
   const largura = taxa ? Math.min(100, Math.max(0, taxa.valor)) : 0
   return (
-    <KPICard.Root color={color} tooltip={tooltip} aria-label={frente} className="gap-3">
+    <KPICard.Root color={color} tooltip={tooltip} role="group" aria-label={frente} className="gap-3">
       <KPICard.Header>
         <KPICard.Dot color={color} />
         <KPICard.Label>{frente}</KPICard.Label>
@@ -309,11 +309,11 @@ function CelulaPercentual({ metrica }: { metrica: Metrica }) {
 function MetricasSkeleton() {
   return (
     <div className="space-y-6" role="status" aria-busy="true" aria-label="Carregando as métricas">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <KPIGrid columns={3} className="sm:grid-cols-1 md:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-44 w-full" />
+          <Skeleton key={i} className="h-48 w-full" />
         ))}
-      </div>
+      </KPIGrid>
       <TableSkeleton columns={7} rows={4} aria-label="Carregando o histórico" />
     </div>
   )
