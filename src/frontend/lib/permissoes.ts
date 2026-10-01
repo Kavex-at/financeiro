@@ -39,6 +39,55 @@ export const CATALOGO_PERMISSOES: readonly Permissao[] = [
   PERMISSAO.USUARIOS_GERENCIAR,
 ]
 
+/** Uma permissão na tela: o código e o rótulo curto da ação ("ver", "executar", "gerenciar"). */
+export interface ItemPermissao {
+  permissao: Permissao
+  acao: string
+}
+
+/**
+ * Agrupamento e rótulos das permissões por módulo, na ordem da navegação. Fonte ÚNICA: a tela de
+ * usuários (`EditarAcessoDialog`) e o perfil (`/perfil`) leem daqui. A Frente IV se chama
+ * "Adiantamentos", o rótulo que o usuário já vê no nav.
+ */
+export const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = [
+  {
+    nome: 'Permutas',
+    itens: [
+      { permissao: PERMISSAO.PERMUTAS_VER, acao: 'ver' },
+      { permissao: PERMISSAO.PERMUTAS_EXECUTAR, acao: 'executar' },
+    ],
+  },
+  {
+    nome: 'SISPAG',
+    itens: [
+      { permissao: PERMISSAO.SISPAG_VER, acao: 'ver' },
+      { permissao: PERMISSAO.SISPAG_EXECUTAR, acao: 'executar' },
+      // ADR-0054 D10: aprova a conta digitada no item do lote. Não implica nem é implicada.
+      { permissao: PERMISSAO.SISPAG_APROVAR_DESTINO, acao: 'aprovar destino manual' },
+    ],
+  },
+  {
+    nome: 'Adiantamentos',
+    itens: [
+      { permissao: PERMISSAO.RECEBIMENTOS_VER, acao: 'ver' },
+      { permissao: PERMISSAO.RECEBIMENTOS_EXECUTAR, acao: 'executar' },
+    ],
+  },
+  { nome: 'Operação', itens: [{ permissao: PERMISSAO.OPERACAO_VER, acao: 'ver' }] },
+  { nome: 'Métricas', itens: [{ permissao: PERMISSAO.METRICAS_VER, acao: 'ver' }] },
+  { nome: 'Usuários', itens: [{ permissao: PERMISSAO.USUARIOS_GERENCIAR, acao: 'gerenciar' }] },
+]
+
+/** "Módulo — ação" de uma permissão (ex.: "SISPAG — aprovar destino manual"). */
+export const rotuloPermissao = (permissao: Permissao): string => {
+  for (const modulo of MODULOS) {
+    const item = modulo.itens.find((i) => i.permissao === permissao)
+    if (item) return `${modulo.nome} — ${item.acao}`
+  }
+  return permissao
+}
+
 export const isPermissao = (valor: unknown): valor is Permissao =>
   typeof valor === 'string' && (CATALOGO_PERMISSOES as readonly string[]).includes(valor)
 

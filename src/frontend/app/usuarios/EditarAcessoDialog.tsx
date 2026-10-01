@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { PERMISSAO, type Permissao } from '@/lib/permissoes'
+import { MODULOS, PERMISSAO, type Permissao } from '@/lib/permissoes'
 import {
   type AppUser,
   atribuirPapel,
@@ -34,41 +34,8 @@ import {
   type PapelComPermissoes,
 } from '@/lib/usuarios'
 
-/** Uma permissão na tela: o código e o rótulo curto da ação ("ver", "executar", "gerenciar"). */
-interface ItemPermissao {
-  permissao: Permissao
-  acao: string
-}
-
-/** Agrupamento por módulo, na ordem da navegação. Só aparece o que estiver no `catalogo`. */
-const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = [
-  {
-    nome: 'Permutas',
-    itens: [
-      { permissao: PERMISSAO.PERMUTAS_VER, acao: 'ver' },
-      { permissao: PERMISSAO.PERMUTAS_EXECUTAR, acao: 'executar' },
-    ],
-  },
-  {
-    nome: 'SISPAG',
-    itens: [
-      { permissao: PERMISSAO.SISPAG_VER, acao: 'ver' },
-      { permissao: PERMISSAO.SISPAG_EXECUTAR, acao: 'executar' },
-      // ADR-0054 D10: aprova a conta digitada no item do lote. Não implica nem é implicada.
-      { permissao: PERMISSAO.SISPAG_APROVAR_DESTINO, acao: 'aprovar destino manual' },
-    ],
-  },
-  {
-    nome: 'Adiantamentos',
-    itens: [
-      { permissao: PERMISSAO.RECEBIMENTOS_VER, acao: 'ver' },
-      { permissao: PERMISSAO.RECEBIMENTOS_EXECUTAR, acao: 'executar' },
-    ],
-  },
-  { nome: 'Operação', itens: [{ permissao: PERMISSAO.OPERACAO_VER, acao: 'ver' }] },
-  { nome: 'Métricas', itens: [{ permissao: PERMISSAO.METRICAS_VER, acao: 'ver' }] },
-  { nome: 'Usuários', itens: [{ permissao: PERMISSAO.USUARIOS_GERENCIAR, acao: 'gerenciar' }] },
-]
+// Agrupamento e rótulos vêm de `lib/permissoes.ts` (`MODULOS`), compartilhados com `/perfil`.
+// Só aparece o que estiver no `catalogo`.
 
 /** `executar` → `ver` do mesmo módulo (Q8). */
 const VER_DE: Partial<Record<Permissao, Permissao>> = {

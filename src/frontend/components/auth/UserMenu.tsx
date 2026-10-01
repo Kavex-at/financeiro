@@ -1,17 +1,32 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { LogOut } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { KeyRound, LogOut, UserRound } from 'lucide-react'
+import { Avatar } from '@/components/ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useAuth } from '@/lib/auth/AuthProvider'
+import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 
 /**
- * Header user menu: shows the signed-in identity and a sign-out action.
- * Renders nothing when there is no session (e.g. on the `/login` page) and
- * in dev-bypass mode there is no real session to sign out of.
+ * Menu de avatar do header (ADR-0058): identidade do usuário, "Meu perfil", "Alterar senha" e
+ * "Sair". Não renderiza nada sem sessão (`/login`) nem em dev-bypass (não há sessão para encerrar).
+ *
+ * O papel vem de `usePermissoes().papel` — a mesma consulta de `/me/permissoes` que o resto da tela
+ * já faz, sem chamada nova. Enquanto carrega, ou se falhou, mostra só o username.
+ *
+ * O gatilho tem 40px (alvo de toque) e aparece em qualquer largura; o menu abre alinhado à direita.
  */
 export function UserMenu() {
   const { username, devBypass, signOut } = useAuth()
+  const { papel } = usePermissoes()
   const router = useRouter()
 
   if (devBypass || !username) {
@@ -24,12 +39,40 @@ export function UserMenu() {
   }
 
   return (
-    <div className="flex items-center gap-2" data-testid="user-menu">
-      <span className="text-xs text-muted-foreground hidden sm:inline">{username}</span>
-      <Button variant="ghost" size="sm" onClick={handleSignOut} data-testid="signout-button">
-        <LogOut className="size-4" />
-        Sair
-      </Button>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={`Menu da conta de ${username}`}
+        data-testid="user-menu"
+        className="inline-flex size-10 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        <Avatar username={username} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel className="flex flex-col gap-0.5">
+          <span className="truncate font-medium">{username}</span>
+          {papel ? (
+            <span className="truncate text-xs font-normal text-muted-foreground">{papel.nome}</span>
+          ) : null}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/perfil">
+            <UserRound aria-hidden />
+            Meu perfil
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/perfil#senha">
+            <KeyRound aria-hidden />
+            Alterar senha
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={handleSignOut} data-testid="signout-button">
+          <LogOut aria-hidden />
+          Sair
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
