@@ -54,6 +54,9 @@ describe('migrations — segurança do diretório', () => {
                 // A 0069 troca o CHECK de `alerta.tipo`: voltar exige apagar os alertas dos tipos
                 // novos, e isso precisa estar escrito, não improvisado (ADR-0055).
                 '0069_sispag_item_situacao_sincronizacao.sql',
+                // A 0072 só cria índices: o reverse é trivial (DROP INDEX), mas fica escrito para
+                // ninguém precisar adivinhar nomes num rollback (ADR-0058).
+                '0072_idx_atividade_usuario.sql',
             ].sort(),
         );
         for (const alvo of reverses) {
