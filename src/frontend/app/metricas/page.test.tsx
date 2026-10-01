@@ -106,11 +106,11 @@ describe('MetricasPage', () => {
   it('SISPAG (Frente II): títulos aceitos pelo banco, com o absoluto e o valor', async () => {
     await renderPagina()
 
-    expect(screen.getByText('Pagamentos aceitos pelo banco')).toBeInTheDocument()
+    expect(screen.getByText('Aceitos pelo banco')).toBeInTheDocument()
     expect(screen.getAllByText('40,0%').length).toBeGreaterThan(0)
     expect(screen.getAllByText('2 de 5 títulos, 2 aguardando retorno').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/R\$\s2\.131,16/).length).toBeGreaterThan(0)
-    expect(screen.getByRole('columnheader', { name: 'Pagamentos aceitos' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Aceitos' })).toBeInTheDocument()
   })
 
   it('semana sem remessa gerada mostra travessão no SISPAG, não 0%', async () => {

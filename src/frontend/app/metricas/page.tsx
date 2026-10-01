@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { AlertTriangle, BarChart3, RefreshCcw } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
-import { KPIGrid, SimpleKPI } from '@/components/ui/kpi-card'
+import { KPICard } from '@/components/ui/kpi-card'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton, TableSkeleton } from '@/components/ui/skeleton'
@@ -123,51 +123,42 @@ function MetricasPageConteudo() {
                 sexta às 18:00.
               </p>
             ) : null}
-            {/* Duas colunas = uma linha por frente (% e R$). Seis lado a lado estouravam o valor em R$. */}
-            <KPIGrid columns={2}>
-              <SimpleKPI
-                label="Permutas concluídas"
-                value={formatarMetrica(ultima.porChave[METRICA.PERMUTAS_PCT])}
-                footer={
-                  absolutoDoRotulo(ultima.porChave[METRICA.PERMUTAS_PCT]?.rotulo ?? '') ??
-                  'sem tentativas na semana'
-                }
+            {/* Uma coluna por frente: o valor em R$ em destaque e a taxa de conclusão logo abaixo. */}
+            <div data-slot="kpi-grid" className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <FrenteKPI
+                frente="Permutas"
+                color="permuta"
+                rotuloValor="Valor baixado"
+                valor={ultima.porChave[METRICA.PERMUTAS_RS]}
+                notaValor="borderôs finalizados"
+                rotuloTaxa="Baixas concluídas"
+                taxa={ultima.porChave[METRICA.PERMUTAS_PCT]}
+                semTaxa="sem tentativas na semana"
                 tooltip="Baixas cujo borderô está finalizado no ERP, sobre todas as tentativas da semana."
               />
-              <SimpleKPI
-                label="Valor baixado em permutas"
-                value={formatarMetrica(ultima.porChave[METRICA.PERMUTAS_RS])}
-                footer="borderôs finalizados"
-              />
-              <SimpleKPI
-                label="Adiantamentos concluídos"
-                value={formatarMetrica(ultima.porChave[METRICA.RECEBIMENTOS_PCT])}
-                footer={
-                  absolutoDoRotulo(ultima.porChave[METRICA.RECEBIMENTOS_PCT]?.rotulo ?? '') ??
-                  'sem tentativas na semana'
-                }
+              <FrenteKPI
+                frente="Adiantamentos"
+                color="info"
+                rotuloValor="Valor alocado"
+                valor={ultima.porChave[METRICA.RECEBIMENTOS_RS]}
+                notaValor="créditos de cliente"
+                rotuloTaxa="Alocações concluídas"
+                taxa={ultima.porChave[METRICA.RECEBIMENTOS_PCT]}
+                semTaxa="sem tentativas na semana"
                 tooltip="Créditos de cliente alocados até a NDe sem erro, sobre todas as tentativas da semana."
               />
-              <SimpleKPI
-                label="Valor alocado em adiantamentos"
-                value={formatarMetrica(ultima.porChave[METRICA.RECEBIMENTOS_RS])}
-                footer="créditos de cliente"
-              />
-              <SimpleKPI
-                label="Pagamentos aceitos pelo banco"
-                value={formatarMetrica(ultima.porChave[METRICA.SISPAG_PCT])}
-                footer={
-                  absolutoDoRotulo(ultima.porChave[METRICA.SISPAG_PCT]?.rotulo ?? '') ??
-                  'sem remessa na semana'
-                }
+              <FrenteKPI
+                frente="Pagamentos (SISPAG)"
+                color="primary"
+                rotuloValor="Valor aceito"
+                valor={ultima.porChave[METRICA.SISPAG_RS]}
+                notaValor="títulos agendados ou pagos"
+                rotuloTaxa="Aceitos pelo banco"
+                taxa={ultima.porChave[METRICA.SISPAG_PCT]}
+                semTaxa="sem remessa na semana"
                 tooltip="Títulos de remessa SISPAG gerada na semana que o banco agendou ou pagou, sobre todos os títulos enviados. Aceite que chega depois atualiza a semana da remessa."
               />
-              <SimpleKPI
-                label="Valor aceito em pagamentos"
-                value={formatarMetrica(ultima.porChave[METRICA.SISPAG_RS])}
-                footer="títulos agendados ou pagos"
-              />
-            </KPIGrid>
+            </div>
           </section>
 
           <section aria-labelledby="historico" className="space-y-3">
@@ -182,13 +173,26 @@ function MetricasPageConteudo() {
             >
               <Table aria-label="Métricas por semana">
                 <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead rowSpan={2} className="align-bottom">
+                      Semana
+                    </TableHead>
+                    <TableHead colSpan={2} scope="colgroup" className="border-l text-center text-xs uppercase tracking-wider text-muted-foreground">
+                      Permutas
+                    </TableHead>
+                    <TableHead colSpan={2} scope="colgroup" className="border-l text-center text-xs uppercase tracking-wider text-muted-foreground">
+                      Adiantamentos
+                    </TableHead>
+                    <TableHead colSpan={2} scope="colgroup" className="border-l text-center text-xs uppercase tracking-wider text-muted-foreground">
+                      Pagamentos (SISPAG)
+                    </TableHead>
+                  </TableRow>
                   <TableRow>
-                    <TableHead>Semana</TableHead>
-                    <TableHead className="text-right">Permutas concluídas</TableHead>
+                    <TableHead className="border-l text-right">Concluídas</TableHead>
                     <TableHead className="text-right">Valor baixado</TableHead>
-                    <TableHead className="text-right">Adiantamentos concluídos</TableHead>
+                    <TableHead className="border-l text-right">Concluídos</TableHead>
                     <TableHead className="text-right">Valor alocado</TableHead>
-                    <TableHead className="text-right">Pagamentos aceitos</TableHead>
+                    <TableHead className="border-l text-right">Aceitos</TableHead>
                     <TableHead className="text-right">Valor aceito</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -230,10 +234,72 @@ function MetricasPageConteudo() {
   )
 }
 
-function CelulaPercentual({ metrica }: { metrica: Parameters<typeof formatarMetrica>[0] }) {
+type Metrica = Parameters<typeof formatarMetrica>[0]
+
+const barraCor = {
+  permuta: 'bg-permuta',
+  info: 'bg-info',
+  primary: 'bg-primary',
+} as const
+
+/**
+ * Um card por frente. O R$ é o número grande; a taxa vem logo abaixo, sempre com o absoluto
+ * ("12 de 13 tentativas") e uma barra fina — compacto, sem o vão de seis cards soltos.
+ */
+function FrenteKPI({
+  frente,
+  color,
+  rotuloValor,
+  valor,
+  notaValor,
+  rotuloTaxa,
+  taxa,
+  semTaxa,
+  tooltip,
+}: {
+  frente: string
+  color: keyof typeof barraCor
+  rotuloValor: string
+  valor: Metrica
+  notaValor: string
+  rotuloTaxa: string
+  taxa: Metrica
+  semTaxa: string
+  tooltip: string
+}) {
+  const absoluto = taxa ? absolutoDoRotulo(taxa.rotulo) : undefined
+  const largura = taxa ? Math.min(100, Math.max(0, taxa.valor)) : 0
+  return (
+    <KPICard.Root color={color} tooltip={tooltip} aria-label={frente} className="gap-3">
+      <KPICard.Header>
+        <KPICard.Dot color={color} />
+        <KPICard.Label>{frente}</KPICard.Label>
+      </KPICard.Header>
+      <div className="space-y-0.5">
+        <KPICard.Value className="tabular-nums">{formatarMetrica(valor)}</KPICard.Value>
+        <KPICard.Footer>
+          {rotuloValor} · {notaValor}
+        </KPICard.Footer>
+      </div>
+      <div className="space-y-1.5 border-t pt-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-sm text-muted-foreground">{rotuloTaxa}</span>
+          <span className="text-lg font-semibold tabular-nums">{formatarMetrica(taxa)}</span>
+        </div>
+        {/* O trilho aparece mesmo sem taxa, para as três colunas ficarem alinhadas. */}
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted" aria-hidden>
+          <div className={`h-full rounded-full ${barraCor[color]}`} style={{ width: `${largura}%` }} />
+        </div>
+        <KPICard.Footer>{absoluto ?? semTaxa}</KPICard.Footer>
+      </div>
+    </KPICard.Root>
+  )
+}
+
+function CelulaPercentual({ metrica }: { metrica: Metrica }) {
   const absoluto = metrica ? absolutoDoRotulo(metrica.rotulo) : undefined
   return (
-    <TableCell className="text-right tabular-nums">
+    <TableCell className="border-l text-right tabular-nums">
       {formatarMetrica(metrica)}
       {absoluto ? <span className="block text-xs text-muted-foreground">{absoluto}</span> : null}
     </TableCell>
@@ -243,9 +309,9 @@ function CelulaPercentual({ metrica }: { metrica: Parameters<typeof formatarMetr
 function MetricasSkeleton() {
   return (
     <div className="space-y-6" role="status" aria-busy="true" aria-label="Carregando as métricas">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-28 w-full" />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-44 w-full" />
         ))}
       </div>
       <TableSkeleton columns={7} rows={4} aria-label="Carregando o histórico" />
