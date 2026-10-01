@@ -362,12 +362,20 @@
     },
     "AtividadeUsuario": {
       "file": "entities/atividade-usuario.md",
-      "status": "planned",
+      "status": "implemented",
       "impl_files": [
         "src/backend/routes/me.ts",
-        "src/backend/domain/service/perfil/PerfilService.ts (a criar)",
-        "src/backend/domain/repository/perfil/AtividadeUsuarioRepository.ts (a criar)",
-        "src/frontend/app/perfil/page.tsx (a criar)"
+        "src/backend/domain/service/perfil/PerfilService.ts",
+        "src/backend/domain/service/perfil/PeriodoPerfil.ts",
+        "src/backend/domain/service/perfil/HistoricoCursor.ts",
+        "src/backend/domain/repository/perfil/AtividadeUsuarioRepository.ts",
+        "src/backend/domain/repository/perfil/PerfilRepository.ts",
+        "src/backend/domain/interface/perfil/AtividadeUsuarioInterface.ts",
+        "src/backend/domain/interface/perfil/PerfilQuerySchemas.ts",
+        "src/backend/migrations/0072_idx_atividade_usuario.sql",
+        "src/backend/jobs/validate-perfil-usuario-v1.ts",
+        "src/frontend/app/perfil/page.tsx",
+        "src/frontend/lib/api/perfil.ts"
       ],
       "note": "Read model sobre 9 ledgers, sem tabela (ADR-0042/0058). KPIs compartilham grade e regras de metricas_ciclo (0070)."
     }

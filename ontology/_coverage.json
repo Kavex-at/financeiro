@@ -11,11 +11,11 @@
     "entities_imported": 0,
     "entities_custom": 21,
     "entities_core": 0,
-    "entities_implemented": 13,
+    "entities_implemented": 14,
     "entities_partial": 2,
-    "entities_planned": 6,
+    "entities_planned": 5,
     "entities_planned_migration": 0,
-    "entities_coverage_pct": 62,
+    "entities_coverage_pct": 67,
     "actions_total": 27,
     "actions_implemented": 20,
     "actions_partial": 1,
@@ -250,14 +250,14 @@
       "note": "Plataforma; consolida ADR-0051/0053/0057 (ADR-0058)."
     },
     "AtividadeUsuario": {
-      "status": "planned",
+      "status": "implemented",
       "actions": [
         "lerPerfil",
         "lerAtividade",
         "listarHistorico"
       ],
-      "impl_pct": 0,
-      "note": "Read model só leitura (ADR-0058); feature perfil-usuario."
+      "impl_pct": 100,
+      "note": "Read model só leitura (ADR-0058); feature perfil-usuario. GET /me, /me/atividade, /me/historico; equivalência read-only com metricas_ciclo sem divergência (validate-perfil-usuario-v1)."
     }
   },
   "by_business_rule": {

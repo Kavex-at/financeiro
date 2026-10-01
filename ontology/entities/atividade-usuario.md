@@ -2,14 +2,21 @@
 name: AtividadeUsuario
 type: entity
 ontology_version: "0.32.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/routes/me.ts
-  - src/backend/domain/service/perfil/PerfilService.ts            # a criar
-  - src/backend/domain/repository/perfil/AtividadeUsuarioRepository.ts  # a criar
-  - src/frontend/app/perfil/page.tsx                              # a criar
+  - src/backend/domain/service/perfil/PerfilService.ts
+  - src/backend/domain/service/perfil/PeriodoPerfil.ts
+  - src/backend/domain/service/perfil/HistoricoCursor.ts
+  - src/backend/domain/repository/perfil/AtividadeUsuarioRepository.ts
+  - src/backend/domain/repository/perfil/PerfilRepository.ts
+  - src/backend/domain/interface/perfil/AtividadeUsuarioInterface.ts
+  - src/backend/migrations/0072_idx_atividade_usuario.sql         # índices (ator, tempo)
+  - src/backend/jobs/validate-perfil-usuario-v1.ts                # equivalência com metricas_ciclo
+  - src/frontend/app/perfil/page.tsx
+  - src/frontend/lib/api/perfil.ts
   - src/backend/migrations/0070_metricas_ciclo_sispag.sql         # grade de semanas e regras compartilhadas
 properties:
   - em
