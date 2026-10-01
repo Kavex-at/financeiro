@@ -26,6 +26,7 @@ import {
     type SessionLimiterOptions,
     buildOwnPasswordLimiter,
 } from '../http/rateLimit.js';
+import respondHandlerError from '../http/respondHandlerError.js';
 import { validateInput } from '../http/validate.js';
 
 /**
@@ -116,6 +117,26 @@ const alvoDaSessao = (req: Request, rota: string): AlvoPerfil => {
 /** 400 no formato de `routes/metricas.ts` (`{ error, details }`). */
 const recusar = (res: Response, error: string, details: unknown): void => {
     res.status(400).json({ error, details });
+};
+
+/**
+ * Responde a leitura com `no-store` (o perfil muda sem o token mudar). Erro de domínio declarado
+ * (`PerfilQueryInvalidError`: período longo demais, cursor adulterado) responde com o PRÓPRIO
+ * status (400) via `respondHandlerError` — o `errorMiddleware` central achataria em 500 e ainda
+ * registraria um erro de servidor por um erro do cliente. O resto segue ao middleware central.
+ */
+const responderLeitura = async (
+    req: Request,
+    res: Response,
+    ler: () => Promise<unknown>,
+): Promise<void> => {
+    try {
+        const corpo = await ler();
+        res.setHeader('Cache-Control', 'no-store');
+        res.json(corpo);
+    } catch (err) {
+        if (!respondHandlerError(req, res, err)) throw err;
+    }
 };
 
 /**
@@ -219,9 +240,7 @@ export const buildMeRouter = ({ limiters = {} }: MeRouterOptions = {}): Router =
             }
             const alvo = alvoDaSessao(req, '/me');
             await bootstrapAppContainer();
-            const perfil = await container.resolve(PerfilService).perfil(alvo);
-            res.setHeader('Cache-Control', 'no-store');
-            res.json(perfil);
+            await responderLeitura(req, res, () => container.resolve(PerfilService).perfil(alvo));
         }),
     );
 
@@ -243,16 +262,16 @@ export const buildMeRouter = ({ limiters = {} }: MeRouterOptions = {}): Router =
             const alvo = alvoDaSessao(req, '/me/atividade');
             const { periodo, inicio, fim } = parsed.data;
             await bootstrapAppContainer();
-            const atividade = await container.resolve(PerfilService).atividade({
-                alvo,
-                periodo: {
-                    tipo: periodo,
-                    ...(inicio !== undefined ? { inicio } : {}),
-                    ...(fim !== undefined ? { fim } : {}),
-                },
-            });
-            res.setHeader('Cache-Control', 'no-store');
-            res.json(atividade);
+            await responderLeitura(req, res, () =>
+                container.resolve(PerfilService).atividade({
+                    alvo,
+                    periodo: {
+                        tipo: periodo,
+                        ...(inicio !== undefined ? { inicio } : {}),
+                        ...(fim !== undefined ? { fim } : {}),
+                    },
+                }),
+            );
         }),
     );
 
@@ -273,13 +292,13 @@ export const buildMeRouter = ({ limiters = {} }: MeRouterOptions = {}): Router =
             const alvo = alvoDaSessao(req, '/me/historico');
             const { cursor, ...filtros } = parsed.data;
             await bootstrapAppContainer();
-            const pagina = await container.resolve(PerfilService).historico({
-                alvo,
-                filtros,
-                ...(cursor !== undefined ? { cursor } : {}),
-            });
-            res.setHeader('Cache-Control', 'no-store');
-            res.json(pagina);
+            await responderLeitura(req, res, () =>
+                container.resolve(PerfilService).historico({
+                    alvo,
+                    filtros,
+                    ...(cursor !== undefined ? { cursor } : {}),
+                }),
+            );
         }),
     );
 

@@ -18,6 +18,7 @@ import OwnPasswordService from '../domain/service/auth/OwnPasswordService.js';
 import HistoricoCursor from '../domain/service/perfil/HistoricoCursor.js';
 import PerfilService from '../domain/service/perfil/PerfilService.js';
 import PeriodoPerfil from '../domain/service/perfil/PeriodoPerfil.js';
+import { errorMiddleware } from '../http/errorMiddleware.js';
 
 jest.mock('../domain/appContainer.js', () => ({
     bootstrapAppContainer: jest.fn().mockResolvedValue(undefined),
@@ -61,13 +62,9 @@ beforeAll(async () => {
         next();
     });
     app.use('/me', meRouter);
-    app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-        // Espelha o handler central: erro de domínio com statusCode responde com ele.
-        const status = (err as { statusCode?: number }).statusCode ?? 500;
-        res.status(status).json({
-            error: status === 500 ? 'erro interno' : (err as Error).message,
-        });
-    });
+    // O middleware central DE VERDADE: ele achata tudo em 500. Um 400 de domínio só chega ao
+    // cliente se a rota o tratar (`respondHandlerError`) — é isso que os testes de 400 provam.
+    app.use(errorMiddleware);
     srv = await new Promise((resolve) => {
         const server: Server = app.listen(0, '127.0.0.1', () => {
             const { port } = server.address() as AddressInfo;
