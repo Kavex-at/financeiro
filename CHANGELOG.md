@@ -1,5 +1,30 @@
 # Columbia Financeiro — Changelog
 
+## v0.51.0 (2026-10-02) — tela Meu perfil (/perfil)
+
+- **Novo menu do usuário no topo:** avatar com iniciais. O menu mostra usuário e papel, e leva a
+  "Meu perfil", "Alterar senha" e "Sair". Funciona no celular e pelo teclado.
+- **Nova página `/perfil`**, só de leitura. Cada seção carrega e falha sozinha.
+  - **Identidade:** papel, status, "membro desde" e quem criou o usuário. Sem vínculo Conexos,
+    aparece um aviso: as ações no ERP ficam gravadas como robô CLONEX.
+  - **Permissões:** cada permissão mostra de onde vem (pelo papel, concedida ou revogada por
+    alguém, ou implicada). Ninguém edita as próprias permissões aqui, nem um admin.
+  - **Minha atividade:** períodos hoje, semana, mês ou personalizado, no horário de São Paulo.
+    A semana é a mesma de Métricas (sexta 18h a sexta 18h).
+    - Permutas: os números de Permutas batem com Métricas, borderô finalizado.
+    - SISPAG: o valor é o **remessado**; "agendado" e "pago confirmado" aparecem separados.
+    - Recebimentos (Adiantamentos): execuções e valor.
+    - Cada tile compara com o período anterior e mostra "N com erro".
+  - **Histórico de ações:** linha do tempo das próprias ações em todas as frentes e da trilha de
+    acesso (por exemplo, "seu papel foi alterado por X"). Tem filtros e paginação, e vira lista de
+    cartões no celular.
+  - **Segurança:** a tela de troca de senha já está pronta, mas fica marcada "em breve" até sair o
+    backend próprio dela.
+- **Novas rotas `GET /me`, `/me/atividade` e `/me/historico`.** A identidade vem sempre da sessão:
+  não há como consultar outro usuário.
+- **Migration `0072`:** índices de leitura (ator, data) nas tabelas de execução. Só cria índices,
+  sem tocar em dados.
+
 ## v0.50.0 (2026-10-02) — trocar a própria senha (backend)
 
 - **Novos endpoints para cada usuário trocar a própria senha**, sem depender do admin:
