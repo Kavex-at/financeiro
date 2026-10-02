@@ -45,21 +45,34 @@ const testarPadrao = (padrao: string, valor: string): boolean | null => {
   }
 }
 
+/** Ids das regras que o servidor também usa no 400 POLITICA e que o checklist avalia localmente. */
+const REGRAS_LOCAIS = new Set(['tamanho', 'diferente_da_atual'])
+
+/** O servidor mede o máximo em BYTES UTF-8 (limite do bcrypt): "ç" ou "é" contam 2. */
+export const bytesUtf8 = (s: string): number => {
+  let total = 0
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0
+    total += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4
+  }
+  return total
+}
+
 /** Checklist ao vivo: tamanho da política, regras do servidor, diferente da atual e confirmação. */
 export const montarChecklist = (politica: PoliticaSenha): ItemChecklist[] => [
   {
     id: 'tamanho',
     rotulo: `Entre ${politica.minimo} e ${politica.maximo} caracteres`,
-    ok: (n) => n.length >= politica.minimo && n.length <= politica.maximo,
+    ok: (n) => n.length >= politica.minimo && bytesUtf8(n) <= politica.maximo,
   },
-  ...politica.regras.map(
+  ...politica.regras.filter((r) => !REGRAS_LOCAIS.has(r.id)).map(
     (r): ItemChecklist => ({
       id: r.id,
       rotulo: r.rotulo,
       ok: (n) => (r.padrao === undefined ? null : testarPadrao(r.padrao, n)),
     }),
   ),
-  { id: 'diferente', rotulo: 'Diferente da senha atual', ok: (n, a) => n !== '' && n !== a },
+  { id: 'diferente_da_atual', rotulo: 'Diferente da senha atual', ok: (n, a) => n !== '' && n !== a },
   {
     id: 'confirmacao',
     rotulo: 'Confirmação igual à nova senha',
