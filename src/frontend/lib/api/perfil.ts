@@ -83,6 +83,23 @@ export interface DetalheAtividade {
   alvoAlerta?: string
   tipoAcesso?: string
   outroUsername?: string
+  remessaNum?: number
+  banco?: string
+  titCod?: string
+  bncCod?: number
+  /** Títulos que o .RET aceitou: prova "agendado", nunca "pago". */
+  agendados?: number
+  rejeitados?: number
+  papelAntes?: string
+  papelDepois?: string
+  ativoDepois?: boolean
+  excecoesAntes?: ExcecaoAcesso[]
+  excecoesDepois?: ExcecaoAcesso[]
+}
+
+export interface ExcecaoAcesso {
+  permissao: string
+  efeito: 'conceder' | 'revogar'
 }
 
 export interface LinhaHistorico {

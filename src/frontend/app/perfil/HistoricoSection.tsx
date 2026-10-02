@@ -30,6 +30,7 @@ import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { isSessionExpiredError } from '@/lib/http'
 import { PERMISSAO, type Permissao } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
+import { rotuloAlvo, separador } from './alvo'
 import { momentoSp, tempoRelativo } from './periodo'
 import { ErroSecao, SecaoPerfil } from './SecaoPerfil'
 
@@ -326,10 +327,21 @@ function Alvo({ l, vinculo }: { l: LinhaHistorico; vinculo: string | null }) {
   const { tem } = usePermissoes()
   const d = destino(l)
   const assinado = l.detalhe.conexosUsername
+  const rotulo = rotuloAlvo(l)
   return (
     <span className="flex flex-col gap-0.5">
       <span className="flex flex-wrap items-center gap-2">
-        <span className="select-all font-mono text-xs">{l.alvoId}</span>
+        {rotulo.codigo !== undefined && rotulo.prefixo !== undefined ? (
+          <span title={rotulo.titulo} className="text-sm">
+            {rotulo.prefixo}
+            {separador(rotulo.prefixo)}
+            <span className="select-all font-mono text-xs">{rotulo.codigo}</span>
+          </span>
+        ) : (
+          <span title={rotulo.titulo} className="text-sm">
+            {rotulo.texto}
+          </span>
+        )}
         {d && tem(d.permissao) ? (
           <Link
             href={d.href}
@@ -340,6 +352,7 @@ function Alvo({ l, vinculo }: { l: LinhaHistorico; vinculo: string | null }) {
           </Link>
         ) : null}
       </span>
+      {rotulo.detalhe ? <span className="text-xs text-muted-foreground">{rotulo.detalhe}</span> : null}
       {assinado && assinado !== vinculo ? (
         <span className="text-xs text-muted-foreground">assinado no ERP como {assinado}</span>
       ) : null}
@@ -369,8 +382,8 @@ function Linhas({ itens, vinculo }: { itens: LinhaHistorico[]; vinculo: string |
                   <Quando em={l.em} />
                 </TableCell>
                 <TableCell>{ROTULO_FRENTE[l.frente]}</TableCell>
-                <TableCell>{descreverAcao(l)}</TableCell>
-                <TableCell>
+                <TableCell className="min-w-40 whitespace-normal">{descreverAcao(l)}</TableCell>
+                <TableCell className="min-w-48 whitespace-normal">
                   <Alvo l={l} vinculo={vinculo} />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
