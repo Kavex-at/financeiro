@@ -6,6 +6,8 @@ import SupabaseAuthUnavailableError, {
 } from '../errors/SupabaseAuthUnavailableError.js';
 import SupabaseEmailConflictError from '../errors/SupabaseEmailConflictError.js';
 import {
+    LOGOUT_SCOPE,
+    type LogoutScope,
     type SupabaseAdminCreateInput,
     type SupabaseAdminUpdateInput,
     type SupabaseAdminUser,
@@ -35,7 +37,7 @@ interface Requisicao {
     caminho: string;
     acesso: Acesso;
     corpo?: unknown;
-    /** Bearer do PRÓPRIO usuário (logout). */
+    /** Bearer do PRÓPRIO usuário (logout, troca da própria senha). */
     tokenDoUsuario?: string;
 }
 
@@ -126,15 +128,41 @@ export default class SupabaseAuthClient {
             ),
         );
 
-    /** Revoga o refresh token da sessão dona deste access token (`scope=local`). */
-    public logout = async (accessToken: string): Promise<void> => {
+    /**
+     * `scope=local` (default): revoga o refresh token da sessão dona deste access token.
+     * `scope=others`: revoga as OUTRAS sessões do usuário e mantém esta.
+     */
+    public logout = async (
+        accessToken: string,
+        scope: LogoutScope = LOGOUT_SCOPE.LOCAL,
+    ): Promise<void> => {
         await this.enviar({
             operacao: 'logout',
             metodo: 'POST',
-            caminho: '/logout?scope=local',
+            caminho: `/logout?scope=${scope}`,
             acesso: 'publico',
             tokenDoUsuario: accessToken,
         });
+    };
+
+    /**
+     * Troca a senha EM NOME do usuário (`PUT /user` com o access token dele, ADR-0059). O GoTrue
+     * mantém a sessão dona do token e revoga as outras (`LogoutAllExceptMe`; medido na v2.197 pelo
+     * probe Q1). Exige "Secure password change" OFF no projeto: ligado, pede `nonce` por e-mail.
+     * Escrita: nunca repetida.
+     */
+    public updateOwnPassword = async (accessToken: string, password: string): Promise<void> => {
+        await this.enviar(
+            {
+                operacao: 'updateOwnPassword',
+                metodo: 'PUT',
+                caminho: '/user',
+                acesso: 'publico',
+                corpo: { password },
+                tokenDoUsuario: accessToken,
+            },
+            supabaseAdminUserResponseSchema,
+        );
     };
 
     public adminCreateUser = async (input: SupabaseAdminCreateInput): Promise<SupabaseAdminUser> =>

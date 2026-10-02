@@ -16,7 +16,12 @@ import LogService from '../LogService.js';
 /** As escritas de credencial que o `app_user` projeta no Supabase Auth. */
 export type OperacaoCredencial =
     | { tipo: 'criar'; senha: string }
-    | { tipo: 'senha'; senha: string }
+    /**
+     * `tokenDoChamador`: access token do GoTrue do PRÓPRIO usuário (troca da própria senha,
+     * ADR-0059). Com ele, o passo é `PUT /user`, que mantém a sessão do chamador e revoga as outras;
+     * sem ele (reset do admin, chamador com token HS256), é o update admin, que revoga todas (Q1).
+     */
+    | { tipo: 'senha'; senha: string; tokenDoChamador?: string }
     | { tipo: 'email' }
     | { tipo: 'desativar' }
     | { tipo: 'reativar' };
@@ -111,6 +116,14 @@ export default class CredentialMirror {
             case 'criar':
                 return this.criarEVincular(tx, linha, estado, operacao.senha);
             case 'senha':
+                if (operacao.tokenDoChamador !== undefined) {
+                    return this.trocarPropriaSenha(
+                        linha,
+                        estado,
+                        operacao.tokenDoChamador,
+                        operacao.senha,
+                    );
+                }
                 return this.atualizar(linha, estado, { password: operacao.senha });
             case 'email':
                 return this.trocarEmail(linha, estado);
@@ -128,6 +141,19 @@ export default class CredentialMirror {
     ): Promise<void> => {
         if (!linha.authUserId) return;
         await this.supabaseAuthClient.adminUpdateUser(linha.authUserId, mudanca);
+        estado.supabaseAlterado = true;
+        estado.authUserId = linha.authUserId;
+    };
+
+    /** `PUT /user` com o token do próprio usuário (RAMO = put-user, ADR-0059). Sem vínculo: nada. */
+    private trocarPropriaSenha = async (
+        linha: CredencialLinha,
+        estado: EstadoEspelho,
+        tokenDoChamador: string,
+        senha: string,
+    ): Promise<void> => {
+        if (!linha.authUserId) return;
+        await this.supabaseAuthClient.updateOwnPassword(tokenDoChamador, senha);
         estado.supabaseAlterado = true;
         estado.authUserId = linha.authUserId;
     };
