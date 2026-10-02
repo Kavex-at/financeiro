@@ -1,6 +1,6 @@
 /**
- * Seção Segurança (ADR-0058): pronta e DESLIGADA atrás de `SENHA_PROPRIA_HABILITADA` até o backend
- * `feat/auth-senha-propria` existir. Desligada, não chama a rede. Ligada (só no teste), mapeia
+ * Seção Segurança (ADR-0058; backend ADR-0059): ligada por `SENHA_PROPRIA_HABILITADA`. Desligada
+ * (kill switch), volta a "em breve" e não chama a rede. Ligada, busca a política e mapeia
  * 204 / 400 POLITICA / 422 SENHA_ATUAL_INVALIDA / 429 / 503 — e o 422 nunca vira sessão expirada.
  */
 import { render, screen, waitFor } from '@testing-library/react'
@@ -48,14 +48,25 @@ afterEach(() => {
   toastSuccess.mockReset()
 })
 
-describe('SegurancaSection — desligada (padrão)', () => {
-  it('a flag nasce desligada', () => {
-    expect(SENHA_PROPRIA_HABILITADA).toBe(false)
+describe('SegurancaSection — flag', () => {
+  it('ligada em produção desde a v0.51.0 (backend da ADR-0059 no ar)', () => {
+    expect(SENHA_PROPRIA_HABILITADA).toBe(true)
   })
 
+  it('sem prop, segue a flag: campos habilitados, sem "em breve", e a política vem do servidor', async () => {
+    const fetchSpy = usarFetch(responder(200, { minimo: 8, maximo: 72, regras: [] }))
+    render(<SegurancaSection />)
+    expect(await screen.findByRole('listitem', { name: /entre 8 e 72 caracteres/i })).toBeInTheDocument()
+    expect(screen.queryByText(/em breve/i)).toBeNull()
+    expect(screen.getByLabelText('Senha atual')).toBeEnabled()
+    expect(String(fetchSpy.mock.calls[0][0])).toMatch(/\/me\/senha\/politica$/)
+  })
+})
+
+describe('SegurancaSection — desligada (kill switch)', () => {
   it('campos e botão desabilitados, selo "em breve", âncora #senha e nenhuma chamada de rede', async () => {
     const fetchSpy = usarFetch(responder(204))
-    render(<SegurancaSection />)
+    render(<SegurancaSection habilitada={false} />)
     expect(document.getElementById('senha')).not.toBeNull()
     expect(screen.getByText(/em breve/i)).toBeInTheDocument()
     expect(screen.getByLabelText('Senha atual')).toBeDisabled()

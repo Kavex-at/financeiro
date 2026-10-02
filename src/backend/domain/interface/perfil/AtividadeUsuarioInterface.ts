@@ -146,6 +146,7 @@ export const STATUS_POR_FONTE: Readonly<
         papel: STATUS_ATIVIDADE.INFO,
         excecao: STATUS_ATIVIDADE.INFO,
         ativo: STATUS_ATIVIDADE.INFO,
+        senha: STATUS_ATIVIDADE.INFO,
     },
 };
 

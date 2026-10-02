@@ -20,10 +20,9 @@ import {
 import { SecaoPerfil } from './SecaoPerfil'
 
 /**
- * Segurança — troca da própria senha. Desenhada e testada, mas DESLIGADA ("em breve") enquanto
- * `SENHA_PROPRIA_HABILITADA = false`: o backend (`POST /me/senha`, `GET /me/senha/politica`) ainda
- * não existe. Desligada, nenhum campo aceita entrada, nada vai à rede e o checklist mostra a
- * `POLITICA_PADRAO` (8 a 72). A âncora `#senha` é o destino de "Alterar senha" no menu do avatar.
+ * Segurança — troca da própria senha (backend: ADR-0059). Ligada por `SENHA_PROPRIA_HABILITADA`.
+ * Com a flag em `false` (kill switch) volta a "em breve": nenhum campo aceita entrada, nada vai à
+ * rede e o checklist mostra a `POLITICA_PADRAO` (8 a 72). A âncora `#senha` é o destino de "Alterar senha" no menu do avatar.
  */
 export function SegurancaSection({ habilitada = SENHA_PROPRIA_HABILITADA }: { habilitada?: boolean }) {
   const [politica, setPolitica] = React.useState<PoliticaSenha>(POLITICA_PADRAO)

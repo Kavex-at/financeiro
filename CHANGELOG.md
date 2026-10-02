@@ -18,8 +18,10 @@
   - **Histórico de ações:** linha do tempo das próprias ações em todas as frentes e da trilha de
     acesso (por exemplo, "seu papel foi alterado por X"). Tem filtros e paginação, e vira lista de
     cartões no celular.
-  - **Segurança:** a tela de troca de senha já está pronta, mas fica marcada "em breve" até sair o
-    backend próprio dela.
+  - **Segurança:** o próprio usuário troca a senha (usa o backend da v0.50.0). O checklist da
+    política aparece ao vivo, e cada campo tem botão de mostrar/ocultar. Senha atual errada aparece no
+    próprio campo, e serviço indisponível nunca desloga. Esta sessão continua ativa, e as outras são
+    encerradas.
 - **Novas rotas `GET /me`, `/me/atividade` e `/me/historico`.** A identidade vem sempre da sessão:
   não há como consultar outro usuário.
 - **Migration `0072`:** índices de leitura (ator, data) nas tabelas de execução. Só cria índices,

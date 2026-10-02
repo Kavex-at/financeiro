@@ -2,7 +2,7 @@
  * Rótulo do alvo no histórico: o que o analista reconhece, nunca o id cru (que vai no tooltip).
  */
 import type { LinhaHistorico } from '@/lib/api/perfil'
-import { descreverExcecoes, rotuloAlvo } from './alvo'
+import { descreverAcao, descreverExcecoes, rotuloAlvo } from './alvo'
 
 const linha = (over: Partial<LinhaHistorico>): LinhaHistorico => ({
   em: '2026-10-02T14:00:00.000000Z',
@@ -118,5 +118,30 @@ describe('descreverExcecoes', () => {
 
   it('sem diferença: texto genérico', () => {
     expect(descreverExcecoes([], [])).toBe('Exceções de permissão')
+  })
+})
+
+describe('descreverAcao — eventos de acesso', () => {
+  const acao = (acaoCod: string, detalhe: LinhaHistorico['detalhe']) =>
+    descreverAcao(linha({ frente: 'plataforma', acao: acaoCod, alvoTipo: 'usuario', alvoId: '2', detalhe }))
+
+  it('troca da própria senha (ator = alvo, sem "outro")', () => {
+    expect(acao('acesso_recebido', { tipoAcesso: 'senha' })).toBe('Alterou a própria senha')
+  })
+
+  it('senha redefinida por um admin, dos dois lados', () => {
+    expect(acao('acesso_recebido', { tipoAcesso: 'senha', outroUsername: 'admin' })).toBe(
+      'Sua senha foi redefinida por admin',
+    )
+    expect(acao('acesso_alterado', { tipoAcesso: 'senha', outroUsername: 'rafael.lima' })).toBe(
+      'Redefiniu a senha de rafael.lima',
+    )
+  })
+
+  it('alteração do próprio acesso nunca diz "outro usuário"', () => {
+    expect(acao('acesso_recebido', { tipoAcesso: 'papel', papelDepois: 'Consulta' })).toBe('Alterou o próprio acesso')
+    expect(acao('acesso_recebido', { tipoAcesso: 'papel', outroUsername: 'admin' })).toBe(
+      'Seu acesso foi alterado por admin',
+    )
   })
 })
