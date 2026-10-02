@@ -27,11 +27,12 @@ describe('UserMenu (menu de avatar)', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('o gatilho é o avatar com as iniciais, alvo de toque ≥ 40px', () => {
+  it('o gatilho é o avatar com as iniciais + chevron, alvo de toque ≥ 40px', () => {
     render(<UserMenu />)
     const gatilho = screen.getByRole('button', { name: /menu da conta/i })
     expect(gatilho).toHaveTextContent('AS')
-    expect(gatilho.className).toMatch(/size-10/)
+    expect(gatilho.className).toMatch(/\bh-10\b/)
+    expect(gatilho.querySelector('svg.lucide-chevron-down')).not.toBeNull()
   })
 
   it('abre por clique: username, nome do papel e os itens', async () => {
