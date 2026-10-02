@@ -49,6 +49,11 @@ Contrato que o front espera:
 - `GET /me/senha/politica` → `{ minimo, maximo, regras: [{ id, rotulo, padrao? }] }`. Se falhar, o front usa 8 a 72.
 - `POST /me/senha { senhaAtual, novaSenha }` → 204, 400 `{ codigo: 'POLITICA', regras: string[] }`, 422
   `SENHA_ATUAL_INVALIDA` (nunca 401), 429 `MUITAS_TENTATIVAS`, 503 `AUTH_INDISPONIVEL`. 5xx nunca desloga.
+- Confirmado pela sessão de auth em 02/10 (backend em `feat/auth-senha-propria`, migration 0073, ADR-0059):
+  - Os corpos de erro são `{ codigo, error }`; o front lê só `codigo`.
+  - Os ids de regra são `tamanho` e `diferente_da_atual`, os mesmos do checklist.
+  - O máximo de 72 é contado em **bytes UTF-8**, e o checklist conta igual.
+  - Rate limit do GoTrue na verificação da senha atual também vira 429.
 
 Restrições do ADR-0057 que valem para o backend:
 - **Ordem de escrita (R6):** a transação trava a linha e grava o bcrypt local; depois o update no GoTrue

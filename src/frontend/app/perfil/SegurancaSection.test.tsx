@@ -141,6 +141,46 @@ describe('SegurancaSection — ligada (só no teste)', () => {
     expect(screen.getByRole('listitem', { name: /vazamentos/i })).toHaveAttribute('data-ok', 'indefinido')
   })
 
+  it('400 POLITICA com diferente_da_atual marca o item; regra local repetida pelo servidor não duplica', async () => {
+    usarFetch(
+      jest
+        .fn()
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          json: async () => ({
+            minimo: 8,
+            maximo: 72,
+            regras: [{ id: 'diferente_da_atual', rotulo: 'Diferente da senha atual' }],
+          }),
+        })
+        .mockResolvedValue({
+          status: 400,
+          ok: false,
+          json: async () => ({ codigo: 'POLITICA', regras: ['diferente_da_atual'], error: 'x' }),
+        }),
+    )
+    const user = userEvent.setup()
+    render(<SegurancaSection habilitada />)
+    await preencher(user)
+    expect(await screen.findByText(/não atende à política/i)).toBeInTheDocument()
+    const itens = screen.getAllByRole('listitem', { name: /diferente da senha atual/i })
+    expect(itens).toHaveLength(1)
+    expect(itens[0]).toHaveAttribute('data-ok', 'false')
+  })
+
+  it('máximo em bytes UTF-8, como o servidor: 72 caracteres com acento não passam', async () => {
+    usarFetch(responder(204))
+    const user = userEvent.setup()
+    render(<SegurancaSection habilitada />)
+    const item = () => screen.getByRole('listitem', { name: /entre 8 e 72 caracteres/i })
+    await user.type(screen.getByLabelText('Nova senha'), 'a'.repeat(72))
+    expect(item()).toHaveAttribute('data-ok', 'true')
+    await user.clear(screen.getByLabelText('Nova senha'))
+    await user.type(screen.getByLabelText('Nova senha'), 'ç'.repeat(40))
+    expect(item()).toHaveAttribute('data-ok', 'false')
+  })
+
   it('política inválida ou indisponível → padrão de 8 a 72', async () => {
     usarFetch(responder(200, { minimo: 'oito' }))
     render(<SegurancaSection habilitada />)
