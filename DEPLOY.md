@@ -339,3 +339,26 @@ Projeto: `kngrpoqzaxtuzkcugsyl` (sa-east-1). Quem executa: dono do ciclo. Cada p
 | Divergência pontual (um usuário não entra) | Não é rollback: rodar `sync-supabase-auth` em dry-run, ler a linha do usuário, rodar com `--execute` | Só aquele usuário |
 
 Nunca: apagar usuários no painel do Supabase para "recomeçar" com o modo `supabase` ligado (quebra o vínculo de quem está logado; o sync recria e vincula, mas as sessões caem). Nunca: `SUPABASE_URL` definida com o backend anterior a esta feature (≤ v0.46) no ar.
+
+### Troca da própria senha (`/me/senha`, ADR-0059)
+
+**Nada a configurar.** Nenhuma env nova: `AUTH_PROVIDER`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` e
+`SUPABASE_SECRET_KEY` já existem. A migration `0073` só amplia a CHECK de
+`app_user_access_event.tipo` (aditiva, idempotente): um cron pode aplicá-la antes do deploy sem
+afetar o backend antigo. Rollback de código: a CHECK ampliada fica (não há reverse) e o código antigo
+a ignora. O front continua com `SENHA_PROPRIA_HABILITADA = false` até o tweak que liga a flag; este
+backend pode ir antes, sem efeito visível.
+
+**"Secure password change" do Supabase precisa continuar OFF.** No modo `supabase`, a troca usa
+`PUT /auth/v1/user` com o token do próprio usuário (mantém a sessão atual e revoga as outras). Com a
+opção ligada, esse endpoint passa a exigir um `nonce` de reautenticação enviado por e-mail, e o
+projeto não tem SMTP: toda troca responderia 503. Como conferir, **sem escrever nada**:
+
+- Dashboard: Authentication → Sign In / Providers → Email → **Secure password change** desmarcado; ou
+- Management API (só leitura, com token pessoal):
+  `GET https://api.supabase.com/v1/projects/kngrpoqzaxtuzkcugsyl/config/auth` →
+  `security_update_password_require_reauthentication` deve ser `false`.
+
+Verificação pós-deploy (opcional, com OK do dono e usuário descartável): o passo 4 do roteiro de QA
+(duas sessões, troca pela A → refresh de A 200, de B 401). O comportamento de sessões foi medido no
+GoTrue v2.197 local; a versão do projeto pode diferir.

@@ -3,6 +3,13 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## ADR-0059 — Troca da própria senha (2026-10-02, sem diff de entidade)
+
+Feature: `auth-senha-propria` (branch `feat/auth-senha-propria`). `GET /me/senha/politica` e
+`POST /me/senha`; a trilha de acesso ganha o tipo `senha` (migration 0073). Nenhuma entidade, action,
+state machine ou regra de negócio muda (`entity_changed = false`); continua as ADRs 0051, 0053 e 0057.
+A versão da ontologia não sobe.
+
 ## ADR-0057 — Supabase Auth no mesmo projeto (2026-09-30, sem diff de entidade)
 
 Feature: `auth-supabase` (branch `feat/auth-supabase`). Passo 3 de 3 do plano de auth.

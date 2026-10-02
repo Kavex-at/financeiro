@@ -154,3 +154,22 @@ usando sessão do GoTrue, nada visível muda para ele. O reset do admin (`/usuar
 também derruba todas as sessões GoTrue do alvo, o que é o comportamento desejável para um reset.
 
 RAMO = put-user
+
+## Resultado do roteiro de QA local
+
+Rodado em 2026-10-02 contra `npx supabase@2.118.0` (GoTrue v2.197.0) e um Postgres 17 descartável
+(contêiner `asp-qa-pg`), backend da árvore de trabalho (`node --import tsx index.ts`) sem `.env` (o
+dotenv injetou 0 variáveis) e com env só local. `qa1@qa.local` criado pelo `POST /usuarios` (criado e
+vinculado no GoTrue pelo espelho); `qa2@qa.local` inserido por SQL, sem `auth_user_id`.
+
+| Passo | Resultado |
+|---|---|
+| 1. Migration | `CHECK ((tipo = ANY (ARRAY['papel','excecao','ativo','senha'])))`; reaplicar o arquivo: `ALTER TABLE` ×2, sem erro, 1 constraint |
+| 2. Política (`supabase`, token ES256) | `GET /me/senha/politica` → 200 `{"minimo":8,"maximo":72,"regras":[]}`; 7 caracteres → 400 `POLITICA ["tamanho"]`; `'ç'×40` → 400 `["tamanho"]`; nova = atual → 400 `["diferente_da_atual"]`; campo extra → 400 `{error, details}` sem `codigo` |
+| 3. Senha atual errada | 5 × 422 `SENHA_ATUAL_INVALIDA`; a 6ª, com a senha certa → 429 `MUITAS_TENTATIVAS`; a sessão segue (`GET /me/permissoes` 200). Backend reiniciado antes do passo 4 |
+| 4. Sucesso (`supabase`) | sessões A e B (ES256); troca pela A → 204; login com a antiga → 401; com a nova → 200; refresh de A → 200; refresh de B → 401. Extra: o access token de B (revogada no GoTrue, ainda no `exp`) tentando trocar → 503 `AUTH_INDISPONIVEL` (GoTrue `session_not_found` 403 no `PUT /user`; ROLLBACK), não 500 |
+| 5. Sucesso (`local`) | qa1 (HS256, vinculado) → 204; qa2 (HS256, sem vínculo) → 204; antigas → 401, novas → 200 nos dois; GoTrue direto para qa1: nova → 200, antiga → 400 (R6); um segundo token HS256 de qa1 emitido antes da troca continua respondendo 200 até o `exp` |
+| 6. GoTrue fora | `docker stop supabase_auth_*`. `supabase`: → 503 `AUTH_INDISPONIVEL`; `local` com qa1 vinculado: → 503 (passo de escrita). Nos dois: `password_hash` e contagem de eventos `senha` idênticos antes/depois; `GET /me/permissoes` 200 (a sessão não cai). Contêiner religado |
+| 7. Auditoria | 3 linhas `tipo='senha'`: qa1 (passo 4), qa1 e qa2 (passo 5); `ator` = o próprio username, `alvo_user_id` = si, `antes`/`depois` NULL. Nenhuma das tentativas 400/422/429/503 gravou linha |
+| 8. Logs sem senha | `grep` das 10 senhas usadas nos três logs do backend: 0 ocorrências. Todo `[REQ] body=` de `/me/senha` saiu `{"senhaAtual":"[REDACTED]","novaSenha":"[REDACTED]"}`. Linhas de sucesso em português com `usuario`, `modo` e `revogacao` (`gotrue-put-user`, `pulada-hs256`, `sem-vinculo`) |
+| 9. Limpeza | `npx supabase@2.118.0 stop` e contêineres descartáveis parados no fim do ciclo |
