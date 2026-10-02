@@ -14,7 +14,11 @@ import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
  * Run (numa pasta temporária fora do repositório, com o stack local no ar):
  *   SUPABASE_URL=http://127.0.0.1:54321 \
  *   SUPABASE_PUBLISHABLE_KEY=<publishable/anon local> SUPABASE_SECRET_KEY=<secret/service_role local> \
- *   MAILPIT_URL=http://127.0.0.1:54324 npx tsx jobs/probe-gotrue-local.ts
+ *   MAILPIT_URL=http://127.0.0.1:54324 npx tsx jobs/probe-gotrue-local.ts [--q1]
+ *
+ * `--q1` roda só os cenários da Q1 (feature `auth-senha-propria`, ADR-0059): a troca de senha
+ * pela API admin revoga as sessões do usuário? `PUT /user` preserva a sessão de quem chama?
+ * Sem a flag, roda o T-1 inteiro e, depois, os cenários da Q1.
  */
 const URL_LOCAL = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/;
 const BCRYPT_ROUNDS = 12;
@@ -307,7 +311,127 @@ const passoJwks = async (token: string): Promise<void> => {
     }
 };
 
+interface Sessao {
+    access: string;
+    refreshToken: string;
+}
+
+const abrirSessao = async (email: string, senha: string): Promise<Sessao> => {
+    const r = await login(email, senha);
+    if (r.status !== 200) {
+        throw new Error(`login de preparo falhou: ${resumoErro(r)}`);
+    }
+    return { access: String(r.body.access_token), refreshToken: String(r.body.refresh_token) };
+};
+
+const usuarioDescartavel = async (rotulo: string, senha: string): Promise<Contexto> => {
+    const email = `q1-${rotulo.toLowerCase()}-${Date.now()}@probe.local`;
+    const criado = await chamar('POST', '/admin/users', admin, {
+        email,
+        password: senha,
+        email_confirm: true,
+    });
+    const userId = String(criado.body.id ?? '');
+    if (criado.status !== 200 || userId === '') {
+        throw new Error(`create do cenário ${rotulo} falhou: ${resumoErro(criado)}`);
+    }
+    return { userId, email, senha };
+};
+
+const statusRefresh = async (s: Sessao): Promise<string> => {
+    const r = await refresh(s.refreshToken);
+    return r.status === 200 ? '200 ok' : resumoErro(r);
+};
+
+const statusLogin = async (email: string, senha: string): Promise<number> =>
+    (await login(email, senha)).status;
+
+/** Executa um cenário com usuário próprio e apaga o usuário mesmo se o cenário falhar. */
+const comUsuario = async (
+    rotulo: string,
+    corpo: (ctx: Contexto) => Promise<void>,
+): Promise<void> => {
+    const ctx = await usuarioDescartavel(rotulo, 'Senha-q1-original-1');
+    try {
+        await corpo(ctx);
+    } finally {
+        const del = await chamar('DELETE', `/admin/users/${ctx.userId}`, admin);
+        console.log(`[Q1] limpeza ${rotulo}: DELETE /admin/users/<id> → ${del.status}`);
+    }
+};
+
+const SENHA_NOVA_Q1 = 'Senha-q1-nova-22';
+
+const cenarioAdmin = (): Promise<void> =>
+    comUsuario('A', async (ctx) => {
+        const a = await abrirSessao(ctx.email, ctx.senha);
+        const b = await abrirSessao(ctx.email, ctx.senha);
+        const up = await chamar('PUT', `/admin/users/${ctx.userId}`, admin, {
+            password: SENHA_NOVA_Q1,
+        });
+        console.log(`[Q1] A PUT /admin/users/:id { password } → ${up.status}`);
+        console.log(`[Q1] A refresh da sessão A → ${await statusRefresh(a)}`);
+        console.log(`[Q1] A refresh da sessão B → ${await statusRefresh(b)}`);
+        console.log(`[Q1] A login com a senha antiga → ${await statusLogin(ctx.email, ctx.senha)}`);
+        console.log(
+            `[Q1] A login com a senha nova → ${await statusLogin(ctx.email, SENHA_NOVA_Q1)}`,
+        );
+    });
+
+const cenarioPutUser = (): Promise<void> =>
+    comUsuario('B', async (ctx) => {
+        const a = await abrirSessao(ctx.email, ctx.senha);
+        const b = await abrirSessao(ctx.email, ctx.senha);
+        const up = await chamar(
+            'PUT',
+            '/user',
+            { ...publico, authorization: `Bearer ${a.access}` },
+            { password: SENHA_NOVA_Q1 },
+        );
+        // Cenário D: com secure_password_change = false não pode pedir nonce/reautenticação.
+        console.log(
+            `[Q1] D PUT /user { password } (token de A) → status=${up.status} ` +
+                `${up.status === 200 ? `chaves: ${chaves(up)}` : resumoErro(up)}`,
+        );
+        console.log(`[Q1] B refresh da sessão A → ${await statusRefresh(a)}`);
+        console.log(`[Q1] B refresh da sessão B → ${await statusRefresh(b)}`);
+        console.log(`[Q1] B login com a senha antiga → ${await statusLogin(ctx.email, ctx.senha)}`);
+        console.log(
+            `[Q1] B login com a senha nova → ${await statusLogin(ctx.email, SENHA_NOVA_Q1)}`,
+        );
+    });
+
+const cenarioLogoutOthers = (): Promise<void> =>
+    comUsuario('C', async (ctx) => {
+        const a = await abrirSessao(ctx.email, ctx.senha);
+        const b = await abrirSessao(ctx.email, ctx.senha);
+        const lo = await chamar('POST', '/logout?scope=others', {
+            ...publico,
+            authorization: `Bearer ${a.access}`,
+        });
+        console.log(`[Q1] C POST /logout?scope=others (token de A) → ${lo.status}`);
+        console.log(`[Q1] C refresh da sessão A → ${await statusRefresh(a)}`);
+        console.log(`[Q1] C refresh da sessão B → ${await statusRefresh(b)}`);
+    });
+
+const rodarQ1 = async (): Promise<void> => {
+    const health = await chamar('GET', '/health', publico);
+    console.log(`[Q1] GoTrue local: ${String(health.body.version)} (${baseUrl})`);
+    // Cada cenário apaga o próprio usuário no finally; a falha de um não impede os outros.
+    for (const cenario of [cenarioAdmin, cenarioPutUser, cenarioLogoutOthers]) {
+        try {
+            await cenario();
+        } catch (error) {
+            console.error(`[Q1] cenário falhou: ${(error as Error).message}`);
+        }
+    }
+};
+
 const main = async (): Promise<void> => {
+    if (process.argv.includes('--q1')) {
+        await rodarQ1();
+        process.exit(0);
+    }
     const health = await chamar('GET', '/health', publico);
     console.log(`[T-1] GoTrue local: ${String(health.body.version)} (${baseUrl})`);
     await passoCabecalhos();
@@ -326,6 +450,7 @@ const main = async (): Promise<void> => {
     for (const linha of vereditos) {
         console.log(linha);
     }
+    await rodarQ1();
     // O passo 3 (password_hash no update) é um achado, não uma falha da sonda: o 3b decide.
     const falhas = vereditos.filter((l) => l.includes('FALHA') && !l.startsWith('[T-1] 3 '));
     process.exit(falhas.length > 0 ? 1 : 0);
