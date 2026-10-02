@@ -6,7 +6,7 @@ import PostgreeDatabaseClient, {
 import AdminRoleMissingError from '../../errors/AdminRoleMissingError.js';
 import EmailAlreadyInUseError from '../../errors/EmailAlreadyInUseError.js';
 import { ADMIN_ROLE_NAME, type RoleRef } from '../../interface/auth/Permission.js';
-import AccessRepository, { ACCESS_EVENT_TYPE } from './AccessRepository.js';
+import AccessRepository, { ACCESS_EVENT_TYPE, type AccessEvent } from './AccessRepository.js';
 
 /** Linha de `app_user` mapeada para o domínio (camelCase). */
 export interface AppUser {
@@ -500,35 +500,28 @@ export default class UserRepository {
         });
 
     /**
-     * Redefine a senha (hash) de um usuário. Retorna false se o id não existe. Com o passo de
-     * espelhamento (R6): trava a linha, grava o hash, roda o passo, e só então commita.
+     * Redefine a senha (hash) de um usuário. Retorna false se o id não existe, sem gravar nada.
+     *
+     * SEMPRE numa transação com a linha travada (`FOR UPDATE`), com ou sem espelho (ADR-0059):
+     * `UPDATE password_hash` → evento da trilha (se houver) → passo de espelhamento (se houver, R6)
+     * → COMMIT. Falha em qualquer etapa = ROLLBACK, inclusive do evento.
      */
     public updatePassword = async (
         id: number,
         passwordHash: string,
-        antesDoCommit?: AntesDoCommit,
-    ): Promise<boolean> => {
-        if (antesDoCommit) {
-            return this.databaseClient.withTransaction(async (tx) => {
-                const atual = await this.lerCredencial(tx, id, true);
-                if (!atual) return false;
-                await tx.update(
-                    `UPDATE app_user SET password_hash = $passwordHash WHERE id = $id`,
-                    {
-                        id,
-                        passwordHash,
-                    },
-                );
-                await antesDoCommit(tx, { ...atual, passwordHash });
-                return true;
+        opcoes: { antesDoCommit?: AntesDoCommit; evento?: AccessEvent } = {},
+    ): Promise<boolean> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const atual = await this.lerCredencial(tx, id, true);
+            if (!atual) return false;
+            await tx.update(`UPDATE app_user SET password_hash = $passwordHash WHERE id = $id`, {
+                id,
+                passwordHash,
             });
-        }
-        const affected = await this.databaseClient.update(
-            `UPDATE app_user SET password_hash = $passwordHash WHERE id = $id`,
-            { id, passwordHash },
-        );
-        return affected > 0;
-    };
+            if (opcoes.evento) await this.accessRepository.recordEvent(tx, opcoes.evento);
+            if (opcoes.antesDoCommit) await opcoes.antesDoCommit(tx, { ...atual, passwordHash });
+            return true;
+        });
 
     /**
      * Vínculo Conexos de um usuário pelo `username` (email da plataforma) — usado

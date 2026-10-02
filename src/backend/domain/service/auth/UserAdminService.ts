@@ -426,7 +426,9 @@ export default class UserAdminService {
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const passo = await this.credentialMirror.preparar({ tipo: 'senha', senha: password });
         const ok = await this.comEspelho(passo, id, () =>
-            this.userRepository.updatePassword(id, passwordHash, passo.antesDoCommit),
+            this.userRepository.updatePassword(id, passwordHash, {
+                antesDoCommit: passo.antesDoCommit,
+            }),
         );
         if (!ok) throw new Error(`NOT_FOUND: user ${id} not found`);
     };

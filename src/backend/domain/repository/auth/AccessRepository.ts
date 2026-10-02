@@ -41,6 +41,8 @@ export const ACCESS_EVENT_TYPE = {
     PAPEL: 'papel',
     EXCECAO: 'excecao',
     ATIVO: 'ativo',
+    /** Troca da própria senha (ADR-0059, migration 0073); `antes`/`depois` sempre NULL. */
+    SENHA: 'senha',
 } as const;
 export type AccessEventType = (typeof ACCESS_EVENT_TYPE)[keyof typeof ACCESS_EVENT_TYPE];
 
