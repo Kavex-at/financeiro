@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.50.0 (2026-10-02) — trocar a própria senha (backend)
+
+- **Novos endpoints para cada usuário trocar a própria senha**, sem depender do admin:
+  `GET /me/senha/politica` (regras: mínimo 8 caracteres, máximo 72 bytes) e `POST /me/senha`
+  (`senhaAtual` + `novaSenha`). A senha atual é conferida de verdade, no modo `local` e no
+  `supabase`. Senha atual errada responde 422 (nunca derruba a sessão); 5 erros em 15 min bloqueiam
+  por um tempo (429); Supabase fora responde 503 e nada muda.
+- **Esta sessão continua; as outras são encerradas** (no modo `supabase`). A troca grava a senha nos
+  dois lados (nosso banco e Supabase Auth), na mesma ordem das outras escritas de credencial, e
+  registra o evento "senha" na trilha de acesso, sem nenhum dado da senha.
+- **A tela ainda não aparece**: o formulário do perfil (PR #101) fica desligado até este backend
+  estar no ar. Nenhuma variável nova. Migration `0073` só amplia o tipo de evento aceito.
+- O "Secure password change" do Supabase precisa continuar **desligado** (ver `DEPLOY.md`).
+
 ## v0.49.0 (2026-10-01) — tela de Métricas mais enxuta: um card por frente
 
 - **Os KPIs viram três cards, um por frente** (Permutas, Adiantamentos, Pagamentos SISPAG), lado a
