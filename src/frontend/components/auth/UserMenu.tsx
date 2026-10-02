@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { KeyRound, LogOut, UserRound } from 'lucide-react'
+import { ChevronDown, KeyRound, LogOut, UserRound } from 'lucide-react'
 import { Avatar } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -22,7 +22,8 @@ import { usePermissoes } from '@/lib/auth/PermissoesProvider'
  * O papel vem de `usePermissoes().papel` — a mesma consulta de `/me/permissoes` que o resto da tela
  * já faz, sem chamada nova. Enquanto carrega, ou se falhou, mostra só o username.
  *
- * O gatilho tem 40px (alvo de toque) e aparece em qualquer largura; o menu abre alinhado à direita.
+ * O gatilho (avatar + chevron) tem 40px de altura (alvo de toque) e aparece em qualquer largura; o
+ * menu abre alinhado à direita.
  */
 export function UserMenu() {
   const { username, devBypass, signOut } = useAuth()
@@ -43,9 +44,13 @@ export function UserMenu() {
       <DropdownMenuTrigger
         aria-label={`Menu da conta de ${username}`}
         data-testid="user-menu"
-        className="inline-flex size-10 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className="group inline-flex h-10 items-center gap-1 rounded-full pr-1.5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=open]:bg-accent"
       >
         <Avatar username={username} />
+        <ChevronDown
+          aria-hidden
+          className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuLabel className="flex flex-col gap-0.5">
