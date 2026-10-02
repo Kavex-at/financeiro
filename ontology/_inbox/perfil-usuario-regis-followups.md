@@ -52,7 +52,8 @@ Contrato que o front espera:
 - Confirmado pela sessão de auth em 02/10 (backend em `feat/auth-senha-propria`, migration 0073, ADR-0059):
   - Os corpos de erro são `{ codigo, error }`; o front lê só `codigo`.
   - Os ids de regra são `tamanho` e `diferente_da_atual`, os mesmos do checklist.
-  - O máximo de 72 é contado em **bytes UTF-8**, e o checklist conta igual.
+  - O máximo de 72 é contado em **bytes UTF-8**, e o checklist conta igual. O mínimo de 8 é em **caracteres**, como no cadastro e no reset pelo admin.
+  - **Quando ligar o formulário:** `SENHA_PROPRIA_HABILITADA = true` entra só no PR que fizer merge por último, e só depois que o backend com `/me/senha` estiver no ar no Render (backend primeiro).
   - Rate limit do GoTrue na verificação da senha atual também vira 429.
 
 Restrições do ADR-0057 que valem para o backend:
