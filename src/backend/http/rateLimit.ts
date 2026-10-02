@@ -78,6 +78,33 @@ export const buildLoginLimiters = (
     }),
 });
 
+/**
+ * Troca da própria senha (ADR-0059): 5 FALHAS em 15 min por usuário autenticado. Só o 422
+ * (`SENHA_ATUAL_INVALIDA`) conta; 204, 400 da política, 429 e 503 não gastam o balde. Montado
+ * DEPOIS da validação do corpo (corpo malformado não o consome). Além de proteger a senha contra
+ * adivinhação com uma sessão roubada, segura a sonda no balde de login do GoTrue (mesmo IP do
+ * Render que o login usa). O `globalLimiter` continua valendo por cima.
+ */
+export const OWN_PASSWORD_FAILURES = 5;
+export const OWN_PASSWORD_WINDOW_MS = 15 * 60_000;
+
+export const buildOwnPasswordLimiter = (
+    options: SessionLimiterOptions = {},
+): RateLimitRequestHandler =>
+    sessionLimiter(options, {
+        windowMs: OWN_PASSWORD_WINDOW_MS,
+        limit: OWN_PASSWORD_FAILURES,
+        keyGenerator: (req: Request) => `senha:${req.user?.sub ?? ''}`,
+        skipSuccessfulRequests: true,
+        requestWasSuccessful: (_req: Request, res: ExpressResponse) => res.statusCode !== 422,
+        handler: (_req: Request, res: ExpressResponse) => {
+            res.status(429).json({
+                codigo: 'MUITAS_TENTATIVAS',
+                error: MENSAGEM_MUITAS_TENTATIVAS,
+            });
+        },
+    });
+
 /** `/auth/refresh` (D4): 30/min por IP. */
 export const buildRefreshLimiter = (options: SessionLimiterOptions = {}): RateLimitRequestHandler =>
     sessionLimiter(options, { windowMs: ONE_MINUTE_MS, limit: REFRESH_IP_LIMIT_PER_MINUTE });

@@ -1,13 +1,17 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express, { type Request, type Response } from 'express';
+import { MemoryStore } from 'express-rate-limit';
 import {
     LOGIN_FAILURES_PER_IDENTIFIER,
     LOGIN_FAILURE_WINDOW_MS,
     LOGIN_IP_LIMIT_PER_MINUTE,
     MENSAGEM_MUITAS_TENTATIVAS,
+    OWN_PASSWORD_FAILURES,
+    OWN_PASSWORD_WINDOW_MS,
     REFRESH_IP_LIMIT_PER_MINUTE,
     buildLoginLimiters,
+    buildOwnPasswordLimiter,
     buildRefreshLimiter,
     identificadorDoLogin,
 } from './rateLimit.js';
@@ -156,5 +160,61 @@ describe('limitadores de sessão (D4)', () => {
         expect(identificadorDoLogin({ body: { username: '  Beto@QA.Local ' } } as Request)).toBe(
             'beto@qa.local',
         );
+    });
+});
+
+/**
+ * Limitador da troca da própria senha (ADR-0059): 5 FALHAS (422) em 15 min por usuário
+ * autenticado (`req.user.sub`), venham de que IP vierem. Só o 422 conta.
+ */
+describe('limitador de troca de senha (ADR-0059)', () => {
+    const subirSenha = async () => {
+        const limiter = buildOwnPasswordLimiter({ skip: () => false, store: new MemoryStore() });
+        const app = express();
+        app.use(express.json());
+        app.use((req: Request, _res: Response, next) => {
+            req.user = { sub: String(req.headers['x-usuario'] ?? 'beto') };
+            next();
+        });
+        app.post('/me/senha', limiter, (req: Request, res: Response) => {
+            res.status(Number(req.body.status)).end();
+        });
+        const server: Server = await new Promise((r) => {
+            const s = app.listen(0, '127.0.0.1', () => r(s));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        const post = (status: number, usuario = 'beto') =>
+            fetch(`${base}/me/senha`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', 'x-usuario': usuario },
+                body: JSON.stringify({ status }),
+            });
+        return { server, post };
+    };
+
+    it('os limites são 5 falhas em 15 minutos', () => {
+        expect(OWN_PASSWORD_FAILURES).toBe(5);
+        expect(OWN_PASSWORD_WINDOW_MS).toBe(15 * 60_000);
+    });
+
+    it('5 × 422 → a 6ª responde 429 { codigo: MUITAS_TENTATIVAS } sem chegar ao handler', async () => {
+        const { server, post } = await subirSenha();
+        for (let i = 0; i < 5; i++) expect((await post(422)).status).toBe(422);
+        const sexta = await post(204);
+        const corpo = await sexta.json();
+        server.close();
+        expect(sexta.status).toBe(429);
+        expect(corpo).toEqual({ codigo: 'MUITAS_TENTATIVAS', error: MENSAGEM_MUITAS_TENTATIVAS });
+    });
+
+    it('204, 400 POLITICA e 503 não contam; o balde é por usuário', async () => {
+        const { server, post } = await subirSenha();
+        for (let i = 0; i < 4; i++) await post(422);
+        for (const s of [204, 400, 503, 400, 204]) expect((await post(s)).status).toBe(s);
+        expect((await post(422)).status).toBe(422); // 5ª falha: ainda passa
+        expect((await post(422, 'outra')).status).toBe(422); // outro usuário, outro balde
+        const bloqueado = await post(204);
+        server.close();
+        expect(bloqueado.status).toBe(429);
     });
 });

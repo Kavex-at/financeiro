@@ -10,6 +10,9 @@
 const DEFAULT_SENSITIVE_KEYS: ReadonlyArray<string> = [
     'password',
     'senha',
+    // ADR-0059 — corpo do `POST /me/senha` (o casamento é exato: `senha` não cobre estes).
+    'senhaatual',
+    'novasenha',
     'token',
     'accesstoken',
     'refreshtoken',
