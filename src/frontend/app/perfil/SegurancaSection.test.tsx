@@ -11,6 +11,8 @@ import { SENHA_PROPRIA_HABILITADA, mapearRespostaSenha } from '@/lib/perfil/senh
 jest.mock('@/lib/auth/token', () => ({
   withAuthHeaders: async () => ({ Authorization: 'Bearer t' }),
 }))
+const toastSuccess = jest.fn()
+jest.mock('sonner', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a) } }))
 const emitSessionExpired = jest.fn()
 jest.mock('@/lib/auth/session-events', () => ({
   emitSessionExpired: () => emitSessionExpired(),
@@ -43,6 +45,7 @@ const preencher = async (user: ReturnType<typeof userEvent.setup>) => {
 afterEach(() => {
   jest.restoreAllMocks()
   emitSessionExpired.mockReset()
+  toastSuccess.mockReset()
 })
 
 describe('SegurancaSection — desligada (padrão)', () => {
@@ -66,21 +69,22 @@ describe('SegurancaSection — desligada (padrão)', () => {
 })
 
 describe('SegurancaSection — ligada (só no teste)', () => {
-  it('204 → sucesso', async () => {
+  it('204 → sucesso, com toast', async () => {
     usarFetch(responder(204))
     const user = userEvent.setup()
     render(<SegurancaSection habilitada />)
     await preencher(user)
     expect(await screen.findByText(/senha alterada/i)).toBeInTheDocument()
+    expect(toastSuccess).toHaveBeenCalledWith('Senha alterada', expect.anything())
   })
 
   it('400 POLITICA → checklist com o que falhou', async () => {
-    usarFetch(responder(400, { codigo: 'POLITICA', falhas: ['tamanho'] }))
+    usarFetch(responder(400, { codigo: 'POLITICA', regras: ['tamanho'] }))
     const user = userEvent.setup()
     render(<SegurancaSection habilitada />)
     await preencher(user)
     expect(await screen.findByText(/não atende à política/i)).toBeInTheDocument()
-    expect(screen.getByRole('listitem', { name: /mínimo de 12 caracteres/i })).toHaveAttribute(
+    expect(screen.getByRole('listitem', { name: /entre 8 e 72 caracteres/i })).toHaveAttribute(
       'data-ok',
       'false',
     )
@@ -109,14 +113,58 @@ describe('SegurancaSection — ligada (só no teste)', () => {
     const user = userEvent.setup()
     render(<SegurancaSection habilitada />)
     await preencher(user)
-    await waitFor(() => expect(screen.getByText(/não foi possível verificar/i)).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText(/serviço de autenticação indisponível/i)).toBeInTheDocument(),
+    )
+    expect(emitSessionExpired).not.toHaveBeenCalled()
+  })
+
+  it('checklist vem de GET /me/senha/politica; regra sem padrão fica neutra', async () => {
+    const fetchSpy = usarFetch(
+      responder(200, {
+        minimo: 10,
+        maximo: 64,
+        regras: [
+          { id: 'numero', rotulo: 'Pelo menos um número', padrao: '\\d' },
+          { id: 'vazada', rotulo: 'Não aparece em vazamentos conhecidos' },
+        ],
+      }),
+    )
+    const user = userEvent.setup()
+    render(<SegurancaSection habilitada />)
+    expect(await screen.findByRole('listitem', { name: /entre 10 e 64 caracteres/i })).toBeInTheDocument()
+    expect(String(fetchSpy.mock.calls[0][0])).toMatch(/\/me\/senha\/politica$/)
+    await user.type(screen.getByLabelText('Nova senha'), 'semnumero-abc')
+    expect(screen.getByRole('listitem', { name: /pelo menos um número/i })).toHaveAttribute('data-ok', 'false')
+    await user.type(screen.getByLabelText('Nova senha'), '7')
+    expect(screen.getByRole('listitem', { name: /pelo menos um número/i })).toHaveAttribute('data-ok', 'true')
+    expect(screen.getByRole('listitem', { name: /vazamentos/i })).toHaveAttribute('data-ok', 'indefinido')
+  })
+
+  it('política inválida ou indisponível → padrão de 8 a 72', async () => {
+    usarFetch(responder(200, { minimo: 'oito' }))
+    render(<SegurancaSection habilitada />)
+    await waitFor(() =>
+      expect(screen.getByRole('listitem', { name: /entre 8 e 72 caracteres/i })).toBeInTheDocument(),
+    )
+  })
+
+  it('mostrar/ocultar alterna o tipo do campo', async () => {
+    usarFetch(responder(204))
+    const user = userEvent.setup()
+    render(<SegurancaSection habilitada />)
+    const campo = screen.getByLabelText('Nova senha')
+    expect(campo).toHaveAttribute('type', 'password')
+    await user.click(screen.getByRole('button', { name: 'Mostrar nova senha' }))
+    expect(campo).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: 'Ocultar nova senha' })).toHaveAttribute('aria-pressed', 'true')
   })
 })
 
 describe('mapearRespostaSenha', () => {
   it.each([
     [204, undefined, 'sucesso'],
-    [400, { codigo: 'POLITICA' }, 'politica'],
+    [400, { codigo: 'POLITICA', regras: ['tamanho'] }, 'politica'],
     [422, { codigo: 'SENHA_ATUAL_INVALIDA' }, 'senha_atual_invalida'],
     [429, undefined, 'muitas_tentativas'],
     [503, undefined, 'indisponivel'],

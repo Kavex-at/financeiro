@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { withAuthHeaders } from '../auth/token'
 import { apiFetch } from '../http'
 
@@ -11,18 +12,53 @@ const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace
  */
 export const SENHA_PROPRIA_HABILITADA = false
 
-/** Regras da política mostradas no checklist. `id` casa com as `falhas` do 400 POLITICA. */
-export const POLITICA_SENHA: ReadonlyArray<{
+/**
+ * Contrato de `GET /me/senha/politica` → `{ minimo, maximo, regras[] }`. O tamanho vem de
+ * `minimo`/`maximo`; cada item de `regras` é uma regra extra do servidor (`id` + `rotulo`). Com
+ * `padrao` (regex) ela é avaliada ao vivo no checklist; sem, fica neutra até um 400 POLITICA
+ * apontá-la. O formato de `regras` é PROPOSTA deste front para o backend `feat/auth-senha-propria`.
+ */
+const politicaSchema = z.object({
+  minimo: z.number().int().positive(),
+  maximo: z.number().int().positive(),
+  regras: z
+    .array(z.object({ id: z.string().min(1), rotulo: z.string().min(1), padrao: z.string().optional() }))
+    .default([]),
+})
+export type PoliticaSenha = z.infer<typeof politicaSchema>
+
+/** Política usada enquanto o endpoint não existe ou falha: 8 a 72 caracteres (limite do bcrypt). */
+export const POLITICA_PADRAO: PoliticaSenha = { minimo: 8, maximo: 72, regras: [] }
+
+export interface ItemChecklist {
   id: string
   rotulo: string
-  ok: (nova: string, atual: string, confirmacao: string) => boolean
-}> = [
-  { id: 'tamanho', rotulo: 'Mínimo de 12 caracteres', ok: (n) => n.length >= 12 },
+  /** `null` = regra do servidor sem `padrao`: não dá para avaliar no navegador. */
+  ok: (nova: string, atual: string, confirmacao: string) => boolean | null
+}
+
+const testarPadrao = (padrao: string, valor: string): boolean | null => {
+  try {
+    return new RegExp(padrao).test(valor)
+  } catch {
+    return null
+  }
+}
+
+/** Checklist ao vivo: tamanho da política, regras do servidor, diferente da atual e confirmação. */
+export const montarChecklist = (politica: PoliticaSenha): ItemChecklist[] => [
   {
-    id: 'composicao',
-    rotulo: 'Letras e números',
-    ok: (n) => /[A-Za-z]/.test(n) && /\d/.test(n),
+    id: 'tamanho',
+    rotulo: `Entre ${politica.minimo} e ${politica.maximo} caracteres`,
+    ok: (n) => n.length >= politica.minimo && n.length <= politica.maximo,
   },
+  ...politica.regras.map(
+    (r): ItemChecklist => ({
+      id: r.id,
+      rotulo: r.rotulo,
+      ok: (n) => (r.padrao === undefined ? null : testarPadrao(r.padrao, n)),
+    }),
+  ),
   { id: 'diferente', rotulo: 'Diferente da senha atual', ok: (n, a) => n !== '' && n !== a },
   {
     id: 'confirmacao',
@@ -31,9 +67,21 @@ export const POLITICA_SENHA: ReadonlyArray<{
   },
 ]
 
+/** `GET /me/senha/politica`. Só chamada com a flag ligada; qualquer falha cai na `POLITICA_PADRAO`. */
+export async function buscarPoliticaSenha(): Promise<PoliticaSenha> {
+  try {
+    const res = await apiFetch(`${API}/me/senha/politica`, { headers: await withAuthHeaders() })
+    if (!res.ok) return POLITICA_PADRAO
+    const lida = politicaSchema.safeParse(await res.json())
+    return lida.success && lida.data.minimo <= lida.data.maximo ? lida.data : POLITICA_PADRAO
+  } catch {
+    return POLITICA_PADRAO
+  }
+}
+
 export type ResultadoSenha =
   | { tipo: 'sucesso' }
-  | { tipo: 'politica'; falhas: string[] }
+  | { tipo: 'politica'; regras: string[] }
   | { tipo: 'senha_atual_invalida' }
   | { tipo: 'muitas_tentativas' }
   | { tipo: 'indisponivel' }
@@ -47,10 +95,10 @@ export const mapearRespostaSenha = (status: number, body?: unknown): ResultadoSe
   const codigo = (body as { codigo?: string } | undefined)?.codigo
   if (status === 204 || status === 200) return { tipo: 'sucesso' }
   if (status === 400 && codigo === 'POLITICA') {
-    const falhas = (body as { falhas?: unknown }).falhas
+    const regras = (body as { regras?: unknown }).regras
     return {
       tipo: 'politica',
-      falhas: Array.isArray(falhas) ? falhas.filter((f): f is string => typeof f === 'string') : [],
+      regras: Array.isArray(regras) ? regras.filter((r): r is string => typeof r === 'string') : [],
     }
   }
   if (status === 422 && codigo === 'SENHA_ATUAL_INVALIDA') return { tipo: 'senha_atual_invalida' }
