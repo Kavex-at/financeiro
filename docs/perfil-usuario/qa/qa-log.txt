@@ -1,0 +1,42 @@
+QA 1 — menu do avatar
+  📸 01a-header-desktop.png
+  📸 01a2-avatar-chevron-hover.png
+  📸 01b-menu-aberto-desktop.png
+  itens do menu: ["Meu perfil","Alterar senha","Sair"]
+  📸 01c-menu-teclado-foco.png
+  teclado: Enter→foco em "Meu perfil", ArrowDown→"Alterar senha", ArrowDown→"Sair"
+  teclado: Escape fecha=true, foco volta para=user-menu
+  "Alterar senha" → /perfil#senha
+  erros de console: 0
+  📸 01d-header-mobile-360.png
+  📸 01e-menu-aberto-mobile-360.png
+  mobile: menu abre; scrollWidth=360 (viewport 360)
+QA 2 — aviso sem vínculo Conexos
+  rafael.lima: aviso presente=true
+  📸 02a-rafael-perfil-completo.png
+  erros de console: 0 
+  marina.souza: aviso presente=false (esperado false)
+  📸 02b-marina-perfil-completo.png
+  📸 02c-marina-permissoes.png
+  erros de console: 0 
+QA 3 — atividade da semana × /metricas
+  📸 03a-atividade-esta-semana.png
+  texto atividade (semana): Minha atividade O que você executou, com os mesmos critérios de /metricas. Hoje Esta semana (desde sex 18:00) Este mês Personalizado Permutas PERMUTAS CONCLUÍDAS 3 ↑ 3 vs. anterior aumento de 3 em relação ao período anterior VALOR BAIXADO R$ 572.070,55 ↑ R$ 572.070,55 vs. anterior aumento de R$ 572.070,55 em relação ao período anterior 1 parciais 1 aguardando borderô finalizado 1 com erro SISPAG LOTES FINALIZADOS 2 ↑ 2 vs. anterior aumento de 2 em relação ao período anterior REMESSAS GERADAS 2 ↑ 2 vs. anterior aumento de 2 em relação ao período anterior RETORNOS CONCILIADOS 1 ↑ 1 vs. anterior aumento de 1 em relação ao período anterior VALOR REMESSADO R$ 116.850,75 ↑ R$ 116.850,75 vs. anterior aumento de R$ 116.850,75 em relação ao período anterior R$ 51.350,75 agendado pelo banco R$ 18.450,00 pago confirmado no ERP 1 com erro Adiantamentos ADIANTAMENTOS CONCLUÍDOS 2 ↑ 1 vs. anterior aum
+  📸 03b-atividade-hoje.png
+  texto atividade (hoje): Minha atividade O que você executou, com os mesmos critérios de /metricas. Hoje Esta semana (desde sex 18:00) Este mês Personalizado Permutas PERMUTAS CONCLUÍDAS 2 ↑ 2 vs. anterior aumento de 2 em relação ao período anterior VALOR BAIXADO R$ 280.820,55 ↑ R$ 280.820,55 vs. anterior aumento de R$ 280.820,55 em relação ao período anterior 0 parciais 0 aguardando borderô finalizado 1 com erro SISPAG LOTES FINALIZADOS 1 ↑ 1 vs. anterior aumento de 1 em relação ao período anterior REMESSAS GERADAS 1 ↑ 1 vs. anterior aumento de 1 em relação ao período anterior RETORNOS CONCILIADOS 0 = igual ao períod
+  📸 03c-metricas-mesma-semana.png
+  texto /metricas: Métricas Quanto trabalho o sistema fez pela operação, por semana (sexta 18:00 a sexta 18:00). Valores gravados no momento de cada operação. Recarregar Semana de 18/09 a 25/09/2026 PERMUTAS CONCLUÍDAS 0,0% 0 de 2 tentativas VALOR BAIXADO EM PERMUTAS R$ 0,00 borderôs finalizados ADIANTAMENTOS CONCLUÍDOS 100,0% 1 de 1 tentativas VALOR ALOCADO EM ADIANTAMENTOS R$ 60.000,00 créditos de cliente PAGAMENTOS ACEITOS PELO BANCO — sem remessa na semana VALOR ACEITO EM PAGAMENTOS R$ 0,00 títulos agendados ou pagos Histórico Semana Permutas concluídas Valor baixado Adiantamentos concluídos Valor alocado Pagamentos aceitos Valor aceito 25/09 a 02/10/2026 em andamento · parcial até sex 02/10, 11:36 57,1% 4 de 7 tentativas R$ 627.070,55 66,7% 2 de 3 tentativas R$ 177.300,00 50,0% 2 de 4 títulos, 1 aguardando retorno R$ 51.350,75 18/09 a 25/09/2026 0,0% 0 de 2 tentativas R$ 0,00 100,0% 1 de 1 tentativas R$ 60.000,00 — R$ 0,00 11/09 a 18/09/2026 — R$ 0,00 — R$ 0,00 — R$ 0,00 04/09 a 11/09/2026 — R$ 0,00 — R$ 0,00 — R$ 0,00 28/08 a 04/09/2026 — R$ 0,00 — R$ 0,00 — R$ 0,00 21/08 a 28/08/2026 — R$ 0,00 — R$ 0,00 — R$ 0,00 14/08 a 21/08/2026 — R$ 0,00 — R$ 0,00 — R$ 0,00 07/08 a 14/08/2026 — R$ 0,00 — R
+  erros de console: 0 
+QA 4 — histórico
+  📸 04a-historico-desktop.png — linhas iniciais=25
+  "Carregar mais": linhas 25 → 26; botão ainda visível=false
+  filtro frente=SISPAG: linhas=9
+  + status=erro: linhas=1
+  📸 04b-historico-filtro-sispag-erro.png
+  📸 04c-historico-tooltip-data.png
+  erros de console: 0 
+  📸 04d-historico-cartoes-mobile-360.png — tabela visível=false, scrollWidth=360
+  📸 04e-perfil-mobile-360-completo.png
+QA 5 — segurança em breve
+  📸 05a-seguranca-em-breve.png — "em breve" visível=true, inputs desabilitados=3/3, botão desabilitado=true
+  erros de console: 0 
