@@ -279,13 +279,14 @@ describe('UserRepository', () => {
         });
     });
 
-    it('updatePassword: parametrizado; false quando nenhuma linha afetada', async () => {
-        const db = buildDb();
-        (db.update as jest.Mock).mockResolvedValueOnce(0);
+    it('updatePassword sem passo: id inexistente → false, nada gravado, e nada fora da transação', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
         expect(await repoOf(db).updatePassword(999, 'h')).toBe(false); // id inexistente
-        const [sql, params] = (db.update as jest.Mock).mock.calls[0];
-        expect(sql).toContain('UPDATE app_user SET password_hash = $passwordHash WHERE id = $id');
-        expect(params).toEqual({ id: 999, passwordHash: 'h' });
+        expect(db.withTransaction).toHaveBeenCalledTimes(1);
+        expect(tx.update).not.toHaveBeenCalled();
+        expect(tx.insert).not.toHaveBeenCalled();
+        expect(db.update).not.toHaveBeenCalled();
     });
 
     describe('findByLoginIdentifier', () => {
@@ -792,7 +793,9 @@ describe('UserRepository — passo antes do commit (R6)', () => {
     it('updatePassword: BEGIN → trava → escrita → admin → COMMIT, com a linha travada', async () => {
         const { db, ordem } = bancoComOrdem();
         const antes = passo(ordem);
-        expect(await repoOf(db).updatePassword(4, '$2a$12$novo', antes)).toBe(true);
+        expect(await repoOf(db).updatePassword(4, '$2a$12$novo', { antesDoCommit: antes })).toBe(
+            true,
+        );
         expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'admin', 'COMMIT']);
         expect(antes).toHaveBeenCalledWith(
             expect.anything(),
@@ -807,15 +810,67 @@ describe('UserRepository — passo antes do commit (R6)', () => {
     it('updatePassword: falha no admin → ROLLBACK e o erro sobe', async () => {
         const { db, ordem } = bancoComOrdem();
         await expect(
-            repoOf(db).updatePassword(4, 'h', passo(ordem, new Error('gotrue fora'))),
+            repoOf(db).updatePassword(4, 'h', {
+                antesDoCommit: passo(ordem, new Error('gotrue fora')),
+            }),
         ).rejects.toThrow('gotrue fora');
         expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'admin', 'ROLLBACK']);
+    });
+
+    it('updatePassword SEM passo (sem espelho): ainda abre transação e trava a linha (FOR UPDATE)', async () => {
+        const { db, tx, ordem } = bancoComOrdem();
+        expect(await repoOf(db).updatePassword(4, '$2a$12$novo')).toBe(true);
+        expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'COMMIT']);
+        const [sql, params] = (tx.update as jest.Mock).mock.calls[0] as unknown as [
+            string,
+            Record<string, unknown>,
+        ];
+        expect(sql).toContain('UPDATE app_user SET password_hash = $passwordHash WHERE id = $id');
+        expect(params).toEqual({ id: 4, passwordHash: '$2a$12$novo' });
+        expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('updatePassword com evento: INSERT da trilha na MESMA tx, depois da escrita e ANTES do passo', async () => {
+        const { db, tx, ordem } = bancoComOrdem();
+        const antes = passo(ordem);
+        const ok = await repoOf(db).updatePassword(4, '$2a$12$novo', {
+            antesDoCommit: antes,
+            evento: { actor: 'beto', targetId: 4, type: 'senha', before: null, after: null },
+        });
+        expect(ok).toBe(true);
+        expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'evento', 'admin', 'COMMIT']);
+        const [sql, params] = (tx.insert as jest.Mock).mock.calls[0] as unknown as [
+            string,
+            Record<string, unknown>,
+        ];
+        expect(sql).toContain('INSERT INTO app_user_access_event');
+        expect(params).toEqual({ ator: 'beto', alvo: 4, tipo: 'senha', antes: null, depois: null });
+    });
+
+    it('updatePassword com evento e passo falhando: ROLLBACK (o evento some junto)', async () => {
+        const { db, ordem } = bancoComOrdem();
+        await expect(
+            repoOf(db).updatePassword(4, 'h', {
+                antesDoCommit: passo(ordem, new Error('gotrue fora')),
+                evento: { actor: 'beto', targetId: 4, type: 'senha', before: null, after: null },
+            }),
+        ).rejects.toThrow('gotrue fora');
+        expect(ordem).toEqual(['BEGIN', 'trava', 'escrita', 'evento', 'admin', 'ROLLBACK']);
+    });
+
+    it('updatePassword com evento: id inexistente → false, sem escrita nem evento', async () => {
+        const { db, ordem } = bancoComOrdem(null);
+        const ok = await repoOf(db).updatePassword(99, 'h', {
+            evento: { actor: 'x', targetId: 99, type: 'senha', before: null, after: null },
+        });
+        expect(ok).toBe(false);
+        expect(ordem).toEqual(['BEGIN', 'trava', 'COMMIT']);
     });
 
     it('updatePassword com passo: id inexistente → false, sem escrita nem admin', async () => {
         const { db, ordem } = bancoComOrdem(null);
         const antes = passo(ordem);
-        expect(await repoOf(db).updatePassword(99, 'h', antes)).toBe(false);
+        expect(await repoOf(db).updatePassword(99, 'h', { antesDoCommit: antes })).toBe(false);
         expect(antes).not.toHaveBeenCalled();
     });
 

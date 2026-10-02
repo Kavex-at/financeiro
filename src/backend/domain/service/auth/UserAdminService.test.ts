@@ -616,10 +616,12 @@ describe('UserAdminService — escritas de credencial espelhadas no Supabase Aut
         );
         const m = montar(mirror);
         Object.assign(m.repo, {
-            updatePassword: jest.fn(async (id: number, hash: string, a?: AntesDoCommit) => {
-                await transacao(id, { passwordHash: hash }, a);
-                return true;
-            }),
+            updatePassword: jest.fn(
+                async (id: number, hash: string, o: { antesDoCommit?: AntesDoCommit } = {}) => {
+                    await transacao(id, { passwordHash: hash }, o.antesDoCommit);
+                    return true;
+                },
+            ),
             deactivateGuarded: jest.fn(async (id: number, _ator: string, a?: AntesDoCommit) => {
                 await transacao(id, { ativo: false }, a);
                 return DEACTIVATE_RESULT.DEACTIVATED;
