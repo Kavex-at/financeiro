@@ -132,12 +132,74 @@ describe('SupabaseAuthClient — endpoints públicos', () => {
         expect(c.headers.authorization).toBe('Bearer access-do-usuario');
     });
 
+    it('logout com escopo others: POST /logout?scope=others (revoga as OUTRAS sessões)', async () => {
+        fetchMock.mockImplementation(async () => resposta(204));
+        const { client } = criar();
+        await client.logout('access-do-usuario', 'others');
+        expect(chamada().url).toBe(`${URL_LOCAL}/auth/v1/logout?scope=others`);
+    });
+
     it('2xx fora do formato = indisponível (nunca "sucesso parcial"), mensagem em português', async () => {
         fetchMock.mockImplementation(async () => resposta(200, { access_token: 'at' }));
         const { client } = criar();
         const erro = await client.signInWithPassword('a@b.com', 'x').catch((e) => e);
         expect(erro).toBeInstanceOf(SupabaseAuthUnavailableError);
         expect(erro.message).toMatch(/resposta inesperada/i);
+    });
+});
+
+describe('SupabaseAuthClient.updateOwnPassword — PUT /user com o token do chamador (Q1)', () => {
+    it('PUT /auth/v1/user { password } com apikey publicável e o Bearer do PRÓPRIO usuário', async () => {
+        fetchMock.mockImplementation(async () => resposta(200, USUARIO));
+        const { client } = criar();
+        await client.updateOwnPassword('access-do-chamador', 'Nova-senha-9');
+        const c = chamada();
+        expect(c.url).toBe(`${URL_LOCAL}/auth/v1/user`);
+        expect(c.method).toBe('PUT');
+        expect(c.headers.apikey).toBe(PUBLISHABLE);
+        expect(c.headers.authorization).toBe('Bearer access-do-chamador');
+        expect(c.body).toEqual({ password: 'Nova-senha-9' });
+    });
+
+    it('nunca usa a chave secreta (é uma chamada pública, em nome do usuário)', async () => {
+        fetchMock.mockImplementation(async () => resposta(200, USUARIO));
+        const { client } = criar();
+        await client.updateOwnPassword('access-do-chamador', 'Nova-senha-9');
+        expect(JSON.stringify(chamada().headers)).not.toContain(SECRET);
+    });
+
+    it('429 → indisponível com rateLimited; 5xx → indisponível; 2xx torto → indisponível', async () => {
+        const { client } = criar();
+        fetchMock.mockImplementationOnce(async () =>
+            resposta(429, { error_code: 'over_request_rate_limit' }),
+        );
+        const e429 = await client.updateOwnPassword('t', 'Nova-senha-9').catch((e) => e);
+        expect(e429).toBeInstanceOf(SupabaseAuthUnavailableError);
+        expect(e429.rateLimited).toBe(true);
+        fetchMock.mockImplementationOnce(async () => resposta(503));
+        const e5xx = await client.updateOwnPassword('t', 'Nova-senha-9').catch((e) => e);
+        expect(e5xx).toBeInstanceOf(SupabaseAuthUnavailableError);
+        expect(e5xx.rateLimited).toBe(false);
+        fetchMock.mockImplementationOnce(async () => resposta(200, { nada: true }));
+        const torto = await client.updateOwnPassword('t', 'Nova-senha-9').catch((e) => e);
+        expect(torto).toBeInstanceOf(SupabaseAuthUnavailableError);
+    });
+
+    it('4xx do GoTrue (ex.: sessão inexistente) → SupabaseAuthRejectedError com o code', async () => {
+        fetchMock.mockImplementation(async () =>
+            resposta(403, { error_code: 'session_not_found' }),
+        );
+        const { client } = criar();
+        const erro = await client.updateOwnPassword('t', 'Nova-senha-9').catch((e) => e);
+        expect(erro).toBeInstanceOf(SupabaseAuthRejectedError);
+        expect(erro.code).toBe('session_not_found');
+    });
+
+    it('a senha nunca vai para o log de falha', async () => {
+        fetchMock.mockImplementation(async () => resposta(503));
+        const { client, log } = criar();
+        await client.updateOwnPassword('t', 'Nova-senha-9').catch(() => undefined);
+        expect(JSON.stringify(log.warn.mock.calls)).not.toContain('Nova-senha-9');
     });
 });
 

@@ -39,6 +39,16 @@ export const supabaseErrorResponseSchema = z
     })
     .passthrough();
 
+/**
+ * Escopo do `POST /logout` do GoTrue: `local` encerra só a sessão dona do token; `others` encerra
+ * as OUTRAS sessões do usuário e mantém a dele. Sempre destas constantes, nunca do request.
+ */
+export const LOGOUT_SCOPE = {
+    LOCAL: 'local',
+    OTHERS: 'others',
+} as const;
+export type LogoutScope = (typeof LOGOUT_SCOPE)[keyof typeof LOGOUT_SCOPE];
+
 /** Sessão devolvida ao nosso login/refresh. */
 export interface SupabaseSession {
     accessToken: string;

@@ -26,6 +26,7 @@ const build = (adminConfigurado = true) => {
         adminCreateUser: jest.fn().mockResolvedValue({ id: UUID, banned: false }),
         adminUpdateUser: jest.fn().mockResolvedValue({ id: UUID, banned: false }),
         adminFindUserByEmail: jest.fn().mockResolvedValue(null),
+        updateOwnPassword: jest.fn().mockResolvedValue(undefined),
     };
     const repo = {
         setAuthUserId: jest.fn().mockResolvedValue(undefined),
@@ -134,6 +135,40 @@ describe('CredentialMirror — senha, e-mail, ativo', () => {
         await p.antesDoCommit?.(TX, linha());
         expect(client.adminUpdateUser).toHaveBeenCalledWith(UUID, { password: 'nova-senha-1' });
         expect(p.estado.supabaseAlterado).toBe(true);
+    });
+
+    it('senha com token do chamador (RAMO = put-user): PUT /user, nunca o update admin', async () => {
+        const { mirror, client } = build();
+        const p = await passo(mirror, {
+            tipo: 'senha',
+            senha: 'nova-senha-1',
+            tokenDoChamador: 'access-do-chamador',
+        });
+        await p.antesDoCommit?.(TX, linha());
+        expect(client.updateOwnPassword).toHaveBeenCalledWith('access-do-chamador', 'nova-senha-1');
+        expect(client.adminUpdateUser).not.toHaveBeenCalled();
+        expect(p.estado).toEqual({ supabaseAlterado: true, authUserId: UUID });
+    });
+
+    it('senha com token do chamador e sem vínculo: nada no GoTrue (D3)', async () => {
+        const { mirror, client } = build();
+        const p = await passo(mirror, { tipo: 'senha', senha: 's', tokenDoChamador: 't' });
+        await p.antesDoCommit?.(TX, linha({ authUserId: undefined }));
+        expect(client.updateOwnPassword).not.toHaveBeenCalled();
+        expect(client.adminUpdateUser).not.toHaveBeenCalled();
+        expect(p.estado.supabaseAlterado).toBe(false);
+    });
+
+    it('senha com token do chamador e GoTrue fora: o erro sobe, nada marcado como alterado', async () => {
+        const { mirror, client } = build();
+        client.updateOwnPassword.mockRejectedValue(
+            new SupabaseAuthUnavailableError('x', 'timeout'),
+        );
+        const p = await passo(mirror, { tipo: 'senha', senha: 's', tokenDoChamador: 't' });
+        await expect(p.antesDoCommit?.(TX, linha())).rejects.toBeInstanceOf(
+            SupabaseAuthUnavailableError,
+        );
+        expect(p.estado.supabaseAlterado).toBe(false);
     });
 
     it('e-mail: troca confirmada; conflito no GoTrue vira AuthEmailInUseError', async () => {
