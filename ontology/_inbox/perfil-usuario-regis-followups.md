@@ -40,6 +40,26 @@ no repositório. Ou se cria o módulo, ou se corrige a documentação.
 | security-3 | Rate limit leve e métrica de 400 em `/me/*` |
 | testability-4 | Casos de erro de transporte e teste de propriedade |
 
+## Backend da troca de senha (`feat/auth-senha-propria`)
+
+**Fora do escopo deste PR.** Entregue à sessão dona da transição de auth em 02/10. O front está
+pronto e desligado por `SENHA_PROPRIA_HABILITADA = false` em `src/frontend/lib/perfil/senha.ts`.
+
+Contrato que o front espera:
+- `GET /me/senha/politica` → `{ minimo, maximo, regras: [{ id, rotulo, padrao? }] }`. Se falhar, o front usa 8 a 72.
+- `POST /me/senha { senhaAtual, novaSenha }` → 204, 400 `{ codigo: 'POLITICA', regras: string[] }`, 422
+  `SENHA_ATUAL_INVALIDA` (nunca 401), 429 `MUITAS_TENTATIVAS`, 503 `AUTH_INDISPONIVEL`. 5xx nunca desloga.
+
+Restrições do ADR-0057 que valem para o backend:
+- **Ordem de escrita (R6):** a transação trava a linha e grava o bcrypt local; depois o update no GoTrue
+  (com a senha em claro, porque o GoTrue ignora `password_hash` no update); depois o commit. Falha no GoTrue = rollback + 503.
+- **Senha atual verificada de verdade nos dois modos:** bcrypt no local; no Supabase, login pelo proxy, e a sessão de prova é revogada.
+- **Sessões:** "encerrar as outras" usa logout `scope=others` do GoTrue. No modo local o token não tem estado, então não dá para revogar.
+- **Trilha:** a CHECK de `app_user_access_event.tipo` só aceita `papel`, `excecao` e `ativo`, então `senha` precisa de
+  migration (0073 ou a próxima livre). Gravar `antes`/`depois` = NULL, sem material de senha. O histórico já mostra
+  "Senha alterada" quando o tipo vier `senha`.
+- **Sem SMTP:** "require reauthentication" do Supabase fica desligado, e a política do GoTrue é alinhada em mínimo 8 e máximo 72 bytes.
+
 ## Follow-ups de produto (decisões da entrevista)
 
 - Adicionar `encerrado_em` em `conciliacao_execucao`. Hoje ela é datada por `atualizado_em`, que é uma aproximação.
