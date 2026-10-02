@@ -185,12 +185,16 @@ WITH atividade AS (
     UNION ALL
 
     SELECT e.em, 'plataforma'::text,
-           CASE WHEN e.ator = $username THEN 'acesso_alterado' ELSE 'acesso_recebido' END,
+           CASE WHEN e.ator = $username AND e.alvo_user_id <> $userId THEN 'acesso_alterado'
+                ELSE 'acesso_recebido' END,
            'usuario'::text, e.alvo_user_id::text, NULL::numeric, e.tipo::text,
            'acesso_evento'::text, e.id::text,
            jsonb_strip_nulls(jsonb_build_object(
                'tipoAcesso', e.tipo,
-               'outroUsername', CASE WHEN e.ator = $username THEN t.username ELSE e.ator END,
+               -- ator = alvo (troca da própria senha, ADR-0059): evento recebido, sem "outro"
+               'outroUsername', CASE WHEN e.ator = $username AND e.alvo_user_id = $userId THEN NULL
+                                     WHEN e.ator = $username THEN t.username
+                                     ELSE e.ator END,
                'papelAntes', CASE WHEN e.tipo = 'papel' THEN e.antes->>'nome' END,
                'papelDepois', CASE WHEN e.tipo = 'papel' THEN e.depois->>'nome' END,
                'ativoDepois', CASE WHEN e.tipo = 'ativo' AND jsonb_typeof(e.depois) = 'boolean'

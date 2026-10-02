@@ -30,7 +30,7 @@ import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { isSessionExpiredError } from '@/lib/http'
 import { PERMISSAO, type Permissao } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
-import { rotuloAlvo, separador } from './alvo'
+import { descreverAcao, rotuloAlvo, separador } from './alvo'
 import { momentoSp, tempoRelativo } from './periodo'
 import { ErroSecao, SecaoPerfil } from './SecaoPerfil'
 
@@ -59,41 +59,6 @@ const ROTULO_FRENTE: Record<FrenteAtividade, string> = {
   sispag: 'SISPAG',
   recebimentos: 'Adiantamentos',
   plataforma: 'Plataforma',
-}
-
-/** Ação → frase em português. O código vem do servidor; o texto mora aqui. */
-const descreverAcao = (l: LinhaHistorico): string => {
-  const outro = l.detalhe.outroUsername ?? 'outro usuário'
-  switch (l.acao) {
-    case 'baixa_permuta':
-      return 'Baixa de permuta'
-    case 'excecao_criada':
-      return 'Marcou permutado fora do painel'
-    case 'excecao_removida':
-      return 'Desfez exceção de permuta'
-    case 'lote_criado':
-      return 'Criou lote'
-    case 'lote_finalizado':
-      return 'Finalizou lote'
-    case 'destino_gravado':
-      return 'Gravou destino de pagamento'
-    case 'destino_aprovado':
-      return 'Aprovou destino manual'
-    case 'remessa_gerada':
-      return 'Gerou remessa'
-    case 'retorno_conciliado':
-      return 'Conciliou retorno'
-    case 'numerario_executado':
-      return 'Executou solicitação de numerário'
-    case 'alerta_reconhecido':
-      return `Reconheceu alerta${l.detalhe.tipoAlerta ? ` (${l.detalhe.tipoAlerta})` : ''}`
-    case 'acesso_alterado':
-      return `Alterou acesso de ${outro}`
-    case 'acesso_recebido':
-      return `Seu acesso foi alterado por ${outro}`
-    default:
-      return l.acao
-  }
 }
 
 /** Para onde o link da linha leva, e a permissão que o mostra (sem ela, só o id em texto). */

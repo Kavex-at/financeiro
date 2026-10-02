@@ -113,3 +113,42 @@ export const rotuloAlvo = (l: LinhaHistorico): RotuloAlvo => {
       return { texto: l.alvoId, titulo }
   }
 }
+
+/** Ação → frase em português. O código vem do servidor; o texto mora aqui. */
+export const descreverAcao = (l: LinhaHistorico): string => {
+  const outro = l.detalhe.outroUsername ?? 'outro usuário'
+  switch (l.acao) {
+    case 'baixa_permuta':
+      return 'Baixa de permuta'
+    case 'excecao_criada':
+      return 'Marcou permutado fora do painel'
+    case 'excecao_removida':
+      return 'Desfez exceção de permuta'
+    case 'lote_criado':
+      return 'Criou lote'
+    case 'lote_finalizado':
+      return 'Finalizou lote'
+    case 'destino_gravado':
+      return 'Gravou destino de pagamento'
+    case 'destino_aprovado':
+      return 'Aprovou destino manual'
+    case 'remessa_gerada':
+      return 'Gerou remessa'
+    case 'retorno_conciliado':
+      return 'Conciliou retorno'
+    case 'numerario_executado':
+      return 'Executou solicitação de numerário'
+    case 'alerta_reconhecido':
+      return `Reconheceu alerta${l.detalhe.tipoAlerta ? ` (${l.detalhe.tipoAlerta})` : ''}`
+    case 'acesso_alterado':
+      return l.detalhe.tipoAcesso === 'senha' ? `Redefiniu a senha de ${outro}` : `Alterou acesso de ${outro}`
+    case 'acesso_recebido':
+      // Sem "outro" = ator e alvo são o próprio usuário (ex.: troca da própria senha, ADR-0059).
+      if (l.detalhe.tipoAcesso === 'senha') {
+        return l.detalhe.outroUsername ? `Sua senha foi redefinida por ${outro}` : 'Alterou a própria senha'
+      }
+      return l.detalhe.outroUsername ? `Seu acesso foi alterado por ${outro}` : 'Alterou o próprio acesso'
+    default:
+      return l.acao
+  }
+}

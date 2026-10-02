@@ -352,13 +352,14 @@ describeComBanco('AtividadeUsuario — integração', () => {
 
         expect(obtido).toEqual(esperado);
         expect(new Set(linhas.map((l) => l.fonte)).size).toBe(11);
-        // A trilha de outro par (bruno → carla) nunca aparece; o autoajuste (ana → ana) aparece uma vez.
+        // A trilha de outro par (bruno → carla) nunca aparece; o autoajuste (ana → ana) aparece uma
+        // vez, como RECEBIDO e sem "outro" (ator = alvo, mesma regra da troca da própria senha).
         const acessos = linhas.filter((l) => l.fonte === 'acesso_evento');
-        expect(acessos.map((l) => [l.acao, l.detalhe.outroUsername]).sort()).toEqual(
+        expect(acessos.map((l) => [l.acao, l.detalhe.outroUsername ?? null]).sort()).toEqual(
             [
-                ['acesso_alterado', 'ana'],
                 ['acesso_alterado', 'bruno'],
                 ['acesso_recebido', 'bruno'],
+                ['acesso_recebido', null],
             ].sort(),
         );
         // Nenhuma coluna de credencial chega à linha.
@@ -402,5 +403,34 @@ describeComBanco('AtividadeUsuario — integração', () => {
             ['conciliacao', 'permuta_execucao', 'remessa', 'sn_execucao'].sort(),
         );
         expect(linhas.every((l) => l.statusBruto === 'error')).toBe(true);
+    });
+
+    it('troca da própria senha (ator = alvo, ADR-0059): evento recebido, sem "outro", status info', async () => {
+        await admin.query(
+            `INSERT INTO app_user_access_event (ator, alvo_user_id, tipo, antes, depois, em)
+             VALUES ('ana', $1, 'senha', NULL, NULL, '2026-09-30 12:00-03')`,
+            [ids.ana],
+        );
+        const linhas = await repo.historico({
+            userId: ids.ana,
+            username: 'ana',
+            ...SEMANA,
+            tipo: 'acesso_recebido',
+            status: 'info',
+            limit: 100,
+        });
+        const senha = linhas.find((l) => l.detalhe.tipoAcesso === 'senha');
+        expect(senha).toBeDefined();
+        expect(senha?.acao).toBe('acesso_recebido');
+        expect(senha?.detalhe.outroUsername).toBeUndefined();
+        // a alteração de acesso de ana em bruno continua "alterado", com o nome de bruno
+        const emOutro = await repo.historico({
+            userId: ids.ana,
+            username: 'ana',
+            ...SEMANA,
+            tipo: 'acesso_alterado',
+            limit: 100,
+        });
+        expect(emOutro.map((l) => l.detalhe.outroUsername)).toEqual(['bruno']);
     });
 });

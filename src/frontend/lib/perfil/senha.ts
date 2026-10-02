@@ -5,12 +5,12 @@ import { apiFetch } from '../http'
 const API = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '')
 
 /**
- * Troca da própria senha — DESLIGADA até o backend `feat/auth-senha-propria` existir
- * (`POST /me/senha` ainda não existe). Com a flag desligada a seção Segurança é desenhada, mas
- * desabilitada com "em breve", e nada aqui é chamado. Ligar = trocar esta constante num tweak
- * posterior, junto com o backend.
+ * Troca da própria senha — LIGADA desde a v0.51.0: o backend (`GET /me/senha/politica`,
+ * `POST /me/senha`, ADR-0059, PR #102) está em produção desde a v0.50.0. Desligar (`false`) volta a
+ * seção Segurança para "em breve", desabilitada e sem nenhuma chamada de rede — é o kill switch do
+ * front, caso o backend precise sair do ar.
  */
-export const SENHA_PROPRIA_HABILITADA = false
+export const SENHA_PROPRIA_HABILITADA = true
 
 /**
  * Contrato de `GET /me/senha/politica` → `{ minimo, maximo, regras[] }`. O tamanho vem de
