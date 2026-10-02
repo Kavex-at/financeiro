@@ -1,6 +1,17 @@
 import { redactBody, redactErrorMessage } from './redact.js';
 
 describe('redactBody', () => {
+    it('caso 8 (ADR-0059): senhaAtual e novaSenha do POST /me/senha saem [REDACTED]', () => {
+        expect(redactBody({ senhaAtual: 'x', novaSenha: 'y' })).toEqual({
+            senhaAtual: '[REDACTED]',
+            novaSenha: '[REDACTED]',
+        });
+        expect(redactBody({ SENHAATUAL: 'x', NovaSenha: 'y' })).toEqual({
+            SENHAATUAL: '[REDACTED]',
+            NovaSenha: '[REDACTED]',
+        });
+    });
+
     it('masks sensitive top-level keys (case-insensitive)', () => {
         const out = redactBody({ username: 'simone', password: 'segredo', Token: 'abc' }) as Record<
             string,

@@ -152,6 +152,8 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['GET /metricas/ciclo', P.METRICAS_VER],
     ['GET /me/conexos-status', AUT],
     ['GET /me/permissoes', AUT],
+    ['GET /me/senha/politica', AUT],
+    ['POST /me/senha', AUT],
     ['GET /conexos/filiais', AUT],
 ];
 
@@ -214,7 +216,7 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055): 27/32/15/10/2/1/2/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + senha, ADR-0059): 27/32/15/10/2/1/4/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
@@ -223,7 +225,7 @@ describe('cobertura de guard por rota (introspecção)', () => {
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);
         expect(porMount('metricas')).toBe(1);
-        expect(porMount('me')).toBe(2);
+        expect(porMount('me')).toBe(4);
         expect(porMount('conexos')).toBe(1);
     });
 
