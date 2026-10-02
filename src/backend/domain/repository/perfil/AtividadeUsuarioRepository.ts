@@ -73,7 +73,9 @@ WITH atividade AS (
     SELECT l.criado_em, 'sispag'::text, 'lote_criado'::text, 'lote'::text,
            l.id::text, NULL::numeric, l.status::text,
            'lote_criado'::text, l.id::text,
-           jsonb_build_object('filCod', l.fil_cod)
+           jsonb_strip_nulls(jsonb_build_object(
+               'filCod', l.fil_cod, 'remessaNum', l.remessa_num, 'banco', l.banco
+           ))
       FROM lote_pagamento l
      WHERE l.criado_por = $username
        AND l.criado_em >= $inicio::timestamptz
@@ -86,7 +88,9 @@ WITH atividade AS (
            (SELECT SUM(i.valor) FROM lote_pagamento_item i WHERE i.lote_id = l.id),
            l.status::text,
            'lote_finalizado'::text, l.id::text,
-           jsonb_build_object('filCod', l.fil_cod)
+           jsonb_strip_nulls(jsonb_build_object(
+               'filCod', l.fil_cod, 'remessaNum', l.remessa_num, 'banco', l.banco
+           ))
       FROM lote_pagamento l
      WHERE l.finalizado_por = $username
        AND l.finalizado_em >= $inicio::timestamptz
@@ -100,7 +104,10 @@ WITH atividade AS (
            d.fil_cod::text || '-' || d.doc_cod || '-' || d.tit_cod,
            NULL::numeric, d.evento::text,
            'destino_audit'::text, d.id::text,
-           jsonb_build_object('filCod', d.fil_cod, 'loteId', d.lote_id::text)
+           jsonb_build_object(
+               'filCod', d.fil_cod, 'loteId', d.lote_id::text,
+               'docCod', d.doc_cod, 'titCod', d.tit_cod
+           )
       FROM lote_pagamento_item_destino_audit d
      WHERE d.alterado_por = $username
        AND d.alterado_em >= $inicio::timestamptz
@@ -115,9 +122,12 @@ WITH atividade AS (
            'remessa'::text, r.id::text,
            jsonb_strip_nulls(jsonb_build_object(
                'filCod', r.fil_cod,
-               'conexosUsername', r.conexos_username
+               'conexosUsername', r.conexos_username,
+               'remessaNum', lp.remessa_num,
+               'banco', lp.banco
            ))
       FROM remessa_execucao r
+      LEFT JOIN lote_pagamento lp ON lp.id = r.lote_id
      WHERE r.executado_por = $username
        AND r.dry_run = false
        AND COALESCE(r.encerrado_em, r.criado_em) >= $inicio::timestamptz
@@ -133,7 +143,10 @@ WITH atividade AS (
            jsonb_strip_nulls(jsonb_build_object(
                'parcial', CASE WHEN c.varredura_incompleta THEN true END,
                'filCod', c.fil_cod,
-               'conexosUsername', c.conexos_username
+               'conexosUsername', c.conexos_username,
+               'bncCod', c.bnc_cod,
+               'agendados', c.pagos,
+               'rejeitados', c.rejeitados
            ))
       FROM conciliacao_execucao c
      WHERE c.executado_por = $username
@@ -175,10 +188,18 @@ WITH atividade AS (
            CASE WHEN e.ator = $username THEN 'acesso_alterado' ELSE 'acesso_recebido' END,
            'usuario'::text, e.alvo_user_id::text, NULL::numeric, e.tipo::text,
            'acesso_evento'::text, e.id::text,
-           jsonb_build_object(
+           jsonb_strip_nulls(jsonb_build_object(
                'tipoAcesso', e.tipo,
-               'outroUsername', CASE WHEN e.ator = $username THEN t.username ELSE e.ator END
-           )
+               'outroUsername', CASE WHEN e.ator = $username THEN t.username ELSE e.ator END,
+               'papelAntes', CASE WHEN e.tipo = 'papel' THEN e.antes->>'nome' END,
+               'papelDepois', CASE WHEN e.tipo = 'papel' THEN e.depois->>'nome' END,
+               'ativoDepois', CASE WHEN e.tipo = 'ativo' AND jsonb_typeof(e.depois) = 'boolean'
+                                   THEN e.depois END,
+               'excecoesAntes', CASE WHEN e.tipo = 'excecao' AND jsonb_typeof(e.antes) = 'array'
+                                     THEN e.antes END,
+               'excecoesDepois', CASE WHEN e.tipo = 'excecao' AND jsonb_typeof(e.depois) = 'array'
+                                      THEN e.depois END
+           ))
       FROM app_user_access_event e
       JOIN app_user t ON t.id = e.alvo_user_id
      WHERE (e.ator = $username OR e.alvo_user_id = $userId)
@@ -315,6 +336,11 @@ SELECT
         AND COALESCE(s.encerrado_em, s.criado_em) >= $inicio::timestamptz
         AND COALESCE(s.encerrado_em, s.criado_em) < $fim::timestamptz) AS recebimentos_com_erro`;
 
+/** Item da trilha de exceções (`AccessRepository`): `{ permissao, efeito }`. */
+const excecaoSchema = z
+    .object({ permissao: z.string(), efeito: z.enum(['conceder', 'revogar']) })
+    .strip();
+
 const detalheSchema = z
     .object({
         parcial: z.boolean().optional(),
@@ -327,6 +353,17 @@ const detalheSchema = z
         alvoAlerta: z.string().optional(),
         tipoAcesso: z.string().optional(),
         outroUsername: z.string().optional(),
+        remessaNum: z.coerce.number().int().optional(),
+        banco: z.string().optional(),
+        titCod: z.string().optional(),
+        bncCod: z.coerce.number().int().optional(),
+        agendados: z.coerce.number().int().optional(),
+        rejeitados: z.coerce.number().int().optional(),
+        papelAntes: z.string().optional(),
+        papelDepois: z.string().optional(),
+        ativoDepois: z.boolean().optional(),
+        excecoesAntes: z.array(excecaoSchema).optional().catch(undefined),
+        excecoesDepois: z.array(excecaoSchema).optional().catch(undefined),
     })
     .strip();
 

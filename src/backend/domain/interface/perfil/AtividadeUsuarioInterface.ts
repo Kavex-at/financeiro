@@ -163,7 +163,17 @@ export interface AlvoPerfil {
     username: string;
 }
 
-/** Detalhe opcional da linha. Nenhuma chave de credencial nem dado de outro usuário além do nome. */
+/** Item da trilha de exceções de permissão (`AccessRepository`). */
+export interface ExcecaoAcesso {
+    permissao: string;
+    efeito: 'conceder' | 'revogar';
+}
+
+/**
+ * Detalhe opcional da linha, para o rótulo do alvo. Nenhuma chave de credencial. Do outro usuário,
+ * só o nome e — nos eventos de acesso — o que mudou naquela alteração (papel, exceções, ativo), que
+ * é a própria ação do usuário (ator) ou a que ele sofreu (alvo).
+ */
 export interface DetalheAtividade {
     parcial?: boolean;
     filCod?: number;
@@ -175,6 +185,21 @@ export interface DetalheAtividade {
     alvoAlerta?: string;
     tipoAcesso?: string;
     outroUsername?: string;
+    /** Lote: número da remessa (quando já gerada) e banco. */
+    remessaNum?: number;
+    banco?: string;
+    /** Destino de pagamento: parcela do título (`docCod` já existe). */
+    titCod?: string;
+    /** Conciliação: banco e contagens do retorno. "agendados" = o que o .RET aceitou (nunca "pago"). */
+    bncCod?: number;
+    agendados?: number;
+    rejeitados?: number;
+    /** Evento de acesso: o que mudou. */
+    papelAntes?: string;
+    papelDepois?: string;
+    ativoDepois?: boolean;
+    excecoesAntes?: ExcecaoAcesso[];
+    excecoesDepois?: ExcecaoAcesso[];
 }
 
 /** Linha como sai do repositório (status ainda bruto). */

@@ -168,6 +168,72 @@ describe('AtividadeUsuarioRepository.historico', () => {
         expect(b.detalhe).toEqual({});
     });
 
+    it('detalhe para o rótulo do alvo: lote, conciliação e o que mudou no evento de acesso', async () => {
+        const db = {
+            selectMany: jest.fn().mockResolvedValue([
+                linha({
+                    acao: 'remessa_gerada',
+                    frente: 'sispag',
+                    alvo_tipo: 'lote',
+                    fonte: 'remessa',
+                    detalhe: { filCod: 7, remessaNum: '231002', banco: '341' },
+                }),
+                linha({
+                    acao: 'retorno_conciliado',
+                    frente: 'sispag',
+                    alvo_tipo: 'retorno',
+                    fonte: 'conciliacao',
+                    fonte_id: '2',
+                    detalhe: { bncCod: 341, agendados: 2, rejeitados: 1 },
+                }),
+                linha({
+                    acao: 'acesso_recebido',
+                    frente: 'plataforma',
+                    alvo_tipo: 'usuario',
+                    fonte: 'acesso_evento',
+                    fonte_id: '3',
+                    detalhe: {
+                        tipoAcesso: 'excecao',
+                        outroUsername: 'admin',
+                        excecoesAntes: [],
+                        excecoesDepois: [
+                            { permissao: 'metricas:ver', efeito: 'conceder', extra: 1 },
+                        ],
+                    },
+                }),
+                linha({
+                    acao: 'acesso_recebido',
+                    frente: 'plataforma',
+                    alvo_tipo: 'usuario',
+                    fonte: 'acesso_evento',
+                    fonte_id: '4',
+                    // trilha torta não derruba o histórico: a lista some, o resto fica
+                    detalhe: { tipoAcesso: 'excecao', excecoesDepois: [{ permissao: 1 }] },
+                }),
+            ]),
+        };
+        const [rem, conc, exc, torta] = await new AtividadeUsuarioRepository(db as never).historico(
+            consultaBase,
+        );
+        expect(rem.detalhe).toEqual({ filCod: 7, remessaNum: 231002, banco: '341' });
+        expect(conc.detalhe).toEqual({ bncCod: 341, agendados: 2, rejeitados: 1 });
+        expect(exc.detalhe.excecoesDepois).toEqual([
+            { permissao: 'metricas:ver', efeito: 'conceder' },
+        ]);
+        expect(torta.detalhe).toEqual({ tipoAcesso: 'excecao' });
+    });
+
+    it('o ramo de remessa traz o número da remessa do lote; nada além do nome do outro usuário', async () => {
+        const db = { selectMany: jest.fn().mockResolvedValue([]) };
+        await new AtividadeUsuarioRepository(db as never).historico(consultaBase);
+        const partes = ramos(db.selectMany.mock.calls[0][0]);
+        const remessa = partes.find((p) => /FROM remessa_execucao\b/.test(p));
+        expect(remessa).toMatch(/LEFT JOIN lote_pagamento \w+ ON \w+\.id = r\.lote_id/);
+        const acesso = partes.find((p) => p.includes('app_user_access_event'));
+        // do app_user do outro lado, só `username`
+        expect(acesso?.match(/\bt\.\w+/g)?.filter((c) => c !== 't.id')).toEqual(['t.username']);
+    });
+
     it('linha fora do contrato (fonte desconhecida) falha alto', async () => {
         const db = { selectMany: jest.fn().mockResolvedValue([linha({ fonte: 'app_user' })]) };
         await expect(
