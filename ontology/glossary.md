@@ -38,6 +38,8 @@ Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem e
 | **Nexxera** | Gateway/diretório bancário onde a remessa é depositada e o retorno é lido. |
 | **Baixa** | Quitação do título refletida no ERP após a conciliação do retorno. |
 | **Janela de corte** | Horário-limite do banco para envio do lote (a confirmar no diagnóstico). |
+| **Cadastro (cmn025) como fonte principal de destino** | Conta (TED) ou chave PIX ativa do favorecido no `cmn025` é o destino do pagamento; nunca é escrito pela solução (ADR-0060). |
+| **Exceção de destino** | Destino de um favorecido diferente do cadastro, só usado quando o cadastro não tem destino válido; por favorecido, reutilizável, aprovada por **segunda pessoa** com `sispag:excecao`, sem expiração, revogável (entidade `ExcecaoDestino`, ADR-0060). Substitui o antigo "destino manual" por item (ADR-0054, retirado). |
 
 ## Frente III — Popula GED
 

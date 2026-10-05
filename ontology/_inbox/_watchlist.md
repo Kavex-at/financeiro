@@ -120,6 +120,15 @@
   (REJECT-VOLATILE para a operação de hoje: duas analistas). **Revisitar** quando existir
   permissão por módulo (branch `feat/auth-permissoes-modulo`, ADR-0053): a forma provável é uma
   permissão específica para informar ou substituir destino, não uma regra de pessoa diferente.
+- **(2026-10-05, ADR-0060) "Quatro olhos" no destino:** agora **implementado em outra forma** —
+  dupla validação rígida (aprovador ≠ cadastrante) na `ExcecaoDestino`, permissão única
+  `sispag:excecao`. A entrada acima é histórica.
+- **Limite de valor por exceção** e **observação do retorno do banco sobre o destino:** adiados;
+  REJECT-PREMATURE (sem decisão do usuário). Revisitar se a Columbia pedir.
+- **Chaves PIX e-mail/telefone/aleatória em exceção:** fora de escopo (decisão 2026-10-05; só
+  CPF/CNPJ = documento do favorecido). Voltam só com prova de titular via DICT (H1).
+- **Campos, nome e regras da planilha de exceções da Columbia:** aguardam amostra (gap Q1). Não
+  inventar colunas.
 - **Atualizar o cadastro `cmn025` com o destino digitado** (opção A do plano): fora agora. Volta
   se o H3/H5 falhar (e o usuário escolher) ou se a analista pedir para não redigitar a cada lote.
 - **Finalidade do TED como constante (H7):** não entra na ontologia até a sonda

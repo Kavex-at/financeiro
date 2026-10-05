@@ -38,7 +38,8 @@ properties:
   - dataDebito
   - itens
   - itens[].modalidade
-  - itens[].destinoManual
+  - itens[].destinoOrigem
+  - itens[].excecaoDestinoId
   - itens[].situacao
   - itens[].pagoEm
   - itens[].pagoObservadoEm
@@ -51,8 +52,8 @@ relationships:
   - "LotePagamento 1—N ItemLote (agregado — os títulos incluídos, snapshot de valor/venc na inclusão)"
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
-  - "ItemLote 0..1—1 DestinoManual (value object: conta ou chave PIX digitada para aquele item; ADR-0054)"
-last_review: 2026-09-29
+  - "ItemLote N—0..1 ExcecaoDestino (a exceção APROVADA usada como destino; ADR-0060; vazio quando o destino vem do cadastro)"
+last_review: 2026-10-05
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
   - "ADR-0018 — formação AUTOMÁTICA de lotes candidatos (cron pós-ingestão + manual): pré-montar os lotes das obrigações a-vencer é a automação natural sobre a montagem manual; universal em contas-a-pagar de trading com comex"
@@ -61,7 +62,7 @@ universality_evidence:
   - "Conceito universal de financeiro/comex: agrupar títulos a pagar em um lote para revisão e liberação em bloco (o borderô/lote de pagamento)"
   - "dataDebito: o lote nativo do fin015 carrega a data de débito (flpDtaCredito) e o finalizarLote a valida (R1/R2, sispag-fin015-exploration.md:72-76) — todo lote SISPAG/CNAB 240 tem data de pagamento; pedido da Flavia (Columbia) de 2026-09-22, ADR-0049"
   - "modalidade + destino do item: todo item de remessa CNAB 240 tem forma de lançamento (segmento A) e, para TED/PIX, destino (conta ou chave, segmentos A/B); FinItemSispag.itsVldModalidade/pctCodSeq/itsDesChavePix no fin015 (sispag-ted-pix-plan.md §2, 89 itens PRD)"
-  - "destinoManual: 12/21 favorecidos sem conta e 0 chave PIX no cadastro (PRD 2026-09-28), cadastro desatualizado (Yuri); ADR-0054. Conceito universal (conta/chave do favorecido informada no pagamento); a precedência sobre o cadastro é decisão da Columbia — candidata a configuração se um 2º cliente divergir"
+  - "ExcecaoDestino (ADR-0060; antes destinoManual, ADR-0054): 12/21 favorecidos sem conta e 0 chave PIX no cadastro (PRD 2026-09-28), cadastro desatualizado (Yuri); ADR-0054. Conceito universal (conta/chave do favorecido informada no pagamento); o cadastro do Conexos é a fonte principal e o destino fora dele exige exceção aprovada por 2ª pessoa (controle antifraude, universal em contas a pagar; 1 cliente até agora, gap Q11)"
   - "sincronização pelo título (ADR-0055): o pagamento de um título a pagar é observável no próprio título em qualquer ERP (saldo aberto zero); o arquivo de retorno bancário é uma das origens possíveis da baixa, não a única — caso PG230901.REM, baixa manual do 38682/1 em 24/09"
 ---
 
@@ -146,8 +147,8 @@ fora de um lote.
 | `vencimento` | Date | `lote_pagamento_item.vencimento` | **Snapshot** do vencimento na inclusão. |
 | `incluidoPor` | string | `lote_pagamento_item.incluido_por` | Auditoria: quem incluiu o item. |
 | `modalidade` | enum? | `lote_pagamento_item.modalidade` (migration 0031) | Forma de pagamento: `BOLETO \| TED \| PIX \| CREDITO_CONTA`; `null` = "a definir" (bloqueia a finalização, `ModalidadePendenteError`). Escolhida pela analista, só em RASCUNHO (L2); boleto pré-selecionado quando o título tem DDA. **Oferecidas:** `BOLETO`, `TED`, `PIX`. `CREDITO_CONTA` segue válido no enum para item que já o tem, mas **não é oferecido** (commit `fc22dcd`). Mapeamento para o `fin015` (`itsVldModalidade`): TED = **5**, crédito = 1, boleto = derivado pelo ERP da DDA; PIX não tem código próprio, é o conjunto `itsVldChavePix`/`itsDesChavePix`/... (H4). *Existia desde 2026-07-18 e faltava nesta doc.* |
-| `destinoOrigem` | enum? (derivado) | — | `MANUAL` se há `destinoManual`; `CADASTRO` se o destino TED/PIX vem do `cmn025` (resolvido ao vivo); `null` para boleto. Dirige o selo "manual" na tela. Ver `business-rules/destino-pagamento-sispag.md`. |
-| `destinoManual` | DestinoManual? | `lote_pagamento_item.destino_*` *(a criar)* | Destino **digitado pela analista para este item** (ADR-0054). Só para TED/PIX. **Prevalece** sobre o cadastro. **Não** é escrito no Conexos; vai no item do `fin015` sem `pctCodSeq`. `null` = destino do cadastro. Editável só em RASCUNHO (I10e); congela no import (I10f). |
+| `destinoOrigem` | enum? (derivado) | — | `CADASTRO` (cmn025 ao vivo) \| `EXCECAO` (`ExcecaoDestino` aprovada, fallback) \| `null` para boleto. Dirige o selo "exceção" na tela. Ver `business-rules/destino-pagamento-sispag.md` e `excecao-destino-sispag.md`. |
+| `excecaoDestinoId` | string? | `lote_pagamento_item.excecao_destino_id` *(a criar)* | FK lógica para a `ExcecaoDestino` usada, **gravada quando o destino congela** (I10f); liga o item à exceção sem copiar o valor. `null` quando o destino vem do cadastro. A coluna antiga `destino_*` (ADR-0054) fica inerte. |
 | `situacao` | enum (derivado) | — | `AGENDADO \| PAGO \| REJEITADO \| SEM_RETORNO`, derivada pela sincronização (I11d); **não** é estado do lote (decisão "sem estado parcialmente pago"). Constantes tipadas (`ITEM_SITUACAO`). Só existe de `REMESSA_GERADA` em diante. |
 | `rejeitado` · `retornoEvento` · `retornoDescricao` | boolean · string? · string? | `rejeitado`, `retorno_evento`, `retorno_descricao` (0049) | Evento do `fin052` **escolhido por precedência** `REJEITADO > 00 > BD > outro` sobre todas as linhas do item (I11d), nunca a última lida. *Existiam desde a 0049 e faltavam nesta doc.* |
 | `borCod` · `bxaCodSeq` | number? | `bor_cod`, `bxa_cod_seq` (0049) | Borderô/baixa da baixa do título. **Enriquecimento**, não prova de pagamento. Nulos quando nenhuma fonte legível os trouxe. |
@@ -158,21 +159,7 @@ fora de um lote.
 | `divergencia` | boolean + detalhe | `divergencia`, `divergencia_detalhe` *(a criar)* | Contradição observada que a máquina **não** resolve sozinha: título antes pago voltou a aberto (estorno), ou item `REJEITADO` com título pago. Gera `Alerta` `sispag-baixa-divergente` (I11f). |
 | `sincronizadoEm` | Date? | `sincronizado_em` *(a criar)* | Última leitura **bem-sucedida** do título. Atualizá-la **não** incrementa `versao` (I11h). |
 
-**Value object `DestinoManual`** (só existe dentro de um `ItemLote`):
-
-| Campo | Tipo | Notas |
-|---|---|---|
-| `tipo` | `CONTA \| CHAVE_PIX` | `CONTA` ⇔ modalidade TED; `CHAVE_PIX` ⇔ modalidade PIX. |
-| `bancoCod` | string(3) | FEBRABAN. Qualquer banco (I10c). Só `CONTA`. |
-| `agencia` / `agenciaDv?` | string | Só `CONTA`. |
-| `conta` / `contaDv` | string | Só `CONTA`. Gravada completa, exibida mascarada (I10h). |
-| `chavePixTipo` | `CPF_CNPJ \| EMAIL \| TELEFONE \| ALEATORIA` | Escolhido pela analista, não inferido. Só `CHAVE_PIX`. |
-| `chavePix` | string | Formato validado por tipo. Gravada completa, exibida mascarada (I10h). |
-| `titularDocumento` | string (CPF/CNPJ, dígitos) | **Obrigatório nos dois tipos.** Tem de ser igual ao CPF/CNPJ do favorecido do título (I10i). |
-| `titularNomeDict?` | string | Só se o H1 provar que `validacao/modalidadePix` devolve o nome. |
-| `informadoPor` / `informadoEm` | string / Date | Autor (do JWT) e momento da última gravação. O histórico completo (anterior → novo) fica na trilha só de inclusão (I10g, `lote_pagamento_item_destino_audit`, 0067). |
-| `aprovacao` | enum (derivado) | `NAO_EXIGIDA` (chave PIX CPF/CNPJ, D11) · `PENDENTE` · `APROVADO` (I10j, ADR-0054 D10). Derivado da trilha: aprovado = há linha `APROVACAO` apontando para a gravação vigente (0068). Editar ou limpar volta a `PENDENTE`. |
-| `aprovadoPor` / `aprovadoEm` | string / Date | Quem tem `sispag:aprovar_destino` e aprovou a conta vigente, e quando. Pode ser quem digitou. |
+> **`DestinoManual` retirado (ADR-0060).** O destino fora do cadastro agora é a entidade `ExcecaoDestino` (por favorecido, aprovada por 2ª pessoa): ver `entities/excecao-destino.md`.
 
 > **Por que snapshot no item:** o `TituloAPagar` é read-through (muda no ERP entre leituras); o
 > `ItemLote` congela valor/venc/credor no instante da inclusão, preservando o que a analista viu
@@ -215,16 +202,15 @@ fora de um lote.
     nativo deixar de existir (cancelado no ERP e confirmado pela analista via `LoteAnteriorCanceladoError`).
   - Ver `business-rules/data-debito-remessa-sispag.md`.
 
-- **I10 (destino de pagamento TED/PIX — ADR-0054, 2026-09-28):** todo item TED/PIX tem destino
-  resolvível antes de qualquer escrita (I10a); a tela oferece com a mesma função que o envio usa
-  (I10b); TED em qualquer banco (I10c); PIX só com chave (I10d); `destinoManual` editável só em
-  RASCUNHO (I10e) e congelado depois do import no `fin015` (I10f); trilha (I10g); mascaramento
-  (I10h); titularidade bloqueante (I10i); conta digitada só sai aprovada por quem tem
-  `sispag:aprovar_destino` — `finalizarLote` barra e o envio confere de novo (I10j, D10; chave PIX
-  CPF/CNPJ digitada não exige, D11); chave PIX CPF/CNPJ do favorecido tem preferência sobre a
-  default (I10k, D12). O digitado **prevalece** sobre o cadastro. Ver
-  `business-rules/destino-pagamento-sispag.md`. *(I9 foi proposto e retirado na ADR-0050; o
-  número não é reaproveitado.)*
+- **I10 (destino de pagamento TED/PIX — ADR-0054, revisada pela ADR-0060, 2026-10-05):** todo item
+  TED/PIX tem destino resolvível antes de qualquer escrita (I10a); a tela oferece com a mesma
+  função que o envio usa (I10b); TED em qualquer banco (I10c); PIX só com chave (I10d); **cadastro
+  primeiro, exceção `APROVADA` como fallback** (I10, I12c); o destino congela depois do import no
+  `fin015` (I10f); trilha (I10g); mascaramento (I10h); titularidade bloqueante (I10i); chave PIX do
+  cadastro CPF/CNPJ do favorecido tem preferência (I10k). Exceção: dupla validação, permissão
+  única `sispag:excecao` (I12). No lote a analista só vê a origem. Ver
+  `business-rules/destino-pagamento-sispag.md` e `business-rules/excecao-destino-sispag.md`.
+  *(I9 foi proposto e retirado na ADR-0050; o número não é reaproveitado.)*
 
 - **I11 (sincronização pelo título — ADR-0055, 2026-09-29):** pagamento do item = título pago no
   `fin064`, de qualquer origem (I11b); o `fin052` só enriquece e veta por rejeição lida; falha de

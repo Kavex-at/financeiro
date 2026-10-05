@@ -39,7 +39,7 @@ relationships:
   - "Usuario é ator de toda execução registrada nos ledgers (executado_por / criado_por / finalizado_por / ...)"
   - "Usuario é ator ou alvo de EventoAcesso (app_user_access_event)"
   - "Usuario tem 0..1 VinculoConexos; sem vínculo, o ERP registra a ação como robô CLONEX (ADR-0041)"
-last_review: 2026-10-01
+last_review: 2026-10-05
 universality_evidence:
   - "ADR-0051 (identidade = username, e-mail real como atributo)"
   - "ADR-0053 (permissões por módulo no banco; token só identifica)"
@@ -75,6 +75,13 @@ universality_evidence:
 | Exceção | `user_permission(efeito ∈ conceder/revogar, concedido_por, concedido_em)` | **revogar vence** |
 | Implicação | `EffectivePermissionCalculator` | `<módulo>:executar ⇒ <módulo>:ver` |
 | Efetiva | calculada a cada requisição | o token não carrega permissão |
+
+> **Permissão de exceção de destino (ADR-0060, 2026-10-05):** `sispag:excecao` (única; cadastrar,
+> aprovar, rejeitar e revogar `ExcecaoDestino`) **substitui** `sispag:aprovar_destino` (ADR-0054/0068).
+> A migration troca o `CHECK` das tabelas de permissão e **converte as concessões existentes**
+> (papel e exceções por usuário, inclusive "revogar vence"). É avulsa como a anterior (não implica
+> `sispag:ver`/`sispag:executar`). Hoje só `Administrador`; o `Analista` (0074) não a tem. A
+> separação de funções entre cadastrante e aprovador é regra de backend (I12b), não de papel.
 
 A **origem** de uma permissão efetiva tem 4 valores: `papel`, `concedida` (por X em data),
 `revogada` (por X; aparece como ausente, com motivo) e `implicada` (por `<módulo>:executar`).

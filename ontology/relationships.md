@@ -25,3 +25,10 @@
 > READ-ONLY). O que falta é a **baixa efetiva** no ERP via a ação `reconciliarPermuta` (escrita
 > `fin010`) — caminho de write-back não validado (risco #1, ADR-0002/0003 O3). Por isso `Permuta` é
 > `partial`.
+
+## Frente II — SISPAG: destino de pagamento (ADR-0060)
+
+| Origem | Relação | Destino | Cardinalidade |
+|--------|---------|---------|---------------|
+| `ItemLote` | usa como destino, quando o cadastro não tem destino válido | `ExcecaoDestino` | N—0..1 (só `APROVADA`; vazio quando o destino vem do `cmn025`) |
+| `ExcecaoDestino` | é do favorecido (via `pesCod` no `cmn025`) | Favorecido (sem entidade local) | N—1 (no máximo 1 `APROVADA` por favorecido e tipo, I12a) |

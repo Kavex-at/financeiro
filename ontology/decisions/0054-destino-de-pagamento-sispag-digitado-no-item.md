@@ -16,6 +16,7 @@ evidence:
   - respostas do Yuri às Q1–Q5 do interview, 2026-09-28
 supersedes_decisions: []
 amends_decisions: [0039, 0049]
+superseded_in_part_by: [0060]   # D2, D3 (ressalva de permissão), D10, D11
 ---
 
 # ADR 0054: destino de TED e PIX digitado no item do lote, com precedência sobre o cadastro
@@ -46,6 +47,8 @@ pelo `pctCodSeq`, como o ERP faz. À tarde a decisão foi trocada pela forma mai
 
 ## Decisões
 
+> **Superseção parcial (ADR-0060, 2026-10-05).** D2 (digitado vence o cadastro), D10 (aprovação pela própria pessoa) e D11 (PIX CPF/CNPJ sem aprovação) **deixam de valer**: o cadastro do Conexos é a fonte principal e o destino fora dele só existe como `ExcecaoDestino` aprovada por segunda pessoa, para TED **e** PIX, sob a permissão única `sispag:excecao` (substitui `sispag:aprovar_destino`). D1 (nunca escrever no `cmn025`), D5 (congelamento) e I10g/h/i seguem. O destino por item (`destinoManual`) é substituído pela exceção por favorecido. O texto abaixo é histórico.
+
 ### D1 — O destino digitado vale só para o item do lote (substitui a opção A do plano)
 
 A analista digita o destino **no `ItemLote`**. Ele é persistido no nosso Postgres
@@ -55,7 +58,7 @@ como feature própria.
 
 Consequência aceita: a analista redigita o destino a cada lote em que o favorecido aparecer.
 
-### D2 — O destino digitado pode substituir o do cadastro (Q2)
+### D2 — O destino digitado pode substituir o do cadastro (Q2) *(superseded por 0060)*
 
 A entrada manual **não** fica restrita a "quando o cadastro está vazio". Se o favorecido tem conta
 ou chave no cadastro, a analista ainda pode digitar outra, e **a digitada prevalece** naquele item.
@@ -79,7 +82,7 @@ fraude.
 - **selo "manual"** no item e destino mascarado na tela, para que quem finaliza veja que o destino não
   veio do cadastro.
 
-### D3 — Sem regra de quatro olhos agora (Q1)
+### D3 — Sem regra de quatro olhos agora (Q1) *(ressalva superseded por 0060)*
 
 A regra "quem digitou o destino não pode finalizar o lote" foi **retirada** (decisão do Yuri,
 2026-09-28): com duas analistas, ela travaria a operação sempre que uma estivesse ausente. Fica
@@ -177,14 +180,14 @@ declaração, não prova; só a chave PIX CPF/CNPJ é amarrada ao favorecido pel
 restante dos controles (limite de valor, observação do retorno do banco) fica para a conversa com a
 Columbia.
 
-- **D10 — Conta digitada (TED) exige aprovação.** Nova permissão de catálogo
+- **D10 *(superseded por 0060)* — Conta digitada (TED) exige aprovação.** Nova permissão de catálogo
   `sispag:aprovar_destino` (ADR-0053: permissão fixa no código + migration que atualiza o
   `CHECK`). A conta digitada nasce **pendente de aprovação**; só quem tem a permissão aprova.
   **Quem digitou pode aprovar a própria conta** se tiver a permissão (decisão explícita: não é
   quatro-olhos, é um passo de confirmação por quem está habilitado). Finalizar o lote é barrado
   enquanto houver conta digitada pendente; o envio confere de novo. Editar ou limpar a conta
   aprovada volta a exigir aprovação. Aprovação vai para a trilha só-inclusão (quem, quando).
-- **D11 — Chave PIX CPF/CNPJ digitada não exige aprovação.** A chave CPF/CNPJ só pode ser
+- **D11 *(superseded por 0060)* — Chave PIX CPF/CNPJ digitada não exige aprovação.** A chave CPF/CNPJ só pode ser
   registrada pelo dono do documento, e a titularidade (I10i) já exige que seja o documento do
   favorecido.
 - **D12 — Preferir a chave PIX CPF/CNPJ.** Entre as chaves ativas do cadastro, a de tipo CPF/CNPJ
