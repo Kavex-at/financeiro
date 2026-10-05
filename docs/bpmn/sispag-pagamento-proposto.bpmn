@@ -1,0 +1,510 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_SispagProposto" targetNamespace="http://kavex.at/financeiro/bpmn/sispag" exporter="kavex bpmn-generate" exporterVersion="1.0">
+  <bpmn2:documentation>SISPAG (Frente II) — fluxo PROPOSTO (to-be), visão de negócio. Novidades: alerta de duplicidade com bloqueio e aprovação por segunda pessoa; envio e retorno bancário automáticos via Nexxera.</bpmn2:documentation>
+  <bpmn2:error id="Error_FalhaRemessa" name="Falha na remessa" errorCode="FALHA_REMESSA" />
+  <bpmn2:message id="Message_Ret" name=".RET disponível" />
+  <bpmn2:collaboration id="Collaboration_Sispag">
+    <bpmn2:participant id="Participant_Banco" name="Banco (via Nexxera)" />
+    <bpmn2:participant id="Participant_Columbia" name="Columbia Trading — Pagamentos (SISPAG)" processRef="Process_Sispag" />
+    <bpmn2:participant id="Participant_Conexos" name="Conexos (ERP)" />
+    <bpmn2:messageFlow id="MessageFlow_Titulos" name="títulos aprovados" sourceRef="Participant_Conexos" targetRef="Task_BuscarTitulos" />
+    <bpmn2:messageFlow id="MessageFlow_Cancelamento" name="pedido de cancelamento" sourceRef="Task_RetirarTitulo" targetRef="Participant_Conexos" />
+    <bpmn2:messageFlow id="MessageFlow_Remessa" name="gera a remessa" sourceRef="Task_GerarRemessa" targetRef="Participant_Conexos" />
+    <bpmn2:messageFlow id="MessageFlow_EnviarRemessa" name="arquivo de remessa" sourceRef="Task_EnviarBanco" targetRef="Participant_Banco" />
+    <bpmn2:messageFlow id="MessageFlow_Retorno" name="arquivo de retorno" sourceRef="Participant_Banco" targetRef="Event_RetornoBanco" />
+    <bpmn2:messageFlow id="MessageFlow_Baixa" name="baixa dos títulos pagos" sourceRef="Task_ProcessarRetorno" targetRef="Participant_Conexos" />
+  </bpmn2:collaboration>
+  <bpmn2:process id="Process_Sispag" name="SISPAG — pagamento a fornecedores (proposto)" isExecutable="false">
+    <bpmn2:laneSet id="LaneSet_Columbia">
+      <bpmn2:lane id="Lane_Analista" name="Analista Financeiro">
+        <bpmn2:flowNodeRef>Gateway_MergeRevisao</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_RevisarLote</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Gateway_TemAlerta</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_AnalisarAlerta</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Gateway_EDuplicado</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_Justificar</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_RetirarTitulo</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Gateway_MergeAprovacao</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_AprovarLote</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_CorrigirPendencias</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_TratarRejeicao</bpmn2:flowNodeRef>
+      </bpmn2:lane>
+      <bpmn2:lane id="Lane_Aprovador" name="Aprovador (segunda pessoa)">
+        <bpmn2:flowNodeRef>Task_AprovarExcecao</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Gateway_ExcecaoAprovada</bpmn2:flowNodeRef>
+      </bpmn2:lane>
+      <bpmn2:lane id="Lane_Sistema" name="Sistema Kavex">
+        <bpmn2:flowNodeRef>StartEvent_Diario</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_BuscarTitulos</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_VerificarDuplicidade</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_MontarLotes</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_GerarRemessa</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Gateway_ArquivoValido</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_EnviarBanco</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Gateway_MergeRetorno</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Event_RetornoBanco</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Task_ProcessarRetorno</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>Gateway_Resultado</bpmn2:flowNodeRef>
+        <bpmn2:flowNodeRef>EndEvent_LotePago</bpmn2:flowNodeRef>
+      </bpmn2:lane>
+    </bpmn2:laneSet>
+    <bpmn2:startEvent id="StartEvent_Diario" name="Todo dia, 07h">
+      <bpmn2:outgoing>Flow_01</bpmn2:outgoing>
+      <bpmn2:timerEventDefinition id="TimerDef_StartEvent_Diario">
+        <bpmn2:timeCycle xsi:type="bpmn2:tFormalExpression">0 10 * * *</bpmn2:timeCycle>
+      </bpmn2:timerEventDefinition>
+    </bpmn2:startEvent>
+    <bpmn2:serviceTask id="Task_BuscarTitulos" name="Buscar títulos a pagar aprovados no Conexos">
+      <bpmn2:incoming>Flow_01</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_02</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+    <bpmn2:serviceTask id="Task_VerificarDuplicidade" name="Verificar duplicidade">
+      <bpmn2:incoming>Flow_02</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_03</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+    <bpmn2:serviceTask id="Task_MontarLotes" name="Montar lotes por filial (vencimento em até 7 dias)">
+      <bpmn2:incoming>Flow_03</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_04</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+    <bpmn2:exclusiveGateway id="Gateway_MergeRevisao">
+      <bpmn2:incoming>Flow_04</bpmn2:incoming>
+      <bpmn2:incoming>Flow_21</bpmn2:incoming>
+      <bpmn2:incoming>Flow_30</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_05</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:userTask id="Task_RevisarLote" name="Revisar lote (forma de pagamento e conta pagadora)">
+      <bpmn2:incoming>Flow_05</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_06</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:exclusiveGateway id="Gateway_TemAlerta" name="Há título com alerta de duplicidade?">
+      <bpmn2:incoming>Flow_06</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_07</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_08</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:userTask id="Task_AnalisarAlerta" name="Analisar o alerta">
+      <bpmn2:incoming>Flow_08</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_09</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:exclusiveGateway id="Gateway_EDuplicado" name="É duplicado?">
+      <bpmn2:incoming>Flow_09</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_10</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_11</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:userTask id="Task_Justificar" name="Justificar o pagamento do título">
+      <bpmn2:incoming>Flow_10</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_12</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:userTask id="Task_AprovarExcecao" name="Aprovar pagamento do título com alerta">
+      <bpmn2:incoming>Flow_12</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_13</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:exclusiveGateway id="Gateway_ExcecaoAprovada" name="Aprovado?">
+      <bpmn2:incoming>Flow_13</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_14</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_15</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:userTask id="Task_RetirarTitulo" name="Retirar título do lote e pedir cancelamento no Conexos">
+      <bpmn2:incoming>Flow_11</bpmn2:incoming>
+      <bpmn2:incoming>Flow_15</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_16</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:exclusiveGateway id="Gateway_MergeAprovacao">
+      <bpmn2:incoming>Flow_07</bpmn2:incoming>
+      <bpmn2:incoming>Flow_14</bpmn2:incoming>
+      <bpmn2:incoming>Flow_16</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_17</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:userTask id="Task_AprovarLote" name="Aprovar lote">
+      <bpmn2:incoming>Flow_17</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_18</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:serviceTask id="Task_GerarRemessa" name="Gerar arquivo de remessa no Conexos">
+      <bpmn2:incoming>Flow_18</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_19</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+    <bpmn2:exclusiveGateway id="Gateway_ArquivoValido" name="Arquivo válido?">
+      <bpmn2:incoming>Flow_19</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_20</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_22</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:userTask id="Task_CorrigirPendencias" name="Corrigir pendências do lote">
+      <bpmn2:incoming>Flow_20</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_21</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:serviceTask id="Task_EnviarBanco" name="Enviar remessa ao banco">
+      <bpmn2:incoming>Flow_22</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_23</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+    <bpmn2:exclusiveGateway id="Gateway_MergeRetorno">
+      <bpmn2:incoming>Flow_23</bpmn2:incoming>
+      <bpmn2:incoming>Flow_29</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_24</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:intermediateCatchEvent id="Event_RetornoBanco" name="Retorno do banco recebido">
+      <bpmn2:incoming>Flow_24</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_25</bpmn2:outgoing>
+      <bpmn2:messageEventDefinition id="MessageDef_Event_RetornoBanco" messageRef="Message_Ret" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Task_ProcessarRetorno" name="Processar retorno e dar baixa no Conexos">
+      <bpmn2:incoming>Flow_25</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_26</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+    <bpmn2:exclusiveGateway id="Gateway_Resultado" name="Resultado do pagamento?">
+      <bpmn2:incoming>Flow_26</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_27</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_28</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_29</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+    <bpmn2:endEvent id="EndEvent_LotePago" name="Lote pago">
+      <bpmn2:incoming>Flow_27</bpmn2:incoming>
+    </bpmn2:endEvent>
+    <bpmn2:userTask id="Task_TratarRejeicao" name="Tratar rejeição (corrigir cadastro e repagar)">
+      <bpmn2:incoming>Flow_28</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_30</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:sequenceFlow id="Flow_01" sourceRef="StartEvent_Diario" targetRef="Task_BuscarTitulos" />
+    <bpmn2:sequenceFlow id="Flow_02" sourceRef="Task_BuscarTitulos" targetRef="Task_VerificarDuplicidade" />
+    <bpmn2:sequenceFlow id="Flow_03" sourceRef="Task_VerificarDuplicidade" targetRef="Task_MontarLotes" />
+    <bpmn2:sequenceFlow id="Flow_04" sourceRef="Task_MontarLotes" targetRef="Gateway_MergeRevisao" />
+    <bpmn2:sequenceFlow id="Flow_05" sourceRef="Gateway_MergeRevisao" targetRef="Task_RevisarLote" />
+    <bpmn2:sequenceFlow id="Flow_06" sourceRef="Task_RevisarLote" targetRef="Gateway_TemAlerta" />
+    <bpmn2:sequenceFlow id="Flow_07" name="Não" sourceRef="Gateway_TemAlerta" targetRef="Gateway_MergeAprovacao" />
+    <bpmn2:sequenceFlow id="Flow_08" name="Sim" sourceRef="Gateway_TemAlerta" targetRef="Task_AnalisarAlerta" />
+    <bpmn2:sequenceFlow id="Flow_09" sourceRef="Task_AnalisarAlerta" targetRef="Gateway_EDuplicado" />
+    <bpmn2:sequenceFlow id="Flow_10" name="Não, quero pagar" sourceRef="Gateway_EDuplicado" targetRef="Task_Justificar" />
+    <bpmn2:sequenceFlow id="Flow_11" name="Sim" sourceRef="Gateway_EDuplicado" targetRef="Task_RetirarTitulo" />
+    <bpmn2:sequenceFlow id="Flow_12" sourceRef="Task_Justificar" targetRef="Task_AprovarExcecao" />
+    <bpmn2:sequenceFlow id="Flow_13" sourceRef="Task_AprovarExcecao" targetRef="Gateway_ExcecaoAprovada" />
+    <bpmn2:sequenceFlow id="Flow_14" name="Sim" sourceRef="Gateway_ExcecaoAprovada" targetRef="Gateway_MergeAprovacao" />
+    <bpmn2:sequenceFlow id="Flow_15" name="Não" sourceRef="Gateway_ExcecaoAprovada" targetRef="Task_RetirarTitulo" />
+    <bpmn2:sequenceFlow id="Flow_16" sourceRef="Task_RetirarTitulo" targetRef="Gateway_MergeAprovacao" />
+    <bpmn2:sequenceFlow id="Flow_17" sourceRef="Gateway_MergeAprovacao" targetRef="Task_AprovarLote" />
+    <bpmn2:sequenceFlow id="Flow_18" sourceRef="Task_AprovarLote" targetRef="Task_GerarRemessa" />
+    <bpmn2:sequenceFlow id="Flow_19" sourceRef="Task_GerarRemessa" targetRef="Gateway_ArquivoValido" />
+    <bpmn2:sequenceFlow id="Flow_20" name="Não" sourceRef="Gateway_ArquivoValido" targetRef="Task_CorrigirPendencias" />
+    <bpmn2:sequenceFlow id="Flow_21" sourceRef="Task_CorrigirPendencias" targetRef="Gateway_MergeRevisao" />
+    <bpmn2:sequenceFlow id="Flow_22" name="Sim" sourceRef="Gateway_ArquivoValido" targetRef="Task_EnviarBanco" />
+    <bpmn2:sequenceFlow id="Flow_23" sourceRef="Task_EnviarBanco" targetRef="Gateway_MergeRetorno" />
+    <bpmn2:sequenceFlow id="Flow_24" sourceRef="Gateway_MergeRetorno" targetRef="Event_RetornoBanco" />
+    <bpmn2:sequenceFlow id="Flow_25" sourceRef="Event_RetornoBanco" targetRef="Task_ProcessarRetorno" />
+    <bpmn2:sequenceFlow id="Flow_26" sourceRef="Task_ProcessarRetorno" targetRef="Gateway_Resultado" />
+    <bpmn2:sequenceFlow id="Flow_27" name="Todos pagos" sourceRef="Gateway_Resultado" targetRef="EndEvent_LotePago" />
+    <bpmn2:sequenceFlow id="Flow_28" name="Rejeitado" sourceRef="Gateway_Resultado" targetRef="Task_TratarRejeicao" />
+    <bpmn2:sequenceFlow id="Flow_29" name="Aguardando confirmação" sourceRef="Gateway_Resultado" targetRef="Gateway_MergeRetorno" />
+    <bpmn2:sequenceFlow id="Flow_30" sourceRef="Task_TratarRejeicao" targetRef="Gateway_MergeRevisao" />
+    <bpmn2:textAnnotation id="Annotation_Duplicidade">
+      <bpmn2:text>NOVO. Alerta forte: mesmo fornecedor + mesmo nº de NF, em qualquer tipo de documento e inclusive contra títulos já pagos. Alerta fraco: mesmo fornecedor + mesmo valor + vencimento próximo.</bpmn2:text>
+    </bpmn2:textAnnotation>
+    <bpmn2:association id="Association_Annotation_Duplicidade" sourceRef="Annotation_Duplicidade" targetRef="Task_VerificarDuplicidade" />
+    <bpmn2:textAnnotation id="Annotation_Bloqueio">
+      <bpmn2:text>NOVO. Lote com alerta não pode ser aprovado até o alerta ser resolvido.</bpmn2:text>
+    </bpmn2:textAnnotation>
+    <bpmn2:association id="Association_Annotation_Bloqueio" sourceRef="Annotation_Bloqueio" targetRef="Task_AnalisarAlerta" />
+    <bpmn2:textAnnotation id="Annotation_QuatroOlhos">
+      <bpmn2:text>NOVO. Pagar um título com alerta exige uma segunda pessoa: quem justifica não aprova.</bpmn2:text>
+    </bpmn2:textAnnotation>
+    <bpmn2:association id="Association_Annotation_QuatroOlhos" sourceRef="Annotation_QuatroOlhos" targetRef="Task_AprovarExcecao" />
+    <bpmn2:textAnnotation id="Annotation_Automatico">
+      <bpmn2:text>NOVO. Envio da remessa e leitura do retorno automáticos via Nexxera (hoje é manual).</bpmn2:text>
+    </bpmn2:textAnnotation>
+    <bpmn2:association id="Association_Annotation_Automatico" sourceRef="Annotation_Automatico" targetRef="Task_EnviarBanco" />
+  </bpmn2:process>
+  <bpmndi:BPMNDiagram id="Diagram_Sispag">
+    <bpmndi:BPMNPlane id="Plane_Sispag" bpmnElement="Collaboration_Sispag">
+      <bpmndi:BPMNShape id="Participant_Banco_di" bpmnElement="Participant_Banco" isHorizontal="true" isExpanded="false">
+        <dc:Bounds x="0" y="0" width="4800" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Participant_Columbia_di" bpmnElement="Participant_Columbia" isHorizontal="true" isExpanded="true">
+        <dc:Bounds x="0" y="180" width="4800" height="900" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Participant_Conexos_di" bpmnElement="Participant_Conexos" isHorizontal="true" isExpanded="false">
+        <dc:Bounds x="0" y="1160" width="4800" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Analista_di" bpmnElement="Lane_Analista" isHorizontal="true">
+        <dc:Bounds x="30" y="180" width="4770" height="450" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Aprovador_di" bpmnElement="Lane_Aprovador" isHorizontal="true">
+        <dc:Bounds x="30" y="630" width="4770" height="150" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Sistema_di" bpmnElement="Lane_Sistema" isHorizontal="true">
+        <dc:Bounds x="30" y="780" width="4770" height="300" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_Diario_di" bpmnElement="StartEvent_Diario">
+        <dc:Bounds x="142" y="837" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_BuscarTitulos_di" bpmnElement="Task_BuscarTitulos">
+        <dc:Bounds x="280" y="815" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_VerificarDuplicidade_di" bpmnElement="Task_VerificarDuplicidade">
+        <dc:Bounds x="480" y="815" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_MontarLotes_di" bpmnElement="Task_MontarLotes">
+        <dc:Bounds x="680" y="815" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_MergeRevisao_di" bpmnElement="Gateway_MergeRevisao" isMarkerVisible="true">
+        <dc:Bounds x="935" y="230" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RevisarLote_di" bpmnElement="Task_RevisarLote">
+        <dc:Bounds x="1080" y="215" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_TemAlerta_di" bpmnElement="Gateway_TemAlerta" isMarkerVisible="true">
+        <dc:Bounds x="1335" y="230" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1240" y="200" width="90" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AnalisarAlerta_di" bpmnElement="Task_AnalisarAlerta">
+        <dc:Bounds x="1480" y="365" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_EDuplicado_di" bpmnElement="Gateway_EDuplicado" isMarkerVisible="true">
+        <dc:Bounds x="1735" y="380" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1640" y="350" width="90" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Justificar_di" bpmnElement="Task_Justificar">
+        <dc:Bounds x="1880" y="365" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AprovarExcecao_di" bpmnElement="Task_AprovarExcecao">
+        <dc:Bounds x="2080" y="665" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ExcecaoAprovada_di" bpmnElement="Gateway_ExcecaoAprovada" isMarkerVisible="true">
+        <dc:Bounds x="2335" y="680" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2240" y="650" width="90" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RetirarTitulo_di" bpmnElement="Task_RetirarTitulo">
+        <dc:Bounds x="2480" y="515" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_MergeAprovacao_di" bpmnElement="Gateway_MergeAprovacao" isMarkerVisible="true">
+        <dc:Bounds x="2735" y="230" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AprovarLote_di" bpmnElement="Task_AprovarLote">
+        <dc:Bounds x="2880" y="215" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_GerarRemessa_di" bpmnElement="Task_GerarRemessa">
+        <dc:Bounds x="3080" y="815" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ArquivoValido_di" bpmnElement="Gateway_ArquivoValido" isMarkerVisible="true">
+        <dc:Bounds x="3335" y="830" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="3240" y="800" width="90" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_CorrigirPendencias_di" bpmnElement="Task_CorrigirPendencias">
+        <dc:Bounds x="3280" y="365" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_EnviarBanco_di" bpmnElement="Task_EnviarBanco">
+        <dc:Bounds x="3480" y="815" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_MergeRetorno_di" bpmnElement="Gateway_MergeRetorno" isMarkerVisible="true">
+        <dc:Bounds x="3735" y="830" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_RetornoBanco_di" bpmnElement="Event_RetornoBanco">
+        <dc:Bounds x="3942" y="837" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ProcessarRetorno_di" bpmnElement="Task_ProcessarRetorno">
+        <dc:Bounds x="4080" y="815" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Resultado_di" bpmnElement="Gateway_Resultado" isMarkerVisible="true">
+        <dc:Bounds x="4335" y="830" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="4240" y="800" width="90" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_LotePago_di" bpmnElement="EndEvent_LotePago">
+        <dc:Bounds x="4542" y="837" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_TratarRejeicao_di" bpmnElement="Task_TratarRejeicao">
+        <dc:Bounds x="4280" y="365" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Annotation_Duplicidade_di" bpmnElement="Annotation_Duplicidade">
+        <dc:Bounds x="420" y="955" width="280" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Annotation_Bloqueio_di" bpmnElement="Annotation_Bloqueio">
+        <dc:Bounds x="1350" y="670" width="220" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Annotation_QuatroOlhos_di" bpmnElement="Annotation_QuatroOlhos">
+        <dc:Bounds x="1700" y="670" width="240" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Annotation_Automatico_di" bpmnElement="Annotation_Automatico">
+        <dc:Bounds x="3430" y="980" width="260" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_01_di" bpmnElement="Flow_01">
+        <di:waypoint x="178" y="855" />
+        <di:waypoint x="280" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_02_di" bpmnElement="Flow_02">
+        <di:waypoint x="440" y="855" />
+        <di:waypoint x="480" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_03_di" bpmnElement="Flow_03">
+        <di:waypoint x="640" y="855" />
+        <di:waypoint x="680" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_04_di" bpmnElement="Flow_04">
+        <di:waypoint x="840" y="855" />
+        <di:waypoint x="960" y="855" />
+        <di:waypoint x="960" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_05_di" bpmnElement="Flow_05">
+        <di:waypoint x="985" y="255" />
+        <di:waypoint x="1080" y="255" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_06_di" bpmnElement="Flow_06">
+        <di:waypoint x="1240" y="255" />
+        <di:waypoint x="1335" y="255" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_07_di" bpmnElement="Flow_07">
+        <di:waypoint x="1385" y="255" />
+        <di:waypoint x="2735" y="255" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_08_di" bpmnElement="Flow_08">
+        <di:waypoint x="1360" y="280" />
+        <di:waypoint x="1360" y="405" />
+        <di:waypoint x="1480" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_09_di" bpmnElement="Flow_09">
+        <di:waypoint x="1640" y="405" />
+        <di:waypoint x="1735" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_10_di" bpmnElement="Flow_10">
+        <di:waypoint x="1785" y="405" />
+        <di:waypoint x="1880" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_11_di" bpmnElement="Flow_11">
+        <di:waypoint x="1760" y="430" />
+        <di:waypoint x="1760" y="555" />
+        <di:waypoint x="2480" y="555" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_12_di" bpmnElement="Flow_12">
+        <di:waypoint x="2040" y="405" />
+        <di:waypoint x="2060" y="405" />
+        <di:waypoint x="2060" y="705" />
+        <di:waypoint x="2080" y="705" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_13_di" bpmnElement="Flow_13">
+        <di:waypoint x="2240" y="705" />
+        <di:waypoint x="2335" y="705" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_14_di" bpmnElement="Flow_14">
+        <di:waypoint x="2385" y="705" />
+        <di:waypoint x="2760" y="705" />
+        <di:waypoint x="2760" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_15_di" bpmnElement="Flow_15">
+        <di:waypoint x="2360" y="680" />
+        <di:waypoint x="2360" y="638" />
+        <di:waypoint x="2560" y="638" />
+        <di:waypoint x="2560" y="595" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_16_di" bpmnElement="Flow_16">
+        <di:waypoint x="2560" y="515" />
+        <di:waypoint x="2560" y="204" />
+        <di:waypoint x="2760" y="204" />
+        <di:waypoint x="2760" y="230" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_17_di" bpmnElement="Flow_17">
+        <di:waypoint x="2785" y="255" />
+        <di:waypoint x="2880" y="255" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_18_di" bpmnElement="Flow_18">
+        <di:waypoint x="3040" y="255" />
+        <di:waypoint x="3060" y="255" />
+        <di:waypoint x="3060" y="855" />
+        <di:waypoint x="3080" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_19_di" bpmnElement="Flow_19">
+        <di:waypoint x="3240" y="855" />
+        <di:waypoint x="3335" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_20_di" bpmnElement="Flow_20">
+        <di:waypoint x="3360" y="830" />
+        <di:waypoint x="3360" y="445" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_21_di" bpmnElement="Flow_21">
+        <di:waypoint x="3360" y="365" />
+        <di:waypoint x="3360" y="186" />
+        <di:waypoint x="960" y="186" />
+        <di:waypoint x="960" y="230" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_22_di" bpmnElement="Flow_22">
+        <di:waypoint x="3385" y="855" />
+        <di:waypoint x="3480" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_23_di" bpmnElement="Flow_23">
+        <di:waypoint x="3640" y="855" />
+        <di:waypoint x="3735" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_24_di" bpmnElement="Flow_24">
+        <di:waypoint x="3785" y="855" />
+        <di:waypoint x="3942" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_25_di" bpmnElement="Flow_25">
+        <di:waypoint x="3978" y="855" />
+        <di:waypoint x="4080" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_26_di" bpmnElement="Flow_26">
+        <di:waypoint x="4240" y="855" />
+        <di:waypoint x="4335" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_27_di" bpmnElement="Flow_27">
+        <di:waypoint x="4385" y="855" />
+        <di:waypoint x="4542" y="855" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_28_di" bpmnElement="Flow_28">
+        <di:waypoint x="4360" y="830" />
+        <di:waypoint x="4360" y="445" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_29_di" bpmnElement="Flow_29">
+        <di:waypoint x="4360" y="880" />
+        <di:waypoint x="4360" y="955" />
+        <di:waypoint x="3760" y="955" />
+        <di:waypoint x="3760" y="880" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_30_di" bpmnElement="Flow_30">
+        <di:waypoint x="4360" y="365" />
+        <di:waypoint x="4360" y="194" />
+        <di:waypoint x="960" y="194" />
+        <di:waypoint x="960" y="230" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Association_Annotation_Duplicidade_di" bpmnElement="Association_Annotation_Duplicidade">
+        <di:waypoint x="560" y="955" />
+        <di:waypoint x="560" y="895" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Association_Annotation_Bloqueio_di" bpmnElement="Association_Annotation_Bloqueio">
+        <di:waypoint x="1560" y="670" />
+        <di:waypoint x="1560" y="445" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Association_Annotation_QuatroOlhos_di" bpmnElement="Association_Annotation_QuatroOlhos">
+        <di:waypoint x="1940" y="705" />
+        <di:waypoint x="2080" y="705" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Association_Annotation_Automatico_di" bpmnElement="Association_Annotation_Automatico">
+        <di:waypoint x="3560" y="980" />
+        <di:waypoint x="3560" y="895" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="MessageFlow_Titulos_di" bpmnElement="MessageFlow_Titulos">
+        <di:waypoint x="360" y="1160" />
+        <di:waypoint x="360" y="895" />
+        <bpmndi:BPMNLabel><dc:Bounds x="366" y="1088" width="120" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="MessageFlow_Cancelamento_di" bpmnElement="MessageFlow_Cancelamento">
+        <di:waypoint x="2605" y="595" />
+        <di:waypoint x="2605" y="1160" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2611" y="1088" width="120" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="MessageFlow_Remessa_di" bpmnElement="MessageFlow_Remessa">
+        <di:waypoint x="3160" y="895" />
+        <di:waypoint x="3160" y="1160" />
+        <bpmndi:BPMNLabel><dc:Bounds x="3166" y="1088" width="120" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="MessageFlow_EnviarRemessa_di" bpmnElement="MessageFlow_EnviarRemessa">
+        <di:waypoint x="3560" y="815" />
+        <di:waypoint x="3560" y="100" />
+        <bpmndi:BPMNLabel><dc:Bounds x="3566" y="108" width="120" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="MessageFlow_Retorno_di" bpmnElement="MessageFlow_Retorno">
+        <di:waypoint x="3960" y="100" />
+        <di:waypoint x="3960" y="837" />
+        <bpmndi:BPMNLabel><dc:Bounds x="3966" y="108" width="120" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="MessageFlow_Baixa_di" bpmnElement="MessageFlow_Baixa">
+        <di:waypoint x="4160" y="895" />
+        <di:waypoint x="4160" y="1160" />
+        <bpmndi:BPMNLabel><dc:Bounds x="4166" y="1088" width="120" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn2:definitions>
