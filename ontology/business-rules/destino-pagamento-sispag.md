@@ -3,7 +3,7 @@ name: destino-pagamento-sispag
 type: business-rule
 entity: LotePagamento
 invariant: I10
-ontology_version: "0.33.0"
+ontology_version: "0.36.0"
 implementation_status: partial
 status: active
 owners: [yuri]
@@ -74,7 +74,7 @@ destino(item) =
 | # | Regra | Quando |
 |---|---|---|
 | **I10a** (D1) | Todo item TED/PIX tem destino resolvível **antes do `criarLote`** no `fin015`. Item sem destino barra o envio inteiro, com erro nomeado por item, **antes de qualquer escrita** (como `BoletoSemCodigoBarrasError`). E o `finalizarLote` já barra item TED/PIX sem destino, como barra "modalidade a definir". | finalizar e envio |
-| **I10b** (D2) | **Oferta = envio.** A tela só oferece TED/PIX quando `destino(item)` resolve, com a **mesma função** que o envio usa. Divergência entre as duas é bug. | tela e envio |
+| **I10b** (D2) | ~~**Oferta = envio.**~~ **Revisado (ADR-0063, gap Q1 opção a):** com a flag da modalidade ligada, a tela oferece TED/PIX **sempre**; quem decide é a verificação TED/PIX (I13j), que retira o item sem destino resolvível e abre a `PendenciaCadastro`. A tela continua mostrando **de onde viria** o destino (cadastro, exceção ou nenhum), calculado com a **mesma função** que o envio usa — divergência entre as duas segue sendo bug. | tela (indicação) e envio |
 | **I10c** (D3) | TED aceita conta em **qualquer banco**. O banco do favorecido não precisa ser o do lote. `TED → itsVldModalidade = 5`. | envio |
 | **I10d** (D4) | **PIX só com chave**, do cadastro ou de exceção aprovada (CPF/CNPJ). Sem chave, PIX não é oferecido nem enviado. | tela e envio |
 | **I10e** (ADR-0061) | A exceção **não é editada no item nem no lote**: é cadastrada, aprovada e revogada na entidade `ExcecaoDestino` (I12). No lote a analista só **vê** a origem do destino (`CADASTRO` \| `EXCECAO`). | — |
@@ -159,6 +159,16 @@ Decisões de implementação a registrar:
   converte as concessões existentes.
 - `SISPAG_DESTINO_MANUAL_ENABLED` passa a significar "exceção de destino habilitada" (nome: gap Q6).
 - Mantêm-se `DestinoManualValidator`, `MaskDestino` e I10i. H3/H5 seguem não provadas.
+
+### Adendo (2026-10-05) — ADR-0063
+
+- **I10a no `finalizarLote` muda de forma:** o item TED/PIX sem destino resolvível (sem cadastro e
+  sem exceção `APROVADA`) **sai do lote** pela verificação TED/PIX e abre `PendenciaCadastro`
+  (I13j); a finalização não acontece naquela tentativa (`ItemsRemovedByCheckError`). No **envio**
+  (`gerarRemessa`) I10a segue barrando como antes.
+- Com exceção `APROVADA` o item fica, mas a pendência de cadastro é aberta do mesmo jeito.
+- **I10b × I13j (gap Q1 — resolvido, opção a):** a escolha de TED/PIX é livre (com a flag ligada);
+  a verificação retira o item sem destino e abre a pendência. Ver `_inbox/sispag-verificacoes-ted-pix-gap.md`.
 
 ## Ver também
 

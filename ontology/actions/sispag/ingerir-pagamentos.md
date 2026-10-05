@@ -27,6 +27,7 @@ postconditions:
   - "Títulos ausentes da run atual marcados ativo=false (anti-fantasma) — somem do painel."
   - "Run de auditoria gravada em pagamento_ingestao_run (quem/quando/status/total_titulos/total_inativados)."
   - "Nenhuma escrita no ERP (I1) — leitura Conexos + escrita LOCAL (Postgres)."
+  - "Título que fica ativo = false (sumiu do fin064) encerra o BloqueioDuplicidade ATIVO dele (ATIVO → ENCERRADO, ator sistema; I13g, ADR-0063)."
 side_effects:
   - "Leitura paginada do fin064 + alçada com308 (rate-limit — fan-out com concorrência LIMITADA/BoundedConcurrency)."
   - "UPSERT em titulo_a_pagar + marcarInativosForaDaRun; INSERT em pagamento_ingestao_run."

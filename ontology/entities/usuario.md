@@ -83,6 +83,13 @@ universality_evidence:
 > `sispag:ver`/`sispag:executar`). Hoje só `Administrador`; o `Analista` (0074) não a tem. A
 > separação de funções entre cadastrante e aprovador é regra de backend (I12b), não de papel.
 
+> **Permissões de verificação SISPAG (ADR-0063, 2026-10-05):** `sispag:conferir` (conferência por
+> 2ª pessoa e devolução do lote, L12/L13) e `sispag:cadastro` (fila "Pendências de cadastro" do
+> responsável pelo cadastro). Avulsas como `sispag:excecao`: não implicam nem são implicadas por
+> `sispag:ver`/`sispag:executar`. Migration no padrão da 0068/0075 (troca do `CHECK` das tabelas de
+> permissão). A separação entre quem finaliza/monta e quem confere é regra de backend (I13l), não de
+> papel. Concessão default: gap Q8 de `_inbox/sispag-verificacoes-ted-pix-gap.md`.
+
 A **origem** de uma permissão efetiva tem 4 valores: `papel`, `concedida` (por X em data),
 `revogada` (por X; aparece como ausente, com motivo) e `implicada` (por `<módulo>:executar`).
 
