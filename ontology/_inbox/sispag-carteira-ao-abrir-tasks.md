@@ -13,8 +13,9 @@ Pagamento pede carteira quase em tempo real, e o cron do GitHub chega 2–5 h at
    no ERP — se mantém).
 3. **A formação automática de lotes NÃO dispara na abertura da tela**: continua só no cron (e no botão
    explícito). Formar lote sob os pés de quem está editando muda a tela dela.
-4. **Cron**: de 1x/dia para **3x/dia em dia útil** (07h, 12h e 16h BRT), como rede de segurança.
-   A formação roda só na execução da manhã (e no `workflow_dispatch`) — comportamento de hoje.
+4. **Cron**: de 1x/dia para **3x/dia em dia útil** (07h todo dia; mais 12h e 16h BRT em dia útil),
+   como rede de segurança. A formação roda só na execução da manhã (e no `workflow_dispatch`) —
+   comportamento de hoje.
 
 Classificação: **mudança de regra** (novo gatilho + TTL de staleness) → diff de ontologia + ADR-0060.
 Sem lógica monetária alimentada pelo Conexos → **Ground-Truth Validation não se aplica** (a ingestão
@@ -52,9 +53,9 @@ os dados com aviso "não foi possível atualizar". `IngestaoDialog` rotula `aber
   `fresca`; falha mostra aviso sem esconder os dados; não dispara sem `sispag:ver`.
 
 ### T5 — Cron (workflow)
-`ingest-sispag.yml`: `schedule` em dia útil (`0 10,15,19 * * 1-5`); `job:formar-lotes` só quando
-`github.event.schedule == '0 10,15,19 * * 1-5'` for a primeira execução do dia **ou** `workflow_dispatch`.
-Como o GitHub atrasa, a condição usa a hora UTC da execução (< 13h) e não o texto do cron.
+`ingest-sispag.yml`: duas entradas de `schedule` — `0 10 * * *` (manhã, todo dia, como hoje) e
+`0 15,19 * * 1-5` (12h e 16h BRT, dia útil). `job:formar-lotes` só roda com `workflow_dispatch` ou
+`github.event.schedule == '0 10 * * *'` (o texto do cron que disparou, não a hora, que o GitHub atrasa).
 - Aceite: YAML válido; `job:formar-lotes` condicionado; passo de alerta intacto.
 
 ### T6 — Ontologia e docs

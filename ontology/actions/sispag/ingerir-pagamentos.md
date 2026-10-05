@@ -12,14 +12,16 @@ related_files:
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/repository/sispag/PagamentoIngestaoRunRepository.ts
   - src/backend/domain/service/sispag/IngestaoPagamentosService.ts
+  - src/backend/domain/service/sispag/CarteiraAtualizacaoService.ts
+  - src/frontend/app/sispag/useCarteiraAoAbrir.ts
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/routes/sispag.ts
   - src/backend/jobs/ingest-pagamentos.ts
-last_review: 2026-07-08
+last_review: 2026-10-05
 preconditions:
   - "Sessão Conexos ativa (SID compartilhado)."
   - "Escopo de filiais definido (multi-filial, I4)."
-  - "Mutações via cron ('cron') ou trigger manual autenticado (POST /sispag/ingestao); histórico via GET /sispag/ingestao/runs."
+  - "Mutações via cron ('cron'), trigger manual autenticado (POST /sispag/ingestao) ou refresh ao abrir a tela (POST /sispag/carteira/atualizar, ADR-0060); histórico via GET /sispag/ingestao/runs."
 postconditions:
   - "Carteira de títulos a pagar (dados básicos) persistida em titulo_a_pagar via UPSERT (chave natural filCod:docCod:titCod)."
   - "Títulos ausentes da run atual marcados ativo=false (anti-fantasma) — somem do painel."
@@ -43,8 +45,9 @@ side_effects:
 
 | Gatilho | Caminho | `triggered_by` |
 |---------|---------|----------------|
-| **Cron diário** | `job:ingest-pagamentos` (`src/backend/jobs/ingest-pagamentos.ts`) | `'cron'` |
+| **Cron** | `job:ingest-pagamentos` (`src/backend/jobs/ingest-pagamentos.ts`): 07:00 BRT todo dia + 12:00 e 16:00 BRT em dia útil (ADR-0060) | `'cron'` |
 | **Manual** | `POST /sispag/ingestao` (`src/backend/routes/sispag.ts`) | username do analista (JWT verificado, server-side, não spoofável) |
+| **Ao abrir a tela** (ADR-0060) | `POST /sispag/carteira/atualizar` (`sispag:ver`) — só roda se a carteira tem > 30 min | `abertura:<username>` |
 | **Histórico** | `GET /sispag/ingestao/runs` | — (READ-ONLY, últimas N runs) |
 
 Ambos os gatilhos rodam o **mesmo** compute (`IngestaoPagamentosService`). O manual é uma **interface
@@ -68,6 +71,24 @@ humana** para a ingestão existente (*human-in-the-loop*), não um segundo camin
    atual viram `ativo=false` (**anti-fantasma**; somem do painel).
 6. Fecha a run (`status='success'`, `total_titulos`, `total_inativados`, `finished_at`) — ou
    `status='error'` + `error_message` na falha.
+
+## Atualização ao abrir a tela (ADR-0060)
+
+A tela mostra a carteira gravada e pede o refresh; `CarteiraAtualizacaoService.atualizarSeDefasada`
+decide, nesta ordem, e devolve um **estado**:
+
+| Estado | Condição | Roda a ingestão? |
+|---|---|---|
+| `fresca` | última run `success` com menos de `SISPAG_CARTEIRA_TTL_MIN` (30 min) | não |
+| `em_andamento` | run `running` iniciada há < 10 min, ou o advisory lock está ocupado | não |
+| `falha_recente` | última run `error` há < `SISPAG_CARTEIRA_COOLDOWN_MIN` (5 min) | não (evita uma tentativa por abertura quando o robô toma 403) |
+| `atualizada` | nenhuma das anteriores | **sim**, o mesmo `executar` do cron e do manual |
+
+Invariantes: (a) basta `sispag:ver` — a rota só lê o Conexos (I1) e escreve no Postgres próprio;
+(b) **nunca forma lotes** (formação continua só no cron e no botão); (c) contenção não é erro
+(`IngestLockBusyError` vira `em_andamento`); (d) run `running` com mais de 10 min é run morta e não
+bloqueia. A tela recarrega o painel quando o estado é `atualizada` e reconfere a cada 8 s (até 6
+vezes) quando `em_andamento`.
 
 ## Idempotência
 

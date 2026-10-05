@@ -4,8 +4,14 @@ name: Ingestão diária de SISPAG
 # carteira de pagamentos e, EM SEGUIDA, a formação automática de lotes (a ordem
 # importa: formar-lotes consome o que a ingestão gravou).
 #
-# Agendado 1x/dia PELA MANHÃ, +1h depois da ingestão matinal de Permutas
-# (09:00 UTC) para NÃO CONFLITAR na sessão Conexos: 10:00 UTC = 07:00 BRT.
+# Agendado PELA MANHÃ todo dia, +1h depois da ingestão matinal de Permutas (09:00 UTC) para NÃO
+# CONFLITAR na sessão Conexos: 10:00 UTC = 07:00 BRT. Em DIA ÚTIL ganha mais duas ingestões
+# (12:00 e 16:00 BRT) — ADR-0060. A carteira também é atualizada quando alguém abre a tela do
+# SISPAG (TTL de 30 min), então estas são a rede de segurança, não a fonte de frescor: o GitHub
+# atrasa schedules em 2–5 h.
+#
+# A FORMAÇÃO de lotes roda só na execução da manhã (e no disparo manual): formar lote várias vezes
+# ao dia fragmentaria os lotes, e nunca acontece na abertura da tela.
 # Os jobs usam o robô (rodam fora de request) — o bloqueio de acesso do SISPAG
 # (SISPAG_ENABLED) é só das rotas HTTP e NÃO afeta estes crons.
 #
@@ -14,8 +20,11 @@ name: Ingestão diária de SISPAG
 # (workflow_dispatch) na aba Actions.
 on:
   schedule:
-    # 1x/dia: 07:00 BRT (= 10:00 UTC) — 1h após a ingestão matinal de Permutas.
+    # Manhã, todos os dias: 07:00 BRT (= 10:00 UTC) — 1h após a ingestão matinal de Permutas.
+    # Ingestão + formação de lotes.
     - cron: '0 10 * * *'
+    # Dia útil, 12:00 e 16:00 BRT (= 15:00 e 19:00 UTC). Só ingestão.
+    - cron: '0 15,19 * * 1-5'
   workflow_dispatch: {} # permite rodar manualmente pela aba Actions
 
 # Evita duas execuções simultâneas do pipeline SISPAG.
@@ -50,7 +59,10 @@ jobs:
         run: npm run migrate
       - name: Ingestão de pagamentos (carteira titulo_a_pagar)
         run: npm run job:ingest-pagamentos
+      # Só na manhã ou no disparo manual. `github.event.schedule` traz a expressão cron que disparou
+      # a execução (não a hora, que o GitHub atrasa).
       - name: Formação automática de lotes (após a ingestão)
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 10 * * *'
         run: npm run job:formar-lotes
 
       # ⚠️ Passo de ALERTA — ADR-0042. Roda SÓ quando algo acima falhou.
