@@ -3,6 +3,18 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.35.0 — Teto do líquido no disponível vivo do adto (2026-10-05, ADR-0062)
+
+Feature: `permuta-centavos-adto` (`/feature-tweak`). `entity_changed = false`.
+
+- **NEW invariante I-Write-10** em `business-rules/fin010-write-contract.md`: em toda baixa, o
+  líquido nunca excede o `bxaMnyValorPermuta` do passo 3 (disponível vivo do adto no borderô).
+  Excesso ≤ R$1,00 sai da variação em uso (juros ↓ / desconto ↑); acima disso, ou com juros
+  insuficiente, nada é ajustado (BUSINESS_WARN). Só corta para baixo e roda depois de I-Write-6.
+- Emenda a ADR-0020: a premissa de que perna N:M e invoice multi-título só deixariam saldo legítimo
+  era falsa (borderôs 16596, 23184, 23188 com 0,01 acima do adto, recusados pelo ERP).
+- Linha nova na tabela de tolerâncias. Nenhuma contagem muda (é invariante de uma regra existente).
+
 ## v0.34.0 — Exceção de destino SISPAG: cadastro primeiro (2026-10-05, ADR-0061)
 
 Feature: `sispag-excecao-destino` (continuação de `sispag-ted-pix`). `entity_changed = true`.

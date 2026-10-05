@@ -4,6 +4,8 @@
  * Uma única constante para os dois usos do mesmo fenômeno (arredondamento da taxa a 3 casas):
  *   - a âncora I-Write-6 da baixa (`ReconciliacaoPermutaService`, ADR-0020), que absorve resíduo
  *     de até R$ 1,00 como variação;
+ *   - o teto I-Write-10 da baixa (mesmo serviço, ADR-0062), que tira da variação um excesso de até
+ *     R$ 1,00 do líquido sobre o disponível vivo do adto;
  *   - a elegibilidade do ADIANTAMENTO (Gates 2 e 3 + roteamento de cliente-filtro), onde um saldo
  *     ou um em-aberto de até R$ 1,00 conta como zero.
  *

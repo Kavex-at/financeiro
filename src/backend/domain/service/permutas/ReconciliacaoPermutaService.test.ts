@@ -1429,3 +1429,149 @@ describe('ReconciliacaoPermutaService — borderoAindaValido, os 5 ramos (T2)', 
         expect(conexosClient.gravarBaixaPermuta).not.toHaveBeenCalled();
     });
 });
+
+describe('ReconciliacaoPermutaService — teto do líquido no disponível do adto (I-Write-10)', () => {
+    beforeEach(() => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+    });
+
+    const permutaErp = (bxaMnyValorPermuta: number) => ({
+        responseData: { gerNumPermuta: 198, gerNum: 198, pesCod: 5023, bxaMnyValorPermuta },
+    });
+
+    it('multi-título (borderô 23184): o título 2 não passa do disponível — juros 419,08 → 419,07', async () => {
+        // Números reais: adto 29469 × invoice 32539, títulos USD 4.152 + 5.536 a 5,0723, variação
+        // 733,39 rateada 314,31 + 419,08. O ERP devolveu 49.873,82 no título 1 e 28.499,32 no 2
+        // (o disponível VIVO, já descontado o título 1); o título 2 ia com 28.499,33.
+        const { service, conexosClient, alocacaoRepository, execucaoRepository } = buildDeps();
+        alocacaoRepository.listAtivas = jest.fn().mockResolvedValue([
+            buildAloc({
+                valorAlocado: 9688,
+                taxaAdiantamento: 5.148,
+                taxaInvoice: 5.0723,
+                variacaoClassificacao: 'JUROS',
+                variacaoResultado: 733.39,
+            }),
+        ]);
+        conexosClient.listTitulosAPagar = jest.fn().mockResolvedValue([
+            { titCod: '1', valorNegociado: 4152, taxa: 5.0723 },
+            { titCod: '2', valorNegociado: 5536, taxa: 5.0723 },
+        ]);
+        conexosClient.validarTituloBaixa = jest.fn().mockImplementation((p: { titCod: number }) =>
+            Promise.resolve({
+                responseData: { bxaMnyValor: p.titCod === 1 ? 21060.19 : 28080.25 },
+            }),
+        );
+        conexosClient.validarTituloPermuta = jest
+            .fn()
+            .mockResolvedValueOnce(permutaErp(49873.82))
+            .mockResolvedValueOnce(permutaErp(28499.32));
+        conexosClient.atualizarValorLiquido = jest.fn().mockResolvedValue({ responseData: {} });
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'marilyn.mutafci@kavex.com',
+            dataMovto: 1,
+        });
+
+        const p1 = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        const p2 = conexosClient.gravarBaixaPermuta.mock.calls[1][0].payload;
+        expect(p1.bxaMnyJuros).toBe(314.31); // abaixo do disponível: intocado
+        expect(p1.bxaMnyLiquido).toBe(21374.5);
+        expect(p2.bxaMnyValor).toBe(28080.25); // o valor da baixa da invoice NÃO muda
+        expect(p2.bxaMnyJuros).toBe(419.07);
+        expect(p2.bxaMnyLiquido).toBe(28499.32);
+        expect(p2.bxaMnyLiquido).toBe(p2.bxaMnyValorPermuta);
+        expect(conexosClient.atualizarValorLiquido).toHaveBeenLastCalledWith(
+            expect.objectContaining({ titCod: 2, juros: 419.07, desconto: 0 }),
+        );
+        expect(execucaoRepository.markSettled).toHaveBeenCalledWith(
+            KEY,
+            expect.objectContaining({ valorBaixado: 49140.44, juros: 733.38 }),
+        );
+    });
+
+    it('perna N:M sem âncora (borderô 23188): DESCONTO absorve o excesso — 472,06 → 472,07', async () => {
+        // Adto 31117 (saldo 85.685,99 / 5,0739 = 16.887,6 USD) × invoice 39083, 6.993,5 USD: perna
+        // parcial frente ao saldo TOTAL, então I-Write-6 não dispara. O ERP devolveu 35.484,31
+        // (85.685,99 − 50.201,68 da perna 1); a perna ia com 35.484,32.
+        const { service, conexosClient, alocacaoRepository, relationalRepository } = buildDeps();
+        relationalRepository.findAdiantamento = jest.fn().mockResolvedValue({
+            docCod: '2767',
+            priCod: '1408',
+            filCod: 4,
+            valorPermutar: 85685.99,
+            taxa: 5.0739,
+        });
+        alocacaoRepository.listAtivas = jest.fn().mockResolvedValue([
+            buildAloc({
+                valorAlocado: 6993.5,
+                taxaAdiantamento: 5.0739,
+                taxaInvoice: 5.1414,
+                variacaoClassificacao: 'DESCONTO',
+                variacaoResultado: 472.06,
+            }),
+        ]);
+        conexosClient.validarTituloBaixa = jest
+            .fn()
+            .mockResolvedValue({ responseData: { bxaMnyValor: 35956.38 } });
+        conexosClient.validarTituloPermuta = jest.fn().mockResolvedValue(permutaErp(35484.31));
+        conexosClient.atualizarValorLiquido = jest.fn().mockResolvedValue({ responseData: {} });
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'marilyn.mutafci@kavex.com',
+            dataMovto: 1,
+        });
+
+        const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        expect(payload.bxaMnyValor).toBe(35956.38);
+        expect(payload.bxaMnyJuros).toBe(0);
+        expect(payload.bxaMnyDesconto).toBe(472.07);
+        expect(payload.bxaMnyLiquido).toBe(35484.31);
+    });
+
+    it('excesso acima do teto (R$1) NÃO é ajustado — não é arredondamento; avisa', async () => {
+        const { service, conexosClient, logService } = buildDeps();
+        // Default: 1000 USD × 5 = 5000 + juros 220 = 5220; disponível 5218,50 → excesso 1,50.
+        conexosClient.validarTituloPermuta = jest.fn().mockResolvedValue(permutaErp(5218.5));
+        conexosClient.atualizarValorLiquido = jest.fn().mockResolvedValue({ responseData: {} });
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        expect(payload.bxaMnyJuros).toBe(220);
+        expect(payload.bxaMnyLiquido).toBe(5220);
+        expect(logService.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ excesso: 1.5 }) }),
+        );
+    });
+
+    it('juros menor que o excesso NÃO é ajustado (variação nunca fica negativa); avisa', async () => {
+        const { service, conexosClient, alocacaoRepository, logService } = buildDeps();
+        alocacaoRepository.listAtivas = jest
+            .fn()
+            .mockResolvedValue([buildAloc({ variacaoResultado: 0.3 })]);
+        // 5000 + 0,30 = 5000,30; disponível 4999,50 → excesso 0,80 > juros 0,30.
+        conexosClient.validarTituloPermuta = jest.fn().mockResolvedValue(permutaErp(4999.5));
+        conexosClient.atualizarValorLiquido = jest.fn().mockResolvedValue({ responseData: {} });
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        expect(payload.bxaMnyJuros).toBe(0.3);
+        expect(payload.bxaMnyLiquido).toBe(5000.3);
+        expect(logService.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ excesso: 0.8 }) }),
+        );
+    });
+});
