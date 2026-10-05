@@ -7,9 +7,9 @@ export type ItemLoteApi = ItemLote;
 export type LotePagamentoApi = Omit<LotePagamento, 'itens'> & { itens: ItemLoteApi[] };
 
 /**
- * LotePagamentoApiView — a ÚNICA saída de lote para a API (ADR-0054 I10h, ADR-0060).
+ * LotePagamentoApiView — a ÚNICA saída de lote para a API (ADR-0054 I10h, ADR-0061).
  *
- * Desde a ADR-0060 o item do lote NÃO carrega destino de pagamento: o destino é do cadastro do
+ * Desde a ADR-0061 o item do lote NÃO carrega destino de pagamento: o destino é do cadastro do
  * Conexos ou de uma `ExcecaoDestino` (por favorecido, com o próprio resumo mascarado em
  * `ExcecaoDestinoService`). O item só leva `excecaoDestinoId`, que identifica a exceção usada sem
  * revelar o valor. Toda resposta com lote continua passando por aqui: se o item voltar a ganhar

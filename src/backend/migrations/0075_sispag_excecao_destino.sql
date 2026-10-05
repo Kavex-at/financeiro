@@ -1,5 +1,5 @@
 -- 0075_sispag_excecao_destino.sql
--- ADR-0060 — o cadastro do Conexos (cmn025) é a fonte principal do destino de TED/PIX; o destino
+-- ADR-0061 — o cadastro do Conexos (cmn025) é a fonte principal do destino de TED/PIX; o destino
 -- fora do cadastro só existe como EXCEÇÃO por favorecido, aprovada por uma SEGUNDA pessoa.
 -- Substitui o destino digitado por item (0067) e a aprovação por item (0068).
 --
@@ -126,7 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_excecao_destino_audit_excecao
 CREATE OR REPLACE FUNCTION excecao_destino_audit_so_inclusao() RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION
-        'trilha da excecao de destino e so de inclusao: % recusado (ADR-0060 I12e)', TG_OP
+        'trilha da excecao de destino e so de inclusao: % recusado (ADR-0061 I12e)', TG_OP
         USING ERRCODE = 'raise_exception';
 END;
 $$ LANGUAGE plpgsql;
@@ -219,10 +219,10 @@ BEGIN
 END $$;
 
 COMMENT ON TABLE excecao_destino IS
-    'ADR-0060 — destino de pagamento SISPAG fora do cadastro cmn025, por favorecido, aprovado por 2a pessoa. Valor completo: nunca em log nem em resposta de API (I10h).';
+    'ADR-0061 — destino de pagamento SISPAG fora do cadastro cmn025, por favorecido, aprovado por 2a pessoa. Valor completo: nunca em log nem em resposta de API (I10h).';
 COMMENT ON TABLE excecao_destino_audit IS
-    'ADR-0060 I12e — trilha so-inclusao dos eventos da excecao de destino. UPDATE/DELETE/TRUNCATE recusados por trigger.';
+    'ADR-0061 I12e — trilha so-inclusao dos eventos da excecao de destino. UPDATE/DELETE/TRUNCATE recusados por trigger.';
 COMMENT ON COLUMN lote_pagamento_item.destino_manual IS
-    'INERTE desde a 0075 (ADR-0060): o destino digitado por item foi substituido por excecao_destino. O codigo nao le nem grava esta coluna.';
+    'INERTE desde a 0075 (ADR-0061): o destino digitado por item foi substituido por excecao_destino. O codigo nao le nem grava esta coluna.';
 COMMENT ON COLUMN lote_pagamento_item.excecao_destino_id IS
-    'ADR-0060 I10f — exceção usada como destino, gravada quando o destino congela no import do fin015. Liga o item à exceção sem copiar o valor.';
+    'ADR-0061 I10f — exceção usada como destino, gravada quando o destino congela no import do fin015. Liga o item à exceção sem copiar o valor.';

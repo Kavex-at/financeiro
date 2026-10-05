@@ -1,7 +1,7 @@
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
 /**
- * Quem cadastrou a exceção de destino não pode aprová-la (ADR-0060, I12b). Falha fechada: vale
+ * Quem cadastrou a exceção de destino não pode aprová-la (ADR-0061, I12b). Falha fechada: vale
  * também quando o id de um dos lados falta. HTTP 403.
  *
  * A mensagem não traz conta nem chave (I10h) — só o id da exceção.

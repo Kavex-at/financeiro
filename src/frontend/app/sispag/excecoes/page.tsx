@@ -32,7 +32,7 @@ type Dialogo =
   | { tipo: 'rejeitar' | 'revogar'; excecao: ExcecaoDestinoResumo }
 
 /**
- * Exceções de destino de pagamento SISPAG (ADR-0060) — quem tem `sispag:excecao`. O cadastro do
+ * Exceções de destino de pagamento SISPAG (ADR-0061) — quem tem `sispag:excecao`. O cadastro do
  * Conexos é a fonte do destino; aqui se cadastra, aprova (por OUTRA pessoa), rejeita e revoga o
  * destino que difere dele. Com a flag desligada a página só explica. A autorização real é do
  * servidor: este guard é ergonomia.

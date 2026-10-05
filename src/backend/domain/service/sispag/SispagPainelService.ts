@@ -56,7 +56,7 @@ const TITULOS_CAP = 5000;
 
 /**
  * Dias a partir dos quais uma exceção de destino `PENDENTE` conta como "esperando demais" no
- * painel (ADR-0060, T11). Uma exceção parada é um pagamento que não sai (ou sai pela conta velha).
+ * painel (ADR-0061, T11). Uma exceção parada é um pagamento que não sai (ou sai pela conta velha).
  */
 const EXCECAO_PENDENTE_DIAS_LIMITE = 7;
 
@@ -222,7 +222,7 @@ export default class SispagPainelService {
     };
 
     /**
-     * Exceções de destino por estado e as `PENDENTE` paradas há mais de N dias (ADR-0060, T11).
+     * Exceções de destino por estado e as `PENDENTE` paradas há mais de N dias (ADR-0061, T11).
      * Só contagens (I10h). Falha NÃO derruba o painel: sem o contador a tela segue inteira, e o
      * aviso diz que o contador não veio (não que "não há exceções").
      */
@@ -377,7 +377,7 @@ export default class SispagPainelService {
     public modalidadesDisponiveisDoLote = async (
         loteId: string,
         /**
-         * `aposentarExcecao`: só o finalizar liga (ADR-0060 I12c) — a oferta em si é leitura e não
+         * `aposentarExcecao`: só o finalizar liga (ADR-0061 I12c) — a oferta em si é leitura e não
          * escreve. Com ele, exceção APROVADA que o cadastro tornou desnecessária vai a SUBSTITUIDA.
          */
         opcoes: { aposentarExcecao?: boolean } = {},

@@ -1047,9 +1047,9 @@ describe('GET /sispag/boletos-dda', () => {
     });
 });
 
-// ─────────────────────────────────────────────────────────── ADR-0060 — exceção de destino
+// ─────────────────────────────────────────────────────────── ADR-0061 — exceção de destino
 
-describe('exceção de destino (ADR-0060)', () => {
+describe('exceção de destino (ADR-0061)', () => {
     const ID = '3f1c2b9e-4d8a-4c1e-9f7a-2b6d8e0a1c55';
     const DESTINO = {
         tipo: 'CONTA',

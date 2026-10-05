@@ -85,7 +85,7 @@ const buildRepo = (): RepoMock => ({
 });
 
 /**
- * Dependências do ADR-0054/0060 (flags, oferta). Por padrão as flags estão DESLIGADAS — é o
+ * Dependências do ADR-0054/0061 (flags, oferta). Por padrão as flags estão DESLIGADAS — é o
  * comportamento do `main`.
  */
 const buildDestinoDeps = (envVars: Record<string, unknown> = {}) => ({
@@ -653,10 +653,10 @@ describe('LotePagamentoService — invariantes', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════
-// ADR-0054 Adendo + ADR-0060 I12f — o finalizar barra item sem destino resolvível
+// ADR-0054 Adendo + ADR-0061 I12f — o finalizar barra item sem destino resolvível
 // ═══════════════════════════════════════════════════════════════════════════════════════
 
-describe('LotePagamentoService.finalizarLote — falha fechada do destino (ADR-0060 I12f)', () => {
+describe('LotePagamentoService.finalizarLote — falha fechada do destino (ADR-0061 I12f)', () => {
     const itemTed = {
         loteId: 'L1',
         filCod: 2,

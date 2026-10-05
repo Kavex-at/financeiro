@@ -16,7 +16,7 @@ export const PERMISSION = {
     SISPAG_VER: 'sispag:ver',
     SISPAG_EXECUTAR: 'sispag:executar',
     /**
-     * Exceção de destino de pagamento (ADR-0060, 0075): cadastrar, aprovar, rejeitar e revogar.
+     * Exceção de destino de pagamento (ADR-0061, 0075): cadastrar, aprovar, rejeitar e revogar.
      * Permissão ÚNICA; a separação de funções é a regra "aprovador ≠ cadastrante" no backend
      * (I12b), não uma segunda permissão. Substitui `sispag:aprovar_destino` (ADR-0054 D10).
      * Avulsa: não implica nem é implicada por `sispag:ver`/`sispag:executar`.

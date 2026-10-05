@@ -35,7 +35,7 @@ export const ATOR_SISTEMA = 'sistema';
 
 /**
  * ExcecaoSubstituicaoService — aposenta a exceção `APROVADA` quando o cadastro do Conexos passou a
- * ter destino válido (ADR-0060, I12c). Usado pelo resolver (ao resolver no finalizar/envio) e
+ * ter destino válido (ADR-0061, I12c). Usado pelo resolver (ao resolver no finalizar/envio) e
  * pelo job `aposentar-excecoes-substituidas`: UMA só implementação, para as duas vias nunca
  * discordarem.
  *

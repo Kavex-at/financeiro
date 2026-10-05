@@ -45,7 +45,7 @@ const ATOR_DESCONHECIDO = 'unknown';
 const soDigitos = (v: string): string => v.replace(/\D/g, '');
 
 /**
- * ExcecaoDestinoRule — as regras PURAS da exceção de destino (ADR-0060, I12). Sem I/O.
+ * ExcecaoDestinoRule — as regras PURAS da exceção de destino (ADR-0061, I12). Sem I/O.
  *
  * - **I12b, dupla validação:** `aprovadoPor ≠ cadastradoPor`, comparados como identidade
  *   normalizada (sem caixa nem espaço). FALHA FECHADA: id ausente, vazio ou o "unknown" do ator

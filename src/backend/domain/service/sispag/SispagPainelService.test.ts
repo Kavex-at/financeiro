@@ -71,7 +71,7 @@ const make = (
         listarLinhasDigitaveisDoLote?: jest.Mock;
         remessaLedger?: { listReconcilingParadas: jest.Mock };
         conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
-        /** Exceção APROVADA por tipo que o `findAprovada` devolve (ADR-0060). */
+        /** Exceção APROVADA por tipo que o `findAprovada` devolve (ADR-0061). */
         excecaoAprovada?: Partial<Record<'CONTA' | 'CHAVE_PIX', unknown>>;
         substituicao?: { aposentar: jest.Mock };
         painelExcecoes?: { contarPorEstado: jest.Mock; contarPendentesAntigas: jest.Mock };
@@ -141,7 +141,7 @@ const make = (
     const substituicao = over.substituicao ?? {
         aposentar: jest.fn().mockResolvedValue({ aposentada: true, divergiu: false }),
     };
-    // Contadores do painel (ADR-0060 T11) — só contagens.
+    // Contadores do painel (ADR-0061 T11) — só contagens.
     const painelExcecoes = over.painelExcecoes ?? {
         contarPorEstado: jest.fn().mockResolvedValue({
             PENDENTE: 2,
@@ -184,7 +184,7 @@ const make = (
     };
 };
 
-describe('SispagPainelService.montarPainel — exceções de destino (ADR-0060, T11)', () => {
+describe('SispagPainelService.montarPainel — exceções de destino (ADR-0061, T11)', () => {
     it('flag ligada: contagem por estado e pendentes antigas, sem nenhum valor de destino', async () => {
         const { service, painelExcecoes } = make({
             envVars: { sispagExcecaoDestinoEnabled: true },

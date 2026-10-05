@@ -115,7 +115,7 @@ export interface ChavePixFavorecido {
 }
 
 /**
- * Destino de pagamento fora do cadastro (ADR-0054 D1 → ADR-0060): a forma do valor que uma
+ * Destino de pagamento fora do cadastro (ADR-0054 D1 → ADR-0061): a forma do valor que uma
  * `ExcecaoDestino` guarda e que vai no item do `fin015` sem `pctCodSeq`. Não é escrito no
  * cadastro do Conexos. Gravado completo (vai ao ERP), mas NUNCA sai inteiro em log, ledger, API
  * ou erro (I10h).
@@ -175,7 +175,7 @@ export const EXCECAO_EVENTO = {
 export type ExcecaoEvento = (typeof EXCECAO_EVENTO)[keyof typeof EXCECAO_EVENTO];
 
 /**
- * Exceção de destino COMPLETA (ADR-0060) — uso interno (service/resolver/envio). A API nunca a
+ * Exceção de destino COMPLETA (ADR-0061) — uso interno (service/resolver/envio). A API nunca a
  * devolve: as rotas projetam para `ExcecaoDestinoResumo` (só máscara, I10h).
  */
 export interface ExcecaoDestino {
@@ -350,7 +350,7 @@ export interface SispagPainelResponse {
     execucoesParadas: ExecucoesParadas;
     lotes: LoteSispag[];
     /**
-     * Exceções de destino (ADR-0060): contagem por estado e as `PENDENTE` esperando há mais de
+     * Exceções de destino (ADR-0061): contagem por estado e as `PENDENTE` esperando há mais de
      * `diasLimite` dias. SÓ contagens, nunca valores de destino (I10h). Ausente com a flag de
      * exceção desligada (paridade com o `main`) ou se a leitura falhou.
      */
@@ -504,7 +504,7 @@ export interface ItemLote {
     /** Sequencial do item no lote NATIVO — 4ª parte da chave que viaja no `.REM`/`.RET`. */
     nativeItsCodSeq?: number;
     /**
-     * Exceção de destino usada quando o destino do item congelou no import do `fin015` (ADR-0060
+     * Exceção de destino usada quando o destino do item congelou no import do `fin015` (ADR-0061
      * I10f): liga o item à exceção SEM copiar o valor. Ausente = o destino veio do cadastro.
      */
     excecaoDestinoId?: string;

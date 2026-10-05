@@ -16,7 +16,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { aprovarExcecao, type ExcecaoDestinoResumo } from '@/lib/sispag'
 
 /**
- * Aprovar exceção (ADR-0060, I12b): a segunda pessoa confere o destino e o titular (sempre
+ * Aprovar exceção (ADR-0061, I12b): a segunda pessoa confere o destino e o titular (sempre
  * MASCARADOS) e aprova. O backend nega o próprio cadastrante; a tela só evita o clique inútil.
  * Erro do servidor fica inline, com o diálogo aberto.
  */

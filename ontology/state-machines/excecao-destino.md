@@ -13,7 +13,7 @@ related_files:
 last_review: 2026-10-05
 ---
 
-# State machine: ExcecaoDestino (ADR-0060)
+# State machine: ExcecaoDestino (ADR-0061)
 
 Estados: `PENDENTE`, `APROVADA`, `REJEITADA`, `SUBSTITUIDA`, `REVOGADA`. Terminais:
 `REJEITADA`, `SUBSTITUIDA`, `REVOGADA`. Só `APROVADA` resolve destino; `PENDENTE` nunca é usada no

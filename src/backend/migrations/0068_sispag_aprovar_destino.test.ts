@@ -3,7 +3,7 @@ import path from 'node:path';
 import { PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
 
 /**
- * O catálogo no dia da 0068: o de hoje, com `sispag:excecao` (0075, ADR-0060) de volta como
+ * O catálogo no dia da 0068: o de hoje, com `sispag:excecao` (0075, ADR-0061) de volta como
  * `sispag:aprovar_destino`. A 0068 é histórico; a paridade vigente é checada pelo teste da 0075.
  */
 const CATALOGO_DA_0068: readonly string[] = PERMISSION_CATALOG.map((p) =>

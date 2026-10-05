@@ -6,7 +6,7 @@ import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.
 import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js';
 
 /**
- * Q4 da ADR-0060 (SOMENTE LEITURA): quanto do destino digitado por item (ADR-0054) existe no
+ * Q4 da ADR-0061 (SOMENTE LEITURA): quanto do destino digitado por item (ADR-0054) existe no
  * banco. Decide o ramo da migration 0075: 0 = a coluna `destino_manual` fica inerte e nada é
  * convertido; > 0 = converter em exceção PENDENTE (nunca APROVADA), deduplicada por
  * favorecido + tipo, decisão do Yuri.

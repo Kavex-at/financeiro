@@ -79,7 +79,7 @@ const MODALIDADE_TED_NATIVA = 5;
 const MODALIDADE_PIX_NATIVA = 1;
 
 /**
- * Assinatura do destino de cada item no ledger (ADR-0054 I10f, ADR-0060): SÓ referências —
+ * Assinatura do destino de cada item no ledger (ADR-0054 I10f, ADR-0061): SÓ referências —
  * `pctCodSeq` da conta do cadastro, `cixCod` da chave do cadastro, ou o `excecaoId` da exceção
  * APROVADA usada. Nunca conta, chave ou documento (I10h): o `request_payload` é lido por gente e
  * por jobs. `MANUAL`/`auditId` são o formato LEGADO do destino digitado por item (ADR-0054, flag
@@ -92,7 +92,7 @@ const assinaturaDestinoSchema = z.object({
     pctCodSeq: z.number().optional(),
     cixCod: z.number().optional(),
     excecaoId: z.string().optional(),
-    /** Legado (destino digitado por item, retirado na ADR-0060). */
+    /** Legado (destino digitado por item, retirado na ADR-0061). */
     auditId: z.string().optional(),
 });
 
@@ -250,7 +250,7 @@ export default class RemessaService {
 
         const env = await this.environmentProvider.getEnvironmentVars();
         const writeEnabled = env.conexosWriteEnabled;
-        // ADR-0054/0060 — as três desligadas (default) = envio idêntico ao `main`. `=== true`
+        // ADR-0054/0061 — as três desligadas (default) = envio idêntico ao `main`. `=== true`
         // porque ausência nunca liga nada.
         const flags: FlagsDestino = {
             ted: env.sispagTedEnabled === true,
@@ -1008,7 +1008,7 @@ export default class RemessaService {
         apenas?: ReadonlySet<string>,
         /** `false` = freio de incidente ligado (`SISPAG_DDA_ASSOC_ENABLED=false`). */
         ddaHabilitado = true,
-        /** Flags TED/PIX/exceção (ADR-0054/0060). Ausente = todas desligadas (regra do `main`). */
+        /** Flags TED/PIX/exceção (ADR-0054/0061). Ausente = todas desligadas (regra do `main`). */
         flags: FlagsDestino = { ted: false, pix: false, excecao: false },
         /** Destinos já resolvidos e conferidos no pré-voo — a fonte, quando existe. */
         preResolvidos?: ReadonlyMap<string, DestinoResolvido>,
@@ -1193,7 +1193,7 @@ export default class RemessaService {
     });
 
     /**
-     * ADR-0060 I10f/I12e: o destino que vai ao `fin015` é uma exceção — liga o item a ela
+     * ADR-0061 I10f/I12e: o destino que vai ao `fin015` é uma exceção — liga o item a ela
      * (`excecao_destino_id`, sem copiar o valor) e grava o evento USO na trilha (sem valor em
      * claro). Idempotente numa retomada: o item que já aponta para a mesma exceção não regrava.
      */

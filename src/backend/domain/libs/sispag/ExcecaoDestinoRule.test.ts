@@ -35,7 +35,7 @@ const CHAVE_EMAIL: DestinoManual = {
     titularDocumento: DOC,
 };
 
-describe('ExcecaoDestinoRule (ADR-0060, I12)', () => {
+describe('ExcecaoDestinoRule (ADR-0061, I12)', () => {
     const rule = new ExcecaoDestinoRule(new DestinoManualValidator());
 
     describe('I12b — aprovador diferente do cadastrante (falha fechada)', () => {

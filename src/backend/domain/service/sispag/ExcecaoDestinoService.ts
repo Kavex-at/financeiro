@@ -53,7 +53,7 @@ export interface ResultadoAposentadoria {
 }
 
 /**
- * ExcecaoDestinoService — o ciclo de vida da exceção de destino (ADR-0060): registrar, aprovar,
+ * ExcecaoDestinoService — o ciclo de vida da exceção de destino (ADR-0061): registrar, aprovar,
  * rejeitar, revogar, listar e aposentar as substituídas pelo cadastro.
  *
  * - **I12b no serviço, não só na UI:** aprovar passa por `ExcecaoDestinoRule.decidir`, que nega o

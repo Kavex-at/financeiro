@@ -189,7 +189,7 @@ describe('DestinoPagamentoResolver — flags desligadas = regra do main', () => 
     });
 });
 
-describe('DestinoPagamentoResolver — cadastro primeiro, exceção APROVADA como fallback (ADR-0060)', () => {
+describe('DestinoPagamentoResolver — cadastro primeiro, exceção APROVADA como fallback (ADR-0061)', () => {
     it('cadastro com conta ativa vence a exceção APROVADA (a exceção nunca é lida sem aposentar)', async () => {
         const { resolver, excecoes } = build(
             [conta({ banco: 237, pctCodSeq: 42 })],

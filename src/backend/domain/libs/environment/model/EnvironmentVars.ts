@@ -157,7 +157,7 @@ export default class EnvironmentVars {
      *   conta ativa do favorecido em QUALQUER banco (I10c), e a oferta usa o mesmo resolver do
      *   envio (I10b). Desligado: regra antiga (conta no banco do lote, modalidade 1).
      * - `sispagExcecaoDestinoEnabled` (`SISPAG_EXCECAO_DESTINO_ENABLED`, com o nome antigo
-     *   `SISPAG_DESTINO_MANUAL_ENABLED` aceito como alias por um ciclo de deploy; ADR-0060): a
+     *   `SISPAG_DESTINO_MANUAL_ENABLED` aceito como alias por um ciclo de deploy; ADR-0061): a
      *   exceção de destino aprovada vale como fallback do cadastro do Conexos. Desligado: as rotas
      *   de exceção recusam e nenhuma exceção resolve (paridade com o `main`).
      * - `sispagPixEnabled` (`SISPAG_PIX_ENABLED`): PIX pela chave do `cmn025/cmnPessoasPix` ou

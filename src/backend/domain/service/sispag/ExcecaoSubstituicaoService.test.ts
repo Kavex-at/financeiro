@@ -79,7 +79,7 @@ const build = () => {
     return { svc, repo, notificacao, log };
 };
 
-describe('ExcecaoSubstituicaoService (ADR-0060, I12c)', () => {
+describe('ExcecaoSubstituicaoService (ADR-0061, I12c)', () => {
     it('cadastro igual à exceção: só a substituição, sem divergência nem alerta', async () => {
         const { svc, repo, notificacao } = build();
         const r = await svc.aposentar({

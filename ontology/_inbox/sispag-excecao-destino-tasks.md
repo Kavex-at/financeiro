@@ -1,7 +1,7 @@
 # Tasks: sispag-excecao-destino
 
-**Spec source:** ontology/_inbox/sispag-excecao-destino-diff-proposal.md (+ ontology/_inbox/sispag-excecao-gap.md, ADR-0060)
-**Ontology diff:** yes — `ontology/decisions/0060-excecao-de-destino-sispag-cadastro-primeiro.md`, `ontology/entities/excecao-destino.md`, `ontology/state-machines/excecao-destino.md`, `ontology/business-rules/excecao-destino-sispag.md` (I12a-i), `ontology/actions/sispag/*excecao*.md` (6), `ontology/business-rules/destino-pagamento-sispag.md`, `ontology/entities/lote-pagamento.md`, `ontology/entities/usuario.md`, `ontology/state-machines/lote-pagamento.md`
+**Spec source:** ontology/_inbox/sispag-excecao-destino-diff-proposal.md (+ ontology/_inbox/sispag-excecao-gap.md, ADR-0061)
+**Ontology diff:** yes — `ontology/decisions/0061-excecao-de-destino-sispag-cadastro-primeiro.md`, `ontology/entities/excecao-destino.md`, `ontology/state-machines/excecao-destino.md`, `ontology/business-rules/excecao-destino-sispag.md` (I12a-i), `ontology/actions/sispag/*excecao*.md` (6), `ontology/business-rules/destino-pagamento-sispag.md`, `ontology/entities/lote-pagamento.md`, `ontology/entities/usuario.md`, `ontology/state-machines/lote-pagamento.md`
 **Estimated scope:** L (1 migration, 1 regra, 1 repository, 1 service, resolver/finalizar/envio ajustados, rotas, frontend com tela nova; carga em planilha bloqueada)
 
 > **Regras transversais (valem para toda task):**
@@ -252,7 +252,7 @@ All tasks complete (Task 10 pode sair como follow-up se Q1 seguir aberta) AND:
 - [ ] `npm run lint` (backend e frontend)
 - [ ] `npm test` (backend e frontend)
 - [ ] PatternGuardian gate
-- [ ] entity_changed: diff em `ontology/` presente (ADR-0060 e demais)
+- [ ] entity_changed: diff em `ontology/` presente (ADR-0061 e demais)
 - [ ] frontend tocado: DesignSystemReviewer gate
 - [ ] novo job (`aposentar-excecoes-substituidas`): ObservabilityAdvisor review
 - [ ] Ground-Truth gate: N/A (sem lógica monetária; nenhum valor, saldo ou baixa é calculado). Registrar a dispensa no relatório do loop

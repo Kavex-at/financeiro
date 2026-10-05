@@ -1,7 +1,7 @@
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
 /**
- * O usuário não tem `sispag:excecao` (ADR-0060, I12b). A rota já barra pelo guard; este erro é a
+ * O usuário não tem `sispag:excecao` (ADR-0061, I12b). A rota já barra pelo guard; este erro é a
  * segunda trava, no serviço, para quem chamar fora da rota. HTTP 403.
  */
 export default class ExcecaoSemPermissaoError extends Error implements HandlerError {

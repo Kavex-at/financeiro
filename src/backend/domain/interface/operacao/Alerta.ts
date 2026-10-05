@@ -13,7 +13,7 @@ export const ALERTA_TIPO = {
     /** Estorno de título pago, ou item rejeitado com título pago (ADR-0055, I11f). */
     SISPAG_BAIXA_DIVERGENTE: 'sispag-baixa-divergente',
     /**
-     * O cadastro do Conexos passou a ter destino válido DIFERENTE da exceção aprovada (ADR-0060,
+     * O cadastro do Conexos passou a ter destino válido DIFERENTE da exceção aprovada (ADR-0061,
      * I12c). A exceção vai a SUBSTITUIDA e nunca é usada; o alerta pede revisão. Sem valores:
      * só o id da exceção e o favorecido.
      */

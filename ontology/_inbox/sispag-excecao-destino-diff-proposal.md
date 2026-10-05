@@ -4,7 +4,7 @@
 **Status:** RASCUNHO, aguardando aprovação do Yuri. Nada em `ontology/` próprio, `_index.json`,
 `_coverage.json` ou código foi alterado. `entity_changed = true`.
 **Base:** 5 respostas confirmadas pelo usuário (entrevista real) + item 6 (refactor do fluxo por item).
-Numeração conferida em `origin/main`: último ADR = 0059 → este é o **0060**; última migration = 0074 →
+Numeração conferida em `origin/main`: último ADR = 0059 → este é o **0061**; última migration = 0074 →
 a nova é a **0075** (reconfirmar contra `origin/main` antes do commit; sessões paralelas colidem).
 
 ## 1. Candidate analysis
@@ -26,7 +26,7 @@ a nova é a **0075** (reconfirmar contra `origin/main` antes do commit; sessões
 
 ## 2. Arquivos afetados e diffs
 
-### 2.1 NOVO `ontology/decisions/0060-excecao-de-destino-sispag-cadastro-primeiro.md` (rascunho completo na §3)
+### 2.1 NOVO `ontology/decisions/0061-excecao-de-destino-sispag-cadastro-primeiro.md` (rascunho completo na §3)
 
 ### 2.2 `ontology/decisions/0054-destino-de-pagamento-sispag-digitado-no-item.md`
 
@@ -38,18 +38,18 @@ Só frontmatter + marca de superseção; o corpo histórico fica (ADR é registr
 -amends_decisions: [0039, 0049]
 +supersedes_decisions: []
 +amends_decisions: [0039, 0049]
-+superseded_in_part_by: [0060]   # D2, D3, D10, D11 e D12-tela (ver 0060 §Superseção)
++superseded_in_part_by: [0061]   # D2, D3, D10, D11 e D12-tela (ver 0061 §Superseção)
 ```
 ```diff
  ## Decisões
 +
-+> **Superseção parcial (ADR-0060, 2026-10-05).** D2 (digitado vence o cadastro), D10 (aprovação
++> **Superseção parcial (ADR-0061, 2026-10-05).** D2 (digitado vence o cadastro), D10 (aprovação
 +> pela própria pessoa) e D11 (PIX CPF/CNPJ sem aprovação) **deixam de valer**: o cadastro do
 +> Conexos é a fonte principal e o destino fora dele só existe como `ExcecaoDestino` aprovada por
 +> segunda pessoa, para TED **e** PIX. D1 (nunca escrever no `cmn025`), D5 (congelamento), I10g/h/i
 +> seguem. O destino por item (`destinoManual`) é substituído pela exceção por favorecido.
 ```
-Marcar também, inline, `D2`, `D10`, `D11` com `*(superseded por 0060)*` no título de cada seção.
+Marcar também, inline, `D2`, `D10`, `D11` com `*(superseded por 0061)*` no título de cada seção.
 
 ### 2.3 `ontology/business-rules/destino-pagamento-sispag.md` (invariante I10, `ontology_version` 0.30.0 → 0.31.0)
 
@@ -69,7 +69,7 @@ Marcar também, inline, `D2`, `D10`, `D11` com `*(superseded por 0060)*` no tít
 ```
 ```diff
 -- **Precedência:** o digitado vence o cadastro (ADR-0054 D2). ...
-+- **Precedência (ADR-0060):** o cadastro vence. A exceção APROVADA é fallback **só quando o
++- **Precedência (ADR-0061):** o cadastro vence. A exceção APROVADA é fallback **só quando o
 +  cadastro não tem destino válido** para a modalidade. Cadastro com destino válido nunca é
 +  substituído por exceção (decisão de segurança/fraude).
 +- **A exceção nunca é escrita no cadastro** (ADR-0054 D1, mantida). Vai no item do `fin015` sem
@@ -80,7 +80,7 @@ Marcar também, inline, `D2`, `D10`, `D11` com `*(superseded por 0060)*` no tít
 **Invariantes**
 ```diff
 -| **I10e** (D5) | Digitar ou alterar `destinoManual` só com o lote em RASCUNHO ... | edição |
-+| **I10e** (ADR-0060) | A exceção **não é editada no item nem no lote**: é cadastrada/aprovada/revogada na entidade `ExcecaoDestino` (I12). No lote, a analista só **vê** a origem do destino. | — |
++| **I10e** (ADR-0061) | A exceção **não é editada no item nem no lote**: é cadastrada/aprovada/revogada na entidade `ExcecaoDestino` (I12). No lote, a analista só **vê** a origem do destino. | — |
  | **I10f** (D6) | Congelamento ... | retomada |
 +|   | *(texto: "o destino" passa a ser o resolvido, com `excecaoId` da exceção usada, gravado no ledger/assinatura da marca d'água)* | |
 -| **I10g** ... trilha ... `lote_pagamento_item_destino_audit`
@@ -111,7 +111,7 @@ Premissas H3/H5 (fin015 aceita destino sem `pctCodSeq`) **continuam valendo e n�
 +  - itens[].destinoOrigem
  relationships:
 -  - "ItemLote 0..1—1 DestinoManual (value object ...; ADR-0054)"
-+  - "ItemLote N—0..1 ExcecaoDestino (a exceção APROVADA usada como destino; ADR-0060; vazio quando o destino vem do cadastro)"
++  - "ItemLote N—0..1 ExcecaoDestino (a exceção APROVADA usada como destino; ADR-0061; vazio quando o destino vem do cadastro)"
 ```
 Propriedades do `ItemLote`:
 ```diff
@@ -120,7 +120,7 @@ Propriedades do `ItemLote`:
 +| `destinoOrigem` | enum? (derivado) | — | `CADASTRO` (cmn025 ao vivo) \| `EXCECAO` (ExcecaoDestino aprovada, fallback) \| `null` para boleto. Dirige o selo "exceção" na tela. |
 +| `excecaoDestinoId` | string? | `lote_pagamento_item.excecao_destino_id` *(a criar)* | FK lógica para a exceção usada, **gravada na hora em que o destino congela** (I10f) — liga o item à exceção sem copiar o valor. |
 ```
-Remover a tabela "Value object `DestinoManual`" (movida para `entities/excecao-destino.md`; campos `tipo`, `bancoCod`, `agencia*`, `conta*`, `chavePixTipo`, `chavePix`, `titularDocumento` seguem iguais; `aprovacao`/`aprovadoPor`/`aprovadoEm` viram estado/atributos da exceção). Em "Invariantes aplicáveis", reescrever o bullet I10: tirar "`destinoManual` editável só em RASCUNHO", "conta digitada só sai aprovada por quem tem `sispag:aprovar_destino`", "O digitado prevalece sobre o cadastro"; incluir "cadastro primeiro, exceção APROVADA como fallback (I10, I12)". Ajustar `universality_evidence` (linha do `destinoManual` → "ExcecaoDestino; ADR-0060"). `last_review` e `ontology_version` bump.
+Remover a tabela "Value object `DestinoManual`" (movida para `entities/excecao-destino.md`; campos `tipo`, `bancoCod`, `agencia*`, `conta*`, `chavePixTipo`, `chavePix`, `titularDocumento` seguem iguais; `aprovacao`/`aprovadoPor`/`aprovadoEm` viram estado/atributos da exceção). Em "Invariantes aplicáveis", reescrever o bullet I10: tirar "`destinoManual` editável só em RASCUNHO", "conta digitada só sai aprovada por quem tem `sispag:aprovar_destino`", "O digitado prevalece sobre o cadastro"; incluir "cadastro primeiro, exceção APROVADA como fallback (I10, I12)". Ajustar `universality_evidence` (linha do `destinoManual` → "ExcecaoDestino; ADR-0061"). `last_review` e `ontology_version` bump.
 
 ### 2.5 NOVO `ontology/entities/excecao-destino.md` (frontmatter pelo padrão da Parte 8)
 
@@ -166,7 +166,7 @@ L2 (linha 96): tirar `informarDestinoItem (ADR-0054)` da lista de ações; remov
 
 ```diff
 -  - "Todo item TED/PIX com destino resolvível — destinoManual ou conta/chave ativa do cadastro cmn025 (I10a, ADR-0054; ...)."
-+  - "Todo item TED/PIX com destino resolvível — conta/chave ativa do cadastro cmn025 ou, na falta, ExcecaoDestino APROVADA do favorecido (I10a, I12f; ADR-0054, ADR-0060)."
++  - "Todo item TED/PIX com destino resolvível — conta/chave ativa do cadastro cmn025 ou, na falta, ExcecaoDestino APROVADA do favorecido (I10a, I12f; ADR-0054, ADR-0061)."
 ```
 Remover a precondição de "conta digitada pendente" (`DestinoAprovacaoPendenteError`), se existir no corpo.
 
@@ -181,7 +181,7 @@ Catálogo de permissões: `sispag:aprovar_destino` → substituída/renomeada pe
 
 - `ontology/relationships.md`: trocar `ItemLote → DestinoManual` por `ItemLote → ExcecaoDestino (0..1)`; adicionar `ExcecaoDestino → Favorecido(pesCod)`.
 - `ontology/glossary.md`: verbetes **Exceção de destino**, **Cadastro (cmn025) como fonte principal de destino**; remover/anotar "destino manual".
-- `ontology/_inbox/_watchlist.md` (seção SISPAG, linhas ~117–123): atualizar "Quatro olhos" → agora **implementado em outra forma** (dupla validação por exceção, ADR-0060); "Atualizar `cmn025`" segue fora; adicionar "limite de valor por exceção" e "observação do retorno do banco" como watchlist; adicionar "campos/regras da planilha de exceções" (aguarda Q1).
+- `ontology/_inbox/_watchlist.md` (seção SISPAG, linhas ~117–123): atualizar "Quatro olhos" → agora **implementado em outra forma** (dupla validação por exceção, ADR-0061); "Atualizar `cmn025`" segue fora; adicionar "limite de valor por exceção" e "observação do retorno do banco" como watchlist; adicionar "campos/regras da planilha de exceções" (aguarda Q1).
 - `ontology/_index.json`, `ontology/_coverage.json`: **só após aprovação** — entidade nova (`ExcecaoDestino`, planned), 6 ações, 1 state-machine, 1 rule (se arquivo próprio); `ontology_version` minor bump. Contagens "20 entities, ~25 actions, 3 state-machines" do CLAUDE.md serão recalculadas na gravação.
 - `ontology/CHANGELOG.md`: entrada `0.31.0`.
 - `docs-contexto/03_ontologia_financeiro.md`: grep não achou "destino manual" em `docs/` nem README; verificar `docs-contexto/03_ontologia_financeiro.md` por "ItemLote"/"destino" (não alterado nesta etapa; incluir na aprovação se houver referência).
@@ -191,7 +191,7 @@ Catálogo de permissões: `sispag:aprovar_destino` → substituída/renomeada pe
 
 ```markdown
 ---
-adr_number: 0060
+adr_number: 0061
 title: Cadastro do Conexos é a fonte principal do destino de pagamento SISPAG; destino fora do cadastro só como Exceção de destino aprovada por segunda pessoa
 date: 2026-10-05
 status: accepted
@@ -208,7 +208,7 @@ evidence:
   - ontology/decisions/0054-... (D1, adendos de 2026-09-28 e 2026-09-29)
 ---
 
-# ADR 0060: cadastro primeiro; exceção de destino aprovada por segunda pessoa como fallback
+# ADR 0061: cadastro primeiro; exceção de destino aprovada por segunda pessoa como fallback
 
 ## Contexto
 A ADR-0054 deixou a analista digitar o destino no item, com precedência sobre o cadastro (D2),
@@ -279,5 +279,5 @@ O que sai/vira: coluna `lote_pagamento_item.destino_manual` (0067), tabela `lote
 
 ## 6. Pedido de resposta
 
-- **approve** — grava ADR-0060, marca superseções na 0054, cria entidade/state-machine/ações, atualiza as demais, `_index.json`, `_coverage.json`, CHANGELOG e watchlist; hand-off ao TaskScoper.
+- **approve** — grava ADR-0061, marca superseções na 0054, cria entidade/state-machine/ações, atualiza as demais, `_index.json`, `_coverage.json`, CHANGELOG e watchlist; hand-off ao TaskScoper.
 - **edit [arquivo] [instrução]** · **reject [motivo]** · **partial [itens]**.

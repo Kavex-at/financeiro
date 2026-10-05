@@ -10,7 +10,7 @@ export type ExcecaoTitularidadeMotivo =
     (typeof EXCECAO_TITULARIDADE_MOTIVO)[keyof typeof EXCECAO_TITULARIDADE_MOTIVO];
 
 /**
- * Titularidade da exceção (ADR-0060, I12i/I10i): o CPF/CNPJ do titular — ou a chave PIX — não é o
+ * Titularidade da exceção (ADR-0061, I12i/I10i): o CPF/CNPJ do titular — ou a chave PIX — não é o
  * documento do favorecido, ou a chave PIX não é do tipo CPF/CNPJ (único titular conferível sem o
  * DICT). HTTP 422. Nunca carrega documento nem chave (I10h): só o motivo.
  */

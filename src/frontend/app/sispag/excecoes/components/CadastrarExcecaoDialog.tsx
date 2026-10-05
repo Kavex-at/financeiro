@@ -87,7 +87,7 @@ export interface FavorecidoDaExcecao {
 }
 
 /**
- * "Cadastrar exceção de destino" (ADR-0060) — conta (TED) ou chave PIX CPF/CNPJ de um favorecido
+ * "Cadastrar exceção de destino" (ADR-0061) — conta (TED) ou chave PIX CPF/CNPJ de um favorecido
  * que difere do cadastro do Conexos. A exceção nasce PENDENTE: outra pessoa com a permissão
  * precisa aprová-la. Vale para o favorecido, em qualquer lote, até ser revogada ou o cadastro
  * assumir. Não escreve no cadastro do Conexos.

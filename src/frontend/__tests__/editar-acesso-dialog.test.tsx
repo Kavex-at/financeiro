@@ -103,7 +103,7 @@ describe('EditarAcessoDialog', () => {
     expect(within(screen.getByRole('group', { name: 'Métricas' })).getByText('concedida')).toBeInTheDocument()
   })
 
-  it('ADR-0060: "Exceção de destino" aparece no SISPAG e não arrasta ver/executar', () => {
+  it('ADR-0061: "Exceção de destino" aparece no SISPAG e não arrasta ver/executar', () => {
     abrir(alvo({ papel: { id: 2, nome: 'Consulta' } }))
     const aprovar = caixa(/SISPAG — exceção de destino/)
     expect(aprovar).toHaveAttribute('aria-checked', 'false')

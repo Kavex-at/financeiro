@@ -20,14 +20,14 @@ import ExcecaoSubstituicaoService from './ExcecaoSubstituicaoService.js';
 /** De onde veio o destino resolvido de um item. Constantes tipadas — nunca string crua. */
 export const DESTINO_ORIGEM = {
     CADASTRO: 'CADASTRO',
-    /** `ExcecaoDestino` APROVADA, só como fallback de um cadastro sem destino válido (ADR-0060). */
+    /** `ExcecaoDestino` APROVADA, só como fallback de um cadastro sem destino válido (ADR-0061). */
     EXCECAO: 'EXCECAO',
     NENHUM: 'NENHUM',
 } as const;
 
 export type DestinoOrigem = (typeof DESTINO_ORIGEM)[keyof typeof DESTINO_ORIGEM];
 
-/** O que o resolver lê das flags (ADR-0054, ADR-0060). Vem do `EnvironmentProvider`, nunca daqui. */
+/** O que o resolver lê das flags (ADR-0054, ADR-0061). Vem do `EnvironmentProvider`, nunca daqui. */
 export interface FlagsDestino {
     ted: boolean;
     pix: boolean;
@@ -81,7 +81,7 @@ export interface ContextoDestino {
     pesCod?: string;
     cache?: CacheCadastroDestino;
     /**
-     * `true` só no finalizar/envio (ADR-0060 I12c): cadastro com destino válido + exceção APROVADA
+     * `true` só no finalizar/envio (ADR-0061 I12c): cadastro com destino válido + exceção APROVADA
      * do favorecido = a exceção é aposentada na hora (`SUBSTITUIDA`, nunca usada). O painel NÃO
      * liga isto: oferecer modalidade é leitura e não escreve.
      */
@@ -107,7 +107,7 @@ const NENHUM: DestinoResolvido = { origem: DESTINO_ORIGEM.NENHUM };
  *                          ordem: CPF/CNPJ = documento do favorecido (D12), depois default, depois
  *                          as demais. Documento indisponível = ordem de antes (default 1º).
  *     2. senão, ExcecaoDestino APROVADA do favorecido, do tipo da modalidade
- *        (CONTA p/ TED, CHAVE_PIX p/ PIX; flag de exceção ligada)    → EXCECAO (ADR-0060 I12)
+ *        (CONTA p/ TED, CHAVE_PIX p/ PIX; flag de exceção ligada)    → EXCECAO (ADR-0061 I12)
  *     3. senão (flag da modalidade desligada, ou CRÉDITO EM CONTA legado):
  *          regra do `main` — conta ativa NO BANCO DO LOTE, default 1º
  *     nada → NENHUM

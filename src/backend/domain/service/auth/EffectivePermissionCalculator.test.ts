@@ -23,7 +23,7 @@ const efetivas = (pacote: string[], excecoes: PermissionException[] = []): strin
     [...calc.calcular(pacote, excecoes).permissoes].sort();
 
 describe('catálogo de permissões', () => {
-    it('tem exatamente as permissões decididas (nove da entrevista + sispag:excecao do ADR-0060; mudar o catálogo exige mudar este teste)', () => {
+    it('tem exatamente as permissões decididas (nove da entrevista + sispag:excecao do ADR-0061; mudar o catálogo exige mudar este teste)', () => {
         expect([...PERMISSION_CATALOG].sort()).toEqual(
             [
                 'metricas:ver',
@@ -40,7 +40,7 @@ describe('catálogo de permissões', () => {
         );
     });
 
-    it('não expõe mais sispag:aprovar_destino (ADR-0060 substituiu pela permissão única)', () => {
+    it('não expõe mais sispag:aprovar_destino (ADR-0061 substituiu pela permissão única)', () => {
         expect(PERMISSION_CATALOG as readonly string[]).not.toContain('sispag:aprovar_destino');
         expect(PERMISSION.SISPAG_EXCECAO).toBe('sispag:excecao');
     });
@@ -88,7 +88,7 @@ describe('EffectivePermissionCalculator.calcular — fecho(pacote ∪ concedidas
         expect(efetivas([...PERMISSION_CATALOG])).toEqual([...PERMISSION_CATALOG].sort());
     });
 
-    describe('sispag:excecao (ADR-0060)', () => {
+    describe('sispag:excecao (ADR-0061)', () => {
         const ADMINISTRADOR = [...PERMISSION_CATALOG];
         const ANALISTA = [
             'permutas:ver',

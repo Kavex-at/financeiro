@@ -83,7 +83,7 @@ const RECURSOS_DESLIGADOS: RecursosSispag = {
 /**
  * Itens TED/PIX (com a flag da modalidade ligada) que a oferta já carregada NÃO cobre — nem
  * cadastro do Conexos, nem exceção APROVADA. Mesma checagem do `finalizarLote` no backend
- * (ADR-0054 Adendo, ADR-0060 I12f); a mensagem é a mesma para a analista não ver dois textos para um problema.
+ * (ADR-0054 Adendo, ADR-0061 I12f); a mensagem é a mesma para a analista não ver dois textos para um problema.
  */
 function itensSemDestino(
   itens: ItemLote[],
@@ -201,7 +201,7 @@ function SituacaoDoItem({ item }: { item: ItemLote }) {
 }
 
 /**
- * Destino de TED/PIX de um item (ADR-0054, ADR-0060). Mostra a MÁSCARA que veio da oferta do
+ * Destino de TED/PIX de um item (ADR-0054, ADR-0061). Mostra a MÁSCARA que veio da oferta do
  * backend: do cadastro do Conexos, ou o selo "exceção" quando o cadastro não tem destino e uma
  * exceção APROVADA assumiu. Sem destino nenhum, "sem destino: aguardando exceção" — com link para
  * a tela de exceções (e atalho de cadastro, em RASCUNHO) só para quem tem `sispag:excecao`. Não
@@ -308,9 +308,9 @@ export function LoteCard({
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
-  // ADR-0060: exceção de destino é permissão própria (cadastrar, aprovar, rejeitar, revogar).
+  // ADR-0061: exceção de destino é permissão própria (cadastrar, aprovar, rejeitar, revogar).
   const podeExcecao = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXCECAO)
-  // ADR-0054/0060: flags de TED/PIX/exceção de destino. Desligadas (default e em falha) = tela de antes.
+  // ADR-0054/0061: flags de TED/PIX/exceção de destino. Desligadas (default e em falha) = tela de antes.
   const [recursos, setRecursos] = React.useState<RecursosSispag>(RECURSOS_DESLIGADOS)
   React.useEffect(() => {
     let vivo = true

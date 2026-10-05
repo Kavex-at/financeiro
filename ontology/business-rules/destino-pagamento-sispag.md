@@ -36,7 +36,7 @@ has_canonical_test: true
 > banco do lote, e PIX nunca era oferecido. Metade dos favorecidos não tem conta no cadastro, nenhum
 > tem chave PIX, e o cadastro que existe está desatualizado. Decisão em ADR-0054.
 >
-> **Revisada pela ADR-0060 (2026-10-05):** cadastro primeiro, exceção aprovada como fallback (I12,
+> **Revisada pela ADR-0061 (2026-10-05):** cadastro primeiro, exceção aprovada como fallback (I12,
 > `business-rules/excecao-destino-sispag.md`); D2, D10 e D11 da ADR-0054 estão superseded.
 
 ## Onde se aplica
@@ -61,7 +61,7 @@ destino(item) =
     3. senão: nenhum
 ```
 
-- **Precedência (ADR-0060):** o cadastro vence. A exceção `APROVADA` é fallback **só quando o
+- **Precedência (ADR-0061):** o cadastro vence. A exceção `APROVADA` é fallback **só quando o
   cadastro não tem destino válido** para a modalidade; cadastro válido nunca é substituído por
   exceção (segurança/fraude).
 - **A exceção nunca é escrita no cadastro** (ADR-0054 D1, mantida). Vai no item do `fin015` sem
@@ -77,13 +77,13 @@ destino(item) =
 | **I10b** (D2) | **Oferta = envio.** A tela só oferece TED/PIX quando `destino(item)` resolve, com a **mesma função** que o envio usa. Divergência entre as duas é bug. | tela e envio |
 | **I10c** (D3) | TED aceita conta em **qualquer banco**. O banco do favorecido não precisa ser o do lote. `TED → itsVldModalidade = 5`. | envio |
 | **I10d** (D4) | **PIX só com chave**, do cadastro ou de exceção aprovada (CPF/CNPJ). Sem chave, PIX não é oferecido nem enviado. | tela e envio |
-| **I10e** (ADR-0060) | A exceção **não é editada no item nem no lote**: é cadastrada, aprovada e revogada na entidade `ExcecaoDestino` (I12). No lote a analista só **vê** a origem do destino (`CADASTRO` \| `EXCECAO`). | — |
+| **I10e** (ADR-0061) | A exceção **não é editada no item nem no lote**: é cadastrada, aprovada e revogada na entidade `ExcecaoDestino` (I12). No lote a analista só **vê** a origem do destino (`CADASTRO` \| `EXCECAO`). | — |
 | **I10f** (D6) | **Congelamento:** depois do `importarTitulos` no `fin015` com um destino, esse destino **não muda**. Retry e retomada (ADR-0039) reenviam o persistido. O destino resolvido (com o `excecaoDestinoId`, quando `EXCECAO`) entra na assinatura da marca d'água do lote órfão (como a `dataDebito`, I8b). Só volta a ser editável se aquele lote nativo deixar de existir. | retomada |
-| **I10g** (D7, ADR-0060) | **Trilha:** a trilha só-inclusão passa a registrar também os eventos da exceção (I12e). A tabela `lote_pagamento_item_destino_audit` é mantida como histórico e **deixa de receber linhas novas**; a nova trilha reaproveita o padrão (trigger recusa UPDATE/DELETE/TRUNCATE). | sempre |
+| **I10g** (D7, ADR-0061) | **Trilha:** a trilha só-inclusão passa a registrar também os eventos da exceção (I12e). A tabela `lote_pagamento_item_destino_audit` é mantida como histórico e **deixa de receber linhas novas**; a nova trilha reaproveita o padrão (trigger recusa UPDATE/DELETE/TRUNCATE). | sempre |
 | **I10h** (D8) | **Proteção do dado:** conta e chave são gravadas completas (vão ao ERP) e aparecem **mascaradas** na tela. **Nunca** saem inteiras em log, `LogService.data`, ledger (`remessa_execucao.requestPayload`) ou mensagem de erro. Revelar só para quem está editando. | sempre |
-| **I10i** (D9) | **Titularidade (bloqueante):** o `titularDocumento` da exceção é **igual** ao CPF/CNPJ do favorecido do título (`pdcDocFederal`, lido ao vivo do `cmn025` por `pesCod`); diferente = gravação recusada. Chave PIX da exceção: **só CPF/CNPJ, e a própria chave** tem de ser igual (ADR-0060; outros tipos fora de escopo). **Chave digitada e-mail/telefone/aleatória: recusada** (titular não conferível — só o DICT sabe; ADR-0054, adendo de 2026-09-29). Reabrir se o H1 provar que `validacao/modalidadePix` devolve o titular. | edição |
+| **I10i** (D9) | **Titularidade (bloqueante):** o `titularDocumento` da exceção é **igual** ao CPF/CNPJ do favorecido do título (`pdcDocFederal`, lido ao vivo do `cmn025` por `pesCod`); diferente = gravação recusada. Chave PIX da exceção: **só CPF/CNPJ, e a própria chave** tem de ser igual (ADR-0061; outros tipos fora de escopo). **Chave digitada e-mail/telefone/aleatória: recusada** (titular não conferível — só o DICT sabe; ADR-0054, adendo de 2026-09-29). Reabrir se o H1 provar que `validacao/modalidadePix` devolve o titular. | edição |
 
-| **I10j** (ADR-0054 D10/D11) | **REVOGADA pela ADR-0060.** Substituída por I12b: dupla validação rígida (aprovador ≠ cadastrante), permissão única `sispag:excecao`, TED e PIX. | — |
+| **I10j** (ADR-0054 D10/D11) | **REVOGADA pela ADR-0061.** Substituída por I12b: dupla validação rígida (aprovador ≠ cadastrante), permissão única `sispag:excecao`, TED e PIX. | — |
 | **I10k** (ADR-0054 D12) | **Preferência pela chave CPF/CNPJ (do cadastro):** entre as chaves ativas do cadastro, a do tipo CPF/CNPJ igual ao documento do favorecido vem antes da default. A oferta marca esse PIX (`destinos.PIX.chaveCpfCnpjDoFavorecido`) e a tela sugere PIX antes de TED; a analista continua podendo escolher TED. | tela e envio |
 
 > **I10h é requisito de proteção, não estado de domínio.** Está aqui porque sem ele a entrada manual
@@ -97,7 +97,7 @@ fora do cadastro** (exceção, I12b), não na finalização do lote.
 | Tipo | Campos | Validação de formato |
 |---|---|---|
 | TED (`CONTA`) | `bancoCod` (FEBRABAN, 3 dígitos), `agencia`, `agenciaDv?`, `conta`, `contaDv`, `titularDocumento` | dígitos; CPF/CNPJ com DV válido |
-| PIX (`CHAVE_PIX`) | `chavePixTipo = CPF_CNPJ` (único aceito, ADR-0060), `chavePix`, `titularDocumento` | CPF/CNPJ com DV válido; chave = `pdcDocFederal` do favorecido |
+| PIX (`CHAVE_PIX`) | `chavePixTipo = CPF_CNPJ` (único aceito, ADR-0061), `chavePix`, `titularDocumento` | CPF/CNPJ com DV válido; chave = `pdcDocFederal` do favorecido |
 
 O tipo da chave **não é inferido** (11 dígitos são CPF ou celular). O `titularDocumento` é exigido
 também no PIX, para a checagem de I10i.
@@ -150,7 +150,7 @@ Decisões de implementação a registrar:
   **mascarado** (é o que o aprovador confere; o valor inteiro não sai da API, I10h).
 - Na tela, o botão "Aprovar destino" só existe para quem tem a permissão (ADR-0053 R11).
 
-### Adendo (2026-10-05) — ADR-0060
+### Adendo (2026-10-05) — ADR-0061
 
 - O fluxo por item (`destinoManual`, `InformarDestinoDialog`, rota `.../destino/aprovar`,
   `DestinoAprovacaoRule`, `DestinoAprovacaoPendenteError`) é **retirado** e refatorado para
@@ -163,7 +163,7 @@ Decisões de implementação a registrar:
 ## Ver também
 
 - ADR-0054 — a decisão original (parcialmente superseded)
-- ADR-0060 — cadastro primeiro, exceção aprovada
+- ADR-0061 — cadastro primeiro, exceção aprovada
 - `business-rules/excecao-destino-sispag.md` — I12
 - `entities/lote-pagamento.md` — `ItemLote.modalidade` e `ItemLote.destinoOrigem`/`excecaoDestinoId`
 - `business-rules/boleto-exige-codigo-de-barras.md` — o fail-closed irmão, para boleto

@@ -22,5 +22,5 @@ side_effects:
 
 # carregarExcecoesDestinoPlanilha
 
-ADR-0060. Transições em `state-machines/excecao-destino.md`; regras em
+ADR-0061. Transições em `state-machines/excecao-destino.md`; regras em
 `business-rules/excecao-destino-sispag.md` (I12).

@@ -26,7 +26,7 @@
 > `fin010`) — caminho de write-back não validado (risco #1, ADR-0002/0003 O3). Por isso `Permuta` é
 > `partial`.
 
-## Frente II — SISPAG: destino de pagamento (ADR-0060)
+## Frente II — SISPAG: destino de pagamento (ADR-0061)
 
 | Origem | Relação | Destino | Cardinalidade |
 |--------|---------|---------|---------------|

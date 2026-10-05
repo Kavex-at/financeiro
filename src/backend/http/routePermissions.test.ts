@@ -111,7 +111,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['GET /sispag/lotes/:id/remessa/arquivo', P.SISPAG_EXECUTAR],
     ['POST /sispag/retornos/conciliar', P.SISPAG_EXECUTAR],
     ['GET /sispag/execucoes', P.SISPAG_EXECUTAR],
-    // ADR-0060: exceção de destino — cadastrar, aprovar, rejeitar, revogar e ver, tudo na permissão
+    // ADR-0061: exceção de destino — cadastrar, aprovar, rejeitar, revogar e ver, tudo na permissão
     // única `sispag:excecao` (a separação de funções é a regra aprovador ≠ cadastrante no serviço)
     ['GET /sispag/excecoes', P.SISPAG_EXCECAO],
     ['POST /sispag/excecoes', P.SISPAG_EXCECAO],

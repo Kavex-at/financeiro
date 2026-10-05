@@ -1,7 +1,7 @@
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
 /**
- * Exceção de destino desligada (ADR-0060): `SISPAG_EXCECAO_DESTINO_ENABLED` (alias
+ * Exceção de destino desligada (ADR-0061): `SISPAG_EXCECAO_DESTINO_ENABLED` (alias
  * `SISPAG_DESTINO_MANUAL_ENABLED`) não está ligada. As flags ficam desligadas até o teste
  * supervisionado em produção provar o H3/H5. HTTP 403.
  */
