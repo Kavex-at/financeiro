@@ -51,7 +51,7 @@ const SITUACOES: { value: FiltroSituacao; label: string }[] = [
   { value: 'SEM_TITULO', label: 'Sem título' },
 ]
 
-const SITUACAO_BADGE: Record<BoletoDdaSituacao, { label: string; className: string; title: string }> =
+export const SITUACAO_BADGE: Record<BoletoDdaSituacao, { label: string; className: string; title: string }> =
   {
     VINCULADO: {
       label: 'vinculado',

@@ -1064,7 +1064,12 @@ export default class RemessaService {
                 throw new BoletoSemCodigoBarrasError({
                     docCod: item.docCod,
                     titCod: item.titCod,
+                    filCod: item.filCod,
+                    valor: item.valor,
                     ...(item.credor ? { credor: item.credor } : {}),
+                    ...(item.vencimento !== undefined
+                        ? { vencimento: new Date(item.vencimento).toISOString().slice(0, 10) }
+                        : {}),
                 });
             }
 
