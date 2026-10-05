@@ -21,17 +21,17 @@
 
 Arquivos: `src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts` (+ teste).
 
-- [ ] AC1: título 2 de invoice multi-título com excesso de 0,01 → `bxaMnyJuros` 419,08 → 419,07 e
+- [x] AC1: título 2 de invoice multi-título com excesso de 0,01 → `bxaMnyJuros` 419,08 → 419,07 e
       `bxaMnyLiquido` = `bxaMnyValorPermuta` (28.499,32); título 1 inalterado (314,31).
-- [ ] AC2: perna N:M (sem âncora) com DESCONTO e excesso de 0,01 → `bxaMnyDesconto` 472,06 → 472,07,
+- [x] AC2: perna N:M (sem âncora) com DESCONTO e excesso de 0,01 → `bxaMnyDesconto` 472,06 → 472,07,
       líquido 35.484,31.
-- [ ] AC3: excesso > R$1,00 → nada é ajustado, sai BUSINESS_WARN.
-- [ ] AC4: juros menor que o excesso → nada é ajustado (juros nunca negativo), sai BUSINESS_WARN.
-- [ ] AC5: líquido abaixo do disponível (perna parcial) → inalterado (testes existentes passam sem
+- [x] AC3: excesso > R$1,00 → nada é ajustado, sai BUSINESS_WARN.
+- [x] AC4: juros menor que o excesso → nada é ajustado (juros nunca negativo), sai BUSINESS_WARN.
+- [x] AC5: líquido abaixo do disponível (perna parcial) → inalterado (testes existentes passam sem
       mudar asserções).
-- [ ] AC6: o passo 4 (`atualizarValorLiquido`) recebe a variação já limitada; o `markSettled`
+- [x] AC6: o passo 4 (`atualizarValorLiquido`) recebe a variação já limitada; o `markSettled`
       agrega o juros limitado.
-- [ ] AC7: os testes existentes da âncora I-Write-6 passam sem mudar asserções.
+- [x] AC7: os testes existentes da âncora I-Write-6 passam sem mudar asserções.
 
 ## Plano de Validação Ground-Truth
 
