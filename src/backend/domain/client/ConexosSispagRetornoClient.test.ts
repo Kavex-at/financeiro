@@ -56,6 +56,19 @@ describe('ConexosSispagRetornoClient (fin052 retorno)', () => {
         });
     });
 
+    it('listArquivosRetorno: filCod NULO (.RET multi-filial) herda a filial da consulta, nunca 0', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [
+                { filCod: null, bncCod: 4, gtbCodSeq: 1, garCodSeq: 9, garEspArquivo: 'PG.RET' },
+            ],
+        });
+        const [arq] = await make(base).listArquivosRetorno({ filCod: 2, bncCod: 4, gtbCodSeq: 1 });
+        // Number(null) === 0 → fin050 com filial 0 responde HTTP 500 (bug de 02/10).
+        expect(arq?.filCod).toBe(2);
+    });
+
     it('listDetalhe expõe a ponte bxaCodSeq/borCod/titCod (fin010)', async () => {
         const base = buildBase();
         base.listGenericPaginated.mockResolvedValue({

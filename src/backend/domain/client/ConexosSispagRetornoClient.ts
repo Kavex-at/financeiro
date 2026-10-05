@@ -134,16 +134,22 @@ export default class ConexosSispagRetornoClient {
                 ),
             );
             return (page.rows ?? [])
-                .map((r) => this.mapArquivo(r))
+                .map((r) => this.mapArquivo(r, filCod))
                 .filter((a) => Number.isFinite(a.garCodSeq));
         } catch (cause) {
             throw this.toConexosError('fin052/arquivosRetorno/list', cause);
         }
     };
 
-    /** Mapeia uma linha de `GerArquivosRetorno` para `ArquivoRetorno`. */
-    private mapArquivo = (r: Record<string, unknown>): ArquivoRetorno => ({
-        filCod: Number(r.filCod),
+    /**
+     * Mapeia uma linha de `GerArquivosRetorno` para `ArquivoRetorno`.
+     *
+     * `filCod` da linha vem NULO num `.RET` que mistura filiais. `Number(null)` é `0`, e a
+     * filial 0 faz o fin050 responder HTTP 500 — o que derrubava a leitura de BD/00 sem erro
+     * visível. Nulo/ausente herda a filial em cujo contexto o arquivo foi listado.
+     */
+    private mapArquivo = (r: Record<string, unknown>, filCodConsulta: number): ArquivoRetorno => ({
+        filCod: Number(r.filCod ?? filCodConsulta),
         bncCod: Number(r.bncCod),
         gtbCodSeq: Number(r.gtbCodSeq),
         garCodSeq: Number(r.garCodSeq),
@@ -418,7 +424,7 @@ export default class ConexosSispagRetornoClient {
             const raw = await this.base.postMultipartOnce<Record<string, unknown>>(path, form, {
                 filCod,
             });
-            return this.mapArquivo(raw ?? {});
+            return this.mapArquivo(raw ?? {}, filCod);
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }
