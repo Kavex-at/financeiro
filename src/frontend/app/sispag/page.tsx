@@ -72,6 +72,7 @@ import { BoletosDdaTab } from './components/BoletosDdaTab'
 import { BoletosDoTituloDialog } from './components/BoletosDoTituloDialog'
 import { ConfirmarProcessarRetornoDialog } from './components/ConfirmarAcaoDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
+import { useCarteiraAoAbrir } from './useCarteiraAoAbrir'
 import { LoteCard } from './components/LoteCard'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
@@ -300,6 +301,13 @@ function SispagPanel() {
   React.useEffect(() => {
     void carregar()
   }, [carregar])
+
+  // ADR-0060: com o painel já na tela (dados gravados), pede o refresh se a carteira estiver
+  // defasada e recarrega o painel — sem spinner — quando a ingestão termina.
+  const { situacao: refresh, aviso: avisoRefresh } = useCarteiraAoAbrir({
+    habilitado: !loading && painel !== null,
+    aoAtualizar: recarregarPainel,
+  })
 
   const titulos = painel?.titulos ?? []
   const ehVencido = (t: TituloAPagar): boolean => (t.diasAteVencimento ?? 0) < 0
@@ -716,6 +724,20 @@ function SispagPanel() {
               · carteira de {new Date(painel.ingestao.ultimaRunEm).toLocaleString('pt-BR')}
             </span>
           ) : null}
+          <span role="status" aria-live="polite">
+            {refresh === 'atualizando' ? (
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                {' '}
+                · <Spinner /> atualizando a carteira…
+              </span>
+            ) : refresh === 'falhou' ? (
+              <span className="text-warning">
+                {' '}
+                · não foi possível atualizar agora
+                {avisoRefresh ? ` (${avisoRefresh})` : ''}; mostrando a última carteira gravada
+              </span>
+            ) : null}
+          </span>
         </div>
       </div>
 

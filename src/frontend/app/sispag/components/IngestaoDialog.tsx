@@ -25,7 +25,13 @@ import {
 import type { PagamentoIngestaoRun } from '@/lib/sispag'
 
 /** cron → automático; senão foi manual e mostra quem rodou. */
-const quemRodou = (t: string) => (t === 'cron' ? 'Automático (cron)' : t)
+const PREFIXO_ABERTURA = 'abertura:'
+const quemRodou = (t: string) =>
+  t === 'cron'
+    ? 'Automático (cron)'
+    : t.startsWith(PREFIXO_ABERTURA)
+      ? `${t.slice(PREFIXO_ABERTURA.length)} (ao abrir a tela)`
+      : t
 const quando = (r: PagamentoIngestaoRun) => {
   const d = r.finishedAt ?? r.startedAt
   return d ? new Date(d).toLocaleString('pt-BR') : '—'
