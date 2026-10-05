@@ -230,6 +230,24 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
         );
     });
 
+    it('flag de boleto ILEGÍVEL (ex.: 403 do robô) → temBoleto indefinido, não false, e avisa', async () => {
+        // Antes: conjunto vazio → temBoleto=false → o UPSERT apagava o flag de toda a filial,
+        // desfazendo todo dia a ingestão manual da analista.
+        const { service, tituloRepo, runRepo } = make({
+            listBoletoDda: jest.fn().mockRejectedValue(new Error('403 ACCESS_DENIED FIN_041')),
+        });
+        const r = await service.executar({ triggeredBy: 'cron' });
+        const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
+        expect(persistidos[0].temBoleto).toBeUndefined();
+        expect(r.filiaisSemFlagBoleto).toEqual([2]);
+        expect(runRepo.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({
+                status: 'success',
+                errorMessage: expect.stringContaining('flag de boleto DDA não lido'),
+            }),
+        );
+    });
+
     it('manda TODOS os bancos distintos da filial, não só o primeiro', async () => {
         // Medido em PRD: `contas[0]` é um banco sem lote nas filiais 1 e 2, e parar nele
         // marcava a carteira inteira dessas filiais como "sem boleto".
@@ -250,10 +268,9 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
         });
         const r = await service.executar({ triggeredBy: 'cron' });
         expect(r.status).toBe('success');
-        expect(tituloRepo.upsertMany).toHaveBeenCalledWith(
-            [expect.objectContaining({ temBoleto: false })],
-            'RUN1',
-        );
+        // Indefinido (preserva o flag gravado), e NÃO `false` — ver o teste do 403 do robô.
+        const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
+        expect(persistidos[0].temBoleto).toBeUndefined();
         expect(runRepo.finishRun).toHaveBeenCalledWith(
             expect.objectContaining({ status: 'success' }),
         );

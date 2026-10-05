@@ -86,15 +86,17 @@ export default class IngestaoPagamentosService {
      * Títulos da filial que o ERP casou com um boleto DDA (`titVldReflexoDdaAssoc`).
      *
      * Best-effort por desenho: a carteira é o produto principal da ingestão, e o flag de boleto
-     * é enriquecimento. Falha de leitura devolve conjunto vazio com WARN — os títulos entram com
-     * `temBoleto = false` em vez de a rodada inteira cair.
+     * é enriquecimento. Falha de leitura devolve `undefined` ("não sei") com WARN: os títulos
+     * entram com `temBoleto` indefinido e a carteira PRESERVA o valor já gravado. Devolver um
+     * conjunto vazio aqui apagava o flag de toda a filial — o cron do robô (403 em
+     * `titulosPendentes`) zerava, todo dia, o que a ingestão manual da analista tinha acertado.
      */
-    private titulosComBoletoDda = async (filCod: number): Promise<Set<string>> => {
+    private titulosComBoletoDda = async (filCod: number): Promise<Set<string> | undefined> => {
         try {
             const bncCods = await this.bancosDaFilial(filCod);
             if (bncCods.length === 0) {
                 await this.avisar('filial sem conta pagadora — sem flag de boleto', { filCod });
-                return new Set();
+                return undefined;
             }
             const comBoleto = await this.fin015.listarTitulosComBoletoDda({ filCod, bncCods });
             // Taxa por filial, registrada TODA rodada. É o sinal barato de quebra de contrato:
@@ -115,11 +117,11 @@ export default class IngestaoPagamentosService {
             }
             return comBoleto;
         } catch (error) {
-            await this.avisar('leitura do flag de boleto DDA falhou (ignorada)', {
+            await this.avisar('leitura do flag de boleto DDA falhou — flag anterior preservado', {
                 filCod,
                 reason: error instanceof Error ? error.message : String(error),
             });
-            return new Set();
+            return undefined;
         }
     };
 
@@ -139,7 +141,8 @@ export default class IngestaoPagamentosService {
     private titulosDaFilial = (lido: {
         titulos: TituloAPagar[];
         exterior: Set<string>;
-        comBoleto: Set<string>;
+        /** `undefined` = a leitura do flag falhou: `temBoleto` fica indefinido (não vira `false`). */
+        comBoleto: Set<string> | undefined;
     }): TituloAPagar[] =>
         lido.titulos
             // Pago sai; internacional (exterior/câmbio) também — é câmbio manual da tesouraria,
@@ -149,7 +152,7 @@ export default class IngestaoPagamentosService {
             // (o `titEspCodbar` é null em 100% da carteira medida em produção).
             .map((t) => ({
                 ...t,
-                temBoleto: lido.comBoleto.has(`${t.filCod}:${t.docCod}:${t.titCod}`),
+                temBoleto: lido.comBoleto?.has(`${t.filCod}:${t.docCod}:${t.titCod}`),
             }));
 
     /** `filial 4: conexos 504; filial 7: …` — curto o bastante para a coluna `error_message`. */
@@ -195,6 +198,7 @@ export default class IngestaoPagamentosService {
             // uma filial que falhou não perde seus títulos por engano (fault-tolerance).
             const filiaisLidas: number[] = [];
             const falhas: Array<{ filCod: number; motivo: string }> = [];
+            const filiaisSemFlagBoleto: number[] = [];
             for (let i = 0; i < settled.length; i += 1) {
                 const s = settled[i];
                 if (s.status !== 'fulfilled') {
@@ -207,6 +211,7 @@ export default class IngestaoPagamentosService {
                     continue;
                 }
                 filiaisLidas.push(filCods[i]);
+                if (s.value.comBoleto === undefined) filiaisSemFlagBoleto.push(filCods[i]);
                 titulos.push(...this.titulosDaFilial(s.value));
             }
 
@@ -231,8 +236,19 @@ export default class IngestaoPagamentosService {
                 status: 'success',
                 totalTitulos: titulos.length,
                 totalInativados: inativados,
-                ...(falhas.length > 0
-                    ? { errorMessage: `filiais não lidas: ${this.resumoFalhas(falhas)}` }
+                ...(falhas.length > 0 || filiaisSemFlagBoleto.length > 0
+                    ? {
+                          errorMessage: [
+                              falhas.length > 0
+                                  ? `filiais não lidas: ${this.resumoFalhas(falhas)}`
+                                  : undefined,
+                              filiaisSemFlagBoleto.length > 0
+                                  ? `flag de boleto DDA não lido (anterior preservado): filiais ${filiaisSemFlagBoleto.join(', ')}`
+                                  : undefined,
+                          ]
+                              .filter(Boolean)
+                              .join('; '),
+                      }
                     : {}),
             });
             // Best-effort pós-sucesso: a run JÁ está 'success' e os títulos persistidos —
@@ -260,6 +276,7 @@ export default class IngestaoPagamentosService {
                 totalTitulos: titulos.length,
                 totalInativados: inativados,
                 filiaisComFalha: falhas.map((f) => f.filCod),
+                filiaisSemFlagBoleto,
             };
         } catch (error) {
             await this.runRepo.finishRun({

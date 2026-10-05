@@ -39,6 +39,19 @@ describe('TituloAPagarRepository', () => {
         expect(params).toMatchObject({ runId: 'RUN1', f0: 2, d0: '100', t1: '2' });
     });
 
+    it('upsertMany PRESERVA tem_boleto quando o flag é indefinido e o grava quando é conhecido', async () => {
+        const { client, tx } = buildDb();
+        await new TituloAPagarRepository(client).upsertMany(
+            [titulo({ titCod: '1', temBoleto: true }), titulo({ titCod: '2' })],
+            'RUN1',
+        );
+        // Dois INSERTs: o do flag conhecido grava tem_boleto; o do desconhecido não o toca.
+        expect(tx.insert).toHaveBeenCalledTimes(2);
+        const [conhecido, desconhecido] = tx.insert.mock.calls.map((c: [string]) => c[0]);
+        expect(conhecido).toContain('tem_boleto = EXCLUDED.tem_boleto');
+        expect(desconhecido).not.toContain('tem_boleto = EXCLUDED.tem_boleto');
+    });
+
     it('upsertMany com lista vazia não abre transação', async () => {
         const { client } = buildDb();
         await new TituloAPagarRepository(client).upsertMany([], 'RUN1');
