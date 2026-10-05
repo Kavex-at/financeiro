@@ -26,6 +26,12 @@ const main = async (): Promise<void> => {
         `[ingest-pagamentos] run ${result.runId} status=${result.status} ` +
             `titulos=${result.totalTitulos} inativados=${result.totalInativados}`,
     );
+    if (result.filiaisComFalha && result.filiaisComFalha.length > 0) {
+        // Anotação do GitHub Actions: aparece no resumo da run mesmo com exit 0.
+        console.warn(
+            `::warning::[ingest-pagamentos] leitura parcial — filiais não lidas: ${result.filiaisComFalha.join(', ')}`,
+        );
+    }
 };
 
 main()
