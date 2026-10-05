@@ -93,4 +93,17 @@ describe('TituloAPagarRepository', () => {
         });
         expect(typeof titulos[0].vencimento).toBe('number');
     });
+
+    it('listElegiveisParaFormacao exclui título em QUALQUER lote vivo, não só RASCUNHO (I3)', async () => {
+        const { client } = buildDb();
+        await new TituloAPagarRepository(client).listElegiveisParaFormacao(7);
+        const [sql, params] = (client.selectMany as jest.Mock).mock.calls[0];
+        // Título de remessa já gerada voltava para um novo lote automático (caso 3143, 02/10).
+        for (const status of ['RASCUNHO', 'FINALIZADO', 'REMESSA_GERADA', 'RETORNADO']) {
+            expect(sql).toContain(`'${status}'`);
+        }
+        // CANCELADO libera o título; não pode entrar na lista de lotes que o seguram.
+        expect(sql).not.toContain("'CANCELADO'");
+        expect(params).toEqual({ maxDias: 7 });
+    });
 });

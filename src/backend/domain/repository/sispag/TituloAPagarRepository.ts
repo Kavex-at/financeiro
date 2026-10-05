@@ -191,8 +191,10 @@ export default class TituloAPagarRepository {
 
     /**
      * Elegíveis para FORMAÇÃO AUTOMÁTICA de lote: ativos, aprovados, não-pagos, A VENCER
-     * dentro de `maxDias` (vencidos NÃO entram), e que ainda NÃO estão em nenhum lote RASCUNHO
-     * (anti-join — não duplica o que o analista já tem em montagem, manual ou automático).
+     * dentro de `maxDias` (vencidos NÃO entram), e que ainda NÃO estão em nenhum lote VIVO
+     * (anti-join — não duplica o que já está em montagem, finalizado, com remessa gerada ou
+     * com rejeição à espera de tratamento humano; `CANCELADO` libera o título e `BAIXADO` já
+     * sai por `pago = FALSE`).
      */
     public listElegiveisParaFormacao = async (maxDias: number): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(
@@ -207,7 +209,7 @@ export default class TituloAPagarRepository {
                AND NOT EXISTS (
                  SELECT 1 FROM lote_pagamento_item i
                  JOIN lote_pagamento l ON l.id = i.lote_id
-                 WHERE l.status = 'RASCUNHO'
+                 WHERE l.status IN ('RASCUNHO', 'FINALIZADO', 'REMESSA_GERADA', 'RETORNADO')
                    AND i.fil_cod = t.fil_cod AND i.doc_cod = t.doc_cod AND i.tit_cod = t.tit_cod)
              ORDER BY t.fil_cod, t.banco, t.vencimento ASC`,
             { maxDias },
