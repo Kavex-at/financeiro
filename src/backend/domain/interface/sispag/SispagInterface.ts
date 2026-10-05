@@ -115,9 +115,10 @@ export interface ChavePixFavorecido {
 }
 
 /**
- * Destino digitado pela analista no item do lote (ADR-0054 D1, `lote_pagamento_item.destino_manual`).
- * Vale só para aquele item, não é escrito no cadastro do Conexos e vence o do cadastro (D2).
- * Gravado completo (vai ao ERP), mas NUNCA sai inteiro em log, ledger, API ou erro (I10h).
+ * Destino de pagamento fora do cadastro (ADR-0054 D1 → ADR-0060): a forma do valor que uma
+ * `ExcecaoDestino` guarda e que vai no item do `fin015` sem `pctCodSeq`. Não é escrito no
+ * cadastro do Conexos. Gravado completo (vai ao ERP), mas NUNCA sai inteiro em log, ledger, API
+ * ou erro (I10h).
  */
 export const DESTINO_MANUAL_TIPO = { CONTA: 'CONTA', CHAVE_PIX: 'CHAVE_PIX' } as const;
 
@@ -144,29 +145,98 @@ export interface DestinoManualChavePix {
 
 export type DestinoManual = DestinoManualConta | DestinoManualChavePix;
 
-/**
- * Estado de aprovação do destino digitado (ADR-0054 D10/D11). Conta (TED) digitada exige
- * aprovação por quem tem `sispag:aprovar_destino`; chave PIX CPF/CNPJ não exige (D11).
- */
-export const DESTINO_APROVACAO = {
-    NAO_EXIGIDA: 'NAO_EXIGIDA',
+/** Estados da exceção de destino (`state-machines/excecao-destino.md`). Nunca string crua. */
+export const EXCECAO_ESTADO = {
     PENDENTE: 'PENDENTE',
-    APROVADO: 'APROVADO',
+    APROVADA: 'APROVADA',
+    REJEITADA: 'REJEITADA',
+    SUBSTITUIDA: 'SUBSTITUIDA',
+    REVOGADA: 'REVOGADA',
 } as const;
 
-export type DestinoAprovacao = (typeof DESTINO_APROVACAO)[keyof typeof DESTINO_APROVACAO];
+export type ExcecaoEstado = (typeof EXCECAO_ESTADO)[keyof typeof EXCECAO_ESTADO];
 
-/** Projeção SEGURA do destino manual para a API/tela: só a máscara (I10h). */
-export interface DestinoManualResumo {
+/** De onde a exceção veio. A carga em planilha (T10) está bloqueada pela Q1. */
+export const EXCECAO_ORIGEM = { MANUAL: 'MANUAL', PLANILHA: 'PLANILHA' } as const;
+
+export type ExcecaoOrigem = (typeof EXCECAO_ORIGEM)[keyof typeof EXCECAO_ORIGEM];
+
+/** Eventos da trilha só-inclusão da exceção (I12e). */
+export const EXCECAO_EVENTO = {
+    CADASTRO: 'CADASTRO',
+    APROVACAO: 'APROVACAO',
+    REJEICAO: 'REJEICAO',
+    REVOGACAO: 'REVOGACAO',
+    SUBSTITUICAO: 'SUBSTITUICAO',
+    DIVERGENCIA_CADASTRO: 'DIVERGENCIA_CADASTRO',
+    USO: 'USO',
+} as const;
+
+export type ExcecaoEvento = (typeof EXCECAO_EVENTO)[keyof typeof EXCECAO_EVENTO];
+
+/**
+ * Exceção de destino COMPLETA (ADR-0060) — uso interno (service/resolver/envio). A API nunca a
+ * devolve: as rotas projetam para `ExcecaoDestinoResumo` (só máscara, I10h).
+ */
+export interface ExcecaoDestino {
+    id: string;
+    /** Favorecido no `cmn025`. Escopo da exceção: por favorecido, não por item (I12a). */
+    pesCod: string;
+    /** Filial usada para ler o cadastro do favorecido (não faz parte da chave, Q9). */
+    filCod: number;
+    destino: DestinoManual;
+    estado: ExcecaoEstado;
+    origem: ExcecaoOrigem;
+    cargaId?: string;
+    justificativa: string;
+    cadastradoPor: string;
+    cadastradoEm: string;
+    aprovadoPor?: string;
+    aprovadoEm?: string;
+    /** Rejeição ou revogação. */
+    decididoPor?: string;
+    decididoEm?: string;
+    motivoDecisao?: string;
+    substituidaEm?: string;
+    /** Há evento `DIVERGENCIA_CADASTRO` na trilha: o cadastro passou a ter valor DIFERENTE (I12c). */
+    divergiu?: boolean;
+    versao: number;
+}
+
+/** Projeção SEGURA da exceção para a API/tela: só a máscara (I10h). */
+export interface ExcecaoDestinoResumo {
+    id: string;
+    pesCod: string;
+    filCod: number;
     tipo: DestinoManualTipo;
     destinoMascarado: string;
     /** CPF/CNPJ do titular, MASCARADO (`MaskDestino.documento`) — é o que o aprovador confere. */
     titularDocumentoMascarado: string;
-    informadoPor?: string;
-    informadoEm?: string;
-    aprovacao: DestinoAprovacao;
+    estado: ExcecaoEstado;
+    origem: ExcecaoOrigem;
+    justificativa: string;
+    cadastradoPor: string;
+    cadastradoEm: string;
     aprovadoPor?: string;
     aprovadoEm?: string;
+    decididoPor?: string;
+    decididoEm?: string;
+    motivoDecisao?: string;
+    substituidaEm?: string;
+    /** O cadastro assumiu com valor diferente: pede revisão (alerta `sispag-excecao-divergencia`). */
+    divergiu?: boolean;
+    versao: number;
+}
+
+/** Linha da trilha da exceção (valores só mascarados na leitura, I12e). */
+export interface ExcecaoDestinoEvento {
+    id: string;
+    excecaoId: string;
+    evento: ExcecaoEvento;
+    ator: string;
+    ocorridoEm: string;
+    /** Texto livre mascarado/estados, nunca conta ou chave em claro. */
+    detalhe?: Record<string, unknown>;
 }
 
 /**
@@ -279,6 +349,18 @@ export interface SispagPainelResponse {
     /** Execuções de escrita presas — ver `ExecucoesParadas`. */
     execucoesParadas: ExecucoesParadas;
     lotes: LoteSispag[];
+    /**
+     * Exceções de destino (ADR-0060): contagem por estado e as `PENDENTE` esperando há mais de
+     * `diasLimite` dias. SÓ contagens, nunca valores de destino (I10h). Ausente com a flag de
+     * exceção desligada (paridade com o `main`) ou se a leitura falhou.
+     */
+    excecoes?: PainelExcecoes;
+}
+
+export interface PainelExcecoes {
+    porEstado: Record<ExcecaoEstado, number>;
+    pendentesAntigas: number;
+    diasLimite: number;
 }
 
 // ============================================================ Fatia 2 — LotePagamento
@@ -422,25 +504,10 @@ export interface ItemLote {
     /** Sequencial do item no lote NATIVO — 4ª parte da chave que viaja no `.REM`/`.RET`. */
     nativeItsCodSeq?: number;
     /**
-     * Destino digitado (ADR-0054). COMPLETO — uso interno (resolver/envio). A API nunca o
-     * devolve: as rotas projetam para `destinoManualResumo` (ver `LotePagamentoApiView`).
+     * Exceção de destino usada quando o destino do item congelou no import do `fin015` (ADR-0060
+     * I10f): liga o item à exceção SEM copiar o valor. Ausente = o destino veio do cadastro.
      */
-    destinoManual?: DestinoManual;
-    /** Quem gravou o destino manual vigente e quando (da trilha só-inclusão, I10g). */
-    destinoManualInformadoPor?: string;
-    destinoManualInformadoEm?: string;
-    /**
-     * Id da linha de trilha que gravou o destino vigente. Identifica o valor SEM revelá-lo:
-     * é o que entra na assinatura do ledger da remessa (I10f), no lugar da conta/chave.
-     */
-    destinoManualAuditId?: string;
-    /**
-     * Quem aprovou o destino manual VIGENTE e quando (ADR-0054 D10) — a linha `APROVACAO` da
-     * trilha que aponta para a gravação vigente. Ausente = não aprovado (outra gravação depois da
-     * aprovação também cai aqui).
-     */
-    destinoManualAprovadoPor?: string;
-    destinoManualAprovadoEm?: string;
+    excecaoDestinoId?: string;
     // ── resultado da conciliação do retorno (fin052/arquivosRetornoDetalhe) ──
     /** Código do evento bancário. Itaú: `00` = PAGAMENTO EFETUADO. */
     retornoEvento?: string;

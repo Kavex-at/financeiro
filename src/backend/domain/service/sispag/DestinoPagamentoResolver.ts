@@ -6,25 +6,33 @@ import {
     type ContaFavorecido,
     DESTINO_MANUAL_TIPO,
     type DestinoManual,
+    type DestinoManualTipo,
+    type ExcecaoDestino,
     MODALIDADE,
     type Modalidade,
 } from '../../interface/sispag/SispagInterface.js';
+import Logger from '../../libs/logger/Logger.js';
+import { redactErrorMessage } from '../../libs/redact/redactErrorMessage.js';
 import MaskDestino from '../../libs/sispag/MaskDestino.js';
+import ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestinoRepository.js';
+import ExcecaoSubstituicaoService from './ExcecaoSubstituicaoService.js';
 
 /** De onde veio o destino resolvido de um item. Constantes tipadas — nunca string crua. */
 export const DESTINO_ORIGEM = {
     CADASTRO: 'CADASTRO',
-    MANUAL: 'MANUAL',
+    /** `ExcecaoDestino` APROVADA, só como fallback de um cadastro sem destino válido (ADR-0060). */
+    EXCECAO: 'EXCECAO',
     NENHUM: 'NENHUM',
 } as const;
 
 export type DestinoOrigem = (typeof DESTINO_ORIGEM)[keyof typeof DESTINO_ORIGEM];
 
-/** O que o resolver lê das flags (ADR-0054, Adendo). Vem do `EnvironmentProvider`, nunca daqui. */
+/** O que o resolver lê das flags (ADR-0054, ADR-0060). Vem do `EnvironmentProvider`, nunca daqui. */
 export interface FlagsDestino {
     ted: boolean;
     pix: boolean;
-    destinoManual: boolean;
+    /** `SISPAG_EXCECAO_DESTINO_ENABLED` (alias `SISPAG_DESTINO_MANUAL_ENABLED`). */
+    excecao: boolean;
 }
 
 /** Tipo do destino do cadastro: conta (`ctcorr`, via `pctCodSeq`) ou chave (`cmnPessoasPix`). */
@@ -47,7 +55,12 @@ export type DestinoResolvido =
            */
           chaveDoDocumentoDoFavorecido?: boolean;
       }
-    | { origem: typeof DESTINO_ORIGEM.MANUAL; destino: DestinoManual };
+    | {
+          origem: typeof DESTINO_ORIGEM.EXCECAO;
+          /** Id da exceção usada: o que o ledger e o item gravam no lugar do valor (I10f). */
+          excecaoId: string;
+          destino: DestinoManual;
+      };
 
 /**
  * Memo das leituras do cadastro por favorecido, compartilhado entre chamadas do MESMO fluxo
@@ -67,11 +80,16 @@ export interface ContextoDestino {
     /** Favorecido do título. Ausente = nada a ler, destino do cadastro não existe. */
     pesCod?: string;
     cache?: CacheCadastroDestino;
+    /**
+     * `true` só no finalizar/envio (ADR-0060 I12c): cadastro com destino válido + exceção APROVADA
+     * do favorecido = a exceção é aposentada na hora (`SUBSTITUIDA`, nunca usada). O painel NÃO
+     * liga isto: oferecer modalidade é leitura e não escreve.
+     */
+    aposentarExcecao?: boolean;
 }
 
 export interface ItemParaDestino {
     modalidade?: Modalidade;
-    destinoManual?: DestinoManual;
 }
 
 const NENHUM: DestinoResolvido = { origem: DESTINO_ORIGEM.NENHUM };
@@ -83,15 +101,22 @@ const NENHUM: DestinoResolvido = { origem: DESTINO_ORIGEM.NENHUM };
  *
  * ```
  * destino(item) =
- *     destinoManual (flag manual + flag da modalidade)       → MANUAL   (vence o cadastro, D2)
- *     TED  (flag TED):  conta ativa em QUALQUER banco, default 1º → CADASTRO (I10c)
- *     PIX  (flag PIX):  chave ativa do cmnPessoasPix               → CADASTRO (I10d)
- *                       ordem: CPF/CNPJ = documento do favorecido (D12), depois default, depois
- *                       as demais. Documento indisponível = ordem de antes (default 1º).
- *     senão (flag da modalidade desligada, ou CRÉDITO EM CONTA legado):
+ *     1. cadastro (cmn025, AO VIVO — a mesma leitura da oferta e do envio):
+ *        TED  (flag TED):  conta ativa em QUALQUER banco, default 1º → CADASTRO (I10c)
+ *        PIX  (flag PIX):  chave ativa do cmnPessoasPix               → CADASTRO (I10d)
+ *                          ordem: CPF/CNPJ = documento do favorecido (D12), depois default, depois
+ *                          as demais. Documento indisponível = ordem de antes (default 1º).
+ *     2. senão, ExcecaoDestino APROVADA do favorecido, do tipo da modalidade
+ *        (CONTA p/ TED, CHAVE_PIX p/ PIX; flag de exceção ligada)    → EXCECAO (ADR-0060 I12)
+ *     3. senão (flag da modalidade desligada, ou CRÉDITO EM CONTA legado):
  *          regra do `main` — conta ativa NO BANCO DO LOTE, default 1º
  *     nada → NENHUM
  * ```
+ *
+ * O CADASTRO VENCE: cadastro com destino válido nunca é substituído por exceção. Exceção
+ * `PENDENTE`/`REJEITADA`/`REVOGADA`/`SUBSTITUIDA` nunca resolve (só a `APROVADA` existe para o
+ * resolver: `findAprovada`). Com `aposentarExcecao`, a exceção APROVADA que o cadastro tornou
+ * desnecessária vai a `SUBSTITUIDA` (I12c) — falha ao aposentar NUNCA bloqueia: segue o cadastro.
  *
  * A regra do `main` com a flag desligada é deliberada: com as três flags desligadas o envio tem
  * de ser idêntico ao de antes (Adendo). Isso vale também para PIX: sem a flag, PIX nunca resolve
@@ -105,6 +130,9 @@ export default class DestinoPagamentoResolver {
     public constructor(
         @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
         @inject(MaskDestino) private readonly mask: MaskDestino,
+        @inject(ExcecaoDestinoRepository) private readonly excecoes: ExcecaoDestinoRepository,
+        @inject(ExcecaoSubstituicaoService)
+        private readonly substituicao: ExcecaoSubstituicaoService,
     ) {}
 
     public novoCache = (): CacheCadastroDestino => new Map();
@@ -123,31 +151,28 @@ export default class DestinoPagamentoResolver {
         }
         const { flags } = contexto;
 
-        const manual = this.manualAplicavel(item, flags);
-        if (manual) return { origem: DESTINO_ORIGEM.MANUAL, destino: manual };
-
         if (modalidade === MODALIDADE.TED && flags.ted) {
             const contas = await this.contas(contexto);
             const escolhida = contas[0];
-            return escolhida
-                ? {
-                      origem: DESTINO_ORIGEM.CADASTRO,
-                      tipo: DESTINO_CADASTRO_TIPO.CONTA,
-                      conta: escolhida,
-                  }
-                : NENHUM;
+            if (!escolhida) return this.excecao(contexto, DESTINO_MANUAL_TIPO.CONTA);
+            await this.cadastroVence(contexto, DESTINO_MANUAL_TIPO.CONTA, { contas });
+            return {
+                origem: DESTINO_ORIGEM.CADASTRO,
+                tipo: DESTINO_CADASTRO_TIPO.CONTA,
+                conta: escolhida,
+            };
         }
         if (modalidade === MODALIDADE.PIX && flags.pix) {
             const { chaves, doDocumento } = await this.chavesEmOrdem(contexto);
             const escolhida = chaves[0];
-            return escolhida
-                ? {
-                      origem: DESTINO_ORIGEM.CADASTRO,
-                      tipo: DESTINO_CADASTRO_TIPO.CHAVE_PIX,
-                      chave: escolhida,
-                      ...(doDocumento.has(escolhida) ? { chaveDoDocumentoDoFavorecido: true } : {}),
-                  }
-                : NENHUM;
+            if (!escolhida) return this.excecao(contexto, DESTINO_MANUAL_TIPO.CHAVE_PIX);
+            await this.cadastroVence(contexto, DESTINO_MANUAL_TIPO.CHAVE_PIX, { chaves });
+            return {
+                origem: DESTINO_ORIGEM.CADASTRO,
+                tipo: DESTINO_CADASTRO_TIPO.CHAVE_PIX,
+                chave: escolhida,
+                ...(doDocumento.has(escolhida) ? { chaveDoDocumentoDoFavorecido: true } : {}),
+            };
         }
         return this.regraDoMain(contexto);
     };
@@ -155,7 +180,7 @@ export default class DestinoPagamentoResolver {
     /** Máscara do destino resolvido (I10h) — `undefined` quando não há destino. */
     public mascarar = (resolvido: DestinoResolvido): string | undefined => {
         switch (resolvido.origem) {
-            case DESTINO_ORIGEM.MANUAL:
+            case DESTINO_ORIGEM.EXCECAO:
                 return this.mask.destinoManual(resolvido.destino);
             case DESTINO_ORIGEM.CADASTRO:
                 return resolvido.tipo === DESTINO_CADASTRO_TIPO.CONTA
@@ -167,31 +192,58 @@ export default class DestinoPagamentoResolver {
     };
 
     /**
-     * O destino manual só vale com a flag manual E a flag da modalidade que ele serve: conta
-     * para TED, chave para PIX. Flag desligada = o valor persistido é ignorado (nem oferta, nem
-     * envio).
+     * Fallback (I12): o cadastro não tem destino válido para a modalidade. Só a exceção
+     * `APROVADA` do (favorecido, tipo) resolve, e só com a flag de exceção ligada. Falha de leitura
+     * sobe: quem oferta trata como "não oferece"; quem envia, como erro (falha fechada).
      */
-    private manualAplicavel = (
-        item: ItemParaDestino,
-        flags: FlagsDestino,
-    ): DestinoManual | undefined => {
-        const d = item.destinoManual;
-        if (!d || !flags.destinoManual) return undefined;
-        if (
-            d.tipo === DESTINO_MANUAL_TIPO.CONTA &&
-            item.modalidade === MODALIDADE.TED &&
-            flags.ted
-        ) {
-            return d;
+    private excecao = async (
+        contexto: ContextoDestino,
+        tipo: DestinoManualTipo,
+    ): Promise<DestinoResolvido> => {
+        if (!contexto.flags.excecao) return NENHUM;
+        const aprovada = await this.aprovada(contexto, tipo);
+        return aprovada
+            ? {
+                  origem: DESTINO_ORIGEM.EXCECAO,
+                  excecaoId: aprovada.id,
+                  destino: aprovada.destino,
+              }
+            : NENHUM;
+    };
+
+    /**
+     * I12c — o cadastro tem destino válido e há exceção APROVADA do mesmo (favorecido, tipo): a
+     * exceção é aposentada (nunca usada). Só quando o fluxo pede (`aposentarExcecao`) e a flag está
+     * ligada; qualquer falha aqui é registrada e IGNORADA, porque o destino do cadastro já está
+     * resolvido e é o seguro.
+     */
+    private cadastroVence = async (
+        contexto: ContextoDestino,
+        tipo: DestinoManualTipo,
+        cadastro: { contas?: ContaFavorecido[]; chaves?: ChavePixFavorecido[] },
+    ): Promise<void> => {
+        if (!contexto.flags.excecao || contexto.aposentarExcecao !== true) return;
+        try {
+            const aprovada = await this.aprovada(contexto, tipo);
+            if (aprovada) await this.substituicao.aposentar({ excecao: aprovada, cadastro });
+        } catch (error) {
+            Logger.warn(
+                `[SISPAG] exceção de destino não aposentada para o favorecido ${contexto.pesCod}: ${redactErrorMessage(
+                    error instanceof Error ? error.message : String(error),
+                )}`,
+            );
         }
-        if (
-            d.tipo === DESTINO_MANUAL_TIPO.CHAVE_PIX &&
-            item.modalidade === MODALIDADE.PIX &&
-            flags.pix
-        ) {
-            return d;
-        }
-        return undefined;
+    };
+
+    private aprovada = (
+        contexto: ContextoDestino,
+        tipo: DestinoManualTipo,
+    ): Promise<ExcecaoDestino | null> => {
+        const { pesCod } = contexto;
+        if (!pesCod) return Promise.resolve(null);
+        return this.memo(contexto, `excecao:${pesCod}:${tipo}`, () =>
+            this.excecoes.findAprovada(pesCod, tipo),
+        );
     };
 
     /** Regra de antes do tweak: conta ativa no banco do lote, a default primeiro. */

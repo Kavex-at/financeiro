@@ -1,6 +1,14 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { PERMISSION, PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
+import { PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
+
+/**
+ * O catálogo no dia da 0068: o de hoje, com `sispag:excecao` (0075, ADR-0060) de volta como
+ * `sispag:aprovar_destino`. A 0068 é histórico; a paridade vigente é checada pelo teste da 0075.
+ */
+const CATALOGO_DA_0068: readonly string[] = PERMISSION_CATALOG.map((p) =>
+    p === 'sispag:excecao' ? 'sispag:aprovar_destino' : p,
+);
 
 /**
  * 0068 — permissão `sispag:aprovar_destino` e aprovação na trilha (ADR-0054 D10).
@@ -29,7 +37,7 @@ describe('migration 0068 — sispag:aprovar_destino (ADR-0054 D10)', () => {
     it('troca os DOIS CHECK de permission pelo catálogo atual do código (R4, paridade)', () => {
         const listas = listasDoCheck(CODIGO);
         expect(listas).toHaveLength(2);
-        for (const lista of listas) expect(lista).toEqual([...PERMISSION_CATALOG].sort());
+        for (const lista of listas) expect(lista).toEqual([...CATALOGO_DA_0068].sort());
         for (const tabela of ['app_role_permission', 'user_permission']) {
             const nome = `${tabela}_permission_check`;
             const drop = CODIGO.search(
@@ -67,7 +75,7 @@ describe('migration 0068 — sispag:aprovar_destino (ADR-0054 D10)', () => {
         );
         expect(seeds).toHaveLength(1);
         const seed = seeds[0] ?? '';
-        expect(seed).toContain(`'${PERMISSION.SISPAG_APROVAR_DESTINO}'`);
+        expect(seed).toContain("'sispag:aprovar_destino'");
         expect(seed).toMatch(/lower\(r\.nome\)\s*=\s*'administrador'/i);
         expect(seed).toMatch(/ON CONFLICT DO NOTHING/i);
         expect(CODIGO).not.toMatch(/INSERT INTO user_permission/i);

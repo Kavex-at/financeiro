@@ -16,8 +16,10 @@ import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import DebitDateFrozenError from '../../errors/DebitDateFrozenError.js';
 import DebitDateOutsideWindowError from '../../errors/DebitDateOutsideWindowError.js';
 import DebitDateService from './DebitDateService.js';
-import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
 import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
+import ExcecaoDestinoRule from '../../libs/sispag/ExcecaoDestinoRule.js';
+import type ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestinoRepository.js';
+import type ExcecaoSubstituicaoService from './ExcecaoSubstituicaoService.js';
 import MaskDestino from '../../libs/sispag/MaskDestino.js';
 import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
 import RemessaService from './RemessaService.js';
@@ -118,6 +120,7 @@ const buildLoteRepo = (l: LotePagamento = lote()) => ({
     getLoteComItens: jest.fn().mockResolvedValue(l),
     setChavesNativas: jest.fn().mockResolvedValue(undefined),
     setDataDebito: jest.fn().mockResolvedValue(undefined),
+    setExcecaoDestinoItem: jest.fn().mockResolvedValue(1),
     setRemessaGerada: jest.fn().mockResolvedValue(undefined),
     transicionarStatus: jest.fn().mockResolvedValue(1),
 });
@@ -164,6 +167,16 @@ const buildWrite = () => ({
     ]),
 });
 
+/** Exceções de destino (ADR-0060): por padrão nenhuma APROVADA — o resolver cai no cadastro. */
+const buildExcecoes = () => ({
+    findAprovada: jest.fn().mockResolvedValue(null),
+    marcarUso: jest.fn().mockResolvedValue(undefined),
+});
+
+const buildSubstituicao = () => ({
+    aposentar: jest.fn().mockResolvedValue({ aposentada: true, divergiu: false }),
+});
+
 const buildSispag = () => ({
     listContasCorrentes: jest
         .fn()
@@ -175,7 +188,7 @@ const buildSispag = () => ({
         .mockResolvedValue([
             { pctCodSeq: 1, banco: 341, agencia: '292', conta: '31404', padrao: true },
         ]),
-    // ADR-0054 — só são chamados com alguma flag TED/PIX/manual ligada.
+    // ADR-0054/0060 — só são chamados com alguma flag TED/PIX/exceção ligada.
     listChavesPixFavorecido: jest.fn().mockResolvedValue([]),
     getTituloAPagar: jest.fn().mockResolvedValue({ pesCod: '1161' }),
     getDocumentoFavorecido: jest.fn().mockResolvedValue(undefined),
@@ -197,6 +210,8 @@ const make = (o: {
     ledger?: ReturnType<typeof buildLedger>;
     write?: ReturnType<typeof buildWrite>;
     sispag?: ReturnType<typeof buildSispag>;
+    excecoes?: ReturnType<typeof buildExcecoes>;
+    substituicao?: ReturnType<typeof buildSubstituicao>;
     env?: EnvironmentProvider;
     lote?: LotePagamento;
     db?: ReturnType<typeof buildDb>;
@@ -207,6 +222,7 @@ const make = (o: {
     const loteRepo = o.loteRepo ?? buildLoteRepo(o.lote);
     const calendar = BankingCalendar.withClock(() => new Date(o.agora ?? AGORA));
     const sispag = o.sispag ?? buildSispag();
+    const excecoes = o.excecoes ?? buildExcecoes();
     return new RemessaService(
         loteRepo as unknown as LotePagamentoRepository,
         (o.ledger ?? buildLedger()) as unknown as RemessaExecucaoRepository,
@@ -218,9 +234,14 @@ const make = (o: {
         new RemessaCnabValidator(),
         new DebitDateService(loteRepo as unknown as LotePagamentoRepository, calendar),
         calendar,
-        new DestinoPagamentoResolver(sispag as unknown as ConexosSispagClient, new MaskDestino()),
-        new DestinoManualValidator(),
-        new DestinoAprovacaoRule(),
+        new DestinoPagamentoResolver(
+            sispag as unknown as ConexosSispagClient,
+            new MaskDestino(),
+            excecoes as unknown as ExcecaoDestinoRepository,
+            (o.substituicao ?? buildSubstituicao()) as unknown as ExcecaoSubstituicaoService,
+        ),
+        new ExcecaoDestinoRule(new DestinoManualValidator()),
+        excecoes as unknown as ExcecaoDestinoRepository,
     );
 };
 
@@ -1605,14 +1626,14 @@ describe('RemessaService — paridade com as flags TED/PIX desligadas', () => {
     });
 });
 
-describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
+describe('RemessaService — TED/PIX e exceção de destino (flags ligadas, ADR-0060)', () => {
     const FLAGS = {
         sispagTedEnabled: true,
         sispagPixEnabled: true,
-        sispagDestinoManualEnabled: true,
+        sispagExcecaoDestinoEnabled: true,
     };
     const DOC_FAV = '11144477735';
-    const MANUAL_CONTA = {
+    const EXC_CONTA = {
         tipo: 'CONTA' as const,
         bancoCod: '001',
         agencia: '4321',
@@ -1620,12 +1641,42 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         contaDv: '5',
         titularDocumento: DOC_FAV,
     };
-    const MANUAL_PIX = {
+    const EXC_PIX = {
         tipo: 'CHAVE_PIX' as const,
-        // Chave digitada só do tipo CPF/CNPJ (a única de titular conferível): é o documento.
+        // Exceção PIX só do tipo CPF/CNPJ (a única de titular conferível): é o documento.
         chavePixTipo: 'CPF_CNPJ' as const,
         chavePix: DOC_FAV,
         titularDocumento: DOC_FAV,
+    };
+    /** `ExcecaoDestino` APROVADA que o `findAprovada` devolve, por tipo. */
+    const excecoesCom = (o: {
+        conta?: typeof EXC_CONTA;
+        pix?: typeof EXC_PIX;
+        idConta?: string;
+        idPix?: string;
+    }) => {
+        const e = buildExcecoes();
+        const base = {
+            pesCod: '1161',
+            filCod: 2,
+            estado: 'APROVADA',
+            origem: 'MANUAL',
+            justificativa: 'cadastro desatualizado',
+            cadastradoPor: 'ana',
+            cadastradoEm: '2026-10-05T10:00:00.000Z',
+            aprovadoPor: 'bia',
+            versao: 2,
+        };
+        e.findAprovada.mockImplementation(async (_p: string, tipo: string) => {
+            if (tipo === 'CONTA' && o.conta) {
+                return { ...base, id: o.idConta ?? 'EXC-C', destino: o.conta };
+            }
+            if (tipo === 'CHAVE_PIX' && o.pix) {
+                return { ...base, id: o.idPix ?? 'EXC-P', destino: o.pix };
+            }
+            return null;
+        });
+        return e;
     };
     const CHAVE_CADASTRO = {
         cixCod: 31,
@@ -1694,22 +1745,19 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         expect(p.pctCodSeq).toBeUndefined();
     });
 
-    it('caso 4: TED manual vai SEM pctCodSeq, com banco/agência/conta/DV digitados', async () => {
+    it('caso 4: TED por exceção APROVADA (cadastro sem conta) vai SEM pctCodSeq, com a conta da exceção', async () => {
         const write = buildWrite();
-        const l = lote({
-            itens: [
-                itemCom({
-                    modalidade: 'TED',
-                    destinoManual: MANUAL_CONTA,
-                    destinoManualAuditId: 'aud-1',
-                    destinoManualAprovadoPor: 'bia',
-                }),
-            ],
-        });
-        await make({ write, lote: l, sispag: sispagCom({}), env: buildEnv(FLAGS) }).gerarRemessa({
-            loteId: 'L1',
-            ator: 'u',
-        });
+        const l = lote({ itens: [itemCom({ modalidade: 'TED' })] });
+        const excecoes = excecoesCom({ conta: EXC_CONTA, idConta: 'EXC-1' });
+        const loteRepo = buildLoteRepo(l);
+        await make({
+            write,
+            loteRepo,
+            lote: l,
+            sispag: sispagCom({ contas: [] }),
+            excecoes,
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
         const p = payloadDe(write);
         expect(p).not.toHaveProperty('pctCodSeq');
         expect(p).toMatchObject({
@@ -1721,75 +1769,89 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
             pctEspNumContaBanc: '99887766',
             pctEspDvconta: '5',
         });
+        // I10f/I12e: o item aponta para a exceção e a trilha ganha USO — sem valor em claro.
+        expect(loteRepo.setExcecaoDestinoItem).toHaveBeenCalledWith({
+            loteId: 'L1',
+            filCod: 2,
+            docCod: '801',
+            titCod: '1',
+            excecaoId: 'EXC-1',
+        });
+        expect(excecoes.marcarUso).toHaveBeenCalledWith({
+            excecaoId: 'EXC-1',
+            ator: 'sistema',
+            loteId: 'L1',
+        });
     });
 
-    it('D10 — conta digitada SEM aprovação: o envio falha fechado ANTES de criar o lote nativo', async () => {
+    it('cadastro com conta ativa VENCE a exceção APROVADA: sai com o pctCodSeq do cadastro e a exceção nem é usada', async () => {
+        const write = buildWrite();
+        const l = lote({ itens: [itemCom({ modalidade: 'TED' })] });
+        const excecoes = excecoesCom({ conta: EXC_CONTA });
+        const substituicao = buildSubstituicao();
+        await make({
+            write,
+            lote: l,
+            sispag: sispagCom({}),
+            excecoes,
+            substituicao,
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(payloadDe(write)).toMatchObject({ pctCodSeq: 42, itsNumBanco: 237 });
+        expect(excecoes.marcarUso).not.toHaveBeenCalled();
+        // No envio o cadastro que valeu aposenta a exceção que sobrou (I12c).
+        expect(substituicao.aposentar).toHaveBeenCalled();
+    });
+
+    it('I12f — exceção REVOGADA entre o finalizar e o envio: o item não resolve e o envio falha fechado ANTES do criarLote', async () => {
         const write = buildWrite();
         const l = lote({
-            itens: [
-                itemCom({
-                    modalidade: 'TED',
-                    credor: 'ACME',
-                    destinoManual: MANUAL_CONTA,
-                    destinoManualAuditId: 'aud-1',
-                }),
-            ],
+            itens: [itemCom({ modalidade: 'TED', credor: 'ACME' })],
         });
-        const err = await make({ write, lote: l, sispag: sispagCom({}), env: buildEnv(FLAGS) })
+        // `findAprovada` só devolve APROVADA: revogada = null.
+        const err = await make({
+            write,
+            lote: l,
+            sispag: sispagCom({ contas: [] }),
+            excecoes: buildExcecoes(),
+            env: buildEnv(FLAGS),
+        })
             .gerarRemessa({ loteId: 'L1', ator: 'u' })
             .catch((e: unknown) => e);
-        expect(err).toMatchObject({ code: 'DESTINO_APROVACAO_PENDENTE', statusCode: 409 });
+        expect(err).toMatchObject({ code: 'DESTINO_PAGAMENTO_AUSENTE', statusCode: 409 });
+        expect(String((err as { userMessage?: string }).userMessage)).toContain('801/1');
         expect(String((err as { userMessage?: string }).userMessage)).not.toContain('99887766');
         expect(write.criarLote).not.toHaveBeenCalled();
     });
 
-    it('D11 — chave PIX CPF/CNPJ digitada sai sem aprovação', async () => {
+    it('PIX por exceção APROVADA (cadastro sem chave) vai com a chave CPF/CNPJ da exceção', async () => {
         const write = buildWrite();
-        const l = lote({
-            itens: [
-                itemCom({
-                    modalidade: 'PIX',
-                    destinoManual: {
-                        tipo: 'CHAVE_PIX',
-                        chavePixTipo: 'CPF_CNPJ',
-                        chavePix: MANUAL_CONTA.titularDocumento,
-                        titularDocumento: MANUAL_CONTA.titularDocumento,
-                    },
-                    destinoManualAuditId: 'aud-3',
-                }),
-            ],
-        });
-        await make({ write, lote: l, sispag: sispagCom({}), env: buildEnv(FLAGS) }).gerarRemessa({
-            loteId: 'L1',
-            ator: 'u',
-        });
-        expect(payloadDe(write)).toMatchObject({ itsVldChavePix: 1 });
-    });
-
-    it('PIX manual vai com a chave digitada', async () => {
-        const write = buildWrite();
-        const l = lote({
-            itens: [
-                itemCom({
-                    modalidade: 'PIX',
-                    destinoManual: MANUAL_PIX,
-                    destinoManualAuditId: 'aud-2',
-                }),
-            ],
-        });
+        const l = lote({ itens: [itemCom({ modalidade: 'PIX' })] });
         await make({
             write,
             lote: l,
-            sispag: sispagCom({ chaves: [CHAVE_CADASTRO] }),
+            sispag: sispagCom({ chaves: [] }),
+            excecoes: excecoesCom({ pix: EXC_PIX }),
             env: buildEnv(FLAGS),
-        }).gerarRemessa({
-            loteId: 'L1',
-            ator: 'u',
-        });
-        expect(payloadDe(write)).toMatchObject({
-            itsVldChavePix: 1,
-            itsDesChavePix: DOC_FAV,
-        });
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(payloadDe(write)).toMatchObject({ itsVldChavePix: 1, itsDesChavePix: DOC_FAV });
+        expect(payloadDe(write)).not.toHaveProperty('pctCodSeq');
+    });
+
+    it('com a flag de exceção desligada nenhuma exceção é lida (paridade com o main)', async () => {
+        const write = buildWrite();
+        const excecoes = excecoesCom({ conta: EXC_CONTA });
+        const l = lote({ itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                write,
+                lote: l,
+                sispag: sispagCom({ contas: [] }),
+                excecoes,
+                env: buildEnv({ sispagTedEnabled: true }),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'DESTINO_PAGAMENTO_AUSENTE' });
+        expect(excecoes.findAprovada).not.toHaveBeenCalled();
     });
 
     it('caso 6 forçado: TED/PIX sem destino → DestinoPagamentoAusenteError ANTES do criarLote', async () => {
@@ -1823,56 +1885,36 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         expect(ledger.fail).toHaveBeenCalled();
     });
 
-    it('documento do favorecido indisponível com destino manual → falha fechada antes de qualquer escrita', async () => {
+    it('documento do favorecido indisponível com exceção → falha fechada antes de qualquer escrita', async () => {
         const write = buildWrite();
-        const l = lote({
-            itens: [
-                itemCom({
-                    modalidade: 'TED',
-                    destinoManual: MANUAL_CONTA,
-                    destinoManualAuditId: 'aud-1',
-                    destinoManualAprovadoPor: 'bia',
-                }),
-            ],
-        });
+        const l = lote({ itens: [itemCom({ modalidade: 'TED' })] });
         await expect(
             make({
                 write,
                 lote: l,
-                sispag: sispagCom({ documento: undefined }),
+                sispag: sispagCom({ contas: [], documento: undefined }),
+                excecoes: excecoesCom({ conta: EXC_CONTA }),
                 env: buildEnv(FLAGS),
-            }).gerarRemessa({
-                loteId: 'L1',
-                ator: 'u',
-            }),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
         ).rejects.toMatchObject({ code: 'DOCUMENTO_FAVORECIDO_INDISPONIVEL' });
         expect(write.criarLote).not.toHaveBeenCalled();
         expect(write.importarTitulos).not.toHaveBeenCalled();
     });
 
-    it('titular divergente no envio → recusa antes de qualquer escrita', async () => {
+    it('titular divergente da exceção no envio (I10i reconferida) → recusa antes de qualquer escrita', async () => {
         const write = buildWrite();
-        const l = lote({
-            itens: [
-                itemCom({
-                    modalidade: 'TED',
-                    destinoManual: MANUAL_CONTA,
-                    destinoManualAuditId: 'aud-1',
-                    destinoManualAprovadoPor: 'bia',
-                }),
-            ],
-        });
-        await expect(
-            make({
-                write,
-                lote: l,
-                sispag: sispagCom({ documento: '11222333000181' }),
-                env: buildEnv(FLAGS),
-            }).gerarRemessa({
-                loteId: 'L1',
-                ator: 'u',
-            }),
-        ).rejects.toMatchObject({ code: 'DESTINO_TITULAR_DIVERGENTE' });
+        const l = lote({ itens: [itemCom({ modalidade: 'TED' })] });
+        const err = await make({
+            write,
+            lote: l,
+            sispag: sispagCom({ contas: [], documento: '11222333000181' }),
+            excecoes: excecoesCom({ conta: EXC_CONTA }),
+            env: buildEnv(FLAGS),
+        })
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: 'EXCECAO_TITULARIDADE', statusCode: 422 });
+        expect(JSON.stringify(err) + String((err as Error).message)).not.toContain('99887766');
         expect(write.criarLote).not.toHaveBeenCalled();
     });
 
@@ -1881,15 +1923,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         const l = lote({
             itens: [
                 itemCom({ modalidade: 'TED' }),
-                {
-                    ...itemCom({
-                        modalidade: 'TED',
-                        destinoManual: MANUAL_CONTA,
-                        destinoManualAuditId: 'aud-9',
-                        destinoManualAprovadoPor: 'bia',
-                    }),
-                    docCod: '802',
-                },
+                { ...itemCom({ modalidade: 'PIX' }), docCod: '802' },
             ],
         });
         const write = buildWrite();
@@ -1898,18 +1932,16 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
             ledger,
             write,
             lote: l,
-            sispag: sispagCom({}),
+            sispag: sispagCom({ chaves: [] }),
+            excecoes: excecoesCom({ pix: EXC_PIX, idPix: 'EXC-9' }),
             env: buildEnv(FLAGS),
-        }).gerarRemessa({
-            loteId: 'L1',
-            ator: 'u',
-        });
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
         const [, marca] = ledger.setRequestPayload.mock.calls[0];
         expect(marca).toMatchObject({
             marcaFlpCods: [98],
             destinos: [
                 { item: '2:801:1', origem: 'CADASTRO', pctCodSeq: 42 },
-                { item: '2:802:1', origem: 'MANUAL', auditId: 'aud-9' },
+                { item: '2:802:1', origem: 'EXCECAO', excecaoId: 'EXC-9' },
             ],
         });
         // Todas as gravações seguintes carregam a assinatura (o payload é substituído a cada passo).
@@ -1971,43 +2003,6 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         expect(write.importarTitulos).not.toHaveBeenCalled();
     });
 
-    it('caso 7: destino manual trocado depois do envio → falha fechada, sem import', async () => {
-        const ledger = buildLedger({
-            status: 'error',
-            dryRun: false,
-            nativeFlpCod: 12,
-            etapa: 'importar',
-            requestPayload: {
-                destinos: [{ item: '2:801:1', origem: 'MANUAL', auditId: 'aud-antigo' }],
-            },
-        });
-        const write = buildWrite();
-        const l = lote({
-            dataDebito: '2026-09-23',
-            itens: [
-                itemCom({
-                    modalidade: 'TED',
-                    destinoManual: MANUAL_CONTA,
-                    destinoManualAuditId: 'aud-novo',
-                    destinoManualAprovadoPor: 'bia',
-                }),
-            ],
-        });
-        await expect(
-            make({
-                ledger,
-                write,
-                lote: l,
-                sispag: sispagCom({}),
-                env: buildEnv(FLAGS),
-            }).gerarRemessa({
-                loteId: 'L1',
-                ator: 'u',
-            }),
-        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
-        expect(write.importarTitulos).not.toHaveBeenCalled();
-    });
-
     // ── fault-tolerance-1 (Regis-Review 2026-09-29): o pin sobrevive a flag desligada, a
     // assinatura ilegível e a retomada parcial ─────────────────────────────────────────
     const ledgerComPin = (destinos: unknown, over: Record<string, unknown> = {}) =>
@@ -2019,6 +2014,73 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
             requestPayload: { itens: 1, flpCod: 12, destinos },
             ...over,
         });
+
+    it('caso 7: a exceção fixada é a mesma na retomada → segue com a exceção, sem recriar o lote', async () => {
+        const ledger = ledgerComPin([{ item: '2:801:1', origem: 'EXCECAO', excecaoId: 'EXC-1' }]);
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await make({
+            ledger,
+            write,
+            lote: l,
+            sispag: sispagCom({ contas: [] }),
+            excecoes: excecoesCom({ conta: EXC_CONTA, idConta: 'EXC-1' }),
+            env: buildEnv(FLAGS),
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(write.criarLote).not.toHaveBeenCalled();
+        expect(payloadDe(write)).toMatchObject({ itsVldModalidade: 5, conta: '99887766' });
+    });
+
+    it('caso 7: exceção trocada (outro id) depois do envio → falha fechada, sem import', async () => {
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                ledger: ledgerComPin([
+                    { item: '2:801:1', origem: 'EXCECAO', excecaoId: 'EXC-antiga' },
+                ]),
+                write,
+                lote: l,
+                sispag: sispagCom({ contas: [] }),
+                excecoes: excecoesCom({ conta: EXC_CONTA, idConta: 'EXC-nova' }),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('caso 7: exceção fixada REVOGADA no meio da retomada → falha fechada (I12g: nada reescrito)', async () => {
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                ledger: ledgerComPin([{ item: '2:801:1', origem: 'EXCECAO', excecaoId: 'EXC-1' }]),
+                write,
+                lote: l,
+                sispag: sispagCom({ contas: [] }),
+                excecoes: buildExcecoes(),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('pin do formato LEGADO (destino digitado por item, ADR-0054) → falha fechada, não "ilegível"', async () => {
+        const write = buildWrite();
+        const l = lote({ dataDebito: '2026-09-23', itens: [itemCom({ modalidade: 'TED' })] });
+        await expect(
+            make({
+                ledger: ledgerComPin([
+                    { item: '2:801:1', origem: 'MANUAL', auditId: 'aud-antigo' },
+                ]),
+                write,
+                lote: l,
+                sispag: sispagCom({}),
+                env: buildEnv(FLAGS),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
 
     it('flag TED desligada numa retomada com destino fixado → falha fechada, sem import', async () => {
         const write = buildWrite();
@@ -2132,36 +2194,22 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
         const l = lote({
             itens: [
                 itemCom({ modalidade: 'TED' }),
-                {
-                    ...itemCom({
-                        modalidade: 'TED',
-                        destinoManual: MANUAL_CONTA,
-                        destinoManualAuditId: 'a1',
-                        destinoManualAprovadoPor: 'bia',
-                    }),
-                    docCod: '802',
-                },
-                {
-                    ...itemCom({
-                        modalidade: 'PIX',
-                        destinoManual: MANUAL_PIX,
-                        destinoManualAuditId: 'a2',
-                    }),
-                    docCod: '803',
-                },
+                { ...itemCom({ modalidade: 'TED' }), docCod: '802' },
+                { ...itemCom({ modalidade: 'PIX' }), docCod: '803' },
             ],
         });
+        // Cadastro sem conta nem chave: os TEDs saem pela exceção CONTA e o PIX pela exceção PIX.
+        const sispag = sispagCom({ contas: [], chaves: [] });
+        const excecoes = excecoesCom({ conta: EXC_CONTA, pix: EXC_PIX });
         await make({
             ledger,
             log,
             write,
             lote: l,
-            sispag: sispagCom({ chaves: [CHAVE_CADASTRO] }),
+            sispag,
+            excecoes,
             env: buildEnv(FLAGS),
-        }).gerarRemessa({
-            loteId: 'L1',
-            ator: 'u',
-        });
+        }).gerarRemessa({ loteId: 'L1', ator: 'u' });
         const registrado = JSON.stringify([
             ledger.setRequestPayload.mock.calls,
             ledger.beginExecution.mock.calls,
@@ -2169,6 +2217,7 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
             (log.info as jest.Mock).mock.calls,
             (log.warn as jest.Mock).mock.calls,
             (log.error as jest.Mock).mock.calls,
+            excecoes.marcarUso.mock.calls,
         ]);
         for (const v of SENSIVEIS) expect(registrado).not.toContain(v);
 
@@ -2179,7 +2228,8 @@ describe('RemessaService — TED/PIX e destino manual (flags ligadas)', () => {
                 ledger: ledger2,
                 lote: l,
                 write,
-                sispag: sispagCom({ chaves: [CHAVE_CADASTRO], documento: '11222333000181' }),
+                sispag: sispagCom({ contas: [], chaves: [], documento: '11222333000181' }),
+                excecoes,
                 env: buildEnv(FLAGS),
             }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
         ).rejects.toBeDefined();

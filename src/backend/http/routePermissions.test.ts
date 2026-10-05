@@ -111,14 +111,14 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['GET /sispag/lotes/:id/remessa/arquivo', P.SISPAG_EXECUTAR],
     ['POST /sispag/retornos/conciliar', P.SISPAG_EXECUTAR],
     ['GET /sispag/execucoes', P.SISPAG_EXECUTAR],
-    // ADR-0054: destino digitado do item e as flags de TED/PIX
-    ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino', P.SISPAG_EXECUTAR],
-    ['DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino', P.SISPAG_EXECUTAR],
-    // ADR-0054 D10: aprovar a conta digitada é permissão própria
-    [
-        'POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino/aprovar',
-        P.SISPAG_APROVAR_DESTINO,
-    ],
+    // ADR-0060: exceção de destino — cadastrar, aprovar, rejeitar, revogar e ver, tudo na permissão
+    // única `sispag:excecao` (a separação de funções é a regra aprovador ≠ cadastrante no serviço)
+    ['GET /sispag/excecoes', P.SISPAG_EXCECAO],
+    ['POST /sispag/excecoes', P.SISPAG_EXCECAO],
+    ['POST /sispag/excecoes/:id/aprovar', P.SISPAG_EXCECAO],
+    ['POST /sispag/excecoes/:id/rejeitar', P.SISPAG_EXCECAO],
+    ['POST /sispag/excecoes/:id/revogar', P.SISPAG_EXCECAO],
+    ['GET /sispag/excecoes/:id/eventos', P.SISPAG_EXCECAO],
     ['GET /sispag/recursos', P.SISPAG_VER],
     // /recebimentos (15)
     ['GET /recebimentos/painel', P.RECEBIMENTOS_VER],
@@ -222,11 +222,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; + carteira ao abrir, ADR-0060): 27/33/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060): 27/36/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(33);
+        expect(porMount('sispag')).toBe(36);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);

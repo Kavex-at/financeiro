@@ -23,7 +23,7 @@ const efetivas = (pacote: string[], excecoes: PermissionException[] = []): strin
     [...calc.calcular(pacote, excecoes).permissoes].sort();
 
 describe('catálogo de permissões', () => {
-    it('tem exatamente as permissões decididas (nove da entrevista + a do ADR-0054 D10; mudar o catálogo exige mudar este teste)', () => {
+    it('tem exatamente as permissões decididas (nove da entrevista + sispag:excecao do ADR-0060; mudar o catálogo exige mudar este teste)', () => {
         expect([...PERMISSION_CATALOG].sort()).toEqual(
             [
                 'metricas:ver',
@@ -32,12 +32,17 @@ describe('catálogo de permissões', () => {
                 'permutas:ver',
                 'recebimentos:executar',
                 'recebimentos:ver',
-                'sispag:aprovar_destino',
+                'sispag:excecao',
                 'sispag:executar',
                 'sispag:ver',
                 'usuarios:gerenciar',
             ].sort(),
         );
+    });
+
+    it('não expõe mais sispag:aprovar_destino (ADR-0060 substituiu pela permissão única)', () => {
+        expect(PERMISSION_CATALOG as readonly string[]).not.toContain('sispag:aprovar_destino');
+        expect(PERMISSION.SISPAG_EXCECAO).toBe('sispag:excecao');
     });
 
     it('as constantes nomeadas são o próprio catálogo, sem sobra', () => {
@@ -81,6 +86,31 @@ describe('EffectivePermissionCalculator.calcular — fecho(pacote ∪ concedidas
 
     it('Administrador (as nove) sem exceções: as nove', () => {
         expect(efetivas([...PERMISSION_CATALOG])).toEqual([...PERMISSION_CATALOG].sort());
+    });
+
+    describe('sispag:excecao (ADR-0060)', () => {
+        const ADMINISTRADOR = [...PERMISSION_CATALOG];
+        const ANALISTA = [
+            'permutas:ver',
+            'permutas:executar',
+            'sispag:ver',
+            'recebimentos:ver',
+            'recebimentos:executar',
+        ];
+
+        it('o Administrador tem', () => {
+            expect(efetivas(ADMINISTRADOR)).toContain(PERMISSION.SISPAG_EXCECAO);
+        });
+
+        it('o Analista não tem', () => {
+            expect(efetivas(ANALISTA)).not.toContain(PERMISSION.SISPAG_EXCECAO);
+        });
+
+        it('exceção por usuário conceder dá a permissão ao Analista, sem arrastar executar', () => {
+            const out = efetivas(ANALISTA, [conceder(PERMISSION.SISPAG_EXCECAO)]);
+            expect(out).toContain(PERMISSION.SISPAG_EXCECAO);
+            expect(out).not.toContain(PERMISSION.SISPAG_EXECUTAR);
+        });
     });
 
     it('concedida soma ao pacote sem tirar nada', () => {

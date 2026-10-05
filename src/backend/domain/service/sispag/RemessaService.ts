@@ -31,10 +31,10 @@ import DebitDateService from './DebitDateService.js';
 import DestinoCongeladoError, {
     MOTIVO_DESTINO_CONGELADO,
 } from '../../errors/DestinoCongeladoError.js';
-import DestinoAprovacaoPendenteError from '../../errors/DestinoAprovacaoPendenteError.js';
 import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
-import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
-import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
+import ExcecaoDestinoRule from '../../libs/sispag/ExcecaoDestinoRule.js';
+import ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestinoRepository.js';
+import { ATOR_SISTEMA } from './ExcecaoSubstituicaoService.js';
 import DestinoPagamentoResolver, {
     type ContextoDestino,
     DESTINO_CADASTRO_TIPO,
@@ -79,15 +79,20 @@ const MODALIDADE_TED_NATIVA = 5;
 const MODALIDADE_PIX_NATIVA = 1;
 
 /**
- * Assinatura do destino de cada item no ledger (ADR-0054 I10f): SÓ referências — `pctCodSeq` da
- * conta do cadastro, `cixCod` da chave do cadastro, ou o id da linha de trilha do destino digitado.
- * Nunca conta, chave ou documento (I10h): o `request_payload` é lido por gente e por jobs.
+ * Assinatura do destino de cada item no ledger (ADR-0054 I10f, ADR-0060): SÓ referências —
+ * `pctCodSeq` da conta do cadastro, `cixCod` da chave do cadastro, ou o `excecaoId` da exceção
+ * APROVADA usada. Nunca conta, chave ou documento (I10h): o `request_payload` é lido por gente e
+ * por jobs. `MANUAL`/`auditId` são o formato LEGADO do destino digitado por item (ADR-0054, flag
+ * nunca ligada em PRD): ainda lido para não virar "ilegível", mas nunca mais gerado — numa
+ * retomada diverge e falha fechado.
  */
 const assinaturaDestinoSchema = z.object({
     item: z.string(),
-    origem: z.enum([DESTINO_ORIGEM.CADASTRO, DESTINO_ORIGEM.MANUAL]),
+    origem: z.enum([DESTINO_ORIGEM.CADASTRO, DESTINO_ORIGEM.EXCECAO, 'MANUAL']),
     pctCodSeq: z.number().optional(),
     cixCod: z.number().optional(),
+    excecaoId: z.string().optional(),
+    /** Legado (destino digitado por item, retirado na ADR-0060). */
     auditId: z.string().optional(),
 });
 
@@ -176,8 +181,8 @@ export default class RemessaService {
         @inject(DebitDateService) private readonly debitDate: DebitDateService,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
-        @inject(DestinoManualValidator) private readonly destinoValidator: DestinoManualValidator,
-        @inject(DestinoAprovacaoRule) private readonly aprovacao: DestinoAprovacaoRule,
+        @inject(ExcecaoDestinoRule) private readonly excecaoRule: ExcecaoDestinoRule,
+        @inject(ExcecaoDestinoRepository) private readonly excecoes: ExcecaoDestinoRepository,
     ) {}
 
     /**
@@ -245,12 +250,12 @@ export default class RemessaService {
 
         const env = await this.environmentProvider.getEnvironmentVars();
         const writeEnabled = env.conexosWriteEnabled;
-        // ADR-0054 — as três desligadas (default) = envio idêntico ao `main`. `=== true` porque
-        // ausência nunca liga nada.
+        // ADR-0054/0060 — as três desligadas (default) = envio idêntico ao `main`. `=== true`
+        // porque ausência nunca liga nada.
         const flags: FlagsDestino = {
             ted: env.sispagTedEnabled === true,
             pix: env.sispagPixEnabled === true,
-            destinoManual: env.sispagDestinoManualEnabled === true,
+            excecao: env.sispagExcecaoDestinoEnabled === true,
         };
         // `sispagLiveWriteEnabled` é o kill-switch DESTA frente: conter um bug do SISPAG
         // pelo `conexosDryRun` global desligaria Permutas e Recebimentos junto.
@@ -1003,8 +1008,8 @@ export default class RemessaService {
         apenas?: ReadonlySet<string>,
         /** `false` = freio de incidente ligado (`SISPAG_DDA_ASSOC_ENABLED=false`). */
         ddaHabilitado = true,
-        /** Flags TED/PIX/manual (ADR-0054). Ausente = todas desligadas (regra do `main`). */
-        flags: FlagsDestino = { ted: false, pix: false, destinoManual: false },
+        /** Flags TED/PIX/exceção (ADR-0054/0060). Ausente = todas desligadas (regra do `main`). */
+        flags: FlagsDestino = { ted: false, pix: false, excecao: false },
         /** Destinos já resolvidos e conferidos no pré-voo — a fonte, quando existe. */
         preResolvidos?: ReadonlyMap<string, DestinoResolvido>,
     ): Promise<Array<{ payload: Record<string, unknown>; associarDda: boolean }>> => {
@@ -1090,7 +1095,6 @@ export default class RemessaService {
                       filCod: lote.filCod,
                       ...(pesCod != null ? { pesCod: String(pesCod) } : {}),
                   })));
-            this.exigirContaAprovada(item, destino, flags);
             if (destino?.origem === DESTINO_ORIGEM.NENHUM) {
                 if (this.usaRegraNova(item.modalidade, flags)) {
                     throw new DestinoPagamentoAusenteError({
@@ -1107,8 +1111,9 @@ export default class RemessaService {
                     `favorecido de ${item.docCod}/${item.titCod} não tem conta ativa no banco ${febraban}. Cadastre a conta ou escolha outra forma de pagamento.`,
                 );
             }
+            await this.registrarUsoDaExcecao(lote, item, destino);
             // Destino que NÃO é conta do cadastro vai sem `pctCodSeq` (ADR-0054 D1): a referência
-            // ao cadastro seria outra conta, não a digitada.
+            // ao cadastro seria outra conta, não a da exceção.
             const raw =
                 destino && !this.ehContaDoCadastro(destino)
                     ? this.semReferenciaDeConta(pendente.raw)
@@ -1180,33 +1185,38 @@ export default class RemessaService {
         return MODALIDADE_NATIVA[modalidade ?? 'CREDITO_CONTA'] ?? 1;
     };
 
-    /**
-     * D10: o destino que vai sair é a conta DIGITADA e ela não foi aprovada. Só vale para o
-     * destino MANUAL resolvido — com as flags desligadas o resolver nunca o devolve.
-     */
-    private contaDigitadaPendente = (
-        item: ItemLote,
-        d: DestinoResolvido,
-        flags: FlagsDestino,
-    ): boolean => d.origem === DESTINO_ORIGEM.MANUAL && this.aprovacao.bloqueia(item, flags);
-
-    /** Defesa em profundidade do D10 no montar do import (o pré-voo já barrou antes). */
-    private exigirContaAprovada = (
-        item: ItemLote,
-        d: DestinoResolvido | undefined,
-        flags: FlagsDestino,
-    ): void => {
-        if (d && this.contaDigitadaPendente(item, d, flags)) {
-            throw new DestinoAprovacaoPendenteError({ itens: [this.refDoItem(item)] });
-        }
-    };
-
     /** O item como aparece em mensagem ao operador: título e credor, nunca o destino (I10h). */
     private refDoItem = (item: ItemLote): { docCod: string; titCod: string; credor?: string } => ({
         docCod: item.docCod,
         titCod: item.titCod,
         ...(item.credor ? { credor: item.credor } : {}),
     });
+
+    /**
+     * ADR-0060 I10f/I12e: o destino que vai ao `fin015` é uma exceção — liga o item a ela
+     * (`excecao_destino_id`, sem copiar o valor) e grava o evento USO na trilha (sem valor em
+     * claro). Idempotente numa retomada: o item que já aponta para a mesma exceção não regrava.
+     */
+    private registrarUsoDaExcecao = async (
+        lote: LotePagamento,
+        item: ItemLote,
+        d: DestinoResolvido | undefined,
+    ): Promise<void> => {
+        if (d?.origem !== DESTINO_ORIGEM.EXCECAO) return;
+        if (item.excecaoDestinoId === d.excecaoId) return;
+        await this.loteRepo.setExcecaoDestinoItem({
+            loteId: lote.id,
+            filCod: item.filCod,
+            docCod: item.docCod,
+            titCod: item.titCod,
+            excecaoId: d.excecaoId,
+        });
+        await this.excecoes.marcarUso({
+            excecaoId: d.excecaoId,
+            ator: ATOR_SISTEMA,
+            loteId: lote.id,
+        });
+    };
 
     private ehContaDoCadastro = (d: DestinoResolvido): boolean =>
         d.origem === DESTINO_ORIGEM.CADASTRO && d.tipo === DESTINO_CADASTRO_TIPO.CONTA;
@@ -1219,10 +1229,10 @@ export default class RemessaService {
      * Campos do destino no item do fin015.
      *
      * - Conta do cadastro: `pctCodSeq` + os dados da conta, exatamente como o `main` mandava.
-     * - Conta digitada: SEM `pctCodSeq`, com banco/agência/conta/DV. ⚠️ H3 — nunca observado:
+     * - Conta de exceção: SEM `pctCodSeq`, com banco/agência/conta/DV. ⚠️ H3 — nunca observado:
      *   19/19 itens históricos tinham `pctCodSeq`. Se o fin015 recusar no teste supervisionado,
      *   PARAR e falar com o usuário (ADR-0054 D6). Os nomes seguem o `CmnPessoasCtcorr`.
-     * - Chave PIX (cadastro ou digitada): `itsVldChavePix = 1` + `itsDesChavePix`. ⚠️ H4/H5.
+     * - Chave PIX (cadastro ou exceção): `itsVldChavePix = 1` + `itsDesChavePix`. ⚠️ H4/H5.
      */
     private camposDoDestino = (d: DestinoResolvido | undefined): Record<string, unknown> => {
         if (!d || d.origem === DESTINO_ORIGEM.NENHUM) return {};
@@ -1311,15 +1321,9 @@ export default class RemessaService {
         return [...porItem.values()];
     };
 
-    private assinar = (chave: string, d: DestinoResolvido, item: ItemLote): AssinaturaDestino => {
-        if (d.origem === DESTINO_ORIGEM.MANUAL) {
-            return {
-                item: chave,
-                origem: DESTINO_ORIGEM.MANUAL,
-                ...(item.destinoManualAuditId !== undefined
-                    ? { auditId: item.destinoManualAuditId }
-                    : {}),
-            };
+    private assinar = (chave: string, d: DestinoResolvido): AssinaturaDestino => {
+        if (d.origem === DESTINO_ORIGEM.EXCECAO) {
+            return { item: chave, origem: DESTINO_ORIGEM.EXCECAO, excecaoId: d.excecaoId };
         }
         if (d.origem === DESTINO_ORIGEM.CADASTRO && d.tipo === DESTINO_CADASTRO_TIPO.CONTA) {
             return { item: chave, origem: DESTINO_ORIGEM.CADASTRO, pctCodSeq: d.conta.pctCodSeq };
@@ -1333,8 +1337,9 @@ export default class RemessaService {
     /**
      * Retomada (I10f): o destino que vale é o que a tentativa anterior registrou, não o que o
      * cadastro diz hoje. Conta/chave do cadastro é fixada pela referência (`pctCodSeq`/`cixCod`);
-     * destino digitado, pela linha de trilha. Qualquer divergência falha FECHADA — reenviar um
-     * destino diferente para um lote nativo que já existe é o que o congelamento proíbe.
+     * exceção, pelo `excecaoId`. Qualquer divergência falha FECHADA — reenviar um destino
+     * diferente para um lote nativo que já existe é o que o congelamento proíbe. Isso inclui a
+     * exceção revogada no meio da retomada (I12g): o item não segue sozinho.
      *
      * A conta fixada é relida do cadastro só para montar os campos do item (o ledger não guarda
      * conta, I10h); o que decide QUAL conta é a referência gravada, nunca a default de hoje.
@@ -1352,12 +1357,13 @@ export default class RemessaService {
                 titulo: `${item.docCod}/${item.titCod}`,
                 ...(nativeFlpCod !== undefined ? { nativeFlpCod } : {}),
             });
-        if (fixado.origem === DESTINO_ORIGEM.MANUAL) {
-            if (atual.origem !== DESTINO_ORIGEM.MANUAL) throw diverge();
-            if (item.destinoManualAuditId !== fixado.auditId) throw diverge();
+        if (fixado.origem === 'MANUAL') throw diverge();
+        if (fixado.origem === DESTINO_ORIGEM.EXCECAO) {
+            if (atual.origem !== DESTINO_ORIGEM.EXCECAO) throw diverge();
+            if (atual.excecaoId !== fixado.excecaoId) throw diverge();
             return atual;
         }
-        if (atual.origem === DESTINO_ORIGEM.MANUAL) throw diverge();
+        if (atual.origem === DESTINO_ORIGEM.EXCECAO) throw diverge();
         const { pesCod, filCod } = contexto;
         if (!pesCod) throw diverge();
         if (fixado.pctCodSeq !== undefined) {
@@ -1435,7 +1441,7 @@ export default class RemessaService {
 
     /**
      * Um item do pré-voo: favorecido lido ao vivo, destino resolvido, fixado à tentativa anterior
-     * (se houver) e, se digitado, conferido na titularidade.
+     * (se houver) e, se for exceção, conferido na titularidade (I10i) com o documento ao vivo.
      */
     private destinoConferidoDoItem = async (
         item: ItemLote,
@@ -1448,21 +1454,19 @@ export default class RemessaService {
         const lido = await this.sispag.getTituloAPagar(item.filCod, item.docCod, item.titCod);
         const contexto: ContextoDestino = {
             ...o.contexto,
+            // I12c: no envio o cadastro que passou a valer aposenta a exceção que sobrou.
+            aposentarExcecao: true,
             ...(lido?.pesCod ? { pesCod: lido.pesCod } : {}),
         };
         const atual = await this.resolver.resolve(item, contexto);
         const resolvido = o.fixado
             ? await this.aplicarFixado(atual, o.fixado, item, contexto, o.nativeFlpCod)
             : atual;
-        if (resolvido.origem === DESTINO_ORIGEM.MANUAL) {
+        if (resolvido.origem === DESTINO_ORIGEM.EXCECAO) {
             const documento = contexto.pesCod
                 ? await this.sispag.getDocumentoFavorecido(contexto.pesCod, item.filCod)
                 : undefined;
-            this.destinoValidator.conferirTitularidade(
-                resolvido.destino,
-                documento,
-                `${item.docCod}/${item.titCod}`,
-            );
+            this.excecaoRule.conferirTitularidade(resolvido.destino, documento);
         }
         return resolvido;
     };
@@ -1474,7 +1478,7 @@ export default class RemessaService {
      *   1. o favorecido de cada item TED/PIX sai da leitura AO VIVO do título (`fin064`);
      *   2. o destino sai do `DestinoPagamentoResolver` (a mesma regra da oferta);
      *   3. numa retomada, o destino é fixado ao que a tentativa anterior registrou;
-     *   4. destino digitado passa pela titularidade, com o CPF/CNPJ do favorecido lido ao vivo
+     *   4. destino de exceção passa pela titularidade, com o CPF/CNPJ do favorecido lido ao vivo
      *      (`cmn025`). Documento indisponível = falha fechada.
      *
      * Todo item sem destino entra numa ÚNICA `DestinoPagamentoAusenteError`, para a analista ver
@@ -1496,7 +1500,6 @@ export default class RemessaService {
             credor?: string;
             modalidade?: string;
         }> = [];
-        const pendentes: Array<{ docCod: string; titCod: string; credor?: string }> = [];
         const fixadoPor = new Map((p.fixados ?? []).map((f) => [f.item, f]));
         const cache = this.resolver.novoCache();
 
@@ -1520,17 +1523,12 @@ export default class RemessaService {
                 });
                 continue;
             }
-            if (this.contaDigitadaPendente(item, resolvido, p.flags)) {
-                pendentes.push(this.refDoItem(item));
-                continue;
-            }
             destinos.set(chave, resolvido);
-            assinatura.push(this.assinar(chave, resolvido, item));
+            assinatura.push(this.assinar(chave, resolvido));
         }
+        // I12f — falha fechada: exceção revogada entre o finalizar e o envio (ou cadastro que
+        // deixou de ter destino) barra o item ANTES do `criarLote`, nada de lote pela metade.
         if (ausentes.length > 0) throw new DestinoPagamentoAusenteError({ itens: ausentes });
-        // D10 — o envio confere de novo: conta digitada sem aprovação não sai (falha fechada),
-        // mesmo que o lote tenha sido finalizado antes da regra existir.
-        if (pendentes.length > 0) throw new DestinoAprovacaoPendenteError({ itens: pendentes });
         return { destinos, assinatura };
     };
 

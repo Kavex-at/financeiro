@@ -156,13 +156,15 @@ export default class EnvironmentVars {
      * - `sispagTedEnabled` (`SISPAG_TED_ENABLED`): TED sai como `itsVldModalidade = 5`, para
      *   conta ativa do favorecido em QUALQUER banco (I10c), e a oferta usa o mesmo resolver do
      *   envio (I10b). Desligado: regra antiga (conta no banco do lote, modalidade 1).
-     * - `sispagDestinoManualEnabled` (`SISPAG_DESTINO_MANUAL_ENABLED`): a analista pode digitar o
-     *   destino no item (ADR-0054 D1/D2). Desligado: rota recusa e destino persistido é ignorado.
+     * - `sispagExcecaoDestinoEnabled` (`SISPAG_EXCECAO_DESTINO_ENABLED`, com o nome antigo
+     *   `SISPAG_DESTINO_MANUAL_ENABLED` aceito como alias por um ciclo de deploy; ADR-0060): a
+     *   exceção de destino aprovada vale como fallback do cadastro do Conexos. Desligado: as rotas
+     *   de exceção recusam e nenhuma exceção resolve (paridade com o `main`).
      * - `sispagPixEnabled` (`SISPAG_PIX_ENABLED`): PIX pela chave do `cmn025/cmnPessoasPix` ou
      *   digitada (I10d). Desligado: PIX nunca resolve por chave.
      */
     public sispagTedEnabled: boolean;
-    public sispagDestinoManualEnabled: boolean;
+    public sispagExcecaoDestinoEnabled: boolean;
     public sispagPixEnabled: boolean;
     /**
      * Carteira SISPAG ao abrir a tela (ADR-0060). `sispagCarteiraTtlMin`
@@ -269,7 +271,7 @@ export default class EnvironmentVars {
         sispagLiveWriteEnabled,
         sispagDdaAssocEnabled,
         sispagTedEnabled,
-        sispagDestinoManualEnabled,
+        sispagExcecaoDestinoEnabled,
         sispagPixEnabled,
         sispagCarteiraTtlMin,
         sispagCarteiraCooldownMin,
@@ -312,7 +314,7 @@ export default class EnvironmentVars {
         sispagLiveWriteEnabled: boolean;
         sispagDdaAssocEnabled: boolean;
         sispagTedEnabled?: boolean;
-        sispagDestinoManualEnabled?: boolean;
+        sispagExcecaoDestinoEnabled?: boolean;
         sispagPixEnabled?: boolean;
         sispagCarteiraTtlMin?: number;
         sispagCarteiraCooldownMin?: number;
@@ -355,7 +357,7 @@ export default class EnvironmentVars {
         this.sispagLiveWriteEnabled = sispagLiveWriteEnabled;
         this.sispagDdaAssocEnabled = sispagDdaAssocEnabled;
         this.sispagTedEnabled = sispagTedEnabled ?? false;
-        this.sispagDestinoManualEnabled = sispagDestinoManualEnabled ?? false;
+        this.sispagExcecaoDestinoEnabled = sispagExcecaoDestinoEnabled ?? false;
         this.sispagPixEnabled = sispagPixEnabled ?? false;
         this.sispagCarteiraTtlMin = sispagCarteiraTtlMin ?? 30;
         this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
