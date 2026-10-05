@@ -152,6 +152,13 @@ export default class IngestaoPagamentosService {
                 temBoleto: lido.comBoleto.has(`${t.filCod}:${t.docCod}:${t.titCod}`),
             }));
 
+    /** `filial 4: conexos 504; filial 7: …` — curto o bastante para a coluna `error_message`. */
+    private resumoFalhas = (falhas: Array<{ filCod: number; motivo: string }>): string =>
+        falhas
+            .map((f) => `filial ${f.filCod}: ${f.motivo.slice(0, 120)}`)
+            .join('; ')
+            .slice(0, 500);
+
     private runIngestion = async (input: {
         triggeredBy: string;
         idempotencyKey?: string;
@@ -187,26 +194,46 @@ export default class IngestaoPagamentosService {
             // Só as filiais LIDAS com sucesso participam da inativação anti-fantasma —
             // uma filial que falhou não perde seus títulos por engano (fault-tolerance).
             const filiaisLidas: number[] = [];
+            const falhas: Array<{ filCod: number; motivo: string }> = [];
             for (let i = 0; i < settled.length; i += 1) {
                 const s = settled[i];
                 if (s.status !== 'fulfilled') {
+                    const motivo = s.reason instanceof Error ? s.reason.message : String(s.reason);
                     await this.avisar('leitura de filial falhou (ignorada)', {
                         filCod: filCods[i],
-                        reason: s.reason instanceof Error ? s.reason.message : String(s.reason),
+                        reason: motivo,
                     });
+                    falhas.push({ filCod: filCods[i], motivo });
                     continue;
                 }
                 filiaisLidas.push(filCods[i]);
                 titulos.push(...this.titulosDaFilial(s.value));
             }
 
+            // Zero filiais lidas NÃO é "carteira vazia": é a ingestão cega (senha do Conexos
+            // vencida, ERP fora). Gravar `success` com 0 títulos congelou a carteira por dias sem
+            // alarme (secrets dos crons, 20–30/09). Vira `error` ANTES de tocar a carteira — o
+            // catch fecha a run, o job sai com 1 e o alerta do workflow dispara.
+            if (filiaisLidas.length === 0) {
+                throw new Error(
+                    filCods.length === 0
+                        ? 'ingestão sem leitura: o Conexos não devolveu nenhuma filial'
+                        : `ingestão sem leitura: nenhuma das ${filCods.length} filiais foi lida (${this.resumoFalhas(falhas)})`,
+                );
+            }
+
             await this.tituloRepo.upsertMany(titulos, runId);
             const inativados = await this.tituloRepo.marcarInativosForaDaRun(runId, filiaisLidas);
+            // Leitura parcial segue `success` (as filiais lidas valem), mas não em silêncio: a run
+            // guarda quais filiais ficaram de fora e o resultado as devolve.
             await this.runRepo.finishRun({
                 runId,
                 status: 'success',
                 totalTitulos: titulos.length,
                 totalInativados: inativados,
+                ...(falhas.length > 0
+                    ? { errorMessage: `filiais não lidas: ${this.resumoFalhas(falhas)}` }
+                    : {}),
             });
             // Best-effort pós-sucesso: a run JÁ está 'success' e os títulos persistidos —
             // uma falha aqui (blip de banco no idempotency, log) NÃO deve remarcar como error.
@@ -232,6 +259,7 @@ export default class IngestaoPagamentosService {
                 status: 'success',
                 totalTitulos: titulos.length,
                 totalInativados: inativados,
+                filiaisComFalha: falhas.map((f) => f.filCod),
             };
         } catch (error) {
             await this.runRepo.finishRun({

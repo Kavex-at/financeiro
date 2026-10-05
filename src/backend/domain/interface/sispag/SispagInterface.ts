@@ -206,6 +206,8 @@ export interface IngestaoPagamentosResult {
     status: 'success' | 'error';
     totalTitulos: number;
     totalInativados: number;
+    /** Filiais cuja leitura falhou nesta run (leitura parcial). Ausente/vazio = todas lidas. */
+    filiaisComFalha?: number[];
 }
 
 /** Um lote SISPAG nativo — fonte `fin015/list`. */
