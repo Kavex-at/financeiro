@@ -3,6 +3,41 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.34.0 — Exceção de destino SISPAG: cadastro primeiro (2026-10-05, ADR-0061)
+
+Feature: `sispag-excecao-destino` (continuação de `sispag-ted-pix`). `entity_changed = true`.
+
+- **NEW entity `ExcecaoDestino`** (planned), **NEW state machine `excecao-destino`** (E1-E5), **NEW
+  business rule `excecao-destino-sispag`** (I12a-i), **6 NEW actions** (`registrar`, `aprovar`,
+  `rejeitar`, `revogar`, `carregarPlanilha`, `aposentarSubstituidas`).
+- **Cadastro `cmn025` é a fonte principal; exceção aprovada só como fallback.** Supersede
+  parcialmente a ADR-0054 (D2, D3-ressalva, D10, D11). `DestinoManual` por item retirado.
+- **Permissão única `sispag:excecao`** (cadastrar, aprovar, rejeitar, revogar) substitui
+  `sispag:aprovar_destino`; separação de funções só pela regra aprovador ≠ cadastrante.
+- PIX de exceção só com chave CPF/CNPJ = documento do favorecido. Sem expiração; revogação por
+  qualquer pessoa com a permissão.
+- Revisados: `destino-pagamento-sispag` (I10e/g/j), `LotePagamento` (`destinoOrigem`,
+  `excecaoDestinoId`), state machine do lote (L2/L3), `finalizarLote`, `Usuario`, glossário,
+  relacionamentos, watchlist.
+- **Gaps abertos:** Q1, Q3, Q4, Q6, Q8-Q11 em `_inbox/sispag-excecao-gap.md`.
+- **Coverage:** entities_total 21 → 22 (planned 5 → 6), actions_total 27 → 33 (planned 6 → 12),
+  business_rules_total 25 → 26 (planned 10 → 11), state_machines_total 5 → 6 (planned 3 → 4).
+
+### v0.33.0 impl — implementação (2026-10-05, mesma feature)
+
+- `ExcecaoDestino`, state machine `excecao-destino`, regra `excecao-destino-sispag` e 5 das 6 actions
+  passam a **implemented** (migration 0075, `ExcecaoDestinoRule` com teste canônico, repositório com
+  trilha só-inclusão, `ExcecaoDestinoService`, resolver cadastro-primeiro, rotas `/sispag/excecoes`,
+  tela `/sispag/excecoes`, job `aposentar-excecoes-substituidas`). Alerta novo
+  `sispag-excecao-divergencia`.
+- **`carregarExcecoesDestinoPlanilha` segue `planned`** (T10): bloqueada por Q1 (layout da planilha
+  nunca visto; nada foi inventado).
+- **Q4 pendente:** a contagem de `destino_manual` em produção não pôde ser medida (sem acesso ao
+  banco); a 0075 é só de criação e deixa a coluna inerte, com `RAISE WARNING` se houver dado.
+- Flag renomeada `SISPAG_EXCECAO_DESTINO_ENABLED` (alias `SISPAG_DESTINO_MANUAL_ENABLED` por um ciclo).
+- **Coverage:** entities_implemented +1, actions_implemented +5, business_rules_implemented +1 (com
+  teste), state_machines_implemented +1.
+
 ## v0.33.0 — Carteira do SISPAG atualizada ao abrir a tela (2026-10-05, ADR-0060)
 
 Feature: `sispag-carteira-ao-abrir` (branch `fix/sispag-carteira-ao-abrir`). `entity_changed = false`.
