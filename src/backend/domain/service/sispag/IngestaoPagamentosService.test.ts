@@ -119,6 +119,47 @@ describe('IngestaoPagamentosService', () => {
         expect(tituloRepo.marcarInativosForaDaRun).toHaveBeenCalledWith('RUN1', [2]);
     });
 
+    it('NENHUMA filial lida → run `error`, propaga e NÃO toca a carteira (não é carteira vazia)', async () => {
+        const listTitulos = jest.fn().mockRejectedValue(new Error('Bad Credentials'));
+        const { service, tituloRepo, runRepo } = make({
+            listTitulos,
+            filiais: [{ filCod: 1 }, { filCod: 2 }],
+        });
+        await expect(service.executar({ triggeredBy: 'cron' })).rejects.toThrow(/nenhuma das 2/);
+        expect(runRepo.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({
+                status: 'error',
+                errorMessage: expect.stringContaining('Bad Credentials'),
+            }),
+        );
+        expect(tituloRepo.upsertMany).not.toHaveBeenCalled();
+        expect(tituloRepo.marcarInativosForaDaRun).not.toHaveBeenCalled();
+    });
+
+    it('Conexos sem nenhuma filial → run `error`', async () => {
+        const { service, runRepo } = make({ filiais: [] });
+        await expect(service.executar({ triggeredBy: 'cron' })).rejects.toThrow(/nenhuma filial/);
+        expect(runRepo.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'error' }),
+        );
+    });
+
+    it('leitura PARCIAL segue success, mas registra e devolve as filiais que falharam', async () => {
+        const listTitulos = jest
+            .fn()
+            .mockResolvedValueOnce([titulo()])
+            .mockRejectedValueOnce(new Error('conexos 504'));
+        const { service, runRepo } = make({ listTitulos, filiais: [{ filCod: 2 }, { filCod: 4 }] });
+        const r = await service.executar({ triggeredBy: 'cron' });
+        expect(r).toMatchObject({ status: 'success', filiaisComFalha: [4] });
+        expect(runRepo.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({
+                status: 'success',
+                errorMessage: expect.stringContaining('filial 4: conexos 504'),
+            }),
+        );
+    });
+
     it('DESCARTA os títulos internacionais (exterior/câmbio) da carteira — fora do escopo', async () => {
         const listTitulos = jest
             .fn()
