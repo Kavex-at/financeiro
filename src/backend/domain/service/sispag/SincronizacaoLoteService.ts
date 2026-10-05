@@ -432,7 +432,7 @@ export default class SincronizacaoLoteService {
         if (alvos.length === 0) return { porLote, eventosNaoLidos: 0 };
 
         const arquivos = await this.arquivosProcessados(alvos);
-        const codigosPorBanco = await this.codigosQueDecidem(arquivos);
+        const { porPar: codigosPorBanco, paresNaoLidos } = await this.codigosQueDecidem(arquivos);
         const leituras = arquivos.flatMap((arquivo) =>
             (codigosPorBanco.get(`${arquivo.filCod}:${arquivo.bncCod}`) ?? []).map((ev) => ({
                 arquivo,
@@ -457,7 +457,9 @@ export default class SincronizacaoLoteService {
         const loteDaChave = new Map(
             alvos.map((l) => [`${l.nativeFilCod}:${l.nativeBncCod}:${l.nativeFlpCod}`, l]),
         );
-        let eventosNaoLidos = 0;
+        // Sem o cadastro de eventos de um (filial, banco) não há código a consultar: o que não
+        // foi lido não decide (I11c), mas TEM que aparecer — não pode parecer "nenhum evento".
+        let eventosNaoLidos = paresNaoLidos;
         for (const [i, lido] of detalhes.entries()) {
             const leitura = leituras[i];
             if (leitura === undefined) continue;
@@ -560,7 +562,7 @@ export default class SincronizacaoLoteService {
     /** Códigos de rejeição + `00` + `BD` do cadastro de eventos de cada (filial, banco). */
     private codigosQueDecidem = async (
         arquivos: ArquivoRetorno[],
-    ): Promise<Map<string, EventoBancario[]>> => {
+    ): Promise<{ porPar: Map<string, EventoBancario[]>; paresNaoLidos: number }> => {
         const pares = [
             ...new Map(
                 arquivos.map((a) => [
@@ -575,15 +577,29 @@ export default class SincronizacaoLoteService {
             CONEXOS_FANOUT_LIMIT,
         );
         const porPar = new Map<string, EventoBancario[]>();
+        let paresNaoLidos = 0;
         for (const [i, lido] of lidos.entries()) {
             const par = pares[i];
-            if (par === undefined || lido.status === 'rejected') continue;
+            if (par === undefined) continue;
+            if (lido.status === 'rejected') {
+                paresNaoLidos += 1;
+                await this.logService.warn({
+                    type: LOG_TYPE.CONEXOS_ERROR,
+                    message: 'falha ao ler o cadastro de eventos bancários — eventos não lidos',
+                    data: {
+                        filCod: par.filCod,
+                        bncCod: par.bncCod,
+                        motivo: this.motivo(lido.reason),
+                    },
+                });
+                continue;
+            }
             porPar.set(
                 `${par.filCod}:${par.bncCod}`,
                 lido.value.filter((e) => e.tipoRetorno === 2 || EVENTOS_QUE_DECIDEM.has(e.cod)),
             );
         }
-        return porPar;
+        return { porPar, paresNaoLidos };
     };
 
     /** O ERP recicla `flpCod`: arquivo anterior à remessa deste lote é de outro lote. */
