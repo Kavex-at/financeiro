@@ -99,6 +99,8 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/:id/conta', P.SISPAG_EXECUTAR],
     ['POST /sispag/ingestao', P.SISPAG_EXECUTAR],
+    // ADR-0060: o refresh ao abrir a tela só LÊ o ERP e escreve no Postgres próprio.
+    ['POST /sispag/carteira/atualizar', P.SISPAG_VER],
     ['POST /sispag/lotes/formar', P.SISPAG_EXECUTAR],
     ['GET /sispag/boletos-dda', P.SISPAG_VER],
     ['POST /sispag/boletos-dda/sincronizar', P.SISPAG_EXECUTAR],
@@ -220,11 +222,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059): 27/32/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; + carteira ao abrir, ADR-0060): 27/33/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(32);
+        expect(porMount('sispag')).toBe(33);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);

@@ -18,6 +18,7 @@ import {
     SITUACOES_FILTRAVEIS,
 } from '../domain/service/sispag/PaginacaoBoletoDda.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
+import CarteiraAtualizacaoService from '../domain/service/sispag/CarteiraAtualizacaoService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoApiView from '../domain/service/sispag/LotePagamentoApiView.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
@@ -591,6 +592,25 @@ router.post(
         try {
             const result = await service.executar({ triggeredBy: ator(req), idempotencyKey });
             res.json(result);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/carteira/atualizar — a tela chama ao abrir (ADR-0060): se a carteira gravada
+// está defasada (TTL de 30 min), roda a ingestão; senão devolve `fresca` sem tocar o Conexos.
+// `sispag:ver` basta: só LÊ o ERP (I1) e escreve no Postgres próprio. NÃO forma lotes.
+// Contenção (`IngestLockBusyError`) vira `em_andamento`, nunca 409.
+router.post(
+    '/carteira/atualizar',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(CarteiraAtualizacaoService);
+        try {
+            res.json(await service.atualizarSeDefasada({ triggeredBy: `abertura:${ator(req)}` }));
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
