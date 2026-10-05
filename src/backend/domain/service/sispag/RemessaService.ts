@@ -394,6 +394,23 @@ export default class RemessaService {
         const cc = lote.conta
             ? contas.find((c) => `${c.numeroConta}-${c.dvConta ?? ''}` === lote.conta)
             : undefined;
+        // A conta do lote nasce fixa (Itaú 55795-4 nos lotes automáticos) e pode não existir no
+        // fin005 da filial: o fallback para a conta da FILIAL é intencional (teste "usa a conta
+        // pagadora da FILIAL"). Só não pode ser SILENCIOSO — a conta usada difere da gravada no
+        // lote e quem lê o log precisa ver isso. A correção de fundo é a conta por filial (G-13).
+        if (lote.conta && !cc && contas[0]) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'conta pagadora do lote não consta na filial — usada a primeira da filial',
+                data: {
+                    loteId: lote.id,
+                    filCod: lote.filCod,
+                    contaDoLote: lote.conta,
+                    contaUsada: `${contas[0].numeroConta}-${contas[0].dvConta ?? ''}`,
+                    contasDaFilial: contas.length,
+                },
+            });
+        }
         const escolhida = cc ?? contas[0];
         if (!escolhida) {
             throw new LoteEstadoInvalidoError({
@@ -407,7 +424,7 @@ export default class RemessaService {
         const contaFmt = `${escolhida.numeroConta}-${escolhida.dvConta ?? ''}`;
         const contaPagadora: ContaPagadora = {
             bncCod,
-            bncNumCodbanco: FEBRABAN_POR_BNCCOD[bncCod] ?? 341,
+            bncNumCodbanco: this.febrabanDe(bncCod, lote),
             ccoCod: escolhida.ccoCod,
             ccoNumConta: Number(escolhida.numeroConta),
             ccoEspDvconta: String(escolhida.dvConta ?? ''),
@@ -1023,7 +1040,7 @@ export default class RemessaService {
         const porChave = new Map(
             pendentes.map((p) => [`${Number(p.raw.filCod)}:${p.docCod}:${p.titCod}`, p]),
         );
-        const febraban = FEBRABAN_POR_BNCCOD[bncCod] ?? 341;
+        const febraban = this.febrabanDe(bncCod, lote);
         const itens: Array<{ payload: Record<string, unknown>; associarDda: boolean }> = [];
 
         for (const item of alvo) {
@@ -1407,7 +1424,7 @@ export default class RemessaService {
         const preflight = o.importar
             ? await this.resolverDestinosAntesDaEscrita({
                   lote: o.lote,
-                  febraban: FEBRABAN_POR_BNCCOD[o.bncCod] ?? 341,
+                  febraban: this.febrabanDe(o.bncCod, o.lote),
                   flags: o.flags,
                   itens: alvo,
                   ...(anteriores ? { fixados: anteriores } : {}),
@@ -1522,6 +1539,24 @@ export default class RemessaService {
         // mesmo que o lote tenha sido finalizado antes da regra existir.
         if (pendentes.length > 0) throw new DestinoAprovacaoPendenteError({ itens: pendentes });
         return { destinos, assinatura };
+    };
+
+    /**
+     * Código FEBRABAN do banco da conta pagadora. Banco fora do mapa é erro: o antigo
+     * `?? 341` tratava qualquer banco desconhecido como Itaú e gerava o CNAB com o código
+     * errado, sem nenhum aviso. Falha ANTES de qualquer escrita no ERP.
+     */
+    private febrabanDe = (bncCod: number, lote: LotePagamento): number => {
+        const febraban = FEBRABAN_POR_BNCCOD[bncCod];
+        if (febraban === undefined) {
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao: 'gerar remessa',
+                motivo: `O banco da conta pagadora (bncCod ${bncCod}) não está mapeado para o código FEBRABAN. Cadastre o banco antes de gerar a remessa.`,
+            });
+        }
+        return febraban;
     };
 
     /**
