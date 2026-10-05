@@ -4,7 +4,6 @@ import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
-    CONTA_PAGADORA_DEFAULT,
     type FormacaoLotesResult,
     MODALIDADE,
     type TituloAPagar,
@@ -12,6 +11,7 @@ import {
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
+import ContaPagadoraResolver, { type ContaPagadoraEscolhida } from './ContaPagadoraResolver.js';
 
 /** Horizonte da formação automática: só títulos a vencer nos próximos N dias. */
 const HORIZONTE_DIAS = 7;
@@ -36,6 +36,7 @@ export default class FormacaoLotesService {
         @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(ContaPagadoraResolver) private readonly contaResolver: ContaPagadoraResolver,
     ) {}
 
     public formar = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> =>
@@ -57,10 +58,17 @@ export default class FormacaoLotesService {
         const grupos = this.agrupar(elegiveis);
         let lotesFormados = 0;
         let titulosLotados = 0;
+        // Conta pagadora resolvida UMA vez por filial na rodada (G-13): lê o fin005 da filial,
+        // não grava uma conta fixa.
+        const contaPorFilial = new Map<number, ContaPagadoraEscolhida | undefined>();
         for (const titulos of grupos.values()) {
             for (const fatia of chunked(titulos, MAX_TITULOS_POR_LOTE)) {
                 if (fatia.length === 0) continue;
-                await this.montarGrupo(fatia, input.triggeredBy);
+                const filCod = fatia[0].filCod;
+                if (!contaPorFilial.has(filCod)) {
+                    contaPorFilial.set(filCod, await this.contaResolver.resolverPadrao(filCod));
+                }
+                await this.montarGrupo(fatia, input.triggeredBy, contaPorFilial.get(filCod));
                 lotesFormados += 1;
                 titulosLotados += fatia.length;
             }
@@ -76,15 +84,19 @@ export default class FormacaoLotesService {
     };
 
     /** Um lote por grupo, numa transação (raiz + itens). */
-    private montarGrupo = async (titulos: TituloAPagar[], ator: string): Promise<void> => {
+    private montarGrupo = async (
+        titulos: TituloAPagar[],
+        ator: string,
+        conta: ContaPagadoraEscolhida | undefined,
+    ): Promise<void> => {
         const primeiro = titulos[0];
         await this.db.withTransaction(async (tx) => {
             const lote = await this.loteRepo.criarLote(
                 {
                     filCod: primeiro.filCod,
-                    // A3: conta pagadora default Itaú (o analista troca na revisão se preciso).
-                    banco: CONTA_PAGADORA_DEFAULT.banco,
-                    conta: CONTA_PAGADORA_DEFAULT.conta,
+                    // G-13: conta que a filial tem no fin005; sem ela o lote nasce sem conta e a
+                    // analista escolhe (o finalizar recusa lote sem conta pagadora).
+                    ...(conta ? { banco: conta.banco, conta: conta.conta } : {}),
                     automatico: true,
                     criadoPor: ator,
                 },

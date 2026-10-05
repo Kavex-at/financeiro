@@ -5,6 +5,7 @@ import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
+import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import FormacaoLotesService from './FormacaoLotesService.js';
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
@@ -20,7 +21,17 @@ const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
 
 const buildLog = () => ({ info: jest.fn().mockResolvedValue(undefined) }) as unknown as LogService;
 
-const make = (over: { elegiveis?: TituloAPagar[]; desfeitos?: number; acquire?: boolean } = {}) => {
+const make = (
+    over: {
+        elegiveis?: TituloAPagar[];
+        desfeitos?: number;
+        acquire?: boolean;
+        conta?: { banco: string; conta: string } | undefined;
+    } = {},
+) => {
+    const resolverPadrao = jest
+        .fn()
+        .mockResolvedValue('conta' in over ? over.conta : { banco: 'ITAÚ', conta: '55795-4' });
     const tituloRepo = {
         listElegiveisParaFormacao: jest.fn().mockResolvedValue(over.elegiveis ?? []),
     };
@@ -43,8 +54,9 @@ const make = (over: { elegiveis?: TituloAPagar[]; desfeitos?: number; acquire?: 
         loteRepo as unknown as LotePagamentoRepository,
         db,
         buildLog(),
+        { resolverPadrao } as unknown as ContaPagadoraResolver,
     );
-    return { service, tituloRepo, loteRepo };
+    return { service, tituloRepo, loteRepo, resolverPadrao };
 };
 
 describe('FormacaoLotesService', () => {
@@ -71,6 +83,40 @@ describe('FormacaoLotesService', () => {
         for (const call of loteRepo.criarLote.mock.calls) {
             expect(call[0]).toMatchObject({ automatico: true });
         }
+    });
+
+    it('G-13: a conta do lote vem da FILIAL (resolvida uma vez por filial), não de uma constante', async () => {
+        const elegiveis = [
+            titulo({ docCod: '1', filCod: 2 }),
+            ...Array.from({ length: 30 }, (_, i) => titulo({ docCod: `9${i}`, filCod: 4 })),
+        ];
+        const { service, loteRepo, resolverPadrao } = make({ elegiveis });
+        resolverPadrao.mockImplementation(async (filCod: number) =>
+            filCod === 2
+                ? { banco: 'ITAÚ', conta: '29949-2' }
+                : { banco: 'ITAÚ', conta: '55795-4' },
+        );
+        await service.formar({ triggeredBy: 'cron' });
+        const porFilial = Object.fromEntries(
+            loteRepo.criarLote.mock.calls.map((c: [Record<string, unknown>]) => [
+                `${c[0].filCod}:${c[0].conta}`,
+                true,
+            ]),
+        );
+        expect(Object.keys(porFilial).sort()).toEqual(['2:29949-2', '4:55795-4']);
+        // 3 lotes (1 da filial 2, 25+5 da 4), mas só 2 leituras do fin005.
+        expect(resolverPadrao).toHaveBeenCalledTimes(2);
+    });
+
+    it('G-13: filial sem conta inequívoca → o lote nasce SEM conta (a analista escolhe)', async () => {
+        const { service, loteRepo } = make({
+            elegiveis: [titulo({ docCod: '1', filCod: 7 })],
+            conta: undefined,
+        });
+        await service.formar({ triggeredBy: 'cron' });
+        const arg = loteRepo.criarLote.mock.calls[0][0];
+        expect(arg).not.toHaveProperty('conta');
+        expect(arg).not.toHaveProperty('banco');
     });
 
     it('fatia grupos grandes em lotes de no máx. 25 títulos (revisão humana)', async () => {
