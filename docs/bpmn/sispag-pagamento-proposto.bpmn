@@ -178,7 +178,7 @@
       <bpmn2:incoming>Flow_31</bpmn2:incoming>
       <bpmn2:outgoing>Flow_33</bpmn2:outgoing>
     </bpmn2:userTask>
-    <bpmn2:serviceTask id="Task_VerificarDados" name="Verificar dados de pagamento">
+    <bpmn2:serviceTask id="Task_VerificarDados" name="Verificar dados de pagamento (TED e PIX)">
       <bpmn2:incoming>Flow_03</bpmn2:incoming>
       <bpmn2:outgoing>Flow_03a</bpmn2:outgoing>
     </bpmn2:serviceTask>
@@ -259,7 +259,7 @@
     </bpmn2:textAnnotation>
     <bpmn2:association id="Association_Annotation_Automatico" sourceRef="Annotation_Automatico" targetRef="Task_EnviarBanco" />
     <bpmn2:textAnnotation id="Annotation_DadosFaltantes">
-      <bpmn2:text>NOVO. Ex.: boleto sem código de barras, TED sem conta bancária, PIX sem chave. Quem lançou o título no Conexos recebe o alerta; o título entra na próxima rodada depois de corrigido.</bpmn2:text>
+      <bpmn2:text>NOVO. Ex.: TED sem conta bancária, PIX sem chave. Boleto fica de fora: o código de barras só é confirmado na geração da remessa. O alerta vai para quem tem a permissão de responsável pelo cadastro (acesso ao cadastro do Conexos); o título entra na próxima rodada depois de corrigido.</bpmn2:text>
     </bpmn2:textAnnotation>
     <bpmn2:association id="Association_Annotation_DadosFaltantes" sourceRef="Annotation_DadosFaltantes" targetRef="Task_AlertarResponsavel" />
     <bpmn2:textAnnotation id="Annotation_Legenda">
@@ -405,7 +405,7 @@
         <dc:Bounds x="4630" y="980" width="260" height="70" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Annotation_DadosFaltantes_di" bpmnElement="Annotation_DadosFaltantes" bioc:fill="#FFF3E0" bioc:stroke="#E65100" color:background-color="#FFF3E0" color:border-color="#E65100">
-        <dc:Bounds x="1010" y="660" width="300" height="90" />
+        <dc:Bounds x="1000" y="650" width="320" height="100" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Annotation_Legenda_di" bpmnElement="Annotation_Legenda">
         <dc:Bounds x="75" y="965" width="250" height="70" />
