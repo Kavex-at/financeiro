@@ -31,7 +31,24 @@ const quando = (r: PagamentoIngestaoRun) => {
   return d ? new Date(d).toLocaleString('pt-BR') : '—'
 }
 
-function RunStatus({ status }: { status: PagamentoIngestaoRun['status'] }) {
+function RunStatus({
+  status,
+  aviso,
+}: {
+  status: PagamentoIngestaoRun['status']
+  /** `error_message` de uma run que terminou com sucesso: leitura parcial (filial ou flag de boleto). */
+  aviso?: string
+}) {
+  if (status === 'success' && aviso) {
+    return (
+      <Badge
+        className="border-transparent bg-warning-subtle text-warning-foreground"
+        title={aviso}
+      >
+        <CheckCircle2 aria-hidden /> Sucesso parcial
+      </Badge>
+    )
+  }
   if (status === 'success') {
     return (
       <Badge className="border-transparent bg-success-subtle text-success-foreground">
@@ -123,7 +140,10 @@ export function IngestaoDialog({
                         {run.status === 'success' ? run.totalTitulos.toLocaleString('pt-BR') : '—'}
                       </TableCell>
                       <TableCell className="text-right">
-                        <RunStatus status={run.status} />
+                        <RunStatus status={run.status} aviso={run.errorMessage} />
+                        {run.status === 'success' && run.errorMessage ? (
+                          <p className="mt-1 text-xs text-muted-foreground">{run.errorMessage}</p>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

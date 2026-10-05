@@ -18,7 +18,19 @@ export default class BoletoSemCodigoBarrasError extends Error implements Handler
     public readonly statusCode = 409;
     public readonly details?: unknown;
 
-    public constructor(params: { docCod: string; titCod: string; credor?: string }) {
+    /**
+     * `filCod`, `valor` e `vencimento` (data civil `YYYY-MM-DD`) alimentam o diálogo da tela que
+     * mostra os boletos DDA do título e a diferença de data. Opcionais: o erro continua válido
+     * sem eles.
+     */
+    public constructor(params: {
+        docCod: string;
+        titCod: string;
+        credor?: string;
+        filCod?: number;
+        valor?: number;
+        vencimento?: string;
+    }) {
         super(
             `título ${params.docCod}/${params.titCod} is BOLETO but has no DDA barcode associated`,
         );
@@ -27,7 +39,8 @@ export default class BoletoSemCodigoBarrasError extends Error implements Handler
         this.userMessage =
             `O título ${params.docCod}/${params.titCod}${quem} está marcado como BOLETO, mas o Conexos ` +
             'não tem um boleto DDA associado a ele — a remessa sairia sem código de barras. ' +
-            'Importe o arquivo DDA do boleto no fin124 ou troque a forma de pagamento do item.';
+            'Confira os boletos DDA deste título (valor, fornecedor e data de vencimento) ou ' +
+            'troque a forma de pagamento do item.';
         this.details = params;
     }
 }
