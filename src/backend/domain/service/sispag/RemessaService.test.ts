@@ -709,6 +709,56 @@ describe('RemessaService', () => {
         });
     });
 
+    describe('conta pagadora e banco — nada de fallback silencioso', () => {
+        it('conta do lote ausente no fin005 usa a da filial, mas AVISA no log', async () => {
+            const write = buildWrite();
+            const log = buildLog();
+            const loteRepo = buildLoteRepo(lote({ conta: '99999-9' }));
+            const res = await make({ write, loteRepo, log }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+            expect(res.status).toBe('gerada');
+            expect(log.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: expect.stringContaining('conta pagadora do lote não consta'),
+                    data: expect.objectContaining({
+                        contaDoLote: '99999-9',
+                        contaUsada: '55795-4',
+                    }),
+                }),
+            );
+        });
+
+        it('lote SEM conta definida segue usando a primeira conta cadastrada', async () => {
+            const { conta: _conta, ...semConta } = lote();
+            const loteRepo = buildLoteRepo(semConta as LotePagamento);
+            const res = await make({ loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(res.status).toBe('gerada');
+        });
+
+        it('banco fora do mapa FEBRABAN recusa — não vira Itaú (341)', async () => {
+            const write = buildWrite();
+            const sispag = buildSispag();
+            sispag.listContasCorrentes.mockResolvedValue([
+                {
+                    ccoCod: 9,
+                    bncCod: 999,
+                    agencia: '0001',
+                    numeroConta: 55795,
+                    dvConta: '4',
+                    gerNum: 1,
+                },
+            ]);
+            await expect(
+                make({ write, sispag }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toMatchObject({
+                userMessage: expect.stringContaining('bncCod 999'),
+            });
+            expect(write.criarLote).not.toHaveBeenCalled();
+        });
+    });
+
     describe('caminho feliz', () => {
         it('executa a sequência na ordem e devolve o arquivo', async () => {
             const write = buildWrite();
