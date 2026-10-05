@@ -41,8 +41,9 @@ relationships:
   - "TituloAPagar N—1 Filial (via filCod — a filial que originou o título a pagar)"
   - "TituloAPagar N—1 PagamentoIngestaoRun (via ingestaoRunId — a run que gravou/atualizou este título)"
   - "TituloAPagar N—1 LotePagamento (via ItemLote — um título elegível pode ser incluído em um lote candidato RASCUNHO)"
+  - "TituloAPagar 1—0..N BloqueioDuplicidade (no máximo 1 ATIVO; retirado de lote por duplicidade, cancelamento pendente no Conexos; ADR-0063)"
   - "TituloAPagar 1—1 (contexto) Borderô a-pagar / Lote SISPAG nativos (fin010/fin015 — leitura de contexto no painel, não vínculo próprio)"
-last_review: 2026-09-29
+last_review: 2026-10-05
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -168,6 +169,13 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
   `0030_remove_internacional.sql` purga o legado internacional já ingerido e dropa as colunas (reverte a
   migration 0025 do ADR-0017). A automação do câmbio, se for feita, é uma **frente futura separada**.
   READ-ONLY no ERP (I1) mantido.
+
+## Bloqueio por duplicidade (ADR-0063)
+
+Título que a analista retirou de um lote por duplicidade ganha um `BloqueioDuplicidade` local
+(`entities/bloqueio-duplicidade.md`): fica fora da formação automática e da inclusão manual até
+sumir do `fin064` (o anti-fantasma abaixo o encerra) ou a analista desfazer. Não é coluna de
+`titulo_a_pagar` porque o UPSERT da ingestão a apagaria.
 
 ## Anti-fantasma (`ativo`)
 

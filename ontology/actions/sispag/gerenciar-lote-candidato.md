@@ -12,7 +12,7 @@ related_files:
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-09-23
+last_review: 2026-10-05
 preconditions:
   - "Requer papel admin (requireRole('admin')) nas mutações."
   - "criar: filCod válido; incluir: título aprovado (liberado) + não pago + mesma filial do lote + não em outro RASCUNHO."
@@ -61,6 +61,15 @@ Ao `incluirTituloNoLote`, o título candidato é validado contra:
 
 Passando os três, cria-se um `ItemLote` com **snapshot** de `valor`/`vencimento`/`credor` (congela
 o que a analista viu) + `incluido_por` (auditoria).
+
+## Verificação TED/PIX e bloqueio por duplicidade (ADR-0063)
+
+- **Quarta regra de inclusão:** título com `BloqueioDuplicidade` `ATIVO` é recusado
+  (`DuplicateHoldError`, I13g) até o documento sumir do `fin064` ou a analista desfazer o bloqueio.
+- `atualizarModalidadeItem` para TED/PIX dispara `verificarItensTedPix` no item (I13a). A
+  verificação pode **retirar o item** (sem dado de pagamento e sem exceção, I13j): mesma remoção da
+  lixeira, com ator `sistema` e motivo `SEM_DADO_PAGAMENTO`.
+- `resolverAlertaDuplicidade` com `RETIRAR` usa a mesma remoção, seguida do bloqueio do título.
 
 ## Remoção a partir da aba de títulos (ADR-0050)
 

@@ -14,7 +14,7 @@ related_files:
   - src/backend/jobs/formar-lotes.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-07-18
+last_review: 2026-10-05
 preconditions:
   - "Carteira de títulos a pagar já ingerida/persistida (titulo_a_pagar) — roda logo APÓS o cron de ingestão."
   - "Mutações via cron ('cron', job:formar-lotes) ou trigger manual autenticado (POST /sispag/lotes/formar) — requireRole('admin') no manual."
@@ -23,6 +23,7 @@ postconditions:
   - "Lotes automáticos RASCUNHO com ≥1 título VENCIDO são DESFEITOS (deletados) e seus títulos LIBERADOS (só a-vencer é elegível) — desfazerAutomaticosVencidos."
   - "Novos lotes automáticos RASCUNHO criados (criarLote(automatico=true)) agrupando títulos elegíveis por FILIAL (I4) — internacional fora do escopo (ADR-0021), sem divisão por classe."
   - "Só entram títulos A VENCER ≤ maxDias (7) — vencidos excluídos — e ainda não presentes em NENHUM lote RASCUNHO (anti-join)."
+  - "Títulos com BloqueioDuplicidade ATIVO nunca entram (I13g, ADR-0063)."
   - "Lotes manuais e lotes FINALIZADOS/CANCELADOS NUNCA são tocados — o cron só mexe nos automáticos RASCUNHO."
   - "Nenhuma escrita no ERP (I1) — leitura Conexos + escrita LOCAL (Postgres: lote_pagamento/_item)."
 side_effects:

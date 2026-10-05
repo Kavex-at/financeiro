@@ -40,6 +40,14 @@ Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem e
 | **Janela de corte** | Horário-limite do banco para envio do lote (a confirmar no diagnóstico). |
 | **Cadastro (cmn025) como fonte principal de destino** | Conta (TED) ou chave PIX ativa do favorecido no `cmn025` é o destino do pagamento; nunca é escrito pela solução (ADR-0061). |
 | **Exceção de destino** | Destino de um favorecido diferente do cadastro, só usado quando o cadastro não tem destino válido; por favorecido, reutilizável, aprovada por **segunda pessoa** com `sispag:excecao`, sem expiração, revogável (entidade `ExcecaoDestino`, ADR-0061). Substitui o antigo "destino manual" por item (ADR-0054, retirado). |
+| **Verificação TED/PIX** | Checagem dos itens TED/PIX do lote, depois que a analista define a forma de pagamento e de novo ao finalizar: dados de pagamento, duplicidade e canal habitual. Boleto nunca é verificado (invariante I13, ADR-0063). |
+| **Verificação pendente** | Item TED/PIX cuja verificação não pôde ler o Conexos; barra a finalização até ser verificado (falha fechada, I13b). |
+| **Duplicidade forte / fraca** | Alerta de possível pagamento em dobro ao mesmo favorecido: **forte** = mesmo número de NF em outro documento, inclusive já pago; **fraca** = mesmo valor com vencimento a ±15 dias. Parcelas do mesmo documento nunca são duplicidade. Bloqueia a finalização até a analista justificar ou retirar (entidade `AlertaItemLote`). |
+| **Justificar / retirar (duplicidade)** | As duas resoluções da alerta de duplicidade: **justificar** mantém o item com texto obrigatório (visto pelo conferente); **retirar** tira o item do lote e bloqueia o título. |
+| **Bloqueio por duplicidade** | Marca local "retirado por duplicidade — cancelamento pendente no Conexos" num título: fora da formação automática e da inclusão manual até o documento sumir do ERP ou a analista desfazer (entidade `BloqueioDuplicidade`). Nenhuma escrita no Conexos. |
+| **Canal habitual** | Grupo de canal pelo qual o favorecido costuma ser pago (`BOLETO`, `TED_PIX` ou `OUTROS`), medido casando baixas com débitos do extrato (entidade `PerfilCanalFornecedor`). Item TED/PIX para favorecido de canal habitual diferente, com confiança ALTA, gera alerta **não bloqueante** para o conferente. |
+| **Pendência de cadastro** | Registro de que um favorecido não tem conta (TED) ou chave PIX no cadastro `cmn025`; aberta pela verificação, resolvida sozinha quando o cadastro é corrigido, numa fila para quem tem `sispag:cadastro` (entidade `PendenciaCadastro`). |
+| **Conferência (por segunda pessoa)** | Revisão dos pagamentos TED/PIX de um lote finalizado por alguém com `sispag:conferir` que não finalizou, não incluiu itens e não criou o lote manual; exigida antes da remessa. O conferente pode **devolver** o lote com motivo (ADR-0063). |
 
 ## Frente III — Popula GED
 

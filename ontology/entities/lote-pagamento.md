@@ -1,7 +1,7 @@
 ---
 name: LotePagamento
 type: entity
-ontology_version: "0.31.0"
+ontology_version: "0.36.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -34,12 +34,21 @@ properties:
   - criadoPor
   - finalizadoPor
   - finalizadoEm
+  - conferidoPor
+  - conferidoEm
+  - devolvidoPor
+  - devolvidoEm
+  - motivoDevolucao
+  - exigeConferencia
   - versao
   - dataDebito
   - itens
   - itens[].modalidade
   - itens[].destinoOrigem
   - itens[].excecaoDestinoId
+  - itens[].verificacaoEstado
+  - itens[].verificadoEm
+  - itens[].alertas
   - itens[].situacao
   - itens[].pagoEm
   - itens[].pagoObservadoEm
@@ -53,6 +62,8 @@ relationships:
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
   - "ItemLote N—0..1 ExcecaoDestino (a exceção APROVADA usada como destino; ADR-0061; vazio quando o destino vem do cadastro)"
+  - "ItemLote 1—N AlertaItemLote (duplicidade e canal habitual da verificação TED/PIX; ADR-0063)"
+  - "ItemLote N—0..1 PendenciaCadastro (o item é origem da pendência quando o cadastro não tem o dado; ADR-0063)"
 last_review: 2026-10-05
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
@@ -63,6 +74,7 @@ universality_evidence:
   - "dataDebito: o lote nativo do fin015 carrega a data de débito (flpDtaCredito) e o finalizarLote a valida (R1/R2, sispag-fin015-exploration.md:72-76) — todo lote SISPAG/CNAB 240 tem data de pagamento; pedido da Flavia (Columbia) de 2026-09-22, ADR-0049"
   - "modalidade + destino do item: todo item de remessa CNAB 240 tem forma de lançamento (segmento A) e, para TED/PIX, destino (conta ou chave, segmentos A/B); FinItemSispag.itsVldModalidade/pctCodSeq/itsDesChavePix no fin015 (sispag-ted-pix-plan.md §2, 89 itens PRD)"
   - "ExcecaoDestino (ADR-0061; antes destinoManual, ADR-0054): 12/21 favorecidos sem conta e 0 chave PIX no cadastro (PRD 2026-09-28), cadastro desatualizado (Yuri); ADR-0054. Conceito universal (conta/chave do favorecido informada no pagamento); o cadastro do Conexos é a fonte principal e o destino fora dele exige exceção aprovada por 2ª pessoa (controle antifraude, universal em contas a pagar; 1 cliente até agora, gap Q11)"
+  - "verificação TED/PIX e conferência por 2ª pessoa (ADR-0063): duplicidade real em PRD (fil 4, docs 6173 × 6702), 89% do valor pago com canal estável por fornecedor (probes 2026-10-05); segregação de funções entre quem monta/finaliza e quem confere o pagamento eletrônico é controle universal de tesouraria"
   - "sincronização pelo título (ADR-0055): o pagamento de um título a pagar é observável no próprio título em qualquer ERP (saldo aberto zero); o arquivo de retorno bancário é uma das origens possíveis da baixa, não a única — caso PG230901.REM, baixa manual do 38682/1 em 24/09"
 ---
 
@@ -130,6 +142,9 @@ fora de um lote.
 | `criadoPor` | string | `lote_pagamento.criado_por` | Auditoria: quem abriu o lote (`'cron'` nos automáticos, username nos manuais). |
 | `finalizadoPor` | string? | `lote_pagamento.finalizado_por` | Auditoria: quem finalizou (gate). `null` enquanto RASCUNHO. |
 | `finalizadoEm` | Date? | `lote_pagamento.finalizado_em` | Timestamp da finalização. `null` enquanto RASCUNHO. |
+| `conferidoPor` · `conferidoEm` | string? · Date? | `conferido_por`, `conferido_em` *(a criar)* | **Conferência por 2ª pessoa** (L12, ADR-0063, I13l). Só em `FINALIZADO` com `exigeConferencia`. Limpos por `reabrirLote` (L4) e `devolverLote` (L13). Não é status: o lote segue `FINALIZADO`. |
+| `devolvidoPor` · `devolvidoEm` · `motivoDevolucao` | string? · Date? · string? | `devolvido_por`, `devolvido_em`, `motivo_devolucao` *(a criar)* | Última devolução pelo conferente (L13). Visível à analista no `RASCUNHO`; o histórico completo está na trilha. |
+| `exigeConferencia` | boolean (derivado) | — | `true` ⇔ ≥1 item com `modalidade ∈ {TED, PIX}`. Lote só de boleto não exige conferência (I13l). |
 | `versao` | number | `lote_pagamento.versao` | Controle otimista de concorrência (I6 — 2 analistas). Incrementa a cada transição. |
 | `dataDebito` | Date? (data civil, sem hora) | `lote_pagamento.data_debito` *(a criar)* | **Data de débito/pagamento** que vai ao `fin015` como `flpDtaCredito`. Escolhida pela analista ao pedir a remessa (L8); default = **hoje no fuso de Brasília**. Tem de cair na janela de I8. `null` até a primeira tentativa de remessa. **Imutável** a partir do momento em que existe lote nativo no `fin015` criado com ela (I8b). Ver `business-rules/data-debito-remessa-sispag.md` e ADR-0049. |
 | `itens` | ItemLote[] | join `lote_pagamento_item` | Os títulos incluídos (agregado). |
@@ -149,6 +164,9 @@ fora de um lote.
 | `modalidade` | enum? | `lote_pagamento_item.modalidade` (migration 0031) | Forma de pagamento: `BOLETO \| TED \| PIX \| CREDITO_CONTA`; `null` = "a definir" (bloqueia a finalização, `ModalidadePendenteError`). Escolhida pela analista, só em RASCUNHO (L2); boleto pré-selecionado quando o título tem DDA. **Oferecidas:** `BOLETO`, `TED`, `PIX`. `CREDITO_CONTA` segue válido no enum para item que já o tem, mas **não é oferecido** (commit `fc22dcd`). Mapeamento para o `fin015` (`itsVldModalidade`): TED = **5**, crédito = 1, boleto = derivado pelo ERP da DDA; PIX não tem código próprio, é o conjunto `itsVldChavePix`/`itsDesChavePix`/... (H4). *Existia desde 2026-07-18 e faltava nesta doc.* |
 | `destinoOrigem` | enum? (derivado) | — | `CADASTRO` (cmn025 ao vivo) \| `EXCECAO` (`ExcecaoDestino` aprovada, fallback) \| `null` para boleto. Dirige o selo "exceção" na tela. Ver `business-rules/destino-pagamento-sispag.md` e `excecao-destino-sispag.md`. |
 | `excecaoDestinoId` | string? | `lote_pagamento_item.excecao_destino_id` *(a criar)* | FK lógica para a `ExcecaoDestino` usada, **gravada quando o destino congela** (I10f); liga o item à exceção sem copiar o valor. `null` quando o destino vem do cadastro. A coluna antiga `destino_*` (ADR-0054) fica inerte. |
+| `verificacaoEstado` | enum? | `verificacao_estado` *(a criar)* | Verificação TED/PIX (ADR-0063, I13a/b): `NAO_APLICAVEL` (boleto, sem modalidade) \| `PENDENTE` (ainda não rodou ou leitura do Conexos falhou — barra o finalizar) \| `VERIFICADO`. Constante `ITEM_CHECK_STATE`. |
+| `verificadoEm` | Date? | `verificado_em` *(a criar)* | Última verificação bem-sucedida. |
+| `alertas` | AlertaItemLote[] | join `lote_pagamento_item_alerta` *(a criar)* | Duplicidade (FORTE/FRACA, bloqueiam até resolvidas) e canal habitual (informativa). Ver `entities/alerta-item-lote.md`. |
 | `situacao` | enum (derivado) | — | `AGENDADO \| PAGO \| REJEITADO \| SEM_RETORNO`, derivada pela sincronização (I11d); **não** é estado do lote (decisão "sem estado parcialmente pago"). Constantes tipadas (`ITEM_SITUACAO`). Só existe de `REMESSA_GERADA` em diante. |
 | `rejeitado` · `retornoEvento` · `retornoDescricao` | boolean · string? · string? | `rejeitado`, `retorno_evento`, `retorno_descricao` (0049) | Evento do `fin052` **escolhido por precedência** `REJEITADO > 00 > BD > outro` sobre todas as linhas do item (I11d), nunca a última lida. *Existiam desde a 0049 e faltavam nesta doc.* |
 | `borCod` · `bxaCodSeq` | number? | `bor_cod`, `bxa_cod_seq` (0049) | Borderô/baixa da baixa do título. **Enriquecimento**, não prova de pagamento. Nulos quando nenhuma fonte legível os trouxe. |
@@ -217,6 +235,15 @@ fora de um lote.
   leitura não decide (I11c); precedência de evento por item (I11d); `BAIXADO` terminal, com
   divergência (I11f); escritas locais sem gate de ERP (I11g); sem mudança, sem `versao` (I11h). Ver
   `business-rules/sincronizacao-status-lote-sispag.md`.
+
+- **I13 (verificação TED/PIX — ADR-0063, 2026-10-05):** itens TED/PIX são verificados depois que a
+  analista define a modalidade e de novo no `finalizarLote` (nunca na ingestão; boleto nunca)
+  (I13a); leitura que falha deixa `PENDENTE` e barra (I13b); duplicidade FORTE (mesma NF) e FRACA
+  (mesmo valor, ±15 dias), inclusive contra título pago, bloqueiam até justificar ou retirar
+  (I13c–h); retirada cria `BloqueioDuplicidade` no título; canal habitual divergente alerta sem
+  bloquear (I13i); sem dado de pagamento e sem exceção o item sai do lote e abre
+  `PendenciaCadastro` (I13j/k); lote com TED/PIX exige **conferência por 2ª pessoa** antes da
+  remessa (I13l; L12/L13). Ver `business-rules/verificacao-ted-pix-sispag.md`.
 
 ## Cardinalidade
 

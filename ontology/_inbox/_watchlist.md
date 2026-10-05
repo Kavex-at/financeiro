@@ -142,3 +142,19 @@
 - **Baixa manual × processamento nativo do `fin052`:** hoje não distinguíveis com segurança
   (`origemBaixa = FORA_DO_RETORNO` cobre os dois). Revisitar se o PSQ_018 voltar a ser legível para
   o robô e trouxer o canal da baixa. REJECT-PREMATURE.
+
+## SISPAG — verificações TED/PIX e conferência (curadoria 2026-10-05, ADR-0063)
+
+- **E-mail ao responsável pelo cadastro:** o usuário escolheu fila in-app (`sispag:cadastro`).
+  REJECT-PREMATURE. Revisitar se a fila envelhecer sem que ninguém a abra.
+- **Alerta de canal para perfil MEDIA:** só ALTA alerta hoje. Revisitar com a taxa de falso
+  positivo medida em produção.
+- **Sinal S3 da probe de duplicidade (NF × fatura, tipos diferentes, ≤45 dias):** coberto em parte
+  pela FRACA (±15 dias). Não entra; revisitar se aparecer duplicata real fora da janela.
+- **Cancelamento do documento duplicado escrito no Conexos:** fora (escrita de documento). Revisitar
+  só com pedido explícito e prova de API segura.
+- **Envio/retorno automático via Nexxera** (BPMN proposto): `/feature-new` próprio, não ontologia
+  deste ciclo.
+- **Universalidade de `PerfilCanalFornecedor`:** 1 cliente medido. Estrutura aceita, limiares em
+  config; revisar com o 2º cliente (Francinei).
+
