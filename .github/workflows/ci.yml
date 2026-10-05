@@ -21,7 +21,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: src/backend/package-lock.json
       - run: npm ci
-      - run: npm audit --audit-level=high
+      # Só dependências de produção: a cadeia dev tsc-esm-fix → fast-glob → micromatch → braces tem
+      # advisory high sem versão corrigida (GHSA-vfj7-8cjw-p6xm) e só roda no build.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test -- --coverage
