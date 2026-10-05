@@ -1,5 +1,35 @@
 # Columbia Financeiro — Changelog
 
+## v0.53.0 (2026-10-05) — SISPAG: carteira atualizada ao abrir a tela, conta por filial e correções
+
+- **A carteira se atualiza ao abrir `/sispag`.** A tela mostra a carteira já gravada, mostra
+  "atualizando a carteira…" e recarrega sozinha quando a ingestão termina. A ingestão só roda se a última
+  tem mais de 30 minutos. Quem só tem `sispag:ver`, como o papel Analista, também dispara. Não forma lotes.
+  - Se a última ingestão falhou há menos de 5 minutos, não tenta de novo; a tela avisa e mostra a última
+    carteira gravada.
+  - Na lista de ingestões, a rodada aparece como "(ao abrir a tela)", e uma leitura parcial aparece como
+    "Sucesso parcial", com o motivo.
+  - Novas variáveis: `SISPAG_CARTEIRA_TTL_MIN` (30) e `SISPAG_CARTEIRA_COOLDOWN_MIN` (5). O valor inválido
+    volta ao padrão.
+- **Ingestão automática em dia útil: 07h, 12h e 16h.** Aos fins de semana, só 07h. A formação de lotes
+  continua só na execução da manhã.
+- **Conta pagadora por filial.** O lote usa a conta Itaú que a filial tem no Conexos (`fin005`). Sem uma
+  conta inequívoca, o lote nasce sem conta e a analista escolhe; **não é possível finalizar lote sem
+  conta**. A remessa não cai mais na "primeira conta da filial". **Antes de subir:** rode
+  `jobs/probe-contas-pagadoras-filiais.ts` (somente leitura). Lotes em rascunho ou finalizados com uma conta
+  que a filial não tem passam a recusar na remessa até a conta ser trocada.
+- **Boleto sem DDA associado:** "Ver boletos DDA" no item do lote e no aviso da remessa abre os boletos do
+  título e os de mesmo valor, com a diferença de vencimento.
+- **Correções:**
+  - A formação automática não coloca de novo em lote um título que já está em remessa.
+  - O retorno (`.RET`) de várias filiais é lido, e a leitura que falha passa a ser contada em vez de
+    descartada.
+  - Banco fora do mapa recusa a remessa, em vez de virar Itaú.
+  - Uma ingestão que não leu nenhuma filial é registrada como falha, e a carteira não é alterada.
+  - Quando o flag de boleto não pode ser lido (o robô recebe 403 em `fin015`), o valor gravado é mantido
+    em vez de ser zerado.
+- **Pendente no Conexos:** conceder ao usuário-robô CLONEX o acesso de leitura à tela FIN_041.
+
 ## v0.52.0 (2026-10-05) — papel Analista
 
 - **Novo papel `Analista`** ao lado do Administrador, para atribuir na tela de Usuários.
