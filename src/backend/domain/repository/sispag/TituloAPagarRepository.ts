@@ -60,9 +60,16 @@ export default class TituloAPagarRepository {
     /** UPSERT em chunks: marca os títulos vistos como ativos, com o run atual. */
     public upsertMany = async (titulos: TituloAPagar[], runId: string): Promise<void> => {
         if (titulos.length === 0) return;
+        // `temBoleto` indefinido = o flag não pôde ser lido nesta rodada: o UPSERT desses
+        // títulos NÃO toca `tem_boleto` (preserva o que a última leitura boa gravou).
+        const comFlag = titulos.filter((t) => t.temBoleto !== undefined);
+        const semFlag = titulos.filter((t) => t.temBoleto === undefined);
         await this.databaseClient.withTransaction(async (tx) => {
-            for (const chunk of chunked(titulos, UPSERT_CHUNK)) {
-                await this.upsertChunk(tx, runId, chunk);
+            for (const chunk of chunked(comFlag, UPSERT_CHUNK)) {
+                await this.upsertChunk(tx, runId, chunk, true);
+            }
+            for (const chunk of chunked(semFlag, UPSERT_CHUNK)) {
+                await this.upsertChunk(tx, runId, chunk, false);
             }
         });
     };
@@ -71,6 +78,7 @@ export default class TituloAPagarRepository {
         tx: TransactionClient,
         runId: string,
         chunk: TituloAPagar[],
+        gravarFlagBoleto: boolean,
     ): Promise<void> => {
         const tuples: string[] = [];
         const params: Record<string, unknown> = { runId };
@@ -108,7 +116,7 @@ export default class TituloAPagarRepository {
                 moeda = EXCLUDED.moeda, vencimento = EXCLUDED.vencimento, aprovado = EXCLUDED.aprovado,
                 pago = EXCLUDED.pago, banco = EXCLUDED.banco, num_remessa = EXCLUDED.num_remessa,
                 tpd_cod = EXCLUDED.tpd_cod, pronto_para_remessa = EXCLUDED.pronto_para_remessa,
-                tem_boleto = EXCLUDED.tem_boleto,
+                ${gravarFlagBoleto ? 'tem_boleto = EXCLUDED.tem_boleto,' : ''}
                 ativo = TRUE, ingestao_run_id = EXCLUDED.ingestao_run_id, atualizado_em = now()`,
             params,
         );
