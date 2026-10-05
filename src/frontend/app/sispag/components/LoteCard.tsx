@@ -12,8 +12,8 @@ import {
   RefreshCcw,
   ShieldCheck,
   Trash2,
-  X,
 } from 'lucide-react'
+import Link from 'next/link'
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -35,13 +35,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
-  aprovarDestinoItem,
   atualizarContaPagadora,
   atualizarModalidadeItem,
   baixarRemessa,
   cancelarLote,
   type ContaPagadora,
-  destinoPendenteDeAprovacao,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   fetchContasPagadoras,
@@ -50,7 +48,6 @@ import {
   formatErpDay,
   getRecursos,
   type ItemLote,
-  limparDestinoItem,
   type ItemSituacao,
   type LotePagamento,
   type Modalidade,
@@ -75,18 +72,18 @@ import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
 import { type AcaoLote, ConfirmarAcaoDialog, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
-import { InformarDestinoDialog } from './InformarDestinoDialog'
+import { CadastrarExcecaoDialog } from '../excecoes/components/CadastrarExcecaoDialog'
 
 const RECURSOS_DESLIGADOS: RecursosSispag = {
   tedEnabled: false,
-  destinoManualEnabled: false,
+  excecaoDestinoEnabled: false,
   pixEnabled: false,
 }
 
 /**
  * Itens TED/PIX (com a flag da modalidade ligada) que a oferta já carregada NÃO cobre — nem
- * cadastro, nem destino digitado. Mesma checagem leve do `finalizarLote` no backend (ADR-0054,
- * Adendo); a mensagem é a mesma para a analista não ver dois textos para um problema.
+ * cadastro do Conexos, nem exceção APROVADA. Mesma checagem do `finalizarLote` no backend
+ * (ADR-0054 Adendo, ADR-0060 I12f); a mensagem é a mesma para a analista não ver dois textos para um problema.
  */
 function itensSemDestino(
   itens: ItemLote[],
@@ -104,20 +101,8 @@ function itensSemDestino(
   })
 }
 
-/**
- * Itens com conta (TED) digitada aguardando aprovação que BARRAM o finalizar (ADR-0054 D10) — a
- * mesma condição do backend: item TED, flags manual + TED ligadas, conta digitada pendente.
- */
-function itensPendentesDeAprovacao(itens: ItemLote[], recursos: RecursosSispag): ItemLote[] {
-  if (!recursos.destinoManualEnabled || !recursos.tedEnabled) return []
-  return itens.filter((i) => i.modalidade === 'TED' && destinoPendenteDeAprovacao(i))
-}
-
 const nomesDosItens = (itens: ItemLote[]): string =>
   itens.map((i) => `${i.docCod}/${i.titCod}${i.credor ? ` (${i.credor})` : ''}`).join('; ')
-
-const mensagemPendentesAprovacao = (itens: ItemLote[]): string =>
-  `Conta digitada aguardando aprovação: ${nomesDosItens(itens)}. Quem tem a permissão "Aprovar destino manual (SISPAG)" precisa aprovar antes de finalizar.`
 
 /** D12: PIX antes de TED quando o favorecido tem chave CPF/CNPJ que é o próprio documento. */
 function ordenarPixPrimeiro<T extends { value: Modalidade }>(opcoes: T[]): T[] {
@@ -132,7 +117,7 @@ function ordenarPixPrimeiro<T extends { value: Modalidade }>(opcoes: T[]): T[] {
 const mensagemSemDestino = (itens: ItemLote[]): string =>
   `Sem destino de pagamento para: ${itens
     .map((i) => `${i.docCod}/${i.titCod}${i.credor ? ` (${i.credor})` : ''}`)
-    .join('; ')}. Informe o destino ou troque a forma de pagamento.`
+    .join('; ')}. Corrija o cadastro no Conexos, peça uma exceção de destino (aprovada por outra pessoa) ou troque a forma de pagamento.`
 
 function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
   if (status === 'FINALIZADO')
@@ -216,111 +201,79 @@ function SituacaoDoItem({ item }: { item: ItemLote }) {
 }
 
 /**
- * Destino de TED/PIX de um item (ADR-0054). Mostra a MÁSCARA que veio do backend — digitado,
- * com o selo "manual"; ou do cadastro, pela oferta — e, em RASCUNHO, os botões para informar,
- * trocar ou remover. Nunca recebe nem exibe o valor completo.
+ * Destino de TED/PIX de um item (ADR-0054, ADR-0060). Mostra a MÁSCARA que veio da oferta do
+ * backend: do cadastro do Conexos, ou o selo "exceção" quando o cadastro não tem destino e uma
+ * exceção APROVADA assumiu. Sem destino nenhum, "sem destino: aguardando exceção" — com link para
+ * a tela de exceções (e atalho de cadastro, em RASCUNHO) só para quem tem `sispag:excecao`. Não
+ * há edição de destino no item: nunca recebe nem exibe o valor completo.
  */
 function DestinoDoItem({
   item,
   oferta,
-  editavel,
+  semDestino,
+  podeExcecao,
+  excecaoHabilitada,
   busy,
-  onInformar,
-  onRemover,
-  onAprovar,
+  onCadastrarExcecao,
 }: {
   item: ItemLote
   oferta?: OfertaModalidadesItem
-  editavel: boolean
+  semDestino: boolean
+  podeExcecao: boolean
+  excecaoHabilitada: boolean
   busy: boolean
-  onInformar?: () => void
-  onRemover?: () => void
-  /**
-   * ADR-0054 D10: presente só para quem tem `sispag:aprovar_destino`, com o lote em RASCUNHO.
-   * Sem a permissão o botão NÃO é renderizado (R11 da ADR-0053: esconder, não desabilitar).
-   */
-  onAprovar?: () => void
+  /** Atalho "cadastrar exceção para este favorecido": só em RASCUNHO e para quem tem a permissão. */
+  onCadastrarExcecao?: () => void
 }) {
-  const resumo = item.destinoManualResumo
-  const pendente = destinoPendenteDeAprovacao(item)
   const modalidade = item.modalidade === 'TED' || item.modalidade === 'PIX' ? item.modalidade : null
-  const doCadastro = modalidade ? oferta?.destinos?.[modalidade] : undefined
+  const doItem = modalidade ? oferta?.destinos?.[modalidade] : undefined
   const titulo = `${item.docCod}/${item.titCod}`
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {resumo ? (
+      {doItem?.origem === 'EXCECAO' ? (
         <>
           <Badge
             variant="outline"
             className="border-warning/40 text-warning"
-            title={`Destino digitado${resumo.informadoPor ? ` por ${resumo.informadoPor}` : ''} — não veio do cadastro do Conexos.`}
+            title="O cadastro do Conexos não tem destino: vale a exceção aprovada por outra pessoa."
           >
-            manual
+            exceção
           </Badge>
-          {pendente ? (
-            <Badge
-              variant="outline"
-              className="border-warning/40 text-warning"
-              title="Conta digitada: precisa ser aprovada por quem tem a permissão antes de finalizar o lote."
-            >
-              pendente de aprovação
-            </Badge>
-          ) : resumo.aprovacao === 'APROVADO' ? (
-            <Badge
-              variant="outline"
-              className="border-success/40 text-success"
-              title={`Aprovado${resumo.aprovadoPor ? ` por ${resumo.aprovadoPor}` : ''}.`}
-            >
-              aprovado
-            </Badge>
+          {doItem.destinoMascarado ? (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {doItem.destinoMascarado}
+            </span>
           ) : null}
-          <span className="text-xs tabular-nums text-muted-foreground">{resumo.destinoMascarado}</span>
-          {pendente && onAprovar ? (
+        </>
+      ) : doItem?.origem === 'CADASTRO' && doItem.destinoMascarado ? (
+        <span className="text-xs tabular-nums text-muted-foreground">
+          cadastro: {doItem.destinoMascarado}
+        </span>
+      ) : null}
+      {semDestino && excecaoHabilitada ? (
+        <>
+          <span className="text-xs text-warning">sem destino: aguardando exceção</span>
+          {podeExcecao ? (
+            <Link
+              href="/sispag/excecoes"
+              className="text-xs underline underline-offset-2"
+              aria-label={`Abrir exceções de destino (título ${titulo})`}
+            >
+              ver exceções
+            </Link>
+          ) : null}
+          {podeExcecao && onCadastrarExcecao ? (
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs"
               disabled={busy}
-              onClick={onAprovar}
-              aria-label={`Aprovar destino do título ${titulo}`}
+              onClick={onCadastrarExcecao}
+              aria-label={`Cadastrar exceção de destino para o favorecido do título ${titulo}`}
             >
-              <ShieldCheck className="size-3" aria-hidden />
-              Aprovar destino
-            </Button>
-          ) : null}
-        </>
-      ) : doCadastro?.origem === 'CADASTRO' && doCadastro.destinoMascarado ? (
-        <span className="text-xs tabular-nums text-muted-foreground">
-          cadastro: {doCadastro.destinoMascarado}
-        </span>
-      ) : null}
-      {editavel ? (
-        <>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs"
-            disabled={busy}
-            onClick={onInformar}
-            aria-label={`${resumo ? 'Trocar' : 'Informar'} destino do título ${titulo}`}
-          >
-            <Landmark className="size-3" aria-hidden />
-            {resumo ? 'Trocar destino' : 'Informar destino'}
-          </Button>
-          {resumo ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              disabled={busy}
-              onClick={onRemover}
-              aria-label={`Remover o destino digitado do título ${titulo}`}
-              title="Remover o destino digitado (volta a valer o cadastro)"
-            >
-              <X className="size-3" aria-hidden />
+              <Landmark className="size-3" aria-hidden />
+              Cadastrar exceção
             </Button>
           ) : null}
         </>
@@ -355,9 +308,9 @@ export function LoteCard({
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
-  // ADR-0054 D10: aprovar a conta digitada é permissão própria (quem digitou pode aprovar a sua).
-  const podeAprovarDestino = !carregandoPermissoes && tem(PERMISSAO.SISPAG_APROVAR_DESTINO)
-  // ADR-0054: flags de TED/PIX/destino manual. Desligadas (default e em falha) = tela de antes.
+  // ADR-0060: exceção de destino é permissão própria (cadastrar, aprovar, rejeitar, revogar).
+  const podeExcecao = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXCECAO)
+  // ADR-0054/0060: flags de TED/PIX/exceção de destino. Desligadas (default e em falha) = tela de antes.
   const [recursos, setRecursos] = React.useState<RecursosSispag>(RECURSOS_DESLIGADOS)
   React.useEffect(() => {
     let vivo = true
@@ -368,13 +321,9 @@ export function LoteCard({
       vivo = false
     }
   }, [])
-  const [destinoDe, setDestinoDe] = React.useState<ItemLote | null>(null)
-  const [aprovandoDe, setAprovandoDe] = React.useState<ItemLote | null>(null)
+  const [excecaoDe, setExcecaoDe] = React.useState<ItemLote | null>(null)
   // Título BOLETO sem DDA associado cujos boletos DDA a analista quer conferir.
   const [tituloDda, setTituloDda] = React.useState<TituloSemBoleto | null>(null)
-  const podeInformarDestino =
-    podeExecutar &&
-    recursos.destinoManualEnabled && (recursos.tedEnabled || recursos.pixEnabled)
   // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
   const [gerandoRemessa, setGerandoRemessa] = React.useState(false)
   // As demais transições também passam por uma confirmação que nomeia o lote.
@@ -457,12 +406,7 @@ export function LoteCard({
   }, [aberto, isRascunho, l.id, podeExecutar])
 
   const semDestino = itensSemDestino(l.itens, oferta, recursos)
-  const pendentesAprovacao = isRascunho ? itensPendentesDeAprovacao(l.itens, recursos) : []
-  // Só RASCUNHO: a rota de aprovação recusa qualquer outro estado.
-  const aprovarDe = (i: ItemLote) =>
-    isRascunho && podeAprovarDestino && recursos.destinoManualEnabled && recursos.tedEnabled
-      ? () => setAprovandoDe(i)
-      : undefined
+  const semDestinoChaves = new Set(semDestino.map((i) => `${i.docCod}:${i.titCod}`))
 
   // Linha digitável do boleto por item, para a analista conferir com o banco. Só existe
   // depois da remessa gerada — o ERP anexa o código no import (ADR-0040), então em rascunho
@@ -567,17 +511,14 @@ export function LoteCard({
                   busy ||
                   l.itens.length === 0 ||
                   faltaModalidade ||
-                  semDestino.length > 0 ||
-                  pendentesAprovacao.length > 0
+                  semDestino.length > 0
                 }
                 title={
                   faltaModalidade
                     ? 'Defina a forma de pagamento de todos os títulos antes de finalizar.'
-                    : pendentesAprovacao.length > 0
-                      ? mensagemPendentesAprovacao(pendentesAprovacao)
-                      : semDestino.length > 0
-                        ? mensagemSemDestino(semDestino)
-                        : undefined
+                    : semDestino.length > 0
+                      ? mensagemSemDestino(semDestino)
+                      : undefined
                 }
                 onClick={() => setConfirmando('finalizar')}
               >
@@ -623,63 +564,25 @@ export function LoteCard({
             </>
           ) : null}
           <BoletosDoTituloDialog titulo={tituloDda} onClose={() => setTituloDda(null)} />
-          {destinoDe ? (
-            <InformarDestinoDialog
-              lote={l}
-              item={destinoDe}
+          {excecaoDe ? (
+            <CadastrarExcecaoDialog
+              favorecido={{
+                filCod: excecaoDe.filCod,
+                docCod: excecaoDe.docCod,
+                titCod: excecaoDe.titCod,
+                ...(excecaoDe.credor ? { credor: excecaoDe.credor } : {}),
+              }}
               tedEnabled={recursos.tedEnabled}
               pixEnabled={recursos.pixEnabled}
-              preferirPix={pixPreferido(oferta?.get(`${destinoDe.docCod}:${destinoDe.titCod}`))}
+              preferirPix={pixPreferido(oferta?.get(`${excecaoDe.docCod}:${excecaoDe.titCod}`))}
               onOpenChange={(open) => {
-                if (!open) setDestinoDe(null)
+                if (!open) setExcecaoDe(null)
               }}
-              onSalvo={(atualizado) => {
-                setDestinoDe(null)
-                // Recarrega a lista pelo mesmo caminho das outras ações (e mostra o toast).
-                acao(async () => atualizado, 'Destino informado')
+              onCadastrada={() => {
+                setExcecaoDe(null)
+                toast.success('Exceção cadastrada: aguarda a aprovação de outra pessoa')
               }}
             />
-          ) : null}
-          {aprovandoDe?.destinoManualResumo ? (
-            <ConfirmarAcaoDialog
-              open
-              onOpenChange={(open) => {
-                if (!open) setAprovandoDe(null)
-              }}
-              titulo="Aprovar destino"
-              descricao={`Título ${aprovandoDe.docCod}/${aprovandoDe.titCod}${aprovandoDe.credor ? ` · ${aprovandoDe.credor}` : ''}. Confira a conta e o titular antes de aprovar: o pagamento vai para esta conta, não para a do cadastro do Conexos.`}
-              rotuloConfirmar="Aprovar destino"
-              busy={busy}
-              onConfirmar={() => {
-                const i = aprovandoDe
-                setAprovandoDe(null)
-                acao(
-                  () =>
-                    aprovarDestinoItem(l.id, {
-                      filCod: i.filCod,
-                      docCod: i.docCod,
-                      titCod: i.titCod,
-                      versao: l.versao,
-                    }),
-                  'Destino aprovado',
-                )
-              }}
-            >
-              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                <dt className="text-muted-foreground">Conta</dt>
-                <dd className="tabular-nums">{aprovandoDe.destinoManualResumo.destinoMascarado}</dd>
-                <dt className="text-muted-foreground">CPF/CNPJ do titular</dt>
-                <dd className="tabular-nums">
-                  {aprovandoDe.destinoManualResumo.titularDocumentoMascarado ?? '—'}
-                </dd>
-                {aprovandoDe.destinoManualResumo.informadoPor ? (
-                  <>
-                    <dt className="text-muted-foreground">Informado por</dt>
-                    <dd>{aprovandoDe.destinoManualResumo.informadoPor}</dd>
-                  </>
-                ) : null}
-              </dl>
-            </ConfirmarAcaoDialog>
           ) : null}
           {confirmando ? (
             <ConfirmarAcaoLoteDialog
@@ -870,26 +773,16 @@ export function LoteCard({
                                 Ver boletos DDA
                               </Button>
                             ) : null}
-                            {podeInformarDestino ? (
+                            {recursos.excecaoDestinoEnabled &&
+                            (recursos.tedEnabled || recursos.pixEnabled) ? (
                               <DestinoDoItem
                                 item={i}
                                 oferta={ofertaDoItem}
-                                editavel
+                                semDestino={semDestinoChaves.has(`${i.docCod}:${i.titCod}`)}
+                                podeExcecao={podeExcecao}
+                                excecaoHabilitada={recursos.excecaoDestinoEnabled}
                                 busy={busy}
-                                onAprovar={aprovarDe(i)}
-                                onInformar={() => setDestinoDe(i)}
-                                onRemover={() =>
-                                  acao(
-                                    () =>
-                                      limparDestinoItem(l.id, {
-                                        filCod: i.filCod,
-                                        docCod: i.docCod,
-                                        titCod: i.titCod,
-                                        versao: l.versao,
-                                      }),
-                                    'Destino removido — vale o cadastro do Conexos',
-                                  )
-                                }
+                                onCadastrarExcecao={() => setExcecaoDe(i)}
                               />
                             ) : null}
                           </div>
@@ -898,12 +791,15 @@ export function LoteCard({
                             <span className="text-xs text-muted-foreground">
                               {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
                             </span>
-                            {recursos.destinoManualEnabled && i.destinoManualResumo ? (
+                            {recursos.excecaoDestinoEnabled &&
+                            (i.modalidade === 'TED' || i.modalidade === 'PIX') ? (
                               <DestinoDoItem
                                 item={i}
-                                editavel={false}
+                                oferta={oferta?.get(`${i.docCod}:${i.titCod}`)}
+                                semDestino={false}
+                                podeExcecao={podeExcecao}
+                                excecaoHabilitada={recursos.excecaoDestinoEnabled}
                                 busy={busy}
-                                onAprovar={aprovarDe(i)}
                               />
                             ) : null}
                             {i.modalidade === 'BOLETO' &&
@@ -1003,13 +899,13 @@ export function LoteCard({
               </p>
             </div>
           ) : null}
-          {pendentesAprovacao.length > 0 ? (
+          {isRascunho && recursos.excecaoDestinoEnabled && semDestino.length > 0 ? (
             <div
               role="status"
               className="mt-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning-subtle px-4 py-3 text-sm text-warning-foreground"
             >
               <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <p>{mensagemPendentesAprovacao(pendentesAprovacao)}</p>
+              <p>{mensagemSemDestino(semDestino)}</p>
             </div>
           ) : null}
           {linhasRecusadas > 0 ? (

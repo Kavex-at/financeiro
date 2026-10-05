@@ -15,9 +15,13 @@ import {
   gerarRemessa,
   retirarDoLote,
   __limparCacheRecursos,
-  definirDestinoItem,
+  aprovarExcecao,
+  cadastrarExcecao,
+  eventosExcecao,
+  listarExcecoes,
+  rejeitarExcecao,
+  revogarExcecao,
   getRecursos,
-  limparDestinoItem,
   validarDestinoManual,
 } from '@/lib/sispag'
 
@@ -331,11 +335,11 @@ describe('getRecursos', () => {
 
   it('lê as flags como booleanos', async () => {
     mockApiFetch.mockResolvedValueOnce(
-      respostaOk({ tedEnabled: true, destinoManualEnabled: 'sim', pixEnabled: false }),
+      respostaOk({ tedEnabled: true, excecaoDestinoEnabled: 'sim', pixEnabled: false }),
     )
     expect(await getRecursos()).toEqual({
       tedEnabled: true,
-      destinoManualEnabled: false,
+      excecaoDestinoEnabled: false,
       pixEnabled: false,
     })
     expect(String(mockApiFetch.mock.calls[0]?.[0])).toMatch(/\/sispag\/recursos$/)
@@ -345,15 +349,15 @@ describe('getRecursos', () => {
     mockApiFetch.mockRejectedValueOnce(new Error('rede'))
     expect(await getRecursos()).toEqual({
       tedEnabled: false,
-      destinoManualEnabled: false,
+      excecaoDestinoEnabled: false,
       pixEnabled: false,
     })
   })
 })
 
-describe('definirDestinoItem / limparDestinoItem', () => {
+describe('exceção de destino (ADR-0060)', () => {
   beforeEach(() => mockApiFetch.mockReset())
-  const chave = { filCod: 2, docCod: '81/3', titCod: '1', versao: 4 }
+  const ID = '3f1c2b9e-4d8a-4c1e-9f7a-2b6d8e0a1c55'
   const destino = {
     tipo: 'CONTA' as const,
     bancoCod: '237',
@@ -363,33 +367,63 @@ describe('definirDestinoItem / limparDestinoItem', () => {
     titularDocumento: '11144477735',
   }
 
-  it('POST com versao e destino na rota do item', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ lote: { id: 'L1' } }))
-    await definirDestinoItem('L1', { ...chave, destino })
+  it('listarExcecoes: GET com os filtros e devolve a lista', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ excecoes: [{ id: ID }] }))
+    const r = await listarExcecoes({ estado: 'PENDENTE', pesCod: '7001' })
+    const [url] = ultimaChamadaComUrl()
+    expect(url).toMatch(/\/sispag\/excecoes\?estado=PENDENTE&pesCod=7001$/)
+    expect(r).toEqual([{ id: ID }])
+  })
+
+  it('listarExcecoes sem filtro não manda query string', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ excecoes: [] }))
+    await listarExcecoes()
+    expect(ultimaChamadaComUrl()[0]).toMatch(/\/sispag\/excecoes$/)
+  })
+
+  it('cadastrarExcecao: POST com o corpo, devolve a exceção', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ excecao: { id: ID } }))
+    const entrada = { filCod: 2, docCod: '81', titCod: '1', destino, justificativa: 'cadastro errado' }
+    await cadastrarExcecao(entrada)
     const [url, init] = ultimaChamadaComUrl()
-    expect(url).toMatch(/\/sispag\/lotes\/L1\/itens\/2\/81%2F3\/1\/destino$/)
+    expect(url).toMatch(/\/sispag\/excecoes$/)
     expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toEqual({ versao: 4, destino })
+    expect(JSON.parse(String(init.body))).toEqual(entrada)
   })
 
-  it('DELETE com a versao', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ lote: { id: 'L1' } }))
-    await limparDestinoItem('L1', chave)
-    const [url, init] = ultimaChamadaComUrl()
-    expect(url).toMatch(/\/destino$/)
-    expect(init.method).toBe('DELETE')
-    expect(JSON.parse(String(init.body))).toEqual({ versao: 4 })
+  it('aprovar / rejeitar / revogar: rotas por id; motivo só nos dois últimos', async () => {
+    mockApiFetch.mockResolvedValue(respostaOk({ excecao: { id: ID } }))
+    await aprovarExcecao(ID)
+    expect(ultimaChamadaComUrl()[0]).toMatch(new RegExp(`/sispag/excecoes/${ID}/aprovar$`))
+    await rejeitarExcecao(ID, 'conta de terceiro')
+    let [url, init] = ultimaChamadaComUrl()
+    expect(url).toMatch(/\/rejeitar$/)
+    expect(JSON.parse(String(init.body))).toEqual({ motivo: 'conta de terceiro' })
+    await revogarExcecao(ID, 'fornecedor trocou')
+    ;[url, init] = ultimaChamadaComUrl()
+    expect(url).toMatch(/\/revogar$/)
+    expect(JSON.parse(String(init.body))).toEqual({ motivo: 'fornecedor trocou' })
   })
 
-  it('409 vira a mensagem de conflito do backend, como nas outras edições', async () => {
+  it('eventosExcecao: GET da trilha', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ eventos: [{ id: 'A1', evento: 'CADASTRO' }] }))
+    const r = await eventosExcecao(ID)
+    expect(ultimaChamadaComUrl()[0]).toMatch(/\/eventos$/)
+    expect(r[0]?.evento).toBe('CADASTRO')
+  })
+
+  it('erro do backend vira a mensagem em português (403 aprovar a própria)', async () => {
     mockApiFetch.mockResolvedValueOnce({
       ok: false,
-      status: 409,
-      json: async () => ({ error: 'O lote foi alterado por outra pessoa. Recarregue.' }),
+      status: 403,
+      json: async () => ({ error: 'Quem cadastrou a exceção de destino não pode aprová-la.' }),
     } as unknown as Response)
-    await expect(definirDestinoItem('L1', { ...chave, destino })).rejects.toThrow(
-      'O lote foi alterado por outra pessoa. Recarregue.',
-    )
+    await expect(aprovarExcecao(ID)).rejects.toThrow('Quem cadastrou a exceção')
+  })
+
+  it('HTTP sem corpo legível cai em "API <status>"', async () => {
+    mockApiFetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => { throw new Error('x') } } as unknown as Response)
+    await expect(listarExcecoes()).rejects.toThrow('API 500')
   })
 })
 

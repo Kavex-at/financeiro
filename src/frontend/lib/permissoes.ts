@@ -14,8 +14,11 @@ export const PERMISSAO = {
   PERMUTAS_EXECUTAR: 'permutas:executar',
   SISPAG_VER: 'sispag:ver',
   SISPAG_EXECUTAR: 'sispag:executar',
-  /** Aprovar a conta (TED) digitada no item do lote (ADR-0054 D10). Avulsa, sem implicações. */
-  SISPAG_APROVAR_DESTINO: 'sispag:aprovar_destino',
+  /**
+   * Exceção de destino de pagamento (ADR-0060): cadastrar, aprovar, rejeitar e revogar. Permissão
+   * única; a separação de funções é a regra "aprovador ≠ cadastrante" no backend. Avulsa.
+   */
+  SISPAG_EXCECAO: 'sispag:excecao',
   RECEBIMENTOS_VER: 'recebimentos:ver',
   RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
   OPERACAO_VER: 'operacao:ver',
@@ -31,7 +34,7 @@ export const CATALOGO_PERMISSOES: readonly Permissao[] = [
   PERMISSAO.PERMUTAS_EXECUTAR,
   PERMISSAO.SISPAG_VER,
   PERMISSAO.SISPAG_EXECUTAR,
-  PERMISSAO.SISPAG_APROVAR_DESTINO,
+  PERMISSAO.SISPAG_EXCECAO,
   PERMISSAO.RECEBIMENTOS_VER,
   PERMISSAO.RECEBIMENTOS_EXECUTAR,
   PERMISSAO.OPERACAO_VER,
@@ -63,8 +66,8 @@ export const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = 
     itens: [
       { permissao: PERMISSAO.SISPAG_VER, acao: 'ver' },
       { permissao: PERMISSAO.SISPAG_EXECUTAR, acao: 'executar' },
-      // ADR-0054 D10: aprova a conta digitada no item do lote. Não implica nem é implicada.
-      { permissao: PERMISSAO.SISPAG_APROVAR_DESTINO, acao: 'aprovar destino manual' },
+      // ADR-0060: cadastra, aprova, rejeita e revoga exceções de destino. Não implica nem é implicada.
+      { permissao: PERMISSAO.SISPAG_EXCECAO, acao: 'exceção de destino' },
     ],
   },
   {
@@ -79,7 +82,7 @@ export const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = 
   { nome: 'Usuários', itens: [{ permissao: PERMISSAO.USUARIOS_GERENCIAR, acao: 'gerenciar' }] },
 ]
 
-/** "Módulo — ação" de uma permissão (ex.: "SISPAG — aprovar destino manual"). */
+/** "Módulo — ação" de uma permissão (ex.: "SISPAG — exceção de destino"). */
 export const rotuloPermissao = (permissao: Permissao): string => {
   for (const modulo of MODULOS) {
     const item = modulo.itens.find((i) => i.permissao === permissao)

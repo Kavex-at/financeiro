@@ -103,9 +103,9 @@ describe('EditarAcessoDialog', () => {
     expect(within(screen.getByRole('group', { name: 'Métricas' })).getByText('concedida')).toBeInTheDocument()
   })
 
-  it('ADR-0054 D10: "Aprovar destino manual" aparece no SISPAG e não arrasta ver/executar', () => {
+  it('ADR-0060: "Exceção de destino" aparece no SISPAG e não arrasta ver/executar', () => {
     abrir(alvo({ papel: { id: 2, nome: 'Consulta' } }))
-    const aprovar = caixa(/SISPAG — aprovar destino manual/)
+    const aprovar = caixa(/SISPAG — exceção de destino/)
     expect(aprovar).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(aprovar)
     expect(aprovar).toHaveAttribute('aria-checked', 'true')

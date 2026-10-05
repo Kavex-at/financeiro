@@ -111,7 +111,7 @@ describe('descreverExcecoes', () => {
   })
 
   it('usa o rótulo do catálogo de permissões', () => {
-    expect(descreverExcecoes([], [{ permissao: 'sispag:aprovar_destino', efeito: 'conceder' }])).toMatch(
+    expect(descreverExcecoes([], [{ permissao: 'sispag:excecao', efeito: 'conceder' }])).toMatch(
       /^SISPAG — .+ concedida$/,
     )
   })

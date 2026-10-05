@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import * as React from 'react'
 import { toast } from 'sonner'
 import {
@@ -171,6 +172,8 @@ function SispagPanel() {
   // (`sispag:ver`); só o "Atualizar DDA" dentro dela exige executar.
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
+  // ADR-0060: a tela de exceções de destino só aparece para quem tem `sispag:excecao`.
+  const podeExcecao = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXCECAO)
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
   const [lotesErro, setLotesErro] = React.useState<string | null>(null)
@@ -637,6 +640,11 @@ function SispagPanel() {
                 title="Ver as últimas ingestões (cron/manual) e rodar sob demanda"
               >
                 <DatabaseZap aria-hidden /> Ingestão de dados
+              </Button>
+            ) : null}
+            {podeExcecao ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/sispag/excecoes">Exceções de destino</Link>
               </Button>
             ) : null}
             <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
