@@ -39,14 +39,11 @@ jest.mock('@/lib/sispag', () => {
     // ADR-0054: por padrão as flags estão desligadas — a tela de antes.
     getRecursos: jest
       .fn()
-      .mockResolvedValue({ tedEnabled: false, destinoManualEnabled: false, pixEnabled: false }),
-    limparDestinoItem: jest.fn(),
-    aprovarDestinoItem: jest.fn(),
+      .mockResolvedValue({ tedEnabled: false, excecaoDestinoEnabled: false, pixEnabled: false }),
   }
 })
 
 import {
-  aprovarDestinoItem,
   baixarRemessa,
   cancelarLote,
   fetchContasPagadoras,
@@ -256,126 +253,9 @@ describe('LoteCard — só sispag:ver', () => {
   })
 })
 
-describe('LoteCard — destino de TED/PIX (ADR-0054)', () => {
-  const ligado = { tedEnabled: true, destinoManualEnabled: true, pixEnabled: false }
-  const desligado = { tedEnabled: false, destinoManualEnabled: false, pixEnabled: false }
-  const itemTed = (over: Partial<LotePagamento['itens'][number]> = {}) =>
-    ({
-      loteId: 'L1',
-      filCod: 7,
-      docCod: '801',
-      titCod: '1',
-      valor: 100,
-      modalidade: 'TED',
-      incluidoPor: 'u1',
-      ...over,
-    }) as LotePagamento['itens'][number]
-
-  beforeEach(() => {
-    jest.clearAllMocks()
-    ;(getRecursos as jest.Mock).mockResolvedValue(desligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([])
-  })
-
-  const abrir = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByRole('button', { name: /filial 7/i }))
-  }
-
-  it('flags desligadas: nenhum botão de destino, nenhum selo — igual ao main', async () => {
-    const user = userEvent.setup()
-    renderCard(
-      lote({
-        itens: [
-          itemTed({
-            destinoManualResumo: { tipo: 'CONTA', destinoMascarado: 'banco 237 · cc ****7766-1' },
-          }),
-        ],
-      }),
-    )
-    await abrir(user)
-    await waitFor(() => expect(getRecursos).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /informar destino/i })).not.toBeInTheDocument()
-    expect(screen.queryByText('manual')).not.toBeInTheDocument()
-    expect(screen.queryByText(/\*\*\*\*7766/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled()
-  })
-
-  it('flag manual ligada e RASCUNHO: botão "Informar destino" ao lado da forma de pagamento', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed()] }))
-    await abrir(user)
-    await user.click(await screen.findByRole('button', { name: /informar destino do título 801\/1/i }))
-    expect(screen.getByRole('dialog', { name: 'Informar destino' })).toBeInTheDocument()
-  })
-
-  it('destino manual aparece MASCARADO como veio do backend, com o selo "manual"', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
-      { docCod: '801', titCod: '1', modalidades: ['TED'] },
-    ])
-    const user = userEvent.setup()
-    renderCard(
-      lote({
-        itens: [
-          itemTed({
-            destinoManualResumo: {
-              tipo: 'CONTA',
-              destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1',
-              informadoPor: 'ana',
-            },
-          }),
-        ],
-      }),
-    )
-    await abrir(user)
-    expect(await screen.findByText('banco 237 · ag. 1234 · cc ****7766-1')).toBeInTheDocument()
-    expect(screen.getByText('manual')).toBeInTheDocument()
-  })
-
-  it('fora de RASCUNHO o destino é só leitura (sem botão)', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    const user = userEvent.setup()
-    renderCard(
-      lote({
-        status: 'FINALIZADO',
-        itens: [
-          itemTed({ destinoManualResumo: { tipo: 'CONTA', destinoMascarado: 'banco 237 · cc ****7766-1' } }),
-        ],
-      }),
-    )
-    await abrir(user)
-    expect(await screen.findByText('banco 237 · cc ****7766-1')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /informar destino/i })).not.toBeInTheDocument()
-  })
-
-  it('item TED sem destino: Finalizar desabilitado com a mensagem do backend', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
-      { docCod: '801', titCod: '1', modalidades: [] },
-    ])
-    const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed({ credor: 'ACME' })] }))
-    await abrir(user)
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeDisabled(),
-    )
-    expect(screen.getByRole('button', { name: /^finalizar$/i })).toHaveAttribute(
-      'title',
-      expect.stringContaining('Sem destino de pagamento para: 801/1 (ACME)'),
-    )
-  })
-})
-
-describe('LoteCard — aprovação da conta digitada (ADR-0054 D10) e PIX preferido (D12)', () => {
-  const ligado = { tedEnabled: true, destinoManualEnabled: true, pixEnabled: true }
-  const pendente = {
-    tipo: 'CONTA' as const,
-    destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1',
-    titularDocumentoMascarado: '***.444.777-**',
-    informadoPor: 'ana',
-    aprovacao: 'PENDENTE' as const,
-  }
+describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fallback (ADR-0060)', () => {
+  const ligado = { tedEnabled: true, excecaoDestinoEnabled: true, pixEnabled: true }
+  const desligado = { tedEnabled: false, excecaoDestinoEnabled: false, pixEnabled: false }
   const itemTed = (over: Partial<LotePagamento['itens'][number]> = {}) =>
     ({
       loteId: 'L1',
@@ -392,117 +272,135 @@ describe('LoteCard — aprovação da conta digitada (ADR-0054 D10) e PIX prefer
   beforeEach(() => {
     jest.clearAllMocks()
     permissoes = { carregando: false, lista: [...CATALOGO_PERMISSOES] }
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
-      { docCod: '801', titCod: '1', modalidades: ['TED'] },
-    ])
+    ;(getRecursos as jest.Mock).mockResolvedValue(desligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([])
   })
 
   const abrir = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.click(screen.getByRole('button', { name: /filial 7/i }))
   }
 
-  it('conta pendente: selo "pendente de aprovação" ao lado do "manual"', async () => {
+  it('flags desligadas: nenhum selo nem botão de exceção — igual ao main', async () => {
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      { docCod: '801', titCod: '1', modalidades: [] },
+    ])
     const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
-    expect(await screen.findByText('pendente de aprovação')).toBeInTheDocument()
-    expect(screen.getByText('manual')).toBeInTheDocument()
+    await waitFor(() => expect(getRecursos).toHaveBeenCalled())
+    expect(screen.queryByText(/aguardando exceção/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('exceção')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cadastrar exceção/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled()
   })
 
-  it('Finalizar fica desabilitado e a mensagem cita a aprovação pendente', async () => {
+  it('destino do cadastro aparece MASCARADO, sem selo de exceção', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      {
+        docCod: '801',
+        titCod: '1',
+        modalidades: ['TED'],
+        destinos: { TED: { origem: 'CADASTRO', destinoMascarado: 'banco 237 · cc ****1111-0' } },
+      },
+    ])
     const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
+    expect(await screen.findByText('cadastro: banco 237 · cc ****1111-0')).toBeInTheDocument()
+    expect(screen.queryByText('exceção')).not.toBeInTheDocument()
+  })
+
+  it('destino de exceção APROVADA: selo "exceção" com a máscara vinda da oferta', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      {
+        docCod: '801',
+        titCod: '1',
+        modalidades: ['TED'],
+        destinos: {
+          TED: { origem: 'EXCECAO', destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1' },
+        },
+      },
+    ])
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed()] }))
+    await abrir(user)
+    expect(await screen.findByText('banco 237 · ag. 1234 · cc ****7766-1')).toBeInTheDocument()
+    expect(screen.getByText('exceção')).toBeInTheDocument()
+  })
+
+  it('item TED sem destino: "sem destino: aguardando exceção", Finalizar desabilitado com a mensagem', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      { docCod: '801', titCod: '1', modalidades: [] },
+    ])
+    const user = userEvent.setup()
+    renderCard(lote({ itens: [itemTed()] }))
+    await abrir(user)
+    expect(await screen.findByText('sem destino: aguardando exceção')).toBeInTheDocument()
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeDisabled(),
     )
     expect(screen.getByRole('button', { name: /^finalizar$/i })).toHaveAttribute(
       'title',
-      expect.stringContaining('aguardando aprovação: 801/1 (ACME)'),
+      expect.stringContaining('Sem destino de pagamento para: 801/1 (ACME)'),
     )
-    expect(screen.getByRole('status')).toHaveTextContent(/aguardando aprovação/)
   })
 
-  it('"Aprovar destino" mostra conta e titular MASCARADOS e só chama a API ao confirmar', async () => {
-    ;(aprovarDestinoItem as jest.Mock).mockResolvedValue(lote())
+  it('quem tem sispag:excecao vê o link para a tela de exceções e o atalho de cadastro', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      { docCod: '801', titCod: '1', modalidades: [] },
+    ])
     const user = userEvent.setup()
-    const acao = renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
-    await user.click(await screen.findByRole('button', { name: /aprovar destino do título 801\/1/i }))
-    const dialog = screen.getByRole('dialog', { name: 'Aprovar destino' })
-    expect(within(dialog).getByText('banco 237 · ag. 1234 · cc ****7766-1')).toBeInTheDocument()
-    expect(within(dialog).getByText('***.444.777-**')).toBeInTheDocument()
-    expect(within(dialog).getByText('ana')).toBeInTheDocument()
-    expect(aprovarDestinoItem).not.toHaveBeenCalled()
-    await user.click(within(dialog).getByRole('button', { name: 'Aprovar destino' }))
-    expect(aprovarDestinoItem).toHaveBeenCalledWith('L1', {
-      filCod: 7,
-      docCod: '801',
-      titCod: '1',
-      versao: 3,
-    })
-    expect(acao).toHaveBeenCalledWith(expect.any(Function), 'Destino aprovado')
+    const link = await screen.findByRole('link', { name: /exceções de destino/i })
+    expect(link).toHaveAttribute('href', '/sispag/excecoes')
+    await user.click(
+      screen.getByRole('button', { name: /cadastrar exceção de destino para o favorecido do título 801\/1/i }),
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Cadastrar exceção de destino' })
+    expect(within(dialog).getByText(/título 801\/1 · ACME/)).toBeInTheDocument()
+    // Favorecido do título: nenhum campo de pesCod/filial.
+    expect(within(dialog).queryByLabelText(/código do favorecido/i)).not.toBeInTheDocument()
   })
 
-  it('sem sispag:aprovar_destino o botão NÃO existe (esconder, não desabilitar)', async () => {
+  it('sem sispag:excecao: só o texto, sem link nem botão (esconder, não desabilitar)', async () => {
     permissoes = {
       carregando: false,
-      lista: CATALOGO_PERMISSOES.filter((p) => p !== 'sispag:aprovar_destino'),
+      lista: CATALOGO_PERMISSOES.filter((p) => p !== 'sispag:excecao'),
     }
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
+    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
+      { docCod: '801', titCod: '1', modalidades: [] },
+    ])
     const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
+    renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
-    expect(await screen.findByText('pendente de aprovação')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /aprovar destino/i })).not.toBeInTheDocument()
+    expect(await screen.findByText('sem destino: aguardando exceção')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /exceções de destino/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cadastrar exceção/i })).not.toBeInTheDocument()
   })
 
-  it('só sispag:ver + sispag:aprovar_destino: aprova sem ver as ações de execução', async () => {
-    permissoes = { carregando: false, lista: ['sispag:ver', 'sispag:aprovar_destino'] }
+  it('fora de RASCUNHO não há atalho de cadastro', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
     const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed({ destinoManualResumo: pendente })] }))
-    await abrir(user)
-    expect(
-      await screen.findByRole('button', { name: /aprovar destino do título 801\/1/i }),
-    ).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^finalizar$/i })).not.toBeInTheDocument()
-  })
-
-  it('aprovada: selo "aprovado", sem botão de aprovar e Finalizar liberado', async () => {
-    const user = userEvent.setup()
-    renderCard(
-      lote({
-        itens: [
-          itemTed({
-            destinoManualResumo: { ...pendente, aprovacao: 'APROVADO', aprovadoPor: 'bia' },
-          }),
-        ],
-      }),
-    )
-    await abrir(user)
-    expect(await screen.findByText('aprovado')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /aprovar destino/i })).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled())
-  })
-
-  it('fora de RASCUNHO não há botão de aprovar', async () => {
-    const user = userEvent.setup()
-    renderCard(
-      lote({ status: 'FINALIZADO', itens: [itemTed({ destinoManualResumo: pendente })] }),
-    )
+    renderCard(lote({ status: 'FINALIZADO', itens: [itemTed()] }))
     await abrir(user)
     await waitFor(() => expect(getRecursos).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /aprovar destino/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cadastrar exceção/i })).not.toBeInTheDocument()
   })
 
-  it('D12: com chave CPF/CNPJ do favorecido, o diálogo "Informar destino" abre na aba PIX', async () => {
+  it('o diálogo do atalho abre na aba PIX quando o favorecido tem chave CPF/CNPJ no próprio documento (D12)', async () => {
+    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
     ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
       {
         docCod: '801',
         titCod: '1',
-        modalidades: ['TED', 'PIX'],
+        modalidades: ['PIX'],
         destinos: {
-          TED: { origem: 'CADASTRO', destinoMascarado: 'banco 237 · cc ****1111-0' },
           PIX: {
             origem: 'CADASTRO',
             destinoMascarado: 'PIX CPF/CNPJ ***.444.777-**',
@@ -512,14 +410,14 @@ describe('LoteCard — aprovação da conta digitada (ADR-0054 D10) e PIX prefer
       },
     ])
     const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed()] }))
+    renderCard(lote({ itens: [itemTed({ modalidade: 'TED' })] }))
     await abrir(user)
     await waitFor(() => expect(fetchModalidadesDisponiveis).toHaveBeenCalled())
-    await user.click(await screen.findByRole('button', { name: /informar destino do título 801\/1/i }))
-    const dialog = screen.getByRole('dialog', { name: 'Informar destino' })
-    const abas = within(dialog).getAllByRole('tab')
-    expect(abas.map((a) => a.textContent)).toEqual(['PIX', 'TED'])
-    expect(within(dialog).getByRole('tab', { name: 'PIX' })).toHaveAttribute('aria-selected', 'true')
+    await user.click(
+      await screen.findByRole('button', { name: /cadastrar exceção de destino para o favorecido/i }),
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Cadastrar exceção de destino' })
+    expect(within(dialog).getByRole('tab', { name: /PIX/ })).toHaveAttribute('aria-selected', 'true')
   })
 })
 

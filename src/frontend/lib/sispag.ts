@@ -235,39 +235,19 @@ export interface ItemLote {
   /** Última leitura bem-sucedida do título (ISO). */
   sincronizadoEm?: string
   /**
-   * Destino digitado pela analista (ADR-0054), SÓ mascarado — a API nunca manda o valor inteiro,
-   * e a tela exibe este texto como veio (não re-mascara).
+   * Exceção de destino usada quando o destino do item congelou no envio (ADR-0060): só a
+   * REFERÊNCIA. A API nunca devolve conta ou chave do item.
    */
-  destinoManualResumo?: DestinoManualResumo
-}
-
-/**
- * Aprovação do destino digitado (ADR-0054 D10/D11): conta (TED) digitada nasce `PENDENTE` e só
- * quem tem `sispag:aprovar_destino` aprova; chave PIX CPF/CNPJ é `NAO_EXIGIDA`.
- */
-export type DestinoAprovacao = 'NAO_EXIGIDA' | 'PENDENTE' | 'APROVADO'
-
-/** Máscara do destino digitado + quem informou + estado da aprovação. */
-export interface DestinoManualResumo {
-  tipo: 'CONTA' | 'CHAVE_PIX'
-  destinoMascarado: string
-  /** CPF/CNPJ do titular, já mascarado pelo backend — é o que o aprovador confere. */
-  titularDocumentoMascarado?: string
-  informadoPor?: string
-  informadoEm?: string
-  /** Ausente = backend anterior ao D10: tratado como não exigida. */
-  aprovacao?: DestinoAprovacao
-  aprovadoPor?: string
-  aprovadoEm?: string
+  excecaoDestinoId?: string
 }
 
 /** Destino que a oferta mostra para TED/PIX: origem + máscara (só com as flags ligadas). */
 export interface DestinoOfertado {
-  origem: 'CADASTRO' | 'MANUAL' | 'NENHUM'
+  origem: 'CADASTRO' | 'EXCECAO' | 'NENHUM'
   destinoMascarado?: string
   /**
    * Só no PIX (D12): chave CPF/CNPJ que é o próprio documento do favorecido. A tela lista PIX
-   * antes de TED e abre "Informar destino" na aba PIX.
+   * antes de TED.
    */
   chaveCpfCnpjDoFavorecido?: boolean
 }
@@ -1142,18 +1122,18 @@ export async function sincronizarBoletosDda(): Promise<SincronizacaoDdaResultado
   return (await res.json()) as SincronizacaoDdaResultado
 }
 
-// ============================================================ ADR-0054 — destino de TED/PIX
+// ============================================================ ADR-0054/0060 — destino de TED/PIX
 
-/** Flags de TED/PIX/destino manual expostas pelo backend (`GET /sispag/recursos`). */
+/** Flags de TED/PIX/exceção de destino expostas pelo backend (`GET /sispag/recursos`). */
 export interface RecursosSispag {
   tedEnabled: boolean
-  destinoManualEnabled: boolean
+  excecaoDestinoEnabled: boolean
   pixEnabled: boolean
 }
 
 const RECURSOS_DESLIGADOS: RecursosSispag = {
   tedEnabled: false,
-  destinoManualEnabled: false,
+  excecaoDestinoEnabled: false,
   pixEnabled: false,
 }
 
@@ -1177,7 +1157,7 @@ export function getRecursos(): Promise<RecursosSispag> {
         const j = (await res.json()) as Partial<Record<keyof RecursosSispag, unknown>>
         return {
           tedEnabled: j.tedEnabled === true,
-          destinoManualEnabled: j.destinoManualEnabled === true,
+          excecaoDestinoEnabled: j.excecaoDestinoEnabled === true,
           pixEnabled: j.pixEnabled === true,
         }
       } catch {
@@ -1326,45 +1306,129 @@ export function validarDestinoManual(e: DestinoManualEntrada): {
   }
 }
 
-const rotaDestino = (loteId: string, c: { filCod: number; docCod: string; titCod: string }) =>
-  `/sispag/lotes/${loteId}/itens/${c.filCod}/${encodeURIComponent(c.docCod)}/${encodeURIComponent(c.titCod)}/destino`
+// ============================================================ ADR-0060 — exceção de destino
 
-/** Grava o destino digitado do item (só RASCUNHO; optimistic lock). 409/422 → mensagem do backend. */
-export const definirDestinoItem = (
-  loteId: string,
-  input: { filCod: number; docCod: string; titCod: string; versao: number; destino: DestinoManual },
-) =>
-  loteRequest(rotaDestino(loteId, input), {
+export type ExcecaoEstado = 'PENDENTE' | 'APROVADA' | 'REJEITADA' | 'SUBSTITUIDA' | 'REVOGADA'
+
+export const ESTADOS_EXCECAO: { value: ExcecaoEstado; label: string }[] = [
+  { value: 'PENDENTE', label: 'Pendente' },
+  { value: 'APROVADA', label: 'Aprovada' },
+  { value: 'REJEITADA', label: 'Rejeitada' },
+  { value: 'SUBSTITUIDA', label: 'Substituída pelo cadastro' },
+  { value: 'REVOGADA', label: 'Revogada' },
+]
+
+/** Exceção como a API devolve: SÓ máscara (nunca conta, chave ou documento inteiros). */
+export interface ExcecaoDestinoResumo {
+  id: string
+  pesCod: string
+  filCod: number
+  tipo: 'CONTA' | 'CHAVE_PIX'
+  destinoMascarado: string
+  titularDocumentoMascarado: string
+  estado: ExcecaoEstado
+  origem: 'MANUAL' | 'PLANILHA'
+  justificativa: string
+  cadastradoPor: string
+  cadastradoEm: string
+  aprovadoPor?: string
+  aprovadoEm?: string
+  decididoPor?: string
+  decididoEm?: string
+  motivoDecisao?: string
+  substituidaEm?: string
+  /** O cadastro assumiu com valor diferente: pede revisão. */
+  divergiu?: boolean
+  versao: number
+}
+
+export interface ExcecaoDestinoEvento {
+  id: string
+  excecaoId: string
+  evento: string
+  ator: string
+  ocorridoEm: string
+}
+
+/** Corpo do cadastro: o favorecido por `pesCod` OU pelo título (`docCod` + `titCod`). */
+export interface CadastrarExcecaoInput {
+  filCod: number
+  pesCod?: string
+  docCod?: string
+  titCod?: string
+  destino: DestinoManual
+  justificativa: string
+}
+
+async function excecaoRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(`${API}${path}`, {
+    ...init,
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+  })
+  if (!res.ok) {
+    let msg = `API ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+  return (await res.json()) as T
+}
+
+export async function listarExcecoes(
+  filtro: { estado?: ExcecaoEstado; pesCod?: string } = {},
+): Promise<ExcecaoDestinoResumo[]> {
+  const qs = new URLSearchParams()
+  if (filtro.estado) qs.set('estado', filtro.estado)
+  if (filtro.pesCod) qs.set('pesCod', filtro.pesCod)
+  const q = qs.toString()
+  const j = await excecaoRequest<{ excecoes: ExcecaoDestinoResumo[] }>(
+    `/sispag/excecoes${q ? `?${q}` : ''}`,
+  )
+  return j.excecoes
+}
+
+/** Cadastra uma exceção PENDENTE. 400 formato · 403 permissão/flag · 422 titularidade. */
+export async function cadastrarExcecao(input: CadastrarExcecaoInput): Promise<ExcecaoDestinoResumo> {
+  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>('/sispag/excecoes', {
     method: 'POST',
-    body: JSON.stringify({ versao: input.versao, destino: input.destino }),
+    body: JSON.stringify(input),
   })
+  return j.excecao
+}
 
-/** Remove o destino digitado (volta a valer o cadastro do Conexos). */
-export const limparDestinoItem = (
-  loteId: string,
-  input: { filCod: number; docCod: string; titCod: string; versao: number },
-) =>
-  loteRequest(rotaDestino(loteId, input), {
-    method: 'DELETE',
-    body: JSON.stringify({ versao: input.versao }),
-  })
+/** Aprova a PENDENTE. O backend nega o próprio cadastrante (403, I12b). */
+export async function aprovarExcecao(id: string): Promise<ExcecaoDestinoResumo> {
+  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>(
+    `/sispag/excecoes/${encodeURIComponent(id)}/aprovar`,
+    { method: 'POST', body: '{}' },
+  )
+  return j.excecao
+}
 
-/**
- * Aprova a conta (TED) digitada do item (ADR-0054 D10). Exige `sispag:aprovar_destino`; só
- * RASCUNHO; optimistic lock pela `versao`. O body leva só a versão.
- */
-export const aprovarDestinoItem = (
-  loteId: string,
-  input: { filCod: number; docCod: string; titCod: string; versao: number },
-) =>
-  loteRequest(`${rotaDestino(loteId, input)}/aprovar`, {
-    method: 'POST',
-    body: JSON.stringify({ versao: input.versao }),
-  })
+export async function rejeitarExcecao(id: string, motivo: string): Promise<ExcecaoDestinoResumo> {
+  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>(
+    `/sispag/excecoes/${encodeURIComponent(id)}/rejeitar`,
+    { method: 'POST', body: JSON.stringify({ motivo }) },
+  )
+  return j.excecao
+}
 
-/** D10: o item tem conta digitada aguardando aprovação. */
-export const destinoPendenteDeAprovacao = (item: ItemLote): boolean =>
-  item.destinoManualResumo?.aprovacao === 'PENDENTE'
+export async function revogarExcecao(id: string, motivo: string): Promise<ExcecaoDestinoResumo> {
+  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>(
+    `/sispag/excecoes/${encodeURIComponent(id)}/revogar`,
+    { method: 'POST', body: JSON.stringify({ motivo }) },
+  )
+  return j.excecao
+}
+
+export async function eventosExcecao(id: string): Promise<ExcecaoDestinoEvento[]> {
+  const j = await excecaoRequest<{ eventos: ExcecaoDestinoEvento[] }>(
+    `/sispag/excecoes/${encodeURIComponent(id)}/eventos`,
+  )
+  return j.eventos
+}
 
 /** D12: a oferta do item traz PIX por chave CPF/CNPJ do favorecido. */
 export const pixPreferido = (oferta: OfertaModalidadesItem | undefined): boolean =>

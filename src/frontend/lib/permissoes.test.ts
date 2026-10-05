@@ -13,7 +13,7 @@ describe('MODULOS (rótulos de permissão compartilhados)', () => {
   })
 
   it('rótulo legível de uma permissão: módulo + ação', () => {
-    expect(rotuloPermissao(PERMISSAO.SISPAG_APROVAR_DESTINO)).toBe('SISPAG — aprovar destino manual')
+    expect(rotuloPermissao(PERMISSAO.SISPAG_EXCECAO)).toBe('SISPAG — exceção de destino')
     expect(rotuloPermissao(PERMISSAO.PERMUTAS_EXECUTAR)).toBe('Permutas — executar')
   })
 })
