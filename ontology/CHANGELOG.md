@@ -3,6 +3,16 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.33.0 — Carteira do SISPAG atualizada ao abrir a tela (2026-10-05, ADR-0060)
+
+Feature: `sispag-carteira-ao-abrir` (branch `fix/sispag-carteira-ao-abrir`). `entity_changed = false`.
+
+- **CHANGED action `ingerirPagamentos`:** terceiro gatilho, o refresh ao abrir a tela, com regra de
+  staleness (TTL de 30 min, cooldown de 5 min após falha, lock da ingestão) e quatro estados
+  (`fresca`, `atualizada`, `em_andamento`, `falha_recente`). Basta `sispag:ver`; nunca forma lotes.
+- **CHANGED cron:** `0 10 * * *` + `0 15,19 * * 1-5`; a formação de lotes só na execução da manhã.
+- **CHANGED `staleness-por-pipeline`:** coluna de cron do `sispag-pagamentos`; limite de 30 h mantido.
+
 ## v0.32.0 — Usuário e atividade do usuário (2026-10-01, ADR-0058)
 
 Feature: `perfil-usuario` (branch `feat/perfil-usuario`). `entity_changed = true`.

@@ -22,7 +22,7 @@ has_canonical_test: false
 |---|---|---|---|---|
 | `recebimentos-extratos` | `20 * * * *` | 1h | **3h** | 2 execuções perdidas |
 | `permutas-eleicao` | `0 9,15,21 * * *` | 12h (21h→9h) | **18h** | 1 execução perdida |
-| `sispag-pagamentos` | `0 10 * * *` | 24h | **30h** | 6h |
+| `sispag-pagamentos` | `0 10 * * *` + `0 15,19 * * 1-5` (ADR-0060) | 24h (fim de semana) | **30h** | 6h |
 | `sispag-reaper` | `10,25,40,55 * * * *` | 8,4h medido (cron pede 15min) | **12h** | ~3,6h sobre o pior gap |
 
 ## O reaper ganhou trilha (2026-09-01)
