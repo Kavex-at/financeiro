@@ -1,5 +1,20 @@
 # Columbia Financeiro — Changelog
 
+## v0.54.1 (2026-10-05) — permuta não estoura mais o disponível do adiantamento por centavos
+
+- **A baixa de permuta não sai mais R$ 0,01 acima do que o adiantamento tem.** Na última perna de uma
+  permuta N:M e nos títulos de invoice com mais de um título, os arredondamentos podiam somar um
+  centavo acima do disponível. O Conexos então recusava a baixa ao gravar, ou só ao **Aprovar** o
+  borderô ("O TOTAL PERMUTADO DE ADIANTAMENTO (49.873,83) É MAIOR QUE O VALOR DISPONÍVEL
+  (49.873,82)"). Agora, em toda baixa, um excesso de até R$ 1,00 sai da variação cambial (juros
+  menor ou desconto maior), e o líquido fecha no disponível que o próprio ERP informa.
+  - Excesso acima de R$ 1,00 não é ajustado: não é arredondamento, fica em aviso no log para
+    conferência.
+  - Conferido contra as 196 baixas reais já feitas: as 3 que tinham o centavo a mais (borderôs 16596,
+    23184 e 23188) passariam a fechar; as outras 193 não mudam.
+  - **Os borderôs 23184 e 23188 (em aberto) não são corrigidos por esta versão:** precisam de ajuste
+    de R$ 0,01 na variação direto no Conexos, ou exclusão e refação da permuta.
+
 ## v0.54.0 (2026-10-05) — exceção de destino do SISPAG
 
 - **O cadastro do Conexos é a fonte do destino de TED/PIX.** Quando ele não tem conta ou chave
