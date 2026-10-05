@@ -39,12 +39,23 @@ if (!BASE.includes('-hml') && process.env.PROBE_PRD !== '1') {
     process.exit(1);
 }
 const OUT = process.env.PROBE_OUT ?? '/tmp/canal-por-fornecedor';
-const MESES = Number(process.env.PROBE_MESES ?? 12);
+const MESES = Number(process.env.PROBE_MESES ?? 24);
 const MAX_BORDEROS = Number(process.env.MAX_BORDEROS ?? 400);
+const PARALELO = Number(process.env.PROBE_PARALELO ?? 4);
+// Sinal A mediu 0% de forma/código de barras no fin064 (2026-10-05) — desligado por padrão.
+const SINAL_A = process.env.PROBE_SINAL_A === '1';
 const DIA = 86_400_000;
 
 type Row = Record<string, unknown>;
-type Canal = 'BOLETO' | 'TED' | 'PIX' | 'SISPAG_INDEFINIDO' | 'TRIBUTO' | 'OUTROS' | 'SEM_DEBITO';
+type Canal =
+    | 'BOLETO'
+    | 'TED'
+    | 'PIX'
+    | 'SISPAG_INDEFINIDO'
+    | 'TRIBUTO'
+    | 'OUTROS'
+    | 'SEM_DEBITO'
+    | 'AMBIGUO';
 
 const s = (v: unknown): string => (v === null || v === undefined ? '' : String(v).trim());
 const log = (m: string): void => console.log(m);
@@ -111,6 +122,8 @@ interface Fornecedor {
     baixas: number;
     valorPago: number;
     canais: Partial<Record<Canal, number>>;
+    ambiguos: number;
+    meses: Set<string>;
 }
 
 const fornecedores = new Map<string, Fornecedor>();
@@ -126,6 +139,8 @@ const fornecedor = (chave: string, nome: string): Fornecedor => {
             baixas: 0,
             valorPago: 0,
             canais: {},
+            ambiguos: 0,
+            meses: new Set(),
         };
         fornecedores.set(chave, f);
     }
@@ -227,57 +242,79 @@ interface Baixa {
     data: number;
 }
 
+/** Borderôs de pagamento finalizados da filial, paginando (desc por data) até sair da janela. */
+async function lerBorderos(base: ConexosBaseClient, filCod: number, de: number): Promise<Row[]> {
+    const out: Row[] = [];
+    for (let pagina = 1; pagina <= 100; pagina++) {
+        const page = await base.runWithRetry(() =>
+            base.listGenericPaginated<Row>(
+                'fin010/list',
+                {
+                    fieldList: [],
+                    filterList: { 'borVldTipo#EQ': 2, 'borVldFinalizado#EQ': 1 },
+                    serviceName: 'fin010',
+                    pageNumber: pagina,
+                    pageSize: MAX_BORDEROS,
+                    orderList: { orderList: [{ propertyName: 'borDtaMvto', order: 'desc' }] },
+                },
+                { filCod },
+            ),
+        );
+        out.push(...page.rows.filter((b) => Number(b.borDtaMvto) >= de));
+        const ultimo = page.rows[page.rows.length - 1];
+        if (page.rows.length < MAX_BORDEROS || !ultimo || Number(ultimo.borDtaMvto) < de) break;
+    }
+    return out;
+}
+
+async function baixasDoBordero(base: ConexosBaseClient, filCod: number, b: Row): Promise<Baixa[]> {
+    const page = await base.runWithRetry(() =>
+        base.listGenericPaginated<Row>(
+            `fin010/baixas/list/${s(b.borCod)}`,
+            { fieldList: [], filterList: {}, pageNumber: 1, pageSize: 500 },
+            { filCod },
+        ),
+    );
+    return page.rows
+        .filter((r) => Number(r.vldPermuta ?? 0) !== 1 && !s(r.gerNumPermuta))
+        .map((r) => ({
+            nome: s(r.dpeNomPessoa) || s(r.dpeNomPessoaDocumento),
+            valor: Math.abs(Number(r.bxaMnyLiquido ?? r.bxaMnyValor ?? 0)),
+            data: Number(r.lcbDtaCompensado ?? r.borDtaMvto ?? b.borDtaMvto ?? 0),
+        }));
+}
+
+const alcance: Record<string, { borderos: number; maisAntigo: string; falhas: number }> = {};
+
 async function lerBaixas(base: ConexosBaseClient, filiais: number[], de: number): Promise<Baixa[]> {
     const baixas: Baixa[] = [];
     for (const filCod of filiais) {
         let borderos: Row[] = [];
         try {
-            const page = await base.runWithRetry(() =>
-                base.listGenericPaginated<Row>(
-                    'fin010/list',
-                    {
-                        fieldList: [],
-                        filterList: { 'borVldTipo#EQ': 2, 'borVldFinalizado#EQ': 1 },
-                        serviceName: 'fin010',
-                        pageNumber: 1,
-                        pageSize: MAX_BORDEROS,
-                        orderList: { orderList: [{ propertyName: 'borDtaMvto', order: 'desc' }] },
-                    },
-                    { filCod },
-                ),
-            );
-            borderos = page.rows.filter((b) => Number(b.borDtaMvto) >= de);
-            if (page.rows.length === MAX_BORDEROS) {
-                log(
-                    `fin010 fil=${filCod}: bateu o teto de ${MAX_BORDEROS} borderôs — janela encurtada`,
-                );
-            }
+            borderos = await lerBorderos(base, filCod, de);
         } catch (e) {
             log(`fin010 fil=${filCod}: FALHOU (${(e as Error).message})`);
             continue;
         }
-        for (const b of borderos) {
-            try {
-                const page = await base.runWithRetry(() =>
-                    base.listGenericPaginated<Row>(
-                        `fin010/baixas/list/${s(b.borCod)}`,
-                        { fieldList: [], filterList: {}, pageNumber: 1, pageSize: 500 },
-                        { filCod },
-                    ),
-                );
-                for (const r of page.rows) {
-                    if (Number(r.vldPermuta ?? 0) === 1 || s(r.gerNumPermuta)) continue;
-                    baixas.push({
-                        nome: s(r.dpeNomPessoa) || s(r.dpeNomPessoaDocumento),
-                        valor: Math.abs(Number(r.bxaMnyLiquido ?? r.bxaMnyValor ?? 0)),
-                        data: Number(r.lcbDtaCompensado ?? r.borDtaMvto ?? b.borDtaMvto ?? 0),
-                    });
-                }
-            } catch (e) {
-                log(`fin010 bor=${s(b.borCod)}: FALHOU (${(e as Error).message})`);
+        let falhas = 0;
+        for (let i = 0; i < borderos.length; i += PARALELO) {
+            const lote = await Promise.allSettled(
+                borderos.slice(i, i + PARALELO).map((b) => baixasDoBordero(base, filCod, b)),
+            );
+            for (const r of lote) {
+                if (r.status === 'fulfilled') baixas.push(...r.value);
+                else falhas++;
             }
         }
-        log(`fin010 fil=${filCod}: ${borderos.length} borderôs na janela`);
+        const datas = borderos.map((b) => Number(b.borDtaMvto)).filter((d) => d > 0);
+        alcance[filCod] = {
+            borderos: borderos.length,
+            maisAntigo: datas.length
+                ? new Date(Math.min(...datas)).toISOString().slice(0, 10)
+                : '-',
+            falhas,
+        };
+        log(`fin010 fil=${filCod}: ${JSON.stringify(alcance[filCod])}`);
     }
     return baixas;
 }
@@ -292,13 +329,21 @@ function cruzar(baixas: Baixa[], debitos: LancamentoExtrato[]): Record<string, n
     const vocabulario: Record<string, number> = {};
     for (const b of baixas) {
         if (!b.nome || b.valor <= 0) continue;
-        const achado = (porValor.get(b.valor.toFixed(2)) ?? []).find(
+        const candidatos = (porValor.get(b.valor.toFixed(2)) ?? []).filter(
             (d) => !usados.has(d) && Math.abs(d.dataLancamento.getTime() - b.data) <= 1.5 * DIA,
         );
+        const achado = candidatos[0];
         let canal: Canal = 'SEM_DEBITO';
-        if (achado) {
+        const f = fornecedor(chaveNome(b.nome), b.nome);
+        if (achado && candidatos.length > 1) {
+            // Mais de um débito cabe: não dá para afirmar o canal. Não conta.
+            usados.add(achado);
+            f.ambiguos++;
+            canal = 'AMBIGUO';
+        } else if (achado) {
             usados.add(achado);
             canal = canalDoHistorico(achado.historico);
+            f.meses.add(new Date(b.data).toISOString().slice(0, 7));
             const palavras = (achado.historico ?? '')
                 .toUpperCase()
                 .split(/\s+/)
@@ -307,7 +352,6 @@ function cruzar(baixas: Baixa[], debitos: LancamentoExtrato[]): Record<string, n
             const k = `${canal} | ${palavras}`;
             vocabulario[k] = (vocabulario[k] ?? 0) + 1;
         }
-        const f = fornecedor(chaveNome(b.nome), b.nome);
         f.baixas++;
         f.valorPago += b.valor;
         f.canais[canal] = (f.canais[canal] ?? 0) + 1;
@@ -331,6 +375,28 @@ function classe(f: Fornecedor): string {
     return 'MISTO';
 }
 
+/**
+ * Confiança da regra "canal habitual" para o fornecedor, só com casamentos ÚNICOS:
+ *   ALTA  — ≥5 pagamentos, ≥3 meses distintos, canal dominante ≥95%
+ *   MEDIA — ≥3 pagamentos, canal dominante ≥90%
+ *   BAIXA — o resto (pouco histórico ou canal dividido)
+ */
+function confianca(f: Fornecedor): { nivel: string; dominante: string; share: number; n: number } {
+    const grupos: Record<string, number> = {
+        BOLETO: f.canais.BOLETO ?? 0,
+        TED_PIX: (f.canais.TED ?? 0) + (f.canais.PIX ?? 0),
+        OUTROS:
+            (f.canais.TRIBUTO ?? 0) + (f.canais.OUTROS ?? 0) + (f.canais.SISPAG_INDEFINIDO ?? 0),
+    };
+    const n = Object.values(grupos).reduce((a, v) => a + v, 0);
+    const [dominante, qtd] = Object.entries(grupos).sort((a, b) => b[1] - a[1])[0] ?? ['-', 0];
+    const share = n ? qtd / n : 0;
+    let nivel = 'BAIXA';
+    if (n >= 5 && f.meses.size >= 3 && share >= 0.95) nivel = 'ALTA';
+    else if (n >= 3 && share >= 0.9) nivel = 'MEDIA';
+    return { nivel, dominante, share: Number(share.toFixed(3)), n };
+}
+
 async function main(): Promise<void> {
     mkdirSync(OUT, { recursive: true });
     const base = await conectar();
@@ -340,15 +406,22 @@ async function main(): Promise<void> {
         ? process.env.PROBE_FILIAIS.split(',').map(Number)
         : (await base.getFiliais()).map((f) => Number((f as { filCod: unknown }).filCod));
 
-    log(`── A: títulos (fin064) desde ${de.toISOString().slice(0, 10)} ──`);
-    const titulos = await sinalTitulos(base, filiais, de.getTime());
-    log('── B: baixas (fin010) × extrato (fin095) ──');
+    const titulos: SinalTitulos = SINAL_A
+        ? await sinalTitulos(base, filiais, de.getTime())
+        : { total: 0, comForma: 0, comCodbar: 0, formas: {} };
+    log(`── B: baixas (fin010) × extrato (fin095) desde ${de.toISOString().slice(0, 10)} ──`);
     const debitos = await lerDebitos(filiais, de, ate);
     const baixas = await lerBaixas(base, filiais, de.getTime());
     const vocabulario = cruzar(baixas, debitos);
 
     const classes: Record<string, { fornecedores: number; baixas: number; valorPago: number }> = {};
-    const linhas = ['classe;fornecedor;titulos;comCodbar;formas;baixas;valorPago;canais'];
+    const porConfianca: Record<
+        string,
+        Record<string, { fornecedores: number; valorPago: number }>
+    > = {};
+    const linhas = [
+        'confianca;dominante;share;pagtosUnicos;meses;ambiguos;classe;fornecedor;baixas;valorPago;canais',
+    ];
     for (const f of fornecedores.values()) {
         const k = classe(f);
         const agg = classes[k] ?? { fornecedores: 0, baixas: 0, valorPago: 0 };
@@ -356,13 +429,25 @@ async function main(): Promise<void> {
         agg.baixas += f.baixas;
         agg.valorPago = Math.round(agg.valorPago + f.valorPago);
         classes[k] = agg;
+        const c = confianca(f);
+        if (c.n > 0) {
+            const nivel = porConfianca[c.nivel] ?? {};
+            porConfianca[c.nivel] = nivel;
+            const dom = nivel[c.dominante] ?? { fornecedores: 0, valorPago: 0 };
+            nivel[c.dominante] = dom;
+            dom.fornecedores++;
+            dom.valorPago = Math.round(dom.valorPago + f.valorPago);
+        }
         linhas.push(
             [
+                c.nivel,
+                c.dominante,
+                c.share,
+                c.n,
+                f.meses.size,
+                f.ambiguos,
                 k,
                 f.nome.replace(/;/g, ','),
-                f.titulos,
-                f.comCodbar,
-                JSON.stringify(f.formas),
                 f.baixas,
                 f.valorPago.toFixed(2),
                 JSON.stringify(f.canais),
@@ -370,12 +455,15 @@ async function main(): Promise<void> {
         );
     }
     const casadas = baixas.filter((b) => b.nome && b.valor > 0).length;
-    const semDebito = [...fornecedores.values()].reduce(
-        (a, f) => a + (f.canais.SEM_DEBITO ?? 0),
-        0,
-    );
+    const contar = (canal: Canal): number =>
+        [...fornecedores.values()].reduce((a, f) => a + (f.canais[canal] ?? 0), 0);
+    const semDebito = contar('SEM_DEBITO');
+    const ambiguos = contar('AMBIGUO');
     const resumo = {
         janela: { de: de.toISOString().slice(0, 10), ate: ate.toISOString().slice(0, 10), filiais },
+        alcancePorFilial: alcance,
+        casamento: { unicos: casadas - semDebito - ambiguos, ambiguos, semDebito },
+        confiancaPorCanalDominante: porConfianca,
         sinalA_titulos: {
             ...titulos,
             coberturaForma: titulos.total
