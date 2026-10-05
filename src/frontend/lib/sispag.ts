@@ -878,6 +878,40 @@ export async function runIngestaoPagamentos(): Promise<IngestaoPagamentosResult>
   return (await res.json()) as IngestaoPagamentosResult
 }
 
+export type EstadoCarteira = 'fresca' | 'atualizada' | 'em_andamento' | 'falha_recente'
+
+/** Resposta de `POST /sispag/carteira/atualizar` (ADR-0060). */
+export interface CarteiraAtualizacao {
+  estado: EstadoCarteira
+  /** ISO do fim da última ingestão bem-sucedida. */
+  ultimaIngestaoEm?: string
+  idadeMin?: number
+  run?: IngestaoPagamentosResult
+  /** Mensagem da última falha (só em `falha_recente`). */
+  motivo?: string
+}
+
+/**
+ * Pede ao backend para atualizar a carteira SE ela estiver defasada (TTL de 30 min no servidor).
+ * Chamada pela tela ao abrir: `fresca` não toca o Conexos; `atualizada` rodou a ingestão (~10 s).
+ * Basta `sispag:ver`. NÃO forma lotes.
+ */
+export async function atualizarCarteiraSeDefasada(): Promise<CarteiraAtualizacao> {
+  const res = await apiFetch(`${API}/sispag/carteira/atualizar`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+  })
+  if (!res.ok) {
+    let msg = `API ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+  return (await res.json()) as CarteiraAtualizacao
+}
+
 export async function fetchIngestaoRuns(limit = 10): Promise<PagamentoIngestaoRun[]> {
   const res = await apiFetch(`${API}/sispag/ingestao/runs?limit=${limit}`, {
     headers: await withAuthHeaders(),

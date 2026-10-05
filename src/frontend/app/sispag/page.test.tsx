@@ -3,12 +3,14 @@ import userEvent from '@testing-library/user-event'
 import SispagPage from '@/app/sispag/page'
 import { CATALOGO_PERMISSOES, type Permissao } from '@/lib/permissoes'
 import {
+  atualizarCarteiraSeDefasada,
   type ArquivoRetorno,
   conciliarRetorno,
   fetchBoletosDda,
   fetchContasPagadoras,
   fetchLotes,
   fetchRetornos,
+  fetchSispagPainel,
   type LotePagamento,
   type SispagPainel,
   type TituloAPagar,
@@ -65,6 +67,8 @@ jest.mock('@/lib/sispag', () => {
     fetchContasPagadoras: jest.fn().mockResolvedValue([]),
     fetchModalidadesDisponiveis: jest.fn().mockResolvedValue([]),
     fetchBoletosDda: jest.fn(),
+    // ADR-0060: o refresh ao abrir não pode bater na rede real nos demais testes da página.
+    atualizarCarteiraSeDefasada: jest.fn().mockResolvedValue({ estado: 'fresca' }),
   }
 })
 
@@ -337,5 +341,90 @@ describe('SispagPage — só sispag:ver', () => {
     expect(screen.getByRole('button', { name: /criar lote/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /retirar do lote/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /boletos dda/i })).toBeInTheDocument()
+  })
+})
+
+
+/**
+ * ADR-0060 — carteira ao abrir a tela. A tela mostra o que está gravado e pede o refresh; quando a
+ * ingestão termina, recarrega o painel sozinha. Quem só tem `sispag:ver` também dispara.
+ */
+describe('SispagPage — atualiza a carteira ao abrir', () => {
+  const mockRefresh = atualizarCarteiraSeDefasada as jest.Mock
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockReset()
+    lib.fetchSispagPainel.mockResolvedValue(painel)
+    lib.fetchLotes.mockReset()
+    lib.fetchLotes.mockResolvedValue([])
+    mockRefresh.mockReset()
+  })
+
+  const renderPainel = async () => {
+    await act(async () => {
+      render(<SispagPage />)
+    })
+  }
+
+  it('carteira fresca: pede o refresh UMA vez e não recarrega o painel', async () => {
+    mockRefresh.mockResolvedValue({ estado: 'fresca', idadeMin: 4 })
+    await renderPainel()
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1))
+    expect(fetchSispagPainel as jest.Mock).toHaveBeenCalledTimes(1)
+  })
+
+  it('atualizada: mostra "atualizando" enquanto roda e recarrega o painel ao terminar', async () => {
+    let terminar: (v: unknown) => void = () => {}
+    mockRefresh.mockReturnValue(new Promise((resolve) => (terminar = resolve)))
+    await renderPainel()
+
+    // Os dados gravados já estão na tela, com o aviso de que a atualização está em curso.
+    expect(await screen.findByText(/atualizando a carteira/)).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Títulos a pagar' })).toBeInTheDocument()
+    expect(fetchSispagPainel as jest.Mock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      terminar({ estado: 'atualizada', idadeMin: 0 })
+    })
+    await waitFor(() => expect(fetchSispagPainel as jest.Mock).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.queryByText(/atualizando a carteira/)).not.toBeInTheDocument(),
+    )
+  })
+
+  it('falha_recente: mantém os dados e avisa, sem recarregar', async () => {
+    mockRefresh.mockResolvedValue({
+      estado: 'falha_recente',
+      motivo: 'nenhuma das 7 filiais foi lida',
+    })
+    await renderPainel()
+    expect(await screen.findByText(/não foi possível atualizar agora/)).toBeInTheDocument()
+    expect(screen.getByText(/nenhuma das 7 filiais foi lida/)).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Títulos a pagar' })).toBeInTheDocument()
+    expect(fetchSispagPainel as jest.Mock).toHaveBeenCalledTimes(1)
+  })
+
+  it('erro da chamada: avisa e mantém a carteira gravada', async () => {
+    mockRefresh.mockRejectedValue(new Error('API 500'))
+    await renderPainel()
+    expect(await screen.findByText(/não foi possível atualizar agora/)).toBeInTheDocument()
+    expect(screen.getByText(/API 500/)).toBeInTheDocument()
+  })
+
+  it('quem só tem sispag:ver dispara o refresh (ADR-0060)', async () => {
+    permissoes = ['sispag:ver' as Permissao]
+    mockRefresh.mockResolvedValue({ estado: 'fresca' })
+    await renderPainel()
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1))
+  })
+
+  it('não dispara se o painel não carregou', async () => {
+    ;(jest.requireMock('@/lib/sispag').fetchSispagPainel as jest.Mock).mockRejectedValue(
+      new Error('fora do ar'),
+    )
+    await renderPainel()
+    expect(mockRefresh).not.toHaveBeenCalled()
   })
 })
