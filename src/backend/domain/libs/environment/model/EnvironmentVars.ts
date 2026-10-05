@@ -164,6 +164,14 @@ export default class EnvironmentVars {
     public sispagTedEnabled: boolean;
     public sispagDestinoManualEnabled: boolean;
     public sispagPixEnabled: boolean;
+    /**
+     * Carteira SISPAG ao abrir a tela (ADR-0060). `sispagCarteiraTtlMin`
+     * (`SISPAG_CARTEIRA_TTL_MIN`, default 30): ingestão mais nova que isto não é refeita.
+     * `sispagCarteiraCooldownMin` (`SISPAG_CARTEIRA_COOLDOWN_MIN`, default 5): depois de uma
+     * ingestão que falhou, não tenta de novo antes disto.
+     */
+    public sispagCarteiraTtlMin: number;
+    public sispagCarteiraCooldownMin: number;
     public solicitacaoNumerarioGcdCod: number;
 
     /**
@@ -263,6 +271,8 @@ export default class EnvironmentVars {
         sispagTedEnabled,
         sispagDestinoManualEnabled,
         sispagPixEnabled,
+        sispagCarteiraTtlMin,
+        sispagCarteiraCooldownMin,
         solicitacaoNumerarioGcdCod,
         solicitacaoNumerarioGcdCodPorFilial,
         conexosCredEncKey,
@@ -304,6 +314,8 @@ export default class EnvironmentVars {
         sispagTedEnabled?: boolean;
         sispagDestinoManualEnabled?: boolean;
         sispagPixEnabled?: boolean;
+        sispagCarteiraTtlMin?: number;
+        sispagCarteiraCooldownMin?: number;
         solicitacaoNumerarioGcdCod: number;
         solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
         conexosCredEncKey?: string;
@@ -345,6 +357,8 @@ export default class EnvironmentVars {
         this.sispagTedEnabled = sispagTedEnabled ?? false;
         this.sispagDestinoManualEnabled = sispagDestinoManualEnabled ?? false;
         this.sispagPixEnabled = sispagPixEnabled ?? false;
+        this.sispagCarteiraTtlMin = sispagCarteiraTtlMin ?? 30;
+        this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};
         this.conexosCredEncKey = conexosCredEncKey;

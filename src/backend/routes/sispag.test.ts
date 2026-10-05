@@ -23,6 +23,7 @@ import TituloForaDeLoteError from '../domain/errors/TituloForaDeLoteError.js';
 import ConciliacaoExecucaoRepository from '../domain/repository/sispag/ConciliacaoExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
 import RemessaExecucaoRepository from '../domain/repository/sispag/RemessaExecucaoRepository.js';
+import CarteiraAtualizacaoService from '../domain/service/sispag/CarteiraAtualizacaoService.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
@@ -505,6 +506,30 @@ describe('POST /sispag/ingestao', () => {
                 triggeredBy: 'user-abc',
                 idempotencyKey: 'chave-123',
             });
+        });
+    });
+});
+
+describe('POST /sispag/carteira/atualizar (ADR-0060)', () => {
+    it('quem só tem sispag:ver pode disparar, e o gatilho é marcado `abertura:<ator>`', async () => {
+        const atualizarSeDefasada = jest.fn().mockResolvedValue({ estado: 'fresca', idadeMin: 7 });
+        container.registerInstance(CarteiraAtualizacaoService, { atualizarSeDefasada } as never);
+
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/carteira/atualizar`, { method: 'POST' });
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toMatchObject({ estado: 'fresca', idadeMin: 7 });
+            expect(atualizarSeDefasada).toHaveBeenCalledWith({ triggeredBy: 'abertura:user-abc' });
+        });
+    });
+
+    it('sem login responde 401 e não toca a ingestão', async () => {
+        const atualizarSeDefasada = jest.fn();
+        container.registerInstance(CarteiraAtualizacaoService, { atualizarSeDefasada } as never);
+        await comApp({ authenticated: false }, async (url) => {
+            const res = await fetch(`${url}/sispag/carteira/atualizar`, { method: 'POST' });
+            expect(res.status).toBe(401);
+            expect(atualizarSeDefasada).not.toHaveBeenCalled();
         });
     });
 });

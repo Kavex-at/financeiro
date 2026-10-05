@@ -31,6 +31,12 @@ export default class EnvironmentProvider {
 
     private readEnv = (key: string, fallback = ''): string => process.env[key] || fallback;
 
+    /** Minutos positivos da env; ausente, inválido ou ≤ 0 cai no default (nunca desliga o freio). */
+    private readMinutos = (key: string, fallback: number): number => {
+        const n = Number(this.readEnv(key));
+        return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+
     /**
      * Resolve `conexosWriteEnabled` com um piso de segurança: **máquina local não escreve
      * na Conexos de PRODUÇÃO.**
@@ -241,6 +247,8 @@ export default class EnvironmentProvider {
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagDestinoManualEnabled: this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
+            sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
+            sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
@@ -332,6 +340,8 @@ export default class EnvironmentProvider {
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagDestinoManualEnabled: this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
+            sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
+            sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
