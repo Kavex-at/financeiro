@@ -556,6 +556,32 @@ export class DebitDateFrozenError extends Error {
   }
 }
 
+/** O título que ficou sem boleto DDA associado — o que o diálogo dos boletos precisa para abrir. */
+export interface TituloSemBoleto {
+  /** Ausente em respostas antigas do backend; a tela cai no filtro só por documento/valor. */
+  filCod?: number
+  docCod: string
+  titCod: string
+  credor?: string
+  valor?: number
+  /** Data civil `YYYY-MM-DD`. */
+  vencimento?: string
+}
+
+/**
+ * BOLETO sem boleto DDA associado no Conexos: a remessa sairia sem código de barras. Nada foi
+ * escrito no ERP. A tela abre os boletos DDA do título para a analista ver valor e data.
+ */
+export class BoletoSemCodigoBarrasError extends Error {
+  constructor(
+    message: string,
+    public readonly titulo: TituloSemBoleto,
+  ) {
+    super(message)
+    this.name = 'BoletoSemCodigoBarrasError'
+  }
+}
+
 /** Já existe uma geração em curso para este lote — esperar resolve. */
 export class RemessaEmAndamentoError extends Error {
   constructor(message: string) {
@@ -604,6 +630,16 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
     }
     if (body.code === 'REMESSA_EM_ANDAMENTO') {
       throw new RemessaEmAndamentoError(msg)
+    }
+    if (body.code === 'BOLETO_SEM_CODIGO_BARRAS') {
+      throw new BoletoSemCodigoBarrasError(msg, {
+        docCod: String(det.docCod ?? ''),
+        titCod: String(det.titCod ?? ''),
+        ...(typeof det.filCod === 'number' ? { filCod: det.filCod } : {}),
+        ...(typeof det.credor === 'string' ? { credor: det.credor } : {}),
+        ...(typeof det.valor === 'number' ? { valor: det.valor } : {}),
+        ...(typeof det.vencimento === 'string' ? { vencimento: det.vencimento } : {}),
+      })
     }
     if (body.code === 'CONCILIACAO_EM_DUVIDA') {
       throw new ConciliacaoEmDuvidaError(msg, det.garCodSeq as number | undefined)
@@ -960,6 +996,106 @@ export async function fetchBoletosDda(filtro: FiltroBoletosDda): Promise<Boletos
     throw new Error(msg)
   }
   return (await res.json()) as BoletosDdaResposta
+}
+
+/** Dados do item de um lote que o diálogo dos boletos DDA usa (vencimento vira data civil). */
+export const tituloDeItem = (i: ItemLote): TituloSemBoleto => ({
+  filCod: i.filCod,
+  docCod: i.docCod,
+  titCod: i.titCod,
+  ...(i.credor ? { credor: i.credor } : {}),
+  ...(i.valor !== undefined ? { valor: i.valor } : {}),
+  ...(i.vencimento !== undefined
+    ? { vencimento: new Date(i.vencimento).toISOString().slice(0, 10) }
+    : {}),
+})
+
+/** Dias entre duas datas civis `YYYY-MM-DD` (`b − a`), sem passar por fuso. */
+export const diasEntre = (a: string, b: string): number => {
+  const [ya, ma, da] = a.split('-').map(Number)
+  const [yb, mb, db] = b.split('-').map(Number)
+  return Math.round((Date.UTC(yb, mb - 1, db) - Date.UTC(ya, ma - 1, da)) / 86_400_000)
+}
+
+/** Boleto DDA já ligado ou candidato a um título específico. */
+const ehDoTitulo = (b: BoletoDda, t: TituloSemBoleto): boolean =>
+  [b.vinculo, ...b.candidatos].some(
+    (x) =>
+      x !== undefined &&
+      x.docCod === t.docCod &&
+      x.titCod === t.titCod &&
+      (t.filCod === undefined || x.filCod === t.filCod),
+  )
+
+export interface BoletoDdaDoTitulo {
+  boleto: BoletoDda
+  /** Vencimento do boleto − vencimento do título, em dias. Ausente se uma das datas falta. */
+  diferencaDias?: number
+}
+
+export interface BoletosDdaDoTitulo {
+  /** O Conexos já ligou, ou listou como candidato, este título. */
+  doTitulo: BoletoDdaDoTitulo[]
+  /** Mesmo valor, mas nenhuma ligação com este título: o caso de data fora da janela. */
+  mesmoValor: BoletoDdaDoTitulo[]
+}
+
+/**
+ * Separa os boletos DDA que importam para UM título: os que o Conexos associa/lista como
+ * candidatos dele e os que só têm o MESMO valor (onde mora o "a data difere alguns dias").
+ * Pura: a busca do backend é textual, então o filtro exato do valor e do título é feito aqui.
+ */
+export const classificarBoletosDoTitulo = (
+  titulo: TituloSemBoleto,
+  boletos: BoletoDda[],
+): BoletosDdaDoTitulo => {
+  const unicos = [...new Map(boletos.map((b) => [`${b.ddcCod}:${b.ditCod}`, b])).values()]
+  const comDiferenca = (b: BoletoDda): BoletoDdaDoTitulo => {
+    const candidato = [b.vinculo, ...b.candidatos].find(
+      (x) => x !== undefined && x.docCod === titulo.docCod && x.titCod === titulo.titCod,
+    )
+    const calculada =
+      titulo.vencimento && b.vencimento ? diasEntre(titulo.vencimento, b.vencimento) : undefined
+    const diferencaDias = calculada ?? candidato?.diferencaDias
+    return { boleto: b, ...(diferencaDias !== undefined ? { diferencaDias } : {}) }
+  }
+  const porDistancia = (a: BoletoDdaDoTitulo, b: BoletoDdaDoTitulo) =>
+    Math.abs(a.diferencaDias ?? Number.MAX_SAFE_INTEGER) -
+    Math.abs(b.diferencaDias ?? Number.MAX_SAFE_INTEGER)
+  const doTitulo = unicos.filter((b) => ehDoTitulo(b, titulo)).map(comDiferenca).sort(porDistancia)
+  const mesmoValor = unicos
+    .filter(
+      (b) =>
+        !ehDoTitulo(b, titulo) &&
+        titulo.valor !== undefined &&
+        Math.abs(b.valor - titulo.valor) < 0.005,
+    )
+    .map(comDiferenca)
+    .sort(porDistancia)
+  return { doTitulo, mesmoValor }
+}
+
+/**
+ * Boletos DDA que podem ser deste título: os que o listam como candidato/vínculo e os de mesmo
+ * valor, qualquer data. Duas buscas à lista paginada do backend (ela já indexa `doc/tit` e o
+ * valor), unidas e classificadas aqui.
+ */
+export async function fetchBoletosDdaDoTitulo(
+  titulo: TituloSemBoleto,
+): Promise<BoletosDdaDoTitulo> {
+  const base = {
+    escopo: 'todos' as const,
+    pagina: 1,
+    tamanho: 50,
+    ...(titulo.filCod !== undefined ? { filCod: titulo.filCod } : {}),
+  }
+  const [porTitulo, porValor] = await Promise.all([
+    fetchBoletosDda({ ...base, busca: `${titulo.docCod}/${titulo.titCod}` }),
+    titulo.valor !== undefined
+      ? fetchBoletosDda({ ...base, busca: titulo.valor.toFixed(2) })
+      : Promise.resolve(undefined),
+  ])
+  return classificarBoletosDoTitulo(titulo, [...porTitulo.boletos, ...(porValor?.boletos ?? [])])
 }
 
 export async function sincronizarBoletosDda(): Promise<SincronizacaoDdaResultado> {

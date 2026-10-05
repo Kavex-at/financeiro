@@ -57,7 +57,9 @@ import {
   DebitDateOutsideWindowError,
   LoteAnteriorCanceladoError,
   RemessaEmAndamentoError,
+  BoletoSemCodigoBarrasError,
   RemessaEmDuvidaError,
+  type TituloSemBoleto,
   removerItem,
   runIngestaoPagamentos,
   type LotePagamento,
@@ -67,6 +69,7 @@ import {
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { BoletosDdaTab } from './components/BoletosDdaTab'
+import { BoletosDoTituloDialog } from './components/BoletosDoTituloDialog'
 import { ConfirmarProcessarRetornoDialog } from './components/ConfirmarAcaoDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
@@ -190,6 +193,7 @@ function SispagPanel() {
   const [runsLoading, setRunsLoading] = React.useState(false)
   // Abas controladas: o link do lote na linha do título (ADR-0050) troca de aba.
   const [aba, setAba] = React.useState('titulos')
+  const [tituloDda, setTituloDda] = React.useState<TituloSemBoleto | null>(null)
   const [loteEmFoco, setLoteEmFoco] = React.useState<string | null>(null)
   const [retirando, setRetirando] = React.useState<TituloAPagar | null>(null)
   const [salvandoRetirada, setSalvandoRetirada] = React.useState(false)
@@ -512,6 +516,16 @@ function SispagPanel() {
         toast.warning('Data de débito já fixada no Conexos (fin015)', {
           description: e.message,
           duration: 30000,
+        })
+      } else if (e instanceof BoletoSemCodigoBarrasError) {
+        // Nada foi escrito no ERP. A analista confere valor e data dos boletos DDA do título.
+        toast.warning('Boleto sem DDA associado', {
+          description: e.message,
+          duration: 30000,
+          action: {
+            label: 'Ver boletos DDA',
+            onClick: () => setTituloDda(e.titulo),
+          },
         })
       } else if (e instanceof RemessaEmDuvidaError) {
         toast.error('Remessa em dúvida — NÃO repita', {
@@ -1281,6 +1295,7 @@ function SispagPanel() {
             </TabsContent>
 
           </Tabs>
+          <BoletosDoTituloDialog titulo={tituloDda} onClose={() => setTituloDda(null)} />
         </>
       ) : null}
     </div>

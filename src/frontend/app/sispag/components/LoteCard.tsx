@@ -64,8 +64,11 @@ import {
   rotuloConta,
   STATUS_SINCRONIZAVEIS,
   sincronizarLote,
+  type TituloSemBoleto,
+  tituloDeItem,
   ultimaSincronizacao,
 } from '@/lib/sispag'
+import { BoletosDoTituloDialog } from './BoletosDoTituloDialog'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { baixarBlob } from '@/lib/download'
 import { PERMISSAO } from '@/lib/permissoes'
@@ -367,6 +370,8 @@ export function LoteCard({
   }, [])
   const [destinoDe, setDestinoDe] = React.useState<ItemLote | null>(null)
   const [aprovandoDe, setAprovandoDe] = React.useState<ItemLote | null>(null)
+  // Título BOLETO sem DDA associado cujos boletos DDA a analista quer conferir.
+  const [tituloDda, setTituloDda] = React.useState<TituloSemBoleto | null>(null)
   const podeInformarDestino =
     podeExecutar &&
     recursos.destinoManualEnabled && (recursos.tedEnabled || recursos.pixEnabled)
@@ -617,6 +622,7 @@ export function LoteCard({
               </Button>
             </>
           ) : null}
+          <BoletosDoTituloDialog titulo={tituloDda} onClose={() => setTituloDda(null)} />
           {destinoDe ? (
             <InformarDestinoDialog
               lote={l}
@@ -852,6 +858,17 @@ export function LoteCard({
                                   ? 'sem boleto DDA — a remessa sairia sem código de barras'
                                   : 'forma não cadastrada'}
                               </span>
+                            ) : null}
+                            {i.modalidade === 'BOLETO' && indisponivel ? (
+                              <Button
+                                type="button"
+                                variant="link"
+                                size="sm"
+                                className="h-auto p-0 text-xs"
+                                onClick={() => setTituloDda(tituloDeItem(i))}
+                              >
+                                Ver boletos DDA
+                              </Button>
                             ) : null}
                             {podeInformarDestino ? (
                               <DestinoDoItem

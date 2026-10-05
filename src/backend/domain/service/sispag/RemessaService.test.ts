@@ -1031,7 +1031,17 @@ describe('RemessaService — boleto (código de barras via DDA)', () => {
 
         await expect(
             make({ write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
-        ).rejects.toMatchObject({ code: 'BOLETO_SEM_CODIGO_BARRAS' });
+        ).rejects.toMatchObject({
+            code: 'BOLETO_SEM_CODIGO_BARRAS',
+            // A tela abre o diálogo dos boletos DDA do título com estes dados (valor + data).
+            details: expect.objectContaining({
+                docCod: '801',
+                titCod: '1',
+                filCod: 2,
+                valor: 258.4,
+                vencimento: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+            }),
+        });
 
         expect(write.importarTitulos).not.toHaveBeenCalled();
         expect(write.gerarRemessa).not.toHaveBeenCalled();

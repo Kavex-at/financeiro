@@ -1,5 +1,10 @@
 import {
   baixarRemessa,
+  BoletoSemCodigoBarrasError,
+  type BoletoDda,
+  classificarBoletosDoTitulo,
+  diasEntre,
+  tituloDeItem,
   fetchBoletosDda,
   DebitDateFrozenError,
   DebitDateOutsideWindowError,
@@ -123,6 +128,33 @@ describe('gerarRemessa — data de débito (ADR-0049)', () => {
     expect(erro).toBeInstanceOf(DebitDateOutsideWindowError)
     expect((erro as DebitDateOutsideWindowError).message).toBe('Data 30/09 depois do vencimento')
     expect((erro as DebitDateOutsideWindowError).details).toMatchObject({ max: '2026-09-29' })
+  })
+
+  it('BOLETO_SEM_CODIGO_BARRAS vira BoletoSemCodigoBarrasError com o título', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      respostaJson(409, {
+        error: 'O título 5046/1 está marcado como BOLETO, mas…',
+        code: 'BOLETO_SEM_CODIGO_BARRAS',
+        details: {
+          docCod: '5046',
+          titCod: '1',
+          filCod: 1,
+          credor: 'ADP BRASIL LTDA',
+          valor: 4815.33,
+          vencimento: '2026-09-24',
+        },
+      }),
+    )
+    const erro = await gerarRemessa('L1').catch((e: unknown) => e)
+    expect(erro).toBeInstanceOf(BoletoSemCodigoBarrasError)
+    expect((erro as BoletoSemCodigoBarrasError).titulo).toEqual({
+      docCod: '5046',
+      titCod: '1',
+      filCod: 1,
+      credor: 'ADP BRASIL LTDA',
+      valor: 4815.33,
+      vencimento: '2026-09-24',
+    })
   })
 
   it('DATA_DEBITO_CONGELADA vira DebitDateFrozenError com details', async () => {
@@ -420,5 +452,106 @@ describe('validarDestinoManual — espelho da validação do backend', () => {
   it('mensagens de erro não repetem o valor digitado', () => {
     const r = validarDestinoManual({ ...conta, titularDocumento: '11144477736' })
     expect(JSON.stringify(r.erros)).not.toContain('11144477736')
+  })
+})
+
+
+describe('boletos DDA de um título', () => {
+  const titulo = {
+    filCod: 1,
+    docCod: '5046',
+    titCod: '1',
+    credor: 'ADP BRASIL LTDA',
+    valor: 4815.33,
+    vencimento: '2026-09-24',
+  }
+  const boleto = (over: Partial<BoletoDda> & { ditCod: number }): BoletoDda => ({
+    ddcCod: 152,
+    valor: 4815.33,
+    vencimento: '2026-09-24',
+    vencido: false,
+    situacao: 'SEM_TITULO',
+    candidatos: [],
+    ...over,
+  })
+
+  it('diasEntre conta dias civis, sem fuso (inclusive na virada de mês e ano)', () => {
+    expect(diasEntre('2026-09-24', '2026-09-24')).toBe(0)
+    expect(diasEntre('2026-09-24', '2026-09-27')).toBe(3)
+    expect(diasEntre('2026-09-24', '2026-09-21')).toBe(-3)
+    expect(diasEntre('2026-12-30', '2027-01-02')).toBe(3)
+  })
+
+  it('separa os candidatos do título dos boletos só de mesmo valor, e mede a diferença de data', () => {
+    const candidato = boleto({
+      ditCod: 1,
+      situacao: 'CANDIDATO',
+      candidatos: [{ filCod: 1, docCod: '5046', titCod: '1', diferencaDias: 0 }],
+    })
+    const dataDiferente = boleto({ ditCod: 2, vencimento: '2026-09-27' })
+    const outroValor = boleto({ ditCod: 3, valor: 100 })
+    const deOutroTitulo = boleto({
+      ditCod: 4,
+      situacao: 'VINCULADO',
+      vinculo: { filCod: 1, docCod: '9', titCod: '1' },
+      candidatos: [],
+    })
+    const r = classificarBoletosDoTitulo(titulo, [
+      candidato,
+      dataDiferente,
+      outroValor,
+      deOutroTitulo,
+      candidato, // duplicado vindo das duas buscas
+    ])
+    expect(r.doTitulo.map((x) => x.boleto.ditCod)).toEqual([1])
+    expect(r.doTitulo[0]?.diferencaDias).toBe(0)
+    // Mesmo valor sem ligação a ESTE título: é onde mora "a data difere por alguns dias" (3 dias
+    // no 2) e também o boleto já ligado a outro título (4). O de outro valor sai. Mais próximo 1º.
+    expect(r.mesmoValor.map((x) => [x.boleto.ditCod, x.diferencaDias])).toEqual([
+      [4, 0],
+      [2, 3],
+    ])
+  })
+
+  it('ordena do vencimento mais próximo ao mais distante', () => {
+    const r = classificarBoletosDoTitulo(titulo, [
+      boleto({ ditCod: 1, vencimento: '2026-10-05' }),
+      boleto({ ditCod: 2, vencimento: '2026-09-25' }),
+      boleto({ ditCod: 3, vencimento: '2026-09-20' }),
+    ])
+    expect(r.mesmoValor.map((x) => x.boleto.ditCod)).toEqual([2, 3, 1])
+  })
+
+  it('não confunde o mesmo docCod/titCod de OUTRA filial', () => {
+    const outraFilial = boleto({
+      ditCod: 1,
+      situacao: 'CANDIDATO',
+      candidatos: [{ filCod: 2, docCod: '5046', titCod: '1', diferencaDias: 0 }],
+    })
+    const r = classificarBoletosDoTitulo(titulo, [outraFilial])
+    expect(r.doTitulo).toHaveLength(0)
+    expect(r.mesmoValor).toHaveLength(1)
+  })
+
+  it('tituloDeItem converte o vencimento (epoch) em data civil', () => {
+    expect(
+      tituloDeItem({
+        loteId: 'L1',
+        filCod: 1,
+        docCod: '5046',
+        titCod: '1',
+        credor: 'ADP',
+        valor: 10,
+        vencimento: Date.UTC(2026, 8, 24),
+        incluidoPor: 'u',
+      }),
+    ).toEqual({
+      filCod: 1,
+      docCod: '5046',
+      titCod: '1',
+      credor: 'ADP',
+      valor: 10,
+      vencimento: '2026-09-24',
+    })
   })
 })
