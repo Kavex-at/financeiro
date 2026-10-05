@@ -234,6 +234,31 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
   **Fora do escopo (follow-up consciente):** a âncora I-Write-6 segue condicionada a
   `titulos.length === 1` — e **não** a "uma única parcela aberta". Mudar isso alteraria o
   arredondamento de centavos em baixas multi-parcela e é decisão de outra rodada.
+  *(Atualização v0.35.0: a âncora segue condicionada a título único; o que cobre a multi-parcela
+  agora é o teto I-Write-10, que só corta excesso e não fecha para cima.)*
+
+- **I-Write-10 (teto do líquido no disponível vivo do adto — anti-recusa por centavo):** em **toda**
+  baixa (1:1, perna N:M, cada título de invoice multi-título), o líquido enviado
+  (`bxaMnyValor + juros − desconto`) **nunca** excede o `bxaMnyValorPermuta` que o ERP devolve no
+  passo 3. Esse valor é o disponível **vivo** do adto naquele borderô: já desconta as pernas/títulos
+  gravados antes no mesmo `borCod` (medido 2026-10-05: borderô 23188, perna 2 recebeu 35.484,31 =
+  85.685,99 − 50.201,68; borderô 23184, título 2 recebeu 28.499,32 = 49.873,82 − 21.374,50).
+  Excesso **≤ R$1,00** (mesmo teto absoluto de I-Write-6, `ToleranciaResiduo.LIMITE_BRL`) é
+  absorvido na conta de variação JÁ em uso: `juros −= excesso` (131) ou `desconto += excesso` (130).
+  Excesso **> R$1,00**, ou juros menor que o excesso, **não** é ajustado → BUSINESS_WARN (não é
+  arredondamento; o ERP recusa e a analista confere). **Só corta para baixo:** líquido abaixo do
+  disponível fica como está (o saldo restante é legítimo na perna parcial; fechar para cima
+  continua sendo exclusividade de I-Write-6). Roda **depois** da âncora I-Write-6; quando a âncora
+  atuou, o excesso é zero e o teto é no-op.
+  **Por que existe:** I-Write-6 só cobre full-consume de título único. Nos dois casos de fora — a
+  última perna N:M (o gate compara com o saldo **total** do adto, nunca com o restante) e a invoice
+  multi-título (cada título arredonda `round2(usd × taxa)` e o rateio da variação separadamente) —
+  os centavos somavam 0,01 **acima** do adto, e o ERP recusava: no gravar (borderô 16596,
+  2026-07-13, `Generic.ERROR_MESSAGE`) ou só no **Finalizar** ("O TOTAL PERMUTADO DE ADIANTAMENTO
+  (49.873,83) É MAIOR QUE O VALOR DISPONÍVEL (49.873,82)", borderô 23184, 2026-10-05). Medido no
+  ledger: 3 das 196 execuções reais com payload tinham excesso de 0,01; nenhuma acima disso, fora a
+  2646 (disponível 0, excesso R$921 mil — outro problema, corretamente fora do teto). Ver ADR-0062 e
+  `ReconciliacaoPermutaService.limitarAoDisponivelDoAdto`.
 
 ## Adendo v0.7.0 (2026-06-24) — auto-alocação ANTES de gravar
 
@@ -274,6 +299,7 @@ confundir entre si.
 | **dinâmica (anti-drift na baixa)** | `ReconciliacaoPermutaService.ts:269-270` | `tolerancia = Math.max(0.01, emAbertoErp * 0.005)`; se `valorBaixaDesejado > emAbertoErp + tolerancia` ⇒ **aborta** (I-Write-1) | a baixa NUNCA pode exceder o em-aberto VIVO do ERP; tolera só centavo/0,5% de arredondamento, depois capa em `bxaMnyValor = min(valorBaixaDesejado, emAbertoErp)` (`:277`) |
 | **+1 USD** (elegibilidade automática) | `GestaoPermutasService.ts:322-335` + `AlocacaoPermutasService.ts:337` | `saldoNeg + 1 ≥ Σ invoices do processo` ⇒ múltipla AUTOMÁTICA | já documentada em `business-rules/multipla-automatica.md` (I-Permuta-6) — só referência aqui |
 | **resíduo de âncora (I-Write-6)** — `R$1,00` fixo (absoluto) | `ReconciliacaoPermutaService.ancorarVariacaoNoAdto` | no full-consume de título único, absorve `bxaMnyValorPermuta − líquido` na conta de variação SE `|resíduo| ≤ R$1,00`; senão **não ancora** (BUSINESS_WARN) | zera o resíduo de centavos "à permutar" no adto sem mascarar saldo real (teto NÃO escala com o valor de propósito) |
+| **teto do líquido (I-Write-10)** — `R$1,00` fixo (absoluto), só para baixo | `ReconciliacaoPermutaService.limitarAoDisponivelDoAdto` | em TODA baixa, se `líquido − bxaMnyValorPermuta` ∈ (0; R$1,00], tira o excesso da variação (juros ↓ / desconto ↑); acima disso ou juros insuficiente ⇒ não ajusta (BUSINESS_WARN) | o ERP recusa líquido acima do disponível do adto (no gravar ou no Finalizar); cobre a última perna N:M e a invoice multi-título, que I-Write-6 não alcança |
 
 > **Tolerância dinâmica — fórmula EXATA do código (`ReconciliacaoPermutaService.ts:269`):**
 > `const tolerancia = Math.max(0.01, emAbertoErp * 0.005);` — ou seja, o maior entre **0,01 BRL**

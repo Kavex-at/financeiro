@@ -869,6 +869,24 @@ export default class ReconciliacaoPermutaService {
         juros = ancorada.juros;
         desconto = ancorada.desconto;
 
+        // TETO NO DISPONÍVEL VIVO DO ADTO (I-Write-10) — em TODA baixa, depois da âncora. Cobre o
+        // que a âncora não alcança (última perna N:M, invoice multi-título): centavos de
+        // arredondamento somando ACIMA do adto, que o ERP recusa no gravar ou no Finalizar.
+        const limitada = await this.limitarAoDisponivelDoAdto({
+            ...(perm.bxaMnyValorPermuta !== undefined
+                ? { bxaMnyValorPermuta: perm.bxaMnyValorPermuta }
+                : {}),
+            bxaMnyValor,
+            juros,
+            desconto,
+            isDesconto,
+            adiantamentoDocCod,
+            invoiceDocCod,
+            titCod,
+        });
+        juros = limitada.juros;
+        desconto = limitada.desconto;
+
         // Passo 4 — recalcula o líquido com o juros/desconto informado.
         const val4 = await this.conexosBaixaClient.atualizarValorLiquido({
             filCod,
@@ -978,6 +996,59 @@ export default class ReconciliacaoPermutaService {
             data: ctx,
         });
         return { juros: jurosAncora, desconto: descontoAncora };
+    };
+
+    /**
+     * TETO DO LÍQUIDO NO DISPONÍVEL VIVO DO ADTO (I-Write-10, ADR-0062). O `bxaMnyValorPermuta` do
+     * passo 3 é o disponível do adto NAQUELE borderô — já desconta as pernas/títulos gravados antes
+     * no mesmo `borCod`. Se o líquido passa dele por centavos (≤ R$1,00, o mesmo teto absoluto da
+     * âncora), o excesso sai da variação em uso (juros ↓ / desconto ↑). SÓ corta para baixo: líquido
+     * abaixo do disponível é saldo legítimo de perna parcial, e fechar para cima é da âncora
+     * (I-Write-6). Excesso maior, ou juros que ficaria negativo, não é arredondamento → avisa e não
+     * mexe (o ERP recusa, a analista confere).
+     */
+    private limitarAoDisponivelDoAdto = async (p: {
+        bxaMnyValorPermuta?: number;
+        bxaMnyValor: number;
+        juros: number;
+        desconto: number;
+        isDesconto: boolean;
+        adiantamentoDocCod: number;
+        invoiceDocCod: number;
+        titCod: number;
+    }): Promise<{ juros: number; desconto: number }> => {
+        const { juros, desconto } = p;
+        if (p.bxaMnyValorPermuta === undefined) return { juros, desconto };
+        const excesso = round2(round2(p.bxaMnyValor + juros - desconto) - p.bxaMnyValorPermuta);
+        if (!(excesso > 0)) return { juros, desconto };
+
+        const limiteResiduo = ToleranciaResiduo.LIMITE_BRL;
+        const ctx = {
+            adiantamentoDocCod: p.adiantamentoDocCod,
+            invoiceDocCod: p.invoiceDocCod,
+            titCod: p.titCod,
+            excesso,
+            bxaMnyValorPermuta: p.bxaMnyValorPermuta,
+            limiteResiduo,
+        };
+        const jurosTeto = p.isDesconto ? juros : round2(juros - excesso);
+        const descontoTeto = p.isDesconto ? round2(desconto + excesso) : desconto;
+        if (excesso > limiteResiduo || jurosTeto < 0) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'líquido da baixa acima do disponível do adto e fora da tolerância — NÃO ajustado (o ERP deve recusar; conferir)',
+                data: ctx,
+            });
+            return { juros, desconto };
+        }
+
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'permuta baixa LIMITADA ao disponível do adto (excesso absorvido na variação)',
+            data: ctx,
+        });
+        return { juros: jurosTeto, desconto: descontoTeto };
     };
 
     /** Payload do passo 5 — une o lado invoice + o lado permuta (dados do ERP no passo 3). */
