@@ -2,14 +2,15 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from 'pg';
 import 'reflect-metadata';
-import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
-import type { DestinoManual } from '../domain/interface/sispag/SispagInterface.js';
-import type EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
-import LotePagamentoRepository from '../domain/repository/sispag/LotePagamentoRepository.js';
 
 /**
- * 0068 contra um Postgres DE VERDADE (ADR-0054 D10): o `CHECK` novo das permissões, o selo do
- * Administrador e a aprovação derivada da trilha — pelo `LotePagamentoRepository` real.
+ * 0068 contra um Postgres DE VERDADE (ADR-0054 D10): o `CHECK` das permissões, o selo do
+ * Administrador e a aprovação na trilha só-inclusão.
+ *
+ * É HISTÓRICO: a ADR-0060 (migration 0075) trocou `sispag:aprovar_destino` por `sispag:excecao` e
+ * retirou o destino digitado por item. Por isso aplica só as migrations ATÉ a 0068 — o estado do
+ * banco no dia em que ela subiu — e testa o esquema com SQL cru (o repositório que gravava e
+ * aprovava o destino do item foi removido). A conversão para `sispag:excecao` está no teste da 0075.
  *
  * Não roda no `npm test`. Roda no `npm run test:sql` com o mesmo DSN do teste da 0067:
  *
@@ -28,6 +29,7 @@ if (process.env.CI === 'true' && !ADMIN_DSN) {
     );
 }
 const BANCO = 'sispag_aprovar_destino_it';
+const NOME_0068 = '0068_sispag_aprovar_destino.sql';
 const LOTE = '00000000-0000-0000-0000-000000000068';
 
 const dsnPara = (dsn: string, banco: string): string => {
@@ -36,26 +38,19 @@ const dsnPara = (dsn: string, banco: string): string => {
     return url.toString();
 };
 
-const CONTA: DestinoManual = {
-    tipo: 'CONTA',
-    bancoCod: '237',
-    agencia: '1234',
-    conta: '99887766',
-    contaDv: '1',
-    titularDocumento: '11144477735',
-};
-
 const describeComBanco = ADMIN_DSN ? describe : describe.skip;
 
-describeComBanco('0068 — aprovação do destino digitado (integração)', () => {
+describeComBanco('0068 — aprovação do destino digitado (integração, histórico)', () => {
     let db: Client;
-    let pool: PostgreeDatabaseClient;
-    let repo: LotePagamentoRepository;
-    const chave = { loteId: LOTE, filCod: 1, docCod: '100', titCod: '1' };
 
-    const versao = async (): Promise<number> =>
-        (await db.query('SELECT versao FROM lote_pagamento WHERE id = $1', [LOTE])).rows[0].versao;
-    const item = async () => (await repo.getLoteComItens(LOTE))?.itens[0];
+    const gravacao = async (id: string): Promise<void> => {
+        await db.query(
+            `INSERT INTO lote_pagamento_item_destino_audit
+                (id, lote_id, fil_cod, doc_cod, tit_cod, alterado_por, evento, depois)
+             VALUES ($1, $2, 1, '100', '1', 'ana', 'GRAVACAO', '{"tipo":"CONTA"}'::jsonb)`,
+            [id, LOTE],
+        );
+    };
 
     beforeAll(async () => {
         const dsn = ADMIN_DSN ?? '';
@@ -69,41 +64,27 @@ describeComBanco('0068 — aprovação do destino digitado (integração)', () =
         await raiz.query(`CREATE DATABASE ${BANCO}`);
         await raiz.end();
 
-        const dsnBanco = dsnPara(dsn, BANCO);
-        db = new Client({ connectionString: dsnBanco });
+        db = new Client({ connectionString: dsnPara(dsn, BANCO) });
         await db.connect();
         const migrations = readdirSync(__dirname)
             .filter((f) => /^\d{4}_.*\.sql$/.test(f))
             .sort();
-        expect(migrations).toContain('0068_sispag_aprovar_destino.sql');
-        for (const arquivo of migrations) {
+        expect(migrations).toContain(NOME_0068);
+        // Só até a 0068: o esquema do dia em que ela subiu.
+        for (const arquivo of migrations.filter((f) => f <= NOME_0068)) {
             await db.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
         }
         // Idempotente: aplicar de novo não quebra nem duplica.
-        await db.query(
-            readFileSync(path.join(__dirname, '0068_sispag_aprovar_destino.sql'), 'utf8'),
-        );
+        await db.query(readFileSync(path.join(__dirname, NOME_0068), 'utf8'));
 
         await db.query(
             `INSERT INTO lote_pagamento (id, fil_cod, status, criado_por)
              VALUES ($1, 1, 'RASCUNHO', 'u1')`,
             [LOTE],
         );
-        await db.query(
-            `INSERT INTO lote_pagamento_item (lote_id, fil_cod, doc_cod, tit_cod, incluido_por, modalidade)
-             VALUES ($1, 1, '100', '1', 'u1', 'TED')`,
-            [LOTE],
-        );
-
-        const env = {
-            getEnvironmentVars: async () => ({ databaseConnectionString: dsnBanco }),
-        } as unknown as EnvironmentProvider;
-        pool = new PostgreeDatabaseClient(env);
-        repo = new LotePagamentoRepository(pool);
     });
 
     afterAll(async () => {
-        await pool?.close();
         await db?.end();
     });
 
@@ -143,58 +124,15 @@ describeComBanco('0068 — aprovação do destino digitado (integração)', () =
         ).rejects.toThrow(/check/i);
     });
 
-    it('gravar → pendente; aprovar → aprovado sem mudar a gravação vigente; regravar → pendente de novo', async () => {
-        const g1 = await repo.setDestinoManualItem({
-            ...chave,
-            versaoEsperada: await versao(),
-            destino: CONTA,
-            usuario: 'ana',
-        });
-        expect(g1.atualizado).toBe(true);
-        const gravado = await item();
-        expect(gravado?.destinoManualAuditId).toBe(g1.auditId);
-        expect(gravado?.destinoManualAprovadoPor).toBeUndefined();
-
-        const ap = await repo.aprovarDestinoManualItem({
-            ...chave,
-            versaoEsperada: await versao(),
-            usuario: 'ana',
-        });
-        expect(ap.atualizado).toBe(true);
-        const aprovado = await item();
-        expect(aprovado?.destinoManualAprovadoPor).toBe('ana');
-        // A aprovação não vira "a gravação mais recente": o pin do ledger (I10f) não muda.
-        expect(aprovado?.destinoManualAuditId).toBe(g1.auditId);
-        expect(aprovado?.destinoManualInformadoPor).toBe('ana');
-
-        const g2 = await repo.setDestinoManualItem({
-            ...chave,
-            versaoEsperada: await versao(),
-            destino: { ...CONTA, conta: '11112222' },
-            usuario: 'bia',
-        });
-        const regravado = await item();
-        expect(regravado?.destinoManualAuditId).toBe(g2.auditId);
-        expect(regravado?.destinoManualAprovadoPor).toBeUndefined();
-    });
-
-    it('versão velha: a aprovação não grava nada', async () => {
-        const antes = await db.query(
-            `SELECT count(*)::int AS n FROM lote_pagamento_item_destino_audit WHERE evento = 'APROVACAO'`,
+    it('GRAVACAO → APROVACAO apontando para ela; a trilha continua só-inclusão', async () => {
+        const g = '00000000-0000-0000-0000-0000000000c1';
+        await gravacao(g);
+        await db.query(
+            `INSERT INTO lote_pagamento_item_destino_audit
+                (id, lote_id, fil_cod, doc_cod, tit_cod, alterado_por, evento, aprova_audit_id)
+             VALUES ('00000000-0000-0000-0000-0000000000c2', $1, 1, '100', '1', 'bia', 'APROVACAO', $2)`,
+            [LOTE, g],
         );
-        const r = await repo.aprovarDestinoManualItem({
-            ...chave,
-            versaoEsperada: 1,
-            usuario: 'ana',
-        });
-        expect(r.atualizado).toBe(false);
-        const depois = await db.query(
-            `SELECT count(*)::int AS n FROM lote_pagamento_item_destino_audit WHERE evento = 'APROVACAO'`,
-        );
-        expect(depois.rows[0].n).toBe(antes.rows[0].n);
-    });
-
-    it('a linha de aprovação continua só-inclusão', async () => {
         await expect(
             db.query(
                 `UPDATE lote_pagamento_item_destino_audit SET alterado_por = 'x' WHERE evento = 'APROVACAO'`,

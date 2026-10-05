@@ -20,6 +20,9 @@ import {
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import CarteiraAtualizacaoService from '../domain/service/sispag/CarteiraAtualizacaoService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
+import ExcecaoDestinoService, {
+    type AtorExcecao,
+} from '../domain/service/sispag/ExcecaoDestinoService.js';
 import LotePagamentoApiView from '../domain/service/sispag/LotePagamentoApiView.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
@@ -28,6 +31,7 @@ import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
+import { EXCECAO_ESTADO } from '../domain/interface/sispag/SispagInterface.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { exigirPermissao } from '../http/acesso.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
@@ -404,17 +408,7 @@ router.post(
     }),
 );
 
-// ===================================================== ADR-0054 — destino de TED/PIX
-
-/**
- * Body do destino digitado. Só a forma da requisição (`versao` + presença do destino): o
- * formato e a titularidade são do serviço (`DestinoManualValidator`, 400/422).
- */
-const destinoBodySchema = z.object({
-    versao: z.coerce.number().int().min(1),
-    destino: z.record(z.unknown()),
-});
-const versaoDestinoSchema = z.object({ versao: z.coerce.number().int().min(1) });
+// ===================================================== ADR-0060 — exceção de destino
 
 /**
  * `details` do Zod SEM o valor enviado (I10h): só caminho e código de cada problema. O
@@ -423,115 +417,188 @@ const versaoDestinoSchema = z.object({ versao: z.coerce.number().int().min(1) })
 const detalhesSemValor = (erro: z.ZodError): Array<{ campo: string; codigo: string }> =>
     erro.issues.map((i) => ({ campo: i.path.join('.') || '(body)', codigo: i.code }));
 
-// POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino — informa o destino TED/PIX do
-// item (só RASCUNHO; optimistic lock). admin. 400 formato · 403 flag · 409 estado/versão/
-// congelado · 422 titularidade.
+/** O ator da exceção: o id do usuário AUTENTICADO (nunca o do body) e as permissões efetivas. */
+const atorExcecao = (req: Request): AtorExcecao => ({
+    id: ator(req),
+    permissoes: req.acesso?.permissoes ?? new Set<string>(),
+});
+
+/**
+ * Só a forma da requisição. Formato do destino, titularidade e demais regras são do serviço
+ * (`ExcecaoDestinoService`): 400 formato · 422 titularidade · 403 permissão/flag/aprovar a própria ·
+ * 409 estado inválido.
+ */
+const registrarExcecaoSchema = z
+    .object({
+        filCod: z.coerce.number().int().positive(),
+        pesCod: z.string().trim().min(1).optional(),
+        docCod: z.string().trim().min(1).optional(),
+        titCod: z.string().trim().min(1).optional(),
+        destino: z.record(z.unknown()),
+        justificativa: z.string().min(1),
+    })
+    .strict()
+    .refine((b) => b.pesCod !== undefined || (b.docCod !== undefined && b.titCod !== undefined), {
+        message: 'informe o favorecido (pesCod) ou o título (docCod e titCod)',
+        path: ['pesCod'],
+    });
+const motivoExcecaoSchema = z.object({ motivo: z.string().min(1) }).strict();
+const filtroExcecoesSchema = z.object({
+    estado: z
+        .enum([
+            EXCECAO_ESTADO.PENDENTE,
+            EXCECAO_ESTADO.APROVADA,
+            EXCECAO_ESTADO.REJEITADA,
+            EXCECAO_ESTADO.SUBSTITUIDA,
+            EXCECAO_ESTADO.REVOGADA,
+        ])
+        .optional(),
+    pesCod: z.string().trim().min(1).optional(),
+});
+const idExcecaoSchema = z.object({ id: z.string().uuid() });
+
+const respostaInvalida = (res: Response, ...erros: Array<z.ZodError | undefined>): void => {
+    res.status(400).json({
+        error: 'invalid request',
+        details: erros.flatMap((e) => (e ? detalhesSemValor(e) : [])),
+    });
+};
+
+// GET /sispag/excecoes — lista as exceções de destino (?estado=&pesCod=). SEMPRE mascarada
+// (I10h). Só quem tem `sispag:excecao`: é a tela de quem cadastra e aprova.
+router.get(
+    '/excecoes',
+    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const filtro = filtroExcecoesSchema.safeParse(req.query);
+        if (!filtro.success) return respostaInvalida(res, filtro.error);
+        const service = container.resolve(ExcecaoDestinoService);
+        try {
+            const excecoes = await service.listar(filtro.data);
+            res.json({ excecoes });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/excecoes — cadastra uma exceção PENDENTE (nunca APROVADA). 400 formato · 403
+// permissão/flag · 422 titularidade (lida ao vivo no cadastro). Resposta mascarada.
 router.post(
-    '/lotes/:id/itens/:filCod/:docCod/:titCod/destino',
-    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    '/excecoes',
+    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const chave = chaveTituloSchema.safeParse(req.params);
-        const parsed = destinoBodySchema.safeParse(req.body);
-        if (!chave.success || !parsed.success) {
-            res.status(400).json({
-                error: 'invalid request (versao, destino)',
-                details: [
-                    ...(chave.success ? [] : detalhesSemValor(chave.error)),
-                    ...(parsed.success ? [] : detalhesSemValor(parsed.error)),
-                ],
-            });
-            return;
-        }
-        const service = container.resolve(LotePagamentoService);
+        const parsed = registrarExcecaoSchema.safeParse(req.body);
+        if (!parsed.success) return respostaInvalida(res, parsed.error);
+        const service = container.resolve(ExcecaoDestinoService);
         try {
-            const lote = await service.definirDestinoManualItem({
-                loteId: String(req.params.id),
-                ...chave.data,
-                versao: parsed.data.versao,
-                destino: parsed.data.destino,
-                ator: ator(req),
-            });
-            res.json({ lote: apiView().lote(lote) });
+            const excecao = await service.registrar({ ...parsed.data, ator: atorExcecao(req) });
+            res.status(201).json({ excecao });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
     }),
 );
 
-// DELETE /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino — remove o destino digitado
-// (volta a valer o cadastro). `versao` no body ou na query. admin.
-router.delete(
-    '/lotes/:id/itens/:filCod/:docCod/:titCod/destino',
-    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const chave = chaveTituloSchema.safeParse(req.params);
-        const parsed = versaoDestinoSchema.safeParse({
-            versao: (req.body as { versao?: unknown } | undefined)?.versao ?? req.query.versao,
-        });
-        if (!chave.success || !parsed.success) {
-            res.status(400).json({
-                error: 'invalid request (versao)',
-                details: [
-                    ...(chave.success ? [] : detalhesSemValor(chave.error)),
-                    ...(parsed.success ? [] : detalhesSemValor(parsed.error)),
-                ],
-            });
-            return;
-        }
-        const service = container.resolve(LotePagamentoService);
-        try {
-            const lote = await service.limparDestinoManualItem({
-                loteId: String(req.params.id),
-                ...chave.data,
-                versao: parsed.data.versao,
-                ator: ator(req),
-            });
-            res.json({ lote: apiView().lote(lote) });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/destino/aprovar — aprova a conta (TED)
-// digitada do item (ADR-0054 D10). Só RASCUNHO; optimistic lock pela `versao` do body. Exige
-// `sispag:aprovar_destino` (quem digitou pode aprovar a própria, se a tiver). O body só tem a
-// versão; a resposta, o lote mascarado. 403 flag/permissão · 409 estado/versão/sem conta.
+// POST /sispag/excecoes/:id/aprovar — aprova a PENDENTE (I12b): o aprovador NÃO pode ser quem
+// cadastrou (403 EXCECAO_APROVACAO_PROPRIO_CADASTRANTE). Sem body.
 router.post(
-    '/lotes/:id/itens/:filCod/:docCod/:titCod/destino/aprovar',
-    exigirPermissao(PERMISSION.SISPAG_APROVAR_DESTINO),
+    '/excecoes/:id/aprovar',
+    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const chave = chaveTituloSchema.safeParse(req.params);
-        const parsed = versaoDestinoSchema.safeParse(req.body ?? {});
-        if (!chave.success || !parsed.success) {
-            res.status(400).json({
-                error: 'invalid request (versao)',
-                details: [
-                    ...(chave.success ? [] : detalhesSemValor(chave.error)),
-                    ...(parsed.success ? [] : detalhesSemValor(parsed.error)),
-                ],
-            });
-            return;
-        }
-        const service = container.resolve(LotePagamentoService);
+        const id = idExcecaoSchema.safeParse(req.params);
+        if (!id.success) return respostaInvalida(res, id.error);
+        const service = container.resolve(ExcecaoDestinoService);
         try {
-            const lote = await service.aprovarDestinoManualItem({
-                loteId: String(req.params.id),
-                ...chave.data,
-                versao: parsed.data.versao,
-                ator: ator(req),
-            });
-            res.json({ lote: apiView().lote(lote) });
+            const excecao = await service.aprovar({ id: id.data.id, ator: atorExcecao(req) });
+            res.json({ excecao });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
     }),
 );
 
-// GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054), SÓ como booleanos.
+// POST /sispag/excecoes/:id/rejeitar — rejeita a PENDENTE (motivo obrigatório). Pode ser quem
+// cadastrou.
+router.post(
+    '/excecoes/:id/rejeitar',
+    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = idExcecaoSchema.safeParse(req.params);
+        const body = motivoExcecaoSchema.safeParse(req.body);
+        if (!id.success || !body.success) {
+            return respostaInvalida(
+                res,
+                id.success ? undefined : id.error,
+                body.success ? undefined : body.error,
+            );
+        }
+        const service = container.resolve(ExcecaoDestinoService);
+        try {
+            const excecao = await service.rejeitar({
+                id: id.data.id,
+                ator: atorExcecao(req),
+                motivo: body.data.motivo,
+            });
+            res.json({ excecao });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/excecoes/:id/revogar — revoga a APROVADA (motivo obrigatório). Qualquer pessoa com
+// `sispag:excecao`, inclusive quem cadastrou (I12h). Não reescreve destino já congelado (I12g).
+router.post(
+    '/excecoes/:id/revogar',
+    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = idExcecaoSchema.safeParse(req.params);
+        const body = motivoExcecaoSchema.safeParse(req.body);
+        if (!id.success || !body.success) {
+            return respostaInvalida(
+                res,
+                id.success ? undefined : id.error,
+                body.success ? undefined : body.error,
+            );
+        }
+        const service = container.resolve(ExcecaoDestinoService);
+        try {
+            const excecao = await service.revogar({
+                id: id.data.id,
+                ator: atorExcecao(req),
+                motivo: body.data.motivo,
+            });
+            res.json({ excecao });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/excecoes/:id/eventos — a trilha da exceção (quem, quando, o quê), sem valores.
+router.get(
+    '/excecoes/:id/eventos',
+    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = idExcecaoSchema.safeParse(req.params);
+        if (!id.success) return respostaInvalida(res, id.error);
+        const service = container.resolve(ExcecaoDestinoService);
+        try {
+            res.json({ eventos: await service.eventos(id.data.id) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054/0060), SÓ como booleanos.
 router.get(
     '/recursos',
     exigirPermissao(PERMISSION.SISPAG_VER),
@@ -540,7 +607,7 @@ router.get(
         const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
         res.json({
             tedEnabled: env.sispagTedEnabled === true,
-            destinoManualEnabled: env.sispagDestinoManualEnabled === true,
+            excecaoDestinoEnabled: env.sispagExcecaoDestinoEnabled === true,
             pixEnabled: env.sispagPixEnabled === true,
         });
     }),

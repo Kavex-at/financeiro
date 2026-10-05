@@ -107,7 +107,7 @@ Crie um **Web Service** apontando para o repositório.
 | `client_name` | `local` (faz o `EnvironmentProvider` ler do ENV, não do SSM/AWS) |
 | `SISPAG_ENABLED` | `true|false` — liga/desliga a Frente II (SISPAG). **Fail-safe:** sem a var, fica **bloqueada em produção** e habilitada fora de prod. |
 | `RECEBIMENTOS_ENABLED` | **KILL-SWITCH** da Frente IV (Recebimentos / "Gestão de Adiantamentos"), liberada em produção desde a v0.20.0 (ADR-0028). Ao contrário do SISPAG **não é fail-safe**: sem a var a frente fica **habilitada**. Só `false` desliga (rotas `/recebimentos/*` → 403), e vale sem redeploy. |
-| `SISPAG_TED_ENABLED` / `SISPAG_DESTINO_MANUAL_ENABLED` / `SISPAG_PIX_ENABLED` | Gates de go-live de TED/PIX no SISPAG (ADR-0054). Default **`false`**; só `true` exato liga, sem redeploy (`sync: false`). Desligadas, remessa e tela ficam idênticas às de antes. Ligar uma por vez, nesta ordem (TED → destino manual → PIX), durante o teste supervisionado descrito em `ontology/_inbox/sispag-ted-pix-tasks.md`. Destino digitado de conta exige TED ligado; de chave, PIX. Desligar no meio de uma retomada de remessa falha fechado em vez de trocar o destino. |
+| `SISPAG_TED_ENABLED` / `SISPAG_EXCECAO_DESTINO_ENABLED` / `SISPAG_PIX_ENABLED` | Gates de go-live de TED/PIX no SISPAG (ADR-0054, ADR-0060). Default **`false`**; só `true` exato liga, sem redeploy (`sync: false`). Desligadas, remessa e tela ficam idênticas às de antes. Ligar uma por vez, nesta ordem (TED → exceção de destino → PIX), durante o teste supervisionado descrito em `ontology/_inbox/sispag-ted-pix-tasks.md`. A exceção de conta serve a TED (exige TED ligado); a de chave, a PIX. **`SISPAG_DESTINO_MANUAL_ENABLED` é o nome antigo da flag de exceção e segue aceito como alias por um ciclo de deploy**: o nome novo manda quando está definido (inclusive `false`); migre a var no Render e apague a antiga. Desligar no meio de uma retomada de remessa falha fechado em vez de trocar o destino. |
 | `CONEXOS_EXTRATO_SYNC_START_DATE` | *(opcional)* `YYYY-MM-DD` — **piso** da janela de ingestão do extrato; default `2026-08-03`. Nenhum caminho de sincronização (cron horário, `DIAS=`, `POST /recebimentos/ingestao`) lê lançamento anterior a esta data. |
 | `RECEBIMENTO_INGEST_DIAS` | *(opcional)* janela default da ingestão, em dias; default `90`. A janela efetiva é a **interseção** com o piso acima. |
 | `RECEBIMENTO_INGEST_FIL_CODS` | *(opcional)* CSV de filiais a ingerir (ex.: `1,2`). Vazio/ausente = todas as filiais que o ERP devolver. |
@@ -225,6 +225,37 @@ acesso gravada no intervalo **se perde** (exporte `app_user_access_event` antes,
   `kavex-report-ciclo` para outra conta com `metricas:ver`: desativar `admin` quebra o report até lá.
 - A trilha de mudanças de acesso fica em `app_user_access_event` (leitura por SQL: `SELECT ator,
   alvo_user_id, tipo, antes, depois, em FROM app_user_access_event ORDER BY id`).
+
+---
+
+### Exceção de destino do SISPAG (`sispag:excecao`, ADR-0060, migration 0075)
+
+O cadastro do Conexos (`cmn025`) é a fonte do destino de TED/PIX. Quando ele não tem conta ou
+chave válida, só uma **exceção de destino** aprovada por uma **segunda pessoa** vale como destino
+(fallback). A permissão **`sispag:excecao`** (única: cadastrar, aprovar, rejeitar, revogar) substitui
+`sispag:aprovar_destino`; a 0075 **converte** as concessões existentes (papel e exceção por usuário).
+O papel `Administrador` a recebe; o `Analista` não.
+
+> **Passo operacional obrigatório antes de ligar `SISPAG_EXCECAO_DESTINO_ENABLED`: a Columbia precisa
+> de pelo menos DUAS pessoas com `sispag:excecao`.** A regra é "quem aprova não pode ser quem
+> cadastrou" e é verificada no backend. Com um único titular **nada se aprova**: o que ele cadastra
+> fica `PENDENTE` para sempre (e ele ainda pode rejeitar e revogar). Conceda a permissão à segunda
+> pessoa na tela `/usuarios` ("Editar acesso" → conceder `sispag:excecao`) ou atribua o papel
+> Administrador.
+
+- **A migration 0075 é só de criação.** O destino digitado por item da ADR-0054 (`destino_manual`) fica
+  **inerte** (o código não o lê nem grava mais). Se a 0075 avisar no log do `BootMigrator`
+  (`RAISE WARNING ... itens com destino_manual`), há destino digitado a decidir com o Yuri antes de
+  ligar a flag. A contagem em produção (Q4) ainda não foi medida: rode, com o `.env` do financeiro
+  apontando para o banco, `npx tsx jobs/probe-destino-manual-uso.ts` (somente leitura; só imprime
+  contagens e ids de lote).
+- **Job `aposentar-excecoes-substituidas`** (`npx tsx jobs/aposentar-excecoes-substituidas.ts`):
+  aposenta (`SUBSTITUIDA`) as exceções aprovadas que o cadastro do Conexos já cobre, com alerta
+  `sispag-excecao-divergencia` quando o valor difere. Sem scheduler: roda à mão (ou por um
+  workflow, que ainda não existe). O resolver faz o mesmo ao finalizar e ao enviar.
+- **Rollback:** a 0075 não apaga nada. Voltar o backend para antes dela deixa `excecao_destino` e a
+  trilha no banco sem uso, e as concessões `sispag:excecao` fora do `CHECK` do código antigo (reconverter
+  para `sispag:aprovar_destino` à mão, se for o caso).
 
 ---
 

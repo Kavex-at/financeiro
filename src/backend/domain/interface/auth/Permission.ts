@@ -16,10 +16,12 @@ export const PERMISSION = {
     SISPAG_VER: 'sispag:ver',
     SISPAG_EXECUTAR: 'sispag:executar',
     /**
-     * Aprovar a conta (TED) digitada no item do lote antes de finalizar (ADR-0054 D10, 0068).
+     * Exceção de destino de pagamento (ADR-0060, 0075): cadastrar, aprovar, rejeitar e revogar.
+     * Permissão ÚNICA; a separação de funções é a regra "aprovador ≠ cadastrante" no backend
+     * (I12b), não uma segunda permissão. Substitui `sispag:aprovar_destino` (ADR-0054 D10).
      * Avulsa: não implica nem é implicada por `sispag:ver`/`sispag:executar`.
      */
-    SISPAG_APROVAR_DESTINO: 'sispag:aprovar_destino',
+    SISPAG_EXCECAO: 'sispag:excecao',
     RECEBIMENTOS_VER: 'recebimentos:ver',
     RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
     OPERACAO_VER: 'operacao:ver',
@@ -35,7 +37,7 @@ export const PERMISSION_CATALOG: readonly Permission[] = [
     PERMISSION.PERMUTAS_EXECUTAR,
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
-    PERMISSION.SISPAG_APROVAR_DESTINO,
+    PERMISSION.SISPAG_EXCECAO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
@@ -49,7 +51,7 @@ export const permissionSchema = z.enum([
     PERMISSION.PERMUTAS_EXECUTAR,
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
-    PERMISSION.SISPAG_APROVAR_DESTINO,
+    PERMISSION.SISPAG_EXCECAO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
@@ -98,7 +100,7 @@ export interface RoleRef {
     nome: string;
 }
 
-/** Nome do papel semeado pela 0066 (nove permissões; a 0068 acrescenta a décima). */
+/** Nome do papel semeado pela 0066 (nove permissões; a 0068 acrescentou a décima, `sispag:aprovar_destino`, que a 0075 trocou por `sispag:excecao`). */
 export const ADMIN_ROLE_NAME = 'Administrador';
 
 /** `true` quando o valor é uma permissão do catálogo. */

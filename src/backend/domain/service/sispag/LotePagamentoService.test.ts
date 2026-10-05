@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
-import DestinoAprovacaoPendenteError from '../../errors/DestinoAprovacaoPendenteError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
@@ -13,10 +12,7 @@ import type { LotePagamento, TituloAPagar } from '../../interface/sispag/SispagI
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type LogService from '../LogService.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
-import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
-import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
-import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import LotePagamentoService from './LotePagamentoService.js';
 import type SispagPainelService from './SispagPainelService.js';
@@ -70,8 +66,6 @@ interface RepoMock {
     atualizarContaPagadora: jest.Mock;
     contarItensSemModalidade: jest.Mock;
     atualizarModalidadeItem: jest.Mock;
-    setDestinoManualItem: jest.Mock;
-    aprovarDestinoManualItem: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -88,13 +82,11 @@ const buildRepo = (): RepoMock => ({
     atualizarContaPagadora: jest.fn().mockResolvedValue(1),
     contarItensSemModalidade: jest.fn().mockResolvedValue(0),
     atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
-    setDestinoManualItem: jest.fn().mockResolvedValue({ atualizado: true, auditId: 'a-1' }),
-    aprovarDestinoManualItem: jest.fn().mockResolvedValue({ atualizado: true, auditId: 'ap-1' }),
 });
 
 /**
- * Dependências do ADR-0054 (flags, validador, oferta, leitura do lote nativo). Por padrão as
- * flags estão DESLIGADAS — é o comportamento do `main`.
+ * Dependências do ADR-0054/0060 (flags, oferta). Por padrão as flags estão DESLIGADAS — é o
+ * comportamento do `main`.
  */
 const buildDestinoDeps = (envVars: Record<string, unknown> = {}) => ({
     env: {
@@ -103,10 +95,6 @@ const buildDestinoDeps = (envVars: Record<string, unknown> = {}) => ({
     conexos: {
         getTituloAPagar: jest.fn(),
         getDocumentoFavorecido: jest.fn().mockResolvedValue(undefined),
-    },
-    write: {
-        getLoteNativo: jest.fn().mockResolvedValue(undefined),
-        listarChavesDoLote: jest.fn().mockResolvedValue(new Set<string>()),
     },
     painel: { modalidadesDisponiveisDoLote: jest.fn().mockResolvedValue([]) },
     log: buildLog(),
@@ -139,10 +127,7 @@ const make = (
         buildDb(),
         deps.log,
         deps.env,
-        new DestinoManualValidator(),
         deps.painel as unknown as SispagPainelService,
-        deps.write as unknown as ConexosSispagWriteClient,
-        new DestinoAprovacaoRule(),
         contaResolver,
     );
     return { service, conexos, tituloRepo, contaResolver };
@@ -475,10 +460,7 @@ describe('LotePagamentoService — invariantes', () => {
                 dbBusy,
                 buildLog(),
                 buildDestinoDeps().env,
-                new DestinoManualValidator(),
                 buildDestinoDeps().painel as unknown as SispagPainelService,
-                buildDestinoDeps().write as unknown as ConexosSispagWriteClient,
-                new DestinoAprovacaoRule(),
                 {
                     resolverPadrao: jest.fn().mockResolvedValue(undefined),
                 } as unknown as ContaPagadoraResolver,
@@ -671,217 +653,10 @@ describe('LotePagamentoService — invariantes', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════
-// ADR-0054 — destino manual no item e checagem leve do finalizar
+// ADR-0054 Adendo + ADR-0060 I12f — o finalizar barra item sem destino resolvível
 // ═══════════════════════════════════════════════════════════════════════════════════════
 
-describe('LotePagamentoService — destino manual (ADR-0054)', () => {
-    const DOC = '11144477735';
-    const ENTRADA_CONTA = {
-        tipo: 'CONTA',
-        bancoCod: '237',
-        agencia: '1234',
-        conta: '99887766',
-        contaDv: '1',
-        titularDocumento: '111.444.777-35',
-    };
-    const ENTRADA_PIX = {
-        tipo: 'CHAVE_PIX',
-        chavePixTipo: 'EMAIL',
-        chavePix: 'fornecedor@x.com.br',
-        titularDocumento: DOC,
-    };
-    const FLAGS = {
-        sispagTedEnabled: true,
-        sispagPixEnabled: true,
-        sispagDestinoManualEnabled: true,
-    };
-    const item = {
-        loteId: 'L1',
-        filCod: 2,
-        docCod: '100',
-        titCod: '1',
-        modalidade: 'TED' as const,
-        incluidoPor: 'u1',
-        divergencia: false,
-    };
-    const input = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', versao: 1, ator: 'ana' };
-
-    const montar = (o: {
-        env?: Record<string, unknown>;
-        lote?: LotePagamento;
-        documento?: string | undefined;
-        nativo?: unknown;
-        chavesNativas?: Set<string> | undefined;
-        oferta?: unknown[];
-    }) => {
-        const repo = buildRepo();
-        repo.getLoteComItens.mockResolvedValue(o.lote ?? lote({ itens: [item] }));
-        const deps = buildDestinoDeps(o.env ?? FLAGS);
-        deps.conexos.getDocumentoFavorecido.mockResolvedValue('documento' in o ? o.documento : DOC);
-        deps.write.getLoteNativo.mockResolvedValue(o.nativo);
-        deps.write.listarChavesDoLote.mockResolvedValue(
-            'chavesNativas' in o ? o.chavesNativas : new Set<string>(),
-        );
-        deps.painel.modalidadesDisponiveisDoLote.mockResolvedValue(o.oferta ?? []);
-        const { service } = make(repo, titulo({ pesCod: 'P1' }), buildTituloRepo(), deps);
-        return { service, repo, deps };
-    };
-
-    it('flag manual desligada → 403 e nada gravado', async () => {
-        const { service, repo } = montar({ env: {} });
-        await expect(
-            service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-        ).rejects.toMatchObject({ code: 'DESTINO_MANUAL_DESABILITADO', statusCode: 403 });
-        expect(repo.setDestinoManualItem).not.toHaveBeenCalled();
-    });
-
-    it('conta digitada exige a flag TED; chave digitada exige a flag PIX', async () => {
-        const semTed = montar({
-            env: { sispagDestinoManualEnabled: true, sispagPixEnabled: true },
-        });
-        await expect(
-            semTed.service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-        ).rejects.toMatchObject({ code: 'DESTINO_MANUAL_DESABILITADO' });
-        const semPix = montar({
-            env: { sispagDestinoManualEnabled: true, sispagTedEnabled: true },
-        });
-        await expect(
-            semPix.service.definirDestinoManualItem({ ...input, destino: ENTRADA_PIX }),
-        ).rejects.toMatchObject({ code: 'DESTINO_MANUAL_DESABILITADO' });
-    });
-
-    it('formato inválido → 400 sem ecoar o valor', async () => {
-        const { service, repo } = montar({});
-        const err = await service
-            .definirDestinoManualItem({ ...input, destino: { ...ENTRADA_CONTA, bancoCod: '99' } })
-            .catch((e: unknown) => e);
-        expect(err).toMatchObject({ code: 'DESTINO_MANUAL_INVALIDO', statusCode: 400 });
-        expect(JSON.stringify(err)).not.toContain('99887766');
-        expect(repo.setDestinoManualItem).not.toHaveBeenCalled();
-    });
-
-    it('I10e — lote fora de RASCUNHO recusa', async () => {
-        const { service, repo } = montar({ lote: lote({ status: 'FINALIZADO', itens: [item] }) });
-        await expect(
-            service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-        ).rejects.toBeInstanceOf(LoteEstadoInvalidoError);
-        expect(repo.setDestinoManualItem).not.toHaveBeenCalled();
-    });
-
-    it('item que não está no lote recusa', async () => {
-        const { service } = montar({ lote: lote({ itens: [] }) });
-        await expect(
-            service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-        ).rejects.toBeInstanceOf(LoteEstadoInvalidoError);
-    });
-
-    it('I10i — titular divergente → 422 em PT, nada gravado', async () => {
-        const { service, repo } = montar({ documento: '11222333000181' });
-        await expect(
-            service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-        ).rejects.toMatchObject({ code: 'DESTINO_TITULAR_DIVERGENTE', statusCode: 422 });
-        expect(repo.setDestinoManualItem).not.toHaveBeenCalled();
-    });
-
-    it('documento do favorecido indisponível → falha fechada', async () => {
-        const { service, repo } = montar({ documento: undefined });
-        await expect(
-            service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-        ).rejects.toMatchObject({ code: 'DOCUMENTO_FAVORECIDO_INDISPONIVEL' });
-        expect(repo.setDestinoManualItem).not.toHaveBeenCalled();
-    });
-
-    it('versão errada → 409 de conflito, como nas outras edições', async () => {
-        const { service, repo } = montar({});
-        repo.setDestinoManualItem.mockResolvedValue({ atualizado: false });
-        repo.getLoteComItens.mockResolvedValue(lote({ versao: 2, itens: [item] }));
-        await expect(
-            service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-        ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
-    });
-
-    it('sucesso: grava o destino NORMALIZADO com o usuário do request; log sem o valor', async () => {
-        const { service, repo, deps } = montar({});
-        const r = await service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA });
-        expect(repo.setDestinoManualItem).toHaveBeenCalledWith({
-            loteId: 'L1',
-            filCod: 2,
-            docCod: '100',
-            titCod: '1',
-            versaoEsperada: 1,
-            destino: { ...ENTRADA_CONTA, titularDocumento: DOC },
-            usuario: 'ana',
-        });
-        expect(r.id).toBe('L1');
-        const logado = JSON.stringify((deps.log.info as jest.Mock).mock.calls);
-        expect(logado).not.toContain('99887766');
-        expect(logado).not.toContain(DOC);
-        expect(logado).toContain('definirDestinoManualItem');
-    });
-
-    describe('I10f — congelamento depois do import no fin015', () => {
-        const loteNativo = lote({
-            nativeFilCod: 2,
-            nativeBncCod: 4,
-            nativeFlpCod: 12,
-            itens: [item],
-        });
-
-        it('item já dentro de um lote nativo vivo → recusa, mesmo com o lote reaberto', async () => {
-            const { service, repo } = montar({
-                lote: loteNativo,
-                nativo: { status: 0, titulosCount: 1 },
-                chavesNativas: new Set(['2:100:1']),
-            });
-            await expect(
-                service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-            ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
-            expect(repo.setDestinoManualItem).not.toHaveBeenCalled();
-        });
-
-        it('lote nativo cancelado no ERP → volta a ser editável', async () => {
-            const { service, repo } = montar({
-                lote: loteNativo,
-                nativo: { status: 2, titulosCount: 0 },
-                chavesNativas: new Set(['2:100:1']),
-            });
-            await service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA });
-            expect(repo.setDestinoManualItem).toHaveBeenCalled();
-        });
-
-        it('lote nativo que não existe mais → editável', async () => {
-            const { service, repo } = montar({ lote: loteNativo, nativo: undefined });
-            await service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA });
-            expect(repo.setDestinoManualItem).toHaveBeenCalled();
-        });
-
-        it('não dá para ler os itens do lote nativo → recusa (fail closed)', async () => {
-            const { service } = montar({
-                lote: loteNativo,
-                nativo: { status: 0, titulosCount: 1 },
-                chavesNativas: undefined,
-            });
-            await expect(
-                service.definirDestinoManualItem({ ...input, destino: ENTRADA_CONTA }),
-            ).rejects.toMatchObject({ code: 'DESTINO_CONGELADO' });
-        });
-    });
-
-    it('limpar: grava sem destino, sob as mesmas regras', async () => {
-        const { service, repo } = montar({});
-        await service.limparDestinoManualItem(input);
-        expect(repo.setDestinoManualItem).toHaveBeenCalledWith(
-            expect.objectContaining({ versaoEsperada: 1, usuario: 'ana' }),
-        );
-        expect(repo.setDestinoManualItem.mock.calls[0]?.[0]).not.toHaveProperty('destino');
-        const off = montar({ env: {} });
-        await expect(off.service.limparDestinoManualItem(input)).rejects.toMatchObject({
-            code: 'DESTINO_MANUAL_DESABILITADO',
-        });
-    });
-});
-
-describe('LotePagamentoService.finalizarLote — checagem LEVE do destino (Adendo)', () => {
+describe('LotePagamentoService.finalizarLote — falha fechada do destino (ADR-0060 I12f)', () => {
     const itemTed = {
         loteId: 'L1',
         filCod: 2,
@@ -910,7 +685,7 @@ describe('LotePagamentoService.finalizarLote — checagem LEVE do destino (Adend
         expect(repo.transicionarStatus).toHaveBeenCalled();
     });
 
-    it('TED sem opção ofertada e sem destino manual → recusa nomeando o item', async () => {
+    it('TED sem opção ofertada (sem cadastro nem exceção APROVADA) → recusa nomeando o item', async () => {
         const { service, repo } = montar({ sispagTedEnabled: true }, [
             { docCod: '100', titCod: '1', modalidades: [] },
         ]);
@@ -921,12 +696,36 @@ describe('LotePagamentoService.finalizarLote — checagem LEVE do destino (Adend
         expect(repo.transicionarStatus).not.toHaveBeenCalled();
     });
 
-    it('TED com opção ofertada (cadastro ou manual) → passa', async () => {
+    it('TED com opção ofertada (cadastro ou exceção APROVADA) → passa', async () => {
         const { service, repo } = montar({ sispagTedEnabled: true }, [
             { docCod: '100', titCod: '1', modalidades: ['TED'] },
         ]);
         await service.finalizarLote(input);
         expect(repo.transicionarStatus).toHaveBeenCalled();
+    });
+
+    it('a mensagem nomeia título e credor e NUNCA o destino (I10h)', async () => {
+        const { service } = montar({ sispagTedEnabled: true, sispagExcecaoDestinoEnabled: true }, [
+            { docCod: '100', titCod: '1', modalidades: [] },
+        ]);
+        const err = await service.finalizarLote(input).catch((e: unknown) => e);
+        expect(err).toMatchObject({
+            code: 'DESTINO_PAGAMENTO_AUSENTE',
+            statusCode: 409,
+            userMessage: expect.stringContaining('100/1 (ACME)'),
+        });
+        expect(JSON.stringify(err) + String((err as Error).message)).not.toMatch(/\d{8}/);
+    });
+
+    it('pede a oferta COM aposentadoria das exceções (I12c) — só o finalizar escreve', async () => {
+        const { service, deps } = montar(
+            { sispagTedEnabled: true, sispagExcecaoDestinoEnabled: true },
+            [{ docCod: '100', titCod: '1', modalidades: ['TED'] }],
+        );
+        await service.finalizarLote(input);
+        expect(deps.painel.modalidadesDisponiveisDoLote).toHaveBeenCalledWith('L1', {
+            aposentarExcecao: true,
+        });
     });
 
     it('item de modalidade cuja flag está desligada não é checado', async () => {
@@ -935,189 +734,5 @@ describe('LotePagamentoService.finalizarLote — checagem LEVE do destino (Adend
         ]);
         await service.finalizarLote(input);
         expect(repo.transicionarStatus).toHaveBeenCalled();
-    });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════════════
-// ADR-0054 D10/D11 — aprovação da conta digitada
-// ═══════════════════════════════════════════════════════════════════════════════════════
-
-describe('LotePagamentoService — aprovação do destino digitado (D10/D11)', () => {
-    const FLAGS = {
-        sispagTedEnabled: true,
-        sispagPixEnabled: true,
-        sispagDestinoManualEnabled: true,
-    };
-    const CONTA = {
-        tipo: 'CONTA' as const,
-        bancoCod: '237',
-        agencia: '1234',
-        conta: '99887766',
-        contaDv: '1',
-        titularDocumento: '11144477735',
-    };
-    const CHAVE_CPF = {
-        tipo: 'CHAVE_PIX' as const,
-        chavePixTipo: 'CPF_CNPJ' as const,
-        chavePix: '11144477735',
-        titularDocumento: '11144477735',
-    };
-    const itemTed = {
-        loteId: 'L1',
-        filCod: 2,
-        docCod: '100',
-        titCod: '1',
-        credor: 'ACME',
-        modalidade: 'TED' as const,
-        incluidoPor: 'u1',
-        divergencia: false,
-        destinoManual: CONTA,
-        destinoManualAuditId: 'grav-1',
-        destinoManualInformadoPor: 'ana',
-    };
-    const input = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', versao: 1, ator: 'ana' };
-
-    const montar = (env: Record<string, unknown>, itens: LotePagamento['itens']) => {
-        const repo = buildRepo();
-        repo.getLoteComItens.mockResolvedValue(lote({ itens }));
-        const deps = buildDestinoDeps(env);
-        deps.painel.modalidadesDisponiveisDoLote.mockResolvedValue(
-            itens.map((i) => ({ docCod: i.docCod, titCod: i.titCod, modalidades: ['TED', 'PIX'] })),
-        );
-        const { service } = make(repo, titulo({ pesCod: 'P1' }), buildTituloRepo(), deps);
-        return { service, repo, deps };
-    };
-
-    describe('aprovarDestinoManualItem', () => {
-        it('quem digitou pode aprovar a própria conta: grava APROVACAO com o ator; log sem o valor', async () => {
-            const { service, repo, deps } = montar(FLAGS, [itemTed]);
-            await service.aprovarDestinoManualItem(input);
-            expect(repo.aprovarDestinoManualItem).toHaveBeenCalledWith({
-                loteId: 'L1',
-                filCod: 2,
-                docCod: '100',
-                titCod: '1',
-                versaoEsperada: 1,
-                usuario: 'ana',
-            });
-            const logado = JSON.stringify((deps.log.info as jest.Mock).mock.calls);
-            expect(logado).toContain('aprovarDestinoManualItem');
-            expect(logado).not.toContain('99887766');
-            expect(logado).not.toContain('11144477735');
-        });
-
-        it('flags manual ou TED desligadas → 403, nada gravado', async () => {
-            for (const env of [
-                { sispagTedEnabled: true },
-                { sispagDestinoManualEnabled: true, sispagPixEnabled: true },
-            ]) {
-                const { service, repo } = montar(env, [itemTed]);
-                await expect(service.aprovarDestinoManualItem(input)).rejects.toMatchObject({
-                    code: 'DESTINO_MANUAL_DESABILITADO',
-                    statusCode: 403,
-                });
-                expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
-            }
-        });
-
-        it('só RASCUNHO', async () => {
-            const repo = buildRepo();
-            repo.getLoteComItens.mockResolvedValue(
-                lote({ status: 'FINALIZADO', itens: [itemTed] }),
-            );
-            const { service } = make(repo, titulo(), buildTituloRepo(), buildDestinoDeps(FLAGS));
-            await expect(service.aprovarDestinoManualItem(input)).rejects.toBeInstanceOf(
-                LoteEstadoInvalidoError,
-            );
-            expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
-        });
-
-        it('D11 — chave PIX CPF/CNPJ digitada não tem o que aprovar; item sem destino idem', async () => {
-            for (const itens of [
-                [{ ...itemTed, modalidade: 'PIX' as const, destinoManual: CHAVE_CPF }],
-                [{ ...itemTed, destinoManual: undefined }],
-            ]) {
-                const { service, repo } = montar(FLAGS, itens);
-                await expect(service.aprovarDestinoManualItem(input)).rejects.toBeInstanceOf(
-                    LoteEstadoInvalidoError,
-                );
-                expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
-            }
-        });
-
-        it('já aprovada → devolve o lote sem nova linha na trilha', async () => {
-            const { service, repo } = montar(FLAGS, [
-                { ...itemTed, destinoManualAprovadoPor: 'bia' },
-            ]);
-            const r = await service.aprovarDestinoManualItem(input);
-            expect(r.id).toBe('L1');
-            expect(repo.aprovarDestinoManualItem).not.toHaveBeenCalled();
-        });
-
-        it('versão mudou → 409 de conflito', async () => {
-            const { service, repo } = montar(FLAGS, [itemTed]);
-            repo.aprovarDestinoManualItem.mockResolvedValue({ atualizado: false });
-            repo.getLoteComItens.mockResolvedValue(lote({ versao: 2, itens: [itemTed] }));
-            await expect(service.aprovarDestinoManualItem(input)).rejects.toBeInstanceOf(
-                LoteVersaoConflitoError,
-            );
-        });
-
-        it('I10f — item congelado num lote nativo vivo → recusa', async () => {
-            const repo = buildRepo();
-            repo.getLoteComItens.mockResolvedValue(
-                lote({ nativeFilCod: 2, nativeBncCod: 4, nativeFlpCod: 12, itens: [itemTed] }),
-            );
-            const deps = buildDestinoDeps(FLAGS);
-            deps.write.getLoteNativo.mockResolvedValue({ status: 0, titulosCount: 1 });
-            deps.write.listarChavesDoLote.mockResolvedValue(new Set(['2:100:1']));
-            const { service } = make(repo, titulo(), buildTituloRepo(), deps);
-            await expect(service.aprovarDestinoManualItem(input)).rejects.toMatchObject({
-                code: 'DESTINO_CONGELADO',
-            });
-        });
-    });
-
-    describe('finalizarLote barra conta digitada pendente', () => {
-        const fin = { loteId: 'L1', versao: 1, ator: 'u1' };
-
-        it('pendente → 409 nomeando o item, sem banco/conta/CPF na mensagem', async () => {
-            const { service, repo } = montar(FLAGS, [itemTed]);
-            const err = await service.finalizarLote(fin).catch((e: unknown) => e);
-            expect(err).toBeInstanceOf(DestinoAprovacaoPendenteError);
-            expect(err).toMatchObject({
-                code: 'DESTINO_APROVACAO_PENDENTE',
-                statusCode: 409,
-                userMessage: expect.stringContaining('100/1 (ACME)'),
-            });
-            const texto = JSON.stringify(err) + String((err as Error).message);
-            expect(texto).not.toContain('99887766');
-            expect(texto).not.toContain('11144477735');
-            expect(texto).not.toContain('237');
-            expect(repo.transicionarStatus).not.toHaveBeenCalled();
-        });
-
-        it('aprovada → finaliza', async () => {
-            const { service, repo } = montar(FLAGS, [
-                { ...itemTed, destinoManualAprovadoPor: 'bia' },
-            ]);
-            await service.finalizarLote(fin);
-            expect(repo.transicionarStatus).toHaveBeenCalled();
-        });
-
-        it('D11 — chave PIX CPF/CNPJ digitada não bloqueia', async () => {
-            const { service, repo } = montar(FLAGS, [
-                { ...itemTed, modalidade: 'PIX' as const, destinoManual: CHAVE_CPF },
-            ]);
-            await service.finalizarLote(fin);
-            expect(repo.transicionarStatus).toHaveBeenCalled();
-        });
-
-        it('flags desligadas: a conta persistida é ignorada e nada bloqueia (paridade com o main)', async () => {
-            const { service, repo, deps } = montar({}, [itemTed]);
-            await service.finalizarLote(fin);
-            expect(repo.transicionarStatus).toHaveBeenCalled();
-            expect(deps.painel.modalidadesDisponiveisDoLote).not.toHaveBeenCalled();
-        });
     });
 });

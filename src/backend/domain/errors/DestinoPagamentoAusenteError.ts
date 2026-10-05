@@ -2,7 +2,7 @@ import type { HandlerError } from '../libs/handler/HandlerError.js';
 
 /**
  * Item TED/PIX sem destino de pagamento resolvível (ADR-0054 I10a): nem conta/chave ativa no
- * cadastro do Conexos, nem destino digitado no item. Irmão do `BoletoSemCodigoBarrasError`.
+ * cadastro do Conexos, nem exceção de destino aprovada para o favorecido. Irmão do `BoletoSemCodigoBarrasError`.
  *
  * No ENVIO é lançado ANTES do `criarLote` — nada de lote nativo pela metade. No `finalizarLote`
  * (checagem leve do Adendo), barra a finalização do mesmo jeito que "modalidade a definir".
@@ -29,8 +29,9 @@ export default class DestinoPagamentoAusenteError extends Error implements Handl
         this.name = 'DestinoPagamentoAusenteError';
         this.userMessage =
             `Sem destino de pagamento para: ${nomes.join('; ')}. O favorecido não tem conta ` +
-            '(TED) ou chave PIX ativa no cadastro do Conexos, e nenhum destino foi informado no ' +
-            'item. Informe o destino ou troque a forma de pagamento.';
+            '(TED) ou chave PIX ativa no cadastro do Conexos, e não há exceção de destino aprovada. ' +
+            'Corrija o cadastro no Conexos, peça uma exceção de destino (aprovada por outra ' +
+            'pessoa) ou troque a forma de pagamento.';
         this.details = { itens: params.itens.map((i) => `${i.docCod}/${i.titCod}`) };
     }
 }

@@ -38,6 +38,16 @@ export default class EnvironmentProvider {
     };
 
     /**
+     * ADR-0060: `SISPAG_EXCECAO_DESTINO_ENABLED` manda; o nome antigo `SISPAG_DESTINO_MANUAL_ENABLED`
+     * só vale como alias quando o novo não está definido (um ciclo de deploy). Só `'true'` liga.
+     */
+    private excecaoDestinoEnabled = (): boolean => {
+        const novo = this.readEnv('SISPAG_EXCECAO_DESTINO_ENABLED');
+        const valor = novo !== '' ? novo : this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED');
+        return valor === 'true';
+    };
+
+    /**
      * Resolve `conexosWriteEnabled` com um piso de segurança: **máquina local não escreve
      * na Conexos de PRODUÇÃO.**
      *
@@ -243,9 +253,9 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
-            // ADR-0054: gates de go-live de TED/PIX/destino manual — default OFF.
+            // ADR-0054/0060: gates de go-live de TED/PIX/exceção de destino — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
-            sispagDestinoManualEnabled: this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED') === 'true',
+            sispagExcecaoDestinoEnabled: this.excecaoDestinoEnabled(),
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
@@ -336,9 +346,9 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
-            // ADR-0054: gates de go-live de TED/PIX/destino manual — default OFF.
+            // ADR-0054/0060: gates de go-live de TED/PIX/exceção de destino — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
-            sispagDestinoManualEnabled: this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED') === 'true',
+            sispagExcecaoDestinoEnabled: this.excecaoDestinoEnabled(),
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),

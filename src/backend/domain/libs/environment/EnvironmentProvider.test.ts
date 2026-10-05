@@ -195,7 +195,7 @@ describe('EnvironmentProvider', () => {
 
         const FLAGS_TED_PIX = [
             'SISPAG_TED_ENABLED',
-            'SISPAG_DESTINO_MANUAL_ENABLED',
+            'SISPAG_EXCECAO_DESTINO_ENABLED',
             'SISPAG_PIX_ENABLED',
         ] as const;
         const setFlagsTedPix = (valor: string | undefined): void => {
@@ -206,10 +206,10 @@ describe('EnvironmentProvider', () => {
         };
         const flagsTedPix = async (): Promise<boolean[]> => {
             const v = await new EnvironmentProvider().getEnvironmentVars();
-            return [v.sispagTedEnabled, v.sispagDestinoManualEnabled, v.sispagPixEnabled];
+            return [v.sispagTedEnabled, v.sispagExcecaoDestinoEnabled, v.sispagPixEnabled];
         };
 
-        it('flags TED/PIX/destino manual do SISPAG: default OFF, só "true" exato liga (ADR-0054)', async () => {
+        it('flags TED/PIX/exceção de destino do SISPAG: default OFF, só "true" exato liga (ADR-0054/0060)', async () => {
             setFlagsTedPix(undefined);
             expect(await flagsTedPix()).toEqual([false, false, false]); // ausente = desligado
             for (const [valor, esperado] of [
@@ -245,11 +245,42 @@ describe('EnvironmentProvider', () => {
             delete process.env.SISPAG_CARTEIRA_COOLDOWN_MIN;
         });
 
-        it('flags TED/PIX/destino manual são independentes entre si', async () => {
+        it('flags TED/PIX/exceção de destino são independentes entre si', async () => {
             setFlagsTedPix(undefined);
             process.env.SISPAG_PIX_ENABLED = 'true';
             expect(await flagsTedPix()).toEqual([false, false, true]);
             setFlagsTedPix(undefined);
+        });
+
+        describe('alias SISPAG_DESTINO_MANUAL_ENABLED da flag de exceção (ADR-0060, Q6)', () => {
+            const NOVO = 'SISPAG_EXCECAO_DESTINO_ENABLED';
+            const ANTIGO = 'SISPAG_DESTINO_MANUAL_ENABLED';
+            const excecao = async (): Promise<boolean> =>
+                (await new EnvironmentProvider().getEnvironmentVars()).sispagExcecaoDestinoEnabled;
+
+            afterEach(() => {
+                delete process.env[NOVO];
+                delete process.env[ANTIGO];
+            });
+
+            it('só o nome antigo ligado: liga (alias por um ciclo de deploy)', async () => {
+                delete process.env[NOVO];
+                process.env[ANTIGO] = 'true';
+                expect(await excecao()).toBe(true);
+            });
+
+            it('o nome novo manda: definido, vence o antigo nos dois sentidos', async () => {
+                process.env[NOVO] = 'false';
+                process.env[ANTIGO] = 'true';
+                expect(await excecao()).toBe(false);
+                process.env[NOVO] = 'true';
+                process.env[ANTIGO] = 'false';
+                expect(await excecao()).toBe(true);
+            });
+
+            it('nenhum dos dois: desligado', async () => {
+                expect(await excecao()).toBe(false);
+            });
         });
 
         it('does not call SSM in local mode', async () => {
@@ -349,7 +380,7 @@ describe('EnvironmentProvider', () => {
             process.env.SISPAG_TED_ENABLED = 'true';
             const v = await new EnvironmentProvider().getEnvironmentVars();
             expect(v.sispagTedEnabled).toBe(true);
-            expect(v.sispagDestinoManualEnabled).toBe(false);
+            expect(v.sispagExcecaoDestinoEnabled).toBe(false);
             expect(v.sispagPixEnabled).toBe(false);
             delete process.env.SISPAG_TED_ENABLED;
         });

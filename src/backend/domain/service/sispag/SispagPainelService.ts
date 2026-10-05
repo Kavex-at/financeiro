@@ -16,6 +16,7 @@ import {
     type Modalidade,
     type SispagKpis,
     type ExecucoesParadas,
+    type PainelExcecoes,
     type SispagPainelResponse,
     type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
@@ -25,6 +26,8 @@ import LotePagamentoRepository from '../../repository/sispag/LotePagamentoReposi
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestinoRepository.js';
+import { redactErrorMessage } from '../../libs/redact/redactErrorMessage.js';
 import LogService from '../LogService.js';
 import DestinoPagamentoResolver, {
     type CacheCadastroDestino,
@@ -50,6 +53,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * sem aviso é o que transformou um limite de payload num bug de negócio.
  */
 const TITULOS_CAP = 5000;
+
+/**
+ * Dias a partir dos quais uma exceção de destino `PENDENTE` conta como "esperando demais" no
+ * painel (ADR-0060, T11). Uma exceção parada é um pagamento que não sai (ou sai pela conta velha).
+ */
+const EXCECAO_PENDENTE_DIAS_LIMITE = 7;
 
 /** Idade a partir da qual uma execução `reconciling` deixa de ser "em voo" e vira órfã. */
 const MINUTOS_ORFAO = 15;
@@ -108,6 +117,7 @@ export default class SispagPainelService {
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
+        @inject(ExcecaoDestinoRepository) private readonly excecoes: ExcecaoDestinoRepository,
     ) {}
 
     public montarPainel = async (): Promise<SispagPainelResponse> => {
@@ -177,6 +187,8 @@ export default class SispagPainelService {
         // gera remessa, que é onde a decisão de repetir ou não vai ser tomada.
         const execucoesParadas = await this.contarExecucoesParadas();
         const envVars = await this.env.getEnvironmentVars();
+        const excecoes =
+            envVars.sispagExcecaoDestinoEnabled === true ? await this.contarExcecoes() : undefined;
 
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -205,7 +217,34 @@ export default class SispagPainelService {
             titulosTotal,
             execucoesParadas,
             lotes: this.ordenarLotes(lotesRaw),
+            ...(excecoes ? { excecoes } : {}),
         };
+    };
+
+    /**
+     * Exceções de destino por estado e as `PENDENTE` paradas há mais de N dias (ADR-0060, T11).
+     * Só contagens (I10h). Falha NÃO derruba o painel: sem o contador a tela segue inteira, e o
+     * aviso diz que o contador não veio (não que "não há exceções").
+     */
+    private contarExcecoes = async (): Promise<PainelExcecoes | undefined> => {
+        try {
+            const [porEstado, pendentesAntigas] = await Promise.all([
+                this.excecoes.contarPorEstado(),
+                this.excecoes.contarPendentesAntigas(EXCECAO_PENDENTE_DIAS_LIMITE),
+            ]);
+            return { porEstado, pendentesAntigas, diasLimite: EXCECAO_PENDENTE_DIAS_LIMITE };
+        } catch (error) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'SISPAG painel: contagem das exceções de destino falhou (omitida)',
+                data: {
+                    erro: redactErrorMessage(
+                        error instanceof Error ? error.message : String(error),
+                    ),
+                },
+            });
+            return undefined;
+        }
     };
 
     /**
@@ -337,6 +376,11 @@ export default class SispagPainelService {
      */
     public modalidadesDisponiveisDoLote = async (
         loteId: string,
+        /**
+         * `aposentarExcecao`: só o finalizar liga (ADR-0060 I12c) — a oferta em si é leitura e não
+         * escreve. Com ele, exceção APROVADA que o cadastro tornou desnecessária vai a SUBSTITUIDA.
+         */
+        opcoes: { aposentarExcecao?: boolean } = {},
     ): Promise<OfertaModalidadesItem[]> => {
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote) return [];
@@ -346,7 +390,7 @@ export default class SispagPainelService {
         const flags: FlagsDestino = {
             ted: envVars.sispagTedEnabled === true,
             pix: envVars.sispagPixEnabled === true,
-            destinoManual: envVars.sispagDestinoManualEnabled === true,
+            excecao: envVars.sispagExcecaoDestinoEnabled === true,
         };
         // Duas fontes, porque o ERP as guarda em lugares diferentes:
         //   boleto/PIX  → do TÍTULO (`fin064`, via `getTituloAPagar`)
@@ -416,7 +460,14 @@ export default class SispagPainelService {
         }
 
         if (flags.ted || flags.pix) {
-            return this.ofertaComResolver(lote.itens, titulos, comBoleto, temConta, flags);
+            return this.ofertaComResolver(
+                lote.itens,
+                titulos,
+                comBoleto,
+                temConta,
+                flags,
+                opcoes.aposentarExcecao === true,
+            );
         }
 
         return lote.itens.map((it, i) => {
@@ -450,6 +501,7 @@ export default class SispagPainelService {
         comBoleto: ReadonlySet<string>,
         temContaLegado: ReadonlyMap<string, boolean>,
         flags: FlagsDestino,
+        aposentarExcecao = false,
     ): Promise<OfertaModalidadesItem[]> => {
         const cache: CacheCadastroDestino = this.resolver.novoCache();
         const modalidadesNovas = [
@@ -463,11 +515,14 @@ export default class SispagPainelService {
                 for (const modalidade of modalidadesNovas) {
                     out[modalidade] = await this.resolver
                         .resolve(
+                            { modalidade },
                             {
-                                modalidade,
-                                ...(it.destinoManual ? { destinoManual: it.destinoManual } : {}),
+                                flags,
+                                filCod: it.filCod,
+                                cache,
+                                ...(aposentarExcecao ? { aposentarExcecao } : {}),
+                                ...(pesCod ? { pesCod } : {}),
                             },
-                            { flags, filCod: it.filCod, cache, ...(pesCod ? { pesCod } : {}) },
                         )
                         .catch((): DestinoResolvido => ({ origem: DESTINO_ORIGEM.NENHUM }));
                 }
@@ -510,9 +565,9 @@ export default class SispagPainelService {
                 r.chaveDoDocumentoDoFavorecido === true
             );
         }
-        // Digitada: só CPF/CNPJ passa, e a titularidade (I10i) já exigiu que seja o documento.
+        // Exceção: só chave CPF/CNPJ existe (I12i), e a titularidade (I10i) exigiu o documento.
         return (
-            r.origem === DESTINO_ORIGEM.MANUAL &&
+            r.origem === DESTINO_ORIGEM.EXCECAO &&
             r.destino.tipo === DESTINO_MANUAL_TIPO.CHAVE_PIX &&
             r.destino.chavePixTipo === CHAVE_PIX_TIPO.CPF_CNPJ
         );

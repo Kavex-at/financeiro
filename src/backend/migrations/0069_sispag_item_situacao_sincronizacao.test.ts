@@ -82,9 +82,12 @@ describe('migration 0069 — situação do item do lote SISPAG (ADR-0055)', () =
         }
     });
 
-    it('o CHECK de alerta.tipo é o catálogo ALERTA_TIPO inteiro (tipo novo sem migration falha)', () => {
+    it('o CHECK de alerta.tipo é o catálogo ALERTA_TIPO do dia da 0069 (a 0075 acrescentou um tipo)', () => {
+        // A paridade com o catálogo ATUAL é checada no teste da 0075; a 0069 é histórico.
         expect(valoresDoCheck('alerta_tipo_check', 'tipo')).toEqual(
-            Object.values(ALERTA_TIPO).sort(),
+            Object.values(ALERTA_TIPO)
+                .filter((t) => t !== 'sispag-excecao-divergencia')
+                .sort(),
         );
     });
 
