@@ -433,6 +433,15 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         expect(resumo.eventosNaoLidos).toBe(1);
     });
 
+    it('falha ao ler o cadastro de eventos do banco é CONTADA — não parece "nenhum evento"', async () => {
+        const s = setup({ lotes: [loteFil1()] });
+        s.retorno.listEventosBancarios.mockRejectedValue(new Error('HTTP 500'));
+        const resumo = await s.service.sincronizarTodos(AGORA);
+        // Antes: o par era descartado em silêncio e eventosNaoLidos ficava em 0.
+        expect(resumo.eventosNaoLidos).toBeGreaterThanOrEqual(1);
+        expect(s.retorno.listDetalhe).not.toHaveBeenCalled();
+    });
+
     it('falha de alerta não derruba a sincronização (já gravada)', async () => {
         const s = setup({
             lotes: [loteFil2()],
