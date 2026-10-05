@@ -1,5 +1,16 @@
 # Columbia Financeiro — Changelog
 
+## v0.52.0 (2026-10-05) — papel Analista
+
+- **Novo papel `Analista`** ao lado do Administrador, para atribuir na tela de Usuários.
+  - Permutas e Recebimentos: ver e executar.
+  - SISPAG: só ver. Não monta lote, não gera remessa e não faz as demais escritas do SISPAG.
+  - Fora do pacote: aprovar destino, Operação, Métricas e gestão de usuários. Quem precisar de algum
+    deles recebe como exceção por usuário (a trilha de acesso registra quem concedeu).
+  - Atenção: conceder `sispag:executar` a um Analista libera **todas** as escritas do SISPAG,
+    inclusive montar lote. A permissão ainda não tem divisão mais fina.
+- Migration `0074`, só dados: nenhum usuário muda de papel sozinho.
+
 ## v0.51.0 (2026-10-02) — tela Meu perfil (/perfil)
 
 - **Novo menu do usuário no topo:** avatar com iniciais. O menu mostra usuário e papel, e leva a
