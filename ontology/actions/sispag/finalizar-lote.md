@@ -17,7 +17,7 @@ preconditions:
   - "Requer papel admin (requireRole('admin'))."
   - "Lote em RASCUNHO com ≥1 item; todos os itens ainda elegíveis (liberado + não pago)."
   - "Todo item com modalidade definida (ModalidadePendenteError, migration 0031)."
-  - "Todo item TED/PIX com destino resolvível — conta/chave ativa do cadastro cmn025 ou, na falta, ExcecaoDestino APROVADA do favorecido (I10a, I12f; ADR-0054, ADR-0060)."
+  - "Todo item TED/PIX com destino resolvível — conta/chave ativa do cadastro cmn025 ou, na falta, ExcecaoDestino APROVADA do favorecido (I10a, I12f; ADR-0054, ADR-0061)."
 postconditions:
   - "Lote RASCUNHO → FINALIZADO (L3): registra finalizadoPor + finalizadoEm; incrementa versao."
   - "O lote FINALIZADO é o 'pronto para processar' — gatilho CONCEITUAL, SEM downstream nesta fatia (I1)."

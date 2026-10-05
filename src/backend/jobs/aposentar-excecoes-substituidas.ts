@@ -6,7 +6,7 @@ import { redactErrorMessage } from '../domain/libs/redact/redactErrorMessage.js'
 import ExcecaoDestinoService from '../domain/service/sispag/ExcecaoDestinoService.js';
 
 /**
- * Varredura de aposentadoria das exceções de destino SISPAG (ADR-0060, I12c; gap Q3).
+ * Varredura de aposentadoria das exceções de destino SISPAG (ADR-0061, I12c; gap Q3).
  *
  * Para cada exceção `APROVADA`, lê o cadastro do favorecido no Conexos (`cmn025`, SOMENTE LEITURA)
  * com a MESMA função do resolver — a da oferta e do envio — e, se o cadastro passou a ter destino

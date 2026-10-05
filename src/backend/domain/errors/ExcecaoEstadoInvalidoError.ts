@@ -1,7 +1,7 @@
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
 /**
- * Transição inválida da exceção de destino (ADR-0060, `state-machines/excecao-destino.md`): ação
+ * Transição inválida da exceção de destino (ADR-0061, `state-machines/excecao-destino.md`): ação
  * incompatível com o estado atual, ou o estado mudou entre a leitura e a gravação (transição com
  * `WHERE estado = esperado` não encontrou linha). HTTP 409.
  */

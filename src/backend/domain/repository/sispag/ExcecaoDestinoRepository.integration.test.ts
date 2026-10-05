@@ -9,7 +9,7 @@ import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider
 import ExcecaoDestinoRepository from './ExcecaoDestinoRepository.js';
 
 /**
- * `ExcecaoDestinoRepository` contra um Postgres DE VERDADE (ADR-0060): aprovar substitui a
+ * `ExcecaoDestinoRepository` contra um Postgres DE VERDADE (ADR-0061): aprovar substitui a
  * anterior na mesma transação, a trilha é atômica com a transição e o banco recusa dois
  * `APROVADA` e a autoaprovação.
  *

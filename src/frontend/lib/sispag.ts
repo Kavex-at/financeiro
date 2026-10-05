@@ -235,7 +235,7 @@ export interface ItemLote {
   /** Última leitura bem-sucedida do título (ISO). */
   sincronizadoEm?: string
   /**
-   * Exceção de destino usada quando o destino do item congelou no envio (ADR-0060): só a
+   * Exceção de destino usada quando o destino do item congelou no envio (ADR-0061): só a
    * REFERÊNCIA. A API nunca devolve conta ou chave do item.
    */
   excecaoDestinoId?: string
@@ -1122,7 +1122,7 @@ export async function sincronizarBoletosDda(): Promise<SincronizacaoDdaResultado
   return (await res.json()) as SincronizacaoDdaResultado
 }
 
-// ============================================================ ADR-0054/0060 — destino de TED/PIX
+// ============================================================ ADR-0054/0061 — destino de TED/PIX
 
 /** Flags de TED/PIX/exceção de destino expostas pelo backend (`GET /sispag/recursos`). */
 export interface RecursosSispag {
@@ -1306,7 +1306,7 @@ export function validarDestinoManual(e: DestinoManualEntrada): {
   }
 }
 
-// ============================================================ ADR-0060 — exceção de destino
+// ============================================================ ADR-0061 — exceção de destino
 
 export type ExcecaoEstado = 'PENDENTE' | 'APROVADA' | 'REJEITADA' | 'SUBSTITUIDA' | 'REVOGADA'
 

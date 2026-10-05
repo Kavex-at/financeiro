@@ -1,5 +1,5 @@
 /**
- * Página de exceções de destino (ADR-0060): guard por `sispag:excecao`, flag desligada só
+ * Página de exceções de destino (ADR-0061): guard por `sispag:excecao`, flag desligada só
  * explica, filtro por estado e o bloqueio de "Aprovar" para quem cadastrou.
  */
 

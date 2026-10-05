@@ -34,7 +34,7 @@ const formatarData = (iso?: string): string =>
   iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—'
 
 /**
- * Tabela de exceções de destino (ADR-0060). SÓ renderiza máscaras. As ações só existem para
+ * Tabela de exceções de destino (ADR-0061). SÓ renderiza máscaras. As ações só existem para
  * quem tem `sispag:excecao` (`podeAgir`; sem a permissão a tabela é só leitura). "Aprovar" fica
  * desabilitado, com a razão, quando o usuário é o cadastrante: a regra de verdade é do backend
  * (I12b), a tela só evita o clique inútil.

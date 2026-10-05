@@ -1,6 +1,6 @@
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
-/** Rejeitar e revogar exigem motivo (ADR-0060, E3/E5); cadastrar exige justificativa. HTTP 400. */
+/** Rejeitar e revogar exigem motivo (ADR-0061, E3/E5); cadastrar exige justificativa. HTTP 400. */
 export default class ExcecaoMotivoObrigatorioError extends Error implements HandlerError {
     public readonly code = 'EXCECAO_MOTIVO_OBRIGATORIO';
     public readonly userMessage: string;

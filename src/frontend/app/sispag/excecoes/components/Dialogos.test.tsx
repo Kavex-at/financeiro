@@ -1,5 +1,5 @@
 /**
- * Diálogos da exceção de destino (ADR-0060): cadastrar (formato no cliente, erro do servidor
+ * Diálogos da exceção de destino (ADR-0061): cadastrar (formato no cliente, erro do servidor
  * inline, sem reexibir o valor), aprovar (só máscaras, erro 403 inline) e rejeitar/revogar
  * (motivo obrigatório). Acessíveis por teclado: Esc fecha, campos com label.
  */

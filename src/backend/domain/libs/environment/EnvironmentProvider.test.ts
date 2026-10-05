@@ -209,7 +209,7 @@ describe('EnvironmentProvider', () => {
             return [v.sispagTedEnabled, v.sispagExcecaoDestinoEnabled, v.sispagPixEnabled];
         };
 
-        it('flags TED/PIX/exceção de destino do SISPAG: default OFF, só "true" exato liga (ADR-0054/0060)', async () => {
+        it('flags TED/PIX/exceção de destino do SISPAG: default OFF, só "true" exato liga (ADR-0054/0061)', async () => {
             setFlagsTedPix(undefined);
             expect(await flagsTedPix()).toEqual([false, false, false]); // ausente = desligado
             for (const [valor, esperado] of [
@@ -252,7 +252,7 @@ describe('EnvironmentProvider', () => {
             setFlagsTedPix(undefined);
         });
 
-        describe('alias SISPAG_DESTINO_MANUAL_ENABLED da flag de exceção (ADR-0060, Q6)', () => {
+        describe('alias SISPAG_DESTINO_MANUAL_ENABLED da flag de exceção (ADR-0061, Q6)', () => {
             const NOVO = 'SISPAG_EXCECAO_DESTINO_ENABLED';
             const ANTIGO = 'SISPAG_DESTINO_MANUAL_ENABLED';
             const excecao = async (): Promise<boolean> =>

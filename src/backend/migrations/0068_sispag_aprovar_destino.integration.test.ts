@@ -7,7 +7,7 @@ import 'reflect-metadata';
  * 0068 contra um Postgres DE VERDADE (ADR-0054 D10): o `CHECK` das permissões, o selo do
  * Administrador e a aprovação na trilha só-inclusão.
  *
- * É HISTÓRICO: a ADR-0060 (migration 0075) trocou `sispag:aprovar_destino` por `sispag:excecao` e
+ * É HISTÓRICO: a ADR-0061 (migration 0075) trocou `sispag:aprovar_destino` por `sispag:excecao` e
  * retirou o destino digitado por item. Por isso aplica só as migrations ATÉ a 0068 — o estado do
  * banco no dia em que ela subiu — e testa o esquema com SQL cru (o repositório que gravava e
  * aprovava o destino do item foi removido). A conversão para `sispag:excecao` está no teste da 0075.

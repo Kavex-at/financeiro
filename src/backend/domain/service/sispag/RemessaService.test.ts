@@ -167,7 +167,7 @@ const buildWrite = () => ({
     ]),
 });
 
-/** Exceções de destino (ADR-0060): por padrão nenhuma APROVADA — o resolver cai no cadastro. */
+/** Exceções de destino (ADR-0061): por padrão nenhuma APROVADA — o resolver cai no cadastro. */
 const buildExcecoes = () => ({
     findAprovada: jest.fn().mockResolvedValue(null),
     marcarUso: jest.fn().mockResolvedValue(undefined),
@@ -188,7 +188,7 @@ const buildSispag = () => ({
         .mockResolvedValue([
             { pctCodSeq: 1, banco: 341, agencia: '292', conta: '31404', padrao: true },
         ]),
-    // ADR-0054/0060 — só são chamados com alguma flag TED/PIX/exceção ligada.
+    // ADR-0054/0061 — só são chamados com alguma flag TED/PIX/exceção ligada.
     listChavesPixFavorecido: jest.fn().mockResolvedValue([]),
     getTituloAPagar: jest.fn().mockResolvedValue({ pesCod: '1161' }),
     getDocumentoFavorecido: jest.fn().mockResolvedValue(undefined),
@@ -1626,7 +1626,7 @@ describe('RemessaService — paridade com as flags TED/PIX desligadas', () => {
     });
 });
 
-describe('RemessaService — TED/PIX e exceção de destino (flags ligadas, ADR-0060)', () => {
+describe('RemessaService — TED/PIX e exceção de destino (flags ligadas, ADR-0061)', () => {
     const FLAGS = {
         sispagTedEnabled: true,
         sispagPixEnabled: true,

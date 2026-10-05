@@ -22,7 +22,7 @@ has_canonical_test: false
 
 # Business Rule: exceção de destino SISPAG (I12)
 
-> **Origem:** ADR-0060 (2026-10-05). Complementa `destino-pagamento-sispag` (I10): o cadastro do
+> **Origem:** ADR-0061 (2026-10-05). Complementa `destino-pagamento-sispag` (I10): o cadastro do
 > Conexos manda; a exceção é fallback aprovado por segunda pessoa. Cadastro ruim ou ausente é
 > problema operacional da Columbia a corrigir no Conexos; a exceção é ponte.
 
@@ -45,5 +45,5 @@ H3/H5 (o `fin015` aceita destino sem `pctCodSeq`) seguem **não provadas**; `SIS
 
 ## Ver também
 
-`decisions/0060-*.md` · `entities/excecao-destino.md` · `state-machines/excecao-destino.md` ·
+`decisions/0061-*.md` · `entities/excecao-destino.md` · `state-machines/excecao-destino.md` ·
 `business-rules/destino-pagamento-sispag.md` · `_inbox/sispag-excecao-gap.md`

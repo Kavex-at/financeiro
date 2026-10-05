@@ -107,7 +107,7 @@ Crie um **Web Service** apontando para o repositório.
 | `client_name` | `local` (faz o `EnvironmentProvider` ler do ENV, não do SSM/AWS) |
 | `SISPAG_ENABLED` | `true|false` — liga/desliga a Frente II (SISPAG). **Fail-safe:** sem a var, fica **bloqueada em produção** e habilitada fora de prod. |
 | `RECEBIMENTOS_ENABLED` | **KILL-SWITCH** da Frente IV (Recebimentos / "Gestão de Adiantamentos"), liberada em produção desde a v0.20.0 (ADR-0028). Ao contrário do SISPAG **não é fail-safe**: sem a var a frente fica **habilitada**. Só `false` desliga (rotas `/recebimentos/*` → 403), e vale sem redeploy. |
-| `SISPAG_TED_ENABLED` / `SISPAG_EXCECAO_DESTINO_ENABLED` / `SISPAG_PIX_ENABLED` | Gates de go-live de TED/PIX no SISPAG (ADR-0054, ADR-0060). Default **`false`**; só `true` exato liga, sem redeploy (`sync: false`). Desligadas, remessa e tela ficam idênticas às de antes. Ligar uma por vez, nesta ordem (TED → exceção de destino → PIX), durante o teste supervisionado descrito em `ontology/_inbox/sispag-ted-pix-tasks.md`. A exceção de conta serve a TED (exige TED ligado); a de chave, a PIX. **`SISPAG_DESTINO_MANUAL_ENABLED` é o nome antigo da flag de exceção e segue aceito como alias por um ciclo de deploy**: o nome novo manda quando está definido (inclusive `false`); migre a var no Render e apague a antiga. Desligar no meio de uma retomada de remessa falha fechado em vez de trocar o destino. |
+| `SISPAG_TED_ENABLED` / `SISPAG_EXCECAO_DESTINO_ENABLED` / `SISPAG_PIX_ENABLED` | Gates de go-live de TED/PIX no SISPAG (ADR-0054, ADR-0061). Default **`false`**; só `true` exato liga, sem redeploy (`sync: false`). Desligadas, remessa e tela ficam idênticas às de antes. Ligar uma por vez, nesta ordem (TED → exceção de destino → PIX), durante o teste supervisionado descrito em `ontology/_inbox/sispag-ted-pix-tasks.md`. A exceção de conta serve a TED (exige TED ligado); a de chave, a PIX. **`SISPAG_DESTINO_MANUAL_ENABLED` é o nome antigo da flag de exceção e segue aceito como alias por um ciclo de deploy**: o nome novo manda quando está definido (inclusive `false`); migre a var no Render e apague a antiga. Desligar no meio de uma retomada de remessa falha fechado em vez de trocar o destino. |
 | `CONEXOS_EXTRATO_SYNC_START_DATE` | *(opcional)* `YYYY-MM-DD` — **piso** da janela de ingestão do extrato; default `2026-08-03`. Nenhum caminho de sincronização (cron horário, `DIAS=`, `POST /recebimentos/ingestao`) lê lançamento anterior a esta data. |
 | `RECEBIMENTO_INGEST_DIAS` | *(opcional)* janela default da ingestão, em dias; default `90`. A janela efetiva é a **interseção** com o piso acima. |
 | `RECEBIMENTO_INGEST_FIL_CODS` | *(opcional)* CSV de filiais a ingerir (ex.: `1,2`). Vazio/ausente = todas as filiais que o ERP devolver. |
@@ -228,7 +228,7 @@ acesso gravada no intervalo **se perde** (exporte `app_user_access_event` antes,
 
 ---
 
-### Exceção de destino do SISPAG (`sispag:excecao`, ADR-0060, migration 0075)
+### Exceção de destino do SISPAG (`sispag:excecao`, ADR-0061, migration 0075)
 
 O cadastro do Conexos (`cmn025`) é a fonte do destino de TED/PIX. Quando ele não tem conta ou
 chave válida, só uma **exceção de destino** aprovada por uma **segunda pessoa** vale como destino

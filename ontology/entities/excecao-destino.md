@@ -23,7 +23,7 @@ related_files:
 properties: [id, pesCod, filCod?, tipo, bancoCod, agencia, agenciaDv, conta, contaDv, chavePixTipo, chavePix, titularDocumento, estado, origem, cargaId?, justificativa, cadastradoPor, cadastradoEm, decididoPor, decididoEm, motivoDecisao, substituidaEm, versao]
 relationships:
   - "ExcecaoDestino N—1 Favorecido (pesCod no cmn025; sem entidade local, como em TituloAPagar)"
-  - "ItemLote N—0..1 ExcecaoDestino (a exceção usada, congelada no import; ADR-0060)"
+  - "ItemLote N—0..1 ExcecaoDestino (a exceção usada, congelada no import; ADR-0061)"
   - "ExcecaoDestino 1—N EventoExcecaoDestino (trilha só-inclusão; é o ledger, não entidade de domínio)"
 last_review: 2026-10-05
 universality_evidence:
@@ -33,7 +33,7 @@ universality_evidence:
 
 # ExcecaoDestino
 
-> **Origem:** ADR-0060 (2026-10-05). Destino de pagamento (conta TED ou chave PIX) de um favorecido
+> **Origem:** ADR-0061 (2026-10-05). Destino de pagamento (conta TED ou chave PIX) de um favorecido
 > **diferente do cadastro do Conexos**, registrado e aprovado por duas pessoas, reutilizável em
 > qualquer lote. Substitui o `DestinoManual` por item da ADR-0054. Estados em
 > `state-machines/excecao-destino.md`; regras em `business-rules/excecao-destino-sispag.md`.

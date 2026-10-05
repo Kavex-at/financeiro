@@ -1,6 +1,6 @@
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
-/** Exceção de destino inexistente (ADR-0060). HTTP 404. */
+/** Exceção de destino inexistente (ADR-0061). HTTP 404. */
 export default class ExcecaoNaoEncontradaError extends Error implements HandlerError {
     public readonly code = 'EXCECAO_NAO_ENCONTRADA';
     public readonly userMessage = 'Exceção de destino não encontrada.';

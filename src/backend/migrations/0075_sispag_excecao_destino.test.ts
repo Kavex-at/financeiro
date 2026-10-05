@@ -6,7 +6,7 @@ import { PERMISSION, PERMISSION_CATALOG } from '../domain/interface/auth/Permiss
 import MigrationFiles from './MigrationFiles.js';
 
 /**
- * 0075 — exceção de destino SISPAG (ADR-0060): tabela, trilha só-inclusão, permissão única
+ * 0075 — exceção de destino SISPAG (ADR-0061): tabela, trilha só-inclusão, permissão única
  * `sispag:excecao` e o tipo de alerta de divergência.
  *
  * Asserções sobre o FONTE (padrão da 0064/0066/0067/0068: o `MigrationRunner` usa `import.meta` e
@@ -31,7 +31,7 @@ const listasDoCheck = (codigo: string): string[][] =>
         [...m[1].matchAll(/'([^']+)'/g)].map((v) => v[1]).sort(),
     );
 
-describe('migration 0075 — exceção de destino SISPAG (ADR-0060)', () => {
+describe('migration 0075 — exceção de destino SISPAG (ADR-0061)', () => {
     it('cria excecao_destino com o índice único parcial de uma APROVADA por (favorecido, tipo)', () => {
         expect(CODIGO).toMatch(/CREATE TABLE IF NOT EXISTS excecao_destino\s*\(/i);
         expect(CODIGO).toMatch(

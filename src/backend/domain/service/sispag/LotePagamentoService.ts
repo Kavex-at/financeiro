@@ -353,7 +353,7 @@ export default class LotePagamentoService {
         if (semModalidade > 0) {
             throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
-        // ADR-0054 (Adendo) + ADR-0060 I12f — FALHA FECHADA: item TED/PIX sem destino resolvível
+        // ADR-0054 (Adendo) + ADR-0061 I12f — FALHA FECHADA: item TED/PIX sem destino resolvível
         // (cadastro do Conexos ou exceção APROVADA) barra o finalizar.
         await this.exigirDestinoOfertado(lote);
         return this.transicionar(input, {
@@ -394,7 +394,7 @@ export default class LotePagamentoService {
     };
 
     /**
-     * Checagem do finalizar (ADR-0054 Adendo, ADR-0060 I12f): item TED/PIX — com a flag da
+     * Checagem do finalizar (ADR-0054 Adendo, ADR-0061 I12f): item TED/PIX — com a flag da
      * modalidade ligada — sem a modalidade na OFERTA do painel. A oferta usa o mesmo resolver do
      * envio (cadastro primeiro, exceção APROVADA como fallback), então "ofertado" cobre os dois.
      * Pede também a aposentadoria das exceções que o cadastro tornou desnecessárias (I12c). A

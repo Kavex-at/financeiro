@@ -408,7 +408,7 @@ router.post(
     }),
 );
 
-// ===================================================== ADR-0060 — exceção de destino
+// ===================================================== ADR-0061 — exceção de destino
 
 /**
  * `details` do Zod SEM o valor enviado (I10h): só caminho e código de cada problema. O
@@ -598,7 +598,7 @@ router.get(
     }),
 );
 
-// GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054/0060), SÓ como booleanos.
+// GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054/0061), SÓ como booleanos.
 router.get(
     '/recursos',
     exigirPermissao(PERMISSION.SISPAG_VER),

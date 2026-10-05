@@ -120,7 +120,7 @@
   (REJECT-VOLATILE para a operação de hoje: duas analistas). **Revisitar** quando existir
   permissão por módulo (branch `feat/auth-permissoes-modulo`, ADR-0053): a forma provável é uma
   permissão específica para informar ou substituir destino, não uma regra de pessoa diferente.
-- **(2026-10-05, ADR-0060) "Quatro olhos" no destino:** agora **implementado em outra forma** —
+- **(2026-10-05, ADR-0061) "Quatro olhos" no destino:** agora **implementado em outra forma** —
   dupla validação rígida (aprovador ≠ cadastrante) na `ExcecaoDestino`, permissão única
   `sispag:excecao`. A entrada acima é histórica.
 - **Limite de valor por exceção** e **observação do retorno do banco sobre o destino:** adiados;

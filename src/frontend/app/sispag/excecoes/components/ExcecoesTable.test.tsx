@@ -1,5 +1,5 @@
 /**
- * Tabela de exceções de destino (ADR-0060): só máscaras, "Aprovar" bloqueado para o cadastrante
+ * Tabela de exceções de destino (ADR-0061): só máscaras, "Aprovar" bloqueado para o cadastrante
  * (com a razão), ações escondidas sem a permissão e o marcador de divergência do cadastro.
  */
 

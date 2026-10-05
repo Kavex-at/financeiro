@@ -101,7 +101,7 @@ export interface TransicaoExcecao {
 }
 
 /**
- * ExcecaoDestinoRepository — a exceção de destino e a sua trilha só-inclusão (ADR-0060, I12a,
+ * ExcecaoDestinoRepository — a exceção de destino e a sua trilha só-inclusão (ADR-0061, I12a,
  * I12e). SQL só com parâmetros nomeados.
  *
  * Duas garantias moram aqui:

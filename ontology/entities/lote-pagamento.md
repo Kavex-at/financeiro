@@ -52,7 +52,7 @@ relationships:
   - "LotePagamento 1—N ItemLote (agregado — os títulos incluídos, snapshot de valor/venc na inclusão)"
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
-  - "ItemLote N—0..1 ExcecaoDestino (a exceção APROVADA usada como destino; ADR-0060; vazio quando o destino vem do cadastro)"
+  - "ItemLote N—0..1 ExcecaoDestino (a exceção APROVADA usada como destino; ADR-0061; vazio quando o destino vem do cadastro)"
 last_review: 2026-10-05
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
@@ -62,7 +62,7 @@ universality_evidence:
   - "Conceito universal de financeiro/comex: agrupar títulos a pagar em um lote para revisão e liberação em bloco (o borderô/lote de pagamento)"
   - "dataDebito: o lote nativo do fin015 carrega a data de débito (flpDtaCredito) e o finalizarLote a valida (R1/R2, sispag-fin015-exploration.md:72-76) — todo lote SISPAG/CNAB 240 tem data de pagamento; pedido da Flavia (Columbia) de 2026-09-22, ADR-0049"
   - "modalidade + destino do item: todo item de remessa CNAB 240 tem forma de lançamento (segmento A) e, para TED/PIX, destino (conta ou chave, segmentos A/B); FinItemSispag.itsVldModalidade/pctCodSeq/itsDesChavePix no fin015 (sispag-ted-pix-plan.md §2, 89 itens PRD)"
-  - "ExcecaoDestino (ADR-0060; antes destinoManual, ADR-0054): 12/21 favorecidos sem conta e 0 chave PIX no cadastro (PRD 2026-09-28), cadastro desatualizado (Yuri); ADR-0054. Conceito universal (conta/chave do favorecido informada no pagamento); o cadastro do Conexos é a fonte principal e o destino fora dele exige exceção aprovada por 2ª pessoa (controle antifraude, universal em contas a pagar; 1 cliente até agora, gap Q11)"
+  - "ExcecaoDestino (ADR-0061; antes destinoManual, ADR-0054): 12/21 favorecidos sem conta e 0 chave PIX no cadastro (PRD 2026-09-28), cadastro desatualizado (Yuri); ADR-0054. Conceito universal (conta/chave do favorecido informada no pagamento); o cadastro do Conexos é a fonte principal e o destino fora dele exige exceção aprovada por 2ª pessoa (controle antifraude, universal em contas a pagar; 1 cliente até agora, gap Q11)"
   - "sincronização pelo título (ADR-0055): o pagamento de um título a pagar é observável no próprio título em qualquer ERP (saldo aberto zero); o arquivo de retorno bancário é uma das origens possíveis da baixa, não a única — caso PG230901.REM, baixa manual do 38682/1 em 24/09"
 ---
 
@@ -159,7 +159,7 @@ fora de um lote.
 | `divergencia` | boolean + detalhe | `divergencia`, `divergencia_detalhe` *(a criar)* | Contradição observada que a máquina **não** resolve sozinha: título antes pago voltou a aberto (estorno), ou item `REJEITADO` com título pago. Gera `Alerta` `sispag-baixa-divergente` (I11f). |
 | `sincronizadoEm` | Date? | `sincronizado_em` *(a criar)* | Última leitura **bem-sucedida** do título. Atualizá-la **não** incrementa `versao` (I11h). |
 
-> **`DestinoManual` retirado (ADR-0060).** O destino fora do cadastro agora é a entidade `ExcecaoDestino` (por favorecido, aprovada por 2ª pessoa): ver `entities/excecao-destino.md`.
+> **`DestinoManual` retirado (ADR-0061).** O destino fora do cadastro agora é a entidade `ExcecaoDestino` (por favorecido, aprovada por 2ª pessoa): ver `entities/excecao-destino.md`.
 
 > **Por que snapshot no item:** o `TituloAPagar` é read-through (muda no ERP entre leituras); o
 > `ItemLote` congela valor/venc/credor no instante da inclusão, preservando o que a analista viu
@@ -202,7 +202,7 @@ fora de um lote.
     nativo deixar de existir (cancelado no ERP e confirmado pela analista via `LoteAnteriorCanceladoError`).
   - Ver `business-rules/data-debito-remessa-sispag.md`.
 
-- **I10 (destino de pagamento TED/PIX — ADR-0054, revisada pela ADR-0060, 2026-10-05):** todo item
+- **I10 (destino de pagamento TED/PIX — ADR-0054, revisada pela ADR-0061, 2026-10-05):** todo item
   TED/PIX tem destino resolvível antes de qualquer escrita (I10a); a tela oferece com a mesma
   função que o envio usa (I10b); TED em qualquer banco (I10c); PIX só com chave (I10d); **cadastro
   primeiro, exceção `APROVADA` como fallback** (I10, I12c); o destino congela depois do import no

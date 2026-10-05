@@ -32,7 +32,7 @@ const TEXTOS: Record<AcaoComMotivo, { titulo: string; descricao: string; botao: 
   },
 }
 
-/** Rejeitar (PENDENTE) e revogar (APROVADA) exigem motivo (ADR-0060, E3/E5). */
+/** Rejeitar (PENDENTE) e revogar (APROVADA) exigem motivo (ADR-0061, E3/E5). */
 export function RevogarExcecaoDialog({
   excecao,
   acao,

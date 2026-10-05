@@ -76,7 +76,7 @@ universality_evidence:
 | Implicação | `EffectivePermissionCalculator` | `<módulo>:executar ⇒ <módulo>:ver` |
 | Efetiva | calculada a cada requisição | o token não carrega permissão |
 
-> **Permissão de exceção de destino (ADR-0060, 2026-10-05):** `sispag:excecao` (única; cadastrar,
+> **Permissão de exceção de destino (ADR-0061, 2026-10-05):** `sispag:excecao` (única; cadastrar,
 > aprovar, rejeitar e revogar `ExcecaoDestino`) **substitui** `sispag:aprovar_destino` (ADR-0054/0068).
 > A migration troca o `CHECK` das tabelas de permissão e **converte as concessões existentes**
 > (papel e exceções por usuário, inclusive "revogar vence"). É avulsa como a anterior (não implica

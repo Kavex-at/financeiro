@@ -15,7 +15,7 @@ export const PERMISSAO = {
   SISPAG_VER: 'sispag:ver',
   SISPAG_EXECUTAR: 'sispag:executar',
   /**
-   * Exceção de destino de pagamento (ADR-0060): cadastrar, aprovar, rejeitar e revogar. Permissão
+   * Exceção de destino de pagamento (ADR-0061): cadastrar, aprovar, rejeitar e revogar. Permissão
    * única; a separação de funções é a regra "aprovador ≠ cadastrante" no backend. Avulsa.
    */
   SISPAG_EXCECAO: 'sispag:excecao',
@@ -66,7 +66,7 @@ export const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = 
     itens: [
       { permissao: PERMISSAO.SISPAG_VER, acao: 'ver' },
       { permissao: PERMISSAO.SISPAG_EXECUTAR, acao: 'executar' },
-      // ADR-0060: cadastra, aprova, rejeita e revoga exceções de destino. Não implica nem é implicada.
+      // ADR-0061: cadastra, aprova, rejeita e revoga exceções de destino. Não implica nem é implicada.
       { permissao: PERMISSAO.SISPAG_EXCECAO, acao: 'exceção de destino' },
     ],
   },

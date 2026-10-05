@@ -253,7 +253,7 @@ describe('LoteCard — só sispag:ver', () => {
   })
 })
 
-describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fallback (ADR-0060)', () => {
+describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fallback (ADR-0061)', () => {
   const ligado = { tedEnabled: true, excecaoDestinoEnabled: true, pixEnabled: true }
   const desligado = { tedEnabled: false, excecaoDestinoEnabled: false, pixEnabled: false }
   const itemTed = (over: Partial<LotePagamento['itens'][number]> = {}) =>

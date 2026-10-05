@@ -128,7 +128,7 @@ describe('SispagPage — falha ao carregar os lotes', () => {
     expect(screen.getByRole('tab', { name: 'Lotes candidatos (1)' })).toBeInTheDocument()
   })
 
-  it('o link das exceções de destino aparece só para quem tem sispag:excecao (ADR-0060)', async () => {
+  it('o link das exceções de destino aparece só para quem tem sispag:excecao (ADR-0061)', async () => {
     ;(fetchLotes as jest.Mock).mockResolvedValue([])
     await renderPainel()
     expect(screen.getByRole('link', { name: 'Exceções de destino' })).toHaveAttribute(

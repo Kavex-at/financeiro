@@ -16,7 +16,7 @@ import ExcecaoDestinoService, { type AtorExcecao } from './ExcecaoDestinoService
 import ExcecaoSubstituicaoService from './ExcecaoSubstituicaoService.js';
 
 /**
- * `ExcecaoDestinoService` + resolver + aposentadoria contra um Postgres DE VERDADE (ADR-0060):
+ * `ExcecaoDestinoService` + resolver + aposentadoria contra um Postgres DE VERDADE (ADR-0061):
  * o ciclo registrar → aprovar com a regra aprovador ≠ cadastrante, a revogação que tira a exceção
  * da resolução e a varredura de aposentadoria idempotente. O Conexos é mockado (só leitura).
  *

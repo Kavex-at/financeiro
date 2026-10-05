@@ -1,4 +1,4 @@
-# Gap — sispag-excecao-destino (ADR-0060)
+# Gap — sispag-excecao-destino (ADR-0061)
 
 > Perguntas **ainda abertas** após a aprovação do diff (2026-10-05). As "propostas" abaixo são
 > defaults razoáveis para destravar o TaskScoper; **não estão decididas**. Responder editando este

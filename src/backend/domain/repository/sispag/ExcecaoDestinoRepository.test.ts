@@ -73,7 +73,7 @@ const row = (over: Record<string, unknown> = {}) => ({
 
 const sqls = (m: jest.Mock): string[] => m.mock.calls.map(([q]) => String(q));
 
-describe('ExcecaoDestinoRepository (ADR-0060)', () => {
+describe('ExcecaoDestinoRepository (ADR-0061)', () => {
     describe('insert', () => {
         it('UMA transação: grava PENDENTE com o destino em colunas e a trilha CADASTRO', async () => {
             const db = buildDb();

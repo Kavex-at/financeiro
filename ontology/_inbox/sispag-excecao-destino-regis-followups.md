@@ -1,4 +1,4 @@
-# Follow-ups do Regis-Review — sispag-excecao-destino (ADR-0060)
+# Follow-ups do Regis-Review — sispag-excecao-destino (ADR-0061)
 
 Run: `docs/regis-review/2026-10-05-1645-sispag-excecao-destino/` (8 QAs; consolidador não rodado, nenhum P0).
 **Nenhum P0 (Crítico).** Nada abaixo foi implementado neste ciclo (anti-recursão).
@@ -11,7 +11,7 @@ Run: `docs/regis-review/2026-10-05-1645-sispag-excecao-destino/` (8 QAs; consoli
 - [P2] Trigger de auditoria em `excecao_destino` (hoje só a trilha é só-inclusão; update direto no banco não deixa rastro) (security-1)
 - [P2] Conta/chave em claro na tabela e em `audit.depois.destino`: plano LGPD/anonimização (security-2)
 - [P2] Alarme agregado para negações de auto-aprovação e aviso a terceiro ao cadastrar/aprovar (security-3)
-- [P2] Teto de valor ou terceira aprovação contra conluio de dois titulares (security-4, watchlist da ADR-0060)
+- [P2] Teto de valor ou terceira aprovação contra conluio de dois titulares (security-4, watchlist da ADR-0061)
 - [P2] Script de reversão testado para a conversão `aprovar_destino` → `excecao` (deployability-1)
 - [P2] Varredura `aposentarSubstituidas` sequencial: concorrência 4 e log de duração (performance-1)
 - [P2] Testes dos jobs `aposentar-excecoes-substituidas` e `probe-destino-manual-uso` (testability-1)

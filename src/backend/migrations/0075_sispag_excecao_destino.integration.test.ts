@@ -4,7 +4,7 @@ import { Client } from 'pg';
 import 'reflect-metadata';
 
 /**
- * 0075 contra um Postgres DE VERDADE (ADR-0060): trilha só-inclusão, uma APROVADA por
+ * 0075 contra um Postgres DE VERDADE (ADR-0061): trilha só-inclusão, uma APROVADA por
  * (favorecido, tipo), aprovador ≠ cadastrante no banco, conversão idempotente de
  * `sispag:aprovar_destino` em `sispag:excecao` e o `CHECK` do alerta.
  *

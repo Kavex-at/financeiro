@@ -250,7 +250,7 @@ describe('LotePagamentoRepository', () => {
         expect(params).not.toHaveProperty('finalizadoPor');
     });
     // ── ADR-0054 — destino manual do item (I10e, I10g, I10h) ─────────────────────────────
-    describe('exceção de destino do item (ADR-0060, I10f)', () => {
+    describe('exceção de destino do item (ADR-0061, I10f)', () => {
         it('item sem exceção usada: sem excecaoDestinoId', async () => {
             const db = buildDb();
             db.selectFirst.mockResolvedValue(header());

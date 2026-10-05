@@ -73,7 +73,7 @@ interface ItemRow {
     divergencia?: boolean | null;
     divergencia_detalhe?: string | null;
     sincronizado_em?: Date | null;
-    // ── 0075: a exceção de destino usada quando o destino congelou (ADR-0060, I10f) ──
+    // ── 0075: a exceção de destino usada quando o destino congelou (ADR-0061, I10f) ──
     excecao_destino_id?: string | null;
 }
 
@@ -514,7 +514,7 @@ export default class LotePagamentoRepository {
     };
 
     /**
-     * Liga o item à exceção de destino usada quando o destino congela no import (ADR-0060 I10f).
+     * Liga o item à exceção de destino usada quando o destino congela no import (ADR-0061 I10f).
      * Só a REFERÊNCIA (id): o valor da conta/chave não é copiado para o item. Não bumpa a versão
      * (não é edição do agregado pela analista; o lote já está FINALIZADO no envio).
      */

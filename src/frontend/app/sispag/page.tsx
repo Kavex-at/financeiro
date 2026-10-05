@@ -172,7 +172,7 @@ function SispagPanel() {
   // (`sispag:ver`); só o "Atualizar DDA" dentro dela exige executar.
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
-  // ADR-0060: a tela de exceções de destino só aparece para quem tem `sispag:excecao`.
+  // ADR-0061: a tela de exceções de destino só aparece para quem tem `sispag:excecao`.
   const podeExcecao = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXCECAO)
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
