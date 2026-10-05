@@ -26,6 +26,12 @@ const main = async (): Promise<void> => {
         `[ingest-pagamentos] run ${result.runId} status=${result.status} ` +
             `titulos=${result.totalTitulos} inativados=${result.totalInativados}`,
     );
+    if (result.filiaisSemFlagBoleto && result.filiaisSemFlagBoleto.length > 0) {
+        console.warn(
+            `::warning::[ingest-pagamentos] flag de boleto DDA NÃO lido (valor anterior preservado) — filiais: ${result.filiaisSemFlagBoleto.join(', ')}. ` +
+                'Provável 403 do robô em fin015/titulosPendentes (FIN_041).',
+        );
+    }
     if (result.filiaisComFalha && result.filiaisComFalha.length > 0) {
         // Anotação do GitHub Actions: aparece no resumo da run mesmo com exit 0.
         console.warn(

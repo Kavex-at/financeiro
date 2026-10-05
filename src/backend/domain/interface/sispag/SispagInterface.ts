@@ -208,6 +208,8 @@ export interface IngestaoPagamentosResult {
     totalInativados: number;
     /** Filiais cuja leitura falhou nesta run (leitura parcial). Ausente/vazio = todas lidas. */
     filiaisComFalha?: number[];
+    /** Filiais cujo flag de boleto DDA não pôde ser lido: o valor anterior foi preservado. */
+    filiaisSemFlagBoleto?: number[];
 }
 
 /** Um lote SISPAG nativo — fonte `fin015/list`. */
