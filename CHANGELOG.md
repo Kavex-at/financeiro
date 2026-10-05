@@ -1,5 +1,23 @@
 # Columbia Financeiro — Changelog
 
+## v0.54.0 (2026-10-05) — exceção de destino do SISPAG
+
+- **O cadastro do Conexos é a fonte do destino de TED/PIX.** Quando ele não tem conta ou chave
+  válida, só uma **exceção de destino** aprovada por uma **segunda pessoa** vale como destino. O
+  destino digitado por item deixou de existir.
+  - Nova permissão **`sispag:excecao`** (cadastrar, aprovar, rejeitar e revogar), no lugar de
+    `sispag:aprovar_destino`; as concessões existentes são convertidas pela migration `0075`.
+  - Quem cadastra **não** aprova a própria exceção (regra no backend e no banco), para TED e PIX.
+    PIX só com chave CPF/CNPJ do próprio favorecido. Sem validade; qualquer titular pode revogar.
+  - **A Columbia precisa de pelo menos duas pessoas com `sispag:excecao`**; com uma só, nada se aprova.
+  - Nova tela **Exceções de destino** (`/sispag/excecoes`) e selos nos itens do lote ("exceção" e
+    "sem destino: aguardando exceção"). O finalizar e o envio barram item sem destino.
+  - Se o cadastro passar a ter destino válido, a exceção é aposentada sozinha; valor diferente gera
+    alerta de divergência. Job novo: `aposentar-excecoes-substituidas` (manual).
+- Flag renomeada para `SISPAG_EXCECAO_DESTINO_ENABLED` (`SISPAG_DESTINO_MANUAL_ENABLED` segue como
+  alias por um ciclo). Continua desligada por padrão.
+- Carga em planilha **não** entra neste release (layout da planilha ainda não visto).
+
 ## v0.53.0 (2026-10-05) — SISPAG: carteira atualizada ao abrir a tela, conta por filial e correções
 
 - **A carteira se atualiza ao abrir `/sispag`.** A tela mostra a carteira já gravada, mostra
