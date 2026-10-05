@@ -17,6 +17,7 @@ import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import DestinoAprovacaoRule from '../../libs/sispag/DestinoAprovacaoRule.js';
 import DestinoManualValidator from '../../libs/sispag/DestinoManualValidator.js';
+import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import LotePagamentoService from './LotePagamentoService.js';
 import type SispagPainelService from './SispagPainelService.js';
 
@@ -24,6 +25,7 @@ const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
     id: 'L1',
     filCod: 2,
     status: 'RASCUNHO',
+    conta: '55795-4',
     criadoPor: 'u1',
     versao: 1,
     itens: [],
@@ -120,8 +122,15 @@ const make = (
     conexosTitulo: TituloAPagar | null = titulo(),
     tituloRepo = buildTituloRepo(),
     deps = buildDestinoDeps(),
+    contaPadrao: { banco: string; conta: string } | null = {
+        banco: 'ITAÚ',
+        conta: '55795-4',
+    },
 ) => {
     deps.conexos.getTituloAPagar.mockResolvedValue(conexosTitulo);
+    const contaResolver = {
+        resolverPadrao: jest.fn().mockResolvedValue(contaPadrao ?? undefined),
+    } as unknown as ContaPagadoraResolver;
     const conexos = deps.conexos as unknown as ConexosSispagClient;
     const service = new LotePagamentoService(
         repo as unknown as LotePagamentoRepository,
@@ -134,8 +143,9 @@ const make = (
         deps.painel as unknown as SispagPainelService,
         deps.write as unknown as ConexosSispagWriteClient,
         new DestinoAprovacaoRule(),
+        contaResolver,
     );
-    return { service, conexos, tituloRepo };
+    return { service, conexos, tituloRepo, contaResolver };
 };
 
 describe('LotePagamentoService — invariantes', () => {
@@ -265,6 +275,16 @@ describe('LotePagamentoService — invariantes', () => {
             expect(repo.transicionarStatus).not.toHaveBeenCalled();
         });
 
+        it('G-13 — recusa finalizar lote SEM conta pagadora (falha aqui, não na remessa)', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(lote({ conta: undefined }));
+            const { service } = make(repo);
+            await expect(service.finalizarLote(input)).rejects.toMatchObject({
+                userMessage: expect.stringContaining('conta pagadora'),
+            });
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
         it('happy — finaliza (RASCUNHO→FINALIZADO)', async () => {
             const repo = buildRepo();
             const { service } = make(repo);
@@ -340,6 +360,45 @@ describe('LotePagamentoService — invariantes', () => {
             expect(repo.criarLote).toHaveBeenCalledWith(
                 expect.objectContaining({ filCod: 2, criadoPor: 'u1' }),
             );
+        });
+
+        it('G-13: criarLote usa a conta que a FILIAL tem (resolver), não uma constante', async () => {
+            const repo = buildRepo();
+            repo.criarLote.mockResolvedValue(lote());
+            const { service, contaResolver } = make(repo, titulo(), buildTituloRepo(), undefined, {
+                banco: 'ITAÚ',
+                conta: '29949-2',
+            });
+            await service.criarLote({ filCod: 2, ator: 'u1' });
+            expect(contaResolver.resolverPadrao).toHaveBeenCalledWith(2);
+            expect(repo.criarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ banco: 'ITAÚ', conta: '29949-2' }),
+            );
+        });
+
+        it('G-13: conta informada pelo analista vale e dispensa o resolver', async () => {
+            const repo = buildRepo();
+            repo.criarLote.mockResolvedValue(lote());
+            const { service, contaResolver } = make(repo);
+            await service.criarLote({
+                filCod: 2,
+                ator: 'u1',
+                banco: 'Santander',
+                conta: '13001274-8',
+            });
+            expect(contaResolver.resolverPadrao).not.toHaveBeenCalled();
+            expect(repo.criarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ banco: 'Santander', conta: '13001274-8' }),
+            );
+        });
+
+        it('G-13: filial sem conta inequívoca → lote criado SEM conta', async () => {
+            const repo = buildRepo();
+            repo.criarLote.mockResolvedValue(lote({ conta: undefined }));
+            const { service } = make(repo, titulo(), buildTituloRepo(), undefined, null);
+            await service.criarLote({ filCod: 7, ator: 'u1' });
+            const arg = repo.criarLote.mock.calls[0][0];
+            expect(arg).not.toHaveProperty('conta');
         });
 
         it('listarLotes e getLote delegam ao repo', async () => {
@@ -420,6 +479,9 @@ describe('LotePagamentoService — invariantes', () => {
                 buildDestinoDeps().painel as unknown as SispagPainelService,
                 buildDestinoDeps().write as unknown as ConexosSispagWriteClient,
                 new DestinoAprovacaoRule(),
+                {
+                    resolverPadrao: jest.fn().mockResolvedValue(undefined),
+                } as unknown as ContaPagadoraResolver,
             );
             await expect(
                 service.incluirTitulo({

@@ -710,31 +710,28 @@ describe('RemessaService', () => {
     });
 
     describe('conta pagadora e banco — nada de fallback silencioso', () => {
-        it('conta do lote ausente no fin005 usa a da filial, mas AVISA no log', async () => {
+        it('G-13 — conta do lote que NÃO existe no fin005 da filial recusa, sem fallback', async () => {
             const write = buildWrite();
-            const log = buildLog();
             const loteRepo = buildLoteRepo(lote({ conta: '99999-9' }));
-            const res = await make({ write, loteRepo, log }).gerarRemessa({
-                loteId: 'L1',
-                ator: 'u',
+            await expect(
+                make({ write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toMatchObject({
+                userMessage: expect.stringContaining('99999-9'),
             });
-            expect(res.status).toBe('gerada');
-            expect(log.warn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    message: expect.stringContaining('conta pagadora do lote não consta'),
-                    data: expect.objectContaining({
-                        contaDoLote: '99999-9',
-                        contaUsada: '55795-4',
-                    }),
-                }),
-            );
+            // Antes caía na primeira conta do fin005 (ordem arbitrária, às vezes outro banco).
+            expect(write.criarLote).not.toHaveBeenCalled();
         });
 
-        it('lote SEM conta definida segue usando a primeira conta cadastrada', async () => {
+        it('G-13 — lote SEM conta definida recusa e manda escolher a conta', async () => {
+            const write = buildWrite();
             const { conta: _conta, ...semConta } = lote();
             const loteRepo = buildLoteRepo(semConta as LotePagamento);
-            const res = await make({ loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
-            expect(res.status).toBe('gerada');
+            await expect(
+                make({ write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toMatchObject({
+                userMessage: expect.stringContaining('não tem conta pagadora'),
+            });
+            expect(write.criarLote).not.toHaveBeenCalled();
         });
 
         it('banco fora do mapa FEBRABAN recusa — não vira Itaú (341)', async () => {
@@ -922,6 +919,7 @@ describe('RemessaService', () => {
         });
 
         it('usa a conta pagadora da FILIAL, nunca uma fixa', async () => {
+            const loteRepo = buildLoteRepo(lote({ conta: '29949-2' }));
             const sispag = buildSispag();
             sispag.listContasCorrentes.mockResolvedValue([
                 {
@@ -934,7 +932,7 @@ describe('RemessaService', () => {
                 },
             ]);
             const write = buildWrite();
-            await make({ sispag, write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            await make({ sispag, write, loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
             expect(write.criarLote).toHaveBeenCalledWith(
                 expect.objectContaining({
                     conta: expect.objectContaining({ ccoCod: 9, ccoEspAgcod: '0870' }),

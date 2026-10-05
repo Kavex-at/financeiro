@@ -375,9 +375,18 @@ export type LeituraBaixas =
     | { legivel: false; motivo: string; status?: number };
 
 /**
- * Conta pagadora DEFAULT do lote (A3): tudo sai pelo Itaú; o analista troca na
- * revisão só na exceção rara (fornecedor que não aceita boleto via Itaú). O lote
- * nativo fin015 é por conta pagadora (a conta da Columbia de onde sai o dinheiro).
+ * Banco padrão da conta pagadora (A3): tudo sai pelo Itaú; o analista troca na revisão só na
+ * exceção rara (fornecedor que não aceita boleto via Itaú). `bncCod` é o código INTERNO do
+ * Conexos (≠ FEBRABAN 341). O lote nativo fin015 é por conta pagadora.
+ */
+export const ITAU_BNCCOD = 4;
+
+/**
+ * Conta Itaú PREFERIDA — só desempata quando a filial tem mais de uma conta Itaú no `fin005`.
+ * NUNCA é gravada às cegas num lote: quem decide a conta é o `ContaPagadoraResolver`, a partir
+ * das contas que a filial realmente tem (G-13). Antes, todo lote automático nascia com esta
+ * conta, exista ela ou não na filial, e a remessa compensava caindo na primeira conta do `fin005`
+ * (ordem arbitrária, às vezes de outro banco).
  */
 export const CONTA_PAGADORA_DEFAULT = { banco: 'ITAÚ', conta: '55795-4' } as const;
 

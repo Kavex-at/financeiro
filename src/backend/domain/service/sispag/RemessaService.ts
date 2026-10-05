@@ -394,30 +394,18 @@ export default class RemessaService {
         const cc = lote.conta
             ? contas.find((c) => `${c.numeroConta}-${c.dvConta ?? ''}` === lote.conta)
             : undefined;
-        // A conta do lote nasce fixa (Itaú 55795-4 nos lotes automáticos) e pode não existir no
-        // fin005 da filial: o fallback para a conta da FILIAL é intencional (teste "usa a conta
-        // pagadora da FILIAL"). Só não pode ser SILENCIOSO — a conta usada difere da gravada no
-        // lote e quem lê o log precisa ver isso. A correção de fundo é a conta por filial (G-13).
-        if (lote.conta && !cc && contas[0]) {
-            await this.logService.warn({
-                type: LOG_TYPE.BUSINESS_WARN,
-                message: 'conta pagadora do lote não consta na filial — usada a primeira da filial',
-                data: {
-                    loteId: lote.id,
-                    filCod: lote.filCod,
-                    contaDoLote: lote.conta,
-                    contaUsada: `${contas[0].numeroConta}-${contas[0].dvConta ?? ''}`,
-                    contasDaFilial: contas.length,
-                },
-            });
-        }
-        const escolhida = cc ?? contas[0];
+        // G-13: SEM fallback. A conta do lote foi resolvida pelo `fin005` da filial (ou escolhida
+        // pela analista); aqui ela tem que existir lá. Cair na "primeira conta da filial" pagava
+        // de um banco que ninguém escolheu (a ordem do fin005 é arbitrária).
+        const escolhida = cc;
         if (!escolhida) {
             throw new LoteEstadoInvalidoError({
                 loteId: lote.id,
                 statusAtual: lote.status,
                 acao: 'gerar remessa',
-                motivo: `Nenhuma conta pagadora cadastrada no fin005 para a filial ${lote.filCod}.`,
+                motivo: lote.conta
+                    ? `A conta pagadora ${lote.conta} do lote não consta no fin005 da filial ${lote.filCod}. Reabra o lote, escolha a conta pagadora e finalize de novo.`
+                    : `O lote não tem conta pagadora definida (filial ${lote.filCod}). Reabra o lote e escolha a conta antes de gerar a remessa.`,
             });
         }
         const bncCod = escolhida.bncCod;

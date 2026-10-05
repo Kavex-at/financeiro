@@ -15,10 +15,10 @@ import DestinoCongeladoError, {
 import DestinoAprovacaoPendenteError from '../../errors/DestinoAprovacaoPendenteError.js';
 import DestinoManualDesabilitadoError from '../../errors/DestinoManualDesabilitadoError.js';
 import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
+import ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     type ChaveTitulo,
-    CONTA_PAGADORA_DEFAULT,
     type CriarLoteInput,
     DESTINO_APROVACAO,
     DESTINO_MANUAL_TIPO,
@@ -78,14 +78,22 @@ export default class LotePagamentoService {
         @inject(SispagPainelService) private readonly painel: SispagPainelService,
         @inject(ConexosSispagWriteClient) private readonly fin015: ConexosSispagWriteClient,
         @inject(DestinoAprovacaoRule) private readonly aprovacao: DestinoAprovacaoRule,
+        @inject(ContaPagadoraResolver) private readonly contaResolver: ContaPagadoraResolver,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
-        // A3: conta pagadora default = Itaú (o analista troca na revisão se preciso).
+        // G-13: sem conta informada, usa a que a FILIAL tem no fin005 (Itaú). Se não houver uma
+        // conta inequívoca o lote nasce sem conta e a analista escolhe — o finalizar recusa.
+        const padrao =
+            input.banco && input.conta
+                ? { banco: input.banco, conta: input.conta }
+                : await this.contaResolver.resolverPadrao(input.filCod);
+        const banco = input.banco ?? padrao?.banco;
+        const conta = input.conta ?? padrao?.conta;
         const lote = await this.repo.criarLote({
             filCod: input.filCod,
-            banco: input.banco ?? CONTA_PAGADORA_DEFAULT.banco,
-            conta: input.conta ?? CONTA_PAGADORA_DEFAULT.conta,
+            ...(banco ? { banco } : {}),
+            ...(conta ? { conta } : {}),
             criadoPor: input.ator,
         });
         await this.audit('criarLote', lote.id, input.ator, { filCod: input.filCod });
@@ -356,6 +364,15 @@ export default class LotePagamentoService {
                 statusAtual: lote.status,
                 acao: 'finalizar',
                 motivo: 'Não é possível finalizar um lote vazio. Inclua ao menos um título.',
+            });
+        }
+        // G-13: a remessa sai de UMA conta. Sem ela escolhida, falha aqui — não na geração.
+        if (!lote.conta) {
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao: 'finalizar',
+                motivo: `Defina a conta pagadora do lote antes de finalizar (a filial ${lote.filCod} não tem uma conta Itaú inequívoca).`,
             });
         }
         // A2: revisão obrigatória — todo item precisa de forma de pagamento definida.
