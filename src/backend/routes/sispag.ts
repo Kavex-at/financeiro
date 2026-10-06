@@ -31,7 +31,10 @@ import RemessaService from '../domain/service/sispag/RemessaService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
-import { EXCECAO_ESTADO } from '../domain/interface/sispag/SispagInterface.js';
+import { DUPLICATE_ACTION, EXCECAO_ESTADO } from '../domain/interface/sispag/SispagInterface.js';
+import ConferenciaLoteService from '../domain/service/sispag/ConferenciaLoteService.js';
+import DuplicateResolutionService from '../domain/service/sispag/DuplicateResolutionService.js';
+import PendenciaCadastroService from '../domain/service/sispag/PendenciaCadastroService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { exigirPermissao } from '../http/acesso.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
@@ -405,6 +408,155 @@ router.post(
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
+    }),
+);
+
+// ===================================================== ADR-0063 — verificação TED/PIX e conferência
+// O ator é SEMPRE o usuário autenticado (`req.user.sub`): o Zod descarta campo desconhecido, então
+// um "ator" mandado no body é ignorado. Nada aqui escreve no Conexos.
+
+const resolucaoAlertaSchema = z
+    .object({
+        acao: z.enum([DUPLICATE_ACTION.JUSTIFICAR, DUPLICATE_ACTION.RETIRAR]),
+        justificativa: z.string().max(2000).optional(),
+    })
+    .refine(
+        (b) => b.acao !== DUPLICATE_ACTION.JUSTIFICAR || (b.justificativa ?? '').trim() !== '',
+        {
+            message: 'justificativa obrigatória para JUSTIFICAR',
+            path: ['justificativa'],
+        },
+    );
+const alertaParamsSchema = chaveTituloSchema.extend({
+    id: z.string().uuid(),
+    alertaId: z.string().uuid(),
+});
+const motivoSchema = z.object({ motivo: z.string().trim().min(1).max(2000) });
+const conferirSchema = z.object({ versao: z.coerce.number().int().min(1) });
+const devolverSchema = z.object({
+    versao: z.coerce.number().int().min(1),
+    motivo: z.string().trim().min(1).max(2000),
+});
+
+// POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/alertas/:alertaId/resolucao — a analista
+// trata UMA alerta de duplicidade (I13f): JUSTIFICAR (texto obrigatório; o item fica) ou RETIRAR (o
+// item sai e o título fica bloqueado até o cancelamento no Conexos). Só RASCUNHO.
+// 400 body · 404 alerta · 409 alerta já tratada / lote fora de RASCUNHO.
+router.post(
+    '/lotes/:id/itens/:filCod/:docCod/:titCod/alertas/:alertaId/resolucao',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const params = alertaParamsSchema.safeParse(req.params);
+        const body = resolucaoAlertaSchema.safeParse(req.body);
+        if (!params.success || !body.success) {
+            return respostaInvalida(res, params.error, body.error);
+        }
+        const service = container.resolve(DuplicateResolutionService);
+        try {
+            const lote = await service.resolverAlertaDuplicidade({
+                loteId: params.data.id,
+                chave: {
+                    filCod: params.data.filCod,
+                    docCod: params.data.docCod,
+                    titCod: params.data.titCod,
+                },
+                alertaId: params.data.alertaId,
+                acao: body.data.acao,
+                ...(body.data.justificativa !== undefined
+                    ? { justificativa: body.data.justificativa }
+                    : {}),
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(lote) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/titulos/:filCod/:docCod/:titCod/bloqueio-duplicidade/desfazer — a analista desfaz o
+// bloqueio por duplicidade do título (I13g), com motivo, auditado. 400 · 409 sem bloqueio ATIVO.
+router.post(
+    '/titulos/:filCod/:docCod/:titCod/bloqueio-duplicidade/desfazer',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const chave = chaveTituloSchema.safeParse(req.params);
+        const body = motivoSchema.safeParse(req.body);
+        if (!chave.success || !body.success) return respostaInvalida(res, chave.error, body.error);
+        const service = container.resolve(DuplicateResolutionService);
+        try {
+            const bloqueio = await service.desfazerBloqueio({
+                chave: chave.data,
+                motivo: body.data.motivo,
+                ator: ator(req),
+            });
+            res.json({ bloqueio });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/lotes/:id/conferir — L12, conferência por 2ª pessoa (I13l). `sispag:conferir`;
+// quem finalizou, incluiu item ou montou o lote manual recebe 403 (`SelfConferenceError`).
+router.post(
+    '/lotes/:id/conferir',
+    exigirPermissao(PERMISSION.SISPAG_CONFERIR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = loteIdSchema.safeParse(req.params);
+        const body = conferirSchema.safeParse(req.body);
+        if (!id.success || !body.success) return respostaInvalida(res, id.error, body.error);
+        const service = container.resolve(ConferenciaLoteService);
+        try {
+            const lote = await service.conferirLote({
+                loteId: id.data.id,
+                versao: body.data.versao,
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(lote) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/lotes/:id/devolver — L13, o conferente devolve o lote a RASCUNHO com motivo.
+router.post(
+    '/lotes/:id/devolver',
+    exigirPermissao(PERMISSION.SISPAG_CONFERIR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = loteIdSchema.safeParse(req.params);
+        const body = devolverSchema.safeParse(req.body);
+        if (!id.success || !body.success) return respostaInvalida(res, id.error, body.error);
+        const service = container.resolve(ConferenciaLoteService);
+        try {
+            const lote = await service.devolverLote({
+                loteId: id.data.id,
+                versao: body.data.versao,
+                motivo: body.data.motivo,
+                ator: ator(req),
+            });
+            res.json({ lote: apiView().lote(lote) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/pendencias-cadastro — fila "Pendências de cadastro" (I13k), `sispag:cadastro`.
+// Reconfere cada pendência no cmn025 na leitura (resolve as corrigidas). Nunca traz conta/chave.
+router.get(
+    '/pendencias-cadastro',
+    exigirPermissao(PERMISSION.SISPAG_CADASTRO),
+    heavyRouteLimiter,
+    asyncHandler(async (_req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(PendenciaCadastroService);
+        res.json({ pendencias: await service.listarAbertas() });
     }),
 );
 

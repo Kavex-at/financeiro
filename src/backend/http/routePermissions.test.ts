@@ -97,6 +97,18 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     // L11 "Sincronizar agora" (ADR-0055): mesmo nível de finalizar/reabrir.
     ['POST /sispag/lotes/:id/sincronizar', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade', P.SISPAG_EXECUTAR],
+    // ADR-0063 — verificação TED/PIX, bloqueio por duplicidade, conferência e pendências
+    [
+        'POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/alertas/:alertaId/resolucao',
+        P.SISPAG_EXECUTAR,
+    ],
+    [
+        'POST /sispag/titulos/:filCod/:docCod/:titCod/bloqueio-duplicidade/desfazer',
+        P.SISPAG_EXECUTAR,
+    ],
+    ['POST /sispag/lotes/:id/conferir', P.SISPAG_CONFERIR],
+    ['POST /sispag/lotes/:id/devolver', P.SISPAG_CONFERIR],
+    ['GET /sispag/pendencias-cadastro', P.SISPAG_CADASTRO],
     ['POST /sispag/lotes/:id/conta', P.SISPAG_EXECUTAR],
     ['POST /sispag/ingestao', P.SISPAG_EXECUTAR],
     // ADR-0060: o refresh ao abrir a tela só LÊ o ERP e escreve no Postgres próprio.
@@ -222,11 +234,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060): 27/36/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063): 27/41/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(36);
+        expect(porMount('sispag')).toBe(41);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);
