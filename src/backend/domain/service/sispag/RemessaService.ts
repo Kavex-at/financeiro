@@ -170,6 +170,10 @@ export interface GerarRemessaResult {
  *   - Conta pagadora vem do `fin005` da FILIAL. `ccoCod` não é global.
  *   - A identidade do título vai VERBATIM do grid de pendentes.
  */
+
+/** Início do header de arquivo CNAB 240: código do banco (3), lote `0000`, registro `0`. */
+const CABECALHO_CNAB_240 = /^\d{3}00000/;
+
 @injectable()
 export default class RemessaService {
     public constructor(
@@ -1645,7 +1649,10 @@ export default class RemessaService {
         if (arquivo?.conteudo) return { nomeArquivo, conteudo: arquivo.conteudo };
         if (lote.nativeGabCod) {
             const conteudo = await this.write.baixarRemessa({ filCod, gabCod: lote.nativeGabCod });
-            if (conteudo) {
+            // O GET de download é octet-stream e o client converte qualquer corpo com
+            // `String(...)`: um JSON de erro com 200 viraria "[object Object]" servido como
+            // .REM. Só aceita o que tem cara de header CNAB 240 (banco + lote 0000 + tipo 0).
+            if (CABECALHO_CNAB_240.test(conteudo)) {
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
                     message: 'remessa baixada pelo gabCod (fora da grade do fin015)',
