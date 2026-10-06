@@ -3,6 +3,7 @@ import {
     EXCEPTION_EFFECT,
     PERMISSION,
     PERMISSION_CATALOG,
+    PERMISSION_IMPLIES,
     type PermissionException,
 } from '../../interface/auth/Permission.js';
 import EffectivePermissionCalculator from './EffectivePermissionCalculator.js';
@@ -23,7 +24,7 @@ const efetivas = (pacote: string[], excecoes: PermissionException[] = []): strin
     [...calc.calcular(pacote, excecoes).permissoes].sort();
 
 describe('catálogo de permissões', () => {
-    it('tem exatamente as permissões decididas (nove da entrevista + sispag:excecao do ADR-0061; mudar o catálogo exige mudar este teste)', () => {
+    it('tem exatamente as permissões decididas (nove da entrevista + sispag:excecao do ADR-0061 + sispag:conferir e sispag:cadastro do ADR-0063; mudar o catálogo exige mudar este teste)', () => {
         expect([...PERMISSION_CATALOG].sort()).toEqual(
             [
                 'metricas:ver',
@@ -32,6 +33,8 @@ describe('catálogo de permissões', () => {
                 'permutas:ver',
                 'recebimentos:executar',
                 'recebimentos:ver',
+                'sispag:cadastro',
+                'sispag:conferir',
                 'sispag:excecao',
                 'sispag:executar',
                 'sispag:ver',
@@ -43,6 +46,12 @@ describe('catálogo de permissões', () => {
     it('não expõe mais sispag:aprovar_destino (ADR-0061 substituiu pela permissão única)', () => {
         expect(PERMISSION_CATALOG as readonly string[]).not.toContain('sispag:aprovar_destino');
         expect(PERMISSION.SISPAG_EXCECAO).toBe('sispag:excecao');
+    });
+
+    it('sispag:conferir e sispag:cadastro são avulsas: não implicam nem são implicadas (ADR-0063)', () => {
+        const pares = Object.entries(PERMISSION_IMPLIES).flat();
+        expect(pares).not.toContain(PERMISSION.SISPAG_CONFERIR);
+        expect(pares).not.toContain(PERMISSION.SISPAG_CADASTRO);
     });
 
     it('as constantes nomeadas são o próprio catálogo, sem sobra', () => {

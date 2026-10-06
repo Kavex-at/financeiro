@@ -22,6 +22,17 @@ export const PERMISSION = {
      * Avulsa: não implica nem é implicada por `sispag:ver`/`sispag:executar`.
      */
     SISPAG_EXCECAO: 'sispag:excecao',
+    /**
+     * Conferência por segunda pessoa do lote com TED/PIX (ADR-0063, I13l): `conferirLote` (L12) e
+     * `devolverLote` (L13). Avulsa: não implica nem é implicada por `sispag:ver`/`sispag:executar`.
+     * A separação de funções (conferente ≠ quem finalizou/incluiu/montou) é regra do backend.
+     */
+    SISPAG_CONFERIR: 'sispag:conferir',
+    /**
+     * Fila "Pendências de cadastro" (ADR-0063, I13k): quem corrige conta/chave PIX no cadastro do
+     * Conexos. Avulsa. Só leitura no nosso sistema: a correção é feita no ERP.
+     */
+    SISPAG_CADASTRO: 'sispag:cadastro',
     RECEBIMENTOS_VER: 'recebimentos:ver',
     RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
     OPERACAO_VER: 'operacao:ver',
@@ -38,6 +49,8 @@ export const PERMISSION_CATALOG: readonly Permission[] = [
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
     PERMISSION.SISPAG_EXCECAO,
+    PERMISSION.SISPAG_CONFERIR,
+    PERMISSION.SISPAG_CADASTRO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
@@ -52,6 +65,8 @@ export const permissionSchema = z.enum([
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
     PERMISSION.SISPAG_EXCECAO,
+    PERMISSION.SISPAG_CONFERIR,
+    PERMISSION.SISPAG_CADASTRO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
