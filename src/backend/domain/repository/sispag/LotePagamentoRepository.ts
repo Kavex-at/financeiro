@@ -14,7 +14,12 @@ import {
     type ListarLotesFiltro,
     type Modalidade,
     type OrigemBaixa,
+    type PaymentCheckState,
+    SISPAG_SYSTEM_ACTOR,
+    SYSTEM_REMOVAL_REASON,
+    VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
+import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 
 /** Superfície de query comum ao pool e ao cliente transacional (mesmos 4 métodos). */
 type QueryRunner = Pick<PostgreeDatabaseClient, 'selectMany' | 'selectFirst' | 'insert' | 'update'>;
@@ -42,6 +47,12 @@ interface LoteHeaderRow {
     ger_num: number | null;
     /** `to_char(data_debito, 'YYYY-MM-DD')` — nunca o DATE cru (o node-pg o leria em hora local). */
     data_debito?: string | null;
+    // ── 0078: conferência por 2ª pessoa (ADR-0063) ──
+    conferido_por?: string | null;
+    conferido_em?: Date | null;
+    devolvido_por?: string | null;
+    devolvido_em?: Date | null;
+    motivo_devolucao?: string | null;
 }
 
 interface ItemRow {
@@ -75,6 +86,11 @@ interface ItemRow {
     sincronizado_em?: Date | null;
     // ── 0075: a exceção de destino usada quando o destino congelou (ADR-0061, I10f) ──
     excecao_destino_id?: string | null;
+    // ── 0076: verificação TED/PIX (ADR-0063) ──
+    verificacao_estado?: string | null;
+    verificado_em?: Date | null;
+    destino_origem?: string | null;
+    destino_mascarado?: string | null;
 }
 
 export const RESULTADO_APLICAR_SINCRONIZACAO = {
@@ -97,6 +113,8 @@ export default class LotePagamentoRepository {
     constructor(
         @inject(PostgreeDatabaseClient)
         private databaseClient: PostgreeDatabaseClient,
+        @inject(VerificacaoEventoRepository)
+        private eventos: VerificacaoEventoRepository,
     ) {}
 
     private db = (tx?: TransactionClient): QueryRunner => tx ?? this.databaseClient;
@@ -121,6 +139,7 @@ export default class LotePagamentoRepository {
         ...(r.conciliado_em != null ? { conciliadoEm: String(r.conciliado_em) } : {}),
         ...this.mapSincronizacao(r),
         ...(r.excecao_destino_id != null ? { excecaoDestinoId: r.excecao_destino_id } : {}),
+        ...this.mapVerificacao(r),
     });
 
     /**
@@ -156,6 +175,25 @@ export default class LotePagamentoRepository {
             : {}),
     });
 
+    /** Campos da verificação TED/PIX (0076, ADR-0063). O destino só sai mascarado (I10h). */
+    private mapVerificacao = (
+        r: ItemRow,
+    ): Pick<
+        ItemLote,
+        'verificacaoEstado' | 'verificadoEm' | 'destinoOrigem' | 'destinoMascarado'
+    > => ({
+        ...(r.verificacao_estado != null
+            ? { verificacaoEstado: r.verificacao_estado as PaymentCheckState }
+            : {}),
+        ...(r.verificado_em != null
+            ? { verificadoEm: new Date(r.verificado_em).toISOString() }
+            : {}),
+        ...(r.destino_origem != null
+            ? { destinoOrigem: r.destino_origem as NonNullable<ItemLote['destinoOrigem']> }
+            : {}),
+        ...(r.destino_mascarado != null ? { destinoMascarado: r.destino_mascarado } : {}),
+    });
+
     private mapLote = (h: LoteHeaderRow, itens: ItemLote[]): LotePagamento => ({
         id: h.id,
         filCod: h.fil_cod,
@@ -179,6 +217,11 @@ export default class LotePagamentoRepository {
         ...(h.cco_cod != null ? { ccoCod: Number(h.cco_cod) } : {}),
         ...(h.ger_num != null ? { gerNum: Number(h.ger_num) } : {}),
         ...(h.data_debito != null ? { dataDebito: String(h.data_debito) } : {}),
+        ...(h.conferido_por != null ? { conferidoPor: h.conferido_por } : {}),
+        ...(h.conferido_em != null ? { conferidoEm: new Date(h.conferido_em).toISOString() } : {}),
+        ...(h.devolvido_por != null ? { devolvidoPor: h.devolvido_por } : {}),
+        ...(h.devolvido_em != null ? { devolvidoEm: new Date(h.devolvido_em).toISOString() } : {}),
+        ...(h.motivo_devolucao != null ? { motivoDevolucao: h.motivo_devolucao } : {}),
     });
 
     public criarLote = async (
@@ -308,7 +351,8 @@ export default class LotePagamentoRepository {
                     finalizado_em, versao, criado_em, automatico,
                     native_fil_cod, native_bnc_cod, native_flp_cod, native_gab_cod,
                     remessa_arquivo, remessa_num, remessa_gerada_em, cco_cod, ger_num,
-                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito
+                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito,
+                    conferido_por, conferido_em, devolvido_por, devolvido_em, motivo_devolucao
              FROM lote_pagamento WHERE id = $id`,
             { id },
         );
@@ -319,7 +363,8 @@ export default class LotePagamentoRepository {
                     i.retorno_evento, i.retorno_descricao, i.rejeitado, i.bor_cod, i.bxa_cod_seq,
                     i.conciliado_em, i.excecao_destino_id,
                     i.situacao, i.pago_em, i.pago_observado_em, i.valor_pago, i.origem_baixa,
-                    i.baixa_fonte, i.divergencia, i.divergencia_detalhe, i.sincronizado_em
+                    i.baixa_fonte, i.divergencia, i.divergencia_detalhe, i.sincronizado_em,
+                    i.verificacao_estado, i.verificado_em, i.destino_origem, i.destino_mascarado
              FROM lote_pagamento_item i
              WHERE i.lote_id = $id ORDER BY i.incluido_em ASC, i.id ASC`,
             { id },
@@ -331,7 +376,8 @@ export default class LotePagamentoRepository {
         const headers = (await this.databaseClient.selectMany(
             `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
                     finalizado_em, versao, criado_em, automatico,
-                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito
+                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito,
+                    conferido_por, conferido_em, devolvido_por, devolvido_em, motivo_devolucao
              FROM lote_pagamento
              WHERE ($status::text IS NULL OR status = $status)
                AND ($filCod::int IS NULL OR fil_cod = $filCod)
@@ -345,7 +391,8 @@ export default class LotePagamentoRepository {
                     modalidade, incluido_por, incluido_em,
                     retorno_evento, retorno_descricao, rejeitado, bor_cod, bxa_cod_seq,
                     situacao, pago_em, valor_pago, origem_baixa, baixa_fonte,
-                    divergencia, divergencia_detalhe, sincronizado_em
+                    divergencia, divergencia_detalhe, sincronizado_em,
+                    verificacao_estado, verificado_em, destino_origem, destino_mascarado
              FROM lote_pagamento_item WHERE lote_id = ANY($ids) ORDER BY incluido_em ASC, id ASC`,
             { ids },
         )) as ItemRow[];
@@ -582,13 +629,20 @@ export default class LotePagamentoRepository {
         tx?: TransactionClient,
     ): Promise<number> => {
         const setFinal = params.para === LOTE_STATUS.FINALIZADO;
+        // ADR-0063: voltar a RASCUNHO (L4) limpa a conferência — o lote reeditado é conferido de
+        // novo. Finalizar apaga o motivo da última devolução (visível só até a próxima finalização).
         return this.db(tx).update(
             `UPDATE lote_pagamento
              SET status = $para,
                  versao = versao + 1,
                  atualizado_em = now(),
                  finalizado_por = ${setFinal ? '$finalizadoPor' : "CASE WHEN $para = 'RASCUNHO' THEN NULL ELSE finalizado_por END"},
-                 finalizado_em  = ${setFinal ? 'now()' : "CASE WHEN $para = 'RASCUNHO' THEN NULL ELSE finalizado_em END"}
+                 finalizado_em  = ${setFinal ? 'now()' : "CASE WHEN $para = 'RASCUNHO' THEN NULL ELSE finalizado_em END"},
+                 conferido_por  = CASE WHEN $para = 'RASCUNHO' THEN NULL ELSE conferido_por END,
+                 conferido_em   = CASE WHEN $para = 'RASCUNHO' THEN NULL ELSE conferido_em END,
+                 devolvido_por  = CASE WHEN $para = 'FINALIZADO' THEN NULL ELSE devolvido_por END,
+                 devolvido_em   = CASE WHEN $para = 'FINALIZADO' THEN NULL ELSE devolvido_em END,
+                 motivo_devolucao = CASE WHEN $para = 'FINALIZADO' THEN NULL ELSE motivo_devolucao END
              WHERE id = $id AND versao = $versaoEsperada AND status = ANY($de)`,
             {
                 id: params.id,
@@ -599,6 +653,157 @@ export default class LotePagamentoRepository {
             },
         );
     };
+    // ============================================== ADR-0063 — verificação TED/PIX e conferência
+
+    /**
+     * Resultado da verificação de UM item TED/PIX (I13b, I13j). Não bumpa a versão: é o sistema
+     * registrando o que leu, não edição do agregado pela analista. `PENDENTE` não apaga o destino
+     * visto antes (a leitura falhou; nada novo se sabe).
+     */
+    public marcarVerificacaoItem = async (
+        params: {
+            loteId: string;
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            estado: PaymentCheckState;
+            destinoOrigem?: NonNullable<ItemLote['destinoOrigem']>;
+            destinoMascarado?: string;
+        },
+        tx?: TransactionClient,
+    ): Promise<number> =>
+        this.db(tx).update(
+            `UPDATE lote_pagamento_item
+             SET verificacao_estado = $estado,
+                 verificado_em = CASE WHEN $estado = 'OK' THEN now() ELSE verificado_em END,
+                 destino_origem = CASE WHEN $estado = 'OK' THEN $destinoOrigem ELSE destino_origem END,
+                 destino_mascarado = CASE WHEN $estado = 'OK' THEN $destinoMascarado
+                                          ELSE destino_mascarado END
+             WHERE lote_id = $loteId AND fil_cod = $filCod AND doc_cod = $docCod
+               AND tit_cod = $titCod`,
+            {
+                loteId: params.loteId,
+                filCod: params.filCod,
+                docCod: params.docCod,
+                titCod: params.titCod,
+                estado: params.estado,
+                destinoOrigem: params.destinoOrigem ?? null,
+                destinoMascarado: params.destinoMascarado ?? null,
+            },
+        );
+
+    /** O item deixou de ser TED/PIX: some o estado da verificação e o destino visto. */
+    public limparVerificacaoItem = async (
+        params: { loteId: string; filCod: number; docCod: string; titCod: string },
+        tx?: TransactionClient,
+    ): Promise<number> =>
+        this.db(tx).update(
+            `UPDATE lote_pagamento_item
+             SET verificacao_estado = NULL, verificado_em = NULL, destino_origem = NULL,
+                 destino_mascarado = NULL
+             WHERE lote_id = $loteId AND fil_cod = $filCod AND doc_cod = $docCod
+               AND tit_cod = $titCod`,
+            params,
+        );
+
+    /**
+     * I13j-1 — remoção do item PELO SISTEMA (sem dado de pagamento), só em RASCUNHO. Ator `sistema`,
+     * motivo `SEM_DADO_PAGAMENTO`, evento na trilha e bump de versão na mesma transação. NÃO marca
+     * o lote como manual (gap Q11): a formação automática pode recolocar o título. `false` = o item
+     * não estava no lote RASCUNHO (nada gravado).
+     */
+    public removerItemPeloSistema = async (
+        params: { loteId: string; filCod: number; docCod: string; titCod: string },
+        tx: TransactionClient,
+    ): Promise<boolean> => {
+        const n = await tx.update(
+            `DELETE FROM lote_pagamento_item i
+             USING lote_pagamento l
+             WHERE i.lote_id = l.id AND l.id = $loteId AND l.status = 'RASCUNHO'
+               AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod`,
+            params,
+        );
+        if (n === 0) return false;
+        await this.tocarLote(params.loteId, tx);
+        await this.eventos.registrar(
+            {
+                evento: VERIFICATION_EVENT.ITEM_REMOVIDO_SISTEMA,
+                ator: SISPAG_SYSTEM_ACTOR,
+                loteId: params.loteId,
+                filCod: params.filCod,
+                docCod: params.docCod,
+                titCod: params.titCod,
+                dados: { motivo: SYSTEM_REMOVAL_REASON.SEM_DADO_PAGAMENTO },
+            },
+            tx,
+        );
+        return true;
+    };
+
+    /**
+     * L12 `conferirLote` (I13l): só FINALIZADO, ainda não conferido, `versao` batendo. Grava quem e
+     * quando, bumpa a versão e o evento na MESMA transação. 0 = conflito (versão/estado/já conferido;
+     * o serviço distingue relendo).
+     */
+    public conferir = async (params: {
+        loteId: string;
+        versaoEsperada: number;
+        ator: string;
+    }): Promise<number> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const n = await tx.update(
+                `UPDATE lote_pagamento
+                 SET conferido_por = $ator, conferido_em = now(), versao = versao + 1,
+                     atualizado_em = now()
+                 WHERE id = $loteId AND status = 'FINALIZADO' AND versao = $versaoEsperada
+                   AND conferido_por IS NULL`,
+                params,
+            );
+            if (n === 0) return 0;
+            await this.eventos.registrar(
+                {
+                    evento: VERIFICATION_EVENT.LOTE_CONFERIDO,
+                    ator: params.ator,
+                    loteId: params.loteId,
+                },
+                tx,
+            );
+            return n;
+        });
+
+    /**
+     * L13 `devolverLote` (I13l): FINALIZADO → RASCUNHO com motivo; limpa conferência e finalização,
+     * grava quem/quando/motivo da devolução, bumpa a versão, evento na mesma transação. 0 = conflito.
+     */
+    public devolver = async (params: {
+        loteId: string;
+        versaoEsperada: number;
+        ator: string;
+        motivo: string;
+    }): Promise<number> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const n = await tx.update(
+                `UPDATE lote_pagamento
+                 SET status = 'RASCUNHO', versao = versao + 1, atualizado_em = now(),
+                     finalizado_por = NULL, finalizado_em = NULL,
+                     conferido_por = NULL, conferido_em = NULL,
+                     devolvido_por = $ator, devolvido_em = now(), motivo_devolucao = $motivo
+                 WHERE id = $loteId AND status = 'FINALIZADO' AND versao = $versaoEsperada`,
+                params,
+            );
+            if (n === 0) return 0;
+            await this.eventos.registrar(
+                {
+                    evento: VERIFICATION_EVENT.LOTE_DEVOLVIDO,
+                    ator: params.ator,
+                    loteId: params.loteId,
+                    dados: { motivo: params.motivo },
+                },
+                tx,
+            );
+            return n;
+        });
+
     /**
      * Grava as chaves do lote NATIVO do Conexos assim que o ERP as devolve. Chamado ANTES do
      * import — se a sequência morrer no meio, é por aqui que se acha o lote órfão no fin015.
