@@ -2365,3 +2365,86 @@ describe('RemessaService — validador do .REM com TED/PIX (caso 8, só aviso)',
         expect(integridade?.[0].data.avisos).toEqual([]);
     });
 });
+
+describe('RemessaService.baixarArquivo', () => {
+    const comRemessa = (over: Partial<LotePagamento> = {}) =>
+        lote({
+            status: 'REMESSA_GERADA',
+            nativeFilCod: 2,
+            nativeBncCod: 4,
+            nativeFlpCod: 12,
+            nativeGabCod: 52,
+            remessaArquivo: 'PG210801.REM',
+            remessaNum: 12,
+            ...over,
+        });
+    const writeComDownload = (conteudo = 'CNAB VIA DOWNLOAD') => ({
+        ...buildWrite(),
+        baixarRemessa: jest.fn().mockResolvedValue(conteudo),
+    });
+    const fazer = (write: ReturnType<typeof writeComDownload>, l: LotePagamento | null) => {
+        const loteRepo = buildLoteRepo();
+        loteRepo.getLoteComItens.mockResolvedValue(l);
+        return make({ write, loteRepo });
+    };
+
+    it('casa pelo nome registrado, nunca pelo primeiro da grade', async () => {
+        const write = writeComDownload();
+        const res = await fazer(write, comRemessa()).baixarArquivo('L1');
+        expect(res).toEqual({ nomeArquivo: 'PG210801.REM', conteudo: 'CNAB DO LOTE' });
+        expect(write.listarArquivosRemessa).toHaveBeenCalledWith({
+            filCod: 2,
+            bncCod: 4,
+            flpCod: 12,
+        });
+        expect(write.baixarRemessa).not.toHaveBeenCalled();
+    });
+
+    it('nome fora da grade (página única de 20): baixa pelo gabCod REGISTRADO no lote', async () => {
+        const write = writeComDownload();
+        write.listarArquivosRemessa.mockResolvedValue([
+            { gabCod: 16, nomeArquivo: 'PG191101.REM', conteudo: 'ARQUIVO ANTIGO' },
+        ]);
+        const res = await fazer(write, comRemessa()).baixarArquivo('L1');
+        expect(write.baixarRemessa).toHaveBeenCalledWith({ filCod: 2, gabCod: 52 });
+        expect(res).toEqual({ nomeArquivo: 'PG210801.REM', conteudo: 'CNAB VIA DOWNLOAD' });
+    });
+
+    it('grade com o nome mas sem conteúdo: também cai no download por gabCod', async () => {
+        const write = writeComDownload();
+        write.listarArquivosRemessa.mockResolvedValue([
+            { gabCod: 52, nomeArquivo: 'PG210801.REM' },
+        ]);
+        const res = await fazer(write, comRemessa()).baixarArquivo('L1');
+        expect(write.baixarRemessa).toHaveBeenCalledWith({ filCod: 2, gabCod: 52 });
+        expect(res?.conteudo).toBe('CNAB VIA DOWNLOAD');
+    });
+
+    it('lote sem remessa (ou inexistente) devolve null sem ir ao Conexos', async () => {
+        const write = writeComDownload();
+        expect(await fazer(write, lote()).baixarArquivo('L1')).toBeNull();
+        expect(await fazer(write, null).baixarArquivo('L1')).toBeNull();
+        expect(write.listarArquivosRemessa).not.toHaveBeenCalled();
+    });
+
+    it('arquivo não achado no Conexos: erro claro em português, não "sem remessa"', async () => {
+        const write = writeComDownload('');
+        write.listarArquivosRemessa.mockResolvedValue([]);
+        await expect(fazer(write, comRemessa()).baixarArquivo('L1')).rejects.toMatchObject({
+            code: 'REMESSA_ARQUIVO_INDISPONIVEL',
+            statusCode: 404,
+            userMessage: expect.stringContaining('PG210801.REM'),
+        });
+    });
+
+    it('sem gabCod registrado e fora da grade: erro claro, sem tentar outro arquivo', async () => {
+        const write = writeComDownload();
+        write.listarArquivosRemessa.mockResolvedValue([
+            { gabCod: 16, nomeArquivo: 'PG191101.REM', conteudo: 'ARQUIVO ANTIGO' },
+        ]);
+        await expect(
+            fazer(write, comRemessa({ nativeGabCod: undefined })).baixarArquivo('L1'),
+        ).rejects.toMatchObject({ code: 'REMESSA_ARQUIVO_INDISPONIVEL' });
+        expect(write.baixarRemessa).not.toHaveBeenCalled();
+    });
+});

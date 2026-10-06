@@ -121,6 +121,8 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['GET /sispag/lotes/:id/remessa/janela', P.SISPAG_VER],
     ['POST /sispag/lotes/:id/remessa', P.SISPAG_EXECUTAR],
     ['GET /sispag/lotes/:id/remessa/arquivo', P.SISPAG_EXECUTAR],
+    // Export dos títulos das remessas: leitura local, sem destino do favorecido.
+    ['POST /sispag/remessas/titulos/exportar', P.SISPAG_VER],
     ['POST /sispag/retornos/conciliar', P.SISPAG_EXECUTAR],
     ['GET /sispag/execucoes', P.SISPAG_EXECUTAR],
     // ADR-0061: exceção de destino — cadastrar, aprovar, rejeitar, revogar e ver, tudo na permissão
@@ -234,11 +236,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063): 27/41/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas): 27/42/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(41);
+        expect(porMount('sispag')).toBe(42);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);

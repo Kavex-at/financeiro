@@ -1,5 +1,7 @@
 import {
   baixarRemessa,
+  exportarTitulosRemessas,
+  temRemessa,
   BoletoSemCodigoBarrasError,
   type BoletoDda,
   classificarBoletosDoTitulo,
@@ -81,6 +83,64 @@ describe('baixarRemessa', () => {
   it('falha com o status quando o backend recusa', async () => {
     mockApiFetch.mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response)
     await expect(baixarRemessa('lote-1')).rejects.toThrow('Falha ao baixar a remessa (404)')
+  })
+
+  it('mostra o motivo do backend (arquivo sumido do Conexos) em vez do status cru', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        error: 'O arquivo de remessa PG061001.REM não foi encontrado no Conexos (filial 7).',
+        code: 'REMESSA_ARQUIVO_INDISPONIVEL',
+      }),
+    } as unknown as Response)
+    await expect(baixarRemessa('lote-1')).rejects.toThrow(
+      'O arquivo de remessa PG061001.REM não foi encontrado no Conexos (filial 7).',
+    )
+  })
+})
+
+describe('exportarTitulosRemessas', () => {
+  it('manda os ids no corpo e devolve o xlsx com o nome anunciado', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'Content-Disposition': 'attachment; filename="sispag-titulos-remessas-2026-10-06.xlsx"',
+      }),
+      blob: async () => new Blob([new Uint8Array([0x50, 0x4b])]),
+    } as unknown as Response)
+
+    const { nome, arquivo } = await exportarTitulosRemessas(['L1', 'L2'])
+
+    const [url, init] = mockApiFetch.mock.calls.at(-1) ?? []
+    expect(String(url)).toContain('/sispag/remessas/titulos/exportar')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ loteIds: ['L1', 'L2'] })
+    expect(nome).toBe('sispag-titulos-remessas-2026-10-06.xlsx')
+    expect(arquivo.size).toBe(2)
+  })
+
+  it('propaga a mensagem do backend na recusa', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      json: async () => ({ error: 'Não foi possível exportar: 1 lote(s) ainda sem remessa gerada.' }),
+    } as unknown as Response)
+    await expect(exportarTitulosRemessas(['L1'])).rejects.toThrow('ainda sem remessa gerada')
+  })
+})
+
+describe('temRemessa', () => {
+  it.each([
+    ['REMESSA_GERADA', true],
+    ['RETORNADO', true],
+    ['BAIXADO', true],
+    ['FINALIZADO', false],
+    ['RASCUNHO', false],
+    ['CANCELADO', false],
+  ] as const)('%s → %s', (status, esperado) => {
+    expect(temRemessa({ status })).toBe(esperado)
   })
 })
 

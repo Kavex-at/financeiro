@@ -219,6 +219,60 @@ describe('LotePagamentoRepository', () => {
             expect(lotes[0]?.dataDebito).toBe('2026-09-24');
         });
 
+        it('listLotes devolve a remessa e as chaves nativas (o botão "Baixar remessa" depende disso)', async () => {
+            // Causa-raiz do "não vi o download": a lista da aba Finalizados vinha sem
+            // `remessa_arquivo`, então o card escondia o botão em toda carga de página.
+            const db = buildDb();
+            db.selectMany
+                .mockResolvedValueOnce([
+                    header({
+                        id: 'L1',
+                        status: 'REMESSA_GERADA',
+                        native_fil_cod: 7,
+                        native_bnc_cod: 341,
+                        native_flp_cod: 26,
+                        native_gab_cod: 46,
+                        remessa_arquivo: 'PG200893.REM',
+                        remessa_num: 93,
+                        remessa_gerada_em: new Date('2026-10-06T13:30:00Z'),
+                    }),
+                ])
+                .mockResolvedValueOnce([]);
+            const lotes = await make(db).listLotes({});
+            const [sql] = db.selectMany.mock.calls[0];
+            expect(sql).toContain('remessa_arquivo');
+            expect(sql).toContain('native_gab_cod');
+            expect(lotes[0]).toMatchObject({
+                nativeFilCod: 7,
+                nativeBncCod: 341,
+                nativeFlpCod: 26,
+                nativeGabCod: 46,
+                remessaArquivo: 'PG200893.REM',
+                remessaNum: 93,
+                remessaGeradaEm: '2026-10-06T13:30:00.000Z',
+            });
+        });
+
+        it('listLotesPorIds filtra por id com parâmetro, sem interpolar', async () => {
+            const db = buildDb();
+            db.selectMany
+                .mockResolvedValueOnce([header({ id: 'L1' })])
+                .mockResolvedValueOnce([itemRow({ lote_id: 'L1' })]);
+            const lotes = await make(db).listLotesPorIds(['L1', 'L2']);
+            const [sql, params] = db.selectMany.mock.calls[0];
+            expect(sql).toContain('id = ANY($ids)');
+            expect(sql).not.toContain("'L1'");
+            expect(params).toEqual({ ids: ['L1', 'L2'] });
+            expect(lotes).toHaveLength(1);
+            expect(lotes[0]?.itens).toHaveLength(1);
+        });
+
+        it('listLotesPorIds com lista vazia não consulta o banco', async () => {
+            const db = buildDb();
+            expect(await make(db).listLotesPorIds([])).toEqual([]);
+            expect(db.selectMany).not.toHaveBeenCalled();
+        });
+
         it('setDataDebito grava com parâmetros nomeados, sem interpolar a data', async () => {
             const db = buildDb();
             await make(db).setDataDebito({ loteId: 'L1', dataDebito: '2026-09-23' });

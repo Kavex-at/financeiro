@@ -22,6 +22,7 @@ import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.js';
 import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
+import RemittanceFileUnavailableError from '../../errors/RemittanceFileUnavailableError.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
 import ConferenciaLoteRule from '../../libs/sispag/ConferenciaLoteRule.js';
 import ConferenceRequiredError from '../../errors/ConferenceRequiredError.js';
@@ -1619,19 +1620,46 @@ export default class RemessaService {
      * com conteúdo": o ERP recicla `flpCod`, e a lista de um lote novo pode trazer arquivos
      * órfãos de lotes antigos. Foi assim que um `.REM` de outro mês foi lido (e cancelado)
      * por engano em produção.
+     *
+     * Quando o nome não está na grade (`listarArquivosRemessa` lê UMA página de 20: um `flpCod`
+     * muito reciclado empurra o arquivo para fora) ou a linha vem sem `gabLngDados`, baixa pelo
+     * `gabCod` REGISTRADO no lote na geração — a mesma identidade, por outro caminho. Nunca por
+     * um `gabCod` da grade.
+     *
+     * `null` = o lote não existe ou não tem remessa. Lote COM remessa cujo arquivo sumiu do ERP
+     * = {@link RemittanceFileUnavailableError} (antes virava o mesmo 404 de "sem remessa").
      */
     public baixarArquivo = async (
         loteId: string,
     ): Promise<{ nomeArquivo: string; conteudo: string } | null> => {
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote?.nativeFlpCod || !lote.nativeBncCod || !lote.remessaArquivo) return null;
+        const filCod = lote.nativeFilCod ?? lote.filCod;
+        const nomeArquivo = lote.remessaArquivo;
         const arquivos = await this.write.listarArquivosRemessa({
-            filCod: lote.nativeFilCod ?? lote.filCod,
+            filCod,
             bncCod: lote.nativeBncCod,
             flpCod: lote.nativeFlpCod,
         });
-        const arquivo = arquivos.find((a) => a.nomeArquivo === lote.remessaArquivo);
-        if (!arquivo?.conteudo) return null;
-        return { nomeArquivo: lote.remessaArquivo, conteudo: arquivo.conteudo };
+        const arquivo = arquivos.find((a) => a.nomeArquivo === nomeArquivo);
+        if (arquivo?.conteudo) return { nomeArquivo, conteudo: arquivo.conteudo };
+        if (lote.nativeGabCod) {
+            const conteudo = await this.write.baixarRemessa({ filCod, gabCod: lote.nativeGabCod });
+            if (conteudo) {
+                await this.logService.info({
+                    type: LOG_TYPE.BUSINESS_INFO,
+                    message: 'remessa baixada pelo gabCod (fora da grade do fin015)',
+                    data: { loteId, nomeArquivo, gabCod: lote.nativeGabCod, naGrade: !!arquivo },
+                });
+                return { nomeArquivo, conteudo };
+            }
+        }
+        throw new RemittanceFileUnavailableError({
+            loteId,
+            nomeArquivo,
+            filCod,
+            flpCod: lote.nativeFlpCod,
+            ...(lote.nativeGabCod ? { gabCod: lote.nativeGabCod } : {}),
+        });
     };
 }

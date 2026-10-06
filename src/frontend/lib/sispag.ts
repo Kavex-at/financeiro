@@ -826,9 +826,50 @@ export async function baixarRemessa(loteId: string): Promise<{ nome: string; arq
   const res = await apiFetch(`${API}/sispag/lotes/${loteId}/remessa/arquivo`, {
     headers: { ...(await withAuthHeaders()) },
   })
-  if (!res.ok) throw new Error(`Falha ao baixar a remessa (${res.status})`)
+  if (!res.ok) throw new Error(await mensagemDeErro(res, 'Falha ao baixar a remessa'))
   return lerArquivoDaResposta(res, `lote-${loteId}.REM`)
 }
+
+/**
+ * Mensagem de uma resposta de erro de download: o `error` do corpo JSON quando o backend manda
+ * (ex.: "O arquivo de remessa PG… não foi encontrado no Conexos…"), senão o prefixo + status.
+ * Antes a tela só mostrava "Falha ao baixar a remessa (404)" e escondia o motivo.
+ */
+async function mensagemDeErro(res: Response, prefixo: string): Promise<string> {
+  const body = (await res.json?.().catch(() => null)) as { error?: unknown } | null
+  return typeof body?.error === 'string' && body.error.trim()
+    ? body.error
+    : `${prefixo} (${res.status})`
+}
+
+/** Teto de lotes por export — espelha `MAX_LOTES_EXPORT` do backend. */
+export const MAX_LOTES_EXPORT = 50
+
+/**
+ * Exporta (.xlsx) os títulos das remessas dos lotes escolhidos — uma linha por título, com
+ * linha de totais. Para a revisão do financeiro; basta `sispag:ver`.
+ */
+export async function exportarTitulosRemessas(
+  loteIds: string[],
+): Promise<{ nome: string; arquivo: Blob }> {
+  const res = await apiFetch(`${API}/sispag/remessas/titulos/exportar`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+    body: JSON.stringify({ loteIds }),
+  })
+  if (!res.ok) throw new Error(await mensagemDeErro(res, 'Falha ao exportar os títulos'))
+  return lerArquivoDaResposta(res, 'sispag-titulos-remessas.xlsx')
+}
+
+/** Status em que o lote tem remessa gerada — download do `.REM` e export dos títulos. */
+export const STATUS_COM_REMESSA: readonly LotePagamentoStatus[] = [
+  'REMESSA_GERADA',
+  'RETORNADO',
+  'BAIXADO',
+]
+
+export const temRemessa = (lote: Pick<LotePagamento, 'status'>): boolean =>
+  STATUS_COM_REMESSA.includes(lote.status)
 
 /**
  * Concilia um arquivo de retorno: lê o detalhe do `.RET` e traz borderô, baixa e evento

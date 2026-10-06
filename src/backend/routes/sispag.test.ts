@@ -33,6 +33,9 @@ import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagament
 import ExcecaoDestinoService from '../domain/service/sispag/ExcecaoDestinoService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
+import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
+import RemittanceFileUnavailableError from '../domain/errors/RemittanceFileUnavailableError.js';
+import RemittanceExportInvalidError from '../domain/errors/RemittanceExportInvalidError.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
@@ -887,6 +890,87 @@ describe('GET /sispag/lotes/:id/remessa/arquivo', () => {
             // 1 byte por caractere: o comprimento em bytes é igual ao da string.
             expect(bytes.length).toBe(conteudo.length);
             expect(bytes.toString('latin1')).toBe(conteudo);
+        });
+    });
+
+    it('arquivo sumido do Conexos: 404 com mensagem própria, não "sem remessa"', async () => {
+        container.registerInstance(RemessaService, {
+            baixarArquivo: jest.fn().mockRejectedValue(
+                new RemittanceFileUnavailableError({
+                    loteId: 'L1',
+                    nomeArquivo: 'PG240801.REM',
+                    filCod: 7,
+                    flpCod: 26,
+                }),
+            ),
+        } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa/arquivo`);
+            expect(res.status).toBe(404);
+            const body = (await res.json()) as { error: string; code: string };
+            expect(body.code).toBe('REMESSA_ARQUIVO_INDISPONIVEL');
+            expect(body.error).toContain('PG240801.REM');
+            expect(body.error).toContain('não foi encontrado no Conexos');
+        });
+    });
+});
+
+describe('POST /sispag/remessas/titulos/exportar', () => {
+    const ID = '5b0f7a52-3c1e-4d7a-9b1e-2f4c6d8e0a11';
+    const post = (url: string, body: unknown) =>
+        fetch(`${url}/sispag/remessas/titulos/exportar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    it('devolve o xlsx como anexo com o nome do serviço', async () => {
+        const exportar = jest.fn().mockResolvedValue({
+            filename: 'sispag-titulos-PG240801-2026-10-06.xlsx',
+            buffer: Buffer.from('PK-fake'),
+        });
+        container.registerInstance(RemessaTitulosExportService, { exportar } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, { loteIds: [ID] });
+            expect(res.status).toBe(200);
+            expect(res.headers.get('content-type')).toContain('spreadsheetml');
+            expect(res.headers.get('content-disposition')).toContain(
+                'sispag-titulos-PG240801-2026-10-06.xlsx',
+            );
+            expect(exportar).toHaveBeenCalledWith([ID], expect.anything());
+        });
+    });
+
+    it.each([
+        ['lista vazia', { loteIds: [] }],
+        ['id que não é uuid', { loteIds: ['1; DROP TABLE'] }],
+        ['acima do teto', { loteIds: Array.from({ length: 51 }, () => ID) }],
+        ['sem corpo', {}],
+    ])('400 com %s', async (_c, body) => {
+        const exportar = jest.fn();
+        container.registerInstance(RemessaTitulosExportService, { exportar } as never);
+        await comApp({}, async (url) => {
+            const res = await post(url, body);
+            expect(res.status).toBe(400);
+            expect(exportar).not.toHaveBeenCalled();
+        });
+    });
+
+    it('lote sem remessa: 422 com a mensagem do serviço', async () => {
+        container.registerInstance(RemessaTitulosExportService, {
+            exportar: jest
+                .fn()
+                .mockRejectedValue(
+                    new RemittanceExportInvalidError({ inexistentes: [], semRemessa: [ID] }),
+                ),
+        } as never);
+        await comApp({}, async (url) => {
+            const res = await post(url, { loteIds: [ID] });
+            expect(res.status).toBe(422);
+            const body = (await res.json()) as { error: string };
+            expect(body.error).toContain('sem remessa gerada');
         });
     });
 });
