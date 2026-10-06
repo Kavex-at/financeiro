@@ -19,6 +19,10 @@ export const PERMISSAO = {
    * única; a separação de funções é a regra "aprovador ≠ cadastrante" no backend. Avulsa.
    */
   SISPAG_EXCECAO: 'sispag:excecao',
+  /** Conferência por segunda pessoa do lote com TED/PIX (ADR-0063). Avulsa. */
+  SISPAG_CONFERIR: 'sispag:conferir',
+  /** Fila "Pendências de cadastro" (ADR-0063). Avulsa. */
+  SISPAG_CADASTRO: 'sispag:cadastro',
   RECEBIMENTOS_VER: 'recebimentos:ver',
   RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
   OPERACAO_VER: 'operacao:ver',
@@ -35,6 +39,8 @@ export const CATALOGO_PERMISSOES: readonly Permissao[] = [
   PERMISSAO.SISPAG_VER,
   PERMISSAO.SISPAG_EXECUTAR,
   PERMISSAO.SISPAG_EXCECAO,
+  PERMISSAO.SISPAG_CONFERIR,
+  PERMISSAO.SISPAG_CADASTRO,
   PERMISSAO.RECEBIMENTOS_VER,
   PERMISSAO.RECEBIMENTOS_EXECUTAR,
   PERMISSAO.OPERACAO_VER,
@@ -68,6 +74,9 @@ export const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = 
       { permissao: PERMISSAO.SISPAG_EXECUTAR, acao: 'executar' },
       // ADR-0061: cadastra, aprova, rejeita e revoga exceções de destino. Não implica nem é implicada.
       { permissao: PERMISSAO.SISPAG_EXCECAO, acao: 'exceção de destino' },
+      // ADR-0063: conferência por 2ª pessoa e fila de pendências de cadastro. Avulsas.
+      { permissao: PERMISSAO.SISPAG_CONFERIR, acao: 'conferir' },
+      { permissao: PERMISSAO.SISPAG_CADASTRO, acao: 'pendências de cadastro' },
     ],
   },
   {

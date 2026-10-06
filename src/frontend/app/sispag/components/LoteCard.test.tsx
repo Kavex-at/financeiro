@@ -330,7 +330,7 @@ describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fal
     expect(screen.getByText('exceção')).toBeInTheDocument()
   })
 
-  it('item TED sem destino: "sem destino: aguardando exceção", Finalizar desabilitado com a mensagem', async () => {
+  it('item TED sem destino: aviso de que sai do lote ao finalizar; Finalizar segue habilitado (ADR-0063, I10b revisado)', async () => {
     ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
     ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
       { docCod: '801', titCod: '1', modalidades: [] },
@@ -338,14 +338,14 @@ describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fal
     const user = userEvent.setup()
     renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
-    expect(await screen.findByText('sem destino: aguardando exceção')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeDisabled(),
+    expect(
+      await screen.findByText('sem conta/chave no cadastro: sai do lote ao finalizar'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Sem conta (TED) ou chave PIX no cadastro do Conexos para: 801/1 (ACME)',
     )
-    expect(screen.getByRole('button', { name: /^finalizar$/i })).toHaveAttribute(
-      'title',
-      expect.stringContaining('Sem destino de pagamento para: 801/1 (ACME)'),
-    )
+    // Quem decide é a verificação do finalizar (I13j): o botão não trava por isso.
+    expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled()
   })
 
   it('quem tem sispag:excecao vê o link para a tela de exceções e o atalho de cadastro', async () => {
@@ -379,7 +379,9 @@ describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fal
     const user = userEvent.setup()
     renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
-    expect(await screen.findByText('sem destino: aguardando exceção')).toBeInTheDocument()
+    expect(
+      await screen.findByText('sem conta/chave no cadastro: sai do lote ao finalizar'),
+    ).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /exceções de destino/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /cadastrar exceção/i })).not.toBeInTheDocument()
   })

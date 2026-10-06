@@ -239,6 +239,48 @@ export interface ItemLote {
    * REFERÊNCIA. A API nunca devolve conta ou chave do item.
    */
   excecaoDestinoId?: string
+  // ── verificação TED/PIX (ADR-0063) ──
+  /** `PENDENTE`: o Conexos não respondeu — o finalizar barra até a verificação passar. */
+  verificacaoEstado?: 'PENDENTE' | 'OK'
+  verificadoEm?: string
+  /** O que a verificação viu do destino: a origem e SÓ a máscara (nunca o valor). */
+  destinoOrigem?: 'CADASTRO' | 'EXCECAO' | 'NENHUM'
+  destinoMascarado?: string
+  /** Alertas vivas do item neste lote, com a justificativa quando houver. */
+  alertas?: AlertaItemLote[]
+}
+
+export type TipoAlertaItem = 'DUPLICIDADE_FORTE' | 'DUPLICIDADE_FRACA' | 'CANAL_HABITUAL'
+
+/** Sinal da verificação TED/PIX sobre um item (ADR-0063). Duplicidade ABERTA barra o finalizar. */
+export interface AlertaItemLote {
+  id: string
+  loteId: string
+  filCod: number
+  docCod: string
+  titCod: string
+  tipo: TipoAlertaItem
+  contraparteFilCod?: number
+  contraparteDocCod?: string
+  contraparteTitulos?: Array<{ titCod: string; valor: number; vencimento?: number; pago: boolean }>
+  evidencia: Record<string, unknown>
+  estado: 'ABERTA' | 'RESOLVIDA' | 'OBSOLETA' | 'DESCARTADA'
+  resolucao?: 'JUSTIFICADA' | 'RETIRADA'
+  justificativa?: string
+  resolvidoPor?: string
+  resolvidoEm?: string
+  criadoEm: string
+  verificadoEm: string
+}
+
+export const ehDuplicidade = (a: AlertaItemLote): boolean =>
+  a.tipo === 'DUPLICIDADE_FORTE' || a.tipo === 'DUPLICIDADE_FRACA'
+
+/** Rótulo curto do grupo de canal habitual (evidência do perfil). */
+export const ROTULO_CANAL: Record<string, string> = {
+  BOLETO: 'boleto',
+  TED_PIX: 'TED/PIX',
+  OUTROS: 'outros (tributo, sem canal)',
 }
 
 /** Destino que a oferta mostra para TED/PIX: origem + máscara (só com as flags ligadas). */
@@ -286,6 +328,14 @@ export interface LotePagamento {
    * lote nativo do fin015. Exibir com `formatCivilDate`, nunca com `new Date(...)`.
    */
   dataDebito?: string
+  // ── conferência por 2ª pessoa (ADR-0063) ──
+  /** Derivado no backend: ≥1 item TED/PIX — a remessa só sai depois de conferido. */
+  exigeConferencia?: boolean
+  conferidoPor?: string
+  conferidoEm?: string
+  devolvidoPor?: string
+  devolvidoEm?: string
+  motivoDevolucao?: string
   itens: ItemLote[]
 }
 
@@ -377,6 +427,91 @@ export const cancelarLote = (loteId: string, versao: number) =>
  */
 export const sincronizarLote = (loteId: string) =>
   loteRequest(`/sispag/lotes/${loteId}/sincronizar`, { method: 'POST' })
+
+// ── ADR-0063 — verificação TED/PIX, duplicidade e conferência ──────────────────────────────
+
+/**
+ * Trata UMA alerta de duplicidade (só RASCUNHO): JUSTIFICAR (texto obrigatório; o item fica) ou
+ * RETIRAR (o item sai e o título fica bloqueado até o cancelamento no Conexos). O ator é sempre
+ * quem está logado — o backend ignora qualquer outro.
+ */
+export const resolverAlertaDuplicidade = (
+  loteId: string,
+  item: ChaveTitulo,
+  alertaId: string,
+  input: { acao: 'JUSTIFICAR' | 'RETIRAR'; justificativa?: string },
+) =>
+  loteRequest(
+    `/sispag/lotes/${loteId}/itens/${item.filCod}/${encodeURIComponent(item.docCod)}/${encodeURIComponent(item.titCod)}/alertas/${encodeURIComponent(alertaId)}/resolucao`,
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+
+/** Desfaz o bloqueio por duplicidade de um título, com motivo (auditado). */
+export async function desfazerBloqueioDuplicidade(chave: ChaveTitulo, motivo: string): Promise<void> {
+  const res = await apiFetch(`${API}${rotaTitulo(chave)}/bloqueio-duplicidade/desfazer`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+    body: JSON.stringify({ motivo }),
+  })
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(j.error ?? `API ${res.status}`)
+  }
+}
+
+/** L12 — conferência por segunda pessoa (`sispag:conferir`). 403 para quem montou/finalizou. */
+export const conferirLote = (loteId: string, versao: number) =>
+  loteRequest(`/sispag/lotes/${loteId}/conferir`, {
+    method: 'POST',
+    body: JSON.stringify({ versao }),
+  })
+
+/** L13 — o conferente devolve o lote a RASCUNHO, com motivo obrigatório. */
+export const devolverLote = (loteId: string, versao: number, motivo: string) =>
+  loteRequest(`/sispag/lotes/${loteId}/devolver`, {
+    method: 'POST',
+    body: JSON.stringify({ versao, motivo }),
+  })
+
+/** Origem de uma pendência de cadastro: o título e o lote de onde a verificação partiu. */
+export interface PendenciaCadastroOrigem {
+  loteId: string
+  filCod: number
+  docCod: string
+  titCod: string
+  desfecho: 'RETIRADO' | 'MANTIDO_POR_EXCECAO'
+  registradaEm: string
+}
+
+/** Favorecido sem conta (TED) ou chave PIX no cadastro do Conexos (ADR-0063, I13k). */
+export interface PendenciaCadastro {
+  id: string
+  pesCod: string
+  filCod: number
+  credor?: string
+  tipo: 'CONTA' | 'CHAVE_PIX'
+  estado: 'ABERTA' | 'RESOLVIDA'
+  abertaEm: string
+  ultimaConferenciaEm?: string
+  origens: PendenciaCadastroOrigem[]
+  comExcecaoAprovada?: boolean
+}
+
+/**
+ * Fila "Pendências de cadastro" (`sispag:cadastro`). O backend reconfere cada pendência no Conexos
+ * a cada leitura: as que já têm o dado somem da lista sozinhas.
+ */
+export async function fetchPendenciasCadastro(): Promise<PendenciaCadastro[]> {
+  const res = await apiFetch(`${API}/sispag/pendencias-cadastro`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(j.error ?? `Falha ao carregar as pendências (HTTP ${res.status}).`)
+  }
+  const j = (await res.json()) as { pendencias?: PendenciaCadastro[] }
+  return j.pendencias ?? []
+}
 
 // ══════════════════════════════════════════ Fatia 3 — remessa e conciliação
 
