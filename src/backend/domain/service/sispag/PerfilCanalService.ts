@@ -14,6 +14,8 @@ import {
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import PerfilCanalFornecedorRepository from '../../repository/sispag/PerfilCanalFornecedorRepository.js';
+import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import LogService from '../LogService.js';
 import ChannelProfileCalculator from './ChannelProfileCalculator.js';
 
 const DIA_MS = 86_400_000;
@@ -74,6 +76,7 @@ export default class PerfilCanalService {
         private readonly repo: PerfilCanalFornecedorRepository,
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
+        @inject(LogService) private readonly logService: LogService,
     ) {}
 
     public calcular = async (input: {
@@ -138,8 +141,8 @@ export default class PerfilCanalService {
                     if (!contas.has(c.gerNum) && (c.qtdeBanco ?? 1) > 0)
                         contas.set(c.gerNum, filCod);
                 }
-            } catch {
-                falhas.n += 1;
+            } catch (error) {
+                await this.falhou(falhas, 'fin133 contas', { filCod }, error);
             }
         }
         return contas;
@@ -169,8 +172,8 @@ export default class PerfilCanalService {
                             ...(l.historico ? { historico: l.historico } : {}),
                         });
                     }
-                } catch {
-                    falhas.n += 1;
+                } catch (error) {
+                    await this.falhou(falhas, 'fin095 débitos', { filCod, gerNum, de: ini }, error);
                 }
             }
         }
@@ -189,8 +192,8 @@ export default class PerfilCanalService {
             let lista: BorderoPagamento[];
             try {
                 lista = await this.pagamentos.listBorderosPagamento(filCod, janela.inicio);
-            } catch {
-                falhas.n += 1;
+            } catch (error) {
+                await this.falhou(falhas, 'fin010 borderôs', { filCod }, error);
                 continue;
             }
             borderos += lista.length;
@@ -199,12 +202,34 @@ export default class PerfilCanalService {
                 (b) => this.pagamentos.listBaixasPagamento(filCod, b),
                 PARALELO_BAIXAS,
             );
-            for (const s of settled) {
+            for (const [i, s] of settled.entries()) {
                 if (s.status === 'fulfilled') baixas.push(...s.value);
-                else falhas.n += 1;
+                else {
+                    await this.falhou(
+                        falhas,
+                        'fin010 baixas',
+                        { filCod, borCod: lista[i]?.borCod },
+                        s.reason,
+                    );
+                }
             }
         }
         return { baixas, borderos };
+    };
+
+    /** Conta a leitura que falhou e diz QUAL foi (filial, conta, borderô) — só o tipo do erro. */
+    private falhou = async (
+        falhas: Falhas,
+        etapa: string,
+        contexto: Record<string, unknown>,
+        error: unknown,
+    ): Promise<void> => {
+        falhas.n += 1;
+        await this.logService.warn({
+            type: LOG_TYPE.BUSINESS_WARN,
+            message: `perfil de canal: leitura falhou (${etapa})`,
+            data: { ...contexto, erro: error instanceof Error ? error.name : 'erro' },
+        });
     };
 
     private contarConfianca = (perfis: ChannelProfile[]): Record<ChannelConfidence, number> => {

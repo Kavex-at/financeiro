@@ -6,6 +6,7 @@ import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import { SISPAG_VERIFICACAO_DEFAULT } from '../../libs/environment/model/EnvironmentVars.js';
 import type PerfilCanalFornecedorRepository from '../../repository/sispag/PerfilCanalFornecedorRepository.js';
+import type LogService from '../LogService.js';
 import ChannelProfileCalculator from './ChannelProfileCalculator.js';
 import PerfilCanalService from './PerfilCanalService.js';
 
@@ -73,6 +74,7 @@ const build = (opts: { falhaBordero?: boolean; falhaExtrato?: boolean } = {}) =>
             .fn()
             .mockResolvedValue({ sispagVerificacao: { ...SISPAG_VERIFICACAO_DEFAULT } }),
     };
+    const log = { warn: jest.fn() };
     const service = new PerfilCanalService(
         base as unknown as ConexosBaseClient,
         realizados as unknown as ConexosPagamentosRealizadosClient,
@@ -81,8 +83,9 @@ const build = (opts: { falhaBordero?: boolean; falhaExtrato?: boolean } = {}) =>
         repo as unknown as PerfilCanalFornecedorRepository,
         env as unknown as EnvironmentProvider,
         new BoundedConcurrency(),
+        log as unknown as LogService,
     );
-    return { service, repo, extrato, realizados, proibidos };
+    return { service, repo, extrato, realizados, proibidos, log };
 };
 
 describe('PerfilCanalService.calcular', () => {
@@ -129,5 +132,6 @@ describe('PerfilCanalService.calcular', () => {
         expect(r.falhasLeitura).toBeGreaterThan(0);
         expect(r.gravado).toBe(false);
         expect(h.repo.upsertRodada).not.toHaveBeenCalled();
+        expect(h.log.warn.mock.calls[0]?.[0].message).toMatch(/perfil de canal: leitura falhou/);
     });
 });

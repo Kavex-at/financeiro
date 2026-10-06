@@ -43,7 +43,11 @@ export default class CalcularPerfilCanalJob {
             const errorMessage = redactErrorMessage(
                 error instanceof Error ? error.message : String(error),
             );
-            await this.runRepo.finishRun({ runId, status: JOB_RUN_STATUS.ERROR, errorMessage });
+            try {
+                await this.runRepo.finishRun({ runId, status: JOB_RUN_STATUS.ERROR, errorMessage });
+            } catch {
+                // O log abaixo sai mesmo assim; a run presa em `running` é vista pela staleness.
+            }
             await this.logService.error({
                 type: LOG_TYPE.FLOW_ERROR,
                 message: 'perfil de canal falhou',
