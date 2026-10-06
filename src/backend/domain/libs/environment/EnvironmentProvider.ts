@@ -6,7 +6,10 @@ import {
     RECEBIMENTO_INGEST_DIAS_PADRAO,
     RECEBIMENTO_INGEST_START_DATE_PADRAO,
 } from '../../interface/recebimentos/constants.js';
-import EnvironmentVars from './model/EnvironmentVars.js';
+import EnvironmentVars, {
+    SISPAG_VERIFICACAO_DEFAULT,
+    type SispagVerificacaoConfig,
+} from './model/EnvironmentVars.js';
 
 @singleton()
 @injectable()
@@ -35,6 +38,46 @@ export default class EnvironmentProvider {
     private readMinutos = (key: string, fallback: number): number => {
         const n = Number(this.readEnv(key));
         return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+
+    /**
+     * Verificação TED/PIX (ADR-0063): configuração do tenant. Todo valor inválido (não numérico,
+     * ≤ 0, participação > 1, data malformada) volta ao default — um env torto nunca desliga nem
+     * afrouxa a verificação por acidente.
+     */
+    private resolveSispagVerificacao = (): SispagVerificacaoConfig => {
+        const d = SISPAG_VERIFICACAO_DEFAULT;
+        const inteiro = (key: string, fallback: number): number => {
+            const bruto = this.readEnv(key).trim();
+            const n = Number(bruto);
+            return bruto !== '' && Number.isInteger(n) && n > 0 ? n : fallback;
+        };
+        const participacaoBruta = this.readEnv('SISPAG_PERFIL_CANAL_MIN_PARTICIPACAO').trim();
+        const participacao = Number(participacaoBruta);
+        const desdeBruto = this.readEnv('SISPAG_DUPLICIDADE_DESDE').trim();
+        const desde = /^\d{4}-\d{2}-\d{2}$/.test(desdeBruto)
+            ? Date.parse(`${desdeBruto}T00:00:00Z`)
+            : Number.NaN;
+        return {
+            duplicidadeJanelaDias: inteiro(
+                'SISPAG_DUPLICIDADE_JANELA_DIAS',
+                d.duplicidadeJanelaDias,
+            ),
+            duplicidadeDesde: Number.isFinite(desde) ? desde : d.duplicidadeDesde,
+            perfilMinPagamentos: inteiro(
+                'SISPAG_PERFIL_CANAL_MIN_PAGAMENTOS',
+                d.perfilMinPagamentos,
+            ),
+            perfilMinMeses: inteiro('SISPAG_PERFIL_CANAL_MIN_MESES', d.perfilMinMeses),
+            perfilMinParticipacao:
+                participacaoBruta !== '' &&
+                Number.isFinite(participacao) &&
+                participacao > 0 &&
+                participacao <= 1
+                    ? participacao
+                    : d.perfilMinParticipacao,
+            perfilJanelaMeses: inteiro('SISPAG_PERFIL_CANAL_MESES', d.perfilJanelaMeses),
+        };
     };
 
     /**
@@ -259,6 +302,7 @@ export default class EnvironmentProvider {
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
+            sispagVerificacao: this.resolveSispagVerificacao(),
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,
@@ -352,6 +396,7 @@ export default class EnvironmentProvider {
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
+            sispagVerificacao: this.resolveSispagVerificacao(),
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
                 : 0,

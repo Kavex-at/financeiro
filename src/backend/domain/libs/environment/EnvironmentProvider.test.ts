@@ -245,6 +245,55 @@ describe('EnvironmentProvider', () => {
             delete process.env.SISPAG_CARTEIRA_COOLDOWN_MIN;
         });
 
+        it('verificação TED/PIX (ADR-0063): defaults 15 dias / 2026-01-01 / 5 / 3 / 0,95 / 24 meses; inválido volta ao default', async () => {
+            const CHAVES = [
+                'SISPAG_DUPLICIDADE_JANELA_DIAS',
+                'SISPAG_DUPLICIDADE_DESDE',
+                'SISPAG_PERFIL_CANAL_MIN_PAGAMENTOS',
+                'SISPAG_PERFIL_CANAL_MIN_MESES',
+                'SISPAG_PERFIL_CANAL_MIN_PARTICIPACAO',
+                'SISPAG_PERFIL_CANAL_MESES',
+            ];
+            const ler = async () =>
+                (await new EnvironmentProvider().getEnvironmentVars()).sispagVerificacao;
+            const DEFAULT = {
+                duplicidadeJanelaDias: 15,
+                duplicidadeDesde: Date.UTC(2026, 0, 1),
+                perfilMinPagamentos: 5,
+                perfilMinMeses: 3,
+                perfilMinParticipacao: 0.95,
+                perfilJanelaMeses: 24,
+            };
+            for (const c of CHAVES) delete process.env[c];
+            expect(await ler()).toEqual(DEFAULT);
+
+            process.env.SISPAG_DUPLICIDADE_JANELA_DIAS = '10';
+            process.env.SISPAG_DUPLICIDADE_DESDE = '2026-03-01';
+            process.env.SISPAG_PERFIL_CANAL_MIN_PAGAMENTOS = '8';
+            process.env.SISPAG_PERFIL_CANAL_MIN_MESES = '4';
+            process.env.SISPAG_PERFIL_CANAL_MIN_PARTICIPACAO = '0.9';
+            process.env.SISPAG_PERFIL_CANAL_MESES = '12';
+            expect(await ler()).toEqual({
+                duplicidadeJanelaDias: 10,
+                duplicidadeDesde: Date.UTC(2026, 2, 1),
+                perfilMinPagamentos: 8,
+                perfilMinMeses: 4,
+                perfilMinParticipacao: 0.9,
+                perfilJanelaMeses: 12,
+            });
+
+            for (const lixo of ['abc', '0', '-3', '1.5', 'NaN']) {
+                for (const c of CHAVES) process.env[c] = lixo;
+                expect(await ler()).toEqual(DEFAULT);
+            }
+            process.env.SISPAG_PERFIL_CANAL_MIN_PARTICIPACAO = '1.01';
+            process.env.SISPAG_DUPLICIDADE_DESDE = '01/03/2026';
+            const torto = await ler();
+            expect(torto.perfilMinParticipacao).toBe(0.95);
+            expect(torto.duplicidadeDesde).toBe(DEFAULT.duplicidadeDesde);
+            for (const c of CHAVES) delete process.env[c];
+        });
+
         it('flags TED/PIX/exceção de destino são independentes entre si', async () => {
             setFlagsTedPix(undefined);
             process.env.SISPAG_PIX_ENABLED = 'true';
