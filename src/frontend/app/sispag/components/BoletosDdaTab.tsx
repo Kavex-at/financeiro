@@ -111,6 +111,9 @@ export function BoletosDdaTab() {
   const [escopo, setEscopo] = React.useState<BoletoDdaEscopo>('a-vencer')
   const [situacao, setSituacao] = React.useState<FiltroSituacao>('todas')
   const [filial, setFilial] = React.useState('todas')
+  /** Vencimento de/até (`YYYY-MM-DD`) — filtrado no servidor, como os demais. */
+  const [vencimentoDe, setVencimentoDe] = React.useState('')
+  const [vencimentoAte, setVencimentoAte] = React.useState('')
   /** O que está no campo de busca. */
   const [busca, setBusca] = React.useState('')
   /** A busca que de fato vai ao servidor (depois do debounce). */
@@ -145,8 +148,10 @@ export function BoletosDdaTab() {
       ...(situacao !== 'todas' ? { situacao } : {}),
       ...(buscaAplicada.trim() ? { busca: buscaAplicada.trim() } : {}),
       ...(filial !== 'todas' ? { filCod: Number(filial) } : {}),
+      ...(vencimentoDe ? { vencimentoDe } : {}),
+      ...(vencimentoAte ? { vencimentoAte } : {}),
     }),
-    [escopo, pagina, situacao, buscaAplicada, filial],
+    [escopo, pagina, situacao, buscaAplicada, filial, vencimentoDe, vencimentoAte],
   )
   const chave = `${JSON.stringify(filtro)}#${recarga}`
 
@@ -190,6 +195,16 @@ export function BoletosDdaTab() {
       setPagina(1)
     },
     setBusca,
+    dataDe: vencimentoDe,
+    dataAte: vencimentoAte,
+    setDataDe: (v) => {
+      setVencimentoDe(v)
+      setPagina(1)
+    },
+    setDataAte: (v) => {
+      setVencimentoAte(v)
+      setPagina(1)
+    },
     pagina,
     setPagina,
     filiais: dados?.filiais ?? [],
@@ -199,7 +214,12 @@ export function BoletosDdaTab() {
     paginaAtual: dados?.pagina ?? pagina,
     pageSize: dados?.tamanho ?? TAMANHO_PAGINA,
   }
-  const filtrando = situacao !== 'todas' || filial !== 'todas' || buscaAplicada.trim() !== ''
+  const filtrando =
+    situacao !== 'todas' ||
+    filial !== 'todas' ||
+    buscaAplicada.trim() !== '' ||
+    vencimentoDe !== '' ||
+    vencimentoAte !== ''
 
   const sincronizar = async () => {
     setSincronizando(true)
@@ -286,6 +306,7 @@ export function BoletosDdaTab() {
       <FiltroBarra
         aba={aba}
         buscaPlaceholder="Buscar por número, valor, credor, documento, código de barras ou arquivo…"
+        rotuloData="Vencimento"
       />
 
       {carregando && !dados ? (
@@ -306,7 +327,7 @@ export function BoletosDdaTab() {
             !dados?.sincronizadoEm
               ? 'Clique em "Atualizar DDA" para trazer os boletos do fin124.'
               : filtrando
-                ? 'Ajuste a situação, a filial ou a busca acima.'
+                ? 'Ajuste a situação, a filial, o vencimento ou a busca acima.'
                 : 'Nenhum boleto neste período. Veja "Todos" para incluir os vencidos.'
           }
         />

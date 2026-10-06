@@ -1056,10 +1056,28 @@ describe('GET /sispag/boletos-dda', () => {
         });
     });
 
+    it('repassa o intervalo de vencimento (data civil)', async () => {
+        const listar = registrar();
+        await comApp({}, async (url) => {
+            const qs = 'vencimentoDe=2026-10-01&vencimentoAte=2026-10-31';
+            const res = await fetch(`${url}/sispag/boletos-dda?${qs}`);
+            expect(res.status).toBe(200);
+        });
+        expect(listar).toHaveBeenCalledWith({
+            escopo: 'a-vencer',
+            pagina: 1,
+            tamanho: 20,
+            vencimentoDe: '2026-10-01',
+            vencimentoAte: '2026-10-31',
+        });
+    });
+
     it.each([
         ['página maior que o teto (limita o que sai por resposta)', 'tamanho=500'],
         ['situação desconhecida', 'situacao=PAGO'],
         ['página zero', 'pagina=0'],
+        ['vencimento fora do formato civil', 'vencimentoDe=01/10/2026'],
+        ['vencimento com lixo depois da data', "vencimentoAte=2026-10-31'%20OR%201=1"],
     ])('400 para %s', async (_caso, qs) => {
         const listar = registrar();
         await comApp({}, async (url) => {

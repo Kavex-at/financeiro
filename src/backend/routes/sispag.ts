@@ -15,6 +15,7 @@ import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
 import {
     BOLETO_DDA_TAMANHO_MAX,
     BOLETO_DDA_TAMANHO_PADRAO,
+    DATA_CIVIL_REGEX,
     SITUACOES_FILTRAVEIS,
 } from '../domain/service/sispag/PaginacaoBoletoDda.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
@@ -872,9 +873,13 @@ const boletosDdaSchema = z.object({
         .min(1)
         .max(BOLETO_DDA_TAMANHO_MAX)
         .default(BOLETO_DDA_TAMANHO_PADRAO),
+    // Intervalo de vencimento (data civil, inclusivo). O formato estrito é o que torna segura a
+    // comparação por string no `PaginacaoBoletoDda` — nada disto chega a SQL.
+    vencimentoDe: z.string().regex(DATA_CIVIL_REGEX).optional(),
+    vencimentoAte: z.string().regex(DATA_CIVIL_REGEX).optional(),
 });
 
-// GET /sispag/boletos-dda?escopo=&situacao=&busca=&filCod=&pagina=&tamanho=
+// GET /sispag/boletos-dda?escopo=&situacao=&busca=&filCod=&vencimentoDe=&vencimentoAte=&pagina=&tamanho=
 // Devolve UMA página (≤ 100 linhas) — nunca o pool inteiro (Regis-Review performance-1/security-2).
 router.get(
     '/boletos-dda',

@@ -103,6 +103,25 @@ describe('BoletosDdaTab', () => {
     )
   })
 
+  it('vencimento de/até vai ao servidor (o rótulo diz qual data filtra)', async () => {
+    mockFetch.mockResolvedValue(pagina([ADP]))
+    render(<BoletosDdaTab />)
+    await screen.findByText('001532761')
+
+    expect(screen.getByText('Vencimento de/até')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Vencimento de'), { target: { value: '2026-09-20' } })
+    fireEvent.change(screen.getByLabelText('Vencimento até'), { target: { value: '2026-09-30' } })
+    await waitFor(() =>
+      expect(mockFetch).toHaveBeenLastCalledWith({
+        escopo: 'a-vencer',
+        pagina: 1,
+        tamanho: 20,
+        vencimentoDe: '2026-09-20',
+        vencimentoAte: '2026-09-30',
+      }),
+    )
+  })
+
   it('busca vai ao servidor depois do debounce — uma requisição, não uma por tecla', async () => {
     mockFetch.mockResolvedValue(pagina([ADP]))
     render(<BoletosDdaTab />)

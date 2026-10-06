@@ -98,6 +98,33 @@ describe('PaginacaoBoletoDda', () => {
         expect(r.tamanho).toBe(BOLETO_DDA_TAMANHO_MAX);
     });
 
+    it('intervalo de vencimento: inclusivo, antes da contagem; sem vencimento sai', () => {
+        const comVenc = [
+            linha({ ditCod: 1, vencimento: '2026-10-01', situacao: 'CANDIDATO' }),
+            linha({ ditCod: 2, vencimento: '2026-10-15' }),
+            linha({ ditCod: 3, vencimento: '2026-10-31' }),
+            linha({ ditCod: 4 }),
+        ];
+        const r = paginacao.paginar(comVenc, {
+            vencimentoDe: '2026-10-01',
+            vencimentoAte: '2026-10-15',
+            pagina: 1,
+            tamanho: 20,
+        });
+        expect(r.boletos.map((b) => b.ditCod)).toEqual([1, 2]);
+        expect(r.contagem).toMatchObject({ todas: 2, CANDIDATO: 1, SEM_TITULO: 1 });
+
+        const soAte = paginacao.paginar(comVenc, {
+            vencimentoAte: '2026-10-01',
+            pagina: 1,
+            tamanho: 20,
+        });
+        expect(soAte.boletos.map((b) => b.ditCod)).toEqual([1]);
+
+        const semIntervalo = paginacao.paginar(comVenc, { pagina: 1, tamanho: 20 });
+        expect(semIntervalo.total).toBe(4);
+    });
+
     it('lista vazia devolve página 1 sem linhas', () => {
         const r = paginacao.paginar([], { pagina: 5, tamanho: 20 });
         expect(r).toMatchObject({ boletos: [], total: 0, pagina: 1, filiais: [] });

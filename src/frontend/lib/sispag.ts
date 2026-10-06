@@ -1120,6 +1120,9 @@ export interface FiltroBoletosDda {
   situacao?: BoletoDdaSituacao
   busca?: string
   filCod?: number
+  /** Vencimento do boleto de/até, `YYYY-MM-DD`, inclusivo (filtrado no servidor). */
+  vencimentoDe?: string
+  vencimentoAte?: string
   pagina: number
   tamanho?: number
 }
@@ -1144,6 +1147,8 @@ export async function fetchBoletosDda(filtro: FiltroBoletosDda): Promise<Boletos
   if (filtro.situacao) qs.set('situacao', filtro.situacao)
   if (filtro.busca?.trim()) qs.set('busca', filtro.busca.trim())
   if (filtro.filCod != null) qs.set('filCod', String(filtro.filCod))
+  if (filtro.vencimentoDe) qs.set('vencimentoDe', filtro.vencimentoDe)
+  if (filtro.vencimentoAte) qs.set('vencimentoAte', filtro.vencimentoAte)
   if (filtro.tamanho != null) qs.set('tamanho', String(filtro.tamanho))
   const res = await apiFetch(`${API}/sispag/boletos-dda?${qs.toString()}`, {
     headers: await withAuthHeaders(),

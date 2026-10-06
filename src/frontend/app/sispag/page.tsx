@@ -66,6 +66,18 @@ import {
   type TituloAPagar,
 } from '@/lib/sispag'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
+import {
+  chavesComBoleto,
+  diaDoRetorno,
+  filtroCandidatos,
+  filtroFinalizados,
+  filtroLotesNativos,
+  filtroRetornos,
+  filtroTitulos,
+  formatarDia,
+  ROTULO_DATA,
+  TITULO_BOLETO_LOTE,
+} from './components/filtrosAbas'
 import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { BoletosDdaTab } from './components/BoletosDdaTab'
 import { BoletosDoTituloDialog } from './components/BoletosDoTituloDialog'
@@ -332,7 +344,13 @@ function SispagPanel() {
   }, [titulos, filtro])
 
   // Filial + busca + paginação — mesmo kit do painel de Permutas (consistência de UX).
-  const abaTitulos = useTabelaFiltro(titulosFiltrados, (t) => t.filCod, textoBuscaTitulo)
+  const abaTitulos = useTabelaFiltro(
+    titulosFiltrados,
+    (t) => t.filCod,
+    textoBuscaTitulo,
+    undefined,
+    filtroTitulos,
+  )
   // Lotes: candidatos (RASCUNHO) vs. em andamento (do FINALIZADO até o BAIXADO).
   const lotesRascunho = lotes.filter((l) => l.status === 'RASCUNHO')
   const EM_ANDAMENTO = ['FINALIZADO', 'REMESSA_GERADA', 'RETORNADO', 'BAIXADO'] as const
@@ -344,11 +362,17 @@ function SispagPanel() {
   >('todos')
   const [adicionarLote, setAdicionarLote] = React.useState<LotePagamento | null>(null)
   const buscaLote = textoBuscaLote
+  // Boleto do item vem da carteira (o item não carrega o flag) — memo: entra nas deps do filtro.
+  const extrasCandidatos = React.useMemo(
+    () => filtroCandidatos(chavesComBoleto(painel?.titulos ?? [])),
+    [painel?.titulos],
+  )
   const abaCandidatos = useTabelaFiltro(
     lotesRascunho,
     (l) => l.filCod,
     buscaLote,
     LOTES_POR_PAGINA,
+    extrasCandidatos,
   )
 
   /** Link do lote na linha do título: abre a aba de candidatos na página do lote e o destaca. */
@@ -366,6 +390,7 @@ function SispagPanel() {
     }
     abaCandidatos.setFilial('todas')
     abaCandidatos.setBusca('')
+    abaCandidatos.limparFiltros() // data e boleto também — senão o lote pode estar escondido
     abaCandidatos.setPagina(pagina)
     setAba('lotes-candidatos')
     setLoteEmFoco(loteId)
@@ -407,12 +432,28 @@ function SispagPanel() {
           ? l.status === 'RETORNADO' || l.status === 'BAIXADO'
           : true,
   )
-  const abaFinalizados = useTabelaFiltro(finFiltrados, (l) => l.filCod, buscaLote, 8)
+  const abaFinalizados = useTabelaFiltro(
+    finFiltrados,
+    (l) => l.filCod,
+    buscaLote,
+    8,
+    filtroFinalizados,
+  )
   // Retornos (.RET) do fin052 — mesmo kit (filial + busca + paginação) das demais abas.
   const abaRetornos = useTabelaFiltro(
     retornos ?? [],
     (r) => r.filCod,
     (r) => `${r.banco ?? ''} ${r.configNome ?? ''} ${r.arquivo ?? ''}`,
+    undefined,
+    filtroRetornos,
+  )
+  // Lançamento Lote (REM) — lotes nativos do fin015 que o painel já trouxe; filtro no cliente.
+  const abaRem = useTabelaFiltro(
+    painel?.lotes ?? [],
+    (l) => l.filCod,
+    (l) => `${l.banco ?? ''} ${l.conta ?? ''} ${l.layoutConta ?? ''} ${l.finalizadoPor ?? ''}`,
+    undefined,
+    filtroLotesNativos,
   )
 
   const selTitulos = titulos.filter((t) => selecionados.has(keyOf(t)))
@@ -798,7 +839,12 @@ function SispagPanel() {
 
             {/* ---- Títulos a pagar ---- */}
             <TabsContent value="titulos" className="space-y-3">
-              <FiltroBarra aba={abaTitulos} buscaPlaceholder="Buscar por credor, documento ou banco…" />
+              <FiltroBarra
+                aba={abaTitulos}
+                buscaPlaceholder="Buscar por credor, documento ou banco…"
+                rotuloData={ROTULO_DATA.titulos}
+                filtroBoleto
+              />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <div className="flex gap-1">
@@ -864,7 +910,7 @@ function SispagPanel() {
                   description={
                     titulos.length === 0
                       ? 'Clique em "Ingestão de dados" para carregar os títulos a pagar do Conexos.'
-                      : 'Ajuste a faixa, a filial ou a busca acima.'
+                      : 'Ajuste a faixa, a filial, o vencimento, o boleto ou a busca acima.'
                   }
                 />
               ) : (
@@ -1050,6 +1096,9 @@ function SispagPanel() {
               <FiltroBarra
                 aba={abaCandidatos}
                 buscaPlaceholder="Buscar por documento, credor, filial ou quem criou…"
+                rotuloData={ROTULO_DATA.candidatos}
+                filtroBoleto
+                tituloBoleto={TITULO_BOLETO_LOTE}
               />
               {lotesErro ? (
                 <LotesIndisponiveis erro={lotesErro} onRecarregar={recarregarLotes} />
@@ -1085,6 +1134,7 @@ function SispagPanel() {
               <FiltroBarra
                 aba={abaFinalizados}
                 buscaPlaceholder="Buscar por documento, credor, filial ou quem finalizou…"
+                rotuloData={ROTULO_DATA.finalizados}
               />
               <div className="flex flex-wrap gap-x-3 gap-y-2">
                 <div className="flex gap-1">
@@ -1127,6 +1177,11 @@ function SispagPanel() {
 
             {/* ---- Lotes SISPAG nativos ---- */}
             <TabsContent value="lotes" className="space-y-3">
+              <FiltroBarra
+                aba={abaRem}
+                buscaPlaceholder="Buscar por banco, conta, layout ou quem finalizou…"
+                rotuloData={ROTULO_DATA.rem}
+              />
               <div className="overflow-x-auto rounded-lg border">
                 <Table>
                   <TableHeader>
@@ -1135,6 +1190,7 @@ function SispagPanel() {
                       <TableHead>Layout</TableHead>
                       <TableHead className="text-right">Títulos</TableHead>
                       <TableHead className="text-right">Soma</TableHead>
+                      <TableHead>{ROTULO_DATA.rem}</TableHead>
                       <TableHead>Envio</TableHead>
                       <TableHead>Retorno</TableHead>
                       <TableHead>Finalizado por</TableHead>
@@ -1142,7 +1198,7 @@ function SispagPanel() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {painel.lotes.map((l) => (
+                    {abaRem.slice.map((l) => (
                       <TableRow key={`${l.filCod}:${l.flpCod}`}>
                         <TableCell className="font-medium">
                           {l.banco ?? '—'}
@@ -1153,6 +1209,9 @@ function SispagPanel() {
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{l.titulosCount}</TableCell>
                         <TableCell className="text-right tabular-nums">{formatBRL(l.soma)}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {l.dataCredito ? formatErpDay(l.dataCredito) : '—'}
+                        </TableCell>
                         <TableCell>
                           {l.envioConfirmado ? (
                             <Badge variant="outline" className="border-success/40 text-success">
@@ -1182,6 +1241,14 @@ function SispagPanel() {
                   </TableBody>
                 </Table>
               </div>
+              {abaRem.total === 0 && painel.lotes.length > 0 ? (
+                <EmptyState
+                  icon={<Layers className="size-6" />}
+                  title="Nenhum lote para o filtro"
+                  description="Ajuste a filial, a data de crédito ou a busca acima."
+                />
+              ) : null}
+              <Paginacao aba={abaRem} />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   {painel.lotes.length} lotes nativos (fin015) — a visão do ERP. Para gerar uma
@@ -1228,12 +1295,13 @@ function SispagPanel() {
                   <FiltroBarra
                     aba={abaRetornos}
                     buscaPlaceholder="Buscar por banco, config ou arquivo…"
+                    rotuloData={ROTULO_DATA.retornos}
                   />
                   {abaRetornos.total === 0 ? (
                     <EmptyState
                       icon={<Layers className="size-6" />}
                       title="Nenhum retorno para o filtro"
-                      description="Ajuste a filial ou a busca para ver os arquivos .RET."
+                      description="Ajuste a filial, a data ou a busca para ver os arquivos .RET."
                     />
                   ) : (
                     <div className="overflow-x-auto rounded-lg border">
@@ -1245,6 +1313,7 @@ function SispagPanel() {
                             <TableHead>Status</TableHead>
                             <TableHead className="text-right">Rejeitados</TableHead>
                             <TableHead className="text-right">Erros</TableHead>
+                            <TableHead>{ROTULO_DATA.retornos}</TableHead>
                             <TableHead>Filial</TableHead>
                             <TableHead className="text-right">Ações</TableHead>
                           </TableRow>
@@ -1295,6 +1364,9 @@ function SispagPanel() {
                                 ) : (
                                   '—'
                                 )}
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {formatarDia(diaDoRetorno(r))}
                               </TableCell>
                               <TableCell className="text-muted-foreground">{r.filCod}</TableCell>
                               <TableCell className="text-right">

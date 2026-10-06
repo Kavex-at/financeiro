@@ -15,6 +15,7 @@ interface DatePickerProps {
     className?: string
     'aria-invalid'?: boolean
     'aria-describedby'?: string
+    'aria-label'?: string
 }
 
 /**
