@@ -62,7 +62,6 @@ export default class FormacaoLotesService {
         const contaPorFilial = new Map<number, ContaPagadoraEscolhida | undefined>();
         for (const titulos of grupos.values()) {
             for (const fatia of this.separarBoletos(titulos)) {
-                if (fatia.length === 0) continue;
                 const filCod = fatia[0].filCod;
                 if (!contaPorFilial.has(filCod)) {
                     contaPorFilial.set(filCod, await this.contaResolver.resolverPadrao(filCod));
