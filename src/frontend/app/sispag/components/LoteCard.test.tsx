@@ -35,7 +35,6 @@ jest.mock('@/lib/sispag', () => {
     reabrirLote: jest.fn(),
     sincronizarLote: jest.fn(),
     baixarRemessa: jest.fn(),
-    exportarTitulosRemessas: jest.fn(),
     removerItem: jest.fn(),
     // ADR-0054: por padrão as flags estão desligadas — a tela de antes.
     getRecursos: jest
@@ -53,7 +52,6 @@ import { baixarBlob } from '@/lib/download'
 import {
   baixarRemessa,
   cancelarLote,
-  exportarTitulosRemessas,
   fetchContasPagadoras,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
@@ -550,7 +548,7 @@ describe('LoteCard — sincronização pelo título (ADR-0055)', () => {
   })
 })
 
-describe('LoteCard — download da remessa e export dos títulos', () => {
+describe('LoteCard — download da remessa e seleção para o export', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     permissoes = { carregando: false, lista: ['sispag:ver', 'sispag:executar'] }
@@ -562,14 +560,14 @@ describe('LoteCard — download da remessa e export dos títulos', () => {
       // Causa-raiz do "não vi o download": a lista vinha sem `remessaArquivo` e o botão sumia.
       renderCard(lote({ status }))
       expect(screen.getByRole('button', { name: /baixar remessa/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /exportar títulos/i })).toBeInTheDocument()
+      // O export de títulos é só pela seleção + barra da aba Finalizados (sem atalho no card).
+      expect(screen.queryByRole('button', { name: /exportar títulos/i })).not.toBeInTheDocument()
     },
   )
 
-  it.each(['RASCUNHO', 'FINALIZADO'] as const)('%s: sem download nem export', (status) => {
+  it.each(['RASCUNHO', 'FINALIZADO'] as const)('%s: sem download', (status) => {
     renderCard(lote({ status }))
     expect(screen.queryByRole('button', { name: /baixar remessa/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /exportar títulos/i })).not.toBeInTheDocument()
   })
 
   it('baixar entrega os bytes do backend com o nome anunciado', async () => {
@@ -582,20 +580,9 @@ describe('LoteCard — download da remessa e export dos títulos', () => {
     await waitFor(() => expect(baixarBlob).toHaveBeenCalledWith(arquivo, 'PG061001.REM'))
   })
 
-  it('"Exportar títulos" do card exporta só este lote', async () => {
-    const user = userEvent.setup()
-    const arquivo = new Blob(['PK'])
-    ;(exportarTitulosRemessas as jest.Mock).mockResolvedValue({ nome: 't.xlsx', arquivo })
-    renderCard(lote({ status: 'REMESSA_GERADA' }))
-    await user.click(screen.getByRole('button', { name: /exportar títulos/i }))
-    expect(exportarTitulosRemessas).toHaveBeenCalledWith(['L1'])
-    await waitFor(() => expect(baixarBlob).toHaveBeenCalledWith(arquivo, 't.xlsx'))
-  })
-
-  it('só sispag:ver: exporta títulos, mas não baixa o .REM (dados bancários dos fornecedores)', () => {
+  it('só sispag:ver: não baixa o .REM (dados bancários dos fornecedores)', () => {
     permissoes = { carregando: false, lista: ['sispag:ver'] }
     renderCard(lote({ status: 'REMESSA_GERADA', remessaArquivo: 'PG061001.REM' }))
-    expect(screen.getByRole('button', { name: /exportar títulos/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /baixar remessa/i })).not.toBeInTheDocument()
   })
 

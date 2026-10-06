@@ -60,8 +60,9 @@ nenhum estado, transição ou invariante novo; é leitura/projeção do que o lo
 ### T5 — Frontend
 - `lib/sispag.ts`: `exportarTitulosRemessas(loteIds)`; `baixarRemessa` lê a mensagem do corpo no erro.
 - `LoteCard.tsx`: botão **"Baixar remessa"** no cabeçalho de todo lote `REMESSA_GERADA`/`RETORNADO`/
-  `BAIXADO` (com `SISPAG_EXECUTAR`, regra LGPD mantida), ao lado de "Sincronizar agora"; atalho
-  **"Exportar títulos"** por card; checkbox opcional de seleção (props `selecionado`/`onSelecionar`).
+  `BAIXADO` (com `SISPAG_EXECUTAR`, regra LGPD mantida), ao lado de "Sincronizar agora"; checkbox
+  opcional de seleção (props `selecionado`/`onSelecionar`). Sem atalho de export por card (decisão do
+  usuário no QA do PR #110: export só pela seleção + barra; uma remessa = marcar uma).
 - Novo `components/ExportarTitulosBarra.tsx`: contador, "Exportar títulos (.xlsx)", "Limpar seleção".
 - `page.tsx`: edição mínima (estado de seleção + barra + props no `LoteCard` da aba Finalizados).
 - AC: testes jest dos dois componentes e do client.
