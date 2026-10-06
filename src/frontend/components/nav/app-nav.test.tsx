@@ -31,7 +31,7 @@ describe('buildAppNavGroups', () => {
   it('separa Frentes de Plataforma', () => {
     const groups = buildAppNavGroups({ sispagEnabled: true, tem: tudo })
     expect(groups.map((g) => g.label)).toEqual(['Frentes', 'Plataforma'])
-    expect(visiveis([groups[0]])).toEqual(['Permutas', 'SISPAG', 'Adiantamentos'])
+    expect(visiveis([groups[0]])).toEqual(['Permutas', 'SISPAG', 'Pendências de cadastro', 'Adiantamentos'])
     expect(visiveis([groups[1]])).toEqual(['Operação', 'Métricas', 'Usuários'])
   })
 
@@ -45,6 +45,7 @@ describe('buildAppNavGroups', () => {
         '/permutas/borderos',
         '/permutas/clientes-filtro',
         '/sispag',
+        '/sispag/pendencias-cadastro',
         '/recebimentos',
         '/operacao',
         '/metricas',
@@ -56,6 +57,7 @@ describe('buildAppNavGroups', () => {
   it.each<[string, Permissao]>([
     ['Permutas', 'permutas:ver'],
     ['SISPAG', 'sispag:ver'],
+    ['Pendências de cadastro', 'sispag:cadastro'],
     ['Adiantamentos', 'recebimentos:ver'],
     ['Operação', 'operacao:ver'],
     ['Métricas', 'metricas:ver'],
@@ -90,7 +92,7 @@ describe('buildAppNavGroups', () => {
         .filter((i) => i.hidden)
         .map((i) => i.label)
         .sort(),
-    ).toEqual(['Adiantamentos', 'Métricas', 'Operação', 'Permutas', 'SISPAG', 'Usuários'])
+    ).toEqual(['Adiantamentos', 'Métricas', 'Operação', 'Pendências de cadastro', 'Permutas', 'SISPAG', 'Usuários'])
   })
 })
 

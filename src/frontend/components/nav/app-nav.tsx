@@ -1,7 +1,15 @@
 'use client'
 
 import * as React from 'react'
-import { Activity, ArrowLeftRight, Banknote, BarChart3, Landmark, Users } from 'lucide-react'
+import {
+  Activity,
+  ArrowLeftRight,
+  Banknote,
+  BarChart3,
+  ClipboardList,
+  Landmark,
+  Users,
+} from 'lucide-react'
 import type { SidebarGroup } from '@/components/ui/sidebar'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { isSispagEnabled } from '@/lib/features'
@@ -70,6 +78,19 @@ export function buildAppNavGroups({ sispagEnabled, tem }: AppNavPermissions): Si
           tooltip: {
             title: 'SISPAG — Pagamentos',
             description: 'Títulos a pagar: ingestão, montagem do lote, remessa e retorno.',
+          },
+        },
+        {
+          // ADR-0063: a área de cadastro de favorecidos pode não ter `sispag:ver` — o item é próprio,
+          // pela permissão avulsa `sispag:cadastro` (e a flag do SISPAG).
+          id: 'sispag-pendencias-cadastro',
+          label: 'Pendências de cadastro',
+          icon: <ClipboardList />,
+          href: '/sispag/pendencias-cadastro',
+          hidden: !(sispagEnabled && tem(PERMISSAO.SISPAG_CADASTRO)),
+          tooltip: {
+            title: 'Pendências de cadastro',
+            description: 'Favorecidos sem conta ou chave PIX no cadastro do Conexos.',
           },
         },
         {

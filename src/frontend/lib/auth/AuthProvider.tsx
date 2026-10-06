@@ -296,6 +296,15 @@ export function useAuth(): AuthContextValue {
 }
 
 /**
+ * Username of the logged-in user, or `null` outside an `<AuthProvider>` / while loading. Never
+ * throws: components that only need it for ergonomics (e.g. hiding "Conferir" from whoever
+ * finalized the lot — the backend is the authority) work in isolated tests too.
+ */
+export function useUsuarioAtual(): string | null {
+  return useContext(AuthContext)?.username ?? null
+}
+
+/**
  * Returns whether the current visitor is allowed past the auth gate:
  * true when dev-bypass is on OR a token exists.
  */
