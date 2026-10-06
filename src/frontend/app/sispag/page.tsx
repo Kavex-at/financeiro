@@ -1182,6 +1182,13 @@ function SispagPanel() {
                 buscaPlaceholder="Buscar por banco, conta, layout ou quem finalizou…"
                 rotuloData={ROTULO_DATA.rem}
               />
+              {abaRem.total === 0 && painel.lotes.length > 0 ? (
+                <EmptyState
+                  icon={<Layers className="size-6" />}
+                  title="Nenhum lote para o filtro"
+                  description="Ajuste a filial, a data de crédito ou a busca acima."
+                />
+              ) : (
               <div className="overflow-x-auto rounded-lg border">
                 <Table>
                   <TableHeader>
@@ -1241,13 +1248,7 @@ function SispagPanel() {
                   </TableBody>
                 </Table>
               </div>
-              {abaRem.total === 0 && painel.lotes.length > 0 ? (
-                <EmptyState
-                  icon={<Layers className="size-6" />}
-                  title="Nenhum lote para o filtro"
-                  description="Ajuste a filial, a data de crédito ou a busca acima."
-                />
-              ) : null}
+              )}
               <Paginacao aba={abaRem} />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">

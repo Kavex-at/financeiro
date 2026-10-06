@@ -261,9 +261,11 @@ export function FiltroBarra<T>({
       {mostrarDatas ? (
         <fieldset className="m-0 min-w-0 border-0 p-0">
           <legend className="mb-1 text-xs text-muted-foreground">{rotuloData} de/até</legend>
-          <div className="flex items-center gap-1">
+          {/* No celular os dois campos dividem a largura e o "Limpar" desce de linha: dois
+              campos fixos de 144px + botão estouravam os 343px úteis de uma tela de 375px. */}
+          <div className="flex flex-wrap items-center gap-1">
             <DatePicker
-              className="w-36"
+              className="w-full min-w-0 flex-1 sm:w-36 sm:flex-none"
               aria-label={`${rotuloData} de`}
               value={dataDe}
               {...(dataAte ? { max: dataAte } : {})}
@@ -273,7 +275,7 @@ export function FiltroBarra<T>({
               –
             </span>
             <DatePicker
-              className="w-36"
+              className="w-full min-w-0 flex-1 sm:w-36 sm:flex-none"
               aria-label={`${rotuloData} até`}
               value={dataAte}
               {...(dataDe ? { min: dataDe } : {})}
@@ -281,6 +283,7 @@ export function FiltroBarra<T>({
             />
             {dataDe || dataAte ? (
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => {
@@ -296,12 +299,13 @@ export function FiltroBarra<T>({
         </fieldset>
       ) : null}
       {filtroBoleto && setBoleto && contagemBoleto ? (
-        <fieldset className="m-0 min-w-0 border-0 p-0" title={tituloBoleto}>
+        <fieldset className="m-0 min-w-0 border-0 p-0">
           <legend className="mb-1 text-xs text-muted-foreground">Boleto</legend>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {(['todos', 'com', 'sem'] as const).map((f) => (
               <Button
                 key={f}
+                type="button"
                 size="sm"
                 variant={aba.boleto === f ? 'default' : 'outline'}
                 aria-pressed={aba.boleto === f}
@@ -311,6 +315,10 @@ export function FiltroBarra<T>({
               </Button>
             ))}
           </div>
+          {/* Texto visível, não `title`: hover não existe no toque nem no teclado. */}
+          {tituloBoleto ? (
+            <p className="mt-1 max-w-xs text-xs text-muted-foreground">{tituloBoleto}</p>
+          ) : null}
         </fieldset>
       ) : null}
     </div>
