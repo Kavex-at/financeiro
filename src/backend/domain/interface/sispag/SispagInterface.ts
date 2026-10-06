@@ -534,6 +534,15 @@ export interface ItemLote {
     divergenciaDetalhe?: string;
     /** Última leitura bem-sucedida do título (ISO). Não mexe em `versao` (I11h). */
     sincronizadoEm?: string;
+    // ── 0076: verificação TED/PIX (ADR-0063) ──
+    /** I13b. Ausente = nunca verificado (boleto, "a definir"). `PENDENTE` barra o finalizar. */
+    verificacaoEstado?: PaymentCheckState;
+    verificadoEm?: string;
+    /** O que a verificação viu do destino (I13j/I13l): a ORIGEM e só a MÁSCARA (I10h). */
+    destinoOrigem?: 'CADASTRO' | 'EXCECAO' | 'NENHUM';
+    destinoMascarado?: string;
+    /** Alertas vivas do item neste lote (ABERTA | RESOLVIDA), com a justificativa. */
+    alertas?: AlertaItemLote[];
 }
 
 /** Lote candidato (raiz do agregado). */
@@ -568,6 +577,12 @@ export interface LotePagamento {
      * lote legado (anterior à 0061).
      */
     dataDebito?: string;
+    // ── 0078: conferência por 2ª pessoa (ADR-0063, I13l; L12/L13) ──
+    conferidoPor?: string;
+    conferidoEm?: string;
+    devolvidoPor?: string;
+    devolvidoEm?: string;
+    motivoDevolucao?: string;
     itens: ItemLote[];
 }
 

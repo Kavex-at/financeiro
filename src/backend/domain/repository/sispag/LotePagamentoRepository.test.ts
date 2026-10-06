@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import LotePagamentoRepository from './LotePagamentoRepository.js';
+import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 
 interface DbMock {
     selectMany: jest.Mock;
@@ -49,7 +50,10 @@ const itemRow = (over: Record<string, unknown> = {}) => ({
     ...over,
 });
 
-const make = (db: DbMock) => new LotePagamentoRepository(db as unknown as PostgreeDatabaseClient);
+const make = (db: DbMock) => {
+    const pg = db as unknown as PostgreeDatabaseClient;
+    return new LotePagamentoRepository(pg, new VerificacaoEventoRepository(pg));
+};
 
 describe('LotePagamentoRepository', () => {
     it('criarLote insere e devolve o lote com itens', async () => {
@@ -505,5 +509,180 @@ describe('LotePagamentoRepository', () => {
                 nativeFlpCod: 24,
             });
         });
+    });
+});
+
+/** Todas as queries vistas pelo mock, na ordem (insert/update/select), com os parâmetros. */
+const todas = (db: DbMock): Array<[string, Record<string, unknown> | undefined]> =>
+    [db.insert, db.update, db.selectMany, db.selectFirst].flatMap((m) =>
+        m.mock.calls.map(
+            ([q, p]) =>
+                [String(q), p as Record<string, unknown> | undefined] as [
+                    string,
+                    Record<string, unknown> | undefined,
+                ],
+        ),
+    );
+
+const eventosGravados = (db: DbMock): Array<Record<string, unknown> | undefined> =>
+    db.insert.mock.calls
+        .filter(([q]) => String(q).includes('INSERT INTO sispag_verificacao_evento'))
+        .map(([, p]) => p as Record<string, unknown> | undefined);
+
+describe('LotePagamentoRepository — verificação TED/PIX e conferência (ADR-0063)', () => {
+    it('lê o estado da verificação no item e a conferência no lote; destino só mascarado', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValue(
+            header({
+                status: 'FINALIZADO',
+                conferido_por: 'bia',
+                conferido_em: new Date('2026-10-05T10:00:00Z'),
+                motivo_devolucao: null,
+            }),
+        );
+        db.selectMany.mockResolvedValue([
+            itemRow({
+                modalidade: 'TED',
+                verificacao_estado: 'OK',
+                verificado_em: new Date('2026-10-05T09:00:00Z'),
+                destino_origem: 'CADASTRO',
+                destino_mascarado: '341 / ****-5',
+            }),
+        ]);
+        const lote = await make(db).getLoteComItens('L1');
+        expect(lote).toMatchObject({
+            conferidoPor: 'bia',
+            conferidoEm: '2026-10-05T10:00:00.000Z',
+        });
+        expect(lote?.itens[0]).toMatchObject({
+            verificacaoEstado: 'OK',
+            destinoOrigem: 'CADASTRO',
+            destinoMascarado: '341 / ****-5',
+        });
+        const [sqlHeader] = db.selectFirst.mock.calls[0] ?? [];
+        expect(String(sqlHeader)).toMatch(/conferido_por, conferido_em, devolvido_por/);
+        const [sqlItens] = db.selectMany.mock.calls[0] ?? [];
+        expect(String(sqlItens)).toMatch(/i\.verificacao_estado, i\.verificado_em/);
+    });
+
+    it('voltar a RASCUNHO (L4) limpa a conferência; finalizar apaga a última devolução', async () => {
+        const db = buildDb();
+        await make(db).transicionarStatus({
+            id: 'L1',
+            de: ['FINALIZADO'],
+            para: 'RASCUNHO',
+            versaoEsperada: 3,
+        });
+        const [sql, params] = db.update.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/conferido_por\s+= CASE WHEN \$para = 'RASCUNHO' THEN NULL/);
+        expect(String(sql)).toMatch(/motivo_devolucao = CASE WHEN \$para = 'FINALIZADO' THEN NULL/);
+        expect(params).toMatchObject({ para: 'RASCUNHO', versaoEsperada: 3 });
+    });
+
+    it('marcarVerificacaoItem grava estado e destino mascarado, parametrizado, sem bump de versão', async () => {
+        const db = buildDb();
+        await make(db).marcarVerificacaoItem({
+            loteId: 'L1',
+            filCod: 4,
+            docCod: '6173',
+            titCod: '1',
+            estado: 'OK',
+            destinoOrigem: 'EXCECAO',
+            destinoMascarado: 'CPF ***.***.***-35',
+        });
+        const [sql, params] = db.update.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/SET verificacao_estado = \$estado/);
+        expect(String(sql)).not.toMatch(/versao/);
+        expect(params).toMatchObject({ estado: 'OK', destinoOrigem: 'EXCECAO' });
+    });
+
+    it('removerItemPeloSistema: DELETE só em RASCUNHO + bump + evento ITEM_REMOVIDO_SISTEMA, na transação dada; não marca manual', async () => {
+        const db = buildDb();
+        const ok = await make(db).removerItemPeloSistema(
+            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1' },
+            db as never,
+        );
+        expect(ok).toBe(true);
+        const sqls = todas(db).map(([q]) => q);
+        expect(
+            sqls.some((q) =>
+                /DELETE FROM lote_pagamento_item[\s\S]*l\.status = 'RASCUNHO'/.test(q),
+            ),
+        ).toBe(true);
+        expect(sqls.some((q) => /versao = versao \+ 1/.test(q))).toBe(true);
+        expect(sqls.some((q) => /automatico = FALSE/.test(q))).toBe(false);
+        expect(eventosGravados(db)).toEqual([
+            expect.objectContaining({
+                evento: 'ITEM_REMOVIDO_SISTEMA',
+                ator: 'sistema',
+                loteId: 'L1',
+                dados: JSON.stringify({ motivo: 'SEM_DADO_PAGAMENTO' }),
+            }),
+        ]);
+        expect(db.withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('removerItemPeloSistema: item fora do lote RASCUNHO não gera evento', async () => {
+        const db = buildDb();
+        db.update.mockResolvedValueOnce(0);
+        const ok = await make(db).removerItemPeloSistema(
+            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1' },
+            db as never,
+        );
+        expect(ok).toBe(false);
+        expect(eventosGravados(db)).toEqual([]);
+    });
+
+    it('conferir: só FINALIZADO, versão batendo e ainda não conferido; evento na mesma transação', async () => {
+        const db = buildDb();
+        const n = await make(db).conferir({ loteId: 'L1', versaoEsperada: 4, ator: 'bia' });
+        expect(n).toBe(1);
+        expect(db.withTransaction).toHaveBeenCalledTimes(1);
+        const [sql, params] = db.update.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(
+            /WHERE id = \$loteId AND status = 'FINALIZADO' AND versao = \$versaoEsperada\s+AND conferido_por IS NULL/,
+        );
+        expect(params).toEqual({ loteId: 'L1', versaoEsperada: 4, ator: 'bia' });
+        expect(eventosGravados(db)).toEqual([
+            expect.objectContaining({ evento: 'LOTE_CONFERIDO', ator: 'bia', loteId: 'L1' }),
+        ]);
+    });
+
+    it('conferir: zero linhas (conflito) não grava evento', async () => {
+        const db = buildDb();
+        db.update.mockResolvedValueOnce(0);
+        expect(await make(db).conferir({ loteId: 'L1', versaoEsperada: 4, ator: 'bia' })).toBe(0);
+        expect(eventosGravados(db)).toEqual([]);
+    });
+
+    it('devolver: FINALIZADO → RASCUNHO com motivo, limpa conferência e finalização, evento', async () => {
+        const db = buildDb();
+        const n = await make(db).devolver({
+            loteId: 'L1',
+            versaoEsperada: 4,
+            ator: 'bia',
+            motivo: 'conta do favorecido diverge da NF',
+        });
+        expect(n).toBe(1);
+        const [sql] = db.update.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/SET status = 'RASCUNHO'/);
+        expect(String(sql)).toMatch(/conferido_por = NULL/);
+        expect(String(sql)).toMatch(/finalizado_por = NULL/);
+        expect(String(sql)).toMatch(/motivo_devolucao = \$motivo/);
+        expect(String(sql)).toMatch(/status = 'FINALIZADO' AND versao = \$versaoEsperada/);
+        expect(eventosGravados(db)).toEqual([
+            expect.objectContaining({ evento: 'LOTE_DEVOLVIDO', ator: 'bia' }),
+        ]);
+    });
+
+    it('nenhuma query nova interpola valor: tudo por $parâmetro', async () => {
+        const db = buildDb();
+        const repo = make(db);
+        await repo.conferir({ loteId: "L1'; DROP TABLE x;--", versaoEsperada: 1, ator: 'bia' });
+        await repo.devolver({ loteId: 'L1', versaoEsperada: 1, ator: "o'hara", motivo: "x'y" });
+        for (const [q] of todas(db)) {
+            expect(q).not.toContain('DROP TABLE');
+            expect(q).not.toContain("o'hara");
+        }
     });
 });

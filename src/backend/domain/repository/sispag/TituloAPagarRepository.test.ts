@@ -119,4 +119,14 @@ describe('TituloAPagarRepository', () => {
         expect(sql).not.toContain("'CANCELADO'");
         expect(params).toEqual({ maxDias: 7 });
     });
+
+    it('listElegiveisParaFormacao deixa de fora título com bloqueio por duplicidade ATIVO (I13g)', async () => {
+        const { client } = buildDb();
+        await new TituloAPagarRepository(client).listElegiveisParaFormacao(7);
+        const [sql] = (client.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toMatch(
+            /NOT EXISTS \(\s*SELECT 1 FROM titulo_bloqueio_duplicidade b\s+WHERE b\.estado = 'ATIVO'/,
+        );
+        expect(sql).toMatch(/b\.fil_cod = t\.fil_cod AND b\.doc_cod = t\.doc_cod/);
+    });
 });

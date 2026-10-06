@@ -203,6 +203,10 @@ export default class TituloAPagarRepository {
      * (anti-join — não duplica o que já está em montagem, finalizado, com remessa gerada ou
      * com rejeição à espera de tratamento humano; `CANCELADO` libera o título e `BAIXADO` já
      * sai por `pago = FALSE`).
+     *
+     * ADR-0063 I13g: título com `BloqueioDuplicidade` ATIVO (retirado por duplicidade, cancelamento
+     * pendente no Conexos) também fica de fora — voltar a um lote é o risco que a marca existe para
+     * impedir.
      */
     public listElegiveisParaFormacao = async (maxDias: number): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(
@@ -219,6 +223,10 @@ export default class TituloAPagarRepository {
                  JOIN lote_pagamento l ON l.id = i.lote_id
                  WHERE l.status IN ('RASCUNHO', 'FINALIZADO', 'REMESSA_GERADA', 'RETORNADO')
                    AND i.fil_cod = t.fil_cod AND i.doc_cod = t.doc_cod AND i.tit_cod = t.tit_cod)
+               AND NOT EXISTS (
+                 SELECT 1 FROM titulo_bloqueio_duplicidade b
+                 WHERE b.estado = 'ATIVO'
+                   AND b.fil_cod = t.fil_cod AND b.doc_cod = t.doc_cod AND b.tit_cod = t.tit_cod)
              ORDER BY t.fil_cod, t.banco, t.vencimento ASC`,
             { maxDias },
         )) as TituloRow[];

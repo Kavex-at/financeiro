@@ -5,6 +5,7 @@ import 'reflect-metadata';
 import PostgreeDatabaseClient from '../domain/client/database/PostgreeDatabaseClient.js';
 import type EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../domain/repository/sispag/LotePagamentoRepository.js';
+import VerificacaoEventoRepository from '../domain/repository/sispag/VerificacaoEventoRepository.js';
 
 /**
  * 0069 contra um Postgres DE VERDADE (ADR-0055): as colunas novas do item, os CHECK, o tipo novo de
@@ -89,7 +90,7 @@ describeComBanco('0069 — situação do item e sincronização (integração)',
             getEnvironmentVars: async () => ({ databaseConnectionString: dsnBanco }),
         } as unknown as EnvironmentProvider;
         pool = new PostgreeDatabaseClient(env);
-        repo = new LotePagamentoRepository(pool);
+        repo = new LotePagamentoRepository(pool, new VerificacaoEventoRepository(pool));
     });
 
     afterAll(async () => {
