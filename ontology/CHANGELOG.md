@@ -3,6 +3,18 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.37.0 — SISPAG: lotes por vencimento e mover títulos (2026-10-06, ADR-0064)
+
+Feature: `sispag-lotes-vencimento-mover` (`/feature-tweak LotePagamento`). `entity_changed = false`.
+
+- Formação automática agrupa por **filial × dia de vencimento**; acima de 25, boletos juntos (emenda
+  ADR-0018).
+- `incluirTitulo` com `mover`: o título sai do outro lote RASCUNHO na mesma transação (origem vira
+  manual; vazia é cancelada). Emenda ADR-0050 (UX principal = seleção + confirmação).
+- I3 estendida no código a lotes `FINALIZADO`/`REMESSA_GERADA` (`TitleInCommittedBatchError`), como a
+  regra já descrevia. `RETORNADO` em aberto.
+- Nenhuma contagem muda (emendas de regra/ação/estado existentes).
+
 ## v0.35.0 — Teto do líquido no disponível vivo do adto (2026-10-05, ADR-0062)
 
 Feature: `permuta-centavos-adto` (`/feature-tweak`). `entity_changed = false`.

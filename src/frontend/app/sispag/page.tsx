@@ -889,7 +889,7 @@ function SispagPanel() {
                                 checked={selecionados.has(keyOf(t))}
                                 onCheckedChange={() => toggle(t)}
                                 disabled={!podeSelecionar(t)}
-                                aria-label="selecionar título"
+                                aria-label={motivoSelecaoBloqueada(t) ?? 'selecionar título'}
                                 title={
                                   motivoSelecaoBloqueada(t) ??
                                   (t.loteRascunho
