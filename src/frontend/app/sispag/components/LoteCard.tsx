@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Copy,
   Download,
-  FileSpreadsheet,
   FileText,
   Landmark,
   Plus,
@@ -44,7 +43,6 @@ import {
   cancelarLote,
   type ContaPagadora,
   ehDuplicidade,
-  exportarTitulosRemessas,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   fetchContasPagadoras,
@@ -809,22 +807,6 @@ export function LoteCard({
               }
             >
               <Download className="size-4" aria-hidden /> Baixar remessa
-            </Button>
-          ) : null}
-          {comRemessa && podeVer ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              title="Planilha (.xlsx) com os títulos desta remessa, para revisão do financeiro"
-              onClick={() =>
-                acao(async () => {
-                  const { nome, arquivo } = await exportarTitulosRemessas([l.id])
-                  baixarBlob(arquivo, nome)
-                }, 'Títulos exportados')
-              }
-            >
-              <FileSpreadsheet className="size-4" aria-hidden /> Exportar títulos
             </Button>
           ) : null}
         </div>

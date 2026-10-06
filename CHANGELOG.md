@@ -15,9 +15,8 @@
 - **Exportar títulos (.xlsx)** na aba Finalizados: marque uma ou várias remessas (até 50) e baixe uma
   planilha com uma linha por título (lote, remessa nº e arquivo, data de geração, filial, banco e
   conta pagadora, data de débito, status, credor, documento, vencimento, valor, forma de pagamento,
-  situação, pago em, valor pago, retorno do banco) e uma linha de totais. Cada card com remessa
-  também tem o atalho "Exportar títulos". Basta `sispag:ver`; o `.REM` continua exigindo
-  `sispag:executar`.
+  situação, pago em, valor pago, retorno do banco) e uma linha de totais. Para exportar uma
+  remessa só, marque só ela. Basta `sispag:ver`; o `.REM` continua exigindo `sispag:executar`.
 
 ## v0.57.0 (2026-10-06) — filtro de data e de boleto nas abas do SISPAG
 
