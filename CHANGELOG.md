@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.57.0 (2026-10-06) — filtro de data e de boleto nas abas do SISPAG
+
+- **Todas as abas do SISPAG ganharam um filtro de/até de data**, e o rótulo diz qual data está sendo
+  filtrada:
+  - **Títulos a pagar** e **Lotes candidatos:** vencimento. O lote aparece se algum título dele vence
+    no período.
+  - **Finalizados:** dia em que a remessa foi gerada; sem remessa, o dia da finalização.
+  - **Lançamento Lote (REM):** data de crédito do lote no fin015.
+  - **Retorno Lote (RET):** dia em que o arquivo .RET entrou no fin052.
+  - **Boletos DDA:** vencimento do boleto, filtrado no servidor.
+- **Filtro de boleto (Todos / Boleto / Sem boleto)** em Títulos a pagar e Lotes candidatos, com a
+  contagem em cada botão. Num lote, "Boleto" mostra os lotes com ao menos um título com boleto e "Sem
+  boleto" os com ao menos um sem. Um lote misto aparece nos dois.
+- A aba **Lançamento Lote (REM)** passou a ter filtro de filial, busca, paginação e a coluna "Data de
+  crédito". A aba **Retorno Lote (RET)** ganhou a coluna "Recebido em".
+- Abrir um lote pelo link da linha do título limpa também os filtros de data e de boleto da aba de
+  candidatos, para o lote não ficar escondido.
+- API: `GET /sispag/boletos-dda` aceita `vencimentoDe` e `vencimentoAte` (`YYYY-MM-DD`, inclusivos).
+
 ## v0.56.0 (2026-10-06) — lotes automáticos por vencimento e mover títulos para um lote manual
 
 - **Os lotes automáticos agora saem por filial e data de vencimento**, em vez de um por filial
