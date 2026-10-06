@@ -1,6 +1,6 @@
 ---
 adr_number: 0064
-title: "SISPAG: lotes automáticos por filial × vencimento (boletos juntos) e mover títulos para um lote manual"
+title: "SISPAG: lotes automáticos por filial × vencimento (boletos separados, sem teto) e mover títulos para um lote manual"
 date: 2026-10-06
 status: accepted
 type: amendment
@@ -27,7 +27,9 @@ amends_decisions: ["0018", "0050"]
 
 1. A formação automática (ADR-0018, emendada pela ADR-0021) agrupava só por filial: uma filial com
    títulos vencendo em dias diferentes recebia um lote misturando datas, e o fatiamento em 25 cortava
-   o grupo na ordem da consulta, misturando boletos e TED/PIX nos lotes resultantes.
+   o grupo na ordem da consulta, misturando boletos e TED/PIX nos lotes resultantes. O teto de 25 era
+   nosso, de revisão humana (commit `25d99ec`, "Teto de 25 títulos/lote (revisão humana)"), não um
+   limite do Conexos nem do CNAB.
 2. Para levar a um lote manual um título que o cron já tinha lotado, a analista tinha de "Retirar do
    lote" um a um (ADR-0050) e só então selecioná-lo. Com vários títulos, o caminho é lento.
 3. A regra I3 (`nao-duplicacao-titulo-lote`) já dizia que o invariante de domínio é "não em dois lotes
@@ -40,17 +42,18 @@ amends_decisions: ["0018", "0050"]
 
 Um lote por filial por data de vencimento. O dia é o civil UTC do epoch do ERP
 (`BankingCalendar.fromErpEpoch`), a mesma regra da janela de débito. I4 continua garantida porque a
-filial está na chave. O teto de 25 títulos por lote não muda.
+filial está na chave.
 
-### D2: no fatiamento, boletos juntos
+### D2: boletos e o resto em lotes separados, sem teto de quantidade
 
-Grupo com até 25 títulos fica num lote só, misto ou não. Acima disso, o número de lotes é sempre o
-mínimo, ⌈n/25⌉. Se esse mínimo comporta separar boletos (`temBoleto`) e não-boletos
-(⌈b/25⌉ + ⌈m/25⌉ = ⌈n/25⌉), eles saem em lotes distintos, sem nenhum misto. Senão, os boletos vêm
-primeiro e contíguos, e no máximo um lote sai misto.
+Cada grupo filial × dia vira **no máximo dois lotes**: um com os boletos (`temBoleto`) e outro com o
+resto. Nunca há lote misto, e não há teto de quantidade: o teto de 25 (`MAX_TITULOS_POR_LOTE`) saiu.
 
-*Interpretação registrada:* "sempre que a contagem permitir" foi lida como "sem criar lote extra".
-Separar sempre (zero mistos, às vezes um lote a mais) é a alternativa se a operação preferir.
+*Revisão de 2026-10-06 (QA do usuário, mesmo PR):* a primeira versão desta decisão mantinha o teto de
+25 e só separava boletos quando isso não exigia um lote a mais. O usuário confirmou que o 25 era nosso,
+não do ERP, e pediu a regra simples. Ela também casa com a ADR-0063: lote só de boletos não passa pela
+conferência por segunda pessoa, então separar os boletos tira trabalho da conferência em vez de
+arrastar um lote inteiro para ela por causa de um TED.
 
 ### D3: incluir com `mover` — o título sai do lote RASCUNHO de origem na mesma transação
 
@@ -91,6 +94,21 @@ avisa quando a origem vira manual ou fica vazia e é cancelada. Só os títulos 
 confirmada vão com `mover: true`; título que entrou num lote depois da confirmação é recusado pelo
 servidor. O "Retirar do lote" por título (ADR-0050) continua, porque não custa nada mantê-lo.
 
+### D6: o cartão do lote candidato mostra o vencimento
+
+O cabeçalho do lote RASCUNHO ganha "vence em DD/MM" quando todos os itens vencem no mesmo dia (o
+automático, por construção) ou "vence DD/MM–DD/MM" quando o lote manual mistura datas. Lote sem item
+não mostra nada. A confirmação de mover usa o mesmo rótulo para distinguir os lotes de origem, que
+antes apareciam todos como "Lote automático".
+
+### D7: selecionar todos os títulos do filtro
+
+O cabeçalho da tabela de títulos tem um checkbox que marca todas as linhas que passam nos filtros da
+aba, em todas as páginas, pulando as que não podem ser selecionadas (lote comprometido). Parte marcada
+mostra estado indeterminado, e o clique limpa as linhas do filtro. Como o lote é de uma filial só, o
+checkbox fica desabilitado ("Filtre por uma filial para selecionar todos") quando as linhas
+selecionáveis do filtro são de mais de uma filial.
+
 ## Alternativas rejeitadas
 
 - **Endpoint em lote "criar lote manual com N títulos" numa transação só.** Seguraria a transação
@@ -103,7 +121,7 @@ servidor. O "Retirar do lote" por título (ADR-0050) continua, porque não custa
 
 ## Consequências
 
-- Mais lotes automáticos por filial (um por dia de vencimento), menores e de data única.
+- Lotes automáticos de data única, até dois por filial e dia (boletos / resto), de qualquer tamanho.
 - I3 passa a cobrir lotes comprometidos no código, como a regra já descrevia.
 - Nenhuma tabela, coluna ou migration nova. Nenhuma escrita no ERP (I1).
 

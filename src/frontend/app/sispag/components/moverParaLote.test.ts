@@ -65,6 +65,16 @@ describe('planoDeSaida', () => {
     expect(b).toMatchObject({ automatico: false, ficaVazio: false })
   })
 
+  it('cada origem carrega o vencimento do lote, para distinguir lotes automáticos', () => {
+    const a = titulo({ docCod: '1', loteRascunho: { id: 'A', automatico: true } })
+    const b = titulo({ docCod: '2', loteRascunho: { id: 'B', automatico: true } })
+    const comVenc = (id: string, dia: number) =>
+      ({ id, itens: [{ ...itens(1)[0], vencimento: Date.UTC(2026, 9, dia) }, ...itens(2)] })
+    const plano = planoDeSaida([a, b], [comVenc('A', 8), comVenc('B', 9)])
+    expect(plano.find((p) => p.loteId === 'A')?.vencimento).toBe('vence em 08/10')
+    expect(plano.find((p) => p.loteId === 'B')?.vencimento).toBe('vence em 09/10')
+  })
+
   it('lote fora da lista carregada não é dado como vazio', () => {
     const t = titulo({ loteRascunho: { id: 'Z', automatico: true } })
     expect(planoDeSaida([t], [])[0].ficaVazio).toBe(false)

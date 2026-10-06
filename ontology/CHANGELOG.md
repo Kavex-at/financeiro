@@ -7,8 +7,10 @@
 
 Feature: `sispag-lotes-vencimento-mover` (`/feature-tweak LotePagamento`). `entity_changed = false`.
 
-- Formação automática agrupa por **filial × dia de vencimento**; acima de 25, boletos juntos (emenda
-  ADR-0018).
+- Formação automática agrupa por **filial × dia de vencimento**, no máximo dois lotes por grupo
+  (boletos / resto, nunca mistos), **sem o teto de 25** (era nosso, de revisão humana). Emenda ADR-0018.
+- Cartão do lote candidato e confirmação de mover mostram o vencimento; "selecionar todos" do filtro
+  na aba de títulos (uma filial por vez).
 - `incluirTitulo` com `mover`: o título sai do outro lote RASCUNHO na mesma transação (origem vira
   manual; vazia é cancelada). Emenda ADR-0050 (UX principal = seleção + confirmação).
 - I3 estendida no código a lotes `FINALIZADO`/`REMESSA_GERADA` (`TitleInCommittedBatchError`), como a

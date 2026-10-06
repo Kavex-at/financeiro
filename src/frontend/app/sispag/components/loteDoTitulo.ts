@@ -19,6 +19,28 @@ export const paginaDoLote = (ids: string[], id: string, pageSize: number): numbe
  * título no mesmo formato da aba de títulos (`docCod/titCod`), para o código que a analista usa lá
  * achar o lote aqui.
  */
+/** `epoch-ms` do ERP → `'DD/MM'` no dia UTC (o ERP grava 00:00Z do dia; mesma regra de `formatErpDay`). */
+const diaMes = (ms: number): string =>
+  new Date(ms).toLocaleDateString('pt-BR', { timeZone: 'UTC', day: '2-digit', month: '2-digit' })
+
+/** Dia UTC, para comparar vencimentos sem a hora (o ERP grava 00:00Z ou 15:00Z). */
+const diaUtc = (ms: number): number => Math.floor(ms / 86_400_000)
+
+/**
+ * Vencimento do lote no cabeçalho (ADR-0064): "vence em DD/MM" quando todos os itens vencem no mesmo
+ * dia (o lote automático é por dia), "vence DD/MM–DD/MM" quando o lote manual mistura datas, e
+ * `undefined` quando não há item com vencimento.
+ */
+export const rotuloVencimentoLote = (itens: { vencimento?: number }[]): string | undefined => {
+  const vencs = itens.map((i) => i.vencimento).filter((v): v is number => typeof v === 'number')
+  if (vencs.length === 0) return undefined
+  const min = Math.min(...vencs)
+  const max = Math.max(...vencs)
+  return diaUtc(min) === diaUtc(max)
+    ? `vence em ${diaMes(min)}`
+    : `vence ${diaMes(min)}–${diaMes(max)}`
+}
+
 export const textoBuscaLote = (l: LotePagamento): string =>
   [
     l.filCod,

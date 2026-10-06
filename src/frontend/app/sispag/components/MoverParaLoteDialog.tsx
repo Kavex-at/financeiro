@@ -53,6 +53,7 @@ export function MoverParaLoteDialog({
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium">
                   <Layers className="size-4 text-muted-foreground" aria-hidden />
                   {rotuloLote({ id: s.loteId, automatico: s.automatico })}
+                  {s.vencimento ? ` · ${s.vencimento}` : ''}
                   <span className="text-xs font-normal text-muted-foreground">
                     {s.titulos.length > 1 ? 'saem' : 'sai'} {s.titulos.length} título(s)
                   </span>
