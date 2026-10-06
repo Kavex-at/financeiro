@@ -151,7 +151,7 @@ export function ConferenciaLoteDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div className="overflow-x-auto rounded-lg border">
-            <Table>
+            <Table aria-label="Pagamentos TED/PIX a conferir">
               <TableHeader>
                 <TableRow>
                   <TableHead>Favorecido</TableHead>

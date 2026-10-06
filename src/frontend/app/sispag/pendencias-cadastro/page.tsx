@@ -96,7 +96,7 @@ function PendenciasConteudo() {
         />
       ) : (
         <div className="overflow-x-auto rounded-lg border">
-          <Table>
+          <Table aria-label="Pendências de cadastro">
             <TableHeader>
               <TableRow>
                 <TableHead>Favorecido</TableHead>
