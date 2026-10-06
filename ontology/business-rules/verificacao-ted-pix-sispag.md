@@ -4,7 +4,7 @@ type: business-rule
 entity: LotePagamento
 invariant: I13
 ontology_version: "0.36.0"
-implementation_status: planned
+implementation_status: implemented
 status: active
 owners: [yuri]
 related_files:
@@ -18,7 +18,7 @@ related_files:
   - src/backend/jobs/probe-canal-por-fornecedor.ts
   - docs/bpmn/sispag-pagamento-proposto.bpmn
 last_review: 2026-10-05
-has_canonical_test: false
+has_canonical_test: true
 ---
 
 # Business Rule — verificação dos itens TED/PIX do lote SISPAG (I13)

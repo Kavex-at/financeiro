@@ -3,7 +3,7 @@ name: calcularPerfilCanal
 type: action
 entity: PerfilCanalFornecedor
 ontology_version: "0.36.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
