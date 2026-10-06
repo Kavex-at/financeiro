@@ -79,6 +79,7 @@ import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
 import { CadastrarExcecaoDialog } from '../excecoes/components/CadastrarExcecaoDialog'
 import { ConferenciaLoteDialog } from './ConferenciaLoteDialog'
 import { ResolverDuplicidadeDialog } from './ResolverDuplicidadeDialog'
+import { rotuloVencimentoLote } from './loteDoTitulo'
 
 const RECURSOS_DESLIGADOS: RecursosSispag = {
   tedEnabled: false,
@@ -457,6 +458,8 @@ export function LoteCard({
     })
   }, [destacado])
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
+  // ADR-0064: o candidato diz de que dia é (o automático é um por filial × vencimento).
+  const vencimento = l.status === 'RASCUNHO' ? rotuloVencimentoLote(l.itens) : undefined
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
   const aguardandoConferencia = isFinalizado && l.exigeConferencia === true && !l.conferidoPor
@@ -602,6 +605,7 @@ export function LoteCard({
           ) : null}
           <CardTitle className="text-sm font-medium">
             Filial {l.filCod} · {l.itens.length} título(s) · {formatBRL(total)}
+            {vencimento ? ` · ${vencimento}` : ''}
             {l.conta ? ` · paga por ${l.banco ?? ''} ${l.conta}`.trimEnd() : ''}
             {l.dataDebito ? ` · débito em ${formatCivilDate(l.dataDebito)}` : ''}
           </CardTitle>

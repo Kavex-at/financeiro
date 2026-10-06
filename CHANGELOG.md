@@ -2,9 +2,16 @@
 
 ## v0.56.0 (2026-10-06) — lotes automáticos por vencimento e mover títulos para um lote manual
 
-- **Os lotes automáticos agora saem um por filial por data de vencimento**, em vez de um por filial
-  misturando datas. Quando um grupo passa de 25 títulos e precisa ser dividido, os **boletos ficam
-  juntos**: os lotes saem só com boleto ou só sem boleto sempre que isso não exigir um lote a mais.
+- **Os lotes automáticos agora saem por filial e data de vencimento**, em vez de um por filial
+  misturando datas. Cada filial e data gera **no máximo dois lotes: um só com boletos e outro com o
+  resto**, nunca misturados. **Acabou o limite de 25 títulos por lote** (era uma regra nossa, não do
+  Conexos). Lote só com boleto também dispensa a conferência por segunda pessoa.
+- **O cartão do lote candidato mostra o vencimento**: "vence em 08/10", ou "vence 08/10–12/10" num
+  lote manual com datas diferentes. A confirmação de mover usa o mesmo rótulo para distinguir os lotes
+  de origem.
+- **Selecionar todos** na aba Títulos: a caixa no cabeçalho marca todos os títulos que passam nos
+  filtros, em todas as páginas, pulando os que não podem entrar em lote. Com títulos de mais de uma
+  filial no filtro ela fica desabilitada ("Filtre por uma filial para selecionar todos").
 - **Na aba Títulos a analista pode selecionar também títulos que já estão num lote em rascunho** e
   clicar em "Criar lote". Uma confirmação lista, por lote de origem, os títulos que vão sair de lá; ao
   confirmar, eles **mudam para o lote manual novo** de uma vez, sem precisar retirar um por um. O lote

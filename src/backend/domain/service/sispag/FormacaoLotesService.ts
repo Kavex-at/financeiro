@@ -1,5 +1,4 @@
 import { inject, injectable } from 'tsyringe';
-import { chunked } from '../../client/ConexosBaseClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
@@ -16,8 +15,6 @@ import ContaPagadoraResolver, { type ContaPagadoraEscolhida } from './ContaPagad
 
 /** Horizonte da formação automática: só títulos a vencer nos próximos N dias. */
 const HORIZONTE_DIAS = 7;
-/** Teto de títulos por lote — lotes menores são melhores para a revisão humana. */
-const MAX_TITULOS_POR_LOTE = 25;
 /** Advisory lock EXCLUSIVO da formação (≠ ingestão 726354819, ≠ permutas). */
 export const FORMACAO_LOCK_KEY = 615243789;
 
@@ -55,7 +52,7 @@ export default class FormacaoLotesService {
         const lotesDesfeitos = await this.loteRepo.desfazerAutomaticosVencidos();
 
         // 2) forma lotes novos com os elegíveis (a vencer ≤7d, não lotados). Cada grupo
-        // (filial × vencimento) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE, boletos juntos.
+        // (filial × vencimento) vira no máx. dois lotes: boletos e o resto, nunca misturados.
         const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS);
         const grupos = this.agrupar(elegiveis);
         let lotesFormados = 0;
@@ -64,7 +61,7 @@ export default class FormacaoLotesService {
         // não grava uma conta fixa.
         const contaPorFilial = new Map<number, ContaPagadoraEscolhida | undefined>();
         for (const titulos of grupos.values()) {
-            for (const fatia of this.fatiar(titulos)) {
+            for (const fatia of this.separarBoletos(titulos)) {
                 if (fatia.length === 0) continue;
                 const filCod = fatia[0].filCod;
                 if (!contaPorFilial.has(filCod)) {
@@ -144,25 +141,13 @@ export default class FormacaoLotesService {
     };
 
     /**
-     * Fatia um grupo em lotes de no máx. MAX_TITULOS_POR_LOTE preferindo BOLETOS JUNTOS (ADR-0064).
-     * O número de lotes é sempre o mínimo (⌈n/teto⌉). Se esse mínimo comporta separar boletos e
-     * não-boletos, eles saem em lotes distintos (nenhum misto); senão, boletos vêm primeiro e
-     * contíguos (no máximo um lote misto). Grupo que cabe num lote fica num lote só.
+     * Separa o grupo em BOLETOS (`temBoleto`) e o RESTO (ADR-0064): no máximo dois lotes, nunca
+     * mistos, sem teto de quantidade. O teto de 25 era nosso (revisão humana), não do Conexos/CNAB.
+     * Lote só de boletos também não passa pela conferência TED/PIX (ADR-0063).
      */
-    private fatiar = (titulos: TituloAPagar[]): TituloAPagar[][] => {
-        if (titulos.length <= MAX_TITULOS_POR_LOTE) return [titulos];
-        const boletos = titulos.filter((t) => t.temBoleto === true);
-        const outros = titulos.filter((t) => t.temBoleto !== true);
-        const minimo = Math.ceil(titulos.length / MAX_TITULOS_POR_LOTE);
-        const separados =
-            Math.ceil(boletos.length / MAX_TITULOS_POR_LOTE) +
-            Math.ceil(outros.length / MAX_TITULOS_POR_LOTE);
-        if (separados === minimo) {
-            return [
-                ...chunked(boletos, MAX_TITULOS_POR_LOTE),
-                ...chunked(outros, MAX_TITULOS_POR_LOTE),
-            ];
-        }
-        return chunked([...boletos, ...outros], MAX_TITULOS_POR_LOTE);
-    };
+    private separarBoletos = (titulos: TituloAPagar[]): TituloAPagar[][] =>
+        [
+            titulos.filter((t) => t.temBoleto === true),
+            titulos.filter((t) => t.temBoleto !== true),
+        ].filter((parte) => parte.length > 0);
 }

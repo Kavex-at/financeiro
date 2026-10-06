@@ -77,12 +77,14 @@ import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
 import { MoverParaLoteDialog } from './components/MoverParaLoteDialog'
 import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLote'
 import { useCriarLoteManual } from './components/useCriarLoteManual'
+import { alternarTodos, estadoSelecionarTodos, filtrarComoAba } from './components/selecionarTodos'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { PERMISSAO } from '@/lib/permissoes'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
+const textoBuscaTitulo = (t: TituloAPagar) => `${t.credor ?? ''} ${t.docCod}/${t.titCod} ${t.banco ?? ''}`
 
 /** Lotes candidatos por página na aba "Lotes candidatos" (o link da linha do título usa). */
 const LOTES_POR_PAGINA = 8
@@ -330,11 +332,7 @@ function SispagPanel() {
   }, [titulos, filtro])
 
   // Filial + busca + paginação — mesmo kit do painel de Permutas (consistência de UX).
-  const abaTitulos = useTabelaFiltro(
-    titulosFiltrados,
-    (t) => t.filCod,
-    (t) => `${t.credor ?? ''} ${t.docCod}/${t.titCod} ${t.banco ?? ''}`,
-  )
+  const abaTitulos = useTabelaFiltro(titulosFiltrados, (t) => t.filCod, textoBuscaTitulo)
   // Lotes: candidatos (RASCUNHO) vs. em andamento (do FINALIZADO até o BAIXADO).
   const lotesRascunho = lotes.filter((l) => l.status === 'RASCUNHO')
   const EM_ANDAMENTO = ['FINALIZADO', 'REMESSA_GERADA', 'RETORNADO', 'BAIXADO'] as const
@@ -432,6 +430,12 @@ function SispagPanel() {
       return next
     })
   }
+
+  // ADR-0064: "selecionar todos" vale para TODAS as linhas do filtro (todas as páginas).
+  const todosDoFiltro = estadoSelecionarTodos(
+    filtrarComoAba(titulosFiltrados, abaTitulos, textoBuscaTitulo),
+    selecionados,
+  )
 
   const loteManual = useCriarLoteManual({
     selecionados: selTitulos,
@@ -867,7 +871,25 @@ function SispagPanel() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        {podeExecutar ? <TableHead className="w-10" /> : null}
+                        {podeExecutar ? (
+                          <TableHead className="w-10">
+                            <Checkbox
+                              checked={todosDoFiltro.marcado}
+                              onCheckedChange={() =>
+                                setSelecionados((prev) => alternarTodos(todosDoFiltro, prev))
+                              }
+                              disabled={todosDoFiltro.bloqueio !== undefined}
+                              aria-label={
+                                todosDoFiltro.bloqueio ??
+                                `selecionar os ${todosDoFiltro.chaves.length} títulos do filtro`
+                              }
+                              title={
+                                todosDoFiltro.bloqueio ??
+                                `Seleciona os ${todosDoFiltro.chaves.length} títulos do filtro, em todas as páginas.`
+                              }
+                            />
+                          </TableHead>
+                        ) : null}
                         <TableHead>Credor</TableHead>
                         <TableHead>Documento</TableHead>
                         <TableHead className="text-right">Valor</TableHead>

@@ -1,4 +1,5 @@
 import type { LotePagamento, TituloAPagar } from '@/lib/sispag'
+import { rotuloVencimentoLote } from './loteDoTitulo'
 
 /**
  * Mover títulos para um lote manual (ADR-0064): regras puras da seleção e da confirmação na aba de
@@ -25,6 +26,8 @@ export interface SaidaDeLote {
   titulos: TituloAPagar[]
   /** Todos os títulos do lote foram selecionados: ele fica vazio e é cancelado. */
   ficaVazio: boolean
+  /** "vence em DD/MM" do lote de origem, para distinguir lotes automáticos entre si. */
+  vencimento?: string
 }
 
 /**
@@ -46,9 +49,14 @@ export const planoDeSaida = (
     if (atual) atual.titulos.push(t)
     else porLote.set(ref.id, { loteId: ref.id, automatico: ref.automatico, titulos: [t], ficaVazio: false })
   }
-  const itensPorLote = new Map(lotes.map((l) => [l.id, l.itens.length]))
+  const lotePorId = new Map(lotes.map((l) => [l.id, l]))
   return [...porLote.values()].map((s) => {
-    const total = itensPorLote.get(s.loteId)
-    return { ...s, ficaVazio: total !== undefined && total <= s.titulos.length }
+    const lote = lotePorId.get(s.loteId)
+    const vencimento = lote ? rotuloVencimentoLote(lote.itens) : undefined
+    return {
+      ...s,
+      ficaVazio: lote !== undefined && lote.itens.length <= s.titulos.length,
+      ...(vencimento ? { vencimento } : {}),
+    }
   })
 }

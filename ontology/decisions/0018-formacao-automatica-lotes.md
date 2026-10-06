@@ -18,8 +18,8 @@ supersedes_decisions: []
 > anti-join, nasce RASCUNHO para revisão, cron nunca toca manual/finalizado) segue **vigente**.
 
 > ℹ️ **Amendado por [ADR-0064](./0064-sispag-lotes-por-vencimento-e-mover-titulos.md) (2026-10-06):**
-> o agrupamento passa a ser **filial × dia de vencimento**, e grupos acima de 25 são fatiados com
-> **boletos juntos** (lotes só-boleto / só-não-boleto sempre que o número mínimo de lotes permitir).
+> o agrupamento passa a ser **filial × dia de vencimento**, cada grupo vira no máximo dois lotes
+> (**boletos** / resto, nunca mistos) e o teto de 25 títulos por lote **saiu**.
 
 # ADR 0018: Formação automática de lotes candidatos SISPAG
 

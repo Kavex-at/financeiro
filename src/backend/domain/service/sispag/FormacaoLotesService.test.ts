@@ -102,23 +102,39 @@ describe('FormacaoLotesService', () => {
             expect(lotes.map((l) => l.length).sort()).toEqual([15, 15]);
         });
 
-        it('quando separar exigiria lote extra, mantém o mínimo de lotes com boletos contíguos (um misto)', async () => {
-            const elegiveis = Array.from({ length: 30 }, (_, i) =>
+        it('sem teto de quantidade: 60 títulos do mesmo dia viram só dois lotes (boletos × outros)', async () => {
+            const elegiveis = Array.from({ length: 60 }, (_, i) =>
                 titulo({ docCod: String(i + 1), filCod: 2, vencimento: DIA_1, temBoleto: i >= 2 }),
             );
             const { service, loteRepo } = make({ elegiveis });
             const r = await service.formar({ triggeredBy: 'cron' });
-            expect(r.lotesFormados).toBe(2);
-            const [primeiro, segundo] = itensDe(loteRepo);
-            expect(primeiro).toHaveLength(25);
-            expect(primeiro.every((i) => i.modalidade === 'BOLETO')).toBe(true);
-            expect(segundo.filter((i) => i.modalidade === 'BOLETO')).toHaveLength(3);
-            expect(segundo.filter((i) => i.modalidade === undefined)).toHaveLength(2);
+            expect(r).toMatchObject({ lotesFormados: 2, titulosLotados: 60 });
+            const lotes = itensDe(loteRepo);
+            const boletos = lotes.find((l) => l[0]?.modalidade === 'BOLETO');
+            const outros = lotes.find((l) => l[0]?.modalidade === undefined);
+            expect(boletos).toHaveLength(58);
+            expect(boletos?.every((i) => i.modalidade === 'BOLETO')).toBe(true);
+            expect(outros).toHaveLength(2);
+            expect(outros?.every((i) => i.modalidade === undefined)).toBe(true);
         });
 
-        it('grupo até 25 continua num lote só, mesmo misto', async () => {
+        it('grupo pequeno misto também se divide: boletos nunca dividem lote com TED/PIX', async () => {
             const elegiveis = Array.from({ length: 10 }, (_, i) =>
                 titulo({ docCod: String(i + 1), filCod: 2, vencimento: DIA_1, temBoleto: i < 4 }),
+            );
+            const { service, loteRepo } = make({ elegiveis });
+            const r = await service.formar({ triggeredBy: 'cron' });
+            expect(r.lotesFormados).toBe(2);
+            expect(
+                itensDe(loteRepo)
+                    .map((l) => l.length)
+                    .sort(),
+            ).toEqual([4, 6]);
+        });
+
+        it('grupo só de boletos (ou só de outros) fica num lote só', async () => {
+            const elegiveis = Array.from({ length: 40 }, (_, i) =>
+                titulo({ docCod: String(i + 1), filCod: 2, vencimento: DIA_1, temBoleto: true }),
             );
             const { service } = make({ elegiveis });
             const r = await service.formar({ triggeredBy: 'cron' });
@@ -169,7 +185,7 @@ describe('FormacaoLotesService', () => {
             ]),
         );
         expect(Object.keys(porFilial).sort()).toEqual(['2:29949-2', '4:55795-4']);
-        // 3 lotes (1 da filial 2, 25+5 da 4), mas só 2 leituras do fin005.
+        // 2 lotes (um por filial), 2 leituras do fin005 — uma por filial.
         expect(resolverPadrao).toHaveBeenCalledTimes(2);
     });
 
@@ -182,18 +198,6 @@ describe('FormacaoLotesService', () => {
         const arg = loteRepo.criarLote.mock.calls[0][0];
         expect(arg).not.toHaveProperty('conta');
         expect(arg).not.toHaveProperty('banco');
-    });
-
-    it('fatia grupos grandes em lotes de no máx. 25 títulos (revisão humana)', async () => {
-        const elegiveis = Array.from({ length: 30 }, (_, i) =>
-            titulo({ docCod: String(i + 1), filCod: 2 }),
-        );
-        const { service, loteRepo } = make({ elegiveis });
-        const r = await service.formar({ triggeredBy: 'cron' });
-        // 30 no mesmo grupo → 25 + 5 = 2 lotes
-        expect(r.lotesFormados).toBe(2);
-        expect(r.titulosLotados).toBe(30);
-        expect(loteRepo.criarLote).toHaveBeenCalledTimes(2);
     });
 
     it('desfaz os lotes automáticos vencidos antes de formar (conta no resultado)', async () => {

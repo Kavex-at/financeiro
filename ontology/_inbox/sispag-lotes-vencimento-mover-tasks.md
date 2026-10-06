@@ -7,8 +7,8 @@
 
 ## Decisões do usuário
 
-1. Lotes automáticos agrupam por **filial × dia de vencimento**. Grupo acima do teto (25) é fatiado
-   preferindo **boletos juntos**: lotes só-boleto ou só-não-boleto sempre que a contagem permitir.
+1. Lotes automáticos agrupam por **filial × dia de vencimento**. *(Revisto após QA, 2026-10-06: sem
+   teto de 25; cada grupo vira no máximo dois lotes, boletos / resto, nunca mistos. Ver T6.)*
 2. "Retirar" um a um deixa de ser o fluxo principal: na aba Títulos a analista seleciona títulos,
    **inclusive os que já estão num lote RASCUNHO**, clica "Criar lote", confirma a lista de quem sai
    de qual lote, e os títulos **movem** para o novo lote manual. Títulos em lote FINALIZADO ou com
@@ -77,3 +77,12 @@ Aceite: testes puros do agrupamento da confirmação; typecheck/lint/test verdes
 
 ADR-0064; `business-rules/nao-duplicacao-titulo-lote.md` (mover + comprometido), regra de formação
 na action/ADR-0018 emendada; CHANGELOG da ontologia; `_coverage.json` versão.
+
+## T6 — Revisão pós-QA (2026-10-06)
+
+- Formação: sem `MAX_TITULOS_POR_LOTE`; grupo filial × dia → no máx. dois lotes (boletos / resto).
+  Aceite: 60 títulos (58 boletos) → 2 lotes de 58 e 2; 10 mistos → 2 lotes; só boletos → 1 lote.
+- `rotuloVencimentoLote` (puro, testado) no cabeçalho do LoteCard RASCUNHO e na confirmação de mover.
+- Checkbox "selecionar todos" no cabeçalho da aba de títulos (`selecionarTodos.ts`, puro, testado):
+  todas as páginas do filtro, pula lote comprometido, indeterminado, desabilitado com mais de uma
+  filial.

@@ -1,5 +1,27 @@
 import type { LotePagamento } from '@/lib/sispag'
-import { paginaDoLote, rotuloLote, textoBuscaLote } from './loteDoTitulo'
+import { paginaDoLote, rotuloLote, rotuloVencimentoLote, textoBuscaLote } from './loteDoTitulo'
+
+describe('rotuloVencimentoLote', () => {
+  const D8 = Date.UTC(2026, 9, 8)
+  const D12 = Date.UTC(2026, 9, 12)
+
+  it('um dia só (mesmo com horas diferentes) → "vence em DD/MM"', () => {
+    expect(rotuloVencimentoLote([{ vencimento: D8 }, { vencimento: D8 + 15 * 3_600_000 }])).toBe(
+      'vence em 08/10',
+    )
+  })
+
+  it('datas diferentes → faixa da menor à maior', () => {
+    expect(rotuloVencimentoLote([{ vencimento: D12 }, { vencimento: D8 }, {}])).toBe(
+      'vence 08/10–12/10',
+    )
+  })
+
+  it('sem item com vencimento → undefined', () => {
+    expect(rotuloVencimentoLote([])).toBeUndefined()
+    expect(rotuloVencimentoLote([{}])).toBeUndefined()
+  })
+})
 
 describe('rotuloLote', () => {
   it('distingue lote automático de manual', () => {

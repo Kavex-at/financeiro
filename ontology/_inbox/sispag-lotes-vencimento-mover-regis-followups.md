@@ -40,7 +40,7 @@
 
 - `incluirTitulo` acumula três caminhos (comprometido / incluir / mover) — `moverTitulo` separado.
 - Sem métrica para `TitleInCommittedBatchError` / conflitos de versão.
-- Regra de agrupamento sem flag; rollback = redeploy. Teto 25 / horizonte 7d seguem constantes.
+- Regra de agrupamento sem flag; rollback = redeploy. Horizonte 7d segue constante (o teto de 25 saiu na revisão pós-QA).
 - 409 expõe `loteId`/`status` do lote comprometido (relevante só quando houver escopo por filial).
 - Movimentos cruzados simultâneos entre dois lotes podem gerar deadlock; o Postgres aborta um lado.
 
@@ -48,4 +48,7 @@
 
 - `RETORNADO` fora do conjunto comprometido de propósito (ADR-0064 D4): como um item rejeitado sai do
   lote retornado para um lote novo.
-- D2: "sem lote extra" foi a leitura de "sempre que a contagem permitir". Confirmar com a operação.
+- ~~D2: "sem lote extra"~~ — resolvido no QA: sem teto, boletos / resto sempre separados.
+- "Selecionar todos" reaplica filial + busca por conta própria (`filtrarComoAba`), porque o
+  `useTabelaFiltro` só expõe a página. Quando o kit de filtros (PR #109) expuser a lista filtrada
+  inteira, trocar por ela — senão os filtros de data/boleto do #109 não entram no "todos".
