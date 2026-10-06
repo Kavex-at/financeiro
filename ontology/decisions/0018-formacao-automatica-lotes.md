@@ -17,6 +17,10 @@ supersedes_decisions: []
 > (migration 0030). O restante do ADR-0018 (cron pós-ingestão + manual, a-vencer ≤7d, desfazer-vencidos,
 > anti-join, nasce RASCUNHO para revisão, cron nunca toca manual/finalizado) segue **vigente**.
 
+> ℹ️ **Amendado por [ADR-0064](./0064-sispag-lotes-por-vencimento-e-mover-titulos.md) (2026-10-06):**
+> o agrupamento passa a ser **filial × dia de vencimento**, e grupos acima de 25 são fatiados com
+> **boletos juntos** (lotes só-boleto / só-não-boleto sempre que o número mínimo de lotes permitir).
+
 # ADR 0018: Formação automática de lotes candidatos SISPAG
 
 **Cliente:** Columbia Trading · **Entrega:** Kavex (created by Clonex) · **Branch:** `feat/sispag-ingestao-pagamentos`

@@ -15,6 +15,10 @@ supersedes_decisions: []
 amends_decisions: []
 ---
 
+> ℹ️ **Amendado por [ADR-0064](./0064-sispag-lotes-por-vencimento-e-mover-titulos.md) (2026-10-06):**
+> o caminho principal passa a ser selecionar títulos (inclusive em lote RASCUNHO) e "Criar lote", que
+> os **move** com confirmação. "Retirar do lote" por título continua disponível.
+
 # ADR 0050: retirar o título do lote pela aba de títulos
 
 > **Status `accepted`.** Aceita em 2026-09-22 com uma retenção da formação automática; **simplificada

@@ -34,6 +34,17 @@ UNIQUE (fil_cod, doc_cod, tit_cod)  WHERE status = 'RASCUNHO'
   cobertura RASCUNHO+FINALIZADO na UNIQUE é decisão de implementação do TaskScoper — o invariante
   de domínio é "não em dois lotes vivos".)*
 
+## Emenda ADR-0064 (2026-10-06): lotes comprometidos e mover
+
+- **Comprometido:** título num lote `FINALIZADO` ou `REMESSA_GERADA` não entra em outro lote nem se
+  move (`TitleInCommittedBatchError`, 409). O painel projeta `loteComprometido { id, status }` e a aba
+  de títulos bloqueia a seleção explicando o motivo. `RETORNADO` fica fora (item rejeitado precisa
+  voltar a ser pago; em aberto).
+- **Mover:** `incluirTitulo` com `mover: true` tira o título do outro lote RASCUNHO e o inclui no
+  destino na MESMA transação (a origem só perde o item se ainda for RASCUNHO; vira manual; é cancelada
+  se ficar vazia). I3 nunca é violada: em nenhum instante o título está em dois RASCUNHO. Sem
+  `mover`, a recusa (`TituloEmOutroLoteError`) segue igual.
+
 ## Por que UNIQUE parcial no banco (e não só em app)
 
 Duas analistas incluindo o mesmo título ao mesmo tempo passam ambas no check de app (leem "não

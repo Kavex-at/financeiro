@@ -37,7 +37,7 @@ export function MoverParaLoteDialog({
 }) {
   const movidos = plano?.reduce((acc, s) => acc + s.titulos.length, 0) ?? 0
   return (
-    <Dialog open={plano !== null} onOpenChange={(open) => (!open ? onClose() : undefined)}>
+    <Dialog open={plano !== null} onOpenChange={(open) => (!open && !salvando ? onClose() : undefined)}>
       <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>Mover títulos para um lote manual</DialogTitle>
@@ -54,7 +54,7 @@ export function MoverParaLoteDialog({
                   <Layers className="size-4 text-muted-foreground" aria-hidden />
                   {rotuloLote({ id: s.loteId, automatico: s.automatico })}
                   <span className="text-xs font-normal text-muted-foreground">
-                    sai{s.titulos.length > 1 ? 'em' : ''} {s.titulos.length} título(s)
+                    {s.titulos.length > 1 ? 'saem' : 'sai'} {s.titulos.length} título(s)
                   </span>
                   {s.ficaVazio ? (
                     <Badge variant="outline" className="border-warning/40 text-warning">
