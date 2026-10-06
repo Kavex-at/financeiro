@@ -24,6 +24,7 @@ has_canonical_test: false
 | `permutas-eleicao` | `0 9,15,21 * * *` | 12h (21h→9h) | **18h** | 1 execução perdida |
 | `sispag-pagamentos` | `0 10 * * *` + `0 15,19 * * 1-5` (ADR-0060) | 24h (fim de semana) | **30h** | 6h |
 | `sispag-reaper` | `10,25,40,55 * * * *` | 8,4h medido (cron pede 15min) | **12h** | ~3,6h sobre o pior gap |
+| `sispag-perfil-canal` (ADR-0063) | `17 6 * * 0` | 7 dias (semanal) | **9 dias** | 1 execução atrasada; leitura falha ou zero perfis já fecha `error` |
 
 ## O reaper ganhou trilha (2026-09-01)
 

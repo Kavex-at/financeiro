@@ -109,6 +109,16 @@ export const LIMITES_STALENESS: Readonly<Record<MonitoravelPipeline, LimiteStale
         limiteMs: 64 * HORA_MS,
         distinguePartial: true,
     },
+    [PIPELINE.SISPAG_PERFIL_CANAL]: {
+        pipeline: PIPELINE.SISPAG_PERFIL_CANAL,
+        rotulo: 'SISPAG — perfil de canal dos favorecidos',
+        cadencia: '17 6 * * 0 (semanal, domingo)',
+        // Semanal: o maior gap normal é 7 dias. 9 dias tolera uma execução atrasada pelo GitHub sem
+        // tolerar uma semana perdida. O perfil muda devagar; a falha de leitura já fecha a run em
+        // `error` e alerta por `job-falhou` na hora.
+        limiteMs: 9 * 24 * HORA_MS,
+        distinguePartial: true,
+    },
     [PIPELINE.SISPAG_PAGAMENTOS]: {
         pipeline: PIPELINE.SISPAG_PAGAMENTOS,
         rotulo: 'SISPAG — ingestão de pagamentos',

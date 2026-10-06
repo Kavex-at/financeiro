@@ -29,6 +29,11 @@ export const PIPELINE = {
      * trilha em `job_execucao` — lição do reaper, que nasceu cego.
      */
     SISPAG_SINCRONIZACAO: 'sispag-sincronizacao',
+    /**
+     * Perfil de canal do favorecido (ADR-0063, I13i): job semanal read-only no ERP que grava
+     * `perfil_canal_fornecedor`. Nasce COM trilha em `job_execucao`.
+     */
+    SISPAG_PERFIL_CANAL: 'sispag-perfil-canal',
 } as const;
 
 export type Pipeline = (typeof PIPELINE)[keyof typeof PIPELINE];

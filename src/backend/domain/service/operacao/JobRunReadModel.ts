@@ -88,7 +88,7 @@ export default class JobRunReadModel {
      * a fronteira do limite sem depender do relógio real.
      */
     public exporSaude = async (agora: Date = new Date()): Promise<PipelineSaude[]> => {
-        const [permutas, recebimentos, sispag, ndeSefaz, detector, reaper, sincronizacao] =
+        const [permutas, recebimentos, sispag, ndeSefaz, detector, reaper, sincronizacao, perfil] =
             await Promise.all([
                 this.lerPermutas(),
                 this.lerRecebimentos(),
@@ -97,6 +97,7 @@ export default class JobRunReadModel {
                 this.lerJobExecucao(PIPELINE.OPERACAO_DETECTOR),
                 this.lerJobExecucao(PIPELINE.SISPAG_REAPER),
                 this.lerJobExecucao(PIPELINE.SISPAG_SINCRONIZACAO),
+                this.lerJobExecucao(PIPELINE.SISPAG_PERFIL_CANAL),
             ]);
 
         const monitoraveis = [
@@ -109,6 +110,7 @@ export default class JobRunReadModel {
             this.montarSaude(PIPELINE.OPERACAO_DETECTOR, detector, agora),
             this.montarSaude(PIPELINE.SISPAG_REAPER, reaper, agora),
             this.montarSaude(PIPELINE.SISPAG_SINCRONIZACAO, sincronizacao, agora),
+            this.montarSaude(PIPELINE.SISPAG_PERFIL_CANAL, perfil, agora),
         ];
 
         // Os cegos entram na lista de propósito — omiti-los afirmaria cobertura que não existe.
