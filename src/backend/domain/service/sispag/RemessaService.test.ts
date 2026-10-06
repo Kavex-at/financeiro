@@ -22,6 +22,8 @@ import type ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestin
 import type ExcecaoSubstituicaoService from './ExcecaoSubstituicaoService.js';
 import MaskDestino from '../../libs/sispag/MaskDestino.js';
 import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
+import ConferenceRequiredError from '../../errors/ConferenceRequiredError.js';
+import ConferenciaLoteRule from '../../libs/sispag/ConferenciaLoteRule.js';
 import RemessaService from './RemessaService.js';
 
 /** Relógio default dos testes: terça 2026-09-22, meio-dia de Brasília. */
@@ -36,6 +38,8 @@ const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
     status: 'FINALIZADO',
     criadoPor: 'u1',
     versao: 3,
+    // ADR-0063: lote com TED/PIX só gera remessa conferido — os testes de envio partem de um.
+    conferidoPor: 'conferente',
     itens: [
         {
             loteId: 'L1',
@@ -242,6 +246,7 @@ const make = (o: {
         ),
         new ExcecaoDestinoRule(new DestinoManualValidator()),
         excecoes as unknown as ExcecaoDestinoRepository,
+        new ConferenciaLoteRule(),
     );
 };
 
@@ -259,6 +264,42 @@ describe('RemessaService', () => {
             await expect(
                 make({ loteRepo }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
             ).rejects.toBeInstanceOf(LoteEstadoInvalidoError);
+        });
+
+        it.each([
+            'TED',
+            'PIX',
+        ] as const)('ADR-0063 L8 — lote com %s sem conferência → ConferenceRequiredError ANTES de qualquer chamada ao ERP', async (modalidade) => {
+            const base = lote();
+            const loteRepo = buildLoteRepo(
+                lote({
+                    conferidoPor: undefined,
+                    itens: [{ ...base.itens[0], modalidade }] as LotePagamento['itens'],
+                }),
+            );
+            const write = buildWrite();
+            const ledger = buildLedger();
+            const err = await make({ loteRepo, write, ledger })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(ConferenceRequiredError);
+            expect(err).toMatchObject({ statusCode: 409 });
+            for (const fn of Object.values(write)) expect(fn).not.toHaveBeenCalled();
+            expect(ledger.findByIdempotencyKey).not.toHaveBeenCalled();
+        });
+
+        it('ADR-0063 L8 — lote só de boleto não exige conferência', async () => {
+            const base = lote();
+            const loteRepo = buildLoteRepo(
+                lote({
+                    conferidoPor: undefined,
+                    itens: [{ ...base.itens[0], modalidade: 'BOLETO' }] as LotePagamento['itens'],
+                }),
+            );
+            const err = await make({ loteRepo })
+                .gerarRemessa({ loteId: 'L1', ator: 'u', dryRunOverride: true })
+                .catch((e: unknown) => e);
+            expect(err).not.toBeInstanceOf(ConferenceRequiredError);
         });
     });
 

@@ -23,6 +23,8 @@ import LotePagamentoRepository from '../../repository/sispag/LotePagamentoReposi
 import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.js';
 import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
+import ConferenciaLoteRule from '../../libs/sispag/ConferenciaLoteRule.js';
+import ConferenceRequiredError from '../../errors/ConferenceRequiredError.js';
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import DebitDateFrozenError, { MOTIVO_CONGELADA } from '../../errors/DebitDateFrozenError.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
@@ -183,6 +185,7 @@ export default class RemessaService {
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
         @inject(ExcecaoDestinoRule) private readonly excecaoRule: ExcecaoDestinoRule,
         @inject(ExcecaoDestinoRepository) private readonly excecoes: ExcecaoDestinoRepository,
+        @inject(ConferenciaLoteRule) private readonly conferencia: ConferenciaLoteRule,
     ) {}
 
     /**
@@ -246,6 +249,12 @@ export default class RemessaService {
                 acao: 'gerar remessa',
                 motivo: 'O lote está vazio.',
             });
+        }
+        // ADR-0063 I13l (guarda de L8): lote com TED/PIX só vira remessa depois de conferido por
+        // uma segunda pessoa — checado ANTES de qualquer chamada ao ERP. Não re-verifica os itens
+        // aqui (gap Q10): o destino é reconferido ao vivo no envio (I10a/I12f).
+        if (this.conferencia.exigeConferencia(lote) && !lote.conferidoPor) {
+            throw new ConferenceRequiredError({ loteId: lote.id });
         }
 
         const env = await this.environmentProvider.getEnvironmentVars();
