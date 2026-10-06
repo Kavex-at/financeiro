@@ -1,5 +1,21 @@
 # Columbia Financeiro — Changelog
 
+## v0.56.0 (2026-10-06) — lotes automáticos por vencimento e mover títulos para um lote manual
+
+- **Os lotes automáticos agora saem um por filial por data de vencimento**, em vez de um por filial
+  misturando datas. Quando um grupo passa de 25 títulos e precisa ser dividido, os **boletos ficam
+  juntos**: os lotes saem só com boleto ou só sem boleto sempre que isso não exigir um lote a mais.
+- **Na aba Títulos a analista pode selecionar também títulos que já estão num lote em rascunho** e
+  clicar em "Criar lote". Uma confirmação lista, por lote de origem, os títulos que vão sair de lá; ao
+  confirmar, eles **mudam para o lote manual novo** de uma vez, sem precisar retirar um por um. O lote
+  de origem automático passa a ser manual, e o que ficar vazio é cancelado. "Retirar do lote"
+  continua disponível.
+- **Título em lote finalizado ou com remessa gerada não pode entrar em outro lote** (antes ele
+  aparecia livre na lista). A linha mostra "lote finalizado" ou "remessa gerada" e a caixa de
+  seleção explica o motivo; o servidor também recusa.
+- Se nenhum título entrar no lote manual recém-criado, o lote vazio é descartado.
+- ADR-0064. Nada é escrito no ERP.
+
 ## v0.55.0 (2026-10-06) — verificações de TED/PIX, alerta de duplicidade e conferência por segunda pessoa
 
 - **Todo título que vai por TED ou PIX passa por verificações assim que a analista escolhe a forma
