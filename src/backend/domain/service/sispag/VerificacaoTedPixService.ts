@@ -147,8 +147,15 @@ export default class VerificacaoTedPixService {
             resultado[desfecho].push(ref);
         }
 
-        await this.logService.info({
-            type: LOG_TYPE.BUSINESS_INFO,
+        const registrar =
+            resultado.pendentes.length > 0 || resultado.retirados.length > 0
+                ? this.logService.warn
+                : this.logService.info;
+        await registrar({
+            type:
+                resultado.pendentes.length > 0 || resultado.retirados.length > 0
+                    ? LOG_TYPE.BUSINESS_WARN
+                    : LOG_TYPE.BUSINESS_INFO,
             message: 'verificação TED/PIX concluída',
             data: {
                 loteId,
