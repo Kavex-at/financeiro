@@ -241,7 +241,7 @@ describe('GET /sispag/lotes/:id', () => {
 
         await comApp({}, async (url) => {
             const res = await fetch(`${url}/sispag/lotes/L1`);
-            expect(await readJson(res)).toEqual({ lote: LOTE });
+            expect(await readJson(res)).toEqual({ lote: { ...LOTE, exigeConferencia: false } });
         });
     });
 });
