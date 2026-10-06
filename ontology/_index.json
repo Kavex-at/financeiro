@@ -408,8 +408,12 @@
     },
     "AlertaItemLote": {
       "file": "entities/alerta-item-lote.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/repository/sispag/AlertaItemLoteRepository.ts",
+        "src/backend/migrations/0076_sispag_alerta_item_lote.sql",
+        "src/frontend/app/sispag/components/ResolverDuplicidadeDialog.tsx"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
@@ -417,8 +421,11 @@
     },
     "BloqueioDuplicidade": {
       "file": "entities/bloqueio-duplicidade.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/repository/sispag/BloqueioDuplicidadeRepository.ts",
+        "src/backend/migrations/0077_sispag_bloqueio_pendencia.sql"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
@@ -426,8 +433,12 @@
     },
     "PendenciaCadastro": {
       "file": "entities/pendencia-cadastro.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/repository/sispag/PendenciaCadastroRepository.ts",
+        "src/backend/domain/service/sispag/PendenciaCadastroService.ts",
+        "src/frontend/app/sispag/pendencias-cadastro/page.tsx"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
@@ -435,9 +446,11 @@
     },
     "PerfilCanalFornecedor": {
       "file": "entities/perfil-canal-fornecedor.md",
-      "status": "planned",
+      "status": "implemented",
       "impl_files": [
-        "src/backend/jobs/probe-canal-por-fornecedor.ts"
+        "src/backend/domain/repository/sispag/PerfilCanalFornecedorRepository.ts",
+        "src/backend/domain/service/sispag/ChannelProfileCalculator.ts",
+        "src/backend/migrations/0078_sispag_perfil_canal_conferencia.sql"
       ],
       "resolved_by": [
         "ADR-0063"
@@ -914,8 +927,11 @@
     "verificarItensTedPix": {
       "file": "actions/sispag/verificar-itens-ted-pix.md",
       "entity": "LotePagamento",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/VerificacaoTedPixService.ts",
+        "src/backend/domain/service/sispag/DuplicateDetector.ts"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
@@ -924,8 +940,10 @@
     "resolverAlertaDuplicidade": {
       "file": "actions/sispag/resolver-alerta-duplicidade.md",
       "entity": "AlertaItemLote",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/DuplicateResolutionService.ts"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
@@ -934,8 +952,12 @@
     "conferirLote": {
       "file": "actions/sispag/conferir-lote.md",
       "entity": "LotePagamento",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/ConferenciaLoteService.ts",
+        "src/backend/domain/libs/sispag/ConferenciaLoteRule.ts",
+        "src/frontend/app/sispag/components/ConferenciaLoteDialog.tsx"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
@@ -944,8 +966,10 @@
     "devolverLote": {
       "file": "actions/sispag/devolver-lote.md",
       "entity": "LotePagamento",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/ConferenciaLoteService.ts"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
@@ -954,9 +978,11 @@
     "calcularPerfilCanal": {
       "file": "actions/sispag/calcular-perfil-canal.md",
       "entity": "PerfilCanalFornecedor",
-      "status": "planned",
+      "status": "implemented",
       "impl_files": [
-        "src/backend/jobs/probe-canal-por-fornecedor.ts"
+        "src/backend/domain/service/sispag/PerfilCanalService.ts",
+        "src/backend/jobs/calcular-perfil-canal.ts",
+        ".github/workflows/calcular-perfil-canal.yml"
       ],
       "resolved_by": [
         "ADR-0063"
@@ -1451,9 +1477,14 @@
       "file": "business-rules/verificacao-ted-pix-sispag.md",
       "entity": "LotePagamento",
       "invariant": "I13",
-      "status": "planned",
-      "has_canonical_test": false,
-      "impl_files": [],
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/service/sispag/VerificacaoTedPixService.ts",
+        "src/backend/domain/service/sispag/LotePagamentoService.ts",
+        "src/backend/domain/service/sispag/RemessaService.ts",
+        "src/backend/domain/service/sispag/DuplicateDetector.test.ts"
+      ],
       "resolved_by": [
         "ADR-0063"
       ],
