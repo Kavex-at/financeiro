@@ -6,6 +6,7 @@ import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
+import TitleInCommittedBatchError from '../../errors/TitleInCommittedBatchError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import DuplicateHoldError from '../../errors/DuplicateHoldError.js';
@@ -276,20 +277,34 @@ export default class LotePagamentoService {
 
         // I3 + inserção atômica, serializadas por título (lock só em torno do DB).
         const lockKey = this.lockKey(input.filCod, input.docCod, input.titCod);
+        const chave = { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod };
+        let origem: { loteId: string; cancelado: boolean } | undefined;
         await this.db.withAdvisoryLock(
             lockKey,
             () =>
                 this.db.withTransaction(async (tx) => {
-                    const outroLote = await this.repo.loteRascunhoComTitulo(
-                        { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod },
-                        tx,
-                    );
-                    if (outroLote && outroLote !== input.loteId) {
-                        throw new TituloEmOutroLoteError({
+                    // ADR-0064 — lote FINALIZADO/REMESSA_GERADA compromete o título: nem entra
+                    // em outro lote, nem se move (o pagamento já está a caminho do banco).
+                    const comprometido = await this.repo.loteComprometidoComTitulo(chave, tx);
+                    if (comprometido) {
+                        throw new TitleInCommittedBatchError({
                             docCod: input.docCod,
                             titCod: input.titCod,
-                            loteId: outroLote,
+                            loteId: comprometido.loteId,
+                            status: comprometido.status,
                         });
+                    }
+                    const outroLote = await this.repo.loteRascunhoComTitulo(chave, tx);
+                    if (outroLote && outroLote !== input.loteId) {
+                        if (!input.mover) {
+                            throw new TituloEmOutroLoteError({
+                                docCod: input.docCod,
+                                titCod: input.titCod,
+                                loteId: outroLote,
+                            });
+                        }
+                        // ADR-0064 — mover: sai da origem na MESMA transação em que entra aqui.
+                        origem = await this.retirarDaOrigem(outroLote, chave, input.ator, tx);
                     }
                     await this.repo.adicionarItem(
                         {
@@ -316,11 +331,40 @@ export default class LotePagamentoService {
                 throw new LoteVersaoConflitoError({ loteId: input.loteId, versaoEsperada: -1 });
             },
         );
-        await this.audit('incluirTitulo', input.loteId, input.ator, {
+        await this.audit(origem ? 'moverTitulo' : 'incluirTitulo', input.loteId, input.ator, {
             docCod: input.docCod,
             titCod: input.titCod,
+            ...(origem ? { loteOrigem: origem.loteId, origemCancelada: origem.cancelado } : {}),
         });
         return this.loteCompleto(input.loteId);
+    };
+
+    /**
+     * Metade "sai" do mover (ADR-0064), dentro da transação do incluir: remove o item da origem só
+     * se ela ainda é RASCUNHO, descarta as alertas vivas dele lá, adota a origem como manual (a
+     * analista mexeu nela — `marcarManual` é idempotente), bumpa a versão (quem estiver com a
+     * origem aberta recebe conflito) e cancela a origem se ela ficou vazia.
+     */
+    private retirarDaOrigem = async (
+        loteId: string,
+        chave: ChaveTitulo,
+        ator: string,
+        tx: TransactionClient,
+    ): Promise<{ loteId: string; cancelado: boolean }> => {
+        const removidos = await this.repo.removerItemDeRascunho({ loteId, ...chave }, tx);
+        if (removidos === 0) {
+            throw new LoteEstadoInvalidoError({
+                loteId,
+                statusAtual: 'alterado',
+                acao: 'mover título',
+                motivo: 'O lote de origem deixou de ser rascunho. Atualize a tela e tente de novo.',
+            });
+        }
+        await this.alertaRepo.descartarDoItem(loteId, chave, ator, tx);
+        await this.repo.marcarManual(loteId, tx);
+        await this.repo.tocarLote(loteId, tx);
+        const cancelado = await this.repo.cancelarSeVazio(loteId, tx);
+        return { loteId, cancelado };
     };
 
     public removerTitulo = async (input: IncluirTituloInput): Promise<LotePagamento> => {

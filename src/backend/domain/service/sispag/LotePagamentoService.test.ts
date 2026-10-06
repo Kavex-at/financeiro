@@ -6,6 +6,7 @@ import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
+import TitleInCommittedBatchError from '../../errors/TitleInCommittedBatchError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import DuplicateHoldError from '../../errors/DuplicateHoldError.js';
@@ -76,6 +77,9 @@ interface RepoMock {
     atualizarContaPagadora: jest.Mock;
     contarItensSemModalidade: jest.Mock;
     atualizarModalidadeItem: jest.Mock;
+    loteComprometidoComTitulo: jest.Mock;
+    removerItemDeRascunho: jest.Mock;
+    cancelarSeVazio: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -92,6 +96,9 @@ const buildRepo = (): RepoMock => ({
     atualizarContaPagadora: jest.fn().mockResolvedValue(1),
     contarItensSemModalidade: jest.fn().mockResolvedValue(0),
     atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
+    loteComprometidoComTitulo: jest.fn().mockResolvedValue(null),
+    removerItemDeRascunho: jest.fn().mockResolvedValue(1),
+    cancelarSeVazio: jest.fn().mockResolvedValue(false),
 });
 
 const SEM_ACHADO = { verificados: [], pendentes: [], retirados: [] };
@@ -650,6 +657,84 @@ describe('LotePagamentoService — invariantes', () => {
                     ator: 'u1',
                 }),
             ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
+        });
+    });
+
+    describe('incluirTitulo com mover (ADR-0064)', () => {
+        const input = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', ator: 'u1' };
+        const chave = { filCod: 2, docCod: '100', titCod: '1' };
+
+        it('título em OUTRO lote RASCUNHO: sai da origem e entra no destino na mesma transação', async () => {
+            const repo = buildRepo();
+            repo.loteRascunhoComTitulo.mockResolvedValue('ORIGEM');
+            const { service, deps } = make(repo);
+            await service.incluirTitulo({ ...input, mover: true });
+            expect(repo.removerItemDeRascunho).toHaveBeenCalledWith(
+                { loteId: 'ORIGEM', ...chave },
+                expect.anything(),
+            );
+            expect(deps.alertaRepo.descartarDoItem).toHaveBeenCalledWith(
+                'ORIGEM',
+                chave,
+                'u1',
+                expect.anything(),
+            );
+            // a origem perdeu item → vira manual e tem a versão bumpada
+            expect(repo.marcarManual).toHaveBeenCalledWith('ORIGEM', expect.anything());
+            expect(repo.tocarLote).toHaveBeenCalledWith('ORIGEM', expect.anything());
+            expect(repo.cancelarSeVazio).toHaveBeenCalledWith('ORIGEM', expect.anything());
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ loteId: 'L1', docCod: '100' }),
+                expect.anything(),
+            );
+            // a remoção da origem acontece antes da inclusão no destino
+            const ordemRemocao = repo.removerItemDeRascunho.mock.invocationCallOrder[0];
+            const ordemInclusao = repo.adicionarItem.mock.invocationCallOrder[0];
+            expect(ordemRemocao).toBeLessThan(ordemInclusao);
+        });
+
+        it('origem que deixou de ser RASCUNHO no meio do caminho → LoteEstadoInvalidoError, nada incluído', async () => {
+            const repo = buildRepo();
+            repo.loteRascunhoComTitulo.mockResolvedValue('ORIGEM');
+            repo.removerItemDeRascunho.mockResolvedValue(0);
+            const { service } = make(repo);
+            await expect(service.incluirTitulo({ ...input, mover: true })).rejects.toBeInstanceOf(
+                LoteEstadoInvalidoError,
+            );
+            expect(repo.adicionarItem).not.toHaveBeenCalled();
+            expect(repo.cancelarSeVazio).not.toHaveBeenCalled();
+        });
+
+        it('sem mover, título em outro RASCUNHO segue barrado (I3) e a origem não é tocada', async () => {
+            const repo = buildRepo();
+            repo.loteRascunhoComTitulo.mockResolvedValue('ORIGEM');
+            const { service } = make(repo);
+            await expect(service.incluirTitulo(input)).rejects.toBeInstanceOf(
+                TituloEmOutroLoteError,
+            );
+            expect(repo.removerItemDeRascunho).not.toHaveBeenCalled();
+        });
+
+        it('mover com o título solto é só uma inclusão (nada removido de lugar nenhum)', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo);
+            await service.incluirTitulo({ ...input, mover: true });
+            expect(repo.removerItemDeRascunho).not.toHaveBeenCalled();
+            expect(repo.adicionarItem).toHaveBeenCalled();
+        });
+
+        it('título em lote FINALIZADO ou com remessa gerada não entra nem se move', async () => {
+            const repo = buildRepo();
+            repo.loteComprometidoComTitulo.mockResolvedValue({
+                loteId: 'FIN',
+                status: 'FINALIZADO',
+            });
+            const { service } = make(repo);
+            await expect(service.incluirTitulo({ ...input, mover: true })).rejects.toBeInstanceOf(
+                TitleInCommittedBatchError,
+            );
+            expect(repo.removerItemDeRascunho).not.toHaveBeenCalled();
+            expect(repo.adicionarItem).not.toHaveBeenCalled();
         });
     });
 

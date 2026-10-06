@@ -38,12 +38,20 @@ export interface TituloAPagar {
   emLote?: boolean
   /** O lote RASCUNHO em que o título está (ADR-0050) — a linha mostra e linka o lote. */
   loteRascunho?: LoteRascunhoRef
+  /** Lote FINALIZADO / com remessa gerada que já tem o título (ADR-0064) — não se move. */
+  loteComprometido?: LoteComprometidoRef
 }
 
 /** Referência ao lote RASCUNHO que contém um título. */
 export interface LoteRascunhoRef {
   id: string
   automatico: boolean
+}
+
+/** Lote que compromete o título: o pagamento já está a caminho do banco (ADR-0064). */
+export interface LoteComprometidoRef {
+  id: string
+  status: 'FINALIZADO' | 'REMESSA_GERADA'
 }
 
 /** Chave natural de um título a pagar. */
@@ -381,9 +389,13 @@ export async function fetchLotes(
 export const criarLote = (input: { filCod: number; banco?: string; conta?: string }) =>
   loteRequest('/sispag/lotes', { method: 'POST', body: JSON.stringify(input) })
 
+/**
+ * Inclui o título no lote. `mover: true` (ADR-0064) o tira do lote RASCUNHO em que estiver, na
+ * mesma transação; sem a flag, título em outro lote é recusado (409).
+ */
 export const incluirTitulo = (
   loteId: string,
-  input: { filCod: number; docCod: string; titCod: string },
+  input: { filCod: number; docCod: string; titCod: string; mover?: boolean },
 ) =>
   loteRequest(`/sispag/lotes/${loteId}/itens`, { method: 'POST', body: JSON.stringify(input) })
 

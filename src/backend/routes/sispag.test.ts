@@ -389,6 +389,38 @@ describe('POST /sispag/lotes/:id/itens', () => {
         });
     });
 
+    it('repassa mover=true ao serviço (ADR-0064)', async () => {
+        const incluirTitulo = jest.fn().mockResolvedValue(LOTE);
+        container.registerInstance(LotePagamentoService, { incluirTitulo } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/itens`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filCod: 2, docCod: '813', titCod: '1', mover: true }),
+            });
+            expect(res.status).toBe(200);
+            expect(incluirTitulo).toHaveBeenCalledWith(
+                expect.objectContaining({ loteId: 'L1', mover: true }),
+            );
+        });
+    });
+
+    it('mover que não é booleano → 400', async () => {
+        const incluirTitulo = jest.fn();
+        container.registerInstance(LotePagamentoService, { incluirTitulo } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/itens`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filCod: 2, docCod: '813', titCod: '1', mover: 'sim' }),
+            });
+            expect(res.status).toBe(400);
+            expect(incluirTitulo).not.toHaveBeenCalled();
+        });
+    });
+
     it('mapeia HandlerError de domínio para o status dele', async () => {
         const incluirTitulo = jest.fn().mockRejectedValue(
             new ErpPerguntaError({

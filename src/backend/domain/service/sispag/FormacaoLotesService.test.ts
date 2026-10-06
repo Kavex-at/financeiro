@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
@@ -55,12 +56,76 @@ const make = (
         db,
         buildLog(),
         { resolverPadrao } as unknown as ContaPagadoraResolver,
+        new BankingCalendar(),
     );
     return { service, tituloRepo, loteRepo, resolverPadrao };
 };
 
 describe('FormacaoLotesService', () => {
-    it('agrupa só por FILIAL (banco não conta) e forma um lote por grupo (automatico=true)', async () => {
+    describe('ADR-0064 — filial × vencimento, boletos juntos no fatiamento', () => {
+        const DIA_1 = Date.UTC(2026, 9, 8); // 2026-10-08 00:00Z (o ERP grava 00:00Z do dia)
+        const DIA_2 = Date.UTC(2026, 9, 9);
+        const itensDe = (loteRepo: ReturnType<typeof make>['loteRepo']) =>
+            loteRepo.adicionarItens.mock.calls.map(
+                (c: unknown[]) => c[1] as Array<{ docCod: string; modalidade?: string }>,
+            );
+
+        it('mesma filial em dois vencimentos → dois lotes; mesmo dia → um lote', async () => {
+            const elegiveis = [
+                titulo({ docCod: '1', filCod: 2, vencimento: DIA_1 }),
+                titulo({ docCod: '2', filCod: 2, vencimento: DIA_1 + 15 * 3_600_000 }), // 15:00Z
+                titulo({ docCod: '3', filCod: 2, vencimento: DIA_2 }),
+                titulo({ docCod: '4', filCod: 4, vencimento: DIA_1 }),
+            ];
+            const { service, loteRepo } = make({ elegiveis });
+            const r = await service.formar({ triggeredBy: 'cron' });
+            expect(r.lotesFormados).toBe(3);
+            const grupos = itensDe(loteRepo).map((itens) => itens.map((i) => i.docCod).sort());
+            expect(grupos).toEqual(expect.arrayContaining([['1', '2'], ['3'], ['4']]));
+        });
+
+        it('grupo grande com 15 boletos e 15 não-boletos → um lote só-boleto e um só-não-boleto', async () => {
+            const elegiveis = Array.from({ length: 30 }, (_, i) =>
+                titulo({
+                    docCod: String(i + 1),
+                    filCod: 2,
+                    vencimento: DIA_1,
+                    temBoleto: i % 2 === 0,
+                }),
+            );
+            const { service, loteRepo } = make({ elegiveis });
+            const r = await service.formar({ triggeredBy: 'cron' });
+            expect(r.lotesFormados).toBe(2);
+            const lotes = itensDe(loteRepo);
+            const tipos = lotes.map((itens) => [...new Set(itens.map((i) => i.modalidade ?? '-'))]);
+            expect(tipos).toEqual(expect.arrayContaining([['BOLETO'], ['-']]));
+            expect(lotes.map((l) => l.length).sort()).toEqual([15, 15]);
+        });
+
+        it('quando separar exigiria lote extra, mantém o mínimo de lotes com boletos contíguos (um misto)', async () => {
+            const elegiveis = Array.from({ length: 30 }, (_, i) =>
+                titulo({ docCod: String(i + 1), filCod: 2, vencimento: DIA_1, temBoleto: i >= 2 }),
+            );
+            const { service, loteRepo } = make({ elegiveis });
+            const r = await service.formar({ triggeredBy: 'cron' });
+            expect(r.lotesFormados).toBe(2);
+            const [primeiro, segundo] = itensDe(loteRepo);
+            expect(primeiro).toHaveLength(25);
+            expect(primeiro.every((i) => i.modalidade === 'BOLETO')).toBe(true);
+            expect(segundo.filter((i) => i.modalidade === 'BOLETO')).toHaveLength(3);
+            expect(segundo.filter((i) => i.modalidade === undefined)).toHaveLength(2);
+        });
+
+        it('grupo até 25 continua num lote só, mesmo misto', async () => {
+            const elegiveis = Array.from({ length: 10 }, (_, i) =>
+                titulo({ docCod: String(i + 1), filCod: 2, vencimento: DIA_1, temBoleto: i < 4 }),
+            );
+            const { service } = make({ elegiveis });
+            const r = await service.formar({ triggeredBy: 'cron' });
+            expect(r.lotesFormados).toBe(1);
+        });
+    });
+    it('agrupa por FILIAL (banco não conta) e forma um lote por grupo (automatico=true)', async () => {
         const elegiveis = [
             titulo({ docCod: '1', filCod: 2, banco: 'ITAÚ' }),
             titulo({ docCod: '2', filCod: 2, banco: 'ITAÚ' }), // mesmo grupo

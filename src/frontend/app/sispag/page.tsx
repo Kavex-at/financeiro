@@ -40,7 +40,6 @@ import {
   conciliarRetorno,
   type ConciliarResult,
   ErpPerguntaError,
-  criarLote,
   fetchLotes,
   fetchRetornos,
   fetchSispagPainel,
@@ -48,7 +47,6 @@ import {
   finalizarLote,
   formarLotes,
   formatErpDay,
-  incluirTitulo,
   IngestaoPagamentosEmAndamentoError,
   retirarDoLote,
   type PagamentoIngestaoRun,
@@ -76,6 +74,9 @@ import { IngestaoDialog } from './components/IngestaoDialog'
 import { useCarteiraAoAbrir } from './useCarteiraAoAbrir'
 import { LoteCard } from './components/LoteCard'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
+import { MoverParaLoteDialog } from './components/MoverParaLoteDialog'
+import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLote'
+import { useCriarLoteManual } from './components/useCriarLoteManual'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
@@ -420,7 +421,9 @@ function SispagPanel() {
   const totalSelecionado = selTitulos.reduce((acc, t) => acc + t.valor, 0)
 
   const toggle = (t: TituloAPagar) => {
-    if (t.emLote) return
+    // ADR-0064: título em lote RASCUNHO pode ser selecionado (ele se move para o lote novo);
+    // em lote finalizado ou com remessa gerada, não.
+    if (!podeSelecionar(t)) return
     setSelecionados((prev) => {
       const next = new Set(prev)
       const k = keyOf(t)
@@ -430,48 +433,14 @@ function SispagPanel() {
     })
   }
 
-  const criarLoteComSelecionados = async () => {
-    if (selTitulos.length === 0) return
-    const filiais = new Set(selTitulos.map((t) => t.filCod))
-    if (filiais.size > 1) {
-      toast.error('Selecione títulos de uma única filial', {
-        description: 'Um lote é de uma filial só. Filtre por filial e monte um lote por vez.',
-      })
-      return
-    }
-    setBusy(true)
-    try {
-      const filCod = selTitulos[0].filCod
-      const lote = await criarLote({ filCod })
-      let ok = 0
-      const falhas: string[] = []
-      for (const t of selTitulos) {
-        try {
-          await incluirTitulo(lote.id, { filCod: t.filCod, docCod: t.docCod, titCod: t.titCod })
-          ok += 1
-        } catch (e) {
-          falhas.push(`${t.docCod}/${t.titCod}: ${e instanceof Error ? e.message : 'erro'}`)
-        }
-      }
+  const loteManual = useCriarLoteManual({
+    selecionados: selTitulos,
+    lotes,
+    aoConcluir: async () => {
       setSelecionados(new Set())
-      await recarregarLotes()
-      if (falhas.length === 0) {
-        toast.success(`Lote criado com ${ok} título(s)`, {
-          description: 'Lote criado localmente — nada foi escrito no ERP ainda.',
-        })
-      } else {
-        toast.warning(`Lote criado com ${ok} título(s); ${falhas.length} não entraram`, {
-          description: falhas.slice(0, 3).join(' · '),
-        })
-      }
-    } catch (e) {
-      toast.error('Não foi possível criar o lote', {
-        description: e instanceof Error ? e.message : undefined,
-      })
-    } finally {
-      setBusy(false)
-    }
-  }
+      await Promise.all([recarregarLotes(), recarregarPainel()])
+    },
+  })
 
   const acaoLote = async (
     fn: (opts?: { confirmarNovoLote?: boolean }) => Promise<unknown>,
@@ -661,6 +630,14 @@ function SispagPanel() {
         runs={runs}
         runsLoading={runsLoading}
         rodarIngestao={ingerir}
+      />
+
+      <MoverParaLoteDialog
+        plano={loteManual.plano}
+        totalSelecionados={loteManual.totalConfirmacao}
+        onClose={loteManual.cancelar}
+        salvando={loteManual.criando}
+        onConfirmar={loteManual.confirmar}
       />
 
       <RetirarDoLoteDialog
@@ -863,7 +840,11 @@ function SispagPanel() {
                         <Layers className="size-4" />{' '}
                         {formando ? 'Formando…' : 'Formar lotes automáticos'}
                       </Button>
-                      <Button size="sm" disabled={selecionados.size === 0 || busy} onClick={criarLoteComSelecionados}>
+                      <Button
+                        size="sm"
+                        disabled={selecionados.size === 0 || busy || loteManual.criando}
+                        onClick={loteManual.iniciar}
+                      >
                         <Layers className="size-4" /> Criar lote ({selecionados.size})
                       </Button>
                     </>
@@ -907,14 +888,21 @@ function SispagPanel() {
                               <Checkbox
                                 checked={selecionados.has(keyOf(t))}
                                 onCheckedChange={() => toggle(t)}
-                                disabled={t.emLote}
+                                disabled={!podeSelecionar(t)}
                                 aria-label="selecionar título"
-                                title={t.emLote ? 'Já está num lote — não pode ser atachado a outro.' : undefined}
+                                title={
+                                  motivoSelecaoBloqueada(t) ??
+                                  (t.loteRascunho
+                                    ? 'Está num lote em rascunho: ao criar o lote, ele sai de lá e entra no novo.'
+                                    : undefined)
+                                }
                               />
                             </TableCell>
                           ) : null}
                           <TableCell className="max-w-[18rem] truncate font-medium">
-                            <span className={t.emLote ? 'text-muted-foreground' : undefined}>
+                            <span
+                              className={t.emLote || t.loteComprometido ? 'text-muted-foreground' : undefined}
+                            >
                               {t.credor ?? '—'}
                             </span>
                             {t.loteRascunho ? (
@@ -928,6 +916,17 @@ function SispagPanel() {
                                 <Layers className="size-3" aria-hidden />
                                 {rotuloLote(t.loteRascunho)}
                               </Button>
+                            ) : t.loteComprometido ? (
+                              <Badge
+                                variant="outline"
+                                className="ml-2 border-muted text-muted-foreground"
+                                title={motivoSelecaoBloqueada(t)}
+                              >
+                                <Lock className="mr-1 size-3" aria-hidden />
+                                {t.loteComprometido.status === 'FINALIZADO'
+                                  ? 'lote finalizado'
+                                  : 'remessa gerada'}
+                              </Badge>
                             ) : t.emLote ? (
                               <Badge
                                 variant="outline"
