@@ -8,6 +8,13 @@ import {
 
 const DIA_MS = 86_400_000;
 
+/** Um documento-contraparte e os títulos dele que casaram. */
+interface Contraparte {
+    filCod: number;
+    docCod: string;
+    titulos: DuplicateCandidate[];
+}
+
 export interface DuplicateDetectionOptions {
     /** Janela da FRACA, em dias para cada lado do vencimento (config do tenant; default 15). */
     janelaFracaDias: number;
@@ -44,8 +51,8 @@ export default class DuplicateDetector {
         if (!favorecido) return [];
         const janelaMs = opcoes.janelaFracaDias * DIA_MS;
 
-        const fortes = new Map<string, DuplicateCandidate[]>();
-        const fracas = new Map<string, DuplicateCandidate[]>();
+        const fortes = new Map<string, Contraparte>();
+        const fracas = new Map<string, Contraparte>();
         for (const outro of universo) {
             if (outro.filCod !== alvo.filCod) continue;
             if (outro.docCod === alvo.docCod) continue;
@@ -60,13 +67,13 @@ export default class DuplicateDetector {
         for (const doc of fortes.keys()) fracas.delete(doc);
 
         return [
-            ...[...fortes.entries()].map(([, titulos]) =>
-                this.achado(ITEM_ALERT_TYPE.DUPLICIDADE_FORTE, titulos, {
+            ...[...fortes.values()].map((c) =>
+                this.achado(ITEM_ALERT_TYPE.DUPLICIDADE_FORTE, c, {
                     numeroNota: alvo.numeroNota,
                 }),
             ),
-            ...[...fracas.entries()].map(([, titulos]) =>
-                this.achado(ITEM_ALERT_TYPE.DUPLICIDADE_FRACA, titulos, {
+            ...[...fracas.values()].map((c) =>
+                this.achado(ITEM_ALERT_TYPE.DUPLICIDADE_FRACA, c, {
                     valorCentavos: alvo.valorCentavos,
                     vencimento: alvo.vencimento,
                     janelaDias: opcoes.janelaFracaDias,
@@ -86,24 +93,25 @@ export default class DuplicateDetector {
         outro.vencimento !== undefined &&
         Math.abs(outro.vencimento - alvo.vencimento) <= janelaMs;
 
-    private acumular = (mapa: Map<string, DuplicateCandidate[]>, t: DuplicateCandidate): void => {
+    private acumular = (mapa: Map<string, Contraparte>, t: DuplicateCandidate): void => {
         const chave = `${t.filCod}|${t.docCod}`;
         const atual = mapa.get(chave);
-        if (atual) atual.push(t);
-        else mapa.set(chave, [t]);
+        if (atual) atual.titulos.push(t);
+        else mapa.set(chave, { filCod: t.filCod, docCod: t.docCod, titulos: [t] });
     };
 
     private achado = (
         tipo: DuplicateMatch['tipo'],
-        titulos: DuplicateCandidate[],
+        contraparte: Contraparte,
         evidencia: Record<string, unknown>,
     ): DuplicateMatch => {
-        const ordenados = [...titulos].sort((a, b) => a.titCod.localeCompare(b.titCod, 'en'));
-        const primeiro = ordenados[0] as DuplicateCandidate;
+        const ordenados = [...contraparte.titulos].sort((a, b) =>
+            a.titCod.localeCompare(b.titCod, 'en'),
+        );
         return {
             tipo,
-            contraparteFilCod: primeiro.filCod,
-            contraparteDocCod: primeiro.docCod,
+            contraparteFilCod: contraparte.filCod,
+            contraparteDocCod: contraparte.docCod,
             contraparteTitulos: ordenados.map(
                 (t): CounterpartTitle => ({
                     titCod: t.titCod,
