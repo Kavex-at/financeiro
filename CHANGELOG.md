@@ -1,5 +1,39 @@
 # Columbia Financeiro — Changelog
 
+## v0.55.0 (2026-10-06) — verificações de TED/PIX, alerta de duplicidade e conferência por segunda pessoa
+
+- **Todo título que vai por TED ou PIX passa por verificações assim que a analista escolhe a forma
+  de pagamento**, e de novo ao finalizar o lote. Boleto fica de fora (o banco trata, e o código de
+  barras só é confirmado na remessa). Se o Conexos não responder, o item fica "verificação
+  pendente" e o lote não finaliza até conseguir verificar.
+  - **Duplicidade forte:** mesmo fornecedor e mesmo número de NF em outro documento, em qualquer
+    tipo de documento e inclusive contra títulos já pagos (desde jan/2026). **Fraca:** mesmo
+    fornecedor, mesmo valor e vencimento a até 15 dias. As duas **bloqueiam a finalização** até a
+    analista **justificar** o pagamento ou **retirar** o título. O título retirado fica marcado
+    "cancelamento pendente no Conexos" e não volta a lote nenhum (automático ou manual) até sumir do
+    Conexos ou a marca ser desfeita.
+  - **Canal habitual:** alerta, sem bloquear, quando o TED/PIX vai para um fornecedor que há meses
+    é pago por outro canal (≥5 pagamentos, ≥3 meses, ≥95% num canal). O histórico vem de um job
+    semanal só de leitura (`calcular-perfil-canal`).
+  - **Dados de pagamento:** TED sem conta ou PIX sem chave no cadastro do Conexos **tira o título
+    do lote** e abre uma pendência para quem cuida do cadastro. Com uma exceção de destino
+    aprovada o título fica, mas a pendência é aberta do mesmo jeito. A pendência se resolve sozinha
+    quando o cadastro passa a ter o dado.
+  - Com a flag de TED/PIX ligada, TED e PIX passam a ser oferecidos sempre; a tela mostra de onde
+    viria o destino (cadastro, exceção ou nenhum) e avisa que o item sem destino vai sair do lote.
+- **Lote com TED ou PIX passa por conferência de uma segunda pessoa antes da remessa.** Quem
+  finalizou o lote ou incluiu títulos nele não confere. A conferência mostra favorecido, conta ou
+  chave (mascaradas), valor, alertas de duplicidade com a justificativa e alertas de canal; a
+  pessoa **confere** ou **devolve** o lote para revisão com o motivo. Lote só com boleto não passa
+  por conferência.
+- Novas permissões **`sispag:conferir`** (conferir e devolver) e **`sispag:cadastro`** (tela
+  **Pendências de cadastro**, `/sispag/pendencias-cadastro`). A migration não concede a ninguém.
+- Migrations `0076`–`0079`.
+- **Para ligar em produção:** conceder `sispag:conferir` a **pelo menos uma pessoa que não
+  finaliza lotes** (senão nenhum lote com TED/PIX chega à remessa) e `sispag:cadastro` a quem cuida
+  do cadastro no Conexos; rodar o workflow **Perfil de canal dos favorecidos** uma vez à mão (o
+  agendamento só vale depois do merge na `main`).
+
 ## v0.54.1 (2026-10-05) — permuta não estoura mais o disponível do adiantamento por centavos
 
 - **A baixa de permuta não sai mais R$ 0,01 acima do que o adiantamento tem.** Na última perna de uma
