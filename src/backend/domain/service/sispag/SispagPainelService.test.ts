@@ -681,7 +681,9 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
             listChavesPixFavorecido: jest.fn().mockResolvedValue([]),
         });
         const [r] = await service.modalidadesDisponiveisDoLote('L1');
-        expect(r?.modalidades).not.toContain('PIX');
+        // ADR-0063 (I10b revisado): PIX é oferecido, mas o destino viria de NENHUM lugar — o
+        // itsDesChavePix do fin064 não conta.
+        expect(r?.destinos?.PIX).toEqual({ origem: 'NENHUM' });
     });
 
     it('devolve origem e destino MASCARADO por modalidade, nunca o valor completo', async () => {
@@ -794,7 +796,7 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
         });
     });
 
-    it('leitura de cadastro que falha não oferece (na dúvida, não promete destino)', async () => {
+    it('leitura de cadastro que falha: oferece com origem NENHUM (a verificação barra, I13b)', async () => {
         const { service } = make({
             envVars: FLAGS,
             getLoteComItens: loteCom([item]),
@@ -805,11 +807,12 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
             listChavesPixFavorecido: jest.fn().mockRejectedValue(new Error('504')),
         });
         const [r] = await service.modalidadesDisponiveisDoLote('L1');
-        expect(r?.modalidades).toEqual([]);
+        expect(r?.modalidades).toEqual(['TED', 'PIX']);
+        expect(r?.destinos).toEqual({ TED: { origem: 'NENHUM' }, PIX: { origem: 'NENHUM' } });
     });
 
-    // Caso 3 (I10b): oferta = envio. Para cada fixture, a oferta diz TED/PIX SE E SÓ SE o
-    // resolver — o mesmo que o envio usa — resolve.
+    // I10b revisado (ADR-0063): com a flag ligada TED/PIX são SEMPRE oferecidos, e a origem que a
+    // tela mostra é a MESMA que o envio resolveria — divergência entre as duas segue sendo bug.
     const fixtures: Array<{
         nome: string;
         contas: unknown[];
@@ -858,7 +861,8 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
                     { modalidade },
                     { flags, febrabanLote: 341, filCod: 2, pesCod: 'P1' },
                 );
-                expect(oferta?.modalidades.includes(modalidade)).toBe(envio.origem !== 'NENHUM');
+                expect(oferta?.modalidades).toContain(modalidade);
+                expect(oferta?.destinos?.[modalidade]?.origem).toBe(envio.origem);
             }
         });
     }

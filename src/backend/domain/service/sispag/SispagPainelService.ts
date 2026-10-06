@@ -486,14 +486,16 @@ export default class SispagPainelService {
     };
 
     /**
-     * Oferta com TED e/ou PIX ligados (ADR-0054). A modalidade ligada só aparece quando o
-     * `DestinoPagamentoResolver` resolve — o MESMO que o envio chama (I10b, caso 3) —, e cada
-     * uma vem com a origem e a máscara do destino. A desligada segue a regra antiga.
+     * Oferta com TED e/ou PIX ligados (ADR-0054; I10b revisado pela ADR-0063). A modalidade ligada
+     * é SEMPRE oferecida e vem com a origem (CADASTRO | EXCECAO | NENHUM) e a máscara do destino,
+     * calculadas pelo `DestinoPagamentoResolver` — o MESMO que o envio chama. A desligada segue a
+     * regra antiga.
      *
      * PIX do `fin064` (`itsDesChavePix`) deixa de valer com a flag ligada: é LEFT JOIN no item
      * SISPAG, 0% preenchido; a fonte certa é o `cmnPessoasPix`.
      *
-     * Leitura que falha = não oferece (na dúvida, não promete um destino que o envio recusaria).
+     * Leitura que falha = origem NENHUM (a verificação TED/PIX, que roda depois da escolha, fica
+     * PENDENTE e barra o finalizar — falha fechada, I13b).
      */
     private ofertaComResolver = async (
         itens: ItemLote[],
@@ -543,8 +545,11 @@ export default class SispagPainelService {
             );
             const destinos: Partial<Record<'TED' | 'PIX', DestinoOfertado>> = {};
             for (const modalidade of modalidadesNovas) {
-                const r = resolvidos[modalidade];
-                if (!r || r.origem === DESTINO_ORIGEM.NENHUM) continue;
+                // ADR-0063 (I10b revisado, gap Q1-a): com a flag ligada a modalidade é SEMPRE
+                // oferecida; quem decide é a verificação TED/PIX (I13j), que retira o item sem destino
+                // e abre a pendência de cadastro. A tela mostra de onde VIRIA o destino (NENHUM =
+                // nem cadastro nem exceção aprovada, ou leitura que falhou).
+                const r = resolvidos[modalidade] ?? { origem: DESTINO_ORIGEM.NENHUM };
                 modalidades.push(modalidade);
                 const mascara = this.resolver.mascarar(r);
                 destinos[modalidade] = {

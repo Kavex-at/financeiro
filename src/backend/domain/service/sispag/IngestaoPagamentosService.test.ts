@@ -7,6 +7,7 @@ import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
+import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
 import IngestaoPagamentosService from './IngestaoPagamentosService.js';
@@ -41,6 +42,7 @@ interface Mocks {
     listBoletoDda: jest.Mock;
     acquire: boolean;
     filiais: Array<{ filCod: number }>;
+    encerrar: jest.Mock;
 }
 
 const make = (over: Partial<Mocks> = {}) => {
@@ -77,6 +79,10 @@ const make = (over: Partial<Mocks> = {}) => {
                 acquire ? onAcquired() : onBusy(),
         ),
     } as unknown as PostgreeDatabaseClient;
+    const bloqueioRepo = {
+        encerrarDeTitulosInativos: over.encerrar ?? jest.fn().mockResolvedValue(0),
+    };
+    const log = buildLog();
     const service = new IngestaoPagamentosService(
         tituloRepo as unknown as TituloAPagarRepository,
         runRepo as unknown as PagamentoIngestaoRunRepository,
@@ -85,9 +91,19 @@ const make = (over: Partial<Mocks> = {}) => {
         base,
         new BoundedConcurrency(),
         db,
-        buildLog(),
+        log,
+        bloqueioRepo as unknown as BloqueioDuplicidadeRepository,
     );
-    return { service, tituloRepo, runRepo, listTitulos, listContas, listBoletoDda };
+    return {
+        service,
+        tituloRepo,
+        runRepo,
+        listTitulos,
+        listContas,
+        listBoletoDda,
+        bloqueioRepo,
+        log,
+    };
 };
 
 describe('IngestaoPagamentosService', () => {
@@ -102,6 +118,32 @@ describe('IngestaoPagamentosService', () => {
         );
         expect(runRepo.finishRun).toHaveBeenCalledWith(
             expect.objectContaining({ runId: 'RUN1', status: 'success', totalTitulos: 1 }),
+        );
+    });
+
+    it('ADR-0063 I13g — depois de inativar, encerra os bloqueios por duplicidade dos títulos inativos', async () => {
+        const { service, bloqueioRepo, tituloRepo } = make({
+            encerrar: jest.fn().mockResolvedValue(2),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(bloqueioRepo.encerrarDeTitulosInativos).toHaveBeenCalledTimes(1);
+        const ordemInativar = tituloRepo.marcarInativosForaDaRun.mock.invocationCallOrder[0] ?? 0;
+        const ordemEncerrar =
+            bloqueioRepo.encerrarDeTitulosInativos.mock.invocationCallOrder[0] ?? 0;
+        expect(ordemEncerrar).toBeGreaterThan(ordemInativar);
+    });
+
+    it('falha ao encerrar bloqueios não regride a run (efeito pós-sucesso)', async () => {
+        const { service, runRepo, log } = make({
+            encerrar: jest.fn().mockRejectedValue(new Error('pg down')),
+        });
+        const r = await service.executar({ triggeredBy: 'cron' });
+        expect(r.status).toBe('success');
+        expect(runRepo.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'success' }),
+        );
+        expect((log.warn as jest.Mock).mock.calls.map(([p]) => p.message)).toContain(
+            'ingestão: falha ao encerrar bloqueios por duplicidade de títulos inativos',
         );
     });
 

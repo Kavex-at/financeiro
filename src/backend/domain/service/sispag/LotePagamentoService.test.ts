@@ -8,14 +8,24 @@ import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
-import type { LotePagamento, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
+import DuplicateHoldError from '../../errors/DuplicateHoldError.js';
+import ItemsRemovedByCheckError from '../../errors/ItemsRemovedByCheckError.js';
+import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
+import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
+import type {
+    AlertaItemLote,
+    LotePagamento,
+    TituloAPagar,
+} from '../../interface/sispag/SispagInterface.js';
+import type AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
+import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
+import type VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
+import type VerificacaoTedPixService from './VerificacaoTedPixService.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type LogService from '../LogService.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
-import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import LotePagamentoService from './LotePagamentoService.js';
-import type SispagPainelService from './SispagPainelService.js';
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
     id: 'L1',
@@ -84,21 +94,56 @@ const buildRepo = (): RepoMock => ({
     atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
 });
 
+const SEM_ACHADO = { verificados: [], pendentes: [], retirados: [] };
+
 /**
- * Dependências do ADR-0054/0061 (flags, oferta). Por padrão as flags estão DESLIGADAS — é o
- * comportamento do `main`.
+ * Dependências da ADR-0063: a verificação TED/PIX (mockada — testada em
+ * `VerificacaoTedPixService.test.ts`), as alertas, o bloqueio e a trilha. Por padrão a verificação
+ * não acha nada e não há bloqueio.
  */
-const buildDestinoDeps = (envVars: Record<string, unknown> = {}) => ({
-    env: {
-        getEnvironmentVars: jest.fn().mockResolvedValue(envVars),
-    } as unknown as EnvironmentProvider,
+const buildDestinoDeps = () => ({
     conexos: {
         getTituloAPagar: jest.fn(),
         getDocumentoFavorecido: jest.fn().mockResolvedValue(undefined),
     },
-    painel: { modalidadesDisponiveisDoLote: jest.fn().mockResolvedValue([]) },
     log: buildLog(),
+    verificacao: {
+        ehVerificavel: jest.fn(
+            (i: { modalidade?: string }) => i.modalidade === 'TED' || i.modalidade === 'PIX',
+        ),
+        verificarItens: jest.fn().mockResolvedValue(SEM_ACHADO),
+        descartarVerificacao: jest.fn().mockResolvedValue(0),
+    },
+    alertaRepo: {
+        listVivasDosLotes: jest.fn().mockResolvedValue([] as AlertaItemLote[]),
+        descartarDoItem: jest.fn().mockResolvedValue(0),
+    },
+    bloqueioRepo: { findAtivo: jest.fn().mockResolvedValue(null) },
+    eventos: { registrar: jest.fn().mockResolvedValue('EV1') },
 });
+
+type DestinoDeps = ReturnType<typeof buildDestinoDeps>;
+
+const novoService = (
+    repo: RepoMock,
+    conexos: ConexosSispagClient,
+    tituloRepo: ReturnType<typeof buildTituloRepo>,
+    db: PostgreeDatabaseClient,
+    deps: DestinoDeps,
+    contaResolver: ContaPagadoraResolver,
+) =>
+    new LotePagamentoService(
+        repo as unknown as LotePagamentoRepository,
+        tituloRepo as unknown as TituloAPagarRepository,
+        conexos,
+        db,
+        deps.log,
+        deps.verificacao as unknown as VerificacaoTedPixService,
+        contaResolver,
+        deps.alertaRepo as unknown as AlertaItemLoteRepository,
+        deps.bloqueioRepo as unknown as BloqueioDuplicidadeRepository,
+        deps.eventos as unknown as VerificacaoEventoRepository,
+    );
 
 /** Carteira persistida: é DAQUI que sai o "tem boleto?" — nunca do `fin064`. */
 const buildTituloRepo = (temBoleto = false) => ({
@@ -120,17 +165,8 @@ const make = (
         resolverPadrao: jest.fn().mockResolvedValue(contaPadrao ?? undefined),
     } as unknown as ContaPagadoraResolver;
     const conexos = deps.conexos as unknown as ConexosSispagClient;
-    const service = new LotePagamentoService(
-        repo as unknown as LotePagamentoRepository,
-        tituloRepo as unknown as TituloAPagarRepository,
-        conexos,
-        buildDb(),
-        deps.log,
-        deps.env,
-        deps.painel as unknown as SispagPainelService,
-        contaResolver,
-    );
-    return { service, conexos, tituloRepo, contaResolver };
+    const service = novoService(repo, conexos, tituloRepo, buildDb(), deps, contaResolver);
+    return { service, conexos, tituloRepo, contaResolver, deps };
 };
 
 describe('LotePagamentoService — invariantes', () => {
@@ -280,6 +316,7 @@ describe('LotePagamentoService — invariantes', () => {
                     versaoEsperada: 1,
                     finalizadoPor: 'u1',
                 }),
+                expect.anything(),
             );
         });
 
@@ -311,6 +348,7 @@ describe('LotePagamentoService — invariantes', () => {
                     de: ['FINALIZADO'],
                     versaoEsperada: 3,
                 }),
+                expect.anything(),
             );
         });
 
@@ -320,6 +358,7 @@ describe('LotePagamentoService — invariantes', () => {
             await service.cancelarLote({ loteId: 'L1', versao: 1, ator: 'u1' });
             expect(repo.transicionarStatus).toHaveBeenCalledWith(
                 expect.objectContaining({ para: 'CANCELADO' }),
+                expect.anything(),
             );
         });
 
@@ -453,14 +492,12 @@ describe('LotePagamentoService — invariantes', () => {
                     ) => onBusy(),
                 ),
             } as unknown as PostgreeDatabaseClient;
-            const service = new LotePagamentoService(
-                repo as unknown as LotePagamentoRepository,
-                buildTituloRepo() as unknown as TituloAPagarRepository,
+            const service = novoService(
+                repo,
                 conexos,
+                buildTituloRepo(),
                 dbBusy,
-                buildLog(),
-                buildDestinoDeps().env,
-                buildDestinoDeps().painel as unknown as SispagPainelService,
+                buildDestinoDeps(),
                 {
                     resolverPadrao: jest.fn().mockResolvedValue(undefined),
                 } as unknown as ContaPagadoraResolver,
@@ -652,11 +689,9 @@ describe('LotePagamentoService — invariantes', () => {
     });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════════════
-// ADR-0054 Adendo + ADR-0061 I12f — o finalizar barra item sem destino resolvível
-// ═══════════════════════════════════════════════════════════════════════════════════════
+// ADR-0063 — verificação TED/PIX no ciclo do lote (I13a, I13f, I13g, I13l).
 
-describe('LotePagamentoService.finalizarLote — falha fechada do destino (ADR-0061 I12f)', () => {
+describe('LotePagamentoService — verificação TED/PIX (ADR-0063)', () => {
     const itemTed = {
         loteId: 'L1',
         filCod: 2,
@@ -668,71 +703,199 @@ describe('LotePagamentoService.finalizarLote — falha fechada do destino (ADR-0
         divergencia: false,
     };
     const input = { loteId: 'L1', versao: 1, ator: 'u1' };
+    const alerta = (over: Partial<AlertaItemLote> = {}): AlertaItemLote => ({
+        id: 'A1',
+        loteId: 'L1',
+        filCod: 2,
+        docCod: '100',
+        titCod: '1',
+        tipo: 'DUPLICIDADE_FORTE',
+        contraparteFilCod: 2,
+        contraparteDocCod: '200',
+        evidencia: {},
+        estado: 'ABERTA',
+        criadoEm: '2026-10-05T10:00:00.000Z',
+        verificadoEm: '2026-10-05T10:00:00.000Z',
+        ...over,
+    });
 
-    const montar = (env: Record<string, unknown>, oferta: unknown[], itens = [itemTed]) => {
+    const montar = (itens = [itemTed]) => {
         const repo = buildRepo();
         repo.getLoteComItens.mockResolvedValue(lote({ itens }));
-        const deps = buildDestinoDeps(env);
-        deps.painel.modalidadesDisponiveisDoLote.mockResolvedValue(oferta);
+        const deps = buildDestinoDeps();
         const { service } = make(repo, titulo(), buildTituloRepo(), deps);
         return { service, repo, deps };
     };
 
-    it('flags desligadas: nenhuma consulta nova (igual ao main)', async () => {
-        const { service, deps, repo } = montar({}, []);
-        await service.finalizarLote(input);
-        expect(deps.painel.modalidadesDisponiveisDoLote).not.toHaveBeenCalled();
-        expect(repo.transicionarStatus).toHaveBeenCalled();
-    });
+    describe('atualizarModalidadeItem (I13a)', () => {
+        const chave = { filCod: 2, docCod: '100', titCod: '1' };
+        const mudar = (service: LotePagamentoService, modalidade: 'TED' | 'PIX' | 'BOLETO') =>
+            service.atualizarModalidadeItem({
+                loteId: 'L1',
+                ...chave,
+                modalidade,
+                versao: 1,
+                ator: 'u1',
+            });
 
-    it('TED sem opção ofertada (sem cadastro nem exceção APROVADA) → recusa nomeando o item', async () => {
-        const { service, repo } = montar({ sispagTedEnabled: true }, [
-            { docCod: '100', titCod: '1', modalidades: [] },
-        ]);
-        await expect(service.finalizarLote(input)).rejects.toMatchObject({
-            code: 'DESTINO_PAGAMENTO_AUSENTE',
-            userMessage: expect.stringContaining('100/1'),
+        it.each(['TED', 'PIX'] as const)('%s dispara a verificação SÓ daquele item', async (m) => {
+            const { service, deps } = montar();
+            await mudar(service, m);
+            expect(deps.verificacao.verificarItens).toHaveBeenCalledWith('L1', { itens: [chave] });
+            expect(deps.verificacao.descartarVerificacao).not.toHaveBeenCalled();
         });
-        expect(repo.transicionarStatus).not.toHaveBeenCalled();
-    });
 
-    it('TED com opção ofertada (cadastro ou exceção APROVADA) → passa', async () => {
-        const { service, repo } = montar({ sispagTedEnabled: true }, [
-            { docCod: '100', titCod: '1', modalidades: ['TED'] },
-        ]);
-        await service.finalizarLote(input);
-        expect(repo.transicionarStatus).toHaveBeenCalled();
-    });
-
-    it('a mensagem nomeia título e credor e NUNCA o destino (I10h)', async () => {
-        const { service } = montar({ sispagTedEnabled: true, sispagExcecaoDestinoEnabled: true }, [
-            { docCod: '100', titCod: '1', modalidades: [] },
-        ]);
-        const err = await service.finalizarLote(input).catch((e: unknown) => e);
-        expect(err).toMatchObject({
-            code: 'DESTINO_PAGAMENTO_AUSENTE',
-            statusCode: 409,
-            userMessage: expect.stringContaining('100/1 (ACME)'),
+        it('BOLETO descarta as alertas abertas do item (trilha), sem verificar', async () => {
+            const { service, deps } = montar();
+            await mudar(service, 'BOLETO');
+            expect(deps.verificacao.descartarVerificacao).toHaveBeenCalledWith('L1', chave, 'u1');
+            expect(deps.verificacao.verificarItens).not.toHaveBeenCalled();
         });
-        expect(JSON.stringify(err) + String((err as Error).message)).not.toMatch(/\d{8}/);
+
+        it('o lote devolvido traz as alertas do item', async () => {
+            const { service, deps } = montar();
+            deps.alertaRepo.listVivasDosLotes.mockResolvedValue([alerta()]);
+            const l = await mudar(service, 'TED');
+            expect(l.itens[0]?.alertas?.map((a) => a.id)).toEqual(['A1']);
+        });
     });
 
-    it('pede a oferta COM aposentadoria das exceções (I12c) — só o finalizar escreve', async () => {
-        const { service, deps } = montar(
-            { sispagTedEnabled: true, sispagExcecaoDestinoEnabled: true },
-            [{ docCod: '100', titCod: '1', modalidades: ['TED'] }],
+    describe('finalizarLote — ordem dos bloqueios', () => {
+        it('re-verifica TODOS os TED/PIX, aposentando exceção (I12c), antes da transição', async () => {
+            const { service, deps, repo } = montar();
+            await service.finalizarLote(input);
+            expect(deps.verificacao.verificarItens).toHaveBeenCalledWith('L1', {
+                aposentarExcecao: true,
+            });
+            expect(repo.transicionarStatus).toHaveBeenCalled();
+        });
+
+        it('1º item retirado nesta rodada → ItemsRemovedByCheckError; lote fica RASCUNHO', async () => {
+            const { service, deps, repo } = montar();
+            deps.verificacao.verificarItens.mockResolvedValue({
+                verificados: [],
+                pendentes: [{ filCod: 2, docCod: '300', titCod: '1' }],
+                retirados: [
+                    { filCod: 2, docCod: '100', titCod: '1', credor: 'ACME', modalidade: 'TED' },
+                ],
+            });
+            deps.alertaRepo.listVivasDosLotes.mockResolvedValue([alerta()]);
+            const err = await service.finalizarLote(input).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(ItemsRemovedByCheckError);
+            expect(err).toMatchObject({
+                statusCode: 409,
+                userMessage: expect.stringContaining('100/1 (ACME)'),
+            });
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
+        it('2º item PENDENTE → PaymentCheckPendingError (antes de olhar duplicidade)', async () => {
+            const { service, deps, repo } = montar();
+            deps.verificacao.verificarItens.mockResolvedValue({
+                ...SEM_ACHADO,
+                pendentes: [{ filCod: 2, docCod: '100', titCod: '1' }],
+            });
+            deps.alertaRepo.listVivasDosLotes.mockResolvedValue([alerta()]);
+            await expect(service.finalizarLote(input)).rejects.toBeInstanceOf(
+                PaymentCheckPendingError,
+            );
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
+        it('3º duplicidade ABERTA → PendingDuplicateAlertError com a lista por item', async () => {
+            const { service, deps, repo } = montar();
+            deps.alertaRepo.listVivasDosLotes.mockResolvedValue([
+                alerta(),
+                alerta({ id: 'A2', tipo: 'DUPLICIDADE_FRACA', contraparteDocCod: '201' }),
+            ]);
+            const err = await service.finalizarLote(input).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(PendingDuplicateAlertError);
+            expect((err as PendingDuplicateAlertError).details).toMatchObject({
+                itens: [{ docCod: '100', titCod: '1', alertas: [{ id: 'A1' }, { id: 'A2' }] }],
+            });
+            expect((err as PendingDuplicateAlertError).userMessage).toContain('doc 200');
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
+        it('duplicidade JUSTIFICADA (RESOLVIDA) e alerta de CANAL não barram', async () => {
+            const { service, deps, repo } = montar();
+            deps.alertaRepo.listVivasDosLotes.mockResolvedValue([
+                alerta({ estado: 'RESOLVIDA', resolucao: 'JUSTIFICADA', justificativa: 'ok' }),
+                alerta({ id: 'C1', tipo: 'CANAL_HABITUAL', contraparteDocCod: undefined }),
+            ]);
+            await service.finalizarLote(input);
+            expect(repo.transicionarStatus).toHaveBeenCalled();
+        });
+    });
+
+    it('incluirTitulo com bloqueio por duplicidade ATIVO → DuplicateHoldError, sem ler o Conexos (I13g)', async () => {
+        const repo = buildRepo();
+        const deps = buildDestinoDeps();
+        deps.bloqueioRepo.findAtivo.mockResolvedValue({
+            id: 'B1',
+            filCod: 2,
+            docCod: '100',
+            titCod: '1',
+            motivo: 'duplicata do 200',
+            estado: 'ATIVO',
+            marcadoPor: 'ana',
+            marcadoEm: '2026-10-05T10:00:00.000Z',
+        });
+        const { service, conexos } = make(repo, titulo(), buildTituloRepo(), deps);
+        await expect(
+            service.incluirTitulo({
+                loteId: 'L1',
+                filCod: 2,
+                docCod: '100',
+                titCod: '1',
+                ator: 'u1',
+            }),
+        ).rejects.toBeInstanceOf(DuplicateHoldError);
+        expect(conexos.getTituloAPagar).not.toHaveBeenCalled();
+        expect(repo.adicionarItem).not.toHaveBeenCalled();
+    });
+
+    it('removerTitulo descarta as alertas do item na mesma transação', async () => {
+        const { service, deps } = montar();
+        await service.removerTitulo({
+            loteId: 'L1',
+            filCod: 2,
+            docCod: '100',
+            titCod: '1',
+            ator: 'u1',
+        });
+        expect(deps.alertaRepo.descartarDoItem).toHaveBeenCalledWith(
+            'L1',
+            { filCod: 2, docCod: '100', titCod: '1' },
+            'u1',
+            expect.anything(),
         );
-        await service.finalizarLote(input);
-        expect(deps.painel.modalidadesDisponiveisDoLote).toHaveBeenCalledWith('L1', {
-            aposentarExcecao: true,
-        });
     });
 
-    it('item de modalidade cuja flag está desligada não é checado', async () => {
-        const { service, repo } = montar({ sispagPixEnabled: true }, [
-            { docCod: '100', titCod: '1', modalidades: [] },
-        ]);
-        await service.finalizarLote(input);
-        expect(repo.transicionarStatus).toHaveBeenCalled();
+    it('reabrir (L4) de lote conferido registra CONFERENCIA_LIMPA na mesma transação', async () => {
+        const repo = buildRepo();
+        repo.getLoteComItens.mockResolvedValue(
+            lote({ status: 'FINALIZADO', conferidoPor: 'bia', itens: [itemTed] }),
+        );
+        const deps = buildDestinoDeps();
+        const { service } = make(repo, titulo(), buildTituloRepo(), deps);
+        await service.reabrirLote({ loteId: 'L1', versao: 3, ator: 'u1' });
+        expect(repo.transicionarStatus).toHaveBeenCalledWith(
+            expect.objectContaining({ para: 'RASCUNHO' }),
+            expect.anything(),
+        );
+        expect(deps.eventos.registrar).toHaveBeenCalledWith(
+            expect.objectContaining({ evento: 'CONFERENCIA_LIMPA', ator: 'u1', loteId: 'L1' }),
+            expect.anything(),
+        );
+    });
+
+    it('reabrir de lote não conferido não grava evento de conferência', async () => {
+        const repo = buildRepo();
+        repo.getLoteComItens.mockResolvedValue(lote({ status: 'FINALIZADO' }));
+        const deps = buildDestinoDeps();
+        const { service } = make(repo, titulo(), buildTituloRepo(), deps);
+        await service.reabrirLote({ loteId: 'L1', versao: 3, ator: 'u1' });
+        expect(deps.eventos.registrar).not.toHaveBeenCalled();
     });
 });
