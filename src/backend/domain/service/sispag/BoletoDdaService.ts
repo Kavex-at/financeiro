@@ -77,6 +77,8 @@ export default class BoletoDdaService {
             ...(input.situacao ? { situacao: input.situacao } : {}),
             ...(input.busca ? { busca: input.busca } : {}),
             ...(input.filCod !== undefined ? { filCod: input.filCod } : {}),
+            ...(input.vencimentoDe ? { vencimentoDe: input.vencimentoDe } : {}),
+            ...(input.vencimentoAte ? { vencimentoAte: input.vencimentoAte } : {}),
         });
         return {
             ...pagina,

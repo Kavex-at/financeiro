@@ -16,9 +16,18 @@ export interface FiltroPaginaBoletoDda {
     /** Texto livre: número, valor, credor, documento, código de barras, linha digitável, arquivo. */
     busca?: string;
     filCod?: number;
+    /**
+     * Intervalo de vencimento do boleto, data civil `YYYY-MM-DD`, inclusivo. Compara por ordem de
+     * string (o formato garante). Com intervalo ativo, boleto sem vencimento sai.
+     */
+    vencimentoDe?: string;
+    vencimentoAte?: string;
     pagina: number;
     tamanho: number;
 }
+
+/** Formato aceito para `vencimentoDe`/`vencimentoAte` (para o Zod da rota). */
+export const DATA_CIVIL_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface PaginaBoletoDda {
     boletos: BoletoDdaConsolidado[];
@@ -85,11 +94,19 @@ export default class PaginacaoBoletoDda {
             ...new Set(linhas.map(filialDe).filter((f): f is number => f !== undefined)),
         ].sort((a, c) => a - c);
 
+        const { vencimentoDe, vencimentoAte } = filtro;
+        const temIntervalo = vencimentoDe !== undefined || vencimentoAte !== undefined;
+        const vencimentoOk = (b: BoletoDdaConsolidado): boolean =>
+            !temIntervalo ||
+            (b.vencimento !== undefined &&
+                (vencimentoDe === undefined || b.vencimento >= vencimentoDe) &&
+                (vencimentoAte === undefined || b.vencimento <= vencimentoAte));
+
         const semSituacao = linhas.filter((b) => {
             const fil = filialDe(b);
             const filialOk =
                 filtro.filCod === undefined || fil === undefined || fil === filtro.filCod;
-            return filialOk && (busca === '' || textoDeBusca(b).includes(busca));
+            return filialOk && vencimentoOk(b) && (busca === '' || textoDeBusca(b).includes(busca));
         });
 
         const contagem: BoletoDdaContagem = {
