@@ -2378,7 +2378,8 @@ describe('RemessaService.baixarArquivo', () => {
             remessaNum: 12,
             ...over,
         });
-    const writeComDownload = (conteudo = 'CNAB VIA DOWNLOAD') => ({
+    const CNAB_DOWNLOAD = '34100000         2PG210801 HEADER VIA DOWNLOAD';
+    const writeComDownload = (conteudo = CNAB_DOWNLOAD) => ({
         ...buildWrite(),
         baixarRemessa: jest.fn().mockResolvedValue(conteudo),
     });
@@ -2407,7 +2408,7 @@ describe('RemessaService.baixarArquivo', () => {
         ]);
         const res = await fazer(write, comRemessa()).baixarArquivo('L1');
         expect(write.baixarRemessa).toHaveBeenCalledWith({ filCod: 2, gabCod: 52 });
-        expect(res).toEqual({ nomeArquivo: 'PG210801.REM', conteudo: 'CNAB VIA DOWNLOAD' });
+        expect(res).toEqual({ nomeArquivo: 'PG210801.REM', conteudo: CNAB_DOWNLOAD });
     });
 
     it('grade com o nome mas sem conteúdo: também cai no download por gabCod', async () => {
@@ -2417,7 +2418,7 @@ describe('RemessaService.baixarArquivo', () => {
         ]);
         const res = await fazer(write, comRemessa()).baixarArquivo('L1');
         expect(write.baixarRemessa).toHaveBeenCalledWith({ filCod: 2, gabCod: 52 });
-        expect(res?.conteudo).toBe('CNAB VIA DOWNLOAD');
+        expect(res?.conteudo).toBe(CNAB_DOWNLOAD);
     });
 
     it('lote sem remessa (ou inexistente) devolve null sem ir ao Conexos', async () => {
@@ -2434,6 +2435,14 @@ describe('RemessaService.baixarArquivo', () => {
             code: 'REMESSA_ARQUIVO_INDISPONIVEL',
             statusCode: 404,
             userMessage: expect.stringContaining('PG210801.REM'),
+        });
+    });
+
+    it('download que não é CNAB (JSON de erro com 200 → "[object Object]") não vira .REM', async () => {
+        const write = writeComDownload('[object Object]');
+        write.listarArquivosRemessa.mockResolvedValue([]);
+        await expect(fazer(write, comRemessa()).baixarArquivo('L1')).rejects.toMatchObject({
+            code: 'REMESSA_ARQUIVO_INDISPONIVEL',
         });
     });
 
