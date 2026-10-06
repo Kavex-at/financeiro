@@ -13,6 +13,14 @@ import MigrationFiles from './MigrationFiles.js';
  * não roda sob Jest). O comportamento contra um Postgres de verdade está em
  * `0075_sispag_excecao_destino.integration.test.ts`.
  */
+/**
+ * O catálogo no dia da 0075: o de hoje sem as avulsas que a 0079 (ADR-0063) acrescentou. A 0075 é
+ * histórico; a paridade vigente é checada contra a lista mais recente do diretório.
+ */
+const CATALOGO_DA_0075: readonly string[] = PERMISSION_CATALOG.filter(
+    (p) => p !== 'sispag:conferir' && p !== 'sispag:cadastro',
+);
+
 const NOME = '0075_sispag_excecao_destino.sql';
 const SQL = readFileSync(path.join(__dirname, NOME), 'utf8');
 
@@ -87,11 +95,11 @@ describe('migration 0075 — exceção de destino SISPAG (ADR-0061)', () => {
         );
     });
 
-    it('troca os DOIS CHECK de permission pelo catálogo atual e sem aprovar_destino (R4)', () => {
+    it('troca os DOIS CHECK de permission pelo catálogo da 0075 e sem aprovar_destino (R4)', () => {
         const listas = listasDoCheck(CODIGO);
         expect(listas).toHaveLength(2);
         for (const lista of listas) {
-            expect(lista).toEqual([...PERMISSION_CATALOG].sort());
+            expect(lista).toEqual([...CATALOGO_DA_0075].sort());
             expect(lista).toContain(PERMISSION.SISPAG_EXCECAO);
             expect(lista).not.toContain('sispag:aprovar_destino');
         }
@@ -106,7 +114,13 @@ describe('migration 0075 — exceção de destino SISPAG (ADR-0061)', () => {
                     semComentarios(readFileSync(path.join(__dirname, f), 'utf8')),
                 ),
             );
-        expect(comCheck[comCheck.length - 1]).toBe(NOME);
+        const ultima = comCheck[comCheck.length - 1] ?? '';
+        expect(ultima >= NOME).toBe(true);
+        const listas = listasDoCheck(
+            semComentarios(readFileSync(path.join(__dirname, ultima), 'utf8')),
+        );
+        expect(listas.length).toBeGreaterThan(0);
+        for (const lista of listas) expect(lista).toEqual([...PERMISSION_CATALOG].sort());
     });
 
     it('converte as concessões de aprovar_destino (papel e usuário) ANTES de recriar o CHECK, sem duplicar', () => {
