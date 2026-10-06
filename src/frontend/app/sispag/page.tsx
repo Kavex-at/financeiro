@@ -833,11 +833,12 @@ function SispagPanel() {
                   ) : null}
                 </div>
                 <div className="flex items-center gap-2">
-                  {selecionados.size > 0 ? (
-                    <span className="text-xs text-muted-foreground">
-                      {selecionados.size} sel. · {formatBRL(totalSelecionado)}
-                    </span>
-                  ) : null}
+                  {/* aria-live: o "selecionar todos" marca linhas de outras páginas — anuncia a contagem. */}
+                  <span className="text-xs text-muted-foreground" aria-live="polite">
+                    {selecionados.size > 0
+                      ? `${selecionados.size} sel. · ${formatBRL(totalSelecionado)}`
+                      : ''}
+                  </span>
                   {podeExecutar ? (
                     <>
                       <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
