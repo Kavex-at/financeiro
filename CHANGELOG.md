@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.58.0 (2026-10-06) — download da remessa visível e export dos títulos das remessas
+
+> Versão pode ser re-sequenciada no merge (lote paralelo A/B/C).
+
+- **"Baixar remessa" aparece em todo lote com remessa gerada** (remessa gerada, retornado, baixado),
+  no cabeçalho do card ao lado de "Sincronizar agora". Antes o botão sumia: a lista de lotes não
+  trazia o nome do arquivo, então o card escondia o download em toda carga da página e logo depois
+  de gerar a remessa.
+- **Download mais confiável:** quando o arquivo não aparece na listagem do fin015 (que só lê 20
+  arquivos por lote nativo) ou vem sem conteúdo, o sistema baixa pelo código do arquivo registrado
+  na geração, e só aceita o que tem cara de CNAB 240. Se o arquivo não existir mais no Conexos, a
+  tela diz isso com o nome do arquivo e o lote nativo, em vez de "lote sem remessa gerada".
+- **Exportar títulos (.xlsx)** na aba Finalizados: marque uma ou várias remessas (até 50) e baixe uma
+  planilha com uma linha por título (lote, remessa nº e arquivo, data de geração, filial, banco e
+  conta pagadora, data de débito, status, credor, documento, vencimento, valor, forma de pagamento,
+  situação, pago em, valor pago, retorno do banco) e uma linha de totais. Cada card com remessa
+  também tem o atalho "Exportar títulos". Basta `sispag:ver`; o `.REM` continua exigindo
+  `sispag:executar`.
+
 ## v0.57.0 (2026-10-06) — filtro de data e de boleto nas abas do SISPAG
 
 - **Todas as abas do SISPAG ganharam um filtro de/até de data**, e o rótulo diz qual data está sendo
