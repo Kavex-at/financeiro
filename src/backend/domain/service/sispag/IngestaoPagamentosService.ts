@@ -12,6 +12,7 @@ import type {
 } from '../../interface/sispag/SispagInterface.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import LogService from '../LogService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -39,6 +40,8 @@ export default class IngestaoPagamentosService {
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(BloqueioDuplicidadeRepository)
+        private readonly bloqueioRepo: BloqueioDuplicidadeRepository,
     ) {}
 
     public executar = async (input: {
@@ -251,6 +254,20 @@ export default class IngestaoPagamentosService {
                       }
                     : {}),
             });
+            // ADR-0063 I13g — título que sumiu do fin064 (inativo agora) encerra o bloqueio por
+            // duplicidade: o cancelamento no Conexos aconteceu (ou o título foi pago/baixado). É
+            // efeito pós-sucesso: falhar aqui não regride a run; a próxima ingestão encerra.
+            let bloqueiosEncerrados = 0;
+            try {
+                bloqueiosEncerrados = await this.bloqueioRepo.encerrarDeTitulosInativos();
+            } catch (error) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message:
+                        'ingestão: falha ao encerrar bloqueios por duplicidade de títulos inativos',
+                    data: { runId, erro: error instanceof Error ? error.name : 'erro' },
+                });
+            }
             // Best-effort pós-sucesso: a run JÁ está 'success' e os títulos persistidos —
             // uma falha aqui (blip de banco no idempotency, log) NÃO deve remarcar como error.
             try {
@@ -265,6 +282,7 @@ export default class IngestaoPagamentosService {
                         triggeredBy: input.triggeredBy,
                         totalTitulos: titulos.length,
                         inativados,
+                        bloqueiosEncerrados,
                     },
                 });
             } catch {

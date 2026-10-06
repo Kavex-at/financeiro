@@ -8,31 +8,45 @@ import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
-import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
+import DuplicateHoldError from '../../errors/DuplicateHoldError.js';
+import ItemsRemovedByCheckError from '../../errors/ItemsRemovedByCheckError.js';
+import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
+import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
 import ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
+    type AlertaItemLote,
     type ChaveTitulo,
     type CriarLoteInput,
+    DUPLICATE_ALERT_TYPES,
     type IncluirTituloInput,
+    ITEM_ALERT_STATE,
     type ListarLotesFiltro,
     type LotePagamento,
     type LotePagamentoStatus,
     LOTE_STATUS,
     MODALIDADE,
     type Modalidade,
+    VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
+import AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
+import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
-import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
+import type { TransactionClient } from '../../client/database/PostgreeDatabaseClient.js';
 import LogService from '../LogService.js';
-import SispagPainelService from './SispagPainelService.js';
+import VerificacaoTedPixService from './VerificacaoTedPixService.js';
 
 interface TransicaoInput {
     loteId: string;
     versao: number;
     ator: string;
 }
+
+/** Chave `filCod:docCod:titCod` de um item/alerta. */
+const chaveItem = (c: { filCod: number; docCod: string; titCod: string }): string =>
+    `${c.filCod}:${c.docCod}:${c.titCod}`;
 
 /**
  * LotePagamentoService — montagem assistida + gate do lote candidato SISPAG
@@ -49,9 +63,12 @@ export default class LotePagamentoService {
         @inject(ConexosSispagClient) private readonly conexos: ConexosSispagClient,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
-        @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
-        @inject(SispagPainelService) private readonly painel: SispagPainelService,
+        @inject(VerificacaoTedPixService) private readonly verificacao: VerificacaoTedPixService,
         @inject(ContaPagadoraResolver) private readonly contaResolver: ContaPagadoraResolver,
+        @inject(AlertaItemLoteRepository) private readonly alertaRepo: AlertaItemLoteRepository,
+        @inject(BloqueioDuplicidadeRepository)
+        private readonly bloqueioRepo: BloqueioDuplicidadeRepository,
+        @inject(VerificacaoEventoRepository) private readonly eventos: VerificacaoEventoRepository,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -109,7 +126,7 @@ export default class LotePagamentoService {
             banco: input.banco,
             conta: input.conta,
         });
-        return this.exigirLote(input.loteId);
+        return this.loteCompleto(input.loteId);
     };
 
     /**
@@ -159,13 +176,27 @@ export default class LotePagamentoService {
             titCod: input.titCod,
             modalidade: input.modalidade,
         });
-        return this.exigirLote(input.loteId);
+        // ADR-0063 I13a — TED/PIX dispara a verificação SÓ deste item (pode retirá-lo do lote se
+        // faltar dado de pagamento, I13j); qualquer outra forma descarta as alertas abertas dele.
+        const chave = { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod };
+        if (this.verificacao.ehVerificavel({ modalidade: input.modalidade })) {
+            await this.verificacao.verificarItens(input.loteId, { itens: [chave] });
+        } else {
+            await this.verificacao.descartarVerificacao(input.loteId, chave, input.ator);
+        }
+        return this.loteCompleto(input.loteId);
     };
 
-    public listarLotes = (filtro: ListarLotesFiltro): Promise<LotePagamento[]> =>
-        this.repo.listLotes(filtro);
+    /** Lotes com as alertas vivas de cada item (ADR-0063): a tela mostra os badges na listagem. */
+    public listarLotes = async (filtro: ListarLotesFiltro): Promise<LotePagamento[]> =>
+        this.comAlertas(await this.repo.listLotes(filtro));
 
-    public getLote = (id: string): Promise<LotePagamento | null> => this.repo.getLoteComItens(id);
+    public getLote = async (id: string): Promise<LotePagamento | null> => {
+        const lote = await this.repo.getLoteComItens(id);
+        if (!lote) return null;
+        const [completo] = await this.comAlertas([lote]);
+        return completo ?? lote;
+    };
 
     /**
      * Inclui um título no lote — I2/I3/I4 na fronteira do agregado.
@@ -188,7 +219,23 @@ export default class LotePagamentoService {
         }
         // já está neste lote? idempotente.
         if (lote.itens.some((i) => i.docCod === input.docCod && i.titCod === input.titCod)) {
-            return lote;
+            return this.loteCompleto(lote.id);
+        }
+        // ADR-0063 I13g — título retirado por duplicidade não volta a lote enquanto o bloqueio
+        // estiver ATIVO (antes de qualquer leitura no Conexos).
+        const bloqueio = await this.bloqueioRepo.findAtivo({
+            filCod: input.filCod,
+            docCod: input.docCod,
+            titCod: input.titCod,
+        });
+        if (bloqueio) {
+            throw new DuplicateHoldError({
+                filCod: input.filCod,
+                docCod: input.docCod,
+                titCod: input.titCod,
+                motivo: bloqueio.motivo,
+                marcadoPor: bloqueio.marcadoPor,
+            });
         }
         // I2 — elegibilidade AUTORITATIVA (re-leitura Conexos, FORA do lock/transação).
         const titulo = await this.conexos.getTituloAPagar(input.filCod, input.docCod, input.titCod);
@@ -273,7 +320,7 @@ export default class LotePagamentoService {
             docCod: input.docCod,
             titCod: input.titCod,
         });
-        return this.exigirLote(input.loteId);
+        return this.loteCompleto(input.loteId);
     };
 
     public removerTitulo = async (input: IncluirTituloInput): Promise<LotePagamento> => {
@@ -295,6 +342,13 @@ export default class LotePagamentoService {
                 },
                 tx,
             );
+            // ADR-0063: o item saiu do lote — as alertas vivas dele são DESCARTADAS (trilha).
+            await this.alertaRepo.descartarDoItem(
+                input.loteId,
+                { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod },
+                input.ator,
+                tx,
+            );
             // O analista mexeu num lote automático → vira manual (cron para de gerenciar).
             if (lote.automatico) await this.repo.marcarManual(input.loteId, tx);
             await this.repo.tocarLote(input.loteId, tx);
@@ -303,7 +357,7 @@ export default class LotePagamentoService {
             docCod: input.docCod,
             titCod: input.titCod,
         });
-        return this.exigirLote(input.loteId);
+        return this.loteCompleto(input.loteId);
     };
 
     /**
@@ -353,9 +407,23 @@ export default class LotePagamentoService {
         if (semModalidade > 0) {
             throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
-        // ADR-0054 (Adendo) + ADR-0061 I12f — FALHA FECHADA: item TED/PIX sem destino resolvível
-        // (cadastro do Conexos ou exceção APROVADA) barra o finalizar.
-        await this.exigirDestinoOfertado(lote);
+        // ADR-0063 (I13a/b/f/j) — re-verifica TODOS os itens TED/PIX antes da transição L3. Substitui
+        // a checagem de oferta da ADR-0054/0061 (I12f): o destino é resolvido pela MESMA função
+        // (`DestinoPagamentoResolver`), agora dentro da verificação, que aposenta a exceção que o
+        // cadastro tornou desnecessária (I12c). Ordem dos bloqueios (documentada no teste):
+        //   1. a verificação retirou item(ns) → `ItemsRemovedByCheckError` (lote segue RASCUNHO, Q5);
+        //   2. item PENDENTE (Conexos não respondeu) → `PaymentCheckPendingError` (falha fechada);
+        //   3. alerta de duplicidade ABERTA → `PendingDuplicateAlertError`. Canal habitual não barra.
+        const verificacao = await this.verificacao.verificarItens(input.loteId, {
+            aposentarExcecao: true,
+        });
+        if (verificacao.retirados.length > 0) {
+            throw new ItemsRemovedByCheckError({ loteId: lote.id, itens: verificacao.retirados });
+        }
+        if (verificacao.pendentes.length > 0) {
+            throw new PaymentCheckPendingError({ loteId: lote.id, itens: verificacao.pendentes });
+        }
+        await this.exigirDuplicidadesTratadas(lote);
         return this.transicionar(input, {
             de: [LOTE_STATUS.RASCUNHO],
             para: LOTE_STATUS.FINALIZADO,
@@ -364,12 +432,26 @@ export default class LotePagamentoService {
         });
     };
 
-    public reabrirLote = (input: TransicaoInput): Promise<LotePagamento> =>
-        this.transicionar(input, {
-            de: [LOTE_STATUS.FINALIZADO],
-            para: LOTE_STATUS.RASCUNHO,
-            acao: 'reabrir',
-        });
+    /** L4 — reabre; limpa a conferência (ADR-0063, I13l), com evento na trilha quando havia uma. */
+    public reabrirLote = async (input: TransicaoInput): Promise<LotePagamento> => {
+        const antes = await this.repo.getLoteComItens(input.loteId);
+        return this.transicionar(
+            input,
+            { de: [LOTE_STATUS.FINALIZADO], para: LOTE_STATUS.RASCUNHO, acao: 'reabrir' },
+            antes?.conferidoPor
+                ? (tx) =>
+                      this.eventos.registrar(
+                          {
+                              evento: VERIFICATION_EVENT.CONFERENCIA_LIMPA,
+                              ator: input.ator,
+                              loteId: input.loteId,
+                              dados: { conferidoPor: antes.conferidoPor, acao: 'reabrir' },
+                          },
+                          tx,
+                      )
+                : undefined,
+        );
+    };
 
     public cancelarLote = (input: TransicaoInput): Promise<LotePagamento> =>
         this.transicionar(input, {
@@ -380,53 +462,68 @@ export default class LotePagamentoService {
 
     // -------------------------------------------------------------- internals
 
-    private flagsDestino = async (): Promise<{
-        ted: boolean;
-        pix: boolean;
-        excecao: boolean;
-    }> => {
-        const env = await this.environmentProvider.getEnvironmentVars();
-        return {
-            ted: env.sispagTedEnabled === true,
-            pix: env.sispagPixEnabled === true,
-            excecao: env.sispagExcecaoDestinoEnabled === true,
-        };
-    };
-
     /**
-     * Checagem do finalizar (ADR-0054 Adendo, ADR-0061 I12f): item TED/PIX — com a flag da
-     * modalidade ligada — sem a modalidade na OFERTA do painel. A oferta usa o mesmo resolver do
-     * envio (cadastro primeiro, exceção APROVADA como fallback), então "ofertado" cobre os dois.
-     * Pede também a aposentadoria das exceções que o cadastro tornou desnecessárias (I12c). A
-     * checagem estrita, autoritativa, continua no envio. Com as flags desligadas não consulta
-     * nada. A mensagem nomeia o item (docCod/titCod, credor), nunca o destino (I10h).
+     * I13f — alerta de duplicidade ABERTA de item que ainda está no lote barra o finalizar, com a
+     * lista por item (e a contraparte). Alerta de canal habitual NÃO barra.
      */
-    private exigirDestinoOfertado = async (lote: LotePagamento): Promise<void> => {
-        const flags = await this.flagsDestino();
-        const alvo = lote.itens.filter(
-            (i) =>
-                (i.modalidade === MODALIDADE.TED && flags.ted) ||
-                (i.modalidade === MODALIDADE.PIX && flags.pix),
+    private exigirDuplicidadesTratadas = async (lote: LotePagamento): Promise<void> => {
+        const abertas = (await this.alertaRepo.listVivasDosLotes([lote.id])).filter(
+            (a) => a.estado === ITEM_ALERT_STATE.ABERTA && DUPLICATE_ALERT_TYPES.includes(a.tipo),
         );
-        if (alvo.length === 0) return;
-        const oferta = await this.painel.modalidadesDisponiveisDoLote(lote.id, {
-            aposentarExcecao: true,
-        });
-        const ofertadas = new Map(oferta.map((o) => [`${o.docCod}:${o.titCod}`, o.modalidades]));
-        const semDestino = alvo.filter((i) => {
-            const modalidade = i.modalidade;
-            return !modalidade || !ofertadas.get(`${i.docCod}:${i.titCod}`)?.includes(modalidade);
-        });
-        if (semDestino.length > 0) {
-            throw new DestinoPagamentoAusenteError({
-                itens: semDestino.map((i) => ({
+        const porItem = new Map<string, AlertaItemLote[]>();
+        for (const a of abertas) {
+            const lista = porItem.get(chaveItem(a)) ?? [];
+            lista.push(a);
+            porItem.set(chaveItem(a), lista);
+        }
+        const itens = lote.itens.flatMap((i) => {
+            const alertas = porItem.get(chaveItem(i));
+            if (!alertas) return [];
+            return [
+                {
                     docCod: i.docCod,
                     titCod: i.titCod,
                     ...(i.credor ? { credor: i.credor } : {}),
-                    ...(i.modalidade ? { modalidade: i.modalidade } : {}),
-                })),
-            });
+                    alertas: alertas.map((a) => ({
+                        id: a.id,
+                        tipo: a.tipo,
+                        ...(a.contraparteFilCod !== undefined
+                            ? { contraparteFilCod: a.contraparteFilCod }
+                            : {}),
+                        ...(a.contraparteDocCod ? { contraparteDocCod: a.contraparteDocCod } : {}),
+                    })),
+                },
+            ];
+        });
+        if (itens.length > 0) throw new PendingDuplicateAlertError({ loteId: lote.id, itens });
+    };
+
+    /** Anexa a cada item as alertas VIVAS dele (ABERTA | RESOLVIDA) — uma consulta por chamada. */
+    private comAlertas = async (lotes: LotePagamento[]): Promise<LotePagamento[]> => {
+        if (lotes.length === 0) return lotes;
+        const alertas = await this.alertaRepo.listVivasDosLotes(lotes.map((l) => l.id));
+        if (alertas.length === 0) return lotes;
+        const porItem = new Map<string, AlertaItemLote[]>();
+        for (const a of alertas) {
+            const k = `${a.loteId}|${chaveItem(a)}`;
+            const lista = porItem.get(k) ?? [];
+            lista.push(a);
+            porItem.set(k, lista);
         }
+        return lotes.map((l) => ({
+            ...l,
+            itens: l.itens.map((i) => {
+                const doItem = porItem.get(`${l.id}|${chaveItem(i)}`);
+                return doItem ? { ...i, alertas: doItem } : i;
+            }),
+        }));
+    };
+
+    /** O lote como sai para a API depois de uma mutação: itens + alertas. */
+    private loteCompleto = async (id: string): Promise<LotePagamento> => {
+        const [completo] = await this.comAlertas([await this.exigirLote(id)]);
+        if (!completo) return this.exigirLote(id);
+        return completo;
     };
 
     private transicionar = async (
@@ -437,13 +534,22 @@ export default class LotePagamentoService {
             acao: string;
             finalizadoPor?: string;
         },
+        /** Efeito na MESMA transação da troca de status (ex.: evento de conferência limpa). */
+        naTransacao?: (tx: TransactionClient) => Promise<unknown>,
     ): Promise<LotePagamento> => {
-        const afetadas = await this.repo.transicionarStatus({
-            id: input.loteId,
-            de: t.de,
-            para: t.para,
-            versaoEsperada: input.versao,
-            finalizadoPor: t.finalizadoPor,
+        const afetadas = await this.db.withTransaction(async (tx) => {
+            const n = await this.repo.transicionarStatus(
+                {
+                    id: input.loteId,
+                    de: t.de,
+                    para: t.para,
+                    versaoEsperada: input.versao,
+                    finalizadoPor: t.finalizadoPor,
+                },
+                tx,
+            );
+            if (n > 0 && naTransacao) await naTransacao(tx);
+            return n;
         });
         if (afetadas === 0) {
             // Distingue conflito de versão vs. estado incompatível relendo.
@@ -461,7 +567,7 @@ export default class LotePagamentoService {
             });
         }
         await this.audit(t.acao, input.loteId, input.ator, { para: t.para });
-        return this.exigirLote(input.loteId);
+        return this.loteCompleto(input.loteId);
     };
 
     private exigirLote = async (id: string): Promise<LotePagamento> => {
