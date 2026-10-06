@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { isSessionExpiredError } from '@/lib/http'
-import { criarLote, incluirTitulo, type LotePagamento, type TituloAPagar } from '@/lib/sispag'
+import { cancelarLote, criarLote, incluirTitulo, type LotePagamento, type TituloAPagar } from '@/lib/sispag'
 import { planoDeSaida, type SaidaDeLote } from './moverParaLote'
 
 const chave = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
@@ -53,10 +53,19 @@ export function useCriarLoteManual({
             falhas.push(`${t.docCod}/${t.titCod}: ${e instanceof Error ? e.message : 'erro'}`)
           }
         }
+        // Nenhum título entrou: não deixa um lote manual vazio para trás (o lote nasceu na versão 1
+        // e nenhuma inclusão o tocou). Falhar ao cancelar não muda o aviso abaixo.
+        if (ok === 0) {
+          await cancelarLote(lote.id, lote.versao).catch(() => undefined)
+        }
         setConfirmacao(null)
         await aoConcluir()
         const descricaoMovidos = movidos > 0 ? `${movidos} movido(s) de outro lote. ` : ''
-        if (falhas.length === 0) {
+        if (ok === 0) {
+          toast.error('Nenhum título entrou no lote; o lote foi descartado', {
+            description: falhas.slice(0, 3).join(' · '),
+          })
+        } else if (falhas.length === 0) {
           toast.success(`Lote criado com ${ok} título(s)`, {
             description: `${descricaoMovidos}Lote criado localmente — nada foi escrito no ERP ainda.`,
           })
