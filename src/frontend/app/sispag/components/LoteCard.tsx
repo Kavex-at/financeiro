@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Copy,
   Download,
+  FileSpreadsheet,
   FileText,
   Landmark,
   Plus,
@@ -19,6 +20,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
@@ -42,6 +44,7 @@ import {
   cancelarLote,
   type ContaPagadora,
   ehDuplicidade,
+  exportarTitulosRemessas,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   fetchContasPagadoras,
@@ -64,6 +67,7 @@ import {
   rotuloConta,
   STATUS_SINCRONIZAVEIS,
   sincronizarLote,
+  temRemessa,
   type TituloSemBoleto,
   tituloDeItem,
   ultimaSincronizacao,
@@ -388,6 +392,8 @@ export function LoteCard({
   acao,
   onAdicionar,
   destacado = false,
+  selecionado = false,
+  onSelecionar,
 }: {
   lote: LotePagamento
   busy: boolean
@@ -398,6 +404,10 @@ export function LoteCard({
    * a vista e ganha um anel de foco para ser achado na lista.
    */
   destacado?: boolean
+  /** Lote marcado para o export de títulos em lote (aba Finalizados). */
+  selecionado?: boolean
+  /** Presente = o card mostra a caixa de seleção (só em lote com remessa gerada). */
+  onSelecionar?: (lote: LotePagamento, marcado: boolean) => void
 }) {
   const [aberto, setAberto] = React.useState(false)
   // ADR-0053: toda ação do lote exige `sispag:executar`. Sem ela (ou enquanto carrega), as ações
@@ -465,6 +475,7 @@ export function LoteCard({
   const aguardandoConferencia = isFinalizado && l.exigeConferencia === true && !l.conferidoPor
   // ADR-0055: depois da remessa, o lote acompanha a baixa dos títulos no Conexos.
   const sincronizavel = STATUS_SINCRONIZAVEIS.includes(l.status)
+  const comRemessa = temRemessa(l)
   const isRetornado = l.status === 'RETORNADO'
   const sincronizadoEm = ultimaSincronizacao(l)
   // A2: revisão obrigatória — não finaliza enquanto houver item "a definir".
@@ -569,6 +580,13 @@ export function LoteCard({
         .join(' ')}
     >
       <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
+        {onSelecionar && comRemessa ? (
+          <Checkbox
+            checked={selecionado}
+            onCheckedChange={(v) => onSelecionar(l, v === true)}
+            aria-label={`Selecionar lote da filial ${l.filCod} para exportar os títulos`}
+          />
+        ) : null}
         <button
           type="button"
           onClick={() => setAberto((v) => !v)}
@@ -769,22 +787,44 @@ export function LoteCard({
               <RefreshCcw className="size-4" aria-hidden /> Sincronizar agora
             </Button>
           ) : null}
-          {l.remessaArquivo && podeExecutar ? (
+          {/* Todo lote com remessa mostra o download — pelo STATUS, não por `remessaArquivo`:
+              a lista vinha sem esse campo e o botão sumia em toda carga de página. */}
+          {(comRemessa || l.remessaArquivo) && podeExecutar ? (
             <Button
               size="sm"
               variant="outline"
               disabled={busy}
-              title={`Arquivo ${l.remessaArquivo} (remessa nº ${l.remessaNum ?? '—'}), lote nativo ${l.nativeFlpCod ?? '—'}`}
+              title={
+                l.remessaArquivo
+                  ? `Baixar o arquivo ${l.remessaArquivo} (remessa nº ${l.remessaNum ?? '—'}, lote nativo ${l.nativeFlpCod ?? '—'}) para enviar ao banco`
+                  : 'Baixar o arquivo .REM desta remessa para enviar ao banco'
+              }
               onClick={() =>
                 acao(async () => {
                   const { nome, arquivo } = await baixarRemessa(l.id)
                   // Os bytes do ERP vão direto ao navegador — sem string no meio, que
                   // reencodaria em UTF-8 e quebraria as colunas fixas do CNAB.
                   baixarBlob(arquivo, nome)
-                }, 'Arquivo baixado')
+                }, l.remessaArquivo ? `Remessa ${l.remessaArquivo} baixada` : 'Remessa baixada')
               }
             >
-              <Download className="size-4" /> Baixar {l.remessaArquivo}
+              <Download className="size-4" aria-hidden /> Baixar remessa
+            </Button>
+          ) : null}
+          {comRemessa && podeVer ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              title="Planilha (.xlsx) com os títulos desta remessa, para revisão do financeiro"
+              onClick={() =>
+                acao(async () => {
+                  const { nome, arquivo } = await exportarTitulosRemessas([l.id])
+                  baixarBlob(arquivo, nome)
+                }, 'Títulos exportados')
+              }
+            >
+              <FileSpreadsheet className="size-4" aria-hidden /> Exportar títulos
             </Button>
           ) : null}
         </div>

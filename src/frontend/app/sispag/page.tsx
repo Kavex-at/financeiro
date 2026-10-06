@@ -85,6 +85,7 @@ import { ConfirmarProcessarRetornoDialog } from './components/ConfirmarAcaoDialo
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { useCarteiraAoAbrir } from './useCarteiraAoAbrir'
 import { LoteCard } from './components/LoteCard'
+import { ExportarTitulosBarra, useSelecaoRemessas } from './components/ExportarTitulosBarra'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
 import { MoverParaLoteDialog } from './components/MoverParaLoteDialog'
 import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLote'
@@ -439,6 +440,8 @@ function SispagPanel() {
     8,
     filtroFinalizados,
   )
+  // Export dos títulos das remessas (lote C): seleção nos cards da aba Finalizados.
+  const selecaoRemessas = useSelecaoRemessas()
   // Retornos (.RET) do fin052 — mesmo kit (filial + busca + paginação) das demais abas.
   const abaRetornos = useTabelaFiltro(
     retornos ?? [],
@@ -1166,8 +1169,20 @@ function SispagPanel() {
                 />
               ) : (
                 <div className="space-y-3">
+                  <ExportarTitulosBarra
+                    lotes={finFiltrados}
+                    selecionados={selecaoRemessas.selecionados}
+                    onDefinir={selecaoRemessas.definir}
+                  />
                   {abaFinalizados.slice.map((l) => (
-                    <LoteCard key={l.id} lote={l} busy={busy} acao={acaoLote} />
+                    <LoteCard
+                      key={l.id}
+                      lote={l}
+                      busy={busy}
+                      acao={acaoLote}
+                      selecionado={selecaoRemessas.selecionados.has(l.id)}
+                      onSelecionar={selecaoRemessas.alternar}
+                    />
                   ))}
                 </div>
               )}

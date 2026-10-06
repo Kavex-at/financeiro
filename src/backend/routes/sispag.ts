@@ -29,6 +29,8 @@ import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
+import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
+import { MAX_LOTES_EXPORT } from '../domain/interface/sispag/RemessaTitulosExport.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
@@ -1065,9 +1067,16 @@ router.get(
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(RemessaService);
-        const arquivo = await service.baixarArquivo(String(req.params.id));
+        let arquivo: Awaited<ReturnType<RemessaService['baixarArquivo']>>;
+        try {
+            arquivo = await service.baixarArquivo(String(req.params.id));
+        } catch (err) {
+            // Lote COM remessa cujo arquivo não está no fin015: mensagem própria, não "sem remessa".
+            if (respondLoteError(req, res, err)) return;
+            throw err;
+        }
         if (!arquivo) {
-            res.status(404).json({ error: 'lote sem remessa gerada' });
+            res.status(404).json({ error: 'Este lote não tem remessa gerada.' });
             return;
         }
         res.setHeader('Content-Type', 'text/plain; charset=latin1');
@@ -1077,6 +1086,40 @@ router.get(
         // favorecido viraria 2 bytes e empurraria todas as colunas seguintes daquele
         // registro. O banco recusa o arquivo, ou pior, lê os campos deslocados.
         res.send(Buffer.from(arquivo.conteudo, 'latin1'));
+    }),
+);
+
+// POST /sispag/remessas/titulos/exportar — planilha (.xlsx) com os títulos das remessas
+// selecionadas, para a revisão do financeiro. Leitura local (sem Conexos), mesmos dados que
+// `GET /sispag/lotes` já mostra (sem destino do favorecido) → `SISPAG_VER`. POST porque leva
+// uma lista de ids; o teto evita uma planilha gigante segurando o processo.
+const CONTENT_TYPE_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const exportarTitulosSchema = z.object({
+    loteIds: z.array(z.string().uuid()).min(1).max(MAX_LOTES_EXPORT),
+});
+router.post(
+    '/remessas/titulos/exportar',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = exportarTitulosSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: `Selecione de 1 a ${MAX_LOTES_EXPORT} lotes para exportar.`,
+                details: parsed.error.flatten(),
+            });
+            return;
+        }
+        const service = container.resolve(RemessaTitulosExportService);
+        try {
+            const { filename, buffer } = await service.exportar(parsed.data.loteIds, req.requestId);
+            res.setHeader('Content-Type', CONTENT_TYPE_XLSX);
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(buffer);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
     }),
 );
 

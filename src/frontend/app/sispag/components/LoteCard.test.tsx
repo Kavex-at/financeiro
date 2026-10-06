@@ -35,6 +35,7 @@ jest.mock('@/lib/sispag', () => {
     reabrirLote: jest.fn(),
     sincronizarLote: jest.fn(),
     baixarRemessa: jest.fn(),
+    exportarTitulosRemessas: jest.fn(),
     removerItem: jest.fn(),
     // ADR-0054: por padrão as flags estão desligadas — a tela de antes.
     getRecursos: jest
@@ -43,9 +44,16 @@ jest.mock('@/lib/sispag', () => {
   }
 })
 
+jest.mock('@/lib/download', () => ({
+  ...jest.requireActual('@/lib/download'),
+  baixarBlob: jest.fn(),
+}))
+
+import { baixarBlob } from '@/lib/download'
 import {
   baixarRemessa,
   cancelarLote,
+  exportarTitulosRemessas,
   fetchContasPagadoras,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
@@ -539,5 +547,80 @@ describe('LoteCard — sincronização pelo título (ADR-0055)', () => {
     renderCard(lote({ status: 'RETORNADO' }))
     expect(screen.getByText(/rejeitado pelo banco/i)).toBeInTheDocument()
     expect(document.getElementById('lote-L1')?.className).toMatch(/border-danger/)
+  })
+})
+
+describe('LoteCard — download da remessa e export dos títulos', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    permissoes = { carregando: false, lista: ['sispag:ver', 'sispag:executar'] }
+  })
+
+  it.each(['REMESSA_GERADA', 'RETORNADO', 'BAIXADO'] as const)(
+    '%s: "Baixar remessa" aparece no cabeçalho mesmo sem remessaArquivo na lista',
+    (status) => {
+      // Causa-raiz do "não vi o download": a lista vinha sem `remessaArquivo` e o botão sumia.
+      renderCard(lote({ status }))
+      expect(screen.getByRole('button', { name: /baixar remessa/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /exportar títulos/i })).toBeInTheDocument()
+    },
+  )
+
+  it.each(['RASCUNHO', 'FINALIZADO'] as const)('%s: sem download nem export', (status) => {
+    renderCard(lote({ status }))
+    expect(screen.queryByRole('button', { name: /baixar remessa/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /exportar títulos/i })).not.toBeInTheDocument()
+  })
+
+  it('baixar entrega os bytes do backend com o nome anunciado', async () => {
+    const user = userEvent.setup()
+    const arquivo = new Blob(['CNAB'])
+    ;(baixarRemessa as jest.Mock).mockResolvedValue({ nome: 'PG061001.REM', arquivo })
+    const acao = renderCard(lote({ status: 'REMESSA_GERADA', remessaArquivo: 'PG061001.REM' }))
+    await user.click(screen.getByRole('button', { name: /baixar remessa/i }))
+    expect(acao).toHaveBeenCalledWith(expect.any(Function), 'Remessa PG061001.REM baixada')
+    await waitFor(() => expect(baixarBlob).toHaveBeenCalledWith(arquivo, 'PG061001.REM'))
+  })
+
+  it('"Exportar títulos" do card exporta só este lote', async () => {
+    const user = userEvent.setup()
+    const arquivo = new Blob(['PK'])
+    ;(exportarTitulosRemessas as jest.Mock).mockResolvedValue({ nome: 't.xlsx', arquivo })
+    renderCard(lote({ status: 'REMESSA_GERADA' }))
+    await user.click(screen.getByRole('button', { name: /exportar títulos/i }))
+    expect(exportarTitulosRemessas).toHaveBeenCalledWith(['L1'])
+    await waitFor(() => expect(baixarBlob).toHaveBeenCalledWith(arquivo, 't.xlsx'))
+  })
+
+  it('só sispag:ver: exporta títulos, mas não baixa o .REM (dados bancários dos fornecedores)', () => {
+    permissoes = { carregando: false, lista: ['sispag:ver'] }
+    renderCard(lote({ status: 'REMESSA_GERADA', remessaArquivo: 'PG061001.REM' }))
+    expect(screen.getByRole('button', { name: /exportar títulos/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /baixar remessa/i })).not.toBeInTheDocument()
+  })
+
+  it('caixa de seleção só com onSelecionar e só em lote com remessa', async () => {
+    const user = userEvent.setup()
+    const onSelecionar = jest.fn()
+    const { rerender } = render(
+      <LoteCard
+        lote={lote({ status: 'REMESSA_GERADA' })}
+        busy={false}
+        acao={acaoQueExecuta()}
+        onSelecionar={onSelecionar}
+      />,
+    )
+    await user.click(screen.getByRole('checkbox', { name: /selecionar lote/i }))
+    expect(onSelecionar).toHaveBeenCalledWith(expect.objectContaining({ id: 'L1' }), true)
+
+    rerender(
+      <LoteCard
+        lote={lote({ status: 'FINALIZADO' })}
+        busy={false}
+        acao={acaoQueExecuta()}
+        onSelecionar={onSelecionar}
+      />,
+    )
+    expect(screen.queryByRole('checkbox', { name: /selecionar lote/i })).not.toBeInTheDocument()
   })
 })

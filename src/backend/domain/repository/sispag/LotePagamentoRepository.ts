@@ -26,6 +26,18 @@ import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 /** Superfície de query comum ao pool e ao cliente transacional (mesmos 4 métodos). */
 type QueryRunner = Pick<PostgreeDatabaseClient, 'selectMany' | 'selectFirst' | 'insert' | 'update'>;
 
+/**
+ * Projeção ÚNICA do cabeçalho do lote — `getLoteComItens`, `listLotes` e `listLotesPorIds` leem a
+ * mesma lista. Constante sem entrada do usuário (interpolá-la não abre injeção). Divergir aqui foi
+ * o que escondeu o botão "Baixar remessa" da aba Finalizados.
+ */
+const LOTE_HEADER_COLUMNS = `id, fil_cod, banco, conta, status, criado_por, finalizado_por,
+                    finalizado_em, versao, criado_em, automatico,
+                    native_fil_cod, native_bnc_cod, native_flp_cod, native_gab_cod,
+                    remessa_arquivo, remessa_num, remessa_gerada_em, cco_cod, ger_num,
+                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito,
+                    conferido_por, conferido_em, devolvido_por, devolvido_em, motivo_devolucao`;
+
 interface LoteHeaderRow {
     id: string;
     fil_cod: number;
@@ -215,7 +227,9 @@ export default class LotePagamentoRepository {
         ...(h.native_gab_cod != null ? { nativeGabCod: Number(h.native_gab_cod) } : {}),
         ...(h.remessa_arquivo != null ? { remessaArquivo: String(h.remessa_arquivo) } : {}),
         ...(h.remessa_num != null ? { remessaNum: Number(h.remessa_num) } : {}),
-        ...(h.remessa_gerada_em != null ? { remessaGeradaEm: String(h.remessa_gerada_em) } : {}),
+        ...(h.remessa_gerada_em != null
+            ? { remessaGeradaEm: new Date(h.remessa_gerada_em).toISOString() }
+            : {}),
         ...(h.cco_cod != null ? { ccoCod: Number(h.cco_cod) } : {}),
         ...(h.ger_num != null ? { gerNum: Number(h.ger_num) } : {}),
         ...(h.data_debito != null ? { dataDebito: String(h.data_debito) } : {}),
@@ -349,12 +363,7 @@ export default class LotePagamentoRepository {
         tx?: TransactionClient,
     ): Promise<LotePagamento | null> => {
         const header = await this.db(tx).selectFirst<LoteHeaderRow>(
-            `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
-                    finalizado_em, versao, criado_em, automatico,
-                    native_fil_cod, native_bnc_cod, native_flp_cod, native_gab_cod,
-                    remessa_arquivo, remessa_num, remessa_gerada_em, cco_cod, ger_num,
-                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito,
-                    conferido_por, conferido_em, devolvido_por, devolvido_em, motivo_devolucao
+            `SELECT ${LOTE_HEADER_COLUMNS}
              FROM lote_pagamento WHERE id = $id`,
             { id },
         );
@@ -375,17 +384,35 @@ export default class LotePagamentoRepository {
     };
 
     public listLotes = async (filtro: ListarLotesFiltro): Promise<LotePagamento[]> => {
+        // Mesma projeção de cabeçalho do `getLoteComItens`. Sem `remessa_arquivo` e as chaves
+        // nativas aqui, a aba Finalizados recebia todo lote sem remessa e escondia o botão
+        // "Baixar remessa" em toda carga de página (sispag-remessa-download-export).
         const headers = (await this.databaseClient.selectMany(
-            `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
-                    finalizado_em, versao, criado_em, automatico,
-                    to_char(data_debito, 'YYYY-MM-DD') AS data_debito,
-                    conferido_por, conferido_em, devolvido_por, devolvido_em, motivo_devolucao
+            `SELECT ${LOTE_HEADER_COLUMNS}
              FROM lote_pagamento
              WHERE ($status::text IS NULL OR status = $status)
                AND ($filCod::int IS NULL OR fil_cod = $filCod)
              ORDER BY criado_em DESC`,
             { status: filtro.status ?? null, filCod: filtro.filCod ?? null },
         )) as LoteHeaderRow[];
+        return this.comItens(headers);
+    };
+
+    /** Lotes pelos ids (export de títulos das remessas). Ids ausentes simplesmente não voltam. */
+    public listLotesPorIds = async (ids: string[]): Promise<LotePagamento[]> => {
+        if (ids.length === 0) return [];
+        const headers = (await this.databaseClient.selectMany(
+            `SELECT ${LOTE_HEADER_COLUMNS}
+             FROM lote_pagamento
+             WHERE id = ANY($ids)
+             ORDER BY remessa_gerada_em ASC NULLS LAST, criado_em ASC`,
+            { ids },
+        )) as LoteHeaderRow[];
+        return this.comItens(headers);
+    };
+
+    /** Carrega os itens de vários lotes numa query e monta os agregados. */
+    private comItens = async (headers: LoteHeaderRow[]): Promise<LotePagamento[]> => {
         if (headers.length === 0) return [];
         const ids = headers.map((h) => h.id);
         const itens = (await this.databaseClient.selectMany(
