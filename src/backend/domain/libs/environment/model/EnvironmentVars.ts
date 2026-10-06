@@ -1,3 +1,29 @@
+/** Parâmetros da verificação TED/PIX (ADR-0063). Ver `SISPAG_VERIFICACAO_DEFAULT`. */
+export interface SispagVerificacaoConfig {
+    /** `SISPAG_DUPLICIDADE_JANELA_DIAS`: ±dias de vencimento da duplicidade FRACA (I13d). */
+    duplicidadeJanelaDias: number;
+    /** `SISPAG_DUPLICIDADE_DESDE` (`YYYY-MM-DD`): início da leitura do fin064 (gap Q3), epoch-ms. */
+    duplicidadeDesde: number;
+    /** `SISPAG_PERFIL_CANAL_MIN_PAGAMENTOS`: perfil ALTA exige ≥ N pagamentos únicos. */
+    perfilMinPagamentos: number;
+    /** `SISPAG_PERFIL_CANAL_MIN_MESES`: perfil ALTA exige ≥ N meses distintos. */
+    perfilMinMeses: number;
+    /** `SISPAG_PERFIL_CANAL_MIN_PARTICIPACAO` (0 < x ≤ 1): participação do grupo dominante. */
+    perfilMinParticipacao: number;
+    /** `SISPAG_PERFIL_CANAL_MESES`: meses de histórico que o job `calcular-perfil-canal` lê. */
+    perfilJanelaMeses: number;
+}
+
+/** Defaults da Columbia (probes de 2026-10-05). Ponto de partida, ajustável sem ADR. */
+export const SISPAG_VERIFICACAO_DEFAULT: Readonly<SispagVerificacaoConfig> = {
+    duplicidadeJanelaDias: 15,
+    duplicidadeDesde: Date.UTC(2026, 0, 1),
+    perfilMinPagamentos: 5,
+    perfilMinMeses: 3,
+    perfilMinParticipacao: 0.95,
+    perfilJanelaMeses: 24,
+};
+
 export default class EnvironmentVars {
     public databaseConnectionString: string;
     public conexosLogin: string;
@@ -174,6 +200,11 @@ export default class EnvironmentVars {
      */
     public sispagCarteiraTtlMin: number;
     public sispagCarteiraCooldownMin: number;
+    /**
+     * Verificação TED/PIX (ADR-0063) — configuração do TENANT, não ontologia. Defaults da
+     * Columbia medidos nas probes de 2026-10-05; valor inválido volta ao default.
+     */
+    public sispagVerificacao: SispagVerificacaoConfig;
     public solicitacaoNumerarioGcdCod: number;
 
     /**
@@ -275,6 +306,7 @@ export default class EnvironmentVars {
         sispagPixEnabled,
         sispagCarteiraTtlMin,
         sispagCarteiraCooldownMin,
+        sispagVerificacao,
         solicitacaoNumerarioGcdCod,
         solicitacaoNumerarioGcdCodPorFilial,
         conexosCredEncKey,
@@ -318,6 +350,7 @@ export default class EnvironmentVars {
         sispagPixEnabled?: boolean;
         sispagCarteiraTtlMin?: number;
         sispagCarteiraCooldownMin?: number;
+        sispagVerificacao?: SispagVerificacaoConfig;
         solicitacaoNumerarioGcdCod: number;
         solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
         conexosCredEncKey?: string;
@@ -361,6 +394,7 @@ export default class EnvironmentVars {
         this.sispagPixEnabled = sispagPixEnabled ?? false;
         this.sispagCarteiraTtlMin = sispagCarteiraTtlMin ?? 30;
         this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
+        this.sispagVerificacao = sispagVerificacao ?? { ...SISPAG_VERIFICACAO_DEFAULT };
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};
         this.conexosCredEncKey = conexosCredEncKey;

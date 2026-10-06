@@ -4,6 +4,7 @@ import {
     type BorderoAPagar,
     CHAVE_PIX_TIPO_POR_CIX_VLD_TIPO,
     type ChavePixFavorecido,
+    type DuplicateCandidate,
     type LeituraTitulo,
     type LoteSispag,
     MODALIDADE,
@@ -106,6 +107,33 @@ const vldPagoEstrito = z.union([
     z.literal('0').transform(() => false),
     z.literal(false),
 ]);
+
+/** Página da leitura de duplicidade (ADR-0063): grande, porque a janela começa em 2026-01-01. */
+const DUPLICIDADE_PAGE_SIZE = 1000;
+/** Teto de páginas por filial — 50 mil títulos; acima disso algo está errado no filtro. */
+const DUPLICIDADE_MAX_PAGINAS = 50;
+
+/**
+ * Linha do fin064 lida pela verificação de duplicidade (I13c–e). `docCod` é obrigatório (sem ele
+ * não há o que comparar); o resto é tolerante — campo ilegível vira ausente, não derruba a linha.
+ */
+const duplicidadeRowSchema = z
+    .object({
+        docCod: z.union([z.string(), z.number()]).transform(String),
+        titCod: z.union([z.string(), z.number()]).transform(String).optional().catch('1'),
+        pesCod: strOpt,
+        pesCodFor: strOpt,
+        docEspNumero: strOpt,
+        dpeNomPessoa: strOpt,
+        dpeNomPessoaFor: strOpt,
+        titMnyValor: numOpt,
+        titDtaVencimento: numOpt,
+        vldPago: boolFromFlag,
+        docTip: strOpt,
+        docVldTipo: strOpt,
+        tpdCod: strOpt,
+    })
+    .passthrough();
 
 /** Linha do fin064 lida pela sincronização: só o que prova (ou não) o pagamento. */
 const situacaoTituloSchema = z
@@ -453,6 +481,90 @@ export default class ConexosSispagClient {
             );
         if (linha?.success) return this.situacaoDaLinha(linha.data);
         return { legivel: false, motivo: `título ${docCod}/${titCod} não encontrado no fin064` };
+    };
+
+    /**
+     * Títulos de UMA filial para a verificação de duplicidade (ADR-0063, I13c–e): `fin064` com
+     * vencimento ≥ `desde`, **sem** filtro de `vldPago` (a FORTE compara inclusive contra título já
+     * pago) e sem documento de previsão. Pagina de verdade: o `listGenericPaginated` devolve UMA
+     * página, então lê até esgotar o `count` (ou a página vir menor que o tamanho pedido).
+     *
+     * Linha que não passa no Zod é descartada (não derruba a lista). Falha de rede/HTTP propaga:
+     * quem chama trata como verificação PENDENTE (I13b, falha fechada) — nunca como "sem duplicata".
+     *
+     * Gap Q3: o filtro por favorecido NO SERVIDOR não foi medido (o `fin064` ignora em silêncio
+     * filtro desconhecido e responde 500 a coluna não-filtrável; sondar PRD foi vedado nesta
+     * entrega). Por isso a leitura é por filial e o recorte por favorecido é em memória
+     * (`listTitulosFavorecidoParaDuplicidade`). A `validate-sispag-verificacoes-ted-pix-v1.ts`
+     * mede o volume; trocar por filtro no servidor só com sonda que prove o filtro.
+     */
+    public listTitulosParaDuplicidade = async (
+        filCod: number,
+        desde: number,
+    ): Promise<DuplicateCandidate[]> => {
+        const filtro = { 'docVldPrevisao#EQ': 0, 'titDtaVencimento#GE': desde };
+        const linhas: Record<string, unknown>[] = [];
+        for (let pagina = 1; pagina <= DUPLICIDADE_MAX_PAGINAS; pagina += 1) {
+            const page = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'fin064/list',
+                    {
+                        ...this.listBody('fin064', filtro, DUPLICIDADE_PAGE_SIZE),
+                        pageNumber: pagina,
+                    },
+                    { filCod },
+                ),
+            );
+            const rows = page.rows ?? [];
+            linhas.push(...rows);
+            const total = Number(page.count);
+            if (rows.length < DUPLICIDADE_PAGE_SIZE) break;
+            if (Number.isFinite(total) && linhas.length >= total) break;
+        }
+        return linhas.flatMap((row) => {
+            const parsed = duplicidadeRowSchema.safeParse(row);
+            if (!parsed.success) return [];
+            const candidato = this.candidatoDuplicidade(parsed.data, filCod);
+            // Recorte também em memória: um filtro de data ignorado pelo ERP não alarga a janela.
+            if (candidato.vencimento !== undefined && candidato.vencimento < desde) return [];
+            return [candidato];
+        });
+    };
+
+    /** O recorte por favorecido de `listTitulosParaDuplicidade` (em memória — ver gap Q3 lá). */
+    public listTitulosFavorecidoParaDuplicidade = async (
+        filCod: number,
+        pesCod: string,
+        desde: number,
+    ): Promise<DuplicateCandidate[]> => {
+        const alvo = pesCod.trim();
+        return (await this.listTitulosParaDuplicidade(filCod, desde)).filter(
+            (t) => t.favorecido === alvo,
+        );
+    };
+
+    private candidatoDuplicidade = (
+        r: z.infer<typeof duplicidadeRowSchema>,
+        filCod: number,
+    ): DuplicateCandidate => {
+        // I13c: `pesCod`, e `pesCodFor` quando o `pesCod` vem vazio (o fin064 costuma mandar vazio).
+        const favorecido = r.pesCod?.trim() || r.pesCodFor?.trim() || undefined;
+        const credor = r.dpeNomPessoaFor ?? r.dpeNomPessoa;
+        const docTipo = [r.docTip, r.docVldTipo, r.tpdCod].some((v) => v !== undefined)
+            ? `${r.docTip ?? ''}/${r.docVldTipo ?? ''}/${r.tpdCod ?? ''}`
+            : undefined;
+        return {
+            filCod,
+            docCod: r.docCod,
+            titCod: r.titCod ?? '1',
+            ...(favorecido ? { favorecido } : {}),
+            ...(credor ? { credor } : {}),
+            numeroNota: (r.docEspNumero ?? '').replace(/\D/g, '').replace(/^0+/, ''),
+            valorCentavos: Math.round((r.titMnyValor ?? 0) * 100),
+            ...(r.titDtaVencimento !== undefined ? { vencimento: r.titDtaVencimento } : {}),
+            pago: r.vldPago ?? false,
+            ...(docTipo ? { docTipo } : {}),
+        };
     };
 
     /** Tri-estado de UMA linha: campo ilegível ou ausente é "não sei", nunca "não pago". */

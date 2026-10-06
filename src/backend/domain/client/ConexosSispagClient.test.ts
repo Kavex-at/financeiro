@@ -562,3 +562,105 @@ describe('ConexosSispagClient.lerSituacaoTitulo — fin064 tri-estado (I11c, ADR
         expect(t?.pago).toBe(false);
     });
 });
+
+describe('ConexosSispagClient.listTitulosParaDuplicidade — fin064 paginado (ADR-0063, I13c)', () => {
+    const DESDE = Date.UTC(2026, 0, 1);
+    const titulo = (docCod: number, over: Record<string, unknown> = {}) => ({
+        docCod,
+        titCod: 1,
+        pesCod: '',
+        pesCodFor: 77,
+        docEspNumero: `00${docCod}`,
+        titMnyValor: 10.5,
+        titDtaVencimento: DESDE + 86_400_000,
+        vldPago: 0,
+        ...over,
+    });
+
+    it('pagina de verdade até esgotar o count (2 páginas de 1000)', async () => {
+        const base = buildBase();
+        const pagina1 = Array.from({ length: 1000 }, (_, i) => titulo(i + 1));
+        const pagina2 = [titulo(1001), titulo(1002)];
+        base.listGenericPaginated
+            .mockResolvedValueOnce({ count: 1002, rows: pagina1 })
+            .mockResolvedValueOnce({ count: 1002, rows: pagina2 });
+        const titulos = await make(base).listTitulosParaDuplicidade(4, DESDE);
+        expect(titulos).toHaveLength(1002);
+        expect(base.listGenericPaginated).toHaveBeenCalledTimes(2);
+        const corpos = base.listGenericPaginated.mock.calls.map(
+            (c) => c[1] as { pageNumber: number; filterList: Record<string, unknown> },
+        );
+        expect(corpos.map((c) => c.pageNumber)).toEqual([1, 2]);
+        // Sem filtro de vldPago (inclui pagos), sem previsão, vencimento ≥ desde.
+        expect(corpos[0]?.filterList).toEqual({
+            'docVldPrevisao#EQ': 0,
+            'titDtaVencimento#GE': DESDE,
+        });
+        expect(base.listGenericPaginated.mock.calls[0]?.[2]).toEqual({ filCod: 4 });
+    });
+
+    it('para quando a página vem menor que o tamanho, mesmo com count maior', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValueOnce({ count: 5000, rows: [titulo(1)] });
+        expect(await make(base).listTitulosParaDuplicidade(4, DESDE)).toHaveLength(1);
+        expect(base.listGenericPaginated).toHaveBeenCalledTimes(1);
+    });
+
+    it('mapeia: favorecido pesCod→pesCodFor, NF normalizada, centavos, pago', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValueOnce({
+            count: 2,
+            rows: [
+                titulo(10, { vldPago: 1, titMnyValor: 1234.56 }),
+                titulo(11, { pesCod: '55', docEspNumero: null }),
+            ],
+        });
+        const [a, b] = await make(base).listTitulosParaDuplicidade(4, DESDE);
+        expect(a).toMatchObject({
+            filCod: 4,
+            docCod: '10',
+            titCod: '1',
+            favorecido: '77',
+            numeroNota: '10',
+            valorCentavos: 123_456,
+            pago: true,
+        });
+        expect(b).toMatchObject({ docCod: '11', favorecido: '55', numeroNota: '', pago: false });
+    });
+
+    it('linha inválida (sem docCod) é descartada sem derrubar a lista', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValueOnce({
+            count: 3,
+            rows: [titulo(1), { titCod: 1, pesCodFor: 77 }, titulo(3)],
+        });
+        const titulos = await make(base).listTitulosParaDuplicidade(4, DESDE);
+        expect(titulos.map((t) => t.docCod)).toEqual(['1', '3']);
+    });
+
+    it('recorta em memória vencimento anterior a desde (filtro ignorado pelo ERP não alarga)', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValueOnce({
+            count: 2,
+            rows: [titulo(1), titulo(2, { titDtaVencimento: DESDE - 1 })],
+        });
+        const titulos = await make(base).listTitulosParaDuplicidade(4, DESDE);
+        expect(titulos.map((t) => t.docCod)).toEqual(['1']);
+    });
+
+    it('falha de leitura propaga (quem chama marca a verificação PENDENTE)', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockRejectedValueOnce(httpError(500));
+        await expect(make(base).listTitulosParaDuplicidade(4, DESDE)).rejects.toBeDefined();
+    });
+
+    it('listTitulosFavorecidoParaDuplicidade recorta pelo favorecido em memória', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValueOnce({
+            count: 2,
+            rows: [titulo(1), titulo(2, { pesCodFor: 88 })],
+        });
+        const titulos = await make(base).listTitulosFavorecidoParaDuplicidade(4, '77', DESDE);
+        expect(titulos.map((t) => t.docCod)).toEqual(['1']);
+    });
+});

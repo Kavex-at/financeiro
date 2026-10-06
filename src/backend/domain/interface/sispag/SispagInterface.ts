@@ -654,3 +654,259 @@ export interface ExecucoesParadas {
     /** `flpCod` dos lotes nativos conhecidos — o número que se leva ao fin015. */
     lotesNativos: number[];
 }
+
+// ============================================================ ADR-0063 — verificação TED/PIX
+// Duplicidade, canal habitual, dados de pagamento e conferência por 2ª pessoa (I13a–m).
+// Ver ontology/business-rules/verificacao-ted-pix-sispag.md. Nada aqui escreve no Conexos.
+
+/** Ator das ações que o SISTEMA executa (retirada por falta de dado, resolução de pendência). */
+export const SISPAG_SYSTEM_ACTOR = 'sistema';
+
+/** Tipo da `AlertaItemLote` (I13c, I13d, I13i). */
+export const ITEM_ALERT_TYPE = {
+    DUPLICIDADE_FORTE: 'DUPLICIDADE_FORTE',
+    DUPLICIDADE_FRACA: 'DUPLICIDADE_FRACA',
+    CANAL_HABITUAL: 'CANAL_HABITUAL',
+} as const;
+
+export type ItemAlertType = (typeof ITEM_ALERT_TYPE)[keyof typeof ITEM_ALERT_TYPE];
+
+/** As duas de duplicidade — só elas bloqueiam o finalizar (I13f). */
+export const DUPLICATE_ALERT_TYPES: readonly ItemAlertType[] = [
+    ITEM_ALERT_TYPE.DUPLICIDADE_FORTE,
+    ITEM_ALERT_TYPE.DUPLICIDADE_FRACA,
+];
+
+/** Estado da `AlertaItemLote`. `OBSOLETA`/`DESCARTADA` só aparecem na trilha (gap Q12). */
+export const ITEM_ALERT_STATE = {
+    ABERTA: 'ABERTA',
+    RESOLVIDA: 'RESOLVIDA',
+    OBSOLETA: 'OBSOLETA',
+    DESCARTADA: 'DESCARTADA',
+} as const;
+
+export type ItemAlertState = (typeof ITEM_ALERT_STATE)[keyof typeof ITEM_ALERT_STATE];
+
+/** Resolução da alerta de duplicidade pela analista (I13f). */
+export const ITEM_ALERT_RESOLUTION = {
+    JUSTIFICADA: 'JUSTIFICADA',
+    RETIRADA: 'RETIRADA',
+} as const;
+
+export type ItemAlertResolution =
+    (typeof ITEM_ALERT_RESOLUTION)[keyof typeof ITEM_ALERT_RESOLUTION];
+
+/** A ação pedida pela analista na rota (JUSTIFICAR mantém o item; RETIRAR o tira e bloqueia). */
+export const DUPLICATE_ACTION = { JUSTIFICAR: 'JUSTIFICAR', RETIRAR: 'RETIRAR' } as const;
+
+export type DuplicateAction = (typeof DUPLICATE_ACTION)[keyof typeof DUPLICATE_ACTION];
+
+/** Estado da verificação de UM item TED/PIX (I13b). Ausente = nunca verificado (boleto, a definir). */
+export const PAYMENT_CHECK_STATE = { PENDENTE: 'PENDENTE', OK: 'OK' } as const;
+
+export type PaymentCheckState = (typeof PAYMENT_CHECK_STATE)[keyof typeof PAYMENT_CHECK_STATE];
+
+/** Estado do `BloqueioDuplicidade` (I13g). */
+export const DUPLICATE_HOLD_STATE = {
+    ATIVO: 'ATIVO',
+    ENCERRADO: 'ENCERRADO',
+    DESFEITO: 'DESFEITO',
+} as const;
+
+export type DuplicateHoldState = (typeof DUPLICATE_HOLD_STATE)[keyof typeof DUPLICATE_HOLD_STATE];
+
+/** Estado da `PendenciaCadastro` (I13k). Sem resolução manual: só o cadastro corrigido resolve. */
+export const PAYEE_ISSUE_STATE = { ABERTA: 'ABERTA', RESOLVIDA: 'RESOLVIDA' } as const;
+
+export type PayeeIssueState = (typeof PAYEE_ISSUE_STATE)[keyof typeof PAYEE_ISSUE_STATE];
+
+/** O que aconteceu com o item que originou a pendência (I13j). */
+export const PAYEE_ISSUE_OUTCOME = {
+    RETIRADO: 'RETIRADO',
+    MANTIDO_POR_EXCECAO: 'MANTIDO_POR_EXCECAO',
+} as const;
+
+export type PayeeIssueOutcome = (typeof PAYEE_ISSUE_OUTCOME)[keyof typeof PAYEE_ISSUE_OUTCOME];
+
+/** Motivo da remoção de item pelo sistema (I13j-1). */
+export const SYSTEM_REMOVAL_REASON = { SEM_DADO_PAGAMENTO: 'SEM_DADO_PAGAMENTO' } as const;
+
+/** Grupo de canal de pagamento (I13i): TED e PIX são um grupo só. */
+export const CHANNEL_GROUP = {
+    BOLETO: 'BOLETO',
+    TED_PIX: 'TED_PIX',
+    OUTROS: 'OUTROS',
+} as const;
+
+export type ChannelGroup = (typeof CHANNEL_GROUP)[keyof typeof CHANNEL_GROUP];
+
+/** Confiança do perfil de canal. Só `ALTA` gera alerta. */
+export const CHANNEL_CONFIDENCE = { ALTA: 'ALTA', MEDIA: 'MEDIA', BAIXA: 'BAIXA' } as const;
+
+export type ChannelConfidence = (typeof CHANNEL_CONFIDENCE)[keyof typeof CHANNEL_CONFIDENCE];
+
+/** Evento da trilha só-inclusão da verificação TED/PIX (I13m). Paridade com o CHECK da 0078. */
+export const VERIFICATION_EVENT = {
+    ALERTA_CRIADA: 'ALERTA_CRIADA',
+    ALERTA_JUSTIFICADA: 'ALERTA_JUSTIFICADA',
+    ALERTA_RETIRADA: 'ALERTA_RETIRADA',
+    ALERTA_OBSOLETA: 'ALERTA_OBSOLETA',
+    ALERTA_DESCARTADA: 'ALERTA_DESCARTADA',
+    BLOQUEIO_CRIADO: 'BLOQUEIO_CRIADO',
+    BLOQUEIO_ENCERRADO: 'BLOQUEIO_ENCERRADO',
+    BLOQUEIO_DESFEITO: 'BLOQUEIO_DESFEITO',
+    PENDENCIA_ABERTA: 'PENDENCIA_ABERTA',
+    PENDENCIA_ORIGEM_ACRESCENTADA: 'PENDENCIA_ORIGEM_ACRESCENTADA',
+    PENDENCIA_RESOLVIDA: 'PENDENCIA_RESOLVIDA',
+    ITEM_REMOVIDO_SISTEMA: 'ITEM_REMOVIDO_SISTEMA',
+    LOTE_CONFERIDO: 'LOTE_CONFERIDO',
+    LOTE_DEVOLVIDO: 'LOTE_DEVOLVIDO',
+    CONFERENCIA_LIMPA: 'CONFERENCIA_LIMPA',
+} as const;
+
+export type VerificationEvent = (typeof VERIFICATION_EVENT)[keyof typeof VERIFICATION_EVENT];
+
+/**
+ * Um título do `fin064` visto pela verificação de duplicidade (I13c–e), já normalizado. Inclui
+ * títulos PAGOS (a leitura não filtra `vldPago`).
+ */
+export interface DuplicateCandidate {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    /** `pesCod`, ou `pesCodFor` quando o `pesCod` vem vazio. Ausente = não casa com nada. */
+    favorecido?: string;
+    credor?: string;
+    /** `docEspNumero` só com dígitos, sem zeros à esquerda; `''` quando não há número. */
+    numeroNota: string;
+    /** Valor do título em centavos (inteiro) — a FRACA compara centavo a centavo. */
+    valorCentavos: number;
+    /** Vencimento (epoch-ms). */
+    vencimento?: number;
+    pago: boolean;
+    /** Tipo do documento (informativo: a FORTE casa qualquer tipo). */
+    docTipo?: string;
+}
+
+/** Título da contraparte guardado na alerta (snapshot para a tela). */
+export interface CounterpartTitle {
+    titCod: string;
+    valor: number;
+    vencimento?: number;
+    pago: boolean;
+}
+
+/** Um achado de duplicidade: o outro DOCUMENTO e seus títulos que casaram. */
+export interface DuplicateMatch {
+    tipo: typeof ITEM_ALERT_TYPE.DUPLICIDADE_FORTE | typeof ITEM_ALERT_TYPE.DUPLICIDADE_FRACA;
+    contraparteFilCod: number;
+    contraparteDocCod: string;
+    contraparteTitulos: CounterpartTitle[];
+    evidencia: Record<string, unknown>;
+}
+
+/** Baixa a pagar (`fin010`) usada no perfil de canal. Valor positivo, data epoch-ms. */
+export interface ChannelPayment {
+    pesCod?: string;
+    credor?: string;
+    valor: number;
+    data: number;
+}
+
+/** Débito do extrato (`fin095`) usado no perfil de canal. */
+export interface StatementDebit {
+    valor: number;
+    data: number;
+    historico?: string;
+}
+
+/** Limiares da confiança ALTA (configuração do tenant, não ontologia). */
+export interface ChannelThresholds {
+    minPagamentos: number;
+    minMeses: number;
+    minParticipacao: number;
+}
+
+/** `PerfilCanalFornecedor` — read model persistido, um por `pesCod` (gap Q4). */
+export interface ChannelProfile {
+    pesCod: string;
+    credor?: string;
+    contagens: Record<ChannelGroup, number>;
+    pagamentosUnicos: number;
+    mesesDistintos: number;
+    grupoDominante: ChannelGroup;
+    participacao: number;
+    confianca: ChannelConfidence;
+    janelaInicio: number;
+    janelaFim: number;
+    calculadoEm?: string;
+    jobRunId?: string;
+}
+
+/** `AlertaItemLote` (code-facing `PaymentItemAlert`). */
+export interface AlertaItemLote {
+    id: string;
+    loteId: string;
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    tipo: ItemAlertType;
+    contraparteFilCod?: number;
+    contraparteDocCod?: string;
+    contraparteTitulos?: CounterpartTitle[];
+    evidencia: Record<string, unknown>;
+    estado: ItemAlertState;
+    resolucao?: ItemAlertResolution;
+    justificativa?: string;
+    resolvidoPor?: string;
+    resolvidoEm?: string;
+    criadoEm: string;
+    verificadoEm: string;
+}
+
+/** `BloqueioDuplicidade` (code-facing `DuplicateHold`). */
+export interface BloqueioDuplicidade {
+    id: string;
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    pesCod?: string;
+    alertaId?: string;
+    loteIdOrigem?: string;
+    motivo: string;
+    estado: DuplicateHoldState;
+    marcadoPor: string;
+    marcadoEm: string;
+    encerradoEm?: string;
+    desfeitoPor?: string;
+    desfeitoEm?: string;
+    motivoDesfazer?: string;
+}
+
+/** Origem de uma pendência: o título e o lote de onde a verificação partiu. */
+export interface PendenciaCadastroOrigem {
+    loteId: string;
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    desfecho: PayeeIssueOutcome;
+    registradaEm: string;
+}
+
+/** `PendenciaCadastro` (code-facing `PayeeRegistrationIssue`). Nunca carrega conta/chave. */
+export interface PendenciaCadastro {
+    id: string;
+    pesCod: string;
+    filCod: number;
+    credor?: string;
+    tipo: DestinoManualTipo;
+    estado: PayeeIssueState;
+    abertaPor: string;
+    abertaEm: string;
+    resolvidaPor?: string;
+    resolvidaEm?: string;
+    ultimaConferenciaEm?: string;
+    origens: PendenciaCadastroOrigem[];
+    /** Derivado na leitura: há `ExcecaoDestino` APROVADA do favorecido/tipo. */
+    comExcecaoAprovada?: boolean;
+}
