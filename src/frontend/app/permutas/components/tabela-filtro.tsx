@@ -54,6 +54,12 @@ export interface TabelaFiltro<T> {
   setPagina: React.Dispatch<React.SetStateAction<number>>
   filiais: number[]
   slice: T[]
+  /**
+   * A lista inteira depois de TODOS os filtros (filial, busca, data, boleto), antes da paginação.
+   * É o que um "selecionar todos os filtrados" deve usar — reimplementar o filtro fora daqui
+   * esquece os filtros opt-in. Opcional porque abas paginadas no servidor não a têm.
+   */
+  filtrados?: T[]
   total: number
   totalPaginas: number
   paginaAtual: number
@@ -70,7 +76,7 @@ export function useTabelaFiltro<T>(
   getBuscaTexto: (x: T) => string,
   pageSize = 20,
   extras: OpcoesFiltroExtra<T> = {},
-): TabelaFiltro<T> & { limparFiltros: () => void } {
+): TabelaFiltro<T> & { limparFiltros: () => void; filtrados: T[] } {
   const [filial, setFilialState] = React.useState('todas')
   const [busca, setBuscaState] = React.useState('')
   const [dataDe, setDataDeState] = React.useState('')
@@ -195,6 +201,7 @@ export function useTabelaFiltro<T>(
     setPagina,
     filiais,
     slice,
+    filtrados,
     total: filtrados.length,
     totalPaginas,
     paginaAtual,

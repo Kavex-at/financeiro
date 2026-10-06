@@ -94,6 +94,21 @@ describe('useTabelaFiltro — boleto', () => {
     expect(result.current.contagemBoleto).toEqual({ todos: 2, com: 1, sem: 1 })
   })
 
+  it('filtrados: lista inteira após data + boleto, atravessando páginas', () => {
+    const { result } = renderHook(() =>
+      useTabelaFiltro(linhas, (x) => x.fil, (x) => x.id, 1, EXTRAS),
+    )
+    act(() => {
+      result.current.setDataDe?.('2026-10-01')
+      result.current.setDataAte?.('2026-10-10')
+      result.current.setBoleto?.('com')
+    })
+    // a (01/10, boleto) e c (05/10, misto) passam; b sem boleto; d sem data.
+    expect(ids(result.current.filtrados)).toEqual(['a', 'c'])
+    expect(result.current.slice).toHaveLength(1)
+    expect(result.current.totalPaginas).toBe(2)
+  })
+
   it('limparFiltros zera filial, busca, datas e boleto', () => {
     const { result } = comExtras()
     act(() => {

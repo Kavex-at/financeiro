@@ -18,6 +18,8 @@
 - Abrir um lote pelo link da linha do título limpa também os filtros de data e de boleto da aba de
   candidatos, para o lote não ficar escondido.
 - API: `GET /sispag/boletos-dda` aceita `vencimentoDe` e `vencimentoAte` (`YYYY-MM-DD`, inclusivos).
+- O kit de filtro das tabelas passa a expor a lista inteira já filtrada (`filtrados`, todas as
+  páginas), para que "selecionar todos os filtrados" respeite também os filtros de data e de boleto.
 
 ## v0.56.0 (2026-10-06) — lotes automáticos por vencimento e mover títulos para um lote manual
 
