@@ -693,6 +693,24 @@ describe('LotePagamentoService — invariantes', () => {
             expect(ordemRemocao).toBeLessThan(ordemInclusao);
         });
 
+        it('origem que fica vazia é cancelada e a trilha registra o movimento', async () => {
+            const repo = buildRepo();
+            repo.loteRascunhoComTitulo.mockResolvedValue('ORIGEM');
+            repo.cancelarSeVazio.mockResolvedValue(true);
+            const { service, deps } = make(repo);
+            await service.incluirTitulo({ ...input, mover: true });
+            expect(deps.log.info).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: 'SISPAG lote: moverTitulo',
+                    data: expect.objectContaining({
+                        loteId: 'L1',
+                        loteOrigem: 'ORIGEM',
+                        origemCancelada: true,
+                    }),
+                }),
+            );
+        });
+
         it('origem que deixou de ser RASCUNHO no meio do caminho → LoteEstadoInvalidoError, nada incluído', async () => {
             const repo = buildRepo();
             repo.loteRascunhoComTitulo.mockResolvedValue('ORIGEM');
