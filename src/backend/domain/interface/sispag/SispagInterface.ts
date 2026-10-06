@@ -35,6 +35,8 @@ export interface TituloAPagar {
     emLote?: boolean;
     /** O lote RASCUNHO em que o título está (ADR-0050) — a linha mostra e linka o lote. */
     loteRascunho?: LoteRascunhoRef;
+    /** Lote FINALIZADO / com remessa gerada que já tem o título (ADR-0064) — não se move. */
+    loteComprometido?: LoteComprometidoRef;
     // ---- campos da carteira PERSISTIDA (ingestão) ----
     pesCod?: string;
     tpdCod?: string;
@@ -646,6 +648,20 @@ export interface IncluirTituloInput {
     docCod: string;
     titCod: string;
     ator: string;
+    /**
+     * ADR-0064 — o título pode estar em OUTRO lote RASCUNHO: sai de lá e entra neste na mesma
+     * transação. Sem a flag, I3 barra (`TituloEmOutroLoteError`). Lote comprometido nunca move.
+     */
+    mover?: boolean;
+}
+
+/** Status de lote que COMPROMETEM o título (ADR-0064): não entra em outro lote nem se move. */
+export const LOTE_STATUS_COMPROMETIDO = ['FINALIZADO', 'REMESSA_GERADA'] as const;
+
+/** Lote comprometido que contém um título (projeção no painel e checagem no incluir). */
+export interface LoteComprometidoRef {
+    id: string;
+    status: (typeof LOTE_STATUS_COMPROMETIDO)[number];
 }
 
 /** Filtros de listagem de lotes. */

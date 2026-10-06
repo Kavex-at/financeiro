@@ -154,6 +154,8 @@ const incluirTituloSchema = z.object({
     filCod: z.coerce.number().int().positive(),
     docCod: z.string().trim().min(1),
     titCod: z.string().trim().min(1),
+    // ADR-0064: título em outro lote RASCUNHO sai de lá e entra neste, atomicamente.
+    mover: z.boolean().optional(),
 });
 const versaoSchema = z.object({ versao: z.coerce.number().int().min(1) });
 const contaPagadoraSchema = z.object({
@@ -215,7 +217,8 @@ router.post(
     }),
 );
 
-// POST /sispag/lotes/:id/itens — inclui um título no lote. admin.
+// POST /sispag/lotes/:id/itens — inclui um título no lote (`mover: true` o tira do lote RASCUNHO
+// em que está, na mesma transação — ADR-0064). admin. 409 título em outro lote / comprometido.
 router.post(
     '/lotes/:id/itens',
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),

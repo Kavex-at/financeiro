@@ -56,6 +56,13 @@ const make = (
             loteId: string;
             automatico: boolean;
         }>;
+        comprometidos?: Array<{
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            id: string;
+            status: 'FINALIZADO' | 'REMESSA_GERADA';
+        }>;
         log?: LogService;
         retornoConfigs?: jest.Mock;
         retornoArquivos?: jest.Mock;
@@ -108,6 +115,7 @@ const make = (
     } as unknown as PagamentoIngestaoRunRepository;
     const loteRepo = {
         listTitulosEmRascunho: jest.fn().mockResolvedValue(over.emRascunho ?? []),
+        listTitulosEmLotesComprometidos: jest.fn().mockResolvedValue(over.comprometidos ?? []),
         getLoteComItens: over.getLoteComItens ?? jest.fn().mockResolvedValue(null),
     } as unknown as LotePagamentoRepository;
     const listarLinhasDigitaveisDoLote =
@@ -273,6 +281,25 @@ describe('SispagPainelService.montarPainel', () => {
         expect(porDoc('100')?.loteRascunho).toEqual({ id: 'L1', automatico: false });
         expect(porDoc('200')?.loteRascunho).toBeUndefined();
         expect(porDoc('200')?.emLote).toBe(false);
+    });
+
+    it('ADR-0064: título em lote FINALIZADO/REMESSA_GERADA carrega o lote comprometido', async () => {
+        const { service } = make({
+            titulosAtivos: [
+                titulo({ docCod: '100', titCod: '1' }),
+                titulo({ docCod: '200', titCod: '1' }),
+            ],
+            comprometidos: [
+                { filCod: 2, docCod: '100', titCod: '1', id: 'F1', status: 'FINALIZADO' },
+                { filCod: 4, docCod: '200', titCod: '1', id: 'R9', status: 'REMESSA_GERADA' },
+            ],
+        });
+
+        const painel = await service.montarPainel();
+        const porDoc = (d: string) => painel.titulos.find((t) => t.docCod === d);
+
+        expect(porDoc('100')?.loteComprometido).toEqual({ id: 'F1', status: 'FINALIZADO' });
+        expect(porDoc('200')?.loteComprometido).toBeUndefined();
     });
 
     it('tolera falha de UMA leitura de contexto (loga warn e segue)', async () => {

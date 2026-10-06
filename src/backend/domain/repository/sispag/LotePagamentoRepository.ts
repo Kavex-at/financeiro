@@ -8,9 +8,11 @@ import {
     type BaixaFonte,
     type ItemLote,
     type ItemSituacao,
+    type LoteComprometidoRef,
     type LotePagamento,
     type LotePagamentoStatus,
     LOTE_STATUS,
+    LOTE_STATUS_COMPROMETIDO,
     type ListarLotesFiltro,
     type Modalidade,
     type OrigemBaixa,
@@ -403,6 +405,88 @@ export default class LotePagamentoRepository {
             porLote.set(row.lote_id, arr);
         }
         return headers.map((h) => this.mapLote(h, porLote.get(h.id) ?? []));
+    };
+
+    /**
+     * Título num lote COMPROMETIDO (`FINALIZADO` | `REMESSA_GERADA`)? ADR-0064 — não entra em
+     * outro lote nem se move. Lote mais recente primeiro.
+     */
+    public loteComprometidoComTitulo = async (
+        params: { filCod: number; docCod: string; titCod: string },
+        tx?: TransactionClient,
+    ): Promise<{ loteId: string; status: LoteComprometidoRef['status'] } | null> => {
+        const row = await this.db(tx).selectFirst<{
+            lote_id: string;
+            status: LoteComprometidoRef['status'];
+        }>(
+            `SELECT i.lote_id, l.status
+             FROM lote_pagamento_item i
+             JOIN lote_pagamento l ON l.id = i.lote_id
+             WHERE l.status = ANY($status)
+               AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod
+             ORDER BY l.criado_em DESC
+             LIMIT 1`,
+            { ...params, status: [...LOTE_STATUS_COMPROMETIDO] },
+        );
+        return row ? { loteId: row.lote_id, status: row.status } : null;
+    };
+
+    /** Títulos em lotes COMPROMETIDOS, para o painel bloquear a seleção (ADR-0064). */
+    public listTitulosEmLotesComprometidos = async (
+        tx?: TransactionClient,
+    ): Promise<Array<{ filCod: number; docCod: string; titCod: string } & LoteComprometidoRef>> => {
+        const rows = (await this.db(tx).selectMany(
+            `SELECT i.fil_cod, i.doc_cod, i.tit_cod, l.id AS lote_id, l.status
+             FROM lote_pagamento_item i JOIN lote_pagamento l ON l.id = i.lote_id
+             WHERE l.status = ANY($status)
+             ORDER BY l.criado_em ASC`,
+            { status: [...LOTE_STATUS_COMPROMETIDO] },
+        )) as Array<{
+            fil_cod: number;
+            doc_cod: string;
+            tit_cod: string;
+            lote_id: string;
+            status: LoteComprometidoRef['status'];
+        }>;
+        return rows.map((r) => ({
+            filCod: r.fil_cod,
+            docCod: r.doc_cod,
+            titCod: r.tit_cod,
+            id: r.lote_id,
+            status: r.status,
+        }));
+    };
+
+    /**
+     * Remove o item SÓ se o lote ainda é RASCUNHO (ADR-0064, mover). Retorna rowCount: 0 = o lote
+     * saiu de RASCUNHO (ou o item já não estava lá) e o serviço aborta o movimento inteiro.
+     */
+    public removerItemDeRascunho = async (
+        params: { loteId: string; filCod: number; docCod: string; titCod: string },
+        tx?: TransactionClient,
+    ): Promise<number> =>
+        this.db(tx).update(
+            `DELETE FROM lote_pagamento_item i
+             USING lote_pagamento l
+             WHERE l.id = i.lote_id AND l.status = 'RASCUNHO'
+               AND i.lote_id = $loteId AND i.fil_cod = $filCod
+               AND i.doc_cod = $docCod AND i.tit_cod = $titCod`,
+            params,
+        );
+
+    /**
+     * Cancela o lote RASCUNHO que ficou sem itens (ADR-0064: a origem de um movimento que perdeu o
+     * último título). Bumpa a versão. Retorna se cancelou.
+     */
+    public cancelarSeVazio = async (loteId: string, tx?: TransactionClient): Promise<boolean> => {
+        const n = await this.db(tx).update(
+            `UPDATE lote_pagamento l
+             SET status = 'CANCELADO', versao = versao + 1, atualizado_em = now()
+             WHERE l.id = $loteId AND l.status = 'RASCUNHO'
+               AND NOT EXISTS (SELECT 1 FROM lote_pagamento_item i WHERE i.lote_id = l.id)`,
+            { loteId },
+        );
+        return n > 0;
     };
 
     /** Título já presente em ALGUM lote RASCUNHO? (I3). Retorna o loteId ou null. */

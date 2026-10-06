@@ -3,6 +3,7 @@ import { chunked } from '../../client/ConexosBaseClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import {
     type FormacaoLotesResult,
     MODALIDADE,
@@ -24,7 +25,7 @@ export const FORMACAO_LOCK_KEY = 615243789;
  * FormacaoLotesService — cron pós-ingestão que MONTA lotes candidatos automaticamente.
  *
  * Regras (as mesmas da montagem manual): mesma filial (I4), SÓ títulos A VENCER
- * (≤7d; vencidos NÃO entram). Agrupa por FILIAL. Cada run: (1) DESFAZ lotes automáticos que já têm título
+ * (≤7d; vencidos NÃO entram). Agrupa por FILIAL × DIA DE VENCIMENTO (ADR-0064). Cada run: (1) DESFAZ lotes automáticos que já têm título
  * vencido (libera os títulos); (2) forma lotes novos com os elegíveis ainda sem lote.
  * Os lotes nascem RASCUNHO e caem em "Lotes candidatos" para o analista revisar antes
  * de aprovar. NÃO toca em lotes manuais nem finalizados. Escreve só no Postgres (I1).
@@ -37,6 +38,7 @@ export default class FormacaoLotesService {
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
         @inject(ContaPagadoraResolver) private readonly contaResolver: ContaPagadoraResolver,
+        @inject(BankingCalendar) private readonly calendar: BankingCalendar,
     ) {}
 
     public formar = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> =>
@@ -53,7 +55,7 @@ export default class FormacaoLotesService {
         const lotesDesfeitos = await this.loteRepo.desfazerAutomaticosVencidos();
 
         // 2) forma lotes novos com os elegíveis (a vencer ≤7d, não lotados). Cada grupo
-        // (por filial) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE para revisão.
+        // (filial × vencimento) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE, boletos juntos.
         const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS);
         const grupos = this.agrupar(elegiveis);
         let lotesFormados = 0;
@@ -62,7 +64,7 @@ export default class FormacaoLotesService {
         // não grava uma conta fixa.
         const contaPorFilial = new Map<number, ContaPagadoraEscolhida | undefined>();
         for (const titulos of grupos.values()) {
-            for (const fatia of chunked(titulos, MAX_TITULOS_POR_LOTE)) {
+            for (const fatia of this.fatiar(titulos)) {
                 if (fatia.length === 0) continue;
                 const filCod = fatia[0].filCod;
                 if (!contaPorFilial.has(filCod)) {
@@ -122,19 +124,45 @@ export default class FormacaoLotesService {
     };
 
     /**
-     * Chave de grupo: só a FILIAL (I4 — um lote por filial). Internacional saiu do escopo
-     * (câmbio manual, ADR-0021), então não há mais divisão por classe. A conta pagadora é
-     * default Itaú (o analista troca na revisão) e o banco do favorecido é buscado ao vivo
-     * só na remessa (Fatia 3, anti-drift), não na montagem.
+     * Chave de grupo: FILIAL × DIA DE VENCIMENTO (ADR-0064 — um lote por filial por data; I4
+     * segue garantida porque a filial está na chave). O dia é o civil UTC do epoch do ERP
+     * (`fromErpEpoch`), a mesma regra da janela de débito. Internacional saiu do escopo
+     * (ADR-0021). A conta pagadora é a da filial no fin005 e o banco do favorecido é buscado ao
+     * vivo só na remessa (anti-drift), não na montagem.
      */
     private agrupar = (titulos: TituloAPagar[]): Map<string, TituloAPagar[]> => {
         const grupos = new Map<string, TituloAPagar[]>();
         for (const t of titulos) {
-            const key = `${t.filCod}`;
+            const dia =
+                t.vencimento !== undefined ? this.calendar.fromErpEpoch(t.vencimento) : 'sem-venc';
+            const key = `${t.filCod}:${dia}`;
             const atual = grupos.get(key);
             if (atual) atual.push(t);
             else grupos.set(key, [t]);
         }
         return grupos;
+    };
+
+    /**
+     * Fatia um grupo em lotes de no máx. MAX_TITULOS_POR_LOTE preferindo BOLETOS JUNTOS (ADR-0064).
+     * O número de lotes é sempre o mínimo (⌈n/teto⌉). Se esse mínimo comporta separar boletos e
+     * não-boletos, eles saem em lotes distintos (nenhum misto); senão, boletos vêm primeiro e
+     * contíguos (no máximo um lote misto). Grupo que cabe num lote fica num lote só.
+     */
+    private fatiar = (titulos: TituloAPagar[]): TituloAPagar[][] => {
+        if (titulos.length <= MAX_TITULOS_POR_LOTE) return [titulos];
+        const boletos = titulos.filter((t) => t.temBoleto === true);
+        const outros = titulos.filter((t) => t.temBoleto !== true);
+        const minimo = Math.ceil(titulos.length / MAX_TITULOS_POR_LOTE);
+        const separados =
+            Math.ceil(boletos.length / MAX_TITULOS_POR_LOTE) +
+            Math.ceil(outros.length / MAX_TITULOS_POR_LOTE);
+        if (separados === minimo) {
+            return [
+                ...chunked(boletos, MAX_TITULOS_POR_LOTE),
+                ...chunked(outros, MAX_TITULOS_POR_LOTE),
+            ];
+        }
+        return chunked([...boletos, ...outros], MAX_TITULOS_POR_LOTE);
     };
 }

@@ -129,10 +129,11 @@ export default class SispagPainelService {
         const now = Date.now();
 
         // TÍTULOS: vêm da carteira PERSISTIDA (ingestão), não mais ao vivo do Conexos.
-        const [titulosRaw, ultimaRun, emRascunho] = await Promise.all([
+        const [titulosRaw, ultimaRun, emRascunho, comprometidos] = await Promise.all([
             this.tituloRepo.listAtivos(),
             this.runRepo.findLatestSuccessFinishedAt(),
             this.loteRepo.listTitulosEmRascunho(),
+            this.loteRepo.listTitulosEmLotesComprometidos(),
         ]);
         // Marca os títulos já num lote RASCUNHO — o painel bloqueia a seleção (I3, anti-reatache)
         // e a linha mostra/linka o lote (ADR-0050). Mapa por chave natural: O(n) sobre a carteira.
@@ -141,10 +142,17 @@ export default class SispagPainelService {
         const loteDe = new Map(
             emRascunho.map((t) => [chaveDe(t), { id: t.loteId, automatico: t.automatico }]),
         );
+        // ADR-0064: título em lote FINALIZADO/REMESSA_GERADA não se move — a linha diz onde está.
+        // A query ordena do mais antigo ao mais recente: o último a entrar no mapa vence.
+        const comprometidoDe = new Map(
+            comprometidos.map((t) => [chaveDe(t), { id: t.id, status: t.status }]),
+        );
         for (const t of titulosRaw) {
             const lote = loteDe.get(chaveDe(t));
             t.emLote = lote !== undefined;
             if (lote) t.loteRascunho = lote;
+            const comprometido = comprometidoDe.get(chaveDe(t));
+            if (comprometido) t.loteComprometido = comprometido;
         }
 
         // Contexto AO VIVO (lotes SISPAG nativos): fan-out LIMITADO (1 leitura/filial),
