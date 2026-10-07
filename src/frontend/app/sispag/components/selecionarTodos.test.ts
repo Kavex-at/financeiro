@@ -4,7 +4,6 @@ import {
   alternarTodos,
   chaveTitulo,
   estadoSelecionarTodos,
-  filtrarComoAba,
 } from './selecionarTodos'
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
@@ -60,21 +59,5 @@ describe('estadoSelecionarTodos / alternarTodos', () => {
 
   it('nenhuma selecionável → desabilitado', () => {
     expect(estadoSelecionarTodos([travado], new Set()).bloqueio).toBeDefined()
-  })
-})
-
-describe('filtrarComoAba', () => {
-  const itens = [
-    titulo({ docCod: '1', credor: 'ACME' }),
-    titulo({ docCod: '2', credor: 'Beta', filCod: 4 }),
-  ]
-  const texto = (t: TituloAPagar) => `${t.credor ?? ''} ${t.docCod}/${t.titCod}`
-
-  it('aplica filial e busca como o hook da aba', () => {
-    expect(filtrarComoAba(itens, { filial: 'todas', busca: '' }, texto)).toHaveLength(2)
-    expect(filtrarComoAba(itens, { filial: '4', busca: '' }, texto).map((t) => t.docCod)).toEqual([
-      '2',
-    ])
-    expect(filtrarComoAba(itens, { filial: 'todas', busca: ' acme ' }, texto)).toHaveLength(1)
   })
 })

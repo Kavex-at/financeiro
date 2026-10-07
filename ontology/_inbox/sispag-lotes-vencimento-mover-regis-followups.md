@@ -49,6 +49,6 @@
 - `RETORNADO` fora do conjunto comprometido de propósito (ADR-0064 D4): como um item rejeitado sai do
   lote retornado para um lote novo.
 - ~~D2: "sem lote extra"~~ — resolvido no QA: sem teto, boletos / resto sempre separados.
-- "Selecionar todos" reaplica filial + busca por conta própria (`filtrarComoAba`), porque o
-  `useTabelaFiltro` só expõe a página. Quando o kit de filtros (PR #109) expuser a lista filtrada
-  inteira, trocar por ela — senão os filtros de data/boleto do #109 não entram no "todos".
+- ~~"Selecionar todos" reaplica filial + busca por conta própria (`filtrarComoAba`)~~ — resolvido
+  no rebase do PR #109 (2026-10-07): o `useTabelaFiltro` expõe `filtrados` e o "todos" usa essa lista,
+  com os filtros de data e de boleto; `filtrarComoAba` removido.
