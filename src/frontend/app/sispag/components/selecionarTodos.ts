@@ -51,21 +51,3 @@ export const alternarTodos = (
   else for (const k of estado.chaves) next.delete(k)
   return next
 }
-
-/**
- * As linhas da aba depois dos filtros de filial e busca — a mesma regra de `useTabelaFiltro`
- * (filial "todas" ou igual; busca por substring, sem caixa). O hook não expõe a lista filtrada
- * inteira (só a página), e o kit de filtros é de outra frente; quando ele expuser, trocar por ela.
- */
-export const filtrarComoAba = (
-  itens: TituloAPagar[],
-  filtro: { filial: string; busca: string },
-  textoBusca: (t: TituloAPagar) => string,
-): TituloAPagar[] => {
-  const b = filtro.busca.trim().toLowerCase()
-  return itens.filter(
-    (t) =>
-      (filtro.filial === 'todas' || String(t.filCod) === filtro.filial) &&
-      (b === '' || textoBusca(t).toLowerCase().includes(b)),
-  )
-}

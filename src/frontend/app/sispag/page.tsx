@@ -89,7 +89,7 @@ import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
 import { MoverParaLoteDialog } from './components/MoverParaLoteDialog'
 import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLote'
 import { useCriarLoteManual } from './components/useCriarLoteManual'
-import { alternarTodos, estadoSelecionarTodos, filtrarComoAba } from './components/selecionarTodos'
+import { alternarTodos, estadoSelecionarTodos } from './components/selecionarTodos'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
@@ -474,7 +474,7 @@ function SispagPanel() {
 
   // ADR-0064: "selecionar todos" vale para TODAS as linhas do filtro (todas as páginas).
   const todosDoFiltro = estadoSelecionarTodos(
-    filtrarComoAba(titulosFiltrados, abaTitulos, textoBuscaTitulo),
+    abaTitulos.filtrados,
     selecionados,
   )
 
