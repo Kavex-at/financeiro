@@ -4,12 +4,20 @@ type: business-rule
 entity: FavorecidoAutorizado
 invariant: I14
 ontology_version: "0.38.0"
-implementation_status: planned
+implementation_status: implemented
 status: active
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/sispag/AuthorizedPayeeService.ts
+  - src/backend/domain/libs/sispag/AuthorizedPayeeRule.ts
+  - src/backend/domain/libs/sispag/PayeeFingerprint.ts
+  - src/backend/domain/repository/sispag/AuthorizedPayeeRepository.ts
+  - src/backend/domain/service/sispag/VerificacaoTedPixService.ts
+  - src/backend/domain/service/sispag/LotePagamentoService.ts
+  - src/backend/domain/service/sispag/RemessaService.ts
+  - src/backend/migrations/0080_sispag_favorecido_autorizado.sql
 last_review: 2026-10-08
-has_canonical_test: false
+has_canonical_test: true
 ---
 
 # Business Rule: favorecido autorizado SISPAG (I14)

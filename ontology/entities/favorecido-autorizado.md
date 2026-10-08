@@ -2,10 +2,13 @@
 name: FavorecidoAutorizado
 type: entity
 ontology_version: "0.38.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/interface/sispag/AuthorizedPayeeInterface.ts
+  - src/backend/domain/repository/sispag/AuthorizedPayeeRepository.ts
+  - src/backend/migrations/0080_sispag_favorecido_autorizado.sql
 properties: [id, pesCod, credor, modalidade, estado, fingerprint, fingerprintChaveId, destinoMascarado, avisos, fingerprintObservado, destinoObservadoMascarado, origemSolicitacao, solicitadoPor, solicitadoEm, decididoPor, decididoEm, motivoDecisao, ultimaConferenciaEm, ultimaConferenciaResultado, versao]
 relationships:
   - "FavorecidoAutorizado N—1 Favorecido (pesCod no cmn025; sem entidade local, como em TituloAPagar)"

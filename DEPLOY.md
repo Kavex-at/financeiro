@@ -230,36 +230,44 @@ acesso gravada no intervalo **se perde** (exporte `app_user_access_event` antes,
 
 ---
 
-### Exceção de destino do SISPAG (`sispag:excecao`, ADR-0061, migration 0075)
+### Favorecido autorizado do SISPAG (`sispag:autorizar_favorecido`, ADR-0065, migration 0080)
 
-O cadastro do Conexos (`cmn025`) é a fonte do destino de TED/PIX. Quando ele não tem conta ou
-chave válida, só uma **exceção de destino** aprovada por uma **segunda pessoa** vale como destino
-(fallback). A permissão **`sispag:excecao`** (única: cadastrar, aprovar, rejeitar, revogar) substitui
-`sispag:aprovar_destino`; a 0075 **converte** as concessões existentes (papel e exceção por usuário).
-O papel `Administrador` a recebe; o `Analista` não.
+O destino de TED/PIX é **sempre** o do cadastro do Conexos (`cmn025`). Uma segunda pessoa aprova o
+par (favorecido, modalidade) amarrado à impressão digital (HMAC) do destino que o cadastro resolvia
+na aprovação; toda verificação compara a impressão de novo. Substitui a exceção de destino
+(ADR-0061) e a conferência por lote (ADR-0063), que a 0080 apaga.
 
-> **Passo operacional obrigatório antes de ligar `SISPAG_EXCECAO_DESTINO_ENABLED`: a Columbia precisa
-> de pelo menos DUAS pessoas com `sispag:excecao`.** A regra é "quem aprova não pode ser quem
-> cadastrou" e é verificada no backend. Com um único titular **nada se aprova**: o que ele cadastra
-> fica `PENDENTE` para sempre (e ele ainda pode rejeitar e revogar). Conceda a permissão à segunda
-> pessoa na tela `/usuarios` ("Editar acesso" → conceder `sispag:excecao`) ou atribua o papel
-> Administrador.
+**Antes do merge — a guarda da 0080.** A migração ABORTA inteira (e o `BootMigrator` para de
+migrar) se `excecao_destino`, `excecao_destino_audit`, `lote_pagamento_item_destino_audit`,
+`pendencia_cadastro`, `pendencia_cadastro_origem` tiverem qualquer linha, ou se algum
+`lote_pagamento_item.destino_manual` estiver preenchido. Em 2026-10-08 todas estavam em 0 em
+produção. Reconfira com o `.env` local (sa-east-1, não o MCP do Supabase) se o merge atrasar.
 
-- **A migration 0075 é só de criação.** O destino digitado por item da ADR-0054 (`destino_manual`) fica
-  **inerte** (o código não o lê nem grava mais). Se a 0075 avisar no log do `BootMigrator`
-  (`RAISE WARNING ... itens com destino_manual`), há destino digitado a decidir com o Yuri antes de
-  ligar a flag. A contagem em produção (Q4) ainda não foi medida: rode, com o `.env` do financeiro
-  apontando para o banco, `npx tsx jobs/probe-destino-manual-uso.ts` (somente leitura; só imprime
-  contagens e ids de lote).
-- **Job `aposentar-excecoes-substituidas`** (`npx tsx jobs/aposentar-excecoes-substituidas.ts`):
-  aposenta (`SUBSTITUIDA`) as exceções aprovadas que o cadastro do Conexos já cobre, com alerta
-  `sispag-excecao-divergencia` quando o valor difere. Sem scheduler: roda à mão (ou por um
-  workflow, que ainda não existe). O resolver faz o mesmo ao finalizar e ao enviar.
-- **Rollback:** a 0075 não apaga nada. Voltar o backend para antes dela deixa `excecao_destino` e a
-  trilha no banco sem uso, e as concessões `sispag:excecao` fora do `CHECK` do código antigo (reconverter
-  para `sispag:aprovar_destino` à mão, se for o caso).
+**Rollout (nesta ordem):**
 
----
+1. Deploy com `SISPAG_FAVORECIDO_AUTORIZADO_ENABLED` **ausente/false**. Nada muda para boleto. Com a
+   guarda desligada, TED/PIX **não são oferecidos nem aceitos** (I14k) — inclusive o TED antigo
+   pela conta do banco do lote. Lotes FINALIZADOS com item TED/PIX ficam barrados na remessa
+   (`FAVORECIDO_NAO_AUTORIZADO_NA_REMESSA`) até a guarda ser ligada e o favorecido autorizado.
+2. Gerar o segredo (`openssl rand -hex 32`) e definir `SISPAG_FAVORECIDO_FINGERPRINT_KEY` e
+   `SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID=v1` no Render **e** nos secrets dos crons que resolvem
+   destino. Nunca trocar o segredo sem trocar o `KEY_ID`.
+3. Conceder `sispag:autorizar_favorecido` (tela `/usuarios`) a **duas** pessoas no mínimo:
+   aprovador ≠ quem pediu, verificado no backend. A 0080 converteu as concessões de
+   `sispag:excecao` e deu a permissão ao Administrador.
+4. Com a Columbia, revisar o relatório **Favorecidos autorizados → Candidatos**, pedir as
+   autorizações (`sispag:executar`) e aprová-las (segunda pessoa).
+5. Ligar `SISPAG_FAVORECIDO_AUTORIZADO_ENABLED=true` e então `SISPAG_TED_ENABLED` /
+   `SISPAG_PIX_ENABLED`. Ligada sem segredo válido, a guarda resolve `false` e o boot avisa no log.
+
+**Efeitos:** no `finalizarLote` o item TED/PIX sem autorização válida **sai do lote** (motivo na
+trilha) e o lote finaliza com os demais; na remessa, a guarda barra o lote inteiro antes de qualquer
+escrita no Conexos (só sem lote nativo; numa retomada vale o destino congelado). Destino que mudou
+no cadastro abre reaprovação e alerta `sispag-destino-alterado`.
+
+**Rollback:** voltar o backend para a versão anterior e aplicar
+`migrations/rollbacks/0080_sispag_favorecido_autorizado.rollback.sql` (só estrutura: as autorizações
+se perdem; exporte antes).
 
 ## 6. Supabase Auth (ADR-0057)
 
