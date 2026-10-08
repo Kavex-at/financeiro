@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import ExcelJS from 'exceljs';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import PlanilhaXlsxWriter from '../../libs/xlsx/PlanilhaXlsxWriter.js';
 import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type LogService from '../LogService.js';
@@ -45,6 +46,7 @@ const make = (lotes: LotePagamento[]) => {
         repo as unknown as LotePagamentoRepository,
         log as unknown as LogService,
         calendar,
+        new PlanilhaXlsxWriter(),
     );
     return { service, repo, log };
 };

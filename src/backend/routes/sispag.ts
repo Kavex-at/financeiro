@@ -31,6 +31,8 @@ import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
 import { MAX_LOTES_EXPORT } from '../domain/interface/sispag/RemessaTitulosExport.js';
+import TitulosAPagarExportService from '../domain/service/sispag/TitulosAPagarExportService.js';
+import { MAX_TITULOS_EXPORT } from '../domain/interface/sispag/TitulosAPagarExport.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
@@ -1120,6 +1122,47 @@ router.post(
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
+    }),
+);
+
+// POST /sispag/titulos/exportar — planilha (.xlsx) dos títulos a pagar que a aba mostra com o
+// filtro atual. A tela manda só as chaves; os valores saem da carteira persistida (os mesmos que
+// `GET /sispag/painel` já mostra) → `SISPAG_VER`. POST porque leva a lista de chaves.
+// Chave compacta `filCod:docCod:titCod` (a mesma da tela): 5000 objetos estourariam o limite de
+// 100 KB do `express.json()`; em string cabem com folga.
+const exportarTitulosAPagarSchema = z.object({
+    chaves: z
+        .array(
+            z
+                .string()
+                .regex(/^\d{1,6}:[^:]{1,40}:[^:]{1,40}$/)
+                .transform((k) => {
+                    const [filCod, docCod, titCod] = k.split(':');
+                    return { filCod: Number(filCod), docCod: docCod ?? '', titCod: titCod ?? '' };
+                }),
+        )
+        .min(1)
+        .max(MAX_TITULOS_EXPORT),
+});
+router.post(
+    '/titulos/exportar',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = exportarTitulosAPagarSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: `Exporte de 1 a ${MAX_TITULOS_EXPORT} títulos.`,
+                details: parsed.error.flatten(),
+            });
+            return;
+        }
+        const service = container.resolve(TitulosAPagarExportService);
+        const { filename, buffer } = await service.exportar(parsed.data.chaves, req.requestId);
+        res.setHeader('Content-Type', CONTENT_TYPE_XLSX);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(buffer);
     }),
 );
 

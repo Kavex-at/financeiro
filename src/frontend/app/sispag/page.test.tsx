@@ -444,3 +444,72 @@ describe('SispagPage — atualiza a carteira ao abrir', () => {
     expect(mockRefresh).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * Aba Títulos a pagar: título em lote finalizado / com remessa gerada fica fora da tabela por
+ * padrão (a um clique), o motivo do "selecionar todos" bloqueado aparece em texto e o export
+ * está disponível para quem só vê.
+ */
+describe('SispagPage — títulos: comprometidos, selecionar todos e export', () => {
+  const base = {
+    titCod: '1',
+    filCod: 1,
+    valor: 100,
+    diasAteVencimento: 5,
+    liberado: true,
+    pago: false,
+  }
+  const livre = { ...base, docCod: '801', credor: 'LIVRE LTDA' } as TituloAPagar
+  const outraFilial = { ...base, docCod: '802', filCod: 2, credor: 'OUTRA FILIAL SA' } as TituloAPagar
+  const comRemessa = {
+    ...base,
+    docCod: '803',
+    credor: 'JA NA REMESSA SA',
+    loteComprometido: { id: 'L9', status: 'REMESSA_GERADA' },
+  } as TituloAPagar
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockReset()
+    lib.fetchSispagPainel.mockResolvedValue({
+      ...painel,
+      titulos: [livre, outraFilial, comRemessa],
+    })
+    lib.fetchLotes.mockReset()
+    lib.fetchLotes.mockResolvedValue([])
+    ;(fetchRetornos as jest.Mock).mockResolvedValue([])
+  })
+
+  const renderPainel = async () => {
+    await act(async () => {
+      render(<SispagPage />)
+    })
+  }
+
+  it('esconde o título com remessa gerada por padrão e o botão o traz de volta', async () => {
+    await renderPainel()
+    expect(screen.getByText('LIVRE LTDA')).toBeInTheDocument()
+    expect(screen.queryByText('JA NA REMESSA SA')).not.toBeInTheDocument()
+    // A contagem da faixa não conta o oculto.
+    expect(screen.getByRole('button', { name: 'A vencer (2)' })).toBeInTheDocument()
+
+    const filtro = screen.getByRole('button', { name: /em lote finalizado\/remessa \(1\)/i })
+    expect(filtro).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(filtro)
+
+    expect(screen.getByText('JA NA REMESSA SA')).toBeInTheDocument()
+    expect(filtro).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('com várias filiais, o motivo do bloqueio do "selecionar todos" aparece em texto', async () => {
+    await renderPainel()
+    expect(screen.getByText('Filtre por uma filial para selecionar todos')).toBeInTheDocument()
+  })
+
+  it('o export conta as linhas do filtro e aparece para quem só vê', async () => {
+    permissoes = ['sispag:ver']
+    await renderPainel()
+    expect(screen.getByRole('button', { name: /exportar \(2\)/i })).toBeEnabled()
+  })
+})

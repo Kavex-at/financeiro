@@ -34,6 +34,7 @@ import ExcecaoDestinoService from '../domain/service/sispag/ExcecaoDestinoServic
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
+import TitulosAPagarExportService from '../domain/service/sispag/TitulosAPagarExportService.js';
 import RemittanceFileUnavailableError from '../domain/errors/RemittanceFileUnavailableError.js';
 import RemittanceExportInvalidError from '../domain/errors/RemittanceExportInvalidError.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
@@ -971,6 +972,68 @@ describe('POST /sispag/remessas/titulos/exportar', () => {
             expect(res.status).toBe(422);
             const body = (await res.json()) as { error: string };
             expect(body.error).toContain('sem remessa gerada');
+        });
+    });
+});
+
+describe('POST /sispag/titulos/exportar', () => {
+    const CHAVE = { filCod: 7, docCod: '801', titCod: '1' };
+    const post = (url: string, body: unknown) =>
+        fetch(`${url}/sispag/titulos/exportar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    it('devolve o xlsx como anexo, com as chaves na ordem pedida', async () => {
+        const exportar = jest.fn().mockResolvedValue({
+            filename: 'sispag-titulos-a-pagar-2026-10-08.xlsx',
+            buffer: Buffer.from('PK-fake'),
+        });
+        container.registerInstance(TitulosAPagarExportService, { exportar } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, { chaves: ['7:802:1', '7:801:1'] });
+            expect(res.status).toBe(200);
+            expect(res.headers.get('content-type')).toContain('spreadsheetml');
+            expect(res.headers.get('content-disposition')).toContain(
+                'sispag-titulos-a-pagar-2026-10-08.xlsx',
+            );
+            expect(exportar).toHaveBeenCalledWith(
+                [{ ...CHAVE, docCod: '802' }, CHAVE],
+                expect.anything(),
+            );
+        });
+    });
+
+    it('o teto de 5000 chaves realistas cabe no limite do corpo JSON', async () => {
+        const exportar = jest
+            .fn()
+            .mockResolvedValue({ filename: 'x.xlsx', buffer: Buffer.from('') });
+        container.registerInstance(TitulosAPagarExportService, { exportar } as never);
+        await comApp({}, async (url) => {
+            const chaves = Array.from({ length: 5000 }, (_, i) => `12:${10000000 + i}:12`);
+            const res = await post(url, { chaves });
+            expect(res.status).toBe(200);
+            expect(exportar.mock.calls[0]?.[0]).toHaveLength(5000);
+        });
+    });
+
+    it.each([
+        ['lista vazia', { chaves: [] }],
+        ['chave em objeto', { chaves: [CHAVE] }],
+        ['filial não numérica', { chaves: ['X:801:1'] }],
+        ['documento vazio', { chaves: ['7::1'] }],
+        ['parte a mais', { chaves: ['7:801:1:9'] }],
+        ['acima do teto', { chaves: Array.from({ length: 5001 }, () => '7:801:1') }],
+        ['sem corpo', {}],
+    ])('400 com %s', async (_c, body) => {
+        const exportar = jest.fn();
+        container.registerInstance(TitulosAPagarExportService, { exportar } as never);
+        await comApp({}, async (url) => {
+            const res = await post(url, body);
+            expect(res.status).toBe(400);
+            expect(exportar).not.toHaveBeenCalled();
         });
     });
 });

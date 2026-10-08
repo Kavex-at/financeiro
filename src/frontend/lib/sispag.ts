@@ -861,6 +861,25 @@ export async function exportarTitulosRemessas(
   return lerArquivoDaResposta(res, 'sispag-titulos-remessas.xlsx')
 }
 
+/** Teto de títulos por export — espelha `MAX_TITULOS_EXPORT` do backend. */
+export const MAX_TITULOS_EXPORT = 5000
+
+/**
+ * Exporta (.xlsx) os títulos a pagar das chaves `filCod:docCod:titCod` — as linhas da aba com o
+ * filtro atual, na ordem da tela. Os valores saem da carteira no servidor; basta `sispag:ver`.
+ */
+export async function exportarTitulosAPagar(
+  chaves: string[],
+): Promise<{ nome: string; arquivo: Blob }> {
+  const res = await apiFetch(`${API}/sispag/titulos/exportar`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+    body: JSON.stringify({ chaves }),
+  })
+  if (!res.ok) throw new Error(await mensagemDeErro(res, 'Falha ao exportar os títulos'))
+  return lerArquivoDaResposta(res, 'sispag-titulos-a-pagar.xlsx')
+}
+
 /** Status em que o lote tem remessa gerada — download do `.REM` e export dos títulos. */
 export const STATUS_COM_REMESSA: readonly LotePagamentoStatus[] = [
   'REMESSA_GERADA',

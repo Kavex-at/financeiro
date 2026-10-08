@@ -35,6 +35,16 @@ export const filtroTitulos: OpcoesFiltroExtra<TituloAPagar> = {
 }
 
 /**
+ * Títulos visíveis na aba conforme o filtro de comprometidos. Título em lote FINALIZADO ou com
+ * remessa gerada (ADR-0064) não é selecionável nem se move — por padrão fica fora da tabela de
+ * trabalho, e o botão com a contagem o traz de volta.
+ */
+export const titulosVisiveis = (
+  titulos: TituloAPagar[],
+  mostrarComprometidos: boolean,
+): TituloAPagar[] => (mostrarComprometidos ? titulos : titulos.filter((t) => !t.loteComprometido))
+
+/**
  * Lotes candidatos: o lote passa no de/até se QUALQUER item vence no intervalo. Um item tem boleto
  * se a carteira diz que o título tem boleto DDA (`comBoleto`, chaves `fil:doc:tit`) ou se a
  * modalidade escolhida no lote já é BOLETO — o item não carrega o flag da carteira, e um título

@@ -77,6 +77,7 @@ import {
   formatarDia,
   ROTULO_DATA,
   TITULO_BOLETO_LOTE,
+  titulosVisiveis,
 } from './components/filtrosAbas'
 import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { BoletosDdaTab } from './components/BoletosDdaTab'
@@ -86,6 +87,7 @@ import { IngestaoDialog } from './components/IngestaoDialog'
 import { useCarteiraAoAbrir } from './useCarteiraAoAbrir'
 import { LoteCard } from './components/LoteCard'
 import { ExportarTitulosBarra, useSelecaoRemessas } from './components/ExportarTitulosBarra'
+import { ExportarTitulosAPagarBotao } from './components/ExportarTitulosAPagarBotao'
 import { RetirarDoLoteDialog } from './components/RetirarDoLoteDialog'
 import { MoverParaLoteDialog } from './components/MoverParaLoteDialog'
 import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLote'
@@ -200,6 +202,9 @@ function SispagPanel() {
   // tabela de trabalho. Continua a um clique de distância — e o contador no botão existe
   // para que "escondido" nunca vire "esquecido".
   const [filtro, setFiltro] = React.useState<'a-vencer' | 'vencidos' | 'todos'>('a-vencer')
+  // Título em lote finalizado / com remessa gerada não se move (ADR-0064): fora da tabela de
+  // trabalho por padrão, a um clique — com a contagem no botão, como a faixa de vencidos.
+  const [mostrarComprometidos, setMostrarComprometidos] = React.useState(false)
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
   const [busy, setBusy] = React.useState(false)
   const [ingerindo, setIngerindo] = React.useState(false)
@@ -328,9 +333,17 @@ function SispagPanel() {
     aoAtualizar: recarregarPainel,
   })
 
-  const titulos = painel?.titulos ?? []
+  const titulos = React.useMemo(() => painel?.titulos ?? [], [painel?.titulos])
   const ehVencido = (t: TituloAPagar): boolean => (t.diasAteVencimento ?? 0) < 0
-  const totalVencidos = React.useMemo(() => titulos.filter(ehVencido).length, [titulos])
+  const totalComprometidos = React.useMemo(
+    () => titulos.filter((t) => t.loteComprometido).length,
+    [titulos],
+  )
+  const titulosAba = React.useMemo(
+    () => titulosVisiveis(titulos, mostrarComprometidos),
+    [titulos, mostrarComprometidos],
+  )
+  const totalVencidos = React.useMemo(() => titulosAba.filter(ehVencido).length, [titulosAba])
   // O backend corta o payload num teto. Se cortou, dizer — a versão anterior mostrava
   // "Todos (400)" ao lado de um KPI de 1.225 e ninguém tinha como saber qual valia.
   const truncado = (painel?.titulosTotal ?? titulos.length) > titulos.length
@@ -338,11 +351,11 @@ function SispagPanel() {
   const execucoesParadas =
     paradas && paradas.remessa + paradas.conciliacao > 0 ? paradas : undefined
   const titulosFiltrados = React.useMemo(() => {
-    const base = titulos
+    const base = titulosAba
     if (filtro === 'a-vencer') return base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
     if (filtro === 'vencidos') return base.filter(ehVencido)
     return base
-  }, [titulos, filtro])
+  }, [titulosAba, filtro])
 
   // Filial + busca + paginação — mesmo kit do painel de Permutas (consistência de UX).
   const abaTitulos = useTabelaFiltro(
@@ -859,13 +872,29 @@ function SispagPanel() {
                         onClick={() => setFiltro(f)}
                       >
                         {f === 'todos'
-                          ? `Todos (${titulos.length})`
+                          ? `Todos (${titulosAba.length})`
                           : f === 'a-vencer'
-                            ? `A vencer (${titulos.length - totalVencidos})`
+                            ? `A vencer (${titulosAba.length - totalVencidos})`
                             : `Vencidos (${totalVencidos})`}
                       </Button>
                     ))}
                   </div>
+                  {totalComprometidos > 0 ? (
+                    <Button
+                      size="sm"
+                      variant={mostrarComprometidos ? 'default' : 'outline'}
+                      aria-pressed={mostrarComprometidos}
+                      onClick={() => setMostrarComprometidos((v) => !v)}
+                      title={
+                        mostrarComprometidos
+                          ? 'Esconder os títulos que já estão num lote finalizado ou com remessa gerada.'
+                          : 'Mostrar os títulos que já estão num lote finalizado ou com remessa gerada — não podem entrar em outro lote.'
+                      }
+                    >
+                      <Lock className="size-4" aria-hidden />
+                      Em lote finalizado/remessa ({totalComprometidos})
+                    </Button>
+                  ) : null}
                   {truncado ? (
                     <span className="text-xs font-medium text-amber-700 dark:text-amber-500">
                       Lista cortada em {titulos.length} de {painel?.titulosTotal} títulos — os
@@ -886,8 +915,11 @@ function SispagPanel() {
                   <span className="text-xs text-muted-foreground" aria-live="polite">
                     {selecionados.size > 0
                       ? `${selecionados.size} sel. · ${formatBRL(totalSelecionado)}`
-                      : ''}
+                      : podeExecutar && abaTitulos.total > 0 && todosDoFiltro.bloqueio
+                        ? todosDoFiltro.bloqueio
+                        : ''}
                   </span>
+                  <ExportarTitulosAPagarBotao titulos={abaTitulos.filtrados} />
                   {podeExecutar ? (
                     <>
                       <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
