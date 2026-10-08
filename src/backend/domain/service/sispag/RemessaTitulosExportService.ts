@@ -1,11 +1,13 @@
 import { inject, injectable } from 'tsyringe';
 import RemittanceExportInvalidError from '../../errors/RemittanceExportInvalidError.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import Clock from '../../libs/clock/Clock.js';
 import PlanilhaXlsxWriter from '../../libs/xlsx/PlanilhaXlsxWriter.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     type CelulaExport,
     type ColunaExport,
+    type ContextoExport,
     type PlanilhaExport,
     STATUS_COM_REMESSA,
 } from '../../interface/sispag/RemessaTitulosExport.js';
@@ -82,13 +84,15 @@ export default class RemessaTitulosExportService {
         @inject(LogService) private readonly logService: LogService,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(PlanilhaXlsxWriter) private readonly writer: PlanilhaXlsxWriter,
+        @inject(Clock) private readonly clock: Clock,
     ) {}
 
     /** Exporta os títulos dos lotes pedidos. Recusa tudo se algum lote não tem remessa. */
     public exportar = async (
         loteIds: string[],
-        requestId: string,
+        contexto: ContextoExport,
     ): Promise<{ filename: string; buffer: Buffer }> => {
+        const inicio = this.clock.now();
         const ids = [...new Set(loteIds)];
         const lotes = await this.loteRepo.listLotesPorIds(ids);
         const achados = new Map(lotes.map((l) => [l.id, l]));
@@ -105,7 +109,12 @@ export default class RemessaTitulosExportService {
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
             message: 'títulos de remessas exportados',
-            data: { requestId, lotes: lotes.length, titulos: planilha.linhas.length },
+            data: {
+                ...contexto,
+                lotes: lotes.length,
+                titulos: planilha.linhas.length,
+                durationMs: this.clock.now() - inicio,
+            },
         });
         return { filename, buffer };
     };

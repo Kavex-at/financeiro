@@ -13,6 +13,10 @@
   vencimento, boleto e comprometidos), de todas as páginas e na ordem da tela, até 5.000 títulos.
   Colunas: filial, credor, documento, valor, moeda, vencimento, dias p/ vencer, boleto DDA, aprovação,
   pronto p/ remessa, lote e banco, com linha de totais. Basta `sispag:ver`.
+- **Os dois exports do SISPAG (títulos a pagar e títulos das remessas) registram quem exportou e
+  quanto demorou:** o log `BUSINESS_INFO` passa a ter o usuário (`ator` = username, `userId`) e
+  `durationMs`, além das contagens. A planilha expõe credores, valores e bancos; agora dá para
+  responder "quem extraiu isto" direto no log.
 
 ## v0.58.0 (2026-10-06) — download da remessa visível e export dos títulos das remessas
 

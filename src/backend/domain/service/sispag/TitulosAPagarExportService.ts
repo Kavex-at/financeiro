@@ -1,10 +1,12 @@
 import { inject, injectable } from 'tsyringe';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import Clock from '../../libs/clock/Clock.js';
 import PlanilhaXlsxWriter from '../../libs/xlsx/PlanilhaXlsxWriter.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type {
     CelulaExport,
     ColunaExport,
+    ContextoExport,
     PlanilhaExport,
 } from '../../interface/sispag/RemessaTitulosExport.js';
 import type { ChaveTitulo, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
@@ -54,18 +56,27 @@ export default class TitulosAPagarExportService {
         @inject(LogService) private readonly logService: LogService,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(PlanilhaXlsxWriter) private readonly writer: PlanilhaXlsxWriter,
+        @inject(Clock) private readonly clock: Clock,
     ) {}
 
+    /** Monta e serializa a planilha; o log diz quem exportou, quanto e em quanto tempo. */
     public exportar = async (
         chaves: ChaveTitulo[],
-        requestId: string,
+        contexto: ContextoExport,
     ): Promise<{ filename: string; buffer: Buffer }> => {
+        const inicio = this.clock.now();
         const { ignorados, ...planilha } = await this.montar(chaves);
         const buffer = await this.writer.serializar(planilha);
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
             message: 'títulos a pagar exportados',
-            data: { requestId, pedidos: chaves.length, titulos: planilha.linhas.length, ignorados },
+            data: {
+                ...contexto,
+                pedidos: chaves.length,
+                titulos: planilha.linhas.length,
+                ignorados,
+                durationMs: this.clock.now() - inicio,
+            },
         });
         return { filename: `sispag-titulos-a-pagar-${this.calendar.todayBrt()}.xlsx`, buffer };
     };

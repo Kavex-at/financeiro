@@ -1,12 +1,25 @@
 import 'reflect-metadata';
 import ExcelJS from 'exceljs';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import type Clock from '../../libs/clock/Clock.js';
 import PlanilhaXlsxWriter from '../../libs/xlsx/PlanilhaXlsxWriter.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
 import TitulosAPagarExportService from './TitulosAPagarExportService.js';
+
+/** Relógio que anda 125 ms a cada leitura: início → fim do export = 125 ms. */
+const relogio = () => {
+    let t = 1_000;
+    return {
+        now: () => {
+            const agora = t;
+            t += 125;
+            return agora;
+        },
+    } as unknown as Clock;
+};
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     filCod: 7,
@@ -46,6 +59,7 @@ const make = ({
         log as unknown as LogService,
         calendar,
         new PlanilhaXlsxWriter(),
+        relogio(),
     );
     return { service, tituloRepo, loteRepo, log };
 };
@@ -134,7 +148,11 @@ describe('TitulosAPagarExportService', () => {
 
     it('exportar devolve um xlsx legível, com nome datado, e registra o log', async () => {
         const { service, log } = make();
-        const { filename, buffer } = await service.exportar([chave(titulo())], 'req-1');
+        const { filename, buffer } = await service.exportar([chave(titulo())], {
+            requestId: 'req-1',
+            ator: 'ana.silva',
+            userId: 42,
+        });
         expect(filename).toBe('sispag-titulos-a-pagar-2026-10-06.xlsx');
         const wb = new ExcelJS.Workbook();
         await wb.xlsx.load(buffer as unknown as ArrayBuffer);
@@ -144,7 +162,15 @@ describe('TitulosAPagarExportService', () => {
         expect(sheet?.rowCount).toBe(3); // cabeçalho + 1 título + totais
         expect(log.info).toHaveBeenCalledWith(
             expect.objectContaining({
-                data: { requestId: 'req-1', pedidos: 1, titulos: 1, ignorados: 0 },
+                data: {
+                    requestId: 'req-1',
+                    ator: 'ana.silva',
+                    userId: 42,
+                    pedidos: 1,
+                    titulos: 1,
+                    ignorados: 0,
+                    durationMs: 125,
+                },
             }),
         );
     });
