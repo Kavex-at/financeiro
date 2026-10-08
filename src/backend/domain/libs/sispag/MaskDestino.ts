@@ -1,5 +1,9 @@
 import { injectable } from 'tsyringe';
 import {
+    AUTHORIZED_PAYEE_MODALITY,
+    type PayeeDestination,
+} from '../../interface/sispag/AuthorizedPayeeInterface.js';
+import {
     CHAVE_PIX_TIPO,
     type ChavePixTipo,
     type ContaFavorecido,
@@ -97,6 +101,26 @@ export default class MaskDestino {
                   dv: destino.contaDv,
               })
             : this.chavePixRotulada(destino.chavePixTipo, destino.chavePix);
+
+    /**
+     * I14l — o destino que o resolvedor escolheu, na forma do favorecido autorizado: TED com banco e
+     * agência completos e a conta com os 4 últimos dígitos; PIX com o tipo e um trecho da chave.
+     */
+    public destino = (destino: PayeeDestination): string =>
+        destino.tipo === AUTHORIZED_PAYEE_MODALITY.TED
+            ? this.contaBancaria({
+                  banco: destino.banco,
+                  ...(destino.agencia
+                      ? {
+                            agencia: destino.agenciaDv
+                                ? `${destino.agencia}-${destino.agenciaDv}`
+                                : destino.agencia,
+                        }
+                      : {}),
+                  conta: destino.conta,
+                  ...(destino.contaDv ? { dv: destino.contaDv } : {}),
+              })
+            : this.chavePixRotulada(destino.chaveTipo as ChavePixTipo | undefined, destino.chave);
 
     public contaFavorecido = (conta: ContaFavorecido): string =>
         this.contaBancaria({
