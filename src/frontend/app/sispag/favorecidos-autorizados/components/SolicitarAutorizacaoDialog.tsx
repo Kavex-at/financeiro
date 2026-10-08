@@ -48,16 +48,14 @@ export function SolicitarAutorizacaoDialog({
   const [modalidade, setModalidade] = React.useState<ModalidadeAutorizavel>(
     inicial?.modalidade ?? 'TED',
   )
-  const [filCod, setFilCod] = React.useState(String(inicial?.filCod ?? 1))
   const [erro, setErro] = React.useState<string | null>(null)
   const [salvando, setSalvando] = React.useState(false)
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault()
     if (salvando) return
-    const fil = Number(filCod)
-    if (pesCod.trim() === '' || !Number.isInteger(fil) || fil <= 0) {
-      setErro('Informe o código do favorecido e a filial.')
+    if (pesCod.trim() === '') {
+      setErro('Informe o código do favorecido.')
       return
     }
     setErro(null)
@@ -69,7 +67,8 @@ export function SolicitarAutorizacaoDialog({
           ...(credor.trim() ? { credor: credor.trim() } : {}),
           modalidade,
           origem,
-          filCod: fil,
+          // Só o atalho do item do lote traz a filial (a do lote); sem ela, o backend usa a do tenant.
+          ...(inicial?.filCod !== undefined ? { filCod: inicial.filCod } : {}),
         }),
       )
     } catch (err) {
@@ -116,19 +115,6 @@ export function SolicitarAutorizacaoDialog({
                 ))}
               </div>
             </fieldset>
-            <div className="space-y-1.5">
-              <Label htmlFor="pedido-filial">Filial para ler o cadastro</Label>
-              <Input
-                id="pedido-filial"
-                inputMode="numeric"
-                value={filCod}
-                onChange={(e) => setFilCod(e.target.value)}
-                aria-describedby="pedido-filial-ajuda"
-              />
-              <p id="pedido-filial-ajuda" className="text-xs text-muted-foreground">
-                O cadastro do favorecido é o mesmo em todas as filiais; a filial só é usada para lê-lo.
-              </p>
-            </div>
             {erro ? (
               <p role="alert" className="rounded-lg border border-danger/40 bg-danger-subtle px-4 py-3 text-sm text-danger-foreground">
                 {erro}

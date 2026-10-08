@@ -125,6 +125,24 @@ describe('POST /sispag/favorecidos-autorizados — pedir (F1/F5)', () => {
         });
     });
 
+    it('sem filCod no body (relatório/manual) → o serviço recebe o pedido sem filial', async () => {
+        const s = servico({});
+        await comApp([PERMISSION.SISPAG_EXECUTAR], async (url) => {
+            const res = await post(`${url}/sispag/favorecidos-autorizados`, {
+                pesCod: '7001',
+                modalidade: 'PIX',
+                origem: 'RELATORIO',
+            });
+            expect(res.status).toBe(201);
+        });
+        expect(s.solicitar).toHaveBeenCalledWith({
+            pesCod: '7001',
+            modalidade: 'PIX',
+            origem: 'RELATORIO',
+            ator: 'bia',
+        });
+    });
+
     it('modalidade inválida → 400; sem sispag:executar → 403', async () => {
         const s = servico({});
         await comApp([PERMISSION.SISPAG_EXECUTAR], async (url) => {

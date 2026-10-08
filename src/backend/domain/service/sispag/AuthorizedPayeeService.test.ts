@@ -74,6 +74,7 @@ const montar = (m: Montagem = {}) => {
         sispagPixEnabled: true,
         sispagFavorecidoFingerprintKey: CHAVE_HMAC,
         sispagFavorecidoFingerprintKeyId: 'v1',
+        sispagCadastroFilCod: 7,
     };
     const env = { getEnvironmentVars: async () => envVars } as unknown as EnvironmentProvider;
     const falha = Object.assign(new Error(`conta ${CONTA_COMPLETA} indisponível`), {
@@ -190,6 +191,20 @@ describe('AuthorizedPayeeService — solicitar (F1/F5)', () => {
                 dados: { origem: 'RELATORIO' },
             }),
         ]);
+    });
+
+    it('sem filial no pedido (relatório/manual), lê o cadastro pela filial do tenant', async () => {
+        const { service, repo } = montar();
+        await service.solicitar({
+            pesCod: '7001',
+            modalidade: 'TED',
+            origem: 'RELATORIO',
+            ator: 'ana',
+        });
+        expect(repo.inserir).toHaveBeenCalledWith(
+            expect.objectContaining({ filCodLeitura: 7 }),
+            expect.anything(),
+        );
     });
 
     it('PENDENTE já vigente → 409, nada gravado', async () => {

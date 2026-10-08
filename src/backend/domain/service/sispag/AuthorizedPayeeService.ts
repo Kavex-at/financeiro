@@ -116,9 +116,13 @@ export default class AuthorizedPayeeService {
         credor?: string;
         modalidade: AuthorizedPayeeModality;
         origem: PayeeRequestOrigin;
-        filCod: number;
+        /** Filial só para ler o cadastro; ausente, a do tenant (`sispagCadastroFilCod`). */
+        filCod?: number;
         ator: string;
     }): Promise<AuthorizedPayee> => {
+        const filCodLeitura =
+            input.filCod ??
+            (await this.environmentProvider.getEnvironmentVars()).sispagCadastroFilCod;
         const vigente = await this.repo.buscarVigente(input.pesCod, input.modalidade);
         const acao = this.rule.solicitar(vigente);
         let id: string;
@@ -150,7 +154,7 @@ export default class AuthorizedPayeeService {
                         ...(input.credor ? { credor: input.credor } : {}),
                         modalidade: input.modalidade,
                         origemSolicitacao: input.origem,
-                        filCodLeitura: input.filCod,
+                        filCodLeitura,
                         solicitadoPor: input.ator,
                     },
                     tx,

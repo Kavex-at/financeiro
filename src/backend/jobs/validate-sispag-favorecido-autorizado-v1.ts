@@ -50,10 +50,21 @@ import DestinoPagamentoResolver, {
  *
  * Saída: uma linha por (pesCod, modalidade) com EXATO | DIVERGENTE | SEM_DADO | FALHA_LEITURA e as
  * máscaras; exit 1 se houver qualquer DIVERGENTE (P0: volta ao loop).
+ *
+ * ── CADASTRO GLOBAL ENTRE FILIAIS ─────────────────────────────────────────────────────────
+ * A autorização não tem filial (o `cmn025` é tido como global), mas o Conexos exige uma filial no
+ * header da leitura: o pedido lê pela `SISPAG_CADASTRO_FIL_COD` e o lote, pela filial dele. Se o
+ * header mudasse o resultado, um pagamento de outra filial pareceria "destino mudou". A 2ª parte
+ * resolve o mesmo (pesCod, modalidade) por cada filial de `VAL_FILS` (default `1,2,4`) e compara as
+ * impressões: MESMO_EM_TODAS | DIFERE_POR_FILIAL. Exit 1 também se alguma DIFERE_POR_FILIAL.
  */
 
 const AMOSTRA_MAX = 20;
 const FIL = Number(process.env.VAL_FIL ?? 2);
+const FILS = (process.env.VAL_FILS ?? '1,2,4')
+    .split(',')
+    .map((f) => Number(f.trim()))
+    .filter((f) => Number.isInteger(f) && f > 0);
 const log = (s: string): void => console.log(`[val-favorecido] ${s}`);
 const motivo = (e: unknown): string => {
     const status = (e as { response?: { status?: number } } | undefined)?.response?.status;
@@ -230,7 +241,43 @@ async function main(): Promise<void> {
     log(
         `EXATO=${conta('EXATO')} DIVERGENTE=${conta('DIVERGENTE')} SEM_DADO=${conta('SEM_DADO')} FALHA_LEITURA=${conta('FALHA_LEITURA')}`,
     );
-    process.exit(conta('DIVERGENTE') > 0 ? 1 : 0);
+
+    // 2ª parte — o mesmo destino por qualquer filial do header?
+    console.log('='.repeat(78));
+    log(`cadastro entre filiais: ${FILS.join(', ')}`);
+    let diferentes = 0;
+    for (const pesCod of pesCods) {
+        const cache = resolver.novoCache();
+        for (const modalidade of ['TED', 'PIX'] as const) {
+            const porFilial: string[] = [];
+            const impressoes = new Set<string>();
+            for (const filCod of FILS) {
+                try {
+                    const resolvido = await resolver.resolve(
+                        { modalidade },
+                        { flags: { ted: true, pix: true }, filCod, pesCod, cache },
+                    );
+                    const destino =
+                        resolvido.origem === DESTINO_ORIGEM.CADASTRO
+                            ? resolver.destinoFavorecido(resolvido)
+                            : undefined;
+                    const fp = destino ? (await fingerprint.calcular(destino)).fingerprint : '-';
+                    impressoes.add(fp);
+                    porFilial.push(`fil ${filCod}=${destino ? mask.destino(destino) : 'sem dado'}`);
+                } catch (error) {
+                    impressoes.add(`falha:${filCod}`);
+                    porFilial.push(`fil ${filCod}=falha (${motivo(error)})`);
+                }
+            }
+            const mesmo = impressoes.size === 1;
+            if (!mesmo) diferentes += 1;
+            log(
+                `${pesCod} ${modalidade} ${mesmo ? 'MESMO_EM_TODAS' : 'DIFERE_POR_FILIAL'} · ${porFilial.join(' · ')}`,
+            );
+        }
+    }
+    log(`DIFERE_POR_FILIAL=${diferentes}`);
+    process.exit(conta('DIVERGENTE') > 0 || diferentes > 0 ? 1 : 0);
 }
 
 main().catch((e) => {

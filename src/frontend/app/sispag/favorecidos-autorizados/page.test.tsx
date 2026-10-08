@@ -241,6 +241,13 @@ describe('/sispag/favorecidos-autorizados', () => {
     const dialogo = await screen.findByRole('dialog', { name: /pedir autorização/i })
     expect(within(dialogo).getByLabelText(/código do favorecido/i)).toHaveValue('9001')
     expect(within(dialogo).getByLabelText('PIX')).toBeChecked()
+    expect(within(dialogo).queryByLabelText(/filial/i)).not.toBeInTheDocument()
+    ;(pedirAutorizacao as jest.Mock).mockResolvedValue({ id: 'A9', estado: 'PENDENTE' })
+    await userEvent.click(within(dialogo).getByRole('button', { name: /^pedir autorização$/i }))
+    // A filial do lote segue escondida, só para ler o cadastro.
+    await waitFor(() =>
+      expect(pedirAutorizacao).toHaveBeenCalledWith(expect.objectContaining({ pesCod: '9001', filCod: 2 })),
+    )
   })
 
   it('guarda desligada no tenant: avisa, mas a lista segue montável', async () => {

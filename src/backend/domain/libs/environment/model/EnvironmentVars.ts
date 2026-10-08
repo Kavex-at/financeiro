@@ -204,6 +204,12 @@ export default class EnvironmentVars {
     public sispagFavorecidoFingerprintKey?: string;
     public sispagFavorecidoFingerprintKeyId: string;
     /**
+     * Filial usada só para LER o cadastro (`cmn025`) num pedido de autorização que não vem de um
+     * lote (`SISPAG_CADASTRO_FIL_COD`, default 1). O cadastro do favorecido é global; o Conexos só
+     * exige uma filial no header da leitura. Não faz parte da chave da autorização.
+     */
+    public sispagCadastroFilCod: number;
+    /**
      * Carteira SISPAG ao abrir a tela (ADR-0060). `sispagCarteiraTtlMin`
      * (`SISPAG_CARTEIRA_TTL_MIN`, default 30): ingestão mais nova que isto não é refeita.
      * `sispagCarteiraCooldownMin` (`SISPAG_CARTEIRA_COOLDOWN_MIN`, default 5): depois de uma
@@ -317,6 +323,7 @@ export default class EnvironmentVars {
         sispagFavorecidoAutorizadoEnabled,
         sispagFavorecidoFingerprintKey,
         sispagFavorecidoFingerprintKeyId,
+        sispagCadastroFilCod,
         sispagCarteiraTtlMin,
         sispagCarteiraCooldownMin,
         sispagVerificacao,
@@ -363,6 +370,7 @@ export default class EnvironmentVars {
         sispagFavorecidoAutorizadoEnabled?: boolean;
         sispagFavorecidoFingerprintKey?: string;
         sispagFavorecidoFingerprintKeyId?: string;
+        sispagCadastroFilCod?: number;
         sispagCarteiraTtlMin?: number;
         sispagCarteiraCooldownMin?: number;
         sispagVerificacao?: SispagVerificacaoConfig;
@@ -411,6 +419,7 @@ export default class EnvironmentVars {
             this.sispagFavorecidoFingerprintKey = sispagFavorecidoFingerprintKey;
         }
         this.sispagFavorecidoFingerprintKeyId = sispagFavorecidoFingerprintKeyId ?? 'v1';
+        this.sispagCadastroFilCod = sispagCadastroFilCod ?? 1;
         this.sispagCarteiraTtlMin = sispagCarteiraTtlMin ?? 30;
         this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
         this.sispagVerificacao = sispagVerificacao ?? { ...SISPAG_VERIFICACAO_DEFAULT };
