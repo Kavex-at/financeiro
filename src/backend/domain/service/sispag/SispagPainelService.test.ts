@@ -9,9 +9,7 @@ import type PagamentoIngestaoRunRepository from '../../repository/sispag/Pagamen
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
 import MaskDestino from '../../libs/sispag/MaskDestino.js';
-import type ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestinoRepository.js';
 import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
-import type ExcecaoSubstituicaoService from './ExcecaoSubstituicaoService.js';
 import SispagPainelService from './SispagPainelService.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -78,10 +76,6 @@ const make = (
         listarLinhasDigitaveisDoLote?: jest.Mock;
         remessaLedger?: { listReconcilingParadas: jest.Mock };
         conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
-        /** Exceção APROVADA por tipo que o `findAprovada` devolve (ADR-0061). */
-        excecaoAprovada?: Partial<Record<'CONTA' | 'CHAVE_PIX', unknown>>;
-        substituicao?: { aposentar: jest.Mock };
-        painelExcecoes?: { contarPorEstado: jest.Mock; contarPendentesAntigas: jest.Mock };
     } = {},
 ) => {
     const { listChavesPixFavorecido = jest.fn().mockResolvedValue([]), envVars = {} } = over;
@@ -138,34 +132,7 @@ const make = (
     const conciliacaoLedger = (over.conciliacaoLedger ?? {
         listReconcilingParadas: jest.fn().mockResolvedValue([]),
     }) as never;
-    const excecoes = {
-        findAprovada: jest
-            .fn()
-            .mockImplementation(
-                async (_pes: string, tipo: 'CONTA' | 'CHAVE_PIX') =>
-                    over.excecaoAprovada?.[tipo] ?? null,
-            ),
-    };
-    const substituicao = over.substituicao ?? {
-        aposentar: jest.fn().mockResolvedValue({ aposentada: true, divergiu: false }),
-    };
-    // Contadores do painel (ADR-0061 T11) — só contagens.
-    const painelExcecoes = over.painelExcecoes ?? {
-        contarPorEstado: jest.fn().mockResolvedValue({
-            PENDENTE: 2,
-            APROVADA: 5,
-            REJEITADA: 1,
-            SUBSTITUIDA: 3,
-            REVOGADA: 0,
-        }),
-        contarPendentesAntigas: jest.fn().mockResolvedValue(1),
-    };
-    const resolver = new DestinoPagamentoResolver(
-        sispag,
-        new MaskDestino(),
-        excecoes as unknown as ExcecaoDestinoRepository,
-        substituicao as unknown as ExcecaoSubstituicaoService,
-    );
+    const resolver = new DestinoPagamentoResolver(sispag, new MaskDestino());
     const service = new SispagPainelService(
         sispag,
         fin015,
@@ -180,7 +147,6 @@ const make = (
         env,
         log,
         resolver,
-        painelExcecoes as unknown as ExcecaoDestinoRepository,
     );
     return {
         service,
@@ -188,48 +154,14 @@ const make = (
         listChavesComBoleto,
         listarLinhasDigitaveisDoLote,
         resolver,
-        painelExcecoes,
     };
 };
 
-describe('SispagPainelService.montarPainel — exceções de destino (ADR-0061, T11)', () => {
-    it('flag ligada: contagem por estado e pendentes antigas, sem nenhum valor de destino', async () => {
-        const { service, painelExcecoes } = make({
-            envVars: { sispagExcecaoDestinoEnabled: true },
-        });
-        const painel = await service.montarPainel();
-        expect(painelExcecoes.contarPendentesAntigas).toHaveBeenCalledWith(7);
-        expect(painel.excecoes).toEqual({
-            porEstado: { PENDENTE: 2, APROVADA: 5, REJEITADA: 1, SUBSTITUIDA: 3, REVOGADA: 0 },
-            pendentesAntigas: 1,
-            diasLimite: 7,
-        });
-    });
-
-    it('flag desligada: o campo não existe e nada é consultado (paridade com o main)', async () => {
-        const { service, painelExcecoes } = make({});
+describe('SispagPainelService.montarPainel — sem contadores de exceção (ADR-0065)', () => {
+    it('o painel não tem mais o bloco de exceções de destino', async () => {
+        const { service } = make({});
         const painel = await service.montarPainel();
         expect(painel).not.toHaveProperty('excecoes');
-        expect(painelExcecoes.contarPorEstado).not.toHaveBeenCalled();
-    });
-
-    it('contagem que falha NÃO derruba o painel: omite o campo e avisa', async () => {
-        const falha = {
-            contarPorEstado: jest.fn().mockRejectedValue(new Error('banco fora')),
-            contarPendentesAntigas: jest.fn().mockResolvedValue(0),
-        };
-        const { service, log } = make({
-            envVars: { sispagExcecaoDestinoEnabled: true },
-            painelExcecoes: falha,
-        });
-        const painel = await service.montarPainel();
-        expect(painel).not.toHaveProperty('excecoes');
-        expect(painel.titulosTotal).toBeGreaterThanOrEqual(0);
-        expect(log.warn).toHaveBeenCalledWith(
-            expect.objectContaining({
-                message: expect.stringContaining('contagem das exceções de destino'),
-            }),
-        );
     });
 });
 
@@ -336,17 +268,19 @@ describe('SispagPainelService.listRetornos', () => {
 });
 
 describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
-    it('devolve as formas disponíveis por título (ao vivo) do fin064', async () => {
-        // Do `fin064` só sai PIX. BOLETO saía de `titEspCodbar`, que é null em 100% dos
-        // títulos de produção — a detecção nunca disparava. Agora vem do flag de DDA.
+    it('devolve as formas disponíveis por título (ao vivo) do fin064, sem TED/PIX', async () => {
+        // Do `fin064` só se aproveita o que não é TED/PIX: TED/PIX vêm do cadastro, e só com a
+        // guarda do favorecido autorizado ligada (ADR-0065).
         const getLoteComItens = jest.fn().mockResolvedValue({
             id: 'L1',
             itens: [{ filCod: 2, docCod: '100', titCod: '1' }],
         });
-        const getTituloAPagar = jest.fn().mockResolvedValue({ modalidadesDisponiveis: ['PIX'] });
+        const getTituloAPagar = jest
+            .fn()
+            .mockResolvedValue({ modalidadesDisponiveis: ['PIX', 'CREDITO_CONTA'] });
         const { service } = make({ getLoteComItens, getTituloAPagar });
         const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: ['PIX'] }]);
+        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: ['CREDITO_CONTA'] }]);
     });
 
     it('lote inexistente → lista vazia', async () => {
@@ -354,68 +288,24 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
         expect(await service.modalidadesDisponiveisDoLote('X')).toEqual([]);
     });
 
-    it('TED/crédito vêm da conta do favorecido, não do fin064', async () => {
+    it('sem a guarda do favorecido autorizado TED/PIX NÃO são oferecidos (I14k), nem do fin064', async () => {
         const getLoteComItens = jest.fn().mockResolvedValue({
             id: 'L1',
             itens: [{ filCod: 2, docCod: '100', titCod: '1' }],
         });
         const getTituloAPagar = jest
             .fn()
-            .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] });
+            .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: ['PIX', 'TED'] });
         const listContasFavorecido = jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 341 }]);
-        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
-        const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(itens[0].modalidades).toEqual(['TED']);
-        expect(listContasFavorecido).toHaveBeenCalledWith('P1', 2);
-    });
-
-    it('agrupa por (filial, favorecido): 3 títulos do mesmo pesCod = 1 consulta de contas', async () => {
-        const getLoteComItens = jest.fn().mockResolvedValue({
-            id: 'L1',
-            itens: [
-                { filCod: 2, docCod: '100', titCod: '1' },
-                { filCod: 2, docCod: '100', titCod: '2' },
-                { filCod: 2, docCod: '200', titCod: '1' },
-            ],
+        const { service } = make({
+            envVars: { sispagTedEnabled: true, sispagPixEnabled: true },
+            getLoteComItens,
+            getTituloAPagar,
+            listContasFavorecido,
         });
-        const getTituloAPagar = jest.fn().mockResolvedValue({ pesCod: 'P1' });
-        const listContasFavorecido = jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 341 }]);
-        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
         const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(getTituloAPagar).toHaveBeenCalledTimes(3); // 1 por título — são títulos distintos
-        expect(listContasFavorecido).toHaveBeenCalledTimes(1); // 1 por favorecido distinto
-        expect(itens.every((i) => i.modalidades.includes('TED'))).toBe(true);
-    });
-
-    it('o mesmo favorecido em filiais diferentes são consultas diferentes', async () => {
-        const getLoteComItens = jest.fn().mockResolvedValue({
-            id: 'L1',
-            itens: [
-                { filCod: 2, docCod: '100', titCod: '1' },
-                { filCod: 4, docCod: '200', titCod: '1' },
-            ],
-        });
-        const getTituloAPagar = jest.fn().mockResolvedValue({ pesCod: 'P1' });
-        const listContasFavorecido = jest.fn().mockResolvedValue([]);
-        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
-        await service.modalidadesDisponiveisDoLote('L1');
-        expect(listContasFavorecido).toHaveBeenCalledTimes(2);
-        expect(listContasFavorecido).toHaveBeenCalledWith('P1', 2);
-        expect(listContasFavorecido).toHaveBeenCalledWith('P1', 4);
-    });
-
-    it('consulta de contas que falha não vira TED/crédito (não promete destino inexistente)', async () => {
-        const getLoteComItens = jest.fn().mockResolvedValue({
-            id: 'L1',
-            itens: [{ filCod: 2, docCod: '100', titCod: '1' }],
-        });
-        const getTituloAPagar = jest
-            .fn()
-            .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: ['PIX'] });
-        const listContasFavorecido = jest.fn().mockRejectedValue(new Error('504'));
-        const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
-        const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(itens[0].modalidades).toEqual(['PIX']);
+        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: [] }]);
+        expect(listContasFavorecido).not.toHaveBeenCalled();
     });
 
     it('título que falha no fin064 não derruba os demais itens do lote', async () => {
@@ -434,7 +324,7 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
         const { service } = make({ getLoteComItens, getTituloAPagar, listContasFavorecido });
         const itens = await service.modalidadesDisponiveisDoLote('L1');
         expect(itens[0]).toEqual({ docCod: '100', titCod: '1', modalidades: [] });
-        expect(itens[1].modalidades).toEqual(['BOLETO', 'TED']);
+        expect(itens[1].modalidades).toEqual(['BOLETO']);
     });
     describe('execuções presas (aviso na tela)', () => {
         it('reporta zero quando não há órfão', async () => {
@@ -648,59 +538,33 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
     });
 });
 
-describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054)', () => {
+describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054, ADR-0065)', () => {
     const FLAGS = {
+        sispagFavorecidoAutorizadoEnabled: true,
         sispagTedEnabled: true,
         sispagPixEnabled: true,
-        sispagExcecaoDestinoEnabled: true,
     };
-    const EXC_CONTA = {
-        tipo: 'CONTA' as const,
-        bancoCod: '001',
-        agencia: '4321',
-        conta: '99887766',
-        contaDv: '5',
-        titularDocumento: '11144477735',
-    };
-    const EXC_PIX = {
-        tipo: 'CHAVE_PIX' as const,
-        chavePixTipo: 'CPF_CNPJ' as const,
-        chavePix: '11144477735',
-        titularDocumento: '11144477735',
-    };
-    /** `ExcecaoDestino` APROVADA completa, como o repositório a devolve. */
-    const aprovada = (destino: typeof EXC_CONTA | typeof EXC_PIX, id = 'EXC-1') => ({
-        id,
-        pesCod: 'P1',
-        filCod: 2,
-        destino,
-        estado: 'APROVADA',
-        origem: 'MANUAL',
-        justificativa: 'j',
-        cadastradoPor: 'ana',
-        cadastradoEm: '2026-10-05T10:00:00.000Z',
-        aprovadoPor: 'bia',
-        versao: 2,
-    });
     const loteCom = (itens: Array<Record<string, unknown>>) =>
         jest.fn().mockResolvedValue({ id: 'L1', itens });
     const item = { filCod: 2, docCod: '100', titCod: '1' };
 
-    it('flags desligadas: a resposta não ganha o campo `destinos` (igual ao main)', async () => {
+    it('guarda ligada mas flag da modalidade desligada: só a ligada é oferecida', async () => {
         const { service } = make({
+            envVars: { ...FLAGS, sispagTedEnabled: false },
             getLoteComItens: loteCom([item]),
             getTituloAPagar: jest
                 .fn()
                 .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
             listContasFavorecido: jest.fn().mockResolvedValue([{ pctCodSeq: 9, banco: 237 }]),
         });
-        const itens = await service.modalidadesDisponiveisDoLote('L1');
-        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: ['TED'] }]);
+        const [r] = await service.modalidadesDisponiveisDoLote('L1');
+        expect(r?.modalidades).toEqual(['PIX']);
+        expect(r?.destinos).not.toHaveProperty('TED');
     });
 
-    it('PIX do fin064 deixa de valer com a flag PIX ligada (fonte certa é o cmnPessoasPix)', async () => {
+    it('PIX do fin064 não vale: a fonte é o cmnPessoasPix', async () => {
         const { service } = make({
-            envVars: { sispagPixEnabled: true },
+            envVars: FLAGS,
             getLoteComItens: loteCom([item]),
             getTituloAPagar: jest
                 .fn()
@@ -708,21 +572,26 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
             listChavesPixFavorecido: jest.fn().mockResolvedValue([]),
         });
         const [r] = await service.modalidadesDisponiveisDoLote('L1');
-        // ADR-0063 (I10b revisado): PIX é oferecido, mas o destino viria de NENHUM lugar — o
-        // itsDesChavePix do fin064 não conta.
         expect(r?.destinos?.PIX).toEqual({ origem: 'NENHUM' });
     });
 
     it('devolve origem e destino MASCARADO por modalidade, nunca o valor completo', async () => {
-        // TED: cadastro sem conta → exceção APROVADA. PIX: chave do cadastro (o cadastro vence).
         const { service } = make({
             envVars: FLAGS,
-            excecaoAprovada: { CONTA: aprovada(EXC_CONTA) },
             getLoteComItens: loteCom([item]),
             getTituloAPagar: jest
                 .fn()
                 .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
-            listContasFavorecido: jest.fn().mockResolvedValue([]),
+            listContasFavorecido: jest.fn().mockResolvedValue([
+                {
+                    pctCodSeq: 9,
+                    banco: 1,
+                    agencia: '4321',
+                    conta: '99887766',
+                    dvConta: '5',
+                    padrao: true,
+                },
+            ]),
             listChavesPixFavorecido: jest.fn().mockResolvedValue([
                 {
                     cixCod: 3,
@@ -736,49 +605,13 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
         const [r] = await service.modalidadesDisponiveisDoLote('L1');
         expect(r?.modalidades).toEqual(['TED', 'PIX']);
         expect(r?.destinos).toEqual({
-            TED: { origem: 'EXCECAO', destinoMascarado: 'banco 001 · ag. 4321 · cc ****7766-5' },
+            TED: { origem: 'CADASTRO', destinoMascarado: 'banco 001 · ag. 4321 · cc ****7766-5' },
             PIX: { origem: 'CADASTRO', destinoMascarado: 'PIX e-mail p***@x.com.br' },
         });
         const json = JSON.stringify(r);
-        for (const v of ['99887766', 'pix.secreto@x.com.br', '11144477735']) {
+        for (const v of ['99887766', 'pix.secreto@x.com.br']) {
             expect(json).not.toContain(v);
         }
-    });
-
-    it('cadastro com conta ativa VENCE a exceção APROVADA: origem CADASTRO', async () => {
-        const { service } = make({
-            envVars: FLAGS,
-            excecaoAprovada: { CONTA: aprovada(EXC_CONTA) },
-            getLoteComItens: loteCom([item]),
-            getTituloAPagar: jest
-                .fn()
-                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
-            listContasFavorecido: jest
-                .fn()
-                .mockResolvedValue([{ pctCodSeq: 9, banco: 237, conta: '55554444', padrao: true }]),
-        });
-        const [r] = await service.modalidadesDisponiveisDoLote('L1');
-        expect(r?.destinos?.TED?.origem).toBe('CADASTRO');
-    });
-
-    it('a oferta é LEITURA: nunca aposenta exceção (só o finalizar pede aposentarExcecao)', async () => {
-        const substituicao = { aposentar: jest.fn() };
-        const { service } = make({
-            envVars: FLAGS,
-            substituicao,
-            excecaoAprovada: { CONTA: aprovada(EXC_CONTA) },
-            getLoteComItens: loteCom([item]),
-            getTituloAPagar: jest
-                .fn()
-                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
-            listContasFavorecido: jest
-                .fn()
-                .mockResolvedValue([{ pctCodSeq: 9, banco: 237, conta: '55554444', padrao: true }]),
-        });
-        await service.modalidadesDisponiveisDoLote('L1');
-        expect(substituicao.aposentar).not.toHaveBeenCalled();
-        await service.modalidadesDisponiveisDoLote('L1', { aposentarExcecao: true });
-        expect(substituicao.aposentar).toHaveBeenCalledTimes(1);
     });
 
     it('D12 — PIX por chave CPF/CNPJ do favorecido vem marcado (campo aditivo)', async () => {
@@ -807,22 +640,6 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
         expect(JSON.stringify(r)).not.toContain('11144477735');
     });
 
-    it('D12 — exceção PIX (só CPF/CNPJ, I12i) também conta como do favorecido', async () => {
-        const { service } = make({
-            envVars: FLAGS,
-            excecaoAprovada: { CHAVE_PIX: aprovada(EXC_PIX) },
-            getLoteComItens: loteCom([item]),
-            getTituloAPagar: jest
-                .fn()
-                .mockResolvedValue({ pesCod: 'P1', modalidadesDisponiveis: [] }),
-        });
-        const [r] = await service.modalidadesDisponiveisDoLote('L1');
-        expect(r?.destinos?.PIX).toMatchObject({
-            origem: 'EXCECAO',
-            chaveCpfCnpjDoFavorecido: true,
-        });
-    });
-
     it('leitura de cadastro que falha: oferece com origem NENHUM (a verificação barra, I13b)', async () => {
         const { service } = make({
             envVars: FLAGS,
@@ -838,14 +655,8 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
         expect(r?.destinos).toEqual({ TED: { origem: 'NENHUM' }, PIX: { origem: 'NENHUM' } });
     });
 
-    // I10b revisado (ADR-0063): com a flag ligada TED/PIX são SEMPRE oferecidos, e a origem que a
-    // tela mostra é a MESMA que o envio resolveria — divergência entre as duas segue sendo bug.
-    const fixtures: Array<{
-        nome: string;
-        contas: unknown[];
-        chaves: unknown[];
-        excecao?: typeof EXC_CONTA;
-    }> = [
+    // I10b: a origem que a tela mostra é a MESMA que o envio resolveria.
+    const fixtures: Array<{ nome: string; contas: unknown[]; chaves: unknown[] }> = [
         {
             nome: 'conta em outro banco',
             contas: [{ pctCodSeq: 1, banco: 237, padrao: true }],
@@ -865,7 +676,6 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
             contas: [],
             chaves: [{ cixCod: 1, chave: 'a@b.com', tipo: 'EMAIL', padrao: true, pesCod: 'P1' }],
         },
-        { nome: 'exceção APROVADA sem cadastro', contas: [], chaves: [], excecao: EXC_CONTA },
     ];
     for (const f of fixtures) {
         it(`oferta = envio: ${f.nome}`, async () => {
@@ -873,7 +683,6 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
             const listChavesPixFavorecido = jest.fn().mockResolvedValue(f.chaves);
             const { service, resolver } = make({
                 envVars: FLAGS,
-                excecaoAprovada: f.excecao ? { CONTA: aprovada(f.excecao) } : {},
                 getLoteComItens: loteCom([item]),
                 getTituloAPagar: jest
                     .fn()
@@ -882,7 +691,7 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
                 listChavesPixFavorecido,
             });
             const [oferta] = await service.modalidadesDisponiveisDoLote('L1');
-            const flags = { ted: true, pix: true, excecao: true };
+            const flags = { ted: true, pix: true };
             for (const modalidade of ['TED', 'PIX'] as const) {
                 const envio = await resolver.resolve(
                     { modalidade },

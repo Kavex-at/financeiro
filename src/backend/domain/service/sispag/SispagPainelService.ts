@@ -8,15 +8,12 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
 import type { LinhasDigitaveisDoLote } from '../../interface/sispag/Fin015Write.js';
 import {
-    CHAVE_PIX_TIPO,
-    DESTINO_MANUAL_TIPO,
     type ItemLote,
     type LoteSispag,
     MODALIDADE,
     type Modalidade,
     type SispagKpis,
     type ExecucoesParadas,
-    type PainelExcecoes,
     type SispagPainelResponse,
     type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
@@ -26,8 +23,6 @@ import LotePagamentoRepository from '../../repository/sispag/LotePagamentoReposi
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
-import ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestinoRepository.js';
-import { redactErrorMessage } from '../../libs/redact/redactErrorMessage.js';
 import LogService from '../LogService.js';
 import DestinoPagamentoResolver, {
     type CacheCadastroDestino,
@@ -54,12 +49,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 const TITULOS_CAP = 5000;
 
-/**
- * Dias a partir dos quais uma exceção de destino `PENDENTE` conta como "esperando demais" no
- * painel (ADR-0061, T11). Uma exceção parada é um pagamento que não sai (ou sai pela conta velha).
- */
-const EXCECAO_PENDENTE_DIAS_LIMITE = 7;
-
 /** Idade a partir da qual uma execução `reconciling` deixa de ser "em voo" e vira órfã. */
 const MINUTOS_ORFAO = 15;
 /**
@@ -73,9 +62,8 @@ export interface DestinoOfertado {
     origem: DestinoOrigem;
     destinoMascarado?: string;
     /**
-     * Só no PIX (ADR-0054 D12): o destino é uma chave CPF/CNPJ que é o próprio documento do
-     * favorecido — do cadastro (conferida contra o `cmn025`) ou digitada (titularidade I10i). A
-     * tela lista PIX antes de TED e abre "Informar destino" na aba PIX. Ausente = sem preferência.
+     * Só no PIX (ADR-0054 D12): o destino é uma chave CPF/CNPJ do cadastro que é o próprio
+     * documento do favorecido. A tela lista PIX antes de TED. Ausente = sem preferência.
      */
     chaveCpfCnpjDoFavorecido?: true;
 }
@@ -85,7 +73,7 @@ export interface OfertaModalidadesItem {
     docCod: string;
     titCod: string;
     modalidades: Modalidade[];
-    /** Só com TED/PIX ligados (ADR-0054). Com as flags desligadas o campo não existe. */
+    /** Só com TED/PIX oferecidos (ADR-0054, ADR-0065 I14k). Sem eles o campo não existe. */
     destinos?: Partial<Record<'TED' | 'PIX', DestinoOfertado>>;
 }
 
@@ -117,7 +105,6 @@ export default class SispagPainelService {
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
-        @inject(ExcecaoDestinoRepository) private readonly excecoes: ExcecaoDestinoRepository,
     ) {}
 
     public montarPainel = async (): Promise<SispagPainelResponse> => {
@@ -195,8 +182,6 @@ export default class SispagPainelService {
         // gera remessa, que é onde a decisão de repetir ou não vai ser tomada.
         const execucoesParadas = await this.contarExecucoesParadas();
         const envVars = await this.env.getEnvironmentVars();
-        const excecoes =
-            envVars.sispagExcecaoDestinoEnabled === true ? await this.contarExcecoes() : undefined;
 
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -225,34 +210,7 @@ export default class SispagPainelService {
             titulosTotal,
             execucoesParadas,
             lotes: this.ordenarLotes(lotesRaw),
-            ...(excecoes ? { excecoes } : {}),
         };
-    };
-
-    /**
-     * Exceções de destino por estado e as `PENDENTE` paradas há mais de N dias (ADR-0061, T11).
-     * Só contagens (I10h). Falha NÃO derruba o painel: sem o contador a tela segue inteira, e o
-     * aviso diz que o contador não veio (não que "não há exceções").
-     */
-    private contarExcecoes = async (): Promise<PainelExcecoes | undefined> => {
-        try {
-            const [porEstado, pendentesAntigas] = await Promise.all([
-                this.excecoes.contarPorEstado(),
-                this.excecoes.contarPendentesAntigas(EXCECAO_PENDENTE_DIAS_LIMITE),
-            ]);
-            return { porEstado, pendentesAntigas, diasLimite: EXCECAO_PENDENTE_DIAS_LIMITE };
-        } catch (error) {
-            await this.logService.warn({
-                type: LOG_TYPE.BUSINESS_WARN,
-                message: 'SISPAG painel: contagem das exceções de destino falhou (omitida)',
-                data: {
-                    erro: redactErrorMessage(
-                        error instanceof Error ? error.message : String(error),
-                    ),
-                },
-            });
-            return undefined;
-        }
     };
 
     /**
@@ -372,44 +330,25 @@ export default class SispagPainelService {
      * Conexos. Evita o analista escolher uma forma sem cadastro (→ `.REM` rejeitado).
      * Fan-out limitado, tolerante a falha (título sem leitura → lista vazia, o front trata).
      *
-     * TRÊS fontes, porque o ERP guarda cada coisa num lugar:
-     *   PIX         → do TÍTULO (`fin064`, via `getTituloAPagar`)
-     *   TED/crédito → da CONTA DO FAVORECIDO (`cmn025/ctcorr`)
-     *   BOLETO      → de `titulo_a_pagar.tem_boleto`, que a ingestão preencheu a partir do
-     *                 flag `titVldReflexoDdaAssoc` do grid de pendentes do `fin015`
-     *
-     * BOLETO passou a sair daí porque o `fin064` **não sabe** de boleto: o `titEspCodbar`
-     * que a detecção antiga usava é null em 100% dos títulos de produção. Oferecer BOLETO
-     * a partir dele significava nunca oferecer. Ver `sispag-boleto-dda-sondagem.md`.
+     * Fontes, porque o ERP guarda cada coisa num lugar:
+     *   BOLETO  → de `titulo_a_pagar.tem_boleto`, que a ingestão preencheu a partir do flag
+     *             `titVldReflexoDdaAssoc` do grid de pendentes do `fin015` (o `fin064` não sabe)
+     *   TED/PIX → do CADASTRO do favorecido (`cmn025`), pelo MESMO `DestinoPagamentoResolver` do
+     *             envio (I10b) — e SÓ com a guarda do favorecido autorizado ligada e a flag da
+     *             modalidade ligada (ADR-0065 I14k). Sem isso TED/PIX não são oferecidos.
+     *   demais  → o que o `fin064` traz do título, sem TED/PIX.
      */
     public modalidadesDisponiveisDoLote = async (
         loteId: string,
-        /**
-         * `aposentarExcecao`: só o finalizar liga (ADR-0061 I12c) — a oferta em si é leitura e não
-         * escreve. Com ele, exceção APROVADA que o cadastro tornou desnecessária vai a SUBSTITUIDA.
-         */
-        opcoes: { aposentarExcecao?: boolean } = {},
     ): Promise<OfertaModalidadesItem[]> => {
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote) return [];
         const envVars = await this.env.getEnvironmentVars();
-        // ADR-0054 — com TED/PIX ligados, a oferta dessas duas passa pelo MESMO resolver do
-        // envio (I10b). Desligados, nada muda: é o código de antes, linha por linha.
+        const guarda = envVars.sispagFavorecidoAutorizadoEnabled === true;
         const flags: FlagsDestino = {
-            ted: envVars.sispagTedEnabled === true,
-            pix: envVars.sispagPixEnabled === true,
-            excecao: envVars.sispagExcecaoDestinoEnabled === true,
+            ted: guarda && envVars.sispagTedEnabled === true,
+            pix: guarda && envVars.sispagPixEnabled === true,
         };
-        // Duas fontes, porque o ERP as guarda em lugares diferentes:
-        //   boleto/PIX  → do TÍTULO (`fin064`, via `getTituloAPagar`)
-        //   TED/crédito → da CONTA DO FAVORECIDO (`cmn025/ctcorr`)
-        // O `fin064` NÃO carrega a conta (0% em 561 títulos de HML e 2000 de PRD — os
-        // campos `pct*` de lá são join no item SISPAG e só populam depois do import).
-        // Antes desta correção a rota devolvia lista vazia para todo item.
-        //
-        // Em DUAS FASES porque a conta é do FAVORECIDO, não do título, e um lote repete
-        // favorecido (várias parcelas do mesmo fornecedor). Consultar por título faria N
-        // chamadas idênticas ao mesmo `pesCod`; a fase 2 faz uma por par DISTINTO.
         const titulosSettled = await this.bounded.run(
             lote.itens,
             (it) => this.sispag.getTituloAPagar(it.filCod, it.docCod, it.titCod),
@@ -417,48 +356,9 @@ export default class SispagPainelService {
         );
         const titulos = titulosSettled.map((s) => (s.status === 'fulfilled' ? s.value : null));
 
-        // `filCod` entra na chave porque a chamada ao Conexos é por filial — o mesmo
-        // favorecido em duas filiais são duas consultas, não uma.
-        const chaveFavorecido = (filCod: number, pesCod: string): string => `${filCod}:${pesCod}`;
-        const favorecidos = new Map<string, { pesCod: string; filCod: number }>();
-        titulos.forEach((titulo, i) => {
-            if (!titulo?.pesCod) return;
-            const { filCod } = lote.itens[i];
-            favorecidos.set(chaveFavorecido(filCod, titulo.pesCod), {
-                pesCod: titulo.pesCod,
-                filCod,
-            });
-        });
-
-        // Com a flag TED ligada o TED sai do resolver (que lê as contas com cache próprio); a
-        // leitura antiga só roda quando é ela que decide.
-        const distintos = flags.ted ? [] : [...favorecidos.values()];
-        const contasSettled = await this.bounded.run(
-            distintos,
-            (f) => this.sispag.listContasFavorecido(f.pesCod, f.filCod),
-            CONEXOS_FANOUT_LIMIT,
-        );
-        // Consulta que FALHOU ≠ favorecido sem conta: na dúvida não oferece TED/crédito,
-        // porque prometer um destino inexistente só estoura mais tarde, no envio.
-        const temConta = new Map<string, boolean>();
-        distintos.forEach((f, i) => {
-            const s = contasSettled[i];
-            temConta.set(
-                chaveFavorecido(f.filCod, f.pesCod),
-                s.status === 'fulfilled' && s.value.length > 0,
-            );
-        });
-
         // BOLETO: lido do BANCO, não do ERP. A ingestão já resolveu o flag de DDA na última
-        // rodada e gravou em `tem_boleto`; refazer o grid de pendentes aqui custava +7
-        // requisições Conexos por abertura de lote na filial 2, para chegar à mesma resposta.
-        //
-        // Servir dado de ≤ 24 h neste ponto é seguro por construção: aqui só se decide o que
-        // o dropdown OFERECE. O que move dinheiro é validado ao vivo no envio
-        // (`BoletoSemCodigoBarrasError`), que continua lendo o grid no momento do import.
-        // Um `tem_boleto` stale desatualiza uma tela; não deixa sair remessa sem barras.
-        //
-        // I4 garante uma filial por lote, então isto é UMA consulta, não um fan-out.
+        // rodada; servir dado de ≤ 24 h aqui é seguro (só decide o que o dropdown OFERECE — o
+        // envio relê ao vivo, `BoletoSemCodigoBarrasError`). I4: uma filial por lote.
         const filiaisDoLote = [...new Set(lote.itens.map((it) => it.filCod))];
         const comBoleto = new Set<string>();
         for (const filCod of filiaisDoLote) {
@@ -467,51 +367,40 @@ export default class SispagPainelService {
             }
         }
 
-        if (flags.ted || flags.pix) {
-            return this.ofertaComResolver(
-                lote.itens,
-                titulos,
-                comBoleto,
-                temConta,
-                flags,
-                opcoes.aposentarExcecao === true,
+        const base = (it: ItemLote, i: number): Modalidade[] => {
+            const modalidades = (titulos[i]?.modalidadesDisponiveis ?? []).filter(
+                (m) => m !== MODALIDADE.TED && m !== MODALIDADE.PIX,
             );
-        }
-
-        return lote.itens.map((it, i) => {
-            const titulo = titulos[i];
-            const modalidades = [...(titulo?.modalidadesDisponiveis ?? [])];
             if (comBoleto.has(`${it.filCod}:${it.docCod}:${it.titCod}`)) {
                 modalidades.push(MODALIDADE.BOLETO);
             }
-            // CRÉDITO EM CONTA fica fora da oferta: não foi testado ponta a ponta e não é
-            // prioridade agora (decisão de 2026-09-28). Item que já o tem continua válido.
-            if (titulo?.pesCod && temConta.get(chaveFavorecido(it.filCod, titulo.pesCod))) {
-                modalidades.push(MODALIDADE.TED);
-            }
-            return { docCod: it.docCod, titCod: it.titCod, modalidades };
-        });
+            return modalidades;
+        };
+
+        if (!flags.ted && !flags.pix) {
+            return lote.itens.map((it, i) => ({
+                docCod: it.docCod,
+                titCod: it.titCod,
+                modalidades: base(it, i),
+            }));
+        }
+        return this.ofertaComResolver(lote.itens, titulos, base, flags);
     };
 
     /**
-     * Oferta com TED e/ou PIX ligados (ADR-0054; I10b revisado pela ADR-0063). A modalidade ligada
-     * é SEMPRE oferecida e vem com a origem (CADASTRO | EXCECAO | NENHUM) e a máscara do destino,
-     * calculadas pelo `DestinoPagamentoResolver` — o MESMO que o envio chama. A desligada segue a
-     * regra antiga.
+     * Oferta com TED e/ou PIX habilitados (ADR-0054; I10b; ADR-0065). A modalidade habilitada é
+     * SEMPRE oferecida e vem com a origem (CADASTRO | NENHUM) e a máscara do destino, calculadas
+     * pelo `DestinoPagamentoResolver` — o MESMO que o envio chama. Quem decide se o item pode ir é a
+     * verificação do favorecido autorizado (selo no item ao escolher, retirada no finalizar).
      *
-     * PIX do `fin064` (`itsDesChavePix`) deixa de valer com a flag ligada: é LEFT JOIN no item
-     * SISPAG, 0% preenchido; a fonte certa é o `cmnPessoasPix`.
-     *
-     * Leitura que falha = origem NENHUM (a verificação TED/PIX, que roda depois da escolha, fica
-     * PENDENTE e barra o finalizar — falha fechada, I13b).
+     * Leitura que falha = origem NENHUM (a verificação fica PENDENTE e barra o finalizar — falha
+     * fechada, I13b).
      */
     private ofertaComResolver = async (
         itens: ItemLote[],
         titulos: Array<TituloAPagar | null>,
-        comBoleto: ReadonlySet<string>,
-        temContaLegado: ReadonlyMap<string, boolean>,
+        base: (it: ItemLote, i: number) => Modalidade[],
         flags: FlagsDestino,
-        aposentarExcecao = false,
     ): Promise<OfertaModalidadesItem[]> => {
         const cache: CacheCadastroDestino = this.resolver.novoCache();
         const modalidadesNovas = [
@@ -526,13 +415,7 @@ export default class SispagPainelService {
                     out[modalidade] = await this.resolver
                         .resolve(
                             { modalidade },
-                            {
-                                flags,
-                                filCod: it.filCod,
-                                cache,
-                                ...(aposentarExcecao ? { aposentarExcecao } : {}),
-                                ...(pesCod ? { pesCod } : {}),
-                            },
+                            { flags, filCod: it.filCod, cache, ...(pesCod ? { pesCod } : {}) },
                         )
                         .catch((): DestinoResolvido => ({ origem: DESTINO_ORIGEM.NENHUM }));
                 }
@@ -542,21 +425,10 @@ export default class SispagPainelService {
         );
 
         return itens.map((it, i) => {
-            const titulo = titulos[i];
             const resolvidos = settled[i]?.status === 'fulfilled' ? settled[i].value : {};
-            const modalidades = this.modalidadesSemResolver(
-                it,
-                titulo,
-                comBoleto,
-                temContaLegado,
-                flags,
-            );
+            const modalidades = base(it, i);
             const destinos: Partial<Record<'TED' | 'PIX', DestinoOfertado>> = {};
             for (const modalidade of modalidadesNovas) {
-                // ADR-0063 (I10b revisado, gap Q1-a): com a flag ligada a modalidade é SEMPRE
-                // oferecida; quem decide é a verificação TED/PIX (I13j), que retira o item sem destino
-                // e abre a pendência de cadastro. A tela mostra de onde VIRIA o destino (NENHUM =
-                // nem cadastro nem exceção aprovada, ou leitura que falhou).
                 const r = resolvidos[modalidade] ?? { origem: DESTINO_ORIGEM.NENHUM };
                 modalidades.push(modalidade);
                 const mascara = this.resolver.mascarar(r);
@@ -570,46 +442,11 @@ export default class SispagPainelService {
         });
     };
 
-    /** D12: PIX resolvido por chave CPF/CNPJ que é o documento do favorecido. */
-    private chaveCpfCnpjDoFavorecido = (r: DestinoResolvido): boolean => {
-        if (r.origem === DESTINO_ORIGEM.CADASTRO) {
-            return (
-                r.tipo === DESTINO_CADASTRO_TIPO.CHAVE_PIX &&
-                r.chaveDoDocumentoDoFavorecido === true
-            );
-        }
-        // Exceção: só chave CPF/CNPJ existe (I12i), e a titularidade (I10i) exigiu o documento.
-        return (
-            r.origem === DESTINO_ORIGEM.EXCECAO &&
-            r.destino.tipo === DESTINO_MANUAL_TIPO.CHAVE_PIX &&
-            r.destino.chavePixTipo === CHAVE_PIX_TIPO.CPF_CNPJ
-        );
-    };
-
-    /**
-     * A parte da oferta que NÃO passa pelo resolver: o que o `fin064` traz (sem o PIX dele, se a
-     * flag PIX estiver ligada), BOLETO da carteira persistida e, com a flag TED desligada, o TED
-     * pela regra antiga.
-     */
-    private modalidadesSemResolver = (
-        it: ItemLote,
-        titulo: TituloAPagar | null | undefined,
-        comBoleto: ReadonlySet<string>,
-        temContaLegado: ReadonlyMap<string, boolean>,
-        flags: FlagsDestino,
-    ): Modalidade[] => {
-        const modalidades = (titulo?.modalidadesDisponiveis ?? []).filter(
-            (m) => !(flags.pix && m === MODALIDADE.PIX),
-        );
-        if (comBoleto.has(`${it.filCod}:${it.docCod}:${it.titCod}`)) {
-            modalidades.push(MODALIDADE.BOLETO);
-        }
-        const pesCod = titulo?.pesCod;
-        if (!flags.ted && pesCod && temContaLegado.get(`${it.filCod}:${pesCod}`)) {
-            modalidades.push(MODALIDADE.TED);
-        }
-        return modalidades;
-    };
+    /** D12: PIX resolvido por chave CPF/CNPJ do cadastro que é o documento do favorecido. */
+    private chaveCpfCnpjDoFavorecido = (r: DestinoResolvido): boolean =>
+        r.origem === DESTINO_ORIGEM.CADASTRO &&
+        r.tipo === DESTINO_CADASTRO_TIPO.CHAVE_PIX &&
+        r.chaveDoDocumentoDoFavorecido === true;
 
     /** Filtra não-pagos, deriva aging e ordena por vencimento (mais urgente 1º). */
     /**

@@ -63,12 +63,15 @@ interface Montagem {
     documento?: string;
     falhaLeitura?: boolean;
     enabled?: boolean;
+    ted?: boolean;
     registros?: AuthorizedPayee[];
 }
 
 const montar = (m: Montagem = {}) => {
     const envVars = {
         sispagFavorecidoAutorizadoEnabled: m.enabled ?? true,
+        sispagTedEnabled: m.ted ?? true,
+        sispagPixEnabled: true,
         sispagFavorecidoFingerprintKey: CHAVE_HMAC,
         sispagFavorecidoFingerprintKeyId: 'v1',
     };
@@ -459,6 +462,18 @@ describe('AuthorizedPayeeService — verificarDestinoAutorizado (I14d)', () => {
         expect(r.get('7001:TED')?.resultado).toBe('FALHA_LEITURA');
         expect(repo.atualizarComVersao).not.toHaveBeenCalled();
         expect(notificacao.emitir).not.toHaveBeenCalled();
+    });
+
+    it('flag TED desligada: TED não passa (o envio usaria outra conta), PIX segue verificado', async () => {
+        const { service, sispag } = montar({ ted: false, chaves: [chaveEmail] });
+        const r = await service.verificarDestinoAutorizado([
+            { pesCod: '7001', modalidade: 'TED', filCod: 1 },
+            { pesCod: '7001', modalidade: 'PIX', filCod: 1 },
+        ]);
+        expect(r.get('7001:TED')?.resultado).toBe('FAVORECIDO_NAO_AUTORIZADO');
+        expect(r.get('7001:PIX')?.resultado).toBe('FAVORECIDO_NAO_AUTORIZADO');
+        expect(sispag.listContasFavorecido).not.toHaveBeenCalled();
+        expect(sispag.listChavesPixFavorecido).toHaveBeenCalledTimes(1);
     });
 
     it('guarda desligada no tenant (I14k): todo par é FAVORECIDO_NAO_AUTORIZADO, sem ler o Conexos', async () => {

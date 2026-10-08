@@ -1,9 +1,9 @@
 import 'reflect-metadata';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import type { PayeeCheckResult } from '../../interface/sispag/AuthorizedPayeeInterface.js';
 import type {
     AlertaItemLote,
-    ChannelProfile,
     DuplicateCandidate,
     ItemLote,
     LotePagamento,
@@ -12,22 +12,22 @@ import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider
 import { SISPAG_VERIFICACAO_DEFAULT } from '../../libs/environment/model/EnvironmentVars.js';
 import type AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
-import type PendenciaCadastroRepository from '../../repository/sispag/PendenciaCadastroRepository.js';
-import type PerfilCanalFornecedorRepository from '../../repository/sispag/PerfilCanalFornecedorRepository.js';
 import type LogService from '../LogService.js';
+import type AuthorizedPayeeService from './AuthorizedPayeeService.js';
 import type DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
-import { DESTINO_ORIGEM, type DestinoResolvido } from './DestinoPagamentoResolver.js';
 import DuplicateDetector from './DuplicateDetector.js';
 import VerificacaoTedPixService from './VerificacaoTedPixService.js';
 
 /**
- * verificarItensTedPix (ADR-0063, I13a–k). Tudo mockado: Conexos (fin064 via client, cmn025 via o
- * resolver), banco e log. O detector de duplicidade é o real (puro).
+ * verificarItensTedPix (ADR-0063 I13, reescrito pela ADR-0065). Tudo mockado: Conexos (fin064 via
+ * client), a guarda do favorecido autorizado (`AuthorizedPayeeService`), banco e log. O detector de
+ * duplicidade é o real (puro).
  */
 
 const DIA = 86_400_000;
 const VENC = Date.UTC(2026, 9, 20);
-const CONTA_COMPLETA = '99887766';
+const AVISO = { modo: 'AVISO' as const };
+const RETIRAR = { modo: 'RETIRAR' as const };
 
 const item = (over: Partial<ItemLote> = {}): ItemLote => ({
     loteId: 'L1',
@@ -66,29 +66,6 @@ const fin064 = (over: Partial<DuplicateCandidate> = {}): DuplicateCandidate => (
     ...over,
 });
 
-const CADASTRO: DestinoResolvido = {
-    origem: DESTINO_ORIGEM.CADASTRO,
-    tipo: 'CONTA',
-    conta: {
-        banco: 341,
-        agencia: '0641',
-        conta: CONTA_COMPLETA,
-        contaDv: '5',
-        padrao: true,
-    } as never,
-};
-const EXCECAO: DestinoResolvido = {
-    origem: DESTINO_ORIGEM.EXCECAO,
-    excecaoId: 'E1',
-    destino: {
-        tipo: 'CHAVE_PIX',
-        chavePixTipo: 'CPF_CNPJ',
-        chavePix: '11144477735',
-        titularDocumento: '11144477735',
-    },
-};
-const NENHUM: DestinoResolvido = { origem: DESTINO_ORIGEM.NENHUM };
-
 const viva = (over: Partial<AlertaItemLote> = {}): AlertaItemLote => ({
     id: 'A1',
     loteId: 'L1',
@@ -105,27 +82,13 @@ const viva = (over: Partial<AlertaItemLote> = {}): AlertaItemLote => ({
     ...over,
 });
 
-const perfil = (over: Partial<ChannelProfile> = {}): ChannelProfile => ({
-    pesCod: '90001',
-    contagens: { BOLETO: 10, TED_PIX: 0, OUTROS: 0 },
-    pagamentosUnicos: 10,
-    mesesDistintos: 5,
-    grupoDominante: 'BOLETO',
-    participacao: 1,
-    confianca: 'ALTA',
-    janelaInicio: 0,
-    janelaFim: 1,
-    ...over,
-});
-
 const build = (
     opts: {
         lote?: LotePagamento;
         titulos?: DuplicateCandidate[] | Error;
-        destino?: DestinoResolvido | Error;
+        /** Resultado da guarda I14 por `pesCod:modalidade`; default OK. */
+        guarda?: Record<string, PayeeCheckResult>;
         vivas?: AlertaItemLote[];
-        perfil?: ChannelProfile | null;
-        flags?: { ted?: boolean; pix?: boolean; excecao?: boolean };
     } = {},
 ) => {
     const tx = { tx: true };
@@ -143,13 +106,6 @@ const build = (
         fechar: jest.fn().mockResolvedValue(true),
         descartarDoItem: jest.fn().mockResolvedValue(0),
     };
-    const pendenciaRepo = {
-        abrirOuAcrescentar: jest.fn().mockResolvedValue({ pendenciaId: 'P1', aberta: true }),
-        resolverDoFavorecido: jest.fn().mockResolvedValue(0),
-    };
-    const perfilRepo = {
-        findByPesCod: jest.fn().mockResolvedValue(opts.perfil ?? null),
-    };
     const titulos = opts.titulos ?? [fin064()];
     const sispag = {
         listTitulosParaDuplicidade: jest.fn(async () => {
@@ -157,23 +113,27 @@ const build = (
             return titulos;
         }),
     };
-    const destino = opts.destino ?? CADASTRO;
-    const resolver = {
-        novoCache: jest.fn(() => new Map()),
-        resolve: jest.fn(async () => {
-            if (destino instanceof Error) throw destino;
-            return destino;
-        }),
-        mascarar: jest.fn((d: DestinoResolvido) =>
-            d.origem === DESTINO_ORIGEM.NENHUM ? undefined : '341 / ****-5',
+    const resolver = { novoCache: jest.fn(() => new Map()) };
+    const payees = {
+        verificarDestinoAutorizado: jest.fn(
+            async (pares: Array<{ pesCod: string; modalidade: string }>) =>
+                new Map(
+                    pares.map((p) => {
+                        const k = `${p.pesCod}:${p.modalidade}`;
+                        return [
+                            k,
+                            {
+                                resultado: opts.guarda?.[k] ?? 'OK',
+                                autorizacaoId: 'AUT-1',
+                                destinoMascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
+                            },
+                        ];
+                    }),
+                ),
         ),
     };
-    const flags = { ted: true, pix: true, excecao: true, ...opts.flags };
     const env = {
         getEnvironmentVars: jest.fn().mockResolvedValue({
-            sispagTedEnabled: flags.ted,
-            sispagPixEnabled: flags.pix,
-            sispagExcecaoDestinoEnabled: flags.excecao,
             sispagVerificacao: { ...SISPAG_VERIFICACAO_DEFAULT },
         }),
     };
@@ -182,30 +142,19 @@ const build = (
     const service = new VerificacaoTedPixService(
         loteRepo as unknown as LotePagamentoRepository,
         alertaRepo as unknown as AlertaItemLoteRepository,
-        pendenciaRepo as unknown as PendenciaCadastroRepository,
-        perfilRepo as unknown as PerfilCanalFornecedorRepository,
         sispag as unknown as ConexosSispagClient,
         resolver as unknown as DestinoPagamentoResolver,
+        payees as unknown as AuthorizedPayeeService,
         new DuplicateDetector(),
         env as unknown as EnvironmentProvider,
         db as unknown as PostgreeDatabaseClient,
         logService as unknown as LogService,
     );
-    return {
-        service,
-        loteRepo,
-        alertaRepo,
-        pendenciaRepo,
-        perfilRepo,
-        sispag,
-        resolver,
-        logService,
-        tx,
-    };
+    return { service, loteRepo, alertaRepo, sispag, payees, logService, tx };
 };
 
 describe('VerificacaoTedPixService — alcance (I13a)', () => {
-    it('ignora BOLETO, "a definir" e CRÉDITO EM CONTA; item TED verificado vira OK', async () => {
+    it('ignora BOLETO, "a definir" e CRÉDITO EM CONTA; item TED verificado vira OK com o selo', async () => {
         const h = build({
             lote: lote([
                 item(),
@@ -214,15 +163,18 @@ describe('VerificacaoTedPixService — alcance (I13a)', () => {
                 item({ docCod: '3', modalidade: 'CREDITO_CONTA' }),
             ]),
         });
-        const r = await h.service.verificarItens('L1');
+        const r = await h.service.verificarItens('L1', AVISO);
         expect(r.verificados.map((i) => i.docCod)).toEqual(['6173']);
-        expect(h.resolver.resolve).toHaveBeenCalledTimes(1);
+        expect(h.payees.verificarDestinoAutorizado).toHaveBeenCalledTimes(1);
+        expect(h.payees.verificarDestinoAutorizado.mock.calls[0]?.[0]).toEqual([
+            { pesCod: '90001', modalidade: 'TED', filCod: 4 },
+        ]);
         expect(h.loteRepo.marcarVerificacaoItem).toHaveBeenCalledWith(
             expect.objectContaining({
                 docCod: '6173',
                 estado: 'OK',
-                destinoOrigem: 'CADASTRO',
-                destinoMascarado: '341 / ****-5',
+                autorizacaoAviso: 'OK',
+                destinoMascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
             }),
             h.tx,
         );
@@ -235,16 +187,18 @@ describe('VerificacaoTedPixService — alcance (I13a)', () => {
         });
         const r = await h.service.verificarItens('L1', {
             itens: [{ filCod: 4, docCod: '6174', titCod: '1' }],
+            modo: 'AVISO',
         });
         expect(r.verificados.map((i) => i.docCod)).toEqual(['6174']);
     });
 
     it('lote fora de RASCUNHO não é verificado', async () => {
         const h = build({ lote: lote([item()], { status: 'FINALIZADO' }) });
-        expect(await h.service.verificarItens('L1')).toEqual({
+        expect(await h.service.verificarItens('L1', RETIRAR)).toEqual({
             verificados: [],
             pendentes: [],
             retirados: [],
+            avisos: [],
         });
         expect(h.sispag.listTitulosParaDuplicidade).not.toHaveBeenCalled();
     });
@@ -254,7 +208,7 @@ describe('VerificacaoTedPixService — alcance (I13a)', () => {
             lote: lote([item(), item({ docCod: '6174' })]),
             titulos: [fin064(), fin064({ docCod: '6174', numeroNota: '1' })],
         });
-        await h.service.verificarItens('L1');
+        await h.service.verificarItens('L1', AVISO);
         expect(h.sispag.listTitulosParaDuplicidade).toHaveBeenCalledTimes(1);
         expect(h.sispag.listTitulosParaDuplicidade).toHaveBeenCalledWith(
             4,
@@ -263,19 +217,68 @@ describe('VerificacaoTedPixService — alcance (I13a)', () => {
     });
 });
 
-describe('VerificacaoTedPixService — falha fechada (I13b)', () => {
+describe('VerificacaoTedPixService — favorecido autorizado (ADR-0065 I14e)', () => {
+    it('modo AVISO: favorecido não autorizado NÃO é retirado; fica com o selo e a duplicidade roda', async () => {
+        const h = build({ guarda: { '90001:TED': 'FAVORECIDO_NAO_AUTORIZADO' } });
+        const r = await h.service.verificarItens('L1', AVISO);
+        expect(r.retirados).toEqual([]);
+        expect(r.avisos).toEqual([
+            expect.objectContaining({ docCod: '6173', aviso: 'FAVORECIDO_NAO_AUTORIZADO' }),
+        ]);
+        expect(h.loteRepo.removerItemPeloSistema).not.toHaveBeenCalled();
+        expect(h.loteRepo.marcarVerificacaoItem).toHaveBeenCalledWith(
+            expect.objectContaining({
+                estado: 'OK',
+                autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO',
+            }),
+            h.tx,
+        );
+        expect(h.alertaRepo.listVivasDoItem).toHaveBeenCalled();
+    });
+
+    it.each([
+        'SEM_DADO_PAGAMENTO',
+        'FAVORECIDO_NAO_AUTORIZADO',
+        'DESTINO_ALTERADO',
+    ] as const)('modo RETIRAR: %s → item sai (sistema), com o motivo, alertas descartadas', async (motivo) => {
+        const h = build({ guarda: { '90001:TED': motivo } });
+        const r = await h.service.verificarItens('L1', RETIRAR);
+        expect(r.retirados).toEqual([expect.objectContaining({ docCod: '6173', motivo })]);
+        expect(h.loteRepo.removerItemPeloSistema).toHaveBeenCalledWith(
+            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1', motivo },
+            h.tx,
+        );
+        expect(h.alertaRepo.descartarDoItem).toHaveBeenCalledWith(
+            'L1',
+            { filCod: 4, docCod: '6173', titCod: '1' },
+            'sistema',
+            h.tx,
+        );
+        expect(h.loteRepo.marcarManual).not.toHaveBeenCalled();
+    });
+
+    it('uma chamada à guarda para todos os itens TED/PIX do lote', async () => {
+        const h = build({
+            lote: lote([item(), item({ docCod: '6174', modalidade: 'PIX' })]),
+            titulos: [fin064(), fin064({ docCod: '6174', numeroNota: '2' })],
+        });
+        await h.service.verificarItens('L1', RETIRAR);
+        expect(h.payees.verificarDestinoAutorizado).toHaveBeenCalledTimes(1);
+        expect(h.payees.verificarDestinoAutorizado.mock.calls[0]?.[0]).toHaveLength(2);
+    });
+});
+
+describe('VerificacaoTedPixService — falha fechada (I13b, I14f)', () => {
     const semEfeito = (h: ReturnType<typeof build>) => {
         expect(h.alertaRepo.criar).not.toHaveBeenCalled();
         expect(h.alertaRepo.fechar).not.toHaveBeenCalled();
         expect(h.alertaRepo.descartarDoItem).not.toHaveBeenCalled();
         expect(h.loteRepo.removerItemPeloSistema).not.toHaveBeenCalled();
-        expect(h.pendenciaRepo.abrirOuAcrescentar).not.toHaveBeenCalled();
-        expect(h.pendenciaRepo.resolverDoFavorecido).not.toHaveBeenCalled();
     };
 
-    it('fin064 falha → PENDENTE, nada criado, fechado, retirado ou aberto', async () => {
+    it('fin064 falha → PENDENTE, nada criado, fechado ou retirado', async () => {
         const h = build({ titulos: new Error('HTTP 500'), vivas: [viva()] });
-        const r = await h.service.verificarItens('L1');
+        const r = await h.service.verificarItens('L1', RETIRAR);
         expect(r.pendentes.map((i) => i.docCod)).toEqual(['6173']);
         expect(h.loteRepo.marcarVerificacaoItem).toHaveBeenCalledWith(
             expect.objectContaining({ estado: 'PENDENTE' }),
@@ -283,22 +286,23 @@ describe('VerificacaoTedPixService — falha fechada (I13b)', () => {
         semEfeito(h);
     });
 
-    it('cmn025 falha (resolver lança) → PENDENTE, sem retirar nem abrir pendência', async () => {
-        const h = build({ destino: new Error('cmn025 timeout'), vivas: [viva()] });
-        const r = await h.service.verificarItens('L1');
+    it('cadastro com FALHA_LEITURA → PENDENTE, sem retirar nem no modo RETIRAR', async () => {
+        const h = build({ guarda: { '90001:TED': 'FALHA_LEITURA' }, vivas: [viva()] });
+        const r = await h.service.verificarItens('L1', RETIRAR);
         expect(r.pendentes).toHaveLength(1);
+        expect(r.retirados).toHaveLength(0);
         semEfeito(h);
     });
 
     it('título não encontrado no fin064 → PENDENTE (não decide por ausência)', async () => {
         const h = build({ titulos: [fin064({ docCod: '9999' })] });
-        expect((await h.service.verificarItens('L1')).pendentes).toHaveLength(1);
+        expect((await h.service.verificarItens('L1', RETIRAR)).pendentes).toHaveLength(1);
         semEfeito(h);
     });
 
     it('título sem favorecido → PENDENTE', async () => {
         const h = build({ titulos: [fin064({ favorecido: undefined })] });
-        expect((await h.service.verificarItens('L1')).pendentes).toHaveLength(1);
+        expect((await h.service.verificarItens('L1', RETIRAR)).pendentes).toHaveLength(1);
         semEfeito(h);
     });
 });
@@ -308,7 +312,7 @@ describe('VerificacaoTedPixService — duplicidade e re-verificação (I13c–h)
 
     it('contraparte nova → alerta FORTE ABERTA, ator sistema', async () => {
         const h = build({ titulos: DUPLA });
-        await h.service.verificarItens('L1');
+        await h.service.verificarItens('L1', AVISO);
         expect(h.alertaRepo.criar).toHaveBeenCalledWith(
             expect.objectContaining({
                 tipo: 'DUPLICIDADE_FORTE',
@@ -325,7 +329,7 @@ describe('VerificacaoTedPixService — duplicidade e re-verificação (I13c–h)
             titulos: DUPLA,
             vivas: [viva({ estado: 'RESOLVIDA', resolucao: 'JUSTIFICADA', justificativa: 'ok' })],
         });
-        await h.service.verificarItens('L1');
+        await h.service.verificarItens('L1', AVISO);
         expect(h.alertaRepo.confirmar).toHaveBeenCalledWith('A1', expect.anything(), h.tx);
         expect(h.alertaRepo.criar).not.toHaveBeenCalled();
         expect(h.alertaRepo.fechar).not.toHaveBeenCalled();
@@ -333,7 +337,7 @@ describe('VerificacaoTedPixService — duplicidade e re-verificação (I13c–h)
 
     it('contraparte que sumiu → OBSOLETA', async () => {
         const h = build({ titulos: [fin064()], vivas: [viva()] });
-        await h.service.verificarItens('L1');
+        await h.service.verificarItens('L1', AVISO);
         expect(h.alertaRepo.fechar).toHaveBeenCalledWith(
             expect.objectContaining({ id: 'A1' }),
             'OBSOLETA',
@@ -347,7 +351,7 @@ describe('VerificacaoTedPixService — duplicidade e re-verificação (I13c–h)
             titulos: [...DUPLA, fin064({ docCod: '6800' })],
             vivas: [viva({ estado: 'RESOLVIDA', resolucao: 'JUSTIFICADA', justificativa: 'ok' })],
         });
-        await h.service.verificarItens('L1');
+        await h.service.verificarItens('L1', AVISO);
         expect(h.alertaRepo.criar).toHaveBeenCalledTimes(1);
         expect(h.alertaRepo.criar.mock.calls[0]?.[0]).toMatchObject({ contraparteDocCod: '6800' });
     });
@@ -359,152 +363,24 @@ describe('VerificacaoTedPixService — duplicidade e re-verificação (I13c–h)
                 fin064({ docCod: '7', numeroNota: '', vencimento: VENC + 16 * DIA }),
             ],
         });
-        await h.service.verificarItens('L1');
+        await h.service.verificarItens('L1', AVISO);
         expect(h.alertaRepo.criar).not.toHaveBeenCalled();
-    });
-});
-
-describe('VerificacaoTedPixService — canal habitual (I13i)', () => {
-    it('perfil ALTA com grupo dominante BOLETO → alerta CANAL_HABITUAL', async () => {
-        const h = build({ perfil: perfil() });
-        await h.service.verificarItens('L1');
-        expect(h.perfilRepo.findByPesCod).toHaveBeenCalledWith('90001');
-        expect(h.alertaRepo.criar).toHaveBeenCalledWith(
-            expect.objectContaining({
-                tipo: 'CANAL_HABITUAL',
-                evidencia: expect.objectContaining({ grupoDominante: 'BOLETO' }),
-            }),
-            'sistema',
-            h.tx,
-        );
-    });
-
-    it.each([
-        ['sem perfil', null],
-        ['perfil MEDIA', perfil({ confianca: 'MEDIA' })],
-        ['perfil ALTA de TED_PIX', perfil({ grupoDominante: 'TED_PIX' })],
-    ])('%s → nenhuma alerta de canal', async (_n, p) => {
-        const h = build({ perfil: p as ChannelProfile | null });
-        await h.service.verificarItens('L1');
-        expect(h.alertaRepo.criar).not.toHaveBeenCalled();
-    });
-
-    it('perfil que deixou de divergir → alerta de canal OBSOLETA', async () => {
-        const h = build({
-            perfil: perfil({ grupoDominante: 'TED_PIX' }),
-            vivas: [
-                viva({
-                    id: 'C1',
-                    tipo: 'CANAL_HABITUAL',
-                    contraparteDocCod: undefined,
-                    contraparteFilCod: undefined,
-                }),
-            ],
-        });
-        await h.service.verificarItens('L1');
-        expect(h.alertaRepo.fechar).toHaveBeenCalledWith(
-            expect.objectContaining({ id: 'C1' }),
-            'OBSOLETA',
-            'sistema',
-            h.tx,
-        );
-    });
-});
-
-describe('VerificacaoTedPixService — dados de pagamento (I13j, I13k)', () => {
-    it('sem cadastro e sem exceção → item SAI (sistema), pendência CONTA para TED, alertas descartadas', async () => {
-        const h = build({ destino: NENHUM });
-        const r = await h.service.verificarItens('L1');
-        expect(r.retirados.map((i) => i.docCod)).toEqual(['6173']);
-        expect(h.alertaRepo.descartarDoItem).toHaveBeenCalledWith(
-            'L1',
-            { filCod: 4, docCod: '6173', titCod: '1' },
-            'sistema',
-            h.tx,
-        );
-        expect(h.loteRepo.removerItemPeloSistema).toHaveBeenCalledWith(
-            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1' },
-            h.tx,
-        );
-        expect(h.pendenciaRepo.abrirOuAcrescentar).toHaveBeenCalledWith(
-            expect.objectContaining({ pesCod: '90001', tipo: 'CONTA', desfecho: 'RETIRADO' }),
-            h.tx,
-        );
-        // Item retirado não segue para duplicidade/canal.
-        expect(h.perfilRepo.findByPesCod).not.toHaveBeenCalled();
-        expect(h.alertaRepo.criar).not.toHaveBeenCalled();
-    });
-
-    it('PIX sem chave → pendência CHAVE_PIX', async () => {
-        const h = build({ lote: lote([item({ modalidade: 'PIX' })]), destino: NENHUM });
-        await h.service.verificarItens('L1');
-        expect(h.pendenciaRepo.abrirOuAcrescentar.mock.calls[0]?.[0]).toMatchObject({
-            tipo: 'CHAVE_PIX',
-        });
-    });
-
-    it('retirada pelo sistema NÃO marca o lote automático como manual (Q11)', async () => {
-        const h = build({ destino: NENHUM });
-        await h.service.verificarItens('L1');
-        expect(h.loteRepo.marcarManual).not.toHaveBeenCalled();
-    });
-
-    it('com exceção APROVADA → item fica, pendência abre como MANTIDO_POR_EXCECAO', async () => {
-        const h = build({ destino: EXCECAO });
-        const r = await h.service.verificarItens('L1');
-        expect(r.verificados).toHaveLength(1);
-        expect(h.loteRepo.removerItemPeloSistema).not.toHaveBeenCalled();
-        expect(h.pendenciaRepo.abrirOuAcrescentar).toHaveBeenCalledWith(
-            expect.objectContaining({ desfecho: 'MANTIDO_POR_EXCECAO', tipo: 'CONTA' }),
-            h.tx,
-        );
-        expect(h.loteRepo.marcarVerificacaoItem).toHaveBeenCalledWith(
-            expect.objectContaining({ destinoOrigem: 'EXCECAO' }),
-            h.tx,
-        );
-    });
-
-    it('cadastro com dado → nada aberto, e a pendência ABERTA do par é resolvida', async () => {
-        const h = build({ destino: CADASTRO });
-        await h.service.verificarItens('L1');
-        expect(h.pendenciaRepo.abrirOuAcrescentar).not.toHaveBeenCalled();
-        expect(h.pendenciaRepo.resolverDoFavorecido).toHaveBeenCalledWith('90001', 'CONTA', h.tx);
-    });
-
-    it('usa o resolver de I10 com o favorecido do fin064 e repassa aposentarExcecao (finalizar)', async () => {
-        const h = build();
-        await h.service.verificarItens('L1', { aposentarExcecao: true });
-        expect(h.resolver.resolve).toHaveBeenCalledWith(
-            { modalidade: 'TED' },
-            expect.objectContaining({ filCod: 4, pesCod: '90001', aposentarExcecao: true }),
-        );
-    });
-
-    it('flag da modalidade desligada: não decide destino (regra de antes), mas verifica duplicidade', async () => {
-        const h = build({
-            flags: { ted: false },
-            titulos: [fin064(), fin064({ docCod: '6702' })],
-        });
-        const r = await h.service.verificarItens('L1');
-        expect(h.resolver.resolve).not.toHaveBeenCalled();
-        expect(r.verificados).toHaveLength(1);
-        expect(h.alertaRepo.criar).toHaveBeenCalledTimes(1);
     });
 });
 
 describe('VerificacaoTedPixService — logs (ADR-0042, I10h)', () => {
-    it('mensagens em português e nenhum log carrega conta/chave', async () => {
-        for (const destino of [CADASTRO, EXCECAO, NENHUM, new Error(`falhou ${CONTA_COMPLETA}`)]) {
-            const h = build({ destino, perfil: perfil() });
-            await h.service.verificarItens('L1');
+    it('mensagens em português', async () => {
+        const cenarios: Array<Record<string, PayeeCheckResult>> = [
+            {},
+            { '90001:TED': 'SEM_DADO_PAGAMENTO' },
+            { '90001:TED': 'FALHA_LEITURA' },
+        ];
+        for (const guarda of cenarios) {
+            const h = build({ guarda });
+            await h.service.verificarItens('L1', RETIRAR);
             const chamadas = [...h.logService.info.mock.calls, ...h.logService.warn.mock.calls];
             expect(chamadas.length).toBeGreaterThan(0);
-            for (const [params] of chamadas) {
-                const texto = JSON.stringify(params);
-                expect(texto).not.toContain(CONTA_COMPLETA);
-                expect(texto).not.toContain('11144477735');
-                expect(params.message).toMatch(/verificação/);
-            }
+            for (const [params] of chamadas) expect(params.message).toMatch(/verificação/);
         }
     });
 });

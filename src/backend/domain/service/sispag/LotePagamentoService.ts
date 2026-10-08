@@ -10,7 +10,8 @@ import TitleInCommittedBatchError from '../../errors/TitleInCommittedBatchError.
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import DuplicateHoldError from '../../errors/DuplicateHoldError.js';
-import ItemsRemovedByCheckError from '../../errors/ItemsRemovedByCheckError.js';
+import BatchEmptiedByCheckError from '../../errors/BatchEmptiedByCheckError.js';
+import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavailableError.js';
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
 import ContaPagadoraResolver from './ContaPagadoraResolver.js';
@@ -28,21 +29,29 @@ import {
     LOTE_STATUS,
     MODALIDADE,
     type Modalidade,
-    VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
+import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
-import VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
 import type { TransactionClient } from '../../client/database/PostgreeDatabaseClient.js';
 import LogService from '../LogService.js';
-import VerificacaoTedPixService from './VerificacaoTedPixService.js';
+import VerificacaoTedPixService, {
+    type ItemRetirado,
+    VERIFICATION_MODE,
+} from './VerificacaoTedPixService.js';
 
 interface TransicaoInput {
     loteId: string;
     versao: number;
     ator: string;
+}
+
+/** Resultado do finalizar (ADR-0065 L3): o lote e os itens que a verificação retirou. */
+export interface LoteFinalizado {
+    lote: LotePagamento;
+    retirados: ItemRetirado[];
 }
 
 /** Chave `filCod:docCod:titCod` de um item/alerta. */
@@ -69,7 +78,7 @@ export default class LotePagamentoService {
         @inject(AlertaItemLoteRepository) private readonly alertaRepo: AlertaItemLoteRepository,
         @inject(BloqueioDuplicidadeRepository)
         private readonly bloqueioRepo: BloqueioDuplicidadeRepository,
-        @inject(VerificacaoEventoRepository) private readonly eventos: VerificacaoEventoRepository,
+        @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -144,6 +153,7 @@ export default class LotePagamentoService {
         versao: number;
         ator: string;
     }): Promise<LotePagamento> => {
+        await this.exigirModalidadeDisponivel(input.loteId, input.modalidade);
         await this.db.withTransaction(async (tx) => {
             const afetadas = await this.repo.atualizarModalidadeItem(
                 {
@@ -177,11 +187,14 @@ export default class LotePagamentoService {
             titCod: input.titCod,
             modalidade: input.modalidade,
         });
-        // ADR-0063 I13a — TED/PIX dispara a verificação SÓ deste item (pode retirá-lo do lote se
-        // faltar dado de pagamento, I13j); qualquer outra forma descarta as alertas abertas dele.
+        // ADR-0063 I13a / ADR-0065 I14e-1 — TED/PIX dispara a verificação SÓ deste item, que só
+        // AVISA (selo `autorizacaoAviso`), nunca retira; qualquer outra forma descarta as alertas.
         const chave = { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod };
         if (this.verificacao.ehVerificavel({ modalidade: input.modalidade })) {
-            await this.verificacao.verificarItens(input.loteId, { itens: [chave] });
+            await this.verificacao.verificarItens(input.loteId, {
+                itens: [chave],
+                modo: VERIFICATION_MODE.AVISO,
+            });
         } else {
             await this.verificacao.descartarVerificacao(input.loteId, chave, input.ator);
         }
@@ -418,8 +431,16 @@ export default class LotePagamentoService {
         return this.removerTitulo({ loteId, ...chave, ator: input.ator });
     };
 
-    /** GATE (I5) — finaliza o lote (≥1 item; optimistic lock por `versao`). */
-    public finalizarLote = async (input: TransicaoInput): Promise<LotePagamento> => {
+    /**
+     * GATE (I5) — finaliza o lote (≥1 item; optimistic lock por `versao`). ADR-0065 L3: a
+     * verificação TED/PIX RETIRA os itens cujo favorecido não está autorizado e o lote finaliza na
+     * MESMA chamada com os restantes (a resposta lista os retirados). Ordem dos bloqueios (as
+     * retiradas já gravadas ficam):
+     *   1. item PENDENTE (Conexos não respondeu) → `PaymentCheckPendingError` (falha fechada);
+     *   2. todos retirados → `BatchEmptiedByCheckError` (lote segue RASCUNHO);
+     *   3. alerta de duplicidade ABERTA → `PendingDuplicateAlertError`.
+     */
+    public finalizarLote = async (input: TransicaoInput): Promise<LoteFinalizado> => {
         const lote = await this.exigirLote(input.loteId);
         if (lote.status !== LOTE_STATUS.RASCUNHO) {
             throw new LoteEstadoInvalidoError({
@@ -427,6 +448,11 @@ export default class LotePagamentoService {
                 statusAtual: lote.status,
                 acao: 'finalizar',
             });
+        }
+        // A versão é checada ANTES da verificação: as retiradas do sistema bumpam a versão, e o
+        // que se protege é a edição concorrente de outra pessoa sobre o lote que esta tela viu.
+        if (lote.versao !== input.versao) {
+            throw new LoteVersaoConflitoError({ loteId: lote.id, versaoEsperada: input.versao });
         }
         const n = await this.repo.contarItens(input.loteId);
         if (n === 0) {
@@ -451,51 +477,40 @@ export default class LotePagamentoService {
         if (semModalidade > 0) {
             throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
-        // ADR-0063 (I13a/b/f/j) — re-verifica TODOS os itens TED/PIX antes da transição L3. Substitui
-        // a checagem de oferta da ADR-0054/0061 (I12f): o destino é resolvido pela MESMA função
-        // (`DestinoPagamentoResolver`), agora dentro da verificação, que aposenta a exceção que o
-        // cadastro tornou desnecessária (I12c). Ordem dos bloqueios (documentada no teste):
-        //   1. a verificação retirou item(ns) → `ItemsRemovedByCheckError` (lote segue RASCUNHO, Q5);
-        //   2. item PENDENTE (Conexos não respondeu) → `PaymentCheckPendingError` (falha fechada);
-        //   3. alerta de duplicidade ABERTA → `PendingDuplicateAlertError`. Canal habitual não barra.
         const verificacao = await this.verificacao.verificarItens(input.loteId, {
-            aposentarExcecao: true,
+            modo: VERIFICATION_MODE.RETIRAR,
         });
-        if (verificacao.retirados.length > 0) {
-            throw new ItemsRemovedByCheckError({ loteId: lote.id, itens: verificacao.retirados });
-        }
+        const { retirados } = verificacao;
         if (verificacao.pendentes.length > 0) {
             throw new PaymentCheckPendingError({ loteId: lote.id, itens: verificacao.pendentes });
         }
-        await this.exigirDuplicidadesTratadas(lote);
-        return this.transicionar(input, {
-            de: [LOTE_STATUS.RASCUNHO],
-            para: LOTE_STATUS.FINALIZADO,
-            acao: 'finalizar',
-            finalizadoPor: input.ator,
-        });
+        let atual = lote;
+        if (retirados.length > 0) {
+            if ((await this.repo.contarItens(input.loteId)) === 0) {
+                throw new BatchEmptiedByCheckError({ loteId: lote.id, itens: retirados });
+            }
+            atual = await this.exigirLote(input.loteId);
+        }
+        await this.exigirDuplicidadesTratadas(atual);
+        const finalizado = await this.transicionar(
+            { ...input, versao: input.versao + retirados.length },
+            {
+                de: [LOTE_STATUS.RASCUNHO],
+                para: LOTE_STATUS.FINALIZADO,
+                acao: 'finalizar',
+                finalizadoPor: input.ator,
+            },
+        );
+        return { lote: finalizado, retirados };
     };
 
-    /** L4 — reabre; limpa a conferência (ADR-0063, I13l), com evento na trilha quando havia uma. */
-    public reabrirLote = async (input: TransicaoInput): Promise<LotePagamento> => {
-        const antes = await this.repo.getLoteComItens(input.loteId);
-        return this.transicionar(
-            input,
-            { de: [LOTE_STATUS.FINALIZADO], para: LOTE_STATUS.RASCUNHO, acao: 'reabrir' },
-            antes?.conferidoPor
-                ? (tx) =>
-                      this.eventos.registrar(
-                          {
-                              evento: VERIFICATION_EVENT.CONFERENCIA_LIMPA,
-                              ator: input.ator,
-                              loteId: input.loteId,
-                              dados: { conferidoPor: antes.conferidoPor, acao: 'reabrir' },
-                          },
-                          tx,
-                      )
-                : undefined,
-        );
-    };
+    /** L4 — reabre (FINALIZADO → RASCUNHO). Desde a ADR-0065 não há conferência a limpar. */
+    public reabrirLote = (input: TransicaoInput): Promise<LotePagamento> =>
+        this.transicionar(input, {
+            de: [LOTE_STATUS.FINALIZADO],
+            para: LOTE_STATUS.RASCUNHO,
+            acao: 'reabrir',
+        });
 
     public cancelarLote = (input: TransicaoInput): Promise<LotePagamento> =>
         this.transicionar(input, {
@@ -507,8 +522,23 @@ export default class LotePagamentoService {
     // -------------------------------------------------------------- internals
 
     /**
+     * I14k — TED/PIX só com a guarda do favorecido autorizado ligada no tenant e a flag da
+     * modalidade ligada (a mesma condição da oferta). Outras formas passam.
+     */
+    private exigirModalidadeDisponivel = async (
+        loteId: string,
+        modalidade: Modalidade,
+    ): Promise<void> => {
+        if (modalidade !== MODALIDADE.TED && modalidade !== MODALIDADE.PIX) return;
+        const env = await this.environmentProvider.getEnvironmentVars();
+        const flag = modalidade === MODALIDADE.TED ? env.sispagTedEnabled : env.sispagPixEnabled;
+        if (env.sispagFavorecidoAutorizadoEnabled === true && flag === true) return;
+        throw new PaymentModalityUnavailableError({ loteId, modalidade });
+    };
+
+    /**
      * I13f — alerta de duplicidade ABERTA de item que ainda está no lote barra o finalizar, com a
-     * lista por item (e a contraparte). Alerta de canal habitual NÃO barra.
+     * lista por item (e a contraparte).
      */
     private exigirDuplicidadesTratadas = async (lote: LotePagamento): Promise<void> => {
         const abertas = (await this.alertaRepo.listVivasDosLotes([lote.id])).filter(
@@ -578,8 +608,6 @@ export default class LotePagamentoService {
             acao: string;
             finalizadoPor?: string;
         },
-        /** Efeito na MESMA transação da troca de status (ex.: evento de conferência limpa). */
-        naTransacao?: (tx: TransactionClient) => Promise<unknown>,
     ): Promise<LotePagamento> => {
         const afetadas = await this.db.withTransaction(async (tx) => {
             const n = await this.repo.transicionarStatus(
@@ -592,7 +620,6 @@ export default class LotePagamentoService {
                 },
                 tx,
             );
-            if (n > 0 && naTransacao) await naTransacao(tx);
             return n;
         });
         if (afetadas === 0) {

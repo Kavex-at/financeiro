@@ -7,13 +7,12 @@ import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider
 import AlertaItemLoteRepository from './AlertaItemLoteRepository.js';
 import BloqueioDuplicidadeRepository from './BloqueioDuplicidadeRepository.js';
 import LotePagamentoRepository from './LotePagamentoRepository.js';
-import PendenciaCadastroRepository from './PendenciaCadastroRepository.js';
 import PerfilCanalFornecedorRepository from './PerfilCanalFornecedorRepository.js';
 import TituloAPagarRepository from './TituloAPagarRepository.js';
 import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 
 /**
- * Repositórios da verificação TED/PIX (ADR-0063) contra um Postgres DE VERDADE — o SQL que os
+ * Repositórios da verificação TED/PIX (ADR-0063, ADR-0065) contra um Postgres DE VERDADE — o SQL que os
  * mocks não provam: `ON CONFLICT` com índice parcial, `DELETE ... USING`, `UPDATE ... FROM`,
  * `CASE` com parâmetro, trilha na mesma transação.
  *
@@ -137,28 +136,34 @@ describeComBanco('repositórios da verificação TED/PIX (integração)', () => 
         expect(await contarEventos('ALERTA_OBSOLETA')).toBe(1);
     });
 
-    it('lote: verificação do item, remoção pelo sistema, conferir e devolver', async () => {
+    it('lote: verificação do item com selo, remoção pelo sistema com motivo, reabrir sem conferência', async () => {
         const repo = new LotePagamentoRepository(pool, eventos);
         await repo.marcarVerificacaoItem({
             loteId: LOTE,
             ...CHAVE,
             estado: 'OK',
-            destinoOrigem: 'CADASTRO',
-            destinoMascarado: '341 / ****-5',
+            destinoMascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
+            autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO',
         });
         await repo.marcarVerificacaoItem({ loteId: LOTE, ...CHAVE, estado: 'PENDENTE' });
         let lote = await repo.getLoteComItens(LOTE);
-        // PENDENTE não apaga o destino visto antes.
+        // PENDENTE não apaga o destino nem o selo vistos antes.
         expect(lote?.itens.find((i) => i.docCod === '6173')).toMatchObject({
             verificacaoEstado: 'PENDENTE',
-            destinoOrigem: 'CADASTRO',
-            destinoMascarado: '341 / ****-5',
+            destinoMascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
+            autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO',
         });
 
         const versaoAntes = lote?.versao ?? 0;
         const removido = await pool.withTransaction((tx) =>
             repo.removerItemPeloSistema(
-                { loteId: LOTE, filCod: 4, docCod: '6174', titCod: '1' },
+                {
+                    loteId: LOTE,
+                    filCod: 4,
+                    docCod: '6174',
+                    titCod: '1',
+                    motivo: 'FAVORECIDO_NAO_AUTORIZADO',
+                },
                 tx,
             ),
         );
@@ -166,7 +171,10 @@ describeComBanco('repositórios da verificação TED/PIX (integração)', () => 
         lote = await repo.getLoteComItens(LOTE);
         expect(lote?.itens.map((i) => i.docCod)).toEqual(['6173']);
         expect(lote?.versao).toBe(versaoAntes + 1);
-        expect(await contarEventos('ITEM_REMOVIDO_SISTEMA')).toBe(1);
+        const evento = await db.query(
+            `SELECT dados FROM sispag_verificacao_evento WHERE evento = 'ITEM_REMOVIDO_SISTEMA'`,
+        );
+        expect(evento.rows.map((r) => r.dados)).toEqual([{ motivo: 'FAVORECIDO_NAO_AUTORIZADO' }]);
 
         const v = lote?.versao ?? 0;
         expect(
@@ -178,47 +186,23 @@ describeComBanco('repositórios da verificação TED/PIX (integração)', () => 
                 finalizadoPor: 'ana',
             }),
         ).toBe(1);
-        expect(await repo.conferir({ loteId: LOTE, versaoEsperada: v + 1, ator: 'bia' })).toBe(1);
-        // Já conferido: segunda conferência não pega.
-        expect(await repo.conferir({ loteId: LOTE, versaoEsperada: v + 2, ator: 'caio' })).toBe(0);
-        lote = await repo.getLoteComItens(LOTE);
-        expect(lote).toMatchObject({ status: 'FINALIZADO', conferidoPor: 'bia' });
-
+        await repo.setFavorecidoAutorizadoItem({
+            loteId: LOTE,
+            ...CHAVE,
+            autorizacaoId: '00000000-0000-0000-0000-000000000065',
+        });
         expect(
-            await repo.devolver({
-                loteId: LOTE,
-                versaoEsperada: v + 2,
-                ator: 'bia',
-                motivo: 'confira a conta',
+            await repo.transicionarStatus({
+                id: LOTE,
+                de: ['FINALIZADO'],
+                para: 'RASCUNHO',
+                versaoEsperada: v + 1,
             }),
         ).toBe(1);
         lote = await repo.getLoteComItens(LOTE);
-        expect(lote).toMatchObject({
-            status: 'RASCUNHO',
-            devolvidoPor: 'bia',
-            motivoDevolucao: 'confira a conta',
-        });
-        expect(lote?.conferidoPor).toBeUndefined();
+        expect(lote).toMatchObject({ status: 'RASCUNHO' });
         expect(lote?.finalizadoPor).toBeUndefined();
-
-        // Finalizar de novo apaga o motivo da devolução; reabrir limpa a conferência.
-        await repo.transicionarStatus({
-            id: LOTE,
-            de: ['RASCUNHO'],
-            para: 'FINALIZADO',
-            versaoEsperada: v + 3,
-            finalizadoPor: 'ana',
-        });
-        await repo.conferir({ loteId: LOTE, versaoEsperada: v + 4, ator: 'bia' });
-        await repo.transicionarStatus({
-            id: LOTE,
-            de: ['FINALIZADO'],
-            para: 'RASCUNHO',
-            versaoEsperada: v + 5,
-        });
-        lote = await repo.getLoteComItens(LOTE);
-        expect(lote?.conferidoPor).toBeUndefined();
-        expect(lote?.motivoDevolucao).toBeUndefined();
+        expect(lote?.itens[0]?.favorecidoAutorizadoId).toBe('00000000-0000-0000-0000-000000000065');
     });
 
     it('bloqueio: criar (idempotente por título), formação ignora o título, ingestão encerra', async () => {
@@ -251,34 +235,6 @@ describeComBanco('repositórios da verificação TED/PIX (integração)', () => 
         expect(await repo.findAtivo(chave)).toBeNull();
         expect(await contarEventos('BLOQUEIO_ENCERRADO')).toBe(1);
         expect(await repo.desfazer({ chave, motivo: 'x', ator: 'ana' })).toBeNull();
-    });
-
-    it('pendência: abrir, acrescentar origem sem duplicar, resolver só pelo sistema', async () => {
-        const repo = new PendenciaCadastroRepository(pool, eventos);
-        const base = {
-            pesCod: '90001',
-            filCod: 4,
-            tipo: 'CONTA' as const,
-            loteId: LOTE,
-            desfecho: 'RETIRADO' as const,
-        };
-        const a = await repo.abrirOuAcrescentar({ ...base, chave: CHAVE });
-        const b = await repo.abrirOuAcrescentar({ ...base, chave: CHAVE });
-        const c = await repo.abrirOuAcrescentar({
-            ...base,
-            chave: { filCod: 4, docCod: '7000', titCod: '1' },
-        });
-        expect(a.aberta).toBe(true);
-        expect(b).toEqual({ pendenciaId: a.pendenciaId, aberta: false });
-        expect(c.pendenciaId).toBe(a.pendenciaId);
-        const [aberta] = await repo.listAbertas();
-        expect(aberta?.origens.map((o) => o.docCod)).toEqual(['6173', '7000']);
-        expect(await contarEventos('PENDENCIA_ABERTA')).toBe(1);
-        expect(await contarEventos('PENDENCIA_ORIGEM_ACRESCENTADA')).toBe(1);
-        expect(await repo.resolverDoFavorecido('90001', 'CONTA')).toBe(1);
-        expect(await repo.listAbertas()).toEqual([]);
-        // Ocorrência nova depois de resolvida abre outra pendência.
-        expect((await repo.abrirOuAcrescentar({ ...base, chave: CHAVE })).aberta).toBe(true);
     });
 
     it('perfil: upsert da rodada substitui só o recalculado', async () => {

@@ -447,12 +447,6 @@ export interface LotePagamento {
      * lote legado (anterior à 0061).
      */
     dataDebito?: string;
-    // ── 0078: conferência por 2ª pessoa (ADR-0063, I13l; L12/L13) ──
-    conferidoPor?: string;
-    conferidoEm?: string;
-    devolvidoPor?: string;
-    devolvidoEm?: string;
-    motivoDevolucao?: string;
     itens: ItemLote[];
 }
 
@@ -554,18 +548,17 @@ export interface ExecucoesParadas {
     lotesNativos: number[];
 }
 
-// ============================================================ ADR-0063 — verificação TED/PIX
-// Duplicidade, canal habitual, dados de pagamento e conferência por 2ª pessoa (I13a–m).
-// Ver ontology/business-rules/verificacao-ted-pix-sispag.md. Nada aqui escreve no Conexos.
+// ============================================================ ADR-0063/0065 — verificação TED/PIX
+// Duplicidade e favorecido autorizado (I13, I14). Ver ontology/business-rules/
+// verificacao-ted-pix-sispag.md e favorecido-autorizado-sispag.md. Nada aqui escreve no Conexos.
 
-/** Ator das ações que o SISTEMA executa (retirada por falta de dado, resolução de pendência). */
+/** Ator das ações que o SISTEMA executa (retirada do item no finalizar, reaprovação). */
 export const SISPAG_SYSTEM_ACTOR = 'sistema';
 
-/** Tipo da `AlertaItemLote` (I13c, I13d, I13i). */
+/** Tipo da `AlertaItemLote` (I13c, I13d). O alerta de canal habitual saiu na ADR-0065. */
 export const ITEM_ALERT_TYPE = {
     DUPLICIDADE_FORTE: 'DUPLICIDADE_FORTE',
     DUPLICIDADE_FRACA: 'DUPLICIDADE_FRACA',
-    CANAL_HABITUAL: 'CANAL_HABITUAL',
 } as const;
 
 export type ItemAlertType = (typeof ITEM_ALERT_TYPE)[keyof typeof ITEM_ALERT_TYPE];
@@ -614,10 +607,20 @@ export const DUPLICATE_HOLD_STATE = {
 
 export type DuplicateHoldState = (typeof DUPLICATE_HOLD_STATE)[keyof typeof DUPLICATE_HOLD_STATE];
 
-/** Motivo da remoção de item pelo sistema (I13j-1). */
-export const SYSTEM_REMOVAL_REASON = { SEM_DADO_PAGAMENTO: 'SEM_DADO_PAGAMENTO' } as const;
+/**
+ * Motivo da remoção de item pelo sistema no `finalizarLote` (ADR-0065 I13j): o resultado da
+ * verificação do favorecido autorizado que não é OK nem falha de leitura.
+ */
+export const SYSTEM_REMOVAL_REASON = {
+    SEM_DADO_PAGAMENTO: 'SEM_DADO_PAGAMENTO',
+    FAVORECIDO_NAO_AUTORIZADO: 'FAVORECIDO_NAO_AUTORIZADO',
+    DESTINO_ALTERADO: 'DESTINO_ALTERADO',
+} as const;
 
-/** Grupo de canal de pagamento (I13i): TED e PIX são um grupo só. */
+export type SystemRemovalReason =
+    (typeof SYSTEM_REMOVAL_REASON)[keyof typeof SYSTEM_REMOVAL_REASON];
+
+/** Grupo de canal de pagamento (perfil de canal; desde a ADR-0065 só alimenta o relatório). */
 export const CHANNEL_GROUP = {
     BOLETO: 'BOLETO',
     TED_PIX: 'TED_PIX',
@@ -626,12 +629,16 @@ export const CHANNEL_GROUP = {
 
 export type ChannelGroup = (typeof CHANNEL_GROUP)[keyof typeof CHANNEL_GROUP];
 
-/** Confiança do perfil de canal. Só `ALTA` gera alerta. */
+/** Confiança do perfil de canal (relatório de candidatos à autorização). */
 export const CHANNEL_CONFIDENCE = { ALTA: 'ALTA', MEDIA: 'MEDIA', BAIXA: 'BAIXA' } as const;
 
 export type ChannelConfidence = (typeof CHANNEL_CONFIDENCE)[keyof typeof CHANNEL_CONFIDENCE];
 
-/** Evento da trilha só-inclusão da verificação TED/PIX (I13m). Paridade com o CHECK da 0078. */
+/**
+ * Evento da trilha só-inclusão da verificação TED/PIX (I13m). Paridade com o CHECK da 0078.
+ * `PENDENCIA_*`, `LOTE_CONFERIDO`, `LOTE_DEVOLVIDO` e `CONFERENCIA_LIMPA` só existem nas linhas
+ * históricas: a ADR-0065 parou de emiti-los (o CHECK os mantém).
+ */
 export const VERIFICATION_EVENT = {
     ALERTA_CRIADA: 'ALERTA_CRIADA',
     ALERTA_JUSTIFICADA: 'ALERTA_JUSTIFICADA',

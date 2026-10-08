@@ -308,54 +308,60 @@ describe('LotePagamentoRepository', () => {
         expect(params).not.toHaveProperty('finalizadoPor');
     });
     // ── ADR-0054 — destino manual do item (I10e, I10g, I10h) ─────────────────────────────
-    describe('exceção de destino do item (ADR-0061, I10f)', () => {
-        it('item sem exceção usada: sem excecaoDestinoId', async () => {
+    describe('autorização do favorecido usada no item (ADR-0065, I10f)', () => {
+        it('item sem autorização registrada: sem favorecidoAutorizadoId', async () => {
             const db = buildDb();
             db.selectFirst.mockResolvedValue(header());
             db.selectMany.mockResolvedValue([itemRow()]);
             const lote = await make(db).getLoteComItens('L1');
-            expect(lote?.itens[0]?.excecaoDestinoId).toBeUndefined();
+            expect(lote?.itens[0]?.favorecidoAutorizadoId).toBeUndefined();
         });
 
-        it('mapeia a exceção usada sem copiar nenhum valor de destino', async () => {
+        it('mapeia a autorização usada sem nenhum valor de destino', async () => {
             const db = buildDb();
             db.selectFirst.mockResolvedValue(header());
-            db.selectMany.mockResolvedValue([itemRow({ excecao_destino_id: 'EXC-1' })]);
+            db.selectMany.mockResolvedValue([itemRow({ favorecido_autorizado_id: 'AUT-1' })]);
             const lote = await make(db).getLoteComItens('L1');
-            expect(lote?.itens[0]?.excecaoDestinoId).toBe('EXC-1');
+            expect(lote?.itens[0]?.favorecidoAutorizadoId).toBe('AUT-1');
         });
 
-        it('setExcecaoDestinoItem grava só o id da exceção no item, com parâmetros nomeados', async () => {
+        it('setFavorecidoAutorizadoItem grava só o id, com parâmetros nomeados e sem bump', async () => {
             const db = buildDb();
-            const n = await make(db).setExcecaoDestinoItem({
+            const n = await make(db).setFavorecidoAutorizadoItem({
                 loteId: 'L1',
                 filCod: 2,
                 docCod: '100',
                 titCod: '1',
-                excecaoId: 'EXC-1',
+                autorizacaoId: 'AUT-1',
             });
             expect(n).toBe(1);
             const [sql, params] = db.update.mock.calls[0];
-            expect(sql).toMatch(/SET excecao_destino_id = \$excecaoId/);
+            expect(sql).toMatch(/SET favorecido_autorizado_id = \$autorizacaoId/);
             expect(sql).not.toMatch(/versao/);
             expect(params).toEqual({
                 loteId: 'L1',
                 filCod: 2,
                 docCod: '100',
                 titCod: '1',
-                excecaoId: 'EXC-1',
+                autorizacaoId: 'AUT-1',
             });
         });
 
-        it('o destino manual por item (0067) não é mais lido: coluna inerte', async () => {
+        it('as colunas apagadas pela 0080 não são mais lidas', async () => {
             const db = buildDb();
             db.selectFirst.mockResolvedValue(header());
             db.selectMany.mockResolvedValue([]);
             await make(db).getLoteComItens('L1');
-            const sql = String(db.selectMany.mock.calls[0]?.[0]);
-            expect(sql).not.toMatch(/destino_manual/);
-            expect(sql).not.toMatch(/destino_audit/);
-            expect(sql).toMatch(/excecao_destino_id/);
+            const sqlItens = String(db.selectMany.mock.calls[0]?.[0]);
+            const sqlHeader = String(db.selectFirst.mock.calls[0]?.[0]);
+            for (const c of ['destino_manual', 'destino_origem', 'excecao_destino_id']) {
+                expect(sqlItens).not.toContain(c);
+            }
+            for (const c of ['conferido_por', 'devolvido_por', 'motivo_devolucao']) {
+                expect(sqlHeader).not.toContain(c);
+            }
+            expect(sqlItens).toMatch(/favorecido_autorizado_id/);
+            expect(sqlItens).toMatch(/autorizacao_aviso/);
         });
     });
 
@@ -583,43 +589,30 @@ const eventosGravados = (db: DbMock): Array<Record<string, unknown> | undefined>
         .filter(([q]) => String(q).includes('INSERT INTO sispag_verificacao_evento'))
         .map(([, p]) => p as Record<string, unknown> | undefined);
 
-describe('LotePagamentoRepository — verificação TED/PIX e conferência (ADR-0063)', () => {
-    it('lê o estado da verificação no item e a conferência no lote; destino só mascarado', async () => {
+describe('LotePagamentoRepository — verificação TED/PIX (ADR-0063, ADR-0065)', () => {
+    it('lê o estado da verificação e o selo no item; destino só mascarado', async () => {
         const db = buildDb();
-        db.selectFirst.mockResolvedValue(
-            header({
-                status: 'FINALIZADO',
-                conferido_por: 'bia',
-                conferido_em: new Date('2026-10-05T10:00:00Z'),
-                motivo_devolucao: null,
-            }),
-        );
+        db.selectFirst.mockResolvedValue(header({ status: 'RASCUNHO' }));
         db.selectMany.mockResolvedValue([
             itemRow({
                 modalidade: 'TED',
                 verificacao_estado: 'OK',
                 verificado_em: new Date('2026-10-05T09:00:00Z'),
-                destino_origem: 'CADASTRO',
-                destino_mascarado: '341 / ****-5',
+                destino_mascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
+                autorizacao_aviso: 'DESTINO_ALTERADO',
             }),
         ]);
         const lote = await make(db).getLoteComItens('L1');
-        expect(lote).toMatchObject({
-            conferidoPor: 'bia',
-            conferidoEm: '2026-10-05T10:00:00.000Z',
-        });
         expect(lote?.itens[0]).toMatchObject({
             verificacaoEstado: 'OK',
-            destinoOrigem: 'CADASTRO',
-            destinoMascarado: '341 / ****-5',
+            destinoMascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
+            autorizacaoAviso: 'DESTINO_ALTERADO',
         });
-        const [sqlHeader] = db.selectFirst.mock.calls[0] ?? [];
-        expect(String(sqlHeader)).toMatch(/conferido_por, conferido_em, devolvido_por/);
         const [sqlItens] = db.selectMany.mock.calls[0] ?? [];
         expect(String(sqlItens)).toMatch(/i\.verificacao_estado, i\.verificado_em/);
     });
 
-    it('voltar a RASCUNHO (L4) limpa a conferência; finalizar apaga a última devolução', async () => {
+    it('voltar a RASCUNHO (L4) só limpa a finalização — não há conferência', async () => {
         const db = buildDb();
         await make(db).transicionarStatus({
             id: 'L1',
@@ -628,12 +621,11 @@ describe('LotePagamentoRepository — verificação TED/PIX e conferência (ADR-
             versaoEsperada: 3,
         });
         const [sql, params] = db.update.mock.calls[0] ?? [];
-        expect(String(sql)).toMatch(/conferido_por\s+= CASE WHEN \$para = 'RASCUNHO' THEN NULL/);
-        expect(String(sql)).toMatch(/motivo_devolucao = CASE WHEN \$para = 'FINALIZADO' THEN NULL/);
+        expect(String(sql)).not.toMatch(/conferido_por|motivo_devolucao/);
         expect(params).toMatchObject({ para: 'RASCUNHO', versaoEsperada: 3 });
     });
 
-    it('marcarVerificacaoItem grava estado e destino mascarado, parametrizado, sem bump de versão', async () => {
+    it('marcarVerificacaoItem grava estado, máscara e selo, parametrizado, sem bump de versão', async () => {
         const db = buildDb();
         await make(db).marcarVerificacaoItem({
             loteId: 'L1',
@@ -641,19 +633,27 @@ describe('LotePagamentoRepository — verificação TED/PIX e conferência (ADR-
             docCod: '6173',
             titCod: '1',
             estado: 'OK',
-            destinoOrigem: 'EXCECAO',
-            destinoMascarado: 'CPF ***.***.***-35',
+            destinoMascarado: 'PIX CPF/CNPJ ***.444.777-**',
+            autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO',
         });
         const [sql, params] = db.update.mock.calls[0] ?? [];
         expect(String(sql)).toMatch(/SET verificacao_estado = \$estado/);
+        expect(String(sql)).toMatch(/autorizacao_aviso = CASE WHEN \$estado = 'OK'/);
         expect(String(sql)).not.toMatch(/versao/);
-        expect(params).toMatchObject({ estado: 'OK', destinoOrigem: 'EXCECAO' });
+        expect(params).toMatchObject({
+            estado: 'OK',
+            autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO',
+        });
     });
 
-    it('removerItemPeloSistema: DELETE só em RASCUNHO + bump + evento ITEM_REMOVIDO_SISTEMA, na transação dada; não marca manual', async () => {
+    it.each([
+        'SEM_DADO_PAGAMENTO',
+        'FAVORECIDO_NAO_AUTORIZADO',
+        'DESTINO_ALTERADO',
+    ] as const)('removerItemPeloSistema (%s): DELETE só em RASCUNHO + bump + evento com o motivo; não marca manual', async (motivo) => {
         const db = buildDb();
         const ok = await make(db).removerItemPeloSistema(
-            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1' },
+            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1', motivo },
             db as never,
         );
         expect(ok).toBe(true);
@@ -670,7 +670,7 @@ describe('LotePagamentoRepository — verificação TED/PIX e conferência (ADR-
                 evento: 'ITEM_REMOVIDO_SISTEMA',
                 ator: 'sistema',
                 loteId: 'L1',
-                dados: JSON.stringify({ motivo: 'SEM_DADO_PAGAMENTO' }),
+                dados: JSON.stringify({ motivo }),
             }),
         ]);
         expect(db.withTransaction).not.toHaveBeenCalled();
@@ -680,63 +680,16 @@ describe('LotePagamentoRepository — verificação TED/PIX e conferência (ADR-
         const db = buildDb();
         db.update.mockResolvedValueOnce(0);
         const ok = await make(db).removerItemPeloSistema(
-            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1' },
+            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1', motivo: 'SEM_DADO_PAGAMENTO' },
             db as never,
         );
         expect(ok).toBe(false);
         expect(eventosGravados(db)).toEqual([]);
     });
 
-    it('conferir: só FINALIZADO, versão batendo e ainda não conferido; evento na mesma transação', async () => {
-        const db = buildDb();
-        const n = await make(db).conferir({ loteId: 'L1', versaoEsperada: 4, ator: 'bia' });
-        expect(n).toBe(1);
-        expect(db.withTransaction).toHaveBeenCalledTimes(1);
-        const [sql, params] = db.update.mock.calls[0] ?? [];
-        expect(String(sql)).toMatch(
-            /WHERE id = \$loteId AND status = 'FINALIZADO' AND versao = \$versaoEsperada\s+AND conferido_por IS NULL/,
-        );
-        expect(params).toEqual({ loteId: 'L1', versaoEsperada: 4, ator: 'bia' });
-        expect(eventosGravados(db)).toEqual([
-            expect.objectContaining({ evento: 'LOTE_CONFERIDO', ator: 'bia', loteId: 'L1' }),
-        ]);
-    });
-
-    it('conferir: zero linhas (conflito) não grava evento', async () => {
-        const db = buildDb();
-        db.update.mockResolvedValueOnce(0);
-        expect(await make(db).conferir({ loteId: 'L1', versaoEsperada: 4, ator: 'bia' })).toBe(0);
-        expect(eventosGravados(db)).toEqual([]);
-    });
-
-    it('devolver: FINALIZADO → RASCUNHO com motivo, limpa conferência e finalização, evento', async () => {
-        const db = buildDb();
-        const n = await make(db).devolver({
-            loteId: 'L1',
-            versaoEsperada: 4,
-            ator: 'bia',
-            motivo: 'conta do favorecido diverge da NF',
-        });
-        expect(n).toBe(1);
-        const [sql] = db.update.mock.calls[0] ?? [];
-        expect(String(sql)).toMatch(/SET status = 'RASCUNHO'/);
-        expect(String(sql)).toMatch(/conferido_por = NULL/);
-        expect(String(sql)).toMatch(/finalizado_por = NULL/);
-        expect(String(sql)).toMatch(/motivo_devolucao = \$motivo/);
-        expect(String(sql)).toMatch(/status = 'FINALIZADO' AND versao = \$versaoEsperada/);
-        expect(eventosGravados(db)).toEqual([
-            expect.objectContaining({ evento: 'LOTE_DEVOLVIDO', ator: 'bia' }),
-        ]);
-    });
-
-    it('nenhuma query nova interpola valor: tudo por $parâmetro', async () => {
-        const db = buildDb();
-        const repo = make(db);
-        await repo.conferir({ loteId: "L1'; DROP TABLE x;--", versaoEsperada: 1, ator: 'bia' });
-        await repo.devolver({ loteId: 'L1', versaoEsperada: 1, ator: "o'hara", motivo: "x'y" });
-        for (const [q] of todas(db)) {
-            expect(q).not.toContain('DROP TABLE');
-            expect(q).not.toContain("o'hara");
-        }
+    it('o repositório não expõe mais conferir/devolver (L12/L13 removidas)', () => {
+        const repo = make(buildDb()) as unknown as Record<string, unknown>;
+        expect(repo.conferir).toBeUndefined();
+        expect(repo.devolver).toBeUndefined();
     });
 });

@@ -1,12 +1,7 @@
 import 'reflect-metadata';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import {
-    DESTINO_MANUAL_TIPO,
-    DUPLICATE_HOLD_STATE,
-    PAYEE_ISSUE_OUTCOME,
-    PAYEE_ISSUE_STATE,
-} from '../domain/interface/sispag/SispagInterface.js';
+import { DUPLICATE_HOLD_STATE } from '../domain/interface/sispag/SispagInterface.js';
 import MigrationFiles from './MigrationFiles.js';
 
 /** 0077 — BloqueioDuplicidade e PendenciaCadastro (ADR-0063, I13g/I13k). Asserções sobre o FONTE. */
@@ -27,14 +22,13 @@ describe('migration 0077 — bloqueio por duplicidade e pendência de cadastro (
             Object.values(DUPLICATE_HOLD_STATE).sort(),
         );
         expect(valoresDoCheck('pendencia_cadastro_estado_check')).toEqual(
-            Object.values(PAYEE_ISSUE_STATE).sort(),
+            ['ABERTA', 'RESOLVIDA'], // congelado: a 0080 (ADR-0065) apagou a pendência
         );
-        expect(valoresDoCheck('pendencia_cadastro_tipo_check')).toEqual(
-            Object.values(DESTINO_MANUAL_TIPO).sort(),
-        );
-        expect(valoresDoCheck('pendencia_cadastro_origem_desfecho_check')).toEqual(
-            Object.values(PAYEE_ISSUE_OUTCOME).sort(),
-        );
+        expect(valoresDoCheck('pendencia_cadastro_tipo_check')).toEqual(['CHAVE_PIX', 'CONTA']);
+        expect(valoresDoCheck('pendencia_cadastro_origem_desfecho_check')).toEqual([
+            'MANTIDO_POR_EXCECAO',
+            'RETIRADO',
+        ]);
     });
 
     it('no máximo um bloqueio ATIVO por título (I13g)', () => {
