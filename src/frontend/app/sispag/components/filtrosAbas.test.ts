@@ -7,6 +7,7 @@ import {
   filtroLotesNativos,
   filtroTitulos,
   formatarDia,
+  titulosVisiveis,
 } from './filtrosAbas'
 
 const dia = (s: string) => Date.parse(`${s}T00:00:00Z`)
@@ -104,5 +105,21 @@ describe('filtros por aba', () => {
   it('formatarDia sem fuso', () => {
     expect(formatarDia('2026-10-06')).toBe('06/10/2026')
     expect(formatarDia(undefined)).toBe('—')
+  })
+})
+
+describe('titulosVisiveis', () => {
+  const livre = titulo({ docCod: 'L' })
+  const rascunho = titulo({ docCod: 'R', loteRascunho: { id: 'L1', automatico: true } })
+  const finalizado = titulo({ docCod: 'F', loteComprometido: { id: 'L2', status: 'FINALIZADO' } })
+  const remessa = titulo({ docCod: 'G', loteComprometido: { id: 'L3', status: 'REMESSA_GERADA' } })
+  const todos = [livre, rascunho, finalizado, remessa]
+
+  it('por padrão esconde lote finalizado e remessa gerada; rascunho continua', () => {
+    expect(titulosVisiveis(todos, false).map((t) => t.docCod)).toEqual(['L', 'R'])
+  })
+
+  it('com o filtro ligado mostra todos', () => {
+    expect(titulosVisiveis(todos, true)).toEqual(todos)
   })
 })

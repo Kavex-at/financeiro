@@ -1,7 +1,7 @@
-import ExcelJS from 'exceljs';
 import { inject, injectable } from 'tsyringe';
 import RemittanceExportInvalidError from '../../errors/RemittanceExportInvalidError.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import PlanilhaXlsxWriter from '../../libs/xlsx/PlanilhaXlsxWriter.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     type CelulaExport,
@@ -73,7 +73,7 @@ const SITUACAO_ROTULO: Record<ItemSituacao, string> = {
  * RemessaTitulosExportService — planilha (.xlsx) com os títulos das remessas geradas, para a
  * revisão do time financeiro da Columbia. READ-ONLY e local: lê `lote_pagamento` e os itens,
  * não vai ao Conexos. Mesmo desenho do `RelatorioExportService` das Permutas: a projeção
- * (`montarPlanilha`) é separada da serialização (exceljs), para testar sem ler bytes.
+ * (`montarPlanilha`) é separada da serialização (`PlanilhaXlsxWriter`), para testar sem ler bytes.
  */
 @injectable()
 export default class RemessaTitulosExportService {
@@ -81,6 +81,7 @@ export default class RemessaTitulosExportService {
         @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
         @inject(LogService) private readonly logService: LogService,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
+        @inject(PlanilhaXlsxWriter) private readonly writer: PlanilhaXlsxWriter,
     ) {}
 
     /** Exporta os títulos dos lotes pedidos. Recusa tudo se algum lote não tem remessa. */
@@ -99,7 +100,7 @@ export default class RemessaTitulosExportService {
             throw new RemittanceExportInvalidError({ inexistentes, semRemessa });
         }
         const planilha = this.montarPlanilha(lotes);
-        const buffer = await this.serializar(planilha);
+        const buffer = await this.writer.serializar(planilha);
         const filename = this.nomeArquivo(lotes);
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -189,23 +190,5 @@ export default class RemessaTitulosExportService {
         return base
             ? `sispag-titulos-${base}-${hoje}.xlsx`
             : `sispag-titulos-remessas-${hoje}.xlsx`;
-    };
-
-    private serializar = async (planilha: PlanilhaExport): Promise<Buffer> => {
-        const workbook = new ExcelJS.Workbook();
-        workbook.creator = 'Columbia Financeiro';
-        const sheet = workbook.addWorksheet(planilha.titulo.slice(0, 31));
-        sheet.columns = planilha.colunas.map((c) => ({
-            header: c.header,
-            key: c.key,
-            width: c.width,
-            ...(c.numFmt ? { style: { numFmt: c.numFmt } } : {}),
-        }));
-        sheet.getRow(1).font = { bold: true };
-        sheet.views = [{ state: 'frozen', ySplit: 1 }];
-        for (const linha of planilha.linhas) sheet.addRow(linha);
-        sheet.addRow(planilha.totais).font = { bold: true };
-        const arrayBuffer = await workbook.xlsx.writeBuffer();
-        return Buffer.from(arrayBuffer as ArrayBuffer);
     };
 }

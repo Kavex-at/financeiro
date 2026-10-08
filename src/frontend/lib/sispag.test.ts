@@ -1,5 +1,6 @@
 import {
   baixarRemessa,
+  exportarTitulosAPagar,
   exportarTitulosRemessas,
   temRemessa,
   BoletoSemCodigoBarrasError,
@@ -97,6 +98,29 @@ describe('baixarRemessa', () => {
     await expect(baixarRemessa('lote-1')).rejects.toThrow(
       'O arquivo de remessa PG061001.REM não foi encontrado no Conexos (filial 7).',
     )
+  })
+})
+
+describe('exportarTitulosAPagar', () => {
+  it('manda as chaves no corpo, na ordem, e devolve o xlsx com o nome anunciado', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'Content-Disposition': 'attachment; filename="sispag-titulos-a-pagar-2026-10-08.xlsx"',
+      }),
+      blob: async () => new Blob([new Uint8Array([0x50, 0x4b])]),
+    } as unknown as Response)
+
+    const { nome } = await exportarTitulosAPagar(['7:802:1', '2:801:1'])
+
+    const [url, init] = mockApiFetch.mock.calls.at(-1) ?? []
+    expect(String(url)).toContain('/sispag/titulos/exportar')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      chaves: ['7:802:1', '2:801:1'],
+    })
+    expect(nome).toBe('sispag-titulos-a-pagar-2026-10-08.xlsx')
   })
 })
 
