@@ -3,10 +3,12 @@ name: favorecido-autorizado
 type: state-machine
 entity: FavorecidoAutorizado
 ontology_version: "0.38.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/libs/sispag/AuthorizedPayeeRule.ts
+  - src/backend/domain/service/sispag/AuthorizedPayeeService.ts
 last_review: 2026-10-08
 states: [PENDENTE, AUTORIZADO, REJEITADO, REAPROVACAO_PENDENTE, REVOGADO]
 ---
