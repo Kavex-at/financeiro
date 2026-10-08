@@ -1,5 +1,28 @@
 # Columbia Financeiro — Changelog
 
+## v0.60.0 (2026-10-08) — SISPAG: favorecidos autorizados para TED/PIX (ADR-0065)
+
+- **TED/PIX só para favorecido autorizado, e só para o destino aprovado.** Nova tela "Favorecidos
+  autorizados": quem tem `sispag:executar` pede a autorização de um par (favorecido, modalidade) e
+  outra pessoa, com a nova permissão `sispag:autorizar_favorecido`, aprova conferindo a conta ou a
+  chave PIX lida do cadastro do Conexos (`cmn025`). A aprovação grava uma impressão (HMAC) desse
+  destino; toda verificação a compara de novo. Destino trocado no cadastro abre reaprovação, também
+  com duas pessoas, e alerta in-app. Revogação com motivo; sem expiração.
+- **No lote:** definir TED/PIX para quem não está autorizado só avisa no item (com atalho "Pedir
+  autorização"). No finalizar, o item sem autorização válida ou sem dado no cadastro sai do lote,
+  com o motivo na trilha, e o lote finaliza com os demais (se esvaziar, fica em rascunho). A geração
+  da remessa barra o lote inteiro antes de qualquer escrita no Conexos se um destino mudou ou foi
+  revogado nesse meio-tempo.
+- **Sai a conferência do lote por segunda pessoa** (pedido da Columbia): a segunda pessoa passa a
+  agir uma vez por destino, na autorização. Saem também a exceção de destino (o destino é sempre o do
+  Conexos), a fila de pendências de cadastro e o alerta de canal habitual no item. A duplicidade
+  continua como estava (justificar ou retirar).
+- **Destino sempre mascarado**, com selo "igual ao Conexos / igual ao aprovado", botão "Reconferir
+  com o Conexos" e "Revelar" auditado só para quem aprova.
+- **Liga por flag, desligado por padrão.** Sem `SISPAG_FAVORECIDO_AUTORIZADO_ENABLED` (e o segredo
+  `SISPAG_FAVORECIDO_FINGERPRINT_KEY`), TED/PIX não são oferecidos. Boleto não muda. Migration
+  `0080` (aborta se as tabelas apagadas tiverem linhas; em produção estavam vazias). Ver `DEPLOY.md`.
+
 ## v0.59.0 (2026-10-08) — títulos a pagar: comprometidos fora da tabela e export pelo filtro
 
 - **Títulos já num lote finalizado ou com remessa gerada saem da tabela "Títulos a pagar" por
