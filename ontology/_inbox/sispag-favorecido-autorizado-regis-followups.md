@@ -39,3 +39,19 @@ Descartado: integrability P3 "caminho legado de exceção coexistindo atrás de 
 - **performance-3:** `AuthorizedPayeeRepository.listar` com `LIMIT 1000` sem paginação; o cache do resolver memoiza leitura que falhou dentro do mesmo fluxo.
 - **modifiability-3:** sem ponto de extensão para novas modalidades.
 - **testability-5:** sem piso de cobertura próprio para regra/fingerprint/repositório do favorecido.
+
+## Achados fora da revisão (2026-10-08, sessão do PR)
+
+- **P1 — `calcular-perfil-canal` nunca grava perfil (bug no `main`).** Primeira execução manual
+  (run 37844808519): leituras OK (38.537 baixas, 35.457 débitos, 0 falhas), mas `semFavorecido =
+  38.537`. O `fin010/baixas/list/{borCod}` tem o campo `pesCod`, mas o ERP devolve `null` (probe
+  read-only, borderô 23417 / fil 2); a linha traz `filCod`+`docCod`+`titCod`. O gap Q4 da ADR-0063
+  foi dado como resolvido pela interface, sem prova ao vivo. Correção proposta: mapa documento →
+  favorecido a partir do `fin064` (pagos inclusive), `pesCod ?? pesCodFor`. Sem isso o relatório de
+  candidatos fica vazio. PR separado (`fix/sispag-perfil-canal-favorecido`).
+- **P2 — `cmn025/list` com `pesCod#EQ` devolveu `count=14`.** O filtro pode estar sendo ignorado e o
+  `getDocumentoFavorecido` só olha 5 linhas: a preferência pela chave PIX CPF/CNPJ do próprio
+  favorecido (I10k) pode não achar o documento. Investigar.
+- **Verificado:** o cadastro `cmn025` (contas e chaves) é o mesmo pelas filiais 1, 2 e 4 (10
+  favorecidos, `validate-sispag-favorecido-autorizado-v1.ts`, 0 divergências) — a autorização sem
+  filial está correta.
