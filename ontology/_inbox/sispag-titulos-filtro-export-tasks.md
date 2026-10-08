@@ -21,7 +21,7 @@
 | 1 | Filtro de comprometidos na aba Títulos | Por padrão, título com `loteComprometido` não aparece na tabela nem na contagem do filtro; o botão mostra quantos estão ocultos e, ligado, eles voltam com o cadeado de hoje. Teste puro cobre o filtro. |
 | 2 | Motivo do "selecionar todos" visível | Com o bloqueio ativo (várias filiais ou nada selecionável), o texto do motivo aparece ao lado da contagem de selecionados; regra de bloqueio inalterada. |
 | 3 | `TitulosAPagarExportService` + `POST /sispag/titulos/exportar` | Zod: 1..5000 chaves compactas `filCod:docCod:titCod` (objetos estourariam o limite de 100 KB do `express.json()` — 5000 chaves realistas cabem, com teste); `SISPAG_VER`; `heavyRouteLimiter`. Relê `listAtivos` + lotes rascunho/comprometidos; mantém a ordem pedida; chave fora da carteira ativa é ignorada e contada no log. Colunas: Filial, Credor, Documento, Valor, Moeda, Vencimento, Dias p/ vencer, Boleto DDA, Aprovação, Pronto p/ remessa, Lote, Banco. Linha de totais. Testes do service (projeção) e da rota (400/200). |
-| 4 | Botão "Exportar (.xlsx)" na aba Títulos | Exporta `abaTitulos.filtrados` (todas as páginas, não só a visível); desabilitado com 0 linhas; toast de sucesso/erro; sessão expirada não vira toast. Teste do cliente `lib/sispag`. |
+| 4 | Botão "Exportar (N)" (.xlsx) na aba Títulos | Exporta `abaTitulos.filtrados` (todas as páginas, não só a visível); N = linhas do filtro; desabilitado com 0 linhas ou acima do teto; toast de sucesso/erro; sessão expirada não vira toast. Teste do cliente `lib/sispag`. |
 
 ## Gates
 typecheck · lint · test (BE+FE) · PatternGuardian · DesignSystemReviewer · SpecVerifier · Regis-Review (`--quick`, escopo do delta) · rebase main · bump `feat` → minor.
