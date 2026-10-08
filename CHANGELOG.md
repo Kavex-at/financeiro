@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.59.0 (2026-10-08) — títulos a pagar: comprometidos fora da tabela e export pelo filtro
+
+- **Títulos já num lote finalizado ou com remessa gerada saem da tabela "Títulos a pagar" por
+  padrão.** Eles não podem entrar em outro lote, então só poluíam a lista de trabalho. O botão
+  "Em lote finalizado/remessa (N)" mostra quantos estão escondidos e os traz de volta com um clique.
+  As contagens de A vencer / Vencidos / Todos acompanham o que a tabela mostra.
+- **"Selecionar todos" diz por que está bloqueado.** Com títulos de mais de uma filial no filtro, o
+  motivo ("Filtre por uma filial para selecionar todos") aparece em texto ao lado da contagem, em vez
+  de só no tooltip de um checkbox desabilitado. A regra continua: um lote é de uma filial só.
+- **Exportar (.xlsx) na aba Títulos a pagar:** baixa as linhas do filtro atual (faixa, filial, busca,
+  vencimento, boleto e comprometidos), de todas as páginas e na ordem da tela, até 5.000 títulos.
+  Colunas: filial, credor, documento, valor, moeda, vencimento, dias p/ vencer, boleto DDA, aprovação,
+  pronto p/ remessa, lote e banco, com linha de totais. Basta `sispag:ver`.
+
 ## v0.58.0 (2026-10-06) — download da remessa visível e export dos títulos das remessas
 
 > Versão pode ser re-sequenciada no merge (lote paralelo A/B/C).
