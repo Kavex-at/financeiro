@@ -43,25 +43,46 @@ describe('MaskDestino (I10h — a mesma máscara para log, API e tela)', () => {
         expect(mask.chavePix(undefined, 'qualquercoisa1234')).toBe('****-1234');
     });
 
-    it('destino manual CONTA e CHAVE_PIX', () => {
+    it('destino do favorecido (I14l): TED com banco e agência completos e só os 4 últimos da conta', () => {
         expect(
-            mask.destinoManual({
-                tipo: 'CONTA',
-                bancoCod: '237',
+            mask.destino({
+                tipo: 'TED',
+                banco: '237',
                 agencia: '1234',
                 conta: '87654321',
                 contaDv: '0',
-                titularDocumento: '12345678909',
             }),
         ).toBe('banco 237 · ag. 1234 · cc ****4321-0');
+    });
+
+    it('destino do favorecido (I14l): PIX com o tipo e um trecho da chave', () => {
         expect(
-            mask.destinoManual({
-                tipo: 'CHAVE_PIX',
-                chavePixTipo: 'EMAIL',
-                chavePix: 'fornecedor@empresa.com.br',
-                titularDocumento: '12345678909',
-            }),
+            mask.destino({ tipo: 'PIX', chaveTipo: 'EMAIL', chave: 'fornecedor@empresa.com.br' }),
         ).toBe('PIX e-mail f***@empresa.com.br');
+        expect(mask.destino({ tipo: 'PIX', chaveTipo: 'CPF_CNPJ', chave: '11144477735' })).toBe(
+            'PIX CPF/CNPJ ***.444.777-**',
+        );
+    });
+
+    it('destino do favorecido nunca contém a conta ou a chave completa', () => {
+        const saidas = [
+            mask.destino({
+                tipo: 'TED',
+                banco: '1',
+                agencia: '1',
+                conta: '987654321',
+                contaDv: '2',
+            }),
+            mask.destino({ tipo: 'PIX', chaveTipo: 'TELEFONE', chave: '+5511987654321' }),
+            mask.destino({
+                tipo: 'PIX',
+                chaveTipo: 'ALEATORIA',
+                chave: '123e4567-e89b-12d3-a456-426614174000',
+            }),
+        ];
+        expect(saidas[0]).not.toContain('987654321');
+        expect(saidas[1]).not.toContain('987654321');
+        expect(saidas[2]).not.toContain('123e4567');
     });
 
     it('nunca devolve o valor completo', () => {
