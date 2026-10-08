@@ -31,7 +31,7 @@ describe('buildAppNavGroups', () => {
   it('separa Frentes de Plataforma', () => {
     const groups = buildAppNavGroups({ sispagEnabled: true, tem: tudo })
     expect(groups.map((g) => g.label)).toEqual(['Frentes', 'Plataforma'])
-    expect(visiveis([groups[0]])).toEqual(['Permutas', 'SISPAG', 'Pendências de cadastro', 'Adiantamentos'])
+    expect(visiveis([groups[0]])).toEqual(['Permutas', 'SISPAG', 'Favorecidos autorizados', 'Adiantamentos'])
     expect(visiveis([groups[1]])).toEqual(['Operação', 'Métricas', 'Usuários'])
   })
 
@@ -45,7 +45,7 @@ describe('buildAppNavGroups', () => {
         '/permutas/borderos',
         '/permutas/clientes-filtro',
         '/sispag',
-        '/sispag/pendencias-cadastro',
+        '/sispag/favorecidos-autorizados',
         '/recebimentos',
         '/operacao',
         '/metricas',
@@ -57,7 +57,7 @@ describe('buildAppNavGroups', () => {
   it.each<[string, Permissao]>([
     ['Permutas', 'permutas:ver'],
     ['SISPAG', 'sispag:ver'],
-    ['Pendências de cadastro', 'sispag:cadastro'],
+    ['Favorecidos autorizados', 'sispag:ver'],
     ['Adiantamentos', 'recebimentos:ver'],
     ['Operação', 'operacao:ver'],
     ['Métricas', 'metricas:ver'],
@@ -78,10 +78,16 @@ describe('buildAppNavGroups', () => {
     ).not.toContain('SISPAG')
   })
 
-  it('SISPAG exige a flag E a permissão', () => {
-    expect(
-      visiveis(buildAppNavGroups({ sispagEnabled: false, tem: tudo })),
-    ).not.toContain('SISPAG')
+  it('SISPAG e Favorecidos autorizados exigem a flag E a permissão', () => {
+    const itens = visiveis(buildAppNavGroups({ sispagEnabled: false, tem: tudo }))
+    expect(itens).not.toContain('SISPAG')
+    expect(itens).not.toContain('Favorecidos autorizados')
+  })
+
+  it('as telas retiradas pela ADR-0065 não aparecem mais', () => {
+    const labels = todos(buildAppNavGroups({ sispagEnabled: true, tem: tudo })).map((i) => i.label)
+    expect(labels).not.toContain('Exceções de destino')
+    expect(labels).not.toContain('Pendências de cadastro')
   })
 
   it('nunca usa disabled para expressar permissão', () => {
@@ -92,7 +98,7 @@ describe('buildAppNavGroups', () => {
         .filter((i) => i.hidden)
         .map((i) => i.label)
         .sort(),
-    ).toEqual(['Adiantamentos', 'Métricas', 'Operação', 'Pendências de cadastro', 'Permutas', 'SISPAG', 'Usuários'])
+    ).toEqual(['Adiantamentos', 'Favorecidos autorizados', 'Métricas', 'Operação', 'Permutas', 'SISPAG', 'Usuários'])
   })
 })
 

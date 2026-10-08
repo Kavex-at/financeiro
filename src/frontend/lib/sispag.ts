@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { withAuthHeaders } from './auth/token'
 import { lerArquivoDaResposta } from './download'
 import { apiFetch } from './http'
@@ -243,22 +244,26 @@ export interface ItemLote {
   /** Última leitura bem-sucedida do título (ISO). */
   sincronizadoEm?: string
   /**
-   * Exceção de destino usada quando o destino do item congelou no envio (ADR-0061): só a
+   * Autorização do favorecido vigente quando o destino do item congelou no envio (ADR-0065): só a
    * REFERÊNCIA. A API nunca devolve conta ou chave do item.
    */
-  excecaoDestinoId?: string
+  favorecidoAutorizadoId?: string
   // ── verificação TED/PIX (ADR-0063) ──
   /** `PENDENTE`: o Conexos não respondeu — o finalizar barra até a verificação passar. */
   verificacaoEstado?: 'PENDENTE' | 'OK'
   verificadoEm?: string
-  /** O que a verificação viu do destino: a origem e SÓ a máscara (nunca o valor). */
-  destinoOrigem?: 'CADASTRO' | 'EXCECAO' | 'NENHUM'
+  /** O que a verificação viu do destino: SÓ a máscara (nunca o valor). */
   destinoMascarado?: string
+  /**
+   * Selo do favorecido autorizado (ADR-0065): o último resultado da verificação do item TED/PIX.
+   * Ausente = nunca verificado ou leitura que falhou.
+   */
+  autorizacaoAviso?: AvisoAutorizacao
   /** Alertas vivas do item neste lote, com a justificativa quando houver. */
   alertas?: AlertaItemLote[]
 }
 
-export type TipoAlertaItem = 'DUPLICIDADE_FORTE' | 'DUPLICIDADE_FRACA' | 'CANAL_HABITUAL'
+export type TipoAlertaItem = 'DUPLICIDADE_FORTE' | 'DUPLICIDADE_FRACA'
 
 /** Sinal da verificação TED/PIX sobre um item (ADR-0063). Duplicidade ABERTA barra o finalizar. */
 export interface AlertaItemLote {
@@ -284,16 +289,9 @@ export interface AlertaItemLote {
 export const ehDuplicidade = (a: AlertaItemLote): boolean =>
   a.tipo === 'DUPLICIDADE_FORTE' || a.tipo === 'DUPLICIDADE_FRACA'
 
-/** Rótulo curto do grupo de canal habitual (evidência do perfil). */
-export const ROTULO_CANAL: Record<string, string> = {
-  BOLETO: 'boleto',
-  TED_PIX: 'TED/PIX',
-  OUTROS: 'outros (tributo, sem canal)',
-}
-
 /** Destino que a oferta mostra para TED/PIX: origem + máscara (só com as flags ligadas). */
 export interface DestinoOfertado {
-  origem: 'CADASTRO' | 'EXCECAO' | 'NENHUM'
+  origem: 'CADASTRO' | 'NENHUM'
   destinoMascarado?: string
   /**
    * Só no PIX (D12): chave CPF/CNPJ que é o próprio documento do favorecido. A tela lista PIX
@@ -336,14 +334,6 @@ export interface LotePagamento {
    * lote nativo do fin015. Exibir com `formatCivilDate`, nunca com `new Date(...)`.
    */
   dataDebito?: string
-  // ── conferência por 2ª pessoa (ADR-0063) ──
-  /** Derivado no backend: ≥1 item TED/PIX — a remessa só sai depois de conferido. */
-  exigeConferencia?: boolean
-  conferidoPor?: string
-  conferidoEm?: string
-  devolvidoPor?: string
-  devolvidoEm?: string
-  motivoDevolucao?: string
   itens: ItemLote[]
 }
 
@@ -418,11 +408,41 @@ const rotaTitulo = (c: ChaveTitulo) =>
 export const retirarDoLote = (chave: ChaveTitulo) =>
   loteRequest(`${rotaTitulo(chave)}/retirar-do-lote`, { method: 'POST' })
 
-export const finalizarLote = (loteId: string, versao: number) =>
-  loteRequest(`/sispag/lotes/${loteId}/finalizar`, {
+/** Item que a verificação do favorecido autorizado retirou no finalizar (ADR-0065 L3). */
+export interface ItemRetirado {
+  filCod: number
+  docCod: string
+  titCod: string
+  credor?: string
+  modalidade?: string
+  motivo: Exclude<AvisoAutorizacao, 'OK'>
+}
+
+/**
+ * Finaliza o lote. A verificação RETIRA os itens TED/PIX cujo favorecido não está autorizado e o
+ * lote finaliza com os restantes; a resposta lista os retirados (vazia quando nenhum saiu).
+ * Todos retirados = 409 com a mensagem do backend e o lote segue RASCUNHO.
+ */
+export async function finalizarLote(
+  loteId: string,
+  versao: number,
+): Promise<{ lote: LotePagamento; retirados: ItemRetirado[] }> {
+  const res = await apiFetch(`${API}/sispag/lotes/${loteId}/finalizar`, {
     method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
     body: JSON.stringify({ versao }),
   })
+  if (!res.ok) {
+    let msg = `API ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+  const j = (await res.json()) as { lote: LotePagamento; retirados?: ItemRetirado[] }
+  return { lote: j.lote, retirados: j.retirados ?? [] }
+}
 
 export const reabrirLote = (loteId: string, versao: number) =>
   loteRequest(`/sispag/lotes/${loteId}/reabrir`, { method: 'POST', body: JSON.stringify({ versao }) })
@@ -440,7 +460,7 @@ export const cancelarLote = (loteId: string, versao: number) =>
 export const sincronizarLote = (loteId: string) =>
   loteRequest(`/sispag/lotes/${loteId}/sincronizar`, { method: 'POST' })
 
-// ── ADR-0063 — verificação TED/PIX, duplicidade e conferência ──────────────────────────────
+// ── ADR-0063 — verificação TED/PIX e duplicidade ──────────────────────────────
 
 /**
  * Trata UMA alerta de duplicidade (só RASCUNHO): JUSTIFICAR (texto obrigatório; o item fica) ou
@@ -469,60 +489,6 @@ export async function desfazerBloqueioDuplicidade(chave: ChaveTitulo, motivo: st
     const j = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(j.error ?? `API ${res.status}`)
   }
-}
-
-/** L12 — conferência por segunda pessoa (`sispag:conferir`). 403 para quem montou/finalizou. */
-export const conferirLote = (loteId: string, versao: number) =>
-  loteRequest(`/sispag/lotes/${loteId}/conferir`, {
-    method: 'POST',
-    body: JSON.stringify({ versao }),
-  })
-
-/** L13 — o conferente devolve o lote a RASCUNHO, com motivo obrigatório. */
-export const devolverLote = (loteId: string, versao: number, motivo: string) =>
-  loteRequest(`/sispag/lotes/${loteId}/devolver`, {
-    method: 'POST',
-    body: JSON.stringify({ versao, motivo }),
-  })
-
-/** Origem de uma pendência de cadastro: o título e o lote de onde a verificação partiu. */
-export interface PendenciaCadastroOrigem {
-  loteId: string
-  filCod: number
-  docCod: string
-  titCod: string
-  desfecho: 'RETIRADO' | 'MANTIDO_POR_EXCECAO'
-  registradaEm: string
-}
-
-/** Favorecido sem conta (TED) ou chave PIX no cadastro do Conexos (ADR-0063, I13k). */
-export interface PendenciaCadastro {
-  id: string
-  pesCod: string
-  filCod: number
-  credor?: string
-  tipo: 'CONTA' | 'CHAVE_PIX'
-  estado: 'ABERTA' | 'RESOLVIDA'
-  abertaEm: string
-  ultimaConferenciaEm?: string
-  origens: PendenciaCadastroOrigem[]
-  comExcecaoAprovada?: boolean
-}
-
-/**
- * Fila "Pendências de cadastro" (`sispag:cadastro`). O backend reconfere cada pendência no Conexos
- * a cada leitura: as que já têm o dado somem da lista sozinhas.
- */
-export async function fetchPendenciasCadastro(): Promise<PendenciaCadastro[]> {
-  const res = await apiFetch(`${API}/sispag/pendencias-cadastro`, {
-    headers: await withAuthHeaders(),
-  })
-  if (!res.ok) {
-    const j = (await res.json().catch(() => ({}))) as { error?: string }
-    throw new Error(j.error ?? `Falha ao carregar as pendências (HTTP ${res.status}).`)
-  }
-  const j = (await res.json()) as { pendencias?: PendenciaCadastro[] }
-  return j.pendencias ?? []
 }
 
 // ══════════════════════════════════════════ Fatia 3 — remessa e conciliação
@@ -728,6 +694,27 @@ export class ConciliacaoEmDuvidaError extends Error {
   }
 }
 
+/** Motivo, por item, de uma remessa barrada pela guarda do favorecido autorizado (ADR-0065). */
+export interface ItemBarradoNaRemessa {
+  /** `docCod/titCod`. */
+  item: string
+  motivo: AvisoAutorizacao | 'FALHA_LEITURA'
+}
+
+/**
+ * A remessa não saiu: item(ns) TED/PIX sem autorização válida do favorecido. Nada foi enviado ao
+ * Conexos. A tela lista item e motivo.
+ */
+export class PayeeNotAuthorizedAtRemittanceError extends Error {
+  constructor(
+    message: string,
+    readonly itens: ItemBarradoNaRemessa[],
+  ) {
+    super(message)
+    this.name = 'PayeeNotAuthorizedAtRemittanceError'
+  }
+}
+
 export class ErpPerguntaError extends Error {
   constructor(
     message: string,
@@ -779,6 +766,10 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
     }
     if (body.code === 'DATA_DEBITO_CONGELADA') {
       throw new DebitDateFrozenError(msg, det as DebitDateFrozenError['details'])
+    }
+    if (body.code === 'FAVORECIDO_NAO_AUTORIZADO_NA_REMESSA') {
+      const itens = Array.isArray(det.itens) ? (det.itens as ItemBarradoNaRemessa[]) : []
+      throw new PayeeNotAuthorizedAtRemittanceError(msg, itens)
     }
     if (body.code === 'ERP_PERGUNTA') {
       throw new ErpPerguntaError(msg, det.chave as string | undefined)
@@ -1334,19 +1325,22 @@ export async function sincronizarBoletosDda(): Promise<SincronizacaoDdaResultado
   return (await res.json()) as SincronizacaoDdaResultado
 }
 
-// ============================================================ ADR-0054/0061 — destino de TED/PIX
+// ============================================================ ADR-0054/0065 — destino de TED/PIX
 
-/** Flags de TED/PIX/exceção de destino expostas pelo backend (`GET /sispag/recursos`). */
+/**
+ * Flags expostas pelo backend (`GET /sispag/recursos`). `tedEnabled`/`pixEnabled` já dizem se a
+ * modalidade é OFERECIDA: só com a guarda do favorecido autorizado ligada (I14k).
+ */
 export interface RecursosSispag {
   tedEnabled: boolean
-  excecaoDestinoEnabled: boolean
   pixEnabled: boolean
+  favorecidoAutorizadoEnabled: boolean
 }
 
 const RECURSOS_DESLIGADOS: RecursosSispag = {
   tedEnabled: false,
-  excecaoDestinoEnabled: false,
   pixEnabled: false,
+  favorecidoAutorizadoEnabled: false,
 }
 
 let recursosEmCache: Promise<RecursosSispag> | null = null
@@ -1369,8 +1363,8 @@ export function getRecursos(): Promise<RecursosSispag> {
         const j = (await res.json()) as Partial<Record<keyof RecursosSispag, unknown>>
         return {
           tedEnabled: j.tedEnabled === true,
-          excecaoDestinoEnabled: j.excecaoDestinoEnabled === true,
           pixEnabled: j.pixEnabled === true,
+          favorecidoAutorizadoEnabled: j.favorecidoAutorizadoEnabled === true,
         }
       } catch {
         recursosEmCache = null
@@ -1381,267 +1375,295 @@ export function getRecursos(): Promise<RecursosSispag> {
   return recursosEmCache
 }
 
-export type ChavePixTipo = 'CPF_CNPJ' | 'EMAIL' | 'TELEFONE' | 'ALEATORIA'
+/** D12: a oferta do item traz PIX por chave CPF/CNPJ do favorecido. */
+export const pixPreferido = (oferta: OfertaModalidadesItem | undefined): boolean =>
+  oferta?.destinos?.PIX?.chaveCpfCnpjDoFavorecido === true
 
-export const TIPOS_CHAVE_PIX: { value: ChavePixTipo; label: string }[] = [
-  { value: 'CPF_CNPJ', label: 'CPF/CNPJ' },
-  { value: 'EMAIL', label: 'E-mail' },
-  { value: 'TELEFONE', label: 'Telefone' },
-  { value: 'ALEATORIA', label: 'Chave aleatória' },
-]
+// ============================================================ ADR-0065 — favorecido autorizado
 
 /**
- * Tipos de chave que a analista pode DIGITAR. Só CPF/CNPJ: é o único em que dá para conferir o
- * titular (a chave é o próprio documento). O dono das outras está no DICT, que só banco consulta.
- * Chave que vem do cadastro do Conexos pode ser de qualquer tipo.
+ * Selo do item TED/PIX e motivo de retirada/bloqueio: o resultado da verificação do favorecido
+ * autorizado (I14d). `OK` = autorizado com o destino de agora igual ao aprovado.
  */
-export const TIPOS_CHAVE_PIX_DIGITAVEIS = TIPOS_CHAVE_PIX.filter((t) => t.value === 'CPF_CNPJ')
+export type AvisoAutorizacao =
+  | 'OK'
+  | 'SEM_DADO_PAGAMENTO'
+  | 'FAVORECIDO_NAO_AUTORIZADO'
+  | 'DESTINO_ALTERADO'
 
-export type DestinoManual =
-  | {
-      tipo: 'CONTA'
-      bancoCod: string
-      agencia: string
-      agenciaDv?: string
-      conta: string
-      contaDv: string
-      titularDocumento: string
-    }
-  | { tipo: 'CHAVE_PIX'; chavePixTipo: ChavePixTipo; chavePix: string; titularDocumento: string }
+/** Texto curto, em português, de cada resultado (selo, retirada, remessa barrada). */
+export const ROTULO_AVISO_AUTORIZACAO: Record<AvisoAutorizacao | 'FALHA_LEITURA', string> = {
+  OK: 'favorecido autorizado',
+  SEM_DADO_PAGAMENTO:
+    'sem conta/chave no cadastro do Conexos — pedir ao responsável pelo cadastro do Conexos',
+  FAVORECIDO_NAO_AUTORIZADO: 'favorecido não autorizado para esta forma de pagamento',
+  DESTINO_ALTERADO: 'destino mudou no cadastro desde a aprovação',
+  FALHA_LEITURA: 'não foi possível ler o cadastro do Conexos',
+}
 
-/** O que o formulário digita — tudo texto, antes de normalizar. */
-export type DestinoManualEntrada =
-  | {
-      tipo: 'CONTA'
-      bancoCod: string
-      agencia: string
-      agenciaDv: string
-      conta: string
-      contaDv: string
-      titularDocumento: string
-    }
-  | { tipo: 'CHAVE_PIX'; chavePixTipo: ChavePixTipo; chavePix: string; titularDocumento: string }
+export const ESTADOS_AUTORIZACAO = [
+  'PENDENTE',
+  'AUTORIZADO',
+  'REJEITADO',
+  'REAPROVACAO_PENDENTE',
+  'REVOGADO',
+] as const
 
-const soDigitos = (v: string): string => v.replace(/\D/g, '')
+export type EstadoAutorizacao = (typeof ESTADOS_AUTORIZACAO)[number]
 
-/** CPF (11) ou CNPJ (14) com DV válido — a mesma conta do backend. */
-export function documentoValido(doc: string): boolean {
-  if (!/^(\d{11}|\d{14})$/.test(doc) || /^(\d)\1+$/.test(doc)) return false
-  const n = doc.split('').map(Number)
-  if (doc.length === 11) {
-    const dv = (ate: number) => {
-      let soma = 0
-      for (let i = 0; i < ate; i += 1) soma += (n[i] ?? 0) * (ate + 1 - i)
-      const r = (soma * 10) % 11
-      return r === 10 ? 0 : r
-    }
-    return dv(9) === n[9] && dv(10) === n[10]
+export const ROTULO_ESTADO_AUTORIZACAO: Record<EstadoAutorizacao, string> = {
+  PENDENTE: 'Pendente',
+  AUTORIZADO: 'Autorizado',
+  REJEITADO: 'Rejeitado',
+  REAPROVACAO_PENDENTE: 'Reaprovação pendente',
+  REVOGADO: 'Revogado',
+}
+
+export type ModalidadeAutorizavel = 'TED' | 'PIX'
+export type OrigemSolicitacao = 'ITEM' | 'RELATORIO' | 'MANUAL'
+
+const opcional = <T extends z.ZodType>(t: T) => t.nullish().transform((v) => v ?? undefined)
+
+const autorizacaoSchema = z.object({
+  id: z.string(),
+  pesCod: z.string(),
+  credor: opcional(z.string()),
+  modalidade: z.enum(['TED', 'PIX']),
+  estado: z.enum(ESTADOS_AUTORIZACAO),
+  fingerprintChaveId: opcional(z.string()),
+  destinoMascarado: opcional(z.string()),
+  avisos: z.array(z.string()).default([]),
+  destinoObservadoMascarado: opcional(z.string()),
+  origemSolicitacao: z.enum(['ITEM', 'RELATORIO', 'MANUAL']),
+  filCodLeitura: z.number(),
+  solicitadoPor: opcional(z.string()),
+  solicitadoEm: opcional(z.string()),
+  decididoPor: opcional(z.string()),
+  decididoEm: opcional(z.string()),
+  motivoDecisao: opcional(z.string()),
+  ultimaConferenciaEm: opcional(z.string()),
+  ultimaConferenciaResultado: opcional(z.enum(['IGUAL', 'DIFERENTE', 'SEM_DADO', 'FALHA_LEITURA'])),
+  versao: z.number(),
+})
+
+/** Autorização como a API devolve: só máscara, nunca conta ou chave completas. */
+export type FavorecidoAutorizado = z.infer<typeof autorizacaoSchema>
+
+const eventoSchema = z.object({
+  id: z.string(),
+  autorizacaoId: z.string(),
+  evento: z.string(),
+  ator: z.string(),
+  ocorridoEm: z.string(),
+  dados: opcional(z.record(z.string(), z.unknown())),
+})
+
+export type EventoAutorizacao = z.infer<typeof eventoSchema>
+
+const destinoAtualSchema = z.object({
+  resultado: z.enum(['OK', 'SEM_DADO', 'FALHA_LEITURA']),
+  destinoMascarado: opcional(z.string()),
+  /** A impressão que a aprovação devolve (anti-TOCTOU). Não é reversível. */
+  fingerprint: opcional(z.string()),
+  avisos: z.array(z.string()).default([]),
+})
+
+export type DestinoAtual = z.infer<typeof destinoAtualSchema>
+
+const destinoReveladoSchema = z.object({
+  destinoMascarado: z.string(),
+  destino: z.union([
+    z.object({
+      tipo: z.literal('TED'),
+      banco: z.string(),
+      agencia: opcional(z.string()),
+      agenciaDv: opcional(z.string()),
+      conta: z.string(),
+      contaDv: opcional(z.string()),
+    }),
+    z.object({ tipo: z.literal('PIX'), chaveTipo: opcional(z.string()), chave: z.string() }),
+  ]),
+})
+
+export type DestinoRevelado = z.infer<typeof destinoReveladoSchema>
+
+const cadastroTemSchema = z.enum(['SIM', 'NAO', 'FALHA_LEITURA'])
+const estadoLinhaSchema = z.object({
+  estado: z.union([z.enum(ESTADOS_AUTORIZACAO), z.literal('NENHUMA')]),
+  id: opcional(z.string()),
+})
+
+const candidatoSchema = z.object({
+  pesCod: z.string(),
+  credor: opcional(z.string()),
+  grupoDominante: z.string(),
+  participacao: z.number(),
+  pagamentos: z.number(),
+  pagamentosTedPix: z.number(),
+  meses: z.number(),
+  confianca: z.string(),
+  cadastro: z.object({ TED: cadastroTemSchema, PIX: cadastroTemSchema }),
+  autorizacao: z.object({ TED: estadoLinhaSchema, PIX: estadoLinhaSchema }),
+})
+
+export type CandidatoAutorizacao = z.infer<typeof candidatoSchema>
+
+const retiradoSemDadoSchema = z.object({
+  loteId: opcional(z.string()),
+  filCod: opcional(z.number()),
+  docCod: opcional(z.string()),
+  titCod: opcional(z.string()),
+  pesCod: opcional(z.string()),
+  credor: opcional(z.string()),
+  ocorridoEm: z.string(),
+})
+
+const relatorioSchema = z.object({
+  candidatos: z.array(candidatoSchema),
+  total: z.number(),
+  pagina: z.number(),
+  limite: z.number(),
+  retiradosSemDado: z.array(retiradoSemDadoSchema),
+})
+
+export type RelatorioCandidatos = z.infer<typeof relatorioSchema>
+
+/** Erro da API de autorizações, com o código estável (o 409 de destino mudado recarrega). */
+export class AutorizacaoApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message)
+    this.name = 'AutorizacaoApiError'
   }
-  const dv = (ate: number) => {
-    const pesos =
-      ate === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    let soma = 0
-    for (let i = 0; i < ate; i += 1) soma += (n[i] ?? 0) * (pesos[i] ?? 0)
-    const r = soma % 11
-    return r < 2 ? 0 : 11 - r
-  }
-  return dv(12) === n[12] && dv(13) === n[13]
 }
 
-const normalizarChave = (tipo: ChavePixTipo, chave: string): string => {
-  const c = chave.trim()
-  if (tipo === 'CPF_CNPJ') return soDigitos(c)
-  if (tipo === 'TELEFONE') {
-    const d = soDigitos(c)
-    return !c.startsWith('+') && (d.length === 10 || d.length === 11) ? `+55${d}` : `+${d}`
-  }
-  return c.toLowerCase()
-}
-
-const chaveValida = (tipo: ChavePixTipo, chave: string): boolean => {
-  if (tipo === 'CPF_CNPJ') return documentoValido(chave)
-  if (tipo === 'EMAIL')
-    return chave.length <= 77 && /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(chave)
-  if (tipo === 'TELEFONE') return /^\+55[1-9][1-9]\d{8,9}$/.test(chave)
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(chave)
-}
-
-/**
- * Validação de FORMATO no cliente, espelhando o `DestinoManualValidator` do backend (que é quem
- * decide — e confere a titularidade). As mensagens nunca repetem o valor digitado.
- */
-export function validarDestinoManual(e: DestinoManualEntrada): {
-  destino?: DestinoManual
-  erros: Partial<Record<string, string>>
-} {
-  const erros: Partial<Record<string, string>> = {}
-  const titular = soDigitos(e.titularDocumento)
-  if (!documentoValido(titular)) erros.titularDocumento = 'CPF/CNPJ inválido.'
-  if (e.tipo === 'CONTA') {
-    const v = {
-      bancoCod: e.bancoCod.trim(),
-      agencia: e.agencia.trim(),
-      agenciaDv: e.agenciaDv.trim(),
-      conta: e.conta.trim(),
-      contaDv: e.contaDv.trim(),
-    }
-    if (!/^\d{3}$/.test(v.bancoCod)) erros.bancoCod = 'Use o código FEBRABAN de 3 dígitos.'
-    if (!/^\d{1,5}$/.test(v.agencia)) erros.agencia = 'Só dígitos.'
-    if (v.agenciaDv !== '' && !/^\d$/.test(v.agenciaDv)) erros.agenciaDv = 'Um dígito.'
-    if (!/^\d{1,12}$/.test(v.conta)) erros.conta = 'Só dígitos.'
-    if (!/^\d{1,2}$/.test(v.contaDv)) erros.contaDv = 'Só dígitos.'
-    if (Object.keys(erros).length > 0) return { erros }
-    return {
-      erros,
-      destino: {
-        tipo: 'CONTA',
-        bancoCod: v.bancoCod,
-        agencia: v.agencia,
-        ...(v.agenciaDv !== '' ? { agenciaDv: v.agenciaDv } : {}),
-        conta: v.conta,
-        contaDv: v.contaDv,
-        titularDocumento: titular,
-      },
-    }
-  }
-  const chave = normalizarChave(e.chavePixTipo, e.chavePix)
-  if (!chaveValida(e.chavePixTipo, chave)) erros.chavePix = 'Chave inválida para o tipo escolhido.'
-  if (Object.keys(erros).length > 0) return { erros }
-  return {
-    erros,
-    destino: {
-      tipo: 'CHAVE_PIX',
-      chavePixTipo: e.chavePixTipo,
-      chavePix: chave,
-      titularDocumento: titular,
-    },
-  }
-}
-
-// ============================================================ ADR-0061 — exceção de destino
-
-export type ExcecaoEstado = 'PENDENTE' | 'APROVADA' | 'REJEITADA' | 'SUBSTITUIDA' | 'REVOGADA'
-
-export const ESTADOS_EXCECAO: { value: ExcecaoEstado; label: string }[] = [
-  { value: 'PENDENTE', label: 'Pendente' },
-  { value: 'APROVADA', label: 'Aprovada' },
-  { value: 'REJEITADA', label: 'Rejeitada' },
-  { value: 'SUBSTITUIDA', label: 'Substituída pelo cadastro' },
-  { value: 'REVOGADA', label: 'Revogada' },
-]
-
-/** Exceção como a API devolve: SÓ máscara (nunca conta, chave ou documento inteiros). */
-export interface ExcecaoDestinoResumo {
-  id: string
-  pesCod: string
-  filCod: number
-  tipo: 'CONTA' | 'CHAVE_PIX'
-  destinoMascarado: string
-  titularDocumentoMascarado: string
-  estado: ExcecaoEstado
-  origem: 'MANUAL' | 'PLANILHA'
-  justificativa: string
-  cadastradoPor: string
-  cadastradoEm: string
-  aprovadoPor?: string
-  aprovadoEm?: string
-  decididoPor?: string
-  decididoEm?: string
-  motivoDecisao?: string
-  substituidaEm?: string
-  /** O cadastro assumiu com valor diferente: pede revisão. */
-  divergiu?: boolean
-  versao: number
-}
-
-export interface ExcecaoDestinoEvento {
-  id: string
-  excecaoId: string
-  evento: string
-  ator: string
-  ocorridoEm: string
-}
-
-/** Corpo do cadastro: o favorecido por `pesCod` OU pelo título (`docCod` + `titCod`). */
-export interface CadastrarExcecaoInput {
-  filCod: number
-  pesCod?: string
-  docCod?: string
-  titCod?: string
-  destino: DestinoManual
-  justificativa: string
-}
-
-async function excecaoRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function autorizacaoRequest<T>(
+  path: string,
+  schema: z.ZodType<T>,
+  init?: RequestInit,
+): Promise<T> {
   const res = await apiFetch(`${API}${path}`, {
     ...init,
     headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
   })
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) {
-    let msg = `API ${res.status}`
-    try {
-      const j = await res.json()
-      if (j?.error) msg = j.error
-    } catch {}
-    throw new Error(msg)
+    throw new AutorizacaoApiError(
+      typeof body.error === 'string' ? body.error : `Falha (HTTP ${res.status}).`,
+      res.status,
+      typeof body.code === 'string' ? body.code : undefined,
+    )
   }
-  return (await res.json()) as T
+  return schema.parse(body)
 }
 
-export async function listarExcecoes(
-  filtro: { estado?: ExcecaoEstado; pesCod?: string } = {},
-): Promise<ExcecaoDestinoResumo[]> {
+const base = '/sispag/favorecidos-autorizados'
+const rotaId = (id: string) => `${base}/${encodeURIComponent(id)}`
+
+export async function listarFavorecidosAutorizados(
+  filtro: { estado?: EstadoAutorizacao; pesCod?: string } = {},
+): Promise<FavorecidoAutorizado[]> {
   const qs = new URLSearchParams()
   if (filtro.estado) qs.set('estado', filtro.estado)
   if (filtro.pesCod) qs.set('pesCod', filtro.pesCod)
   const q = qs.toString()
-  const j = await excecaoRequest<{ excecoes: ExcecaoDestinoResumo[] }>(
-    `/sispag/excecoes${q ? `?${q}` : ''}`,
+  const j = await autorizacaoRequest(
+    `${base}${q ? `?${q}` : ''}`,
+    z.object({ autorizacoes: z.array(autorizacaoSchema) }),
   )
-  return j.excecoes
+  return j.autorizacoes
 }
 
-/** Cadastra uma exceção PENDENTE. 400 formato · 403 permissão/flag · 422 titularidade. */
-export async function cadastrarExcecao(input: CadastrarExcecaoInput): Promise<ExcecaoDestinoResumo> {
-  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>('/sispag/excecoes', {
+/** Pede a autorização (F1) ou confirma a reaprovação aberta pelo sistema (F5). */
+export async function pedirAutorizacao(input: {
+  pesCod: string
+  credor?: string
+  modalidade: ModalidadeAutorizavel
+  origem: OrigemSolicitacao
+  filCod: number
+}): Promise<FavorecidoAutorizado> {
+  const j = await autorizacaoRequest(base, z.object({ autorizacao: autorizacaoSchema }), {
     method: 'POST',
     body: JSON.stringify(input),
   })
-  return j.excecao
+  return j.autorizacao
 }
 
-/** Aprova a PENDENTE. O backend nega o próprio cadastrante (403, I12b). */
-export async function aprovarExcecao(id: string): Promise<ExcecaoDestinoResumo> {
-  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>(
-    `/sispag/excecoes/${encodeURIComponent(id)}/aprovar`,
+/** Aprova com a impressão que a tela mostrou (vinda do `reconferirAutorizacao`). */
+export async function aprovarAutorizacao(
+  id: string,
+  input: { versao: number; fingerprintMostrado: string },
+): Promise<FavorecidoAutorizado> {
+  const j = await autorizacaoRequest(
+    `${rotaId(id)}/aprovar`,
+    z.object({ autorizacao: autorizacaoSchema }),
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+  return j.autorizacao
+}
+
+export async function rejeitarAutorizacao(
+  id: string,
+  input: { versao: number; motivo: string },
+): Promise<FavorecidoAutorizado> {
+  const j = await autorizacaoRequest(
+    `${rotaId(id)}/rejeitar`,
+    z.object({ autorizacao: autorizacaoSchema }),
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+  return j.autorizacao
+}
+
+export async function revogarAutorizacao(
+  id: string,
+  input: { versao: number; motivo: string },
+): Promise<FavorecidoAutorizado> {
+  const j = await autorizacaoRequest(
+    `${rotaId(id)}/revogar`,
+    z.object({ autorizacao: autorizacaoSchema }),
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+  return j.autorizacao
+}
+
+/** "Reconferir com o Conexos": o selo atualizado e o destino de agora (mascarado + impressão). */
+export function reconferirAutorizacao(
+  id: string,
+): Promise<{ autorizacao: FavorecidoAutorizado; atual: DestinoAtual }> {
+  return autorizacaoRequest(
+    `${rotaId(id)}/reconferir`,
+    z.object({ autorizacao: autorizacaoSchema, atual: destinoAtualSchema }),
     { method: 'POST', body: '{}' },
   )
-  return j.excecao
 }
 
-export async function rejeitarExcecao(id: string, motivo: string): Promise<ExcecaoDestinoResumo> {
-  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>(
-    `/sispag/excecoes/${encodeURIComponent(id)}/rejeitar`,
-    { method: 'POST', body: JSON.stringify({ motivo }) },
-  )
-  return j.excecao
+/** O destino COMPLETO, lido ao vivo e auditado. Nunca guardar: a tela mostra e esquece. */
+export function revelarDestino(id: string): Promise<DestinoRevelado> {
+  return autorizacaoRequest(`${rotaId(id)}/revelar`, destinoReveladoSchema, {
+    method: 'POST',
+    body: '{}',
+    cache: 'no-store',
+  })
 }
 
-export async function revogarExcecao(id: string, motivo: string): Promise<ExcecaoDestinoResumo> {
-  const j = await excecaoRequest<{ excecao: ExcecaoDestinoResumo }>(
-    `/sispag/excecoes/${encodeURIComponent(id)}/revogar`,
-    { method: 'POST', body: JSON.stringify({ motivo }) },
-  )
-  return j.excecao
-}
-
-export async function eventosExcecao(id: string): Promise<ExcecaoDestinoEvento[]> {
-  const j = await excecaoRequest<{ eventos: ExcecaoDestinoEvento[] }>(
-    `/sispag/excecoes/${encodeURIComponent(id)}/eventos`,
+export async function eventosAutorizacao(id: string): Promise<EventoAutorizacao[]> {
+  const j = await autorizacaoRequest(
+    `${rotaId(id)}/eventos`,
+    z.object({ eventos: z.array(eventoSchema) }),
   )
   return j.eventos
 }
 
-/** D12: a oferta do item traz PIX por chave CPF/CNPJ do favorecido. */
-export const pixPreferido = (oferta: OfertaModalidadesItem | undefined): boolean =>
-  oferta?.destinos?.PIX?.chaveCpfCnpjDoFavorecido === true
+/** Relatório read-only de candidatos à autorização (paginado). */
+export function listarCandidatosAutorizacao(
+  params: { pagina?: number; limite?: number } = {},
+): Promise<RelatorioCandidatos> {
+  const qs = new URLSearchParams()
+  if (params.pagina) qs.set('pagina', String(params.pagina))
+  if (params.limite) qs.set('limite', String(params.limite))
+  const q = qs.toString()
+  return autorizacaoRequest(`${base}/candidatos${q ? `?${q}` : ''}`, relatorioSchema)
+}

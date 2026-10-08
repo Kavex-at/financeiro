@@ -15,14 +15,10 @@ export const PERMISSAO = {
   SISPAG_VER: 'sispag:ver',
   SISPAG_EXECUTAR: 'sispag:executar',
   /**
-   * Exceção de destino de pagamento (ADR-0061): cadastrar, aprovar, rejeitar e revogar. Permissão
-   * única; a separação de funções é a regra "aprovador ≠ cadastrante" no backend. Avulsa.
+   * Aprovar, rejeitar, revogar e revelar o destino de um favorecido autorizado a receber TED/PIX
+   * (ADR-0065). Avulsa; a separação de funções (aprovador ≠ quem pediu) é regra do backend.
    */
-  SISPAG_EXCECAO: 'sispag:excecao',
-  /** Conferência por segunda pessoa do lote com TED/PIX (ADR-0063). Avulsa. */
-  SISPAG_CONFERIR: 'sispag:conferir',
-  /** Fila "Pendências de cadastro" (ADR-0063). Avulsa. */
-  SISPAG_CADASTRO: 'sispag:cadastro',
+  SISPAG_AUTORIZAR_FAVORECIDO: 'sispag:autorizar_favorecido',
   RECEBIMENTOS_VER: 'recebimentos:ver',
   RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
   OPERACAO_VER: 'operacao:ver',
@@ -38,9 +34,7 @@ export const CATALOGO_PERMISSOES: readonly Permissao[] = [
   PERMISSAO.PERMUTAS_EXECUTAR,
   PERMISSAO.SISPAG_VER,
   PERMISSAO.SISPAG_EXECUTAR,
-  PERMISSAO.SISPAG_EXCECAO,
-  PERMISSAO.SISPAG_CONFERIR,
-  PERMISSAO.SISPAG_CADASTRO,
+  PERMISSAO.SISPAG_AUTORIZAR_FAVORECIDO,
   PERMISSAO.RECEBIMENTOS_VER,
   PERMISSAO.RECEBIMENTOS_EXECUTAR,
   PERMISSAO.OPERACAO_VER,
@@ -72,11 +66,8 @@ export const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = 
     itens: [
       { permissao: PERMISSAO.SISPAG_VER, acao: 'ver' },
       { permissao: PERMISSAO.SISPAG_EXECUTAR, acao: 'executar' },
-      // ADR-0061: cadastra, aprova, rejeita e revoga exceções de destino. Não implica nem é implicada.
-      { permissao: PERMISSAO.SISPAG_EXCECAO, acao: 'exceção de destino' },
-      // ADR-0063: conferência por 2ª pessoa e fila de pendências de cadastro. Avulsas.
-      { permissao: PERMISSAO.SISPAG_CONFERIR, acao: 'conferir' },
-      { permissao: PERMISSAO.SISPAG_CADASTRO, acao: 'pendências de cadastro' },
+      // ADR-0065: aprova, rejeita, revoga e revela favorecidos autorizados. Avulsa.
+      { permissao: PERMISSAO.SISPAG_AUTORIZAR_FAVORECIDO, acao: 'autorizar favorecido' },
     ],
   },
   {
@@ -91,7 +82,7 @@ export const MODULOS: ReadonlyArray<{ nome: string; itens: ItemPermissao[] }> = 
   { nome: 'Usuários', itens: [{ permissao: PERMISSAO.USUARIOS_GERENCIAR, acao: 'gerenciar' }] },
 ]
 
-/** "Módulo — ação" de uma permissão (ex.: "SISPAG — exceção de destino"). */
+/** "Módulo — ação" de uma permissão (ex.: "SISPAG — autorizar favorecido"). */
 export const rotuloPermissao = (permissao: Permissao): string => {
   for (const modulo of MODULOS) {
     const item = modulo.itens.find((i) => i.permissao === permissao)
