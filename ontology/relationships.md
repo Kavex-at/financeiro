@@ -26,9 +26,10 @@
 > `fin010`) — caminho de write-back não validado (risco #1, ADR-0002/0003 O3). Por isso `Permuta` é
 > `partial`.
 
-## Frente II — SISPAG: destino de pagamento (ADR-0061)
+## Frente II — SISPAG: destino de pagamento (ADR-0065; antes ADR-0061)
 
 | Origem | Relação | Destino | Cardinalidade |
 |--------|---------|---------|---------------|
-| `ItemLote` | usa como destino, quando o cadastro não tem destino válido | `ExcecaoDestino` | N—0..1 (só `APROVADA`; vazio quando o destino vem do `cmn025`) |
-| `ExcecaoDestino` | é do favorecido (via `pesCod` no `cmn025`) | Favorecido (sem entidade local) | N—1 (no máximo 1 `APROVADA` por favorecido e tipo, I12a) |
+| `ItemLote` | é liberado para TED/PIX por | `FavorecidoAutorizado` | N—0..1 (só `AUTORIZADO` com fingerprint igual; id gravado no congelamento I10f; vazio para boleto) |
+| `FavorecidoAutorizado` | é do favorecido (via `pesCod` no `cmn025`) | Favorecido (sem entidade local) | N—1 (no máximo 1 vigente por favorecido e modalidade, I14) |
+| `PerfilCanalFornecedor` | alimenta | relatório `listarCandidatosAutorizacao` | 1—N (só leitura; não autoriza) |

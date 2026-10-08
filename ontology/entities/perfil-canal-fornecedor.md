@@ -1,7 +1,7 @@
 ---
 name: PerfilCanalFornecedor
 type: entity
-ontology_version: "0.36.0"
+ontology_version: "0.38.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -10,10 +10,10 @@ related_files:
   - src/backend/domain/client/ConexosExtratoClient.ts
 properties: [pesCod, credor, contagens, pagamentosUnicos, mesesDistintos, grupoDominante, participacao, confianca, janelaInicio, janelaFim, calculadoEm, jobRunId]
 relationships:
+  - "PerfilCanalFornecedor 1—N linha de listarCandidatosAutorizacao (relatório read-only; ADR-0065)"
   - "PerfilCanalFornecedor 1—1 Favorecido (pesCod; um perfil por favorecido)"
-  - "PerfilCanalFornecedor 1—N AlertaItemLote CANAL_HABITUAL"
   - "PerfilCanalFornecedor N—1 JobRun (a rodada de calcularPerfilCanal que o gravou)"
-last_review: 2026-10-05
+last_review: 2026-10-08
 universality_evidence:
   - "probe-canal-por-fornecedor.ts (PRD, 2026-10-05): baixa a pagar (fin010) casada com débito do extrato (fin095), só casamentos únicos; 89% do valor pago em fornecedores de confiança ALTA"
   - "Conceito universal: o canal pelo qual um fornecedor costuma receber é uma linha de base para detectar desvio (fraude de troca de dados bancários); a estrutura é do domínio, os limiares são do cliente"
@@ -23,7 +23,7 @@ universality_evidence:
 
 > **Origem:** ADR-0063 (2026-10-05). **Read model persistido**: por qual grupo de canal um
 > favorecido costuma ser pago, com nível de confiança. Pré-calculado por `calcularPerfilCanal`
-> (job periódico, read-only no ERP). Consumido pela verificação TED/PIX (I13i). Code-facing:
+> (job periódico, read-only no ERP). Consumido **só** pelo relatório `listarCandidatosAutorizacao` (ADR-0065; a alerta I13i no item foi removida). Não pré-preenche a lista de favorecidos autorizados. Code-facing:
 > `SupplierChannelProfile`; tabela proposta `sispag_perfil_canal_fornecedor`.
 
 ## Propriedades

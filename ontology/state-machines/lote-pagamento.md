@@ -2,7 +2,7 @@
 name: lote-pagamento
 type: state-machine
 entity: LotePagamento
-ontology_version: "0.36.0"
+ontology_version: "0.38.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -33,7 +33,7 @@ related_files:
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
   - src/frontend/app/sispag/components/LoteCard.tsx
-last_review: 2026-10-05
+last_review: 2026-10-08
 states: [RASCUNHO, FINALIZADO, REMESSA_GERADA, RETORNADO, BAIXADO, CANCELADO]
 out_of_scope_states: [ENVIADO, PROCESSANDO]
 ---
@@ -53,6 +53,9 @@ out_of_scope_states: [ENVIADO, PROCESSANDO]
 > verificação dos itens TED/PIX (I13) e barra por duplicidade aberta ou verificação pendente; novas
 > transições **L12 `conferirLote`** e **L13 `devolverLote`**; L4 limpa a conferência; L8 ganha a
 > guarda `exigeConferencia ⇒ conferido`. **Nenhum estado novo.**
+> **2026-10-08 (ADR-0065) — favorecido autorizado substitui a conferência.** L12 e L13 **removidas**
+> (números não reaproveitados); L3 retira os itens que falham e **finaliza na mesma chamada**; L4 só
+> reabre; L8 troca a guarda de conferência pela **guarda I14** (só sem lote nativo). Nenhum estado novo.
 >
 > **O que mudou de essencial na Fatia 3:** até a v0.9 esta máquina era **puramente local** — o
 > invariante I1 dizia que ela **não tocava o ERP**. Isso acabou. De `FINALIZADO` em diante cada
@@ -69,7 +72,7 @@ Fonte: `LOTE_STATUS` em `src/backend/domain/interface/sispag/SispagInterface.ts`
 | Constante (TS) | Valor | Significado |
 |----------------|-------|-------------|
 | `RASCUNHO` | `RASCUNHO` | Lote em montagem — a analista inclui/remove títulos, define a forma de pagamento de cada item e a conta pagadora. Aberto para edição. Estado inicial. |
-| `FINALIZADO` | `FINALIZADO` | A analista finalizou o lote (gate). Registra `finalizadoPor`/`finalizadoEm`. **Reversível** por `reabrirLote` (L4) e `devolverLote` (L13) — e só aqui: depois da remessa não há volta local. É o **único** estado do qual `gerarRemessa` (L8) parte. Lote com TED/PIX fica aqui **aguardando conferência** até L12 (`conferidoPor`/`conferidoEm`; atributo, não estado — ADR-0063). |
+| `FINALIZADO` | `FINALIZADO` | A analista finalizou o lote (gate). Registra `finalizadoPor`/`finalizadoEm`. **Reversível** por `reabrirLote` (L4) — e só aqui: depois da remessa não há volta local. É o **único** estado do qual `gerarRemessa` (L8) parte. Sem conferência por lote (ADR-0065). |
 | `REMESSA_GERADA` | `REMESSA_GERADA` | O `.REM` (CNAB 240) existe no Conexos: o lote nativo do `fin015` foi criado, os títulos importados, o lote nativo finalizado e o arquivo gerado. Guarda `native_fil_cod`/`native_bnc_cod`/`native_flp_cod`, `native_gab_cod`, `remessa_arquivo`, `remessa_num`, `remessa_gerada_em`. **Não é "enviado"** — ver nota abaixo. |
 | `RETORNADO` | `RETORNADO` | Algum item tem **rejeição lida** no `fin052` (`fbeVldTpret = 2`). **Exige tratamento humano** (sanear cadastro e reenviar). Item sem baixa e varredura incompleta **não** levam mais a `RETORNADO` (ADR-0055): o lote espera em `REMESSA_GERADA`. Re-sincronizável (L9/L10/L11 partem dele). |
 | `BAIXADO` | `BAIXADO` | **Todo** item tem o título pago no `fin064` (`vldPago = 1` e `aberto = 0`), **qualquer que seja a origem da baixa** (remessa, `fin010` manual, processamento nativo do `fin052`), e nenhum item tem rejeição lida. **Terminal**: estorno posterior não reabre, vira divergência no item (I11f). |
@@ -97,18 +100,18 @@ grava ator + timestamp (auditoria, I5) e é feita sob **optimistic lock** por `v
 | # | De → Para | Ação (gatilho) | Regra | Vigência |
 |---|-----------|----------------|-------|----------|
 | L1 | `(novo) → RASCUNHO` | `criarLoteCandidato` (manual) / `formarLotesAutomaticos` (cron) | Abre um lote **RASCUNHO** para **uma** filial (`filCod`). Manual: analista abre vazio (`automatico=false`). Cron: cria já preenchido (`automatico=true`) agrupando títulos a-vencer ≤7d por **filial** (I4), para revisão (internacional fora do escopo — ADR-0021). Ver `actions/sispag/gerenciar-lote-candidato.md` e `actions/sispag/formar-lotes-automaticos.md`. | 2026-07-08 |
-| L2 | `RASCUNHO → RASCUNHO` | `incluirTitulo` / `removerTitulo` / `atualizarModalidadeItem` (A2) / `atualizarContaPagadora` (A3) | Item só entra se **aprovado + não pago** (I2, `elegibilidade-titulo-lote`), da **mesma filial** (I4, `lote-uma-filial`) e **não em outro RASCUNHO** (I3, `nao-duplicacao-titulo-lote`). Modalidade e conta pagadora do item **só** mudam em RASCUNHO. O destino **não** é editado no item (ADR-0061): vem do cadastro ou de uma `ExcecaoDestino` aprovada (I10, I12) e congela depois do import no lote nativo (I10f). **ADR-0063:** `atualizarModalidadeItem` para TED/PIX dispara a verificação do item (I13a; pode retirar o item, ator `sistema`, I13j); `incluirTitulo` recusa título com `BloqueioDuplicidade` ativo (`DuplicateHoldError`, I13g); `resolverAlertaDuplicidade` (justificar/retirar) também é L2. **ADR-0064:** `incluirTitulo` com `mover` tira o título de outro RASCUNHO na mesma transação (L2 na origem; a origem vazia vai a L5); título em lote `FINALIZADO`/`REMESSA_GERADA` é recusado (`TitleInCommittedBatchError`). Auto-transição (edição do agregado). | 2026-07-07; destino manual em 2026-09-28; verificação TED/PIX em 2026-10-05 |
-| L3 | `RASCUNHO → FINALIZADO` | `finalizarLote` **(GATE)** | O lote tem **≥1 item** e **todo item tem forma de pagamento definida** (A2 — `ModalidadePendenteError` se houver pendente) e **todo item TED/PIX tem destino resolvível** (I10a/I12f — cadastro primeiro, ou exceção `APROVADA`). **Desde a ADR-0063** roda antes a verificação TED/PIX (`verificarItensTedPix`, I13): item sem dado de pagamento e sem exceção **sai do lote** e a finalização não acontece (`ItemsRemovedByCheckError`); item com verificação `PENDENTE` barra (`PaymentCheckPendingError`); alerta de duplicidade `ABERTA` barra (`PendingDuplicateAlertError`). Registra `finalizadoPor`/`finalizadoEm`. Ver `actions/sispag/finalizar-lote.md`. | 2026-07-07; revisão obrigatória de modalidade em 2026-07-18 (migration `0031`); destino TED/PIX em 2026-09-28 (ADR-0054); revisado em 2026-10-05 (ADR-0061); verificação TED/PIX em 2026-10-05 (ADR-0063) |
-| L4 | `FINALIZADO → RASCUNHO` | `reabrirLote` | Reversão do gate. **Só a partir de FINALIZADO** — uma vez gerada a remessa não há reabertura local (o `.REM` já existe no ERP; desfazer é decisão humana no `fin015`). **Limpa a conferência** (`conferidoPor`/`conferidoEm`, ADR-0063): o lote reeditado precisa ser conferido de novo. | 2026-07-07; limpa conferência em 2026-10-05 (ADR-0063) |
+| L2 | `RASCUNHO → RASCUNHO` | `incluirTitulo` / `removerTitulo` / `atualizarModalidadeItem` (A2) / `atualizarContaPagadora` (A3) | Item só entra se **aprovado + não pago** (I2, `elegibilidade-titulo-lote`), da **mesma filial** (I4, `lote-uma-filial`) e **não em outro RASCUNHO** (I3, `nao-duplicacao-titulo-lote`). Modalidade e conta pagadora do item **só** mudam em RASCUNHO. O destino **não** é editado no item: vem só do cadastro `cmn025` (I10, ADR-0065) e congela depois do import no lote nativo (I10f). **ADR-0063/0065:** `atualizarModalidadeItem` para TED/PIX dispara a verificação do item (I13a); o resultado da autorização (I14) é **só aviso** no item, nunca o retira; `incluirTitulo` recusa título com `BloqueioDuplicidade` ativo (`DuplicateHoldError`, I13g); `resolverAlertaDuplicidade` (justificar/retirar) também é L2. **ADR-0064:** `incluirTitulo` com `mover` tira o título de outro RASCUNHO na mesma transação (L2 na origem; a origem vazia vai a L5); título em lote `FINALIZADO`/`REMESSA_GERADA` é recusado (`TitleInCommittedBatchError`). Auto-transição (edição do agregado). | 2026-07-07; destino manual em 2026-09-28; verificação TED/PIX em 2026-10-05 |
+| L3 | `RASCUNHO → FINALIZADO` | `finalizarLote` **(GATE)** | O lote tem **≥1 item** e **todo item tem forma de pagamento definida** (A2 — `ModalidadePendenteError` se houver pendente). **Desde a ADR-0063** roda antes a verificação TED/PIX (`verificarItensTedPix`, I13). **Desde a ADR-0065:** item TED/PIX sem dado no cadastro, de favorecido não autorizado ou com destino alterado desde a aprovação **sai do lote** (ator `sistema`, motivo gravado, I13j/I14) e o lote **finaliza na mesma chamada** com os restantes; se esvaziar, fica `RASCUNHO` com as retiradas gravadas (`BatchEmptiedByCheckError`); item com verificação `PENDENTE` barra (`PaymentCheckPendingError`); alerta de duplicidade `ABERTA` barra (`PendingDuplicateAlertError`) — nesses dois casos as retiradas ficam gravadas. Registra `finalizadoPor`/`finalizadoEm`. Ver `actions/sispag/finalizar-lote.md`. | 2026-07-07; revisão obrigatória de modalidade em 2026-07-18 (migration `0031`); destino TED/PIX em 2026-09-28 (ADR-0054); revisado em 2026-10-05 (ADR-0061); verificação TED/PIX em 2026-10-05 (ADR-0063); retira e finaliza em 2026-10-08 (ADR-0065) |
+| L4 | `FINALIZADO → RASCUNHO` | `reabrirLote` | Reversão do gate. **Só a partir de FINALIZADO** — uma vez gerada a remessa não há reabertura local (o `.REM` já existe no ERP; desfazer é decisão humana no `fin015`). | 2026-07-07; conferência retirada em 2026-10-08 (ADR-0065) |
 | L5 | `{RASCUNHO, FINALIZADO} → CANCELADO` | `cancelarLote` | Descarta o lote candidato (decisão da analista). **ADR-0064:** também quando um RASCUNHO perde o último título para um `mover` (sistema, dentro da ação da analista). Libera os títulos (saem da UNIQUE de I3). **Terminal.** **Não alcança `REMESSA_GERADA`/`RETORNADO`/`BAIXADO`**: cancelar depois da remessa exigiria desfazer o lote nativo e o arquivo, e isso não é uma transição nossa. | 2026-07-07 |
 | L6 | `RASCUNHO → (deletado)` | `formarLotesAutomaticos` (desfazer-vencidos) | **Só lote `automatico=true` em RASCUNHO.** Um auto-lote que passou a conter **≥1 título VENCIDO** é **DESFEITO (deletado)** e seus títulos liberados (`desfazerAutomaticosVencidos`). **Distinto de `CANCELADO`.** Nunca atinge lote **manual** nem estados posteriores. Ver ADR-0018. | 2026-07-08 |
 | ~~L7~~ | ~~`FINALIZADO → RETORNADO`~~ | ~~`marcarRetorno`~~ **APOSENTADA** | Botão removido do `LoteCard`; `POST /sispag/lotes/:id/retorno` responde **410 Gone**. Nenhum lote em `RETORNADO` em produção (2026-09-29), então sem limpeza de dados. O número L7 não é reaproveitado. | 2026-07-08; aposentada em 2026-09-29 (ADR-0055) |
-| L8 | `FINALIZADO → REMESSA_GERADA` | `gerarRemessa` (`RemessaService`) | **Primeira escrita no ERP.** Dirige o lote nativo do `fin015` na ordem `criarLote → importarTitulos → finalizarLote → gerarRemessa`, e persiste as chaves nativas. Serializada por **advisory lock por lote** + ledger `remessa_execucao` (write-ahead). Gated por `conexosWriteEnabled`/`sispagLiveWriteEnabled`/`conexosDryRun` — dry-run monta e loga o payload sem POST, e **não** transiciona. Ver `business-rules/retomada-remessa-sispag.md` e ADR-0039. **Desde 2026-09-22 (ADR-0049) recebe a `dataDebito`** escolhida pela analista (default hoje BRT), validada contra I8a **antes** de qualquer escrita e persistida no write-ahead; com lote nativo já existente, a data é a persistida (I8b) e não se aceita outra. Ver `business-rules/data-debito-remessa-sispag.md`. **Desde a ADR-0063:** guarda `exigeConferencia ⇒ conferidoPor ≠ null` (lote com ≥1 item TED/PIX; I13l), checada **antes** de qualquer escrita — `ConferenceRequiredError`. Lote só de boleto passa sem conferência. | 2026-08-25; data de débito escolhível em 2026-09-22; guarda de conferência em 2026-10-05 (ADR-0063) |
+| L8 | `FINALIZADO → REMESSA_GERADA` | `gerarRemessa` (`RemessaService`) | **Primeira escrita no ERP.** Dirige o lote nativo do `fin015` na ordem `criarLote → importarTitulos → finalizarLote → gerarRemessa`, e persiste as chaves nativas. Serializada por **advisory lock por lote** + ledger `remessa_execucao` (write-ahead). Gated por `conexosWriteEnabled`/`sispagLiveWriteEnabled`/`conexosDryRun` — dry-run monta e loga o payload sem POST, e **não** transiciona. Ver `business-rules/retomada-remessa-sispag.md` e ADR-0039. **Desde 2026-09-22 (ADR-0049) recebe a `dataDebito`** escolhida pela analista (default hoje BRT), validada contra I8a **antes** de qualquer escrita e persistida no write-ahead; com lote nativo já existente, a data é a persistida (I8b) e não se aceita outra. Ver `business-rules/data-debito-remessa-sispag.md`. **Desde a ADR-0065:** guarda **I14a** por item TED/PIX (favorecido `AUTORIZADO` e fingerprint igual ao destino lido ao vivo), checada **só enquanto não existe lote nativo no `fin015`** e **antes** de qualquer escrita; falha barra o lote inteiro com erro nomeado por item (`PayeeNotAuthorizedAtRemittanceError`). Existindo lote nativo (retomada), vale o destino congelado (I10f). Lote só de boleto não passa pela guarda. | 2026-08-25; data de débito escolhível em 2026-09-22; guarda de conferência em 2026-10-05 (ADR-0063), trocada pela guarda I14 em 2026-10-08 (ADR-0065) |
 | L9 | `{REMESSA_GERADA, RETORNADO} → BAIXADO` | `conciliarRetorno` (`ConciliacaoRetornoService`, admin, `processar=true`) | **Escreve no ERP** (`processar` do `fin052`) e em seguida aplica o **mesmo fechamento de L11** (I11). Mantida como caminho administrativo. | 2026-08-25; fechamento por I11 em 2026-09-29 |
 | L10 | `{REMESSA_GERADA, RETORNADO} → RETORNADO` | `conciliarRetorno` (`ConciliacaoRetornoService`, admin) | Idem L9, destino `RETORNADO` quando há rejeição lida. | 2026-08-25; fechamento por I11 em 2026-09-29 |
 | L11 | `{REMESSA_GERADA, RETORNADO} → BAIXADO \| RETORNADO \| (mesmo)` | `sincronizarStatus` (cron agendado + "Sincronizar agora") | **Read-only no ERP**: nunca chama `carregar`/`processar`. Lê o título no `fin064` por `docCod`, os eventos do `fin052` e, se legível, as baixas do título (`com308`, PSQ_018); deriva a `situacao` de cada item e decide o destino pelo quadro abaixo. Falha de leitura **não decide** (I11c). Sem mudança observada, **não** incrementa `versao` (I11h). Escritas locais **não** passam por `conexosWriteEnabled`/`sispagLiveWriteEnabled`/`conexosDryRun` (I11g). | 2026-09-29 (ADR-0055) |
-| L12 | `FINALIZADO → FINALIZADO` | `conferirLote` | **Conferência por 2ª pessoa** (ADR-0063, I13l). Só com `exigeConferencia` e ainda não conferido. Ator com **`sispag:conferir`** e que **não** seja `finalizadoPor`, `incluidoPor` de nenhum item, nem `criadoPor` de lote manual — username canônico autenticado, no backend (`SelfConferenceError`). Grava `conferidoPor`/`conferidoEm`, incrementa `versao`. Local, sem ERP. Ver `actions/sispag/conferir-lote.md`. | 2026-10-05 (ADR-0063) |
-| L13 | `FINALIZADO → RASCUNHO` | `devolverLote` | O conferente **devolve** o lote à analista (mesmas restrições de pessoa e permissão de L12), com **motivo obrigatório**. Grava `devolvidoPor`/`devolvidoEm`/`motivoDevolucao`, limpa conferência e finalização, incrementa `versao`. Ver `actions/sispag/devolver-lote.md`. | 2026-10-05 (ADR-0063) |
+| ~~L12~~ | ~~`FINALIZADO → FINALIZADO`~~ | ~~`conferirLote`~~ **REMOVIDA** | Conferência por 2ª pessoa retirada pela ADR-0065; a 2ª pessoa passou para a autorização do favorecido (I14c). Número não reaproveitado. | 2026-10-05 (ADR-0063); removida em 2026-10-08 (ADR-0065) |
+| ~~L13~~ | ~~`FINALIZADO → RASCUNHO`~~ | ~~`devolverLote`~~ **REMOVIDA** | Idem L12. | 2026-10-05 (ADR-0063); removida em 2026-10-08 (ADR-0065) |
 
 ```
           L1  criarLoteCandidato (manual) / formarLotesAutomaticos (cron)
@@ -121,12 +124,12 @@ grava ator + timestamp (auditoria, I5) e é feita sob **optimistic lock** por `v
       modalidade,       │        │  L4 reabrirLote
       A3 conta)      L3 │        │
         finalizarLote   ▼        │
-                     ┌──────────────┐   L12 conferirLote (2ª pessoa,
-                     │  FINALIZADO  │◀─┐ sispag:conferir; só com TED/PIX)
-                     └──────────────┘──┘ L13 devolverLote → RASCUNHO
+                     ┌──────────────┐
+                     │  FINALIZADO  │
+                     └──────────────┘
                         │
       L8 gerarRemessa   │   (L7 marcarRetorno: APOSENTADA em 2026-09-29)
-      (fin015 + ledger) │   guarda: TED/PIX ⇒ conferido (ADR-0063)
+      (fin015 + ledger) │   guarda I14: TED/PIX ⇒ favorecido autorizado (sem lote nativo)
                         ▼
                 ┌────────────────┐
                 │ REMESSA_GERADA │◀─┐  permanece enquanto há item sem baixa
@@ -232,13 +235,13 @@ Ledger e máquina de estados são ortogonais de propósito: transicionar o lote 
 pagamento; o ledger sem a máquina não diria à analista onde o lote está. Trilha visível em
 `GET /sispag/execucoes` e no job `reaper-sispag-reconciling`.
 
-## Decisões de modelagem (ADR-0015, ADR-0018, ADR-0019, ADR-0039, ADR-0055, ADR-0063)
+## Decisões de modelagem (ADR-0015, ADR-0018, ADR-0019, ADR-0039, ADR-0055, ADR-0063, ADR-0065)
 
-- **Conferência não é estado (ADR-0063).** "Aguardando conferência" é `FINALIZADO` com
-  `exigeConferencia` e `conferidoPor = null`; "conferido" é o mesmo `FINALIZADO` com a conferência
-  gravada. Um status `CONFERIDO` duplicaria L4/L5/L8 (todas teriam de partir de dois estados) sem
-  dizer nada que as propriedades não digam. L12 é auto-transição; L13 tem o efeito de L4 com outro
-  ator e motivo obrigatório.
+- **Conferência por lote retirada (ADR-0065).** A ADR-0063 a modelou como atributo de `FINALIZADO`
+  (L12/L13); a ADR-0065 a removeu. **Lote vazio:** quando a verificação do `finalizarLote` retira
+  todos os itens, o lote **fica `RASCUNHO`** (a analista decide), enquanto um RASCUNHO esvaziado por
+  `mover` (ADR-0064, L5) vai a `CANCELADO`. A diferença é deliberada: lá o esvaziamento é efeito
+  colateral de outra ação da analista; aqui é decisão do sistema sobre um lote que ela está fechando.
 
 - **Reversibilidade acabou onde nasceu o downstream.** A v0.5 registrou que `finalizarLote` era
   reversível *"porque não há downstream nesta fatia"* e que isso ficaria gated quando o transporte

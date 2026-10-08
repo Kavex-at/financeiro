@@ -158,3 +158,8 @@
 - **Universalidade de `PerfilCanalFornecedor`:** 1 cliente medido. Estrutura aceita, limiares em
   config; revisar com o 2º cliente (Francinei).
 
+
+- **Titularidade da conta TED no `cmn025`/`ctcorr` (ADR-0065, B4, 2026-10-08) — REJECT-PREMATURE.**
+  Se o cadastro expuser o documento do titular da conta, conta de terceiro (doc ≠ favorecido)
+  poderia virar aviso forte na aprovação do `FavorecidoAutorizado`. Precisa de probe read-only no
+  `ctcorr` antes de modelar. Revisitar no ciclo de implementação da ADR-0065.

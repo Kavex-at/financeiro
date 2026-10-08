@@ -3,7 +3,7 @@ name: destino-pagamento-sispag
 type: business-rule
 entity: LotePagamento
 invariant: I10
-ontology_version: "0.36.0"
+ontology_version: "0.38.0"
 implementation_status: partial
 status: active
 owners: [yuri]
@@ -26,7 +26,7 @@ related_files:
   - src/backend/domain/libs/sispag/DestinoAprovacaoRule.ts
   - src/backend/domain/errors/DestinoAprovacaoPendenteError.ts
   - src/backend/domain/interface/auth/Permission.ts
-last_review: 2026-10-05
+last_review: 2026-10-08
 has_canonical_test: true
 ---
 
@@ -38,6 +38,12 @@ has_canonical_test: true
 >
 > **Revisada pela ADR-0061 (2026-10-05):** cadastro primeiro, exceção aprovada como fallback (I12,
 > `business-rules/excecao-destino-sispag.md`); D2, D10 e D11 da ADR-0054 estão superseded.
+>
+> **Revisada pela ADR-0065 (2026-10-08), que supersede a ADR-0061:** a exceção de destino (I12) foi
+> **apagada**. O destino é **só o do cadastro** (`cmn025`) e o favorecido precisa estar **autorizado**
+> para a modalidade, com o mesmo destino aprovado (I14, `business-rules/favorecido-autorizado-sispag.md`).
+> I10d, I10e, I10g, I10h, I10i reescritas; H3/H5 deixam de importar (todo TED vai por `pctCodSeq`,
+> todo PIX por chave do `cmnPessoasPix`).
 
 ## Onde se aplica
 
@@ -45,71 +51,56 @@ Só a itens com `modalidade ∈ {TED, PIX}`. **Boleto** não tem destino de cont
 de barras; ver `boleto-exige-codigo-de-barras`). **Crédito em conta** não é oferecido (commit
 `fc22dcd`); item legado que o tem segue a regra antiga.
 
-## Resolução do destino (a mesma função para oferta e envio)
+## Resolução do destino (a mesma função para oferta, verificação, fingerprint e envio)
 
 ```
 destino(item) =
-    1. cadastro:
+    cadastro:
        TED: conta ATIVA do favorecido no cmn025/ctcorr, qualquer banco, default primeiro
        PIX: chave ATIVA do favorecido no cmn025/cmnPessoasPix, nesta ordem (I10k):
             1. tipo CPF/CNPJ igual ao documento do favorecido (pdcDocFederal)
             2. a default
             3. as demais
-            documento indisponível = ordem de antes (default primeiro)   → origem CADASTRO
-    2. senão, ExcecaoDestino do favorecido em estado APROVADA, do tipo da modalidade
-                                                                          → origem EXCECAO
-    3. senão: nenhum
+            documento indisponível = ordem de antes (default primeiro)
+    senão: nenhum
 ```
 
-- **Precedência (ADR-0061):** o cadastro vence. A exceção `APROVADA` é fallback **só quando o
-  cadastro não tem destino válido** para a modalidade; cadastro válido nunca é substituído por
-  exceção (segurança/fraude).
-- **A exceção nunca é escrita no cadastro** (ADR-0054 D1, mantida). Vai no item do `fin015` sem
-  `pctCodSeq`. Destino do cadastro vai por `pctCodSeq` (TED) ou pela chave (PIX).
-- **Cadastro ruim ou ausente é problema operacional da Columbia, a corrigir no Conexos.** A exceção
-  é ponte, não substituto.
+- **Só o cadastro (ADR-0065).** Nenhum destino fora do `cmn025`; nada é escrito no `cmn025` (ADR-0054
+  D1, mantida). Cadastro ruim ou ausente é problema operacional da Columbia, a corrigir no Conexos.
+- O destino escolhido é o que o fingerprint da autorização pina (I14b): o resolvedor escolher outra
+  conta/chave = "destino mudou".
 
 ## Invariantes (I10; D1–D9 do interview)
 
 | # | Regra | Quando |
 |---|---|---|
-| **I10a** (D1) | Todo item TED/PIX tem destino resolvível **antes do `criarLote`** no `fin015`. Item sem destino barra o envio inteiro, com erro nomeado por item, **antes de qualquer escrita** (como `BoletoSemCodigoBarrasError`). E o `finalizarLote` já barra item TED/PIX sem destino, como barra "modalidade a definir". | finalizar e envio |
-| **I10b** (D2) | ~~**Oferta = envio.**~~ **Revisado (ADR-0063, gap Q1 opção a):** com a flag da modalidade ligada, a tela oferece TED/PIX **sempre**; quem decide é a verificação TED/PIX (I13j), que retira o item sem destino resolvível e abre a `PendenciaCadastro`. A tela continua mostrando **de onde viria** o destino (cadastro, exceção ou nenhum), calculado com a **mesma função** que o envio usa — divergência entre as duas segue sendo bug. | tela (indicação) e envio |
+| **I10a** (D1) | Todo item TED/PIX tem destino resolvível e autorizado **antes do `criarLote`** no `fin015`. No `finalizarLote` o item que falha **sai do lote** (I13j); no envio (L8, sem lote nativo) barra o lote inteiro, com erro nomeado por item, **antes de qualquer escrita** (I14e). | finalizar e envio |
+| **I10b** (D2) | Com a guarda I14 habilitada (I14k) e a flag da modalidade ligada, a tela oferece TED/PIX **sempre**; ao definir a modalidade o item recebe **aviso** (sem dado, não autorizado, destino mudou) e quem decide é o `finalizarLote` (I13j). A tela mostra o destino mascarado e o selo de conferência (I14l), calculados com a **mesma função** que o envio usa — divergência entre as duas é bug. | tela e envio |
 | **I10c** (D3) | TED aceita conta em **qualquer banco**. O banco do favorecido não precisa ser o do lote. `TED → itsVldModalidade = 5`. | envio |
-| **I10d** (D4) | **PIX só com chave**, do cadastro ou de exceção aprovada (CPF/CNPJ). Sem chave, PIX não é oferecido nem enviado. | tela e envio |
-| **I10e** (ADR-0061) | A exceção **não é editada no item nem no lote**: é cadastrada, aprovada e revogada na entidade `ExcecaoDestino` (I12). No lote a analista só **vê** a origem do destino (`CADASTRO` \| `EXCECAO`). | — |
-| **I10f** (D6) | **Congelamento:** depois do `importarTitulos` no `fin015` com um destino, esse destino **não muda**. Retry e retomada (ADR-0039) reenviam o persistido. O destino resolvido (com o `excecaoDestinoId`, quando `EXCECAO`) entra na assinatura da marca d'água do lote órfão (como a `dataDebito`, I8b). Só volta a ser editável se aquele lote nativo deixar de existir. | retomada |
-| **I10g** (D7, ADR-0061) | **Trilha:** a trilha só-inclusão passa a registrar também os eventos da exceção (I12e). A tabela `lote_pagamento_item_destino_audit` é mantida como histórico e **deixa de receber linhas novas**; a nova trilha reaproveita o padrão (trigger recusa UPDATE/DELETE/TRUNCATE). | sempre |
-| **I10h** (D8) | **Proteção do dado:** conta e chave são gravadas completas (vão ao ERP) e aparecem **mascaradas** na tela. **Nunca** saem inteiras em log, `LogService.data`, ledger (`remessa_execucao.requestPayload`) ou mensagem de erro. Revelar só para quem está editando. | sempre |
-| **I10i** (D9) | **Titularidade (bloqueante):** o `titularDocumento` da exceção é **igual** ao CPF/CNPJ do favorecido do título (`pdcDocFederal`, lido ao vivo do `cmn025` por `pesCod`); diferente = gravação recusada. Chave PIX da exceção: **só CPF/CNPJ, e a própria chave** tem de ser igual (ADR-0061; outros tipos fora de escopo). **Chave digitada e-mail/telefone/aleatória: recusada** (titular não conferível — só o DICT sabe; ADR-0054, adendo de 2026-09-29). Reabrir se o H1 provar que `validacao/modalidadePix` devolve o titular. | edição |
+| **I10d** (D4, ADR-0065) | **PIX só com chave do cadastro**, de qualquer tipo (ordem I10k). Sem chave, PIX não é enviado. | tela e envio |
+| **I10e** (ADR-0065) | O destino **nunca é editado** no item nem no lote: vem só do `cmn025`. Dado de pagamento é só leitura no lote. | — |
+| **I10f** (D6) | **Congelamento:** depois do `importarTitulos` no `fin015` com um destino, esse destino **não muda**. Retry e retomada (ADR-0039) reenviam o persistido, e a guarda I14 de L8 não roda de novo. O destino resolvido entra na assinatura da marca d'água do lote órfão (como a `dataDebito`, I8b); o item grava `favorecidoAutorizadoId` (só rastreio). Só volta a ser editável se aquele lote nativo deixar de existir. | retomada |
+| **I10g** (D7, ADR-0065) | **Trilha:** eventos de autorização e de destino vão para a trilha da `FavorecidoAutorizado` (I14j). A tabela `lote_pagamento_item_destino_audit` (ADR-0054) e a trilha da exceção são **dropadas**; a migração **recusa** rodar se alguma delas, ou `excecao_destino`, tiver linhas. | sempre |
+| **I10h** (D8, ADR-0065) | **Proteção do dado:** conta e chave aparecem **mascaradas** (banco e agência completos, conta com 4 últimos dígitos; PIX com tipo e trecho). **Nunca** saem inteiras em log, `LogService.data`, ledger (`remessa_execucao.requestPayload`) ou mensagem de erro. Valor completo só pelo botão "revelar", com `sispag:autorizar_favorecido`, lido ao vivo e auditado (I14l). | sempre |
+| ~~**I10i**~~ (D9) | **REMOVIDA (ADR-0065).** Era a titularidade bloqueante da exceção. Vira **aviso** na aprovação da autorização PIX quando a chave não é o CPF/CNPJ do favorecido (I14c). | — |
 
-| **I10j** (ADR-0054 D10/D11) | **REVOGADA pela ADR-0061.** Substituída por I12b: dupla validação rígida (aprovador ≠ cadastrante), permissão única `sispag:excecao`, TED e PIX. | — |
+| **I10j** (ADR-0054 D10/D11) | **REVOGADA pela ADR-0061.** Substituída por I12b, que a ADR-0065 também apagou; a dupla validação hoje é a da autorização do favorecido (I14c). | — |
 | **I10k** (ADR-0054 D12) | **Preferência pela chave CPF/CNPJ (do cadastro):** entre as chaves ativas do cadastro, a do tipo CPF/CNPJ igual ao documento do favorecido vem antes da default. A oferta marca esse PIX (`destinos.PIX.chaveCpfCnpjDoFavorecido`) e a tela sugere PIX antes de TED; a analista continua podendo escolher TED. | tela e envio |
 
 > **I10h é requisito de proteção, não estado de domínio.** Está aqui porque sem ele a entrada manual
 > não pode existir; a forma (máscara, redação de log) é decisão de implementação.
 
-**Quatro olhos:** o `finalizarLote` não exige pessoa diferente. A dupla validação vale no **destino
-fora do cadastro** (exceção, I12b), não na finalização do lote.
-
-## Formato do destino (cadastro da exceção)
-
-| Tipo | Campos | Validação de formato |
-|---|---|---|
-| TED (`CONTA`) | `bancoCod` (FEBRABAN, 3 dígitos), `agencia`, `agenciaDv?`, `conta`, `contaDv`, `titularDocumento` | dígitos; CPF/CNPJ com DV válido |
-| PIX (`CHAVE_PIX`) | `chavePixTipo = CPF_CNPJ` (único aceito, ADR-0061), `chavePix`, `titularDocumento` | CPF/CNPJ com DV válido; chave = `pdcDocFederal` do favorecido |
-
-O tipo da chave **não é inferido** (11 dígitos são CPF ou celular). O `titularDocumento` é exigido
-também no PIX, para a checagem de I10i.
+**Quatro olhos:** o `finalizarLote` não exige pessoa diferente. A dupla validação vale na **autorização
+do par (favorecido, destino)** (I14c), uma vez por destino, não por lote.
 
 ## Premissas que dependem do HML
 
 | # | Premissa | Se falhar |
 |---|---|---|
 | H1 | `validacao/modalidadeTed` / `modalidadePix` sem efeito colateral | não chamamos; o `RemessaCnabValidator` fica como única rede; sem nome do DICT |
-| **H3** | `fin015` aceita item TED com banco/agência/conta digitados **sem `pctCodSeq`** | **o pipeline para e fala com o usuário** antes de qualquer fallback para a opção A (escrita no `cmn025`) |
+| ~~**H3**~~ (irrelevante, ADR-0065) | `fin015` aceita item TED com banco/agência/conta digitados **sem `pctCodSeq`** | **o pipeline para e fala com o usuário** antes de qualquer fallback para a opção A (escrita no `cmn025`) |
 | H4 | campos do item PIX e forma/segmentos do `.REM` | PIX fica atrás de feature flag |
-| **H5** | `fin015` aceita chave PIX digitada fora do `cmnPessoasPix` | idem H3 |
+| ~~**H5**~~ (irrelevante, ADR-0065) | `fin015` aceita chave PIX digitada fora do `cmnPessoasPix` | idem H3 |
 | H6 | o ERP não sobrescreve `itsVldModalidade = 5` | ajustar o mapeamento ao que ele grava |
 | H7 | `fbtCod`/`fbtDesDescr`/`fbtEspCodbanco` (`FinBancosTpcontrib`, `fin055/{bncCod}/{fbtCod}`) são a **finalidade do TED** | sem constante; mandar o que o ERP espera, conforme a sonda |
 
@@ -170,12 +161,22 @@ Decisões de implementação a registrar:
 - **I10b × I13j (gap Q1 — resolvido, opção a):** a escolha de TED/PIX é livre (com a flag ligada);
   a verificação retira o item sem destino e abre a pendência. Ver `_inbox/sispag-verificacoes-ted-pix-gap.md`.
 
+### Adendo (2026-10-08) — ADR-0065
+
+- A exceção de destino (ADR-0061, I12) foi **apagada**: entidade, trilha, tabelas, tela
+  `/sispag/excecoes`, `sispag:excecao` (convertida em `sispag:autorizar_favorecido`),
+  `SISPAG_EXCECAO_DESTINO_ENABLED`/`SISPAG_DESTINO_MANUAL_ENABLED`, `ExcecaoDesabilitadaError`,
+  `DestinoManualValidator` (se só servia à exceção) e o alerta `SISPAG_EXCECAO_DIVERGENCIA`.
+- Os adendos de 2026-10-05 acima ficam como histórico; o que eles dizem sobre exceção e
+  `PendenciaCadastro` não vale mais.
+
 ## Ver também
 
 - ADR-0054 — a decisão original (parcialmente superseded)
-- ADR-0061 — cadastro primeiro, exceção aprovada
-- `business-rules/excecao-destino-sispag.md` — I12
-- `entities/lote-pagamento.md` — `ItemLote.modalidade` e `ItemLote.destinoOrigem`/`excecaoDestinoId`
+- ADR-0061 — cadastro primeiro, exceção aprovada (superseded pela ADR-0065)
+- ADR-0065 — favorecido autorizado
+- `business-rules/favorecido-autorizado-sispag.md` — I14
+- `entities/lote-pagamento.md` — `ItemLote.modalidade` e `ItemLote.favorecidoAutorizadoId`/`autorizacaoAviso`
 - `business-rules/boleto-exige-codigo-de-barras.md` — o fail-closed irmão, para boleto
 - `business-rules/retomada-remessa-sispag.md` — marca d'água e retomada
 - `ontology/_inbox/sispag-ted-pix-interview.md` — casos de teste 1–9
