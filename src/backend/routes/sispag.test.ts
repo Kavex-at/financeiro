@@ -13,9 +13,6 @@ jest.mock('../domain/appContainer.js', () => ({
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import DebitDateFrozenError from '../domain/errors/DebitDateFrozenError.js';
 import LoteVersaoConflitoError from '../domain/errors/LoteVersaoConflitoError.js';
-import ExcecaoAprovacaoProprioCadastranteError from '../domain/errors/ExcecaoAprovacaoProprioCadastranteError.js';
-import ExcecaoEstadoInvalidoError from '../domain/errors/ExcecaoEstadoInvalidoError.js';
-import ExcecaoTitularidadeError from '../domain/errors/ExcecaoTitularidadeError.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindowError.js';
 import ErpPerguntaError from '../domain/errors/ErpPerguntaError.js';
@@ -30,7 +27,6 @@ import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetor
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
-import ExcecaoDestinoService from '../domain/service/sispag/ExcecaoDestinoService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
@@ -245,7 +241,7 @@ describe('GET /sispag/lotes/:id', () => {
 
         await comApp({}, async (url) => {
             const res = await fetch(`${url}/sispag/lotes/L1`);
-            expect(await readJson(res)).toEqual({ lote: { ...LOTE, exigeConferencia: false } });
+            expect(await readJson(res)).toEqual({ lote: LOTE });
         });
     });
 });
@@ -1250,377 +1246,36 @@ describe('GET /sispag/boletos-dda', () => {
 
 // ─────────────────────────────────────────────────────────── ADR-0061 — exceção de destino
 
-describe('exceção de destino (ADR-0061)', () => {
-    const ID = '3f1c2b9e-4d8a-4c1e-9f7a-2b6d8e0a1c55';
-    const DESTINO = {
-        tipo: 'CONTA',
-        bancoCod: '237',
-        agencia: '1234',
-        conta: '99887766',
-        contaDv: '1',
-        titularDocumento: '11144477735',
-    };
-    const RESUMO = {
-        id: ID,
-        pesCod: '7001',
-        filCod: 1,
-        tipo: 'CONTA',
-        destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1',
-        titularDocumentoMascarado: '***.444.777-**',
-        estado: 'PENDENTE',
-        origem: 'MANUAL',
-        justificativa: 'cadastro desatualizado',
-        cadastradoPor: 'user-abc',
-        cadastradoEm: '2026-10-05T10:00:00.000Z',
-        versao: 1,
-    };
-    const semSensivel = (json: unknown): void => {
-        const texto = JSON.stringify(json);
-        for (const v of ['99887766', '11144477735']) expect(texto).not.toContain(v);
-    };
-    const post = (url: string, path: string, body?: unknown): Promise<Response> =>
-        fetch(`${url}${path}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body ?? {}),
-        });
-    const servico = (over: Record<string, jest.Mock>): void => {
-        container.registerInstance(ExcecaoDestinoService, over as never);
-    };
-
-    describe('GET /sispag/excecoes', () => {
-        it('lista com filtros por estado e favorecido; só máscara na resposta', async () => {
-            const listar = jest.fn().mockResolvedValue([RESUMO]);
-            servico({ listar });
-            await comApp({}, async (url) => {
-                const res = await fetch(`${url}/sispag/excecoes?estado=PENDENTE&pesCod=7001`);
-                expect(res.status).toBe(200);
-                const body = await readJson(res);
-                expect(body.excecoes[0].destinoMascarado).toContain('****');
-                semSensivel(body);
-            });
-            expect(listar).toHaveBeenCalledWith({ estado: 'PENDENTE', pesCod: '7001' });
-        });
-
-        it('estado fora do catálogo → 400', async () => {
-            const listar = jest.fn();
-            servico({ listar });
-            await comApp({}, async (url) => {
-                const res = await fetch(`${url}/sispag/excecoes?estado=INVENTADO`);
-                expect(res.status).toBe(400);
-            });
-            expect(listar).not.toHaveBeenCalled();
-        });
-
-        it('sem sispag:excecao (só leitura) → 403 com o código da permissão', async () => {
-            const listar = jest.fn();
-            servico({ listar });
-            await comApp({ role: 'viewer' }, async (url) => {
-                const res = await fetch(`${url}/sispag/excecoes`);
-                expect(res.status).toBe(403);
-                expect((await readJson(res)).permissao).toBe('sispag:excecao');
-            });
-            expect(listar).not.toHaveBeenCalled();
-        });
-
-        it('exige autenticação', async () => {
-            await comApp({ authenticated: false }, async (url) => {
-                expect((await fetch(`${url}/sispag/excecoes`)).status).toBe(401);
-            });
-        });
-    });
-
-    describe('POST /sispag/excecoes', () => {
-        const BODY = {
-            filCod: 1,
-            pesCod: '7001',
-            destino: DESTINO,
-            justificativa: 'cadastro errado',
-        };
-
-        it('cadastra via serviço com o ator do TOKEN (não do body) e as permissões efetivas; 201 mascarado', async () => {
-            const registrar = jest.fn().mockResolvedValue(RESUMO);
-            servico({ registrar });
-            await comApp({}, async (url) => {
-                const res = await post(url, '/sispag/excecoes', {
-                    ...BODY,
-                    ator: 'outra-pessoa',
-                });
-                // `.strict()`: campo desconhecido (inclusive um "ator" forjado) é 400.
-                expect(res.status).toBe(400);
-                const ok = await post(url, '/sispag/excecoes', BODY);
-                expect(ok.status).toBe(201);
-                semSensivel(await readJson(ok));
-            });
-            expect(registrar).toHaveBeenCalledTimes(1);
-            const chamada = registrar.mock.calls[0][0];
-            expect(chamada).toMatchObject({
-                filCod: 1,
-                pesCod: '7001',
-                destino: DESTINO,
-                justificativa: 'cadastro errado',
-                ator: { id: 'user-abc' },
-            });
-            expect([...chamada.ator.permissoes]).toContain('sispag:excecao');
-        });
-
-        it('aceita o favorecido pelo título (docCod + titCod)', async () => {
-            const registrar = jest.fn().mockResolvedValue(RESUMO);
-            servico({ registrar });
-            await comApp({}, async (url) => {
-                const res = await post(url, '/sispag/excecoes', {
-                    filCod: 2,
-                    docCod: '100',
-                    titCod: '1',
-                    destino: DESTINO,
-                    justificativa: 'j',
-                });
-                expect(res.status).toBe(201);
-            });
-        });
-
-        it('sem favorecido nem título → 400 sem ecoar o destino', async () => {
-            const registrar = jest.fn();
-            servico({ registrar });
-            await comApp({}, async (url) => {
-                const res = await post(url, '/sispag/excecoes', {
-                    filCod: 1,
-                    destino: DESTINO,
-                    justificativa: 'j',
-                });
-                expect(res.status).toBe(400);
-                semSensivel(await readJson(res));
-            });
-            expect(registrar).not.toHaveBeenCalled();
-        });
-
-        it('body inválido → 400 SEM o valor enviado', async () => {
-            const registrar = jest.fn();
-            servico({ registrar });
-            await comApp({}, async (url) => {
-                const res = await post(url, '/sispag/excecoes', {
-                    filCod: 'x99887766',
-                    pesCod: '7001',
-                    destino: DESTINO,
-                    justificativa: 'j',
-                });
-                expect(res.status).toBe(400);
-                semSensivel(await readJson(res));
-            });
-            expect(registrar).not.toHaveBeenCalled();
-        });
-
-        it('titularidade (422) e flag desligada (403) saem como erro de domínio em português', async () => {
-            const registrar = jest
-                .fn()
-                .mockRejectedValueOnce(
-                    new ExcecaoTitularidadeError({ motivo: 'titular-divergente' }),
-                )
-                .mockRejectedValueOnce(
-                    Object.assign(new Error('off'), {
-                        code: 'EXCECAO_DESABILITADA',
-                        userMessage: 'A exceção de destino de pagamento ainda não está habilitada.',
-                        retryable: false,
-                        statusCode: 403,
-                    }),
-                );
-            servico({ registrar });
-            await comApp({}, async (url) => {
-                const r1 = await post(url, '/sispag/excecoes', BODY);
-                expect(r1.status).toBe(422);
-                expect((await readJson(r1)).code).toBe('EXCECAO_TITULARIDADE');
-                const r2 = await post(url, '/sispag/excecoes', BODY);
-                expect(r2.status).toBe(403);
-                expect((await readJson(r2)).code).toBe('EXCECAO_DESABILITADA');
-            });
-        });
-
-        it('sem sispag:excecao → 403 e o serviço não é chamado', async () => {
-            const registrar = jest.fn();
-            servico({ registrar });
-            await comApp({ role: 'viewer' }, async (url) => {
-                const res = await post(url, '/sispag/excecoes', BODY);
-                expect(res.status).toBe(403);
-                expect((await readJson(res)).permissao).toBe('sispag:excecao');
-            });
-            expect(registrar).not.toHaveBeenCalled();
-        });
-    });
-
-    describe('POST /sispag/excecoes/:id/aprovar', () => {
-        it('aprova com o ator do token; resposta mascarada', async () => {
-            const aprovar = jest.fn().mockResolvedValue({ ...RESUMO, estado: 'APROVADA' });
-            servico({ aprovar });
-            await comApp({}, async (url) => {
-                const res = await post(url, `/sispag/excecoes/${ID}/aprovar`);
-                expect(res.status).toBe(200);
-                const body = await readJson(res);
-                expect(body.excecao.estado).toBe('APROVADA');
-                semSensivel(body);
-            });
-            expect(aprovar).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    id: ID,
-                    ator: expect.objectContaining({ id: 'user-abc' }),
-                }),
-            );
-        });
-
-        it('aprovar a PRÓPRIA exceção → 403 específico (I12b), vindo do serviço', async () => {
-            const aprovar = jest
-                .fn()
-                .mockRejectedValue(new ExcecaoAprovacaoProprioCadastranteError({ excecaoId: ID }));
-            servico({ aprovar });
-            await comApp({}, async (url) => {
-                const res = await post(url, `/sispag/excecoes/${ID}/aprovar`);
-                expect(res.status).toBe(403);
-                expect((await readJson(res)).code).toBe('EXCECAO_APROVACAO_PROPRIO_CADASTRANTE');
-            });
-        });
-
-        it('estado inválido → 409', async () => {
-            const aprovar = jest
-                .fn()
-                .mockRejectedValue(
-                    new ExcecaoEstadoInvalidoError({ acao: 'aprovar', estadoAtual: 'REVOGADA' }),
-                );
-            servico({ aprovar });
-            await comApp({}, async (url) => {
-                expect((await post(url, `/sispag/excecoes/${ID}/aprovar`)).status).toBe(409);
-            });
-        });
-
-        it('id que não é UUID → 400', async () => {
-            const aprovar = jest.fn();
-            servico({ aprovar });
-            await comApp({}, async (url) => {
-                expect((await post(url, '/sispag/excecoes/nao-e-uuid/aprovar')).status).toBe(400);
-            });
-            expect(aprovar).not.toHaveBeenCalled();
-        });
-
-        it('sem sispag:excecao → 403', async () => {
-            const aprovar = jest.fn();
-            servico({ aprovar });
-            await comApp({ role: 'viewer' }, async (url) => {
-                const res = await post(url, `/sispag/excecoes/${ID}/aprovar`);
-                expect(res.status).toBe(403);
-                expect((await readJson(res)).permissao).toBe('sispag:excecao');
-            });
-            expect(aprovar).not.toHaveBeenCalled();
-        });
-    });
-
-    describe('POST /sispag/excecoes/:id/rejeitar e /revogar', () => {
-        it.each([
-            ['rejeitar', 'REJEITADA'],
-            ['revogar', 'REVOGADA'],
-        ])('%s exige motivo e leva o ator do token', async (acao, estado) => {
-            const fn = jest.fn().mockResolvedValue({ ...RESUMO, estado });
-            servico({ [acao]: fn });
-            await comApp({}, async (url) => {
-                const sem = await post(url, `/sispag/excecoes/${ID}/${acao}`, {});
-                expect(sem.status).toBe(400);
-                const vazio = await post(url, `/sispag/excecoes/${ID}/${acao}`, { motivo: '' });
-                expect(vazio.status).toBe(400);
-                const ok = await post(url, `/sispag/excecoes/${ID}/${acao}`, {
-                    motivo: 'fornecedor trocou de banco',
-                });
-                expect(ok.status).toBe(200);
-                expect((await readJson(ok)).excecao.estado).toBe(estado);
-            });
-            expect(fn).toHaveBeenCalledTimes(1);
-            expect(fn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    id: ID,
-                    motivo: 'fornecedor trocou de banco',
-                    ator: expect.objectContaining({ id: 'user-abc' }),
-                }),
-            );
-        });
-
-        it.each(['rejeitar', 'revogar'])('%s sem sispag:excecao → 403', async (acao) => {
-            const fn = jest.fn();
-            servico({ [acao]: fn });
-            await comApp({ role: 'viewer' }, async (url) => {
-                const res = await post(url, `/sispag/excecoes/${ID}/${acao}`, { motivo: 'x' });
-                expect(res.status).toBe(403);
-            });
-            expect(fn).not.toHaveBeenCalled();
-        });
-    });
-
-    describe('GET /sispag/excecoes/:id/eventos', () => {
-        it('devolve a trilha (sem valores)', async () => {
-            const eventos = jest.fn().mockResolvedValue([
-                {
-                    id: 'A1',
-                    excecaoId: ID,
-                    evento: 'CADASTRO',
-                    ator: 'ana',
-                    ocorridoEm: '2026-10-05T10:00:00.000Z',
-                },
-            ]);
-            servico({ eventos });
-            await comApp({}, async (url) => {
-                const res = await fetch(`${url}/sispag/excecoes/${ID}/eventos`);
-                expect(res.status).toBe(200);
-                expect((await readJson(res)).eventos[0].evento).toBe('CADASTRO');
-            });
-        });
-    });
-
-    it('o item do lote não carrega mais destino: GET /lotes/:id devolve só a referência da exceção usada', async () => {
-        const getLote = jest.fn().mockResolvedValue({
-            ...LOTE,
-            itens: [
-                {
-                    loteId: 'L1',
-                    filCod: 2,
-                    docCod: '100',
-                    titCod: '1',
-                    modalidade: 'TED',
-                    incluidoPor: 'u1',
-                    excecaoDestinoId: ID,
-                },
-            ],
-        });
-        container.registerInstance(LotePagamentoService, { getLote } as never);
-        await comApp({}, async (url) => {
-            const body = await readJson(await fetch(`${url}/sispag/lotes/L1`));
-            expect(body.lote.itens[0].excecaoDestinoId).toBe(ID);
-            expect(body.lote.itens[0]).not.toHaveProperty('destinoManual');
-            expect(body.lote.itens[0]).not.toHaveProperty('destinoManualResumo');
-        });
-    });
-
-    it('as rotas antigas de destino por item foram retiradas (404)', async () => {
-        await comApp({}, async (url) => {
-            const base = '/sispag/lotes/L1/itens/2/100/1/destino';
-            expect((await post(url, base, { versao: 1, destino: DESTINO })).status).toBe(404);
-            expect((await fetch(`${url}${base}`, { method: 'DELETE' })).status).toBe(404);
-            expect((await post(url, `${base}/aprovar`, { versao: 1 })).status).toBe(404);
-        });
-    });
-});
-
 describe('GET /sispag/recursos', () => {
-    it('expõe as flags TED/PIX/exceção de destino só como booleanos', async () => {
+    it('expõe só booleanos; TED/PIX só aparecem oferecidos com a guarda do favorecido (I14k)', async () => {
+        const vars = {
+            sispagTedEnabled: true,
+            sispagPixEnabled: undefined as boolean | undefined,
+            sispagFavorecidoAutorizadoEnabled: false,
+            sispagFavorecidoFingerprintKey: 'segredo-do-hmac-que-nunca-sai-daqui',
+            conexosPassword: 'segredo',
+        };
         container.registerInstance(EnvironmentProvider, {
-            getEnvironmentVars: jest.fn().mockResolvedValue({
-                sispagTedEnabled: true,
-                sispagExcecaoDestinoEnabled: false,
-                sispagPixEnabled: undefined,
-                conexosPassword: 'segredo',
-            }),
+            getEnvironmentVars: jest.fn().mockResolvedValue(vars),
         } as never);
         await comApp({}, async (url) => {
             const res = await fetch(`${url}/sispag/recursos`);
             expect(res.status).toBe(200);
+            const corpo = await readJson(res);
+            expect(corpo).toEqual({
+                tedEnabled: false,
+                pixEnabled: false,
+                favorecidoAutorizadoEnabled: false,
+            });
+            expect(JSON.stringify(corpo)).not.toContain('segredo');
+        });
+        vars.sispagFavorecidoAutorizadoEnabled = true;
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/recursos`);
             expect(await readJson(res)).toEqual({
                 tedEnabled: true,
-                excecaoDestinoEnabled: false,
                 pixEnabled: false,
+                favorecidoAutorizadoEnabled: true,
             });
         });
     });

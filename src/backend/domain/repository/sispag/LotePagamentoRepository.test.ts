@@ -354,7 +354,7 @@ describe('LotePagamentoRepository', () => {
             await make(db).getLoteComItens('L1');
             const sqlItens = String(db.selectMany.mock.calls[0]?.[0]);
             const sqlHeader = String(db.selectFirst.mock.calls[0]?.[0]);
-            for (const c of ['destino_manual', 'destino_origem', 'excecao_destino_id']) {
+            for (const c of ['destino_origem', 'destino_audit']) {
                 expect(sqlItens).not.toContain(c);
             }
             for (const c of ['conferido_por', 'devolvido_por', 'motivo_devolucao']) {

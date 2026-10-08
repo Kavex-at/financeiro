@@ -97,7 +97,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     // L11 "Sincronizar agora" (ADR-0055): mesmo nível de finalizar/reabrir.
     ['POST /sispag/lotes/:id/sincronizar', P.SISPAG_EXECUTAR],
     ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade', P.SISPAG_EXECUTAR],
-    // ADR-0063 — verificação TED/PIX, bloqueio por duplicidade, conferência e pendências
+    // ADR-0063 — verificação TED/PIX e bloqueio por duplicidade
     [
         'POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/alertas/:alertaId/resolucao',
         P.SISPAG_EXECUTAR,
@@ -106,9 +106,6 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
         'POST /sispag/titulos/:filCod/:docCod/:titCod/bloqueio-duplicidade/desfazer',
         P.SISPAG_EXECUTAR,
     ],
-    ['POST /sispag/lotes/:id/conferir', P.SISPAG_CONFERIR],
-    ['POST /sispag/lotes/:id/devolver', P.SISPAG_CONFERIR],
-    ['GET /sispag/pendencias-cadastro', P.SISPAG_CADASTRO],
     ['POST /sispag/lotes/:id/conta', P.SISPAG_EXECUTAR],
     ['POST /sispag/ingestao', P.SISPAG_EXECUTAR],
     // ADR-0060: o refresh ao abrir a tela só LÊ o ERP e escreve no Postgres próprio.
@@ -126,14 +123,17 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['POST /sispag/titulos/exportar', P.SISPAG_VER],
     ['POST /sispag/retornos/conciliar', P.SISPAG_EXECUTAR],
     ['GET /sispag/execucoes', P.SISPAG_EXECUTAR],
-    // ADR-0061: exceção de destino — cadastrar, aprovar, rejeitar, revogar e ver, tudo na permissão
-    // única `sispag:excecao` (a separação de funções é a regra aprovador ≠ cadastrante no serviço)
-    ['GET /sispag/excecoes', P.SISPAG_EXCECAO],
-    ['POST /sispag/excecoes', P.SISPAG_EXCECAO],
-    ['POST /sispag/excecoes/:id/aprovar', P.SISPAG_EXCECAO],
-    ['POST /sispag/excecoes/:id/rejeitar', P.SISPAG_EXCECAO],
-    ['POST /sispag/excecoes/:id/revogar', P.SISPAG_EXCECAO],
-    ['GET /sispag/excecoes/:id/eventos', P.SISPAG_EXCECAO],
+    // ADR-0065: favorecido autorizado — pedir é `executar`; decidir e revelar é a avulsa
+    // `sispag:autorizar_favorecido` (aprovador ≠ solicitante é regra do serviço); ler é `ver`.
+    ['GET /sispag/favorecidos-autorizados', P.SISPAG_VER],
+    ['GET /sispag/favorecidos-autorizados/candidatos', P.SISPAG_VER],
+    ['POST /sispag/favorecidos-autorizados', P.SISPAG_EXECUTAR],
+    ['POST /sispag/favorecidos-autorizados/:id/aprovar', P.SISPAG_AUTORIZAR_FAVORECIDO],
+    ['POST /sispag/favorecidos-autorizados/:id/rejeitar', P.SISPAG_AUTORIZAR_FAVORECIDO],
+    ['POST /sispag/favorecidos-autorizados/:id/revogar', P.SISPAG_AUTORIZAR_FAVORECIDO],
+    ['POST /sispag/favorecidos-autorizados/:id/reconferir', P.SISPAG_VER],
+    ['POST /sispag/favorecidos-autorizados/:id/revelar', P.SISPAG_AUTORIZAR_FAVORECIDO],
+    ['GET /sispag/favorecidos-autorizados/:id/eventos', P.SISPAG_VER],
     ['GET /sispag/recursos', P.SISPAG_VER],
     // /recebimentos (15)
     ['GET /recebimentos/painel', P.RECEBIMENTOS_VER],

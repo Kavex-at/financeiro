@@ -21,9 +21,8 @@ import {
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import CarteiraAtualizacaoService from '../domain/service/sispag/CarteiraAtualizacaoService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
-import ExcecaoDestinoService, {
-    type AtorExcecao,
-} from '../domain/service/sispag/ExcecaoDestinoService.js';
+import AuthorizationCandidatesService from '../domain/service/sispag/AuthorizationCandidatesService.js';
+import AuthorizedPayeeService from '../domain/service/sispag/AuthorizedPayeeService.js';
 import LotePagamentoApiView from '../domain/service/sispag/LotePagamentoApiView.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
@@ -39,10 +38,16 @@ import { MAX_TITULOS_EXPORT } from '../domain/interface/sispag/TitulosAPagarExpo
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
-import { DUPLICATE_ACTION, EXCECAO_ESTADO } from '../domain/interface/sispag/SispagInterface.js';
-import ConferenciaLoteService from '../domain/service/sispag/ConferenciaLoteService.js';
+import { DUPLICATE_ACTION } from '../domain/interface/sispag/SispagInterface.js';
 import DuplicateResolutionService from '../domain/service/sispag/DuplicateResolutionService.js';
-import PendenciaCadastroService from '../domain/service/sispag/PendenciaCadastroService.js';
+import {
+    AprovarAutorizacaoSchema,
+    AutorizacaoIdSchema,
+    CandidatosQuerySchema,
+    DecidirAutorizacaoSchema,
+    FiltroAutorizacoesSchema,
+    SolicitarAutorizacaoSchema,
+} from '../http/schemas.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { exigirPermissao } from '../http/acesso.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
@@ -323,12 +328,17 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar'] as const) {
                 ator: ator(req),
             };
             try {
+                if (acao === 'finalizar') {
+                    // ADR-0065 L3: o lote finaliza com os restantes; a resposta lista os itens que
+                    // a verificação do favorecido autorizado retirou (vazio quando nenhum saiu).
+                    const { lote, retirados } = await service.finalizarLote(input);
+                    res.json({ lote: apiView().lote(lote), retirados });
+                    return;
+                }
                 const lote =
-                    acao === 'finalizar'
-                        ? await service.finalizarLote(input)
-                        : acao === 'reabrir'
-                          ? await service.reabrirLote(input)
-                          : await service.cancelarLote(input);
+                    acao === 'reabrir'
+                        ? await service.reabrirLote(input)
+                        : await service.cancelarLote(input);
                 res.json({ lote: apiView().lote(lote) });
             } catch (err) {
                 if (!respondLoteError(req, res, err)) throw err;
@@ -422,7 +432,7 @@ router.post(
     }),
 );
 
-// ===================================================== ADR-0063 — verificação TED/PIX e conferência
+// ===================================================== ADR-0063 — verificação TED/PIX
 // O ator é SEMPRE o usuário autenticado (`req.user.sub`): o Zod descarta campo desconhecido, então
 // um "ator" mandado no body é ignorado. Nada aqui escreve no Conexos.
 
@@ -443,11 +453,6 @@ const alertaParamsSchema = chaveTituloSchema.extend({
     alertaId: z.string().uuid(),
 });
 const motivoSchema = z.object({ motivo: z.string().trim().min(1).max(2000) });
-const conferirSchema = z.object({ versao: z.coerce.number().int().min(1) });
-const devolverSchema = z.object({
-    versao: z.coerce.number().int().min(1),
-    motivo: z.string().trim().min(1).max(2000),
-});
 
 // POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/alertas/:alertaId/resolucao — a analista
 // trata UMA alerta de duplicidade (I13f): JUSTIFICAR (texto obrigatório; o item fica) ou RETIRAR (o
@@ -510,68 +515,7 @@ router.post(
     }),
 );
 
-// POST /sispag/lotes/:id/conferir — L12, conferência por 2ª pessoa (I13l). `sispag:conferir`;
-// quem finalizou, incluiu item ou montou o lote manual recebe 403 (`SelfConferenceError`).
-router.post(
-    '/lotes/:id/conferir',
-    exigirPermissao(PERMISSION.SISPAG_CONFERIR),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const id = loteIdSchema.safeParse(req.params);
-        const body = conferirSchema.safeParse(req.body);
-        if (!id.success || !body.success) return respostaInvalida(res, id.error, body.error);
-        const service = container.resolve(ConferenciaLoteService);
-        try {
-            const lote = await service.conferirLote({
-                loteId: id.data.id,
-                versao: body.data.versao,
-                ator: ator(req),
-            });
-            res.json({ lote: apiView().lote(lote) });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// POST /sispag/lotes/:id/devolver — L13, o conferente devolve o lote a RASCUNHO com motivo.
-router.post(
-    '/lotes/:id/devolver',
-    exigirPermissao(PERMISSION.SISPAG_CONFERIR),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const id = loteIdSchema.safeParse(req.params);
-        const body = devolverSchema.safeParse(req.body);
-        if (!id.success || !body.success) return respostaInvalida(res, id.error, body.error);
-        const service = container.resolve(ConferenciaLoteService);
-        try {
-            const lote = await service.devolverLote({
-                loteId: id.data.id,
-                versao: body.data.versao,
-                motivo: body.data.motivo,
-                ator: ator(req),
-            });
-            res.json({ lote: apiView().lote(lote) });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// GET /sispag/pendencias-cadastro — fila "Pendências de cadastro" (I13k), `sispag:cadastro`.
-// Reconfere cada pendência no cmn025 na leitura (resolve as corrigidas). Nunca traz conta/chave.
-router.get(
-    '/pendencias-cadastro',
-    exigirPermissao(PERMISSION.SISPAG_CADASTRO),
-    heavyRouteLimiter,
-    asyncHandler(async (_req, res) => {
-        await bootstrapAppContainer();
-        const service = container.resolve(PendenciaCadastroService);
-        res.json({ pendencias: await service.listarAbertas() });
-    }),
-);
-
-// ===================================================== ADR-0061 — exceção de destino
+// ===================================================== ADR-0065 — favorecido autorizado
 
 /**
  * `details` do Zod SEM o valor enviado (I10h): só caminho e código de cada problema. O
@@ -580,46 +524,6 @@ router.get(
 const detalhesSemValor = (erro: z.ZodError): Array<{ campo: string; codigo: string }> =>
     erro.issues.map((i) => ({ campo: i.path.join('.') || '(body)', codigo: i.code }));
 
-/** O ator da exceção: o id do usuário AUTENTICADO (nunca o do body) e as permissões efetivas. */
-const atorExcecao = (req: Request): AtorExcecao => ({
-    id: ator(req),
-    permissoes: req.acesso?.permissoes ?? new Set<string>(),
-});
-
-/**
- * Só a forma da requisição. Formato do destino, titularidade e demais regras são do serviço
- * (`ExcecaoDestinoService`): 400 formato · 422 titularidade · 403 permissão/flag/aprovar a própria ·
- * 409 estado inválido.
- */
-const registrarExcecaoSchema = z
-    .object({
-        filCod: z.coerce.number().int().positive(),
-        pesCod: z.string().trim().min(1).optional(),
-        docCod: z.string().trim().min(1).optional(),
-        titCod: z.string().trim().min(1).optional(),
-        destino: z.record(z.unknown()),
-        justificativa: z.string().min(1),
-    })
-    .strict()
-    .refine((b) => b.pesCod !== undefined || (b.docCod !== undefined && b.titCod !== undefined), {
-        message: 'informe o favorecido (pesCod) ou o título (docCod e titCod)',
-        path: ['pesCod'],
-    });
-const motivoExcecaoSchema = z.object({ motivo: z.string().min(1) }).strict();
-const filtroExcecoesSchema = z.object({
-    estado: z
-        .enum([
-            EXCECAO_ESTADO.PENDENTE,
-            EXCECAO_ESTADO.APROVADA,
-            EXCECAO_ESTADO.REJEITADA,
-            EXCECAO_ESTADO.SUBSTITUIDA,
-            EXCECAO_ESTADO.REVOGADA,
-        ])
-        .optional(),
-    pesCod: z.string().trim().min(1).optional(),
-});
-const idExcecaoSchema = z.object({ id: z.string().uuid() });
-
 const respostaInvalida = (res: Response, ...erros: Array<z.ZodError | undefined>): void => {
     res.status(400).json({
         error: 'invalid request',
@@ -627,151 +531,180 @@ const respostaInvalida = (res: Response, ...erros: Array<z.ZodError | undefined>
     });
 };
 
-// GET /sispag/excecoes — lista as exceções de destino (?estado=&pesCod=). SEMPRE mascarada
-// (I10h). Só quem tem `sispag:excecao`: é a tela de quem cadastra e aprova.
+const payees = (): AuthorizedPayeeService => container.resolve(AuthorizedPayeeService);
+
+// GET /sispag/favorecidos-autorizados — lista (?estado=&pesCod=). Só máscara, nunca o destino.
 router.get(
-    '/excecoes',
-    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
+    '/favorecidos-autorizados',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const filtro = filtroExcecoesSchema.safeParse(req.query);
+        const filtro = FiltroAutorizacoesSchema.safeParse(req.query);
         if (!filtro.success) return respostaInvalida(res, filtro.error);
-        const service = container.resolve(ExcecaoDestinoService);
-        try {
-            const excecoes = await service.listar(filtro.data);
-            res.json({ excecoes });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
+        res.json({ autorizacoes: await payees().listar(filtro.data) });
     }),
 );
 
-// POST /sispag/excecoes — cadastra uma exceção PENDENTE (nunca APROVADA). 400 formato · 403
-// permissão/flag · 422 titularidade (lida ao vivo no cadastro). Resposta mascarada.
-router.post(
-    '/excecoes',
-    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const parsed = registrarExcecaoSchema.safeParse(req.body);
-        if (!parsed.success) return respostaInvalida(res, parsed.error);
-        const service = container.resolve(ExcecaoDestinoService);
-        try {
-            const excecao = await service.registrar({ ...parsed.data, ator: atorExcecao(req) });
-            res.status(201).json({ excecao });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// POST /sispag/excecoes/:id/aprovar — aprova a PENDENTE (I12b): o aprovador NÃO pode ser quem
-// cadastrou (403 EXCECAO_APROVACAO_PROPRIO_CADASTRANTE). Sem body.
-router.post(
-    '/excecoes/:id/aprovar',
-    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const id = idExcecaoSchema.safeParse(req.params);
-        if (!id.success) return respostaInvalida(res, id.error);
-        const service = container.resolve(ExcecaoDestinoService);
-        try {
-            const excecao = await service.aprovar({ id: id.data.id, ator: atorExcecao(req) });
-            res.json({ excecao });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// POST /sispag/excecoes/:id/rejeitar — rejeita a PENDENTE (motivo obrigatório). Pode ser quem
-// cadastrou.
-router.post(
-    '/excecoes/:id/rejeitar',
-    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const id = idExcecaoSchema.safeParse(req.params);
-        const body = motivoExcecaoSchema.safeParse(req.body);
-        if (!id.success || !body.success) {
-            return respostaInvalida(
-                res,
-                id.success ? undefined : id.error,
-                body.success ? undefined : body.error,
-            );
-        }
-        const service = container.resolve(ExcecaoDestinoService);
-        try {
-            const excecao = await service.rejeitar({
-                id: id.data.id,
-                ator: atorExcecao(req),
-                motivo: body.data.motivo,
-            });
-            res.json({ excecao });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// POST /sispag/excecoes/:id/revogar — revoga a APROVADA (motivo obrigatório). Qualquer pessoa com
-// `sispag:excecao`, inclusive quem cadastrou (I12h). Não reescreve destino já congelado (I12g).
-router.post(
-    '/excecoes/:id/revogar',
-    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const id = idExcecaoSchema.safeParse(req.params);
-        const body = motivoExcecaoSchema.safeParse(req.body);
-        if (!id.success || !body.success) {
-            return respostaInvalida(
-                res,
-                id.success ? undefined : id.error,
-                body.success ? undefined : body.error,
-            );
-        }
-        const service = container.resolve(ExcecaoDestinoService);
-        try {
-            const excecao = await service.revogar({
-                id: id.data.id,
-                ator: atorExcecao(req),
-                motivo: body.data.motivo,
-            });
-            res.json({ excecao });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
-    }),
-);
-
-// GET /sispag/excecoes/:id/eventos — a trilha da exceção (quem, quando, o quê), sem valores.
+// GET /sispag/favorecidos-autorizados/candidatos — relatório read-only (listarCandidatosAutorizacao).
+// Paginado: o cmn025 é lido só para a página, com cache por favorecido. Nenhuma escrita.
 router.get(
-    '/excecoes/:id/eventos',
-    exigirPermissao(PERMISSION.SISPAG_EXCECAO),
+    '/favorecidos-autorizados/candidatos',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const id = idExcecaoSchema.safeParse(req.params);
-        if (!id.success) return respostaInvalida(res, id.error);
-        const service = container.resolve(ExcecaoDestinoService);
+        const query = CandidatosQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        const service = container.resolve(AuthorizationCandidatesService);
+        res.json(await service.listar(query.data));
+    }),
+);
+
+// POST /sispag/favorecidos-autorizados — pedir a autorização (F1) ou confirmar a reaprovação (F5).
+// `sispag:executar`. O solicitante é o usuário autenticado; nunca nasce AUTORIZADO.
+router.post(
+    '/favorecidos-autorizados',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = SolicitarAutorizacaoSchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
         try {
-            res.json({ eventos: await service.eventos(id.data.id) });
+            const autorizacao = await payees().solicitar({
+                pesCod: body.data.pesCod,
+                ...(body.data.credor ? { credor: body.data.credor } : {}),
+                modalidade: body.data.modalidade,
+                origem: body.data.origem,
+                filCod: body.data.filCod,
+                ator: ator(req),
+            });
+            res.status(201).json({ autorizacao });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
     }),
 );
 
-// GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054/0061), SÓ como booleanos.
+// POST /sispag/favorecidos-autorizados/:id/aprovar — F2/F6, `sispag:autorizar_favorecido`. Envia a
+// impressão que a tela mostrou (anti-TOCTOU). 403 aprovador = solicitante · 409 destino mudou /
+// reaprovação não confirmada / versão · 422 cadastro sem dado.
+router.post(
+    '/favorecidos-autorizados/:id/aprovar',
+    exigirPermissao(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = AutorizacaoIdSchema.safeParse(req.params);
+        const body = AprovarAutorizacaoSchema.safeParse(req.body);
+        if (!id.success || !body.success) return respostaInvalida(res, id.error, body.error);
+        try {
+            const autorizacao = await payees().aprovar({
+                id: id.data.id,
+                versao: body.data.versao,
+                fingerprintMostrado: body.data.fingerprintMostrado,
+                ator: ator(req),
+            });
+            res.json({ autorizacao });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/favorecidos-autorizados/:id/{rejeitar|revogar} — F3/F7, motivo obrigatório.
+for (const acao of ['rejeitar', 'revogar'] as const) {
+    router.post(
+        `/favorecidos-autorizados/:id/${acao}`,
+        exigirPermissao(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO),
+        asyncHandler(async (req, res) => {
+            await bootstrapAppContainer();
+            const id = AutorizacaoIdSchema.safeParse(req.params);
+            const body = DecidirAutorizacaoSchema.safeParse(req.body);
+            if (!id.success || !body.success) return respostaInvalida(res, id.error, body.error);
+            const input = {
+                id: id.data.id,
+                versao: body.data.versao,
+                motivo: body.data.motivo,
+                ator: ator(req),
+            };
+            try {
+                const autorizacao =
+                    acao === 'rejeitar'
+                        ? await payees().rejeitar(input)
+                        : await payees().revogar(input);
+                res.json({ autorizacao });
+            } catch (err) {
+                if (!respondLoteError(req, res, err)) throw err;
+            }
+        }),
+    );
+}
+
+// POST /sispag/favorecidos-autorizados/:id/reconferir — "reconferir com o Conexos" (selo, I14l),
+// `sispag:ver`. Devolve o destino ATUAL mascarado e a impressão que a aprovação envia. Pode abrir
+// a reaprovação (F4).
+router.post(
+    '/favorecidos-autorizados/:id/reconferir',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = AutorizacaoIdSchema.safeParse(req.params);
+        if (!id.success) return respostaInvalida(res, id.error);
+        try {
+            res.json(await payees().reconferir(id.data.id, ator(req)));
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/favorecidos-autorizados/:id/revelar — o destino COMPLETO, lido ao vivo do cmn025,
+// só na resposta e auditado (I14l). `sispag:autorizar_favorecido`. Nunca em cache.
+router.post(
+    '/favorecidos-autorizados/:id/revelar',
+    exigirPermissao(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = AutorizacaoIdSchema.safeParse(req.params);
+        if (!id.success) return respostaInvalida(res, id.error);
+        try {
+            const revelado = await payees().revelar(id.data.id, ator(req));
+            res.setHeader('Cache-Control', 'no-store');
+            res.json(revelado);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/favorecidos-autorizados/:id/eventos — a trilha (quem, quando, o quê), sem valores.
+router.get(
+    '/favorecidos-autorizados/:id/eventos',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = AutorizacaoIdSchema.safeParse(req.params);
+        if (!id.success) return respostaInvalida(res, id.error);
+        try {
+            res.json({ eventos: await payees().eventos(id.data.id) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/recursos — o que a tela deve mostrar (flags do ADR-0054/0065), SÓ como booleanos.
+// `tedEnabled`/`pixEnabled` já dizem se a modalidade é OFERECIDA: exigem a guarda do favorecido
+// autorizado ligada (I14k).
 router.get(
     '/recursos',
     exigirPermissao(PERMISSION.SISPAG_VER),
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
         const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
+        const guarda = env.sispagFavorecidoAutorizadoEnabled === true;
         res.json({
-            tedEnabled: env.sispagTedEnabled === true,
-            excecaoDestinoEnabled: env.sispagExcecaoDestinoEnabled === true,
-            pixEnabled: env.sispagPixEnabled === true,
+            tedEnabled: guarda && env.sispagTedEnabled === true,
+            pixEnabled: guarda && env.sispagPixEnabled === true,
+            favorecidoAutorizadoEnabled: guarda,
         });
     }),
 );

@@ -62,6 +62,37 @@ export default class PerfilCanalFornecedorRepository {
     };
 
     /**
+     * Candidatos do relatório de autorização (ADR-0065, `listarCandidatosAutorizacao`): favorecidos
+     * pagos por TED/PIX no histórico ou com grupo dominante TED_PIX. Paginado (o relatório lê o
+     * `cmn025` só da página). Ordem: mais pagamentos TED/PIX primeiro.
+     */
+    public listarCandidatos = async (params: {
+        limite: number;
+        deslocamento: number;
+    }): Promise<{ perfis: ChannelProfile[]; total: number }> => {
+        const filtro = `grupo_dominante = 'TED_PIX' OR COALESCE((contagens->>'TED_PIX')::int, 0) > 0`;
+        const [rows, contagem] = await Promise.all([
+            this.databaseClient.selectMany(
+                `SELECT pes_cod, credor, contagens, pagamentos_unicos, meses_distintos,
+                        grupo_dominante, participacao, confianca, janela_inicio, janela_fim,
+                        calculado_em, job_run_id
+                 FROM perfil_canal_fornecedor
+                 WHERE ${filtro}
+                 ORDER BY COALESCE((contagens->>'TED_PIX')::int, 0) DESC, pes_cod
+                 LIMIT $limite OFFSET $deslocamento`,
+                { limite: params.limite, deslocamento: params.deslocamento },
+            ),
+            this.databaseClient.selectFirst<{ n: number }>(
+                `SELECT count(*)::int AS n FROM perfil_canal_fornecedor WHERE ${filtro}`,
+            ),
+        ]);
+        return {
+            perfis: (rows as PerfilRow[]).map(this.map),
+            total: Number(contagem?.n ?? 0),
+        };
+    };
+
+    /**
      * Grava os perfis da rodada (UPSERT por `pes_cod`) numa transação. Favorecido que não aparece
      * na rodada mantém o perfil anterior (com o `calculado_em` dele): a tela mostra a idade.
      */
