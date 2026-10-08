@@ -14,7 +14,11 @@ jest.mock('@/lib/sispag', () => {
   return { ...real, fetchJanelaDataDebito: jest.fn(), gerarRemessa: jest.fn() }
 })
 
-import { fetchJanelaDataDebito, gerarRemessa } from '@/lib/sispag'
+import {
+  fetchJanelaDataDebito,
+  gerarRemessa,
+  PayeeNotAuthorizedAtRemittanceError,
+} from '@/lib/sispag'
 
 const mockJanela = fetchJanelaDataDebito as jest.MockedFunction<typeof fetchJanelaDataDebito>
 const mockGerar = gerarRemessa as jest.MockedFunction<typeof gerarRemessa>
@@ -218,5 +222,27 @@ describe('GerarRemessaDialog', () => {
     )
     expect(await screen.findByText(/API 500/)).toBeInTheDocument()
     expect(botaoGerar()).toBeDisabled()
+  })
+
+  it('remessa barrada pela guarda do favorecido: o diálogo fica aberto e lista item e motivo', async () => {
+    mockGerar.mockRejectedValue(
+      new PayeeNotAuthorizedAtRemittanceError('A remessa não foi gerada', [
+        { item: '801/1', motivo: 'DESTINO_ALTERADO' },
+        { item: '802/1', motivo: 'FALHA_LEITURA' },
+      ]),
+    )
+    const fechar = jest.fn()
+    const acao: Acao = jest.fn(async (fn) => {
+      await fn().catch(() => undefined)
+    })
+    mockJanela.mockResolvedValueOnce(janela())
+    render(<GerarRemessaDialog lote={lote} open onOpenChange={fechar} busy={false} acao={acao} />)
+    await screen.findByText(/Permitido/)
+    fireEvent.click(botaoGerar())
+    const alerta = await screen.findByText(/favorecido sem autorização válida/)
+    expect(alerta.closest('[role="alert"]')).toHaveTextContent(
+      /801\/1: destino mudou no cadastro desde a aprovação.*802\/1: não foi possível ler o cadastro do Conexos/,
+    )
+    expect(fechar).not.toHaveBeenCalled()
   })
 })

@@ -56,6 +56,8 @@ import {
   DebitDateOutsideWindowError,
   LoteAnteriorCanceladoError,
   RemessaEmAndamentoError,
+  PayeeNotAuthorizedAtRemittanceError,
+  type ItemLote,
   BoletoSemCodigoBarrasError,
   RemessaEmDuvidaError,
   type TituloSemBoleto,
@@ -190,8 +192,6 @@ function SispagPanel() {
   // (`sispag:ver`); só o "Atualizar DDA" dentro dela exige executar.
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
-  // ADR-0061: a tela de exceções de destino só aparece para quem tem `sispag:excecao`.
-  const podeExcecao = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXCECAO)
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
   const [lotesErro, setLotesErro] = React.useState<string | null>(null)
@@ -334,6 +334,21 @@ function SispagPanel() {
   })
 
   const titulos = React.useMemo(() => painel?.titulos ?? [], [painel?.titulos])
+  // ADR-0065: o item do lote não carrega o favorecido; a carteira do painel sim. É o que permite o
+  // atalho "Pedir autorização" direto no item.
+  const pesCodPorTitulo = React.useMemo(
+    () =>
+      new Map(
+        (painel?.titulos ?? []).flatMap((t) =>
+          t.pesCod ? [[`${t.filCod}:${t.docCod}:${t.titCod}`, t.pesCod] as [string, string]] : [],
+        ),
+      ),
+    [painel?.titulos],
+  )
+  const pesCodDoItem = React.useCallback(
+    (i: ItemLote) => pesCodPorTitulo.get(`${i.filCod}:${i.docCod}:${i.titCod}`),
+    [pesCodPorTitulo],
+  )
   const ehVencido = (t: TituloAPagar): boolean => (t.diasAteVencimento ?? 0) < 0
   const totalComprometidos = React.useMemo(
     () => titulos.filter((t) => t.loteComprometido).length,
@@ -524,6 +539,9 @@ function SispagPanel() {
       // Dois erros pedem ação humana diferente de "tente de novo" — e insistir em um
       // deles pode gerar pagamento em duplicidade. Não podem virar toast genérico.
       if (isSessionExpiredError(e)) return
+      // ADR-0065: a remessa barrada pela guarda do favorecido é mostrada item a item no próprio
+      // diálogo de gerar remessa — um toast aqui repetiria a mesma informação pela metade.
+      if (e instanceof PayeeNotAuthorizedAtRemittanceError) return
       if (e instanceof RemessaEmAndamentoError) {
         // Não é falha: outra execução está rodando agora. Insistir é o que criaria o
         // segundo lote — por isso a mensagem pede espera, não retry.
@@ -672,11 +690,9 @@ function SispagPanel() {
                 <DatabaseZap aria-hidden /> Ingestão de dados
               </Button>
             ) : null}
-            {podeExcecao ? (
-              <Button variant="outline" size="sm" asChild>
-                <Link href="/sispag/excecoes">Exceções de destino</Link>
-              </Button>
-            ) : null}
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/sispag/favorecidos-autorizados">Favorecidos autorizados</Link>
+            </Button>
             <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
               <RefreshCcw className="size-4" /> Recarregar
             </Button>
@@ -1151,6 +1167,7 @@ function SispagPanel() {
                       lote={l}
                       busy={busy}
                       acao={acaoLote}
+                      pesCodDoItem={pesCodDoItem}
                       {...(podeExecutar ? { onAdicionar: setAdicionarLote } : {})}
                       destacado={loteEmFoco === l.id}
                     />

@@ -20,8 +20,11 @@ import {
   formatCivilDate,
   type GerarRemessaResult,
   gerarRemessa,
+  type ItemBarradoNaRemessa,
   type JanelaDataDebito,
   type LotePagamento,
+  PayeeNotAuthorizedAtRemittanceError,
+  ROTULO_AVISO_AUTORIZACAO,
 } from '@/lib/sispag'
 import { formatBRL } from '@/lib/utils'
 
@@ -114,6 +117,9 @@ export function GerarRemessaDialog({
   const [janela, setJanela] = React.useState<JanelaDataDebito | null>(null)
   const [erroCarga, setErroCarga] = React.useState<string | null>(null)
   const [data, setData] = React.useState('')
+  // ADR-0065: remessa barrada pela guarda do favorecido autorizado — o diálogo fica aberto e
+  // lista item e motivo. Nada foi enviado ao Conexos.
+  const [barrados, setBarrados] = React.useState<ItemBarradoNaRemessa[] | null>(null)
 
   // O card monta este diálogo só enquanto ele está aberto: cada abertura começa do zero
   // (janela relida), sem precisar zerar estado dentro do efeito.
@@ -142,8 +148,18 @@ export function GerarRemessaDialog({
 
   const confirmar = () => {
     const dataDebito = congelada?.data ?? data
-    onOpenChange(false)
-    acao((o) => gerarRemessa(l.id, { ...o, dataDebito }), mensagemDeSucesso(l.filCod))
+    setBarrados(null)
+    acao(async (o) => {
+      try {
+        const r = await gerarRemessa(l.id, { ...o, dataDebito })
+        onOpenChange(false)
+        return r
+      } catch (e) {
+        if (e instanceof PayeeNotAuthorizedAtRemittanceError) setBarrados(e.itens)
+        else onOpenChange(false)
+        throw e
+      }
+    }, mensagemDeSucesso(l.filCod))
   }
 
   return (
@@ -252,6 +268,25 @@ export function GerarRemessaDialog({
             </div>
           )}
         </DialogBody>
+        {barrados ? (
+          <div
+            role="alert"
+            className="mx-6 mb-2 space-y-1 rounded-md border border-danger/40 bg-danger-subtle p-3 text-sm text-danger-foreground"
+          >
+            <p className="font-medium">
+              A remessa não foi gerada: favorecido sem autorização válida. Nada foi enviado ao
+              Conexos.
+            </p>
+            <ul className="list-disc pl-5">
+              {barrados.map((b) => (
+                <li key={b.item}>
+                  {b.item}: {ROTULO_AVISO_AUTORIZACAO[b.motivo] ?? b.motivo}
+                </li>
+              ))}
+            </ul>
+            <p>Peça a autorização em Favorecidos autorizados, ou reabra o lote e troque a forma de pagamento.</p>
+          </div>
+        ) : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar

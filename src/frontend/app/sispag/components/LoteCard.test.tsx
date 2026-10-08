@@ -39,7 +39,7 @@ jest.mock('@/lib/sispag', () => {
     // ADR-0054: por padrão as flags estão desligadas — a tela de antes.
     getRecursos: jest
       .fn()
-      .mockResolvedValue({ tedEnabled: false, excecaoDestinoEnabled: false, pixEnabled: false }),
+      .mockResolvedValue({ tedEnabled: false, pixEnabled: false, favorecidoAutorizadoEnabled: false }),
   }
 })
 
@@ -117,7 +117,10 @@ describe('LoteCard — confirmação das transições', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Finalizar lote' }))
 
     expect(finalizarLote).toHaveBeenCalledWith('L1', 3)
-    expect(acao).toHaveBeenCalledWith(expect.any(Function), 'Lote finalizado')
+    // A mensagem depende do que a verificação retirou (ADR-0065): é uma função do resultado.
+    expect(acao).toHaveBeenCalledWith(expect.any(Function), expect.any(Function))
+    const okMsg = (acao as jest.Mock).mock.calls[0][1] as (r: unknown) => { titulo: string }
+    expect(okMsg({ lote: {}, retirados: [] })).toEqual({ titulo: 'Lote finalizado' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -259,9 +262,9 @@ describe('LoteCard — só sispag:ver', () => {
   })
 })
 
-describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fallback (ADR-0061)', () => {
-  const ligado = { tedEnabled: true, excecaoDestinoEnabled: true, pixEnabled: true }
-  const desligado = { tedEnabled: false, excecaoDestinoEnabled: false, pixEnabled: false }
+describe('LoteCard — destino de TED/PIX: só o cadastro (ADR-0065)', () => {
+  const ligado = { tedEnabled: true, pixEnabled: true, favorecidoAutorizadoEnabled: true }
+  const desligado = { tedEnabled: false, pixEnabled: false, favorecidoAutorizadoEnabled: false }
   const itemTed = (over: Partial<LotePagamento['itens'][number]> = {}) =>
     ({
       loteId: 'L1',
@@ -286,7 +289,7 @@ describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fal
     await user.click(screen.getByRole('button', { name: /filial 7/i }))
   }
 
-  it('flags desligadas: nenhum selo nem botão de exceção — igual ao main', async () => {
+  it('flags desligadas: nenhum aviso de destino', async () => {
     ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
       { docCod: '801', titCod: '1', modalidades: [] },
     ])
@@ -294,13 +297,11 @@ describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fal
     renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
     await waitFor(() => expect(getRecursos).toHaveBeenCalled())
-    expect(screen.queryByText(/aguardando exceção/i)).not.toBeInTheDocument()
-    expect(screen.queryByText('exceção')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /cadastrar exceção/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled()
   })
 
-  it('destino do cadastro aparece MASCARADO, sem selo de exceção', async () => {
+  it('destino do cadastro aparece MASCARADO', async () => {
     ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
     ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
       {
@@ -314,26 +315,6 @@ describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fal
     renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
     expect(await screen.findByText('cadastro: banco 237 · cc ****1111-0')).toBeInTheDocument()
-    expect(screen.queryByText('exceção')).not.toBeInTheDocument()
-  })
-
-  it('destino de exceção APROVADA: selo "exceção" com a máscara vinda da oferta', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
-      {
-        docCod: '801',
-        titCod: '1',
-        modalidades: ['TED'],
-        destinos: {
-          TED: { origem: 'EXCECAO', destinoMascarado: 'banco 237 · ag. 1234 · cc ****7766-1' },
-        },
-      },
-    ])
-    const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed()] }))
-    await abrir(user)
-    expect(await screen.findByText('banco 237 · ag. 1234 · cc ****7766-1')).toBeInTheDocument()
-    expect(screen.getByText('exceção')).toBeInTheDocument()
   })
 
   it('item TED sem destino: aviso de que sai do lote ao finalizar; Finalizar segue habilitado (ADR-0063, I10b revisado)', async () => {
@@ -345,87 +326,13 @@ describe('LoteCard — destino de TED/PIX: cadastro primeiro, exceção como fal
     renderCard(lote({ itens: [itemTed()] }))
     await abrir(user)
     expect(
-      await screen.findByText('sem conta/chave no cadastro: sai do lote ao finalizar'),
+      await screen.findByText(/sem conta\/chave no cadastro do Conexos — pedir ao responsável/),
     ).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(
       'Sem conta (TED) ou chave PIX no cadastro do Conexos para: 801/1 (ACME)',
     )
     // Quem decide é a verificação do finalizar (I13j): o botão não trava por isso.
     expect(screen.getByRole('button', { name: /^finalizar$/i })).toBeEnabled()
-  })
-
-  it('quem tem sispag:excecao vê o link para a tela de exceções e o atalho de cadastro', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
-      { docCod: '801', titCod: '1', modalidades: [] },
-    ])
-    const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed()] }))
-    await abrir(user)
-    const link = await screen.findByRole('link', { name: /exceções de destino/i })
-    expect(link).toHaveAttribute('href', '/sispag/excecoes')
-    await user.click(
-      screen.getByRole('button', { name: /cadastrar exceção de destino para o favorecido do título 801\/1/i }),
-    )
-    const dialog = screen.getByRole('dialog', { name: 'Cadastrar exceção de destino' })
-    expect(within(dialog).getByText(/título 801\/1 · ACME/)).toBeInTheDocument()
-    // Favorecido do título: nenhum campo de pesCod/filial.
-    expect(within(dialog).queryByLabelText(/código do favorecido/i)).not.toBeInTheDocument()
-  })
-
-  it('sem sispag:excecao: só o texto, sem link nem botão (esconder, não desabilitar)', async () => {
-    permissoes = {
-      carregando: false,
-      lista: CATALOGO_PERMISSOES.filter((p) => p !== 'sispag:excecao'),
-    }
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
-      { docCod: '801', titCod: '1', modalidades: [] },
-    ])
-    const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed()] }))
-    await abrir(user)
-    expect(
-      await screen.findByText('sem conta/chave no cadastro: sai do lote ao finalizar'),
-    ).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /exceções de destino/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /cadastrar exceção/i })).not.toBeInTheDocument()
-  })
-
-  it('fora de RASCUNHO não há atalho de cadastro', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    const user = userEvent.setup()
-    renderCard(lote({ status: 'FINALIZADO', itens: [itemTed()] }))
-    await abrir(user)
-    await waitFor(() => expect(getRecursos).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /cadastrar exceção/i })).not.toBeInTheDocument()
-  })
-
-  it('o diálogo do atalho abre na aba PIX quando o favorecido tem chave CPF/CNPJ no próprio documento (D12)', async () => {
-    ;(getRecursos as jest.Mock).mockResolvedValue(ligado)
-    ;(fetchModalidadesDisponiveis as jest.Mock).mockResolvedValue([
-      {
-        docCod: '801',
-        titCod: '1',
-        modalidades: ['PIX'],
-        destinos: {
-          PIX: {
-            origem: 'CADASTRO',
-            destinoMascarado: 'PIX CPF/CNPJ ***.444.777-**',
-            chaveCpfCnpjDoFavorecido: true,
-          },
-        },
-      },
-    ])
-    const user = userEvent.setup()
-    renderCard(lote({ itens: [itemTed({ modalidade: 'TED' })] }))
-    await abrir(user)
-    await waitFor(() => expect(fetchModalidadesDisponiveis).toHaveBeenCalled())
-    await user.click(
-      await screen.findByRole('button', { name: /cadastrar exceção de destino para o favorecido/i }),
-    )
-    const dialog = screen.getByRole('dialog', { name: 'Cadastrar exceção de destino' })
-    expect(within(dialog).getByRole('tab', { name: /PIX/ })).toHaveAttribute('aria-selected', 'true')
   })
 })
 

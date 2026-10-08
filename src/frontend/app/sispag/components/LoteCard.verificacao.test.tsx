@@ -1,7 +1,7 @@
 /**
- * LoteCard — verificação TED/PIX e conferência (ADR-0063): alertas por item, "Tratar" a
- * duplicidade, verificação pendente, aguardando conferência e o botão "Conferir" (escondido de
- * quem finalizou; o backend continua sendo a autoridade).
+ * LoteCard — verificação TED/PIX (ADR-0063) e favorecido autorizado (ADR-0065): alertas de
+ * duplicidade por item, verificação pendente, o selo do favorecido com o atalho "Pedir
+ * autorização", a mensagem dos itens retirados no finalizar e a remessa sem conferência.
  */
 
 import { render, screen, within } from '@testing-library/react'
@@ -11,11 +11,9 @@ import type { ItemLote, LotePagamento } from '@/lib/sispag'
 import type { Acao } from './GerarRemessaDialog'
 
 let permissoes: Permissao[] = [...CATALOGO_PERMISSOES]
-let usuario: string | null = 'bia'
 jest.mock('@/lib/auth/PermissoesProvider', () => ({
   usePermissoes: () => ({ carregando: false, tem: (p: Permissao) => permissoes.includes(p) }),
 }))
-jest.mock('@/lib/auth/AuthProvider', () => ({ useUsuarioAtual: () => usuario }))
 jest.mock('@/lib/sispag', () => {
   const real = jest.requireActual('@/lib/sispag')
   return {
@@ -25,11 +23,14 @@ jest.mock('@/lib/sispag', () => {
     fetchLinhasDigitaveis: jest.fn().mockResolvedValue({ itens: [], total: 0, dropped: 0 }),
     getRecursos: jest
       .fn()
-      .mockResolvedValue({ tedEnabled: true, excecaoDestinoEnabled: false, pixEnabled: true }),
+      .mockResolvedValue({ tedEnabled: true, pixEnabled: true, favorecidoAutorizadoEnabled: true }),
+    pedirAutorizacao: jest.fn(),
   }
 })
+jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn(), warning: jest.fn() } }))
 
-import { LoteCard } from './LoteCard'
+import { pedirAutorizacao } from '@/lib/sispag'
+import { LoteCard, mensagemFinalizado } from './LoteCard'
 
 const item = (over: Partial<ItemLote> = {}): ItemLote => ({
   loteId: 'L1',
@@ -70,15 +71,21 @@ const alertaDup = {
 
 const acao: Acao = jest.fn()
 
-const abrir = async (l: LotePagamento) => {
-  render(<LoteCard lote={l} busy={false} acao={acao} />)
+const abrir = async (l: LotePagamento, pesCod?: string) => {
+  render(
+    <LoteCard
+      lote={l}
+      busy={false}
+      acao={acao}
+      {...(pesCod ? { pesCodDoItem: () => pesCod } : {})}
+    />,
+  )
   await userEvent.click(screen.getByRole('button', { expanded: false }))
 }
 
 beforeEach(() => {
   jest.clearAllMocks()
   permissoes = [...CATALOGO_PERMISSOES]
-  usuario = 'bia'
 })
 
 describe('LoteCard — alertas da verificação TED/PIX', () => {
@@ -112,26 +119,9 @@ describe('LoteCard — alertas da verificação TED/PIX', () => {
     expect(screen.queryByRole('button', { name: /Tratar/ })).toBeNull()
   })
 
-  it('verificação pendente e canal habitual aparecem no item', async () => {
-    await abrir(
-      lote({
-        itens: [
-          item({
-            verificacaoEstado: 'PENDENTE',
-            alertas: [
-              { ...alertaDup, id: 'C1', tipo: 'CANAL_HABITUAL', evidencia: { grupoDominante: 'BOLETO' } },
-            ],
-          }),
-        ],
-      }),
-    )
+  it('verificação pendente aparece no item', async () => {
+    await abrir(lote({ itens: [item({ verificacaoEstado: 'PENDENTE' })] }))
     expect(screen.getByText('verificação pendente')).toBeInTheDocument()
-    expect(screen.getByText('canal habitual: boleto')).toBeInTheDocument()
-  })
-
-  it('o lote devolvido mostra quem devolveu e o motivo', async () => {
-    await abrir(lote({ devolvidoPor: 'bia', motivoDevolucao: 'conta diverge da NF' }))
-    expect(screen.getByRole('status')).toHaveTextContent(/Devolvido na conferência por bia.*conta diverge da NF/)
   })
 
   it('TED/PIX são sempre oferecidos (I10b revisado): nenhum campo de conta/chave no lote', async () => {
@@ -140,60 +130,61 @@ describe('LoteCard — alertas da verificação TED/PIX', () => {
   })
 })
 
-describe('LoteCard — conferência por segunda pessoa', () => {
-  const finalizado = (over: Partial<LotePagamento> = {}) =>
-    lote({ status: 'FINALIZADO', finalizadoPor: 'ana', exigeConferencia: true, ...over })
-
-  it('aguardando conferência: selo, "Conferir" para outra pessoa e remessa travada', () => {
-    render(<LoteCard lote={finalizado()} busy={false} acao={acao} />)
-    expect(screen.getByText('aguardando conferência')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Conferir/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Gerar remessa/ })).toBeDisabled()
+describe('LoteCard — favorecido autorizado (ADR-0065)', () => {
+  it('OK: selo neutro, sem atalho', async () => {
+    await abrir(lote({ itens: [item({ autorizacaoAviso: 'OK' })] }), '90001')
+    expect(screen.getByText('favorecido autorizado')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /pedir autorização/i })).toBeNull()
   })
 
-  it('quem finalizou não vê "Conferir"', () => {
-    usuario = 'ANA'
-    render(<LoteCard lote={finalizado()} busy={false} acao={acao} />)
-    expect(screen.queryByRole('button', { name: /Conferir/ })).toBeNull()
+  it('não autorizado: aviso e "Pedir autorização" direto com origem ITEM', async () => {
+    ;(pedirAutorizacao as jest.Mock).mockResolvedValue({ id: 'A1' })
+    await abrir(lote({ itens: [item({ autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO' })] }), '90001')
+    expect(screen.getByText(/favorecido não autorizado/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /pedir autorização TED/i }))
+    expect(pedirAutorizacao).toHaveBeenCalledWith({
+      pesCod: '90001',
+      credor: 'FORNECEDOR A',
+      modalidade: 'TED',
+      origem: 'ITEM',
+      filCod: 4,
+    })
+    expect(await screen.findByText('autorização pedida')).toBeInTheDocument()
   })
 
-  it('quem incluiu item não vê "Conferir"', () => {
-    usuario = 'caio'
-    render(
-      <LoteCard lote={finalizado({ itens: [item({ incluidoPor: 'caio' })] })} busy={false} acao={acao} />,
+  it('sem o favorecido conhecido, o atalho leva à tela de autorizações preenchida', async () => {
+    await abrir(lote({ itens: [item({ autorizacaoAviso: 'DESTINO_ALTERADO' })] }))
+    const link = screen.getByRole('link', { name: /pedir autorização TED/i })
+    expect(link.getAttribute('href')).toMatch(
+      /^\/sispag\/favorecidos-autorizados\?pedir=1&modalidade=TED&filCod=4&credor=FORNECEDOR/,
     )
-    expect(screen.queryByRole('button', { name: /Conferir/ })).toBeNull()
   })
 
-  it('sem sispag:conferir não vê "Conferir"', () => {
-    permissoes = CATALOGO_PERMISSOES.filter((p) => p !== 'sispag:conferir')
-    render(<LoteCard lote={finalizado()} busy={false} acao={acao} />)
-    expect(screen.queryByRole('button', { name: /Conferir/ })).toBeNull()
+  it('sem dado no cadastro: orienta pedir ao responsável pelo cadastro do Conexos, sem atalho', async () => {
+    await abrir(lote({ itens: [item({ autorizacaoAviso: 'SEM_DADO_PAGAMENTO' })] }), '90001')
+    expect(screen.getByText(/pedir ao responsável pelo cadastro do Conexos/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /pedir autorização/i })).toBeNull()
   })
 
-  it('conferido: selo e a remessa liberada', () => {
-    render(<LoteCard lote={finalizado({ conferidoPor: 'bia' })} busy={false} acao={acao} />)
-    expect(screen.getByText('conferido')).toBeInTheDocument()
+  it('sem sispag:executar: só o selo, sem atalho (esconder, não desabilitar)', async () => {
+    permissoes = ['sispag:ver']
+    await abrir(lote({ itens: [item({ autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO' })] }), '90001')
+    expect(screen.queryByRole('button', { name: /pedir autorização/i })).toBeNull()
+    expect(screen.queryByRole('link', { name: /pedir autorização/i })).toBeNull()
+  })
+
+  it('mensagem do finalizar lista os retirados com o motivo', () => {
+    expect(mensagemFinalizado([])).toEqual({ titulo: 'Lote finalizado' })
+    const m = mensagemFinalizado([
+      { filCod: 4, docCod: '6173', titCod: '1', credor: 'ACME', motivo: 'SEM_DADO_PAGAMENTO' },
+    ])
+    expect(m.titulo).toBe('Lote finalizado sem 1 item(ns) TED/PIX')
+    expect(m.descricao).toMatch(/6173\/1 \(ACME\) — sem conta\/chave .* pedir ao responsável pelo cadastro do Conexos/)
+  })
+
+  it('lote FINALIZADO com TED/PIX: remessa liberada, sem selo de conferência', () => {
+    render(<LoteCard lote={lote({ status: 'FINALIZADO', finalizadoPor: 'ana' })} busy={false} acao={acao} />)
+    expect(screen.getByRole('button', { name: /Gerar remessa/ })).toBeEnabled()
     expect(screen.queryByRole('button', { name: /^Conferir/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /Gerar remessa/ })).toBeEnabled()
-  })
-
-  it('lote só de boleto não exige conferência', () => {
-    render(
-      <LoteCard
-        lote={finalizado({ exigeConferencia: false, itens: [item({ modalidade: 'BOLETO' })] })}
-        busy={false}
-        acao={acao}
-      />,
-    )
-    expect(screen.queryByText('aguardando conferência')).toBeNull()
-    expect(screen.getByRole('button', { name: /Gerar remessa/ })).toBeEnabled()
-  })
-
-  it('"Conferir" abre a visão do conferente', async () => {
-    render(<LoteCard lote={finalizado()} busy={false} acao={acao} />)
-    await userEvent.click(screen.getByRole('button', { name: /Conferir/ }))
-    const dialogo = await screen.findByRole('dialog')
-    expect(within(dialogo).getByText('Conferir pagamentos TED/PIX')).toBeInTheDocument()
   })
 })

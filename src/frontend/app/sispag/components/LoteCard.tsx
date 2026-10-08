@@ -7,7 +7,6 @@ import {
   Copy,
   Download,
   FileText,
-  Landmark,
   Plus,
   RefreshCcw,
   ShieldCheck,
@@ -57,10 +56,12 @@ import {
   MODALIDADES,
   MODALIDADES_OFERECIDAS,
   type OfertaModalidadesItem,
+  pedirAutorizacao,
   pixPreferido,
+  ROTULO_AVISO_AUTORIZACAO,
+  type ItemRetirado,
   reabrirLote,
   type RecursosSispag,
-  ROTULO_CANAL,
   removerItem,
   rotuloConta,
   STATUS_SINCRONIZAVEIS,
@@ -72,28 +73,23 @@ import {
 } from '@/lib/sispag'
 import { BoletosDoTituloDialog } from './BoletosDoTituloDialog'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
-import { useUsuarioAtual } from '@/lib/auth/AuthProvider'
 import { baixarBlob } from '@/lib/download'
 import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
 import { type AcaoLote, ConfirmarAcaoDialog, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
-import { CadastrarExcecaoDialog } from '../excecoes/components/CadastrarExcecaoDialog'
-import { ConferenciaLoteDialog } from './ConferenciaLoteDialog'
 import { ResolverDuplicidadeDialog } from './ResolverDuplicidadeDialog'
 import { rotuloVencimentoLote } from './loteDoTitulo'
 
 const RECURSOS_DESLIGADOS: RecursosSispag = {
   tedEnabled: false,
-  excecaoDestinoEnabled: false,
   pixEnabled: false,
+  favorecidoAutorizadoEnabled: false,
 }
 
 /**
- * Itens TED/PIX (com a flag da modalidade ligada) cujo destino viria de lugar NENHUM — nem cadastro
- * do Conexos, nem exceção APROVADA. Desde a ADR-0063 (I10b revisado) isto é só AVISO: a escolha de
- * TED/PIX é livre e quem decide é a verificação do finalizar, que retira o item e abre a pendência
- * de cadastro (I13j). O backend é a autoridade.
+ * Itens TED/PIX cujo destino viria de lugar NENHUM no cadastro do Conexos. É só AVISO: quem decide
+ * é a verificação do finalizar, que retira o item (ADR-0065 I13j). O backend é a autoridade.
  */
 function itensSemDestino(
   itens: ItemLote[],
@@ -129,26 +125,12 @@ function ordenarPixPrimeiro<T extends { value: Modalidade }>(opcoes: T[]): T[] {
 const mensagemSemDestino = (itens: ItemLote[]): string =>
   `Sem conta (TED) ou chave PIX no cadastro do Conexos para: ${itens
     .map((i) => `${i.docCod}/${i.titCod}${i.credor ? ` (${i.credor})` : ''}`)
-    .join('; ')}. Ao finalizar, a verificação retira esses itens do lote e abre uma pendência de cadastro. Corrija o cadastro no Conexos, peça uma exceção de destino (aprovada por outra pessoa) ou troque a forma de pagamento.`
-
-/** Mesma pessoa? Comparação sem caixa nem espaço — espelho da regra do backend (I13l). */
-const mesmaPessoa = (a?: string | null, b?: string | null): boolean =>
-  !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
-
-/** Quem montou/finalizou o lote não confere (I13l). A autoridade é o backend; isto só esconde. */
-function participouDoLote(lote: LotePagamento, usuario: string | null): boolean {
-  if (!usuario) return true
-  return (
-    mesmaPessoa(lote.finalizadoPor, usuario) ||
-    lote.itens.some((i) => mesmaPessoa(i.incluidoPor, usuario)) ||
-    (lote.automatico !== true && mesmaPessoa(lote.criadoPor, usuario))
-  )
-}
+    .join('; ')}. Ao finalizar, a verificação retira esses itens do lote. Peça ao responsável pelo cadastro do Conexos para incluir a conta ou a chave, ou troque a forma de pagamento.`
 
 /**
  * Alertas da verificação TED/PIX de um item (ADR-0063) e o estado da verificação. Duplicidade
  * ABERTA barra o finalizar e oferece "Tratar" (só RASCUNHO, para quem executa); justificada mostra
- * o texto; canal habitual é só informativo.
+ * o texto.
  */
 function AlertasDoItem({
   item,
@@ -159,7 +141,7 @@ function AlertasDoItem({
   podeTratar: boolean
   onTratar: (alerta: AlertaItemLote) => void
 }) {
-  const alertas = item.alertas ?? []
+  const alertas = (item.alertas ?? []).filter(ehDuplicidade)
   if (alertas.length === 0 && item.verificacaoEstado !== 'PENDENTE') return null
   const titulo = `${item.docCod}/${item.titCod}`
   return (
@@ -173,8 +155,7 @@ function AlertasDoItem({
           verificação pendente
         </Badge>
       ) : null}
-      {alertas.map((a) =>
-        ehDuplicidade(a) ? (
+      {alertas.map((a) => (
           <div key={a.id} className="flex flex-wrap items-center gap-1">
             <Badge
               variant="outline"
@@ -203,17 +184,7 @@ function AlertasDoItem({
               <span className="w-full text-xs text-muted-foreground">“{a.justificativa}”</span>
             ) : null}
           </div>
-        ) : (
-          <Badge
-            key={a.id}
-            variant="outline"
-            className="w-fit border-info/40 text-info"
-            title="Pelo histórico, este favorecido costuma ser pago por outro canal. Não bloqueia; o conferente vê."
-          >
-            canal habitual: {ROTULO_CANAL[String(a.evidencia.grupoDominante)] ?? '—'}
-          </Badge>
-        ),
-      )}
+        ))}
     </div>
   )
 }
@@ -300,88 +271,120 @@ function SituacaoDoItem({ item }: { item: ItemLote }) {
 }
 
 /**
- * Destino de TED/PIX de um item (ADR-0054, ADR-0061). Mostra a MÁSCARA que veio da oferta do
- * backend: do cadastro do Conexos, ou o selo "exceção" quando o cadastro não tem destino e uma
- * exceção APROVADA assumiu. Sem destino nenhum, "sem destino: aguardando exceção" — com link para
- * a tela de exceções (e atalho de cadastro, em RASCUNHO) só para quem tem `sispag:excecao`. Não
- * há edição de destino no item: nunca recebe nem exibe o valor completo.
+ * Destino e selo do favorecido autorizado de um item TED/PIX (ADR-0065). Mostra só a MÁSCARA do
+ * cadastro do Conexos e o resultado da última verificação (`autorizacaoAviso`): OK neutro, os
+ * demais como aviso. Quem executa tem o atalho "Pedir autorização" (origem ITEM): direto, quando o
+ * favorecido do título é conhecido pela carteira; senão leva à tela de autorizações já preenchida.
+ * Não há edição de destino no item: nunca recebe nem exibe o valor completo.
  */
 function DestinoDoItem({
   item,
   oferta,
   semDestino,
-  podeExcecao,
-  excecaoHabilitada,
+  pesCod,
+  podePedir,
   busy,
-  onCadastrarExcecao,
 }: {
   item: ItemLote
   oferta?: OfertaModalidadesItem
   semDestino: boolean
-  podeExcecao: boolean
-  excecaoHabilitada: boolean
+  pesCod?: string
+  podePedir: boolean
   busy: boolean
-  /** Atalho "cadastrar exceção para este favorecido": só em RASCUNHO e para quem tem a permissão. */
-  onCadastrarExcecao?: () => void
 }) {
+  const [pedindo, setPedindo] = React.useState(false)
+  const [pedido, setPedido] = React.useState(false)
   const modalidade = item.modalidade === 'TED' || item.modalidade === 'PIX' ? item.modalidade : null
-  const doItem = modalidade ? oferta?.destinos?.[modalidade] : undefined
+  if (!modalidade) return null
+  const doItem = oferta?.destinos?.[modalidade]
+  const mascara = item.destinoMascarado ?? (doItem?.origem === 'CADASTRO' ? doItem.destinoMascarado : undefined)
+  const aviso = item.autorizacaoAviso
   const titulo = `${item.docCod}/${item.titCod}`
+  const cabePedir =
+    podePedir && !pedido && (aviso === 'FAVORECIDO_NAO_AUTORIZADO' || aviso === 'DESTINO_ALTERADO')
+
+  async function pedir() {
+    if (!pesCod || !modalidade) return
+    setPedindo(true)
+    try {
+      await pedirAutorizacao({
+        pesCod,
+        ...(item.credor ? { credor: item.credor } : {}),
+        modalidade,
+        origem: 'ITEM',
+        filCod: item.filCod,
+      })
+      setPedido(true)
+      toast.success('Autorização pedida: aguarda a aprovação de outra pessoa')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Não foi possível pedir a autorização.')
+    } finally {
+      setPedindo(false)
+    }
+  }
+
+  const linkPreenchido = `/sispag/favorecidos-autorizados?${new URLSearchParams({
+    pedir: '1',
+    modalidade,
+    filCod: String(item.filCod),
+    ...(item.credor ? { credor: item.credor } : {}),
+  }).toString()}`
+
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {doItem?.origem === 'EXCECAO' ? (
-        <>
-          <Badge
-            variant="outline"
-            className="border-warning/40 text-warning"
-            title="O cadastro do Conexos não tem destino: vale a exceção aprovada por outra pessoa."
-          >
-            exceção
-          </Badge>
-          {doItem.destinoMascarado ? (
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {doItem.destinoMascarado}
-            </span>
-          ) : null}
-        </>
-      ) : doItem?.origem === 'CADASTRO' && doItem.destinoMascarado ? (
-        <span className="text-xs tabular-nums text-muted-foreground">
-          cadastro: {doItem.destinoMascarado}
-        </span>
+      {mascara ? (
+        <span className="text-xs tabular-nums text-muted-foreground">cadastro: {mascara}</span>
       ) : null}
-      {semDestino ? (
-        <>
-          <span className="text-xs text-warning">
-            sem conta/chave no cadastro: sai do lote ao finalizar
-          </span>
-          {podeExcecao && excecaoHabilitada ? (
-            <Link
-              href="/sispag/excecoes"
-              className="text-xs underline underline-offset-2"
-              aria-label={`Abrir exceções de destino (título ${titulo})`}
-            >
-              ver exceções
-            </Link>
-          ) : null}
-          {podeExcecao && excecaoHabilitada && onCadastrarExcecao ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs"
-              disabled={busy}
-              onClick={onCadastrarExcecao}
-              aria-label={`Cadastrar exceção de destino para o favorecido do título ${titulo}`}
-            >
-              <Landmark className="size-3" aria-hidden />
-              Cadastrar exceção
-            </Button>
-          ) : null}
-        </>
+      {aviso ? (
+        <Badge
+          variant="outline"
+          className={aviso === 'OK' ? 'text-muted-foreground' : 'border-warning/40 text-warning'}
+        >
+          {pedido ? 'autorização pedida' : ROTULO_AVISO_AUTORIZACAO[aviso]}
+        </Badge>
+      ) : semDestino ? (
+        <span className="text-xs text-warning">{ROTULO_AVISO_AUTORIZACAO.SEM_DADO_PAGAMENTO}</span>
+      ) : null}
+      {cabePedir ? (
+        pesCod ? (
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            className="h-auto p-0 text-xs"
+            disabled={busy || pedindo}
+            onClick={() => void pedir()}
+            aria-label={`Pedir autorização ${modalidade} para o favorecido do título ${titulo}`}
+          >
+            Pedir autorização
+          </Button>
+        ) : (
+          <Link
+            href={linkPreenchido}
+            className="text-xs underline underline-offset-2"
+            aria-label={`Pedir autorização ${modalidade} para o favorecido do título ${titulo}`}
+          >
+            Pedir autorização
+          </Link>
+        )
       ) : null}
     </div>
   )
 }
+
+/** Texto do toast do finalizar: os itens que a verificação retirou e o motivo (ADR-0065 L3). */
+export const mensagemFinalizado = (retirados: ItemRetirado[]): { titulo: string; descricao?: string } =>
+  retirados.length === 0
+    ? { titulo: 'Lote finalizado' }
+    : {
+        titulo: `Lote finalizado sem ${retirados.length} item(ns) TED/PIX`,
+        descricao: `Retirados pela verificação do favorecido autorizado: ${retirados
+          .map(
+            (r) =>
+              `${r.docCod}/${r.titCod}${r.credor ? ` (${r.credor})` : ''} — ${ROTULO_AVISO_AUTORIZACAO[r.motivo]}`,
+          )
+          .join('; ')}.`,
+      }
 
 /** Card de lote (colapsável): resumo sempre visível; os títulos expandem sob demanda. */
 export function LoteCard({
@@ -392,6 +395,7 @@ export function LoteCard({
   destacado = false,
   selecionado = false,
   onSelecionar,
+  pesCodDoItem,
 }: {
   lote: LotePagamento
   busy: boolean
@@ -406,6 +410,11 @@ export function LoteCard({
   selecionado?: boolean
   /** Presente = o card mostra a caixa de seleção (só em lote com remessa gerada). */
   onSelecionar?: (lote: LotePagamento, marcado: boolean) => void
+  /**
+   * Favorecido (`pesCod`) do título, pela carteira do painel — o item do lote não o carrega. Sem
+   * ele, o atalho "Pedir autorização" leva à tela de autorizações já preenchida.
+   */
+  pesCodDoItem?: (item: ItemLote) => string | undefined
 }) {
   const [aberto, setAberto] = React.useState(false)
   // ADR-0053: toda ação do lote exige `sispag:executar`. Sem ela (ou enquanto carrega), as ações
@@ -415,17 +424,10 @@ export function LoteCard({
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
-  // ADR-0061: exceção de destino é permissão própria (cadastrar, aprovar, rejeitar, revogar).
-  const podeExcecao = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXCECAO)
-  // ADR-0063: conferência por 2ª pessoa. Escondida de quem montou/finalizou (o backend recusa).
-  const usuario = useUsuarioAtual()
-  const podeConferir =
-    !carregandoPermissoes && tem(PERMISSAO.SISPAG_CONFERIR) && !participouDoLote(l, usuario)
-  const [conferindo, setConferindo] = React.useState(false)
   const [tratando, setTratando] = React.useState<{ item: ItemLote; alerta: AlertaItemLote } | null>(
     null,
   )
-  // ADR-0054/0061: flags de TED/PIX/exceção de destino. Desligadas (default e em falha) = tela de antes.
+  // ADR-0054/0065: TED/PIX oferecidos. Desligados (default e em falha) = tela de antes.
   const [recursos, setRecursos] = React.useState<RecursosSispag>(RECURSOS_DESLIGADOS)
   React.useEffect(() => {
     let vivo = true
@@ -436,7 +438,6 @@ export function LoteCard({
       vivo = false
     }
   }, [])
-  const [excecaoDe, setExcecaoDe] = React.useState<ItemLote | null>(null)
   // Título BOLETO sem DDA associado cujos boletos DDA a analista quer conferir.
   const [tituloDda, setTituloDda] = React.useState<TituloSemBoleto | null>(null)
   // "Gerar remessa" abre a confirmação com a data de débito (ADR-0049) em vez de chamar a API.
@@ -444,7 +445,11 @@ export function LoteCard({
   // As demais transições também passam por uma confirmação que nomeia o lote.
   const [confirmando, setConfirmando] = React.useState<AcaoLote | null>(null)
   const executar: Record<AcaoLote, () => void> = {
-    finalizar: () => acao(() => finalizarLote(l.id, l.versao), 'Lote finalizado'),
+    finalizar: () =>
+      acao(
+        () => finalizarLote(l.id, l.versao),
+        (r) => mensagemFinalizado((r as { retirados?: ItemRetirado[] }).retirados ?? []),
+      ),
     cancelar: () => acao(() => cancelarLote(l.id, l.versao), 'Lote cancelado'),
     reabrir: () => acao(() => reabrirLote(l.id, l.versao), 'Lote reaberto'),
   }
@@ -470,7 +475,6 @@ export function LoteCard({
   const vencimento = l.status === 'RASCUNHO' ? rotuloVencimentoLote(l.itens) : undefined
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
-  const aguardandoConferencia = isFinalizado && l.exigeConferencia === true && !l.conferidoPor
   // ADR-0055: depois da remessa, o lote acompanha a baixa dos títulos no Conexos.
   const sincronizavel = STATUS_SINCRONIZAVEIS.includes(l.status)
   const comRemessa = temRemessa(l)
@@ -597,19 +601,6 @@ export function LoteCard({
             }`}
           />
           <StatusLoteBadge status={l.status} />
-          {aguardandoConferencia ? (
-            <Badge
-              variant="outline"
-              className="border-warning/40 text-warning"
-              title="Lote com TED/PIX: a remessa só sai depois da conferência por uma segunda pessoa."
-            >
-              aguardando conferência
-            </Badge>
-          ) : isFinalizado && l.conferidoPor ? (
-            <Badge variant="outline" className="border-success/40 text-success">
-              conferido
-            </Badge>
-          ) : null}
           {l.automatico ? (
             <Badge
               variant="outline"
@@ -651,7 +642,7 @@ export function LoteCard({
                 title={
                   faltaModalidade
                     ? 'Defina a forma de pagamento de todos os títulos antes de finalizar.'
-                    : 'Verifica os itens TED/PIX (duplicidade, canal e dados de pagamento) e finaliza.'
+                    : 'Verifica os itens TED/PIX (duplicidade e favorecido autorizado), retira os não autorizados e finaliza.'
                 }
                 onClick={() => setConfirmando('finalizar')}
               >
@@ -671,12 +662,9 @@ export function LoteCard({
             <>
               <Button
                 size="sm"
-                disabled={busy || aguardandoConferencia}
-                title={
-                  aguardandoConferencia
-                    ? 'Lote com TED/PIX: aguarde a conferência por uma segunda pessoa antes de gerar a remessa.'
-                    : 'Escolha a data de débito; depois cria o lote no Conexos, importa os títulos, finaliza e gera o arquivo .REM.'
-                }
+                disabled={busy}
+                title="Escolha a data de débito; depois cria o lote no Conexos, importa os títulos, finaliza e gera o arquivo .REM."
+
                 onClick={() => setGerandoRemessa(true)}
               >
                 <FileText className="size-4" /> Gerar remessa (.REM)
@@ -700,29 +688,6 @@ export function LoteCard({
               </Button>
             </>
           ) : null}
-          {aguardandoConferencia && podeConferir ? (
-            <Button
-              size="sm"
-              disabled={busy}
-              title="Conferir os pagamentos TED/PIX deste lote (segunda pessoa)."
-              onClick={() => setConferindo(true)}
-            >
-              <ShieldCheck className="size-4" aria-hidden /> Conferir
-            </Button>
-          ) : null}
-          {conferindo ? (
-            <ConferenciaLoteDialog
-              lote={l}
-              onOpenChange={setConferindo}
-              onConcluida={(atualizado, resultado) => {
-                setConferindo(false)
-                acao(
-                  async () => atualizado,
-                  resultado === 'conferido' ? 'Lote conferido' : 'Lote devolvido à analista',
-                )
-              }}
-            />
-          ) : null}
           {tratando ? (
             <ResolverDuplicidadeDialog
               lote={l}
@@ -743,26 +708,6 @@ export function LoteCard({
             />
           ) : null}
           <BoletosDoTituloDialog titulo={tituloDda} onClose={() => setTituloDda(null)} />
-          {excecaoDe ? (
-            <CadastrarExcecaoDialog
-              favorecido={{
-                filCod: excecaoDe.filCod,
-                docCod: excecaoDe.docCod,
-                titCod: excecaoDe.titCod,
-                ...(excecaoDe.credor ? { credor: excecaoDe.credor } : {}),
-              }}
-              tedEnabled={recursos.tedEnabled}
-              pixEnabled={recursos.pixEnabled}
-              preferirPix={pixPreferido(oferta?.get(`${excecaoDe.docCod}:${excecaoDe.titCod}`))}
-              onOpenChange={(open) => {
-                if (!open) setExcecaoDe(null)
-              }}
-              onCadastrada={() => {
-                setExcecaoDe(null)
-                toast.success('Exceção cadastrada: aguarda a aprovação de outra pessoa')
-              }}
-            />
-          ) : null}
           {confirmando ? (
             <ConfirmarAcaoLoteDialog
               lote={l}
@@ -958,17 +903,14 @@ export function LoteCard({
                                 Ver boletos DDA
                               </Button>
                             ) : null}
-                            {recursos.tedEnabled || recursos.pixEnabled ? (
-                              <DestinoDoItem
-                                item={i}
-                                oferta={ofertaDoItem}
-                                semDestino={semDestinoChaves.has(`${i.docCod}:${i.titCod}`)}
-                                podeExcecao={podeExcecao}
-                                excecaoHabilitada={recursos.excecaoDestinoEnabled}
-                                busy={busy}
-                                onCadastrarExcecao={() => setExcecaoDe(i)}
-                              />
-                            ) : null}
+                            <DestinoDoItem
+                              item={i}
+                              oferta={ofertaDoItem}
+                              semDestino={semDestinoChaves.has(`${i.docCod}:${i.titCod}`)}
+                              {...(pesCodDoItem?.(i) ? { pesCod: pesCodDoItem(i) } : {})}
+                              podePedir={podeExecutar}
+                              busy={busy}
+                            />
                             <AlertasDoItem
                               item={i}
                               podeTratar={podeExecutar && !busy}
@@ -980,17 +922,12 @@ export function LoteCard({
                             <span className="text-xs text-muted-foreground">
                               {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
                             </span>
-                            {recursos.excecaoDestinoEnabled &&
-                            (i.modalidade === 'TED' || i.modalidade === 'PIX') ? (
-                              <DestinoDoItem
-                                item={i}
-                                oferta={oferta?.get(`${i.docCod}:${i.titCod}`)}
-                                semDestino={false}
-                                podeExcecao={podeExcecao}
-                                excecaoHabilitada={recursos.excecaoDestinoEnabled}
-                                busy={busy}
-                              />
-                            ) : null}
+                            <DestinoDoItem
+                              item={i}
+                              semDestino={false}
+                              podePedir={false}
+                              busy={busy}
+                            />
                             {i.modalidade === 'BOLETO' &&
                             linhas.get(`${i.docCod}:${i.titCod}`) ? (
                               <Button
@@ -1115,34 +1052,11 @@ export function LoteCard({
               </p>
             </div>
           ) : null}
-          {isRascunho && l.motivoDevolucao ? (
-            <div
-              role="status"
-              className="mt-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning-subtle px-4 py-3 text-sm text-warning-foreground"
-            >
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <p>
-                Devolvido na conferência por {l.devolvidoPor ?? '—'}
-                {l.devolvidoEm ? ` em ${new Date(l.devolvidoEm).toLocaleString('pt-BR')}` : ''}:{' '}
-                {l.motivoDevolucao}
-              </p>
-            </div>
-          ) : null}
-          {l.conferidoPor ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Conferido por {l.conferidoPor}
-              {l.conferidoEm ? ` em ${new Date(l.conferidoEm).toLocaleString('pt-BR')}` : ''}.
-            </p>
-          ) : null}
           {l.finalizadoPor ? (
             <p className="mt-2 text-xs text-muted-foreground">
               Finalizado por {l.finalizadoPor}
               {l.finalizadoEm ? ` em ${new Date(l.finalizadoEm).toLocaleString('pt-BR')}` : ''}.
-              {aguardandoConferencia
-                ? ' Aguardando a conferência por uma segunda pessoa.'
-                : isFinalizado
-                  ? ' Aguardando a geração da remessa.'
-                  : ''}
+              {isFinalizado ? ' Aguardando a geração da remessa.' : ''}
               {isRetornado ? ' O banco rejeitou ao menos um título.' : ''}
             </p>
           ) : null}
