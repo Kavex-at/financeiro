@@ -7,8 +7,6 @@ import {
     CHAVE_PIX_TIPO,
     type ChavePixTipo,
     type ContaFavorecido,
-    DESTINO_MANUAL_TIPO,
-    type DestinoManual,
 } from '../../interface/sispag/SispagInterface.js';
 
 /** Rótulo curto do tipo de chave, em português (é o que a analista lê na tela). */
@@ -91,16 +89,6 @@ export default class MaskDestino {
         const ag = params.agencia ? ` · ag. ${params.agencia}` : '';
         return `banco ${banco}${ag} · cc ${this.conta(params.conta, params.dv)}`;
     };
-
-    public destinoManual = (destino: DestinoManual): string =>
-        destino.tipo === DESTINO_MANUAL_TIPO.CONTA
-            ? this.contaBancaria({
-                  banco: destino.bancoCod,
-                  agencia: destino.agencia,
-                  conta: destino.conta,
-                  dv: destino.contaDv,
-              })
-            : this.chavePixRotulada(destino.chavePixTipo, destino.chavePix);
 
     /**
      * I14l — o destino que o resolvedor escolheu, na forma do favorecido autorizado: TED com banco e
