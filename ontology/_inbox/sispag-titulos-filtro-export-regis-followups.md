@@ -6,8 +6,8 @@
 
 | Card | Prioridade | Esforço | Finding |
 |---|---|---|---|
-| availability-1 (+ performance-1) | P2 | S | Log do export sem `durationMs`; leituras sem `statement_timeout` (pool compartilhado com remessa/lote). |
-| security-1 | P2 | S | Log dos 2 exports SISPAG sem `userId`: extração de credores/valores/bancos não atribuível. Fazer junto com availability-1 (mesmas linhas). |
+| availability-1 (+ performance-1) | P2 | S | ~~Log do export sem `durationMs`~~ **feito no PR #111** (os 2 exports). Pendente: leituras sem `statement_timeout` (pool compartilhado com remessa/lote). |
+| security-1 | P2 | S | ✅ **Feito no PR #111** a pedido do usuário: os 2 exports SISPAG logam `ator` (username) e `userId`. |
 | modifiability-1 (+ integrability-2) | P2 | S | Teto de 5000 em 3 cópias (`TITULOS_CAP`, `MAX_TITULOS_EXPORT` BE e FE) sem fonte única nem teste de paridade. |
 | testability-1 | P2 | S | `PlanilhaXlsxWriter` (2 consumidores) sem teste direto: 0 → 3 casos. |
 | modifiability-2 | P2 | L | `routes/sispag.ts` 1257 LOC e `app/sispag/page.tsx` 1475 LOC (alvo 600): Split Module incremental no próximo tweak em SISPAG. |

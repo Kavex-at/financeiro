@@ -30,7 +30,10 @@ import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetor
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
-import { MAX_LOTES_EXPORT } from '../domain/interface/sispag/RemessaTitulosExport.js';
+import {
+    type ContextoExport,
+    MAX_LOTES_EXPORT,
+} from '../domain/interface/sispag/RemessaTitulosExport.js';
 import TitulosAPagarExportService from '../domain/service/sispag/TitulosAPagarExportService.js';
 import { MAX_TITULOS_EXPORT } from '../domain/interface/sispag/TitulosAPagarExport.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
@@ -1096,6 +1099,12 @@ router.get(
 // `GET /sispag/lotes` já mostra (sem destino do favorecido) → `SISPAG_VER`. POST porque leva
 // uma lista de ids; o teto evita uma planilha gigante segurando o processo.
 const CONTENT_TYPE_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+/** Quem pediu o export: vai para o log — a planilha expõe credores, valores e bancos. */
+const contextoExport = (req: Request): ContextoExport => ({
+    requestId: req.requestId,
+    ator: ator(req),
+    ...(req.acesso ? { userId: req.acesso.userId } : {}),
+});
 const exportarTitulosSchema = z.object({
     loteIds: z.array(z.string().uuid()).min(1).max(MAX_LOTES_EXPORT),
 });
@@ -1115,7 +1124,10 @@ router.post(
         }
         const service = container.resolve(RemessaTitulosExportService);
         try {
-            const { filename, buffer } = await service.exportar(parsed.data.loteIds, req.requestId);
+            const { filename, buffer } = await service.exportar(
+                parsed.data.loteIds,
+                contextoExport(req),
+            );
             res.setHeader('Content-Type', CONTENT_TYPE_XLSX);
             res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
             res.send(buffer);
@@ -1159,7 +1171,10 @@ router.post(
             return;
         }
         const service = container.resolve(TitulosAPagarExportService);
-        const { filename, buffer } = await service.exportar(parsed.data.chaves, req.requestId);
+        const { filename, buffer } = await service.exportar(
+            parsed.data.chaves,
+            contextoExport(req),
+        );
         res.setHeader('Content-Type', CONTENT_TYPE_XLSX);
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.send(buffer);

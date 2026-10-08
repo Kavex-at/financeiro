@@ -1,11 +1,24 @@
 import 'reflect-metadata';
 import ExcelJS from 'exceljs';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import type Clock from '../../libs/clock/Clock.js';
 import PlanilhaXlsxWriter from '../../libs/xlsx/PlanilhaXlsxWriter.js';
 import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type LogService from '../LogService.js';
 import RemessaTitulosExportService from './RemessaTitulosExportService.js';
+
+/** Relógio que anda 125 ms a cada leitura: início → fim do export = 125 ms. */
+const relogio = () => {
+    let t = 1_000;
+    return {
+        now: () => {
+            const agora = t;
+            t += 125;
+            return agora;
+        },
+    } as unknown as Clock;
+};
 
 const item = (over: Partial<LotePagamento['itens'][number]> = {}) => ({
     loteId: 'L1',
@@ -47,6 +60,7 @@ const make = (lotes: LotePagamento[]) => {
         log as unknown as LogService,
         calendar,
         new PlanilhaXlsxWriter(),
+        relogio(),
     );
     return { service, repo, log };
 };
@@ -161,7 +175,11 @@ describe('RemessaTitulosExportService', () => {
 
     it('exportar: busca pelos ids, gera xlsx legível com cabeçalho, linhas e totais', async () => {
         const { service, repo, log } = make([loteRemessa()]);
-        const { filename, buffer } = await service.exportar(['L1'], 'req-1');
+        const { filename, buffer } = await service.exportar(['L1'], {
+            requestId: 'req-1',
+            ator: 'ana.silva',
+            userId: 42,
+        });
         expect(repo.listLotesPorIds).toHaveBeenCalledWith(['L1']);
         // Uma remessa só: o arquivo leva o nome da remessa, para a analista achar depois.
         expect(filename).toBe('sispag-titulos-PG061001-2026-10-06.xlsx');
@@ -171,20 +189,39 @@ describe('RemessaTitulosExportService', () => {
         expect(sheet?.getRow(1).getCell(1).value).toBe('Lote');
         expect(sheet?.rowCount).toBe(4); // cabeçalho + 2 títulos + totais
         expect(log.info).toHaveBeenCalledWith(
-            expect.objectContaining({ data: expect.objectContaining({ lotes: 1, titulos: 2 }) }),
+            expect.objectContaining({
+                data: {
+                    requestId: 'req-1',
+                    ator: 'ana.silva',
+                    userId: 42,
+                    lotes: 1,
+                    titulos: 2,
+                    durationMs: 125,
+                },
+            }),
         );
     });
 
     it('várias remessas: nome genérico com a data de hoje (BRT)', async () => {
         const lotes = [loteRemessa(), loteRemessa({ id: 'L2', remessaArquivo: 'PG061002.REM' })];
         const { service } = make(lotes);
-        const { filename } = await service.exportar(['L1', 'L2'], 'req-1');
+        const { filename } = await service.exportar(['L1', 'L2'], {
+            requestId: 'req-1',
+            ator: 'ana.silva',
+            userId: 42,
+        });
         expect(filename).toBe('sispag-titulos-remessas-2026-10-06.xlsx');
     });
 
     it('recusa o pedido inteiro com lote inexistente ou sem remessa (nada sai pela metade)', async () => {
         const { service } = make([loteRemessa(), loteRemessa({ id: 'L2', status: 'FINALIZADO' })]);
-        await expect(service.exportar(['L1', 'L2', 'L3'], 'req-1')).rejects.toMatchObject({
+        await expect(
+            service.exportar(['L1', 'L2', 'L3'], {
+                requestId: 'req-1',
+                ator: 'ana.silva',
+                userId: 42,
+            }),
+        ).rejects.toMatchObject({
             code: 'EXPORT_REMESSA_INVALIDO',
             statusCode: 422,
             details: { inexistentes: ['L3'], semRemessa: ['L2'] },
@@ -193,7 +230,7 @@ describe('RemessaTitulosExportService', () => {
 
     it('ids repetidos contam uma vez', async () => {
         const { service, repo } = make([loteRemessa()]);
-        await service.exportar(['L1', 'L1'], 'req-1');
+        await service.exportar(['L1', 'L1'], { requestId: 'req-1', ator: 'ana.silva', userId: 42 });
         expect(repo.listLotesPorIds).toHaveBeenCalledWith(['L1']);
     });
 });

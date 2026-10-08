@@ -18,6 +18,18 @@ export const STATUS_COM_REMESSA: readonly LotePagamentoStatus[] = [
     'BAIXADO',
 ];
 
+/**
+ * Quem pediu o export — vai para o log `BUSINESS_INFO` de todo export SISPAG. A planilha expõe
+ * credores, valores e bancos: o log tem de responder "quem extraiu isto" sem cruzar com o access log.
+ */
+export interface ContextoExport {
+    requestId: string;
+    /** `req.user.sub` = `app_user.username` (ADR-0057) — o mesmo ator das trilhas de lote. */
+    ator: string;
+    /** `app_user.id` resolvido pelo `resolverAcesso`. */
+    userId?: number;
+}
+
 /** Valor de célula. `Date` vira data do Excel (UTC, sem fuso); `null` vira célula em branco. */
 export type CelulaExport = string | number | Date | null;
 

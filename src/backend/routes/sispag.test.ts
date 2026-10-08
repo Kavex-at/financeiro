@@ -940,7 +940,11 @@ describe('POST /sispag/remessas/titulos/exportar', () => {
             expect(res.headers.get('content-disposition')).toContain(
                 'sispag-titulos-PG240801-2026-10-06.xlsx',
             );
-            expect(exportar).toHaveBeenCalledWith([ID], expect.anything());
+            // Quem exportou vai para o log do serviço: o ator é o usuário autenticado.
+            expect(exportar).toHaveBeenCalledWith(
+                [ID],
+                expect.objectContaining({ ator: 'user-abc', userId: 1 }),
+            );
         });
     });
 
@@ -1001,7 +1005,7 @@ describe('POST /sispag/titulos/exportar', () => {
             );
             expect(exportar).toHaveBeenCalledWith(
                 [{ ...CHAVE, docCod: '802' }, CHAVE],
-                expect.anything(),
+                expect.objectContaining({ ator: 'user-abc', userId: 1 }),
             );
         });
     });
