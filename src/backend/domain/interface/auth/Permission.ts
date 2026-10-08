@@ -16,23 +16,12 @@ export const PERMISSION = {
     SISPAG_VER: 'sispag:ver',
     SISPAG_EXECUTAR: 'sispag:executar',
     /**
-     * Exceção de destino de pagamento (ADR-0061, 0075): cadastrar, aprovar, rejeitar e revogar.
-     * Permissão ÚNICA; a separação de funções é a regra "aprovador ≠ cadastrante" no backend
-     * (I12b), não uma segunda permissão. Substitui `sispag:aprovar_destino` (ADR-0054 D10).
-     * Avulsa: não implica nem é implicada por `sispag:ver`/`sispag:executar`.
+     * Aprovar, rejeitar, revogar e revelar o destino de um favorecido autorizado a receber TED/PIX
+     * (ADR-0065, migration 0080). Converte a antiga `sispag:excecao`. Pedir a autorização é
+     * `sispag:executar`; a separação de funções (aprovador ≠ quem pediu) é regra do backend (I14c),
+     * não uma segunda permissão. Avulsa: não implica nem é implicada por `sispag:ver`/`executar`.
      */
-    SISPAG_EXCECAO: 'sispag:excecao',
-    /**
-     * Conferência por segunda pessoa do lote com TED/PIX (ADR-0063, I13l): `conferirLote` (L12) e
-     * `devolverLote` (L13). Avulsa: não implica nem é implicada por `sispag:ver`/`sispag:executar`.
-     * A separação de funções (conferente ≠ quem finalizou/incluiu/montou) é regra do backend.
-     */
-    SISPAG_CONFERIR: 'sispag:conferir',
-    /**
-     * Fila "Pendências de cadastro" (ADR-0063, I13k): quem corrige conta/chave PIX no cadastro do
-     * Conexos. Avulsa. Só leitura no nosso sistema: a correção é feita no ERP.
-     */
-    SISPAG_CADASTRO: 'sispag:cadastro',
+    SISPAG_AUTORIZAR_FAVORECIDO: 'sispag:autorizar_favorecido',
     RECEBIMENTOS_VER: 'recebimentos:ver',
     RECEBIMENTOS_EXECUTAR: 'recebimentos:executar',
     OPERACAO_VER: 'operacao:ver',
@@ -48,9 +37,7 @@ export const PERMISSION_CATALOG: readonly Permission[] = [
     PERMISSION.PERMUTAS_EXECUTAR,
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
-    PERMISSION.SISPAG_EXCECAO,
-    PERMISSION.SISPAG_CONFERIR,
-    PERMISSION.SISPAG_CADASTRO,
+    PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
@@ -64,9 +51,7 @@ export const permissionSchema = z.enum([
     PERMISSION.PERMUTAS_EXECUTAR,
     PERMISSION.SISPAG_VER,
     PERMISSION.SISPAG_EXECUTAR,
-    PERMISSION.SISPAG_EXCECAO,
-    PERMISSION.SISPAG_CONFERIR,
-    PERMISSION.SISPAG_CADASTRO,
+    PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO,
     PERMISSION.RECEBIMENTOS_VER,
     PERMISSION.RECEBIMENTOS_EXECUTAR,
     PERMISSION.OPERACAO_VER,
@@ -115,7 +100,7 @@ export interface RoleRef {
     nome: string;
 }
 
-/** Nome do papel semeado pela 0066 (nove permissões; a 0068 acrescentou a décima, `sispag:aprovar_destino`, que a 0075 trocou por `sispag:excecao`). */
+/** Nome do papel semeado pela 0066 (nove permissões; a 0068 acrescentou a décima, `sispag:aprovar_destino`, que a 0075 trocou por `sispag:excecao` e a 0080 por `sispag:autorizar_favorecido`). */
 export const ADMIN_ROLE_NAME = 'Administrador';
 
 /** `true` quando o valor é uma permissão do catálogo. */

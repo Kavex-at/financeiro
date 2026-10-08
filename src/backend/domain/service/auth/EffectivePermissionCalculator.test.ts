@@ -24,7 +24,7 @@ const efetivas = (pacote: string[], excecoes: PermissionException[] = []): strin
     [...calc.calcular(pacote, excecoes).permissoes].sort();
 
 describe('catálogo de permissões', () => {
-    it('tem exatamente as permissões decididas (nove da entrevista + sispag:excecao do ADR-0061 + sispag:conferir e sispag:cadastro do ADR-0063; mudar o catálogo exige mudar este teste)', () => {
+    it('tem exatamente as permissões decididas (nove da entrevista + sispag:autorizar_favorecido do ADR-0065; mudar o catálogo exige mudar este teste)', () => {
         expect([...PERMISSION_CATALOG].sort()).toEqual(
             [
                 'metricas:ver',
@@ -33,9 +33,7 @@ describe('catálogo de permissões', () => {
                 'permutas:ver',
                 'recebimentos:executar',
                 'recebimentos:ver',
-                'sispag:cadastro',
-                'sispag:conferir',
-                'sispag:excecao',
+                'sispag:autorizar_favorecido',
                 'sispag:executar',
                 'sispag:ver',
                 'usuarios:gerenciar',
@@ -43,15 +41,21 @@ describe('catálogo de permissões', () => {
         );
     });
 
-    it('não expõe mais sispag:aprovar_destino (ADR-0061 substituiu pela permissão única)', () => {
-        expect(PERMISSION_CATALOG as readonly string[]).not.toContain('sispag:aprovar_destino');
-        expect(PERMISSION.SISPAG_EXCECAO).toBe('sispag:excecao');
+    it('não expõe mais aprovar_destino, excecao, conferir nem cadastro (ADR-0061/0065)', () => {
+        for (const antiga of [
+            'sispag:aprovar_destino',
+            'sispag:excecao',
+            'sispag:conferir',
+            'sispag:cadastro',
+        ]) {
+            expect(PERMISSION_CATALOG as readonly string[]).not.toContain(antiga);
+        }
+        expect(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO).toBe('sispag:autorizar_favorecido');
     });
 
-    it('sispag:conferir e sispag:cadastro são avulsas: não implicam nem são implicadas (ADR-0063)', () => {
+    it('sispag:autorizar_favorecido é avulsa: não implica nem é implicada (ADR-0065)', () => {
         const pares = Object.entries(PERMISSION_IMPLIES).flat();
-        expect(pares).not.toContain(PERMISSION.SISPAG_CONFERIR);
-        expect(pares).not.toContain(PERMISSION.SISPAG_CADASTRO);
+        expect(pares).not.toContain(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO);
     });
 
     it('as constantes nomeadas são o próprio catálogo, sem sobra', () => {
@@ -97,7 +101,7 @@ describe('EffectivePermissionCalculator.calcular — fecho(pacote ∪ concedidas
         expect(efetivas([...PERMISSION_CATALOG])).toEqual([...PERMISSION_CATALOG].sort());
     });
 
-    describe('sispag:excecao (ADR-0061)', () => {
+    describe('sispag:autorizar_favorecido (ADR-0065)', () => {
         const ADMINISTRADOR = [...PERMISSION_CATALOG];
         const ANALISTA = [
             'permutas:ver',
@@ -108,16 +112,16 @@ describe('EffectivePermissionCalculator.calcular — fecho(pacote ∪ concedidas
         ];
 
         it('o Administrador tem', () => {
-            expect(efetivas(ADMINISTRADOR)).toContain(PERMISSION.SISPAG_EXCECAO);
+            expect(efetivas(ADMINISTRADOR)).toContain(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO);
         });
 
         it('o Analista não tem', () => {
-            expect(efetivas(ANALISTA)).not.toContain(PERMISSION.SISPAG_EXCECAO);
+            expect(efetivas(ANALISTA)).not.toContain(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO);
         });
 
         it('exceção por usuário conceder dá a permissão ao Analista, sem arrastar executar', () => {
-            const out = efetivas(ANALISTA, [conceder(PERMISSION.SISPAG_EXCECAO)]);
-            expect(out).toContain(PERMISSION.SISPAG_EXCECAO);
+            const out = efetivas(ANALISTA, [conceder(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO)]);
+            expect(out).toContain(PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO);
             expect(out).not.toContain(PERMISSION.SISPAG_EXECUTAR);
         });
     });

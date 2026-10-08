@@ -182,16 +182,27 @@ export default class EnvironmentVars {
      * - `sispagTedEnabled` (`SISPAG_TED_ENABLED`): TED sai como `itsVldModalidade = 5`, para
      *   conta ativa do favorecido em QUALQUER banco (I10c), e a oferta usa o mesmo resolver do
      *   envio (I10b). Desligado: regra antiga (conta no banco do lote, modalidade 1).
-     * - `sispagExcecaoDestinoEnabled` (`SISPAG_EXCECAO_DESTINO_ENABLED`, com o nome antigo
-     *   `SISPAG_DESTINO_MANUAL_ENABLED` aceito como alias por um ciclo de deploy; ADR-0061): a
-     *   exceção de destino aprovada vale como fallback do cadastro do Conexos. Desligado: as rotas
-     *   de exceção recusam e nenhuma exceção resolve (paridade com o `main`).
      * - `sispagPixEnabled` (`SISPAG_PIX_ENABLED`): PIX pela chave do `cmn025/cmnPessoasPix` ou
      *   digitada (I10d). Desligado: PIX nunca resolve por chave.
+     *
+     * Nenhuma das duas é OFERECIDA sem `sispagFavorecidoAutorizadoEnabled` (ADR-0065 I14k).
      */
     public sispagTedEnabled: boolean;
-    public sispagExcecaoDestinoEnabled: boolean;
     public sispagPixEnabled: boolean;
+    /**
+     * Favorecido autorizado (ADR-0065). `sispagFavorecidoAutorizadoEnabled`
+     * (`SISPAG_FAVORECIDO_AUTORIZADO_ENABLED`, default **false**): sem ela TED/PIX não são
+     * oferecidos nem aceitos (I14k). Já vem RESOLVIDA: flag ligada sem segredo válido
+     * (`SISPAG_FAVORECIDO_FINGERPRINT_KEY` ausente ou com menos de 32 bytes) resolve `false` —
+     * falha fechada, nunca TED/PIX sem a guarda.
+     *
+     * `sispagFavorecidoFingerprintKey` é SEGREDO (HMAC do destino, I14b): nunca em log, nunca em
+     * resposta. `sispagFavorecidoFingerprintKeyId` (`SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID`,
+     * default `v1`) versiona o segredo: rotação ≠ "destino mudou".
+     */
+    public sispagFavorecidoAutorizadoEnabled: boolean;
+    public sispagFavorecidoFingerprintKey?: string;
+    public sispagFavorecidoFingerprintKeyId: string;
     /**
      * Carteira SISPAG ao abrir a tela (ADR-0060). `sispagCarteiraTtlMin`
      * (`SISPAG_CARTEIRA_TTL_MIN`, default 30): ingestão mais nova que isto não é refeita.
@@ -302,8 +313,10 @@ export default class EnvironmentVars {
         sispagLiveWriteEnabled,
         sispagDdaAssocEnabled,
         sispagTedEnabled,
-        sispagExcecaoDestinoEnabled,
         sispagPixEnabled,
+        sispagFavorecidoAutorizadoEnabled,
+        sispagFavorecidoFingerprintKey,
+        sispagFavorecidoFingerprintKeyId,
         sispagCarteiraTtlMin,
         sispagCarteiraCooldownMin,
         sispagVerificacao,
@@ -346,8 +359,10 @@ export default class EnvironmentVars {
         sispagLiveWriteEnabled: boolean;
         sispagDdaAssocEnabled: boolean;
         sispagTedEnabled?: boolean;
-        sispagExcecaoDestinoEnabled?: boolean;
         sispagPixEnabled?: boolean;
+        sispagFavorecidoAutorizadoEnabled?: boolean;
+        sispagFavorecidoFingerprintKey?: string;
+        sispagFavorecidoFingerprintKeyId?: string;
         sispagCarteiraTtlMin?: number;
         sispagCarteiraCooldownMin?: number;
         sispagVerificacao?: SispagVerificacaoConfig;
@@ -390,8 +405,12 @@ export default class EnvironmentVars {
         this.sispagLiveWriteEnabled = sispagLiveWriteEnabled;
         this.sispagDdaAssocEnabled = sispagDdaAssocEnabled;
         this.sispagTedEnabled = sispagTedEnabled ?? false;
-        this.sispagExcecaoDestinoEnabled = sispagExcecaoDestinoEnabled ?? false;
         this.sispagPixEnabled = sispagPixEnabled ?? false;
+        this.sispagFavorecidoAutorizadoEnabled = sispagFavorecidoAutorizadoEnabled ?? false;
+        if (sispagFavorecidoFingerprintKey !== undefined) {
+            this.sispagFavorecidoFingerprintKey = sispagFavorecidoFingerprintKey;
+        }
+        this.sispagFavorecidoFingerprintKeyId = sispagFavorecidoFingerprintKeyId ?? 'v1';
         this.sispagCarteiraTtlMin = sispagCarteiraTtlMin ?? 30;
         this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
         this.sispagVerificacao = sispagVerificacao ?? { ...SISPAG_VERIFICACAO_DEFAULT };

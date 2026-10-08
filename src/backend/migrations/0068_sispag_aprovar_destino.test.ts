@@ -3,13 +3,22 @@ import path from 'node:path';
 import { PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
 
 /**
- * O catálogo no dia da 0068: o de hoje, com `sispag:excecao` (0075, ADR-0061) de volta como
- * `sispag:aprovar_destino`. A 0068 é histórico; a paridade vigente é checada pelo teste da 0075.
+ * O catálogo no dia da 0068, CONGELADO (a 0075 trocou `aprovar_destino` por `sispag:excecao`, a 0080
+ * por `sispag:autorizar_favorecido`). A 0068 é histórico; a paridade vigente é checada contra a
+ * lista mais recente do diretório.
  */
-const CATALOGO_DA_0068: readonly string[] = PERMISSION_CATALOG.filter(
-    // 0079 (ADR-0063): avulsas que ainda não existiam no dia da 0068.
-    (p) => p !== 'sispag:conferir' && p !== 'sispag:cadastro',
-).map((p) => (p === 'sispag:excecao' ? 'sispag:aprovar_destino' : p));
+const CATALOGO_DA_0068: readonly string[] = [
+    'permutas:ver',
+    'permutas:executar',
+    'sispag:ver',
+    'sispag:executar',
+    'sispag:aprovar_destino',
+    'recebimentos:ver',
+    'recebimentos:executar',
+    'operacao:ver',
+    'metricas:ver',
+    'usuarios:gerenciar',
+];
 
 /**
  * 0068 — permissão `sispag:aprovar_destino` e aprovação na trilha (ADR-0054 D10).

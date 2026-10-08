@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { PERMISSION, PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
+import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import MigrationFiles from './MigrationFiles.js';
 
 /**
@@ -9,6 +9,22 @@ import MigrationFiles from './MigrationFiles.js';
  * 0068/0075). O comportamento contra um Postgres de verdade está na integração da 0078.
  */
 const NOME = '0079_permissoes_sispag_conferir_cadastro.sql';
+
+/** O catálogo no dia da 0079, CONGELADO (a 0080 trocou as três avulsas por uma). */
+const CATALOGO_DA_0079: readonly string[] = [
+    'permutas:ver',
+    'permutas:executar',
+    'sispag:ver',
+    'sispag:executar',
+    'sispag:excecao',
+    'sispag:conferir',
+    'sispag:cadastro',
+    'recebimentos:ver',
+    'recebimentos:executar',
+    'operacao:ver',
+    'metricas:ver',
+    'usuarios:gerenciar',
+];
 
 const semComentarios = (texto: string): string =>
     texto
@@ -28,11 +44,11 @@ describe('migration 0079 — permissões sispag:conferir e sispag:cadastro (ADR-
         const listas = listasDoCheck(CODIGO);
         expect(listas).toHaveLength(2);
         for (const lista of listas) {
-            expect(lista).toEqual([...PERMISSION_CATALOG].sort());
-            expect(lista).toContain(PERMISSION.SISPAG_CONFERIR);
-            expect(lista).toContain(PERMISSION.SISPAG_CADASTRO);
+            expect(lista).toEqual([...CATALOGO_DA_0079].sort());
+            expect(lista).toContain('sispag:conferir');
+            expect(lista).toContain('sispag:cadastro');
             // Todas as antigas continuam aceitas.
-            expect(lista).toContain(PERMISSION.SISPAG_EXCECAO);
+            expect(lista).toContain('sispag:excecao');
             expect(lista).toContain(PERMISSION.USUARIOS_GERENCIAR);
         }
     });
@@ -57,7 +73,7 @@ describe('migration 0079 — permissões sispag:conferir e sispag:cadastro (ADR-
         expect(CODIGO).not.toMatch(/UPDATE\s+\w+\s+SET/i);
     });
 
-    it('é a lista de permissões mais recente do diretório', () => {
+    it('a 0080 (ADR-0065) é quem traz a lista vigente depois desta', () => {
         const comCheck = readdirSync(__dirname)
             .filter((f) => /^\d{4}_.*\.sql$/.test(f))
             .sort()
@@ -66,7 +82,7 @@ describe('migration 0079 — permissões sispag:conferir e sispag:cadastro (ADR-
                     semComentarios(readFileSync(path.join(__dirname, f), 'utf8')),
                 ),
             );
-        expect(comCheck[comCheck.length - 1]).toBe(NOME);
+        expect(comCheck[comCheck.length - 1] >= NOME).toBe(true);
     });
 
     it('é migração de verdade (copiada ao dist/) e única com o número 0079', () => {

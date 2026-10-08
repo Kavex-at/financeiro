@@ -193,11 +193,7 @@ describe('EnvironmentProvider', () => {
             delete process.env[BANNER_ANTIGO];
         });
 
-        const FLAGS_TED_PIX = [
-            'SISPAG_TED_ENABLED',
-            'SISPAG_EXCECAO_DESTINO_ENABLED',
-            'SISPAG_PIX_ENABLED',
-        ] as const;
+        const FLAGS_TED_PIX = ['SISPAG_TED_ENABLED', 'SISPAG_PIX_ENABLED'] as const;
         const setFlagsTedPix = (valor: string | undefined): void => {
             for (const n of FLAGS_TED_PIX) {
                 if (valor === undefined) delete process.env[n];
@@ -206,12 +202,12 @@ describe('EnvironmentProvider', () => {
         };
         const flagsTedPix = async (): Promise<boolean[]> => {
             const v = await new EnvironmentProvider().getEnvironmentVars();
-            return [v.sispagTedEnabled, v.sispagExcecaoDestinoEnabled, v.sispagPixEnabled];
+            return [v.sispagTedEnabled, v.sispagPixEnabled];
         };
 
-        it('flags TED/PIX/exceção de destino do SISPAG: default OFF, só "true" exato liga (ADR-0054/0061)', async () => {
+        it('flags TED/PIX do SISPAG: default OFF, só "true" exato liga (ADR-0054)', async () => {
             setFlagsTedPix(undefined);
-            expect(await flagsTedPix()).toEqual([false, false, false]); // ausente = desligado
+            expect(await flagsTedPix()).toEqual([false, false]); // ausente = desligado
             for (const [valor, esperado] of [
                 ['true', true],
                 ['1', false],
@@ -220,7 +216,7 @@ describe('EnvironmentProvider', () => {
                 ['TRUE', false],
             ] as const) {
                 setFlagsTedPix(valor);
-                expect(await flagsTedPix()).toEqual([esperado, esperado, esperado]);
+                expect(await flagsTedPix()).toEqual([esperado, esperado]);
             }
             setFlagsTedPix(undefined);
         });
@@ -294,41 +290,78 @@ describe('EnvironmentProvider', () => {
             for (const c of CHAVES) delete process.env[c];
         });
 
-        it('flags TED/PIX/exceção de destino são independentes entre si', async () => {
+        it('flags TED/PIX são independentes entre si', async () => {
             setFlagsTedPix(undefined);
             process.env.SISPAG_PIX_ENABLED = 'true';
-            expect(await flagsTedPix()).toEqual([false, false, true]);
+            expect(await flagsTedPix()).toEqual([false, true]);
             setFlagsTedPix(undefined);
         });
 
-        describe('alias SISPAG_DESTINO_MANUAL_ENABLED da flag de exceção (ADR-0061, Q6)', () => {
-            const NOVO = 'SISPAG_EXCECAO_DESTINO_ENABLED';
-            const ANTIGO = 'SISPAG_DESTINO_MANUAL_ENABLED';
-            const excecao = async (): Promise<boolean> =>
-                (await new EnvironmentProvider().getEnvironmentVars()).sispagExcecaoDestinoEnabled;
+        describe('favorecido autorizado (ADR-0065, I14k): flag só liga com segredo válido', () => {
+            const NOMES = [
+                'SISPAG_FAVORECIDO_AUTORIZADO_ENABLED',
+                'SISPAG_FAVORECIDO_FINGERPRINT_KEY',
+                'SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID',
+            ];
+            const CHAVE = 'k'.repeat(32);
+            let warn: jest.SpyInstance;
+
+            beforeEach(() => {
+                warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+            });
 
             afterEach(() => {
-                delete process.env[NOVO];
-                delete process.env[ANTIGO];
+                for (const n of NOMES) delete process.env[n];
+                warn.mockRestore();
             });
 
-            it('só o nome antigo ligado: liga (alias por um ciclo de deploy)', async () => {
-                delete process.env[NOVO];
-                process.env[ANTIGO] = 'true';
-                expect(await excecao()).toBe(true);
+            const vars = () => new EnvironmentProvider().getEnvironmentVars();
+
+            it('default: desligada, keyId v1, sem segredo', async () => {
+                const v = await vars();
+                expect(v.sispagFavorecidoAutorizadoEnabled).toBe(false);
+                expect(v.sispagFavorecidoFingerprintKeyId).toBe('v1');
+                expect(v.sispagFavorecidoFingerprintKey).toBeUndefined();
             });
 
-            it('o nome novo manda: definido, vence o antigo nos dois sentidos', async () => {
-                process.env[NOVO] = 'false';
-                process.env[ANTIGO] = 'true';
-                expect(await excecao()).toBe(false);
-                process.env[NOVO] = 'true';
-                process.env[ANTIGO] = 'false';
-                expect(await excecao()).toBe(true);
+            it('ligada com segredo de 32 bytes: liga e expõe o segredo só ao código', async () => {
+                process.env.SISPAG_FAVORECIDO_AUTORIZADO_ENABLED = 'true';
+                process.env.SISPAG_FAVORECIDO_FINGERPRINT_KEY = CHAVE;
+                process.env.SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID = 'v2';
+                const v = await vars();
+                expect(v.sispagFavorecidoAutorizadoEnabled).toBe(true);
+                expect(v.sispagFavorecidoFingerprintKey).toBe(CHAVE);
+                expect(v.sispagFavorecidoFingerprintKeyId).toBe('v2');
+                expect(warn).not.toHaveBeenCalled();
             });
 
-            it('nenhum dos dois: desligado', async () => {
-                expect(await excecao()).toBe(false);
+            it('ligada sem segredo, ou com segredo curto: resolve false e loga o motivo sem o segredo', async () => {
+                process.env.SISPAG_FAVORECIDO_AUTORIZADO_ENABLED = 'true';
+                expect((await vars()).sispagFavorecidoAutorizadoEnabled).toBe(false);
+                process.env.SISPAG_FAVORECIDO_FINGERPRINT_KEY = 'curta-demais';
+                const v = await vars();
+                expect(v.sispagFavorecidoAutorizadoEnabled).toBe(false);
+                expect(v.sispagFavorecidoFingerprintKey).toBeUndefined();
+                expect(warn).toHaveBeenCalledTimes(2);
+                for (const [msg] of warn.mock.calls) {
+                    expect(String(msg)).toMatch(/SISPAG_FAVORECIDO_FINGERPRINT_KEY/);
+                    expect(String(msg)).not.toContain('curta-demais');
+                }
+            });
+
+            it('só "true" exato liga', async () => {
+                process.env.SISPAG_FAVORECIDO_FINGERPRINT_KEY = CHAVE;
+                for (const valor of ['TRUE', '1', 'yes', '']) {
+                    process.env.SISPAG_FAVORECIDO_AUTORIZADO_ENABLED = valor;
+                    expect((await vars()).sispagFavorecidoAutorizadoEnabled).toBe(false);
+                }
+            });
+
+            it('keyId malformado: desliga (falha fechada)', async () => {
+                process.env.SISPAG_FAVORECIDO_AUTORIZADO_ENABLED = 'true';
+                process.env.SISPAG_FAVORECIDO_FINGERPRINT_KEY = CHAVE;
+                process.env.SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID = 'v 1; drop';
+                expect((await vars()).sispagFavorecidoAutorizadoEnabled).toBe(false);
             });
         });
 
@@ -429,8 +462,8 @@ describe('EnvironmentProvider', () => {
             process.env.SISPAG_TED_ENABLED = 'true';
             const v = await new EnvironmentProvider().getEnvironmentVars();
             expect(v.sispagTedEnabled).toBe(true);
-            expect(v.sispagExcecaoDestinoEnabled).toBe(false);
             expect(v.sispagPixEnabled).toBe(false);
+            expect(v.sispagFavorecidoAutorizadoEnabled).toBe(false);
             delete process.env.SISPAG_TED_ENABLED;
         });
     });

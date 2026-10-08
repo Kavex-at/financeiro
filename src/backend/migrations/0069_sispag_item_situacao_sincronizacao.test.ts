@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { ALERTA_TIPO } from '../domain/interface/operacao/Alerta.js';
 import {
     BAIXA_FONTE,
     ITEM_SITUACAO,
@@ -82,12 +81,17 @@ describe('migration 0069 — situação do item do lote SISPAG (ADR-0055)', () =
         }
     });
 
-    it('o CHECK de alerta.tipo é o catálogo ALERTA_TIPO do dia da 0069 (a 0075 acrescentou um tipo)', () => {
+    it('o CHECK de alerta.tipo é o catálogo ALERTA_TIPO do dia da 0069 (congelado: a 0075 e a 0080 mudaram a lista)', () => {
         // A paridade com o catálogo ATUAL é checada no teste da 0075; a 0069 é histórico.
         expect(valoresDoCheck('alerta_tipo_check', 'tipo')).toEqual(
-            Object.values(ALERTA_TIPO)
-                .filter((t) => t !== 'sispag-excecao-divergencia')
-                .sort(),
+            [
+                'job-falhou',
+                'job-parcial',
+                'job-parado',
+                'config-ausente',
+                'sispag-lote-retornado',
+                'sispag-baixa-divergente',
+            ].sort(),
         );
     });
 

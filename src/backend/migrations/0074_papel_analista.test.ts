@@ -41,7 +41,7 @@ describe('migration 0074 — papel Analista', () => {
         const dado = pacote();
         for (const fora of [
             PERMISSION.SISPAG_EXECUTAR,
-            PERMISSION.SISPAG_EXCECAO,
+            'sispag:excecao',
             PERMISSION.OPERACAO_VER,
             PERMISSION.METRICAS_VER,
             PERMISSION.USUARIOS_GERENCIAR,
