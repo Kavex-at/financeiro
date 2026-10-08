@@ -217,18 +217,13 @@ export default class AuthorizedPayeeRepository {
             }
         }
         sets.push('versao = versao + 1');
-        try {
-            return await (tx ?? this.db).update(
-                `UPDATE sispag_favorecido_autorizado SET ${sets.join(', ')}
-                  WHERE id = $id AND versao = $versao`,
-                params,
-            );
-        } catch (error) {
-            if ((error as { code?: string } | undefined)?.code === UNIQUE_VIOLATION) {
-                throw new AuthorizedPayeeActiveExistsError({ pesCod: '?', modalidade: '?' });
-            }
-            throw error;
-        }
+        // Nenhuma transição F2–F7 cria um segundo vigente a partir de um terminal: o índice de
+        // vigência não pode disparar aqui. Se disparar, o erro do banco sobe como está.
+        return (tx ?? this.db).update(
+            `UPDATE sispag_favorecido_autorizado SET ${sets.join(', ')}
+              WHERE id = $id AND versao = $versao`,
+            params,
+        );
     };
 
     /** Trilha só-inclusão (o trigger da 0080 recusa UPDATE/DELETE/TRUNCATE). */
