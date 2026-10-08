@@ -13,17 +13,15 @@ jest.mock('../http/rateLimit.js', () => ({
     heavyRouteLimiter: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
-import ConferenceRequiredError from '../domain/errors/ConferenceRequiredError.js';
+import BatchEmptiedByCheckError from '../domain/errors/BatchEmptiedByCheckError.js';
 import DuplicateHoldError from '../domain/errors/DuplicateHoldError.js';
-import ItemsRemovedByCheckError from '../domain/errors/ItemsRemovedByCheckError.js';
+import PayeeNotAuthorizedAtRemittanceError from '../domain/errors/PayeeNotAuthorizedAtRemittanceError.js';
 import PaymentCheckPendingError from '../domain/errors/PaymentCheckPendingError.js';
+import PaymentModalityUnavailableError from '../domain/errors/PaymentModalityUnavailableError.js';
 import PendingDuplicateAlertError from '../domain/errors/PendingDuplicateAlertError.js';
-import SelfConferenceError from '../domain/errors/SelfConferenceError.js';
 import { PERMISSION, type Permission } from '../domain/interface/auth/Permission.js';
-import ConferenciaLoteService from '../domain/service/sispag/ConferenciaLoteService.js';
 import DuplicateResolutionService from '../domain/service/sispag/DuplicateResolutionService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
-import PendenciaCadastroService from '../domain/service/sispag/PendenciaCadastroService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
@@ -31,8 +29,8 @@ import { requestIdMiddleware } from '../middleware/requestId.js';
 import sispagRouter from './sispag.js';
 
 /**
- * Rotas da ADR-0063 (verificação TED/PIX, duplicidade, conferência, pendências de cadastro). O ator
- * vem SEMPRE do usuário autenticado (`req.user.sub = 'bia'`), nunca do body.
+ * Rotas da ADR-0063/0065 (verificação TED/PIX, duplicidade, retiradas no finalizar, guarda da
+ * remessa). O ator vem SEMPRE do usuário autenticado (`req.user.sub = 'bia'`), nunca do body.
  */
 
 const LOTE_ID = '00000000-0000-0000-0000-000000000063';
@@ -52,8 +50,8 @@ const LOTE = {
             modalidade: 'TED',
             incluidoPor: 'cron',
             divergencia: false,
-            destinoOrigem: 'CADASTRO',
-            destinoMascarado: '341 / ****-5',
+            destinoMascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
+            autorizacaoAviso: 'OK',
             alertas: [{ id: ALERTA_ID, tipo: 'DUPLICIDADE_FORTE', justificativa: 'ok' }],
         },
     ],
@@ -115,8 +113,8 @@ describe('POST /sispag/lotes/:id/itens/:chave/alertas/:alertaId/resolucao (I13f)
                 ator: 'outra-pessoa',
             });
             expect(res.status).toBe(200);
-            const body = (await res.json()) as { lote: Record<string, unknown> };
-            expect(body.lote.exigeConferencia).toBe(true);
+            const body = (await res.json()) as { lote: { id: string } };
+            expect(body.lote.id).toBe(LOTE_ID);
         });
         expect(resolverAlertaDuplicidade).toHaveBeenCalledWith({
             loteId: LOTE_ID,
@@ -143,9 +141,12 @@ describe('POST /sispag/lotes/:id/itens/:chave/alertas/:alertaId/resolucao (I13f)
     });
 
     it('exige sispag:executar', async () => {
-        await comApp([PERMISSION.SISPAG_VER, PERMISSION.SISPAG_CONFERIR], async (url) => {
-            expect((await post(`${url}${URL}`, { acao: 'RETIRAR' })).status).toBe(403);
-        });
+        await comApp(
+            [PERMISSION.SISPAG_VER, PERMISSION.SISPAG_AUTORIZAR_FAVORECIDO],
+            async (url) => {
+                expect((await post(`${url}${URL}`, { acao: 'RETIRAR' })).status).toBe(403);
+            },
+        );
     });
 });
 
@@ -168,104 +169,64 @@ describe('POST /sispag/titulos/:chave/bloqueio-duplicidade/desfazer (I13g)', () 
     });
 });
 
-describe('POST /sispag/lotes/:id/conferir e /devolver (L12/L13)', () => {
-    it('conferir: sispag:conferir, ator do token (body ignorado)', async () => {
-        const conferirLote = jest.fn().mockResolvedValue({ ...LOTE, conferidoPor: 'bia' });
-        container.registerInstance(ConferenciaLoteService, { conferirLote } as never);
-        await comApp([PERMISSION.SISPAG_VER, PERMISSION.SISPAG_CONFERIR], async (url) => {
-            const res = await post(`${url}/sispag/lotes/${LOTE_ID}/conferir`, {
+describe('POST /sispag/lotes/:id/finalizar — retira e finaliza (ADR-0065 L3)', () => {
+    it('200 com o lote e a lista de retirados (motivo, sem destino)', async () => {
+        const retirados = [
+            {
+                filCod: 4,
+                docCod: '6174',
+                titCod: '1',
+                credor: 'ACME',
+                modalidade: 'TED',
+                motivo: 'FAVORECIDO_NAO_AUTORIZADO',
+            },
+        ];
+        const finalizarLote = jest.fn().mockResolvedValue({ lote: LOTE, retirados });
+        container.registerInstance(LotePagamentoService, { finalizarLote } as never);
+        await comApp(undefined, async (url) => {
+            const res = await post(`${url}/sispag/lotes/${LOTE_ID}/finalizar`, {
                 versao: 4,
-                ator: 'ana',
+                ator: 'outra',
             });
             expect(res.status).toBe(200);
+            const body = (await res.json()) as { lote: { id: string }; retirados: unknown };
+            expect(body.lote.id).toBe(LOTE_ID);
+            expect(body.retirados).toEqual(retirados);
         });
-        expect(conferirLote).toHaveBeenCalledWith({ loteId: LOTE_ID, versao: 4, ator: 'bia' });
+        expect(finalizarLote).toHaveBeenCalledWith({ loteId: LOTE_ID, versao: 4, ator: 'bia' });
     });
 
-    it('sem sispag:conferir → 403 (mesmo com executar)', async () => {
-        const conferirLote = jest.fn();
-        container.registerInstance(ConferenciaLoteService, { conferirLote } as never);
-        await comApp([PERMISSION.SISPAG_VER, PERMISSION.SISPAG_EXECUTAR], async (url) => {
-            expect(
-                (await post(`${url}/sispag/lotes/${LOTE_ID}/conferir`, { versao: 4 })).status,
-            ).toBe(403);
-        });
-        expect(conferirLote).not.toHaveBeenCalled();
-    });
-
-    it('SelfConferenceError → 403 com mensagem em português', async () => {
-        container.registerInstance(ConferenciaLoteService, {
-            conferirLote: jest
-                .fn()
-                .mockRejectedValue(
-                    new SelfConferenceError({ loteId: LOTE_ID, impedimento: 'FINALIZOU' }),
-                ),
-        } as never);
+    it('as rotas de conferência e de pendências não existem mais', async () => {
         await comApp(undefined, async (url) => {
-            const res = await post(`${url}/sispag/lotes/${LOTE_ID}/conferir`, { versao: 4 });
-            expect(res.status).toBe(403);
-            expect(((await res.json()) as { error: string }).error).toMatch(/outra pessoa/);
-        });
-    });
-
-    it('devolver exige motivo (400) e passa o ator do token', async () => {
-        const devolverLote = jest.fn().mockResolvedValue({ ...LOTE, status: 'RASCUNHO' });
-        container.registerInstance(ConferenciaLoteService, { devolverLote } as never);
-        await comApp(undefined, async (url) => {
-            expect(
-                (await post(`${url}/sispag/lotes/${LOTE_ID}/devolver`, { versao: 4 })).status,
-            ).toBe(400);
-            const ok = await post(`${url}/sispag/lotes/${LOTE_ID}/devolver`, {
-                versao: 4,
-                motivo: 'conta diverge',
-                ator: 'ana',
-            });
-            expect(ok.status).toBe(200);
-        });
-        expect(devolverLote).toHaveBeenCalledWith({
-            loteId: LOTE_ID,
-            versao: 4,
-            motivo: 'conta diverge',
-            ator: 'bia',
+            for (const rota of ['conferir', 'devolver']) {
+                const res = await post(`${url}/sispag/lotes/${LOTE_ID}/${rota}`, { versao: 1 });
+                expect(res.status).toBe(404);
+            }
+            expect((await fetch(`${url}/sispag/pendencias-cadastro`)).status).toBe(404);
+            expect((await fetch(`${url}/sispag/excecoes`)).status).toBe(404);
         });
     });
 });
 
-describe('GET /sispag/pendencias-cadastro (I13k)', () => {
-    it('com sispag:cadastro → 200; sem → 403', async () => {
-        const listarAbertas = jest.fn().mockResolvedValue([{ id: 'P1', pesCod: '90001' }]);
-        container.registerInstance(PendenciaCadastroService, { listarAbertas } as never);
-        await comApp([PERMISSION.SISPAG_CADASTRO], async (url) => {
-            const res = await fetch(`${url}/sispag/pendencias-cadastro`);
-            expect(res.status).toBe(200);
-            expect(await res.json()).toEqual({ pendencias: [{ id: 'P1', pesCod: '90001' }] });
-        });
-        await comApp([PERMISSION.SISPAG_VER, PERMISSION.SISPAG_EXECUTAR], async (url) => {
-            expect((await fetch(`${url}/sispag/pendencias-cadastro`)).status).toBe(403);
-        });
-    });
-});
-
-describe('GET /sispag/lotes/:id — verificação no lote (I13l)', () => {
-    it('traz alertas com justificativa, verificação, origem e máscara do destino, exigeConferencia', async () => {
+describe('GET /sispag/lotes/:id — verificação no lote (I13, I14)', () => {
+    it('traz alertas com justificativa, a máscara do destino e o selo do favorecido autorizado', async () => {
         container.registerInstance(LotePagamentoService, {
             getLote: jest.fn().mockResolvedValue(LOTE),
         } as never);
         await comApp(undefined, async (url) => {
             const body = (await (await fetch(`${url}/sispag/lotes/${LOTE_ID}`)).json()) as {
-                lote: { exigeConferencia: boolean; itens: Array<Record<string, unknown>> };
+                lote: Record<string, unknown> & { itens: Array<Record<string, unknown>> };
             };
-            expect(body.lote.exigeConferencia).toBe(true);
             expect(body.lote.itens[0]).toMatchObject({
-                destinoOrigem: 'CADASTRO',
-                destinoMascarado: '341 / ****-5',
+                destinoMascarado: 'banco 341 · ag. 0641 · cc ****7766-5',
+                autorizacaoAviso: 'OK',
                 alertas: [{ justificativa: 'ok' }],
             });
         });
     });
 });
 
-describe('erros da ADR-0063 → HTTP', () => {
+describe('erros da ADR-0063/0065 → HTTP', () => {
     it.each([
         [
             'PaymentCheckPendingError',
@@ -279,10 +240,10 @@ describe('erros da ADR-0063 → HTTP', () => {
             new PendingDuplicateAlertError({ loteId: LOTE_ID, itens: [] }),
         ],
         [
-            'ItemsRemovedByCheckError',
-            new ItemsRemovedByCheckError({
+            'BatchEmptiedByCheckError',
+            new BatchEmptiedByCheckError({
                 loteId: LOTE_ID,
-                itens: [{ docCod: '1', titCod: '1' }],
+                itens: [{ docCod: '1', titCod: '1', motivo: 'SEM_DADO_PAGAMENTO' }],
             }),
         ],
     ])('finalizar com %s → 409', async (_n, erro) => {
@@ -314,16 +275,41 @@ describe('erros da ADR-0063 → HTTP', () => {
         });
     });
 
-    it('gerar remessa sem conferência (ConferenceRequiredError) → 409', async () => {
+    it('gerar remessa com favorecido não autorizado → 409 com a lista por item', async () => {
         container.registerInstance(RemessaService, {
-            gerarRemessa: jest
-                .fn()
-                .mockRejectedValue(new ConferenceRequiredError({ loteId: LOTE_ID })),
+            gerarRemessa: jest.fn().mockRejectedValue(
+                new PayeeNotAuthorizedAtRemittanceError({
+                    loteId: LOTE_ID,
+                    itens: [{ docCod: '6173', titCod: '1', motivo: 'DESTINO_ALTERADO' }],
+                }),
+            ),
         } as never);
         await comApp(undefined, async (url) => {
             const res = await post(`${url}/sispag/lotes/${LOTE_ID}/remessa`, {});
             expect(res.status).toBe(409);
-            expect(((await res.json()) as { code: string }).code).toBe('CONFERENCIA_OBRIGATORIA');
+            const body = (await res.json()) as { code: string; details: unknown };
+            expect(body.code).toBe('FAVORECIDO_NAO_AUTORIZADO_NA_REMESSA');
+            expect(body.details).toEqual({
+                loteId: LOTE_ID,
+                itens: [{ item: '6173/1', motivo: 'DESTINO_ALTERADO' }],
+            });
+        });
+    });
+
+    it('TED/PIX com a guarda desligada → 422 na troca de modalidade', async () => {
+        container.registerInstance(LotePagamentoService, {
+            atualizarModalidadeItem: jest
+                .fn()
+                .mockRejectedValue(
+                    new PaymentModalityUnavailableError({ loteId: LOTE_ID, modalidade: 'TED' }),
+                ),
+        } as never);
+        await comApp(undefined, async (url) => {
+            const res = await post(`${url}/sispag/lotes/${LOTE_ID}/itens/4/6173/1/modalidade`, {
+                versao: 1,
+                modalidade: 'TED',
+            });
+            expect(res.status).toBe(422);
         });
     });
 });

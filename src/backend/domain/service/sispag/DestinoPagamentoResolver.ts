@@ -91,7 +91,7 @@ const NENHUM: DestinoResolvido = { origem: DESTINO_ORIGEM.NENHUM };
  *     nada → NENHUM
  * ```
  *
- * Não há destino fora do cadastro (I14i): a `ExcecaoDestino` foi apagada pela ADR-0065. Quem
+ * Não há destino fora do cadastro (I14i): a exceção de destino da ADR-0061 foi apagada. Quem
  * decide se o destino resolvido PODE receber é a guarda do favorecido autorizado (I14), sobre a
  * impressão de `destinoFavorecido`. Não valida titularidade e não escreve nada.
  */
