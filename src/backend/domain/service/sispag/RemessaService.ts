@@ -37,7 +37,7 @@ import DestinoCongeladoError, {
 import DestinoPagamentoAusenteError from '../../errors/DestinoPagamentoAusenteError.js';
 import ExcecaoDestinoRule from '../../libs/sispag/ExcecaoDestinoRule.js';
 import ExcecaoDestinoRepository from '../../repository/sispag/ExcecaoDestinoRepository.js';
-import { ATOR_SISTEMA } from './ExcecaoSubstituicaoService.js';
+import { SISPAG_SYSTEM_ACTOR as ATOR_SISTEMA } from '../../interface/sispag/SispagInterface.js';
 import DestinoPagamentoResolver, {
     type ContextoDestino,
     DESTINO_CADASTRO_TIPO,
