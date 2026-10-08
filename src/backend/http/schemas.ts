@@ -50,8 +50,8 @@ export const FiltroAutorizacoesSchema = z.object({
     pesCod: z.string().trim().min(1).max(40).optional(),
 });
 
-/** `GET /sispag/favorecidos-autorizados/candidatos` — paginado: o cmn025 é lido só da página. */
+/** `GET /sispag/favorecidos-autorizados/candidatos` — paginado: o cmn025 é lido só da página, em série (teto de sessões do Conexos), por isso a página é pequena (até 25: ~50 leituras). */
 export const CandidatosQuerySchema = z.object({
     pagina: z.coerce.number().int().min(1).max(1000).default(1),
-    limite: z.coerce.number().int().min(1).max(100).default(50),
+    limite: z.coerce.number().int().min(1).max(25).default(20),
 });
