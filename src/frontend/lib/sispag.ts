@@ -1422,7 +1422,11 @@ export const ROTULO_ESTADO_AUTORIZACAO: Record<EstadoAutorizacao, string> = {
 export type ModalidadeAutorizavel = 'TED' | 'PIX'
 export type OrigemSolicitacao = 'ITEM' | 'RELATORIO' | 'MANUAL'
 
-const opcional = <T extends z.ZodType>(t: T) => t.nullish().transform((v) => v ?? undefined)
+const opcional = <T extends z.ZodType>(t: T) =>
+  t
+    .nullish()
+    .transform((v) => v ?? undefined)
+    .optional()
 
 const autorizacaoSchema = z.object({
   id: z.string(),
