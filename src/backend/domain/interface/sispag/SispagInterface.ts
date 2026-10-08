@@ -614,19 +614,6 @@ export const DUPLICATE_HOLD_STATE = {
 
 export type DuplicateHoldState = (typeof DUPLICATE_HOLD_STATE)[keyof typeof DUPLICATE_HOLD_STATE];
 
-/** Estado da `PendenciaCadastro` (I13k). Sem resolução manual: só o cadastro corrigido resolve. */
-export const PAYEE_ISSUE_STATE = { ABERTA: 'ABERTA', RESOLVIDA: 'RESOLVIDA' } as const;
-
-export type PayeeIssueState = (typeof PAYEE_ISSUE_STATE)[keyof typeof PAYEE_ISSUE_STATE];
-
-/** O que aconteceu com o item que originou a pendência (I13j). */
-export const PAYEE_ISSUE_OUTCOME = {
-    RETIRADO: 'RETIRADO',
-    MANTIDO_POR_EXCECAO: 'MANTIDO_POR_EXCECAO',
-} as const;
-
-export type PayeeIssueOutcome = (typeof PAYEE_ISSUE_OUTCOME)[keyof typeof PAYEE_ISSUE_OUTCOME];
-
 /** Motivo da remoção de item pelo sistema (I13j-1). */
 export const SYSTEM_REMOVAL_REASON = { SEM_DADO_PAGAMENTO: 'SEM_DADO_PAGAMENTO' } as const;
 
@@ -780,32 +767,4 @@ export interface BloqueioDuplicidade {
     desfeitoPor?: string;
     desfeitoEm?: string;
     motivoDesfazer?: string;
-}
-
-/** Origem de uma pendência: o título e o lote de onde a verificação partiu. */
-export interface PendenciaCadastroOrigem {
-    loteId: string;
-    filCod: number;
-    docCod: string;
-    titCod: string;
-    desfecho: PayeeIssueOutcome;
-    registradaEm: string;
-}
-
-/** `PendenciaCadastro` (code-facing `PayeeRegistrationIssue`). Nunca carrega conta/chave. */
-export interface PendenciaCadastro {
-    id: string;
-    pesCod: string;
-    filCod: number;
-    credor?: string;
-    tipo: DestinoManualTipo;
-    estado: PayeeIssueState;
-    abertaPor: string;
-    abertaEm: string;
-    resolvidaPor?: string;
-    resolvidaEm?: string;
-    ultimaConferenciaEm?: string;
-    origens: PendenciaCadastroOrigem[];
-    /** Derivado na leitura: há `ExcecaoDestino` APROVADA do favorecido/tipo. */
-    comExcecaoAprovada?: boolean;
 }
