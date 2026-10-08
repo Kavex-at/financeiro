@@ -51,17 +51,20 @@ services:
       # `sync: false` deixa o dashboard como fonte da verdade — ligar e desligar sem redeploy.
       - key: SISPAG_LIVE_WRITE_ENABLED
         sync: false
-      # SISPAG TED/PIX (ADR-0054) — gates de go-live, default do codigo `false` (so `'true'` exato
-      # liga). Desligadas, a remessa e a tela sao identicas as de antes. Ligar NESTA ORDEM, uma por
-      # vez, durante o teste supervisionado (ontology/_inbox/sispag-ted-pix-tasks.md):
-      #   1. SISPAG_TED_ENABLED            — TED como modalidade 5, conta do cadastro em qualquer banco
-      #   2. SISPAG_DESTINO_MANUAL_ENABLED — destino digitado no item (conta; chave so com o PIX)
-      #   3. SISPAG_PIX_ENABLED            — PIX por chave (cmnPessoasPix ou digitada)
-      # Desligar no meio de uma retomada de remessa FALHA FECHADO (destino fixado), nao troca conta.
+      # SISPAG TED/PIX (ADR-0054, ADR-0065) — gates de go-live, default do codigo `false` (so `'true'`
+      # exato liga). TED/PIX so sao OFERECIDOS com SISPAG_FAVORECIDO_AUTORIZADO_ENABLED ligada, e ela
+      # so liga com SISPAG_FAVORECIDO_FINGERPRINT_KEY (segredo HMAC, >= 32 bytes) definida — ligada
+      # sem o segredo, resolve false (falha fechada). Ordem: segredo + KEY_ID, conceder
+      # `sispag:autorizar_favorecido` a duas pessoas, aprovar a lista inicial, ligar a guarda, e so
+      # entao SISPAG_TED_ENABLED / SISPAG_PIX_ENABLED. Ver DEPLOY.md.
       # `sync: false`: o dashboard e a fonte da verdade; liga e desliga sem redeploy.
-      - key: SISPAG_TED_ENABLED
+      - key: SISPAG_FAVORECIDO_AUTORIZADO_ENABLED
         sync: false
-      - key: SISPAG_DESTINO_MANUAL_ENABLED
+      - key: SISPAG_FAVORECIDO_FINGERPRINT_KEY
+        sync: false
+      - key: SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID
+        sync: false
+      - key: SISPAG_TED_ENABLED
         sync: false
       - key: SISPAG_PIX_ENABLED
         sync: false

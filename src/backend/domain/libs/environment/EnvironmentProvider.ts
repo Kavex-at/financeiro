@@ -6,10 +6,21 @@ import {
     RECEBIMENTO_INGEST_DIAS_PADRAO,
     RECEBIMENTO_INGEST_START_DATE_PADRAO,
 } from '../../interface/recebimentos/constants.js';
+import { z } from 'zod';
 import EnvironmentVars, {
     SISPAG_VERIFICACAO_DEFAULT,
     type SispagVerificacaoConfig,
 } from './model/EnvironmentVars.js';
+
+/** Tamanho mínimo do segredo do HMAC do destino (ADR-0065 I14b): 256 bits. */
+const FINGERPRINT_KEY_MIN_BYTES = 32;
+
+/** Zod no boundary das envs do favorecido autorizado. Só `'true'` liga. */
+const favorecidoAutorizadoEnvSchema = z.object({
+    enabled: z.string().transform((v) => v === 'true'),
+    key: z.string(),
+    keyId: z.string().regex(/^[A-Za-z0-9_.-]{1,32}$/),
+});
 
 @singleton()
 @injectable()
@@ -81,13 +92,47 @@ export default class EnvironmentProvider {
     };
 
     /**
-     * ADR-0061: `SISPAG_EXCECAO_DESTINO_ENABLED` manda; o nome antigo `SISPAG_DESTINO_MANUAL_ENABLED`
-     * só vale como alias quando o novo não está definido (um ciclo de deploy). Só `'true'` liga.
+     * Favorecido autorizado (ADR-0065, I14k). A flag só liga com um segredo de HMAC válido
+     * (≥ 32 bytes): ligada sem ele, resolve `false` — falha fechada, nunca TED/PIX sem a guarda — e
+     * o motivo vai ao log UMA vez por processo (o provider memoiza). O segredo nunca é logado.
+     *
+     * O diagnóstico mora aqui, não no `bootstrapAppContainer`: o container é compartilhado com ~58
+     * jobs de env estreito e emitiria falso-positivo em massa (gotcha do CLAUDE.md).
      */
-    private excecaoDestinoEnabled = (): boolean => {
-        const novo = this.readEnv('SISPAG_EXCECAO_DESTINO_ENABLED');
-        const valor = novo !== '' ? novo : this.readEnv('SISPAG_DESTINO_MANUAL_ENABLED');
-        return valor === 'true';
+    private resolveFavorecidoAutorizado = (): {
+        sispagFavorecidoAutorizadoEnabled: boolean;
+        sispagFavorecidoFingerprintKey?: string;
+        sispagFavorecidoFingerprintKeyId: string;
+    } => {
+        const parsed = favorecidoAutorizadoEnvSchema.safeParse({
+            enabled: this.readEnv('SISPAG_FAVORECIDO_AUTORIZADO_ENABLED'),
+            key: this.readEnv('SISPAG_FAVORECIDO_FINGERPRINT_KEY'),
+            keyId: this.readEnv('SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID').trim() || 'v1',
+        });
+        if (!parsed.success) {
+            console.warn(
+                '[env] SISPAG_FAVORECIDO_FINGERPRINT_KEY_ID inválido: TED/PIX ficam desligados ' +
+                    '(favorecido autorizado sem versão de segredo legível).',
+            );
+            return {
+                sispagFavorecidoAutorizadoEnabled: false,
+                sispagFavorecidoFingerprintKeyId: 'v1',
+            };
+        }
+        const { enabled, key, keyId } = parsed.data;
+        const chaveValida = Buffer.byteLength(key, 'utf8') >= FINGERPRINT_KEY_MIN_BYTES;
+        if (enabled && !chaveValida) {
+            console.warn(
+                `[env] SISPAG_FAVORECIDO_AUTORIZADO_ENABLED=true IGNORADO: SISPAG_FAVORECIDO_FINGERPRINT_KEY ${
+                    key === '' ? 'ausente' : `com menos de ${FINGERPRINT_KEY_MIN_BYTES} bytes`
+                }. TED/PIX seguem desligados até o segredo ser configurado (ADR-0065 I14k).`,
+            );
+        }
+        return {
+            sispagFavorecidoAutorizadoEnabled: enabled && chaveValida,
+            ...(chaveValida ? { sispagFavorecidoFingerprintKey: key } : {}),
+            sispagFavorecidoFingerprintKeyId: keyId,
+        };
     };
 
     /**
@@ -296,10 +341,10 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
-            // ADR-0054/0061: gates de go-live de TED/PIX/exceção de destino — default OFF.
+            // ADR-0054/0065: gates de go-live de TED/PIX e do favorecido autorizado — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
-            sispagExcecaoDestinoEnabled: this.excecaoDestinoEnabled(),
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
+            ...this.resolveFavorecidoAutorizado(),
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             sispagVerificacao: this.resolveSispagVerificacao(),
@@ -390,10 +435,10 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
-            // ADR-0054/0061: gates de go-live de TED/PIX/exceção de destino — default OFF.
+            // ADR-0054/0065: gates de go-live de TED/PIX e do favorecido autorizado — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
-            sispagExcecaoDestinoEnabled: this.excecaoDestinoEnabled(),
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
+            ...this.resolveFavorecidoAutorizado(),
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             sispagVerificacao: this.resolveSispagVerificacao(),

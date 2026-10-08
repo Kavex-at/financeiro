@@ -13,11 +13,11 @@ export const ALERTA_TIPO = {
     /** Estorno de título pago, ou item rejeitado com título pago (ADR-0055, I11f). */
     SISPAG_BAIXA_DIVERGENTE: 'sispag-baixa-divergente',
     /**
-     * O cadastro do Conexos passou a ter destino válido DIFERENTE da exceção aprovada (ADR-0061,
-     * I12c). A exceção vai a SUBSTITUIDA e nunca é usada; o alerta pede revisão. Sem valores:
-     * só o id da exceção e o favorecido.
+     * O destino que o cadastro do Conexos resolve para um favorecido AUTORIZADO mudou (ADR-0065,
+     * F4): a autorização foi para REAPROVACAO_PENDENTE e precisa de pedido + aprovação. Dedup por
+     * favorecido e modalidade. Sem valores: só o favorecido, a modalidade e as máscaras.
      */
-    SISPAG_EXCECAO_DIVERGENCIA: 'sispag-excecao-divergencia',
+    SISPAG_DESTINO_ALTERADO: 'sispag-destino-alterado',
 } as const;
 
 export type AlertaTipo = (typeof ALERTA_TIPO)[keyof typeof ALERTA_TIPO];

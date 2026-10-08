@@ -4,10 +4,8 @@ import path from 'node:path';
 import {
     ITEM_ALERT_RESOLUTION,
     ITEM_ALERT_STATE,
-    ITEM_ALERT_TYPE,
     PAYMENT_CHECK_STATE,
 } from '../domain/interface/sispag/SispagInterface.js';
-import { DESTINO_ORIGEM } from '../domain/service/sispag/DestinoPagamentoResolver.js';
 import MigrationFiles from './MigrationFiles.js';
 
 /**
@@ -28,8 +26,9 @@ const valoresDoCheck = (nome: string): string[] => {
 
 describe('migration 0076 — alerta do item e estado da verificação (ADR-0063)', () => {
     it('os CHECKs batem com as constantes do código', () => {
+        // Congelado: a 0080 (ADR-0065) tirou CANAL_HABITUAL; a paridade vigente é checada lá.
         expect(valoresDoCheck('lote_pagamento_item_alerta_tipo_check')).toEqual(
-            Object.values(ITEM_ALERT_TYPE).sort(),
+            ['CANAL_HABITUAL', 'DUPLICIDADE_FORTE', 'DUPLICIDADE_FRACA'].sort(),
         );
         expect(valoresDoCheck('lote_pagamento_item_alerta_estado_check')).toEqual(
             Object.values(ITEM_ALERT_STATE).sort(),
@@ -40,8 +39,9 @@ describe('migration 0076 — alerta do item e estado da verificação (ADR-0063)
         expect(valoresDoCheck('lote_pagamento_item_verificacao_estado_check')).toEqual(
             Object.values(PAYMENT_CHECK_STATE).sort(),
         );
+        // Congelado: a 0080 (ADR-0065) dropou a coluna `destino_origem`.
         expect(valoresDoCheck('lote_pagamento_item_destino_origem_check')).toEqual(
-            Object.values(DESTINO_ORIGEM).sort(),
+            ['CADASTRO', 'EXCECAO', 'NENHUM'].sort(),
         );
     });
 

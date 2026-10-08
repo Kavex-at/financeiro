@@ -1,8 +1,7 @@
 import 'reflect-metadata';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { ALERTA_TIPO } from '../domain/interface/operacao/Alerta.js';
-import { PERMISSION, PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
+import { PERMISSION_CATALOG } from '../domain/interface/auth/Permission.js';
 import MigrationFiles from './MigrationFiles.js';
 
 /**
@@ -14,12 +13,33 @@ import MigrationFiles from './MigrationFiles.js';
  * `0075_sispag_excecao_destino.integration.test.ts`.
  */
 /**
- * O catálogo no dia da 0075: o de hoje sem as avulsas que a 0079 (ADR-0063) acrescentou. A 0075 é
- * histórico; a paridade vigente é checada contra a lista mais recente do diretório.
+ * O catálogo no dia da 0075, CONGELADO (a 0079 acrescentou `conferir`/`cadastro`; a 0080 trocou tudo
+ * por `sispag:autorizar_favorecido`). A 0075 é histórico; a paridade vigente é checada contra a
+ * lista mais recente do diretório.
  */
-const CATALOGO_DA_0075: readonly string[] = PERMISSION_CATALOG.filter(
-    (p) => p !== 'sispag:conferir' && p !== 'sispag:cadastro',
-);
+const CATALOGO_DA_0075: readonly string[] = [
+    'permutas:ver',
+    'permutas:executar',
+    'sispag:ver',
+    'sispag:executar',
+    'sispag:excecao',
+    'recebimentos:ver',
+    'recebimentos:executar',
+    'operacao:ver',
+    'metricas:ver',
+    'usuarios:gerenciar',
+];
+
+/** Os tipos de `alerta` no dia da 0075 (a 0080 trocou a divergência pelo destino alterado). */
+const ALERTA_TIPOS_DA_0075: readonly string[] = [
+    'job-falhou',
+    'job-parcial',
+    'job-parado',
+    'config-ausente',
+    'sispag-lote-retornado',
+    'sispag-baixa-divergente',
+    'sispag-excecao-divergencia',
+];
 
 const NOME = '0075_sispag_excecao_destino.sql';
 const SQL = readFileSync(path.join(__dirname, NOME), 'utf8');
@@ -100,7 +120,7 @@ describe('migration 0075 — exceção de destino SISPAG (ADR-0061)', () => {
         expect(listas).toHaveLength(2);
         for (const lista of listas) {
             expect(lista).toEqual([...CATALOGO_DA_0075].sort());
-            expect(lista).toContain(PERMISSION.SISPAG_EXCECAO);
+            expect(lista).toContain('sispag:excecao');
             expect(lista).not.toContain('sispag:aprovar_destino');
         }
     });
@@ -141,12 +161,12 @@ describe('migration 0075 — exceção de destino SISPAG (ADR-0061)', () => {
         expect(CODIGO).not.toMatch(/lower\(r\.nome\)\s*=\s*'analista'/i);
     });
 
-    it('o CHECK de alerta.tipo é o catálogo ALERTA_TIPO inteiro (tipo novo sem migration falha)', () => {
+    it('o CHECK de alerta.tipo é o catálogo do dia da 0075 (a paridade vigente é da 0080)', () => {
         const m = CODIGO.match(
             /ADD CONSTRAINT alerta_tipo_check\s+CHECK\s*\(\s*tipo\s+IN\s*\(([^)]*)\)\s*\)/i,
         );
         expect([...(m?.[1] ?? '').matchAll(/'([^']+)'/g)].map((v) => v[1]).sort()).toEqual(
-            Object.values(ALERTA_TIPO).sort(),
+            [...ALERTA_TIPOS_DA_0075].sort(),
         );
     });
 
