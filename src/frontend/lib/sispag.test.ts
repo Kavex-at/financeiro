@@ -18,14 +18,19 @@ import {
   gerarRemessa,
   retirarDoLote,
   __limparCacheRecursos,
-  aprovarExcecao,
-  cadastrarExcecao,
-  eventosExcecao,
-  listarExcecoes,
-  rejeitarExcecao,
-  revogarExcecao,
+  AutorizacaoApiError,
+  aprovarAutorizacao,
+  eventosAutorizacao,
+  finalizarLote,
   getRecursos,
-  validarDestinoManual,
+  listarCandidatosAutorizacao,
+  listarFavorecidosAutorizados,
+  PayeeNotAuthorizedAtRemittanceError,
+  pedirAutorizacao,
+  reconferirAutorizacao,
+  rejeitarAutorizacao,
+  revelarDestino,
+  revogarAutorizacao,
 } from '@/lib/sispag'
 
 // `apiFetch` é o boundary HTTP — mockado para controlar os bytes que "chegam do backend".
@@ -419,12 +424,12 @@ describe('getRecursos', () => {
 
   it('lê as flags como booleanos', async () => {
     mockApiFetch.mockResolvedValueOnce(
-      respostaOk({ tedEnabled: true, excecaoDestinoEnabled: 'sim', pixEnabled: false }),
+      respostaOk({ tedEnabled: true, favorecidoAutorizadoEnabled: 'sim', pixEnabled: false }),
     )
     expect(await getRecursos()).toEqual({
       tedEnabled: true,
-      excecaoDestinoEnabled: false,
       pixEnabled: false,
+      favorecidoAutorizadoEnabled: false,
     })
     expect(String(mockApiFetch.mock.calls[0]?.[0])).toMatch(/\/sispag\/recursos$/)
   })
@@ -433,146 +438,125 @@ describe('getRecursos', () => {
     mockApiFetch.mockRejectedValueOnce(new Error('rede'))
     expect(await getRecursos()).toEqual({
       tedEnabled: false,
-      excecaoDestinoEnabled: false,
       pixEnabled: false,
+      favorecidoAutorizadoEnabled: false,
     })
   })
 })
 
-describe('exceção de destino (ADR-0061)', () => {
+describe('favorecido autorizado (ADR-0065)', () => {
   beforeEach(() => mockApiFetch.mockReset())
   const ID = '3f1c2b9e-4d8a-4c1e-9f7a-2b6d8e0a1c55'
-  const destino = {
-    tipo: 'CONTA' as const,
-    bancoCod: '237',
-    agencia: '1234',
-    conta: '99887766',
-    contaDv: '1',
-    titularDocumento: '11144477735',
+  const AUT = {
+    id: ID,
+    pesCod: '7001',
+    credor: 'ACME',
+    modalidade: 'TED',
+    estado: 'PENDENTE',
+    avisos: [],
+    origemSolicitacao: 'ITEM',
+    filCodLeitura: 4,
+    solicitadoPor: 'ana',
+    versao: 1,
   }
 
-  it('listarExcecoes: GET com os filtros e devolve a lista', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ excecoes: [{ id: ID }] }))
-    const r = await listarExcecoes({ estado: 'PENDENTE', pesCod: '7001' })
-    const [url] = ultimaChamadaComUrl()
-    expect(url).toMatch(/\/sispag\/excecoes\?estado=PENDENTE&pesCod=7001$/)
-    expect(r).toEqual([{ id: ID }])
+  it('listarFavorecidosAutorizados: GET com filtros, valida a resposta com Zod', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ autorizacoes: [{ ...AUT, credor: null }] }))
+    const r = await listarFavorecidosAutorizados({ estado: 'PENDENTE', pesCod: '7001' })
+    expect(ultimaChamadaComUrl()[0]).toMatch(
+      /\/sispag\/favorecidos-autorizados\?estado=PENDENTE&pesCod=7001$/,
+    )
+    expect(r[0]).toMatchObject({ id: ID, estado: 'PENDENTE' })
+    expect(r[0]?.credor).toBeUndefined()
   })
 
-  it('listarExcecoes sem filtro não manda query string', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ excecoes: [] }))
-    await listarExcecoes()
-    expect(ultimaChamadaComUrl()[0]).toMatch(/\/sispag\/excecoes$/)
+  it('resposta fora do contrato é recusada (Zod)', async () => {
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ autorizacoes: [{ ...AUT, estado: 'XYZ' }] }))
+    await expect(listarFavorecidosAutorizados()).rejects.toThrow()
   })
 
-  it('cadastrarExcecao: POST com o corpo, devolve a exceção', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ excecao: { id: ID } }))
-    const entrada = { filCod: 2, docCod: '81', titCod: '1', destino, justificativa: 'cadastro errado' }
-    await cadastrarExcecao(entrada)
-    const [url, init] = ultimaChamadaComUrl()
-    expect(url).toMatch(/\/sispag\/excecoes$/)
-    expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toEqual(entrada)
-  })
-
-  it('aprovar / rejeitar / revogar: rotas por id; motivo só nos dois últimos', async () => {
-    mockApiFetch.mockResolvedValue(respostaOk({ excecao: { id: ID } }))
-    await aprovarExcecao(ID)
-    expect(ultimaChamadaComUrl()[0]).toMatch(new RegExp(`/sispag/excecoes/${ID}/aprovar$`))
-    await rejeitarExcecao(ID, 'conta de terceiro')
+  it('pedir, aprovar com a impressão, rejeitar e revogar: rotas e corpos', async () => {
+    mockApiFetch.mockResolvedValue(respostaOk({ autorizacao: AUT }))
+    await pedirAutorizacao({ pesCod: '7001', modalidade: 'TED', origem: 'ITEM', filCod: 4 })
     let [url, init] = ultimaChamadaComUrl()
-    expect(url).toMatch(/\/rejeitar$/)
-    expect(JSON.parse(String(init.body))).toEqual({ motivo: 'conta de terceiro' })
-    await revogarExcecao(ID, 'fornecedor trocou')
+    expect(url).toMatch(/\/sispag\/favorecidos-autorizados$/)
+    expect(JSON.parse(String(init.body))).toEqual({
+      pesCod: '7001',
+      modalidade: 'TED',
+      origem: 'ITEM',
+      filCod: 4,
+    })
+    await aprovarAutorizacao(ID, { versao: 1, fingerprintMostrado: 'f'.repeat(64) })
+    ;[url, init] = ultimaChamadaComUrl()
+    expect(url).toMatch(new RegExp(`/favorecidos-autorizados/${ID}/aprovar$`))
+    expect(JSON.parse(String(init.body))).toEqual({ versao: 1, fingerprintMostrado: 'f'.repeat(64) })
+    await rejeitarAutorizacao(ID, { versao: 1, motivo: 'conta de terceiro' })
+    expect(ultimaChamadaComUrl()[0]).toMatch(/\/rejeitar$/)
+    await revogarAutorizacao(ID, { versao: 2, motivo: 'encerrado' })
     ;[url, init] = ultimaChamadaComUrl()
     expect(url).toMatch(/\/revogar$/)
-    expect(JSON.parse(String(init.body))).toEqual({ motivo: 'fornecedor trocou' })
+    expect(JSON.parse(String(init.body))).toEqual({ versao: 2, motivo: 'encerrado' })
   })
 
-  it('eventosExcecao: GET da trilha', async () => {
-    mockApiFetch.mockResolvedValueOnce(respostaOk({ eventos: [{ id: 'A1', evento: 'CADASTRO' }] }))
-    const r = await eventosExcecao(ID)
-    expect(ultimaChamadaComUrl()[0]).toMatch(/\/eventos$/)
-    expect(r[0]?.evento).toBe('CADASTRO')
-  })
-
-  it('erro do backend vira a mensagem em português (403 aprovar a própria)', async () => {
+  it('erro do backend vira AutorizacaoApiError com status e código', async () => {
     mockApiFetch.mockResolvedValueOnce({
       ok: false,
-      status: 403,
-      json: async () => ({ error: 'Quem cadastrou a exceção de destino não pode aprová-la.' }),
+      status: 409,
+      json: async () => ({ error: 'O destino deste favorecido mudou.', code: 'AUTORIZACAO_DESTINO_MUDOU' }),
     } as unknown as Response)
-    await expect(aprovarExcecao(ID)).rejects.toThrow('Quem cadastrou a exceção')
+    const err = await aprovarAutorizacao(ID, { versao: 1, fingerprintMostrado: 'x' }).catch((e) => e)
+    expect(err).toBeInstanceOf(AutorizacaoApiError)
+    expect(err).toMatchObject({ status: 409, code: 'AUTORIZACAO_DESTINO_MUDOU', message: 'O destino deste favorecido mudou.' })
   })
 
-  it('HTTP sem corpo legível cai em "API <status>"', async () => {
-    mockApiFetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => { throw new Error('x') } } as unknown as Response)
-    await expect(listarExcecoes()).rejects.toThrow('API 500')
+  it('reconferir devolve o destino atual; revelar é POST sem cache; eventos e candidatos', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      respostaOk({ autorizacao: AUT, atual: { resultado: 'OK', destinoMascarado: 'banco 237', fingerprint: 'f', avisos: [] } }),
+    )
+    const rc = await reconferirAutorizacao(ID)
+    expect(rc.atual.fingerprint).toBe('f')
+    mockApiFetch.mockResolvedValueOnce(
+      respostaOk({ destinoMascarado: 'banco 237', destino: { tipo: 'TED', banco: '237', conta: '1' } }),
+    )
+    await revelarDestino(ID)
+    const [url, init] = ultimaChamadaComUrl()
+    expect(url).toMatch(/\/revelar$/)
+    expect(init.method).toBe('POST')
+    expect(init.cache).toBe('no-store')
+    mockApiFetch.mockResolvedValueOnce(respostaOk({ eventos: [] }))
+    await eventosAutorizacao(ID)
+    expect(ultimaChamadaComUrl()[0]).toMatch(/\/eventos$/)
+    mockApiFetch.mockResolvedValueOnce(
+      respostaOk({ candidatos: [], total: 0, pagina: 2, limite: 25, retiradosSemDado: [] }),
+    )
+    await listarCandidatosAutorizacao({ pagina: 2, limite: 25 })
+    expect(ultimaChamadaComUrl()[0]).toMatch(/\/candidatos\?pagina=2&limite=25$/)
+  })
+
+  it('finalizarLote devolve o lote e os itens retirados', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      respostaOk({ lote: { id: 'L1' }, retirados: [{ docCod: '1', titCod: '1', motivo: 'SEM_DADO_PAGAMENTO' }] }),
+    )
+    const r = await finalizarLote('L1', 3)
+    expect(r.lote.id).toBe('L1')
+    expect(r.retirados).toHaveLength(1)
+  })
+
+  it('remessa barrada pela guarda vira PayeeNotAuthorizedAtRemittanceError com os itens', async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: 'A remessa não foi gerada',
+        code: 'FAVORECIDO_NAO_AUTORIZADO_NA_REMESSA',
+        details: { loteId: 'L1', itens: [{ item: '801/1', motivo: 'DESTINO_ALTERADO' }] },
+      }),
+    } as unknown as Response)
+    const err = await gerarRemessa('L1').catch((e) => e)
+    expect(err).toBeInstanceOf(PayeeNotAuthorizedAtRemittanceError)
+    expect(err.itens).toEqual([{ item: '801/1', motivo: 'DESTINO_ALTERADO' }])
   })
 })
-
-describe('validarDestinoManual — espelho da validação do backend', () => {
-  const conta = {
-    tipo: 'CONTA' as const,
-    bancoCod: '237',
-    agencia: '1234',
-    agenciaDv: '',
-    conta: '9876543',
-    contaDv: '1',
-    titularDocumento: '111.444.777-35',
-  }
-  const pix = {
-    tipo: 'CHAVE_PIX' as const,
-    chavePixTipo: 'EMAIL' as const,
-    chavePix: 'a@b.com.br',
-    titularDocumento: '11.222.333/0001-81',
-  }
-
-  it('conta válida → sem erros e normalizada', () => {
-    const r = validarDestinoManual(conta)
-    expect(r.erros).toEqual({})
-    expect(r.destino).toEqual({
-      tipo: 'CONTA',
-      bancoCod: '237',
-      agencia: '1234',
-      conta: '9876543',
-      contaDv: '1',
-      titularDocumento: '11144477735',
-    })
-  })
-
-  it('banco com 3 dígitos, agência/conta/DV só dígitos, CPF/CNPJ com DV', () => {
-    const r = validarDestinoManual({
-      ...conta,
-      bancoCod: '37',
-      agencia: '12a',
-      contaDv: 'X',
-      titularDocumento: '11144477736',
-    })
-    expect(Object.keys(r.erros).sort()).toEqual(['agencia', 'bancoCod', 'contaDv', 'titularDocumento'])
-    expect(r.destino).toBeUndefined()
-  })
-
-  it('chave por tipo, sem inferir: 11 dígitos como TELEFONE valem como telefone', () => {
-    expect(validarDestinoManual({ ...pix, chavePixTipo: 'TELEFONE', chavePix: '11144477735' }).destino).toMatchObject({
-      chavePix: '+5511144477735',
-    })
-    expect(validarDestinoManual({ ...pix, chavePixTipo: 'CPF_CNPJ', chavePix: '11987654321' }).erros).toHaveProperty(
-      'chavePix',
-    )
-    expect(validarDestinoManual({ ...pix, chavePixTipo: 'ALEATORIA', chavePix: 'abc' }).erros).toHaveProperty(
-      'chavePix',
-    )
-    expect(validarDestinoManual({ ...pix, chavePix: 'sem-arroba' }).erros).toHaveProperty('chavePix')
-    expect(validarDestinoManual(pix).destino).toMatchObject({ chavePix: 'a@b.com.br' })
-  })
-
-  it('mensagens de erro não repetem o valor digitado', () => {
-    const r = validarDestinoManual({ ...conta, titularDocumento: '11144477736' })
-    expect(JSON.stringify(r.erros)).not.toContain('11144477736')
-  })
-})
-
 
 describe('boletos DDA de um título', () => {
   const titulo = {

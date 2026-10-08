@@ -1,9 +1,9 @@
 import { CATALOGO_PERMISSOES, MODULOS, PERMISSAO, rotuloPermissao } from '@/lib/permissoes'
 
 describe('MODULOS (rótulos de permissão compartilhados)', () => {
-  it('cobre as 12 permissões do catálogo, cada uma uma vez', () => {
+  it('cobre as 10 permissões do catálogo, cada uma uma vez', () => {
     const todas = MODULOS.flatMap((m) => m.itens.map((i) => i.permissao))
-    expect(todas).toHaveLength(12)
+    expect(todas).toHaveLength(10)
     expect(new Set(todas)).toEqual(new Set(CATALOGO_PERMISSOES))
   })
 
@@ -13,10 +13,9 @@ describe('MODULOS (rótulos de permissão compartilhados)', () => {
   })
 
   it('rótulo legível de uma permissão: módulo + ação', () => {
-    expect(rotuloPermissao(PERMISSAO.SISPAG_EXCECAO)).toBe('SISPAG — exceção de destino')
+    expect(rotuloPermissao(PERMISSAO.SISPAG_AUTORIZAR_FAVORECIDO)).toBe(
+      'SISPAG — autorizar favorecido',
+    )
     expect(rotuloPermissao(PERMISSAO.PERMUTAS_EXECUTAR)).toBe('Permutas — executar')
-    // ADR-0063
-    expect(rotuloPermissao(PERMISSAO.SISPAG_CONFERIR)).toBe('SISPAG — conferir')
-    expect(rotuloPermissao(PERMISSAO.SISPAG_CADASTRO)).toBe('SISPAG — pendências de cadastro')
   })
 })

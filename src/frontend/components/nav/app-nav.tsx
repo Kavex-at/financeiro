@@ -6,8 +6,8 @@ import {
   ArrowLeftRight,
   Banknote,
   BarChart3,
-  ClipboardList,
   Landmark,
+  UserCheck,
   Users,
 } from 'lucide-react'
 import type { SidebarGroup } from '@/components/ui/sidebar'
@@ -81,16 +81,16 @@ export function buildAppNavGroups({ sispagEnabled, tem }: AppNavPermissions): Si
           },
         },
         {
-          // ADR-0063: a área de cadastro de favorecidos pode não ter `sispag:ver` — o item é próprio,
-          // pela permissão avulsa `sispag:cadastro` (e a flag do SISPAG).
-          id: 'sispag-pendencias-cadastro',
-          label: 'Pendências de cadastro',
-          icon: <ClipboardList />,
-          href: '/sispag/pendencias-cadastro',
-          hidden: !(sispagEnabled && tem(PERMISSAO.SISPAG_CADASTRO)),
+          // ADR-0065: lista de favorecidos autorizados a receber TED/PIX e relatório de candidatos.
+          // Ver é `sispag:ver`; pedir e decidir são checados na tela e no servidor.
+          id: 'sispag-favorecidos-autorizados',
+          label: 'Favorecidos autorizados',
+          icon: <UserCheck />,
+          href: '/sispag/favorecidos-autorizados',
+          hidden: !(sispagEnabled && tem(PERMISSAO.SISPAG_VER)),
           tooltip: {
-            title: 'Pendências de cadastro',
-            description: 'Favorecidos sem conta ou chave PIX no cadastro do Conexos.',
+            title: 'Favorecidos autorizados',
+            description: 'Quem pode receber TED/PIX e em qual conta ou chave do cadastro do Conexos.',
           },
         },
         {
