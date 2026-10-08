@@ -1,7 +1,7 @@
 ---
 name: Usuario
 type: entity
-ontology_version: "0.32.0"
+ontology_version: "0.38.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -39,7 +39,7 @@ relationships:
   - "Usuario é ator de toda execução registrada nos ledgers (executado_por / criado_por / finalizado_por / ...)"
   - "Usuario é ator ou alvo de EventoAcesso (app_user_access_event)"
   - "Usuario tem 0..1 VinculoConexos; sem vínculo, o ERP registra a ação como robô CLONEX (ADR-0041)"
-last_review: 2026-10-05
+last_review: 2026-10-08
 universality_evidence:
   - "ADR-0051 (identidade = username, e-mail real como atributo)"
   - "ADR-0053 (permissões por módulo no banco; token só identifica)"
@@ -76,19 +76,22 @@ universality_evidence:
 | Implicação | `EffectivePermissionCalculator` | `<módulo>:executar ⇒ <módulo>:ver` |
 | Efetiva | calculada a cada requisição | o token não carrega permissão |
 
-> **Permissão de exceção de destino (ADR-0061, 2026-10-05):** `sispag:excecao` (única; cadastrar,
+> **Permissão de exceção de destino (ADR-0061, 2026-10-05; substituída pela ADR-0065, abaixo):** `sispag:excecao` (única; cadastrar,
 > aprovar, rejeitar e revogar `ExcecaoDestino`) **substitui** `sispag:aprovar_destino` (ADR-0054/0068).
 > A migration troca o `CHECK` das tabelas de permissão e **converte as concessões existentes**
 > (papel e exceções por usuário, inclusive "revogar vence"). É avulsa como a anterior (não implica
 > `sispag:ver`/`sispag:executar`). Hoje só `Administrador`; o `Analista` (0074) não a tem. A
 > separação de funções entre cadastrante e aprovador é regra de backend (I12b), não de papel.
 
-> **Permissões de verificação SISPAG (ADR-0063, 2026-10-05):** `sispag:conferir` (conferência por
-> 2ª pessoa e devolução do lote, L12/L13) e `sispag:cadastro` (fila "Pendências de cadastro" do
-> responsável pelo cadastro). Avulsas como `sispag:excecao`: não implicam nem são implicadas por
-> `sispag:ver`/`sispag:executar`. Migration no padrão da 0068/0075 (troca do `CHECK` das tabelas de
-> permissão). A separação entre quem finaliza/monta e quem confere é regra de backend (I13l), não de
-> papel. Concessão default: gap Q8 de `_inbox/sispag-verificacoes-ted-pix-gap.md`.
+> **Permissões de verificação SISPAG (ADR-0063, 2026-10-05):** `sispag:conferir` e `sispag:cadastro`
+> **removidas pela ADR-0065** (sem conferência por lote, sem fila de pendências de cadastro).
+
+> **Autorização de favorecido (ADR-0065, 2026-10-08):** `sispag:autorizar_favorecido` **substitui**
+> `sispag:excecao`; a migration troca o `CHECK` das tabelas de permissão, **converte as concessões**
+> de `sispag:excecao` e **remove** as de `sispag:conferir`/`sispag:cadastro`; `Administrador` recebe a
+> nova. Avulsa (não implica nem é implicada por `sispag:ver`/`sispag:executar`). Aprova, rejeita,
+> revoga e revela o destino completo; pedir/confirmar a autorização é `sispag:executar`. A separação
+> solicitante ≠ aprovador é regra de backend (I14c), não de papel.
 
 A **origem** de uma permissão efetiva tem 4 valores: `papel`, `concedida` (por X em data),
 `revogada` (por X; aparece como ausente, com motivo) e `implicada` (por `<módulo>:executar`).

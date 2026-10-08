@@ -3,6 +3,7 @@ adr_number: 0063
 title: SISPAG — verificações TED/PIX, duplicidade e conferência por segunda pessoa
 date: 2026-10-05
 status: accepted
+amended_by: [0065]   # I13i/k/l, L12/L13, PendenciaCadastro, sispag:conferir e sispag:cadastro removidos
 type: addition
 related_entities: [LotePagamento, TituloAPagar, AlertaItemLote, BloqueioDuplicidade, PendenciaCadastro, PerfilCanalFornecedor, ExcecaoDestino, Usuario]
 related_actions: [verificarItensTedPix, resolverAlertaDuplicidade, conferirLote, devolverLote, calcularPerfilCanal, finalizarLote, reabrirLote, gerarRemessa, gerenciarLoteCandidato, formarLotesAutomaticos]

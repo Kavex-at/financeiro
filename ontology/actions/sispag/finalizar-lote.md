@@ -2,7 +2,7 @@
 name: finalizarLote
 type: action
 entity: LotePagamento
-ontology_version: "0.36.0"
+ontology_version: "0.38.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -12,22 +12,22 @@ related_files:
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-10-05
+last_review: 2026-10-08
 preconditions:
   - "Requer papel admin (requireRole('admin'))."
   - "Lote em RASCUNHO com ≥1 item; todos os itens ainda elegíveis (liberado + não pago)."
   - "Todo item com modalidade definida (ModalidadePendenteError, migration 0031)."
-  - "Todo item TED/PIX com destino resolvível — conta/chave ativa do cadastro cmn025 ou, na falta, ExcecaoDestino APROVADA do favorecido (I10a, I12f; ADR-0054, ADR-0061). Desde a ADR-0063 a verificação retira do lote o item sem destino (I13j) e a finalização não acontece (ItemsRemovedByCheckError)."
-  - "verificarItensTedPix roda antes da transição (I13a): nenhum item TED/PIX com verificacaoEstado PENDENTE (PaymentCheckPendingError, I13b) e nenhuma AlertaItemLote de duplicidade ABERTA (PendingDuplicateAlertError, I13f). Alerta de canal habitual não barra."
+  - "Item TED/PIX sem dado no cadastro cmn025, de favorecido não autorizado ou com destino alterado desde a aprovação é retirado pela verificação (I13j, I14; ADR-0065) e a finalização segue com os restantes; se o lote esvaziar, fica RASCUNHO (BatchEmptiedByCheckError)."
+  - "verificarItensTedPix roda antes da transição (I13a): nenhum item TED/PIX com verificacaoEstado PENDENTE (PaymentCheckPendingError, I13b) e nenhuma AlertaItemLote de duplicidade ABERTA (PendingDuplicateAlertError, I13f)."
 postconditions:
   - "Lote RASCUNHO → FINALIZADO (L3): registra finalizadoPor + finalizadoEm; incrementa versao."
-  - "Lote com ≥1 item TED/PIX fica aguardando conferência por 2ª pessoa (L12 conferirLote) antes do gerarRemessa (L8, I13l; ADR-0063)."
+  - "Resposta lista os itens retirados pela verificação, com motivo (ADR-0065)."
   - "O lote FINALIZADO é o 'pronto para processar' — gatilho CONCEITUAL, SEM downstream nesta fatia (I1)."
   - "Reversível por reabrirLote (L4) enquanto não houver etapa downstream (não há nesta fatia; I5)."
 side_effects:
   - "Escrita LOCAL: lote_pagamento.status/finalizado_por/finalizado_em + auditoria. NENHUMA escrita no ERP (I1)."
-  - "reabrirLote (L4): FINALIZADO → RASCUNHO (mesma auditoria; limpa a conferência, ADR-0063); cancelarLote (L5): → CANCELADO (terminal, libera títulos da I3)."
-  - "Leitura ao vivo no Conexos (fin064, cmn025) pela verificação TED/PIX; escrita local de alertas, pendências de cadastro e remoções pelo sistema (ADR-0063)."
+  - "reabrirLote (L4): FINALIZADO → RASCUNHO (mesma auditoria); cancelarLote (L5): → CANCELADO (terminal, libera títulos da I3)."
+  - "Leitura ao vivo no Conexos (fin064, cmn025) pela verificação TED/PIX; escrita local de alertas, remoções pelo sistema e reaprovação de favorecido (ADR-0063, ADR-0065)."
 ---
 
 # finalizarLote — o GATE (Fatia 2)
@@ -57,15 +57,15 @@ Todas `requireRole('admin')`, Zod no boundary, SQL parametrizado, auditoria.
   pasta de rede, não chama Nexxera, não baixa. É estado local. A próxima fatia lê o `FINALIZADO`
   como insumo.
 
-## Verificação TED/PIX e conferência (ADR-0063)
+## Verificação TED/PIX (ADR-0063, revisada pela ADR-0065)
 
 Antes de transicionar, o gate roda `verificarItensTedPix` sobre todos os itens TED/PIX (I13):
-dados de pagamento, duplicidade e canal habitual. Três desfechos barram a finalização: item retirado
-pela verificação (`ItemsRemovedByCheckError` — a retirada fica gravada e a analista finaliza de
-novo), verificação pendente por leitura falha (`PaymentCheckPendingError`) e alerta de duplicidade
-não resolvida (`PendingDuplicateAlertError`). Depois de `FINALIZADO`, lote com TED/PIX só segue para
-a remessa após `conferirLote` (L12) por outra pessoa com `sispag:conferir`. Ver
-`business-rules/verificacao-ted-pix-sispag.md`.
+dados de pagamento/autorização (I14) e duplicidade. Item sem dado no cadastro, de favorecido não
+autorizado ou com destino alterado **sai do lote** e a finalização segue com os restantes; lote
+esvaziado fica `RASCUNHO` (`BatchEmptiedByCheckError`). Barram: verificação pendente por leitura
+falha (`PaymentCheckPendingError`) e alerta de duplicidade não resolvida
+(`PendingDuplicateAlertError`). Sem conferência por lote (L12/L13 removidas). Ver
+`business-rules/verificacao-ted-pix-sispag.md` e `business-rules/favorecido-autorizado-sispag.md`.
 
 ## Reversibilidade (L4) e cancelamento (L5)
 

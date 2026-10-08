@@ -2,7 +2,8 @@
 adr_number: 0060
 title: Cadastro do Conexos é a fonte principal do destino de pagamento SISPAG; destino fora do cadastro só como Exceção de destino aprovada por segunda pessoa
 date: 2026-10-05
-status: accepted
+status: superseded
+superseded_by: [0065]
 type: change
 related_entities: [ExcecaoDestino, LotePagamento, Usuario]
 related_actions: [registrarExcecaoDestino, aprovarExcecaoDestino, rejeitarExcecaoDestino, revogarExcecaoDestino, carregarExcecoesDestinoPlanilha, aposentarExcecoesSubstituidas, finalizarLote, gerarRemessa]

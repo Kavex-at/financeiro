@@ -2,14 +2,14 @@
 name: calcularPerfilCanal
 type: action
 entity: PerfilCanalFornecedor
-ontology_version: "0.36.0"
+ontology_version: "0.38.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/jobs/probe-canal-por-fornecedor.ts
   - src/backend/domain/client/ConexosExtratoClient.ts
-last_review: 2026-10-05
+last_review: 2026-10-08
 preconditions:
   - "Job periódico (cron) ou disparo administrativo; uma rodada por vez (advisory lock)."
   - "Limiares de confiança e janela de histórico vindos da configuração do tenant."
@@ -23,7 +23,7 @@ side_effects:
 
 # calcularPerfilCanal
 
-ADR-0063, I13i. Promove a lógica da `probe-canal-por-fornecedor.ts` a job: casa cada baixa a pagar
+ADR-0063; desde a ADR-0065 alimenta só o relatório `listarCandidatosAutorizacao` (I13i removida). Promove a lógica da `probe-canal-por-fornecedor.ts` a job: casa cada baixa a pagar
 com o débito do extrato por valor exato e data ±1,5 dia, **só casamento único**, classifica o canal
 pelo histórico do banco e agrega por favorecido.
 

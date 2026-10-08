@@ -3,6 +3,30 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.38.0 — SISPAG: favorecido autorizado (2026-10-08, ADR-0065)
+
+Feature: `sispag-favorecido-autorizado` (`/feature-tweak`). `entity_changed = true`. Supersede a
+ADR-0061; emenda 0053, 0054 e 0063. **Ontologia à frente do código.**
+
+- **NEW entity `FavorecidoAutorizado`** (planned) + state machine `favorecido-autorizado` (F1–F7) +
+  business rule `favorecido-autorizado-sispag` (**I14a–l**). Autorização por (favorecido, modalidade)
+  amarrada ao destino do `cmn025` por fingerprint HMAC; duas pessoas sempre, inclusive na
+  reaprovação aberta pelo sistema; sem expiração; destino mascarado, "revelar" auditado.
+- **NEW actions** (planned): `solicitarAutorizacaoFavorecido`, `aprovarAutorizacaoFavorecido`,
+  `rejeitarAutorizacaoFavorecido`, `revogarAutorizacaoFavorecido`, `verificarDestinoAutorizado`,
+  `listarCandidatosAutorizacao` (read-only).
+- **I13:** i, k, l removidas; j e m reescritas (retira e finaliza na mesma chamada; lote vazio fica
+  RASCUNHO). **I10:** resolvedor só cadastro; d, e, g, h reescritas; i removida.
+- **LotePagamento:** L12/L13 removidas; L3, L4, L8 (guarda I14 só sem lote nativo) revisadas;
+  conferência, `destinoOrigem` e `excecaoDestinoId` saem; `favorecidoAutorizadoId` e
+  `autorizacaoAviso` entram.
+- **REMOVED:** `ExcecaoDestino` (+ I12, state machine, 6 actions), `PendenciaCadastro`,
+  `conferirLote`, `devolverLote`, `CANAL_HABITUAL`. Permissões: `sispag:excecao` →
+  `sispag:autorizar_favorecido`; `sispag:conferir` e `sispag:cadastro` saem.
+- Coverage: entities 26→25 (impl 19→17, planned 5→6); actions 38→36 (impl 30→23, planned 7→12);
+  business rules 27 (impl 17→16, planned 10→11, com teste 13→12); state machines 6 (impl 2→1,
+  planned 3→4). `_index._meta.version` corrigida de 0.36.0 para 0.38.0.
+
 ## v0.37.0 — SISPAG: lotes por vencimento e mover títulos (2026-10-06, ADR-0064)
 
 Feature: `sispag-lotes-vencimento-mover` (`/feature-tweak LotePagamento`). `entity_changed = false`.
