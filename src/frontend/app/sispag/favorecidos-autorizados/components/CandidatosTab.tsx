@@ -25,7 +25,7 @@ import {
 import { formatarData } from './formatar'
 import { type PedidoInicial, SolicitarAutorizacaoDialog } from './SolicitarAutorizacaoDialog'
 
-const LIMITE = 50
+const LIMITE = 20
 const MODALIDADES: ModalidadeAutorizavel[] = ['TED', 'PIX']
 
 const ROTULO_GRUPO: Record<string, string> = {

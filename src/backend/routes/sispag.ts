@@ -23,6 +23,9 @@ import CarteiraAtualizacaoService from '../domain/service/sispag/CarteiraAtualiz
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import AuthorizationCandidatesService from '../domain/service/sispag/AuthorizationCandidatesService.js';
 import AuthorizedPayeeService from '../domain/service/sispag/AuthorizedPayeeService.js';
+import type { AuthorizedPayee } from '../domain/interface/sispag/AuthorizedPayeeInterface.js';
+
+type AuthorizedPayeeApiView = Omit<AuthorizedPayee, 'fingerprint' | 'fingerprintObservado'>;
 import LotePagamentoApiView from '../domain/service/sispag/LotePagamentoApiView.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
@@ -533,6 +536,16 @@ const respostaInvalida = (res: Response, ...erros: Array<z.ZodError | undefined>
 
 const payees = (): AuthorizedPayeeService => container.resolve(AuthorizedPayeeService);
 
+/**
+ * Projeção da autorização para a API: sem as impressões (HMAC) aprovada e observada. Não são
+ * reversíveis, mas não servem a quem só lê (`sispag:ver`); a tela de decisão recebe a impressão
+ * ATUAL pelo `reconferir`, que é a que a aprovação envia.
+ */
+const semImpressao = (a: AuthorizedPayee): AuthorizedPayeeApiView => {
+    const { fingerprint: _f, fingerprintObservado: _o, ...resto } = a;
+    return resto;
+};
+
 // GET /sispag/favorecidos-autorizados — lista (?estado=&pesCod=). Só máscara, nunca o destino.
 router.get(
     '/favorecidos-autorizados',
@@ -541,7 +554,7 @@ router.get(
         await bootstrapAppContainer();
         const filtro = FiltroAutorizacoesSchema.safeParse(req.query);
         if (!filtro.success) return respostaInvalida(res, filtro.error);
-        res.json({ autorizacoes: await payees().listar(filtro.data) });
+        res.json({ autorizacoes: (await payees().listar(filtro.data)).map(semImpressao) });
     }),
 );
 
@@ -577,7 +590,7 @@ router.post(
                 filCod: body.data.filCod,
                 ator: ator(req),
             });
-            res.status(201).json({ autorizacao });
+            res.status(201).json({ autorizacao: semImpressao(autorizacao) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
@@ -602,7 +615,7 @@ router.post(
                 fingerprintMostrado: body.data.fingerprintMostrado,
                 ator: ator(req),
             });
-            res.json({ autorizacao });
+            res.json({ autorizacao: semImpressao(autorizacao) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
@@ -630,7 +643,7 @@ for (const acao of ['rejeitar', 'revogar'] as const) {
                     acao === 'rejeitar'
                         ? await payees().rejeitar(input)
                         : await payees().revogar(input);
-                res.json({ autorizacao });
+                res.json({ autorizacao: semImpressao(autorizacao) });
             } catch (err) {
                 if (!respondLoteError(req, res, err)) throw err;
             }
@@ -649,7 +662,8 @@ router.post(
         const id = AutorizacaoIdSchema.safeParse(req.params);
         if (!id.success) return respostaInvalida(res, id.error);
         try {
-            res.json(await payees().reconferir(id.data.id, ator(req)));
+            const { autorizacao, atual } = await payees().reconferir(id.data.id, ator(req));
+            res.json({ autorizacao: semImpressao(autorizacao), atual });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }

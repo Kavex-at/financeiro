@@ -236,6 +236,18 @@ describe('POST /sispag/favorecidos-autorizados/:id/{rejeitar,revogar} (F3/F7)', 
 });
 
 describe('leitura, reconferência, revelar e trilha', () => {
+    it('as respostas nunca trazem as impressões (HMAC) aprovada e observada', async () => {
+        servico({
+            listar: jest
+                .fn()
+                .mockResolvedValue([{ ...AUTORIZACAO, fingerprint: FP, fingerprintObservado: FP }]),
+        });
+        await comApp([PERMISSION.SISPAG_VER], async (url) => {
+            const texto = await (await fetch(`${url}/sispag/favorecidos-autorizados`)).text();
+            expect(texto).not.toContain(FP);
+        });
+    });
+
     it('GET lista com filtro validado; estado desconhecido → 400', async () => {
         const s = servico({});
         await comApp([PERMISSION.SISPAG_VER], async (url) => {
@@ -287,9 +299,9 @@ describe('GET /sispag/favorecidos-autorizados/candidatos (relatório read-only)'
                 200,
             );
             expect(
-                (await fetch(`${url}/sispag/favorecidos-autorizados/candidatos?limite=500`)).status,
+                (await fetch(`${url}/sispag/favorecidos-autorizados/candidatos?limite=26`)).status,
             ).toBe(400);
         });
-        expect(listar).toHaveBeenCalledWith({ pagina: 1, limite: 50 });
+        expect(listar).toHaveBeenCalledWith({ pagina: 1, limite: 20 });
     });
 });

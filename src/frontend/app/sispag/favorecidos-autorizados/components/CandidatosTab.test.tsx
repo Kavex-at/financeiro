@@ -32,7 +32,7 @@ const relatorio = (over: Partial<RelatorioCandidatos> = {}): RelatorioCandidatos
   ],
   total: 1,
   pagina: 1,
-  limite: 50,
+  limite: 20,
   retiradosSemDado: [
     { docCod: '6173', titCod: '1', pesCod: '7003', credor: 'GAMA', ocorridoEm: '2026-10-08T10:00:00.000Z' },
   ],
@@ -88,7 +88,7 @@ describe('CandidatosTab', () => {
     render(<CandidatosTab podePedir />)
     await userEvent.click(await screen.findByRole('button', { name: /próxima página/i }))
     await waitFor(() =>
-      expect(listarCandidatosAutorizacao).toHaveBeenLastCalledWith({ pagina: 2, limite: 50 }),
+      expect(listarCandidatosAutorizacao).toHaveBeenLastCalledWith({ pagina: 2, limite: 20 }),
     )
   })
 })
