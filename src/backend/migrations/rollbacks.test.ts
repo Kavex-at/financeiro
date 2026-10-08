@@ -57,6 +57,9 @@ describe('migrations — segurança do diretório', () => {
                 // A 0072 só cria índices: o reverse é trivial (DROP INDEX), mas fica escrito para
                 // ninguém precisar adivinhar nomes num rollback (ADR-0058).
                 '0072_idx_atividade_usuario.sql',
+                // A 0080 apaga cinco tabelas e colunas (ADR-0065): o reverse recria a ESTRUTURA vazia —
+                // o conteúdo não volta, e a guarda da 0080 provou que não havia conteúdo.
+                '0080_sispag_favorecido_autorizado.sql',
             ].sort(),
         );
         for (const alvo of reverses) {

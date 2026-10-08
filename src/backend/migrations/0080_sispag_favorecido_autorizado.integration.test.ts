@@ -279,9 +279,17 @@ describeComBanco('0080 — com as tabelas vazias aplica e converte permissões',
             db.query(
                 `INSERT INTO sispag_favorecido_autorizado
                     (id, pes_cod, credor, modalidade, estado, fingerprint, fingerprint_chave_id,
-                     origem_solicitacao, solicitado_por, fil_cod_leitura)
-                 VALUES ($1, $2, 'ACME', $3, $4, $5, $6, 'MANUAL', 'ana', 1)`,
-                [id(n), pes, modalidade, estado, fp ?? null, fp ? 'v1' : null],
+                     origem_solicitacao, solicitado_por, fil_cod_leitura, motivo_decisao)
+                 VALUES ($1, $2, 'ACME', $3, $4, $5, $6, 'MANUAL', 'ana', 1, $7)`,
+                [
+                    id(n),
+                    pes,
+                    modalidade,
+                    estado,
+                    fp ?? null,
+                    fp ? 'v1' : null,
+                    estado === 'REVOGADO' ? 'encerrado' : null,
+                ],
             );
         await inserir(100, '9001', 'TED', 'PENDENTE');
         await expect(inserir(101, '9001', 'TED', 'AUTORIZADO', 'f')).rejects.toThrow(
