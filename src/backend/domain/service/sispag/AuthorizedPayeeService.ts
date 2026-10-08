@@ -83,8 +83,8 @@ export const chaveDoPar = (pesCod: string, modalidade: string): string => `${pes
  * só o `revelar` o devolve, na resposta, e grava que revelou.
  *
  * Toda mudança de estado vai com o evento na MESMA transação e com lock otimista por `versao`.
- * Com a guarda desligada no tenant (I14k), a verificação responde FAVORECIDO_NAO_AUTORIZADO para
- * todo par sem ler o Conexos: TED/PIX nunca passam sem a guarda.
+ * Com a guarda desligada no tenant, ou a flag da modalidade desligada (I14k), a verificação responde
+ * FAVORECIDO_NAO_AUTORIZADO para o par sem ler o Conexos: TED/PIX nunca passam sem a guarda.
  */
 @injectable()
 export default class AuthorizedPayeeService {
@@ -287,13 +287,21 @@ export default class AuthorizedPayeeService {
         const pares = this.paresDistintos(itens);
         if (pares.size === 0) return resultado;
 
+        // I14k: guarda desligada no tenant, ou modalidade desligada, = nenhum TED/PIX passa. A flag
+        // da modalidade entra porque, com ela desligada, o envio usa a regra antiga (conta no
+        // banco do lote) — um destino que a impressão aprovada (conta default) não cobre.
         const env = await this.environmentProvider.getEnvironmentVars();
-        if (env.sispagFavorecidoAutorizadoEnabled !== true) {
-            for (const k of pares.keys()) {
-                resultado.set(k, { resultado: PAYEE_CHECK_RESULT.FAVORECIDO_NAO_AUTORIZADO });
-            }
-            return resultado;
+        const habilitada = (m: AuthorizedPayeeModality): boolean =>
+            env.sispagFavorecidoAutorizadoEnabled === true &&
+            (m === AUTHORIZED_PAYEE_MODALITY.TED
+                ? env.sispagTedEnabled === true
+                : env.sispagPixEnabled === true);
+        for (const [k, par] of pares) {
+            if (habilitada(par.modalidade)) continue;
+            resultado.set(k, { resultado: PAYEE_CHECK_RESULT.FAVORECIDO_NAO_AUTORIZADO });
+            pares.delete(k);
         }
+        if (pares.size === 0) return resultado;
 
         const vigentes = await this.repo.listarVigentesPorPesCods(
             [...pares.values()].map((p) => p.pesCod),

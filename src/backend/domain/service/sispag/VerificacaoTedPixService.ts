@@ -5,35 +5,32 @@ import PostgreeDatabaseClient, {
 } from '../../client/database/PostgreeDatabaseClient.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
-    CHANNEL_CONFIDENCE,
-    CHANNEL_GROUP,
-    type ChannelProfile,
+    type AuthorizedPayeeModality,
+    PAYEE_CHECK_RESULT,
+    type PayeeItemWarning,
+} from '../../interface/sispag/AuthorizedPayeeInterface.js';
+import {
     type ChaveTitulo,
-    DESTINO_MANUAL_TIPO,
     type DuplicateCandidate,
     type DuplicateMatch,
     ITEM_ALERT_STATE,
-    ITEM_ALERT_TYPE,
     type ItemLote,
     LOTE_STATUS,
     MODALIDADE,
-    PAYEE_ISSUE_OUTCOME,
     PAYMENT_CHECK_STATE,
     SISPAG_SYSTEM_ACTOR,
+    type SystemRemovalReason,
 } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type { SispagVerificacaoConfig } from '../../libs/environment/model/EnvironmentVars.js';
 import AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
-import PendenciaCadastroRepository from '../../repository/sispag/PendenciaCadastroRepository.js';
-import PerfilCanalFornecedorRepository from '../../repository/sispag/PerfilCanalFornecedorRepository.js';
 import LogService from '../LogService.js';
-import DestinoPagamentoResolver, {
-    type CacheCadastroDestino,
-    DESTINO_ORIGEM,
-    type DestinoResolvido,
-    type FlagsDestino,
-} from './DestinoPagamentoResolver.js';
+import AuthorizedPayeeService, {
+    chaveDoPar,
+    type PayeeCheckOutcome,
+} from './AuthorizedPayeeService.js';
+import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
 import DuplicateDetector from './DuplicateDetector.js';
 
 /** Um item citado no resultado — o título, o credor e a forma de pagamento (nunca o destino). */
@@ -45,20 +42,39 @@ export interface ItemVerificado {
     modalidade?: string;
 }
 
-export interface ResultadoVerificacao {
-    /** Itens TED/PIX verificados com sucesso (estado OK). */
-    verificados: ItemVerificado[];
-    /** Itens que ficaram PENDENTE (leitura do Conexos falhou — I13b). */
-    pendentes: ItemVerificado[];
-    /** Itens retirados do lote pelo sistema por falta de dado de pagamento (I13j-1). */
-    retirados: ItemVerificado[];
+/** Item retirado do lote pelo sistema no finalizar, com o motivo (I13j). */
+export interface ItemRetirado extends ItemVerificado {
+    motivo: SystemRemovalReason;
 }
+
+/** Item que ficou no lote com selo de aviso (modo AVISO, I14e-1). */
+export interface ItemComAviso extends ItemVerificado {
+    aviso: PayeeItemWarning;
+}
+
+export interface ResultadoVerificacao {
+    /** Itens TED/PIX verificados (estado OK), com ou sem aviso. */
+    verificados: ItemVerificado[];
+    /** Itens que ficaram PENDENTE (leitura do Conexos falhou — I13b, I14f). */
+    pendentes: ItemVerificado[];
+    /** Itens retirados do lote pelo sistema (só no modo RETIRAR). */
+    retirados: ItemRetirado[];
+    /** Itens que ficaram no lote com resultado ≠ OK (só no modo AVISO). */
+    avisos: ItemComAviso[];
+}
+
+/**
+ * Onde a verificação roda (ADR-0065 I14e): ao definir TED/PIX num item só AVISA (nunca retira); no
+ * `finalizarLote` é autoritativa e RETIRA o item cujo favorecido não está autorizado.
+ */
+export const VERIFICATION_MODE = { AVISO: 'AVISO', RETIRAR: 'RETIRAR' } as const;
+
+export type VerificationMode = (typeof VERIFICATION_MODE)[keyof typeof VERIFICATION_MODE];
 
 export interface OpcoesVerificacao {
     /** Só estes itens (edição de modalidade); ausente = todos os TED/PIX do lote (finalizar). */
     itens?: ChaveTitulo[];
-    /** Só o finalizar liga (ADR-0061 I12c): aposenta a exceção que o cadastro tornou desnecessária. */
-    aposentarExcecao?: boolean;
+    modo: VerificationMode;
 }
 
 /** Leitura do fin064 da filial nesta rodada: os candidatos, ou a falha (→ PENDENTE). */
@@ -70,33 +86,36 @@ const MODALIDADES_VERIFICADAS: ReadonlySet<string> = new Set([MODALIDADE.TED, MO
 const chaveAlerta = (tipo: string, filCod?: number, docCod?: string): string =>
     `${tipo}|${filCod ?? ''}|${docCod ?? ''}`;
 
+/** Um item do lote já com o favorecido do fin064 resolvido. */
+interface ItemComFavorecido {
+    item: ItemLote;
+    proprio: DuplicateCandidate;
+    pesCod: string;
+    titulos: DuplicateCandidate[];
+}
+
 /**
- * VerificacaoTedPixService — `verificarItensTedPix` (ADR-0063, I13a–k). Só itens TED/PIX; BOLETO,
- * "a definir" e CRÉDITO EM CONTA legado nunca. NADA é escrito no Conexos: lê o `fin064` (duplicidade)
- * e o `cmn025` (via `DestinoPagamentoResolver`, a mesma função da oferta e do envio, I10b), e grava
- * só no Postgres.
+ * VerificacaoTedPixService — `verificarItensTedPix` (ADR-0063 I13, reescrito pela ADR-0065). Só
+ * itens TED/PIX; BOLETO, "a definir" e CRÉDITO EM CONTA legado nunca. NADA é escrito no Conexos:
+ * lê o `fin064` (duplicidade e favorecido do título) e, pela `AuthorizedPayeeService`, o `cmn025`
+ * (a mesma função única `verificarDestinoAutorizado`, I14d). Grava só no Postgres.
  *
- * Ordem por item (ver `actions/sispag/verificar-itens-ted-pix.md`):
- *   1. dados de pagamento (I13j) — com a flag da modalidade ligada; sem dado e sem exceção APROVADA
- *      o item SAI do lote (ator `sistema`) e abre `PendenciaCadastro`; com exceção, fica e abre;
- *      com cadastro, resolve a pendência ABERTA do par (I13k). Item retirado não segue.
+ * Por item:
+ *   1. favorecido autorizado (I14) — resultado ≠ OK: no modo AVISO o item fica com o selo; no
+ *      modo RETIRAR o item SAI do lote (ator `sistema`, motivo na trilha) e não segue.
  *   2. duplicidade (I13c–e, I13h) — `DuplicateDetector` sobre o fin064 da filial.
- *   3. canal habitual (I13i) — `PerfilCanalFornecedor` local, só ALTA divergente de TED_PIX.
  *
- * FALHA FECHADA (I13b): leitura do Conexos que falha nos passos 1–2 deixa o item `PENDENTE` e não
- * cria, não fecha, não retira e não abre pendência.
+ * FALHA FECHADA (I13b, I14f): leitura do Conexos que falha deixa o item `PENDENTE` e não cria, não
+ * fecha e não retira nada.
  */
 @injectable()
 export default class VerificacaoTedPixService {
     public constructor(
         @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
         @inject(AlertaItemLoteRepository) private readonly alertaRepo: AlertaItemLoteRepository,
-        @inject(PendenciaCadastroRepository)
-        private readonly pendenciaRepo: PendenciaCadastroRepository,
-        @inject(PerfilCanalFornecedorRepository)
-        private readonly perfilRepo: PerfilCanalFornecedorRepository,
         @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
+        @inject(AuthorizedPayeeService) private readonly payees: AuthorizedPayeeService,
         @inject(DuplicateDetector) private readonly detector: DuplicateDetector,
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
@@ -109,9 +128,14 @@ export default class VerificacaoTedPixService {
 
     public verificarItens = async (
         loteId: string,
-        opcoes: OpcoesVerificacao = {},
+        opcoes: OpcoesVerificacao,
     ): Promise<ResultadoVerificacao> => {
-        const resultado: ResultadoVerificacao = { verificados: [], pendentes: [], retirados: [] };
+        const resultado: ResultadoVerificacao = {
+            verificados: [],
+            pendentes: [],
+            retirados: [],
+            avisos: [],
+        };
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote || lote.status !== LOTE_STATUS.RASCUNHO) return resultado;
         const filtro = opcoes.itens?.map((c) => `${c.filCod}:${c.docCod}:${c.titCod}`);
@@ -122,50 +146,35 @@ export default class VerificacaoTedPixService {
         );
         if (alvo.length === 0) return resultado;
 
-        const env = await this.environmentProvider.getEnvironmentVars();
-        const config = env.sispagVerificacao;
-        const flags: FlagsDestino = {
-            ted: env.sispagTedEnabled === true,
-            pix: env.sispagPixEnabled === true,
-            excecao: env.sispagExcecaoDestinoEnabled === true,
-        };
+        const config = (await this.environmentProvider.getEnvironmentVars()).sispagVerificacao;
         const leituras = new Map<number, LeituraFilial>();
-        const cache = this.resolver.novoCache();
-
+        const comFavorecido: ItemComFavorecido[] = [];
         for (const item of alvo) {
             const leitura = await this.lerFilial(leituras, item.filCod, config, loteId);
-            const ref = this.ref(item);
-            const desfecho = await this.verificarItem({
-                loteId,
-                item,
-                leitura,
-                flags,
-                config,
-                cache,
-                aposentarExcecao: opcoes.aposentarExcecao === true,
-            });
-            resultado[desfecho].push(ref);
+            const achado = this.favorecidoDoTitulo(item, leitura);
+            if ('motivo' in achado) {
+                resultado.pendentes.push(await this.pendente(loteId, item, achado.motivo));
+            } else {
+                comFavorecido.push(achado);
+            }
         }
 
-        const registrar =
-            resultado.pendentes.length > 0 || resultado.retirados.length > 0
-                ? this.logService.warn
-                : this.logService.info;
-        await registrar({
-            type:
-                resultado.pendentes.length > 0 || resultado.retirados.length > 0
-                    ? LOG_TYPE.BUSINESS_WARN
-                    : LOG_TYPE.BUSINESS_INFO,
-            message: 'verificação TED/PIX concluída',
-            data: {
-                loteId,
-                filCod: lote.filCod,
-                itens: alvo.length,
-                verificados: resultado.verificados.length,
-                pendentes: resultado.pendentes.length,
-                retirados: resultado.retirados.length,
-            },
-        });
+        const verificacao = await this.payees.verificarDestinoAutorizado(
+            comFavorecido.map((c) => ({
+                pesCod: c.pesCod,
+                modalidade: c.item.modalidade as AuthorizedPayeeModality,
+                filCod: c.item.filCod,
+            })),
+            { cache: this.resolver.novoCache() },
+        );
+        for (const c of comFavorecido) {
+            const outcome = verificacao.get(
+                chaveDoPar(c.pesCod, c.item.modalidade as AuthorizedPayeeModality),
+            ) ?? { resultado: PAYEE_CHECK_RESULT.FALHA_LEITURA };
+            await this.aplicar(loteId, c, outcome, opcoes.modo, config, resultado);
+        }
+
+        await this.registrarResultado(loteId, lote.filCod, alvo.length, resultado);
         return resultado;
     };
 
@@ -224,104 +233,75 @@ export default class VerificacaoTedPixService {
         return leitura;
     };
 
-    private verificarItem = async (ctx: {
-        loteId: string;
-        item: ItemLote;
-        leitura: LeituraFilial;
-        flags: FlagsDestino;
-        config: SispagVerificacaoConfig;
-        cache: CacheCadastroDestino;
-        aposentarExcecao: boolean;
-    }): Promise<keyof ResultadoVerificacao> => {
-        const { loteId, item, leitura } = ctx;
+    /** O título no fin064 e o favorecido dele; sem eles o item não é verificável agora. */
+    private favorecidoDoTitulo = (
+        item: ItemLote,
+        leitura: LeituraFilial,
+    ): ItemComFavorecido | { motivo: string } => {
+        if (!leitura.ok) return { motivo: 'fin064 indisponível' };
+        const proprio = leitura.titulos.find(
+            (t) => t.docCod === item.docCod && t.titCod === item.titCod,
+        );
+        if (!proprio) return { motivo: 'título não encontrado no fin064' };
+        if (!proprio.favorecido) return { motivo: 'favorecido ausente no fin064' };
+        return { item, proprio, pesCod: proprio.favorecido, titulos: leitura.titulos };
+    };
+
+    /** Aplica o resultado da guarda I14 a um item e, se ele fica no lote, a duplicidade. */
+    private aplicar = async (
+        loteId: string,
+        c: ItemComFavorecido,
+        outcome: PayeeCheckOutcome,
+        modo: VerificationMode,
+        config: SispagVerificacaoConfig,
+        resultado: ResultadoVerificacao,
+    ): Promise<void> => {
+        const { item } = c;
+        if (outcome.resultado === PAYEE_CHECK_RESULT.FALHA_LEITURA) {
+            resultado.pendentes.push(await this.pendente(loteId, item, 'cadastro indisponível'));
+            return;
+        }
+        const aviso: PayeeItemWarning = outcome.resultado;
+        if (aviso !== PAYEE_CHECK_RESULT.OK && modo === VERIFICATION_MODE.RETIRAR) {
+            if (await this.retirar(loteId, item, aviso)) {
+                resultado.retirados.push({ ...this.ref(item), motivo: aviso });
+            }
+            return;
+        }
         const chave: ChaveTitulo = {
             filCod: item.filCod,
             docCod: item.docCod,
             titCod: item.titCod,
         };
-        if (!leitura.ok) return this.pendente(loteId, chave, 'fin064 indisponível');
-        const proprio = leitura.titulos.find(
-            (t) => t.docCod === item.docCod && t.titCod === item.titCod,
-        );
-        const pesCod = proprio?.favorecido;
-        if (!proprio || !pesCod) {
-            return this.pendente(
-                loteId,
-                chave,
-                proprio ? 'favorecido ausente no fin064' : 'título não encontrado no fin064',
-            );
-        }
-
-        // 1. Dados de pagamento (I13j) — só com a flag da modalidade ligada (com ela desligada o
-        //    TED/PIX segue a regra de antes e o envio continua sendo a autoridade).
-        let destino: DestinoResolvido | undefined;
-        if (this.flagDaModalidade(item, ctx.flags)) {
-            try {
-                destino = await this.resolver.resolve(
-                    { modalidade: item.modalidade },
-                    {
-                        flags: ctx.flags,
-                        filCod: item.filCod,
-                        pesCod,
-                        cache: ctx.cache,
-                        ...(ctx.aposentarExcecao ? { aposentarExcecao: true } : {}),
-                    },
-                );
-            } catch (error) {
-                return this.pendente(loteId, chave, `cadastro indisponível: ${this.motivo(error)}`);
-            }
-            if (destino.origem === DESTINO_ORIGEM.NENHUM) {
-                await this.retirarSemDado(loteId, item, pesCod, proprio.credor);
-                return 'retirados';
-            }
-        }
-
-        // 2. Duplicidade (I13c–e) e 3. canal habitual (I13i).
-        const achados = this.detector.detectar(proprio, leitura.titulos, {
-            janelaFracaDias: ctx.config.duplicidadeJanelaDias,
+        const achados = this.detector.detectar(c.proprio, c.titulos, {
+            janelaFracaDias: config.duplicidadeJanelaDias,
         });
-        const perfil = await this.perfilRepo.findByPesCod(pesCod);
         await this.db.withTransaction(async (tx) => {
-            if (destino) await this.registrarPendencia(loteId, item, pesCod, destino, tx);
-            await this.reconciliarAlertas(loteId, chave, achados, perfil, tx);
+            await this.reconciliarAlertas(loteId, chave, achados, tx);
             await this.loteRepo.marcarVerificacaoItem(
                 {
                     loteId,
                     ...chave,
                     estado: PAYMENT_CHECK_STATE.OK,
-                    ...(destino
-                        ? {
-                              destinoOrigem: destino.origem,
-                              ...this.mascara(destino),
-                          }
+                    autorizacaoAviso: aviso,
+                    ...(outcome.destinoMascarado
+                        ? { destinoMascarado: outcome.destinoMascarado }
                         : {}),
                 },
                 tx,
             );
         });
-        return 'verificados';
-    };
-
-    private flagDaModalidade = (item: ItemLote, flags: FlagsDestino): boolean =>
-        (item.modalidade === MODALIDADE.TED && flags.ted) ||
-        (item.modalidade === MODALIDADE.PIX && flags.pix);
-
-    private tipoPendencia = (item: ItemLote) =>
-        item.modalidade === MODALIDADE.PIX
-            ? DESTINO_MANUAL_TIPO.CHAVE_PIX
-            : DESTINO_MANUAL_TIPO.CONTA;
-
-    private mascara = (destino: DestinoResolvido): { destinoMascarado?: string } => {
-        const m = this.resolver.mascarar(destino);
-        return m !== undefined ? { destinoMascarado: m } : {};
+        resultado.verificados.push(this.ref(item));
+        if (aviso !== PAYEE_CHECK_RESULT.OK) resultado.avisos.push({ ...this.ref(item), aviso });
     };
 
     /** I13b — item PENDENTE: nada mais muda (sem alerta nova, sem fechar, sem retirar). */
     private pendente = async (
         loteId: string,
-        chave: ChaveTitulo,
+        item: ItemLote,
         motivo: string,
-    ): Promise<'pendentes'> => {
+    ): Promise<ItemVerificado> => {
+        const chave = { filCod: item.filCod, docCod: item.docCod, titCod: item.titCod };
         await this.loteRepo.marcarVerificacaoItem({
             loteId,
             ...chave,
@@ -332,72 +312,55 @@ export default class VerificacaoTedPixService {
             message: 'verificação TED/PIX pendente: item não verificável agora',
             data: { loteId, ...chave, motivo },
         });
-        return 'pendentes';
+        return this.ref(item);
     };
 
     /**
-     * I13j-1 — sem dado no cadastro e sem exceção APROVADA: o item SAI do lote (ator `sistema`,
-     * motivo `SEM_DADO_PAGAMENTO`), as alertas dele são descartadas e abre-se a pendência do
-     * favorecido — tudo numa transação. Não mexe em `automatico` (gap Q11).
+     * I13j (ADR-0065) — no finalizar, item cujo favorecido não está autorizado SAI do lote (ator
+     * `sistema`, motivo na trilha) e as alertas dele são descartadas, numa transação. `false` = o
+     * item já não estava no lote RASCUNHO.
      */
-    private retirarSemDado = async (
+    private retirar = async (
         loteId: string,
         item: ItemLote,
-        pesCod: string,
-        credor: string | undefined,
-    ): Promise<void> => {
+        motivo: SystemRemovalReason,
+    ): Promise<boolean> => {
         const chave = { filCod: item.filCod, docCod: item.docCod, titCod: item.titCod };
-        await this.db.withTransaction(async (tx) => {
+        const removido = await this.db.withTransaction(async (tx) => {
             await this.alertaRepo.descartarDoItem(loteId, chave, SISPAG_SYSTEM_ACTOR, tx);
-            await this.loteRepo.removerItemPeloSistema({ loteId, ...chave }, tx);
-            await this.pendenciaRepo.abrirOuAcrescentar(
-                {
-                    pesCod,
-                    filCod: item.filCod,
-                    ...((credor ?? item.credor) ? { credor: credor ?? item.credor } : {}),
-                    tipo: this.tipoPendencia(item),
-                    loteId,
-                    chave,
-                    desfecho: PAYEE_ISSUE_OUTCOME.RETIRADO,
-                },
-                tx,
-            );
+            return this.loteRepo.removerItemPeloSistema({ loteId, ...chave, motivo }, tx);
         });
         await this.logService.warn({
             type: LOG_TYPE.BUSINESS_WARN,
-            message: 'verificação TED/PIX retirou item sem dado de pagamento no cadastro',
-            data: { loteId, ...chave, pesCod, modalidade: item.modalidade },
+            message: 'verificação TED/PIX retirou item do lote: favorecido sem autorização válida',
+            data: { loteId, ...chave, modalidade: item.modalidade, motivo },
         });
+        return removido;
     };
 
-    /**
-     * I13j-2/3 e I13k: com exceção APROVADA o item fica, mas a pendência abre do mesmo jeito; com o
-     * dado no cadastro, a pendência ABERTA do (favorecido, tipo) é resolvida pelo sistema.
-     */
-    private registrarPendencia = async (
+    private registrarResultado = async (
         loteId: string,
-        item: ItemLote,
-        pesCod: string,
-        destino: DestinoResolvido,
-        tx: TransactionClient,
+        filCod: number,
+        itens: number,
+        resultado: ResultadoVerificacao,
     ): Promise<void> => {
-        const tipo = this.tipoPendencia(item);
-        if (destino.origem === DESTINO_ORIGEM.EXCECAO) {
-            await this.pendenciaRepo.abrirOuAcrescentar(
-                {
-                    pesCod,
-                    filCod: item.filCod,
-                    ...(item.credor ? { credor: item.credor } : {}),
-                    tipo,
-                    loteId,
-                    chave: { filCod: item.filCod, docCod: item.docCod, titCod: item.titCod },
-                    desfecho: PAYEE_ISSUE_OUTCOME.MANTIDO_POR_EXCECAO,
-                },
-                tx,
-            );
-        } else if (destino.origem === DESTINO_ORIGEM.CADASTRO) {
-            await this.pendenciaRepo.resolverDoFavorecido(pesCod, tipo, tx);
-        }
+        const atencao =
+            resultado.pendentes.length > 0 ||
+            resultado.retirados.length > 0 ||
+            resultado.avisos.length > 0;
+        await (atencao ? this.logService.warn : this.logService.info)({
+            type: atencao ? LOG_TYPE.BUSINESS_WARN : LOG_TYPE.BUSINESS_INFO,
+            message: 'verificação TED/PIX concluída',
+            data: {
+                loteId,
+                filCod,
+                itens,
+                verificados: resultado.verificados.length,
+                pendentes: resultado.pendentes.length,
+                retirados: resultado.retirados.length,
+                avisos: resultado.avisos.length,
+            },
+        });
     };
 
     /**
@@ -405,13 +368,11 @@ export default class VerificacaoTedPixService {
      *   mesma contraparte + mesmo tipo → mantém (e a resolução dela);
      *   contraparte nova → alerta nova ABERTA;
      *   viva que não casou mais → OBSOLETA.
-     * Canal: perfil ALTA com grupo dominante ≠ TED_PIX → alerta CANAL_HABITUAL (informativa).
      */
     private reconciliarAlertas = async (
         loteId: string,
         chave: ChaveTitulo,
         achados: DuplicateMatch[],
-        perfil: ChannelProfile | null,
         tx: TransactionClient,
     ): Promise<void> => {
         const vivas = await this.alertaRepo.listVivasDoItem(loteId, chave, tx);
@@ -441,31 +402,6 @@ export default class VerificacaoTedPixService {
                         contraparteTitulos: achado.contraparteTitulos,
                         evidencia: achado.evidencia,
                     },
-                    SISPAG_SYSTEM_ACTOR,
-                    tx,
-                );
-            }
-        }
-
-        const canalDiverge =
-            perfil !== null &&
-            perfil.confianca === CHANNEL_CONFIDENCE.ALTA &&
-            perfil.grupoDominante !== CHANNEL_GROUP.TED_PIX;
-        const kCanal = chaveAlerta(ITEM_ALERT_TYPE.CANAL_HABITUAL);
-        if (canalDiverge && perfil) {
-            vistas.add(kCanal);
-            const evidencia = {
-                grupoDominante: perfil.grupoDominante,
-                participacao: perfil.participacao,
-                pagamentosUnicos: perfil.pagamentosUnicos,
-                mesesDistintos: perfil.mesesDistintos,
-                ...(perfil.calculadoEm ? { calculadoEm: perfil.calculadoEm } : {}),
-            };
-            const existente = porChave.get(kCanal);
-            if (existente) await this.alertaRepo.confirmar(existente.id, { evidencia }, tx);
-            else {
-                await this.alertaRepo.criar(
-                    { loteId, chave, tipo: ITEM_ALERT_TYPE.CANAL_HABITUAL, evidencia },
                     SISPAG_SYSTEM_ACTOR,
                     tx,
                 );

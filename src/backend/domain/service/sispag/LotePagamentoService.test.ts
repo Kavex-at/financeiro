@@ -10,7 +10,8 @@ import TitleInCommittedBatchError from '../../errors/TitleInCommittedBatchError.
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import DuplicateHoldError from '../../errors/DuplicateHoldError.js';
-import ItemsRemovedByCheckError from '../../errors/ItemsRemovedByCheckError.js';
+import BatchEmptiedByCheckError from '../../errors/BatchEmptiedByCheckError.js';
+import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavailableError.js';
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
 import type {
@@ -20,7 +21,7 @@ import type {
 } from '../../interface/sispag/SispagInterface.js';
 import type AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
-import type VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
+import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type VerificacaoTedPixService from './VerificacaoTedPixService.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type LogService from '../LogService.js';
@@ -101,7 +102,7 @@ const buildRepo = (): RepoMock => ({
     cancelarSeVazio: jest.fn().mockResolvedValue(false),
 });
 
-const SEM_ACHADO = { verificados: [], pendentes: [], retirados: [] };
+const SEM_ACHADO = { verificados: [], pendentes: [], retirados: [], avisos: [] };
 
 /**
  * Dependências da ADR-0063: a verificação TED/PIX (mockada — testada em
@@ -126,7 +127,11 @@ const buildDestinoDeps = () => ({
         descartarDoItem: jest.fn().mockResolvedValue(0),
     },
     bloqueioRepo: { findAtivo: jest.fn().mockResolvedValue(null) },
-    eventos: { registrar: jest.fn().mockResolvedValue('EV1') },
+    envVars: {
+        sispagFavorecidoAutorizadoEnabled: true,
+        sispagTedEnabled: true,
+        sispagPixEnabled: true,
+    } as Record<string, boolean>,
 });
 
 type DestinoDeps = ReturnType<typeof buildDestinoDeps>;
@@ -149,7 +154,7 @@ const novoService = (
         contaResolver,
         deps.alertaRepo as unknown as AlertaItemLoteRepository,
         deps.bloqueioRepo as unknown as BloqueioDuplicidadeRepository,
-        deps.eventos as unknown as VerificacaoEventoRepository,
+        { getEnvironmentVars: async () => deps.envVars } as unknown as EnvironmentProvider,
     );
 
 /** Carteira persistida: é DAQUI que sai o "tem boleto?" — nunca do `fin064`. */
@@ -844,8 +849,54 @@ describe('LotePagamentoService — verificação TED/PIX (ADR-0063)', () => {
         it.each(['TED', 'PIX'] as const)('%s dispara a verificação SÓ daquele item', async (m) => {
             const { service, deps } = montar();
             await mudar(service, m);
-            expect(deps.verificacao.verificarItens).toHaveBeenCalledWith('L1', { itens: [chave] });
+            expect(deps.verificacao.verificarItens).toHaveBeenCalledWith('L1', {
+                itens: [chave],
+                modo: 'AVISO',
+            });
             expect(deps.verificacao.descartarVerificacao).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ['guarda do favorecido desligada', { sispagFavorecidoAutorizadoEnabled: false }],
+            ['flag TED desligada', { sispagTedEnabled: false }],
+        ])('TED com %s → PaymentModalityUnavailableError (422), nada gravado (I14k)', async (_c, env) => {
+            const { service, deps, repo } = montar();
+            Object.assign(deps.envVars, env);
+            await expect(mudar(service, 'TED')).rejects.toBeInstanceOf(
+                PaymentModalityUnavailableError,
+            );
+            expect(repo.atualizarModalidadeItem).not.toHaveBeenCalled();
+            expect(deps.verificacao.verificarItens).not.toHaveBeenCalled();
+        });
+
+        it('PIX com a guarda desligada é recusado mesmo com SISPAG_PIX_ENABLED ligado', async () => {
+            const { service, deps } = montar();
+            deps.envVars.sispagFavorecidoAutorizadoEnabled = false;
+            await expect(mudar(service, 'PIX')).rejects.toMatchObject({ statusCode: 422 });
+        });
+
+        it('BOLETO segue livre com a guarda desligada', async () => {
+            const { service, deps, repo } = montar();
+            deps.envVars.sispagFavorecidoAutorizadoEnabled = false;
+            await mudar(service, 'BOLETO');
+            expect(repo.atualizarModalidadeItem).toHaveBeenCalled();
+        });
+
+        it('regressão (a): TED de favorecido não autorizado NÃO retira o item — só avisa', async () => {
+            const { service, deps, repo } = montar();
+            deps.verificacao.verificarItens.mockResolvedValue({
+                ...SEM_ACHADO,
+                verificados: [{ filCod: 2, docCod: '100', titCod: '1' }],
+                avisos: [
+                    { filCod: 2, docCod: '100', titCod: '1', aviso: 'FAVORECIDO_NAO_AUTORIZADO' },
+                ],
+            });
+            repo.getLoteComItens.mockResolvedValue(
+                lote({ itens: [{ ...itemTed, autorizacaoAviso: 'FAVORECIDO_NAO_AUTORIZADO' }] }),
+            );
+            const l = await mudar(service, 'TED');
+            expect(l.itens).toHaveLength(1);
+            expect(l.itens[0]?.autorizacaoAviso).toBe('FAVORECIDO_NAO_AUTORIZADO');
         });
 
         it('BOLETO descarta as alertas abertas do item (trilha), sem verificar', async () => {
@@ -863,36 +914,61 @@ describe('LotePagamentoService — verificação TED/PIX (ADR-0063)', () => {
         });
     });
 
-    describe('finalizarLote — ordem dos bloqueios', () => {
-        it('re-verifica TODOS os TED/PIX, aposentando exceção (I12c), antes da transição', async () => {
-            const { service, deps, repo } = montar();
-            await service.finalizarLote(input);
-            expect(deps.verificacao.verificarItens).toHaveBeenCalledWith('L1', {
-                aposentarExcecao: true,
-            });
-            expect(repo.transicionarStatus).toHaveBeenCalled();
+    describe('finalizarLote — retira e finaliza (ADR-0065 L3)', () => {
+        const retirado = (docCod: string, motivo = 'FAVORECIDO_NAO_AUTORIZADO' as const) => ({
+            filCod: 2,
+            docCod,
+            titCod: '1',
+            credor: 'ACME',
+            modalidade: 'TED',
+            motivo,
         });
 
-        it('1º item retirado nesta rodada → ItemsRemovedByCheckError; lote fica RASCUNHO', async () => {
+        it('re-verifica TODOS os TED/PIX no modo RETIRAR antes da transição', async () => {
+            const { service, deps, repo } = montar();
+            const r = await service.finalizarLote(input);
+            expect(deps.verificacao.verificarItens).toHaveBeenCalledWith('L1', { modo: 'RETIRAR' });
+            expect(repo.transicionarStatus).toHaveBeenCalled();
+            expect(r.retirados).toEqual([]);
+        });
+
+        it('regressão (b): 3 itens, 1 não autorizado → FINALIZADO com 2, resposta lista o retirado', async () => {
             const { service, deps, repo } = montar();
             deps.verificacao.verificarItens.mockResolvedValue({
-                verificados: [],
-                pendentes: [{ filCod: 2, docCod: '300', titCod: '1' }],
-                retirados: [
-                    { filCod: 2, docCod: '100', titCod: '1', credor: 'ACME', modalidade: 'TED' },
-                ],
+                ...SEM_ACHADO,
+                retirados: [retirado('100')],
             });
-            deps.alertaRepo.listVivasDosLotes.mockResolvedValue([alerta()]);
+            repo.contarItens.mockResolvedValueOnce(3).mockResolvedValueOnce(2);
+            const r = await service.finalizarLote(input);
+            expect(r.retirados).toEqual([
+                expect.objectContaining({ docCod: '100', motivo: 'FAVORECIDO_NAO_AUTORIZADO' }),
+            ]);
+            // A retirada do sistema bumpou a versão: a transição usa versão + nº de retirados.
+            expect(repo.transicionarStatus).toHaveBeenCalledWith(
+                expect.objectContaining({ para: 'FINALIZADO', versaoEsperada: 2 }),
+                expect.anything(),
+            );
+        });
+
+        it('regressão (c): todos retirados → BatchEmptiedByCheckError, lote fica RASCUNHO', async () => {
+            const { service, deps, repo } = montar();
+            deps.verificacao.verificarItens.mockResolvedValue({
+                ...SEM_ACHADO,
+                retirados: [retirado('100', 'SEM_DADO_PAGAMENTO' as never)],
+            });
+            repo.contarItens.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
             const err = await service.finalizarLote(input).catch((e: unknown) => e);
-            expect(err).toBeInstanceOf(ItemsRemovedByCheckError);
+            expect(err).toBeInstanceOf(BatchEmptiedByCheckError);
             expect(err).toMatchObject({
                 statusCode: 409,
-                userMessage: expect.stringContaining('100/1 (ACME)'),
+                userMessage: expect.stringContaining(
+                    'pedir ao responsável pelo cadastro do Conexos',
+                ),
             });
             expect(repo.transicionarStatus).not.toHaveBeenCalled();
         });
 
-        it('2º item PENDENTE → PaymentCheckPendingError (antes de olhar duplicidade)', async () => {
+        it('regressão (d): item PENDENTE → PaymentCheckPendingError, nada retirado por ele', async () => {
             const { service, deps, repo } = montar();
             deps.verificacao.verificarItens.mockResolvedValue({
                 ...SEM_ACHADO,
@@ -905,8 +981,13 @@ describe('LotePagamentoService — verificação TED/PIX (ADR-0063)', () => {
             expect(repo.transicionarStatus).not.toHaveBeenCalled();
         });
 
-        it('3º duplicidade ABERTA → PendingDuplicateAlertError com a lista por item', async () => {
-            const { service, deps, repo } = montar();
+        it('regressão (e): duplicidade ABERTA barra mesmo depois de retiradas (que ficam gravadas)', async () => {
+            const { service, deps, repo } = montar([itemTed, { ...itemTed, docCod: '101' }]);
+            deps.verificacao.verificarItens.mockResolvedValue({
+                ...SEM_ACHADO,
+                retirados: [retirado('101')],
+            });
+            repo.contarItens.mockResolvedValueOnce(2).mockResolvedValueOnce(1);
             deps.alertaRepo.listVivasDosLotes.mockResolvedValue([
                 alerta(),
                 alerta({ id: 'A2', tipo: 'DUPLICIDADE_FRACA', contraparteDocCod: '201' }),
@@ -920,11 +1001,10 @@ describe('LotePagamentoService — verificação TED/PIX (ADR-0063)', () => {
             expect(repo.transicionarStatus).not.toHaveBeenCalled();
         });
 
-        it('duplicidade JUSTIFICADA (RESOLVIDA) e alerta de CANAL não barram', async () => {
+        it('duplicidade JUSTIFICADA (RESOLVIDA) não barra', async () => {
             const { service, deps, repo } = montar();
             deps.alertaRepo.listVivasDosLotes.mockResolvedValue([
                 alerta({ estado: 'RESOLVIDA', resolucao: 'JUSTIFICADA', justificativa: 'ok' }),
-                alerta({ id: 'C1', tipo: 'CANAL_HABITUAL', contraparteDocCod: undefined }),
             ]);
             await service.finalizarLote(input);
             expect(repo.transicionarStatus).toHaveBeenCalled();
@@ -975,30 +1055,14 @@ describe('LotePagamentoService — verificação TED/PIX (ADR-0063)', () => {
         );
     });
 
-    it('reabrir (L4) de lote conferido registra CONFERENCIA_LIMPA na mesma transação', async () => {
+    it('regressão (f): reabrir (L4) só transiciona — não há conferência a limpar', async () => {
         const repo = buildRepo();
-        repo.getLoteComItens.mockResolvedValue(
-            lote({ status: 'FINALIZADO', conferidoPor: 'bia', itens: [itemTed] }),
-        );
-        const deps = buildDestinoDeps();
-        const { service } = make(repo, titulo(), buildTituloRepo(), deps);
+        repo.getLoteComItens.mockResolvedValue(lote({ status: 'FINALIZADO', itens: [itemTed] }));
+        const { service } = make(repo);
         await service.reabrirLote({ loteId: 'L1', versao: 3, ator: 'u1' });
         expect(repo.transicionarStatus).toHaveBeenCalledWith(
-            expect.objectContaining({ para: 'RASCUNHO' }),
+            expect.objectContaining({ para: 'RASCUNHO', de: ['FINALIZADO'] }),
             expect.anything(),
         );
-        expect(deps.eventos.registrar).toHaveBeenCalledWith(
-            expect.objectContaining({ evento: 'CONFERENCIA_LIMPA', ator: 'u1', loteId: 'L1' }),
-            expect.anything(),
-        );
-    });
-
-    it('reabrir de lote não conferido não grava evento de conferência', async () => {
-        const repo = buildRepo();
-        repo.getLoteComItens.mockResolvedValue(lote({ status: 'FINALIZADO' }));
-        const deps = buildDestinoDeps();
-        const { service } = make(repo, titulo(), buildTituloRepo(), deps);
-        await service.reabrirLote({ loteId: 'L1', versao: 3, ator: 'u1' });
-        expect(deps.eventos.registrar).not.toHaveBeenCalled();
     });
 });

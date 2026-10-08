@@ -140,7 +140,6 @@ describe('DuplicateResolutionService.resolverAlertaDuplicidade (I13f)', () => {
         ['inexistente', null],
         ['de outro lote', alerta({ loteId: 'L2' })],
         ['de outro item', alerta({ docCod: '9' })],
-        ['de canal (não é duplicidade)', alerta({ tipo: 'CANAL_HABITUAL' })],
     ])('alerta %s → 404', async (_n, a) => {
         const h = build({ alerta: a as AlertaItemLote | null });
         await expect(resolver(h.service, 'JUSTIFICAR', 'x')).rejects.toMatchObject({

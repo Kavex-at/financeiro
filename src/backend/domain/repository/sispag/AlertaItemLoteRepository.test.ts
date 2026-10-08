@@ -78,7 +78,14 @@ describe('AlertaItemLoteRepository (ADR-0063)', () => {
     it('criar dentro de uma transação existente não abre outra', async () => {
         const db = buildDb();
         await make(db).criar(
-            { loteId: 'L1', chave: CHAVE, tipo: 'CANAL_HABITUAL', evidencia: {} },
+            {
+                loteId: 'L1',
+                chave: CHAVE,
+                tipo: 'DUPLICIDADE_FRACA',
+                contraparteFilCod: 4,
+                contraparteDocCod: '6702',
+                evidencia: {},
+            },
             'sistema',
             db as never,
         );
