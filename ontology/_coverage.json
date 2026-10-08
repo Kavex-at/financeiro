@@ -526,10 +526,9 @@
     },
     "destino-pagamento-sispag": {
       "invariant": "I10",
-      "status": "planned",
+      "status": "implemented",
       "has_test": false,
-      "note": "ADR-0054 — destino TED/PIX: manual (só no item, precede o cadastro) ou cmn025; oferta = envio; titularidade, trilha, mascaramento, congelamento no import.",
-      "open_gap": "H3/H5 (fin015 aceita destino digitado sem pctCodSeq?) — se falhar, parar e falar com o usuário; H1/H4/H6/H7 no HML"
+      "note": "ADR-0065 implementada (branch fix/sispag-favorecido-autorizado): verificacao/destino reescritos sobre o favorecido autorizado (I14); sem gap aberto."
     },
     "sincronizacao-status-lote-sispag": {
       "invariant": "I11",
@@ -540,13 +539,13 @@
     },
     "verificacao-ted-pix-sispag": {
       "invariant": "I13",
-      "status": "planned",
+      "status": "implemented",
       "has_test": false,
       "resolved_by": [
         "ADR-0063",
         "ADR-0065"
       ],
-      "note": "Gap Q1 (P0) aberto: I10b x I13j. ADR-0065: I13i/k/l removidas, I13j/m reescritas; ontologia a frente do codigo."
+      "note": "ADR-0065 implementada (branch fix/sispag-favorecido-autorizado): verificacao/destino reescritos sobre o favorecido autorizado (I14); sem gap aberto."
     },
     "favorecido-autorizado-sispag": {
       "invariant": "I14",
