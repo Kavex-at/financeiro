@@ -1587,7 +1587,7 @@ export async function pedirAutorizacao(input: {
   credor?: string
   modalidade: ModalidadeAutorizavel
   origem: OrigemSolicitacao
-  filCod: number
+  filCod?: number
 }): Promise<FavorecidoAutorizado> {
   const j = await autorizacaoRequest(base, z.object({ autorizacao: autorizacaoSchema }), {
     method: 'POST',

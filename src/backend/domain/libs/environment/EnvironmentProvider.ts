@@ -45,6 +45,12 @@ export default class EnvironmentProvider {
 
     private readEnv = (key: string, fallback = ''): string => process.env[key] || fallback;
 
+    /** Código de filial (inteiro > 0) da env; ausente ou inválido cai no default. */
+    private readFilCod = (key: string, fallback: number): number => {
+        const n = Number(this.readEnv(key).trim());
+        return Number.isInteger(n) && n > 0 ? n : fallback;
+    };
+
     /** Minutos positivos da env; ausente, inválido ou ≤ 0 cai no default (nunca desliga o freio). */
     private readMinutos = (key: string, fallback: number): number => {
         const n = Number(this.readEnv(key));
@@ -345,6 +351,7 @@ export default class EnvironmentProvider {
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             ...this.resolveFavorecidoAutorizado(),
+            sispagCadastroFilCod: this.readFilCod('SISPAG_CADASTRO_FIL_COD', 1),
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             sispagVerificacao: this.resolveSispagVerificacao(),
@@ -439,6 +446,7 @@ export default class EnvironmentProvider {
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
             ...this.resolveFavorecidoAutorizado(),
+            sispagCadastroFilCod: this.readFilCod('SISPAG_CADASTRO_FIL_COD', 1),
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
             sispagVerificacao: this.resolveSispagVerificacao(),

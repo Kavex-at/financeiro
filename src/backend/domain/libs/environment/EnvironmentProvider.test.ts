@@ -241,6 +241,20 @@ describe('EnvironmentProvider', () => {
             delete process.env.SISPAG_CARTEIRA_COOLDOWN_MIN;
         });
 
+        it('filial de leitura do cadastro (ADR-0065): default 1; inválido volta ao default', async () => {
+            const ler = async () =>
+                (await new EnvironmentProvider().getEnvironmentVars()).sispagCadastroFilCod;
+            delete process.env.SISPAG_CADASTRO_FIL_COD;
+            expect(await ler()).toBe(1);
+            process.env.SISPAG_CADASTRO_FIL_COD = '4';
+            expect(await ler()).toBe(4);
+            for (const lixo of ['abc', '0', '-2', '1.5']) {
+                process.env.SISPAG_CADASTRO_FIL_COD = lixo;
+                expect(await ler()).toBe(1);
+            }
+            delete process.env.SISPAG_CADASTRO_FIL_COD;
+        });
+
         it('verificação TED/PIX (ADR-0063): defaults 15 dias / 2026-01-01 / 5 / 3 / 0,95 / 24 meses; inválido volta ao default', async () => {
             const CHAVES = [
                 'SISPAG_DUPLICIDADE_JANELA_DIAS',

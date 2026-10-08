@@ -62,6 +62,8 @@ describe('CandidatosTab', () => {
     render(<CandidatosTab podePedir />)
     await userEvent.click(await screen.findByRole('button', { name: /pedir autorização TED para ACME/i }))
     const dialogo = await screen.findByRole('dialog')
+    // A autorização não é por filial: o pedido não pergunta filial nenhuma.
+    expect(within(dialogo).queryByLabelText(/filial/i)).not.toBeInTheDocument()
     await userEvent.click(within(dialogo).getByRole('button', { name: /^pedir autorização$/i }))
     await waitFor(() =>
       expect(pedirAutorizacao).toHaveBeenCalledWith({
@@ -69,7 +71,6 @@ describe('CandidatosTab', () => {
         credor: 'ACME',
         modalidade: 'TED',
         origem: 'RELATORIO',
-        filCod: 1,
       }),
     )
     const t = within(screen.getByRole('table', { name: /candidatos à autorização/i }))

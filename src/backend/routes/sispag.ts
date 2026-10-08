@@ -587,7 +587,7 @@ router.post(
                 ...(body.data.credor ? { credor: body.data.credor } : {}),
                 modalidade: body.data.modalidade,
                 origem: body.data.origem,
-                filCod: body.data.filCod,
+                ...(body.data.filCod !== undefined ? { filCod: body.data.filCod } : {}),
                 ator: ator(req),
             });
             res.status(201).json({ autorizacao: semImpressao(autorizacao) });

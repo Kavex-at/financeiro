@@ -25,8 +25,11 @@ export const SolicitarAutorizacaoSchema = z.object({
     credor: z.string().trim().min(1).max(200).optional(),
     modalidade: z.enum(['TED', 'PIX']),
     origem: z.enum(['ITEM', 'RELATORIO', 'MANUAL']),
-    /** Filial usada para LER o cadastro (o cmn025 é global). */
-    filCod: z.coerce.number().int().positive(),
+    /**
+     * Filial usada para LER o cadastro (o cmn025 é global). Só o atalho do item do lote a envia
+     * (a filial do lote); ausente, vale `SISPAG_CADASTRO_FIL_COD`.
+     */
+    filCod: z.coerce.number().int().positive().optional(),
 });
 
 /** `POST /sispag/favorecidos-autorizados/:id/aprovar` — a impressão que a tela mostrou (I14c). */
