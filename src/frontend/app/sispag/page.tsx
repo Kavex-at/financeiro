@@ -46,8 +46,10 @@ import {
   fetchIngestaoRuns,
   finalizarLote,
   formarLotes,
+  FORMA_CONEXOS_BOLETO,
   formatErpDay,
   IngestaoPagamentosEmAndamentoError,
+  rotuloFormaConexos,
   retirarDoLote,
   type PagamentoIngestaoRun,
   reabrirLote,
@@ -993,6 +995,7 @@ function SispagPanel() {
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Vencimento</TableHead>
                         <TableHead>Boleto</TableHead>
+                        <TableHead>Forma no Conexos</TableHead>
                         <TableHead>Situação</TableHead>
                         <TableHead>Filial</TableHead>
                         <TableHead>
@@ -1082,6 +1085,16 @@ function SispagPanel() {
                                 <Barcode className="mr-1 size-3" aria-hidden />
                                 boleto
                               </Badge>
+                            ) : t.formaPagamentoConexos === FORMA_CONEXOS_BOLETO ? (
+                              // BOLETO no Conexos, mas o ERP não casou um boleto DDA — em geral o
+                              // vencimento do boleto difere do título. Sem DDA não há barras.
+                              <Badge
+                                variant="outline"
+                                className="border-warning/40 text-warning"
+                                title="BOLETO no Conexos, sem boleto DDA: valor ou vencimento do boleto difere do título"
+                              >
+                                boleto sem DDA
+                              </Badge>
                             ) : (
                               <span
                                 className="text-xs text-muted-foreground"
@@ -1090,6 +1103,12 @@ function SispagPanel() {
                                 sem boleto
                               </span>
                             )}
+                          </TableCell>
+                          <TableCell
+                            className="whitespace-nowrap text-xs text-muted-foreground"
+                            title="Forma de pagamento no Conexos (Pago Por / Situação do psq014)"
+                          >
+                            {rotuloFormaConexos(t.formaPagamentoConexos)}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col items-start gap-1">

@@ -5,6 +5,7 @@ import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
+import type { SinalPendente } from '../../interface/sispag/Fin015Write.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
@@ -39,11 +40,15 @@ interface Mocks {
     listTitulos: jest.Mock;
     listExterior: jest.Mock;
     listContas: jest.Mock;
-    listBoletoDda: jest.Mock;
+    listSinais: jest.Mock;
     acquire: boolean;
     filiais: Array<{ filCod: number }>;
     encerrar: jest.Mock;
 }
+
+/** Mapa do grid de pendentes como `listarSinaisDosPendentes` devolve. */
+const sinais = (...linhas: Array<[string, SinalPendente]>): Map<string, SinalPendente> =>
+    new Map(linhas);
 
 const make = (over: Partial<Mocks> = {}) => {
     const tituloRepo = over.tituloRepo ?? {
@@ -65,9 +70,9 @@ const make = (over: Partial<Mocks> = {}) => {
         listExteriorDocCods: over.listExterior ?? jest.fn().mockResolvedValue(new Set<string>()),
         listContasCorrentes: listContas,
     } as unknown as ConexosSispagClient;
-    const listBoletoDda = over.listBoletoDda ?? jest.fn().mockResolvedValue(new Set<string>());
+    const listSinais = over.listSinais ?? jest.fn().mockResolvedValue(new Map());
     const fin015 = {
-        listarTitulosComBoletoDda: listBoletoDda,
+        listarSinaisDosPendentes: listSinais,
     } as unknown as ConexosSispagWriteClient;
     const base = {
         getFiliais: jest.fn().mockResolvedValue(over.filiais ?? [{ filCod: 2 }]),
@@ -100,7 +105,7 @@ const make = (over: Partial<Mocks> = {}) => {
         runRepo,
         listTitulos,
         listContas,
-        listBoletoDda,
+        listSinais,
         bloqueioRepo,
         log,
     };
@@ -252,7 +257,7 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
         // O `fin064` não sabe de boleto (titEspCodbar é null em 100% da carteira); quem sabe
         // é o flag `titVldReflexoDdaAssoc` do grid de pendentes.
         const { service, tituloRepo } = make({
-            listBoletoDda: jest.fn().mockResolvedValue(new Set(['2:100:1'])),
+            listSinais: jest.fn().mockResolvedValue(sinais(['2:100:1', { temBoletoDda: true }])),
         });
         await service.executar({ triggeredBy: 'cron' });
         expect(tituloRepo.upsertMany).toHaveBeenCalledWith(
@@ -263,7 +268,7 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
 
     it('título fora do conjunto fica temBoleto=false', async () => {
         const { service, tituloRepo } = make({
-            listBoletoDda: jest.fn().mockResolvedValue(new Set(['2:999:1'])),
+            listSinais: jest.fn().mockResolvedValue(sinais(['2:999:1', { temBoletoDda: true }])),
         });
         await service.executar({ triggeredBy: 'cron' });
         expect(tituloRepo.upsertMany).toHaveBeenCalledWith(
@@ -276,7 +281,7 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
         // Antes: conjunto vazio → temBoleto=false → o UPSERT apagava o flag de toda a filial,
         // desfazendo todo dia a ingestão manual da analista.
         const { service, tituloRepo, runRepo } = make({
-            listBoletoDda: jest.fn().mockRejectedValue(new Error('403 ACCESS_DENIED FIN_041')),
+            listSinais: jest.fn().mockRejectedValue(new Error('403 ACCESS_DENIED FIN_041')),
         });
         const r = await service.executar({ triggeredBy: 'cron' });
         const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
@@ -298,15 +303,15 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
             { ccoCod: 1, bncCod: 4 },
             { ccoCod: 3, bncCod: 4 },
         ]);
-        const listBoletoDda = jest.fn().mockResolvedValue(new Set<string>());
-        const { service } = make({ listContas, listBoletoDda });
+        const listSinais = jest.fn().mockResolvedValue(new Map());
+        const { service } = make({ listContas, listSinais });
         await service.executar({ triggeredBy: 'cron' });
-        expect(listBoletoDda).toHaveBeenCalledWith({ filCod: 2, bncCods: [38, 4] });
+        expect(listSinais).toHaveBeenCalledWith({ filCod: 2, bncCods: [38, 4] });
     });
 
     it('falha ao ler o flag NÃO derruba a ingestão — carteira persiste com warn', async () => {
         const { service, tituloRepo, runRepo } = make({
-            listBoletoDda: jest.fn().mockRejectedValue(new Error('ERP fora do ar')),
+            listSinais: jest.fn().mockRejectedValue(new Error('ERP fora do ar')),
         });
         const r = await service.executar({ triggeredBy: 'cron' });
         expect(r.status).toBe('success');
@@ -319,13 +324,68 @@ describe('IngestaoPagamentosService — flag de boleto (DDA)', () => {
     });
 
     it('filial sem conta pagadora degrada em silêncio (sem contexto para o grid)', async () => {
-        const listBoletoDda = jest.fn();
+        const listSinais = jest.fn();
         const { service } = make({
             listContas: jest.fn().mockResolvedValue([]),
-            listBoletoDda,
+            listSinais,
         });
         const r = await service.executar({ triggeredBy: 'cron' });
         expect(r.status).toBe('success');
-        expect(listBoletoDda).not.toHaveBeenCalled();
+        expect(listSinais).not.toHaveBeenCalled();
+    });
+});
+
+describe('IngestaoPagamentosService — forma de pagamento no Conexos (titVldPagopor)', () => {
+    it('grava a forma do grid de pendentes, independente do flag DDA', async () => {
+        // JOMED 5427/1 (PRD, 2026-10-08): BOLETO no Conexos, sem boleto DDA associado.
+        const { service, tituloRepo } = make({
+            listSinais: jest
+                .fn()
+                .mockResolvedValue(sinais(['2:100:1', { temBoletoDda: false, pagoPor: 6 }])),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(tituloRepo.upsertMany).toHaveBeenCalledWith(
+            [expect.objectContaining({ temBoleto: false, formaPagamentoConexos: 6 })],
+            'RUN1',
+        );
+    });
+
+    it('título fora do grid ou sem forma legível fica indefinido (o UPSERT preserva)', async () => {
+        const { service, tituloRepo } = make({
+            listSinais: jest
+                .fn()
+                .mockResolvedValue(sinais(['2:999:1', { temBoletoDda: false, pagoPor: 2 }])),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
+        expect(persistidos[0].formaPagamentoConexos).toBeUndefined();
+        expect(persistidos[0]).not.toHaveProperty('formaPagamentoConexos');
+    });
+
+    it('grid sem NENHUM titVldPagopor legível → avisa (contrato mudou), sem derrubar', async () => {
+        const { service, log } = make({
+            listSinais: jest
+                .fn()
+                .mockResolvedValue(
+                    sinais(
+                        ['2:100:1', { temBoletoDda: true }],
+                        ['2:200:1', { temBoletoDda: false }],
+                    ),
+                ),
+        });
+        const r = await service.executar({ triggeredBy: 'cron' });
+        expect(r.status).toBe('success');
+        expect((log.warn as jest.Mock).mock.calls.map(([p]) => p.message)).toContain(
+            'ingestão pagamentos: forma de pagamento (titVldPagopor) ilegível em todo o grid',
+        );
+    });
+
+    it('leitura do grid falhou → forma indefinida, como o flag DDA', async () => {
+        const { service, tituloRepo } = make({
+            listSinais: jest.fn().mockRejectedValue(new Error('403 ACCESS_DENIED')),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
+        expect(persistidos[0].formaPagamentoConexos).toBeUndefined();
     });
 });

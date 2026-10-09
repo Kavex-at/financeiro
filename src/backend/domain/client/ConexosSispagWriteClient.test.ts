@@ -687,6 +687,61 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
         });
     });
 
+    describe('listarSinaisDosPendentes', () => {
+        const comGrid = (rows: Array<Record<string, unknown>>) => {
+            const base = buildBase();
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 1, rows: [{ flpCod: 9, filCod: 1, bncCod: 4 }] })
+                .mockResolvedValueOnce({ count: rows.length, rows });
+            return base;
+        };
+
+        it('devolve TODAS as linhas, com o flag DDA e a forma de pagamento (titVldPagopor)', async () => {
+            const base = comGrid([
+                { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 1, titVldPagopor: 6 },
+                { filCod: 1, docCod: 200, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: 6 },
+                { filCod: 1, docCod: 300, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: 10 },
+            ]);
+            const sinais = await make(base).listarSinaisDosPendentes({ filCod: 1, bncCods: [4] });
+            expect(sinais).toEqual(
+                new Map([
+                    ['1:100:1', { temBoletoDda: true, pagoPor: 6 }],
+                    ['1:200:1', { temBoletoDda: false, pagoPor: 6 }],
+                    ['1:300:1', { temBoletoDda: false, pagoPor: 10 }],
+                ]),
+            );
+        });
+
+        it('titVldPagopor ausente, nulo ou fora de 1..10 → sem pagoPor (não inventa código)', async () => {
+            const base = comGrid([
+                { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 0 },
+                {
+                    filCod: 1,
+                    docCod: 200,
+                    titCod: 1,
+                    titVldReflexoDdaAssoc: 0,
+                    titVldPagopor: null,
+                },
+                { filCod: 1, docCod: 300, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: 11 },
+                { filCod: 1, docCod: 400, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: '6' },
+            ]);
+            const sinais = await make(base).listarSinaisDosPendentes({ filCod: 1, bncCods: [4] });
+            expect([...sinais.values()]).toEqual([
+                { temBoletoDda: false },
+                { temBoletoDda: false },
+                { temBoletoDda: false },
+                { temBoletoDda: false },
+            ]);
+        });
+
+        it('filial sem lote nativo → mapa vazio', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+            const sinais = await make(base).listarSinaisDosPendentes({ filCod: 1, bncCods: [4] });
+            expect(sinais.size).toBe(0);
+        });
+    });
+
     describe('leituras (via runWithRetry)', () => {
         it('listarTitulosPendentes mapeia as linhas e passa pelo runWithRetry', async () => {
             const base = buildBase();

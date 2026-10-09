@@ -24,6 +24,8 @@ interface TituloRow {
     /** NULL = o read da carteira não soube dizer (ver migration 0063). */
     pronto_para_remessa: boolean | null;
     tem_boleto: boolean;
+    /** `titVldPagopor` cru do Conexos (migration 0081). NULL = nunca lido. */
+    forma_pagamento_conexos: number | null;
 }
 
 /**
@@ -54,6 +56,7 @@ export default class TituloAPagarRepository {
         tpdCod: r.tpd_cod ?? undefined,
         prontoParaRemessa: r.pronto_para_remessa ?? undefined,
         temBoleto: r.tem_boleto,
+        formaPagamentoConexos: r.forma_pagamento_conexos ?? undefined,
         ativo: true,
     });
 
@@ -85,7 +88,7 @@ export default class TituloAPagarRepository {
         chunk.forEach((t, i) => {
             tuples.push(
                 `($f${i}, $d${i}, $t${i}, $cr${i}, $pe${i}, $v${i}, $mo${i}, $ve${i}, ` +
-                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $tb${i}, TRUE, $runId, now())`,
+                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $tb${i}, $fp${i}, TRUE, $runId, now())`,
             );
             params[`f${i}`] = t.filCod;
             params[`d${i}`] = t.docCod;
@@ -104,12 +107,13 @@ export default class TituloAPagarRepository {
             // "não sei". Um FALSE aqui acenderia "falta cadastro?" na carteira inteira.
             params[`pr${i}`] = t.prontoParaRemessa ?? null;
             params[`tb${i}`] = t.temBoleto ?? false;
+            params[`fp${i}`] = t.formaPagamentoConexos ?? null;
         });
         await tx.insert(
             `INSERT INTO titulo_a_pagar (
                 fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
                 aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
-                ativo, ingestao_run_id, atualizado_em
+                forma_pagamento_conexos, ativo, ingestao_run_id, atualizado_em
              ) VALUES ${tuples.join(', ')}
              ON CONFLICT (fil_cod, doc_cod, tit_cod) DO UPDATE SET
                 credor = EXCLUDED.credor, pes_cod = EXCLUDED.pes_cod, valor = EXCLUDED.valor,
@@ -117,6 +121,11 @@ export default class TituloAPagarRepository {
                 pago = EXCLUDED.pago, banco = EXCLUDED.banco, num_remessa = EXCLUDED.num_remessa,
                 tpd_cod = EXCLUDED.tpd_cod, pronto_para_remessa = EXCLUDED.pronto_para_remessa,
                 ${gravarFlagBoleto ? 'tem_boleto = EXCLUDED.tem_boleto,' : ''}
+                -- NULL = esta rodada não viu o título no grid de pendentes (ou a leitura
+                -- falhou): preserva a última forma conhecida em vez de apagá-la.
+                forma_pagamento_conexos = COALESCE(
+                    EXCLUDED.forma_pagamento_conexos, titulo_a_pagar.forma_pagamento_conexos
+                ),
                 ativo = TRUE, ingestao_run_id = EXCLUDED.ingestao_run_id, atualizado_em = now()`,
             params,
         );
@@ -144,7 +153,8 @@ export default class TituloAPagarRepository {
     public listAtivos = async (): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(
             `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto
+                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
+                    forma_pagamento_conexos
              FROM titulo_a_pagar
              WHERE ativo = TRUE
              ORDER BY vencimento ASC NULLS LAST`,
@@ -212,7 +222,7 @@ export default class TituloAPagarRepository {
         const rows = (await this.databaseClient.selectMany(
             `SELECT t.fil_cod, t.doc_cod, t.tit_cod, t.credor, t.pes_cod, t.valor, t.moeda,
                     t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod,
-                    t.pronto_para_remessa, t.tem_boleto
+                    t.pronto_para_remessa, t.tem_boleto, t.forma_pagamento_conexos
              FROM titulo_a_pagar t
              WHERE t.ativo = TRUE AND t.aprovado = TRUE AND t.pago = FALSE
                AND t.vencimento IS NOT NULL

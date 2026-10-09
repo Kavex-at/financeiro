@@ -48,6 +48,14 @@ export interface LoteNativoCriado {
     bncCod: number;
 }
 
+/** O que a ingestão aproveita de cada linha do grid de pendentes (ver `listarSinaisDosPendentes`). */
+export interface SinalPendente {
+    /** `titVldReflexoDdaAssoc === 1` — o ERP casou um boleto DDA com o título. */
+    temBoletoDda: boolean;
+    /** `titVldPagopor` legível (ver `PAGO_POR_CONEXOS`); ausente = não sei. */
+    pagoPor?: number;
+}
+
 /** Um título pendente elegível a importar num lote (linha de `titulosPendentes/list`). */
 export interface TituloPendente {
     filCod: number;
@@ -80,6 +88,11 @@ export interface TituloPendente {
      * diferença. Ver `PENDENTE_DDA_SCHEMA` em `ConexosSispagWriteClient`.
      */
     ddaLegivel: boolean;
+    /**
+     * Forma de pagamento do título no Conexos (`titVldPagopor`, ver `PAGO_POR_CONEXOS`).
+     * Ausente quando o campo não veio ou veio fora do domínio documentado (1..10).
+     */
+    pagoPor?: number;
     /** Linha crua do ERP — repassada no `importar` (o ERP exige o registro completo do item). */
     raw: Record<string, unknown>;
 }

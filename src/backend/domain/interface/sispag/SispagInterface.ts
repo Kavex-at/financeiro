@@ -30,6 +30,11 @@ export interface TituloAPagar {
     numRemessa?: string;
     /** Tem código de barras (`titEspCodbar`) = candidato a BOLETO (A2, auto-detecção). */
     temBoleto?: boolean;
+    /**
+     * Forma de pagamento do título NO CONEXOS (`titVldPagopor`, ver `PAGO_POR_CONEXOS`).
+     * Independente de `temBoleto` (vínculo DDA). Indefinido = nunca lido no grid de pendentes.
+     */
+    formaPagamentoConexos?: number;
     /** Formas de pagamento disponíveis no cadastro do favorecido (A2 opção B) — leitura ao vivo. */
     modalidadesDisponiveis?: Modalidade[];
     /** Já está num lote RASCUNHO — não pode ser atachado a outro (I3). Bloqueia a seleção. */

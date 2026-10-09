@@ -34,6 +34,11 @@ export interface TituloAPagar {
    * título. Sem isto, marcar BOLETO no lote é barrado na geração da remessa.
    */
   temBoleto?: boolean
+  /**
+   * Forma de pagamento do título NO CONEXOS (`titVldPagopor`, a "Situação" do psq014). Não é
+   * o vínculo DDA: um título BOLETO pode estar sem boleto DDA associado. Ver `rotuloFormaConexos`.
+   */
+  formaPagamentoConexos?: number
   ativo?: boolean
   /** Já está num lote RASCUNHO — não pode ser atachado a outro (bloqueia a seleção). */
   emLote?: boolean
@@ -553,6 +558,32 @@ export function formatCivilDate(civil: string): string {
  */
 export function formatErpDay(ms?: number): string {
   return ms == null ? '—' : new Date(ms).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
+}
+
+/** Código `titVldPagopor` do Conexos que significa BOLETO. */
+export const FORMA_CONEXOS_BOLETO = 6
+
+/**
+ * Rótulos de `titVldPagopor` ("Pago Por"), como o Conexos os documenta (070-com3 FinTituloFin).
+ * Espelha `PAGO_POR_CONEXOS_ROTULO` do backend. Não há "TED": qual código a Columbia usa para
+ * TED não está confirmado — não deduza.
+ */
+const FORMA_CONEXOS_ROTULO: Readonly<Record<number, string>> = {
+  1: 'CHEQUE',
+  2: 'TEF',
+  3: 'CARTEIRA',
+  4: 'EXTRA-CAIXA',
+  5: 'CARTÃO DE CRÉDITO',
+  6: 'BOLETO',
+  7: 'CAIXA',
+  8: 'TRANSAÇÃO',
+  9: 'DOCUMENTO',
+  10: 'TRANSAÇÃO AUTOMÁTICA',
+}
+
+/** Forma de pagamento do título no Conexos → rótulo; `'—'` quando nunca lida ou desconhecida. */
+export function rotuloFormaConexos(codigo?: number): string {
+  return (codigo != null && FORMA_CONEXOS_ROTULO[codigo]) || '—'
 }
 
 export interface ItemConciliado {

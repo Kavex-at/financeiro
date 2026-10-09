@@ -6,6 +6,7 @@ import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import type { SinalPendente } from '../../interface/sispag/Fin015Write.js';
 import type {
     IngestaoPagamentosResult,
     TituloAPagar,
@@ -86,39 +87,52 @@ export default class IngestaoPagamentosService {
     };
 
     /**
-     * Títulos da filial que o ERP casou com um boleto DDA (`titVldReflexoDdaAssoc`).
+     * Sinais do grid de pendentes da filial: flag de boleto DDA (`titVldReflexoDdaAssoc`) e
+     * forma de pagamento do título no Conexos (`titVldPagopor`), por chave.
      *
-     * Best-effort por desenho: a carteira é o produto principal da ingestão, e o flag de boleto
-     * é enriquecimento. Falha de leitura devolve `undefined` ("não sei") com WARN: os títulos
-     * entram com `temBoleto` indefinido e a carteira PRESERVA o valor já gravado. Devolver um
-     * conjunto vazio aqui apagava o flag de toda a filial — o cron do robô (403 em
-     * `titulosPendentes`) zerava, todo dia, o que a ingestão manual da analista tinha acertado.
+     * Best-effort por desenho: a carteira é o produto principal da ingestão, e os sinais são
+     * enriquecimento. Falha de leitura devolve `undefined` ("não sei") com WARN: os títulos
+     * entram com `temBoleto`/`formaPagamentoConexos` indefinidos e a carteira PRESERVA o valor
+     * já gravado. Devolver um mapa vazio aqui apagava o flag de toda a filial — o cron do robô
+     * (403 em `titulosPendentes`) zerava, todo dia, o que a ingestão manual da analista tinha
+     * acertado.
      */
-    private titulosComBoletoDda = async (filCod: number): Promise<Set<string> | undefined> => {
+    private sinaisDosPendentes = async (
+        filCod: number,
+    ): Promise<Map<string, SinalPendente> | undefined> => {
         try {
             const bncCods = await this.bancosDaFilial(filCod);
             if (bncCods.length === 0) {
                 await this.avisar('filial sem conta pagadora — sem flag de boleto', { filCod });
                 return undefined;
             }
-            const comBoleto = await this.fin015.listarTitulosComBoletoDda({ filCod, bncCods });
+            const sinais = await this.fin015.listarSinaisDosPendentes({ filCod, bncCods });
+            const comBoletoDda = [...sinais.values()].filter((s) => s.temBoletoDda).length;
             // Taxa por filial, registrada TODA rodada. É o sinal barato de quebra de contrato:
             // uma filial que historicamente traz dezenas de boletos e passa a trazer 0 aparece
             // aqui na rodada seguinte, em vez de aparecer no banco recusando a remessa.
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'ingestão pagamentos: taxa de boleto DDA por filial',
-                data: { filCod, bncCodsTentados: bncCods.length, comBoletoDda: comBoleto.size },
+                data: { filCod, bncCodsTentados: bncCods.length, comBoletoDda },
             });
             // Zero pode ser verdade (filial sem boleto) ou "nenhum banco tinha lote para servir
             // de contexto". A diferença importa: no segundo caso a coluna do painel mente.
-            if (comBoleto.size === 0) {
+            if (comBoletoDda === 0) {
                 await this.avisar('nenhum título com boleto DDA nesta filial', {
                     filCod,
                     bncCodsTentados: bncCods.length,
                 });
             }
-            return comBoleto;
+            // Sem nenhum `titVldPagopor` legível o COALESCE do UPSERT congelaria a coluna em
+            // silêncio — o aviso é o que denuncia a mudança de contrato do grid.
+            if (sinais.size > 0 && [...sinais.values()].every((s) => s.pagoPor === undefined)) {
+                await this.avisar('forma de pagamento (titVldPagopor) ilegível em todo o grid', {
+                    filCod,
+                    linhas: sinais.size,
+                });
+            }
+            return sinais;
         } catch (error) {
             await this.avisar('leitura do flag de boleto DDA falhou — flag anterior preservado', {
                 filCod,
@@ -144,19 +158,26 @@ export default class IngestaoPagamentosService {
     private titulosDaFilial = (lido: {
         titulos: TituloAPagar[];
         exterior: Set<string>;
-        /** `undefined` = a leitura do flag falhou: `temBoleto` fica indefinido (não vira `false`). */
-        comBoleto: Set<string> | undefined;
+        /** `undefined` = a leitura do grid falhou: `temBoleto` fica indefinido (não vira `false`). */
+        sinais: Map<string, SinalPendente> | undefined;
     }): TituloAPagar[] =>
         lido.titulos
             // Pago sai; internacional (exterior/câmbio) também — é câmbio manual da tesouraria,
             // fora do escopo SISPAG (ADR-0021).
             .filter((t) => !t.pago && !lido.exterior.has(t.docCod))
             // "Tem boleto?" vem do flag de DDA do grid de pendentes — nunca do título
-            // (o `titEspCodbar` é null em 100% da carteira medida em produção).
-            .map((t) => ({
-                ...t,
-                temBoleto: lido.comBoleto?.has(`${t.filCod}:${t.docCod}:${t.titCod}`),
-            }));
+            // (o `titEspCodbar` é null em 100% da carteira medida em produção). A forma de
+            // pagamento no Conexos vem da mesma linha; fora do grid fica indefinida (preserva).
+            .map((t) => {
+                const sinal = lido.sinais?.get(`${t.filCod}:${t.docCod}:${t.titCod}`);
+                return {
+                    ...t,
+                    temBoleto: lido.sinais ? sinal?.temBoletoDda === true : undefined,
+                    ...(sinal?.pagoPor !== undefined
+                        ? { formaPagamentoConexos: sinal.pagoPor }
+                        : {}),
+                };
+            });
 
     /** `filial 4: conexos 504; filial 7: …` — curto o bastante para a coluna `error_message`. */
     private resumoFalhas = (falhas: Array<{ filCod: number; motivo: string }>): string =>
@@ -186,12 +207,12 @@ export default class IngestaoPagamentosService {
             const settled = await this.bounded.run(
                 filCods,
                 async (filCod) => {
-                    const [titulos, exterior, comBoleto] = await Promise.all([
+                    const [titulos, exterior, sinais] = await Promise.all([
                         this.sispag.listTitulosAPagar(filCod, { minVencimento, maxVencimento }),
                         this.sispag.listExteriorDocCods(filCod),
-                        this.titulosComBoletoDda(filCod),
+                        this.sinaisDosPendentes(filCod),
                     ]);
-                    return { titulos, exterior, comBoleto };
+                    return { titulos, exterior, sinais };
                 },
                 FANOUT_LIMIT,
             );
@@ -214,7 +235,7 @@ export default class IngestaoPagamentosService {
                     continue;
                 }
                 filiaisLidas.push(filCods[i]);
-                if (s.value.comBoleto === undefined) filiaisSemFlagBoleto.push(filCods[i]);
+                if (s.value.sinais === undefined) filiaisSemFlagBoleto.push(filCods[i]);
                 titulos.push(...this.titulosDaFilial(s.value));
             }
 

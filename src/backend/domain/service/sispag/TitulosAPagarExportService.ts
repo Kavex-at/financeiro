@@ -3,6 +3,7 @@ import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import Clock from '../../libs/clock/Clock.js';
 import PlanilhaXlsxWriter from '../../libs/xlsx/PlanilhaXlsxWriter.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import { PagoPorConexosRotulo } from '../../interface/sispag/PagoPorConexos.js';
 import type {
     CelulaExport,
     ColunaExport,
@@ -27,6 +28,7 @@ const COLUNAS: ColunaExport[] = [
     { header: 'Vencimento', key: 'vencimento', width: 12, numFmt: FMT_DATA },
     { header: 'Dias p/ vencer', key: 'diasParaVencer', width: 13 },
     { header: 'Boleto DDA', key: 'boleto', width: 11 },
+    { header: 'Forma no Conexos', key: 'formaConexos', width: 22 },
     { header: 'Aprovação', key: 'aprovacao', width: 11 },
     { header: 'Pronto p/ remessa', key: 'prontoParaRemessa', width: 16 },
     { header: 'Lote', key: 'lote', width: 22 },
@@ -147,6 +149,7 @@ export default class TitulosAPagarExportService {
             vencimento,
             diasParaVencer: vencimento ? Math.round((vencimento.getTime() - hoje) / DAY_MS) : null,
             boleto: t.temBoleto ? 'Sim' : 'Não',
+            formaConexos: PagoPorConexosRotulo.de(t.formaPagamentoConexos) ?? null,
             aprovacao: t.liberado ? 'Aprovado' : 'Bloqueado',
             prontoParaRemessa: simNao(t.prontoParaRemessa),
             lote: lote?.rotulo ?? null,

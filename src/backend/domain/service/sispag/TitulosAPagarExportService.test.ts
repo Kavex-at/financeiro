@@ -34,6 +34,7 @@ const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     pago: false,
     banco: 'ITAÚ',
     temBoleto: true,
+    formaPagamentoConexos: 6,
     prontoParaRemessa: true,
     ...over,
 });
@@ -83,6 +84,7 @@ describe('TitulosAPagarExportService', () => {
             moeda: 'BRL',
             diasParaVencer: 2,
             boleto: 'Sim',
+            formaConexos: 'BOLETO',
             aprovacao: 'Aprovado',
             prontoParaRemessa: 'Sim',
             lote: null,
@@ -115,7 +117,13 @@ describe('TitulosAPagarExportService', () => {
     it('coluna Lote: rascunho, finalizado ou remessa gerada', async () => {
         const r = titulo({ docCod: 'R' });
         const f = titulo({ docCod: 'F' });
-        const g = titulo({ docCod: 'G', liberado: false, temBoleto: false, vencimento: undefined });
+        const g = titulo({
+            docCod: 'G',
+            liberado: false,
+            temBoleto: false,
+            formaPagamentoConexos: undefined,
+            vencimento: undefined,
+        });
         const { service } = make({
             titulos: [r, f, g],
             rascunho: [{ ...chave(r), loteId: 'L1', automatico: true }],
@@ -133,6 +141,7 @@ describe('TitulosAPagarExportService', () => {
         expect(linhas[2]).toMatchObject({
             aprovacao: 'Bloqueado',
             boleto: 'Não',
+            formaConexos: null,
             vencimento: null,
             diasParaVencer: null,
         });
