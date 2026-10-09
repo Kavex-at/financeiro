@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.62.0 (2026-10-09) — SISPAG: forma de pagamento do título no Conexos
+
+- **Nova coluna "Forma no Conexos" em "Títulos a pagar"** (e no export): mostra como o Conexos
+  pretende pagar o título — o campo "Pago Por" (`titVldPagopor`), a "Situação" do `psq014`
+  (BOLETO, TEF, TRANSAÇÃO…). Desconhecida aparece como "—". Não é o vínculo DDA: as duas coisas
+  agora aparecem separadas.
+- **"boleto sem DDA" na coluna Boleto**: título que o Conexos marca como BOLETO mas sem boleto DDA
+  associado — em geral o boleto chegou com vencimento diferente do título (ex.: JOMED, boletos
+  agrupados). Antes aparecia só "sem boleto", como se não fosse boleto.
+- Lido do mesmo grid de pendentes do `fin015` que a ingestão já lê para o DDA (nenhuma chamada a
+  mais ao Conexos). Rodada que não vê o título preserva o último valor; grid sem o campo legível em
+  nenhuma linha gera aviso. Migration `0081` (coluna nova, aditiva). O valor aparece a partir da
+  próxima ingestão.
+
 ## v0.61.0 (2026-10-09) — SISPAG: achar o favorecido no Conexos ao pedir a autorização
 
 - **Pedir a autorização sem abrir o Conexos.** O pedido não pede mais o código do favorecido:
