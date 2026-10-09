@@ -345,6 +345,28 @@ describe('busca de favorecido no Conexos e prévia do destino (pedido sem abrir 
         });
     });
 
+    it('POST /busca está atrás do limitador por usuário: a 31ª no minuto é 429 e não chega ao serviço', async () => {
+        // Os limitadores são desligados sob NODE_ENV=test; aqui ligamos para provar a montagem.
+        const ambiente = process.env.NODE_ENV;
+        process.env.NODE_ENV = 'production';
+        const buscar = jest.fn().mockResolvedValue({ favorecidos: [], truncado: false });
+        container.registerInstance(PayeeSearchService, { buscar } as never);
+        try {
+            await comApp([PERMISSION.SISPAG_EXECUTAR], async (url) => {
+                const rota = `${url}/sispag/favorecidos-autorizados/busca`;
+                for (let i = 0; i < 30; i++) {
+                    expect((await post(rota, { termo: 'acme' })).status).toBe(200);
+                }
+                const r = await post(rota, { termo: 'acme' });
+                expect(r.status).toBe(429);
+                expect(await r.json()).toMatchObject({ codigo: 'MUITAS_BUSCAS' });
+            });
+        } finally {
+            process.env.NODE_ENV = ambiente;
+        }
+        expect(buscar).toHaveBeenCalledTimes(30);
+    });
+
     it('GET /destino-atual é sispag:executar; devolve só a máscara, valida modalidade', async () => {
         const destinoAtual = jest.fn().mockResolvedValue({
             resultado: 'OK',

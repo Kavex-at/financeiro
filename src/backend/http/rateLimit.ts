@@ -105,6 +105,31 @@ export const buildOwnPasswordLimiter = (
         },
     });
 
+/**
+ * Busca de favorecido no cadastro do Conexos (`POST /sispag/favorecidos-autorizados/busca`): 30
+ * buscas/min por USUÁRIO autenticado. Cada busca são até 2 leituras do `cmn025` na sessão que o
+ * robô e os crons SISPAG também usam (teto de sessões; incidente de 23/09). O debounce do frontend
+ * junta as teclas numa busca, então quem digita e refina fica longe do teto; uma rajada (script,
+ * sessão roubada enumerando o cadastro) para em 60 leituras/min por usuário. Por usuário e não por
+ * IP: o escritório da Columbia sai por um IP só. Toda requisição conta, inclusive a recusada. O
+ * `globalLimiter` (100/min por IP) continua valendo por cima.
+ */
+export const PAYEE_SEARCH_LIMIT_PER_MINUTE = 30;
+export const MENSAGEM_MUITAS_BUSCAS =
+    'Muitas buscas em pouco tempo. Aguarde um minuto e tente de novo.';
+
+export const buildPayeeSearchLimiter = (
+    options: SessionLimiterOptions = {},
+): RateLimitRequestHandler =>
+    sessionLimiter(options, {
+        windowMs: ONE_MINUTE_MS,
+        limit: PAYEE_SEARCH_LIMIT_PER_MINUTE,
+        keyGenerator: (req: Request) => `busca-favorecido:${req.user?.sub ?? ''}`,
+        handler: (_req: Request, res: ExpressResponse) => {
+            res.status(429).json({ codigo: 'MUITAS_BUSCAS', error: MENSAGEM_MUITAS_BUSCAS });
+        },
+    });
+
 /** `/auth/refresh` (D4): 30/min por IP. */
 export const buildRefreshLimiter = (options: SessionLimiterOptions = {}): RateLimitRequestHandler =>
     sessionLimiter(options, { windowMs: ONE_MINUTE_MS, limit: REFRESH_IP_LIMIT_PER_MINUTE });

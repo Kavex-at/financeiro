@@ -9,9 +9,11 @@ import {
     MENSAGEM_MUITAS_TENTATIVAS,
     OWN_PASSWORD_FAILURES,
     OWN_PASSWORD_WINDOW_MS,
+    PAYEE_SEARCH_LIMIT_PER_MINUTE,
     REFRESH_IP_LIMIT_PER_MINUTE,
     buildLoginLimiters,
     buildOwnPasswordLimiter,
+    buildPayeeSearchLimiter,
     buildRefreshLimiter,
     identificadorDoLogin,
 } from './rateLimit.js';
@@ -216,5 +218,64 @@ describe('limitador de troca de senha (ADR-0059)', () => {
         const bloqueado = await post(204);
         server.close();
         expect(bloqueado.status).toBe(429);
+    });
+});
+
+/**
+ * Busca de favorecido no cadastro do Conexos: cada busca são até 2 leituras do `cmn025`, na sessão
+ * que o robô e os crons SISPAG também usam. Balde POR USUÁRIO (o escritório sai por um IP só).
+ */
+describe('limitador da busca de favorecido', () => {
+    const subirBusca = async () => {
+        const limiter = buildPayeeSearchLimiter({ skip: () => false, store: new MemoryStore() });
+        const app = express();
+        app.use(express.json());
+        app.use((req: Request, _res: Response, next) => {
+            req.user = { sub: String(req.headers['x-usuario'] ?? 'ana') };
+            next();
+        });
+        let chegaram = 0;
+        app.post('/busca', limiter, (_req: Request, res: Response) => {
+            chegaram++;
+            res.json({ favorecidos: [], truncado: false });
+        });
+        const server: Server = await new Promise((r) => {
+            const s = app.listen(0, '127.0.0.1', () => r(s));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        const post = (usuario = 'ana') =>
+            fetch(`${base}/busca`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', 'x-usuario': usuario },
+                body: JSON.stringify({ termo: 'acme' }),
+            });
+        return { server, post, chegaram: () => chegaram };
+    };
+
+    it('o limite é 30 buscas por minuto por usuário', () => {
+        expect(PAYEE_SEARCH_LIMIT_PER_MINUTE).toBe(30);
+    });
+
+    it('a 31ª busca no minuto responde 429 { codigo: MUITAS_BUSCAS } sem chegar ao handler', async () => {
+        const { server, post, chegaram } = await subirBusca();
+        for (let i = 0; i < 30; i++) expect((await post()).status).toBe(200);
+        const r = await post();
+        server.close();
+        expect(r.status).toBe(429);
+        expect(await r.json()).toEqual({
+            codigo: 'MUITAS_BUSCAS',
+            error: 'Muitas buscas em pouco tempo. Aguarde um minuto e tente de novo.',
+        });
+        expect(chegaram()).toBe(30);
+    });
+
+    it('o balde é por usuário: outra pessoa no mesmo IP continua buscando', async () => {
+        const { server, post } = await subirBusca();
+        for (let i = 0; i < 30; i++) await post('ana');
+        const ana = await post('ana');
+        const bia = await post('bia');
+        server.close();
+        expect(ana.status).toBe(429);
+        expect(bia.status).toBe(200);
     });
 });

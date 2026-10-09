@@ -56,7 +56,7 @@ import {
 } from '../http/schemas.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { exigirPermissao } from '../http/acesso.js';
-import { heavyRouteLimiter } from '../http/rateLimit.js';
+import { buildPayeeSearchLimiter, heavyRouteLimiter } from '../http/rateLimit.js';
 
 /**
  * Rotas SISPAG (Escopo II) — SPIKE READ-ONLY (semente da Fatia 1).
@@ -575,6 +575,9 @@ router.get(
     }),
 );
 
+/** 30 buscas/min por usuário: cada busca lê o `cmn025` na sessão compartilhada do Conexos. */
+const limiteBuscaFavorecido = buildPayeeSearchLimiter();
+
 // POST /sispag/favorecidos-autorizados/busca — acha o favorecido no cadastro do Conexos (cmn025)
 // para o pedido, sem abrir o Conexos. `sispag:executar` (só quem pede). Documento só mascarado;
 // read-only. POST de propósito: o termo pode ser um CPF/CNPJ inteiro, e os middlewares logam
@@ -582,6 +585,7 @@ router.get(
 router.post(
     '/favorecidos-autorizados/busca',
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteBuscaFavorecido,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const body = BuscaFavorecidoSchema.safeParse(req.body);
