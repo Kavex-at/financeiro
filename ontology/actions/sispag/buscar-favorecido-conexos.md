@@ -16,7 +16,7 @@ last_review: 2026-10-09
 preconditions:
   - "Usuário com `sispag:executar` (quem pede; ver não basta)."
   - "Texto com 3 letras ou mais; código e CPF/CNPJ (só dígitos) com qualquer tamanho."
-  - "No máximo 30 buscas por minuto por usuário (`buildPayeeSearchLimiter`); acima, 429 `MUITAS_BUSCAS`, sem leitura no Conexos."
+  - "No máximo 30 buscas e, em balde separado, 30 prévias por minuto por usuário (`buildPayeeSearchLimiter`, escopos `busca` e `previa`); acima, 429 `MUITAS_BUSCAS`, sem leitura no Conexos. Prévia barrada não bloqueia o pedido."
 postconditions:
   - "Busca: pessoas do `cmn025` (código, razão social, nome fantasia, `pesVldStatus`), CPF/CNPJ só mascarado (`MaskDestino.documento`), e o estado da autorização vigente por modalidade. Até 20 por leitura, com aviso de que há mais."
   - "Prévia: para (favorecido, modalidade), o destino que o resolvedor I10 escolhe agora no `cmn025`, mascarado (I14l): OK | SEM_DADO | FALHA_LEITURA, com os avisos de I14c. Sem impressão (HMAC)."

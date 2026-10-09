@@ -11,9 +11,10 @@
   deixa pedir; se o Conexos não responder, o pedido segue (quem aprova lê de novo). A aprovação
   continua com outra pessoa, conferindo o destino.
 - Só leitura no Conexos; o termo da busca vai no corpo da requisição para um CPF/CNPJ não parar em
-  log. **Limite de 30 buscas por minuto por usuário** (cada busca lê o cadastro na sessão do
-  Conexos que o robô e os crons SISPAG também usam); passou do limite, a tela diz "Muitas buscas em
-  pouco tempo. Aguarde um minuto e tente de novo." Atalhos do item do lote e da aba Candidatos continuam abrindo o pedido já preenchido.
+  log. **Limite de 30 buscas por minuto por usuário**, e outro de 30 prévias do destino por minuto
+  (cada uma lê o cadastro na sessão do Conexos que o robô e os crons SISPAG também usam); passou do
+  limite, a tela diz "Muitas buscas em pouco tempo. Aguarde um minuto e tente de novo." Prévia barrada
+  pelo limite não impede o pedido: quem aprova lê o cadastro de novo. Atalhos do item do lote e da aba Candidatos continuam abrindo o pedido já preenchido.
 
 ## v0.60.0 (2026-10-08) — SISPAG: favorecidos autorizados para TED/PIX (ADR-0065)
 
