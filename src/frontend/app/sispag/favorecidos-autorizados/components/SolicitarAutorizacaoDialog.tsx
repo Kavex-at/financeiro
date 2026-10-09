@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import {
+  AutorizacaoApiError,
   type BuscaFavorecidos,
   buscarFavorecidos,
   type FavorecidoAutorizado,
@@ -149,7 +150,13 @@ export function SolicitarAutorizacaoDialog({
   const buscando = !fixo && !escolhido && buscavel(termoAplicado) && busca?.termo !== termoAplicado.trim()
 
   // --------------------------------------------------------------- prévia do destino
-  const [previa, setPrevia] = React.useState<{ chave: string; dados?: PreviaDestino; erro?: string } | null>(null)
+  const [previa, setPrevia] = React.useState<{
+    chave: string
+    dados?: PreviaDestino
+    erro?: string
+    /** 429 do limitador por usuário: a mensagem do servidor diz o que fazer. */
+    limite?: boolean
+  } | null>(null)
   const chavePrevia = escolhido ? `${escolhido.pesCod}:${modalidade}` : null
 
   React.useEffect(() => {
@@ -160,7 +167,11 @@ export function SolicitarAutorizacaoDialog({
       .then((dados) => setPrevia({ chave, dados }))
       .catch((e: unknown) => {
         if (ctrl.signal.aborted) return
-        setPrevia({ chave, erro: e instanceof Error ? e.message : 'Não foi possível ler o cadastro.' })
+        setPrevia({
+          chave,
+          erro: e instanceof Error ? e.message : 'Não foi possível ler o cadastro.',
+          ...(e instanceof AutorizacaoApiError && e.status === 429 ? { limite: true } : {}),
+        })
       })
     return () => ctrl.abort()
   }, [escolhido, modalidade])
@@ -405,13 +416,20 @@ function PreviaDestinoBox({
   previa,
 }: {
   modalidade: ModalidadeAutorizavel
-  previa: { dados?: PreviaDestino; erro?: string } | null
+  previa: { dados?: PreviaDestino; erro?: string; limite?: boolean } | null
 }) {
   const oQue = modalidade === 'TED' ? 'conta' : 'chave PIX'
   if (!previa) {
     return (
       <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
         <Spinner className="size-3" aria-hidden /> Lendo o cadastro do Conexos…
+      </p>
+    )
+  }
+  if (previa.limite) {
+    return (
+      <p role="status" className="rounded-lg border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+        {previa.erro} O pedido pode seguir: quem aprovar lê o cadastro de novo.
       </p>
     )
   }

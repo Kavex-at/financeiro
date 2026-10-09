@@ -149,6 +149,19 @@ describe('SolicitarAutorizacaoDialog — busca no Conexos', () => {
     expect(buscarFavorecidos).toHaveBeenCalledTimes(1)
   })
 
+  it('prévia barrada pelo limite (429) mostra a mensagem do servidor e não bloqueia o pedido', async () => {
+    const { AutorizacaoApiError } = jest.requireActual('@/lib/sispag')
+    ;(previaDestinoFavorecido as jest.Mock).mockRejectedValue(
+      new AutorizacaoApiError('Muitas buscas em pouco tempo. Aguarde um minuto e tente de novo.', 429, 'MUITAS_BUSCAS'),
+    )
+    renderizar()
+    digitar('beta')
+    await userEvent.click(await screen.findByRole('button', { name: /escolher BETA SA/i }))
+    expect(await screen.findByText(/muitas buscas em pouco tempo/i)).toBeInTheDocument()
+    expect(screen.queryByText(/não foi possível ler/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^pedir autorização$/i })).toBeEnabled()
+  })
+
   it('falha de leitura não bloqueia o pedido (quem aprova lê de novo)', async () => {
     ;(previaDestinoFavorecido as jest.Mock).mockResolvedValue({ resultado: 'FALHA_LEITURA', avisos: [] })
     renderizar()
