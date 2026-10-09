@@ -1532,6 +1532,29 @@ const relatorioSchema = z.object({
 
 export type RelatorioCandidatos = z.infer<typeof relatorioSchema>
 
+const favorecidoEncontradoSchema = z.object({
+  pesCod: z.string(),
+  nome: z.string(),
+  nomeFantasia: opcional(z.string()),
+  /** CPF/CNPJ mascarado no backend. O valor completo nunca chega aqui. */
+  documentoMascarado: opcional(z.string()),
+  /** `pesVldStatus` do Conexos: 1 ativo, 2 inativo, 3 em cadastro, 4 bloqueado, 5 não vender. */
+  situacao: opcional(z.number()),
+  autorizacao: z.object({ TED: estadoLinhaSchema, PIX: estadoLinhaSchema }),
+})
+
+export type FavorecidoEncontrado = z.infer<typeof favorecidoEncontradoSchema>
+
+const buscaFavorecidosSchema = z.object({
+  favorecidos: z.array(favorecidoEncontradoSchema),
+  truncado: z.boolean(),
+})
+
+export type BuscaFavorecidos = z.infer<typeof buscaFavorecidosSchema>
+
+/** Prévia do pedido: o destino do cadastro, mascarado, sem impressão. */
+export type PreviaDestino = Omit<DestinoAtual, 'fingerprint'>
+
 /** Erro da API de autorizações, com o código estável (o 409 de destino mudado recarrega). */
 export class AutorizacaoApiError extends Error {
   constructor(
@@ -1670,4 +1693,29 @@ export function listarCandidatosAutorizacao(
   if (params.limite) qs.set('limite', String(params.limite))
   const q = qs.toString()
   return autorizacaoRequest(`${base}/candidatos${q ? `?${q}` : ''}`, relatorioSchema)
+}
+
+/** Acha o favorecido no cadastro do Conexos por nome, nome fantasia, CPF/CNPJ ou código. */
+export function buscarFavorecidos(termo: string, init?: { signal?: AbortSignal }): Promise<BuscaFavorecidos> {
+  // POST: o termo pode ser um CPF/CNPJ inteiro e não deve ir para URL (logs de acesso/erro).
+  return autorizacaoRequest(`${base}/busca`, buscaFavorecidosSchema, {
+    method: 'POST',
+    body: JSON.stringify({ termo }),
+    cache: 'no-store',
+    ...(init?.signal ? { signal: init.signal } : {}),
+  })
+}
+
+/** O destino que o cadastro do Conexos tem agora para o favorecido, mascarado (prévia do pedido). */
+export function previaDestinoFavorecido(
+  pesCod: string,
+  modalidade: ModalidadeAutorizavel,
+  init?: { signal?: AbortSignal },
+): Promise<PreviaDestino> {
+  const qs = new URLSearchParams({ pesCod, modalidade })
+  return autorizacaoRequest(
+    `${base}/destino-atual?${qs.toString()}`,
+    destinoAtualSchema.omit({ fingerprint: true }),
+    { cache: 'no-store', ...(init?.signal ? { signal: init.signal } : {}) },
+  )
 }

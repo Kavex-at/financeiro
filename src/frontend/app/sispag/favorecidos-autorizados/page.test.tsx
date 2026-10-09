@@ -35,6 +35,10 @@ jest.mock('@/lib/sispag', () => {
     pedirAutorizacao: jest.fn(),
     revelarDestino: jest.fn(),
     listarCandidatosAutorizacao: jest.fn(),
+    buscarFavorecidos: jest.fn(),
+    previaDestinoFavorecido: jest
+      .fn()
+      .mockResolvedValue({ resultado: 'OK', destinoMascarado: 'PIX CPF/CNPJ · **.345.678/****-**', avisos: [] }),
   }
 })
 
@@ -239,7 +243,11 @@ describe('/sispag/favorecidos-autorizados', () => {
     busca = new URLSearchParams('pedir=1&pesCod=9001&modalidade=PIX&filCod=2&credor=BETA')
     render(<FavorecidosAutorizadosPage />)
     const dialogo = await screen.findByRole('dialog', { name: /pedir autorização/i })
-    expect(within(dialogo).getByLabelText(/código do favorecido/i)).toHaveValue('9001')
+    // Favorecido já definido pelo item: sem busca, com a prévia mascarada do destino.
+    expect(within(dialogo).getByText('BETA')).toBeInTheDocument()
+    expect(within(dialogo).getByText(/código 9001/)).toBeInTheDocument()
+    expect(within(dialogo).queryByRole('searchbox')).not.toBeInTheDocument()
+    expect(await within(dialogo).findByText('PIX CPF/CNPJ · **.345.678/****-**')).toBeInTheDocument()
     expect(within(dialogo).getByLabelText('PIX')).toBeChecked()
     expect(within(dialogo).queryByLabelText(/filial/i)).not.toBeInTheDocument()
     ;(pedirAutorizacao as jest.Mock).mockResolvedValue({ id: 'A9', estado: 'PENDENTE' })

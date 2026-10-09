@@ -9,7 +9,12 @@ import type { RelatorioCandidatos } from '@/lib/sispag'
 jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn() } }))
 jest.mock('@/lib/sispag', () => {
   const real = jest.requireActual('@/lib/sispag')
-  return { ...real, listarCandidatosAutorizacao: jest.fn(), pedirAutorizacao: jest.fn() }
+  return {
+    ...real,
+    listarCandidatosAutorizacao: jest.fn(),
+    pedirAutorizacao: jest.fn(),
+    previaDestinoFavorecido: jest.fn().mockResolvedValue({ resultado: 'OK', destinoMascarado: 'banco 237 · cc ****4321', avisos: [] }),
+  }
 })
 
 import { listarCandidatosAutorizacao, pedirAutorizacao } from '@/lib/sispag'
