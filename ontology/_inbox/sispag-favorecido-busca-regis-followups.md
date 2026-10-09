@@ -5,9 +5,10 @@ nada reentra no loop. Os cards abaixo **não foram implementados** nesta branch.
 
 ## P2
 
-- [ ] **security-1** — limitador por usuário em `POST /busca` e `GET /destino-atual` (hoje só o
-      `globalLimiter` de 100/min/IP; até 2 leituras `cmn025` por busca). Protege o teto de sessões
-      do Conexos que os crons SISPAG usam.
+- [x] **security-1** — FEITO na busca (2026-10-09): `buildPayeeSearchLimiter`, 30 buscas/min por
+      usuário em `POST /busca`, 429 `MUITAS_BUSCAS` (≤ 60 leituras `cmn025`/min por usuário; antes
+      ~200/min por IP). Testado no limitador e na montagem da rota. **Fica de fora** o
+      `GET /destino-atual` (1 prévia por escolha, não por tecla) — se quiser, mesmo limitador.
 - [ ] **integrability-1** — medir ao vivo a semântica do `#LIKE` do `cmn025` e o formato de
       `pdcDocFederal`; gravar 2+ fixtures reais. Bloqueado: HML recusa o usuário do `.env` (pedir
       credencial HML). Sonda pronta: `src/backend/jobs/probe-cmn025-busca-hml.ts`. Se o documento
