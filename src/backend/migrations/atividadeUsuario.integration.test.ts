@@ -51,6 +51,7 @@ const describeComBanco = ADMIN_DSN ? describe : describe.skip;
 
 describeComBanco('AtividadeUsuario — integração', () => {
     let admin: Client;
+    let indicesApos0072: string[] = [];
     let repo: AtividadeUsuarioRepository;
     const ids: Record<string, number> = {};
 
@@ -73,13 +74,19 @@ describeComBanco('AtividadeUsuario — integração', () => {
             .filter((f) => /^\d{4}_.*\.sql$/.test(f))
             .sort();
         expect(migrations).toContain('0072_idx_atividade_usuario.sql');
-        for (const arquivo of migrations) {
-            await admin.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
+        const aplicar = async (arquivo: string) =>
+            admin.query(readFileSync(path.join(__dirname, arquivo), 'utf8'));
+        // Idempotência da 0072 provada no ponto da história em que ela roda: migrações seguintes
+        // (a 0080, ADR-0065) apagam tabelas que ela indexa, e o BootMigrator nunca reaplica.
+        const ate0072 = migrations.filter((f) => f <= '0072_idx_atividade_usuario.sql');
+        for (const arquivo of ate0072) await aplicar(arquivo);
+        await aplicar('0072_idx_atividade_usuario.sql');
+        indicesApos0072 = (
+            await admin.query<{ indexname: string }>('SELECT indexname FROM pg_indexes')
+        ).rows.map((r) => r.indexname);
+        for (const arquivo of migrations.filter((f) => f > '0072_idx_atividade_usuario.sql')) {
+            await aplicar(arquivo);
         }
-        // Idempotência: a 0072 de novo, sem erro.
-        await admin.query(
-            readFileSync(path.join(__dirname, '0072_idx_atividade_usuario.sql'), 'utf8'),
-        );
 
         const builder = new SqlBuilder();
         const db = {
@@ -170,13 +177,6 @@ describeComBanco('AtividadeUsuario — integração', () => {
                 ('X2', 'justificativa longa 2', 'bruno', '2026-09-29 11:00-03', 'ana',   '2026-09-30 10:00-03')`);
 
         await admin.query(`
-            INSERT INTO lote_pagamento_item_destino_audit
-                (id, lote_id, fil_cod, doc_cod, tit_cod, alterado_por, alterado_em, evento, aprova_audit_id)
-            VALUES
-                ('00000000-0000-4000-8000-0000000000a1', '${L1}', 1, 'D1', 'T1', 'ana',   '2026-09-28 10:00-03', 'GRAVACAO', NULL),
-                ('00000000-0000-4000-8000-0000000000a2', '${L1}', 1, 'D1', 'T1', 'bruno', '2026-09-28 11:00-03', 'APROVACAO', '00000000-0000-4000-8000-0000000000a1')`);
-
-        await admin.query(`
             INSERT INTO alerta (tipo, alvo, dedup_key, janela_inicio, reconhecido_por, reconhecido_em) VALUES
                 ('job-falhou', 'ingest-permutas', 'k1', '2026-09-30 00:00-03', 'ana',   '2026-09-30 10:00-03'),
                 ('job-falhou', 'ingest-extratos', 'k2', '2026-09-30 00:00-03', 'bruno', '2026-09-30 11:00-03')`);
@@ -198,26 +198,22 @@ describeComBanco('AtividadeUsuario — integração', () => {
     const agregados = (username: string): Promise<AgregadosAtividade> =>
         repo.agregados({ username, ...SEMANA });
 
-    it('a 0072 criou os 11 índices e reaplicá-la não falhou', async () => {
-        const { rows } = await admin.query<{ indexname: string }>(
-            `SELECT indexname FROM pg_indexes WHERE indexname = ANY($1::text[])`,
-            [
-                [
-                    'idx_permuta_alocacao_execucao_ator_em',
-                    'idx_solicitacao_numerario_execucao_ator_em',
-                    'idx_remessa_execucao_ator_em',
-                    'idx_conciliacao_execucao_ator_em',
-                    'idx_lote_pagamento_criado_por_em',
-                    'idx_lote_pagamento_finalizado_por_em',
-                    'idx_permuta_excecao_manual_criado_por_em',
-                    'idx_permuta_excecao_manual_removido_por_em',
-                    'idx_destino_audit_alterado_por_em',
-                    'idx_alerta_reconhecido_por_em',
-                    'idx_app_user_access_event_ator_em',
-                ],
-            ],
-        );
-        expect(rows).toHaveLength(11);
+    it('a 0072 criou os 11 índices e reaplicá-la não falhou', () => {
+        const esperados = [
+            'idx_permuta_alocacao_execucao_ator_em',
+            'idx_solicitacao_numerario_execucao_ator_em',
+            'idx_remessa_execucao_ator_em',
+            'idx_conciliacao_execucao_ator_em',
+            'idx_lote_pagamento_criado_por_em',
+            'idx_lote_pagamento_finalizado_por_em',
+            'idx_permuta_excecao_manual_criado_por_em',
+            'idx_permuta_excecao_manual_removido_por_em',
+            'idx_destino_audit_alterado_por_em',
+            'idx_alerta_reconhecido_por_em',
+            'idx_app_user_access_event_ator_em',
+        ];
+        // A 0080 (ADR-0065) apaga a trilha de destino; o índice dela é conferido logo após a 0072.
+        expect(esperados.filter((n) => indicesApos0072.includes(n))).toHaveLength(11);
     });
 
     it('Permutas: principal = settled finalizada; R$ = settled+parcial finalizadas; secundários', async () => {
@@ -330,9 +326,6 @@ describeComBanco('AtividadeUsuario — integração', () => {
                 `SELECT 'lote_finalizado:' || id AS k FROM lote_pagamento WHERE finalizado_por = 'ana'`,
             )),
             ...(await q(
-                `SELECT 'destino_audit:' || id AS k FROM lote_pagamento_item_destino_audit WHERE alterado_por = 'ana'`,
-            )),
-            ...(await q(
                 `SELECT 'remessa:' || id AS k FROM remessa_execucao WHERE executado_por = 'ana' AND NOT dry_run`,
             )),
             ...(await q(
@@ -351,7 +344,8 @@ describeComBanco('AtividadeUsuario — integração', () => {
         ].sort();
 
         expect(obtido).toEqual(esperado);
-        expect(new Set(linhas.map((l) => l.fonte)).size).toBe(11);
+        // 10 fontes: a trilha de destino manual saiu com a 0080 (ADR-0065).
+        expect(new Set(linhas.map((l) => l.fonte)).size).toBe(10);
         // A trilha de outro par (bruno → carla) nunca aparece; o autoajuste (ana → ana) aparece uma
         // vez, como RECEBIDO e sem "outro" (ator = alvo, mesma regra da troca da própria senha).
         const acessos = linhas.filter((l) => l.fonte === 'acesso_evento');

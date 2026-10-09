@@ -53,7 +53,6 @@ export const FONTE_ATIVIDADE = {
     EXCECAO_REMOVIDA: 'excecao_removida',
     LOTE_CRIADO: 'lote_criado',
     LOTE_FINALIZADO: 'lote_finalizado',
-    DESTINO_AUDIT: 'destino_audit',
     REMESSA: 'remessa',
     CONCILIACAO: 'conciliacao',
     SN_EXECUCAO: 'sn_execucao',
@@ -73,8 +72,6 @@ export const ACAO_ATIVIDADE = {
     EXCECAO_REMOVIDA: 'excecao_removida',
     LOTE_CRIADO: 'lote_criado',
     LOTE_FINALIZADO: 'lote_finalizado',
-    DESTINO_GRAVADO: 'destino_gravado',
-    DESTINO_APROVADO: 'destino_aprovado',
     REMESSA_GERADA: 'remessa_gerada',
     RETORNO_CONCILIADO: 'retorno_conciliado',
     NUMERARIO_EXECUTADO: 'numerario_executado',
@@ -118,10 +115,6 @@ export const STATUS_POR_FONTE: Readonly<
         RETORNADO: STATUS_ATIVIDADE.SUCESSO,
         BAIXADO: STATUS_ATIVIDADE.SUCESSO,
         CANCELADO: STATUS_ATIVIDADE.CANCELADO,
-    },
-    [FONTE_ATIVIDADE.DESTINO_AUDIT]: {
-        GRAVACAO: STATUS_ATIVIDADE.INFO,
-        APROVACAO: STATUS_ATIVIDADE.INFO,
     },
     [FONTE_ATIVIDADE.REMESSA]: {
         settled: STATUS_ATIVIDADE.SUCESSO,
