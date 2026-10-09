@@ -16,6 +16,7 @@ import PayeeWithoutPaymentDataError from '../domain/errors/PayeeWithoutPaymentDa
 import { PERMISSION, type Permission } from '../domain/interface/auth/Permission.js';
 import AuthorizationCandidatesService from '../domain/service/sispag/AuthorizationCandidatesService.js';
 import AuthorizedPayeeService from '../domain/service/sispag/AuthorizedPayeeService.js';
+import PayeeSearchService from '../domain/service/sispag/PayeeSearchService.js';
 import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
@@ -321,5 +322,68 @@ describe('GET /sispag/favorecidos-autorizados/candidatos (relatório read-only)'
             ).toBe(400);
         });
         expect(listar).toHaveBeenCalledWith({ pagina: 1, limite: 20 });
+    });
+});
+
+describe('busca de favorecido no Conexos e prévia do destino (pedido sem abrir o Conexos)', () => {
+    it('POST /busca (termo no body, nunca na URL) é sispag:executar; termo obrigatório e limitado', async () => {
+        const buscar = jest.fn().mockResolvedValue({ favorecidos: [], truncado: false });
+        container.registerInstance(PayeeSearchService, { buscar } as never);
+        const rota = '/sispag/favorecidos-autorizados/busca';
+        await comApp([PERMISSION.SISPAG_EXECUTAR], async (url) => {
+            const ok = await post(`${url}${rota}`, { termo: '12.345.678/0001-95' });
+            expect(ok.status).toBe(200);
+            expect(ok.headers.get('cache-control')).toBe('no-store');
+            expect((await post(`${url}${rota}`, {})).status).toBe(400);
+            expect((await post(`${url}${rota}`, { termo: 'a'.repeat(101) })).status).toBe(400);
+            // GET com o termo na query não existe: CPF/CNPJ em URL vai para log de erro/acesso.
+            expect((await fetch(`${url}${rota}?termo=acme`)).status).toBe(404);
+        });
+        expect(buscar).toHaveBeenCalledWith('12.345.678/0001-95');
+        await comApp([PERMISSION.SISPAG_VER], async (url) => {
+            expect((await post(`${url}${rota}`, { termo: 'acme' })).status).toBe(403);
+        });
+    });
+
+    it('GET /destino-atual é sispag:executar; devolve só a máscara, valida modalidade', async () => {
+        const destinoAtual = jest.fn().mockResolvedValue({
+            resultado: 'OK',
+            destinoMascarado: 'banco 237 · cc ****4321',
+            avisos: [],
+        });
+        servico({ destinoAtual });
+        await comApp([PERMISSION.SISPAG_EXECUTAR], async (url) => {
+            const r = await fetch(
+                `${url}/sispag/favorecidos-autorizados/destino-atual?pesCod=7001&modalidade=PIX`,
+            );
+            expect(r.status).toBe(200);
+            expect(r.headers.get('cache-control')).toBe('no-store');
+            expect(await r.json()).toEqual({
+                resultado: 'OK',
+                destinoMascarado: 'banco 237 · cc ****4321',
+                avisos: [],
+            });
+            expect(
+                (
+                    await fetch(
+                        `${url}/sispag/favorecidos-autorizados/destino-atual?pesCod=7001&modalidade=BOLETO`,
+                    )
+                ).status,
+            ).toBe(400);
+            expect(
+                (await fetch(`${url}/sispag/favorecidos-autorizados/destino-atual?modalidade=TED`))
+                    .status,
+            ).toBe(400);
+        });
+        expect(destinoAtual).toHaveBeenCalledWith('7001', 'PIX');
+        await comApp([PERMISSION.SISPAG_VER], async (url) => {
+            expect(
+                (
+                    await fetch(
+                        `${url}/sispag/favorecidos-autorizados/destino-atual?pesCod=7001&modalidade=TED`,
+                    )
+                ).status,
+            ).toBe(403);
+        });
     });
 });

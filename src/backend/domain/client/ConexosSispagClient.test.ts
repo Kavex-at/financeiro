@@ -439,6 +439,127 @@ describe('ConexosSispagClient (read-only)', () => {
         });
     });
 
+    describe('buscarPessoas (cmn025/list, busca do pedido de autorização)', () => {
+        const pessoa = (over: Record<string, unknown> = {}) => ({
+            pesCod: 77,
+            dpeNomPessoa: 'ACME LTDA',
+            dpeNomFantasia: 'ACME',
+            [CAMPO_DOCUMENTO_FAVORECIDO]: '12.345.678/0001-95',
+            pesVldStatus: 1,
+            ...over,
+        });
+        const filtros = (base: ReturnType<typeof buildBase>) =>
+            base.listGenericPaginated.mock.calls.map(
+                (c) => (c[1] as { filterList: Record<string, unknown> }).filterList,
+            );
+
+        it('texto: LIKE em razão social e em nome fantasia, em maiúsculas, mescla sem repetir', async () => {
+            const base = buildBase();
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 1, rows: [pessoa()] })
+                .mockResolvedValueOnce({
+                    count: 2,
+                    rows: [
+                        pessoa(),
+                        pessoa({ pesCod: 88, dpeNomPessoa: 'OUTRA SA', dpeNomFantasia: 'ACME 2' }),
+                    ],
+                });
+            const r = await make(base).buscarPessoas('  acme   ltda ', 2);
+            expect(filtros(base)).toEqual([
+                { 'dpeNomPessoa#LIKE': 'ACME LTDA' },
+                { 'dpeNomFantasia#LIKE': 'ACME LTDA' },
+            ]);
+            expect(r.pessoas.map((p) => p.pesCod)).toEqual(['77', '88']);
+            expect(r.pessoas[0]).toEqual({
+                pesCod: '77',
+                nome: 'ACME LTDA',
+                nomeFantasia: 'ACME',
+                documento: '12345678000195',
+                situacao: 1,
+            });
+            expect(r.truncado).toBe(false);
+            const [path, body, opts] = base.listGenericPaginated.mock.calls[0];
+            expect(path).toBe('cmn025/list');
+            expect((body as { fieldList: string[] }).fieldList).toEqual(
+                expect.arrayContaining(['pesCod', 'dpeNomPessoa', CAMPO_DOCUMENTO_FAVORECIDO]),
+            );
+            expect(opts).toEqual({ filCod: 2 });
+        });
+
+        it('curingas do #LIKE digitados (% e _) não viram padrão; só curinga não lê o ERP', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+            await make(base).buscarPessoas('ac%me_x', 2);
+            expect(filtros(base)[0]).toEqual({ 'dpeNomPessoa#LIKE': 'AC ME X' });
+            const vazio = buildBase();
+            await expect(make(vazio).buscarPessoas('%%%', 2)).resolves.toEqual({
+                pessoas: [],
+                truncado: false,
+            });
+            expect(vazio.listGenericPaginated).not.toHaveBeenCalled();
+        });
+
+        it('só dígitos curtos: código da pessoa (uma leitura)', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ count: 1, rows: [pessoa()] });
+            const r = await make(base).buscarPessoas('77', 2);
+            expect(filtros(base)).toEqual([{ 'pesCod#EQ': '77' }]);
+            expect(r.pessoas).toHaveLength(1);
+        });
+
+        it('CNPJ: só dígitos primeiro; sem linha, tenta o formatado', async () => {
+            const base = buildBase();
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 0, rows: [] })
+                .mockResolvedValueOnce({ count: 1, rows: [pessoa()] });
+            const r = await make(base).buscarPessoas('12.345.678/0001-95', 2);
+            expect(filtros(base)).toEqual([
+                { 'pdcDocFederal#EQ': '12345678000195' },
+                { 'pdcDocFederal#EQ': '12.345.678/0001-95' },
+            ]);
+            expect(r.pessoas.map((p) => p.pesCod)).toEqual(['77']);
+        });
+
+        it('CPF achado pelos dígitos não faz a segunda leitura', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [pessoa({ [CAMPO_DOCUMENTO_FAVORECIDO]: '12345678901' })],
+            });
+            await make(base).buscarPessoas('123.456.789-01', 2);
+            expect(filtros(base)).toEqual([{ 'pdcDocFederal#EQ': '12345678901' }]);
+        });
+
+        it('truncado quando o ERP conta mais do que devolveu', async () => {
+            const base = buildBase();
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 500, rows: [pessoa()] })
+                .mockResolvedValueOnce({ count: 0, rows: [] });
+            const r = await make(base).buscarPessoas('ACME', 2);
+            expect(r.truncado).toBe(true);
+        });
+
+        it('descarta linha sem código ou sem nome; documento inválido vira ausente', async () => {
+            const base = buildBase();
+            base.listGenericPaginated
+                .mockResolvedValueOnce({
+                    count: 3,
+                    rows: [
+                        pessoa({ pesCod: null }),
+                        pessoa({ pesCod: 90, dpeNomPessoa: '' }),
+                        pessoa({
+                            pesCod: 91,
+                            [CAMPO_DOCUMENTO_FAVORECIDO]: '123',
+                            dpeNomFantasia: null,
+                        }),
+                    ],
+                })
+                .mockResolvedValueOnce({ count: 0, rows: [] });
+            const r = await make(base).buscarPessoas('ACME', 2);
+            expect(r.pessoas).toEqual([{ pesCod: '91', nome: 'ACME LTDA', situacao: 1 }]);
+        });
+    });
+
     describe('listContasFavorecido', () => {
         it('não filtra por banco dentro do client (regressão: TED para qualquer banco)', async () => {
             const base = buildBase();

@@ -53,6 +53,17 @@ export const FiltroAutorizacoesSchema = z.object({
     pesCod: z.string().trim().min(1).max(40).optional(),
 });
 
+/** `POST /sispag/favorecidos-autorizados/busca` — nome, nome fantasia, CPF/CNPJ ou código (no body: CPF/CNPJ não vai para URL/log). */
+export const BuscaFavorecidoSchema = z.object({
+    termo: z.string().trim().min(1).max(100),
+});
+
+/** `GET /sispag/favorecidos-autorizados/destino-atual` — prévia mascarada do pedido. */
+export const DestinoAtualQuerySchema = z.object({
+    pesCod: z.string().trim().min(1).max(40),
+    modalidade: z.enum(['TED', 'PIX']),
+});
+
 /** `GET /sispag/favorecidos-autorizados/candidatos` — paginado: o cmn025 é lido só da página, em série (teto de sessões do Conexos), por isso a página é pequena (até 25: ~50 leituras). */
 export const CandidatosQuerySchema = z.object({
     pagina: z.coerce.number().int().min(1).max(1000).default(1),
