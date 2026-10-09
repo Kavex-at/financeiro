@@ -22,6 +22,7 @@ import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.
 import CarteiraAtualizacaoService from '../domain/service/sispag/CarteiraAtualizacaoService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import AuthorizationCandidatesService from '../domain/service/sispag/AuthorizationCandidatesService.js';
+import PayeeSearchService from '../domain/service/sispag/PayeeSearchService.js';
 import AuthorizedPayeeService from '../domain/service/sispag/AuthorizedPayeeService.js';
 import type { AuthorizedPayee } from '../domain/interface/sispag/AuthorizedPayeeInterface.js';
 
@@ -46,7 +47,9 @@ import DuplicateResolutionService from '../domain/service/sispag/DuplicateResolu
 import {
     AprovarAutorizacaoSchema,
     AutorizacaoIdSchema,
+    BuscaFavorecidoSchema,
     CandidatosQuerySchema,
+    DestinoAtualQuerySchema,
     DecidirAutorizacaoSchema,
     FiltroAutorizacoesSchema,
     SolicitarAutorizacaoSchema,
@@ -569,6 +572,36 @@ router.get(
         if (!query.success) return respostaInvalida(res, query.error);
         const service = container.resolve(AuthorizationCandidatesService);
         res.json(await service.listar(query.data));
+    }),
+);
+
+// POST /sispag/favorecidos-autorizados/busca — acha o favorecido no cadastro do Conexos (cmn025)
+// para o pedido, sem abrir o Conexos. `sispag:executar` (só quem pede). Documento só mascarado;
+// read-only. POST de propósito: o termo pode ser um CPF/CNPJ inteiro, e os middlewares logam
+// `req.originalUrl` (com a query) em erro e em acesso negado (I10h).
+router.post(
+    '/favorecidos-autorizados/busca',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = BuscaFavorecidoSchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        res.setHeader('Cache-Control', 'no-store');
+        res.json(await container.resolve(PayeeSearchService).buscar(body.data.termo));
+    }),
+);
+
+// GET /sispag/favorecidos-autorizados/destino-atual — prévia do pedido: o destino que o cadastro
+// resolve agora para (favorecido, modalidade), MASCARADO (I14l), sem impressão. Read-only.
+router.get(
+    '/favorecidos-autorizados/destino-atual',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = DestinoAtualQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        res.setHeader('Cache-Control', 'no-store');
+        res.json(await payees().destinoAtual(query.data.pesCod, query.data.modalidade));
     }),
 );
 

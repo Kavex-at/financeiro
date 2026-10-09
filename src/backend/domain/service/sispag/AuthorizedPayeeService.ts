@@ -371,6 +371,24 @@ export default class AuthorizedPayeeService {
     };
 
     /**
+     * Prévia do pedido (`buscarFavorecidoConexos`) — `sispag:executar`. O que o cadastro resolve
+     * AGORA para (favorecido, modalidade), mascarado (I14l), lido na filial do tenant, a mesma do
+     * pedido. Sem impressão (só a tela de decisão a recebe) e sem escrita: não há registro ainda.
+     */
+    public destinoAtual = async (
+        pesCod: string,
+        modalidade: AuthorizedPayeeModality,
+    ): Promise<Omit<DestinoAtual, 'fingerprint'>> => {
+        const filCod = (await this.environmentProvider.getEnvironmentVars()).sispagCadastroFilCod;
+        const lido = await this.lerCadastro(pesCod, modalidade, filCod);
+        return {
+            resultado: lido.leitura.status,
+            ...(lido.destinoMascarado ? { destinoMascarado: lido.destinoMascarado } : {}),
+            avisos: lido.avisos,
+        };
+    };
+
+    /**
      * Revelar o destino completo (I14l) — `sispag:autorizar_favorecido`. Lido AO VIVO do `cmn025`,
      * devolvido SÓ na resposta. A trilha grava que revelou (com a máscara), nunca o valor.
      */

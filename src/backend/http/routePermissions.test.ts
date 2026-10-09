@@ -127,6 +127,9 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     // `sispag:autorizar_favorecido` (aprovador ≠ solicitante é regra do serviço); ler é `ver`.
     ['GET /sispag/favorecidos-autorizados', P.SISPAG_VER],
     ['GET /sispag/favorecidos-autorizados/candidatos', P.SISPAG_VER],
+    // Busca no cadastro do Conexos e prévia mascarada: só quem pede (`executar`).
+    ['POST /sispag/favorecidos-autorizados/busca', P.SISPAG_EXECUTAR],
+    ['GET /sispag/favorecidos-autorizados/destino-atual', P.SISPAG_EXECUTAR],
     ['POST /sispag/favorecidos-autorizados', P.SISPAG_EXECUTAR],
     ['POST /sispag/favorecidos-autorizados/:id/aprovar', P.SISPAG_AUTORIZAR_FAVORECIDO],
     ['POST /sispag/favorecidos-autorizados/:id/rejeitar', P.SISPAG_AUTORIZAR_FAVORECIDO],
@@ -237,11 +240,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar): 27/43/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino): 27/45/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(43);
+        expect(porMount('sispag')).toBe(45);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);

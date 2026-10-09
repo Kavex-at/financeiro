@@ -118,6 +118,25 @@ export interface ChavePixFavorecido {
 }
 
 /**
+ * Uma pessoa do cadastro do Conexos (`cmn025/list`), achada pela busca do pedido de autorização.
+ * `documento` (só dígitos) é dado do cadastro: sai do backend só mascarado.
+ */
+export interface PessoaCadastro {
+    pesCod: string;
+    nome: string;
+    nomeFantasia?: string;
+    documento?: string;
+    /** `pesVldStatus`: 1 ATIVO, 2 INATIVO, 3 EM CADASTRO, 4 BLOQUEADO, 5 NÃO VENDER. */
+    situacao?: number;
+}
+
+/** Resultado da busca: `truncado` quando o ERP tem mais linhas do que a página devolveu. */
+export interface BuscaPessoasResultado {
+    pessoas: PessoaCadastro[];
+    truncado: boolean;
+}
+
+/**
  * Conta corrente PAGADORA da Columbia (`fin005`) — de onde o dinheiro sai.
  *
  * ⚠️ `ccoCod` NÃO é global: o mesmo código aponta para contas DIFERENTES em cada filial.

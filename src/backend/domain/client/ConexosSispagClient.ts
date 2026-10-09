@@ -2,6 +2,7 @@ import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import {
     type BorderoAPagar,
+    type BuscaPessoasResultado,
     CHAVE_PIX_TIPO_POR_CIX_VLD_TIPO,
     type ChavePixFavorecido,
     type DuplicateCandidate,
@@ -9,6 +10,7 @@ import {
     type LoteSispag,
     MODALIDADE,
     type Modalidade,
+    type PessoaCadastro,
     type TituloAPagar,
     type ContaCorrentePagadora,
     type ContaFavorecido,
@@ -210,6 +212,34 @@ const documentoSchema = z.preprocess(
     (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/\D/g, '') : v),
     z.string().regex(/^(\d{11}|\d{14})$/),
 );
+
+/** Quantas pessoas a busca do pedido de autorização devolve por leitura. */
+const BUSCA_PESSOAS_LIMITE = 20;
+
+/** Campos da linha de pessoa que a busca lê do `cmn025/list`. */
+const BUSCA_PESSOAS_CAMPOS = [
+    'pesCod',
+    'dpeNomPessoa',
+    'dpeNomFantasia',
+    CAMPO_DOCUMENTO_FAVORECIDO,
+    'pesVldStatus',
+];
+
+/** Linha de pessoa da busca. Sem código ou sem razão social não é favorecido que se peça. */
+const pessoaRowSchema = z
+    .object({
+        pesCod: z.union([z.string().trim().min(1), z.number()]).transform(String),
+        dpeNomPessoa: z.string().trim().min(1),
+        dpeNomFantasia: z.string().trim().nullish(),
+        pesVldStatus: numOpt,
+    })
+    .passthrough();
+
+/** CPF `000.000.000-00` / CNPJ `00.000.000/0000-00` — o formato em que o cadastro pode guardar. */
+const formatarDocumento = (d: string): string =>
+    d.length === 11
+        ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+        : `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
 
 @singleton()
 @injectable()
@@ -723,6 +753,83 @@ export default class ConexosSispagClient {
         if (!pessoa) return undefined;
         const parsed = documentoSchema.safeParse(pessoa[CAMPO_DOCUMENTO_FAVORECIDO]);
         return parsed.success ? parsed.data : undefined;
+    };
+
+    /**
+     * Busca de pessoa no cadastro do Conexos (`cmn025/list`) para o pedido de autorização de
+     * favorecido: quem pede acha o favorecido sem abrir o Conexos.
+     *
+     * - Só dígitos com 11 ou 14 (CPF/CNPJ, com ou sem pontuação): `pdcDocFederal#EQ` com os
+     *   dígitos e, sem linha, com o documento formatado. O formato guardado no cadastro não foi
+     *   medido ao vivo; as duas leituras cobrem os dois casos.
+     * - Outros só dígitos: código da pessoa (`pesCod#EQ`).
+     * - Texto: `#LIKE` na razão social e no nome fantasia, em maiúsculas, mesclado por código.
+     *   Se o `#LIKE` do ERP for "começa com" e não "contém", a busca acha menos, mas não erra.
+     *
+     * Falha de rede sobe. O documento volta só em dígitos; mascarar é de quem expõe.
+     */
+    public buscarPessoas = async (
+        termo: string,
+        filCod: number,
+    ): Promise<BuscaPessoasResultado> => {
+        const limpo = termo.trim().replace(/\s+/g, ' ');
+        const digitos = limpo.replace(/[.\-/\s]/g, '');
+        const leituras: Array<Record<string, unknown>> = [];
+        if (/^\d+$/.test(digitos) && (digitos.length === 11 || digitos.length === 14)) {
+            leituras.push({ 'pdcDocFederal#EQ': digitos });
+        } else if (/^\d+$/.test(digitos)) {
+            leituras.push({ 'pesCod#EQ': digitos });
+        } else {
+            // `%` e `_` são curingas do `#LIKE`: digitados, viram espaço (busca pelo texto, não padrão).
+            const texto = limpo.replace(/[%_]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+            if (texto.length === 0) return { pessoas: [], truncado: false };
+            leituras.push({ 'dpeNomPessoa#LIKE': texto }, { 'dpeNomFantasia#LIKE': texto });
+        }
+
+        const porCodigo = new Map<string, PessoaCadastro>();
+        let truncado = false;
+        const ler = async (filterList: Record<string, unknown>): Promise<void> => {
+            const { rows, count } = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'cmn025/list',
+                    {
+                        fieldList: BUSCA_PESSOAS_CAMPOS,
+                        filterList,
+                        serviceName: 'cmn025',
+                        pageNumber: 1,
+                        pageSize: BUSCA_PESSOAS_LIMITE,
+                    },
+                    { filCod },
+                ),
+            );
+            if (typeof count === 'number' && count > rows.length) truncado = true;
+            for (const row of rows) {
+                const pessoa = this.mapPessoa(row);
+                if (pessoa && !porCodigo.has(pessoa.pesCod)) porCodigo.set(pessoa.pesCod, pessoa);
+            }
+        };
+
+        for (const filterList of leituras) await ler(filterList);
+        if (porCodigo.size === 0 && 'pdcDocFederal#EQ' in (leituras[0] ?? {})) {
+            await ler({ 'pdcDocFederal#EQ': formatarDocumento(digitos) });
+        }
+        return { pessoas: [...porCodigo.values()], truncado };
+    };
+
+    /** Linha do `cmn025/list` → `PessoaCadastro`; fora do schema, `undefined`. */
+    private mapPessoa = (row: Record<string, unknown>): PessoaCadastro | undefined => {
+        const parsed = pessoaRowSchema.safeParse(row);
+        if (!parsed.success) return undefined;
+        const documento = documentoSchema.safeParse(row[CAMPO_DOCUMENTO_FAVORECIDO]);
+        return {
+            pesCod: parsed.data.pesCod,
+            nome: parsed.data.dpeNomPessoa,
+            ...(parsed.data.dpeNomFantasia ? { nomeFantasia: parsed.data.dpeNomFantasia } : {}),
+            ...(documento.success ? { documento: documento.data } : {}),
+            ...(parsed.data.pesVldStatus !== undefined
+                ? { situacao: parsed.data.pesVldStatus }
+                : {}),
+        };
     };
 
     /**

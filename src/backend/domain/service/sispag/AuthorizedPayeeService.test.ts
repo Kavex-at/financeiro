@@ -577,3 +577,43 @@ describe('AuthorizedPayeeService — reconferir e revelar', () => {
         expect(JSON.stringify(a.logService.warn.mock.calls)).toContain('HTTP 503');
     });
 });
+
+describe('AuthorizedPayeeService — destinoAtual (prévia do pedido)', () => {
+    it('OK: destino mascarado lido na filial do tenant, sem impressão, sem escrita', async () => {
+        const { service, sispag, repo } = montar();
+        const r = await service.destinoAtual('7001', 'TED');
+        expect(r).toEqual({
+            resultado: 'OK',
+            destinoMascarado: 'banco 237 · ag. 1234 · cc ****4321-0',
+            avisos: [],
+        });
+        expect(JSON.stringify(r)).not.toContain(CONTA_COMPLETA);
+        expect(sispag.listContasFavorecido).toHaveBeenCalledWith('7001', 7);
+        expect(repo.registrarEvento).not.toHaveBeenCalled();
+        expect(repo.atualizarComVersao).not.toHaveBeenCalled();
+    });
+
+    it('PIX com chave que não é o documento do favorecido traz o aviso', async () => {
+        const { service } = montar({ chaves: [chaveEmail], documento: '12345678000195' });
+        const r = await service.destinoAtual('7001', 'PIX');
+        expect(r.resultado).toBe('OK');
+        expect(r.avisos).toEqual(['PIX_CHAVE_NAO_E_DOCUMENTO_DO_FAVORECIDO']);
+        expect(r.destinoMascarado).not.toContain('fornecedor@');
+    });
+
+    it('sem conta no cadastro → SEM_DADO', async () => {
+        const { service } = montar({ contas: [] });
+        await expect(service.destinoAtual('7001', 'TED')).resolves.toEqual({
+            resultado: 'SEM_DADO',
+            avisos: [],
+        });
+    });
+
+    it('leitura que falha → FALHA_LEITURA (nunca "sem dado")', async () => {
+        const { service } = montar({ falhaLeitura: true });
+        await expect(service.destinoAtual('7001', 'TED')).resolves.toEqual({
+            resultado: 'FALHA_LEITURA',
+            avisos: [],
+        });
+    });
+});
