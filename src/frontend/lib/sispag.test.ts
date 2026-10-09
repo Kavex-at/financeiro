@@ -15,6 +15,7 @@ import {
   fetchLinhasDigitaveis,
   formatCivilDate,
   formatErpDay,
+  rotuloFormaConexos,
   gerarRemessa,
   retirarDoLote,
   __limparCacheRecursos,
@@ -655,5 +656,19 @@ describe('boletos DDA de um título', () => {
       valor: 10,
       vencimento: '2026-09-24',
     })
+  })
+})
+
+describe('rotuloFormaConexos', () => {
+  it('rotula os códigos documentados de titVldPagopor', () => {
+    expect(rotuloFormaConexos(6)).toBe('BOLETO')
+    expect(rotuloFormaConexos(2)).toBe('TEF')
+    expect(rotuloFormaConexos(10)).toBe('TRANSAÇÃO AUTOMÁTICA')
+  })
+
+  it('nunca lido ou fora do domínio → "—" (não inventa rótulo)', () => {
+    expect(rotuloFormaConexos(undefined)).toBe('—')
+    expect(rotuloFormaConexos(0)).toBe('—')
+    expect(rotuloFormaConexos(11)).toBe('—')
   })
 })

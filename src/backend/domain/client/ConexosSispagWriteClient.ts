@@ -11,6 +11,7 @@ import type {
     LoteNativoCriado,
     LoteNativoEstado,
     RemessaGerada,
+    SinalPendente,
     TituloPendente,
 } from '../interface/sispag/Fin015Write.js';
 import { LOG_TYPE } from '../interface/log/LogInterface.js';
@@ -150,6 +151,15 @@ function linhaDigitavelValida(linha: string): boolean {
 
 const PENDENTE_DDA_SCHEMA = z
     .object({ titVldReflexoDdaAssoc: z.union([z.literal(0), z.literal(1)]) })
+    .passthrough();
+
+/**
+ * `titVldPagopor` do grid de pendentes — a "Situação" do título no Conexos (BOLETO, TEF, …).
+ * Validado, não coagido: valor fora do domínio documentado (1..10) vira "não sei", não um
+ * código inventado. Ver `PAGO_POR_CONEXOS`.
+ */
+const PENDENTE_PAGO_POR_SCHEMA = z
+    .object({ titVldPagopor: z.number().int().min(1).max(10) })
     .passthrough();
 
 /**
@@ -739,6 +749,24 @@ export default class ConexosSispagWriteClient {
         bncCods: readonly number[];
         maxPaginas?: number;
     }): Promise<Set<string>> => {
+        const sinais = await this.listarSinaisDosPendentes(params);
+        return new Set(
+            [...sinais].filter(([, sinal]) => sinal.temBoletoDda).map(([chave]) => chave),
+        );
+    };
+
+    /**
+     * Sinais do grid de pendentes por `filCod:docCod:titCod` — TODAS as linhas, não só as com
+     * boleto: o flag DDA (`titVldReflexoDdaAssoc`) e a forma de pagamento do título no Conexos
+     * (`titVldPagopor`). Mesma leitura, mesmo contexto e mesmas garantias de
+     * `listarTitulosComBoletoDda` (ver o comentário dele); filial sem lote nativo devolve mapa
+     * vazio.
+     */
+    public listarSinaisDosPendentes = async (params: {
+        filCod: number;
+        bncCods: readonly number[];
+        maxPaginas?: number;
+    }): Promise<Map<string, SinalPendente>> => {
         const { filCod, bncCods, maxPaginas } = params;
         let contexto: { bncCod: number; flpCod: number } | undefined;
         for (const bncCod of bncCods) {
@@ -752,7 +780,7 @@ export default class ConexosSispagWriteClient {
                 break;
             }
         }
-        if (contexto === undefined) return new Set();
+        if (contexto === undefined) return new Map();
         const pendentes = await this.listarTitulosPendentes({
             filCod,
             bncCod: contexto.bncCod,
@@ -772,11 +800,21 @@ export default class ConexosSispagWriteClient {
                     'deve ser marcada como "sem boleto" por causa disto.',
             });
         }
-        return new Set(
-            pendentes
-                .filter((p) => p.temBoletoDda)
-                .map((p) => `${p.filCod}:${p.docCod}:${p.titCod}`),
+        return new Map(
+            pendentes.map((p) => [
+                `${p.filCod}:${p.docCod}:${p.titCod}`,
+                {
+                    temBoletoDda: p.temBoletoDda,
+                    ...(p.pagoPor !== undefined ? { pagoPor: p.pagoPor } : {}),
+                },
+            ]),
         );
+    };
+
+    /** `{ pagoPor }` quando `titVldPagopor` veio legível; `{}` caso contrário. */
+    private pagoPorDe = (r: Record<string, unknown>): { pagoPor?: number } => {
+        const lido = PENDENTE_PAGO_POR_SCHEMA.safeParse(r);
+        return lido.success ? { pagoPor: lido.data.titVldPagopor } : {};
     };
 
     /** Projeção da linha crua do grid — a identidade vai VERBATIM em `raw`. */
@@ -799,6 +837,7 @@ export default class ConexosSispagWriteClient {
         // Validado (não coagido) — ver PENDENTE_DDA_SCHEMA.
         temBoletoDda: PENDENTE_DDA_SCHEMA.safeParse(r).data?.titVldReflexoDdaAssoc === 1,
         ddaLegivel: PENDENTE_DDA_SCHEMA.safeParse(r).success,
+        ...this.pagoPorDe(r),
         raw: r,
     });
 

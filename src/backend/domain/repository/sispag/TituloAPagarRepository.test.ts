@@ -52,6 +52,20 @@ describe('TituloAPagarRepository', () => {
         expect(desconhecido).not.toContain('tem_boleto = EXCLUDED.tem_boleto');
     });
 
+    it('upsertMany grava forma_pagamento_conexos e PRESERVA a última quando vem indefinida', async () => {
+        const { client, tx } = buildDb();
+        await new TituloAPagarRepository(client).upsertMany(
+            [titulo({ titCod: '1', formaPagamentoConexos: 6 }), titulo({ titCod: '2' })],
+            'RUN1',
+        );
+        const [sql, params] = tx.insert.mock.calls[0];
+        expect(params).toMatchObject({ fp0: 6, fp1: null });
+        // NULL (título fora do grid / leitura falhou) não apaga o que a última leitura gravou.
+        expect(sql).toMatch(
+            /forma_pagamento_conexos = COALESCE\(\s*EXCLUDED\.forma_pagamento_conexos, titulo_a_pagar\.forma_pagamento_conexos\s*\)/,
+        );
+    });
+
     it('upsertMany com lista vazia não abre transação', async () => {
         const { client } = buildDb();
         await new TituloAPagarRepository(client).upsertMany([], 'RUN1');
@@ -94,6 +108,7 @@ describe('TituloAPagarRepository', () => {
                 num_remessa: null,
                 tpd_cod: null,
                 pronto_para_remessa: true,
+                forma_pagamento_conexos: 6,
             },
         ]);
         const titulos = await new TituloAPagarRepository(client).listAtivos();
@@ -102,9 +117,13 @@ describe('TituloAPagarRepository', () => {
             valor: 500.5,
             liberado: true,
             prontoParaRemessa: true,
+            formaPagamentoConexos: 6,
             ativo: true,
         });
         expect(typeof titulos[0].vencimento).toBe('number');
+        expect((client.selectMany as jest.Mock).mock.calls[0][0]).toContain(
+            'forma_pagamento_conexos',
+        );
     });
 
     it('listElegiveisParaFormacao exclui título em QUALQUER lote vivo, não só RASCUNHO (I3)', async () => {
