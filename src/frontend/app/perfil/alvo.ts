@@ -128,10 +128,6 @@ export const descreverAcao = (l: LinhaHistorico): string => {
       return 'Criou lote'
     case 'lote_finalizado':
       return 'Finalizou lote'
-    case 'destino_gravado':
-      return 'Gravou destino de pagamento'
-    case 'destino_aprovado':
-      return 'Aprovou destino manual'
     case 'remessa_gerada':
       return 'Gerou remessa'
     case 'retorno_conciliado':

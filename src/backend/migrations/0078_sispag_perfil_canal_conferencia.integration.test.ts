@@ -59,8 +59,10 @@ describeComBanco('0076–0079 — verificação TED/PIX (integração)', () => {
 
         db = new Client({ connectionString: dsnPara(dsn, BANCO) });
         await db.connect();
+        // Até a 0079: é o esquema que estas quatro criaram. A 0080 (ADR-0065) apaga a conferência e a
+        // pendência de cadastro e troca o catálogo de permissões; o BootMigrator nunca reaplica.
         const migrations = readdirSync(__dirname)
-            .filter((f) => /^\d{4}_.*\.sql$/.test(f))
+            .filter((f) => /^\d{4}_.*\.sql$/.test(f) && f <= NOVAS[NOVAS.length - 1])
             .sort();
         for (const nova of NOVAS) expect(migrations).toContain(nova);
         for (const arquivo of migrations) {

@@ -98,23 +98,6 @@ WITH atividade AS (
 
     UNION ALL
 
-    SELECT d.alterado_em, 'sispag'::text,
-           CASE WHEN d.evento = 'APROVACAO' THEN 'destino_aprovado' ELSE 'destino_gravado' END,
-           'titulo'::text,
-           d.fil_cod::text || '-' || d.doc_cod || '-' || d.tit_cod,
-           NULL::numeric, d.evento::text,
-           'destino_audit'::text, d.id::text,
-           jsonb_build_object(
-               'filCod', d.fil_cod, 'loteId', d.lote_id::text,
-               'docCod', d.doc_cod, 'titCod', d.tit_cod
-           )
-      FROM lote_pagamento_item_destino_audit d
-     WHERE d.alterado_por = $username
-       AND d.alterado_em >= $inicio::timestamptz
-       AND d.alterado_em < $fim::timestamptz
-
-    UNION ALL
-
     SELECT COALESCE(r.encerrado_em, r.criado_em), 'sispag'::text, 'remessa_gerada'::text,
            'lote'::text, r.lote_id::text,
            (SELECT SUM(i.valor) FROM lote_pagamento_item i WHERE i.lote_id = r.lote_id),
