@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.61.0 (2026-10-09) — SISPAG: achar o favorecido no Conexos ao pedir a autorização
+
+- **Pedir a autorização sem abrir o Conexos.** O pedido não pede mais o código do favorecido:
+  quem pede busca por nome, nome fantasia, CNPJ/CPF ou código, e escolhe numa lista que traz o
+  documento mascarado, a situação no Conexos (inativo, bloqueado…) e se TED/PIX já está pedido ou
+  autorizado.
+- **Destino mascarado antes de pedir.** Escolhido o favorecido, a tela mostra a conta ou a chave
+  PIX do cadastro, mascarada. Sem conta/chave no cadastro para a modalidade, a tela avisa e não
+  deixa pedir; se o Conexos não responder, o pedido segue (quem aprova lê de novo). A aprovação
+  continua com outra pessoa, conferindo o destino.
+- Só leitura no Conexos; o termo da busca vai no corpo da requisição para um CPF/CNPJ não parar em
+  log. Atalhos do item do lote e da aba Candidatos continuam abrindo o pedido já preenchido.
+
 ## v0.60.0 (2026-10-08) — SISPAG: favorecidos autorizados para TED/PIX (ADR-0065)
 
 - **TED/PIX só para favorecido autorizado, e só para o destino aprovado.** Nova tela "Favorecidos
