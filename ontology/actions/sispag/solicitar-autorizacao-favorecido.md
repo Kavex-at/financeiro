@@ -23,3 +23,6 @@ side_effects:
 ADR-0065. Nunca cria `AUTORIZADO`. Também é a ação disparada pela linha do relatório
 (`listarCandidatosAutorizacao`) e pelo atalho "pedir autorização" do item. Ver
 `state-machines/favorecido-autorizado.md` (F1, F5) e I14c.
+
+**v0.39.0:** o pedido `MANUAL` nasce de `buscarFavorecidoConexos`: quem pede escolhe o favorecido
+numa busca no cadastro do Conexos e vê o destino mascarado; não digita código.

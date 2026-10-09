@@ -3,6 +3,22 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.39.0 — SISPAG: buscar o favorecido no Conexos ao pedir a autorização (2026-10-09)
+
+Feature: `sispag-favorecido-busca` (`/feature-tweak FavorecidoAutorizado`). `entity_changed = false`.
+Emenda da ADR-0065, **sem regra nova**.
+
+- **NEW action `buscarFavorecidoConexos`** (implemented, read-only, `sispag:executar`): quem pede
+  acha o favorecido no `cmn025` por nome, nome fantasia, CPF/CNPJ ou código, sem abrir o Conexos;
+  a lista traz o documento só mascarado, a situação no Conexos e a autorização vigente por
+  modalidade. Escolhido o favorecido, a prévia mostra o destino do cadastro mascarado (I14l já
+  manda mascarar; o `reconferir` já mostrava a máscara a `sispag:ver`). Sem destino para a
+  modalidade, a tela não deixa pedir.
+- `solicitarAutorizacaoFavorecido`: a origem `MANUAL` passa a nascer da busca, não de código digitado.
+- Gap aberto: semântica do `#LIKE` do `cmn025` e formato do `pdcDocFederal` não medidos ao vivo
+  (HML recusa o usuário do `.env`). Sonda: `src/backend/jobs/probe-cmn025-busca-hml.ts`.
+- Coverage: actions 36→37 (implemented 29→30, 81%).
+
 ## v0.38.0 — SISPAG: favorecido autorizado (2026-10-08, ADR-0065)
 
 Feature: `sispag-favorecido-autorizado` (`/feature-tweak`). `entity_changed = true`. Supersede a
