@@ -269,6 +269,33 @@ describe('limitador da busca de favorecido', () => {
         expect(chegaram()).toBe(30);
     });
 
+    it('a prévia do destino tem balde próprio: esgotar as buscas não bloqueia a prévia (e vice-versa)', async () => {
+        const store = new MemoryStore();
+        const busca = buildPayeeSearchLimiter({ skip: () => false, store }, 'busca');
+        const previa = buildPayeeSearchLimiter({ skip: () => false, store }, 'previa');
+        const app = express();
+        app.use((req: Request, _res: Response, next) => {
+            req.user = { sub: 'ana' };
+            next();
+        });
+        app.post('/busca', busca, (_req: Request, res: Response) => res.json({}));
+        app.get('/previa', previa, (_req: Request, res: Response) => res.json({}));
+        const server: Server = await new Promise((r) => {
+            const s = app.listen(0, '127.0.0.1', () => r(s));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        for (let i = 0; i < 30; i++) await fetch(`${base}/busca`, { method: 'POST' });
+        const buscaBloqueada = await fetch(`${base}/busca`, { method: 'POST' });
+        const previaLivre = await fetch(`${base}/previa`);
+        for (let i = 0; i < 29; i++) await fetch(`${base}/previa`);
+        const previaBloqueada = await fetch(`${base}/previa`);
+        server.close();
+        expect(buscaBloqueada.status).toBe(429);
+        expect(previaLivre.status).toBe(200);
+        expect(previaBloqueada.status).toBe(429);
+        expect(await previaBloqueada.json()).toMatchObject({ codigo: 'MUITAS_BUSCAS' });
+    });
+
     it('o balde é por usuário: outra pessoa no mesmo IP continua buscando', async () => {
         const { server, post } = await subirBusca();
         for (let i = 0; i < 30; i++) await post('ana');

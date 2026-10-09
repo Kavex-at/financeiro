@@ -118,13 +118,19 @@ export const PAYEE_SEARCH_LIMIT_PER_MINUTE = 30;
 export const MENSAGEM_MUITAS_BUSCAS =
     'Muitas buscas em pouco tempo. Aguarde um minuto e tente de novo.';
 
+/**
+ * `escopo` separa os baldes: `busca` (`POST /busca`) e `previa` (`GET /destino-atual`, 1–3 leituras
+ * do cadastro por favorecido escolhido) têm o MESMO limite, mas contam à parte — quem busca muito
+ * não fica sem poder ver a prévia, e vice-versa.
+ */
 export const buildPayeeSearchLimiter = (
     options: SessionLimiterOptions = {},
+    escopo: 'busca' | 'previa' = 'busca',
 ): RateLimitRequestHandler =>
     sessionLimiter(options, {
         windowMs: ONE_MINUTE_MS,
         limit: PAYEE_SEARCH_LIMIT_PER_MINUTE,
-        keyGenerator: (req: Request) => `busca-favorecido:${req.user?.sub ?? ''}`,
+        keyGenerator: (req: Request) => `${escopo}-favorecido:${req.user?.sub ?? ''}`,
         handler: (_req: Request, res: ExpressResponse) => {
             res.status(429).json({ codigo: 'MUITAS_BUSCAS', error: MENSAGEM_MUITAS_BUSCAS });
         },

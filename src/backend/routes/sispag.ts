@@ -575,8 +575,12 @@ router.get(
     }),
 );
 
-/** 30 buscas/min por usuário: cada busca lê o `cmn025` na sessão compartilhada do Conexos. */
-const limiteBuscaFavorecido = buildPayeeSearchLimiter();
+/**
+ * 30/min por usuário na busca e, em balde próprio, na prévia: as duas leem o `cmn025` na sessão
+ * compartilhada do Conexos.
+ */
+const limiteBuscaFavorecido = buildPayeeSearchLimiter({}, 'busca');
+const limitePreviaFavorecido = buildPayeeSearchLimiter({}, 'previa');
 
 // POST /sispag/favorecidos-autorizados/busca — acha o favorecido no cadastro do Conexos (cmn025)
 // para o pedido, sem abrir o Conexos. `sispag:executar` (só quem pede). Documento só mascarado;
@@ -600,6 +604,7 @@ router.post(
 router.get(
     '/favorecidos-autorizados/destino-atual',
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limitePreviaFavorecido,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const query = DestinoAtualQuerySchema.safeParse(req.query);

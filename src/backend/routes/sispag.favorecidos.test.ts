@@ -367,6 +367,25 @@ describe('busca de favorecido no Conexos e prévia do destino (pedido sem abrir 
         expect(buscar).toHaveBeenCalledTimes(30);
     });
 
+    it('GET /destino-atual está atrás do limitador por usuário: a 31ª no minuto é 429 e não lê o cadastro', async () => {
+        const ambiente = process.env.NODE_ENV;
+        process.env.NODE_ENV = 'production';
+        const destinoAtual = jest.fn().mockResolvedValue({ resultado: 'SEM_DADO', avisos: [] });
+        servico({ destinoAtual });
+        try {
+            await comApp([PERMISSION.SISPAG_EXECUTAR], async (url) => {
+                const rota = `${url}/sispag/favorecidos-autorizados/destino-atual?pesCod=7001&modalidade=TED`;
+                for (let i = 0; i < 30; i++) expect((await fetch(rota)).status).toBe(200);
+                const r = await fetch(rota);
+                expect(r.status).toBe(429);
+                expect(await r.json()).toMatchObject({ codigo: 'MUITAS_BUSCAS' });
+            });
+        } finally {
+            process.env.NODE_ENV = ambiente;
+        }
+        expect(destinoAtual).toHaveBeenCalledTimes(30);
+    });
+
     it('GET /destino-atual é sispag:executar; devolve só a máscara, valida modalidade', async () => {
         const destinoAtual = jest.fn().mockResolvedValue({
             resultado: 'OK',
