@@ -261,6 +261,20 @@ describe('EnvironmentProvider', () => {
             delete process.env.SISPAG_LOTES_SYNC_COOLDOWN_MIN;
         });
 
+        it('prazo da passada de lotes (ADR-0066): default 120 s; inválido/≤0 volta ao default', async () => {
+            const ler = async () =>
+                (await new EnvironmentProvider().getEnvironmentVars()).sispagLotesSyncPrazoSeg;
+            delete process.env.SISPAG_LOTES_SYNC_PRAZO_SEG;
+            expect(await ler()).toBe(120);
+            process.env.SISPAG_LOTES_SYNC_PRAZO_SEG = '60';
+            expect(await ler()).toBe(60);
+            for (const lixo of ['abc', '0', '-10']) {
+                process.env.SISPAG_LOTES_SYNC_PRAZO_SEG = lixo;
+                expect(await ler()).toBe(120); // prazo nunca é desligado por lixo
+            }
+            delete process.env.SISPAG_LOTES_SYNC_PRAZO_SEG;
+        });
+
         it('filial de leitura do cadastro (ADR-0065): default 1; inválido volta ao default', async () => {
             const ler = async () =>
                 (await new EnvironmentProvider().getEnvironmentVars()).sispagCadastroFilCod;

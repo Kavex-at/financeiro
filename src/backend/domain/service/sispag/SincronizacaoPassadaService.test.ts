@@ -67,9 +67,11 @@ const setup = (
         ),
     };
     const env = {
-        getEnvironmentVars: jest
-            .fn()
-            .mockResolvedValue({ sispagLotesSyncTtlMin: 30, sispagLotesSyncCooldownMin: 5 }),
+        getEnvironmentVars: jest.fn().mockResolvedValue({
+            sispagLotesSyncTtlMin: 30,
+            sispagLotesSyncCooldownMin: 5,
+            sispagLotesSyncPrazoSeg: 120,
+        }),
     };
     const logService = {
         info: jest.fn().mockResolvedValue(undefined),
@@ -154,6 +156,42 @@ describe('SincronizacaoPassadaService.executarPassada', () => {
             IngestLockBusyError,
         );
         expect(s.runRepo.createRun).not.toHaveBeenCalled();
+    });
+});
+
+describe('SincronizacaoPassadaService — prazo da passada (ADR-0066)', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('leitura pendurada: no prazo fecha a run em error, solta a trava e pede para parar', async () => {
+        const s = setup();
+        let sinal: AbortSignal | undefined;
+        s.sincronizacao.sincronizarTodos.mockImplementation(
+            (_agora: Date, recebido: AbortSignal) => {
+                sinal = recebido;
+                return new Promise(() => undefined); // Conexos nunca responde
+            },
+        );
+        const passada = s.service.executarPassada({ triggeredBy: 'cron' });
+        await jest.advanceTimersByTimeAsync(119_999);
+        expect(s.runRepo.finishRun).not.toHaveBeenCalled();
+        await jest.advanceTimersByTimeAsync(1);
+
+        const p = await passada; // devolveu: a trava (withAdvisoryLock) foi solta
+        expect(p.status).toBe('error');
+        expect(p.errorMessage).toMatch(/excedeu o prazo de 120 s/);
+        expect(s.runRepo.finishRun).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'error', errorMessage: p.errorMessage }),
+        );
+        expect(sinal?.aborted).toBe(true);
+    });
+
+    it('na abertura, o prazo estourado vira atualizada com o motivo (a tela avisa)', async () => {
+        const s = setup({ runs: [] });
+        s.sincronizacao.sincronizarTodos.mockReturnValue(new Promise(() => undefined));
+        const r = s.service.sincronizarSeDefasada({ triggeredBy: 'abertura:ana', agora: AGORA });
+        await jest.advanceTimersByTimeAsync(120_000);
+        expect((await r).motivo).toMatch(/excedeu o prazo/);
     });
 });
 
