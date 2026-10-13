@@ -22,6 +22,11 @@ testability, performance). Nenhum P0 — itens abaixo **não implementados**, pa
 
 ## P3
 
+- [ ] **patternguardian (6ecf434) — WARN de código desconhecido a cada rodada.** Um código fora de
+  `PAGO_POR_CONEXOS_ROTULO` gera um WARN por código por filial em TODA ingestão, sem memória entre
+  rodadas. É o lembrete desejado enquanto o rótulo não é cadastrado; se fizer barulho, dedupe ou
+  cooldown.
+
 - [x] **modifiability (código morto)** — `rotuloFormaConexos` e `FORMA_CONEXOS_ROTULO` sem chamador
   após o PR #115 (some junto com modifiability-1).
 - [ ] **testability-3 — Chip escolhido que desaparece.** Se outro filtro zera a categoria
