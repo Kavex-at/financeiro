@@ -1,15 +1,19 @@
 import 'reflect-metadata';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import type JobExecucaoRepository from '../domain/repository/operacao/JobExecucaoRepository.js';
+import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import type LogService from '../domain/service/LogService.js';
-import type SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
 import type { ResumoSincronizacao } from '../domain/service/sispag/SincronizacaoLoteService.js';
+import type SincronizacaoPassadaService from '../domain/service/sispag/SincronizacaoPassadaService.js';
+import type { PassadaSincronizacao } from '../domain/service/sispag/SincronizacaoPassadaService.js';
 import SincronizarLotesSispagJob from './SincronizarLotesSispagJob.js';
 
-/** Job `sincronizar-lotes-sispag` com o serviço mockado (ADR-0055, Task 11). */
+/**
+ * Job `sincronizar-lotes-sispag` com a passada mockada (ADR-0055, ADR-0066). O status da run
+ * (success/partial/error) é testado em `SincronizacaoPassadaService.test.ts`; aqui, o exit code.
+ */
 
-const resumo = (over: Partial<ResumoSincronizacao> = {}): ResumoSincronizacao => ({
+const resumo: ResumoSincronizacao = {
     lotes: 2,
     transicionados: 1,
     atualizados: 0,
@@ -18,64 +22,29 @@ const resumo = (over: Partial<ResumoSincronizacao> = {}): ResumoSincronizacao =>
     falhasLeitura: 0,
     eventosNaoLidos: 0,
     resultados: [],
-    ...over,
-});
+};
 
-const setup = (r: ResumoSincronizacao | Error) => {
-    const sincronizacao = {
-        sincronizarTodos:
+const setup = (r: PassadaSincronizacao | Error) => {
+    const passada = {
+        executarPassada:
             r instanceof Error ? jest.fn().mockRejectedValue(r) : jest.fn().mockResolvedValue(r),
     };
-    const runRepo = {
-        createRun: jest.fn().mockResolvedValue('run-1'),
-        finishRun: jest.fn().mockResolvedValue(undefined),
-    };
-    const logService = {
-        info: jest.fn().mockResolvedValue(undefined),
-        error: jest.fn().mockResolvedValue(undefined),
-    };
+    const logService = { info: jest.fn().mockResolvedValue(undefined) };
     const job = new SincronizarLotesSispagJob(
-        sincronizacao as unknown as SincronizacaoLoteService,
-        runRepo as unknown as JobExecucaoRepository,
+        passada as unknown as SincronizacaoPassadaService,
         logService as unknown as LogService,
     );
-    return { job, sincronizacao, runRepo, logService };
+    return { job, passada, logService };
 };
 
 describe('SincronizarLotesSispagJob', () => {
     beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => undefined));
     afterEach(() => jest.restoreAllMocks());
 
-    it('abre a trilha no pipeline sispag-sincronizacao e fecha success com os contadores', async () => {
-        const s = setup(resumo());
+    it('roda a passada com o triggeredBy e imprime os contadores em pt-BR', async () => {
+        const s = setup({ runId: 'run-1', status: 'success', resumo });
         expect(await s.job.executar('cron')).toBe(0);
-        expect(s.runRepo.createRun).toHaveBeenCalledWith({
-            pipeline: 'sispag-sincronizacao',
-            triggeredBy: 'cron',
-        });
-        expect(s.runRepo.finishRun).toHaveBeenCalledWith({
-            runId: 'run-1',
-            status: 'success',
-            metricas: {
-                lotesLidos: 2,
-                transicionados: 1,
-                atualizados: 0,
-                semMudanca: 1,
-                pulados: 0,
-                falhasLeitura: 0,
-                eventosNaoLidos: 0,
-            },
-        });
-    });
-
-    it('loga em pt-BR o início e o fim com lotes lidos, transicionados, sem mudança, pulados, falhas', async () => {
-        const s = setup(resumo());
-        await s.job.executar('cron');
-        const mensagens = s.logService.info.mock.calls.map((c) => c[0].message);
-        expect(mensagens).toEqual([
-            'sincronização de lotes SISPAG: início',
-            'sincronização de lotes SISPAG: fim',
-        ]);
+        expect(s.passada.executarPassada).toHaveBeenCalledWith({ triggeredBy: 'cron' });
         const linha = (console.log as jest.Mock).mock.calls.flat().join(' ');
         for (const termo of [
             'lotes lidos',
@@ -88,34 +57,25 @@ describe('SincronizarLotesSispagJob', () => {
         }
     });
 
-    it('TODAS as leituras falharam (ex.: Bad Credentials) → exit 1 e run em error — nunca "success com 0"', async () => {
-        const s = setup(resumo({ lotes: 3, falhasLeitura: 3, transicionados: 0, semMudanca: 0 }));
+    it('passada partial → exit 0', async () => {
+        const s = setup({ runId: 'run-1', status: 'partial', resumo });
+        expect(await s.job.executar('cron')).toBe(0);
+    });
+
+    it('passada error (ex.: nenhum título lido) → exit 1 — o workflow fica VERMELHO', async () => {
+        const s = setup({ runId: 'run-1', status: 'error', errorMessage: 'Bad Credentials' });
         expect(await s.job.executar('cron')).toBe(1);
-        expect(s.runRepo.finishRun).toHaveBeenCalledWith(
-            expect.objectContaining({ status: 'error', errorMessage: expect.any(String) }),
-        );
-        expect(s.logService.error).toHaveBeenCalled();
     });
 
-    it('falha parcial → exit 0 e run partial (o painel pinta de amarelo)', async () => {
-        const s = setup(resumo({ falhasLeitura: 1 }));
+    it('outra passada em andamento (a tela de alguém) → exit 0, não é falha', async () => {
+        const s = setup(new IngestLockBusyError('ocupada'));
         expect(await s.job.executar('cron')).toBe(0);
-        expect(s.runRepo.finishRun).toHaveBeenCalledWith(
-            expect.objectContaining({ status: 'partial' }),
-        );
+        expect(s.logService.info).toHaveBeenCalled();
     });
 
-    it('nenhum lote a sincronizar não é falha', async () => {
-        const s = setup(resumo({ lotes: 0, transicionados: 0, semMudanca: 0 }));
-        expect(await s.job.executar('cron')).toBe(0);
-    });
-
-    it('exceção do serviço → exit 1, run em error com a mensagem REDIGIDA', async () => {
-        const s = setup(new Error('password authentication failed for user "robo" senha=abc'));
-        expect(await s.job.executar('manual')).toBe(1);
-        const fechamento = s.runRepo.finishRun.mock.calls[0][0];
-        expect(fechamento.status).toBe('error');
-        expect(fechamento.errorMessage).not.toContain('senha=abc');
+    it('erro inesperado fora da passada propaga (o ponto de entrada sai com 1)', async () => {
+        const s = setup(new Error('pool do banco caiu'));
+        await expect(s.job.executar('cron')).rejects.toThrow('pool do banco caiu');
     });
 
     it('o ponto de entrada não acrescenta nada ao bootstrapAppContainer (compartilhado por ~58 jobs)', () => {

@@ -12,7 +12,6 @@ jest.mock('../domain/appContainer.js', () => ({
 
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import DebitDateFrozenError from '../domain/errors/DebitDateFrozenError.js';
-import LoteVersaoConflitoError from '../domain/errors/LoteVersaoConflitoError.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindowError.js';
 import ErpPerguntaError from '../domain/errors/ErpPerguntaError.js';
@@ -34,7 +33,7 @@ import TitulosAPagarExportService from '../domain/service/sispag/TitulosAPagarEx
 import RemittanceFileUnavailableError from '../domain/errors/RemittanceFileUnavailableError.js';
 import RemittanceExportInvalidError from '../domain/errors/RemittanceExportInvalidError.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
-import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
+import SincronizacaoPassadaService from '../domain/service/sispag/SincronizacaoPassadaService.js';
 import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
@@ -1283,120 +1282,85 @@ describe('GET /sispag/recursos', () => {
 
 // ─────────────────────────────────────────── SINCRONIZAÇÃO PELO TÍTULO (ADR-0055)
 
-describe('POST /sispag/lotes/:id/sincronizar', () => {
-    const ID = '3f1c2b9e-4d8a-4c1e-9f7a-2b6d8e0a1c55';
-    const LOTE_SINC = {
-        id: ID,
-        filCod: 2,
-        status: 'BAIXADO',
-        criadoPor: 'u',
-        versao: 6,
-        itens: [
-            {
-                loteId: ID,
-                filCod: 2,
-                docCod: '38682',
-                titCod: '1',
-                incluidoPor: 'u',
-                situacao: 'PAGO',
-                pagoEm: '2026-09-24T15:00:00.000Z',
-                valorPago: 275,
-                origemBaixa: 'FORA_DO_RETORNO',
-                baixaFonte: 'TITULO',
-                borCod: 22320,
-                divergencia: false,
-                sincronizadoEm: '2026-09-29T14:35:00.000Z',
-            },
-        ],
-    };
-    const RESULTADO = {
-        loteId: ID,
-        filCod: 2,
-        resultado: 'TRANSICIONOU',
-        statusAntes: 'REMESSA_GERADA',
-        statusDepois: 'BAIXADO',
-        itens: 1,
-        itensIlegiveis: 0,
-        divergenciasNovas: 0,
-    };
-
-    it('devolve o lote atualizado (com os campos novos do item) e o resumo da passada', async () => {
-        const sincronizarLote = jest
-            .fn()
-            .mockResolvedValue({ lote: LOTE_SINC, resultado: RESULTADO });
-        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
+describe('POST /sispag/lotes/:id/sincronizar — por lote aposentada (ADR-0066)', () => {
+    it('responde 410 Gone apontando para "Sincronizar lotes", sem rodar passada', async () => {
+        const forcar = jest.fn();
+        container.registerInstance(SincronizacaoPassadaService, { forcar } as never);
         await comApp({}, async (url) => {
-            const res = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
-            expect(res.status).toBe(200);
-            const body = await readJson(res);
-            expect(body.resumo).toEqual(RESULTADO);
-            expect(body.lote.itens[0]).toEqual(
-                expect.objectContaining({
-                    situacao: 'PAGO',
-                    pagoEm: '2026-09-24T15:00:00.000Z',
-                    valorPago: 275,
-                    origemBaixa: 'FORA_DO_RETORNO',
-                    borCod: 22320,
-                    divergencia: false,
-                    sincronizadoEm: '2026-09-29T14:35:00.000Z',
-                }),
+            const res = await fetch(
+                `${url}/sispag/lotes/3f1c2b9e-4d8a-4c1e-9f7a-2b6d8e0a1c55/sincronizar`,
+                { method: 'POST' },
             );
+            expect(res.status).toBe(410);
+            const body = await readJson(res);
+            expect(body.code).toBe('LOTE_SINCRONIZACAO_POR_LOTE_APOSENTADA');
+            expect(body.error).toMatch(/Sincronizar lotes/);
         });
-        expect(sincronizarLote).toHaveBeenCalledWith(ID);
+        expect(forcar).not.toHaveBeenCalled();
     });
+});
 
-    it('400 quando o :id não é um UUID — sem chamar o serviço', async () => {
-        const sincronizarLote = jest.fn();
-        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
-        await comApp({}, async (url) => {
-            const res = await fetch(`${url}/sispag/lotes/nao-e-uuid/sincronizar`, {
+describe('POST /sispag/lotes/sincronizar-se-defasado (ADR-0066)', () => {
+    it('quem só tem sispag:ver pode disparar, e o gatilho é marcado `abertura:<ator>`', async () => {
+        const sincronizarSeDefasada = jest
+            .fn()
+            .mockResolvedValue({ estado: 'fresca', idadeMin: 12 });
+        container.registerInstance(SincronizacaoPassadaService, {
+            sincronizarSeDefasada,
+        } as never);
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/sincronizar-se-defasado`, {
                 method: 'POST',
             });
-            expect(res.status).toBe(400);
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toMatchObject({ estado: 'fresca', idadeMin: 12 });
         });
-        expect(sincronizarLote).not.toHaveBeenCalled();
+        expect(sincronizarSeDefasada).toHaveBeenCalledWith({ triggeredBy: 'abertura:user-abc' });
     });
 
-    it('404 quando o lote não existe', async () => {
-        container.registerInstance(SincronizacaoLoteService, {
-            sincronizarLote: jest.fn().mockResolvedValue(null),
+    it('sem login responde 401 e não roda passada', async () => {
+        const sincronizarSeDefasada = jest.fn();
+        container.registerInstance(SincronizacaoPassadaService, {
+            sincronizarSeDefasada,
+        } as never);
+        await comApp({ authenticated: false }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/sincronizar-se-defasado`, {
+                method: 'POST',
+            });
+            expect(res.status).toBe(401);
+        });
+        expect(sincronizarSeDefasada).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /sispag/lotes/sincronizar — "Sincronizar lotes" da tela (ADR-0066)', () => {
+    it('quem só tem sispag:ver força a passada, marcada `manual:<ator>`, e recebe o resumo', async () => {
+        const forcar = jest.fn().mockResolvedValue({
+            estado: 'atualizada',
+            idadeMin: 0,
+            passada: { runId: 'run-1', status: 'success', resumo: { transicionados: 2 } },
+        });
+        container.registerInstance(SincronizacaoPassadaService, { forcar } as never);
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/sincronizar`, { method: 'POST' });
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toMatchObject({
+                estado: 'atualizada',
+                passada: { resumo: { transicionados: 2 } },
+            });
+        });
+        expect(forcar).toHaveBeenCalledWith({ triggeredBy: 'manual:user-abc' });
+    });
+
+    it('outra passada rodando → 200 em_andamento, nunca 409', async () => {
+        container.registerInstance(SincronizacaoPassadaService, {
+            forcar: jest.fn().mockResolvedValue({ estado: 'em_andamento' }),
         } as never);
         await comApp({}, async (url) => {
-            const res = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
-            expect(res.status).toBe(404);
+            const res = await fetch(`${url}/sispag/lotes/sincronizar`, { method: 'POST' });
+            expect(res.status).toBe(200);
+            expect((await readJson(res)).estado).toBe('em_andamento');
         });
-    });
-
-    it('409 em conflito de versão e 409 em estado não sincronizável (convenção do lote)', async () => {
-        const sincronizarLote = jest
-            .fn()
-            .mockRejectedValueOnce(new LoteVersaoConflitoError({ loteId: ID, versaoEsperada: 6 }))
-            .mockRejectedValueOnce(
-                new LoteEstadoInvalidoError({
-                    loteId: ID,
-                    statusAtual: 'RASCUNHO',
-                    acao: 'sincronizar',
-                }),
-            );
-        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
-        await comApp({}, async (url) => {
-            const a = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
-            expect(a.status).toBe(409);
-            expect((await readJson(a)).code).toBe('LOTE_VERSAO_CONFLITO');
-            const b = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
-            expect(b.status).toBe(409);
-            expect((await readJson(b)).code).toBe('LOTE_ESTADO_INVALIDO');
-        });
-    });
-
-    it('exige sispag:executar', async () => {
-        const sincronizarLote = jest.fn();
-        container.registerInstance(SincronizacaoLoteService, { sincronizarLote } as never);
-        await comApp({ role: 'viewer' }, async (url) => {
-            const res = await fetch(`${url}/sispag/lotes/${ID}/sincronizar`, { method: 'POST' });
-            expect(res.status).toBe(403);
-        });
-        expect(sincronizarLote).not.toHaveBeenCalled();
     });
 });
 
@@ -1411,7 +1375,7 @@ describe('POST /sispag/lotes/:id/retorno — L7 aposentada (ADR-0055)', () => {
                 body: JSON.stringify({ versao: 1 }),
             });
             expect(res.status).toBe(410);
-            expect((await readJson(res)).error).toMatch(/Sincronizar agora/);
+            expect((await readJson(res)).error).toMatch(/Sincronizar lotes/);
         });
         expect(service.marcarRetorno).not.toHaveBeenCalled();
     });
