@@ -10,6 +10,7 @@ owners: [yuri]
 related_files:
   - src/backend/domain/service/sispag/DecisaoStatusLote.ts
   - src/backend/domain/service/sispag/SincronizacaoLoteService.ts
+  - src/backend/domain/service/sispag/SincronizacaoPassadaService.ts
   - src/backend/domain/service/sispag/ConciliacaoRetornoService.ts
   - src/backend/domain/client/ConexosSispagClient.ts
   - src/backend/domain/client/ConexosTitulosClient.ts
@@ -18,7 +19,9 @@ related_files:
   - src/backend/jobs/sincronizar-lotes-sispag.ts
   - src/backend/migrations/0069_sispag_item_situacao_sincronizacao.sql
   - src/frontend/app/sispag/components/LoteCard.tsx
-last_review: 2026-09-29
+  - src/frontend/app/sispag/useCarteiraAoAbrir.ts
+  - src/frontend/app/sispag/page.tsx
+last_review: 2026-10-13
 has_canonical_test: true
 canonical_test: src/backend/domain/service/sispag/DecisaoStatusLote.test.ts
 ---
@@ -75,8 +78,21 @@ canonical_test: src/backend/domain/service/sispag/DecisaoStatusLote.test.ts
 
 ## Gatilho
 
-Agendado (cron) + manual ("Sincronizar agora" no card do lote). A cadência é configuração
-operacional, não regra: hoje GitHub Actions, dias úteis, de hora em hora.
+Três gatilhos, todos uma **passada completa** de L11 (todos os lotes sincronizáveis), sob as mesmas
+invariantes I11a–h (ADR-0066):
+
+1. **Abertura da tela do SISPAG**: *stale-while-revalidate*. A tela mostra o que está gravado e
+   dispara uma passada só se a última run **finalizada** do pipeline `sispag-sincronizacao` for mais
+   velha que o TTL. Freios idênticos aos da carteira (ADR-0060): TTL, uma passada por vez (uma run em
+   andamento mais nova que o limiar de stale bloqueia outra) e cooldown depois de passada que falhou.
+   Roda **depois** do refresh da carteira, nunca em paralelo (cap de sessões do robô no Conexos).
+2. **Manual**: um único "Sincronizar agora" na tela, que força a passada (ignora o TTL e o
+   cooldown, respeita "uma por vez"). O botão por lote deixou de existir.
+3. **Agendado (cron)**: rede de segurança para quando ninguém abre a tela.
+
+Toda passada grava uma run em `job_execucao`, então todas contam para o TTL. Cadência, TTL, limiar de
+stale e cooldown são configuração operacional, não regra. Como L11 é read-only no ERP (I11a/I11g),
+a permissão de ver o SISPAG (`sispag:ver`) basta para disparar a passada, na abertura ou no botão.
 
 ## Rejeição
 
