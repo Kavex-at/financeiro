@@ -28,6 +28,11 @@ export interface TituloAPagar {
     banco?: string;
     /** Nº da remessa se já entrou num lote — `titNumRemessa`. */
     numRemessa?: string;
+    /**
+     * Nº do documento do fornecedor (NF/fatura) — `docEspNumero` do fin064. Serve para confirmar o
+     * casamento com o boleto DDA (`ditEspNumero`); é do credor, não do banco.
+     */
+    numeroDocumento?: string;
     /** Tem código de barras (`titEspCodbar`) = candidato a BOLETO (A2, auto-detecção). */
     temBoleto?: boolean;
     /**
@@ -172,12 +177,41 @@ export interface PagamentoIngestaoRun {
     errorMessage?: string;
 }
 
+/**
+ * O que a sincronização do pool DDA (fin124) fez DENTRO da ingestão de pagamentos. É enriquecimento:
+ * nenhum destes estados derruba a ingestão.
+ */
+export const DDA_NA_INGESTAO = {
+    /** Pool sincronizado por inteiro. */
+    SINCRONIZADO: 'sincronizado',
+    /** Passou, mas com arquivos que falharam ou foram adiados pelo prazo. */
+    PARCIAL: 'parcial',
+    /** Outra sincronização (botão manual ou job) já estava rodando — esta rodada não a repete. */
+    OCUPADA: 'ocupada',
+    /** Falhou; o pool ficou como estava. */
+    FALHOU: 'falhou',
+} as const;
+export type DdaNaIngestaoEstado = (typeof DDA_NA_INGESTAO)[keyof typeof DDA_NA_INGESTAO];
+
+export interface DdaNaIngestao {
+    estado: DdaNaIngestaoEstado;
+    arquivosNovos?: number;
+    arquivosRelidos?: number;
+    boletos?: number;
+    falhas?: number;
+    arquivosAdiados?: number;
+    /** Mensagem do erro (só em `falhou`). */
+    erro?: string;
+}
+
 /** Resultado de uma execução de ingestão. */
 export interface IngestaoPagamentosResult {
     runId: string;
     status: 'success' | 'error';
     totalTitulos: number;
     totalInativados: number;
+    /** Sincronização do pool DDA feita antes da leitura dos títulos. Ausente = não tentada. */
+    dda?: DdaNaIngestao;
     /** Filiais cuja leitura falhou nesta run (leitura parcial). Ausente/vazio = todas lidas. */
     filiaisComFalha?: number[];
     /** Filiais cujo flag de boleto DDA não pôde ser lido: o valor anterior foi preservado. */

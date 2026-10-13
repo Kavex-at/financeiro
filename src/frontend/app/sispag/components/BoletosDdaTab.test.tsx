@@ -21,7 +21,14 @@ jest.mock('@/lib/sispag', () => {
   return { ...real, fetchBoletosDda: jest.fn(), sincronizarBoletosDda: jest.fn() }
 })
 
+// A defasagem depende do relógio e do dia da semana; aqui é controlada por teste (a regra em si
+// tem teste próprio em `ddaDefasado.test.ts`). Padrão: sem alerta.
+jest.mock('./ddaDefasado', () => ({ horasDdaDefasado: jest.fn() }))
+
 import { fetchBoletosDda, sincronizarBoletosDda } from '@/lib/sispag'
+import { horasDdaDefasado } from './ddaDefasado'
+
+const mockDefasado = horasDdaDefasado as jest.MockedFunction<typeof horasDdaDefasado>
 
 const mockFetch = fetchBoletosDda as jest.MockedFunction<typeof fetchBoletosDda>
 const mockSync = sincronizarBoletosDda as jest.MockedFunction<typeof sincronizarBoletosDda>
@@ -72,6 +79,8 @@ const pagina = (
 beforeEach(() => {
   mockFetch.mockReset()
   mockSync.mockReset()
+  mockDefasado.mockReset()
+  mockDefasado.mockReturnValue(undefined)
 })
 
 describe('BoletosDdaTab', () => {
@@ -206,6 +215,24 @@ describe('BoletosDdaTab', () => {
     expect(await screen.findByRole('dialog')).toHaveTextContent('3 títulos candidatos')
     expect(screen.getByText('34872/1')).toBeInTheDocument()
     expect(screen.getByText('36171/1')).toBeInTheDocument()
+  })
+
+  it('pool DDA parado em dia útil mostra o aviso com as horas', async () => {
+    mockDefasado.mockReturnValue(30)
+    mockFetch.mockResolvedValue(pagina([ADP]))
+    render(<BoletosDdaTab />)
+    await screen.findByText('001532761')
+
+    expect(screen.getByRole('status')).toHaveTextContent('DDA parado há 30 h')
+    expect(mockDefasado).toHaveBeenCalledWith(Date.parse('2026-09-24T12:00:00Z'))
+  })
+
+  it('pool em dia: nenhum aviso de defasagem', async () => {
+    mockFetch.mockResolvedValue(pagina([ADP]))
+    render(<BoletosDdaTab />)
+    await screen.findByText('001532761')
+
+    expect(screen.queryByText(/DDA parado há/)).not.toBeInTheDocument()
   })
 
   it('sem sincronização ainda, orienta a clicar em "Atualizar DDA"', async () => {

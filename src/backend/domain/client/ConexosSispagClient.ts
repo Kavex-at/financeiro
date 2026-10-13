@@ -79,6 +79,8 @@ const tituloRowSchema = z
         vldPago: boolFromFlag,
         bncDesNome: strOpt,
         titNumRemessa: strOpt,
+        /** Nº do documento do fornecedor (NF/fatura). `titEspNumero` é este com a sequência colada. */
+        docEspNumero: strOpt,
         pesCod: strOpt,
         // O `fin064` devolve `pesCod` VAZIO e o favorecido em `pesCodFor` (fixtures reais de
         // 2026-08-24/25). Sem o fallback, oferta de TED/PIX e titularidade não acham ninguém.
@@ -376,6 +378,7 @@ export default class ConexosSispagClient {
             pago: r.vldPago ?? false,
             banco: r.bncDesNome,
             numRemessa: r.titNumRemessa,
+            numeroDocumento: r.docEspNumero?.trim() || undefined,
             pesCod: r.pesCod ?? r.pesCodFor,
             tpdCod: r.tpdCod,
             prontoParaRemessa,

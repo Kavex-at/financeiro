@@ -6,6 +6,7 @@ import 'reflect-metadata';
 import 'dotenv/config';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
+import { DDA_NA_INGESTAO } from '../domain/interface/sispag/SispagInterface.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 
 /**
@@ -26,6 +27,22 @@ const main = async (): Promise<void> => {
         `[ingest-pagamentos] run ${result.runId} status=${result.status} ` +
             `titulos=${result.totalTitulos} inativados=${result.totalInativados}`,
     );
+    if (result.dda) {
+        const d = result.dda;
+        console.log(
+            `[ingest-pagamentos] pool DDA: ${d.estado}` +
+                (d.arquivosNovos !== undefined
+                    ? ` novos=${d.arquivosNovos} relidos=${d.arquivosRelidos} boletos=${d.boletos} ` +
+                      `falhas=${d.falhas} adiados=${d.arquivosAdiados}`
+                    : ''),
+        );
+        if (d.estado === DDA_NA_INGESTAO.FALHOU || d.estado === DDA_NA_INGESTAO.PARCIAL) {
+            console.warn(
+                `::warning::[ingest-pagamentos] pool DDA ${d.estado}` +
+                    `${d.erro ? ` — ${d.erro}` : ''}: boletos podem estar defasados nesta carteira.`,
+            );
+        }
+    }
     if (result.filiaisSemFlagBoleto && result.filiaisSemFlagBoleto.length > 0) {
         console.warn(
             `::warning::[ingest-pagamentos] flag de boleto DDA NÃO lido (valor anterior preservado) — filiais: ${result.filiaisSemFlagBoleto.join(', ')}. ` +

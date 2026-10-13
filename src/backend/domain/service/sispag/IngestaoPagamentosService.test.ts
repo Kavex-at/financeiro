@@ -11,7 +11,10 @@ import type PagamentoIngestaoRunRepository from '../../repository/sispag/Pagamen
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
-import IngestaoPagamentosService from './IngestaoPagamentosService.js';
+import type BoletoDdaService from './BoletoDdaService.js';
+import IngestaoPagamentosService, {
+    DDA_PRAZO_NA_INGESTAO_MS,
+} from './IngestaoPagamentosService.js';
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     docCod: '100',
@@ -44,7 +47,17 @@ interface Mocks {
     acquire: boolean;
     filiais: Array<{ filCod: number }>;
     encerrar: jest.Mock;
+    /** `BoletoDdaService.sincronizar` — por padrão, sincroniza sem falha. */
+    sincronizarDda: jest.Mock;
 }
+
+const DDA_OK = {
+    arquivosNovos: 1,
+    arquivosRelidos: 4,
+    boletos: 120,
+    falhas: 0,
+    arquivosAdiados: 0,
+};
 
 /** Mapa do grid de pendentes como `listarSinaisDosPendentes` devolve. */
 const sinais = (...linhas: Array<[string, SinalPendente]>): Map<string, SinalPendente> =>
@@ -87,6 +100,7 @@ const make = (over: Partial<Mocks> = {}) => {
     const bloqueioRepo = {
         encerrarDeTitulosInativos: over.encerrar ?? jest.fn().mockResolvedValue(0),
     };
+    const sincronizarDda = over.sincronizarDda ?? jest.fn().mockResolvedValue(DDA_OK);
     const log = buildLog();
     const service = new IngestaoPagamentosService(
         tituloRepo as unknown as TituloAPagarRepository,
@@ -98,8 +112,10 @@ const make = (over: Partial<Mocks> = {}) => {
         db,
         log,
         bloqueioRepo as unknown as BloqueioDuplicidadeRepository,
+        { sincronizar: sincronizarDda } as unknown as BoletoDdaService,
     );
     return {
+        sincronizarDda,
         service,
         tituloRepo,
         runRepo,
@@ -124,6 +140,66 @@ describe('IngestaoPagamentosService', () => {
         expect(runRepo.finishRun).toHaveBeenCalledWith(
             expect.objectContaining({ runId: 'RUN1', status: 'success', totalTitulos: 1 }),
         );
+    });
+
+    describe('pool DDA dentro da ingestão', () => {
+        it('sincroniza ANTES de ler os títulos, com prazo, e devolve o resumo', async () => {
+            const { service, sincronizarDda, listTitulos } = make();
+            const r = await service.executar({ triggeredBy: 'cron' });
+            expect(sincronizarDda).toHaveBeenCalledWith({
+                triggeredBy: 'ingestao:cron',
+                prazoMs: DDA_PRAZO_NA_INGESTAO_MS,
+            });
+            expect(sincronizarDda.mock.invocationCallOrder[0]).toBeLessThan(
+                listTitulos.mock.invocationCallOrder[0] ?? 0,
+            );
+            expect(r.dda).toEqual({ estado: 'sincronizado', ...DDA_OK });
+        });
+
+        it('falha do DDA NÃO derruba a ingestão: run success, aviso na run e WARN', async () => {
+            const { service, runRepo, tituloRepo, log } = make({
+                sincronizarDda: jest.fn().mockRejectedValue(new Error('fin124 504')),
+            });
+            const r = await service.executar({ triggeredBy: 'cron' });
+            expect(r.status).toBe('success');
+            expect(r.dda).toMatchObject({ estado: 'falhou', erro: 'fin124 504' });
+            expect(tituloRepo.upsertMany).toHaveBeenCalledTimes(1);
+            expect(runRepo.finishRun).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    status: 'success',
+                    errorMessage: expect.stringContaining('pool DDA falhou'),
+                }),
+            );
+            expect(log.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: expect.stringContaining('sincronização DDA falhou'),
+                }),
+            );
+        });
+
+        it('sincronização já em andamento (lock) vira "ocupada", sem aviso na run', async () => {
+            const { service, runRepo } = make({
+                sincronizarDda: jest.fn().mockRejectedValue(new IngestLockBusyError('busy')),
+            });
+            const r = await service.executar({ triggeredBy: 'cron' });
+            expect(r.status).toBe('success');
+            expect(r.dda).toEqual({ estado: 'ocupada' });
+            const fin = runRepo.finishRun.mock.calls[0]?.[0] as { errorMessage?: string };
+            expect(fin.errorMessage).toBeUndefined();
+        });
+
+        it('arquivos adiados pelo prazo viram "parcial" e ficam registrados na run', async () => {
+            const { service, runRepo } = make({
+                sincronizarDda: jest.fn().mockResolvedValue({ ...DDA_OK, arquivosAdiados: 12 }),
+            });
+            const r = await service.executar({ triggeredBy: 'cron' });
+            expect(r.dda).toMatchObject({ estado: 'parcial', arquivosAdiados: 12 });
+            expect(runRepo.finishRun).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    errorMessage: expect.stringContaining('pool DDA parcial'),
+                }),
+            );
+        });
     });
 
     it('ADR-0063 I13g — depois de inativar, encerra os bloqueios por duplicidade dos títulos inativos', async () => {

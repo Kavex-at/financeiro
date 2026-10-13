@@ -40,6 +40,7 @@ import {
   fmtCivil,
   resumoCandidatos,
 } from './CandidatosBoletoDialog'
+import { horasDdaDefasado } from './ddaDefasado'
 
 type FiltroSituacao = 'todas' | BoletoDdaSituacao
 
@@ -175,6 +176,7 @@ export function BoletosDdaTab() {
   const carregando = resultado?.chave !== chave
   const erro = carregando ? undefined : resultado?.erro
   const dados = resultado?.dados
+  const horasDefasado = horasDdaDefasado(dados?.sincronizadoEm)
   const boletos = dados?.boletos ?? []
   const contagem = dados?.contagem
 
@@ -277,6 +279,13 @@ export function BoletosDdaTab() {
               : 'DDA ainda não sincronizado'}
             {dados ? ` · candidato = mesmo valor e vencimento em ±${dados.janelaDias} dias` : ''}
           </span>
+          {horasDefasado !== undefined ? (
+            <span role="status" className="flex items-center gap-1 text-xs text-warning">
+              <AlertTriangle className="size-3.5" aria-hidden="true" />
+              DDA parado há {horasDefasado} h — a coluna Boleto pode estar defasada. A ingestão
+              atualiza o DDA a cada rodada; use &quot;Atualizar DDA&quot; para forçar.
+            </span>
+          ) : null}
         </div>
         {podeExecutar ? (
           <Button size="sm" variant="outline" onClick={sincronizar} disabled={sincronizando}>
