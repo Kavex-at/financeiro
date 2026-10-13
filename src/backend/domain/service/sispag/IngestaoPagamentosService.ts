@@ -7,6 +7,7 @@ import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { SinalPendente } from '../../interface/sispag/Fin015Write.js';
+import { PagoPorConexosRotulo } from '../../interface/sispag/PagoPorConexos.js';
 import type {
     IngestaoPagamentosResult,
     TituloAPagar,
@@ -132,6 +133,7 @@ export default class IngestaoPagamentosService {
                     linhas: sinais.size,
                 });
             }
+            await this.avisarFormasDesconhecidas(filCod, sinais);
             return sinais;
         } catch (error) {
             await this.avisar('leitura do flag de boleto DDA falhou — flag anterior preservado', {
@@ -139,6 +141,36 @@ export default class IngestaoPagamentosService {
                 reason: error instanceof Error ? error.message : String(error),
             });
             return undefined;
+        }
+    };
+
+    /**
+     * Código de `titVldPagopor` que o Conexos mandou e a tabela não conhece (fora de
+     * `PAGO_POR_CONEXOS_ROTULO`): é gravado (migration 0082) e a tela mostra "código N", mas alguém
+     * precisa abrir um título de exemplo no psq014, ler o rótulo e cadastrá-lo. Um WARN por código
+     * por filial, com a contagem e um título para conferir.
+     */
+    private avisarFormasDesconhecidas = async (
+        filCod: number,
+        sinais: Map<string, SinalPendente>,
+    ): Promise<void> => {
+        const porCodigo = new Map<number, { titulos: number; exemplo: string }>();
+        for (const [chave, sinal] of sinais) {
+            if (sinal.pagoPor === undefined || PagoPorConexosRotulo.de(sinal.pagoPor)) continue;
+            const atual = porCodigo.get(sinal.pagoPor);
+            if (atual) atual.titulos += 1;
+            else porCodigo.set(sinal.pagoPor, { titulos: 1, exemplo: chave });
+        }
+        for (const [codigo, { titulos, exemplo }] of porCodigo) {
+            await this.avisar(
+                'forma de pagamento desconhecida (titVldPagopor) — cadastrar rótulo',
+                {
+                    filCod,
+                    codigo,
+                    titulos,
+                    exemplo,
+                },
+            );
         }
     };
 

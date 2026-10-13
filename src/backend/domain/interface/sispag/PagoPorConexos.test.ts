@@ -7,6 +7,12 @@ describe('PagoPorConexosRotulo', () => {
         expect(PagoPorConexosRotulo.de(10)).toBe('TRANSAÇÃO AUTOMÁTICA');
     });
 
+    it('exibir: rótulo conhecido, "código N" para código novo, undefined sem código', () => {
+        expect(PagoPorConexosRotulo.exibir(6)).toBe('BOLETO');
+        expect(PagoPorConexosRotulo.exibir(11)).toBe('código 11');
+        expect(PagoPorConexosRotulo.exibir(undefined)).toBeUndefined();
+    });
+
     it('ausente ou fora do domínio → undefined (quem exibe mostra "—")', () => {
         expect(PagoPorConexosRotulo.de(undefined)).toBeUndefined();
         expect(PagoPorConexosRotulo.de(0)).toBeUndefined();

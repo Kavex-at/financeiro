@@ -380,6 +380,33 @@ describe('IngestaoPagamentosService — forma de pagamento no Conexos (titVldPag
         );
     });
 
+    it('código de forma desconhecido → grava e avisa UMA vez por código, com contagem e exemplo', async () => {
+        const { service, tituloRepo, log } = make({
+            listTitulos: jest
+                .fn()
+                .mockResolvedValue([titulo({ docCod: '100' }), titulo({ docCod: '200' })]),
+            listSinais: jest
+                .fn()
+                .mockResolvedValue(
+                    sinais(
+                        ['2:100:1', { temBoletoDda: false, pagoPor: 11 }],
+                        ['2:200:1', { temBoletoDda: false, pagoPor: 11 }],
+                        ['2:300:1', { temBoletoDda: false, pagoPor: 6 }],
+                    ),
+                ),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
+        expect(
+            persistidos.map((t: { formaPagamentoConexos?: number }) => t.formaPagamentoConexos),
+        ).toEqual([11, 11]);
+        const avisos = (log.warn as jest.Mock).mock.calls
+            .map(([p]) => p)
+            .filter((p) => p.message.includes('forma de pagamento desconhecida'));
+        expect(avisos).toHaveLength(1);
+        expect(avisos[0].data).toEqual({ filCod: 2, codigo: 11, titulos: 2, exemplo: '2:100:1' });
+    });
+
     it('leitura do grid falhou → forma indefinida, como o flag DDA', async () => {
         const { service, tituloRepo } = make({
             listSinais: jest.fn().mockRejectedValue(new Error('403 ACCESS_DENIED')),

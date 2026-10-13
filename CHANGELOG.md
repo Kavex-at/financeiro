@@ -13,6 +13,11 @@
   forma presente na carteira, com a contagem ("boleto sem DDA (12)", "transação automática (3)"…).
   Exportar e "selecionar todos" respeitam o chip escolhido. A aba de lotes candidatos mantém os
   chips de boleto.
+- **Código de forma novo do Conexos não some mais.** Antes, um `titVldPagopor` fora dos 10
+  documentados era descartado (gravava vazio e a tela dizia "sem forma no Conexos"). Agora é
+  guardado e aparece como "código N" na tela e no export, e a ingestão avisa (código, quantos
+  títulos e um de exemplo) para alguém conferir o rótulo no psq014. Migration `0082` (troca a
+  CHECK 1..10 por "> 0"; nenhum dado muda). Medido em 13/10: só códigos documentados em produção.
 
 ## v0.62.0 (2026-10-09) — SISPAG: forma de pagamento do título no Conexos
 

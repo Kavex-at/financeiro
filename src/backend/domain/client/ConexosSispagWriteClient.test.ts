@@ -712,7 +712,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             );
         });
 
-        it('titVldPagopor ausente, nulo ou fora de 1..10 → sem pagoPor (não inventa código)', async () => {
+        it('titVldPagopor ausente, nulo, zero ou string → sem pagoPor (não inventa código)', async () => {
             const base = comGrid([
                 { filCod: 1, docCod: 100, titCod: 1, titVldReflexoDdaAssoc: 0 },
                 {
@@ -722,7 +722,7 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                     titVldReflexoDdaAssoc: 0,
                     titVldPagopor: null,
                 },
-                { filCod: 1, docCod: 300, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: 11 },
+                { filCod: 1, docCod: 300, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: 0 },
                 { filCod: 1, docCod: 400, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: '6' },
             ]);
             const sinais = await make(base).listarSinaisDosPendentes({ filCod: 1, bncCods: [4] });
@@ -732,6 +732,14 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 { temBoletoDda: false },
                 { temBoletoDda: false },
             ]);
+        });
+
+        it('código fora do domínio documentado (ex.: 11) PASSA — é código novo, não lixo', async () => {
+            const base = comGrid([
+                { filCod: 1, docCod: 300, titCod: 1, titVldReflexoDdaAssoc: 0, titVldPagopor: 11 },
+            ]);
+            const sinais = await make(base).listarSinaisDosPendentes({ filCod: 1, bncCods: [4] });
+            expect(sinais.get('1:300:1')).toEqual({ temBoletoDda: false, pagoPor: 11 });
         });
 
         it('filial sem lote nativo → mapa vazio', async () => {
