@@ -1264,6 +1264,10 @@ export interface BoletoDdaTitulo {
   diferencaDias?: number
   temBoletoDda?: boolean
   lote?: { loteId: string; status: string }
+  /** Resultado da regra em camadas (ADR-0068). */
+  tier?: 'FORTE' | 'ATENCAO' | 'VENCIDO_INFORMATIVO'
+  /** boleto − título, em reais, com sinal. */
+  deltaValor?: number
 }
 
 export interface BoletoDda {
@@ -1282,6 +1286,8 @@ export interface BoletoDda {
   situacao: BoletoDdaSituacao
   vinculo?: BoletoDdaTitulo & { flpCod?: number }
   candidatos: BoletoDdaTitulo[]
+  /** Valor igual, data fora do limite seguro: só informação, não conta para a situação. */
+  informativos?: BoletoDdaTitulo[]
 }
 
 export type BoletoDdaContagem = Record<BoletoDdaSituacao | 'todas', number>
@@ -1297,7 +1303,8 @@ export interface BoletosDdaResposta {
   contagem: BoletoDdaContagem
   filiais: number[]
   sincronizadoEm?: number
-  janelaDias: number
+  /** Regra de candidato vigente (texto vindo do backend, a partir das constantes). */
+  regraCandidato: string
 }
 
 export interface FiltroBoletosDda {

@@ -62,17 +62,17 @@ export const SITUACAO_BADGE: Record<BoletoDdaSituacao, { label: string; classNam
     CANDIDATO: {
       label: 'candidato',
       className: 'border-info/40 text-info',
-      title: 'Livre. Um título aberto tem o mesmo valor com vencimento próximo — confira.',
+      title: 'Livre. Um título aberto cai nos limites seguros de valor e vencimento — confira.',
     },
     AMBIGUO: {
       label: 'ambíguo',
       className: 'border-warning/40 text-warning',
-      title: 'Livre. Mais de um título aberto tem o mesmo valor (cobrança recorrente).',
+      title: 'Livre. Mais de um título aberto cai nos limites seguros (cobrança recorrente).',
     },
     SEM_TITULO: {
       label: 'sem título',
       className: 'border-muted text-muted-foreground',
-      title: 'Livre, e nenhum título aberto tem o mesmo valor na janela de vencimento.',
+      title: 'Livre, e nenhum título aberto cai nos limites seguros de valor e vencimento.',
     },
   }
 
@@ -277,7 +277,7 @@ export function BoletosDdaTab() {
             {dados?.sincronizadoEm
               ? `DDA de ${new Date(dados.sincronizadoEm).toLocaleString('pt-BR')}`
               : 'DDA ainda não sincronizado'}
-            {dados ? ` · candidato = mesmo valor e vencimento em ±${dados.janelaDias} dias` : ''}
+            {dados?.regraCandidato ? ` · ${dados.regraCandidato}` : ''}
           </span>
           {horasDefasado !== undefined ? (
             <span role="status" className="flex items-center gap-1 text-xs text-warning">

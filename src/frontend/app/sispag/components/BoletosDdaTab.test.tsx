@@ -71,7 +71,7 @@ const pagina = (
     contagem,
     filiais: [1, 2],
     sincronizadoEm: Date.parse('2026-09-24T12:00:00Z'),
-    janelaDias: 3,
+    regraCandidato: 'candidato = diferença de até R$ 0,05 no mesmo dia, ou valor igual com vencimento de 1 a 5 dias depois do título',
     ...over,
   }
 }
@@ -94,6 +94,15 @@ describe('BoletosDdaTab', () => {
     expect(screen.getByText('lote finalizado')).toBeInTheDocument()
     expect(screen.getByText('25/09/2026')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Candidatos (1)' })).toBeInTheDocument()
+  })
+
+  it('mostra a regra de candidato vigente (camadas), não mais "valor exato ±N dias"', async () => {
+    mockFetch.mockResolvedValue(pagina([ADP]))
+    render(<BoletosDdaTab />)
+    await screen.findByText('ADP BRASIL LTDA')
+
+    expect(screen.getByText(/diferença de até R\$ 0,05 no mesmo dia/)).toBeInTheDocument()
+    expect(screen.queryByText(/±/)).not.toBeInTheDocument()
   })
 
   it('chip de situação vai ao servidor e volta para a página 1', async () => {

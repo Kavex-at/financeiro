@@ -32,6 +32,12 @@ export const ENVELOPE_VALOR_ABSOLUTO = 10;
 export const ENVELOPE_VALOR_PERCENTUAL = 2;
 export const ENVELOPE_DIAS = 10;
 
+/**
+ * Texto estático da regra de candidato para a tela — um único lugar, vindo das constantes acima.
+ * A aba "Boletos DDA" mostra isto no lugar do antigo "mesmo valor e vencimento em ±N dias".
+ */
+export const REGRA_CANDIDATO_TEXTO = `candidato = diferença de até R$ ${LIMITE_VALOR_MESMO_DIA.toFixed(2).replace('.', ',')} no mesmo dia, ou valor igual com vencimento de ${DIAS_DEPOIS_MIN} a ${DIAS_DEPOIS_MAX} dias depois do título (nunca antes da data de débito)`;
+
 const centavos = (valor: number): number => Math.round(valor * 100);
 
 const diasEntre = (de: string, ate: string): number =>
