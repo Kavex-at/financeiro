@@ -133,7 +133,9 @@ export default class IngestaoPagamentosService {
                     linhas: sinais.size,
                 });
             }
-            await this.avisarFormasDesconhecidas(filCod, sinais);
+            // Aviso é acessório: se o próprio log falhar, os sinais lidos não podem ir junto
+            // (o catch abaixo devolveria `undefined` e descartaria a leitura boa).
+            await this.avisarFormasDesconhecidas(filCod, sinais).catch(() => undefined);
             return sinais;
         } catch (error) {
             await this.avisar('leitura do flag de boleto DDA falhou — flag anterior preservado', {
