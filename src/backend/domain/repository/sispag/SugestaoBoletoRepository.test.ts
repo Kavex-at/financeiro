@@ -1,0 +1,280 @@
+import 'reflect-metadata';
+import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import SugestaoBoletoRepository from './SugestaoBoletoRepository.js';
+
+interface DbMock {
+    selectMany: jest.Mock;
+    selectFirst: jest.Mock;
+    insert: jest.Mock;
+    update: jest.Mock;
+}
+
+const buildDb = (): DbMock => ({
+    selectMany: jest.fn().mockResolvedValue([]),
+    selectFirst: jest.fn().mockResolvedValue(null),
+    insert: jest.fn().mockResolvedValue(1),
+    update: jest.fn().mockResolvedValue(1),
+});
+
+const make = (db: DbMock) => new SugestaoBoletoRepository(db as unknown as PostgreeDatabaseClient);
+
+const PAR_ROW = {
+    id: 'p1',
+    pes_cod: '7001',
+    credor: 'ACME',
+    emissor_chave: '341:1234:12345',
+    layout_emissor: 'ITAU_341',
+    banco_emissor: '341',
+    emissor_mascarado: '341 / 1234 / ***2345',
+    estado: 'VIGENTE',
+    evidencia: { tier: 'FORTE' },
+    confirmado_por: 'ana',
+    confirmado_em: new Date('2026-10-14T10:00:00Z'),
+    revogado_por: null,
+    revogado_em: null,
+    motivo_revogacao: null,
+    versao: 1,
+};
+
+const DECISAO_ROW = {
+    id: 'd1',
+    fil_cod: 2,
+    doc_cod: '9001',
+    tit_cod: '1',
+    pes_cod: '7001',
+    credor: 'ACME',
+    ddc_cod: 10,
+    dit_cod: 3,
+    numero_boleto: 'NF1',
+    codbar_mascarado: '341…0100',
+    valor_titulo: '100.00',
+    vencimento_titulo: '2026-10-20',
+    valor_boleto: '100.03',
+    vencimento_boleto: '2026-10-20',
+    delta_valor: '0.03',
+    delta_percentual: '0.0300',
+    delta_dias: 0,
+    sinais: ['MESMO_DIA'],
+    tier: 'FORTE',
+    emissor_chave: '341:1234:12345',
+    decisao: 'CONFIRMADA',
+    decidido_por: 'ana',
+    decidido_em: new Date('2026-10-14T10:00:00Z'),
+    motivo: null,
+    confirmacao_emissor_id: 'p1',
+};
+
+const NOVA_DECISAO = {
+    filCod: 2,
+    docCod: '9001',
+    titCod: '1',
+    pesCod: '7001',
+    credor: 'ACME',
+    ddcCod: 10,
+    ditCod: 3,
+    numeroBoleto: 'NF1',
+    codbarMascarado: '341…0100',
+    valorTitulo: 100,
+    vencimentoTitulo: '2026-10-20',
+    valorBoleto: 100.03,
+    vencimentoBoleto: '2026-10-20',
+    deltaValor: 0.03,
+    deltaPercentual: 0.03,
+    deltaDias: 0,
+    sinais: ['MESMO_DIA' as const],
+    tier: 'FORTE' as const,
+    emissorChave: '341:1234:12345',
+    decisao: 'CONFIRMADA' as const,
+    decididoPor: 'ana',
+    confirmacaoEmissorId: 'p1',
+};
+
+describe('SugestaoBoletoRepository (ADR-0068, migration 0084)', () => {
+    it('listarParesVigentes: só VIGENTE, parametrizado, mapeia a linha', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValue([PAR_ROW]);
+        const r = await make(db).listarParesVigentes(['7001']);
+        const [sql, params] = db.selectMany.mock.calls[0];
+        expect(sql).toMatch(/estado = 'VIGENTE'/);
+        expect(sql).not.toMatch(/'7001'/);
+        expect(params).toEqual({ pesCods: ['7001'] });
+        expect(r[0]).toMatchObject({
+            id: 'p1',
+            pesCod: '7001',
+            emissorChave: '341:1234:12345',
+            layoutEmissor: 'ITAU_341',
+            estado: 'VIGENTE',
+            versao: 1,
+        });
+        expect(r[0]).not.toHaveProperty('revogadoPor');
+    });
+
+    it('listarParesVigentes sem filtro passa pesCods nulo', async () => {
+        const db = buildDb();
+        await make(db).listarParesVigentes();
+        expect(db.selectMany.mock.calls[0][1]).toEqual({ pesCods: null });
+    });
+
+    it('inserirPar: ON CONFLICT no índice parcial; devolve criado=true quando RETURNING traz id', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce({ id: 'novo' }).mockResolvedValueOnce(PAR_ROW);
+        const r = await make(db).inserirPar({
+            pesCod: '7001',
+            credor: 'ACME',
+            emissorChave: '341:1234:12345',
+            layoutEmissor: 'ITAU_341',
+            bancoEmissor: '341',
+            emissorMascarado: '341 / 1234 / ***2345',
+            evidencia: { tier: 'FORTE' },
+            confirmadoPor: 'ana',
+        });
+        const [sql, params] = db.selectFirst.mock.calls[0];
+        expect(sql).toMatch(/ON CONFLICT \(pes_cod, emissor_chave\) WHERE estado = 'VIGENTE'/);
+        expect(sql).toMatch(/DO NOTHING/);
+        expect(sql).toMatch(/RETURNING id/);
+        expect(sql).not.toMatch(/'ana'|'7001'/);
+        expect(params).toMatchObject({ pesCod: '7001', confirmadoPor: 'ana' });
+        expect(params.evidencia).toBe(JSON.stringify({ tier: 'FORTE' }));
+        expect(r.criado).toBe(true);
+    });
+
+    it('inserirPar: perdedor da corrida relê e devolve a vencedora (criado=false)', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(PAR_ROW);
+        const r = await make(db).inserirPar({
+            pesCod: '7001',
+            emissorChave: '341:1234:12345',
+            layoutEmissor: 'ITAU_341',
+            bancoEmissor: '341',
+            emissorMascarado: 'm',
+            evidencia: {},
+            confirmadoPor: 'bia',
+        });
+        expect(r.criado).toBe(false);
+        expect(r.par.id).toBe('p1');
+        expect(db.selectFirst.mock.calls[1][0]).toMatch(/estado = 'VIGENTE'/);
+    });
+
+    it('revogarPar: lock otimista por versao e só se VIGENTE; devolve linhas afetadas', async () => {
+        const db = buildDb();
+        db.update.mockResolvedValue(0);
+        const n = await make(db).revogarPar({
+            id: 'p1',
+            versaoEsperada: 1,
+            ator: 'bia',
+            motivo: 'conta trocada',
+        });
+        const [sql, params] = db.update.mock.calls[0];
+        expect(sql).toMatch(/versao = \$versao/);
+        expect(sql).toMatch(/estado = 'VIGENTE'/);
+        expect(sql).toMatch(/versao = versao \+ 1/);
+        expect(sql).not.toMatch(/conta trocada|'bia'/);
+        expect(params).toEqual({ id: 'p1', versao: 1, ator: 'bia', motivo: 'conta trocada' });
+        expect(n).toBe(0);
+    });
+
+    it('inserirDecisao CONFIRMADA: ON CONFLICT DO NOTHING; criada=true com a linha gravada', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce({ id: 'd1' }).mockResolvedValueOnce(DECISAO_ROW);
+        const r = await make(db).inserirDecisao(NOVA_DECISAO);
+        const [sql, params] = db.selectFirst.mock.calls[0];
+        expect(sql).toMatch(/ON CONFLICT DO NOTHING/);
+        expect(sql).toMatch(/RETURNING id/);
+        expect(params.sinais).toBe(JSON.stringify(['MESMO_DIA']));
+        expect(r.criada).toBe(true);
+        expect(r.decisao).toMatchObject({
+            id: 'd1',
+            valorBoleto: 100.03,
+            deltaDias: 0,
+            tier: 'FORTE',
+        });
+    });
+
+    it('inserirDecisao: perdedor relê a vencedora pelo título OU pelo boleto (criada=false)', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(DECISAO_ROW);
+        const r = await make(db).inserirDecisao(NOVA_DECISAO);
+        const [sql, params] = db.selectFirst.mock.calls[1];
+        expect(sql).toMatch(/decisao = \$decisao/);
+        expect(sql).toMatch(/\(fil_cod = \$filCod AND doc_cod = \$docCod AND tit_cod = \$titCod\)/);
+        expect(sql).toMatch(/\(ddc_cod = \$ddcCod AND dit_cod = \$ditCod\)/);
+        expect(params).toMatchObject({ decisao: 'CONFIRMADA', ddcCod: 10 });
+        expect(r.criada).toBe(false);
+        expect(r.decisao.id).toBe('d1');
+    });
+
+    it('inserirDecisao REJEITADA: relê só por (título, boleto)', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+            ...DECISAO_ROW,
+            decisao: 'REJEITADA',
+            motivo: 'outro credor',
+        });
+        const { confirmacaoEmissorId: _c, ...base } = NOVA_DECISAO;
+        const r = await make(db).inserirDecisao({
+            ...base,
+            decisao: 'REJEITADA',
+            motivo: 'outro credor',
+        });
+        const sql = db.selectFirst.mock.calls[1][0] as string;
+        expect(sql).toMatch(
+            /fil_cod = \$filCod AND doc_cod = \$docCod AND tit_cod = \$titCod\s+AND ddc_cod = \$ddcCod AND dit_cod = \$ditCod/,
+        );
+        expect(r.criada).toBe(false);
+        expect(r.decisao.motivo).toBe('outro credor');
+    });
+
+    it('listarDecisoes: filtros nomeados e teto de linhas', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValue([DECISAO_ROW]);
+        const r = await make(db).listarDecisoes({ decisao: 'CONFIRMADA', filCod: 2 });
+        const [sql, params] = db.selectMany.mock.calls[0];
+        expect(sql).toMatch(/\$decisao::text IS NULL OR decisao = \$decisao::text/);
+        expect(sql).toMatch(/LIMIT 10000/);
+        expect(params).toMatchObject({ decisao: 'CONFIRMADA', filCod: 2, docCod: null });
+        expect(r).toHaveLength(1);
+    });
+
+    it('inserirEvento: parametrizado, detalhe como jsonb; devolve o id', async () => {
+        const db = buildDb();
+        const id = await make(db).inserirEvento({
+            tipo: 'LINHA_COPIADA',
+            ator: 'ana',
+            filCod: 2,
+            docCod: '9001',
+            titCod: '1',
+            ddcCod: 10,
+            ditCod: 3,
+            detalhe: { codbarMascarado: '341…0100' },
+        });
+        const [sql, params] = db.insert.mock.calls[0];
+        expect(sql).toMatch(/INSERT INTO sispag_sugestao_boleto_evento/);
+        expect(sql).toMatch(/\$detalhe::jsonb/);
+        expect(sql).not.toMatch(/'ana'/);
+        expect(params).toMatchObject({
+            id,
+            tipo: 'LINHA_COPIADA',
+            ator: 'ana',
+            pesCod: null,
+            motivo: null,
+            detalhe: JSON.stringify({ codbarMascarado: '341…0100' }),
+        });
+    });
+
+    it('nada persistido carrega 44 dígitos seguidos (barras completas)', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce({ id: 'd1' }).mockResolvedValueOnce(DECISAO_ROW);
+        const repo = make(db);
+        await repo.inserirDecisao(NOVA_DECISAO);
+        await repo.inserirEvento({
+            tipo: 'LINHA_COPIADA',
+            ator: 'ana',
+            detalhe: { m: '341…0100' },
+        });
+        const gravado = JSON.stringify([
+            ...db.selectFirst.mock.calls.map((c) => c[1]),
+            ...db.insert.mock.calls.map((c) => c[1]),
+        ]);
+        expect(gravado).not.toMatch(/\d{44}/);
+    });
+});

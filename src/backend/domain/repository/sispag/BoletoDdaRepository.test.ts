@@ -80,4 +80,33 @@ describe('BoletoDdaRepository', () => {
         await repo.listBoletos({});
         expect(client.selectMany.mock.calls[1][1]).toEqual({ desde: null });
     });
+
+    it('buscarPorChave: só de arquivo não cancelado, parametrizado; null quando não existe', async () => {
+        const { client } = buildDb();
+        client.selectFirst
+            .mockResolvedValueOnce({
+                ddc_cod: 152,
+                dit_cod: 7,
+                numero: 'NF1',
+                valor: '10.50',
+                vencimento: '2026-10-20',
+                codbar: null,
+                fil_cod: null,
+                doc_cod: null,
+                tit_cod: null,
+                flp_cod: null,
+                bnc_cod: null,
+                arquivo: 'X.RET',
+                importado_em: null,
+            })
+            .mockResolvedValueOnce(null);
+        const repo = new BoletoDdaRepository(client);
+        const b = await repo.buscarPorChave({ ddcCod: 152, ditCod: 7 });
+        const [sql, params] = client.selectFirst.mock.calls[0];
+        expect(sql).toContain('a.cancelado_em IS NULL');
+        expect(sql).toContain('b.ddc_cod = $ddcCod AND b.dit_cod = $ditCod');
+        expect(params).toEqual({ ddcCod: 152, ditCod: 7 });
+        expect(b).toMatchObject({ ddcCod: 152, ditCod: 7, valor: 10.5, vencimento: '2026-10-20' });
+        expect(await repo.buscarPorChave({ ddcCod: 1, ditCod: 1 })).toBeNull();
+    });
 });
