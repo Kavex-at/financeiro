@@ -40,7 +40,14 @@ controle.
    responde `410`, como a L7 aposentada.
 5. **Permissão `sispag:ver`** para os dois gatilhos de tela: L11 só lê o ERP (I11a/I11g). Antes o
    botão por lote era admin.
-6. **O cron continua** como rede de segurança. **Nenhuma invariante I11a–h muda.**
+6. **Prazo da passada** (default 120 s, configuração; a passada leva ~25 s): estourado, a run fecha
+   em `error` com o motivo, a trava é solta e a passada para antes do próximo lote. Sem prazo, uma
+   leitura pendurada no Conexos prenderia a trava até o processo reiniciar: toda abertura diria
+   "em andamento" e o cron pularia em silêncio (achado do Regis-Review 2026-10-13-1518). O prazo é
+   da passada, não do client HTTP do Conexos, que também escreve (retry depois de timeout duplicaria
+   escrita). O lote que estiver no meio quando o prazo estoura pode terminar depois; o optimistic
+   lock (I6) cobre a corrida com a passada seguinte.
+7. **O cron continua** como rede de segurança. **Nenhuma invariante I11a–h muda.**
 
 ## Consequências
 
