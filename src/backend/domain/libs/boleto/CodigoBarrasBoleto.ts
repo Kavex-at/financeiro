@@ -1,4 +1,5 @@
 import { injectable } from 'tsyringe';
+import { type EmissorBoleto, LAYOUT_EMISSOR } from '../../interface/sispag/SugestaoBoleto.js';
 
 const SO_DIGITOS = /^\d+$/;
 
@@ -40,6 +41,52 @@ export default class CodigoBarrasBoleto {
     /** Código FEBRABAN do banco emissor (ex.: `341` Itaú). */
     public bancoEmissor = (codbar?: string): string | undefined =>
         this.normalizar(codbar)?.slice(0, 3);
+
+    /**
+     * Conta emissora do boleto (ADR-0068, I15g). Posições no CAMPO LIVRE (25 dígitos =
+     * `barras.slice(19)`), verificadas em 2026-10-13 contra barras reais do pool de PRD:
+     *
+     *  - Itaú 341:     carteira(3) nossoNúmero(8) DAC(1) agência(4) conta(5) DAC(1) '000'
+     *  - Bradesco 237: agência(4) carteira(2) nossoNúmero(11) conta(7) '0'
+     *  - demais bancos: layout NÃO verificado → chave genérica `banco:<primeiros 8 dígitos do campo
+     *    livre>`. Confirmável por humano, mas `GENERICO` nunca é elegível a automático (I15i).
+     *
+     * Nunca lança: código inválido → `undefined`. Nenhuma saída contém as barras completas.
+     */
+    public emissor = (codbar?: string): EmissorBoleto | undefined => {
+        const barras = this.normalizar(codbar);
+        if (!barras) return undefined;
+        const banco = barras.slice(0, 3);
+        const livre = barras.slice(19);
+
+        if (banco === '341') {
+            const agencia = livre.slice(12, 16);
+            const conta = livre.slice(16, 21);
+            return {
+                banco,
+                layout: LAYOUT_EMISSOR.ITAU_341,
+                chave: `${banco}:${agencia}:${conta}`,
+                mascarado: `${banco} / ${agencia} / ***${conta.slice(-4)}`,
+            };
+        }
+        if (banco === '237') {
+            const agencia = livre.slice(0, 4);
+            const conta = livre.slice(17, 24);
+            return {
+                banco,
+                layout: LAYOUT_EMISSOR.BRADESCO_237,
+                chave: `${banco}:${agencia}:${conta}`,
+                mascarado: `${banco} / ${agencia} / ***${conta.slice(-4)}`,
+            };
+        }
+        const prefixo = livre.slice(0, 8);
+        return {
+            banco,
+            layout: LAYOUT_EMISSOR.GENERICO,
+            chave: `${banco}:${prefixo}`,
+            mascarado: `${banco} / ${prefixo.slice(0, 4)} / ****`,
+        };
+    };
 
     private normalizar = (codbar?: string): string | undefined => {
         const barras = (codbar ?? '').trim();
