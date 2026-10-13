@@ -3,6 +3,19 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.39.2 — SISPAG: o pool DDA sincroniza dentro da ingestão (2026-10-13, ADR-0067)
+
+Feature: `sispag-dda-na-ingestao` (`/feature-tweak BoletoDda`). `entity_changed = false`
+(emenda de gatilho; nenhuma propriedade, relação ou regra nova na entidade).
+
+- **BoletoDda — sincronização:** além do botão e do job avulso, a ingestão de pagamentos sincroniza
+  o pool antes de ler os títulos (prazo 60 s; nunca derruba a ingestão). Supersede a decisão de
+  2026-09-24 ("sem cron"). Motivo: pool parado 5 dias sem ninguém ver.
+- **TituloAPagar:** nova coluna persistida `doc_esp_numero` (número do documento do fornecedor,
+  migration 0083). Informativa — nenhuma regra a usa ainda.
+- **Fato registrado:** o item `fin124` não traz beneficiário (15 campos, sonda PRD 2026-10-13).
+- Contagens inalteradas.
+
 ## v0.39.0 — SISPAG: buscar o favorecido no Conexos ao pedir a autorização (2026-10-09)
 
 Feature: `sispag-favorecido-busca` (`/feature-tweak FavorecidoAutorizado`). `entity_changed = false`.

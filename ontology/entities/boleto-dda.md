@@ -15,7 +15,10 @@ related_files:
   - src/backend/domain/service/sispag/BoletoDdaService.ts
   - src/backend/routes/sispag.ts
   - src/backend/jobs/ingest-boletos-dda.ts
+  - src/backend/domain/service/sispag/IngestaoPagamentosService.ts
+  - src/backend/migrations/0083_titulo_doc_esp_numero.sql
   - src/frontend/app/sispag/components/BoletosDdaTab.tsx
+  - src/frontend/app/sispag/components/ddaDefasado.ts
 properties:
   - ddcCod
   - ditCod
@@ -84,9 +87,21 @@ Invariantes:
 
 ## Sincronização
 
-Manual (botão "Atualizar DDA", admin) ou job `npm run job:ingest-boletos-dda`. Incremental:
-arquivos novos + releitura dos importados nos últimos 60 dias (é neles que o Conexos ainda grava
-vínculo). Sem agendamento por decisão de 2026-09-24.
+Três gatilhos, todos incrementais (arquivos novos + releitura dos importados nos últimos 60 dias —
+é neles que o Conexos ainda grava vínculo):
+
+- **Ingestão de pagamentos (ADR-0067)** — antes de ler os títulos, em toda rodada (cron 07h/12h/16h
+  BRT e abertura da tela). Com prazo de 60 s; falha, lock ocupado e prazo estourado **não** derrubam
+  a ingestão (`dda.estado`: `sincronizado`/`parcial`/`ocupada`/`falhou`).
+- Botão "Atualizar DDA" (admin) — sem prazo.
+- Job avulso `npm run job:ingest-boletos-dda` — carga completa, sem prazo.
+
+Supersede a decisão de 2026-09-24 ("sem cron"): o pool ficou 5 dias parado (08–13/10/2026) sem
+ninguém ver. A aba mostra aviso quando o pool está parado há mais de 8 h em dia útil.
+
+**Não há beneficiário no item DDA** (sonda PRD 2026-10-13: 15 campos, nenhum nome/CNPJ do emissor).
+O emissor só se deriva do código de barras (banco + agência + conta). `titulo_a_pagar.doc_esp_numero`
+(0083) guarda o número do documento do fornecedor para confirmar casamentos — não é usado em decisão.
 
 ## Acesso
 
