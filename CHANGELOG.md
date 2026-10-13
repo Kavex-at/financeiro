@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.64.0 (2026-10-13) — SISPAG: lotes sincronizam com o Conexos ao abrir a tela
+
+- **O status dos lotes acompanha a baixa sem precisar clicar.** Ao abrir o SISPAG, depois de
+  atualizar a carteira, a tela relê no Conexos a baixa dos títulos de todos os lotes com remessa se
+  a última leitura tiver mais de 30 min. Lote pago no Conexos passa a `BAIXADO` sozinho. Antes isso
+  dependia do cron de hora em hora, que o GitHub chegou a rodar só 2–3 vezes por dia.
+- **Um único "Sincronizar lotes" no topo da tela** substitui o "Sincronizar agora" de cada card.
+  Atualiza todos os lotes de uma vez (~25 s), sem esperar os 30 min, e mostra quantos mudaram de
+  status. Basta permissão de ver o SISPAG: a sincronização só lê o Conexos.
+- Uma sincronização por vez (abertura, botão e cron usam a mesma trava); se outra estiver rodando,
+  a tela espera em vez de dar erro. Falha aparece na tela com o motivo e a tela mantém o último
+  status gravado. A carteira e os lotes nunca leem o Conexos ao mesmo tempo na abertura.
+- **Prazo de 2 min por sincronização.** Se o Conexos travar numa leitura, a sincronização é
+  interrompida, a falha aparece na tela e a próxima pode rodar — antes a trava ficaria presa até o
+  servidor reiniciar, com a tela dizendo "em andamento" e o cron pulando.
+- Novas variáveis opcionais: `SISPAG_LOTES_SYNC_TTL_MIN` (30), `SISPAG_LOTES_SYNC_COOLDOWN_MIN`
+  (5) e `SISPAG_LOTES_SYNC_PRAZO_SEG` (120). O cron continua como rede de segurança. Sem
+  migration. ADR-0066.
+
 ## v0.63.0 (2026-10-13) — títulos a pagar: uma coluna "Forma de pagamento"
 
 - **"Boleto" e "Forma no Conexos" viram uma coluna só, "Forma de pagamento".** BOLETO no Conexos
