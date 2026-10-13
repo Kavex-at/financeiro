@@ -43,6 +43,19 @@ const centavos = (valor: number): number => Math.round(valor * 100);
 const diasEntre = (de: string, ate: string): number =>
     Math.round((Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / DAY_MS);
 
+/**
+ * Faixa de valor (centavos, inclusiva) em que um título pode ser candidato de um boleto de
+ * `valorCentavos`. Serve para indexar por valor sem O(n × m); a regra decide o resto.
+ */
+export const faixaDeCandidatos = (valorCentavos: number): [number, number] => {
+    const absoluto = centavos(ENVELOPE_VALOR_ABSOLUTO);
+    const pct = ENVELOPE_VALOR_PERCENTUAL / 100;
+    return [
+        Math.floor(Math.min(valorCentavos - absoluto, valorCentavos / (1 + pct))),
+        Math.ceil(Math.max(valorCentavos + absoluto, valorCentavos / (1 - pct))),
+    ];
+};
+
 /** Só dígitos, sem zeros à esquerda; vazio = sem número (nunca penaliza). */
 const digitos = (numero?: string): string => (numero ?? '').replace(/\D/g, '').replace(/^0+/, '');
 

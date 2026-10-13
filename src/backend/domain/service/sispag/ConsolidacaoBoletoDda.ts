@@ -12,8 +12,7 @@ import { RESULTADO_SUGESTAO } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import RegraSugestaoBoleto, {
-    ENVELOPE_VALOR_ABSOLUTO,
-    ENVELOPE_VALOR_PERCENTUAL,
+    faixaDeCandidatos,
     LIMITE_VALOR_MESMO_DIA,
 } from './RegraSugestaoBoleto.js';
 
@@ -130,16 +129,6 @@ export default class ConsolidacaoBoletoDda {
             }))
             .sort((x, y) => x.centavos - y.centavos);
 
-    /** Faixa de valor em que a regra pode devolver algo; a regra decide o resto. */
-    private faixa = (valorCentavos: number): [number, number] => {
-        const absoluto = centavos(ENVELOPE_VALOR_ABSOLUTO);
-        const pct = ENVELOPE_VALOR_PERCENTUAL / 100;
-        return [
-            Math.floor(Math.min(valorCentavos - absoluto, valorCentavos / (1 + pct))),
-            Math.ceil(Math.max(valorCentavos + absoluto, valorCentavos / (1 - pct))),
-        ];
-    };
-
     private primeiroNaFaixa = (abertos: TituloAberto[], minimo: number): number => {
         let lo = 0;
         let hi = abertos.length;
@@ -161,7 +150,7 @@ export default class ConsolidacaoBoletoDda {
         const informativos: BoletoDdaTitulo[] = [];
         if (!b.vencimento) return { candidatos, informativos };
         const valor = centavos(b.valor);
-        const [minimo, maximo] = this.faixa(valor);
+        const [minimo, maximo] = faixaDeCandidatos(valor);
         for (let i = this.primeiroNaFaixa(abertos, minimo); i < abertos.length; i += 1) {
             const aberto = abertos[i];
             if (!aberto || aberto.centavos > maximo) break;
