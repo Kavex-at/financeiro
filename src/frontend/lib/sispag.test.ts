@@ -16,6 +16,7 @@ import {
   formatCivilDate,
   formatErpDay,
   rotuloFormaConexos,
+  formaDePagamento,
   gerarRemessa,
   retirarDoLote,
   __limparCacheRecursos,
@@ -670,5 +671,39 @@ describe('rotuloFormaConexos', () => {
     expect(rotuloFormaConexos(undefined)).toBe('—')
     expect(rotuloFormaConexos(0)).toBe('—')
     expect(rotuloFormaConexos(11)).toBe('—')
+  })
+})
+
+describe('formaDePagamento', () => {
+  it('BOLETO se divide pelo vínculo DDA', () => {
+    expect(formaDePagamento({ formaPagamentoConexos: 6, temBoleto: true })).toEqual({
+      chave: 'boleto-com-dda',
+      rotulo: 'boleto com DDA',
+      tom: 'dda',
+    })
+    expect(formaDePagamento({ formaPagamentoConexos: 6, temBoleto: false })).toMatchObject({
+      chave: 'boleto-sem-dda',
+      tom: 'alerta',
+    })
+  })
+
+  it('outras formas usam o rótulo do Conexos; DDA associado vira só uma marca', () => {
+    expect(formaDePagamento({ formaPagamentoConexos: 10, temBoleto: true })).toEqual({
+      chave: 'forma-10',
+      rotulo: 'transação automática',
+      tom: 'neutro',
+      comDda: true,
+    })
+    expect(formaDePagamento({ formaPagamentoConexos: 2 })).toEqual({
+      chave: 'forma-2',
+      rotulo: 'TEF',
+      tom: 'neutro',
+    })
+  })
+
+  it('forma não lida: o flag DDA ainda prova boleto; sem nada, "—"', () => {
+    expect(formaDePagamento({ temBoleto: true }).chave).toBe('boleto-com-dda')
+    expect(formaDePagamento({})).toEqual({ chave: 'nao-lida', rotulo: '—', tom: 'neutro' })
+    expect(formaDePagamento({ formaPagamentoConexos: 42 }).chave).toBe('nao-lida')
   })
 })
