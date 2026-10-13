@@ -52,10 +52,10 @@ describe('filtros por aba', () => {
     expect(filtroTitulos.getCategoria?.(titulo({ formaPagamentoConexos: 8 })).chave).toBe(
       'forma-8',
     )
-    // A célula mostra "—"; o chip precisa de palavra.
-    expect(filtroTitulos.getCategoria?.(titulo({}))).toEqual({
-      chave: 'nao-lida',
-      rotulo: 'não lida',
+    // Sem forma no Conexos: chip próprio, mesmo com DDA (o verde exige o Conexos dizer BOLETO).
+    expect(filtroTitulos.getCategoria?.(titulo({ temBoleto: true }))).toEqual({
+      chave: 'sem-forma',
+      rotulo: 'sem forma no Conexos',
     })
     // O chip "Boleto / Sem boleto" saiu da aba de títulos: a forma de pagamento o substitui.
     expect(filtroTitulos.getBoleto).toBeUndefined()

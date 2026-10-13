@@ -21,8 +21,16 @@ describe('FormaPagamentoBadge', () => {
     expect(screen.getByText('com boleto DDA')).toBeInTheDocument()
   })
 
-  it('forma não lida e sem DDA → "—"', () => {
+  it('sem forma no Conexos e sem DDA', () => {
     render(<FormaPagamentoBadge titulo={{}} />)
-    expect(screen.getByText('—')).toBeInTheDocument()
+    expect(screen.getByText('sem forma no Conexos')).toBeInTheDocument()
+    expect(screen.queryByText('com boleto DDA')).not.toBeInTheDocument()
+  })
+
+  it('sem forma no Conexos COM DDA: marca de DDA, não o verde de "boleto com DDA"', () => {
+    render(<FormaPagamentoBadge titulo={{ temBoleto: true }} />)
+    expect(screen.getByText('sem forma no Conexos')).toBeInTheDocument()
+    expect(screen.getByText('com boleto DDA')).toBeInTheDocument()
+    expect(screen.queryByText('boleto com DDA')).not.toBeInTheDocument()
   })
 })

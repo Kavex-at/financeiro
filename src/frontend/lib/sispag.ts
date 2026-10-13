@@ -604,43 +604,49 @@ const FORMA_ROTULO_TABELA: Readonly<Record<number, string>> = {
 
 /** Valor do filtro/coluna "Forma de pagamento" de um título. */
 export interface FormaDePagamento {
-  /** Chave estável do filtro: `boleto-com-dda`, `boleto-sem-dda`, `forma-<código>` ou `nao-lida`. */
+  /** Chave estável do filtro: `boleto-com-dda`, `boleto-sem-dda`, `forma-<código>` ou `sem-forma`. */
   chave: string
   rotulo: string
   /** `dda` = boleto pronto para a remessa; `alerta` = BOLETO sem DDA (sai sem código de barras). */
   tom: 'dda' | 'alerta' | 'neutro'
-  /** Forma não-BOLETO, mas com boleto DDA associado no Conexos — a linha mostra o código de barras. */
+  /**
+   * O Conexos NÃO diz BOLETO (outra forma, ou forma nenhuma), mas tem boleto DDA associado — a
+   * linha mostra o código de barras sem fingir que é o caso perfeito.
+   */
   comDda?: boolean
 }
 
-/** Ordem dos chips de filtro: boletos primeiro, depois pelo código do Conexos, "não lida" por último. */
+/** Ordem dos chips: boletos primeiro, depois pelo código do Conexos, "sem forma" por último. */
 export const ORDEM_FORMA_DE_PAGAMENTO = [
   'boleto-com-dda',
   'boleto-sem-dda',
   ...Object.keys(FORMA_ROTULO_TABELA).map((c) => `forma-${c}`),
-  'nao-lida',
+  'sem-forma',
 ] as const
 
 /**
  * Uma coluna para "como este título vai ser pago": a forma do Conexos (`titVldPagopor`) e, quando
  * é BOLETO, se o ERP já associou o boleto DDA — "boleto sem DDA" é o caso que sai sem barras.
- * Sem forma lida, o flag DDA ainda prova que é boleto; sem nenhum dos dois, "—" ("não lida").
+ * "boleto com DDA" exige o Conexos dizer BOLETO. Sem forma no Conexos (título fora do grid de
+ * pendentes — bloqueado, já num lote nativo — ou com "Pago Por" vazio no ERP), a linha diz
+ * "sem forma no Conexos", com a marca de DDA se houver boleto associado.
  */
 export function formaDePagamento(
   t: Pick<TituloAPagar, 'formaPagamentoConexos' | 'temBoleto'>,
 ): FormaDePagamento {
   const forma = t.formaPagamentoConexos
   const dda = t.temBoleto === true
-  if (forma === FORMA_CONEXOS_BOLETO || (forma == null && dda)) {
+  const marcaDda = dda ? { comDda: true } : {}
+  if (forma === FORMA_CONEXOS_BOLETO) {
     return dda
       ? { chave: 'boleto-com-dda', rotulo: 'boleto com DDA', tom: 'dda' }
       : { chave: 'boleto-sem-dda', rotulo: 'boleto sem DDA', tom: 'alerta' }
   }
   const rotulo = forma != null ? FORMA_ROTULO_TABELA[forma] : undefined
-  if (forma == null || rotulo === undefined) {
-    return { chave: 'nao-lida', rotulo: '—', tom: 'neutro' }
+  if (rotulo === undefined) {
+    return { chave: 'sem-forma', rotulo: 'sem forma no Conexos', tom: 'neutro', ...marcaDda }
   }
-  return { chave: `forma-${forma}`, rotulo, tom: 'neutro', ...(dda ? { comDda: true } : {}) }
+  return { chave: `forma-${forma}`, rotulo, tom: 'neutro', ...marcaDda }
 }
 
 export interface ItemConciliado {
