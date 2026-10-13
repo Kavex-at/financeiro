@@ -458,13 +458,6 @@ export const cancelarLote = (loteId: string, versao: number) =>
     body: JSON.stringify({ versao }),
   })
 
-/**
- * "Sincronizar agora" (ADR-0055): relê no Conexos a baixa dos títulos do lote e atualiza a
- * situação de cada item e o status do lote. Só leitura no ERP. Devolve o lote atualizado.
- */
-export const sincronizarLote = (loteId: string) =>
-  loteRequest(`/sispag/lotes/${loteId}/sincronizar`, { method: 'POST' })
-
 // ── ADR-0063 — verificação TED/PIX e duplicidade ──────────────────────────────
 
 /**
@@ -1168,6 +1161,68 @@ export async function atualizarCarteiraSeDefasada(): Promise<CarteiraAtualizacao
   }
   return (await res.json()) as CarteiraAtualizacao
 }
+
+// ============================================================ Sincronização dos lotes (L11)
+
+export type EstadoSincronizacaoLotes = 'fresca' | 'atualizada' | 'em_andamento' | 'falha_recente'
+
+/** Contadores de uma passada completa de L11 (ADR-0055). */
+export interface ResumoSincronizacaoLotes {
+  lotes: number
+  transicionados: number
+  atualizados: number
+  semMudanca: number
+  pulados: number
+  falhasLeitura: number
+  eventosNaoLidos: number
+}
+
+/** Resposta de `POST /sispag/lotes/sincronizar[-se-defasado]` (ADR-0066). */
+export interface SincronizacaoLotes {
+  estado: EstadoSincronizacaoLotes
+  /** ISO do fim da última passada completa finalizada. */
+  ultimaSincronizacaoEm?: string
+  idadeMin?: number
+  /** A passada que rodou (só em `atualizada`). */
+  passada?: {
+    runId: string
+    status: 'success' | 'partial' | 'error'
+    resumo?: ResumoSincronizacaoLotes
+    errorMessage?: string
+  }
+  /** Última falha (`falha_recente`) ou a da passada que acabou de fechar em erro. */
+  motivo?: string
+}
+
+async function postSincronizacaoLotes(path: string): Promise<SincronizacaoLotes> {
+  const res = await apiFetch(`${API}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+  })
+  if (!res.ok) {
+    let msg = `API ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+  return (await res.json()) as SincronizacaoLotes
+}
+
+/**
+ * Sincroniza os lotes com o Conexos SE a última passada tiver mais de 30 min (TTL no servidor).
+ * Chamada pela tela ao abrir, DEPOIS da carteira (ADR-0066). Só leitura no ERP; basta `sispag:ver`.
+ */
+export const sincronizarLotesSeDefasado = () =>
+  postSincronizacaoLotes('/sispag/lotes/sincronizar-se-defasado')
+
+/**
+ * "Sincronizar lotes" (ADR-0066): relê no Conexos a baixa dos títulos de TODOS os lotes com
+ * remessa e atualiza situação e status (~25 s). Ignora o TTL; outra passada rodando →
+ * `em_andamento`. Só leitura no ERP; basta `sispag:ver`.
+ */
+export const sincronizarLotes = () => postSincronizacaoLotes('/sispag/lotes/sincronizar')
 
 export async function fetchIngestaoRuns(limit = 10): Promise<PagamentoIngestaoRun[]> {
   const res = await apiFetch(`${API}/sispag/ingestao/runs?limit=${limit}`, {

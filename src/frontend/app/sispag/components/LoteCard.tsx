@@ -8,7 +8,6 @@ import {
   Download,
   FileText,
   Plus,
-  RefreshCcw,
   ShieldCheck,
   Trash2,
 } from 'lucide-react'
@@ -65,7 +64,6 @@ import {
   removerItem,
   rotuloConta,
   STATUS_SINCRONIZAVEIS,
-  sincronizarLote,
   temRemessa,
   type TituloSemBoleto,
   tituloDeItem,
@@ -718,17 +716,6 @@ export function LoteCard({
               busy={busy}
               onConfirmar={executar[confirmando]}
             />
-          ) : null}
-          {sincronizavel && podeExecutar ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              title="Relê no Conexos a baixa dos títulos deste lote e atualiza a situação de cada item. Só leitura no ERP."
-              onClick={() => acao(() => sincronizarLote(l.id), 'Lote sincronizado')}
-            >
-              <RefreshCcw className="size-4" aria-hidden /> Sincronizar agora
-            </Button>
           ) : null}
           {/* Todo lote com remessa mostra o download — pelo STATUS, não por `remessaArquivo`:
               a lista vinha sem esse campo e o botão sumia em toda carga de página. */}
