@@ -73,7 +73,47 @@ describe('BoletoDdaService', () => {
         const r = await service.sincronizar({ triggeredBy: 'teste' });
 
         expect(dda.listarItens.mock.calls.map((c) => c[0].ddcCod).sort()).toEqual([152, 162]);
-        expect(r).toEqual({ arquivosNovos: 1, arquivosRelidos: 1, boletos: 2, falhas: 0 });
+        expect(r).toEqual({
+            arquivosNovos: 1,
+            arquivosRelidos: 1,
+            boletos: 2,
+            falhas: 0,
+            arquivosAdiados: 0,
+        });
+    });
+
+    it('prazo estourado: não abre arquivo novo, conta como adiado e não é falha', async () => {
+        const { service, dda, repo } = build();
+        dda.listarArquivos.mockResolvedValue([{ ddcCod: 1 }, { ddcCod: 2 }]);
+
+        const r = await service.sincronizar({ triggeredBy: 'teste', prazoMs: -1 });
+
+        expect(dda.listarItens).not.toHaveBeenCalled();
+        expect(repo.salvarArquivo).not.toHaveBeenCalled();
+        expect(r).toMatchObject({ arquivosNovos: 2, boletos: 0, falhas: 0, arquivosAdiados: 2 });
+    });
+
+    it('sem prazo (botão, job avulso) nada é adiado', async () => {
+        const { service, dda } = build();
+        dda.listarArquivos.mockResolvedValue([{ ddcCod: 1 }]);
+        dda.listarItens.mockResolvedValue([{ ddcCod: 1, ditCod: 1, valor: 1 }]);
+
+        const r = await service.sincronizar({ triggeredBy: 'teste' });
+
+        expect(r.arquivosAdiados).toBe(0);
+        expect(r.boletos).toBe(1);
+    });
+
+    it('releituraDias encurta a janela de releitura dos arquivos já conhecidos', async () => {
+        const { service, dda, repo } = build();
+        dda.listarArquivos.mockResolvedValue([{ ddcCod: 152, importadoEm: dia('2026-09-10') }]);
+        repo.listArquivosSincronizados.mockResolvedValue(new Map([[152, dia('2026-09-10')]]));
+
+        const curta = await service.sincronizar({ triggeredBy: 'teste', releituraDias: 7 });
+        expect(curta.arquivosRelidos).toBe(0);
+
+        const padrao = await service.sincronizar({ triggeredBy: 'teste' });
+        expect(padrao.arquivosRelidos).toBe(1);
     });
 
     it('um arquivo que falha não derruba os outros e é contado', async () => {

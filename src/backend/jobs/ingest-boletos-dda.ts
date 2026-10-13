@@ -10,8 +10,10 @@ import BoletoDdaService from '../domain/service/sispag/BoletoDdaService.js';
  * Incremental: arquivos novos + releitura dos importados nos últimos 60 dias. READ-ONLY no ERP.
  * O primeiro run lê o pool inteiro (~160 arquivos) — rode por aqui, não pelo botão.
  *
- * CRON (NÃO configurado — entrada documentada apenas; hoje é manual + botão na aba):
- *   30 9 * * 1-5  cd /caminho/do/repo/src/backend && npm run job:ingest-boletos-dda
+ * Hoje a sincronização também roda DENTRO da ingestão de pagamentos (`IngestaoPagamentosService`,
+ * antes da leitura dos títulos, com prazo): crons de 07h/12h/16h BRT e a abertura da tela a
+ * mantêm fresca. Este job (e o botão da aba) ficam para a carga completa e para forçar a mão —
+ * sem prazo. Nenhum cron próprio é necessário.
  *
  * Exit non-zero em falha (fail-fast) para o agendador registrar o erro.
  */

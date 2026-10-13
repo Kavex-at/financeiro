@@ -8,16 +8,25 @@ import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { SinalPendente } from '../../interface/sispag/Fin015Write.js';
 import { PagoPorConexosRotulo } from '../../interface/sispag/PagoPorConexos.js';
-import type {
-    IngestaoPagamentosResult,
-    TituloAPagar,
+import {
+    DDA_NA_INGESTAO,
+    type DdaNaIngestao,
+    type IngestaoPagamentosResult,
+    type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import LogService from '../LogService.js';
+import BoletoDdaService from './BoletoDdaService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * Orçamento da sincronização DDA dentro da ingestão. A ingestão leva ~10 s medidos no cron; a
+ * leitura do fin124 (arquivos novos + releitura) não pode multiplicar isso. O que não couber fica
+ * para a próxima rodada (novos primeiro) — o botão da aba e o job avulso não têm prazo.
+ */
+export const DDA_PRAZO_NA_INGESTAO_MS = 60_000;
 /** Chave de advisory lock EXCLUSIVA da ingestão de pagamentos (≠ da de permutas). */
 export const PAGAMENTO_INGEST_LOCK_KEY = 726354819;
 /** Teto de leituras Conexos simultâneas no fan-out da ingestão. */
@@ -44,6 +53,7 @@ export default class IngestaoPagamentosService {
         @inject(LogService) private readonly logService: LogService,
         @inject(BloqueioDuplicidadeRepository)
         private readonly bloqueioRepo: BloqueioDuplicidadeRepository,
+        @inject(BoletoDdaService) private readonly boletoDda: BoletoDdaService,
     ) {}
 
     public executar = async (input: {
@@ -176,6 +186,41 @@ export default class IngestaoPagamentosService {
         }
     };
 
+    /**
+     * Sincroniza o pool DDA ANTES de ler os títulos: o flag e o casamento de boleto da carteira
+     * leem `boleto_dda`, e uma carteira nova sobre um pool de 5 dias dá "boleto sem DDA" falso.
+     *
+     * Enriquecimento, como o flag de boleto: NUNCA derruba a ingestão. Falha vira WARN + `falhou`
+     * no resultado (e na run); lock ocupado vira `ocupada` (a sincronização que já roda cobre);
+     * prazo estourado vira `parcial`. Sequencial com a leitura de títulos — não paralelo — por
+     * causa do cap de sessões do robô (ADR-0066 §3).
+     */
+    private sincronizarDda = async (triggeredBy: string): Promise<DdaNaIngestao> => {
+        try {
+            const r = await this.boletoDda.sincronizar({
+                triggeredBy: `ingestao:${triggeredBy}`,
+                prazoMs: DDA_PRAZO_NA_INGESTAO_MS,
+            });
+            const parcial = r.falhas > 0 || r.arquivosAdiados > 0;
+            if (parcial) {
+                await this.avisar('sincronização DDA parcial', { ...r });
+            }
+            return {
+                estado: parcial ? DDA_NA_INGESTAO.PARCIAL : DDA_NA_INGESTAO.SINCRONIZADO,
+                arquivosNovos: r.arquivosNovos,
+                arquivosRelidos: r.arquivosRelidos,
+                boletos: r.boletos,
+                falhas: r.falhas,
+                arquivosAdiados: r.arquivosAdiados,
+            };
+        } catch (error) {
+            if (error instanceof IngestLockBusyError) return { estado: DDA_NA_INGESTAO.OCUPADA };
+            const erro = error instanceof Error ? error.message : String(error);
+            await this.avisar('sincronização DDA falhou — pool anterior mantido', { erro });
+            return { estado: DDA_NA_INGESTAO.FALHOU, erro: erro.slice(0, 300) };
+        }
+    };
+
     /** WARN da ingestão, com o prefixo padrão da frente. */
     private avisar = async (mensagem: string, data: Record<string, unknown>): Promise<void> => {
         await this.logService.warn({
@@ -220,12 +265,38 @@ export default class IngestaoPagamentosService {
             .join('; ')
             .slice(0, 500);
 
+    /**
+     * Texto que acompanha uma run `success` incompleta (coluna `error_message`); `undefined` =
+     * nada a avisar. DDA `ocupada` não é aviso: a sincronização que já rodava cobre esta rodada.
+     */
+    private avisoDaRun = (input: {
+        falhas: Array<{ filCod: number; motivo: string }>;
+        filiaisSemFlagBoleto: number[];
+        dda: DdaNaIngestao;
+    }): string | undefined => {
+        const { falhas, filiaisSemFlagBoleto, dda } = input;
+        const ddaComAviso =
+            dda.estado === DDA_NA_INGESTAO.FALHOU || dda.estado === DDA_NA_INGESTAO.PARCIAL;
+        const partes = [
+            falhas.length > 0 ? `filiais não lidas: ${this.resumoFalhas(falhas)}` : undefined,
+            filiaisSemFlagBoleto.length > 0
+                ? `flag de boleto DDA não lido (anterior preservado): filiais ${filiaisSemFlagBoleto.join(', ')}`
+                : undefined,
+            ddaComAviso
+                ? `pool DDA ${dda.estado}${dda.erro ? ` (${dda.erro.slice(0, 120)})` : ''}`
+                : undefined,
+        ].filter(Boolean);
+        return partes.length > 0 ? partes.join('; ') : undefined;
+    };
+
     private runIngestion = async (input: {
         triggeredBy: string;
         idempotencyKey?: string;
     }): Promise<IngestaoPagamentosResult> => {
         const runId = await this.runRepo.createRun({ triggeredBy: input.triggeredBy });
         try {
+            // Pool DDA primeiro: o que vem a seguir (flag + casamento) lê `boleto_dda`.
+            const dda = await this.sincronizarDda(input.triggeredBy);
             const filiais = await this.base.getFiliais();
             const filCods = filiais
                 .map((f) => f.filCod)
@@ -288,26 +359,14 @@ export default class IngestaoPagamentosService {
             await this.tituloRepo.upsertMany(titulos, runId);
             const inativados = await this.tituloRepo.marcarInativosForaDaRun(runId, filiaisLidas);
             // Leitura parcial segue `success` (as filiais lidas valem), mas não em silêncio: a run
-            // guarda quais filiais ficaram de fora e o resultado as devolve.
+            // guarda o que ficou de fora e o resultado o devolve.
+            const avisoDaRun = this.avisoDaRun({ falhas, filiaisSemFlagBoleto, dda });
             await this.runRepo.finishRun({
                 runId,
                 status: 'success',
                 totalTitulos: titulos.length,
                 totalInativados: inativados,
-                ...(falhas.length > 0 || filiaisSemFlagBoleto.length > 0
-                    ? {
-                          errorMessage: [
-                              falhas.length > 0
-                                  ? `filiais não lidas: ${this.resumoFalhas(falhas)}`
-                                  : undefined,
-                              filiaisSemFlagBoleto.length > 0
-                                  ? `flag de boleto DDA não lido (anterior preservado): filiais ${filiaisSemFlagBoleto.join(', ')}`
-                                  : undefined,
-                          ]
-                              .filter(Boolean)
-                              .join('; '),
-                      }
-                    : {}),
+                ...(avisoDaRun ? { errorMessage: avisoDaRun } : {}),
             });
             // ADR-0063 I13g — título que sumiu do fin064 (inativo agora) encerra o bloqueio por
             // duplicidade: o cancelamento no Conexos aconteceu (ou o título foi pago/baixado). É
@@ -350,6 +409,7 @@ export default class IngestaoPagamentosService {
                 totalInativados: inativados,
                 filiaisComFalha: falhas.map((f) => f.filCod),
                 filiaisSemFlagBoleto,
+                dda,
             };
         } catch (error) {
             await this.runRepo.finishRun({

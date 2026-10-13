@@ -62,6 +62,23 @@ describe('ConexosSispagClient (read-only)', () => {
         });
     });
 
+    it('numeroDocumento vem de docEspNumero (aparado); vazio ou ausente fica indefinido', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 3,
+            rows: [
+                fin064Row({ docCod: '1', docEspNumero: ' 3501 ' }),
+                fin064Row({ docCod: '2', docEspNumero: '   ' }),
+                fin064Row({ docCod: '3' }),
+            ],
+        });
+        const titulos = await make(base).listTitulosAPagar(2, {
+            minVencimento: 1,
+            maxVencimento: 2,
+        });
+        expect(titulos.map((t) => t.numeroDocumento)).toEqual(['3501', undefined, undefined]);
+    });
+
     it('favorecido do fin064 vem de pesCodFor quando pesCod chega vazio (forma real do ERP)', async () => {
         const base = buildBase();
         base.listGenericPaginated.mockResolvedValue({

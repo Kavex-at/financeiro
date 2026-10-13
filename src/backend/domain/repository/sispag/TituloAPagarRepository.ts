@@ -26,6 +26,8 @@ interface TituloRow {
     tem_boleto: boolean;
     /** `titVldPagopor` cru do Conexos (migration 0081). NULL = nunca lido. */
     forma_pagamento_conexos: number | null;
+    /** `docEspNumero` do fin064 (migration 0083). NULL = nunca lido. */
+    doc_esp_numero: string | null;
 }
 
 /**
@@ -57,6 +59,7 @@ export default class TituloAPagarRepository {
         prontoParaRemessa: r.pronto_para_remessa ?? undefined,
         temBoleto: r.tem_boleto,
         formaPagamentoConexos: r.forma_pagamento_conexos ?? undefined,
+        numeroDocumento: r.doc_esp_numero ?? undefined,
         ativo: true,
     });
 
@@ -88,7 +91,7 @@ export default class TituloAPagarRepository {
         chunk.forEach((t, i) => {
             tuples.push(
                 `($f${i}, $d${i}, $t${i}, $cr${i}, $pe${i}, $v${i}, $mo${i}, $ve${i}, ` +
-                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $tb${i}, $fp${i}, TRUE, $runId, now())`,
+                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $tb${i}, $fp${i}, $dn${i}, TRUE, $runId, now())`,
             );
             params[`f${i}`] = t.filCod;
             params[`d${i}`] = t.docCod;
@@ -108,12 +111,13 @@ export default class TituloAPagarRepository {
             params[`pr${i}`] = t.prontoParaRemessa ?? null;
             params[`tb${i}`] = t.temBoleto ?? false;
             params[`fp${i}`] = t.formaPagamentoConexos ?? null;
+            params[`dn${i}`] = t.numeroDocumento ?? null;
         });
         await tx.insert(
             `INSERT INTO titulo_a_pagar (
                 fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
                 aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
-                forma_pagamento_conexos, ativo, ingestao_run_id, atualizado_em
+                forma_pagamento_conexos, doc_esp_numero, ativo, ingestao_run_id, atualizado_em
              ) VALUES ${tuples.join(', ')}
              ON CONFLICT (fil_cod, doc_cod, tit_cod) DO UPDATE SET
                 credor = EXCLUDED.credor, pes_cod = EXCLUDED.pes_cod, valor = EXCLUDED.valor,
@@ -126,6 +130,7 @@ export default class TituloAPagarRepository {
                 forma_pagamento_conexos = COALESCE(
                     EXCLUDED.forma_pagamento_conexos, titulo_a_pagar.forma_pagamento_conexos
                 ),
+                doc_esp_numero = COALESCE(EXCLUDED.doc_esp_numero, titulo_a_pagar.doc_esp_numero),
                 ativo = TRUE, ingestao_run_id = EXCLUDED.ingestao_run_id, atualizado_em = now()`,
             params,
         );
@@ -154,7 +159,7 @@ export default class TituloAPagarRepository {
         const rows = (await this.databaseClient.selectMany(
             `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
                     aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
-                    forma_pagamento_conexos
+                    forma_pagamento_conexos, doc_esp_numero
              FROM titulo_a_pagar
              WHERE ativo = TRUE
              ORDER BY vencimento ASC NULLS LAST`,

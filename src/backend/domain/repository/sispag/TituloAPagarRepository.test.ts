@@ -66,6 +66,19 @@ describe('TituloAPagarRepository', () => {
         );
     });
 
+    it('upsertMany grava doc_esp_numero (número do documento do fornecedor) e PRESERVA o último', async () => {
+        const { client, tx } = buildDb();
+        await new TituloAPagarRepository(client).upsertMany(
+            [titulo({ titCod: '1', numeroDocumento: '3501' }), titulo({ titCod: '2' })],
+            'RUN1',
+        );
+        const [sql, params] = tx.insert.mock.calls[0];
+        expect(params).toMatchObject({ dn0: '3501', dn1: null });
+        expect(sql).toMatch(
+            /doc_esp_numero = COALESCE\(EXCLUDED\.doc_esp_numero, titulo_a_pagar\.doc_esp_numero\)/,
+        );
+    });
+
     it('upsertMany com lista vazia não abre transação', async () => {
         const { client } = buildDb();
         await new TituloAPagarRepository(client).upsertMany([], 'RUN1');
@@ -109,6 +122,7 @@ describe('TituloAPagarRepository', () => {
                 tpd_cod: null,
                 pronto_para_remessa: true,
                 forma_pagamento_conexos: 6,
+                doc_esp_numero: '3501',
             },
         ]);
         const titulos = await new TituloAPagarRepository(client).listAtivos();
@@ -118,12 +132,14 @@ describe('TituloAPagarRepository', () => {
             liberado: true,
             prontoParaRemessa: true,
             formaPagamentoConexos: 6,
+            numeroDocumento: '3501',
             ativo: true,
         });
         expect(typeof titulos[0].vencimento).toBe('number');
-        expect((client.selectMany as jest.Mock).mock.calls[0][0]).toContain(
-            'forma_pagamento_conexos',
-        );
+        const sql = (client.selectMany as jest.Mock).mock.calls[0][0] as string;
+        expect(sql).toContain('forma_pagamento_conexos');
+        // lido de volta: a coluna da 0083 só serve se o SELECT a traz
+        expect(sql).toContain('doc_esp_numero');
     });
 
     it('listElegiveisParaFormacao exclui título em QUALQUER lote vivo, não só RASCUNHO (I3)', async () => {

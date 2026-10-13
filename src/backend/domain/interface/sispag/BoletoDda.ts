@@ -129,4 +129,9 @@ export interface SincronizacaoDdaResultado {
     boletos: number;
     /** Arquivos cuja leitura falhou (não interrompem os demais). */
     falhas: number;
+    /**
+     * Arquivos que ficaram para a próxima passada porque o prazo (`prazoMs`) acabou. Novos vão
+     * antes dos relidos, então o que sobra é, em regra, releitura de arquivo já conhecido.
+     */
+    arquivosAdiados: number;
 }

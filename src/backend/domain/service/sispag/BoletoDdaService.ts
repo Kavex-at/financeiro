@@ -89,6 +89,14 @@ export default class BoletoDdaService {
 
     public sincronizar = async (input: {
         triggeredBy: string;
+        /**
+         * Orçamento de tempo desta passada (ms). Passado o prazo, os arquivos que ainda não
+         * começaram ficam para a próxima (`arquivosAdiados`); o que já está em voo termina.
+         * Ausente = sem prazo (botão manual e job avulso).
+         */
+        prazoMs?: number;
+        /** Janela de releitura em dias (default `RELEITURA_DIAS`). */
+        releituraDias?: number;
     }): Promise<SincronizacaoDdaResultado> =>
         this.db.withAdvisoryLock(
             BOLETO_DDA_SYNC_LOCK_KEY,
@@ -102,7 +110,10 @@ export default class BoletoDdaService {
 
     private executarSincronizacao = async (input: {
         triggeredBy: string;
+        prazoMs?: number;
+        releituraDias?: number;
     }): Promise<SincronizacaoDdaResultado> => {
+        const limite = input.prazoMs !== undefined ? Date.now() + input.prazoMs : undefined;
         // O pool não é por filial; a filial só satisfaz a sessão do Conexos.
         const filCod = (await this.base.getFilCodDefault()) ?? 1;
         const [arquivos, conhecidos] = await Promise.all([
@@ -110,7 +121,10 @@ export default class BoletoDdaService {
             this.repo.listArquivosSincronizados(),
         ]);
         const corte = Date.parse(
-            `${this.calendar.addDays(this.calendar.todayBrt(), -RELEITURA_DIAS)}T00:00:00Z`,
+            `${this.calendar.addDays(
+                this.calendar.todayBrt(),
+                -(input.releituraDias ?? RELEITURA_DIAS),
+            )}T00:00:00Z`,
         );
         const novos = arquivos.filter((a) => !conhecidos.has(a.ddcCod));
         const relidos = arquivos.filter(
@@ -121,6 +135,8 @@ export default class BoletoDdaService {
         const resultados = await this.bounded.run(
             alvo,
             async (arquivo) => {
+                // Prazo estourado: não começa arquivo novo. `null` ≠ falha — fica para a próxima.
+                if (limite !== undefined && Date.now() > limite) return null;
                 const itens = await this.dda.listarItens({ filCod, ddcCod: arquivo.ddcCod });
                 await this.repo.salvarArquivo(arquivo, itens);
                 return itens.length;
@@ -129,9 +145,11 @@ export default class BoletoDdaService {
         );
         let boletos = 0;
         let falhas = 0;
+        let arquivosAdiados = 0;
         for (const [i, r] of resultados.entries()) {
             if (r.status === 'fulfilled') {
-                boletos += r.value;
+                if (r.value === null) arquivosAdiados += 1;
+                else boletos += r.value;
                 continue;
             }
             falhas += 1;
@@ -150,6 +168,7 @@ export default class BoletoDdaService {
             arquivosRelidos: relidos.length,
             boletos,
             falhas,
+            arquivosAdiados,
         };
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
