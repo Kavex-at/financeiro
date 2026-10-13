@@ -15,7 +15,7 @@ import {
   fetchLinhasDigitaveis,
   formatCivilDate,
   formatErpDay,
-  rotuloFormaConexos,
+  FORMA_CONEXOS_ROTULO,
   formaDePagamento,
   gerarRemessa,
   retirarDoLote,
@@ -39,6 +39,8 @@ import {
 jest.mock('@/lib/http', () => ({ apiFetch: jest.fn() }))
 jest.mock('@/lib/auth/token', () => ({ withAuthHeaders: jest.fn(async () => ({})) }))
 
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { apiFetch } from '@/lib/http'
 
 const mockApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>
@@ -660,17 +662,23 @@ describe('boletos DDA de um título', () => {
   })
 })
 
-describe('rotuloFormaConexos', () => {
-  it('rotula os códigos documentados de titVldPagopor', () => {
-    expect(rotuloFormaConexos(6)).toBe('BOLETO')
-    expect(rotuloFormaConexos(2)).toBe('TEF')
-    expect(rotuloFormaConexos(10)).toBe('TRANSAÇÃO AUTOMÁTICA')
-  })
-
-  it('nunca lido ou fora do domínio → "—" (não inventa rótulo)', () => {
-    expect(rotuloFormaConexos(undefined)).toBe('—')
-    expect(rotuloFormaConexos(0)).toBe('—')
-    expect(rotuloFormaConexos(11)).toBe('—')
+describe('FORMA_CONEXOS_ROTULO — paridade com o backend', () => {
+  it('tem exatamente os códigos de PAGO_POR_CONEXOS (backend), com os mesmos rótulos', () => {
+    // O frontend não importa o backend; lê o fonte e compara. Código novo de um lado só = vermelho.
+    const fonte = readFileSync(
+      path.join(__dirname, '../../backend/domain/interface/sispag/PagoPorConexos.ts'),
+      'utf8',
+    )
+    const tabela = /PAGO_POR_CONEXOS_ROTULO[^=]*=\s*\{([^}]*)\}/.exec(fonte)?.[1] ?? ''
+    const backend = Object.fromEntries(
+      [...tabela.matchAll(/(\d+):\s*'([^']+)'/g)].map((m) => [m[1], m[2]]),
+    )
+    expect(Object.keys(backend).length).toBeGreaterThan(0)
+    expect(Object.keys(FORMA_CONEXOS_ROTULO).sort()).toEqual(Object.keys(backend).sort())
+    for (const [codigo, rotulo] of Object.entries(FORMA_CONEXOS_ROTULO)) {
+      // Mesmo rótulo; só a caixa muda (a tabela usa minúsculo, siglas em caixa alta).
+      expect(rotulo.toUpperCase()).toBe(backend[codigo])
+    }
   })
 })
 
@@ -714,6 +722,17 @@ describe('formaDePagamento', () => {
       rotulo: 'sem forma no Conexos',
       tom: 'neutro',
     })
-    expect(formaDePagamento({ formaPagamentoConexos: 42 }).chave).toBe('sem-forma')
+  })
+
+  it('código que o ERP mandou e a tabela não conhece vira "código N", nunca "sem forma"', () => {
+    expect(formaDePagamento({ formaPagamentoConexos: 11 })).toEqual({
+      chave: 'forma-11',
+      rotulo: 'código 11',
+      tom: 'neutro',
+    })
+    expect(formaDePagamento({ formaPagamentoConexos: 11, temBoleto: true })).toMatchObject({
+      chave: 'forma-11',
+      comDda: true,
+    })
   })
 })

@@ -36,7 +36,7 @@ export interface TituloAPagar {
   temBoleto?: boolean
   /**
    * Forma de pagamento do título NO CONEXOS (`titVldPagopor`, a "Situação" do psq014). Não é
-   * o vínculo DDA: um título BOLETO pode estar sem boleto DDA associado. Ver `rotuloFormaConexos`.
+   * o vínculo DDA: um título BOLETO pode estar sem boleto DDA associado. Ver `formaDePagamento`.
    */
   formaPagamentoConexos?: number
   ativo?: boolean
@@ -564,38 +564,19 @@ export function formatErpDay(ms?: number): string {
 export const FORMA_CONEXOS_BOLETO = 6
 
 /**
- * Rótulos de `titVldPagopor` ("Pago Por"), como o Conexos os documenta (070-com3 FinTituloFin).
- * Espelha `PAGO_POR_CONEXOS_ROTULO` do backend. Não há "TED": qual código a Columbia usa para
+ * A ÚNICA tabela de rótulos de `titVldPagopor` ("Pago Por") no frontend, com os códigos que o
+ * Conexos documenta (070-com3 FinTituloFin). Os códigos espelham `PAGO_POR_CONEXOS` do backend —
+ * um teste de paridade lê o arquivo do backend e falha se divergirem. Rótulo no minúsculo das
+ * outras etiquetas da linha; sigla em caixa alta. Não há "TED": qual código a Columbia usa para
  * TED não está confirmado — não deduza.
  */
-const FORMA_CONEXOS_ROTULO: Readonly<Record<number, string>> = {
-  1: 'CHEQUE',
-  2: 'TEF',
-  3: 'CARTEIRA',
-  4: 'EXTRA-CAIXA',
-  5: 'CARTÃO DE CRÉDITO',
-  6: 'BOLETO',
-  7: 'CAIXA',
-  8: 'TRANSAÇÃO',
-  9: 'DOCUMENTO',
-  10: 'TRANSAÇÃO AUTOMÁTICA',
-}
-
-/** Forma de pagamento do título no Conexos → rótulo; `'—'` quando nunca lida ou desconhecida. */
-export function rotuloFormaConexos(codigo?: number): string {
-  return (codigo != null && FORMA_CONEXOS_ROTULO[codigo]) || '—'
-}
-
-/**
- * Rótulo da forma na tabela, no minúsculo das outras etiquetas da linha ("aprovado", "boleto");
- * sigla fica em caixa alta. BOLETO (6) não entra: ele se divide em com/sem DDA.
- */
-const FORMA_ROTULO_TABELA: Readonly<Record<number, string>> = {
+export const FORMA_CONEXOS_ROTULO: Readonly<Record<number, string>> = {
   1: 'cheque',
   2: 'TEF',
   3: 'carteira',
   4: 'extra-caixa',
   5: 'cartão de crédito',
+  6: 'boleto',
   7: 'caixa',
   8: 'transação',
   9: 'documento',
@@ -620,7 +601,10 @@ export interface FormaDePagamento {
 export const ORDEM_FORMA_DE_PAGAMENTO = [
   'boleto-com-dda',
   'boleto-sem-dda',
-  ...Object.keys(FORMA_ROTULO_TABELA).map((c) => `forma-${c}`),
+  // BOLETO não tem chip próprio: ele se divide em com/sem DDA.
+  ...Object.keys(FORMA_CONEXOS_ROTULO)
+    .filter((c) => Number(c) !== FORMA_CONEXOS_BOLETO)
+    .map((c) => `forma-${c}`),
   'sem-forma',
 ] as const
 
@@ -629,7 +613,8 @@ export const ORDEM_FORMA_DE_PAGAMENTO = [
  * é BOLETO, se o ERP já associou o boleto DDA — "boleto sem DDA" é o caso que sai sem barras.
  * "boleto com DDA" exige o Conexos dizer BOLETO. Sem forma no Conexos (título fora do grid de
  * pendentes — bloqueado, já num lote nativo — ou com "Pago Por" vazio no ERP), a linha diz
- * "sem forma no Conexos", com a marca de DDA se houver boleto associado.
+ * "sem forma no Conexos", com a marca de DDA se houver boleto associado. Código que o ERP mandou
+ * mas não está na tabela (novo no Conexos) vira "código N" — chip próprio, nunca "sem forma".
  */
 export function formaDePagamento(
   t: Pick<TituloAPagar, 'formaPagamentoConexos' | 'temBoleto'>,
@@ -642,10 +627,10 @@ export function formaDePagamento(
       ? { chave: 'boleto-com-dda', rotulo: 'boleto com DDA', tom: 'dda' }
       : { chave: 'boleto-sem-dda', rotulo: 'boleto sem DDA', tom: 'alerta' }
   }
-  const rotulo = forma != null ? FORMA_ROTULO_TABELA[forma] : undefined
-  if (rotulo === undefined) {
+  if (forma == null) {
     return { chave: 'sem-forma', rotulo: 'sem forma no Conexos', tom: 'neutro', ...marcaDda }
   }
+  const rotulo = FORMA_CONEXOS_ROTULO[forma] ?? `código ${forma}`
   return { chave: `forma-${forma}`, rotulo, tom: 'neutro', ...marcaDda }
 }
 
