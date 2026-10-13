@@ -354,6 +354,8 @@ export default class EnvironmentProvider {
             sispagCadastroFilCod: this.readFilCod('SISPAG_CADASTRO_FIL_COD', 1),
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
+            sispagLotesSyncTtlMin: this.readMinutos('SISPAG_LOTES_SYNC_TTL_MIN', 30),
+            sispagLotesSyncCooldownMin: this.readMinutos('SISPAG_LOTES_SYNC_COOLDOWN_MIN', 5),
             sispagVerificacao: this.resolveSispagVerificacao(),
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))
@@ -449,6 +451,8 @@ export default class EnvironmentProvider {
             sispagCadastroFilCod: this.readFilCod('SISPAG_CADASTRO_FIL_COD', 1),
             sispagCarteiraTtlMin: this.readMinutos('SISPAG_CARTEIRA_TTL_MIN', 30),
             sispagCarteiraCooldownMin: this.readMinutos('SISPAG_CARTEIRA_COOLDOWN_MIN', 5),
+            sispagLotesSyncTtlMin: this.readMinutos('SISPAG_LOTES_SYNC_TTL_MIN', 30),
+            sispagLotesSyncCooldownMin: this.readMinutos('SISPAG_LOTES_SYNC_COOLDOWN_MIN', 5),
             sispagVerificacao: this.resolveSispagVerificacao(),
             solicitacaoNumerarioGcdCod: this.readEnv('SN_GCD_COD')
                 ? Number(this.readEnv('SN_GCD_COD'))

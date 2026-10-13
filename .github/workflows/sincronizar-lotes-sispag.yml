@@ -11,6 +11,11 @@ name: Sincronização de status dos lotes SISPAG
 # Cadência: de hora em hora, dias úteis, no minuto :48, 11–22 UTC (08–19 BRT) — a janela em que a
 # analista baixa títulos e os retornos chegam. Cadência é configuração operacional, não regra.
 #
+# REDE DE SEGURANÇA, não fonte de frescor (ADR-0066): em out/2026 o GitHub rodou este schedule 2–3
+# vezes por dia, não 12. Quem mantém o status em dia é a tela: ao abrir, ela sincroniza se a última
+# passada tiver mais de 30 min (SISPAG_LOTES_SYNC_TTL_MIN), e "Sincronizar lotes" força uma. A
+# passada é a mesma, sob a mesma trava: se a tela de alguém estiver sincronizando, o job sai com 0.
+#
 # ⚠️ Credenciais: usa os MESMOS secrets CONEXOS_* dos outros crons. Em 23/09 eles estavam
 # desatualizados (Bad Credentials) e a ingestão fechou "success" com 0 títulos. Este job sai com
 # exit ≠ 0 quando nenhum título pôde ser lido, então o mesmo problema aqui fica VERMELHO.

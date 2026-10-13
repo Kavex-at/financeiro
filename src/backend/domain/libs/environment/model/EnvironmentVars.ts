@@ -218,6 +218,14 @@ export default class EnvironmentVars {
     public sispagCarteiraTtlMin: number;
     public sispagCarteiraCooldownMin: number;
     /**
+     * Lotes SISPAG ao abrir a tela (ADR-0066). `sispagLotesSyncTtlMin`
+     * (`SISPAG_LOTES_SYNC_TTL_MIN`, default 30): passada completa de L11 mais nova que isto não é
+     * refeita. `sispagLotesSyncCooldownMin` (`SISPAG_LOTES_SYNC_COOLDOWN_MIN`, default 5): depois
+     * de uma passada que falhou, a abertura não tenta de novo antes disto.
+     */
+    public sispagLotesSyncTtlMin: number;
+    public sispagLotesSyncCooldownMin: number;
+    /**
      * Verificação TED/PIX (ADR-0063) — configuração do TENANT, não ontologia. Defaults da
      * Columbia medidos nas probes de 2026-10-05; valor inválido volta ao default.
      */
@@ -326,6 +334,8 @@ export default class EnvironmentVars {
         sispagCadastroFilCod,
         sispagCarteiraTtlMin,
         sispagCarteiraCooldownMin,
+        sispagLotesSyncTtlMin,
+        sispagLotesSyncCooldownMin,
         sispagVerificacao,
         solicitacaoNumerarioGcdCod,
         solicitacaoNumerarioGcdCodPorFilial,
@@ -373,6 +383,8 @@ export default class EnvironmentVars {
         sispagCadastroFilCod?: number;
         sispagCarteiraTtlMin?: number;
         sispagCarteiraCooldownMin?: number;
+        sispagLotesSyncTtlMin?: number;
+        sispagLotesSyncCooldownMin?: number;
         sispagVerificacao?: SispagVerificacaoConfig;
         solicitacaoNumerarioGcdCod: number;
         solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
@@ -422,6 +434,8 @@ export default class EnvironmentVars {
         this.sispagCadastroFilCod = sispagCadastroFilCod ?? 1;
         this.sispagCarteiraTtlMin = sispagCarteiraTtlMin ?? 30;
         this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
+        this.sispagLotesSyncTtlMin = sispagLotesSyncTtlMin ?? 30;
+        this.sispagLotesSyncCooldownMin = sispagLotesSyncCooldownMin ?? 5;
         this.sispagVerificacao = sispagVerificacao ?? { ...SISPAG_VERIFICACAO_DEFAULT };
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};

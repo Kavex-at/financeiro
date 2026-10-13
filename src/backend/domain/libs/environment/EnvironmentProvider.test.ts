@@ -241,6 +241,26 @@ describe('EnvironmentProvider', () => {
             delete process.env.SISPAG_CARTEIRA_COOLDOWN_MIN;
         });
 
+        it('lotes SISPAG ao abrir a tela (ADR-0066): TTL 30 e cooldown 5 por default; inválido/≤0 volta ao default', async () => {
+            const ler = async () => {
+                const v = await new EnvironmentProvider().getEnvironmentVars();
+                return [v.sispagLotesSyncTtlMin, v.sispagLotesSyncCooldownMin];
+            };
+            delete process.env.SISPAG_LOTES_SYNC_TTL_MIN;
+            delete process.env.SISPAG_LOTES_SYNC_COOLDOWN_MIN;
+            expect(await ler()).toEqual([30, 5]);
+            process.env.SISPAG_LOTES_SYNC_TTL_MIN = '15';
+            process.env.SISPAG_LOTES_SYNC_COOLDOWN_MIN = '2';
+            expect(await ler()).toEqual([15, 2]);
+            for (const lixo of ['abc', '0', '-10', 'NaN']) {
+                process.env.SISPAG_LOTES_SYNC_TTL_MIN = lixo;
+                process.env.SISPAG_LOTES_SYNC_COOLDOWN_MIN = lixo;
+                expect(await ler()).toEqual([30, 5]);
+            }
+            delete process.env.SISPAG_LOTES_SYNC_TTL_MIN;
+            delete process.env.SISPAG_LOTES_SYNC_COOLDOWN_MIN;
+        });
+
         it('filial de leitura do cadastro (ADR-0065): default 1; inválido volta ao default', async () => {
             const ler = async () =>
                 (await new EnvironmentProvider().getEnvironmentVars()).sispagCadastroFilCod;

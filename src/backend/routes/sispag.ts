@@ -40,7 +40,7 @@ import {
 import TitulosAPagarExportService from '../domain/service/sispag/TitulosAPagarExportService.js';
 import { MAX_TITULOS_EXPORT } from '../domain/interface/sispag/TitulosAPagarExport.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
-import SincronizacaoLoteService from '../domain/service/sispag/SincronizacaoLoteService.js';
+import SincronizacaoPassadaService from '../domain/service/sispag/SincronizacaoPassadaService.js';
 import { PERMISSION } from '../domain/interface/auth/Permission.js';
 import { DUPLICATE_ACTION } from '../domain/interface/sispag/SispagInterface.js';
 import DuplicateResolutionService from '../domain/service/sispag/DuplicateResolutionService.js';
@@ -361,42 +361,51 @@ router.post(
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     (_req: Request, res: Response) => {
         res.status(410).json({
-            error: 'A marcação manual de retorno foi descontinuada. Use "Sincronizar agora" no card do lote: o status passa a seguir a baixa dos títulos no Conexos.',
+            error: 'A marcação manual de retorno foi descontinuada. Use "Sincronizar lotes" no topo da tela: o status passa a seguir a baixa dos títulos no Conexos.',
             code: 'LOTE_RETORNO_MANUAL_APOSENTADO',
         });
     },
 );
 
-// POST /sispag/lotes/:id/sincronizar — "Sincronizar agora" (L11, ADR-0055). admin.
-// READ-ONLY no ERP: lê o título (fin064), o retorno (fin052) e as baixas (PSQ_018) e grava só o
-// que observou. 404 lote inexistente · 409 conflito de versão ou lote fora de REMESSA_GERADA/
-// RETORNADO/BAIXADO (convenção dos erros de lote).
-const loteIdSchema = z.object({ id: z.string().uuid() });
+// POST /sispag/lotes/:id/sincronizar — o "Sincronizar agora" POR LOTE saiu (ADR-0066): a
+// sincronização é sempre a passada completa (`/lotes/sincronizar`, abaixo). 410 (e não 404) para
+// quem ainda tiver a tela antiga em cache saber o motivo.
 router.post(
     '/lotes/:id/sincronizar',
-    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    (_req: Request, res: Response) => {
+        res.status(410).json({
+            error: 'A sincronização por lote foi descontinuada. Use "Sincronizar lotes" no topo da tela: ela atualiza todos os lotes de uma vez.',
+            code: 'LOTE_SINCRONIZACAO_POR_LOTE_APOSENTADA',
+        });
+    },
+);
+
+// POST /sispag/lotes/sincronizar-se-defasado — a tela chama ao abrir, DEPOIS da carteira
+// (ADR-0066): se a última passada completa de L11 tem mais que o TTL (30 min), roda uma; senão
+// devolve `fresca` sem tocar o Conexos. `sispag:ver` basta: L11 só LÊ o ERP (I11a).
+// Contenção vira `em_andamento`, nunca 409.
+router.post(
+    '/lotes/sincronizar-se-defasado',
+    exigirPermissao(PERMISSION.SISPAG_VER),
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const parsed = loteIdSchema.safeParse(req.params);
-        if (!parsed.success) {
-            res.status(400).json({ error: 'invalid lote id', details: parsed.error.flatten() });
-            return;
-        }
-        const service = container.resolve(SincronizacaoLoteService);
-        try {
-            const sincronizado = await service.sincronizarLote(parsed.data.id);
-            if (!sincronizado) {
-                res.status(404).json({ error: 'lote not found' });
-                return;
-            }
-            res.json({
-                lote: apiView().lote(sincronizado.lote),
-                resumo: sincronizado.resultado,
-            });
-        } catch (err) {
-            if (!respondLoteError(req, res, err)) throw err;
-        }
+        const service = container.resolve(SincronizacaoPassadaService);
+        res.json(await service.sincronizarSeDefasada({ triggeredBy: `abertura:${ator(req)}` }));
+    }),
+);
+
+// POST /sispag/lotes/sincronizar — "Sincronizar lotes" da tela (ADR-0066): força a passada
+// completa (ignora TTL e cooldown) e respeita "uma por vez" (`em_andamento`). `sispag:ver`.
+router.post(
+    '/lotes/sincronizar',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(SincronizacaoPassadaService);
+        res.json(await service.forcar({ triggeredBy: `manual:${ator(req)}` }));
     }),
 );
 

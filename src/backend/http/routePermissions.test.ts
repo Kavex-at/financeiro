@@ -95,7 +95,9 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     // L7 aposentada (ADR-0055): a rota continua montada, guardada, e responde 410 Gone.
     ['POST /sispag/lotes/:id/retorno', P.SISPAG_EXECUTAR],
     // L11 "Sincronizar agora" (ADR-0055): mesmo nível de finalizar/reabrir.
-    ['POST /sispag/lotes/:id/sincronizar', P.SISPAG_EXECUTAR],
+    ['POST /sispag/lotes/:id/sincronizar', P.SISPAG_VER],
+    ['POST /sispag/lotes/sincronizar-se-defasado', P.SISPAG_VER],
+    ['POST /sispag/lotes/sincronizar', P.SISPAG_VER],
     ['POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade', P.SISPAG_EXECUTAR],
     // ADR-0063 — verificação TED/PIX e bloqueio por duplicidade
     [
@@ -240,11 +242,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino): 27/45/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino; + sincronização dos lotes ao abrir e botão único, ADR-0066): 27/47/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(45);
+        expect(porMount('sispag')).toBe(47);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);
