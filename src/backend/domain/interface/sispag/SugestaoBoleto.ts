@@ -105,3 +105,58 @@ export interface AvaliacaoSugestao {
     /** Só os três tiers são confirmáveis; vencido e sem relação não. */
     confirmavel: boolean;
 }
+
+/** Chave de um boleto do pool `fin124`. */
+export interface ChaveBoletoDda {
+    ddcCod: number;
+    ditCod: number;
+}
+
+/** Decisão por título já registrada (a chave do título + a do boleto). */
+export interface DecisaoChaveada extends ChaveBoletoDda {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+}
+
+/** Par (credor, emissor) `VIGENTE`. */
+export interface ParVigenteChave {
+    pesCod: string;
+    emissorChave: string;
+}
+
+/** Estado da sugestão devolvida para um título. */
+export const ESTADO_SUGESTAO = {
+    /** Proposta pelo motor; nenhuma decisão registrada. */
+    SUGERIDA: 'SUGERIDA',
+    /** O analista já a confirmou (decisão `CONFIRMADA` ativa). */
+    CONFIRMADA: 'CONFIRMADA',
+} as const;
+export type EstadoSugestao = (typeof ESTADO_SUGESTAO)[keyof typeof ESTADO_SUGESTAO];
+
+/**
+ * Sugestão por título (I15c). NUNCA carrega as barras nem a linha digitável: o emissor sai
+ * mascarado e a linha só é obtida pelo endpoint de cópia, auditado (I15k).
+ */
+export interface SugestaoBoletoTitulo {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    pesCod?: string;
+    credor?: string;
+    valorTitulo: number;
+    /** Data civil `YYYY-MM-DD`. */
+    vencimentoTitulo: string;
+    /** Data de débito considerada: a do lote (I8) ou, sem lote, o vencimento do título (Q-C). */
+    dataDebito: string;
+    ddcCod: number;
+    ditCod: number;
+    numeroBoleto?: string;
+    valorBoleto: number;
+    vencimentoBoleto: string;
+    emissor?: EmissorBoleto;
+    avaliacao: AvaliacaoSugestao;
+    estado: EstadoSugestao;
+    /** Motivo legível (pt-BR) quando a sugestão é só informativa. */
+    motivo?: string;
+}
