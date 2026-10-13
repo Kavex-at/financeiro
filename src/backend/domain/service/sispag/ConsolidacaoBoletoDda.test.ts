@@ -4,10 +4,15 @@ import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
+import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 
 // "Hoje" = 23/09/2026 12h em Brasília.
 const calendar = BankingCalendar.withClock(() => new Date('2026-09-23T15:00:00Z'));
-const consolidacao = new ConsolidacaoBoletoDda(new CodigoBarrasBoleto(), calendar);
+const consolidacao = new ConsolidacaoBoletoDda(
+    new CodigoBarrasBoleto(),
+    calendar,
+    new RegraSugestaoBoleto(),
+);
 
 const utc = (civil: string): number => Date.parse(`${civil}T00:00:00Z`);
 
@@ -89,17 +94,88 @@ describe('ConsolidacaoBoletoDda', () => {
         ]);
     });
 
-    it('fora da janela, valor diferente ou título pago → SEM_TITULO', () => {
+    it('valor longe, título pago ou boleto além de +5 dias → SEM_TITULO', () => {
         const resultado = consolidacao.consolidar({
             boletos: [boleto({ valor: 100, vencimento: '2026-09-25' })],
             titulos: [
-                titulo({ docCod: 'longe', valor: 100, vencimento: utc('2026-09-21') }),
-                titulo({ docCod: 'centavo', valor: 100.01, vencimento: utc('2026-09-25') }),
+                // +7 dias: além do limite seguro (era "fora da janela ±3")
+                titulo({ docCod: 'longe', valor: 100, vencimento: utc('2026-09-18') }),
+                // R$ 5,00 de diferença: fora do limite de R$ 0,05
+                titulo({ docCod: 'valor', valor: 105, vencimento: utc('2026-09-25') }),
                 titulo({ docCod: 'pago', valor: 100, vencimento: utc('2026-09-25'), pago: true }),
             ],
             titulosEmLote: [],
         });
         expect(resultado[0]).toMatchObject({ situacao: 'SEM_TITULO', candidatos: [] });
+    });
+
+    it('REGRA EM CAMADAS: R$ 0,01 de diferença no mesmo dia passa a ser candidato FORTE (antes SEM_TITULO)', () => {
+        const [linha] = consolidacao.consolidar({
+            boletos: [boleto({ valor: 93.41, vencimento: '2026-09-25' })],
+            titulos: [titulo({ docCod: 'NELSON', valor: 93.4, vencimento: utc('2026-09-25') })],
+            titulosEmLote: [],
+        });
+        expect(linha.situacao).toBe('CANDIDATO');
+        expect(linha.candidatos[0]).toMatchObject({
+            docCod: 'NELSON',
+            tier: 'FORTE',
+            deltaValor: 0.01,
+            diferencaDias: 0,
+        });
+    });
+
+    it('REGRA EM CAMADAS: boleto de 1 a 3 dias ANTES do título não é mais candidato, vira informativo', () => {
+        for (const dias of [1, 2, 3]) {
+            const [linha] = consolidacao.consolidar({
+                boletos: [boleto({ valor: 100, vencimento: `2026-09-${25 - dias}` })],
+                titulos: [titulo({ docCod: 'T', valor: 100, vencimento: utc('2026-09-25') })],
+                titulosEmLote: [],
+            });
+            expect(linha.situacao).toBe('SEM_TITULO');
+            expect(linha.candidatos).toEqual([]);
+            expect(linha.informativos?.[0]).toMatchObject({
+                docCod: 'T',
+                tier: 'VENCIDO_INFORMATIVO',
+                diferencaDias: -dias,
+            });
+        }
+    });
+
+    it('REGRA EM CAMADAS: com lote pagando antes do vencimento do título, 1 dia antes é só ATENCAO', () => {
+        const [linha] = consolidacao.consolidar({
+            boletos: [boleto({ valor: 100, vencimento: '2026-09-24' })],
+            titulos: [titulo({ docCod: 'T', valor: 100, vencimento: utc('2026-09-25') })],
+            titulosEmLote: [
+                {
+                    filCod: 1,
+                    docCod: 'T',
+                    titCod: '1',
+                    loteId: 'L',
+                    status: 'RASCUNHO',
+                    dataDebito: '2026-09-23',
+                },
+            ],
+        });
+        expect(linha.situacao).toBe('SEM_TITULO');
+        expect(linha.informativos?.[0]).toMatchObject({ tier: 'ATENCAO', diferencaDias: -1 });
+    });
+
+    it('PEDRONI 34697/1: boleto 1 dia DEPOIS continua candidato (caso de 2026-09-23)', () => {
+        const [linha] = consolidacao.consolidar({
+            boletos: [boleto({ valor: 1412, vencimento: '2026-09-24' })],
+            titulos: [
+                titulo({
+                    filCod: 2,
+                    docCod: '34697',
+                    credor: 'PEDRONI',
+                    valor: 1412,
+                    vencimento: utc('2026-09-23'),
+                }),
+            ],
+            titulosEmLote: [],
+        });
+        expect(linha.situacao).toBe('CANDIDATO');
+        expect(linha.candidatos[0]).toMatchObject({ docCod: '34697', diferencaDias: 1 });
     });
 
     it('vínculo gravado pelo Conexos → VINCULADO, e o título não vira candidato de outro boleto', () => {

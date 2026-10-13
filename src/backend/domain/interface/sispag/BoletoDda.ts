@@ -45,7 +45,8 @@ export interface BoletoDda extends ItemDda {
 /**
  * Situação do boleto frente à carteira.
  * - VINCULADO:  o Conexos já ligou o boleto a um título.
- * - CANDIDATO:  livre, e exatamente UM título aberto tem o mesmo valor com vencimento na janela.
+ * - CANDIDATO:  livre, e exatamente UM título aberto cai nos limites seguros da regra em camadas
+ *               (|Δvalor| ≤ R$ 0,05 no mesmo dia, ou valor igual e boleto 1–5 dias depois).
  * - AMBIGUO:    livre, e MAIS de um título casa (cobrança recorrente de mesmo valor).
  * - SEM_TITULO: livre, e nenhum título aberto casa.
  */
@@ -77,6 +78,10 @@ export interface BoletoDdaTitulo {
     /** O Conexos sinaliza boleto DDA para este título (`tem_boleto` da carteira). */
     temBoletoDda?: boolean;
     lote?: BoletoDdaLoteRef;
+    /** Resultado da regra em camadas (ADR-0068, I15c) para este par título × boleto. */
+    tier?: 'FORTE' | 'ATENCAO' | 'VENCIDO_INFORMATIVO';
+    /** boleto − título, em reais, com sinal. */
+    deltaValor?: number;
 }
 
 /** Linha da aba "Boletos DDA". */
@@ -96,8 +101,13 @@ export interface BoletoDdaConsolidado {
     situacao: BoletoDdaSituacao;
     /** Presente só em VINCULADO. */
     vinculo?: BoletoDdaTitulo & { flpCod?: number };
-    /** Presente em CANDIDATO (1) e AMBIGUO (2+). */
+    /** Presente em CANDIDATO (1) e AMBIGUO (2+): dentro dos limites seguros da regra em camadas. */
     candidatos: BoletoDdaTitulo[];
+    /**
+     * Valor praticamente igual, mas data fora do limite seguro (vence antes do título/da data de
+     * débito, ou além de 5 dias): só informação, não conta para a situação (I15h).
+     */
+    informativos?: BoletoDdaTitulo[];
 }
 
 export const BOLETO_DDA_ESCOPO = {
@@ -120,7 +130,8 @@ export interface BoletosDdaResposta {
     filiais: number[];
     /** epoch ms da última sincronização com o fin124; ausente = nunca sincronizado. */
     sincronizadoEm?: number;
-    janelaDias: number;
+    /** Texto da regra de candidato vigente (vem das constantes de `RegraSugestaoBoleto`). */
+    regraCandidato: string;
 }
 
 export interface SincronizacaoDdaResultado {

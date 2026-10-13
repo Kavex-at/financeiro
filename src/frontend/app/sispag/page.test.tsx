@@ -317,7 +317,7 @@ describe('SispagPage — só sispag:ver', () => {
   })
 
   it('aba Boletos DDA aparece para quem só vê, mas sem "Atualizar DDA" (ADR-0053)', async () => {
-    ;(fetchBoletosDda as jest.Mock).mockResolvedValue({ boletos: [], total: 0, janelaDias: 3 })
+    ;(fetchBoletosDda as jest.Mock).mockResolvedValue({ boletos: [], total: 0, regraCandidato: '' })
     const user = userEvent.setup()
     await renderPainel()
     await user.click(screen.getByRole('tab', { name: /boletos dda/i }))

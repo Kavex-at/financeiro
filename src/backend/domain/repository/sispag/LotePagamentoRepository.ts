@@ -313,10 +313,19 @@ export default class LotePagamentoRepository {
      * num lote antigo que nunca gerou remessa).
      */
     public listTitulosEmLotesAbertos = async (): Promise<
-        Array<{ filCod: number; docCod: string; titCod: string; loteId: string; status: string }>
+        Array<{
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            loteId: string;
+            status: string;
+            /** Data de débito do lote (civil, `YYYY-MM-DD`), quando já definida. */
+            dataDebito?: string;
+        }>
     > => {
         const rows = (await this.databaseClient.selectMany(
-            `SELECT i.fil_cod, i.doc_cod, i.tit_cod, l.id AS lote_id, l.status
+            `SELECT i.fil_cod, i.doc_cod, i.tit_cod, l.id AS lote_id, l.status,
+                    to_char(l.data_debito, 'YYYY-MM-DD') AS data_debito
              FROM lote_pagamento_item i JOIN lote_pagamento l ON l.id = i.lote_id
              WHERE l.status <> 'CANCELADO'
              ORDER BY l.criado_em DESC`,
@@ -326,6 +335,7 @@ export default class LotePagamentoRepository {
             tit_cod: string;
             lote_id: string;
             status: string;
+            data_debito?: string | null;
         }>;
         return rows.map((r) => ({
             filCod: r.fil_cod,
@@ -333,6 +343,7 @@ export default class LotePagamentoRepository {
             titCod: r.tit_cod,
             loteId: r.lote_id,
             status: r.status,
+            ...(r.data_debito ? { dataDebito: String(r.data_debito) } : {}),
         }));
     };
 

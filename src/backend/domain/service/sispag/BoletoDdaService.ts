@@ -17,7 +17,8 @@ import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js'
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
-import ConsolidacaoBoletoDda, { JANELA_CANDIDATO_DIAS } from './ConsolidacaoBoletoDda.js';
+import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
+import { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import PaginacaoBoletoDda, {
     BOLETO_DDA_TAMANHO_PADRAO,
     type FiltroPaginaBoletoDda,
@@ -83,7 +84,7 @@ export default class BoletoDdaService {
         return {
             ...pagina,
             ...(sincronizadoEm != null ? { sincronizadoEm } : {}),
-            janelaDias: JANELA_CANDIDATO_DIAS,
+            regraCandidato: REGRA_CANDIDATO_TEXTO,
         };
     };
 

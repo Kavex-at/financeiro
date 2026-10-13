@@ -12,6 +12,7 @@ import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRep
 import type LogService from '../LogService.js';
 import BoletoDdaService from './BoletoDdaService.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
+import RegraSugestaoBoleto, { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import PaginacaoBoletoDda from './PaginacaoBoletoDda.js';
 
 const HOJE = new Date('2026-09-23T15:00:00Z');
@@ -44,7 +45,7 @@ const build = (lockLivre = true) => {
         {
             listTitulosEmLotesAbertos: jest.fn().mockResolvedValue([]),
         } as unknown as LotePagamentoRepository,
-        new ConsolidacaoBoletoDda(new CodigoBarrasBoleto(), calendar),
+        new ConsolidacaoBoletoDda(new CodigoBarrasBoleto(), calendar, new RegraSugestaoBoleto()),
         new PaginacaoBoletoDda(),
         calendar,
         new BoundedConcurrency(),
@@ -153,7 +154,7 @@ describe('BoletoDdaService', () => {
             contagem: { todas: 0, VINCULADO: 0, CANDIDATO: 0, AMBIGUO: 0, SEM_TITULO: 0 },
             filiais: [],
             sincronizadoEm: 123,
-            janelaDias: 3,
+            regraCandidato: REGRA_CANDIDATO_TEXTO,
         });
 
         await service.listar({ escopo: 'todos' });
