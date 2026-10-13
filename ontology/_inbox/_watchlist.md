@@ -163,3 +163,19 @@
   Se o cadastro expuser o documento do titular da conta, conta de terceiro (doc ≠ favorecido)
   poderia virar aviso forte na aprovação do `FavorecidoAutorizado`. Precisa de probe read-only no
   `ctcorr` antes de modelar. Revisitar no ciclo de implementação da ADR-0065.
+
+## 2026-10-14 — sispag-sugestao-boleto-dda (ADR-0068)
+
+- **Passo 2: bind do código de barras ao item do lote** — REJECT-PREMATURE. Precisa de credencial HML
+  própria (HML recusa o usuário de produção) e prova de `finItemSispag/validacao/codigoBarras` ou
+  `titulosPendentes/importar` + `FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO`. Estado
+  `APLICADO_NO_ERP` por instância só entra com a ADR do passo 2.
+- **Passo 3: automático para pares confirmados** — REJECT-PREMATURE. Exige segunda pessoa na primeira
+  vez que o par vira automático, tolerância por par (Q2c), exclusão de chave genérica (I15i).
+- **Layout de emissor para 104, 329, 422, 033** — REJECT-PREMATURE: 41 de 290 casos medidos
+  (104=17, 329=14, 422=7, 033=3); revisitar se algum passar de ~10 % ou aparecer em outro cliente.
+  Até lá, chave genérica, nunca elegível a automático.
+- **Universalidade de `ConfirmacaoEmissorBoleto`/`DecisaoSugestaoBoleto` com o Francinei** — 1 cliente
+  apenas (não bloqueante, como ADR-0065).
+- **Defaults revisáveis (orquestrador)**: data de débito sem lote = vencimento; disputa por menor
+  vencimento/menor docCod; vencido não confirmável no passo 1. Revisitar com uso real.

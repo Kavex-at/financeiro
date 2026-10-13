@@ -43,7 +43,8 @@ relationships:
   - "TituloAPagar N—1 LotePagamento (via ItemLote — um título elegível pode ser incluído em um lote candidato RASCUNHO)"
   - "TituloAPagar 1—0..N BloqueioDuplicidade (no máximo 1 ATIVO; retirado de lote por duplicidade, cancelamento pendente no Conexos; ADR-0063)"
   - "TituloAPagar 1—1 (contexto) Borderô a-pagar / Lote SISPAG nativos (fin010/fin015 — leitura de contexto no painel, não vínculo próprio)"
-last_review: 2026-10-05
+  - "TituloAPagar 0..N—N DecisaoSugestaoBoleto (decisão humana sobre qual boleto livre do fin124 é o deste título; não altera o título nem `temBoleto`, I15a; ADR-0068, planned)"
+last_review: 2026-10-14
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -142,6 +143,9 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 - **O código de barras em si não é persistido** (nem existe do nosso lado). Quem o anexa ao item
   é o ERP, no import, quando pedimos a associação. Ver ADR-0040 e
   `business-rules/boleto-exige-codigo-de-barras.md`.
+- **`temBoleto` continua sendo SÓ o flag do ERP.** Uma confirmação de emissor ou uma decisão por
+  título (`DecisaoSugestaoBoleto`, ADR-0068, planned) é exibida **ao lado**, como informativo, nunca no
+  lugar do flag e sem nenhuma propriedade nova persistida em `titulo_a_pagar`.
 
 ## `prontoParaRemessa` — heurística INFORMATIVA (não-autoritativa)
 
