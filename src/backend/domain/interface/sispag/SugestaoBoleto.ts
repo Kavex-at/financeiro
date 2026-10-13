@@ -32,3 +32,76 @@ export interface EmissorBoleto {
     /** Exibição: banco e agência completos, conta com os 4 últimos dígitos (padrão I14l). */
     mascarado: string;
 }
+
+/**
+ * Tiers da sugestão, do mais ao menos forte (I15c):
+ * - CONHECIDO: par (pesCod, emissorChave) VIGENTE e dentro dos limites globais;
+ * - FORTE:     dentro dos limites globais, candidato único nos dois sentidos;
+ * - ATENCAO:   fora dos limites globais — mostrada com a diferença com sinal, nunca como segura.
+ */
+export const TIER_SUGESTAO = {
+    CONHECIDO: 'CONHECIDO',
+    FORTE: 'FORTE',
+    ATENCAO: 'ATENCAO',
+} as const;
+export type TierSugestao = (typeof TIER_SUGESTAO)[keyof typeof TIER_SUGESTAO];
+
+/** Resultado da avaliação de um par título × boleto: um tier, ou um dos dois não-tiers. */
+export const RESULTADO_SUGESTAO = {
+    ...TIER_SUGESTAO,
+    /** Boleto que vence antes da data de débito (I15h): só informação, nunca confirmável. */
+    VENCIDO_INFORMATIVO: 'VENCIDO_INFORMATIVO',
+    /** Fora do envelope de plausibilidade: não é candidato. */
+    SEM_RELACAO: 'SEM_RELACAO',
+} as const;
+export type ResultadoSugestao = (typeof RESULTADO_SUGESTAO)[keyof typeof RESULTADO_SUGESTAO];
+
+/** Sinais de evidência exibidos e gravados com a decisão. */
+export const SINAL_SUGESTAO = {
+    VALOR_IGUAL: 'VALOR_IGUAL',
+    VALOR_ATE_5_CENTAVOS: 'VALOR_ATE_5_CENTAVOS',
+    MESMO_DIA: 'MESMO_DIA',
+    DIAS_DEPOIS: 'DIAS_DEPOIS',
+    NUMERO_IGUAL: 'NUMERO_IGUAL',
+    /** Número igual com valor/data fora dos limites (I15f): não sobe o tier. */
+    COLISAO_NUMERO: 'COLISAO_NUMERO',
+    EMISSOR_CONFIRMADO: 'EMISSOR_CONFIRMADO',
+} as const;
+export type SinalSugestao = (typeof SINAL_SUGESTAO)[keyof typeof SINAL_SUGESTAO];
+
+/** Lado do título na avaliação. Datas civis `YYYY-MM-DD`, valores em reais. */
+export interface TituloParaSugestao {
+    valor: number;
+    vencimento: string;
+    /** `doc_esp_numero` do fornecedor. */
+    numeroDocumento?: string;
+}
+
+/** Lado do boleto na avaliação. */
+export interface BoletoParaSugestao {
+    valor: number;
+    vencimento: string;
+    numero?: string;
+}
+
+export interface AvaliacaoSugestaoEntrada {
+    titulo: TituloParaSugestao;
+    boleto: BoletoParaSugestao;
+    /** Data de débito: a do lote quando existe (I8); sem lote, o vencimento do título (Q-C). */
+    dataDebito: string;
+    /** Há par `VIGENTE` para (pesCod, emissorChave) deste boleto. */
+    parConfirmado: boolean;
+}
+
+export interface AvaliacaoSugestao {
+    resultado: ResultadoSugestao;
+    /** boleto − título, em reais (2 casas). */
+    deltaValor: number;
+    /** (boleto − título) / título × 100, com sinal. */
+    deltaPercentual: number;
+    /** vencimento do boleto − vencimento do título, em dias, com sinal. */
+    deltaDias: number;
+    sinais: SinalSugestao[];
+    /** Só os três tiers são confirmáveis; vencido e sem relação não. */
+    confirmavel: boolean;
+}
