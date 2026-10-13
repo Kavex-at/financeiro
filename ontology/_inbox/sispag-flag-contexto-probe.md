@@ -64,6 +64,44 @@ contextos × 3 filiais ≈ 70–100 chamadas seriais. Login do robô com `sessio
 viva do CLONEX; o app e os crons relogam sozinhos (ver `probe-local-derruba-sessao-conexos`). Rodar
 fora do horário de ingestão (07h/12h/16h BRT) e da formação de lotes.
 
+## Resultado (PRD, 2026-10-13, filiais 2/4/6)
+
+**H0 confirmada: o flag NÃO depende do contexto.** 10 contextos lidos (bancos 4 e 10; contas 1, 2 e 8;
+lotes rascunho, finalizado e `status 3`; débitos de 24/02 a 14/10): **0 títulos instáveis**, 0 campos do
+`raw` que mudam, mesmo conjunto de títulos (a única diferença é 1 título novo na fil 4 entre leituras).
+
+| Filial | Contextos | Títulos | Flagados (sempre) | Instáveis |
+|---|---|---|---|---|
+| 2 | 5 | 1863 | 160 | 0 |
+| 4 | 3 | 846 | 60 | 0 |
+| 6 | 2 | 610 | 80 | 0 |
+
+- **Cruzamento com o banco:** dos 200 candidatos "mesmo valor+dia, livres, sem flag" (123 + 16 + 61),
+  **0** aparecem flagados em algum contexto. E nenhum título sem flag no banco aparece flagado no ERP:
+  o `tem_boleto` da carteira **bate com o ERP** (a leitura da ingestão está correta).
+- **O grid não expõe a associação:** campos DDA-like são só `titVldReflexoDdaAssoc` (160/1863),
+  `titVldReflexoDdaDesassoc` (0/N) e `titEspCodbar` (0/N). Não há id/número do boleto no grid.
+- **Limite do teste:** só os bancos 4 (Itaú) e 10 (fil 2) têm lote nativo; os outros ~13 bancos de cada
+  filial não têm `flpCod` para a URL e não puderam ser testados.
+- **Observação:** os flagados são quase todos títulos com vencimento ≥ a data de débito do lote
+  (ex. 160/1552 contra 0/311 no lote de 24/02) — consequência do pool só ter boletos a vencer, não um
+  efeito do contexto (o total flagado é idêntico em todos).
+
+### O que sobrou (offline, mesmo dia)
+
+Entre os pares valor+dia únicos (178 flagados, 146 sem flag), o sem-flag é **por credor+filial**, não
+por título: MULTILOG BRASIL f2 (61), TRANSMAGNA f6 (16), SANTOS BRASIL f6 (12), MULTILOG COMÉRCIO f2/f6 (8)
+têm 0 flagados e **uma única conta emissora**. O único caso misto, **MULTILOG S/A f2** (53 flagados, 22
+sem flag, mesma conta emissora Bradesco ag 2656 cc 6500), se separa pela **série do número do boleto**:
+flagados `0315xx000`/`0318xx000`, sem flag `74xx000`/`7480000`. Conta emissora, valor e dia iguais.
+
+Leitura: a regra de associação do ERP olha algo que o pool e o grid não mostram (entidade emissora /
+beneficiário, ou o número do documento). **Próximo passo** (HML, escrita controlada): importar num lote
+de teste um título candidato sem flag com `titVldReflexoDdaAssoc = 1` e ver se o ERP responde à
+pergunta `FIN_041.EXISTE_CODIGO_BARRAS_ASSOCIADO_TITULO` e anexa as barras — isto é, se a associação
+acontece no import mesmo com o flag do grid em 0. Em paralelo, perguntar à analista da Columbia como ela
+associa hoje os boletos MULTILOG manualmente.
+
 ## Limites
 
 - Só vê contextos que **existem**: bancos sem lote nativo na filial não têm `flpCod` para a URL.

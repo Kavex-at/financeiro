@@ -53,6 +53,15 @@ if (!BASE.includes('-hml') && process.env.PROBE_PRD !== '1') {
     console.error(`RECUSADO: base não é HML (${BASE}). Para PRD (read-only) passe PROBE_PRD=1.`);
     process.exit(1);
 }
+/**
+ * URL do Postgres só para o cruzamento (read-only). Com `PROBE_DB_FROM_ENV=1` vem do .env e a
+ * variável que o container usa para persistir a sessão do robô é ESVAZIADA antes do bootstrap:
+ * o login desta sonda não pode ser gravado no banco (contaminação de sessão).
+ */
+const DB_URL =
+    process.env.PROBE_DB_URL ??
+    (process.env.PROBE_DB_FROM_ENV === '1' ? process.env.databaseConnectionString : undefined);
+if (process.env.PROBE_DB_FROM_ENV === '1') process.env.databaseConnectionString = '';
 const OUT = process.env.PROBE_OUT ?? '/tmp/probe-flag-contexto';
 const FILIAIS = (process.env.PROBE_FILIAIS ?? '2,4,6')
     .split(',')
@@ -298,7 +307,7 @@ function analisar(filCod: number, leituras: Leitura[]): Row {
 
 /** Cruza com o Postgres: dos candidatos "mesmo valor+dia, livres, sem flag", quantos o ERP flaga em algum contexto? */
 async function cruzarComBanco(leiturasPorFilial: Map<number, Leitura[]>): Promise<Row[]> {
-    const url = process.env.PROBE_DB_URL;
+    const url = DB_URL;
     if (!url) return [];
     const db = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
     await db.connect();
