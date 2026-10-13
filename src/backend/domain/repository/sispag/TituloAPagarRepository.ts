@@ -168,6 +168,26 @@ export default class TituloAPagarRepository {
     };
 
     /**
+     * Um título pela chave natural (ativo ou não) — releitura pontual do passo de confirmação do
+     * boleto sugerido (ADR-0068, anti-TOCTOU). `ativo = false` volta mapeado com `ativo: false`.
+     */
+    public buscarPorChave = async (chave: {
+        filCod: number;
+        docCod: string;
+        titCod: string;
+    }): Promise<TituloAPagar | null> => {
+        const row = await this.databaseClient.selectFirst<TituloRow & { ativo: boolean }>(
+            `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
+                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
+                    forma_pagamento_conexos, doc_esp_numero, ativo
+             FROM titulo_a_pagar
+             WHERE fil_cod = $filCod AND doc_cod = $docCod AND tit_cod = $titCod`,
+            chave,
+        );
+        return row ? { ...this.map(row), ativo: row.ativo } : null;
+    };
+
+    /**
      * Chaves `filCod:docCod:titCod` dos títulos ATIVOS que têm boleto DDA associado.
      *
      * Serve o painel sem ir ao ERP: a ingestão já resolveu isso na última rodada (≤ 24 h) e

@@ -164,4 +164,43 @@ describe('TituloAPagarRepository', () => {
         );
         expect(sql).toMatch(/b\.fil_cod = t\.fil_cod AND b\.doc_cod = t\.doc_cod/);
     });
+
+    it('buscarPorChave: parametrizado, devolve o título com a marca ativo e null quando não existe', async () => {
+        const selectFirst = jest
+            .fn()
+            .mockResolvedValueOnce({
+                fil_cod: 2,
+                doc_cod: '100',
+                tit_cod: '1',
+                credor: null,
+                pes_cod: '7001',
+                valor: '500.00',
+                moeda: null,
+                vencimento: null,
+                aprovado: true,
+                pago: false,
+                banco: null,
+                num_remessa: null,
+                tpd_cod: null,
+                pronto_para_remessa: null,
+                tem_boleto: false,
+                forma_pagamento_conexos: 6,
+                doc_esp_numero: 'NF9',
+                ativo: false,
+            })
+            .mockResolvedValueOnce(null);
+        const client = { selectFirst } as unknown as PostgreeDatabaseClient;
+        const repo = new TituloAPagarRepository(client);
+        const chave = { filCod: 2, docCod: '100', titCod: '1' };
+        const t = await repo.buscarPorChave(chave);
+        expect(selectFirst.mock.calls[0][0]).toMatch(/fil_cod = \$filCod AND doc_cod = \$docCod/);
+        expect(selectFirst.mock.calls[0][1]).toEqual(chave);
+        expect(t).toMatchObject({
+            pesCod: '7001',
+            valor: 500,
+            ativo: false,
+            numeroDocumento: 'NF9',
+        });
+        expect(await repo.buscarPorChave(chave)).toBeNull();
+    });
 });

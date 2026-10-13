@@ -1,0 +1,285 @@
+import { z } from 'zod';
+import {
+    LAYOUT_EMISSOR,
+    SINAL_SUGESTAO,
+    TIER_SUGESTAO,
+    type LayoutEmissor,
+    type SinalSugestao,
+    type TierSugestao,
+} from './SugestaoBoleto.js';
+
+/**
+ * Persistência da confirmação de emissor e das decisões por título (ADR-0068, I15; migration
+ * 0084). EVIDÊNCIA, não autoridade: nada aqui altera `temBoleto`, lote nem Conexos (I15a/b).
+ * Nenhuma estrutura guarda as barras completas nem a linha digitável (I15k).
+ */
+
+export const ESTADO_CONFIRMACAO_EMISSOR = {
+    VIGENTE: 'VIGENTE',
+    REVOGADA: 'REVOGADA',
+} as const;
+export type EstadoConfirmacaoEmissor =
+    (typeof ESTADO_CONFIRMACAO_EMISSOR)[keyof typeof ESTADO_CONFIRMACAO_EMISSOR];
+
+export const DECISAO_SUGESTAO_BOLETO = {
+    CONFIRMADA: 'CONFIRMADA',
+    REJEITADA: 'REJEITADA',
+} as const;
+export type DecisaoSugestaoBoletoTipo =
+    (typeof DECISAO_SUGESTAO_BOLETO)[keyof typeof DECISAO_SUGESTAO_BOLETO];
+
+export const EVENTO_SUGESTAO_BOLETO = {
+    PAR_CONFIRMADO: 'PAR_CONFIRMADO',
+    DECISAO_CONFIRMADA: 'DECISAO_CONFIRMADA',
+    DECISAO_REJEITADA: 'DECISAO_REJEITADA',
+    PAR_REVOGADO: 'PAR_REVOGADO',
+    LINHA_COPIADA: 'LINHA_COPIADA',
+} as const;
+export type EventoSugestaoBoleto =
+    (typeof EVENTO_SUGESTAO_BOLETO)[keyof typeof EVENTO_SUGESTAO_BOLETO];
+
+/** Par (credor, emissor) — uso interno: `emissorChave` contém a conta completa. */
+export interface ConfirmacaoEmissor {
+    id: string;
+    pesCod: string;
+    credor?: string;
+    emissorChave: string;
+    layoutEmissor: LayoutEmissor;
+    bancoEmissor: string;
+    emissorMascarado: string;
+    estado: EstadoConfirmacaoEmissor;
+    evidencia: Record<string, unknown>;
+    confirmadoPor: string;
+    confirmadoEm: string;
+    revogadoPor?: string;
+    revogadoEm?: string;
+    motivoRevogacao?: string;
+    versao: number;
+}
+
+/** Projeção para a API: sem a chave do emissor (só a máscara) e com a marca de elegibilidade. */
+export type ConfirmacaoEmissorView = Omit<ConfirmacaoEmissor, 'emissorChave'> & {
+    /** `GENERICO` nunca é elegível a automático (I15i). */
+    elegivelAutomatico: boolean;
+};
+
+export interface DecisaoSugestao {
+    id: string;
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    pesCod: string;
+    credor?: string;
+    ddcCod: number;
+    ditCod: number;
+    numeroBoleto?: string;
+    codbarMascarado: string;
+    valorTitulo: number;
+    vencimentoTitulo: string;
+    valorBoleto: number;
+    vencimentoBoleto: string;
+    deltaValor: number;
+    deltaPercentual: number;
+    deltaDias: number;
+    sinais: SinalSugestao[];
+    tier?: TierSugestao;
+    emissorChave: string;
+    decisao: DecisaoSugestaoBoletoTipo;
+    decididoPor: string;
+    decididoEm: string;
+    motivo?: string;
+    confirmacaoEmissorId?: string;
+}
+
+export interface EventoSugestaoRegistro {
+    id: string;
+    tipo: EventoSugestaoBoleto;
+    ator: string;
+    ocorridoEm: string;
+    pesCod?: string;
+    emissorChave?: string;
+    filCod?: number;
+    docCod?: string;
+    titCod?: string;
+    ddcCod?: number;
+    ditCod?: number;
+    motivo?: string;
+    detalhe?: Record<string, unknown>;
+}
+
+// ── Linhas do banco (Zod no boundary; nulos viram ausência) ──────────────────────────────────
+
+const textoOpcional = z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => v ?? undefined);
+
+const dataIso = z
+    .union([z.date(), z.string()])
+    .transform((v) => (v instanceof Date ? v.toISOString() : v));
+
+const dataIsoOpcional = z
+    .union([z.date(), z.string()])
+    .nullable()
+    .optional()
+    .transform((v) => (v == null ? undefined : v instanceof Date ? v.toISOString() : v));
+
+/** `DATE` civil: o driver pode devolver `Date` (meia-noite local) ou `YYYY-MM-DD` (to_char). */
+const dataCivil = z.union([z.date(), z.string()]).transform((v) => {
+    if (typeof v === 'string') return v.slice(0, 10);
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+});
+
+const objeto = z
+    .record(z.unknown())
+    .nullable()
+    .optional()
+    .transform((v) => v ?? {});
+
+export const confirmacaoEmissorRowSchema = z
+    .object({
+        id: z.string(),
+        pes_cod: z.string(),
+        credor: textoOpcional,
+        emissor_chave: z.string(),
+        layout_emissor: z.enum([
+            LAYOUT_EMISSOR.ITAU_341,
+            LAYOUT_EMISSOR.BRADESCO_237,
+            LAYOUT_EMISSOR.GENERICO,
+        ]),
+        banco_emissor: z.string(),
+        emissor_mascarado: z.string(),
+        estado: z.enum([ESTADO_CONFIRMACAO_EMISSOR.VIGENTE, ESTADO_CONFIRMACAO_EMISSOR.REVOGADA]),
+        evidencia: objeto,
+        confirmado_por: z.string(),
+        confirmado_em: dataIso,
+        revogado_por: textoOpcional,
+        revogado_em: dataIsoOpcional,
+        motivo_revogacao: textoOpcional,
+        versao: z.coerce.number().int(),
+    })
+    .transform(
+        (r): ConfirmacaoEmissor => ({
+            id: r.id,
+            pesCod: r.pes_cod,
+            ...(r.credor ? { credor: r.credor } : {}),
+            emissorChave: r.emissor_chave,
+            layoutEmissor: r.layout_emissor,
+            bancoEmissor: r.banco_emissor,
+            emissorMascarado: r.emissor_mascarado,
+            estado: r.estado,
+            evidencia: r.evidencia,
+            confirmadoPor: r.confirmado_por,
+            confirmadoEm: r.confirmado_em,
+            ...(r.revogado_por ? { revogadoPor: r.revogado_por } : {}),
+            ...(r.revogado_em ? { revogadoEm: r.revogado_em } : {}),
+            ...(r.motivo_revogacao ? { motivoRevogacao: r.motivo_revogacao } : {}),
+            versao: r.versao,
+        }),
+    );
+
+const tierSchema = z
+    .enum([TIER_SUGESTAO.CONHECIDO, TIER_SUGESTAO.FORTE, TIER_SUGESTAO.ATENCAO])
+    .nullable()
+    .optional()
+    .transform((v) => v ?? undefined);
+
+const sinaisSchema = z
+    .array(z.nativeEnum(SINAL_SUGESTAO))
+    .nullable()
+    .optional()
+    .transform((v) => v ?? []);
+
+export const decisaoSugestaoRowSchema = z
+    .object({
+        id: z.string(),
+        fil_cod: z.coerce.number().int(),
+        doc_cod: z.string(),
+        tit_cod: z.string(),
+        pes_cod: z.string(),
+        credor: textoOpcional,
+        ddc_cod: z.coerce.number().int(),
+        dit_cod: z.coerce.number().int(),
+        numero_boleto: textoOpcional,
+        codbar_mascarado: z.string(),
+        valor_titulo: z.coerce.number(),
+        vencimento_titulo: dataCivil,
+        valor_boleto: z.coerce.number(),
+        vencimento_boleto: dataCivil,
+        delta_valor: z.coerce.number(),
+        delta_percentual: z.coerce.number(),
+        delta_dias: z.coerce.number().int(),
+        sinais: sinaisSchema,
+        tier: tierSchema,
+        emissor_chave: z.string(),
+        decisao: z.enum([DECISAO_SUGESTAO_BOLETO.CONFIRMADA, DECISAO_SUGESTAO_BOLETO.REJEITADA]),
+        decidido_por: z.string(),
+        decidido_em: dataIso,
+        motivo: textoOpcional,
+        confirmacao_emissor_id: textoOpcional,
+    })
+    .transform(
+        (r): DecisaoSugestao => ({
+            id: r.id,
+            filCod: r.fil_cod,
+            docCod: r.doc_cod,
+            titCod: r.tit_cod,
+            pesCod: r.pes_cod,
+            ...(r.credor ? { credor: r.credor } : {}),
+            ddcCod: r.ddc_cod,
+            ditCod: r.dit_cod,
+            ...(r.numero_boleto ? { numeroBoleto: r.numero_boleto } : {}),
+            codbarMascarado: r.codbar_mascarado,
+            valorTitulo: r.valor_titulo,
+            vencimentoTitulo: r.vencimento_titulo,
+            valorBoleto: r.valor_boleto,
+            vencimentoBoleto: r.vencimento_boleto,
+            deltaValor: r.delta_valor,
+            deltaPercentual: r.delta_percentual,
+            deltaDias: r.delta_dias,
+            sinais: r.sinais,
+            ...(r.tier ? { tier: r.tier } : {}),
+            emissorChave: r.emissor_chave,
+            decisao: r.decisao,
+            decididoPor: r.decidido_por,
+            decididoEm: r.decidido_em,
+            ...(r.motivo ? { motivo: r.motivo } : {}),
+            ...(r.confirmacao_emissor_id ? { confirmacaoEmissorId: r.confirmacao_emissor_id } : {}),
+        }),
+    );
+
+export const eventoSugestaoRowSchema = z
+    .object({
+        id: z.string(),
+        tipo: z.nativeEnum(EVENTO_SUGESTAO_BOLETO),
+        ator: z.string(),
+        ocorrido_em: dataIso,
+        pes_cod: textoOpcional,
+        emissor_chave: textoOpcional,
+        fil_cod: z.coerce.number().int().nullable().optional(),
+        doc_cod: textoOpcional,
+        tit_cod: textoOpcional,
+        ddc_cod: z.coerce.number().int().nullable().optional(),
+        dit_cod: z.coerce.number().int().nullable().optional(),
+        motivo: textoOpcional,
+        detalhe: z.record(z.unknown()).nullable().optional(),
+    })
+    .transform(
+        (r): EventoSugestaoRegistro => ({
+            id: r.id,
+            tipo: r.tipo,
+            ator: r.ator,
+            ocorridoEm: r.ocorrido_em,
+            ...(r.pes_cod ? { pesCod: r.pes_cod } : {}),
+            ...(r.emissor_chave ? { emissorChave: r.emissor_chave } : {}),
+            ...(r.fil_cod != null ? { filCod: r.fil_cod } : {}),
+            ...(r.doc_cod ? { docCod: r.doc_cod } : {}),
+            ...(r.tit_cod ? { titCod: r.tit_cod } : {}),
+            ...(r.ddc_cod != null ? { ddcCod: r.ddc_cod } : {}),
+            ...(r.dit_cod != null ? { ditCod: r.dit_cod } : {}),
+            ...(r.motivo ? { motivo: r.motivo } : {}),
+            ...(r.detalhe ? { detalhe: r.detalhe } : {}),
+        }),
+    );

@@ -127,6 +127,26 @@ export default class BoletoDdaRepository {
         return rows.map(this.map);
     };
 
+    /**
+     * Um boleto pela chave (`ddcCod`, `ditCod`), de arquivo NÃO cancelado — releitura pontual do
+     * passo de confirmação do boleto sugerido (ADR-0068, anti-TOCTOU).
+     */
+    public buscarPorChave = async (chave: {
+        ddcCod: number;
+        ditCod: number;
+    }): Promise<BoletoDda | null> => {
+        const row = await this.databaseClient.selectFirst<BoletoRow>(
+            `SELECT b.ddc_cod, b.dit_cod, b.numero, b.valor,
+                    to_char(b.vencimento, 'YYYY-MM-DD') AS vencimento, b.codbar,
+                    b.fil_cod, b.doc_cod, b.tit_cod, b.flp_cod, b.bnc_cod,
+                    a.nome AS arquivo, a.importado_em
+             FROM boleto_dda b JOIN boleto_dda_arquivo a ON a.ddc_cod = b.ddc_cod
+             WHERE a.cancelado_em IS NULL AND b.ddc_cod = $ddcCod AND b.dit_cod = $ditCod`,
+            chave,
+        );
+        return row ? this.map(row) : null;
+    };
+
     /** epoch ms da sincronização mais recente; `undefined` = nunca sincronizado. */
     public ultimaSincronizacao = async (): Promise<number | undefined> => {
         const row = await this.databaseClient.selectFirst<{ em: Date | null }>(
