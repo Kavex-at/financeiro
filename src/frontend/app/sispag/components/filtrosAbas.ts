@@ -38,8 +38,7 @@ export const filtroTitulos: OpcoesFiltroExtra<TituloAPagar> = {
   getDatas: (t) => [diaDoErp(t.vencimento)],
   getCategoria: (t) => {
     const { chave, rotulo } = formaDePagamento(t)
-    // "—" é a célula; o chip precisa de palavra.
-    return { chave, rotulo: chave === 'nao-lida' ? 'não lida' : rotulo }
+    return { chave, rotulo }
   },
   ordemCategorias: ORDEM_FORMA_DE_PAGAMENTO,
 }

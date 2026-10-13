@@ -701,9 +701,19 @@ describe('formaDePagamento', () => {
     })
   })
 
-  it('forma não lida: o flag DDA ainda prova boleto; sem nada, "—"', () => {
-    expect(formaDePagamento({ temBoleto: true }).chave).toBe('boleto-com-dda')
-    expect(formaDePagamento({})).toEqual({ chave: 'nao-lida', rotulo: '—', tom: 'neutro' })
-    expect(formaDePagamento({ formaPagamentoConexos: 42 }).chave).toBe('nao-lida')
+  it('sem forma no Conexos: nunca o verde do caso perfeito, só a marca de DDA', () => {
+    // SSM 3679/1 (PRD, 13/10): no grid com DDA associado, mas "Pago Por" vazio no Conexos.
+    expect(formaDePagamento({ temBoleto: true })).toEqual({
+      chave: 'sem-forma',
+      rotulo: 'sem forma no Conexos',
+      tom: 'neutro',
+      comDda: true,
+    })
+    expect(formaDePagamento({})).toEqual({
+      chave: 'sem-forma',
+      rotulo: 'sem forma no Conexos',
+      tom: 'neutro',
+    })
+    expect(formaDePagamento({ formaPagamentoConexos: 42 }).chave).toBe('sem-forma')
   })
 })
