@@ -31,6 +31,20 @@ export interface OpcoesFiltroExtra<T> {
    * se ALGUM não tem — uma linha mista aparece nos dois, nunca some do filtro que a procura.
    */
   getBoleto?: (x: T) => boolean[]
+  /**
+   * Categoria única da linha (ex.: forma de pagamento) — liga os chips "Todos + uma por categoria".
+   * A linha passa se a sua categoria é a escolhida. `ordemCategorias` ordena os chips; chave fora
+   * da lista vai para o fim. Só aparecem as categorias com ao menos uma linha.
+   */
+  getCategoria?: (x: T) => { chave: string; rotulo: string }
+  ordemCategorias?: readonly string[]
+}
+
+/** Um chip de categoria: chave, rótulo e quantas linhas há nele (depois dos outros filtros). */
+export interface ContagemCategoria {
+  chave: string
+  rotulo: string
+  total: number
 }
 
 /** Estado de filtro (filial + busca) + paginação de uma aba. */
@@ -50,6 +64,11 @@ export interface TabelaFiltro<T> {
   setBoleto?: (v: FiltroBoleto) => void
   /** Contagem por chip depois dos outros filtros e antes do de boleto. */
   contagemBoleto?: Record<FiltroBoleto, number>
+  /** `'todas'` ou a chave da categoria escolhida. */
+  categoria?: string
+  setCategoria?: (v: string) => void
+  /** Chips de categoria (sem o "Todos"), contados depois dos outros filtros. */
+  contagemCategorias?: ContagemCategoria[]
   pagina: number
   setPagina: React.Dispatch<React.SetStateAction<number>>
   filiais: number[]
@@ -82,9 +101,10 @@ export function useTabelaFiltro<T>(
   const [dataDe, setDataDeState] = React.useState('')
   const [dataAte, setDataAteState] = React.useState('')
   const [boleto, setBoletoState] = React.useState<FiltroBoleto>('todos')
+  const [categoria, setCategoriaState] = React.useState('todas')
   const [pagina, setPagina] = React.useState(1)
   const b = busca.trim().toLowerCase()
-  const { getDatas, getBoleto } = extras
+  const { getDatas, getBoleto, getCategoria, ordemCategorias } = extras
   const temIntervalo = getDatas !== undefined && (dataDe !== '' || dataAte !== '')
 
   // Memoizado porque a lista chega com até 500 linhas e o filtro rodava a CADA render — inclusive
@@ -127,14 +147,32 @@ export function useTabelaFiltro<T>(
     }
     return c
   }, [semBoleto, getBoleto])
+  // Os chips de categoria contam sobre a mesma base dos de boleto: depois de filial, busca e data.
+  const contagemCategorias = React.useMemo(() => {
+    if (!getCategoria) return undefined
+    const porChave = new Map<string, ContagemCategoria>()
+    for (const x of semBoleto) {
+      const { chave, rotulo } = getCategoria(x)
+      const atual = porChave.get(chave)
+      if (atual) atual.total += 1
+      else porChave.set(chave, { chave, rotulo, total: 1 })
+    }
+    const posicao = (chave: string) => {
+      const i = ordemCategorias?.indexOf(chave) ?? -1
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i
+    }
+    return [...porChave.values()].sort((a, c) => posicao(a.chave) - posicao(c.chave))
+  }, [semBoleto, getCategoria, ordemCategorias])
   const filtrados = React.useMemo(
     () =>
-      !getBoleto || boleto === 'todos'
-        ? semBoleto
-        : semBoleto.filter((x) =>
-            boleto === 'com' ? getBoleto(x).some(Boolean) : getBoleto(x).some((f) => !f),
-          ),
-    [semBoleto, boleto, getBoleto],
+      semBoleto.filter(
+        (x) =>
+          (!getBoleto ||
+            boleto === 'todos' ||
+            (boleto === 'com' ? getBoleto(x).some(Boolean) : getBoleto(x).some((f) => !f))) &&
+          (!getCategoria || categoria === 'todas' || getCategoria(x).chave === categoria),
+      ),
+    [semBoleto, boleto, getBoleto, categoria, getCategoria],
   )
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / pageSize))
   const paginaAtual = Math.min(pagina, totalPaginas)
@@ -165,6 +203,7 @@ export function useTabelaFiltro<T>(
     setDataDeState('')
     setDataAteState('')
     setBoletoState('todos')
+    setCategoriaState('todas')
     setPagina(1)
   }
   return {
@@ -193,6 +232,16 @@ export function useTabelaFiltro<T>(
           contagemBoleto,
           setBoleto: (v: FiltroBoleto) => {
             setBoletoState(v)
+            setPagina(1)
+          },
+        }
+      : {}),
+    ...(getCategoria && contagemCategorias
+      ? {
+          categoria,
+          contagemCategorias,
+          setCategoria: (v: string) => {
+            setCategoriaState(v)
             setPagina(1)
           },
         }
@@ -226,6 +275,8 @@ export function FiltroBarra<T>({
   rotuloData,
   filtroBoleto = false,
   tituloBoleto,
+  rotuloCategoria,
+  dicaCategoria,
 }: {
   aba: TabelaFiltro<T>
   buscaPlaceholder: string
@@ -235,8 +286,21 @@ export function FiltroBarra<T>({
   filtroBoleto?: boolean
   /** Dica (title) dos chips — p.ex. como um lote misto é tratado. */
   tituloBoleto?: string
+  /** Liga os chips de categoria com este título (a aba precisa ter passado `getCategoria`). */
+  rotuloCategoria?: string
+  /** Texto visível sob os chips de categoria — o que uma categoria quer dizer. */
+  dicaCategoria?: string
 }) {
-  const { dataDe = '', dataAte = '', setDataDe, setDataAte, setBoleto, contagemBoleto } = aba
+  const {
+    dataDe = '',
+    dataAte = '',
+    setDataDe,
+    setDataAte,
+    setBoleto,
+    contagemBoleto,
+    setCategoria,
+    contagemCategorias,
+  } = aba
   const mostrarDatas = rotuloData !== undefined && setDataDe && setDataAte
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
@@ -325,6 +389,36 @@ export function FiltroBarra<T>({
           {/* Texto visível, não `title`: hover não existe no toque nem no teclado. */}
           {tituloBoleto ? (
             <p className="mt-1 max-w-xs text-xs text-muted-foreground">{tituloBoleto}</p>
+          ) : null}
+        </fieldset>
+      ) : null}
+      {rotuloCategoria && setCategoria && contagemCategorias ? (
+        <fieldset className="m-0 min-w-0 border-0 p-0">
+          <legend className="mb-1 text-xs text-muted-foreground">{rotuloCategoria}</legend>
+          <div className="flex flex-wrap gap-1">
+            {[
+              {
+                chave: 'todas',
+                rotulo: 'Todos',
+                total: contagemCategorias.reduce((s, c) => s + c.total, 0),
+              },
+              ...contagemCategorias,
+            ].map((c) => (
+              <Button
+                key={c.chave}
+                type="button"
+                size="sm"
+                variant={aba.categoria === c.chave ? 'default' : 'outline'}
+                aria-pressed={aba.categoria === c.chave}
+                onClick={() => setCategoria(c.chave)}
+              >
+                {c.rotulo} ({c.total})
+              </Button>
+            ))}
+          </div>
+          {/* Texto visível, não `title`: hover não existe no toque nem no teclado. */}
+          {dicaCategoria ? (
+            <p className="mt-1 max-w-md text-xs text-muted-foreground">{dicaCategoria}</p>
           ) : null}
         </fieldset>
       ) : null}

@@ -1,10 +1,12 @@
 import type { OpcoesFiltroExtra } from '@/app/permutas/components/tabela-filtro'
-import type {
-  ArquivoRetorno,
-  ChaveTitulo,
-  LotePagamento,
-  LoteSispag,
-  TituloAPagar,
+import {
+  type ArquivoRetorno,
+  type ChaveTitulo,
+  formaDePagamento,
+  type LotePagamento,
+  type LoteSispag,
+  ORDEM_FORMA_DE_PAGAMENTO,
+  type TituloAPagar,
 } from '@/lib/sispag'
 import { diaDoErp, diaEmBrasilia } from './filtroDatas'
 
@@ -28,11 +30,23 @@ export const TITULO_BOLETO_LOTE =
 
 const chave = (c: ChaveTitulo) => `${c.filCod}:${c.docCod}:${c.titCod}`
 
-/** Títulos a pagar: vencimento (dia ERP) e o boleto DDA do título. */
+/**
+ * Títulos a pagar: vencimento (dia ERP) e a forma de pagamento — a mesma da coluna, com BOLETO
+ * dividido em com/sem DDA. Um chip por forma presente na carteira.
+ */
 export const filtroTitulos: OpcoesFiltroExtra<TituloAPagar> = {
   getDatas: (t) => [diaDoErp(t.vencimento)],
-  getBoleto: (t) => [t.temBoleto === true],
+  getCategoria: (t) => {
+    const { chave, rotulo } = formaDePagamento(t)
+    // "—" é a célula; o chip precisa de palavra.
+    return { chave, rotulo: chave === 'nao-lida' ? 'não lida' : rotulo }
+  },
+  ordemCategorias: ORDEM_FORMA_DE_PAGAMENTO,
 }
+
+/** Dica visível sob os chips de forma de pagamento dos títulos. */
+export const DICA_FORMA_PAGAMENTO =
+  'Boleto sem DDA: o Conexos marca o título como boleto, mas o boleto DDA não casou (valor ou vencimento diferente) — a remessa sairia sem código de barras.'
 
 /**
  * Títulos visíveis na aba conforme o filtro de comprometidos. Título em lote FINALIZADO ou com

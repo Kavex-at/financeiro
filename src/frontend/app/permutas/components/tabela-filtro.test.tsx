@@ -125,6 +125,66 @@ describe('useTabelaFiltro — boleto', () => {
   })
 })
 
+describe('useTabelaFiltro — categoria', () => {
+  // Estáveis, como o hook pede. `b` e `d` caem na mesma categoria.
+  const CATEGORIAS: Record<string, { chave: string; rotulo: string }> = {
+    a: { chave: 'z', rotulo: 'Zeta' },
+    b: { chave: 'x', rotulo: 'Xis' },
+    c: { chave: 'y', rotulo: 'Ípsilon' },
+    d: { chave: 'x', rotulo: 'Xis' },
+  }
+  const POR_CATEGORIA = {
+    getCategoria: (x: Linha) => CATEGORIAS[x.id] ?? { chave: '?', rotulo: '?' },
+    ordemCategorias: ['x', 'y'],
+  }
+  const comCategoria = () =>
+    renderHook(() => useTabelaFiltro(linhas, (x) => x.fil, (x) => x.id, 20, POR_CATEGORIA))
+
+  it('conta por categoria na ordem pedida; fora da ordem vai para o fim', () => {
+    const { result } = comCategoria()
+    expect(result.current.contagemCategorias).toEqual([
+      { chave: 'x', rotulo: 'Xis', total: 2 },
+      { chave: 'y', rotulo: 'Ípsilon', total: 1 },
+      { chave: 'z', rotulo: 'Zeta', total: 1 },
+    ])
+    expect(result.current.setBoleto).toBeUndefined()
+  })
+
+  it('filtra pela categoria escolhida e conta depois dos outros filtros', () => {
+    const { result } = comCategoria()
+    act(() => result.current.setCategoria?.('x'))
+    expect(ids(result.current.filtrados)).toEqual(['b', 'd'])
+    act(() => result.current.setFilial('2'))
+    expect(ids(result.current.filtrados)).toEqual(['d'])
+    expect(result.current.contagemCategorias).toEqual([
+      { chave: 'x', rotulo: 'Xis', total: 1 },
+      { chave: 'y', rotulo: 'Ípsilon', total: 1 },
+    ])
+  })
+
+  it('limparFiltros volta a "todas"', () => {
+    const { result } = comCategoria()
+    act(() => result.current.setCategoria?.('y'))
+    expect(result.current.total).toBe(1)
+    act(() => result.current.limparFiltros())
+    expect(result.current.categoria).toBe('todas')
+    expect(result.current.total).toBe(4)
+  })
+
+  it('FiltroBarra mostra "Todos" + um chip por categoria, com a contagem', () => {
+    const { result } = comCategoria()
+    render(
+      <FiltroBarra aba={result.current} buscaPlaceholder="Buscar" rotuloCategoria="Forma" />,
+    )
+    expect(screen.getByText('Forma')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Todos (4)' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: 'Xis (2)' })).toBeInTheDocument()
+  })
+})
+
 describe('FiltroBarra', () => {
   it('sem as props opt-in não mostra data nem boleto', () => {
     const { result } = comExtras()

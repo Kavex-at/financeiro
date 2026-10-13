@@ -5,7 +5,6 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
-  Barcode,
   CheckCircle2,
   DatabaseZap,
   Layers,
@@ -46,10 +45,8 @@ import {
   fetchIngestaoRuns,
   finalizarLote,
   formarLotes,
-  FORMA_CONEXOS_BOLETO,
   formatErpDay,
   IngestaoPagamentosEmAndamentoError,
-  rotuloFormaConexos,
   retirarDoLote,
   type PagamentoIngestaoRun,
   reabrirLote,
@@ -79,6 +76,7 @@ import {
   filtroRetornos,
   filtroTitulos,
   formatarDia,
+  DICA_FORMA_PAGAMENTO,
   ROTULO_DATA,
   TITULO_BOLETO_LOTE,
   titulosVisiveis,
@@ -97,6 +95,7 @@ import { MoverParaLoteDialog } from './components/MoverParaLoteDialog'
 import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLote'
 import { useCriarLoteManual } from './components/useCriarLoteManual'
 import { alternarTodos, estadoSelecionarTodos } from './components/selecionarTodos'
+import { FormaPagamentoBadge } from './components/FormaPagamentoBadge'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
@@ -877,7 +876,8 @@ function SispagPanel() {
                 aba={abaTitulos}
                 buscaPlaceholder="Buscar por credor, documento ou banco…"
                 rotuloData={ROTULO_DATA.titulos}
-                filtroBoleto
+                rotuloCategoria="Forma de pagamento"
+                dicaCategoria={DICA_FORMA_PAGAMENTO}
               />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -994,8 +994,7 @@ function SispagPanel() {
                         <TableHead>Documento</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Vencimento</TableHead>
-                        <TableHead>Boleto</TableHead>
-                        <TableHead>Forma no Conexos</TableHead>
+                        <TableHead>Forma de pagamento</TableHead>
                         <TableHead>Situação</TableHead>
                         <TableHead>Filial</TableHead>
                         <TableHead>
@@ -1073,42 +1072,9 @@ function SispagPanel() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {/* Boleto DDA: o Conexos casou um boleto (fin124) com este título.
-                                É o que permite a remessa sair com código de barras — sem ele,
-                                escolher BOLETO no lote é barrado na geração. */}
-                            {t.temBoleto ? (
-                              <Badge
-                                variant="outline"
-                                className="border-success/40 text-success"
-                                title="Boleto DDA associado — código adicionado pelo ERP ao gerar a remessa"
-                              >
-                                <Barcode className="mr-1 size-3" aria-hidden />
-                                boleto
-                              </Badge>
-                            ) : t.formaPagamentoConexos === FORMA_CONEXOS_BOLETO ? (
-                              // BOLETO no Conexos, mas o ERP não casou um boleto DDA — em geral o
-                              // vencimento do boleto difere do título. Sem DDA não há barras.
-                              <Badge
-                                variant="outline"
-                                className="border-warning/40 text-warning"
-                                title="BOLETO no Conexos, sem boleto DDA: valor ou vencimento do boleto difere do título"
-                              >
-                                boleto sem DDA
-                              </Badge>
-                            ) : (
-                              <span
-                                className="text-xs text-muted-foreground"
-                                title="Nenhum boleto DDA associado. Pagamento por TED/PIX/crédito, ou importe o arquivo DDA no fin124."
-                              >
-                                sem boleto
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell
-                            className="whitespace-nowrap text-xs text-muted-foreground"
-                            title="Forma de pagamento no Conexos (Pago Por / Situação do psq014)"
-                          >
-                            {rotuloFormaConexos(t.formaPagamentoConexos)}
+                            {/* Forma do Conexos + boleto DDA: sem DDA, escolher BOLETO no lote é
+                                barrado na geração (não há código de barras). */}
+                            <FormaPagamentoBadge titulo={t} />
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col items-start gap-1">

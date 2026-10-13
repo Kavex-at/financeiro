@@ -42,11 +42,23 @@ const lote = (over: Partial<LotePagamento>): LotePagamento => ({
 })
 
 describe('filtros por aba', () => {
-  it('títulos: vencimento como dia ERP e boleto do título', () => {
-    const t = titulo({ vencimento: dia('2026-10-06'), temBoleto: true })
+  it('títulos: vencimento como dia ERP e forma de pagamento (boleto com/sem DDA)', () => {
+    const t = titulo({ vencimento: dia('2026-10-06'), temBoleto: true, formaPagamentoConexos: 6 })
     expect(filtroTitulos.getDatas?.(t)).toEqual(['2026-10-06'])
-    expect(filtroTitulos.getBoleto?.(t)).toEqual([true])
-    expect(filtroTitulos.getBoleto?.(titulo({}))).toEqual([false])
+    expect(filtroTitulos.getCategoria?.(t).chave).toBe('boleto-com-dda')
+    expect(filtroTitulos.getCategoria?.(titulo({ formaPagamentoConexos: 6 })).chave).toBe(
+      'boleto-sem-dda',
+    )
+    expect(filtroTitulos.getCategoria?.(titulo({ formaPagamentoConexos: 8 })).chave).toBe(
+      'forma-8',
+    )
+    // A célula mostra "—"; o chip precisa de palavra.
+    expect(filtroTitulos.getCategoria?.(titulo({}))).toEqual({
+      chave: 'nao-lida',
+      rotulo: 'não lida',
+    })
+    // O chip "Boleto / Sem boleto" saiu da aba de títulos: a forma de pagamento o substitui.
+    expect(filtroTitulos.getBoleto).toBeUndefined()
   })
 
   it('candidatos: datas de todos os itens; boleto pela carteira OU pela modalidade', () => {
