@@ -226,6 +226,12 @@ export default class EnvironmentVars {
     public sispagLotesSyncTtlMin: number;
     public sispagLotesSyncCooldownMin: number;
     /**
+     * Prazo de uma passada completa de L11 (`SISPAG_LOTES_SYNC_PRAZO_SEG`, default 120; a passada
+     * leva ~25 s). Estourado, a run fecha em `error` e a trava é solta — uma leitura pendurada no
+     * Conexos não pode prender a trava e deixar abertura e cron em "em andamento" para sempre.
+     */
+    public sispagLotesSyncPrazoSeg: number;
+    /**
      * Verificação TED/PIX (ADR-0063) — configuração do TENANT, não ontologia. Defaults da
      * Columbia medidos nas probes de 2026-10-05; valor inválido volta ao default.
      */
@@ -336,6 +342,7 @@ export default class EnvironmentVars {
         sispagCarteiraCooldownMin,
         sispagLotesSyncTtlMin,
         sispagLotesSyncCooldownMin,
+        sispagLotesSyncPrazoSeg,
         sispagVerificacao,
         solicitacaoNumerarioGcdCod,
         solicitacaoNumerarioGcdCodPorFilial,
@@ -385,6 +392,7 @@ export default class EnvironmentVars {
         sispagCarteiraCooldownMin?: number;
         sispagLotesSyncTtlMin?: number;
         sispagLotesSyncCooldownMin?: number;
+        sispagLotesSyncPrazoSeg?: number;
         sispagVerificacao?: SispagVerificacaoConfig;
         solicitacaoNumerarioGcdCod: number;
         solicitacaoNumerarioGcdCodPorFilial?: Readonly<Record<number, number>>;
@@ -436,6 +444,7 @@ export default class EnvironmentVars {
         this.sispagCarteiraCooldownMin = sispagCarteiraCooldownMin ?? 5;
         this.sispagLotesSyncTtlMin = sispagLotesSyncTtlMin ?? 30;
         this.sispagLotesSyncCooldownMin = sispagLotesSyncCooldownMin ?? 5;
+        this.sispagLotesSyncPrazoSeg = sispagLotesSyncPrazoSeg ?? 120;
         this.sispagVerificacao = sispagVerificacao ?? { ...SISPAG_VERIFICACAO_DEFAULT };
         this.solicitacaoNumerarioGcdCod = solicitacaoNumerarioGcdCod;
         this.solicitacaoNumerarioGcdCodPorFilial = solicitacaoNumerarioGcdCodPorFilial ?? {};

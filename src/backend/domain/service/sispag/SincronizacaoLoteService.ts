@@ -2,8 +2,6 @@ import { inject, injectable } from 'tsyringe';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.js';
 import ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
-import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
-import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import { ALERTA_SEVERIDADE } from '../../interface/operacao/Alerta.js';
 import type {
@@ -131,8 +129,15 @@ export default class SincronizacaoLoteService {
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
     ) {}
 
-    /** Passada do cron: todos os lotes sincronizáveis, um de cada vez. */
-    public sincronizarTodos = async (agora: Date = new Date()): Promise<ResumoSincronizacao> => {
+    /**
+     * Passada completa: todos os lotes sincronizáveis, um de cada vez (cron, abertura da tela e
+     * "Sincronizar lotes", ADR-0066). `sinal` abortado (prazo da passada estourado) para antes do
+     * próximo lote: os que faltam ficam para a próxima passada, nada é decidido sem leitura.
+     */
+    public sincronizarTodos = async (
+        agora: Date = new Date(),
+        sinal?: AbortSignal,
+    ): Promise<ResumoSincronizacao> => {
         const ids = await this.loteRepo.listLotesSincronizaveis(JANELA_ESTORNO_DIAS);
         if (ids.length === 0) {
             await this.logService.info({
@@ -149,29 +154,21 @@ export default class SincronizacaoLoteService {
         const { porLote, eventosNaoLidos } = await this.lerEventosRetorno(lotes);
         const resultados: ResultadoSincronizacaoLote[] = [];
         for (const lote of lotes) {
+            if (sinal?.aborted) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message:
+                        'passada interrompida pelo prazo — lotes restantes ficam para a próxima',
+                    data: {
+                        processados: resultados.length,
+                        restantes: lotes.length - resultados.length,
+                    },
+                });
+                break;
+            }
             resultados.push(await this.processarLote(lote, porLote.get(lote.id), agora));
         }
         return this.resumir(resultados, eventosNaoLidos);
-    };
-
-    /**
-     * "Sincronizar agora" (manual). `null` quando o lote não existe. Estado não sincronizável →
-     * `LoteEstadoInvalidoError`; conflito de versão → `LoteVersaoConflitoError` (a tela recarrega).
-     */
-    public sincronizarLote = async (
-        loteId: string,
-        agora: Date = new Date(),
-    ): Promise<{ lote: LotePagamento; resultado: ResultadoSincronizacaoLote } | null> => {
-        const lote = await this.loteRepo.getLoteComItens(loteId);
-        if (!lote) return null;
-        this.exigirSincronizavel(lote);
-        const { porLote } = await this.lerEventosRetorno([lote]);
-        const resultado = await this.processarLote(lote, porLote.get(lote.id), agora);
-        if (resultado.resultado === RESULTADO_SINCRONIZACAO.PULADO) {
-            throw new LoteVersaoConflitoError({ loteId, versaoEsperada: lote.versao });
-        }
-        const atualizado = (await this.loteRepo.getLoteComItens(loteId)) ?? lote;
-        return { lote: atualizado, resultado };
     };
 
     /**
@@ -611,23 +608,6 @@ export default class SincronizacaoLoteService {
     };
 
     // ---------------------------------------------------------------- apoio
-
-    private exigirSincronizavel = (lote: LotePagamento): void => {
-        const semChave =
-            lote.nativeFilCod === undefined ||
-            lote.nativeBncCod === undefined ||
-            lote.nativeFlpCod === undefined;
-        if (!SINCRONIZAVEIS.includes(lote.status) || semChave) {
-            throw new LoteEstadoInvalidoError({
-                loteId: lote.id,
-                statusAtual: lote.status,
-                acao: 'sincronizar',
-                motivo: semChave
-                    ? 'Não é possível sincronizar: o lote ainda não tem remessa gerada no Conexos.'
-                    : `Não é possível sincronizar: o lote está em ${lote.status}. A sincronização vale depois da remessa gerada.`,
-            });
-        }
-    };
 
     private chaveItem = (docCod: string, titCod: string): string => `${docCod}:${titCod}`;
 

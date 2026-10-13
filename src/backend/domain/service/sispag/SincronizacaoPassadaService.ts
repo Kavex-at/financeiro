@@ -1,9 +1,11 @@
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import DeadlineExceededError from '../../errors/DeadlineExceededError.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import { JOB_RUN_STATUS, PIPELINE } from '../../interface/operacao/JobRun.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import TimeoutExecutor from '../../libs/executor/TimeoutExecutor.js';
 import { redactErrorMessage } from '../../libs/redact/redactErrorMessage.js';
 import JobExecucaoRepository from '../../repository/operacao/JobExecucaoRepository.js';
 import LogService from '../LogService.js';
@@ -198,13 +200,20 @@ export default class SincronizacaoPassadaService {
             message: 'sincronização de lotes SISPAG: início',
             data: { runId, triggeredBy },
         });
+        const { sispagLotesSyncPrazoSeg } = await this.environmentProvider.getEnvironmentVars();
+        // Prazo da passada: uma leitura pendurada no Conexos não pode prender a trava (e deixar a
+        // abertura em "em andamento" e o cron pulando) até o processo reiniciar.
+        const prazo = new TimeoutExecutor({ deadlineMs: sispagLotesSyncPrazoSeg * 1000 });
         try {
-            const resumo = await this.sincronizacao.sincronizarTodos();
+            const resumo = await prazo.execute((sinal) =>
+                this.sincronizacao.sincronizarTodos(new Date(), sinal),
+            );
             return await this.fechar(runId, resumo);
         } catch (error) {
-            const errorMessage = redactErrorMessage(
-                error instanceof Error ? error.message : String(error),
-            );
+            const errorMessage =
+                error instanceof DeadlineExceededError
+                    ? `passada excedeu o prazo de ${sispagLotesSyncPrazoSeg} s e foi interrompida — os lotes restantes ficam para a próxima`
+                    : redactErrorMessage(error instanceof Error ? error.message : String(error));
             await this.runRepo.finishRun({ runId, status: JOB_RUN_STATUS.ERROR, errorMessage });
             await this.logService.error({
                 type: LOG_TYPE.FLOW_ERROR,

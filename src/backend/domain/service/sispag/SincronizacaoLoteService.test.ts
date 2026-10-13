@@ -4,8 +4,6 @@ import path from 'node:path';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.js';
 import type ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
-import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
-import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import type {
     ItemLote,
     LeituraBaixas,
@@ -182,10 +180,20 @@ const setup = ({ lotes, titulos = {}, baixas = baixas22320, detalhe }: Setup) =>
 const aplicadoPara = (loteRepo: { aplicarSincronizacao: jest.Mock }, loteId: string) =>
     loteRepo.aplicarSincronizacao.mock.calls.map((c) => c[0]).find((a) => a.loteId === loteId);
 
+/** Passada completa (único caminho desde ADR-0066) e o resultado de um lote dela. */
+const sincronizarUm = async (
+    service: { sincronizarTodos: SincronizacaoLoteService['sincronizarTodos'] },
+    loteId: string,
+) => {
+    const resumo = await service.sincronizarTodos(AGORA);
+    const resultado = resumo.resultados.find((r) => r.loteId === loteId);
+    return resultado ? { resultado } : undefined;
+};
+
 describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
     it('T1: 38682/1 pago no fin064, PSQ_018 borderô 22320 manual, fin052 só BD → BAIXADO', async () => {
         const s = setup({ lotes: [loteFil2()], titulos: { '2:38682:1': pago } });
-        const r = await s.service.sincronizarLote('L-fil2', AGORA);
+        const r = await sincronizarUm(s.service, 'L-fil2');
         const aplicado = aplicadoPara(s.loteRepo, 'L-fil2');
         expect(aplicado).toEqual(
             expect.objectContaining({
@@ -216,7 +224,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
 
     it('T2: 4030/7 vldPago=0 + BD → permanece REMESSA_GERADA com item AGENDADO', async () => {
         const s = setup({ lotes: [loteFil1()] });
-        await s.service.sincronizarLote('L-fil1', AGORA);
+        await sincronizarUm(s.service, 'L-fil1');
         const aplicado = aplicadoPara(s.loteRepo, 'L-fil1');
         expect(aplicado.para).toBeUndefined();
         expect(aplicado.itens[0]).toEqual(expect.objectContaining({ situacao: 'AGENDADO' }));
@@ -225,7 +233,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
 
     it('T2 gêmeo: 4030/7 vldPago=1 → BAIXADO', async () => {
         const s = setup({ lotes: [loteFil1()], titulos: { '1:4030:7': pago } });
-        await s.service.sincronizarLote('L-fil1', AGORA);
+        await sincronizarUm(s.service, 'L-fil1');
         expect(aplicadoPara(s.loteRepo, 'L-fil1').para).toBe('BAIXADO');
     });
 
@@ -293,7 +301,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
                     ? [{ ...linhasBdGar9[1], eventoCod: 'AE', eventoDescricao: 'DATA INVALIDA' }]
                     : [],
         });
-        await s.service.sincronizarLote('L-fil2', AGORA);
+        await sincronizarUm(s.service, 'L-fil2');
         expect(aplicadoPara(s.loteRepo, 'L-fil2').para).toBe('RETORNADO');
         expect(s.notificacao.emitir).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -309,7 +317,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         ['403', { legivel: false as const, motivo: 'HTTP 403' }],
     ])('T6: fin064 com %s → lote e itens inalterados', async (_n, leitura) => {
         const s = setup({ lotes: [loteFil2()], titulos: { '2:38682:1': leitura } });
-        const r = await s.service.sincronizarLote('L-fil2', AGORA);
+        const r = await sincronizarUm(s.service, 'L-fil2');
         expect(s.loteRepo.aplicarSincronizacao).not.toHaveBeenCalled();
         expect(s.loteRepo.tocarSincronizacao).not.toHaveBeenCalled();
         expect(r?.resultado.resultado).toBe('FALHA_LEITURA');
@@ -331,7 +339,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
             titulos: { '2:38682:1': pago },
             baixas: { legivel: false, motivo: 'forbidden', status: 403 },
         });
-        await s.service.sincronizarLote('L-fil2', AGORA);
+        await sincronizarUm(s.service, 'L-fil2');
         const aplicado = aplicadoPara(s.loteRepo, 'L-fil2');
         expect(aplicado.para).toBe('BAIXADO');
         expect(aplicado.itens[0].origemBaixa).toBe('NAO_IDENTIFICADA');
@@ -343,7 +351,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         const fonte = readFileSync(path.join(__dirname, 'SincronizacaoLoteService.ts'), 'utf8');
         expect(fonte).not.toMatch(/conexosWriteEnabled|sispagLiveWriteEnabled|conexosDryRun/);
         const s = setup({ lotes: [loteFil2()], titulos: { '2:38682:1': pago } });
-        await s.service.sincronizarLote('L-fil2', AGORA);
+        await sincronizarUm(s.service, 'L-fil2');
         expect(s.loteRepo.aplicarSincronizacao).toHaveBeenCalledTimes(1);
     });
 
@@ -375,7 +383,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
                     ? [{ ...linhasBdGar9[1], eventoCod: 'AE', eventoDescricao: 'DATA INVALIDA' }]
                     : [],
         });
-        await s.service.sincronizarLote('L-fil2', AGORA);
+        await sincronizarUm(s.service, 'L-fil2');
         const aplicado = aplicadoPara(s.loteRepo, 'L-fil2');
         expect(aplicado.para).toBe('RETORNADO');
         expect(aplicado.itens[0]).toEqual(
@@ -404,20 +412,18 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
         expect(resumo.transicionados).toBe(1);
     });
 
-    it('sincronizarLote manual com conflito de versão → LoteVersaoConflitoError (409)', async () => {
-        const s = setup({ lotes: [loteFil2()], titulos: { '2:38682:1': pago } });
-        s.loteRepo.aplicarSincronizacao.mockResolvedValue('CONFLITO');
-        await expect(s.service.sincronizarLote('L-fil2', AGORA)).rejects.toBeInstanceOf(
-            LoteVersaoConflitoError,
+    it('sinal abortado (prazo da passada) para antes do próximo lote, sem decidir nada', async () => {
+        const s = setup({ lotes: [loteFil1(), loteFil2()], titulos: { '2:38682:1': pago } });
+        const controle = new AbortController();
+        controle.abort();
+        const resumo = await s.service.sincronizarTodos(AGORA, controle.signal);
+        expect(resumo.lotes).toBe(0);
+        expect(s.loteRepo.aplicarSincronizacao).not.toHaveBeenCalled();
+        expect(s.logService.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'passada interrompida pelo prazo — lotes restantes ficam para a próxima',
+            }),
         );
-    });
-
-    it('sincronizarLote em lote não sincronizável → LoteEstadoInvalidoError; inexistente → null', async () => {
-        const s = setup({ lotes: [loteFil2({ status: 'FINALIZADO' })] });
-        await expect(s.service.sincronizarLote('L-fil2', AGORA)).rejects.toBeInstanceOf(
-            LoteEstadoInvalidoError,
-        );
-        expect(await s.service.sincronizarLote('nao-existe', AGORA)).toBeNull();
     });
 
     it('falha ao ler um código de evento não derruba a passada (e não vira rejeição)', async () => {
@@ -451,7 +457,7 @@ describe('SincronizacaoLoteService — T1..T8 (ADR-0055)', () => {
                     : [],
         });
         s.notificacao.emitir.mockRejectedValue(new Error('banco fora'));
-        const r = await s.service.sincronizarLote('L-fil2', AGORA);
+        const r = await sincronizarUm(s.service, 'L-fil2');
         expect(r?.resultado.resultado).toBe('TRANSICIONOU');
     });
 });
