@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.65.0 (2026-10-13) — SISPAG: o DDA se atualiza junto com a carteira
+
+- **Os boletos DDA do Conexos passam a ser lidos a cada ingestão** (07h, 12h e 16h em dia útil e ao
+  abrir a tela, quando a carteira está defasada), antes dos títulos. Antes só o botão "Atualizar
+  DDA" fazia isso: o pool ficou parado de 08/10 a 13/10 e a coluna "boleto sem DDA" mostrava
+  boletos que o Conexos já tinha casado.
+- **Nunca atrapalha a carteira.** Se o DDA falhar, a carteira atualiza do mesmo jeito, a execução
+  fica marcada com o aviso e a tela segue com os boletos anteriores. A leitura tem prazo de 1 min
+  por rodada; o que não couber é retomado na seguinte.
+- **A aba "Boletos DDA" avisa quando o DDA está parado** há mais de 8 h em dia útil.
+- Guardamos o número do documento do fornecedor de cada título (`docEspNumero`) para, mais
+  adiante, confirmar o casamento de boletos. Ainda não é usado em nenhuma decisão.
+- Migration 0083 (coluna nova, nullable). ADR-0067.
+
 ## v0.64.0 (2026-10-13) — SISPAG: lotes sincronizam com o Conexos ao abrir a tela
 
 - **O status dos lotes acompanha a baixa sem precisar clicar.** Ao abrir o SISPAG, depois de
