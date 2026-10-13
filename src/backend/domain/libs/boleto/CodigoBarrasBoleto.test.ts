@@ -33,3 +33,110 @@ describe('CodigoBarrasBoleto', () => {
         expect(cb.bancoEmissor(codbar)).toBeUndefined();
     });
 });
+
+/**
+ * Barras SINTÉTICAS no formato real (44 dígitos, fator de vencimento e DV geral módulo 11
+ * válidos), montadas pelo layout do campo livre — nenhum código de barras real mora aqui.
+ */
+const dvGeral = (semDv: string): string => {
+    let soma = 0;
+    let peso = 2;
+    for (let i = semDv.length - 1; i >= 0; i -= 1) {
+        soma += Number(semDv[i]) * peso;
+        peso = peso === 9 ? 2 : peso + 1;
+    }
+    const dv = 11 - (soma % 11);
+    return String(dv === 0 || dv === 10 || dv === 11 ? 1 : dv);
+};
+
+const barras = (banco: string, livre: string, fator = '1580', valorCentavos = 481533): string => {
+    expect(livre).toHaveLength(25);
+    const valor = String(valorCentavos).padStart(10, '0');
+    const semDv = `${banco}9${fator}${valor}${livre}`;
+    return `${banco}9${dvGeral(semDv)}${fator}${valor}${livre}`;
+};
+
+/** Itaú: carteira(3) nosso(8) DAC(1) agência(4) conta(5) DAC(1) '000'. */
+const itau = (agencia: string, conta: string, nosso = '00477290'): string =>
+    barras('341', `109${nosso}9${agencia}${conta}0000`);
+
+/** Bradesco: agência(4) carteira(2) nosso(11) conta(7) '0'. */
+const bradesco = (agencia: string, conta: string, nosso = '00000007128'): string =>
+    barras('237', `${agencia}09${nosso}${conta}0`);
+
+describe('CodigoBarrasBoleto.emissor', () => {
+    it('Bradesco 237: agência(4) + conta(7) do campo livre, com a máscara I14l', () => {
+        expect(cb.emissor(bradesco('2656', '0092740'))).toEqual({
+            banco: '237',
+            layout: 'BRADESCO_237',
+            chave: '237:2656:0092740',
+            mascarado: '237 / 2656 / ***2740',
+        });
+    });
+
+    it('237: outra conta do mesmo credor gera chave DIFERENTE (MULTILOG BRASIL x S/A)', () => {
+        const a = cb.emissor(bradesco('2656', '0092740'));
+        const b = cb.emissor(bradesco('2656', '0006500'));
+        expect(a?.chave).toBe('237:2656:0092740');
+        expect(b?.chave).toBe('237:2656:0006500');
+    });
+
+    it('Itaú 341: agência(4) + conta(5), ignorando carteira, nosso número e DACs', () => {
+        expect(cb.emissor(itau('9260', '40834'))).toEqual({
+            banco: '341',
+            layout: 'ITAU_341',
+            chave: '341:9260:40834',
+            mascarado: '341 / 9260 / ***0834',
+        });
+    });
+
+    it('o nosso número não entra na chave: boletos da mesma conta têm a mesma chave', () => {
+        expect(cb.emissor(bradesco('2656', '0092740', '00000007316'))?.chave).toBe(
+            cb.emissor(bradesco('2656', '0092740', '00060176257'))?.chave,
+        );
+        expect(cb.emissor(itau('9260', '40834', '00477291'))?.chave).toBe(
+            cb.emissor(itau('9260', '40834', '00477292'))?.chave,
+        );
+    });
+
+    it.each([
+        ['104'],
+        ['329'],
+        ['422'],
+        ['033'],
+    ])('banco %s: chave genérica, nunca com selo de layout verificado', (banco) => {
+        const e = cb.emissor(barras(banco, '1234567890123456789012345'));
+        expect(e?.layout).toBe('GENERICO');
+        expect(e?.chave).toBe(`${banco}:12345678`);
+        expect(e?.banco).toBe(banco);
+        expect(e?.mascarado).toBe(`${banco} / 1234 / ****`);
+    });
+
+    it.each([
+        ['vazio', undefined],
+        ['string vazia', ''],
+        ['curto', '3419315800000481533'],
+        ['longo', `${itau('9260', '40834')}0`],
+        ['não numérico', `${itau('9260', '40834').slice(0, 43)}X`],
+        ['arrecadação (começa com 8)', '84670000001435900240200240500024384221010811'],
+    ])('devolve undefined sem lançar: %s', (_caso, codbar) => {
+        expect(() => cb.emissor(codbar)).not.toThrow();
+        expect(cb.emissor(codbar)).toBeUndefined();
+    });
+
+    it('nenhuma saída contém as 44 dígitos nem a linha digitável (I15k)', () => {
+        for (const codbar of [bradesco('2656', '0092740'), itau('9260', '40834')]) {
+            const saida = JSON.stringify(cb.emissor(codbar));
+            expect(saida).not.toContain(codbar);
+            expect(saida).not.toContain(cb.paraLinhaDigitavel(codbar) ?? 'x');
+            expect(saida).not.toMatch(/\d{20,}/);
+        }
+    });
+
+    it('as barras de teste têm 44 dígitos e DV geral válido (fixture no formato real)', () => {
+        const codbar = bradesco('2656', '0092740');
+        expect(codbar).toHaveLength(44);
+        expect(codbar[4]).toBe(dvGeral(codbar.slice(0, 4) + codbar.slice(5)));
+        expect(cb.paraLinhaDigitavel(codbar)).toHaveLength(47);
+    });
+});
