@@ -155,11 +155,12 @@ const PENDENTE_DDA_SCHEMA = z
 
 /**
  * `titVldPagopor` do grid de pendentes — a "Situação" do título no Conexos (BOLETO, TEF, …).
- * Validado, não coagido: valor fora do domínio documentado (1..10) vira "não sei", não um
- * código inventado. Ver `PAGO_POR_CONEXOS`.
+ * Validado, não coagido: inteiro positivo (string, zero ou negativo viram "não sei"). Código fora
+ * do domínio documentado (1..10) PASSA — é um código novo do ERP, não lixo; a ingestão o grava e
+ * avisa (migration 0082). Ver `PAGO_POR_CONEXOS`.
  */
 const PENDENTE_PAGO_POR_SCHEMA = z
-    .object({ titVldPagopor: z.number().int().min(1).max(10) })
+    .object({ titVldPagopor: z.number().int().positive() })
     .passthrough();
 
 /**

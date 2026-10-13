@@ -44,4 +44,11 @@ export class PagoPorConexosRotulo {
         codigo !== undefined && Object.hasOwn(PAGO_POR_CONEXOS_ROTULO, codigo)
             ? PAGO_POR_CONEXOS_ROTULO[codigo as PagoPorConexos]
             : undefined;
+
+    /**
+     * Para exibir: rótulo conhecido, `código N` para código que o ERP mandou e a tabela não conhece
+     * (migration 0082), `undefined` só quando não há código.
+     */
+    public static exibir = (codigo?: number): string | undefined =>
+        codigo === undefined ? undefined : (PagoPorConexosRotulo.de(codigo) ?? `código ${codigo}`);
 }

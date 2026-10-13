@@ -149,7 +149,7 @@ export default class TitulosAPagarExportService {
             vencimento,
             diasParaVencer: vencimento ? Math.round((vencimento.getTime() - hoje) / DAY_MS) : null,
             boleto: t.temBoleto ? 'Sim' : 'Não',
-            formaConexos: PagoPorConexosRotulo.de(t.formaPagamentoConexos) ?? null,
+            formaConexos: PagoPorConexosRotulo.exibir(t.formaPagamentoConexos) ?? null,
             aprovacao: t.liberado ? 'Aprovado' : 'Bloqueado',
             prontoParaRemessa: simNao(t.prontoParaRemessa),
             lote: lote?.rotulo ?? null,

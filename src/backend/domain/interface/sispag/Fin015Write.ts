@@ -90,7 +90,8 @@ export interface TituloPendente {
     ddaLegivel: boolean;
     /**
      * Forma de pagamento do título no Conexos (`titVldPagopor`, ver `PAGO_POR_CONEXOS`).
-     * Ausente quando o campo não veio ou veio fora do domínio documentado (1..10).
+     * Ausente quando o campo não veio ou não é inteiro positivo. Código fora do domínio documentado
+     * (1..10) vem, de propósito: é código novo do ERP (migration 0082).
      */
     pagoPor?: number;
     /** Linha crua do ERP — repassada no `importar` (o ERP exige o registro completo do item). */
