@@ -90,8 +90,9 @@ invariantes I11a–h (ADR-0066):
    cooldown, respeita "uma por vez"). O botão por lote deixou de existir.
 3. **Agendado (cron)**: rede de segurança para quando ninguém abre a tela.
 
-Toda passada grava uma run em `job_execucao`, então todas contam para o TTL. Cadência, TTL, limiar de
-stale e cooldown são configuração operacional, não regra. Como L11 é read-only no ERP (I11a/I11g),
+Toda passada grava uma run em `job_execucao`, então todas contam para o TTL, e tem **prazo**:
+estourado, a run fecha em `error` e a trava é solta (uma leitura pendurada não prende a trava).
+Cadência, TTL, limiar de stale, cooldown e prazo são configuração operacional, não regra. Como L11 é read-only no ERP (I11a/I11g),
 a permissão de ver o SISPAG (`sispag:ver`) basta para disparar a passada, na abertura ou no botão.
 
 ## Rejeição
