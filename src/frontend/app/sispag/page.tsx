@@ -746,6 +746,7 @@ function SispagPanel() {
               size="sm"
               onClick={() => void sincronizar()}
               disabled={sincronizandoLotes}
+              aria-busy={sincronizandoLotes}
               title="Relê no Conexos a baixa dos títulos de todos os lotes com remessa"
             >
               {sincronizandoLotes ? <Spinner /> : <ArrowDownUp className="size-4" aria-hidden />}{' '}
