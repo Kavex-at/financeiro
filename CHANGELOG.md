@@ -1,5 +1,17 @@
 # Columbia Financeiro — Changelog
 
+## v0.63.0 (2026-10-13) — títulos a pagar: uma coluna "Forma de pagamento"
+
+- **"Boleto" e "Forma no Conexos" viram uma coluna só, "Forma de pagamento".** BOLETO no Conexos
+  aparece como **boleto com DDA** (verde, sai com código de barras) ou **boleto sem DDA** (alerta,
+  o boleto DDA não casou com o título). As outras formas aparecem com o nome do Conexos
+  (transação automática, TEF, transação…); se um boleto DDA estiver associado a uma delas, a
+  linha mostra o ícone de código de barras. Forma ainda não lida: "—".
+- **O filtro da aba acompanha a coluna.** Os chips Boleto / Sem boleto dão lugar a um chip por
+  forma presente na carteira, com a contagem ("boleto sem DDA (12)", "transação automática (3)"…).
+  Exportar e "selecionar todos" respeitam o chip escolhido. A aba de lotes candidatos mantém os
+  chips de boleto.
+
 ## v0.62.0 (2026-10-09) — SISPAG: forma de pagamento do título no Conexos
 
 - **Nova coluna "Forma no Conexos" em "Títulos a pagar"** (e no export): mostra como o Conexos
