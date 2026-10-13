@@ -3,6 +3,40 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.40.0 — SISPAG: sugestão de boleto DDA e confirmação de emissor (2026-10-14, ADR-0068)
+
+Feature: `sispag-sugestao-boleto-dda` (`/feature-new`). `entity_changed = true`. **Ontologia à frente
+do código** (tudo `planned`). Passo 1 de 3: mostrar a sugestão e registrar a decisão humana; sem
+nenhuma escrita no Conexos.
+
+- **NEW entity `ConfirmacaoEmissorBoleto`** (planned): par (`pesCod`, `emissorChave`), `VIGENTE`|
+  `REVOGADA`, 1 pessoa (`sispag:executar`; qualquer uma revoga), índice único parcial no vigente,
+  trilha só-inclusão, evidência em snapshot. Padrão da `FavorecidoAutorizado` (ADR-0065), conceito
+  distinto.
+- **NEW entity `DecisaoSugestaoBoleto`** (planned): registro imutável por título (`CONFIRMADA`|
+  `REJEITADA`) com snapshot do boleto, delta com sinal, sinais e tier. Âncora do passo 2.
+- **NEW business rule `sugestao-boleto-dda-sispag`** (planned, **I15a–k**): confirmação é evidência,
+  não autoridade (a validação ao vivo da remessa, ADR-0040, segue única autoridade); zero escrita no
+  ERP; camadas `CONHECIDO`/`FORTE`/`ATENCAO` com limites globais decididos (\|Δvalor\| ≤ R$ 0,05 no
+  mesmo dia; ou valor igual e 1–5 dias depois); a confirmação nunca alarga limite; exclusões e
+  disputa (menor vencimento, depois menor `docCod`); número do documento só apoia; escopo (credor,
+  emissor); vencido só informativo e não confirmável; chave genérica nunca automática; linha
+  digitável por permissão e toda cópia auditada.
+- **NEW actions** (planned): `sugerirBoletoParaTitulo` (puro), `confirmarSugestaoBoleto`,
+  `rejeitarSugestaoBoleto`, `revogarConfirmacaoEmissor`, `copiarLinhaDigitavel`.
+- **BoletoDda — I-DDA3:** hipótese ("exige vencimento idêntico") vira **fato medido** em 2026-10-13: o
+  ERP associa valor exato + dia exato (0 divergências em ~250). Candidato "valor exato ±3 dias" vira a
+  regra em camadas (I15c). Novo I-DDA4. I-DDA1 (candidato não persistido) preservado. `BoletoDda`
+  segue `implemented` com `open_gap` (o código ainda usa a janela ±3 dias).
+- **TituloAPagar:** relação informativa com `DecisaoSugestaoBoleto`; `temBoleto` segue só o flag do ERP.
+- **Rejeitado/adiado** (ver ADR-0068): bind no ERP e automático (passos 2 e 3), segunda pessoa,
+  aprendizado de tolerância por par, chave de emissor para bancos fora de 341/237 (genérica, nunca
+  automática).
+- **Housekeeping:** `_index.json._meta.version` realinhado (estava 0.39.1) junto de `_coverage.json`.
+- Coverage: entities 25→27 (planned 5→7, 72→67 %); actions 37→42 (planned 6→11, 81→71 %);
+  business_rules 27→28 (planned 10→11). State machines inalteradas. `BoletoDda` passa a constar em
+  `by_entity` (drift pré-existente; o `summary` segue sem contá-la).
+
 ## v0.39.2 — SISPAG: o pool DDA sincroniza dentro da ingestão (2026-10-13, ADR-0067)
 
 Feature: `sispag-dda-na-ingestao` (`/feature-tweak BoletoDda`). `entity_changed = false`

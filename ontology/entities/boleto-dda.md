@@ -1,7 +1,7 @@
 ---
 name: BoletoDda
 type: entity
-ontology_version: "0.29"
+ontology_version: "0.40.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -37,12 +37,14 @@ properties:
 relationships:
   - "BoletoDda N—1 ArquivoDda (via ddcCod — o arquivo DDA do banco importado no fin124)"
   - "BoletoDda 0..1—1 TituloAPagar (via filCod/docCod/titCod — vínculo gravado PELO CONEXOS na associação do fin015; nunca por nós)"
-  - "BoletoDda 0..N—0..N TituloAPagar (candidatos — SUGESTÃO calculada, não persistida: mesmo valor, vencimento a ±3 dias)"
-last_review: 2026-09-25
+  - "BoletoDda 0..N—0..N TituloAPagar (candidatos — SUGESTÃO calculada, não persistida: regra em camadas I15c; só o que o ERP não associou)"
+  - "BoletoDda 0..N—N DecisaoSugestaoBoleto (snapshot por ddcCod/ditCod; decisão humana registrada, ADR-0068, planned)"
+last_review: 2026-10-14
 universality_evidence:
   - "ontology/_inbox/sispag-boleto-dda-sondagem.md — pool fin124 medido em PRD: 100% dos itens com barras de 44 dígitos, ~0% com vínculo"
   - "ontology/_inbox/sispag-boleto-dda-tab.md — casos PEDRONI 34697/1 e ADP 5046/1 (2026-09-23): boleto 1 dia depois do título, Conexos não associou"
   - "Conceito universal de pagamentos no Brasil: DDA (Débito Direto Autorizado) entrega ao pagador os boletos registrados contra o seu CNPJ"
+  - "ontology/_inbox/sispag-sugestao-boleto-dda-interview.md — medição PRD 2026-10-13: o ERP associa valor exato + dia exato, 0 divergências em ~250 associados; ~836 de ~1090 títulos BOLETO sem DDA"
 ---
 
 # BoletoDda (pool de boletos DDA do `fin124` — snapshot local)
@@ -71,7 +73,7 @@ ganha filial quando é vinculado (ou, na aba, pelo candidato único).
 | Situação | Regra |
 |---|---|
 | `VINCULADO` | O Conexos preencheu `docCod`/`titCod` no item do fin124. |
-| `CANDIDATO` | Livre, e **um** título aberto tem o mesmo valor (ao centavo) com vencimento a ±3 dias. |
+| `CANDIDATO` | Livre, e **um** título aberto cai nas camadas de I15c (\|Δvalor\| ≤ R$ 0,05 e mesmo dia; ou valor igual e 1–5 dias depois), sem estar reservado por título que o ERP já sinalizou (I15e). **Alvo da v0.40.0 (ADR-0068, planned):** os limites vêm de `business-rules/sugestao-boleto-dda-sispag.md`; a janela "valor exato ±3 dias" (`JANELA_CANDIDATO_DIAS`), ainda vigente no código, deixa de ser a regra (ela inclui dias ANTES do título, que são vencidos — I15h). **open_gap:** código ainda na janela antiga. |
 | `AMBIGUO` | Livre, e **mais de um** título casa. Típico de cobrança recorrente de mesmo valor. |
 | `SEM_TITULO` | Livre, e nenhum título aberto casa. |
 
@@ -81,9 +83,17 @@ Invariantes:
   é confiável (a PEDRONI tem ~18 boletos de R$ 1.412,00 no pool).
 - **I-DDA2 — título vinculado sai da disputa.** Título que o Conexos já ligou a um boleto não é
   candidato de nenhum outro.
-- **I-DDA3 — diferença de vencimento é exposta.** `diferencaDias` = vencimento do boleto −
-  vencimento do título. Os dois casos medidos em 2026-09-23 tinham +1 dia, e o Conexos não associou
-  nenhum dos dois (hipótese: exige vencimento idêntico — não confirmada).
+- **I-DDA3 — diferença de valor e de vencimento é exposta, com sinal.** `diferencaDias` = vencimento
+  do boleto − vencimento do título; `diferencaValor` = valor do boleto − valor do título.
+  **Fato medido (2026-10-13, PRD):** o ERP associa **valor exato e dia exato** — 0 divergências entre
+  ~250 títulos com `titVldReflexoDdaAssoc = 1`. Os dois casos de 2026-09-23 (+1 dia: PEDRONI 34697/1,
+  ADP 5046/1) não foram associados por isso. (Substitui a hipótese "exige vencimento idêntico — não
+  confirmada".) Consequência: tudo o que sobra "sem DDA" é, por construção, o que o ERP **não**
+  consegue associar (centavos, dias, conta emissora desconhecida) — é o território da sugestão.
+- **I-DDA4 — a sugestão tem camadas e decisão humana registrada** (ADR-0068, I15, planned). Ver
+  `business-rules/sugestao-boleto-dda-sispag.md`. I-DDA1 (candidato não é gravado) permanece:
+  a sugestão é calculada; o que se persiste é a **decisão** (`DecisaoSugestaoBoleto`) e o **par**
+  (`ConfirmacaoEmissorBoleto`), nunca o candidato.
 
 ## Sincronização
 
@@ -101,9 +111,15 @@ ninguém ver. A aba mostra aviso quando o pool está parado há mais de 8 h em d
 
 **Não há beneficiário no item DDA** (sonda PRD 2026-10-13: 15 campos, nenhum nome/CNPJ do emissor).
 O emissor só se deriva do código de barras (banco + agência + conta). `titulo_a_pagar.doc_esp_numero`
-(0083) guarda o número do documento do fornecedor para confirmar casamentos — não é usado em decisão.
+(0083) guarda o número do documento do fornecedor para confirmar casamentos — **sinal de apoio**
+(I15f, nunca suficiente). Layout real da chave do emissor só para 341 e 237 (84 % dos casos
+medidos); demais bancos usam chave genérica (I15i).
 
 ## Acesso
 
 `GET /sispag/boletos-dda` e `POST /sispag/boletos-dda/sincronizar` exigem `admin`: o código de
 barras carrega banco, agência e conta do cedente (mesmo guard das linhas digitáveis do lote).
+
+**Sugestão por título (ADR-0068, planned):** `sispag:ver` vê a sugestão com o emissor mascarado;
+copiar a linha digitável (auditado), confirmar, rejeitar e revogar exigem `sispag:executar`. O `GET`
+de sugestões é uma rota **nova** (por título) — não abre o pool inteiro a quem não é `admin`.

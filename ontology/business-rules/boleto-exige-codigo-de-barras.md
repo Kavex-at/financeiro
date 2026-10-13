@@ -9,7 +9,7 @@ related_files:
   - src/backend/domain/errors/BoletoSemCodigoBarrasError.ts
   - src/backend/domain/service/sispag/RemessaService.ts
   - src/backend/domain/client/ConexosSispagWriteClient.ts
-last_review: 2026-08-27
+last_review: 2026-10-14
 ---
 
 # Boleto exige código de barras (fail-closed no envio)
@@ -63,5 +63,7 @@ conta para boleto rejeitava justamente o fornecedor que só aceita boleto (o cas
 ## Ver também
 
 - ADR-0040 — o boleto vem da associação DDA do ERP
+- ADR-0068 / `business-rules/sugestao-boleto-dda-sispag.md` — a **confirmação de emissor** é
+  evidência humana; **não** faz `temBoletoDda` = true e **não** substitui esta validação (I15a)
 - `ontology/_inbox/sispag-boleto-dda-sondagem.md` — as medições
 - `business-rules/elegibilidade-titulo-lote.md` — I2, elegibilidade do item
