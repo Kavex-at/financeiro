@@ -5,6 +5,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
+  ArrowDownUp,
   CheckCircle2,
   DatabaseZap,
   Layers,
@@ -42,6 +43,7 @@ import {
   fetchLotes,
   fetchRetornos,
   fetchSispagPainel,
+  sincronizarLotes,
   fetchIngestaoRuns,
   finalizarLote,
   formarLotes,
@@ -86,7 +88,7 @@ import { BoletosDdaTab } from './components/BoletosDdaTab'
 import { BoletosDoTituloDialog } from './components/BoletosDoTituloDialog'
 import { ConfirmarProcessarRetornoDialog } from './components/ConfirmarAcaoDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
-import { useCarteiraAoAbrir } from './useCarteiraAoAbrir'
+import { useCarteiraAoAbrir, useLotesAoAbrir } from './useCarteiraAoAbrir'
 import { LoteCard } from './components/LoteCard'
 import { ExportarTitulosBarra, useSelecaoRemessas } from './components/ExportarTitulosBarra'
 import { ExportarTitulosAPagarBotao } from './components/ExportarTitulosAPagarBotao'
@@ -329,10 +331,55 @@ function SispagPanel() {
 
   // ADR-0060: com o painel já na tela (dados gravados), pede o refresh se a carteira estiver
   // defasada e recarrega o painel — sem spinner — quando a ingestão termina.
-  const { situacao: refresh, aviso: avisoRefresh } = useCarteiraAoAbrir({
+  const {
+    situacao: refresh,
+    aviso: avisoRefresh,
+    concluido: carteiraConcluida,
+  } = useCarteiraAoAbrir({
     habilitado: !loading && painel !== null,
     aoAtualizar: recarregarPainel,
   })
+  // ADR-0066: os lotes sincronizam com o Conexos (L11) DEPOIS da carteira, nunca junto — cada uma
+  // ocupa sessões do robô, que tem teto. TTL de 30 min no servidor.
+  const { situacao: syncAbertura, aviso: avisoSyncAbertura } = useLotesAoAbrir({
+    habilitado: carteiraConcluida,
+    aoAtualizar: recarregarLotes,
+  })
+
+  // "Sincronizar lotes": passada completa forçada (~25 s). Basta `sispag:ver`.
+  const [sincronizando, setSincronizando] = React.useState(false)
+  const sincronizar = async () => {
+    setSincronizando(true)
+    try {
+      const r = await sincronizarLotes()
+      if (r.estado === 'em_andamento') {
+        toast.warning('Sincronização em andamento', {
+          description: 'Outra sincronização já está rodando. Os lotes atualizam quando ela terminar.',
+        })
+        return
+      }
+      await Promise.all([recarregarLotes(), recarregarPainel()])
+      const resumo = r.passada?.resumo
+      if (r.passada?.status === 'error') {
+        toast.error('Falha ao sincronizar os lotes', { description: r.motivo })
+      } else {
+        toast.success('Lotes sincronizados', {
+          description: resumo
+            ? `${resumo.lotes} lote(s) lido(s) · ${resumo.transicionados} mudaram de status${
+                resumo.falhasLeitura ? ` · ${resumo.falhasLeitura} sem leitura` : ''
+              }.`
+            : undefined,
+        })
+      }
+    } catch (e) {
+      toast.error('Falha ao sincronizar os lotes', {
+        description: e instanceof Error ? e.message : undefined,
+      })
+    } finally {
+      setSincronizando(false)
+    }
+  }
+  const sincronizandoLotes = sincronizando || syncAbertura === 'atualizando'
 
   const titulos = React.useMemo(() => painel?.titulos ?? [], [painel?.titulos])
   // ADR-0065: o item do lote não carrega o favorecido; a carteira do painel sim. É o que permite o
@@ -694,6 +741,16 @@ function SispagPanel() {
             <Button variant="outline" size="sm" asChild>
               <Link href="/sispag/favorecidos-autorizados">Favorecidos autorizados</Link>
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void sincronizar()}
+              disabled={sincronizandoLotes}
+              title="Relê no Conexos a baixa dos títulos de todos os lotes com remessa"
+            >
+              {sincronizandoLotes ? <Spinner /> : <ArrowDownUp className="size-4" aria-hidden />}{' '}
+              Sincronizar lotes
+            </Button>
             <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
               <RefreshCcw className="size-4" /> Recarregar
             </Button>
@@ -798,6 +855,19 @@ function SispagPanel() {
                 {' '}
                 · não foi possível atualizar agora
                 {avisoRefresh ? ` (${avisoRefresh})` : ''}; mostrando a última carteira gravada
+              </span>
+            ) : null}
+            {sincronizandoLotes ? (
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                {' '}
+                · <Spinner /> sincronizando os lotes com o Conexos…
+              </span>
+            ) : syncAbertura === 'falhou' ? (
+              <span className="text-warning">
+                {' '}
+                · não foi possível sincronizar os lotes agora
+                {avisoSyncAbertura ? ` (${avisoSyncAbertura})` : ''}; mostrando o último status
+                gravado
               </span>
             ) : null}
           </span>

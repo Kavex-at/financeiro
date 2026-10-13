@@ -1,35 +1,46 @@
 'use client'
 
 import * as React from 'react'
-import { atualizarCarteiraSeDefasada } from '@/lib/sispag'
+import { atualizarCarteiraSeDefasada, sincronizarLotesSeDefasado } from '@/lib/sispag'
 
-/** Espera entre reconferências quando OUTRA ingestão está rodando (cron ou outra pessoa). */
+/** Espera entre reconferências quando OUTRA execução está rodando (cron ou outra pessoa). */
 export const ESPERA_REFRESH_MS = 8_000
-/** Quantas vezes reconferir antes de desistir (≈ 48 s; a ingestão leva ~10 s). */
+/** Quantas vezes reconferir antes de desistir (≈ 48 s; a ingestão leva ~10 s, a sincronização ~25 s). */
 export const TENTATIVAS_REFRESH = 6
 
 export type SituacaoRefresh = 'ocioso' | 'atualizando' | 'falhou'
 
+/** O que os endpoints de "atualizar se defasado" devolvem (ADR-0060, ADR-0066). */
+interface RespostaRefresh {
+  estado: 'fresca' | 'atualizada' | 'em_andamento' | 'falha_recente'
+  motivo?: string
+}
+
 const esperar = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /**
- * Atualiza a carteira SISPAG ao abrir a tela (ADR-0060): a tela já mostra o que está gravado; este
- * hook pede ao backend o refresh se a carteira estiver defasada (TTL no servidor) e, quando uma
- * ingestão termina, chama `aoAtualizar` para recarregar o painel — sem spinner de página inteira.
+ * Refresh ao abrir a tela (*stale-while-revalidate*): a tela já mostra o que está gravado; este
+ * hook pede ao backend o refresh (o TTL é do servidor) e, quando um refresh termina, chama
+ * `aoAtualizar` para recarregar — sem spinner de página inteira.
  *
- * Dispara UMA vez por abertura, quando `habilitado` vira `true` (painel já carregado). Em
- * StrictMode de desenvolvimento o efeito roda duas vezes; o backend absorve (TTL e lock).
+ * Dispara UMA vez por abertura, quando `habilitado` vira `true`. `concluido` vira `true` quando
+ * o passo termina, com sucesso ou não — é o que encadeia o próximo passo. Em StrictMode de
+ * desenvolvimento o efeito roda duas vezes; o backend absorve (TTL e trava).
  */
-export function useCarteiraAoAbrir(opts: {
+export function useRefreshAoAbrir(opts: {
   habilitado: boolean
+  pedir: () => Promise<RespostaRefresh>
   aoAtualizar: () => void | Promise<void>
-}): { situacao: SituacaoRefresh; aviso: string | null } {
+}): { situacao: SituacaoRefresh; aviso: string | null; concluido: boolean } {
   const [situacao, setSituacao] = React.useState<SituacaoRefresh>('ocioso')
   const [aviso, setAviso] = React.useState<string | null>(null)
-  // O callback muda a cada render do pai; o efeito não pode depender dele.
+  const [concluido, setConcluido] = React.useState(false)
+  // Os callbacks mudam a cada render do pai; o efeito não pode depender deles.
   const aoAtualizar = React.useRef(opts.aoAtualizar)
+  const pedir = React.useRef(opts.pedir)
   React.useEffect(() => {
     aoAtualizar.current = opts.aoAtualizar
+    pedir.current = opts.pedir
   })
 
   React.useEffect(() => {
@@ -40,14 +51,20 @@ export function useCarteiraAoAbrir(opts: {
       let esperouOutra = false
       try {
         for (let i = 0; i < TENTATIVAS_REFRESH; i += 1) {
-          const r = await atualizarCarteiraSeDefasada()
+          const r = await pedir.current()
           if (!vivo) return
           if (r.estado === 'atualizada') {
             await aoAtualizar.current()
+            // Rodou, mas fechou em erro (ex.: nenhum título lido): os dados gravados ficam.
+            if (r.motivo) {
+              setAviso(r.motivo)
+              setSituacao('falhou')
+              return
+            }
             break
           }
           if (r.estado === 'falha_recente') {
-            setAviso(r.motivo ?? 'a última ingestão falhou')
+            setAviso(r.motivo ?? 'a última execução falhou')
             setSituacao('falhou')
             return
           }
@@ -57,7 +74,7 @@ export function useCarteiraAoAbrir(opts: {
             if (!vivo) return
             continue
           }
-          // `fresca`: se antes havia outra ingestão rodando, ela terminou — traz os dados novos.
+          // `fresca`: se antes havia outra execução rodando, ela terminou — traz os dados novos.
           if (esperouOutra) await aoAtualizar.current()
           break
         }
@@ -66,6 +83,8 @@ export function useCarteiraAoAbrir(opts: {
         if (!vivo) return
         setAviso(e instanceof Error ? e.message : 'falha ao atualizar')
         setSituacao('falhou')
+      } finally {
+        if (vivo) setConcluido(true)
       }
     }
     void rodar()
@@ -74,5 +93,24 @@ export function useCarteiraAoAbrir(opts: {
     }
   }, [opts.habilitado])
 
-  return { situacao, aviso }
+  return { situacao, aviso, concluido }
+}
+
+/** Carteira SISPAG ao abrir a tela (ADR-0060). */
+export function useCarteiraAoAbrir(opts: {
+  habilitado: boolean
+  aoAtualizar: () => void | Promise<void>
+}) {
+  return useRefreshAoAbrir({ ...opts, pedir: atualizarCarteiraSeDefasada })
+}
+
+/**
+ * Lotes SISPAG ao abrir a tela (ADR-0066): a passada de L11 roda DEPOIS da carteira, nunca junto
+ * (cap de sessões do robô no Conexos) — passe `habilitado` = carteira concluída.
+ */
+export function useLotesAoAbrir(opts: {
+  habilitado: boolean
+  aoAtualizar: () => void | Promise<void>
+}) {
+  return useRefreshAoAbrir({ ...opts, pedir: sincronizarLotesSeDefasado })
 }

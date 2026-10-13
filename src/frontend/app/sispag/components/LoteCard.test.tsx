@@ -33,7 +33,6 @@ jest.mock('@/lib/sispag', () => {
     finalizarLote: jest.fn(),
     cancelarLote: jest.fn(),
     reabrirLote: jest.fn(),
-    sincronizarLote: jest.fn(),
     baixarRemessa: jest.fn(),
     removerItem: jest.fn(),
     // ADR-0054: por padrão as flags estão desligadas — a tela de antes.
@@ -58,7 +57,6 @@ import {
   finalizarLote,
   getRecursos,
   reabrirLote,
-  sincronizarLote,
 } from '@/lib/sispag'
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
@@ -355,29 +353,13 @@ describe('LoteCard — sincronização pelo título (ADR-0055)', () => {
       ...over,
     }) as LotePagamento['itens'][number]
 
-  it.each(['REMESSA_GERADA', 'RETORNADO', 'BAIXADO'] as const)(
-    '"Sincronizar agora" aparece em %s e chama a API pelo caminho das ações',
-    async (status) => {
-      const user = userEvent.setup()
-      const acao = renderCard(lote({ status }))
-      await user.click(screen.getByRole('button', { name: /sincronizar agora/i }))
-      expect(sincronizarLote).toHaveBeenCalledWith('L1')
-      expect(acao).toHaveBeenCalledWith(expect.any(Function), 'Lote sincronizado')
-    },
-  )
-
-  it.each(['RASCUNHO', 'FINALIZADO', 'CANCELADO'] as const)(
-    '"Sincronizar agora" NÃO aparece em %s (não há remessa para acompanhar)',
+  it.each(['RASCUNHO', 'REMESSA_GERADA', 'RETORNADO', 'BAIXADO'] as const)(
+    'não há "Sincronizar agora" no card em %s — a sincronização é da tela inteira (ADR-0066)',
     (status) => {
       renderCard(lote({ status }))
-      expect(screen.queryByRole('button', { name: /sincronizar agora/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /sincronizar/i })).not.toBeInTheDocument()
     },
   )
-
-  it('o botão fica desabilitado enquanto uma ação está em curso (carregando)', () => {
-    render(<LoteCard lote={lote({ status: 'REMESSA_GERADA' })} busy acao={acaoQueExecuta()} />)
-    expect(screen.getByRole('button', { name: /sincronizar agora/i })).toBeDisabled()
-  })
 
   it('cada item mostra a situação (PAGO/AGENDADO/REJEITADO/SEM_RETORNO)', async () => {
     const user = userEvent.setup()

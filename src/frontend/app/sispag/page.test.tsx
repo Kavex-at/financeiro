@@ -69,6 +69,9 @@ jest.mock('@/lib/sispag', () => {
     fetchBoletosDda: jest.fn(),
     // ADR-0060: o refresh ao abrir não pode bater na rede real nos demais testes da página.
     atualizarCarteiraSeDefasada: jest.fn().mockResolvedValue({ estado: 'fresca' }),
+    // ADR-0066: idem para a sincronização dos lotes ao abrir e o botão "Sincronizar lotes".
+    sincronizarLotesSeDefasado: jest.fn().mockResolvedValue({ estado: 'fresca' }),
+    sincronizarLotes: jest.fn(),
   }
 })
 
@@ -319,7 +322,7 @@ describe('SispagPage — só sispag:ver', () => {
     await renderPainel()
     await user.click(screen.getByRole('tab', { name: /boletos dda/i }))
     await waitFor(() => expect(fetchBoletosDda).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /atualizar dda|sincronizar/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /atualizar dda/i })).not.toBeInTheDocument()
   })
 
   it('lotes candidatos: sem ações no card e sem ler as contas pagadoras (JC-3)', async () => {
@@ -436,6 +439,90 @@ describe('SispagPage — atualiza a carteira ao abrir', () => {
     )
     await renderPainel()
     expect(mockRefresh).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * ADR-0066 — lotes ao abrir a tela e "Sincronizar lotes". A sincronização roda DEPOIS da
+ * carteira (cap de sessões do robô) e o botão único substitui o "Sincronizar agora" por lote.
+ */
+describe('SispagPage — sincroniza os lotes', () => {
+  const lib = () => jest.requireMock('@/lib/sispag')
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+    permissoes = ['sispag:ver' as Permissao]
+    lib().fetchSispagPainel.mockReset()
+    lib().fetchSispagPainel.mockResolvedValue(painel)
+    lib().fetchLotes.mockReset()
+    lib().fetchLotes.mockResolvedValue([])
+    lib().atualizarCarteiraSeDefasada.mockReset()
+    lib().sincronizarLotesSeDefasado.mockReset()
+    lib().sincronizarLotes.mockReset()
+  })
+
+  const renderPainel = async () => {
+    await act(async () => {
+      render(<SispagPage />)
+    })
+  }
+
+  it('ao abrir: só sincroniza os lotes depois que a carteira termina, e recarrega os lotes', async () => {
+    let terminarCarteira: (v: unknown) => void = () => {}
+    lib().atualizarCarteiraSeDefasada.mockReturnValue(
+      new Promise((resolve) => (terminarCarteira = resolve)),
+    )
+    lib().sincronizarLotesSeDefasado.mockResolvedValue({ estado: 'atualizada', idadeMin: 0 })
+    await renderPainel()
+    await waitFor(() => expect(lib().atualizarCarteiraSeDefasada).toHaveBeenCalledTimes(1))
+    expect(lib().sincronizarLotesSeDefasado).not.toHaveBeenCalled()
+
+    await act(async () => {
+      terminarCarteira({ estado: 'fresca' })
+    })
+    await waitFor(() => expect(lib().sincronizarLotesSeDefasado).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(lib().fetchLotes).toHaveBeenCalledTimes(2))
+  })
+
+  it('falha_recente dos lotes: avisa e mantém o último status gravado', async () => {
+    lib().atualizarCarteiraSeDefasada.mockResolvedValue({ estado: 'fresca' })
+    lib().sincronizarLotesSeDefasado.mockResolvedValue({
+      estado: 'falha_recente',
+      motivo: 'Bad Credentials',
+    })
+    await renderPainel()
+    expect(await screen.findByText(/não foi possível sincronizar os lotes agora/)).toBeInTheDocument()
+    expect(screen.getByText(/Bad Credentials/)).toBeInTheDocument()
+  })
+
+  it('quem só tem sispag:ver vê "Sincronizar lotes"; o clique força a passada e recarrega', async () => {
+    const user = userEvent.setup()
+    lib().atualizarCarteiraSeDefasada.mockResolvedValue({ estado: 'fresca' })
+    lib().sincronizarLotesSeDefasado.mockResolvedValue({ estado: 'fresca' })
+    lib().sincronizarLotes.mockResolvedValue({
+      estado: 'atualizada',
+      passada: { runId: 'r', status: 'success', resumo: { lotes: 5, transicionados: 2 } },
+    })
+    await renderPainel()
+    await waitFor(() => expect(lib().sincronizarLotesSeDefasado).toHaveBeenCalled())
+    const lotesAntes = lib().fetchLotes.mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: /sincronizar lotes/i }))
+    await waitFor(() => expect(lib().sincronizarLotes).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(lib().fetchLotes.mock.calls.length).toBe(lotesAntes + 1))
+  })
+
+  it('outra passada rodando: não recarrega nem acusa erro', async () => {
+    const user = userEvent.setup()
+    lib().atualizarCarteiraSeDefasada.mockResolvedValue({ estado: 'fresca' })
+    lib().sincronizarLotesSeDefasado.mockResolvedValue({ estado: 'fresca' })
+    lib().sincronizarLotes.mockResolvedValue({ estado: 'em_andamento' })
+    await renderPainel()
+    await waitFor(() => expect(lib().sincronizarLotesSeDefasado).toHaveBeenCalled())
+    const lotesAntes = lib().fetchLotes.mock.calls.length
+    await user.click(screen.getByRole('button', { name: /sincronizar lotes/i }))
+    await waitFor(() => expect(lib().sincronizarLotes).toHaveBeenCalledTimes(1))
+    expect(lib().fetchLotes.mock.calls.length).toBe(lotesAntes)
   })
 })
 
