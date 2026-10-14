@@ -59,5 +59,9 @@ export default class AnaliseCodigoBarrasRepetido {
     };
 
     /** I16e: 5 primeiros + 4 últimos dígitos das barras (44). */
-    public mascarar = (barras44: string): string => `${barras44.slice(0, 5)}…${barras44.slice(-4)}`;
+    public mascarar = (barras44: string): string => AnaliseCodigoBarrasRepetido.mascarar(barras44);
+
+    /** Mesma máscara sem instância — única definição da regra I16e (usada pelo validador do .REM). */
+    public static mascarar = (barras44: string): string =>
+        `${barras44.slice(0, 5)}…${barras44.slice(-4)}`;
 }
