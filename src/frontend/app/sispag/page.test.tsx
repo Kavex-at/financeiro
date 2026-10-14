@@ -694,4 +694,15 @@ describe('SispagPage — sugestão de boleto na aba de títulos (ADR-0068)', () 
     expect(screen.getAllByText('ADP BRASIL LTDA', { exact: false }).length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: 'sugestão disponível' })).not.toBeInTheDocument()
   })
+
+  it('emissores confirmados: botão abre a lista (sispag:ver)', async () => {
+    permissoes = ['sispag:ver']
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    await userEvent.click(
+      await screen.findByRole('button', { name: /emissores de boleto confirmados/ }),
+    )
+    expect(await screen.findByText('Nenhum emissor confirmado')).toBeInTheDocument()
+  })
 })
