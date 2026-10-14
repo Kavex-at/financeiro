@@ -115,3 +115,92 @@ describe('AnaliseCodigoBarrasRepetido', () => {
         expect(r.grupos[0].mascarado).toBe(m);
     });
 });
+
+describe('AnaliseCodigoBarrasRepetido.decidirRetirada (I16d.1, I16d.2)', () => {
+    const DIA = 86_400_000;
+    const BASE = Date.UTC(2026, 9, 20);
+    const item = (
+        docCod: string,
+        o: { filCod?: number; titCod?: string; venc?: number | null; codigo?: string } = {},
+    ) => ({
+        chave: `${o.filCod ?? 1}:${docCod}:${o.titCod ?? '1'}`,
+        codigo: o.codigo ?? LINHA_A,
+        filCod: o.filCod ?? 1,
+        docCod,
+        titCod: o.titCod ?? '1',
+        ...(o.venc === null ? {} : { vencimento: o.venc ?? BASE }),
+    });
+
+    it('3 itens, mesmo código, vencimentos distintos: fica o de menor vencimento', () => {
+        const r = analise.decidirRetirada([
+            item('100', { venc: BASE + 2 * DIA }),
+            item('101', { venc: BASE }),
+            item('102', { venc: BASE + DIA }),
+        ]);
+        expect(r.retirar.map((x) => x.chave).sort()).toEqual(['1:100:1', '1:102:1']);
+        for (const x of r.retirar) {
+            expect(x.mantida).toBe('1:101:1');
+            expect(x.motivo).toBe('CODIGO_BARRAS_REPETIDO');
+            expect(x.mascarado).toBe(`${BARRAS_A.slice(0, 5)}…${BARRAS_A.slice(-4)}`);
+        }
+    });
+
+    it('vencimento igual: menor docCod NUMÉRICO (9 < 10), depois filCod, depois titCod', () => {
+        const r1 = analise.decidirRetirada([item('10'), item('9')]);
+        expect(r1.retirar).toHaveLength(1);
+        expect(r1.retirar[0]?.chave).toBe('1:10:1');
+        expect(r1.retirar[0]?.mantida).toBe('1:9:1');
+
+        const r2 = analise.decidirRetirada([item('5', { filCod: 2 }), item('5', { filCod: 1 })]);
+        expect(r2.retirar[0]?.chave).toBe('2:5:1');
+
+        const r3 = analise.decidirRetirada([
+            item('5', { titCod: '2' }),
+            item('5', { titCod: '1' }),
+        ]);
+        expect(r3.retirar[0]?.chave).toBe('1:5:2');
+    });
+
+    it('vencimento ausente perde o desempate (Q6)', () => {
+        const r = analise.decidirRetirada([item('1', { venc: null }), item('2', { venc: BASE })]);
+        expect(r.retirar[0]?.chave).toBe('1:1:1');
+        expect(r.retirar[0]?.mantida).toBe('1:2:1');
+    });
+
+    it('dois grupos independentes retiram 1 de cada; quem fica nunca aparece em retirar', () => {
+        const r = analise.decidirRetirada([
+            item('1', { codigo: LINHA_A }),
+            item('2', { codigo: LINHA_A }),
+            item('3', { codigo: LINHA_B }),
+            item('4', { codigo: LINHA_B }),
+            item('5', { codigo: LINHA_B }),
+        ]);
+        expect(r.retirar).toHaveLength(3);
+        const mantidas = new Set(r.retirar.map((x) => x.mantida));
+        for (const x of r.retirar) expect(mantidas.has(x.chave)).toBe(false);
+        expect([...mantidas].sort()).toEqual(['1:1:1', '1:3:1']);
+    });
+
+    it('ilegível (DV inválido) vai para ilegiveis sem "quem fica"', () => {
+        const dvRuim = `${LINHA_A.slice(0, 9)}${(Number(LINHA_A[9]) + 1) % 10}${LINHA_A.slice(10)}`;
+        const r = analise.decidirRetirada([item('1', { codigo: dvRuim }), item('2')]);
+        expect(r.retirar).toEqual([]);
+        expect(r.ilegiveis).toEqual([{ chave: '1:1:1', motivo: 'CODIGO_BARRAS_ILEGIVEL' }]);
+    });
+
+    it('a saída pública não carrega as 44 barras nem a linha de 47', () => {
+        const r = analise.decidirRetirada([item('1'), item('2')]);
+        const json = JSON.stringify(r);
+        expect(json).not.toContain(BARRAS_A);
+        expect(json).not.toContain(LINHA_A);
+        expect(json).toContain('…');
+    });
+
+    it('sem repetição nem ilegível: nada a retirar', () => {
+        const r = analise.decidirRetirada([
+            item('1', { codigo: LINHA_A }),
+            item('2', { codigo: LINHA_B }),
+        ]);
+        expect(r).toEqual({ retirar: [], ilegiveis: [] });
+    });
+});
