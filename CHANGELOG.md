@@ -1,5 +1,21 @@
 # Columbia Financeiro — Changelog
 
+## v0.67.0 (2026-10-14) — SISPAG: boleto repetido não trava mais a remessa
+
+- **Os títulos repetidos saem do lote sozinhos e a remessa segue.** Quando dois ou mais títulos do
+  mesmo lote apontam para o **mesmo código de barras**, a geração deixa de parar: fica um título por
+  boleto (o de menor vencimento e, em empate, o de menor número de documento) e os demais são
+  retirados do lote e do rascunho no Conexos antes de finalizar. Nenhum boleto é pago duas vezes.
+- **O lote avisa o que aconteceu.** O cartão do lote mostra, de forma persistente, quais títulos
+  saíram e qual ficou com o boleto, e a resposta da geração traz a lista em `avisos`.
+- **Títulos retirados ficam retidos** (selo "retido: boleto repetido") e não voltam à formação nem à
+  inclusão manual até o boleto deixar de ser compartilhado ou a retenção ser desfeita com motivo.
+  Não é possível desfazer enquanto a limpeza no Conexos estiver incompleta.
+- **Código ilegível (DV inválido) também é retirado; código ausente ou leitura incompleta continua
+  barrando a remessa.** Se o lote nativo já estiver finalizado, nada é alterado e a mensagem manda
+  cancelá-lo no Conexos.
+- Só o código mascarado (5 primeiros e 4 últimos dígitos) é guardado; nunca o código completo.
+
 ## v0.66.2 (2026-10-14) — SISPAG: título que vence hoje não aparece mais como vencido
 
 - **Vence hoje = "vence em 0d", o dia inteiro.** A partir das 9h o título que vencia hoje virava
