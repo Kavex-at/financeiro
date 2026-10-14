@@ -18,12 +18,10 @@ evidence:
 # ADR 0069: guarda de código de barras repetido
 
 **Branch:** `fix/sispag-guarda-codbar-repetido`. `/feature-tweak`. `entity_changed = true`.
-**Status da implementação:** `planned` (ontologia à frente do código).
+**Status da implementação:** `implemented` (app v0.66.1, ontologia v0.40.2).
 
-> **Reconferir no ship.** O número 0069 e a versão de ontologia v0.40.1 foram verificados contra
-> `origin/main` em 2026-10-14 (último ADR 0068, ontologia 0.40.0, app 0.66.0). Outra sessão (correção de
-> data de vencimento, ADR retroativo próprio) pode reivindicá-los antes: **reconferir ADR, versão da
-> ontologia e `CHANGELOG.md` no momento do ship e renumerar se colidir.**
+> **Reconferido no ship (2026-10-14):** `origin/main` não avançou desde a base (último ADR 0068, ontologia
+> 0.40.0 + a 0.40.1 desta branch, app 0.66.0); número 0069 livre.
 
 ## Contexto
 `titVldReflexoDdaAssoc` é "existe boleto DDA com mesmo valor e vencimento", não reserva 1:1. O ERP anexa o
