@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogBody,
@@ -35,14 +36,21 @@ import { SugestaoBoletoPainel } from './SugestaoBoletoPainel'
 function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]; mostrarLigacao: boolean }) {
   return (
     <Table>
+      <caption className="sr-only">
+        {mostrarLigacao
+          ? 'Outros boletos DDA com o mesmo valor'
+          : 'Boletos DDA candidatos do título'}
+      </caption>
       <TableHeader>
         <TableRow>
-          <TableHead>Boleto</TableHead>
-          <TableHead className="text-right">Valor</TableHead>
-          <TableHead>Vencimento</TableHead>
-          <TableHead>Diferença</TableHead>
-          <TableHead>Situação</TableHead>
-          {mostrarLigacao ? <TableHead>Ligado a</TableHead> : null}
+          <TableHead scope="col">Boleto</TableHead>
+          <TableHead scope="col" className="text-right">
+            Valor
+          </TableHead>
+          <TableHead scope="col">Vencimento</TableHead>
+          <TableHead scope="col">Diferença</TableHead>
+          <TableHead scope="col">Situação</TableHead>
+          {mostrarLigacao ? <TableHead scope="col">Ligado a</TableHead> : null}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -113,6 +121,7 @@ export function BoletosDoTituloDialog({
     erro?: string
   } | null>(null)
 
+  const [tentativa, setTentativa] = React.useState(0)
   const chave = titulo ? `${titulo.filCod ?? ''}:${titulo.docCod}:${titulo.titCod}` : null
   React.useEffect(() => {
     if (!titulo || chave === null) return
@@ -131,7 +140,7 @@ export function BoletosDoTituloDialog({
     return () => {
       vivo = false
     }
-  }, [titulo, chave])
+  }, [titulo, chave, tentativa])
 
   const atual = resultado !== null && resultado.chave === chave ? resultado : null
   const dados = atual?.dados ?? null
@@ -167,8 +176,26 @@ export function BoletosDoTituloDialog({
                 />
               ) : null}
               {erro ? (
-                <EmptyState title="Não foi possível consultar os boletos DDA" description={erro} />
+                <div role="alert">
+                  <EmptyState
+                    title="Não foi possível consultar os boletos DDA"
+                    description={erro}
+                    action={
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setResultado(null)
+                          setTentativa((n) => n + 1)
+                        }}
+                      >
+                        Tentar de novo
+                      </Button>
+                    }
+                  />
+                </div>
               ) : dados === null ? (
+                // O Spinner já expõe role=status com o rótulo "Loading".
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Spinner /> Consultando os boletos DDA…
                 </div>

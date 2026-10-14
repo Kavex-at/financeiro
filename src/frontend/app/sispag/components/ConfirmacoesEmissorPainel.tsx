@@ -55,41 +55,31 @@ export function ConfirmacoesEmissorPainel({
     void carregar()
   }, [carregar])
 
-  if (erro)
-    return (
-      <EmptyState
-        title="Não foi possível carregar as confirmações de emissor"
-        description={erro}
-        action={
-          <Button size="sm" variant="outline" onClick={() => void carregar()}>
-            Tentar de novo
-          </Button>
-        }
-      />
-    )
-  if (lista === null)
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Spinner /> Carregando as confirmações de emissor…
-      </div>
-    )
-  if (lista.length === 0)
-    return (
-      <EmptyState
-        title="Nenhum emissor confirmado"
-        description="Ao confirmar uma sugestão de boleto, o emissor do credor aparece aqui."
-      />
-    )
-
   return (
     <div className="flex flex-col gap-2">
-      <div aria-live="polite">
-        {ok ? (
-          <p role="status" className="text-sm text-success">
-            {ok}
-          </p>
-        ) : null}
+      <div role="status">
+        {ok ? <p className="text-sm text-success-foreground">{ok}</p> : null}
       </div>
+      {erro ? (
+        <EmptyState
+          title="Não foi possível carregar as confirmações de emissor"
+          description={erro}
+          action={
+            <Button size="sm" variant="outline" onClick={() => void carregar()}>
+              Tentar de novo
+            </Button>
+          }
+        />
+      ) : lista === null ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Spinner /> Carregando as confirmações de emissor…
+        </div>
+      ) : lista.length === 0 ? (
+        <EmptyState
+          title="Nenhum emissor confirmado"
+          description="Ao confirmar uma sugestão de boleto, o emissor do credor aparece aqui."
+        />
+      ) : (
       <Table>
         <caption className="sr-only">Emissores de boleto confirmados por credor</caption>
         <TableHeader>
@@ -111,19 +101,20 @@ export function ConfirmacoesEmissorPainel({
                 <div className="flex flex-col items-start gap-1">
                   <span className="tabular-nums">{c.emissorMascarado}</span>
                   {!c.elegivelAutomatico ? (
-                    <Badge
-                      variant="outline"
-                      className="border-warning/40 text-warning"
-                      title="Layout genérico: nunca vira automático (I15i)."
-                    >
-                      não elegível a automático
-                    </Badge>
+                    <>
+                      <Badge variant="outline" className="border-warning/40 text-warning-foreground">
+                        não elegível a automático
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        Layout genérico: nunca vira automático.
+                      </span>
+                    </>
                   ) : null}
                 </div>
               </TableCell>
               <TableCell>
                 {c.estado === 'VIGENTE' ? (
-                  <Badge variant="outline" className="border-success/40 text-success">
+                  <Badge variant="outline" className="border-success/40 text-success-foreground">
                     vigente
                   </Badge>
                 ) : (
@@ -140,7 +131,12 @@ export function ConfirmacoesEmissorPainel({
               </TableCell>
               <TableCell className="text-right">
                 {podeExecutar && c.estado === 'VIGENTE' ? (
-                  <Button size="sm" variant="outline" onClick={() => setRevogando(c)}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Revogar confirmação de ${c.credor ?? c.pesCod}`}
+                    onClick={() => setRevogando(c)}
+                  >
                     Revogar
                   </Button>
                 ) : null}
@@ -149,6 +145,7 @@ export function ConfirmacoesEmissorPainel({
           ))}
         </TableBody>
       </Table>
+      )}
       {revogando ? (
         <MotivoDecisaoDialog
           titulo="Revogar confirmação do emissor"

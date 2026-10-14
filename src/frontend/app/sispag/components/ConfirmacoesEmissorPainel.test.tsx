@@ -51,7 +51,7 @@ describe('ConfirmacoesEmissorPainel', () => {
     listar.mockResolvedValue([par()])
     render(<ConfirmacoesEmissorPainel podeExecutar={false} />)
     await screen.findByText('MULTILOG BRASIL')
-    expect(screen.queryByRole('button', { name: 'Revogar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Revogar confirmação de/ })).not.toBeInTheDocument()
   })
 
   it('par GENERICO mostra o selo; par revogado não tem botão', async () => {
@@ -62,7 +62,7 @@ describe('ConfirmacoesEmissorPainel', () => {
     render(<ConfirmacoesEmissorPainel podeExecutar />)
     expect(await screen.findByText('não elegível a automático')).toBeInTheDocument()
     expect(screen.getByText('revogada')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Revogar' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^Revogar confirmação de/ })).toHaveLength(1)
   })
 
   it('revoga com motivo, recarrega e avisa a tela', async () => {
@@ -70,7 +70,7 @@ describe('ConfirmacoesEmissorPainel', () => {
     revogar.mockResolvedValue(par({ estado: 'REVOGADA' }))
     const onAlterado = jest.fn()
     render(<ConfirmacoesEmissorPainel podeExecutar onAlterado={onAlterado} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Revogar' }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Revogar confirmação de/ }))
     const dlg = await screen.findByRole('dialog')
     await userEvent.click(within(dlg).getByRole('button', { name: 'Revogar' }))
     expect(within(dlg).getByRole('alert')).toHaveTextContent('Informe o motivo.')
@@ -89,7 +89,7 @@ describe('ConfirmacoesEmissorPainel', () => {
     listar.mockResolvedValue([par()])
     revogar.mockRejectedValue(new AutorizacaoApiError(msg, status, code))
     render(<ConfirmacoesEmissorPainel podeExecutar />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Revogar' }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Revogar confirmação de/ }))
     const dlg = await screen.findByRole('dialog')
     await userEvent.type(within(dlg).getByLabelText('Motivo'), 'x')
     await userEvent.click(within(dlg).getByRole('button', { name: 'Revogar' }))
@@ -102,5 +102,31 @@ describe('ConfirmacoesEmissorPainel', () => {
     expect(await screen.findByText('Falha de rede')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
     expect(await screen.findByText('MULTILOG BRASIL')).toBeInTheDocument()
+  })
+
+  it('revogar a última confirmação: a lista fica vazia e o sucesso continua anunciado', async () => {
+    listar.mockResolvedValueOnce([par()]).mockResolvedValueOnce([])
+    revogar.mockResolvedValue(par({ estado: 'REVOGADA' }))
+    render(<ConfirmacoesEmissorPainel podeExecutar />)
+    await userEvent.click(await screen.findByRole('button', { name: /^Revogar confirmação de/ }))
+    const dlg = await screen.findByRole('dialog')
+    await userEvent.type(within(dlg).getByLabelText('Motivo'), 'conta trocada')
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Revogar' }))
+    expect(await screen.findByText('Nenhum emissor confirmado')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Confirmação do emissor revogada.')
+  })
+
+  it('o nome do botão de revogar é único por credor e a explicação do selo é texto visível', async () => {
+    listar.mockResolvedValue([
+      par({ layoutEmissor: 'GENERICO', elegivelAutomatico: false }),
+      par({ id: 'par-2', pesCod: '7002', credor: undefined }),
+    ])
+    render(<ConfirmacoesEmissorPainel podeExecutar />)
+    expect(
+      await screen.findByRole('button', { name: 'Revogar confirmação de MULTILOG BRASIL' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Revogar confirmação de 7002' })).toBeInTheDocument()
+    expect(screen.getByText(/Layout genérico: nunca vira automático/)).toBeInTheDocument()
+    expect(screen.queryByText(/I15i/)).not.toBeInTheDocument()
   })
 })

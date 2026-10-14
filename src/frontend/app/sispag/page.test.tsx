@@ -674,15 +674,15 @@ describe('SispagPage — sugestão de boleto na aba de títulos (ADR-0068)', () 
     expect(within(dlg).getByText('Sugestão de boleto')).toBeInTheDocument()
     expect(within(dlg).getByText('+3 dias')).toBeInTheDocument()
     expect(within(dlg).getByRole('button', { name: /Copiar linha digitável/ })).toBeInTheDocument()
-    expect(within(dlg).queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument()
-    expect(within(dlg).queryByRole('button', { name: 'Rejeitar' })).not.toBeInTheDocument()
+    expect(within(dlg).queryByRole('button', { name: /^Confirmar boleto/ })).not.toBeInTheDocument()
+    expect(within(dlg).queryByRole('button', { name: /^Rejeitar boleto/ })).not.toBeInTheDocument()
   })
 
   it('sispag:executar vê Confirmar e Rejeitar', async () => {
     permissoes = ['sispag:ver', 'sispag:executar']
     const dlg = await abrir()
-    expect(within(dlg).getByRole('button', { name: 'Confirmar' })).toBeEnabled()
-    expect(within(dlg).getByRole('button', { name: 'Rejeitar' })).toBeInTheDocument()
+    expect(within(dlg).getByRole('button', { name: /^Confirmar boleto/ })).toBeEnabled()
+    expect(within(dlg).getByRole('button', { name: /^Rejeitar boleto/ })).toBeInTheDocument()
   })
 
   it('falha ao ler as sugestões não derruba a aba de títulos', async () => {
