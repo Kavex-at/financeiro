@@ -257,6 +257,33 @@ describe('DuplicateResolutionService — retenção por código de barras (ADR-0
         expect(h.bloqueioRepo.desfazer).not.toHaveBeenCalled();
     });
 
+    it('Q10: recusa desfazer com a execução mais recente ainda reconciling (limpeza em voo)', async () => {
+        const h = build();
+        h.bloqueioRepo.findAtivo.mockResolvedValue(marca());
+        h.ledger.listByLote.mockResolvedValue([
+            { dryRun: false, status: 'reconciling', erroMensagem: undefined },
+            { dryRun: false, status: 'settled' },
+        ]);
+        await expect(
+            h.service.desfazerBloqueio({ chave: CHAVE, motivo: 'x', ator: 'ana' }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            code: 'RESOLUCAO_DUPLICIDADE_LIMPEZA_PENDENTE',
+        });
+        expect(h.bloqueioRepo.desfazer).not.toHaveBeenCalled();
+    });
+
+    it('Q10: reconciling de dry-run ou ledger settled/success permite desfazer', async () => {
+        const h = build();
+        h.bloqueioRepo.findAtivo.mockResolvedValue(marca());
+        h.ledger.listByLote.mockResolvedValue([
+            { dryRun: true, status: 'reconciling' },
+            { dryRun: false, status: 'settled' },
+        ]);
+        await h.service.desfazerBloqueio({ chave: CHAVE, motivo: 'x', ator: 'ana' });
+        expect(h.bloqueioRepo.desfazer).toHaveBeenCalledTimes(1);
+    });
+
     it('Q10: execução mais recente concluída ou dry-run não trava o desfazer', async () => {
         const h = build();
         h.bloqueioRepo.findAtivo.mockResolvedValue(marca());

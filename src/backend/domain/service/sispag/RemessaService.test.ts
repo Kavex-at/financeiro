@@ -2454,8 +2454,10 @@ describe('RemessaService — guarda de código de barras que retira (ADR-0069 em
         log?: LogService;
         bloqueios?: ReturnType<typeof buildBloqueios>;
         eventos?: ReturnType<typeof buildEventos>;
+        ajustarRepo?: (repo: ReturnType<typeof buildLoteRepo>) => void;
     }) => {
         const vivo = loteVivo(o.lote);
+        o.ajustarRepo?.(vivo.repo);
         const ledger = o.ledger ?? buildLedger();
         const svc = make({
             write: o.nativo.write,
@@ -2773,6 +2775,46 @@ describe('RemessaService — guarda de código de barras que retira (ADR-0069 em
         expect(r.write.finalizarLote).not.toHaveBeenCalled();
         // O 1º saiu do local (local primeiro) e só ele: o 2º nem foi tocado.
         expect(r.loteRepo.retirarItemPorCodigoDeBarras).toHaveBeenCalledTimes(1);
+    });
+
+    it('retirada local sem efeito (removido:false): nenhum DELETE, nada contado, erro com o pendente', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A), nat(2, LINHA_A)]);
+        const r = await rodar({
+            lote: loteBoleto(3),
+            nativo,
+            ajustarRepo: (repo) =>
+                repo.retirarItemPorCodigoDeBarras.mockResolvedValue({ removido: false }),
+        });
+        expect(r.err).toMatchObject({
+            code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+            details: {
+                modo: 'limpeza',
+                retirados: 0,
+                pendentes: [
+                    { docCod: '1001', titCod: '1' },
+                    { docCod: '1002', titCod: '1' },
+                ],
+            },
+        });
+        expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+        expect(r.write.finalizarLote).not.toHaveBeenCalled();
+        expect(r.ledger.setEtapa).not.toHaveBeenCalledWith(expect.any(String), 'gerar_remessa');
+    });
+
+    it('transação local falha: nenhum DELETE, nada contado, erro com o pendente', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)]);
+        const r = await rodar({
+            lote: loteBoleto(2),
+            nativo,
+            ajustarRepo: (repo) =>
+                repo.retirarItemPorCodigoDeBarras.mockRejectedValue(new Error('conexão perdida')),
+        });
+        expect(r.err).toMatchObject({
+            code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+            details: { modo: 'limpeza', retirados: 0, pendentes: [{ docCod: '1001' }] },
+        });
+        expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+        expect(r.write.finalizarLote).not.toHaveBeenCalled();
     });
 
     it('falha parcial: o 1º confirmado permanece retirado, o erro lista só o pendente', async () => {

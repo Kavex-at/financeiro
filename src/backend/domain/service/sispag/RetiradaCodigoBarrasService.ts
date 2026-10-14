@@ -255,7 +255,14 @@ export default class RetiradaCodigoBarrasService {
         let estado = estadoInicial;
         for (let i = 0; i < alvos.length; i += 1) {
             const alvo = alvos[i] as AlvoRetirada;
-            if (!alvo.residuo) await this.retirarLocal(lote.id, alvo);
+            if (!alvo.residuo && !(await this.retirarLocal(lote.id, alvo))) {
+                // Fail-closed: o local não saiu (sem efeito ou transação falhou) ⇒ nenhum DELETE
+                // nativo, nada contado como retirado. Este e os que faltam ficam pendentes.
+                for (const resto of alvos.slice(i)) {
+                    pendentes.push({ docCod: resto.docCod, titCod: resto.titCod });
+                }
+                break;
+            }
 
             const nativo = estado.find((e) => e.chave === alvo.chave);
             let ausente = nativo === undefined;
@@ -440,23 +447,42 @@ export default class RetiradaCodigoBarrasService {
 
     // ── Efeitos ─────────────────────────────────────────────────────────────
 
-    private retirarLocal = async (loteId: string, alvo: AlvoRetirada): Promise<void> => {
-        await this.db.withTransaction((tx) =>
-            this.loteRepo.retirarItemPorCodigoDeBarras(
-                {
-                    loteId,
-                    filCod: alvo.filCod,
-                    docCod: alvo.docCod,
-                    titCod: alvo.titCod,
-                    motivo: alvo.motivo,
-                    ...(alvo.mascarado !== undefined ? { codigoMascarado: alvo.mascarado } : {}),
-                    ...(alvo.mantida !== undefined
-                        ? { tituloMantido: paraChaveTitulo(alvo.mantida) }
-                        : {}),
-                },
-                tx,
-            ),
-        );
+    /** `true` só quando a transação local confirmou a retirada; falha ou `removido:false` ⇒ `false`. */
+    private retirarLocal = async (loteId: string, alvo: AlvoRetirada): Promise<boolean> => {
+        try {
+            const r = await this.db.withTransaction((tx) =>
+                this.loteRepo.retirarItemPorCodigoDeBarras(
+                    {
+                        loteId,
+                        filCod: alvo.filCod,
+                        docCod: alvo.docCod,
+                        titCod: alvo.titCod,
+                        motivo: alvo.motivo,
+                        ...(alvo.mascarado !== undefined
+                            ? { codigoMascarado: alvo.mascarado }
+                            : {}),
+                        ...(alvo.mantida !== undefined
+                            ? { tituloMantido: paraChaveTitulo(alvo.mantida) }
+                            : {}),
+                    },
+                    tx,
+                ),
+            );
+            if (r?.removido === true) return true;
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'remessa: retirada local sem efeito — DELETE nativo não executado',
+                data: { loteId, item: idCurto(alvo) },
+            });
+            return false;
+        } catch {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'remessa: retirada local falhou — DELETE nativo não executado',
+                data: { loteId, item: idCurto(alvo) },
+            });
+            return false;
+        }
     };
 
     /** `DELETE` de tentativa única. A falha NÃO decide: a releitura é quem diz se saiu. */
