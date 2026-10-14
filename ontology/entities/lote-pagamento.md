@@ -57,7 +57,7 @@ relationships:
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
   - "ItemLote N—0..1 FavorecidoAutorizado (a autorização que liberou o item, gravada no congelamento I10f; ADR-0065)"
   - "ItemLote 1—N AlertaItemLote (duplicidade e canal habitual da verificação TED/PIX; ADR-0063)"
-  - "ItemLote N—0..1 DecisaoSugestaoBoleto (a decisão que originou o código vinculado ao item; I17, ADR-0071, planned)"
+  - "ItemLote N—0..1 DecisaoSugestaoBoleto (a decisão que originou o código vinculado ao item; I17, ADR-0071, implemented)"
 last_review: 2026-10-14
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
@@ -158,7 +158,7 @@ fora de um lote.
 | `verificacaoEstado` | enum? | `verificacao_estado` *(a criar)* | Verificação TED/PIX (ADR-0063, I13a/b): `NAO_APLICAVEL` (boleto, sem modalidade) \| `PENDENTE` (ainda não rodou ou leitura do Conexos falhou — barra o finalizar) \| `VERIFICADO`. Constante `ITEM_CHECK_STATE`. |
 | `verificadoEm` | Date? | `verificado_em` *(a criar)* | Última verificação bem-sucedida. |
 | `alertas` | AlertaItemLote[] | join `lote_pagamento_item_alerta` *(a criar)* | Duplicidade (FORTE/FRACA, bloqueiam até resolvidas). Canal habitual saiu do item (ADR-0065). Ver `entities/alerta-item-lote.md`. |
-| `vinculoCodigoBarras` | objeto? | `vinculo_origem`, `vinculo_decisao_id`, `vinculo_codigo_mascarado`, `vinculo_aplicado_em`, `vinculo_flp_cod` *(a criar, 1 migration, nullable; ADR-0071, planned)* | De onde veio o código de barras do item: `{ origem: ERP_DDA \| DECISAO_HUMANA, decisaoId?, codigoMascarado (5+4, nunca o completo), aplicadoEm, flpCod }`. Ausente = sem vínculo registrado (legado = `ERP_DDA` implícito, sem backfill). Gravado só após a releitura (I17e); incrementa `versao`. |
+| `vinculoCodigoBarras` | objeto? | `vinculo_origem`, `vinculo_decisao_id`, `vinculo_codigo_mascarado`, `vinculo_aplicado_em`, `vinculo_flp_cod` *(migration 0086, nullable; ADR-0071, implemented — modo `off` por default)* | De onde veio o código de barras do item: `{ origem: ERP_DDA \| DECISAO_HUMANA, decisaoId?, codigoMascarado (5+4, nunca o completo), aplicadoEm, flpCod }`. Ausente = sem vínculo registrado (legado = `ERP_DDA` implícito, sem backfill). Gravado só após a releitura (I17e); incrementa `versao`. |
 | `situacao` | enum (derivado) | — | `AGENDADO \| PAGO \| REJEITADO \| SEM_RETORNO`, derivada pela sincronização (I11d); **não** é estado do lote (decisão "sem estado parcialmente pago"). Constantes tipadas (`ITEM_SITUACAO`). Só existe de `REMESSA_GERADA` em diante. |
 | `rejeitado` · `retornoEvento` · `retornoDescricao` | boolean · string? · string? | `rejeitado`, `retorno_evento`, `retorno_descricao` (0049) | Evento do `fin052` **escolhido por precedência** `REJEITADO > 00 > BD > outro` sobre todas as linhas do item (I11d), nunca a última lida. *Existiam desde a 0049 e faltavam nesta doc.* |
 | `borCod` · `bxaCodSeq` | number? | `bor_cod`, `bxa_cod_seq` (0049) | Borderô/baixa da baixa do título. **Enriquecimento**, não prova de pagamento. Nulos quando nenhuma fonte legível os trouxe. |

@@ -5,6 +5,13 @@
 
 ## v0.42.0 — SISPAG: vínculo do código de barras confirmado ao item (2026-10-14, ADR-0071)
 
+> **Implementação entregue (mesma data):** `vinculo-codbar-item-sispag` e `vincularCodigoBarrasAoItem`
+> passaram de `planned` a `implemented` (modo `off` por default). Medições HML V1–V9 em
+> `_inbox/sispag-passo2-vinculo-codbar-hml-achados.md`: **I17i confirmada** para `PUT`; banco do código ≠
+> banco do lote exige **modalidade 7** (6º campo do `PUT`); o ERP **não tem lock otimista** no item
+> (releitura imediata antes do `PUT`); `fin064.totalAberto` difere do valor do grid. Abertos: V6, V-PRD1,
+> V-PRD2.
+
 Feature: `sispag-passo2-vinculo-codbar` (`/feature-new`). `entity_changed = true`. **Ontologia à frente do
 código** (tudo `planned`). Passo 2 do ADR-0068, escopo **valor igual**.
 
