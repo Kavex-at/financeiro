@@ -155,3 +155,35 @@ describe('CodigoBarrasBoleto.mascarar', () => {
         expect(cb.mascarar(`8${'1'.repeat(43)}`)).toBeUndefined();
     });
 });
+
+describe('CodigoBarrasBoleto.paraBarras', () => {
+    it('ida e volta 44 → 47 → 44 é idêntica', () => {
+        for (const codbar of [bradesco('2656', '0092740'), itau('9260', '40834')]) {
+            const linha = cb.paraLinhaDigitavel(codbar);
+            expect(cb.paraBarras(linha)).toBe(codbar);
+        }
+    });
+
+    it('44 válido passa; DV geral errado => undefined', () => {
+        const codbar = itau('9260', '40834');
+        expect(cb.paraBarras(codbar)).toBe(codbar);
+        const ruim = `${codbar.slice(0, 4)}${(Number(codbar[4]) % 9) + 1}${codbar.slice(5)}`;
+        expect(cb.paraBarras(ruim)).toBeUndefined();
+    });
+
+    it('DV de campo errado => undefined', () => {
+        const linha = cb.paraLinhaDigitavel(itau('9260', '40834')) as string;
+        const ruim = `${linha.slice(0, 9)}${(Number(linha[9]) + 1) % 10}${linha.slice(10)}`;
+        expect(cb.paraBarras(ruim)).toBeUndefined();
+    });
+
+    it.each([
+        ['prefixo 8 (47)', `8${'1'.repeat(46)}`],
+        ['prefixo 8 (44)', `8${'1'.repeat(43)}`],
+        ['tamanho errado', '123'],
+        ['letras', `${'1'.repeat(46)}X`],
+        ['vazio', ''],
+    ])('inválido: %s', (_caso, codigo) => {
+        expect(cb.paraBarras(codigo)).toBeUndefined();
+    });
+});
