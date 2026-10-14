@@ -1,5 +1,31 @@
 # Columbia Financeiro — Changelog
 
+## v0.66.0 (2026-10-14) — SISPAG: sugestão de boleto para o título "boleto sem DDA"
+
+- **O "boleto sem DDA" agora vem com uma sugestão.** Na aba "Títulos a pagar", o título que o
+  Conexos não conseguiu ligar a um boleto passa a mostrar "sugestão disponível". Ao abrir, você vê
+  o boleto proposto, a diferença **com sinal** em relação ao título (por exemplo `R$ +0,01`,
+  `+1,6 %`, `+2 dias`: boleto menos título), os motivos em português e o emissor do boleto
+  (banco, agência e final da conta).
+- **Três níveis.** "Sugestão forte" (valor igual com vencimento de 1 a 5 dias depois do título, ou
+  até R$ 0,05 de diferença no mesmo dia), "atenção" (a diferença aparece destacada; só vira
+  sugestão com um segundo sinal: o número do documento ou um emissor já confirmado) e "vencido, só informativo" (o boleto vence antes da data de débito:
+  não pode ser confirmado).
+- **Você decide e a decisão fica registrada.** Quem tem permissão de executar confirma ou rejeita
+  (a rejeição pede o motivo). Confirmar o boleto de um credor passa a marcar aquele emissor como
+  conhecido para o credor: as próximas sugestões dele sobem de nível. Dá para revogar, com motivo,
+  na lista "emissores de boleto confirmados".
+- **Copiar a linha digitável** sem digitar: qualquer pessoa com acesso de ver o SISPAG pode copiar,
+  e toda cópia fica registrada (quem, quando, qual boleto). Se o registro falhar, nada é copiado.
+- **A regra de candidato da aba "Boletos DDA" mudou.** Antes era "valor exato e vencimento até 3
+  dias de diferença, para qualquer lado" (inclusive antes do título). Agora segue os níveis acima.
+  Boleto já ligado pelo Conexos a um título nunca é sugerido; quando dois títulos disputam o mesmo
+  boleto, ele fica com o de vencimento mais próximo.
+- **O que NÃO mudou:** nada é gravado no Conexos nesta etapa. Confirmar não associa o boleto ao
+  título no ERP, o aviso de "sem boleto DDA" no lote continua e a remessa segue bloqueada até o
+  boleto ser associado no Conexos. Título com dois candidatos igualmente fortes fica sem sugestão.
+- Migration 0084 (tabelas novas; nenhuma existente é alterada). ADR-0068.
+
 ## v0.65.0 (2026-10-13) — SISPAG: o DDA se atualiza junto com a carteira
 
 - **Os boletos DDA do Conexos passam a ser lidos a cada ingestão** (07h, 12h e 16h em dia útil e ao
