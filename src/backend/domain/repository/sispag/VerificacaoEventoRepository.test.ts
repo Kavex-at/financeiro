@@ -30,6 +30,27 @@ describe('VerificacaoEventoRepository (ADR-0063, I13m)', () => {
         });
     });
 
+    it('listarChavesRetiradasPeloSistema: chaves com filial, só ator sistema, só os motivos pedidos', async () => {
+        const pool = {
+            selectMany: jest.fn().mockResolvedValue([
+                { fil_cod: 2, doc_cod: '6171', tit_cod: '1' },
+                { fil_cod: null, doc_cod: '9', tit_cod: '1' },
+            ]),
+        };
+        const chaves = await new VerificacaoEventoRepository(
+            pool as unknown as PostgreeDatabaseClient,
+        ).listarChavesRetiradasPeloSistema('L1', ['CODIGO_BARRAS_REPETIDO']);
+        expect([...chaves]).toEqual(['2:6171:1']);
+        const [sql, params] = pool.selectMany.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/dados->>'motivo' = ANY\(\$motivos\)/);
+        expect(params).toEqual({
+            evento: 'ITEM_REMOVIDO_SISTEMA',
+            loteId: 'L1',
+            ator: 'sistema',
+            motivos: ['CODIGO_BARRAS_REPETIDO'],
+        });
+    });
+
     it('sem tx, grava no pool', async () => {
         const pool = { insert: jest.fn().mockResolvedValue(1) };
         await new VerificacaoEventoRepository(pool as unknown as PostgreeDatabaseClient).registrar({

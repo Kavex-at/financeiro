@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import LotePagamentoRepository from './LotePagamentoRepository.js';
+import BloqueioDuplicidadeRepository from './BloqueioDuplicidadeRepository.js';
 import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 
 interface DbMock {
@@ -52,7 +53,8 @@ const itemRow = (over: Record<string, unknown> = {}) => ({
 
 const make = (db: DbMock) => {
     const pg = db as unknown as PostgreeDatabaseClient;
-    return new LotePagamentoRepository(pg, new VerificacaoEventoRepository(pg));
+    const eventos = new VerificacaoEventoRepository(pg);
+    return new LotePagamentoRepository(pg, eventos, new BloqueioDuplicidadeRepository(pg, eventos));
 };
 
 describe('LotePagamentoRepository', () => {
@@ -702,5 +704,177 @@ describe('LotePagamentoRepository — verificação TED/PIX (ADR-0063, ADR-0065)
         const repo = make(buildDb()) as unknown as Record<string, unknown>;
         expect(repo.conferir).toBeUndefined();
         expect(repo.devolver).toBeUndefined();
+    });
+});
+
+describe('LotePagamentoRepository — retirada por código de barras (ADR-0069 emenda 1, I16d.8)', () => {
+    const MASCARA = '34191…5555';
+    const params = (over: Record<string, unknown> = {}) => ({
+        loteId: 'L1',
+        filCod: 4,
+        docCod: '6173',
+        titCod: '1',
+        motivo: 'CODIGO_BARRAS_REPETIDO' as const,
+        codigoMascarado: MASCARA,
+        tituloMantido: { filCod: 4, docCod: '6170', titCod: '1' },
+        ...over,
+    });
+    /** O item removido, como o `DELETE ... RETURNING` o devolve. */
+    const removido = {
+        valor: '1412.00',
+        vencimento: new Date('2026-10-20T00:00:00Z'),
+        credor: 'PEDRONI',
+    };
+
+    it('lote FINALIZADO: remove o item, MANTÉM o status, versao+1, evento com motivo e identidade', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(removido);
+        const r = await make(db).retirarItemPorCodigoDeBarras(params(), db as never);
+        expect(r).toMatchObject({ removido: true, valor: 1412, credor: 'PEDRONI' });
+
+        const sqls = todas(db).map(([q]) => q);
+        expect(
+            sqls.some((q) =>
+                /DELETE FROM lote_pagamento_item[\s\S]*l\.status = 'FINALIZADO'/.test(q),
+            ),
+        ).toBe(true);
+        expect(sqls.some((q) => /versao = versao \+ 1/.test(q))).toBe(true);
+        // O status do lote não é tocado: exceção estreita, não transição.
+        expect(sqls.some((q) => /UPDATE lote_pagamento\s+SET[^;]*\bstatus\b/.test(q))).toBe(false);
+        expect(sqls.some((q) => /automatico = FALSE/.test(q))).toBe(false);
+
+        const ev = eventosGravados(db);
+        expect(ev.map((e) => e?.evento)).toEqual(['BLOQUEIO_CRIADO', 'ITEM_REMOVIDO_SISTEMA']);
+        const item = ev.find((e) => e?.evento === 'ITEM_REMOVIDO_SISTEMA');
+        expect(item).toMatchObject({ ator: 'sistema', loteId: 'L1', filCod: 4, docCod: '6173' });
+        expect(JSON.parse(String(item?.dados))).toEqual({
+            motivo: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: MASCARA,
+            tituloMantido: { filCod: 4, docCod: '6170', titCod: '1' },
+            valor: 1412,
+            vencimento: '2026-10-20',
+        });
+        expect(db.withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('cria a marca ATIVA com a origem do motivo, na mesma transação', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(removido);
+        await make(db).retirarItemPorCodigoDeBarras(params(), db as never);
+        const marca = db.insert.mock.calls.find(([q]) =>
+            String(q).includes('INSERT INTO titulo_bloqueio_duplicidade'),
+        );
+        expect(marca?.[1]).toMatchObject({
+            filCod: 4,
+            docCod: '6173',
+            origem: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: MASCARA,
+            mantidoDocCod: '6170',
+            ator: 'sistema',
+            loteIdOrigem: 'L1',
+        });
+    });
+
+    it.each([
+        ['REMESSA_GERADA/CANCELADO/RASCUNHO manual', null],
+    ])('%s: o caminho recusa (nada removido, nada gravado)', async (_nome, linha) => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(linha);
+        const r = await make(db).retirarItemPorCodigoDeBarras(params(), db as never);
+        expect(r.removido).toBe(false);
+        expect(db.insert).not.toHaveBeenCalled();
+        expect(db.update).not.toHaveBeenCalled();
+        expect(eventosGravados(db)).toEqual([]);
+    });
+
+    it('idempotente: item já fora do lote local não gera evento nem marca', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(null);
+        const r = await make(db).retirarItemPorCodigoDeBarras(params(), db as never);
+        expect(r.removido).toBe(false);
+        expect(db.insert).not.toHaveBeenCalled();
+        expect(eventosGravados(db)).toEqual([]);
+    });
+
+    it('marca ATIVA preexistente de outra origem: não sobrescreve nem repete BLOQUEIO_CRIADO', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(removido).mockResolvedValueOnce({
+            id: 'B0',
+            origem: 'DUPLICIDADE_TITULO',
+            fil_cod: 4,
+            doc_cod: '6173',
+            tit_cod: '1',
+            motivo: 'x',
+            estado: 'ATIVO',
+            marcado_por: 'ana',
+            marcado_em: new Date('2026-10-05T10:00:00Z'),
+        });
+        // INSERT da marca → 0 linhas (índice ATIVO); o resto (evento do item) insere normal.
+        db.insert.mockImplementation(async (q: string) =>
+            String(q).includes('INSERT INTO titulo_bloqueio_duplicidade') ? 0 : 1,
+        );
+        const r = await make(db).retirarItemPorCodigoDeBarras(params(), db as never);
+        expect(r.removido).toBe(true);
+        expect(eventosGravados(db).map((e) => e?.evento)).toEqual(['ITEM_REMOVIDO_SISTEMA']);
+    });
+
+    it('falha ao gravar a marca propaga (a transação do chamador desfaz a remoção) e não grava o evento do item', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(removido);
+        db.insert.mockImplementation(async (q: string) => {
+            if (String(q).includes('INSERT INTO titulo_bloqueio_duplicidade')) {
+                throw new Error('falha na marca');
+            }
+            return 1;
+        });
+        await expect(make(db).retirarItemPorCodigoDeBarras(params(), db as never)).rejects.toThrow(
+            'falha na marca',
+        );
+        expect(eventosGravados(db)).toEqual([]);
+    });
+
+    it('o caminho antigo continua só RASCUNHO (regressão)', async () => {
+        const db = buildDb();
+        await make(db).removerItemPeloSistema(
+            { loteId: 'L1', filCod: 4, docCod: '6173', titCod: '1', motivo: 'SEM_DADO_PAGAMENTO' },
+            db as never,
+        );
+        const sql = String(db.update.mock.calls[0]?.[0]);
+        expect(sql).toMatch(/l\.status = 'RASCUNHO'/);
+        expect(sql).not.toMatch(/FINALIZADO/);
+    });
+
+    it('recusa máscara que não é 5+4 — o código completo nunca entra em coluna nem em dados', async () => {
+        const db = buildDb();
+        await expect(
+            make(db).retirarItemPorCodigoDeBarras(
+                params({ codigoMascarado: '1'.repeat(44) }),
+                db as never,
+            ),
+        ).rejects.toThrow(/mascarad/i);
+        expect(db.update).not.toHaveBeenCalled();
+        expect(db.selectFirst).not.toHaveBeenCalled();
+    });
+
+    it('ILEGIVEL sem máscara e sem título mantido é aceito', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(removido);
+        const r = await make(db).retirarItemPorCodigoDeBarras(
+            {
+                loteId: 'L1',
+                filCod: 4,
+                docCod: '6173',
+                titCod: '1',
+                motivo: 'CODIGO_BARRAS_ILEGIVEL',
+            },
+            db as never,
+        );
+        expect(r.removido).toBe(true);
+        const item = eventosGravados(db).find((e) => e?.evento === 'ITEM_REMOVIDO_SISTEMA');
+        expect(JSON.parse(String(item?.dados))).toEqual({
+            motivo: 'CODIGO_BARRAS_ILEGIVEL',
+            valor: 1412,
+            vencimento: '2026-10-20',
+        });
     });
 });
