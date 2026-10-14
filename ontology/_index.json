@@ -1109,12 +1109,16 @@
     "vincularCodigoBarrasAoItem": {
       "file": "actions/sispag/vincular-codigo-barras-ao-item.md",
       "entity": "LotePagamento",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/VinculoCodigoBarrasService.ts",
+        "src/backend/domain/service/sispag/RemessaService.ts",
+        "src/backend/domain/client/ConexosSispagWriteClient.ts"
+      ],
       "resolved_by": [
         "ADR-0071"
       ],
-      "note": "ADR-0071 (planned): grava o codigo confirmado no item do rascunho (validacao -> confirma -> PUT -> releitura); so por gerarRemessa."
+      "note": "ADR-0071 (implemented, modo off por default): grava o codigo confirmado no item do rascunho (validacao -> confirma -> PUT -> releitura; modalidade 7 para banco != banco do lote); so por gerarRemessa."
     }
   },
   "business_rules": {
@@ -1635,17 +1639,21 @@
     "vinculo-codbar-item-sispag": {
       "file": "business-rules/vinculo-codbar-item-sispag.md",
       "entity": "LotePagamento",
-      "status": "planned",
-      "has_canonical_test": false,
+      "status": "implemented",
+      "has_canonical_test": true,
       "impl_files": [
         "src/backend/domain/service/sispag/VinculoCodigoBarrasService.ts",
         "src/backend/domain/service/sispag/RemessaService.ts",
-        "src/backend/domain/client/ConexosSispagWriteClient.ts"
+        "src/backend/domain/service/sispag/RetiradaCodigoBarrasService.ts",
+        "src/backend/domain/client/ConexosSispagWriteClient.ts",
+        "src/backend/domain/libs/boleto/ElegibilidadeVinculoCodigoBarras.ts",
+        "src/backend/domain/libs/boleto/ModoVinculoCodigoBarras.ts",
+        "src/backend/migrations/0086_sispag_vinculo_codigo_barras.sql"
       ],
       "resolved_by": [
         "ADR-0071"
       ],
-      "note": "ADR-0071 (planned): passo 2 do ADR-0068, valor igual. I17a-l: elegibilidade ao vivo, valor em centavos, data [0,+5], verificacoes nossas, sequencia e releitura, idempotencia/terceiros, aborta transitorio/retira deterministico, guarda I16 sobre o conjunto, so rascunho, privacidade, modos off/shadow/on, vigencia da decisao."
+      "note": "ADR-0071 (implemented, modo off por default): I17a-l; HML V1-V9 medidos em 2026-10-14 (I17i confirmada; modalidade 7 para outro banco; sem lock otimista); abertos V6, V-PRD1, V-PRD2."
     }
   },
   "state_machines": {

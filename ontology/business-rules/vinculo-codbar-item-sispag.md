@@ -4,7 +4,7 @@ type: business-rule
 entity: LotePagamento
 invariant: I17
 ontology_version: "0.42.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
@@ -15,7 +15,7 @@ related_files:
   - src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.ts
   - src/backend/domain/service/sispag/BoletoSuggestionService.ts
 last_review: 2026-10-14
-has_canonical_test: false
+has_canonical_test: true
 universality_evidence:
   - "ADR-0068 passo 2; achados de HML 2026-10-14 (o ERP descarta o codigo no importar; o codigo so chega ao item por validacao/codigoBarras + confirmaCodigoBarras + PUT fin015/finItemSispag; nao valida DV nem compara com o titulo)"
   - "1 cliente apenas (Columbia): universalidade a revisar com o Francinei (nao bloqueante, watchlist; precedente Q-I do ADR-0068). Limitacao do ERP e de produto (Conexos), estavel"
@@ -26,7 +26,8 @@ universality_evidence:
 > **Origem:** ADR-0071 (2026-10-14). **Passo 2 do ADR-0068, escopo "valor igual".** Quando o ERP não
 > associou o boleto DDA ao título, o código de barras de um boleto que **uma pessoa confirmou** para o
 > título (I15) é gravado no item do rascunho nativo depois do `importar`, por uma etapa nova da remessa
-> (`vincular_codbar`). **Status: planned** — ontologia à frente do código. Passo 3 (automático sem
+> (`vincular_codbar`). **Status: implemented** (código entregue com o modo `off` por default; `on` em
+> PRD só depois de V-PRD1/V-PRD2 — ver "Medições HML"). Passo 3 (automático sem
 > decisão humana) continua **não autorizado**.
 
 ## Decisões do maintainer (2026-10-14)
@@ -46,14 +47,31 @@ universality_evidence:
 | **I17b** | **Valor igual em centavos.** `round(valorBoleto × 100) == round(fin064.totalAberto × 100)`, com `valorBoleto` **decodificado por nós** do código de barras (campo de 10 dígitos / 100) e conferido com o devolvido pelo ERP (`validacao/codigoBarras`). Nunca se compara com `ItemLote.valor` (snapshot da inclusão): o aberto é lido ao vivo. Diferença de 1 centavo = **inelegível** (acima/abaixo do título está fora do escopo, watchlist). |
 | **I17c** | **Data.** Com `Δdias = vencimentoBoleto − vencimentoTitulo` (data civil, UTC meia-noite; I15h): **elegível se `0 ≤ Δdias ≤ 5`** **e** `vencimentoBoleto ≥ dataDebito` do lote. A data de pagamento do item **acompanha a barra** e o ERP só exige `dataDebito ≤ min(itsDtaPgto)` (R2, I8); barra com vencimento ≥ título não reduz essa janela. Barra vencida (antes da data de débito) ou anterior ao título: inelegível. `Δdias > 5` é `ATENCAO` (I15c) e fica fora. Vencimento **igual** à data de débito é elegível. |
 | **I17d** | **Verificações são nossas.** Antes de qualquer escrita e antes do `PUT`: (1) `CodigoBarrasBoleto.paraBarras(linha)` confere comprimento 44/47, DVs de campo e DV geral; (2) código não é arrecadação (inicia por `8`); (3) banco do código = banco informado pelo `confirmaCodigoBarras`; (4) valor decodificado = I17b; (5) data decodificada = `itsDtaPgtoResult` do confirm; (6) `itsMnyVlrPgtoResult == valorBoleto` (**juros e desconto = 0**; qualquer ≠ 0 aborta o item — o ERP soma juros ao valor da barra). Divergência ⇒ item **não vinculado** (I17g). Nenhuma checagem é delegada ao ERP. |
-| **I17e** | **Sequência por item (rascunho aberto).** `listar item (itsCodSeq vivo)` → `validacao/codigoBarras(47)` → `confirmaCodigoBarras(splitCodBar)` → `PUT fin015/finItemSispag` com **o item lido** alterado em exatamente `itsNumCodbar` (47), `itsNumBanco`, `bncDesNome`, `itsMnyVlrPgto`, `itsDtaPgto` (do resultado do confirm, conferidos em I17d) → **releitura**. O sucesso é a **observação na releitura** (código igual, banco/nome preenchidos, valor e data iguais ao enviado), não o `200` do `PUT`. `PUT` em **tentativa única, sem retry cego**; a repetição só ocorre depois de nova leitura. |
+| **I17e** | **Sequência por item (rascunho aberto).** `listar item (itsCodSeq vivo)` → `validacao/codigoBarras(47)` → `confirmaCodigoBarras(splitCodBar)` → `PUT fin015/finItemSispag` com **o item lido** alterado em exatamente `itsNumCodbar` (47), `itsNumBanco`, `bncDesNome`, `itsMnyVlrPgto`, `itsDtaPgto` (do resultado do confirm, conferidos em I17d) → **releitura**. A row do `PUT` é a lida **imediatamente antes** dele (o ERP não tem lock otimista, V3) e, quando o banco do código ≠ banco do lote, o item vai em **modalidade `7`** na validação, no confirma e no `PUT` (`itsVldModalidade`, 6º campo; `6` com banco igual — V4). O sucesso é a **observação na releitura** (código igual, banco/nome preenchidos, valor e data iguais ao enviado), não o `200` do `PUT`. `PUT` em **tentativa única, sem retry cego**; a repetição só ocorre depois de nova leitura. |
 | **I17f** | **Idempotência e terceiros.** Item que já traz `itsNumCodbar` **igual** ao esperado (comparado em 44 dígitos) e valor/data coerentes = **já vinculado**: nenhuma chamada nova, nenhum evento duplicado (evento único por `(lote, título, decisaoId)`). `itsNumCodbar` **diferente** do esperado, ou valor/data diferentes do que gravaríamos, é **edição de terceiro**: não sobrescreve, etapa `indeterminado`, fail-closed (espelho de I16h(b)). Nunca se limpa nem se sobrescreve um rascunho tocado por outra pessoa. |
 | **I17g** | **Falha: o que aborta e o que retira (P0-2).** (1) **Pré-import** (decisão, boleto, DV, valor, data, modo): item inelegível ⇒ comportamento **atual**, `BoletoSemCodigoBarrasError` antes de qualquer escrita. (2) **Pós-import, transitória ou ambígua** (timeout, 5xx, resposta ilegível, `PUT` sem releitura conclusiva, leitura incompleta): **aborta** com `VinculoCodigoBarrasIncompletoError` (409), ledger `failed`, rascunho **preservado**; a retomada refaz o item (I17f). **Nunca** vira retirada. (3) **Pós-import, determinística** (divergência de I17d depois do `validacao`/`confirma`; recusa de negócio 4xx do `PUT`; código já presente em outro item — I16): o item é **retirado** pela maquinaria da I16d (local primeiro, `DELETE`, releitura) com motivo `VINCULO_CODIGO_BARRAS_FALHOU`, marca de retenção `BloqueioDuplicidade` e aviso (I16f/g); a remessa segue com os demais. |
 | **I17h** | **Guarda I16 sobre o conjunto final.** Depois do último `PUT` e da releitura, `AnaliseCodigoBarrasRepetido` roda sobre **todos** os códigos do rascunho (DDA + vinculados) antes do `finalizarLote`. Ordem: `importar → vincular_codbar → (guarda I16 / limpar_retirados) → finalizar → gerar_remessa`. Antes do `PUT`, o código do item é conferido contra os códigos **já presentes**: repetido ⇒ não vincula (I17g(3)). **Desempate (P1):** na I16d.1, quando **exatamente um** título do grupo tem decisão humana vigente (I17a), ele é o que fica; caso contrário vale a ordem vencimento/`docCod`/`filCod`/`titCod`. |
-| **I17i** | **Só em rascunho aberto.** Nunca se vincula em lote nativo `FINALIZADO` (retomada em `gerar_remessa`): o ERP recusa alteração de item de lote não cadastrado (verificado para `DELETE`; **assumido** para `PUT`, a provar em HML — V5). Nessa retomada o item sem código cai em I16c (ausência ⇒ aborta). |
+| **I17i** | **Só em rascunho aberto.** Nunca se vincula em lote nativo `FINALIZADO` (retomada em `gerar_remessa`): o ERP recusa alteração de item de lote não cadastrado (verificado para `DELETE` **e para `PUT`**: `FIN_015.IMPOSSIVEL_ALTERAR_REGISTRO_NAO_EM_CADASTRO`, HML 2026-10-14, V5). Nessa retomada o item sem código cai em I16c (ausência ⇒ aborta). |
 | **I17j** | **Privacidade.** A linha digitável completa trafega **só em memória** (leitura do pool → `validacao` → `confirma` → `PUT`). Nunca em log, ledger, evento, evidência ou mensagem de erro; persiste **só o mascarado 5+4** (`AnaliseCodigoBarrasRepetido.mascarar`) em `ItemLote.vinculoCodigoBarras` e no evento. |
 | **I17k** | **Modos por filial e rollout.** `off` (default): nada muda, I15b vale integral. `shadow`: roda **apenas** as pré-condições e verificações **locais** (I17a–d sobre o pool) e grava `VINCULO_SIMULADO`; **zero** chamada nova ao ERP; o comportamento da remessa é o de `off`; resultado visível só por endpoint (`GET /sispag/lotes/:id/vinculos-previstos`) e log. `on`: executa I17e. Modo desconhecido, filial ausente ou parse inválido ⇒ `off`. O kill-switch global `sispagLiveWriteEnabled` derruba também este vínculo; `SISPAG_DDA_ASSOC_ENABLED=false` **não** o desliga. **Ordem em PRD (P0-3):** HML V1–V9 → sonda somente leitura de permissão do robô → `shadow` em PRD → **um** título real controlado; `on` em PRD só depois de V-PRD1 e V-PRD2. Os valores de modo por filial são configuração (`EnvironmentProvider`), não ontologia. |
 | **I17l** | **Vigência da decisão ≠ reversão do pagamento.** Anular a decisão (I15l) ou revogar o par depois do vínculo **não** desfaz o item no ERP: em rascunho a analista **retira o título do lote** (ação existente) — a tela avisa na anulação que há item vinculado em lote vivo; depois do `finalizar` vale o cancelamento do lote nativo. O vínculo registra `decisaoId`, mas nunca reconfirma nem altera a decisão. |
+
+## Medições HML (2026-10-14) — `_inbox/sispag-passo2-vinculo-codbar-hml-achados.md`
+
+| Caso | Resultado |
+|---|---|
+| V1 | 3+ itens vinculados e observados; guarda I16 sobre o conjunto limpa; `finalizar` e `gerarRemessa` passam; J com barra/valor/data da barra (vencimento do J = o do **título**). Sem título DDA em HML. |
+| V2 | `PUT` repetido idempotente; `PUT` por cima de barra existente **substitui** (o ERP não protege). Serviço: reexecução = 0 `PUT`. |
+| V3 | **Sem lock otimista**: `PUT` com row antiga sobrescreve a edição do terceiro. Defesa: releitura imediata + `ItemEditadoPorTerceiroError`. Janela residual de ms aceita. |
+| V4 | Banco do código ≠ banco do lote: modalidade `6` ⇒ `FIN_015.TITULO_NAO_PERTENCE_AO_BANCO_EM_USO`; `7` ⇒ aceito, e o item **precisa** ficar em `7` (senão o `finalizar` recusa). Tratado na sequência (6º campo). |
+| V5 | **I17i confirmada** para `PUT` em lote finalizado. |
+| V6 | **Não observável em HML** (sem retorno bancário, sem pool com o boleto sintético). Aberto. |
+| V7 | 237/104 ok com modalidade 7; 329 = `BANCO_NAO_CADASTRADO` em HML (recusa determinística ⇒ `retirar`). |
+| V8 | `fin064.totalAberto` ≠ `titMnyValor` do grid em vários títulos: a igualdade é contra o `totalAberto` ao vivo (I17b); o valor da carteira/grid **não** é o aberto (o `shadow` é indicativo). |
+| V9 | `finalizar` aceita barra = data de débito e barras até +10 dias do débito. |
+
+**Abertos:** V6; V-PRD1 (permissão do robô para o `PUT`, sonda só de leitura implementada e **não
+executada**) e V-PRD2 (1 título real controlado); janela residual do V3.
 
 ## Erros nomeados
 

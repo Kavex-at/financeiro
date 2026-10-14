@@ -139,7 +139,7 @@ vinculoCodigoBarras?: {
 ```
 
 e relacionamento `ItemLote N—0..1 DecisaoSugestaoBoleto (a decisão que originou o código; I17)`.
-Migration: **uma** (3 colunas nullable em `sispag_lote_item` + 3 valores novos de `tipo` na trilha
+Migration: **uma** (**cinco** colunas nullable em `lote_pagamento_item` + 3 valores novos de `tipo` na trilha
 `sispag_sugestao_boleto_evento`). Item sem vínculo = `origem` ausente (legado = `ERP_DDA`
 implícito, sem backfill).
 

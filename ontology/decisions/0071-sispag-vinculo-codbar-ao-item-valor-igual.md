@@ -46,8 +46,9 @@ Decisões do maintainer:
   **um** título real controlado. Sem permissão de `PUT` verificada, o código sobe `off`/`shadow`.
 - **P1:** janela `[0, +5]` (constante global da I15c); `shadow` visível por endpoint + log; desempate da
   I16d.1 prefere o título com decisão humana vigente quando exatamente um no grupo (fecha o follow-up P1-1(b)
-  do ADR-0069); vínculo como colunas de `ItemLote` (1 migration: 3 colunas nullable + 3 tipos de evento na
-  trilha `sispag_sugestao_boleto_evento`); endpoint `GET /sispag/lotes/:id/vinculos-previstos`.
+  do ADR-0069); vínculo como colunas de `ItemLote` (1 migration, 0086: **cinco** colunas nullable em `lote_pagamento_item` + 3 tipos de evento na
+  trilha `sispag_sugestao_boleto_evento` com `lote_id`/`decisao_id` e índice único parcial de idempotência, e a
+  origem `VINCULO_CODIGO_BARRAS_FALHOU` na marca de retenção); endpoint `GET /sispag/lotes/:id/vinculos-previstos`.
 
 Mudanças: 1 regra, 1 ação, 1 propriedade (`ItemLote.vinculoCodigoBarras`), etapa de memória
 `vincular_codbar`, emendas em `sugestao-boleto-dda-sispag` (I15a/I15b), `boleto-exige-codigo-de-barras`

@@ -214,3 +214,15 @@
   decisão `CONFIRMADA` + guarda I16 dentro do lote; entre lotes vivos segue a lacuna do ADR-0069.
 - **Modalidade/forma de lançamento do item após o `PUT`** (V4: mesmo banco × outro banco; J para emissor ≠
   pagador) — provar em HML antes de `on` em PRD.
+
+## 2026-10-14 — sispag-passo2-vinculo-codbar (implementação + medições HML)
+
+- **V6 (boleto reaparece "livre" no `fin124` depois de pago)** — **não observável em HML** (sem retorno
+  bancário, sem pool com o boleto sintético). Seguir em PRD com o 1 título controlado (V-PRD2).
+- **V-PRD1 — permissão do robô para o `PUT fin015/finItemSispag`** — sonda somente leitura
+  implementada, **não executada** (derruba a sessão do robô; só com o go do maintainer). Preferir a matriz de
+  permissões do robô para o `fin015` pedida à Conexos/Columbia.
+- **Janela residual de TOCTOU (V3)** — o ERP não tem lock otimista no item; a releitura imediatamente antes
+  do `PUT` reduz mas não elimina. Revisitar se aparecer edição concorrente em PRD.
+- **`shadow` usa a carteira local como "aberto"** — em HML o `fin064.totalAberto` difere do valor do grid em
+  vários títulos (V8): o `shadow` é indicativo; só o `on` compara com o aberto ao vivo.

@@ -91,6 +91,9 @@ export interface FalhaDeterministicaVinculo {
  */
 export const MODALIDADE_ITEM = { MESMO_BANCO: 6, OUTRO_BANCO: 7 } as const;
 
+/** Tamanho de página medido em HML; lote com mais itens aborta o vínculo (Q9). */
+export const LIMITE_ITENS_DO_LOTE = 500;
+
 export interface ResultadoExecucaoVinculo {
     vinculados: VinculoAplicado[];
     retirar: FalhaDeterministicaVinculo[];
@@ -308,6 +311,19 @@ export default class VinculoCodigoBarrasService {
         // nem é tocado (o item sem código cai na guarda I16c, como sempre).
         if (!candidatos.some((c) => ctx.decisoes.has(c.chave))) {
             return { vinculados: [], retirar: [], preferidos };
+        }
+        // Q9: só 500 itens/página foi exercitado em HML. Lote maior: o vínculo ABORTA (retomável,
+        // nunca retira) em vez de apostar numa leitura paginada não medida.
+        if (lote.itens.length > LIMITE_ITENS_DO_LOTE) {
+            throw new VinculoCodigoBarrasIncompletoError({
+                flpCod,
+                vinculados: [],
+                pendentes: candidatos.map((c) => ({
+                    docCod: c.item.docCod,
+                    titCod: c.item.titCod,
+                })),
+                causa: 'LOTE_ACIMA_DE_500_ITENS',
+            });
         }
         const vinculados: VinculoAplicado[] = [];
         const retirar: FalhaDeterministicaVinculo[] = [];

@@ -420,6 +420,19 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
         expect(h.sugestoes.listarDecisoes).toHaveBeenCalled();
     });
 
+    it('lote com mais de 500 itens: o vínculo ABORTA (retomável), nunca retira, nenhuma chamada ao ERP', async () => {
+        const itens = Array.from({ length: 501 }, (_v, i) => itemLote(String(700 + i)));
+        itens[0] = itemLote('636');
+        const h = build({ itens, rascunho: [nativo('636', 91)] });
+        const erro = await h.service.executar({ lote: h.lote, ...CTX }).catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(VinculoCodigoBarrasIncompletoError);
+        expect((erro as VinculoCodigoBarrasIncompletoError).details).toMatchObject({
+            causa: 'LOTE_ACIMA_DE_500_ITENS',
+        });
+        for (const fn of Object.values(h.write)) expect(fn).not.toHaveBeenCalled();
+        expect(h.loteRepo.gravarVinculoCodigoBarras).not.toHaveBeenCalled();
+    });
+
     it('lote SEM nenhuma decisão confirmada: nenhuma chamada ao client, nenhum evento', async () => {
         const h = umItem({ decisoes: [] });
         const r = await h.service.executar({ lote: h.lote, ...CTX });
