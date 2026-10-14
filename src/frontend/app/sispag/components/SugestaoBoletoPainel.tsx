@@ -93,7 +93,13 @@ export function SugestaoBoletoPainel({
   podeCopiar,
   ddaDefasadoHoras,
   onDecidido,
+  itemVinculadoEmLoteVivo = false,
 }: {
+  /**
+   * O item deste título já tem o código vinculado num lote vivo (ADR-0071, I17l): anular a
+   * confirmação NÃO o desfaz no Conexos — o diálogo avisa.
+   */
+  itemVinculadoEmLoteVivo?: boolean
   sugestoes: SugestaoBoleto[]
   podeExecutar: boolean
   podeCopiar: boolean
@@ -363,7 +369,11 @@ export function SugestaoBoletoPainel({
       {dialogo?.tipo === 'anular' ? (
         <MotivoDecisaoDialog
           titulo="Anular confirmação do boleto"
-          descricao="A confirmação deste título é desfeita e o título e o boleto voltam a ficar livres. A confirmação do emissor não muda. Nada muda no Conexos. O motivo fica na trilha."
+          descricao={
+            itemVinculadoEmLoteVivo
+              ? 'ATENÇÃO: o código de barras deste boleto já foi vinculado ao item do lote. Anular a confirmação NÃO desfaz isso no Conexos: o item continua no lote com o boleto. Para não pagá-lo, retire o título do lote. A confirmação do emissor não muda. O motivo fica na trilha.'
+              : 'A confirmação deste título é desfeita e o título e o boleto voltam a ficar livres. A confirmação do emissor não muda. Nada muda no Conexos. O motivo fica na trilha.'
+          }
           rotuloConfirmar="Anular confirmação"
           minimoCaracteres={MOTIVO_ANULACAO_MINIMO}
           onFechar={() => setDialogo(null)}

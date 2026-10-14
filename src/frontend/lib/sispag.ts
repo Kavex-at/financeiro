@@ -266,6 +266,61 @@ export interface ItemLote {
   autorizacaoAviso?: AvisoAutorizacao
   /** Alertas vivas do item neste lote, com a justificativa quando houver. */
   alertas?: AlertaItemLote[]
+  /**
+   * Vínculo do código de barras ao item (ADR-0071): só a MÁSCARA 5+4. Ausente = sem vínculo.
+   */
+  vinculoCodigoBarras?: VinculoCodigoBarrasItem
+}
+
+/** Origem do vínculo do código de barras ao item (ADR-0071, I17). */
+export interface VinculoCodigoBarrasItem {
+  origem: 'ERP_DDA' | 'DECISAO_HUMANA'
+  decisaoId?: string
+  /** 5 primeiros + 4 últimos dígitos, separados por `…`. Nunca o código completo. */
+  codigoMascarado: string
+  /** ISO-8601. */
+  aplicadoEm: string
+  /** Lote nativo (`flpCod`) em que o vínculo foi gravado. */
+  flpCod: number
+}
+
+export type ModoVinculoCodigoBarras = 'off' | 'shadow' | 'on'
+
+/** Previsão do vínculo por título (`GET /sispag/lotes/:id/vinculos-previstos`). Só máscaras. */
+export interface VinculoPrevisto {
+  titulo: ChaveTitulo
+  elegivel: boolean
+  motivo?: string
+  /** Vencimento da barra − vencimento do título, em dias, com sinal. */
+  deltaDias?: number
+  /** Valor da barra − aberto, em centavos, com sinal. */
+  deltaCentavos?: number
+  codigoMascarado?: string
+  decisaoId?: string
+  valorAbertoFonte: 'CARTEIRA_LOCAL' | 'ERP_AO_VIVO'
+}
+
+export interface VinculosPrevistos {
+  modo: ModoVinculoCodigoBarras
+  itens: VinculoPrevisto[]
+}
+
+/**
+ * O que o vínculo do código confirmado FARIA neste lote (ADR-0071, I17k). Leitura local no
+ * servidor. Falha vira "sem previsão" (modo `off`): é complemento, nunca bloqueia o card.
+ */
+export async function fetchVinculosPrevistos(loteId: string): Promise<VinculosPrevistos> {
+  try {
+    const res = await apiFetch(
+      `${API}/sispag/lotes/${encodeURIComponent(loteId)}/vinculos-previstos`,
+      { headers: { ...(await withAuthHeaders()) } },
+    )
+    if (!res.ok) return { modo: 'off', itens: [] }
+    const j = (await res.json().catch(() => ({}))) as Partial<VinculosPrevistos>
+    return { modo: j.modo ?? 'off', itens: j.itens ?? [] }
+  } catch {
+    return { modo: 'off', itens: [] }
+  }
 }
 
 export type TipoAlertaItem = 'DUPLICIDADE_FORTE' | 'DUPLICIDADE_FRACA'
@@ -537,10 +592,17 @@ export interface GerarRemessaResult {
   retiradosPorCodigoBarras?: RetiradoPorCodigoBarras[]
   /** Avisos em pt-BR: não vazio quando houve retirada — a remessa saiu, mas NÃO é "tudo certo". */
   avisos?: string[]
+  /** Itens cujo código de barras foi vinculado da confirmação da analista (ADR-0071). Só máscara. */
+  vinculados?: Array<{ titulo: ChaveTitulo; codigoMascarado: string }>
+  /** Dry-run com o modo shadow/on: o que seria vinculado. */
+  vinculosPrevistos?: VinculoPrevisto[]
 }
 
 /** Motivo da retirada automática por código de barras. */
-export type MotivoRetiradaCodigoBarras = 'CODIGO_BARRAS_REPETIDO' | 'CODIGO_BARRAS_ILEGIVEL'
+export type MotivoRetiradaCodigoBarras =
+  | 'CODIGO_BARRAS_REPETIDO'
+  | 'CODIGO_BARRAS_ILEGIVEL'
+  | 'VINCULO_CODIGO_BARRAS_FALHOU'
 
 /** Item retirado do lote pela guarda (resultado da geração). Nunca o código completo. */
 export interface RetiradoPorCodigoBarras {
@@ -580,6 +642,7 @@ export interface TituloRetidoPorCodigoBarras {
 export const ROTULO_RETIRADA_CODIGO_BARRAS: Record<MotivoRetiradaCodigoBarras, string> = {
   CODIGO_BARRAS_REPETIDO: 'boleto repetido',
   CODIGO_BARRAS_ILEGIVEL: 'código de barras ilegível',
+  VINCULO_CODIGO_BARRAS_FALHOU: 'vínculo do código de barras falhou',
 }
 
 /** Título cujo vencimento limita a janela de débito. */

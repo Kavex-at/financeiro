@@ -44,6 +44,7 @@ import {
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   fetchRetiradasDoLote,
+  fetchVinculosPrevistos,
   fetchContasPagadoras,
   finalizarLote,
   formatCivilDate,
@@ -63,6 +64,7 @@ import {
   reabrirLote,
   type RecursosSispag,
   type RetiradaDoLote,
+  type VinculosPrevistos,
   removerItem,
   rotuloConta,
   STATUS_SINCRONIZAVEIS,
@@ -81,6 +83,8 @@ import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
 import { ResolverDuplicidadeDialog } from './ResolverDuplicidadeDialog'
 import { RetiradosPorCodigoBarrasAviso } from './RetiradosPorCodigoBarrasAviso'
 import { rotuloVencimentoLote } from './loteDoTitulo'
+import { seloDoItem } from './vinculoCodigoBarras'
+import { VinculoCodigoBarrasSelo } from './VinculoCodigoBarrasSelo'
 
 const RECURSOS_DESLIGADOS: RecursosSispag = {
   tedEnabled: false,
@@ -580,6 +584,27 @@ export function LoteCard({
     // `l.versao`: a retirada bumpa a versão do lote — relê quando o lote muda.
   }, [isRascunho, l.id, l.status, l.versao, podeVer])
 
+  // ADR-0071 (I17k): previsão local do vínculo do código confirmado. Só o modo `on` vira selo;
+  // `shadow` fica no endpoint e no log. Falha = sem previsão, nada quebra.
+  const [previstos, setPrevistos] = React.useState<VinculosPrevistos>({ modo: 'off', itens: [] })
+  React.useEffect(() => {
+    if (!isRascunho && l.status !== 'FINALIZADO') return
+    if (!podeVer) return
+    let vivo = true
+    Promise.resolve(fetchVinculosPrevistos(l.id))
+      .then((r) => {
+        if (vivo) setPrevistos(r ?? { modo: 'off', itens: [] })
+      })
+      .catch(() => {
+        if (vivo) setPrevistos({ modo: 'off', itens: [] })
+      })
+    return () => {
+      vivo = false
+    }
+  }, [isRascunho, l.id, l.status, l.versao, podeVer])
+  const previstoDe = (docCod: string, titCod: string) =>
+    previstos.itens.find((p) => p.titulo.docCod === docCod && p.titulo.titCod === titCod)
+
   /** Copia a linha digitável. O toast confirma sem repetir os 47 dígitos na tela. */
   const copiarLinha = async (linhaDigitavel: string, docCod: string, titCod: string) => {
     try {
@@ -856,7 +881,19 @@ export function LoteCard({
                       carregou && !!i.modalidade && !!avail && !avail.includes(i.modalidade)
                     return (
                     <TableRow key={`${i.docCod}:${i.titCod}`}>
-                      <TableCell className="max-w-[16rem] truncate">{i.credor ?? '—'}</TableCell>
+                      <TableCell className="max-w-[16rem]">
+                        <span className="block truncate">{i.credor ?? '—'}</span>
+                        <VinculoCodigoBarrasSelo
+                          selo={seloDoItem({
+                            item: i,
+                            modo: previstos.modo,
+                            ...(previstoDe(i.docCod, i.titCod)
+                              ? { previsto: previstoDe(i.docCod, i.titCod) }
+                              : {}),
+                            ...(l.dataDebito ? { dataDebito: l.dataDebito } : {}),
+                          })}
+                        />
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {i.docCod}/{i.titCod}
                       </TableCell>

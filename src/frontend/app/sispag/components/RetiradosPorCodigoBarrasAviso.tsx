@@ -28,7 +28,9 @@ function descreverRetirada(r: RetiradaDoLote): string {
  */
 export function RetiradosPorCodigoBarrasAviso({ retiradas }: { retiradas: RetiradaDoLote[] }) {
   if (retiradas.length === 0) return null
-  const grupos = (['CODIGO_BARRAS_REPETIDO', 'CODIGO_BARRAS_ILEGIVEL'] as const)
+  const grupos = (
+    ['CODIGO_BARRAS_REPETIDO', 'CODIGO_BARRAS_ILEGIVEL', 'VINCULO_CODIGO_BARRAS_FALHOU'] as const
+  )
     .map((motivo) => ({ motivo, itens: retiradas.filter((r) => r.motivo === motivo) }))
     .filter((g) => g.itens.length > 0)
 
@@ -51,7 +53,9 @@ export function RetiradosPorCodigoBarrasAviso({ retiradas }: { retiradas: Retira
             <p>
               {g.motivo === 'CODIGO_BARRAS_REPETIDO'
                 ? 'O mesmo boleto aparecia em mais de um título do lote e só um pode ser pago:'
-                : 'O código de barras do boleto está ilegível ou inválido:'}
+                : g.motivo === 'VINCULO_CODIGO_BARRAS_FALHOU'
+                  ? 'O código de barras confirmado não pôde ser vinculado ao título (valor, data ou banco divergentes) e o título saiu do lote:'
+                  : 'O código de barras do boleto está ilegível ou inválido:'}
             </p>
             <ul className="mt-1 list-disc space-y-0.5 pl-5">
               {g.itens.map((r) => (
