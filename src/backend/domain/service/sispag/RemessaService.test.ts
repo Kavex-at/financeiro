@@ -27,6 +27,7 @@ import type { PayeeCheckResult } from '../../interface/sispag/AuthorizedPayeeInt
 import type AuthorizedPayeeService from './AuthorizedPayeeService.js';
 import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
 import RemessaService from './RemessaService.js';
+import type VinculoCodigoBarrasService from './VinculoCodigoBarrasService.js';
 
 /** Linha digitável SINTÉTICA (DV válidos) usada como default "código distinto" (I16). */
 const LINHA_DISTINTA = '00191234546789012345767890123457199990000012345';
@@ -251,7 +252,23 @@ const buildDb = (concede = true) => ({
     withTransaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({})),
 });
 
+/**
+ * Vínculo do código de barras (ADR-0071). Default = o que o serviço devolve com o modo `off`:
+ * nada a avaliar, nada a executar. Os testes do vínculo injetam o comportamento que exercitam.
+ */
+const buildVinculo = (o: Record<string, unknown> = {}) => ({
+    avaliarParaImport: jest.fn().mockResolvedValue(new Map()),
+    prever: jest.fn().mockResolvedValue([]),
+    executar: jest
+        .fn()
+        .mockResolvedValue({ vinculados: [], retirar: [], preferidos: new Set<string>() }),
+    chavesComDecisaoHumana: jest.fn().mockResolvedValue(new Set<string>()),
+    existemVinculaveis: jest.fn().mockResolvedValue(false),
+    ...o,
+});
+
 const make = (o: {
+    vinculo?: ReturnType<typeof buildVinculo>;
     loteRepo?: ReturnType<typeof buildLoteRepo>;
     ledger?: ReturnType<typeof buildLedger>;
     write?: ReturnType<typeof buildWrite>;
@@ -295,6 +312,7 @@ const make = (o: {
         new DestinoPagamentoResolver(sispag as unknown as ConexosSispagClient, new MaskDestino()),
         (o.payees ?? buildPayees()) as unknown as AuthorizedPayeeService,
         retirada,
+        (o.vinculo ?? buildVinculo()) as unknown as VinculoCodigoBarrasService,
     );
 };
 
@@ -3120,6 +3138,594 @@ describe('RemessaService — guarda de código de barras que retira (ADR-0069 em
             expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
             expect(r.write.sugerirRemessa).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('RemessaService — vínculo do código de barras (ADR-0071, I17)', () => {
+    const MASCARA = '34191…0000';
+    const boletoSemDda = () =>
+        lote({ itens: [{ ...lote().itens[0], modalidade: 'BOLETO' as const }] });
+    const elegivel = (over: Record<string, unknown> = {}) =>
+        new Map([
+            ['2:801:1', { elegivel: true, codigoMascarado: MASCARA, decisaoId: 'dec-1', ...over }],
+        ]);
+    const envModo = (modo: string, over: Record<string, unknown> = {}) =>
+        buildEnv({ sispagBindCodbarFiliais: modo, ...over });
+    /** Todas as chamadas de escrita/leitura ao ERP, na ordem, só pelo nome. */
+    const chamadas = (w: ReturnType<typeof buildWrite>): string[] =>
+        Object.entries(w)
+            .flatMap(([nome, fn]) =>
+                (fn as jest.Mock).mock.invocationCallOrder.map((ordem) => ({ nome, ordem })),
+            )
+            .sort((a, b) => a.ordem - b.ordem)
+            .map((c) => c.nome);
+
+    describe('exceção no pré-import (BoletoSemCodigoBarrasError)', () => {
+        it('modo on + elegível: importa SEM associarDda e SEM destino (a barra define o destino)', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+            });
+            await make({
+                write,
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(vinculo.avaliarParaImport).toHaveBeenCalledWith(expect.anything(), 'on');
+            expect(write.importarTitulos).toHaveBeenCalledTimes(1);
+            const [{ itens, associarDda }] = write.importarTitulos.mock.calls[0];
+            expect(associarDda).toBe(false);
+            expect(itens[0]).not.toHaveProperty('pctCodSeq');
+            expect(itens[0]).not.toHaveProperty('itsNumBanco');
+        });
+
+        it('modo on + INELEGÍVEL: BoletoSemCodigoBarrasError antes de qualquer escrita', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest
+                    .fn()
+                    .mockResolvedValue(elegivel({ elegivel: false, motivo: 'VALOR_DIFERENTE' })),
+            });
+            await expect(
+                make({ write, lote: boletoSemDda(), env: envModo('2:on'), vinculo }).gerarRemessa({
+                    loteId: 'L1',
+                    ator: 'u',
+                }),
+            ).rejects.toMatchObject({ code: 'BOLETO_SEM_CODIGO_BARRAS' });
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(vinculo.executar).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            '',
+            '2:off',
+            '2:shadow',
+        ])('modo "%s": comportamento atual preservado literalmente (erro antes de escrever)', async (modo) => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            // Mesmo que o serviço devolva "elegível": só o modo `on` libera.
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+            });
+            await expect(
+                make({
+                    write,
+                    lote: boletoSemDda(),
+                    env: envModo(modo),
+                    vinculo,
+                }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toMatchObject({ code: 'BOLETO_SEM_CODIGO_BARRAS' });
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(vinculo.executar).not.toHaveBeenCalled();
+        });
+
+        it('item que o ERP associou ao DDA nunca entra no caminho do vínculo', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, true)]);
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+            });
+            await make({
+                write,
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(write.importarTitulos).toHaveBeenCalledWith(
+                expect.objectContaining({ associarDda: true }),
+            );
+        });
+
+        it('o freio SISPAG_DDA_ASSOC_ENABLED=false NÃO desliga o vínculo', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+            });
+            await make({
+                write,
+                lote: boletoSemDda(),
+                env: envModo('2:on', { sispagDdaAssocEnabled: false }),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(write.importarTitulos).toHaveBeenCalledTimes(1);
+            expect(vinculo.executar).toHaveBeenCalled();
+        });
+
+        it('kill-switch sispagLiveWriteEnabled=false com modo on ⇒ comportamento de off (dry-run)', async () => {
+            const write = buildWrite();
+            const vinculo = buildVinculo();
+            const r = await make({
+                write,
+                lote: boletoSemDda(),
+                env: envModo('2:on', { sispagLiveWriteEnabled: false }),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(r.status).toBe('dry-run');
+            expect(r).not.toHaveProperty('vinculosPrevistos');
+            expect(vinculo.prever).not.toHaveBeenCalled();
+            expect(vinculo.avaliarParaImport).not.toHaveBeenCalled();
+            expect(write.criarLote).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('etapa vincular_codbar', () => {
+        it('ordem: criar → importar → vincular → guarda I16 → finalizar → gerar; etapa só de MEMÓRIA', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const ledger = buildLedger();
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+                executar: jest.fn().mockImplementation(async () => {
+                    // O vínculo roda com o rascunho JÁ importado e ANTES de finalizar.
+                    expect(write.importarTitulos).toHaveBeenCalled();
+                    expect(write.finalizarLote).not.toHaveBeenCalled();
+                    return {
+                        vinculados: [
+                            {
+                                titulo: { filCod: 2, docCod: '801', titCod: '1' },
+                                codigoMascarado: MASCARA,
+                                decisaoId: 'dec-1',
+                                jaVinculado: false,
+                            },
+                        ],
+                        retirar: [],
+                        preferidos: new Set(['2:801:1']),
+                    };
+                }),
+            });
+            const r = await make({
+                write,
+                ledger,
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(r.status).toBe('gerada');
+            const ordem = chamadas(write);
+            expect(ordem.indexOf('criarLote')).toBeLessThan(ordem.indexOf('importarTitulos'));
+            expect(ordem.indexOf('importarTitulos')).toBeLessThan(
+                ordem.indexOf('listarLinhasDigitaveisDoLote'),
+            );
+            expect(ordem.indexOf('listarLinhasDigitaveisDoLote')).toBeLessThan(
+                ordem.indexOf('finalizarLote'),
+            );
+            expect(vinculo.executar).toHaveBeenCalledWith(
+                expect.objectContaining({ bncCod: 4, flpCod: 12 }),
+            );
+            // `vincular_codbar` NUNCA vai ao ledger (o CHECK da 0049 não o conhece).
+            const etapas = ledger.setEtapa.mock.calls.map((c) => c[1]);
+            expect(etapas).not.toContain('vincular_codbar');
+            expect(etapas).toEqual(['finalizar', 'gerar_remessa']);
+        });
+
+        it('resultado: `vinculados` (só máscara) e `avisos` não vazio quando houve vínculo', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+                executar: jest.fn().mockResolvedValue({
+                    vinculados: [
+                        {
+                            titulo: { filCod: 2, docCod: '801', titCod: '1' },
+                            codigoMascarado: MASCARA,
+                            decisaoId: 'dec-1',
+                            jaVinculado: false,
+                        },
+                    ],
+                    retirar: [],
+                    preferidos: new Set(['2:801:1']),
+                }),
+            });
+            const r = await make({
+                write,
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(r.vinculados).toEqual([
+                { titulo: { filCod: 2, docCod: '801', titCod: '1' }, codigoMascarado: MASCARA },
+            ]);
+            expect(r.avisos?.join(' ')).toMatch(/vinculado/);
+            expect(JSON.stringify(r)).not.toMatch(/\d{20,}/);
+        });
+
+        it('lote sem vínculo nenhum: o resultado NÃO ganha `vinculados` nem `avisos` (compat)', async () => {
+            const write = buildWrite();
+            const r = await make({ write, env: envModo('2:on') }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+            expect(r).not.toHaveProperty('vinculados');
+            expect(r).not.toHaveProperty('avisos');
+        });
+
+        it('falha transitória: VinculoCodigoBarrasIncompletoError, ledger failed, rascunho preservado, NENHUMA retirada', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const ledger = buildLedger();
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+                executar: jest.fn().mockRejectedValue(
+                    Object.assign(new Error('incompleto'), {
+                        code: 'VINCULO_CODIGO_BARRAS_INCOMPLETO',
+                    }),
+                ),
+            });
+            await expect(
+                make({
+                    write,
+                    ledger,
+                    lote: boletoSemDda(),
+                    env: envModo('2:on'),
+                    vinculo,
+                }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+            ).rejects.toMatchObject({ code: 'VINCULO_CODIGO_BARRAS_INCOMPLETO' });
+            expect(ledger.fail).toHaveBeenCalled();
+            expect(write.removerItemDoRascunho).not.toHaveBeenCalled();
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+            expect(write.gerarRemessa).not.toHaveBeenCalled();
+            // O ledger ficou em `finalizar` + flpCod: a retomada passa por `sincronizarComErp`.
+            expect(ledger.setEtapa).toHaveBeenCalledWith(expect.anything(), 'finalizar');
+        });
+
+        it('falha DETERMINÍSTICA: o item sai pela maquinaria da I16d e a remessa segue', async () => {
+            const l = lote({
+                itens: [
+                    { ...lote().itens[0], modalidade: 'BOLETO' as const },
+                    {
+                        loteId: 'L1',
+                        filCod: 2,
+                        docCod: '802',
+                        titCod: '1',
+                        credor: 'OUTRO',
+                        valor: 100,
+                        vencimento: VENC,
+                        modalidade: 'CREDITO_CONTA' as const,
+                        incluidoPor: 'u1',
+                        divergencia: false,
+                    },
+                ],
+            });
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false), pendente802()]);
+            // 801 ficou SEM código no rascunho (o vínculo falhou); 802 não é boleto.
+            let estado = [{ docCod: '801', itsCodSeq: 7 }];
+            write.listarLinhasDigitaveisDoLote.mockImplementation(async () => ({
+                itens: [],
+                total: 0,
+                dropped: 0,
+                completa: true,
+                ...(estado.length > 0
+                    ? {
+                          semCodigo: estado.map((e) => ({
+                              docCod: e.docCod,
+                              titCod: '1',
+                              filCod: 2,
+                              itsCodSeq: e.itsCodSeq,
+                          })),
+                      }
+                    : {}),
+            }));
+            write.removerItemDoRascunho.mockImplementation(async (p: { itsCodSeq: number }) => {
+                estado = estado.filter((e) => e.itsCodSeq !== p.itsCodSeq);
+            });
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+                executar: jest.fn().mockResolvedValue({
+                    vinculados: [],
+                    retirar: [
+                        {
+                            titulo: { filCod: 2, docCod: '801', titCod: '1' },
+                            campo: 'VALOR',
+                            codigoMascarado: MASCARA,
+                            itsCodSeq: 7,
+                            aviso: 'o valor do boleto é diferente do valor em aberto',
+                        },
+                    ],
+                    preferidos: new Set<string>(),
+                }),
+            });
+            const loteRepo = buildLoteRepo(l);
+            // Depois da retirada local o lote só tem o 802.
+            loteRepo.getLoteComItens
+                .mockResolvedValueOnce(l)
+                .mockResolvedValueOnce(l)
+                .mockResolvedValue({ ...l, itens: [l.itens[1]] });
+            const r = await make({
+                write,
+                loteRepo,
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+            expect(r.status).toBe('gerada');
+            expect(loteRepo.retirarItemPorCodigoDeBarras).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    docCod: '801',
+                    motivo: 'VINCULO_CODIGO_BARRAS_FALHOU',
+                    codigoMascarado: MASCARA,
+                }),
+                expect.anything(),
+            );
+            expect(write.removerItemDoRascunho).toHaveBeenCalledWith(
+                expect.objectContaining({ itsCodSeq: 7 }),
+            );
+            expect(r.retiradosPorCodigoBarras?.[0]).toMatchObject({
+                titulo: { docCod: '801' },
+                motivo: 'VINCULO_CODIGO_BARRAS_FALHOU',
+            });
+            expect(r.avisos?.join(' ')).toMatch(/vínculo do código de barras/);
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('o desempate prefere o título com decisão humana: `preferidos` chega à guarda', async () => {
+            const write = buildWrite();
+            write.listarTitulosPendentes.mockResolvedValue([pendente({}, false)]);
+            const vinculo = buildVinculo({
+                avaliarParaImport: jest.fn().mockResolvedValue(elegivel()),
+                executar: jest.fn().mockResolvedValue({
+                    vinculados: [],
+                    retirar: [],
+                    preferidos: new Set(['2:801:1']),
+                }),
+            });
+            // Dois itens no rascunho com o MESMO código: o 801 (decisão humana) tem vencimento
+            // MAIOR e mesmo assim fica; o 802 sai.
+            const l = lote({
+                itens: [
+                    {
+                        ...lote().itens[0],
+                        modalidade: 'BOLETO' as const,
+                        vencimento: VENC + 5 * 86_400_000,
+                    },
+                    {
+                        loteId: 'L1',
+                        filCod: 2,
+                        docCod: '802',
+                        titCod: '1',
+                        credor: 'OUTRO',
+                        valor: 100,
+                        vencimento: VENC,
+                        modalidade: 'BOLETO' as const,
+                        incluidoPor: 'u1',
+                        divergencia: false,
+                    },
+                ],
+            });
+            write.listarTitulosPendentes.mockResolvedValue([
+                pendente({}, false),
+                { ...pendente({ docCod: 802 }, true), docCod: '802' },
+            ]);
+            let estado = [
+                { docCod: '801', itsCodSeq: 1 },
+                { docCod: '802', itsCodSeq: 2 },
+            ];
+            write.listarLinhasDigitaveisDoLote.mockImplementation(async () => ({
+                itens: estado.map((e) => ({
+                    docCod: e.docCod,
+                    titCod: '1',
+                    linhaDigitavel: LINHA_DISTINTA,
+                    filCod: 2,
+                    itsCodSeq: e.itsCodSeq,
+                })),
+                total: estado.length,
+                dropped: 0,
+                completa: true,
+            }));
+            write.removerItemDoRascunho.mockImplementation(async (p: { itsCodSeq: number }) => {
+                estado = estado.filter((e) => e.itsCodSeq !== p.itsCodSeq);
+            });
+            const loteRepo = buildLoteRepo(l);
+            loteRepo.getLoteComItens
+                .mockResolvedValueOnce(l)
+                .mockResolvedValueOnce(l)
+                .mockResolvedValue({ ...l, itens: [l.itens[0]] });
+            const r = await make({ write, loteRepo, env: envModo('2:on'), vinculo }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+            expect(r.retiradosPorCodigoBarras?.map((x) => x.titulo.docCod)).toEqual(['802']);
+            expect(write.removerItemDoRascunho).toHaveBeenCalledWith(
+                expect.objectContaining({ itsCodSeq: 2 }),
+            );
+        });
+    });
+
+    describe('shadow e off: ZERO chamada nova ao ERP (I17k)', () => {
+        const rodarModo = async (modo: string) => {
+            const write = buildWrite();
+            const vinculo = buildVinculo();
+            await make({ write, env: envModo(modo), vinculo }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            });
+            return { write, vinculo };
+        };
+
+        it('a sequência de chamadas ao ERP é IDÊNTICA à de hoje (snapshot de chamadas)', async () => {
+            const base = await rodarModo('');
+            const off = await rodarModo('2:off');
+            const shadow = await rodarModo('2:shadow');
+            expect(chamadas(off.write)).toEqual(chamadas(base.write));
+            expect(chamadas(shadow.write)).toEqual(chamadas(base.write));
+            expect(shadow.vinculo.executar).not.toHaveBeenCalled();
+            expect(base.vinculo.executar).not.toHaveBeenCalled();
+        });
+
+        it('`shadow` só AVALIA (local); `off` nem isso', async () => {
+            const shadow = await rodarModo('2:shadow');
+            expect(shadow.vinculo.avaliarParaImport).toHaveBeenCalledWith(
+                expect.anything(),
+                'shadow',
+            );
+            const off = await rodarModo('');
+            expect(off.vinculo.avaliarParaImport).not.toHaveBeenCalled();
+        });
+
+        it('dry-run com `shadow`: previsão no resultado, nada durável, nenhuma escrita', async () => {
+            const write = buildWrite();
+            const previsao = {
+                titulo: { filCod: 2, docCod: '801', titCod: '1' },
+                elegivel: true,
+                codigoMascarado: MASCARA,
+                valorAbertoFonte: 'CARTEIRA_LOCAL',
+            };
+            const vinculo = buildVinculo({ prever: jest.fn().mockResolvedValue([previsao]) });
+            const r = await make({
+                write,
+                env: envModo('2:shadow', { conexosDryRun: true }),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(r.status).toBe('dry-run');
+            expect(r.vinculosPrevistos).toEqual([previsao]);
+            // `prever` SEM `registrar`: no dry-run nada durável é gravado (Q8).
+            expect(vinculo.prever).toHaveBeenCalledWith(expect.anything());
+            expect(vinculo.avaliarParaImport).not.toHaveBeenCalled();
+            expect(write.criarLote).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('retomada (sincronizarComErp)', () => {
+        const ledgerEmFinalizar = () =>
+            buildLedger({
+                status: 'error',
+                dryRun: false,
+                nativeFlpCod: 99,
+                etapa: 'finalizar',
+                erroMensagem: 'VINCULO_CODIGO_BARRAS_INCOMPLETO',
+            });
+        const nativoAbertoCompleto = () => {
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: 1,
+                soma: 258.4,
+            });
+            write.listarChavesDoLote.mockResolvedValue(new Set(['2:801:1']));
+            return write;
+        };
+
+        it('rascunho completo + modo on + há item a vincular ⇒ retoma em vincular_codbar (sem reimportar)', async () => {
+            const write = nativoAbertoCompleto();
+            const vinculo = buildVinculo({
+                existemVinculaveis: jest.fn().mockResolvedValue(true),
+            });
+            await make({
+                write,
+                ledger: ledgerEmFinalizar(),
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(vinculo.executar).toHaveBeenCalledWith(expect.objectContaining({ flpCod: 99 }));
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('nada a vincular ⇒ retoma em finalizar e o vínculo NÃO roda', async () => {
+            const write = nativoAbertoCompleto();
+            const vinculo = buildVinculo({
+                existemVinculaveis: jest.fn().mockResolvedValue(false),
+            });
+            await make({
+                write,
+                ledger: ledgerEmFinalizar(),
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(vinculo.executar).not.toHaveBeenCalled();
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('lote nativo FINALIZADO (retomada em gerar_remessa): nunca vincula (I17i)', async () => {
+            const write = buildWrite();
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 1,
+                titulosCount: 1,
+                soma: 258.4,
+            });
+            const vinculo = buildVinculo({
+                existemVinculaveis: jest.fn().mockResolvedValue(true),
+            });
+            await make({
+                write,
+                ledger: ledgerEmFinalizar(),
+                lote: boletoSemDda(),
+                env: envModo('2:on'),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(vinculo.executar).not.toHaveBeenCalled();
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+            expect(write.gerarRemessa).toHaveBeenCalled();
+        });
+
+        it('modo off: a retomada não consulta o vínculo', async () => {
+            const write = nativoAbertoCompleto();
+            const vinculo = buildVinculo({ existemVinculaveis: jest.fn() });
+            await make({
+                write,
+                ledger: ledgerEmFinalizar(),
+                lote: boletoSemDda(),
+                env: envModo(''),
+                vinculo,
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(vinculo.existemVinculaveis).not.toHaveBeenCalled();
+            expect(vinculo.executar).not.toHaveBeenCalled();
+        });
+    });
+
+    it('homônimo cross-filial: o mapa de elegibilidade é por FILIAL (regressão)', async () => {
+        const write = buildWrite();
+        // O grid só traz o 801 da filial 4: o item do lote (filial 2) NÃO pode herdar a barra.
+        write.listarTitulosPendentes.mockResolvedValue([
+            { ...pendente({ filCod: 4 }, false), docCod: '801' },
+        ]);
+        const vinculo = buildVinculo({
+            avaliarParaImport: jest
+                .fn()
+                .mockResolvedValue(new Map([['4:801:1', { elegivel: true }]])),
+        });
+        await expect(
+            make({ write, lote: boletoSemDda(), env: envModo('2:on'), vinculo }).gerarRemessa({
+                loteId: 'L1',
+                ator: 'u',
+            }),
+        ).rejects.toThrow(/cross-filial|filial/);
+        expect(write.importarTitulos).not.toHaveBeenCalled();
     });
 });
 

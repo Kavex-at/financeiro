@@ -262,6 +262,18 @@ export default class VinculoCodigoBarrasService {
         return chaves;
     };
 
+    /**
+     * A retomada precisa do vínculo? (LOCAL, sem ERP.) Há BOLETO com decisão humana vigente que
+     * ainda não carrega `vinculoCodigoBarras` no lote local. Over-approximation segura: o executor
+     * é idempotente e lê o rascunho para saber o que de fato falta (I17f).
+     */
+    public existemVinculaveis = async (lote: LotePagamento): Promise<boolean> => {
+        const vigentes = await this.chavesComDecisaoHumana(lote);
+        return this.boletos_(lote).some(
+            (i) => vigentes.has(chaveDe(i)) && i.vinculoCodigoBarras === undefined,
+        );
+    };
+
     // ── Execução (modo `on`) ────────────────────────────────────────────────
 
     /**
