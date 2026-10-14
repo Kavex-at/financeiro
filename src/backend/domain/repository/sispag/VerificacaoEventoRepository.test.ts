@@ -51,6 +51,45 @@ describe('VerificacaoEventoRepository (ADR-0063, I13m)', () => {
         });
     });
 
+    it('listarRetiradasPorCodigoBarras: lê da trilha do lote, mascarado e título mantido', async () => {
+        const pool = {
+            selectMany: jest.fn().mockResolvedValue([
+                {
+                    fil_cod: 2,
+                    doc_cod: '1001',
+                    tit_cod: '1',
+                    credor: 'PEDRONI',
+                    ocorrido_em: new Date('2026-10-14T10:00:00Z'),
+                    dados: {
+                        motivo: 'CODIGO_BARRAS_REPETIDO',
+                        codigoMascarado: '34191…5555',
+                        tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+                        valor: 1412,
+                        vencimento: '2026-10-14',
+                    },
+                },
+            ]),
+        };
+        const r = await new VerificacaoEventoRepository(
+            pool as unknown as PostgreeDatabaseClient,
+        ).listarRetiradasPorCodigoBarras('L1');
+        expect(r).toEqual([
+            {
+                titulo: { filCod: 2, docCod: '1001', titCod: '1' },
+                motivo: 'CODIGO_BARRAS_REPETIDO',
+                codigoMascarado: '34191…5555',
+                tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+                valor: 1412,
+                vencimento: '2026-10-14',
+                credor: 'PEDRONI',
+                ocorridoEm: '2026-10-14T10:00:00.000Z',
+            },
+        ]);
+        const [sql, params] = pool.selectMany.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/e\.evento = \$evento AND e\.lote_id = \$loteId/);
+        expect(params).toMatchObject({ loteId: 'L1', ator: 'sistema' });
+    });
+
     it('sem tx, grava no pool', async () => {
         const pool = { insert: jest.fn().mockResolvedValue(1) };
         await new VerificacaoEventoRepository(pool as unknown as PostgreeDatabaseClient).registrar({

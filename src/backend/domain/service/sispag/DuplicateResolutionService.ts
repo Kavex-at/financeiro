@@ -3,12 +3,18 @@ import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient
 import DuplicateResolutionError, {
     DUPLICATE_RESOLUTION_FAILURE,
 } from '../../errors/DuplicateResolutionError.js';
+import { MOTIVO_LEDGER_LIMPEZA_INCOMPLETA } from '../../errors/BoletoCodigoBarrasRetiradaIncompletaError.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import type {
+    RetiradaDoLoteNaTrilha,
+    TituloRetidoPorCodigoBarras,
+} from '../../interface/sispag/RetiradaCodigoBarras.js';
 import {
     type BloqueioDuplicidade,
     type ChaveTitulo,
     DUPLICATE_ACTION,
+    DUPLICATE_HOLD_ORIGIN,
     DUPLICATE_ALERT_TYPES,
     type DuplicateAction,
     ITEM_ALERT_RESOLUTION,
@@ -19,6 +25,8 @@ import {
 import AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
+import VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
 import LogService from '../LogService.js';
 import LotePagamentoService from './LotePagamentoService.js';
 
@@ -52,6 +60,9 @@ export default class DuplicateResolutionService {
         @inject(LotePagamentoService) private readonly lotes: LotePagamentoService,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(VerificacaoEventoRepository)
+        private readonly eventos: VerificacaoEventoRepository,
+        @inject(RemessaExecucaoRepository) private readonly ledger: RemessaExecucaoRepository,
     ) {}
 
     public resolverAlertaDuplicidade = async (
@@ -156,6 +167,30 @@ export default class DuplicateResolutionService {
         return atualizado;
     };
 
+    /**
+     * `true` quando a ÚLTIMA execução real de remessa do lote terminou em `error` por limpeza de
+     * código de barras incompleta: o rascunho nativo ainda tem resíduo (I16d.6, Q10).
+     */
+    private limpezaPendente = async (loteId: string): Promise<boolean> => {
+        const execucoes = await this.ledger.listByLote(loteId);
+        const ultima = execucoes.find((e) => !e.dryRun);
+        return (
+            ultima?.status === 'error' &&
+            (ultima.erroMensagem ?? '').includes(MOTIVO_LEDGER_LIMPEZA_INCOMPLETA)
+        );
+    };
+
+    /** I16g — títulos retidos por código de barras (aba de títulos): só campos mascarados. */
+    public listarRetidosPorCodigoDeBarras = async (): Promise<TituloRetidoPorCodigoBarras[]> =>
+        this.bloqueioRepo.listAtivosPorOrigemComTitulo([
+            DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_REPETIDO,
+            DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_ILEGIVEL,
+        ]);
+
+    /** I16f(3) — o que o sistema retirou deste lote por código de barras, lido da trilha. */
+    public listarRetiradasDoLote = async (loteId: string): Promise<RetiradaDoLoteNaTrilha[]> =>
+        this.eventos.listarRetiradasPorCodigoBarras(loteId);
+
     /** I13g — a analista desfaz o bloqueio ATIVO do título, com motivo obrigatório, auditado. */
     public desfazerBloqueio = async (input: {
         chave: ChaveTitulo;
@@ -166,6 +201,19 @@ export default class DuplicateResolutionService {
         if (motivo === '') {
             throw new DuplicateResolutionError({
                 motivo: DUPLICATE_RESOLUTION_FAILURE.TEXTO_OBRIGATORIO,
+            });
+        }
+        // Q10 — marca por código de barras: não desfaz enquanto o resíduo no rascunho nativo do
+        // lote de origem não foi limpo (o par marca + evento que o reconhece quebraria).
+        const ativo = await this.bloqueioRepo.findAtivo(input.chave);
+        if (
+            ativo?.origem !== undefined &&
+            ativo.origem !== DUPLICATE_HOLD_ORIGIN.DUPLICIDADE_TITULO &&
+            ativo.loteIdOrigem !== undefined &&
+            (await this.limpezaPendente(ativo.loteIdOrigem))
+        ) {
+            throw new DuplicateResolutionError({
+                motivo: DUPLICATE_RESOLUTION_FAILURE.LIMPEZA_PENDENTE,
             });
         }
         const desfeito = await this.bloqueioRepo.desfazer({

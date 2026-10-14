@@ -12,6 +12,8 @@ jest.mock('../domain/appContainer.js', () => ({
 
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
 import BoletoCodigoBarrasRepetidoError from '../domain/errors/BoletoCodigoBarrasRepetidoError.js';
+import BoletoCodigoBarrasRetiradaIncompletaError from '../domain/errors/BoletoCodigoBarrasRetiradaIncompletaError.js';
+import DuplicateResolutionService from '../domain/service/sispag/DuplicateResolutionService.js';
 import DebitDateFrozenError from '../domain/errors/DebitDateFrozenError.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindowError.js';
@@ -587,6 +589,158 @@ describe('POST /sispag/lotes/formar', () => {
         await comApp({ role: 'viewer' }, async (url) => {
             const res = await fetch(`${url}/sispag/lotes/formar`, { method: 'POST' });
             expect(res.status).toBe(403);
+        });
+    });
+});
+
+// ───────────────── ADR-0069 emenda 1 — retidos por código de barras (I16f, I16g)
+
+describe('GET /sispag/titulos/retidos-por-codigo-barras', () => {
+    // Código SINTÉTICO de 44 dígitos: nenhum campo da resposta pode carregá-lo.
+    const BARRAS = '34191158000001412001090047729099260408340000';
+
+    it('devolve só campos mascarados (snapshot de chaves) e nunca o código completo', async () => {
+        const listarRetidosPorCodigoDeBarras = jest.fn().mockResolvedValue([
+            {
+                id: 'B1',
+                filCod: 2,
+                docCod: '1001',
+                titCod: '1',
+                motivo: 'Boleto repetido',
+                origem: 'CODIGO_BARRAS_REPETIDO',
+                estado: 'ATIVO',
+                marcadoPor: 'sistema',
+                marcadoEm: '2026-10-14T10:00:00.000Z',
+                loteIdOrigem: 'L1',
+                codigoMascarado: '34191…8340',
+                tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+                credor: 'PEDRONI',
+                valor: 1412,
+                vencimento: '2026-10-14',
+            },
+        ]);
+        container.registerInstance(DuplicateResolutionService, {
+            listarRetidosPorCodigoDeBarras,
+        } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/titulos/retidos-por-codigo-barras`);
+            expect(res.status).toBe(200);
+            const corpo = await readJson(res);
+            expect(corpo.retidos).toHaveLength(1);
+            expect(Object.keys(corpo.retidos[0]).sort()).toEqual(
+                [
+                    'codigoMascarado',
+                    'credor',
+                    'docCod',
+                    'filCod',
+                    'loteIdOrigem',
+                    'marcadoEm',
+                    'origem',
+                    'titCod',
+                    'tituloMantido',
+                    'valor',
+                    'vencimento',
+                ].sort(),
+            );
+            expect(JSON.stringify(corpo)).not.toContain(BARRAS);
+            expect(JSON.stringify(corpo)).not.toMatch(/\d{10,}/);
+        });
+    });
+
+    it('exige autenticação', async () => {
+        await comApp({ authenticated: false }, async (url) => {
+            const res = await fetch(`${url}/sispag/titulos/retidos-por-codigo-barras`);
+            expect(res.status).toBe(401);
+        });
+    });
+});
+
+describe('GET /sispag/lotes/:id/retirados-por-codigo-barras', () => {
+    it('lê da trilha do lote e devolve em `retirados`', async () => {
+        const listarRetiradasDoLote = jest.fn().mockResolvedValue([
+            {
+                titulo: { filCod: 2, docCod: '1001', titCod: '1' },
+                motivo: 'CODIGO_BARRAS_REPETIDO',
+                codigoMascarado: '34191…8340',
+                tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+                valor: 1412,
+                vencimento: '2026-10-14',
+                credor: 'PEDRONI',
+                ocorridoEm: '2026-10-14T10:00:00.000Z',
+            },
+        ]);
+        container.registerInstance(DuplicateResolutionService, {
+            listarRetiradasDoLote,
+        } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/retirados-por-codigo-barras`);
+            expect(res.status).toBe(200);
+            const corpo = await readJson(res);
+            expect(corpo.retirados[0]).toMatchObject({
+                titulo: { docCod: '1001' },
+                codigoMascarado: '34191…8340',
+            });
+            expect(listarRetiradasDoLote).toHaveBeenCalledWith('L1');
+        });
+    });
+});
+
+describe('POST /sispag/lotes/:id/remessa — retirada por código de barras (I16f)', () => {
+    it('repassa retiradosPorCodigoBarras e avisos do serviço', async () => {
+        const retirados = [
+            {
+                titulo: { filCod: 2, docCod: '1001', titCod: '1' },
+                motivo: 'CODIGO_BARRAS_REPETIDO',
+                codigoMascarado: '34191…8340',
+            },
+        ];
+        const gerarRemessa = jest.fn().mockResolvedValue({
+            status: 'gerada',
+            retiradosPorCodigoBarras: retirados,
+            avisos: ['1 título(s) retirado(s) do lote por boleto repetido: 1001/1'],
+        });
+        container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' });
+            expect(res.status).toBe(200);
+            const corpo = await readJson(res);
+            expect(corpo.retiradosPorCodigoBarras).toEqual(retirados);
+            expect(corpo.avisos).toHaveLength(1);
+        });
+    });
+
+    it('sem retirada, os campos novos não aparecem (compat. com cliente antigo)', async () => {
+        const gerarRemessa = jest.fn().mockResolvedValue({ status: 'gerada', itens: 3 });
+        container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' });
+            const corpo = await readJson(res);
+            expect(corpo).not.toHaveProperty('retiradosPorCodigoBarras');
+            expect(corpo).not.toHaveProperty('avisos');
+        });
+    });
+
+    it('retirada incompleta vira 409 com o userMessage e code estável', async () => {
+        const gerarRemessa = jest.fn().mockRejectedValue(
+            new BoletoCodigoBarrasRetiradaIncompletaError({
+                modo: 'limpeza',
+                flpCod: 31,
+                retirados: 1,
+                pendentes: [{ docCod: '1002', titCod: '1' }],
+            }),
+        );
+        container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' });
+            expect(res.status).toBe(409);
+            const corpo = await readJson(res);
+            expect(corpo.code).toBe('BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA');
+            expect(corpo.error).toMatch(/Nada foi enviado ao banco/);
         });
     });
 });
