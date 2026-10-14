@@ -216,6 +216,71 @@ describeComBanco('0084 — sugestão de boleto DDA', () => {
         });
     });
 
+    it('ANULADA libera o título e o boleto e é terminal; exige quem, quando e motivo (I15l)', async () => {
+        await inserirDecisao(40, { dec: 'CONFIRMADA', titulo: 200, ddc: 8, dit: 1, par: 5 });
+        // sem os campos da anulação: 23514
+        expect(
+            await codigoDoErro(
+                db.query(
+                    `UPDATE sispag_decisao_sugestao_boleto SET decisao = 'ANULADA' WHERE id = $1`,
+                    [id(40)],
+                ),
+            ),
+        ).toBe('23514');
+        // `sistema` não anula: 23514
+        expect(
+            await codigoDoErro(
+                db.query(
+                    `UPDATE sispag_decisao_sugestao_boleto
+                        SET decisao = 'ANULADA', anulada_por = 'sistema', anulada_em = now(),
+                            motivo_anulacao = 'confirmação errada', versao = versao + 1
+                      WHERE id = $1`,
+                    [id(40)],
+                ),
+            ),
+        ).toBe('23514');
+        // campos de anulação em linha não anulada: 23514
+        expect(
+            await codigoDoErro(
+                db.query(
+                    `UPDATE sispag_decisao_sugestao_boleto SET motivo_anulacao = 'x' WHERE id = $1`,
+                    [id(40)],
+                ),
+            ),
+        ).toBe('23514');
+
+        await db.query(
+            `UPDATE sispag_decisao_sugestao_boleto
+                SET decisao = 'ANULADA', anulada_por = 'bia', anulada_em = now(),
+                    motivo_anulacao = 'confirmação errada', versao = versao + 1
+              WHERE id = $1`,
+            [id(40)],
+        );
+        // o mesmo título e o mesmo boleto voltam a poder ser confirmados (índices só da CONFIRMADA)
+        await inserirDecisao(41, { dec: 'CONFIRMADA', titulo: 200, ddc: 8, dit: 1, par: 5 });
+        // anular outra vez a mesma (título, boleto) é possível: várias ANULADA convivem
+        await db.query(
+            `UPDATE sispag_decisao_sugestao_boleto
+                SET decisao = 'ANULADA', anulada_por = 'bia', anulada_em = now(),
+                    motivo_anulacao = 'outra vez', versao = versao + 1
+              WHERE id = $1`,
+            [id(41)],
+        );
+        const { rows } = await db.query(
+            `SELECT count(*)::int AS n FROM sispag_decisao_sugestao_boleto
+              WHERE decisao = 'ANULADA' AND doc_cod = '200'`,
+        );
+        expect(rows[0].n).toBe(2);
+    });
+
+    it('a trilha aceita DECISAO_ANULADA e segue recusando UPDATE, DELETE e TRUNCATE', async () => {
+        await db.query(
+            `INSERT INTO sispag_sugestao_boleto_evento (id, tipo, ator, motivo)
+             VALUES ($1, 'DECISAO_ANULADA', 'bia', 'confirmação errada')`,
+            [id(32)],
+        );
+    });
+
     it('a trilha recusa UPDATE, DELETE e TRUNCATE', async () => {
         await db.query(
             `INSERT INTO sispag_sugestao_boleto_evento (id, tipo, ator, pes_cod)

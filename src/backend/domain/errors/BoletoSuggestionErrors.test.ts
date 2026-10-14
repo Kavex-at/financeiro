@@ -1,5 +1,6 @@
 import BoletoAlreadySuggestedToOtherTitleError from './BoletoAlreadySuggestedToOtherTitleError.js';
 import BoletoSuggestionNotAvailableError from './BoletoSuggestionNotAvailableError.js';
+import DecisionNotConfirmedError from './DecisionNotConfirmedError.js';
 import IssuerConfirmationNotFoundError from './IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from './IssuerConfirmationReasonRequiredError.js';
 import IssuerConfirmationVersionConflictError from './IssuerConfirmationVersionConflictError.js';
@@ -18,6 +19,7 @@ describe('erros da sugestão de boleto (ADR-0068) — HTTP e mensagem', () => {
         [new OverdueBoletoNotConfirmableError(chave), 422],
         [new IssuerConfirmationNotFoundError({ id: 'x' }), 404],
         [new IssuerConfirmationVersionConflictError({ id: 'x' }), 409],
+        [new DecisionNotConfirmedError({ filCod: 2, docCod: '9001', titCod: '1' }), 409],
         [new InvalidDecisionActorError(), 403],
         [new SuggestionListingTruncatedError({ listagem: 'decisoes', limite: 10000 }), 503],
         [new LineCopyAuditFailedError({ filCod: 2, docCod: '9001', titCod: '1' }), 503],

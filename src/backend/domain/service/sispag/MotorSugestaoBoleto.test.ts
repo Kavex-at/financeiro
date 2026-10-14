@@ -428,3 +428,112 @@ describe('MotorSugestaoBoleto', () => {
         });
     });
 });
+
+describe('MotorSugestaoBoleto — confirmação órfã (I15l)', () => {
+    const snapshot = {
+        valorTitulo: 100,
+        vencimentoTitulo: '2026-10-20',
+        valorBoleto: 100,
+        vencimentoBoleto: '2026-10-20',
+        deltaValor: 0,
+        deltaPercentual: 0,
+        deltaDias: 0,
+        sinais: ['VALOR_IGUAL' as const, 'MESMO_DIA' as const],
+        tier: 'FORTE' as const,
+        numeroBoleto: 'NF-7',
+    };
+
+    it('boleto fora do pool: a CONFIRMADA volta como órfã, não confirmável, com o snapshot', () => {
+        const dono = titulo({ docCod: 'DONO' });
+        const r = motor.sugerir(
+            entrada({
+                titulos: [dono],
+                boletos: [],
+                confirmadas: [
+                    {
+                        filCod: 1,
+                        docCod: 'DONO',
+                        titCod: '1',
+                        ddcCod: 500,
+                        ditCod: 40,
+                        ...snapshot,
+                    },
+                ],
+            }),
+        );
+        expect(r).toHaveLength(1);
+        expect(r[0]).toMatchObject({
+            docCod: 'DONO',
+            estado: 'CONFIRMADA',
+            orfa: true,
+            ddcCod: 500,
+            ditCod: 40,
+            numeroBoleto: 'NF-7',
+            valorBoleto: 100,
+            vencimentoBoleto: '2026-10-20',
+            avaliacao: { resultado: 'FORTE', confirmavel: false },
+        });
+        expect(r[0]?.motivoOrfa).toMatch(/saiu do pool DDA/);
+    });
+
+    it('boleto vinculado pelo ERP a um título: motivo próprio', () => {
+        const dono = titulo({ docCod: 'DONO' });
+        const b = boleto({ ditCod: 40, filCod: 1, docCod: 'X', titCod: '1' });
+        const r = motor.sugerir(
+            entrada({
+                titulos: [dono],
+                boletos: [b],
+                confirmadas: [{ filCod: 1, docCod: 'DONO', titCod: '1', ddcCod: 500, ditCod: 40 }],
+            }),
+        );
+        expect(r[0]).toMatchObject({ orfa: true });
+        expect(r[0]?.motivoOrfa).toMatch(/vinculou o boleto/);
+    });
+
+    it('título sinalizado pelo ERP: órfã com o motivo do ERP', () => {
+        const dono = titulo({ docCod: 'DONO', temBoleto: true });
+        const r = motor.sugerir(
+            entrada({
+                titulos: [dono],
+                boletos: [],
+                confirmadas: [{ filCod: 1, docCod: 'DONO', titCod: '1', ddcCod: 500, ditCod: 40 }],
+            }),
+        );
+        expect(r[0]).toMatchObject({ orfa: true, estado: 'CONFIRMADA' });
+        expect(r[0]?.motivoOrfa).toMatch(/sinalizou boleto DDA/);
+    });
+
+    it('título pago ou inativo: nada na lista, e o boleto fica livre para outro título', () => {
+        const pago = titulo({ docCod: 'PAGO', pago: true });
+        const inativo = titulo({ docCod: 'INATIVO', ativo: false });
+        const outro = titulo({ docCod: 'OUTRO' });
+        const b = boleto({ ditCod: 40 });
+        const r = motor.sugerir(
+            entrada({
+                titulos: [pago, inativo, outro],
+                boletos: [b],
+                confirmadas: [
+                    { filCod: 1, docCod: 'PAGO', titCod: '1', ddcCod: 500, ditCod: 40 },
+                    { filCod: 1, docCod: 'INATIVO', titCod: '1', ddcCod: 500, ditCod: 40 },
+                ],
+            }),
+        );
+        expect(r.map((s) => s.docCod)).toEqual(['OUTRO']);
+        expect(r[0]).toMatchObject({ estado: 'SUGERIDA', ditCod: 40 });
+        expect(r[0]?.orfa).toBeUndefined();
+    });
+
+    it('a órfã não recebe outra sugestão no lugar (a decisão ainda ocupa o título)', () => {
+        const dono = titulo({ docCod: 'DONO' });
+        const alt = boleto({ ditCod: 41 });
+        const r = motor.sugerir(
+            entrada({
+                titulos: [dono],
+                boletos: [alt],
+                confirmadas: [{ filCod: 1, docCod: 'DONO', titCod: '1', ddcCod: 500, ditCod: 40 }],
+            }),
+        );
+        expect(r).toHaveLength(1);
+        expect(r[0]).toMatchObject({ orfa: true, ditCod: 40 });
+    });
+});

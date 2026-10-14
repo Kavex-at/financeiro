@@ -24,6 +24,8 @@ export type EstadoConfirmacaoEmissor =
 export const DECISAO_SUGESTAO_BOLETO = {
     CONFIRMADA: 'CONFIRMADA',
     REJEITADA: 'REJEITADA',
+    /** Terminal; só se chega a ela a partir de `CONFIRMADA` (I15l). Libera título e boleto. */
+    ANULADA: 'ANULADA',
 } as const;
 export type DecisaoSugestaoBoletoTipo =
     (typeof DECISAO_SUGESTAO_BOLETO)[keyof typeof DECISAO_SUGESTAO_BOLETO];
@@ -32,6 +34,7 @@ export const EVENTO_SUGESTAO_BOLETO = {
     PAR_CONFIRMADO: 'PAR_CONFIRMADO',
     DECISAO_CONFIRMADA: 'DECISAO_CONFIRMADA',
     DECISAO_REJEITADA: 'DECISAO_REJEITADA',
+    DECISAO_ANULADA: 'DECISAO_ANULADA',
     PAR_REVOGADO: 'PAR_REVOGADO',
     LINHA_COPIADA: 'LINHA_COPIADA',
 } as const;
@@ -89,6 +92,11 @@ export interface DecisaoSugestao {
     decididoEm: string;
     motivo?: string;
     confirmacaoEmissorId?: string;
+    /** Lock otimista da anulação (I15l). */
+    versao: number;
+    anuladaPor?: string;
+    anuladaEm?: string;
+    motivoAnulacao?: string;
 }
 
 export interface EventoSugestaoRegistro {
@@ -214,11 +222,19 @@ export const decisaoSugestaoRowSchema = z
         sinais: sinaisSchema,
         tier: tierSchema,
         emissor_chave: z.string(),
-        decisao: z.enum([DECISAO_SUGESTAO_BOLETO.CONFIRMADA, DECISAO_SUGESTAO_BOLETO.REJEITADA]),
+        decisao: z.enum([
+            DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
+            DECISAO_SUGESTAO_BOLETO.REJEITADA,
+            DECISAO_SUGESTAO_BOLETO.ANULADA,
+        ]),
         decidido_por: z.string(),
         decidido_em: dataIso,
         motivo: textoOpcional,
         confirmacao_emissor_id: textoOpcional,
+        versao: z.coerce.number().int(),
+        anulada_por: textoOpcional,
+        anulada_em: dataIsoOpcional,
+        motivo_anulacao: textoOpcional,
     })
     .transform(
         (r): DecisaoSugestao => ({
@@ -247,6 +263,10 @@ export const decisaoSugestaoRowSchema = z
             decididoEm: r.decidido_em,
             ...(r.motivo ? { motivo: r.motivo } : {}),
             ...(r.confirmacao_emissor_id ? { confirmacaoEmissorId: r.confirmacao_emissor_id } : {}),
+            versao: r.versao,
+            ...(r.anulada_por ? { anuladaPor: r.anulada_por } : {}),
+            ...(r.anulada_em ? { anuladaEm: r.anulada_em } : {}),
+            ...(r.motivo_anulacao ? { motivoAnulacao: r.motivo_anulacao } : {}),
         }),
     );
 

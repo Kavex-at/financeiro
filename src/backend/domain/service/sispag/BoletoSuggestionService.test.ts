@@ -4,6 +4,7 @@ import path from 'node:path';
 import { container } from 'tsyringe';
 import BoletoAlreadySuggestedToOtherTitleError from '../../errors/BoletoAlreadySuggestedToOtherTitleError.js';
 import BoletoSuggestionNotAvailableError from '../../errors/BoletoSuggestionNotAvailableError.js';
+import DecisionNotConfirmedError from '../../errors/DecisionNotConfirmedError.js';
 import IssuerConfirmationNotFoundError from '../../errors/IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from '../../errors/IssuerConfirmationReasonRequiredError.js';
 import IssuerConfirmationVersionConflictError from '../../errors/IssuerConfirmationVersionConflictError.js';
@@ -111,6 +112,7 @@ const DECISAO: DecisaoSugestao = {
     decididoPor: 'ana',
     decididoEm: '2026-10-14T10:00:00.000Z',
     confirmacaoEmissorId: 'par-1',
+    versao: 1,
 };
 
 interface Cenario {
@@ -170,6 +172,33 @@ const montar = (over: Partial<Cenario> = {}) => {
         ),
         listarChaveadas: jest.fn(async (decisao: string) =>
             cen.decisoes.filter((d) => d.decisao === decisao),
+        ),
+        listarConfirmadasDoPar: jest.fn(async (parId: string) =>
+            cen.decisoes.filter(
+                (d) => d.confirmacaoEmissorId === parId && d.decisao === 'CONFIRMADA',
+            ),
+        ),
+        buscarDecisaoPorId: jest.fn(
+            async (id: string) => cen.decisoes.find((d) => d.id === id) ?? null,
+        ),
+        anularDecisao: jest.fn(
+            async (i: { id: string; versaoEsperada: number; ator: string; motivo: string }) => {
+                const d = cen.decisoes.find(
+                    (x) =>
+                        x.id === i.id &&
+                        x.decisao === 'CONFIRMADA' &&
+                        x.versao === i.versaoEsperada,
+                );
+                if (!d) return 0;
+                Object.assign(d, {
+                    decisao: 'ANULADA',
+                    anuladaPor: i.ator,
+                    anuladaEm: '2026-10-14T12:00:00.000Z',
+                    motivoAnulacao: i.motivo,
+                    versao: d.versao + 1,
+                });
+                return 1;
+            },
         ),
         inserirDecisao: jest.fn(async (n: Record<string, unknown>) => {
             const decisao = {
@@ -510,6 +539,218 @@ describe('BoletoSuggestionService.revogarPar (I15g, Q-A)', () => {
     });
 });
 
+const TIT = { filCod: 1, docCod: '9001', titCod: '1' };
+
+describe('BoletoSuggestionService.anularDecisao (I15l)', () => {
+    it('CONFIRMADA → ANULADA com lock por versão e evento DECISAO_ANULADA, numa transação', async () => {
+        const { service, repo, db, eventos } = montar({ pares: [PAR], decisoes: [{ ...DECISAO }] });
+        const r = await service.anularDecisao({
+            ...TIT,
+            motivo: 'boleto de outro credor',
+            ator: 'cid',
+        });
+        expect(r.anulada).toBe(true);
+        expect(r.decisao).toMatchObject({
+            decisao: 'ANULADA',
+            anuladaPor: 'cid',
+            motivoAnulacao: 'boleto de outro credor',
+        });
+        expect(repo.anularDecisao).toHaveBeenCalledWith(
+            { id: 'dec-1', versaoEsperada: 1, ator: 'cid', motivo: 'boleto de outro credor' },
+            expect.anything(),
+        );
+        expect(db.withTransaction).toHaveBeenCalledTimes(1);
+        expect(eventos).toHaveLength(1);
+        expect(eventos[0]).toMatchObject({
+            tipo: 'DECISAO_ANULADA',
+            ator: 'cid',
+            docCod: '9001',
+            ddcCod: 500,
+            ditCod: 1,
+            motivo: 'boleto de outro credor',
+        });
+        expect(JSON.stringify(eventos)).not.toContain(CODBAR);
+    });
+
+    it('idempotente: já ANULADA devolve a decisão, sem escrita nem evento', async () => {
+        const anulada = {
+            ...DECISAO,
+            decisao: 'ANULADA',
+            anuladaPor: 'cid',
+            anuladaEm: '2026-10-14T12:00:00.000Z',
+            motivoAnulacao: 'confirmação errada',
+            versao: 2,
+        } as DecisaoSugestao;
+        const { service, repo, db, eventos } = montar({ decisoes: [anulada] });
+        const r = await service.anularDecisao({
+            ...TIT,
+            motivo: 'de novo, por favor',
+            ator: 'bia',
+        });
+        expect(r.anulada).toBe(false);
+        expect(r.decisao.id).toBe('dec-1');
+        expect(repo.anularDecisao).not.toHaveBeenCalled();
+        expect(db.withTransaction).not.toHaveBeenCalled();
+        expect(eventos).toHaveLength(0);
+    });
+
+    it('título sem decisão CONFIRMADA (nada ou só REJEITADA) → DecisionNotConfirmedError 409', async () => {
+        const vazio = montar();
+        await expect(
+            vazio.service.anularDecisao({ ...TIT, motivo: 'confirmação errada', ator: 'ana' }),
+        ).rejects.toBeInstanceOf(DecisionNotConfirmedError);
+        const rejeitada = montar({
+            decisoes: [{ ...DECISAO, decisao: 'REJEITADA', motivo: 'não é' } as DecisaoSugestao],
+        });
+        await expect(
+            rejeitada.service.anularDecisao({ ...TIT, motivo: 'confirmação errada', ator: 'ana' }),
+        ).rejects.toBeInstanceOf(DecisionNotConfirmedError);
+        expect(new DecisionNotConfirmedError(TIT).statusCode).toBe(409);
+    });
+
+    it('motivo curto (< 10) ou em branco → 422 nomeado, nada lido nem gravado', async () => {
+        const { service, repo, db } = montar({ decisoes: [{ ...DECISAO }] });
+        for (const motivo of ['', '   ', 'curto']) {
+            await expect(
+                service.anularDecisao({ ...TIT, motivo, ator: 'ana' }),
+            ).rejects.toBeInstanceOf(IssuerConfirmationReasonRequiredError);
+        }
+        expect(repo.listarDecisoes).not.toHaveBeenCalled();
+        expect(db.withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('perdeu a corrida (versão mudou e ainda CONFIRMADA) → conflito de versão, sem evento', async () => {
+        const { service, repo, eventos } = montar({ decisoes: [{ ...DECISAO }] });
+        repo.anularDecisao.mockResolvedValueOnce(0);
+        await expect(
+            service.anularDecisao({ ...TIT, motivo: 'confirmação errada', ator: 'ana' }),
+        ).rejects.toBeInstanceOf(IssuerConfirmationVersionConflictError);
+        expect(eventos).toHaveLength(0);
+    });
+
+    it('perdeu a corrida para outra anulação → no-op (anulada = false), sem evento', async () => {
+        const { service, repo, eventos, cen } = montar({ decisoes: [{ ...DECISAO }] });
+        repo.anularDecisao.mockImplementationOnce(async () => {
+            const d = cen.decisoes[0] as DecisaoSugestao;
+            cen.decisoes[0] = { ...d, decisao: 'ANULADA', versao: 2 };
+            return 0;
+        });
+        const r = await service.anularDecisao({
+            ...TIT,
+            motivo: 'confirmação errada',
+            ator: 'ana',
+        });
+        expect(r.anulada).toBe(false);
+        expect(eventos).toHaveLength(0);
+    });
+
+    it('anular libera título e boleto: a sugestão volta a ser confirmável', async () => {
+        const { service } = montar({ pares: [PAR], decisoes: [{ ...DECISAO }] });
+        const antes = await service.listarSugestoes({});
+        expect(antes.sugestoes[0]).toMatchObject({ estado: 'CONFIRMADA', confirmavel: false });
+        await service.anularDecisao({ ...TIT, motivo: 'confirmação errada', ator: 'ana' });
+        const depois = await service.listarSugestoes({});
+        expect(depois.sugestoes[0]).toMatchObject({ estado: 'SUGERIDA', confirmavel: true });
+    });
+});
+
+describe('revogarPar em cascata (I15l, Q-E)', () => {
+    it('anula toda decisão CONFIRMADA do par, com motivo composto, um evento cada, na mesma transação', async () => {
+        const outra: DecisaoSugestao = {
+            ...DECISAO,
+            id: 'dec-2',
+            docCod: '9002',
+            ddcCod: 501,
+        };
+        const { service, repo, db, eventos, cen } = montar({
+            pares: [PAR],
+            decisoes: [{ ...DECISAO }, outra],
+        });
+        repo.revogarPar.mockImplementationOnce(async () => {
+            cen.pares[0] = { ...PAR, estado: 'REVOGADA', revogadoPor: 'cid', versao: 2 };
+            return 1;
+        });
+        await service.revogarPar({ id: 'par-1', motivo: 'conta trocada', ator: 'cid' });
+        expect(db.withTransaction).toHaveBeenCalledTimes(1);
+        expect(cen.decisoes.map((d) => d.decisao)).toEqual(['ANULADA', 'ANULADA']);
+        expect(cen.decisoes[0]).toMatchObject({
+            motivoAnulacao: 'par revogado: conta trocada',
+            anuladaPor: 'cid',
+        });
+        expect(eventos.map((e) => e.tipo)).toEqual([
+            'DECISAO_ANULADA',
+            'DECISAO_ANULADA',
+            'PAR_REVOGADO',
+        ]);
+        expect(eventos[2]?.detalhe).toMatchObject({ decisoesAnuladas: 2 });
+    });
+
+    it('par sem decisões: só PAR_REVOGADO', async () => {
+        const { service, repo, eventos, cen } = montar({ pares: [PAR] });
+        repo.revogarPar.mockImplementationOnce(async () => {
+            cen.pares[0] = { ...PAR, estado: 'REVOGADA', versao: 2 };
+            return 1;
+        });
+        await service.revogarPar({ id: 'par-1', motivo: 'conta trocada', ator: 'cid' });
+        expect(eventos.map((e) => e.tipo)).toEqual(['PAR_REVOGADO']);
+    });
+
+    it('decisão REJEITADA do mesmo par não é tocada', async () => {
+        const rej = {
+            ...DECISAO,
+            id: 'dec-r',
+            decisao: 'REJEITADA',
+            motivo: 'não é',
+        } as DecisaoSugestao;
+        const { service, repo, cen } = montar({ pares: [PAR], decisoes: [rej] });
+        repo.revogarPar.mockImplementationOnce(async () => {
+            cen.pares[0] = { ...PAR, estado: 'REVOGADA', versao: 2 };
+            return 1;
+        });
+        await service.revogarPar({ id: 'par-1', motivo: 'conta trocada', ator: 'cid' });
+        expect(repo.anularDecisao).not.toHaveBeenCalled();
+    });
+});
+
+describe('confirmação órfã na listagem (I15l)', () => {
+    it('boleto saiu do pool: devolve CONFIRMADA órfã, não confirmável, com motivo em português', async () => {
+        const { service } = montar({ pares: [PAR], boletos: [], decisoes: [{ ...DECISAO }] });
+        const r = await service.listarSugestoes({});
+        expect(r.total).toBe(1);
+        expect(r.sugestoes[0]).toMatchObject({
+            docCod: '9001',
+            estado: 'CONFIRMADA',
+            orfa: true,
+            confirmavel: false,
+            ddcCod: 500,
+            ditCod: 1,
+        });
+        expect(r.sugestoes[0]?.motivoOrfa).toMatch(/saiu do pool DDA/);
+    });
+
+    it('título sinalizado pelo ERP depois da confirmação: órfã com o motivo do ERP', async () => {
+        const { service } = montar({
+            pares: [PAR],
+            titulos: [{ ...TITULO, temBoleto: true }],
+            decisoes: [{ ...DECISAO }],
+        });
+        const r = await service.listarSugestoes({});
+        expect(r.sugestoes[0]).toMatchObject({ orfa: true, estado: 'CONFIRMADA' });
+        expect(r.sugestoes[0]?.motivoOrfa).toMatch(/sinalizou boleto DDA/);
+    });
+
+    it('título pago/inativo não aparece, e o boleto dele não fica ocupado', async () => {
+        const outro: TituloAPagar = { ...TITULO, docCod: '9100', titCod: '1' };
+        const { service } = montar({
+            titulos: [{ ...TITULO, pago: true }, outro],
+            decisoes: [{ ...DECISAO }],
+        });
+        const r = await service.listarSugestoes({});
+        expect(r.sugestoes.map((s) => s.docCod)).toEqual(['9100']);
+        expect(r.sugestoes[0]).toMatchObject({ estado: 'SUGERIDA', ddcCod: 500, ditCod: 1 });
+    });
+});
+
 describe('BoletoSuggestionService.copiarLinha (I15k, fail-closed)', () => {
     it('grava LINHA_COPIADA ANTES de devolver a linha digitável', async () => {
         const { service, repo, eventos } = montar();
@@ -623,6 +864,14 @@ describe('erros nomeados e entradas ruins (PatternGuardian)', () => {
             () => service.confirmar({ ...CHAVE, ator }),
             () => service.rejeitar({ ...CHAVE, motivo: 'x', ator }),
             () => service.revogarPar({ id: 'par-1', motivo: 'x', ator }),
+            () =>
+                service.anularDecisao({
+                    filCod: 1,
+                    docCod: '9001',
+                    titCod: '1',
+                    motivo: 'confirmação errada',
+                    ator,
+                }),
             () => service.copiarLinha({ ...CHAVE, ator }),
         ];
         for (const chamar of chamadas) {

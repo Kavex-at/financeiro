@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Client } from 'pg';
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import type { TransactionClient } from '../../client/database/PostgreeDatabaseClient.js';
 import SqlBuilder from '../../libs/sql/SqlBuilder.js';
 import SugestaoBoletoRepository, {
     type NovaDecisao,
@@ -201,13 +202,15 @@ describeComBanco('SugestaoBoletoRepository — integração (ADR-0068)', () => {
         const listadas = await repo.listarDecisoes({ docCod: '5003' });
         expect(listadas.map((x) => x.decisao).sort()).toEqual(['CONFIRMADA', 'REJEITADA']);
         const confirmadas = await repo.listarChaveadas('CONFIRMADA');
-        expect(confirmadas).toContainEqual({
-            filCod: 2,
-            docCod: '5003',
-            titCod: '1',
-            ddcCod: 40,
-            ditCod: 2,
-        });
+        expect(confirmadas).toContainEqual(
+            expect.objectContaining({
+                filCod: 2,
+                docCod: '5003',
+                titCod: '1',
+                ddcCod: 40,
+                ditCod: 2,
+            }),
+        );
     });
 
     it('decisão: mapeia numéricos e datas civis sem deslocar o dia', async () => {
@@ -225,6 +228,152 @@ describeComBanco('SugestaoBoletoRepository — integração (ADR-0068)', () => {
             tier: 'FORTE',
             confirmacaoEmissorId: p.id,
         });
+    });
+
+    it('anular: CONFIRMADA → ANULADA com lock por versão libera título e boleto; ANULADA é terminal', async () => {
+        const { par: p } = await repo.inserirPar(par({ pesCod: '8007' }));
+        const base = decisao(p.id, { pesCod: '8007', docCod: '5005', ddcCod: 55, ditCod: 1 });
+        const { decisao: d } = await repo.inserirDecisao(base);
+        expect(d.versao).toBe(1);
+        // versão velha não anula
+        expect(
+            await repo.anularDecisao({
+                id: d.id,
+                versaoEsperada: 9,
+                ator: 'bia',
+                motivo: 'confirmação errada',
+            }),
+        ).toBe(0);
+        expect(
+            await repo.anularDecisao({
+                id: d.id,
+                versaoEsperada: 1,
+                ator: 'bia',
+                motivo: 'confirmação errada',
+            }),
+        ).toBe(1);
+        // segunda anulação (já ANULADA) não afeta nada
+        expect(
+            await repo.anularDecisao({
+                id: d.id,
+                versaoEsperada: 2,
+                ator: 'cid',
+                motivo: 'de novo e de novo',
+            }),
+        ).toBe(0);
+        const anulada = await repo.buscarDecisaoPorId(d.id);
+        expect(anulada).toMatchObject({
+            decisao: 'ANULADA',
+            anuladaPor: 'bia',
+            motivoAnulacao: 'confirmação errada',
+            versao: 2,
+        });
+        expect(anulada?.anuladaEm).toBeDefined();
+        // o mesmo título e o mesmo boleto podem ser confirmados de novo
+        const nova = await repo.inserirDecisao(base);
+        expect(nova.criada).toBe(true);
+        expect(nova.decisao.id).not.toBe(d.id);
+        // a ANULADA não conta como confirmada para o motor
+        const confirmadas = await repo.listarChaveadas('CONFIRMADA');
+        expect(confirmadas.filter((c) => c.docCod === '5005')).toHaveLength(1);
+        const doPar = await repo.listarDecisoes({ confirmacaoEmissorId: p.id });
+        expect(doPar.map((x) => x.decisao).sort()).toEqual(['ANULADA', 'CONFIRMADA']);
+    });
+
+    it('F-2: confirmar (FOR SHARE no par) × revogar concorrente → nenhuma CONFIRMADA sob par REVOGADA', async () => {
+        const { par: p } = await repo.inserirPar(par({ pesCod: '8010' }));
+        const txConfirmar = adaptar(db) as unknown as TransactionClient;
+        const txRevogar = adaptar(db2) as unknown as TransactionClient;
+        await db.query('BEGIN');
+        await db2.query('BEGIN');
+        try {
+            const vigente = await repo.buscarParVigente(
+                '8010',
+                '341:1234:12345',
+                txConfirmar,
+                true,
+            );
+            expect(vigente?.id).toBe(p.id);
+
+            let revogou = false;
+            const revogacao = repo2
+                .revogarPar(
+                    { id: p.id, versaoEsperada: 1, ator: 'bia', motivo: 'conta trocada' },
+                    txRevogar,
+                )
+                .then((n) => {
+                    revogou = true;
+                    return n;
+                });
+            await new Promise((r) => setTimeout(r, 400));
+            expect(revogou).toBe(false); // esperando o FOR SHARE da confirmação
+
+            const gravada = await repo.inserirDecisao(
+                decisao(p.id, { pesCod: '8010', docCod: '5010', ddcCod: 60, ditCod: 1 }),
+                txConfirmar,
+            );
+            expect(gravada.criada).toBe(true);
+            await db.query('COMMIT');
+
+            expect(await revogacao).toBe(1);
+            // a cascata do serviço: enxerga a decisão que acabou de ser confirmada
+            const confirmadas = await repo2.listarConfirmadasDoPar(p.id, txRevogar);
+            expect(confirmadas.map((c) => c.id)).toEqual([gravada.decisao.id]);
+            for (const c of confirmadas) {
+                expect(
+                    await repo2.anularDecisao(
+                        {
+                            id: c.id,
+                            versaoEsperada: c.versao,
+                            ator: 'bia',
+                            motivo: 'par revogado: conta trocada',
+                        },
+                        txRevogar,
+                    ),
+                ).toBe(1);
+            }
+            await db2.query('COMMIT');
+        } catch (erro) {
+            await db.query('ROLLBACK').catch(() => undefined);
+            await db2.query('ROLLBACK').catch(() => undefined);
+            throw erro;
+        }
+        const orfas = await db.query(
+            `SELECT d.id FROM sispag_decisao_sugestao_boleto d
+               JOIN sispag_confirmacao_emissor_boleto p ON p.id = d.confirmacao_emissor_id
+              WHERE p.estado = 'REVOGADA' AND d.decisao = 'CONFIRMADA'`,
+        );
+        expect(orfas.rows).toEqual([]);
+    });
+
+    it('F-2: revogação que chega primeiro → a confirmação não enxerga o par (cria um novo)', async () => {
+        const { par: p } = await repo.inserirPar(par({ pesCod: '8011' }));
+        const txConfirmar = adaptar(db) as unknown as TransactionClient;
+        const txRevogar = adaptar(db2) as unknown as TransactionClient;
+        await db2.query('BEGIN');
+        await db.query('BEGIN');
+        try {
+            expect(
+                await repo2.revogarPar(
+                    { id: p.id, versaoEsperada: 1, ator: 'bia', motivo: 'conta trocada' },
+                    txRevogar,
+                ),
+            ).toBe(1);
+            let resolvido = false;
+            const busca = repo
+                .buscarParVigente('8011', '341:1234:12345', txConfirmar, true)
+                .then((r) => {
+                    resolvido = true;
+                    return r;
+                });
+            await new Promise((r) => setTimeout(r, 400));
+            expect(resolvido).toBe(false); // espera a revogação terminar
+            await db2.query('COMMIT');
+            expect(await busca).toBeNull();
+        } finally {
+            await db.query('ROLLBACK').catch(() => undefined);
+            await db2.query('ROLLBACK').catch(() => undefined);
+        }
     });
 
     it('trilha: inserirEvento grava e a trilha recusa UPDATE/DELETE (append-only)', async () => {
