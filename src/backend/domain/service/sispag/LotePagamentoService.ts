@@ -249,6 +249,18 @@ export default class LotePagamentoService {
                 titCod: input.titCod,
                 motivo: bloqueio.motivo,
                 marcadoPor: bloqueio.marcadoPor,
+                origem: bloqueio.origem,
+                ...(bloqueio.codigoMascarado !== undefined
+                    ? { codigoMascarado: bloqueio.codigoMascarado }
+                    : {}),
+                ...(bloqueio.tituloMantido
+                    ? {
+                          tituloMantido: {
+                              docCod: bloqueio.tituloMantido.docCod,
+                              titCod: bloqueio.tituloMantido.titCod,
+                          },
+                      }
+                    : {}),
             });
         }
         // I2 — elegibilidade AUTORITATIVA (re-leitura Conexos, FORA do lock/transação).

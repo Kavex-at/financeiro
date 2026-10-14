@@ -99,6 +99,7 @@ const make = (over: Partial<Mocks> = {}) => {
     } as unknown as PostgreeDatabaseClient;
     const bloqueioRepo = {
         encerrarDeTitulosInativos: over.encerrar ?? jest.fn().mockResolvedValue(0),
+        encerrarPorSinaisDeCodigoDeBarras: jest.fn().mockResolvedValue(0),
     };
     const sincronizarDda = over.sincronizarDda ?? jest.fn().mockResolvedValue(DDA_OK);
     const log = buildLog();
@@ -212,6 +213,18 @@ describe('IngestaoPagamentosService', () => {
         const ordemEncerrar =
             bloqueioRepo.encerrarDeTitulosInativos.mock.invocationCallOrder[0] ?? 0;
         expect(ordemEncerrar).toBeGreaterThan(ordemInativar);
+    });
+
+    it('ADR-0069 emenda 1 — também encerra as marcas por código de barras pelos sinais baratos', async () => {
+        const { service, bloqueioRepo, tituloRepo } = make({
+            encerrar: jest.fn().mockResolvedValue(1),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(bloqueioRepo.encerrarPorSinaisDeCodigoDeBarras).toHaveBeenCalledTimes(1);
+        const ordemInativar = tituloRepo.marcarInativosForaDaRun.mock.invocationCallOrder[0] ?? 0;
+        const ordem =
+            bloqueioRepo.encerrarPorSinaisDeCodigoDeBarras.mock.invocationCallOrder[0] ?? 0;
+        expect(ordem).toBeGreaterThan(ordemInativar);
     });
 
     it('falha ao encerrar bloqueios não regride a run (efeito pós-sucesso)', async () => {

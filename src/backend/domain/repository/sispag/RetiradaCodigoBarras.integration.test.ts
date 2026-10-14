@@ -225,4 +225,73 @@ describeComBanco('retirada por código de barras (integração)', () => {
         ]);
         expect(r.map((b) => b.docCod)).toEqual(['6171']);
     });
+
+    it('a trilha do lote devolve a retirada (máscara, título mantido, valor) e o credor', async () => {
+        const eventos = new VerificacaoEventoRepository(pool);
+        await db.query(
+            `INSERT INTO titulo_a_pagar (fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
+                                         aprovado, pago, ativo)
+             VALUES (2, '6171', '1', 'PEDRONI', 1412, '2026-10-20', TRUE, FALSE, TRUE)`,
+        );
+        const r = await eventos.listarRetiradasPorCodigoBarras(FINALIZADO);
+        const linha = r.find((x) => x.titulo.docCod === '6171');
+        expect(linha).toMatchObject({
+            motivo: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: MASCARA,
+            tituloMantido: MANTIDO,
+            valor: 1412,
+            vencimento: '2026-10-20',
+            credor: 'PEDRONI',
+        });
+        const chaves = await eventos.listarChavesRetiradasPeloSistema(FINALIZADO, [
+            'CODIGO_BARRAS_REPETIDO',
+        ]);
+        expect(chaves.has('2:6171:1')).toBe(true);
+    });
+
+    it('listAtivosPorOrigemComTitulo junta o título da carteira', async () => {
+        const r = await bloqueios.listAtivosPorOrigemComTitulo(['CODIGO_BARRAS_REPETIDO']);
+        expect(r[0]).toMatchObject({
+            docCod: '6171',
+            origem: 'CODIGO_BARRAS_REPETIDO',
+            credor: 'PEDRONI',
+            valor: 1412,
+        });
+    });
+
+    it('encerra por sinal barato: item mantido pago; e lote de origem cancelado sem remessa', async () => {
+        // Nada a encerrar ainda: o mantido (6170) não existe na carteira, o lote segue FINALIZADO.
+        expect(await bloqueios.encerrarPorSinaisDeCodigoDeBarras()).toBe(0);
+
+        // (a) o item mantido foi pago.
+        await db.query(
+            `INSERT INTO titulo_a_pagar (fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
+                                         aprovado, pago, ativo)
+             VALUES (2, '6170', '1', 'PEDRONI', 1412, '2026-10-20', TRUE, TRUE, TRUE)`,
+        );
+        expect(await bloqueios.encerrarPorSinaisDeCodigoDeBarras()).toBe(1);
+        expect(await bloqueios.findAtivo({ filCod: 2, docCod: '6171', titCod: '1' })).toBeNull();
+        expect(await contarEventos('BLOQUEIO_ENCERRADO')).toBe(1);
+
+        // A marca por DUPLICIDADE_TITULO do 6172 (outra origem) nunca é tocada por este sinal.
+        await db.query(`UPDATE lote_pagamento SET status = 'CANCELADO' WHERE id = $1`, [
+            FINALIZADO,
+        ]);
+        expect(await bloqueios.encerrarPorSinaisDeCodigoDeBarras()).toBe(0);
+        expect(
+            (await bloqueios.findAtivo({ filCod: 2, docCod: '6172', titCod: '1' }))?.origem,
+        ).toBe('DUPLICIDADE_TITULO');
+
+        // (b) marca por código de barras com lote de origem CANCELADO sem remessa.
+        await db.query(
+            `INSERT INTO titulo_bloqueio_duplicidade
+                (id, fil_cod, doc_cod, tit_cod, lote_id_origem, motivo, estado, marcado_por, origem,
+                 codigo_mascarado)
+             VALUES ('00000000-0000-0000-0000-0000000006a1', 2, '6190', '1', $1, 'x', 'ATIVO',
+                     'sistema', 'CODIGO_BARRAS_ILEGIVEL', NULL)`,
+            [FINALIZADO],
+        );
+        expect(await bloqueios.encerrarPorSinaisDeCodigoDeBarras()).toBe(1);
+        expect(await bloqueios.findAtivo({ filCod: 2, docCod: '6190', titCod: '1' })).toBeNull();
+    });
 });

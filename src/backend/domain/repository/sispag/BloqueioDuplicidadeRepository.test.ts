@@ -249,6 +249,63 @@ describe('BloqueioDuplicidadeRepository — origem por código de barras (ADR-00
         expect(b?.tituloMantido).toBeUndefined();
     });
 
+    it('encerrarPorSinaisDeCodigoDeBarras: só as origens de código, só sinais baratos, um evento por marca', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValueOnce([
+            { id: 'B1', fil_cod: 4, doc_cod: '6702', tit_cod: '1', lote_id_origem: 'L1' },
+        ]);
+        expect(await make(db).encerrarPorSinaisDeCodigoDeBarras()).toBe(1);
+        expect(db.withTransaction).toHaveBeenCalledTimes(1);
+        const [sql, params] = db.selectMany.mock.calls[0] ?? [];
+        // (a) item mantido inativo/pago; (b) lote de origem CANCELADO sem remessa gerada.
+        expect(String(sql)).toMatch(/k\.ativo = FALSE OR k\.pago = TRUE/);
+        expect(String(sql)).toMatch(/l\.status = 'CANCELADO'[\s\S]*l\.remessa_gerada_em IS NULL/);
+        // Nenhum sinal caro (fin124/boleto mudou) nem a duplicidade de título.
+        expect(String(sql)).not.toMatch(/fin124|titVldReflexoDdaAssoc/);
+        expect(params).toMatchObject({
+            ativo: 'ATIVO',
+            encerrado: 'ENCERRADO',
+            origens: ['CODIGO_BARRAS_REPETIDO', 'CODIGO_BARRAS_ILEGIVEL'],
+        });
+        expect(eventos(db)).toEqual([
+            expect.objectContaining({
+                evento: 'BLOQUEIO_ENCERRADO',
+                ator: 'sistema',
+                bloqueioId: 'B1',
+                loteId: 'L1',
+            }),
+        ]);
+    });
+
+    it('listAtivosPorOrigemComTitulo junta credor/valor/vencimento e mapeia a origem', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValueOnce([
+            {
+                ...row({
+                    origem: 'CODIGO_BARRAS_REPETIDO',
+                    codigo_mascarado: '34191…5555',
+                    titulo_mantido_fil_cod: 4,
+                    titulo_mantido_doc_cod: '6701',
+                    titulo_mantido_tit_cod: '1',
+                }),
+                t_credor: 'PEDRONI',
+                t_valor: '1412.00',
+                t_vencimento: new Date('2026-10-20T00:00:00Z'),
+            },
+        ]);
+        const r = await make(db).listAtivosPorOrigemComTitulo(['CODIGO_BARRAS_REPETIDO']);
+        expect(r[0]).toMatchObject({
+            origem: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: '34191…5555',
+            credor: 'PEDRONI',
+            valor: 1412,
+            vencimento: '2026-10-20',
+        });
+        const [sql] = db.selectMany.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/LEFT JOIN titulo_a_pagar t/);
+        expect(String(sql)).toMatch(/b\.origem = ANY\(\$origens\)/);
+    });
+
     it('listAtivosPorOrigem filtra por origem(ns) e por estado ATIVO', async () => {
         const db = buildDb();
         db.selectMany.mockResolvedValueOnce([row({ origem: 'CODIGO_BARRAS_REPETIDO' })]);

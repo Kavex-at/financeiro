@@ -6,6 +6,8 @@ import type { AlertaItemLote, LotePagamento } from '../../interface/sispag/Sispa
 import type AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import type RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
+import type VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
 import type LogService from '../LogService.js';
 import DuplicateResolutionService from './DuplicateResolutionService.js';
 import type LotePagamentoService from './LotePagamentoService.js';
@@ -53,7 +55,12 @@ const build = (opts: { lote?: LotePagamento | null; alerta?: AlertaItemLote | nu
     const bloqueioRepo = {
         criar: jest.fn().mockResolvedValue('B1'),
         desfazer: jest.fn().mockResolvedValue({ id: 'B1', estado: 'DESFEITO' }),
+        // Marca da duplicidade de título por padrão (comportamento histórico do desfazer).
+        findAtivo: jest.fn().mockResolvedValue(null),
+        listAtivosPorOrigemComTitulo: jest.fn().mockResolvedValue([]),
     };
+    const eventos = { listarRetiradasPorCodigoBarras: jest.fn().mockResolvedValue([]) };
+    const ledger = { listByLote: jest.fn().mockResolvedValue([]) };
     const lotes = { getLote: jest.fn().mockResolvedValue(lote()) };
     const db = { withTransaction: jest.fn(async (fn: (t: unknown) => unknown) => fn(tx)) };
     const log = { info: jest.fn() };
@@ -64,8 +71,10 @@ const build = (opts: { lote?: LotePagamento | null; alerta?: AlertaItemLote | nu
         lotes as unknown as LotePagamentoService,
         db as unknown as PostgreeDatabaseClient,
         log as unknown as LogService,
+        eventos as unknown as VerificacaoEventoRepository,
+        ledger as unknown as RemessaExecucaoRepository,
     );
-    return { service, loteRepo, alertaRepo, bloqueioRepo, lotes, tx };
+    return { service, loteRepo, alertaRepo, bloqueioRepo, lotes, tx, eventos, ledger };
 };
 
 const resolver = (
@@ -181,5 +190,103 @@ describe('DuplicateResolutionService.desfazerBloqueio (I13g)', () => {
         await expect(
             h.service.desfazerBloqueio({ chave: CHAVE, motivo: 'x', ator: 'ana' }),
         ).rejects.toMatchObject({ statusCode: 409 });
+    });
+});
+
+describe('DuplicateResolutionService — retenção por código de barras (ADR-0069 emenda 1, I16g)', () => {
+    const marca = (over: Record<string, unknown> = {}) => ({
+        id: 'B9',
+        ...CHAVE,
+        motivo: 'Boleto repetido',
+        origem: 'CODIGO_BARRAS_REPETIDO',
+        estado: 'ATIVO',
+        marcadoPor: 'sistema',
+        marcadoEm: '2026-10-14T10:00:00.000Z',
+        loteIdOrigem: 'L1',
+        codigoMascarado: '34191…5555',
+        tituloMantido: { filCod: 4, docCod: '6170', titCod: '1' },
+        ...over,
+    });
+
+    it('desfazer sem motivo é recusado (400) também para a marca por código de barras', async () => {
+        const h = build();
+        h.bloqueioRepo.findAtivo.mockResolvedValue(marca());
+        await expect(
+            h.service.desfazerBloqueio({ chave: CHAVE, motivo: '   ', ator: 'ana' }),
+        ).rejects.toMatchObject({ statusCode: 400 });
+        expect(h.bloqueioRepo.desfazer).not.toHaveBeenCalled();
+    });
+
+    it('desfazer com motivo: DESFEITO pelo mesmo caminho/permissão/auditoria; não troca o item que ficou', async () => {
+        const h = build();
+        h.bloqueioRepo.findAtivo.mockResolvedValue(marca());
+        h.ledger.listByLote.mockResolvedValue([
+            { dryRun: false, status: 'settled', erroMensagem: undefined },
+        ]);
+        const r = await h.service.desfazerBloqueio({
+            chave: CHAVE,
+            motivo: 'boleto corrigido no fin124',
+            ator: 'ana',
+        });
+        expect(r).toMatchObject({ estado: 'DESFEITO' });
+        expect(h.bloqueioRepo.desfazer).toHaveBeenCalledWith({
+            chave: CHAVE,
+            motivo: 'boleto corrigido no fin124',
+            ator: 'ana',
+        });
+        // Nada no lote local nem no ERP: desfazer só devolve o título ao pool.
+        expect(h.loteRepo.removerItem).not.toHaveBeenCalled();
+    });
+
+    it('Q10: recusa desfazer enquanto a limpeza do rascunho do lote de origem está pendente', async () => {
+        const h = build();
+        h.bloqueioRepo.findAtivo.mockResolvedValue(marca());
+        h.ledger.listByLote.mockResolvedValue([
+            {
+                dryRun: false,
+                status: 'error',
+                erroMensagem: 'LIMPEZA_CODIGO_REPETIDO_INCOMPLETA: 1 item(s) pending removal',
+            },
+        ]);
+        await expect(
+            h.service.desfazerBloqueio({ chave: CHAVE, motivo: 'x', ator: 'ana' }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            code: 'RESOLUCAO_DUPLICIDADE_LIMPEZA_PENDENTE',
+        });
+        expect(h.bloqueioRepo.desfazer).not.toHaveBeenCalled();
+    });
+
+    it('Q10: execução mais recente concluída ou dry-run não trava o desfazer', async () => {
+        const h = build();
+        h.bloqueioRepo.findAtivo.mockResolvedValue(marca());
+        h.ledger.listByLote.mockResolvedValue([
+            { dryRun: true, status: 'error', erroMensagem: 'LIMPEZA_CODIGO_REPETIDO_INCOMPLETA' },
+            { dryRun: false, status: 'settled' },
+        ]);
+        await h.service.desfazerBloqueio({ chave: CHAVE, motivo: 'x', ator: 'ana' });
+        expect(h.bloqueioRepo.desfazer).toHaveBeenCalled();
+    });
+
+    it('marca por duplicidade de título não consulta o ledger (comportamento histórico)', async () => {
+        const h = build();
+        h.bloqueioRepo.findAtivo.mockResolvedValue(marca({ origem: 'DUPLICIDADE_TITULO' }));
+        await h.service.desfazerBloqueio({ chave: CHAVE, motivo: 'x', ator: 'ana' });
+        expect(h.ledger.listByLote).not.toHaveBeenCalled();
+    });
+
+    it('listarRetidosPorCodigoDeBarras pede só as duas origens de código de barras', async () => {
+        const h = build();
+        await h.service.listarRetidosPorCodigoDeBarras();
+        expect(h.bloqueioRepo.listAtivosPorOrigemComTitulo).toHaveBeenCalledWith([
+            'CODIGO_BARRAS_REPETIDO',
+            'CODIGO_BARRAS_ILEGIVEL',
+        ]);
+    });
+
+    it('listarRetiradasDoLote lê da trilha do lote', async () => {
+        const h = build();
+        await h.service.listarRetiradasDoLote('L1');
+        expect(h.eventos.listarRetiradasPorCodigoBarras).toHaveBeenCalledWith('L1');
     });
 });

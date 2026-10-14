@@ -10,6 +10,11 @@ export const DUPLICATE_RESOLUTION_FAILURE = {
     ALERTA_NAO_ABERTA: 'ALERTA_NAO_ABERTA',
     /** Título sem bloqueio ATIVO para desfazer (409). */
     SEM_BLOQUEIO_ATIVO: 'SEM_BLOQUEIO_ATIVO',
+    /**
+     * Desfazer a retenção por código de barras enquanto a limpeza do rascunho nativo do lote de
+     * origem não terminou (ADR-0069 emenda 1, Q10): o resíduo deixaria de ser reconhecido (409).
+     */
+    LIMPEZA_PENDENTE: 'LIMPEZA_PENDENTE',
 } as const;
 
 export type DuplicateResolutionFailure =
@@ -20,6 +25,7 @@ const STATUS: Readonly<Record<DuplicateResolutionFailure, number>> = {
     ALERTA_NAO_ENCONTRADA: 404,
     ALERTA_NAO_ABERTA: 409,
     SEM_BLOQUEIO_ATIVO: 409,
+    LIMPEZA_PENDENTE: 409,
 };
 
 const MENSAGEM: Readonly<Record<DuplicateResolutionFailure, string>> = {
@@ -29,6 +35,9 @@ const MENSAGEM: Readonly<Record<DuplicateResolutionFailure, string>> = {
     ALERTA_NAO_ABERTA:
         'Esta alerta de duplicidade já foi tratada ou deixou de valer. Atualize o lote.',
     SEM_BLOQUEIO_ATIVO: 'Este título não tem bloqueio por duplicidade ativo.',
+    LIMPEZA_PENDENTE:
+        'A limpeza do rascunho deste lote no Conexos ainda não terminou: gere a remessa do lote de ' +
+        'novo para concluí-la e só então desfaça a retenção deste título.',
 };
 
 /** Resolução de duplicidade recusada (ADR-0063, I13f/I13g). Mensagem ao operador em português. */

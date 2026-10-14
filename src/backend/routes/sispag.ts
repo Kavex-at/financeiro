@@ -521,6 +521,48 @@ router.post(
     }),
 );
 
+// GET /sispag/titulos/retidos-por-codigo-barras — títulos que o sistema retirou de um lote por
+// boleto repetido/ilegível e mantém retidos (ADR-0069 emenda 1, I16g). Só campos MASCARADOS.
+router.get(
+    '/titulos/retidos-por-codigo-barras',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (_req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(DuplicateResolutionService);
+        const retidos = await service.listarRetidosPorCodigoDeBarras();
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({
+            retidos: retidos.map((r) => ({
+                filCod: r.filCod,
+                docCod: r.docCod,
+                titCod: r.titCod,
+                origem: r.origem,
+                ...(r.codigoMascarado !== undefined ? { codigoMascarado: r.codigoMascarado } : {}),
+                ...(r.tituloMantido ? { tituloMantido: r.tituloMantido } : {}),
+                ...(r.loteIdOrigem !== undefined ? { loteIdOrigem: r.loteIdOrigem } : {}),
+                marcadoEm: r.marcadoEm,
+                ...(r.credor !== undefined ? { credor: r.credor } : {}),
+                ...(r.valor !== undefined ? { valor: r.valor } : {}),
+                ...(r.vencimento !== undefined ? { vencimento: r.vencimento } : {}),
+            })),
+        });
+    }),
+);
+
+// GET /sispag/lotes/:id/retirados-por-codigo-barras — o que o sistema retirou DESTE lote por código
+// de barras, lido da trilha (persistente: sobrevive a recarregar a tela, I16f(3)). Só mascarado.
+router.get(
+    '/lotes/:id/retirados-por-codigo-barras',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(DuplicateResolutionService);
+        const retirados = await service.listarRetiradasDoLote(String(req.params.id));
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ retirados });
+    }),
+);
+
 // POST /sispag/titulos/:filCod/:docCod/:titCod/bloqueio-duplicidade/desfazer — a analista desfaz o
 // bloqueio por duplicidade do título (I13g), com motivo, auditado. 400 · 409 sem bloqueio ATIVO.
 router.post(

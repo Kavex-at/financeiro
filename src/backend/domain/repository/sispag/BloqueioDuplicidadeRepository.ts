@@ -14,6 +14,7 @@ import {
     SISPAG_SYSTEM_ACTOR,
     VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
+import type { TituloRetidoPorCodigoBarras } from '../../interface/sispag/RetiradaCodigoBarras.js';
 import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 
 interface BloqueioRow {
@@ -130,6 +131,104 @@ export default class BloqueioDuplicidadeRepository {
         )) as BloqueioRow[];
         return rows.map(this.map);
     };
+
+    /**
+     * Retidos por código de barras (I16g) com credor/valor/vencimento do título da carteira, para
+     * a aba de títulos. Só leitura; nada de código completo (a marca só tem a máscara).
+     */
+    public listAtivosPorOrigemComTitulo = async (
+        origens: DuplicateHoldOrigin[],
+    ): Promise<TituloRetidoPorCodigoBarras[]> => {
+        const colunas = COLUNAS.split(',')
+            .map((c) => `b.${c.trim()}`)
+            .join(', ');
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT ${colunas}, t.credor AS t_credor, t.valor AS t_valor,
+                    t.vencimento AS t_vencimento
+               FROM titulo_bloqueio_duplicidade b
+               LEFT JOIN titulo_a_pagar t
+                 ON t.fil_cod = b.fil_cod AND t.doc_cod = b.doc_cod AND t.tit_cod = b.tit_cod
+              WHERE b.estado = $ativo AND b.origem = ANY($origens)
+              ORDER BY b.marcado_em DESC`,
+            { ativo: DUPLICATE_HOLD_STATE.ATIVO, origens },
+        )) as Array<
+            BloqueioRow & {
+                t_credor: string | null;
+                t_valor: string | number | null;
+                t_vencimento: Date | null;
+            }
+        >;
+        return rows.map((r) => ({
+            ...this.map(r),
+            ...(r.t_credor ? { credor: r.t_credor } : {}),
+            ...(r.t_valor != null ? { valor: Number(r.t_valor) } : {}),
+            ...(r.t_vencimento != null
+                ? { vencimento: new Date(r.t_vencimento).toISOString().slice(0, 10) }
+                : {}),
+        }));
+    };
+
+    /**
+     * I16g — encerra, só pelos sinais BARATOS, as marcas por código de barras que não fazem mais
+     * sentido: (a) o item que FICOU saiu do fin064 ou foi pago (o boleto está coberto); (b) o lote
+     * de origem foi CANCELADO sem remessa gerada. O sinal "o boleto do título retido mudou" fica
+     * de fora (depende do fin124): sem ele, o desfazer manual cobre. Um evento por marca, na
+     * mesma transação. Devolve quantas encerrou.
+     */
+    public encerrarPorSinaisDeCodigoDeBarras = async (): Promise<number> =>
+        this.databaseClient.withTransaction(async (tx) => {
+            const encerrados = (await tx.selectMany(
+                `UPDATE titulo_bloqueio_duplicidade b
+                 SET estado = $encerrado, encerrado_em = now()
+                 WHERE b.estado = $ativo
+                   AND b.origem = ANY($origens)
+                   AND (
+                     EXISTS (
+                       SELECT 1 FROM titulo_a_pagar k
+                       WHERE k.fil_cod = b.titulo_mantido_fil_cod
+                         AND k.doc_cod = b.titulo_mantido_doc_cod
+                         AND k.tit_cod = b.titulo_mantido_tit_cod
+                         AND (k.ativo = FALSE OR k.pago = TRUE))
+                     OR EXISTS (
+                       SELECT 1 FROM lote_pagamento l
+                       WHERE l.id = b.lote_id_origem AND l.status = 'CANCELADO'
+                         AND l.remessa_gerada_em IS NULL)
+                   )
+                 RETURNING b.id, b.fil_cod, b.doc_cod, b.tit_cod, b.lote_id_origem`,
+                {
+                    encerrado: DUPLICATE_HOLD_STATE.ENCERRADO,
+                    ativo: DUPLICATE_HOLD_STATE.ATIVO,
+                    origens: [
+                        DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_REPETIDO,
+                        DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_ILEGIVEL,
+                    ],
+                },
+            )) as Array<{
+                id: string;
+                fil_cod: number;
+                doc_cod: string;
+                tit_cod: string;
+                lote_id_origem: string | null;
+            }>;
+            for (const b of encerrados) {
+                await this.eventos.registrar(
+                    {
+                        evento: VERIFICATION_EVENT.BLOQUEIO_ENCERRADO,
+                        ator: SISPAG_SYSTEM_ACTOR,
+                        ...(b.lote_id_origem ? { loteId: b.lote_id_origem } : {}),
+                        filCod: b.fil_cod,
+                        docCod: b.doc_cod,
+                        titCod: b.tit_cod,
+                        bloqueioId: b.id,
+                        dados: {
+                            motivo: 'item mantido pago/inativo ou lote de origem cancelado sem remessa',
+                        },
+                    },
+                    tx,
+                );
+            }
+            return encerrados.length;
+        });
 
     /**
      * Cria o bloqueio ATIVO + evento BLOQUEIO_CRIADO, na transação dada.

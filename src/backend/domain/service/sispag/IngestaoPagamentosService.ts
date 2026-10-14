@@ -374,6 +374,9 @@ export default class IngestaoPagamentosService {
             let bloqueiosEncerrados = 0;
             try {
                 bloqueiosEncerrados = await this.bloqueioRepo.encerrarDeTitulosInativos();
+                // ADR-0069 emenda 1 (I16g): marcas por código de barras também encerram pelos
+                // sinais baratos (item mantido pago/inativo; lote de origem cancelado sem remessa).
+                bloqueiosEncerrados += await this.bloqueioRepo.encerrarPorSinaisDeCodigoDeBarras();
             } catch (error) {
                 await this.logService.warn({
                     type: LOG_TYPE.BUSINESS_WARN,
