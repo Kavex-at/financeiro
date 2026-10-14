@@ -41,8 +41,11 @@ describe('BoletoCodigoBarrasRepetidoError', () => {
         expect(m).toContain('R$ 1.412,00');
         expect(m).toContain('14/10/2026');
         expect(m).toContain(MASCARADO);
-        expect(m).toMatch(/retire o título repetido do lote e gere a remessa de novo/i);
-        expect(m).toMatch(/rascunho no Conexos será reaproveitado/);
+        expect(m).toMatch(
+            /retire o título repetido do lote aqui e peça que o rascunho seja descartado/i,
+        );
+        expect(m).toMatch(/rascunho deste lote no Conexos ainda contém o item repetido/);
+        expect(m).toMatch(/nada foi enviado ao banco/);
     });
 
     it('modo ilegível: mensagem própria, sem código', () => {

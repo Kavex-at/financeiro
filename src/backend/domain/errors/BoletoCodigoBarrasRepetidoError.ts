@@ -157,7 +157,7 @@ export default class BoletoCodigoBarrasRepetidoError extends Error implements Ha
     ): string => {
         const E = BoletoCodigoBarrasRepetidoError;
         const orientacao =
-            'Retire o título repetido do lote e gere a remessa de novo — o rascunho no Conexos será reaproveitado.';
+            'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco. O rascunho deste lote no Conexos ainda contém o item repetido: retire o título repetido do lote aqui e peça que o rascunho seja descartado no Conexos antes de gerar a remessa de novo.';
         if (n.modo === 'arquivo') {
             const gs = (n.grupos as GrupoRepetidoNoArquivo[])
                 .map((g) => `código ${g.mascarado} nas linhas ${g.linhas.join(' e ')} do arquivo`)
