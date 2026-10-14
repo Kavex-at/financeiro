@@ -161,3 +161,6 @@ carga (páginas de 100 em série). Decisão do maintainer, sem mudar nenhuma reg
 - A listagem aceita `tamanho` até 2000 e a tela busca tudo numa chamada; acima disso a tela avisa
   que está truncada (nunca corta em silêncio).
 
+## Emenda 2026-10-14 (4) — o passo 2 depende da ADR-0069
+
+> **Emenda (ADR-0069):** o passo 2 (bind de valor igual) só pode ser implementado depois da guarda I16 (um código de barras, um item), que roda sobre `itsNumCodbar` pós-import e pós-edição.

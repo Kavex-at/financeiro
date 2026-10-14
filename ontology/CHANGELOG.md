@@ -3,6 +3,25 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.40.1 — SISPAG: guarda de código de barras repetido na remessa (2026-10-14, ADR-0069)
+
+Feature: `sispag-guarda-codbar-repetido` (`/feature-tweak`). `entity_changed = true`, aditivo, sem entidade
+nova. **Ontologia à frente do código** (tudo `planned`). Número/versão a reconferir no ship (sessão
+paralela de correção de vencimento pode reivindicá-los).
+
+- **Regra `boleto-exige-codigo-de-barras`:** nova família **I16a–e** — um código de barras (44 dígitos)
+  por item do lote; checada após `importarTitulos`/antes de `finalizarLote` e nos segmentos J do `.REM`;
+  falha fechada para código presente porém inválido; aborta com erro nomeado, ledger `failed`, rascunho
+  preservado, analista remove o título do lote local; código só mascarado, nada persistido.
+- **Achado HML (2026-10-14):** o ERP não valida o DV do código digitado nem o compara com o título;
+  `importar` descarta o código do payload; ele só chega ao item via `PUT fin015/finItemSispag`. A
+  unicidade roda sobre o 44 dígitos de `itsNumCodbar` pós-import e (passo 2) pós-edição.
+- **Erro `BoletoCodigoBarrasRepetidoError`** (409).
+- **Pré-requisito do passo 2 da ADR-0068** (emenda).
+- **Adiado (REJECT-PREMATURE):** guarda entre lotes vivos e contra boleto já pago — requer hash salgado
+  persistido + migration + ADR.
+- Coverage: contagens inalteradas.
+
 ## v0.40.0 — SISPAG: sugestão de boleto DDA e confirmação de emissor (2026-10-14, ADR-0068)
 
 Feature: `sispag-sugestao-boleto-dda` (`/feature-new`). `entity_changed = true`. **Ontologia à frente

@@ -75,9 +75,11 @@ tier, concordância posterior com o ERP) ficam no log, fora do modelo (Q-H).
 | `IssuerConfirmationReasonRequiredError` | rejeitar/revogar sem motivo; anular com motivo < 10 caracteres | 422 |
 | `OverdueBoletoNotConfirmableError` | confirmar boleto que vence antes da data de débito (I15h) | 422 |
 | `DecisionNotConfirmedError` | anular título sem decisão `CONFIRMADA` (I15l) | 409 |
+| `BoletoCodigoBarrasRepetidoError` | **remessa** (não é da sugestão; `planned`): dois itens BOLETO do lote com o mesmo código de barras de 44 dígitos, ou código presente porém inválido (I16a–c, ADR-0069). Pré-requisito do passo 2. Mensagem pt-BR com `docCod/titCod`, valor, vencimento e código mascarado | 409 |
 
 ## Ver também
 
 `decisions/0068-*.md` · `entities/confirmacao-emissor-boleto.md` · `entities/decisao-sugestao-boleto.md` ·
 `entities/boleto-dda.md` (I-DDA1–4) · `business-rules/boleto-exige-codigo-de-barras.md` ·
 `business-rules/favorecido-autorizado-sispag.md` (I14, padrão da trilha e da máscara)
+`decisions/0069-*.md` (guarda de repetição de código de barras, pré-requisito do passo 2)
