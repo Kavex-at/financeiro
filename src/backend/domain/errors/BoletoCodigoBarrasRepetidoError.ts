@@ -187,9 +187,12 @@ export default class BoletoCodigoBarrasRepetidoError extends Error implements Ha
     ): string => {
         const E = BoletoCodigoBarrasRepetidoError;
         const loteNativo = n.flpCod !== undefined ? ` Lote nativo no Conexos: ${n.flpCod}.` : '';
-        // lote/ilegível: a guarda abortou ANTES de finalizar — o rascunho ainda existe.
+        // lote/ilegível: a guarda parou ANTES de finalizar. Desde a emenda 1 da ADR-0069 ela
+        // retira sozinha o item repetido/ilegível: esta mensagem só chega à tela se a retirada
+        // não pôde acontecer, e a saída é gerar de novo — nunca "retire à mão e descarte".
         const orientacao =
-            'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco. O rascunho deste lote no Conexos ainda contém o item repetido: retire o título repetido do lote aqui e peça que o rascunho seja descartado no Conexos antes de gerar a remessa de novo.' +
+            'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco. ' +
+            'Gere a remessa de novo: o sistema retira sozinho o título repetido do lote.' +
             loteNativo;
         if (n.modo === 'arquivo') {
             // Aqui o lote JÁ foi finalizado e o `.REM` existe no ERP: não há rascunho a descartar.
@@ -212,9 +215,9 @@ export default class BoletoCodigoBarrasRepetidoError extends Error implements Ha
             blocos.push(
                 `O código de barras está ilegível ou inválido para o título ${itens}. ` +
                     'Revise o boleto antes de gerar a remessa. ' +
-                    'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco; ' +
-                    'o rascunho deste lote no Conexos ainda contém o item e deve ser descartado ' +
-                    `no Conexos antes de gerar a remessa de novo.${loteNativo}`,
+                    'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco. ' +
+                    'Gere a remessa de novo: o sistema retira sozinho o título de código ' +
+                    `ilegível do lote.${loteNativo}`,
             );
         }
         const grupos = n.grupos as GrupoRepetidoNoLote[];

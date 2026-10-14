@@ -41,10 +41,9 @@ describe('BoletoCodigoBarrasRepetidoError', () => {
         expect(m).toContain('R$ 1.412,00');
         expect(m).toContain('14/10/2026');
         expect(m).toContain(MASCARADO);
-        expect(m).toMatch(
-            /retire o título repetido do lote aqui e peça que o rascunho seja descartado/i,
-        );
-        expect(m).toMatch(/rascunho deste lote no Conexos ainda contém o item repetido/);
+        // A guarda agora retira sozinha: a mensagem nunca manda "retire à mão e descarte".
+        expect(m).toMatch(/o sistema retira sozinho o título repetido do lote/i);
+        expect(m).not.toMatch(/peça que o rascunho seja descartado/i);
         expect(m).toMatch(/nada foi enviado ao banco/);
     });
 
@@ -92,7 +91,8 @@ describe('BoletoCodigoBarrasRepetidoError', () => {
             ilegiveis: [titulo(7)],
         });
         expect(err.userMessage).toMatch(/interrompida antes de finalizar/);
-        expect(err.userMessage).toMatch(/descartado no Conexos/);
+        expect(err.userMessage).toMatch(/retira sozinho o título de código ilegível/);
+        expect(err.userMessage).not.toMatch(/descartado no Conexos/);
         expect(err.userMessage).toMatch(/Lote nativo no Conexos: 12/);
         expect(err.message).toContain('flpCod 12');
     });
