@@ -175,6 +175,13 @@ export default class EnvironmentVars {
     public sispagDdaAssocEnabled: boolean;
 
     /**
+     * Vínculo do código de barras confirmado ao item do lote, POR FILIAL (ADR-0071, I17k):
+     * `SISPAG_BIND_CODBAR_FILIAIS="1:shadow,7:off"`. Valor BRUTO; o parse fail-closed mora em
+     * `ModoVinculoCodigoBarras`. Default `''` = `off` em todas as filiais.
+     */
+    public sispagBindCodbarFiliais: string;
+
+    /**
      * SISPAG TED/PIX (ADR-0054, Adendo). Três flags de go-live, **default false**, lidas só do
      * `EnvironmentProvider`. Nada disto foi provado sem HML; com as três desligadas o envio e a
      * tela são idênticos ao `main`. Só o valor exato `'true'` liga.
@@ -332,6 +339,7 @@ export default class EnvironmentVars {
         snLiveWriteEnabled,
         sispagLiveWriteEnabled,
         sispagDdaAssocEnabled,
+        sispagBindCodbarFiliais,
         sispagTedEnabled,
         sispagPixEnabled,
         sispagFavorecidoAutorizadoEnabled,
@@ -382,6 +390,7 @@ export default class EnvironmentVars {
         snLiveWriteEnabled: boolean;
         sispagLiveWriteEnabled: boolean;
         sispagDdaAssocEnabled: boolean;
+        sispagBindCodbarFiliais?: string;
         sispagTedEnabled?: boolean;
         sispagPixEnabled?: boolean;
         sispagFavorecidoAutorizadoEnabled?: boolean;
@@ -432,6 +441,7 @@ export default class EnvironmentVars {
         this.snLiveWriteEnabled = snLiveWriteEnabled;
         this.sispagLiveWriteEnabled = sispagLiveWriteEnabled;
         this.sispagDdaAssocEnabled = sispagDdaAssocEnabled;
+        this.sispagBindCodbarFiliais = sispagBindCodbarFiliais ?? '';
         this.sispagTedEnabled = sispagTedEnabled ?? false;
         this.sispagPixEnabled = sispagPixEnabled ?? false;
         this.sispagFavorecidoAutorizadoEnabled = sispagFavorecidoAutorizadoEnabled ?? false;

@@ -505,6 +505,20 @@ describe('EnvironmentProvider', () => {
             delete process.env.AUTH_PROVIDER;
         });
 
+        it('SISPAG_BIND_CODBAR_FILIAIS (ADR-0071): bruto, default vazio, mesma leitura no caminho SSM', async () => {
+            ssmSendMock.mockImplementation(async () => ({ Parameter: { Value: '{}' } }));
+            delete process.env.SISPAG_BIND_CODBAR_FILIAIS;
+            expect(
+                (await new EnvironmentProvider().getEnvironmentVars()).sispagBindCodbarFiliais,
+            ).toBe('');
+            process.env.SISPAG_BIND_CODBAR_FILIAIS = ' 1:shadow,7:off ';
+            const v = await new EnvironmentProvider().getEnvironmentVars();
+            expect(v.sispagBindCodbarFiliais).toBe('1:shadow,7:off');
+            // O kill-switch de DDA não é o do vínculo: o flag novo não depende dele.
+            expect(v.sispagDdaAssocEnabled).toBe(true);
+            delete process.env.SISPAG_BIND_CODBAR_FILIAIS;
+        });
+
         it('flags TED/PIX/destino manual do SISPAG: mesma regra no caminho SSM/Lambda', async () => {
             ssmSendMock.mockImplementation(async () => ({ Parameter: { Value: '{}' } }));
             process.env.SISPAG_TED_ENABLED = 'true';

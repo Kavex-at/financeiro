@@ -347,6 +347,8 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
+            // ADR-0071 (I17k): modo do vínculo por filial. Bruto; parse fail-closed no consumidor.
+            sispagBindCodbarFiliais: this.readEnv('SISPAG_BIND_CODBAR_FILIAIS').trim(),
             // ADR-0054/0065: gates de go-live de TED/PIX e do favorecido autorizado — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
@@ -446,6 +448,8 @@ export default class EnvironmentProvider {
             sispagLiveWriteEnabled: this.readEnv('SISPAG_LIVE_WRITE_ENABLED') === 'true',
             // Default TRUE (≠ o kill-switch da frente): é freio de incidente, não gate de go-live.
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
+            // ADR-0071 (I17k): modo do vínculo por filial. Bruto; parse fail-closed no consumidor.
+            sispagBindCodbarFiliais: this.readEnv('SISPAG_BIND_CODBAR_FILIAIS').trim(),
             // ADR-0054/0065: gates de go-live de TED/PIX e do favorecido autorizado — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
