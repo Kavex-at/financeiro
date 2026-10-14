@@ -1,5 +1,20 @@
 # Columbia Financeiro — Changelog
 
+## v0.66.1 (2026-10-14) — SISPAG: a remessa não sai mais com o mesmo boleto duas vezes
+
+- **Código de barras repetido no lote agora barra a geração da remessa.** Quando dois ou mais
+  títulos do lote apontam para o mesmo boleto (o caso de vários títulos com mesmo valor e mesmo
+  vencimento para poucos boletos), o Conexos anexava o mesmo código a todos e o arquivo pagaria o
+  boleto várias vezes. Agora a geração para **antes de finalizar o lote**, com o aviso "código de
+  barras repetido", listando os títulos, valor, vencimento e o código mascarado (só o começo e o
+  fim).
+- **Nada é descartado em silêncio.** O sistema não decide qual título fica com o boleto. Retire o
+  título repetido do lote e gere a remessa de novo; o rascunho já criado no Conexos é reaproveitado.
+- **Código ilegível também para.** Se um boleto chegou com o código presente porém inválido, a
+  remessa não é gerada e a mensagem nomeia o título para revisão.
+- **Limites.** A checagem vale dentro de um lote; o mesmo boleto em dois lotes diferentes, ou um
+  boleto já pago, ainda não é detectado.
+
 ## v0.66.0 (2026-10-14) — SISPAG: sugestão de boleto para o título "boleto sem DDA"
 
 - **O "boleto sem DDA" agora vem com uma sugestão.** Na aba "Títulos a pagar", o título que o
