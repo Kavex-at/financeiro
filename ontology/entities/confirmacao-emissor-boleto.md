@@ -48,7 +48,7 @@ universality_evidence:
 | `emissorChave` | string | Banco + agência + conta **derivados do código de barras de 44 dígitos**. Layout real para 341 (Itaú) e 237 (Bradesco), ex. `237:2656:0092740`. Outros bancos: chave genérica `banco:<8 dígitos do campo livre>`. Imutável. |
 | `layoutEmissor` | `ITAU_341 \| BRADESCO_237 \| GENERICO` | Como a chave foi derivada. `GENERICO` **nunca** é elegível a automático (I15i). |
 | `bancoEmissor` | string | Código FEBRABAN de 3 dígitos. |
-| `emissorMascarado` | string | Exibição: banco e agência completos, conta com os 4 últimos dígitos (padrão I14l). A chave completa **não** aparece para quem só tem `sispag:ver`. |
+| `emissorMascarado` | string | Exibição: banco e agência completos, conta com os 4 últimos dígitos (padrão I14l). A listagem não traz a chave completa (higiene, não controle de acesso). |
 | `estado` | `VIGENTE \| REVOGADA` | **No máximo 1 `VIGENTE`** por (`pesCod`, `emissorChave`) — índice único parcial. `REVOGADA` é terminal; reconfirmar cria **nova** linha. |
 | `evidencia` | JSON | Snapshot imutável da decisão que criou o par: título (`filCod/docCod/titCod`, valor, vencimento, `doc_esp_numero`), boleto (`ddcCod`, `ditCod`, `numero`, valor, vencimento, `codbar` mascarado), delta com sinal, sinais usados, tier. Nunca a linha digitável completa. |
 | `confirmadoPor` · `confirmadoEm` | string · Date | Pessoa com `sispag:executar`. **Nunca** `sistema` (I15g). |

@@ -24,8 +24,8 @@ has_canonical_test: false
 
 Confirmadas pelo maintainer: Q1 (par + registro por título), Q2 (par confirmado nunca alarga limite),
 Q3 (uma pessoa com `sispag:executar` no passo 1; segunda pessoa só quando o par virar automático, passo
-3), Q4 (`sispag:ver` vê a sugestão com emissor mascarado; `sispag:executar` copia a linha digitável e
-confirma), Q5 (layout real só para 341 e 237 — 244 de 290 candidatos únicos, 84 %, medido em PRD
+3), Q4 (re-decidida em 2026-10-14: `sispag:ver` vê a sugestão e **copia** a linha digitável, toda cópia
+auditada; `sispag:executar` confirma, rejeita e revoga), Q5 (layout real só para 341 e 237 — 244 de 290 candidatos únicos, 84 %, medido em PRD
 2026-10-14; 104=17, 329=14, 422=7, 033=3, demais ≤1), Q-A (quem revoga: qualquer pessoa com
 `sispag:executar`), Q-B (limites globais abaixo). Auditoria de cópias: **sim**, toda cópia de linha
 digitável é auditada (quem, quando, qual boleto).
@@ -50,7 +50,7 @@ bloqueante). Q-G (implementação) é do TaskScoper.
 | **I15h** | **Boleto que vence antes da data de débito nunca é seguro e não é confirmável no passo 1** (Q-F, default, revisável). Está vencido (juros/multa): é mostrado **só para informação**, com o motivo visível; nunca `CONHECIDO` nem `FORTE`, nunca confirmável, nunca elegível ao automático. Datas comparadas como data civil (UTC meia-noite, BRT). A data de débito é a do lote quando existe (I8, `data-debito-remessa-sispag`); **sem lote, é o vencimento do título** (Q-C, default, revisável). |
 | **I15i** | **Chave genérica nunca é elegível a automático.** Só 341 e 237 têm layout verificado (`layoutEmissor`). Os demais bancos usam a chave genérica (`banco` + 8 dígitos do campo livre), podem ser sugeridos e **confirmados por humano**, mas a confirmação carrega `layoutEmissor = GENERICO` e fica **excluída** do passo 3 até o layout ser verificado. Desenhar a chave **como se** o passo 3 confiasse nela. |
 | **I15j** | **Idempotência.** Sugerir é puro. Confirmar sobre par `VIGENTE` é no-op no par e, para título/boleto sem decisão ativa, apenas grava a decisão; confirmar o mesmo (título, boleto) de novo devolve a decisão existente. Revogar par não `VIGENTE` e rejeitar (título, boleto) já rejeitado são no-ops. Concorrência: índices únicos parciais; perdedor da corrida relê e devolve a linha vencedora. |
-| **I15k** | **Dado sensível por permissão.** `sispag:ver` enxerga a sugestão com o emissor **mascarado** (banco e agência completos, conta com 4 últimos dígitos) e a evidência; **só** `sispag:executar` copia a linha digitável e confirma/rejeita/revoga. Nunca a linha digitável completa em log, ledger, evidência ou mensagem de erro. **Toda cópia é auditada** (evento `LINHA_COPIADA`: quem, quando, título, boleto) — mais estrito que o lote atual (ADR-0053), de propósito. |
+| **I15k** | **Dado sensível por permissão.** `sispag:ver` enxerga a sugestão (emissor mascarado na listagem, por higiene — **não** é controle de acesso, a linha já é visível a `ver` em `GET /boletos-dda` e no lote, ADR-0053) e **copia** a linha digitável pela rota auditada; **só** `sispag:executar` confirma/rejeita/revoga. Nunca a linha digitável completa em log, ledger, evidência ou mensagem de erro. **Toda cópia é auditada** (evento `LINHA_COPIADA`: quem, quando, título, boleto) — mais estrito que o lote atual (ADR-0053), de propósito: o controle é a trilha fail-closed. |
 
 ## Trilha só-inclusão
 

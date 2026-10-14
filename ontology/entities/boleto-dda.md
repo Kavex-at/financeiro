@@ -117,9 +117,9 @@ medidos); demais bancos usam chave genérica (I15i).
 
 ## Acesso
 
-`GET /sispag/boletos-dda` e `POST /sispag/boletos-dda/sincronizar` exigem `admin`: o código de
-barras carrega banco, agência e conta do cedente (mesmo guard das linhas digitáveis do lote).
+`GET /sispag/boletos-dda` é `sispag:ver` desde a ADR-0053 (era `admin`); `POST
+/sispag/boletos-dda/sincronizar` segue como está no código. O payload do GET carrega `linhaDigitavel`
+**sem auditoria** — estado conhecido e aceito (emenda de 2026-10-14 à ADR-0068).
 
-**Sugestão por título (ADR-0068, planned):** `sispag:ver` vê a sugestão com o emissor mascarado;
-copiar a linha digitável (auditado), confirmar, rejeitar e revogar exigem `sispag:executar`. O `GET`
-de sugestões é uma rota **nova** (por título) — não abre o pool inteiro a quem não é `admin`.
+**Sugestão por título (ADR-0068, planned):** `sispag:ver` vê a sugestão e copia a linha digitável
+(sempre auditado); confirmar, rejeitar e revogar exigem `sispag:executar`.

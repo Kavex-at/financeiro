@@ -50,7 +50,7 @@ confere à mão no portal do banco, título a título.
    abençoado (I15d, I15g).
 5. **Uma pessoa, `sispag:executar` (Q3, confirmada).** Nada move dinheiro no passo 1; a segunda
    pessoa é exigida só quando o par virar automático (passo 3). `sispag:ver` vê a sugestão com o
-   emissor mascarado; só `sispag:executar` copia a linha digitável, confirma, rejeita e revoga
+   emissor mascarado; só `sispag:executar` copia a linha digitável, confirma, rejeita e revoga [emendado em 2026-10-14: a cópia é `sispag:ver`, ver Emenda]
    (Q4, I15k). **Quem revoga um par: qualquer pessoa com `sispag:executar` (Q-A).** **Toda cópia de
    linha digitável é auditada** (quem, quando, qual boleto).
 6. **Chave do emissor (Q5).** Layout real só para 341 e 237 (244 de 290 candidatos únicos, 84 %,
@@ -113,3 +113,12 @@ confere à mão no portal do banco, título a título.
 - **Bind no ERP e automático (passos 2 e 3)**: REJECT-PREMATURE, na watchlist.
 - **Valores numéricos como `RegraNegocioCliente`**: REJECT-CONFIG; constantes globais de código
   (1 tenant), citadas na regra.
+
+## Emenda 2026-10-14 — Q4 re-decidida (cópia da linha digitável)
+
+A premissa de Q4 ("`GET /sispag/boletos-dda` é só `admin`") era **falsa**: desde a ADR-0053 essa rota
+e as linhas digitáveis do lote são `sispag:ver`. Decisão do maintainer: **`sispag:ver` copia a linha
+digitável pela rota nova, e toda cópia segue auditada (`LINHA_COPIADA`, fail-closed)**. Confirmar,
+rejeitar e revogar permanecem `sispag:executar`. O emissor mascarado na listagem fica por higiene,
+não como controle de acesso. Estado conhecido e aceito: `GET /boletos-dda` entrega `linhaDigitavel`
+sem auditoria.

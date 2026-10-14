@@ -23,7 +23,8 @@ import sispagRouter from './sispag.js';
 
 /**
  * Rotas da sugestão de boleto (ADR-0068, I15). O ator vem SEMPRE do token (`req.user.sub = 'bia'`);
- * `sispag:ver` lê com o emissor mascarado; `sispag:executar` confirma, rejeita, revoga e copia.
+ * `sispag:ver` lê e copia a linha digitável (toda cópia auditada, fail-closed); `sispag:executar`
+ * confirma, rejeita e revoga.
  */
 
 const ID = '00000000-0000-0000-0000-000000000068';
@@ -126,7 +127,6 @@ describe('matriz de permissão da sugestão de boleto (ADR-0053/0068)', () => {
             '/sispag/sugestoes-boleto/rejeitar',
             { ...CHAVE, motivo: 'outro credor' },
         ],
-        ['POST copiar-linha', '/sispag/sugestoes-boleto/copiar-linha', CHAVE],
         ['POST revogar', `/sispag/confirmacoes-emissor/${ID}/revogar`, { motivo: 'conta trocada' }],
     ];
 
@@ -153,7 +153,6 @@ describe('matriz de permissão da sugestão de boleto (ADR-0053/0068)', () => {
         expect(s.confirmar).not.toHaveBeenCalled();
         expect(s.rejeitar).not.toHaveBeenCalled();
         expect(s.revogarPar).not.toHaveBeenCalled();
-        expect(s.copiarLinha).not.toHaveBeenCalled();
         await comApp(VER_EXECUTAR, async (url) => {
             expect([200, 201]).toContain((await post(`${url}${rota}`, body)).status);
         });
@@ -298,6 +297,22 @@ describe('POST /sispag/sugestoes-boleto/rejeitar', () => {
 });
 
 describe('POST /sispag/sugestoes-boleto/copiar-linha', () => {
+    it('sispag:ver copia (200, auditado pelo serviço); sem sispag:* é 403 e o serviço fica intocado', async () => {
+        const s = servico();
+        await comApp(NENHUMA, async (url) => {
+            expect((await post(`${url}/sispag/sugestoes-boleto/copiar-linha`, CHAVE)).status).toBe(
+                403,
+            );
+        });
+        expect(s.copiarLinha).not.toHaveBeenCalled();
+        await comApp(VER, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/copiar-linha`, CHAVE);
+            expect(res.status).toBe(200);
+            expect(res.headers.get('cache-control')).toBe('no-store');
+        });
+        expect(s.copiarLinha).toHaveBeenCalledWith({ ...CHAVE, ator: 'bia' });
+    });
+
     it('devolve a linha com Cache-Control: no-store e o ator do token', async () => {
         const s = servico();
         await comApp(VER_EXECUTAR, async (url) => {
