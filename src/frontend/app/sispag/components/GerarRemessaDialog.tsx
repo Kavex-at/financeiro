@@ -76,8 +76,17 @@ const mensagemDeSucesso =
     const avisos = res.avisos ?? []
     if (avisos.length > 0) {
       const n = res.retiradosPorCodigoBarras?.length ?? 0
+      const v = res.vinculados?.length ?? 0
+      // ADR-0071: só vínculo (nada saiu): o resumo diz o que foi vinculado, não "tudo certo".
+      if (n === 0 && v > 0) {
+        return {
+          titulo: `Remessa ${res.arquivo ?? ''} gerada — ${v} título(s) com código de barras vinculado da confirmação`,
+          descricao: `${avisos.join(' ')} ${ondeNoErp}`,
+          aviso: true,
+        }
+      }
       return {
-        titulo: `Remessa ${res.arquivo ?? ''} gerada — ${n || 'alguns'} título(s) retirado(s) do lote`,
+        titulo: `Remessa ${res.arquivo ?? ''} gerada — ${n || 'alguns'} título(s) retirado(s) do lote${v > 0 ? ` e ${v} vinculado(s)` : ''}`,
         descricao: `${avisos.join(' ')} ${ondeNoErp}`,
         aviso: true,
       }

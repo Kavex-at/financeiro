@@ -103,7 +103,10 @@ export function BoletosDoTituloDialog({
   podeCopiar = false,
   ddaDefasadoHoras,
   onDecidido,
+  vinculadoEmLoteVivo = false,
 }: {
+  /** O item do título tem o código vinculado num lote vivo (ADR-0071, I17l). */
+  vinculadoEmLoteVivo?: boolean
   titulo: TituloSemBoleto | null
   onClose: () => void
   /** Sugestões (ADR-0068) deste título; vazio = a seção nem aparece. */
@@ -172,6 +175,7 @@ export function BoletosDoTituloDialog({
                   podeExecutar={podeExecutar}
                   podeCopiar={podeCopiar}
                   ddaDefasadoHoras={ddaDefasadoHoras}
+                  itemVinculadoEmLoteVivo={vinculadoEmLoteVivo}
                   onDecidido={onDecidido ?? (() => undefined)}
                 />
               ) : null}

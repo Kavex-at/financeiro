@@ -357,6 +357,31 @@ describe('SugestaoBoletoPainel — anular confirmação (I15l)', () => {
     expect(onDecidido).toHaveBeenCalled()
   })
 
+  it('item vinculado em lote vivo: o diálogo avisa que NÃO desfaz no Conexos e manda retirar o título (I17l)', async () => {
+    render(
+      <SugestaoBoletoPainel
+        sugestoes={[sugestao({ estado: 'CONFIRMADA' })]}
+        podeExecutar
+        podeCopiar
+        itemVinculadoEmLoteVivo
+        onDecidido={onDecidido}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /^Anular confirmação do boleto/ }))
+    const dlg = await screen.findByRole('dialog')
+    expect(dlg).toHaveTextContent(/NÃO desfaz isso no Conexos/)
+    expect(dlg).toHaveTextContent(/retire o título do lote/)
+    // Sem botão "desfazer vínculo": não existe no escopo.
+    expect(within(dlg).queryByRole('button', { name: /desfazer/i })).not.toBeInTheDocument()
+  })
+
+  it('sem vínculo, o diálogo mantém o texto de sempre', async () => {
+    renderPainel([sugestao({ estado: 'CONFIRMADA' })])
+    await userEvent.click(screen.getByRole('button', { name: /^Anular confirmação do boleto/ }))
+    const dlg = await screen.findByRole('dialog')
+    expect(dlg).not.toHaveTextContent(/NÃO desfaz/)
+  })
+
   it('erro do servidor aparece no diálogo, que continua aberto', async () => {
     anular.mockRejectedValue(
       erroApi(409, 'DECISAO_NAO_CONFIRMADA', 'Este título não tem boleto confirmado para anular.'),

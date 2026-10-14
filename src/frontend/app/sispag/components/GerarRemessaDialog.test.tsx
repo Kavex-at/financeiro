@@ -199,6 +199,28 @@ describe('GerarRemessaDialog', () => {
     expect(msg.descricao).toContain('Lote nativo 12')
   })
 
+  it('com vínculo do código (ADR-0071): resumo de AVISO com o que foi vinculado', async () => {
+    const acao = jest.fn() as jest.MockedFunction<Acao>
+    await abrir(janela(), acao)
+    await screen.findByText(/Permitido/)
+    fireEvent.click(botaoGerar())
+    const okMsg = acao.mock.calls[0]?.[1]
+    const msg = (
+      okMsg as (r: unknown) => { titulo: string; descricao?: string; aviso?: boolean }
+    )({
+      status: 'gerada',
+      arquivo: 'PG220901.REM',
+      nativeFlpCod: 12,
+      numRemessa: 1,
+      dataDebito: '2026-09-22',
+      vinculados: [{ titulo: { filCod: 2, docCod: '636', titCod: '1' }, codigoMascarado: '34191…0000' }],
+      avisos: ['1 título(s) com o código de barras vinculado a partir da confirmação: 636/1.'],
+    })
+    expect(msg.aviso).toBe(true)
+    expect(msg.titulo).toMatch(/1 título\(s\) com código de barras vinculado/)
+    expect(msg.descricao).toContain('636/1')
+  })
+
   it('sem retirada, a mensagem não é de aviso', async () => {
     const acao = jest.fn() as jest.MockedFunction<Acao>
     await abrir(janela(), acao)

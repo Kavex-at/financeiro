@@ -31,6 +31,7 @@ jest.mock('@/lib/sispag', () => {
     fetchModalidadesDisponiveis: jest.fn().mockResolvedValue([]),
     fetchLinhasDigitaveis: jest.fn().mockResolvedValue({ itens: [], total: 0, dropped: 0 }),
     fetchRetiradasDoLote: jest.fn().mockResolvedValue([]),
+    fetchVinculosPrevistos: jest.fn().mockResolvedValue({ modo: 'off', itens: [] }),
     finalizarLote: jest.fn(),
     cancelarLote: jest.fn(),
     reabrirLote: jest.fn(),
@@ -56,6 +57,7 @@ import {
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
   fetchRetiradasDoLote,
+  fetchVinculosPrevistos,
   finalizarLote,
   getRecursos,
   reabrirLote,
@@ -555,5 +557,107 @@ describe('LoteCard — download da remessa e seleção para o export', () => {
       />,
     )
     expect(screen.queryByRole('checkbox', { name: /selecionar lote/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('LoteCard — vínculo do código de barras (ADR-0071)', () => {
+  const BARRAS_44 = '34191158000001412001090047729099260408340000'
+  /** O card nasce recolhido: abre pelo cabeçalho (o botão que carrega `aria-expanded`). */
+  const abrir = async (container: HTMLElement) => {
+    const botao = container.querySelector('button[aria-expanded="false"]') as HTMLElement
+    await userEvent.click(botao)
+  }
+  const comVinculo = (over: Partial<LotePagamento> = {}) =>
+    lote({
+      itens: [
+        {
+          ...lote().itens[0],
+          modalidade: 'BOLETO',
+          vinculoCodigoBarras: {
+            origem: 'DECISAO_HUMANA',
+            decisaoId: 'dec-1',
+            codigoMascarado: '34191…0000',
+            aplicadoEm: '2026-10-14T12:00:00.000Z',
+            flpCod: 36,
+            // Campo que a API nunca manda; a tela não pode renderizá-lo.
+            ...({ codigo: BARRAS_44 } as object),
+          },
+        } as LotePagamento['itens'][number],
+      ],
+      dataDebito: '2026-10-20',
+      ...over,
+    })
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    permissoes = { carregando: false, lista: [...CATALOGO_PERMISSOES] }
+  })
+
+  it('selo persistente a partir do item: máscara, valor e data; nenhum código completo no DOM', async () => {
+    const { container } = render(
+      <LoteCard lote={comVinculo()} busy={false} acao={acaoQueExecuta()} />,
+    )
+    await abrir(container)
+    const selo = screen.getByTestId('selo-vinculo-vinculado')
+    expect(selo).toHaveTextContent('vinculado por confirmação')
+    expect(selo).toHaveTextContent('34191…0000')
+    expect(selo).toHaveTextContent('20/10')
+    expect(container.innerHTML).not.toContain(BARRAS_44)
+    expect(container.innerHTML).not.toMatch(/\d{20,}/)
+    for (const el of container.querySelectorAll('[aria-label],[title]')) {
+      expect(el.getAttribute('aria-label') ?? '').not.toMatch(/\d{20,}/)
+      expect(el.getAttribute('title') ?? '').not.toMatch(/\d{20,}/)
+    }
+  })
+
+  it('previsto só com modo on; shadow não mostra selo', async () => {
+    const semVinculo = lote({
+      itens: [{ ...lote().itens[0], modalidade: 'BOLETO' } as LotePagamento['itens'][number]],
+    })
+    const previsao = {
+      titulo: { filCod: 7, docCod: '801', titCod: '1' },
+      elegivel: true,
+      valorAbertoFonte: 'CARTEIRA_LOCAL',
+    }
+    ;(fetchVinculosPrevistos as jest.Mock).mockResolvedValueOnce({ modo: 'shadow', itens: [previsao] })
+    const a = render(<LoteCard lote={semVinculo} busy={false} acao={acaoQueExecuta()} />)
+    await abrir(a.container)
+    await waitFor(() => expect(fetchVinculosPrevistos).toHaveBeenCalledWith('L1'))
+    expect(screen.queryByTestId('selo-vinculo-previsto')).not.toBeInTheDocument()
+    a.unmount()
+
+    ;(fetchVinculosPrevistos as jest.Mock).mockResolvedValueOnce({ modo: 'on', itens: [previsao] })
+    const b = render(<LoteCard lote={semVinculo} busy={false} acao={acaoQueExecuta()} />)
+    await abrir(b.container)
+    expect(await screen.findByTestId('selo-vinculo-previsto')).toHaveTextContent(
+      'será vinculado na remessa',
+    )
+  })
+
+  it('inelegível mostra o motivo e o delta com sinal', async () => {
+    ;(fetchVinculosPrevistos as jest.Mock).mockResolvedValueOnce({
+      modo: 'on',
+      itens: [
+        {
+          titulo: { filCod: 7, docCod: '801', titCod: '1' },
+          elegivel: false,
+          motivo: 'DATA_FORA_DA_JANELA',
+          deltaDias: 6,
+          valorAbertoFonte: 'ERP_AO_VIVO',
+        },
+      ],
+    })
+    const { container } = render(
+      <LoteCard
+        lote={lote({
+          itens: [{ ...lote().itens[0], modalidade: 'BOLETO' } as LotePagamento['itens'][number]],
+        })}
+        busy={false}
+        acao={acaoQueExecuta()}
+      />,
+    )
+    await abrir(container)
+    const selo = await screen.findByTestId('selo-vinculo-inelegivel')
+    expect(selo).toHaveTextContent('+6 dias')
   })
 })

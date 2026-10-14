@@ -1682,6 +1682,20 @@ function SispagPanel() {
             podeCopiar={podeVer}
             ddaDefasadoHoras={sugestoes?.ddaDefasadoHoras}
             onDecidido={carregarSugestoes}
+            vinculadoEmLoteVivo={
+              tituloDda !== null &&
+              lotes.some(
+                (lt) =>
+                  lt.status !== 'CANCELADO' &&
+                  lt.itens.some(
+                    (it) =>
+                      it.filCod === tituloDda.filCod &&
+                      it.docCod === tituloDda.docCod &&
+                      it.titCod === tituloDda.titCod &&
+                      it.vinculoCodigoBarras !== undefined,
+                  ),
+              )
+            }
           />
         </>
       ) : null}
