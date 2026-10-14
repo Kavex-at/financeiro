@@ -179,3 +179,9 @@
   apenas (não bloqueante, como ADR-0065).
 - **Defaults revisáveis (orquestrador)**: data de débito sem lote = vencimento; disputa por menor
   vencimento/menor docCod; vencido não confirmável no passo 1. Revisitar com uso real.
+
+- **Guarda de código de barras entre lotes/contra boleto pago** (2026-10-14, ADR-0069): o mesmo boleto pode
+  cair em dois lotes por vencimento (ADR-0064) ou ser reenviado após RETORNADO. Pré-requisito: persistir
+  hash salgado (HMAC, segredo do EnvironmentProvider) do código por item enviado + migration + ADR próprio;
+  alternativa sem persistência = ler `itsNumCodbar` dos demais lotes nativos (mais chamadas ao ERP).
+  Revisitar se o caso aparecer em produção após I16.
