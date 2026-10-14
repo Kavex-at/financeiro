@@ -140,3 +140,18 @@ describe('CodigoBarrasBoleto.emissor', () => {
         expect(cb.paraLinhaDigitavel(codbar)).toHaveLength(47);
     });
 });
+
+describe('CodigoBarrasBoleto.mascarar', () => {
+    it('só banco e os 4 últimos dígitos; nunca as barras', () => {
+        const codbar = bradesco('2656', '0092740');
+        const m = cb.mascarar(codbar);
+        expect(m).toBe(`237…${codbar.slice(-4)}`);
+        expect(m).not.toMatch(/\d{20,}/);
+    });
+
+    it('código inválido ou de arrecadação → undefined', () => {
+        expect(cb.mascarar('123')).toBeUndefined();
+        expect(cb.mascarar(undefined)).toBeUndefined();
+        expect(cb.mascarar(`8${'1'.repeat(43)}`)).toBeUndefined();
+    });
+});

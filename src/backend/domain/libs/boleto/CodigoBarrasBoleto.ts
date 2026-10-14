@@ -43,6 +43,15 @@ export default class CodigoBarrasBoleto {
         this.normalizar(codbar)?.slice(0, 3);
 
     /**
+     * Forma exibível e persistível do código (ADR-0068, I15k): banco + 4 últimos dígitos. Nunca as
+     * barras completas nem a linha digitável. `undefined` se não for boleto bancário válido.
+     */
+    public mascarar = (codbar?: string): string | undefined => {
+        const barras = this.normalizar(codbar);
+        return barras ? `${barras.slice(0, 3)}…${barras.slice(-4)}` : undefined;
+    };
+
+    /**
      * Conta emissora do boleto (ADR-0068, I15g). Posições no CAMPO LIVRE (25 dígitos =
      * `barras.slice(19)`), verificadas em 2026-10-13 contra barras reais do pool de PRD:
      *

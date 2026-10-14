@@ -160,3 +160,48 @@ export interface SugestaoBoletoTitulo {
     /** Motivo legível (pt-BR) quando a sugestão é só informativa. */
     motivo?: string;
 }
+
+/** Emissor como a API o expõe: só a máscara (a chave carrega a conta completa). */
+export interface EmissorBoletoView {
+    banco: string;
+    layout: LayoutEmissor;
+    mascarado: string;
+}
+
+/**
+ * Sugestão como a API a devolve (`sispag:ver`): emissor MASCARADO, sem barras e sem linha digitável
+ * (I15k). A linha só sai pelo endpoint de cópia, auditado.
+ */
+export type SugestaoBoletoView = Omit<SugestaoBoletoTitulo, 'emissor'> & {
+    emissor?: EmissorBoletoView;
+    /** Só uma sugestão ainda não decidida e dentro dos três tiers pode ser confirmada. */
+    confirmavel: boolean;
+    /** Par (credor, emissor) vigente do boleto, quando existe — para revogar pela tela. */
+    confirmacaoEmissorId?: string;
+};
+
+export interface FiltroSugestoes {
+    filCod?: number;
+    pesCod?: string;
+    tier?: ResultadoSugestao;
+    pagina?: number;
+    tamanho?: number;
+}
+
+export interface ListagemSugestoes {
+    sugestoes: SugestaoBoletoView[];
+    total: number;
+    pagina: number;
+    tamanho: number;
+    /** Contagem por resultado, sobre o conjunto filtrado por filial/credor (antes do `tier`). */
+    contagem: Record<ResultadoSugestao, number>;
+    /** epoch ms da última sincronização do DDA; ausente = nunca sincronizado (ADR-0067). */
+    sincronizadoEm?: number;
+    /** Horas de defasagem do DDA quando passou de 8 h em dia útil; ausente = em dia (ADR-0067). */
+    ddaDefasadoHoras?: number;
+}
+
+export const SUGESTAO_TAMANHO_PADRAO = 50;
+export const SUGESTAO_TAMANHO_MAXIMO = 100;
+/** Horas sem sincronizar o DDA, em dia útil, a partir das quais a tela avisa (ADR-0067). */
+export const DDA_DEFASADO_HORAS = 8;
