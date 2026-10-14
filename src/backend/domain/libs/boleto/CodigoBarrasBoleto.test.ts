@@ -187,3 +187,23 @@ describe('CodigoBarrasBoleto.paraBarras', () => {
         expect(cb.paraBarras(codigo)).toBeUndefined();
     });
 });
+
+describe('CodigoBarrasBoleto.decodificar', () => {
+    const barras = itau('9260', '40834');
+
+    it('decodifica valor e o vencimento do ciclo mais próximo da referência', () => {
+        const r = cb.decodificar(barras, '2026-10-20');
+        expect(r?.valorCentavos).toBe(481533);
+        expect(r?.banco).toBe('341');
+        // fator 1580: ciclo iniciado em 22/02/2025 (fator 1000) + 580 dias.
+        expect(r?.vencimento).toBe('2026-09-25');
+    });
+
+    it('aceita a linha digitável e recusa DV errado e arrecadação', () => {
+        const linha = cb.paraLinhaDigitavel(barras) as string;
+        expect(cb.decodificar(linha, '2026-10-20')?.barras).toBe(barras);
+        const ruim = `${linha.slice(0, 9)}${(Number(linha[9]) + 1) % 10}${linha.slice(10)}`;
+        expect(cb.decodificar(ruim, '2026-10-20')).toBeUndefined();
+        expect(cb.decodificar(`8${'1'.repeat(43)}`, '2026-10-20')).toBeUndefined();
+    });
+});
