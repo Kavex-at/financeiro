@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Client } from 'pg';
 import 'reflect-metadata';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import AlertaItemLoteRepository from './AlertaItemLoteRepository.js';
 import BloqueioDuplicidadeRepository from './BloqueioDuplicidadeRepository.js';
@@ -227,7 +228,9 @@ describeComBanco('repositórios da verificação TED/PIX (integração)', () => 
         expect(id2).toBe(id1);
         expect(await contarEventos('BLOQUEIO_CRIADO')).toBe(1);
 
-        const elegiveis = await new TituloAPagarRepository(pool).listElegiveisParaFormacao(7);
+        const calendario = new BankingCalendar();
+        const hoje = new Date(calendario.toErpEpoch(calendario.todayBrt()));
+        const elegiveis = await new TituloAPagarRepository(pool).listElegiveisParaFormacao(7, hoje);
         expect(elegiveis.map((t) => t.docCod)).not.toContain('6702');
 
         await db.query(`UPDATE titulo_a_pagar SET ativo = FALSE WHERE doc_cod = '6702'`);

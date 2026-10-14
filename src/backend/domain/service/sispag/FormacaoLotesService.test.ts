@@ -28,6 +28,7 @@ const make = (
         desfeitos?: number;
         acquire?: boolean;
         conta?: { banco: string; conta: string } | undefined;
+        calendar?: BankingCalendar;
     } = {},
 ) => {
     const resolverPadrao = jest
@@ -56,7 +57,7 @@ const make = (
         db,
         buildLog(),
         { resolverPadrao } as unknown as ContaPagadoraResolver,
-        new BankingCalendar(),
+        over.calendar ?? new BankingCalendar(),
     );
     return { service, tituloRepo, loteRepo, resolverPadrao };
 };
@@ -206,6 +207,21 @@ describe('FormacaoLotesService', () => {
         expect(loteRepo.desfazerAutomaticosVencidos).toHaveBeenCalled();
         expect(r.lotesDesfeitos).toBe(3);
         expect(r.lotesFormados).toBe(1);
+    });
+
+    it.each([
+        ['09:00 BRT', '2026-10-14T12:00:00Z'],
+        ['21:30 BRT (UTC já virou)', '2026-10-15T00:30:00Z'],
+    ])('às %s, "hoje" do desfazer e da elegibilidade é o dia civil de Brasília', async (_r, instante) => {
+        // Título que vence hoje não é vencido: comparar com now() desfazia o lote dele e o
+        // deixava fora da formação (incidente 14/10: 15 lotes / 79 itens).
+        const { service, loteRepo, tituloRepo } = make({
+            calendar: BankingCalendar.withClock(() => new Date(instante)),
+        });
+        await service.formar({ triggeredBy: 'cron' });
+        const hoje = new Date('2026-10-14T00:00:00Z');
+        expect(loteRepo.desfazerAutomaticosVencidos).toHaveBeenCalledWith(hoje);
+        expect(tituloRepo.listElegiveisParaFormacao).toHaveBeenCalledWith(7, hoje);
     });
 
     it('sem elegíveis: nenhum lote formado', async () => {

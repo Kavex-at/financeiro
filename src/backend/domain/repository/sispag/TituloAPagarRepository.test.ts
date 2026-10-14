@@ -14,6 +14,9 @@ const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     ...over,
 });
 
+/** Dia civil de Brasília codificado como o ERP (00:00Z). */
+const HOJE = new Date('2026-10-14T00:00:00Z');
+
 const buildDb = () => {
     const tx = { insert: jest.fn().mockResolvedValue(1) };
     return {
@@ -144,7 +147,7 @@ describe('TituloAPagarRepository', () => {
 
     it('listElegiveisParaFormacao exclui título em QUALQUER lote vivo, não só RASCUNHO (I3)', async () => {
         const { client } = buildDb();
-        await new TituloAPagarRepository(client).listElegiveisParaFormacao(7);
+        await new TituloAPagarRepository(client).listElegiveisParaFormacao(7, HOJE);
         const [sql, params] = (client.selectMany as jest.Mock).mock.calls[0];
         // Título de remessa já gerada voltava para um novo lote automático (caso 3143, 02/10).
         for (const status of ['RASCUNHO', 'FINALIZADO', 'REMESSA_GERADA', 'RETORNADO']) {
@@ -152,12 +155,22 @@ describe('TituloAPagarRepository', () => {
         }
         // CANCELADO libera o título; não pode entrar na lista de lotes que o seguram.
         expect(sql).not.toContain("'CANCELADO'");
-        expect(params).toEqual({ maxDias: 7 });
+        expect(params).toEqual({ hoje: HOJE, ate: new Date('2026-10-22T00:00:00Z') });
+    });
+
+    it('listElegiveisParaFormacao: janela por dia civil — hoje entra, hoje+7 entra, hoje+8 não', async () => {
+        // `>= now()` deixava de fora o título que vence hoje (00:00Z < instante atual).
+        const { client } = buildDb();
+        await new TituloAPagarRepository(client).listElegiveisParaFormacao(7, HOJE);
+        const [sql] = (client.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toContain('t.vencimento >= $hoje');
+        expect(sql).toContain('t.vencimento < $ate');
+        expect(sql).not.toContain('now()');
     });
 
     it('listElegiveisParaFormacao deixa de fora título com bloqueio por duplicidade ATIVO (I13g)', async () => {
         const { client } = buildDb();
-        await new TituloAPagarRepository(client).listElegiveisParaFormacao(7);
+        await new TituloAPagarRepository(client).listElegiveisParaFormacao(7, HOJE);
         const [sql] = (client.selectMany as jest.Mock).mock.calls[0];
         expect(sql).toMatch(
             /NOT EXISTS \(\s*SELECT 1 FROM titulo_bloqueio_duplicidade b\s+WHERE b\.estado = 'ATIVO'/,

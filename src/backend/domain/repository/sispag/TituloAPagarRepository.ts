@@ -5,6 +5,8 @@ import PostgreeDatabaseClient, {
 } from '../../client/database/PostgreeDatabaseClient.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 const UPSERT_CHUNK = 200;
 
 interface TituloRow {
@@ -242,8 +244,15 @@ export default class TituloAPagarRepository {
      * ADR-0063 I13g: título com `BloqueioDuplicidade` ATIVO (retirado por duplicidade, cancelamento
      * pendente no Conexos) também fica de fora — voltar a um lote é o risco que a marca existe para
      * impedir.
+     *
+     * Janela por DIA CIVIL: `hoje` (dia de Brasília codificado como o ERP, 00:00Z) até
+     * `hoje + maxDias`, inclusive. Nunca `now()`: o título que vence hoje (00:00Z) ficava de fora.
      */
-    public listElegiveisParaFormacao = async (maxDias: number): Promise<TituloAPagar[]> => {
+    public listElegiveisParaFormacao = async (
+        maxDias: number,
+        hoje: Date,
+    ): Promise<TituloAPagar[]> => {
+        const ate = new Date(hoje.getTime() + (maxDias + 1) * DAY_MS);
         const rows = (await this.databaseClient.selectMany(
             `SELECT t.fil_cod, t.doc_cod, t.tit_cod, t.credor, t.pes_cod, t.valor, t.moeda,
                     t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod,
@@ -251,8 +260,8 @@ export default class TituloAPagarRepository {
              FROM titulo_a_pagar t
              WHERE t.ativo = TRUE AND t.aprovado = TRUE AND t.pago = FALSE
                AND t.vencimento IS NOT NULL
-               AND t.vencimento >= now()
-               AND t.vencimento <= now() + make_interval(days => $maxDias)
+               AND t.vencimento >= $hoje
+               AND t.vencimento < $ate
                AND NOT EXISTS (
                  SELECT 1 FROM lote_pagamento_item i
                  JOIN lote_pagamento l ON l.id = i.lote_id
@@ -263,7 +272,7 @@ export default class TituloAPagarRepository {
                  WHERE b.estado = 'ATIVO'
                    AND b.fil_cod = t.fil_cod AND b.doc_cod = t.doc_cod AND b.tit_cod = t.tit_cod)
              ORDER BY t.fil_cod, t.banco, t.vencimento ASC`,
-            { maxDias },
+            { hoje, ate },
         )) as TituloRow[];
         return rows.map(this.map);
     };

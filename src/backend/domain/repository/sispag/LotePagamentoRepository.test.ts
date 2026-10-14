@@ -56,6 +56,17 @@ const make = (db: DbMock) => {
 };
 
 describe('LotePagamentoRepository', () => {
+    it('desfazerAutomaticosVencidos compara com o dia civil recebido, não com now()', async () => {
+        // Título que vence hoje (00:00Z) não é vencido; `< now()` desfazia o lote dele.
+        const db = buildDb();
+        const hoje = new Date('2026-10-14T00:00:00Z');
+        await make(db).desfazerAutomaticosVencidos(hoje);
+        const [sql, params] = db.update.mock.calls[0];
+        expect(sql).toContain('i.vencimento < $hoje');
+        expect(sql).not.toContain('now()');
+        expect(params).toEqual({ hoje });
+    });
+
     it('criarLote insere e devolve o lote com itens', async () => {
         const db = buildDb();
         db.selectFirst.mockResolvedValue(header());
