@@ -58,6 +58,19 @@ describe('BoletoCodigoBarrasRetiradaIncompletaError', () => {
         expect(err.message).toContain('LISTA_TRUNCADA');
     });
 
+    it('finalizado: lote nativo já finalizado — manda cancelar o nativo, não promete limpeza', () => {
+        const err = new BoletoCodigoBarrasRetiradaIncompletaError({
+            modo: 'finalizado',
+            flpCod: 31,
+            pendentes: [{ docCod: '6172', titCod: '1' }],
+        });
+        expect(err.message).toContain('already finalized');
+        expect(err.userMessage).toMatch(/já está FINALIZADO no Conexos/);
+        expect(err.userMessage).toMatch(/cancele o lote nativo no Conexos/);
+        expect(err.userMessage).not.toMatch(/o sistema termina a limpeza/);
+        expect((err.details as { modo: string }).modo).toBe('finalizado');
+    });
+
     it('privacidade: código de 44/47 dígitos injetado em texto livre é saneado em todas as saídas', () => {
         const hostil = new BoletoCodigoBarrasRetiradaIncompletaError({
             modo: 'limpeza',
