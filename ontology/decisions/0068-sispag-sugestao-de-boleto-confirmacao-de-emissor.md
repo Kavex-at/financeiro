@@ -148,3 +148,16 @@ pelos índices únicos. Decisão do maintainer, antes do PR:
 
 Rejeitado: expirar confirmação por tempo (esconde o erro humano e some com a trilha) e reaproveitar
 `REJEITADA` como saída (muda de significado: esconde aquele boleto para aquele título).
+
+## Emenda 2026-10-14 (3) — o cenário das sugestões é cacheado (PERF-1)
+
+O motor rodava inteiro (carteira × pool) a cada listagem, e a tela fazia de 3 a 11 listagens por
+carga (páginas de 100 em série). Decisão do maintainer, sem mudar nenhuma regra:
+
+- **Cache em processo do cenário completo** (`SugestaoBoletoCache`): single-flight, TTL de 30 s,
+  invalidado por confirmar, rejeitar, anular, revogar e ao fim de toda sincronização do DDA.
+  Defasagem entre instâncias de até o TTL é aceita (a lista é informativa).
+- **Confirmar, rejeitar e anular nunca confiam nele**: releem o banco ao vivo (anti-TOCTOU, I15a).
+- A listagem aceita `tamanho` até 2000 e a tela busca tudo numa chamada; acima disso a tela avisa
+  que está truncada (nunca corta em silêncio).
+

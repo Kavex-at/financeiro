@@ -102,14 +102,25 @@ describe('cliente da sugestão de boleto', () => {
     expect(r.sugestoes).toHaveLength(1)
   })
 
-  it('fetchTodas junta as páginas e guarda o frescor da primeira', async () => {
-    mock
-      .mockResolvedValueOnce(resp(200, lista([item(1), item(2)], 3, { ddaDefasadoHoras: 20 })))
-      .mockResolvedValueOnce(resp(200, lista([item(3)], 3)))
+  it('fetchTodas faz UMA chamada com tamanho 2000 e guarda o frescor', async () => {
+    mock.mockResolvedValueOnce(
+      resp(200, lista([item(1), item(2), item(3)], 3, { ddaDefasadoHoras: 20, tamanho: 2000 })),
+    )
     const r = await fetchTodasSugestoesBoleto()
     expect(r.sugestoes).toHaveLength(3)
     expect(r.ddaDefasadoHoras).toBe(20)
-    expect(mock).toHaveBeenCalledTimes(2)
+    expect(mock).toHaveBeenCalledTimes(1)
+    const url = new URL(String(mock.mock.calls[0]?.[0]), 'http://x')
+    expect(url.searchParams.get('tamanho')).toBe('2000')
+    expect(url.searchParams.get('pagina')).toBe('1')
+  })
+
+  it('fetchTodas não pagina em silêncio: total maior que a lista fica visível ao chamador', async () => {
+    mock.mockResolvedValueOnce(resp(200, lista([item(1), item(2)], 2500, { tamanho: 2000 })))
+    const r = await fetchTodasSugestoesBoleto()
+    expect(mock).toHaveBeenCalledTimes(1)
+    expect(r.total).toBe(2500)
+    expect(r.sugestoes).toHaveLength(2)
   })
 
   it('confirmar e rejeitar mandam POST com a chave (e o motivo), nunca um ator', async () => {

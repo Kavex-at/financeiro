@@ -26,6 +26,9 @@
   dias de diferença, para qualquer lado" (inclusive antes do título). Agora segue os níveis acima.
   Boleto já ligado pelo Conexos a um título nunca é sugerido; quando dois títulos disputam o mesmo
   boleto, ele fica com o de vencimento mais próximo.
+- **A aba de títulos carrega as sugestões numa única consulta**, e o cálculo é reaproveitado por
+  30 segundos (e refeito logo depois de qualquer decisão ou sincronização do DDA). Se houver mais
+  de 2000 sugestões, a tela avisa que está mostrando só as primeiras.
 - **O que NÃO mudou:** nada é gravado no Conexos nesta etapa. Confirmar não associa o boleto ao
   título no ERP, o aviso de "sem boleto DDA" no lote continua e a remessa segue bloqueada até o
   boleto ser associado no Conexos. Título com dois candidatos igualmente fortes fica sem sugestão.

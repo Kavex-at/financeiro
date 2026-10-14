@@ -685,6 +685,31 @@ describe('SispagPage — sugestão de boleto na aba de títulos (ADR-0068)', () 
     expect(within(dlg).getByRole('button', { name: /^Rejeitar boleto/ })).toBeInTheDocument()
   })
 
+  it('lista truncada (total > recebidas): aviso visível, nunca silencioso', async () => {
+    permissoes = ['sispag:ver']
+    jest.requireMock('@/lib/sispag').fetchTodasSugestoesBoleto.mockResolvedValue({
+      sugestoes: [sugestao],
+      total: 2500,
+      pagina: 1,
+      tamanho: 2000,
+      contagem: {},
+    })
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    expect(await screen.findByText(/mostrando as 1 primeiras de/i)).toBeInTheDocument()
+    expect(screen.getByText(/mostrando as 1 primeiras de/i)).toHaveTextContent('2500')
+  })
+
+  it('lista completa: nenhum aviso de truncamento', async () => {
+    permissoes = ['sispag:ver']
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    await screen.findByRole('button', { name: 'sugestão disponível' })
+    expect(screen.queryByText(/mostrando as .* primeiras de/i)).not.toBeInTheDocument()
+  })
+
   it('falha ao ler as sugestões não derruba a aba de títulos', async () => {
     permissoes = ['sispag:ver']
     jest.requireMock('@/lib/sispag').fetchTodasSugestoesBoleto.mockRejectedValue(new Error('x'))

@@ -22,12 +22,19 @@ import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
+import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 const HOJE = new Date('2026-10-14T15:00:00Z'); // quarta-feira
 const calendar = BankingCalendar.withClock(() => HOJE);
 const codigoBarras = new CodigoBarrasBoleto();
 const regra = new RegraSugestaoBoleto();
 const motor = new MotorSugestaoBoleto(codigoBarras, calendar, regra);
+
+/** Relógio do cache nos testes: avança só quando o teste manda (TTL determinístico). */
+const relogio = { agora: HOJE.getTime() };
+afterEach(() => {
+    relogio.agora = HOJE.getTime();
+});
 
 const utc = (civil: string): number => Date.parse(`${civil}T00:00:00Z`);
 
@@ -237,6 +244,7 @@ const montar = (over: Partial<Cenario> = {}) => {
         info: jest.fn().mockResolvedValue(undefined),
         warn: jest.fn().mockResolvedValue(undefined),
     };
+    const cache = SugestaoBoletoCache.withClock(() => relogio.agora);
     const service = new BoletoSuggestionService(
         repo as never,
         tituloRepo as never,
@@ -248,8 +256,9 @@ const montar = (over: Partial<Cenario> = {}) => {
         calendar,
         db as never,
         logService as never,
+        cache,
     );
-    return { service, repo, tituloRepo, boletoRepo, loteRepo, db, logService, eventos, cen };
+    return { service, repo, tituloRepo, boletoRepo, loteRepo, db, logService, eventos, cen, cache };
 };
 
 describe('BoletoSuggestionService.listarSugestoes (I15c, I15k)', () => {
@@ -296,6 +305,173 @@ describe('BoletoSuggestionService.listarSugestoes (I15c, I15k)', () => {
         expect(a.sincronizadoEm).toBe(HOJE.getTime() - 20 * 3_600_000);
         const novo = montar();
         expect((await novo.service.listarSugestoes({})).ddaDefasadoHoras).toBeUndefined();
+    });
+});
+
+describe('cache do cenário (PERF-1)', () => {
+    it('a segunda listagem sai do cache: o motor e as leituras rodam uma vez só', async () => {
+        const { service, tituloRepo, boletoRepo } = montar();
+        const motorSugerir = jest.spyOn(motor, 'sugerir');
+        try {
+            await service.listarSugestoes({});
+            await service.listarSugestoes({ tier: 'FORTE', pagina: 1, tamanho: 10 });
+            await service.listarSugestoes({ pesCod: '7001' });
+            expect(motorSugerir).toHaveBeenCalledTimes(1);
+            expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+            expect(boletoRepo.listBoletos).toHaveBeenCalledTimes(1);
+        } finally {
+            motorSugerir.mockRestore();
+        }
+    });
+
+    it('filtro e paginação valem sobre o cenário em cache, sem recalcular', async () => {
+        const outro: TituloAPagar = { ...TITULO, docCod: '9100', pesCod: '7002', valor: 250 };
+        const { service, tituloRepo } = montar({
+            titulos: [TITULO, outro],
+            boletos: [BOLETO, { ...BOLETO, ditCod: 2, valor: 250 }],
+        });
+        const a = await service.listarSugestoes({ pesCod: '7002' });
+        const b = await service.listarSugestoes({ pagina: 2, tamanho: 1 });
+        expect(a.sugestoes.map((s) => s.docCod)).toEqual(['9100']);
+        expect(b.total).toBe(2);
+        expect(b.sugestoes).toHaveLength(1);
+        expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+    });
+
+    it('single-flight: duas listagens concorrentes rodam o motor exatamente uma vez', async () => {
+        const { service, tituloRepo } = montar();
+        const motorSugerir = jest.spyOn(motor, 'sugerir');
+        let liberar: () => void = () => undefined;
+        const portao = new Promise<void>((r) => {
+            liberar = r;
+        });
+        tituloRepo.listAtivos.mockImplementationOnce(async () => {
+            await portao;
+            return [TITULO];
+        });
+        try {
+            const a = service.listarSugestoes({});
+            const b = service.listarSugestoes({});
+            await new Promise((r) => setImmediate(r));
+            liberar();
+            const [ra, rb] = await Promise.all([a, b]);
+            expect(ra.total).toBe(1);
+            expect(rb.total).toBe(1);
+            expect(motorSugerir).toHaveBeenCalledTimes(1);
+            expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+        } finally {
+            motorSugerir.mockRestore();
+        }
+    });
+
+    it('TTL: passado o tempo, a listagem recalcula', async () => {
+        const { service, tituloRepo } = montar();
+        await service.listarSugestoes({});
+        relogio.agora += 29_000;
+        await service.listarSugestoes({});
+        expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+        relogio.agora += 2_000;
+        await service.listarSugestoes({});
+        expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        [
+            'confirmar',
+            (s: ReturnType<typeof montar>['service']) => s.confirmar({ ...CHAVE, ator: 'ana' }),
+            {},
+        ],
+        [
+            'rejeitar',
+            (s: ReturnType<typeof montar>['service']) =>
+                s.rejeitar({ ...CHAVE, motivo: 'outro credor', ator: 'ana' }),
+            {},
+        ],
+        [
+            'anular',
+            (s: ReturnType<typeof montar>['service']) =>
+                s.anularDecisao({
+                    filCod: 1,
+                    docCod: '9001',
+                    titCod: '1',
+                    motivo: 'confirmação errada',
+                    ator: 'ana',
+                }),
+            { decisoes: [{ ...DECISAO }] },
+        ],
+    ] as Array<
+        [string, (s: ReturnType<typeof montar>['service']) => Promise<unknown>, Partial<Cenario>]
+    >)('invalida o cache depois de %s: a listagem seguinte recalcula', async (_nome, acao, over) => {
+        const { service, tituloRepo } = montar({ pares: [PAR], ...over });
+        await service.listarSugestoes({});
+        expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
+        await acao(service);
+        const antes = tituloRepo.listAtivos.mock.calls.length;
+        await service.listarSugestoes({});
+        expect(tituloRepo.listAtivos.mock.calls.length).toBe(antes + 1);
+    });
+
+    it('revogar o par invalida o cache', async () => {
+        const { service, repo, tituloRepo, cen } = montar({ pares: [PAR] });
+        repo.revogarPar.mockImplementationOnce(async () => {
+            cen.pares[0] = { ...PAR, estado: 'REVOGADA', versao: 2 };
+            return 1;
+        });
+        await service.listarSugestoes({});
+        await service.revogarPar({ id: 'par-1', motivo: 'conta trocada', ator: 'cid' });
+        await service.listarSugestoes({});
+        expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(2);
+    });
+
+    it('confirmar, rejeitar e anular NUNCA consultam o cache para decidir', async () => {
+        const { service, cache } = montar({ pares: [PAR] });
+        const obter = jest.spyOn(cache, 'obter');
+        await service.confirmar({ ...CHAVE, ator: 'ana' });
+        await service
+            .rejeitar({ ...CHAVE, ditCod: 2, motivo: 'outro', ator: 'ana' })
+            .catch(() => undefined);
+        await service
+            .anularDecisao({
+                filCod: 1,
+                docCod: '9001',
+                titCod: '1',
+                motivo: 'confirmação errada',
+                ator: 'ana',
+            })
+            .catch(() => undefined);
+        expect(obter).not.toHaveBeenCalled();
+    });
+
+    it('confirmar relê o banco ao vivo mesmo com o cache quente e já velho', async () => {
+        const { service, tituloRepo, cen } = montar({ pares: [PAR] });
+        await service.listarSugestoes({}); // aquece: o título está livre
+        cen.titulos = [{ ...TITULO, pago: true }]; // mudou no banco; o cache ainda não sabe
+        await expect(service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toBeInstanceOf(
+            BoletoSuggestionNotAvailableError,
+        );
+        expect(tituloRepo.buscarPorChave).toHaveBeenCalled();
+    });
+
+    it('registra a duração e as contagens só na falta de cache, sem barras', async () => {
+        const { service, logService } = montar();
+        await service.listarSugestoes({});
+        await service.listarSugestoes({});
+        const calculos = logService.info.mock.calls
+            .map((c) => c[0] as { message: string; data?: Record<string, unknown> })
+            .filter((p) => p.message === 'sugestao_boleto.cenario_calculado');
+        expect(calculos).toHaveLength(1);
+        expect(calculos[0]?.data).toMatchObject({ titulos: 1, boletos: 1, sugestoes: 1, orfas: 0 });
+        expect(typeof calculos[0]?.data?.duracaoMs).toBe('number');
+        expect(JSON.stringify(calculos)).not.toContain(CODBAR);
+        expect(JSON.stringify(calculos)).not.toMatch(/\d{30,}/);
+    });
+
+    it('falha do cálculo não fica em cache: a chamada seguinte tenta de novo', async () => {
+        const { service, tituloRepo } = montar();
+        tituloRepo.listAtivos.mockRejectedValueOnce(new Error('banco fora'));
+        await expect(service.listarSugestoes({})).rejects.toThrow('banco fora');
+        const r = await service.listarSugestoes({});
+        expect(r.total).toBe(1);
     });
 });
 

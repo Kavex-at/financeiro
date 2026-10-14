@@ -14,6 +14,7 @@ import BoletoDdaService from './BoletoDdaService.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
 import RegraSugestaoBoleto, { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
 import PaginacaoBoletoDda from './PaginacaoBoletoDda.js';
+import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 const HOJE = new Date('2026-09-23T15:00:00Z');
 const dia = (civil: string): number => Date.parse(`${civil}T08:30:00Z`);
@@ -37,6 +38,7 @@ const build = (lockLivre = true) => {
         ),
     };
     const log = { info: jest.fn(), warn: jest.fn() };
+    const cache = new SugestaoBoletoCache();
     const service = new BoletoDdaService(
         dda as unknown as ConexosDdaClient,
         { getFilCodDefault: jest.fn().mockResolvedValue(1) } as unknown as ConexosBaseClient,
@@ -51,9 +53,43 @@ const build = (lockLivre = true) => {
         new BoundedConcurrency(),
         db as unknown as PostgreeDatabaseClient,
         log as unknown as LogService,
+        cache,
     );
-    return { service, dda, repo, log };
+    return { service, dda, repo, log, cache };
 };
+
+describe('BoletoDdaService — invalida o cache das sugestões (ADR-0068, PERF-1)', () => {
+    it('ao fim de toda sincronização, com ou sem falha de arquivo', async () => {
+        const { service, dda, repo, cache } = build();
+        const invalidar = jest.spyOn(cache, 'invalidar');
+        dda.listarArquivos.mockResolvedValue([{ ddcCod: 1, importadoEm: dia('2026-09-23') }]);
+        dda.listarItens.mockRejectedValue(new Error('falhou'));
+        const r = await service.sincronizar({ triggeredBy: 'teste' });
+        expect(r.falhas).toBe(1);
+        expect(invalidar).toHaveBeenCalledTimes(1);
+        repo.salvarArquivo.mockClear();
+        dda.listarItens.mockResolvedValue([{ ddcCod: 1, ditCod: 1, valor: 1 }]);
+        await service.sincronizar({ triggeredBy: 'teste' });
+        expect(invalidar).toHaveBeenCalledTimes(2);
+    });
+
+    it('invalida mesmo quando a sincronização lança (pool pode ter mudado em parte)', async () => {
+        const { service, dda, cache } = build();
+        const invalidar = jest.spyOn(cache, 'invalidar');
+        dda.listarArquivos.mockRejectedValue(new Error('conexos fora'));
+        await expect(service.sincronizar({ triggeredBy: 'teste' })).rejects.toThrow('conexos fora');
+        expect(invalidar).toHaveBeenCalledTimes(1);
+    });
+
+    it('não invalida quando o lock está ocupado (nada foi sincronizado)', async () => {
+        const { service, cache } = build(false);
+        const invalidar = jest.spyOn(cache, 'invalidar');
+        await expect(service.sincronizar({ triggeredBy: 'teste' })).rejects.toBeInstanceOf(
+            IngestLockBusyError,
+        );
+        expect(invalidar).not.toHaveBeenCalled();
+    });
+});
 
 describe('BoletoDdaService', () => {
     it('sincronizar lê arquivos novos e relê só os recentes já conhecidos', async () => {

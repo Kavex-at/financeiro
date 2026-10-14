@@ -227,6 +227,10 @@ export interface ListagemSugestoes {
 }
 
 export const SUGESTAO_TAMANHO_PADRAO = 50;
-export const SUGESTAO_TAMANHO_MAXIMO = 100;
+/**
+ * Teto de uma página. A tela busca tudo numa chamada só (o cenário vem do cache em processo), então
+ * o teto cobre a carteira real (~1,1 mil títulos); acima disso a tela avisa que está truncado.
+ */
+export const SUGESTAO_TAMANHO_MAXIMO = 2000;
 /** Horas sem sincronizar o DDA, em dia útil, a partir das quais a tela avisa (ADR-0067). */
 export const DDA_DEFASADO_HORAS = 8;

@@ -1055,6 +1055,20 @@ function SispagPanel() {
                 </div>
               </div>
 
+              {sugestoes && sugestoes.total > sugestoes.sugestoes.length ? (
+                <p
+                  role="status"
+                  className="mb-3 flex items-start gap-2 rounded-lg border border-warning/40 px-3 py-2 text-xs text-warning-foreground"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  <span>
+                    Sugestões de boleto: mostrando as {sugestoes.sugestoes.length} primeiras de{' '}
+                    {sugestoes.total}. Os títulos além delas aparecem sem a sugestão; use os filtros
+                    para reduzir a lista.
+                  </span>
+                </p>
+              ) : null}
+
               {abaTitulos.total === 0 ? (
                 <EmptyState
                   icon={titulos.length === 0 ? <DatabaseZap className="size-6" /> : undefined}
