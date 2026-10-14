@@ -72,6 +72,51 @@ describe('BoletoCodigoBarrasRepetidoError', () => {
         expect((err.details as { modo: string }).modo).toBe('arquivo');
     });
 
+    it('lote: orienta a descartar o rascunho e nomeia o lote nativo; message leva o flpCod', () => {
+        const err = new BoletoCodigoBarrasRepetidoError({
+            origem: 'lote',
+            flpCod: 12,
+            grupos: [{ mascarado: MASCARADO, itens: [titulo(1), titulo(2)] }],
+            ilegiveis: [],
+        });
+        expect(err.userMessage).toMatch(/interrompida antes de finalizar/);
+        expect(err.userMessage).toMatch(/Lote nativo no Conexos: 12/);
+        expect(err.message).toContain('flpCod 12');
+    });
+
+    it('ilegível: também diz que o rascunho segue no Conexos e deve ser descartado', () => {
+        const err = new BoletoCodigoBarrasRepetidoError({
+            origem: 'lote',
+            flpCod: 12,
+            grupos: [],
+            ilegiveis: [titulo(7)],
+        });
+        expect(err.userMessage).toMatch(/interrompida antes de finalizar/);
+        expect(err.userMessage).toMatch(/descartado no Conexos/);
+        expect(err.userMessage).toMatch(/Lote nativo no Conexos: 12/);
+        expect(err.message).toContain('flpCod 12');
+    });
+
+    it('arquivo: lote JÁ finalizado — não envie, cancele; nomeia flpCod e arquivo, sem "rascunho"', () => {
+        const err = new BoletoCodigoBarrasRepetidoError({
+            origem: 'arquivo',
+            flpCod: 12,
+            nomeArquivo: 'PG210801.REM',
+            grupos: [{ mascarado: MASCARADO, linhas: [12, 15] }],
+        });
+        const m = err.userMessage;
+        expect(m).toContain('PG210801.REM');
+        expect(m).toMatch(/lote nativo 12 está FINALIZADO/);
+        expect(m).toMatch(/NÃO envie este arquivo ao banco/);
+        expect(m).toMatch(/cancele o arquivo e o lote no Conexos/);
+        expect(m).not.toMatch(/interrompida antes de finalizar/);
+        expect(m).not.toMatch(/rascunho/);
+        expect(err.message).toContain('flpCod 12');
+        expect(err.message).toContain('PG210801.REM');
+        expect(m).toContain(MASCARADO);
+        expect(m).not.toMatch(/\d{10,}/);
+    });
+
     it('message (ledger) lista no máximo 20 títulos e resume o resto com (+N)', () => {
         const itens = Array.from({ length: 25 }, (_, i) => titulo(i));
         const err = new BoletoCodigoBarrasRepetidoError({

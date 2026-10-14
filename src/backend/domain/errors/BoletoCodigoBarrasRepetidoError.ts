@@ -22,9 +22,24 @@ export interface GrupoRepetidoNoArquivo {
     linhas: number[];
 }
 
+/** Onde o lote nativo está no Conexos — dado de recuperação, nunca sensível. */
+interface ContextoNativo {
+    /** Número do lote nativo (`flpCod`) no Conexos. */
+    flpCod?: number;
+}
+
 export type BoletoCodigoBarrasRepetidoParams =
-    | { origem: 'lote'; grupos: GrupoRepetidoNoLote[]; ilegiveis: ItemBoletoRepetido[] }
-    | { origem: 'arquivo'; grupos: GrupoRepetidoNoArquivo[] };
+    | ({
+          origem: 'lote';
+          grupos: GrupoRepetidoNoLote[];
+          ilegiveis: ItemBoletoRepetido[];
+      } & ContextoNativo)
+    | ({
+          origem: 'arquivo';
+          grupos: GrupoRepetidoNoArquivo[];
+          /** Nome do `.REM` já gerado no Conexos. */
+          nomeArquivo?: string;
+      } & ContextoNativo);
 
 const MAX_TITULOS_NA_MENSAGEM = 20;
 const JANELA_SENSIVEL = /\d{10,}/;
@@ -74,9 +89,14 @@ export default class BoletoCodigoBarrasRepetidoError extends Error implements Ha
 
     private static normalizar = (params: BoletoCodigoBarrasRepetidoParams) => {
         const E = BoletoCodigoBarrasRepetidoError;
+        const flpCod = params.flpCod !== undefined ? { flpCod: Number(params.flpCod) } : {};
         if (params.origem === 'arquivo') {
             return {
                 modo: 'arquivo' as const,
+                ...flpCod,
+                ...(params.nomeArquivo !== undefined
+                    ? { nomeArquivo: E.sanear(String(params.nomeArquivo)) }
+                    : {}),
                 grupos: params.grupos.map((g) => ({
                     mascarado: E.mascara(g.mascarado),
                     linhas: [...g.linhas].map(Number),
@@ -86,6 +106,7 @@ export default class BoletoCodigoBarrasRepetidoError extends Error implements Ha
         }
         return {
             modo: params.grupos.length === 0 ? ('ilegivel' as const) : ('repetido' as const),
+            ...flpCod,
             grupos: params.grupos.map((g) => ({
                 mascarado: E.mascara(g.mascarado),
                 itens: g.itens.map(E.item),
@@ -114,11 +135,12 @@ export default class BoletoCodigoBarrasRepetidoError extends Error implements Ha
     private static montarMessage = (
         n: ReturnType<typeof BoletoCodigoBarrasRepetidoError.normalizar>,
     ): string => {
+        const E = BoletoCodigoBarrasRepetidoError;
         if (n.modo === 'arquivo') {
             const gs = (n.grupos as GrupoRepetidoNoArquivo[])
                 .map((g) => `${g.mascarado} at lines ${g.linhas.join(',')}`)
                 .join('; ');
-            return `remittance file repeats the same boleto barcode: ${gs}`;
+            return `remittance file repeats the same boleto barcode: ${gs}${E.sufixoMessage(n)}`;
         }
         const partes: string[] = [];
         let listados = 0;
@@ -149,27 +171,50 @@ export default class BoletoCodigoBarrasRepetidoError extends Error implements Ha
             const mais = n.ilegiveis.length - ids.length;
             partes.push(`unreadable barcode on ${ids.join(', ')}${mais > 0 ? ` (+${mais})` : ''}`);
         }
-        return partes.join(' | ');
+        return `${partes.join(' | ')}${E.sufixoMessage(n)}`;
+    };
+
+    /** flpCod/arquivo no motivo do ledger: onde a operadora precisa agir no Conexos. */
+    private static sufixoMessage = (n: { flpCod?: number; nomeArquivo?: string }): string => {
+        const partes: string[] = [];
+        if (n.flpCod !== undefined) partes.push(`flpCod ${n.flpCod}`);
+        if (n.nomeArquivo !== undefined) partes.push(`file ${n.nomeArquivo}`);
+        return partes.length > 0 ? ` [${partes.join(', ')}]` : '';
     };
 
     private static montarUserMessage = (
         n: ReturnType<typeof BoletoCodigoBarrasRepetidoError.normalizar>,
     ): string => {
         const E = BoletoCodigoBarrasRepetidoError;
+        const loteNativo = n.flpCod !== undefined ? ` Lote nativo no Conexos: ${n.flpCod}.` : '';
+        // lote/ilegível: a guarda abortou ANTES de finalizar — o rascunho ainda existe.
         const orientacao =
-            'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco. O rascunho deste lote no Conexos ainda contém o item repetido: retire o título repetido do lote aqui e peça que o rascunho seja descartado no Conexos antes de gerar a remessa de novo.';
+            'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco. O rascunho deste lote no Conexos ainda contém o item repetido: retire o título repetido do lote aqui e peça que o rascunho seja descartado no Conexos antes de gerar a remessa de novo.' +
+            loteNativo;
         if (n.modo === 'arquivo') {
+            // Aqui o lote JÁ foi finalizado e o `.REM` existe no ERP: não há rascunho a descartar.
             const gs = (n.grupos as GrupoRepetidoNoArquivo[])
                 .map((g) => `código ${g.mascarado} nas linhas ${g.linhas.join(' e ')} do arquivo`)
                 .join('; ');
-            return `O arquivo de remessa repete o mesmo boleto: ${gs}. Pagar duas vezes o mesmo boleto não é permitido. ${orientacao}`;
+            const arquivo = n.nomeArquivo !== undefined ? ` "${n.nomeArquivo}"` : '';
+            const lote = n.flpCod !== undefined ? ` O lote nativo ${n.flpCod}` : ' O lote nativo';
+            return (
+                `O arquivo de remessa${arquivo} repete o mesmo boleto: ${gs}. ` +
+                'Pagar duas vezes o mesmo boleto não é permitido. ' +
+                `O arquivo foi gerado e${lote} está FINALIZADO no Conexos. ` +
+                'NÃO envie este arquivo ao banco: cancele o arquivo e o lote no Conexos, retire o ' +
+                'título repetido do lote aqui e gere a remessa de novo.'
+            );
         }
         const blocos: string[] = [];
         if (n.modo === 'ilegivel' || n.ilegiveis.length > 0) {
             const itens = n.ilegiveis.map(E.descreverItem).join('; ');
             blocos.push(
                 `O código de barras está ilegível ou inválido para o título ${itens}. ` +
-                    'Revise o boleto antes de gerar a remessa.',
+                    'Revise o boleto antes de gerar a remessa. ' +
+                    'A remessa foi interrompida antes de finalizar e nada foi enviado ao banco; ' +
+                    'o rascunho deste lote no Conexos ainda contém o item e deve ser descartado ' +
+                    `no Conexos antes de gerar a remessa de novo.${loteNativo}`,
             );
         }
         const grupos = n.grupos as GrupoRepetidoNoLote[];
