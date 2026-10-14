@@ -46,6 +46,75 @@ describe('RemessaCnabValidator', () => {
         });
     });
 
+    describe('barras repetidas entre segmentos J (ADR-0069, I16b)', () => {
+        const OUTRA = '34191100000005720681234567890123456789012399';
+        const comDvOk = (b: string): string => {
+            // Recalcula o DV geral para a barra sintética ficar válida.
+            const semDv = b.slice(0, 4) + b.slice(5);
+            let soma = 0;
+            let peso = 2;
+            for (let i = semDv.length - 1; i >= 0; i -= 1) {
+                soma += Number(semDv[i]) * peso;
+                peso = peso === 9 ? 2 : peso + 1;
+            }
+            const dv = 11 - (soma % 11);
+            return `${b.slice(0, 4)}${dv === 0 || dv === 10 || dv === 11 ? 1 : dv}${b.slice(5)}`;
+        };
+        const BARRAS_B = comDvOk(OUTRA);
+
+        it('dois J com as mesmas barras → 1 grupo com as linhas e a barra mascarada', () => {
+            const conteudo = [
+                header,
+                linha('J', BARRAS_OK),
+                linha('J', BARRAS_B),
+                linha('J', BARRAS_OK),
+            ].join('\n');
+            const r = make().validar(conteudo);
+            expect(r.invalidos).toEqual([]);
+            expect(r.repetidos).toEqual([
+                {
+                    barrasMascarada: `${BARRAS_OK.slice(0, 5)}…${BARRAS_OK.slice(-4)}`,
+                    linhas: [2, 4],
+                },
+            ]);
+        });
+
+        it('J-52 que repete a identificação NÃO conta', () => {
+            const conteudo = [
+                linha('J', BARRAS_OK),
+                linha('J', '', '52'),
+                linha('J', BARRAS_B),
+                linha('J', '', '52'),
+            ].join('\n');
+            expect(make().validar(conteudo).repetidos).toEqual([]);
+        });
+
+        it('segmentos A/B/O iguais não contam', () => {
+            const conteudo = [
+                linha('A', BARRAS_OK),
+                linha('A', BARRAS_OK),
+                linha('O', BARRAS_OK),
+            ].join('\n');
+            expect(make().validar(conteudo).repetidos).toEqual([]);
+        });
+
+        it('J com barras inválidas fica em invalidos, não vira repetido', () => {
+            const conteudo = [linha('J', BARRAS_DV_ERRADO), linha('J', BARRAS_DV_ERRADO)].join(
+                '\n',
+            );
+            const r = make().validar(conteudo);
+            expect(r.invalidos).toHaveLength(2);
+            expect(r.repetidos).toEqual([]);
+        });
+
+        it('repetidos é sempre um array e nada carrega as barras completas', () => {
+            expect(make().validar(linha('J', BARRAS_OK)).repetidos).toEqual([]);
+            const r = make().validar([linha('J', BARRAS_OK), linha('J', BARRAS_OK)].join('\n'));
+            expect(JSON.stringify(r.repetidos)).not.toContain(BARRAS_OK);
+            expect(JSON.stringify(r)).not.toContain(BARRAS_OK);
+        });
+    });
+
     describe('varredura do arquivo', () => {
         it('arquivo íntegro: nenhum inválido', () => {
             const conteudo = [header, linha('J', BARRAS_OK), linha('J', '', '52')].join('\n');

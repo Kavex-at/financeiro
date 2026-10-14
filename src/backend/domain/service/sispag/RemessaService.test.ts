@@ -1328,6 +1328,38 @@ describe('RemessaService — gate de integridade do .REM', () => {
         expect(loteRepo.setRemessaGerada).toHaveBeenCalled();
     });
 
+    it('mesma barra em dois segmentos J (I16b) → BoletoCodigoBarrasRepetidoError modo arquivo, sem entregar', async () => {
+        const write = comConteudo([linhaJ(BARRAS_OK), linhaJ(BARRAS_OK)].join('\n'));
+        const loteRepo = buildLoteRepo(lote());
+        const ledger = buildLedger();
+        const err = await make({ write, loteRepo, ledger })
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .catch((e: unknown) => e);
+        expect(err).toMatchObject({
+            code: 'BOLETO_CODIGO_BARRAS_REPETIDO',
+            statusCode: 409,
+            details: { modo: 'arquivo' },
+        });
+        expect(loteRepo.setRemessaGerada).not.toHaveBeenCalled();
+        expect(loteRepo.transicionarStatus).not.toHaveBeenCalled();
+        expect(ledger.settle).not.toHaveBeenCalled();
+        expect(ledger.fail).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(ledger.fail.mock.calls)).not.toContain(BARRAS_OK);
+    });
+
+    it('barra inválida tem precedência: RemessaCorrompidaError, não o de repetido', async () => {
+        const write = comConteudo(
+            [
+                linhaJ('34198100000005720681234567890123456789012345'),
+                linhaJ(BARRAS_OK),
+                linhaJ(BARRAS_OK),
+            ].join('\n'),
+        );
+        await expect(
+            make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
+        ).rejects.toMatchObject({ code: 'REMESSA_CORROMPIDA' });
+    });
+
     it('.REM sem conteúdo legível NÃO bloqueia — avisa e segue', async () => {
         // A garantia cai neste caso, e isso fica registrado em vez de virar recusa silenciosa.
         const write = buildWrite();
