@@ -1,8 +1,8 @@
 ---
 name: boleto-exige-codigo-de-barras
 type: business-rule
-ontology_version: "0.10"
-implementation_status: implemented
+ontology_version: "0.41.0"
+implementation_status: partial
 status: active
 owners: [yuri]
 related_files:
@@ -59,7 +59,7 @@ São dois fail-closed diferentes:
 |---|---|---|
 | BOLETO sem boleto DDA | `BoletoSemCodigoBarrasError` | importar o DDA no `fin124`, ou trocar a forma |
 | TED/crédito sem conta ativa | erro de destino (`cmn025`) | cadastrar a conta do favorecido |
-| Dois itens BOLETO com o mesmo código de barras | `BoletoCodigoBarrasRepetidoError` | retirar o título repetido do lote local e gerar de novo |
+| Dois itens BOLETO com o mesmo código de barras | **retirada automática** (I16d, ADR-0069 Emenda 1); `BoletoCodigoBarrasRepetidoError` só na rede do `.REM` (I16b(2)) | ver o aviso do lote (I16f); o título retirado fica retido (I16g) |
 
 **Boleto não precisa de conta do favorecido** — o destino é o próprio código de barras. Exigir
 conta para boleto rejeitava justamente o fornecedor que só aceita boleto (o caso comum: em PRD,
@@ -67,24 +67,28 @@ conta para boleto rejeitava justamente o fornecedor que só aceita boleto (o cas
 
 ## Um código de barras, um item (I16)
 
-> **Status: I16 `implemented`** (ADR-0069, app v0.66.1). A guarda é uma função pura sobre os códigos
-> do lote (`AnaliseCodigoBarrasRepetido`), chamada em `RemessaService` entre o import e o
-> `finalizarLote` — inclusive em retomada — e, como rede, no gate 5.1 do `.REM`.
+> **Status: I16a–c e I16e (aborto) `implemented`** (ADR-0069, app v0.66.1). **I16d–I16h
+> (retirada automática, ADR-0069 Emenda 1, ontologia v0.41.0) `planned`: a ontologia está à frente do
+> código** até a feature de remoção ship. Até lá o comportamento em produção continua sendo o aborto da
+> ADR-0069 original.
 >
-> Detalhes da entrega:
+> A guarda é uma função pura sobre os códigos do lote (`AnaliseCodigoBarrasRepetido`), chamada em
+> `RemessaService` entre o import e o `finalizarLote` — inclusive em retomada — e, como rede, no gate
+> 5.1 do `.REM`.
+>
+> Detalhes da entrega (PR 1):
 > - `ConexosSispagWriteClient.listarLinhasDigitaveisDoLote` passou a devolver `invalidos`
 >   (`docCod/titCod` dos códigos presentes porém ilegíveis — nunca o código) para que a mensagem de I16c
 >   nomeie o título.
-> - A máscara de I16e (5 primeiros + 4 últimos) é uma definição própria da guarda
+> - A máscara (5 primeiros + 4 últimos) é uma definição própria da guarda
 >   (`AnaliseCodigoBarrasRepetido.mascarar`); não altera `CodigoBarrasBoleto.mascarar` (I15k, banco…4)
 >   nem a máscara do `RemessaCnabValidator` para barras inválidas.
 > - **Limite conhecido (R3):** `listarLinhasDigitaveisDoLote` é leitura de página única (500). Se
 >   `itens + invalidos` for menor que o número de itens BOLETO do lote (leitura truncada ou item ainda sem
->   código), a guarda **avisa** (`LogService.warn`) e segue; a rede do `.REM` cobre. Virar abort é decisão
->   pendente do mantenedor.
-> - **Limite conhecido (rascunho):** a leitura é do que está no rascunho nativo do ERP. Retirar o título
->   do lote local não remove o item já importado no rascunho; remover o repetido do rascunho nativo é
->   tratado em feature separada.
+>   código), a guarda **avisa** (`LogService.warn`) e segue; a rede do `.REM` cobre. **Leitura
+>   incompleta nunca vira retirada** (I16c, P0-3(c)); virar abort é decisão pendente.
+> - **Limite conhecido (rascunho):** a leitura é do que está no rascunho nativo do ERP. O item já
+>   importado só sai do rascunho nativo pelo `DELETE` de I16d.3 (verificado em HML, 2026-10-14).
 
 > `titVldReflexoDdaAssoc` significa "existe boleto DDA com mesmo valor e vencimento"; **não reserva 1:1**.
 > O ERP anexa o **mesmo** código de barras a cada item importado do grupo (caso PEDRONI, fil 2: 10 títulos
@@ -96,9 +100,20 @@ conta para boleto rejeitava justamente o fornecedor que só aceita boleto (o cas
 |---|---|
 | **I16a** | **Um código de barras, um item.** Dentro de um mesmo lote/remessa, dois ou mais itens `modalidade = BOLETO` não podem carregar o mesmo código de barras **normalizado de 44 dígitos** (a linha digitável de 47 dígitos de `itsNumCodbar` é convertida para barras de 44; o segmento J do `.REM` já carrega 44). Violação ⇒ `BoletoCodigoBarrasRepetidoError` (409). |
 | **I16b** | **Pontos de checagem.** (1) **Principal:** logo após `importarTitulos` e **antes de `finalizarLote`**, sobre `listarLinhasDigitaveisDoLote` (único ponto em que o código já existe e o último antes de o lote nativo virar FINALIZADO; rascunho nativo não se apaga por API, finalizado se cancela). (2) **Rede de segurança:** `RemessaCnabValidator` compara o 44 dígitos dos segmentos J do `.REM` gerado, e cobre o caso em que (1) foi pulado (retomada de etapa) ou a leitura dropou itens. Falha em (2) é tardia e segue o tratamento já existente do gate pós-geração (lote nativo finalizado e arquivo no ERP para cancelamento manual). O mesmo caminho serve lote manual e automático. |
-| **I16c** | **Falha fechada para código presente mas inválido.** Item cujo código de barras existe porém foi descartado pela leitura (`dropped`: DV inválido, tamanho incorreto) impede a comparação confiável: o lote com BOLETO e `dropped > 0` **aborta** com o mesmo erro nomeado, em mensagem própria ("código de barras ilegível/inválido para o título X"). Nunca se ignora o item inválido para "seguir com o resto". Ausência continua sendo tratada pela regra `BoletoSemCodigoBarrasError`, antes desta. |
-| **I16d** | **Semântica do aborto.** Aborta **antes de `finalizarLote`**; o ledger de idempotência da remessa é marcado `failed` com motivo e títulos; o **rascunho nativo permanece** e a retomada o **reaproveita**. A solução **não decide** qual título fica com o boleto (julgamento financeiro, human-in-the-loop) e **não descarta item em silêncio**: a analista tira o título repetido do lote **local** (RETIRAR) e gera de novo. |
-| **I16e** | **Mensagem e privacidade.** A mensagem é em pt-BR e lista, para cada grupo repetido, os títulos (`docCod/titCod`), `valor`, `vencimento` e o código de barras **mascarado** (primeiros 5 + últimos 4 dígitos). O código completo **nunca** aparece em mensagem, log ou ledger, e **nada sobre o código de barras é persistido** por esta guarda: a leitura é ao vivo do ERP (sem migration). A guarda roda dentro de `gerarRemessa`, sem permissão nova; o bloqueio é auditado por `LogService.warn` (mascarado) e pelo ledger. |
+| **I16c** | **Código lido e descartado é retirado; ausência e leitura incompleta abortam (decisão P0-3(c)).** Item cujo código de barras **foi lido** do ERP porém descartado pela leitura (`dropped`: DV inválido, tamanho incorreto) impede a comparação confiável e **é retirado** conforme I16d.2 (motivo `CODIGO_BARRAS_ILEGIVEL`): nunca se mantém no lote um item cujo código não pôde ser comparado. **Ausência pura** (item BOLETO sem código: `BoletoSemCodigoBarrasError`, antes desta guarda) e **leitura incompleta ou falha de leitura** da lista nativa **continuam abortando**: podem ser falha do ERP, não problema do título, e **leitura incompleta nunca vira retirada**. |
+| **I16d** | **Retirada automática (Emenda 1, ADR-0069).** Achada a repetição (I16a) ou item com código lido e descartado (I16c), a solução **retira** os itens ofensores e **continua a remessa com o restante**, antes de `finalizarLote` nativo. Nunca em silêncio: a analista é informada (I16f) e o título fica retido (I16g). Valem I16d.1–I16d.8. Vale para lote manual e automático (P1-2(a)). A rede do `.REM` (I16b(2)) **não** retira: continua abortando. |
+| **I16d.1** | **O que sai, o que fica.** Por grupo de itens BOLETO com o mesmo código normalizado de 44 dígitos, **fica exatamente um** e **saem os demais**. O que fica: **menor `vencimento`, depois menor `docCod`, depois `filCod`, depois `titCod`** (comparação numérica onde o campo é numérico). Heurística de desempate, **não** juízo financeiro sobre qual dívida o boleto quita; a retirada é reversível (I16g). **Nunca** se retira o item que fica. *Follow-up aberto, não implementado (P1-1(b)):* preferir o título com decisão humana confirmada (ADR-0068) quando houver exatamente um no grupo. |
+| **I16d.2** | **Cláusula de código ilegível (P0-3(c)).** Item `modalidade = BOLETO` cujo código **foi lido e descartado** (DV inválido, tamanho incorreto: I16c), depois do import (e, no passo 2 da ADR-0068, depois do `PUT`), **é retirado**, sem grupo e sem "o que fica". **Não** se retira por ausência pura nem por leitura incompleta: aí a guarda aborta (I16c). Só dois casos retiram: código **lido e repetido** (I16a) e código **lido e descartado**. |
+| **I16d.3** | **Local primeiro, ERP depois.** Para cada item a retirar: (1) numa transação local, remover o item do lote local, criar a marca de retenção (I16g) e gravar o evento na trilha (I16e/I16f); (2) só então `DELETE fin015/finItemSispag/{bncCod}/{flpCod}/{itsCodSeq}/{filCod}/{filCodLote}` no rascunho nativo, com `itsCodSeq` lido **na hora** de `fin015/finItemSispag/list` (nunca de cache); (3) reler a lista e **confirmar a ausência**: o sucesso é a ausência observada, não o `200` do DELETE. A ordem inversa criaria item fora do ERP e ainda no lote local, que a retomada reimportaria. |
+| **I16d.4** | **Ator e motivo.** Ator `sistema` (`SISPAG_SYSTEM_ACTOR`). Motivos novos no enum `SystemRemovalReason`: `CODIGO_BARRAS_REPETIDO` e `CODIGO_BARRAS_ILEGIVEL`. O evento carrega: identidade do título retirado (`filCod/docCod/titCod`), `valor`, `vencimento`, o **código mascarado** (5+4) e, para repetição, a identidade do título **que ficou**. Nunca o código completo. |
+| **I16d.5** | **Idempotência.** Reexecutar a guarda sobre o mesmo rascunho é seguro: item já fora do lote local e já ausente da lista nativa não gera novo evento nem novo `DELETE`; item fora do lote local e ainda presente no rascunho gera **só** o `DELETE` (I16h). Evento de trilha único por `(lote, título, motivo)`; marca `ATIVO` única por título. |
+| **I16d.6** | **Falha parcial fecha.** Se algum `DELETE` falhar (ou a releitura ainda mostrar o item): **não** se chama `finalizarLote`; ledger `failed` com motivo `LIMPEZA_CODIGO_REPETIDO_INCOMPLETA` e os títulos pendentes; erro nomeado `BoletoCodigoBarrasRetiradaIncompletaError` (409). Itens já retirados **permanecem retirados**; a retomada termina a limpeza (I16h). Falha de **leitura** da lista nativa não decide: é incompleta, nunca "limpo". |
+| **I16d.7** | **Pós-limpeza.** Depois de retirar, a guarda **relê** os códigos e **reaplica** I16a: só passa a `finalizarLote` com zero código repetido e zero item ilegível. Lote que **esvazia** (só possível pela cláusula de ilegível) falha com erro nomeado, ledger `failed`, rascunho nativo vazio permanece (espelho de `BatchEmptiedByCheckError`). |
+| **I16d.8** | **Exceção estreita à máquina de estados do lote (P0-1(a)).** `gerarRemessa` roda com o lote local em `FINALIZADO` (L8). Durante essa chamada, e **só** para código repetido ou ilegível, o sistema retira o item do lote `FINALIZADO` **sem mudar o status**, com `versao` incrementada, evento na trilha e recálculo do total (valor e contagem). Nenhum outro caminho retira item de lote `FINALIZADO`. |
+| **I16e** | **Mensagem e privacidade (emenda).** Mensagens em pt-BR, listando por grupo `docCod/titCod`, `valor`, `vencimento` e o código **mascarado** (5 primeiros + 4 últimos). O código completo **nunca** aparece em mensagem, log, ledger ou trilha e **nunca é persistido** (sem hash, sem HMAC; follow-up no watchlist). **Só o código mascarado persiste** (P1-3(a)), dentro do evento de trilha e da marca de retenção (I16d.4, I16g), porque a analista precisa reconhecer o boleto depois de recarregar a tela. Migration: **uma**, só para o discriminador `origem` e campos de I16g. Sem permissão nova; auditado por `LogService.warn` (mascarado), ledger e trilha. |
+| **I16f** | **Quem foi informado e como.** Toda retirada automática é (1) evento só-inclusão na trilha do lote (`CODIGO_BARRAS_REPETIDO` / `CODIGO_BARRAS_ILEGIVEL`), ator `sistema`; (2) devolvida no resultado de `gerarRemessa` como `retiradosPorCodigoBarras: [{ titulo, valor, vencimento, codigoMascarado, tituloMantido? }]`; (3) exibida no `LoteCard` como aviso **persistente** enquanto o lote existir (lê a trilha); (4) listada na aba de títulos como "retidos por boleto repetido" com ação de desfazer com motivo (I16g). A remessa **conclui**, mas o resultado carrega `avisos` não vazio para a automação diária não tratar "tudo certo" quando houve retirada. UI em pt-BR, identificando por `docCod/titCod` e favorecido. |
+| **I16g** | **Retenção do título retirado.** Todo item retirado por I16d ganha uma `BloqueioDuplicidade` `ATIVO` com `origem` correspondente (ciclo na entidade). A marca é criada **na mesma transação** da remoção local (I16d.3); no máximo uma `ATIVO` por título; o título retido não entra em formação nem inclusão (`DuplicateHoldError`). A analista pode **desfazer** com motivo (auditado): o título volta ao pool e, se o boleto ainda estiver compartilhado, a próxima guarda o retira de novo, com novo evento. Desfazer **não** troca o item que ficou; para pagar o retido, resolver o boleto no `fin124` ou mudar a forma de pagamento. |
+| **I16h** | **Retomada (resume) com resíduos.** Em `RemessaService`, `intrusos = jaNoErp \ nossas`; `residuos` = intrusos com marca `ATIVO` de origem `CODIGO_BARRAS_REPETIDO`/`CODIGO_BARRAS_ILEGIVEL` **e** evento do sistema neste lote; `estranhos = intrusos \ residuos`. **(a)** item retirado **nunca é reimportado** (`nossas` é o lote local; a importação parcial também). **(b)** fail-closed: `estranhos` não vazio ⇒ etapa `indeterminado`, mesmo havendo resíduos; nunca se limpa parcialmente num rascunho tocado por terceiro. **(c)** reconhecimento exige o **par** marca + evento; retirada por `DUPLICIDADE_TITULO` ou por I13j **não** é resíduo (segue intruso; divergência herdada no watchlist, P1-4(a)). **(d)** a guarda roda em **todo** caminho que chega a `finalizarLote`, inclusive a etapa `finalizar` direta. **(e)** `estranhos = ∅ ∧ residuos ≠ ∅` ⇒ nova etapa `limpar_retirados`: `DELETE` dos resíduos, reler, reavaliar. O comportamento do ERP para `DELETE` de `itsCodSeq` inexistente **não foi medido** (P1-5): decide-se pela releitura da lista, não pelo status do `DELETE`. |
 
 **O ERP não valida o código (achado HML, 2026-10-14).** Experimentos em HML mostraram que o Conexos
 **não valida o dígito verificador** de um código de barras digitado **nem o compara com o título**;
@@ -121,7 +136,7 @@ watchlist.
 boleto. É **pré-requisito do passo 2 da ADR-0068**: vincular o código de um boleto confirmado ao título passa
 pelo mesmo import, e sem esta guarda confirmar o mesmo boleto para N títulos reproduz o caso PEDRONI por ação
 humana. A guarda opera sobre `itsNumCodbar` pós-import, independente de como o código chegou (DDA flagado
-ou confirmação). A confirmação de emissor continua sendo evidência, não autoridade (I15a).
+ou confirmação). A confirmação de emissor continua sendo evidência, não autoridade (I15a). A retirada automática (I16d) não consulta a decisão humana da ADR-0068 para escolher quem fica (follow-up P1-1(b)).
 
 ## Ver também
 
@@ -131,4 +146,5 @@ ou confirmação). A confirmação de emissor continua sendo evidência, não au
 - `ontology/_inbox/sispag-boleto-dda-sondagem.md` — as medições
 - `business-rules/elegibilidade-titulo-lote.md` — I2, elegibilidade do item
 - ADR-0063 / `business-rules/verificacao-ted-pix-sispag.md` — I13g, duplicidade por TÍTULO
-- ADR-0069 — I16, duplicidade por BOLETO (um código de barras, um item); pré-requisito do passo 2 da ADR-0068
+- ADR-0069 (+ Emenda 1) — I16, duplicidade por BOLETO (um código de barras, um item; retirada automática I16d–h); pré-requisito do passo 2 da ADR-0068
+- `entities/bloqueio-duplicidade.md` — marca de retenção (`origem`), I16g

@@ -185,3 +185,14 @@
   hash salgado (HMAC, segredo do EnvironmentProvider) do código por item enviado + migration + ADR próprio;
   alternativa sem persistência = ler `itsNumCodbar` dos demais lotes nativos (mais chamadas ao ERP).
   Revisitar se o caso aparecer em produção após I16.
+
+- **Remoção automática de código repetido (ADR-0069 Emenda 1, 2026-10-14), follow-ups abertos:**
+  (1) **P1-1(b)** preferir, no desempate de quem fica com o boleto, o título com decisão humana
+  confirmada da ADR-0068 quando houver exatamente um no grupo (hoje: vencimento, `docCod`, `filCod`,
+  `titCod`); (2) **P1-4** divergência herdada de I13j: itens retirados pelo sistema por
+  `SEM_DADO_PAGAMENTO`/`FAVORECIDO_NAO_AUTORIZADO`/`DESTINO_ALTERADO` não têm marca de retenção e, se
+  caírem no rascunho nativo, viram `indeterminado`; revisitar estendendo o reconhecimento de resíduo;
+  (3) **P1-5** medir em HML o `DELETE` de `itsCodSeq` inexistente (404/200/500) antes do ship;
+  (4) **P1-6** confirmar se o sinal "boleto do título retido mudou" é detectável na ingestão sem custo
+  novo; (5) leitura incompleta (página única de 500) hoje avisa e segue: decidir se vira abort.
+  A guarda **entre lotes vivos / contra boleto pago** (HMAC + migration) segue sem mudança de status.
