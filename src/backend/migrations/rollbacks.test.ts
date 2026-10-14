@@ -63,6 +63,9 @@ describe('migrations — segurança do diretório', () => {
                 // Só tabelas novas, sem dado a restaurar; o reverse documenta o export prévio da
                 // trilha de decisões/cópias (ADR-0068).
                 '0084_sispag_sugestao_boleto.sql',
+                // Só colunas e CHECKs novos na marca de bloqueio (ADR-0069 emenda 1); o reverse
+                // documenta o export prévio da origem/máscara das marcas por código de barras.
+                '0085_sispag_bloqueio_origem_codigo_barras.sql',
             ].sort(),
         );
         for (const alvo of reverses) {
