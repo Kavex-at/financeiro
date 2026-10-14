@@ -1,0 +1,705 @@
+import { inject, injectable } from 'tsyringe';
+import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import BoletoAlreadySuggestedToOtherTitleError from '../../errors/BoletoAlreadySuggestedToOtherTitleError.js';
+import BoletoSuggestionNotAvailableError from '../../errors/BoletoSuggestionNotAvailableError.js';
+import IssuerConfirmationNotFoundError from '../../errors/IssuerConfirmationNotFoundError.js';
+import IssuerConfirmationReasonRequiredError from '../../errors/IssuerConfirmationReasonRequiredError.js';
+import LineCopyAuditFailedError from '../../errors/LineCopyAuditFailedError.js';
+import OverdueBoletoNotConfirmableError from '../../errors/OverdueBoletoNotConfirmableError.js';
+import type { BoletoDda } from '../../interface/sispag/BoletoDda.js';
+import {
+    type ConfirmacaoEmissor,
+    type ConfirmacaoEmissorView,
+    DECISAO_SUGESTAO_BOLETO,
+    type DecisaoSugestao,
+    ESTADO_CONFIRMACAO_EMISSOR,
+    EVENTO_SUGESTAO_BOLETO,
+    type EstadoConfirmacaoEmissor,
+} from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
+import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
+import {
+    type AvaliacaoSugestao,
+    DDA_DEFASADO_HORAS,
+    ESTADO_SUGESTAO,
+    type FiltroSugestoes,
+    LAYOUT_EMISSOR,
+    type ListagemSugestoes,
+    RESULTADO_SUGESTAO,
+    type ResultadoSugestao,
+    SUGESTAO_TAMANHO_MAXIMO,
+    SUGESTAO_TAMANHO_PADRAO,
+    type SugestaoBoletoTitulo,
+    type SugestaoBoletoView,
+    TIER_SUGESTAO,
+    type TierSugestao,
+} from '../../interface/sispag/SugestaoBoleto.js';
+import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
+import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
+import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import LogService from '../LogService.js';
+import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
+import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
+
+export interface ChaveSugestao {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    ddcCod: number;
+    ditCod: number;
+}
+
+export interface ResultadoDecisao {
+    /** `false` = a decisão já existia (idempotência, I15j): nada novo foi gravado. */
+    criada: boolean;
+    decisao: DecisaoSugestao;
+}
+
+const HORA_MS = 60 * 60 * 1000;
+const ATORES_RECUSADOS = new Set(['sistema', 'unknown', '']);
+const EMISSOR_DESCONHECIDO = 'SEM_EMISSOR';
+const CODBAR_DESCONHECIDO = '(sem código de barras)';
+
+const chaveTitulo = (c: { filCod: number; docCod: string; titCod: string }): string =>
+    `${c.filCod}:${c.docCod}:${c.titCod}`;
+
+const mesmoTitulo = (
+    a: { filCod: number; docCod: string; titCod: string },
+    b: { filCod: number; docCod: string; titCod: string },
+): boolean => chaveTitulo(a) === chaveTitulo(b);
+
+const TIERS: ReadonlySet<string> = new Set(Object.values(TIER_SUGESTAO));
+
+/**
+ * BoletoSuggestionService — sugerir, confirmar, rejeitar, revogar e copiar a linha digitável
+ * (ADR-0068, I15; ontologia `sugestao-boleto-dda-sispag.md`). PASSO 1: EVIDÊNCIA, não autoridade.
+ *
+ * - **Zero escrita e zero leitura no Conexos**: este serviço só conhece Postgres (carteira e pool
+ *   `fin124` persistidos). Nenhum client do ERP é injetado; `temBoleto`, lote e título ficam
+ *   intactos (I15a/I15b). A validação ao vivo da remessa (ADR-0040) segue sendo a autoridade.
+ * - **Ator**: sempre o usuário autenticado, recebido da rota; nunca `sistema` (I15g).
+ * - **Anti-TOCTOU**: `confirmar` relê título e boleto do banco e reavalia a regra e a disputa com o
+ *   pool de agora; o que a tela mostrou ontem não vale.
+ * - **Linha digitável**: nunca na listagem; só em `copiarLinha`, que grava `LINHA_COPIADA` ANTES de
+ *   devolvê-la e falha fechada se a trilha não grava (I15k).
+ * - **Logs**: português, sem barras nem linha digitável (só a forma mascarada).
+ */
+@injectable()
+export default class BoletoSuggestionService {
+    public constructor(
+        @inject(SugestaoBoletoRepository) private readonly repo: SugestaoBoletoRepository,
+        @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
+        @inject(BoletoDdaRepository) private readonly boletoRepo: BoletoDdaRepository,
+        @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
+        @inject(MotorSugestaoBoleto) private readonly motor: MotorSugestaoBoleto,
+        @inject(RegraSugestaoBoleto) private readonly regra: RegraSugestaoBoleto,
+        @inject(CodigoBarrasBoleto) private readonly codigoBarras: CodigoBarrasBoleto,
+        @inject(BankingCalendar) private readonly calendar: BankingCalendar,
+        @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
+        @inject(LogService) private readonly logService: LogService,
+    ) {}
+
+    // ── Leitura ────────────────────────────────────────────────────────────────────────────────
+
+    /** Sugestões por título, com o emissor mascarado e SEM barras nem linha digitável. */
+    public listarSugestoes = async (filtro: FiltroSugestoes): Promise<ListagemSugestoes> => {
+        const [cenario, sincronizadoEm] = await Promise.all([
+            this.sugerirAgora(),
+            this.boletoRepo.ultimaSincronizacao(),
+        ]);
+        const parPorChave = new Map(
+            cenario.pares.map((p) => [`${p.pesCod}|${p.emissorChave}`, p.id] as const),
+        );
+        const base = cenario.sugestoes
+            .filter((s) => filtro.filCod === undefined || s.filCod === filtro.filCod)
+            .filter((s) => filtro.pesCod === undefined || s.pesCod === filtro.pesCod);
+        const contagem = Object.fromEntries(
+            Object.values(RESULTADO_SUGESTAO).map((r) => [r, 0]),
+        ) as Record<ResultadoSugestao, number>;
+        for (const s of base) contagem[s.avaliacao.resultado] += 1;
+
+        const filtradas = base.filter(
+            (s) => filtro.tier === undefined || s.avaliacao.resultado === filtro.tier,
+        );
+        const tamanho = Math.min(
+            Math.max(filtro.tamanho ?? SUGESTAO_TAMANHO_PADRAO, 1),
+            SUGESTAO_TAMANHO_MAXIMO,
+        );
+        const pagina = Math.max(filtro.pagina ?? 1, 1);
+        const recorte = filtradas.slice((pagina - 1) * tamanho, pagina * tamanho);
+        const defasado = this.horasDefasado(sincronizadoEm);
+        return {
+            sugestoes: recorte.map((s) => this.paraView(s, parPorChave)),
+            total: filtradas.length,
+            pagina,
+            tamanho,
+            contagem,
+            ...(sincronizadoEm != null ? { sincronizadoEm } : {}),
+            ...(defasado != null ? { ddaDefasadoHoras: defasado } : {}),
+        };
+    };
+
+    /** Pares (credor, emissor), só com a máscara do emissor. */
+    public listarConfirmacoes = async (
+        filtro: { estado?: EstadoConfirmacaoEmissor; pesCod?: string } = {},
+    ): Promise<ConfirmacaoEmissorView[]> =>
+        (await this.repo.listarPares(filtro)).map(this.paraViewPar);
+
+    // ── Confirmar ──────────────────────────────────────────────────────────────────────────────
+
+    public confirmar = async (
+        input: ChaveSugestao & { ator: string },
+    ): Promise<ResultadoDecisao> => {
+        this.exigirAtor(input.ator);
+        const chave = this.chave(input);
+
+        // Idempotência e unicidade já decididas (I15j): sem tocar em transação.
+        const doBoleto = await this.repo.listarDecisoes({
+            decisao: DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
+            ddcCod: chave.ddcCod,
+            ditCod: chave.ditCod,
+        });
+        const donoDoBoleto = doBoleto[0];
+        if (donoDoBoleto) {
+            if (mesmoTitulo(donoDoBoleto, chave)) return { criada: false, decisao: donoDoBoleto };
+            throw new BoletoAlreadySuggestedToOtherTitleError(chave);
+        }
+        const doTitulo = await this.repo.listarDecisoes({
+            decisao: DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
+            filCod: chave.filCod,
+            docCod: chave.docCod,
+            titCod: chave.titCod,
+        });
+        if (doTitulo[0]) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'Este título já tem um boleto confirmado.',
+            });
+        }
+
+        // Releitura (anti-TOCTOU): o que vale é o banco de agora.
+        const { titulo, boleto } = await this.reler(chave);
+        const emissor = this.codigoBarras.emissor(boleto.codbar);
+        if (!titulo.pesCod) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'O título não tem credor identificado.',
+            });
+        }
+        if (!emissor) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'O boleto não tem código de barras válido para identificar o emissor.',
+            });
+        }
+
+        const cenario = await this.sugerirAgora();
+        const pesCod = titulo.pesCod;
+        const parVigente = cenario.pares.some(
+            (p) => p.pesCod === pesCod && p.emissorChave === emissor.chave,
+        );
+        const avaliacaoDireta = this.avaliar(titulo, boleto, cenario.datasDebito, parVigente);
+        if (avaliacaoDireta.resultado === RESULTADO_SUGESTAO.VENCIDO_INFORMATIVO) {
+            throw new OverdueBoletoNotConfirmableError(chave);
+        }
+        if (!avaliacaoDireta.confirmavel) throw new BoletoSuggestionNotAvailableError(chave);
+
+        const sugestao = cenario.sugestoes.find(
+            (s) => mesmoTitulo(s, chave) && s.ddcCod === chave.ddcCod && s.ditCod === chave.ditCod,
+        );
+        if (!sugestao || !sugestao.avaliacao.confirmavel) {
+            const rival = cenario.sugestoes.find(
+                (s) =>
+                    s.ddcCod === chave.ddcCod &&
+                    s.ditCod === chave.ditCod &&
+                    !mesmoTitulo(s, chave) &&
+                    s.avaliacao.confirmavel,
+            );
+            if (rival) throw new BoletoAlreadySuggestedToOtherTitleError(chave);
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'Este boleto não é mais a sugestão única para o título (empate ou mudança no pool).',
+            });
+        }
+        const tier = sugestao.avaliacao.resultado;
+        if (!TIERS.has(tier)) throw new OverdueBoletoNotConfirmableError(chave);
+
+        const resultado = await this.db.withTransaction(async (tx) => {
+            const existente = await this.repo.buscarParVigente(pesCod, emissor.chave, tx);
+            let par: ConfirmacaoEmissor;
+            let parCriado = false;
+            if (existente) {
+                par = existente;
+            } else {
+                const inserido = await this.repo.inserirPar(
+                    {
+                        pesCod,
+                        ...(titulo.credor ? { credor: titulo.credor } : {}),
+                        emissorChave: emissor.chave,
+                        layoutEmissor: emissor.layout,
+                        bancoEmissor: emissor.banco,
+                        emissorMascarado: emissor.mascarado,
+                        evidencia: this.evidencia(sugestao, input.ator),
+                        confirmadoPor: input.ator,
+                    },
+                    tx,
+                );
+                par = inserido.par;
+                parCriado = inserido.criado;
+            }
+
+            const gravada = await this.repo.inserirDecisao(
+                {
+                    filCod: sugestao.filCod,
+                    docCod: sugestao.docCod,
+                    titCod: sugestao.titCod,
+                    pesCod,
+                    ...(titulo.credor ? { credor: titulo.credor } : {}),
+                    ddcCod: sugestao.ddcCod,
+                    ditCod: sugestao.ditCod,
+                    ...(sugestao.numeroBoleto ? { numeroBoleto: sugestao.numeroBoleto } : {}),
+                    codbarMascarado:
+                        this.codigoBarras.mascarar(boleto.codbar) ?? CODBAR_DESCONHECIDO,
+                    valorTitulo: sugestao.valorTitulo,
+                    vencimentoTitulo: sugestao.vencimentoTitulo,
+                    valorBoleto: sugestao.valorBoleto,
+                    vencimentoBoleto: sugestao.vencimentoBoleto,
+                    deltaValor: sugestao.avaliacao.deltaValor,
+                    deltaPercentual: sugestao.avaliacao.deltaPercentual,
+                    deltaDias: sugestao.avaliacao.deltaDias,
+                    sinais: sugestao.avaliacao.sinais,
+                    tier: tier as TierSugestao,
+                    emissorChave: emissor.chave,
+                    decisao: DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
+                    decididoPor: input.ator,
+                    confirmacaoEmissorId: par.id,
+                },
+                tx,
+            );
+            if (!gravada.criada) {
+                // Perdeu a corrida (I15j): idempotente se a vencedora é este mesmo par; senão, nomeia.
+                const v = gravada.decisao;
+                if (
+                    mesmoTitulo(v, chave) &&
+                    v.ddcCod === chave.ddcCod &&
+                    v.ditCod === chave.ditCod
+                ) {
+                    return { criada: false, decisao: v };
+                }
+                if (v.ddcCod === chave.ddcCod && v.ditCod === chave.ditCod) {
+                    throw new BoletoAlreadySuggestedToOtherTitleError(chave);
+                }
+                throw new BoletoSuggestionNotAvailableError({
+                    ...chave,
+                    motivo: 'Este título já tem um boleto confirmado.',
+                });
+            }
+
+            if (parCriado) {
+                await this.repo.inserirEvento(
+                    {
+                        tipo: EVENTO_SUGESTAO_BOLETO.PAR_CONFIRMADO,
+                        ator: input.ator,
+                        pesCod,
+                        emissorChave: emissor.chave,
+                        detalhe: {
+                            layoutEmissor: emissor.layout,
+                            emissorMascarado: emissor.mascarado,
+                        },
+                    },
+                    tx,
+                );
+            }
+            await this.repo.inserirEvento(
+                {
+                    tipo: EVENTO_SUGESTAO_BOLETO.DECISAO_CONFIRMADA,
+                    ator: input.ator,
+                    pesCod,
+                    emissorChave: emissor.chave,
+                    ...this.camposChave(chave),
+                    detalhe: {
+                        tier,
+                        deltaValor: sugestao.avaliacao.deltaValor,
+                        deltaDias: sugestao.avaliacao.deltaDias,
+                        sinais: sugestao.avaliacao.sinais,
+                    },
+                },
+                tx,
+            );
+            return { criada: true, decisao: gravada.decisao };
+        });
+
+        if (resultado.criada) {
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'sugestao_boleto.decisao',
+                data: {
+                    decisao: DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
+                    tier,
+                    layoutEmissor: emissor.layout,
+                    pesCod,
+                    ator: input.ator,
+                },
+            });
+        }
+        return resultado;
+    };
+
+    // ── Rejeitar ───────────────────────────────────────────────────────────────────────────────
+
+    public rejeitar = async (
+        input: ChaveSugestao & { motivo: string; ator: string },
+    ): Promise<ResultadoDecisao> => {
+        this.exigirAtor(input.ator);
+        const motivo = input.motivo.trim();
+        if (motivo === '') {
+            throw new IssuerConfirmationReasonRequiredError({ acao: 'rejeitar a sugestão' });
+        }
+        const chave = this.chave(input);
+        const confirmadas = await this.repo.listarDecisoes({
+            decisao: DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
+            ddcCod: chave.ddcCod,
+            ditCod: chave.ditCod,
+        });
+        if (confirmadas.some((d) => mesmoTitulo(d, chave))) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'Esta sugestão já foi confirmada; revogue o par para desfazer.',
+            });
+        }
+        const { titulo, boleto } = await this.reler(chave);
+        const emissor = this.codigoBarras.emissor(boleto.codbar);
+        const pesCod = titulo.pesCod ?? '';
+        const pares = await this.repo.listarParesVigentes(pesCod ? [pesCod] : []);
+        const avaliacao = this.avaliar(
+            titulo,
+            boleto,
+            new Map(),
+            emissor != null && pares.some((p) => p.emissorChave === emissor.chave),
+        );
+        const tier = TIERS.has(avaliacao.resultado) ? (avaliacao.resultado as TierSugestao) : null;
+        const vencimento = this.vencimentoCivil(titulo);
+
+        const resultado = await this.db.withTransaction(async (tx) => {
+            const gravada = await this.repo.inserirDecisao(
+                {
+                    ...this.camposChave(chave),
+                    pesCod,
+                    ...(titulo.credor ? { credor: titulo.credor } : {}),
+                    ...(boleto.numero ? { numeroBoleto: boleto.numero } : {}),
+                    codbarMascarado:
+                        this.codigoBarras.mascarar(boleto.codbar) ?? CODBAR_DESCONHECIDO,
+                    valorTitulo: titulo.valor,
+                    vencimentoTitulo: vencimento,
+                    valorBoleto: boleto.valor,
+                    vencimentoBoleto: boleto.vencimento ?? vencimento,
+                    deltaValor: avaliacao.deltaValor,
+                    deltaPercentual: avaliacao.deltaPercentual,
+                    deltaDias: avaliacao.deltaDias,
+                    sinais: avaliacao.sinais,
+                    ...(tier ? { tier } : {}),
+                    emissorChave: emissor?.chave ?? EMISSOR_DESCONHECIDO,
+                    decisao: DECISAO_SUGESTAO_BOLETO.REJEITADA,
+                    decididoPor: input.ator,
+                    motivo,
+                },
+                tx,
+            );
+            if (gravada.criada) {
+                await this.repo.inserirEvento(
+                    {
+                        tipo: EVENTO_SUGESTAO_BOLETO.DECISAO_REJEITADA,
+                        ator: input.ator,
+                        ...(pesCod ? { pesCod } : {}),
+                        ...(emissor ? { emissorChave: emissor.chave } : {}),
+                        ...this.camposChave(chave),
+                        motivo,
+                        detalhe: { tier, deltaValor: avaliacao.deltaValor },
+                    },
+                    tx,
+                );
+            }
+            return gravada;
+        });
+        if (resultado.criada) {
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'sugestao_boleto.decisao',
+                data: {
+                    decisao: DECISAO_SUGESTAO_BOLETO.REJEITADA,
+                    tier,
+                    layoutEmissor: emissor?.layout ?? LAYOUT_EMISSOR.GENERICO,
+                    pesCod,
+                    ator: input.ator,
+                },
+            });
+        }
+        return resultado;
+    };
+
+    // ── Revogar ────────────────────────────────────────────────────────────────────────────────
+
+    /** Qualquer pessoa com `sispag:executar` revoga, com motivo (I15g, Q-A). No-op se já revogado. */
+    public revogarPar = async (input: {
+        id: string;
+        motivo: string;
+        ator: string;
+    }): Promise<ConfirmacaoEmissorView> => {
+        this.exigirAtor(input.ator);
+        const motivo = input.motivo.trim();
+        if (motivo === '') {
+            throw new IssuerConfirmationReasonRequiredError({ acao: 'revogar a confirmação' });
+        }
+        const par = await this.repo.buscarParPorId(input.id);
+        if (!par) throw new IssuerConfirmationNotFoundError({ id: input.id });
+        if (par.estado === ESTADO_CONFIRMACAO_EMISSOR.REVOGADA) return this.paraViewPar(par);
+
+        const revogado = await this.db.withTransaction(async (tx) => {
+            const n = await this.repo.revogarPar(
+                { id: par.id, versaoEsperada: par.versao, ator: input.ator, motivo },
+                tx,
+            );
+            const atual = await this.repo.buscarParPorId(par.id, tx);
+            if (!atual) throw new IssuerConfirmationNotFoundError({ id: par.id });
+            if (n === 0) {
+                if (atual.estado === ESTADO_CONFIRMACAO_EMISSOR.REVOGADA) return null;
+                throw new Error('conflito de versão ao revogar a confirmação de emissor');
+            }
+            await this.repo.inserirEvento(
+                {
+                    tipo: EVENTO_SUGESTAO_BOLETO.PAR_REVOGADO,
+                    ator: input.ator,
+                    pesCod: par.pesCod,
+                    emissorChave: par.emissorChave,
+                    motivo,
+                    detalhe: {
+                        layoutEmissor: par.layoutEmissor,
+                        emissorMascarado: par.emissorMascarado,
+                    },
+                },
+                tx,
+            );
+            return atual;
+        });
+        if (!revogado) {
+            const atual = await this.repo.buscarParPorId(par.id);
+            return this.paraViewPar(atual ?? par);
+        }
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'confirmação de emissor revogada',
+            data: {
+                id: par.id,
+                pesCod: par.pesCod,
+                layoutEmissor: par.layoutEmissor,
+                ator: input.ator,
+            },
+        });
+        return this.paraViewPar(revogado);
+    };
+
+    // ── Copiar linha digitável ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Devolve a linha digitável SÓ depois de gravar `LINHA_COPIADA` (quem, quando, título,
+     * boleto). Se a trilha não grava, a linha não sai (fail-closed, I15k).
+     */
+    public copiarLinha = async (
+        input: ChaveSugestao & { ator: string },
+    ): Promise<{ linhaDigitavel: string }> => {
+        this.exigirAtor(input.ator);
+        const chave = this.chave(input);
+        const { titulo, boleto } = await this.reler(chave);
+        const linhaDigitavel = this.codigoBarras.paraLinhaDigitavel(boleto.codbar);
+        if (!linhaDigitavel) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'O boleto não tem código de barras válido.',
+            });
+        }
+        try {
+            await this.repo.inserirEvento({
+                tipo: EVENTO_SUGESTAO_BOLETO.LINHA_COPIADA,
+                ator: input.ator,
+                ...(titulo.pesCod ? { pesCod: titulo.pesCod } : {}),
+                ...this.camposChave(chave),
+                detalhe: {
+                    codbarMascarado:
+                        this.codigoBarras.mascarar(boleto.codbar) ?? CODBAR_DESCONHECIDO,
+                },
+            });
+        } catch (erro) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'cópia da linha digitável recusada: a trilha não gravou',
+                data: { ...this.camposChave(chave), ator: input.ator },
+                ...(erro instanceof Error ? { error: erro } : {}),
+            });
+            throw new LineCopyAuditFailedError(chave);
+        }
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'linha digitável copiada (auditada)',
+            data: { ...this.camposChave(chave), ator: input.ator },
+        });
+        return { linhaDigitavel };
+    };
+
+    // ── Internos ───────────────────────────────────────────────────────────────────────────────
+
+    private exigirAtor = (ator: string): void => {
+        if (ATORES_RECUSADOS.has(ator.trim().toLowerCase())) {
+            throw new Error('ator inválido: a decisão exige o usuário autenticado');
+        }
+    };
+
+    private chave = (c: ChaveSugestao): ChaveSugestao => ({
+        filCod: c.filCod,
+        docCod: c.docCod,
+        titCod: c.titCod,
+        ddcCod: c.ddcCod,
+        ditCod: c.ditCod,
+    });
+
+    private camposChave = (c: ChaveSugestao) => ({
+        filCod: c.filCod,
+        docCod: c.docCod,
+        titCod: c.titCod,
+        ddcCod: c.ddcCod,
+        ditCod: c.ditCod,
+    });
+
+    /** Relê título e boleto do banco e recusa o que deixou de ser elegível (I15a/I15e). */
+    private reler = async (
+        chave: ChaveSugestao,
+    ): Promise<{ titulo: TituloAPagar; boleto: BoletoDda }> => {
+        const [titulo, boleto] = await Promise.all([
+            this.tituloRepo.buscarPorChave(chave),
+            this.boletoRepo.buscarPorChave(chave),
+        ]);
+        const indisponivel = (motivo: string) =>
+            new BoletoSuggestionNotAvailableError({ ...chave, motivo });
+        if (!titulo || titulo.ativo === false) {
+            throw indisponivel('O título não está mais na carteira ativa.');
+        }
+        if (titulo.pago) throw indisponivel('O título já foi pago.');
+        if (titulo.temBoleto === true) {
+            throw indisponivel('O Conexos já sinalizou boleto DDA para este título.');
+        }
+        if (!boleto) throw indisponivel('O boleto não está mais no pool DDA.');
+        if (boleto.filCod != null && boleto.docCod && boleto.titCod) {
+            throw indisponivel('O Conexos já vinculou este boleto a um título.');
+        }
+        return { titulo, boleto };
+    };
+
+    private vencimentoCivil = (t: TituloAPagar): string =>
+        t.vencimento != null ? this.calendar.fromErpEpoch(Number(t.vencimento)) : '';
+
+    private avaliar = (
+        titulo: TituloAPagar,
+        boleto: BoletoDda,
+        datasDebito: ReadonlyMap<string, string>,
+        parConfirmado: boolean,
+    ): AvaliacaoSugestao => {
+        const vencimento = this.vencimentoCivil(titulo);
+        return this.regra.avaliar({
+            titulo: {
+                valor: titulo.valor,
+                vencimento,
+                ...(titulo.numeroDocumento ? { numeroDocumento: titulo.numeroDocumento } : {}),
+            },
+            boleto: {
+                valor: boleto.valor,
+                vencimento: boleto.vencimento ?? '',
+                ...(boleto.numero ? { numero: boleto.numero } : {}),
+            },
+            dataDebito: datasDebito.get(chaveTitulo(titulo)) ?? vencimento,
+            parConfirmado,
+        });
+    };
+
+    /** Lê o pool e a carteira persistidos e roda o motor com o estado de decisões de agora. */
+    private sugerirAgora = async (): Promise<{
+        sugestoes: SugestaoBoletoTitulo[];
+        pares: ConfirmacaoEmissor[];
+        datasDebito: Map<string, string>;
+    }> => {
+        const [titulos, boletos, pares, rejeitadas, confirmadas, emLotes] = await Promise.all([
+            this.tituloRepo.listAtivos(),
+            this.boletoRepo.listBoletos({}),
+            this.repo.listarParesVigentes(),
+            this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.REJEITADA),
+            this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
+            this.loteRepo.listTitulosEmLotesAbertos(),
+        ]);
+        // O primeiro visto é o lote mais recente (a query ordena por `criado_em DESC`).
+        const datasDebito = new Map<string, string>();
+        const vistos = new Set<string>();
+        for (const item of emLotes) {
+            const k = chaveTitulo(item);
+            if (vistos.has(k)) continue;
+            vistos.add(k);
+            if (item.dataDebito) datasDebito.set(k, item.dataDebito);
+        }
+        const sugestoes = this.motor.sugerir({
+            titulos,
+            boletos,
+            paresVigentes: pares.map((p) => ({ pesCod: p.pesCod, emissorChave: p.emissorChave })),
+            rejeitadas,
+            confirmadas,
+            datasDebito,
+        });
+        return { sugestoes, pares, datasDebito };
+    };
+
+    private paraView = (
+        s: SugestaoBoletoTitulo,
+        parPorChave: ReadonlyMap<string, string>,
+    ): SugestaoBoletoView => {
+        const { emissor, ...resto } = s;
+        const parId =
+            emissor && s.pesCod ? parPorChave.get(`${s.pesCod}|${emissor.chave}`) : undefined;
+        return {
+            ...resto,
+            ...(emissor
+                ? {
+                      emissor: {
+                          banco: emissor.banco,
+                          layout: emissor.layout,
+                          mascarado: emissor.mascarado,
+                      },
+                  }
+                : {}),
+            confirmavel: s.avaliacao.confirmavel && s.estado === ESTADO_SUGESTAO.SUGERIDA,
+            ...(parId ? { confirmacaoEmissorId: parId } : {}),
+        };
+    };
+
+    private paraViewPar = (p: ConfirmacaoEmissor): ConfirmacaoEmissorView => {
+        const { emissorChave: _chave, ...resto } = p;
+        return { ...resto, elegivelAutomatico: p.layoutEmissor !== LAYOUT_EMISSOR.GENERICO };
+    };
+
+    private evidencia = (s: SugestaoBoletoTitulo, ator: string): Record<string, unknown> => ({
+        tier: s.avaliacao.resultado,
+        sinais: s.avaliacao.sinais,
+        deltaValor: s.avaliacao.deltaValor,
+        deltaPercentual: s.avaliacao.deltaPercentual,
+        deltaDias: s.avaliacao.deltaDias,
+        titulo: { filCod: s.filCod, docCod: s.docCod, titCod: s.titCod },
+        boleto: { ddcCod: s.ddcCod, ditCod: s.ditCod },
+        confirmadoPor: ator,
+    });
+
+    /** Horas de defasagem do DDA quando > 8 h em dia útil (ADR-0067); fim de semana não conta. */
+    private horasDefasado = (sincronizadoEm?: number): number | undefined => {
+        if (sincronizadoEm == null) return undefined;
+        if (!this.calendar.isBusinessDay(this.calendar.todayBrt())) return undefined;
+        const horas = Math.floor((this.calendar.now().getTime() - sincronizadoEm) / HORA_MS);
+        return horas > DDA_DEFASADO_HORAS ? horas : undefined;
+    };
+}

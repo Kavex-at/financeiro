@@ -47,6 +47,9 @@ export default class BankingCalendar {
         return calendar;
     };
 
+    /** O instante atual segundo o relógio do calendário (fixo nos testes). */
+    public now = (): Date => this.clock();
+
     public isValidCivilDate = (civil: string): boolean => {
         const m = CIVIL_DATE.exec(civil);
         if (!m) return false;
