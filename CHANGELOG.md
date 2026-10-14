@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.68.0 (2026-10-14) — SISPAG: vínculo do código de barras ao item (desligado por padrão)
+
+- **Boleto confirmado por você passa a ser colado no item do lote.** Quando o ERP não associou o boleto
+  ao título mas você confirmou a sugestão (e o valor do boleto é igual ao valor em aberto no Conexos, com
+  vencimento até 5 dias depois), a remessa grava o código de barras no item do rascunho antes de finalizar,
+  e o arquivo paga o boleto certo. Só valor igual; boleto acima ou abaixo do título continua fora.
+- **Nasce desligado.** Controlado por filial (`SISPAG_BIND_CODBAR_FILIAIS`: desligado, simulação ou ligado).
+  Em simulação nada é escrito no Conexos: o lote mostra o que *seria* vinculado.
+- **Mais seguro que digitar à mão:** o sistema confere valor, vencimento e dígito verificador por conta
+  própria, relê o item depois de gravar e nunca sobrescreve um item que alguém editou no Conexos. Se a
+  confirmação for anulada depois, o item é retirado do lote na próxima remessa.
+- Só o código mascarado (5 primeiros e 4 últimos dígitos) é guardado.
+
 ## v0.67.0 (2026-10-14) — SISPAG: boleto repetido não trava mais a remessa
 
 - **Os títulos repetidos saem do lote sozinhos e a remessa segue.** Quando dois ou mais títulos do
