@@ -139,6 +139,14 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['POST /sispag/favorecidos-autorizados/:id/reconferir', P.SISPAG_VER],
     ['POST /sispag/favorecidos-autorizados/:id/revelar', P.SISPAG_AUTORIZAR_FAVORECIDO],
     ['GET /sispag/favorecidos-autorizados/:id/eventos', P.SISPAG_VER],
+    // ADR-0068 (passo 1, evidência): ver lê com o emissor mascarado; confirmar, rejeitar, revogar e
+    // copiar a linha digitável (auditada) são `executar`. Nenhuma permissão nova no catálogo.
+    ['GET /sispag/sugestoes-boleto', P.SISPAG_VER],
+    ['POST /sispag/sugestoes-boleto/confirmar', P.SISPAG_EXECUTAR],
+    ['POST /sispag/sugestoes-boleto/rejeitar', P.SISPAG_EXECUTAR],
+    ['POST /sispag/sugestoes-boleto/copiar-linha', P.SISPAG_EXECUTAR],
+    ['GET /sispag/confirmacoes-emissor', P.SISPAG_VER],
+    ['POST /sispag/confirmacoes-emissor/:id/revogar', P.SISPAG_EXECUTAR],
     ['GET /sispag/recursos', P.SISPAG_VER],
     // /recebimentos (15)
     ['GET /recebimentos/painel', P.RECEBIMENTOS_VER],
@@ -242,11 +250,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino; + sincronização dos lotes ao abrir e botão único, ADR-0066): 27/47/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino; + sincronização dos lotes ao abrir e botão único, ADR-0066; + 6 da sugestão de boleto, ADR-0068): 27/53/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(47);
+        expect(porMount('sispag')).toBe(53);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);
