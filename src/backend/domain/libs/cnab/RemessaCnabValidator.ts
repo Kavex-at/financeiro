@@ -1,4 +1,5 @@
 import { injectable } from 'tsyringe';
+import AnaliseCodigoBarrasRepetido from '../boleto/AnaliseCodigoBarrasRepetido.js';
 
 /** Por que um segmento J foi recusado. */
 export const MOTIVO_J_INVALIDO = {
@@ -69,6 +70,11 @@ export interface ResultadoValidacaoRemessa {
     /** Lotes CNAB com header (registro tipo 1), na ordem do arquivo. */
     lotes: LoteCnab[];
     invalidos: SegmentoJInvalido[];
+    /**
+     * Barras VÁLIDAS que aparecem em mais de um segmento J (J-52 não conta) — o mesmo boleto
+     * pago N vezes (ADR-0069, I16b). Sempre presente. Só a forma mascarada (5+4) e as linhas.
+     */
+    repetidos: Array<{ barrasMascarada: string; linhas: number[] }>;
     /** Observações que NÃO bloqueiam (ver `valor` abaixo e `AVISO_CNAB`). */
     avisos: string[];
 }
@@ -180,6 +186,7 @@ export default class RemessaCnabValidator {
         const invalidos: SegmentoJInvalido[] = [];
         const avisos: string[] = [];
         const contagem = { J: 0, J52: 0, A: 0, O: 0 };
+        const porBarras = new Map<string, number[]>();
 
         conteudo.split(/\r?\n/).forEach((linha, idx) => {
             if (linha.length < LINHA_MINIMA) return;
@@ -204,6 +211,9 @@ export default class RemessaCnabValidator {
                 invalidos.push(problema);
                 return;
             }
+            const linhasDaBarra = porBarras.get(barras) ?? [];
+            linhasDaBarra.push(idx + 1);
+            porBarras.set(barras, linhasDaBarra);
             // Boleto de valor ABERTO (barras com valor zerado) é legítimo — quem preenche é
             // quem paga. Não bloqueia; só registra, porque num lote SISPAG é incomum.
             if (this.valorDasBarras(barras) === 0) {
@@ -224,6 +234,12 @@ export default class RemessaCnabValidator {
             segmentosO: contagem.O,
             lotes: ab.lotes,
             invalidos,
+            repetidos: [...porBarras.entries()]
+                .filter(([, linhasDaBarra]) => linhasDaBarra.length > 1)
+                .map(([barras, linhasDaBarra]) => ({
+                    barrasMascarada: AnaliseCodigoBarrasRepetido.mascarar(barras),
+                    linhas: linhasDaBarra,
+                })),
             avisos,
         };
     };

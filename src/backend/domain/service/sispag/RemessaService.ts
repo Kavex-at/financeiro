@@ -700,6 +700,7 @@ export default class RemessaService {
                         segmentosJ: validacao.segmentosJ,
                         segmentosA: validacao.segmentosA,
                         invalidos: validacao.invalidos.length,
+                        repetidos: validacao.repetidos.length,
                         avisos: validacao.avisos,
                     },
                 });
@@ -709,6 +710,17 @@ export default class RemessaService {
                         gabCod: arquivo.gabCod,
                         segmentosJ: validacao.segmentosJ,
                         invalidos: validacao.invalidos,
+                    });
+                }
+                // I16b — rede de segurança: o mesmo boleto em dois segmentos J. Mesmo tratamento
+                // tardio do `RemessaCorrompidaError` (arquivo e lote nativo ficam no ERP).
+                if (validacao.repetidos.length > 0) {
+                    throw new BoletoCodigoBarrasRepetidoError({
+                        origem: 'arquivo',
+                        grupos: validacao.repetidos.map((r) => ({
+                            mascarado: r.barrasMascarada,
+                            linhas: r.linhas,
+                        })),
                     });
                 }
             } else {
