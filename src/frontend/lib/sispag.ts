@@ -1860,3 +1860,174 @@ export function previaDestinoFavorecido(
     { cache: 'no-store', ...(init?.signal ? { signal: init.signal } : {}) },
   )
 }
+
+// ===================================================== ADR-0068 — sugestão de boleto (passo 1)
+// Espelho do contrato de `routes/sispag.ts` (`/sugestoes-boleto`, `/confirmacoes-emissor`).
+// EVIDÊNCIA, não autoridade. A listagem NUNCA traz barras nem linha digitável: a linha só sai de
+// `POST /sugestoes-boleto/copiar-linha` (`sispag:executar`, auditado).
+
+export const TIERS_SUGESTAO_BOLETO = ['CONHECIDO', 'FORTE', 'ATENCAO'] as const
+export type TierSugestaoBoleto = (typeof TIERS_SUGESTAO_BOLETO)[number]
+export type ResultadoSugestaoBoleto =
+  | TierSugestaoBoleto
+  | 'VENCIDO_INFORMATIVO'
+  | 'SEM_RELACAO'
+
+export const SINAIS_SUGESTAO_BOLETO = [
+  'VALOR_IGUAL',
+  'VALOR_ATE_5_CENTAVOS',
+  'MESMO_DIA',
+  'DIAS_DEPOIS',
+  'NUMERO_IGUAL',
+  'COLISAO_NUMERO',
+  'EMISSOR_CONFIRMADO',
+] as const
+export type SinalSugestaoBoleto = (typeof SINAIS_SUGESTAO_BOLETO)[number]
+
+const layoutEmissorSchema = z.enum(['ITAU_341', 'BRADESCO_237', 'GENERICO'])
+export type LayoutEmissorBoleto = z.infer<typeof layoutEmissorSchema>
+
+const resultadoSugestaoSchema = z.enum([
+  'CONHECIDO',
+  'FORTE',
+  'ATENCAO',
+  'VENCIDO_INFORMATIVO',
+  'SEM_RELACAO',
+])
+
+export const sugestaoBoletoSchema = z.object({
+  filCod: z.number(),
+  docCod: z.string(),
+  titCod: z.string(),
+  pesCod: z.string().optional(),
+  credor: z.string().optional(),
+  valorTitulo: z.number(),
+  /** Data civil `YYYY-MM-DD`. */
+  vencimentoTitulo: z.string(),
+  /** Data de débito considerada: a do lote ou, sem lote, o vencimento do título. */
+  dataDebito: z.string(),
+  ddcCod: z.number(),
+  ditCod: z.number(),
+  numeroBoleto: z.string().optional(),
+  valorBoleto: z.number(),
+  vencimentoBoleto: z.string(),
+  /** Só a máscara (ex.: `237 / 2656 / ***2740`). Sem chave, sem barras, sem linha digitável. */
+  emissor: z
+    .object({ banco: z.string(), layout: layoutEmissorSchema, mascarado: z.string() })
+    .optional(),
+  avaliacao: z.object({
+    resultado: resultadoSugestaoSchema,
+    /** boleto − título, em reais, com sinal. */
+    deltaValor: z.number(),
+    deltaPercentual: z.number(),
+    /** vencimento do boleto − vencimento do título, em dias, com sinal. */
+    deltaDias: z.number(),
+    sinais: z.array(z.enum(SINAIS_SUGESTAO_BOLETO)),
+    confirmavel: z.boolean(),
+  }),
+  estado: z.enum(['SUGERIDA', 'CONFIRMADA']),
+  motivo: z.string().optional(),
+  /** Só `SUGERIDA` dentro dos três tiers. */
+  confirmavel: z.boolean(),
+  /** Par (credor, emissor) vigente do boleto, quando existe — para revogar pela tela. */
+  confirmacaoEmissorId: z.string().optional(),
+})
+export type SugestaoBoleto = z.infer<typeof sugestaoBoletoSchema>
+
+export const listagemSugestoesBoletoSchema = z.object({
+  sugestoes: z.array(sugestaoBoletoSchema),
+  total: z.number(),
+  pagina: z.number(),
+  tamanho: z.number(),
+  contagem: z.record(z.string(), z.number()),
+  /** epoch ms da última sincronização do DDA. */
+  sincronizadoEm: z.number().optional(),
+  /** Horas de defasagem do DDA (> 8 h em dia útil, ADR-0067); ausente = em dia. */
+  ddaDefasadoHoras: z.number().optional(),
+})
+export type ListagemSugestoesBoleto = z.infer<typeof listagemSugestoesBoletoSchema>
+
+/** Filtros de `GET /sispag/sugestoes-boleto`. */
+export interface FiltroSugestoesBoleto {
+  filCod?: number
+  pesCod?: string
+  tier?: ResultadoSugestaoBoleto
+  pagina?: number
+  tamanho?: number
+}
+
+/** Corpo de `confirmar` e `copiar-linha`; `rejeitar` acrescenta `motivo`. Nunca um "ator". */
+export interface ChaveSugestaoBoleto {
+  filCod: number
+  docCod: string
+  titCod: string
+  ddcCod: number
+  ditCod: number
+}
+
+export const decisaoSugestaoBoletoSchema = z.object({
+  id: z.string(),
+  filCod: z.number(),
+  docCod: z.string(),
+  titCod: z.string(),
+  pesCod: z.string(),
+  credor: z.string().optional(),
+  ddcCod: z.number(),
+  ditCod: z.number(),
+  numeroBoleto: z.string().optional(),
+  codbarMascarado: z.string(),
+  valorTitulo: z.number(),
+  vencimentoTitulo: z.string(),
+  valorBoleto: z.number(),
+  vencimentoBoleto: z.string(),
+  deltaValor: z.number(),
+  deltaPercentual: z.number(),
+  deltaDias: z.number(),
+  sinais: z.array(z.enum(SINAIS_SUGESTAO_BOLETO)),
+  tier: z.enum(TIERS_SUGESTAO_BOLETO).optional(),
+  decisao: z.enum(['CONFIRMADA', 'REJEITADA']),
+  decididoPor: z.string(),
+  decididoEm: z.string(),
+  motivo: z.string().optional(),
+  confirmacaoEmissorId: z.string().optional(),
+})
+export type DecisaoSugestaoBoleto = z.infer<typeof decisaoSugestaoBoletoSchema>
+
+/** Resposta de `confirmar` (201 nova, 200 já existia) e de `rejeitar`. */
+export const resultadoDecisaoBoletoSchema = z.object({
+  criada: z.boolean(),
+  decisao: decisaoSugestaoBoletoSchema,
+})
+export type ResultadoDecisaoBoleto = z.infer<typeof resultadoDecisaoBoletoSchema>
+
+/** Resposta de `POST /sugestoes-boleto/copiar-linha` (`Cache-Control: no-store`). */
+export const linhaCopiadaSchema = z.object({ linhaDigitavel: z.string() })
+
+export const confirmacaoEmissorSchema = z.object({
+  id: z.string(),
+  pesCod: z.string(),
+  credor: z.string().optional(),
+  layoutEmissor: layoutEmissorSchema,
+  bancoEmissor: z.string(),
+  emissorMascarado: z.string(),
+  estado: z.enum(['VIGENTE', 'REVOGADA']),
+  confirmadoPor: z.string(),
+  confirmadoEm: z.string(),
+  revogadoPor: z.string().optional(),
+  revogadoEm: z.string().optional(),
+  motivoRevogacao: z.string().optional(),
+  versao: z.number(),
+  /** `GENERICO` nunca é elegível a automático (I15i). */
+  elegivelAutomatico: z.boolean(),
+})
+export type ConfirmacaoEmissorBoleto = z.infer<typeof confirmacaoEmissorSchema>
+
+/** Códigos estáveis de erro da sugestão de boleto (envelope `{ error, code, retryable }`). */
+export const CODIGOS_ERRO_SUGESTAO_BOLETO = {
+  INDISPONIVEL: 'SUGESTAO_BOLETO_INDISPONIVEL', // 409
+  RESERVADO_A_OUTRO_TITULO: 'BOLETO_JA_SUGERIDO_A_OUTRO_TITULO', // 409
+  MOTIVO_OBRIGATORIO: 'CONFIRMACAO_EMISSOR_MOTIVO_OBRIGATORIO', // 422
+  VENCIDO: 'BOLETO_VENCIDO_NAO_CONFIRMAVEL', // 422
+  PAR_NAO_ENCONTRADO: 'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA', // 404
+  SEM_TRILHA: 'COPIA_LINHA_SEM_TRILHA', // 503: a linha NÃO foi devolvida
+} as const
