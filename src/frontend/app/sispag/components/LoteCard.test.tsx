@@ -30,6 +30,7 @@ jest.mock('@/lib/sispag', () => {
     fetchContasPagadoras: jest.fn().mockResolvedValue([]),
     fetchModalidadesDisponiveis: jest.fn().mockResolvedValue([]),
     fetchLinhasDigitaveis: jest.fn().mockResolvedValue({ itens: [], total: 0, dropped: 0 }),
+    fetchRetiradasDoLote: jest.fn().mockResolvedValue([]),
     finalizarLote: jest.fn(),
     cancelarLote: jest.fn(),
     reabrirLote: jest.fn(),
@@ -54,6 +55,7 @@ import {
   fetchContasPagadoras,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
+  fetchRetiradasDoLote,
   finalizarLote,
   getRecursos,
   reabrirLote,
@@ -473,6 +475,61 @@ describe('LoteCard — download da remessa e seleção para o export', () => {
     permissoes = { carregando: false, lista: ['sispag:ver'] }
     renderCard(lote({ status: 'REMESSA_GERADA', remessaArquivo: 'PG061001.REM' }))
     expect(screen.queryByRole('button', { name: /baixar remessa/i })).not.toBeInTheDocument()
+  })
+
+  describe('aviso persistente da retirada por código de barras (ADR-0069 emenda 1, I16f)', () => {
+    // Código SINTÉTICO de 44 dígitos: nada do DOM pode carregá-lo.
+    const BARRAS = '34191158000001412001090047729099260408340000'
+    const retirada = {
+      titulo: { filCod: 7, docCod: '1001', titCod: '1' },
+      motivo: 'CODIGO_BARRAS_REPETIDO' as const,
+      credor: 'PEDRONI',
+      valor: 1412,
+      vencimento: '2026-10-14',
+      codigoMascarado: '34191…0000',
+      tituloMantido: { filCod: 7, docCod: '801', titCod: '1' },
+      ocorridoEm: '2026-10-14T10:00:00.000Z',
+      // Campos que a API NUNCA deveria mandar — a tela não pode renderizá-los.
+      codigo: BARRAS,
+    }
+
+    it('lê da trilha do lote e mostra o aviso sem abrir o card, com a máscara', async () => {
+      ;(fetchRetiradasDoLote as jest.Mock).mockResolvedValueOnce([retirada])
+      const { container } = render(
+        <LoteCard
+          lote={lote({ status: 'REMESSA_GERADA' })}
+          busy={false}
+          acao={acaoQueExecuta()}
+        />,
+      )
+      const aviso = await screen.findByTestId('aviso-retirados-codigo-barras')
+      expect(fetchRetiradasDoLote).toHaveBeenCalledWith('L1')
+      expect(aviso).toHaveTextContent('1001/1')
+      expect(aviso).toHaveTextContent('PEDRONI')
+      expect(aviso).toHaveTextContent('código 34191…0000')
+      expect(aviso).toHaveTextContent('ficou 801/1')
+      expect(container.innerHTML).not.toContain(BARRAS)
+      expect(container.innerHTML).not.toMatch(/\d{10,}/)
+    })
+
+    it('rascunho não consulta a trilha (a guarda só roda com o lote FINALIZADO)', async () => {
+      renderCard(lote({ status: 'RASCUNHO' }))
+      await waitFor(() => expect(fetchContasPagadoras).toHaveBeenCalled())
+      expect(fetchRetiradasDoLote).not.toHaveBeenCalled()
+    })
+
+    it('sem retiradas ou com falha de leitura, não mostra aviso nem quebra o card', async () => {
+      ;(fetchRetiradasDoLote as jest.Mock).mockRejectedValueOnce(new Error('503'))
+      render(
+        <LoteCard
+          lote={lote({ status: 'FINALIZADO' })}
+          busy={false}
+          acao={acaoQueExecuta()}
+        />,
+      )
+      await waitFor(() => expect(fetchRetiradasDoLote).toHaveBeenCalled())
+      expect(screen.queryByTestId('aviso-retirados-codigo-barras')).toBeNull()
+    })
   })
 
   it('caixa de seleção só com onSelecionar e só em lote com remessa', async () => {

@@ -43,6 +43,7 @@ import {
   ehDuplicidade,
   fetchLinhasDigitaveis,
   fetchModalidadesDisponiveis,
+  fetchRetiradasDoLote,
   fetchContasPagadoras,
   finalizarLote,
   formatCivilDate,
@@ -61,6 +62,7 @@ import {
   type ItemRetirado,
   reabrirLote,
   type RecursosSispag,
+  type RetiradaDoLote,
   removerItem,
   rotuloConta,
   STATUS_SINCRONIZAVEIS,
@@ -77,6 +79,7 @@ import { formatBRL } from '@/lib/utils'
 import { type AcaoLote, ConfirmarAcaoDialog, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
 import { ResolverDuplicidadeDialog } from './ResolverDuplicidadeDialog'
+import { RetiradosPorCodigoBarrasAviso } from './RetiradosPorCodigoBarrasAviso'
 import { rotuloVencimentoLote } from './loteDoTitulo'
 
 const RECURSOS_DESLIGADOS: RecursosSispag = {
@@ -557,6 +560,26 @@ export function LoteCard({
     }
   }, [aberto, isRascunho, l.id, podeVer])
 
+  // ADR-0069 emenda 1 (I16f(3)): o que o sistema retirou DESTE lote por boleto repetido/ilegível,
+  // lido da trilha — persistente, sobrevive a recarregar a página. Só lotes fora de RASCUNHO
+  // (a guarda roda em `gerarRemessa`, com o lote FINALIZADO). Falha = sem aviso, nada quebra.
+  const [retiradas, setRetiradas] = React.useState<RetiradaDoLote[]>([])
+  React.useEffect(() => {
+    if (isRascunho || l.status === 'CANCELADO' || !podeVer) return
+    let vivo = true
+    Promise.resolve(fetchRetiradasDoLote(l.id))
+      .then((r) => {
+        if (vivo) setRetiradas(r ?? [])
+      })
+      .catch(() => {
+        if (vivo) setRetiradas([])
+      })
+    return () => {
+      vivo = false
+    }
+    // `l.versao`: a retirada bumpa a versão do lote — relê quando o lote muda.
+  }, [isRascunho, l.id, l.status, l.versao, podeVer])
+
   /** Copia a linha digitável. O toast confirma sem repetir os 47 dígitos na tela. */
   const copiarLinha = async (linhaDigitavel: string, docCod: string, titCod: string) => {
     try {
@@ -743,6 +766,13 @@ export function LoteCard({
           ) : null}
         </div>
       </CardHeader>
+      {/* Aviso PERSISTENTE (ADR-0069 emenda 1): fora do conteúdo colapsável — a analista o vê sem
+          abrir o card e ele dura enquanto o lote existir (lido da trilha). */}
+      {retiradas.length > 0 ? (
+        <div className="px-6 pb-3">
+          <RetiradosPorCodigoBarrasAviso retiradas={retiradas} />
+        </div>
+      ) : null}
       {aberto ? (
         <CardContent>
           {isRascunho && podeExecutar ? (
