@@ -4,12 +4,18 @@ type: business-rule
 entity: ConfirmacaoEmissorBoleto
 invariant: I15
 ontology_version: "0.40.0"
-implementation_status: planned
+implementation_status: implemented
 status: active
 owners: [yuri]
-related_files: []
+related_files:
+  - "src/backend/domain/service/sispag/RegraSugestaoBoleto.ts"
+  - "src/backend/domain/service/sispag/MotorSugestaoBoleto.ts"
+  - "src/backend/domain/service/sispag/ConsolidacaoBoletoDda.ts"
+  - "src/backend/domain/service/sispag/BoletoSuggestionService.ts"
+  - "src/backend/routes/sispag.ts"
+  - "src/frontend/app/sispag/components/SugestaoBoletoPainel.tsx"
 last_review: 2026-10-14
-has_canonical_test: false
+has_canonical_test: true
 ---
 
 # Business Rule: sugestão e confirmação de boleto DDA (I15)
@@ -18,7 +24,7 @@ has_canonical_test: false
 > que provavelmente é o do título "boleto sem DDA", e **registrar** a decisão dele por
 > (credor, emissor). Passo 2 (bind do código de barras ao item do lote, exige prova em HML) e passo 3
 > (automático só para pares confirmados) terão **ADR e entrevista próprias** — esta regra não os
-> autoriza. **Status: planned** — ontologia à frente do código.
+> autoriza. **Status: implemented (v0.66.0)** — ontologia à frente do código.
 
 ## Decisões do maintainer (2026-10-14)
 
@@ -44,7 +50,7 @@ bloqueante). Q-G (implementação) é do TaskScoper.
 | **I15b** | **Zero escrita no Conexos no passo 1:** nenhum `importar`, nenhum `validacao/codigoBarras`, nenhum `titVldReflexoDdaAssoc = 1`, nenhum `cancelar`. As únicas escritas são locais (confirmação, decisão, trilha). |
 | **I15c** | **Sugestão calculada em camadas, não persistida** (mesma postura de I-DDA1). Para um título ativo, `forma = BOLETO`, `tem_boleto = false`, o candidato é um boleto **livre** (sem `docCod/titCod`). Tiers, do mais ao menos forte: **`CONHECIDO`** (par (`pesCod`, `emissorChave`) já `VIGENTE` **e** dentro dos limites globais); **`FORTE`** (dentro dos limites globais, candidato único nos dois sentidos); **`ATENCAO`** (fora dos limites — ex.: +1,6 % ou +R$ 10 —, mostrada com a **diferença com sinal destacada**, **nunca** como segura). **Limites globais (seguros), decididos pelo maintainer:** \|Δvalor\| ≤ R$ 0,05 **no mesmo dia**; **ou** valor igual e boleto vencendo de 1 a 5 dias **depois** do título e **não antes da data de débito** (I15h). Qualquer coisa maior é `ATENCAO`. São constantes de código globais (não por tenant), ajustáveis por ADR curta, sem mudança estrutural. |
 | **I15d** | **A confirmação nunca alarga limite.** O delta (R$, %, dias, com sinal) é exibido e gravado na evidência; cada nova sugestão é reavaliada contra os limites **globais**. Um par confirmado com +R$ 0,01 não autoriza +R$ 10 nem +5 dias. Aprender tolerância por par é decisão do passo 3. |
-| **I15e** | **Exclusões e disputa.** Não é candidato: (1) boleto vinculado pelo ERP a qualquer título (`docCod/titCod` preenchidos, I-DDA2); (2) boleto "usado" por título que o ERP já sinalizou (`tem_boleto = true` com mesmo valor e dia — o ERP o reservou); (3) título pago, inativo ou com `forma ≠ BOLETO`. **Disputa (Q-D, default, revisável):** quando dois títulos contestam o mesmo boleto, o boleto fica **reservado ao título de menor vencimento**; empate no vencimento desfaz-se pelo **menor `docCod`** (depois `filCod`, `titCod`, para ser determinístico). O outro título é mostrado **sem** o boleto. Um boleto, um título. |
+| **I15e** | **Exclusões e disputa.** Não é candidato: (1) boleto vinculado pelo ERP a qualquer título (`docCod/titCod` preenchidos, I-DDA2); (2) boleto "usado" por título que o ERP já sinalizou (`tem_boleto = true` com mesmo valor e dia — o ERP o reservou); (3) título pago, inativo ou com `forma ≠ BOLETO`. **Disputa (Q-D, default, revisável):** quando dois títulos contestam o mesmo boleto, o boleto fica **reservado ao título de menor vencimento**; empate no vencimento desfaz-se pelo **menor `docCod`** (depois `filCod`, `titCod`, para ser determinístico). O outro título é mostrado **sem** o boleto. Um boleto, um título. **Ambiguidade por título (default implementado, revisável):** quando um título tem **dois ou mais** candidatos seguros (CONHECIDO/FORTE) de mesma força, o título fica **sem sugestão** — a analista os vê na aba "Boletos DDA"; nenhum `ATENCAO` é inventado para desempatar. |
 | **I15f** | **Número do documento é sinal de apoio, nunca suficiente.** `doc_esp_numero` × `boleto_dda.numero` iguais (dígitos estritos) sobem a confiança, mas sozinhos têm ~50 % de precisão (propriedade do credor: 16 de 35 sempre casam, 18 nunca). Número igual com valor/data muito distantes é **colisão** e não é sugerido como seguro. |
 | **I15g** | **Escopo = (`pesCod`, `emissorChave`).** Nunca global, nunca só por credor, nunca só por banco. MULTILOG BRASIL cc 0092740 confirmada **não** cobre MULTILOG S/A (cc 0006500) nem outra conta do mesmo credor. **Quem confirma é sempre uma pessoa** com `sispag:executar`; o sistema nunca confirma. A segunda pessoa só entra quando o par virar automático (passo 3, ADR própria). **Quem revoga** o par: qualquer pessoa com `sispag:executar`, com motivo (Q-A). Revogar cancela as decisões por título ainda não aplicadas no ERP (Q-E; no passo 1 não há nenhuma). |
 | **I15h** | **Boleto que vence antes da data de débito nunca é seguro e não é confirmável no passo 1** (Q-F, default, revisável). Está vencido (juros/multa): é mostrado **só para informação**, com o motivo visível; nunca `CONHECIDO` nem `FORTE`, nunca confirmável, nunca elegível ao automático. Datas comparadas como data civil (UTC meia-noite, BRT). A data de débito é a do lote quando existe (I8, `data-debito-remessa-sispag`); **sem lote, é o vencimento do título** (Q-C, default, revisável). |

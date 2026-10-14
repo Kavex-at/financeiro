@@ -38,7 +38,7 @@ relationships:
   - "BoletoDda N—1 ArquivoDda (via ddcCod — o arquivo DDA do banco importado no fin124)"
   - "BoletoDda 0..1—1 TituloAPagar (via filCod/docCod/titCod — vínculo gravado PELO CONEXOS na associação do fin015; nunca por nós)"
   - "BoletoDda 0..N—0..N TituloAPagar (candidatos — SUGESTÃO calculada, não persistida: regra em camadas I15c; só o que o ERP não associou)"
-  - "BoletoDda 0..N—N DecisaoSugestaoBoleto (snapshot por ddcCod/ditCod; decisão humana registrada, ADR-0068, planned)"
+  - "BoletoDda 0..N—N DecisaoSugestaoBoleto (snapshot por ddcCod/ditCod; decisão humana registrada, ADR-0068, implemented)"
 last_review: 2026-10-14
 universality_evidence:
   - "ontology/_inbox/sispag-boleto-dda-sondagem.md — pool fin124 medido em PRD: 100% dos itens com barras de 44 dígitos, ~0% com vínculo"
@@ -73,7 +73,7 @@ ganha filial quando é vinculado (ou, na aba, pelo candidato único).
 | Situação | Regra |
 |---|---|
 | `VINCULADO` | O Conexos preencheu `docCod`/`titCod` no item do fin124. |
-| `CANDIDATO` | Livre, e **um** título aberto cai nas camadas de I15c (\|Δvalor\| ≤ R$ 0,05 e mesmo dia; ou valor igual e 1–5 dias depois), sem estar reservado por título que o ERP já sinalizou (I15e). **Alvo da v0.40.0 (ADR-0068, planned):** os limites vêm de `business-rules/sugestao-boleto-dda-sispag.md`; a janela "valor exato ±3 dias" (`JANELA_CANDIDATO_DIAS`), ainda vigente no código, deixa de ser a regra (ela inclui dias ANTES do título, que são vencidos — I15h). **open_gap:** código ainda na janela antiga. |
+| `CANDIDATO` | Livre, e **um** título aberto cai nas camadas de I15c (\|Δvalor\| ≤ R$ 0,05 e mesmo dia; ou valor igual e 1–5 dias depois), sem estar reservado por título que o ERP já sinalizou (I15e). **Regra vigente desde a v0.66.0 (ADR-0068):** os limites vêm de `business-rules/sugestao-boleto-dda-sispag.md`; a janela "valor exato ±3 dias" (`JANELA_CANDIDATO_DIAS`) deixou de ser a regra (ela inclui dias ANTES do título, que são vencidos — I15h). |
 | `AMBIGUO` | Livre, e **mais de um** título casa. Típico de cobrança recorrente de mesmo valor. |
 | `SEM_TITULO` | Livre, e nenhum título aberto casa. |
 
@@ -90,7 +90,7 @@ Invariantes:
   ADP 5046/1) não foram associados por isso. (Substitui a hipótese "exige vencimento idêntico — não
   confirmada".) Consequência: tudo o que sobra "sem DDA" é, por construção, o que o ERP **não**
   consegue associar (centavos, dias, conta emissora desconhecida) — é o território da sugestão.
-- **I-DDA4 — a sugestão tem camadas e decisão humana registrada** (ADR-0068, I15, planned). Ver
+- **I-DDA4 — a sugestão tem camadas e decisão humana registrada** (ADR-0068, I15, implemented em v0.66.0). Ver
   `business-rules/sugestao-boleto-dda-sispag.md`. I-DDA1 (candidato não é gravado) permanece:
   a sugestão é calculada; o que se persiste é a **decisão** (`DecisaoSugestaoBoleto`) e o **par**
   (`ConfirmacaoEmissorBoleto`), nunca o candidato.
@@ -118,8 +118,8 @@ medidos); demais bancos usam chave genérica (I15i).
 ## Acesso
 
 `GET /sispag/boletos-dda` é `sispag:ver` desde a ADR-0053 (era `admin`); `POST
-/sispag/boletos-dda/sincronizar` segue como está no código. O payload do GET carrega `linhaDigitavel`
+/sispag/boletos-dda/sincronizar` é `sispag:executar`. O payload do GET carrega `linhaDigitavel`
 **sem auditoria** — estado conhecido e aceito (emenda de 2026-10-14 à ADR-0068).
 
-**Sugestão por título (ADR-0068, planned):** `sispag:ver` vê a sugestão e copia a linha digitável
+**Sugestão por título (ADR-0068, implemented):** `sispag:ver` vê a sugestão e copia a linha digitável
 (sempre auditado); confirmar, rejeitar e revogar exigem `sispag:executar`.

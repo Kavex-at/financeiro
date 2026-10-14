@@ -2,10 +2,16 @@
 name: ConfirmacaoEmissorBoleto
 type: entity
 ontology_version: "0.40.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - "src/backend/migrations/0084_sispag_sugestao_boleto.sql"
+  - "src/backend/domain/interface/sispag/ConfirmacaoEmissorBoleto.ts"
+  - "src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts"
+  - "src/backend/domain/service/sispag/BoletoSuggestionService.ts"
+  - "src/backend/domain/libs/boleto/CodigoBarrasBoleto.ts"
+  - "src/frontend/app/sispag/components/ConfirmacoesEmissorPainel.tsx"
 properties: [id, pesCod, credor, emissorChave, layoutEmissor, bancoEmissor, emissorMascarado, estado, evidencia, confirmadoPor, confirmadoEm, revogadoPor, revogadoEm, motivoRevogacao, versao]
 relationships:
   - "ConfirmacaoEmissorBoleto N—1 Favorecido (pesCod no cmn025; sem entidade local, como em TituloAPagar e FavorecidoAutorizado)"
@@ -27,7 +33,7 @@ universality_evidence:
 > Code-facing: `BoletoIssuerConfirmation` (constante `BOLETO_ISSUER_CONFIRMATION_STATE`). Tabelas
 > propostas: `sispag_confirmacao_emissor_boleto` e a trilha compartilhada só-inclusão
 > `sispag_sugestao_boleto_evento` (trigger recusa UPDATE/DELETE/TRUNCATE, padrão ADR-0065).
-> Regras em `business-rules/sugestao-boleto-dda-sispag.md` (I15). **Status: planned** — ontologia à
+> Regras em `business-rules/sugestao-boleto-dda-sispag.md` (I15). **Status: implemented (v0.66.0, migration 0084)** — ontologia à
 > frente do código.
 
 ## O que é e o que não é
