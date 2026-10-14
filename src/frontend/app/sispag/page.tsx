@@ -100,6 +100,7 @@ import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLo
 import { useCriarLoteManual } from './components/useCriarLoteManual'
 import { alternarTodos, estadoSelecionarTodos } from './components/selecionarTodos'
 import { FormaPagamentoBadge } from './components/FormaPagamentoBadge'
+import { ConfirmacoesEmissorPainel } from './components/ConfirmacoesEmissorPainel'
 import {
   agruparPorTitulo,
   chaveTitulo,
@@ -233,6 +234,7 @@ function SispagPanel() {
   // Sugestões de boleto DDA (ADR-0068). Evidência opcional: se a leitura falhar a aba de
   // títulos funciona igual, só sem o selo "sugestão disponível".
   const [sugestoes, setSugestoes] = React.useState<ListagemSugestoesBoleto | null>(null)
+  const [mostrarConfirmacoes, setMostrarConfirmacoes] = React.useState(false)
   const carregarSugestoes = React.useCallback(async () => {
     try {
       setSugestoes(await fetchTodasSugestoesBoleto())
@@ -1240,6 +1242,29 @@ function SispagPanel() {
                   : 'Sem ingestão ainda — clique em "Ingestão de dados".'}{' '}
                 Selecione títulos de uma filial e clique em <strong>Criar lote</strong>.
               </p>
+              {podeVer ? (
+                <div className="flex flex-col gap-2">
+                  <div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-expanded={mostrarConfirmacoes}
+                      aria-controls="confirmacoes-emissor"
+                      onClick={() => setMostrarConfirmacoes((v) => !v)}
+                    >
+                      {mostrarConfirmacoes ? 'Ocultar' : 'Ver'} emissores de boleto confirmados
+                    </Button>
+                  </div>
+                  {mostrarConfirmacoes ? (
+                    <section id="confirmacoes-emissor" aria-label="Emissores de boleto confirmados">
+                      <ConfirmacoesEmissorPainel
+                        podeExecutar={podeExecutar}
+                        onAlterado={carregarSugestoes}
+                      />
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
             </TabsContent>
 
             {/* ---- Lotes candidatos (RASCUNHO — falta finalizar) ---- */}
