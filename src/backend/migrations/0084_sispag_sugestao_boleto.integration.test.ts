@@ -154,6 +154,20 @@ describeComBanco('0084 — sugestão de boleto DDA', () => {
         ).toBe('23514');
     });
 
+    it('pes_cod em branco é recusado (23514)', async () => {
+        expect(
+            await codigoDoErro(
+                db.query(
+                    `INSERT INTO sispag_confirmacao_emissor_boleto
+                        (id, pes_cod, emissor_chave, layout_emissor, banco_emissor,
+                         emissor_mascarado, confirmado_por)
+                     VALUES ($1, '  ', '237:1:2', 'GENERICO', '237', 'x', 'ana')`,
+                    [id(7)],
+                ),
+            ),
+        ).toBe('23514');
+    });
+
     it('CONFIRMADA exige par e tier; REJEITADA exige motivo', async () => {
         expect(
             await codigoDoErro(

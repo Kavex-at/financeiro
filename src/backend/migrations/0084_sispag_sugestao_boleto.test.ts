@@ -92,6 +92,17 @@ describe('migration 0084 — sugestão de boleto DDA (ADR-0068)', () => {
         expect(CODIGO).toMatch(/confirmado_por\s+TEXT NOT NULL/i);
     });
 
+    it('pes_cod em branco é recusado nas tabelas de par e de decisão', () => {
+        for (const t of ['sispag_confirmacao_emissor_boleto', 'sispag_decisao_sugestao_boleto']) {
+            expect(CODIGO).toMatch(
+                new RegExp(
+                    `${t}_pes_cod_check CHECK \\(\\s*length\\(btrim\\(pes_cod\\)\\) > 0`,
+                    'i',
+                ),
+            );
+        }
+    });
+
     it('REJEITADA exige motivo; CONFIRMADA exige par e tier', () => {
         expect(CODIGO).toMatch(
             /decisao <> 'REJEITADA' OR \(motivo IS NOT NULL AND length\(btrim\(motivo\)\) > 0\)/i,

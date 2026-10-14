@@ -2,6 +2,9 @@ import BoletoAlreadySuggestedToOtherTitleError from './BoletoAlreadySuggestedToO
 import BoletoSuggestionNotAvailableError from './BoletoSuggestionNotAvailableError.js';
 import IssuerConfirmationNotFoundError from './IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from './IssuerConfirmationReasonRequiredError.js';
+import IssuerConfirmationVersionConflictError from './IssuerConfirmationVersionConflictError.js';
+import InvalidDecisionActorError from './InvalidDecisionActorError.js';
+import SuggestionListingTruncatedError from './SuggestionListingTruncatedError.js';
 import LineCopyAuditFailedError from './LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from './OverdueBoletoNotConfirmableError.js';
 
@@ -14,6 +17,9 @@ describe('erros da sugestão de boleto (ADR-0068) — HTTP e mensagem', () => {
         [new IssuerConfirmationReasonRequiredError({ acao: 'rejeitar a sugestão' }), 422],
         [new OverdueBoletoNotConfirmableError(chave), 422],
         [new IssuerConfirmationNotFoundError({ id: 'x' }), 404],
+        [new IssuerConfirmationVersionConflictError({ id: 'x' }), 409],
+        [new InvalidDecisionActorError(), 403],
+        [new SuggestionListingTruncatedError({ listagem: 'decisoes', limite: 10000 }), 503],
         [new LineCopyAuditFailedError({ filCod: 2, docCod: '9001', titCod: '1' }), 503],
     ])('%p → %i', (erro, status) => {
         expect(erro.statusCode).toBe(status);

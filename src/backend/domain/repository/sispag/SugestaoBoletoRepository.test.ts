@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import SuggestionListingTruncatedError from '../../errors/SuggestionListingTruncatedError.js';
 import SugestaoBoletoRepository from './SugestaoBoletoRepository.js';
 
 interface DbMock {
@@ -107,6 +108,20 @@ describe('SugestaoBoletoRepository (ADR-0068, migration 0084)', () => {
             versao: 1,
         });
         expect(r[0]).not.toHaveProperty('revogadoPor');
+    });
+
+    it('listagens no teto de 10000 linhas falham alto em vez de devolver lista truncada', async () => {
+        const cheia = (row: unknown) => Array.from({ length: 10000 }, () => row);
+        const casos: Array<[string, (r: SugestaoBoletoRepository) => Promise<unknown>, unknown]> = [
+            ['listarParesVigentes', (r) => r.listarParesVigentes(), PAR_ROW],
+            ['listarPares', (r) => r.listarPares(), PAR_ROW],
+            ['listarDecisoes', (r) => r.listarDecisoes({}), DECISAO_ROW],
+        ];
+        for (const [, chamar, row] of casos) {
+            const db = buildDb();
+            db.selectMany.mockResolvedValue(cheia(row));
+            await expect(chamar(make(db))).rejects.toBeInstanceOf(SuggestionListingTruncatedError);
+        }
     });
 
     it('listarParesVigentes sem filtro passa pesCods nulo', async () => {

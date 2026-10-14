@@ -6,6 +6,8 @@ import BoletoAlreadySuggestedToOtherTitleError from '../../errors/BoletoAlreadyS
 import BoletoSuggestionNotAvailableError from '../../errors/BoletoSuggestionNotAvailableError.js';
 import IssuerConfirmationNotFoundError from '../../errors/IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from '../../errors/IssuerConfirmationReasonRequiredError.js';
+import IssuerConfirmationVersionConflictError from '../../errors/IssuerConfirmationVersionConflictError.js';
+import InvalidDecisionActorError from '../../errors/InvalidDecisionActorError.js';
 import LineCopyAuditFailedError from '../../errors/LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from '../../errors/OverdueBoletoNotConfirmableError.js';
 import type { BoletoDda } from '../../interface/sispag/BoletoDda.js';
@@ -425,7 +427,9 @@ describe('BoletoSuggestionService.confirmar (I15a, I15d, I15i, I15j)', () => {
 
     it.each(['sistema', 'SISTEMA', 'unknown', '  '])('recusa o ator %p', async (ator) => {
         const { service } = montar();
-        await expect(service.confirmar({ ...CHAVE, ator })).rejects.toThrow(/ator/i);
+        await expect(service.confirmar({ ...CHAVE, ator })).rejects.toBeInstanceOf(
+            InvalidDecisionActorError,
+        );
     });
 });
 
@@ -605,5 +609,83 @@ describe('logs (português, sem barras nem linha digitável)', () => {
             .map((c) => c[0] as { message: string; data?: Record<string, unknown> })
             .find((p) => p.message === 'sugestao_boleto.decisao');
         expect(decisao?.data).toMatchObject({ decisao: 'CONFIRMADA', tier: 'FORTE' });
+    });
+});
+
+describe('erros nomeados e entradas ruins (PatternGuardian)', () => {
+    it.each([
+        'sistema',
+        'unknown',
+        '  ',
+    ])('ator %p é InvalidDecisionActorError (403) em todas as ações', async (ator) => {
+        const { service } = montar({ pares: [PAR] });
+        const chamadas = [
+            () => service.confirmar({ ...CHAVE, ator }),
+            () => service.rejeitar({ ...CHAVE, motivo: 'x', ator }),
+            () => service.revogarPar({ id: 'par-1', motivo: 'x', ator }),
+            () => service.copiarLinha({ ...CHAVE, ator }),
+        ];
+        for (const chamar of chamadas) {
+            await expect(chamar()).rejects.toBeInstanceOf(InvalidDecisionActorError);
+        }
+    });
+
+    it('revogar com conflito de versão e par ainda VIGENTE → IssuerConfirmationVersionConflictError', async () => {
+        const { service, repo, eventos } = montar({ pares: [PAR] });
+        repo.revogarPar.mockResolvedValueOnce(0);
+        await expect(
+            service.revogarPar({ id: 'par-1', motivo: 'conta trocada', ator: 'bia' }),
+        ).rejects.toBeInstanceOf(IssuerConfirmationVersionConflictError);
+        expect(eventos).toHaveLength(0);
+    });
+
+    it('rejeitar: título sem vencimento → indisponível, antes da transação', async () => {
+        const { service, db, repo } = montar({
+            titulos: [{ ...TITULO, vencimento: undefined as never }],
+        });
+        await expect(
+            service.rejeitar({ ...CHAVE, motivo: 'x', ator: 'ana' }),
+        ).rejects.toBeInstanceOf(BoletoSuggestionNotAvailableError);
+        expect(db.withTransaction).not.toHaveBeenCalled();
+        expect(repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('rejeitar: boleto sem vencimento → indisponível, antes da transação', async () => {
+        const { service, db } = montar({
+            boletos: [{ ...BOLETO, vencimento: undefined as never }],
+        });
+        await expect(
+            service.rejeitar({ ...CHAVE, motivo: 'x', ator: 'ana' }),
+        ).rejects.toBeInstanceOf(BoletoSuggestionNotAvailableError);
+        expect(db.withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rejeitar: título sem credor (pesCod) → indisponível, nunca grava pes_cod vazio', async () => {
+        const { service, db, repo } = montar({
+            titulos: [{ ...TITULO, pesCod: undefined as never }],
+        });
+        await expect(
+            service.rejeitar({ ...CHAVE, motivo: 'x', ator: 'ana' }),
+        ).rejects.toBeInstanceOf(BoletoSuggestionNotAvailableError);
+        expect(db.withTransaction).not.toHaveBeenCalled();
+        expect(repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('log de falha da trilha leva só message e code, nunca o objeto do erro', async () => {
+        const { service, repo, logService } = montar();
+        repo.inserirEvento.mockRejectedValueOnce(
+            Object.assign(new Error('insert falhou'), {
+                code: '23505',
+                detail: 'Key (codbar)=(23791...) already exists',
+            }),
+        );
+        await expect(service.copiarLinha({ ...CHAVE, ator: 'ana' })).rejects.toBeInstanceOf(
+            LineCopyAuditFailedError,
+        );
+        const payload = logService.warn.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(payload.error).toBeUndefined();
+        expect(payload.data).toMatchObject({ erro: 'insert falhou', codigoErro: '23505' });
+        expect(JSON.stringify(payload)).not.toContain('detail');
+        expect(JSON.stringify(payload)).not.toContain('already exists');
     });
 });
