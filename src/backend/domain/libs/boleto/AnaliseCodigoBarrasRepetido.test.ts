@@ -181,6 +181,51 @@ describe('AnaliseCodigoBarrasRepetido.decidirRetirada (I16d.1, I16d.2)', () => {
         expect([...mantidas].sort()).toEqual(['1:1:1', '1:3:1']);
     });
 
+    describe('desempate por decisão humana vigente (ADR-0071, I17h)', () => {
+        it('exatamente UM título do grupo com decisão humana: ele fica, mesmo com vencimento maior', () => {
+            const r = analise.decidirRetirada(
+                [item('100', { venc: BASE + 3 * DIA }), item('101', { venc: BASE })],
+                new Set(['1:100:1']),
+            );
+            expect(r.retirar).toHaveLength(1);
+            expect(r.retirar[0]?.chave).toBe('1:101:1');
+            expect(r.retirar[0]?.mantida).toBe('1:100:1');
+        });
+
+        it('dois preferidos no grupo: vale a ordem de hoje (vencimento → docCod → filCod → titCod)', () => {
+            const r = analise.decidirRetirada(
+                [
+                    item('100', { venc: BASE + DIA }),
+                    item('101', { venc: BASE }),
+                    item('102', { venc: BASE + 2 * DIA }),
+                ],
+                new Set(['1:100:1', '1:102:1']),
+            );
+            expect(r.retirar.map((x) => x.chave).sort()).toEqual(['1:100:1', '1:102:1']);
+            expect(r.retirar[0]?.mantida).toBe('1:101:1');
+        });
+
+        it('zero preferidos no grupo: ordem de hoje (a decisão de OUTRO grupo não interfere)', () => {
+            const r = analise.decidirRetirada(
+                [
+                    item('1', { codigo: LINHA_A, venc: BASE + DIA }),
+                    item('2', { codigo: LINHA_A, venc: BASE }),
+                    item('3', { codigo: LINHA_B }),
+                ],
+                new Set(['1:3:1']),
+            );
+            expect(r.retirar).toHaveLength(1);
+            expect(r.retirar[0]?.chave).toBe('1:1:1');
+        });
+
+        it('a análise continua pura e o conjunto vazio equivale a não passar nada', () => {
+            const entrada = [item('100', { venc: BASE + 3 * DIA }), item('101', { venc: BASE })];
+            expect(analise.decidirRetirada(entrada, new Set())).toEqual(
+                analise.decidirRetirada(entrada),
+            );
+        });
+    });
+
     it('ilegível (DV inválido) vai para ilegiveis sem "quem fica"', () => {
         const dvRuim = `${LINHA_A.slice(0, 9)}${(Number(LINHA_A[9]) + 1) % 10}${LINHA_A.slice(10)}`;
         const r = analise.decidirRetirada([item('1', { codigo: dvRuim }), item('2')]);

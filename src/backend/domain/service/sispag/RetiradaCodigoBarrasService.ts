@@ -13,10 +13,11 @@ import type {
 } from '../../interface/sispag/RetiradaCodigoBarras.js';
 import {
     type ChaveTitulo,
-    DUPLICATE_HOLD_ORIGIN,
     type ItemLote,
     type LotePagamento,
     MODALIDADE,
+    MOTIVOS_RETIRADA_CODIGO_BARRAS,
+    ORIGENS_RETENCAO_CODIGO_BARRAS,
     SYSTEM_REMOVAL_REASON,
 } from '../../interface/sispag/SispagInterface.js';
 import AnaliseCodigoBarrasRepetido, {
@@ -40,6 +41,20 @@ export interface GarantirSemCodigoRepetidoInput {
     rascunhoAberto: boolean;
     /** A retomada já viu resíduos no rascunho: lê a lista mesmo sem boleto local. */
     forcarLeitura?: boolean;
+    /**
+     * Chaves (`filCod:docCod:titCod`) com decisão humana vigente (ADR-0071, I17h): no desempate da
+     * I16d.1, quando EXATAMENTE uma do grupo está aqui, é a que fica. A análise segue pura.
+     */
+    preferidos?: ReadonlySet<string>;
+    /**
+     * Itens cujo vínculo do código falhou de forma DETERMINÍSTICA pós-import (ADR-0071, I17g(3)):
+     * saem pela MESMA maquinaria (local primeiro, `DELETE` com `itsCodSeq` relido, ausência
+     * observada), com motivo `VINCULO_CODIGO_BARRAS_FALHOU`. Só a máscara 5+4.
+     */
+    retiradosPeloVinculo?: Array<{
+        titulo: ChaveTitulo;
+        codigoMascarado?: string;
+    }>;
 }
 
 export interface GarantirSemCodigoRepetidoResult {
@@ -66,6 +81,8 @@ interface ItemNativo {
     codigo?: string;
     /** `true` = veio em `invalidos` (código presente mas recusado). */
     invalido: boolean;
+    /** `true` = o item do rascunho ainda NÃO tem código (só a identidade nativa, ADR-0071). */
+    semCodigo?: boolean;
 }
 
 interface AlvoRetirada {
@@ -96,15 +113,9 @@ const paraChaveTitulo = (chave: string): ChaveTitulo => {
 
 const idCurto = (t: { docCod: string; titCod: string }): string => `${t.docCod}/${t.titCod}`;
 
-const MOTIVOS = [
-    SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_REPETIDO,
-    SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_ILEGIVEL,
-];
+const MOTIVOS = [...MOTIVOS_RETIRADA_CODIGO_BARRAS];
 
-const ORIGENS = [
-    DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_REPETIDO,
-    DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_ILEGIVEL,
-];
+const ORIGENS = [...ORIGENS_RETENCAO_CODIGO_BARRAS];
 
 /**
  * Guarda de código de barras que RETIRA (ADR-0069 emenda 1, I16c, I16d, I16h) — substitui a
@@ -180,8 +191,17 @@ export default class RetiradaCodigoBarrasService {
     ): Promise<GarantirSemCodigoRepetidoResult> => {
         const { lote, bncCod, flpCod } = input;
         const inalterado: GarantirSemCodigoRepetidoResult = { lote, retirados: [], avisos: [] };
-        const boletos = lote.itens.filter((i) => i.modalidade === MODALIDADE.BOLETO);
-        if (boletos.length === 0 && input.forcarLeitura !== true) return inalterado;
+        const doVinculo = new Map(
+            (input.retiradosPeloVinculo ?? []).map((v) => [chaveDe(v.titulo), v]),
+        );
+        // Item cujo vínculo falhou NÃO tem código no rascunho: não é "código ausente" (I16c), é o
+        // alvo da retirada — fica fora da exigência de leitura.
+        const boletos = lote.itens.filter(
+            (i) => i.modalidade === MODALIDADE.BOLETO && !doVinculo.has(chaveDe(i)),
+        );
+        if (boletos.length === 0 && doVinculo.size === 0 && input.forcarLeitura !== true) {
+            return inalterado;
+        }
 
         const ctx: ContextoNativo = { filCod: lote.filCod, bncCod, flpCod };
 
@@ -201,7 +221,8 @@ export default class RetiradaCodigoBarrasService {
         const intrusos = estado.filter((e) => !locais.has(e.chave)).map((e) => e.chave);
         const { residuos } = await this.classificarIntrusos(lote.id, intrusos);
         const alvos = [
-            ...this.alvosDaDecisao(this.decidir(estado, locais)),
+            ...this.alvosDaDecisao(this.decidir(estado, locais, input.preferidos)),
+            ...[...doVinculo].map(([chave, v]) => this.alvoDoVinculo(chave, v)),
             ...[...residuos].map(([chave, r]) => this.alvoDeResiduo(chave, r)),
         ];
         if (alvos.length === 0) return inalterado;
@@ -230,7 +251,7 @@ export default class RetiradaCodigoBarrasService {
             });
         }
 
-        const atual = await this.posLimpeza(lote, estado, retirados, flpCod);
+        const atual = await this.posLimpeza(lote, estado, retirados, flpCod, input.preferidos);
         return { lote: atual, retirados, avisos: this.avisos(retirados) };
     };
 
@@ -295,6 +316,7 @@ export default class RetiradaCodigoBarrasService {
         estado: ItemNativo[],
         retirados: RetiradoPorCodigoBarras[],
         flpCod: number,
+        preferidos?: ReadonlySet<string>,
     ): Promise<LotePagamento> => {
         const atual = await this.loteRepo.getLoteComItens(lote.id);
         if (!atual || atual.itens.length === 0) {
@@ -310,7 +332,7 @@ export default class RetiradaCodigoBarrasService {
         }
         // I16a de novo sobre a ÚLTIMA leitura: zero repetido, zero ilegível.
         const locais = new Map(atual.itens.map((i) => [chaveDe(i), i]));
-        const decisao = this.decidir(estado, locais);
+        const decisao = this.decidir(estado, locais, preferidos);
         const aindaRuins = [...decisao.retirar, ...decisao.ilegiveis].map((r) =>
             paraChaveTitulo(r.chave),
         );
@@ -361,6 +383,17 @@ export default class RetiradaCodigoBarrasService {
             ...(i.itsCodSeq !== undefined ? { itsCodSeq: i.itsCodSeq } : {}),
             invalido: true,
         })),
+        // Itens ainda sem código (ADR-0071): só identidade. Não contam como "boleto lido" (I16c),
+        // mas dão ao `DELETE` o `itsCodSeq` e à releitura a confirmação de ausência.
+        ...(leitura.semCodigo ?? []).map((i) => ({
+            chave: chaveDe(i),
+            filCod: i.filCod,
+            docCod: i.docCod,
+            titCod: i.titCod,
+            itsCodSeq: i.itsCodSeq,
+            invalido: false,
+            semCodigo: true,
+        })),
     ];
 
     private erroLeitura = (
@@ -387,7 +420,8 @@ export default class RetiradaCodigoBarrasService {
         if (semIdentidade.length > 0) {
             throw this.erroLeitura('ITEM_SEM_IDENTIDADE', flpCod, semIdentidade);
         }
-        const lidas = new Set(estado.map((e) => e.chave));
+        // Só o item COM código (legível ou recusado) conta como lido (I16c): o sem código não.
+        const lidas = new Set(estado.filter((e) => e.semCodigo !== true).map((e) => e.chave));
         const semLeitura = boletos.filter((b) => !lidas.has(chaveDe(b)));
         if (semLeitura.length > 0) throw this.erroLeitura('CODIGO_AUSENTE', flpCod, semLeitura);
     };
@@ -398,6 +432,7 @@ export default class RetiradaCodigoBarrasService {
     private decidir = (
         estado: ItemNativo[],
         locais: Map<string, { vencimento?: number }>,
+        preferidos?: ReadonlySet<string>,
     ): DecisaoRetirada => {
         const legiveis = estado
             .filter((e) => !e.invalido && e.codigo !== undefined && locais.has(e.chave))
@@ -412,7 +447,7 @@ export default class RetiradaCodigoBarrasService {
                     ...(vencimento !== undefined ? { vencimento } : {}),
                 };
             });
-        const decisao = this.analise.decidirRetirada(legiveis);
+        const decisao = this.analise.decidirRetirada(legiveis, preferidos);
         const invalidos = estado
             .filter((e) => e.invalido && locais.has(e.chave))
             .map((e) => ({ chave: e.chave, motivo: MOTIVO_RETIRADA.CODIGO_BARRAS_ILEGIVEL }));
@@ -435,6 +470,17 @@ export default class RetiradaCodigoBarrasService {
             residuo: false,
         })),
     ];
+
+    private alvoDoVinculo = (
+        chave: string,
+        v: { titulo: ChaveTitulo; codigoMascarado?: string },
+    ): AlvoRetirada => ({
+        chave,
+        ...paraChaveTitulo(chave),
+        motivo: SYSTEM_REMOVAL_REASON.VINCULO_CODIGO_BARRAS_FALHOU,
+        ...(v.codigoMascarado !== undefined ? { mascarado: v.codigoMascarado } : {}),
+        residuo: false,
+    });
 
     private alvoDeResiduo = (chave: string, r: ResiduoReconhecido): AlvoRetirada => ({
         chave,
@@ -577,6 +623,14 @@ export default class RetiradaCodigoBarrasService {
             avisos.push(
                 `${ilegiveis.length} título(s) retirado(s) do lote por código de barras ilegível: ` +
                     `${ilegiveis.map((r) => idCurto(r.titulo)).join(', ')}. Revise o boleto no Conexos.`,
+            );
+        }
+        const vinculos = retirados.filter((r) => r.motivo === 'VINCULO_CODIGO_BARRAS_FALHOU');
+        if (vinculos.length > 0) {
+            avisos.push(
+                `${vinculos.length} título(s) retirado(s) do lote porque o vínculo do código de ` +
+                    `barras confirmado falhou: ${vinculos.map((r) => idCurto(r.titulo)).join(', ')}. ` +
+                    'Eles ficam retidos até a analista desfazer a retenção; confira o boleto.',
             );
         }
         return avisos;
