@@ -96,9 +96,16 @@ export default class AnaliseCodigoBarrasRepetido {
      * I16d.1 — de cada grupo de código repetido FICA UM só: o de menor `vencimento` (ausente
      * perde), depois menor `docCod` (numérico), `filCod` e `titCod`. Os demais saem. Item de
      * código ilegível (DV inválido) sai com motivo próprio e sem "quem fica" (I16d.2).
-     * Sem I/O; a saída NÃO carrega as barras — só a máscara.
+     *
+     * ADR-0071 (I17h): quando EXATAMENTE UM título do grupo está em `preferidos` (decisão humana
+     * vigente), ele é o que fica, mesmo com vencimento maior; com zero ou dois ou mais preferidos
+     * no grupo vale a ordem acima. `preferidos` (chaves `filCod:docCod:titCod`) é montado pelo
+     * chamador: a análise continua PURA (sem I/O). Sem I/O; a saída NÃO carrega as barras.
      */
-    public decidirRetirada = (itens: ItemCodigoBarrasComOrdem[]): DecisaoRetirada => {
+    public decidirRetirada = (
+        itens: ItemCodigoBarrasComOrdem[],
+        preferidos?: ReadonlySet<string>,
+    ): DecisaoRetirada => {
         const porChave = new Map(itens.map((i) => [i.chave, i]));
         const analise = this.analisar(itens);
         const retirar: RetiradaDecidida[] = [];
@@ -107,7 +114,11 @@ export default class AnaliseCodigoBarrasRepetido {
                 .map((c) => porChave.get(c))
                 .filter((i): i is ItemCodigoBarrasComOrdem => i !== undefined)
                 .sort(AnaliseCodigoBarrasRepetido.compararOrdem);
-            const [mantido, ...saem] = membros;
+            const preferidosDoGrupo = membros.filter((m) => preferidos?.has(m.chave) === true);
+            // Exatamente um com decisão humana vigente: ele fica; os demais saem na ordem de hoje.
+            const unico = preferidosDoGrupo.length === 1 ? preferidosDoGrupo[0] : undefined;
+            const ordenados = unico ? [unico, ...membros.filter((m) => m !== unico)] : membros;
+            const [mantido, ...saem] = ordenados;
             if (!mantido) continue;
             for (const s of saem) {
                 retirar.push({
