@@ -11,6 +11,7 @@ import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin01
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type { RemessaExecucaoRow } from '../../interface/sispag/RemessaExecucao.js';
 import {
+    type ChaveTitulo,
     type ItemLote,
     LOTE_STATUS,
     MODALIDADE,
@@ -23,6 +24,11 @@ import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.
 import BoletoCodigoBarrasRepetidoError from '../../errors/BoletoCodigoBarrasRepetidoError.js';
 import type { RetiradoPorCodigoBarras } from '../../interface/sispag/RetiradaCodigoBarras.js';
 import RetiradaCodigoBarrasService from './RetiradaCodigoBarrasService.js';
+import ModoVinculoCodigoBarras, {
+    MODO_VINCULO,
+    type ModoVinculo,
+} from '../../libs/boleto/ModoVinculoCodigoBarras.js';
+import VinculoCodigoBarrasService, { type PrevisaoVinculo } from './VinculoCodigoBarrasService.js';
 import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
 import RemittanceFileUnavailableError from '../../errors/RemittanceFileUnavailableError.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
@@ -107,6 +113,10 @@ type AssinaturaDestino = z.infer<typeof assinaturaDestinoSchema>;
 const ORDEM_ETAPAS = [
     'criar_lote',
     'importar',
+    // ADR-0071 (I17e): vínculo do código de barras confirmado ao item, com o rascunho completo e
+    // ANTES da guarda I16 e do `finalizar`. Etapa só de MEMÓRIA (nunca vai ao ledger): o ledger
+    // fica em `finalizar` desde antes do vínculo, e a retomada a reconhece por `sincronizarComErp`.
+    'vincular_codbar',
     // ADR-0069 emenda 1 (I16h(e)): resíduos de retirada por código de barras ainda no rascunho.
     // Etapa só de MEMÓRIA — nunca vai ao ledger (o CHECK da 0049 não a conhece): a guarda roda
     // antes de `finalizar` em todo caminho e é ela quem limpa.
@@ -164,6 +174,16 @@ export interface GerarRemessaResult {
      * quando houve retirada. Ausente caso contrário.
      */
     avisos?: string[];
+    /**
+     * Itens cujo código de barras foi vinculado a partir da decisão humana confirmada (ADR-0071,
+     * I17). Só a máscara 5+4. Ausente quando nada foi vinculado.
+     */
+    vinculados?: Array<{ titulo: ChaveTitulo; codigoMascarado: string }>;
+    /**
+     * Previsão do vínculo no `dry-run` com o modo `shadow`/`on` (ADR-0071, I17k): o que seria
+     * vinculado, calculado só do que é local. Nada durável é gravado. Só máscaras.
+     */
+    vinculosPrevistos?: PrevisaoVinculo[];
 }
 
 /**
@@ -210,6 +230,8 @@ export default class RemessaService {
         @inject(AuthorizedPayeeService) private readonly payees: AuthorizedPayeeService,
         @inject(RetiradaCodigoBarrasService)
         private readonly retirada: RetiradaCodigoBarrasService,
+        @inject(VinculoCodigoBarrasService)
+        private readonly vinculo: VinculoCodigoBarrasService,
     ) {}
 
     /**
@@ -289,6 +311,13 @@ export default class RemessaService {
             !env.sispagLiveWriteEnabled ||
             env.conexosDryRun ||
             input.dryRunOverride === true;
+        // ADR-0071 (I17k): modo do vínculo POR FILIAL, fail-closed. O kill-switch global
+        // `sispagLiveWriteEnabled` o derruba; `SISPAG_DDA_ASSOC_ENABLED=false` NÃO.
+        const modoVinculo = ModoVinculoCodigoBarras.resolverModo(
+            lote.filCod,
+            ModoVinculoCodigoBarras.parse(env.sispagBindCodbarFiliais),
+            env.sispagLiveWriteEnabled === true,
+        );
 
         // Chave estável por LOTE: duas tentativas para o mesmo lote colidem de propósito.
         const key = input.idempotencyKey ?? `remessa:${lote.id}`;
@@ -338,7 +367,7 @@ export default class RemessaService {
                     anterior.etapa === 'finalizar' &&
                     anterior.nativeFlpCod !== undefined));
         if (anterior && emVooOuAbortadoNaGuarda) {
-            const sync = await this.sincronizarComErp(anterior, lote);
+            const sync = await this.sincronizarComErp(anterior, lote, modoVinculo);
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message: 'execução órfã encontrada — estado real consultado no ERP',
@@ -503,6 +532,22 @@ export default class RemessaService {
                     valorTotal,
                 },
             });
+            // ADR-0071 (Q8): no dry-run o vínculo só PREVÊ (local, zero chamada ao ERP) e não grava
+            // nada durável — nem trilha.
+            const vinculosPrevistos =
+                modoVinculo === MODO_VINCULO.OFF ? [] : await this.vinculo.prever(lote);
+            if (vinculosPrevistos.length > 0) {
+                await this.logService.info({
+                    type: LOG_TYPE.BUSINESS_INFO,
+                    message: 'remessa DRY-RUN: vínculo do código de barras previsto',
+                    data: {
+                        loteId: lote.id,
+                        modo: modoVinculo,
+                        elegiveis: vinculosPrevistos.filter((p) => p.elegivel).length,
+                        inelegiveis: vinculosPrevistos.filter((p) => !p.elegivel).length,
+                    },
+                });
+            }
             return {
                 status: 'dry-run',
                 dryRun: true,
@@ -511,6 +556,7 @@ export default class RemessaService {
                 itens: lote.itens.length,
                 valorTotal,
                 ...(dataDebito !== undefined ? { dataDebito } : {}),
+                ...(vinculosPrevistos.length > 0 ? { vinculosPrevistos } : {}),
             };
         }
 
@@ -625,6 +671,12 @@ export default class RemessaService {
             if (!pular('importar')) {
                 // `apenasChaves` só vem preenchido numa retomada de import parcial: manda
                 // exatamente os títulos que o ERP ainda não tem.
+                // ADR-0071: elegibilidade do vínculo ANTES de montar o import. `off` = vazio e nada
+                // roda; `shadow` = só avalia/registra (local); `on` = lê o aberto ao vivo (leitura).
+                const vinculaveis =
+                    modoVinculo === MODO_VINCULO.OFF
+                        ? undefined
+                        : await this.vinculo.avaliarParaImport(lote, modoVinculo);
                 const montados = await this.montarItensImport(
                     lote,
                     bncCod,
@@ -634,6 +686,7 @@ export default class RemessaService {
                     flags,
                     preflight?.destinos,
                     autorizacoes,
+                    modoVinculo === MODO_VINCULO.ON ? vinculaveis : undefined,
                 );
                 await this.ledger.setRequestPayload(
                     key,
@@ -673,17 +726,65 @@ export default class RemessaService {
             let loteFinal = lote;
             let retiradosPorCodigoBarras: RetiradoPorCodigoBarras[] = [];
             let avisos: string[] = [];
+            let vinculados: NonNullable<GerarRemessaResult['vinculados']> = [];
             if (retomarDe !== 'concluido') {
+                // (2.0) VÍNCULO DO CÓDIGO CONFIRMADO (ADR-0071, I17e) — só com o modo `on`, só em
+                // rascunho ABERTO (nunca numa retomada em `gerar_remessa`, I17i) e só se a retomada
+                // não passou dele. Falha transitória lança `VinculoCodigoBarrasIncompletoError`
+                // (ledger `failed`, rascunho preservado, NUNCA retira); a determinística volta em
+                // `retirar` e sai pela guarda abaixo, com a MESMA maquinaria da I16d.
+                let preferidos: ReadonlySet<string> | undefined;
+                let retiradosPeloVinculo: Array<{
+                    titulo: ChaveTitulo;
+                    codigoMascarado?: string;
+                }> = [];
+                const vincularAgora =
+                    modoVinculo === MODO_VINCULO.ON &&
+                    retomarDe !== 'gerar_remessa' &&
+                    !pular('vincular_codbar');
+                if (vincularAgora) {
+                    const exec = await this.vinculo.executar({ lote, bncCod, flpCod });
+                    vinculados = exec.vinculados.map((v) => ({
+                        titulo: v.titulo,
+                        codigoMascarado: v.codigoMascarado,
+                    }));
+                    retiradosPeloVinculo = exec.retirar.map((f) => ({
+                        titulo: f.titulo,
+                        ...(f.codigoMascarado !== undefined
+                            ? { codigoMascarado: f.codigoMascarado }
+                            : {}),
+                    }));
+                    preferidos = exec.preferidos;
+                    // O lote local mudou (`versao`, coluna do vínculo): daqui para baixo lê o atual.
+                    loteFinal = (await this.loteRepo.getLoteComItens(lote.id)) ?? lote;
+                } else if (modoVinculo === MODO_VINCULO.ON) {
+                    preferidos = await this.vinculo.chavesComDecisaoHumana(lote);
+                }
+
+                // (2.1) GUARDA DE CÓDIGO DE BARRAS REPETIDO (ADR-0069, I16) — fora do `if` do
+                // import de propósito: numa retomada o import é pulado e a checagem TEM que rodar
+                // de novo, senão "retry" seria a forma de passar pela guarda.
                 const guarda = await this.retirada.garantir({
-                    lote,
+                    lote: loteFinal,
                     bncCod,
                     flpCod,
                     rascunhoAberto: retomarDe !== 'gerar_remessa',
                     forcarLeitura: residuosVistos,
+                    ...(preferidos !== undefined ? { preferidos } : {}),
+                    ...(retiradosPeloVinculo.length > 0 ? { retiradosPeloVinculo } : {}),
                 });
                 loteFinal = guarda.lote;
                 retiradosPorCodigoBarras = guarda.retirados;
                 avisos = guarda.avisos;
+            }
+            if (vinculados.length > 0) {
+                avisos = [
+                    ...avisos,
+                    `${vinculados.length} título(s) com o código de barras vinculado a partir da ` +
+                        `confirmação da analista: ${vinculados
+                            .map((v) => `${v.titulo.docCod}/${v.titulo.titCod}`)
+                            .join(', ')}. Confira no extrato do banco.`,
+                ];
             }
             const valorFinal = loteFinal.itens.reduce((acc, i) => acc + Number(i.valor ?? 0), 0);
 
@@ -837,9 +938,10 @@ export default class RemessaService {
                 valorTotal: valorFinal,
                 ...(dataDebito !== undefined ? { dataDebito } : {}),
                 // I16f(2): só quando algo saiu do lote — "sem retirada" não muda o resultado.
-                ...(retiradosPorCodigoBarras.length > 0
-                    ? { retiradosPorCodigoBarras, avisos }
-                    : {}),
+                ...(retiradosPorCodigoBarras.length > 0 ? { retiradosPorCodigoBarras } : {}),
+                // I17: o vínculo também pede atenção (nunca tratar como "tudo certo").
+                ...(vinculados.length > 0 ? { vinculados } : {}),
+                ...(retiradosPorCodigoBarras.length > 0 || vinculados.length > 0 ? { avisos } : {}),
             };
         } catch (e) {
             const mensagem = e instanceof Error ? e.message : String(e);
@@ -869,6 +971,7 @@ export default class RemessaService {
     private sincronizarComErp = async (
         anterior: RemessaExecucaoRow,
         lote: LotePagamento,
+        modoVinculo: ModoVinculo = MODO_VINCULO.OFF,
     ): Promise<{
         etapa: EtapaReal;
         motivo: string;
@@ -1008,6 +1111,16 @@ export default class RemessaService {
 
         const faltando = new Set([...nossas].filter((k) => !jaNoErp.has(k)));
         if (faltando.size === 0) {
+            // ADR-0071 (I17i): rascunho ABERTO e completo, modo `on` e ainda há item a vincular ⇒
+            // a retomada começa no vínculo (idempotente: item já vinculado é reconhecido).
+            if (modoVinculo === MODO_VINCULO.ON && (await this.vinculo.existemVinculaveis(lote))) {
+                return {
+                    ...reusar,
+                    ...comResiduos,
+                    etapa: 'vincular_codbar',
+                    motivo: `lote ${flpCod} tem os ${nossas.size} título(s) e ainda há código de barras a vincular`,
+                };
+            }
             if (residuos.size > 0) {
                 // Rascunho completo + resíduos: a guarda `limpar_retirados` antes do finalizar.
                 return {
@@ -1132,6 +1245,11 @@ export default class RemessaService {
         preResolvidos?: ReadonlyMap<string, DestinoResolvido>,
         /** Autorização de favorecido vigente por item (guarda L8), para o congelamento I10f. */
         autorizacoes?: ReadonlyMap<string, string>,
+        /**
+         * Elegibilidade do vínculo do código (ADR-0071) por `filCod:docCod:titCod`. SÓ vem com o
+         * modo `on`; ausente = o BOLETO sem DDA barra como sempre (I15b).
+         */
+        vinculaveis?: ReadonlyMap<string, { elegivel: boolean }>,
     ): Promise<Array<{ payload: Record<string, unknown>; associarDda: boolean }>> => {
         // A chave inclui a FILIAL. O grid de pendentes cruza filiais e `docCod` NÃO é único
         // entre elas: medido em HML, o doc 285 existe na filial 2 E na 4. Com a chave só
@@ -1185,7 +1303,14 @@ export default class RemessaService {
             // vez de mandar remessa com barras vazia — e PIX/TED seguem passando normalmente.
             const associarDda =
                 ddaHabilitado && item.modalidade === MODALIDADE.BOLETO && pendente.temBoletoDda;
-            if (item.modalidade === MODALIDADE.BOLETO && !associarDda) {
+            // ADR-0071 (I17a): o ERP NÃO associou o DDA e uma decisão humana elegível (I17a–d)
+            // vai gravar o código DEPOIS do import. O destino é a própria barra: sem conta.
+            const vinculavel =
+                !associarDda &&
+                item.modalidade === MODALIDADE.BOLETO &&
+                !pendente.temBoletoDda &&
+                vinculaveis?.get(chaveDe(item))?.elegivel === true;
+            if (item.modalidade === MODALIDADE.BOLETO && !associarDda && !vinculavel) {
                 throw new BoletoSemCodigoBarrasError({
                     docCod: item.docCod,
                     titCod: item.titCod,
@@ -1206,15 +1331,16 @@ export default class RemessaService {
             // oferta (I10b). Com as flags desligadas ela é a regra do `main`: conta ativa no
             // banco do lote.
             const pesCod = pendente.raw.pesCod;
-            const destino = associarDda
-                ? undefined
-                : (preResolvidos?.get(chaveDe(item)) ??
-                  (await this.resolver.resolve(item, {
-                      flags,
-                      febrabanLote: febraban,
-                      filCod: lote.filCod,
-                      ...(pesCod != null ? { pesCod: String(pesCod) } : {}),
-                  })));
+            const destino =
+                associarDda || vinculavel
+                    ? undefined
+                    : (preResolvidos?.get(chaveDe(item)) ??
+                      (await this.resolver.resolve(item, {
+                          flags,
+                          febrabanLote: febraban,
+                          filCod: lote.filCod,
+                          ...(pesCod != null ? { pesCod: String(pesCod) } : {}),
+                      })));
             if (destino?.origem === DESTINO_ORIGEM.NENHUM) {
                 if (this.usaRegraNova(item.modalidade, flags)) {
                     throw new DestinoPagamentoAusenteError({
@@ -1748,6 +1874,7 @@ export default class RemessaService {
         const finalizarPendente =
             retomarDe === undefined ||
             retomarDe === 'importar' ||
+            retomarDe === 'vincular_codbar' ||
             retomarDe === 'limpar_retirados' ||
             retomarDe === 'finalizar';
         if (finalizarPendente && congelada < this.calendar.todayBrt()) {

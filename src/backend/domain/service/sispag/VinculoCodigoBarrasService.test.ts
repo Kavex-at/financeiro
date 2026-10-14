@@ -656,6 +656,27 @@ describe('VinculoCodigoBarrasService — decisão humana e privacidade', () => {
         expect((await semPar.service.chavesComDecisaoHumana(semPar.lote)).size).toBe(0);
     });
 
+    it('`existemVinculaveis`: decisão vigente sem vínculo no lote local ⇒ true; já vinculado ⇒ false', async () => {
+        const h = umItem();
+        expect(await h.service.existemVinculaveis(h.lote)).toBe(true);
+        const vinculado = umItem({
+            itens: [
+                itemLote('636', {
+                    vinculoCodigoBarras: {
+                        origem: 'DECISAO_HUMANA',
+                        decisaoId: 'dec-1',
+                        codigoMascarado: MASCARA,
+                        aplicadoEm: '2026-10-14T12:00:00.000Z',
+                        flpCod: 36,
+                    },
+                }),
+            ],
+        });
+        expect(await vinculado.service.existemVinculaveis(vinculado.lote)).toBe(false);
+        const semPar = umItem({ pares: [] });
+        expect(await semPar.service.existemVinculaveis(semPar.lote)).toBe(false);
+    });
+
     it('nenhum log, evento, argumento de gravação ou erro carrega 44 dígitos nem a linha de 47', async () => {
         const h = umItem();
         h.write.confirmarCodigoBarras.mockResolvedValueOnce({
