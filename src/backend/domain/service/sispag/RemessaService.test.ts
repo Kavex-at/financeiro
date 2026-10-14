@@ -10,6 +10,9 @@ import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseC
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
+import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
+import type VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
+import RetiradaCodigoBarrasService from './RetiradaCodigoBarrasService.js';
 import type LogService from '../LogService.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
 import AnaliseCodigoBarrasRepetido from '../../libs/boleto/AnaliseCodigoBarrasRepetido.js';
@@ -127,6 +130,25 @@ const buildLoteRepo = (l: LotePagamento = lote()) => ({
     setFavorecidoAutorizadoItem: jest.fn().mockResolvedValue(1),
     setRemessaGerada: jest.fn().mockResolvedValue(undefined),
     transicionarStatus: jest.fn().mockResolvedValue(1),
+    // ADR-0069 emenda 1 (I16d.3): remoção local + marca + trilha numa transação.
+    retirarItemPorCodigoDeBarras: jest.fn().mockResolvedValue({ removido: true }),
+});
+
+/** Marcas ATIVAS por código de barras (I16h(c)) — só o par com o evento reconhece resíduo. */
+const buildBloqueios = (
+    marcas: Array<{
+        filCod: number;
+        docCod: string;
+        titCod: string;
+        origem: string;
+        codigoMascarado?: string;
+        tituloMantido?: { filCod: number; docCod: string; titCod: string };
+    }> = [],
+) => ({ listAtivosPorOrigem: jest.fn().mockResolvedValue(marcas) });
+
+/** Chaves `fil:doc:tit` retiradas pelo sistema NESTE lote (a outra metade do par). */
+const buildEventos = (chaves: string[] = []) => ({
+    listarChavesRetiradasPeloSistema: jest.fn().mockResolvedValue(new Set(chaves)),
 });
 
 const buildLedger = (anterior: unknown = null) => ({
@@ -166,10 +188,15 @@ const buildWrite = () => ({
     gerarRemessa: jest.fn().mockResolvedValue({ sucesso: true }),
     // I16: default "códigos distintos" — a guarda de código repetido não dispara.
     listarLinhasDigitaveisDoLote: jest.fn().mockResolvedValue({
-        itens: [{ docCod: '801', titCod: '1', linhaDigitavel: LINHA_DISTINTA }],
+        itens: [
+            { docCod: '801', titCod: '1', linhaDigitavel: LINHA_DISTINTA, filCod: 2, itsCodSeq: 1 },
+        ],
         total: 1,
         dropped: 0,
+        completa: true,
     }),
+    // ADR-0069 emenda 1: o DELETE de item do rascunho (default: sem efeito — nada a retirar).
+    removerItemDoRascunho: jest.fn().mockResolvedValue(undefined),
     listarArquivosRemessa: jest.fn().mockResolvedValue([
         // Arquivo ÓRFÃO de um lote antigo que reusou o mesmo flpCod — vem primeiro de propósito.
         { gabCod: 16, nomeArquivo: 'PG191101.REM', conteudo: 'ARQUIVO ANTIGO' },
@@ -220,6 +247,8 @@ const buildDb = (concede = true) => ({
         async (_k: number, onAcquired: () => Promise<unknown>, onBusy: () => Promise<unknown>) =>
             concede ? onAcquired() : onBusy(),
     ),
+    // A retirada por código de barras abre UMA transação local por item (I16d.3).
+    withTransaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({})),
 });
 
 const make = (o: {
@@ -232,26 +261,40 @@ const make = (o: {
     lote?: LotePagamento;
     db?: ReturnType<typeof buildDb>;
     log?: LogService;
+    bloqueios?: ReturnType<typeof buildBloqueios>;
+    eventos?: ReturnType<typeof buildEventos>;
     /** Instante "agora" (ISO). Default: {@link AGORA}. */
     agora?: string;
 }) => {
     const loteRepo = o.loteRepo ?? buildLoteRepo(o.lote);
     const calendar = BankingCalendar.withClock(() => new Date(o.agora ?? AGORA));
     const sispag = o.sispag ?? buildSispag();
+    const write = o.write ?? buildWrite();
+    const log = o.log ?? buildLog();
+    const db = o.db ?? buildDb();
+    const retirada = new RetiradaCodigoBarrasService(
+        write as unknown as ConexosSispagWriteClient,
+        loteRepo as unknown as LotePagamentoRepository,
+        db as unknown as PostgreeDatabaseClient,
+        new AnaliseCodigoBarrasRepetido(new CodigoBarrasBoleto()),
+        log,
+        (o.bloqueios ?? buildBloqueios()) as unknown as BloqueioDuplicidadeRepository,
+        (o.eventos ?? buildEventos()) as unknown as VerificacaoEventoRepository,
+    );
     return new RemessaService(
         loteRepo as unknown as LotePagamentoRepository,
         (o.ledger ?? buildLedger()) as unknown as RemessaExecucaoRepository,
-        (o.write ?? buildWrite()) as unknown as ConexosSispagWriteClient,
+        write as unknown as ConexosSispagWriteClient,
         sispag as unknown as ConexosSispagClient,
         o.env ?? buildEnv(),
-        o.log ?? buildLog(),
-        (o.db ?? buildDb()) as unknown as PostgreeDatabaseClient,
+        log,
+        db as unknown as PostgreeDatabaseClient,
         new RemessaCnabValidator(),
         new DebitDateService(loteRepo as unknown as LotePagamentoRepository, calendar),
         calendar,
         new DestinoPagamentoResolver(sispag as unknown as ConexosSispagClient, new MaskDestino()),
         (o.payees ?? buildPayees()) as unknown as AuthorizedPayeeService,
-        new AnaliseCodigoBarrasRepetido(new CodigoBarrasBoleto()),
+        retirada,
     );
 };
 
@@ -1216,6 +1259,21 @@ describe('RemessaService — boleto (código de barras via DDA)', () => {
             pendente(),
             { ...pendente({ docCod: 802 }, true), docCod: '802' },
         ]);
+        // O boleto do lote (802) é o que o ERP anexou o código; sem leitura a guarda aborta (I16c).
+        write.listarLinhasDigitaveisDoLote.mockResolvedValue({
+            itens: [
+                {
+                    docCod: '802',
+                    titCod: '1',
+                    linhaDigitavel: LINHA_DISTINTA,
+                    filCod: 2,
+                    itsCodSeq: 2,
+                },
+            ],
+            total: 1,
+            dropped: 0,
+            completa: true,
+        });
 
         await make({ write, lote: l }).gerarRemessa({ loteId: 'L1', ator: 'u' });
 
@@ -1345,6 +1403,9 @@ describe('RemessaService — gate de integridade do .REM', () => {
         expect(ledger.settle).not.toHaveBeenCalled();
         expect(ledger.fail).toHaveBeenCalledTimes(1);
         expect(JSON.stringify(ledger.fail.mock.calls)).not.toContain(BARRAS_OK);
+        // Gate 5.1 continua ABORT-ONLY (I16b): a rede do arquivo nunca retira item.
+        expect(loteRepo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+        expect(write.removerItemDoRascunho).not.toHaveBeenCalled();
     });
 
     it('modo arquivo: motivo no ledger e userMessage dizem que o lote JÁ está finalizado (flpCod + arquivo)', async () => {
@@ -2227,7 +2288,7 @@ describe('RemessaService — validador do .REM com TED/PIX (caso 8, só aviso)',
     });
 });
 
-describe('RemessaService — guarda de código de barras repetido (ADR-0069, I16)', () => {
+describe('RemessaService — guarda de código de barras que retira (ADR-0069 emenda 1, I16)', () => {
     const cb = new CodigoBarrasBoleto();
     const dvGeral = (semDv: string): string => {
         let soma = 0;
@@ -2250,10 +2311,11 @@ describe('RemessaService — guarda de código de barras repetido (ADR-0069, I16
     const LINHA_A = linha(1111);
     const LINHA_B = linha(2222);
     const MASCARADO_A = `${BARRAS_A.slice(0, 5)}…${BARRAS_A.slice(-4)}`;
+    const distintos = (i: number) => linha(5000 + i);
 
-    const N = 10;
     const doc = (i: number) => String(1000 + i);
-    const itensBoleto = (n = N) =>
+    const chave = (i: number, fil = 2) => `${fil}:${doc(i)}:1`;
+    const itensBoleto = (n: number, venc = Date.UTC(2026, 9, 14, 15)) =>
         Array.from({ length: n }, (_, i) => ({
             loteId: 'L1',
             filCod: 2,
@@ -2261,292 +2323,260 @@ describe('RemessaService — guarda de código de barras repetido (ADR-0069, I16
             titCod: '1',
             credor: 'PEDRONI',
             valor: 1412,
-            vencimento: Date.UTC(2026, 9, 14, 15),
+            vencimento: venc,
             modalidade: 'BOLETO' as const,
             incluidoPor: 'u1',
             divergencia: false,
         }));
-    const loteBoleto = (n = N) => lote({ itens: itensBoleto(n) });
-    const pendentesBoleto = (n = N) =>
+    const loteBoleto = (n = 3) => lote({ itens: itensBoleto(n) });
+    const pendentesBoleto = (n: number) =>
         Array.from({ length: n }, (_, i) => ({
             ...pendente({ docCod: 1000 + i }, true),
             docCod: doc(i),
         }));
-    const linhasLote = (codigoDe: (i: number) => string, n = N) => ({
-        itens: Array.from({ length: n }, (_, i) => ({
-            docCod: doc(i),
-            titCod: '1',
-            linhaDigitavel: codigoDe(i),
-        })),
-        total: n,
-        dropped: 0,
+
+    interface Nativo {
+        docCod: string;
+        itsCodSeq?: number;
+        linha?: string;
+        titCod?: string;
+        filCod?: number;
+        /** `true` = veio em `invalidos` (código presente, recusado no boundary). */
+        invalido?: boolean;
+    }
+    const nat = (i: number, linhaDigitavel: string | undefined, over: Partial<Nativo> = {}) => ({
+        docCod: doc(i),
+        itsCodSeq: 10 + i,
+        ...(linhaDigitavel !== undefined ? { linha: linhaDigitavel } : {}),
+        ...over,
     });
-    const writeCom = (leitura: unknown, n = N) => {
-        const write = buildWrite();
-        write.listarTitulosPendentes.mockResolvedValue(pendentesBoleto(n));
-        write.listarLinhasDigitaveisDoLote.mockResolvedValue(leitura as never);
-        return write;
+    const leituraDe = (estado: Nativo[], over: Record<string, unknown> = {}) => {
+        const validos = estado.filter((e) => !e.invalido);
+        const invalidos = estado.filter((e) => e.invalido);
+        return {
+            itens: validos.map((e) => ({
+                docCod: e.docCod,
+                titCod: e.titCod ?? '1',
+                linhaDigitavel: e.linha as string,
+                filCod: e.filCod ?? 2,
+                ...(e.itsCodSeq !== undefined ? { itsCodSeq: e.itsCodSeq } : {}),
+            })),
+            total: estado.length,
+            dropped: invalidos.length,
+            completa: true,
+            ...(invalidos.length > 0
+                ? {
+                      invalidos: invalidos.map((e) => ({
+                          docCod: e.docCod,
+                          titCod: e.titCod ?? '1',
+                          filCod: e.filCod ?? 2,
+                          ...(e.itsCodSeq !== undefined ? { itsCodSeq: e.itsCodSeq } : {}),
+                      })),
+                  }
+                : {}),
+            ...over,
+        };
     };
-    const metade = (i: number) => (i % 2 === 0 ? LINHA_A : LINHA_B);
-    const distintos = (i: number) => linha(5000 + i);
 
-    it('PEDRONI: 10 itens, 2 códigos 5+5 → aborta ANTES de finalizar; ledger failed; rascunho preservado', async () => {
-        const write = writeCom(linhasLote(metade));
-        const ledger = buildLedger();
-        const loteRepo = buildLoteRepo(loteBoleto());
-        const err = await make({ write, ledger, loteRepo })
-            .gerarRemessa({ loteId: 'L1', ator: 'u' })
-            .catch((e: unknown) => e);
-
-        expect(err).toMatchObject({
-            name: 'BoletoCodigoBarrasRepetidoError',
-            code: 'BOLETO_CODIGO_BARRAS_REPETIDO',
-            statusCode: 409,
-        });
-        expect(write.importarTitulos).toHaveBeenCalled();
-        expect(write.finalizarLote).not.toHaveBeenCalled();
-        expect(write.sugerirRemessa).not.toHaveBeenCalled();
-        expect(write.gerarRemessa).not.toHaveBeenCalled();
-        expect(loteRepo.setRemessaGerada).not.toHaveBeenCalled();
-        expect(loteRepo.transicionarStatus).not.toHaveBeenCalled();
-        // Rascunho nativo preservado para reuso: o flpCod foi gravado no ledger.
-        expect(ledger.setNativeFlpCod).toHaveBeenCalledWith(expect.any(String), 12);
-        expect(ledger.fail).toHaveBeenCalledTimes(1);
-        const motivo = ledger.fail.mock.calls[0][1].mensagem as string;
-        expect(motivo).toContain('1000/1');
-        expect(motivo).toContain(MASCARADO_A);
-    });
-
-    it('todos distintos → segue até finalizarLote (regressão)', async () => {
-        const write = writeCom(linhasLote(distintos));
-        const res = await make({ write, lote: loteBoleto() }).gerarRemessa({
-            loteId: 'L1',
-            ator: 'u',
-        });
-        expect(res.status).toBe('gerada');
-        expect(write.finalizarLote).toHaveBeenCalled();
-        expect(write.listarLinhasDigitaveisDoLote).toHaveBeenCalledTimes(1);
-    });
-
-    it('código ilegível (invalidos) → aborta fail-closed, identificando o título', async () => {
-        const leitura = {
-            itens: linhasLote(distintos, N - 1).itens,
-            total: N,
-            dropped: 1,
-            invalidos: [{ docCod: doc(N - 1), titCod: '1' }],
-        };
-        const write = writeCom(leitura);
-        const err = await make({ write, lote: loteBoleto() })
-            .gerarRemessa({ loteId: 'L1', ator: 'u' })
-            .catch((e: unknown) => e);
-        expect(err).toMatchObject({ code: 'BOLETO_CODIGO_BARRAS_REPETIDO' });
-        expect((err as { details: { modo: string } }).details.modo).toBe('ilegivel');
-        expect((err as { userMessage: string }).userMessage).toContain(`${doc(N - 1)}/1`);
-        expect((err as { userMessage: string }).userMessage).toMatch(
-            /interrompida antes de finalizar.*descartado no Conexos/s,
-        );
-        expect(write.finalizarLote).not.toHaveBeenCalled();
-    });
-
-    describe('retomada não pula a checagem', () => {
-        const ledgerOrfao = (etapa: string) =>
-            buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99, etapa });
-        const writeRetomada = (leitura: unknown, status: number) => {
-            const write = writeCom(leitura);
-            write.getLoteNativo.mockResolvedValue({
-                filCod: 2,
-                bncCod: 4,
-                flpCod: 99,
-                status,
-                titulosCount: N,
-                soma: 14120,
-            });
-            write.listarChavesDoLote.mockResolvedValue(
-                new Set(Array.from({ length: N }, (_, i) => `2:${doc(i)}:1`)),
-            );
-            return write;
-        };
-
-        it('(i) retomada com import feito e lote local ainda repetido falha de novo, sem reimportar nem criar lote', async () => {
-            const write = writeRetomada(linhasLote(metade), 0);
-            const err = await make({ write, ledger: ledgerOrfao('finalizar'), lote: loteBoleto() })
-                .gerarRemessa({ loteId: 'L1', ator: 'u' })
-                .catch((e: unknown) => e);
-            expect(err).toMatchObject({ code: 'BOLETO_CODIGO_BARRAS_REPETIDO' });
-            expect(write.listarLinhasDigitaveisDoLote).toHaveBeenCalledTimes(1);
-            expect(write.criarLote).not.toHaveBeenCalled();
-            expect(write.importarTitulos).not.toHaveBeenCalled();
-            expect(write.finalizarLote).not.toHaveBeenCalled();
-        });
-
-        it('(ii) repetido resolvido: a mesma retomada passa e finaliza o mesmo flpCod', async () => {
-            const write = writeRetomada(linhasLote(distintos), 0);
-            await make({
-                write,
-                ledger: ledgerOrfao('finalizar'),
-                lote: loteBoleto(),
-            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
-            expect(write.criarLote).not.toHaveBeenCalled();
-            expect(write.finalizarLote).toHaveBeenCalledWith(
-                expect.objectContaining({ flpCod: 99 }),
-            );
-        });
-
-        it('(iii) retomada em gerar_remessa (lote já finalizado) lê antes de sugerirRemessa', async () => {
-            const write = writeRetomada(linhasLote(metade), 1);
-            await expect(
-                make({
-                    write,
-                    ledger: ledgerOrfao('gerar_remessa'),
-                    lote: loteBoleto(),
-                }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
-            ).rejects.toMatchObject({ code: 'BOLETO_CODIGO_BARRAS_REPETIDO' });
-            expect(write.listarLinhasDigitaveisDoLote).toHaveBeenCalledTimes(1);
-            expect(write.sugerirRemessa).not.toHaveBeenCalled();
-        });
-    });
-
-    describe('retry a partir do ledger deixado pelo aborto (fault-tolerance-1)', () => {
-        const draftCompleto = (leitura: unknown) => {
-            const write = writeCom(leitura);
-            write.getLoteNativo.mockResolvedValue({
-                filCod: 2,
-                bncCod: 4,
-                flpCod: 12,
-                status: 0,
-                titulosCount: N,
-                soma: 14120,
-            });
-            write.listarChavesDoLote.mockResolvedValue(
-                new Set(Array.from({ length: N }, (_, i) => `2:${doc(i)}:1`)),
-            );
-            return write;
-        };
-        /** Linha do ledger como o aborto a deixou: status/etapa/flpCod vindos das chamadas reais. */
-        const linhaDepoisDoAborto = (ledger: ReturnType<typeof buildLedger>) => {
-            const etapas = ledger.setEtapa.mock.calls.map((c) => c[1] as string);
-            return {
-                status: 'error',
-                dryRun: false,
-                nativeFlpCod: ledger.setNativeFlpCod.mock.calls[0][1] as number,
-                etapa: etapas[etapas.length - 1],
-            };
-        };
-
-        it('(iii) o aborto grava etapa=finalizar ANTES de falhar e deixa status=error com o motivo', async () => {
-            const ledger = buildLedger();
-            const write = writeCom(linhasLote(metade));
-            await make({ write, ledger, lote: loteBoleto() })
-                .gerarRemessa({ loteId: 'L1', ator: 'u' })
-                .catch(() => undefined);
-
-            expect(ledger.setEtapa).toHaveBeenCalledWith(expect.any(String), 'finalizar');
-            expect(ledger.setEtapa).not.toHaveBeenCalledWith(expect.any(String), 'gerar_remessa');
-            expect(ledger.fail).toHaveBeenCalledTimes(1);
-            const ordemEtapa = ledger.setEtapa.mock.invocationCallOrder.at(-1) as number;
-            expect(ordemEtapa).toBeLessThan(ledger.fail.mock.invocationCallOrder[0] as number);
-            expect(linhaDepoisDoAborto(ledger)).toMatchObject({
-                status: 'error',
-                nativeFlpCod: 12,
-                etapa: 'finalizar',
-            });
-        });
-
-        it('(i) retry com o código ainda repetido aborta de novo, sem reimportar nem criar lote', async () => {
-            const primeiro = buildLedger();
-            await make({
-                write: writeCom(linhasLote(metade)),
-                ledger: primeiro,
-                lote: loteBoleto(),
-            })
-                .gerarRemessa({ loteId: 'L1', ator: 'u' })
-                .catch(() => undefined);
-
-            const ledger = buildLedger(linhaDepoisDoAborto(primeiro));
-            const write = draftCompleto(linhasLote(metade));
-            const err = await make({ write, ledger, lote: loteBoleto() })
-                .gerarRemessa({ loteId: 'L1', ator: 'u' })
-                .catch((e: unknown) => e);
-
-            expect(err).toMatchObject({ code: 'BOLETO_CODIGO_BARRAS_REPETIDO' });
-            expect(write.getLoteNativo).toHaveBeenCalled();
-            expect(write.criarLote).not.toHaveBeenCalled();
-            expect(write.listarTitulosPendentes).not.toHaveBeenCalled();
-            expect(write.importarTitulos).not.toHaveBeenCalled();
-            expect(write.finalizarLote).not.toHaveBeenCalled();
-            expect(ledger.fail).toHaveBeenCalledTimes(1);
-            expect(ledger.setEtapa).toHaveBeenCalledWith(expect.any(String), 'finalizar');
-        });
-
-        it('retry com o código corrigido segue e finaliza o mesmo rascunho', async () => {
-            const primeiro = buildLedger();
-            await make({
-                write: writeCom(linhasLote(metade)),
-                ledger: primeiro,
-                lote: loteBoleto(),
-            })
-                .gerarRemessa({ loteId: 'L1', ator: 'u' })
-                .catch(() => undefined);
-
-            const write = draftCompleto(linhasLote(distintos));
-            await make({
-                write,
-                ledger: buildLedger(linhaDepoisDoAborto(primeiro)),
-                lote: loteBoleto(),
-            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
-            expect(write.importarTitulos).not.toHaveBeenCalled();
-            expect(write.finalizarLote).toHaveBeenCalledWith(
-                expect.objectContaining({ flpCod: 12 }),
-            );
-        });
-
-        it('(ii) título retirado do lote LOCAL: o rascunho tem item de fora → indeterminado, fail-closed (PR 2 resolve)', async () => {
-            const primeiro = buildLedger();
-            await make({
-                write: writeCom(linhasLote(metade)),
-                ledger: primeiro,
-                lote: loteBoleto(),
-            })
-                .gerarRemessa({ loteId: 'L1', ator: 'u' })
-                .catch(() => undefined);
-
-            const log = buildLog();
-            const write = draftCompleto(linhasLote(metade));
-            const err = await make({
-                write,
-                log,
-                ledger: buildLedger(linhaDepoisDoAborto(primeiro)),
-                lote: loteBoleto(N - 1),
-            })
-                .gerarRemessa({ loteId: 'L1', ator: 'u' })
-                .catch((e: unknown) => e);
-
-            expect(err).toMatchObject({ name: 'RemessaEmDuvidaError' });
-            expect(write.finalizarLote).not.toHaveBeenCalled();
-            expect(write.importarTitulos).not.toHaveBeenCalled();
-            expect(write.criarLote).not.toHaveBeenCalled();
-            expect(write.listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
-            expect(log.warn).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    data: expect.objectContaining({
-                        etapaReal: 'indeterminado',
-                        motivo: expect.stringContaining('fora do nosso lote'),
-                    }),
-                }),
-            );
-        });
-    });
-
-    it('ausência continua BoletoSemCodigoBarrasError, antes de qualquer escrita e da nova leitura', async () => {
+    /**
+     * Rascunho nativo COM ESTADO. `deleteFalha` = o DELETE lança e nada sai; `deleteIgnorado` =
+     * responde 200 e o item continua; `deleteErroMasSai` = lança 500 mas o item saiu.
+     * `relerFalha` = a partir da 2ª leitura a lista não vem.
+     */
+    const nativoFake = (
+        inicial: Nativo[],
+        o: {
+            n?: number;
+            deleteFalha?: string[];
+            deleteIgnorado?: string[];
+            deleteErroMasSai?: string[];
+            relerFalha?: boolean;
+            leituraOver?: Record<string, unknown>;
+        } = {},
+    ) => {
+        let estado = [...inicial];
         const write = buildWrite();
-        write.listarTitulosPendentes.mockResolvedValue([
-            { ...pendente({ docCod: 1000 }, false), docCod: doc(0) },
+        write.listarTitulosPendentes.mockResolvedValue(pendentesBoleto(o.n ?? inicial.length));
+        let leituras = 0;
+        write.listarLinhasDigitaveisDoLote.mockImplementation(async () => {
+            leituras += 1;
+            if (o.relerFalha && leituras > 1) throw new Error('HTTP 503');
+            return leituraDe(estado, o.leituraOver) as never;
+        });
+        write.listarChavesDoLote.mockImplementation(
+            async () =>
+                new Set(estado.map((e) => `${e.filCod ?? 2}:${e.docCod}:${e.titCod ?? '1'}`)),
+        );
+        write.removerItemDoRascunho.mockImplementation(async (p: { itsCodSeq: number }) => {
+            const alvo = estado.find((e) => e.itsCodSeq === p.itsCodSeq);
+            if (alvo && o.deleteFalha?.includes(alvo.docCod)) throw new Error('HTTP 500');
+            if (alvo && o.deleteIgnorado?.includes(alvo.docCod)) return;
+            estado = estado.filter((e) => e.itsCodSeq !== p.itsCodSeq);
+            if (alvo && o.deleteErroMasSai?.includes(alvo.docCod)) throw new Error('HTTP 500');
+        });
+        write.importarTitulos.mockImplementation(async () => {
+            // Import parcial: os que faltavam entram com o código "distinto" do teste.
+            for (const e of inicial)
+                if (!estado.includes(e) && e.itsCodSeq === undefined) estado.push(e);
+        });
+        return {
+            write,
+            estado: () => estado,
+            adicionar: (e: Nativo) => estado.push(e),
+        };
+    };
+
+    /** Lote local COM ESTADO: a retirada tira o item e bumpa a `versao`, como o repositório. */
+    const loteVivo = (inicial: LotePagamento) => {
+        let itens = [...inicial.itens];
+        let versao = inicial.versao;
+        const repo = buildLoteRepo(inicial);
+        repo.getLoteComItens.mockImplementation(async () => ({ ...inicial, itens, versao }));
+        repo.retirarItemPorCodigoDeBarras.mockImplementation(
+            async (p: { filCod: number; docCod: string; titCod: string }) => {
+                const antes = itens.length;
+                itens = itens.filter(
+                    (i) =>
+                        !(i.filCod === p.filCod && i.docCod === p.docCod && i.titCod === p.titCod),
+                );
+                if (itens.length === antes) return { removido: false };
+                versao += 1;
+                return { removido: true };
+            },
+        );
+        return { repo, itens: () => itens };
+    };
+
+    const rodar = async (o: {
+        lote: LotePagamento;
+        nativo: ReturnType<typeof nativoFake>;
+        ledger?: ReturnType<typeof buildLedger>;
+        log?: LogService;
+        bloqueios?: ReturnType<typeof buildBloqueios>;
+        eventos?: ReturnType<typeof buildEventos>;
+    }) => {
+        const vivo = loteVivo(o.lote);
+        const ledger = o.ledger ?? buildLedger();
+        const svc = make({
+            write: o.nativo.write,
+            loteRepo: vivo.repo,
+            ledger,
+            ...(o.log ? { log: o.log } : {}),
+            ...(o.bloqueios ? { bloqueios: o.bloqueios } : {}),
+            ...(o.eventos ? { eventos: o.eventos } : {}),
+        });
+        const res = await svc
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .then((r) => ({ res: r, err: undefined as unknown }))
+            .catch((e: unknown) => ({ res: undefined, err: e }));
+        return { ...res, loteRepo: vivo.repo, locais: vivo.itens, ledger, write: o.nativo.write };
+    };
+
+    // ── Caminho feliz: PEDRONI ──────────────────────────────────────────────
+
+    it('3 itens com o mesmo código: 2 retirados, 1 fica; ordem local → DELETE → releitura → finalizar', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A), nat(2, LINHA_A)]);
+        const r = await rodar({ lote: loteBoleto(3), nativo });
+
+        expect(r.err).toBeUndefined();
+        expect(r.res?.status).toBe('gerada');
+        expect(r.res?.retiradosPorCodigoBarras?.map((x) => x.titulo.docCod)).toEqual([
+            '1001',
+            '1002',
         ]);
-        await expect(
-            make({ write, lote: loteBoleto(1) }).gerarRemessa({ loteId: 'L1', ator: 'u' }),
-        ).rejects.toMatchObject({ code: 'BOLETO_SEM_CODIGO_BARRAS' });
-        expect(write.importarTitulos).not.toHaveBeenCalled();
-        expect(write.listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
+        expect(r.res?.retiradosPorCodigoBarras?.[0]).toMatchObject({
+            titulo: { filCod: 2, docCod: '1001', titCod: '1' },
+            motivo: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: MASCARADO_A,
+            tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+            valor: 1412,
+            vencimento: '2026-10-14',
+        });
+        expect(r.res?.avisos?.length).toBeGreaterThan(0);
+        // Total do lote reflete o item removido.
+        expect(r.res?.itens).toBe(1);
+        expect(r.res?.valorTotal).toBe(1412);
+        expect(r.locais().map((i) => i.docCod)).toEqual(['1000']);
+
+        const ordem = (m: jest.Mock) => m.mock.invocationCallOrder;
+        const leituras = ordem(r.write.listarLinhasDigitaveisDoLote);
+        expect(ordem(r.loteRepo.retirarItemPorCodigoDeBarras)[0]).toBeLessThan(
+            ordem(r.write.removerItemDoRascunho)[0] as number,
+        );
+        expect(ordem(r.write.removerItemDoRascunho)[0]).toBeLessThan(leituras[1] as number);
+        expect(Math.max(...leituras)).toBeLessThan(ordem(r.write.finalizarLote)[0] as number);
+        // `finalizarLote` só roda depois do último DELETE confirmado.
+        expect(r.write.finalizarLote).toHaveBeenCalledTimes(1);
+        // A versão usada na transição é a ATUAL (3 + 2 retiradas), não o snapshot do início.
+        expect(r.loteRepo.transicionarStatus).toHaveBeenCalledWith(
+            expect.objectContaining({ versaoEsperada: 5 }),
+        );
+    });
+
+    it('o repositório recebe motivo, máscara e título mantido (nunca o código)', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)]);
+        const r = await rodar({ lote: loteBoleto(2), nativo });
+        expect(r.err).toBeUndefined();
+        const [params] = r.loteRepo.retirarItemPorCodigoDeBarras.mock.calls[0];
+        expect(params).toEqual({
+            loteId: 'L1',
+            filCod: 2,
+            docCod: '1001',
+            titCod: '1',
+            motivo: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: MASCARADO_A,
+            tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+        });
+    });
+
+    it('o itsCodSeq do DELETE é o da leitura MAIS RECENTE (a lista muda entre os DELETE)', async () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue(pendentesBoleto(3));
+        write.listarLinhasDigitaveisDoLote
+            .mockResolvedValueOnce(
+                leituraDe([
+                    { docCod: '1000', linha: LINHA_A, itsCodSeq: 11 },
+                    { docCod: '1001', linha: LINHA_A, itsCodSeq: 12 },
+                    { docCod: '1002', linha: LINHA_A, itsCodSeq: 13 },
+                ]) as never,
+            )
+            // Depois do 1º DELETE o ERP renumerou: o 1002 agora é o 23.
+            .mockResolvedValueOnce(
+                leituraDe([
+                    { docCod: '1000', linha: LINHA_A, itsCodSeq: 21 },
+                    { docCod: '1002', linha: LINHA_A, itsCodSeq: 23 },
+                ]) as never,
+            )
+            .mockResolvedValueOnce(
+                leituraDe([{ docCod: '1000', linha: LINHA_A, itsCodSeq: 21 }]) as never,
+            );
+        const vivo = loteVivo(loteBoleto(3));
+        await make({ write, loteRepo: vivo.repo }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+
+        expect(write.removerItemDoRascunho.mock.calls.map(([p]) => p.itsCodSeq)).toEqual([12, 23]);
+        expect(write.removerItemDoRascunho.mock.calls[0][0]).toMatchObject({
+            filCod: 2,
+            bncCod: 4,
+            flpCod: 12,
+            filCodItem: 2,
+        });
+        expect(write.finalizarLote).toHaveBeenCalledTimes(1);
+    });
+
+    it('sem repetição: nenhum DELETE, nenhuma marca, resultado sem os campos novos (regressão)', async () => {
+        const nativo = nativoFake([
+            nat(0, distintos(0)),
+            nat(1, distintos(1)),
+            nat(2, distintos(2)),
+        ]);
+        const r = await rodar({ lote: loteBoleto(3), nativo });
+        expect(r.res?.status).toBe('gerada');
+        expect(r.write.listarLinhasDigitaveisDoLote).toHaveBeenCalledTimes(1);
+        expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+        expect(r.loteRepo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+        expect(r.res).not.toHaveProperty('retiradosPorCodigoBarras');
+        expect(r.res).not.toHaveProperty('avisos');
+        expect(r.res?.itens).toBe(3);
     });
 
     it('lote sem BOLETO não consulta as linhas digitáveis', async () => {
@@ -2555,71 +2585,499 @@ describe('RemessaService — guarda de código de barras repetido (ADR-0069, I16
         expect(write.listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
     });
 
-    it('leitura parcial (menos linhas que BOLETOs) só avisa e segue', async () => {
-        const log = buildLog();
-        const write = writeCom(linhasLote(distintos, N - 2));
-        const res = await make({ write, log, lote: loteBoleto() }).gerarRemessa({
+    it('dry-run não faz a leitura (não há import)', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)]);
+        await make({ write: nativo.write, lote: loteBoleto(2) }).gerarRemessa({
             loteId: 'L1',
             ator: 'u',
+            dryRunOverride: true,
         });
-        expect(res.status).toBe('gerada');
-        expect(log.warn).toHaveBeenCalledWith(
-            expect.objectContaining({
-                message: expect.stringContaining('leitura parcial'),
-                data: expect.objectContaining({ lidas: N - 2, boletos: N }),
-            }),
-        );
+        expect(nativo.write.listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
     });
 
-    it('privacidade + auditoria: log e ledger só com o mascarado; um warn BUSINESS_WARN com contagens', async () => {
-        const log = buildLog();
-        const ledger = buildLedger();
-        const write = writeCom(linhasLote(metade));
-        await make({ write, log, ledger, lote: loteBoleto() })
+    it('homônimo cross-filial: mesmo docCod/titCod em outra filial não colapsa (chave com filCod)', async () => {
+        const itens = [
+            { ...itensBoleto(1)[0], filCod: 2, docCod: '1000' },
+            { ...itensBoleto(1)[0], filCod: 3, docCod: '1000' },
+        ];
+        const nativo = nativoFake(
+            [
+                { docCod: '1000', linha: LINHA_A, itsCodSeq: 11, filCod: 2 },
+                { docCod: '1000', linha: LINHA_A, itsCodSeq: 12, filCod: 3 },
+            ],
+            { n: 2 },
+        );
+        nativo.write.listarTitulosPendentes.mockResolvedValue([
+            { ...pendente({ docCod: 1000, filCod: 2 }, true), docCod: '1000' },
+            { ...pendente({ docCod: 1000, filCod: 3 }, true), docCod: '1000' },
+        ]);
+        const r = await rodar({ lote: lote({ itens }), nativo });
+        expect(r.err).toBeUndefined();
+        // Os dois têm o mesmo código: fica a filial 2 (menor filCod); sai a 3 — pela chave completa.
+        expect(r.res?.retiradosPorCodigoBarras).toEqual([
+            expect.objectContaining({
+                titulo: { filCod: 3, docCod: '1000', titCod: '1' },
+                tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+            }),
+        ]);
+        expect(r.write.removerItemDoRascunho.mock.calls[0][0]).toMatchObject({
+            itsCodSeq: 12,
+            filCodItem: 3,
+        });
+    });
+
+    // ── Ilegível ────────────────────────────────────────────────────────────
+
+    it('ilegível (DV inválido lido): retirado com motivo próprio, sem título mantido; segue', async () => {
+        const nativo = nativoFake([
+            nat(0, distintos(0)),
+            nat(1, distintos(1)),
+            nat(2, undefined, { invalido: true }),
+        ]);
+        const r = await rodar({ lote: loteBoleto(3), nativo });
+        expect(r.err).toBeUndefined();
+        expect(r.res?.retiradosPorCodigoBarras).toEqual([
+            {
+                titulo: { filCod: 2, docCod: '1002', titCod: '1' },
+                valor: 1412,
+                vencimento: '2026-10-14',
+                credor: 'PEDRONI',
+                motivo: 'CODIGO_BARRAS_ILEGIVEL',
+            },
+        ]);
+        expect(r.loteRepo.retirarItemPorCodigoDeBarras.mock.calls[0][0]).toMatchObject({
+            motivo: 'CODIGO_BARRAS_ILEGIVEL',
+            docCod: '1002',
+        });
+        expect(r.loteRepo.retirarItemPorCodigoDeBarras.mock.calls[0][0]).not.toHaveProperty(
+            'tituloMantido',
+        );
+        expect(r.write.finalizarLote).toHaveBeenCalledTimes(1);
+    });
+
+    it('lote que esvazia pela cláusula de ilegível: erro nomeado, ledger failed, sem finalizar', async () => {
+        const nativo = nativoFake([
+            nat(0, undefined, { invalido: true }),
+            nat(1, undefined, { invalido: true }),
+        ]);
+        const r = await rodar({ lote: loteBoleto(2), nativo });
+        expect(r.err).toMatchObject({
+            name: 'BoletoLoteEsvaziadoPorCodigoError',
+            code: 'BOLETO_LOTE_ESVAZIADO_POR_CODIGO',
+            statusCode: 409,
+        });
+        expect(r.write.finalizarLote).not.toHaveBeenCalled();
+        expect(r.ledger.fail).toHaveBeenCalledTimes(1);
+        expect(r.locais()).toEqual([]);
+    });
+
+    // ── Leitura incompleta aborta SEM retirar nada (I16c) ───────────────────
+
+    describe.each([
+        [
+            'ausência pura (boleto do lote sem código lido)',
+            () => nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)], { n: 3 }),
+        ],
+        [
+            'lista truncada (completa=false)',
+            () =>
+                nativoFake([nat(0, LINHA_A), nat(1, LINHA_A), nat(2, LINHA_A)], {
+                    leituraOver: { completa: false },
+                }),
+        ],
+        [
+            'item sem itsCodSeq',
+            () =>
+                nativoFake([
+                    nat(0, LINHA_A),
+                    nat(1, LINHA_A),
+                    nat(2, LINHA_A, { itsCodSeq: undefined }),
+                ]),
+        ],
+    ])('%s', (_nome, montar) => {
+        it('aborta com erro nomeado, sem nenhuma remoção, ledger failed', async () => {
+            const nativo = montar();
+            const r = await rodar({ lote: loteBoleto(3), nativo });
+            expect(r.err).toMatchObject({
+                code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+                statusCode: 409,
+                details: { modo: 'leitura' },
+            });
+            expect(r.loteRepo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+            expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+            expect(r.write.finalizarLote).not.toHaveBeenCalled();
+            expect(r.ledger.fail).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it('falha de leitura da lista nativa: incompleta (nunca "limpo"), sem remoção', async () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue(pendentesBoleto(3));
+        write.listarLinhasDigitaveisDoLote.mockRejectedValue(new Error('HTTP 503'));
+        const vivo = loteVivo(loteBoleto(3));
+        const err = await make({ write, loteRepo: vivo.repo })
             .gerarRemessa({ loteId: 'L1', ator: 'u' })
-            .catch(() => undefined);
+            .catch((e: unknown) => e);
+        expect(err).toMatchObject({
+            code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+            details: { modo: 'leitura', causa: 'LISTA_ILEGIVEL' },
+        });
+        expect(vivo.repo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+        expect(write.finalizarLote).not.toHaveBeenCalled();
+    });
+
+    // ── Sucesso = ausência observada (I16d.3) ───────────────────────────────
+
+    it('DELETE responde 200 mas a releitura ainda mostra o item: incompleta, ledger failed, sem finalizar', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)], {
+            deleteIgnorado: ['1001'],
+        });
+        const r = await rodar({ lote: loteBoleto(2), nativo });
+        expect(r.err).toMatchObject({
+            name: 'BoletoCodigoBarrasRetiradaIncompletaError',
+            details: { modo: 'limpeza', pendentes: [{ docCod: '1001', titCod: '1' }] },
+        });
+        expect(r.ledger.fail).toHaveBeenCalledTimes(1);
+        expect(r.ledger.fail.mock.calls[0][1].mensagem).toContain(
+            'LIMPEZA_CODIGO_REPETIDO_INCOMPLETA',
+        );
+        expect(r.write.finalizarLote).not.toHaveBeenCalled();
+        expect(r.res).toBeUndefined();
+    });
+
+    it('DELETE falha (5xx) mas a releitura mostra ausência: observação vence o status; segue', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)], {
+            deleteErroMasSai: ['1001'],
+        });
+        const r = await rodar({ lote: loteBoleto(2), nativo });
+        expect(r.err).toBeUndefined();
+        expect(r.res?.status).toBe('gerada');
+        expect(r.write.finalizarLote).toHaveBeenCalledTimes(1);
+    });
+
+    it('releitura que não vem: incompleta (nunca "limpo"); os que faltam ficam pendentes', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A), nat(2, LINHA_A)], {
+            relerFalha: true,
+        });
+        const r = await rodar({ lote: loteBoleto(3), nativo });
+        expect(r.err).toMatchObject({
+            code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+            details: {
+                modo: 'limpeza',
+                pendentes: [
+                    { docCod: '1001', titCod: '1' },
+                    { docCod: '1002', titCod: '1' },
+                ],
+            },
+        });
+        expect(r.write.finalizarLote).not.toHaveBeenCalled();
+        // O 1º saiu do local (local primeiro) e só ele: o 2º nem foi tocado.
+        expect(r.loteRepo.retirarItemPorCodigoDeBarras).toHaveBeenCalledTimes(1);
+    });
+
+    it('falha parcial: o 1º confirmado permanece retirado, o erro lista só o pendente', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A), nat(2, LINHA_A)], {
+            deleteFalha: ['1002'],
+        });
+        const r = await rodar({ lote: loteBoleto(3), nativo });
+        expect(r.err).toMatchObject({
+            code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+            details: {
+                modo: 'limpeza',
+                retirados: 1,
+                pendentes: [{ docCod: '1002', titCod: '1' }],
+            },
+        });
+        // Local primeiro para os dois; o 1001 saiu do rascunho, o 1002 ficou lá (resíduo).
+        expect(r.loteRepo.retirarItemPorCodigoDeBarras).toHaveBeenCalledTimes(2);
+        expect(r.locais().map((i) => i.docCod)).toEqual(['1000']);
+        expect(nativo.estado().map((e) => e.docCod)).toEqual(['1000', '1002']);
+        expect(r.write.finalizarLote).not.toHaveBeenCalled();
+        // O ledger fica retomável: etapa `finalizar` gravada ANTES da guarda, status `error`.
+        expect(r.ledger.setEtapa).toHaveBeenCalledWith(expect.any(String), 'finalizar');
+        expect(r.ledger.setEtapa).not.toHaveBeenCalledWith(expect.any(String), 'gerar_remessa');
+    });
+
+    // ── Privacidade e auditoria ─────────────────────────────────────────────
+
+    it('log, ledger e erro só com o mascarado; um warn BUSINESS_WARN com contagens', async () => {
+        const log = buildLog();
+        const nativo = nativoFake([
+            nat(0, LINHA_A),
+            nat(1, LINHA_A),
+            nat(2, LINHA_B),
+            nat(3, LINHA_B),
+        ]);
+        const r = await rodar({ lote: loteBoleto(4), nativo, log });
+        expect(r.err).toBeUndefined();
 
         const chamadas = [
             ...(log.info as jest.Mock).mock.calls,
             ...(log.warn as jest.Mock).mock.calls,
             ...(log.error as jest.Mock).mock.calls,
-            ...ledger.fail.mock.calls,
+            ...r.ledger.fail.mock.calls,
+            ...r.ledger.setRequestPayload.mock.calls,
+            ...r.loteRepo.retirarItemPorCodigoDeBarras.mock.calls,
         ];
-        const texto = JSON.stringify(chamadas);
+        const texto = JSON.stringify([chamadas, r.res]);
         for (const completo of [BARRAS_A, LINHA_A, LINHA_B, barras(2222)]) {
             for (let i = 0; i + 10 <= completo.length; i += 1) {
                 expect(texto).not.toContain(completo.slice(i, i + 10));
             }
         }
         expect(texto).toContain(MASCARADO_A);
-        // O flpCod acompanha o motivo do ledger (onde agir no Conexos), sem o código.
-        expect(ledger.fail.mock.calls[0][1].mensagem).toContain('flpCod 12');
 
         const avisos = (log.warn as jest.Mock).mock.calls
             .map(([p]) => p)
-            .filter((p) => String(p.message).includes('código de barras repetido no lote'));
+            .filter((p) => String(p.message).includes('itens retirados do lote'));
         expect(avisos).toHaveLength(1);
         expect(avisos[0]).toMatchObject({
             type: 'BUSINESS_WARN',
-            message: 'remessa: código de barras repetido no lote — geração bloqueada',
             data: expect.objectContaining({
                 loteId: 'L1',
                 flpCod: 12,
-                grupos: 2,
-                titulosAfetados: N,
-                ilegiveis: 0,
+                retirados: 2,
+                pendentes: 0,
+                motivos: ['CODIGO_BARRAS_REPETIDO'],
             }),
         });
+        expect(avisos[0].data.mascarados).toHaveLength(2);
     });
 
-    it('dry-run não faz a leitura (não há import)', async () => {
-        const write = writeCom(linhasLote(metade));
-        await make({ write, lote: loteBoleto() }).gerarRemessa({
-            loteId: 'L1',
-            ator: 'u',
-            dryRunOverride: true,
+    it('erro de limpeza incompleta também não vaza o código no ledger', async () => {
+        const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)], { deleteIgnorado: ['1001'] });
+        const r = await rodar({ lote: loteBoleto(2), nativo });
+        const texto = JSON.stringify([r.ledger.fail.mock.calls, (r.err as Error).message]);
+        for (let i = 0; i + 10 <= BARRAS_A.length; i += 1) {
+            expect(texto).not.toContain(BARRAS_A.slice(i, i + 10));
+        }
+    });
+
+    // ── Retomada (I16h) ─────────────────────────────────────────────────────
+
+    describe('retomada e resíduos (I16h)', () => {
+        const ledgerOrfao = (etapa: string) =>
+            buildLedger({ status: 'reconciling', dryRun: false, nativeFlpCod: 99, etapa });
+        const comNativoAberto = (n: ReturnType<typeof nativoFake>, titulos: number) => {
+            n.write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 0,
+                titulosCount: titulos,
+                soma: 1412 * titulos,
+            });
+            return n;
+        };
+        /** Marca ATIVA + evento do sistema: o PAR que reconhece o resíduo (I16h(c)). */
+        const par = (i: number) => ({
+            bloqueios: buildBloqueios([
+                {
+                    filCod: 2,
+                    docCod: doc(i),
+                    titCod: '1',
+                    origem: 'CODIGO_BARRAS_REPETIDO',
+                    codigoMascarado: MASCARADO_A,
+                    tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+                },
+            ]),
+            eventos: buildEventos([chave(i)]),
         });
-        expect(write.listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
+
+        it('(d) etapa finalizar direta (rascunho completo) ainda passa pela guarda e retira', async () => {
+            const nativo = comNativoAberto(nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)]), 2);
+            const r = await rodar({
+                lote: loteBoleto(2),
+                nativo,
+                ledger: ledgerOrfao('finalizar'),
+            });
+            expect(r.err).toBeUndefined();
+            expect(r.write.criarLote).not.toHaveBeenCalled();
+            expect(r.write.importarTitulos).not.toHaveBeenCalled();
+            expect(r.write.removerItemDoRascunho).toHaveBeenCalledTimes(1);
+            expect(r.write.finalizarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ flpCod: 99 }),
+            );
+        });
+
+        it('(e) resíduo + rascunho completo: limpa só o DELETE, sem reimportar nem mexer no local, e finaliza', async () => {
+            // Lote local já sem o 1001 (retirado antes); o rascunho ainda o tem.
+            const nativo = comNativoAberto(
+                nativoFake([nat(0, distintos(0)), nat(1, LINHA_A)], { n: 1 }),
+                2,
+            );
+            const r = await rodar({
+                lote: loteBoleto(1),
+                nativo,
+                ledger: ledgerOrfao('finalizar'),
+                ...par(1),
+            });
+            expect(r.err).toBeUndefined();
+            expect(r.write.importarTitulos).not.toHaveBeenCalled();
+            expect(r.write.criarLote).not.toHaveBeenCalled();
+            expect(r.loteRepo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+            expect(r.write.removerItemDoRascunho).toHaveBeenCalledTimes(1);
+            expect(r.write.removerItemDoRascunho.mock.calls[0][0]).toMatchObject({
+                itsCodSeq: 11,
+            });
+            expect(r.write.finalizarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ flpCod: 99 }),
+            );
+            expect(nativo.estado().map((e) => e.docCod)).toEqual(['1000']);
+            // O resíduo limpo aparece no resultado (com a máscara da marca).
+            expect(r.res?.retiradosPorCodigoBarras).toEqual([
+                expect.objectContaining({
+                    titulo: { filCod: 2, docCod: '1001', titCod: '1' },
+                    codigoMascarado: MASCARADO_A,
+                }),
+            ]);
+        });
+
+        it('(e) idempotente: reexecutar com o resíduo já ausente não faz DELETE nem evento', async () => {
+            const nativo = comNativoAberto(nativoFake([nat(0, distintos(0))], { n: 1 }), 1);
+            const r = await rodar({
+                lote: loteBoleto(1),
+                nativo,
+                ledger: ledgerOrfao('finalizar'),
+                ...par(1),
+            });
+            expect(r.err).toBeUndefined();
+            expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+            expect(r.loteRepo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+            expect(r.res).not.toHaveProperty('retiradosPorCodigoBarras');
+        });
+
+        it('(e) resíduo cujo DELETE falha: incompleta, ledger failed, sem finalizar', async () => {
+            const nativo = comNativoAberto(
+                nativoFake([nat(0, distintos(0)), nat(1, LINHA_A)], {
+                    n: 1,
+                    deleteFalha: ['1001'],
+                }),
+                2,
+            );
+            const r = await rodar({
+                lote: loteBoleto(1),
+                nativo,
+                ledger: ledgerOrfao('finalizar'),
+                ...par(1),
+            });
+            expect(r.err).toMatchObject({
+                code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+                details: { modo: 'limpeza', pendentes: [{ docCod: '1001', titCod: '1' }] },
+            });
+            expect(r.write.finalizarLote).not.toHaveBeenCalled();
+            expect(r.ledger.fail).toHaveBeenCalledTimes(1);
+        });
+
+        it('(a) item retirado nunca é reimportado: importação parcial manda só o que falta', async () => {
+            // Local: 1000 e 1002. Rascunho: 1000 e o resíduo 1001. Falta o 1002.
+            const lt = lote({ itens: [itensBoleto(1)[0], { ...itensBoleto(3)[2] }] });
+            const nativo = comNativoAberto(
+                nativoFake([nat(0, distintos(0)), nat(1, LINHA_A)], { n: 2 }),
+                2,
+            );
+            nativo.write.listarTitulosPendentes.mockResolvedValue([
+                { ...pendente({ docCod: 1002 }, true), docCod: '1002' },
+            ]);
+            // Depois do import o 1002 está lá, com código distinto.
+            nativo.write.importarTitulos.mockImplementation(async () => {
+                nativo.adicionar(nat(2, distintos(2)));
+            });
+            const r = await rodar({
+                lote: lt,
+                nativo,
+                ledger: ledgerOrfao('importar'),
+                ...par(1),
+            });
+            expect(r.err).toBeUndefined();
+            const pedidas = nativo.write.listarTitulosPendentes.mock.calls[0][0]
+                .chavesDesejadas as Set<string>;
+            expect([...pedidas]).toEqual([chave(2)]);
+            expect(nativo.write.importarTitulos).toHaveBeenCalledTimes(1);
+            // O resíduo 1001 foi limpo; o 1002 entrou e o lote finaliza.
+            expect(
+                nativo
+                    .estado()
+                    .map((e) => e.docCod)
+                    .sort(),
+            ).toEqual(['1000', '1002']);
+            expect(r.write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('(b) estranho no rascunho ⇒ indeterminado MESMO com resíduos; nada é deletado', async () => {
+            const nativo = comNativoAberto(
+                nativoFake([nat(0, distintos(0)), nat(1, LINHA_A), nat(9, distintos(9))], { n: 1 }),
+                3,
+            );
+            const r = await rodar({
+                lote: loteBoleto(1),
+                nativo,
+                ledger: ledgerOrfao('finalizar'),
+                ...par(1),
+            });
+            expect(r.err).toMatchObject({ name: 'RemessaEmDuvidaError' });
+            expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+            expect(r.write.finalizarLote).not.toHaveBeenCalled();
+            expect(r.loteRepo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            [
+                'só a marca, sem evento neste lote',
+                (i: number) => ({ ...par(i), eventos: buildEventos([]) }),
+            ],
+            [
+                'só o evento, sem marca ATIVA',
+                (i: number) => ({ ...par(i), bloqueios: buildBloqueios([]) }),
+            ],
+            [
+                'retirada por duplicidade de título / I13j (nem marca de código, nem evento de código)',
+                () => ({ bloqueios: buildBloqueios([]), eventos: buildEventos([]) }),
+            ],
+        ])('(c) %s: segue intruso (indeterminado)', async (_nome, fabrica) => {
+            const nativo = comNativoAberto(
+                nativoFake([nat(0, distintos(0)), nat(1, LINHA_A)], { n: 1 }),
+                2,
+            );
+            const r = await rodar({
+                lote: loteBoleto(1),
+                nativo,
+                ledger: ledgerOrfao('finalizar'),
+                ...fabrica(1),
+            });
+            expect(r.err).toMatchObject({ name: 'RemessaEmDuvidaError' });
+            expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+        });
+
+        it('lote nativo já finalizado com repetido: não mexe no local e manda cancelar o nativo', async () => {
+            const nativo = nativoFake([nat(0, LINHA_A), nat(1, LINHA_A)]);
+            nativo.write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 99,
+                status: 1,
+                titulosCount: 2,
+                soma: 2824,
+            });
+            const r = await rodar({
+                lote: loteBoleto(2),
+                nativo,
+                ledger: buildLedger({
+                    status: 'reconciling',
+                    dryRun: false,
+                    nativeFlpCod: 99,
+                    etapa: 'gerar_remessa',
+                    requestPayload: { nomeArquivo: 'PG999.REM' },
+                }),
+            });
+            expect(r.err).toMatchObject({
+                code: 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA',
+                details: { modo: 'finalizado' },
+            });
+            expect(r.loteRepo.retirarItemPorCodigoDeBarras).not.toHaveBeenCalled();
+            expect(r.write.removerItemDoRascunho).not.toHaveBeenCalled();
+            expect(r.write.sugerirRemessa).not.toHaveBeenCalled();
+        });
     });
 });
 

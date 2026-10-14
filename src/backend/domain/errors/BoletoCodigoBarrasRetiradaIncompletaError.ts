@@ -23,6 +23,15 @@ export type BoletoCodigoBarrasRetiradaIncompletaParams =
       }
     | {
           /**
+           * `finalizado`: o lote nativo JÁ está finalizado no Conexos e ainda contém item repetido
+           * ou ilegível. O ERP não deixa retirar item de lote finalizado: nada é mexido aqui.
+           */
+          modo: 'finalizado';
+          flpCod?: number;
+          pendentes: ItemRetiradaPendente[];
+      }
+    | {
+          /**
            * `leitura`: a lista nativa não pôde ser lida por inteiro (falha, truncada, item sem
            * `itsCodSeq` ou boleto sem código lido) — I16c. NADA foi retirado.
            */
@@ -93,24 +102,37 @@ export default class BoletoCodigoBarrasRetiradaIncompletaError
     };
 
     private static montarMessage = (n: Normalizado): string => {
+        const p = n.params;
         const onde = n.flpCod !== undefined ? ` on flpCod ${n.flpCod}` : '';
-        if (n.params.modo === 'limpeza') {
+        if (p.modo === 'limpeza') {
             return `${MOTIVO_LEDGER_LIMPEZA_INCOMPLETA}: ${n.pendentes.length} item(s) pending removal${onde}: ${n.lista}`;
         }
-        return `incomplete barcode read (${n.params.causa}): ${n.pendentes.length} boleto(s) unread${onde}: ${n.lista}`;
+        if (p.modo === 'finalizado') {
+            return `native lote already finalized with ${n.pendentes.length} repeated/unreadable barcode item(s)${onde}: ${n.lista}`;
+        }
+        return `incomplete barcode read (${p.causa}): ${n.pendentes.length} boleto(s) unread${onde}: ${n.lista}`;
     };
 
     private static montarUserMessage = (n: Normalizado): string => {
+        const p = n.params;
         const ondeNoErp = n.flpCod !== undefined ? ` Lote nativo no Conexos: ${n.flpCod}.` : '';
-        if (n.params.modo === 'limpeza') {
+        if (p.modo === 'limpeza') {
             const restantes =
-                n.params.restantesNoRascunho !== undefined
-                    ? ` O rascunho deste lote no Conexos ainda contém ${n.params.restantesNoRascunho} item(ns).`
+                p.restantesNoRascunho !== undefined
+                    ? ` O rascunho deste lote no Conexos ainda contém ${p.restantesNoRascunho} item(ns).`
                     : '';
             return (
-                `A retirada automática dos boletos repetidos não terminou: ${n.params.retirados} ` +
+                `A retirada automática dos boletos repetidos não terminou: ${p.retirados} ` +
                 `título(s) já saíram do lote e ${n.pendentes.length} ainda precisam sair (${n.lista}).` +
                 `${restantes} Nada foi enviado ao banco. Gere a remessa de novo: o sistema termina a limpeza.` +
+                ondeNoErp
+            );
+        }
+        if (p.modo === 'finalizado') {
+            return (
+                'O lote nativo já está FINALIZADO no Conexos e ainda contém boleto repetido ou ' +
+                `ilegível (${n.lista}); o Conexos não permite retirar item de lote finalizado. ` +
+                'NÃO envie nada ao banco: cancele o lote nativo no Conexos e gere a remessa de novo.' +
                 ondeNoErp
             );
         }
@@ -123,18 +145,22 @@ export default class BoletoCodigoBarrasRetiradaIncompletaError
     };
 
     private static montarDetails = (n: Normalizado): unknown => {
+        const p = n.params;
         const flpCod = n.flpCod !== undefined ? { flpCod: n.flpCod } : {};
-        if (n.params.modo === 'limpeza') {
+        if (p.modo === 'limpeza') {
             return {
-                modo: n.params.modo,
+                modo: p.modo,
                 ...flpCod,
-                retirados: Number(n.params.retirados),
+                retirados: Number(p.retirados),
                 pendentes: n.pendentes,
-                ...(n.params.restantesNoRascunho !== undefined
-                    ? { restantesNoRascunho: Number(n.params.restantesNoRascunho) }
+                ...(p.restantesNoRascunho !== undefined
+                    ? { restantesNoRascunho: Number(p.restantesNoRascunho) }
                     : {}),
             };
         }
-        return { modo: n.params.modo, causa: n.params.causa, ...flpCod, pendentes: n.pendentes };
+        if (p.modo === 'finalizado') {
+            return { modo: p.modo, ...flpCod, pendentes: n.pendentes };
+        }
+        return { modo: p.modo, causa: p.causa, ...flpCod, pendentes: n.pendentes };
     };
 }

@@ -20,10 +20,9 @@ import {
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.js';
-import BoletoCodigoBarrasRepetidoError, {
-    type ItemBoletoRepetido,
-} from '../../errors/BoletoCodigoBarrasRepetidoError.js';
-import AnaliseCodigoBarrasRepetido from '../../libs/boleto/AnaliseCodigoBarrasRepetido.js';
+import BoletoCodigoBarrasRepetidoError from '../../errors/BoletoCodigoBarrasRepetidoError.js';
+import type { RetiradoPorCodigoBarras } from '../../interface/sispag/RetiradaCodigoBarras.js';
+import RetiradaCodigoBarrasService from './RetiradaCodigoBarrasService.js';
 import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
 import RemittanceFileUnavailableError from '../../errors/RemittanceFileUnavailableError.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
@@ -105,7 +104,17 @@ type AssinaturaDestino = z.infer<typeof assinaturaDestinoSchema>;
  * Ordem canônica da sequência. Retomar numa etapa significa que todas as anteriores já
  * foram observadas como concluídas NO ERP — não presumidas pelo nosso ledger.
  */
-const ORDEM_ETAPAS = ['criar_lote', 'importar', 'finalizar', 'gerar_remessa', 'concluido'] as const;
+const ORDEM_ETAPAS = [
+    'criar_lote',
+    'importar',
+    // ADR-0069 emenda 1 (I16h(e)): resíduos de retirada por código de barras ainda no rascunho.
+    // Etapa só de MEMÓRIA — nunca vai ao ledger (o CHECK da 0049 não a conhece): a guarda roda
+    // antes de `finalizar` em todo caminho e é ela quem limpa.
+    'limpar_retirados',
+    'finalizar',
+    'gerar_remessa',
+    'concluido',
+] as const;
 
 /** Etapa REAL apurada no ERP. `indeterminado` é o único caminho que ainda trava. */
 type EtapaReal = (typeof ORDEM_ETAPAS)[number] | 'indeterminado';
@@ -145,6 +154,16 @@ export interface GerarRemessaResult {
     valorTotal: number;
     /** Data de débito usada (`'YYYY-MM-DD'`). Ausente em lote legado sem data persistida. */
     dataDebito?: string;
+    /**
+     * Itens que a guarda de código de barras retirou do lote nesta execução (ADR-0069 emenda 1,
+     * I16f). Ausente quando nada saiu. Só a máscara 5+4 do código (I16e).
+     */
+    retiradosPorCodigoBarras?: RetiradoPorCodigoBarras[];
+    /**
+     * Avisos em pt-BR para a automação diária NÃO tratar como "tudo certo" (I16f(2)): não vazio
+     * quando houve retirada. Ausente caso contrário.
+     */
+    avisos?: string[];
 }
 
 /**
@@ -189,8 +208,8 @@ export default class RemessaService {
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
         @inject(AuthorizedPayeeService) private readonly payees: AuthorizedPayeeService,
-        @inject(AnaliseCodigoBarrasRepetido)
-        private readonly analiseCodigos: AnaliseCodigoBarrasRepetido,
+        @inject(RetiradaCodigoBarrasService)
+        private readonly retirada: RetiradaCodigoBarrasService,
     ) {}
 
     /**
@@ -304,6 +323,8 @@ export default class RemessaService {
         let retomarDe: EtapaReal | undefined;
         let apenasChaves: ReadonlySet<string> | undefined;
         let flpCodRetomado: number | undefined;
+        /** A retomada viu resíduos de retirada por código de barras no rascunho (I16h). */
+        let residuosVistos = false;
         // `reconciling` = escrita em voo que nunca confirmou. `error` com etapa `finalizar` e lote
         // nativo é o rascunho que a guarda de código repetido (ADR-0069) deixou de propósito para
         // diagnóstico: o import JÁ valeu, então o retry tem que perguntar ao ERP em vez de
@@ -374,6 +395,7 @@ export default class RemessaService {
                 retomarDe = sync.etapa;
                 apenasChaves = sync.apenas;
                 flpCodRetomado = sync.flpCod;
+                residuosVistos = (sync.residuos ?? 0) > 0;
             }
         }
 
@@ -643,10 +665,27 @@ export default class RemessaService {
             // `error` + `finalizar` + flpCod, e o retry passa por `sincronizarComErp` (o rascunho
             // está completo → `finalizar` → a guarda roda de novo), em vez de reimportar sobre
             // um rascunho que já tem os itens.
+            //
+            // Desde a emenda 1 da ADR-0069 a guarda RETIRA (item repetido/ilegível e resíduos de
+            // tentativa anterior) em vez de só abortar. O lote local pode mudar aqui (itens e
+            // `versao`): tudo daqui para baixo lê `loteFinal`, nunca o snapshot do início.
             await this.ledger.setEtapa(key, 'finalizar');
+            let loteFinal = lote;
+            let retiradosPorCodigoBarras: RetiradoPorCodigoBarras[] = [];
+            let avisos: string[] = [];
             if (retomarDe !== 'concluido') {
-                await this.verificarCodigoBarrasRepetido(lote, bncCod, flpCod);
+                const guarda = await this.retirada.garantir({
+                    lote,
+                    bncCod,
+                    flpCod,
+                    rascunhoAberto: retomarDe !== 'gerar_remessa',
+                    forcarLeitura: residuosVistos,
+                });
+                loteFinal = guarda.lote;
+                retiradosPorCodigoBarras = guarda.retirados;
+                avisos = guarda.avisos;
             }
+            const valorFinal = loteFinal.itens.reduce((acc, i) => acc + Number(i.valor ?? 0), 0);
 
             // (3) finalizar (o ERP valida R1 e a regra do itsDtaPgto)
             if (!pular('finalizar')) {
@@ -706,7 +745,7 @@ export default class RemessaService {
                 // arquivo com o que o lote mandou (caso 8) — só AVISO até o teste supervisionado.
                 const validacao = this.cnab.validar(
                     arquivo.conteudo,
-                    this.esperadoNoArquivo(lote, flags),
+                    this.esperadoNoArquivo(loteFinal, flags),
                 );
                 await this.logService.info({
                     type: LOG_TYPE.BUSINESS_INFO,
@@ -766,7 +805,7 @@ export default class RemessaService {
                 id: lote.id,
                 de: [LOTE_STATUS.FINALIZADO],
                 para: LOTE_STATUS.REMESSA_GERADA,
-                versaoEsperada: lote.versao,
+                versaoEsperada: loteFinal.versao,
             });
             await this.ledger.settle(key, { nativeGabCod: arquivo.gabCod });
 
@@ -779,8 +818,8 @@ export default class RemessaService {
                     gabCod: arquivo.gabCod,
                     arquivo: sugerido.nomeArquivo,
                     dataDebito,
-                    itens: lote.itens.length,
-                    valorTotal,
+                    itens: loteFinal.itens.length,
+                    valorTotal: valorFinal,
                 },
             });
 
@@ -794,9 +833,13 @@ export default class RemessaService {
                 arquivo: sugerido.nomeArquivo,
                 numRemessa: sugerido.numRemessa,
                 ...(arquivo.conteudo !== undefined ? { conteudo: arquivo.conteudo } : {}),
-                itens: lote.itens.length,
-                valorTotal,
+                itens: loteFinal.itens.length,
+                valorTotal: valorFinal,
                 ...(dataDebito !== undefined ? { dataDebito } : {}),
+                // I16f(2): só quando algo saiu do lote — "sem retirada" não muda o resultado.
+                ...(retiradosPorCodigoBarras.length > 0
+                    ? { retiradosPorCodigoBarras, avisos }
+                    : {}),
             };
         } catch (e) {
             const mensagem = e instanceof Error ? e.message : String(e);
@@ -836,6 +879,11 @@ export default class RemessaService {
         flpCod?: number;
         /** Preenchido quando a retomada esbarrou num lote cancelado por alguém. */
         canceladoFlpCod?: number;
+        /**
+         * Quantos resíduos de retirada por código de barras (I16h) o rascunho ainda tem — itens
+         * já fora do lote local, reconhecidos pelo par marca + evento. A guarda os limpa.
+         */
+        residuos?: number;
     }> => {
         const bncCod = anterior.bncCod;
         let flpCod = anterior.nativeFlpCod;
@@ -941,18 +989,34 @@ export default class RemessaService {
         // Mesma chave com FILIAL usada no import — as duas pontas têm que falar a mesma língua.
         const nossas = new Set(lote.itens.map((i) => `${i.filCod}:${i.docCod}:${i.titCod}`));
         const intrusos = [...jaNoErp].filter((k) => !nossas.has(k));
-        if (intrusos.length > 0) {
-            // O lote nativo tem título que NÃO está no nosso lote: alguém mexeu nele pelo
-            // ERP. Completar o import aqui misturaria a intenção de duas pessoas.
+        // I16h: intrusos = no rascunho e fora do lote local. RESÍDUOS são os que a guarda de
+        // código de barras retirou DESTE lote (par marca ATIVA + evento do sistema); o resto são
+        // ESTRANHOS. `nossas` é o lote local — item retirado nunca é reimportado (a), nem na
+        // importação parcial.
+        const { residuos, estranhos } = await this.retirada.classificarIntrusos(lote.id, intrusos);
+        if (estranhos.length > 0) {
+            // O lote nativo tem título que NÃO está no nosso lote e não é resíduo nosso: alguém
+            // mexeu nele pelo ERP. Completar o import aqui misturaria a intenção de duas pessoas —
+            // e nunca se limpa parcialmente um rascunho tocado por terceiro (I16h(b)).
             return {
                 ...reusar,
                 etapa: 'indeterminado',
-                motivo: `lote ${flpCod} contém título(s) fora do nosso lote: ${intrusos.join(', ')}`,
+                motivo: `lote ${flpCod} contém título(s) fora do nosso lote: ${estranhos.join(', ')}`,
             };
         }
+        const comResiduos = residuos.size > 0 ? { residuos: residuos.size } : {};
 
         const faltando = new Set([...nossas].filter((k) => !jaNoErp.has(k)));
         if (faltando.size === 0) {
+            if (residuos.size > 0) {
+                // Rascunho completo + resíduos: a guarda `limpar_retirados` antes do finalizar.
+                return {
+                    ...reusar,
+                    ...comResiduos,
+                    etapa: 'limpar_retirados',
+                    motivo: `lote ${flpCod} tem os ${nossas.size} título(s) do lote e ${residuos.size} resíduo(s) de retirada por código de barras`,
+                };
+            }
             return {
                 ...reusar,
                 etapa: 'finalizar',
@@ -961,8 +1025,9 @@ export default class RemessaService {
         }
         return {
             ...reusar,
+            ...comResiduos,
             etapa: 'importar',
-            motivo: `lote ${flpCod} tem ${jaNoErp.size} de ${esperados}; faltam ${faltando.size}`,
+            motivo: `lote ${flpCod} tem ${jaNoErp.size - residuos.size} de ${esperados}; faltam ${faltando.size}`,
             apenas: faltando,
         };
     };
@@ -1053,100 +1118,6 @@ export default class RemessaService {
      * VERBATIM (o grid cruza filiais; reescrever `filCod` devolve `Not Found: FinTituloPag`),
      * enriquecida com a modalidade escolhida e o destino do favorecido (`cmn025`).
      */
-    /**
-     * Guarda de código de barras repetido (ADR-0069, I16a/c). Lê os códigos que o ERP anexou
-     * aos itens JÁ importados do rascunho nativo e aborta, ANTES do `finalizarLote`, se dois ou
-     * mais itens carregam o mesmo boleto — ou se algum código está presente mas ilegível
-     * (falha fechado). Nada é descartado em silêncio: a analista decide o que retirar.
-     *
-     * Contrato de reuso: a entrada da análise é o conjunto de códigos FINAIS do lote; o passo 2
-     * da ADR-0068 chama a mesma função de novo depois do `PUT finItemSispag`.
-     *
-     * Só lê (uma chamada, `listarLinhasDigitaveisDoLote`). Nunca loga nem põe em mensagem o
-     * código completo — só o mascarado (I16e).
-     */
-    private verificarCodigoBarrasRepetido = async (
-        lote: LotePagamento,
-        bncCod: number,
-        flpCod: number,
-    ): Promise<void> => {
-        const boletos = lote.itens.filter((i) => i.modalidade === MODALIDADE.BOLETO);
-        if (boletos.length === 0) return;
-
-        const leitura = await this.write.listarLinhasDigitaveisDoLote({
-            filCod: lote.filCod,
-            bncCod,
-            flpCod,
-        });
-        const invalidos = leitura.invalidos ?? [];
-        const lidas = leitura.itens.length + invalidos.length;
-        if (lidas < boletos.length) {
-            // R3: leitura de página única ou item ainda sem código. Não aborta nesta entrega —
-            // a rede do `.REM` (gate 5.1) cobre —, mas fica registrado.
-            await this.logService.warn({
-                type: LOG_TYPE.BUSINESS_WARN,
-                message:
-                    'remessa: leitura parcial dos códigos de barras — guarda de repetição incompleta',
-                data: { loteId: lote.id, flpCod, lidas, boletos: boletos.length },
-            });
-        }
-
-        const analise = this.analiseCodigos.analisar(
-            leitura.itens.map((i) => ({
-                chave: `${i.docCod}:${i.titCod}`,
-                codigo: i.linhaDigitavel,
-            })),
-        );
-        const locais = new Map(lote.itens.map((i) => [`${i.docCod}:${i.titCod}`, i]));
-        const referencia = (chave: string): ItemBoletoRepetido => {
-            const sep = chave.lastIndexOf(':');
-            const docCod = chave.slice(0, sep);
-            const titCod = chave.slice(sep + 1);
-            const local = locais.get(chave);
-            return {
-                docCod,
-                titCod,
-                ...(local
-                    ? {
-                          valor: local.valor,
-                          ...(local.credor ? { credor: local.credor } : {}),
-                          ...(local.vencimento !== undefined
-                              ? {
-                                    vencimento: new Date(local.vencimento)
-                                        .toISOString()
-                                        .slice(0, 10),
-                                }
-                              : {}),
-                      }
-                    : {}),
-            };
-        };
-
-        const ilegiveis = [
-            ...invalidos.map((i) => referencia(`${i.docCod}:${i.titCod}`)),
-            ...analise.ilegiveis.map(referencia),
-        ];
-        if (analise.grupos.length === 0 && ilegiveis.length === 0) return;
-
-        const grupos = analise.grupos.map((g) => ({
-            mascarado: g.mascarado,
-            itens: g.chaves.map(referencia),
-        }));
-        await this.logService.warn({
-            type: LOG_TYPE.BUSINESS_WARN,
-            message: 'remessa: código de barras repetido no lote — geração bloqueada',
-            data: {
-                loteId: lote.id,
-                flpCod,
-                grupos: grupos.length,
-                titulosAfetados: grupos.reduce((n, g) => n + g.itens.length, 0),
-                ilegiveis: ilegiveis.length,
-                mascarados: grupos.map((g) => g.mascarado),
-            },
-        });
-        throw new BoletoCodigoBarrasRepetidoError({ origem: 'lote', flpCod, grupos, ilegiveis });
-    };
-
     private montarItensImport = async (
         lote: LotePagamento,
         bncCod: number,
@@ -1775,7 +1746,10 @@ export default class RemessaService {
         // O `finalizarLote` ainda vai rodar quando a retomada não passou dele: sem sync
         // (ledger em `error` → a sequência roda inteira) ou retomando em importar/finalizar.
         const finalizarPendente =
-            retomarDe === undefined || retomarDe === 'importar' || retomarDe === 'finalizar';
+            retomarDe === undefined ||
+            retomarDe === 'importar' ||
+            retomarDe === 'limpar_retirados' ||
+            retomarDe === 'finalizar';
         if (finalizarPendente && congelada < this.calendar.todayBrt()) {
             throw new DebitDateFrozenError({
                 motivo: MOTIVO_CONGELADA.NO_PASSADO,
