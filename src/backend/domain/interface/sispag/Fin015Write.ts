@@ -216,4 +216,50 @@ export interface LinhasDigitaveisDoLote {
      * por `maxPaginas`: quem decide retirada ABORTA, nunca assume "o resto não tem repetido".
      */
     completa: boolean;
+    /**
+     * Identidade (nunca código) dos itens do rascunho que AINDA NÃO têm código de barras, só os
+     * que trazem `itsCodSeq` (sem ele não há como apagar). Ausente equivale a `[]`. Serve à
+     * retirada por vínculo falho (ADR-0071, I17g(3)): o item sem código precisa de identidade
+     * nativa para o `DELETE` e para a confirmação de ausência. Não entra em `total`/`dropped`.
+     */
+    semCodigo?: Array<{ docCod: string; titCod: string; filCod: number; itsCodSeq: number }>;
+}
+
+/** Resultado de `validacao/codigoBarras`: o ERP só DECODIFICA (não valida DV, HML #3). */
+export interface ValidacaoCodigoBarras {
+    /** Quebra do código devolvida pelo ERP; reenviada VERBATIM ao `confirmaCodigoBarras`. */
+    splitCodBar: unknown;
+    /** Valor decodificado da barra (reais). */
+    barraVlrPgto: number;
+    /** Vencimento decodificado da barra (epoch ms, UTC meia-noite). */
+    barraDtaVencimento: number;
+}
+
+/** Resultado de `confirmaCodigoBarras` — o que o item precisa para ficar "completo" (HML #6). */
+export interface ConfirmacaoCodigoBarras {
+    /** valor da barra + juros − desconto (reais). */
+    itsMnyVlrPgtoResult: number;
+    /** vencimento da barra (epoch ms). A data que o ERP usa para pagar é esta (HML #5). */
+    itsDtaPgtoResult: number;
+    itsBncNumCodbancoResult: string | number;
+    itsBncDesNomeResult: string;
+}
+
+/** Linha do `finItemSispag/list`, com a identidade validada e a row CRUA em `row`. */
+export interface ItemDoRascunho {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    /** Ausente = identidade incompleta (nunca chute). */
+    itsCodSeq?: number;
+    row: Record<string, unknown>;
+}
+
+/** Os cinco campos que o vínculo altera no item (I17e). Nenhum outro. */
+export interface AlteracaoItemCodigoBarras {
+    itsNumCodbar: string;
+    itsNumBanco: string | number;
+    bncDesNome: string;
+    itsMnyVlrPgto: number;
+    itsDtaPgto: number;
 }

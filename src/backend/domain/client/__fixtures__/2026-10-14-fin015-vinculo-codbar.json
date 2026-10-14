@@ -1,0 +1,47 @@
+{
+    "_fonte": "HML 2026-10-14 (harness probe-hml-validacao-codbar / probe-hml-editar-item-codbar da branch chore/sispag-hml-bind-experimentos) — formato das respostas; valores e códigos SINTÉTICOS e mascarados",
+    "_nota": "O ERP devolve o resultado dentro de `responseData` em validacao/codigoBarras; `confirmaCodigoBarras` devolve os campos *Result no nível de cima. DV corrompido volta SUCESSO (achado 3): a validade do código é decidida por NÓS.",
+    "validacao": {
+        "valid": "SUCESSO",
+        "responseData": {
+            "splitCodBar": {
+                "campo1": "34191.09004",
+                "campo2": "47729.099260",
+                "campo3": "40834.000011",
+                "campo4": "1",
+                "campo5": "15800000141200"
+            },
+            "barraVlrPgto": 1028.8,
+            "barraDtaVencimento": 1792800000000
+        }
+    },
+    "confirma": {
+        "valid": "SUCESSO",
+        "itsMnyVlrPgtoResult": 1028.8,
+        "itsDtaPgtoResult": 1792800000000,
+        "itsBncNumCodbancoResult": 341,
+        "itsBncDesNomeResult": "ITAU UNIBANCO S.A."
+    },
+    "item": {
+        "filCod": 2,
+        "docCod": 636,
+        "titCod": 1,
+        "bncCod": 4,
+        "flpCod": 36,
+        "itsCodSeq": 91,
+        "filCodLote": 2,
+        "itsVldModalidade": 6,
+        "itsNumCodbar": null,
+        "itsNumBanco": 0,
+        "bncDesNome": null,
+        "itsMnyValor": 1028.8,
+        "itsMnyVlrPgto": 1028.8,
+        "titMnyLiquido": 1028.8,
+        "titMnyJuros": 0,
+        "titMnyDesconto": 0,
+        "itsDtaPgto": 1792800000000,
+        "titDtaVencimento": 1792800000000,
+        "vldVinculoDda": 0,
+        "itsEspNomeFav": "FORNECEDOR SINTETICO LTDA"
+    }
+}

@@ -2,11 +2,15 @@ import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import ConexosError from '../errors/ConexosError.js';
 import ErpPerguntaError from '../errors/ErpPerguntaError.js';
+import RascunhoLeituraIncompletaError from '../errors/RascunhoLeituraIncompletaError.js';
 import type {
+    AlteracaoItemCodigoBarras,
     ArquivoRemessa,
+    ConfirmacaoCodigoBarras,
     CriarLoteParams,
     GerarRemessaParams,
     ImportarTitulosParams,
+    ItemDoRascunho,
     ItemLinhaDigitavel,
     LinhasDigitaveisDoLote,
     LoteNativoCriado,
@@ -14,6 +18,7 @@ import type {
     RemessaGerada,
     SinalPendente,
     TituloPendente,
+    ValidacaoCodigoBarras,
 } from '../interface/sispag/Fin015Write.js';
 import { LOG_TYPE } from '../interface/log/LogInterface.js';
 import LogService from '../service/LogService.js';
@@ -149,6 +154,41 @@ function linhaDigitavelValida(linha: string): boolean {
     const base = linha.slice(0, 4) + linha.slice(33, 47) + campoLivre;
     return dvMod11(base) === Number(linha[32]);
 }
+
+/** Nenhum código de barras (44+ dígitos) sai deste cliente em erro, log ou `cause` (I17j). */
+const sanearTexto = (texto: string): string => texto.replace(/\d{20,}/g, '…');
+
+/**
+ * `validacao/codigoBarras`: o ERP devolve o resultado dentro de `responseData` (o preprocess
+ * aceita também o corpo sem envelope). Só decodifica — NÃO valida DV (HML #3).
+ */
+const VALIDACAO_CODBAR_SCHEMA = z.preprocess(
+    (raw) => {
+        const o = (raw ?? {}) as Record<string, unknown>;
+        return o.responseData ?? o;
+    },
+    z.object({
+        splitCodBar: z.unknown().refine((v) => v !== undefined && v !== null, {
+            message: 'splitCodBar ausente',
+        }),
+        barraVlrPgto: z.coerce.number().finite(),
+        barraDtaVencimento: z.coerce.number().int().positive(),
+    }),
+);
+
+/** `confirmaCodigoBarras`: os quatro campos `*Result`; ausente = erro de contrato, nunca default. */
+const CONFIRMA_CODBAR_SCHEMA = z.preprocess(
+    (raw) => {
+        const o = (raw ?? {}) as Record<string, unknown>;
+        return o.responseData ?? o;
+    },
+    z.object({
+        itsMnyVlrPgtoResult: z.coerce.number().finite(),
+        itsDtaPgtoResult: z.coerce.number().int().positive(),
+        itsBncNumCodbancoResult: z.union([z.string().min(1), z.number()]),
+        itsBncDesNomeResult: z.string().min(1),
+    }),
+);
 
 /** `itsCodSeq` do item nativo: inteiro positivo. Ausente/inválido = identidade incompleta. */
 const ITS_COD_SEQ_SCHEMA = z.coerce.number().int().positive();
@@ -612,41 +652,35 @@ export default class ConexosSispagWriteClient {
     }): Promise<LinhasDigitaveisDoLote> => {
         const { filCod, bncCod, flpCod, maxPaginas = 40 } = params;
         const path = `fin015/finItemSispag/list/${filCod}/${bncCod}/${flpCod}`;
-        const pageSize = 500;
         try {
-            const linhas: Array<Record<string, unknown>> = [];
-            let completa = false;
-            for (let pagina = 1; pagina <= maxPaginas; pagina += 1) {
-                const pageNumber = pagina;
-                const resposta = await this.base.runWithRetry(async () => {
-                    await this.base.ensureSid();
-                    return this.base.listGenericPaginated<Record<string, unknown>>(
-                        path,
-                        {
-                            fieldList: [],
-                            filterList: {},
-                            serviceName: 'fin015',
-                            pageNumber,
-                            pageSize,
-                        },
-                        { filCod },
-                    );
-                });
-                const rows = resposta.rows ?? [];
-                linhas.push(...rows);
-                const count = Number(resposta.count);
-                if (rows.length < pageSize || (Number.isFinite(count) && linhas.length >= count)) {
-                    completa = true;
-                    break;
-                }
-            }
+            const { linhas, completa } = await this.lerLinhasDoRascunho({
+                filCod,
+                bncCod,
+                flpCod,
+                maxPaginas,
+            });
             const itens: ItemLinhaDigitavel[] = [];
             const invalidos: NonNullable<LinhasDigitaveisDoLote['invalidos']> = [];
+            const semCodigo: NonNullable<LinhasDigitaveisDoLote['semCodigo']> = [];
             let total = 0;
             for (const row of linhas) {
-                // Sem o campo (ou vazio) = item que não é boleto. Não é anomalia, não conta.
+                // Sem o campo (ou vazio) = item que não é boleto (ainda). Não é anomalia, não
+                // conta; só a identidade (com `itsCodSeq`) é guardada, para a retirada por vínculo
+                // falho (ADR-0071) conseguir apagar e confirmar a ausência.
                 const bruto = row.itsNumCodbar;
-                if (bruto === null || bruto === undefined || String(bruto).trim() === '') continue;
+                if (bruto === null || bruto === undefined || String(bruto).trim() === '') {
+                    const seq = ITS_COD_SEQ_SCHEMA.safeParse(row.itsCodSeq);
+                    if (seq.success) {
+                        const fil = Number(row.filCod);
+                        semCodigo.push({
+                            docCod: this.identidade(row.docCod, ''),
+                            titCod: this.identidade(row.titCod, '1'),
+                            filCod: Number.isInteger(fil) && fil > 0 ? fil : filCod,
+                            itsCodSeq: seq.data,
+                        });
+                    }
+                    continue;
+                }
                 total += 1;
                 const itsCodSeq = ITS_COD_SEQ_SCHEMA.safeParse(row.itsCodSeq);
                 const rowFil = Number(row.filCod);
@@ -683,10 +717,246 @@ export default class ConexosSispagWriteClient {
                 dropped: invalidos.length,
                 completa,
                 ...(invalidos.length > 0 ? { invalidos } : {}),
+                ...(semCodigo.length > 0 ? { semCodigo } : {}),
             };
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }
+    };
+
+    /**
+     * Varre o `finItemSispag/list` do rascunho (páginas de 500) e devolve as rows CRUAS.
+     * `completa=false` = parou em `maxPaginas` com grid sobrando: quem decide aborta, nunca
+     * assume "o resto não tem". Leitura → `runWithRetry`.
+     */
+    private lerLinhasDoRascunho = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        maxPaginas: number;
+    }): Promise<{ linhas: Array<Record<string, unknown>>; completa: boolean }> => {
+        const { filCod, bncCod, flpCod, maxPaginas } = params;
+        const path = `fin015/finItemSispag/list/${filCod}/${bncCod}/${flpCod}`;
+        const pageSize = 500;
+        const linhas: Array<Record<string, unknown>> = [];
+        let completa = false;
+        for (let pagina = 1; pagina <= maxPaginas; pagina += 1) {
+            const pageNumber = pagina;
+            const resposta = await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                return this.base.listGenericPaginated<Record<string, unknown>>(
+                    path,
+                    {
+                        fieldList: [],
+                        filterList: {},
+                        serviceName: 'fin015',
+                        pageNumber,
+                        pageSize,
+                    },
+                    { filCod },
+                );
+            });
+            const rows = resposta.rows ?? [];
+            linhas.push(...rows);
+            const count = Number(resposta.count);
+            if (rows.length < pageSize || (Number.isFinite(count) && linhas.length >= count)) {
+                completa = true;
+                break;
+            }
+        }
+        return { linhas, completa };
+    };
+
+    /**
+     * Todos os itens do rascunho como rows CRUAS + identidade validada (ADR-0071, I17e). É o
+     * "item lido inteiro" de onde sai o corpo do `PUT`. Falha de leitura sobe como `ConexosError`;
+     * truncada ⇒ `completa=false`. Nunca loga nem devolve nada além da row do ERP.
+     */
+    public lerItensDoRascunho = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        maxPaginas?: number;
+    }): Promise<{ itens: ItemDoRascunho[]; completa: boolean }> => {
+        const { filCod, bncCod, flpCod, maxPaginas = 40 } = params;
+        const path = `fin015/finItemSispag/list/${filCod}/${bncCod}/${flpCod}`;
+        try {
+            const { linhas, completa } = await this.lerLinhasDoRascunho({
+                filCod,
+                bncCod,
+                flpCod,
+                maxPaginas,
+            });
+            const itens = linhas.map((row): ItemDoRascunho => {
+                const seq = ITS_COD_SEQ_SCHEMA.safeParse(row.itsCodSeq);
+                const fil = Number(row.filCod);
+                return {
+                    filCod: Number.isInteger(fil) && fil > 0 ? fil : filCod,
+                    docCod: this.identidade(row.docCod, ''),
+                    titCod: this.identidade(row.titCod, '1'),
+                    ...(seq.success ? { itsCodSeq: seq.data } : {}),
+                    row,
+                };
+            });
+            return { itens, completa };
+        } catch (cause) {
+            throw this.toConexosError(path, this.causaSegura(cause));
+        }
+    };
+
+    /**
+     * A row completa do item `itsCodSeq` do rascunho. Item ausente numa leitura COMPLETA ⇒
+     * `undefined`; leitura incompleta sem achar o item ⇒ `RascunhoLeituraIncompletaError`
+     * (distinguível de "ausente": nunca se conclui ausência de uma lista truncada).
+     */
+    public lerItemDoRascunho = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        itsCodSeq: number;
+    }): Promise<Record<string, unknown> | undefined> => {
+        const { itsCodSeq, ...ctx } = params;
+        const { itens, completa } = await this.lerItensDoRascunho(ctx);
+        const achado = itens.find((i) => i.itsCodSeq === itsCodSeq);
+        if (achado) return achado.row;
+        if (!completa) throw new RascunhoLeituraIncompletaError({ ...ctx, lidas: itens.length });
+        return undefined;
+    };
+
+    /**
+     * `POST fin015/finItemSispag/validacao/codigoBarras` — o ERP só DECODIFICA a barra (valor e
+     * vencimento) e devolve o `splitCodBar` que o `confirma` exige. NÃO valida DV (HML #3: DV
+     * corrompido volta SUCESSO) nem compara com o título: quem julga é a elegibilidade nossa.
+     * Não grava nada (HML: sem efeito), mas é `POST` ⇒ tentativa única, sem 401-retry.
+     * `codigo` é a linha digitável (47) ou as barras (44) — só em memória, nunca em log/erro.
+     */
+    public validarCodigoBarras = async (params: {
+        filCod: number;
+        bncCod: number;
+        codigo: string;
+        valorLiquido: number;
+        vencimento: number;
+        modalidade: number;
+    }): Promise<ValidacaoCodigoBarras> => {
+        const path = 'fin015/finItemSispag/validacao/codigoBarras';
+        try {
+            await this.base.ensureSid();
+            const raw = await this.base.postGenericOnce<unknown>(
+                path,
+                this.corpoCodigoBarras(params),
+                { filCod: params.filCod },
+            );
+            return VALIDACAO_CODBAR_SCHEMA.parse(raw) as ValidacaoCodigoBarras;
+        } catch (cause) {
+            throw this.toConexosError(path, this.causaSegura(cause));
+        }
+    };
+
+    /**
+     * `POST fin015/finItemSispag/validacao/confirmaCodigoBarras` — com o `splitCodBar` da etapa
+     * anterior, devolve valor (barra + juros − desconto), data (a da barra) e banco que o item
+     * precisa para ficar completo (HML #4–#6). Campo ausente ⇒ erro de contrato (nunca default).
+     */
+    public confirmarCodigoBarras = async (params: {
+        filCod: number;
+        bncCod: number;
+        codigo: string;
+        valorLiquido: number;
+        vencimento: number;
+        modalidade: number;
+        validacao: ValidacaoCodigoBarras;
+    }): Promise<ConfirmacaoCodigoBarras> => {
+        const path = 'fin015/finItemSispag/validacao/confirmaCodigoBarras';
+        try {
+            await this.base.ensureSid();
+            const raw = await this.base.postGenericOnce<unknown>(
+                path,
+                {
+                    ...this.corpoCodigoBarras(params),
+                    splitCodBar: params.validacao.splitCodBar,
+                    barraDtaVencimento: params.validacao.barraDtaVencimento,
+                    barraVlrPgto: params.validacao.barraVlrPgto,
+                },
+                { filCod: params.filCod },
+            );
+            return CONFIRMA_CODBAR_SCHEMA.parse(raw) as ConfirmacaoCodigoBarras;
+        } catch (cause) {
+            throw this.toConexosError(path, this.causaSegura(cause));
+        }
+    };
+
+    /**
+     * `PUT fin015/finItemSispag` (ADR-0071, I17e): o item LIDO inteiro com EXATAMENTE cinco campos
+     * alterados (`itsNumCodbar`, `itsNumBanco`, `bncDesNome`, `itsMnyVlrPgto`, `itsDtaPgto`).
+     * Tentativa ÚNICA (`putGenericOnce`: sem retry cego, sem 401-retry) — o sucesso é a OBSERVAÇÃO
+     * na releitura, decidida pelo chamador, não o status do `PUT`. `cnx-filcod` = filial do LOTE.
+     */
+    public editarItemDoRascunho = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        item: Record<string, unknown>;
+        alteracoes: AlteracaoItemCodigoBarras;
+    }): Promise<void> => {
+        const { filCod, item, alteracoes } = params;
+        const path = 'fin015/finItemSispag';
+        try {
+            await this.base.ensureSid();
+            await this.base.putGenericOnce<unknown>(
+                path,
+                {
+                    ...item,
+                    itsNumCodbar: alteracoes.itsNumCodbar,
+                    itsNumBanco: alteracoes.itsNumBanco,
+                    bncDesNome: alteracoes.bncDesNome,
+                    itsMnyVlrPgto: alteracoes.itsMnyVlrPgto,
+                    itsDtaPgto: alteracoes.itsDtaPgto,
+                },
+                { filCod },
+            );
+        } catch (cause) {
+            throw this.toConexosError(path, this.causaSegura(cause));
+        }
+    };
+
+    /** Corpo comum das duas validações (contrato do `FinItemCodigoBarrasDTO`). */
+    private corpoCodigoBarras = (p: {
+        bncCod: number;
+        codigo: string;
+        valorLiquido: number;
+        vencimento: number;
+        modalidade: number;
+    }): Record<string, unknown> => ({
+        bncCodLote: p.bncCod,
+        itsNumCodbar: p.codigo,
+        itsVldModalidade: p.modalidade,
+        titDtaVencimento: p.vencimento,
+        titMnyLiquido: p.valorLiquido,
+        titMnyJuros: 0,
+        titMnyDesconto: 0,
+        itsMnyVlrPgto: p.valorLiquido,
+    });
+
+    /**
+     * Cópia da falha SEM nenhum código de barras: a mensagem e o corpo da resposta saem com
+     * `\d{20,}` → `…`, preservando `response.status`/`response.data` para a classificação
+     * (recusa de negócio × transitória). O original (que carrega o corpo enviado) é descartado.
+     */
+    private causaSegura = (cause: unknown): unknown => {
+        const original = cause as {
+            message?: unknown;
+            response?: { status?: unknown; data?: unknown };
+        } | null;
+        const copia = new Error(sanearTexto(String(original?.message ?? 'falha')));
+        const resposta = original?.response;
+        if (resposta === undefined || resposta === null) return copia;
+        let data: unknown;
+        try {
+            data = JSON.parse(sanearTexto(JSON.stringify(resposta.data ?? null)));
+        } catch {
+            data = undefined;
+        }
+        return Object.assign(copia, { response: { status: resposta.status, data } });
     };
 
     /**
