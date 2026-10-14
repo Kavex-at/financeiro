@@ -11,6 +11,8 @@ related_files:
   - src/backend/domain/service/sispag/RemessaService.ts
   - src/backend/domain/libs/cnab/RemessaCnabValidator.ts
   - src/backend/domain/client/ConexosSispagWriteClient.ts
+  - src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.ts
+  - src/backend/domain/libs/boleto/CodigoBarrasBoleto.ts
 last_review: 2026-10-14
 ---
 
@@ -65,7 +67,24 @@ conta para boleto rejeitava justamente o fornecedor que só aceita boleto (o cas
 
 ## Um código de barras, um item (I16)
 
-> **Status: I16 `planned`** — a ontologia está à frente do código (ADR-0069). Vira `implemented` no ship.
+> **Status: I16 `implemented`** (ADR-0069, app v0.66.1). A guarda é uma função pura sobre os códigos
+> do lote (`AnaliseCodigoBarrasRepetido`), chamada em `RemessaService` entre o import e o
+> `finalizarLote` — inclusive em retomada — e, como rede, no gate 5.1 do `.REM`.
+>
+> Detalhes da entrega:
+> - `ConexosSispagWriteClient.listarLinhasDigitaveisDoLote` passou a devolver `invalidos`
+>   (`docCod/titCod` dos códigos presentes porém ilegíveis — nunca o código) para que a mensagem de I16c
+>   nomeie o título.
+> - A máscara de I16e (5 primeiros + 4 últimos) é uma definição própria da guarda
+>   (`AnaliseCodigoBarrasRepetido.mascarar`); não altera `CodigoBarrasBoleto.mascarar` (I15k, banco…4)
+>   nem a máscara do `RemessaCnabValidator` para barras inválidas.
+> - **Limite conhecido (R3):** `listarLinhasDigitaveisDoLote` é leitura de página única (500). Se
+>   `itens + invalidos` for menor que o número de itens BOLETO do lote (leitura truncada ou item ainda sem
+>   código), a guarda **avisa** (`LogService.warn`) e segue; a rede do `.REM` cobre. Virar abort é decisão
+>   pendente do mantenedor.
+> - **Limite conhecido (rascunho):** a leitura é do que está no rascunho nativo do ERP. Retirar o título
+>   do lote local não remove o item já importado no rascunho; remover o repetido do rascunho nativo é
+>   tratado em feature separada.
 
 > `titVldReflexoDdaAssoc` significa "existe boleto DDA com mesmo valor e vencimento"; **não reserva 1:1**.
 > O ERP anexa o **mesmo** código de barras a cada item importado do grupo (caso PEDRONI, fil 2: 10 títulos
