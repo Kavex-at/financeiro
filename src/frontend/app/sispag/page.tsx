@@ -62,6 +62,8 @@ import {
   BoletoSemCodigoBarrasError,
   RemessaEmDuvidaError,
   type TituloSemBoleto,
+  type ListagemSugestoesBoleto,
+  fetchTodasSugestoesBoleto,
   removerItem,
   runIngestaoPagamentos,
   type LotePagamento,
@@ -98,6 +100,11 @@ import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLo
 import { useCriarLoteManual } from './components/useCriarLoteManual'
 import { alternarTodos, estadoSelecionarTodos } from './components/selecionarTodos'
 import { FormaPagamentoBadge } from './components/FormaPagamentoBadge'
+import {
+  agruparPorTitulo,
+  chaveTitulo,
+  resumoDoTitulo,
+} from './components/sugestaoBoleto'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
@@ -195,6 +202,7 @@ function SispagPanel() {
   // (`sispag:ver`); só o "Atualizar DDA" dentro dela exige executar.
   const { carregando: carregandoPermissoes, tem } = usePermissoes()
   const podeExecutar = !carregandoPermissoes && tem(PERMISSAO.SISPAG_EXECUTAR)
+  const podeVer = !carregandoPermissoes && tem(PERMISSAO.SISPAG_VER)
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
   const [lotesErro, setLotesErro] = React.useState<string | null>(null)
@@ -222,6 +230,20 @@ function SispagPanel() {
   // Abas controladas: o link do lote na linha do título (ADR-0050) troca de aba.
   const [aba, setAba] = React.useState('titulos')
   const [tituloDda, setTituloDda] = React.useState<TituloSemBoleto | null>(null)
+  // Sugestões de boleto DDA (ADR-0068). Evidência opcional: se a leitura falhar a aba de
+  // títulos funciona igual, só sem o selo "sugestão disponível".
+  const [sugestoes, setSugestoes] = React.useState<ListagemSugestoesBoleto | null>(null)
+  const carregarSugestoes = React.useCallback(async () => {
+    try {
+      setSugestoes(await fetchTodasSugestoesBoleto())
+    } catch {
+      setSugestoes(null)
+    }
+  }, [])
+  const sugestoesPorTitulo = React.useMemo(
+    () => agruparPorTitulo(sugestoes?.sugestoes ?? []),
+    [sugestoes],
+  )
   const [loteEmFoco, setLoteEmFoco] = React.useState<string | null>(null)
   const [retirando, setRetirando] = React.useState<TituloAPagar | null>(null)
   const [salvandoRetirada, setSalvandoRetirada] = React.useState(false)
@@ -328,6 +350,10 @@ function SispagPanel() {
   React.useEffect(() => {
     void carregar()
   }, [carregar])
+
+  React.useEffect(() => {
+    if (podeVer) void carregarSugestoes()
+  }, [podeVer, carregarSugestoes])
 
   // ADR-0060: com o painel já na tela (dados gravados), pede o refresh se a carteira estiver
   // defasada e recarrega o painel — sem spinner — quando a ingestão termina.
@@ -1145,7 +1171,28 @@ function SispagPanel() {
                           <TableCell>
                             {/* Forma do Conexos + boleto DDA: sem DDA, escolher BOLETO no lote é
                                 barrado na geração (não há código de barras). */}
-                            <FormaPagamentoBadge titulo={t} />
+                            <FormaPagamentoBadge
+                              titulo={t}
+                              sugestao={resumoDoTitulo(
+                                sugestoesPorTitulo.get(chaveTitulo(t)),
+                              )}
+                              onAbrirSugestao={() =>
+                                setTituloDda({
+                                  filCod: t.filCod,
+                                  docCod: t.docCod,
+                                  titCod: t.titCod,
+                                  ...(t.credor ? { credor: t.credor } : {}),
+                                  valor: t.valor,
+                                  ...(t.vencimento != null
+                                    ? {
+                                        vencimento: new Date(t.vencimento)
+                                          .toISOString()
+                                          .slice(0, 10),
+                                      }
+                                    : {}),
+                                })
+                              }
+                            />
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col items-start gap-1">
@@ -1540,7 +1587,15 @@ function SispagPanel() {
             </TabsContent>
 
           </Tabs>
-          <BoletosDoTituloDialog titulo={tituloDda} onClose={() => setTituloDda(null)} />
+          <BoletosDoTituloDialog
+            titulo={tituloDda}
+            onClose={() => setTituloDda(null)}
+            sugestoes={tituloDda ? (sugestoesPorTitulo.get(chaveTitulo(tituloDda)) ?? []) : []}
+            podeExecutar={podeExecutar}
+            podeCopiar={podeVer}
+            ddaDefasadoHoras={sugestoes?.ddaDefasadoHoras}
+            onDecidido={carregarSugestoes}
+          />
         </>
       ) : null}
     </div>

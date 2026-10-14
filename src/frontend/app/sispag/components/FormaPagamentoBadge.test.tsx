@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { FormaPagamentoBadge } from './FormaPagamentoBadge'
 
 describe('FormaPagamentoBadge', () => {
@@ -32,5 +32,37 @@ describe('FormaPagamentoBadge', () => {
     expect(screen.getByText('sem forma no Conexos')).toBeInTheDocument()
     expect(screen.getByText('com boleto DDA')).toBeInTheDocument()
     expect(screen.queryByText('boleto com DDA')).not.toBeInTheDocument()
+  })
+
+  it('boleto sem DDA com sugestão: link que abre a sugestão', () => {
+    const abrir = jest.fn()
+    render(
+      <FormaPagamentoBadge
+        titulo={{ formaPagamentoConexos: 6, temBoleto: false }}
+        sugestao="DISPONIVEL"
+        onAbrirSugestao={abrir}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'sugestão disponível' }))
+    expect(abrir).toHaveBeenCalled()
+  })
+
+  it('confirmada: rótulo "boleto confirmado"; com DDA, nada é mostrado', () => {
+    const { rerender } = render(
+      <FormaPagamentoBadge
+        titulo={{ formaPagamentoConexos: 6, temBoleto: false }}
+        sugestao="CONFIRMADA"
+        onAbrirSugestao={() => undefined}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'boleto confirmado' })).toBeInTheDocument()
+    rerender(
+      <FormaPagamentoBadge
+        titulo={{ formaPagamentoConexos: 6, temBoleto: true }}
+        sugestao="CONFIRMADA"
+        onAbrirSugestao={() => undefined}
+      />,
+    )
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 })

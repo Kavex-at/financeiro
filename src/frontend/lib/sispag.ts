@@ -1864,7 +1864,7 @@ export function previaDestinoFavorecido(
 // ===================================================== ADR-0068 — sugestão de boleto (passo 1)
 // Espelho do contrato de `routes/sispag.ts` (`/sugestoes-boleto`, `/confirmacoes-emissor`).
 // EVIDÊNCIA, não autoridade. A listagem NUNCA traz barras nem linha digitável: a linha só sai de
-// `POST /sugestoes-boleto/copiar-linha` (`sispag:executar`, auditado).
+// `POST /sugestoes-boleto/copiar-linha` (`sispag:ver`, auditado a cada cópia, fail-closed).
 
 export const TIERS_SUGESTAO_BOLETO = ['CONHECIDO', 'FORTE', 'ATENCAO'] as const
 export type TierSugestaoBoleto = (typeof TIERS_SUGESTAO_BOLETO)[number]
@@ -2031,3 +2031,106 @@ export const CODIGOS_ERRO_SUGESTAO_BOLETO = {
   PAR_NAO_ENCONTRADO: 'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA', // 404
   SEM_TRILHA: 'COPIA_LINHA_SEM_TRILHA', // 503: a linha NÃO foi devolvida
 } as const
+
+const sugestoesBase = '/sispag/sugestoes-boleto'
+const confirmacoesBase = '/sispag/confirmacoes-emissor'
+const post = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) })
+
+/** `GET /sispag/sugestoes-boleto` (`sispag:ver`). Sem barras nem linha digitável. */
+export async function fetchSugestoesBoleto(
+  filtro: FiltroSugestoesBoleto = {},
+): Promise<ListagemSugestoesBoleto> {
+  const qs = new URLSearchParams()
+  if (filtro.filCod !== undefined) qs.set('filCod', String(filtro.filCod))
+  if (filtro.pesCod) qs.set('pesCod', filtro.pesCod)
+  if (filtro.tier) qs.set('tier', filtro.tier)
+  if (filtro.pagina !== undefined) qs.set('pagina', String(filtro.pagina))
+  if (filtro.tamanho !== undefined) qs.set('tamanho', String(filtro.tamanho))
+  const q = qs.toString()
+  return autorizacaoRequest(
+    `${sugestoesBase}${q ? `?${q}` : ''}`,
+    listagemSugestoesBoletoSchema,
+    { cache: 'no-store' },
+  )
+}
+
+/** Páginas lidas por `fetchTodasSugestoesBoleto`: teto contra uma carteira patológica. */
+const MAX_PAGINAS_SUGESTOES = 20
+
+/**
+ * Todas as sugestões (páginas de 100) numa lista só, para a aba de títulos casar por título. O
+ * cabeçalho de frescor (`ddaDefasadoHoras`) vem da primeira página.
+ */
+export async function fetchTodasSugestoesBoleto(): Promise<ListagemSugestoesBoleto> {
+  const primeira = await fetchSugestoesBoleto({ pagina: 1, tamanho: 100 })
+  const sugestoes = [...primeira.sugestoes]
+  let pagina = 1
+  while (sugestoes.length < primeira.total && pagina < MAX_PAGINAS_SUGESTOES) {
+    pagina += 1
+    const prox = await fetchSugestoesBoleto({ pagina, tamanho: 100 })
+    if (prox.sugestoes.length === 0) break
+    sugestoes.push(...prox.sugestoes)
+  }
+  return { ...primeira, sugestoes }
+}
+
+/** `POST .../confirmar` (`sispag:executar`). Nada é escrito no ERP. */
+export async function confirmarSugestaoBoleto(
+  chave: ChaveSugestaoBoleto,
+): Promise<ResultadoDecisaoBoleto> {
+  return autorizacaoRequest(`${sugestoesBase}/confirmar`, resultadoDecisaoBoletoSchema, post(chave))
+}
+
+/** `POST .../rejeitar` (`sispag:executar`); `motivo` obrigatório. */
+export async function rejeitarSugestaoBoleto(
+  chave: ChaveSugestaoBoleto,
+  motivo: string,
+): Promise<ResultadoDecisaoBoleto> {
+  return autorizacaoRequest(
+    `${sugestoesBase}/rejeitar`,
+    resultadoDecisaoBoletoSchema,
+    post({ ...chave, motivo }),
+  )
+}
+
+/**
+ * `POST .../copiar-linha` (`sispag:ver`). A cópia é auditada ANTES de a linha sair; sem trilha
+ * (503 `COPIA_LINHA_SEM_TRILHA`) a linha não vem. Devolve só a string — quem chama a escreve na
+ * área de transferência e a descarta; nunca em estado, log nem tela.
+ */
+export async function copiarLinhaSugestao(chave: ChaveSugestaoBoleto): Promise<string> {
+  const r = await autorizacaoRequest(`${sugestoesBase}/copiar-linha`, linhaCopiadaSchema, {
+    ...post(chave),
+    cache: 'no-store',
+  })
+  return r.linhaDigitavel
+}
+
+/** `GET /sispag/confirmacoes-emissor` (`sispag:ver`). Só o emissor mascarado. */
+export async function fetchConfirmacoesEmissor(
+  filtro: { estado?: 'VIGENTE' | 'REVOGADA'; pesCod?: string } = {},
+): Promise<ConfirmacaoEmissorBoleto[]> {
+  const qs = new URLSearchParams()
+  if (filtro.estado) qs.set('estado', filtro.estado)
+  if (filtro.pesCod) qs.set('pesCod', filtro.pesCod)
+  const q = qs.toString()
+  const j = await autorizacaoRequest(
+    `${confirmacoesBase}${q ? `?${q}` : ''}`,
+    z.object({ confirmacoes: z.array(confirmacaoEmissorSchema) }),
+    { cache: 'no-store' },
+  )
+  return j.confirmacoes
+}
+
+/** `POST /sispag/confirmacoes-emissor/:id/revogar` (`sispag:executar`); `motivo` obrigatório. */
+export async function revogarConfirmacaoEmissor(
+  id: string,
+  motivo: string,
+): Promise<ConfirmacaoEmissorBoleto> {
+  const j = await autorizacaoRequest(
+    `${confirmacoesBase}/${encodeURIComponent(id)}/revogar`,
+    z.object({ confirmacao: confirmacaoEmissorSchema }),
+    post({ motivo }),
+  )
+  return j.confirmacao
+}

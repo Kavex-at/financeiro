@@ -1,6 +1,7 @@
 import { Barcode } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { formaDePagamento, type TituloAPagar } from '@/lib/sispag'
+import type { ResumoSugestaoTitulo } from './sugestaoBoleto'
 
 const TITULO: Record<'dda' | 'alerta', string> = {
   dda: 'BOLETO no Conexos com boleto DDA associado — o código de barras sai na remessa',
@@ -11,10 +12,21 @@ const TITULO: Record<'dda' | 'alerta', string> = {
  * Coluna "Forma de pagamento" de um título: a forma do Conexos (`titVldPagopor`) e, quando é
  * BOLETO, se o boleto DDA está associado. "boleto sem DDA" é o caso que sai sem código de barras.
  */
+const ROTULO_SUGESTAO: Record<ResumoSugestaoTitulo, string> = {
+  DISPONIVEL: 'sugestão disponível',
+  INFORMATIVA: 'ver boleto sugerido',
+  CONFIRMADA: 'boleto confirmado',
+}
+
 export function FormaPagamentoBadge({
   titulo,
+  sugestao,
+  onAbrirSugestao,
 }: {
   titulo: Pick<TituloAPagar, 'formaPagamentoConexos' | 'temBoleto'>
+  /** Resumo da sugestão de boleto (ADR-0068) — só aparece em "boleto sem DDA". */
+  sugestao?: ResumoSugestaoTitulo | undefined
+  onAbrirSugestao?: () => void
 }) {
   const forma = formaDePagamento(titulo)
   if (forma.tom === 'dda') {
@@ -27,9 +39,21 @@ export function FormaPagamentoBadge({
   }
   if (forma.tom === 'alerta') {
     return (
-      <Badge variant="outline" className="border-warning/40 text-warning" title={TITULO.alerta}>
-        {forma.rotulo}
-      </Badge>
+      <div className="flex flex-col items-start gap-1">
+        <Badge variant="outline" className="border-warning/40 text-warning" title={TITULO.alerta}>
+          {forma.rotulo}
+        </Badge>
+        {sugestao && onAbrirSugestao ? (
+          <button
+            type="button"
+            onClick={onAbrirSugestao}
+            className="text-xs text-primary underline underline-offset-2 focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded-sm"
+            title="Abre a sugestão de boleto DDA para este título. Não grava nada no Conexos."
+          >
+            {ROTULO_SUGESTAO[sugestao]}
+          </button>
+        ) : null}
+      </div>
     )
   }
   return (

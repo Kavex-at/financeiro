@@ -24,11 +24,13 @@ import { formatBRL } from '@/lib/utils'
 import {
   type BoletoDdaDoTitulo,
   type BoletosDdaDoTitulo,
+  type SugestaoBoleto,
   type TituloSemBoleto,
   fetchBoletosDdaDoTitulo,
 } from '@/lib/sispag'
 import { SITUACAO_BADGE } from './BoletosDdaTab'
 import { DiferencaBadge, fmtCivil } from './CandidatosBoletoDialog'
+import { SugestaoBoletoPainel } from './SugestaoBoletoPainel'
 
 function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]; mostrarLigacao: boolean }) {
   return (
@@ -88,9 +90,20 @@ function TabelaBoletos({ linhas, mostrarLigacao }: { linhas: BoletoDdaDoTitulo[]
 export function BoletosDoTituloDialog({
   titulo,
   onClose,
+  sugestoes = [],
+  podeExecutar = false,
+  podeCopiar = false,
+  ddaDefasadoHoras,
+  onDecidido,
 }: {
   titulo: TituloSemBoleto | null
   onClose: () => void
+  /** Sugestões (ADR-0068) deste título; vazio = a seção nem aparece. */
+  sugestoes?: SugestaoBoleto[]
+  podeExecutar?: boolean
+  podeCopiar?: boolean
+  ddaDefasadoHoras?: number | undefined
+  onDecidido?: () => void | Promise<void>
 }) {
   // O resultado guarda de QUE título é: ao trocar de título, o resultado antigo deixa de valer
   // sem precisar zerar estado dentro do efeito.
@@ -144,6 +157,15 @@ export function BoletosDoTituloDialog({
               </DialogDescription>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-4 overflow-y-auto">
+              {sugestoes.length > 0 ? (
+                <SugestaoBoletoPainel
+                  sugestoes={sugestoes}
+                  podeExecutar={podeExecutar}
+                  podeCopiar={podeCopiar}
+                  ddaDefasadoHoras={ddaDefasadoHoras}
+                  onDecidido={onDecidido ?? (() => undefined)}
+                />
+              ) : null}
               {erro ? (
                 <EmptyState title="Não foi possível consultar os boletos DDA" description={erro} />
               ) : dados === null ? (
