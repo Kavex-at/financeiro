@@ -2,7 +2,7 @@
 name: lote-pagamento
 type: state-machine
 entity: LotePagamento
-ontology_version: "0.38.0"
+ontology_version: "0.42.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -33,7 +33,7 @@ related_files:
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
   - src/frontend/app/sispag/components/LoteCard.tsx
-last_review: 2026-10-08
+last_review: 2026-10-14
 states: [RASCUNHO, FINALIZADO, REMESSA_GERADA, RETORNADO, BAIXADO, CANCELADO]
 out_of_scope_states: [ENVIADO, PROCESSANDO]
 ---
@@ -278,3 +278,10 @@ usuário tem permissão. Medido em 2026-08-20: `borCod` nulo no `finItemSispag` 
 título serve. Em 2026-09-24 a baixa do 38682/1 (borderô 22320) não passou por retorno nenhum: o
 `fin052` não teria o vínculo para copiar. Por isso `borCod`/`bxaCodSeq` no item são
 **enriquecimento** com fonte registrada (`baixaFonte`), nunca a prova de pagamento.
+
+## Emenda ADR-0071 (`planned`) — etapa `vincular_codbar` da remessa
+
+`gerarRemessa` (L8) ganha a etapa de **memória** `vincular_codbar` entre `importar` e a guarda I16
+(`importar → vincular_codbar → guarda I16 / limpar_retirados → finalizar → gerar_remessa`). Sem estado novo
+de `LotePagamento` e sem transição nova: o vínculo só atua no rascunho nativo aberto, enquanto o lote local
+ainda está a caminho de `REMESSA_GERADA`. Ver `business-rules/vinculo-codbar-item-sispag.md` (I17).

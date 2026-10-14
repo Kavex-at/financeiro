@@ -2,7 +2,7 @@
 name: retomada-remessa-sispag
 type: business-rule
 entity: LotePagamento
-ontology_version: "0.31.0"
+ontology_version: "0.42.0"
 implementation_status: implemented
 related_files:
   - src/backend/domain/service/sispag/RemessaService.ts
@@ -15,7 +15,7 @@ related_files:
   - src/backend/domain/errors/RemessaEmDuvidaError.ts
   - src/backend/domain/errors/ConciliacaoEmDuvidaError.ts
   - src/backend/domain/service/sispag/SincronizacaoLoteService.ts
-last_review: 2026-09-29
+last_review: 2026-10-14
 has_canonical_test: true
 ---
 
@@ -66,6 +66,12 @@ No `fin052`, `processadoEm` (`garTimProcessamento`) responde "o `processar` já 
 | Finalizado, sem o arquivo pedido | pula import e finalizar, retoma na geração |
 | Finalizado, com o arquivo pedido | fecha o ledger e devolve o `.REM` existente |
 | Cancelado (status 2/3) | `LoteAnteriorCanceladoError` → exige confirmação humana |
+
+> **Emenda ADR-0071 (`planned`) — etapa `vincular_codbar`.** Etapa **só de memória** (como
+> `limpar_retirados`: o CHECK da 0049 não a conhece e nada vai ao ledger), entre `importar` e a guarda I16.
+> A sincronização com o ERP a devolve quando: rascunho completo ∧ modo `on` ∧ existe item BOLETO sem código
+> com decisão elegível (I17a). Lote nativo **finalizado** nunca a executa (I17i). Falha transitória aborta
+> e a retomada refaz o item (I17f/g). Ver `vinculo-codbar-item-sispag.md`.
 
 ### Write-ahead obrigatório (a ordem é a regra)
 

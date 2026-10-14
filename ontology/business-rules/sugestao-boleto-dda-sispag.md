@@ -3,7 +3,7 @@ name: sugestao-boleto-dda-sispag
 type: business-rule
 entity: ConfirmacaoEmissorBoleto
 invariant: I15
-ontology_version: "0.40.0"
+ontology_version: "0.42.0"
 implementation_status: implemented
 status: active
 owners: [yuri]
@@ -22,9 +22,9 @@ has_canonical_test: true
 
 > **Origem:** ADR-0068 (2026-10-14). Passo 1 de 3: **mostrar** ao analista o boleto livre do `fin124`
 > que provavelmente é o do título "boleto sem DDA", e **registrar** a decisão dele por
-> (credor, emissor). Passo 2 (bind do código de barras ao item do lote, exige prova em HML) e passo 3
-> (automático só para pares confirmados) terão **ADR e entrevista próprias** — esta regra não os
-> autoriza. **Status: implemented (v0.66.0)** — ontologia à frente do código.
+> (credor, emissor). O passo 2 (vínculo do código de barras ao item do lote, **só valor igual**) é a
+> regra `vinculo-codbar-item-sispag` (I17, ADR-0071, `planned`); o passo 3 (automático só para pares
+> confirmados) terá **ADR e entrevista próprias** — esta regra não o autoriza. **Status: implemented (v0.66.0)** — ontologia à frente do código.
 
 ## Decisões do maintainer (2026-10-14)
 
@@ -46,8 +46,8 @@ bloqueante). Q-G (implementação) é do TaskScoper.
 
 | # | Regra |
 |---|---|
-| **I15a** | **Confirmação é evidência, não autoridade.** Confirmar um par ou uma decisão não altera `temBoleto`, o lote, o título nem o Conexos. A **validação ao vivo na remessa** (`titVldReflexoDdaAssoc`, ADR-0040, `BoletoSemCodigoBarrasError`) segue sendo a **única** autoridade que move dinheiro. O pool local e qualquer confirmação nunca a substituem. |
-| **I15b** | **Zero escrita no Conexos no passo 1:** nenhum `importar`, nenhum `validacao/codigoBarras`, nenhum `titVldReflexoDdaAssoc = 1`, nenhum `cancelar`. As únicas escritas são locais (confirmação, decisão, trilha). |
+| **I15a** | **Confirmação é evidência, não autoridade (emendada pelo ADR-0071).** Confirmar um par ou uma decisão não altera `temBoleto`, o lote, o título nem o Conexos. No passo 1 a **validação ao vivo na remessa** (`titVldReflexoDdaAssoc`, ADR-0040, `BoletoSemCodigoBarrasError`) é a **única** autoridade que move dinheiro. **Com o passo 2 em modo `on` (I17k)** a decisão `CONFIRMADA` passa a ser **condição necessária** do vínculo do código ao item, nunca **suficiente**: o vínculo só ocorre depois das verificações nossas (I17b–d) e da releitura (I17e); a validação ao vivo segue sendo a autoridade **do caminho DDA**. O pool local e qualquer confirmação nunca substituem as verificações. |
+| **I15b** | **Zero escrita no Conexos no passo 1:** nenhum `importar`, nenhum `validacao/codigoBarras`, nenhum `titVldReflexoDdaAssoc = 1`, nenhum `cancelar`. As únicas escritas são locais (confirmação, decisão, trilha). **Vale para o passo 1:** o passo 2 (ADR-0071, I17) é a única exceção e vive em outra regra; a UI do passo 1 nunca dispara I17. |
 | **I15c** | **Sugestão calculada em camadas, não persistida** (mesma postura de I-DDA1). Para um título ativo, `forma = BOLETO`, `tem_boleto = false`, o candidato é um boleto **livre** (sem `docCod/titCod`). Tiers, do mais ao menos forte: **`CONHECIDO`** (par (`pesCod`, `emissorChave`) já `VIGENTE` **e** dentro dos limites globais); **`FORTE`** (dentro dos limites globais, candidato único nos dois sentidos); **`ATENCAO`** (fora dos limites — ex.: +1,6 % ou +R$ 10 —, mostrada com a **diferença com sinal destacada**, **nunca** como segura). **Limites globais (seguros), decididos pelo maintainer:** \|Δvalor\| ≤ R$ 0,05 **no mesmo dia**; **ou** valor igual e boleto vencendo de 1 a 5 dias **depois** do título e **não antes da data de débito** (I15h). Qualquer coisa maior é `ATENCAO`. São constantes de código globais (não por tenant), ajustáveis por ADR curta, sem mudança estrutural. |
 | **I15d** | **A confirmação nunca alarga limite.** O delta (R$, %, dias, com sinal) é exibido e gravado na evidência; cada nova sugestão é reavaliada contra os limites **globais**. Um par confirmado com +R$ 0,01 não autoriza +R$ 10 nem +5 dias. Aprender tolerância por par é decisão do passo 3. |
 | **I15e** | **Exclusões e disputa.** Não é candidato: (1) boleto vinculado pelo ERP a qualquer título (`docCod/titCod` preenchidos, I-DDA2); (2) boleto "usado" por título que o ERP já sinalizou (`tem_boleto = true` com mesmo valor e dia — o ERP o reservou); (3) título pago, inativo ou com `forma ≠ BOLETO`. **Disputa (Q-D, default, revisável):** quando dois títulos contestam o mesmo boleto, o boleto fica **reservado ao título de menor vencimento**; empate no vencimento desfaz-se pelo **menor `docCod`** (depois `filCod`, `titCod`, para ser determinístico). O outro título é mostrado **sem** o boleto. Um boleto, um título. **Ambiguidade por título (default implementado, revisável):** quando um título tem **dois ou mais** candidatos seguros (CONHECIDO/FORTE) de mesma força, o título fica **sem sugestão** — a analista os vê na aba "Boletos DDA"; nenhum `ATENCAO` é inventado para desempatar. |
@@ -83,3 +83,4 @@ tier, concordância posterior com o ERP) ficam no log, fora do modelo (Q-H).
 `entities/boleto-dda.md` (I-DDA1–4) · `business-rules/boleto-exige-codigo-de-barras.md` ·
 `business-rules/favorecido-autorizado-sispag.md` (I14, padrão da trilha e da máscara)
 `decisions/0069-*.md` (guarda de repetição de código de barras, pré-requisito do passo 2)
+`decisions/0071-*.md` · `business-rules/vinculo-codbar-item-sispag.md` (passo 2, I17)

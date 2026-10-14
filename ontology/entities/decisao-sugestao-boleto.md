@@ -1,7 +1,7 @@
 ---
 name: DecisaoSugestaoBoleto
 type: entity
-ontology_version: "0.40.0"
+ontology_version: "0.42.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -88,3 +88,9 @@ pool ou o ERP sinalizou o título — I15l) · `SUPERADA_PELO_ERP` (o Conexos as
 boleto — o que vale é o ERP). **Revogar o par ANULA, na mesma transação, toda decisão `CONFIRMADA`
 dele** (ADR-0068, Q-E, implementada em 2026-10-14): a decisão fica `ANULADA`, nunca `CONFIRMADA`
 sob par `REVOGADA`.
+
+**Aplicação no ERP (ADR-0071, `planned`) — derivado, não persistido:** `aplicacao` =
+`NAO_APLICADA | SIMULADA(lote) | APLICADA(lote, flpCod) | FALHOU(motivo)`, lida da trilha
+(`VINCULO_SIMULADO`/`VINCULO_APLICADO`/`VINCULO_FALHOU`) e de `ItemLote.vinculoCodigoBarras`. **Não existe**
+estado `APLICADO_NO_ERP` (a aplicação é por remessa × tentativa; a decisão sobrevive a lote cancelado).
+`decisao` segue `CONFIRMADA | REJEITADA | ANULADA`.
