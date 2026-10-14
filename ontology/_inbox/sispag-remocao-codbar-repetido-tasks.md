@@ -5,6 +5,7 @@
 **entity_changed:** true (BloqueioDuplicidade) — nenhuma entidade nova (REJECT-DUPLICATE)
 **Estimated scope:** L (backend ~10 arquivos + 1 migration + frontend 3 arquivos + 1 medição HML)
 **Mode:** `/feature-tweak` sobre a PR-1 (guarda que aborta). Estende; não reescreve.
+**Execução (AutoLoopRunner, 2026-10-14):** Tasks 1–14 implementadas e verdes (typecheck, lint, backend e frontend). Task 12 medida em HML — ver `sispag-remocao-codbar-repetido-hml-achados.md`; o status `SEM_GROUND_TRUTH` abaixo está **fechado**. Desvios: `RetiradaCodigoBarrasService` extraído (Task 9 previa); modo `finalizado` no erro de limpeza incompleta; Q10 recusa via ledger (`LIMPEZA_CODIGO_REPETIDO_INCOMPLETA`).
 
 ## Decisões fechadas (não reabrir)
 
@@ -29,7 +30,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ## Task list
 
-### Task 1: Testes que falham (RED) para a análise de quem fica
+### Task 1: Testes que falham (RED) para a análise de quem fica ✅
 **Files to change:**
 - `src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.test.ts`
 - `src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.ts` (só o contrato de tipos, sem lógica, para o teste compilar)
@@ -46,7 +47,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 2: Decisão pura de retirada em `AnaliseCodigoBarrasRepetido`
+### Task 2: Decisão pura de retirada em `AnaliseCodigoBarrasRepetido` ✅
 **Files to change:**
 - `src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.ts` (novo método `decidirRetirada(itens: ItemCodigoBarrasComOrdem[])`, mantendo `analisar` intacto para o validador do `.REM`)
 - `src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.test.ts`
@@ -61,7 +62,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 3: Cliente: leitura com identidade completa e `DELETE` de item do rascunho
+### Task 3: Cliente: leitura com identidade completa e `DELETE` de item do rascunho ✅
 **Files to change:**
 - `src/backend/domain/client/ConexosSispagWriteClient.ts` (`listarLinhasDigitaveisDoLote` devolve `filCod` e `itsCodSeq` por item/inválido e pagina de verdade; novo `removerItemDoRascunho`)
 - `src/backend/domain/client/ConexosSispagWriteClient.test.ts`
@@ -78,7 +79,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 4: Migration 0085 (origem + campos de retenção) e paridade de build
+### Task 4: Migration 0085 (origem + campos de retenção) e paridade de build ✅
 **Files to change:**
 - `src/backend/migrations/0085_sispag_bloqueio_origem_codigo_barras.sql`
 - `src/backend/migrations/0085_sispag_bloqueio_origem_codigo_barras.test.ts`
@@ -98,7 +99,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 5: Testes RED de repositório (retirada em FINALIZADO, marca atômica, idempotência)
+### Task 5: Testes RED de repositório (retirada em FINALIZADO, marca atômica, idempotência) ✅
 **Files to change:**
 - `src/backend/domain/repository/sispag/LotePagamentoRepository.test.ts`
 - `src/backend/domain/repository/sispag/BloqueioDuplicidadeRepository.test.ts`
@@ -118,7 +119,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 6: Repositórios: `removerItemPorCodigoDeBarras`, `criar` com origem, consultas de resíduo
+### Task 6: Repositórios: `removerItemPorCodigoDeBarras`, `criar` com origem, consultas de resíduo ✅
 **Files to change:**
 - `src/backend/domain/interface/sispag/SispagInterface.ts` (`SYSTEM_REMOVAL_REASON` += `CODIGO_BARRAS_REPETIDO`, `CODIGO_BARRAS_ILEGIVEL`; tipos `DuplicateHoldOrigin`, campos novos em `BloqueioDuplicidade`)
 - `src/backend/domain/repository/sispag/LotePagamentoRepository.ts` (novo método dedicado, status `FINALIZADO` explícito, **não** relaxa `removerItemPeloSistema`)
@@ -137,7 +138,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 7: Erro nomeado `BoletoCodigoBarrasRetiradaIncompletaError` + avisos de resultado
+### Task 7: Erro nomeado `BoletoCodigoBarrasRetiradaIncompletaError` + avisos de resultado ✅
 **Files to change:**
 - `src/backend/domain/errors/BoletoCodigoBarrasRetiradaIncompletaError.ts`
 - `src/backend/domain/errors/BoletoCodigoBarrasRetiradaIncompletaError.test.ts`
@@ -154,7 +155,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 8: Testes RED do orquestrador (guarda que retira)
+### Task 8: Testes RED do orquestrador (guarda que retira) ✅
 **Files to change:**
 - `src/backend/domain/service/sispag/RemessaService.test.ts`
 
@@ -175,7 +176,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 9: `RemessaService`: guarda que retira, local-first, confirmação por releitura
+### Task 9: `RemessaService`: guarda que retira, local-first, confirmação por releitura ✅
 **Files to change:**
 - `src/backend/domain/service/sispag/RemessaService.ts` (`verificarCodigoBarrasRepetido` passa a decidir/retirar; novo método privado de limpeza; troca do índice `docCod:titCod` por `filCod:docCod:titCod`; `lidas < boletos` vira aborto; `GerarRemessaResult` preenchido)
 - eventualmente extrair `src/backend/domain/service/sispag/RetiradaCodigoBarrasService.ts` (`@injectable`) se `RemessaService` passar de ~2000 linhas; decisão do implementador, mantendo a guarda chamável do mesmo ponto (2.1)
@@ -193,7 +194,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 10: Testes RED + implementação do resume (resíduos, `estranhos`, `limpar_retirados`)
+### Task 10: Testes RED + implementação do resume (resíduos, `estranhos`, `limpar_retirados`) ✅
 **Files to change:**
 - `src/backend/domain/service/sispag/RemessaService.ts` (`ORDEM_ETAPAS` += `limpar_retirados` entre `importar` e `finalizar`; `EtapaReal`; classificação de `intrusos` em `residuos`/`estranhos`; `pular`; ramo de execução; `retomarDe` e `finalizarPendente` em `validarDataDebito`)
 - `src/backend/domain/service/sispag/RemessaService.test.ts`
@@ -213,7 +214,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 11: Retenção: filtros, desfazer e listagem dos retidos por código de barras
+### Task 11: Retenção: filtros, desfazer e listagem dos retidos por código de barras ✅
 **Files to change:**
 - `src/backend/domain/repository/sispag/TituloAPagarRepository.ts` (expõe `origem`/`codigoMascarado` na marcação da aba; formação já filtra ATIVO)
 - `src/backend/domain/service/sispag/LotePagamentoService.ts` (mensagem do `DuplicateHoldError` conforme origem)
@@ -234,7 +235,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 12: Medição HML do `DELETE` de item inexistente (ground-truth)
+### Task 12: Medição HML do `DELETE` de item inexistente (ground-truth) ✅
 **Files to change:**
 - `src/backend/jobs/probe-hml-delete-item-inexistente.ts` (novo; a ser criado **a partir da branch `chore/sispag-hml-bind-experimentos`**, reaproveitando o harness `probe-hml-item-variantes.ts` / `probe-hml-fin026-titulo.ts`)
 - `ontology/_inbox/sispag-remocao-codbar-repetido-hml-achados.md` (registro bruto da medição)
@@ -253,7 +254,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 13: LoteCard: aviso persistente, selo/desfazer dos retidos
+### Task 13: LoteCard: aviso persistente, selo/desfazer dos retidos ✅
 **Files to change:**
 - `src/frontend/lib/sispag.ts` (tipos `RetiradoPorCodigoBarras`, `avisos`, retidos por origem; funções de API; desfazer com motivo) e `src/frontend/lib/sispag.test.ts`
 - `src/frontend/app/sispag/components/LoteCard.tsx` (+ `LoteCard.test.tsx`, `LoteCard.verificacao.test.tsx` se a trilha for lida ali)
@@ -274,7 +275,7 @@ P0-1(a) exceção estreita em lote local `FINALIZADO` durante `gerarRemessa` (st
 
 ---
 
-### Task 14: Observabilidade e revisão de contrato (sem novo handler)
+### Task 14: Observabilidade e revisão de contrato (sem novo handler) ✅
 **Files to change:**
 - `src/backend/domain/service/sispag/RemessaService.ts` (apenas pontos de log; sem lógica nova)
 - `ontology/_inbox/sispag-remocao-codbar-repetido-tasks.md` (marcar ✅)
