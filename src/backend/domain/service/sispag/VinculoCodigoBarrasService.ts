@@ -294,6 +294,11 @@ export default class VinculoCodigoBarrasService {
             item,
             chave: chaveDe(item),
         }));
+        // Nenhum BOLETO do lote tem decisão humana confirmada: não há vínculo a fazer e o client novo
+        // nem é tocado (o item sem código cai na guarda I16c, como sempre).
+        if (!candidatos.some((c) => ctx.decisoes.has(c.chave))) {
+            return { vinculados: [], retirar: [], preferidos };
+        }
         const vinculados: VinculoAplicado[] = [];
         const retirar: FalhaDeterministicaVinculo[] = [];
         const resto = [...candidatos];
