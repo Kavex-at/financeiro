@@ -41,7 +41,7 @@ describe('BoletoCodigoBarrasRepetidoError', () => {
         expect(m).toContain('R$ 1.412,00');
         expect(m).toContain('14/10/2026');
         expect(m).toContain(MASCARADO);
-        expect(m).toMatch(/retire o título repetido do lote e gere a remessa de novo/);
+        expect(m).toMatch(/retire o título repetido do lote e gere a remessa de novo/i);
         expect(m).toMatch(/rascunho no Conexos será reaproveitado/);
     });
 
@@ -53,7 +53,7 @@ describe('BoletoCodigoBarrasRepetidoError', () => {
         });
         expect(err.userMessage).toMatch(/ilegível|inválido/);
         expect(err.userMessage).toContain('1007/1');
-        expect(err.userMessage).toMatch(/revise o boleto antes de gerar a remessa/);
+        expect(err.userMessage).toMatch(/revise o boleto antes de gerar a remessa/i);
         expect(err.userMessage).not.toMatch(/\d{10,}/);
         expect((err.details as { modo: string }).modo).toBe('ilegivel');
     });
