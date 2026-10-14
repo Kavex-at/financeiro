@@ -11,6 +11,7 @@ jest.mock('../domain/appContainer.js', () => ({
 }));
 
 import ConexosSispagClient from '../domain/client/ConexosSispagClient.js';
+import BoletoCodigoBarrasRepetidoError from '../domain/errors/BoletoCodigoBarrasRepetidoError.js';
 import DebitDateFrozenError from '../domain/errors/DebitDateFrozenError.js';
 import EnvironmentProvider from '../domain/libs/environment/EnvironmentProvider.js';
 import DebitDateOutsideWindowError from '../domain/errors/DebitDateOutsideWindowError.js';
@@ -645,6 +646,36 @@ describe('POST /sispag/lotes/:id/remessa', () => {
             expect(body).toMatchObject({ code: 'REMESSA_EM_DUVIDA', retryable: false });
             // Sem flpCod a mensagem TEM que dar coordenadas de busca.
             expect(body.error).toContain('filial 2');
+        });
+    });
+
+    it('BoletoCodigoBarrasRepetidoError vira 409 com code estável e sem o código completo', async () => {
+        const erro = new BoletoCodigoBarrasRepetidoError({
+            origem: 'lote',
+            grupos: [
+                {
+                    mascarado: '34191…0000',
+                    itens: [
+                        { docCod: '1001', titCod: '1', valor: 1412, vencimento: '2026-10-14' },
+                        { docCod: '1002', titCod: '1', valor: 1412, vencimento: '2026-10-14' },
+                    ],
+                },
+            ],
+            ilegiveis: [],
+        });
+        const gerarRemessa = jest.fn().mockRejectedValue(erro);
+        container.registerInstance(RemessaService, { gerarRemessa } as never);
+
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' });
+            expect(res.status).toBe(409);
+            const body = await readJson(res);
+            expect(body).toMatchObject({
+                code: 'BOLETO_CODIGO_BARRAS_REPETIDO',
+                retryable: false,
+                error: erro.userMessage,
+            });
+            expect(JSON.stringify(body)).not.toMatch(/\d{10,}/);
         });
     });
 
