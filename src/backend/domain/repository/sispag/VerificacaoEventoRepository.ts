@@ -70,6 +70,30 @@ export default class VerificacaoEventoRepository {
     };
 
     /**
+     * Chaves `filCod:docCod:titCod` dos itens que o SISTEMA retirou DESTE lote com um dos
+     * `motivos` (evento `ITEM_REMOVIDO_SISTEMA`). É a metade "evento" do par que reconhece um
+     * resíduo no rascunho nativo (I16h(c)); a outra metade é a marca ATIVA de origem
+     * `CODIGO_BARRAS_*`. Só leitura.
+     */
+    public listarChavesRetiradasPeloSistema = async (
+        loteId: string,
+        motivos: string[],
+    ): Promise<Set<string>> => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT DISTINCT fil_cod, doc_cod, tit_cod
+               FROM sispag_verificacao_evento
+              WHERE evento = $evento AND lote_id = $loteId AND ator = $ator
+                AND dados->>'motivo' = ANY($motivos)`,
+            { evento: 'ITEM_REMOVIDO_SISTEMA', loteId, ator: 'sistema', motivos },
+        )) as Array<{ fil_cod: number | null; doc_cod: string | null; tit_cod: string | null }>;
+        return new Set(
+            rows
+                .filter((r) => r.fil_cod != null && r.doc_cod != null && r.tit_cod != null)
+                .map((r) => `${r.fil_cod}:${r.doc_cod}:${r.tit_cod}`),
+        );
+    };
+
+    /**
      * Seção "TED/PIX retirados por falta de dado" do relatório (ADR-0065): os eventos
      * `ITEM_REMOVIDO_SISTEMA` com motivo `SEM_DADO_PAGAMENTO`, com o favorecido da carteira
      * persistida. Só leitura. Os mais recentes primeiro.

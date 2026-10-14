@@ -6,6 +6,9 @@ import PostgreeDatabaseClient, {
 import type { EstadoSincronizacaoItem } from '../../interface/sispag/SincronizacaoLote.js';
 import {
     type BaixaFonte,
+    type ChaveTitulo,
+    isCodigoMascarado,
+    SYSTEM_REMOVAL_REASON,
     type ItemLote,
     type ItemSituacao,
     type LoteComprometidoRef,
@@ -22,6 +25,7 @@ import {
     VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
 import type { PayeeItemWarning } from '../../interface/sispag/AuthorizedPayeeInterface.js';
+import BloqueioDuplicidadeRepository from './BloqueioDuplicidadeRepository.js';
 import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 
 /** Superfície de query comum ao pool e ao cliente transacional (mesmos 4 métodos). */
@@ -124,6 +128,8 @@ export default class LotePagamentoRepository {
         private databaseClient: PostgreeDatabaseClient,
         @inject(VerificacaoEventoRepository)
         private eventos: VerificacaoEventoRepository,
+        @inject(BloqueioDuplicidadeRepository)
+        private bloqueios: BloqueioDuplicidadeRepository,
     ) {}
 
     private db = (tx?: TransactionClient): QueryRunner => tx ?? this.databaseClient;
@@ -860,6 +866,108 @@ export default class LotePagamentoRepository {
             tx,
         );
         return true;
+    };
+
+    /**
+     * ADR-0069 emenda 1 (I16d.3, I16d.8) — retirada AUTOMÁTICA de item por código de barras
+     * repetido/ilegível, em UMA transação do chamador: remove o item do lote local, bumpa `versao`,
+     * cria a marca de retenção ATIVA (I16g) e grava o evento na trilha.
+     *
+     * É a EXCEÇÃO ESTREITA à máquina de estados: `gerarRemessa` roda com o lote local em
+     * `FINALIZADO`, e só aqui um item sai de lote `FINALIZADO` — SEM mudar o `status` (o total do
+     * lote é derivado dos itens, então "recomputar" é a própria remoção). Em qualquer outro status
+     * (RASCUNHO, REMESSA_GERADA, CANCELADO…) o `DELETE` casa 0 linhas e nada é gravado.
+     * `removerItemPeloSistema` (I13j) continua só-RASCUNHO e NÃO é afrouxado.
+     *
+     * Idempotente: item já fora do lote local ⇒ `removido: false`, sem marca nem evento. Marca
+     * ATIVA preexistente de outra origem não é sobrescrita (o índice ATIVO é um por título).
+     * Só a máscara 5+4 entra em coluna ou `dados` (I16e) — o guard recusa o resto antes de tocar o
+     * banco.
+     */
+    public retirarItemPorCodigoDeBarras = async (
+        params: {
+            loteId: string;
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            motivo:
+                | typeof SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_REPETIDO
+                | typeof SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_ILEGIVEL;
+            codigoMascarado?: string;
+            tituloMantido?: ChaveTitulo;
+        },
+        tx: TransactionClient,
+    ): Promise<{ removido: boolean; valor?: number; vencimento?: string; credor?: string }> => {
+        if (params.codigoMascarado !== undefined && !isCodigoMascarado(params.codigoMascarado)) {
+            throw new Error('codigoMascarado precisa estar mascarado (5 primeiros + 4 últimos)');
+        }
+        const chave = {
+            filCod: params.filCod,
+            docCod: params.docCod,
+            titCod: params.titCod,
+        };
+        const linha = await tx.selectFirst<{
+            valor: string | null;
+            vencimento: Date | null;
+            credor: string | null;
+        }>(
+            `DELETE FROM lote_pagamento_item i
+             USING lote_pagamento l
+             WHERE i.lote_id = l.id AND l.id = $loteId AND l.status = 'FINALIZADO'
+               AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod
+             RETURNING i.valor, i.vencimento, i.credor`,
+            { loteId: params.loteId, ...chave },
+        );
+        if (!linha) return { removido: false };
+
+        await this.tocarLote(params.loteId, tx);
+        await this.bloqueios.criar(
+            {
+                chave,
+                loteIdOrigem: params.loteId,
+                motivo:
+                    params.motivo === SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_REPETIDO
+                        ? 'Boleto repetido no lote — retirada automática (I16d)'
+                        : 'Código de barras ilegível — retirada automática (I16d.2)',
+                ator: SISPAG_SYSTEM_ACTOR,
+                origem: params.motivo,
+                ...(params.codigoMascarado !== undefined
+                    ? { codigoMascarado: params.codigoMascarado }
+                    : {}),
+                ...(params.tituloMantido ? { tituloMantido: params.tituloMantido } : {}),
+            },
+            tx,
+        );
+
+        const valor = linha.valor != null ? Number(linha.valor) : undefined;
+        const vencimento =
+            linha.vencimento != null
+                ? new Date(linha.vencimento).toISOString().slice(0, 10)
+                : undefined;
+        await this.eventos.registrar(
+            {
+                evento: VERIFICATION_EVENT.ITEM_REMOVIDO_SISTEMA,
+                ator: SISPAG_SYSTEM_ACTOR,
+                loteId: params.loteId,
+                ...chave,
+                dados: {
+                    motivo: params.motivo,
+                    ...(params.codigoMascarado !== undefined
+                        ? { codigoMascarado: params.codigoMascarado }
+                        : {}),
+                    ...(params.tituloMantido ? { tituloMantido: params.tituloMantido } : {}),
+                    ...(valor !== undefined ? { valor } : {}),
+                    ...(vencimento !== undefined ? { vencimento } : {}),
+                },
+            },
+            tx,
+        );
+        return {
+            removido: true,
+            ...(valor !== undefined ? { valor } : {}),
+            ...(vencimento !== undefined ? { vencimento } : {}),
+            ...(linha.credor ? { credor: linha.credor } : {}),
+        };
     };
 
     /**

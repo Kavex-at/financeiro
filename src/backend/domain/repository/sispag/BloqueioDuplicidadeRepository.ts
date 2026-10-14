@@ -6,8 +6,11 @@ import PostgreeDatabaseClient, {
 import {
     type BloqueioDuplicidade,
     type ChaveTitulo,
+    DUPLICATE_HOLD_ORIGIN,
     DUPLICATE_HOLD_STATE,
+    type DuplicateHoldOrigin,
     type DuplicateHoldState,
+    isCodigoMascarado,
     SISPAG_SYSTEM_ACTOR,
     VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
@@ -29,10 +32,18 @@ interface BloqueioRow {
     desfeito_por: string | null;
     desfeito_em: Date | null;
     motivo_desfazer: string | null;
+    // ── 0085: origem e retenção por código de barras (ADR-0069 emenda 1) ──
+    origem?: string | null;
+    titulo_mantido_fil_cod?: number | null;
+    titulo_mantido_doc_cod?: string | null;
+    titulo_mantido_tit_cod?: string | null;
+    codigo_mascarado?: string | null;
 }
 
 const COLUNAS = `id, fil_cod, doc_cod, tit_cod, pes_cod, alerta_id, lote_id_origem, motivo, estado,
-    marcado_por, marcado_em, encerrado_em, desfeito_por, desfeito_em, motivo_desfazer`;
+    marcado_por, marcado_em, encerrado_em, desfeito_por, desfeito_em, motivo_desfazer,
+    origem, titulo_mantido_fil_cod, titulo_mantido_doc_cod, titulo_mantido_tit_cod,
+    codigo_mascarado`;
 
 const iso = (d: Date | null): string | undefined => (d ? new Date(d).toISOString() : undefined);
 
@@ -61,6 +72,19 @@ export default class BloqueioDuplicidadeRepository {
         ...(r.alerta_id != null ? { alertaId: r.alerta_id } : {}),
         ...(r.lote_id_origem != null ? { loteIdOrigem: r.lote_id_origem } : {}),
         motivo: r.motivo,
+        origem: (r.origem ?? DUPLICATE_HOLD_ORIGIN.DUPLICIDADE_TITULO) as DuplicateHoldOrigin,
+        ...(r.titulo_mantido_fil_cod != null &&
+        r.titulo_mantido_doc_cod != null &&
+        r.titulo_mantido_tit_cod != null
+            ? {
+                  tituloMantido: {
+                      filCod: r.titulo_mantido_fil_cod,
+                      docCod: r.titulo_mantido_doc_cod,
+                      titCod: r.titulo_mantido_tit_cod,
+                  },
+              }
+            : {}),
+        ...(r.codigo_mascarado != null ? { codigoMascarado: r.codigo_mascarado } : {}),
         estado: r.estado as DuplicateHoldState,
         marcadoPor: r.marcado_por,
         marcadoEm: new Date(r.marcado_em).toISOString(),
@@ -94,35 +118,72 @@ export default class BloqueioDuplicidadeRepository {
         return rows.map(this.map);
     };
 
-    /** Cria o bloqueio ATIVO (resolução RETIRAR) + evento BLOQUEIO_CRIADO, na transação dada. */
+    /** Bloqueios ATIVOS de uma ou mais origens (retidos por código de barras, I16g). */
+    public listAtivosPorOrigem = async (
+        origens: DuplicateHoldOrigin[],
+    ): Promise<BloqueioDuplicidade[]> => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT ${COLUNAS} FROM titulo_bloqueio_duplicidade
+             WHERE estado = $ativo AND origem = ANY($origens)
+             ORDER BY marcado_em DESC`,
+            { ativo: DUPLICATE_HOLD_STATE.ATIVO, origens },
+        )) as BloqueioRow[];
+        return rows.map(this.map);
+    };
+
+    /**
+     * Cria o bloqueio ATIVO + evento BLOQUEIO_CRIADO, na transação dada.
+     *
+     * Sem `origem` é a marca histórica da analista (`DUPLICIDADE_TITULO`, I13g) e `alertaId` é
+     * obrigatório. As origens de código de barras (I16g) nascem sem alerta e carregam a máscara
+     * 5+4 e o título mantido; o esquema (0085) recusa código longo, e aqui o guard recusa antes.
+     * Idempotente pelo índice ATIVO: título já retido (qualquer origem) mantém a marca existente.
+     */
     public criar = async (
         input: {
             chave: ChaveTitulo;
             pesCod?: string;
-            alertaId: string;
+            alertaId?: string;
             loteIdOrigem: string;
             motivo: string;
             ator: string;
+            origem?: DuplicateHoldOrigin;
+            codigoMascarado?: string;
+            tituloMantido?: ChaveTitulo;
         },
         tx: TransactionClient,
     ): Promise<string> => {
+        const origem = input.origem ?? DUPLICATE_HOLD_ORIGIN.DUPLICIDADE_TITULO;
+        if (origem === DUPLICATE_HOLD_ORIGIN.DUPLICIDADE_TITULO && !input.alertaId) {
+            throw new Error('alertaId é obrigatório no bloqueio por duplicidade de título');
+        }
+        if (input.codigoMascarado !== undefined && !isCodigoMascarado(input.codigoMascarado)) {
+            throw new Error('codigoMascarado precisa estar mascarado (5 primeiros + 4 últimos)');
+        }
         const id = randomUUID();
         const inseridas = await tx.insert(
             `INSERT INTO titulo_bloqueio_duplicidade
                 (id, fil_cod, doc_cod, tit_cod, pes_cod, alerta_id, lote_id_origem, motivo, estado,
-                 marcado_por)
+                 marcado_por, origem, codigo_mascarado, titulo_mantido_fil_cod,
+                 titulo_mantido_doc_cod, titulo_mantido_tit_cod)
              VALUES ($id, $filCod, $docCod, $titCod, $pesCod, $alertaId, $loteIdOrigem, $motivo,
-                     $ativo, $ator)
+                     $ativo, $ator, $origem, $codigoMascarado, $mantidoFilCod, $mantidoDocCod,
+                     $mantidoTitCod)
              ON CONFLICT (fil_cod, doc_cod, tit_cod) WHERE estado = 'ATIVO' DO NOTHING`,
             {
                 id,
                 ...input.chave,
                 pesCod: input.pesCod ?? null,
-                alertaId: input.alertaId,
+                alertaId: input.alertaId ?? null,
                 loteIdOrigem: input.loteIdOrigem,
                 motivo: input.motivo,
                 ativo: DUPLICATE_HOLD_STATE.ATIVO,
                 ator: input.ator,
+                origem,
+                codigoMascarado: input.codigoMascarado ?? null,
+                mantidoFilCod: input.tituloMantido?.filCod ?? null,
+                mantidoDocCod: input.tituloMantido?.docCod ?? null,
+                mantidoTitCod: input.tituloMantido?.titCod ?? null,
             },
         );
         // Título já bloqueado (outra alerta, mesmo título): o bloqueio ATIVO existente vale.
@@ -133,13 +194,29 @@ export default class BloqueioDuplicidadeRepository {
                 ator: input.ator,
                 loteId: input.loteIdOrigem,
                 ...input.chave,
-                alertaId: input.alertaId,
+                ...(input.alertaId !== undefined ? { alertaId: input.alertaId } : {}),
                 bloqueioId: id,
-                dados: { motivo: input.motivo },
+                dados: this.dadosDoEvento(origem, input),
             },
             tx,
         );
         return id;
+    };
+
+    /** `dados` do BLOQUEIO_CRIADO: a origem histórica não ganha campo novo (paridade I13m). */
+    private dadosDoEvento = (
+        origem: DuplicateHoldOrigin,
+        input: { motivo: string; codigoMascarado?: string; tituloMantido?: ChaveTitulo },
+    ): Record<string, unknown> => {
+        if (origem === DUPLICATE_HOLD_ORIGIN.DUPLICIDADE_TITULO) return { motivo: input.motivo };
+        return {
+            motivo: input.motivo,
+            origem,
+            ...(input.codigoMascarado !== undefined
+                ? { codigoMascarado: input.codigoMascarado }
+                : {}),
+            ...(input.tituloMantido ? { tituloMantido: input.tituloMantido } : {}),
+        };
     };
 
     /**

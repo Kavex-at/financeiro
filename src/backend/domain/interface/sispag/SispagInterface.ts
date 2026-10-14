@@ -666,6 +666,26 @@ export const DUPLICATE_HOLD_STATE = {
 export type DuplicateHoldState = (typeof DUPLICATE_HOLD_STATE)[keyof typeof DUPLICATE_HOLD_STATE];
 
 /**
+ * Origem do `BloqueioDuplicidade` (ADR-0069 emenda 1, I16g). `DUPLICIDADE_TITULO` é a marca
+ * histórica da analista (I13g); as duas outras nascem da retirada automática por código de barras.
+ * Paridade com o CHECK da 0085.
+ */
+export const DUPLICATE_HOLD_ORIGIN = {
+    DUPLICIDADE_TITULO: 'DUPLICIDADE_TITULO',
+    CODIGO_BARRAS_REPETIDO: 'CODIGO_BARRAS_REPETIDO',
+    CODIGO_BARRAS_ILEGIVEL: 'CODIGO_BARRAS_ILEGIVEL',
+} as const;
+
+export type DuplicateHoldOrigin =
+    (typeof DUPLICATE_HOLD_ORIGIN)[keyof typeof DUPLICATE_HOLD_ORIGIN];
+
+/** Máscara I16e: 5 primeiros + 4 últimos dígitos das barras, separados por `…`. */
+const CODIGO_MASCARADO = /^\d{5}…\d{4}$/;
+
+/** `true` quando `valor` é a máscara 5+4 — e NUNCA uma janela de 10+ dígitos contíguos (I16e). */
+export const isCodigoMascarado = (valor: string): boolean => CODIGO_MASCARADO.test(valor);
+
+/**
  * Motivo da remoção de item pelo sistema no `finalizarLote` (ADR-0065 I13j): o resultado da
  * verificação do favorecido autorizado que não é OK nem falha de leitura.
  */
@@ -673,6 +693,10 @@ export const SYSTEM_REMOVAL_REASON = {
     SEM_DADO_PAGAMENTO: 'SEM_DADO_PAGAMENTO',
     FAVORECIDO_NAO_AUTORIZADO: 'FAVORECIDO_NAO_AUTORIZADO',
     DESTINO_ALTERADO: 'DESTINO_ALTERADO',
+    /** ADR-0069 emenda 1 (I16d): o mesmo boleto em dois ou mais itens; fica um só. */
+    CODIGO_BARRAS_REPETIDO: 'CODIGO_BARRAS_REPETIDO',
+    /** ADR-0069 emenda 1 (I16d.2): código presente mas com dígito verificador inválido. */
+    CODIGO_BARRAS_ILEGIVEL: 'CODIGO_BARRAS_ILEGIVEL',
 } as const;
 
 export type SystemRemovalReason =
@@ -825,6 +849,12 @@ export interface BloqueioDuplicidade {
     alertaId?: string;
     loteIdOrigem?: string;
     motivo: string;
+    /** Origem da marca (0085). Linhas legadas = `DUPLICIDADE_TITULO`. */
+    origem: DuplicateHoldOrigin;
+    /** Item do grupo que FICA (só nas origens de código de barras). */
+    tituloMantido?: ChaveTitulo;
+    /** Código mascarado 5+4 — a única forma que persiste (I16e). */
+    codigoMascarado?: string;
     estado: DuplicateHoldState;
     marcadoPor: string;
     marcadoEm: string;

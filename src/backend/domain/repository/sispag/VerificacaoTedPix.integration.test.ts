@@ -138,7 +138,11 @@ describeComBanco('repositórios da verificação TED/PIX (integração)', () => 
     });
 
     it('lote: verificação do item com selo, remoção pelo sistema com motivo, reabrir sem conferência', async () => {
-        const repo = new LotePagamentoRepository(pool, eventos);
+        const repo = new LotePagamentoRepository(
+            pool,
+            eventos,
+            new BloqueioDuplicidadeRepository(pool, eventos),
+        );
         await repo.marcarVerificacaoItem({
             loteId: LOTE,
             ...CHAVE,

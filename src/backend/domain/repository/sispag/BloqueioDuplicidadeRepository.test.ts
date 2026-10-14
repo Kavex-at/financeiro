@@ -134,3 +134,134 @@ describe('BloqueioDuplicidadeRepository (ADR-0063, I13g)', () => {
         expect(eventos(vazio)).toEqual([]);
     });
 });
+
+describe('BloqueioDuplicidadeRepository — origem por código de barras (ADR-0069 emenda 1, I16g)', () => {
+    const MANTIDO = { filCod: 4, docCod: '6701', titCod: '1' };
+
+    it('criar com origem de código de barras aceita sem alertaId e grava máscara + título mantido', async () => {
+        const db = buildDb();
+        const id = await make(db).criar(
+            {
+                chave: CHAVE,
+                loteIdOrigem: 'L1',
+                motivo: 'boleto repetido no lote',
+                ator: 'sistema',
+                origem: 'CODIGO_BARRAS_REPETIDO',
+                codigoMascarado: '34191…5555',
+                tituloMantido: MANTIDO,
+            },
+            db as never,
+        );
+        const [sql, params] = db.insert.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/origem[\s\S]*codigo_mascarado[\s\S]*titulo_mantido_fil_cod/);
+        expect(String(sql)).toMatch(
+            /ON CONFLICT \(fil_cod, doc_cod, tit_cod\) WHERE estado = 'ATIVO'/,
+        );
+        expect(params).toMatchObject({
+            id,
+            ...CHAVE,
+            alertaId: null,
+            origem: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: '34191…5555',
+            mantidoFilCod: 4,
+            mantidoDocCod: '6701',
+            mantidoTitCod: '1',
+        });
+        expect(eventos(db)).toEqual([
+            expect.objectContaining({ evento: 'BLOQUEIO_CRIADO', bloqueioId: id, ator: 'sistema' }),
+        ]);
+        const dados = JSON.parse(String(eventos(db)[0]?.dados));
+        expect(dados).toMatchObject({
+            origem: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: '34191…5555',
+        });
+    });
+
+    it('DUPLICIDADE_TITULO sem alertaId continua inválido', async () => {
+        const db = buildDb();
+        await expect(
+            make(db).criar(
+                { chave: CHAVE, loteIdOrigem: 'L1', motivo: 'x', ator: 'ana' },
+                db as never,
+            ),
+        ).rejects.toThrow(/alertaId/);
+        expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('recusa máscara que não é 5+4 (nunca o código completo)', async () => {
+        const db = buildDb();
+        await expect(
+            make(db).criar(
+                {
+                    chave: CHAVE,
+                    loteIdOrigem: 'L1',
+                    motivo: 'x',
+                    ator: 'sistema',
+                    origem: 'CODIGO_BARRAS_REPETIDO',
+                    codigoMascarado: '1'.repeat(44),
+                },
+                db as never,
+            ),
+        ).rejects.toThrow(/mascarad/i);
+        expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('marca ATIVA preexistente de outra origem não é sobrescrita nem gera evento', async () => {
+        const db = buildDb();
+        db.insert.mockResolvedValueOnce(0);
+        db.selectFirst.mockResolvedValueOnce(row({ id: 'B0', origem: 'DUPLICIDADE_TITULO' }));
+        const id = await make(db).criar(
+            {
+                chave: CHAVE,
+                loteIdOrigem: 'L1',
+                motivo: 'x',
+                ator: 'sistema',
+                origem: 'CODIGO_BARRAS_REPETIDO',
+                codigoMascarado: '34191…5555',
+            },
+            db as never,
+        );
+        expect(id).toBe('B0');
+        expect(eventos(db)).toEqual([]);
+    });
+
+    it('map devolve origem, máscara e título mantido; linha legada vira DUPLICIDADE_TITULO', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce(
+            row({
+                origem: 'CODIGO_BARRAS_REPETIDO',
+                codigo_mascarado: '34191…5555',
+                titulo_mantido_fil_cod: 4,
+                titulo_mantido_doc_cod: '6701',
+                titulo_mantido_tit_cod: '1',
+            }),
+        );
+        expect(await make(db).findAtivo(CHAVE)).toMatchObject({
+            origem: 'CODIGO_BARRAS_REPETIDO',
+            codigoMascarado: '34191…5555',
+            tituloMantido: MANTIDO,
+        });
+        const legado = buildDb();
+        legado.selectFirst.mockResolvedValueOnce(row());
+        const b = await make(legado).findAtivo(CHAVE);
+        expect(b?.origem).toBe('DUPLICIDADE_TITULO');
+        expect(b?.codigoMascarado).toBeUndefined();
+        expect(b?.tituloMantido).toBeUndefined();
+    });
+
+    it('listAtivosPorOrigem filtra por origem(ns) e por estado ATIVO', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValueOnce([row({ origem: 'CODIGO_BARRAS_REPETIDO' })]);
+        const r = await make(db).listAtivosPorOrigem([
+            'CODIGO_BARRAS_REPETIDO',
+            'CODIGO_BARRAS_ILEGIVEL',
+        ]);
+        expect(r).toHaveLength(1);
+        const [sql, params] = db.selectMany.mock.calls[0] ?? [];
+        expect(String(sql)).toMatch(/estado = \$ativo[\s\S]*origem = ANY\(\$origens\)/);
+        expect(params).toEqual({
+            ativo: 'ATIVO',
+            origens: ['CODIGO_BARRAS_REPETIDO', 'CODIGO_BARRAS_ILEGIVEL'],
+        });
+    });
+});
