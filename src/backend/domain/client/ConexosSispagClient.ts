@@ -154,6 +154,15 @@ const situacaoTituloSchema = z
     })
     .passthrough();
 
+/** Linha do fin064 lida pelo vínculo do código de barras (ADR-0071): SÓ `totalAberto`. */
+const totalAbertoRowSchema = z
+    .object({
+        docCod: z.union([z.string(), z.number()]).transform(String),
+        titCod: z.union([z.string(), z.number()]).transform(String).optional().catch('1'),
+        totalAberto: numOpt,
+    })
+    .passthrough();
+
 const loteRowSchema = z
     .object({
         flpCod: z.coerce.number(),
@@ -514,6 +523,51 @@ export default class ConexosSispagClient {
             );
         if (linha?.success) return this.situacaoDaLinha(linha.data);
         return { legivel: false, motivo: `título ${docCod}/${titCod} não encontrado no fin064` };
+    };
+
+    /**
+     * `fin064.totalAberto` AO VIVO de UM título (ADR-0071, I17b) — a fonte da igualdade de valor
+     * do vínculo do código de barras. É o valor com que o `finalizarLote` compara o pagamento.
+     *
+     * Estrito de propósito: lê SÓ `totalAberto`. Nada de reserva em `titMnyAberto` (nos fixtures
+     * reais os `titMny*` vêm nulos e podem estar velhos) nem em `titMnyValor`/`ItemLote.valor`.
+     * Tri-estado, nunca lança: ausente, ilegível, título que não veio ou falha HTTP ⇒
+     * `{ legivel: false }` — quem chama FALHA FECHADO (nenhum vínculo).
+     */
+    public lerTotalAberto = async (
+        filCod: number,
+        docCod: string,
+        titCod: string,
+    ): Promise<{ legivel: true; totalAberto: number } | { legivel: false; motivo: string }> => {
+        let rows: Record<string, unknown>[];
+        try {
+            const res = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'fin064/list',
+                    this.listBody('fin064', { 'docCod#EQ': docCod }, 200),
+                    { filCod },
+                ),
+            );
+            rows = res.rows ?? [];
+        } catch (err) {
+            return { legivel: false, motivo: this.motivoDeFalha(err) };
+        }
+        const linha = rows
+            .map((row) => totalAbertoRowSchema.safeParse(row))
+            .find(
+                (p) => p.success && p.data.docCod === docCod && (p.data.titCod ?? '1') === titCod,
+            );
+        if (!linha?.success) {
+            return {
+                legivel: false,
+                motivo: `título ${docCod}/${titCod} não encontrado no fin064`,
+            };
+        }
+        const aberto = linha.data.totalAberto;
+        if (aberto === undefined || !Number.isFinite(aberto) || aberto < 0) {
+            return { legivel: false, motivo: 'totalAberto ausente ou ilegível no fin064' };
+        }
+        return { legivel: true, totalAberto: aberto };
     };
 
     /**

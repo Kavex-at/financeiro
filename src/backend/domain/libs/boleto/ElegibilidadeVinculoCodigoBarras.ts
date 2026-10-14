@@ -130,11 +130,6 @@ export default class ElegibilidadeVinculoCodigoBarras {
         if ('motivo' in lido) return nega(lido.motivo, lido.extra);
         const { decodificado, comCodigo } = lido;
 
-        // ── I15d: o tier é recalculado agora; só CONHECIDO/FORTE ──
-        if (entrada.tier === undefined || !TIERS_ELEGIVEIS.has(entrada.tier)) {
-            return nega(MOTIVO_INELEGIVEL_VINCULO.TIER_INSUFICIENTE, comCodigo);
-        }
-
         // ── I17b: valor igual, em centavos, contra o aberto AO VIVO ──
         if (entrada.totalAberto === undefined || !Number.isFinite(entrada.totalAberto)) {
             return nega(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL, comCodigo);
@@ -155,6 +150,12 @@ export default class ElegibilidadeVinculoCodigoBarras {
         const dados = { ...comCodigo, deltaCentavos, deltaDias };
         const motivoData = this.motivoDeData(entrada, decodificado.vencimento, deltaDias);
         if (motivoData) return nega(motivoData, dados);
+
+        // ── I15d: o tier é recalculado agora; só CONHECIDO/FORTE. Vem POR ÚLTIMO de propósito:
+        // um valor ou uma data fora devolvem o motivo específico, não "tier insuficiente". ──
+        if (entrada.tier === undefined || !TIERS_ELEGIVEIS.has(entrada.tier)) {
+            return nega(MOTIVO_INELEGIVEL_VINCULO.TIER_INSUFICIENTE, dados);
+        }
 
         return { elegivel: true, decisaoId: decisao.id, ...dados };
     };
