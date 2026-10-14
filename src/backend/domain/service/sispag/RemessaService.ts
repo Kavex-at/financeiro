@@ -20,6 +20,10 @@ import {
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import BoletoSemCodigoBarrasError from '../../errors/BoletoSemCodigoBarrasError.js';
+import BoletoCodigoBarrasRepetidoError, {
+    type ItemBoletoRepetido,
+} from '../../errors/BoletoCodigoBarrasRepetidoError.js';
+import AnaliseCodigoBarrasRepetido from '../../libs/boleto/AnaliseCodigoBarrasRepetido.js';
 import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
 import RemittanceFileUnavailableError from '../../errors/RemittanceFileUnavailableError.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
@@ -185,6 +189,8 @@ export default class RemessaService {
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
         @inject(AuthorizedPayeeService) private readonly payees: AuthorizedPayeeService,
+        @inject(AnaliseCodigoBarrasRepetido)
+        private readonly analiseCodigos: AnaliseCodigoBarrasRepetido,
     ) {}
 
     /**
@@ -616,6 +622,13 @@ export default class RemessaService {
                     });
                 }
             }
+            // (2.1) GUARDA DE CÓDIGO DE BARRAS REPETIDO (ADR-0069, I16) — fora do `if` do import
+            // de propósito: numa retomada o import é pulado e a checagem TEM que rodar de novo,
+            // senão "retry" seria a forma de passar pela guarda. Só não roda quando a execução
+            // já está concluída (arquivo existente).
+            if (retomarDe !== 'concluido') {
+                await this.verificarCodigoBarrasRepetido(lote, bncCod, flpCod);
+            }
             await this.ledger.setEtapa(key, 'finalizar');
 
             // (3) finalizar (o ERP valida R1 e a regra do itsDtaPgto)
@@ -1009,6 +1022,100 @@ export default class RemessaService {
      * VERBATIM (o grid cruza filiais; reescrever `filCod` devolve `Not Found: FinTituloPag`),
      * enriquecida com a modalidade escolhida e o destino do favorecido (`cmn025`).
      */
+    /**
+     * Guarda de código de barras repetido (ADR-0069, I16a/c). Lê os códigos que o ERP anexou
+     * aos itens JÁ importados do rascunho nativo e aborta, ANTES do `finalizarLote`, se dois ou
+     * mais itens carregam o mesmo boleto — ou se algum código está presente mas ilegível
+     * (falha fechado). Nada é descartado em silêncio: a analista decide o que retirar.
+     *
+     * Contrato de reuso: a entrada da análise é o conjunto de códigos FINAIS do lote; o passo 2
+     * da ADR-0068 chama a mesma função de novo depois do `PUT finItemSispag`.
+     *
+     * Só lê (uma chamada, `listarLinhasDigitaveisDoLote`). Nunca loga nem põe em mensagem o
+     * código completo — só o mascarado (I16e).
+     */
+    private verificarCodigoBarrasRepetido = async (
+        lote: LotePagamento,
+        bncCod: number,
+        flpCod: number,
+    ): Promise<void> => {
+        const boletos = lote.itens.filter((i) => i.modalidade === MODALIDADE.BOLETO);
+        if (boletos.length === 0) return;
+
+        const leitura = await this.write.listarLinhasDigitaveisDoLote({
+            filCod: lote.filCod,
+            bncCod,
+            flpCod,
+        });
+        const invalidos = leitura.invalidos ?? [];
+        const lidas = leitura.itens.length + invalidos.length;
+        if (lidas < boletos.length) {
+            // R3: leitura de página única ou item ainda sem código. Não aborta nesta entrega —
+            // a rede do `.REM` (gate 5.1) cobre —, mas fica registrado.
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'remessa: leitura parcial dos códigos de barras — guarda de repetição incompleta',
+                data: { loteId: lote.id, flpCod, lidas, boletos: boletos.length },
+            });
+        }
+
+        const analise = this.analiseCodigos.analisar(
+            leitura.itens.map((i) => ({
+                chave: `${i.docCod}:${i.titCod}`,
+                codigo: i.linhaDigitavel,
+            })),
+        );
+        const locais = new Map(lote.itens.map((i) => [`${i.docCod}:${i.titCod}`, i]));
+        const referencia = (chave: string): ItemBoletoRepetido => {
+            const sep = chave.lastIndexOf(':');
+            const docCod = chave.slice(0, sep);
+            const titCod = chave.slice(sep + 1);
+            const local = locais.get(chave);
+            return {
+                docCod,
+                titCod,
+                ...(local
+                    ? {
+                          valor: local.valor,
+                          ...(local.credor ? { credor: local.credor } : {}),
+                          ...(local.vencimento !== undefined
+                              ? {
+                                    vencimento: new Date(local.vencimento)
+                                        .toISOString()
+                                        .slice(0, 10),
+                                }
+                              : {}),
+                      }
+                    : {}),
+            };
+        };
+
+        const ilegiveis = [
+            ...invalidos.map((i) => referencia(`${i.docCod}:${i.titCod}`)),
+            ...analise.ilegiveis.map(referencia),
+        ];
+        if (analise.grupos.length === 0 && ilegiveis.length === 0) return;
+
+        const grupos = analise.grupos.map((g) => ({
+            mascarado: g.mascarado,
+            itens: g.chaves.map(referencia),
+        }));
+        await this.logService.warn({
+            type: LOG_TYPE.BUSINESS_WARN,
+            message: 'remessa: código de barras repetido no lote — geração bloqueada',
+            data: {
+                loteId: lote.id,
+                flpCod,
+                grupos: grupos.length,
+                titulosAfetados: grupos.reduce((n, g) => n + g.itens.length, 0),
+                ilegiveis: ilegiveis.length,
+                mascarados: grupos.map((g) => g.mascarado),
+            },
+        });
+        throw new BoletoCodigoBarrasRepetidoError({ origem: 'lote', grupos, ilegiveis });
+    };
+
     private montarItensImport = async (
         lote: LotePagamento,
         bncCod: number,
