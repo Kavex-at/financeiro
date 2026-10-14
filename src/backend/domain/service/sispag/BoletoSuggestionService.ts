@@ -48,6 +48,7 @@ import TituloAPagarRepository from '../../repository/sispag/TituloAPagarReposito
 import LogService from '../LogService.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
+import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 export interface ChaveSugestao {
     filCod: number;
@@ -70,6 +71,14 @@ export interface ResultadoDecisao {
     /** `false` = a decisão já existia (idempotência, I15j): nada novo foi gravado. */
     criada: boolean;
     decisao: DecisaoSugestao;
+}
+
+/** O que a listagem guarda em cache: o motor + os pares + o frescor do DDA (`ultimaSincronizacao`). */
+interface CenarioSugestoes {
+    sugestoes: SugestaoBoletoTitulo[];
+    pares: ConfirmacaoEmissor[];
+    datasDebito: Map<string, string>;
+    sincronizadoEm: number | undefined;
 }
 
 const HORA_MS = 60 * 60 * 1000;
@@ -99,6 +108,9 @@ const TIERS: ReadonlySet<string> = new Set(Object.values(TIER_SUGESTAO));
  *   pool de agora; o que a tela mostrou ontem não vale.
  * - **Linha digitável**: nunca na listagem; só em `copiarLinha`, que grava `LINHA_COPIADA` ANTES de
  *   devolvê-la e falha fechada se a trilha não grava (I15k).
+ * - **Cache** (`SugestaoBoletoCache`): SÓ a listagem usa o cenário em cache (single-flight, TTL
+ *   curto). `confirmar`, `rejeitar` e `anularDecisao` releem o banco ao vivo e NUNCA confiam nele;
+ *   toda decisão e revogação invalida o cache do processo.
  * - **Logs**: português, sem barras nem linha digitável (só a forma mascarada).
  */
 @injectable()
@@ -114,16 +126,15 @@ export default class BoletoSuggestionService {
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(SugestaoBoletoCache) private readonly cache: SugestaoBoletoCache,
     ) {}
 
     // ── Leitura ────────────────────────────────────────────────────────────────────────────────
 
     /** Sugestões por título, com o emissor mascarado e SEM barras nem linha digitável. */
     public listarSugestoes = async (filtro: FiltroSugestoes): Promise<ListagemSugestoes> => {
-        const [cenario, sincronizadoEm] = await Promise.all([
-            this.sugerirAgora(),
-            this.boletoRepo.ultimaSincronizacao(),
-        ]);
+        const { valor: cenario } = await this.cache.obter(this.calcularCenario);
+        const { sincronizadoEm } = cenario;
         const parPorChave = new Map(
             cenario.pares.map((p) => [`${p.pesCod}|${p.emissorChave}`, p.id] as const),
         );
@@ -346,6 +357,7 @@ export default class BoletoSuggestionService {
             return { criada: true, decisao: gravada.decisao };
         });
 
+        this.cache.invalidar();
         if (resultado.criada) {
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
@@ -451,6 +463,7 @@ export default class BoletoSuggestionService {
             }
             return gravada;
         });
+        this.cache.invalidar();
         if (resultado.criada) {
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
@@ -522,6 +535,7 @@ export default class BoletoSuggestionService {
             );
             return atual;
         });
+        this.cache.invalidar();
         if (!revogado) {
             const atual = await this.repo.buscarParPorId(par.id);
             return this.paraViewPar(atual ?? par);
@@ -580,6 +594,7 @@ export default class BoletoSuggestionService {
             if (!atual) throw new DecisionNotConfirmedError(chaveTit);
             return { anulada: n > 0, decisao: atual };
         });
+        this.cache.invalidar();
         if (resultado.anulada) {
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
@@ -776,6 +791,8 @@ export default class BoletoSuggestionService {
         sugestoes: SugestaoBoletoTitulo[];
         pares: ConfirmacaoEmissor[];
         datasDebito: Map<string, string>;
+        titulos: number;
+        boletos: number;
     }> => {
         const [titulos, boletos, pares, rejeitadas, confirmadas, emLotes] = await Promise.all([
             this.tituloRepo.listAtivos(),
@@ -802,7 +819,37 @@ export default class BoletoSuggestionService {
             confirmadas,
             datasDebito,
         });
-        return { sugestoes, pares, datasDebito };
+        return {
+            sugestoes,
+            pares,
+            datasDebito,
+            titulos: titulos.length,
+            boletos: boletos.length,
+        };
+    };
+
+    /**
+     * O cenário que a listagem cacheia: o motor sobre a carteira inteira + o frescor do DDA. Só
+     * roda na falta de cache (single-flight); registra a duração e as contagens, nunca barras.
+     */
+    private calcularCenario = async (): Promise<CenarioSugestoes> => {
+        const inicio = Date.now();
+        const [cenario, sincronizadoEm] = await Promise.all([
+            this.sugerirAgora(),
+            this.boletoRepo.ultimaSincronizacao(),
+        ]);
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'sugestao_boleto.cenario_calculado',
+            data: {
+                duracaoMs: Date.now() - inicio,
+                titulos: cenario.titulos,
+                boletos: cenario.boletos,
+                sugestoes: cenario.sugestoes.length,
+                orfas: cenario.sugestoes.filter((s) => s.orfa === true).length,
+            },
+        });
+        return { ...cenario, sincronizadoEm };
     };
 
     private paraView = (

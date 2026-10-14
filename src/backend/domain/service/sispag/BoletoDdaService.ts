@@ -19,6 +19,7 @@ import TituloAPagarRepository from '../../repository/sispag/TituloAPagarReposito
 import LogService from '../LogService.js';
 import ConsolidacaoBoletoDda from './ConsolidacaoBoletoDda.js';
 import { REGRA_CANDIDATO_TEXTO } from './RegraSugestaoBoleto.js';
+import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 import PaginacaoBoletoDda, {
     BOLETO_DDA_TAMANHO_PADRAO,
     type FiltroPaginaBoletoDda,
@@ -39,6 +40,7 @@ export const RELEITURA_DIAS = 60;
  *
  * `sincronizar`: copia o pool `fin124` para o Postgres (incremental). READ-ONLY no ERP.
  * `listar`: lê o snapshot e consolida contra a carteira (`ConsolidacaoBoletoDda`).
+ * Ao fim de toda sincronização invalida o cache das sugestões de boleto (ADR-0068).
  */
 @injectable()
 export default class BoletoDdaService {
@@ -54,6 +56,7 @@ export default class BoletoDdaService {
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(SugestaoBoletoCache) private readonly sugestoesCache: SugestaoBoletoCache,
     ) {}
 
     /**
@@ -101,7 +104,15 @@ export default class BoletoDdaService {
     }): Promise<SincronizacaoDdaResultado> =>
         this.db.withAdvisoryLock(
             BOLETO_DDA_SYNC_LOCK_KEY,
-            () => this.executarSincronizacao(input),
+            async () => {
+                try {
+                    return await this.executarSincronizacao(input);
+                } finally {
+                    // O pool mudou (ou mudou em parte, se falhou no meio): o cenário em cache das
+                    // sugestões não vale mais. Vale para o botão, o job e a ingestão.
+                    this.sugestoesCache.invalidar();
+                }
+            },
             async () => {
                 throw new IngestLockBusyError(
                     'boleto DDA sync advisory lock busy — another sync is running',

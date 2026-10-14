@@ -2081,24 +2081,16 @@ export async function fetchSugestoesBoleto(
   )
 }
 
-/** Páginas lidas por `fetchTodasSugestoesBoleto`: teto contra uma carteira patológica. */
-const MAX_PAGINAS_SUGESTOES = 20
+/** Teto de uma página do backend (`SUGESTAO_TAMANHO_MAXIMO`); a tela pede tudo numa chamada. */
+export const SUGESTOES_TAMANHO_TELA = 2000
 
 /**
- * Todas as sugestões (páginas de 100) numa lista só, para a aba de títulos casar por título. O
- * cabeçalho de frescor (`ddaDefasadoHoras`) vem da primeira página.
+ * Todas as sugestões numa chamada só (`tamanho = 2000`), para a aba de títulos casar por título.
+ * Antes eram páginas de 100 em série, e cada página recalculava o motor inteiro. Se
+ * `total > sugestoes.length` a lista veio truncada: a tela AVISA, nunca corta em silêncio.
  */
 export async function fetchTodasSugestoesBoleto(): Promise<ListagemSugestoesBoleto> {
-  const primeira = await fetchSugestoesBoleto({ pagina: 1, tamanho: 100 })
-  const sugestoes = [...primeira.sugestoes]
-  let pagina = 1
-  while (sugestoes.length < primeira.total && pagina < MAX_PAGINAS_SUGESTOES) {
-    pagina += 1
-    const prox = await fetchSugestoesBoleto({ pagina, tamanho: 100 })
-    if (prox.sugestoes.length === 0) break
-    sugestoes.push(...prox.sugestoes)
-  }
-  return { ...primeira, sugestoes }
+  return fetchSugestoesBoleto({ pagina: 1, tamanho: SUGESTOES_TAMANHO_TELA })
 }
 
 /** `POST .../confirmar` (`sispag:executar`). Nada é escrito no ERP. */

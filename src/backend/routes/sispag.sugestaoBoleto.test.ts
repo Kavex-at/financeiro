@@ -202,7 +202,10 @@ describe('GET /sispag/sugestoes-boleto', () => {
         await comApp(VER, async (url) => {
             expect((await fetch(`${url}/sispag/sugestoes-boleto`)).status).toBe(200);
             expect((await fetch(`${url}/sispag/sugestoes-boleto?tier=XYZ`)).status).toBe(400);
-            expect((await fetch(`${url}/sispag/sugestoes-boleto?tamanho=1000`)).status).toBe(400);
+            // O teto é 2000 (a tela busca tudo numa chamada): 2000 passa, 2001 e 0 não.
+            expect((await fetch(`${url}/sispag/sugestoes-boleto?tamanho=2000`)).status).toBe(200);
+            expect((await fetch(`${url}/sispag/sugestoes-boleto?tamanho=2001`)).status).toBe(400);
+            expect((await fetch(`${url}/sispag/sugestoes-boleto?tamanho=0`)).status).toBe(400);
         });
         expect(s.listarSugestoes).toHaveBeenCalledWith({ pagina: 1, tamanho: 50 });
     });
