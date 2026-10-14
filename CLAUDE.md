@@ -332,6 +332,11 @@ Every feature or rule change goes through the pipeline. No exceptions.
   continua funcionando em dev e nos crons (que rodam a árvore-fonte via `tsx`). Foi assim que o
   `BootMigrator` passou semanas sem migrar nada, e a `0061` esvaziou as abas de lotes do SISPAG.
   *(Incidente 2026-09-23; ver `migrations/MigrationFiles.ts` e `DEPLOY.md`.)*
+- **Vencimento do Conexos é dia civil, não instante.** O ERP grava a data como 00:00Z (às vezes
+  15:00Z) do dia. Comparar com `now()`/`Date.now()` faz o título que vence hoje parecer vencido a
+  partir das 09:00 BRT. "Vencido" e "dias até vencer" se calculam com `BankingCalendar`
+  (`todayBrt`, `fromErpEpoch`, `toErpEpoch`), e o SQL recebe `$hoje` como parâmetro. *(Incidente
+  2026-10-14: a formação automática desfazia 15 lotes/79 itens com título vencendo no dia; ADR-0070.)*
 
 ## Inviolable Rules
 1. Never commit `.env`, AWS credentials, or `terraform.tfstate` **(alvo — quando a infra Terraform existir)**

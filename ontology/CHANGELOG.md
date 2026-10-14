@@ -3,6 +3,13 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.40.3 — SISPAG: título que vence hoje não é vencido (2026-10-14, ADR-0070)
+
+Feature: `sispag-vencimento-hoje` (`/feature-tweak --urgent`). `entity_changed = false`, bug de
+implementação. Esclarece em `formar-lotes-automaticos` e `montar-painel-pagamentos` o que a regra
+já pressupunha: **vencido = dia de vencimento antes de hoje, por dia civil de Brasília**. O título que
+vence hoje é a vencer, entra na formação e não desfaz o lote automático. Contagens inalteradas.
+
 ## v0.40.1 — SISPAG: guarda de código de barras repetido na remessa (2026-10-14, ADR-0069)
 
 Feature: `sispag-guarda-codbar-repetido` (`/feature-tweak`). `entity_changed = true`, aditivo, sem entidade
