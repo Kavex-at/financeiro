@@ -325,13 +325,27 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
     });
 
     it('decisão e boleto são relidos do banco no momento: decisão anulada ⇒ item retirado, sem PUT', async () => {
+        // 636 mantém a decisão; 637 foi ANULADA entre o import e o vínculo (o banco de agora não a tem).
+        const h = build({
+            itens: [itemLote('636'), itemLote('637')],
+            rascunho: [nativo('636', 91), nativo('637', 92)],
+        });
+        const r = await h.service.executar({ lote: h.lote, ...CTX });
+        expect(r.vinculados.map((v) => v.titulo.docCod)).toEqual(['636']);
+        expect(r.retirar).toHaveLength(1);
+        expect(r.retirar[0]).toMatchObject({ titulo: { docCod: '637' }, motivo: 'SEM_DECISAO' });
+        expect(h.write.editarItemDoRascunho).toHaveBeenCalledTimes(1);
+        expect(h.sugestoes.listarDecisoes).toHaveBeenCalled();
+    });
+
+    it('lote SEM nenhuma decisão confirmada: nenhuma chamada ao client, nenhum evento', async () => {
         const h = umItem({ decisoes: [] });
         const r = await h.service.executar({ lote: h.lote, ...CTX });
-        expect(r.vinculados).toEqual([]);
-        expect(r.retirar).toHaveLength(1);
-        expect(r.retirar[0]?.motivo).toBe('SEM_DECISAO');
-        expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
-        expect(h.sugestoes.listarDecisoes).toHaveBeenCalled();
+        expect(r).toMatchObject({ vinculados: [], retirar: [] });
+        for (const fn of Object.values(h.write)) expect(fn).not.toHaveBeenCalled();
+        expect(h.sispag.lerTotalAberto).not.toHaveBeenCalled();
+        expect(h.sugestoes.registrarEventoVinculo).not.toHaveBeenCalled();
+        expect(h.loteRepo.gravarVinculoCodigoBarras).not.toHaveBeenCalled();
     });
 
     describe('verificações nossas pós-confirma (I17d 3–6): divergência ⇒ retira SEM PUT', () => {
