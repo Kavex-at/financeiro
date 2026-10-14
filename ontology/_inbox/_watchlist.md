@@ -196,3 +196,21 @@
   (4) **P1-6** confirmar se o sinal "boleto do título retido mudou" é detectável na ingestão sem custo
   novo; (5) leitura incompleta (página única de 500) hoje avisa e segue: decidir se vira abort.
   A guarda **entre lotes vivos / contra boleto pago** (HMAC + migration) segue sem mudança de status.
+
+## 2026-10-14 — sispag-passo2-vinculo-codbar (ADR-0071)
+
+- **Passo 2 saiu da watchlist** (era REJECT-PREMATURE, ADR-0068): decidido e modelado como I17 (`planned`). O
+  estado `APLICADO_NO_ERP` previsto aqui foi **rejeitado** (REJECT-WORKAROUND): fica derivado `aplicacao`.
+- **Boleto ACIMA do título** (ex.: NELSON +R$ 0,01; 93 de 94) — REJECT-PREMATURE. O `finalizar` recusa pagamento
+  > `fin064.totalAberto`; sem endpoint viável via SISPAG. Pergunta Columbia/Conexos: como registrar acréscimo
+  no título.
+- **Boleto ABAIXO do título** — REJECT-PREMATURE: não medido; muda a semântica (baixa parcial, saldo em aberto).
+- **Vínculo de tier `ATENCAO`** — fora do passo 2 (I15d; escopo valor igual). Revisitar só com ADR próprio.
+- **Universalidade de I17 com o Francinei** — 1 cliente apenas (não bloqueante, precedente Q-I do ADR-0068):
+  o vínculo de código confirmado ao item vale para qualquer trading que pague boleto via Conexos sem DDA
+  associado?
+- **Desempate com decisão humana (P1-1(b) do ADR-0069)** — saiu do follow-up e entrou como I17h (`planned`).
+- **Boleto vinculado reaparece "livre" no `fin124` depois de pago** (V6) — medir em HML; cobre-se por
+  decisão `CONFIRMADA` + guarda I16 dentro do lote; entre lotes vivos segue a lacuna do ADR-0069.
+- **Modalidade/forma de lançamento do item após o `PUT`** (V4: mesmo banco × outro banco; J para emissor ≠
+  pagador) — provar em HML antes de `on` em PRD.

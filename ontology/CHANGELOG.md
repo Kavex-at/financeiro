@@ -3,6 +3,19 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.42.0 — SISPAG: vínculo do código de barras confirmado ao item (2026-10-14, ADR-0071)
+
+Feature: `sispag-passo2-vinculo-codbar` (`/feature-new`). `entity_changed = true`. **Ontologia à frente do
+código** (tudo `planned`). Passo 2 do ADR-0068, escopo **valor igual**.
+
+- **Regra nova `vinculo-codbar-item-sispag` (I17a–l)** e **ação nova `vincularCodigoBarrasAoItem`**.
+- `ItemLote.vinculoCodigoBarras` (planned, 1 migration); etapa de memória `vincular_codbar` na retomada.
+- I15a emendada (confirmação humana + verificações nossas autorizam o vínculo; validação ao vivo = autoridade
+  do caminho DDA); I15b passa a valer "no passo 1". I16d.1: desempate prefere decisão humana vigente.
+  `SystemRemovalReason` `+VINCULO_CODIGO_BARRAS_FALHOU`.
+- `DecisaoSugestaoBoleto` ganha o derivado `aplicacao`; **sem** estado novo.
+- Contagens: ações 43→44, regras 28→29 (ambas `planned`).
+
 ## v0.40.3 — SISPAG: título que vence hoje não é vencido (2026-10-14, ADR-0070)
 
 Feature: `sispag-vencimento-hoje` (`/feature-tweak --urgent`). `entity_changed = false`, bug de
