@@ -27,3 +27,25 @@ rascunho no Conexos. É o escopo da feature separada de remoção automática (P
 ## F5 — Unificar as três máscaras de código de barras (P3)
 I15k (banco…4), `RemessaCnabValidator.mascarar` (4+x+4, barras inválidas) e I16e (5+4). A guarda define a
 sua e não altera as outras. Unificar mexe em I15k e nos testes do painel.
+
+## Regis-Review reduzido 2026-10-14-1806 (Security, Testability, Fault Tolerance) — sem P0
+
+Fault Tolerance teve um P1, corrigido em `ce9243e` (ledger retomável depois do aborto).
+
+## F6 — Convênio/arrecadação (prefixo 8) vira "ilegível" e abortaria o lote (P3)
+Códigos de 44 posições iniciados por `8` não têm o DV mod 11 de boleto bancário. Frequência **não
+medida**: a tentativa de contar `itsNumCodbar` por prefixo nos lotes recentes em PRD (read-only) devolveu
+403 do Conexos para o robô. Medir (via HML ou com permissão) antes do PR 2; se houver ocorrência,
+tratar convênio como "fora do escopo da guarda" em vez de abortar.
+
+## F7 — Testes: apenas 1 dos 3 DVs de campo exercitado em `paraBarras`; privacidade só parcial no serviço (P2)
+
+## F8 — `message` limita 20 títulos, `details`/log não (P2); `lidas` conta linhas não-boleto (P2)
+
+## F9 — JSDoc órfão em `RemessaService` (~1032–1036) e `lastIndexOf(':')` na chave composta (P2, PatternGuardian)
+
+## F10 — Gate 5.1 do `.REM` detecta depois do `finalizarLote`: recuperação é manual (P2)
+
+## F11 — Mudança de comportamento fora da guarda (registrar na PR)
+O predicado de retomada agora também encaminha `status='error' && etapa='finalizar' && nativeFlpCod`
+por `sincronizarComErp` (necessário para o ledger ficar retomável depois do aborto).
