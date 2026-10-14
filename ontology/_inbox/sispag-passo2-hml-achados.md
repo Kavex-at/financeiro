@@ -29,11 +29,37 @@
   o ERP espera que o **título** carregue a diferença (acréscimo) — ver §3.
 - A associação não vira `vldVinculoDda`; o vínculo vive na nossa decisão (`DecisaoSugestaoBoleto`).
 
-## 3. Pendente (não executado)
+## 3. Resultado dos testes seguintes (mesma data)
 
-- **Ajustar o título para cobrir a diferença** (`PUT fin026`, campo `titMnyJuros`): é o que a trava do
-  `finalizar` pede. Escrita em DADO DE TERCEIRO em HML; o body de `fin026` não está no OpenAPI. Testar em
-  HML com backup e reversão (padrão de `seed-hml-vencimento.ts`) antes de qualquer decisão sobre PRD.
-- Finalizar o lote de teste e decodificar o segmento J (o que chega ao banco) com valor igual e com
-  vencimento da barra posterior.
-- Permissão do robô CLONEX em PRD para `fin015/finItemSispag` (PUT) e `fin026`.
+| # | Achado | Evidência |
+|---|---|---|
+| 9 | **`PUT fin026` é aceito mas NÃO altera o valor do título**: `titMnyValor` volta 1028,80 após enviar 1028,81; o DTO da tela (`FinTituloFin026`) não tem campo de juros nem desconto. `fin064` mostra `totalAberto = totalLiquido = valor` e nenhum campo de juros preenchido. | `probe-hml-fin026-titulo.ts` |
+| 10 | **Nenhum campo do ITEM destrava boleto acima do título.** Testados: `itsMnyOutros = 0,01`, `itsMnyValor = pagamento`, `itsMnyValor + titMnyValor + titMnyLiquido`, `titMnyJuros`. O `finalizar` continua recusando: a comparação é com o valor em aberto do TÍTULO (`fin064.totalAberto`), não com o item. `titMnyValor`/`titMnyJuros` do item são espelho: o PUT não os persiste. | `probe-hml-item-variantes.ts` |
+| 11 | **Ponta a ponta com barra de MESMO valor funciona**: editar item → `finalizarLote` OK → `gerarRemessa` sucesso → segmento J com barra, `valorTitulo`, `valorPagamento` iguais ao item e `dataPagamento` = data do item. | `probe-hml-editar-item-codbar.ts` (FINALIZAR=1, DV2=0) |
+| 12 | **Barra que vence DEPOIS do título (+5 dias)** também finaliza: no J, `vencimento` continua a data do TÍTULO (09/10), `dataPagamento` é a do item/barra (29/10) e o valor é o da barra. A barra carrega uma data diferente do campo de vencimento do registro. | segmento 3 do lote 36 |
+
+## 4. O que isto fecha para o passo 2
+
+1. **Viável via SISPAG (fin015):** boleto de valor **igual** ao título em aberto, com vencimento igual ou
+   posterior (AR SOLUÇÕES, os "valor+dia iguais que o ERP recusou"). Sequência: importar → validar →
+   confirmar → `PUT` do item (barra 47 díg., `itsNumBanco`, `bncDesNome`, valor e data do resultado) →
+   finalizar. Verificações de DV, valor e data são NOSSAS (o ERP não faz).
+2. **NÃO viável pelos endpoints que testamos:** boleto **acima** do valor em aberto (NELSON, +R$ 0,01:
+   93 de 94). O ERP só aceita se o título tiver saldo em aberto ≥ pagamento, e não encontramos campo do
+   título nem do item que o aumente (`fin026` não altera valor; sem juros no DTO). Precisa de um processo
+   do ERP que ainda não conhecemos (acréscimo/juros no título, baixa com juros) ou pagamento fora do
+   SISPAG. **Pergunta para a Columbia/Conexos.**
+3. Boleto **abaixo** do título: não testado (provavelmente passa a trava, deixa saldo em aberto).
+4. O vínculo DDA do ERP (`vldVinculoDda`) não é gravado por este caminho: a verdade fica na
+   `DecisaoSugestaoBoleto`.
+
+## 5. Estado deixado em HML
+- Lotes de teste `flp 35` (vazio) e `flp 36` (**finalizado**, com remessa `PG1410…93.REM` gerada).
+- Títulos de teste 757/1, 636/1 e 619/1 ficaram nesse lote. `fin026`: nenhuma alteração persistiu.
+- Item 636/1 voltou a barra de valor igual (1028,80).
+
+## 6. Pendente
+- Pergunta ao Conexos/Columbia sobre boleto acima do título (como registram acréscimo antes do envio).
+- Permissão do robô CLONEX em PRD para `PUT fin015/finItemSispag` (e validar que o `PUT` não precisa de
+  perfil extra).
+- Tratar a pergunta do ERP `PESSOA_FAVORECIDA_SEM_CONTA_ATIVA…` no fluxo (decisão humana, como hoje).

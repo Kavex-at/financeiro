@@ -160,7 +160,7 @@ async function main(): Promise<void> {
         n += 1;
         const valor = Number(it.itsMnyValor ?? it.titMnyLiquido);
         const venc = Number(it.titDtaVencimento);
-        const dv = n === 2 ? 0.01 : 0;
+        const dv = n === 2 ? Number(process.env.DV2 ?? 0.01) : 0;
         const valorBarra = Math.round((valor + dv) * 100) / 100;
         const linha = conv.paraLinhaDigitavel(codbar44(valorBarra, venc, n)) ?? '';
         const caso = n === 1 ? 'H1-barra-igual' : 'H2-barra+0,01 (juros 0: paga o valor da barra)';
