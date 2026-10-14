@@ -304,7 +304,19 @@ export default class RemessaService {
         let retomarDe: EtapaReal | undefined;
         let apenasChaves: ReadonlySet<string> | undefined;
         let flpCodRetomado: number | undefined;
-        if (anterior && !anterior.dryRun && anterior.status === 'reconciling') {
+        // `reconciling` = escrita em voo que nunca confirmou. `error` com etapa `finalizar` e lote
+        // nativo é o rascunho que a guarda de código repetido (ADR-0069) deixou de propósito para
+        // diagnóstico: o import JÁ valeu, então o retry tem que perguntar ao ERP em vez de
+        // reimportar. Qualquer outro `error` mantém o comportamento de sempre.
+        const emVooOuAbortadoNaGuarda =
+            anterior !== null &&
+            anterior !== undefined &&
+            !anterior.dryRun &&
+            (anterior.status === 'reconciling' ||
+                (anterior.status === 'error' &&
+                    anterior.etapa === 'finalizar' &&
+                    anterior.nativeFlpCod !== undefined));
+        if (anterior && emVooOuAbortadoNaGuarda) {
             const sync = await this.sincronizarComErp(anterior, lote);
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
@@ -367,7 +379,7 @@ export default class RemessaService {
 
         // Só o que o ERP NÃO deixa determinar continua fail-closed. É a diferença entre
         // "não sei" e "não quero saber".
-        if (anterior && !anterior.dryRun && anterior.status === 'reconciling' && !retomarDe) {
+        if (anterior && emVooOuAbortadoNaGuarda && !retomarDe) {
             await this.logService.error({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message: 'remessa EM DÚVIDA (estado do ERP indeterminado) — NÃO re-POSTada',
@@ -626,10 +638,15 @@ export default class RemessaService {
             // de propósito: numa retomada o import é pulado e a checagem TEM que rodar de novo,
             // senão "retry" seria a forma de passar pela guarda. Só não roda quando a execução
             // já está concluída (arquivo existente).
+            //
+            // A etapa `finalizar` é gravada ANTES da guarda: se ela abortar, o ledger sai como
+            // `error` + `finalizar` + flpCod, e o retry passa por `sincronizarComErp` (o rascunho
+            // está completo → `finalizar` → a guarda roda de novo), em vez de reimportar sobre
+            // um rascunho que já tem os itens.
+            await this.ledger.setEtapa(key, 'finalizar');
             if (retomarDe !== 'concluido') {
                 await this.verificarCodigoBarrasRepetido(lote, bncCod, flpCod);
             }
-            await this.ledger.setEtapa(key, 'finalizar');
 
             // (3) finalizar (o ERP valida R1 e a regra do itsDtaPgto)
             if (!pular('finalizar')) {

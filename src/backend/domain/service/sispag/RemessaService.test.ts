@@ -2383,6 +2383,137 @@ describe('RemessaService — guarda de código de barras repetido (ADR-0069, I16
         });
     });
 
+    describe('retry a partir do ledger deixado pelo aborto (fault-tolerance-1)', () => {
+        const draftCompleto = (leitura: unknown) => {
+            const write = writeCom(leitura);
+            write.getLoteNativo.mockResolvedValue({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 12,
+                status: 0,
+                titulosCount: N,
+                soma: 14120,
+            });
+            write.listarChavesDoLote.mockResolvedValue(
+                new Set(Array.from({ length: N }, (_, i) => `2:${doc(i)}:1`)),
+            );
+            return write;
+        };
+        /** Linha do ledger como o aborto a deixou: status/etapa/flpCod vindos das chamadas reais. */
+        const linhaDepoisDoAborto = (ledger: ReturnType<typeof buildLedger>) => {
+            const etapas = ledger.setEtapa.mock.calls.map((c) => c[1] as string);
+            return {
+                status: 'error',
+                dryRun: false,
+                nativeFlpCod: ledger.setNativeFlpCod.mock.calls[0][1] as number,
+                etapa: etapas[etapas.length - 1],
+            };
+        };
+
+        it('(iii) o aborto grava etapa=finalizar ANTES de falhar e deixa status=error com o motivo', async () => {
+            const ledger = buildLedger();
+            const write = writeCom(linhasLote(metade));
+            await make({ write, ledger, lote: loteBoleto() })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch(() => undefined);
+
+            expect(ledger.setEtapa).toHaveBeenCalledWith(expect.any(String), 'finalizar');
+            expect(ledger.setEtapa).not.toHaveBeenCalledWith(expect.any(String), 'gerar_remessa');
+            expect(ledger.fail).toHaveBeenCalledTimes(1);
+            const ordemEtapa = ledger.setEtapa.mock.invocationCallOrder.at(-1) as number;
+            expect(ordemEtapa).toBeLessThan(ledger.fail.mock.invocationCallOrder[0] as number);
+            expect(linhaDepoisDoAborto(ledger)).toMatchObject({
+                status: 'error',
+                nativeFlpCod: 12,
+                etapa: 'finalizar',
+            });
+        });
+
+        it('(i) retry com o código ainda repetido aborta de novo, sem reimportar nem criar lote', async () => {
+            const primeiro = buildLedger();
+            await make({
+                write: writeCom(linhasLote(metade)),
+                ledger: primeiro,
+                lote: loteBoleto(),
+            })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch(() => undefined);
+
+            const ledger = buildLedger(linhaDepoisDoAborto(primeiro));
+            const write = draftCompleto(linhasLote(metade));
+            const err = await make({ write, ledger, lote: loteBoleto() })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch((e: unknown) => e);
+
+            expect(err).toMatchObject({ code: 'BOLETO_CODIGO_BARRAS_REPETIDO' });
+            expect(write.getLoteNativo).toHaveBeenCalled();
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(write.listarTitulosPendentes).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+            expect(ledger.fail).toHaveBeenCalledTimes(1);
+            expect(ledger.setEtapa).toHaveBeenCalledWith(expect.any(String), 'finalizar');
+        });
+
+        it('retry com o código corrigido segue e finaliza o mesmo rascunho', async () => {
+            const primeiro = buildLedger();
+            await make({
+                write: writeCom(linhasLote(metade)),
+                ledger: primeiro,
+                lote: loteBoleto(),
+            })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch(() => undefined);
+
+            const write = draftCompleto(linhasLote(distintos));
+            await make({
+                write,
+                ledger: buildLedger(linhaDepoisDoAborto(primeiro)),
+                lote: loteBoleto(),
+            }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.finalizarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ flpCod: 12 }),
+            );
+        });
+
+        it('(ii) título retirado do lote LOCAL: o rascunho tem item de fora → indeterminado, fail-closed (PR 2 resolve)', async () => {
+            const primeiro = buildLedger();
+            await make({
+                write: writeCom(linhasLote(metade)),
+                ledger: primeiro,
+                lote: loteBoleto(),
+            })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch(() => undefined);
+
+            const log = buildLog();
+            const write = draftCompleto(linhasLote(metade));
+            const err = await make({
+                write,
+                log,
+                ledger: buildLedger(linhaDepoisDoAborto(primeiro)),
+                lote: loteBoleto(N - 1),
+            })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch((e: unknown) => e);
+
+            expect(err).toMatchObject({ name: 'RemessaEmDuvidaError' });
+            expect(write.finalizarLote).not.toHaveBeenCalled();
+            expect(write.importarTitulos).not.toHaveBeenCalled();
+            expect(write.criarLote).not.toHaveBeenCalled();
+            expect(write.listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
+            expect(log.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        etapaReal: 'indeterminado',
+                        motivo: expect.stringContaining('fora do nosso lote'),
+                    }),
+                }),
+            );
+        });
+    });
+
     it('ausência continua BoletoSemCodigoBarrasError, antes de qualquer escrita e da nova leitura', async () => {
         const write = buildWrite();
         write.listarTitulosPendentes.mockResolvedValue([
