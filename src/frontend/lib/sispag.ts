@@ -489,6 +489,31 @@ export async function desfazerBloqueioDuplicidade(chave: ChaveTitulo, motivo: st
   }
 }
 
+/**
+ * O que o sistema retirou DESTE lote por código de barras repetido/ilegível, lido da trilha
+ * (ADR-0069 emenda 1, I16f(3)). É o que dá persistência ao aviso do `LoteCard`: sobrevive a
+ * recarregar a tela. Falha vira lista vazia — o aviso é um complemento, nunca bloqueia o card.
+ */
+export async function fetchRetiradasDoLote(loteId: string): Promise<RetiradaDoLote[]> {
+  const res = await apiFetch(
+    `${API}/sispag/lotes/${encodeURIComponent(loteId)}/retirados-por-codigo-barras`,
+    { headers: { ...(await withAuthHeaders()) } },
+  )
+  if (!res.ok) return []
+  const j = (await res.json().catch(() => ({}))) as { retirados?: RetiradaDoLote[] }
+  return j.retirados ?? []
+}
+
+/** Títulos retidos por código de barras (I16g) — a aba de títulos marca e permite desfazer. */
+export async function fetchRetidosPorCodigoBarras(): Promise<TituloRetidoPorCodigoBarras[]> {
+  const res = await apiFetch(`${API}/sispag/titulos/retidos-por-codigo-barras`, {
+    headers: { ...(await withAuthHeaders()) },
+  })
+  if (!res.ok) return []
+  const j = (await res.json().catch(() => ({}))) as { retidos?: TituloRetidoPorCodigoBarras[] }
+  return j.retidos ?? []
+}
+
 // ══════════════════════════════════════════ Fatia 3 — remessa e conciliação
 
 export interface GerarRemessaResult {
@@ -505,6 +530,56 @@ export interface GerarRemessaResult {
   valorTotal: number
   /** Data de débito usada (`'YYYY-MM-DD'`). */
   dataDebito?: string
+  /**
+   * Itens que a guarda de código de barras retirou do lote nesta geração (ADR-0069 emenda 1).
+   * Ausente quando nada saiu. Só a máscara do código (5 primeiros + 4 últimos dígitos).
+   */
+  retiradosPorCodigoBarras?: RetiradoPorCodigoBarras[]
+  /** Avisos em pt-BR: não vazio quando houve retirada — a remessa saiu, mas NÃO é "tudo certo". */
+  avisos?: string[]
+}
+
+/** Motivo da retirada automática por código de barras. */
+export type MotivoRetiradaCodigoBarras = 'CODIGO_BARRAS_REPETIDO' | 'CODIGO_BARRAS_ILEGIVEL'
+
+/** Item retirado do lote pela guarda (resultado da geração). Nunca o código completo. */
+export interface RetiradoPorCodigoBarras {
+  titulo: ChaveTitulo
+  valor?: number
+  /** Data civil `YYYY-MM-DD`. */
+  vencimento?: string
+  credor?: string
+  /** 5 primeiros + 4 últimos dígitos, separados por `…`. */
+  codigoMascarado?: string
+  /** Título do grupo que FICOU no lote (só em repetido). */
+  tituloMantido?: ChaveTitulo
+  motivo: MotivoRetiradaCodigoBarras
+}
+
+/** O mesmo fato lido da TRILHA do lote — persiste enquanto o lote existir (I16f(3)). */
+export interface RetiradaDoLote extends RetiradoPorCodigoBarras {
+  ocorridoEm: string
+}
+
+/** Título retido por código de barras na aba de títulos (I16g). */
+export interface TituloRetidoPorCodigoBarras {
+  filCod: number
+  docCod: string
+  titCod: string
+  origem: MotivoRetiradaCodigoBarras
+  codigoMascarado?: string
+  tituloMantido?: ChaveTitulo
+  loteIdOrigem?: string
+  marcadoEm: string
+  credor?: string
+  valor?: number
+  vencimento?: string
+}
+
+/** Texto curto, em português, do motivo (selo e aviso do lote). */
+export const ROTULO_RETIRADA_CODIGO_BARRAS: Record<MotivoRetiradaCodigoBarras, string> = {
+  CODIGO_BARRAS_REPETIDO: 'boleto repetido',
+  CODIGO_BARRAS_ILEGIVEL: 'código de barras ilegível',
 }
 
 /** Título cujo vencimento limita a janela de débito. */
@@ -747,6 +822,18 @@ export class BoletoSemCodigoBarrasError extends Error {
   }
 }
 
+/**
+ * A retirada automática por boleto repetido/ilegível não terminou (ADR-0069 emenda 1). Nada foi
+ * enviado ao banco; gerar de novo termina a limpeza. A mensagem é a do backend, em pt-BR, e já
+ * diz o que saiu, o que falta e onde está o lote nativo — nunca carrega o código completo.
+ */
+export class BoletoCodigoBarrasRetiradaIncompletaError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BoletoCodigoBarrasRetiradaIncompletaError'
+  }
+}
+
 /** Já existe uma geração em curso para este lote — esperar resolve. */
 export class RemessaEmAndamentoError extends Error {
   constructor(message: string) {
@@ -845,6 +932,9 @@ async function sispagRequest<T>(path: string, init: RequestInit): Promise<T> {
     }
     if (body.code === 'ERP_PERGUNTA') {
       throw new ErpPerguntaError(msg, det.chave as string | undefined)
+    }
+    if (body.code === 'BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA') {
+      throw new BoletoCodigoBarrasRetiradaIncompletaError(msg)
     }
     throw new Error(msg)
   }

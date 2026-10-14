@@ -35,7 +35,14 @@ import { formatBRL } from '@/lib/utils'
  */
 export type Acao = (
   fn: (opts?: { confirmarNovoLote?: boolean }) => Promise<unknown>,
-  okMsg: string | ((resultado: unknown) => { titulo: string; descricao?: string }),
+  okMsg:
+    | string
+    | ((resultado: unknown) => {
+        titulo: string
+        descricao?: string
+        /** `true` = a ação concluiu, mas há o que a analista precisa ler (toast de aviso, não "tudo certo"). */
+        aviso?: boolean
+      }),
 ) => void
 
 const CAMPO_ID = 'gerar-remessa-data-debito'
@@ -45,7 +52,7 @@ const JANELA_ID = 'gerar-remessa-janela'
 /** Mensagem de sucesso por resultado — dry-run e remessa real NÃO podem soar iguais. */
 const mensagemDeSucesso =
   (filCod: number) =>
-  (r: unknown): { titulo: string; descricao?: string } => {
+  (r: unknown): { titulo: string; descricao?: string; aviso?: boolean } => {
     const res = r as GerarRemessaResult
     const debito = res.dataDebito ? ` · débito em ${formatCivilDate(res.dataDebito)}` : ''
     if (res.status === 'dry-run') {
@@ -61,11 +68,23 @@ const mensagemDeSucesso =
         descricao: `Lote nativo ${res.nativeFlpCod ?? '—'} no Conexos${debito}.`,
       }
     }
+    // Sem isto, quem gerou não sabe ONDE procurar no ERP — foi o que aconteceu no
+    // primeiro teste: sucesso na tela, e ninguém achava o lote.
+    const ondeNoErp = `Lote nativo ${res.nativeFlpCod} · filial ${filCod} · remessa nº ${res.numRemessa ?? '—'}${debito}`
+    // ADR-0069 emenda 1 (I16f): a remessa saiu, mas o sistema RETIROU títulos do lote (boleto
+    // repetido/ilegível). Isto NÃO é "tudo certo": o resumo diz o que ficou de fora.
+    const avisos = res.avisos ?? []
+    if (avisos.length > 0) {
+      const n = res.retiradosPorCodigoBarras?.length ?? 0
+      return {
+        titulo: `Remessa ${res.arquivo ?? ''} gerada — ${n || 'alguns'} título(s) retirado(s) do lote`,
+        descricao: `${avisos.join(' ')} ${ondeNoErp}`,
+        aviso: true,
+      }
+    }
     return {
       titulo: `Remessa ${res.arquivo ?? ''} gerada`,
-      // Sem isto, quem gerou não sabe ONDE procurar no ERP — foi o que aconteceu no
-      // primeiro teste: sucesso na tela, e ninguém achava o lote.
-      descricao: `Lote nativo ${res.nativeFlpCod} · filial ${filCod} · remessa nº ${res.numRemessa ?? '—'}${debito}`,
+      descricao: ondeNoErp,
     }
   }
 

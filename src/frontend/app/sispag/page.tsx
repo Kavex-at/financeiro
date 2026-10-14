@@ -64,11 +64,14 @@ import {
   type TituloSemBoleto,
   type ListagemSugestoesBoleto,
   fetchTodasSugestoesBoleto,
+  fetchRetidosPorCodigoBarras,
+  BoletoCodigoBarrasRetiradaIncompletaError,
   removerItem,
   runIngestaoPagamentos,
   type LotePagamento,
   type SispagPainel,
   type TituloAPagar,
+  type TituloRetidoPorCodigoBarras,
 } from '@/lib/sispag'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 import {
@@ -100,6 +103,7 @@ import { motivoSelecaoBloqueada, podeSelecionar } from './components/moverParaLo
 import { useCriarLoteManual } from './components/useCriarLoteManual'
 import { alternarTodos, estadoSelecionarTodos } from './components/selecionarTodos'
 import { FormaPagamentoBadge } from './components/FormaPagamentoBadge'
+import { TitulosRetidosBadge } from './components/TitulosRetidosBadge'
 import { ConfirmacoesEmissorPainel } from './components/ConfirmacoesEmissorPainel'
 import {
   agruparPorTitulo,
@@ -246,6 +250,16 @@ function SispagPanel() {
     () => agruparPorTitulo(sugestoes?.sugestoes ?? []),
     [sugestoes],
   )
+  // Retidos por código de barras (ADR-0069 emenda 1, I16g), por `filCod:docCod:titCod`.
+  const [retidos, setRetidos] = React.useState<Map<string, TituloRetidoPorCodigoBarras>>(new Map())
+  const recarregarRetidos = React.useCallback(async () => {
+    try {
+      const lista = await fetchRetidosPorCodigoBarras()
+      setRetidos(new Map(lista.map((r) => [`${r.filCod}:${r.docCod}:${r.titCod}`, r])))
+    } catch {
+      setRetidos(new Map())
+    }
+  }, [])
   const [loteEmFoco, setLoteEmFoco] = React.useState<string | null>(null)
   const [retirando, setRetirando] = React.useState<TituloAPagar | null>(null)
   const [salvandoRetirada, setSalvandoRetirada] = React.useState(false)
@@ -356,6 +370,12 @@ function SispagPanel() {
   React.useEffect(() => {
     if (podeVer) void carregarSugestoes()
   }, [podeVer, carregarSugestoes])
+
+  // ADR-0069 emenda 1 (I16g): títulos retidos por boleto repetido/ilegível. Complemento da aba
+  // de títulos: se a leitura falhar, a lista segue igual, só sem o selo.
+  React.useEffect(() => {
+    if (podeVer) void recarregarRetidos()
+  }, [podeVer, recarregarRetidos])
 
   // ADR-0060: com o painel já na tela (dados gravados), pede o refresh se a carteira estiver
   // defasada e recarrega o painel — sem spinner — quando a ingestão termina.
@@ -598,18 +618,26 @@ function SispagPanel() {
     fn: (opts?: { confirmarNovoLote?: boolean }) => Promise<unknown>,
     // Função quando a confirmação depende do QUE ACONTECEU. "Remessa gerada" e
     // "simulação em dry-run" não podem ter a mesma mensagem num botão que move dinheiro.
-    okMsg: string | ((resultado: unknown) => { titulo: string; descricao?: string }),
+    okMsg:
+      | string
+      | ((resultado: unknown) => { titulo: string; descricao?: string; aviso?: boolean }),
   ) => {
     setBusy(true)
     try {
       const resultado = await fn()
-      // O painel também muda: a linha do título mostra o lote em que está (ADR-0050).
-      await Promise.all([recarregarLotes(), recarregarPainel()])
+      // O painel também muda: a linha do título mostra o lote em que está (ADR-0050), e os
+      // títulos retidos por código de barras (ADR-0069 emenda 1) aparecem com o selo.
+      await Promise.all([recarregarLotes(), recarregarPainel(), recarregarRetidos()])
       if (typeof okMsg === 'string') {
         toast.success(okMsg)
       } else {
-        const { titulo, descricao } = okMsg(resultado)
-        toast.success(titulo, descricao ? { description: descricao } : undefined)
+        const { titulo, descricao, aviso } = okMsg(resultado)
+        if (aviso) {
+          // Concluiu, mas há o que ler: aviso longo, não o "tudo certo" verde de sempre.
+          toast.warning(titulo, { ...(descricao ? { description: descricao } : {}), duration: 30000 })
+        } else {
+          toast.success(titulo, descricao ? { description: descricao } : undefined)
+        }
       }
     } catch (e) {
       // Dois erros pedem ação humana diferente de "tente de novo" — e insistir em um
@@ -661,6 +689,13 @@ function SispagPanel() {
             label: 'Ver boletos DDA',
             onClick: () => setTituloDda(e.titulo),
           },
+        })
+      } else if (e instanceof BoletoCodigoBarrasRetiradaIncompletaError) {
+        // ADR-0069 emenda 1: a limpeza dos boletos repetidos não terminou. Nada foi ao banco; a
+        // mensagem do backend diz o que saiu, o que falta e que gerar de novo termina a limpeza.
+        toast.error('Retirada de boletos repetidos incompleta', {
+          description: e.message,
+          duration: 30000,
         })
       } else if (e instanceof RemessaEmDuvidaError) {
         toast.error('Remessa em dúvida — NÃO repita', {
@@ -1170,6 +1205,19 @@ function SispagPanel() {
                               >
                                 em lote
                               </Badge>
+                            ) : null}
+                            {retidos.get(keyOf(t)) ? (
+                              <TitulosRetidosBadge
+                                retido={retidos.get(keyOf(t)) as TituloRetidoPorCodigoBarras}
+                                podeDesfazer={podeExecutar}
+                                onDesfeito={async () => {
+                                  toast.success('Retenção desfeita', {
+                                    description:
+                                      'O título voltou a poder entrar em lote. Se o boleto ainda for compartilhado, a próxima geração o retira de novo.',
+                                  })
+                                  await Promise.all([recarregarPainel(), recarregarRetidos()])
+                                }}
+                              />
                             ) : null}
                           </TableCell>
                           <TableCell className="text-muted-foreground">

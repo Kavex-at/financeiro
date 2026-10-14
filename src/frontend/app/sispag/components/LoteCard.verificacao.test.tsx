@@ -21,6 +21,7 @@ jest.mock('@/lib/sispag', () => {
     fetchContasPagadoras: jest.fn().mockResolvedValue([]),
     fetchModalidadesDisponiveis: jest.fn().mockResolvedValue([]),
     fetchLinhasDigitaveis: jest.fn().mockResolvedValue({ itens: [], total: 0, dropped: 0 }),
+    fetchRetiradasDoLote: jest.fn().mockResolvedValue([]),
     getRecursos: jest
       .fn()
       .mockResolvedValue({ tedEnabled: true, pixEnabled: true, favorecidoAutorizadoEnabled: true }),

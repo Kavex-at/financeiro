@@ -81,6 +81,9 @@ jest.mock('@/lib/sispag', () => {
       contagem: {},
     }),
     fetchConfirmacoesEmissor: jest.fn().mockResolvedValue([]),
+    // ADR-0069 emenda 1: títulos retidos por código de barras — por padrão, nenhum.
+    fetchRetidosPorCodigoBarras: jest.fn().mockResolvedValue([]),
+    fetchRetiradasDoLote: jest.fn().mockResolvedValue([]),
   }
 })
 
@@ -158,6 +161,62 @@ describe('SispagPage — falha ao carregar os lotes', () => {
     await user.click(screen.getByRole('tab', { name: 'Lotes candidatos (0)' }))
     expect(screen.getByText('Nenhum lote candidato')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * ADR-0069 emenda 1 (I16g): título retirado do lote por boleto repetido aparece na aba de títulos
+ * com o selo "retido por boleto repetido", a máscara do código e a ação de desfazer com motivo.
+ */
+describe('SispagPage — títulos retidos por código de barras', () => {
+  const titulo: TituloAPagar = {
+    docCod: '1001',
+    titCod: '1',
+    filCod: 2,
+    credor: 'PEDRONI',
+    valor: 1412,
+    vencimento: Date.UTC(2026, 9, 14, 15),
+    diasAteVencimento: 3,
+    liberado: true,
+    pago: false,
+  }
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockResolvedValue({ ...painel, titulos: [titulo] })
+    lib.fetchLotes.mockReset()
+    lib.fetchLotes.mockResolvedValue([])
+    lib.fetchRetidosPorCodigoBarras.mockReset()
+    lib.fetchRetidosPorCodigoBarras.mockResolvedValue([
+      {
+        filCod: 2,
+        docCod: '1001',
+        titCod: '1',
+        origem: 'CODIGO_BARRAS_REPETIDO',
+        codigoMascarado: '34191…0000',
+        tituloMantido: { filCod: 2, docCod: '1000', titCod: '1' },
+        marcadoEm: '2026-10-14T10:00:00.000Z',
+      },
+    ])
+  })
+
+  it('marca o título com o selo, a máscara e o título que ficou', async () => {
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    expect(await screen.findByText(/retido por boleto repetido/)).toBeInTheDocument()
+    expect(screen.getByText(/código 34191…0000/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /desfazer retenção/i })).toBeInTheDocument()
+  })
+
+  it('sem sispag:executar não oferece desfazer', async () => {
+    permissoes = ['sispag:ver']
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    expect(await screen.findByText(/retido por boleto repetido/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /desfazer retenção/i })).toBeNull()
   })
 })
 

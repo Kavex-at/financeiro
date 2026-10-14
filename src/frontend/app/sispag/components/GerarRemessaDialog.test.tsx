@@ -170,6 +170,51 @@ describe('GerarRemessaDialog', () => {
     expect(msg.descricao).toContain('débito em 22/09')
   })
 
+  it('com retirada por código de barras: resumo de AVISO, não o "tudo certo" (ADR-0069 emenda 1)', async () => {
+    const acao = jest.fn() as jest.MockedFunction<Acao>
+    await abrir(janela(), acao)
+    await screen.findByText(/Permitido/)
+    fireEvent.click(botaoGerar())
+    const okMsg = acao.mock.calls[0]?.[1]
+    const msg = (
+      okMsg as (r: unknown) => { titulo: string; descricao?: string; aviso?: boolean }
+    )({
+      status: 'gerada',
+      arquivo: 'PG220901.REM',
+      nativeFlpCod: 12,
+      numRemessa: 1,
+      dataDebito: '2026-09-22',
+      retiradosPorCodigoBarras: [
+        {
+          titulo: { filCod: 2, docCod: '802', titCod: '1' },
+          motivo: 'CODIGO_BARRAS_REPETIDO',
+          codigoMascarado: '34191…8340',
+        },
+      ],
+      avisos: ['1 título(s) retirado(s) do lote por boleto repetido: 802/1 (ficou 801/1).'],
+    })
+    expect(msg.aviso).toBe(true)
+    expect(msg.titulo).toMatch(/PG220901\.REM gerada — 1 título\(s\) retirado\(s\) do lote/)
+    expect(msg.descricao).toContain('802/1')
+    expect(msg.descricao).toContain('Lote nativo 12')
+  })
+
+  it('sem retirada, a mensagem não é de aviso', async () => {
+    const acao = jest.fn() as jest.MockedFunction<Acao>
+    await abrir(janela(), acao)
+    await screen.findByText(/Permitido/)
+    fireEvent.click(botaoGerar())
+    const okMsg = acao.mock.calls[0]?.[1]
+    const msg = (okMsg as (r: unknown) => { titulo: string; aviso?: boolean })({
+      status: 'gerada',
+      arquivo: 'PG220901.REM',
+      nativeFlpCod: 12,
+      numRemessa: 1,
+    })
+    expect(msg.aviso).toBeUndefined()
+    expect(msg.titulo).toBe('Remessa PG220901.REM gerada')
+  })
+
   it('data congelada: só leitura, com o motivo, e gera com ela', async () => {
     const acao = jest.fn(async (fn: Parameters<Acao>[0]) => {
       await fn()
