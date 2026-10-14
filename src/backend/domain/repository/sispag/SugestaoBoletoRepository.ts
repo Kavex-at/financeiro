@@ -34,7 +34,7 @@ const COLUNAS_DECISAO = `id, fil_cod, doc_cod, tit_cod, pes_cod, credor, ddc_cod
     decidido_em, motivo, confirmacao_emissor_id, versao, anulada_por, anulada_em, motivo_anulacao`;
 
 const COLUNAS_EVENTO = `id, tipo, ator, ocorrido_em, pes_cod, emissor_chave, fil_cod, doc_cod,
-    tit_cod, ddc_cod, dit_cod, motivo, detalhe`;
+    tit_cod, ddc_cod, dit_cod, motivo, detalhe, lote_id, decisao_id`;
 
 /** Teto defensivo das listagens (a tabela é de decisões humanas: ordem de milhares). */
 const LIMITE_LISTAGEM = 10000;
@@ -91,6 +91,10 @@ export interface NovoEventoSugestao {
     motivo?: string;
     /** Só máscaras, estados e motivos. */
     detalhe?: Record<string, unknown>;
+    /** Lote local — eventos `VINCULO_*` (0086). */
+    loteId?: string;
+    /** Decisão que autorizou o vínculo — eventos `VINCULO_*` (0086). */
+    decisaoId?: string;
 }
 
 export interface FiltroDecisoes {
@@ -490,6 +494,70 @@ export default class SugestaoBoletoRepository {
             },
         );
         return id;
+    };
+
+    /**
+     * Evento de VÍNCULO (`VINCULO_APLICADO`/`VINCULO_SIMULADO`/`VINCULO_FALHOU`, ADR-0071) com a
+     * chave de idempotência da 0086: `ON CONFLICT DO NOTHING` — sob concorrência, ou numa retomada,
+     * o segundo `VINCULO_APLICADO` do mesmo (lote, título, decisão) não entra (e a transação do
+     * chamador não aborta). `inserido = false` ⇒ o fato já estava registrado.
+     * Só máscara e motivo: nunca o código (I17j).
+     */
+    public registrarEventoVinculo = async (
+        input: NovoEventoSugestao & { loteId: string },
+        tx?: TransactionClient,
+    ): Promise<{ inserido: boolean }> => {
+        const detalhe = input.detalhe ? JSON.stringify(input.detalhe) : null;
+        if (detalhe !== null && /\d{10,}/.test(detalhe)) {
+            throw new Error('detalhe do evento de vínculo não pode carregar dígitos longos');
+        }
+        const n = await this.conn(tx).update(
+            `INSERT INTO sispag_sugestao_boleto_evento
+                (id, tipo, ator, ocorrido_em, pes_cod, emissor_chave, fil_cod, doc_cod, tit_cod,
+                 ddc_cod, dit_cod, motivo, detalhe, lote_id, decisao_id)
+             VALUES ($id, $tipo, $ator, now(), $pesCod, $emissorChave, $filCod, $docCod, $titCod,
+                     $ddcCod, $ditCod, $motivo, $detalhe::jsonb, $loteId::uuid, $decisaoId::uuid)
+             ON CONFLICT DO NOTHING`,
+            {
+                id: randomUUID(),
+                tipo: input.tipo,
+                ator: input.ator,
+                pesCod: input.pesCod ?? null,
+                emissorChave: input.emissorChave ?? null,
+                filCod: input.filCod ?? null,
+                docCod: input.docCod ?? null,
+                titCod: input.titCod ?? null,
+                ddcCod: input.ddcCod ?? null,
+                ditCod: input.ditCod ?? null,
+                motivo: input.motivo ?? null,
+                detalhe,
+                loteId: input.loteId,
+                decisaoId: input.decisaoId ?? null,
+            },
+        );
+        return { inserido: n > 0 };
+    };
+
+    /** Já existe `VINCULO_APLICADO` para (lote, título, decisão)? (I17f — idempotência). */
+    public existeVinculoAplicado = async (
+        input: {
+            loteId: string;
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            decisaoId: string;
+        },
+        tx?: TransactionClient,
+    ): Promise<boolean> => {
+        const row = await this.conn(tx).selectFirst<{ n: number }>(
+            `SELECT 1 AS n FROM sispag_sugestao_boleto_evento
+              WHERE tipo = 'VINCULO_APLICADO' AND lote_id = $loteId::uuid
+                AND fil_cod = $filCod AND doc_cod = $docCod AND tit_cod = $titCod
+                AND decisao_id = $decisaoId::uuid
+              LIMIT 1`,
+            input,
+        );
+        return row != null;
     };
 
     public listarEventos = async (

@@ -4,7 +4,10 @@ import PostgreeDatabaseClient, {
     type TransactionClient,
 } from '../../client/database/PostgreeDatabaseClient.js';
 import type { RetiradaDoLoteNaTrilha } from '../../interface/sispag/RetiradaCodigoBarras.js';
-import type { VerificationEvent } from '../../interface/sispag/SispagInterface.js';
+import {
+    MOTIVOS_RETIRADA_CODIGO_BARRAS,
+    type VerificationEvent,
+} from '../../interface/sispag/SispagInterface.js';
 
 /** Uma linha da trilha da verificação TED/PIX (I13m). `dados` nunca carrega conta/chave (I10h). */
 export interface VerificacaoEventoInput {
@@ -90,7 +93,7 @@ export default class VerificacaoEventoRepository {
                 evento: 'ITEM_REMOVIDO_SISTEMA',
                 loteId,
                 ator: 'sistema',
-                motivos: ['CODIGO_BARRAS_REPETIDO', 'CODIGO_BARRAS_ILEGIVEL'],
+                motivos: [...MOTIVOS_RETIRADA_CODIGO_BARRAS],
             },
         )) as Array<Record<string, unknown>>;
         return rows.flatMap((r) => {

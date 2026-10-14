@@ -15,6 +15,7 @@ import {
     type ChaveTitulo,
     DUPLICATE_ACTION,
     DUPLICATE_HOLD_ORIGIN,
+    ORIGENS_RETENCAO_CODIGO_BARRAS,
     DUPLICATE_ALERT_TYPES,
     type DuplicateAction,
     ITEM_ALERT_RESOLUTION,
@@ -187,10 +188,7 @@ export default class DuplicateResolutionService {
 
     /** I16g — títulos retidos por código de barras (aba de títulos): só campos mascarados. */
     public listarRetidosPorCodigoDeBarras = async (): Promise<TituloRetidoPorCodigoBarras[]> =>
-        this.bloqueioRepo.listAtivosPorOrigemComTitulo([
-            DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_REPETIDO,
-            DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_ILEGIVEL,
-        ]);
+        this.bloqueioRepo.listAtivosPorOrigemComTitulo([...ORIGENS_RETENCAO_CODIGO_BARRAS]);
 
     /** I16f(3) — o que o sistema retirou deste lote por código de barras, lido da trilha. */
     public listarRetiradasDoLote = async (loteId: string): Promise<RetiradaDoLoteNaTrilha[]> =>

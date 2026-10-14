@@ -24,7 +24,11 @@ export interface RetiradaDoLoteNaTrilha {
 }
 
 /** Motivo da retirada automática (ADR-0069 emenda 1, I16d). */
-export type MotivoRetiradaCodigoBarras = 'CODIGO_BARRAS_REPETIDO' | 'CODIGO_BARRAS_ILEGIVEL';
+export type MotivoRetiradaCodigoBarras =
+    | 'CODIGO_BARRAS_REPETIDO'
+    | 'CODIGO_BARRAS_ILEGIVEL'
+    /** ADR-0071 (I17g(3)): o vínculo do código confirmado falhou depois do import. */
+    | 'VINCULO_CODIGO_BARRAS_FALHOU';
 
 /**
  * Item retirado do lote pela guarda de código de barras (I16f(2)). Só a máscara 5+4 (I16e) —

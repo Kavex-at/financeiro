@@ -265,7 +265,11 @@ describe('BloqueioDuplicidadeRepository — origem por código de barras (ADR-00
         expect(params).toMatchObject({
             ativo: 'ATIVO',
             encerrado: 'ENCERRADO',
-            origens: ['CODIGO_BARRAS_REPETIDO', 'CODIGO_BARRAS_ILEGIVEL'],
+            origens: [
+                'CODIGO_BARRAS_REPETIDO',
+                'CODIGO_BARRAS_ILEGIVEL',
+                'VINCULO_CODIGO_BARRAS_FALHOU',
+            ],
         });
         expect(eventos(db)).toEqual([
             expect.objectContaining({
