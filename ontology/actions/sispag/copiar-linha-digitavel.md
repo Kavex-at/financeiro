@@ -9,7 +9,7 @@ owners: [yuri]
 related_files: []
 last_review: 2026-10-14
 preconditions:
-  - "Usuário com `sispag:executar`."
+  - "Usuário com `sispag:ver` (Q4 re-decidida em 2026-10-14; confirmar/rejeitar/revogar seguem `sispag:executar`)."
   - "Boleto presente no pool local (`boleto_dda.codbar`)."
 postconditions:
   - "Devolve a linha digitável (derivada de `codbar`) ao navegador do usuário; evento LINHA_COPIADA (quem, quando, título, boleto) — toda cópia é auditada (decisão do maintainer)."
@@ -20,4 +20,4 @@ side_effects:
 # copiarLinhaDigitavel
 
 ADR-0068, I15k. Existe para o analista conferir no portal do banco/ERP sem digitar. Auditada a cada
-cópia; `sispag:ver` não a vê. **Planned.**
+cópia; Permissão `sispag:ver`, igual a `GET /boletos-dda` e ao lote (ADR-0053); fail-closed: sem trilha, sem linha. **Planned.**

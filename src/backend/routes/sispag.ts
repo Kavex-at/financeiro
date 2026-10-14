@@ -849,12 +849,13 @@ router.post(
     }),
 );
 
-// POST /sispag/sugestoes-boleto/copiar-linha — `sispag:executar`. Devolve a linha digitável SÓ
+// POST /sispag/sugestoes-boleto/copiar-linha — `sispag:ver` (a linha já é visível a `ver` no GET
+// /boletos-dda e no lote, ADR-0053; a trilha, não o mascaramento, é o controle). Devolve a linha digitável SÓ
 // depois de gravar `LINHA_COPIADA`; sem trilha, 503 e nenhuma linha (fail-closed). POST + no-store:
 // a linha nunca vai em URL nem em cache.
 router.post(
     '/sugestoes-boleto/copiar-linha',
-    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    exigirPermissao(PERMISSION.SISPAG_VER),
     limiteCopiaLinha,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();

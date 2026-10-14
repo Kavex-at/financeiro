@@ -144,7 +144,7 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['GET /sispag/sugestoes-boleto', P.SISPAG_VER],
     ['POST /sispag/sugestoes-boleto/confirmar', P.SISPAG_EXECUTAR],
     ['POST /sispag/sugestoes-boleto/rejeitar', P.SISPAG_EXECUTAR],
-    ['POST /sispag/sugestoes-boleto/copiar-linha', P.SISPAG_EXECUTAR],
+    ['POST /sispag/sugestoes-boleto/copiar-linha', P.SISPAG_VER],
     ['GET /sispag/confirmacoes-emissor', P.SISPAG_VER],
     ['POST /sispag/confirmacoes-emissor/:id/revogar', P.SISPAG_EXECUTAR],
     ['GET /sispag/recursos', P.SISPAG_VER],

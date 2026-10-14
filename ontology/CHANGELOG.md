@@ -36,6 +36,7 @@ nenhuma escrita no Conexos.
 - Coverage: entities 25→27 (planned 5→7, 72→67 %); actions 37→42 (planned 6→11, 81→71 %);
   business_rules 27→28 (planned 10→11). State machines inalteradas. `BoletoDda` passa a constar em
   `by_entity` (drift pré-existente; o `summary` segue sem contá-la).
+- **Emenda 2026-10-14:** Q4 re-decidida — `sispag:ver` copia a linha digitável (toda cópia auditada); confirmar/rejeitar/revogar seguem `sispag:executar`. Premissa 'GET /boletos-dda é admin' era falsa (ADR-0053).
 
 ## v0.39.2 — SISPAG: o pool DDA sincroniza dentro da ingestão (2026-10-13, ADR-0067)
 
