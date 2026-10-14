@@ -4,6 +4,7 @@ import { Client } from 'pg';
 import 'reflect-metadata';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import BloqueioDuplicidadeRepository from './BloqueioDuplicidadeRepository.js';
 import LotePagamentoRepository from './LotePagamentoRepository.js';
 import TituloAPagarRepository from './TituloAPagarRepository.js';
 import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
@@ -99,7 +100,12 @@ describeComBanco('vencimento por dia civil (integração)', () => {
                     ($2, 2, 'ontem', '1', '2026-10-13T00:00:00Z', 'cron')`,
             [LOTE_HOJE, LOTE_ONTEM],
         );
-        const repo = new LotePagamentoRepository(pool, new VerificacaoEventoRepository(pool));
+        const eventos = new VerificacaoEventoRepository(pool);
+        const repo = new LotePagamentoRepository(
+            pool,
+            eventos,
+            new BloqueioDuplicidadeRepository(pool, eventos),
+        );
         expect(await repo.desfazerAutomaticosVencidos(HOJE)).toBe(1);
         const { rows } = await db.query('SELECT id FROM lote_pagamento ORDER BY id');
         expect(rows.map((r) => r.id)).toEqual([LOTE_HOJE]);
