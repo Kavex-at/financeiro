@@ -183,6 +183,10 @@ export interface ItemLinhaDigitavel {
     titCod: string;
     /** 47 dígitos, com os 4 verificadores conferidos no boundary. */
     linhaDigitavel: string;
+    /** Filial do item no rascunho nativo (fallback: a do lote). */
+    filCod: number;
+    /** Sequencial nativo do item. Ausente = identidade incompleta (nunca chute). */
+    itsCodSeq?: number;
 }
 
 /**
@@ -206,5 +210,10 @@ export interface LinhasDigitaveisDoLote {
      * `itens.length + (invalidos?.length ?? 0) === total` e `dropped === invalidos.length`.
      * Uso interno do backend (guarda de código repetido, I16c); não é exposto na API do painel.
      */
-    invalidos?: Array<{ docCod: string; titCod: string }>;
+    invalidos?: Array<{ docCod: string; titCod: string; filCod: number; itsCodSeq?: number }>;
+    /**
+     * `true` = a lista foi lida até o fim (página curta ou `count` alcançado). `false` = truncada
+     * por `maxPaginas`: quem decide retirada ABORTA, nunca assume "o resto não tem repetido".
+     */
+    completa: boolean;
 }
