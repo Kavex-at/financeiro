@@ -72,6 +72,34 @@ const codbar = (valor: number, vencEpoch: number): string => {
 
 const dia = (ms?: number): string => (ms ? new Date(ms).toISOString().slice(0, 10) : '—');
 
+/** Resumo do erro SEM referências circulares (o erro do axios carrega req/res). */
+const erroSeguro = (e: unknown): Row => {
+    const err = e as {
+        message?: string;
+        userMessage?: unknown;
+        status?: unknown;
+        statusCode?: unknown;
+        details?: unknown;
+        response?: { status?: unknown; data?: unknown };
+        cause?: { response?: { status?: unknown; data?: unknown }; message?: string };
+    };
+    const resp = err.response ?? err.cause?.response;
+    return {
+        message: String(err.message ?? e).slice(0, 300),
+        userMessage: typeof err.userMessage === 'string' ? err.userMessage : undefined,
+        status: err.status ?? err.statusCode ?? resp?.status,
+        data:
+            resp?.data === undefined
+                ? undefined
+                : JSON.parse(
+                      JSON.stringify(resp.data, (_k, v) =>
+                          typeof v === 'object' && v !== null && 'socket' in v ? undefined : v,
+                      ),
+                  ),
+        causa: err.cause?.message,
+    };
+};
+
 async function main(): Promise<void> {
     mkdirSync(OUT, { recursive: true });
     await bootstrapAppContainer();
@@ -100,14 +128,21 @@ async function main(): Promise<void> {
         flpCod: ctx.flpCod,
     });
     log(`pendentes no contexto flp=${ctx.flpCod}: ${pend.length}`);
-    // alvo: título SEM flag DDA, com valor > 0, preferindo vencimento mais distante
-    const alvo = pend
-        .filter((p) => !p.temBoletoDda && (p.valor ?? 0) > 0 && p.vencimento)
-        .sort((a, b) => (b.vencimento ?? 0) - (a.vencimento ?? 0))[0];
-    if (!alvo?.valor || !alvo.vencimento) {
-        log('nenhum título sem flag com valor/vencimento em HML.');
+    // alvo: título SEM flag DDA; o grid de pendentes traz `titMnyValor`/`titDtaVencimento` no raw
+    const candidatos = pend
+        .map((p) => ({
+            p,
+            valor: Number(p.raw.titMnyValor ?? p.valor ?? 0),
+            vencimento: Number(p.raw.titDtaVencimento ?? p.vencimento ?? 0),
+        }))
+        .filter((x) => !x.p.temBoletoDda && x.valor > 0 && x.vencimento > 0)
+        .sort((a, b) => b.vencimento - a.vencimento);
+    const escolhido = candidatos[0];
+    if (!escolhido) {
+        log(`nenhum título sem flag com valor/vencimento em HML (de ${pend.length}).`);
         return;
     }
+    const alvo = { ...escolhido.p, valor: escolhido.valor, vencimento: escolhido.vencimento };
     const valor = alvo.valor;
     const venc = alvo.vencimento;
     log(
@@ -182,6 +217,12 @@ async function main(): Promise<void> {
     ];
 
     const resultados: Row[] = [];
+    const ENDPOINTS = (
+        process.env.ENDPOINTS ?? 'validacao/codigoBarras,validacao/confirmaCodigoBarras'
+    )
+        .split(',')
+        .map((e) => e.trim())
+        .filter(Boolean);
     for (const k of casos) {
         const body = {
             bncCodLote: BNC,
@@ -203,24 +244,37 @@ async function main(): Promise<void> {
             });
             continue;
         }
-        try {
-            const resp = await base.postGenericOnce<unknown>(
-                'fin015/finItemSispag/validacao/codigoBarras',
-                body,
-                { filCod: FIL },
-            );
-            resultados.push({ id: k.id, descricao: k.descricao, ok: true, resposta: resp as Row });
-            log(`   → OK ${JSON.stringify(resp).slice(0, 220)}`);
-        } catch (e) {
-            const err = e as Record<string, unknown>;
-            const resumo = {
-                message: String(err.message ?? e).slice(0, 400),
-                userMessage: err.userMessage,
-                status: err.status ?? err.statusCode,
-                details: err.details ?? err.response,
-            };
-            resultados.push({ id: k.id, descricao: k.descricao, ok: false, erro: resumo });
-            log(`   → ERRO ${JSON.stringify(resumo).slice(0, 300)}`);
+        // Fluxo de duas etapas, como a tela do ERP: valida (decodifica) e depois confirma com o
+        // `splitCodBar`/`barra*` devolvidos pela primeira.
+        let etapa1: Row | undefined;
+        for (const ep of ENDPOINTS) {
+            const corpo: Row = { ...body };
+            if (ep.includes('confirma') && etapa1) {
+                corpo.splitCodBar = etapa1.splitCodBar;
+                corpo.barraDtaVencimento = etapa1.barraDtaVencimento;
+                corpo.barraVlrPgto = etapa1.barraVlrPgto;
+            }
+            try {
+                const resp = await base.postGenericOnce<unknown>(
+                    `fin015/finItemSispag/${ep}`,
+                    corpo,
+                    { filCod: FIL },
+                );
+                const dados = ((resp as Row | undefined)?.responseData ?? resp) as Row;
+                if (!ep.includes('confirma')) etapa1 = dados;
+                resultados.push({
+                    id: k.id,
+                    ep,
+                    descricao: k.descricao,
+                    ok: true,
+                    resposta: resp as Row,
+                });
+                log(`   ${ep} → OK ${JSON.stringify(resp).slice(0, 360)}`);
+            } catch (e) {
+                const resumo = erroSeguro(e);
+                resultados.push({ id: k.id, ep, descricao: k.descricao, ok: false, erro: resumo });
+                log(`   ${ep} → ERRO ${JSON.stringify(resumo).slice(0, 400)}`);
+            }
         }
     }
     writeFileSync(`${OUT}/resultados.json`, JSON.stringify(resultados, null, 2));
