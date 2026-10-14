@@ -50,13 +50,22 @@ const ehSugestaoVelha = (e: unknown): boolean =>
   (e.code === CODIGOS_ERRO_SUGESTAO_BOLETO.INDISPONIVEL ||
     e.code === CODIGOS_ERRO_SUGESTAO_BOLETO.RESERVADO_A_OUTRO_TITULO)
 
-const ATENCAO_CLASSE = 'border-warning/40 text-warning'
+const ATENCAO_CLASSE = 'border-warning/40 text-warning-foreground'
+
+/** Cada nível tem um tom explícito: SEM_RELACAO nunca herda o verde de "forte". */
+const TIER_CLASSE: Record<SugestaoBoleto['avaliacao']['resultado'], string> = {
+  CONHECIDO: 'border-success/40 text-success-foreground',
+  FORTE: 'border-success/40 text-success-foreground',
+  ATENCAO: ATENCAO_CLASSE,
+  VENCIDO_INFORMATIVO: ATENCAO_CLASSE,
+  SEM_RELACAO: 'text-muted-foreground',
+}
 
 function Delta({ rotulo, valor, destaque }: { rotulo: string; valor: string; destaque: boolean }) {
   return (
     <div className="flex flex-col">
       <dt className="text-xs text-muted-foreground">{rotulo}</dt>
-      <dd className={destaque ? 'font-medium tabular-nums text-warning' : 'tabular-nums'}>
+      <dd className={destaque ? 'font-medium tabular-nums text-warning-foreground' : 'tabular-nums'}>
         {valor}
       </dd>
     </div>
@@ -151,7 +160,7 @@ export function SugestaoBoletoPainel({
         remessa segue bloqueada até o boleto ser associado no ERP.
       </p>
       {ddaDefasadoHoras !== undefined ? (
-        <p className="flex items-start gap-2 text-xs text-warning">
+        <p className="flex items-start gap-2 text-xs text-warning-foreground">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           <span>
             O arquivo DDA não é atualizado há {ddaDefasadoHoras} h; a sugestão pode estar
@@ -160,14 +169,13 @@ export function SugestaoBoletoPainel({
         </p>
       ) : null}
       {/* Região viva única: o resultado da última ação é anunciado sem roubar o foco. */}
-      <div aria-live="polite">
+      <div role="status">
         {aviso ? (
           <p
-            role={aviso.tipo === 'erro' ? 'alert' : 'status'}
             className={
               aviso.tipo === 'erro'
                 ? 'rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-sm text-danger-foreground'
-                : 'rounded-lg border border-success/40 px-3 py-2 text-sm text-success'
+                : 'rounded-lg border border-success/40 px-3 py-2 text-sm text-success-foreground'
             }
           >
             {aviso.texto}
@@ -182,6 +190,8 @@ export function SugestaoBoletoPainel({
           const atencao = a.resultado === 'ATENCAO'
           const vencido = a.resultado === 'VENCIDO_INFORMATIVO'
           const podeConfirmar = a.confirmavel && s.confirmavel && !confirmada
+          const nome = String(s.numeroBoleto ?? s.ditCod)
+          const motivoId = `${titleId}-motivo-${s.ddcCod}-${s.ditCod}`
           return (
             <li
               key={idItem(s)}
@@ -193,9 +203,7 @@ export function SugestaoBoletoPainel({
                 </span>
                 <Badge
                   variant="outline"
-                  className={
-                    atencao || vencido ? ATENCAO_CLASSE : 'border-success/40 text-success'
-                  }
+                  className={TIER_CLASSE[a.resultado]}
                 >
                   {TIER_ROTULO[a.resultado]}
                 </Badge>
@@ -230,7 +238,7 @@ export function SugestaoBoletoPainel({
                   {a.sinais.map((sinal) => {
                     const t = TEXTO_SINAL[sinal]
                     return (
-                      <li key={sinal} className={t.atencao ? 'text-warning' : undefined}>
+                      <li key={sinal} className={t.atencao ? 'text-warning-foreground' : undefined}>
                         {t.texto}
                       </li>
                     )
@@ -244,7 +252,7 @@ export function SugestaoBoletoPainel({
                 </p>
               ) : null}
               {vencido ? (
-                <p className="mt-2 text-sm text-warning">
+                <p className="mt-2 text-sm text-warning-foreground">
                   O boleto vence antes da data de débito: serve só como informação.
                 </p>
               ) : null}
@@ -253,6 +261,8 @@ export function SugestaoBoletoPainel({
                   <Button
                     size="sm"
                     disabled={ocup || !podeConfirmar}
+                    aria-label={`Confirmar boleto ${nome}`}
+                    aria-describedby={!podeConfirmar ? motivoId : undefined}
                     onClick={() => void confirmar(s)}
                   >
                     Confirmar
@@ -263,13 +273,20 @@ export function SugestaoBoletoPainel({
                     size="sm"
                     variant="outline"
                     disabled={ocup}
+                    aria-label={`Rejeitar boleto ${nome}`}
                     onClick={() => setDialogo({ tipo: 'rejeitar', sugestao: s })}
                   >
                     Rejeitar
                   </Button>
                 ) : null}
                 {podeCopiar ? (
-                  <Button size="sm" variant="outline" disabled={ocup} onClick={() => void copiar(s)}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ocup}
+                    aria-label={`Copiar linha digitável do boleto ${nome}`}
+                    onClick={() => void copiar(s)}
+                  >
                     <Copy className="size-4" aria-hidden /> Copiar linha digitável
                   </Button>
                 ) : null}
@@ -278,6 +295,7 @@ export function SugestaoBoletoPainel({
                     size="sm"
                     variant="outline"
                     disabled={ocup}
+                    aria-label={`Revogar confirmação do boleto ${nome}`}
                     onClick={() => setDialogo({ tipo: 'revogar', sugestao: s })}
                   >
                     Revogar confirmação
@@ -285,7 +303,7 @@ export function SugestaoBoletoPainel({
                 ) : null}
               </div>
               {podeExecutar && !podeConfirmar && !confirmada ? (
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p id={motivoId} className="mt-1 text-xs text-muted-foreground">
                   Confirmar indisponível: {s.motivo ?? 'a regra não permite confirmar esta sugestão.'}
                 </p>
               ) : null}

@@ -114,7 +114,7 @@ describe('SugestaoBoletoPainel — evidência', () => {
     expect(screen.getByText('atenção')).toBeInTheDocument()
     expect(screen.queryByText('sugestão forte')).not.toBeInTheDocument()
     expect(screen.getByText('R$ +3,20').className).toMatch(/text-warning/)
-    expect(screen.getByRole('button', { name: 'Confirmar' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^Confirmar boleto/ })).toBeEnabled()
   })
 
   it('VENCIDO_INFORMATIVO é só informativo: Confirmar desabilitado com o motivo, sem Rejeitar', () => {
@@ -130,9 +130,9 @@ describe('SugestaoBoletoPainel — evidência', () => {
       }),
     ])
     expect(screen.getByText('vencido · só informativo')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Confirmar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Confirmar boleto/ })).toBeDisabled()
     expect(screen.getByText(/Boleto vence antes da data de débito/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Rejeitar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Rejeitar boleto/ })).not.toBeInTheDocument()
   })
 
   it('mostra o aviso de DDA defasado só quando informado', () => {
@@ -153,8 +153,8 @@ describe('SugestaoBoletoPainel — evidência', () => {
   it('confirmada: informa que ainda não está associada no ERP e oferece revogar o par', () => {
     renderPainel([sugestao({ estado: 'CONFIRMADA', confirmacaoEmissorId: 'par-1' })])
     expect(screen.getByText(/ainda não associado no ERP/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Revogar confirmação' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Confirmar boleto/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Revogar confirmação do boleto/ })).toBeInTheDocument()
   })
 })
 
@@ -162,9 +162,9 @@ describe('SugestaoBoletoPainel — permissões', () => {
   it('sispag:ver sem executar: vê e copia; Confirmar, Rejeitar e Revogar somem', () => {
     renderPainel([sugestao({ confirmacaoEmissorId: 'par-1' })], { executar: false, copiar: true })
     expect(screen.getByRole('button', { name: /Copiar linha digitável/ })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Rejeitar' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Revogar confirmação' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Confirmar boleto/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Rejeitar boleto/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Revogar confirmação do boleto/ })).not.toBeInTheDocument()
   })
 
   it('sem sispag:ver: nem copiar', () => {
@@ -174,7 +174,12 @@ describe('SugestaoBoletoPainel — permissões', () => {
 
   it('executar vê as quatro ações', () => {
     renderPainel([sugestao({ confirmacaoEmissorId: 'par-1' })])
-    for (const nome of ['Confirmar', 'Rejeitar', /Copiar linha digitável/, 'Revogar confirmação'])
+    for (const nome of [
+      /^Confirmar boleto/,
+      /^Rejeitar boleto/,
+      /Copiar linha digitável/,
+      /^Revogar confirmação do boleto/,
+    ])
       expect(screen.getByRole('button', { name: nome })).toBeInTheDocument()
   })
 })
@@ -183,7 +188,7 @@ describe('SugestaoBoletoPainel — confirmar', () => {
   it('confirma com a chave do título/boleto, anuncia o resultado e relê a lista', async () => {
     confirmar.mockResolvedValue({ criada: true, decisao: {} })
     renderPainel([sugestao()])
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await userEvent.click(screen.getByRole('button', { name: /^Confirmar boleto/ }))
     expect(confirmar).toHaveBeenCalledWith({
       filCod: 1,
       docCod: '5046',
@@ -203,8 +208,8 @@ describe('SugestaoBoletoPainel — confirmar', () => {
   ])('%s %s: mostra a mensagem do envelope', async (status, code, msg, relê) => {
     confirmar.mockRejectedValue(erroApi(status as number, code as string, msg as string))
     renderPainel([sugestao()])
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(msg as string)
+    await userEvent.click(screen.getByRole('button', { name: /^Confirmar boleto/ }))
+    expect(await screen.findByRole('status')).toHaveTextContent(msg as string)
     // Sugestão velha (409) relê a lista; o resto não.
     expect(onDecidido).toHaveBeenCalledTimes(relê ? 1 : 0)
   })
@@ -214,7 +219,7 @@ describe('SugestaoBoletoPainel — rejeitar', () => {
   it('exige motivo, envia, anuncia e relê', async () => {
     rejeitar.mockResolvedValue({ criada: true, decisao: {} })
     renderPainel([sugestao()])
-    await userEvent.click(screen.getByRole('button', { name: 'Rejeitar' }))
+    await userEvent.click(screen.getByRole('button', { name: /^Rejeitar boleto/ }))
     const dlg = await screen.findByRole('dialog')
     await userEvent.click(within(dlg).getByRole('button', { name: 'Rejeitar' }))
     expect(within(dlg).getByRole('alert')).toHaveTextContent('Informe o motivo.')
@@ -236,7 +241,7 @@ describe('SugestaoBoletoPainel — rejeitar', () => {
       erroApi(422, 'CONFIRMACAO_EMISSOR_MOTIVO_OBRIGATORIO', 'Informe o motivo da decisão.'),
     )
     renderPainel([sugestao()])
-    await userEvent.click(screen.getByRole('button', { name: 'Rejeitar' }))
+    await userEvent.click(screen.getByRole('button', { name: /^Rejeitar boleto/ }))
     const dlg = await screen.findByRole('dialog')
     await userEvent.type(within(dlg).getByLabelText('Motivo'), 'x')
     await userEvent.click(within(dlg).getByRole('button', { name: 'Rejeitar' }))
@@ -263,7 +268,7 @@ describe('SugestaoBoletoPainel — copiar linha', () => {
     )
     renderPainel([sugestao()])
     await userEvent.click(screen.getByRole('button', { name: /Copiar linha digitável/ }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Não foi possível registrar a cópia')
+    expect(await screen.findByRole('status')).toHaveTextContent('Não foi possível registrar a cópia')
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
   })
 
@@ -271,7 +276,7 @@ describe('SugestaoBoletoPainel — copiar linha', () => {
     copiar.mockRejectedValue(erroApi(429, 'MUITAS_DECISOES', 'Muitas cópias em pouco tempo.'))
     renderPainel([sugestao()])
     await userEvent.click(screen.getByRole('button', { name: /Copiar linha digitável/ }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Muitas cópias em pouco tempo.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Muitas cópias em pouco tempo.')
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
   })
 
@@ -283,7 +288,7 @@ describe('SugestaoBoletoPainel — copiar linha', () => {
     })
     renderPainel([sugestao()])
     await userEvent.click(screen.getByRole('button', { name: /Copiar linha digitável/ }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('área de transferência')
+    expect(await screen.findByRole('status')).toHaveTextContent('área de transferência')
   })
 })
 
@@ -293,7 +298,7 @@ describe('SugestaoBoletoPainel — revogar', () => {
       erroApi(404, 'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA', 'Confirmação não encontrada.'),
     )
     renderPainel([sugestao({ confirmacaoEmissorId: 'par-1' })])
-    await userEvent.click(screen.getByRole('button', { name: 'Revogar confirmação' }))
+    await userEvent.click(screen.getByRole('button', { name: /^Revogar confirmação do boleto/ }))
     let dlg = await screen.findByRole('dialog')
     await userEvent.type(within(dlg).getByLabelText('Motivo'), 'conta trocada')
     await userEvent.click(within(dlg).getByRole('button', { name: 'Revogar' }))
@@ -306,5 +311,67 @@ describe('SugestaoBoletoPainel — revogar', () => {
     expect(onDecidido).toHaveBeenCalled()
     dlg = screen.queryByRole('dialog') as HTMLElement
     expect(dlg).toBeNull()
+  })
+})
+
+describe('SugestaoBoletoPainel — acessibilidade', () => {
+  const duas = () => [
+    sugestao({ confirmacaoEmissorId: 'par-1' }),
+    sugestao({ ddcCod: 153, ditCod: 8, numeroBoleto: '163987000', confirmacaoEmissorId: 'par-2' }),
+  ]
+
+  it('os botões repetidos têm nomes únicos e citam o número do boleto', () => {
+    renderPainel(duas())
+    const nomes = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
+    expect(new Set(nomes).size).toBe(nomes.length)
+    expect(screen.getByRole('button', { name: 'Confirmar boleto 163987000' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rejeitar boleto 001532761' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Copiar linha digitável do boleto 163987000' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Revogar confirmação do boleto 001532761' }),
+    ).toBeInTheDocument()
+  })
+
+  it.each([
+    ['CONHECIDO', /text-success-foreground/],
+    ['FORTE', /text-success-foreground/],
+    ['ATENCAO', /text-warning-foreground/],
+    ['VENCIDO_INFORMATIVO', /text-warning-foreground/],
+    ['SEM_RELACAO', /text-muted-foreground/],
+  ] as const)('tier %s tem o tom explícito', (resultado, esperado) => {
+    renderPainel([sugestao({ avaliacao: { ...sugestao().avaliacao, resultado } })])
+    const rotulos = {
+      CONHECIDO: 'sugestão forte · emissor conhecido',
+      FORTE: 'sugestão forte',
+      ATENCAO: 'atenção',
+      VENCIDO_INFORMATIVO: 'vencido · só informativo',
+      SEM_RELACAO: 'sem relação com o título',
+    }
+    const badge = screen.getByText(rotulos[resultado])
+    expect(badge.className).toMatch(esperado)
+    expect(badge.className).not.toMatch(/(^|\s)text-(warning|success)(\s|$)/)
+    if (resultado === 'SEM_RELACAO') expect(badge.className).not.toMatch(/success/)
+  })
+
+  it('Confirmar desabilitado é descrito pelo motivo', () => {
+    renderPainel([
+      sugestao({
+        confirmavel: false,
+        motivo: 'Boleto vence antes da data de débito.',
+        avaliacao: { ...sugestao().avaliacao, confirmavel: false },
+      }),
+    ])
+    const botao = screen.getByRole('button', { name: /^Confirmar boleto/ })
+    expect(botao).toHaveAccessibleDescription(/Boleto vence antes da data de débito/)
+  })
+
+  it('um erro é anunciado por uma única região role=status, sem alert aninhado', async () => {
+    confirmar.mockRejectedValue(erroApi(429, 'MUITAS_DECISOES', 'Muitas decisões.'))
+    renderPainel([sugestao()])
+    await userEvent.click(screen.getByRole('button', { name: /^Confirmar boleto/ }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Muitas decisões.')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

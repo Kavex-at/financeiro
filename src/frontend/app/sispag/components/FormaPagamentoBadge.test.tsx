@@ -9,10 +9,9 @@ describe('FormaPagamentoBadge', () => {
 
   it('BOLETO sem DDA — o caso que sai sem código de barras', () => {
     render(<FormaPagamentoBadge titulo={{ formaPagamentoConexos: 6, temBoleto: false }} />)
-    expect(screen.getByText('boleto sem DDA')).toHaveAttribute(
-      'title',
-      expect.stringContaining('sem boleto DDA'),
-    )
+    expect(screen.getByText('boleto sem DDA')).toBeInTheDocument()
+    expect(screen.getByText(/valor ou vencimento do boleto difere do título/)).toBeInTheDocument()
+    expect(screen.getByText('boleto sem DDA').className).toMatch(/text-warning-foreground/)
   })
 
   it('outra forma com DDA associado mostra o rótulo e anuncia o DDA', () => {

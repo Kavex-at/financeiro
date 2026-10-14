@@ -4,6 +4,7 @@
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { BoletoDda, BoletosDdaResposta } from '@/lib/sispag'
 import { BoletosDoTituloDialog } from './BoletosDoTituloDialog'
 
@@ -146,7 +147,30 @@ describe('BoletosDoTituloDialog', () => {
     )
     expect(await screen.findByText('Sugestão de boleto')).toBeInTheDocument()
     expect(screen.getByText('+3 dias')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Confirmar boleto/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Copiar linha digitável/ })).toBeInTheDocument()
+  })
+
+  it('as tabelas têm nome acessível conforme a seção', async () => {
+    mockApiFetch.mockResolvedValue(ok(resposta([boleto({})])))
+    render(<BoletosDoTituloDialog titulo={titulo} onClose={jest.fn()} />)
+    expect(
+      await screen.findByRole('table', { name: 'Outros boletos DDA com o mesmo valor' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Boleto' })).toHaveAttribute('scope', 'col')
+  })
+
+  it('carregando é role=status; falha é role=alert e "Tentar de novo" refaz a consulta', async () => {
+    mockApiFetch.mockRejectedValueOnce(new Error('Falha de rede'))
+    mockApiFetch.mockRejectedValueOnce(new Error('Falha de rede'))
+    render(<BoletosDoTituloDialog titulo={titulo} onClose={jest.fn()} />)
+    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.getByText(/Consultando os boletos DDA/)).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Falha de rede')
+    mockApiFetch.mockReset()
+    mockApiFetch.mockResolvedValue(ok(resposta([boleto({})])))
+    await userEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+    expect(await screen.findByText('001532761')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

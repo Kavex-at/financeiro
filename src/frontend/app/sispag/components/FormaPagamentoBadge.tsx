@@ -3,9 +3,9 @@ import { Badge } from '@/components/ui/badge'
 import { formaDePagamento, type TituloAPagar } from '@/lib/sispag'
 import type { ResumoSugestaoTitulo } from './sugestaoBoleto'
 
-const TITULO: Record<'dda' | 'alerta', string> = {
-  dda: 'BOLETO no Conexos com boleto DDA associado — o código de barras sai na remessa',
-  alerta: 'BOLETO no Conexos sem boleto DDA: valor ou vencimento do boleto difere do título',
+const EXPLICACAO: Record<'dda' | 'alerta', string> = {
+  dda: 'o código de barras sai na remessa',
+  alerta: 'valor ou vencimento do boleto difere do título',
 }
 
 /**
@@ -31,24 +31,25 @@ export function FormaPagamentoBadge({
   const forma = formaDePagamento(titulo)
   if (forma.tom === 'dda') {
     return (
-      <Badge variant="outline" className="border-success/40 text-success" title={TITULO.dda}>
+      <Badge variant="outline" className="border-success/40 text-success-foreground">
         <Barcode className="mr-1 size-3" aria-hidden />
         {forma.rotulo}
+        <span className="sr-only"> — {EXPLICACAO.dda}</span>
       </Badge>
     )
   }
   if (forma.tom === 'alerta') {
     return (
       <div className="flex flex-col items-start gap-1">
-        <Badge variant="outline" className="border-warning/40 text-warning" title={TITULO.alerta}>
+        <Badge variant="outline" className="border-warning/40 text-warning-foreground">
           {forma.rotulo}
+          <span className="sr-only"> — {EXPLICACAO.alerta}</span>
         </Badge>
         {sugestao && onAbrirSugestao ? (
           <button
             type="button"
             onClick={onAbrirSugestao}
             className="text-xs text-primary underline underline-offset-2 focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded-sm"
-            title="Abre a sugestão de boleto DDA para este título. Não grava nada no Conexos."
           >
             {ROTULO_SUGESTAO[sugestao]}
           </button>
@@ -59,11 +60,10 @@ export function FormaPagamentoBadge({
   return (
     <span
       className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
-      title="Forma de pagamento no Conexos (Pago Por / Situação do psq014)"
     >
       {forma.rotulo}
       {forma.comDda ? (
-        <span className="inline-flex items-center text-success">
+        <span className="inline-flex items-center text-success-foreground">
           <Barcode className="size-3" aria-hidden />
           <span className="sr-only">com boleto DDA</span>
         </span>
