@@ -200,4 +200,11 @@ export interface LinhasDigitaveisDoLote {
     itens: ItemLinhaDigitavel[];
     total: number;
     dropped: number;
+    /**
+     * Identidade (nunca o código) dos itens recusados — `docCod: ''` quando a linha nem a tinha.
+     * Presente só quando há recusados; ausente equivale a `[]`. Invariante:
+     * `itens.length + (invalidos?.length ?? 0) === total` e `dropped === invalidos.length`.
+     * Uso interno do backend (guarda de código repetido, I16c); não é exposto na API do painel.
+     */
+    invalidos?: Array<{ docCod: string; titCod: string }>;
 }

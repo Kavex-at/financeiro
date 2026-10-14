@@ -598,6 +598,34 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             expect(res.itens.length + res.dropped).toBe(res.total);
         });
 
+        it('devolve a identidade dos recusados em `invalidos`, sem nenhum campo com o código', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                rows: [
+                    linha({ docCod: 1, itsNumCodbar: LINHA_OK }),
+                    linha({ docCod: 3, titCod: 2, itsNumCodbar: LINHA_DV_RUIM }),
+                    linha({ docCod: 4, titCod: undefined, itsNumCodbar: '123' }),
+                    { itsNumCodbar: LINHA_OK_2 },
+                    linha({ docCod: 5, itsNumCodbar: null }),
+                ],
+            });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+            });
+            expect(res.invalidos).toEqual([
+                { docCod: '3', titCod: '2' },
+                { docCod: '4', titCod: '1' },
+                { docCod: '', titCod: '1' },
+            ]);
+            expect(res.dropped).toBe(3);
+            expect(res.itens.length + (res.invalidos?.length ?? 0)).toBe(res.total);
+            const saida = JSON.stringify(res.invalidos);
+            expect(saida).not.toContain(LINHA_DV_RUIM);
+            expect(saida).not.toContain(LINHA_OK_2);
+        });
+
         it('lote sem nenhum item com boleto → lista vazia, sem erro', async () => {
             const base = buildBase();
             base.listGenericPaginated.mockResolvedValue({ rows: [] });

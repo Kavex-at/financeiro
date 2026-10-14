@@ -262,6 +262,15 @@ export default class ConexosSispagWriteClient {
      * Detectar AQUI cobre todas as chamadas de uma vez, porque todo `catch` deste cliente
      * passa por este método.
      */
+    /** Identidade textual de um campo de chave do grid; `padrao` quando ausente/vazio. */
+    private identidade = (valor: unknown, padrao: string): string => {
+        if (typeof valor === 'string' || typeof valor === 'number') {
+            const s = String(valor).trim();
+            return s === '' ? padrao : s;
+        }
+        return padrao;
+    };
+
     private toConexosError = (endpoint: string, cause: unknown): Error => {
         const pergunta = this.perguntaDoErp(cause);
         if (pergunta) return new ErpPerguntaError({ ...pergunta, contexto: endpoint });
@@ -613,6 +622,7 @@ export default class ConexosSispagWriteClient {
                 );
             });
             const itens: Array<{ docCod: string; titCod: string; linhaDigitavel: string }> = [];
+            const invalidos: Array<{ docCod: string; titCod: string }> = [];
             let total = 0;
             for (const row of page.rows ?? []) {
                 // Sem o campo (ou vazio) = item que não é boleto. Não é anomalia, não conta.
@@ -620,14 +630,26 @@ export default class ConexosSispagWriteClient {
                 if (bruto === null || bruto === undefined || String(bruto).trim() === '') continue;
                 total += 1;
                 const parsed = LINHA_DIGITAVEL_SCHEMA.safeParse(row);
-                if (!parsed.success) continue;
+                if (!parsed.success) {
+                    // Só a identidade do item: o código recusado nunca sai daqui (I16e).
+                    invalidos.push({
+                        docCod: this.identidade(row.docCod, ''),
+                        titCod: this.identidade(row.titCod, '1'),
+                    });
+                    continue;
+                }
                 itens.push({
                     docCod: parsed.data.docCod,
                     titCod: parsed.data.titCod,
                     linhaDigitavel: parsed.data.itsNumCodbar,
                 });
             }
-            return { itens, total, dropped: total - itens.length };
+            return {
+                itens,
+                total,
+                dropped: invalidos.length,
+                ...(invalidos.length > 0 ? { invalidos } : {}),
+            };
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }
