@@ -23,6 +23,40 @@ export interface ResultadoAnaliseCodigoBarras {
     ilegiveis: string[];
 }
 
+/** Entrada da decisão de retirada (I16d.1): item com a ordem de "quem fica". */
+export interface ItemCodigoBarrasComOrdem extends ItemCodigoBarras {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    /** Epoch ms (meia-noite UTC, como o Conexos). Ausente perde o desempate (fica por último). */
+    vencimento?: number;
+}
+
+export const MOTIVO_RETIRADA = {
+    CODIGO_BARRAS_REPETIDO: 'CODIGO_BARRAS_REPETIDO',
+    CODIGO_BARRAS_ILEGIVEL: 'CODIGO_BARRAS_ILEGIVEL',
+} as const;
+
+export interface RetiradaDecidida {
+    /** Chave do item que sai. */
+    chave: string;
+    /** Máscara 5+4 do código compartilhado (I16e). Nunca as barras. */
+    mascarado: string;
+    /** Chave do item do grupo que FICA. */
+    mantida: string;
+    motivo: typeof MOTIVO_RETIRADA.CODIGO_BARRAS_REPETIDO;
+}
+
+export interface IlegivelDecidido {
+    chave: string;
+    motivo: typeof MOTIVO_RETIRADA.CODIGO_BARRAS_ILEGIVEL;
+}
+
+export interface DecisaoRetirada {
+    retirar: RetiradaDecidida[];
+    ilegiveis: IlegivelDecidido[];
+}
+
 /**
  * Análise pura de repetição de código de barras num conjunto de itens (ADR-0069, I16).
  *
@@ -56,6 +90,57 @@ export default class AnaliseCodigoBarrasRepetido {
             grupos.push({ barras44, mascarado: this.mascarar(barras44), chaves });
         }
         return { grupos, ilegiveis };
+    };
+
+    /**
+     * I16d.1 — de cada grupo de código repetido FICA UM só: o de menor `vencimento` (ausente
+     * perde), depois menor `docCod` (numérico), `filCod` e `titCod`. Os demais saem. Item de
+     * código ilegível (DV inválido) sai com motivo próprio e sem "quem fica" (I16d.2).
+     * Sem I/O; a saída NÃO carrega as barras — só a máscara.
+     */
+    public decidirRetirada = (itens: ItemCodigoBarrasComOrdem[]): DecisaoRetirada => {
+        const porChave = new Map(itens.map((i) => [i.chave, i]));
+        const analise = this.analisar(itens);
+        const retirar: RetiradaDecidida[] = [];
+        for (const grupo of analise.grupos) {
+            const membros = grupo.chaves
+                .map((c) => porChave.get(c))
+                .filter((i): i is ItemCodigoBarrasComOrdem => i !== undefined)
+                .sort(AnaliseCodigoBarrasRepetido.compararOrdem);
+            const [mantido, ...saem] = membros;
+            if (!mantido) continue;
+            for (const s of saem) {
+                retirar.push({
+                    chave: s.chave,
+                    mascarado: grupo.mascarado,
+                    mantida: mantido.chave,
+                    motivo: MOTIVO_RETIRADA.CODIGO_BARRAS_REPETIDO,
+                });
+            }
+        }
+        return {
+            retirar,
+            ilegiveis: analise.ilegiveis.map((chave) => ({
+                chave,
+                motivo: MOTIVO_RETIRADA.CODIGO_BARRAS_ILEGIVEL,
+            })),
+        };
+    };
+
+    private static compararOrdem = (
+        a: ItemCodigoBarrasComOrdem,
+        b: ItemCodigoBarrasComOrdem,
+    ): number => {
+        const va = a.vencimento ?? Number.POSITIVE_INFINITY;
+        const vb = b.vencimento ?? Number.POSITIVE_INFINITY;
+        if (va !== vb) return va < vb ? -1 : 1;
+        const num = (x: string, y: string): number => {
+            const nx = Number(x);
+            const ny = Number(y);
+            if (Number.isFinite(nx) && Number.isFinite(ny) && nx !== ny) return nx - ny;
+            return x < y ? -1 : x > y ? 1 : 0;
+        };
+        return num(a.docCod, b.docCod) || a.filCod - b.filCod || num(a.titCod, b.titCod);
     };
 
     /** I16e: 5 primeiros + 4 últimos dígitos das barras (44). */
