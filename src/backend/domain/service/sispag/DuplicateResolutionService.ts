@@ -169,13 +169,18 @@ export default class DuplicateResolutionService {
 
     /**
      * `true` quando a ÚLTIMA execução real de remessa do lote terminou em `error` por limpeza de
-     * código de barras incompleta: o rascunho nativo ainda tem resíduo (I16d.6, Q10).
+     * código de barras incompleta, ou ainda está `reconciling` (em voo/órfã): o rascunho nativo
+     * pode ter resíduo (I16d.6, Q10).
      */
     private limpezaPendente = async (loteId: string): Promise<boolean> => {
         const execucoes = await this.ledger.listByLote(loteId);
         const ultima = execucoes.find((e) => !e.dryRun);
+        if (ultima === undefined) return false;
+        // `reconciling` = limpeza em voo (janela entre a transação local e o DELETE nativo, ou
+        // crash nela): desfazer agora quebraria o par marca + evento que reconhece o resíduo.
+        if (ultima.status === 'reconciling') return true;
         return (
-            ultima?.status === 'error' &&
+            ultima.status === 'error' &&
             (ultima.erroMensagem ?? '').includes(MOTIVO_LEDGER_LIMPEZA_INCOMPLETA)
         );
     };
