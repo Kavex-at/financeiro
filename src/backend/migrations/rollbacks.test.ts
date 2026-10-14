@@ -66,6 +66,10 @@ describe('migrations — segurança do diretório', () => {
                 // Só colunas e CHECKs novos na marca de bloqueio (ADR-0069 emenda 1); o reverse
                 // documenta o export prévio da origem/máscara das marcas por código de barras.
                 '0085_sispag_bloqueio_origem_codigo_barras.sql',
+                // Colunas do vínculo no item, 3 tipos na trilha só-inclusão e a origem nova da
+                // marca de retenção (ADR-0071); o reverse devolve os CHECKs antigos como NOT VALID
+                // porque os eventos VINCULO_* ficam (a trilha recusa DELETE).
+                '0086_sispag_vinculo_codigo_barras.sql',
             ].sort(),
         );
         for (const alvo of reverses) {
