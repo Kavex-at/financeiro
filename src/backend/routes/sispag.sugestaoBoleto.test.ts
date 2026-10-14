@@ -10,6 +10,7 @@ jest.mock('../domain/appContainer.js', () => ({
 
 import BoletoAlreadySuggestedToOtherTitleError from '../domain/errors/BoletoAlreadySuggestedToOtherTitleError.js';
 import BoletoSuggestionNotAvailableError from '../domain/errors/BoletoSuggestionNotAvailableError.js';
+import DecisionNotConfirmedError from '../domain/errors/DecisionNotConfirmedError.js';
 import InvalidDecisionActorError from '../domain/errors/InvalidDecisionActorError.js';
 import IssuerConfirmationVersionConflictError from '../domain/errors/IssuerConfirmationVersionConflictError.js';
 import IssuerConfirmationNotFoundError from '../domain/errors/IssuerConfirmationNotFoundError.js';
@@ -101,6 +102,10 @@ const servico = (over: Record<string, jest.Mock> = {}) => {
             .fn()
             .mockResolvedValue({ criada: true, decisao: { ...DECISAO, decisao: 'REJEITADA' } }),
         revogarPar: jest.fn().mockResolvedValue({ id: ID, estado: 'REVOGADA' }),
+        anularDecisao: jest.fn().mockResolvedValue({
+            anulada: true,
+            decisao: { ...DECISAO, decisao: 'ANULADA', anuladaPor: 'bia' },
+        }),
         copiarLinha: jest.fn().mockResolvedValue({ linhaDigitavel: LINHA }),
         ...over,
     };
@@ -129,6 +134,11 @@ describe('matriz de permissão da sugestão de boleto (ADR-0053/0068)', () => {
             '/sispag/sugestoes-boleto/rejeitar',
             { ...CHAVE, motivo: 'outro credor' },
         ],
+        [
+            'POST anular',
+            '/sispag/sugestoes-boleto/anular',
+            { filCod: 2, docCod: '9001', titCod: '1', motivo: 'confirmação errada' },
+        ],
         ['POST revogar', `/sispag/confirmacoes-emissor/${ID}/revogar`, { motivo: 'conta trocada' }],
     ];
 
@@ -155,6 +165,7 @@ describe('matriz de permissão da sugestão de boleto (ADR-0053/0068)', () => {
         expect(s.confirmar).not.toHaveBeenCalled();
         expect(s.rejeitar).not.toHaveBeenCalled();
         expect(s.revogarPar).not.toHaveBeenCalled();
+        expect(s.anularDecisao).not.toHaveBeenCalled();
         await comApp(VER_EXECUTAR, async (url) => {
             expect([200, 201]).toContain((await post(`${url}${rota}`, body)).status);
         });
@@ -300,6 +311,83 @@ describe('POST /sispag/sugestoes-boleto/rejeitar', () => {
             expect(await res.json()).toMatchObject({
                 code: 'CONFIRMACAO_EMISSOR_MOTIVO_OBRIGATORIO',
             });
+        });
+    });
+});
+
+describe('POST /sispag/sugestoes-boleto/anular (I15l)', () => {
+    const BODY = { filCod: 2, docCod: '9001', titCod: '1', motivo: 'confirmação errada' };
+
+    it('repassa título, motivo e ator do token; 200 { anulada, decisao } sem emissorChave', async () => {
+        const s = servico();
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/anular`, BODY);
+            expect(res.status).toBe(200);
+            const json = await res.json();
+            expect(json).toMatchObject({ anulada: true, decisao: { decisao: 'ANULADA' } });
+            expect(JSON.stringify(json)).not.toContain('emissorChave');
+            expect(JSON.stringify(json)).not.toContain('0092740');
+        });
+        expect(s.anularDecisao).toHaveBeenCalledWith({ ...BODY, ator: 'bia' });
+    });
+
+    it('já anulada continua 200 (idempotente)', async () => {
+        servico({
+            anularDecisao: jest.fn().mockResolvedValue({
+                anulada: false,
+                decisao: { ...DECISAO, decisao: 'ANULADA' },
+            }),
+        });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/anular`, BODY);
+            expect(res.status).toBe(200);
+            expect(await res.json()).toMatchObject({ anulada: false });
+        });
+    });
+
+    it('body estrito: ator/ddcCod forjados, motivo ausente ou fora de 10–500 → 400, serviço intocado', async () => {
+        const s = servico();
+        await comApp(VER_EXECUTAR, async (url) => {
+            const invalidos: unknown[] = [
+                { ...BODY, ator: 'sistema' },
+                { ...BODY, ddcCod: 10 },
+                { filCod: 2, docCod: '9001', titCod: '1' },
+                { ...BODY, motivo: 'curto' },
+                { ...BODY, motivo: '          ' },
+                { ...BODY, motivo: 'x'.repeat(501) },
+                { ...BODY, filCod: 'dois' },
+            ];
+            for (const body of invalidos) {
+                expect((await post(`${url}/sispag/sugestoes-boleto/anular`, body)).status).toBe(
+                    400,
+                );
+            }
+            expect(
+                (
+                    await post(`${url}/sispag/sugestoes-boleto/anular`, {
+                        ...BODY,
+                        motivo: 'x'.repeat(500),
+                    })
+                ).status,
+            ).toBe(200);
+        });
+        expect(s.anularDecisao).toHaveBeenCalledTimes(1);
+    });
+
+    it('título sem confirmação → 409 DECISAO_NAO_CONFIRMADA; ator recusado → 403', async () => {
+        servico({
+            anularDecisao: jest
+                .fn()
+                .mockRejectedValueOnce(
+                    new DecisionNotConfirmedError({ filCod: 2, docCod: '9001', titCod: '1' }),
+                )
+                .mockRejectedValueOnce(new InvalidDecisionActorError()),
+        });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const a = await post(`${url}/sispag/sugestoes-boleto/anular`, BODY);
+            expect(a.status).toBe(409);
+            expect(await a.json()).toMatchObject({ code: 'DECISAO_NAO_CONFIRMADA' });
+            expect((await post(`${url}/sispag/sugestoes-boleto/anular`, BODY)).status).toBe(403);
         });
     });
 });

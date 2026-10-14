@@ -63,6 +63,10 @@ const DECISAO_ROW = {
     decidido_em: new Date('2026-10-14T10:00:00Z'),
     motivo: null,
     confirmacao_emissor_id: 'p1',
+    versao: 1,
+    anulada_por: null,
+    anulada_em: null,
+    motivo_anulacao: null,
 };
 
 const NOVA_DECISAO = {
@@ -186,6 +190,65 @@ describe('SugestaoBoletoRepository (ADR-0068, migration 0084)', () => {
         expect(sql).not.toMatch(/conta trocada|'bia'/);
         expect(params).toEqual({ id: 'p1', versao: 1, ator: 'bia', motivo: 'conta trocada' });
         expect(n).toBe(0);
+    });
+
+    it('anularDecisao: CONFIRMADA → ANULADA com lock por versao, só se ainda CONFIRMADA', async () => {
+        const db = buildDb();
+        db.update.mockResolvedValue(0);
+        const n = await make(db).anularDecisao({
+            id: 'd1',
+            versaoEsperada: 3,
+            ator: 'bia',
+            motivo: 'confirmação errada',
+        });
+        const [sql, params] = db.update.mock.calls[0];
+        expect(sql).toMatch(/decisao = 'ANULADA'/);
+        expect(sql).toMatch(/versao = \$versao/);
+        expect(sql).toMatch(/decisao = 'CONFIRMADA'/);
+        expect(sql).toMatch(/versao = versao \+ 1/);
+        expect(sql).not.toMatch(/confirmação errada|'bia'/);
+        expect(params).toEqual({
+            id: 'd1',
+            versao: 3,
+            ator: 'bia',
+            motivo: 'confirmação errada',
+        });
+        expect(n).toBe(0);
+    });
+
+    it('listarConfirmadasDoPar trava as linhas (FOR UPDATE) e mapeia a anulação', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValue([
+            {
+                ...DECISAO_ROW,
+                decisao: 'ANULADA',
+                anulada_por: 'bia',
+                anulada_em: new Date('2026-10-14T12:00:00Z'),
+                motivo_anulacao: 'par revogado: x',
+                versao: 2,
+            },
+        ]);
+        const tx = db as never;
+        const r = await make(db).listarConfirmadasDoPar('p1', tx);
+        expect(db.selectMany.mock.calls[0][0]).toMatch(/FOR UPDATE/);
+        expect(db.selectMany.mock.calls[0][0]).toMatch(/decisao = 'CONFIRMADA'/);
+        expect(r[0]).toMatchObject({
+            decisao: 'ANULADA',
+            anuladaPor: 'bia',
+            motivoAnulacao: 'par revogado: x',
+            versao: 2,
+        });
+    });
+
+    it('buscarParVigente trava o par (FOR SHARE) só dentro da transação e quando pedido', async () => {
+        const db = buildDb();
+        const tx = buildDb();
+        await make(db).buscarParVigente('7001', '341:1234:12345', undefined, true);
+        await make(db).buscarParVigente('7001', '341:1234:12345', tx as never);
+        await make(db).buscarParVigente('7001', '341:1234:12345', tx as never, true);
+        expect(db.selectFirst.mock.calls[0][0]).not.toMatch(/FOR SHARE/);
+        expect(tx.selectFirst.mock.calls[0][0]).not.toMatch(/FOR SHARE/);
+        expect(tx.selectFirst.mock.calls[1][0]).toMatch(/FOR SHARE/);
     });
 
     it('inserirDecisao CONFIRMADA: ON CONFLICT DO NOTHING; criada=true com a linha gravada', async () => {

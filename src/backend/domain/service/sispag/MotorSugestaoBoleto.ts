@@ -5,6 +5,7 @@ import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import {
     type AvaliacaoSugestao,
     type DecisaoChaveada,
+    type DecisaoConfirmadaChaveada,
     ESTADO_SUGESTAO,
     type EmissorBoleto,
     type ParVigenteChave,
@@ -25,8 +26,8 @@ export interface EntradaMotorSugestao {
     paresVigentes: ParVigenteChave[];
     /** Decisões `REJEITADA`: esconde aquele boleto para aquele título. */
     rejeitadas: DecisaoChaveada[];
-    /** Decisões `CONFIRMADA` ativas. */
-    confirmadas: DecisaoChaveada[];
+    /** Decisões `CONFIRMADA` ativas (com o snapshot, para mostrar as órfãs). */
+    confirmadas: DecisaoConfirmadaChaveada[];
     /** Data de débito (civil) do lote do título, por `filCod:docCod:titCod`. Sem lote: vencimento. */
     datasDebito?: ReadonlyMap<string, string>;
 }
@@ -124,18 +125,43 @@ export default class MotorSugestaoBoleto {
         const rejeitadas = new Set(
             entrada.rejeitadas.map((d) => `${chaveTitulo(d)}|${chaveBoleto(d)}`),
         );
-        const confirmadaDoTitulo = new Map(entrada.confirmadas.map((d) => [chaveTitulo(d), d]));
-        const ocupados = new Set(entrada.confirmadas.map((d) => chaveBoleto(d)));
-
         const elegiveis = this.elegiveis(entrada.titulos, entrada.datasDebito);
-        const resultado: SugestaoBoletoTitulo[] = [];
-        const pendentes: Pendente[] = [];
+        const elegivelPorChave = new Map(elegiveis.map((e) => [e.chave, e]));
+        const tituloPorChave = new Map(entrada.titulos.map((t) => [chaveTitulo(t), t]));
 
+        // Cada CONFIRMADA ativa cai em uma de três: viva (título e boleto no jogo), órfã (visível,
+        // com aviso, I15l) ou invisível (título pago/inativo/fora da carteira: nada a fazer na tela;
+        // a decisão ainda pode ser anulada pela rota). Só a viva reserva o boleto.
+        const confirmadaDoTitulo = new Map<string, DecisaoConfirmadaChaveada>();
+        const ocupados = new Set<string>();
+        const resultado: SugestaoBoletoTitulo[] = [];
+        const resolvidosPorDecisao = new Set<string>();
+        for (const d of entrada.confirmadas) {
+            const chave = chaveTitulo(d);
+            const titulo = tituloPorChave.get(chave);
+            if (!titulo || titulo.pago || titulo.ativo === false) continue;
+            resolvidosPorDecisao.add(chave);
+            const alvo = elegivelPorChave.get(chave);
+            if (alvo) {
+                if (porChave.has(chaveBoleto(d))) {
+                    confirmadaDoTitulo.set(chave, d);
+                    ocupados.add(chaveBoleto(d));
+                } else {
+                    resultado.push(
+                        this.orfa(titulo, d, alvo.dataDebito, this.motivoBoletoSaiu(d, entrada)),
+                    );
+                }
+            } else {
+                resultado.push(this.orfa(titulo, d, undefined, this.motivoTituloSaiu(titulo)));
+            }
+        }
+
+        const pendentes: Pendente[] = [];
         for (const alvo of elegiveis) {
             const confirmada = confirmadaDoTitulo.get(alvo.chave);
             if (confirmada) {
                 const boleto = porChave.get(chaveBoleto(confirmada));
-                if (boleto)
+                if (boleto) {
                     resultado.push(
                         this.montar(
                             alvo,
@@ -144,8 +170,11 @@ export default class MotorSugestaoBoleto {
                             ESTADO_SUGESTAO.CONFIRMADA,
                         ),
                     );
+                }
                 continue;
             }
+            // Órfã: a decisão ainda ocupa o título (índice único); não se sugere outro boleto.
+            if (resolvidosPorDecisao.has(alvo.chave)) continue;
             pendentes.push({
                 alvo,
                 candidatos: this.candidatos(alvo, livres, ocupados, rejeitadas, pares),
@@ -401,6 +430,69 @@ export default class MotorSugestaoBoleto {
             ? { motivo: MOTIVO_VENCIDO }
             : {}),
     });
+
+    /**
+     * Confirmação órfã (I15l): mostra o que foi decidido (snapshot da decisão) e por que não vale
+     * mais. `confirmavel: false`; a tela oferece "Anular confirmação".
+     */
+    private orfa = (
+        titulo: TituloAPagar,
+        d: DecisaoConfirmadaChaveada,
+        dataDebito: string | undefined,
+        motivoOrfa: string,
+    ): SugestaoBoletoTitulo => {
+        const vencimento =
+            titulo.vencimento != null
+                ? this.calendar.fromErpEpoch(Number(titulo.vencimento))
+                : (d.vencimentoTitulo ?? '');
+        return {
+            filCod: titulo.filCod,
+            docCod: titulo.docCod,
+            titCod: titulo.titCod,
+            ...(titulo.pesCod ? { pesCod: titulo.pesCod } : {}),
+            ...(titulo.credor ? { credor: titulo.credor } : {}),
+            valorTitulo: titulo.valor,
+            vencimentoTitulo: vencimento,
+            dataDebito: dataDebito ?? vencimento,
+            ddcCod: d.ddcCod,
+            ditCod: d.ditCod,
+            ...(d.numeroBoleto ? { numeroBoleto: d.numeroBoleto } : {}),
+            valorBoleto: d.valorBoleto ?? 0,
+            vencimentoBoleto: d.vencimentoBoleto ?? '',
+            avaliacao: {
+                resultado: d.tier ?? RESULTADO_SUGESTAO.SEM_RELACAO,
+                deltaValor: d.deltaValor ?? 0,
+                deltaPercentual: d.deltaPercentual ?? 0,
+                deltaDias: d.deltaDias ?? 0,
+                sinais: d.sinais ?? [],
+                confirmavel: false,
+            },
+            estado: ESTADO_SUGESTAO.CONFIRMADA,
+            orfa: true,
+            motivoOrfa,
+        };
+    };
+
+    private motivoBoletoSaiu = (d: DecisaoChaveada, entrada: EntradaMotorSugestao): string => {
+        const noPool = entrada.boletos.find((b) => chaveBoleto(b) === chaveBoleto(d));
+        if (!noPool) {
+            return 'O boleto confirmado saiu do pool DDA (arquivo cancelado ou removido). Anule a confirmação.';
+        }
+        if (noPool.filCod != null && noPool.docCod && noPool.titCod) {
+            return 'O Conexos vinculou o boleto confirmado a um título. Anule a confirmação.';
+        }
+        return 'O boleto confirmado deixou de estar livre no pool DDA. Anule a confirmação.';
+    };
+
+    private motivoTituloSaiu = (titulo: TituloAPagar): string => {
+        if (titulo.temBoleto === true) {
+            return 'O Conexos já sinalizou boleto DDA para este título. Anule a confirmação.';
+        }
+        if (titulo.formaPagamentoConexos !== PAGO_POR_CONEXOS.BOLETO) {
+            return 'O título deixou de ser pago por boleto. Anule a confirmação.';
+        }
+        return 'O título não tem mais as condições da confirmação. Anule a confirmação.';
+    };
 
     /** Prioridade na disputa (I15e/Q-D): menor vencimento; empate: docCod, filCod, titCod. */
     private prioridade = (x: TituloElegivel, y: TituloElegivel): number =>

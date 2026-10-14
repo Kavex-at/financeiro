@@ -63,6 +63,7 @@ import {
 } from '../http/rateLimit.js';
 import type { DecisaoSugestao } from '../domain/interface/sispag/ConfirmacaoEmissorBoleto.js';
 import {
+    AnularDecisaoBodySchema,
     ChaveSugestaoBodySchema,
     ConfirmacaoEmissorIdSchema,
     ConfirmacoesEmissorQuerySchema,
@@ -843,6 +844,26 @@ router.post(
                 criada: r.criada,
                 decisao: decisaoParaApi(r.decisao),
             });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/sugestoes-boleto/anular — `sispag:executar`. CONFIRMADA → ANULADA (I15l): desfaz a
+// confirmação de um título, com motivo (10–500), e libera o título e o boleto. 200 sempre que o
+// título termina ANULADA (idempotente) · 409 título sem confirmação · 422 motivo curto.
+router.post(
+    '/sugestoes-boleto/anular',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteDecisaoBoleto,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = AnularDecisaoBodySchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        try {
+            const r = await sugestoesBoleto().anularDecisao({ ...body.data, ator: ator(req) });
+            res.json({ anulada: r.anulada, decisao: decisaoParaApi(r.decisao) });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }

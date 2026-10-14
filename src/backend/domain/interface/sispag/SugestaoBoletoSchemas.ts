@@ -29,6 +29,19 @@ export const RejeitarSugestaoBodySchema = ChaveSugestaoBodySchema.extend({
     motivo: z.string().max(500),
 }).strict();
 
+/**
+ * Anular a confirmação de UM título (I15l): a decisão é identificada pelo título; o motivo tem de
+ * ser explicado (10 a 500 caracteres). O ator vem do token.
+ */
+export const AnularDecisaoBodySchema = z
+    .object({
+        filCod: z.number().int().positive(),
+        docCod: texto.max(64),
+        titCod: texto.max(64),
+        motivo: z.string().trim().min(10).max(500),
+    })
+    .strict();
+
 export const RevogarConfirmacaoBodySchema = z.object({ motivo: z.string().max(500) }).strict();
 
 export const ConfirmacaoEmissorIdSchema = z.object({ id: z.string().uuid() });

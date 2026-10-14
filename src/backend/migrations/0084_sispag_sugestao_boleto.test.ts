@@ -64,11 +64,13 @@ describe('migration 0084 — sugestão de boleto DDA (ADR-0068)', () => {
             ['ATENCAO', 'CONHECIDO', 'FORTE'].sort(),
         );
         expect(checkIn('sispag_decisao_sugestao_boleto_decisao_check')).toEqual([
+            'ANULADA',
             'CONFIRMADA',
             'REJEITADA',
         ]);
         expect(checkIn('sispag_sugestao_boleto_evento_tipo_check')).toEqual(
             [
+                'DECISAO_ANULADA',
                 'DECISAO_CONFIRMADA',
                 'DECISAO_REJEITADA',
                 'LINHA_COPIADA',
@@ -125,6 +127,14 @@ describe('migration 0084 — sugestão de boleto DDA (ADR-0068)', () => {
         expect(CODIGO).toMatch(
             /ON sispag_decisao_sugestao_boleto \(fil_cod, doc_cod, tit_cod, ddc_cod, dit_cod\)\s+WHERE decisao = 'REJEITADA'/i,
         );
+    });
+
+    it('ANULADA exige quem, quando e motivo; só ANULADA os tem; ninguém anula como sistema (I15l)', () => {
+        expect(CODIGO).toMatch(
+            /sispag_decisao_sugestao_boleto_anulacao_check CHECK \(\s*\(\s*decisao = 'ANULADA'\s+AND anulada_por IS NOT NULL AND length\(btrim\(anulada_por\)\) > 0\s+AND anulada_em IS NOT NULL\s+AND motivo_anulacao IS NOT NULL AND length\(btrim\(motivo_anulacao\)\) > 0\s*\)\s+OR \(\s*decisao <> 'ANULADA'\s+AND anulada_por IS NULL AND anulada_em IS NULL AND motivo_anulacao IS NULL/i,
+        );
+        expect(CODIGO).toMatch(/lower\(btrim\(anulada_por\)\) NOT IN \('sistema', 'unknown'\)/i);
+        expect(CODIGO).toMatch(/versao\s+INTEGER NOT NULL DEFAULT 1/i);
     });
 
     it('a trilha recusa UPDATE, DELETE e TRUNCATE por trigger', () => {

@@ -16,7 +16,7 @@ import {
     eventoSugestaoRowSchema,
 } from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
 import type {
-    DecisaoChaveada,
+    DecisaoConfirmadaChaveada,
     LayoutEmissor,
     ParVigenteChave,
     SinalSugestao,
@@ -31,7 +31,7 @@ const COLUNAS_DECISAO = `id, fil_cod, doc_cod, tit_cod, pes_cod, credor, ddc_cod
     numero_boleto, codbar_mascarado, valor_titulo, to_char(vencimento_titulo, 'YYYY-MM-DD')
     AS vencimento_titulo, valor_boleto, to_char(vencimento_boleto, 'YYYY-MM-DD') AS vencimento_boleto,
     delta_valor, delta_percentual, delta_dias, sinais, tier, emissor_chave, decisao, decidido_por,
-    decidido_em, motivo, confirmacao_emissor_id`;
+    decidido_em, motivo, confirmacao_emissor_id, versao, anulada_por, anulada_em, motivo_anulacao`;
 
 const COLUNAS_EVENTO = `id, tipo, ator, ocorrido_em, pes_cod, emissor_chave, fil_cod, doc_cod,
     tit_cod, ddc_cod, dit_cod, motivo, detalhe`;
@@ -101,6 +101,7 @@ export interface FiltroDecisoes {
     ddcCod?: number;
     ditCod?: number;
     pesCod?: string;
+    confirmacaoEmissorId?: string;
 }
 
 export interface FiltroEventos {
@@ -165,15 +166,22 @@ export default class SugestaoBoletoRepository {
         return rows.map((r) => confirmacaoEmissorRowSchema.parse(r));
     };
 
+    /**
+     * Com `travar` (e dentro de uma transação), `FOR SHARE`: uma revogação do par espera esta
+     * transação terminar e, ao prosseguir, ainda enxerga a decisão que ela gravou — a cascata a
+     * anula (I15l). Se a revogação chegou primeiro, o `WHERE estado = 'VIGENTE'` é reavaliado e a
+     * linha some: o chamador cria um par novo, nunca grava sob um par REVOGADA.
+     */
     public buscarParVigente = async (
         pesCod: string,
         emissorChave: string,
         tx?: TransactionClient,
+        travar = false,
     ): Promise<ConfirmacaoEmissor | null> => {
         const row = await this.conn(tx).selectFirst<Record<string, unknown>>(
             `SELECT ${COLUNAS_PAR} FROM sispag_confirmacao_emissor_boleto
               WHERE pes_cod = $pesCod AND emissor_chave = $emissorChave AND estado = 'VIGENTE'
-              LIMIT 1`,
+              LIMIT 1${travar && tx ? ' FOR SHARE' : ''}`,
             { pesCod, emissorChave },
         );
         return row ? confirmacaoEmissorRowSchema.parse(row) : null;
@@ -221,7 +229,7 @@ export default class SugestaoBoletoRepository {
         );
         const par = inserida
             ? await this.buscarParPorId(inserida.id, tx)
-            : await this.buscarParVigente(input.pesCod, input.emissorChave, tx);
+            : await this.buscarParVigente(input.pesCod, input.emissorChave, tx, true);
         if (!par) throw new Error('par de emissor não encontrado após a inserção');
         return { criado: inserida != null, par };
     };
@@ -352,6 +360,8 @@ export default class SugestaoBoletoRepository {
                 AND ($ddcCod::int IS NULL OR ddc_cod = $ddcCod::int)
                 AND ($ditCod::int IS NULL OR dit_cod = $ditCod::int)
                 AND ($pesCod::text IS NULL OR pes_cod = $pesCod::text)
+                AND ($confirmacaoEmissorId::uuid IS NULL
+                     OR confirmacao_emissor_id = $confirmacaoEmissorId::uuid)
               ORDER BY decidido_em DESC, id
               LIMIT ${LIMITE_LISTAGEM}`,
             {
@@ -362,11 +372,58 @@ export default class SugestaoBoletoRepository {
                 ddcCod: filtro.ddcCod ?? null,
                 ditCod: filtro.ditCod ?? null,
                 pesCod: filtro.pesCod ?? null,
+                confirmacaoEmissorId: filtro.confirmacaoEmissorId ?? null,
             },
         );
         this.exigirNaoTruncada('decisoes', rows.length);
         return rows.map((r) => decisaoSugestaoRowSchema.parse(r));
     };
+
+    /**
+     * As decisões `CONFIRMADA` de um par, TRAVADAS (`FOR UPDATE`) na transação da revogação: a
+     * cascata (I15l) anula exatamente o que travou.
+     */
+    public listarConfirmadasDoPar = async (
+        confirmacaoEmissorId: string,
+        tx: TransactionClient,
+    ): Promise<DecisaoSugestao[]> => {
+        const rows = await tx.selectMany(
+            `SELECT ${COLUNAS_DECISAO} FROM sispag_decisao_sugestao_boleto
+              WHERE confirmacao_emissor_id = $id::uuid AND decisao = 'CONFIRMADA'
+              ORDER BY decidido_em, id
+              FOR UPDATE`,
+            { id: confirmacaoEmissorId },
+        );
+        return rows.map((r) => decisaoSugestaoRowSchema.parse(r));
+    };
+
+    public buscarDecisaoPorId = async (
+        id: string,
+        tx?: TransactionClient,
+    ): Promise<DecisaoSugestao | null> => {
+        const row = await this.conn(tx).selectFirst<Record<string, unknown>>(
+            `SELECT ${COLUNAS_DECISAO} FROM sispag_decisao_sugestao_boleto WHERE id = $id::uuid`,
+            { id },
+        );
+        return row ? decisaoSugestaoRowSchema.parse(row) : null;
+    };
+
+    /**
+     * CONFIRMADA → ANULADA com lock otimista por `versao` (e só se ainda CONFIRMADA). Devolve as
+     * linhas afetadas: 0 = alguém mudou antes; o serviço relê para decidir (no-op ou conflito).
+     * Libera o título e o boleto: os índices únicos valem só para `decisao = 'CONFIRMADA'`.
+     */
+    public anularDecisao = async (
+        input: { id: string; versaoEsperada: number; ator: string; motivo: string },
+        tx?: TransactionClient,
+    ): Promise<number> =>
+        this.conn(tx).update(
+            `UPDATE sispag_decisao_sugestao_boleto
+                SET decisao = 'ANULADA', anulada_por = $ator, anulada_em = now(),
+                    motivo_anulacao = $motivo, versao = versao + 1
+              WHERE id = $id::uuid AND versao = $versao AND decisao = 'CONFIRMADA'`,
+            { id: input.id, versao: input.versaoEsperada, ator: input.ator, motivo: input.motivo },
+        );
 
     /** Lista no teto = possivelmente truncada: falha alto, nunca devolve decisão "ausente". */
     private exigirNaoTruncada = (listagem: string, linhas: number): void => {
@@ -378,13 +435,23 @@ export default class SugestaoBoletoRepository {
     /** Decisões de um tipo no formato que o motor consome (chave do título + chave do boleto). */
     public listarChaveadas = async (
         decisao: DecisaoSugestaoBoletoTipo,
-    ): Promise<DecisaoChaveada[]> =>
+    ): Promise<DecisaoConfirmadaChaveada[]> =>
         (await this.listarDecisoes({ decisao })).map((d) => ({
             filCod: d.filCod,
             docCod: d.docCod,
             titCod: d.titCod,
             ddcCod: d.ddcCod,
             ditCod: d.ditCod,
+            ...(d.numeroBoleto ? { numeroBoleto: d.numeroBoleto } : {}),
+            valorTitulo: d.valorTitulo,
+            vencimentoTitulo: d.vencimentoTitulo,
+            valorBoleto: d.valorBoleto,
+            vencimentoBoleto: d.vencimentoBoleto,
+            deltaValor: d.deltaValor,
+            deltaPercentual: d.deltaPercentual,
+            deltaDias: d.deltaDias,
+            sinais: d.sinais,
+            ...(d.tier ? { tier: d.tier } : {}),
         }));
 
     /** Pares (credor, emissor) VIGENTES no formato que o motor consome. */

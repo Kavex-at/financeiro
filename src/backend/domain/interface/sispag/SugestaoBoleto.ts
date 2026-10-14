@@ -119,6 +119,24 @@ export interface DecisaoChaveada extends ChaveBoletoDda {
     titCod: string;
 }
 
+/**
+ * Decisão `CONFIRMADA` com o snapshot que a gravou. O motor usa o snapshot só para mostrar uma
+ * confirmação ÓRFÃ (boleto que saiu do pool, título sinalizado pelo ERP) com o que foi decidido
+ * (I15l); os campos são opcionais porque os chamadores que só têm a chave continuam válidos.
+ */
+export interface DecisaoConfirmadaChaveada extends DecisaoChaveada {
+    numeroBoleto?: string;
+    valorTitulo?: number;
+    vencimentoTitulo?: string;
+    valorBoleto?: number;
+    vencimentoBoleto?: string;
+    deltaValor?: number;
+    deltaPercentual?: number;
+    deltaDias?: number;
+    sinais?: SinalSugestao[];
+    tier?: TierSugestao;
+}
+
 /** Par (credor, emissor) `VIGENTE`. */
 export interface ParVigenteChave {
     pesCod: string;
@@ -159,6 +177,13 @@ export interface SugestaoBoletoTitulo {
     estado: EstadoSugestao;
     /** Motivo legível (pt-BR) quando a sugestão é só informativa. */
     motivo?: string;
+    /**
+     * Confirmação ÓRFÃ (I15l): a decisão `CONFIRMADA` segue ativa, mas o boleto deixou de estar
+     * livre no pool (ou o ERP já sinalizou o título). Não é confirmável; a tela oferece "Anular".
+     */
+    orfa?: boolean;
+    /** Por que a confirmação ficou órfã (pt-BR). */
+    motivoOrfa?: string;
 }
 
 /** Emissor como a API o expõe: só a máscara (a chave carrega a conta completa). */

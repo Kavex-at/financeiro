@@ -1,7 +1,10 @@
 import { inject, injectable } from 'tsyringe';
-import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import PostgreeDatabaseClient, {
+    type TransactionClient,
+} from '../../client/database/PostgreeDatabaseClient.js';
 import BoletoAlreadySuggestedToOtherTitleError from '../../errors/BoletoAlreadySuggestedToOtherTitleError.js';
 import BoletoSuggestionNotAvailableError from '../../errors/BoletoSuggestionNotAvailableError.js';
+import DecisionNotConfirmedError from '../../errors/DecisionNotConfirmedError.js';
 import InvalidDecisionActorError from '../../errors/InvalidDecisionActorError.js';
 import IssuerConfirmationNotFoundError from '../../errors/IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from '../../errors/IssuerConfirmationReasonRequiredError.js';
@@ -54,6 +57,15 @@ export interface ChaveSugestao {
     ditCod: number;
 }
 
+export interface ResultadoAnulacao {
+    /** `false` = a decisão já estava ANULADA (idempotência): nada novo foi gravado. */
+    anulada: boolean;
+    decisao: DecisaoSugestao;
+}
+
+/** Motivo mínimo de uma anulação (a decisão desfeita era evidência de uma pessoa). */
+const MOTIVO_ANULACAO_MINIMO = 10;
+
 export interface ResultadoDecisao {
     /** `false` = a decisão já existia (idempotência, I15j): nada novo foi gravado. */
     criada: boolean;
@@ -76,7 +88,7 @@ const mesmoTitulo = (
 const TIERS: ReadonlySet<string> = new Set(Object.values(TIER_SUGESTAO));
 
 /**
- * BoletoSuggestionService — sugerir, confirmar, rejeitar, revogar e copiar a linha digitável
+ * BoletoSuggestionService — sugerir, confirmar, rejeitar, anular, revogar e copiar a linha digitável
  * (ADR-0068, I15; ontologia `sugestao-boleto-dda-sispag.md`). PASSO 1: EVIDÊNCIA, não autoridade.
  *
  * - **Zero escrita e zero leitura no Conexos**: este serviço só conhece Postgres (carteira e pool
@@ -230,7 +242,7 @@ export default class BoletoSuggestionService {
         if (!TIERS.has(tier)) throw new OverdueBoletoNotConfirmableError(chave);
 
         const resultado = await this.db.withTransaction(async (tx) => {
-            const existente = await this.repo.buscarParVigente(pesCod, emissor.chave, tx);
+            const existente = await this.repo.buscarParVigente(pesCod, emissor.chave, tx, true);
             let par: ConfirmacaoEmissor;
             let parCriado = false;
             if (existente) {
@@ -483,6 +495,16 @@ export default class BoletoSuggestionService {
                 if (atual.estado === ESTADO_CONFIRMACAO_EMISSOR.REVOGADA) return null;
                 throw new IssuerConfirmationVersionConflictError({ id: par.id });
             }
+            // Cascata (I15l, Q-E): as decisões CONFIRMADAS deste par não valem mais.
+            const motivoCascata = `par revogado: ${motivo}`;
+            const decisoes = await this.repo.listarConfirmadasDoPar(par.id, tx);
+            for (const d of decisoes) {
+                await this.anularNaTransacao(
+                    d,
+                    { ator: input.ator, motivo: motivoCascata, origem: 'PAR_REVOGADO' },
+                    tx,
+                );
+            }
             await this.repo.inserirEvento(
                 {
                     tipo: EVENTO_SUGESTAO_BOLETO.PAR_REVOGADO,
@@ -493,6 +515,7 @@ export default class BoletoSuggestionService {
                     detalhe: {
                         layoutEmissor: par.layoutEmissor,
                         emissorMascarado: par.emissorMascarado,
+                        decisoesAnuladas: decisoes.length,
                     },
                 },
                 tx,
@@ -514,6 +537,107 @@ export default class BoletoSuggestionService {
             },
         });
         return this.paraViewPar(revogado);
+    };
+
+    // ── Anular ─────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * CONFIRMADA → ANULADA (I15l): desfaz a confirmação de UM título, com motivo, e libera o título e
+     * o boleto. Vale mesmo para confirmação órfã (boleto fora do pool, título pago ou sinalizado).
+     * Idempotente: já ANULADA devolve a decisão com `anulada = false`. Não mexe no par.
+     */
+    public anularDecisao = async (input: {
+        filCod: number;
+        docCod: string;
+        titCod: string;
+        motivo: string;
+        ator: string;
+    }): Promise<ResultadoAnulacao> => {
+        this.exigirAtor(input.ator);
+        const motivo = input.motivo.trim();
+        if (motivo.length < MOTIVO_ANULACAO_MINIMO) {
+            throw new IssuerConfirmationReasonRequiredError({ acao: 'anular a confirmação' });
+        }
+        const chaveTit = { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod };
+        const doTitulo = await this.repo.listarDecisoes(chaveTit);
+        const confirmada = doTitulo.find((d) => d.decisao === DECISAO_SUGESTAO_BOLETO.CONFIRMADA);
+        if (!confirmada) {
+            const anulada = doTitulo
+                .filter((d) => d.decisao === DECISAO_SUGESTAO_BOLETO.ANULADA)
+                .sort((a, b) => (b.anuladaEm ?? '').localeCompare(a.anuladaEm ?? ''))[0];
+            if (anulada) return { anulada: false, decisao: anulada };
+            throw new DecisionNotConfirmedError(chaveTit);
+        }
+
+        const resultado = await this.db.withTransaction(async (tx): Promise<ResultadoAnulacao> => {
+            const n = await this.anularNaTransacao(
+                confirmada,
+                { ator: input.ator, motivo, origem: 'ANULACAO' },
+                tx,
+                true,
+            );
+            const atual = await this.repo.buscarDecisaoPorId(confirmada.id, tx);
+            if (!atual) throw new DecisionNotConfirmedError(chaveTit);
+            return { anulada: n > 0, decisao: atual };
+        });
+        if (resultado.anulada) {
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'sugestao_boleto.decisao_anulada',
+                data: {
+                    ...chaveTit,
+                    ddcCod: confirmada.ddcCod,
+                    ditCod: confirmada.ditCod,
+                    ator: input.ator,
+                },
+            });
+        }
+        return resultado;
+    };
+
+    /**
+     * Anula uma decisão com lock por `versao` e grava `DECISAO_ANULADA`, na transação do chamador.
+     * Perdeu a corrida: com `tolerarJaAnulada`, se alguém já a anulou devolve 0 (no-op); senão é
+     * conflito nomeado. Devolve as linhas afetadas.
+     */
+    private anularNaTransacao = async (
+        d: DecisaoSugestao,
+        ctx: { ator: string; motivo: string; origem: 'ANULACAO' | 'PAR_REVOGADO' },
+        tx: TransactionClient,
+        tolerarJaAnulada = false,
+    ): Promise<number> => {
+        const n = await this.repo.anularDecisao(
+            { id: d.id, versaoEsperada: d.versao, ator: ctx.ator, motivo: ctx.motivo },
+            tx,
+        );
+        if (n === 0) {
+            const atual = await this.repo.buscarDecisaoPorId(d.id, tx);
+            if (tolerarJaAnulada && atual?.decisao === DECISAO_SUGESTAO_BOLETO.ANULADA) return 0;
+            throw new IssuerConfirmationVersionConflictError({ id: d.id });
+        }
+        await this.repo.inserirEvento(
+            {
+                tipo: EVENTO_SUGESTAO_BOLETO.DECISAO_ANULADA,
+                ator: ctx.ator,
+                pesCod: d.pesCod,
+                emissorChave: d.emissorChave,
+                filCod: d.filCod,
+                docCod: d.docCod,
+                titCod: d.titCod,
+                ddcCod: d.ddcCod,
+                ditCod: d.ditCod,
+                motivo: ctx.motivo,
+                detalhe: {
+                    origem: ctx.origem,
+                    ...(d.tier ? { tier: d.tier } : {}),
+                    ...(d.confirmacaoEmissorId
+                        ? { confirmacaoEmissorId: d.confirmacaoEmissorId }
+                        : {}),
+                },
+            },
+            tx,
+        );
+        return n;
     };
 
     // ── Copiar linha digitável ─────────────────────────────────────────────────────────────────

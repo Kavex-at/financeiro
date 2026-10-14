@@ -17,6 +17,11 @@
 -- sinal, boleto − título). Unicidade por índices únicos parciais: 1 CONFIRMADA por título, 1
 -- CONFIRMADA por boleto, 1 REJEITADA por (título, boleto) — o perdedor da corrida relê (I15j).
 --
+-- Saída da CONFIRMADA (I15l): `ANULADA` é terminal e só se chega a ela a partir de CONFIRMADA
+-- (anulação pelo analista, ou em cascata quando o par é revogado). Como os índices únicos valem
+-- só para `decisao = 'CONFIRMADA'`, anular LIBERA o título e o boleto. A linha anulada guarda
+-- quem, quando e por quê (`anulada_*`, `motivo_anulacao`) e a `versao` serve de lock otimista.
+--
 -- ── 3. `sispag_sugestao_boleto_evento` — trilha só-inclusão ───────────────────────────────────
 --
 -- Inclui `LINHA_COPIADA` (toda cópia de linha digitável é auditada, I15k). Trigger recusa UPDATE,
@@ -101,11 +106,30 @@ CREATE TABLE IF NOT EXISTS sispag_decisao_sugestao_boleto (
     decidido_em                 TIMESTAMPTZ NOT NULL DEFAULT now(),
     motivo                      TEXT NULL,
     confirmacao_emissor_id      UUID NULL REFERENCES sispag_confirmacao_emissor_boleto (id),
+    anulada_por                 TEXT NULL,
+    anulada_em                  TIMESTAMPTZ NULL,
+    motivo_anulacao             TEXT NULL,
+    versao                      INTEGER NOT NULL DEFAULT 1,
     CONSTRAINT sispag_decisao_sugestao_boleto_tier_check CHECK (
         tier IS NULL OR tier IN ('CONHECIDO', 'FORTE', 'ATENCAO')
     ),
     CONSTRAINT sispag_decisao_sugestao_boleto_decisao_check CHECK (
-        decisao IN ('CONFIRMADA', 'REJEITADA')
+        decisao IN ('CONFIRMADA', 'REJEITADA', 'ANULADA')
+    ),
+    CONSTRAINT sispag_decisao_sugestao_boleto_anulacao_check CHECK (
+        (
+            decisao = 'ANULADA'
+            AND anulada_por IS NOT NULL AND length(btrim(anulada_por)) > 0
+            AND anulada_em IS NOT NULL
+            AND motivo_anulacao IS NOT NULL AND length(btrim(motivo_anulacao)) > 0
+        )
+        OR (
+            decisao <> 'ANULADA'
+            AND anulada_por IS NULL AND anulada_em IS NULL AND motivo_anulacao IS NULL
+        )
+    ),
+    CONSTRAINT sispag_decisao_sugestao_boleto_anulador_check CHECK (
+        anulada_por IS NULL OR lower(btrim(anulada_por)) NOT IN ('sistema', 'unknown')
     ),
     CONSTRAINT sispag_decisao_sugestao_boleto_rejeicao_check CHECK (
         decisao <> 'REJEITADA' OR (motivo IS NOT NULL AND length(btrim(motivo)) > 0)
@@ -153,7 +177,8 @@ CREATE TABLE IF NOT EXISTS sispag_sugestao_boleto_evento (
     motivo          TEXT NULL,
     detalhe         JSONB NULL,
     CONSTRAINT sispag_sugestao_boleto_evento_tipo_check CHECK (tipo IN (
-        'PAR_CONFIRMADO', 'DECISAO_CONFIRMADA', 'DECISAO_REJEITADA', 'PAR_REVOGADO', 'LINHA_COPIADA'
+        'PAR_CONFIRMADO', 'DECISAO_CONFIRMADA', 'DECISAO_REJEITADA', 'DECISAO_ANULADA',
+        'PAR_REVOGADO', 'LINHA_COPIADA'
     ))
 );
 
@@ -190,6 +215,6 @@ CREATE TRIGGER trg_sispag_sugestao_boleto_evento_so_inclusao_truncate
 COMMENT ON TABLE sispag_confirmacao_emissor_boleto IS
     'ADR-0068 I15 — par (credor, emissor) confirmado por uma pessoa com sispag:executar. Evidencia, nao autoridade: nao altera tem_boleto, lote nem Conexos. Nunca guarda barras/linha digitavel.';
 COMMENT ON TABLE sispag_decisao_sugestao_boleto IS
-    'ADR-0068 I15 — decisao por titulo (CONFIRMADA/REJEITADA) com snapshot da evidencia (deltas com sinal, boleto - titulo). So codbar mascarado.';
+    'ADR-0068 I15 — decisao por titulo (CONFIRMADA/REJEITADA; CONFIRMADA -> ANULADA e terminal, I15l) com snapshot da evidencia (deltas com sinal, boleto - titulo). So codbar mascarado.';
 COMMENT ON TABLE sispag_sugestao_boleto_evento IS
     'ADR-0068 I15k — trilha so-inclusao (inclui LINHA_COPIADA). UPDATE/DELETE/TRUNCATE recusados por trigger. Nunca valor completo.';
