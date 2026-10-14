@@ -16,6 +16,7 @@ const ROTULO_SUGESTAO: Record<ResumoSugestaoTitulo, string> = {
   DISPONIVEL: 'sugestão disponível',
   INFORMATIVA: 'ver boleto sugerido',
   CONFIRMADA: 'boleto confirmado',
+  ORFA: 'confirmação a revisar',
 }
 
 export function FormaPagamentoBadge({
@@ -30,12 +31,26 @@ export function FormaPagamentoBadge({
 }) {
   const forma = formaDePagamento(titulo)
   if (forma.tom === 'dda') {
+    // Confirmação órfã (I15l): o ERP já sinalizou o título depois da confirmação. A analista
+    // precisa chegar ao painel para anulá-la; as demais sugestões não aparecem aqui.
+    const orfa = sugestao === 'ORFA' && onAbrirSugestao
     return (
-      <Badge variant="outline" className="border-success/40 text-success-foreground">
-        <Barcode className="mr-1 size-3" aria-hidden />
-        {forma.rotulo}
-        <span className="sr-only"> — {EXPLICACAO.dda}</span>
-      </Badge>
+      <div className="flex flex-col items-start gap-1">
+        <Badge variant="outline" className="border-success/40 text-success-foreground">
+          <Barcode className="mr-1 size-3" aria-hidden />
+          {forma.rotulo}
+          <span className="sr-only"> — {EXPLICACAO.dda}</span>
+        </Badge>
+        {orfa ? (
+          <button
+            type="button"
+            onClick={onAbrirSugestao}
+            className="text-xs text-primary underline underline-offset-2 focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded-sm"
+          >
+            {ROTULO_SUGESTAO.ORFA}
+          </button>
+        ) : null}
+      </div>
     )
   }
   if (forma.tom === 'alerta') {

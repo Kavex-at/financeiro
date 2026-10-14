@@ -119,6 +119,44 @@ describe('contrato da sugestão de boleto (ADR-0068)', () => {
     expect(par.elegivelAutomatico).toBe(false)
   })
 
+  it('a confirmação órfã e a decisão ANULADA passam nos schemas (I15l)', () => {
+    const orfa = sugestaoBoletoSchema.parse({
+      ...sugestao,
+      estado: 'CONFIRMADA',
+      confirmavel: false,
+      orfa: true,
+      motivoOrfa: 'O boleto confirmado saiu do pool DDA.',
+    })
+    expect(orfa.orfa).toBe(true)
+    expect(orfa.motivoOrfa).toMatch(/pool DDA/)
+    expect(sugestaoBoletoSchema.parse(sugestao).orfa).toBeUndefined()
+    const anulada = decisaoSugestaoBoletoSchema.parse({
+      id: 'd1',
+      filCod: 2,
+      docCod: '9001',
+      titCod: '1',
+      pesCod: '7001',
+      ddcCod: 10,
+      ditCod: 3,
+      codbarMascarado: '237…1533',
+      valorTitulo: 100,
+      vencimentoTitulo: '2026-10-20',
+      valorBoleto: 100,
+      vencimentoBoleto: '2026-10-20',
+      deltaValor: 0,
+      deltaPercentual: 0,
+      deltaDias: 0,
+      sinais: [],
+      decisao: 'ANULADA',
+      decididoPor: 'ana',
+      decididoEm: '2026-10-14T10:00:00.000Z',
+      anuladaPor: 'bia',
+      anuladaEm: '2026-10-14T12:00:00.000Z',
+      motivoAnulacao: 'par revogado: conta trocada',
+    })
+    expect(anulada.decisao).toBe('ANULADA')
+  })
+
   it('os códigos de erro espelham os do backend', () => {
     expect(Object.values(CODIGOS_ERRO_SUGESTAO_BOLETO).sort()).toEqual(
       [
@@ -127,6 +165,7 @@ describe('contrato da sugestão de boleto (ADR-0068)', () => {
         'CONFIRMACAO_EMISSOR_MOTIVO_OBRIGATORIO',
         'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA',
         'COPIA_LINHA_SEM_TRILHA',
+        'DECISAO_NAO_CONFIRMADA',
         'SUGESTAO_BOLETO_INDISPONIVEL',
       ].sort(),
     )

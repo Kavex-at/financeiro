@@ -7,9 +7,11 @@ import { Button } from '@/components/ui/button'
 import {
   AutorizacaoApiError,
   CODIGOS_ERRO_SUGESTAO_BOLETO,
+  anularConfirmacaoBoleto,
   type ChaveSugestaoBoleto,
   confirmarSugestaoBoleto,
   copiarLinhaSugestao,
+  MOTIVO_ANULACAO_MINIMO,
   rejeitarSugestaoBoleto,
   revogarConfirmacaoEmissor,
   type SugestaoBoleto,
@@ -48,7 +50,8 @@ const mensagemDe = (e: unknown, padrao: string): string => {
 const ehSugestaoVelha = (e: unknown): boolean =>
   e instanceof AutorizacaoApiError &&
   (e.code === CODIGOS_ERRO_SUGESTAO_BOLETO.INDISPONIVEL ||
-    e.code === CODIGOS_ERRO_SUGESTAO_BOLETO.RESERVADO_A_OUTRO_TITULO)
+    e.code === CODIGOS_ERRO_SUGESTAO_BOLETO.RESERVADO_A_OUTRO_TITULO ||
+    e.code === CODIGOS_ERRO_SUGESTAO_BOLETO.NAO_CONFIRMADA)
 
 const ATENCAO_CLASSE = 'border-warning/40 text-warning-foreground'
 
@@ -73,13 +76,16 @@ function Delta({ rotulo, valor, destaque }: { rotulo: string; valor: string; des
 }
 
 type Aviso = { tipo: 'ok' | 'erro'; texto: string }
-type Dialogo = { tipo: 'rejeitar' | 'revogar'; sugestao: SugestaoBoleto }
+type Dialogo = { tipo: 'rejeitar' | 'revogar' | 'anular'; sugestao: SugestaoBoleto }
 
 /**
  * Sugestão(ões) de boleto DDA para UM título "boleto sem DDA" (ADR-0068, passo 1). É evidência
  * para a analista decidir — nada é gravado no Conexos e o aviso de "sem boleto DDA" do lote não
- * muda. Permissões escondem as ações (R11): copiar = `sispag:ver`; confirmar, rejeitar e
- * revogar = `sispag:executar`. O backend recusa de qualquer forma.
+ * muda. Permissões escondem as ações (R11): copiar = `sispag:ver`; confirmar, rejeitar, anular a
+ * confirmação e revogar = `sispag:executar`. O backend recusa de qualquer forma.
+ *
+ * Confirmação ÓRFÃ (I15l): a decisão segue ativa mas o boleto saiu do pool ou o ERP sinalizou o
+ * título; o painel avisa, não oferece confirmar nem copiar, e deixa "Anular confirmação".
  */
 export function SugestaoBoletoPainel({
   sugestoes,
@@ -187,6 +193,7 @@ export function SugestaoBoletoPainel({
           const a = s.avaliacao
           const ocup = ocupado === idItem(s)
           const confirmada = s.estado === 'CONFIRMADA'
+          const orfa = confirmada && s.orfa === true
           const atencao = a.resultado === 'ATENCAO'
           const vencido = a.resultado === 'VENCIDO_INFORMATIVO'
           const podeConfirmar = a.confirmavel && s.confirmavel && !confirmada
@@ -207,7 +214,12 @@ export function SugestaoBoletoPainel({
                 >
                   {TIER_ROTULO[a.resultado]}
                 </Badge>
-                {confirmada ? <Badge variant="outline">confirmado</Badge> : null}
+                {confirmada && !orfa ? <Badge variant="outline">confirmado</Badge> : null}
+                {orfa ? (
+                  <Badge variant="outline" className={ATENCAO_CLASSE}>
+                    confirmação órfã
+                  </Badge>
+                ) : null}
               </div>
               <p className="mt-1 text-sm">
                 {formatBRL(s.valorBoleto)} · vence {fmtCivil(s.vencimentoBoleto)}
@@ -245,7 +257,17 @@ export function SugestaoBoletoPainel({
                   })}
                 </ul>
               ) : null}
-              {confirmada ? (
+              {orfa ? (
+                <p className="mt-2 flex items-start gap-2 text-sm text-warning-foreground">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <span>
+                    <strong>Confirmação órfã.</strong>{' '}
+                    {s.motivoOrfa ?? 'O boleto confirmado deixou de estar disponível.'} Enquanto
+                    ela existir, o título e o boleto ficam presos; anule-a para liberá-los.
+                  </span>
+                </p>
+              ) : null}
+              {confirmada && !orfa ? (
                 <p className="mt-2 text-sm">
                   Boleto confirmado{s.emissor ? ` (emissor ${s.emissor.mascarado})` : ''} —{' '}
                   <strong>ainda não associado no ERP</strong>; a remessa continua bloqueada.
@@ -279,7 +301,7 @@ export function SugestaoBoletoPainel({
                     Rejeitar
                   </Button>
                 ) : null}
-                {podeCopiar ? (
+                {podeCopiar && !orfa ? (
                   <Button
                     size="sm"
                     variant="outline"
@@ -288,6 +310,17 @@ export function SugestaoBoletoPainel({
                     onClick={() => void copiar(s)}
                   >
                     <Copy className="size-4" aria-hidden /> Copiar linha digitável
+                  </Button>
+                ) : null}
+                {podeExecutar && confirmada ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ocup}
+                    aria-label={`Anular confirmação do boleto ${nome}`}
+                    onClick={() => setDialogo({ tipo: 'anular', sugestao: s })}
+                  >
+                    Anular confirmação
                   </Button>
                 ) : null}
                 {podeExecutar && s.confirmacaoEmissorId ? (
@@ -327,10 +360,36 @@ export function SugestaoBoletoPainel({
           }}
         />
       ) : null}
+      {dialogo?.tipo === 'anular' ? (
+        <MotivoDecisaoDialog
+          titulo="Anular confirmação do boleto"
+          descricao="A confirmação deste título é desfeita e o título e o boleto voltam a ficar livres. A confirmação do emissor não muda. Nada muda no Conexos. O motivo fica na trilha."
+          rotuloConfirmar="Anular confirmação"
+          minimoCaracteres={MOTIVO_ANULACAO_MINIMO}
+          onFechar={() => setDialogo(null)}
+          onConfirmar={async (motivo) => {
+            try {
+              await anularConfirmacaoBoleto(
+                {
+                  filCod: dialogo.sugestao.filCod,
+                  docCod: dialogo.sugestao.docCod,
+                  titCod: dialogo.sugestao.titCod,
+                },
+                motivo,
+              )
+            } catch (e) {
+              throw new Error(mensagemDe(e, 'Não foi possível anular a confirmação.'))
+            }
+            await concluirDialogo(
+              'Confirmação anulada. O título e o boleto voltaram a ficar livres.',
+            )
+          }}
+        />
+      ) : null}
       {dialogo?.tipo === 'revogar' && dialogo.sugestao.confirmacaoEmissorId ? (
         <MotivoDecisaoDialog
           titulo="Revogar confirmação do emissor"
-          descricao="O emissor deixa de contar como conhecido para este credor; as sugestões voltam a 'forte'. Nada muda no Conexos. O motivo fica na trilha."
+          descricao="O emissor deixa de contar como conhecido para este credor; as sugestões voltam a 'forte' e as confirmações de boleto feitas com ele são anuladas. Nada muda no Conexos. O motivo fica na trilha."
           rotuloConfirmar="Revogar"
           onFechar={() => setDialogo(null)}
           onConfirmar={async (motivo) => {

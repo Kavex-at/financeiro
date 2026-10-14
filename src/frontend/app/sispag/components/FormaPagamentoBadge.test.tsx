@@ -64,4 +64,18 @@ describe('FormaPagamentoBadge', () => {
     )
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
+
+  it('confirmação órfã (ERP já sinalizou o título): link "confirmação a revisar" mesmo com DDA', () => {
+    const abrir = jest.fn()
+    render(
+      <FormaPagamentoBadge
+        titulo={{ formaPagamentoConexos: 6, temBoleto: true }}
+        sugestao="ORFA"
+        onAbrirSugestao={abrir}
+      />,
+    )
+    expect(screen.getByText('boleto com DDA')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'confirmação a revisar' }))
+    expect(abrir).toHaveBeenCalled()
+  })
 })

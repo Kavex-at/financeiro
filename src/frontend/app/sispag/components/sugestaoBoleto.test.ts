@@ -66,6 +66,15 @@ describe('resumo por título', () => {
       ]),
     ).toBe('INFORMATIVA')
   })
+  it('confirmação órfã vence a confirmada comum (precisa de atenção)', () => {
+    expect(
+      resumoDoTitulo([
+        base({ estado: 'CONFIRMADA', ditCod: 7 }),
+        base({ estado: 'CONFIRMADA', ditCod: 8, orfa: true, confirmavel: false }),
+      ]),
+    ).toBe('ORFA')
+    expect(resumoDoTitulo([base({ estado: 'CONFIRMADA', orfa: true })])).toBe('ORFA')
+  })
   it('agrupa por fil:doc:tit', () => {
     const m = agruparPorTitulo([base(), base({ ditCod: 9 }), base({ titCod: '2' })])
     expect(m.get(chaveTitulo({ filCod: 1, docCod: '10', titCod: '1' }))).toHaveLength(2)

@@ -23,12 +23,15 @@ export function MotivoDecisaoDialog({
   titulo,
   descricao,
   rotuloConfirmar,
+  minimoCaracteres = 1,
   onFechar,
   onConfirmar,
 }: {
   titulo: string
   descricao: string
   rotuloConfirmar: string
+  /** Menor motivo aceito (caracteres, sem espaços nas pontas); o servidor tem a mesma regra. */
+  minimoCaracteres?: number
   onFechar: () => void
   /** Rejeita com a mensagem em português para o diálogo mostrar e continuar aberto. */
   onConfirmar: (motivo: string) => Promise<void>
@@ -42,8 +45,12 @@ export function MotivoDecisaoDialog({
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault()
     if (salvando) return
-    if (motivo.trim() === '') {
-      setErroCampo('Informe o motivo.')
+    if (motivo.trim().length < minimoCaracteres) {
+      setErroCampo(
+        minimoCaracteres > 1
+          ? `Informe o motivo com pelo menos ${minimoCaracteres} caracteres.`
+          : 'Informe o motivo.',
+      )
       return
     }
     setErroCampo(null)
