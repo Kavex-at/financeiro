@@ -323,6 +323,27 @@ describe('ConexosSispagWriteClient — vínculo do código de barras (ADR-0071)'
             expect(Object.keys(corpo).sort()).toEqual(Object.keys(original).sort());
         });
 
+        it('banco ≠ banco do lote: o 6º campo (itsVldModalidade) entra, e só ele', async () => {
+            const base = buildBase();
+            base.putGenericOnce.mockResolvedValue({});
+            await make(base).editarItemDoRascunho({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 36,
+                item: fixture.item,
+                alteracoes: { ...alteracoes, itsNumBanco: 237, itsVldModalidade: 7 },
+            });
+            const corpo = base.putGenericOnce.mock.calls[0][1] as Record<string, unknown>;
+            const original = fixture.item as Record<string, unknown>;
+            const alterados = Object.keys(corpo).filter(
+                (k) => JSON.stringify(original[k]) !== JSON.stringify(corpo[k]),
+            );
+            expect(alterados.sort()).toEqual(
+                ['bncDesNome', 'itsNumBanco', 'itsNumCodbar', 'itsVldModalidade'].sort(),
+            );
+            expect(corpo.itsVldModalidade).toBe(7);
+        });
+
         it('falha vira ConexosError e nenhum código longo aparece na mensagem, log ou details', async () => {
             const base = buildBase();
             const log = buildLog();

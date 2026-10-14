@@ -262,4 +262,10 @@ export interface AlteracaoItemCodigoBarras {
     bncDesNome: string;
     itsMnyVlrPgto: number;
     itsDtaPgto: number;
+    /**
+     * Só quando o banco do código ≠ banco do lote (HML V4, 2026-10-14): o item precisa estar em
+     * modalidade `7` ("boleto de outro banco"); com `6` o `finalizar` recusa ("A MODALIDADE DO
+     * TÍTULO É PRÓPRIA E O BANCO FAVORECIDO NÃO É O MESMO DA REMESSA"). Ausente = não muda.
+     */
+    itsVldModalidade?: number;
 }

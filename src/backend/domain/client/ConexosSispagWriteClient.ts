@@ -887,7 +887,8 @@ export default class ConexosSispagWriteClient {
 
     /**
      * `PUT fin015/finItemSispag` (ADR-0071, I17e): o item LIDO inteiro com EXATAMENTE cinco campos
-     * alterados (`itsNumCodbar`, `itsNumBanco`, `bncDesNome`, `itsMnyVlrPgto`, `itsDtaPgto`).
+     * alterados (`itsNumCodbar`, `itsNumBanco`, `bncDesNome`, `itsMnyVlrPgto`, `itsDtaPgto`) e,
+     * só para banco emissor ≠ banco do lote, `itsVldModalidade = 7` (HML V4).
      * Tentativa ÚNICA (`putGenericOnce`: sem retry cego, sem 401-retry) — o sucesso é a OBSERVAÇÃO
      * na releitura, decidida pelo chamador, não o status do `PUT`. `cnx-filcod` = filial do LOTE.
      */
@@ -911,6 +912,10 @@ export default class ConexosSispagWriteClient {
                     bncDesNome: alteracoes.bncDesNome,
                     itsMnyVlrPgto: alteracoes.itsMnyVlrPgto,
                     itsDtaPgto: alteracoes.itsDtaPgto,
+                    // O 6º campo só entra quando o banco do código ≠ banco do lote (V4).
+                    ...(alteracoes.itsVldModalidade !== undefined
+                        ? { itsVldModalidade: alteracoes.itsVldModalidade }
+                        : {}),
                 },
                 { filCod },
             );

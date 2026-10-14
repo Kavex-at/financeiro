@@ -83,6 +83,14 @@ export interface FalhaDeterministicaVinculo {
     aviso: string;
 }
 
+/**
+ * Modalidade nativa do item (HML V4, 2026-10-14): `6` = boleto do MESMO banco do lote; `7` = boleto
+ * de OUTRO banco. Com a barra de outro banco e o item em `6`, o ERP recusa a validação
+ * (`FIN_015.TITULO_NAO_PERTENCE_AO_BANCO_EM_USO`) e o `finalizar` ("a modalidade do título é
+ * própria e o banco favorecido não é o mesmo da remessa").
+ */
+export const MODALIDADE_ITEM = { MESMO_BANCO: 6, OUTRO_BANCO: 7 } as const;
+
 export interface ResultadoExecucaoVinculo {
     vinculados: VinculoAplicado[];
     retirar: FalhaDeterministicaVinculo[];
@@ -286,8 +294,10 @@ export default class VinculoCodigoBarrasService {
         lote: LotePagamento;
         bncCod: number;
         flpCod: number;
+        /** Código FEBRABAN do banco da conta pagadora (ex.: 341). Ausente = modalidade da linha. */
+        bancoLote?: number;
     }): Promise<ResultadoExecucaoVinculo> => {
-        const { lote, bncCod, flpCod } = input;
+        const { lote, bncCod, flpCod, bancoLote } = input;
         const ctx = await this.carregarContexto();
         const preferidos = await this.chavesComDecisaoHumana(lote);
         const candidatos: Candidato[] = this.boletos_(lote).map((item) => ({
@@ -309,15 +319,18 @@ export default class VinculoCodigoBarrasService {
 
         while (resto.length > 0) {
             const alvo = resto[0] as Candidato;
-            const r = await this.vincularItem({ lote, bncCod, flpCod, ctx, alvo }, (causa, m) => {
-                throw new VinculoCodigoBarrasIncompletoError({
-                    flpCod,
-                    vinculados: feitos(),
-                    pendentes: naFila(),
-                    causa,
-                    ...(m ? { codigoMascarado: m } : {}),
-                });
-            });
+            const r = await this.vincularItem(
+                { lote, bncCod, flpCod, bancoLote, ctx, alvo },
+                (causa, m) => {
+                    throw new VinculoCodigoBarrasIncompletoError({
+                        flpCod,
+                        vinculados: feitos(),
+                        pendentes: naFila(),
+                        causa,
+                        ...(m ? { codigoMascarado: m } : {}),
+                    });
+                },
+            );
             resto.shift();
             if (r.tipo === 'vinculado') vinculados.push(r.vinculo);
             if (r.tipo === 'retirar') retirar.push(r.falha);
@@ -345,6 +358,7 @@ export default class VinculoCodigoBarrasService {
             lote: LotePagamento;
             bncCod: number;
             flpCod: number;
+            bancoLote: number | undefined;
             ctx: ContextoLocal;
             alvo: Candidato;
         },
@@ -354,7 +368,7 @@ export default class VinculoCodigoBarrasService {
         | { tipo: 'vinculado'; vinculo: VinculoAplicado }
         | { tipo: 'retirar'; falha: FalhaDeterministicaVinculo }
     > => {
-        const { lote, bncCod, flpCod, ctx, alvo } = p;
+        const { lote, bncCod, flpCod, bancoLote, ctx, alvo } = p;
         const { item } = alvo;
         const ctxNativo = { filCod: lote.filCod, bncCod, flpCod };
 
@@ -419,7 +433,13 @@ export default class VinculoCodigoBarrasService {
         // 6. validacao → confirma. O ERP só decodifica; julgamos nós.
         const linha = this.codigoBarras.paraLinhaDigitavel(barras) as string;
         const vencimentoEpoch = this.calendar.toErpEpoch(avaliado.vencimentoBarra as string);
-        const modalidade = Number(nativo.row.itsVldModalidade) || 6;
+        // HML V4: banco do código ≠ banco do lote ⇒ modalidade 7 (validação, confirma E item).
+        const modalidade =
+            bancoLote === undefined
+                ? Number(nativo.row.itsVldModalidade) || MODALIDADE_ITEM.MESMO_BANCO
+                : Number(e.banco) === bancoLote
+                  ? MODALIDADE_ITEM.MESMO_BANCO
+                  : MODALIDADE_ITEM.OUTRO_BANCO;
         const base = {
             filCod: lote.filCod,
             bncCod,
@@ -483,12 +503,31 @@ export default class VinculoCodigoBarrasService {
             });
         }
 
-        // 8. PUT de tentativa ÚNICA. A falha NÃO decide: a releitura é quem diz.
+        // 8. Releitura IMEDIATAMENTE antes do PUT (HML V3: o ERP não tem lock otimista e o PUT
+        // leva o item inteiro — usar a row velha pisaria numa edição de terceiro). A row do PUT é
+        // a de agora; código presente ou item trocado aborta/segue como I17f.
+        const fresca = await this.lerRascunho(ctxNativo, abortar, mascarado);
+        const agora = fresca.find((n) => chaveDe(n) === alvo.chave);
+        if (!agora || agora.itsCodSeq !== nativo.itsCodSeq) {
+            return abortar('ITEM_MUDOU_ANTES_DO_PUT', mascarado);
+        }
+        if (soDigitos(agora.row.itsNumCodbar) !== '') {
+            throw new ItemEditadoPorTerceiroError({
+                docCod: item.docCod,
+                titCod: item.titCod,
+                campo: CAMPO_EDITADO_POR_TERCEIRO.CODIGO,
+                flpCod,
+            });
+        }
+
+        // PUT de tentativa ÚNICA. A falha NÃO decide: a releitura é quem diz.
+        const trocaModalidade = Number(agora.row.itsVldModalidade) !== modalidade;
         const esperado = {
             itsNumBanco: confirma.itsBncNumCodbancoResult,
             bncDesNome: confirma.itsBncDesNomeResult,
             itsMnyVlrPgto: confirma.itsMnyVlrPgtoResult,
             itsDtaPgto: confirma.itsDtaPgtoResult,
+            ...(trocaModalidade ? { itsVldModalidade: modalidade } : {}),
         };
         let putRecusado = false;
         try {
@@ -496,7 +535,7 @@ export default class VinculoCodigoBarrasService {
                 filCod: lote.filCod,
                 bncCod,
                 flpCod,
-                item: nativo.row,
+                item: agora.row,
                 alteracoes: { itsNumCodbar: linha, ...esperado },
             });
         } catch (err) {
@@ -752,9 +791,12 @@ export default class VinculoCodigoBarrasService {
             bncDesNome: string;
             itsMnyVlrPgto: number;
             itsDtaPgto: number;
+            itsVldModalidade?: number;
         },
     ): boolean =>
         this.codigoBarras.paraBarras(soDigitos(row.itsNumCodbar)) === barras &&
+        (esperado.itsVldModalidade === undefined ||
+            Number(row.itsVldModalidade) === esperado.itsVldModalidade) &&
         String(row.itsNumBanco ?? '') === String(esperado.itsNumBanco) &&
         String(row.bncDesNome ?? '').trim() !== '' &&
         centavos(row.itsMnyVlrPgto) === centavos(esperado.itsMnyVlrPgto) &&

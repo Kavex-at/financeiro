@@ -3315,8 +3315,9 @@ describe('RemessaService — vínculo do código de barras (ADR-0071, I17)', () 
             expect(ordem.indexOf('listarLinhasDigitaveisDoLote')).toBeLessThan(
                 ordem.indexOf('finalizarLote'),
             );
+            // `bancoLote` = FEBRABAN da conta pagadora (bncCod 4 → 341): decide a modalidade (V4).
             expect(vinculo.executar).toHaveBeenCalledWith(
-                expect.objectContaining({ bncCod: 4, flpCod: 12 }),
+                expect.objectContaining({ bncCod: 4, flpCod: 12, bancoLote: 341 }),
             );
             // `vincular_codbar` NUNCA vai ao ledger (o CHECK da 0049 não o conhece).
             const etapas = ledger.setEtapa.mock.calls.map((c) => c[1]);

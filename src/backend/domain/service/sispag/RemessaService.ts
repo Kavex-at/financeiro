@@ -743,7 +743,12 @@ export default class RemessaService {
                     retomarDe !== 'gerar_remessa' &&
                     !pular('vincular_codbar');
                 if (vincularAgora) {
-                    const exec = await this.vinculo.executar({ lote, bncCod, flpCod });
+                    const exec = await this.vinculo.executar({
+                        lote,
+                        bncCod,
+                        flpCod,
+                        bancoLote: contaPagadora.bncNumCodbanco,
+                    });
                     vinculados = exec.vinculados.map((v) => ({
                         titulo: v.titulo,
                         codigoMascarado: v.codigoMascarado,
