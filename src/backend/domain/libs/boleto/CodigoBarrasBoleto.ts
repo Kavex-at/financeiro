@@ -38,6 +38,34 @@ export default class CodigoBarrasBoleto {
         );
     };
 
+    /**
+     * 47 → 44 dígitos (inverso de `paraLinhaDigitavel`), conferindo os 3 DVs de campo e o DV
+     * geral. Aceita também 44 dígitos (confere só o DV geral). `undefined` se inválido ou se for
+     * arrecadação (inicia por 8). Nunca lança.
+     */
+    public paraBarras = (codigo?: string): string | undefined => {
+        const c = (codigo ?? '').trim();
+        if (!SO_DIGITOS.test(c) || c.startsWith('8')) return undefined;
+        let barras: string;
+        if (c.length === 44) {
+            barras = c;
+        } else if (c.length === 47) {
+            const campos = [c.slice(0, 9), c.slice(10, 20), c.slice(21, 31)];
+            const dvs = [c[9], c[20], c[31]];
+            if (campos.some((campo, i) => this.modulo10(campo) !== dvs[i])) return undefined;
+            barras =
+                c.slice(0, 4) +
+                c[32] +
+                c.slice(33, 47) +
+                c.slice(4, 9) +
+                c.slice(10, 20) +
+                c.slice(21, 31);
+        } else {
+            return undefined;
+        }
+        return this.dvGeralValido(barras) ? barras : undefined;
+    };
+
     /** Código FEBRABAN do banco emissor (ex.: `341` Itaú). */
     public bancoEmissor = (codbar?: string): string | undefined =>
         this.normalizar(codbar)?.slice(0, 3);
@@ -103,6 +131,20 @@ export default class CodigoBarrasBoleto {
             return undefined;
         }
         return barras;
+    };
+
+    /** DV geral módulo 11 (posição 5 das barras): pesos 2..9 da direita; 0/10/11 valem 1. */
+    private dvGeralValido = (barras: string): boolean => {
+        const semDv = barras.slice(0, 4) + barras.slice(5);
+        let soma = 0;
+        let peso = 2;
+        for (let i = semDv.length - 1; i >= 0; i -= 1) {
+            soma += Number(semDv[i]) * peso;
+            peso = peso === 9 ? 2 : peso + 1;
+        }
+        const dv = 11 - (soma % 11);
+        const esperado = dv === 0 || dv === 10 || dv === 11 ? 1 : dv;
+        return Number(barras[4]) === esperado;
     };
 
     /** DV módulo 10: pesos 2,1,2,1… da direita para a esquerda, somando os dígitos do produto. */
