@@ -107,7 +107,9 @@ const build = (c: Cenario) => {
             };
         }),
         validarCodigoBarras: jest.fn(
-            async (): Promise<{
+            async (
+                _p: { modalidade: number } = { modalidade: 0 },
+            ): Promise<{
                 splitCodBar: unknown;
                 barraVlrPgto: number;
                 barraDtaVencimento: number;
@@ -120,7 +122,7 @@ const build = (c: Cenario) => {
                 };
             },
         ),
-        confirmarCodigoBarras: jest.fn(async () => {
+        confirmarCodigoBarras: jest.fn(async (_p: { modalidade: number } = { modalidade: 0 }) => {
             ordem.push('confirmar');
             return {
                 itsMnyVlrPgtoResult: 1028.8,
@@ -262,10 +264,12 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
     it('caminho feliz: ler → validar → confirmar → PUT → releitura; persiste só DEPOIS da releitura', async () => {
         const h = umItem();
         const r = await h.service.executar({ lote: h.lote, ...CTX });
+        // `ler` extra: a releitura IMEDIATAMENTE antes do PUT (o ERP não tem lock otimista, V3).
         expect(h.ordem).toEqual([
             'ler',
             'validar',
             'confirmar',
+            'ler',
             'editar',
             'ler',
             'gravar',
@@ -298,6 +302,84 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
             }),
             expect.anything(),
         );
+    });
+
+    describe('modalidade do item (HML V4)', () => {
+        it('banco do código = banco do lote (341): modalidade 6, sem o 6º campo no PUT', async () => {
+            const h = umItem();
+            await h.service.executar({ lote: h.lote, ...CTX, bancoLote: 341 });
+            const validar = h.write.validarCodigoBarras.mock.calls[0]?.[0] as {
+                modalidade: number;
+            };
+            expect(validar.modalidade).toBe(6);
+            const put = h.write.editarItemDoRascunho.mock.calls[0]?.[0];
+            expect(put?.alteracoes).not.toHaveProperty('itsVldModalidade');
+        });
+
+        it('banco do código ≠ banco do lote: modalidade 7 na validação, no confirma E no item', async () => {
+            const barras237 = CodigoBarrasSintetico.barras({
+                valor: 1028.8,
+                vencimento: VENC,
+                banco: '237',
+                serie: 5,
+            });
+            const h = umItem({
+                boletoPool: {
+                    '10:3': {
+                        ddcCod: 10,
+                        ditCod: 3,
+                        valor: 1028.8,
+                        vencimento: VENC,
+                        codbar: barras237,
+                    },
+                },
+            });
+            h.write.confirmarCodigoBarras.mockResolvedValueOnce({
+                itsMnyVlrPgtoResult: 1028.8,
+                itsDtaPgtoResult: VENC_EPOCH,
+                itsBncNumCodbancoResult: 237,
+                itsBncDesNomeResult: 'BRADESCO',
+            });
+            const r = await h.service.executar({ lote: h.lote, ...CTX, bancoLote: 341 });
+            expect(r.vinculados).toHaveLength(1);
+            const validar = h.write.validarCodigoBarras.mock.calls[0]?.[0] as {
+                modalidade: number;
+            };
+            const confirmar = h.write.confirmarCodigoBarras.mock.calls[0]?.[0] as {
+                modalidade: number;
+            };
+            expect(validar.modalidade).toBe(7);
+            expect(confirmar.modalidade).toBe(7);
+            const put = h.write.editarItemDoRascunho.mock.calls[0]?.[0];
+            expect(put?.alteracoes).toMatchObject({ itsNumBanco: 237, itsVldModalidade: 7 });
+        });
+
+        it('sem `bancoLote` a modalidade da linha é mantida (compat.)', async () => {
+            const h = umItem({ rascunho: [nativo('636', 91, { itsVldModalidade: 7 })] });
+            await h.service.executar({ lote: h.lote, ...CTX });
+            const validar = h.write.validarCodigoBarras.mock.calls[0]?.[0] as {
+                modalidade: number;
+            };
+            expect(validar.modalidade).toBe(7);
+        });
+    });
+
+    it('edição de terceiro ENTRE a leitura e o PUT: a releitura imediata a pega e nada é sobrescrito', async () => {
+        const h = umItem();
+        // A 1ª leitura vê o item sem código; a 2ª (antes do PUT) já traz um código de outra pessoa.
+        const outro = conv.paraLinhaDigitavel(
+            CodigoBarrasSintetico.barras({ valor: 7, vencimento: VENC, serie: 9 }),
+        );
+        let leituras = 0;
+        const original = h.write.lerItensDoRascunho.getMockImplementation();
+        h.write.lerItensDoRascunho.mockImplementation(async (...a: unknown[]) => {
+            leituras += 1;
+            if (leituras === 2) h.rascunho[0] = { ...h.rascunho[0], itsNumCodbar: outro };
+            return (original as (...x: unknown[]) => Promise<unknown>)(...a) as never;
+        });
+        const erro = await h.service.executar({ lote: h.lote, ...CTX }).catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(ItemEditadoPorTerceiroError);
+        expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
     });
 
     describe('o sucesso é a OBSERVAÇÃO na releitura, não o status do PUT', () => {
