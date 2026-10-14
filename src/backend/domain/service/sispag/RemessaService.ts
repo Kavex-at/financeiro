@@ -762,8 +762,14 @@ export default class RemessaService {
                     preferidos = exec.preferidos;
                     // O lote local mudou (`versao`, coluna do vínculo): daqui para baixo lê o atual.
                     loteFinal = (await this.loteRepo.getLoteComItens(lote.id)) ?? lote;
-                } else if (modoVinculo === MODO_VINCULO.ON) {
-                    preferidos = await this.vinculo.chavesComDecisaoHumana(lote);
+                } else {
+                    if (modoVinculo === MODO_VINCULO.ON) {
+                        preferidos = await this.vinculo.chavesComDecisaoHumana(lote);
+                    }
+                    // F-ft-1: o vínculo não roda aqui (retomada em `gerar_remessa`, modo `off`,
+                    // etapa já passada), mas item com código NOSSO cuja decisão caiu não pode
+                    // seguir: a guarda retira (rascunho aberto) ou aborta (lote nativo FINALIZADO).
+                    retiradosPeloVinculo = await this.vinculo.vinculosOrfaos(lote);
                 }
 
                 // (2.1) GUARDA DE CÓDIGO DE BARRAS REPETIDO (ADR-0069, I16) — fora do `if` do

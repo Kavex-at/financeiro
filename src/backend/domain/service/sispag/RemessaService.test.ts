@@ -264,6 +264,7 @@ const buildVinculo = (o: Record<string, unknown> = {}) => ({
         .mockResolvedValue({ vinculados: [], retirar: [], preferidos: new Set<string>() }),
     chavesComDecisaoHumana: jest.fn().mockResolvedValue(new Set<string>()),
     existemVinculaveis: jest.fn().mockResolvedValue(false),
+    vinculosOrfaos: jest.fn().mockResolvedValue([]),
     ...o,
 });
 
@@ -3692,6 +3693,60 @@ describe('RemessaService — vínculo do código de barras (ADR-0071, I17)', () 
             expect(vinculo.executar).not.toHaveBeenCalled();
             expect(write.finalizarLote).not.toHaveBeenCalled();
             expect(write.gerarRemessa).toHaveBeenCalled();
+        });
+
+        it('F-ft-1: item vinculado cuja decisão caiu NÃO segue na retomada (o vínculo nem roda): a guarda o retira', async () => {
+            const write = nativoAbertoCompleto();
+            let estado = [{ docCod: '801', itsCodSeq: 7 }];
+            write.listarLinhasDigitaveisDoLote.mockImplementation(async () => ({
+                itens: [],
+                total: 0,
+                dropped: 0,
+                completa: true,
+                ...(estado.length > 0
+                    ? {
+                          semCodigo: estado.map((e) => ({
+                              docCod: e.docCod,
+                              titCod: '1',
+                              filCod: 2,
+                              itsCodSeq: e.itsCodSeq,
+                          })),
+                      }
+                    : {}),
+            }));
+            write.removerItemDoRascunho.mockImplementation(async (p: { itsCodSeq: number }) => {
+                estado = estado.filter((e) => e.itsCodSeq !== p.itsCodSeq);
+            });
+            const vinculo = buildVinculo({
+                existemVinculaveis: jest.fn().mockResolvedValue(false),
+                vinculosOrfaos: jest.fn().mockResolvedValue([
+                    {
+                        titulo: { filCod: 2, docCod: '801', titCod: '1' },
+                        codigoMascarado: MASCARA,
+                    },
+                ]),
+            });
+            const l = boletoSemDda();
+            const loteRepo = buildLoteRepo(l);
+            await make({
+                write,
+                loteRepo,
+                ledger: ledgerEmFinalizar(),
+                lote: l,
+                env: envModo('2:on'),
+                vinculo,
+            })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch(() => undefined);
+            expect(vinculo.executar).not.toHaveBeenCalled();
+            expect(loteRepo.retirarItemPorCodigoDeBarras).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    docCod: '801',
+                    motivo: 'VINCULO_CODIGO_BARRAS_FALHOU',
+                    codigoMascarado: MASCARA,
+                }),
+                expect.anything(),
+            );
         });
 
         it('modo off: a retomada não consulta o vínculo', async () => {

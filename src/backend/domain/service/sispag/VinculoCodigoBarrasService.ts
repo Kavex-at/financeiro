@@ -280,9 +280,36 @@ export default class VinculoCodigoBarrasService {
      */
     public existemVinculaveis = async (lote: LotePagamento): Promise<boolean> => {
         const vigentes = await this.chavesComDecisaoHumana(lote);
+        const ctx = await this.carregarContexto();
         return this.boletos_(lote).some(
-            (i) => vigentes.has(chaveDe(i)) && i.vinculoCodigoBarras === undefined,
+            (i) =>
+                (vigentes.has(chaveDe(i)) && i.vinculoCodigoBarras === undefined) ||
+                this.vinculoOrfao(i, ctx),
         );
+    };
+
+    /**
+     * Itens com código gravado por NÓS cuja decisão deixou de ser `CONFIRMADA` (F-ft-1). LOCAL,
+     * sem ERP. A remessa entrega estes à guarda I16d (`retiradosPeloVinculo`) mesmo quando o
+     * vínculo não roda (retomada em `gerar_remessa`, modo `off`): em rascunho ABERTO são
+     * retirados; com o lote nativo FINALIZADO a guarda aborta com o erro nomeado.
+     */
+    public vinculosOrfaos = async (
+        lote: LotePagamento,
+    ): Promise<Array<{ titulo: ChaveTitulo; codigoMascarado?: string }>> => {
+        const alvos = this.boletos_(lote).filter(
+            (i) => i.vinculoCodigoBarras?.origem === VINCULO_ORIGEM.DECISAO_HUMANA,
+        );
+        if (alvos.length === 0) return [];
+        const ctx = await this.carregarContexto();
+        return alvos
+            .filter((i) => this.vinculoOrfao(i, ctx))
+            .map((i) => ({
+                titulo: paraTitulo(i),
+                ...(i.vinculoCodigoBarras?.codigoMascarado
+                    ? { codigoMascarado: i.vinculoCodigoBarras.codigoMascarado }
+                    : {}),
+            }));
     };
 
     // ── Execução (modo `on`) ────────────────────────────────────────────────
@@ -309,7 +336,7 @@ export default class VinculoCodigoBarrasService {
         }));
         // Nenhum BOLETO do lote tem decisão humana confirmada: não há vínculo a fazer e o client novo
         // nem é tocado (o item sem código cai na guarda I16c, como sempre).
-        if (!candidatos.some((c) => ctx.decisoes.has(c.chave))) {
+        if (!candidatos.some((c) => ctx.decisoes.has(c.chave) || this.vinculoOrfao(c.item, ctx))) {
             return { vinculados: [], retirar: [], preferidos };
         }
         // Q9: só 500 itens/página foi exercitado em HML. Lote maior: o vínculo ABORTA (retomável,
@@ -367,6 +394,15 @@ export default class VinculoCodigoBarrasService {
         return { vinculados, retirar, preferidos };
     };
 
+    /**
+     * Item com código vinculado POR NÓS (`DECISAO_HUMANA`) cuja decisão deixou de ser `CONFIRMADA`
+     * (anulada, rejeitada, órfã, revogada): o boleto que a analista desfez não pode chegar ao
+     * `finalizar` (F-ft-1). Vínculo do ERP (`ERP_DDA`) nunca é nosso para retirar.
+     */
+    private vinculoOrfao = (item: ItemLote, ctx: ContextoLocal): boolean =>
+        item.vinculoCodigoBarras?.origem === VINCULO_ORIGEM.DECISAO_HUMANA &&
+        !ctx.decisoes.has(chaveDe(item));
+
     // ── Um item ─────────────────────────────────────────────────────────────
 
     private vincularItem = async (
@@ -401,7 +437,13 @@ export default class VinculoCodigoBarrasService {
 
         // 2. Item que já traz código: idempotência (I17f) ou edição de terceiro.
         if (codigoNoItem !== '') {
-            if (!decisao) return { tipo: 'ignorado' }; // digitado à mão no ERP: não é nosso.
+            if (!decisao) {
+                // Código que NÓS gravamos e cuja decisão caiu: fail-closed, retira (F-ft-1).
+                if (this.vinculoOrfao(item, ctx)) {
+                    return this.falharSemDecisao(lote, flpCod, item, nativo.itsCodSeq);
+                }
+                return { tipo: 'ignorado' }; // digitado à mão no ERP: não é nosso.
+            }
             return this.reconhecerItemComCodigo({ lote, flpCod, ctx, alvo, nativo, decisao });
         }
 
@@ -533,6 +575,17 @@ export default class VinculoCodigoBarrasService {
                 titCod: item.titCod,
                 campo: CAMPO_EDITADO_POR_TERCEIRO.CODIGO,
                 flpCod,
+            });
+        }
+
+        // Revalidação barata da decisão (1 SELECT por PK): anulada/rejeitada desde o início da
+        // execução ⇒ o PUT não acontece (F-ft-1).
+        const vigente = await this.sugestoes.buscarDecisaoPorId(avaliado.decisao.id);
+        if (vigente?.decisao !== DECISAO_SUGESTAO_BOLETO.CONFIRMADA) {
+            return this.falhar(lote, flpCod, item, nativo.itsCodSeq, {
+                campo: CAMPO_DIVERGENTE_VINCULO.ELEGIBILIDADE,
+                motivo: MOTIVO_INELEGIVEL_VINCULO.DECISAO_NAO_CONFIRMADA,
+                avaliado,
             });
         }
 
@@ -823,6 +876,28 @@ export default class VinculoCodigoBarrasService {
         (err instanceof ConexosError && err.code === 'CONEXOS_UPSTREAM_REJECTED');
 
     /** Falha determinística: registra `VINCULO_FALHOU` e devolve o item para a retirada (I17g(3)). */
+    /** Falha por decisão que deixou de ser `CONFIRMADA` (item com código nosso, F-ft-1). */
+    private falharSemDecisao = (
+        lote: LotePagamento,
+        flpCod: number,
+        item: ItemLote,
+        itsCodSeq: number | undefined,
+    ): Promise<{ tipo: 'retirar'; falha: FalhaDeterministicaVinculo }> => {
+        const v = item.vinculoCodigoBarras;
+        return this.falhar(lote, flpCod, item, itsCodSeq, {
+            campo: CAMPO_DIVERGENTE_VINCULO.ELEGIBILIDADE,
+            motivo: MOTIVO_INELEGIVEL_VINCULO.DECISAO_NAO_CONFIRMADA,
+            avaliado: {
+                elegibilidade: {
+                    elegivel: false,
+                    motivo: MOTIVO_INELEGIVEL_VINCULO.DECISAO_NAO_CONFIRMADA,
+                    ...(v?.codigoMascarado ? { codigoMascarado: v.codigoMascarado } : {}),
+                } as ResultadoElegibilidadeVinculo,
+            },
+            ...(v?.decisaoId ? { decisaoId: v.decisaoId } : {}),
+        });
+    };
+
     private falhar = async (
         lote: LotePagamento,
         flpCod: number,
@@ -832,6 +907,7 @@ export default class VinculoCodigoBarrasService {
             campo: CampoDivergenteVinculo;
             motivo?: string;
             avaliado: Avaliado;
+            decisaoId?: string;
             esperadoCentavos?: number;
             obtidoCentavos?: number;
         },
@@ -855,7 +931,11 @@ export default class VinculoCodigoBarrasService {
             filCod: item.filCod,
             docCod: item.docCod,
             titCod: item.titCod,
-            ...(o.avaliado.decisao ? { decisaoId: o.avaliado.decisao.id } : {}),
+            ...(o.avaliado.decisao
+                ? { decisaoId: o.avaliado.decisao.id }
+                : o.decisaoId
+                  ? { decisaoId: o.decisaoId }
+                  : {}),
             motivo,
             detalhe: {
                 campo: o.campo,
