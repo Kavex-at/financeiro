@@ -321,6 +321,12 @@ Every feature or rule change goes through the pipeline. No exceptions.
 
 ## Gotchas conhecidos
 
+- **Vínculo de código de barras (ADR-0071): só no rascunho; `PUT` nunca em lote finalizado; `shadow` não
+  faz chamada ao ERP.** O código confirmado é gravado no item DEPOIS do `importar`
+  (`validacao → confirma → PUT → releitura`; o sucesso é o que a releitura OBSERVA) e só com
+  `SISPAG_BIND_CODBAR_FILIAIS="<filial>:on"`. O ERP recusa `PUT` em item de lote finalizado, não tem
+  lock otimista e exige modalidade 7 quando o banco do código ≠ banco do lote (medido em HML,
+  2026-10-14). `on` em PRD só depois de V-PRD1/V-PRD2.
 - **`bootstrapAppContainer` é compartilhado com ~58 jobs.** Tudo que se acrescenta a ele roda em
   TODA execução de job, não só no servidor. Jobs recebem env deliberadamente estreito (o
   `detect-staleness` passa só `databaseConnectionString`), então qualquer diagnóstico, warm-up ou
