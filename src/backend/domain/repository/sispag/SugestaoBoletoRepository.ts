@@ -3,6 +3,7 @@ import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient, {
     type TransactionClient,
 } from '../../client/database/PostgreeDatabaseClient.js';
+import SuggestionListingTruncatedError from '../../errors/SuggestionListingTruncatedError.js';
 import {
     type ConfirmacaoEmissor,
     confirmacaoEmissorRowSchema,
@@ -144,6 +145,7 @@ export default class SugestaoBoletoRepository {
               LIMIT ${LIMITE_LISTAGEM}`,
             { pesCods: pesCods ? [...new Set(pesCods)] : null },
         );
+        this.exigirNaoTruncada('pares_vigentes', rows.length);
         return rows.map((r) => confirmacaoEmissorRowSchema.parse(r));
     };
 
@@ -159,6 +161,7 @@ export default class SugestaoBoletoRepository {
               LIMIT ${LIMITE_LISTAGEM}`,
             { estado: filtro.estado ?? null, pesCod: filtro.pesCod ?? null },
         );
+        this.exigirNaoTruncada('pares', rows.length);
         return rows.map((r) => confirmacaoEmissorRowSchema.parse(r));
     };
 
@@ -361,7 +364,15 @@ export default class SugestaoBoletoRepository {
                 pesCod: filtro.pesCod ?? null,
             },
         );
+        this.exigirNaoTruncada('decisoes', rows.length);
         return rows.map((r) => decisaoSugestaoRowSchema.parse(r));
+    };
+
+    /** Lista no teto = possivelmente truncada: falha alto, nunca devolve decisão "ausente". */
+    private exigirNaoTruncada = (listagem: string, linhas: number): void => {
+        if (linhas >= LIMITE_LISTAGEM) {
+            throw new SuggestionListingTruncatedError({ listagem, limite: LIMITE_LISTAGEM });
+        }
     };
 
     /** Decisões de um tipo no formato que o motor consome (chave do título + chave do boleto). */

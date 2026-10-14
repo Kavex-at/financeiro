@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS sispag_confirmacao_emissor_boleto (
             AND revogado_em IS NOT NULL
         )
     ),
+    CONSTRAINT sispag_confirmacao_emissor_boleto_pes_cod_check CHECK (
+        length(btrim(pes_cod)) > 0
+    ),
     CONSTRAINT sispag_confirmacao_emissor_boleto_ator_check CHECK (
         lower(btrim(confirmado_por)) <> 'sistema'
     )
@@ -109,6 +112,9 @@ CREATE TABLE IF NOT EXISTS sispag_decisao_sugestao_boleto (
     ),
     CONSTRAINT sispag_decisao_sugestao_boleto_confirmacao_check CHECK (
         decisao <> 'CONFIRMADA' OR (confirmacao_emissor_id IS NOT NULL AND tier IS NOT NULL)
+    ),
+    CONSTRAINT sispag_decisao_sugestao_boleto_pes_cod_check CHECK (
+        length(btrim(pes_cod)) > 0
     ),
     CONSTRAINT sispag_decisao_sugestao_boleto_ator_check CHECK (
         lower(btrim(decidido_por)) <> 'sistema'

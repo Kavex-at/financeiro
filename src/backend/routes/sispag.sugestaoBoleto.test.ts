@@ -10,6 +10,8 @@ jest.mock('../domain/appContainer.js', () => ({
 
 import BoletoAlreadySuggestedToOtherTitleError from '../domain/errors/BoletoAlreadySuggestedToOtherTitleError.js';
 import BoletoSuggestionNotAvailableError from '../domain/errors/BoletoSuggestionNotAvailableError.js';
+import InvalidDecisionActorError from '../domain/errors/InvalidDecisionActorError.js';
+import IssuerConfirmationVersionConflictError from '../domain/errors/IssuerConfirmationVersionConflictError.js';
 import IssuerConfirmationNotFoundError from '../domain/errors/IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from '../domain/errors/IssuerConfirmationReasonRequiredError.js';
 import LineCopyAuditFailedError from '../domain/errors/LineCopyAuditFailedError.js';
@@ -232,7 +234,13 @@ describe('POST /sispag/sugestoes-boleto/confirmar', () => {
     it('body inválido → 400', async () => {
         const s = servico();
         await comApp(VER_EXECUTAR, async (url) => {
-            for (const body of [{}, { ...CHAVE, filCod: 'x' }, { ...CHAVE, docCod: '  ' }]) {
+            for (const body of [
+                {},
+                { ...CHAVE, filCod: 'x' },
+                { ...CHAVE, docCod: '  ' },
+                { ...CHAVE, docCod: 'd'.repeat(65) },
+                { ...CHAVE, titCod: 't'.repeat(65) },
+            ]) {
                 expect((await post(`${url}/sispag/sugestoes-boleto/confirmar`, body)).status).toBe(
                     400,
                 );
@@ -372,6 +380,27 @@ describe('confirmações de emissor', () => {
             ).toBe(400);
         });
         expect(s.revogarPar).toHaveBeenCalledWith({ id: ID, motivo: 'conta trocada', ator: 'bia' });
+    });
+
+    it('conflito de versão → 409 nomeado; ator inválido → 403 nomeado', async () => {
+        servico({
+            revogarPar: jest
+                .fn()
+                .mockRejectedValueOnce(new IssuerConfirmationVersionConflictError({ id: ID }))
+                .mockRejectedValueOnce(new InvalidDecisionActorError()),
+        });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const rota = `${url}/sispag/confirmacoes-emissor/${ID}/revogar`;
+            const a = await post(rota, { motivo: 'x' });
+            expect(a.status).toBe(409);
+            expect(await a.json()).toMatchObject({
+                code: 'CONFIRMACAO_EMISSOR_CONFLITO_DE_VERSAO',
+                retryable: false,
+            });
+            const b = await post(rota, { motivo: 'x' });
+            expect(b.status).toBe(403);
+            expect(await b.json()).toMatchObject({ code: 'ATOR_DA_DECISAO_INVALIDO' });
+        });
     });
 
     it('par inexistente → 404; motivo em branco → 422', async () => {

@@ -17,8 +17,8 @@ const texto = z.string().trim().min(1);
 export const ChaveSugestaoBodySchema = z
     .object({
         filCod: z.number().int().positive(),
-        docCod: texto,
-        titCod: texto,
+        docCod: texto.max(64),
+        titCod: texto.max(64),
         ddcCod: z.number().int().positive(),
         ditCod: z.number().int().min(0),
     })

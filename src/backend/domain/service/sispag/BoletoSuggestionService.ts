@@ -2,8 +2,10 @@ import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import BoletoAlreadySuggestedToOtherTitleError from '../../errors/BoletoAlreadySuggestedToOtherTitleError.js';
 import BoletoSuggestionNotAvailableError from '../../errors/BoletoSuggestionNotAvailableError.js';
+import InvalidDecisionActorError from '../../errors/InvalidDecisionActorError.js';
 import IssuerConfirmationNotFoundError from '../../errors/IssuerConfirmationNotFoundError.js';
 import IssuerConfirmationReasonRequiredError from '../../errors/IssuerConfirmationReasonRequiredError.js';
+import IssuerConfirmationVersionConflictError from '../../errors/IssuerConfirmationVersionConflictError.js';
 import LineCopyAuditFailedError from '../../errors/LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from '../../errors/OverdueBoletoNotConfirmableError.js';
 import type { BoletoDda } from '../../interface/sispag/BoletoDda.js';
@@ -372,8 +374,21 @@ export default class BoletoSuggestionService {
         }
         const { titulo, boleto } = await this.reler(chave);
         const emissor = this.codigoBarras.emissor(boleto.codbar);
-        const pesCod = titulo.pesCod ?? '';
-        const pares = await this.repo.listarParesVigentes(pesCod ? [pesCod] : []);
+        if (!titulo.pesCod) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'O título não tem credor identificado.',
+            });
+        }
+        if (titulo.vencimento == null || !boleto.vencimento) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'O título ou o boleto não tem vencimento informado.',
+            });
+        }
+        const pesCod = titulo.pesCod;
+        const vencimentoBoleto = boleto.vencimento;
+        const pares = await this.repo.listarParesVigentes([pesCod]);
         const avaliacao = this.avaliar(
             titulo,
             boleto,
@@ -395,7 +410,7 @@ export default class BoletoSuggestionService {
                     valorTitulo: titulo.valor,
                     vencimentoTitulo: vencimento,
                     valorBoleto: boleto.valor,
-                    vencimentoBoleto: boleto.vencimento ?? vencimento,
+                    vencimentoBoleto,
                     deltaValor: avaliacao.deltaValor,
                     deltaPercentual: avaliacao.deltaPercentual,
                     deltaDias: avaliacao.deltaDias,
@@ -466,7 +481,7 @@ export default class BoletoSuggestionService {
             if (!atual) throw new IssuerConfirmationNotFoundError({ id: par.id });
             if (n === 0) {
                 if (atual.estado === ESTADO_CONFIRMACAO_EMISSOR.REVOGADA) return null;
-                throw new Error('conflito de versão ao revogar a confirmação de emissor');
+                throw new IssuerConfirmationVersionConflictError({ id: par.id });
             }
             await this.repo.inserirEvento(
                 {
@@ -535,8 +550,12 @@ export default class BoletoSuggestionService {
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'cópia da linha digitável recusada: a trilha não gravou',
-                data: { ...this.camposChave(chave), ator: input.ator },
-                ...(erro instanceof Error ? { error: erro } : {}),
+                data: {
+                    ...this.camposChave(chave),
+                    ator: input.ator,
+                    ...(erro instanceof Error ? { erro: erro.message } : {}),
+                    ...this.codigoDoErro(erro),
+                },
             });
             throw new LineCopyAuditFailedError(chave);
         }
@@ -550,9 +569,15 @@ export default class BoletoSuggestionService {
 
     // ── Internos ───────────────────────────────────────────────────────────────────────────────
 
+    /** Só o `code` textual do driver/domínio: o objeto do erro carrega `detail` com valores. */
+    private codigoDoErro = (erro: unknown): { codigoErro?: string } => {
+        const code = (erro as { code?: unknown } | null)?.code;
+        return typeof code === 'string' ? { codigoErro: code } : {};
+    };
+
     private exigirAtor = (ator: string): void => {
         if (ATORES_RECUSADOS.has(ator.trim().toLowerCase())) {
-            throw new Error('ator inválido: a decisão exige o usuário autenticado');
+            throw new InvalidDecisionActorError();
         }
     };
 
