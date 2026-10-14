@@ -285,7 +285,7 @@ export default class SispagPainelService {
      * `BUSINESS_WARN` e lista vazia — a UI simplesmente não oferece o botão.
      */
     public linhasDigitaveisDoLote = async (loteId: string): Promise<LinhasDigitaveisDoLote> => {
-        const vazio: LinhasDigitaveisDoLote = { itens: [], total: 0, dropped: 0 };
+        const vazio: LinhasDigitaveisDoLote = { itens: [], total: 0, dropped: 0, completa: true };
         const lote = await this.loteRepo.getLoteComItens(loteId);
         if (!lote) return vazio;
         const { nativeFilCod, nativeBncCod, nativeFlpCod } = lote;

@@ -8,6 +8,7 @@ import ConexosSispagWriteClient from './ConexosSispagWriteClient.js';
 const buildBase = () => ({
     ensureSid: jest.fn().mockResolvedValue(undefined),
     postGenericOnce: jest.fn(),
+    deleteGeneric: jest.fn().mockResolvedValue(undefined),
     getGeneric: jest.fn(),
     listGenericPaginated: jest.fn(),
     runWithRetry: jest.fn(<T>(fn: () => Promise<T>) => fn()),
@@ -524,9 +525,10 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             });
             // Item sem `itsNumCodbar` não é boleto: não entra em `total` nem em `dropped`.
             expect(res).toEqual({
-                itens: [{ docCod: '10400', titCod: '1', linhaDigitavel: LINHA_OK }],
+                itens: [{ docCod: '10400', titCod: '1', linhaDigitavel: LINHA_OK, filCod: 2 }],
                 total: 1,
                 dropped: 0,
+                completa: true,
             });
             expect(base.listGenericPaginated.mock.calls[0][0]).toBe(
                 'fin015/finItemSispag/list/2/4/4',
@@ -615,9 +617,9 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
                 flpCod: 4,
             });
             expect(res.invalidos).toEqual([
-                { docCod: '3', titCod: '2' },
-                { docCod: '4', titCod: '1' },
-                { docCod: '', titCod: '1' },
+                { docCod: '3', titCod: '2', filCod: 2 },
+                { docCod: '4', titCod: '1', filCod: 2 },
+                { docCod: '', titCod: '1', filCod: 2 },
             ]);
             expect(res.dropped).toBe(3);
             expect(res.itens.length + (res.invalidos?.length ?? 0)).toBe(res.total);
@@ -631,7 +633,70 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             base.listGenericPaginated.mockResolvedValue({ rows: [] });
             await expect(
                 make(base).listarLinhasDigitaveisDoLote({ filCod: 2, bncCod: 4, flpCod: 4 }),
-            ).resolves.toEqual({ itens: [], total: 0, dropped: 0 });
+            ).resolves.toEqual({ itens: [], total: 0, dropped: 0, completa: true });
+        });
+
+        it('traz filCod (do row, com fallback no lote) e itsCodSeq validado por item e por inválido', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                rows: [
+                    linha({ docCod: 1, filCod: 7, itsCodSeq: 12 }),
+                    linha({ docCod: 2, itsCodSeq: '13' }),
+                    linha({ docCod: 3, itsCodSeq: null }),
+                    linha({ docCod: 4, itsNumCodbar: LINHA_DV_RUIM, filCod: 7, itsCodSeq: 14 }),
+                ],
+            });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+            });
+            expect(res.itens).toEqual([
+                expect.objectContaining({ docCod: '1', filCod: 7, itsCodSeq: 12 }),
+                expect.objectContaining({ docCod: '2', filCod: 2, itsCodSeq: 13 }),
+                { docCod: '3', titCod: '1', linhaDigitavel: LINHA_OK, filCod: 2 },
+            ]);
+            expect(res.itens[2]).not.toHaveProperty('itsCodSeq');
+            expect(res.invalidos).toEqual([{ docCod: '4', titCod: '1', filCod: 7, itsCodSeq: 14 }]);
+        });
+
+        it('pagina de verdade: 501 itens em 2 páginas, completa=true', async () => {
+            const base = buildBase();
+            const pagina1 = Array.from({ length: 500 }, (_, i) =>
+                linha({ docCod: 1000 + i, itsCodSeq: i + 1 }),
+            );
+            base.listGenericPaginated
+                .mockResolvedValueOnce({ count: 501, rows: pagina1 })
+                .mockResolvedValueOnce({
+                    count: 501,
+                    rows: [linha({ docCod: 5000, itsCodSeq: 501 })],
+                });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+            });
+            expect(res.itens).toHaveLength(501);
+            expect(res.completa).toBe(true);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(2);
+            expect(base.listGenericPaginated.mock.calls[0][1]).toMatchObject({ pageNumber: 1 });
+            expect(base.listGenericPaginated.mock.calls[1][1]).toMatchObject({ pageNumber: 2 });
+        });
+
+        it('truncada por maxPaginas: completa=false (nunca "lista vazia" nem sucesso)', async () => {
+            const base = buildBase();
+            const cheia = Array.from({ length: 500 }, (_, i) =>
+                linha({ docCod: 1000 + i, itsCodSeq: i + 1 }),
+            );
+            base.listGenericPaginated.mockResolvedValue({ count: 99999, rows: cheia });
+            const res = await make(base).listarLinhasDigitaveisDoLote({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 4,
+                maxPaginas: 2,
+            });
+            expect(res.completa).toBe(false);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(2);
         });
 
         it('falha de leitura do grid vira ConexosError — não lista vazia', async () => {
@@ -642,6 +707,41 @@ describe('ConexosSispagWriteClient (fin015 write toolbox)', () => {
             await expect(
                 make(base).listarLinhasDigitaveisDoLote({ filCod: 2, bncCod: 4, flpCod: 4 }),
             ).rejects.toBeInstanceOf(ConexosError);
+        });
+    });
+
+    describe('removerItemDoRascunho', () => {
+        it('DELETE com os 5 segmentos na ordem da ontologia; filCod do lote no header', async () => {
+            const base = buildBase();
+            await make(base).removerItemDoRascunho({
+                filCod: 2,
+                bncCod: 4,
+                flpCod: 31,
+                itsCodSeq: 77,
+                filCodItem: 3,
+            });
+            expect(base.deleteGeneric).toHaveBeenCalledTimes(1);
+            expect(base.deleteGeneric).toHaveBeenCalledWith('fin015/finItemSispag/4/31/77/3/2', {
+                filCod: 2,
+            });
+            // Tentativa única: nunca por runWithRetry.
+            expect(base.runWithRetry).not.toHaveBeenCalled();
+        });
+
+        it('falha vira ConexosError e nenhum código longo aparece na mensagem', async () => {
+            const base = buildBase();
+            base.deleteGeneric.mockRejectedValue(new Error('boom'));
+            const erro = await make(base)
+                .removerItemDoRascunho({
+                    filCod: 2,
+                    bncCod: 4,
+                    flpCod: 31,
+                    itsCodSeq: 77,
+                    filCodItem: 2,
+                })
+                .catch((e) => e);
+            expect(erro).toBeInstanceOf(ConexosError);
+            expect(String((erro as Error).message)).not.toMatch(/\d{20,}/);
         });
     });
 

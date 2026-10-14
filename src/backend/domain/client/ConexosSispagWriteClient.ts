@@ -7,6 +7,7 @@ import type {
     CriarLoteParams,
     GerarRemessaParams,
     ImportarTitulosParams,
+    ItemLinhaDigitavel,
     LinhasDigitaveisDoLote,
     LoteNativoCriado,
     LoteNativoEstado,
@@ -148,6 +149,9 @@ function linhaDigitavelValida(linha: string): boolean {
     const base = linha.slice(0, 4) + linha.slice(33, 47) + campoLivre;
     return dvMod11(base) === Number(linha[32]);
 }
+
+/** `itsCodSeq` do item nativo: inteiro positivo. Ausente/inválido = identidade incompleta. */
+const ITS_COD_SEQ_SCHEMA = z.coerce.number().int().positive();
 
 const PENDENTE_DDA_SCHEMA = z
     .object({ titVldReflexoDdaAssoc: z.union([z.literal(0), z.literal(1)]) })
@@ -603,38 +607,58 @@ export default class ConexosSispagWriteClient {
         filCod: number;
         bncCod: number;
         flpCod: number;
+        /** Guarda contra loop infinito (páginas de 500). Atingida antes do fim ⇒ `completa=false`. */
+        maxPaginas?: number;
     }): Promise<LinhasDigitaveisDoLote> => {
-        const { filCod, bncCod, flpCod } = params;
+        const { filCod, bncCod, flpCod, maxPaginas = 40 } = params;
         const path = `fin015/finItemSispag/list/${filCod}/${bncCod}/${flpCod}`;
+        const pageSize = 500;
         try {
-            const page = await this.base.runWithRetry(async () => {
-                await this.base.ensureSid();
-                return this.base.listGenericPaginated<Record<string, unknown>>(
-                    path,
-                    {
-                        fieldList: [],
-                        filterList: {},
-                        serviceName: 'fin015',
-                        pageNumber: 1,
-                        pageSize: 500,
-                    },
-                    { filCod },
-                );
-            });
-            const itens: Array<{ docCod: string; titCod: string; linhaDigitavel: string }> = [];
-            const invalidos: Array<{ docCod: string; titCod: string }> = [];
+            const linhas: Array<Record<string, unknown>> = [];
+            let completa = false;
+            for (let pagina = 1; pagina <= maxPaginas; pagina += 1) {
+                const pageNumber = pagina;
+                const resposta = await this.base.runWithRetry(async () => {
+                    await this.base.ensureSid();
+                    return this.base.listGenericPaginated<Record<string, unknown>>(
+                        path,
+                        {
+                            fieldList: [],
+                            filterList: {},
+                            serviceName: 'fin015',
+                            pageNumber,
+                            pageSize,
+                        },
+                        { filCod },
+                    );
+                });
+                const rows = resposta.rows ?? [];
+                linhas.push(...rows);
+                const count = Number(resposta.count);
+                if (rows.length < pageSize || (Number.isFinite(count) && linhas.length >= count)) {
+                    completa = true;
+                    break;
+                }
+            }
+            const itens: ItemLinhaDigitavel[] = [];
+            const invalidos: NonNullable<LinhasDigitaveisDoLote['invalidos']> = [];
             let total = 0;
-            for (const row of page.rows ?? []) {
+            for (const row of linhas) {
                 // Sem o campo (ou vazio) = item que não é boleto. Não é anomalia, não conta.
                 const bruto = row.itsNumCodbar;
                 if (bruto === null || bruto === undefined || String(bruto).trim() === '') continue;
                 total += 1;
+                const itsCodSeq = ITS_COD_SEQ_SCHEMA.safeParse(row.itsCodSeq);
+                const rowFil = Number(row.filCod);
+                const rowFilCod = Number.isInteger(rowFil) && rowFil > 0 ? rowFil : filCod;
                 const parsed = LINHA_DIGITAVEL_SCHEMA.safeParse(row);
                 if (!parsed.success) {
                     // Só a identidade do item: o código recusado nunca sai daqui (I16e).
                     invalidos.push({
                         docCod: this.identidade(row.docCod, ''),
                         titCod: this.identidade(row.titCod, '1'),
+                        filCod: rowFilCod,
+                        ...(itsCodSeq.success ? { itsCodSeq: itsCodSeq.data } : {}),
                     });
                     continue;
                 }
@@ -642,14 +666,50 @@ export default class ConexosSispagWriteClient {
                     docCod: parsed.data.docCod,
                     titCod: parsed.data.titCod,
                     linhaDigitavel: parsed.data.itsNumCodbar,
+                    filCod: rowFilCod,
+                    ...(itsCodSeq.success ? { itsCodSeq: itsCodSeq.data } : {}),
+                });
+            }
+            if (!completa) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'fin015: lista de itens do lote truncada — leitura incompleta',
+                    data: { filCod, bncCod, flpCod, lidas: linhas.length, maxPaginas },
                 });
             }
             return {
                 itens,
                 total,
                 dropped: invalidos.length,
+                completa,
                 ...(invalidos.length > 0 ? { invalidos } : {}),
             };
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
+     * Retira UM item do rascunho nativo (ADR-0069 emenda 1, I16d.3):
+     * `DELETE fin015/finItemSispag/{bncCod}/{flpCod}/{itsCodSeq}/{filCodItem}/{filCodLote}`.
+     *
+     * `itsCodSeq` tem que ser o que o chamador leu NA HORA da lista (nunca de cache). Tentativa
+     * ÚNICA, sem retry cego: o sucesso é decidido pelo chamador pela AUSÊNCIA na releitura, não
+     * pelo status do DELETE (comportamento para `itsCodSeq` inexistente não medido — Task 12).
+     * O header `cnx-filcod` é a filial do LOTE.
+     */
+    public removerItemDoRascunho = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        itsCodSeq: number;
+        filCodItem: number;
+    }): Promise<void> => {
+        const { filCod, bncCod, flpCod, itsCodSeq, filCodItem } = params;
+        const path = `fin015/finItemSispag/${bncCod}/${flpCod}/${itsCodSeq}/${filCodItem}/${filCod}`;
+        try {
+            await this.base.ensureSid();
+            await this.base.deleteGeneric<unknown>(path, { filCod });
         } catch (cause) {
             throw this.toConexosError(path, cause);
         }

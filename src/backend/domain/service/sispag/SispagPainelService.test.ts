@@ -474,6 +474,7 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
             itens: [],
             total: 0,
             dropped: 0,
+            completa: true,
         });
         expect(listarLinhasDigitaveisDoLote).not.toHaveBeenCalled();
     });
@@ -484,6 +485,7 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
             itens: [],
             total: 0,
             dropped: 0,
+            completa: true,
         });
     });
 
@@ -496,6 +498,7 @@ describe('SispagPainelService.linhasDigitaveisDoLote', () => {
             itens: [],
             total: 0,
             dropped: 0,
+            completa: true,
         });
         expect(log.warn).toHaveBeenCalled();
     });
