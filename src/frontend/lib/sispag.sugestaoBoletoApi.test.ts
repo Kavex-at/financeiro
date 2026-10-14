@@ -3,6 +3,7 @@
  * a mensagem em português e o código do envelope.
  */
 import {
+  anularConfirmacaoBoleto,
   confirmarSugestaoBoleto,
   copiarLinhaSugestao,
   fetchConfirmacoesEmissor,
@@ -122,6 +123,25 @@ describe('cliente da sugestão de boleto', () => {
     expect(JSON.parse((c2?.[1] as RequestInit).body as string)).toEqual({
       ...CHAVE,
       motivo: 'outro credor',
+    })
+  })
+
+  it('anular manda POST só com o título e o motivo, nunca ator nem boleto (I15l)', async () => {
+    mock.mockResolvedValue(
+      resp(200, { anulada: true, decisao: { ...decisao, decisao: 'ANULADA' } }),
+    )
+    const r = await anularConfirmacaoBoleto(
+      { filCod: 1, docCod: '9', titCod: '1' },
+      'confirmação errada',
+    )
+    expect(r.anulada).toBe(true)
+    expect(String(mock.mock.calls[0]?.[0])).toContain('/sugestoes-boleto/anular')
+    expect((mock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST')
+    expect(JSON.parse((mock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      filCod: 1,
+      docCod: '9',
+      titCod: '1',
+      motivo: 'confirmação errada',
     })
   })
 

@@ -6,6 +6,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { SugestaoBoleto } from '@/lib/sispag'
 import {
+  anularConfirmacaoBoleto,
   AutorizacaoApiError,
   confirmarSugestaoBoleto,
   copiarLinhaSugestao,
@@ -22,6 +23,7 @@ jest.mock('@/lib/sispag', () => {
     rejeitarSugestaoBoleto: jest.fn(),
     copiarLinhaSugestao: jest.fn(),
     revogarConfirmacaoEmissor: jest.fn(),
+    anularConfirmacaoBoleto: jest.fn(),
   }
 })
 
@@ -29,6 +31,7 @@ const confirmar = confirmarSugestaoBoleto as jest.Mock
 const rejeitar = rejeitarSugestaoBoleto as jest.Mock
 const copiar = copiarLinhaSugestao as jest.Mock
 const revogar = revogarConfirmacaoEmissor as jest.Mock
+const anular = anularConfirmacaoBoleto as jest.Mock
 
 // Valor de teste sintético: nunca uma linha digitável real.
 const LINHA_FAKE = 'LINHA-DE-TESTE-0000'
@@ -311,6 +314,80 @@ describe('SugestaoBoletoPainel — revogar', () => {
     expect(onDecidido).toHaveBeenCalled()
     dlg = screen.queryByRole('dialog') as HTMLElement
     expect(dlg).toBeNull()
+  })
+})
+
+describe('SugestaoBoletoPainel — anular confirmação (I15l)', () => {
+  it('só executar vê o botão, e só na confirmada; o nome cita o número do boleto', () => {
+    const { unmount } = renderPainel([sugestao({ estado: 'CONFIRMADA' })])
+    expect(
+      screen.getByRole('button', { name: 'Anular confirmação do boleto 001532761' }),
+    ).toBeInTheDocument()
+    unmount()
+    renderPainel([sugestao({ estado: 'CONFIRMADA' })], { executar: false })
+    expect(screen.queryByRole('button', { name: /^Anular confirmação/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Anular confirmação/ })).toBeNull()
+  })
+
+  it('sugestão não confirmada não oferece anular', () => {
+    renderPainel([sugestao()])
+    expect(screen.queryByRole('button', { name: /^Anular confirmação/ })).not.toBeInTheDocument()
+  })
+
+  it('exige motivo de 10 caracteres, anula pelo título, anuncia na região única e relê', async () => {
+    anular.mockResolvedValue({ anulada: true, decisao: {} })
+    renderPainel([sugestao({ estado: 'CONFIRMADA' })])
+    await userEvent.click(screen.getByRole('button', { name: /^Anular confirmação do boleto/ }))
+    const dlg = await screen.findByRole('dialog')
+    await userEvent.type(within(dlg).getByLabelText('Motivo'), 'curto')
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Anular confirmação' }))
+    expect(within(dlg).getByRole('alert')).toHaveTextContent('pelo menos 10 caracteres')
+    expect(anular).not.toHaveBeenCalled()
+    await userEvent.clear(within(dlg).getByLabelText('Motivo'))
+    await userEvent.type(within(dlg).getByLabelText('Motivo'), 'boleto de outro credor')
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Anular confirmação' }))
+    await waitFor(() =>
+      expect(anular).toHaveBeenCalledWith(
+        { filCod: 1, docCod: '5046', titCod: '1' },
+        'boleto de outro credor',
+      ),
+    )
+    const regiao = await screen.findByRole('status')
+    expect(regiao).toHaveTextContent('Confirmação anulada')
+    expect(onDecidido).toHaveBeenCalled()
+  })
+
+  it('erro do servidor aparece no diálogo, que continua aberto', async () => {
+    anular.mockRejectedValue(
+      erroApi(409, 'DECISAO_NAO_CONFIRMADA', 'Este título não tem boleto confirmado para anular.'),
+    )
+    renderPainel([sugestao({ estado: 'CONFIRMADA' })])
+    await userEvent.click(screen.getByRole('button', { name: /^Anular confirmação do boleto/ }))
+    const dlg = await screen.findByRole('dialog')
+    await userEvent.type(within(dlg).getByLabelText('Motivo'), 'confirmação errada')
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Anular confirmação' }))
+    expect(
+      await within(dlg).findByText('Este título não tem boleto confirmado para anular.'),
+    ).toBeInTheDocument()
+  })
+
+  it('confirmação órfã: aviso claro em português, sem Confirmar nem Copiar, com Anular', () => {
+    renderPainel([
+      sugestao({
+        estado: 'CONFIRMADA',
+        orfa: true,
+        motivoOrfa: 'O boleto confirmado saiu do pool DDA (arquivo cancelado ou removido).',
+        confirmavel: false,
+        avaliacao: { ...sugestao().avaliacao, confirmavel: false },
+      }),
+    ])
+    expect(screen.getByText('confirmação órfã')).toBeInTheDocument()
+    expect(screen.getByText(/saiu do pool DDA/)).toBeInTheDocument()
+    expect(screen.getByText(/o título e o boleto ficam presos/)).toBeInTheDocument()
+    expect(screen.queryByText(/ainda não associado no ERP/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Confirmar boleto/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Copiar linha/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Anular confirmação do boleto/ })).toBeEnabled()
   })
 })
 

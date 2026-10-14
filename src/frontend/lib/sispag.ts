@@ -1927,6 +1927,12 @@ export const sugestaoBoletoSchema = z.object({
   }),
   estado: z.enum(['SUGERIDA', 'CONFIRMADA']),
   motivo: z.string().optional(),
+  /**
+   * Confirmação ÓRFÃ (I15l): a decisão segue ativa, mas o boleto saiu do pool ou o ERP sinalizou
+   * o título. Nunca confirmável; a tela oferece "Anular confirmação".
+   */
+  orfa: z.boolean().optional(),
+  motivoOrfa: z.string().optional(),
   /** Só `SUGERIDA` dentro dos três tiers. */
   confirmavel: z.boolean(),
   /** Par (credor, emissor) vigente do boleto, quando existe — para revogar pela tela. */
@@ -1985,11 +1991,14 @@ export const decisaoSugestaoBoletoSchema = z.object({
   deltaDias: z.number(),
   sinais: z.array(z.enum(SINAIS_SUGESTAO_BOLETO)),
   tier: z.enum(TIERS_SUGESTAO_BOLETO).optional(),
-  decisao: z.enum(['CONFIRMADA', 'REJEITADA']),
+  decisao: z.enum(['CONFIRMADA', 'REJEITADA', 'ANULADA']),
   decididoPor: z.string(),
   decididoEm: z.string(),
   motivo: z.string().optional(),
   confirmacaoEmissorId: z.string().optional(),
+  anuladaPor: z.string().optional(),
+  anuladaEm: z.string().optional(),
+  motivoAnulacao: z.string().optional(),
 })
 export type DecisaoSugestaoBoleto = z.infer<typeof decisaoSugestaoBoletoSchema>
 
@@ -1999,6 +2008,23 @@ export const resultadoDecisaoBoletoSchema = z.object({
   decisao: decisaoSugestaoBoletoSchema,
 })
 export type ResultadoDecisaoBoleto = z.infer<typeof resultadoDecisaoBoletoSchema>
+
+/** Corpo de `POST /sugestoes-boleto/anular`: o título (a decisão é uma por título) e o motivo. */
+export interface ChaveAnulacaoBoleto {
+  filCod: number
+  docCod: string
+  titCod: string
+}
+
+/** Resposta de `anular` (200 sempre que o título termina ANULADA; `anulada=false` = já estava). */
+export const resultadoAnulacaoBoletoSchema = z.object({
+  anulada: z.boolean(),
+  decisao: decisaoSugestaoBoletoSchema,
+})
+export type ResultadoAnulacaoBoleto = z.infer<typeof resultadoAnulacaoBoletoSchema>
+
+/** Menor motivo aceito para anular uma confirmação (o servidor recusa menos que isso). */
+export const MOTIVO_ANULACAO_MINIMO = 10
 
 /** Resposta de `POST /sugestoes-boleto/copiar-linha` (`Cache-Control: no-store`). */
 export const linhaCopiadaSchema = z.object({ linhaDigitavel: z.string() })
@@ -2029,6 +2055,7 @@ export const CODIGOS_ERRO_SUGESTAO_BOLETO = {
   MOTIVO_OBRIGATORIO: 'CONFIRMACAO_EMISSOR_MOTIVO_OBRIGATORIO', // 422
   VENCIDO: 'BOLETO_VENCIDO_NAO_CONFIRMAVEL', // 422
   PAR_NAO_ENCONTRADO: 'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA', // 404
+  NAO_CONFIRMADA: 'DECISAO_NAO_CONFIRMADA', // 409: nada a anular neste título
   SEM_TRILHA: 'COPIA_LINHA_SEM_TRILHA', // 503: a linha NÃO foi devolvida
 } as const
 
@@ -2090,6 +2117,21 @@ export async function rejeitarSugestaoBoleto(
     `${sugestoesBase}/rejeitar`,
     resultadoDecisaoBoletoSchema,
     post({ ...chave, motivo }),
+  )
+}
+
+/**
+ * `POST .../anular` (`sispag:executar`): desfaz a confirmação do TÍTULO e libera título e boleto
+ * (I15l). Vale também para confirmação órfã. `motivo` de 10 a 500 caracteres. Nada muda no ERP.
+ */
+export async function anularConfirmacaoBoleto(
+  chave: ChaveAnulacaoBoleto,
+  motivo: string,
+): Promise<ResultadoAnulacaoBoleto> {
+  return autorizacaoRequest(
+    `${sugestoesBase}/anular`,
+    resultadoAnulacaoBoletoSchema,
+    post({ filCod: chave.filCod, docCod: chave.docCod, titCod: chave.titCod, motivo }),
   )
 }
 

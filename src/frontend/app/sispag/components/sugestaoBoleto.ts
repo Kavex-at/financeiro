@@ -33,7 +33,7 @@ export const TIER_ROTULO: Record<SugestaoBoleto['avaliacao']['resultado'], strin
   SEM_RELACAO: 'sem relação com o título',
 }
 
-export type ResumoSugestaoTitulo = 'CONFIRMADA' | 'DISPONIVEL' | 'INFORMATIVA'
+export type ResumoSugestaoTitulo = 'ORFA' | 'CONFIRMADA' | 'DISPONIVEL' | 'INFORMATIVA'
 
 export const chaveTitulo = (t: { filCod?: number; docCod: string; titCod: string }): string =>
   `${t.filCod ?? ''}:${t.docCod}:${t.titCod}`
@@ -50,11 +50,15 @@ export const agruparPorTitulo = (lista: SugestaoBoleto[]): Map<string, SugestaoB
   return mapa
 }
 
-/** O que a linha do título anuncia: confirmado > sugestão confirmável > só informativa. */
+/**
+ * O que a linha do título anuncia: confirmação órfã (precisa de atenção) > confirmado > sugestão
+ * confirmável > só informativa.
+ */
 export const resumoDoTitulo = (
   lista: SugestaoBoleto[] | undefined,
 ): ResumoSugestaoTitulo | undefined => {
   if (!lista || lista.length === 0) return undefined
+  if (lista.some((s) => s.estado === 'CONFIRMADA' && s.orfa === true)) return 'ORFA'
   if (lista.some((s) => s.estado === 'CONFIRMADA')) return 'CONFIRMADA'
   if (lista.some((s) => s.confirmavel && s.avaliacao.confirmavel)) return 'DISPONIVEL'
   return 'INFORMATIVA'
