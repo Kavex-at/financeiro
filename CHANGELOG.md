@@ -1,5 +1,17 @@
 # Columbia Financeiro — Changelog
 
+## v0.66.2 (2026-10-14) — SISPAG: título que vence hoje não aparece mais como vencido
+
+- **Vence hoje = "vence em 0d", o dia inteiro.** A partir das 9h o título que vencia hoje virava
+  "vencido 1d", entrava no contador de vencidos e sumia do filtro "A vencer". Agora a conta é por
+  dia do calendário de Brasília: hoje é 0, ontem é vencido.
+- **A formação automática não desfaz mais os lotes de hoje.** O "Formar lotes automáticos" (botão
+  e rodada das 7h) apagava todo lote automático em rascunho que tivesse um título vencendo no dia,
+  e esse título não voltava a ser lotado. Em 14/10 isso alcançaria 15 lotes e 79 títulos. Agora o
+  título que vence hoje continua elegível e o lote dele fica.
+- **Lotes desfeitos antes desta versão não voltam sozinhos** se o título já tiver vencido; os que
+  ainda vencem hoje ou depois são remontados na próxima formação.
+
 ## v0.66.1 (2026-10-14) — SISPAG: a remessa não sai mais com o mesmo boleto duas vezes
 
 - **Código de barras repetido no lote agora barra a geração da remessa.** Quando dois ou mais
