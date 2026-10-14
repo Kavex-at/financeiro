@@ -17,7 +17,7 @@ preconditions:
   - "Par VIGENTE."
 postconditions:
   - "→ REVOGADA, terminal; evento PAR_REVOGADO."
-  - "Decisões por título do par ainda não aplicadas no ERP são canceladas (Q-E, default revisável; no passo 1 não existe nenhuma aplicada). As demais ficam como histórico (derivado PAR_REVOGADO); sugestões futuras do par perdem o tier CONHECIDO."
+  - "Toda decisão `CONFIRMADA` do par vira `ANULADA` NA MESMA transação, com motivo `par revogado: <motivo>` e um evento `DECISAO_ANULADA` cada (Q-E, I15l; implementado em 2026-10-14). Sugestões futuras do par perdem o tier CONHECIDO."
 side_effects:
   - "Escrita local apenas. Nada a desfazer no ERP (I15b)."
 ---

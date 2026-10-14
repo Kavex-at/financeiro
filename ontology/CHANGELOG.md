@@ -38,6 +38,7 @@ nenhuma escrita no Conexos.
   `by_entity` (drift pré-existente; o `summary` segue sem contá-la).
 - **Emenda 2026-10-14:** Q4 re-decidida — `sispag:ver` copia a linha digitável (toda cópia auditada); confirmar/rejeitar/revogar seguem `sispag:executar`. Premissa 'GET /boletos-dda é admin' era falsa (ADR-0053).
 - **Implementada (2026-10-14, app v0.66.0):** ConfirmacaoEmissorBoleto, DecisaoSugestaoBoleto, as 5 ações e `sugestao-boleto-dda-sispag` (I15) passam a `implemented`; `BoletoDda` perde o `open_gap` (candidato em camadas no código). I15e registra o default: título com 2+ candidatos seguros de mesma força fica sem sugestão. Sem mudança de contrato — a versão da ontologia segue 0.40.0.
+- **Emenda 2026-10-14 (2) — a confirmação tem saída (I15l, Regis-Review FT-1/FT-2):** `DecisaoSugestaoBoleto` ganha o estado terminal `ANULADA` (só a partir de `CONFIRMADA`; libera título e boleto), nova action `anularDecisaoSugestaoBoleto` (`sispag:executar`, motivo 10–500, idempotente), `revogarConfirmacaoEmissor` anula em cascata as decisões do par (Q-E) e a confirmação órfã (boleto fora do pool, título sinalizado pelo ERP) é devolvida visível para ser anulada. Evento `DECISAO_ANULADA`; confirmar trava o par (`FOR SHARE`). Coverage: actions 42→43 (implemented 35→36). Versão da ontologia segue 0.40.0 (feature ainda não implantada).
 
 ## v0.39.2 — SISPAG: o pool DDA sincroniza dentro da ingestão (2026-10-13, ADR-0067)
 

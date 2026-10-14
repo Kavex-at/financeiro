@@ -126,3 +126,25 @@ sem auditoria.
 ## Implementação (2026-10-14, v0.66.0)
 
 Entrou como especificado, em três pacotes: migration 0084 (par, decisão e trilha só-inclusão), motor/regra/serviço com seis rotas (`/sispag/sugestoes-boleto`, `/sispag/confirmacoes-emissor`) e a tela (sugestão no diálogo do título, selo na coluna de pagamento, lista de emissores confirmados). O que mudou na prática: (1) a cópia da linha digitável é `sispag:ver` (ver Emenda); (2) título com dois candidatos seguros de mesma força fica sem sugestão; (3) a regra de candidato da aba "Boletos DDA" passou a ser a de camadas — a janela "valor exato ±3 dias" saiu. Nada é escrito no Conexos.
+
+## Emenda 2026-10-14 (2) — a confirmação tem saída (I15l)
+
+O Regis-Review da feature (FT-1, P1) mostrou que a decisão `CONFIRMADA` não tinha saída: nenhum
+`UPDATE` fora dos testes, a revogação do par só mudava o par (a Q-E prometia cancelar as decisões, e
+o código não cumpria), e em quatro situações (arquivo DDA cancelado, ERP vincula o boleto, título
+pago/inativo, título sinalizado) a confirmação sumia da tela mas seguia ocupando título e boleto
+pelos índices únicos. Decisão do maintainer, antes do PR:
+
+- **Novo estado terminal `ANULADA`**, só a partir de `CONFIRMADA`. Os índices únicos parciais já
+  valiam só para `CONFIRMADA`; anular libera título e boleto. Colunas `anulada_por`, `anulada_em`,
+  `motivo_anulacao` (CHECK: todas em `ANULADA`, nenhuma fora dela), `versao` (lock otimista) e o
+  evento `DECISAO_ANULADA`. Migration **0084 editada no lugar** (ainda não implantada).
+- **Ação `anularDecisaoSugestaoBoleto`** (`sispag:executar`, motivo 10–500, idempotente, ator do
+  token). **`revogarPar` faz cascata** na mesma transação (implementa a Q-E).
+- **Órfã visível**: o motor devolve a `CONFIRMADA` cujo boleto saiu do pool, ou cujo título o ERP
+  sinalizou, com `orfa` e `motivoOrfa`; não confirmável; a tela oferece "Anular confirmação".
+- **FT-2 (P2) fechado junto**: confirmar trava o par (`FOR SHARE`) dentro da transação; a revogação
+  espera e a cascata enxerga a decisão recém-gravada. Nunca `CONFIRMADA` sob par `REVOGADA`.
+
+Rejeitado: expirar confirmação por tempo (esconde o erro humano e some com a trilha) e reaproveitar
+`REJEITADA` como saída (muda de significado: esconde aquele boleto para aquele título).
