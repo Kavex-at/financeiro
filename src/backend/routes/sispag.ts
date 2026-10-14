@@ -56,7 +56,21 @@ import {
 } from '../http/schemas.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { exigirPermissao } from '../http/acesso.js';
-import { buildPayeeSearchLimiter, heavyRouteLimiter } from '../http/rateLimit.js';
+import {
+    buildPayeeSearchLimiter,
+    buildSugestaoBoletoLimiter,
+    heavyRouteLimiter,
+} from '../http/rateLimit.js';
+import type { DecisaoSugestao } from '../domain/interface/sispag/ConfirmacaoEmissorBoleto.js';
+import {
+    ChaveSugestaoBodySchema,
+    ConfirmacaoEmissorIdSchema,
+    ConfirmacoesEmissorQuerySchema,
+    RejeitarSugestaoBodySchema,
+    RevogarConfirmacaoBodySchema,
+    SugestoesQuerySchema,
+} from '../domain/interface/sispag/SugestaoBoletoSchemas.js';
+import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
 
 /**
  * Rotas SISPAG (Escopo II) — SPIKE READ-ONLY (semente da Fatia 1).
@@ -750,6 +764,147 @@ router.get(
         if (!id.success) return respostaInvalida(res, id.error);
         try {
             res.json({ eventos: await payees().eventos(id.data.id) });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// ===================================================== ADR-0068 — sugestão de boleto (passo 1)
+// EVIDÊNCIA, não autoridade: nenhuma rota escreve no Conexos nem muda `temBoleto`/lote/título.
+// O ator é SEMPRE o usuário autenticado (body estrito: "ator" no body é 400).
+
+const sugestoesBoleto = (): BoletoSuggestionService => container.resolve(BoletoSuggestionService);
+
+const limiteDecisaoBoleto = buildSugestaoBoletoLimiter({}, 'confirmar');
+const limiteCopiaLinha = buildSugestaoBoletoLimiter({}, 'copiar');
+
+/** A decisão para a API: sem a chave do emissor (carrega a conta completa; só a máscara sai). */
+const decisaoParaApi = (d: DecisaoSugestao): Omit<DecisaoSugestao, 'emissorChave'> => {
+    const { emissorChave: _chave, ...resto } = d;
+    return resto;
+};
+
+// GET /sispag/sugestoes-boleto?filCod=&pesCod=&tier=&pagina=&tamanho= — `sispag:ver`. Emissor
+// MASCARADO; nunca barras nem linha digitável (a linha só sai por `copiar-linha`, auditado).
+router.get(
+    '/sugestoes-boleto',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = SugestoesQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        res.json(
+            await sugestoesBoleto().listarSugestoes({
+                ...(query.data.filCod !== undefined ? { filCod: query.data.filCod } : {}),
+                ...(query.data.pesCod ? { pesCod: query.data.pesCod } : {}),
+                ...(query.data.tier ? { tier: query.data.tier } : {}),
+                pagina: query.data.pagina,
+                tamanho: query.data.tamanho,
+            }),
+        );
+    }),
+);
+
+// POST /sispag/sugestoes-boleto/confirmar — `sispag:executar`. 201 decisão nova · 200 já existia
+// (idempotente) · 409 indisponível/reservado a outro título · 422 boleto vencido.
+router.post(
+    '/sugestoes-boleto/confirmar',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteDecisaoBoleto,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = ChaveSugestaoBodySchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        try {
+            const r = await sugestoesBoleto().confirmar({ ...body.data, ator: ator(req) });
+            res.status(r.criada ? 201 : 200).json({
+                criada: r.criada,
+                decisao: decisaoParaApi(r.decisao),
+            });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/sugestoes-boleto/rejeitar — `sispag:executar`. Motivo obrigatório (422 se em branco).
+router.post(
+    '/sugestoes-boleto/rejeitar',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteDecisaoBoleto,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = RejeitarSugestaoBodySchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        try {
+            const r = await sugestoesBoleto().rejeitar({ ...body.data, ator: ator(req) });
+            res.status(r.criada ? 201 : 200).json({
+                criada: r.criada,
+                decisao: decisaoParaApi(r.decisao),
+            });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/sugestoes-boleto/copiar-linha — `sispag:executar`. Devolve a linha digitável SÓ
+// depois de gravar `LINHA_COPIADA`; sem trilha, 503 e nenhuma linha (fail-closed). POST + no-store:
+// a linha nunca vai em URL nem em cache.
+router.post(
+    '/sugestoes-boleto/copiar-linha',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteCopiaLinha,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = ChaveSugestaoBodySchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        try {
+            const r = await sugestoesBoleto().copiarLinha({ ...body.data, ator: ator(req) });
+            res.setHeader('Cache-Control', 'no-store');
+            res.json({ linhaDigitavel: r.linhaDigitavel });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/confirmacoes-emissor?estado=&pesCod= — `sispag:ver`. Só o emissor mascarado.
+router.get(
+    '/confirmacoes-emissor',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = ConfirmacoesEmissorQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        res.json({
+            confirmacoes: await sugestoesBoleto().listarConfirmacoes({
+                ...(query.data.estado ? { estado: query.data.estado } : {}),
+                ...(query.data.pesCod ? { pesCod: query.data.pesCod } : {}),
+            }),
+        });
+    }),
+);
+
+// POST /sispag/confirmacoes-emissor/:id/revogar — `sispag:executar` (qualquer pessoa, com motivo).
+// 404 par inexistente · 422 sem motivo · no-op (200) se já revogado.
+router.post(
+    '/confirmacoes-emissor/:id/revogar',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteDecisaoBoleto,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const id = ConfirmacaoEmissorIdSchema.safeParse(req.params);
+        const body = RevogarConfirmacaoBodySchema.safeParse(req.body);
+        if (!id.success || !body.success) return respostaInvalida(res, id.error, body.error);
+        try {
+            const confirmacao = await sugestoesBoleto().revogarPar({
+                id: id.data.id,
+                motivo: body.data.motivo,
+                ator: ator(req),
+            });
+            res.json({ confirmacao });
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
