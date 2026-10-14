@@ -31,6 +31,8 @@ import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
+import VinculoCodigoBarrasService from '../domain/service/sispag/VinculoCodigoBarrasService.js';
+import VinculoCodigoBarrasIncompletoError from '../domain/errors/VinculoCodigoBarrasIncompletoError.js';
 import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
 import TitulosAPagarExportService from '../domain/service/sispag/TitulosAPagarExportService.js';
 import RemittanceFileUnavailableError from '../domain/errors/RemittanceFileUnavailableError.js';
@@ -740,6 +742,139 @@ describe('POST /sispag/lotes/:id/remessa — retirada por código de barras (I16
             expect(res.status).toBe(409);
             const corpo = await readJson(res);
             expect(corpo.code).toBe('BOLETO_CODIGO_BARRAS_RETIRADA_INCOMPLETA');
+            expect(corpo.error).toMatch(/Nada foi enviado ao banco/);
+        });
+    });
+});
+
+describe('GET /sispag/lotes/:id/vinculos-previstos (ADR-0071, I17k)', () => {
+    const previsao = {
+        titulo: { filCod: 2, docCod: '636', titCod: '1' },
+        elegivel: true,
+        deltaDias: 0,
+        deltaCentavos: 0,
+        codigoMascarado: '34191…9000',
+        decisaoId: 'dec-1',
+        valorAbertoFonte: 'CARTEIRA_LOCAL',
+    };
+    const registrar = (modo: string, itens: unknown[] = [previsao]) => {
+        const getLote = jest.fn().mockResolvedValue({ ...LOTE, filCod: 2 });
+        const resolverModo = jest.fn().mockResolvedValue(modo);
+        const prever = jest.fn().mockResolvedValue(itens);
+        container.registerInstance(LotePagamentoService, { getLote } as never);
+        container.registerInstance(VinculoCodigoBarrasService, { resolverModo, prever } as never);
+        return { getLote, resolverModo, prever };
+    };
+
+    it('200 com { modo, itens } e só campos mascarados; Cache-Control: no-store', async () => {
+        const m = registrar('shadow');
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/vinculos-previstos`);
+            expect(res.status).toBe(200);
+            expect(res.headers.get('cache-control')).toBe('no-store');
+            const corpo = await readJson(res);
+            expect(corpo.modo).toBe('shadow');
+            expect(corpo.itens).toEqual([previsao]);
+            // Snapshot de chaves: nenhuma linha digitável nem barras completas.
+            expect(Object.keys(corpo.itens[0]).sort()).toEqual(
+                [
+                    'codigoMascarado',
+                    'decisaoId',
+                    'deltaCentavos',
+                    'deltaDias',
+                    'elegivel',
+                    'titulo',
+                    'valorAbertoFonte',
+                ].sort(),
+            );
+            expect(JSON.stringify(corpo)).not.toMatch(/\d{20,}/);
+        });
+        expect(m.resolverModo).toHaveBeenCalledWith(2);
+        expect(m.prever).toHaveBeenCalledTimes(1);
+        // Só leitura local: nunca grava (`registrar`) a previsão.
+        expect(m.prever.mock.calls[0]).toHaveLength(1);
+    });
+
+    it('modo off ⇒ lista vazia e `prever` nem roda', async () => {
+        const m = registrar('off');
+        await comApp({}, async (url) => {
+            const corpo = await readJson(await fetch(`${url}/sispag/lotes/L1/vinculos-previstos`));
+            expect(corpo).toEqual({ modo: 'off', itens: [] });
+        });
+        expect(m.prever).not.toHaveBeenCalled();
+    });
+
+    it('lote inexistente ⇒ 404', async () => {
+        container.registerInstance(LotePagamentoService, {
+            getLote: jest.fn().mockResolvedValue(null),
+        } as never);
+        container.registerInstance(VinculoCodigoBarrasService, {} as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/NAO/vinculos-previstos`);
+            expect(res.status).toBe(404);
+        });
+    });
+
+    it('exige autenticação', async () => {
+        await comApp({ authenticated: false }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/vinculos-previstos`);
+            expect(res.status).toBe(401);
+        });
+    });
+
+    it('leitura: o papel viewer (sispag:ver) acessa', async () => {
+        registrar('on');
+        await comApp({ role: 'viewer' }, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/vinculos-previstos`);
+            expect(res.status).toBe(200);
+        });
+    });
+});
+
+describe('POST /sispag/lotes/:id/remessa — vínculo do código de barras (ADR-0071)', () => {
+    it('repassa `vinculados` e `avisos`; sem vínculo os campos não aparecem', async () => {
+        const vinculados = [
+            { titulo: { filCod: 2, docCod: '636', titCod: '1' }, codigoMascarado: '34191…9000' },
+        ];
+        const gerarRemessa = jest
+            .fn()
+            .mockResolvedValueOnce({
+                status: 'gerada',
+                vinculados,
+                avisos: ['1 título(s) com o código de barras vinculado'],
+            })
+            .mockResolvedValueOnce({ status: 'gerada', itens: 1 });
+        container.registerInstance(RemessaService, { gerarRemessa } as never);
+        await comApp({}, async (url) => {
+            const a = await readJson(
+                await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' }),
+            );
+            expect(a.vinculados).toEqual(vinculados);
+            expect(a.avisos).toHaveLength(1);
+            const b = await readJson(
+                await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' }),
+            );
+            expect(b).not.toHaveProperty('vinculados');
+            expect(b).not.toHaveProperty('avisos');
+        });
+    });
+
+    it('vínculo incompleto vira 409 com o userMessage, code estável e retryable', async () => {
+        const gerarRemessa = jest.fn().mockRejectedValue(
+            new VinculoCodigoBarrasIncompletoError({
+                flpCod: 36,
+                vinculados: [],
+                pendentes: [{ docCod: '636', titCod: '1' }],
+                causa: 'TRANSITORIA',
+            }),
+        );
+        container.registerInstance(RemessaService, { gerarRemessa } as never);
+        await comApp({}, async (url) => {
+            const res = await fetch(`${url}/sispag/lotes/L1/remessa`, { method: 'POST' });
+            expect(res.status).toBe(409);
+            const corpo = await readJson(res);
+            expect(corpo.code).toBe('VINCULO_CODIGO_BARRAS_INCOMPLETO');
+            expect(corpo.retryable).toBe(true);
             expect(corpo.error).toMatch(/Nada foi enviado ao banco/);
         });
     });

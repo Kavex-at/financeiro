@@ -32,6 +32,7 @@ import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.
 import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetornoService.js';
 import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
+import VinculoCodigoBarrasService from '../domain/service/sispag/VinculoCodigoBarrasService.js';
 import RemessaTitulosExportService from '../domain/service/sispag/RemessaTitulosExportService.js';
 import {
     type ContextoExport,
@@ -560,6 +561,41 @@ router.get(
         const retirados = await service.listarRetiradasDoLote(String(req.params.id));
         res.setHeader('Cache-Control', 'no-store');
         res.json({ retirados });
+    }),
+);
+
+// GET /sispag/lotes/:id/vinculos-previstos — o que o vínculo do código de barras confirmado FARIA
+// neste lote (ADR-0071, I17k): dry-run visível, também o único canal do `shadow` (sem selo na tela).
+// LOCAL: banco/pool, ZERO chamada ao ERP e nada gravado; o valor em aberto é o da carteira
+// persistida (`valorAbertoFonte`). Modo `off` ⇒ lista vazia. Só máscara 5+4: nenhum campo carrega
+// o código. `sispag:ver`, sem permissão nova (R11).
+router.get(
+    '/lotes/:id/vinculos-previstos',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const lote = await container.resolve(LotePagamentoService).getLote(String(req.params.id));
+        if (!lote) {
+            res.status(404).json({ error: 'lote not found' });
+            return;
+        }
+        const vinculo = container.resolve(VinculoCodigoBarrasService);
+        const modo = await vinculo.resolverModo(lote.filCod);
+        const previsoes = modo === 'off' ? [] : await vinculo.prever(lote);
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({
+            modo,
+            itens: previsoes.map((p) => ({
+                titulo: p.titulo,
+                elegivel: p.elegivel,
+                ...(p.motivo !== undefined ? { motivo: p.motivo } : {}),
+                ...(p.deltaDias !== undefined ? { deltaDias: p.deltaDias } : {}),
+                ...(p.deltaCentavos !== undefined ? { deltaCentavos: p.deltaCentavos } : {}),
+                ...(p.codigoMascarado !== undefined ? { codigoMascarado: p.codigoMascarado } : {}),
+                ...(p.decisaoId !== undefined ? { decisaoId: p.decisaoId } : {}),
+                valorAbertoFonte: p.valorAbertoFonte,
+            })),
+        });
     }),
 );
 
