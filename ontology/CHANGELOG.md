@@ -37,6 +37,7 @@ nenhuma escrita no Conexos.
   business_rules 27→28 (planned 10→11). State machines inalteradas. `BoletoDda` passa a constar em
   `by_entity` (drift pré-existente; o `summary` segue sem contá-la).
 - **Emenda 2026-10-14:** Q4 re-decidida — `sispag:ver` copia a linha digitável (toda cópia auditada); confirmar/rejeitar/revogar seguem `sispag:executar`. Premissa 'GET /boletos-dda é admin' era falsa (ADR-0053).
+- **Implementada (2026-10-14, app v0.66.0):** ConfirmacaoEmissorBoleto, DecisaoSugestaoBoleto, as 5 ações e `sugestao-boleto-dda-sispag` (I15) passam a `implemented`; `BoletoDda` perde o `open_gap` (candidato em camadas no código). I15e registra o default: título com 2+ candidatos seguros de mesma força fica sem sugestão. Sem mudança de contrato — a versão da ontologia segue 0.40.0.
 
 ## v0.39.2 — SISPAG: o pool DDA sincroniza dentro da ingestão (2026-10-13, ADR-0067)
 

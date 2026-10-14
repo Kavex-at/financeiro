@@ -2,10 +2,15 @@
 name: DecisaoSugestaoBoleto
 type: entity
 ontology_version: "0.40.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - "src/backend/migrations/0084_sispag_sugestao_boleto.sql"
+  - "src/backend/domain/interface/sispag/SugestaoBoleto.ts"
+  - "src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts"
+  - "src/backend/domain/service/sispag/BoletoSuggestionService.ts"
+  - "src/frontend/app/sispag/components/SugestaoBoletoPainel.tsx"
 properties: [id, filCod, docCod, titCod, pesCod, credor, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorTitulo, vencimentoTitulo, valorBoleto, vencimentoBoleto, deltaValor, deltaPercentual, deltaDias, sinais, tier, emissorChave, decisao, decididoPor, decididoEm, motivo, confirmacaoEmissorId]
 relationships:
   - "DecisaoSugestaoBoleto N—1 TituloAPagar (chave filCod/docCod/titCod; vínculo lógico, sem escrita no título)"
@@ -24,7 +29,7 @@ universality_evidence:
 > uma pessoa olhou a sugestão (título × boleto) e a **confirmou** ou **rejeitou**. É o ponto de
 > ancoragem do passo 2 (bind) e a trilha de auditoria do passo 1. Code-facing:
 > `BoletoSuggestionDecision`. Tabela proposta: `sispag_decisao_sugestao_boleto`.
-> **Status: planned** — ontologia à frente do código.
+> **Status: implemented (v0.66.0, migration 0084)** — ontologia à frente do código.
 
 ## Propriedades
 

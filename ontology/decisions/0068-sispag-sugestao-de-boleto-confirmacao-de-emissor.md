@@ -122,3 +122,7 @@ digitável pela rota nova, e toda cópia segue auditada (`LINHA_COPIADA`, fail-c
 rejeitar e revogar permanecem `sispag:executar`. O emissor mascarado na listagem fica por higiene,
 não como controle de acesso. Estado conhecido e aceito: `GET /boletos-dda` entrega `linhaDigitavel`
 sem auditoria.
+
+## Implementação (2026-10-14, v0.66.0)
+
+Entrou como especificado, em três pacotes: migration 0084 (par, decisão e trilha só-inclusão), motor/regra/serviço com seis rotas (`/sispag/sugestoes-boleto`, `/sispag/confirmacoes-emissor`) e a tela (sugestão no diálogo do título, selo na coluna de pagamento, lista de emissores confirmados). O que mudou na prática: (1) a cópia da linha digitável é `sispag:ver` (ver Emenda); (2) título com dois candidatos seguros de mesma força fica sem sugestão; (3) a regra de candidato da aba "Boletos DDA" passou a ser a de camadas — a janela "valor exato ±3 dias" saiu. Nada é escrito no Conexos.

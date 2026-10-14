@@ -3,10 +3,14 @@ name: copiarLinhaDigitavel
 type: action
 entity: BoletoDda
 ontology_version: "0.40.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - "src/backend/domain/service/sispag/BoletoSuggestionService.ts"
+  - "src/backend/domain/libs/boleto/CodigoBarrasBoleto.ts"
+  - "src/backend/routes/sispag.ts"
+  - "src/frontend/app/sispag/components/SugestaoBoletoPainel.tsx"
 last_review: 2026-10-14
 preconditions:
   - "Usuário com `sispag:ver` (Q4 re-decidida em 2026-10-14; confirmar/rejeitar/revogar seguem `sispag:executar`)."
@@ -20,4 +24,4 @@ side_effects:
 # copiarLinhaDigitavel
 
 ADR-0068, I15k. Existe para o analista conferir no portal do banco/ERP sem digitar. Auditada a cada
-cópia; Permissão `sispag:ver`, igual a `GET /boletos-dda` e ao lote (ADR-0053); fail-closed: sem trilha, sem linha. **Planned.**
+cópia; Permissão `sispag:ver`, igual a `GET /boletos-dda` e ao lote (ADR-0053); fail-closed: sem trilha, sem linha. **Implemented** (v0.66.0).
