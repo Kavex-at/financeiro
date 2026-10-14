@@ -1347,6 +1347,26 @@ describe('RemessaService — gate de integridade do .REM', () => {
         expect(JSON.stringify(ledger.fail.mock.calls)).not.toContain(BARRAS_OK);
     });
 
+    it('modo arquivo: motivo no ledger e userMessage dizem que o lote JÁ está finalizado (flpCod + arquivo)', async () => {
+        const write = comConteudo([linhaJ(BARRAS_OK), linhaJ(BARRAS_OK)].join('\n'));
+        const ledger = buildLedger();
+        const err = (await make({ write, ledger })
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .catch((e: unknown) => e)) as { userMessage: string };
+
+        const motivo = ledger.fail.mock.calls[0][1].mensagem as string;
+        expect(motivo).toContain('flpCod 12');
+        expect(motivo).toContain('PG210801.REM');
+        expect(err.userMessage).toContain('PG210801.REM');
+        expect(err.userMessage).toMatch(/lote nativo 12 está FINALIZADO/);
+        expect(err.userMessage).toMatch(/NÃO envie este arquivo ao banco/);
+        expect(err.userMessage).toMatch(/cancele o arquivo e o lote no Conexos/);
+        expect(err.userMessage).not.toMatch(/interrompida antes de finalizar/);
+        expect(err.userMessage).not.toMatch(/rascunho/);
+        // Privacidade: só o mascarado.
+        expect(JSON.stringify([motivo, err.userMessage])).not.toContain(BARRAS_OK);
+    });
+
     it('barra inválida tem precedência: RemessaCorrompidaError, não o de repetido', async () => {
         const write = comConteudo(
             [
@@ -2322,6 +2342,9 @@ describe('RemessaService — guarda de código de barras repetido (ADR-0069, I16
         expect(err).toMatchObject({ code: 'BOLETO_CODIGO_BARRAS_REPETIDO' });
         expect((err as { details: { modo: string } }).details.modo).toBe('ilegivel');
         expect((err as { userMessage: string }).userMessage).toContain(`${doc(N - 1)}/1`);
+        expect((err as { userMessage: string }).userMessage).toMatch(
+            /interrompida antes de finalizar.*descartado no Conexos/s,
+        );
         expect(write.finalizarLote).not.toHaveBeenCalled();
     });
 
@@ -2569,6 +2592,8 @@ describe('RemessaService — guarda de código de barras repetido (ADR-0069, I16
             }
         }
         expect(texto).toContain(MASCARADO_A);
+        // O flpCod acompanha o motivo do ledger (onde agir no Conexos), sem o código.
+        expect(ledger.fail.mock.calls[0][1].mensagem).toContain('flpCod 12');
 
         const avisos = (log.warn as jest.Mock).mock.calls
             .map(([p]) => p)

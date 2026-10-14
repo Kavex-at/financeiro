@@ -734,6 +734,8 @@ export default class RemessaService {
                 if (validacao.repetidos.length > 0) {
                     throw new BoletoCodigoBarrasRepetidoError({
                         origem: 'arquivo',
+                        flpCod,
+                        nomeArquivo: sugerido.nomeArquivo,
                         grupos: validacao.repetidos.map((r) => ({
                             mascarado: r.barrasMascarada,
                             linhas: r.linhas,
@@ -1142,7 +1144,7 @@ export default class RemessaService {
                 mascarados: grupos.map((g) => g.mascarado),
             },
         });
-        throw new BoletoCodigoBarrasRepetidoError({ origem: 'lote', grupos, ilegiveis });
+        throw new BoletoCodigoBarrasRepetidoError({ origem: 'lote', flpCod, grupos, ilegiveis });
     };
 
     private montarItensImport = async (
