@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import type ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type { LoteSispag, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
@@ -76,9 +77,14 @@ const make = (
         listarLinhasDigitaveisDoLote?: jest.Mock;
         remessaLedger?: { listReconcilingParadas: jest.Mock };
         conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
+        calendar?: BankingCalendar;
     } = {},
 ) => {
-    const { listChavesPixFavorecido = jest.fn().mockResolvedValue([]), envVars = {} } = over;
+    const {
+        listChavesPixFavorecido = jest.fn().mockResolvedValue([]),
+        envVars = {},
+        calendar = new BankingCalendar(),
+    } = over;
     const sispag = {
         listLotes: over.listLotes ?? jest.fn().mockResolvedValue([loteNativo()]),
         getTituloAPagar: over.getTituloAPagar ?? jest.fn().mockResolvedValue(null),
@@ -147,6 +153,7 @@ const make = (
         env,
         log,
         resolver,
+        calendar,
     );
     return {
         service,
@@ -702,4 +709,36 @@ describe('SispagPainelService.modalidadesDisponiveisDoLote — TED/PIX (ADR-0054
             }
         });
     }
+});
+
+describe('SispagPainelService.montarPainel — título que vence hoje não é vencido', () => {
+    // O Conexos grava a data civil como 00:00Z (ou 15:00Z) do dia. Comparar com o instante
+    // virava "vencido 1d" a partir das 09:00 BRT e o tirava da aba "A vencer".
+    const HOJE_00Z = Date.UTC(2026, 9, 14);
+    const HOJE_15Z = Date.UTC(2026, 9, 14, 15);
+    const ONTEM = Date.UTC(2026, 9, 13);
+    const AMANHA = Date.UTC(2026, 9, 15);
+
+    it.each([
+        ['00:30 BRT', '2026-10-14T03:30:00Z'],
+        ['09:00 BRT', '2026-10-14T12:00:00Z'],
+        ['13:44 BRT', '2026-10-14T16:44:00Z'],
+        ['21:30 BRT (UTC já virou)', '2026-10-15T00:30:00Z'],
+        ['23:59 BRT (UTC já virou)', '2026-10-15T02:59:00Z'],
+    ])('às %s: hoje = 0d, ontem = -1d, amanhã = 1d', async (_rotulo, instante) => {
+        const { service } = make({
+            calendar: BankingCalendar.withClock(() => new Date(instante)),
+            titulosAtivos: [
+                titulo({ docCod: 'hoje00', vencimento: HOJE_00Z }),
+                titulo({ docCod: 'hoje15', vencimento: HOJE_15Z }),
+                titulo({ docCod: 'ontem', vencimento: ONTEM }),
+                titulo({ docCod: 'amanha', vencimento: AMANHA }),
+            ],
+        });
+        const painel = await service.montarPainel();
+        const dias = Object.fromEntries(painel.titulos.map((t) => [t.docCod, t.diasAteVencimento]));
+        expect(dias).toEqual({ hoje00: 0, hoje15: 0, ontem: -1, amanha: 1 });
+        expect(painel.kpis.titulosVencidos).toBe(1);
+        expect(painel.kpis.titulosAVencer7d).toBe(3);
+    });
 });

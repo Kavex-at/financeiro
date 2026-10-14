@@ -3,6 +3,7 @@ import ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.js';
 import ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
@@ -105,6 +106,7 @@ export default class SispagPainelService {
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
+        @inject(BankingCalendar) private readonly calendar: BankingCalendar,
     ) {}
 
     public montarPainel = async (): Promise<SispagPainelResponse> => {
@@ -171,7 +173,7 @@ export default class SispagPainelService {
         }
 
         // Carteira completa (KPIs calculam sobre ela); a resposta corta em CAP.
-        const titulosPreparados = this.prepararTitulos(titulosRaw, now);
+        const titulosPreparados = this.prepararTitulos(titulosRaw);
         const kpis = this.calcularKpis(titulosPreparados, lotesRaw);
         const titulos = titulosPreparados.slice(0, TITULOS_CAP);
         const titulosTotal = titulosPreparados.length;
@@ -482,17 +484,26 @@ export default class SispagPainelService {
         }
     };
 
-    private prepararTitulos = (titulos: TituloAPagar[], now: number): TituloAPagar[] =>
-        titulos
+    /**
+     * `diasAteVencimento` em DIAS CIVIS: dia do vencimento (relógio UTC do ERP) menos hoje em
+     * Brasília. Vence hoje = 0, nunca "vencido 1d" — o ERP grava 00:00Z, e comparar com o
+     * instante virava o título de hoje em vencido a partir das 09:00 BRT.
+     */
+    private prepararTitulos = (titulos: TituloAPagar[]): TituloAPagar[] => {
+        const hoje = this.calendar.toErpEpoch(this.calendar.todayBrt());
+        const diaDoErp = (epoch: number): number =>
+            this.calendar.toErpEpoch(this.calendar.fromErpEpoch(epoch));
+        return titulos
             .filter((t) => !t.pago)
             .map((t) => ({
                 ...t,
                 diasAteVencimento:
                     t.vencimento !== undefined
-                        ? Math.round((t.vencimento - now) / DAY_MS)
+                        ? Math.round((diaDoErp(t.vencimento) - hoje) / DAY_MS)
                         : undefined,
             }))
             .sort((a, b) => (a.vencimento ?? Infinity) - (b.vencimento ?? Infinity));
+    };
 
     private ordenarLotes = (lotes: LoteSispag[]): LoteSispag[] =>
         [...lotes].sort((a, b) => (b.dataCredito ?? 0) - (a.dataCredito ?? 0));

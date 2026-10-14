@@ -351,14 +351,22 @@ export default class LotePagamentoRepository {
      * Desfaz (DELETE) os lotes AUTOMÁTICOS em RASCUNHO que já contêm algum título VENCIDO —
      * só títulos a vencer são elegíveis. Os itens caem por CASCATA (títulos voltam a ficar
      * livres). NÃO toca em lotes manuais nem finalizados. Retorna quantos lotes foram desfeitos.
+     *
+     * `hoje` = dia civil de Brasília codificado como o ERP (00:00Z). Vencido é vencimento
+     * ANTES de hoje: o título que vence hoje ainda pode ser pago (R2). Nunca `now()` — o ERP
+     * grava 00:00Z, e a partir das 09:00 BRT o título de hoje já pareceria vencido.
      */
-    public desfazerAutomaticosVencidos = async (tx?: TransactionClient): Promise<number> =>
+    public desfazerAutomaticosVencidos = async (
+        hoje: Date,
+        tx?: TransactionClient,
+    ): Promise<number> =>
         this.db(tx).update(
             `DELETE FROM lote_pagamento l
              WHERE l.automatico = TRUE AND l.status = 'RASCUNHO'
                AND EXISTS (
                  SELECT 1 FROM lote_pagamento_item i
-                 WHERE i.lote_id = l.id AND i.vencimento IS NOT NULL AND i.vencimento < now())`,
+                 WHERE i.lote_id = l.id AND i.vencimento IS NOT NULL AND i.vencimento < $hoje)`,
+            { hoje },
         );
 
     public getLoteComItens = async (

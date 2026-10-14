@@ -49,11 +49,14 @@ export default class FormacaoLotesService {
 
     private run = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> => {
         // 1) desfaz lotes automáticos RASCUNHO com título vencido (libera os títulos).
-        const lotesDesfeitos = await this.loteRepo.desfazerAutomaticosVencidos();
+        // "Hoje" é o dia civil de Brasília no formato do ERP: o título que vence hoje não é
+        // vencido (R2) — comparar com o instante desfazia o lote dele a partir das 09:00 BRT.
+        const hoje = new Date(this.calendar.toErpEpoch(this.calendar.todayBrt()));
+        const lotesDesfeitos = await this.loteRepo.desfazerAutomaticosVencidos(hoje);
 
         // 2) forma lotes novos com os elegíveis (a vencer ≤7d, não lotados). Cada grupo
         // (filial × vencimento) vira no máx. dois lotes: boletos e o resto, nunca misturados.
-        const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS);
+        const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS, hoje);
         const grupos = this.agrupar(elegiveis);
         let lotesFormados = 0;
         let titulosLotados = 0;
