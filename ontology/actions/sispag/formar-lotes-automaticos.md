@@ -85,7 +85,11 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
   internacionais na carteira, logo **não há mais dimensão de classe** no agrupamento (o agrupamento é
   só por filial). Ver `business-rules/lote-uniforme-nacional-internacional.md` (retirado) e ADR-0021.
 - **A-vencer ≤ 7 dias apenas:** vencidos **não** entram e **desfazem** um lote auto que os contenha
-  (passo 2). O horizonte de 7 dias é o valor do tenant (config) sobre a estrutura universal
+  (passo 2). **Vencido = dia de vencimento ANTES de hoje**, por **dia civil**: hoje é a data de
+  Brasília (`BankingCalendar.todayBrt`), o vencimento é o dia do epoch do ERP (00:00Z/15:00Z). O
+  título que **vence hoje é a vencer** (R2 aceita débito no próprio vencimento) e a janela é
+  `hoje..hoje+7`, inclusive. Nunca comparar com o instante (`now()`): a partir das 09:00 BRT o
+  título de hoje parecia vencido e o lote dele era desfeito (ADR-0070). O horizonte de 7 dias é o valor do tenant (config) sobre a estrutura universal
   "montar o lote das obrigações que vencem em breve".
 - **Anti-join (I3):** título já em qualquer lote RASCUNHO (manual ou auto) não é re-agrupado.
 

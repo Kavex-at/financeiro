@@ -48,6 +48,8 @@ side_effects:
   (aprovado-e-pendente vs. bloqueado/pago), não só os elegíveis.
 - **KPIs:** totais por status/aging (a vencer, vencidos, aprovados-pendentes, valor total) para a
   leitura de cadência diária.
+- **Aging em dias civis:** `diasAteVencimento` = dia do vencimento (epoch do ERP pelo relógio UTC)
+  − hoje em Brasília. Vence hoje = **0** (a vencer), nunca "vencido 1d" (ADR-0070).
 - **Contexto (abas):** os **lotes SISPAG nativos** (`fin015`) e os **borderôs a-pagar** (`fin010`)
   são lidos e exibidos como contexto — o que o ERP já executa. **Não** participam do nosso ciclo
   de vida de lote candidato (ver `state-machines/lote-pagamento.md`).
