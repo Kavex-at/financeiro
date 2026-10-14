@@ -136,6 +136,32 @@ export const buildPayeeSearchLimiter = (
         },
     });
 
+/**
+ * Decisões sobre boleto sugerido e cópia da linha digitável (ADR-0068, I15): 30/min por USUÁRIO
+ * autenticado, em baldes separados (`confirmar` serve confirmar/rejeitar; `copiar` serve a cópia
+ * auditada). Uma analista decide um título por vez; o teto só para script ou sessão roubada
+ * colhendo linhas digitáveis. Toda requisição conta.
+ */
+export const SUGESTAO_BOLETO_LIMIT_PER_MINUTE = 30;
+export const MENSAGEM_MUITAS_DECISOES_BOLETO =
+    'Muitas decisões em pouco tempo. Aguarde um minuto e tente de novo.';
+
+export const buildSugestaoBoletoLimiter = (
+    options: SessionLimiterOptions = {},
+    escopo: 'confirmar' | 'copiar' = 'confirmar',
+): RateLimitRequestHandler =>
+    sessionLimiter(options, {
+        windowMs: ONE_MINUTE_MS,
+        limit: SUGESTAO_BOLETO_LIMIT_PER_MINUTE,
+        keyGenerator: (req: Request) => `sugestao-boleto-${escopo}:${req.user?.sub ?? ''}`,
+        handler: (_req: Request, res: ExpressResponse) => {
+            res.status(429).json({
+                codigo: 'MUITAS_DECISOES',
+                error: MENSAGEM_MUITAS_DECISOES_BOLETO,
+            });
+        },
+    });
+
 /** `/auth/refresh` (D4): 30/min por IP. */
 export const buildRefreshLimiter = (options: SessionLimiterOptions = {}): RateLimitRequestHandler =>
     sessionLimiter(options, { windowMs: ONE_MINUTE_MS, limit: REFRESH_IP_LIMIT_PER_MINUTE });

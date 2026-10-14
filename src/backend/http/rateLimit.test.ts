@@ -11,6 +11,8 @@ import {
     OWN_PASSWORD_WINDOW_MS,
     PAYEE_SEARCH_LIMIT_PER_MINUTE,
     REFRESH_IP_LIMIT_PER_MINUTE,
+    SUGESTAO_BOLETO_LIMIT_PER_MINUTE,
+    buildSugestaoBoletoLimiter,
     buildLoginLimiters,
     buildOwnPasswordLimiter,
     buildPayeeSearchLimiter,
@@ -304,5 +306,37 @@ describe('limitador da busca de favorecido', () => {
         server.close();
         expect(ana.status).toBe(429);
         expect(bia.status).toBe(200);
+    });
+});
+
+describe('limitador das decisões de boleto sugerido (ADR-0068)', () => {
+    it('30/min por usuário; a 31ª recebe 429 MUITAS_DECISOES; baldes confirmar/copiar separados', async () => {
+        expect(SUGESTAO_BOLETO_LIMIT_PER_MINUTE).toBe(30);
+        const store = new MemoryStore();
+        const confirmar = buildSugestaoBoletoLimiter({ skip: () => false, store }, 'confirmar');
+        const copiar = buildSugestaoBoletoLimiter({ skip: () => false, store }, 'copiar');
+        const app = express();
+        app.use((req: Request, _res: Response, next) => {
+            req.user = { sub: String(req.headers['x-usuario'] ?? 'ana') };
+            next();
+        });
+        app.post('/confirmar', confirmar, (_req: Request, res: Response) => res.json({}));
+        app.post('/copiar', copiar, (_req: Request, res: Response) => res.json({}));
+        const server: Server = await new Promise((r) => {
+            const s = app.listen(0, '127.0.0.1', () => r(s));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        for (let i = 0; i < 30; i++) await fetch(`${base}/confirmar`, { method: 'POST' });
+        const bloqueada = await fetch(`${base}/confirmar`, { method: 'POST' });
+        const copiaLivre = await fetch(`${base}/copiar`, { method: 'POST' });
+        const outraPessoa = await fetch(`${base}/confirmar`, {
+            method: 'POST',
+            headers: { 'x-usuario': 'bia' },
+        });
+        server.close();
+        expect(bloqueada.status).toBe(429);
+        expect(await bloqueada.json()).toMatchObject({ codigo: 'MUITAS_DECISOES' });
+        expect(copiaLivre.status).toBe(200);
+        expect(outraPessoa.status).toBe(200);
     });
 });

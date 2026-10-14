@@ -1,0 +1,54 @@
+import { z } from 'zod';
+import { ESTADO_CONFIRMACAO_EMISSOR } from './ConfirmacaoEmissorBoleto.js';
+import {
+    RESULTADO_SUGESTAO,
+    SUGESTAO_TAMANHO_MAXIMO,
+    SUGESTAO_TAMANHO_PADRAO,
+} from './SugestaoBoleto.js';
+
+/**
+ * Zod do boundary HTTP da sugestão de boleto (ADR-0068, I15). Bodies `strict`: campo desconhecido
+ * (inclusive um "ator" ou "usuario") é 400 — a identidade vem SEMPRE do token (I15g).
+ */
+
+const texto = z.string().trim().min(1);
+
+/** Chave do título (filial, documento, título) + a do boleto do pool `fin124` (arquivo, item). */
+export const ChaveSugestaoBodySchema = z
+    .object({
+        filCod: z.number().int().positive(),
+        docCod: texto,
+        titCod: texto,
+        ddcCod: z.number().int().positive(),
+        ditCod: z.number().int().min(0),
+    })
+    .strict();
+
+/** `motivo` ausente é 400; em branco chega ao serviço, que responde 422 nomeado. */
+export const RejeitarSugestaoBodySchema = ChaveSugestaoBodySchema.extend({
+    motivo: z.string().max(500),
+}).strict();
+
+export const RevogarConfirmacaoBodySchema = z.object({ motivo: z.string().max(500) }).strict();
+
+export const ConfirmacaoEmissorIdSchema = z.object({ id: z.string().uuid() });
+
+export const SugestoesQuerySchema = z.object({
+    filCod: z.coerce.number().int().positive().optional(),
+    pesCod: texto.optional(),
+    tier: z.nativeEnum(RESULTADO_SUGESTAO).optional(),
+    pagina: z.coerce.number().int().min(1).default(1),
+    tamanho: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(SUGESTAO_TAMANHO_MAXIMO)
+        .default(SUGESTAO_TAMANHO_PADRAO),
+});
+
+export const ConfirmacoesEmissorQuerySchema = z.object({
+    estado: z
+        .enum([ESTADO_CONFIRMACAO_EMISSOR.VIGENTE, ESTADO_CONFIRMACAO_EMISSOR.REVOGADA])
+        .optional(),
+    pesCod: texto.optional(),
+});
