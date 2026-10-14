@@ -178,6 +178,9 @@ const build = (c: Cenario) => {
             return { inserido: true };
         }),
         existeVinculoAplicado: jest.fn(async () => false),
+        buscarDecisaoPorId: jest.fn(
+            async (id: string) => decisoes.find((d) => d.id === id) ?? null,
+        ),
     };
     const boletos = {
         buscarPorChave: jest.fn(async (k: { ddcCod: number; ditCod: number }) => {
@@ -560,6 +563,112 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
                 .catch((e: unknown) => e);
             expect(erro).toBeInstanceOf(VinculoCodigoBarrasIncompletoError);
             expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+        });
+
+        it('validação recusada pelo ERP (4xx de negócio) ⇒ retira ERP_RECUSOU_VALIDACAO e segue', async () => {
+            const h = umItem();
+            h.write.validarCodigoBarras.mockRejectedValueOnce(rejeicao());
+            const r = await h.service.executar({ lote: h.lote, ...CTX });
+            expect(r.retirar).toHaveLength(1);
+            expect(r.retirar[0]).toMatchObject({
+                titulo: { docCod: '636' },
+                motivo: 'ERP_RECUSOU_VALIDACAO',
+                codigoMascarado: MASCARA,
+            });
+            expect(r.vinculados).toEqual([]);
+            expect(h.write.confirmarCodigoBarras).not.toHaveBeenCalled();
+            expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+            expect(h.loteRepo.gravarVinculoCodigoBarras).not.toHaveBeenCalled();
+            expect(
+                h.eventos.some(
+                    (e) => e.tipo === 'VINCULO_FALHOU' && e.motivo === 'ERP_RECUSOU_VALIDACAO',
+                ),
+            ).toBe(true);
+        });
+
+        it('validação com falha transitória ⇒ Incompleto (sem retirar, sem confirma, sem PUT)', async () => {
+            const h = umItem();
+            h.write.validarCodigoBarras.mockRejectedValueOnce(transitorio());
+            const erro = await h.service
+                .executar({ lote: h.lote, ...CTX })
+                .catch((e: unknown) => e);
+            expect(erro).toBeInstanceOf(VinculoCodigoBarrasIncompletoError);
+            expect(h.write.confirmarCodigoBarras).not.toHaveBeenCalled();
+            expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+            expect(h.eventos.some((e) => e.tipo === 'VINCULO_FALHOU')).toBe(false);
+        });
+
+        describe('decisão anulada depois do vínculo (F-ft-1)', () => {
+            const vinculado = (): ItemLote =>
+                itemLote('636', {
+                    vinculoCodigoBarras: {
+                        origem: 'DECISAO_HUMANA',
+                        decisaoId: 'dec-1',
+                        codigoMascarado: MASCARA,
+                        aplicadoEm: '2026-10-14T10:00:00.000Z',
+                        flpCod: 36,
+                    },
+                });
+
+            it('item com código NOSSO e decisão não mais CONFIRMADA ⇒ retira DECISAO_NAO_CONFIRMADA, sem chamar o ERP', async () => {
+                const h = build({
+                    itens: [vinculado()],
+                    rascunho: [nativo('636', 91, { itsNumCodbar: LINHA })],
+                    decisoes: [],
+                });
+                const r = await h.service.executar({ lote: h.lote, ...CTX });
+                expect(r.retirar).toHaveLength(1);
+                expect(r.retirar[0]).toMatchObject({
+                    titulo: { docCod: '636' },
+                    motivo: 'DECISAO_NAO_CONFIRMADA',
+                    codigoMascarado: MASCARA,
+                    itsCodSeq: 91,
+                });
+                expect(JSON.stringify(r.retirar)).not.toContain(BARRAS);
+                expect(h.write.validarCodigoBarras).not.toHaveBeenCalled();
+                expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+                expect(
+                    h.eventos.some(
+                        (e) =>
+                            e.tipo === 'VINCULO_FALHOU' &&
+                            e.motivo === 'DECISAO_NAO_CONFIRMADA' &&
+                            e.decisaoId === 'dec-1',
+                    ),
+                ).toBe(true);
+            });
+
+            it('existemVinculaveis enxerga o item vinculado cuja decisão caiu (a retomada passa pelo vínculo)', async () => {
+                const h = build({
+                    itens: [vinculado()],
+                    rascunho: [nativo('636', 91, { itsNumCodbar: LINHA })],
+                    decisoes: [],
+                });
+                expect(await h.service.existemVinculaveis(h.lote)).toBe(true);
+            });
+
+            it('código digitado à mão (sem vínculo nosso) e sem decisão continua ignorado', async () => {
+                const h = build({
+                    itens: [itemLote('636')],
+                    rascunho: [nativo('636', 91, { itsNumCodbar: LINHA_2 })],
+                    decisoes: [],
+                });
+                const r = await h.service.executar({ lote: h.lote, ...CTX });
+                expect(r.retirar).toEqual([]);
+                expect(r.vinculados).toEqual([]);
+            });
+
+            it('decisão anulada ENTRE a confirma e o PUT ⇒ retira, o PUT nunca acontece', async () => {
+                const h = umItem();
+                h.sugestoes.buscarDecisaoPorId.mockResolvedValueOnce({
+                    id: 'dec-1',
+                    decisao: 'ANULADA',
+                } as never);
+                const r = await h.service.executar({ lote: h.lote, ...CTX });
+                expect(r.retirar).toHaveLength(1);
+                expect(r.retirar[0]).toMatchObject({ motivo: 'DECISAO_NAO_CONFIRMADA' });
+                expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+                expect(h.loteRepo.gravarVinculoCodigoBarras).not.toHaveBeenCalled();
+            });
         });
 
         it('PUT recusado (4xx de negócio) e a releitura não mostra ⇒ determinístico: retira', async () => {

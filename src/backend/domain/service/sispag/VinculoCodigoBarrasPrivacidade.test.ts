@@ -314,6 +314,13 @@ const montar = (opcoes: { confirmaTransitorio?: boolean; semDecisao?: boolean } 
             return { inserido: true };
         }),
         existeVinculoAplicado: jest.fn(async () => false),
+        buscarDecisaoPorId: jest.fn(async (id: string) =>
+            opcoes.semDecisao
+                ? null
+                : ([decisao('801', 'dec-801', 3), decisao('802', 'dec-802', 4)].find(
+                      (d) => d.id === id,
+                  ) ?? null),
+        ),
     };
     const pool = {
         buscarPorChave: jest.fn(async (k: { ddcCod: number; ditCod: number }) => ({
