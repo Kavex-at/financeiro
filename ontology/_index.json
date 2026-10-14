@@ -1074,7 +1074,7 @@
       "resolved_by": [
         "ADR-0068"
       ],
-      "note": "VIGENTE -> REVOGADA; qualquer sispag:executar; motivo obrigatorio; cancela decisoes nao aplicadas no ERP."
+      "note": "VIGENTE -> REVOGADA; qualquer sispag:executar; motivo obrigatorio; ANULA em cascata, na mesma transacao, as decisoes CONFIRMADA do par (Q-E, I15l)."
     },
     "copiarLinhaDigitavel": {
       "file": "actions/sispag/copiar-linha-digitavel.md",
@@ -1090,6 +1090,21 @@
         "ADR-0068"
       ],
       "note": "Toda copia auditada (LINHA_COPIADA); so sispag:executar (I15k)."
+    },
+    "anularDecisaoSugestaoBoleto": {
+      "file": "actions/sispag/anular-decisao-sugestao-boleto.md",
+      "entity": "DecisaoSugestaoBoleto",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/BoletoSuggestionService.ts",
+        "src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts",
+        "src/backend/routes/sispag.ts",
+        "src/frontend/app/sispag/components/SugestaoBoletoPainel.tsx"
+      ],
+      "resolved_by": [
+        "ADR-0068"
+      ],
+      "note": "CONFIRMADA -> ANULADA (terminal) por titulo, motivo 10-500, lock por versao; libera titulo e boleto; cascata na revogacao do par (Q-E); vale para confirmacao orfa (I15l)."
     }
   },
   "business_rules": {

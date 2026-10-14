@@ -15,6 +15,11 @@
   (a rejeição pede o motivo). Confirmar o boleto de um credor passa a marcar aquele emissor como
   conhecido para o credor: as próximas sugestões dele sobem de nível. Dá para revogar, com motivo,
   na lista "emissores de boleto confirmados".
+- **Anular uma confirmação.** Errou ao confirmar? "Anular confirmação" (com motivo de pelo menos
+  10 caracteres) desfaz a confirmação daquele título e libera o título e o boleto. Revogar o
+  emissor de um credor também anula as confirmações feitas com ele. Se o boleto confirmado sumir
+  do DDA (arquivo cancelado ou ligado pelo Conexos a outro título) ou o Conexos sinalizar o título
+  depois, a confirmação aparece como "confirmação órfã", com o motivo, para você anular.
 - **Copiar a linha digitável** sem digitar: qualquer pessoa com acesso de ver o SISPAG pode copiar,
   e toda cópia fica registrada (quem, quando, qual boleto). Se o registro falhar, nada é copiado.
 - **A regra de candidato da aba "Boletos DDA" mudou.** Antes era "valor exato e vencimento até 3
