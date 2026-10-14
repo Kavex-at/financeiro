@@ -72,6 +72,15 @@ jest.mock('@/lib/sispag', () => {
     // ADR-0066: idem para a sincronização dos lotes ao abrir e o botão "Sincronizar lotes".
     sincronizarLotesSeDefasado: jest.fn().mockResolvedValue({ estado: 'fresca' }),
     sincronizarLotes: jest.fn(),
+    // ADR-0068: as sugestões de boleto são evidência opcional; por padrão, nenhuma.
+    fetchTodasSugestoesBoleto: jest.fn().mockResolvedValue({
+      sugestoes: [],
+      total: 0,
+      pagina: 1,
+      tamanho: 100,
+      contagem: {},
+    }),
+    fetchConfirmacoesEmissor: jest.fn().mockResolvedValue([]),
   }
 })
 
@@ -592,5 +601,97 @@ describe('SispagPage — títulos: comprometidos, selecionar todos e export', ()
     permissoes = ['sispag:ver']
     await renderPainel()
     expect(screen.getByRole('button', { name: /exportar \(2\)/i })).toBeEnabled()
+  })
+})
+
+describe('SispagPage — sugestão de boleto na aba de títulos (ADR-0068)', () => {
+  const titulo = {
+    docCod: '5046',
+    titCod: '1',
+    filCod: 1,
+    credor: 'ADP BRASIL LTDA',
+    valor: 4815.33,
+    vencimento: Date.UTC(2026, 8, 24),
+    diasAteVencimento: 5,
+    liberado: true,
+    pago: false,
+    emLote: false,
+    formaPagamentoConexos: 6,
+    temBoleto: false,
+  } as unknown as TituloAPagar
+
+  const sugestao = {
+    filCod: 1,
+    docCod: '5046',
+    titCod: '1',
+    valorTitulo: 4815.33,
+    vencimentoTitulo: '2026-09-24',
+    dataDebito: '2026-09-24',
+    ddcCod: 152,
+    ditCod: 7,
+    numeroBoleto: '001532761',
+    valorBoleto: 4815.33,
+    vencimentoBoleto: '2026-09-27',
+    avaliacao: {
+      resultado: 'FORTE',
+      deltaValor: 0,
+      deltaPercentual: 0,
+      deltaDias: 3,
+      sinais: ['VALOR_IGUAL'],
+      confirmavel: true,
+    },
+    estado: 'SUGERIDA',
+    confirmavel: true,
+  }
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockResolvedValue({ ...painel, titulos: [titulo] })
+    lib.fetchLotes.mockReset()
+    lib.fetchLotes.mockResolvedValue([])
+    lib.fetchBoletosDdaDoTitulo = jest.fn().mockResolvedValue({ doTitulo: [], mesmoValor: [] })
+    lib.fetchTodasSugestoesBoleto.mockResolvedValue({
+      sugestoes: [sugestao],
+      total: 1,
+      pagina: 1,
+      tamanho: 100,
+      contagem: {},
+    })
+  })
+
+  const abrir = async () => {
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    await userEvent.click(await screen.findByRole('button', { name: 'sugestão disponível' }))
+    return screen.findByRole('dialog')
+  }
+
+  it('sispag:ver abre a sugestão e vê "Copiar", mas não Confirmar nem Rejeitar', async () => {
+    permissoes = ['sispag:ver']
+    const dlg = await abrir()
+    expect(within(dlg).getByText('Sugestão de boleto')).toBeInTheDocument()
+    expect(within(dlg).getByText('+3 dias')).toBeInTheDocument()
+    expect(within(dlg).getByRole('button', { name: /Copiar linha digitável/ })).toBeInTheDocument()
+    expect(within(dlg).queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument()
+    expect(within(dlg).queryByRole('button', { name: 'Rejeitar' })).not.toBeInTheDocument()
+  })
+
+  it('sispag:executar vê Confirmar e Rejeitar', async () => {
+    permissoes = ['sispag:ver', 'sispag:executar']
+    const dlg = await abrir()
+    expect(within(dlg).getByRole('button', { name: 'Confirmar' })).toBeEnabled()
+    expect(within(dlg).getByRole('button', { name: 'Rejeitar' })).toBeInTheDocument()
+  })
+
+  it('falha ao ler as sugestões não derruba a aba de títulos', async () => {
+    permissoes = ['sispag:ver']
+    jest.requireMock('@/lib/sispag').fetchTodasSugestoesBoleto.mockRejectedValue(new Error('x'))
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    expect(screen.getAllByText('ADP BRASIL LTDA', { exact: false }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: 'sugestão disponível' })).not.toBeInTheDocument()
   })
 })

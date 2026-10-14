@@ -110,4 +110,43 @@ describe('BoletosDoTituloDialog', () => {
     render(<BoletosDoTituloDialog titulo={null} onClose={jest.fn()} />)
     expect(mockApiFetch).not.toHaveBeenCalled()
   })
+
+  it('com sugestão: mostra o painel de sugestão acima dos boletos', async () => {
+    mockApiFetch.mockResolvedValue(ok(resposta([boleto({})])))
+    const sug = {
+      filCod: 1,
+      docCod: '5046',
+      titCod: '1',
+      valorTitulo: 4815.33,
+      vencimentoTitulo: '2026-09-24',
+      dataDebito: '2026-09-24',
+      ddcCod: 152,
+      ditCod: 7,
+      valorBoleto: 4815.33,
+      vencimentoBoleto: '2026-09-27',
+      avaliacao: {
+        resultado: 'FORTE' as const,
+        deltaValor: 0,
+        deltaPercentual: 0,
+        deltaDias: 3,
+        sinais: ['VALOR_IGUAL' as const],
+        confirmavel: true,
+      },
+      estado: 'SUGERIDA' as const,
+      confirmavel: true,
+    }
+    render(
+      <BoletosDoTituloDialog
+        titulo={titulo}
+        onClose={() => undefined}
+        sugestoes={[sug]}
+        podeExecutar={false}
+        podeCopiar
+      />,
+    )
+    expect(await screen.findByText('Sugestão de boleto')).toBeInTheDocument()
+    expect(screen.getByText('+3 dias')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Copiar linha digitável/ })).toBeInTheDocument()
+  })
 })
