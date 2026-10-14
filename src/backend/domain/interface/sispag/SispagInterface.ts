@@ -471,6 +471,33 @@ export interface ItemLote {
     autorizacaoAviso?: PayeeItemWarning;
     /** Alertas vivas do item neste lote (ABERTA | RESOLVIDA), com a justificativa. */
     alertas?: AlertaItemLote[];
+    /**
+     * Vínculo do código de barras ao item (ADR-0071, I17): quem o originou, a decisão, a MÁSCARA
+     * 5+4 e quando. Ausente = sem vínculo (item legado ou ainda não vinculado). Nunca o código.
+     */
+    vinculoCodigoBarras?: VinculoCodigoBarrasItem;
+}
+
+/** Origem do vínculo do código ao item (paridade com o CHECK da 0086). */
+export const VINCULO_ORIGEM = {
+    /** O próprio ERP associou o boleto DDA. */
+    ERP_DDA: 'ERP_DDA',
+    /** Nós gravamos o código a partir de uma decisão humana confirmada (I17). */
+    DECISAO_HUMANA: 'DECISAO_HUMANA',
+} as const;
+
+export type VinculoOrigem = (typeof VINCULO_ORIGEM)[keyof typeof VINCULO_ORIGEM];
+
+export interface VinculoCodigoBarrasItem {
+    origem: VinculoOrigem;
+    /** `DecisaoSugestaoBoleto` que autorizou (só `DECISAO_HUMANA`). */
+    decisaoId?: string;
+    /** Máscara 5+4 (I17j). */
+    codigoMascarado: string;
+    /** ISO-8601. */
+    aplicadoEm: string;
+    /** Lote nativo (`flpCod`) em que o vínculo foi gravado. */
+    flpCod: number;
 }
 
 /** Lote candidato (raiz do agregado). */
@@ -674,10 +701,29 @@ export const DUPLICATE_HOLD_ORIGIN = {
     DUPLICIDADE_TITULO: 'DUPLICIDADE_TITULO',
     CODIGO_BARRAS_REPETIDO: 'CODIGO_BARRAS_REPETIDO',
     CODIGO_BARRAS_ILEGIVEL: 'CODIGO_BARRAS_ILEGIVEL',
+    /** ADR-0071 (I17g(3)): o vínculo do código falhou de forma determinística pós-import. */
+    VINCULO_CODIGO_BARRAS_FALHOU: 'VINCULO_CODIGO_BARRAS_FALHOU',
 } as const;
 
 export type DuplicateHoldOrigin =
     (typeof DUPLICATE_HOLD_ORIGIN)[keyof typeof DUPLICATE_HOLD_ORIGIN];
+
+/**
+ * Retiradas por código de barras (I16d e I17g(3)): os motivos do evento `ITEM_REMOVIDO_SISTEMA` e
+ * as origens da marca de retenção que reconhecem um resíduo no rascunho (I16h(c)) e entram na aba
+ * de retidos (I16g).
+ */
+export const MOTIVOS_RETIRADA_CODIGO_BARRAS: readonly SystemRemovalReason[] = [
+    'CODIGO_BARRAS_REPETIDO',
+    'CODIGO_BARRAS_ILEGIVEL',
+    'VINCULO_CODIGO_BARRAS_FALHOU',
+];
+
+export const ORIGENS_RETENCAO_CODIGO_BARRAS: readonly DuplicateHoldOrigin[] = [
+    'CODIGO_BARRAS_REPETIDO',
+    'CODIGO_BARRAS_ILEGIVEL',
+    'VINCULO_CODIGO_BARRAS_FALHOU',
+];
 
 /** Máscara I16e: 5 primeiros + 4 últimos dígitos das barras, separados por `…`. */
 const CODIGO_MASCARADO = /^\d{5}…\d{4}$/;
@@ -697,6 +743,11 @@ export const SYSTEM_REMOVAL_REASON = {
     CODIGO_BARRAS_REPETIDO: 'CODIGO_BARRAS_REPETIDO',
     /** ADR-0069 emenda 1 (I16d.2): código presente mas com dígito verificador inválido. */
     CODIGO_BARRAS_ILEGIVEL: 'CODIGO_BARRAS_ILEGIVEL',
+    /**
+     * ADR-0071 (I17g(3)): o vínculo do código confirmado falhou de forma DETERMINÍSTICA depois do
+     * import (divergência de valor/data/banco/juros, ou código já presente em outro item).
+     */
+    VINCULO_CODIGO_BARRAS_FALHOU: 'VINCULO_CODIGO_BARRAS_FALHOU',
 } as const;
 
 export type SystemRemovalReason =

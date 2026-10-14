@@ -1,9 +1,10 @@
+import type { MotivoRetiradaCodigoBarras } from '../interface/sispag/RetiradaCodigoBarras.js';
 import type { HandlerError } from '../libs/handler/HandlerError.js';
 
 export interface ItemEsvaziado {
     docCod: string;
     titCod: string;
-    motivo: 'CODIGO_BARRAS_REPETIDO' | 'CODIGO_BARRAS_ILEGIVEL';
+    motivo: MotivoRetiradaCodigoBarras;
 }
 
 /**
@@ -29,7 +30,7 @@ export default class BoletoLoteEsvaziadoPorCodigoError extends Error implements 
         this.name = 'BoletoLoteEsvaziadoPorCodigoError';
         this.userMessage =
             `Todos os ${params.itens.length} título(s) do lote foram retirados porque o código de ` +
-            'barras do boleto está ilegível ou repetido. Nada foi enviado ao banco e o rascunho no ' +
+            'barras do boleto está ilegível, repetido ou não pôde ser vinculado. Nada foi enviado ao banco e o rascunho no ' +
             'Conexos ficou vazio. Revise os boletos, resolva o código no Conexos ' +
             '(ou troque a forma de pagamento) e monte o lote de novo.' +
             (params.flpCod !== undefined ? ` Lote nativo no Conexos: ${params.flpCod}.` : '');

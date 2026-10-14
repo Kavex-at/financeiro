@@ -11,6 +11,7 @@ import {
     type DuplicateHoldOrigin,
     type DuplicateHoldState,
     isCodigoMascarado,
+    ORIGENS_RETENCAO_CODIGO_BARRAS,
     SISPAG_SYSTEM_ACTOR,
     VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
@@ -198,10 +199,7 @@ export default class BloqueioDuplicidadeRepository {
                 {
                     encerrado: DUPLICATE_HOLD_STATE.ENCERRADO,
                     ativo: DUPLICATE_HOLD_STATE.ATIVO,
-                    origens: [
-                        DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_REPETIDO,
-                        DUPLICATE_HOLD_ORIGIN.CODIGO_BARRAS_ILEGIVEL,
-                    ],
+                    origens: [...ORIGENS_RETENCAO_CODIGO_BARRAS],
                 },
             )) as Array<{
                 id: string;

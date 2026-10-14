@@ -22,6 +22,7 @@ import {
     type PaymentCheckState,
     SISPAG_SYSTEM_ACTOR,
     type SystemRemovalReason,
+    type VinculoCodigoBarrasItem,
     VERIFICATION_EVENT,
 } from '../../interface/sispag/SispagInterface.js';
 import type { PayeeItemWarning } from '../../interface/sispag/AuthorizedPayeeInterface.js';
@@ -104,6 +105,12 @@ interface ItemRow {
     verificado_em?: Date | null;
     destino_mascarado?: string | null;
     autorizacao_aviso?: string | null;
+    // ── 0086: vínculo do código de barras ao item (ADR-0071, I17) ──
+    vinculo_origem?: string | null;
+    vinculo_decisao_id?: string | null;
+    vinculo_codigo_mascarado?: string | null;
+    vinculo_aplicado_em?: Date | null;
+    vinculo_flp_cod?: number | null;
 }
 
 export const RESULTADO_APLICAR_SINCRONIZACAO = {
@@ -114,6 +121,16 @@ export const RESULTADO_APLICAR_SINCRONIZACAO = {
 
 export type ResultadoAplicarSincronizacao =
     (typeof RESULTADO_APLICAR_SINCRONIZACAO)[keyof typeof RESULTADO_APLICAR_SINCRONIZACAO];
+
+/** Texto da marca de retenção por motivo da retirada automática (I16d, I17g(3)). */
+const MOTIVO_DA_MARCA = {
+    [SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_REPETIDO]:
+        'Boleto repetido no lote — retirada automática (I16d)',
+    [SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_ILEGIVEL]:
+        'Código de barras ilegível — retirada automática (I16d.2)',
+    [SYSTEM_REMOVAL_REASON.VINCULO_CODIGO_BARRAS_FALHOU]:
+        'Vínculo do código de barras falhou — retirada automática (I17g)',
+} as const;
 
 /**
  * LotePagamentoRepository — persistência do lote candidato SISPAG (Fatia 2).
@@ -157,7 +174,29 @@ export default class LotePagamentoRepository {
             ? { favorecidoAutorizadoId: r.favorecido_autorizado_id }
             : {}),
         ...this.mapVerificacao(r),
+        ...this.mapVinculo(r),
     });
+
+    /** `vinculoCodigoBarras` só quando a linha traz o vínculo completo (tudo-ou-nada, 0086). */
+    private mapVinculo = (r: ItemRow): { vinculoCodigoBarras?: VinculoCodigoBarrasItem } => {
+        if (
+            r.vinculo_origem == null ||
+            r.vinculo_codigo_mascarado == null ||
+            r.vinculo_aplicado_em == null ||
+            r.vinculo_flp_cod == null
+        ) {
+            return {};
+        }
+        return {
+            vinculoCodigoBarras: {
+                origem: r.vinculo_origem as VinculoCodigoBarrasItem['origem'],
+                ...(r.vinculo_decisao_id != null ? { decisaoId: r.vinculo_decisao_id } : {}),
+                codigoMascarado: r.vinculo_codigo_mascarado,
+                aplicadoEm: new Date(r.vinculo_aplicado_em).toISOString(),
+                flpCod: Number(r.vinculo_flp_cod),
+            },
+        };
+    };
 
     /**
      * Campos da sincronização pelo título (0069, ADR-0055). `divergencia` é sempre definido: a
@@ -392,7 +431,9 @@ export default class LotePagamentoRepository {
                     i.conciliado_em, i.favorecido_autorizado_id,
                     i.situacao, i.pago_em, i.pago_observado_em, i.valor_pago, i.origem_baixa,
                     i.baixa_fonte, i.divergencia, i.divergencia_detalhe, i.sincronizado_em,
-                    i.verificacao_estado, i.verificado_em, i.destino_mascarado, i.autorizacao_aviso
+                    i.verificacao_estado, i.verificado_em, i.destino_mascarado, i.autorizacao_aviso,
+                    i.vinculo_origem, i.vinculo_decisao_id, i.vinculo_codigo_mascarado,
+                    i.vinculo_aplicado_em, i.vinculo_flp_cod
              FROM lote_pagamento_item i
              WHERE i.lote_id = $id ORDER BY i.incluido_em ASC, i.id ASC`,
             { id },
@@ -892,7 +933,8 @@ export default class LotePagamentoRepository {
             titCod: string;
             motivo:
                 | typeof SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_REPETIDO
-                | typeof SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_ILEGIVEL;
+                | typeof SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_ILEGIVEL
+                | typeof SYSTEM_REMOVAL_REASON.VINCULO_CODIGO_BARRAS_FALHOU;
             codigoMascarado?: string;
             tituloMantido?: ChaveTitulo;
         },
@@ -925,10 +967,7 @@ export default class LotePagamentoRepository {
             {
                 chave,
                 loteIdOrigem: params.loteId,
-                motivo:
-                    params.motivo === SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_REPETIDO
-                        ? 'Boleto repetido no lote — retirada automática (I16d)'
-                        : 'Código de barras ilegível — retirada automática (I16d.2)',
+                motivo: MOTIVO_DA_MARCA[params.motivo],
                 ator: SISPAG_SYSTEM_ACTOR,
                 origem: params.motivo,
                 ...(params.codigoMascarado !== undefined
@@ -968,6 +1007,53 @@ export default class LotePagamentoRepository {
             ...(vencimento !== undefined ? { vencimento } : {}),
             ...(linha.credor ? { credor: linha.credor } : {}),
         };
+    };
+
+    /**
+     * ADR-0071 (I17e/I17j) — grava o vínculo do código de barras no item, só a MÁSCARA 5+4, e
+     * bumpa a `versao` do lote na mesma transação do chamador. Roda com o lote local em
+     * `FINALIZADO` (a remessa só roda assim), então NÃO depende do status — mas o item tem que
+     * existir. Idempotente: o mesmo vínculo regravado só atualiza `aplicado_em`/`flp_cod`.
+     * O guard recusa máscara fora de 5+4 ANTES de tocar o banco (o CHECK da 0086 é a 2ª trava).
+     * `false` = o item não está no lote local.
+     */
+    public gravarVinculoCodigoBarras = async (
+        params: {
+            loteId: string;
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            origem: VinculoCodigoBarrasItem['origem'];
+            decisaoId?: string;
+            codigoMascarado: string;
+            flpCod: number;
+        },
+        tx?: TransactionClient,
+    ): Promise<boolean> => {
+        if (!isCodigoMascarado(params.codigoMascarado)) {
+            throw new Error('codigoMascarado precisa estar mascarado (5 primeiros + 4 últimos)');
+        }
+        const n = await this.db(tx).update(
+            `UPDATE lote_pagamento_item
+                SET vinculo_origem = $origem, vinculo_decisao_id = $decisaoId::uuid,
+                    vinculo_codigo_mascarado = $codigoMascarado, vinculo_aplicado_em = now(),
+                    vinculo_flp_cod = $flpCod
+              WHERE lote_id = $loteId AND fil_cod = $filCod
+                AND doc_cod = $docCod AND tit_cod = $titCod`,
+            {
+                loteId: params.loteId,
+                filCod: params.filCod,
+                docCod: params.docCod,
+                titCod: params.titCod,
+                origem: params.origem,
+                decisaoId: params.decisaoId ?? null,
+                codigoMascarado: params.codigoMascarado,
+                flpCod: params.flpCod,
+            },
+        );
+        if (n === 0) return false;
+        await this.tocarLote(params.loteId, tx);
+        return true;
     };
 
     /**

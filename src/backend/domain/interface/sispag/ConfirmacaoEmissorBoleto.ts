@@ -37,6 +37,12 @@ export const EVENTO_SUGESTAO_BOLETO = {
     DECISAO_ANULADA: 'DECISAO_ANULADA',
     PAR_REVOGADO: 'PAR_REVOGADO',
     LINHA_COPIADA: 'LINHA_COPIADA',
+    /** ADR-0071: código gravado no item e CONFIRMADO na releitura (I17e). Único por (lote, título, decisão). */
+    VINCULO_APLICADO: 'VINCULO_APLICADO',
+    /** ADR-0071 (`shadow`): o que o vínculo faria; zero chamada ao ERP (I17k). */
+    VINCULO_SIMULADO: 'VINCULO_SIMULADO',
+    /** ADR-0071: o vínculo falhou (transitória ou determinística); só motivo + máscara. */
+    VINCULO_FALHOU: 'VINCULO_FALHOU',
 } as const;
 export type EventoSugestaoBoleto =
     (typeof EVENTO_SUGESTAO_BOLETO)[keyof typeof EVENTO_SUGESTAO_BOLETO];
@@ -113,6 +119,10 @@ export interface EventoSugestaoRegistro {
     ditCod?: number;
     motivo?: string;
     detalhe?: Record<string, unknown>;
+    /** Lote local (eventos `VINCULO_*`, 0086). */
+    loteId?: string;
+    /** Decisão que autorizou o vínculo (eventos `VINCULO_*`, 0086). */
+    decisaoId?: string;
 }
 
 // ── Linhas do banco (Zod no boundary; nulos viram ausência) ──────────────────────────────────
@@ -285,6 +295,8 @@ export const eventoSugestaoRowSchema = z
         dit_cod: z.coerce.number().int().nullable().optional(),
         motivo: textoOpcional,
         detalhe: z.record(z.unknown()).nullable().optional(),
+        lote_id: textoOpcional,
+        decisao_id: textoOpcional,
     })
     .transform(
         (r): EventoSugestaoRegistro => ({
@@ -301,5 +313,7 @@ export const eventoSugestaoRowSchema = z
             ...(r.dit_cod != null ? { ditCod: r.dit_cod } : {}),
             ...(r.motivo ? { motivo: r.motivo } : {}),
             ...(r.detalhe ? { detalhe: r.detalhe } : {}),
+            ...(r.lote_id ? { loteId: r.lote_id } : {}),
+            ...(r.decisao_id ? { decisaoId: r.decisao_id } : {}),
         }),
     );

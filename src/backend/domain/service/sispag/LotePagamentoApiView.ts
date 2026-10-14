@@ -26,5 +26,26 @@ export default class LotePagamentoApiView {
 
     public lotes = (lotes: LotePagamento[]): LotePagamentoApi[] => lotes.map(this.lote);
 
-    private item = (item: ItemLote): ItemLoteApi => ({ ...item });
+    /**
+     * O vínculo do código (ADR-0071) sai PROJETADO campo a campo: só máscara 5+4, origem, decisão,
+     * quando e o lote nativo. Se `ItemLote.vinculoCodigoBarras` ganhar um campo, ele não vaza por
+     * aqui sem ser escolhido.
+     */
+    private item = (item: ItemLote): ItemLoteApi => {
+        const { vinculoCodigoBarras: v, ...resto } = item;
+        return {
+            ...resto,
+            ...(v
+                ? {
+                      vinculoCodigoBarras: {
+                          origem: v.origem,
+                          ...(v.decisaoId !== undefined ? { decisaoId: v.decisaoId } : {}),
+                          codigoMascarado: v.codigoMascarado,
+                          aplicadoEm: v.aplicadoEm,
+                          flpCod: v.flpCod,
+                      },
+                  }
+                : {}),
+        };
+    };
 }

@@ -302,12 +302,14 @@ describe('DuplicateResolutionService — retenção por código de barras (ADR-0
         expect(h.ledger.listByLote).not.toHaveBeenCalled();
     });
 
-    it('listarRetidosPorCodigoDeBarras pede só as duas origens de código de barras', async () => {
+    it('listarRetidosPorCodigoDeBarras pede as origens de código de barras (repetido, ilegível e vínculo falho)', async () => {
         const h = build();
         await h.service.listarRetidosPorCodigoDeBarras();
         expect(h.bloqueioRepo.listAtivosPorOrigemComTitulo).toHaveBeenCalledWith([
             'CODIGO_BARRAS_REPETIDO',
             'CODIGO_BARRAS_ILEGIVEL',
+            // ADR-0071: o título que saiu do lote porque o vínculo falhou também fica retido.
+            'VINCULO_CODIGO_BARRAS_FALHOU',
         ]);
     });
 
