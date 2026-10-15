@@ -231,3 +231,90 @@ describe('RegraSugestaoBoleto — entrada inválida', () => {
         expect(r.deltaPercentual).toBe(0);
     });
 });
+
+describe('RegraSugestaoBoleto — aviso VENCE_ANTES_DO_TITULO (I15o, ADR-0072)', () => {
+    it.each([
+        [-1, '2026-10-19'],
+        [-8, '2026-10-12'],
+    ])('Δdias = %i dentro do envelope emite o sinal', (delta, venc) => {
+        const r = avaliar({ vencBoleto: venc, dataDebito: '2026-10-11' });
+        expect(r.deltaDias).toBe(delta);
+        expect(r.sinais).toContain('VENCE_ANTES_DO_TITULO');
+    });
+
+    it.each([
+        [0, '2026-10-20'],
+        [1, '2026-10-21'],
+        [5, '2026-10-25'],
+    ])('Δdias = %i não emite o sinal', (delta, venc) => {
+        const r = avaliar({ vencBoleto: venc });
+        expect(r.deltaDias).toBe(delta);
+        expect(r.sinais).not.toContain('VENCE_ANTES_DO_TITULO');
+    });
+
+    it('caso A: boleto antes da data de débito → VENCIDO_INFORMATIVO, não confirmável, com dias de atraso', () => {
+        // título 20/10, boleto 17/10, débito 20/10 → vencido há 3 dias no débito
+        const r = avaliar({ vencBoleto: '2026-10-17', dataDebito: '2026-10-20' });
+        expect(r.resultado).toBe('VENCIDO_INFORMATIVO');
+        expect(r.confirmavel).toBe(false);
+        expect(r.sinais).toContain('VENCE_ANTES_DO_TITULO');
+        expect(r.diasVencidoNoDebito).toBe(3);
+    });
+
+    it('caso B: Δ < 0, boleto ainda vale no débito antecipado → ATENCAO, sinal, 0 dia vencido', () => {
+        // título 20/10, boleto 18/10, débito 15/10 (antecipado) → boleto ≥ débito
+        const r = avaliar({ vencBoleto: '2026-10-18', dataDebito: '2026-10-15' });
+        expect(r.resultado).toBe('ATENCAO');
+        expect(r.sinais).toContain('VENCE_ANTES_DO_TITULO');
+        expect(r.diasVencidoNoDebito).toBe(0);
+    });
+
+    it('Δ ≥ 0 e boleto em dia: diasVencidoNoDebito = 0', () => {
+        expect(avaliar({}).diasVencidoNoDebito).toBe(0);
+    });
+
+    it('o sinal não altera tier, deltas nem confirmavel', () => {
+        const casos: Caso[] = [
+            { vencBoleto: '2026-10-18', dataDebito: '2026-10-15' },
+            { vencBoleto: '2026-10-17', dataDebito: '2026-10-20' },
+            { vencBoleto: '2026-10-12', dataDebito: '2026-10-11', valorBoleto: 100.04 },
+            { vencBoleto: '2026-10-19', dataDebito: '2026-10-15', par: true },
+        ];
+        for (const c of casos) {
+            const r = avaliar(c);
+            const { sinais: _s, diasVencidoNoDebito: _d, ...base } = r;
+            // baseline = a regra anterior: Δ<0 nunca é seguro (nem CONHECIDO) e só ATENCAO confirma
+            expect(['ATENCAO', 'VENCIDO_INFORMATIVO']).toContain(base.resultado);
+            expect(base.confirmavel).toBe(base.resultado === 'ATENCAO');
+            expect(r.sinais).toContain('VENCE_ANTES_DO_TITULO');
+            // tirar o sinal deixa exatamente os sinais que a regra já emitia (valor/dia/par/número)
+            const semSinal = r.sinais.filter((s) => s !== 'VENCE_ANTES_DO_TITULO');
+            expect(semSinal).toEqual(
+                semSinal.filter((s) =>
+                    [
+                        'VALOR_IGUAL',
+                        'VALOR_ATE_5_CENTAVOS',
+                        'MESMO_DIA',
+                        'DIAS_DEPOIS',
+                        'NUMERO_IGUAL',
+                        'COLISAO_NUMERO',
+                        'EMISSOR_CONFIRMADO',
+                    ].includes(s),
+                ),
+            );
+        }
+    });
+
+    it('fora do envelope (SEM_RELACAO) não emite o sinal (Q3)', () => {
+        const r = avaliar({ vencBoleto: '2026-10-01', dataDebito: '2026-10-01' });
+        expect(r.resultado).toBe('SEM_RELACAO');
+        expect(r.sinais).not.toContain('VENCE_ANTES_DO_TITULO');
+    });
+
+    it('datas civis UTC meia-noite: o dia não desloca', () => {
+        const r = avaliar({ vencBoleto: '2026-10-19', dataDebito: '2026-10-19' });
+        expect(r.deltaDias).toBe(-1);
+        expect(r.diasVencidoNoDebito).toBe(0);
+        expect(r.sinais).toContain('VENCE_ANTES_DO_TITULO');
+    });
+});

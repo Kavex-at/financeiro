@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { ESTADO_CONFIRMACAO_EMISSOR } from './ConfirmacaoEmissorBoleto.js';
 import {
     RESULTADO_SUGESTAO,
+    SINAL_SUGESTAO,
+    SITUACAO_SUGESTAO_TITULO,
     SUGESTAO_TAMANHO_MAXIMO,
     SUGESTAO_TAMANHO_PADRAO,
 } from './SugestaoBoleto.js';
@@ -23,6 +25,30 @@ export const ChaveSugestaoBodySchema = z
         ditCod: z.number().int().min(0),
     })
     .strict();
+
+/**
+ * Avisos que o analista pode reconhecer ao confirmar (I15o). Hoje só `VENCE_ANTES_DO_TITULO`; o
+ * servidor confere o reconhecimento contra a avaliação recalculada, nunca confia no cliente.
+ */
+export const AVISOS_RECONHECIVEIS = [SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO] as const;
+
+/**
+ * Body de confirmar: a chave + os avisos reconhecidos. `reconheceAvisos` só existe aqui — rejeitar
+ * e copiar-linha continuam `strict` sem o campo. "ator" e qualquer outro campo continuam 400.
+ */
+export const ConfirmarSugestaoBodySchema = ChaveSugestaoBodySchema.extend({
+    reconheceAvisos: z
+        .array(z.enum(AVISOS_RECONHECIVEIS))
+        .max(AVISOS_RECONHECIVEIS.length)
+        .default([]),
+}).strict();
+
+/** Chave de um título (sem boleto): detalhe de candidatos por título. */
+export const TituloSugestaoQuerySchema = z.object({
+    filCod: z.coerce.number().int().positive(),
+    docCod: texto.max(64),
+    titCod: texto.max(64),
+});
 
 /** `motivo` ausente é 400; em branco chega ao serviço, que responde 422 nomeado. */
 export const RejeitarSugestaoBodySchema = ChaveSugestaoBodySchema.extend({
@@ -50,6 +76,7 @@ export const SugestoesQuerySchema = z.object({
     filCod: z.coerce.number().int().positive().optional(),
     pesCod: texto.optional(),
     tier: z.nativeEnum(RESULTADO_SUGESTAO).optional(),
+    situacao: z.nativeEnum(SITUACAO_SUGESTAO_TITULO).optional(),
     pagina: z.coerce.number().int().min(1).default(1),
     tamanho: z.coerce
         .number()

@@ -11,6 +11,8 @@ import IssuerConfirmationReasonRequiredError from '../../errors/IssuerConfirmati
 import IssuerConfirmationVersionConflictError from '../../errors/IssuerConfirmationVersionConflictError.js';
 import LineCopyAuditFailedError from '../../errors/LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from '../../errors/OverdueBoletoNotConfirmableError.js';
+import TitleSuggestionNotFoundError from '../../errors/TitleSuggestionNotFoundError.js';
+import WarningAcknowledgementRequiredError from '../../errors/WarningAcknowledgementRequiredError.js';
 import type { BoletoDda } from '../../interface/sispag/BoletoDda.js';
 import {
     type ConfirmacaoEmissor,
@@ -23,14 +25,23 @@ import {
 } from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import {
+    AVISO_VENCE_ANTES,
     type AvaliacaoSugestao,
+    type AvisoVenceAntes,
+    type CandidatoTitulo,
     DDA_DEFASADO_HORAS,
+    type DesfechoTitulo,
+    type DesfechoTituloView,
     ESTADO_SUGESTAO,
     type FiltroSugestoes,
     LAYOUT_EMISSOR,
     type ListagemSugestoes,
     RESULTADO_SUGESTAO,
     type ResultadoSugestao,
+    SINAL_SUGESTAO,
+    SITUACAO_SUGESTAO_TITULO,
+    type SinalSugestao,
+    type SituacaoSugestaoTitulo,
     SUGESTAO_TAMANHO_MAXIMO,
     SUGESTAO_TAMANHO_PADRAO,
     type SugestaoBoletoTitulo,
@@ -76,6 +87,8 @@ export interface ResultadoDecisao {
 /** O que a listagem guarda em cache: o motor + os pares + o frescor do DDA (`ultimaSincronizacao`). */
 interface CenarioSugestoes {
     sugestoes: SugestaoBoletoTitulo[];
+    /** Desfecho por título elegível (I15m): uma linha por título. */
+    desfechos: DesfechoTitulo[];
     pares: ConfirmacaoEmissor[];
     datasDebito: Map<string, string>;
     sincronizadoEm: number | undefined;
@@ -131,40 +144,70 @@ export default class BoletoSuggestionService {
 
     // ── Leitura ────────────────────────────────────────────────────────────────────────────────
 
-    /** Sugestões por título, com o emissor mascarado e SEM barras nem linha digitável. */
+    /**
+     * Sugestões por título, com o emissor mascarado e SEM barras nem linha digitável. `titulos` traz
+     * UMA linha por título elegível (I15m); `sugestoes` mantém o contrato anterior.
+     */
     public listarSugestoes = async (filtro: FiltroSugestoes): Promise<ListagemSugestoes> => {
         const { valor: cenario } = await this.cache.obter(this.calcularCenario);
         const { sincronizadoEm } = cenario;
         const parPorChave = new Map(
             cenario.pares.map((p) => [`${p.pesCod}|${p.emissorChave}`, p.id] as const),
         );
-        const base = cenario.sugestoes
-            .filter((s) => filtro.filCod === undefined || s.filCod === filtro.filCod)
-            .filter((s) => filtro.pesCod === undefined || s.pesCod === filtro.pesCod);
+        const daBase = (x: { filCod: number; pesCod?: string }): boolean =>
+            (filtro.filCod === undefined || x.filCod === filtro.filCod) &&
+            (filtro.pesCod === undefined || x.pesCod === filtro.pesCod);
+        const base = cenario.sugestoes.filter(daBase);
+        const baseTitulos = cenario.desfechos.filter(daBase);
         const contagem = Object.fromEntries(
             Object.values(RESULTADO_SUGESTAO).map((r) => [r, 0]),
         ) as Record<ResultadoSugestao, number>;
         for (const s of base) contagem[s.avaliacao.resultado] += 1;
+        const contagemSituacao = Object.fromEntries(
+            Object.values(SITUACAO_SUGESTAO_TITULO).map((r) => [r, 0]),
+        ) as Record<SituacaoSugestaoTitulo, number>;
+        for (const d of baseTitulos) contagemSituacao[d.situacao] += 1;
 
-        const filtradas = base.filter(
-            (s) => filtro.tier === undefined || s.avaliacao.resultado === filtro.tier,
+        const titulosFiltrados = baseTitulos.filter(
+            (d) => filtro.situacao === undefined || d.situacao === filtro.situacao,
         );
+        const chavesDaSituacao =
+            filtro.situacao === undefined ? undefined : new Set(titulosFiltrados.map(chaveTitulo));
+        const filtradas = base
+            .filter((s) => filtro.tier === undefined || s.avaliacao.resultado === filtro.tier)
+            .filter((s) => chavesDaSituacao === undefined || chavesDaSituacao.has(chaveTitulo(s)));
         const tamanho = Math.min(
             Math.max(filtro.tamanho ?? SUGESTAO_TAMANHO_PADRAO, 1),
             SUGESTAO_TAMANHO_MAXIMO,
         );
         const pagina = Math.max(filtro.pagina ?? 1, 1);
         const recorte = filtradas.slice((pagina - 1) * tamanho, pagina * tamanho);
+        const recorteTitulos = titulosFiltrados.slice((pagina - 1) * tamanho, pagina * tamanho);
         const defasado = this.horasDefasado(sincronizadoEm);
         return {
             sugestoes: recorte.map((s) => this.paraView(s, parPorChave)),
+            titulos: recorteTitulos.map(this.paraViewDesfecho),
+            totalTitulos: titulosFiltrados.length,
             total: filtradas.length,
             pagina,
             tamanho,
             contagem,
+            contagemSituacao,
             ...(sincronizadoEm != null ? { sincronizadoEm } : {}),
             ...(defasado != null ? { ddaDefasadoHoras: defasado } : {}),
         };
+    };
+
+    /** Candidatos de UM título (até `SUGESTAO_TOP_CANDIDATOS`), sob demanda; nunca barras (I15k). */
+    public detalharTitulo = async (chave: {
+        filCod: number;
+        docCod: string;
+        titCod: string;
+    }): Promise<DesfechoTituloView> => {
+        const { valor: cenario } = await this.cache.obter(this.calcularCenario);
+        const desfecho = cenario.desfechos.find((d) => mesmoTitulo(d, chave));
+        if (!desfecho) throw new TitleSuggestionNotFoundError(chave);
+        return this.paraViewDesfecho(desfecho);
     };
 
     /** Pares (credor, emissor), só com a máscara do emissor. */
@@ -176,7 +219,7 @@ export default class BoletoSuggestionService {
     // ── Confirmar ──────────────────────────────────────────────────────────────────────────────
 
     public confirmar = async (
-        input: ChaveSugestao & { ator: string },
+        input: ChaveSugestao & { ator: string; reconheceAvisos?: SinalSugestao[] },
     ): Promise<ResultadoDecisao> => {
         this.exigirAtor(input.ator);
         const chave = this.chave(input);
@@ -232,25 +275,16 @@ export default class BoletoSuggestionService {
         }
         if (!avaliacaoDireta.confirmavel) throw new BoletoSuggestionNotAvailableError(chave);
 
-        const sugestao = cenario.sugestoes.find(
-            (s) => mesmoTitulo(s, chave) && s.ddcCod === chave.ddcCod && s.ditCod === chave.ditCod,
-        );
-        if (!sugestao || !sugestao.avaliacao.confirmavel) {
-            const rival = cenario.sugestoes.find(
-                (s) =>
-                    s.ddcCod === chave.ddcCod &&
-                    s.ditCod === chave.ditCod &&
-                    !mesmoTitulo(s, chave) &&
-                    s.avaliacao.confirmavel,
-            );
-            if (rival) throw new BoletoAlreadySuggestedToOtherTitleError(chave);
-            throw new BoletoSuggestionNotAvailableError({
-                ...chave,
-                motivo: 'Este boleto não é mais a sugestão única para o título (empate ou mudança no pool).',
-            });
-        }
+        // Só o candidato ESCOLHIDO pelo motor é confirmável (I15m): fraco, ambíguo e disputado são
+        // exibidos, mas o servidor os recusa com o motivo — independente da regra pura.
+        const sugestao = this.sugestaoConfirmavel(cenario.desfechos, chave);
         const tier = sugestao.avaliacao.resultado;
         if (!TIERS.has(tier)) throw new OverdueBoletoNotConfirmableError(chave);
+        // Aviso (I15o): conferido contra a avaliação RECALCULADA acima, nunca contra o cache.
+        const sinais = this.exigirReconhecimento(sugestao, input.reconheceAvisos ?? [], chave);
+        const reconhecimento = sinais.includes(SINAL_SUGESTAO.RECONHECEU_VENCE_ANTES)
+            ? { reconheceu: [SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO] }
+            : {};
 
         const resultado = await this.db.withTransaction(async (tx) => {
             const existente = await this.repo.buscarParVigente(pesCod, emissor.chave, tx, true);
@@ -267,7 +301,7 @@ export default class BoletoSuggestionService {
                         layoutEmissor: emissor.layout,
                         bancoEmissor: emissor.banco,
                         emissorMascarado: emissor.mascarado,
-                        evidencia: this.evidencia(sugestao, input.ator),
+                        evidencia: this.evidencia(sugestao, input.ator, sinais),
                         confirmadoPor: input.ator,
                     },
                     tx,
@@ -295,7 +329,7 @@ export default class BoletoSuggestionService {
                     deltaValor: sugestao.avaliacao.deltaValor,
                     deltaPercentual: sugestao.avaliacao.deltaPercentual,
                     deltaDias: sugestao.avaliacao.deltaDias,
-                    sinais: sugestao.avaliacao.sinais,
+                    sinais,
                     tier: tier as TierSugestao,
                     emissorChave: emissor.chave,
                     decisao: DECISAO_SUGESTAO_BOLETO.CONFIRMADA,
@@ -349,7 +383,8 @@ export default class BoletoSuggestionService {
                         tier,
                         deltaValor: sugestao.avaliacao.deltaValor,
                         deltaDias: sugestao.avaliacao.deltaDias,
-                        sinais: sugestao.avaliacao.sinais,
+                        sinais,
+                        ...reconhecimento,
                     },
                 },
                 tx,
@@ -412,13 +447,24 @@ export default class BoletoSuggestionService {
         }
         const pesCod = titulo.pesCod;
         const vencimentoBoleto = boleto.vencimento;
-        const pares = await this.repo.listarParesVigentes([pesCod]);
+        const [pares, emLotes] = await Promise.all([
+            this.repo.listarParesVigentes([pesCod]),
+            this.loteRepo.listTitulosEmLotesAbertos(),
+        ]);
         const avaliacao = this.avaliar(
             titulo,
             boleto,
-            new Map(),
+            this.mapaDatasDebito(emLotes),
             emissor != null && pares.some((p) => p.emissorChave === emissor.chave),
         );
+        // Q2: rejeitar o que está exibido e não é confirmável ajuda a limpar ruído; o vencido na
+        // data de débito (I15h) é só informativo — não há o que rejeitar.
+        if (avaliacao.resultado === RESULTADO_SUGESTAO.VENCIDO_INFORMATIVO) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'Boleto vencido na data de débito: é só informativo e não pode ser rejeitado.',
+            });
+        }
         const tier = TIERS.has(avaliacao.resultado) ? (avaliacao.resultado as TierSugestao) : null;
         const vencimento = this.vencimentoCivil(titulo);
 
@@ -786,9 +832,25 @@ export default class BoletoSuggestionService {
         });
     };
 
+    /** O primeiro visto é o lote mais recente (a query ordena por `criado_em DESC`). */
+    private mapaDatasDebito = (
+        emLotes: Array<{ filCod: number; docCod: string; titCod: string; dataDebito?: string }>,
+    ): Map<string, string> => {
+        const datasDebito = new Map<string, string>();
+        const vistos = new Set<string>();
+        for (const item of emLotes) {
+            const k = chaveTitulo(item);
+            if (vistos.has(k)) continue;
+            vistos.add(k);
+            if (item.dataDebito) datasDebito.set(k, item.dataDebito);
+        }
+        return datasDebito;
+    };
+
     /** Lê o pool e a carteira persistidos e roda o motor com o estado de decisões de agora. */
     private sugerirAgora = async (): Promise<{
         sugestoes: SugestaoBoletoTitulo[];
+        desfechos: DesfechoTitulo[];
         pares: ConfirmacaoEmissor[];
         datasDebito: Map<string, string>;
         titulos: number;
@@ -802,16 +864,8 @@ export default class BoletoSuggestionService {
             this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
             this.loteRepo.listTitulosEmLotesAbertos(),
         ]);
-        // O primeiro visto é o lote mais recente (a query ordena por `criado_em DESC`).
-        const datasDebito = new Map<string, string>();
-        const vistos = new Set<string>();
-        for (const item of emLotes) {
-            const k = chaveTitulo(item);
-            if (vistos.has(k)) continue;
-            vistos.add(k);
-            if (item.dataDebito) datasDebito.set(k, item.dataDebito);
-        }
-        const sugestoes = this.motor.sugerir({
+        const datasDebito = this.mapaDatasDebito(emLotes);
+        const { sugestoes, desfechos } = this.motor.analisar({
             titulos,
             boletos,
             paresVigentes: pares.map((p) => ({ pesCod: p.pesCod, emissorChave: p.emissorChave })),
@@ -821,6 +875,7 @@ export default class BoletoSuggestionService {
         });
         return {
             sugestoes,
+            desfechos,
             pares,
             datasDebito,
             titulos: titulos.length,
@@ -847,6 +902,8 @@ export default class BoletoSuggestionService {
                 boletos: cenario.boletos,
                 sugestoes: cenario.sugestoes.length,
                 orfas: cenario.sugestoes.filter((s) => s.orfa === true).length,
+                desfechos: cenario.desfechos.length,
+                situacoes: this.contarSituacoes(cenario.desfechos),
             },
         });
         return { ...cenario, sincronizadoEm };
@@ -875,14 +932,130 @@ export default class BoletoSuggestionService {
         };
     };
 
+    private contarSituacoes = (
+        desfechos: DesfechoTitulo[],
+    ): Partial<Record<SituacaoSugestaoTitulo, number>> => {
+        const contagem: Partial<Record<SituacaoSugestaoTitulo, number>> = {};
+        for (const d of desfechos) contagem[d.situacao] = (contagem[d.situacao] ?? 0) + 1;
+        return contagem;
+    };
+
+    /**
+     * O candidato escolhido (`confirmavel`) do boleto pedido, como sugestão. Qualquer outra coisa é
+     * 409 com o motivo da situação: ambíguo, fraco e disputado nunca se confirmam (I15m).
+     */
+    private sugestaoConfirmavel = (
+        desfechos: DesfechoTitulo[],
+        chave: ChaveSugestao,
+    ): SugestaoBoletoTitulo => {
+        const mesmoBoleto = (c: CandidatoTitulo): boolean =>
+            c.ddcCod === chave.ddcCod && c.ditCod === chave.ditCod;
+        const desfecho = desfechos.find((d) => mesmoTitulo(d, chave));
+        const candidato = desfecho?.candidatos.find(mesmoBoleto);
+        if (desfecho && candidato?.confirmavel) return this.paraSugestao(desfecho, candidato);
+        const rival = desfechos.find(
+            (d) =>
+                !mesmoTitulo(d, chave) && d.candidatos.some((c) => c.confirmavel && mesmoBoleto(c)),
+        );
+        if (rival) throw new BoletoAlreadySuggestedToOtherTitleError(chave);
+        throw new BoletoSuggestionNotAvailableError({
+            ...chave,
+            motivo:
+                candidato?.motivo ??
+                desfecho?.motivo ??
+                'Este boleto não é mais a sugestão única para o título (empate ou mudança no pool).',
+        });
+    };
+
+    private paraSugestao = (d: DesfechoTitulo, c: CandidatoTitulo): SugestaoBoletoTitulo => ({
+        filCod: d.filCod,
+        docCod: d.docCod,
+        titCod: d.titCod,
+        ...(d.pesCod ? { pesCod: d.pesCod } : {}),
+        ...(d.credor ? { credor: d.credor } : {}),
+        valorTitulo: d.valorTitulo,
+        vencimentoTitulo: d.vencimentoTitulo,
+        dataDebito: d.dataDebito,
+        ddcCod: c.ddcCod,
+        ditCod: c.ditCod,
+        ...(c.numeroBoleto ? { numeroBoleto: c.numeroBoleto } : {}),
+        valorBoleto: c.valorBoleto,
+        vencimentoBoleto: c.vencimentoBoleto,
+        ...(c.emissor ? { emissor: c.emissor } : {}),
+        avaliacao: c.avaliacao,
+        estado: ESTADO_SUGESTAO.SUGERIDA,
+    });
+
+    /**
+     * I15o: `VENCE_ANTES_DO_TITULO` só se confirma com o reconhecimento do analista, conferido
+     * contra a avaliação recalculada. Reconhecer algo que o servidor não vê é inócuo (nada a
+     * reconhecer, nada gravado).
+     */
+    private exigirReconhecimento = (
+        s: SugestaoBoletoTitulo,
+        reconhecidos: SinalSugestao[],
+        chave: ChaveSugestao,
+    ): SinalSugestao[] => {
+        const { sinais } = s.avaliacao;
+        if (!sinais.includes(SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO)) return sinais;
+        if (!reconhecidos.includes(SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO)) {
+            throw new WarningAcknowledgementRequiredError({
+                ...chave,
+                avisos: [SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO],
+                vencimentoTitulo: s.vencimentoTitulo,
+                vencimentoBoleto: s.vencimentoBoleto,
+                dataDebito: s.dataDebito,
+            });
+        }
+        return [...sinais, SINAL_SUGESTAO.RECONHECEU_VENCE_ANTES];
+    };
+
+    /**
+     * Aviso do MELHOR candidato. Decisão legada sem o sinal gravado deriva o aviso de `deltaDias < 0`
+     * (Q6): sem backfill.
+     */
+    private avisoDe = (a: AvaliacaoSugestao | undefined): AvisoVenceAntes => {
+        if (!a || a.resultado === RESULTADO_SUGESTAO.SEM_RELACAO) return AVISO_VENCE_ANTES.NENHUM;
+        const tem = a.sinais.includes(SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO) || a.deltaDias < 0;
+        if (!tem) return AVISO_VENCE_ANTES.NENHUM;
+        return a.diasVencidoNoDebito > 0 || a.resultado === RESULTADO_SUGESTAO.VENCIDO_INFORMATIVO
+            ? AVISO_VENCE_ANTES.CRITICO
+            : AVISO_VENCE_ANTES.ATENCAO;
+    };
+
+    private paraViewDesfecho = (d: DesfechoTitulo): DesfechoTituloView => {
+        const melhor = d.candidatos[0]?.avaliacao;
+        return {
+            ...d,
+            candidatos: d.candidatos.map(({ emissor, ...resto }) => ({
+                ...resto,
+                ...(emissor
+                    ? {
+                          emissor: {
+                              banco: emissor.banco,
+                              layout: emissor.layout,
+                              mascarado: emissor.mascarado,
+                          },
+                      }
+                    : {}),
+            })),
+            avisoVenceAntes: this.avisoDe(melhor),
+            diasVencidoNoDebito: melhor?.diasVencidoNoDebito ?? 0,
+        };
+    };
+
     private paraViewPar = (p: ConfirmacaoEmissor): ConfirmacaoEmissorView => {
         const { emissorChave: _chave, ...resto } = p;
         return { ...resto, elegivelAutomatico: p.layoutEmissor !== LAYOUT_EMISSOR.GENERICO };
     };
 
-    private evidencia = (s: SugestaoBoletoTitulo, ator: string): Record<string, unknown> => ({
+    private evidencia = (
+        s: SugestaoBoletoTitulo,
+        ator: string,
+        sinais: SinalSugestao[],
+    ): Record<string, unknown> => ({
         tier: s.avaliacao.resultado,
-        sinais: s.avaliacao.sinais,
+        sinais,
         deltaValor: s.avaliacao.deltaValor,
         deltaPercentual: s.avaliacao.deltaPercentual,
         deltaDias: s.avaliacao.deltaDias,
