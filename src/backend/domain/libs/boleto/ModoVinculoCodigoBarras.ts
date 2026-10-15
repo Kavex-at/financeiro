@@ -12,8 +12,14 @@ export type ModoVinculo = (typeof MODO_VINCULO)[keyof typeof MODO_VINCULO];
 
 const MODOS_VALIDOS: ReadonlySet<string> = new Set(Object.values(MODO_VINCULO));
 
+/** Chave do modo GLOBAL no mapa (valor `on`/`shadow`/`off` sozinho); nenhuma filial real é 0. */
+const CHAVE_GLOBAL = 0;
+
 /**
- * Configuração `SISPAG_BIND_CODBAR_FILIAIS="1:shadow,7:off"` (lida pelo `EnvironmentProvider`).
+ * Configuração `SISPAG_BIND_CODBAR_FILIAIS` (lida pelo `EnvironmentProvider`). Duas formas:
+ *   - modo único `on` | `shadow` | `off`: vale para TODAS as filiais;
+ *   - lista por filial `"1:shadow,7:off"`: filial ausente = `off`.
+ * As duas formas não se misturam (`"on,1:off"` é inválido).
  *
  * FAIL-CLOSED: ausente, vazia, modo desconhecido, filial inválida/duplicada, token vazio ou
  * qualquer outro lixo ⇒ a entrada INTEIRA vira `off`. Parse inválido nunca vira parcial — uma
@@ -23,6 +29,8 @@ export default class ModoVinculoCodigoBarras {
     public static parse = (bruto: string | undefined): ReadonlyMap<number, ModoVinculo> => {
         const vazio = new Map<number, ModoVinculo>();
         if (bruto === undefined || bruto.trim() === '') return vazio;
+        const unico = bruto.trim();
+        if (MODOS_VALIDOS.has(unico)) return new Map([[CHAVE_GLOBAL, unico as ModoVinculo]]);
         const mapa = new Map<number, ModoVinculo>();
         for (const token of bruto.split(',')) {
             const partes = token.split(':');
@@ -47,6 +55,6 @@ export default class ModoVinculoCodigoBarras {
         liveWriteEnabled: boolean,
     ): ModoVinculo => {
         if (!liveWriteEnabled) return MODO_VINCULO.OFF;
-        return mapa.get(filCod) ?? MODO_VINCULO.OFF;
+        return mapa.get(filCod) ?? mapa.get(CHAVE_GLOBAL) ?? MODO_VINCULO.OFF;
     };
 }

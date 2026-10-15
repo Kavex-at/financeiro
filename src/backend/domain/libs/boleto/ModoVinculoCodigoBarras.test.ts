@@ -45,4 +45,32 @@ describe('ModoVinculoCodigoBarras (I17k) — fail-closed', () => {
     it('tolera espaços ao redor dos tokens', () => {
         expect(resolver(7, ' 1:shadow , 7:on ')).toBe(MODO_VINCULO.ON);
     });
+
+    // Chave global: um modo sozinho vale para TODAS as filiais (sem lista por filial).
+    it.each([
+        ['on', MODO_VINCULO.ON],
+        ['shadow', MODO_VINCULO.SHADOW],
+        ['off', MODO_VINCULO.OFF],
+        [' on ', MODO_VINCULO.ON],
+    ])('modo global "%s" vale para todas as filiais', (bruto, esperado) => {
+        for (const fil of [1, 2, 3, 4, 5, 6, 7, 99]) expect(resolver(fil, bruto)).toBe(esperado);
+    });
+
+    it('modo global respeita o kill-switch `sispagLiveWriteEnabled=false`', () => {
+        expect(resolver(2, 'on', false)).toBe(MODO_VINCULO.OFF);
+    });
+
+    it.each([
+        ['maiúsculas', 'ON'],
+        ['modo global misturado com lista', 'on,1:off'],
+        ['dois modos globais', 'on,shadow'],
+        ['modo desconhecido', 'sim'],
+    ])('modo global inválido (%s) ⇒ off em todas as filiais', (_caso, bruto) => {
+        expect(resolver(1, bruto)).toBe(MODO_VINCULO.OFF);
+        expect(resolver(7, bruto)).toBe(MODO_VINCULO.OFF);
+    });
+
+    it('lista por filial continua funcionando e não vaza para as ausentes', () => {
+        expect(resolver(2, '1:on')).toBe(MODO_VINCULO.OFF);
+    });
 });

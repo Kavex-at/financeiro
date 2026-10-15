@@ -1,5 +1,11 @@
 # Columbia Financeiro — Changelog
 
+## v0.68.1 (2026-10-15) — SISPAG: vínculo do código de barras liga para todas as filiais de uma vez
+
+- **Um valor só liga ou desliga tudo.** `SISPAG_BIND_CODBAR_FILIAIS` agora aceita `on`, `shadow` ou
+  `off` sozinho e vale para todas as filiais. A lista por filial (`"1:shadow,7:off"`) continua
+  funcionando; as duas formas não se misturam e qualquer valor inválido cai em `off`.
+
 ## v0.68.0 (2026-10-14) — SISPAG: vínculo do código de barras ao item (desligado por padrão)
 
 - **Boleto confirmado por você passa a ser colado no item do lote.** Quando o ERP não associou o boleto
