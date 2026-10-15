@@ -175,8 +175,8 @@ export default class EnvironmentVars {
     public sispagDdaAssocEnabled: boolean;
 
     /**
-     * Vínculo do código de barras confirmado ao item do lote, POR FILIAL (ADR-0071, I17k):
-     * `SISPAG_BIND_CODBAR_FILIAIS="1:shadow,7:off"`. Valor BRUTO; o parse fail-closed mora em
+     * Vínculo do código de barras confirmado ao item do lote (ADR-0071, I17k):
+     * `SISPAG_BIND_CODBAR_FILIAIS="on"` (todas as filiais) ou `"1:shadow,7:off"` (por filial). Valor BRUTO; o parse fail-closed mora em
      * `ModoVinculoCodigoBarras`. Default `''` = `off` em todas as filiais.
      */
     public sispagBindCodbarFiliais: string;
