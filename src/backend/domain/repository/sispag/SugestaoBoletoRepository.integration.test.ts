@@ -181,6 +181,33 @@ describeComBanco('SugestaoBoletoRepository — integração (ADR-0068)', () => {
         expect(outro.decisao).toMatchObject({ docCod: '5002', titCod: '1' });
     });
 
+    it('decisão: sinais novos (VENCE_ANTES_DO_TITULO, RECONHECEU_VENCE_ANTES) entram e saem sem migration (ADR-0072)', async () => {
+        const { par: p } = await repo.inserirPar(par({ pesCod: '8090' }));
+        const sinais = ['MESMO_DIA', 'VENCE_ANTES_DO_TITULO', 'RECONHECEU_VENCE_ANTES'] as const;
+        const gravada = await repo.inserirDecisao(
+            decisao(p.id, {
+                pesCod: '8090',
+                docCod: '5090',
+                ddcCod: 91,
+                ditCod: 1,
+                tier: 'ATENCAO',
+                deltaDias: -2,
+                sinais: [...sinais],
+            }),
+        );
+        expect(gravada.criada).toBe(true);
+        const lidas = await repo.listarDecisoes({ docCod: '5090' });
+        expect(lidas[0]?.sinais).toEqual([...sinais]);
+        const chaveadas = await repo.listarChaveadas('CONFIRMADA');
+        expect(chaveadas.some((d) => d.docCod === '5090')).toBe(true);
+        // legada: decisão sem os sinais novos segue legível
+        await repo.inserirDecisao(
+            decisao(p.id, { pesCod: '8090', docCod: '5091', ddcCod: 91, ditCod: 2 }),
+        );
+        const legada = await repo.listarDecisoes({ docCod: '5091' });
+        expect(legada[0]?.sinais).toEqual(['MESMO_DIA']);
+    });
+
     it('decisão: rejeição relê por (título, boleto) e convive com a confirmação de outro boleto', async () => {
         const { par: p } = await repo.inserirPar(par({ pesCod: '8005' }));
         const { confirmacaoEmissorId: _c, ...semPar } = decisao(p.id, {

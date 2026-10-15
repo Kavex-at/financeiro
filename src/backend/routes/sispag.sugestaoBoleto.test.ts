@@ -17,6 +17,8 @@ import IssuerConfirmationNotFoundError from '../domain/errors/IssuerConfirmation
 import IssuerConfirmationReasonRequiredError from '../domain/errors/IssuerConfirmationReasonRequiredError.js';
 import LineCopyAuditFailedError from '../domain/errors/LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from '../domain/errors/OverdueBoletoNotConfirmableError.js';
+import TitleSuggestionNotFoundError from '../domain/errors/TitleSuggestionNotFoundError.js';
+import WarningAcknowledgementRequiredError from '../domain/errors/WarningAcknowledgementRequiredError.js';
 import { PERMISSION, type Permission } from '../domain/interface/auth/Permission.js';
 import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
 import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
@@ -94,6 +96,12 @@ const servico = (over: Record<string, jest.Mock> = {}) => {
             tamanho: 50,
             contagem: {},
         }),
+        detalharTitulo: jest.fn().mockResolvedValue({
+            docCod: '9001',
+            situacao: 'AMBIGUA',
+            candidatos: [{ ddcCod: 10, ditCod: 3, confirmavel: false }],
+            totalCandidatos: 1,
+        }),
         listarConfirmacoes: jest
             .fn()
             .mockResolvedValue([{ id: ID, emissorMascarado: '237 / 2656 / ***2740' }]),
@@ -125,6 +133,7 @@ const NENHUMA: Permission[] = [PERMISSION.PERMUTAS_VER];
 describe('matriz de permissão da sugestão de boleto (ADR-0053/0068)', () => {
     const leituras: Array<[string, string]> = [
         ['GET sugestões', '/sispag/sugestoes-boleto'],
+        ['GET detalhe por título', '/sispag/sugestoes-boleto/titulo?filCod=2&docCod=9001&titCod=1'],
         ['GET confirmações de emissor', '/sispag/confirmacoes-emissor'],
     ];
     const escritas: Array<[string, string, unknown]> = [
@@ -211,6 +220,125 @@ describe('GET /sispag/sugestoes-boleto', () => {
     });
 });
 
+describe('GET /sispag/sugestoes-boleto?situacao= e /titulo (ADR-0072)', () => {
+    it('repassa o filtro situacao validado; situação inválida → 400', async () => {
+        const s = servico();
+        await comApp(VER, async (url) => {
+            expect((await fetch(`${url}/sispag/sugestoes-boleto?situacao=AMBIGUA`)).status).toBe(
+                200,
+            );
+            expect((await fetch(`${url}/sispag/sugestoes-boleto?situacao=XYZ`)).status).toBe(400);
+        });
+        expect(s.listarSugestoes).toHaveBeenCalledWith({
+            situacao: 'AMBIGUA',
+            pagina: 1,
+            tamanho: 50,
+        });
+    });
+
+    it('detalhe por título: sispag:ver, no-store, sem linha digitável nem barras', async () => {
+        const s = servico();
+        await comApp(VER, async (url) => {
+            const res = await fetch(
+                `${url}/sispag/sugestoes-boleto/titulo?filCod=2&docCod=9001&titCod=1`,
+            );
+            expect(res.status).toBe(200);
+            expect(res.headers.get('cache-control')).toBe('no-store');
+            expect(JSON.stringify(await res.json())).not.toMatch(/\d{30,}/);
+        });
+        expect(s.detalharTitulo).toHaveBeenCalledWith({ filCod: 2, docCod: '9001', titCod: '1' });
+    });
+
+    it('detalhe: chave incompleta → 400; título inelegível → 404 nomeado', async () => {
+        const s = servico({
+            detalharTitulo: jest
+                .fn()
+                .mockRejectedValue(
+                    new TitleSuggestionNotFoundError({ filCod: 2, docCod: '1', titCod: '1' }),
+                ),
+        });
+        await comApp(VER, async (url) => {
+            expect((await fetch(`${url}/sispag/sugestoes-boleto/titulo?filCod=2`)).status).toBe(
+                400,
+            );
+            const res = await fetch(
+                `${url}/sispag/sugestoes-boleto/titulo?filCod=2&docCod=1&titCod=1`,
+            );
+            expect(res.status).toBe(404);
+            expect(await res.json()).toMatchObject({ code: 'TITULO_SEM_SUGESTAO' });
+        });
+        expect(s.detalharTitulo).toHaveBeenCalledTimes(1);
+    });
+
+    it('sem sispag:* o detalhe é 403', async () => {
+        servico();
+        await comApp(NENHUMA, async (url) => {
+            const res = await fetch(
+                `${url}/sispag/sugestoes-boleto/titulo?filCod=2&docCod=9001&titCod=1`,
+            );
+            expect(res.status).toBe(403);
+        });
+    });
+});
+
+describe('POST /sispag/sugestoes-boleto/confirmar — reconheceAvisos (I15o)', () => {
+    it('repassa reconheceAvisos validado ao serviço', async () => {
+        const s = servico();
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/confirmar`, {
+                ...CHAVE,
+                reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+            });
+            expect(res.status).toBe(201);
+        });
+        expect(s.confirmar).toHaveBeenCalledWith({
+            ...CHAVE,
+            reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+            ator: 'bia',
+        });
+    });
+
+    it('aviso desconhecido → 400; rejeitar não aceita o campo', async () => {
+        const s = servico();
+        await comApp(VER_EXECUTAR, async (url) => {
+            const a = await post(`${url}/sispag/sugestoes-boleto/confirmar`, {
+                ...CHAVE,
+                reconheceAvisos: ['OUTRO'],
+            });
+            expect(a.status).toBe(400);
+            const b = await post(`${url}/sispag/sugestoes-boleto/rejeitar`, {
+                ...CHAVE,
+                motivo: 'não é',
+                reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+            });
+            expect(b.status).toBe(400);
+        });
+        expect(s.confirmar).not.toHaveBeenCalled();
+        expect(s.rejeitar).not.toHaveBeenCalled();
+    });
+
+    it('sem o reconhecimento no caso B → 422 com o envelope e a orientação', async () => {
+        servico({
+            confirmar: jest.fn().mockRejectedValue(
+                new WarningAcknowledgementRequiredError({
+                    ...CHAVE,
+                    avisos: ['VENCE_ANTES_DO_TITULO'],
+                    vencimentoTitulo: '2026-10-20',
+                    vencimentoBoleto: '2026-10-18',
+                    dataDebito: '2026-10-15',
+                }),
+            ),
+        });
+        await comApp(VER_EXECUTAR, async (url) => {
+            const res = await post(`${url}/sispag/sugestoes-boleto/confirmar`, CHAVE);
+            expect(res.status).toBe(422);
+            const corpo = (await res.json()) as { code: string; error: string };
+            expect(corpo.code).toBe('RECONHECIMENTO_DE_AVISO_OBRIGATORIO');
+            expect(corpo.error).toContain('portal do banco');
+        });
+    });
+});
+
 describe('POST /sispag/sugestoes-boleto/confirmar', () => {
     it('201 na decisão nova; ator do token (um "ator" no body é 400); chave do emissor não sai', async () => {
         const s = servico();
@@ -231,7 +359,7 @@ describe('POST /sispag/sugestoes-boleto/confirmar', () => {
             expect(forjado.status).toBe(400);
         });
         expect(s.confirmar).toHaveBeenCalledTimes(1);
-        expect(s.confirmar).toHaveBeenCalledWith({ ...CHAVE, ator: 'bia' });
+        expect(s.confirmar).toHaveBeenCalledWith({ ...CHAVE, reconheceAvisos: [], ator: 'bia' });
     });
 
     it('200 quando a decisão já existia (idempotente)', async () => {
