@@ -1,4 +1,6 @@
 import 'reflect-metadata';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
@@ -923,5 +925,64 @@ describe('VinculoCodigoBarrasService — decisão humana e privacidade', () => {
         expect(tudo).not.toContain(BARRAS);
         expect(tudo).not.toContain(LINHA);
         expect(tudo).not.toMatch(/\d{20,}/);
+    });
+});
+
+describe('VinculoCodigoBarrasService — não-regressão do passo 2 (ADR-0072, I17a/I17c)', () => {
+    const DECISAO_COM_AVISO = {
+        id: 'dec-1',
+        filCod: 2,
+        docCod: '636',
+        titCod: '1',
+        ddcCod: 10,
+        ditCod: 3,
+        decisao: 'CONFIRMADA',
+        confirmacaoEmissorId: 'par-1',
+        pesCod: '7001',
+        sinais: ['VALOR_IGUAL', 'MESMO_DIA', 'VENCE_ANTES_DO_TITULO', 'RECONHECEU_VENCE_ANTES'],
+        tier: 'ATENCAO',
+    };
+
+    it('decisão com o sinal e o reconhecimento no snapshot é elegível exatamente como sem eles', async () => {
+        const sem = umItem({ modo: '2:shadow' });
+        const com = umItem({ modo: '2:shadow', decisoes: [DECISAO_COM_AVISO] });
+        const a = await sem.service.prever(sem.lote);
+        const b = await com.service.prever(com.lote);
+        expect(b).toEqual(a);
+        expect(b[0]).toMatchObject({ elegivel: true });
+    });
+
+    it('boleto que vence antes do título segue INELEGIVEL com o código DATA_ANTES_DO_TITULO', async () => {
+        const barrasAntes = CodigoBarrasSintetico.barras({
+            valor: 1028.8,
+            vencimento: '2026-10-19',
+            serie: 4,
+        });
+        const h = umItem({
+            modo: '2:shadow',
+            decisoes: [DECISAO_COM_AVISO],
+            boletoPool: {
+                '10:3': {
+                    ddcCod: 10,
+                    ditCod: 3,
+                    valor: 1028.8,
+                    vencimento: '2026-10-19',
+                    codbar: barrasAntes,
+                },
+            },
+        });
+        const [p] = await h.service.prever(h.lote);
+        expect(p).toMatchObject({ elegivel: false, motivo: 'DATA_ANTES_DO_TITULO' });
+    });
+
+    it('o fonte do serviço não lê situação, âncora, sinais de aviso nem o motor de sugestão', () => {
+        const fonte = readFileSync(path.join(__dirname, 'VinculoCodigoBarrasService.ts'), 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .split('\n')
+            .map((l) => l.replace(/(^|\s)\/\/.*$/, ''))
+            .join('\n');
+        expect(fonte).not.toMatch(
+            /SITUACAO_SUGESTAO|situacao|ancorad|VENCE_ANTES|RECONHECEU|MotorSugestaoBoleto|reconheceAvisos/,
+        );
     });
 });

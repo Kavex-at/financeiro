@@ -1,5 +1,8 @@
 import 'reflect-metadata';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { RESULTADO_SUGESTAO } from '../../interface/sispag/SugestaoBoleto.js';
+import RegraSugestaoBoleto from '../../service/sispag/RegraSugestaoBoleto.js';
 import CodigoBarrasBoleto from './CodigoBarrasBoleto.js';
 import CodigoBarrasSintetico from './CodigoBarrasSintetico.js';
 import ElegibilidadeVinculoCodigoBarras, {
@@ -250,5 +253,115 @@ describe('ElegibilidadeVinculoCodigoBarras (I17a–d, só locais)', () => {
         for (const r of casos) {
             expect(JSON.stringify(r)).not.toMatch(/\d{20,}/);
         }
+    });
+});
+
+/**
+ * NÃO-REGRESSÃO do passo 2 (ADR-0072, I17a/I17c): a mudança de exibição da sugestão não pode mexer
+ * em QUEM é vinculável. Golden gravado do commit base (`6bc4e89`, regra antes do aviso
+ * `VENCE_ANTES_DO_TITULO`): 600 combinações de Δvalor × Δdias × data de débito × par vigente.
+ */
+describe('não-regressão do passo 2 (ADR-0072)', () => {
+    const DELTAS_VALOR = [-12, -10, -0.06, -0.05, 0, 0.05, 0.06, 5, 10, 10.01];
+    const DELTAS_DIAS = [-11, -10, -8, -1, 0, 1, 5, 6, 10, 11];
+    const OFFSETS_DEBITO = [-3, 0, 2];
+    const PARES = [false, true];
+    const LETRA: Record<string, string> = {
+        CONHECIDO: 'C',
+        FORTE: 'F',
+        ATENCAO: 'A',
+        VENCIDO_INFORMATIVO: 'V',
+        SEM_RELACAO: 'S',
+    };
+    const GOLDEN_TIERS = [
+        'SSSSSSVVVVVVVVVVVVAAVVVVAAAAVVAAAAVVAAAAAAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAAVVVVAAAAVVAAAAVVAAAA',
+        'AAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAAVVVVAAAAVVAAAAVVAAAAAAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAA',
+        'VVVVFCFCVVAAAAVVAAAAAAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAAVVVVFCFCVVFCFCVVFCFCFCAAAAAAAAAAAASSSSSS',
+        'SSSSSSVVVVVVVVVVVVAAVVVVFCFCVVAAAAVVAAAAAAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAAVVVVAAAAVVAAAAVVAAAA',
+        'AAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAAVVVVAAAAVVAAAAVVAAAAAAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAA',
+        'VVVVAAAAVVAAAAVVAAAAAAAAAAAAAAAAAASSSSSSSSSSSSVVVVVVVVVVVVAAVVVVAAAAVVAAAAVVAAAAAAAAAAAAAAAAAASSSSSS',
+    ].join('');
+    const GOLDEN_VINCULAVEIS = [
+        'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNEEEENNEEEENNEEEEEENNNNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN',
+    ].join('');
+
+    const VALOR = 1028.8;
+    const regraSugestao = new RegraSugestaoBoleto();
+
+    const combinacoes = DELTAS_VALOR.flatMap((dv) =>
+        DELTAS_DIAS.flatMap((dd) =>
+            OFFSETS_DEBITO.flatMap((off) => PARES.map((par) => ({ dv, dd, off, par }))),
+        ),
+    );
+
+    const grade = () => {
+        const linhas = combinacoes.map(({ dv, dd, off, par }) => {
+            const valorBoleto = Math.round((VALOR + dv) * 100) / 100;
+            const vencBoleto = dia(VENC_TITULO, dd);
+            const dataDebito = dia(VENC_TITULO, off);
+            const tier = regraSugestao.avaliar({
+                titulo: { valor: VALOR, vencimento: VENC_TITULO },
+                boleto: { valor: valorBoleto, vencimento: vencBoleto },
+                dataDebito,
+                parConfirmado: par,
+            }).resultado;
+            const r = regra.avaliar(
+                base(
+                    { tier, totalAberto: VALOR, dataDebito },
+                    { valor: valorBoleto, vencimento: vencBoleto },
+                ),
+            );
+            return { letra: LETRA[tier] ?? '?', vinculavel: r.elegivel ? 'E' : 'N' };
+        });
+        return {
+            tiers: linhas.map((l) => l.letra).join(''),
+            vinculaveis: linhas.map((l) => l.vinculavel).join(''),
+        };
+    };
+
+    it('o tier e o conjunto vinculável são idênticos ao do commit base', () => {
+        const { tiers, vinculaveis } = grade();
+        expect(tiers).toHaveLength(600);
+        expect(tiers).toBe(GOLDEN_TIERS);
+        expect(vinculaveis).toBe(GOLDEN_VINCULAVEIS);
+        expect(vinculaveis.split('E').length - 1).toBe(14);
+    });
+
+    it('Δdias < 0 segue INELEGIVEL com o motivo DATA_ANTES_DO_TITULO (o código do motivo não muda)', () => {
+        const r = regra.avaliar(base({}, { vencimento: dia(VENC_TITULO, -1) }));
+        expect(r.elegivel).toBe(false);
+        expect(r.motivo).toBe('DATA_ANTES_DO_TITULO');
+        expect(MOTIVO_INELEGIVEL_VINCULO.DATA_ANTES_DO_TITULO).toBe('DATA_ANTES_DO_TITULO');
+    });
+
+    it('situação, âncora e reconhecimento NÃO entram: o resultado é o mesmo com ou sem eles', () => {
+        const sem = regra.avaliar(base());
+        const com = regra.avaliar({
+            ...base(),
+            situacao: 'SO_FRACA',
+            ancorado: false,
+            sinais: ['VENCE_ANTES_DO_TITULO', 'RECONHECEU_VENCE_ANTES'],
+            reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+        } as unknown as EntradaElegibilidadeVinculo);
+        expect(com).toEqual(sem);
+    });
+
+    it('o fonte da elegibilidade não lê situação, âncora, sinais de aviso nem o motor', () => {
+        const fonte = readFileSync(
+            path.join(__dirname, 'ElegibilidadeVinculoCodigoBarras.ts'),
+            'utf8',
+        )
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .split('\n')
+            .map((l) => l.replace(/(^|\s)\/\/.*$/, ''))
+            .join('\n');
+        expect(fonte).not.toMatch(
+            /SITUACAO_SUGESTAO|situacao|ancorad|VENCE_ANTES|RECONHECEU|MotorSugestaoBoleto|reconheceAvisos/,
+        );
     });
 });

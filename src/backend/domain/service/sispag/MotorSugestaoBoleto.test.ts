@@ -537,3 +537,340 @@ describe('MotorSugestaoBoleto — confirmação órfã (I15l)', () => {
         expect(r[0]).toMatchObject({ orfa: true, ditCod: 40 });
     });
 });
+
+describe('MotorSugestaoBoleto — desfecho por título (I15m, I15n, ADR-0072)', () => {
+    const desfecho = (e: EntradaMotorSugestao, t: TituloAPagar) =>
+        motor.desfechos(e).find((d) => d.docCod === t.docCod && d.filCod === t.filCod);
+    const PAR = { pesCod: '7001', emissorChave: '237:2656:0092740' };
+
+    it('todo título elegível produz exatamente um desfecho (0, 1 e N candidatos); nunca inventa boleto', () => {
+        const semCand = titulo({ docCod: 'S0', valor: 7000 });
+        const umCand = titulo({ docCod: 'S1', valor: 200 });
+        const nCand = titulo({ docCod: 'SN', valor: 300 });
+        const inelegivel = titulo({ docCod: 'PAGO', pago: true });
+        const e = entrada({
+            titulos: [semCand, umCand, nCand, inelegivel],
+            boletos: [
+                boleto({ ditCod: 1, valor: 200 }),
+                boleto({ ditCod: 2, valor: 300 }),
+                boleto({ ditCod: 3, valor: 300 }),
+                boleto({ ditCod: 4, valor: 301 }),
+            ],
+        });
+        const d = motor.desfechos(e);
+        expect(d.map((x) => x.docCod).sort()).toEqual(['S0', 'S1', 'SN']);
+        expect(desfecho(e, semCand)).toMatchObject({
+            situacao: 'SEM_CANDIDATO',
+            candidatos: [],
+            totalCandidatos: 0,
+        });
+        expect(desfecho(e, umCand)?.candidatos).toHaveLength(1);
+        const boletosReais = new Set(e.boletos.map((b) => `${b.ddcCod}:${b.ditCod}`));
+        for (const x of d) {
+            for (const c of x.candidatos)
+                expect(boletosReais.has(`${c.ddcCod}:${c.ditCod}`)).toBe(true);
+        }
+    });
+
+    it('UNICA_SEGURA e SO_ATENCAO reproduzem a sugestão atual (mesmo boleto, mesmo tier)', () => {
+        const a = titulo({ docCod: 'A' });
+        const b = titulo({ docCod: 'B', valor: 500, numeroDocumento: '4242' });
+        const e = entrada({
+            titulos: [a, b],
+            boletos: [boleto({ ditCod: 1 }), boleto({ ditCod: 2, valor: 505, numero: '4242' })],
+        });
+        const legado = motor.sugerir(e);
+        const dA = desfecho(e, a);
+        const dB = desfecho(e, b);
+        expect(dA).toMatchObject({ situacao: 'UNICA_SEGURA', totalCandidatos: 1 });
+        expect(dB).toMatchObject({ situacao: 'SO_ATENCAO', totalCandidatos: 1 });
+        for (const [d, t] of [
+            [dA, a],
+            [dB, b],
+        ] as const) {
+            const s = doTitulo(legado, t);
+            expect(d?.candidatos[0]).toMatchObject({
+                ddcCod: s?.ddcCod,
+                ditCod: s?.ditCod,
+                confirmavel: true,
+                avaliacao: { resultado: s?.avaliacao.resultado },
+            });
+        }
+    });
+
+    it('CONFIRMADA e ORFA viram desfecho, com o candidato da decisão', () => {
+        const viva = titulo({ docCod: 'VIVA' });
+        const orfa = titulo({ docCod: 'ORFA', valor: 250 });
+        const e = entrada({
+            titulos: [viva, orfa],
+            boletos: [boleto({ ditCod: 1 })],
+            confirmadas: [
+                { filCod: 1, docCod: 'VIVA', titCod: '1', ddcCod: 500, ditCod: 1 },
+                { filCod: 1, docCod: 'ORFA', titCod: '1', ddcCod: 500, ditCod: 99 },
+            ],
+        });
+        expect(desfecho(e, viva)).toMatchObject({ situacao: 'CONFIRMADA', totalCandidatos: 1 });
+        expect(desfecho(e, orfa)).toMatchObject({ situacao: 'ORFA' });
+        expect(desfecho(e, viva)?.candidatos[0]?.confirmavel).toBe(false);
+    });
+
+    describe('SO_FRACA: exibida, nunca confirmável', () => {
+        it.each([
+            ['acima +R$ 3', { valor: 103 }, 3, 0],
+            ['abaixo −R$ 9,49', { valor: 90.51 }, -9.49, 0],
+            ['valor igual, +8 dias', { vencimento: '2026-10-28' }, 0, 8],
+        ])('%s', (_n, over, deltaValor, deltaDias) => {
+            const t = titulo({ docCod: 'F' });
+            const e = entrada({ titulos: [t], boletos: [boleto({ ditCod: 7, ...over })] });
+            const d = desfecho(e, t);
+            expect(d?.situacao).toBe('SO_FRACA');
+            expect(d?.candidatos[0]).toMatchObject({
+                confirmavel: false,
+                ancorado: false,
+                avaliacao: { resultado: 'ATENCAO', deltaValor, deltaDias },
+            });
+            expect(d?.candidatos[0]?.motivo).toEqual(expect.any(String));
+            expect(motor.sugerir(e)).toEqual([]); // contrato antigo intacto
+        });
+
+        it('ATENCAO sem âncora tem confirmavel=false mesmo que a regra pura diga true', () => {
+            const t = titulo({ docCod: 'F2' });
+            const e = entrada({ titulos: [t], boletos: [boleto({ ditCod: 8, valor: 104 })] });
+            const regraDiz = new RegraSugestaoBoleto().avaliar({
+                titulo: { valor: 100, vencimento: '2026-10-20' },
+                boleto: { valor: 104, vencimento: '2026-10-20' },
+                dataDebito: '2026-10-20',
+                parConfirmado: false,
+            });
+            expect(regraDiz.confirmavel).toBe(true);
+            expect(desfecho(e, t)?.candidatos[0]?.confirmavel).toBe(false);
+        });
+    });
+
+    describe('AMBIGUA', () => {
+        it('2+ seguros de mesma força: listados ranqueados, nenhum confirmável', () => {
+            const t = titulo({ docCod: 'AMB' });
+            const e = entrada({
+                titulos: [t],
+                boletos: [boleto({ ditCod: 70 }), boleto({ ditCod: 71 }), boleto({ ditCod: 72 })],
+            });
+            const d = desfecho(e, t);
+            expect(d?.situacao).toBe('AMBIGUA');
+            expect(d?.totalCandidatos).toBe(3);
+            expect(d?.candidatos.map((c) => c.ditCod)).toEqual([70, 71, 72]);
+            expect(d?.candidatos.every((c) => !c.confirmavel)).toBe(true);
+        });
+
+        it('rejeitar um dos ambíguos deixa o outro UNICA_SEGURA e confirmável', () => {
+            const t = titulo({ docCod: 'AMB2' });
+            const e = entrada({
+                titulos: [t],
+                boletos: [boleto({ ditCod: 73 }), boleto({ ditCod: 74 })],
+                rejeitadas: [{ filCod: 1, docCod: 'AMB2', titCod: '1', ddcCod: 500, ditCod: 73 }],
+            });
+            const d = desfecho(e, t);
+            expect(d?.situacao).toBe('UNICA_SEGURA');
+            expect(d?.candidatos).toHaveLength(1);
+            expect(d?.candidatos[0]).toMatchObject({ ditCod: 74, confirmavel: true });
+        });
+
+        it('CONHECIDO ainda vence FORTE: não é ambíguo', () => {
+            const t = titulo({ docCod: 'CONH' });
+            const e = entrada({
+                titulos: [t],
+                boletos: [
+                    boleto({ ditCod: 75, codbar: bradesco('2656', '0092740', 75) }),
+                    boleto({ ditCod: 76, codbar: bradesco('2656', '0006500', 76) }),
+                ],
+                paresVigentes: [PAR],
+            });
+            const d = desfecho(e, t);
+            expect(d?.situacao).toBe('UNICA_SEGURA');
+            expect(d?.candidatos[0]).toMatchObject({
+                ditCod: 75,
+                confirmavel: true,
+                avaliacao: { resultado: 'CONHECIDO' },
+            });
+        });
+    });
+
+    describe('DISPUTADA (I15n) e reserva', () => {
+        it('o perdedor vê o boleto reservado ao vencedor — nunca SEM_CANDIDATO', () => {
+            const cedo = titulo({ docCod: '1', vencimentoCivil: '2026-10-19' });
+            const tarde = titulo({ docCod: '2', vencimentoCivil: '2026-10-20' });
+            const b = boleto({ ditCod: 50, vencimento: '2026-10-20' });
+            const e = entrada({ titulos: [tarde, cedo], boletos: [b] });
+            expect(desfecho(e, cedo)?.situacao).toBe('UNICA_SEGURA');
+            const d = desfecho(e, tarde);
+            expect(d?.situacao).toBe('DISPUTADA');
+            expect(d?.candidatos[0]).toMatchObject({
+                ditCod: 50,
+                confirmavel: false,
+                reservadoParaTitulo: { filCod: 1, docCod: '1', titCod: '1' },
+            });
+        });
+
+        it('perdedor com candidato ATENCAO ancorado livre fica SO_ATENCAO (comportamento atual)', () => {
+            const cedo = titulo({ docCod: '1', vencimentoCivil: '2026-10-19' });
+            const tarde = titulo({
+                docCod: '2',
+                vencimentoCivil: '2026-10-21',
+                numeroDocumento: '77',
+            });
+            const e = entrada({
+                titulos: [tarde, cedo],
+                boletos: [
+                    boleto({ ditCod: 60, vencimento: '2026-10-21' }),
+                    boleto({ ditCod: 61, vencimento: '2026-10-21', valor: 105, numero: '77' }),
+                ],
+            });
+            const d = desfecho(e, tarde);
+            expect(d?.situacao).toBe('SO_ATENCAO');
+            expect(d?.candidatos[0]).toMatchObject({ ditCod: 61, confirmavel: true });
+        });
+
+        it('fraco não rouba o boleto de seguro de outro título', () => {
+            const fraco = titulo({ docCod: '1', vencimentoCivil: '2026-10-10', valor: 103 });
+            const seguro = titulo({ docCod: '2', vencimentoCivil: '2026-10-20', valor: 100 });
+            const e = entrada({
+                titulos: [fraco, seguro],
+                boletos: [boleto({ ditCod: 9, valor: 100, vencimento: '2026-10-20' })],
+            });
+            expect(desfecho(e, seguro)?.situacao).toBe('UNICA_SEGURA');
+            expect(desfecho(e, fraco)?.candidatos[0]).toMatchObject({
+                ditCod: 9,
+                confirmavel: false,
+                reservadoParaTitulo: { docCod: '2' },
+            });
+        });
+
+        it('vencido e fraco não reservam: o mesmo boleto aparece em dois títulos como compartilhado', () => {
+            const t1 = titulo({ docCod: '1' });
+            const t2 = titulo({ docCod: '2' });
+            const e = entrada({
+                titulos: [t1, t2],
+                boletos: [boleto({ ditCod: 11, vencimento: '2026-10-19' })],
+            });
+            for (const t of [t1, t2]) {
+                const d = desfecho(e, t);
+                expect(d?.situacao).toBe('SO_VENCIDA');
+                expect(d?.candidatos[0]).toMatchObject({
+                    ditCod: 11,
+                    confirmavel: false,
+                    compartilhado: true,
+                });
+            }
+        });
+    });
+
+    describe('SO_VENCIDA (Q4) e SEM_CANDIDATO (I15f)', () => {
+        it('mostra todo vencido dentro do envelope, sempre não confirmável', () => {
+            const t = titulo({ docCod: 'V' });
+            const e = entrada({
+                titulos: [t],
+                boletos: [boleto({ ditCod: 12, vencimento: '2026-10-18', valor: 107 })],
+            });
+            const d = desfecho(e, t);
+            expect(d?.situacao).toBe('SO_VENCIDA');
+            expect(d?.candidatos[0]).toMatchObject({
+                confirmavel: false,
+                avaliacao: { resultado: 'VENCIDO_INFORMATIVO', diasVencidoNoDebito: 2 },
+            });
+        });
+
+        it('fora do envelope não aparece; número igual não resgata', () => {
+            const t = titulo({ docCod: 'N', numeroDocumento: '9' });
+            const e = entrada({
+                titulos: [t],
+                boletos: [
+                    boleto({ ditCod: 13, valor: 150, numero: '9' }),
+                    boleto({ ditCod: 14, vencimento: '2026-11-30' }),
+                ],
+            });
+            expect(desfecho(e, t)).toMatchObject({
+                situacao: 'SEM_CANDIDATO',
+                candidatos: [],
+                totalCandidatos: 0,
+            });
+        });
+    });
+
+    describe('top-N e determinismo', () => {
+        it('retém 3 por título, ordenados por força → |Δvalor| → |Δdias| → chave', () => {
+            const t = titulo({ docCod: 'TOP' });
+            const valores = [108, 102, 106, 101, 104];
+            const e = entrada({
+                titulos: [t],
+                boletos: valores.map((v, i) => boleto({ ditCod: 20 + i, valor: v })),
+            });
+            const d = desfecho(e, t);
+            expect(d?.totalCandidatos).toBe(5);
+            expect(d?.candidatos.map((c) => c.avaliacao.deltaValor)).toEqual([1, 2, 4]);
+        });
+
+        it('permutar títulos e boletos não muda o resultado', () => {
+            const ts = [
+                titulo({ docCod: '1', vencimentoCivil: '2026-10-19' }),
+                titulo({ docCod: '2' }),
+                titulo({ docCod: '3', valor: 103 }),
+                titulo({ docCod: '4', valor: 500 }),
+            ];
+            const bs = [
+                boleto({ ditCod: 31 }),
+                boleto({ ditCod: 32 }),
+                boleto({ ditCod: 33, valor: 104 }),
+                boleto({ ditCod: 34, valor: 101, vencimento: '2026-10-18' }),
+            ];
+            const base = JSON.stringify(motor.desfechos(entrada({ titulos: ts, boletos: bs })));
+            const outras = [
+                [[...ts].reverse(), [...bs].reverse()],
+                [
+                    [ts[2], ts[0], ts[3], ts[1]],
+                    [bs[1], bs[3], bs[0], bs[2]],
+                ],
+            ] as Array<[TituloAPagar[], BoletoDda[]]>;
+            for (const [tt, bb] of outras) {
+                expect(JSON.stringify(motor.desfechos(entrada({ titulos: tt, boletos: bb })))).toBe(
+                    base,
+                );
+            }
+        });
+
+        it('não muta a entrada e a saída não carrega barras nem linha digitável', () => {
+            const b = boleto({ ditCod: 40 });
+            const e = entrada({ titulos: [titulo()], boletos: [b] });
+            const copia = JSON.stringify(e);
+            const saida = JSON.stringify(motor.desfechos(e));
+            expect(JSON.stringify(e)).toBe(copia);
+            expect(saida).not.toContain(String(b.codbar));
+            expect(saida).not.toMatch(/\d{20,}/);
+        });
+    });
+
+    it('desempenho: ~1,1 mil títulos × ~8,8 mil boletos dentro do orçamento', () => {
+        const titulos = Array.from({ length: 1100 }, (_, i) =>
+            titulo({
+                docCod: String(10_000 + i),
+                valor: 100 + (i % 400) * 3.17,
+                vencimentoCivil: `2026-10-${String(10 + (i % 15)).padStart(2, '0')}`,
+            }),
+        );
+        const boletos = Array.from({ length: 8800 }, (_, i) =>
+            boleto({
+                ddcCod: 600 + (i % 20),
+                ditCod: i + 1,
+                valor: 100 + (i % 400) * 3.17,
+                vencimento: `2026-10-${String(10 + (i % 17)).padStart(2, '0')}`,
+            }),
+        );
+        const inicio = Date.now();
+        const d = motor.desfechos(entrada({ titulos, boletos }));
+        const ms = Date.now() - inicio;
+        expect(d).toHaveLength(1100);
+        expect(ms).toBeLessThan(8000); // ~0,6 s fora do jest; folga para a carga paralela do CI
+        const reservados = d
+            .filter((x) => x.situacao === 'UNICA_SEGURA' || x.situacao === 'SO_ATENCAO')
+            .map((x) => `${x.candidatos[0]?.ddcCod}:${x.candidatos[0]?.ditCod}`);
+        expect(new Set(reservados).size).toBe(reservados.length);
+    });
+});

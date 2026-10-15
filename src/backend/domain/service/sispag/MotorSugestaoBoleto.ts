@@ -4,13 +4,19 @@ import { PAGO_POR_CONEXOS } from '../../interface/sispag/PagoPorConexos.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import {
     type AvaliacaoSugestao,
+    type CandidatoTitulo,
+    type ChaveTitulo,
     type DecisaoChaveada,
     type DecisaoConfirmadaChaveada,
+    type DesfechoTitulo,
     ESTADO_SUGESTAO,
     type EmissorBoleto,
     type ParVigenteChave,
     RESULTADO_SUGESTAO,
     SINAL_SUGESTAO,
+    SITUACAO_SUGESTAO_TITULO,
+    type SituacaoSugestaoTitulo,
+    SUGESTAO_TOP_CANDIDATOS,
     type SugestaoBoletoTitulo,
 } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
@@ -61,6 +67,39 @@ interface Candidato {
     avaliacao: AvaliacaoSugestao;
 }
 
+/** Candidato do desfecho: todo par dentro do envelope, com a força refinada pela âncora. */
+interface CandidatoCompleto extends Candidato {
+    ancorado: boolean;
+    /** 0 CONHECIDO · 1 FORTE · 2 ATENCAO ancorada · 3 ATENCAO sem âncora · 4 VENCIDO. */
+    forca: number;
+}
+
+interface PendenteCompleto {
+    alvo: TituloElegivel;
+    candidatos: CandidatoCompleto[];
+}
+
+interface Preparo {
+    livres: BoletoLivre[];
+    porChave: Map<string, BoletoLivre>;
+    pares: Set<string>;
+    rejeitadas: Set<string>;
+    elegiveis: TituloElegivel[];
+    confirmadaDoTitulo: Map<string, DecisaoConfirmadaChaveada>;
+    ocupados: Set<string>;
+    orfas: Array<{
+        titulo: TituloAPagar;
+        decisao: DecisaoConfirmadaChaveada;
+        dataDebito: string | undefined;
+        motivo: string;
+    }>;
+    resolvidosPorDecisao: Set<string>;
+}
+
+const FORCA_ATENCAO_ANCORADA = 2;
+const FORCA_ATENCAO_FRACA = 3;
+const FORCA_VENCIDO = 4;
+
 /** Posição de cada resultado na ordem de força (menor = mais forte). */
 const FORCA: Readonly<Record<string, number>> = {
     [RESULTADO_SUGESTAO.CONHECIDO]: 0,
@@ -85,6 +124,26 @@ const comparaDoc = (a: string, b: string): number => {
 
 const MOTIVO_VENCIDO =
     'Boleto vence antes da data de débito: só informativo, não pode ser confirmado.';
+const MOTIVO_FRACO =
+    'Sem confirmação do emissor nem do número do documento: só informativo, não pode ser confirmado.';
+const MOTIVO_AMBIGUO =
+    'Mais de um boleto igualmente provável para este título: rejeite os que não são deste título para liberar a confirmação.';
+const MOTIVO_MAIS_FORTE = 'Há um candidato mais forte para este título.';
+const MOTIVO_SEM_CANDIDATO =
+    'Nenhum boleto livre no pool DDA dentro do envelope (±R$ 10,00 ou 2 %, ±10 dias).';
+const MOTIVO_POR_SITUACAO: Readonly<Record<SituacaoSugestaoTitulo, string>> = {
+    [SITUACAO_SUGESTAO_TITULO.UNICA_SEGURA]: 'Um único boleto provável: pode ser confirmado.',
+    [SITUACAO_SUGESTAO_TITULO.SO_ATENCAO]:
+        'Boleto com diferença, ancorado pelo emissor ou pelo número do documento: confira antes de confirmar.',
+    [SITUACAO_SUGESTAO_TITULO.AMBIGUA]: MOTIVO_AMBIGUO,
+    [SITUACAO_SUGESTAO_TITULO.SO_FRACA]: MOTIVO_FRACO,
+    [SITUACAO_SUGESTAO_TITULO.SO_VENCIDA]: MOTIVO_VENCIDO,
+    [SITUACAO_SUGESTAO_TITULO.DISPUTADA]:
+        'O melhor boleto está reservado a outro título (vence antes, ou desempate pelo documento).',
+    [SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO]: MOTIVO_SEM_CANDIDATO,
+    [SITUACAO_SUGESTAO_TITULO.CONFIRMADA]: 'Confirmada pelo analista.',
+    [SITUACAO_SUGESTAO_TITULO.ORFA]: 'Confirmação órfã: anule para liberar o título.',
+};
 
 /**
  * Motor de sugestão por título (I15c–I15h). PURO: sem I/O, sem relógio, sem mutar a entrada.
@@ -118,7 +177,82 @@ export default class MotorSugestaoBoleto {
         @inject(RegraSugestaoBoleto) private readonly regra: RegraSugestaoBoleto,
     ) {}
 
-    public sugerir = (entrada: EntradaMotorSugestao): SugestaoBoletoTitulo[] => {
+    /**
+     * Contrato legado: as sugestões que o motor sempre devolveu (seguras, ATENCAO ancorada, vencido
+     * informativo, confirmadas e órfãs). Inalterado pelo ADR-0072 — o desfecho por título vem de
+     * `desfechos`.
+     */
+    public sugerir = (entrada: EntradaMotorSugestao): SugestaoBoletoTitulo[] =>
+        this.analisar(entrada).sugestoes;
+
+    /**
+     * Desfecho por título (I15m, I15n, ADR-0072): TODO título elegível produz exatamente um, com até
+     * `SUGESTAO_TOP_CANDIDATOS` candidatos. Exibir ≠ confirmar: só o candidato escolhido
+     * (`UNICA_SEGURA`/`SO_ATENCAO`) é confirmável; fraco, ambíguo, disputado e vencido são
+     * informação.
+     */
+    public desfechos = (entrada: EntradaMotorSugestao): DesfechoTitulo[] =>
+        this.analisar(entrada).desfechos;
+
+    /**
+     * Uma passada só: os pares do envelope são avaliados UMA vez e alimentam o contrato legado e o
+     * desfecho (o custo dominante é a avaliação por par).
+     */
+    public analisar = (
+        entrada: EntradaMotorSugestao,
+    ): { sugestoes: SugestaoBoletoTitulo[]; desfechos: DesfechoTitulo[] } => {
+        const p = this.preparar(entrada);
+        const sugestoes: SugestaoBoletoTitulo[] = [];
+        const desfechos: DesfechoTitulo[] = [];
+        for (const o of p.orfas) {
+            const orfa = this.orfa(o.titulo, o.decisao, o.dataDebito, o.motivo);
+            sugestoes.push(orfa);
+            desfechos.push(this.desfechoDeDecisao(orfa, SITUACAO_SUGESTAO_TITULO.ORFA));
+        }
+
+        const pendentes: PendenteCompleto[] = [];
+        for (const alvo of p.elegiveis) {
+            const confirmada = p.confirmadaDoTitulo.get(alvo.chave);
+            if (confirmada) {
+                const boleto = p.porChave.get(chaveBoleto(confirmada));
+                if (boleto) {
+                    const viva = this.montar(
+                        alvo,
+                        this.avaliar(alvo, boleto, p.pares),
+                        boleto,
+                        ESTADO_SUGESTAO.CONFIRMADA,
+                    );
+                    sugestoes.push(viva);
+                    desfechos.push(
+                        this.desfechoDeDecisao(viva, SITUACAO_SUGESTAO_TITULO.CONFIRMADA),
+                    );
+                }
+                continue;
+            }
+            // Órfã: a decisão ainda ocupa o título (índice único); não se sugere outro boleto.
+            if (p.resolvidosPorDecisao.has(alvo.chave)) continue;
+            pendentes.push({
+                alvo,
+                candidatos: this.todosCandidatos(alvo, p.livres, p.ocupados, p.rejeitadas, p.pares),
+            });
+        }
+        pendentes.sort((x, y) => this.prioridade(x.alvo, y.alvo));
+
+        // O contrato legado só enxerga o que `aceita`; a ordem relativa da lista completa é a mesma.
+        const legado: Pendente[] = pendentes.map(({ alvo, candidatos }) => ({
+            alvo,
+            candidatos: candidatos.filter((c) => this.aceita(c.avaliacao)),
+        }));
+        sugestoes.push(...this.alocar(legado, p.ocupados));
+        desfechos.push(...this.alocarDesfechos(pendentes));
+        return {
+            sugestoes: sugestoes.sort((x, y) => this.prioridadeChave(x, y)),
+            desfechos: desfechos.sort((x, y) => this.prioridadeDesfecho(x, y)),
+        };
+    };
+
+    /** Estruturas compartilhadas pelo contrato legado e pelo desfecho. */
+    private preparar = (entrada: EntradaMotorSugestao): Preparo => {
         const livres = this.livres(entrada);
         const porChave = new Map(livres.map((b) => [b.chave, b]));
         const pares = new Set(entrada.paresVigentes.map((p) => `${p.pesCod}|${p.emissorChave}`));
@@ -134,7 +268,7 @@ export default class MotorSugestaoBoleto {
         // a decisão ainda pode ser anulada pela rota). Só a viva reserva o boleto.
         const confirmadaDoTitulo = new Map<string, DecisaoConfirmadaChaveada>();
         const ocupados = new Set<string>();
-        const resultado: SugestaoBoletoTitulo[] = [];
+        const orfas: Preparo['orfas'] = [];
         const resolvidosPorDecisao = new Set<string>();
         for (const d of entrada.confirmadas) {
             const chave = chaveTitulo(d);
@@ -147,43 +281,33 @@ export default class MotorSugestaoBoleto {
                     confirmadaDoTitulo.set(chave, d);
                     ocupados.add(chaveBoleto(d));
                 } else {
-                    resultado.push(
-                        this.orfa(titulo, d, alvo.dataDebito, this.motivoBoletoSaiu(d, entrada)),
-                    );
+                    orfas.push({
+                        titulo,
+                        decisao: d,
+                        dataDebito: alvo.dataDebito,
+                        motivo: this.motivoBoletoSaiu(d, entrada),
+                    });
                 }
             } else {
-                resultado.push(this.orfa(titulo, d, undefined, this.motivoTituloSaiu(titulo)));
+                orfas.push({
+                    titulo,
+                    decisao: d,
+                    dataDebito: undefined,
+                    motivo: this.motivoTituloSaiu(titulo),
+                });
             }
         }
-
-        const pendentes: Pendente[] = [];
-        for (const alvo of elegiveis) {
-            const confirmada = confirmadaDoTitulo.get(alvo.chave);
-            if (confirmada) {
-                const boleto = porChave.get(chaveBoleto(confirmada));
-                if (boleto) {
-                    resultado.push(
-                        this.montar(
-                            alvo,
-                            this.avaliar(alvo, boleto, pares),
-                            boleto,
-                            ESTADO_SUGESTAO.CONFIRMADA,
-                        ),
-                    );
-                }
-                continue;
-            }
-            // Órfã: a decisão ainda ocupa o título (índice único); não se sugere outro boleto.
-            if (resolvidosPorDecisao.has(alvo.chave)) continue;
-            pendentes.push({
-                alvo,
-                candidatos: this.candidatos(alvo, livres, ocupados, rejeitadas, pares),
-            });
-        }
-
-        pendentes.sort((x, y) => this.prioridade(x.alvo, y.alvo));
-        resultado.push(...this.alocar(pendentes, ocupados));
-        return resultado.sort((x, y) => this.prioridadeChave(x, y));
+        return {
+            livres,
+            porChave,
+            pares,
+            rejeitadas,
+            elegiveis,
+            confirmadaDoTitulo,
+            ocupados,
+            orfas,
+            resolvidosPorDecisao,
+        };
     };
 
     // ── 1. Entrada → estruturas ────────────────────────────────────────────────────────────────
@@ -262,27 +386,6 @@ export default class MotorSugestaoBoleto {
 
     // ── 2. Candidatos de um título ─────────────────────────────────────────────────────────────
 
-    private candidatos = (
-        alvo: TituloElegivel,
-        livres: BoletoLivre[],
-        ocupados: Set<string>,
-        rejeitadas: Set<string>,
-        pares: Set<string>,
-    ): Candidato[] => {
-        const [minimo, maximo] = faixaDeCandidatos(centavos(alvo.titulo.valor));
-        const achados: Candidato[] = [];
-        for (let i = this.primeiro(livres, minimo); i < livres.length; i += 1) {
-            const boleto = livres[i];
-            if (!boleto || boleto.centavos > maximo) break;
-            if (ocupados.has(boleto.chave) || rejeitadas.has(`${alvo.chave}|${boleto.chave}`)) {
-                continue;
-            }
-            const avaliacao = this.avaliar(alvo, boleto, pares);
-            if (this.aceita(avaliacao)) achados.push({ boleto, avaliacao });
-        }
-        return achados.sort((x, y) => this.melhor(x, y));
-    };
-
     private avaliar = (
         alvo: TituloElegivel,
         boleto: BoletoLivre,
@@ -319,13 +422,6 @@ export default class MotorSugestaoBoleto {
         if (a.resultado === RESULTADO_SUGESTAO.ATENCAO) return ancora;
         return ancora || Math.abs(a.deltaValor) <= 0.05;
     };
-
-    private melhor = (x: Candidato, y: Candidato): number =>
-        (FORCA[x.avaliacao.resultado] ?? 9) - (FORCA[y.avaliacao.resultado] ?? 9) ||
-        Math.abs(x.avaliacao.deltaValor) - Math.abs(y.avaliacao.deltaValor) ||
-        Math.abs(x.avaliacao.deltaDias) - Math.abs(y.avaliacao.deltaDias) ||
-        x.boleto.ddcCod - y.boleto.ddcCod ||
-        x.boleto.ditCod - y.boleto.ditCod;
 
     private primeiro = (livres: BoletoLivre[], minimo: number): number => {
         let lo = 0;
@@ -466,6 +562,7 @@ export default class MotorSugestaoBoleto {
                 deltaDias: d.deltaDias ?? 0,
                 sinais: d.sinais ?? [],
                 confirmavel: false,
+                diasVencidoNoDebito: 0,
             },
             estado: ESTADO_SUGESTAO.CONFIRMADA,
             orfa: true,
@@ -493,6 +590,253 @@ export default class MotorSugestaoBoleto {
         }
         return 'O título não tem mais as condições da confirmação. Anule a confirmação.';
     };
+
+    // ── 4. Desfecho por título (ADR-0072) ──────────────────────────────────────────────────────
+
+    /**
+     * Todo par dentro do envelope (nunca `SEM_RELACAO`), do melhor para o pior. Ao contrário de
+     * `candidatos`, não descarta o fraco nem o vencido: eles precisam ser EXIBIDOS (I15m).
+     */
+    private todosCandidatos = (
+        alvo: TituloElegivel,
+        livres: BoletoLivre[],
+        ocupados: Set<string>,
+        rejeitadas: Set<string>,
+        pares: Set<string>,
+    ): CandidatoCompleto[] => {
+        const [minimo, maximo] = faixaDeCandidatos(centavos(alvo.titulo.valor));
+        const achados: CandidatoCompleto[] = [];
+        for (let i = this.primeiro(livres, minimo); i < livres.length; i += 1) {
+            const boleto = livres[i];
+            if (!boleto || boleto.centavos > maximo) break;
+            if (ocupados.has(boleto.chave) || rejeitadas.has(`${alvo.chave}|${boleto.chave}`)) {
+                continue;
+            }
+            const avaliacao = this.avaliar(alvo, boleto, pares);
+            if (avaliacao.resultado === RESULTADO_SUGESTAO.SEM_RELACAO) continue;
+            const ancorado =
+                avaliacao.sinais.includes(SINAL_SUGESTAO.EMISSOR_CONFIRMADO) ||
+                avaliacao.sinais.includes(SINAL_SUGESTAO.NUMERO_IGUAL);
+            achados.push({
+                boleto,
+                avaliacao,
+                ancorado,
+                forca: this.forcaCompleta(avaliacao, ancorado),
+            });
+        }
+        return achados.sort((x, y) => this.melhorCompleto(x, y));
+    };
+
+    private forcaCompleta = (a: AvaliacaoSugestao, ancorado: boolean): number => {
+        if (a.resultado === RESULTADO_SUGESTAO.CONHECIDO) return 0;
+        if (a.resultado === RESULTADO_SUGESTAO.FORTE) return 1;
+        if (a.resultado === RESULTADO_SUGESTAO.ATENCAO) {
+            return ancorado ? FORCA_ATENCAO_ANCORADA : FORCA_ATENCAO_FRACA;
+        }
+        return FORCA_VENCIDO;
+    };
+
+    /** Força → |Δvalor| → |Δdias| → chave do boleto: ordem total, independe da entrada. */
+    private melhorCompleto = (x: CandidatoCompleto, y: CandidatoCompleto): number =>
+        x.forca - y.forca ||
+        Math.abs(x.avaliacao.deltaValor) - Math.abs(y.avaliacao.deltaValor) ||
+        Math.abs(x.avaliacao.deltaDias) - Math.abs(y.avaliacao.deltaDias) ||
+        x.boleto.ddcCod - y.boleto.ddcCod ||
+        x.boleto.ditCod - y.boleto.ditCod;
+
+    /**
+     * Mesmas camadas do contrato legado (seguros → ATENCAO ancorada), com prioridade do TÍTULO de
+     * menor vencimento; só seguro e ATENCAO ancorada RESERVAM o boleto. O que sobra sem escolha
+     * vira desfecho informativo: `DISPUTADA` quando o melhor candidato está reservado a outro
+     * título (nunca `SEM_CANDIDATO` por perder disputa, I15n), senão `SO_FRACA`/`SO_VENCIDA`.
+     */
+    private alocarDesfechos = (pendentes: PendenteCompleto[]): DesfechoTitulo[] => {
+        const reservadoPor = new Map<string, ChaveTitulo>();
+        const escolhido = new Map<string, CandidatoCompleto>();
+        const situacao = new Map<string, SituacaoSugestaoTitulo>();
+
+        // Camada 1: seguros. 2+ da mesma força = ambíguo (sem reserva).
+        for (const { alvo, candidatos } of pendentes) {
+            const seguros = candidatos.filter((c) => c.forca <= 1);
+            const topo = seguros[0];
+            if (!topo) continue;
+            const empatados = seguros.filter(
+                (c) => c.avaliacao.resultado === topo.avaliacao.resultado,
+            );
+            if (empatados.length > 1) {
+                situacao.set(alvo.chave, SITUACAO_SUGESTAO_TITULO.AMBIGUA);
+                continue;
+            }
+            if (reservadoPor.has(topo.boleto.chave)) continue; // perdeu a disputa
+            reservadoPor.set(topo.boleto.chave, this.chaveDe(alvo));
+            escolhido.set(alvo.chave, topo);
+            situacao.set(alvo.chave, SITUACAO_SUGESTAO_TITULO.UNICA_SEGURA);
+        }
+        // Camada 2: ATENCAO com âncora (só vê o que a camada 1 e os anteriores deixaram livre).
+        for (const { alvo, candidatos } of pendentes) {
+            if (situacao.has(alvo.chave)) continue;
+            const c = candidatos.find(
+                (x) => x.forca === FORCA_ATENCAO_ANCORADA && !reservadoPor.has(x.boleto.chave),
+            );
+            if (!c) continue;
+            reservadoPor.set(c.boleto.chave, this.chaveDe(alvo));
+            escolhido.set(alvo.chave, c);
+            situacao.set(alvo.chave, SITUACAO_SUGESTAO_TITULO.SO_ATENCAO);
+        }
+
+        // Vistas de cada boleto NÃO reservado, para marcar `compartilhado`.
+        const exibicoes = new Map<string, number>();
+        const exibidos = pendentes.map(({ alvo, candidatos }) => {
+            const exibir = this.exibir(candidatos, escolhido.get(alvo.chave));
+            for (const c of exibir) {
+                exibicoes.set(c.boleto.chave, (exibicoes.get(c.boleto.chave) ?? 0) + 1);
+            }
+            return exibir;
+        });
+
+        return pendentes.map(({ alvo, candidatos }, i) => {
+            const escolha = escolhido.get(alvo.chave);
+            const sit =
+                situacao.get(alvo.chave) ?? this.situacaoSemEscolha(candidatos, reservadoPor);
+            return {
+                ...this.chaveDe(alvo),
+                ...(alvo.titulo.pesCod ? { pesCod: alvo.titulo.pesCod } : {}),
+                ...(alvo.titulo.credor ? { credor: alvo.titulo.credor } : {}),
+                valorTitulo: alvo.titulo.valor,
+                vencimentoTitulo: alvo.vencimento,
+                dataDebito: alvo.dataDebito,
+                situacao: sit,
+                candidatos: (exibidos[i] ?? []).map((c) =>
+                    this.paraCandidato(c, {
+                        confirmavel: c === escolha,
+                        dono: reservadoPor.get(c.boleto.chave),
+                        titulo: alvo.chave,
+                        situacao: sit,
+                        exibicoes: exibicoes.get(c.boleto.chave) ?? 0,
+                    }),
+                ),
+                totalCandidatos: candidatos.length,
+                motivo: MOTIVO_POR_SITUACAO[sit],
+            };
+        });
+    };
+
+    private paraCandidato = (
+        c: CandidatoCompleto,
+        ctx: {
+            confirmavel: boolean;
+            dono: ChaveTitulo | undefined;
+            titulo: string;
+            situacao: SituacaoSugestaoTitulo;
+            exibicoes: number;
+        },
+    ): CandidatoTitulo => {
+        const { confirmavel, dono } = ctx;
+        const reservadoParaOutro =
+            dono != null && chaveTitulo(dono) !== ctx.titulo ? dono : undefined;
+        const compartilhado = dono == null && ctx.exibicoes > 1;
+        const motivo = confirmavel
+            ? undefined
+            : this.motivoCandidato(c, ctx.situacao, reservadoParaOutro);
+        return {
+            ddcCod: c.boleto.ddcCod,
+            ditCod: c.boleto.ditCod,
+            ...(c.boleto.numero ? { numeroBoleto: c.boleto.numero } : {}),
+            valorBoleto: c.boleto.valor,
+            vencimentoBoleto: c.boleto.vencimento,
+            ...(c.boleto.emissor ? { emissor: c.boleto.emissor } : {}),
+            avaliacao: { ...c.avaliacao, confirmavel },
+            ancorado: c.ancorado,
+            confirmavel,
+            ...(compartilhado ? { compartilhado: true } : {}),
+            ...(reservadoParaOutro ? { reservadoParaTitulo: reservadoParaOutro } : {}),
+            ...(motivo ? { motivo } : {}),
+        };
+    };
+
+    /** Escolhido primeiro, depois os demais na ordem de força; corta em `SUGESTAO_TOP_CANDIDATOS`. */
+    private exibir = (
+        candidatos: CandidatoCompleto[],
+        escolhido: CandidatoCompleto | undefined,
+    ): CandidatoCompleto[] => {
+        const ordem = escolhido
+            ? [escolhido, ...candidatos.filter((c) => c !== escolhido)]
+            : candidatos;
+        return ordem.slice(0, SUGESTAO_TOP_CANDIDATOS);
+    };
+
+    private situacaoSemEscolha = (
+        candidatos: CandidatoCompleto[],
+        reservadoPor: Map<string, ChaveTitulo>,
+    ): SituacaoSugestaoTitulo => {
+        const melhor = candidatos[0];
+        if (!melhor) return SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO;
+        if (reservadoPor.has(melhor.boleto.chave)) return SITUACAO_SUGESTAO_TITULO.DISPUTADA;
+        return melhor.forca === FORCA_VENCIDO
+            ? SITUACAO_SUGESTAO_TITULO.SO_VENCIDA
+            : SITUACAO_SUGESTAO_TITULO.SO_FRACA;
+    };
+
+    private motivoCandidato = (
+        c: CandidatoCompleto,
+        situacao: SituacaoSugestaoTitulo,
+        reservadoPara: ChaveTitulo | undefined,
+    ): string => {
+        if (reservadoPara) {
+            return `Boleto reservado ao título ${reservadoPara.docCod} (${reservadoPara.filCod}/${reservadoPara.titCod}).`;
+        }
+        if (c.forca === FORCA_VENCIDO) return MOTIVO_VENCIDO;
+        if (situacao === SITUACAO_SUGESTAO_TITULO.AMBIGUA && c.forca <= 1) return MOTIVO_AMBIGUO;
+        if (c.forca === FORCA_ATENCAO_FRACA) return MOTIVO_FRACO;
+        return MOTIVO_MAIS_FORTE;
+    };
+
+    /** CONFIRMADA viva ou ORFA: o desfecho carrega só o boleto da decisão. */
+    private desfechoDeDecisao = (
+        s: SugestaoBoletoTitulo,
+        situacao: SituacaoSugestaoTitulo,
+    ): DesfechoTitulo => ({
+        filCod: s.filCod,
+        docCod: s.docCod,
+        titCod: s.titCod,
+        ...(s.pesCod ? { pesCod: s.pesCod } : {}),
+        ...(s.credor ? { credor: s.credor } : {}),
+        valorTitulo: s.valorTitulo,
+        vencimentoTitulo: s.vencimentoTitulo,
+        dataDebito: s.dataDebito,
+        situacao,
+        candidatos: [
+            {
+                ddcCod: s.ddcCod,
+                ditCod: s.ditCod,
+                ...(s.numeroBoleto ? { numeroBoleto: s.numeroBoleto } : {}),
+                valorBoleto: s.valorBoleto,
+                vencimentoBoleto: s.vencimentoBoleto,
+                ...(s.emissor ? { emissor: s.emissor } : {}),
+                avaliacao: s.avaliacao,
+                ancorado:
+                    s.avaliacao.sinais.includes(SINAL_SUGESTAO.EMISSOR_CONFIRMADO) ||
+                    s.avaliacao.sinais.includes(SINAL_SUGESTAO.NUMERO_IGUAL),
+                confirmavel: false,
+                ...(s.motivoOrfa ? { motivo: s.motivoOrfa } : {}),
+            },
+        ],
+        totalCandidatos: 1,
+        motivo: s.motivoOrfa ?? MOTIVO_POR_SITUACAO[situacao],
+        ...(s.motivoOrfa ? { motivoOrfa: s.motivoOrfa } : {}),
+    });
+
+    private chaveDe = (alvo: TituloElegivel): ChaveTitulo => ({
+        filCod: alvo.titulo.filCod,
+        docCod: alvo.titulo.docCod,
+        titCod: alvo.titulo.titCod,
+    });
+
+    private prioridadeDesfecho = (x: DesfechoTitulo, y: DesfechoTitulo): number =>
+        x.vencimentoTitulo.localeCompare(y.vencimentoTitulo) ||
+        comparaDoc(x.docCod, y.docCod) ||
+        x.filCod - y.filCod ||
+        comparaDoc(x.titCod, y.titCod);
 
     /** Prioridade na disputa (I15e/Q-D): menor vencimento; empate: docCod, filCod, titCod. */
     private prioridade = (x: TituloElegivel, y: TituloElegivel): number =>

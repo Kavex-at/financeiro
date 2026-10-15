@@ -66,6 +66,13 @@ export const SINAL_SUGESTAO = {
     /** Número igual com valor/data fora dos limites (I15f): não sobe o tier. */
     COLISAO_NUMERO: 'COLISAO_NUMERO',
     EMISSOR_CONFIRMADO: 'EMISSOR_CONFIRMADO',
+    /**
+     * O boleto vence ANTES do título (Δdias < 0) dentro do envelope (I15o, ADR-0072). Aviso derivado:
+     * não altera tier, deltas nem `confirmavel`; confirmar exige o reconhecimento do analista.
+     */
+    VENCE_ANTES_DO_TITULO: 'VENCE_ANTES_DO_TITULO',
+    /** Gravado no snapshot da decisão quando o analista reconheceu `VENCE_ANTES_DO_TITULO`. */
+    RECONHECEU_VENCE_ANTES: 'RECONHECEU_VENCE_ANTES',
 } as const;
 export type SinalSugestao = (typeof SINAL_SUGESTAO)[keyof typeof SINAL_SUGESTAO];
 
@@ -104,6 +111,11 @@ export interface AvaliacaoSugestao {
     sinais: SinalSugestao[];
     /** Só os três tiers são confirmáveis; vencido e sem relação não. */
     confirmavel: boolean;
+    /**
+     * Dias em que o boleto já estará vencido na data de débito (`débito − vencimento do boleto`,
+     * ≥ 0). DERIVADO, nunca persistido (I15o): 0 quando o boleto ainda vale no débito.
+     */
+    diasVencidoNoDebito: number;
 }
 
 /** Chave de um boleto do pool `fin124`. */
@@ -205,21 +217,125 @@ export type SugestaoBoletoView = Omit<SugestaoBoletoTitulo, 'emissor'> & {
     confirmacaoEmissorId?: string;
 };
 
+/**
+ * Desfecho de um título elegível (I15m, ADR-0072): derivado, nunca persistido, calculado pelo
+ * motor a cada cenário. Todo título elegível tem exatamente um.
+ *
+ * - `UNICA_SEGURA`  um boleto CONHECIDO/FORTE sem rival: confirmável;
+ * - `SO_ATENCAO`    melhor candidato livre é ATENCAO com âncora (emissor ou número): confirmável;
+ * - `AMBIGUA`       2+ seguros de mesma força: exibidos, não confirmáveis (rejeite os outros);
+ * - `SO_FRACA`      só ATENCAO sem âncora: exibido, não confirmável;
+ * - `SO_VENCIDA`    só boleto vencido na data de débito: informativo (I15h);
+ * - `DISPUTADA`     o melhor candidato está reservado a outro título (I15n);
+ * - `SEM_CANDIDATO` nenhum boleto livre dentro do envelope (I15f);
+ * - `CONFIRMADA`    decisão ativa do analista; `ORFA` confirmação que perdeu o boleto/título (I15l).
+ */
+export const SITUACAO_SUGESTAO_TITULO = {
+    UNICA_SEGURA: 'UNICA_SEGURA',
+    AMBIGUA: 'AMBIGUA',
+    SO_ATENCAO: 'SO_ATENCAO',
+    SO_FRACA: 'SO_FRACA',
+    SO_VENCIDA: 'SO_VENCIDA',
+    DISPUTADA: 'DISPUTADA',
+    SEM_CANDIDATO: 'SEM_CANDIDATO',
+    CONFIRMADA: 'CONFIRMADA',
+    ORFA: 'ORFA',
+} as const;
+export type SituacaoSugestaoTitulo =
+    (typeof SITUACAO_SUGESTAO_TITULO)[keyof typeof SITUACAO_SUGESTAO_TITULO];
+
+/** Limite de EXIBIÇÃO de candidatos por título — não é regra de domínio. */
+export const SUGESTAO_TOP_CANDIDATOS = 3;
+
+/**
+ * Gravidade do aviso `VENCE_ANTES_DO_TITULO` do melhor candidato: `ATENCAO` = o boleto ainda vale
+ * na data de débito (confirmar exige reconhecimento); `CRITICO` = já estará vencido no débito
+ * (I15h: só informativo).
+ */
+export const AVISO_VENCE_ANTES = {
+    NENHUM: 'NENHUM',
+    ATENCAO: 'ATENCAO',
+    CRITICO: 'CRITICO',
+} as const;
+export type AvisoVenceAntes = (typeof AVISO_VENCE_ANTES)[keyof typeof AVISO_VENCE_ANTES];
+
+export interface ChaveTitulo {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+}
+
+/** Um boleto candidato de um título, com a avaliação do par e o que impede a confirmação. */
+export interface CandidatoTitulo {
+    ddcCod: number;
+    ditCod: number;
+    numeroBoleto?: string;
+    valorBoleto: number;
+    vencimentoBoleto: string;
+    emissor?: EmissorBoleto;
+    avaliacao: AvaliacaoSugestao;
+    /** Emissor confirmado (par vigente) OU número do documento igual. */
+    ancorado: boolean;
+    /** Só o candidato escolhido (`UNICA_SEGURA`/`SO_ATENCAO`) é confirmável. */
+    confirmavel: boolean;
+    /** Boleto exibido em mais de um título sem reserva (fraco/vencido não reservam). */
+    compartilhado?: boolean;
+    /** O boleto está reservado ao título indicado (disputa, I15e/I15n). */
+    reservadoParaTitulo?: ChaveTitulo;
+    /** Por que não é confirmável (pt-BR); ausente quando confirmável. */
+    motivo?: string;
+}
+
+/** Desfecho por título: até `SUGESTAO_TOP_CANDIDATOS` candidatos, ranqueados. */
+export interface DesfechoTitulo extends ChaveTitulo {
+    pesCod?: string;
+    credor?: string;
+    valorTitulo: number;
+    vencimentoTitulo: string;
+    dataDebito: string;
+    situacao: SituacaoSugestaoTitulo;
+    candidatos: CandidatoTitulo[];
+    /** Candidatos dentro do envelope (antes do corte de exibição). */
+    totalCandidatos: number;
+    motivo: string;
+    /** Confirmação órfã (I15l): motivo da perda do boleto/título. */
+    motivoOrfa?: string;
+}
+
+/** Candidato como a API o expõe: emissor MASCARADO, sem barras nem linha digitável (I15k). */
+export type CandidatoTituloView = Omit<CandidatoTitulo, 'emissor'> & {
+    emissor?: EmissorBoletoView;
+};
+
+export type DesfechoTituloView = Omit<DesfechoTitulo, 'candidatos'> & {
+    candidatos: CandidatoTituloView[];
+    avisoVenceAntes: AvisoVenceAntes;
+    /** Dias vencido na data de débito do melhor candidato (0 quando não há). */
+    diasVencidoNoDebito: number;
+};
+
 export interface FiltroSugestoes {
     filCod?: number;
     pesCod?: string;
     tier?: ResultadoSugestao;
+    situacao?: SituacaoSugestaoTitulo;
     pagina?: number;
     tamanho?: number;
 }
 
 export interface ListagemSugestoes {
     sugestoes: SugestaoBoletoView[];
+    /** Uma linha por título elegível (I15m): o desfecho e o melhor candidato. */
+    titulos: DesfechoTituloView[];
+    /** Títulos do conjunto filtrado (antes da paginação); `total` segue contando `sugestoes`. */
+    totalTitulos: number;
     total: number;
     pagina: number;
     tamanho: number;
     /** Contagem por resultado, sobre o conjunto filtrado por filial/credor (antes do `tier`). */
     contagem: Record<ResultadoSugestao, number>;
+    /** Contagem por situação do título, sobre o conjunto filtrado por filial/credor. */
+    contagemSituacao: Record<SituacaoSugestaoTitulo, number>;
     /** epoch ms da última sincronização do DDA; ausente = nunca sincronizado (ADR-0067). */
     sincronizadoEm?: number;
     /** Horas de defasagem do DDA quando passou de 8 h em dia útil; ausente = em dia (ADR-0067). */

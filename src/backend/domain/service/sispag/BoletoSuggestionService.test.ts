@@ -11,6 +11,8 @@ import IssuerConfirmationVersionConflictError from '../../errors/IssuerConfirmat
 import InvalidDecisionActorError from '../../errors/InvalidDecisionActorError.js';
 import LineCopyAuditFailedError from '../../errors/LineCopyAuditFailedError.js';
 import OverdueBoletoNotConfirmableError from '../../errors/OverdueBoletoNotConfirmableError.js';
+import TitleSuggestionNotFoundError from '../../errors/TitleSuggestionNotFoundError.js';
+import WarningAcknowledgementRequiredError from '../../errors/WarningAcknowledgementRequiredError.js';
 import type { BoletoDda } from '../../interface/sispag/BoletoDda.js';
 import type {
     ConfirmacaoEmissor,
@@ -311,16 +313,16 @@ describe('BoletoSuggestionService.listarSugestoes (I15c, I15k)', () => {
 describe('cache do cenário (PERF-1)', () => {
     it('a segunda listagem sai do cache: o motor e as leituras rodam uma vez só', async () => {
         const { service, tituloRepo, boletoRepo } = montar();
-        const motorSugerir = jest.spyOn(motor, 'sugerir');
+        const motorAnalisar = jest.spyOn(motor, 'analisar');
         try {
             await service.listarSugestoes({});
             await service.listarSugestoes({ tier: 'FORTE', pagina: 1, tamanho: 10 });
             await service.listarSugestoes({ pesCod: '7001' });
-            expect(motorSugerir).toHaveBeenCalledTimes(1);
+            expect(motorAnalisar).toHaveBeenCalledTimes(1);
             expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
             expect(boletoRepo.listBoletos).toHaveBeenCalledTimes(1);
         } finally {
-            motorSugerir.mockRestore();
+            motorAnalisar.mockRestore();
         }
     });
 
@@ -340,7 +342,7 @@ describe('cache do cenário (PERF-1)', () => {
 
     it('single-flight: duas listagens concorrentes rodam o motor exatamente uma vez', async () => {
         const { service, tituloRepo } = montar();
-        const motorSugerir = jest.spyOn(motor, 'sugerir');
+        const motorAnalisar = jest.spyOn(motor, 'analisar');
         let liberar: () => void = () => undefined;
         const portao = new Promise<void>((r) => {
             liberar = r;
@@ -357,10 +359,10 @@ describe('cache do cenário (PERF-1)', () => {
             const [ra, rb] = await Promise.all([a, b]);
             expect(ra.total).toBe(1);
             expect(rb.total).toBe(1);
-            expect(motorSugerir).toHaveBeenCalledTimes(1);
+            expect(motorAnalisar).toHaveBeenCalledTimes(1);
             expect(tituloRepo.listAtivos).toHaveBeenCalledTimes(1);
         } finally {
-            motorSugerir.mockRestore();
+            motorAnalisar.mockRestore();
         }
     });
 
@@ -1114,3 +1116,324 @@ describe('erros nomeados e entradas ruins (PatternGuardian)', () => {
         expect(JSON.stringify(payload)).not.toContain('already exists');
     });
 });
+
+describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o, ADR-0072)', () => {
+    const LOTE_DEBITO_15 = [
+        {
+            filCod: 1,
+            docCod: '9001',
+            titCod: '1',
+            loteId: 'l1',
+            status: 'RASCUNHO',
+            dataDebito: '2026-10-15',
+        },
+    ];
+    // título vence 20/10, boleto 18/10, débito antecipado 15/10 → Δ −2, o boleto ainda vale (caso B)
+    const BOLETO_ANTES = { ...BOLETO, vencimento: '2026-10-18' };
+    const comLote = (m: ReturnType<typeof montar>) =>
+        m.loteRepo.listTitulosEmLotesAbertos.mockResolvedValue(LOTE_DEBITO_15 as never);
+
+    describe('listagem por título', () => {
+        it('uma linha por título elegível, com situação, total e aviso; contagem soma os títulos', async () => {
+            const semCandidato: TituloAPagar = { ...TITULO, docCod: '9100', valor: 5000 };
+            const fraco: TituloAPagar = { ...TITULO, docCod: '9200', valor: 300 };
+            const m = montar({
+                titulos: [TITULO, semCandidato, fraco],
+                boletos: [BOLETO, { ...BOLETO, ditCod: 2, valor: 304 }],
+            });
+            const r = await m.service.listarSugestoes({});
+            expect(r.titulos).toHaveLength(3);
+            const por = (doc: string) => r.titulos.find((t) => t.docCod === doc);
+            expect(por('9001')).toMatchObject({
+                situacao: 'UNICA_SEGURA',
+                totalCandidatos: 1,
+                avisoVenceAntes: 'NENHUM',
+                diasVencidoNoDebito: 0,
+            });
+            expect(por('9100')).toMatchObject({ situacao: 'SEM_CANDIDATO', totalCandidatos: 0 });
+            expect(por('9200')?.situacao).toBe('SO_FRACA');
+            expect(r.totalTitulos).toBe(3);
+            const soma = Object.values(r.contagemSituacao).reduce((a, b) => a + b, 0);
+            expect(soma).toBe(3);
+            expect(r.contagemSituacao).toMatchObject({
+                UNICA_SEGURA: 1,
+                SEM_CANDIDATO: 1,
+                SO_FRACA: 1,
+            });
+            expect(r.sincronizadoEm).toBe(HOJE.getTime() - 2 * 3_600_000);
+            expect(r.sugestoes).toHaveLength(1); // contrato antigo preservado
+        });
+
+        it('avisoVenceAntes: ATENCAO no caso B e CRITICO no caso A, com os dias de atraso', async () => {
+            const b = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
+            comLote(b);
+            const rb = await b.service.listarSugestoes({});
+            expect(rb.titulos[0]).toMatchObject({
+                situacao: 'SO_ATENCAO',
+                avisoVenceAntes: 'ATENCAO',
+                diasVencidoNoDebito: 0,
+            });
+            const a = montar({ boletos: [{ ...BOLETO, vencimento: '2026-10-17' }] });
+            const ra = await a.service.listarSugestoes({});
+            expect(ra.titulos[0]).toMatchObject({
+                situacao: 'SO_VENCIDA',
+                avisoVenceAntes: 'CRITICO',
+                diasVencidoNoDebito: 3,
+            });
+        });
+
+        it('1,1 mil títulos produzem 1,1 mil linhas (abaixo do teto de 2000)', async () => {
+            const titulos = Array.from({ length: 1100 }, (_, i) => ({
+                ...TITULO,
+                docCod: String(20_000 + i),
+                valor: 5000 + i * 100,
+            }));
+            const { service } = montar({ titulos, boletos: [] });
+            const r = await service.listarSugestoes({ tamanho: 2000 });
+            expect(r.titulos).toHaveLength(1100);
+            expect(r.totalTitulos).toBe(1100);
+        });
+
+        it('filtra por situação e conta antes desse filtro; sem barras nem linha digitável', async () => {
+            const fraco: TituloAPagar = { ...TITULO, docCod: '9200', valor: 300 };
+            const { service } = montar({
+                titulos: [TITULO, fraco],
+                boletos: [BOLETO, { ...BOLETO, ditCod: 2, valor: 304 }],
+            });
+            const r = await service.listarSugestoes({ situacao: 'SO_FRACA' });
+            expect(r.titulos.map((t) => t.docCod)).toEqual(['9200']);
+            expect(r.contagemSituacao.UNICA_SEGURA).toBe(1);
+            const json = JSON.stringify(r);
+            expect(json).not.toContain(CODBAR);
+            expect(json).not.toContain(LINHA);
+            expect(json).not.toMatch(/\d{30,}/);
+        });
+
+        it('o log do cenário traz a contagem por situação, sem barras', async () => {
+            const { service, logService } = montar();
+            await service.listarSugestoes({});
+            const calculo = logService.info.mock.calls
+                .map((c) => c[0] as { message: string; data?: Record<string, unknown> })
+                .find((p) => p.message === 'sugestao_boleto.cenario_calculado');
+            expect(calculo?.data?.situacoes).toMatchObject({ UNICA_SEGURA: 1 });
+            expect(JSON.stringify(calculo)).not.toContain(CODBAR);
+        });
+    });
+
+    describe('detalhe por título', () => {
+        it('devolve até 3 candidatos com Δ com sinal, emissor mascarado e sem barras', async () => {
+            const boletos = [104, 102, 106, 108].map((v, i) => ({
+                ...BOLETO,
+                ditCod: 10 + i,
+                valor: v,
+            }));
+            const { service } = montar({ boletos });
+            const d = await service.detalharTitulo(TIT_CHAVE);
+            expect(d.situacao).toBe('SO_FRACA');
+            expect(d.totalCandidatos).toBe(4);
+            expect(d.candidatos).toHaveLength(3);
+            expect(d.candidatos.map((c) => c.avaliacao.deltaValor)).toEqual([2, 4, 6]);
+            expect(d.candidatos[0]?.emissor).toEqual({
+                banco: '237',
+                layout: 'BRADESCO_237',
+                mascarado: '237 / 2656 / ***2740',
+            });
+            const json = JSON.stringify(d);
+            expect(json).not.toContain(CODBAR);
+            expect(json).not.toContain(LINHA);
+            expect(json).not.toContain('0092740');
+            expect(json).not.toMatch(/\d{30,}/);
+        });
+
+        it('título inelegível ou inexistente → 404 nomeado', async () => {
+            const { service } = montar({ titulos: [{ ...TITULO, pago: true }] });
+            await expect(service.detalharTitulo(TIT_CHAVE)).rejects.toBeInstanceOf(
+                TitleSuggestionNotFoundError,
+            );
+            await expect(
+                service.detalharTitulo({ ...TIT_CHAVE, docCod: '0000' }),
+            ).rejects.toBeInstanceOf(TitleSuggestionNotFoundError);
+        });
+    });
+
+    describe('confirmar: exibir ≠ confirmar (409)', () => {
+        const nada = (m: ReturnType<typeof montar>) => {
+            expect(m.repo.inserirPar).not.toHaveBeenCalled();
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+            expect(m.eventos).toHaveLength(0);
+        };
+
+        it('SO_FRACA (ATENCAO sem âncora) → 409 com o motivo, nada gravado', async () => {
+            const m = montar({ boletos: [{ ...BOLETO, valor: 104 }] });
+            const antes = await m.service.listarSugestoes({});
+            expect(antes.titulos[0]?.situacao).toBe('SO_FRACA');
+            await expect(m.service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toMatchObject({
+                statusCode: 409,
+                code: 'SUGESTAO_BOLETO_INDISPONIVEL',
+                userMessage: expect.stringContaining('Sem confirmação'),
+            });
+            nada(m);
+        });
+
+        it('AMBIGUA → 409; depois de rejeitar o outro, confirma', async () => {
+            const m = montar({ boletos: [BOLETO, { ...BOLETO, ditCod: 2 }] });
+            await expect(m.service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toBeInstanceOf(
+                BoletoSuggestionNotAvailableError,
+            );
+            nada(m);
+            await m.service.rejeitar({ ...CHAVE, ditCod: 2, motivo: 'outro título', ator: 'ana' });
+            const r = await m.service.confirmar({ ...CHAVE, ator: 'ana' });
+            expect(r.criada).toBe(true);
+        });
+
+        it('DISPUTADA (boleto reservado a outro título) → 409, nada gravado', async () => {
+            const rival: TituloAPagar = {
+                ...TITULO,
+                docCod: '1000',
+                vencimento: utc('2026-10-19'),
+            };
+            const m = montar({
+                titulos: [TITULO, rival],
+                boletos: [{ ...BOLETO, vencimento: '2026-10-20' }],
+            });
+            const lista = await m.service.listarSugestoes({});
+            expect(lista.titulos.find((t) => t.docCod === '9001')?.situacao).toBe('DISPUTADA');
+            await expect(m.service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toMatchObject({
+                statusCode: 409,
+            });
+            nada(m);
+        });
+
+        it('mesmo com a regra pura dizendo confirmável, o serviço recusa o fraco (trava no serviço)', async () => {
+            const m = montar({ boletos: [{ ...BOLETO, valor: 104 }] });
+            const direta = regra.avaliar({
+                titulo: { valor: 100, vencimento: '2026-10-20' },
+                boleto: { valor: 104, vencimento: '2026-10-20' },
+                dataDebito: '2026-10-20',
+                parConfirmado: false,
+            });
+            expect(direta.confirmavel).toBe(true);
+            await expect(m.service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toBeInstanceOf(
+                BoletoSuggestionNotAvailableError,
+            );
+            nada(m);
+        });
+    });
+
+    describe('confirmar: aviso VENCE_ANTES_DO_TITULO exige reconhecimento (422)', () => {
+        const caminhoB = () => {
+            const m = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
+            comLote(m);
+            return m;
+        };
+
+        it('sem reconheceAvisos → 422 WarningAcknowledgementRequiredError, nada gravado', async () => {
+            const m = caminhoB();
+            await expect(m.service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toBeInstanceOf(
+                WarningAcknowledgementRequiredError,
+            );
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+            expect(m.repo.inserirPar).not.toHaveBeenCalled();
+            expect(m.db.withTransaction).not.toHaveBeenCalled();
+        });
+
+        it('com o reconhecimento → grava os dois sinais e registra no evento', async () => {
+            const m = caminhoB();
+            const r = await m.service.confirmar({
+                ...CHAVE,
+                ator: 'ana',
+                reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+            });
+            expect(r.criada).toBe(true);
+            const dec = m.repo.inserirDecisao.mock.calls[0]?.[0] as Record<string, unknown>;
+            expect(dec.sinais).toEqual(
+                expect.arrayContaining(['VENCE_ANTES_DO_TITULO', 'RECONHECEU_VENCE_ANTES']),
+            );
+            expect(dec).toMatchObject({ tier: 'ATENCAO', deltaDias: -2 });
+            const confirmado = m.eventos.find((e) => e.tipo === 'DECISAO_CONFIRMADA');
+            expect(confirmado?.detalhe).toMatchObject({
+                reconheceu: ['VENCE_ANTES_DO_TITULO'],
+            });
+        });
+
+        it('ack é conferido contra a avaliação recalculada, nunca contra o cache', async () => {
+            const m = montar({ boletos: [BOLETO_ANTES], pares: [PAR] });
+            // cache quente SEM lote: débito = vencimento do título; o boleto aparece vencido (caso A)
+            await m.service.listarSugestoes({});
+            // o lote antecipa o débito DEPOIS: agora é o caso B e a releitura vê o sinal
+            comLote(m);
+            await expect(m.service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toBeInstanceOf(
+                WarningAcknowledgementRequiredError,
+            );
+        });
+
+        it('ack enviado sem aviso no servidor é aceito mas NÃO grava RECONHECEU_VENCE_ANTES', async () => {
+            const m = montar();
+            await m.service.confirmar({
+                ...CHAVE,
+                ator: 'ana',
+                reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+            });
+            const dec = m.repo.inserirDecisao.mock.calls[0]?.[0] as { sinais: string[] };
+            expect(dec.sinais).not.toContain('RECONHECEU_VENCE_ANTES');
+            expect(dec.sinais).not.toContain('VENCE_ANTES_DO_TITULO');
+        });
+
+        it('caso A (boleto antes do débito) segue 422 OverdueBoletoNotConfirmable, mesmo com ack', async () => {
+            const m = montar({ boletos: [{ ...BOLETO, vencimento: '2026-10-17' }] });
+            await expect(
+                m.service.confirmar({
+                    ...CHAVE,
+                    ator: 'ana',
+                    reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+                }),
+            ).rejects.toBeInstanceOf(OverdueBoletoNotConfirmableError);
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+        });
+
+        it('idempotência: reconfirmar decisão existente devolve criada:false sem exigir ack', async () => {
+            const m = montar({
+                boletos: [BOLETO_ANTES],
+                pares: [PAR],
+                decisoes: [{ ...DECISAO, vencimentoBoleto: '2026-10-18', deltaDias: -2 }],
+            });
+            comLote(m);
+            const r = await m.service.confirmar({ ...CHAVE, ator: 'bia' });
+            expect(r.criada).toBe(false);
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('rejeitar candidato exibido (Q2)', () => {
+        it('permite rejeitar o fraco e esconde o par, com motivo', async () => {
+            const m = montar({ boletos: [{ ...BOLETO, valor: 104 }] });
+            const r = await m.service.rejeitar({ ...CHAVE, motivo: 'não é este', ator: 'ana' });
+            expect(r.criada).toBe(true);
+            expect(m.repo.inserirDecisao.mock.calls[0]?.[0]).toMatchObject({
+                decisao: 'REJEITADA',
+            });
+        });
+
+        it('recusa rejeitar o vencido na data de débito (só informativo)', async () => {
+            const m = montar({ boletos: [{ ...BOLETO, vencimento: '2026-10-17' }] });
+            await expect(
+                m.service.rejeitar({ ...CHAVE, motivo: 'não é este', ator: 'ana' }),
+            ).rejects.toBeInstanceOf(BoletoSuggestionNotAvailableError);
+            expect(m.repo.inserirDecisao).not.toHaveBeenCalled();
+        });
+    });
+
+    it('anular e copiar linha seguem inalterados', async () => {
+        const m = montar({ pares: [PAR], decisoes: [{ ...DECISAO }] });
+        const r = await m.service.anularDecisao({
+            ...TIT_CHAVE,
+            motivo: 'confirmação errada',
+            ator: 'cid',
+        });
+        expect(r.anulada).toBe(true);
+        const c = await m.service.copiarLinha({ ...CHAVE, ator: 'ana' });
+        expect(c.linhaDigitavel).toBe(LINHA);
+    });
+});
+
+const TIT_CHAVE = { filCod: 1, docCod: '9001', titCod: '1' };

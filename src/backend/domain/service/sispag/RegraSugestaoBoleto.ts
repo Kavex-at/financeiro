@@ -40,8 +40,22 @@ export const REGRA_CANDIDATO_TEXTO = `candidato = diferença de até R$ ${LIMITE
 
 const centavos = (valor: number): number => Math.round(valor * 100);
 
+/** Memo de `Date.parse` por data civil: o motor avalia ~10⁵ pares sobre poucas datas distintas. */
+const EPOCH_POR_DATA = new Map<string, number>();
+const LIMITE_MEMO_DATAS = 20_000;
+
+const epochDaData = (civil: string): number => {
+    let epoch = EPOCH_POR_DATA.get(civil);
+    if (epoch === undefined) {
+        epoch = Date.parse(`${civil}T00:00:00Z`);
+        if (EPOCH_POR_DATA.size >= LIMITE_MEMO_DATAS) EPOCH_POR_DATA.clear();
+        EPOCH_POR_DATA.set(civil, epoch);
+    }
+    return epoch;
+};
+
 const diasEntre = (de: string, ate: string): number =>
-    Math.round((Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / DAY_MS);
+    Math.round((epochDaData(ate) - epochDaData(de)) / DAY_MS);
 
 /**
  * Faixa de valor (centavos, inclusiva) em que um título pode ser candidato de um boleto de
@@ -78,6 +92,9 @@ export default class RegraSugestaoBoleto {
                 : Math.round((deltaCentavos / tituloCentavos) * 100 * 10_000) / 10_000;
 
         const sinais: SinalSugestao[] = [];
+        // Dias em que o boleto já estará vencido na data de débito (I15o): derivado, nunca gravado.
+        const debitoAteBoleto = diasEntre(dataDebito, boleto.vencimento);
+        const diasAtraso = -debitoAteBoleto;
         const resposta = (resultado: ResultadoSugestao): AvaliacaoSugestao => ({
             resultado,
             deltaValor: deltaCentavos / 100,
@@ -85,6 +102,7 @@ export default class RegraSugestaoBoleto {
             deltaDias,
             sinais,
             confirmavel: CONFIRMAVEIS.has(resultado),
+            diasVencidoNoDebito: Number.isNaN(diasAtraso) ? 0 : Math.max(0, diasAtraso),
         });
 
         if (Number.isNaN(deltaDias) || Number.isNaN(diasEntre(titulo.vencimento, dataDebito))) {
@@ -102,8 +120,10 @@ export default class RegraSugestaoBoleto {
         }
 
         sinais.push(...this.sinaisDeValorEData(deltaCentavos, deltaDias));
+        // Aviso derivado (I15o): só dentro do envelope; não muda tier, deltas nem confirmabilidade.
+        if (deltaDias < 0) sinais.push(SINAL_SUGESTAO.VENCE_ANTES_DO_TITULO);
 
-        const venceAntesDoDebito = diasEntre(dataDebito, boleto.vencimento) < 0;
+        const venceAntesDoDebito = debitoAteBoleto < 0;
         const dentroDosLimites =
             !venceAntesDoDebito && this.dentroDosLimites(deltaCentavos, deltaDias);
 
