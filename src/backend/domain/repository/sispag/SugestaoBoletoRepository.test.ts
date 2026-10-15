@@ -268,6 +268,33 @@ describe('SugestaoBoletoRepository (ADR-0068, migration 0084)', () => {
         });
     });
 
+    it('inserirDecisao: os sinais novos (ADR-0072) serializam em JSONB e voltam iguais na leitura', async () => {
+        const sinais = [
+            'MESMO_DIA',
+            'VENCE_ANTES_DO_TITULO',
+            'RECONHECEU_VENCE_ANTES',
+        ] as NonNullable<typeof NOVA_DECISAO.sinais>;
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce({ id: 'd1' }).mockResolvedValueOnce({
+            ...DECISAO_ROW,
+            sinais,
+        });
+        const r = await make(db).inserirDecisao({ ...NOVA_DECISAO, sinais });
+        expect(db.selectFirst.mock.calls[0][1].sinais).toBe(JSON.stringify(sinais));
+        expect(r.decisao.sinais).toEqual(sinais);
+
+        db.selectMany.mockResolvedValueOnce([{ ...DECISAO_ROW, sinais }]);
+        const lidas = await make(db).listarDecisoes({ decisao: 'CONFIRMADA' });
+        expect(lidas[0]?.sinais).toEqual(sinais);
+    });
+
+    it('decisão legada sem os sinais novos continua legível', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValueOnce([{ ...DECISAO_ROW, sinais: ['MESMO_DIA'] }]);
+        const lidas = await make(db).listarDecisoes({ decisao: 'CONFIRMADA' });
+        expect(lidas[0]?.sinais).toEqual(['MESMO_DIA']);
+    });
+
     it('inserirDecisao: perdedor relê a vencedora pelo título OU pelo boleto (criada=false)', async () => {
         const db = buildDb();
         db.selectFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(DECISAO_ROW);

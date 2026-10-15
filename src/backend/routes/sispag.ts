@@ -68,9 +68,11 @@ import {
     ChaveSugestaoBodySchema,
     ConfirmacaoEmissorIdSchema,
     ConfirmacoesEmissorQuerySchema,
+    ConfirmarSugestaoBodySchema,
     RejeitarSugestaoBodySchema,
     RevogarConfirmacaoBodySchema,
     SugestoesQuerySchema,
+    TituloSugestaoQuerySchema,
 } from '../domain/interface/sispag/SugestaoBoletoSchemas.js';
 import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
 
@@ -864,8 +866,9 @@ const decisaoParaApi = (d: DecisaoSugestao): Omit<DecisaoSugestao, 'emissorChave
     return resto;
 };
 
-// GET /sispag/sugestoes-boleto?filCod=&pesCod=&tier=&pagina=&tamanho= — `sispag:ver`. Emissor
-// MASCARADO; nunca barras nem linha digitável (a linha só sai por `copiar-linha`, auditado).
+// GET /sispag/sugestoes-boleto?filCod=&pesCod=&tier=&situacao=&pagina=&tamanho= — `sispag:ver`.
+// `titulos[]` = uma linha por título elegível (ADR-0072). Emissor MASCARADO; nunca barras nem linha
+// digitável (a linha só sai por `copiar-linha`, auditado).
 router.get(
     '/sugestoes-boleto',
     exigirPermissao(PERMISSION.SISPAG_VER),
@@ -878,6 +881,7 @@ router.get(
                 ...(query.data.filCod !== undefined ? { filCod: query.data.filCod } : {}),
                 ...(query.data.pesCod ? { pesCod: query.data.pesCod } : {}),
                 ...(query.data.tier ? { tier: query.data.tier } : {}),
+                ...(query.data.situacao ? { situacao: query.data.situacao } : {}),
                 pagina: query.data.pagina,
                 tamanho: query.data.tamanho,
             }),
@@ -885,15 +889,35 @@ router.get(
     }),
 );
 
+// GET /sispag/sugestoes-boleto/titulo?filCod=&docCod=&titCod= — `sispag:ver`. Até 3 candidatos do
+// título (I15m), sob demanda; no-store; 404 nomeado se o título não é elegível.
+router.get(
+    '/sugestoes-boleto/titulo',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = TituloSugestaoQuerySchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        try {
+            const d = await sugestoesBoleto().detalharTitulo(query.data);
+            res.setHeader('Cache-Control', 'no-store');
+            res.json(d);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
 // POST /sispag/sugestoes-boleto/confirmar — `sispag:executar`. 201 decisão nova · 200 já existia
-// (idempotente) · 409 indisponível/reservado a outro título · 422 boleto vencido.
+// (idempotente) · 409 indisponível/reservado a outro título/não confirmável (fraco, ambíguo,
+// disputado) · 422 boleto vencido ou aviso `VENCE_ANTES_DO_TITULO` sem `reconheceAvisos`.
 router.post(
     '/sugestoes-boleto/confirmar',
     exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
     limiteDecisaoBoleto,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const body = ChaveSugestaoBodySchema.safeParse(req.body);
+        const body = ConfirmarSugestaoBodySchema.safeParse(req.body);
         if (!body.success) return respostaInvalida(res, body.error);
         try {
             const r = await sugestoesBoleto().confirmar({ ...body.data, ator: ator(req) });
