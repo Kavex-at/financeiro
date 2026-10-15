@@ -226,3 +226,14 @@
   do `PUT` reduz mas não elimina. Revisitar se aparecer edição concorrente em PRD.
 - **`shadow` usa a carteira local como "aberto"** — em HML o `fin064.totalAberto` difere do valor do grid em
   vários títulos (V8): o `shadow` é indicativo; só o `on` compara com o aberto ao vivo.
+
+## SISPAG — desfecho por título e aviso "vence antes do título" (ADR-0072, 2026-10-15)
+
+- **Confirmar `ATENCAO` sem âncora** — criaria par (credor, emissor) a partir de caso com Δ alto (ex.: +R$ 526),
+  e o par vira âncora. Revisitar só com evidência de necessidade **e** regra para não criar par nessa confirmação.
+- **Escolha direta entre candidatos ambíguos** — hoje se resolve rejeitando os outros. Revisitar se a rejeição
+  se mostrar fricção medida.
+- **Alargar a janela do passo 2** (valor igual, +6..+10 d; os 4 MULTILOG +8 d) — 1 credor; exige evidência
+  de barra +8 d e retorno bancário.
+- **Retirada/trava automática do lote do título com boleto vencido** — decisão de produto, passo 3.
+- **Vincular boleto acima/abaixo do título** — segue em ADR-0071 (inviável/não medido).

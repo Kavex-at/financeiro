@@ -93,7 +93,7 @@ Invariantes:
 - **I-DDA4 — a sugestão tem camadas e decisão humana registrada** (ADR-0068, I15, implemented em v0.66.0). Ver
   `business-rules/sugestao-boleto-dda-sispag.md`. I-DDA1 (candidato não é gravado) permanece:
   a sugestão é calculada; o que se persiste é a **decisão** (`DecisaoSugestaoBoleto`) e o **par**
-  (`ConfirmacaoEmissorBoleto`), nunca o candidato.
+  (`ConfirmacaoEmissorBoleto`), nunca o candidato. **Nota (ADR-0072, `planned`):** o pool (com `sincronizadoEm`) é a base do desfecho derivado `SEM_CANDIDATO` (I15m); defasagem > 8 h (ADR-0067) torna-o "sem candidato no pool de há N h", nunca afirmação absoluta. Desfecho não é persistido.
 
 ## Sincronização
 
