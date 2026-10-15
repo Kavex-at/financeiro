@@ -1,7 +1,7 @@
 ---
 name: DecisaoSugestaoBoleto
 type: entity
-ontology_version: "0.42.0"
+ontology_version: "0.43.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -43,7 +43,7 @@ universality_evidence:
 | `numeroBoleto` · `codbarMascarado` | string? · string | `ditEspNumero` do boleto; barras só mascaradas (emissor + últimos dígitos). A linha digitável completa não é persistida. |
 | `valorTitulo` · `vencimentoTitulo` · `valorBoleto` · `vencimentoBoleto` | number · Date · number · Date | Snapshot na hora da decisão. Datas como data civil (UTC meia-noite, BRT). |
 | `deltaValor` · `deltaPercentual` · `deltaDias` | number · number · number | **Com sinal**, boleto − título (mesma convenção de `diferencaDias`). Mostrados e gravados; **nunca** abençoados pelo par (I15d). |
-| `sinais` | lista | Ex.: `VALOR_IGUAL`, `VALOR_ATE_5_CENTAVOS`, `MESMO_DIA`, `DIAS_DEPOIS`, `NUMERO_IGUAL`, `EMISSOR_CONFIRMADO`. |
+| `sinais` | lista | Ex.: `VALOR_IGUAL`, `VALOR_ATE_5_CENTAVOS`, `MESMO_DIA`, `DIAS_DEPOIS`, `NUMERO_IGUAL`, `EMISSOR_CONFIRMADO`; (ADR-0072, `planned`) `VENCE_ANTES_DO_TITULO` e `RECONHECEU_VENCE_ANTES` (reconhecimento explícito do aviso, I15o). Sem estado novo; se `sinais` não for lista/JSON livre, a migration mínima é do TaskScoper. |
 | `tier` | `CONHECIDO \| FORTE \| ATENCAO` | Derivado na hora da decisão (regra I15c). |
 | `emissorChave` | string | Chave do emissor derivada do `codbar` do boleto (par com `pesCod`). |
 | `decisao` | `CONFIRMADA \| REJEITADA \| ANULADA` | `CONFIRMADA → ANULADA` é a única transição; `REJEITADA` e `ANULADA` são terminais. Ver "Estados". |

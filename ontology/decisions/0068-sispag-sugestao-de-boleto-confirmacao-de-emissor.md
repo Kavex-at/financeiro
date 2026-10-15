@@ -164,3 +164,5 @@ carga (páginas de 100 em série). Decisão do maintainer, sem mudar nenhuma reg
 ## Emenda 2026-10-14 (4) — o passo 2 depende da ADR-0069
 
 > **Emenda (ADR-0069):** o passo 2 (bind de valor igual) só pode ser implementado depois da guarda I16 (um código de barras, um item), que roda sobre `itsNumCodbar` pós-import e pós-edição.
+
+> **Emenda (ADR-0072):** a decisão de I15e "ambiguidade ⇒ sem sugestão" e o corte de `ATENCAO` sem âncora foram substituídos por exibição informativa (não confirmável); ver 0072.

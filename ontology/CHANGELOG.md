@@ -3,6 +3,20 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.43.0 — SISPAG: desfecho de sugestão para todo título e aviso "vence antes do título" (2026-10-15, ADR-0072)
+
+Feature: `sispag-sugestao-para-todo-titulo` (`/feature-new`). `entity_changed = true`. **Ontologia à frente do
+código** (tudo `planned`).
+
+- **Regras novas I15m–o** em `sugestao-boleto-dda-sispag`: desfecho visível por título (I15m), candidato fraco
+  não reserva e `DISPUTADA` (I15n), aviso `VENCE_ANTES_DO_TITULO` com reconhecimento no servidor (I15o).
+- **Emendas:** I15c (`ATENCAO` com/sem âncora), I15e (ambíguo listado, não confirmável; disputa visível), I15h
+  (Δdias < 0 avisa; vencido no débito segue bloqueado). Notas em I17a/I17c, ADR-0068 e ADR-0071; I17 intocado.
+- `DecisaoSugestaoBoleto.sinais` += `VENCE_ANTES_DO_TITULO`, `RECONHECEU_VENCE_ANTES`; `SituacaoSugestaoTitulo`
+  derivada (sem entidade/estado novos). Erro `WarningAcknowledgementRequiredError` (422), `planned`.
+- Decisões do maintainer: P0-1 fraco/ambíguo só informativos; P0-2 ack no servidor. Watchlist atualizada.
+- Contagens inalteradas (nenhuma entidade, ação ou regra nova; invariantes I15: 12 → 15).
+
 ## v0.42.0 — SISPAG: vínculo do código de barras confirmado ao item (2026-10-14, ADR-0071)
 
 > **Implementação entregue (mesma data):** `vinculo-codbar-item-sispag` e `vincularCodigoBarrasAoItem`
