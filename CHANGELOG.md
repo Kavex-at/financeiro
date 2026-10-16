@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.69.0 (2026-10-15) — SISPAG: todo título de boleto sem DDA mostra o que fazer, e o aviso de vencimento antes do título
+
+- **Nenhum título "sem DDA" fica sem resposta.** Antes, só ~1 em cada 4 mostrava sugestão (os candidatos
+  fracos e os ambíguos eram descartados em silêncio). Agora cada título mostra o desfecho: sugestão forte,
+  só candidato fraco, ambíguo (mais de um boleto igual), boleto vencido na data de débito, boleto
+  disputado por outro título, ou "nenhum boleto no pool dentro do critério" com a hora da última carga.
+- **Só o forte pode ser confirmado.** Candidatos fracos, ambíguos, disputados e vencidos aparecem
+  ordenados (até 3 por título) mas **não** podem ser confirmados; o ambíguo se resolve rejeitando os outros.
+- **Aviso "o boleto vence antes do título".** Aparece na lista, no painel e na confirmação, que exige
+  marcar que você leu o aviso (atraso, juros e multa). Boleto já vencido na data de débito continua
+  bloqueado.
+- Nada muda no vínculo do código de barras ao item (passo 2): o mesmo conjunto é vinculável.
+
 ## v0.68.1 (2026-10-15) — SISPAG: vínculo do código de barras liga para todas as filiais de uma vez
 
 - **Um valor só liga ou desliga tudo.** `SISPAG_BIND_CODBAR_FILIAIS` agora aceita `on`, `shadow` ou

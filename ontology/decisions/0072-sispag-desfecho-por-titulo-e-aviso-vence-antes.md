@@ -16,7 +16,7 @@ evidence:
 # ADR 0072: desfecho por título e aviso "vence antes do título"
 
 **Branch:** `feat/sispag-sugestao-para-todo-titulo`. `/feature-new`. `entity_changed = true`. Ontologia **0.43.0**
-(`planned`, à frente do código). Sem código nesta etapa.
+(`implemented`, app v0.69.0). Sem código nesta etapa.
 
 > **Reconferido (2026-10-15):** `origin/main` v0.68.1 (3788e34), ontologia 0.42.0, último ADR 0071; número
 > 0072 livre. Reconferir antes do ship (versões colidem entre sessões paralelas).
