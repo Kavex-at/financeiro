@@ -95,6 +95,27 @@ describe('MedirDesfechoSugestaoBoletoJob (Task 1, somente leitura)', () => {
         expect(r.chavesSemLinha).toEqual(['1:2:1', '7:6:1']);
     });
 
+    it('Task 16: 100 % dos elegíveis têm desfecho; conta por situação e a participação de SO_FRACA', async () => {
+        const { job } = montar(
+            [
+                titulo({ docCod: '1' }), // UNICA_SEGURA
+                titulo({ docCod: '2', valor: 5000 }), // SEM_CANDIDATO
+                titulo({ docCod: '3', pago: true }), // inelegível
+                titulo({ docCod: '4', valor: 300 }), // SO_FRACA
+                titulo({ docCod: '6', filCod: 7, valor: 9000 }), // SEM_CANDIDATO, filial 7
+            ],
+            [boleto({ ditCod: 1 }), boleto({ ditCod: 2, valor: 304 })],
+        );
+        const r = await job.executar();
+        expect(r.elegiveis).toBe(4);
+        expect(r.semDesfecho).toBe(0);
+        expect(r.chavesSemDesfecho).toEqual([]);
+        expect(r.porSituacao).toEqual({ UNICA_SEGURA: 1, SEM_CANDIDATO: 2, SO_FRACA: 1 });
+        expect(Object.values(r.porSituacao).reduce((a, b) => a + b, 0)).toBe(r.elegiveis);
+        expect(r.participacaoSoFraca).toBeCloseTo(0.25);
+        expect(r.porSituacaoPorFilial['7']).toEqual({ SEM_CANDIDATO: 1 });
+    });
+
     it('registra o instante, a data civil BRT e o sincronizadoEm do pool', async () => {
         const { job } = montar([], [], 1_760_000_123_000);
         const r = await job.executar();
