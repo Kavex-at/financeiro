@@ -1182,6 +1182,16 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
             });
         });
 
+        it('o candidato traz o id do par vigente do emissor (para revogar pela tela), sem a chave', async () => {
+            const { service } = montar({ pares: [PAR] });
+            const r = await service.listarSugestoes({});
+            expect(r.titulos[0]?.candidatos[0]).toMatchObject({
+                confirmacaoEmissorId: 'par-1',
+                emissor: { mascarado: '237 / 2656 / ***2740' },
+            });
+            expect(JSON.stringify(r.titulos)).not.toContain('237:2656:0092740');
+        });
+
         it('1,1 mil títulos produzem 1,1 mil linhas (abaixo do teto de 2000)', async () => {
             const titulos = Array.from({ length: 1100 }, (_, i) => ({
                 ...TITULO,

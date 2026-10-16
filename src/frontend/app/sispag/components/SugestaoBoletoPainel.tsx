@@ -11,6 +11,7 @@ import {
   type ChaveSugestaoBoleto,
   confirmarSugestaoBoleto,
   copiarLinhaSugestao,
+  type DesfechoTituloBoleto,
   MOTIVO_ANULACAO_MINIMO,
   rejeitarSugestaoBoleto,
   revogarConfirmacaoEmissor,
@@ -19,10 +20,14 @@ import {
 import { formatBRL } from '@/lib/utils'
 import { fmtCivil } from './CandidatosBoletoDialog'
 import { MotivoDecisaoDialog } from './MotivoDecisaoDialog'
+import { ReconhecerAvisoDialog } from './ReconhecerAvisoDialog'
 import {
+  candidatoComoSugestao,
+  exigeReconhecimento,
   formatDeltaDias,
   formatDeltaPercentual,
   formatDeltaValor,
+  mensagemVenceAntes,
   TEXTO_SINAL,
   TIER_ROTULO,
 } from './sugestaoBoleto'
@@ -76,7 +81,23 @@ function Delta({ rotulo, valor, destaque }: { rotulo: string; valor: string; des
 }
 
 type Aviso = { tipo: 'ok' | 'erro'; texto: string }
-type Dialogo = { tipo: 'rejeitar' | 'revogar' | 'anular'; sugestao: SugestaoBoleto }
+type Dialogo = {
+  tipo: 'rejeitar' | 'revogar' | 'anular' | 'reconhecer'
+  sugestao: SugestaoBoleto
+}
+
+/** Candidato do desfecho que corresponde ao item (para o que a sugestão legada não carrega). */
+const candidatoDe = (d: DesfechoTituloBoleto | undefined, s: SugestaoBoleto) =>
+  d?.candidatos.find((c) => c.ddcCod === s.ddcCod && c.ditCod === s.ditCod)
+
+const dataHora = (epochMs: number): string =>
+  new Date(epochMs).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 
 /**
  * Sugestão(ões) de boleto DDA para UM título "boleto sem DDA" (ADR-0068, passo 1). É evidência
@@ -88,13 +109,25 @@ type Dialogo = { tipo: 'rejeitar' | 'revogar' | 'anular'; sugestao: SugestaoBole
  * título; o painel avisa, não oferece confirmar nem copiar, e deixa "Anular confirmação".
  */
 export function SugestaoBoletoPainel({
-  sugestoes,
+  sugestoes: sugestoesLegadas,
+  desfecho,
+  sincronizadoEm,
+  onAbrirBoletosDda,
   podeExecutar,
   podeCopiar,
   ddaDefasadoHoras,
   onDecidido,
   itemVinculadoEmLoteVivo = false,
 }: {
+  /**
+   * Desfecho do título (ADR-0072): até 3 candidatos com situação e motivo. Sem ele (resposta
+   * antiga do backend), o painel mostra as `sugestoes` como antes.
+   */
+  desfecho?: DesfechoTituloBoleto | undefined
+  /** epoch ms da última sincronização do DDA (texto do estado "sem boleto no pool"). */
+  sincronizadoEm?: number | undefined
+  /** Atalho para a aba "Boletos DDA" quando o título não tem candidato. */
+  onAbrirBoletosDda?: (() => void) | undefined
   /**
    * O item deste título já tem o código vinculado num lote vivo (ADR-0071, I17l): anular a
    * confirmação NÃO o desfaz no Conexos — o diálogo avisa.
@@ -113,6 +146,13 @@ export function SugestaoBoletoPainel({
   const titleId = React.useId()
 
   const idItem = (s: SugestaoBoleto) => `${s.ddcCod}:${s.ditCod}`
+  const sugestoes = React.useMemo(
+    () =>
+      desfecho
+        ? desfecho.candidatos.map((c) => candidatoComoSugestao(desfecho, c))
+        : sugestoesLegadas,
+    [desfecho, sugestoesLegadas],
+  )
 
   const confirmar = async (s: SugestaoBoleto) => {
     setOcupado(idItem(s))
@@ -166,6 +206,14 @@ export function SugestaoBoletoPainel({
       <h3 id={titleId} className="text-sm font-medium">
         Sugestão de boleto
       </h3>
+      {desfecho && desfecho.situacao !== 'SEM_CANDIDATO' ? (
+        <p className="text-xs text-muted-foreground" data-testid="situacao-titulo">
+          {desfecho.motivo}
+          {desfecho.totalCandidatos > desfecho.candidatos.length
+            ? ` Mostrando ${desfecho.candidatos.length} de ${desfecho.totalCandidatos} candidatos.`
+            : ''}
+        </p>
+      ) : null}
       <p className="text-xs text-muted-foreground">
         É uma indicação para você conferir; o Conexos continua sem associar o boleto a este título.
         Confirmar aqui registra a sua decisão e <strong>não grava nada no Conexos</strong>: a
@@ -194,6 +242,30 @@ export function SugestaoBoletoPainel({
           </p>
         ) : null}
       </div>
+      {desfecho?.situacao === 'SEM_CANDIDATO' ? (
+        <div
+          role="status"
+          className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground"
+        >
+          <p>
+            Nenhum boleto no pool DDA dentro do envelope (±R$ 10,00 ou 2 %, ±10 dias).
+            {sincronizadoEm !== undefined
+              ? ` Último arquivo DDA sincronizado em ${dataHora(sincronizadoEm)}`
+              : ' O DDA ainda não foi sincronizado'}
+            {ddaDefasadoHoras !== undefined ? ` — no pool de há ${ddaDefasadoHoras} h` : ''}.
+          </p>
+          {onAbrirBoletosDda ? (
+            <Button
+              size="sm"
+              variant="link"
+              className="mt-1 h-auto p-0"
+              onClick={onAbrirBoletosDda}
+            >
+              Ver na aba &ldquo;Boletos DDA&rdquo;
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <ul className="flex flex-col gap-3">
         {sugestoes.map((s) => {
           const a = s.avaliacao
@@ -205,6 +277,15 @@ export function SugestaoBoletoPainel({
           const podeConfirmar = a.confirmavel && s.confirmavel && !confirmada
           const nome = String(s.numeroBoleto ?? s.ditCod)
           const motivoId = `${titleId}-motivo-${s.ddcCod}-${s.ditCod}`
+          const cand = candidatoDe(desfecho, s)
+          const vencimentoTitulo = desfecho?.vencimentoTitulo ?? s.vencimentoTitulo
+          const dataDebito = desfecho?.dataDebito ?? s.dataDebito
+          // Aviso (I15o): sai do Δdias < 0, inclusive em decisão legada sem o sinal gravado.
+          const venceAntes = mensagemVenceAntes(
+            { avaliacao: a, vencimentoBoleto: s.vencimentoBoleto },
+            { vencimentoTitulo, dataDebito },
+          )
+          const pedeReconhecimento = podeConfirmar && exigeReconhecimento({ avaliacao: a })
           return (
             <li
               key={idItem(s)}
@@ -279,19 +360,41 @@ export function SugestaoBoletoPainel({
                   <strong>ainda não associado no ERP</strong>; a remessa continua bloqueada.
                 </p>
               ) : null}
-              {vencido ? (
+              {venceAntes ? (
+                <p
+                  role="status"
+                  className="mt-2 flex items-start gap-2 text-sm text-warning-foreground"
+                >
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <span>{venceAntes}</span>
+                </p>
+              ) : vencido ? (
                 <p className="mt-2 text-sm text-warning-foreground">
                   O boleto vence antes da data de débito: serve só como informação.
                 </p>
               ) : null}
+              {cand?.reservadoParaTitulo ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Reservado ao título {cand.reservadoParaTitulo.docCod}/
+                  {cand.reservadoParaTitulo.titCod} (fil {cand.reservadoParaTitulo.filCod}).
+                </p>
+              ) : null}
+              {cand?.compartilhado ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Este boleto também aparece como candidato de outro título; nenhum o reserva.
+                </p>
+              ) : null}
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                {podeExecutar && !confirmada ? (
+                {podeExecutar && !confirmada && podeConfirmar ? (
                   <Button
                     size="sm"
-                    disabled={ocup || !podeConfirmar}
+                    disabled={ocup}
                     aria-label={`Confirmar boleto ${nome}`}
-                    aria-describedby={!podeConfirmar ? motivoId : undefined}
-                    onClick={() => void confirmar(s)}
+                    onClick={() =>
+                      pedeReconhecimento
+                        ? setDialogo({ tipo: 'reconhecer', sugestao: s })
+                        : void confirmar(s)
+                    }
                   >
                     Confirmar
                   </Button>
@@ -343,13 +446,40 @@ export function SugestaoBoletoPainel({
               </div>
               {podeExecutar && !podeConfirmar && !confirmada ? (
                 <p id={motivoId} className="mt-1 text-xs text-muted-foreground">
-                  Confirmar indisponível: {s.motivo ?? 'a regra não permite confirmar esta sugestão.'}
+                  Confirmar indisponível:{' '}
+                  {s.motivo ?? 'a regra não permite confirmar esta sugestão.'}
                 </p>
               ) : null}
             </li>
           )
         })}
       </ul>
+      {dialogo?.tipo === 'reconhecer' ? (
+        <ReconhecerAvisoDialog
+          mensagem={
+            mensagemVenceAntes(
+              { avaliacao: dialogo.sugestao.avaliacao, vencimentoBoleto: dialogo.sugestao.vencimentoBoleto },
+              {
+                vencimentoTitulo: desfecho?.vencimentoTitulo ?? dialogo.sugestao.vencimentoTitulo,
+                dataDebito: desfecho?.dataDebito ?? dialogo.sugestao.dataDebito,
+              },
+            ) ?? 'Este boleto vence antes do título.'
+          }
+          deltaValor={formatDeltaValor(dialogo.sugestao.avaliacao.deltaValor)}
+          deltaDias={formatDeltaDias(dialogo.sugestao.avaliacao.deltaDias)}
+          onFechar={() => setDialogo(null)}
+          onConfirmar={async () => {
+            try {
+              await confirmarSugestaoBoleto(chaveDe(dialogo.sugestao), ['VENCE_ANTES_DO_TITULO'])
+            } catch (e) {
+              throw new Error(mensagemDe(e, 'Não foi possível confirmar a sugestão.'))
+            }
+            await concluirDialogo(
+              'Boleto confirmado para este título. Nada foi gravado no Conexos.',
+            )
+          }}
+        />
+      ) : null}
       {dialogo?.tipo === 'rejeitar' ? (
         <MotivoDecisaoDialog
           titulo="Rejeitar sugestão"

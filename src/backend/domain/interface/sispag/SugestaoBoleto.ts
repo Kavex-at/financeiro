@@ -305,6 +305,8 @@ export interface DesfechoTitulo extends ChaveTitulo {
 /** Candidato como a API o expõe: emissor MASCARADO, sem barras nem linha digitável (I15k). */
 export type CandidatoTituloView = Omit<CandidatoTitulo, 'emissor'> & {
     emissor?: EmissorBoletoView;
+    /** Par (credor, emissor) vigente do boleto, quando existe — para revogar pela tela. */
+    confirmacaoEmissorId?: string;
 };
 
 export type DesfechoTituloView = Omit<DesfechoTitulo, 'candidatos'> & {

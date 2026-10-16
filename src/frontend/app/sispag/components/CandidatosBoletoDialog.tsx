@@ -1,5 +1,6 @@
 'use client'
 
+import { AlertTriangle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
@@ -42,7 +43,14 @@ export function DiferencaBadge({ dias }: { dias?: number }) {
       className="border-warning/40 text-warning"
       title="Vencimento do boleto menos o do título. Diferente de zero, o Conexos não costuma associar."
     >
+      {dias < 0 ? <AlertTriangle className="mr-1 size-3" aria-hidden /> : null}
       {texto}
+      {dias < 0 ? (
+        <span className="ml-1">
+          vence antes do título
+          <span className="sr-only"> — o boleto vence antes do título; confirme no portal do banco</span>
+        </span>
+      ) : null}
     </Badge>
   )
 }

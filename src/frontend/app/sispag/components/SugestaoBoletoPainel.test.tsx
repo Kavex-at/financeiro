@@ -120,7 +120,7 @@ describe('SugestaoBoletoPainel — evidência', () => {
     expect(screen.getByRole('button', { name: /^Confirmar boleto/ })).toBeEnabled()
   })
 
-  it('VENCIDO_INFORMATIVO é só informativo: Confirmar desabilitado com o motivo, sem Rejeitar', () => {
+  it('VENCIDO_INFORMATIVO é só informativo: sem Confirmar, com o motivo, sem Rejeitar', () => {
     renderPainel([
       sugestao({
         confirmavel: false,
@@ -133,7 +133,8 @@ describe('SugestaoBoletoPainel — evidência', () => {
       }),
     ])
     expect(screen.getByText('vencido · só informativo')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Confirmar boleto/ })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /^Confirmar boleto/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/Confirmar indisponível:/)).toBeInTheDocument()
     expect(screen.getByText(/Boleto vence antes da data de débito/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Rejeitar boleto/ })).not.toBeInTheDocument()
   })
@@ -457,7 +458,7 @@ describe('SugestaoBoletoPainel — acessibilidade', () => {
     if (resultado === 'SEM_RELACAO') expect(badge.className).not.toMatch(/success/)
   })
 
-  it('Confirmar desabilitado é descrito pelo motivo', () => {
+  it('não confirmável: nenhum botão Confirmar; o motivo aparece como "Confirmar indisponível"', () => {
     renderPainel([
       sugestao({
         confirmavel: false,
@@ -465,8 +466,10 @@ describe('SugestaoBoletoPainel — acessibilidade', () => {
         avaliacao: { ...sugestao().avaliacao, confirmavel: false },
       }),
     ])
-    const botao = screen.getByRole('button', { name: /^Confirmar boleto/ })
-    expect(botao).toHaveAccessibleDescription(/Boleto vence antes da data de débito/)
+    expect(screen.queryByRole('button', { name: /^Confirmar boleto/ })).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/Confirmar indisponível: Boleto vence antes da data de débito/),
+    ).toBeInTheDocument()
   })
 
   it('um erro é anunciado por uma única região role=status, sem alert aninhado', async () => {
