@@ -1,4 +1,11 @@
-import type { SinalSugestaoBoleto, SugestaoBoleto } from '@/lib/sispag'
+import type {
+  AvisoVenceAntes,
+  CandidatoTituloBoleto,
+  DesfechoTituloBoleto,
+  SinalSugestaoBoleto,
+  SituacaoSugestaoTitulo,
+  SugestaoBoleto,
+} from '@/lib/sispag'
 
 const numero = (n: number, casas: number) =>
   new Intl.NumberFormat('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas }).format(n)
@@ -23,6 +30,11 @@ export const TEXTO_SINAL: Record<SinalSugestaoBoleto, { texto: string; atencao: 
   NUMERO_IGUAL: { texto: 'número do boleto igual ao do documento', atencao: false },
   COLISAO_NUMERO: { texto: 'número do boleto coincide com o de outro título', atencao: true },
   EMISSOR_CONFIRMADO: { texto: 'emissor já confirmado para este credor', atencao: false },
+  VENCE_ANTES_DO_TITULO: { texto: 'vence antes do título', atencao: true },
+  RECONHECEU_VENCE_ANTES: {
+    texto: 'aviso de vencimento antes do título reconhecido por quem confirmou',
+    atencao: false,
+  },
 }
 
 export const TIER_ROTULO: Record<SugestaoBoleto['avaliacao']['resultado'], string> = {
@@ -62,4 +74,196 @@ export const resumoDoTitulo = (
   if (lista.some((s) => s.estado === 'CONFIRMADA')) return 'CONFIRMADA'
   if (lista.some((s) => s.confirmavel && s.avaliacao.confirmavel)) return 'DISPONIVEL'
   return 'INFORMATIVA'
+}
+
+// ─────────────────────────────────────── ADR-0072 — desfecho por título (I15m–I15o)
+
+/** Rótulo do link da coluna "Forma de pagamento". Fraco NUNCA diz "sugestão disponível". */
+export const ROTULO_SITUACAO: Record<SituacaoSugestaoTitulo, string> = {
+  UNICA_SEGURA: 'sugestão disponível',
+  SO_ATENCAO: 'ver boleto sugerido',
+  AMBIGUA: 'mais de um boleto possível',
+  SO_FRACA: 'ver candidato (sem confirmação)',
+  DISPUTADA: 'boleto reservado a outro título',
+  SO_VENCIDA: 'ver boleto vencido',
+  SEM_CANDIDATO: 'sem boleto no pool',
+  CONFIRMADA: 'boleto confirmado',
+  ORFA: 'confirmação a revisar',
+}
+
+/** Tom do link: só o que é confirmável e seguro usa o tom de ação; o resto é aviso ou texto mudo. */
+export type TomSituacao = 'acao' | 'aviso' | 'mudo'
+
+export const TOM_SITUACAO: Record<SituacaoSugestaoTitulo, TomSituacao> = {
+  UNICA_SEGURA: 'acao',
+  SO_ATENCAO: 'aviso',
+  AMBIGUA: 'aviso',
+  SO_FRACA: 'mudo',
+  DISPUTADA: 'mudo',
+  SO_VENCIDA: 'aviso',
+  SEM_CANDIDATO: 'mudo',
+  CONFIRMADA: 'acao',
+  ORFA: 'aviso',
+}
+
+/** Só `SEM_CANDIDATO` não tem o que mostrar além do texto: não vira botão. */
+export const SITUACAO_SEM_PAINEL: ReadonlySet<SituacaoSugestaoTitulo> = new Set([
+  'SEM_CANDIDATO',
+])
+
+export interface ResumoDesfecho {
+  situacao: SituacaoSugestaoTitulo
+  avisoVenceAntes: AvisoVenceAntes
+  /** Candidatos dentro do envelope (antes do corte de exibição). */
+  total: number
+}
+
+export const resumoDoDesfecho = (d: DesfechoTituloBoleto | undefined): ResumoDesfecho | undefined =>
+  d
+    ? { situacao: d.situacao, avisoVenceAntes: d.avisoVenceAntes, total: d.totalCandidatos }
+    : undefined
+
+/** Texto do chip de aviso da grade (caso A = já vencido no débito; caso B = vence antes do título). */
+export const ROTULO_AVISO: Record<Exclude<AvisoVenceAntes, 'NENHUM'>, string> = {
+  CRITICO: 'boleto já vencido no débito',
+  ATENCAO: 'boleto vence antes do título',
+}
+
+/** `Map` de desfecho por `fil:doc:tit`. */
+export const desfechoPorTitulo = (
+  lista: DesfechoTituloBoleto[] | undefined,
+): Map<string, DesfechoTituloBoleto> => new Map((lista ?? []).map((d) => [chaveTitulo(d), d]))
+
+/** `AAAA-MM-DD` → `DD/MM` (data civil; nunca passa por `Date`, para não deslocar o dia). */
+const diaMes = (civil: string): string => {
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(civil)
+  return m ? `${m[2]}/${m[1]}` : civil
+}
+
+const diasEntreCivis = (de: string, ate: string): number =>
+  Math.round((Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / 86_400_000)
+
+const dias = (n: number) => `${n} ${n === 1 ? 'dia' : 'dias'}`
+
+/**
+ * Mensagem completa do aviso `VENCE_ANTES_DO_TITULO` (§3.4 da proposta). `undefined` quando o
+ * boleto vence no dia do título ou depois: nenhuma mensagem inventada para Δ ≥ 0. A decisão
+ * legada sem o sinal gravado cai aqui pelo `deltaDias < 0`.
+ */
+export const mensagemVenceAntes = (
+  c: Pick<CandidatoTituloBoleto, 'avaliacao' | 'vencimentoBoleto'>,
+  ctx: { vencimentoTitulo: string; dataDebito: string },
+): string | undefined => {
+  const a = c.avaliacao
+  if (a.resultado === 'SEM_RELACAO') return undefined
+  if (a.deltaDias >= 0) return undefined
+  const antes = Math.abs(a.deltaDias)
+  const inicio = `Este boleto vence em ${diaMes(c.vencimentoBoleto)}, ${dias(antes)} antes do título (${diaMes(ctx.vencimentoTitulo)}).`
+  const vencidoNoDebito =
+    a.diasVencidoNoDebito ?? Math.max(0, diasEntreCivis(c.vencimentoBoleto, ctx.dataDebito))
+  if (a.resultado === 'VENCIDO_INFORMATIVO' || vencidoNoDebito > 0) {
+    return `${inicio} Na data de débito (${diaMes(ctx.dataDebito)}) ele já estará vencido há ${dias(vencidoNoDebito)}: pagar pode gerar juros e multa. Confirme o vencimento no portal do banco antes de decidir. Serve só como informação.`
+  }
+  return `${inicio} O débito está previsto para ${diaMes(ctx.dataDebito)}, dentro do prazo do boleto, mas se o pagamento atrasar ele vencerá antes do título: pode haver juros e multa. Confirmar não faz o boleto sair na remessa.`
+}
+
+/** O candidato exige reconhecimento ao confirmar (o servidor confere de novo). */
+export const exigeReconhecimento = (c: Pick<CandidatoTituloBoleto, 'avaliacao'>): boolean =>
+  c.avaliacao.sinais.includes('VENCE_ANTES_DO_TITULO')
+
+/**
+ * Um candidato do desfecho no formato que o painel já renderiza. Confirmada e órfã vêm com
+ * `estado: CONFIRMADA`; o motivo do que não é confirmável acompanha o item.
+ */
+export const candidatoComoSugestao = (
+  d: DesfechoTituloBoleto,
+  c: CandidatoTituloBoleto,
+): SugestaoBoleto => ({
+  filCod: d.filCod,
+  docCod: d.docCod,
+  titCod: d.titCod,
+  ...(d.pesCod ? { pesCod: d.pesCod } : {}),
+  ...(d.credor ? { credor: d.credor } : {}),
+  valorTitulo: d.valorTitulo,
+  vencimentoTitulo: d.vencimentoTitulo,
+  dataDebito: d.dataDebito,
+  ddcCod: c.ddcCod,
+  ditCod: c.ditCod,
+  ...(c.numeroBoleto ? { numeroBoleto: c.numeroBoleto } : {}),
+  valorBoleto: c.valorBoleto,
+  vencimentoBoleto: c.vencimentoBoleto,
+  ...(c.emissor ? { emissor: c.emissor } : {}),
+  avaliacao: c.avaliacao,
+  estado: d.situacao === 'CONFIRMADA' || d.situacao === 'ORFA' ? 'CONFIRMADA' : 'SUGERIDA',
+  confirmavel: c.confirmavel,
+  ...(c.motivo ? { motivo: c.motivo } : {}),
+  ...(d.situacao === 'ORFA'
+    ? { orfa: true, ...(d.motivoOrfa ? { motivoOrfa: d.motivoOrfa } : {}) }
+    : {}),
+  ...(c.confirmacaoEmissorId ? { confirmacaoEmissorId: c.confirmacaoEmissorId } : {}),
+})
+
+/**
+ * Resposta de um backend anterior ao ADR-0072 (sem `titulos[]`): reconstrói um desfecho por título
+ * a partir da lista antiga, para a tela funcionar nos dois sentidos durante o deploy. Só afirma o
+ * que a lista antiga prova (confirmável / informativa / confirmada / órfã); nunca inventa
+ * `AMBIGUA`, `DISPUTADA` nem `SEM_CANDIDATO`.
+ */
+export const desfechosDeSugestoesLegadas = (lista: SugestaoBoleto[]): DesfechoTituloBoleto[] => {
+  const desfechos: DesfechoTituloBoleto[] = []
+  for (const itens of agruparPorTitulo(lista).values()) {
+    const primeiro = itens[0]
+    const resumo = resumoDoTitulo(itens)
+    if (!primeiro || !resumo) continue
+    const escolhido = itens.find((s) => s.confirmavel && s.avaliacao.confirmavel)
+    const situacao: SituacaoSugestaoTitulo =
+      resumo === 'ORFA'
+        ? 'ORFA'
+        : resumo === 'CONFIRMADA'
+          ? 'CONFIRMADA'
+          : resumo === 'DISPONIVEL'
+            ? escolhido?.avaliacao.resultado === 'ATENCAO'
+              ? 'SO_ATENCAO'
+              : 'UNICA_SEGURA'
+            : 'SO_VENCIDA'
+    const melhor = escolhido ?? primeiro
+    const aviso: AvisoVenceAntes =
+      melhor.avaliacao.deltaDias >= 0
+        ? 'NENHUM'
+        : melhor.avaliacao.resultado === 'VENCIDO_INFORMATIVO'
+          ? 'CRITICO'
+          : 'ATENCAO'
+    desfechos.push({
+      filCod: primeiro.filCod,
+      docCod: primeiro.docCod,
+      titCod: primeiro.titCod,
+      ...(primeiro.pesCod ? { pesCod: primeiro.pesCod } : {}),
+      ...(primeiro.credor ? { credor: primeiro.credor } : {}),
+      valorTitulo: primeiro.valorTitulo,
+      vencimentoTitulo: primeiro.vencimentoTitulo,
+      dataDebito: primeiro.dataDebito,
+      situacao,
+      candidatos: itens.map((s) => ({
+        ddcCod: s.ddcCod,
+        ditCod: s.ditCod,
+        ...(s.numeroBoleto ? { numeroBoleto: s.numeroBoleto } : {}),
+        valorBoleto: s.valorBoleto,
+        vencimentoBoleto: s.vencimentoBoleto,
+        ...(s.emissor ? { emissor: s.emissor } : {}),
+        avaliacao: s.avaliacao,
+        ancorado:
+          s.avaliacao.sinais.includes('EMISSOR_CONFIRMADO') ||
+          s.avaliacao.sinais.includes('NUMERO_IGUAL'),
+        confirmavel: s.confirmavel && s.avaliacao.confirmavel && s.estado !== 'CONFIRMADA',
+        ...(s.motivo ? { motivo: s.motivo } : {}),
+        ...(s.confirmacaoEmissorId ? { confirmacaoEmissorId: s.confirmacaoEmissorId } : {}),
+      })),
+      totalCandidatos: itens.length,
+      motivo: primeiro.motivo ?? ROTULO_SITUACAO[situacao],
+      ...(primeiro.motivoOrfa ? { motivoOrfa: primeiro.motivoOrfa } : {}),
+      avisoVenceAntes: aviso,
+      diasVencidoNoDebito: melhor.avaliacao.diasVencidoNoDebito ?? 0,
+    })
+  }
+  return desfechos
 }

@@ -1,4 +1,6 @@
 import {
+  desfechoTituloSchema,
+  SINAIS_SUGESTAO_BOLETO,
   CODIGOS_ERRO_SUGESTAO_BOLETO,
   confirmacaoEmissorSchema,
   decisaoSugestaoBoletoSchema,
@@ -166,8 +168,113 @@ describe('contrato da sugestão de boleto (ADR-0068)', () => {
         'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA',
         'COPIA_LINHA_SEM_TRILHA',
         'DECISAO_NAO_CONFIRMADA',
+        'RECONHECIMENTO_DE_AVISO_OBRIGATORIO',
         'SUGESTAO_BOLETO_INDISPONIVEL',
+        'TITULO_SEM_SUGESTAO',
       ].sort(),
     )
+  })
+})
+
+describe('contrato do desfecho por título (ADR-0072)', () => {
+  const candidato = {
+    ddcCod: 10,
+    ditCod: 3,
+    valorBoleto: 103,
+    vencimentoBoleto: '2026-10-20',
+    emissor: { banco: '237', layout: 'BRADESCO_237', mascarado: '237 / 2656 / ***2740' },
+    avaliacao: {
+      resultado: 'ATENCAO',
+      deltaValor: 3,
+      deltaPercentual: 3,
+      deltaDias: 0,
+      sinais: ['MESMO_DIA', 'VENCE_ANTES_DO_TITULO'],
+      confirmavel: false,
+      diasVencidoNoDebito: 0,
+    },
+    ancorado: false,
+    confirmavel: false,
+    motivo: 'Sem confirmação do emissor nem do número do documento.',
+  }
+  const desfecho = {
+    filCod: 2,
+    docCod: '9001',
+    titCod: '1',
+    valorTitulo: 100,
+    vencimentoTitulo: '2026-10-20',
+    dataDebito: '2026-10-20',
+    situacao: 'SO_FRACA',
+    candidatos: [candidato],
+    totalCandidatos: 1,
+    motivo: 'Sem confirmação',
+    avisoVenceAntes: 'ATENCAO',
+    diasVencidoNoDebito: 0,
+  }
+
+  it('aceita titulos[], contagemSituacao, situacao, avisoVenceAntes e totalCandidatos', () => {
+    const r = listagemSugestoesBoletoSchema.parse({
+      sugestoes: [],
+      titulos: [desfecho],
+      totalTitulos: 1,
+      contagemSituacao: { SO_FRACA: 1 },
+      total: 0,
+      pagina: 1,
+      tamanho: 50,
+      contagem: {},
+    })
+    expect(r.titulos?.[0]).toMatchObject({
+      situacao: 'SO_FRACA',
+      avisoVenceAntes: 'ATENCAO',
+      totalCandidatos: 1,
+    })
+    expect(r.contagemSituacao).toEqual({ SO_FRACA: 1 })
+  })
+
+  it('os dois sinais novos NÃO quebram o parse da lista inteira', () => {
+    expect(SINAIS_SUGESTAO_BOLETO).toEqual(
+      expect.arrayContaining(['VENCE_ANTES_DO_TITULO', 'RECONHECEU_VENCE_ANTES']),
+    )
+    const r = listagemSugestoesBoletoSchema.parse({
+      sugestoes: [
+        {
+          ...sugestao,
+          avaliacao: {
+            ...sugestao.avaliacao,
+            sinais: ['MESMO_DIA', 'VENCE_ANTES_DO_TITULO', 'RECONHECEU_VENCE_ANTES'],
+          },
+        },
+      ],
+      total: 1,
+      pagina: 1,
+      tamanho: 50,
+      contagem: {},
+    })
+    expect(r.sugestoes[0]?.avaliacao.sinais).toContain('RECONHECEU_VENCE_ANTES')
+  })
+
+  it('resposta antiga (sem os campos novos) ainda é aceita', () => {
+    const r = listagemSugestoesBoletoSchema.parse({
+      sugestoes: [sugestao],
+      total: 1,
+      pagina: 1,
+      tamanho: 50,
+      contagem: {},
+    })
+    expect(r.titulos).toBeUndefined()
+    expect(r.contagemSituacao).toBeUndefined()
+  })
+
+  it('o candidato não tem campo para barras nem linha digitável', () => {
+    const parsed = desfechoTituloSchema.parse({
+      ...desfecho,
+      candidatos: [{ ...candidato, codbar: '1'.repeat(44), linhaDigitavel: '2'.repeat(47) }],
+    })
+    expect(JSON.stringify(parsed)).not.toMatch(/\d{20,}/)
+  })
+
+  it('situação desconhecida é recusada (enum fechado)', () => {
+    expect(
+      desfechoTituloSchema.safeParse({ ...desfecho, situacao: 'INVENTADA' }).success,
+    ).toBe(false)
   })
 })

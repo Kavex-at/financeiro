@@ -186,7 +186,7 @@ export default class BoletoSuggestionService {
         const defasado = this.horasDefasado(sincronizadoEm);
         return {
             sugestoes: recorte.map((s) => this.paraView(s, parPorChave)),
-            titulos: recorteTitulos.map(this.paraViewDesfecho),
+            titulos: recorteTitulos.map((d) => this.paraViewDesfecho(d, parPorChave)),
             totalTitulos: titulosFiltrados.length,
             total: filtradas.length,
             pagina,
@@ -207,7 +207,10 @@ export default class BoletoSuggestionService {
         const { valor: cenario } = await this.cache.obter(this.calcularCenario);
         const desfecho = cenario.desfechos.find((d) => mesmoTitulo(d, chave));
         if (!desfecho) throw new TitleSuggestionNotFoundError(chave);
-        return this.paraViewDesfecho(desfecho);
+        const parPorChave = new Map(
+            cenario.pares.map((p) => [`${p.pesCod}|${p.emissorChave}`, p.id] as const),
+        );
+        return this.paraViewDesfecho(desfecho, parPorChave);
     };
 
     /** Pares (credor, emissor), só com a máscara do emissor. */
@@ -1023,22 +1026,32 @@ export default class BoletoSuggestionService {
             : AVISO_VENCE_ANTES.ATENCAO;
     };
 
-    private paraViewDesfecho = (d: DesfechoTitulo): DesfechoTituloView => {
+    private paraViewDesfecho = (
+        d: DesfechoTitulo,
+        parPorChave: ReadonlyMap<string, string>,
+    ): DesfechoTituloView => {
         const melhor = d.candidatos[0]?.avaliacao;
         return {
             ...d,
-            candidatos: d.candidatos.map(({ emissor, ...resto }) => ({
-                ...resto,
-                ...(emissor
-                    ? {
-                          emissor: {
-                              banco: emissor.banco,
-                              layout: emissor.layout,
-                              mascarado: emissor.mascarado,
-                          },
-                      }
-                    : {}),
-            })),
+            candidatos: d.candidatos.map(({ emissor, ...resto }) => {
+                const parId =
+                    emissor && d.pesCod
+                        ? parPorChave.get(`${d.pesCod}|${emissor.chave}`)
+                        : undefined;
+                return {
+                    ...resto,
+                    ...(emissor
+                        ? {
+                              emissor: {
+                                  banco: emissor.banco,
+                                  layout: emissor.layout,
+                                  mascarado: emissor.mascarado,
+                              },
+                          }
+                        : {}),
+                    ...(parId ? { confirmacaoEmissorId: parId } : {}),
+                };
+            }),
             avisoVenceAntes: this.avisoDe(melhor),
             diasVencidoNoDebito: melhor?.diasVencidoNoDebito ?? 0,
         };

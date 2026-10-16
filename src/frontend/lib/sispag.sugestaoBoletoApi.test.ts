@@ -7,6 +7,7 @@ import {
   confirmarSugestaoBoleto,
   copiarLinhaSugestao,
   fetchConfirmacoesEmissor,
+  fetchDetalheTituloBoleto,
   fetchSugestoesBoleto,
   fetchTodasSugestoesBoleto,
   rejeitarSugestaoBoleto,
@@ -135,6 +136,49 @@ describe('cliente da sugestão de boleto', () => {
       ...CHAVE,
       motivo: 'outro credor',
     })
+  })
+
+  it('confirmar com reconhecimento manda reconheceAvisos; sem aviso o corpo é só a chave', async () => {
+    mock.mockResolvedValue(resp(201, { criada: true, decisao }))
+    await confirmarSugestaoBoleto(CHAVE, ['VENCE_ANTES_DO_TITULO'])
+    await confirmarSugestaoBoleto(CHAVE, [])
+    const [c1, c2] = mock.mock.calls
+    expect(JSON.parse((c1?.[1] as RequestInit).body as string)).toEqual({
+      ...CHAVE,
+      reconheceAvisos: ['VENCE_ANTES_DO_TITULO'],
+    })
+    expect(JSON.parse((c2?.[1] as RequestInit).body as string)).toEqual(CHAVE)
+  })
+
+  it('filtro situacao vai na query', async () => {
+    mock.mockResolvedValue(resp(200, lista([], 0)))
+    await fetchSugestoesBoleto({ situacao: 'AMBIGUA' })
+    const url = new URL(String(mock.mock.calls[0]?.[0]), 'http://x')
+    expect(url.searchParams.get('situacao')).toBe('AMBIGUA')
+  })
+
+  it('detalhe por título: GET com a chave do título', async () => {
+    mock.mockResolvedValue(
+      resp(200, {
+        filCod: 1,
+        docCod: '9',
+        titCod: '1',
+        valorTitulo: 10,
+        vencimentoTitulo: '2026-10-20',
+        dataDebito: '2026-10-20',
+        situacao: 'SEM_CANDIDATO',
+        candidatos: [],
+        totalCandidatos: 0,
+        motivo: 'sem',
+        avisoVenceAntes: 'NENHUM',
+        diasVencidoNoDebito: 0,
+      }),
+    )
+    const r = await fetchDetalheTituloBoleto({ filCod: 1, docCod: '9', titCod: '1' })
+    expect(r.situacao).toBe('SEM_CANDIDATO')
+    const url = new URL(String(mock.mock.calls[0]?.[0]), 'http://x')
+    expect(url.pathname).toContain('/sispag/sugestoes-boleto/titulo')
+    expect(url.searchParams.get('docCod')).toBe('9')
   })
 
   it('anular manda POST só com o título e o motivo, nunca ator nem boleto (I15l)', async () => {

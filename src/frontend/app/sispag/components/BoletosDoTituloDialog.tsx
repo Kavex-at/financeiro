@@ -25,6 +25,7 @@ import { formatBRL } from '@/lib/utils'
 import {
   type BoletoDdaDoTitulo,
   type BoletosDdaDoTitulo,
+  type DesfechoTituloBoleto,
   type SugestaoBoleto,
   type TituloSemBoleto,
   fetchBoletosDdaDoTitulo,
@@ -99,6 +100,9 @@ export function BoletosDoTituloDialog({
   titulo,
   onClose,
   sugestoes = [],
+  desfecho,
+  sincronizadoEm,
+  onAbrirBoletosDda,
   podeExecutar = false,
   podeCopiar = false,
   ddaDefasadoHoras,
@@ -111,6 +115,10 @@ export function BoletosDoTituloDialog({
   onClose: () => void
   /** Sugestões (ADR-0068) deste título; vazio = a seção nem aparece. */
   sugestoes?: SugestaoBoleto[]
+  /** Desfecho do título (ADR-0072); com ele a seção aparece até para "sem boleto no pool". */
+  desfecho?: DesfechoTituloBoleto | undefined
+  sincronizadoEm?: number | undefined
+  onAbrirBoletosDda?: (() => void) | undefined
   podeExecutar?: boolean
   podeCopiar?: boolean
   ddaDefasadoHoras?: number | undefined
@@ -169,9 +177,12 @@ export function BoletosDoTituloDialog({
               </DialogDescription>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-4 overflow-y-auto">
-              {sugestoes.length > 0 ? (
+              {sugestoes.length > 0 || desfecho !== undefined ? (
                 <SugestaoBoletoPainel
                   sugestoes={sugestoes}
+                  desfecho={desfecho}
+                  sincronizadoEm={sincronizadoEm}
+                  onAbrirBoletosDda={onAbrirBoletosDda}
                   podeExecutar={podeExecutar}
                   podeCopiar={podeCopiar}
                   ddaDefasadoHoras={ddaDefasadoHoras}

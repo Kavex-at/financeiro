@@ -1,5 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { FormaPagamentoBadge } from './FormaPagamentoBadge'
+import type { ResumoDesfecho } from './sugestaoBoleto'
+
+const resumo = (over: Partial<ResumoDesfecho> = {}): ResumoDesfecho => ({
+  situacao: 'UNICA_SEGURA',
+  avisoVenceAntes: 'NENHUM',
+  total: 1,
+  ...over,
+})
 
 describe('FormaPagamentoBadge', () => {
   it('BOLETO com DDA', () => {
@@ -38,7 +46,7 @@ describe('FormaPagamentoBadge', () => {
     render(
       <FormaPagamentoBadge
         titulo={{ formaPagamentoConexos: 6, temBoleto: false }}
-        sugestao="DISPONIVEL"
+        sugestao={resumo()}
         onAbrirSugestao={abrir}
       />,
     )
@@ -50,7 +58,7 @@ describe('FormaPagamentoBadge', () => {
     const { rerender } = render(
       <FormaPagamentoBadge
         titulo={{ formaPagamentoConexos: 6, temBoleto: false }}
-        sugestao="CONFIRMADA"
+        sugestao={resumo({ situacao: 'CONFIRMADA' })}
         onAbrirSugestao={() => undefined}
       />,
     )
@@ -58,7 +66,7 @@ describe('FormaPagamentoBadge', () => {
     rerender(
       <FormaPagamentoBadge
         titulo={{ formaPagamentoConexos: 6, temBoleto: true }}
-        sugestao="CONFIRMADA"
+        sugestao={resumo({ situacao: 'CONFIRMADA' })}
         onAbrirSugestao={() => undefined}
       />,
     )
@@ -70,12 +78,73 @@ describe('FormaPagamentoBadge', () => {
     render(
       <FormaPagamentoBadge
         titulo={{ formaPagamentoConexos: 6, temBoleto: true }}
-        sugestao="ORFA"
+        sugestao={resumo({ situacao: 'ORFA' })}
         onAbrirSugestao={abrir}
       />,
     )
     expect(screen.getByText('boleto com DDA')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'confirmação a revisar' }))
     expect(abrir).toHaveBeenCalled()
+  })
+
+  describe('situação do título (ADR-0072)', () => {
+    const boletoSemDda = { formaPagamentoConexos: 6, temBoleto: false }
+    const render1 = (r: ResumoDesfecho, abrir = jest.fn()) => {
+      render(<FormaPagamentoBadge titulo={boletoSemDda} sugestao={r} onAbrirSugestao={abrir} />)
+      return abrir
+    }
+
+    it.each([
+      ['UNICA_SEGURA', 'sugestão disponível'],
+      ['SO_ATENCAO', 'ver boleto sugerido'],
+      ['AMBIGUA', 'mais de um boleto possível'],
+      ['SO_FRACA', 'ver candidato (sem confirmação)'],
+      ['DISPUTADA', 'boleto reservado a outro título'],
+      ['SO_VENCIDA', 'ver boleto vencido'],
+    ] as const)('%s → botão "%s"', (situacao, rotulo) => {
+      const abrir = render1(resumo({ situacao, total: 2 }))
+      fireEvent.click(screen.getByRole('button', { name: rotulo }))
+      expect(abrir).toHaveBeenCalled()
+    })
+
+    it('SEM_CANDIDATO não é botão: só o texto "sem boleto no pool"', () => {
+      render1(resumo({ situacao: 'SEM_CANDIDATO', total: 0 }))
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+      expect(screen.getByText('sem boleto no pool')).toBeInTheDocument()
+    })
+
+    it('fraco nunca usa "sugestão disponível" nem o verde de ação', () => {
+      render1(resumo({ situacao: 'SO_FRACA' }))
+      expect(screen.queryByText('sugestão disponível')).not.toBeInTheDocument()
+      const link = screen.getByRole('button', { name: 'ver candidato (sem confirmação)' })
+      expect(link.className).toMatch(/text-muted-foreground|text-warning-foreground/)
+      expect(link.className).not.toMatch(/success/)
+    })
+
+    it('chip de aviso: ícone + texto + sr-only (a cor nunca é o único canal)', () => {
+      render1(resumo({ situacao: 'SO_VENCIDA', avisoVenceAntes: 'CRITICO' }))
+      expect(screen.getByText('boleto já vencido no débito')).toBeInTheDocument()
+      expect(screen.getByText(/vence antes da data de débito prevista/)).toHaveClass('sr-only')
+    })
+
+    it('aviso de atenção (caso B) e sem aviso quando NENHUM', () => {
+      const { unmount } = render(
+        <FormaPagamentoBadge
+          titulo={boletoSemDda}
+          sugestao={resumo({ situacao: 'SO_ATENCAO', avisoVenceAntes: 'ATENCAO' })}
+          onAbrirSugestao={() => undefined}
+        />,
+      )
+      expect(screen.getByText('boleto vence antes do título')).toBeInTheDocument()
+      unmount()
+      render(
+        <FormaPagamentoBadge
+          titulo={boletoSemDda}
+          sugestao={resumo()}
+          onAbrirSugestao={() => undefined}
+        />,
+      )
+      expect(screen.queryByText(/vence antes do título/)).not.toBeInTheDocument()
+    })
   })
 })

@@ -63,6 +63,8 @@ import {
   RemessaEmDuvidaError,
   type TituloSemBoleto,
   type ListagemSugestoesBoleto,
+  type SituacaoSugestaoTitulo,
+  SITUACOES_SUGESTAO_TITULO,
   fetchTodasSugestoesBoleto,
   fetchRetidosPorCodigoBarras,
   BoletoCodigoBarrasRetiradaIncompletaError,
@@ -108,7 +110,10 @@ import { ConfirmacoesEmissorPainel } from './components/ConfirmacoesEmissorPaine
 import {
   agruparPorTitulo,
   chaveTitulo,
-  resumoDoTitulo,
+  desfechoPorTitulo,
+  desfechosDeSugestoesLegadas,
+  resumoDoDesfecho,
+  ROTULO_SITUACAO,
 } from './components/sugestaoBoleto'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
@@ -239,6 +244,10 @@ function SispagPanel() {
   // títulos funciona igual, só sem o selo "sugestão disponível".
   const [sugestoes, setSugestoes] = React.useState<ListagemSugestoesBoleto | null>(null)
   const [mostrarConfirmacoes, setMostrarConfirmacoes] = React.useState(false)
+  // Filtro por situação do boleto do título (ADR-0072); contagem vem de `contagemSituacao`.
+  const [situacaoBoleto, setSituacaoBoleto] = React.useState<SituacaoSugestaoTitulo | 'todas'>(
+    'todas',
+  )
   const carregarSugestoes = React.useCallback(async () => {
     try {
       setSugestoes(await fetchTodasSugestoesBoleto())
@@ -248,6 +257,14 @@ function SispagPanel() {
   }, [])
   const sugestoesPorTitulo = React.useMemo(
     () => agruparPorTitulo(sugestoes?.sugestoes ?? []),
+    [sugestoes],
+  )
+  // Desfecho por título elegível (ADR-0072): uma linha por título, com situação e até 3 candidatos.
+  const desfechosPorTitulo = React.useMemo(
+    () =>
+      desfechoPorTitulo(
+        sugestoes?.titulos ?? desfechosDeSugestoesLegadas(sugestoes?.sugestoes ?? []),
+      ),
     [sugestoes],
   )
   // Retidos por código de barras (ADR-0069 emenda 1, I16g), por `filCod:docCod:titCod`.
@@ -462,11 +479,17 @@ function SispagPanel() {
   const execucoesParadas =
     paradas && paradas.remessa + paradas.conciliacao > 0 ? paradas : undefined
   const titulosFiltrados = React.useMemo(() => {
-    const base = titulosAba
-    if (filtro === 'a-vencer') return base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
-    if (filtro === 'vencidos') return base.filter(ehVencido)
+    let base = titulosAba
+    if (filtro === 'a-vencer') base = base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
+    else if (filtro === 'vencidos') base = base.filter(ehVencido)
+    // Situação do boleto (ADR-0072): o desfecho do título vem da listagem de sugestões.
+    if (situacaoBoleto !== 'todas') {
+      base = base.filter(
+        (t) => desfechosPorTitulo.get(chaveTitulo(t))?.situacao === situacaoBoleto,
+      )
+    }
     return base
-  }, [titulosAba, filtro])
+  }, [titulosAba, filtro, situacaoBoleto, desfechosPorTitulo])
 
   // Filial + busca + paginação — mesmo kit do painel de Permutas (consistência de UX).
   const abaTitulos = useTabelaFiltro(
@@ -1031,6 +1054,27 @@ function SispagPanel() {
                       </Button>
                     ))}
                   </div>
+                  {sugestoes?.contagemSituacao ? (
+                    <div
+                      className="flex flex-wrap items-center gap-1"
+                      role="group"
+                      aria-label="Situação do boleto do título"
+                    >
+                      {SITUACOES_SUGESTAO_TITULO.filter(
+                        (sit) => (sugestoes.contagemSituacao?.[sit] ?? 0) > 0,
+                      ).map((sit) => (
+                        <Button
+                          key={sit}
+                          size="sm"
+                          variant={situacaoBoleto === sit ? 'default' : 'outline'}
+                          aria-pressed={situacaoBoleto === sit}
+                          onClick={() => setSituacaoBoleto((atual) => (atual === sit ? 'todas' : sit))}
+                        >
+                          {ROTULO_SITUACAO[sit]} ({sugestoes.contagemSituacao?.[sit] ?? 0})
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
                   {totalComprometidos > 0 ? (
                     <Button
                       size="sm"
@@ -1090,7 +1134,21 @@ function SispagPanel() {
                 </div>
               </div>
 
-              {sugestoes && sugestoes.total > sugestoes.sugestoes.length ? (
+              {sugestoes?.titulos &&
+              (sugestoes.totalTitulos ?? sugestoes.titulos.length) > sugestoes.titulos.length ? (
+                <p
+                  role="status"
+                  className="mb-3 flex items-start gap-2 rounded-lg border border-warning/40 px-3 py-2 text-xs text-warning-foreground"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  <span>
+                    Sugestões de boleto: mostrando as {sugestoes.titulos.length} primeiras de{' '}
+                    {sugestoes.totalTitulos}. Os títulos além delas aparecem sem a sugestão; use os
+                    filtros para reduzir a lista.
+                  </span>
+                </p>
+              ) : null}
+              {sugestoes && !sugestoes.titulos && sugestoes.total > sugestoes.sugestoes.length ? (
                 <p
                   role="status"
                   className="mb-3 flex items-start gap-2 rounded-lg border border-warning/40 px-3 py-2 text-xs text-warning-foreground"
@@ -1237,8 +1295,8 @@ function SispagPanel() {
                                 barrado na geração (não há código de barras). */}
                             <FormaPagamentoBadge
                               titulo={t}
-                              sugestao={resumoDoTitulo(
-                                sugestoesPorTitulo.get(chaveTitulo(t)),
+                              sugestao={resumoDoDesfecho(
+                                desfechosPorTitulo.get(chaveTitulo(t)),
                               )}
                               onAbrirSugestao={() =>
                                 setTituloDda({
@@ -1678,6 +1736,12 @@ function SispagPanel() {
             titulo={tituloDda}
             onClose={() => setTituloDda(null)}
             sugestoes={tituloDda ? (sugestoesPorTitulo.get(chaveTitulo(tituloDda)) ?? []) : []}
+            desfecho={tituloDda ? desfechosPorTitulo.get(chaveTitulo(tituloDda)) : undefined}
+            sincronizadoEm={sugestoes?.sincronizadoEm}
+            onAbrirBoletosDda={() => {
+              setTituloDda(null)
+              setAba('boletos-dda')
+            }}
             podeExecutar={podeExecutar}
             podeCopiar={podeVer}
             ddaDefasadoHoras={sugestoes?.ddaDefasadoHoras}

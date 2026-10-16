@@ -769,6 +769,68 @@ describe('SispagPage — sugestão de boleto na aba de títulos (ADR-0068)', () 
     expect(screen.queryByText(/mostrando as .* primeiras de/i)).not.toBeInTheDocument()
   })
 
+  it('filtro por situação do boleto: botões com a contagem do servidor; selecionar filtra a lista', async () => {
+    permissoes = ['sispag:ver']
+    const outro = { ...titulo, docCod: '7777', credor: 'OUTRO CREDOR SA' } as unknown as TituloAPagar
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockResolvedValue({ ...painel, titulos: [titulo, outro] })
+    const desfecho = (docCod: string, situacao: string) => ({
+      filCod: 1,
+      docCod,
+      titCod: '1',
+      valorTitulo: 4815.33,
+      vencimentoTitulo: '2026-09-24',
+      dataDebito: '2026-09-24',
+      situacao,
+      candidatos: [],
+      totalCandidatos: 0,
+      motivo: 'm',
+      avisoVenceAntes: 'NENHUM',
+      diasVencidoNoDebito: 0,
+    })
+    lib.fetchTodasSugestoesBoleto.mockResolvedValue({
+      sugestoes: [],
+      titulos: [desfecho('5046', 'SO_FRACA'), desfecho('7777', 'SEM_CANDIDATO')],
+      totalTitulos: 2,
+      contagemSituacao: { SO_FRACA: 1, SEM_CANDIDATO: 1 },
+      total: 0,
+      pagina: 1,
+      tamanho: 2000,
+      contagem: {},
+    })
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    const grupo = await screen.findByRole('group', { name: 'Situação do boleto do título' })
+    const fraca = within(grupo).getByRole('button', {
+      name: 'ver candidato (sem confirmação) (1)',
+    })
+    expect(within(grupo).getByRole('button', { name: 'sem boleto no pool (1)' })).toBeInTheDocument()
+    expect(screen.getAllByText('OUTRO CREDOR SA', { exact: false }).length).toBeGreaterThan(0)
+    await userEvent.click(fraca)
+    expect(fraca).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('OUTRO CREDOR SA', { exact: false })).not.toBeInTheDocument()
+    expect(screen.getAllByText('ADP BRASIL LTDA', { exact: false }).length).toBeGreaterThan(0)
+  })
+
+  it('truncamento por título: mostra o aviso com totalTitulos', async () => {
+    permissoes = ['sispag:ver']
+    jest.requireMock('@/lib/sispag').fetchTodasSugestoesBoleto.mockResolvedValue({
+      sugestoes: [],
+      titulos: [],
+      totalTitulos: 2500,
+      contagemSituacao: {},
+      total: 0,
+      pagina: 1,
+      tamanho: 2000,
+      contagem: {},
+    })
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    expect(await screen.findByText(/mostrando as 0 primeiras de/i)).toHaveTextContent('2500')
+  })
+
   it('falha ao ler as sugestões não derruba a aba de títulos', async () => {
     permissoes = ['sispag:ver']
     jest.requireMock('@/lib/sispag').fetchTodasSugestoesBoleto.mockRejectedValue(new Error('x'))

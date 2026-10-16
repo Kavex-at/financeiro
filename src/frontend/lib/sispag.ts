@@ -2034,6 +2034,10 @@ export const SINAIS_SUGESTAO_BOLETO = [
   'NUMERO_IGUAL',
   'COLISAO_NUMERO',
   'EMISSOR_CONFIRMADO',
+  /** O boleto vence ANTES do título (Δdias < 0, dentro do envelope): confirmar exige reconhecer (I15o). */
+  'VENCE_ANTES_DO_TITULO',
+  /** Gravado no snapshot da decisão quando o analista reconheceu `VENCE_ANTES_DO_TITULO`. */
+  'RECONHECEU_VENCE_ANTES',
 ] as const
 export type SinalSugestaoBoleto = (typeof SINAIS_SUGESTAO_BOLETO)[number]
 
@@ -2077,6 +2081,8 @@ export const sugestaoBoletoSchema = z.object({
     deltaDias: z.number(),
     sinais: z.array(z.enum(SINAIS_SUGESTAO_BOLETO)),
     confirmavel: z.boolean(),
+    /** Dias vencido na data de débito (derivado, ≥ 0); ausente em resposta antiga. */
+    diasVencidoNoDebito: z.number().optional(),
   }),
   estado: z.enum(['SUGERIDA', 'CONFIRMADA']),
   motivo: z.string().optional(),
@@ -2093,8 +2099,77 @@ export const sugestaoBoletoSchema = z.object({
 })
 export type SugestaoBoleto = z.infer<typeof sugestaoBoletoSchema>
 
+/**
+ * Situação do TÍTULO (I15m, ADR-0072): um desfecho por título elegível. Só `UNICA_SEGURA` e
+ * `SO_ATENCAO` têm candidato confirmável; as demais são informação.
+ */
+export const SITUACOES_SUGESTAO_TITULO = [
+  'UNICA_SEGURA',
+  'AMBIGUA',
+  'SO_ATENCAO',
+  'SO_FRACA',
+  'SO_VENCIDA',
+  'DISPUTADA',
+  'SEM_CANDIDATO',
+  'CONFIRMADA',
+  'ORFA',
+] as const
+export type SituacaoSugestaoTitulo = (typeof SITUACOES_SUGESTAO_TITULO)[number]
+
+export const AVISOS_VENCE_ANTES = ['NENHUM', 'ATENCAO', 'CRITICO'] as const
+export type AvisoVenceAntes = (typeof AVISOS_VENCE_ANTES)[number]
+
+const chaveTituloSchema = z.object({ filCod: z.number(), docCod: z.string(), titCod: z.string() })
+
+export const candidatoTituloSchema = z.object({
+  ddcCod: z.number(),
+  ditCod: z.number(),
+  numeroBoleto: z.string().optional(),
+  valorBoleto: z.number(),
+  vencimentoBoleto: z.string(),
+  /** Só a máscara. Nunca barras nem linha digitável (I15k). */
+  emissor: z
+    .object({ banco: z.string(), layout: layoutEmissorSchema, mascarado: z.string() })
+    .optional(),
+  avaliacao: sugestaoBoletoSchema.shape.avaliacao,
+  ancorado: z.boolean(),
+  confirmavel: z.boolean(),
+  /** Boleto exibido em mais de um título sem reserva (fraco/vencido não reservam). */
+  compartilhado: z.boolean().optional(),
+  /** O boleto está reservado ao título indicado (disputa, I15e/I15n). */
+  reservadoParaTitulo: chaveTituloSchema.optional(),
+  /** Por que não é confirmável (pt-BR). */
+  motivo: z.string().optional(),
+  confirmacaoEmissorId: z.string().optional(),
+})
+export type CandidatoTituloBoleto = z.infer<typeof candidatoTituloSchema>
+
+export const desfechoTituloSchema = z.object({
+  filCod: z.number(),
+  docCod: z.string(),
+  titCod: z.string(),
+  pesCod: z.string().optional(),
+  credor: z.string().optional(),
+  valorTitulo: z.number(),
+  vencimentoTitulo: z.string(),
+  dataDebito: z.string(),
+  situacao: z.enum(SITUACOES_SUGESTAO_TITULO),
+  candidatos: z.array(candidatoTituloSchema),
+  /** Candidatos dentro do envelope, antes do corte de exibição (3). */
+  totalCandidatos: z.number(),
+  motivo: z.string(),
+  motivoOrfa: z.string().optional(),
+  avisoVenceAntes: z.enum(AVISOS_VENCE_ANTES),
+  diasVencidoNoDebito: z.number(),
+})
+export type DesfechoTituloBoleto = z.infer<typeof desfechoTituloSchema>
+
 export const listagemSugestoesBoletoSchema = z.object({
   sugestoes: z.array(sugestaoBoletoSchema),
+  /** Uma linha por título elegível (ADR-0072). Opcional: resposta antiga não o traz. */
+  titulos: z.array(desfechoTituloSchema).optional(),
+  totalTitulos: z.number().optional(),
+  contagemSituacao: z.record(z.string(), z.number()).optional(),
   total: z.number(),
   pagina: z.number(),
   tamanho: z.number(),
@@ -2111,6 +2186,7 @@ export interface FiltroSugestoesBoleto {
   filCod?: number
   pesCod?: string
   tier?: ResultadoSugestaoBoleto
+  situacao?: SituacaoSugestaoTitulo
   pagina?: number
   tamanho?: number
 }
@@ -2207,6 +2283,8 @@ export const CODIGOS_ERRO_SUGESTAO_BOLETO = {
   RESERVADO_A_OUTRO_TITULO: 'BOLETO_JA_SUGERIDO_A_OUTRO_TITULO', // 409
   MOTIVO_OBRIGATORIO: 'CONFIRMACAO_EMISSOR_MOTIVO_OBRIGATORIO', // 422
   VENCIDO: 'BOLETO_VENCIDO_NAO_CONFIRMAVEL', // 422
+  AVISO_OBRIGATORIO: 'RECONHECIMENTO_DE_AVISO_OBRIGATORIO', // 422: reconhecer VENCE_ANTES_DO_TITULO
+  TITULO_SEM_SUGESTAO: 'TITULO_SEM_SUGESTAO', // 404
   PAR_NAO_ENCONTRADO: 'CONFIRMACAO_EMISSOR_NAO_ENCONTRADA', // 404
   NAO_CONFIRMADA: 'DECISAO_NAO_CONFIRMADA', // 409: nada a anular neste título
   SEM_TRILHA: 'COPIA_LINHA_SEM_TRILHA', // 503: a linha NÃO foi devolvida
@@ -2224,6 +2302,7 @@ export async function fetchSugestoesBoleto(
   if (filtro.filCod !== undefined) qs.set('filCod', String(filtro.filCod))
   if (filtro.pesCod) qs.set('pesCod', filtro.pesCod)
   if (filtro.tier) qs.set('tier', filtro.tier)
+  if (filtro.situacao) qs.set('situacao', filtro.situacao)
   if (filtro.pagina !== undefined) qs.set('pagina', String(filtro.pagina))
   if (filtro.tamanho !== undefined) qs.set('tamanho', String(filtro.tamanho))
   const q = qs.toString()
@@ -2246,11 +2325,31 @@ export async function fetchTodasSugestoesBoleto(): Promise<ListagemSugestoesBole
   return fetchSugestoesBoleto({ pagina: 1, tamanho: SUGESTOES_TAMANHO_TELA })
 }
 
-/** `POST .../confirmar` (`sispag:executar`). Nada é escrito no ERP. */
+/**
+ * `POST .../confirmar` (`sispag:executar`). Nada é escrito no ERP. `reconheceAvisos` só vai no
+ * corpo quando há aviso reconhecido (o servidor confere contra a avaliação recalculada).
+ */
 export async function confirmarSugestaoBoleto(
   chave: ChaveSugestaoBoleto,
+  reconheceAvisos: readonly SinalSugestaoBoleto[] = [],
 ): Promise<ResultadoDecisaoBoleto> {
-  return autorizacaoRequest(`${sugestoesBase}/confirmar`, resultadoDecisaoBoletoSchema, post(chave))
+  return autorizacaoRequest(
+    `${sugestoesBase}/confirmar`,
+    resultadoDecisaoBoletoSchema,
+    post(reconheceAvisos.length > 0 ? { ...chave, reconheceAvisos } : chave),
+  )
+}
+
+/** `GET .../titulo` (`sispag:ver`): até 3 candidatos de UM título, sob demanda. */
+export async function fetchDetalheTituloBoleto(chave: ChaveAnulacaoBoleto): Promise<DesfechoTituloBoleto> {
+  const qs = new URLSearchParams({
+    filCod: String(chave.filCod),
+    docCod: chave.docCod,
+    titCod: chave.titCod,
+  })
+  return autorizacaoRequest(`${sugestoesBase}/titulo?${qs.toString()}`, desfechoTituloSchema, {
+    cache: 'no-store',
+  })
 }
 
 /** `POST .../rejeitar` (`sispag:executar`); `motivo` obrigatório. */
