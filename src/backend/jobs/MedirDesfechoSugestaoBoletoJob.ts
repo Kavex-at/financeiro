@@ -2,7 +2,10 @@ import { inject, injectable } from 'tsyringe';
 import { DECISAO_SUGESTAO_BOLETO } from '../domain/interface/sispag/ConfirmacaoEmissorBoleto.js';
 import { PAGO_POR_CONEXOS } from '../domain/interface/sispag/PagoPorConexos.js';
 import type { TituloAPagar } from '../domain/interface/sispag/SispagInterface.js';
-import type { SugestaoBoletoTitulo } from '../domain/interface/sispag/SugestaoBoleto.js';
+import type {
+    DesfechoTitulo,
+    SugestaoBoletoTitulo,
+} from '../domain/interface/sispag/SugestaoBoleto.js';
 import BankingCalendar from '../domain/libs/calendar/BankingCalendar.js';
 import BoletoDdaRepository from '../domain/repository/sispag/BoletoDdaRepository.js';
 import LotePagamentoRepository from '../domain/repository/sispag/LotePagamentoRepository.js';
@@ -34,6 +37,18 @@ export interface ResultadoMedicaoDesfecho {
     semLinhaPorFilial: Record<string, number>;
     /** Chaves `fil:doc:tit` sem linha (nunca barras nem linha digitável). */
     chavesSemLinha: string[];
+    /**
+     * Motor NOVO (ADR-0072, Task 16) sobre o MESMO snapshot: contagem por situação do título.
+     * `semDesfecho` é o nº de títulos elegíveis sem desfecho (esperado 0).
+     */
+    porSituacao: Record<string, number>;
+    semDesfecho: number;
+    desfechos: number;
+    /** Participação de `SO_FRACA` entre os elegíveis (0–1), para o limiar de ruído da Task 16. */
+    participacaoSoFraca: number;
+    porSituacaoPorFilial: Record<string, Record<string, number>>;
+    /** `chaves` dos elegíveis sem desfecho. */
+    chavesSemDesfecho: string[];
 }
 
 const chaveTitulo = (t: { filCod: number; docCod: string; titCod: string }): string =>
@@ -83,7 +98,7 @@ export default class MedirDesfechoSugestaoBoletoJob {
             vistos.add(k);
             if (item.dataDebito) datasDebito.set(k, item.dataDebito);
         }
-        const sugestoes = this.motor.sugerir({
+        const { sugestoes, desfechos } = this.motor.analisar({
             titulos,
             boletos,
             paresVigentes: pares.map((p) => ({ pesCod: p.pesCod, emissorChave: p.emissorChave })),
@@ -91,13 +106,20 @@ export default class MedirDesfechoSugestaoBoletoJob {
             confirmadas,
             datasDebito,
         });
-        return this.resumir({ titulos, boletos: boletos.length, sugestoes, sincronizadoEm });
+        return this.resumir({
+            titulos,
+            boletos: boletos.length,
+            sugestoes,
+            desfechos,
+            sincronizadoEm,
+        });
     };
 
     private resumir = (a: {
         titulos: TituloAPagar[];
         boletos: number;
         sugestoes: SugestaoBoletoTitulo[];
+        desfechos: DesfechoTitulo[];
         sincronizadoEm: number | undefined;
     }): ResultadoMedicaoDesfecho => {
         const elegiveis = a.titulos.filter(this.elegivel);
@@ -123,6 +145,22 @@ export default class MedirDesfechoSugestaoBoletoJob {
             }
         }
         const semLinha = chavesSemLinha.length;
+        const comDesfecho = new Set(a.desfechos.map(chaveTitulo));
+        const chavesSemDesfecho = elegiveis
+            .map(chaveTitulo)
+            .filter((k) => !comDesfecho.has(k))
+            .sort();
+        const porSituacao: Record<string, number> = {};
+        const porSituacaoPorFilial: Record<string, Record<string, number>> = {};
+        const chavesElegiveis = new Set(elegiveis.map(chaveTitulo));
+        for (const d of a.desfechos) {
+            if (!chavesElegiveis.has(chaveTitulo(d))) continue;
+            porSituacao[d.situacao] = (porSituacao[d.situacao] ?? 0) + 1;
+            const f = String(d.filCod);
+            const dessa = porSituacaoPorFilial[f] ?? {};
+            dessa[d.situacao] = (dessa[d.situacao] ?? 0) + 1;
+            porSituacaoPorFilial[f] = dessa;
+        }
         return {
             executadoEm: this.calendar.now().toISOString(),
             dataCivil: this.calendar.todayBrt(),
@@ -136,6 +174,13 @@ export default class MedirDesfechoSugestaoBoletoJob {
             elegiveisPorFilial,
             semLinhaPorFilial,
             chavesSemLinha: chavesSemLinha.sort(),
+            porSituacao,
+            semDesfecho: chavesSemDesfecho.length,
+            desfechos: a.desfechos.length,
+            participacaoSoFraca:
+                elegiveis.length === 0 ? 0 : (porSituacao.SO_FRACA ?? 0) / elegiveis.length,
+            porSituacaoPorFilial,
+            chavesSemDesfecho,
         };
     };
 

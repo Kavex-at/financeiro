@@ -73,10 +73,11 @@ const main = async (): Promise<number> => {
         return 1;
     }
     const resultado = await container.resolve(MedirDesfechoSugestaoBoletoJob).executar();
-    const { chavesSemLinha, ...resumo } = resultado;
+    const { chavesSemLinha, chavesSemDesfecho, ...resumo } = resultado;
     console.log(JSON.stringify({ alvo, ...resumo }, null, 2));
     if (process.argv.includes('--detalhe')) {
         console.log(`sem linha (${chavesSemLinha.length}):\n${chavesSemLinha.join('\n')}`);
+        console.log(`sem desfecho (${chavesSemDesfecho.length}):\n${chavesSemDesfecho.join('\n')}`);
     }
     return 0;
 };
