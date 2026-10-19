@@ -6,6 +6,7 @@ import type { BoletoDda } from '../domain/interface/sispag/BoletoDda.js';
 import type { TituloAPagar } from '../domain/interface/sispag/SispagInterface.js';
 import CodigoBarrasBoleto from '../domain/libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../domain/libs/calendar/BankingCalendar.js';
+import AncoraOrdemDps from '../domain/service/sispag/AncoraOrdemDps.js';
 import MotorSugestaoBoleto from '../domain/service/sispag/MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from '../domain/service/sispag/RegraSugestaoBoleto.js';
 
@@ -163,6 +164,7 @@ const main = async (): Promise<void> => {
         new CodigoBarrasBoleto(),
         BankingCalendar.withClock(() => new Date()),
         new RegraSugestaoBoleto(),
+        new AncoraOrdemDps(),
     );
     const sugestoes = motor.sugerir({
         titulos: entrada,

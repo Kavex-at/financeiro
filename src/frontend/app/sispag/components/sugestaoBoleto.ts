@@ -22,6 +22,14 @@ export const formatDeltaPercentual = (d: number): string => `${sinal(d)}${numero
 export const formatDeltaDias = (d: number): string =>
   `${sinal(d)}${Math.abs(d)} ${Math.abs(d) === 1 ? 'dia' : 'dias'}`
 
+/** Sinais que ancoram o candidato (ADR-0072 + I15p) — espelha o motor do backend. */
+const SINAIS_ANCORA: ReadonlySet<SinalSugestaoBoleto> = new Set<SinalSugestaoBoleto>([
+  'EMISSOR_CONFIRMADO',
+  'NUMERO_IGUAL',
+  'DPS_IGUAL',
+  'ORDEM_DPS',
+])
+
 export const TEXTO_SINAL: Record<SinalSugestaoBoleto, { texto: string; atencao: boolean }> = {
   VALOR_IGUAL: { texto: 'valor igual ao do título', atencao: false },
   VALOR_ATE_5_CENTAVOS: { texto: 'valor difere em até R$ 0,05 do título', atencao: true },
@@ -35,6 +43,8 @@ export const TEXTO_SINAL: Record<SinalSugestaoBoleto, { texto: string; atencao: 
     texto: 'aviso de vencimento antes do título reconhecido por quem confirmou',
     atencao: false,
   },
+  DPS_IGUAL: { texto: 'número do boleto igual ao DPS da NFS-e', atencao: false },
+  ORDEM_DPS: { texto: 'casado pela ordem do DPS da NFS-e deste emissor', atencao: false },
 }
 
 export const TIER_ROTULO: Record<SugestaoBoleto['avaliacao']['resultado'], string> = {
@@ -251,9 +261,7 @@ export const desfechosDeSugestoesLegadas = (lista: SugestaoBoleto[]): DesfechoTi
         vencimentoBoleto: s.vencimentoBoleto,
         ...(s.emissor ? { emissor: s.emissor } : {}),
         avaliacao: s.avaliacao,
-        ancorado:
-          s.avaliacao.sinais.includes('EMISSOR_CONFIRMADO') ||
-          s.avaliacao.sinais.includes('NUMERO_IGUAL'),
+        ancorado: s.avaliacao.sinais.some((x) => SINAIS_ANCORA.has(x)),
         confirmavel: s.confirmavel && s.avaliacao.confirmavel && s.estado !== 'CONFIRMADA',
         ...(s.motivo ? { motivo: s.motivo } : {}),
         ...(s.confirmacaoEmissorId ? { confirmacaoEmissorId: s.confirmacaoEmissorId } : {}),

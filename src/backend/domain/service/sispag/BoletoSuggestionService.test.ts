@@ -19,9 +19,11 @@ import type {
     DecisaoSugestao,
 } from '../../interface/sispag/ConfirmacaoEmissorBoleto.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
+import type { DpsConhecido } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
+import AncoraOrdemDps from './AncoraOrdemDps.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
@@ -30,7 +32,7 @@ const HOJE = new Date('2026-10-14T15:00:00Z'); // quarta-feira
 const calendar = BankingCalendar.withClock(() => HOJE);
 const codigoBarras = new CodigoBarrasBoleto();
 const regra = new RegraSugestaoBoleto();
-const motor = new MotorSugestaoBoleto(codigoBarras, calendar, regra);
+const motor = new MotorSugestaoBoleto(codigoBarras, calendar, regra, new AncoraOrdemDps());
 
 /** Relógio do cache nos testes: avança só quando o teste manda (TTL determinístico). */
 const relogio = { agora: HOJE.getTime() };
@@ -129,6 +131,7 @@ interface Cenario {
     boletos: BoletoDda[];
     pares: ConfirmacaoEmissor[];
     decisoes: DecisaoSugestao[];
+    dps: DpsConhecido[];
 }
 
 const montar = (over: Partial<Cenario> = {}) => {
@@ -137,6 +140,7 @@ const montar = (over: Partial<Cenario> = {}) => {
         boletos: [BOLETO],
         pares: [],
         decisoes: [],
+        dps: [],
         ...over,
     };
     const eventos: Array<Record<string, unknown>> = [];
@@ -240,6 +244,7 @@ const montar = (over: Partial<Cenario> = {}) => {
         ultimaSincronizacao: jest.fn(async () => HOJE.getTime() - 2 * 3_600_000),
     };
     const loteRepo = { listTitulosEmLotesAbertos: jest.fn(async () => []) };
+    const dpsRepo = { listarLidos: jest.fn(async () => cen.dps) };
     const tx = {};
     const db = { withTransaction: jest.fn(async (fn: (t: unknown) => unknown) => fn(tx)) };
     const logService = {
@@ -259,9 +264,44 @@ const montar = (over: Partial<Cenario> = {}) => {
         db as never,
         logService as never,
         cache,
+        dpsRepo as never,
     );
-    return { service, repo, tituloRepo, boletoRepo, loteRepo, db, logService, eventos, cen, cache };
+    return {
+        service,
+        repo,
+        tituloRepo,
+        boletoRepo,
+        loteRepo,
+        dpsRepo,
+        db,
+        logService,
+        eventos,
+        cen,
+        cache,
+    };
 };
+
+describe('BoletoSuggestionService — DPS lidos entram no motor (I15p, ADR-0073)', () => {
+    it('o cenário lê os DPS de `titulo_dps` e os entrega ao motor', async () => {
+        const dps: DpsConhecido = {
+            filCod: 1,
+            docCod: '9001',
+            titCod: '1',
+            pesCod: '7001',
+            nfse: '86666',
+            dps: '776132',
+        };
+        const espiao = jest.spyOn(motor, 'analisar');
+        try {
+            const { service, dpsRepo } = montar({ dps: [dps] });
+            await service.listarSugestoes({});
+            expect(dpsRepo.listarLidos).toHaveBeenCalledTimes(1);
+            expect(espiao.mock.calls[0]?.[0].dps).toEqual([dps]);
+        } finally {
+            espiao.mockRestore();
+        }
+    });
+});
 
 describe('BoletoSuggestionService.listarSugestoes (I15c, I15k)', () => {
     it('devolve o emissor MASCARADO e nenhuma barra/linha digitável; nem a chave do emissor', async () => {

@@ -4,6 +4,7 @@ import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type { SugestaoBoletoTitulo } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import AncoraOrdemDps from './AncoraOrdemDps.js';
 import MotorSugestaoBoleto, { type EntradaMotorSugestao } from './MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 
@@ -12,6 +13,7 @@ const motor = new MotorSugestaoBoleto(
     new CodigoBarrasBoleto(),
     calendar,
     new RegraSugestaoBoleto(),
+    new AncoraOrdemDps(),
 );
 
 const utc = (civil: string): number => Date.parse(`${civil}T00:00:00Z`);

@@ -2038,6 +2038,10 @@ export const SINAIS_SUGESTAO_BOLETO = [
   'VENCE_ANTES_DO_TITULO',
   /** Gravado no snapshot da decisão quando o analista reconheceu `VENCE_ANTES_DO_TITULO`. */
   'RECONHECEU_VENCE_ANTES',
+  /** Número do boleto = DPS lido do PDF da NFS-e + `000` (âncora direta, I15p). */
+  'DPS_IGUAL',
+  /** Casado pela ordem de DPS no escopo provado do emissor (I15p). */
+  'ORDEM_DPS',
 ] as const
 export type SinalSugestaoBoleto = (typeof SINAIS_SUGESTAO_BOLETO)[number]
 

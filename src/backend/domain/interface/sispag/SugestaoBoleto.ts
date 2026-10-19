@@ -73,6 +73,16 @@ export const SINAL_SUGESTAO = {
     VENCE_ANTES_DO_TITULO: 'VENCE_ANTES_DO_TITULO',
     /** Gravado no snapshot da decisão quando o analista reconheceu `VENCE_ANTES_DO_TITULO`. */
     RECONHECEU_VENCE_ANTES: 'RECONHECEU_VENCE_ANTES',
+    /**
+     * Âncora DPS direta (I15p(1), ADR-0073): o número do boleto é o DPS do título, lido do PDF da
+     * NFS-e, seguido de `000`. Âncora como `NUMERO_IGUAL`: não sobe tier nem alarga limite.
+     */
+    DPS_IGUAL: 'DPS_IGUAL',
+    /**
+     * Âncora DPS por ordem (I15p(2), ADR-0073): no escopo (credor, emissor) provado por um DPS lido,
+     * o k-ésimo título por NFS-e casa com o k-ésimo boleto por número. Não sobe tier.
+     */
+    ORDEM_DPS: 'ORDEM_DPS',
 } as const;
 export type SinalSugestao = (typeof SINAL_SUGESTAO)[keyof typeof SINAL_SUGESTAO];
 
@@ -82,6 +92,8 @@ export interface TituloParaSugestao {
     vencimento: string;
     /** `doc_esp_numero` do fornecedor. */
     numeroDocumento?: string;
+    /** Número da DPS lido do PDF da NFS-e (`titulo_dps`, I15p). */
+    dps?: string;
 }
 
 /** Lado do boleto na avaliação. */
@@ -98,6 +110,8 @@ export interface AvaliacaoSugestaoEntrada {
     dataDebito: string;
     /** Há par `VIGENTE` para (pesCod, emissorChave) deste boleto. */
     parConfirmado: boolean;
+    /** O par foi casado pela ordem de DPS do escopo (I15p(2)), calculada fora da regra. */
+    ordemDps?: boolean;
 }
 
 export interface AvaliacaoSugestao {
@@ -153,6 +167,20 @@ export interface DecisaoConfirmadaChaveada extends DecisaoChaveada {
 export interface ParVigenteChave {
     pesCod: string;
     emissorChave: string;
+}
+
+/**
+ * DPS conhecido de um título (`titulo_dps` com status `LIDO`, I15p). Guarda credor e NFS-e para
+ * provar o escopo mesmo depois que o título sai da carteira.
+ */
+export interface DpsConhecido {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    pesCod?: string;
+    /** Nº da NFS-e lido do PDF (cai para `doc_esp_numero` quando o PDF não traz). */
+    nfse?: string;
+    dps: string;
 }
 
 /** Estado da sugestão devolvida para um título. */

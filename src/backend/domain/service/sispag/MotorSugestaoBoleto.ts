@@ -9,6 +9,7 @@ import {
     type DecisaoChaveada,
     type DecisaoConfirmadaChaveada,
     type DesfechoTitulo,
+    type DpsConhecido,
     ESTADO_SUGESTAO,
     type EmissorBoleto,
     type ParVigenteChave,
@@ -21,6 +22,7 @@ import {
 } from '../../interface/sispag/SugestaoBoleto.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
+import AncoraOrdemDps from './AncoraOrdemDps.js';
 import RegraSugestaoBoleto, { faixaDeCandidatos } from './RegraSugestaoBoleto.js';
 
 export interface EntradaMotorSugestao {
@@ -36,6 +38,8 @@ export interface EntradaMotorSugestao {
     confirmadas: DecisaoConfirmadaChaveada[];
     /** Data de débito (civil) do lote do título, por `filCod:docCod:titCod`. Sem lote: vencimento. */
     datasDebito?: ReadonlyMap<string, string>;
+    /** DPS lidos dos PDFs (`titulo_dps`, I15p), inclusive de títulos que já saíram da carteira. */
+    dps?: DpsConhecido[];
 }
 
 /** Boleto livre do pool, pré-computado uma vez por execução. */
@@ -55,6 +59,8 @@ interface TituloElegivel {
     chave: string;
     vencimento: string;
     dataDebito: string;
+    /** DPS lido do PDF da NFS-e (I15p(1)). */
+    dps?: string;
 }
 
 interface Pendente {
@@ -114,6 +120,18 @@ const chaveTitulo = (t: { filCod: number; docCod: string; titCod: string }): str
 const chaveBoleto = (b: { ddcCod: number; ditCod: number }): string => `${b.ddcCod}:${b.ditCod}`;
 
 const centavos = (valor: number): number => Math.round(valor * 100);
+
+/** Âncora (ADR-0072 + I15p): par vigente do emissor, número igual, DPS igual ou ordem de DPS. */
+const SINAIS_ANCORA: ReadonlySet<string> = new Set([
+    SINAL_SUGESTAO.EMISSOR_CONFIRMADO,
+    SINAL_SUGESTAO.NUMERO_IGUAL,
+    SINAL_SUGESTAO.DPS_IGUAL,
+    SINAL_SUGESTAO.ORDEM_DPS,
+]);
+const ancoradoPor = (sinais: readonly string[]): boolean =>
+    sinais.some((x) => SINAIS_ANCORA.has(x));
+const ancoradoPorDps = (sinais: readonly string[]): boolean =>
+    sinais.includes(SINAL_SUGESTAO.DPS_IGUAL) || sinais.includes(SINAL_SUGESTAO.ORDEM_DPS);
 
 const comparaDoc = (a: string, b: string): number => {
     const na = Number(a);
@@ -175,6 +193,7 @@ export default class MotorSugestaoBoleto {
         @inject(CodigoBarrasBoleto) private readonly codigoBarras: CodigoBarrasBoleto,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
         @inject(RegraSugestaoBoleto) private readonly regra: RegraSugestaoBoleto,
+        @inject(AncoraOrdemDps) private readonly ordemDps: AncoraOrdemDps,
     ) {}
 
     /**
@@ -236,6 +255,7 @@ export default class MotorSugestaoBoleto {
                 candidatos: this.todosCandidatos(alvo, p.livres, p.ocupados, p.rejeitadas, p.pares),
             });
         }
+        this.ancorarPorOrdem(pendentes, p, entrada);
         pendentes.sort((x, y) => this.prioridade(x.alvo, y.alvo));
 
         // O contrato legado só enxerga o que `aceita`; a ordem relativa da lista completa é a mesma.
@@ -259,7 +279,8 @@ export default class MotorSugestaoBoleto {
         const rejeitadas = new Set(
             entrada.rejeitadas.map((d) => `${chaveTitulo(d)}|${chaveBoleto(d)}`),
         );
-        const elegiveis = this.elegiveis(entrada.titulos, entrada.datasDebito);
+        const dpsPorTitulo = new Map((entrada.dps ?? []).map((d) => [chaveTitulo(d), d.dps]));
+        const elegiveis = this.elegiveis(entrada.titulos, entrada.datasDebito, dpsPorTitulo);
         const elegivelPorChave = new Map(elegiveis.map((e) => [e.chave, e]));
         const tituloPorChave = new Map(entrada.titulos.map((t) => [chaveTitulo(t), t]));
 
@@ -362,7 +383,8 @@ export default class MotorSugestaoBoleto {
 
     private elegiveis = (
         titulos: TituloAPagar[],
-        datasDebito?: ReadonlyMap<string, string>,
+        datasDebito: ReadonlyMap<string, string> | undefined,
+        dpsPorTitulo: ReadonlyMap<string, string>,
     ): TituloElegivel[] =>
         titulos
             .filter(
@@ -376,11 +398,13 @@ export default class MotorSugestaoBoleto {
             .map((t) => {
                 const vencimento = this.calendar.fromErpEpoch(Number(t.vencimento));
                 const chave = chaveTitulo(t);
+                const dps = dpsPorTitulo.get(chave);
                 return {
                     titulo: t,
                     chave,
                     vencimento,
                     dataDebito: datasDebito?.get(chave) ?? vencimento,
+                    ...(dps ? { dps } : {}),
                 };
             });
 
@@ -390,6 +414,7 @@ export default class MotorSugestaoBoleto {
         alvo: TituloElegivel,
         boleto: BoletoLivre,
         pares: Set<string>,
+        ordemDps = false,
     ): AvaliacaoSugestao =>
         this.regra.avaliar({
             titulo: {
@@ -398,6 +423,7 @@ export default class MotorSugestaoBoleto {
                 ...(alvo.titulo.numeroDocumento
                     ? { numeroDocumento: alvo.titulo.numeroDocumento }
                     : {}),
+                ...(alvo.dps ? { dps: alvo.dps } : {}),
             },
             boleto: {
                 valor: boleto.valor,
@@ -409,6 +435,7 @@ export default class MotorSugestaoBoleto {
                 alvo.titulo.pesCod != null &&
                 boleto.emissor != null &&
                 pares.has(`${alvo.titulo.pesCod}|${boleto.emissor.chave}`),
+            ...(ordemDps ? { ordemDps: true } : {}),
         });
 
     /** Seguros entram; ATENCAO exige âncora; vencido entra só como informação com valor ≈ igual. */
@@ -416,9 +443,7 @@ export default class MotorSugestaoBoleto {
         if (a.resultado === RESULTADO_SUGESTAO.SEM_RELACAO) return false;
         if (a.resultado === RESULTADO_SUGESTAO.CONHECIDO) return true;
         if (a.resultado === RESULTADO_SUGESTAO.FORTE) return true;
-        const ancora =
-            a.sinais.includes(SINAL_SUGESTAO.EMISSOR_CONFIRMADO) ||
-            a.sinais.includes(SINAL_SUGESTAO.NUMERO_IGUAL);
+        const ancora = ancoradoPor(a.sinais);
         if (a.resultado === RESULTADO_SUGESTAO.ATENCAO) return ancora;
         return ancora || Math.abs(a.deltaValor) <= 0.05;
     };
@@ -444,12 +469,54 @@ export default class MotorSugestaoBoleto {
     private alocar = (pendentes: Pendente[], ocupados: Set<string>): SugestaoBoletoTitulo[] => {
         const ocupadosAgora = new Set(ocupados);
         const resolvidos = new Set<string>();
+        const porDps = this.escolhasPorDps(pendentes, ocupadosAgora);
+        const camadaDps: SugestaoBoletoTitulo[] = [];
+        for (const { alvo } of pendentes) {
+            const c = porDps.get(alvo.chave);
+            if (!c) continue;
+            ocupadosAgora.add(c.boleto.chave);
+            resolvidos.add(alvo.chave);
+            camadaDps.push(this.montar(alvo, c.avaliacao, c.boleto));
+        }
         return [
+            ...camadaDps,
             ...this.camadaSegura(pendentes, ocupadosAgora, resolvidos),
             // ATENCAO reserva o boleto; o vencido informativo não.
             ...this.camadaFraca(2, true, pendentes, ocupadosAgora, resolvidos),
             ...this.camadaFraca(3, false, pendentes, ocupadosAgora, resolvidos),
         ];
+    };
+
+    /**
+     * Camada 0 (I15p): o par ancorado por DPS reserva o boleto ANTES das demais camadas — é a prova
+     * de identidade mais forte que o motor tem, e nenhum título de menor vencimento ancorado só pelo
+     * emissor pode levá-lo. Vale só para o candidato DPS ÚNICO do título, num boleto que nenhum outro
+     * título reivindica por DPS, e nunca para vencido no débito (I15h).
+     */
+    private escolhasPorDps = <C extends Candidato>(
+        pendentes: ReadonlyArray<{ alvo: TituloElegivel; candidatos: C[] }>,
+        ocupados: ReadonlySet<string>,
+    ): Map<string, C> => {
+        const dpsDoTitulo = new Map<string, C[]>();
+        const reivindicacoes = new Map<string, number>();
+        for (const { alvo, candidatos } of pendentes) {
+            const doDps = candidatos.filter(
+                (c) =>
+                    ancoradoPorDps(c.avaliacao.sinais) &&
+                    (FORCA[c.avaliacao.resultado] ?? 9) <= FORCA_ATENCAO_ANCORADA &&
+                    !ocupados.has(c.boleto.chave),
+            );
+            dpsDoTitulo.set(alvo.chave, doDps);
+            for (const c of doDps) {
+                reivindicacoes.set(c.boleto.chave, (reivindicacoes.get(c.boleto.chave) ?? 0) + 1);
+            }
+        }
+        const escolhas = new Map<string, C>();
+        for (const [titulo, doDps] of dpsDoTitulo) {
+            const unico = doDps.length === 1 ? doDps[0] : undefined;
+            if (unico && reivindicacoes.get(unico.boleto.chave) === 1) escolhas.set(titulo, unico);
+        }
+        return escolhas;
     };
 
     /** Camada 1. Ambíguo (2+ da mesma força) = sem sugestão, e o título sai do jogo. */
@@ -460,6 +527,7 @@ export default class MotorSugestaoBoleto {
     ): SugestaoBoletoTitulo[] => {
         const resultado: SugestaoBoletoTitulo[] = [];
         for (const { alvo, candidatos } of pendentes) {
+            if (resolvidos.has(alvo.chave)) continue;
             const seguros = candidatos.filter((c) => (FORCA[c.avaliacao.resultado] ?? 9) <= 1);
             const topo = seguros[0];
             if (!topo) continue;
@@ -612,19 +680,75 @@ export default class MotorSugestaoBoleto {
             if (ocupados.has(boleto.chave) || rejeitadas.has(`${alvo.chave}|${boleto.chave}`)) {
                 continue;
             }
-            const avaliacao = this.avaliar(alvo, boleto, pares);
-            if (avaliacao.resultado === RESULTADO_SUGESTAO.SEM_RELACAO) continue;
-            const ancorado =
-                avaliacao.sinais.includes(SINAL_SUGESTAO.EMISSOR_CONFIRMADO) ||
-                avaliacao.sinais.includes(SINAL_SUGESTAO.NUMERO_IGUAL);
-            achados.push({
-                boleto,
-                avaliacao,
-                ancorado,
-                forca: this.forcaCompleta(avaliacao, ancorado),
-            });
+            const candidato = this.candidatoCompleto(alvo, boleto, pares);
+            if (candidato.avaliacao.resultado === RESULTADO_SUGESTAO.SEM_RELACAO) continue;
+            achados.push(candidato);
         }
         return achados.sort((x, y) => this.melhorCompleto(x, y));
+    };
+
+    private candidatoCompleto = (
+        alvo: TituloElegivel,
+        boleto: BoletoLivre,
+        pares: Set<string>,
+        ordemDps = false,
+    ): CandidatoCompleto => {
+        const avaliacao = this.avaliar(alvo, boleto, pares, ordemDps);
+        const ancorado = ancoradoPor(avaliacao.sinais);
+        return { boleto, avaliacao, ancorado, forca: this.forcaCompleta(avaliacao, ancorado) };
+    };
+
+    /**
+     * I15p(2): pareia por ordem de DPS dentro dos escopos provados e reavalia esses pares com o
+     * sinal `ORDEM_DPS`. Muta só a lista de candidatos montada nesta execução.
+     */
+    private ancorarPorOrdem = (
+        pendentes: PendenteCompleto[],
+        p: Preparo,
+        entrada: EntradaMotorSugestao,
+    ): void => {
+        if (!entrada.dps?.length) return;
+        const provas = this.ordemDps.provas(
+            entrada.dps,
+            entrada.boletos.map((b) => {
+                const emissor = this.codigoBarras.emissor(b.codbar);
+                return {
+                    ...(b.numero ? { numero: b.numero } : {}),
+                    ...(emissor ? { emissorChave: emissor.chave } : {}),
+                };
+            }),
+        );
+        const pares = this.ordemDps.parear({
+            titulos: pendentes.map(({ alvo }) => ({
+                chave: alvo.chave,
+                ...(alvo.titulo.pesCod ? { pesCod: alvo.titulo.pesCod } : {}),
+                ...(alvo.titulo.numeroDocumento ? { nfse: alvo.titulo.numeroDocumento } : {}),
+                ...(alvo.dps ? { dps: alvo.dps } : {}),
+            })),
+            boletos: p.livres.map((b) => ({
+                chave: b.chave,
+                ...(b.emissor ? { emissorChave: b.emissor.chave } : {}),
+                ...(b.numero ? { numero: b.numero } : {}),
+            })),
+            candidatos: new Map(
+                pendentes.map(({ alvo, candidatos }) => [
+                    alvo.chave,
+                    candidatos.map((c) => c.boleto.chave),
+                ]),
+            ),
+            provas,
+        });
+        if (pares.size === 0) return;
+        for (const pendente of pendentes) {
+            const { alvo } = pendente;
+            pendente.candidatos = pendente.candidatos
+                .map((c) =>
+                    pares.has(`${alvo.chave}|${c.boleto.chave}`)
+                        ? this.candidatoCompleto(alvo, c.boleto, p.pares, true)
+                        : c,
+                )
+                .sort((x, y) => this.melhorCompleto(x, y));
+        }
     };
 
     private forcaCompleta = (a: AvaliacaoSugestao, ancorado: boolean): number => {
@@ -639,10 +763,35 @@ export default class MotorSugestaoBoleto {
     /** Força → |Δvalor| → |Δdias| → chave do boleto: ordem total, independe da entrada. */
     private melhorCompleto = (x: CandidatoCompleto, y: CandidatoCompleto): number =>
         x.forca - y.forca ||
+        Number(ancoradoPorDps(y.avaliacao.sinais)) - Number(ancoradoPorDps(x.avaliacao.sinais)) ||
         Math.abs(x.avaliacao.deltaValor) - Math.abs(y.avaliacao.deltaValor) ||
         Math.abs(x.avaliacao.deltaDias) - Math.abs(y.avaliacao.deltaDias) ||
         x.boleto.ddcCod - y.boleto.ddcCod ||
         x.boleto.ditCod - y.boleto.ditCod;
+
+    /** Camada 0 do desfecho (I15p): a âncora DPS reserva o boleto antes de tudo. */
+    private reservarPorDps = (
+        pendentes: PendenteCompleto[],
+        estado: {
+            reservadoPor: Map<string, ChaveTitulo>;
+            escolhido: Map<string, CandidatoCompleto>;
+            situacao: Map<string, SituacaoSugestaoTitulo>;
+        },
+    ): void => {
+        const alvoPorChave = new Map(pendentes.map(({ alvo }) => [alvo.chave, alvo]));
+        for (const [titulo, c] of this.escolhasPorDps(pendentes, new Set())) {
+            const alvo = alvoPorChave.get(titulo);
+            if (!alvo) continue;
+            estado.reservadoPor.set(c.boleto.chave, this.chaveDe(alvo));
+            estado.escolhido.set(titulo, c);
+            estado.situacao.set(
+                titulo,
+                c.forca <= 1
+                    ? SITUACAO_SUGESTAO_TITULO.UNICA_SEGURA
+                    : SITUACAO_SUGESTAO_TITULO.SO_ATENCAO,
+            );
+        }
+    };
 
     /**
      * Mesmas camadas do contrato legado (seguros → ATENCAO ancorada), com prioridade do TÍTULO de
@@ -654,9 +803,11 @@ export default class MotorSugestaoBoleto {
         const reservadoPor = new Map<string, ChaveTitulo>();
         const escolhido = new Map<string, CandidatoCompleto>();
         const situacao = new Map<string, SituacaoSugestaoTitulo>();
+        this.reservarPorDps(pendentes, { reservadoPor, escolhido, situacao });
 
         // Camada 1: seguros. 2+ da mesma força = ambíguo (sem reserva).
         for (const { alvo, candidatos } of pendentes) {
+            if (situacao.has(alvo.chave)) continue;
             const seguros = candidatos.filter((c) => c.forca <= 1);
             const topo = seguros[0];
             if (!topo) continue;
@@ -814,9 +965,7 @@ export default class MotorSugestaoBoleto {
                 vencimentoBoleto: s.vencimentoBoleto,
                 ...(s.emissor ? { emissor: s.emissor } : {}),
                 avaliacao: s.avaliacao,
-                ancorado:
-                    s.avaliacao.sinais.includes(SINAL_SUGESTAO.EMISSOR_CONFIRMADO) ||
-                    s.avaliacao.sinais.includes(SINAL_SUGESTAO.NUMERO_IGUAL),
+                ancorado: ancoradoPor(s.avaliacao.sinais),
                 confirmavel: false,
                 ...(s.motivoOrfa ? { motivo: s.motivoOrfa } : {}),
             },

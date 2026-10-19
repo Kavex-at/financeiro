@@ -252,6 +252,22 @@ describe('contrato do desfecho por título (ADR-0072)', () => {
     expect(r.sugestoes[0]?.avaliacao.sinais).toContain('RECONHECEU_VENCE_ANTES')
   })
 
+  it('os sinais da âncora DPS (I15p, ADR-0073) passam no schema', () => {
+    const r = listagemSugestoesBoletoSchema.parse({
+      sugestoes: [
+        {
+          ...sugestao,
+          avaliacao: { ...sugestao.avaliacao, sinais: ['VALOR_IGUAL', 'DPS_IGUAL', 'ORDEM_DPS'] },
+        },
+      ],
+      total: 1,
+      pagina: 1,
+      tamanho: 50,
+      contagem: {},
+    })
+    expect(r.sugestoes[0]?.avaliacao.sinais).toEqual(['VALOR_IGUAL', 'DPS_IGUAL', 'ORDEM_DPS'])
+  })
+
   it('resposta antiga (sem os campos novos) ainda é aceita', () => {
     const r = listagemSugestoesBoletoSchema.parse({
       sugestoes: [sugestao],

@@ -18,6 +18,8 @@ interface Caso {
     par?: boolean;
     numeroTitulo?: string;
     numeroBoleto?: string;
+    dps?: string;
+    ordemDps?: boolean;
 }
 
 const avaliar = (c: Caso): AvaliacaoSugestao => {
@@ -27,6 +29,7 @@ const avaliar = (c: Caso): AvaliacaoSugestao => {
             valor: c.valorTitulo ?? 100,
             vencimento: vencTitulo,
             ...(c.numeroTitulo ? { numeroDocumento: c.numeroTitulo } : {}),
+            ...(c.dps ? { dps: c.dps } : {}),
         },
         boleto: {
             valor: c.valorBoleto ?? c.valorTitulo ?? 100,
@@ -35,6 +38,7 @@ const avaliar = (c: Caso): AvaliacaoSugestao => {
         },
         dataDebito: c.dataDebito ?? vencTitulo,
         parConfirmado: c.par ?? false,
+        ...(c.ordemDps ? { ordemDps: true } : {}),
     });
 };
 
@@ -316,5 +320,57 @@ describe('RegraSugestaoBoleto — aviso VENCE_ANTES_DO_TITULO (I15o, ADR-0072)',
         expect(r.deltaDias).toBe(-1);
         expect(r.diasVencidoNoDebito).toBe(0);
         expect(r.sinais).toContain('VENCE_ANTES_DO_TITULO');
+    });
+});
+
+describe('RegraSugestaoBoleto — âncora DPS (I15p, ADR-0073)', () => {
+    // Caso real (2026-10-19): título 41155/1, NFS-e 86666, DPS 776132, boleto 776132000, +8 dias.
+    const multilog = {
+        valorTitulo: 147.99,
+        vencTitulo: '2026-10-16',
+        vencBoleto: '2026-10-24',
+        numeroTitulo: '86666',
+        numeroBoleto: '776132000',
+    };
+
+    it('número do boleto = DPS + 000 → DPS_IGUAL, sem subir o tier (+8 dias segue ATENCAO)', () => {
+        const r = avaliar({ ...multilog, dps: '776132' });
+        expect(r.resultado).toBe('ATENCAO');
+        expect(r.sinais).toContain('DPS_IGUAL');
+        expect(r.sinais).not.toContain('NUMERO_IGUAL');
+    });
+
+    it('compara dígitos estritos: zeros à esquerda do boleto não atrapalham', () => {
+        expect(avaliar({ ...multilog, dps: '25459', numeroBoleto: '025459000' }).sinais).toContain(
+            'DPS_IGUAL',
+        );
+    });
+
+    it('DPS de outro título (776138) não ancora este boleto', () => {
+        expect(avaliar({ ...multilog, dps: '776138' }).sinais).not.toContain('DPS_IGUAL');
+    });
+
+    it('sem o sufixo 000 não é DPS_IGUAL (o número do boleto tem de ser exatamente DPS·000)', () => {
+        expect(
+            avaliar({ ...multilog, dps: '776132', numeroBoleto: '776132' }).sinais,
+        ).not.toContain('DPS_IGUAL');
+    });
+
+    it('DPS igual não resgata par fora do envelope (I15f por analogia)', () => {
+        const r = avaliar({ ...multilog, dps: '776132', vencBoleto: '2026-11-30' });
+        expect(r.resultado).toBe('SEM_RELACAO');
+        expect(r.sinais).not.toContain('DPS_IGUAL');
+    });
+
+    it('ordemDps vira o sinal ORDEM_DPS dentro do envelope, sem subir o tier', () => {
+        const r = avaliar({ ...multilog, ordemDps: true });
+        expect(r.resultado).toBe('ATENCAO');
+        expect(r.sinais).toContain('ORDEM_DPS');
+    });
+
+    it('ordemDps não alarga I15h: boleto vencido no débito segue VENCIDO_INFORMATIVO', () => {
+        const r = avaliar({ ...multilog, ordemDps: true, dataDebito: '2026-10-25' });
+        expect(r.resultado).toBe('VENCIDO_INFORMATIVO');
+        expect(r.confirmavel).toBe(false);
     });
 });

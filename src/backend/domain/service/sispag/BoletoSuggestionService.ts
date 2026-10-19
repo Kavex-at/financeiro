@@ -56,6 +56,7 @@ import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js'
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import TituloDpsRepository from '../../repository/sispag/TituloDpsRepository.js';
 import LogService from '../LogService.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
@@ -140,6 +141,7 @@ export default class BoletoSuggestionService {
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
         @inject(LogService) private readonly logService: LogService,
         @inject(SugestaoBoletoCache) private readonly cache: SugestaoBoletoCache,
+        @inject(TituloDpsRepository) private readonly dpsRepo: TituloDpsRepository,
     ) {}
 
     // ── Leitura ────────────────────────────────────────────────────────────────────────────────
@@ -859,13 +861,14 @@ export default class BoletoSuggestionService {
         titulos: number;
         boletos: number;
     }> => {
-        const [titulos, boletos, pares, rejeitadas, confirmadas, emLotes] = await Promise.all([
+        const [titulos, boletos, pares, rejeitadas, confirmadas, emLotes, dps] = await Promise.all([
             this.tituloRepo.listAtivos(),
             this.boletoRepo.listBoletos({}),
             this.repo.listarParesVigentes(),
             this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.REJEITADA),
             this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
             this.loteRepo.listTitulosEmLotesAbertos(),
+            this.dpsRepo.listarLidos(),
         ]);
         const datasDebito = this.mapaDatasDebito(emLotes);
         const { sugestoes, desfechos } = this.motor.analisar({
@@ -875,6 +878,7 @@ export default class BoletoSuggestionService {
             rejeitadas,
             confirmadas,
             datasDebito,
+            dps,
         });
         return {
             sugestoes,
