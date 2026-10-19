@@ -68,3 +68,88 @@ describe('ConexosSispagClient.lerTotalAberto (ADR-0071, I17b)', () => {
         expect(r.legivel).toBe(false);
     });
 });
+
+describe('ConexosSispagClient.lerValoresAberto (ADR-0073, I17b régua líquida)', () => {
+    it('devolve os cinco campos da régua líquida do título pedido', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [
+                linha({
+                    titCod: '2',
+                    totalAberto: 53.53,
+                    totalLiquido: 53.54,
+                    totalPago: 0,
+                    titMnyJuros: 0.01,
+                    titMnyDesconto: 0,
+                }),
+            ],
+        });
+        const r = await make(base).lerValoresAberto(2, '636', '2');
+        expect(r).toEqual({
+            legivel: true,
+            valores: {
+                totalAberto: 53.53,
+                totalLiquido: 53.54,
+                totalPago: 0,
+                titMnyJuros: 0.01,
+                titMnyDesconto: 0,
+            },
+        });
+    });
+
+    it('campo nulo/ausente segue ausente (a régua decide, fail-closed); nunca vira titMnyValor', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [linha({ totalLiquido: null })],
+        });
+        const r = await make(base).lerValoresAberto(2, '636', '1');
+        expect(r.legivel).toBe(true);
+        if (r.legivel) {
+            expect(r.valores.totalLiquido).toBeUndefined();
+            expect(r.valores.totalAberto).toBe(1028.8);
+        }
+    });
+
+    it('juros/desconto NULOS (título comum, fixtures reais) viram 0; chave ausente segue ausente', async () => {
+        const base = buildBase();
+        base.listGenericPaginated
+            .mockResolvedValueOnce({
+                count: 1,
+                rows: [
+                    linha({
+                        totalLiquido: 1028.8,
+                        totalPago: 0,
+                        titMnyJuros: null,
+                        titMnyDesconto: null,
+                    }),
+                ],
+            })
+            .mockResolvedValueOnce({ count: 1, rows: [linha({ totalLiquido: 1028.8 })] });
+        const client = make(base);
+        const comNulos = await client.lerValoresAberto(2, '636', '1');
+        expect(comNulos).toEqual({
+            legivel: true,
+            valores: {
+                totalLiquido: 1028.8,
+                totalPago: 0,
+                totalAberto: 1028.8,
+                titMnyJuros: 0,
+                titMnyDesconto: 0,
+            },
+        });
+        const semChave = await client.lerValoresAberto(2, '636', '1');
+        expect(semChave.legivel && semChave.valores.titMnyJuros).toBeUndefined();
+    });
+
+    it('título ausente ou falha HTTP ⇒ ilegível', async () => {
+        const base = buildBase();
+        base.listGenericPaginated
+            .mockResolvedValueOnce({ count: 1, rows: [linha({ titCod: '9' })] })
+            .mockRejectedValueOnce({ response: { status: 500 } });
+        const client = make(base);
+        expect((await client.lerValoresAberto(2, '636', '1')).legivel).toBe(false);
+        expect((await client.lerValoresAberto(2, '636', '1')).legivel).toBe(false);
+    });
+});

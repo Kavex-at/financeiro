@@ -9,6 +9,7 @@ import ElegibilidadeVinculoCodigoBarras, {
     type EntradaElegibilidadeVinculo,
     MOTIVO_INELEGIVEL_VINCULO,
 } from './ElegibilidadeVinculoCodigoBarras.js';
+import ValorAbertoLiquido from './ValorAbertoLiquido.js';
 
 const regra = new ElegibilidadeVinculoCodigoBarras(new CodigoBarrasBoleto());
 
@@ -29,7 +30,7 @@ const base = (
         serie: boleto.serie ?? 1,
     }),
     tier: RESULTADO_SUGESTAO.CONHECIDO,
-    totalAberto: 1028.8,
+    aberto: ValorAbertoLiquido.semAcrescimos(1028.8),
     vencimentoTitulo: VENC_TITULO,
     dataDebito: DATA_DEBITO,
     ...sobrescreve,
@@ -63,7 +64,7 @@ describe('ElegibilidadeVinculoCodigoBarras (I17a–d, só locais)', () => {
 
         it('compara com o `totalAberto` recebido, nunca com o snapshot do item', () => {
             // O aberto ao vivo mudou (pagamento parcial): o boleto de 1028,80 deixa de bater.
-            const r = regra.avaliar(base({ totalAberto: 1000 }));
+            const r = regra.avaliar(base({ aberto: ValorAbertoLiquido.semAcrescimos(1000) }));
             expect(r.elegivel).toBe(false);
             expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_DIFERENTE);
             expect(r.deltaCentavos).toBe(2880);
@@ -77,10 +78,60 @@ describe('ElegibilidadeVinculoCodigoBarras (I17a–d, só locais)', () => {
         });
 
         it('sem `totalAberto` ao vivo não há comparação: inelegível (fail-closed)', () => {
-            const { totalAberto: _t, ...semAberto } = base();
+            const { aberto: _t, ...semAberto } = base();
             const r = regra.avaliar(semAberto);
             expect(r.elegivel).toBe(false);
             expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL);
+        });
+    });
+
+    describe('I17b emendada (ADR-0073) — régua LÍQUIDA', () => {
+        // HML 536/2: base 53,53 + juros 0,01 (renegociação fin070, frnVldTpop 1) ⇒ líquido 53,54.
+        const hml5362 = {
+            totalLiquido: 53.54,
+            totalPago: 0,
+            totalAberto: 53.53,
+            titMnyJuros: 0.01,
+            titMnyDesconto: 0,
+        };
+
+        it('barra 53,54 × líquido 53,54 ⇒ elegível', () => {
+            const r = regra.avaliar(base({ aberto: hml5362 }, { valor: 53.54 }));
+            expect(r.elegivel).toBe(true);
+            expect(r.deltaCentavos).toBe(0);
+        });
+
+        it('barra 53,53 × líquido 53,54 ⇒ VALOR_DIFERENTE com Δ −1', () => {
+            const r = regra.avaliar(base({ aberto: hml5362 }, { valor: 53.53 }));
+            expect(r.elegivel).toBe(false);
+            expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_DIFERENTE);
+            expect(r.deltaCentavos).toBe(-1);
+        });
+
+        it('as duas fórmulas divergem ⇒ VALOR_ABERTO_INDISPONIVEL (fail-closed)', () => {
+            const r = regra.avaliar(
+                base({ aberto: { ...hml5362, titMnyJuros: 0 } }, { valor: 53.54 }),
+            );
+            expect(r.elegivel).toBe(false);
+            expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL);
+        });
+
+        it.each([
+            'totalLiquido',
+            'totalPago',
+            'titMnyJuros',
+            'titMnyDesconto',
+        ] as const)('campo %s ausente ⇒ VALOR_ABERTO_INDISPONIVEL', (campo) => {
+            const { [campo]: _x, ...sem } = hml5362;
+            const r = regra.avaliar(base({ aberto: sem }, { valor: 53.54 }));
+            expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL);
+        });
+
+        it('a elegibilidade calcula o Δ pela MESMA função da régua (ValorAbertoLiquido)', () => {
+            const spy = jest.spyOn(ValorAbertoLiquido, 'calcularCentavos');
+            regra.avaliar(base({ aberto: hml5362 }, { valor: 53.54 }));
+            expect(spy).toHaveBeenCalledWith(hml5362);
+            spy.mockRestore();
         });
     });
 
@@ -312,7 +363,7 @@ describe('não-regressão do passo 2 (ADR-0072)', () => {
             }).resultado;
             const r = regra.avaliar(
                 base(
-                    { tier, totalAberto: VALOR, dataDebito },
+                    { tier, aberto: ValorAbertoLiquido.semAcrescimos(VALOR), dataDebito },
                     { valor: valorBoleto, vencimento: vencBoleto },
                 ),
             );

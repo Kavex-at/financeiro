@@ -7,6 +7,7 @@ import AnaliseCodigoBarrasRepetido from '../../libs/boleto/AnaliseCodigoBarrasRe
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import CodigoBarrasSintetico from '../../libs/boleto/CodigoBarrasSintetico.js';
 import ElegibilidadeVinculoCodigoBarras from '../../libs/boleto/ElegibilidadeVinculoCodigoBarras.js';
+import ValorAbertoLiquido from '../../libs/boleto/ValorAbertoLiquido.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
@@ -257,9 +258,9 @@ const montar = (opcoes: { confirmaTransitorio?: boolean; semDecisao?: boolean } 
         listChavesPixFavorecido: jest.fn().mockResolvedValue([]),
         getTituloAPagar: jest.fn().mockResolvedValue({ pesCod: '1161' }),
         getDocumentoFavorecido: jest.fn().mockResolvedValue(undefined),
-        lerTotalAberto: jest.fn(async (_f: number, doc: string) => ({
+        lerValoresAberto: jest.fn(async (_f: number, doc: string) => ({
             legivel: true as const,
-            totalAberto: abertos[doc] ?? 0,
+            valores: ValorAbertoLiquido.semAcrescimos(abertos[doc] ?? 0),
         })),
     };
 

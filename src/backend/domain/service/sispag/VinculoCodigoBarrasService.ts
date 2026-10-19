@@ -35,6 +35,9 @@ import ElegibilidadeVinculoCodigoBarras, {
     type MotivoInelegivelVinculo,
     type ResultadoElegibilidadeVinculo,
 } from '../../libs/boleto/ElegibilidadeVinculoCodigoBarras.js';
+import ValorAbertoLiquido, {
+    type ValoresAbertoTitulo,
+} from '../../libs/boleto/ValorAbertoLiquido.js';
 import ModoVinculoCodigoBarras, {
     MODO_VINCULO,
     type ModoVinculo,
@@ -52,7 +55,7 @@ import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 export const FONTE_VALOR_ABERTO = {
     /** `shadow`/endpoint: carteira persistida (zero chamada ao ERP). */
     CARTEIRA_LOCAL: 'CARTEIRA_LOCAL',
-    /** `on`: `fin064.totalAberto` lido ao vivo (I17b). */
+    /** `on`: régua líquida do `fin064` lida ao vivo (I17b emendada, ADR-0073). */
     ERP_AO_VIVO: 'ERP_AO_VIVO',
 } as const;
 export type FonteValorAberto = (typeof FONTE_VALOR_ABERTO)[keyof typeof FONTE_VALOR_ABERTO];
@@ -208,7 +211,10 @@ export default class VinculoCodigoBarrasService {
                 item,
                 ctx,
                 temBoletoDda: false,
-                aberto: local && local.ativo !== false ? local.valor : undefined,
+                // Carteira persistida: indicativa por construção (sem juros/desconto/pago).
+                aberto: ValorAbertoLiquido.semAcrescimos(
+                    local && local.ativo !== false ? local.valor : undefined,
+                ),
                 vencimentoTitulo: this.vencimentoCivil(local?.vencimento ?? item.vencimento),
                 titulo: local,
             });
@@ -447,9 +453,12 @@ export default class VinculoCodigoBarrasService {
             return this.reconhecerItemComCodigo({ lote, flpCod, ctx, alvo, nativo, decisao });
         }
 
-        // 3. O aberto AO VIVO. Sem ele não há comparação: fail-closed, sem fallback.
+        // 3. O LÍQUIDO aberto AO VIVO (I17b, ADR-0073). Sem ele não há comparação: fail-closed.
         const aberto = await this.lerAberto(item);
-        if (aberto === undefined) return abortar('VALOR_ABERTO_INDISPONIVEL');
+        const liquidoCentavos = ValorAbertoLiquido.calcularCentavos(aberto);
+        if (aberto === undefined || liquidoCentavos === undefined) {
+            return abortar('VALOR_ABERTO_INDISPONIVEL');
+        }
 
         // 4. Elegibilidade (I17a–d) recalculada AGORA, do banco/pool, nunca do cache.
         const venc = this.vencimentoCivil(
@@ -502,7 +511,7 @@ export default class VinculoCodigoBarrasService {
             filCod: lote.filCod,
             bncCod,
             codigo: linha,
-            valorLiquido: aberto,
+            valorLiquido: liquidoCentavos / 100,
             vencimento: this.calendar.toErpEpoch(venc),
             modalidade,
         };
@@ -519,11 +528,12 @@ export default class VinculoCodigoBarrasService {
             }
             return abortar('VALIDACAO_TRANSITORIA', mascarado);
         }
-        if (centavos(validacao.barraVlrPgto) !== centavos(aberto)) {
+        // Conferência pré-PUT: a MESMA régua líquida da elegibilidade (I17b, três pontos).
+        if (!ValorAbertoLiquido.bate(aberto, centavos(validacao.barraVlrPgto))) {
             return this.falhar(lote, flpCod, item, nativo.itsCodSeq, {
                 campo: CAMPO_DIVERGENTE_VINCULO.VALOR,
                 avaliado,
-                esperadoCentavos: centavos(aberto),
+                esperadoCentavos: liquidoCentavos,
                 obtidoCentavos: centavos(validacao.barraVlrPgto),
             });
         }
@@ -623,7 +633,11 @@ export default class VinculoCodigoBarrasService {
         // 9. Releitura: o sucesso é o que se OBSERVA (código, banco, valor e data).
         const aposPut = await this.lerRascunho(ctxNativo, abortar, mascarado);
         const depois = aposPut.find((n) => chaveDe(n) === alvo.chave);
-        const observado = depois !== undefined && this.bate(depois.row, barras, esperado);
+        // Conferência pós-releitura: o pagamento observado bate com a MESMA régua líquida (I17b).
+        const observado =
+            depois !== undefined &&
+            this.bate(depois.row, barras, esperado) &&
+            ValorAbertoLiquido.bate(aberto, centavos(depois.row.itsMnyVlrPgto));
         if (!observado) {
             if (depois !== undefined && soDigitos(depois.row.itsNumCodbar) !== '') {
                 // O item mudou para um código que não é o nosso entre a leitura e a releitura.
@@ -724,10 +738,10 @@ export default class VinculoCodigoBarrasService {
         }
     };
 
-    /** `fin064.totalAberto` ao vivo; `undefined` = indisponível (fail-closed). */
-    private lerAberto = async (item: ItemLote): Promise<number | undefined> => {
-        const r = await this.sispag.lerTotalAberto(item.filCod, item.docCod, item.titCod);
-        return r.legivel ? r.totalAberto : undefined;
+    /** Valores da régua líquida, ao vivo no `fin064`; `undefined` = ilegível (fail-closed). */
+    private lerAberto = async (item: ItemLote): Promise<ValoresAbertoTitulo | undefined> => {
+        const r = await this.sispag.lerValoresAberto(item.filCod, item.docCod, item.titCod);
+        return r.legivel ? r.valores : undefined;
     };
 
     private boletos_ = (lote: LotePagamento): ItemLote[] =>
@@ -755,7 +769,7 @@ export default class VinculoCodigoBarrasService {
         item: ItemLote;
         ctx: ContextoLocal;
         temBoletoDda: boolean;
-        aberto?: number;
+        aberto?: ValoresAbertoTitulo;
         vencimentoTitulo: string;
         titulo?: Awaited<ReturnType<TituloAPagarRepository['buscarPorChave']>>;
     }): Promise<Avaliado> => {
@@ -768,7 +782,7 @@ export default class VinculoCodigoBarrasService {
             noRascunho: true,
             vencimentoTitulo: p.vencimentoTitulo,
             dataDebito,
-            ...(p.aberto !== undefined ? { totalAberto: p.aberto } : {}),
+            ...(p.aberto !== undefined ? { aberto: p.aberto } : {}),
         };
         if (!decisao) {
             return { elegibilidade: this.elegibilidade.avaliar({ ...base }) };
@@ -786,10 +800,11 @@ export default class VinculoCodigoBarrasService {
             boleto.docCod != null &&
             boleto.titCod != null;
         const orfa = boleto == null || boletoLigadoPeloErp || titulo?.temBoleto === true;
+        const liquidoCentavos = ValorAbertoLiquido.calcularCentavos(p.aberto);
         const tier =
-            boleto && p.aberto !== undefined
+            boleto && liquidoCentavos !== undefined
                 ? this.regra.avaliar({
-                      titulo: { valor: p.aberto, vencimento: p.vencimentoTitulo },
+                      titulo: { valor: liquidoCentavos / 100, vencimento: p.vencimentoTitulo },
                       boleto: {
                           valor: boleto.valor,
                           vencimento: boleto.vencimento ?? '',
