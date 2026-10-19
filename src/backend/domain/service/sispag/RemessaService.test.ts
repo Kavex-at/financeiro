@@ -5,6 +5,7 @@ import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import NetValueUnavailableError from '../../errors/NetValueUnavailableError.js';
+import RemessaBarcodeAmountMismatchError from '../../errors/RemessaBarcodeAmountMismatchError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
 import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
@@ -315,6 +316,7 @@ const make = (o: {
         (o.payees ?? buildPayees()) as unknown as AuthorizedPayeeService,
         retirada,
         (o.vinculo ?? buildVinculo()) as unknown as VinculoCodigoBarrasService,
+        new CodigoBarrasBoleto(),
     );
 };
 
@@ -1346,8 +1348,11 @@ describe('RemessaService — freio de incidente do DDA (SISPAG_DDA_ASSOC_ENABLED
 });
 
 describe('RemessaService — gate de integridade do .REM', () => {
-    /** Registro de detalhe CNAB 240 com o segmento na pos 14 e as barras na 18-61. */
-    const linhaJ = (barras: string, subtipo = ''): string => {
+    /**
+     * Registro de detalhe CNAB 240 com o segmento na pos 14 e as barras na 18-61. O pagamento
+     * (pos 153-167, I17m) vai igual ao valor da barra, salvo `pagamentoCentavos` explícito.
+     */
+    const linhaJ = (barras: string, subtipo = '', pagamentoCentavos?: number): string => {
         const buf = ' '.repeat(240).split('');
         '3410001300001'.split('').forEach((c, i) => {
             buf[i] = c;
@@ -1356,6 +1361,15 @@ describe('RemessaService — gate de integridade do .REM', () => {
         (subtipo + barras).split('').forEach((c, i) => {
             buf[17 + i] = c;
         });
+        if (subtipo === '' && /^\d{44}$/.test(barras)) {
+            const pagamento = pagamentoCentavos ?? Number(barras.slice(9, 19));
+            String(pagamento)
+                .padStart(15, '0')
+                .split('')
+                .forEach((c, i) => {
+                    buf[152 + i] = c;
+                });
+        }
         return buf.join('');
     };
     const BARRAS_OK = '34199100000005720681234567890123456789012345';
@@ -1446,6 +1460,70 @@ describe('RemessaService — gate de integridade do .REM', () => {
         expect(err.userMessage).not.toMatch(/rascunho/);
         // Privacidade: só o mascarado.
         expect(JSON.stringify([motivo, err.userMessage])).not.toContain(BARRAS_OK);
+    });
+
+    describe('I17m — barra == pagamento do J (ADR-0073)', () => {
+        it('pagamento ≠ barra ⇒ RemessaBarcodeAmountMismatchError; lote não vai a REMESSA_GERADA', async () => {
+            const write = comConteudo(linhaJ(BARRAS_OK, '', 572067));
+            const loteRepo = buildLoteRepo(lote());
+            const ledger = buildLedger();
+            const err = await make({ write, loteRepo, ledger })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(RemessaBarcodeAmountMismatchError);
+            expect(err).toMatchObject({ statusCode: 409, details: { flpCod: 12 } });
+            expect(loteRepo.setRemessaGerada).not.toHaveBeenCalled();
+            expect(loteRepo.transicionarStatus).not.toHaveBeenCalled();
+            expect(ledger.settle).not.toHaveBeenCalled();
+            expect(ledger.fail).toHaveBeenCalledTimes(1);
+            // Abort-only, como I16b: nunca retira item do lote finalizado.
+            expect(write.removerItemDoRascunho).not.toHaveBeenCalled();
+            expect(JSON.stringify([ledger.fail.mock.calls, err])).not.toContain(BARRAS_OK);
+        });
+
+        it('identifica docCod/titCod pela leitura dos códigos do lote nativo', async () => {
+            const write = comConteudo(linhaJ(BARRAS_OK, '', 572067));
+            write.listarLinhasDigitaveisDoLote.mockResolvedValue({
+                itens: [
+                    {
+                        docCod: '801',
+                        titCod: '1',
+                        linhaDigitavel: BARRAS_OK,
+                        filCod: 2,
+                        itsCodSeq: 1,
+                    },
+                ],
+                total: 1,
+                dropped: 0,
+                completa: true,
+            });
+            const err = (await make({ write })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch((e: unknown) => e)) as RemessaBarcodeAmountMismatchError;
+            expect(err.details.divergencias[0]).toMatchObject({
+                docCod: '801',
+                titCod: '1',
+                valorBarraCentavos: 572068,
+                pagamentoCentavos: 572067,
+            });
+            expect(err.userMessage).toContain('801/1');
+        });
+
+        it('leitura dos códigos falhou: ainda bloqueia, sem o título', async () => {
+            const write = comConteudo(linhaJ(BARRAS_OK, '', 572067));
+            write.listarLinhasDigitaveisDoLote.mockRejectedValue(new Error('timeout'));
+            const err = (await make({ write })
+                .gerarRemessa({ loteId: 'L1', ator: 'u' })
+                .catch((e: unknown) => e)) as RemessaBarcodeAmountMismatchError;
+            expect(err).toBeInstanceOf(RemessaBarcodeAmountMismatchError);
+            expect(err.details.divergencias[0]?.docCod).toBeUndefined();
+        });
+
+        it('pagamento == barra passa normalmente', async () => {
+            const write = comConteudo(linhaJ(BARRAS_OK));
+            const res = await make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+            expect(res.status).toBe('gerada');
+        });
     });
 
     it('barra inválida tem precedência: RemessaCorrompidaError, não o de repetido', async () => {
