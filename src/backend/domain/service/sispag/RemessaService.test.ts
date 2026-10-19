@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type ConexosSispagWriteClient from '../../client/ConexosSispagWriteClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
+import NetValueUnavailableError from '../../errors/NetValueUnavailableError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
 import type { LotePagamento } from '../../interface/sispag/SispagInterface.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
@@ -3874,5 +3875,71 @@ describe('RemessaService.baixarArquivo', () => {
             fazer(write, comRemessa({ nativeGabCod: undefined })).baixarArquivo('L1'),
         ).rejects.toMatchObject({ code: 'REMESSA_ARQUIVO_INDISPONIVEL' });
         expect(write.baixarRemessa).not.toHaveBeenCalled();
+    });
+});
+
+describe('I17n — o item é importado pelo LÍQUIDO do grid (ADR-0073)', () => {
+    const itensImportados = (write: ReturnType<typeof buildWrite>) =>
+        write.importarTitulos.mock.calls.flatMap(([p]) => p.itens as Record<string, unknown>[]);
+
+    it('titMnyLiquido 462,50 × titMnyValor 462,49 ⇒ itsMnyValor = itsMnyVlrPgto = 462,50', async () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([
+            pendente({ titMnyValor: 462.49, titMnyJuros: 0.01, titMnyLiquido: 462.5 }),
+        ]);
+        await make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        const [item] = itensImportados(write);
+        expect(item).toMatchObject({
+            itsMnyValor: 462.5,
+            itsMnyVlrPgto: 462.5,
+            titMnyLiquido: 462.5,
+        });
+    });
+
+    it('título sem ajuste com juros nativo também vai pelo líquido', async () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([
+            pendente({ titMnyValor: 258.4, titMnyJuros: 1.6, titMnyLiquido: 260 }),
+        ]);
+        await make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(itensImportados(write)[0]).toMatchObject({ itsMnyValor: 260, itsMnyVlrPgto: 260 });
+    });
+
+    it('sem titMnyLiquido e sem juros/desconto ⇒ titMnyValor (comportamento atual)', async () => {
+        const write = buildWrite();
+        await make({ write }).gerarRemessa({ loteId: 'L1', ator: 'u' });
+        expect(itensImportados(write)[0]).toMatchObject({
+            itsMnyValor: 258.4,
+            itsMnyVlrPgto: 258.4,
+        });
+    });
+
+    it('sem titMnyLiquido com juros ≠ 0 ⇒ NetValueUnavailableError e NENHUM importar', async () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([
+            pendente({ titMnyValor: 462.49, titMnyJuros: 0.01 }),
+        ]);
+        const erro = await make({ write })
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(NetValueUnavailableError);
+        expect((erro as NetValueUnavailableError).details).toMatchObject({
+            docCod: '801',
+            titCod: '1',
+            motivo: 'VALOR_LIQUIDO_INDISPONIVEL',
+        });
+        expect(write.importarTitulos).not.toHaveBeenCalled();
+    });
+
+    it('nunca cai no snapshot do item (`item.valor`) quando o grid tem o título', async () => {
+        const write = buildWrite();
+        // O grid tem o título, mas sem titMnyValor nem titMnyLiquido: o snapshot (258,40) NÃO
+        // pode virar o valor do item.
+        write.listarTitulosPendentes.mockResolvedValue([pendente({ titMnyValor: null })]);
+        const erro = await make({ write })
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(NetValueUnavailableError);
+        expect(write.importarTitulos).not.toHaveBeenCalled();
     });
 });

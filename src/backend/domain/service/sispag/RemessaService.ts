@@ -6,6 +6,8 @@ import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteAnteriorCanceladoError from '../../errors/LoteAnteriorCanceladoError.js';
 import RemessaEmAndamentoError from '../../errors/RemessaEmAndamentoError.js';
 import RemessaEmDuvidaError from '../../errors/RemessaEmDuvidaError.js';
+import NetValueUnavailableError from '../../errors/NetValueUnavailableError.js';
+import ValorItemImport from '../../libs/sispag/ValorItemImport.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type { ArquivoRemessa, ContaPagadora } from '../../interface/sispag/Fin015Write.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
@@ -1376,7 +1378,17 @@ export default class RemessaService {
                     ? this.semReferenciaDeConta(pendente.raw)
                     : pendente.raw;
 
-            const valor = Number(pendente.raw.titMnyValor ?? item.valor ?? 0);
+            // I17n (ADR-0073): o item vai pelo LÍQUIDO do grid, nunca pelo base nem pelo
+            // snapshot do item. Indisponível ⇒ nada é importado (o throw vem antes do importar).
+            const liquido = ValorItemImport.valorDoItem(pendente.raw);
+            if (!liquido.disponivel) {
+                throw new NetValueUnavailableError({
+                    filCod: item.filCod,
+                    docCod: item.docCod,
+                    titCod: item.titCod,
+                });
+            }
+            const valor = liquido.valor;
             const selecao = {
                 op: 1,
                 bncCodFin015: bncCod,
