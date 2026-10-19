@@ -1,5 +1,8 @@
+import CentsAdjustmentIncompleteError from './CentsAdjustmentIncompleteError.js';
+import CentsAdjustmentNotEligibleError from './CentsAdjustmentNotEligibleError.js';
 import NetValueUnavailableError from './NetValueUnavailableError.js';
 import RemessaBarcodeAmountMismatchError from './RemessaBarcodeAmountMismatchError.js';
+import TitleAdjustmentInProgressError from './TitleAdjustmentInProgressError.js';
 
 const BARRAS = '34191000000462501234567890123456789012345678';
 const LINHA = '34191234567890123456789012345678901234567890123';
@@ -71,5 +74,44 @@ describe('NetValueUnavailableError (I17n, ADR-0073)', () => {
         expect(erro.message).toMatch(/^Net value unavailable/);
         expect(erro.userMessage).toContain('536/2');
         expect(erro.userMessage).toMatch(/valor líquido/);
+    });
+});
+
+describe('erros do ajuste de centavos (I18, ADR-0073): 409, message inglês, userMessage pt-BR', () => {
+    const chave = { filCod: 2, docCod: '536', titCod: '1' };
+
+    it('CentsAdjustmentIncompleteError é retomável', () => {
+        const e = new CentsAdjustmentIncompleteError({ ...chave, etapa: 'ajuste_aplicado' });
+        expect(e).toMatchObject({
+            statusCode: 409,
+            retryable: true,
+            name: 'CentsAdjustmentIncompleteError',
+        });
+        expect(e.message).toMatch(/^Cents adjustment of title 2:536:1 stopped at ajuste_aplicado/);
+        expect(e.userMessage).toMatch(/ajuste de centavos do título 536\/1 não terminou/);
+    });
+
+    it('CentsAdjustmentNotEligibleError traz o motivo tipado e a razão pt-BR', () => {
+        const e = new CentsAdjustmentNotEligibleError({ ...chave, motivo: 'DELTA_ACIMA_LIMITE' });
+        expect(e).toMatchObject({
+            statusCode: 409,
+            retryable: false,
+            code: 'AJUSTE_CENTAVOS_INELEGIVEL',
+        });
+        expect(e.details.motivo).toBe('DELTA_ACIMA_LIMITE');
+        expect(e.message).toMatch(/not eligible for cents adjustment: DELTA_ACIMA_LIMITE/);
+        expect(e.userMessage).toMatch(/a diferença passa de R\$ 0,05/);
+    });
+
+    it('TitleAdjustmentInProgressError lista os títulos do lote', () => {
+        const e = new TitleAdjustmentInProgressError({
+            loteId: 'L1',
+            titulos: [{ docCod: '536', titCod: '1' }],
+        });
+        expect(e).toMatchObject({ statusCode: 409, code: 'AJUSTE_CENTAVOS_EM_CURSO' });
+        expect(e.message).toMatch(
+            /^Lote L1 has titles with a cents adjustment in progress: 536\/1/,
+        );
+        expect(e.userMessage).toMatch(/Aguarde o ajuste terminar/);
     });
 });

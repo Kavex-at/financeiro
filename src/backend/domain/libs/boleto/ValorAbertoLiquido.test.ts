@@ -76,6 +76,27 @@ describe('ValorAbertoLiquido (I17b emendada, ADR-0073)', () => {
         spy.mockRestore();
     });
 
+    it('`daLinhaFin064`: juros/desconto nulos viram 0; chave ausente ou lixo seguem ausentes', () => {
+        expect(
+            ValorAbertoLiquido.daLinhaFin064({
+                totalLiquido: 53.54,
+                totalPago: 0,
+                totalAberto: '53.53',
+                titMnyJuros: 0.01,
+                titMnyDesconto: null,
+            }),
+        ).toEqual({
+            totalLiquido: 53.54,
+            totalPago: 0,
+            totalAberto: 53.53,
+            titMnyJuros: 0.01,
+            titMnyDesconto: 0,
+        });
+        expect(ValorAbertoLiquido.daLinhaFin064({ totalLiquido: 'x', totalPago: null })).toEqual(
+            {},
+        );
+    });
+
     it('`semAcrescimos` monta a tupla coerente de um título sem juros/desconto/pagamento', () => {
         expect(ValorAbertoLiquido.semAcrescimos(462.49)).toEqual({
             totalLiquido: 462.49,

@@ -49,6 +49,33 @@ export default class ValorAbertoLiquido {
     };
 
     /**
+     * Os cinco campos a partir da linha CRUA do `fin064`. `titMnyJuros`/`titMnyDesconto` NULOS
+     * (chave presente) são o "sem juros/desconto" do ERP e viram 0 — seguro porque a régua confere
+     * contra `totalLiquido`; chave ausente ou valor não numérico seguem ausentes (fail-closed).
+     */
+    public static daLinhaFin064 = (row: Record<string, unknown>): ValoresAbertoTitulo => {
+        const num = (v: unknown): number | undefined => {
+            if (v === null || v === undefined || v === '') return undefined;
+            const n = Number(v);
+            return Number.isFinite(n) ? n : undefined;
+        };
+        const zeroSeNulo = (chave: string): number | undefined =>
+            chave in row && row[chave] === null ? 0 : num(row[chave]);
+        const valores: ValoresAbertoTitulo = {};
+        const totalLiquido = num(row.totalLiquido);
+        const totalPago = num(row.totalPago);
+        const totalAberto = num(row.totalAberto);
+        const titMnyJuros = zeroSeNulo('titMnyJuros');
+        const titMnyDesconto = zeroSeNulo('titMnyDesconto');
+        if (totalLiquido !== undefined) valores.totalLiquido = totalLiquido;
+        if (totalPago !== undefined) valores.totalPago = totalPago;
+        if (totalAberto !== undefined) valores.totalAberto = totalAberto;
+        if (titMnyJuros !== undefined) valores.titMnyJuros = titMnyJuros;
+        if (titMnyDesconto !== undefined) valores.titMnyDesconto = titMnyDesconto;
+        return valores;
+    };
+
+    /**
      * Tupla coerente de um título SEM juros, desconto nem pagamento (líquido = aberto = `valor`).
      * Uso: previsão local (`shadow`, carteira persistida — indicativa por construção) e fixtures.
      */

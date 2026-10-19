@@ -116,6 +116,8 @@ export interface RechaveamentoInput {
     titCodNovo: string;
     frnCod: number;
     decisaoId: string;
+    /** Motivo gravado no ledger junto com `rechaveada` (ex.: aprovação manual pendente, I18e). */
+    motivo?: string;
     /** Título novo lido AO VIVO no `fin064`. */
     tituloNovo: {
         /** `titMnyValor` (base) — o que a carteira guarda. */
