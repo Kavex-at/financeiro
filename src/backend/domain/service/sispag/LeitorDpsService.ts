@@ -95,6 +95,12 @@ export default class LeitorDpsService {
         return resultado;
     };
 
+    /**
+     * Lê o DPS de UM título sem gravar (validação ao vivo e diagnóstico). Mesmo caminho e mesmas
+     * regras do `executar`; falha vira `ERRO` com motivo, nunca exceção.
+     */
+    public lerTitulo = (titulo: TituloAPagar): Promise<Leitura> => this.lerComSeguranca(titulo);
+
     private lerComSeguranca = async (titulo: TituloAPagar): Promise<Leitura> => {
         try {
             return await this.ler(titulo);

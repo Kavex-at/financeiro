@@ -42,19 +42,35 @@ const ARQUIVOS = {
 };
 
 describe('ConexosGedClient (arq020, ADR-0073) — só leitura', () => {
-    it('priCodDoDocumento lê o processo do cabeçalho do com298', async () => {
+    const DOC = { filCod: 2, docCod: '41155', docTip: 2 };
+
+    it('priCodDoDocumento lê o processo no psq014 (a tela que abre o GED)', async () => {
         const base = buildBase();
         base.getGeneric.mockResolvedValue({ docCod: 41155, priCod: 4100 });
-        expect(await clientCom(base).priCodDoDocumento({ filCod: 2, docCod: '41155' })).toBe(4100);
-        expect(base.getGeneric).toHaveBeenCalledWith('com298/41155', { filCod: 2 });
+        expect(await clientCom(base).priCodDoDocumento(DOC)).toBe(4100);
+        expect(base.getGeneric).toHaveBeenCalledTimes(1);
+        expect(base.getGeneric).toHaveBeenCalledWith('psq014/2/2/41155', { filCod: 2 });
     });
 
-    it('priCodDoDocumento devolve undefined quando o documento não tem processo', async () => {
+    it('psq014 falhando ou sem processo, tenta o com298 (documento com parte fiscal)', async () => {
+        const base = buildBase();
+        base.getGeneric
+            .mockRejectedValueOnce(new Error('Request failed with status code 500'))
+            .mockResolvedValueOnce({ priCod: 4100 });
+        expect(await clientCom(base).priCodDoDocumento(DOC)).toBe(4100);
+        expect(base.getGeneric).toHaveBeenLastCalledWith('com298/41155', { filCod: 2 });
+    });
+
+    it('priCodDoDocumento devolve undefined quando nenhuma fonte traz processo', async () => {
         const base = buildBase();
         base.getGeneric.mockResolvedValue({ docCod: 41155, priCod: null });
-        expect(
-            await clientCom(base).priCodDoDocumento({ filCod: 2, docCod: '41155' }),
-        ).toBeUndefined();
+        expect(await clientCom(base).priCodDoDocumento(DOC)).toBeUndefined();
+    });
+
+    it('com298 também falhando (documento sem parte fiscal) propaga o erro', async () => {
+        const base = buildBase();
+        base.getGeneric.mockRejectedValue(new Error('Request failed with status code 500'));
+        await expect(clientCom(base).priCodDoDocumento(DOC)).rejects.toThrow('500');
     });
 
     it('pastasDoDocumento envia os parâmetros do psq014 e achata a árvore em dcmCod', async () => {
