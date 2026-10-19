@@ -58,7 +58,17 @@ Aditiva, sem backfill. Não é evidência de confirmação, é insumo da sugest�
 - ~~**P0 — onde está o PDF no GED?**~~ **Respondido (2026-10-19):** `psq014` → botão GED → `arq020`
   (Arquivamento de Documentos - GED) com `telaOrigin=TelaDocumento&codeView=psq014&filCod=2&docTip=2&
   docCod=41155&priCod=4100`; pasta 46415 (processo 4100, ref. `0038BTC/26`), arquivo `NF_86666.PDF`
-  (o nome traz o nº da NFS-e). Falta mapear os endpoints do `arq020` (listar pasta, baixar arquivo).
+  (o nome traz o nº da NFS-e). **Endpoints mapeados (captura de rede do maintainer, 2026-10-19):**
+  1. `priCod` do título: `GET /api/com298/{docCod}` (`FinDocCab.priCod`) ou `GET /api/psq014/{filCod}/{docTip}/{docCod}`.
+  2. Pasta: `POST /api/arq020/TelaDocumento/list`, corpo
+     `{"parameters":{"filCod":"2","vldTodos":0,"docTip":"2","docCod":"41155","priCod":"4100"}}` →
+     árvore `[{label:"0038BTC/26 (4100)", children:[{label:"Nova Pasta", data:{dcmCod:46415, priCod:4100,…}}]}]`.
+  3. Arquivos: `POST /api/arq020/arqDocFiles/list/{dcmCod}`, `serviceName:"arq020.arquivos"`,
+     `filterList:{filCodFilterDoc, docCodFilterDoc, docTipFilterDoc}` → linhas `{adfCodSeq, binEspName:"NF_86666.PDF",
+     tflDesDescricao:"PDF", binNumSize}`. Escolher o PDF cujo nome traz o nº da NFS-e.
+  4. Download: `GET /api/arq020/arqDocFiles/download/{dcmCod}/{adfCodSeq}` (catálogo: `application/octet-stream`;
+     ainda não observado ao vivo).
+  Pendente: permissão do robô CLONEX no `arq020` (o usuário humano tem SELECT).
 - **Aprovado pelo maintainer em 2026-10-19** → ADR-0073, I15p. Etapa 1 (motor + `titulo_dps`) entregue.
 - **P1 — o robô CLONEX lê o GED?** Conferir permissão antes do job (ver memória de permissões).
 - **P1 — biblioteca de PDF:** dependência nova (`pdfjs-dist` ou `pdf-parse`) só no backend.
