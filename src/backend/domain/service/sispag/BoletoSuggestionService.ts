@@ -59,6 +59,7 @@ import SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepo
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import TituloDpsRepository from '../../repository/sispag/TituloDpsRepository.js';
 import LogService from '../LogService.js';
+import AjusteCentavosTituloService from './AjusteCentavosTituloService.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
@@ -143,6 +144,8 @@ export default class BoletoSuggestionService {
         @inject(LogService) private readonly logService: LogService,
         @inject(SugestaoBoletoCache) private readonly cache: SugestaoBoletoCache,
         @inject(TituloDpsRepository) private readonly dpsRepo: TituloDpsRepository,
+        @inject(AjusteCentavosTituloService)
+        private readonly ajusteCentavos: AjusteCentavosTituloService,
     ) {}
 
     // ── Leitura ────────────────────────────────────────────────────────────────────────────────
@@ -400,6 +403,14 @@ export default class BoletoSuggestionService {
 
         this.cache.invalidar();
         if (resultado.criada) {
+            // I18g(1) (ADR-0073): o ajuste de centavos é agendado SÓ depois do commit, fora da
+            // transação e sem esperar o ERP — a resposta do `confirmar` não muda por causa dele.
+            this.ajusteCentavos.agendarAposConfirmar({
+                filCod: resultado.decisao.filCod,
+                docCod: resultado.decisao.docCod,
+                titCod: resultado.decisao.titCod,
+                decisaoId: resultado.decisao.id,
+            });
             await this.logService.info({
                 type: LOG_TYPE.BUSINESS_INFO,
                 message: 'sugestao_boleto.decisao',

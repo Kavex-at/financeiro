@@ -5,6 +5,7 @@ import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
+import TitleAdjustmentInProgressError from '../../errors/TitleAdjustmentInProgressError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TitleInCommittedBatchError from '../../errors/TitleInCommittedBatchError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
@@ -483,6 +484,12 @@ export default class LotePagamentoService {
                 acao: 'finalizar',
                 motivo: `Defina a conta pagadora do lote antes de finalizar (a filial ${lote.filCod} não tem uma conta Itaú inequívoca).`,
             });
+        }
+        // I18k/M5 (ADR-0073): título com ajuste de centavos em curso não entra em lote finalizado —
+        // o lote nativo fixaria o título antigo, que a renegociação está consumindo.
+        const emAjuste = await this.repo.titulosComAjusteNaoTerminalNoLote(input.loteId);
+        if (emAjuste.length > 0) {
+            throw new TitleAdjustmentInProgressError({ loteId: lote.id, titulos: emAjuste });
         }
         // A2: revisão obrigatória — todo item precisa de forma de pagamento definida.
         const semModalidade = await this.repo.contarItensSemModalidade(input.loteId);

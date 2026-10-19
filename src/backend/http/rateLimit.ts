@@ -148,7 +148,7 @@ export const MENSAGEM_MUITAS_DECISOES_BOLETO =
 
 export const buildSugestaoBoletoLimiter = (
     options: SessionLimiterOptions = {},
-    escopo: 'confirmar' | 'copiar' = 'confirmar',
+    escopo: 'confirmar' | 'copiar' | 'ajuste' = 'confirmar',
 ): RateLimitRequestHandler =>
     sessionLimiter(options, {
         windowMs: ONE_MINUTE_MS,

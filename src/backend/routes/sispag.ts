@@ -74,6 +74,7 @@ import {
     SugestoesQuerySchema,
     TituloSugestaoQuerySchema,
 } from '../domain/interface/sispag/SugestaoBoletoSchemas.js';
+import AjusteCentavosTituloService from '../domain/service/sispag/AjusteCentavosTituloService.js';
 import BoletoSuggestionService from '../domain/service/sispag/BoletoSuggestionService.js';
 
 /**
@@ -1032,6 +1033,74 @@ router.post(
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;
         }
+    }),
+);
+
+// ===================================================== Ajuste de centavos do título (ADR-0073, I18)
+// Disparo principal: pós-commit do `confirmar` (no serviço da sugestão). Aqui: "tentar de novo",
+// a varredura ao abrir a tela e a leitura do estado/candidatos (M7). Só no processo do servidor.
+
+const ajustesCentavos = (): AjusteCentavosTituloService =>
+    container.resolve(AjusteCentavosTituloService);
+const limiteAjusteCentavos = buildSugestaoBoletoLimiter({}, 'ajuste');
+
+const AjusteCentavosTituloBodySchema = z.object({
+    filCod: z.coerce.number().int().positive(),
+    docCod: z.string().trim().min(1).max(20),
+    titCod: z.string().trim().min(1).max(10),
+});
+const AjusteCentavosFilialSchema = z.object({
+    filCod: z.coerce.number().int().positive(),
+});
+const AjusteCentavosRetomarBodySchema = z.object({
+    filCod: z.coerce.number().int().positive().optional(),
+});
+
+// POST /sispag/ajustes-centavos/tentar-novamente — `sispag:executar`. 200 com o resultado ·
+// 409 inelegível (`AJUSTE_CENTAVOS_INELEGIVEL`, com o motivo) ou incompleto (retomável).
+router.post(
+    '/ajustes-centavos/tentar-novamente',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteAjusteCentavos,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = AjusteCentavosTituloBodySchema.safeParse(req.body);
+        if (!body.success) return respostaInvalida(res, body.error);
+        try {
+            res.json(await ajustesCentavos().tentarDeNovo(body.data));
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/ajustes-centavos/retomar — `sispag:executar` (a tela chama ao abrir; quem só tem
+// `sispag:ver` recebe 403 e a tela ignora). 202: a varredura roda em segundo plano.
+router.post(
+    '/ajustes-centavos/retomar',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    limiteAjusteCentavos,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const body = AjusteCentavosRetomarBodySchema.safeParse(req.body ?? {});
+        if (!body.success) return respostaInvalida(res, body.error);
+        ajustesCentavos().agendarVarredura(
+            body.data.filCod !== undefined ? { filCod: body.data.filCod } : {},
+        );
+        res.status(202).json({ agendado: true });
+    }),
+);
+
+// GET /sispag/ajustes-centavos?filCod= — `sispag:ver`. Modo efetivo, avisos e o estado do ajuste
+// por título (ledger). Só máscara 5+4; nunca o código completo.
+router.get(
+    '/ajustes-centavos',
+    exigirPermissao(PERMISSION.SISPAG_VER),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const query = AjusteCentavosFilialSchema.safeParse(req.query);
+        if (!query.success) return respostaInvalida(res, query.error);
+        res.json(await ajustesCentavos().listarCandidatos({ filCod: query.data.filCod }));
     }),
 );
 
