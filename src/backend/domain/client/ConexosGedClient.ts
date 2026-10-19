@@ -47,15 +47,33 @@ const ARQUIVO_SCHEMA = z.object({
 export default class ConexosGedClient {
     public constructor(@inject(ConexosBaseClient) private readonly base: ConexosBaseClient) {}
 
-    /** Processo (`priCod`) do documento a pagar; `undefined` quando o documento não tem processo. */
+    /**
+     * Processo (`priCod`) do documento a pagar; `undefined` quando o documento não tem processo.
+     * Lido do `psq014` (Pesquisa de Documentos a Pagar, a tela de onde o GED é aberto): o `com298`
+     * só acha documento com parte fiscal e devolve RECORDNOTFOUND para o puramente financeiro
+     * (medido em PRD, 2026-10-19: 5 de 5 títulos MULTILOG). O `com298` fica como segunda fonte.
+     */
     public priCodDoDocumento = async (params: {
         filCod: number;
         docCod: string;
+        docTip: number;
     }): Promise<number | undefined> => {
-        const cab = await this.base.getGeneric<unknown>(`com298/${params.docCod}`, {
-            filCod: params.filCod,
-        });
-        const parsed = CABECALHO_SCHEMA.safeParse(cab);
+        const opts = { filCod: params.filCod };
+        try {
+            const doc = await this.base.getGeneric<unknown>(
+                `psq014/${params.filCod}/${params.docTip}/${params.docCod}`,
+                opts,
+            );
+            const priCod = this.priCodDe(doc);
+            if (priCod !== undefined) return priCod;
+        } catch {
+            // segue para o com298: o psq014 é a fonte, não a única
+        }
+        return this.priCodDe(await this.base.getGeneric<unknown>(`com298/${params.docCod}`, opts));
+    };
+
+    private priCodDe = (cabecalho: unknown): number | undefined => {
+        const parsed = CABECALHO_SCHEMA.safeParse(cabecalho);
         return parsed.success ? (parsed.data.priCod ?? undefined) : undefined;
     };
 
