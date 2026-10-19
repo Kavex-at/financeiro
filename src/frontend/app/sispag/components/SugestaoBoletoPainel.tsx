@@ -220,7 +220,7 @@ export function SugestaoBoletoPainel({
         texto:
           r.etapa === 'concluido'
             ? 'Ajuste de centavos concluído no Conexos.'
-            : 'Pedido de ajuste de centavos enviado; o estado aparece aqui quando o Conexos responder.',
+            : 'Pedido de ajuste de centavos enviado. Reabra o título para ver o estado atualizado.',
       })
       await onDecidido()
     } catch (e) {
