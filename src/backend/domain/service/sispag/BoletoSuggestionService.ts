@@ -852,6 +852,13 @@ export default class BoletoSuggestionService {
         return datasDebito;
     };
 
+    /**
+     * Desfecho por título calculado agora, sem cache — para o leitor de DPS (ADR-0073) escolher
+     * quem ainda não tem desempate. Mesma entrada do cenário da tela.
+     */
+    public desfechosAgora = async (): Promise<DesfechoTitulo[]> =>
+        (await this.sugerirAgora()).desfechos;
+
     /** Lê o pool e a carteira persistidos e roda o motor com o estado de decisões de agora. */
     private sugerirAgora = async (): Promise<{
         sugestoes: SugestaoBoletoTitulo[];

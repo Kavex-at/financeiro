@@ -8,6 +8,7 @@ const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     listGeneric: jest.fn(),
     listGenericPaginated: jest.fn().mockResolvedValue({ count: 0, rows: [] }),
     getGeneric: jest.fn().mockResolvedValue({ rows: [] }),
+    getBinary: jest.fn().mockResolvedValue(Buffer.alloc(0)),
     postGeneric: jest.fn().mockResolvedValue({}),
     postGenericOnce: jest.fn().mockResolvedValue({}),
     putGenericOnce: jest.fn().mockResolvedValue({}),

@@ -59,6 +59,12 @@ export const buildLegacyConexosAdapter = (
         return svc.authenticatedGet<T>(`/${path}`, opts);
     };
 
+    /** GET binário (download de arquivo do GED). Bytes crus, sem leitura de JSON. */
+    const getBinary = async (path: string, opts?: { filCod?: number }): Promise<Buffer> => {
+        const svc = await resolveService();
+        return svc.authenticatedGetBinary(`/${path}`, opts);
+    };
+
     /**
      * Raw POST passthrough for WRITE endpoints (Fase 3 — `fin010` baixa/permuta).
      * Returns the response body as-is (no `.rows` unwrapping).
@@ -125,6 +131,7 @@ export const buildLegacyConexosAdapter = (
         listGeneric,
         listGenericPaginated,
         getGeneric,
+        getBinary,
         postGeneric,
         postGenericOnce,
         putGenericOnce,
