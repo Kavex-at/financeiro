@@ -743,6 +743,18 @@ describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0073)', (
             ).rejects.toBeInstanceOf(CentsAdjustmentNotEligibleError);
         });
 
+        it('ledger desta decisão já cancelado ⇒ inelegível, nunca "executado"', async () => {
+            const h = build({ ledgerInicial: { etapa: 'cancelado' } });
+            const erro = await h.service
+                .tentarDeNovo({ filCod: 2, docCod: '536', titCod: '1' })
+                .catch((e: unknown) => e);
+            expect(erro).toBeInstanceOf(CentsAdjustmentNotEligibleError);
+            expect((erro as CentsAdjustmentNotEligibleError).details.motivo).toBe(
+                'AJUSTE_ENCERRADO_CANCELADO',
+            );
+            expect(h.client.criarRenegociacao).not.toHaveBeenCalled();
+        });
+
         it('parou em transitório ⇒ CentsAdjustmentIncompleteError (retomável)', async () => {
             const h = build();
             h.client.finalizarRenegociacao.mockRejectedValueOnce(transitoria());

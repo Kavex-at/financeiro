@@ -79,8 +79,8 @@ describe('seloDoAjusteCentavos (ADR-0073, I18l/I18m)', () => {
 
   it.each([
     ['aguardando_aprovacao_manual', /aprovação.*Conexos/i, false],
-    ['recusado', /não foi ajustado/i, true],
-    ['cancelado', /cancelad/i, true],
+    ['recusado', /não foi ajustado/i, false],
+    ['cancelado', /cancelad/i, false],
     ['indeterminado', /conferir no Conexos/i, false],
   ] as const)('%s ⇒ aviso pt-BR com motivo e próxima ação', (etapa, texto, retomavel) => {
     const s = seloDoAjusteCentavos({
