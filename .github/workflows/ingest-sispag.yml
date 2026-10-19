@@ -64,6 +64,11 @@ jobs:
       - name: Formação automática de lotes (após a ingestão)
         if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 10 * * *'
         run: npm run job:formar-lotes
+      # ADR-0073 (D2): lê o "NÚMERO DA DPS" do PDF da NFS-e no GED só para os títulos cuja sugestão
+      # de boleto DDA a ordem de DPS não desempatou. Por último: nunca atrasa nem bloqueia a carteira
+      # e a formação; falha geral (nada lido, tudo falhou) cai no passo de alerta abaixo.
+      - name: Leitura do DPS no GED (desempate da sugestão de boleto)
+        run: npm run job:ler-dps-nfse
 
       # ⚠️ Passo de ALERTA — ADR-0042. Roda SÓ quando algo acima falhou.
       #

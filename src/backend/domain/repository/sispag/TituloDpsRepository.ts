@@ -1,7 +1,12 @@
 import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type { DpsConhecido } from '../../interface/sispag/SugestaoBoleto.js';
-import { dpsLidoRowSchema, type TituloDps } from '../../interface/sispag/TituloDps.js';
+import {
+    dpsLidoRowSchema,
+    type TentativaDps,
+    type TituloDps,
+    tentativaDpsRowSchema,
+} from '../../interface/sispag/TituloDps.js';
 
 /**
  * TituloDpsRepository — `titulo_dps` (0087, ADR-0073, I15p). Uma linha por título: o DPS lido do
@@ -28,6 +33,17 @@ export default class TituloDpsRepository {
         return rows.flatMap((r) => {
             const lido = dpsLidoRowSchema.safeParse(r);
             return lido.success ? [lido.data] : [];
+        });
+    };
+
+    /** Todas as tentativas (inclusive `LIDO`), para a seleção do leitor não reler à toa. */
+    public listarTentativas = async (): Promise<TentativaDps[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT fil_cod, doc_cod, tit_cod, status, tentativas, lido_em FROM titulo_dps`,
+        );
+        return rows.flatMap((r) => {
+            const t = tentativaDpsRowSchema.safeParse(r);
+            return t.success ? [t.data] : [];
         });
     };
 

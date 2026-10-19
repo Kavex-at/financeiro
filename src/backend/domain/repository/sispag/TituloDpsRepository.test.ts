@@ -50,6 +50,31 @@ describe('TituloDpsRepository (ADR-0073, I15p)', () => {
         expect(await repoCom(db).listarLidos()).toEqual([]);
     });
 
+    it('listarTentativas devolve status, contagem e a data da última leitura', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValueOnce([
+            {
+                fil_cod: 2,
+                doc_cod: '41156',
+                tit_cod: '1',
+                status: 'SEM_PDF',
+                tentativas: 2,
+                lido_em: new Date('2026-10-19T12:00:00Z'),
+            },
+            { fil_cod: 2, doc_cod: 'x', tit_cod: '1', status: 'INVALIDO', tentativas: 1 },
+        ]);
+        expect(await repoCom(db).listarTentativas()).toEqual([
+            {
+                filCod: 2,
+                docCod: '41156',
+                titCod: '1',
+                status: 'SEM_PDF',
+                tentativas: 2,
+                lidoEm: '2026-10-19T12:00:00.000Z',
+            },
+        ]);
+    });
+
     it('registrar grava UPSERT por título, parametrizado, somando tentativas', async () => {
         const db = buildDb();
         await repoCom(db).registrar({

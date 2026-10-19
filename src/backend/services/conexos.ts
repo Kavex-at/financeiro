@@ -488,6 +488,28 @@ export class ConexosService {
     }
 
     /**
+     * GET binário (download de arquivo, ex.: PDF do GED em `arq020/arqDocFiles/download`). Mesmo
+     * 401-retry do `authenticatedGet`; devolve os bytes crus, sem tentar ler JSON.
+     */
+    async authenticatedGetBinary(path: string, opts: { filCod?: number } = {}): Promise<Buffer> {
+        await this.ensureSid();
+        const url = path.startsWith('/') ? path : `/${path}`;
+        const pedir = () =>
+            this.client.get<ArrayBuffer>(url, {
+                headers: this.defaultHeaders(opts.filCod),
+                responseType: 'arraybuffer',
+            });
+        try {
+            return Buffer.from((await pedir()).data);
+        } catch (err: unknown) {
+            const status = (err as { response?: { status?: number } }).response?.status;
+            if (status !== 401) throw err;
+            await this.login();
+            return Buffer.from((await pedir()).data);
+        }
+    }
+
+    /**
      * Generic authenticated DELETE helper. Mirrors `authenticatedGet` (mesmo 401-retry).
      * Usado pela exclusão de baixa do borderô (`fin010/baixas/{bor}/{fil}/{doc}/{tit}/{seq}`).
      */

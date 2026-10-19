@@ -122,7 +122,7 @@ async function main(): Promise<void> {
 main().then(
     () => process.exit(0),
     (e) => {
-        console.error(e);
+        console.error('validação FALHOU:', e instanceof Error ? e.message : String(e));
         process.exit(1);
     },
 );

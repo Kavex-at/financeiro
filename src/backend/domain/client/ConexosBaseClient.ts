@@ -52,6 +52,8 @@ export interface LegacyConexosShape {
      * Returns the raw envelope (Conexos shape varies per endpoint).
      */
     getGeneric: <T>(path: string, opts?: { filCod?: number }) => Promise<T>;
+    /** GET binário (download de arquivo do GED, `arq020/arqDocFiles/download`). */
+    getBinary: (path: string, opts?: { filCod?: number }) => Promise<Buffer>;
     /**
      * Raw POST passthrough for WRITE endpoints (Fase 3 — baixa/permuta `fin010`).
      * Unlike `listGeneric`, it does NOT unwrap a `.rows` envelope: write endpoints
@@ -172,6 +174,10 @@ export default class ConexosBaseClient {
 
     public getGeneric = <T>(path: string, opts?: { filCod?: number }): Promise<T> =>
         this.legacy.getGeneric<T>(path, opts);
+
+    /** GET binário (download de arquivo do GED). See `LegacyConexosShape.getBinary`. */
+    public getBinary = (path: string, opts?: { filCod?: number }): Promise<Buffer> =>
+        this.legacy.getBinary(path, opts);
 
     public postGeneric = <T>(
         path: string,

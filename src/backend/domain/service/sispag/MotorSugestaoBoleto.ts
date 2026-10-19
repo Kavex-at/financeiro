@@ -78,6 +78,8 @@ interface CandidatoCompleto extends Candidato {
     ancorado: boolean;
     /** 0 CONHECIDO · 1 FORTE · 2 ATENCAO ancorada · 3 ATENCAO sem âncora · 4 VENCIDO. */
     forca: number;
+    /** Ancorado por DPS (I15p); calculado uma vez, o comparador é o caminho quente do motor. */
+    porDps: boolean;
 }
 
 interface PendenteCompleto {
@@ -695,7 +697,13 @@ export default class MotorSugestaoBoleto {
     ): CandidatoCompleto => {
         const avaliacao = this.avaliar(alvo, boleto, pares, ordemDps);
         const ancorado = ancoradoPor(avaliacao.sinais);
-        return { boleto, avaliacao, ancorado, forca: this.forcaCompleta(avaliacao, ancorado) };
+        return {
+            boleto,
+            avaliacao,
+            ancorado,
+            forca: this.forcaCompleta(avaliacao, ancorado),
+            porDps: ancoradoPorDps(avaliacao.sinais),
+        };
     };
 
     /**
@@ -763,7 +771,7 @@ export default class MotorSugestaoBoleto {
     /** Força → |Δvalor| → |Δdias| → chave do boleto: ordem total, independe da entrada. */
     private melhorCompleto = (x: CandidatoCompleto, y: CandidatoCompleto): number =>
         x.forca - y.forca ||
-        Number(ancoradoPorDps(y.avaliacao.sinais)) - Number(ancoradoPorDps(x.avaliacao.sinais)) ||
+        Number(y.porDps) - Number(x.porDps) ||
         Math.abs(x.avaliacao.deltaValor) - Math.abs(y.avaliacao.deltaValor) ||
         Math.abs(x.avaliacao.deltaDias) - Math.abs(y.avaliacao.deltaDias) ||
         x.boleto.ddcCod - y.boleto.ddcCod ||

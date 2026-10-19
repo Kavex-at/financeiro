@@ -34,6 +34,42 @@ export interface TituloDps {
     motivo?: string;
 }
 
+/** Última tentativa de leitura de um título (para limitar a releitura). */
+export interface TentativaDps {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    status: StatusTituloDps;
+    tentativas: number;
+    /** ISO da última leitura. */
+    lidoEm: string;
+}
+
+export const tentativaDpsRowSchema = z
+    .object({
+        fil_cod: z.coerce.number().int(),
+        doc_cod: z.string(),
+        tit_cod: z.string(),
+        status: z.enum([
+            STATUS_TITULO_DPS.LIDO,
+            STATUS_TITULO_DPS.SEM_PDF,
+            STATUS_TITULO_DPS.SEM_DPS_NO_PDF,
+            STATUS_TITULO_DPS.ERRO,
+        ]),
+        tentativas: z.coerce.number().int(),
+        lido_em: z.coerce.date(),
+    })
+    .transform(
+        (r): TentativaDps => ({
+            filCod: r.fil_cod,
+            docCod: r.doc_cod,
+            titCod: r.tit_cod,
+            status: r.status,
+            tentativas: r.tentativas,
+            lidoEm: r.lido_em.toISOString(),
+        }),
+    );
+
 const textoOpcional = z
     .string()
     .nullable()
