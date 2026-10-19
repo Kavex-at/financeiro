@@ -5,6 +5,7 @@ import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
+import TitleAdjustmentInProgressError from '../../errors/TitleAdjustmentInProgressError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TitleInCommittedBatchError from '../../errors/TitleInCommittedBatchError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
@@ -77,6 +78,7 @@ interface RepoMock {
     marcarManual: jest.Mock;
     atualizarContaPagadora: jest.Mock;
     contarItensSemModalidade: jest.Mock;
+    titulosComAjusteNaoTerminalNoLote: jest.Mock;
     atualizarModalidadeItem: jest.Mock;
     loteComprometidoComTitulo: jest.Mock;
     removerItemDeRascunho: jest.Mock;
@@ -96,6 +98,7 @@ const buildRepo = (): RepoMock => ({
     marcarManual: jest.fn().mockResolvedValue(undefined),
     atualizarContaPagadora: jest.fn().mockResolvedValue(1),
     contarItensSemModalidade: jest.fn().mockResolvedValue(0),
+    titulosComAjusteNaoTerminalNoLote: jest.fn().mockResolvedValue([]),
     atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
     loteComprometidoComTitulo: jest.fn().mockResolvedValue(null),
     removerItemDeRascunho: jest.fn().mockResolvedValue(1),
@@ -616,6 +619,21 @@ describe('LotePagamentoService — invariantes', () => {
             await expect(
                 service.finalizarLote({ loteId: 'L1', versao: 1, ator: 'u1' }),
             ).rejects.toBeInstanceOf(ModalidadePendenteError);
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
+        it('caso canônico 11: finalizar com ajuste de centavos em curso ⇒ TitleAdjustmentInProgressError (409)', async () => {
+            const repo = buildRepo();
+            repo.titulosComAjusteNaoTerminalNoLote.mockResolvedValue([
+                { docCod: '536', titCod: '1' },
+            ]);
+            const { service } = make(repo);
+            const erro = await service
+                .finalizarLote({ loteId: 'L1', versao: 1, ator: 'u1' })
+                .catch((e: unknown) => e);
+            expect(erro).toBeInstanceOf(TitleAdjustmentInProgressError);
+            expect(erro).toMatchObject({ statusCode: 409 });
+            expect(repo.titulosComAjusteNaoTerminalNoLote).toHaveBeenCalledWith('L1');
             expect(repo.transicionarStatus).not.toHaveBeenCalled();
         });
 

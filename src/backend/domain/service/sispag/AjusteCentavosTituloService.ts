@@ -292,6 +292,31 @@ export default class AjusteCentavosTituloService {
         })();
     };
 
+    /**
+     * Varredura de retomada pedida pela TELA do SISPAG ao abrir (I18g(3), M2): agenda e devolve na
+     * hora; a tela nunca espera o ERP. Só no processo do servidor (o modo efetivo cuida disso).
+     */
+    public agendarVarredura = (p: { filCod?: number }): void => {
+        void (async () => {
+            try {
+                const placar = await this.retomarPendentes(p);
+                if (placar.retomados + placar.falhas > 0) {
+                    await this.logService.info({
+                        type: LOG_TYPE.BUSINESS_INFO,
+                        message: 'ajuste de centavos: varredura de retomada',
+                        data: { ...p, ...placar },
+                    });
+                }
+            } catch (err) {
+                await this.logService.error({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'ajuste de centavos: varredura de retomada falhou',
+                    data: { ...p, erro: this.descrever(err) },
+                });
+            }
+        })();
+    };
+
     // ── Execução ────────────────────────────────────────────────────────────
 
     private ajustarComLock = async (

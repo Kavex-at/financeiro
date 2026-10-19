@@ -252,6 +252,7 @@ const montar = (over: Partial<Cenario> = {}) => {
         warn: jest.fn().mockResolvedValue(undefined),
     };
     const cache = SugestaoBoletoCache.withClock(() => relogio.agora);
+    const ajuste = { agendarAposConfirmar: jest.fn() };
     const service = new BoletoSuggestionService(
         repo as never,
         tituloRepo as never,
@@ -265,6 +266,7 @@ const montar = (over: Partial<Cenario> = {}) => {
         logService as never,
         cache,
         dpsRepo as never,
+        ajuste as never,
     );
     return {
         service,
@@ -278,6 +280,7 @@ const montar = (over: Partial<Cenario> = {}) => {
         eventos,
         cen,
         cache,
+        ajuste,
     };
 };
 
@@ -534,6 +537,46 @@ describe('cache do cenário (PERF-1)', () => {
         await expect(service.listarSugestoes({})).rejects.toThrow('banco fora');
         const r = await service.listarSugestoes({});
         expect(r.total).toBe(1);
+    });
+});
+
+describe('BoletoSuggestionService.confirmar — ajuste de centavos pós-commit (I18g, ADR-0073)', () => {
+    it('agenda o ajuste DEPOIS do commit, fora da transação, sem esperar', async () => {
+        const { service, db, ajuste } = montar();
+        let dentroDaTransacao = false;
+        db.withTransaction.mockImplementationOnce(async (fn: (t: unknown) => unknown) => {
+            dentroDaTransacao = true;
+            const r = await fn({});
+            expect(ajuste.agendarAposConfirmar).not.toHaveBeenCalled();
+            dentroDaTransacao = false;
+            return r;
+        });
+        ajuste.agendarAposConfirmar.mockImplementation(() => {
+            expect(dentroDaTransacao).toBe(false);
+        });
+        const r = await service.confirmar({ ...CHAVE, ator: 'ana' });
+        expect(r.criada).toBe(true);
+        expect(ajuste.agendarAposConfirmar).toHaveBeenCalledWith({
+            filCod: r.decisao.filCod,
+            docCod: r.decisao.docCod,
+            titCod: r.decisao.titCod,
+            decisaoId: r.decisao.id,
+        });
+    });
+
+    it('rollback do confirmar ⇒ nenhum ajuste disparado', async () => {
+        const { service, db, ajuste } = montar();
+        db.withTransaction.mockRejectedValueOnce(new Error('rollback'));
+        await expect(service.confirmar({ ...CHAVE, ator: 'ana' })).rejects.toThrow('rollback');
+        expect(ajuste.agendarAposConfirmar).not.toHaveBeenCalled();
+    });
+
+    it('confirmação idempotente (já existia) não dispara de novo', async () => {
+        const { service, ajuste } = montar();
+        await service.confirmar({ ...CHAVE, ator: 'ana' });
+        ajuste.agendarAposConfirmar.mockClear();
+        await service.confirmar({ ...CHAVE, ator: 'ana' });
+        expect(ajuste.agendarAposConfirmar).not.toHaveBeenCalled();
     });
 });
 

@@ -70,6 +70,9 @@ describe('migrations — segurança do diretório', () => {
                 // marca de retenção (ADR-0071); o reverse devolve os CHECKs antigos como NOT VALID
                 // porque os eventos VINCULO_* ficam (a trilha recusa DELETE).
                 '0086_sispag_vinculo_codigo_barras.sql',
+                // Ledger do ajuste de centavos, colunas de transferência da decisão e tipos novos
+                // nas duas trilhas (ADR-0073); CHECKs antigos voltam NOT VALID (trilhas só-inclusão).
+                '0087_sispag_ajuste_centavos.sql',
             ].sort(),
         );
         for (const alvo of reverses) {

@@ -153,6 +153,9 @@ const TABELA: ReadonlyArray<readonly [string, GuardMark]> = [
     ['POST /sispag/sugestoes-boleto/copiar-linha', P.SISPAG_VER],
     ['GET /sispag/confirmacoes-emissor', P.SISPAG_VER],
     ['POST /sispag/confirmacoes-emissor/:id/revogar', P.SISPAG_EXECUTAR],
+    ['POST /sispag/ajustes-centavos/tentar-novamente', P.SISPAG_EXECUTAR],
+    ['POST /sispag/ajustes-centavos/retomar', P.SISPAG_EXECUTAR],
+    ['GET /sispag/ajustes-centavos', P.SISPAG_VER],
     ['GET /sispag/recursos', P.SISPAG_VER],
     // /recebimentos (15)
     ['GET /recebimentos/painel', P.RECEBIMENTOS_VER],
@@ -256,11 +259,11 @@ for (const [mount, router] of ROUTERS) {
 }
 
 describe('cobertura de guard por rota (introspecção)', () => {
-    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino; + sincronização dos lotes ao abrir e botão único, ADR-0066; + 6 da sugestão de boleto, ADR-0068; + anular a confirmação, I15l; + 2 leituras dos retidos por código de barras, ADR-0069 emenda 1; + previsão do vínculo do código de barras, ADR-0071; + detalhe de candidatos por título, ADR-0072): 27/58/15/10/2/1/7/1', () => {
+    it('a tabela tem as contagens da entrevista (+ sincronizar, ADR-0055; + perfil, ADR-0058; + senha, ADR-0059; sispag: -3 rotas de destino por item +6 de exceção, ADR-0061; + carteira ao abrir, ADR-0060; + 5 da verificação TED/PIX e conferência, ADR-0063; + export de títulos das remessas; + export de títulos a pagar; + busca de favorecido e prévia do destino; + sincronização dos lotes ao abrir e botão único, ADR-0066; + 6 da sugestão de boleto, ADR-0068; + anular a confirmação, I15l; + 2 leituras dos retidos por código de barras, ADR-0069 emenda 1; + previsão do vínculo do código de barras, ADR-0071; + detalhe de candidatos por título, ADR-0072; + 3 do ajuste de centavos, ADR-0073): 27/61/15/10/2/1/7/1', () => {
         const porMount = (m: string) =>
             TABELA.filter(([r]) => r.split(' ')[1].split('/')[1] === m).length;
         expect(porMount('permutas')).toBe(27);
-        expect(porMount('sispag')).toBe(58);
+        expect(porMount('sispag')).toBe(61);
         expect(porMount('recebimentos')).toBe(15);
         expect(porMount('usuarios')).toBe(10);
         expect(porMount('operacao')).toBe(2);
