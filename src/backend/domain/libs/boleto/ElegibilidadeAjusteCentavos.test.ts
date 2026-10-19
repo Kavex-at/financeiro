@@ -158,7 +158,8 @@ describe('ElegibilidadeAjusteCentavos (I18a/I18b/I18m, ADR-0073)', () => {
             const r = regra.avaliar(base(sobrescreve));
             expect(r.elegivel).toBe(false);
             expect(r.motivo).toBe(motivo);
-            expect(r.ajuste).toBeUndefined();
+            // Modo ≠ on: o candidato carrega o ajuste que SERIA feito (shadow); nunca executa.
+            if (motivo !== MOTIVO_INELEGIVEL_AJUSTE.MODO_NAO_ON) expect(r.ajuste).toBeUndefined();
         });
 
         it('os motivos são todos distintos', () => {

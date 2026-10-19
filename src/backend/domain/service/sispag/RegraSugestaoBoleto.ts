@@ -146,6 +146,13 @@ export default class RegraSugestaoBoleto {
     };
 
     private numeroIgual = (doTitulo?: string, doBoleto?: string): boolean =>
+        RegraSugestaoBoleto.numerosIguais(doTitulo, doBoleto);
+
+    /**
+     * Número do documento igual por dígitos estritos (I15f): só dígitos, sem zeros à esquerda;
+     * vazio nunca é igual. Única definição — também usada pelo ajuste de centavos (I18a(2)).
+     */
+    public static numerosIguais = (doTitulo?: string, doBoleto?: string): boolean =>
         digitos(doTitulo) !== '' && digitos(doTitulo) === digitos(doBoleto);
 
     /** O boleto do emissor de NFS-e numera como `<DPS>000` (I15p(1)); a ordem vem do motor (I15p(2)). */
