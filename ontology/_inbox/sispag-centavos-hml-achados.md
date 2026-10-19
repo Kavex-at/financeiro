@@ -134,8 +134,18 @@ provavelmente depende do tipo de documento/valor, não de toda renegociação. A
 - **O título novo volta à aprovação** quando há regra de bloqueio aplicável (regra 19 aqui); o usuário do
   backend tem alçada para o comando APROVAR, mas aprovar por conta da analista é decisão de produto.
 
-**Em aberto:** desconto (boleto ABAIXO) — provavelmente outro `frnVldTpop` (2?); cancelamento da
-renegociação 3 (536/2 já está num lote finalizado).
+### Desconto (boleto ABAIXO) — PONTA A PONTA OK (autorizado pelo maintainer)
+
+Título 540/1 (R$ 178,78, AR SOLUCOES, `pesCodFor 121`), renegociação **frnCod 4**: mesmos passos com
+**`frnVldTpop 2`** + `frnMnyValor 0,01` ⇒ `mnyValorTotal` 178,77 (o campo segue `rgMnyValorJuros 0,01`, mas
+subtrai). Finalizar ⇒ **540/2**: `titMnyValor 178,78`, **`titMnyDesconto 0,01`**, `totalLiquido 178,77`,
+`totalAberto 178,78`, bloqueado na regra 19 ⇒ liberado com `fbaCod 3`. Boleto sintético de **R$ 178,77**
+(lote flp 47, `PG191075.REM`): `importar` traz o item a 178,77; `finalizar` aceita;
+**J: barra 178,77 · valor do título 178,78 · desconto/abatimento 0,01 · pagamento 178,77.**
+
+**`frnVldTpop`:** `0` = sem ajuste (recusa valor) · **`1` = acréscimo (juros)** · **`2` = desconto**.
+
+**Em aberto:** cancelamento das renegociações 3 e 4 (536/2 e 540/2 já estão em lotes finalizados).
 
 ## Estado deixado em HML
 Lotes de teste **flp 42** (rascunho, finalizar recusado), **43, 44, 45** (finalizados, `PG191071–73.REM`).
