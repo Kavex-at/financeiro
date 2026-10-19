@@ -237,12 +237,15 @@ export default class MotorSugestaoBoleto {
             if (confirmada) {
                 const boleto = p.porChave.get(chaveBoleto(confirmada));
                 if (boleto) {
-                    const viva = this.montar(
-                        alvo,
-                        this.avaliar(alvo, boleto, p.pares),
-                        boleto,
-                        ESTADO_SUGESTAO.CONFIRMADA,
-                    );
+                    const viva = {
+                        ...this.montar(
+                            alvo,
+                            this.avaliar(alvo, boleto, p.pares),
+                            boleto,
+                            ESTADO_SUGESTAO.CONFIRMADA,
+                        ),
+                        ...this.autoria(confirmada),
+                    };
                     sugestoes.push(viva);
                     desfechos.push(
                         this.desfechoDeDecisao(viva, SITUACAO_SUGESTAO_TITULO.CONFIRMADA),
@@ -951,6 +954,14 @@ export default class MotorSugestaoBoleto {
     };
 
     /** CONFIRMADA viva ou ORFA: o desfecho carrega só o boleto da decisão. */
+    /** ADR-0073 M1: quem decidiu (herdado na transferência) e a marca do sistema. */
+    private autoria = (
+        d: DecisaoConfirmadaChaveada,
+    ): { decididoPor?: string; transferidaPor?: string } => ({
+        ...(d.decididoPor ? { decididoPor: d.decididoPor } : {}),
+        ...(d.transferidaPor ? { transferidaPor: d.transferidaPor } : {}),
+    });
+
     private desfechoDeDecisao = (
         s: SugestaoBoletoTitulo,
         situacao: SituacaoSugestaoTitulo,
@@ -976,6 +987,8 @@ export default class MotorSugestaoBoleto {
                 ancorado: ancoradoPor(s.avaliacao.sinais),
                 confirmavel: false,
                 ...(s.motivoOrfa ? { motivo: s.motivoOrfa } : {}),
+                ...(s.decididoPor ? { decididoPor: s.decididoPor } : {}),
+                ...(s.transferidaPor ? { transferidaPor: s.transferidaPor } : {}),
             },
         ],
         totalCandidatos: 1,

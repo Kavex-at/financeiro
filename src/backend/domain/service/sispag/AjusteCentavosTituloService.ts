@@ -23,7 +23,7 @@ import {
 import { SISPAG_SYSTEM_ACTOR } from '../../interface/sispag/SispagInterface.js';
 import ElegibilidadeAjusteCentavos, {
     type EntradaElegibilidadeAjuste,
-    type MotivoInelegivelAjuste,
+    MOTIVO_INELEGIVEL_AJUSTE,
     type ResultadoElegibilidadeAjuste,
 } from '../../libs/boleto/ElegibilidadeAjusteCentavos.js';
 import EtapaAjusteCentavos, {
@@ -833,7 +833,7 @@ export default class AjusteCentavosTituloService {
         if (doc === undefined) return 'parar';
         const novo = doc.find((t) => t.titCod === titCodNovo);
         if (!novo || novo.titDtaVencimento === undefined) {
-            return this.indeterminar(exec, 'TITULO_NOVO_AUSENTE_NO_REChAVEAMENTO'.toUpperCase());
+            return this.indeterminar(exec, 'TITULO_NOVO_AUSENTE_NO_RECHAVEAMENTO');
         }
         const liquido = ValorAbertoLiquido.calcularCentavos(
             ValorAbertoLiquido.daLinhaFin064(novo.raw),
@@ -1003,7 +1003,7 @@ export default class AjusteCentavosTituloService {
                 elegibilidade: {
                     elegivel: false,
                     candidato: false,
-                    motivo: 'VALOR_ABERTO_INDISPONIVEL' as MotivoInelegivelAjuste,
+                    motivo: MOTIVO_INELEGIVEL_AJUSTE.VALOR_ABERTO_INDISPONIVEL,
                 },
                 titCodsAntes,
             };
@@ -1081,7 +1081,13 @@ export default class AjusteCentavosTituloService {
     private ler = async <T>(fn: () => Promise<T>): Promise<T | undefined> => {
         try {
             return await fn();
-        } catch {
+        } catch (err) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'ajuste de centavos: leitura no Conexos falhou — etapa fica para a retomada',
+                data: { erro: this.descrever(err) },
+            });
             return undefined;
         }
     };

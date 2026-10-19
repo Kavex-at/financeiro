@@ -596,6 +596,8 @@ export default class SugestaoBoletoRepository {
             deltaDias: d.deltaDias,
             sinais: d.sinais,
             ...(d.tier ? { tier: d.tier } : {}),
+            decididoPor: d.decididoPor,
+            ...(d.transferidaPor ? { transferidaPor: d.transferidaPor } : {}),
         }));
 
     /** Pares (credor, emissor) VIGENTES no formato que o motor consome. */
