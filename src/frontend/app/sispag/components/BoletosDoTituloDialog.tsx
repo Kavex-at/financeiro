@@ -23,11 +23,14 @@ import {
 } from '@/components/ui/table'
 import { formatBRL } from '@/lib/utils'
 import {
+  type AjusteCentavos,
   type BoletoDdaDoTitulo,
   type BoletosDdaDoTitulo,
   type DesfechoTituloBoleto,
+  type ModoAjusteCentavos,
   type SugestaoBoleto,
   type TituloSemBoleto,
+  fetchAjustesCentavos,
   fetchBoletosDdaDoTitulo,
 } from '@/lib/sispag'
 import { SITUACAO_BADGE } from './BoletosDdaTab'
@@ -133,6 +136,35 @@ export function BoletosDoTituloDialog({
   } | null>(null)
 
   const [tentativa, setTentativa] = React.useState(0)
+
+  // Ajuste de centavos (ADR-0073): modo da filial e o estado do ajuste deste título. Falha de
+  // leitura não esconde nada da sugestão — só deixa o selo do ajuste de fora.
+  const [ajuste, setAjuste] = React.useState<{
+    chave: string
+    modo: ModoAjusteCentavos
+    ajuste?: AjusteCentavos
+  } | null>(null)
+  const [versaoAjuste, setVersaoAjuste] = React.useState(0)
+  const chaveAjuste = titulo?.filCod !== undefined ? `${titulo.filCod}:${titulo.docCod}:${titulo.titCod}` : null
+  React.useEffect(() => {
+    if (!titulo || titulo.filCod === undefined || chaveAjuste === null) return
+    let vivo = true
+    fetchAjustesCentavos(titulo.filCod)
+      .then((r) => {
+        if (!vivo) return
+        const doTitulo = r.ajustes.find(
+          (a) =>
+            a.docCod === titulo.docCod &&
+            (a.titCodOrigem === titulo.titCod || a.titCodNovo === titulo.titCod),
+        )
+        setAjuste({ chave: chaveAjuste, modo: r.modo, ...(doTitulo ? { ajuste: doTitulo } : {}) })
+      })
+      .catch(() => undefined)
+    return () => {
+      vivo = false
+    }
+  }, [titulo, chaveAjuste, versaoAjuste])
+  const ajusteAtual = ajuste !== null && ajuste.chave === chaveAjuste ? ajuste : null
   const chave = titulo ? `${titulo.filCod ?? ''}:${titulo.docCod}:${titulo.titCod}` : null
   React.useEffect(() => {
     if (!titulo || chave === null) return
@@ -187,7 +219,12 @@ export function BoletosDoTituloDialog({
                   podeCopiar={podeCopiar}
                   ddaDefasadoHoras={ddaDefasadoHoras}
                   itemVinculadoEmLoteVivo={vinculadoEmLoteVivo}
-                  onDecidido={onDecidido ?? (() => undefined)}
+                  ajusteCentavos={ajusteAtual?.ajuste}
+                  modoAjusteCentavos={ajusteAtual?.modo}
+                  onDecidido={async () => {
+                    setVersaoAjuste((n) => n + 1)
+                    await onDecidido?.()
+                  }}
                 />
               ) : null}
               {erro ? (

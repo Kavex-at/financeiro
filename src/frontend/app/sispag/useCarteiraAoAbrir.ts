@@ -1,7 +1,11 @@
 'use client'
 
 import * as React from 'react'
-import { atualizarCarteiraSeDefasada, sincronizarLotesSeDefasado } from '@/lib/sispag'
+import {
+  atualizarCarteiraSeDefasada,
+  retomarAjustesCentavos,
+  sincronizarLotesSeDefasado,
+} from '@/lib/sispag'
 
 /** Espera entre reconferências quando OUTRA execução está rodando (cron ou outra pessoa). */
 export const ESPERA_REFRESH_MS = 8_000
@@ -113,4 +117,18 @@ export function useLotesAoAbrir(opts: {
   aoAtualizar: () => void | Promise<void>
 }) {
   return useRefreshAoAbrir({ ...opts, pedir: sincronizarLotesSeDefasado })
+}
+
+/**
+ * Varredura de retomada do ajuste de centavos ao abrir a tela (ADR-0073, I18g(3)). Só para quem tem
+ * `sispag:executar` (quem só vê não dispara nada; o servidor recusaria com 403). Uma vez por
+ * abertura, sem esperar o ERP: o servidor agenda e responde 202. Falha não incomoda a tela.
+ */
+export function useAjustesCentavosAoAbrir(opts: { habilitado: boolean; podeExecutar: boolean }) {
+  const disparado = React.useRef(false)
+  React.useEffect(() => {
+    if (!opts.habilitado || !opts.podeExecutar || disparado.current) return
+    disparado.current = true
+    retomarAjustesCentavos().catch(() => undefined)
+  }, [opts.habilitado, opts.podeExecutar])
 }

@@ -95,7 +95,7 @@ import { BoletosDdaTab } from './components/BoletosDdaTab'
 import { BoletosDoTituloDialog } from './components/BoletosDoTituloDialog'
 import { ConfirmarProcessarRetornoDialog } from './components/ConfirmarAcaoDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
-import { useCarteiraAoAbrir, useLotesAoAbrir } from './useCarteiraAoAbrir'
+import { useAjustesCentavosAoAbrir, useCarteiraAoAbrir, useLotesAoAbrir } from './useCarteiraAoAbrir'
 import { LoteCard } from './components/LoteCard'
 import { ExportarTitulosBarra, useSelecaoRemessas } from './components/ExportarTitulosBarra'
 import { ExportarTitulosAPagarBotao } from './components/ExportarTitulosAPagarBotao'
@@ -410,6 +410,8 @@ function SispagPanel() {
     habilitado: carteiraConcluida,
     aoAtualizar: recarregarLotes,
   })
+  // ADR-0073: retoma ajustes de centavos pendentes (só `sispag:executar`; o servidor agenda).
+  useAjustesCentavosAoAbrir({ habilitado: carteiraConcluida, podeExecutar })
 
   // "Sincronizar lotes": passada completa forçada (~25 s). Basta `sispag:ver`.
   const [sincronizando, setSincronizando] = React.useState(false)
