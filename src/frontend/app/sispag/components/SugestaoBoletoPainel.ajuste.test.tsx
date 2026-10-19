@@ -84,7 +84,7 @@ describe('SugestaoBoletoPainel — ajuste de centavos (ADR-0073)', () => {
   it('estado retomável + sispag:executar ⇒ "tentar de novo", desabilitado durante a chamada', async () => {
     let resolver: (v: unknown) => void = () => undefined
     tentar.mockReturnValue(new Promise((r) => (resolver = r)))
-    renderPainel({ ajuste: ajuste({ etapa: 'cancelado' }) })
+    renderPainel({})
     const botao = screen.getByRole('button', { name: /Tentar de novo o ajuste/ })
     await userEvent.click(botao)
     expect(botao).toBeDisabled()
@@ -101,13 +101,15 @@ describe('SugestaoBoletoPainel — ajuste de centavos (ADR-0073)', () => {
         'AJUSTE_CENTAVOS_INELEGIVEL',
       ),
     )
-    renderPainel({ ajuste: ajuste({ etapa: 'recusado' }) })
+    renderPainel({})
     await userEvent.click(screen.getByRole('button', { name: /Tentar de novo o ajuste/ }))
     expect(await screen.findByText(/a diferença passa de R\$ 0,05/)).toBeInTheDocument()
   })
 
   it('só sispag:ver, ou estado não retomável ⇒ sem botão', () => {
-    renderPainel({ ajuste: ajuste({ etapa: 'cancelado' }), executar: false })
+    renderPainel({ executar: false })
+    expect(screen.queryByRole('button', { name: /Tentar de novo o ajuste/ })).toBeNull()
+    renderPainel({ ajuste: ajuste({ etapa: 'cancelado' }) })
     expect(screen.queryByRole('button', { name: /Tentar de novo o ajuste/ })).toBeNull()
   })
 

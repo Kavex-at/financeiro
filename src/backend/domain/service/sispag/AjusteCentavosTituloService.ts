@@ -217,6 +217,18 @@ export default class AjusteCentavosTituloService {
                 motivo: r.motivo ?? 'INELEGIVEL',
             });
         }
+        // Ledger encerrado sem ajuste (cancelado/recusado/indeterminado) desta decisão: a chave de
+        // idempotência não deixa reabrir; "tentar de novo" não pode dizer que executou.
+        if (
+            r.etapa === ETAPA_AJUSTE.CANCELADO ||
+            r.etapa === ETAPA_AJUSTE.RECUSADO ||
+            r.etapa === ETAPA_AJUSTE.INDETERMINADO
+        ) {
+            throw new CentsAdjustmentNotEligibleError({
+                ...chave,
+                motivo: `AJUSTE_ENCERRADO_${r.etapa.toUpperCase()}`,
+            });
+        }
         if (r.resultado === RESULTADO_AJUSTE.EM_ANDAMENTO) {
             throw new CentsAdjustmentIncompleteError({
                 ...chave,

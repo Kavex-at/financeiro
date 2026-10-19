@@ -315,12 +315,12 @@ const AVISO_POR_ETAPA: Partial<Record<AjusteCentavos['etapa'], { texto: string; 
     retomavel: false,
   },
   recusado: {
-    texto: 'o título não foi ajustado; corrija o que impede e tente de novo, ou ajuste pelo fluxo normal do Conexos',
-    retomavel: true,
+    texto: 'o título não foi ajustado; ajuste pelo fluxo normal do Conexos',
+    retomavel: false,
   },
   cancelado: {
-    texto: 'o ajuste foi cancelado antes de finalizar; o título original segue intacto — tente de novo',
-    retomavel: true,
+    texto: 'o ajuste foi cancelado antes de finalizar; o título original segue intacto — ajuste pelo fluxo normal do Conexos',
+    retomavel: false,
   },
   indeterminado: {
     texto: 'o ajuste parou num estado incerto; é preciso conferir no Conexos antes de qualquer nova tentativa',
