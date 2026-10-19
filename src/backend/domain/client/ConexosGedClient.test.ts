@@ -162,4 +162,24 @@ describe('ConexosGedClient (arq020, ADR-0073) — só leitura', () => {
             filCod: 2,
         });
     });
+
+    it('download real: string JSON com o PDF em base64 → bytes do PDF', async () => {
+        const base = buildBase();
+        const pdf = Buffer.from('%PDF-1.3\n3 0 obj');
+        base.getBinary.mockResolvedValue(Buffer.from(JSON.stringify(pdf.toString('base64'))));
+        const bytes = await clientCom(base).baixarArquivo({
+            dcmCod: 46415,
+            adfCodSeq: 1,
+            filCod: 2,
+        });
+        expect(bytes.equals(pdf)).toBe(true);
+    });
+
+    it('download em formato inesperado (ex.: objeto JSON de erro) vira erro, nunca PDF', async () => {
+        const base = buildBase();
+        base.getBinary.mockResolvedValue(Buffer.from('{"messages":[{"valid":"ERRO"}]}'));
+        await expect(
+            clientCom(base).baixarArquivo({ dcmCod: 46415, adfCodSeq: 1, filCod: 2 }),
+        ).rejects.toThrow(/formato inesperado/);
+    });
 });

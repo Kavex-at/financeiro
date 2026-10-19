@@ -68,6 +68,21 @@ describe('LeituraDanfse — DPS e NFS-e do DANFSe (ADR-0073)', () => {
         ).toBeUndefined();
     });
 
+    it('DANFSe v2.0 real (NF_86666.PDF do GED, posições extraídas em 2026-10-19)', () => {
+        const r = leitura.ler([
+            item('NÚMERO DA NFS-e', 9.35, 769.55),
+            item('86666', 9.35, 762.32),
+            item('COMPETÊNCIA DA NFS-e', 155.34, 769.55),
+            item('DATA E HORA DA EMISSÃO DA NFS-E', 301.32, 769.55),
+            item('NÚMERO DA DPS', 9.35, 749.99),
+            item('776132', 9.35, 742.76),
+            item('SÉRIE DA DPS', 155.34, 749.99),
+            item('DATA E HORA DA EMISSÃO DA DPS', 301.32, 749.99),
+            item('Número Processo Suspensão', 447.31, 463.28),
+        ]);
+        expect(r).toEqual({ dps: '776132', nfse: '86666' });
+    });
+
     it('PDF sem o rótulo (outro documento) → nada lido', () => {
         expect(leitura.ler([item('BOLETO', 50, 700), item('776132000', 50, 690)])).toEqual({});
     });
