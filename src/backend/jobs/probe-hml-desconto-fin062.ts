@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import 'dotenv/config';
 import './hmlEnvFile.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import ConexosBaseClient from '../domain/client/ConexosBaseClient.js';
@@ -41,6 +42,8 @@ const TIT = process.env.TIT ?? '1';
 const FASE = process.env.FASE ?? 'ler';
 const VALOR = Number(process.env.VALOR ?? 0.01);
 const DFC = process.env.DFC ?? '';
+const OUT_DIR = process.env.PROBE_OUT ?? '/tmp/hml-fin062';
+mkdirSync(OUT_DIR, { recursive: true });
 if (!DOC) {
     console.error('Informe DOC (e TIT).');
     process.exit(1);
@@ -170,6 +173,53 @@ async function main(): Promise<void> {
     }
 
     const linha = await estado('antes');
+
+    if (FASE === 'vencimento') {
+        // ESCREVE: move o vencimento do título de HML para `NOVO_VENC` (data civil) via
+        // `PUT fin026/alteraDataVencimento`, com backup da row em disco. Mede se a liberação cai.
+        const docTipV = linha?.docTip;
+        const novo = process.env.NOVO_VENC ?? '';
+        if (docTipV === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(novo)) {
+            return log('Informe NOVO_VENC=AAAA-MM-DD (e o título precisa existir no fin064).');
+        }
+        const caminho = `fin026/${docTipV}/${DOC}/${TIT}`;
+        const lerFin026 = (): Promise<Row> => base.getGeneric<Row>(caminho, { filCod: FIL });
+        const datas = (r: Row): Row =>
+            Object.fromEntries(Object.entries(r).filter(([k]) => /Dta|[Ll]ib|Status/.test(k)));
+        const antes = await lerFin026();
+        writeFileSync(`${OUT_DIR}/fin026-${DOC}-${TIT}-antes.json`, JSON.stringify(antes, null, 2));
+        log(`fin026 antes: ${sanea(datas(antes))}`);
+        const epoch = Date.parse(`${novo}T00:00:00Z`);
+        const comData = { ...antes, titDtaVencimento: epoch };
+        // O endpoint é de SELEÇÃO ("NENHUM_REGISTRO_SELECIONADO" com a row solta): tenta os formatos
+        // de seleção usados no Conexos, parando no primeiro aceito. Recusa não grava nada.
+        const variantes: Array<{ nome: string; corpo: Row }> = [
+            { nome: 'row solta', corpo: comData },
+            { nome: 'items[row com data]', corpo: { items: [comData] } },
+            {
+                nome: 'items[row] + titDtaVencimento',
+                corpo: { items: [antes], titDtaVencimento: epoch },
+            },
+            {
+                nome: 'titulosSelecionados + ftsDtaVencimento',
+                corpo: { titulosSelecionados: [antes], ftsDtaVencimento: epoch },
+            },
+        ];
+        for (const v of variantes) {
+            try {
+                await base.putGenericOnce<unknown>('fin026/alteraDataVencimento', v.corpo, {
+                    filCod: FIL,
+                });
+                log(`PUT fin026/alteraDataVencimento (${v.nome}): ok`);
+                break;
+            } catch (e) {
+                log(`PUT fin026/alteraDataVencimento (${v.nome}) falhou: ${erro(e)}`);
+            }
+        }
+        log(`fin026 depois: ${sanea(datas(await lerFin026()))}`);
+        await estado('depois do vencimento');
+        return;
+    }
     const docTip = linha?.docTip;
     if (docTip === undefined) return log('título não encontrado no fin064 (sem docTip).');
 
