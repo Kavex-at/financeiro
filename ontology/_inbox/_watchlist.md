@@ -236,4 +236,22 @@
 - **Alargar a janela do passo 2** (valor igual, +6..+10 d; os 4 MULTILOG +8 d) — 1 credor; exige evidência
   de barra +8 d e retorno bancário.
 - **Retirada/trava automática do lote do título com boleto vencido** — decisão de produto, passo 3.
-- **Vincular boleto acima/abaixo do título** — segue em ADR-0071 (inviável/não medido).
+- ~~**Vincular boleto acima/abaixo do título**~~ — **até R$ 0,05 resolvido pela ADR-0073** (I18, ajuste no
+  título antes do vínculo). **Acima de R$ 0,05** continua aqui (ver seção ADR-0073).
+
+## 2026-10-19 — sispag-ajuste-centavos (ADR-0073)
+
+- **Boleto > R$ 0,05 do título (25 em PRD, todos > R$ 10, ~7 %)** — NELSON fil 4 (título fixo 930,48 × boleto
+  993–1.348, valor previsto?), SAVINO DEL BENE fil 2 (+R$ 386–391 fixo), UPS (+13,7–15,1 %), RHENUS
+  (+1,6–1,7 %, retenção?), JUSTLOG (+R$ 544), MSC (falso par). Outro problema; nada automático (I18m).
+- **Correção do documento via `com298` (estornar/editar/finalizar)** — REJECT-PREMATURE até a Columbia dizer se
+  prefere isso à renegociação (D7).
+- **`fin062`/`fin063` em título a pagar** — recusado em HML (`docCod NOT_VALID`); hipóteses (a) só a receber,
+  (c) só título não liberado. Pergunta aberta para a Columbia.
+- **Conta contábil de juros/desconto da renegociação** — premissa: default do `fin070`. Confirmar com a Columbia.
+- **Líquido de título com pagamento parcial** — `totalLiquido` desconta `totalPago`? Medir em PRD (G4); até lá a
+  I18 exclui pagamento parcial e a I17b é fail-closed.
+- **`valorLiquido` persistido na carteira** — depende de o list do `fin064` trazer `totalLiquido`.
+- **Entidade genérica de renegociação de contas a pagar** — só se aparecer um segundo uso da `fin070`.
+- **Universalidade da I18** — 1 cliente; revisar com o Francinei.
+- **HML: renegociações 3 e 4** ficam como estão (536/2 e 540/2 em lotes finalizados).

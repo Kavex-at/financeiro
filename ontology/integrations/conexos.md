@@ -2,7 +2,7 @@
 name: conexos
 type: integration
 direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG READ-only)
-ontology_version: "0.31.0"
+ontology_version: "0.44.0"
 implementation_status: partial
 status: draft
 owners: [yuri]
@@ -16,7 +16,7 @@ related_files:
   - src/backend/migrations/0017_invoice_importador.sql
   - src/backend/migrations/0018_permuta_bordero_cache.sql
   - src/backend/migrations/0019_permuta_perf_indexes.sql
-last_review: 2026-09-29
+last_review: 2026-10-19
 endpoints_read:
   - com298 (PROFORMA tpdCod=99 + docVldTipoAdto=1 / INVOICE tpdCod=128 / detail mnyTitPermutar + pago=mnyTitAberto===0)
   - imp019 (D.I — data CI = cdiDtaCi)
@@ -337,6 +337,24 @@ Envelope com **2+ perguntas** também não é auto-respondível, mesmo contendo 
 **leitura** (`fin064` + `fin052` arquivos/detalhe + `com308` baixas) e suas gravações locais **não**
 passam por esses gates. `fin015.flpVldRet` **não** é sinal de retorno: medido `false` em todos os
 lotes nativos. O transporte (pasta de rede → VAN Nexxera) segue externo e manual.
+
+### ESCRITA SISPAG — renegociação de centavos no título (ADR-0073, `planned`)
+
+Provado em HML (2026-10-19, frnCod 3 e 4). Só pela ação `ajustarCentavosTitulo` (I18), sessão do servidor.
+
+| Passo | Endpoint | Notas |
+|---|---|---|
+| criar | `POST fin070` | `pesCod = fin064.pesCodFor`, `frnVldTipo 2`, `frnVldTpop 0`, `frnDtaReneg`, obs MAIÚSCULA (marcador de correlação) |
+| título | `POST fin070/titulos` | o título original; juros enviados aqui são ignorados |
+| composição | `POST fin070/titulos/composicao` | mesmo valor aberto, vencimento original, `frgEspNumero`, `pgtCod`, `dupEspOrdem`; valor > aberto ⇒ `FIN_070.O_TOTAL_DOS_TITULOS_A_SEREM_GERADOS…` |
+| ajuste | `PUT fin070` | `frnMnyValor = \|Δ\|`; `frnVldTpop` 1 acréscimo / 2 desconto; `0` com valor ⇒ `FIN_070.TIPO_OP_NAO_PERMITE_VALOR` |
+| finalizar | `PUT fin070/finalizar/{frnCod}` | consome o original; nasce título novo no mesmo `docCod` (`totalLiquido` = boleto; `totalAberto` = base) |
+| cancelar | `PUT fin070/cancelar/{frnCod}` ou `DELETE` | **não provado** (portão G3) |
+| liberar | `POST fin103/validaSelecionado` → `POST fin103/aplicarComando {items:[linha fin103/list + fbaCod]}` | comando ativo "APROVAR" lido em `fin106/finBloqCmd/list/{fblCod}` |
+
+O título novo pode nascer **bloqueado** na `fin103` (HML: regra 19, `vldLib 0`) e só aparece nos pendentes
+do `fin015` depois de liberado. Em PRD o CLONEX não tem `fin070`/`fin026`/`fin103` no menu; a permissão do
+login do servidor é o portão G1.
 
 ## FRENTE IV (Recebimentos) — superfícies NOVAS (SKELETON, ADR-0022)
 

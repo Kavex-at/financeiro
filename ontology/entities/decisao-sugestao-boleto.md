@@ -1,8 +1,8 @@
 ---
 name: DecisaoSugestaoBoleto
 type: entity
-ontology_version: "0.43.0"
-implementation_status: implemented
+ontology_version: "0.44.0"
+implementation_status: partial
 status: draft
 owners: [yuri]
 related_files:
@@ -11,12 +11,13 @@ related_files:
   - "src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts"
   - "src/backend/domain/service/sispag/BoletoSuggestionService.ts"
   - "src/frontend/app/sispag/components/SugestaoBoletoPainel.tsx"
-properties: [id, filCod, docCod, titCod, pesCod, credor, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorTitulo, vencimentoTitulo, valorBoleto, vencimentoBoleto, deltaValor, deltaPercentual, deltaDias, sinais, tier, emissorChave, decisao, decididoPor, decididoEm, motivo, confirmacaoEmissorId, anuladaPor, anuladaEm, motivoAnulacao, versao]
+properties: [id, filCod, docCod, titCod, pesCod, credor, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorTitulo, vencimentoTitulo, valorBoleto, vencimentoBoleto, deltaValor, deltaPercentual, deltaDias, sinais, tier, emissorChave, decisao, decididoPor, decididoEm, motivo, confirmacaoEmissorId, anuladaPor, anuladaEm, motivoAnulacao, tipoAnulacao, origemDecisaoId, transferidaPor, versao]
 relationships:
   - "DecisaoSugestaoBoleto N—1 TituloAPagar (chave filCod/docCod/titCod; vínculo lógico, sem escrita no título)"
   - "DecisaoSugestaoBoleto N—1 BoletoDda (chave ddcCod/ditCod; snapshot — o pool pode mudar)"
   - "DecisaoSugestaoBoleto N—0..1 ConfirmacaoEmissorBoleto (a confirmação que esta decisão criou ou reutilizou; só quando decisao = CONFIRMADA)"
-last_review: 2026-10-14
+  - "DecisaoSugestaoBoleto 0..1—0..1 DecisaoSugestaoBoleto (origemDecisaoId: a decisão do título antigo que esta herdou na renegociação I18j; ADR-0073, planned)"
+last_review: 2026-10-19
 universality_evidence:
   - "Mesmas fontes de ConfirmacaoEmissorBoleto (entrevista 2026-10-14; sondagens PRD 2026-10-13/14)"
   - "Conceito universal: toda conciliação assistida guarda QUEM aprovou QUAL par com QUE evidência (trilha de auditoria)"
@@ -47,10 +48,12 @@ universality_evidence:
 | `tier` | `CONHECIDO \| FORTE \| ATENCAO` | Derivado na hora da decisão (regra I15c). |
 | `emissorChave` | string | Chave do emissor derivada do `codbar` do boleto (par com `pesCod`). |
 | `decisao` | `CONFIRMADA \| REJEITADA \| ANULADA` | `CONFIRMADA → ANULADA` é a única transição; `REJEITADA` e `ANULADA` são terminais. Ver "Estados". |
-| `decididoPor` · `decididoEm` | string · Date | `sispag:executar`. Nunca `sistema`. |
+| `decididoPor` · `decididoEm` | string · Date | `sispag:executar`. Nunca `sistema`. Na transferência (I18j, ADR-0073) são **herdados** da decisão de origem: o autor continua sendo a pessoa. |
 | `motivo` | string? | Obrigatório em `REJEITADA`. |
 | `confirmacaoEmissorId` | string? | Preenchido em `CONFIRMADA` (e mantido em `ANULADA`, como histórico). |
-| `anuladaPor` · `anuladaEm` · `motivoAnulacao` | string? · Date? · string? | Todos preenchidos em `ANULADA` e só nela (CHECK). `anuladaPor` nunca `sistema`/`unknown`. Motivo de 10 a 500 caracteres; na cascata é `par revogado: <motivo da revogação>`. |
+| `anuladaPor` · `anuladaEm` · `motivoAnulacao` | string? · Date? · string? | Todos preenchidos em `ANULADA` e só nela (CHECK). `anuladaPor` nunca `unknown`; nunca `sistema`, **exceto** com `tipoAnulacao = TITULO_RENEGOCIADO` (ADR-0073, M1; CHECK da 0084 relaxado só para esse caso na migration 0087). Motivo de 10 a 500 caracteres; na cascata é `par revogado: <motivo da revogação>`; na renegociação, `título renegociado X/Y → X/Z, frnCod N`. |
+| `tipoAnulacao` | enum? | `MANUAL \| PAR_REVOGADO \| TITULO_RENEGOCIADO` (ADR-0073, `planned`; legado sem backfill ⇒ derivado do motivo). Preenchido só em `ANULADA`. |
+| `origemDecisaoId` · `transferidaPor` | string? · string? | Só na decisão nascida da transferência (I18j): a decisão do título antigo e o ator `sistema`. Nulos em decisão tomada por pessoa. (ADR-0073, `planned`) |
 | `versao` | number | Lock otimista da anulação (`UPDATE ... WHERE versao = ? AND decisao = 'CONFIRMADA'`). |
 
 ## Estados (I15l)
@@ -58,6 +61,7 @@ universality_evidence:
 ```
 CONFIRMADA ──anularDecisaoSugestaoBoleto──▶ ANULADA        (terminal)
 CONFIRMADA ──revogarConfirmacaoEmissor (cascata)──▶ ANULADA
+CONFIRMADA ──ajustarCentavosTitulo (transferência, I18j)──▶ ANULADA  +  nova CONFIRMADA no título novo
 REJEITADA                                                  (terminal, intocada)
 ```
 
@@ -94,3 +98,9 @@ sob par `REVOGADA`.
 (`VINCULO_SIMULADO`/`VINCULO_APLICADO`/`VINCULO_FALHOU`) e de `ItemLote.vinculoCodigoBarras`. **Não existe**
 estado `APLICADO_NO_ERP` (a aplicação é por remessa × tentativa; a decisão sobrevive a lote cancelado).
 `decisao` segue `CONFIRMADA | REJEITADA | ANULADA`.
+
+**Ajuste de centavos (ADR-0073, `planned`) — derivado, não persistido:** `ajuste` =
+`NAO_APLICAVEL | DESLIGADO | AGUARDANDO | SIMULADO | EM_ANDAMENTO | AJUSTADO | AGUARDANDO_APROVACAO_MANUAL |
+RECUSADO(motivo)`, lido do ledger `sispag_ajuste_centavos_execucao` e da trilha. Enquanto o ajuste está entre
+`finalizada` e `rechaveada`, a decisão do título antigo **não** é mostrada como órfã com "Anular": a tela diz
+"título renegociado, ajuste em andamento". **Não existe** estado `AJUSTADA` em `decisao`.

@@ -1,7 +1,7 @@
 ---
 name: TituloAPagar
 type: entity
-ontology_version: "0.31.0"
+ontology_version: "0.44.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -44,7 +44,8 @@ relationships:
   - "TituloAPagar 1—0..N BloqueioDuplicidade (no máximo 1 ATIVO; retirado de lote por duplicidade, cancelamento pendente no Conexos; ADR-0063)"
   - "TituloAPagar 1—1 (contexto) Borderô a-pagar / Lote SISPAG nativos (fin010/fin015 — leitura de contexto no painel, não vínculo próprio)"
   - "TituloAPagar 0..N—N DecisaoSugestaoBoleto (decisão humana sobre qual boleto livre do fin124 é o deste título; não altera o título nem `temBoleto`, I15a; ADR-0068, planned)"
-last_review: 2026-10-14
+  - "TituloAPagar 1—0..1 TituloAPagar (renegociação I18: o título novo nasce no mesmo docCod e consome o antigo; linhagem no ledger sispag_ajuste_centavos_execucao, não em coluna; ADR-0073, planned)"
+last_review: 2026-10-19
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -71,8 +72,12 @@ fornecedor/credor, com um valor e um vencimento. A operação SISPAG existe para
 aprovado deixe de sair no prazo** (evitar multa/juros). O painel expõe a janela relevante (a vencer +
 vencidos, com aging); a analista monta o lote a partir dos títulos **aprovados e não pagos**.
 
-Esta entidade **lê e persiste** os dados básicos da carteira; **não modifica** o título no ERP (I1 —
-read-only no Conexos). A única escrita é no **banco próprio** (Postgres). A baixa/remessa efetiva
+Esta entidade **lê e persiste** os dados básicos da carteira; a ingestão **não modifica** o título no ERP
+(I1 — read-only no Conexos). **Exceção única (ADR-0073, `planned`):** a ação `ajustarCentavosTitulo` renegocia
+no `fin070` o título cujo boleto confirmado difere em centavos e libera no `fin103` o bloqueio que essa
+renegociação criou (regra `ajuste-centavos-titulo-sispag`, I18). Nenhuma outra escrita no título é permitida.
+O título renegociado é um **título novo** (mesmo `docCod`, `titCod` novo); a linhagem antigo → novo vive no
+ledger do ajuste, não em coluna desta tabela (o UPSERT da ingestão a apagaria). A baixa/remessa efetiva
 segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 
 ## Persistência (ADR-0016 — mudança nesta fatia)
@@ -96,7 +101,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `filCod` | number | `fin064` → `fil_cod` | **Invariante multi-filial** — filial que originou o título. Chave do agrupamento de lote (I4). Nunca `null`. |
 | `credor` | string? | `fin064` → nome do fornecedor/credor | Exibição. A quem se paga. |
 | `pesCod` | string? | `fin064` `pesCod`, **senão `pesCodFor`** / `imp021` → `pes_cod` | Código da pessoa (fornecedor/credor). Roteamento/identidade. No `fin064` o `pesCod` chega vazio e o favorecido vem em `pesCodFor` (fixtures reais 2026-08-24/25). O título **não traz o CPF/CNPJ** (`pdcDocFederal` vazio); o documento vem do cadastro (`cmn025`). |
-| `valor` | number? | `fin064`/`com308` → `titMnyValor` (ou saldo a pagar) | Valor do título (moeda em `moeda`). Snapshot no `ItemLote` no momento da inclusão. |
+| `valor` | number? | `fin064`/`com308` → `titMnyValor` (ou saldo a pagar) | Valor do título (moeda em `moeda`). Snapshot no `ItemLote` no momento da inclusão. **Base** (`titMnyValor`), não o líquido; para o líquido, ver I17b/I18 (ADR-0073). |
 | `moeda` | string? | `com298.moeEspSigla` | Moeda do título. |
 | `vencimento` | Date? | `fin064`/`com308` → `titDtaVencimento` | Data de vencimento — base do aging e da janela do painel (−15d..+45d). |
 | `aprovado` | boolean | derivado na ingestão: `titVld1libera ∧ titVld2libera ∧ titVld3libera` (`com308`, alçada) → `aprovado` | **"Aprovado para baixa"** — passou por **todos os níveis de alçada** que a Columbia usa. Gate de elegibilidade do lote (I2). **Persistido** (era o derivado `liberado` no read model do ADR-0015). Ver `business-rules/elegibilidade-titulo-lote.md`. |
@@ -201,7 +206,7 @@ sumir do `fin064` (o anti-fantasma abaixo o encerra) ou a analista desfazer. Nã
 
 ## Fora de escopo (esta fatia)
 
-- Nenhuma escrita no ERP a partir desta entidade. A baixa do título é **observada** (L11, ADR-0055),
+- Nenhuma escrita no ERP a partir desta entidade, salvo a renegociação de centavos da I18 (ADR-0073). A baixa do título é **observada** (L11, ADR-0055),
   nunca feita por nós fora de L9 (`processar` administrativo do `fin052`).
   Ver ADR-0015 e ADR-0016.
 - O **detalhe de remessa** não é persistido (anti-drift) — lido ao vivo só no envio.
