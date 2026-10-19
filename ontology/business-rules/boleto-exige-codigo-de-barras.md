@@ -1,7 +1,7 @@
 ---
 name: boleto-exige-codigo-de-barras
 type: business-rule
-ontology_version: "0.42.0"
+ontology_version: "0.44.0"
 implementation_status: partial
 status: active
 owners: [yuri]
@@ -13,7 +13,7 @@ related_files:
   - src/backend/domain/client/ConexosSispagWriteClient.ts
   - src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.ts
   - src/backend/domain/libs/boleto/CodigoBarrasBoleto.ts
-last_review: 2026-10-14
+last_review: 2026-10-19
 ---
 
 # Boleto exige código de barras (fail-closed no envio)
@@ -103,7 +103,7 @@ conta para boleto rejeitava justamente o fornecedor que só aceita boleto (o cas
 | # | Invariante |
 |---|---|
 | **I16a** | **Um código de barras, um item.** Dentro de um mesmo lote/remessa, dois ou mais itens `modalidade = BOLETO` não podem carregar o mesmo código de barras **normalizado de 44 dígitos** (a linha digitável de 47 dígitos de `itsNumCodbar` é convertida para barras de 44; o segmento J do `.REM` já carrega 44). Violação ⇒ `BoletoCodigoBarrasRepetidoError` (409). |
-| **I16b** | **Pontos de checagem.** (1) **Principal:** logo após `importarTitulos` e **antes de `finalizarLote`**, sobre `listarLinhasDigitaveisDoLote` (único ponto em que o código já existe e o último antes de o lote nativo virar FINALIZADO; rascunho nativo não se apaga por API, finalizado se cancela). (2) **Rede de segurança:** `RemessaCnabValidator` compara o 44 dígitos dos segmentos J do `.REM` gerado, e cobre o caso em que (1) foi pulado (retomada de etapa) ou a leitura dropou itens. Falha em (2) é tardia e segue o tratamento já existente do gate pós-geração (lote nativo finalizado e arquivo no ERP para cancelamento manual). O mesmo caminho serve lote manual e automático. |
+| **I16b** | **Pontos de checagem.** (1) **Principal:** logo após `importarTitulos` e **antes de `finalizarLote`**, sobre `listarLinhasDigitaveisDoLote` (único ponto em que o código já existe e o último antes de o lote nativo virar FINALIZADO; rascunho nativo não se apaga por API, finalizado se cancela). (2) **Rede de segurança:** `RemessaCnabValidator` compara o 44 dígitos dos segmentos J do `.REM` gerado, e cobre o caso em que (1) foi pulado (retomada de etapa) ou a leitura dropou itens. Falha em (2) é tardia e segue o tratamento já existente do gate pós-geração (lote nativo finalizado e arquivo no ERP para cancelamento manual). O mesmo caminho serve lote manual e automático. **Emenda ADR-0073 (`planned`):** a rede (2) passa a conferir também **barra (> 0) == pagamento do J** (I17m, `RemessaBarcodeAmountMismatchError`), com o mesmo tratamento tardio. |
 | **I16c** | **Código lido e descartado é retirado; ausência e leitura incompleta abortam (decisão P0-3(c)).** Item cujo código de barras **foi lido** do ERP porém descartado pela leitura (`dropped`: DV inválido, tamanho incorreto) impede a comparação confiável e **é retirado** conforme I16d.2 (motivo `CODIGO_BARRAS_ILEGIVEL`): nunca se mantém no lote um item cujo código não pôde ser comparado. **Ausência pura** (item BOLETO sem código: `BoletoSemCodigoBarrasError`, antes desta guarda) e **leitura incompleta ou falha de leitura** da lista nativa **continuam abortando**: podem ser falha do ERP, não problema do título, e **leitura incompleta nunca vira retirada**. |
 | **I16d** | **Retirada automática (Emenda 1, ADR-0069).** Achada a repetição (I16a) ou item com código lido e descartado (I16c), a solução **retira** os itens ofensores e **continua a remessa com o restante**, antes de `finalizarLote` nativo. Nunca em silêncio: a analista é informada (I16f) e o título fica retido (I16g). Valem I16d.1–I16d.8. Vale para lote manual e automático (P1-2(a)). A rede do `.REM` (I16b(2)) **não** retira: continua abortando. |
 | **I16d.1** | **O que sai, o que fica.** Por grupo de itens BOLETO com o mesmo código normalizado de 44 dígitos, **fica exatamente um** e **saem os demais**. O que fica: **menor `vencimento`, depois menor `docCod`, depois `filCod`, depois `titCod`** (comparação numérica onde o campo é numérico). Heurística de desempate, **não** juízo financeiro sobre qual dívida o boleto quita; a retirada é reversível (I16g). **Nunca** se retira o item que fica. **Emenda ADR-0071 (P1-1(b), `planned`):** quando houver **exatamente um** título do grupo com decisão humana vigente (ADR-0068, I17a), ele é o que fica, antes da ordem acima. |
@@ -153,3 +153,4 @@ ou confirmação). A confirmação de emissor continua sendo evidência, não au
 - ADR-0069 (+ Emenda 1) — I16, duplicidade por BOLETO (um código de barras, um item; retirada automática I16d–h); pré-requisito do passo 2 da ADR-0068
 - `entities/bloqueio-duplicidade.md` — marca de retenção (`origem`), I16g
 - ADR-0071 / `business-rules/vinculo-codbar-item-sispag.md` — I17, vínculo do código confirmado ao item (passo 2); etapa `vincular_codbar` antes da guarda
+- ADR-0073 / `business-rules/ajuste-centavos-titulo-sispag.md` — I18 (ajuste de centavos no título) e I17m (barra == pagamento do J na rede do `.REM`)

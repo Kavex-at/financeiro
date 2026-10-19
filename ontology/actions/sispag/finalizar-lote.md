@@ -2,7 +2,7 @@
 name: finalizarLote
 type: action
 entity: LotePagamento
-ontology_version: "0.38.0"
+ontology_version: "0.44.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -12,13 +12,14 @@ related_files:
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-10-08
+last_review: 2026-10-19
 preconditions:
   - "Requer papel admin (requireRole('admin'))."
   - "Lote em RASCUNHO com ≥1 item; todos os itens ainda elegíveis (liberado + não pago)."
   - "Todo item com modalidade definida (ModalidadePendenteError, migration 0031)."
   - "Item TED/PIX sem dado no cadastro cmn025, de favorecido não autorizado ou com destino alterado desde a aprovação é retirado pela verificação (I13j, I14; ADR-0065) e a finalização segue com os restantes; se o lote esvaziar, fica RASCUNHO (BatchEmptiedByCheckError)."
   - "verificarItensTedPix roda antes da transição (I13a): nenhum item TED/PIX com verificacaoEstado PENDENTE (PaymentCheckPendingError, I13b) e nenhuma AlertaItemLote de duplicidade ABERTA (PendingDuplicateAlertError, I13f)."
+  - "Nenhum item cujo título tenha ajuste de centavos não terminal (TitleAdjustmentInProgressError, 409; I18k, ADR-0073, planned)."
 postconditions:
   - "Lote RASCUNHO → FINALIZADO (L3): registra finalizadoPor + finalizadoEm; incrementa versao."
   - "Resposta lista os itens retirados pela verificação, com motivo (ADR-0065)."

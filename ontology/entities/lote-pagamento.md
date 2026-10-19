@@ -1,7 +1,7 @@
 ---
 name: LotePagamento
 type: entity
-ontology_version: "0.42.0"
+ontology_version: "0.44.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -58,7 +58,7 @@ relationships:
   - "ItemLote N—0..1 FavorecidoAutorizado (a autorização que liberou o item, gravada no congelamento I10f; ADR-0065)"
   - "ItemLote 1—N AlertaItemLote (duplicidade e canal habitual da verificação TED/PIX; ADR-0063)"
   - "ItemLote N—0..1 DecisaoSugestaoBoleto (a decisão que originou o código vinculado ao item; I17, ADR-0071, implemented)"
-last_review: 2026-10-14
+last_review: 2026-10-19
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
   - "ADR-0018 — formação AUTOMÁTICA de lotes candidatos (cron pós-ingestão + manual): pré-montar os lotes das obrigações a-vencer é a automação natural sobre a montagem manual; universal em contas-a-pagar de trading com comex"
@@ -147,7 +147,7 @@ fora de um lote.
 | `loteId` | string | `lote_pagamento_item.lote_id` | FK para o lote (raiz do agregado). |
 | `filCod` | number | `lote_pagamento_item.fil_cod` | Igual ao `filCod` do lote (I4). Parte da chave de não-duplicação (I3). |
 | `docCod` | string | `lote_pagamento_item.doc_cod` | Documento do título. Parte de `filCod:docCod:titCod` (I3). |
-| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). |
+| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). **Muda só por I18j(5)** (ADR-0073, `planned`): em lote `RASCUNHO`, o item passa para o título renegociado, com `valor` = líquido novo (M6), `versao + 1` e evento `ITEM_TITULO_RENEGOCIADO` na trilha. Em lote não `RASCUNHO` nunca muda (o ajuste é recusado, I18k). |
 | `credor` | string | `lote_pagamento_item.credor` | **Snapshot** no momento da inclusão (exibição estável). |
 | `valor` | number | `lote_pagamento_item.valor` | **Snapshot** do valor do título na inclusão. |
 | `vencimento` | Date | `lote_pagamento_item.vencimento` | **Snapshot** do vencimento na inclusão. |
@@ -198,7 +198,8 @@ fora de um lote.
   lock), espelhando a doutrina de Permutas.
 - **I1 (sem escrita no ERP até `FINALIZADO`):** a montagem (L1–L6) é 100% local. L8 escreve no
   `fin015`; L9/L10 no `fin052`. **L11 é read-only no ERP** e nunca baixa, processa ou carrega nada
-  (I11a).
+  (I11a). A renegociação de centavos (I18, ADR-0073, `planned`) escreve no **título**, não no lote, e nunca
+  toca lote não `RASCUNHO`; enquanto ela corre, `finalizarLote` é recusado (`TitleAdjustmentInProgressError`).
 - **I8 (janela da data de débito — ADR-0049, 2026-09-22):**
   - **I8a (janela):** `dataDebito ∈ [hoje_BRT, min(vencimento dos itens)] ∩ diasUteisBancarios`.
     `hoje_BRT` = data civil em `America/Sao_Paulo` (nunca meia-noite UTC). O limite superior é o do

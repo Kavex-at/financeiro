@@ -2,7 +2,7 @@
 name: confirmarSugestaoBoleto
 type: action
 entity: DecisaoSugestaoBoleto
-ontology_version: "0.40.0"
+ontology_version: "0.44.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -11,7 +11,7 @@ related_files:
   - "src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts"
   - "src/backend/routes/sispag.ts"
   - "src/frontend/app/sispag/components/SugestaoBoletoPainel.tsx"
-last_review: 2026-10-14
+last_review: 2026-10-19
 preconditions:
   - "Usuário com `sispag:executar`; identidade do JWT (nunca `sistema`)."
   - "A sugestão (título, boleto) ainda é válida ao vivo-local: boleto livre, título sem vínculo, sem decisão ativa conflitante, boleto não reservado a outro título (anti-TOCTOU, I15e)."
@@ -22,7 +22,8 @@ postconditions:
   - "Eventos DECISAO_CONFIRMADA (+ PAR_CONFIRMADO quando criou o par)."
   - "temBoleto, lote, título e ERP intactos (I15a, I15b)."
 side_effects:
-  - "Escrita local apenas."
+  - "Escrita local apenas, dentro da transação do confirmar."
+  - "Depois do commit, fora da transação: dispara ajustarCentavosTitulo (assíncrono) quando o par tem 0 < |Δ| <= R$ 0,05 no mesmo dia e o modo da filial não é off (I18g, ADR-0073, planned). A resposta não espera o ERP; o derivado ajuste começa AGUARDANDO."
 ---
 
 # confirmarSugestaoBoleto
