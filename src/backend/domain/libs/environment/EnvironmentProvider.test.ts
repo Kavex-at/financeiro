@@ -519,6 +519,22 @@ describe('EnvironmentProvider', () => {
             delete process.env.SISPAG_BIND_CODBAR_FILIAIS;
         });
 
+        it('SISPAG_AJUSTE_CENTAVOS_FILIAIS/LOGIN_SONDADO (ADR-0073): brutos, default vazio (= off), nos dois caminhos', async () => {
+            ssmSendMock.mockImplementation(async () => ({ Parameter: { Value: '{}' } }));
+            delete process.env.SISPAG_AJUSTE_CENTAVOS_FILIAIS;
+            delete process.env.SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO;
+            const vazio = await new EnvironmentProvider().getEnvironmentVars();
+            expect(vazio.sispagAjusteCentavosFiliais).toBe('');
+            expect(vazio.sispagAjusteCentavosLoginSondado).toBe('');
+            process.env.SISPAG_AJUSTE_CENTAVOS_FILIAIS = ' 1:shadow ';
+            process.env.SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO = ' MPS_FRANCINEI ';
+            const v = await new EnvironmentProvider().getEnvironmentVars();
+            expect(v.sispagAjusteCentavosFiliais).toBe('1:shadow');
+            expect(v.sispagAjusteCentavosLoginSondado).toBe('MPS_FRANCINEI');
+            delete process.env.SISPAG_AJUSTE_CENTAVOS_FILIAIS;
+            delete process.env.SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO;
+        });
+
         it('flags TED/PIX/destino manual do SISPAG: mesma regra no caminho SSM/Lambda', async () => {
             ssmSendMock.mockImplementation(async () => ({ Parameter: { Value: '{}' } }));
             process.env.SISPAG_TED_ENABLED = 'true';
