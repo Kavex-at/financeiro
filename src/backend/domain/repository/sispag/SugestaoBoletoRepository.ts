@@ -31,7 +31,8 @@ const COLUNAS_DECISAO = `id, fil_cod, doc_cod, tit_cod, pes_cod, credor, ddc_cod
     numero_boleto, codbar_mascarado, valor_titulo, to_char(vencimento_titulo, 'YYYY-MM-DD')
     AS vencimento_titulo, valor_boleto, to_char(vencimento_boleto, 'YYYY-MM-DD') AS vencimento_boleto,
     delta_valor, delta_percentual, delta_dias, sinais, tier, emissor_chave, decisao, decidido_por,
-    decidido_em, motivo, confirmacao_emissor_id, versao, anulada_por, anulada_em, motivo_anulacao`;
+    decidido_em, motivo, confirmacao_emissor_id, versao, anulada_por, anulada_em, motivo_anulacao,
+    tipo_anulacao, origem_decisao_id, transferida_por`;
 
 const COLUNAS_EVENTO = `id, tipo, ator, ocorrido_em, pes_cod, emissor_chave, fil_cod, doc_cod,
     tit_cod, ddc_cod, dit_cod, motivo, detalhe, lote_id, decisao_id`;
@@ -428,6 +429,145 @@ export default class SugestaoBoletoRepository {
               WHERE id = $id::uuid AND versao = $versao AND decisao = 'CONFIRMADA'`,
             { id: input.id, versao: input.versaoEsperada, ator: input.ator, motivo: input.motivo },
         );
+
+    /**
+     * Transferência AUDITADA da confirmação humana ao título renegociado (I18j(1)–(3), M1), na
+     * transação do rechaveamento. ANULA ANTES DE INSERIR (os índices únicos de CONFIRMADA por
+     * título e por boleto valem só para a vigente, I15l):
+     *   1. a decisão antiga (travada `FOR UPDATE`, só se ainda CONFIRMADA) vai a `ANULADA` com
+     *      `tipo_anulacao = TITULO_RENEGOCIADO`, `anulada_por = sistema`;
+     *   2. nasce a `CONFIRMADA` no título novo herdando `decidido_por`/`decidido_em` (transferir
+     *      não é confirmar, I15g), com `origem_decisao_id` e `transferida_por = sistema`;
+     *   3. eventos `TITULO_RENEGOCIADO` e `DECISAO_TRANSFERIDA` na trilha.
+     * Decisão já não CONFIRMADA (a analista anulou) ⇒ `{ transferida: false }` e nada muda.
+     */
+    public transferirDecisao = async (
+        input: {
+            decisaoId: string;
+            titCodNovo: string;
+            frnCod: number;
+            ator: string;
+        },
+        tx: TransactionClient,
+    ): Promise<{ transferida: boolean; novaDecisaoId?: string }> => {
+        const atual = await tx.selectFirst<Record<string, unknown>>(
+            `SELECT ${COLUNAS_DECISAO} FROM sispag_decisao_sugestao_boleto
+              WHERE id = $id::uuid FOR UPDATE`,
+            { id: input.decisaoId },
+        );
+        if (!atual) return { transferida: false };
+        const antiga = decisaoSugestaoRowSchema.parse(atual);
+        if (antiga.decisao !== 'CONFIRMADA') return { transferida: false };
+        const motivo = `título renegociado ${antiga.docCod}/${antiga.titCod} → ${antiga.docCod}/${input.titCodNovo}, frnCod ${input.frnCod}`;
+        await tx.update(
+            `UPDATE sispag_decisao_sugestao_boleto
+                SET decisao = 'ANULADA', anulada_por = $ator, anulada_em = now(),
+                    motivo_anulacao = $motivo, tipo_anulacao = 'TITULO_RENEGOCIADO',
+                    versao = versao + 1
+              WHERE id = $id::uuid AND decisao = 'CONFIRMADA'`,
+            { id: antiga.id, ator: input.ator, motivo },
+        );
+        const novaId = randomUUID();
+        await tx.insert(
+            `INSERT INTO sispag_decisao_sugestao_boleto
+                (id, fil_cod, doc_cod, tit_cod, pes_cod, credor, ddc_cod, dit_cod, numero_boleto,
+                 codbar_mascarado, valor_titulo, vencimento_titulo, valor_boleto, vencimento_boleto,
+                 delta_valor, delta_percentual, delta_dias, sinais, tier, emissor_chave, decisao,
+                 decidido_por, decidido_em, motivo, confirmacao_emissor_id, origem_decisao_id,
+                 transferida_por)
+             SELECT $novaId::uuid, fil_cod, doc_cod, $titCodNovo, pes_cod, credor, ddc_cod, dit_cod,
+                    numero_boleto, codbar_mascarado, valor_titulo, vencimento_titulo, valor_boleto,
+                    vencimento_boleto, delta_valor, delta_percentual, delta_dias, sinais, tier,
+                    emissor_chave, 'CONFIRMADA', decidido_por, decidido_em, motivo,
+                    confirmacao_emissor_id, id, $ator
+               FROM sispag_decisao_sugestao_boleto WHERE id = $id::uuid`,
+            { novaId, titCodNovo: input.titCodNovo, ator: input.ator, id: antiga.id },
+        );
+        const base = {
+            ator: input.ator,
+            pesCod: antiga.pesCod,
+            emissorChave: antiga.emissorChave,
+            filCod: antiga.filCod,
+            docCod: antiga.docCod,
+            ddcCod: antiga.ddcCod,
+            ditCod: antiga.ditCod,
+        };
+        await this.inserirEventoAjuste(
+            {
+                ...base,
+                tipo: 'TITULO_RENEGOCIADO',
+                titCod: antiga.titCod,
+                decisaoId: antiga.id,
+                motivo,
+                detalhe: {
+                    titCodNovo: input.titCodNovo,
+                    frnCod: input.frnCod,
+                    codbarMascarado: antiga.codbarMascarado,
+                },
+            },
+            tx,
+        );
+        await this.inserirEventoAjuste(
+            {
+                ...base,
+                tipo: 'DECISAO_TRANSFERIDA',
+                titCod: input.titCodNovo,
+                decisaoId: novaId,
+                motivo: 'decisão transferida ao título renegociado',
+                detalhe: {
+                    origemDecisaoId: antiga.id,
+                    titCodAntigo: antiga.titCod,
+                    decididoPor: antiga.decididoPor,
+                },
+            },
+            tx,
+        );
+        return { transferida: true, novaDecisaoId: novaId };
+    };
+
+    /**
+     * Evento do ajuste de centavos (ADR-0073) com `decisao_id`. `ON CONFLICT DO NOTHING`: o
+     * `AJUSTE_SIMULADO` é único por (título, decisão, motivo) — a varredura `shadow` não inunda a
+     * trilha. Recusa dígitos longos no detalhe (I15k).
+     */
+    public inserirEventoAjuste = async (
+        input: NovoEventoSugestao,
+        tx?: TransactionClient,
+    ): Promise<{ inserido: boolean }> => {
+        const detalhe = input.detalhe ? JSON.stringify(input.detalhe) : null;
+        // UUIDs (decisão de origem) podem ter 10+ dígitos seguidos e não são código de barras.
+        const semUuid = detalhe?.replace(
+            /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+            '',
+        );
+        if (semUuid !== undefined && /\d{10,}/.test(semUuid)) {
+            throw new Error('detalhe do evento do ajuste não pode carregar dígitos longos');
+        }
+        const n = await this.conn(tx).update(
+            `INSERT INTO sispag_sugestao_boleto_evento
+                (id, tipo, ator, ocorrido_em, pes_cod, emissor_chave, fil_cod, doc_cod, tit_cod,
+                 ddc_cod, dit_cod, motivo, detalhe, decisao_id)
+             VALUES ($id, $tipo, $ator, now(), $pesCod, $emissorChave, $filCod, $docCod, $titCod,
+                     $ddcCod, $ditCod, $motivo, $detalhe::jsonb, $decisaoId::uuid)
+             ON CONFLICT DO NOTHING`,
+            {
+                id: randomUUID(),
+                tipo: input.tipo,
+                ator: input.ator,
+                pesCod: input.pesCod ?? null,
+                emissorChave: input.emissorChave ?? null,
+                filCod: input.filCod ?? null,
+                docCod: input.docCod ?? null,
+                titCod: input.titCod ?? null,
+                ddcCod: input.ddcCod ?? null,
+                ditCod: input.ditCod ?? null,
+                motivo: input.motivo ?? null,
+                detalhe,
+                decisaoId: input.decisaoId ?? null,
+            },
+        );
+        return { inserido: n > 0 };
+    };
 
     /** Lista no teto = possivelmente truncada: falha alto, nunca devolve decisão "ausente". */
     private exigirNaoTruncada = (listagem: string, linhas: number): void => {

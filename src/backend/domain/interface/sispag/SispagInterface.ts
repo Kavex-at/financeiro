@@ -788,6 +788,8 @@ export const VERIFICATION_EVENT = {
     LOTE_CONFERIDO: 'LOTE_CONFERIDO',
     LOTE_DEVOLVIDO: 'LOTE_DEVOLVIDO',
     CONFERENCIA_LIMPA: 'CONFERENCIA_LIMPA',
+    /** ADR-0073 (I18j(5)): item de lote RASCUNHO passou ao título renegociado. */
+    ITEM_TITULO_RENEGOCIADO: 'ITEM_TITULO_RENEGOCIADO',
 } as const;
 
 export type VerificationEvent = (typeof VERIFICATION_EVENT)[keyof typeof VERIFICATION_EVENT];

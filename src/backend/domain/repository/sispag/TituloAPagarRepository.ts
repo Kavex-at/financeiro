@@ -156,6 +156,60 @@ export default class TituloAPagarRepository {
         );
     };
 
+    /**
+     * I18j(4) (ADR-0073): o título NOVO da renegociação entra na carteira já, sem esperar o cron.
+     * Copia do título antigo o que o `fin064` não mudou (credor, favorecido, banco, forma, número)
+     * e grava o que foi lido AO VIVO (valor base, vencimento, aprovação). `0` = o título antigo não
+     * estava na carteira (nada a copiar; o cron o trará).
+     */
+    public upsertTituloRenegociado = async (
+        input: {
+            filCod: number;
+            docCod: string;
+            titCodAntigo: string;
+            titCodNovo: string;
+            valor: number;
+            vencimentoEpoch: number;
+            aprovado: boolean;
+        },
+        tx?: TransactionClient,
+    ): Promise<number> =>
+        (tx ?? this.databaseClient).insert(
+            `INSERT INTO titulo_a_pagar (
+                fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
+                aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
+                forma_pagamento_conexos, doc_esp_numero, ativo, ingestao_run_id, atualizado_em
+             )
+             SELECT fil_cod, doc_cod, $titCodNovo, credor, pes_cod, $valor, moeda, $vencimento,
+                    $aprovado, FALSE, banco, NULL, tpd_cod, pronto_para_remessa, tem_boleto,
+                    forma_pagamento_conexos, doc_esp_numero, TRUE, ingestao_run_id, now()
+               FROM titulo_a_pagar
+              WHERE fil_cod = $filCod AND doc_cod = $docCod AND tit_cod = $titCodAntigo
+             ON CONFLICT (fil_cod, doc_cod, tit_cod) DO UPDATE SET
+                valor = EXCLUDED.valor, vencimento = EXCLUDED.vencimento,
+                aprovado = EXCLUDED.aprovado, pago = FALSE, ativo = TRUE, atualizado_em = now()`,
+            {
+                filCod: input.filCod,
+                docCod: input.docCod,
+                titCodAntigo: input.titCodAntigo,
+                titCodNovo: input.titCodNovo,
+                valor: input.valor,
+                vencimento: new Date(input.vencimentoEpoch),
+                aprovado: input.aprovado,
+            },
+        );
+
+    /** I18j(4): o título consumido pela renegociação sai da carteira já (`ativo = false`). */
+    public inativar = async (
+        chave: { filCod: number; docCod: string; titCod: string },
+        tx?: TransactionClient,
+    ): Promise<number> =>
+        (tx ?? this.databaseClient).update(
+            `UPDATE titulo_a_pagar SET ativo = FALSE, atualizado_em = now()
+              WHERE fil_cod = $filCod AND doc_cod = $docCod AND tit_cod = $titCod`,
+            chave,
+        );
+
     /** Carteira ativa para o painel (não-pagos ficam por conta do filtro de ingestão). */
     public listAtivos = async (): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(

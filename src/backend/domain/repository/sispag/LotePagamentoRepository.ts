@@ -750,6 +750,109 @@ export default class LotePagamentoRepository {
             params,
         );
 
+    /**
+     * I18j(5)/M6 (ADR-0073): todo item em lote local `RASCUNHO` que aponta para o título
+     * renegociado passa ao título NOVO (`tit_cod`, `valor` = líquido novo), com `versao + 1` e
+     * `ITEM_TITULO_RENEGOCIADO` na trilha do lote — na transação do rechaveamento. Lote em qualquer
+     * outro status NUNCA é tocado. Devolve os lotes tocados.
+     */
+    public trocarTituloDoItemEmRascunho = async (
+        input: {
+            filCod: number;
+            docCod: string;
+            titCodAntigo: string;
+            titCodNovo: string;
+            valorNovo: number;
+            frnCod: number;
+        },
+        tx: TransactionClient,
+    ): Promise<string[]> => {
+        const itens = await tx.selectMany(
+            `SELECT i.id, i.lote_id, i.valor
+               FROM lote_pagamento_item i
+               JOIN lote_pagamento l ON l.id = i.lote_id
+              WHERE l.status = 'RASCUNHO'
+                AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCodAntigo
+              ORDER BY i.id
+              FOR UPDATE OF i, l`,
+            { filCod: input.filCod, docCod: input.docCod, titCodAntigo: input.titCodAntigo },
+        );
+        const lotes: string[] = [];
+        for (const item of itens as Array<{ id: string; lote_id: string; valor: unknown }>) {
+            await tx.update(
+                `UPDATE lote_pagamento_item SET tit_cod = $titCodNovo, valor = $valorNovo
+                  WHERE id = $id`,
+                { id: item.id, titCodNovo: input.titCodNovo, valorNovo: input.valorNovo },
+            );
+            await this.tocarLote(item.lote_id, tx);
+            await this.eventos.registrar(
+                {
+                    evento: VERIFICATION_EVENT.ITEM_TITULO_RENEGOCIADO,
+                    ator: SISPAG_SYSTEM_ACTOR,
+                    loteId: item.lote_id,
+                    filCod: input.filCod,
+                    docCod: input.docCod,
+                    titCod: input.titCodNovo,
+                    dados: {
+                        titCodAntigo: input.titCodAntigo,
+                        titCodNovo: input.titCodNovo,
+                        valorAntigo: item.valor == null ? null : Number(item.valor),
+                        valorNovo: input.valorNovo,
+                        frnCod: input.frnCod,
+                    },
+                },
+                tx,
+            );
+            if (!lotes.includes(item.lote_id)) lotes.push(item.lote_id);
+        }
+        return lotes;
+    };
+
+    /**
+     * I18k/M5 (ADR-0073): algum item do lote tem ajuste de centavos NÃO terminal (no título de
+     * origem)? O `finalizarLote` recusa enquanto o ajuste corre (`TitleAdjustmentInProgressError`).
+     */
+    public titulosComAjusteNaoTerminalNoLote = async (
+        loteId: string,
+        tx?: TransactionClient,
+    ): Promise<Array<{ docCod: string; titCod: string }>> => {
+        const rows = await this.db(tx).selectMany(
+            `SELECT DISTINCT i.doc_cod, i.tit_cod
+               FROM lote_pagamento_item i
+               JOIN sispag_ajuste_centavos_execucao a
+                 ON a.fil_cod = i.fil_cod AND a.doc_cod = i.doc_cod AND a.tit_cod_origem = i.tit_cod
+              WHERE i.lote_id = $loteId
+                AND a.etapa NOT IN ('concluido', 'concluido_sem_decisao',
+                                    'aguardando_aprovacao_manual', 'cancelado', 'recusado',
+                                    'indeterminado', 'simulado')
+              ORDER BY i.doc_cod, i.tit_cod`,
+            { loteId },
+        );
+        return (rows as Array<{ doc_cod: string; tit_cod: string }>).map((r) => ({
+            docCod: r.doc_cod,
+            titCod: r.tit_cod,
+        }));
+    };
+
+    /**
+     * I18a(8)/I18k: o título está em lote local `FINALIZADO`/`REMESSA_GERADA`/`RETORNADO`? (aí a
+     * renegociação mudaria o total de um lote já fechado — não renegocia).
+     */
+    public tituloEmLoteFechado = async (
+        chave: { filCod: number; docCod: string; titCod: string },
+        tx?: TransactionClient,
+    ): Promise<boolean> => {
+        const row = await this.db(tx).selectFirst<{ n: number }>(
+            `SELECT 1 AS n FROM lote_pagamento_item i
+               JOIN lote_pagamento l ON l.id = i.lote_id
+              WHERE l.status IN ('FINALIZADO', 'REMESSA_GERADA', 'RETORNADO')
+                AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod
+              LIMIT 1`,
+            chave,
+        );
+        return row != null;
+    };
+
     /** Marca o lote como "tocado" (bump de versão) — usado em incluir/remover item. */
     public tocarLote = async (loteId: string, tx?: TransactionClient): Promise<void> => {
         await this.db(tx).update(
