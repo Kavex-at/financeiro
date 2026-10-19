@@ -74,6 +74,17 @@ título a pagar a vencer livre (o 637 foi consumido em 14/10); testar (b) exigir
 fin026/alteraDataVencimento` num título de HML — escrita diferente, pede OK próprio. **Pergunta para a
 Columbia:** usam a tela de solicitação de desconto (fin062/fin063) em título a pagar? Em quais títulos?
 
+### Hipótese (b) "só título a vencer" — testada e descartada (autorizado pelo maintainer)
+
+- `PUT fin026/alteraDataVencimento` é endpoint de **seleção**: a row solta volta
+  `SELECTION_ERROR / NENHUM_REGISTRO_SELECIONADO`; **`{ items: [row com titDtaVencimento novo] }`** é aceito.
+- 640/1 movido de 10/12/2025 para **30/10/2026**: `titVld1/2/3Libera` e `vldLib` **continuaram 1** —
+  alterar vencimento **não devolve o título à aprovação** (horários/usuários de liberação seguem nulos em HML).
+- Com o título a vencer, `POST fin062` continua `docCod NOT_VALID`. Restam (a) só contas a **receber** ou
+  (c) só título **não liberado**. Vencimento **restaurado** para 10/12/2025 (backup da row em disco).
+- Achado lateral útil: existe caminho de escrita no título a pagar via `fin026` para **data**; para
+  **valor**, o `PUT fin026` aceita e ignora (HML #9 de 14/10).
+
 ## Estado deixado em HML
 Lotes de teste **flp 42** (rascunho, finalizar recusado), **43, 44, 45** (finalizados, `PG191071–73.REM`).
 Títulos 753/1, 748/1, 607/1, 15/5. Nenhum cadastro de título alterado.
