@@ -198,12 +198,12 @@ export default class ConexosRenegociacaoClient {
             p.filCod,
             {},
         );
-        const titulos = linhas
-            .map((r) => RENEGOCIACAO_TITULO_SCHEMA.safeParse(r))
-            .filter((r) => r.success)
-            .map((r) => r.data);
+        const lidas = linhas.map((r) => RENEGOCIACAO_TITULO_SCHEMA.safeParse(r));
+        const titulos = lidas.filter((r) => r.success).map((r) => r.data);
+        // Linha ilegível invalida a soma: a conferência do `finalizar` nunca usa total parcial.
+        const todasLegiveis = lidas.every((r) => r.success);
         const totais = titulos.map((t) => t.mnyValorTotal);
-        const completo = totais.length > 0 && totais.every((v) => v !== undefined);
+        const completo = todasLegiveis && totais.length > 0 && totais.every((v) => v !== undefined);
         const soma = completo
             ? Math.round(totais.reduce<number>((acc, v) => acc + Math.round((v ?? 0) * 100), 0)) /
               100
