@@ -5,6 +5,29 @@
 > para diferença maior fica para discutir. Ajustar o **título** antes do vínculo é aceitável se o ERP
 > permitir (permissão; o título volta para aprovação?). A Columbia revisa o caso NELSON em paralelo.
 
+## Decisões do maintainer (2026-10-19)
+
+- **Limite do ajuste automático: R$ 0,05** (|boleto − título|), com **âncora de número do documento
+  igual** (título × boleto) e vencimento a ≤ 5 dias. Mesmo valor de `LIMITE_VALOR_MESMO_DIA` da
+  `RegraSugestaoBoleto` (I15c): reaproveitar a constante, não criar outra.
+- **Até o limite, a plataforma reaprova** o título renegociado; **acima**, segue o fluxo normal de
+  aprovação no Conexos, por outra pessoa.
+- Pendente de confirmação com a Columbia: correção do documento × renegociação com juros/desconto,
+  conta contábil, usuário/alçada própria, acesso do MPS_FRANCINEI em PRD.
+
+**Medição que fundamenta o limite (PRD, somente leitura, 2026-10-19 à tarde):** 955 títulos BOLETO
+sem vínculo DDA; 431 com boleto de valor exato. Com âncora de número igual (sem par exato):
+
+| \|diferença\| | Títulos | Acima / abaixo | Fornecedores |
+|---|---|---|---|
+| ≤ R$ 0,05 | 109 | 109 / 0 | só NELSON HEUSI (todos +R$ 0,01) |
+| R$ 0,06 – R$ 10,00 | 0 | — | — |
+| > R$ 10,00 | 25 | 25 / 0 | 6 (SAVINO DEL BENE 10, NELSON 7, UPS 4, RHENUS 2…), ~7% de diferença |
+
+Sem âncora (só valor + vencimento): 117 / 142 / 208 / 279 títulos até R$ 0,05 / 1 / 5 / 10, o excedente
+é coincidência de valor entre documentos diferentes. Os 25 acima de R$ 10 parecem outro problema
+(boleto agrupando títulos ou com encargos), fora do ajuste automático.
+
 ## Tamanho do problema (PRD, somente leitura, 2026-10-19)
 
 1.056 títulos BOLETO (`forma_pagamento_conexos = 6`) ativos sem vínculo DDA. **126** só têm candidato a
