@@ -130,6 +130,16 @@ const fakeLedger = () => {
             return l ? { ...l } : null;
         }),
         buscarConcluidoPorTitCodNovo: jest.fn(async () => null),
+        ultimoPorTitulo: jest.fn(async (k: { docCod: string; titCod: string }) => {
+            const l = [...linhas.values()]
+                .reverse()
+                .find(
+                    (x) =>
+                        x.docCod === k.docCod &&
+                        (x.titCodOrigem === k.titCod || x.titCodNovo === k.titCod),
+                );
+            return l ? { ...l } : null;
+        }),
         listarUltimosDaFilial: jest.fn(async () => [...linhas.values()]),
         rechavear: jest.fn(async (input: RechaveamentoInput) => {
             rechaveamentos.push(input);
@@ -536,11 +546,11 @@ describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0073)', (
 
     it('elegibilidade recalculada antes do finalizar: inelegível na 2ª leitura ⇒ cancela', async () => {
         const h = build();
-        const pago = { ...(await h.client.listarTitulosDoDocumento())[0], vldPago: 1 };
+        const [original] = await build().client.listarTitulosDoDocumento();
+        const pago = { ...(original as object), vldPago: 1 } as never;
         h.client.listarTitulosDoDocumento
-            .mockImplementationOnce(async () => [(await h.client.listarTitulosDoDocumento())[0]])
-            .mockImplementationOnce(async () => [pago as never]);
-        h.client.listarTitulosDoDocumento.mockClear();
+            .mockImplementationOnce(async () => [original as never])
+            .mockImplementationOnce(async () => [pago]);
         const r = await h.service.ajustar(PEDIDO);
         expect(h.client.finalizarRenegociacao).not.toHaveBeenCalled();
         expect(h.client.cancelarRenegociacao).toHaveBeenCalled();
