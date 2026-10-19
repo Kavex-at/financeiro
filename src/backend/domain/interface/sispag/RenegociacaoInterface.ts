@@ -61,7 +61,7 @@ export interface Renegociacao {
 export const TITULO_FIN064_SCHEMA = z
     .object({
         docCod: chave,
-        titCod: chave.optional().catch('1'),
+        titCod: chave.catch('1'),
         docTip: numOpt,
         pesCodFor: numOpt,
         pesCod: numOpt,
