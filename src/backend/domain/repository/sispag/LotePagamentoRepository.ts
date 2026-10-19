@@ -809,7 +809,7 @@ export default class LotePagamentoRepository {
     };
 
     /**
-     * I18k/M5 (ADR-0073): algum item do lote tem ajuste de centavos NÃO terminal (no título de
+     * I18k/M5 (ADR-0073): algum item do lote tem ajuste de centavos em curso ou indeterminado (no título de
      * origem)? O `finalizarLote` recusa enquanto o ajuste corre (`TitleAdjustmentInProgressError`).
      */
     public titulosComAjusteNaoTerminalNoLote = async (
@@ -822,9 +822,11 @@ export default class LotePagamentoRepository {
                JOIN sispag_ajuste_centavos_execucao a
                  ON a.fil_cod = i.fil_cod AND a.doc_cod = i.doc_cod AND a.tit_cod_origem = i.tit_cod
               WHERE i.lote_id = $loteId
+                -- indeterminado também segura o lote: a renegociação pode ter consumido o título
+                -- no ERP; só depois de a pessoa conferir no Conexos o título sai do lote.
                 AND a.etapa NOT IN ('concluido', 'concluido_sem_decisao',
                                     'aguardando_aprovacao_manual', 'cancelado', 'recusado',
-                                    'indeterminado', 'simulado')
+                                    'simulado')
               ORDER BY i.doc_cod, i.tit_cod`,
             { loteId },
         );
