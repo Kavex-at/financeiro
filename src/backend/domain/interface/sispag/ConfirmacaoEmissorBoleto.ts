@@ -43,7 +43,28 @@ export const EVENTO_SUGESTAO_BOLETO = {
     VINCULO_SIMULADO: 'VINCULO_SIMULADO',
     /** ADR-0071: o vínculo falhou (transitória ou determinística); só motivo + máscara. */
     VINCULO_FALHOU: 'VINCULO_FALHOU',
+    /** ADR-0073 (`shadow`): o ajuste de centavos que seria feito; zero escrita (I18l). */
+    AJUSTE_SIMULADO: 'AJUSTE_SIMULADO',
+    /** ADR-0073: o título foi renegociado no `fin070` (X/Y → X/Z). */
+    TITULO_RENEGOCIADO: 'TITULO_RENEGOCIADO',
+    /** ADR-0073 (M1): a confirmação humana foi transferida ao título novo pelo sistema. */
+    DECISAO_TRANSFERIDA: 'DECISAO_TRANSFERIDA',
+    /** ADR-0073: ajuste recusado (inelegível na execução), com motivo. */
+    AJUSTE_RECUSADO: 'AJUSTE_RECUSADO',
+    /** ADR-0073: renegociação cancelada antes do `finalizar` (compensação). */
+    AJUSTE_CANCELADO: 'AJUSTE_CANCELADO',
+    /** ADR-0073: falha que exige ação humana (`indeterminado`) ou transitória. */
+    AJUSTE_FALHOU: 'AJUSTE_FALHOU',
 } as const;
+
+/** Por que a decisão foi anulada (ADR-0073, 0087). Nulo no legado (derivado do motivo). */
+export const TIPO_ANULACAO_DECISAO = {
+    MANUAL: 'MANUAL',
+    PAR_REVOGADO: 'PAR_REVOGADO',
+    TITULO_RENEGOCIADO: 'TITULO_RENEGOCIADO',
+} as const;
+export type TipoAnulacaoDecisao =
+    (typeof TIPO_ANULACAO_DECISAO)[keyof typeof TIPO_ANULACAO_DECISAO];
 export type EventoSugestaoBoleto =
     (typeof EVENTO_SUGESTAO_BOLETO)[keyof typeof EVENTO_SUGESTAO_BOLETO];
 
@@ -103,6 +124,12 @@ export interface DecisaoSugestao {
     anuladaPor?: string;
     anuladaEm?: string;
     motivoAnulacao?: string;
+    /** ADR-0073: por que foi anulada (nulo no legado). */
+    tipoAnulacao?: TipoAnulacaoDecisao;
+    /** ADR-0073 (M1): decisão original quando esta foi TRANSFERIDA ao título renegociado. */
+    origemDecisaoId?: string;
+    /** ADR-0073 (M1): `sistema` quando transferida; o autor humano fica em `decididoPor`. */
+    transferidaPor?: string;
 }
 
 export interface EventoSugestaoRegistro {
@@ -245,6 +272,13 @@ export const decisaoSugestaoRowSchema = z
         anulada_por: textoOpcional,
         anulada_em: dataIsoOpcional,
         motivo_anulacao: textoOpcional,
+        tipo_anulacao: z
+            .nativeEnum(TIPO_ANULACAO_DECISAO)
+            .nullable()
+            .optional()
+            .transform((v) => v ?? undefined),
+        origem_decisao_id: textoOpcional,
+        transferida_por: textoOpcional,
     })
     .transform(
         (r): DecisaoSugestao => ({
@@ -277,6 +311,9 @@ export const decisaoSugestaoRowSchema = z
             ...(r.anulada_por ? { anuladaPor: r.anulada_por } : {}),
             ...(r.anulada_em ? { anuladaEm: r.anulada_em } : {}),
             ...(r.motivo_anulacao ? { motivoAnulacao: r.motivo_anulacao } : {}),
+            ...(r.tipo_anulacao ? { tipoAnulacao: r.tipo_anulacao } : {}),
+            ...(r.origem_decisao_id ? { origemDecisaoId: r.origem_decisao_id } : {}),
+            ...(r.transferida_por ? { transferidaPor: r.transferida_por } : {}),
         }),
     );
 
