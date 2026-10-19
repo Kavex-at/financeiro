@@ -59,6 +59,8 @@ const SEQ_REMESSA = Number(process.env.SEQ ?? 70);
 const MODALIDADE = 6;
 const JA_USADOS = new Set((process.env.JA_USADOS ?? '').split(',').filter(Boolean));
 const SO_CASOS = new Set((process.env.CASOS ?? '').split(',').filter(Boolean));
+/** Fixa o título (`doc/tit`), ex.: o título novo de uma renegociação `fin070`. */
+const SO_DOC = process.env.SO_DOC ?? '';
 const DAY = 24 * 60 * 60 * 1000;
 type Row = Record<string, unknown>;
 const log = (s: string): void => console.log(`[hml-centavos] ${s}`);
@@ -206,9 +208,16 @@ async function main(): Promise<void> {
                 x.valor >= 1 &&
                 x.valor <= 5000 &&
                 x.venc > 0 &&
-                !JA_USADOS.has(String(x.p.docCod)),
+                !JA_USADOS.has(String(x.p.docCod)) &&
+                (SO_DOC === '' || `${String(x.p.docCod)}/${String(x.p.titCod)}` === SO_DOC),
         )
         .sort((a, b) => b.venc - a.venc || a.valor - b.valor);
+    if (SO_DOC !== '') {
+        const noGrid = pend.find((p) => `${String(p.docCod)}/${String(p.titCod)}` === SO_DOC);
+        log(
+            `título ${SO_DOC} nos pendentes do fin015: ${noGrid ? sanea({ titMnyValor: noGrid.raw.titMnyValor, titMnyJuros: noGrid.raw.titMnyJuros, titMnyLiquido: noGrid.raw.titMnyLiquido }) : 'AUSENTE'}`,
+        );
+    }
     const utilizaveis: Array<(typeof candidatos)[number] & { aberto: number }> = [];
     for (const x of candidatos.slice(0, 30)) {
         if (utilizaveis.length >= CASOS.length + 4) break;
