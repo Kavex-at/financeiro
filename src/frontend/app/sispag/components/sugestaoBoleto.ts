@@ -1,11 +1,14 @@
 import type {
+  AjusteCentavos,
   AvisoVenceAntes,
   CandidatoTituloBoleto,
   DesfechoTituloBoleto,
   SinalSugestaoBoleto,
   SituacaoSugestaoTitulo,
+  ModoAjusteCentavos,
   SugestaoBoleto,
 } from '@/lib/sispag'
+import { formatBRL } from '@/lib/utils'
 
 const numero = (n: number, casas: number) =>
   new Intl.NumberFormat('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas }).format(n)
@@ -211,6 +214,8 @@ export const candidatoComoSugestao = (
     ? { orfa: true, ...(d.motivoOrfa ? { motivoOrfa: d.motivoOrfa } : {}) }
     : {}),
   ...(c.confirmacaoEmissorId ? { confirmacaoEmissorId: c.confirmacaoEmissorId } : {}),
+  ...(c.decididoPor ? { decididoPor: c.decididoPor } : {}),
+  ...(c.transferidaPor ? { transferidaPor: c.transferidaPor } : {}),
 })
 
 /**
@@ -274,4 +279,99 @@ export const desfechosDeSugestoesLegadas = (lista: SugestaoBoleto[]): DesfechoTi
     })
   }
   return desfechos
+}
+
+
+// ── Ajuste de centavos do título (ADR-0073, I18) ─────────────────────────────────────────────
+
+/** Limite da I15c/I18a (R$ 0,05): só pares confirmados dentro dele têm ajuste. */
+export const LIMITE_AJUSTE_CENTAVOS = 0.05
+
+export type TipoSeloAjuste = 'desligado' | 'em_curso' | 'concluido' | 'aviso'
+
+export interface SeloAjusteCentavos {
+  tipo: TipoSeloAjuste
+  texto: string
+  /** "Tentar de novo" faz sentido (o executor pode retomar ou reavaliar). */
+  retomavel: boolean
+}
+
+const EM_CURSO: ReadonlySet<AjusteCentavos['etapa']> = new Set([
+  'pendente',
+  'renegociacao_criada',
+  'titulo_incluido',
+  'composicao_gravada',
+  'ajuste_aplicado',
+  'finalizada',
+  'liberada',
+  'sem_bloqueio',
+  'rechaveada',
+])
+
+const AVISO_POR_ETAPA: Partial<Record<AjusteCentavos['etapa'], { texto: string; retomavel: boolean }>> = {
+  aguardando_aprovacao_manual: {
+    texto:
+      'título ajustado no Conexos, mas o bloqueio novo precisa de aprovação de outra pessoa no Conexos (Liberação de Títulos)',
+    retomavel: false,
+  },
+  recusado: {
+    texto: 'o título não foi ajustado; corrija o que impede e tente de novo, ou ajuste pelo fluxo normal do Conexos',
+    retomavel: true,
+  },
+  cancelado: {
+    texto: 'o ajuste foi cancelado antes de finalizar; o título original segue intacto — tente de novo',
+    retomavel: true,
+  },
+  indeterminado: {
+    texto: 'o ajuste parou num estado incerto; é preciso conferir no Conexos antes de qualquer nova tentativa',
+    retomavel: false,
+  },
+}
+
+const centavosDe = (v: number): number => Math.round(v * 100)
+
+/**
+ * Estado do ajuste de centavos de UM título confirmado (I18l/I18m). Sem selo quando não há ajuste
+ * possível (não confirmado, Δ = 0 ou acima de R$ 0,05). Concluído mostra o título NOVO e o LÍQUIDO
+ * (valor do boleto, do ledger) — não o `titMnyValor` da carteira. Só textos e máscaras.
+ */
+export function seloDoAjusteCentavos(p: {
+  sugestao: SugestaoBoleto
+  ajuste?: AjusteCentavos
+  modo?: ModoAjusteCentavos
+}): SeloAjusteCentavos | null {
+  const { sugestao, ajuste } = p
+  if (sugestao.estado !== 'CONFIRMADA' && !ajuste) return null
+  const delta = centavosDe(sugestao.avaliacao.deltaValor)
+  const dentroDoLimite = delta !== 0 && Math.abs(delta) <= centavosDe(LIMITE_AJUSTE_CENTAVOS)
+  if (!ajuste) {
+    // Sem o modo (tela que não consultou o ajuste), não se afirma nada.
+    if (!dentroDoLimite || p.modo === undefined) return null
+    if (p.modo === 'off') {
+      return { tipo: 'desligado', texto: 'diferença de centavos — ajuste desligado', retomavel: false }
+    }
+    if (p.modo === 'shadow') {
+      return {
+        tipo: 'desligado',
+        texto: 'diferença de centavos — ajuste em simulação (nada é gravado no Conexos)',
+        retomavel: false,
+      }
+    }
+    return { tipo: 'aviso', texto: 'diferença de centavos — ajuste ainda não executado', retomavel: true }
+  }
+  if (EM_CURSO.has(ajuste.etapa)) {
+    return { tipo: 'em_curso', texto: 'ajustando o título no Conexos', retomavel: true }
+  }
+  if (ajuste.etapa === 'concluido' || ajuste.etapa === 'concluido_sem_decisao') {
+    const partes = [`título ajustado no Conexos: ${ajuste.docCod}/${ajuste.titCodNovo ?? '?'}`]
+    if (ajuste.valorBoletoCentavos !== undefined) {
+      partes.push(`líquido ${formatBRL(ajuste.valorBoletoCentavos / 100)}`)
+    }
+    if (ajuste.etapa === 'concluido_sem_decisao') partes.push('a confirmação foi anulada antes')
+    return { tipo: 'concluido', texto: partes.join(' · '), retomavel: false }
+  }
+  const aviso = AVISO_POR_ETAPA[ajuste.etapa]
+  if (!aviso) return null
+  const motivo = ajuste.motivo ? ` (motivo: ${ajuste.motivo.replace(/\d{20,}/g, '…')})` : ''
+  return { tipo: 'aviso', texto: `${aviso.texto}${motivo}`, retomavel: aviso.retomavel }
 }

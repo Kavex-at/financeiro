@@ -2100,6 +2100,10 @@ export const sugestaoBoletoSchema = z.object({
   confirmavel: z.boolean(),
   /** Par (credor, emissor) vigente do boleto, quando existe — para revogar pela tela. */
   confirmacaoEmissorId: z.string().optional(),
+  /** CONFIRMADA: autor humano (herdado quando a decisão foi transferida, ADR-0073 M1). */
+  decididoPor: z.string().optional(),
+  /** `sistema` quando a decisão foi transferida ao título renegociado (ADR-0073 M1). */
+  transferidaPor: z.string().optional(),
 })
 export type SugestaoBoleto = z.infer<typeof sugestaoBoletoSchema>
 
@@ -2145,6 +2149,8 @@ export const candidatoTituloSchema = z.object({
   /** Por que não é confirmável (pt-BR). */
   motivo: z.string().optional(),
   confirmacaoEmissorId: z.string().optional(),
+  decididoPor: z.string().optional(),
+  transferidaPor: z.string().optional(),
 })
 export type CandidatoTituloBoleto = z.infer<typeof candidatoTituloSchema>
 
@@ -2423,4 +2429,111 @@ export async function revogarConfirmacaoEmissor(
     post({ motivo }),
   )
   return j.confirmacao
+}
+
+
+// ===================================================== Ajuste de centavos do título (ADR-0073, I18)
+
+export const MODOS_AJUSTE_CENTAVOS = ['off', 'shadow', 'on'] as const
+export type ModoAjusteCentavos = (typeof MODOS_AJUSTE_CENTAVOS)[number]
+
+export const ETAPAS_AJUSTE_CENTAVOS = [
+  'pendente',
+  'renegociacao_criada',
+  'titulo_incluido',
+  'composicao_gravada',
+  'ajuste_aplicado',
+  'finalizada',
+  'liberada',
+  'sem_bloqueio',
+  'rechaveada',
+  'concluido',
+  'concluido_sem_decisao',
+  'aguardando_aprovacao_manual',
+  'cancelado',
+  'recusado',
+  'indeterminado',
+  'simulado',
+] as const
+export type EtapaAjusteCentavos = (typeof ETAPAS_AJUSTE_CENTAVOS)[number]
+
+/** Estado do ajuste de um título (ledger). Só a máscara 5+4 do código; nunca o código. */
+export const ajusteCentavosSchema = z.object({
+  id: z.string(),
+  filCod: z.number(),
+  docCod: z.string(),
+  titCodOrigem: z.string(),
+  decisaoId: z.string(),
+  titCodNovo: z.string().optional(),
+  frnCod: z.number().optional(),
+  etapa: z.enum(ETAPAS_AJUSTE_CENTAVOS),
+  motivo: z.string().optional(),
+  deltaCentavos: z.number().optional(),
+  frnVldTpop: z.number().optional(),
+  /** Valor do boleto = o LÍQUIDO do título novo depois do ajuste (centavos). */
+  valorBoletoCentavos: z.number().optional(),
+  codigoMascarado: z
+    .string()
+    .regex(/^\d{5}…\d{4}$/)
+    .optional(),
+  tentativas: z.number(),
+  criadoEm: z.string().optional(),
+  atualizadoEm: z.string().optional(),
+  concluidoEm: z.string().optional(),
+})
+export type AjusteCentavos = z.infer<typeof ajusteCentavosSchema>
+
+export const estadoAjustesCentavosSchema = z.object({
+  modo: z.enum(MODOS_AJUSTE_CENTAVOS),
+  avisos: z.array(z.string()),
+  ajustes: z.array(ajusteCentavosSchema),
+})
+export type EstadoAjustesCentavos = z.infer<typeof estadoAjustesCentavosSchema>
+
+export const resultadoAjusteCentavosSchema = z.object({
+  resultado: z.string(),
+  modo: z.enum(MODOS_AJUSTE_CENTAVOS),
+  etapa: z.enum(ETAPAS_AJUSTE_CENTAVOS).optional(),
+  motivo: z.string().optional(),
+  execucaoId: z.string().optional(),
+})
+export type ResultadoAjusteCentavos = z.infer<typeof resultadoAjusteCentavosSchema>
+
+const ajustesBase = '/sispag/ajustes-centavos'
+
+/** `GET /sispag/ajustes-centavos?filCod=` (`sispag:ver`): modo efetivo e estado por título. */
+export async function fetchAjustesCentavos(filCod: number): Promise<EstadoAjustesCentavos> {
+  return autorizacaoRequest(
+    `${ajustesBase}?filCod=${encodeURIComponent(String(filCod))}`,
+    estadoAjustesCentavosSchema,
+    { cache: 'no-store' },
+  )
+}
+
+/** `POST .../tentar-novamente` (`sispag:executar`). 409 traz a mensagem pt-BR do servidor. */
+export async function tentarAjusteCentavos(titulo: {
+  filCod: number
+  docCod: string
+  titCod: string
+}): Promise<ResultadoAjusteCentavos> {
+  return autorizacaoRequest(`${ajustesBase}/tentar-novamente`, resultadoAjusteCentavosSchema, {
+    method: 'POST',
+    body: JSON.stringify(titulo),
+  })
+}
+
+/**
+ * `POST .../retomar` (`sispag:executar`) ao abrir a tela: o servidor agenda a varredura e responde
+ * 202 na hora. Quem só tem `sispag:ver` recebe 403 — ignorado em silêncio.
+ */
+export async function retomarAjustesCentavos(): Promise<void> {
+  try {
+    await autorizacaoRequest(`${ajustesBase}/retomar`, z.object({ agendado: z.boolean() }), {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+  } catch (e) {
+    if (e instanceof AutorizacaoApiError && e.status === 403) return
+    throw e
+  }
 }

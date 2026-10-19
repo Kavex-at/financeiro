@@ -5,6 +5,7 @@ import * as React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  type AjusteCentavos,
   AutorizacaoApiError,
   CODIGOS_ERRO_SUGESTAO_BOLETO,
   anularConfirmacaoBoleto,
@@ -12,12 +13,15 @@ import {
   confirmarSugestaoBoleto,
   copiarLinhaSugestao,
   type DesfechoTituloBoleto,
+  type ModoAjusteCentavos,
   MOTIVO_ANULACAO_MINIMO,
   rejeitarSugestaoBoleto,
   revogarConfirmacaoEmissor,
   type SugestaoBoleto,
+  tentarAjusteCentavos,
 } from '@/lib/sispag'
 import { formatBRL } from '@/lib/utils'
+import { AjusteCentavosSelo } from './AjusteCentavosSelo'
 import { fmtCivil } from './CandidatosBoletoDialog'
 import { MotivoDecisaoDialog } from './MotivoDecisaoDialog'
 import { ReconhecerAvisoDialog } from './ReconhecerAvisoDialog'
@@ -28,6 +32,7 @@ import {
   formatDeltaPercentual,
   formatDeltaValor,
   mensagemVenceAntes,
+  seloDoAjusteCentavos,
   TEXTO_SINAL,
   TIER_ROTULO,
 } from './sugestaoBoleto'
@@ -118,7 +123,13 @@ export function SugestaoBoletoPainel({
   ddaDefasadoHoras,
   onDecidido,
   itemVinculadoEmLoteVivo = false,
+  ajusteCentavos,
+  modoAjusteCentavos,
 }: {
+  /** Estado do ajuste de centavos deste título (ledger, ADR-0073), quando houver. */
+  ajusteCentavos?: AjusteCentavos | undefined
+  /** Modo efetivo do ajuste na filial (`off` por default). */
+  modoAjusteCentavos?: ModoAjusteCentavos | undefined
   /**
    * Desfecho do título (ADR-0072): até 3 candidatos com situação e motivo. Sem ele (resposta
    * antiga do backend), o painel mostra as `sugestoes` como antes.
@@ -190,6 +201,30 @@ export function SugestaoBoletoPainel({
       setAviso({ tipo: 'ok', texto: 'Linha digitável copiada. A cópia ficou registrada.' })
     } catch (e) {
       setAviso({ tipo: 'erro', texto: mensagemDe(e, 'Não foi possível copiar a linha digitável.') })
+    } finally {
+      setOcupado(null)
+    }
+  }
+
+  const tentarAjuste = async (s: SugestaoBoleto) => {
+    setOcupado(`ajuste:${idItem(s)}`)
+    setAviso(null)
+    try {
+      const r = await tentarAjusteCentavos({
+        filCod: s.filCod,
+        docCod: s.docCod,
+        titCod: s.titCod,
+      })
+      setAviso({
+        tipo: 'ok',
+        texto:
+          r.etapa === 'concluido'
+            ? 'Ajuste de centavos concluído no Conexos.'
+            : 'Pedido de ajuste de centavos enviado; o estado aparece aqui quando o Conexos responder.',
+      })
+      await onDecidido()
+    } catch (e) {
+      setAviso({ tipo: 'erro', texto: mensagemDe(e, 'Não foi possível ajustar os centavos.') })
     } finally {
       setOcupado(null)
     }
@@ -286,6 +321,12 @@ export function SugestaoBoletoPainel({
             { vencimentoTitulo, dataDebito },
           )
           const pedeReconhecimento = podeConfirmar && exigeReconhecimento({ avaliacao: a })
+          const seloAjuste = seloDoAjusteCentavos({
+            sugestao: s,
+            ...(ajusteCentavos ? { ajuste: ajusteCentavos } : {}),
+            ...(modoAjusteCentavos ? { modo: modoAjusteCentavos } : {}),
+          })
+          const ocupadoAjuste = ocupado === `ajuste:${idItem(s)}`
           return (
             <li
               key={idItem(s)}
@@ -359,6 +400,27 @@ export function SugestaoBoletoPainel({
                   Boleto confirmado{s.emissor ? ` (emissor ${s.emissor.mascarado})` : ''} —{' '}
                   <strong>ainda não associado no ERP</strong>; a remessa continua bloqueada.
                 </p>
+              ) : null}
+              {confirmada && s.decididoPor ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  confirmado por {s.decididoPor}
+                  {s.transferidaPor
+                    ? ' · decisão transferida pelo sistema ao título renegociado'
+                    : ''}
+                </p>
+              ) : null}
+              {confirmada ? <AjusteCentavosSelo selo={seloAjuste} /> : null}
+              {confirmada && podeExecutar && seloAjuste?.retomavel ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  disabled={ocupadoAjuste}
+                  aria-label={`Tentar de novo o ajuste de centavos do título ${s.docCod}/${s.titCod}`}
+                  onClick={() => void tentarAjuste(s)}
+                >
+                  Tentar de novo o ajuste
+                </Button>
               ) : null}
               {venceAntes ? (
                 <p
