@@ -171,6 +171,72 @@ async function main(): Promise<void> {
         }
     };
 
+    if (FASE === 'comandos') {
+        // Só leitura: comandos da regra de bloqueio `FBL` (fin106), p.ex. liberar/bloquear.
+        const fbl = process.env.FBL ?? '';
+        try {
+            const rows = await listar(`fin106/finBloqCmd/list/${fbl}`, {}, 'fin106');
+            for (const r of rows) log(`   comando: ${sanea(cheios(r)).slice(0, 600)}`);
+        } catch (e) {
+            log(`fin106/finBloqCmd/list/${fbl} falhou: ${erro(e)}`);
+        }
+        return;
+    }
+    if (FASE === 'liberar') {
+        // ESCREVE: aplica o comando `FBA` (ex.: APROVAR) ao bloqueio do título no fin103. O corpo do
+        // `aplicarComando` não está na spec: tenta os formatos de seleção, parando no primeiro aceito.
+        const fba = Number(process.env.FBA ?? 0);
+        const rows = await listar('fin103/list', { filCod: FIL, 'docCod#EQ': DOC }, 'fin103');
+        const alvo = rows.find((r) => String(r.titCod) === TIT);
+        if (!alvo || !fba) return log(`sem bloqueio para ${DOC}/${TIT} no fin103, ou sem FBA.`);
+        const comCmd = { ...alvo, fbaCod: fba };
+        const variantes: Array<{ nome: string; corpo: Row }> = [
+            { nome: 'items[row+fbaCod]', corpo: { items: [comCmd] } },
+            { nome: 'items[row] + fbaCod', corpo: { items: [alvo], fbaCod: fba } },
+            { nome: 'row+fbaCod', corpo: comCmd },
+        ];
+        for (const v of variantes) {
+            for (const path of ['fin103/validaSelecionado', 'fin103/aplicarComando']) {
+                try {
+                    const r = await base.postGenericOnce<unknown>(path, v.corpo, { filCod: FIL });
+                    log(`${path} (${v.nome}): ok ${sanea(r).slice(0, 600)}`);
+                } catch (e) {
+                    const data = (e as { response?: { data?: Row } }).response?.data;
+                    const perguntas = (data?.questions ?? []) as Array<{ id?: string | number }>;
+                    if (data?.type === 'QUESTION' && process.env.RESPONDER === '1') {
+                        const answers: Record<string, string> = {};
+                        for (const q of perguntas)
+                            if (q.id !== undefined) answers[String(q.id)] = 'YES';
+                        log(`${path} (${v.nome}): pergunta ${sanea(data).slice(0, 600)} → YES`);
+                        try {
+                            await base.postGenericOnce<unknown>(
+                                path,
+                                { ...v.corpo, answers },
+                                {
+                                    filCod: FIL,
+                                },
+                            );
+                            log(`${path} (${v.nome}) com resposta: ok`);
+                        } catch (e2) {
+                            log(`${path} (${v.nome}) com resposta falhou: ${erro(e2)}`);
+                            break;
+                        }
+                    } else {
+                        log(`${path} (${v.nome}) falhou: ${erro(e)}`);
+                        break;
+                    }
+                }
+            }
+            const depois = await listar('fin103/list', { filCod: FIL, 'docCod#EQ': DOC }, 'fin103');
+            const ainda = depois.find((r) => String(r.titCod) === TIT);
+            log(
+                `fin103 depois (${v.nome}): ${ainda ? sanea({ ftbVldStatus: ainda.ftbVldStatus, ftbTimCmd: ainda.ftbTimCmd }) : 'sem bloqueio'}`,
+            );
+            if (!ainda || ainda.ftbVldStatus !== alvo.ftbVldStatus) break;
+        }
+        await estado('depois de liberar');
+        return;
+    }
     if (FASE === 'liberacao') {
         // Só leitura: o que segura o título na Liberação de Títulos (fin103) — regra, nível, status.
         for (const filtro of [{ filCod: FIL, 'docCod#EQ': DOC }, { filCod: FIL }]) {

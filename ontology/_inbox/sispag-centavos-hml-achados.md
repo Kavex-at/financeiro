@@ -112,10 +112,30 @@ Ou seja: **renegociar devolve o título à aprovação** — volta ao fluxo norm
 (A renegociação 2 do suporte, `tpop 0`, gerou 15/4 e 15/5 já liberados: a regra de bloqueio
 provavelmente depende do tipo de documento/valor, não de toda renegociação. A confirmar.)
 
-**Em aberto:** (1) liberar 536/2 pelo `fin103/aplicarComando` (corpo sem schema na spec);
-(2) depois, o `finalizar` do SISPAG compara com `totalAberto` (53,53) ou com `totalLiquido` (53,54)?
-Só o vínculo de um boleto de 53,54 ao 536/2 responde. (3) Desconto: provavelmente `frnVldTpop` com
-outro valor (2?) — não testado.
+### Liberação e vínculo — PONTA A PONTA OK (autorizado pelo maintainer)
+
+1. **Liberar:** regra 19 tem um comando ativo, `fbaCod 3` "APROVAR" (alçada CONTROLLER), lido em
+   `fin106/finBloqCmd/list/19`. `POST fin103/validaSelecionado` e **`POST fin103/aplicarComando` com
+   `{ items: [ <linha do fin103/list> + fbaCod: 3 ] }`** ⇒ `SUCESSO`; bloqueio `ftbVldStatus 2`, `fin064.vldLib 1`,
+   536/2 aparece nos pendentes do SISPAG (`titMnyValor 53,53`, `titMnyJuros 0,01`).
+2. **Vínculo de boleto sintético de R$ 53,54 ao 536/2 (lote flp 46, `PG191074.REM`), nada declarado no item:**
+   - o `importar` já traz o item com `itsMnyValor = itsMnyVlrPgto = titMnyLiquido = 53,54` e `titMnyJuros 0,01`;
+   - `validacao → confirma (53,54) → PUT` ok; **`finalizar` ACEITA**;
+   - **J: barra 53,54 · valor do título 53,53 · mora/multa 0,01 · pagamento 53,54.**
+
+**Conclusões para o desenho:**
+- O caminho para boleto ACIMA do título existe e é nativo: **renegociar (`fin070`, `frnVldTpop 1`,
+  `frnMnyValor` = diferença) → liberar (`fin103`) → vincular com valor igual ao LÍQUIDO**. O centavo vira
+  juros no título e mora/multa no J; o banco paga o valor de face do boleto.
+- **I17b precisa mudar de régua:** o `finalizar` compara com o líquido (valor + juros − desconto), não com
+  `fin064.totalAberto` (que fica 53,53). Comparar com `totalLiquido` do fin064 (53,54 no 536/2).
+- **O título muda de `titCod`** (536/1 → 536/2): carteira local, decisão `CONFIRMADA` e par de sugestão
+  apontam para o título antigo e precisam seguir o novo.
+- **O título novo volta à aprovação** quando há regra de bloqueio aplicável (regra 19 aqui); o usuário do
+  backend tem alçada para o comando APROVAR, mas aprovar por conta da analista é decisão de produto.
+
+**Em aberto:** desconto (boleto ABAIXO) — provavelmente outro `frnVldTpop` (2?); cancelamento da
+renegociação 3 (536/2 já está num lote finalizado).
 
 ## Estado deixado em HML
 Lotes de teste **flp 42** (rascunho, finalizar recusado), **43, 44, 45** (finalizados, `PG191071–73.REM`).

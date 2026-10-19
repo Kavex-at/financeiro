@@ -215,7 +215,7 @@ async function main(): Promise<void> {
     if (SO_DOC !== '') {
         const noGrid = pend.find((p) => `${String(p.docCod)}/${String(p.titCod)}` === SO_DOC);
         log(
-            `título ${SO_DOC} nos pendentes do fin015: ${noGrid ? sanea({ titMnyValor: noGrid.raw.titMnyValor, titMnyJuros: noGrid.raw.titMnyJuros, titMnyLiquido: noGrid.raw.titMnyLiquido }) : 'AUSENTE'}`,
+            `título ${SO_DOC} nos pendentes do fin015: ${noGrid ? JSON.stringify({ titMnyValor: noGrid.raw.titMnyValor, titMnyJuros: noGrid.raw.titMnyJuros, titMnyLiquido: noGrid.raw.titMnyLiquido, itsMnyVlrPgto: noGrid.raw.itsMnyVlrPgto, totalLiquido: noGrid.raw.totalLiquido }) : 'AUSENTE'}`,
         );
     }
     const utilizaveis: Array<(typeof candidatos)[number] & { aberto: number }> = [];
@@ -297,9 +297,9 @@ async function main(): Promise<void> {
             flpCod,
             itsVldModalidade: MODALIDADE,
             itsEspNomeFav: x.p.raw.dpeNomPessoa,
-            itsMnyValor: x.valor,
-            itsMnyVlrPgto: x.valor,
-            titMnyLiquido: x.valor,
+            itsMnyValor: SO_DOC ? Number(x.p.raw.titMnyLiquido ?? x.valor) : x.valor,
+            itsMnyVlrPgto: SO_DOC ? Number(x.p.raw.titMnyLiquido ?? x.valor) : x.valor,
+            titMnyLiquido: SO_DOC ? Number(x.p.raw.titMnyLiquido ?? x.valor) : x.valor,
             itsDtaPgto: x.venc,
             vldOk: 1,
             vldImporta: 1,
