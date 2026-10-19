@@ -230,6 +230,22 @@ export default class AjusteCentavosExecucaoRepository {
         return rows.map((r) => ajusteCentavosExecucaoRowSchema.parse(r));
     };
 
+    /** O ledger NÃO terminal do título de origem, se houver (no máximo um, índice parcial). */
+    public buscarNaoTerminalPorOrigem = async (chave: {
+        filCod: number;
+        docCod: string;
+        titCod: string;
+    }): Promise<AjusteCentavosExecucao | null> => {
+        const row = await this.db.selectFirst<Record<string, unknown>>(
+            `SELECT ${COLUNAS} FROM sispag_ajuste_centavos_execucao
+              WHERE fil_cod = $filCod AND doc_cod = $docCod AND tit_cod_origem = $titCod
+                AND etapa NOT IN ${TERMINAIS_SQL}
+              LIMIT 1`,
+            chave,
+        );
+        return row ? ajusteCentavosExecucaoRowSchema.parse(row) : null;
+    };
+
     /** I18a(7): o título já é fruto de um ajuste nosso (é `tit_cod_novo` de algum ledger)? */
     public buscarConcluidoPorTitCodNovo = async (chave: {
         filCod: number;
@@ -326,7 +342,11 @@ export default class AjusteCentavosExecucaoRepository {
                 input.execucaoId,
                 input.etapaAtual,
                 ETAPA_AJUSTE.RECHAVEADA,
-                { titCodNovo: input.titCodNovo, frnCod: input.frnCod },
+                {
+                    titCodNovo: input.titCodNovo,
+                    frnCod: input.frnCod,
+                    ...(input.motivo !== undefined ? { motivo: input.motivo } : {}),
+                },
                 tx,
             );
             if (!avancou) {

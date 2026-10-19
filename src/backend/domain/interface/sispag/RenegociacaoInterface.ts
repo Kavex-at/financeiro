@@ -81,6 +81,9 @@ export const TITULO_FIN064_SCHEMA = z
     .passthrough();
 export type TituloFin064 = z.infer<typeof TITULO_FIN064_SCHEMA>;
 
+/** Título do documento com a linha CRUA (régua líquida e sinal de item SISPAG leem o bruto). */
+export type TituloDoDocumento = TituloFin064 & { raw: Record<string, unknown> };
+
 /**
  * Situação do bloqueio no `fin103` (`ftbVldStatus`). Medido em HML 2026-10-19: depois do comando
  * APROVAR o bloqueio foi a `2`. Qualquer outro valor é tratado como NÃO liberado (fail-closed).

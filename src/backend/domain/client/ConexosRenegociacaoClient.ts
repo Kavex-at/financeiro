@@ -17,7 +17,7 @@ import {
     type SessaoConexos,
     TITULO_FIN064_SCHEMA,
     type TituloDaRenegociacaoInput,
-    type TituloFin064,
+    type TituloDoDocumento,
 } from '../interface/sispag/RenegociacaoInterface.js';
 import EnvironmentProvider from '../libs/environment/EnvironmentProvider.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
@@ -241,15 +241,27 @@ export default class ConexosRenegociacaoClient {
     public listarTitulosDoDocumento = async (
         sessao: SessaoConexos,
         p: { filCod: number; docCod: string },
-    ): Promise<TituloFin064[]> => {
+    ): Promise<TituloDoDocumento[]> => {
         const linhas = await this.listarTudo(sessao, 'fin064/list', p.filCod, {
             'docCod#EQ': p.docCod,
         });
-        return linhas
-            .map((r) => TITULO_FIN064_SCHEMA.safeParse(r))
-            .filter((r) => r.success && r.data.docCod === p.docCod)
-            .map((r) => (r as { data: TituloFin064 }).data);
+        const titulos: TituloDoDocumento[] = [];
+        for (const raw of linhas) {
+            const lido = TITULO_FIN064_SCHEMA.safeParse(raw);
+            if (lido.success && lido.data.docCod === p.docCod) titulos.push({ ...lido.data, raw });
+        }
+        return titulos;
     };
+
+    /**
+     * O título está num item SISPAG do `fin015` (rascunho ou finalizado)? O `fin064` traz os campos
+     * `its*` do item quando o título está num lote nativo. Fail-closed: QUALQUER `its*` de
+     * pagamento preenchido conta (I18a(8)). A confirmar ao vivo em G2/G4.
+     */
+    public static emItemSispag = (raw: Record<string, unknown>): boolean =>
+        ['itsVldModalidade', 'itsDtaPgto', 'itsMnyVlrPgto'].some(
+            (k) => raw[k] !== null && raw[k] !== undefined && raw[k] !== '',
+        );
 
     /** Bloqueios do documento na Liberação de Títulos (`fin103/list`). */
     public listarBloqueios = async (
