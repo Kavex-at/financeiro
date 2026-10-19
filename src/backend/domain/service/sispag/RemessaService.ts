@@ -33,7 +33,14 @@ import ModoVinculoCodigoBarras, {
 import VinculoCodigoBarrasService, { type PrevisaoVinculo } from './VinculoCodigoBarrasService.js';
 import RemessaCorrompidaError from '../../errors/RemessaCorrompidaError.js';
 import RemittanceFileUnavailableError from '../../errors/RemittanceFileUnavailableError.js';
-import RemessaCnabValidator from '../../libs/cnab/RemessaCnabValidator.js';
+import RemessaCnabValidator, {
+    type DivergenciaValorJ,
+    GUARDA_VALOR_J,
+    MODO_GUARDA_VALOR_J,
+} from '../../libs/cnab/RemessaCnabValidator.js';
+import RemessaBarcodeAmountMismatchError from '../../errors/RemessaBarcodeAmountMismatchError.js';
+import AnaliseCodigoBarrasRepetido from '../../libs/boleto/AnaliseCodigoBarrasRepetido.js';
+import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import PayeeNotAuthorizedAtRemittanceError from '../../errors/PayeeNotAuthorizedAtRemittanceError.js';
 import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRepository.js';
 import DebitDateFrozenError, { MOTIVO_CONGELADA } from '../../errors/DebitDateFrozenError.js';
@@ -234,6 +241,7 @@ export default class RemessaService {
         private readonly retirada: RetiradaCodigoBarrasService,
         @inject(VinculoCodigoBarrasService)
         private readonly vinculo: VinculoCodigoBarrasService,
+        @inject(CodigoBarrasBoleto) private readonly codigoBarras: CodigoBarrasBoleto,
     ) {}
 
     /**
@@ -895,6 +903,18 @@ export default class RemessaService {
                         })),
                     });
                 }
+                // I17m (ADR-0073) — o J paga exatamente o valor da barra. Mesmo tratamento tardio.
+                if (validacao.divergenciasValor.length > 0) {
+                    await this.guardaValorDoJ({
+                        loteId: lote.id,
+                        filCod: lote.filCod,
+                        bncCod,
+                        flpCod,
+                        nomeArquivo: sugerido.nomeArquivo,
+                        gabCod: arquivo.gabCod,
+                        divergencias: validacao.divergenciasValor,
+                    });
+                }
             } else {
                 // Sem conteúdo não dá para verificar. Não bloqueia (o arquivo existe e o ERP
                 // confirmou a geração), mas fica registrado — é o caso em que a garantia cai.
@@ -1244,6 +1264,60 @@ export default class RemessaService {
      * VERBATIM (o grid cruza filiais; reescrever `filCod` devolve `Not Found: FinTituloPag`),
      * enriquecida com a modalidade escolhida e o destino do favorecido (`cmn025`).
      */
+    /**
+     * I17m (ADR-0073): J com barra (> 0) ≠ pagamento. `BLOQUEIA` (default, M8) lança
+     * `RemessaBarcodeAmountMismatchError`; `AVISA` só registra. O título é identificado,
+     * best-effort, pelos códigos do lote nativo (só leitura); a falha da leitura não afrouxa a
+     * guarda. Nada sai sem máscara 5+4.
+     */
+    private guardaValorDoJ = async (p: {
+        loteId: string;
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        nomeArquivo: string;
+        gabCod?: number;
+        divergencias: DivergenciaValorJ[];
+    }): Promise<void> => {
+        const porBarras = new Map<string, { docCod: string; titCod: string }>();
+        try {
+            const leitura = await this.write.listarLinhasDigitaveisDoLote({
+                filCod: p.filCod,
+                bncCod: p.bncCod,
+                flpCod: p.flpCod,
+            });
+            for (const i of leitura.itens) {
+                const barras = this.codigoBarras.paraBarras(String(i.linhaDigitavel ?? ''));
+                if (barras) {
+                    porBarras.set(AnaliseCodigoBarrasRepetido.mascarar(barras), {
+                        docCod: String(i.docCod),
+                        titCod: String(i.titCod),
+                    });
+                }
+            }
+        } catch {
+            // Só identificação: a guarda segue com a linha do arquivo.
+        }
+        const divergencias = p.divergencias.map((d) => ({
+            ...d,
+            ...(porBarras.get(d.barrasMascarada) ?? {}),
+        }));
+        if (MODO_GUARDA_VALOR_J === GUARDA_VALOR_J.AVISA) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'remessa: J com pagamento diferente do valor da barra (guarda em aviso)',
+                data: { loteId: p.loteId, arquivo: p.nomeArquivo, divergencias },
+            });
+            return;
+        }
+        throw new RemessaBarcodeAmountMismatchError({
+            nomeArquivo: p.nomeArquivo,
+            flpCod: p.flpCod,
+            ...(p.gabCod !== undefined ? { gabCod: p.gabCod } : {}),
+            divergencias,
+        });
+    };
+
     private montarItensImport = async (
         lote: LotePagamento,
         bncCod: number,

@@ -1,5 +1,9 @@
 import 'reflect-metadata';
-import RemessaCnabValidator, { MOTIVO_J_INVALIDO } from './RemessaCnabValidator.js';
+import RemessaCnabValidator, {
+    GUARDA_VALOR_J,
+    MODO_GUARDA_VALOR_J,
+    MOTIVO_J_INVALIDO,
+} from './RemessaCnabValidator.js';
 
 /**
  * Códigos de barras SINTÉTICOS, com DV calculado. Nenhum dado de fornecedor real entra aqui —
@@ -309,5 +313,129 @@ describe('RemessaCnabValidator — segmento B e forma de lançamento (ADR-0054, 
         });
         const r = make().validar([headerLote('45'), detalhe('A'), comDado.join('')].join('\n'));
         expect(JSON.stringify(r)).not.toContain('12345678909');
+    });
+});
+
+/**
+ * Segmento J no layout dos `.REM` HML PG191074/PG191075 (FEBRABAN/Itaú SISPAG 240): barras 18–61,
+ * vencimento 92–99, valor do título 100–114, desconto 115–129, mora 130–144, data de pagamento
+ * 145–152, valor do pagamento 153–167. Valores em centavos, 15 dígitos.
+ */
+const segmentoJ = (p: {
+    barras: string;
+    tituloCentavos: number;
+    descontoCentavos?: number;
+    moraCentavos?: number;
+    pagamentoCentavos?: number | 'branco';
+}): string => {
+    const buf = linha('J', p.barras).split('');
+    const poe = (ini: number, valor: string) => {
+        valor.split('').forEach((c, i) => {
+            buf[ini - 1 + i] = c;
+        });
+    };
+    const n15 = (v: number) => String(v).padStart(15, '0');
+    poe(62, 'FAVORECIDO SINTETICO'.padEnd(30, ' '));
+    poe(92, '30102026');
+    poe(100, n15(p.tituloCentavos));
+    poe(115, n15(p.descontoCentavos ?? 0));
+    poe(130, n15(p.moraCentavos ?? 0));
+    poe(145, '30102026');
+    if (p.pagamentoCentavos !== 'branco') {
+        poe(153, n15(p.pagamentoCentavos ?? p.tituloCentavos));
+    }
+    return buf.join('');
+};
+
+/** Barra sintética com valor `centavos` e DV geral válido. */
+const barrasComValor = (centavos: number): string => {
+    const b = `3419${'1'}0000${String(centavos).padStart(10, '0')}1234567890123456789012345`;
+    const semDv = b.slice(0, 4) + b.slice(5);
+    let soma = 0;
+    let peso = 2;
+    for (let i = semDv.length - 1; i >= 0; i -= 1) {
+        soma += Number(semDv[i]) * peso;
+        peso = peso === 9 ? 2 : peso + 1;
+    }
+    const dv = 11 - (soma % 11);
+    return `${b.slice(0, 4)}${dv === 0 || dv === 10 || dv === 11 ? 1 : dv}${b.slice(5)}`;
+};
+
+describe('I17m — barra == pagamento do J (ADR-0073)', () => {
+    const B46250 = barrasComValor(46250);
+
+    it('a guarda nasce BLOQUEIA (fail-closed, M8)', () => {
+        expect(GUARDA_VALOR_J.BLOQUEIA).toBe('BLOQUEIA');
+        expect(GUARDA_VALOR_J.AVISA).toBe('AVISA');
+        expect(MODO_GUARDA_VALOR_J).toBe(GUARDA_VALOR_J.BLOQUEIA);
+    });
+
+    it('HML PG191074: barra 53,54 · título 53,53 · mora 0,01 · pagamento 53,54 ⇒ ok', () => {
+        const b = barrasComValor(5354);
+        const r = make().validar(
+            segmentoJ({
+                barras: b,
+                tituloCentavos: 5353,
+                moraCentavos: 1,
+                pagamentoCentavos: 5354,
+            }),
+        );
+        expect(r.invalidos).toEqual([]);
+        expect(r.divergenciasValor).toEqual([]);
+    });
+
+    it('HML PG191075: barra 178,77 · título 178,78 · desconto 0,01 · pagamento 178,77 ⇒ ok', () => {
+        const b = barrasComValor(17877);
+        const r = make().validar(
+            segmentoJ({
+                barras: b,
+                tituloCentavos: 17878,
+                descontoCentavos: 1,
+                pagamentoCentavos: 17877,
+            }),
+        );
+        expect(r.divergenciasValor).toEqual([]);
+    });
+
+    it('barra 462,50 e pagamento 462,50 ⇒ ok; pagamento 462,49 ⇒ divergência mascarada', () => {
+        expect(
+            make().validar(segmentoJ({ barras: B46250, tituloCentavos: 46250 })).divergenciasValor,
+        ).toEqual([]);
+        const r = make().validar(
+            [header, segmentoJ({ barras: B46250, tituloCentavos: 46249 })].join('\n'),
+        );
+        expect(r.divergenciasValor).toEqual([
+            {
+                linha: 2,
+                barrasMascarada: `${B46250.slice(0, 5)}…${B46250.slice(-4)}`,
+                valorBarraCentavos: 46250,
+                pagamentoCentavos: 46249,
+            },
+        ]);
+        expect(JSON.stringify(r)).not.toMatch(/\d{44}/);
+    });
+
+    it('barra com valor zerado (boleto de valor aberto) fica FORA da guarda', () => {
+        const r = make().validar(
+            segmentoJ({
+                barras: BARRAS_VALOR_ZERO,
+                tituloCentavos: 10000,
+                pagamentoCentavos: 10000,
+            }),
+        );
+        expect(r.divergenciasValor).toEqual([]);
+    });
+
+    it('pagamento ilegível (em branco) num J com barra > 0 ⇒ divergência (fail-closed)', () => {
+        const r = make().validar(
+            segmentoJ({ barras: B46250, tituloCentavos: 46250, pagamentoCentavos: 'branco' }),
+        );
+        expect(r.divergenciasValor).toHaveLength(1);
+        expect(r.divergenciasValor[0]?.pagamentoCentavos).toBeUndefined();
+    });
+
+    it('J-52 e J inválido não entram na guarda de valor', () => {
+        const r = make().validar([linha('J', '', '52'), linha('J', BARRAS_DV_ERRADO)].join('\n'));
+        expect(r.divergenciasValor).toEqual([]);
     });
 });

@@ -21,6 +21,29 @@ export interface SegmentoJInvalido {
 }
 
 /**
+ * Modo da guarda I17m (ADR-0073): segmento J cuja barra tem valor > 0 e cujo pagamento difere
+ * dela. `BLOQUEIA` = `RemessaBarcodeAmountMismatchError` (fail-closed, M8); `AVISA` = só `warn`.
+ */
+export const GUARDA_VALOR_J = { BLOQUEIA: 'BLOQUEIA', AVISA: 'AVISA' } as const;
+export type GuardaValorJ = (typeof GUARDA_VALOR_J)[keyof typeof GUARDA_VALOR_J];
+
+/**
+ * Modo vigente da guarda I17m. Nasce `BLOQUEIA` (decisão M8). O valor final é fixado pela medição
+ * só leitura dos `.REM` de PRD dos últimos 30 dias (Task 13) ANTES do merge: caso legítimo achado
+ * ⇒ nasce `AVISA` e vira bloqueio por ADR curta.
+ */
+export const MODO_GUARDA_VALOR_J: GuardaValorJ = GUARDA_VALOR_J.BLOQUEIA;
+
+/** J cuja barra (> 0) difere do valor do pagamento do próprio J (I17m). Só a máscara 5+4. */
+export interface DivergenciaValorJ {
+    linha: number;
+    barrasMascarada: string;
+    valorBarraCentavos: number;
+    /** Ausente = campo de pagamento ilegível (também é divergência: fail-closed). */
+    pagamentoCentavos?: number;
+}
+
+/**
  * Códigos de AVISO do segmento A/B (ADR-0054). Nenhum bloqueia: os códigos de forma de
  * lançamento de TED/PIX são hipótese até o teste supervisionado em produção (checklist do
  * `sispag-ted-pix-tasks.md`, passos 6 e 10). Cada aviso começa pelo código.
@@ -75,6 +98,11 @@ export interface ResultadoValidacaoRemessa {
      * pago N vezes (ADR-0069, I16b). Sempre presente. Só a forma mascarada (5+4) e as linhas.
      */
     repetidos: Array<{ barrasMascarada: string; linhas: number[] }>;
+    /**
+     * I17m (ADR-0073): J com barra de valor > 0 e pagamento (pos 153–167) diferente dela.
+     * Sempre presente. Só máscara 5+4, valores e linha.
+     */
+    divergenciasValor: DivergenciaValorJ[];
     /** Observações que NÃO bloqueiam (ver `valor` abaixo e `AVISO_CNAB`). */
     avisos: string[];
 }
@@ -100,6 +128,9 @@ const POS = {
     /** pos 18-61 — código de barras do boleto (44 dígitos) no segmento J. */
     BARRAS_INI: 17,
     BARRAS_FIM: 61,
+    /** pos 153-167 — valor do pagamento no segmento J (15 dígitos, centavos). */
+    PAGAMENTO_INI: 152,
+    PAGAMENTO_FIM: 167,
 } as const;
 
 /** Comprimento mínimo para uma linha ser registro de detalhe e não header/trailer curto. */
@@ -187,6 +218,7 @@ export default class RemessaCnabValidator {
         const avisos: string[] = [];
         const contagem = { J: 0, J52: 0, A: 0, O: 0 };
         const porBarras = new Map<string, number[]>();
+        const divergenciasValor: DivergenciaValorJ[] = [];
 
         conteudo.split(/\r?\n/).forEach((linha, idx) => {
             if (linha.length < LINHA_MINIMA) return;
@@ -218,7 +250,10 @@ export default class RemessaCnabValidator {
             // quem paga. Não bloqueia; só registra, porque num lote SISPAG é incomum.
             if (this.valorDasBarras(barras) === 0) {
                 avisos.push(`linha ${idx + 1}: código de barras com valor zerado (boleto aberto?)`);
+                return;
             }
+            const divergencia = this.divergenciaDeValor(linha, barras, idx + 1);
+            if (divergencia) divergenciasValor.push(divergencia);
         });
 
         // ADR-0054 — segunda passada, só de AVISO: forma de lançamento por lote e segmento B.
@@ -240,7 +275,30 @@ export default class RemessaCnabValidator {
                     barrasMascarada: AnaliseCodigoBarrasRepetido.mascarar(barras),
                     linhas: linhasDaBarra,
                 })),
+            divergenciasValor,
             avisos,
+        };
+    };
+
+    /**
+     * I17m: o pagamento do J (pos 153–167) deve ser igual ao valor da barra (pos 10–19 do código).
+     * Barra com valor zerado não chega aqui (boleto de valor aberto). Pagamento ilegível ⇒
+     * divergência sem `pagamentoCentavos` (fail-closed).
+     */
+    private divergenciaDeValor = (
+        linha: string,
+        barras: string,
+        numero: number,
+    ): DivergenciaValorJ | undefined => {
+        const valorBarraCentavos = Number(barras.slice(9, 19));
+        const campo = linha.slice(POS.PAGAMENTO_INI, POS.PAGAMENTO_FIM);
+        const pagamentoCentavos = /^\d{15}$/.test(campo) ? Number(campo) : undefined;
+        if (pagamentoCentavos === valorBarraCentavos) return undefined;
+        return {
+            linha: numero,
+            barrasMascarada: AnaliseCodigoBarrasRepetido.mascarar(barras),
+            valorBarraCentavos,
+            ...(pagamentoCentavos !== undefined ? { pagamentoCentavos } : {}),
         };
     };
 

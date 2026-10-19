@@ -424,6 +424,7 @@ const montar = (opcoes: { confirmaTransitorio?: boolean; semDecisao?: boolean } 
         } as unknown as AuthorizedPayeeService,
         retirada,
         vinculo,
+        new CodigoBarrasBoleto(),
     );
     return { remessa, write, rastro, ledgerPayloads, eventosSugestao, loteRepo, rascunho };
 };
