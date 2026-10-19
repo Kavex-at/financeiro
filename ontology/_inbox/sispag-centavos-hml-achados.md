@@ -28,6 +28,14 @@ Sem âncora (só valor + vencimento): 117 / 142 / 208 / 279 títulos até R$ 0,0
 é coincidência de valor entre documentos diferentes. Os 25 acima de R$ 10 parecem outro problema
 (boleto agrupando títulos ou com encargos), fora do ajuste automático.
 
+**Os 25 acima de R$ 10, abertos (PRD, somente leitura):** todos com vencimento igual ao do título,
+1 título e 1 boleto por número — **não** é agrupamento nem juros de atraso. Padrões: NELSON fil 4 (7),
+título fixo R$ 930,48 × boleto R$ 993–1.348 (valor previsto?); SAVINO DEL BENE fil 2 (10), boleto
+≈ +R$ 386–391 fixo; JUSTLOG (1) +R$ 544; UPS (4) +13,7–15,1%; RHENUS (2) +1,6–1,7% (retenção?);
+**MSC (1) é falso par** — número 12294 coincidiu com boleto de outro emissor (R$ 462,50, valor NELSON).
+**Consequência:** número de documento igual **não basta** como âncora do ajuste automático; exigir
+também o **emissor confirmado** (par `ConfirmacaoEmissorBoleto`, banco+agência+conta da barra).
+
 ## Tamanho do problema (PRD, somente leitura, 2026-10-19)
 
 1.056 títulos BOLETO (`forma_pagamento_conexos = 6`) ativos sem vínculo DDA. **126** só têm candidato a
