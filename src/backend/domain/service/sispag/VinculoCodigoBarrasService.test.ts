@@ -11,6 +11,9 @@ import type { ItemLote, LotePagamento } from '../../interface/sispag/SispagInter
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import CodigoBarrasSintetico from '../../libs/boleto/CodigoBarrasSintetico.js';
 import ElegibilidadeVinculoCodigoBarras from '../../libs/boleto/ElegibilidadeVinculoCodigoBarras.js';
+import ValorAbertoLiquido, {
+    type ValoresAbertoTitulo,
+} from '../../libs/boleto/ValorAbertoLiquido.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
@@ -82,6 +85,8 @@ interface Cenario {
     /** Resultados do `PUT` (por chamada) — default: aplica a edição na row e responde ok. */
     put?: (corpo: Record<string, unknown>) => Promise<void>;
     aberto?: number | 'falha';
+    /** Régua líquida completa (I17b, ADR-0073); default = sem acréscimos sobre `aberto`. */
+    valores?: ValoresAbertoTitulo;
     decisoes?: Array<Record<string, unknown>>;
     pares?: Array<Record<string, unknown>>;
     boletoPool?: Record<string, Record<string, unknown> | null>;
@@ -146,10 +151,13 @@ const build = (c: Cenario) => {
         ),
     };
     const sispag = {
-        lerTotalAberto: jest.fn(async () =>
+        lerValoresAberto: jest.fn(async () =>
             c.aberto === 'falha'
                 ? { legivel: false as const, motivo: 'falha' }
-                : { legivel: true as const, totalAberto: c.aberto ?? 1028.8 },
+                : {
+                      legivel: true as const,
+                      valores: c.valores ?? ValorAbertoLiquido.semAcrescimos(c.aberto ?? 1028.8),
+                  },
         ),
     };
     const loteRepo = {
@@ -443,7 +451,7 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
         const r = await h.service.executar({ lote: h.lote, ...CTX });
         expect(r).toMatchObject({ vinculados: [], retirar: [] });
         for (const fn of Object.values(h.write)) expect(fn).not.toHaveBeenCalled();
-        expect(h.sispag.lerTotalAberto).not.toHaveBeenCalled();
+        expect(h.sispag.lerValoresAberto).not.toHaveBeenCalled();
         expect(h.sugestoes.registrarEventoVinculo).not.toHaveBeenCalled();
         expect(h.loteRepo.gravarVinculoCodigoBarras).not.toHaveBeenCalled();
     });
@@ -730,6 +738,55 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
             expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
         });
 
+        it('régua líquida com as duas fórmulas divergentes ⇒ FAIL-CLOSED, nenhuma escrita (ADR-0073)', async () => {
+            const h = umItem({
+                valores: {
+                    totalLiquido: 1028.8,
+                    totalPago: 0,
+                    totalAberto: 1028.79,
+                    titMnyJuros: 0,
+                    titMnyDesconto: 0,
+                },
+            });
+            const erro = await h.service
+                .executar({ lote: h.lote, ...CTX })
+                .catch((e: unknown) => e);
+            expect(erro).toBeInstanceOf(VinculoCodigoBarrasIncompletoError);
+            expect(h.write.validarCodigoBarras).not.toHaveBeenCalled();
+            expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
+        });
+
+        it('título renegociado (juros 0,01 no título, HML 536/2): vincula pelo LÍQUIDO; a mesma régua nos três pontos', async () => {
+            // Base 1028,79 + juros 0,01 ⇒ líquido 1028,80 = barra. O confirm devolve 1028,80
+            // (I17d(6): juros DO TÍTULO são esperados; o critério é confirm == valor da barra).
+            const valores = {
+                totalLiquido: 1028.8,
+                totalPago: 0,
+                totalAberto: 1028.79,
+                titMnyJuros: 0.01,
+                titMnyDesconto: 0,
+            };
+            const calcular = jest.spyOn(ValorAbertoLiquido, 'calcularCentavos');
+            const bate = jest.spyOn(ValorAbertoLiquido, 'bate');
+            const h = umItem({ valores });
+            const r = await h.service.executar({ lote: h.lote, ...CTX });
+            expect(r.vinculados).toHaveLength(1);
+            expect(r.retirar).toEqual([]);
+            // (1) elegibilidade
+            expect(calcular).toHaveBeenCalledWith(valores);
+            // (2) conferência pré-PUT (validação) e (3) pós-releitura (pagamento observado)
+            expect(bate.mock.calls).toEqual([
+                [valores, 102880],
+                [valores, 102880],
+            ]);
+            const validar = h.write.validarCodigoBarras.mock.calls[0]?.[0] as unknown as {
+                valorLiquido: number;
+            };
+            expect(validar.valorLiquido).toBe(1028.8);
+            calcular.mockRestore();
+            bate.mockRestore();
+        });
+
         it('código já presente em outro item do rascunho ⇒ não vincula e retira (I17g(3))', async () => {
             const h = build({
                 itens: [itemLote('636'), itemLote('700')],
@@ -816,7 +873,7 @@ describe('VinculoCodigoBarrasService — modos', () => {
         expect(previsoes).toHaveLength(1);
         expect(previsoes[0]).toMatchObject({ elegivel: true, codigoMascarado: MASCARA });
         for (const fn of Object.values(h.write)) expect(fn).not.toHaveBeenCalled();
-        expect(h.sispag.lerTotalAberto).not.toHaveBeenCalled();
+        expect(h.sispag.lerValoresAberto).not.toHaveBeenCalled();
         expect(h.eventos).toHaveLength(1);
         expect(h.eventos[0]).toMatchObject({ tipo: 'VINCULO_SIMULADO', loteId: LOTE_ID });
     });
@@ -844,7 +901,7 @@ describe('VinculoCodigoBarrasService — modos', () => {
     it('`on` pré-import lê o aberto AO VIVO (leitura) e devolve a elegibilidade por chave', async () => {
         const h = umItem({ modo: '2:on' });
         const mapa = await h.service.avaliarParaImport(h.lote, 'on');
-        expect(h.sispag.lerTotalAberto).toHaveBeenCalledTimes(1);
+        expect(h.sispag.lerValoresAberto).toHaveBeenCalledTimes(1);
         expect(mapa.get('2:636:1')).toMatchObject({ elegivel: true });
         for (const fn of Object.values(h.write)) expect(fn).not.toHaveBeenCalled();
     });

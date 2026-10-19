@@ -15,6 +15,7 @@ import {
     type ContaCorrentePagadora,
     type ContaFavorecido,
 } from '../interface/sispag/SispagInterface.js';
+import type { ValoresAbertoTitulo } from '../libs/boleto/ValorAbertoLiquido.js';
 import Logger from '../libs/logger/Logger.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
@@ -160,6 +161,25 @@ const totalAbertoRowSchema = z
         docCod: z.union([z.string(), z.number()]).transform(String),
         titCod: z.union([z.string(), z.number()]).transform(String).optional().catch('1'),
         totalAberto: numOpt,
+    })
+    .passthrough();
+
+/**
+ * Linha do fin064 para a régua LÍQUIDA da I17b (ADR-0073): os cinco campos, nunca `titMnyValor`.
+ * `titMnyJuros`/`titMnyDesconto` NULOS são o "sem juros/desconto" do ERP (fixtures reais de
+ * 2026-08-24/25 vêm `null` em título comum) e viram 0 — seguro porque a régua CONFERE contra
+ * `totalLiquido`: juros real não lido faz as duas fórmulas divergirem (fail-closed). Chave
+ * AUSENTE da linha (contrato mudou) continua ausente.
+ */
+const valoresAbertoRowSchema = z
+    .object({
+        docCod: z.union([z.string(), z.number()]).transform(String),
+        titCod: z.union([z.string(), z.number()]).transform(String).optional().catch('1'),
+        totalLiquido: numOpt,
+        totalPago: numOpt,
+        totalAberto: numOpt,
+        titMnyJuros: numOpt,
+        titMnyDesconto: numOpt,
     })
     .passthrough();
 
@@ -568,6 +588,60 @@ export default class ConexosSispagClient {
             return { legivel: false, motivo: 'totalAberto ausente ou ilegível no fin064' };
         }
         return { legivel: true, totalAberto: aberto };
+    };
+
+    /**
+     * Os cinco campos da régua LÍQUIDA (I17b emendada, ADR-0073) de UM título, AO VIVO no `fin064`.
+     * Não decide nada: devolve o que leu; `ValorAbertoLiquido` confere as duas fórmulas e falha
+     * fechado. Nunca lança: título que não veio ou falha HTTP ⇒ `{ legivel: false }`.
+     */
+    public lerValoresAberto = async (
+        filCod: number,
+        docCod: string,
+        titCod: string,
+    ): Promise<
+        { legivel: true; valores: ValoresAbertoTitulo } | { legivel: false; motivo: string }
+    > => {
+        let rows: Record<string, unknown>[];
+        try {
+            const res = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'fin064/list',
+                    this.listBody('fin064', { 'docCod#EQ': docCod }, 200),
+                    { filCod },
+                ),
+            );
+            rows = res.rows ?? [];
+        } catch (err) {
+            return { legivel: false, motivo: this.motivoDeFalha(err) };
+        }
+        const bruta = rows.find((row) => {
+            const p = valoresAbertoRowSchema.safeParse(row);
+            return p.success && p.data.docCod === docCod && (p.data.titCod ?? '1') === titCod;
+        });
+        const linha = bruta ? valoresAbertoRowSchema.safeParse(bruta) : undefined;
+        if (!bruta || !linha?.success) {
+            return {
+                legivel: false,
+                motivo: `título ${docCod}/${titCod} não encontrado no fin064`,
+            };
+        }
+        const zeroSeNulo = (chave: 'titMnyJuros' | 'titMnyDesconto'): number | undefined =>
+            linha.data[chave] ?? (chave in bruta && bruta[chave] === null ? 0 : undefined);
+        const valores: ValoresAbertoTitulo = {
+            ...(linha.data.totalLiquido !== undefined
+                ? { totalLiquido: linha.data.totalLiquido }
+                : {}),
+            ...(linha.data.totalPago !== undefined ? { totalPago: linha.data.totalPago } : {}),
+            ...(linha.data.totalAberto !== undefined
+                ? { totalAberto: linha.data.totalAberto }
+                : {}),
+        };
+        const juros = zeroSeNulo('titMnyJuros');
+        const desconto = zeroSeNulo('titMnyDesconto');
+        if (juros !== undefined) valores.titMnyJuros = juros;
+        if (desconto !== undefined) valores.titMnyDesconto = desconto;
+        return { legivel: true, valores };
     };
 
     /**

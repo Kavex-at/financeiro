@@ -11,6 +11,7 @@ import {
 import { DIAS_DEPOIS_MAX } from '../../service/sispag/RegraSugestaoBoleto.js';
 import AnaliseCodigoBarrasRepetido from './AnaliseCodigoBarrasRepetido.js';
 import CodigoBarrasBoleto from './CodigoBarrasBoleto.js';
+import ValorAbertoLiquido, { type ValoresAbertoTitulo } from './ValorAbertoLiquido.js';
 
 export const MOTIVO_INELEGIVEL_VINCULO = {
     MODALIDADE_NAO_BOLETO: 'MODALIDADE_NAO_BOLETO',
@@ -54,8 +55,11 @@ export interface EntradaElegibilidadeVinculo {
     poolVencimento?: string;
     /** Tier recalculado AGORA pela `RegraSugestaoBoleto`. */
     tier?: ResultadoSugestao;
-    /** `fin064.totalAberto` lido ao vivo (reais). Ausente = fail-closed. */
-    totalAberto?: number;
+    /**
+     * Valores do `fin064` lidos ao vivo (reais) que formam o LÍQUIDO aberto (I17b emendada,
+     * ADR-0073). Ausente, incompleto ou com as duas fórmulas divergentes = fail-closed.
+     */
+    aberto?: ValoresAbertoTitulo;
     /** Snapshot de inclusão. Ignorado de propósito (I17b). */
     valorItem?: number;
     /** Vencimento do título, data civil `YYYY-MM-DD`. */
@@ -69,7 +73,7 @@ export interface ResultadoElegibilidadeVinculo {
     motivo?: MotivoInelegivelVinculo;
     /** Vencimento da barra − vencimento do título, em dias. */
     deltaDias?: number;
-    /** Valor da barra − aberto, em centavos. */
+    /** Valor da barra − líquido aberto, em centavos. */
     deltaCentavos?: number;
     /** Máscara 5+4. Nunca o código. */
     codigoMascarado?: string;
@@ -130,11 +134,12 @@ export default class ElegibilidadeVinculoCodigoBarras {
         if ('motivo' in lido) return nega(lido.motivo, lido.extra);
         const { decodificado, comCodigo } = lido;
 
-        // ── I17b: valor igual, em centavos, contra o aberto AO VIVO ──
-        if (entrada.totalAberto === undefined || !Number.isFinite(entrada.totalAberto)) {
+        // ── I17b: valor igual, em centavos, contra o LÍQUIDO aberto AO VIVO (ADR-0073) ──
+        const liquidoCentavos = ValorAbertoLiquido.calcularCentavos(entrada.aberto);
+        if (liquidoCentavos === undefined) {
             return nega(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL, comCodigo);
         }
-        const deltaCentavos = decodificado.valorCentavos - Math.round(entrada.totalAberto * 100);
+        const deltaCentavos = decodificado.valorCentavos - liquidoCentavos;
         if (deltaCentavos !== 0) {
             return nega(MOTIVO_INELEGIVEL_VINCULO.VALOR_DIFERENTE, { ...comCodigo, deltaCentavos });
         }
