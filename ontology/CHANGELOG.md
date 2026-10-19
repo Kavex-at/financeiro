@@ -3,6 +3,18 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.44.0 — SISPAG: âncora DPS na sugestão de boleto DDA (2026-10-19, ADR-0073)
+
+Feature: `sispag-dda-ordem-dps` (`/feature-tweak sugestao-boleto-dda`). `entity_changed = true`.
+
+- **Regra nova I15p** em `sugestao-boleto-dda-sispag`: o boleto do emissor de NFS-e é `<DPS>000`; âncora por DPS
+  lido do PDF (`DPS_IGUAL`) e por ordem no escopo provado (`ORDEM_DPS`); camada 0 reserva antes das demais.
+- **Entidade nova `TituloDps`** (`partial`): tabela `titulo_dps` (0087); leitor do GED pendente.
+- Sinais `DPS_IGUAL` e `ORDEM_DPS` em `DecisaoSugestaoBoleto.sinais`. Glossário: DPS.
+- Decisões do maintainer: D1 ordem aprendida por (credor, emissor), D2 PDF automático no job só para os
+  não resolvidos, D3 confirmável pela analista.
+- Contagens: entidades 27 → 28 (partial 3 → 4); invariantes I15: 15 → 16.
+
 ## v0.43.0 — SISPAG: desfecho de sugestão para todo título e aviso "vence antes do título" (2026-10-15, ADR-0072)
 
 Feature: `sispag-sugestao-para-todo-titulo` (`/feature-new`). `entity_changed = true`. **Ontologia à frente do

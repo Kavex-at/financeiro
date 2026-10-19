@@ -5,6 +5,7 @@ import type { BoletoDda } from '../domain/interface/sispag/BoletoDda.js';
 import type { TituloAPagar } from '../domain/interface/sispag/SispagInterface.js';
 import CodigoBarrasBoleto from '../domain/libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../domain/libs/calendar/BankingCalendar.js';
+import AncoraOrdemDps from '../domain/service/sispag/AncoraOrdemDps.js';
 import MotorSugestaoBoleto from '../domain/service/sispag/MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from '../domain/service/sispag/RegraSugestaoBoleto.js';
 import MedirDesfechoSugestaoBoletoJob from './MedirDesfechoSugestaoBoletoJob.js';
@@ -15,6 +16,7 @@ const motor = new MotorSugestaoBoleto(
     new CodigoBarrasBoleto(),
     calendar,
     new RegraSugestaoBoleto(),
+    new AncoraOrdemDps(),
 );
 const utc = (civil: string): number => Date.parse(`${civil}T00:00:00Z`);
 

@@ -82,7 +82,7 @@ const digitos = (numero?: string): string => (numero ?? '').replace(/\D/g, '').r
 @injectable()
 export default class RegraSugestaoBoleto {
     public avaliar = (entrada: AvaliacaoSugestaoEntrada): AvaliacaoSugestao => {
-        const { titulo, boleto, dataDebito, parConfirmado } = entrada;
+        const { titulo, boleto, dataDebito, parConfirmado, ordemDps } = entrada;
         const tituloCentavos = centavos(titulo.valor);
         const deltaCentavos = centavos(boleto.valor) - tituloCentavos;
         const deltaDias = diasEntre(titulo.vencimento, boleto.vencimento);
@@ -133,6 +133,9 @@ export default class RegraSugestaoBoleto {
             if (!dentroDosLimites) sinais.push(SINAL_SUGESTAO.COLISAO_NUMERO);
         }
 
+        // Âncoras DPS (I15p): só dentro do envelope, nunca sobem o tier nem alargam limite.
+        sinais.push(...this.sinaisDps(titulo.dps, boleto.numero, ordemDps === true));
+
         // O par é evidência exibida; só promove FORTE → CONHECIDO dentro dos limites (I15d).
         if (parConfirmado) sinais.push(SINAL_SUGESTAO.EMISSOR_CONFIRMADO);
 
@@ -144,6 +147,16 @@ export default class RegraSugestaoBoleto {
 
     private numeroIgual = (doTitulo?: string, doBoleto?: string): boolean =>
         digitos(doTitulo) !== '' && digitos(doTitulo) === digitos(doBoleto);
+
+    /** O boleto do emissor de NFS-e numera como `<DPS>000` (I15p(1)); a ordem vem do motor (I15p(2)). */
+    private sinaisDps = (dps: string | undefined, doBoleto: string | undefined, ordem: boolean) => {
+        const sinais: SinalSugestao[] = [];
+        if (digitos(dps) !== '' && `${digitos(dps)}000` === digitos(doBoleto)) {
+            sinais.push(SINAL_SUGESTAO.DPS_IGUAL);
+        }
+        if (ordem) sinais.push(SINAL_SUGESTAO.ORDEM_DPS);
+        return sinais;
+    };
 
     private foraDoEnvelope = (
         deltaCentavos: number,
