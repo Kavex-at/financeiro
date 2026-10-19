@@ -133,15 +133,29 @@ export default class ConexosGedClient {
         });
     };
 
-    /** Bytes do arquivo. */
-    public baixarArquivo = (params: {
+    /**
+     * Bytes do arquivo. O `download` NÃO devolve o binário: devolve uma string JSON com o arquivo
+     * em base64 (`"JVBERi0x…"`, medido em PRD, 2026-10-19). Aceita também o binário cru, caso o
+     * Conexos mude; qualquer outra coisa é contrato quebrado e vira erro (nunca um PDF inventado).
+     */
+    public baixarArquivo = async (params: {
         dcmCod: number;
         adfCodSeq: number;
         filCod: number;
-    }): Promise<Buffer> =>
-        this.base.getBinary(`arq020/arqDocFiles/download/${params.dcmCod}/${params.adfCodSeq}`, {
-            filCod: params.filCod,
-        });
+    }): Promise<Buffer> => {
+        const resposta = await this.base.getBinary(
+            `arq020/arqDocFiles/download/${params.dcmCod}/${params.adfCodSeq}`,
+            { filCod: params.filCod },
+        );
+        if (resposta.subarray(0, 5).toString('latin1') === '%PDF-') return resposta;
+        if (resposta[0] === 0x22 /* " */) {
+            const base64: unknown = JSON.parse(resposta.toString('utf8'));
+            if (typeof base64 === 'string') return Buffer.from(base64, 'base64');
+        }
+        throw new Error(
+            `download do GED em formato inesperado (dcmCod ${params.dcmCod}, seq ${params.adfCodSeq})`,
+        );
+    };
 
     private achatar = (nos: NoArvore[]): PastaGed[] =>
         nos.flatMap((no) => {
