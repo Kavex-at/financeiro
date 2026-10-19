@@ -1,7 +1,11 @@
 import 'reflect-metadata';
 import 'dotenv/config';
+import { writeFileSync } from 'node:fs';
 import { container } from 'tsyringe';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
+import ConexosGedClient from '../domain/client/ConexosGedClient.js';
+import { DOC_TIP_PAGAR } from '../domain/interface/sispag/GedArquivo.js';
+import ExtratorTextoPdf from '../domain/libs/pdf/ExtratorTextoPdf.js';
 import type { TituloAPagar } from '../domain/interface/sispag/SispagInterface.js';
 import LeitorDpsService from '../domain/service/sispag/LeitorDpsService.js';
 
@@ -12,6 +16,8 @@ import LeitorDpsService from '../domain/service/sispag/LeitorDpsService.js';
  *
  * Run (de src/backend), sem tocar o slot de sessão do robô:
  *   databaseConnectionString="" PROBE_PRD=1 npx tsx jobs/validate-sispag-leitura-dps-v1.ts
+ * Com `VALIDATE_OUT=<pasta>`, o PDF e os trechos de texto posicionados de cada título NÃO lido são
+ * salvos lá (`<docCod>.pdf`, `<docCod>.itens.json`) para calibrar o leitor do DANFSe.
  */
 if (process.env.PROBE_PRD !== '1' || process.env.databaseConnectionString !== '') {
     console.error('RECUSADO: rode com PROBE_PRD=1 e databaseConnectionString="".');
@@ -46,6 +52,9 @@ async function main(): Promise<void> {
             numeroDocumento: c.nfse,
         } as unknown as TituloAPagar;
         const r = await leitor.lerTitulo(titulo);
+        if (r.status !== 'LIDO' && r.arquivo && process.env.VALIDATE_OUT) {
+            await salvarParaCalibrar(titulo, r.arquivo, process.env.VALIDATE_OUT);
+        }
         const ok = r.dps === c.esperado;
         if (ok) confere += 1;
         console.log(
@@ -56,6 +65,24 @@ async function main(): Promise<void> {
     }
     console.log(`\n${confere}/${CASOS.length} conferem`);
 }
+
+/** Refaz o caminho do GED só para guardar o PDF e o texto que o leitor não entendeu. */
+const salvarParaCalibrar = async (t: TituloAPagar, arquivo: string, pasta: string) => {
+    const ged = container.resolve(ConexosGedClient);
+    const doc = { filCod: t.filCod, docCod: t.docCod, docTip: DOC_TIP_PAGAR };
+    const priCod = await ged.priCodDoDocumento(doc);
+    if (priCod === undefined) return;
+    for (const p of await ged.pastasDoDocumento({ ...doc, priCod })) {
+        const a = (await ged.arquivosDaPasta(p.dcmCod, doc)).find((x) => x.nome === arquivo);
+        if (!a) continue;
+        const bytes = await ged.baixarArquivo({ ...a, filCod: t.filCod });
+        writeFileSync(`${pasta}/${t.docCod}.pdf`, bytes);
+        const itens = await container.resolve(ExtratorTextoPdf).extrair(bytes);
+        writeFileSync(`${pasta}/${t.docCod}.itens.json`, JSON.stringify(itens, null, 1));
+        console.log(`   salvo para calibrar: ${pasta}/${t.docCod}.{pdf,itens.json}`);
+        return;
+    }
+};
 
 main().then(
     () => process.exit(0),
