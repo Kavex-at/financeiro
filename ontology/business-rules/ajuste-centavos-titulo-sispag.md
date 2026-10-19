@@ -4,21 +4,30 @@ type: business-rule
 entity: TituloAPagar
 invariant: I18
 ontology_version: "0.44.0"
-implementation_status: planned
+implementation_status: partial
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/domain/service/sispag/AjusteCentavosTituloService.ts
-  - src/backend/domain/service/sispag/BoletoSuggestionService.ts
-  - src/backend/domain/service/sispag/RegraSugestaoBoleto.ts
+  - src/backend/domain/libs/boleto/ElegibilidadeAjusteCentavos.ts
+  - src/backend/domain/libs/boleto/EtapaAjusteCentavos.ts
+  - src/backend/domain/libs/boleto/ModoAjusteCentavos.ts
+  - src/backend/domain/libs/boleto/ValorAbertoLiquido.ts
+  - src/backend/domain/client/ConexosRenegociacaoClient.ts
   - src/backend/domain/client/ConexosSispagWriteClient.ts
   - src/backend/domain/client/ConexosSessionResolver.ts
+  - src/backend/domain/repository/sispag/AjusteCentavosExecucaoRepository.ts
   - src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
+  - src/backend/domain/service/sispag/BoletoSuggestionService.ts
+  - src/backend/domain/service/sispag/LotePagamentoService.ts
+  - src/backend/domain/libs/runtime/ServerProcessMarker.ts
+  - src/backend/routes/sispag.ts
   - src/backend/migrations/0087_sispag_ajuste_centavos.sql
 last_review: 2026-10-19
-has_canonical_test: false
+has_canonical_test: true
+canonical_test: src/backend/domain/service/sispag/AjusteCentavosTituloService.test.ts
 universality_evidence:
   - "HML 2026-10-19 (_inbox/sispag-centavos-hml-achados.md): fin070 frnVldTpop 1/2 renegocia o título para o valor do boleto (536/1 -> 536/2 líquido 53,54; 540/1 -> 540/2 líquido 178,77); fin103 APROVAR libera; vínculo e .REM ponta a ponta (J paga o valor da barra)"
   - "PRD 2026-10-19 (só leitura): 109 títulos BOLETO com número igual e |Δ| <= R$ 0,05 (todos NELSON +0,01), 0 entre R$ 0,06 e R$ 10, 25 > R$ 10 (outro problema)"
@@ -32,8 +41,18 @@ universality_evidence:
 > R$ 0,05), a plataforma **renegocia o título no `fin070`** para que o seu líquido fique igual ao valor do
 > boleto (juros quando o boleto está acima, desconto quando está abaixo), **libera no `fin103` só o bloqueio
 > que a própria renegociação criou** e faz decisão, carteira e item seguirem o **novo `titCod`**. A partir daí
-> o vínculo do código (I17, régua líquida) acha o título com valor igual. **Status: planned** (modo `off` por
+> o vínculo do código (I17, régua líquida) acha o título com valor igual. **Status: partial** (modo `off` por
 > default; escrita em PRD só com go explícito do maintainer, depois dos portões G1–G5).
+
+> **Status de implementação (2026-10-19, `partial`).** **Entregue** (código das Tasks 1-12 e 16, modo `off` por
+> default): elegibilidade (I18a), régua líquida, executor com compensação e retomada (I18c-j), gatilho pós-commit
+> do confirmar, rotas de "tentar de novo" e varredura, bloqueio do `finalizarLote` enquanto roda (I18g, I18k),
+> migration `0087`, tela com estado do ajuste e nova tentativa. **Pendente:** os portões **G1** (sonda de leitura
+> do login do servidor), **G2/G3** (HML: vencimento passado/hoje e cancelar a renegociação não finalizada),
+> **G4** (medição do líquido/pagamento parcial, Task 13) e **G5** (rollout, ver
+> `_inbox/sispag-ajuste-centavos-rollout-g5.md`); a rota `cancelarRenegociacao` do `fin070` segue
+> `NotImplementedError` atrás de `CANCELAMENTO_FIN070_PROVADO = false`; o default da guarda I17m
+> (`MODO_GUARDA_VALOR_J = BLOQUEIA`) aguarda a medição da Task 13. `on` em PRD continua proibido.
 
 ## Por que existe
 
