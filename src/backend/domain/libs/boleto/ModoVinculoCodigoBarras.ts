@@ -1,3 +1,5 @@
+import ModoPorFilial from './ModoPorFilial.js';
+
 /** Modos do vínculo do código de barras ao item, por filial (ADR-0071, I17k). */
 export const MODO_VINCULO = {
     /** Default. Nada muda: a I15b vale integral. */
@@ -10,40 +12,13 @@ export const MODO_VINCULO = {
 
 export type ModoVinculo = (typeof MODO_VINCULO)[keyof typeof MODO_VINCULO];
 
-const MODOS_VALIDOS: ReadonlySet<string> = new Set(Object.values(MODO_VINCULO));
-
-/** Chave do modo GLOBAL no mapa (valor `on`/`shadow`/`off` sozinho); nenhuma filial real é 0. */
-const CHAVE_GLOBAL = 0;
-
 /**
- * Configuração `SISPAG_BIND_CODBAR_FILIAIS` (lida pelo `EnvironmentProvider`). Duas formas:
- *   - modo único `on` | `shadow` | `off`: vale para TODAS as filiais;
- *   - lista por filial `"1:shadow,7:off"`: filial ausente = `off`.
- * As duas formas não se misturam (`"on,1:off"` é inválido).
- *
- * FAIL-CLOSED: ausente, vazia, modo desconhecido, filial inválida/duplicada, token vazio ou
- * qualquer outro lixo ⇒ a entrada INTEIRA vira `off`. Parse inválido nunca vira parcial — uma
- * configuração torta jamais liga uma filial "pela metade".
+ * Configuração `SISPAG_BIND_CODBAR_FILIAIS` (lida pelo `EnvironmentProvider`). Parse no
+ * `ModoPorFilial` (parser único, fail-closed: entrada inválida ⇒ `off` em tudo).
  */
 export default class ModoVinculoCodigoBarras {
-    public static parse = (bruto: string | undefined): ReadonlyMap<number, ModoVinculo> => {
-        const vazio = new Map<number, ModoVinculo>();
-        if (bruto === undefined || bruto.trim() === '') return vazio;
-        const unico = bruto.trim();
-        if (MODOS_VALIDOS.has(unico)) return new Map([[CHAVE_GLOBAL, unico as ModoVinculo]]);
-        const mapa = new Map<number, ModoVinculo>();
-        for (const token of bruto.split(',')) {
-            const partes = token.split(':');
-            if (partes.length !== 2) return vazio;
-            const filBruto = (partes[0] as string).trim();
-            const modo = (partes[1] as string).trim();
-            if (!/^\d+$/.test(filBruto) || !MODOS_VALIDOS.has(modo)) return vazio;
-            const filCod = Number(filBruto);
-            if (!Number.isInteger(filCod) || filCod <= 0 || mapa.has(filCod)) return vazio;
-            mapa.set(filCod, modo as ModoVinculo);
-        }
-        return mapa;
-    };
+    public static parse = (bruto: string | undefined): ReadonlyMap<number, ModoVinculo> =>
+        ModoPorFilial.parse(bruto);
 
     /**
      * Modo efetivo da filial. O kill-switch global `sispagLiveWriteEnabled` derruba também este
@@ -55,6 +30,6 @@ export default class ModoVinculoCodigoBarras {
         liveWriteEnabled: boolean,
     ): ModoVinculo => {
         if (!liveWriteEnabled) return MODO_VINCULO.OFF;
-        return mapa.get(filCod) ?? mapa.get(CHAVE_GLOBAL) ?? MODO_VINCULO.OFF;
+        return ModoPorFilial.daFilial(filCod, mapa);
     };
 }

@@ -349,6 +349,10 @@ export default class EnvironmentProvider {
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
             // ADR-0071 (I17k): modo do vínculo por filial. Bruto; parse fail-closed no consumidor.
             sispagBindCodbarFiliais: this.readEnv('SISPAG_BIND_CODBAR_FILIAIS').trim(),
+            sispagAjusteCentavosFiliais: this.readEnv('SISPAG_AJUSTE_CENTAVOS_FILIAIS').trim(),
+            sispagAjusteCentavosLoginSondado: this.readEnv(
+                'SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO',
+            ).trim(),
             // ADR-0054/0065: gates de go-live de TED/PIX e do favorecido autorizado — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',
@@ -450,6 +454,10 @@ export default class EnvironmentProvider {
             sispagDdaAssocEnabled: this.readEnv('SISPAG_DDA_ASSOC_ENABLED') !== 'false',
             // ADR-0071 (I17k): modo do vínculo por filial. Bruto; parse fail-closed no consumidor.
             sispagBindCodbarFiliais: this.readEnv('SISPAG_BIND_CODBAR_FILIAIS').trim(),
+            sispagAjusteCentavosFiliais: this.readEnv('SISPAG_AJUSTE_CENTAVOS_FILIAIS').trim(),
+            sispagAjusteCentavosLoginSondado: this.readEnv(
+                'SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO',
+            ).trim(),
             // ADR-0054/0065: gates de go-live de TED/PIX e do favorecido autorizado — default OFF.
             sispagTedEnabled: this.readEnv('SISPAG_TED_ENABLED') === 'true',
             sispagPixEnabled: this.readEnv('SISPAG_PIX_ENABLED') === 'true',

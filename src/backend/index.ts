@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import 'dotenv/config';
 import { container } from 'tsyringe';
 import { diagnosticarConfiguracao } from './domain/appContainer.js';
+import ServerProcessMarker from './domain/libs/runtime/ServerProcessMarker.js';
 import LogService from './domain/service/LogService.js';
 import { buildApp } from './http/buildApp.js';
 import { startServer } from './http/bootstrap.js';
@@ -64,6 +65,13 @@ setSessionStorePoolEventSink((evento) => {
         data: { tipo: evento.tipo, rebuildsTotal: evento.rebuildsTotal },
     });
 });
+
+/**
+ * Este processo é O SERVIDOR (ADR-0073, I18f/I18g). Ligado aqui, e nunca no
+ * `bootstrapAppContainer` (compartilhado com os ~58 jobs): fora do servidor o ajuste de centavos
+ * do título cai a `shadow` — crons rodam com outra credencial e não escrevem no título.
+ */
+container.resolve(ServerProcessMarker).ligar();
 
 void startServer({
     runMigrations: async () => {

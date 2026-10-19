@@ -59,6 +59,16 @@ describe('bootstrapAppContainer — migration wiring (P0-1)', () => {
         expect(migrationRun).toHaveBeenCalledTimes(1);
     });
 
+    it('does NOT mark the process as the server (ADR-0073: jobs share this bootstrap)', async () => {
+        const { bootstrapAppContainer } = await import('./appContainer.js');
+        await bootstrapAppContainer();
+        const { container } = await import('tsyringe');
+        const { default: ServerProcessMarker } = await import(
+            './libs/runtime/ServerProcessMarker.js'
+        );
+        expect(container.resolve(ServerProcessMarker).ehServidor()).toBe(false);
+    });
+
     it('fails loud in production when migrations fail', async () => {
         migrationRun.mockRejectedValueOnce(new Error('relation does not exist'));
         const { bootstrapAppContainer } = await import('./appContainer.js');
