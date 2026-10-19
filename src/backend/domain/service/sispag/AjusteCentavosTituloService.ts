@@ -1099,6 +1099,16 @@ export default class AjusteCentavosTituloService {
     ): Promise<Passo> => {
         const avancou = await this.ledger.registrarResultado(exec.id, exec.etapa, para, campos);
         if (!avancou) return 'parar';
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: `ajuste de centavos: ${exec.etapa} → ${para}`,
+            data: {
+                ...this.dadosDoLog({ ...exec, ...campos, etapa: para }),
+                de: exec.etapa,
+                marcador: exec.marcador,
+                tentativas: exec.tentativas,
+            },
+        });
         return (await this.ledger.buscarPorId(exec.id)) ?? 'parar';
     };
 
