@@ -85,6 +85,38 @@ Columbia:** usam a tela de solicitação de desconto (fin062/fin063) em título 
 - Achado lateral útil: existe caminho de escrita no título a pagar via `fin026` para **data**; para
   **valor**, o `PUT fin026` aceita e ignora (HML #9 de 14/10).
 
+## Renegociação de Pagamentos `fin070` — o caminho nativo que MUDA o título (HML, 2026-10-19)
+
+Autorizado pelo maintainer. Job `src/backend/jobs/probe-hml-renegociacao-fin070.ts`. Título 536/1
+(R$ 53,53, HAI INTERNATIONAL, venc. 02/12/2025), renegociação **frnCod 3**, usuário **MPS_FRANCINEI**
+(o mesmo do backend em PRD).
+
+| Passo | Corpo | Resultado |
+|---|---|---|
+| `POST fin070` | `pesCod` (= `pesCodFor` do fin064), `frnVldTipo 2`, `frnVldTpop 0`, `frnDtaReneg`, obs MAIÚSCULA | ok, frnCod 3 |
+| `POST fin070/titulos` | título 536/1 (+ `titMnyJuros` é **ignorado**) | ok, `mnyValorTotal` 53,53 |
+| `POST fin070/titulos/composicao` com 53,54 | `frgMnyValor`, `frgDtaVencimento`, `frgEspNumero`, `pgtCod 1`, `dupEspOrdem` | **recusa** `FIN_070.O_TOTAL_DOS_TITULOS_A_SEREM_GERADOS…E_MAIOR_QUE_O_VALOR_EM_ABERTO` |
+| idem com 53,53 (+ `rgMnyValorJuros` ignorado) | — | ok |
+| `PUT fin070` com `frnMnyValor 0,01` e `frnVldTpop 0` | — | recusa `FIN_070.TIPO_OP_NAO_PERMITE_VALOR` |
+| **`PUT fin070` com `frnMnyValor 0,01` e `frnVldTpop 1`** | — | **ok: o ERP lança `rgMnyValorJuros 0,01`; título e composição passam a `mnyValorTotal` 53,54** |
+| `PUT fin070/finalizar/3` | — | ok |
+
+**Resultado:** 536/1 consumido (some do `fin064`); nasce **536/2**: `titMnyValor 53,53` + **`titMnyJuros 0,01`**,
+**`totalLiquido 53,54`**, `totalAberto 53,53`, venc. 30/10/2026, **`vldLib 0`**. `fin026` mostra
+`titVld1/2/3Libera = 1`, mas o título **não aparece nos pendentes do SISPAG** (`fin015`).
+
+**Aprovação:** 536/2 nasce **bloqueado na Liberação de Títulos (`fin103`)** pela regra **19
+"ADIANTAMENTOS_OPERAÇÕES"** (bloqueio no instante do finalizar), `titMnyTotal 53,54`,
+`ftbMnyValorLiberado 53,53`, `alcadaUsuario 1` (o usuário do backend tem alçada para liberar).
+Ou seja: **renegociar devolve o título à aprovação** — volta ao fluxo normal de bloqueio/liberação.
+(A renegociação 2 do suporte, `tpop 0`, gerou 15/4 e 15/5 já liberados: a regra de bloqueio
+provavelmente depende do tipo de documento/valor, não de toda renegociação. A confirmar.)
+
+**Em aberto:** (1) liberar 536/2 pelo `fin103/aplicarComando` (corpo sem schema na spec);
+(2) depois, o `finalizar` do SISPAG compara com `totalAberto` (53,53) ou com `totalLiquido` (53,54)?
+Só o vínculo de um boleto de 53,54 ao 536/2 responde. (3) Desconto: provavelmente `frnVldTpop` com
+outro valor (2?) — não testado.
+
 ## Estado deixado em HML
 Lotes de teste **flp 42** (rascunho, finalizar recusado), **43, 44, 45** (finalizados, `PG191071–73.REM`).
 Títulos 753/1, 748/1, 607/1, 15/5. Nenhum cadastro de título alterado.
