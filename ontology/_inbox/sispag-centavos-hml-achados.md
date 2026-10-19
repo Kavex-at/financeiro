@@ -51,6 +51,29 @@ concilia com o título.
   aparentemente contas a receber). `fin064/eventos` é anotação de follow-up (sem campo de valor).
   **Pergunta para a Columbia/Conexos:** como o financeiro lança acréscimo num título a pagar hoje, pela tela?
 
+## Teste do desconto nativo `fin062` (HML, 2026-10-19, `jobs/probe-hml-desconto-fin062.ts`)
+
+Autorizado pelo maintainer. Títulos 640/1 (R$ 620,62) e 642/1 (R$ 1.146,24), filial 2, ambos a pagar
+(`docTip = 2`), vencidos (dez/2025), liberados (`vldLib = 1` no `fin064`; não há registro `fin007`).
+
+| Passo | Resultado |
+|---|---|
+| `GET fin062/validacao/contaFinanceiraDesconto/{doc}/{tit}/{docTip}` | `docTip 2` ⇒ `{"titCod":1}` (título existe; **não sugere conta**); `docTip 0/1/3` ⇒ `RECORDNOTFOUND` |
+| `POST fin062` sem `gerNum`, obs minúscula | 400: `gerNum` **obrigatório**; `dfcEspObsSol` tem de ser **MAIÚSCULA** |
+| `POST fin062` com `gerNum = 94`, obs maiúscula | 400: `docCod` **`Generic.NOT_VALID`** (640 e 642) — a conta passou, o título não |
+| `fin062/list`, `fin063/list` (filial 2) | 0 registros: nenhum exemplo de solicitação aceita em HML |
+| `ger036/planoContasFin/list` | 0 linhas (com `serviceName` `ger036` ou `fin062`): plano de contas não legível por esta via |
+
+**Nada foi gravado**: as duas inserções foram recusadas na validação; `totalAberto` e `vldLib` iguais
+antes e depois.
+
+**Conclusão:** o `fin062` recusa estes títulos a pagar por regra de negócio não documentada na spec.
+Hipóteses (não distinguíveis sem outra escrita): (a) a tela é só para contas a **receber** (desconto
+concedido a cliente); (b) só aceita título **a vencer**; (c) só aceita título **não liberado**. HML não tem
+título a pagar a vencer livre (o 637 foi consumido em 14/10); testar (b) exigiria `PUT
+fin026/alteraDataVencimento` num título de HML — escrita diferente, pede OK próprio. **Pergunta para a
+Columbia:** usam a tela de solicitação de desconto (fin062/fin063) em título a pagar? Em quais títulos?
+
 ## Estado deixado em HML
 Lotes de teste **flp 42** (rascunho, finalizar recusado), **43, 44, 45** (finalizados, `PG191071–73.REM`).
 Títulos 753/1, 748/1, 607/1, 15/5. Nenhum cadastro de título alterado.
