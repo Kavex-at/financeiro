@@ -10,12 +10,10 @@ import { ehPronto } from './situacaoTitulos'
  */
 
 /**
- * Pronto e livre de lote. Título já em lote RASCUNHO não se seleciona aqui: o contrato de
- * `POST /sispag/lotes/por-filial` não tem o `mover` do ADR-0064 (ver CONTRACT-NOTES.md), então o
- * servidor o recusaria. Ele sai do rascunho pelo "Retirar do lote" da linha.
+ * Pronto e fora de lote comprometido. Título em lote RASCUNHO É selecionável: ao criar os lotes ele
+ * sai de lá e entra no novo (`mover` do ADR-0064), depois de a analista confirmar o que sai de onde.
  */
-export const selecionavel = (t: TituloAPagar): boolean =>
-  ehPronto(t) && !t.loteComprometido && !t.loteRascunho
+export const selecionavel = (t: TituloAPagar): boolean => ehPronto(t) && !t.loteComprometido
 
 /** Motivo de uma linha não ser selecionável (tooltip/aria-label), ou `undefined` se é. */
 export const motivoNaoSelecionavel = (t: TituloAPagar): string | undefined => {
@@ -26,7 +24,6 @@ export const motivoNaoSelecionavel = (t: TituloAPagar): string | undefined => {
       : 'Bloqueado. Resolva antes de incluir em um lote.'
   }
   if (t.loteComprometido) return motivoSelecaoBloqueada(t)
-  if (t.loteRascunho) return 'Já está em um lote em rascunho. Use "Retirar do lote" para usá-lo em outro.'
   return undefined
 }
 
