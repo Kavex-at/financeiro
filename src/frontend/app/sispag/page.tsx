@@ -1089,7 +1089,7 @@ function SispagPanel() {
                         </Button>
                       ) : null}
                       {truncado ? (
-                        <span className="text-xs font-medium text-amber-700 dark:text-amber-500">
+                        <span className="text-xs font-medium text-warning-foreground">
                           Lista cortada em {titulos.length} de {painel?.titulosTotal} títulos — os
                           demais não aparecem aqui nem podem entrar em lote. Os filtros e as
                           contagens valem só para o recorte.
