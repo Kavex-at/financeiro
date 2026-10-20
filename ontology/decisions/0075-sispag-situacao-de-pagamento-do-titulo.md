@@ -116,6 +116,31 @@ são as colunas que a tela já mostra).
 - Migration **0089** aditiva (`tpd_des_nome`; `tpd_cod` já existe e passa a ser preservada no UPSERT).
 - Ontologia 0.46.0; app: minor (`feat`), versão a conferir na `main` antes do bump.
 
+## Medição somente leitura em PRD (2026-10-20)
+
+Script `src/backend/jobs/validate-situacao-pagamento-v1.ts` sobre a carteira persistida (1.294 títulos ativos e
+não pagos), antes da primeira ingestão com o leitor de tipo:
+
+| Estado / motivo principal | Títulos | Valor |
+|---|---:|---:|
+| PRONTO | 153 | R$ 1.624.025 |
+| BLOQUEADO | 1.141 | R$ 7.018.944 |
+| · `BOLETO_SEM_DDA` | 984 | R$ 5.052.360 |
+| · `VENCIDO` | 129 | R$ 1.708.143 |
+| · `ALCADA` | 16 | R$ 212.138 |
+| · `FORMA_NAO_SISPAG` (todos caixa) | 12 | R$ 46.301 |
+
+`TIPO_PERMUTA`, `DUPLICIDADE`, `RETIDO_CODBAR`, `AJUSTE_CENTAVOS_PENDENTE` e `CONFIRMACAO_A_REVISAR`: zero (o
+tipo ainda não está gravado; as demais fontes estavam vazias). Soma dos motivos = bloqueados; nenhum título sem
+situação. Das formas no Conexos, 1.081 títulos são BOLETO sem DDA associado e 129 com; dos 1.081, 375 vencem em até
+7 dias, 278 em 8–15, 219 em 16–30, 115 em mais de 30 e 94 já venceram.
+
+**Leitura:** o motivo `BOLETO_SEM_DDA` domina a carteira (76% dos títulos). É o que o fluxo já fazia na remessa
+(`BoletoSemCodigoBarrasError`), agora visível na lista. O desfecho de sugestão desses títulos (ADR-0072) separa o
+que tem um boleto sugerido para confirmar do que não tem, e é onde está o trabalho da analista. Decisão pendente do
+maintainer: subdividir o motivo por desfecho nos chips, e se boleto com vencimento distante (mais de 15 dias) deve
+ser tratado como bloqueio acionável.
+
 ## Perguntas abertas
 
 1. **Adiantamento:** os tipos `99`, `141`, `18` (carteira de 2026-10-13) não bloqueiam nesta fatia; algum
@@ -127,3 +152,4 @@ são as colunas que a tela já mostra).
 4. **Códigos de forma:** confirmar o código de TED em `titVldPagopor` e se `2, 3, 8, 9, 10` seguem sem
    bloqueio.
 5. **Backlog de filtros:** fechado em D17; reabrir só se a analista pedir coluna nova.
+6. **Volume de `BOLETO_SEM_DDA`** (984 títulos, 76% da carteira): subdividir por desfecho e tratar vencimento distante (ver a medição acima).

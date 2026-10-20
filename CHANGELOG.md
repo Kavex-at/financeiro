@@ -1,5 +1,30 @@
 # Columbia Financeiro — Changelog
 
+## v0.72.0 (2026-10-20) — SISPAG: cada título mostra se pode ser pago, por quê, e o que fazer
+
+- **Pronto ou bloqueado, na própria linha.** A tela de títulos a pagar passa a dizer, para cada título,
+  se ele está **pronto** para entrar em lote ou **bloqueado**, com o motivo, quem resolve e um botão para o
+  próximo passo. Motivos: aguardando aprovação, título de permuta, vencido, forma de pagamento fora do
+  SISPAG (cheque, extra-caixa, cartão de crédito, caixa), possível duplicidade, retido por código de
+  barras, ajuste de centavos pendente, confirmação de boleto a revisar e boleto sem DDA.
+- **Topo da tela feito para agir.** Quatro cartões (prontos para pagar, precisam de ação, vencem em até 2
+  dias, lotes esperando você), uma faixa vermelha com os bloqueados que vencem **hoje** e o filtro
+  **Todos / Prontos / Bloqueados** com contagem e valor. Em Bloqueados, chips por motivo e por quem resolve.
+  O botão "?" explica cada regra.
+- **Filtro e ordenação em todas as colunas.** O funil no cabeçalho filtra (texto, faixa de valor,
+  vencimento por faixa ou por período, forma de pagamento, situação, quem resolve, filial) e o nome da
+  coluna ordena. O vencimento mostra a data completa.
+- **Bloqueado não entra em lote.** A caixa de seleção some nas linhas bloqueadas, e a inclusão manual no
+  lote recusa o título com o motivo. Os lotes automáticos usam só títulos prontos.
+- **Um lote por filial, de uma vez.** Selecione títulos de várias filiais e o botão cria um lote para cada
+  uma, mostrando o que entrou e o que foi recusado. Título que já está em um lote em rascunho pode ser
+  movido, depois de você confirmar de onde ele sai.
+- **Título de permuta.** O tipo do documento passa a ser lido do Conexos na ingestão (antes não vinha em
+  nenhum título). Permuta aparece como bloqueada, avisando que pode já ter permuta parcial. Os tipos só
+  começam a aparecer depois da primeira ingestão com esta versão.
+- **O que fica para depois.** TED/PIX sem conta no cadastro ou com favorecido não autorizado continuam
+  sendo detectados só dentro do lote.
+
 ## v0.71.0 (2026-10-20) — SISPAG: boleto com diferença de centavos passa a ser pagável
 
 - **Boleto até R$ 0,05 acima ou abaixo do título.** Quando você confirma um par com diferença de
