@@ -316,6 +316,55 @@ describe('ConexosSispagClient (read-only)', () => {
             'ufEspSigla#LIKE': 'EX',
         });
     });
+    describe('listTiposDosDocumentos — tipo do documento (ADR-0075)', () => {
+        it('lê o com298/list em lotes de docCod#IN, sem filtro de status, e mapeia código e nome', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 2,
+                rows: [
+                    { docCod: 200, tpdCod: 157, tpdDesNome: ' RECIBO/BOLETO/FATURA - (PERMUTA) ' },
+                    { docCod: '201', tpdCod: '1', tpdDesNome: 'NOTA FISCAL' },
+                ],
+            });
+            const tipos = await make(base).listTiposDosDocumentos(2, ['200', '201', '200']);
+            expect(tipos.get('200')).toEqual({
+                tpdCod: '157',
+                tpdDesNome: 'RECIBO/BOLETO/FATURA - (PERMUTA)',
+            });
+            expect(tipos.get('201')).toEqual({ tpdCod: '1', tpdDesNome: 'NOTA FISCAL' });
+            const [servico, body, opts] = base.listGenericPaginated.mock.calls[0];
+            expect(servico).toBe('com298/list');
+            const filtro = (body as { filterList: Record<string, unknown> }).filterList;
+            expect(filtro['docCod#IN']).toEqual(['200', '201']);
+            expect(filtro).not.toHaveProperty('vldStatus#IN');
+            expect(opts).toEqual({ filCod: 2 });
+        });
+
+        it('documento sem tipo ou fora da resposta fica FORA do mapa (desconhecido, nunca inventado)', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 2,
+                rows: [{ docCod: 300, tpdCod: null, tpdDesNome: '  ' }, { docCod: 301 }],
+            });
+            const tipos = await make(base).listTiposDosDocumentos(2, ['300', '301', '302']);
+            expect(tipos.size).toBe(0);
+        });
+
+        it('parte a lista em várias leituras de 200 documentos', async () => {
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+            const docs = Array.from({ length: 450 }, (_, i) => String(1000 + i));
+            await make(base).listTiposDosDocumentos(2, docs);
+            expect(base.listGenericPaginated).toHaveBeenCalledTimes(3);
+        });
+
+        it('lista vazia não lê nada', async () => {
+            const base = buildBase();
+            await make(base).listTiposDosDocumentos(2, []);
+            expect(base.listGenericPaginated).not.toHaveBeenCalled();
+        });
+    });
+
     describe('listLotes — escopo de filial', () => {
         it('filtra por filCod#EQ e rotula com a filial DA LINHA', async () => {
             // `opts.filCod` é contexto de sessão, não filtro. Sem `filCod#EQ` o ERP devolve

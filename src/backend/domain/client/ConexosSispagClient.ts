@@ -17,7 +17,7 @@ import {
 } from '../interface/sispag/SispagInterface.js';
 import type { ValoresAbertoTitulo } from '../libs/boleto/ValorAbertoLiquido.js';
 import Logger from '../libs/logger/Logger.js';
-import ConexosBaseClient from './ConexosBaseClient.js';
+import ConexosBaseClient, { chunked } from './ConexosBaseClient.js';
 
 /**
  * ConexosSispagClient — leitura da superfície de PAGAMENTOS do Conexos (Escopo II).
@@ -97,6 +97,16 @@ const tituloRowSchema = z
     .passthrough();
 
 type TituloRow = z.infer<typeof tituloRowSchema>;
+
+/** Documentos por leitura de tipo (`com298/list` com `docCod#IN`). */
+const TIPOS_POR_LEITURA = 200;
+
+/** Linha do `com298/list` reduzida ao tipo do documento (ADR-0075). */
+const tipoDocumentoRowSchema = z.object({
+    docCod: z.union([z.string(), z.number()]).transform(String),
+    tpdCod: strOpt,
+    tpdDesNome: strOpt.transform((v) => (v?.trim() ? v.trim() : undefined)),
+});
 
 /**
  * `vldPago` ESTRITO para a sincronização do lote (I11c, ADR-0055). O `boolFromFlag` da carteira
@@ -988,6 +998,46 @@ export default class ConexosSispagClient {
             if (r.docCod !== null && r.docCod !== undefined) set.add(String(r.docCod));
         }
         return set;
+    };
+
+    /**
+     * Tipo do documento (`tpdCod`, `tpdDesNome`) por `docCod`, lido do `com298/list` em lotes de
+     * `docCod#IN`. O `fin064` não devolve o tipo (0% preenchido em PRD, 20/10/2026), e é o NOME do
+     * tipo que diz "(PERMUTA)" — ver ADR-0075. Um documento que o ERP não devolve fica FORA do
+     * mapa ("tipo desconhecido"), nunca com um tipo inventado. Sem filtro de `vldStatus`: o tipo
+     * vale para o documento em qualquer status, e o filtro 1/3 esconderia as NFs comuns.
+     */
+    public listTiposDosDocumentos = async (
+        filCod: number,
+        docCods: readonly string[],
+    ): Promise<Map<string, { tpdCod?: string; tpdDesNome?: string }>> => {
+        const tipos = new Map<string, { tpdCod?: string; tpdDesNome?: string }>();
+        for (const lote of chunked([...new Set(docCods)], TIPOS_POR_LEITURA)) {
+            const { rows } = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'com298/list',
+                    {
+                        fieldList: ['docCod', 'tpdCod', 'tpdDesNome'],
+                        filterList: { 'docCod#IN': lote },
+                        serviceName: 'com298',
+                        pageNumber: 1,
+                        pageSize: lote.length,
+                    },
+                    { filCod },
+                ),
+            );
+            for (const row of rows) {
+                const parsed = tipoDocumentoRowSchema.safeParse(row);
+                if (!parsed.success) continue;
+                const { docCod, tpdCod, tpdDesNome } = parsed.data;
+                if (tpdCod === undefined && tpdDesNome === undefined) continue;
+                tipos.set(docCod, {
+                    ...(tpdCod !== undefined ? { tpdCod } : {}),
+                    ...(tpdDesNome !== undefined ? { tpdDesNome } : {}),
+                });
+            }
+        }
+        return tipos;
     };
 
     /**

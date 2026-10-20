@@ -44,6 +44,7 @@ interface Mocks {
     listExterior: jest.Mock;
     listContas: jest.Mock;
     listSinais: jest.Mock;
+    listTipos: jest.Mock;
     acquire: boolean;
     filiais: Array<{ filCod: number }>;
     encerrar: jest.Mock;
@@ -78,10 +79,12 @@ const make = (over: Partial<Mocks> = {}) => {
         over.listTitulos ??
         jest.fn().mockResolvedValue([titulo(), titulo({ titCod: '2', pago: true })]);
     const listContas = over.listContas ?? jest.fn().mockResolvedValue([{ ccoCod: 1, bncCod: 4 }]);
+    const listTipos = over.listTipos ?? jest.fn().mockResolvedValue(new Map());
     const sispag = {
         listTitulosAPagar: listTitulos,
         listExteriorDocCods: over.listExterior ?? jest.fn().mockResolvedValue(new Set<string>()),
         listContasCorrentes: listContas,
+        listTiposDosDocumentos: listTipos,
     } as unknown as ConexosSispagClient;
     const listSinais = over.listSinais ?? jest.fn().mockResolvedValue(new Map());
     const fin015 = {
@@ -123,6 +126,7 @@ const make = (over: Partial<Mocks> = {}) => {
         listTitulos,
         listContas,
         listSinais,
+        listTipos,
         bloqueioRepo,
         log,
     };
@@ -517,5 +521,67 @@ describe('IngestaoPagamentosService — forma de pagamento no Conexos (titVldPag
         await service.executar({ triggeredBy: 'cron' });
         const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
         expect(persistidos[0].formaPagamentoConexos).toBeUndefined();
+    });
+});
+
+describe('IngestaoPagamentosService — tipo do documento (ADR-0075)', () => {
+    const PERMUTA = { tpdCod: '157', tpdDesNome: 'RECIBO/BOLETO/FATURA - (PERMUTA)' };
+
+    it('grava tpdCod e tpdDesNome do com298/list nos títulos do documento', async () => {
+        const listTipos = jest.fn().mockResolvedValue(new Map([['100', PERMUTA]]));
+        const { service, tituloRepo } = make({
+            listTipos,
+            listTitulos: jest
+                .fn()
+                .mockResolvedValue([titulo(), titulo({ docCod: '200', titCod: '1' })]),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        const [salvos] = tituloRepo.upsertMany.mock.calls[0];
+        expect(salvos).toEqual([
+            expect.objectContaining({ docCod: '100', ...PERMUTA }),
+            expect.not.objectContaining({ tpdCod: expect.anything() }),
+        ]);
+    });
+
+    it('só pede o tipo dos documentos que ENTRAM na carteira (sem pagos nem exterior)', async () => {
+        const listTipos = jest.fn().mockResolvedValue(new Map());
+        const { service } = make({
+            listTipos,
+            listExterior: jest.fn().mockResolvedValue(new Set(['300'])),
+            listTitulos: jest
+                .fn()
+                .mockResolvedValue([
+                    titulo({ docCod: '100' }),
+                    titulo({ docCod: '200', pago: true }),
+                    titulo({ docCod: '300' }),
+                    titulo({ docCod: '100', titCod: '2' }),
+                ]),
+        });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(listTipos).toHaveBeenCalledWith(2, ['100']);
+    });
+
+    it('falha ao ler o tipo NÃO derruba a ingestão: títulos sem tipo (o UPSERT preserva) e WARN', async () => {
+        const listTipos = jest.fn().mockRejectedValue(new Error('conexos 403'));
+        const { service, tituloRepo, log } = make({ listTipos });
+        const r = await service.executar({ triggeredBy: 'cron' });
+        expect(r.status).toBe('success');
+        const [salvos] = tituloRepo.upsertMany.mock.calls[0];
+        expect(salvos[0]).not.toHaveProperty('tpdCod');
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringContaining('leitura do tipo do documento falhou'),
+            }),
+        );
+    });
+
+    it('com298 que não devolve tipo de NENHUM documento avisa (o contrato pode ter mudado)', async () => {
+        const { service, log } = make({ listTipos: jest.fn().mockResolvedValue(new Map()) });
+        await service.executar({ triggeredBy: 'cron' });
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringContaining('não devolveu o tipo de nenhum documento'),
+            }),
+        );
     });
 });
