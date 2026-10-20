@@ -251,3 +251,38 @@ export interface ResultadoOrfao {
     motivo?: MotivoGrupoOrfao;
     titulo?: ChaveTituloGrupo;
 }
+
+// ── Saída do motor de sugestão (MotorGrupoBoleto) ────────────────────────────────────────────
+
+/** Título de uma sugestão de grupo: a avaliação da regra + o que a tela mostra. */
+export interface TituloSugestaoGrupo extends AvaliacaoTituloGrupo {
+    /** `valor` local da carteira, em centavos (G1: a sugestão não lê o Conexos). */
+    valorCentavos: number;
+    vencimento: string;
+}
+
+/**
+ * Sugestão de grupo fechado no mesmo vencimento (I19e) — calculada, NUNCA persistida (I-DDA1).
+ * Exibir ≠ confirmar: um conjunto fechado com título que falha a I19c aparece com o motivo e
+ * `confirmavel = false` (PI-7). A analista confirma cada grupo, inclusive os intercambiáveis.
+ */
+export interface SugestaoGrupoBoleto {
+    filCod: number;
+    pesCod: string;
+    credor?: string;
+    ddcCod: number;
+    ditCod: number;
+    numeroBoleto?: string;
+    codbarMascarado?: string;
+    emissorChave?: string;
+    valorBoletoCentavos: number;
+    vencimentoBoleto: string;
+    somaTitulosCentavos?: number;
+    titulos: TituloSugestaoGrupo[];
+    /** Partição fixa entre K boletos iguais e títulos de mesmo valor (I19f). */
+    intercambiavel: boolean;
+    parVigente: boolean;
+    confirmavel: boolean;
+    motivo?: MotivoGrupoInelegivel;
+    motivos: MotivoGrupoInelegivel[];
+}
