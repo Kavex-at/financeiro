@@ -250,3 +250,21 @@ O import respondeu YES à pergunta `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA…
   0,01) e **8** (539/2→539/3, desconto 0,01), finalizadas e liberadas.
 - Títulos: **537/1** intacto; **528/3** e **539/3** em lotes finalizados **flp 49** (`PG201080.REM`) e
   **flp 50** (`PG201090.REM`). 528/1, 528/2, 539/1, 539/2 consumidos pelas renegociações.
+
+## PRD somente leitura — Tasks 13 (GT1–GT4) e 14 (G1), 2026-10-20
+
+Job `src/backend/jobs/validate-sispag-ajuste-centavos-v1.ts`, autorizado pelo maintainer. Execução 1
+(10:44 BRT, todas as seções): **1 login, 48 chamadas, 0 escritas recusadas**. Execução 2 (10:50 BRT,
+`SECOES=G1`, depois de corrigir `MISSING_FIL_COD` nas chamadas `ger*`): 1 login.
+
+| Medição | Resultado | Consequência |
+|---|---|---|
+| **GT1/GT2** carteira (1.289 títulos; 1.229 BOLETO) | 0 divergências, 0 regressões | régua líquida sem efeito na carteira atual |
+| **GT1/GT2** universo `fin064` (1.910) | 15 divergentes, **todos com pagamento parcial**, e nos 15 o `totalLiquido` **já desconta o pago** | **corrigido:** a régua I17b passa a `abertoLiquido = totalLiquido` (sem `− totalPago`), conferido com `totalAberto + juros − desconto` |
+| **GT3** `.REM` 30 dias | 19 lotes, 12 arquivos, 50 J com barra, **0 divergências** barra × pagamento | guarda I17m fica em **BLOQUEIA** |
+| **GT4** grid de pendentes (3.136 linhas) | **nenhuma** traz `titMnyLiquido`; juros/desconto 0 em todas | **corrigido:** I17n sem `titMnyLiquido` importa `titMnyValor + juros − desconto` (antes recusava todo título ajustado) |
+| **G1** permissões do login do servidor | **MPS_FRANCINEI** (usnCod 97), grupo 4 ADMINISTRADOR: CRUD completo em FIN_064/070/103/106; ações **FIN_070 FINALIZAR, CANCELAR**; **FIN_103 LIBERAR TITULOS** | G1 cumprido para a tela; `SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO=MPS_FRANCINEI` |
+
+**Não coberto pela G1:** a alçada do comando APROVAR da regra de bloqueio que o título renegociado receber em
+PRD (em HML era a regra 19, alçada CONTROLLER, `alcadaUsuario=1`). A regra e o comando de PRD só aparecem no
+primeiro título renegociado; o `shadow` deve registrar `fblCod`/`fbaCod`/`alcadaUsuario` antes de `on`.

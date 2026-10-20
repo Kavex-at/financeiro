@@ -73,6 +73,20 @@ import { ConexosSessionStore } from '../services/conexosSessionStore.js';
  *     npx tsx jobs/validate-sispag-ajuste-centavos-v1.ts --eu-entendo-que-derruba-uma-sessao-viva
  */
 export const FLAG_SESSAO = '--eu-entendo-que-derruba-uma-sessao-viva';
+/**
+ * Filial do cabeçalho `cnx-filcod` nas leituras de permissão (`ger*`): a permissão é do usuário,
+ * não da filial, mas o client exige a filial em toda chamada (ADR-0009). PRD 2026-10-20: sem ela
+ * a G1 falhou com `MISSING_FIL_COD`.
+ */
+const FIL_PERMISSOES = 1;
+/** `SECOES=G1` (ou lista `G1,GT3`) roda só as seções pedidas — p.ex. refazer a G1 com 1 login. */
+const SECOES = new Set(
+    (process.env.SECOES ?? '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean),
+);
+const pedida = (nome: string): boolean => SECOES.size === 0 || SECOES.has(nome);
 const OUT = process.env.PROBE_OUT ?? '/tmp/validate-sispag-ajuste-centavos-v1';
 const JANELA_DIAS = 30;
 const DIA_MS = 24 * 60 * 60 * 1000;
@@ -246,13 +260,17 @@ export class AnaliseReguaLiquida {
         }
         const liquido = centavos(totalLiquido);
         const peloAberto = centavos(totalAberto) + centavos(titMnyJuros) - centavos(titMnyDesconto);
-        const diverge = liquido - base.pagoCentavos !== peloAberto;
+        // Régua vigente (PRD 2026-10-20): o `totalLiquido` já desconta o pago.
+        const diverge = liquido !== peloAberto;
         return {
             ...base,
             completo: true,
             diverge,
             ...(base.pagoCentavos > 0
-                ? { liquidoJaDescontaPago: liquido === peloAberto, liquidoBrutoDoPago: !diverge }
+                ? {
+                      liquidoJaDescontaPago: !diverge,
+                      liquidoBrutoDoPago: liquido - base.pagoCentavos === peloAberto,
+                  }
                 : {}),
             ...(regride ? { motivoRegressao: diverge ? 'DIVERGENTE' : 'NEGATIVO' } : {}),
         };
@@ -741,6 +759,7 @@ export class ValidacaoAjusteCentavosV1 {
         try {
             const r = await this.deps.base.getGeneric<Linha>(
                 `ger014/componentes/${cpoCod}/${grpCod}`,
+                { filCod: FIL_PERMISSOES },
             );
             const dado = (r?.data as Linha | undefined) ?? r ?? {};
             const crud: Linha = {};
@@ -763,6 +782,7 @@ export class ValidacaoAjusteCentavosV1 {
             const lido = await this.paginar({
                 path: `ger014/compAcao/list/${cpoCod}/${grpCod}`,
                 serviceName: 'ger014',
+                filCod: FIL_PERMISSOES,
                 filterList: {},
             });
             const acoes = lido.rows.map((row) => {
@@ -789,6 +809,7 @@ export class ValidacaoAjusteCentavosV1 {
         const grupos = await this.paginar({
             path: `ger004/grupos/list/${usnCod}`,
             serviceName: 'ger004',
+            filCod: FIL_PERMISSOES,
             filterList: {},
         });
         const grpCods = [...new Set(grupos.rows.map((g) => num(g.grpCod)))].filter(
@@ -797,6 +818,7 @@ export class ValidacaoAjusteCentavosV1 {
         const componentes = await this.paginar({
             path: 'ger016/list',
             serviceName: 'ger016',
+            filCod: FIL_PERMISSOES,
             filterList: {},
             pageSize: 1000,
         });
@@ -832,6 +854,7 @@ export class ValidacaoAjusteCentavosV1 {
             const c = await this.paginar({
                 path: 'ger061/list',
                 serviceName: 'ger061',
+                filCod: FIL_PERMISSOES,
                 filterList: { 'usnCod#EQ': Number(usnCod) },
             });
             concessoesAvulsas = { linhas: c.rows.length, completa: c.completa };
@@ -875,7 +898,8 @@ export class ValidacaoAjusteCentavosV1 {
 
     public executar = async (): Promise<Linha> => {
         await this.deps.base.ensureSid();
-        const g1 = await this.secao('G1', this.sondarPermissoes);
+        const g1 = pedida('G1') ? await this.secao('G1', this.sondarPermissoes) : undefined;
+        if (!pedida('GT1') && !pedida('GT3') && !pedida('GT4')) return { g1 };
         const gt12 = await this.secao('GT1/GT2', this.medirReguaLiquida);
         const lotesPorFilial = new Map<number, LoteLido[]>();
         const leiturasLotes: Linha[] = [];
@@ -1028,6 +1052,8 @@ const resumir = (r: Linha): void => {
             `   ${m.arquivo} cpo=${m.cpoCod} grp=${m.grpCod} linha=${m.temLinha ?? '?'} crud=${JSON.stringify(m.crud ?? m.motivo ?? m.erro)} ações=${JSON.stringify(m.nomesAcoes)}`,
         );
     }
+    // `SECOES=G1`: as demais seções não rodaram; nada a imprimir.
+    if (!gt12) return;
     console.log(
         '[GT1/GT2] carteira',
         JSON.stringify({
