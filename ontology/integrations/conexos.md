@@ -367,7 +367,7 @@ Provado em HML em 2026-10-19 (`_inbox/sispag-boleto-agrupado-hml-achados.md`). S
 | # | Chamada | Corpo / regra |
 |---|---|---|
 | 1 | `fin005/list` | `gerNum` da conta pagadora do lote (H2, H10). Ausente ⇒ falha antes de escrever. |
-| 2 | `POST fin010` | `{ filCod, borVldTipo 2, borVldFinalizado 0, frontModelName 'bordero', borDtaMvto = dataDebito do lote, gerNum }` ⇒ `borCod`. Marcador de correlação num campo de observação **(nome a medir no HML)**. |
+| 2 | `POST fin010` | `{ filCod, borVldTipo 2, borVldFinalizado 0, frontModelName 'bordero', borDtaMvto = dataDebito do lote, gerNum }` ⇒ `borCod`. Marcador de correlação em **`borEspNrbanco`** (medido em HML 2026-10-20: máx. 15 caracteres, só maiúsculas, volta no `GET` e filtra no `fin010/list` `#EQ`/`#LIKE`). O `borCod` é **reutilizado** depois de `excluirBordero`: identidade = `borCod` + marcador. `GET` de borderô ausente ⇒ `500 RECORDNOTFOUND`. |
 | 3 | `POST fin010/baixas/validacao/tituloBaixa` | `{ filCod, borCod, borVldTipo 2, docTip 2, docCod, titCod, bxaVldSistema 0, bxaVldCcorrente 0, bxaVldCorrenteDc 1, bxaVldAdto 0, frontModelName 'baixa' }` ⇒ `bxaMnyValor`. |
 | 4 | `POST fin010/baixas` | `responseData` + chave + `gerNum`, juros/multa/desconto 0, `bxaMnyLiquido = bxaMnyValor`. Títulos continuam em aberto. |
 | 5 | `GET fin015/finItemSispag/borderosPendentes/list/{fil}/{bnc}/{flp}` | Linha `{ borCod, pesCod, dpeNomPessoa, vlrTotal, borVldTipo, filCod, pesCodCont, itemy 0 }`. Só aparece se `gerNum` = conta do lote; o filtro **não** é a filial. |
@@ -375,7 +375,7 @@ Provado em HML em 2026-10-19 (`_inbox/sispag-boleto-agrupado-hml-achados.md`). S
 | 7 | vínculo da barra | sequência I17e no item (`borCod`, sem `docCod/titCod`, nasce modalidade 4); `7` banco ≠, `6` banco = (H5). |
 | 8 | `finalizarLote` / `gerarRemessa` | inalterados; o J paga o total do borderô (H6); `vldHasRemessaPgto` do borderô vira 1 (H9). |
 | 9 | retorno (`fin052` `processar`) | parser `ger015.gtbLngSql`: `BOR_COD` não nulo → `FIN_BORDERO` → `FIN_TITULO_RETBANCO` com `BOR_COD` → `PRC_BAIXA_RETORNO_PAGFOR('BAIXAR')`: finaliza o borderô e baixa os N (H7). Chave do J nas posições 183–202 (`fil(2) bnc(4) flp(7) its(7)`), ocorrência em 231. `.RET` sintético com J-52 falha (limite do sintético, H8). |
-| 10 | limpeza | `DELETE finItemSispag` → `excluirBaixa` × N → `excluirBordero`; só em cadastro e com `vldHasRemessaPgto 0`. Nunca `finalizarBordero`/`cancelarBordero`/`fin146`. |
+| 10 | limpeza | `DELETE finItemSispag` → `excluirBaixa` × N → `excluirBordero`; só em cadastro e com `vldHasRemessaPgto 0`. Nunca `finalizarBordero`/`cancelarBordero`/`fin146`. Ordem confirmada em HML (2026-10-20) e imposta pelo ERP: com o item no lote, `excluirBaixa`/`excluirBordero` ⇒ `400 FIN_014.FIN_HAS_REMESSA_PGTO`. Medido: `vldHasRemessaPgto` vira 1 no `importar` e volta a 0 no `DELETE` do item (não na geração do `.REM`); guarda a revisar (achados T6). |
 
 Depois de um J rejeitado, o borderô antigo fica em cadastro com `vldHasRemessaPgto = 1` e **nunca** é
 limpo por nós. Se ele reaparecer em `borderosPendentes` (passo 5) do lote novo, é **reaproveitado** (I21s);
