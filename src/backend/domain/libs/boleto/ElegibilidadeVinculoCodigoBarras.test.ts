@@ -116,9 +116,13 @@ describe('ElegibilidadeVinculoCodigoBarras (I17a–d, só locais)', () => {
             expect(r.motivo).toBe(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL);
         });
 
+        it('totalPago ausente não entra na régua (o líquido do fin064 já desconta o pago)', () => {
+            const { totalPago: _p, ...sem } = hml5362;
+            expect(regra.avaliar(base({ aberto: sem }, { valor: 53.54 })).elegivel).toBe(true);
+        });
+
         it.each([
             'totalLiquido',
-            'totalPago',
             'titMnyJuros',
             'titMnyDesconto',
         ] as const)('campo %s ausente ⇒ VALOR_ABERTO_INDISPONIVEL', (campo) => {

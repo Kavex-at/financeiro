@@ -3992,10 +3992,24 @@ describe('I17n — o item é importado pelo LÍQUIDO do grid (ADR-0073)', () => 
         });
     });
 
-    it('sem titMnyLiquido com juros ≠ 0 ⇒ NetValueUnavailableError e NENHUM importar', async () => {
+    it('sem titMnyLiquido (grid de PRD) com juros 0,01 ⇒ importa valor + juros = 462,50', async () => {
         const write = buildWrite();
         write.listarTitulosPendentes.mockResolvedValue([
             pendente({ titMnyValor: 462.49, titMnyJuros: 0.01 }),
+        ]);
+        await make({ write })
+            .gerarRemessa({ loteId: 'L1', ator: 'u' })
+            .catch(() => undefined);
+        expect(itensImportados(write)[0]).toMatchObject({
+            itsMnyValor: 462.5,
+            itsMnyVlrPgto: 462.5,
+        });
+    });
+
+    it('sem titMnyLiquido com juros ilegível ⇒ NetValueUnavailableError e NENHUM importar', async () => {
+        const write = buildWrite();
+        write.listarTitulosPendentes.mockResolvedValue([
+            pendente({ titMnyValor: 462.49, titMnyJuros: 'x' }),
         ]);
         const erro = await make({ write })
             .gerarRemessa({ loteId: 'L1', ator: 'u' })

@@ -13,9 +13,12 @@ export interface ValoresAbertoTitulo {
 const emCentavos = (v: number): number => Math.round(v * 100);
 
 /**
- * Régua líquida da I17b (ADR-0073): `abertoLiquido = totalLiquido − totalPago`, CONFERIDO contra
- * `totalAberto + titMnyJuros − titMnyDesconto`, em centavos inteiros. As duas fórmulas divergirem
- * ou qualquer campo faltar ⇒ `undefined` (o chamador trata como `VALOR_ABERTO_INDISPONIVEL`).
+ * Régua líquida da I17b (ADR-0073): `abertoLiquido = totalLiquido`, CONFERIDO contra
+ * `totalAberto + titMnyJuros − titMnyDesconto`, em centavos inteiros. O `totalLiquido` do `fin064`
+ * JÁ desconta o pago (PRD 2026-10-20: 15 de 15 títulos com pagamento parcial); subtrair `totalPago`
+ * de novo reprovaria todo título parcialmente pago. As duas fórmulas divergirem ou qualquer campo
+ * faltar ⇒ `undefined` (o chamador trata como `VALOR_ABERTO_INDISPONIVEL`). `totalPago` segue na
+ * tupla para quem precisa saber se houve pagamento (I18a, M4), mas não entra na conta.
  *
  * É a MESMA função nos três pontos do vínculo (elegibilidade, conferência pré-`PUT` e
  * pós-releitura) e no Δ do ajuste de centavos (I18a(3)). Pura: sem I/O, sem log, sem relógio.
@@ -23,19 +26,18 @@ const emCentavos = (v: number): number => Math.round(v * 100);
 export default class ValorAbertoLiquido {
     public static calcularCentavos = (v?: ValoresAbertoTitulo): number | undefined => {
         if (!v) return undefined;
-        const { totalLiquido, totalPago, totalAberto, titMnyJuros, titMnyDesconto } = v;
+        const { totalLiquido, totalAberto, titMnyJuros, titMnyDesconto } = v;
         if (
             totalLiquido === undefined ||
-            totalPago === undefined ||
             totalAberto === undefined ||
             titMnyJuros === undefined ||
             titMnyDesconto === undefined
         ) {
             return undefined;
         }
-        const campos = [totalLiquido, totalPago, totalAberto, titMnyJuros, titMnyDesconto];
+        const campos = [totalLiquido, totalAberto, titMnyJuros, titMnyDesconto];
         if (campos.some((c) => !Number.isFinite(c))) return undefined;
-        const pelaLiquidez = emCentavos(totalLiquido) - emCentavos(totalPago);
+        const pelaLiquidez = emCentavos(totalLiquido);
         const peloAberto =
             emCentavos(totalAberto) + emCentavos(titMnyJuros) - emCentavos(titMnyDesconto);
         if (pelaLiquidez !== peloAberto || pelaLiquidez < 0) return undefined;

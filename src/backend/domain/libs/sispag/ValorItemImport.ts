@@ -22,7 +22,9 @@ export type ValorDoItem = { disponivel: true; valor: number } | { disponivel: fa
  * de pendentes (`titMnyLiquido`), nunca o base (`titMnyValor`) quando há juros/desconto. HML
  * 536/2: o `.REM` paga o valor do título; importar pelo base pagaria 1 centavo a menos.
  *
- * Sem `titMnyLiquido`: usa `titMnyValor` SÓ se juros e desconto forem 0/ausentes; senão
+ * Sem `titMnyLiquido` (o grid de PRD nunca o traz: 3136 de 3136 linhas em 2026-10-20; o título
+ * renegociado 536/2 vem como `titMnyValor 53,53` + `titMnyJuros 0,01`): `titMnyValor + juros −
+ * desconto`, com nulo/ausente = 0. Juros/desconto ilegível, base ausente ou líquido negativo ⇒
  * indisponível (o chamador lança `NetValueUnavailableError`). Nunca o snapshot do item. Puro.
  */
 export default class ValorItemImport {
@@ -31,12 +33,16 @@ export default class ValorItemImport {
         if (!lido.success) return { disponivel: false };
         const { titMnyValor, titMnyLiquido, titMnyJuros, titMnyDesconto } = lido.data;
         if (titMnyLiquido !== undefined) return { disponivel: true, valor: titMnyLiquido };
-        const semAcrescimos = (titMnyJuros ?? 0) === 0 && (titMnyDesconto ?? 0) === 0;
         const jurosIlegivel = raw.titMnyJuros != null && titMnyJuros === undefined;
         const descontoIlegivel = raw.titMnyDesconto != null && titMnyDesconto === undefined;
-        if (!semAcrescimos || jurosIlegivel || descontoIlegivel || titMnyValor === undefined) {
+        if (jurosIlegivel || descontoIlegivel || titMnyValor === undefined) {
             return { disponivel: false };
         }
-        return { disponivel: true, valor: titMnyValor };
+        const centavos =
+            Math.round(titMnyValor * 100) +
+            Math.round((titMnyJuros ?? 0) * 100) -
+            Math.round((titMnyDesconto ?? 0) * 100);
+        if (centavos < 0) return { disponivel: false };
+        return { disponivel: true, valor: centavos / 100 };
     };
 }
