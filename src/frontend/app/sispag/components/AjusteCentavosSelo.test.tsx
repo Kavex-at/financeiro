@@ -7,7 +7,7 @@ describe('AjusteCentavosSelo (ADR-0073)', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it.each(['desligado', 'em_curso', 'concluido', 'aviso'] as const)(
+  it.each(['simulacao', 'em_curso', 'concluido', 'aviso'] as const)(
     'tipo %s vira região de status com o texto',
     (tipo) => {
       render(<AjusteCentavosSelo selo={{ tipo, texto: `texto ${tipo}`, retomavel: false }} />)

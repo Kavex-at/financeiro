@@ -51,11 +51,11 @@ manda `titMnyValor` (base) como valor do item, não o líquido.
    `CONFIRMADA` no título novo com o autor humano herdado (transferir não é confirmar), upsert da carteira,
    troca do item em lote `RASCUNHO`. Lote finalizado/remessa/rascunho nativo ⇒ não renegocia e avisa;
    `finalizarLote` fica bloqueado enquanto o ajuste corre.
-7. **Base (vale com o ajuste desligado):** I17b compara com o **líquido aberto** (fail-closed na divergência
+7. **Base (vale para toda remessa, com ou sem ajuste):** I17b compara com o **líquido aberto** (fail-closed na divergência
    das duas fórmulas); **I17n** o import do item leva o líquido; **I17m** o `.REM` bloqueia J cuja barra (> 0)
    difere do pagamento.
 8. **Rollout** (D6): flag `off/shadow/on` por filial, default `off`; `on` em PRD só depois de G1–G5 e go do
-   maintainer.
+   maintainer. *(Substituído pela emenda 2026-10-20: sem flag dedicada, ativo após o merge.)*
 
 ## Decisões do maintainer (2026-10-19)
 
@@ -128,3 +128,20 @@ Renegociação × correção do documento; conta contábil de juros/desconto (de
 aprovação no `fin103` (sessão do servidor); permissão do login do servidor em `fin070`/`fin103` em PRD
 (o CLONEX não tem `fin070`/`fin026`/`fin103` no menu). HML: renegociações 3 e 4 ficam como estão (P1-5).
 Universalidade: 1 cliente, revisão com o Francinei não bloqueante.
+
+## Emenda 2026-10-20: sem flag dedicada; ativo após o merge
+
+**Decisão do maintainer.** O ajuste de centavos não tem mais flag própria: as variáveis de modo por filial e
+de login sondado foram removidas (código, `EnvironmentProvider`, docs e testes). O ajuste fica **ativo logo
+após o merge**. Isso substitui o item 8 da Decisão (flag `off/shadow/on` por filial, default `off`) e a M3
+(login sondado fixado por configuração).
+
+- **Modo efetivo** (`ModoAjusteCentavos.resolverModoEfetivo`, global, sem filial): `on` quando o processo é o
+  servidor (`ServerProcessMarker`), há credencial Conexos do servidor, `SISPAG_LIVE_WRITE_ENABLED` ligado,
+  escrita no Conexos ligada e `CONEXOS_DRY_RUN` desligado; qualquer falha ⇒ `shadow` (leitura ao vivo, zero
+  escrita), com os motivos em `warn`. Não existe mais `off` por configuração.
+- **Kill-switch:** `SISPAG_LIVE_WRITE_ENABLED=false` (derruba também as demais escritas do SISPAG).
+- **Racional:** flags demais para operar a mesma frente; a G1 (sonda de permissão de `fin070`/`fin103`) já
+  passou em PRD para o login do servidor (MPS_FRANCINEI), então o portão que a M3 protegia está cumprido.
+  Trocar o `CONEXOS_USERNAME` do servidor passa a exigir nova sonda como procedimento operacional, não como
+  configuração.

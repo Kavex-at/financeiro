@@ -38,10 +38,17 @@ const ajuste = (over: Partial<AjusteCentavos> = {}): AjusteCentavos => ({
 })
 
 describe('seloDoAjusteCentavos (ADR-0073, I18l/I18m)', () => {
-  it('modo off + par dentro do limite ⇒ "diferença de centavos — ajuste desligado"', () => {
-    const s = seloDoAjusteCentavos({ sugestao: confirmada(0.01), modo: 'off' })
-    expect(s).toMatchObject({ tipo: 'desligado', retomavel: false })
-    expect(s?.texto).toMatch(/diferença de centavos — ajuste desligado/)
+  it('modo shadow + par dentro do limite ⇒ selo de simulação, sem retomada', () => {
+    const s = seloDoAjusteCentavos({ sugestao: confirmada(0.01), modo: 'shadow' })
+    expect(s).toMatchObject({ tipo: 'simulacao', retomavel: false })
+    expect(s?.texto).toMatch(/diferença de centavos — ajuste em simulação/)
+  })
+
+  it('não existe mais o estado "ajuste desligado" (sem flag dedicada, emenda 2026-10-20)', () => {
+    for (const modo of ['shadow', 'on'] as const) {
+      const s = seloDoAjusteCentavos({ sugestao: confirmada(0.01), modo })
+      expect(s?.texto).not.toMatch(/ajuste desligado/)
+    }
   })
 
   it('sem diferença, acima do limite ou não confirmada ⇒ sem selo', () => {

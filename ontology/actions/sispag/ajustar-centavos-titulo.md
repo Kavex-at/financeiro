@@ -26,8 +26,8 @@ last_review: 2026-10-19
 has_canonical_test: true
 canonical_test: src/backend/domain/service/sispag/AjusteCentavosTituloService.test.ts
 preconditions:
-  - "Processo do servidor (nunca job/cron); sessão Conexos = credencial do ambiente, explícita, com sonda G1 aprovada (I18f)."
-  - "Modo da filial = on; sispagLiveWriteEnabled/conexosWriteEnabled ligados, conexosDryRun desligado (I18l)."
+  - "Processo do servidor (nunca job/cron); sessão Conexos = credencial do ambiente, explícita (I18f; sonda G1 do login é procedimento operacional, já cumprida em PRD)."
+  - "Modo efetivo = on (sem flag dedicada): sispagLiveWriteEnabled/conexosWriteEnabled ligados, conexosDryRun desligado (I18l)."
   - "I18a inteira, recalculada ao vivo: decisão CONFIRMADA não órfã, par VIGENTE, número igual, 0 < |Δ| <= LIMITE_VALOR_MESMO_DIA, mesmo vencimento, título aprovado, não pago, sem pagamento parcial, sem juros/desconto prévios, sem ajuste anterior na linhagem, fora de lote finalizado e de rascunho nativo."
   - "Nenhum outro ledger não terminal para o mesmo título de origem (I18h)."
 postconditions:
@@ -52,10 +52,10 @@ side_effects:
 > **G4** (medição do líquido/pagamento parcial, Task 13) e **G5** (rollout, ver
 > `_inbox/sispag-ajuste-centavos-rollout-g5.md`); a rota `cancelarRenegociacao` do `fin070` segue
 > `NotImplementedError` atrás de `CANCELAMENTO_FIN070_PROVADO = false`; o default da guarda I17m
-> (`MODO_GUARDA_VALOR_J = BLOQUEIA`) aguarda a medição da Task 13. `on` em PRD continua proibido.
+> (`MODO_GUARDA_VALOR_J = BLOQUEIA`) aguarda a medição da Task 13. *(Emenda 2026-10-20: o modo `off` e a flag por filial deixaram de existir; o ajuste fica ativo no servidor após o merge, ver I18l.)*
 
 ADR-0073. Renegocia no `fin070` o título a pagar cujo boleto confirmado difere em centavos (I18), libera só o
 bloqueio que a renegociação criou e faz decisão, carteira e item seguirem o título novo. **Três gatilhos, uma
 ação:** após o commit do `confirmarSugestaoBoleto` (assíncrono), "tentar de novo" (`sispag:executar`) e a
 varredura de retomada no processo do servidor (I18g). Nunca pela remessa, nunca por cron. Idempotente por
-I18h/I18i. **Planned** (modo `off` por default).
+I18h/I18i. Sem flag dedicada: ativo no processo do servidor; kill-switch `SISPAG_LIVE_WRITE_ENABLED` (emenda 2026-10-20).

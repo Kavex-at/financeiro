@@ -31,12 +31,9 @@ describe('ValorItemImport (I17n, ADR-0073): o item é importado pelo LÍQUIDO do
         [{ titMnyValor: 53.53, titMnyJuros: 0.01, titMnyDesconto: null }, 53.54],
         [{ titMnyValor: 178.78, titMnyDesconto: 0.01 }, 178.77],
         [{ titMnyValor: 178.78, titMnyLiquido: null, titMnyDesconto: 0.01 }, 178.77],
-    ])(
-        'sem titMnyLiquido (o grid de PRD nunca traz, 3136/3136): valor + juros − desconto (%j)',
-        (raw, valor) => {
-            expect(ValorItemImport.valorDoItem(raw)).toEqual({ disponivel: true, valor });
-        },
-    );
+    ])('sem titMnyLiquido (o grid de PRD nunca traz, 3136/3136): valor + juros − desconto (%j)', (raw, valor) => {
+        expect(ValorItemImport.valorDoItem(raw)).toEqual({ disponivel: true, valor });
+    });
 
     it.each([
         [{ titMnyValor: 462.49, titMnyJuros: 'x' }],

@@ -323,9 +323,10 @@ Every feature or rule change goes through the pipeline. No exceptions.
 
 - **Ajuste de centavos (ADR-0073): só no processo do servidor; nunca em job/cron/`bootstrapAppContainer`.**
   O `ServerProcessMarker` é ligado em `index.ts`; fora dele o ajuste não dispara (a renegociação no `fin070`
-  é escrita real no ERP). O default é `off`; `on` exige `SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO` igual a
-  `CONEXOS_USERNAME` (o login que passou na sonda G1) e os portões G1–G5 cumpridos
-  (`ontology/_inbox/sispag-ajuste-centavos-rollout-g5.md`).
+  é escrita real no ERP). Não há flag dedicada: no servidor ele é **ativo por padrão** e cai a `shadow`
+  (só leitura, com `warn`) se `SISPAG_LIVE_WRITE_ENABLED` estiver desligado, a escrita Conexos desligada,
+  `CONEXOS_DRY_RUN` ligado ou sem credencial do servidor. O kill-switch é `SISPAG_LIVE_WRITE_ENABLED`
+  (emenda 2026-10-20 da ADR-0073).
 - **Vínculo de código de barras (ADR-0071): só no rascunho; `PUT` nunca em lote finalizado; `shadow` não
   faz chamada ao ERP.** O código confirmado é gravado no item DEPOIS do `importar`
   (`validacao → confirma → PUT → releitura`; o sucesso é o que a releitura OBSERVA) e só com

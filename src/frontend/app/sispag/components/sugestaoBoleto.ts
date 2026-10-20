@@ -287,7 +287,7 @@ export const desfechosDeSugestoesLegadas = (lista: SugestaoBoleto[]): DesfechoTi
 /** Limite da I15c/I18a (R$ 0,05): só pares confirmados dentro dele têm ajuste. */
 export const LIMITE_AJUSTE_CENTAVOS = 0.05
 
-export type TipoSeloAjuste = 'desligado' | 'em_curso' | 'concluido' | 'aviso'
+export type TipoSeloAjuste = 'simulacao' |'em_curso' | 'concluido' | 'aviso'
 
 export interface SeloAjusteCentavos {
   tipo: TipoSeloAjuste
@@ -347,12 +347,9 @@ export function seloDoAjusteCentavos(p: {
   if (!ajuste) {
     // Sem o modo (tela que não consultou o ajuste), não se afirma nada.
     if (!dentroDoLimite || p.modo === undefined) return null
-    if (p.modo === 'off') {
-      return { tipo: 'desligado', texto: 'diferença de centavos — ajuste desligado', retomavel: false }
-    }
     if (p.modo === 'shadow') {
       return {
-        tipo: 'desligado',
+        tipo: 'simulacao',
         texto: 'diferença de centavos — ajuste em simulação (nada é gravado no Conexos)',
         retomavel: false,
       }

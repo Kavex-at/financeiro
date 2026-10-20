@@ -1,6 +1,6 @@
 # Columbia Financeiro — Changelog
 
-## v0.70.0 (2026-10-20) — SISPAG: boleto com diferença de centavos passa a ser pagável (desligado por padrão)
+## v0.70.0 (2026-10-20) — SISPAG: boleto com diferença de centavos passa a ser pagável
 
 - **Boleto até R$ 0,05 acima ou abaixo do título.** Quando você confirma um par com diferença de
   centavos (mesmo número de documento, emissor confirmado, mesmo vencimento), a plataforma ajusta o
@@ -12,10 +12,10 @@
   decisão é transferida mantendo você como autora, e um item em lote ainda em rascunho passa para o
   título novo. Lote finalizado ou já enviado ao Conexos não é ajustado (aviso na tela).
 - **Na tela:** o par mostra o estado do ajuste e o botão "tentar de novo" quando algo falha.
-- **Nasce desligado** (`SISPAG_AJUSTE_CENTAVOS_FILIAIS`, por filial: desligado, simulação ou ligado) e só
-  roda no servidor, nunca em cron. Diferença acima de R$ 0,05 não é ajustada: segue a aprovação normal no
-  Conexos.
-- **Vale para toda remessa, mesmo com o ajuste desligado:**
+- **Já vem ativo** e só roda no servidor, nunca em cron. Se as escritas do SISPAG estiverem desligadas
+  (`SISPAG_LIVE_WRITE_ENABLED`), o ajuste para e fica só em simulação (nada é gravado no Conexos).
+  Diferença acima de R$ 0,05 não é ajustada: segue a aprovação normal no Conexos.
+- **Vale para toda remessa, mesmo sem ajuste:**
   - o item é importado pelo valor líquido do título (valor + juros − desconto), não pelo valor base;
   - o vínculo do código de barras compara com o líquido em aberto;
   - a remessa é barrada se algum boleto for pago por valor diferente do código de barras (nenhum caso nos

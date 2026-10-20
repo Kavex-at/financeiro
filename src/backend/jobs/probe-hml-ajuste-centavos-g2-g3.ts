@@ -754,8 +754,6 @@ async function main(): Promise<void> {
         const login = process.env.CONEXOS_USERNAME ?? '';
         const env = {
             getEnvironmentVars: async () => ({
-                sispagAjusteCentavosFiliais: `${FIL}:on`,
-                sispagAjusteCentavosLoginSondado: login,
                 conexosLogin: login,
                 sispagLiveWriteEnabled: true,
                 conexosWriteEnabled: true,

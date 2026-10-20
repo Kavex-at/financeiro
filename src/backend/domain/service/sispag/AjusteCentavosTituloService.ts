@@ -47,7 +47,6 @@ import TituloAPagarRepository from '../../repository/sispag/TituloAPagarReposito
 import LogService from '../LogService.js';
 
 export const RESULTADO_AJUSTE = {
-    DESLIGADO: 'desligado',
     SIMULADO: 'simulado',
     NAO_CANDIDATO: 'nao_candidato',
     RECUSADO: 'recusado',
@@ -144,12 +143,13 @@ export default class AjusteCentavosTituloService {
 
     // ── API ─────────────────────────────────────────────────────────────────
 
-    /** Modo efetivo da filial (I18f/I18l/M3), com os motivos de rebaixamento a `shadow`. */
-    public resolverModo = async (filCod: number): Promise<ModoEfetivoAjuste> => {
+    /**
+     * Modo efetivo (I18f/I18l), com os motivos de rebaixamento a `shadow`. Sem flag dedicada
+     * (emenda 2026-10-20): ativo por padrão; o kill-switch é `SISPAG_LIVE_WRITE_ENABLED`.
+     */
+    public resolverModo = async (): Promise<ModoEfetivoAjuste> => {
         const env = await this.environmentProvider.getEnvironmentVars();
-        return ModoAjusteCentavos.resolverModoEfetivo(filCod, {
-            filiais: env.sispagAjusteCentavosFiliais ?? '',
-            loginSondado: env.sispagAjusteCentavosLoginSondado ?? '',
+        return ModoAjusteCentavos.resolverModoEfetivo({
             conexosLogin: env.conexosLogin ?? '',
             sispagLiveWriteEnabled: env.sispagLiveWriteEnabled === true,
             conexosWriteEnabled: env.conexosWriteEnabled === true,
@@ -163,8 +163,7 @@ export default class AjusteCentavosTituloService {
      * não terminal se houver; `concluido` ⇒ no-op.
      */
     public ajustar = async (p: PedidoAjuste): Promise<ResultadoAjuste> => {
-        const { modo, avisos } = await this.resolverModo(p.filCod);
-        if (modo === MODO_AJUSTE.OFF) return { resultado: RESULTADO_AJUSTE.DESLIGADO, modo };
+        const { modo, avisos } = await this.resolverModo();
         if (avisos.length > 0) {
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
@@ -205,9 +204,6 @@ export default class AjusteCentavosTituloService {
             decisaoId,
             gatilho: GATILHO_AJUSTE.TENTAR_DE_NOVO,
         });
-        if (r.resultado === RESULTADO_AJUSTE.DESLIGADO) {
-            throw new CentsAdjustmentNotEligibleError({ ...chave, motivo: 'MODO_NAO_ON' });
-        }
         if (
             r.resultado === RESULTADO_AJUSTE.RECUSADO ||
             r.resultado === RESULTADO_AJUSTE.NAO_CANDIDATO
@@ -238,13 +234,13 @@ export default class AjusteCentavosTituloService {
         return r;
     };
 
-    /** Varredura de retomada (I18g(3)): ledgers não terminais das filiais em `on`. */
+    /** Varredura de retomada (I18g(3)): ledgers não terminais (só com o modo efetivo `on`). */
     public retomarPendentes = async (p: {
         filCod?: number;
     }): Promise<{ retomados: number; ignorados: number; falhas: number }> => {
         const placar = { retomados: 0, ignorados: 0, falhas: 0 };
         for (const exec of await this.ledger.listarNaoTerminais(p.filCod)) {
-            const { modo } = await this.resolverModo(exec.filCod);
+            const { modo } = await this.resolverModo();
             if (modo !== MODO_AJUSTE.ON) {
                 placar.ignorados += 1;
                 continue;
@@ -274,7 +270,7 @@ export default class AjusteCentavosTituloService {
     public listarCandidatos = async (p: {
         filCod: number;
     }): Promise<{ modo: ModoAjuste; avisos: string[]; ajustes: AjusteCentavosExecucao[] }> => {
-        const { modo, avisos } = await this.resolverModo(p.filCod);
+        const { modo, avisos } = await this.resolverModo();
         const ajustes = await this.ledger.listarUltimosDaFilial(p.filCod);
         return { modo, avisos, ajustes };
     };
@@ -287,8 +283,7 @@ export default class AjusteCentavosTituloService {
     public agendarAposConfirmar = (p: Omit<PedidoAjuste, 'gatilho'>): void => {
         void (async () => {
             try {
-                const r = await this.ajustar({ ...p, gatilho: GATILHO_AJUSTE.CONFIRMAR });
-                if (r.resultado === RESULTADO_AJUSTE.DESLIGADO) return;
+                await this.ajustar({ ...p, gatilho: GATILHO_AJUSTE.CONFIRMAR });
                 await this.retomarPendentes({ filCod: p.filCod });
             } catch (err) {
                 await this.logService.error({
