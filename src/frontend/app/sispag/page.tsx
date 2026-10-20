@@ -116,6 +116,7 @@ import {
   ROTULO_SITUACAO,
 } from './components/sugestaoBoleto'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
+import { TitulosAbaSituacao } from './situacao/TitulosAbaSituacao'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { PERMISSAO } from '@/lib/permissoes'
@@ -551,6 +552,19 @@ function SispagPanel() {
     if (valor !== 'lotes-candidatos') setLoteEmFoco(null)
   }
 
+  /** Abre os boletos DDA/sugestão do título (a mesma ação da coluna Forma de pagamento). */
+  const abrirSugestaoDoTitulo = (t: TituloAPagar) =>
+    setTituloDda({
+      filCod: t.filCod,
+      docCod: t.docCod,
+      titCod: t.titCod,
+      ...(t.credor ? { credor: t.credor } : {}),
+      valor: t.valor,
+      ...(t.vencimento != null
+        ? { vencimento: new Date(t.vencimento).toISOString().slice(0, 10) }
+        : {}),
+    })
+
   const chaveDe = (t: TituloAPagar) => ({ filCod: t.filCod, docCod: t.docCod, titCod: t.titCod })
 
   const confirmarRetirada = async () => {
@@ -975,6 +989,7 @@ function SispagPanel() {
         />
       ) : painel ? (
         <>
+          {painel.resumoSituacao ? null : (
           <KPIGrid columns={4}>
             <SimpleKPI
               label="A vencer (7 dias)"
@@ -1009,6 +1024,7 @@ function SispagPanel() {
               }
             />
           </KPIGrid>
+          )}
 
           <Tabs value={aba} onValueChange={trocarAba}>
             <TabsList>
@@ -1031,6 +1047,66 @@ function SispagPanel() {
 
             {/* ---- Títulos a pagar ---- */}
             <TabsContent value="titulos" className="space-y-3">
+              {painel.resumoSituacao ? (
+                <TitulosAbaSituacao
+                  titulos={titulosAba}
+                  resumo={painel.resumoSituacao}
+                  lotes={lotes}
+                  lotesIndisponiveis={lotesErro !== null}
+                  podeExecutar={podeExecutar}
+                  busy={busy || salvandoRetirada}
+                  retidos={retidos}
+                  resumoDoDesfecho={(t) => resumoDoDesfecho(desfechosPorTitulo.get(chaveTitulo(t)))}
+                  onAbrirSugestao={abrirSugestaoDoTitulo}
+                  onVerBoleto={abrirSugestaoDoTitulo}
+                  onIrParaLote={irParaLote}
+                  onIrParaLotes={setAba}
+                  onRetirar={setRetirando}
+                  onResolvido={async () => {
+                    await Promise.all([recarregarPainel(), recarregarRetidos(), carregarSugestoes()])
+                  }}
+                  onLotesCriados={async () => {
+                    await Promise.all([recarregarLotes(), recarregarPainel(), recarregarRetidos()])
+                  }}
+                  formando={formando}
+                  onFormarAutomaticos={formar}
+                  barraExtra={
+                    <>
+                      {totalComprometidos > 0 ? (
+                        <Button
+                          size="sm"
+                          variant={mostrarComprometidos ? 'default' : 'outline'}
+                          aria-pressed={mostrarComprometidos}
+                          onClick={() => setMostrarComprometidos((v) => !v)}
+                          title={
+                            mostrarComprometidos
+                              ? 'Esconder os títulos que já estão num lote finalizado ou com remessa gerada.'
+                              : 'Mostrar os títulos que já estão num lote finalizado ou com remessa gerada — não podem entrar em outro lote.'
+                          }
+                        >
+                          <Lock className="size-4" aria-hidden />
+                          Em lote finalizado/remessa ({totalComprometidos})
+                        </Button>
+                      ) : null}
+                      {truncado ? (
+                        <span className="text-xs font-medium text-amber-700 dark:text-amber-500">
+                          Lista cortada em {titulos.length} de {painel?.titulosTotal} títulos — os
+                          demais não aparecem aqui nem podem entrar em lote. Os filtros e as
+                          contagens valem só para o recorte.
+                        </span>
+                      ) : null}
+                      {sugestoes?.titulos &&
+                      (sugestoes.totalTitulos ?? sugestoes.titulos.length) > sugestoes.titulos.length ? (
+                        <span role="status" className="text-xs text-warning-foreground">
+                          Sugestões de boleto: mostrando as {sugestoes.titulos.length} primeiras de{' '}
+                          {sugestoes.totalTitulos}.
+                        </span>
+                      ) : null}
+                    </>
+                  }
+                />
+              ) : (
+              <>
               <FiltroBarra
                 aba={abaTitulos}
                 buscaPlaceholder="Buscar por credor, documento ou banco…"
@@ -1358,6 +1434,8 @@ function SispagPanel() {
                 </div>
               )}
               <Paginacao aba={abaTitulos} />
+              </>
+              )}
               <p className="text-xs text-muted-foreground">
                 {painel.ingestao.ultimaRunEm
                   ? `Carteira ingerida em ${new Date(painel.ingestao.ultimaRunEm).toLocaleString('pt-BR')}.`

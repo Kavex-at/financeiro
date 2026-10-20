@@ -225,14 +225,48 @@ export const vencemEmAteDoisDias = (titulos: TituloAPagar[]): TituloAPagar[] =>
       t.diasAteVencimento !== undefined && t.diasAteVencimento >= 0 && t.diasAteVencimento <= 2,
   )
 
-/** Prévia do "Formar lotes automáticos": só PRONTO, um lote por filial. */
+/** Janela da formação automática: só entram títulos que vencem de hoje a 7 dias (ADR-0018). */
+export const JANELA_FORMACAO_DIAS = 7
+
+/**
+ * Prévia do "Formar lotes automáticos" (decisão D9): só PRONTO, a vencer na janela, fora de
+ * qualquer lote, agrupados por filial. O servidor ainda divide cada filial por vencimento; a
+ * prévia mostra o que entra, não o número exato de lotes por filial.
+ */
 export const prontosPorFilial = (titulos: TituloAPagar[]): Array<{ filCod: number } & Total> => {
   const porFilial = new Map<number, TituloAPagar[]>()
   for (const t of titulos) {
     if (!ehPronto(t) || t.loteComprometido || t.loteRascunho) continue
+    const dias = t.diasAteVencimento
+    if (dias === undefined || dias < 0 || dias > JANELA_FORMACAO_DIAS) continue
     porFilial.set(t.filCod, [...(porFilial.get(t.filCod) ?? []), t])
   }
   return [...porFilial.entries()]
     .sort(([a], [b]) => a - b)
     .map(([filCod, ts]) => ({ filCod, ...somar(ts) }))
+}
+
+/** Contagem e valor do filtro externo, sobre a lista da tela (a mesma que a tabela mostra). */
+export const totaisPorEstado = (
+  titulos: TituloAPagar[],
+): Record<EstadoFiltro, Total> => ({
+  todos: somar(titulos),
+  prontos: somar(titulos.filter(ehPronto)),
+  bloqueados: somar(titulos.filter(ehBloqueado)),
+})
+
+/** Chips de motivo (só quem tem ao menos um título), na ordem de prioridade do contrato. */
+export const bloqueadosPorMotivo = (
+  titulos: TituloAPagar[],
+): Array<{ motivo: MotivoPagamento } & Total> => {
+  const porMotivo = new Map<MotivoPagamento, TituloAPagar[]>()
+  for (const t of titulos) {
+    const m = t.situacaoPagamento?.principal
+    if (!m || !ehBloqueado(t)) continue
+    porMotivo.set(m, [...(porMotivo.get(m) ?? []), t])
+  }
+  return Object.values(MOTIVO_PAGAMENTO).flatMap((motivo) => {
+    const ts = porMotivo.get(motivo)
+    return ts ? [{ motivo, ...somar(ts) }] : []
+  })
 }
