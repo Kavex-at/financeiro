@@ -168,6 +168,9 @@ export class GuardaSomenteLeituraConexos {
                 registro.push({ metodo: 'getGeneric', path });
                 return inner.getGeneric<T>(path, opts);
             },
+            // Download binário (GED) não faz parte desta validação: recusado como qualquer chamada
+            // fora da lista fechada.
+            getBinary: async (path: string) => recusar('getBinary', path),
             postGeneric: async (path: string) => recusar('postGeneric', path),
             postGenericOnce: async (path: string) => recusar('postGenericOnce', path),
             putGenericOnce: async (path: string) => recusar('putGenericOnce', path),
