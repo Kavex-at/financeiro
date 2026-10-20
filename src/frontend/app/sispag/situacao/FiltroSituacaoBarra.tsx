@@ -117,7 +117,7 @@ export function FiltroSituacaoBarra({
                 >
                   {ROTULO_MOTIVO[motivo]}
                   <b className="tabular-nums">{qtd}</b>
-                  <span className={cn('text-[11px]', marcado ? 'opacity-70' : 'text-muted-foreground')}>
+                  <span className={cn('text-xs', marcado ? 'opacity-70' : 'text-muted-foreground')}>
                     · {ROTULO_DONO[DONO_DO_MOTIVO[motivo]]}
                   </span>
                 </button>
