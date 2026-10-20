@@ -86,6 +86,8 @@ export interface ResumoSituacao {
 
 export interface CriarLotesPorFilialInput {
   titulos: Array<{ filCod: number; docCod: string; titCod: string }>
+  /** ADR-0064: título em outro lote RASCUNHO sai de lá e entra no novo. Sem a flag, é recusado. */
+  mover?: boolean
 }
 
 export const RESULTADO_LOTE_FILIAL = {

@@ -17,7 +17,18 @@ import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
 import ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import SituacaoPagamentoService from './SituacaoPagamentoService.js';
-import { ESTADO_PAGAMENTO } from '../../interface/sispag/SituacaoPagamento.js';
+import {
+    type CriarLotesPorFilialInput,
+    type CriarLotesPorFilialResult,
+    type LoteCriadoPorFilial,
+    RESULTADO_LOTE_FILIAL,
+    type TituloRecusadoNoLote,
+} from '../../interface/sispag/SituacaoPagamento.js';
+import { isHandlerError } from '../../libs/handler/HandlerError.js';
+import {
+    ESTADO_PAGAMENTO,
+    type MotivoPagamento,
+} from '../../interface/sispag/SituacaoPagamento.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     type AlertaItemLote,
@@ -216,6 +227,101 @@ export default class LotePagamentoService {
         if (!lote) return null;
         const [completo] = await this.comAlertas([lote]);
         return completo ?? lote;
+    };
+
+    /**
+     * ADR-0075 (D8, D15): um lote por filial, criado de uma vez. Cada título passa por
+     * `incluirTitulo` (a MESMA regra do caminho manual, inclusive a situação de pagamento); o que é
+     * recusado volta em `recusados` com o motivo, sem derrubar o resto. Um lote que falha NÃO desfaz
+     * os outros, e um lote em que nenhum título entrou é descartado (nasceu vazio, sem rastro).
+     */
+    public criarLotesPorFilial = async (
+        input: CriarLotesPorFilialInput & { ator: string },
+    ): Promise<CriarLotesPorFilialResult> => {
+        const porFilial = new Map<number, ChaveTitulo[]>();
+        const vistos = new Set<string>();
+        for (const t of input.titulos) {
+            const chave = `${t.filCod}:${t.docCod}:${t.titCod}`;
+            if (vistos.has(chave)) continue;
+            vistos.add(chave);
+            porFilial.set(t.filCod, [...(porFilial.get(t.filCod) ?? []), t]);
+        }
+        const lotes: LoteCriadoPorFilial[] = [];
+        for (const [filCod, titulos] of porFilial) {
+            lotes.push(await this.criarLoteDaFilial(filCod, titulos, input));
+        }
+        return { lotes };
+    };
+
+    private criarLoteDaFilial = async (
+        filCod: number,
+        titulos: ChaveTitulo[],
+        input: { ator: string; mover?: boolean },
+    ): Promise<LoteCriadoPorFilial> => {
+        const recusados: TituloRecusadoNoLote[] = [];
+        const incluidos: ChaveTitulo[] = [];
+        let lote: LotePagamento;
+        try {
+            lote = await this.criarLote({ filCod, ator: input.ator });
+        } catch (error) {
+            const recusa = await this.recusaDe(error);
+            return {
+                filCod,
+                resultado: RESULTADO_LOTE_FILIAL.RECUSADO,
+                incluidos,
+                recusados: titulos.map((chave) => ({ chave, ...recusa })),
+            };
+        }
+        for (const chave of titulos) {
+            try {
+                await this.incluirTitulo({
+                    loteId: lote.id,
+                    ...chave,
+                    ator: input.ator,
+                    ...(input.mover ? { mover: true } : {}),
+                });
+                incluidos.push(chave);
+            } catch (error) {
+                recusados.push({ chave, ...(await this.recusaDe(error)) });
+            }
+        }
+        if (incluidos.length === 0) {
+            await this.repo.cancelarSeVazio(lote.id).catch(() => false);
+            return { filCod, resultado: RESULTADO_LOTE_FILIAL.RECUSADO, incluidos, recusados };
+        }
+        return {
+            filCod,
+            resultado:
+                recusados.length > 0 ? RESULTADO_LOTE_FILIAL.PARCIAL : RESULTADO_LOTE_FILIAL.CRIADO,
+            loteId: lote.id,
+            incluidos,
+            recusados,
+        };
+    };
+
+    /** Recusa de um título: regra de domínio devolve a mensagem dela; o resto vira erro genérico. */
+    private recusaDe = async (
+        error: unknown,
+    ): Promise<Pick<TituloRecusadoNoLote, 'codigo' | 'mensagem' | 'motivo'>> => {
+        if (isHandlerError(error)) {
+            const motivo = (error.details as { motivoPagamento?: MotivoPagamento } | undefined)
+                ?.motivoPagamento;
+            return {
+                codigo: error.code,
+                mensagem: error.userMessage,
+                ...(motivo !== undefined ? { motivo } : {}),
+            };
+        }
+        await this.logService.warn({
+            type: LOG_TYPE.BUSINESS_WARN,
+            message: 'criação de lotes por filial: falha inesperada ao incluir um título',
+            data: { erro: error instanceof Error ? error.message : String(error) },
+        });
+        return {
+            codigo: 'ERRO_INESPERADO',
+            mensagem:
+                'Não foi possível incluir este título. Tente de novo; se persistir, avise o time.',
+        };
     };
 
     /**

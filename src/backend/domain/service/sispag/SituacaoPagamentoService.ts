@@ -124,7 +124,11 @@ export default class SituacaoPagamentoService {
     public avaliarCarteira = async (titulos: TituloAPagar[]): Promise<ResumoSituacao> => {
         const { contexto, fontesIndisponiveis } = await this.carregarContexto();
         for (const t of titulos) t.situacaoPagamento = this.resolver.avaliar(t, contexto);
-        return { ...this.resolver.resumir(titulos), fontesIndisponiveis };
+        // Título em lote FINALIZADO/REMESSA_GERADA já está comprometido (ADR-0064): não é "pronto
+        // para pagar" nem "precisa de ação", e a tabela o esconde por padrão. Fora das contagens,
+        // senão os cards mostrariam mais prontos do que a tela deixa selecionar.
+        const disponiveis = titulos.filter((t) => t.loteComprometido === undefined);
+        return { ...this.resolver.resumir(disponiveis), fontesIndisponiveis };
     };
 
     /**

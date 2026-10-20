@@ -375,6 +375,94 @@ describe('POST /sispag/lotes', () => {
     });
 });
 
+describe('POST /sispag/lotes/por-filial (ADR-0075)', () => {
+    const corpo = {
+        titulos: [
+            { filCod: 2, docCod: '100', titCod: '1' },
+            { filCod: 7, docCod: '200', titCod: '1' },
+        ],
+    };
+    const post = (url: string, body: unknown) =>
+        fetch(`${url}/sispag/lotes/por-filial`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    it('devolve o resultado por lote e usa o ator da sessão', async () => {
+        const resultado = {
+            lotes: [
+                {
+                    filCod: 2,
+                    resultado: 'CRIADO',
+                    loteId: 'L1',
+                    incluidos: [{ filCod: 2, docCod: '100', titCod: '1' }],
+                    recusados: [],
+                },
+                {
+                    filCod: 7,
+                    resultado: 'RECUSADO',
+                    incluidos: [],
+                    recusados: [
+                        {
+                            chave: { filCod: 7, docCod: '200', titCod: '1' },
+                            codigo: 'TITULO_NAO_ELEGIVEL',
+                            motivo: 'TIPO_PERMUTA',
+                            mensagem: 'Este título não pode entrar no lote: Título de permuta.',
+                        },
+                    ],
+                },
+            ],
+        };
+        const criarLotesPorFilial = jest.fn().mockResolvedValue(resultado);
+        container.registerInstance(LotePagamentoService, { criarLotesPorFilial } as never);
+
+        await comApp({}, async (url) => {
+            const res = await post(url, { ...corpo, mover: true });
+            expect(res.status).toBe(200);
+            expect(await readJson(res)).toEqual(resultado);
+            // O ator vem da sessão, NUNCA do corpo — é a trilha de auditoria.
+            expect(criarLotesPorFilial).toHaveBeenCalledWith(
+                expect.objectContaining({ ...corpo, mover: true, ator: 'user-abc' }),
+            );
+        });
+    });
+
+    it('exige sispag:executar', async () => {
+        const criarLotesPorFilial = jest.fn();
+        container.registerInstance(LotePagamentoService, { criarLotesPorFilial } as never);
+
+        await comApp({ role: 'viewer' }, async (url) => {
+            expect((await post(url, corpo)).status).toBe(403);
+            expect(criarLotesPorFilial).not.toHaveBeenCalled();
+        });
+    });
+
+    it.each([
+        ['sem títulos', { titulos: [] }],
+        ['filial inválida', { titulos: [{ filCod: -1, docCod: '1', titCod: '1' }] }],
+        ['documento vazio', { titulos: [{ filCod: 2, docCod: '', titCod: '1' }] }],
+        [
+            'mais de 500 títulos',
+            {
+                titulos: Array.from({ length: 501 }, (_, i) => ({
+                    filCod: 2,
+                    docCod: String(i + 1),
+                    titCod: '1',
+                })),
+            },
+        ],
+    ])('400 com corpo inválido (%s), sem chamar o serviço', async (_nome, body) => {
+        const criarLotesPorFilial = jest.fn();
+        container.registerInstance(LotePagamentoService, { criarLotesPorFilial } as never);
+
+        await comApp({}, async (url) => {
+            expect((await post(url, body)).status).toBe(400);
+            expect(criarLotesPorFilial).not.toHaveBeenCalled();
+        });
+    });
+});
+
 describe('POST /sispag/lotes/:id/itens', () => {
     it('inclui o título e devolve o lote', async () => {
         const incluirTitulo = jest.fn().mockResolvedValue(LOTE);

@@ -100,6 +100,11 @@ export interface ResumoSituacao {
 
 export interface CriarLotesPorFilialInput {
     titulos: ChaveTitulo[];
+    /**
+     * ADR-0064: título que está em OUTRO lote RASCUNHO sai de lá e entra no lote novo. Sem a flag,
+     * a inclusão é recusada (`TituloEmOutroLoteError`) e o título aparece em `recusados`.
+     */
+    mover?: boolean;
 }
 
 export const RESULTADO_LOTE_FILIAL = {

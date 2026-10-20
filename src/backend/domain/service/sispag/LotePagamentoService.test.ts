@@ -188,6 +188,147 @@ const make = (
     return { service, conexos, tituloRepo, contaResolver, deps };
 };
 
+describe('LotePagamentoService.criarLotesPorFilial (ADR-0075)', () => {
+    const chave = (filCod: number, docCod: string) => ({ filCod, docCod, titCod: '1' });
+
+    /** Um service cujo `incluirTitulo`/`criarLote` são controlados por teste. */
+    const montar = (over: {
+        incluir?: (input: { docCod: string; filCod: number }) => Promise<unknown>;
+        criar?: (input: { filCod: number }) => Promise<unknown>;
+    }) => {
+        const repo = buildRepo();
+        const { service } = make(repo);
+        const criarLote = jest
+            .spyOn(service, 'criarLote')
+            .mockImplementation(
+                async (input) =>
+                    (over.criar
+                        ? over.criar(input)
+                        : lote({ id: `L${input.filCod}`, filCod: input.filCod })) as never,
+            );
+        const incluirTitulo = jest
+            .spyOn(service, 'incluirTitulo')
+            .mockImplementation(
+                async (input) => (over.incluir ? over.incluir(input) : lote()) as never,
+            );
+        return { service, repo, criarLote, incluirTitulo };
+    };
+
+    it('cria UM lote por filial e inclui cada título no lote da sua filial', async () => {
+        const { service, criarLote, incluirTitulo } = montar({});
+        const r = await service.criarLotesPorFilial({
+            titulos: [chave(2, '1'), chave(7, '2'), chave(2, '3')],
+            ator: 'u1',
+        });
+        expect(criarLote).toHaveBeenCalledTimes(2);
+        expect(r.lotes.map((l) => [l.filCod, l.resultado, l.loteId])).toEqual([
+            [2, 'CRIADO', 'L2'],
+            [7, 'CRIADO', 'L7'],
+        ]);
+        expect(r.lotes[0]?.incluidos.map((t) => t.docCod)).toEqual(['1', '3']);
+        expect(incluirTitulo).toHaveBeenCalledWith(
+            expect.objectContaining({ loteId: 'L7', docCod: '2', ator: 'u1' }),
+        );
+    });
+
+    it('ignora título repetido na entrada', async () => {
+        const { service, incluirTitulo } = montar({});
+        await service.criarLotesPorFilial({
+            titulos: [chave(2, '1'), chave(2, '1')],
+            ator: 'u1',
+        });
+        expect(incluirTitulo).toHaveBeenCalledTimes(1);
+    });
+
+    it('título recusado vai para `recusados` com código, motivo e mensagem; o lote fica PARCIAL', async () => {
+        const bloqueado = new TituloNaoElegivelError({
+            docCod: '2',
+            titCod: '1',
+            motivo: 'situacao-pagamento',
+            situacao: {
+                estado: 'BLOQUEADO',
+                motivos: ['TIPO_PERMUTA'],
+                principal: 'TIPO_PERMUTA',
+                rotulo: 'Título de permuta',
+                dono: 'PERMUTAS',
+                acao: { codigo: 'ABRIR_EM_PERMUTAS', rotulo: 'Abrir em Permutas' },
+            },
+        });
+        const { service } = montar({
+            incluir: async (i) => {
+                if (i.docCod === '2') throw bloqueado;
+                return lote();
+            },
+        });
+        const r = await service.criarLotesPorFilial({
+            titulos: [chave(2, '1'), chave(2, '2')],
+            ator: 'u1',
+        });
+        expect(r.lotes[0]).toMatchObject({
+            resultado: 'PARCIAL',
+            loteId: 'L2',
+            recusados: [
+                {
+                    chave: { docCod: '2' },
+                    codigo: 'TITULO_NAO_ELEGIVEL',
+                    motivo: 'TIPO_PERMUTA',
+                    mensagem: expect.stringContaining('Título de permuta'),
+                },
+            ],
+        });
+    });
+
+    it('nenhum título entrou: o lote vazio é descartado e o resultado é RECUSADO, sem loteId', async () => {
+        const { service, repo } = montar({
+            incluir: async () => {
+                throw new TituloNaoElegivelError({
+                    docCod: '1',
+                    titCod: '1',
+                    motivo: 'nao-liberado',
+                });
+            },
+        });
+        const r = await service.criarLotesPorFilial({ titulos: [chave(2, '1')], ator: 'u1' });
+        expect(r.lotes[0]).toMatchObject({ resultado: 'RECUSADO', incluidos: [] });
+        expect(r.lotes[0]?.loteId).toBeUndefined();
+        expect(repo.cancelarSeVazio).toHaveBeenCalledWith('L2');
+    });
+
+    it('um lote que falha NÃO desfaz os outros', async () => {
+        const { service } = montar({
+            criar: async (i) => {
+                if (i.filCod === 2) throw new Error('banco fora');
+                return lote({ id: 'L7', filCod: 7 });
+            },
+        });
+        const r = await service.criarLotesPorFilial({
+            titulos: [chave(2, '1'), chave(7, '2')],
+            ator: 'u1',
+        });
+        expect(r.lotes.map((l) => [l.filCod, l.resultado])).toEqual([
+            [2, 'RECUSADO'],
+            [7, 'CRIADO'],
+        ]);
+        expect(r.lotes[0]?.recusados[0]).toMatchObject({ codigo: 'ERRO_INESPERADO' });
+        // erro interno não vaza para a mensagem da analista
+        expect(r.lotes[0]?.recusados[0]?.mensagem).not.toContain('banco fora');
+    });
+
+    it('`mover` só é repassado quando pedido (ADR-0064)', async () => {
+        const sem = montar({});
+        await sem.service.criarLotesPorFilial({ titulos: [chave(2, '1')], ator: 'u1' });
+        expect(sem.incluirTitulo.mock.calls[0]?.[0]).not.toHaveProperty('mover');
+
+        const com = montar({});
+        await com.service.criarLotesPorFilial({
+            titulos: [chave(2, '1')],
+            mover: true,
+            ator: 'u1',
+        });
+        expect(com.incluirTitulo.mock.calls[0]?.[0]).toMatchObject({ mover: true });
+    });
+});
+
 describe('LotePagamentoService — invariantes', () => {
     describe('incluirTitulo', () => {
         const input = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', ator: 'u1' };
