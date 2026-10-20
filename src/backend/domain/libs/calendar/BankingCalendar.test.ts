@@ -113,6 +113,15 @@ describe('BankingCalendar', () => {
         it('toErpEpoch usa meia-noite UTC do dia civil (mesmo encoding do antigo hojeUtc)', () => {
             expect(cal.toErpEpoch('2026-09-22')).toBe(Date.UTC(2026, 8, 22));
         });
+        it('diasAteVencimento conta por dia civil: hoje é 0, ontem é -1, amanhã é 1 (ADR-0070)', () => {
+            // 22/09 às 23:30 BRT (02:30Z do dia 23): o dia civil de Brasília ainda é 22.
+            const tarde = BankingCalendar.withClock(() => new Date('2026-09-23T02:30:00Z'));
+            expect(tarde.diasAteVencimento(Date.UTC(2026, 8, 22))).toBe(0);
+            expect(tarde.diasAteVencimento(Date.UTC(2026, 8, 21))).toBe(-1);
+            expect(tarde.diasAteVencimento(Date.UTC(2026, 8, 23))).toBe(1);
+            // 15:00Z do mesmo dia pretendido cai no mesmo dia civil
+            expect(tarde.diasAteVencimento(Date.UTC(2026, 8, 22, 15))).toBe(0);
+        });
         it('fromErpEpoch lê o dia pelo relógio UTC (00:00Z e 15:00Z caem no mesmo dia)', () => {
             expect(cal.fromErpEpoch(Date.UTC(2026, 8, 29))).toBe('2026-09-29');
             expect(cal.fromErpEpoch(Date.UTC(2026, 8, 29, 15))).toBe('2026-09-29');

@@ -16,6 +16,8 @@ import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavail
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
 import ContaPagadoraResolver from './ContaPagadoraResolver.js';
+import SituacaoPagamentoService from './SituacaoPagamentoService.js';
+import { ESTADO_PAGAMENTO } from '../../interface/sispag/SituacaoPagamento.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     type AlertaItemLote,
@@ -30,6 +32,7 @@ import {
     LOTE_STATUS,
     MODALIDADE,
     type Modalidade,
+    type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
@@ -80,6 +83,8 @@ export default class LotePagamentoService {
         @inject(BloqueioDuplicidadeRepository)
         private readonly bloqueioRepo: BloqueioDuplicidadeRepository,
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
+        @inject(SituacaoPagamentoService)
+        private readonly situacaoPagamento: SituacaoPagamentoService,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -214,6 +219,29 @@ export default class LotePagamentoService {
     };
 
     /**
+     * ADR-0075: a MESMA regra da tela. Aprovação, pagamento e vencimento são os lidos AO VIVO; tipo
+     * (permuta), forma no Conexos, ajuste de centavos e boleto vêm do contexto. Título bloqueado não
+     * entra, com o motivo, o dono e a ação na resposta (422).
+     */
+    private exigirSituacaoPagavel = async (
+        chave: { filCod: number; docCod: string; titCod: string },
+        vivo: TituloAPagar,
+    ): Promise<void> => {
+        const situacao = await this.situacaoPagamento.avaliarVivo(
+            { filCod: chave.filCod, docCod: chave.docCod, titCod: chave.titCod },
+            vivo,
+        );
+        if (situacao?.estado === ESTADO_PAGAMENTO.BLOQUEADO) {
+            throw new TituloNaoElegivelError({
+                docCod: chave.docCod,
+                titCod: chave.titCod,
+                motivo: 'situacao-pagamento',
+                situacao,
+            });
+        }
+    };
+
+    /**
      * Inclui um título no lote — I2/I3/I4 na fronteira do agregado.
      * A re-leitura Conexos (I2) roda ANTES do advisory lock, para NÃO segurar uma
      * conexão do pool durante a chamada de rede (evita starvation com pool max=5).
@@ -287,6 +315,7 @@ export default class LotePagamentoService {
                 motivo: 'nao-liberado',
             });
         }
+        await this.exigirSituacaoPagavel(input, titulo);
         // A modalidade BOLETO é pré-selecionada a partir da carteira PERSISTIDA, não do
         // `fin064`: o `getTituloAPagar` acima é a fonte autoritativa de ELEGIBILIDADE (pago /
         // liberado), mas não sabe de boleto — `temBoleto` vem `false` de lá por construção.

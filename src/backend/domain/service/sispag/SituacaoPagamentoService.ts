@@ -12,9 +12,11 @@ import type { EtapaAjuste } from '../../libs/boleto/EtapaAjusteCentavos.js';
 import ModoVinculoCodigoBarras, {
     type ModoVinculo,
 } from '../../libs/boleto/ModoVinculoCodigoBarras.js';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
+import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
 import BoletoSuggestionService from './BoletoSuggestionService.js';
 import SituacaoPagamentoResolver, {
@@ -50,7 +52,15 @@ export default class SituacaoPagamentoService {
         @inject(BoletoSuggestionService) private readonly boleto: BoletoSuggestionService,
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
+        @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
+        @inject(BankingCalendar) private readonly calendar: BankingCalendar,
     ) {}
+
+    /** Aging por dia civil quando o título ainda não o tem (a carteira do painel já vem com ele). */
+    private comAging = (t: TituloAPagar): TituloAPagar =>
+        t.diasAteVencimento !== undefined || t.vencimento === undefined
+            ? t
+            : { ...t, diasAteVencimento: this.calendar.diasAteVencimento(t.vencimento) };
 
     /** Lê uma fonte; falha vira `undefined` + registro da fonte indisponível. */
     private ler = async <T>(
@@ -123,7 +133,7 @@ export default class SituacaoPagamentoService {
      */
     public avaliarUm = async (t: TituloAPagar): Promise<SituacaoPagamento> => {
         const { contexto } = await this.carregarContexto();
-        return this.resolver.avaliar(t, contexto);
+        return this.resolver.avaliar(this.comAging(t), contexto);
     };
 
     /** Avalia vários de uma vez (formação automática, criação por filial), com UM contexto. */
@@ -131,6 +141,51 @@ export default class SituacaoPagamentoService {
         titulos: TituloAPagar[],
     ): Promise<Map<string, SituacaoPagamento>> => {
         const { contexto } = await this.carregarContexto();
-        return new Map(titulos.map((t) => [chaveDe(t), this.resolver.avaliar(t, contexto)]));
+        return new Map(
+            titulos.map((t) => [chaveDe(t), this.resolver.avaliar(this.comAging(t), contexto)]),
+        );
+    };
+
+    /** Leitura pontual; falha vira `null` + WARN: a inclusão cai nos guardas ao vivo, nunca quebra. */
+    private lerPersistido = async (chave: {
+        filCod: number;
+        docCod: string;
+        titCod: string;
+    }): Promise<TituloAPagar | null> => {
+        try {
+            return await this.tituloRepo.buscarPorChave(chave);
+        } catch (error) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'situação de pagamento: leitura do título falhou, inclusão sem ela',
+                data: { chave, erro: error instanceof Error ? error.message : String(error) },
+            });
+            return null;
+        }
+    };
+
+    /**
+     * Situação de um título na INCLUSÃO manual no lote: a carteira persistida dá tipo, forma e
+     * boleto; a leitura ao vivo do `fin064` (`vivo`) dá o que muda a cada minuto — aprovação,
+     * pagamento e vencimento. Título fora da carteira persistida devolve `null`: sem tipo nem
+     * forma não há o que avaliar, e os guardas ao vivo da inclusão continuam valendo.
+     */
+    public avaliarVivo = async (
+        chave: { filCod: number; docCod: string; titCod: string },
+        vivo: Pick<TituloAPagar, 'liberado' | 'pago' | 'vencimento'>,
+    ): Promise<SituacaoPagamento | null> => {
+        const persistido = await this.lerPersistido(chave);
+        if (!persistido) return null;
+        // O vencimento ao vivo vence o persistido, e o aging é SEMPRE recalculado dele.
+        const vencimento = vivo.vencimento ?? persistido.vencimento;
+        const titulo: TituloAPagar = {
+            ...persistido,
+            liberado: vivo.liberado,
+            pago: vivo.pago,
+            ...(vencimento !== undefined
+                ? { vencimento, diasAteVencimento: this.calendar.diasAteVencimento(vencimento) }
+                : {}),
+        };
+        return this.avaliarUm(titulo);
     };
 }

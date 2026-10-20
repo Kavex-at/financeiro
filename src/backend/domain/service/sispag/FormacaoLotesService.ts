@@ -11,7 +11,9 @@ import {
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
+import { ESTADO_PAGAMENTO } from '../../interface/sispag/SituacaoPagamento.js';
 import ContaPagadoraResolver, { type ContaPagadoraEscolhida } from './ContaPagadoraResolver.js';
+import SituacaoPagamentoService from './SituacaoPagamentoService.js';
 
 /** Horizonte da formação automática: só títulos a vencer nos próximos N dias. */
 const HORIZONTE_DIAS = 7;
@@ -36,6 +38,8 @@ export default class FormacaoLotesService {
         @inject(LogService) private readonly logService: LogService,
         @inject(ContaPagadoraResolver) private readonly contaResolver: ContaPagadoraResolver,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
+        @inject(SituacaoPagamentoService)
+        private readonly situacaoPagamento: SituacaoPagamentoService,
     ) {}
 
     public formar = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> =>
@@ -56,7 +60,9 @@ export default class FormacaoLotesService {
 
         // 2) forma lotes novos com os elegíveis (a vencer ≤7d, não lotados). Cada grupo
         // (filial × vencimento) vira no máx. dois lotes: boletos e o resto, nunca misturados.
-        const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS, hoje);
+        const elegiveis = await this.somentePagaveis(
+            await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS, hoje),
+        );
         const grupos = this.agrupar(elegiveis);
         let lotesFormados = 0;
         let titulosLotados = 0;
@@ -82,6 +88,42 @@ export default class FormacaoLotesService {
             data: { ...result, triggeredBy: input.triggeredBy },
         });
         return result;
+    };
+
+    /**
+     * ADR-0075 (D9): lote automático só com título em situação PRONTO. Bloqueado (permuta, forma fora
+     * do SISPAG, boleto sem DDA, ajuste pendente…) fica para a analista resolver, com o motivo na
+     * tela, em vez de nascer num lote que não finaliza. Se a situação não puder ser calculada, a
+     * formação segue como antes (WARN): os guardas do finalizar e da remessa continuam valendo.
+     */
+    private somentePagaveis = async (elegiveis: TituloAPagar[]): Promise<TituloAPagar[]> => {
+        if (elegiveis.length === 0) return elegiveis;
+        try {
+            const situacoes = await this.situacaoPagamento.avaliarVarios(elegiveis);
+            const pagaveis = elegiveis.filter(
+                (t) =>
+                    situacoes.get(`${t.filCod}:${t.docCod}:${t.titCod}`)?.estado ===
+                    ESTADO_PAGAMENTO.PRONTO,
+            );
+            const porMotivo: Record<string, number> = {};
+            for (const s of situacoes.values()) {
+                if (s.principal) porMotivo[s.principal] = (porMotivo[s.principal] ?? 0) + 1;
+            }
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'formação automática: títulos fora do lote por situação de pagamento',
+                data: { elegiveis: elegiveis.length, pagaveis: pagaveis.length, porMotivo },
+            });
+            return pagaveis;
+        } catch (error) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'formação automática: situação de pagamento indisponível, seguindo sem ela',
+                data: { erro: error instanceof Error ? error.message : String(error) },
+            });
+            return elegiveis;
+        }
     };
 
     /** Um lote por grupo, numa transação (raiz + itens). */
