@@ -279,6 +279,26 @@ export default class AjusteCentavosExecucaoRepository {
         return row ? ajusteCentavosExecucaoRowSchema.parse(row) : null;
     };
 
+    /**
+     * Etapa do ajuste mais recente de CADA título de origem, de todas as filiais, por
+     * `filCod:docCod:titCod` — insumo da situação de pagamento (ADR-0075, motivo
+     * AJUSTE_CENTAVOS_PENDENTE). Só a etapa: quem decide o que pede ação é o resolver.
+     */
+    public listarUltimaEtapaPorTitulo = async (): Promise<Map<string, EtapaAjuste>> => {
+        const rows = (await this.db.selectMany(
+            `SELECT DISTINCT ON (fil_cod, doc_cod, tit_cod_origem)
+                    fil_cod, doc_cod, tit_cod_origem, etapa
+               FROM sispag_ajuste_centavos_execucao
+              ORDER BY fil_cod, doc_cod, tit_cod_origem, criado_em DESC`,
+        )) as Array<{
+            fil_cod: number;
+            doc_cod: string;
+            tit_cod_origem: string;
+            etapa: EtapaAjuste;
+        }>;
+        return new Map(rows.map((r) => [`${r.fil_cod}:${r.doc_cod}:${r.tit_cod_origem}`, r.etapa]));
+    };
+
     /** O ajuste mais recente por título de origem, da filial (endpoint `GET`, M7). */
     public listarUltimosDaFilial = async (filCod: number): Promise<AjusteCentavosExecucao[]> => {
         const rows = await this.db.selectMany(

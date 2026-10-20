@@ -18,6 +18,7 @@ import {
     type SispagPainelResponse,
     type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
+import type { ResumoSituacao } from '../../interface/sispag/SituacaoPagamento.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import ConciliacaoExecucaoRepository from '../../repository/sispag/ConciliacaoExecucaoRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
@@ -25,6 +26,7 @@ import RemessaExecucaoRepository from '../../repository/sispag/RemessaExecucaoRe
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
+import SituacaoPagamentoService from './SituacaoPagamentoService.js';
 import DestinoPagamentoResolver, {
     type CacheCadastroDestino,
     DESTINO_CADASTRO_TIPO,
@@ -107,6 +109,8 @@ export default class SispagPainelService {
         @inject(LogService) private readonly logService: LogService,
         @inject(DestinoPagamentoResolver) private readonly resolver: DestinoPagamentoResolver,
         @inject(BankingCalendar) private readonly calendar: BankingCalendar,
+        @inject(SituacaoPagamentoService)
+        private readonly situacaoPagamento: SituacaoPagamentoService,
     ) {}
 
     public montarPainel = async (): Promise<SispagPainelResponse> => {
@@ -174,6 +178,9 @@ export default class SispagPainelService {
 
         // Carteira completa (KPIs calculam sobre ela); a resposta corta em CAP.
         const titulosPreparados = this.prepararTitulos(titulosRaw);
+        // ADR-0075: a situação é calculada na carteira INTEIRA, antes do corte, para o resumo valer
+        // para todos os títulos e não só para os que cabem no payload.
+        const resumoSituacao = await this.avaliarSituacao(titulosPreparados);
         const kpis = this.calcularKpis(titulosPreparados, lotesRaw);
         const titulos = titulosPreparados.slice(0, TITULOS_CAP);
         const titulosTotal = titulosPreparados.length;
@@ -212,7 +219,29 @@ export default class SispagPainelService {
             titulosTotal,
             execucoesParadas,
             lotes: this.ordenarLotes(lotesRaw),
+            ...(resumoSituacao ? { resumoSituacao } : {}),
         };
+    };
+
+    /**
+     * Situação de pagamento da carteira. Falha por inteiro NÃO derruba o painel: a tela volta ao
+     * comportamento anterior (sem os cards de ação) e o erro vai ao log. Falha de uma fonte já é
+     * tratada dentro do serviço (`fontesIndisponiveis`).
+     */
+    private avaliarSituacao = async (
+        titulos: TituloAPagar[],
+    ): Promise<ResumoSituacao | undefined> => {
+        try {
+            return await this.situacaoPagamento.avaliarCarteira(titulos);
+        } catch (error) {
+            await this.logService.error({
+                type: LOG_TYPE.FLOW_ERROR,
+                message:
+                    'SISPAG painel: falha ao calcular a situação de pagamento (painel sem ela)',
+                data: { erro: error instanceof Error ? error.message : String(error) },
+            });
+            return undefined;
+        }
     };
 
     /**

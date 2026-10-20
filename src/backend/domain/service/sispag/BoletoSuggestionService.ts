@@ -865,6 +865,16 @@ export default class BoletoSuggestionService {
     };
 
     /**
+     * Situação do desfecho de cada título, por `filCod:docCod:titCod`, do MESMO cenário em cache da
+     * listagem (single-flight: a tela não paga o motor duas vezes). Insumo da situação de pagamento
+     * (ADR-0075); é só evidência de tela, nunca decide a confirmação.
+     */
+    public situacaoPorTitulo = async (): Promise<Map<string, SituacaoSugestaoTitulo>> => {
+        const { valor: cenario } = await this.cache.obter(this.calcularCenario);
+        return new Map(cenario.desfechos.map((d) => [chaveTitulo(d), d.situacao] as const));
+    };
+
+    /**
      * Desfecho por título calculado agora, sem cache — para o leitor de DPS (ADR-0073) escolher
      * quem ainda não tem desempate. Mesma entrada do cenário da tela.
      */
