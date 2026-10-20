@@ -166,10 +166,10 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/errors/GroupedBoletoErrors.test.ts` (novo)
 
 **Acceptance criteria:**
-- [ ] Teste primeiro; `message` em inglês, `userMessage` em português com as chaves (`docCod/titCod`, `borCod`, filial) e o código **mascarado**; `JSON.stringify` do erro sem 44/47 dígitos
-- [ ] Status HTTP conforme a tabela "Erros nomeados" da I21; mapeados pelo `http/errorMiddleware.ts` como os erros SISPAG existentes (teste do middleware)
-- [ ] `WarningAcknowledgementRequiredError` reutilizado (não duplicado) para o aviso da I21g
-- [ ] `GroupedBoletoIndivisibleError` traz o id do grupo e os N títulos (a tela os lista)
+- [x] Teste primeiro; `message` em inglês, `userMessage` em português com as chaves (`docCod/titCod`, `borCod`, filial) e o código **mascarado**; `JSON.stringify` do erro sem 44/47 dígitos
+- [x] Status HTTP conforme a tabela "Erros nomeados" da I21; mapeados pelo `http/errorMiddleware.ts` como os erros SISPAG existentes (teste do middleware) — *nota da T5: os erros SISPAG não passam pelo `errorMiddleware` (ele achata tudo em 500, de propósito); o mapeamento real é `respondHandlerError` (= `respondLoteError` de `routes/sispag.ts`), e é ele que o teste cobre.*
+- [x] `WarningAcknowledgementRequiredError` reutilizado (não duplicado) para o aviso da I21g
+- [x] `GroupedBoletoIndivisibleError` traz o id do grupo e os N títulos (a tela os lista)
 
 **Dependencies:** none
 
