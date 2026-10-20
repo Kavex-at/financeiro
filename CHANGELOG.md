@@ -12,6 +12,9 @@
   decisão é transferida mantendo você como autora, e um item em lote ainda em rascunho passa para o
   título novo. Lote finalizado ou já enviado ao Conexos não é ajustado (aviso na tela).
 - **Na tela:** o par mostra o estado do ajuste e o botão "tentar de novo" quando algo falha.
+- **Se travar, o painel de operação avisa.** Ajuste que precisa de alguém no Conexos (renegociação a resolver,
+  ou título novo esperando aprovação na Liberação de Títulos) vira alerta no painel, com o que fazer — um por
+  título por dia. Falha antes de concluir a renegociação desfaz tudo e o título original fica como estava.
 - **Já vem ativo** e só roda no servidor, nunca em cron. Se as escritas do SISPAG estiverem desligadas
   (`SISPAG_LIVE_WRITE_ENABLED`), o ajuste para e fica só em simulação (nada é gravado no Conexos).
   Diferença acima de R$ 0,05 não é ajustada: segue a aprovação normal no Conexos.
