@@ -9,6 +9,8 @@ import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoR
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
+import type { ResumoSituacao } from '../../interface/sispag/SituacaoPagamento.js';
+import type SituacaoPagamentoService from './SituacaoPagamentoService.js';
 import MaskDestino from '../../libs/sispag/MaskDestino.js';
 import DestinoPagamentoResolver from './DestinoPagamentoResolver.js';
 import SispagPainelService from './SispagPainelService.js';
@@ -78,6 +80,7 @@ const make = (
         remessaLedger?: { listReconcilingParadas: jest.Mock };
         conciliacaoLedger?: { listReconcilingParadas: jest.Mock };
         calendar?: BankingCalendar;
+        avaliarCarteira?: jest.Mock;
     } = {},
 ) => {
     const {
@@ -139,6 +142,21 @@ const make = (
         listReconcilingParadas: jest.fn().mockResolvedValue([]),
     }) as never;
     const resolver = new DestinoPagamentoResolver(sispag, new MaskDestino());
+    const avaliarCarteira =
+        over.avaliarCarteira ??
+        jest.fn(async (titulos: TituloAPagar[]): Promise<ResumoSituacao> => {
+            for (const t of titulos) t.situacaoPagamento = { estado: 'PRONTO', motivos: [] };
+            return {
+                porEstado: {
+                    PRONTO: { qtd: titulos.length, valor: 0 },
+                    BLOQUEADO: { qtd: 0, valor: 0 },
+                },
+                porMotivo: {},
+                porDono: {},
+                fontesIndisponiveis: [],
+            };
+        });
+    const situacaoPagamento = { avaliarCarteira } as unknown as SituacaoPagamentoService;
     const service = new SispagPainelService(
         sispag,
         fin015,
@@ -154,10 +172,12 @@ const make = (
         log,
         resolver,
         calendar,
+        situacaoPagamento,
     );
     return {
         service,
         log,
+        avaliarCarteira,
         listChavesComBoleto,
         listarLinhasDigitaveisDoLote,
         resolver,
@@ -169,6 +189,54 @@ describe('SispagPainelService.montarPainel — sem contadores de exceção (ADR-
         const { service } = make({});
         const painel = await service.montarPainel();
         expect(painel).not.toHaveProperty('excecoes');
+    });
+});
+
+describe('SispagPainelService.montarPainel — situação de pagamento (ADR-0075)', () => {
+    it('devolve a situação de cada título e o resumo da carteira', async () => {
+        const { service } = make({ titulosAtivos: [titulo(), titulo({ titCod: '2' })] });
+        const painel = await service.montarPainel();
+        expect(painel.titulos.map((t) => t.situacaoPagamento?.estado)).toEqual([
+            'PRONTO',
+            'PRONTO',
+        ]);
+        expect(painel.resumoSituacao?.porEstado.PRONTO.qtd).toBe(2);
+    });
+
+    it('calcula sobre a carteira INTEIRA, antes do corte de payload', async () => {
+        const { service, avaliarCarteira } = make({
+            titulosAtivos: [titulo(), titulo({ titCod: '2' }), titulo({ titCod: '3' })],
+        });
+        await service.montarPainel();
+        expect(avaliarCarteira).toHaveBeenCalledTimes(1);
+        const [recebidos] = avaliarCarteira.mock.calls[0] as [TituloAPagar[]];
+        expect(recebidos).toHaveLength(3);
+    });
+
+    it('recebe os títulos já com o aging em dia civil (o vencido depende dele)', async () => {
+        const { service, avaliarCarteira } = make({
+            titulosAtivos: [titulo({ vencimento: Date.now() - 3 * DAY })],
+        });
+        await service.montarPainel();
+        const [recebidos] = avaliarCarteira.mock.calls[0] as [TituloAPagar[]];
+        expect(recebidos[0]?.diasAteVencimento).toBeLessThan(0);
+    });
+
+    it('falha TOTAL do cálculo não derruba o painel: sem o resumo e com o erro no log', async () => {
+        const error = jest.fn().mockResolvedValue(undefined);
+        const log = { ...buildLog(), error } as unknown as LogService;
+        const { service } = make({
+            log,
+            avaliarCarteira: jest.fn().mockRejectedValue(new Error('boom')),
+        });
+        const painel = await service.montarPainel();
+        expect(painel.titulos).toHaveLength(1);
+        expect(painel).not.toHaveProperty('resumoSituacao');
+        expect(error).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringContaining('situação de pagamento'),
+            }),
+        );
     });
 });
 

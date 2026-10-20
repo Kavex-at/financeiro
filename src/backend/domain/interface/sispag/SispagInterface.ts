@@ -1,5 +1,5 @@
 import type { PayeeItemWarning } from './AuthorizedPayeeInterface.js';
-import type { SituacaoPagamento } from './SituacaoPagamento.js';
+import type { ResumoSituacao, SituacaoPagamento } from './SituacaoPagamento.js';
 /**
  * SISPAG (Escopo II) — interfaces do painel READ-ONLY (spike / semente da Fatia 1).
  *
@@ -290,6 +290,11 @@ export interface SispagPainelResponse {
     /** Execuções de escrita presas — ver `ExecucoesParadas`. */
     execucoesParadas: ExecucoesParadas;
     lotes: LoteSispag[];
+    /**
+     * Contagens por estado/motivo/dono sobre a carteira INTEIRA (ADR-0075). Ausente só se o cálculo
+     * da situação falhou por inteiro: a tela cai para o comportamento antigo e o motivo vai ao log.
+     */
+    resumoSituacao?: ResumoSituacao;
 }
 
 // ============================================================ Fatia 2 — LotePagamento
