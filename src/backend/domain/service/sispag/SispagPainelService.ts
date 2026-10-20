@@ -36,7 +36,6 @@ import DestinoPagamentoResolver, {
     type FlagsDestino,
 } from './DestinoPagamentoResolver.js';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 /** Nº máx. de títulos devolvidos ao painel (evita payload gigante). */
 /**
  * Teto do payload de títulos. É GUARDA-RAIL, não limite de trabalho.
@@ -519,16 +518,13 @@ export default class SispagPainelService {
      * instante virava o título de hoje em vencido a partir das 09:00 BRT.
      */
     private prepararTitulos = (titulos: TituloAPagar[]): TituloAPagar[] => {
-        const hoje = this.calendar.toErpEpoch(this.calendar.todayBrt());
-        const diaDoErp = (epoch: number): number =>
-            this.calendar.toErpEpoch(this.calendar.fromErpEpoch(epoch));
         return titulos
             .filter((t) => !t.pago)
             .map((t) => ({
                 ...t,
                 diasAteVencimento:
                     t.vencimento !== undefined
-                        ? Math.round((diaDoErp(t.vencimento) - hoje) / DAY_MS)
+                        ? this.calendar.diasAteVencimento(t.vencimento)
                         : undefined,
             }))
             .sort((a, b) => (a.vencimento ?? Infinity) - (b.vencimento ?? Infinity));

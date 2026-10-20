@@ -135,6 +135,18 @@ export default class BankingCalendar {
      */
     public fromErpEpoch = (epoch: number): CivilDate => this.format(new Date(epoch));
 
+    /**
+     * Dias do dia civil de HOJE (Brasília) até o dia civil do vencimento do ERP; negativo = vencido.
+     * Por dia civil, nunca pelo instante: o título que vence hoje dá 0, não "vencido 1d" a partir
+     * das 09:00 BRT (ADR-0070). A única origem do aging do SISPAG.
+     */
+    public diasAteVencimento = (vencimentoEpoch: number): number =>
+        Math.round(
+            (this.toErpEpoch(this.fromErpEpoch(vencimentoEpoch)) -
+                this.toErpEpoch(this.todayBrt())) /
+                (24 * 60 * 60 * 1000),
+        );
+
     private parse = (civil: CivilDate): Date => {
         if (!this.isValidCivilDate(civil)) {
             throw new Error(`data civil inválida: "${civil}" (esperado AAAA-MM-DD)`);

@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import { PAGO_POR_CONEXOS } from '../../interface/sispag/PagoPorConexos.js';
 import {
@@ -14,6 +15,7 @@ import { SITUACAO_SUGESTAO_TITULO } from '../../interface/sispag/SugestaoBoleto.
 import { ETAPA_AJUSTE } from '../../libs/boleto/EtapaAjusteCentavos.js';
 import type AjusteCentavosExecucaoRepository from '../../repository/sispag/AjusteCentavosExecucaoRepository.js';
 import type BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
+import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
 import type BoletoSuggestionService from './BoletoSuggestionService.js';
 import SituacaoPagamentoResolver from './SituacaoPagamentoResolver.js';
@@ -35,6 +37,7 @@ interface Over {
     ajustes?: jest.Mock;
     desfechos?: jest.Mock;
     env?: jest.Mock;
+    buscarPorChave?: jest.Mock;
 }
 
 const make = (over: Over = {}) => {
@@ -58,6 +61,11 @@ const make = (over: Over = {}) => {
         warn: jest.fn().mockResolvedValue(undefined),
         info: jest.fn().mockResolvedValue(undefined),
     } as unknown as LogService;
+    const tituloRepo = {
+        buscarPorChave: over.buscarPorChave ?? jest.fn().mockResolvedValue(null),
+    } as unknown as TituloAPagarRepository;
+    // 20/10/2026 12:00 BRT: o dia civil de hoje é 2026-10-20.
+    const calendar = BankingCalendar.withClock(() => new Date('2026-10-20T15:00:00Z'));
     const service = new SituacaoPagamentoService(
         new SituacaoPagamentoResolver(),
         bloqueioRepo,
@@ -65,8 +73,10 @@ const make = (over: Over = {}) => {
         boleto,
         env,
         log,
+        tituloRepo,
+        calendar,
     );
-    return { service, log };
+    return { service, log, tituloRepo };
 };
 
 describe('SituacaoPagamentoService', () => {
@@ -233,6 +243,59 @@ describe('SituacaoPagamentoService', () => {
             await service.avaliarCarteira([naDois, naSete]);
             expect(naDois.situacaoPagamento?.estado).toBe(ESTADO_PAGAMENTO.BLOQUEADO);
             expect(naSete.situacaoPagamento?.estado).toBe(ESTADO_PAGAMENTO.PRONTO);
+        });
+    });
+
+    describe('aging por dia civil quando o título vem sem ele', () => {
+        const dia = (d: number) => Date.UTC(2026, 9, d);
+
+        it('avaliarVarios: vencido ontem bloqueia, vence hoje não', async () => {
+            const { service } = make();
+            const mapa = await service.avaliarVarios([
+                titulo({ titCod: '1', vencimento: dia(19), diasAteVencimento: undefined }),
+                titulo({ titCod: '2', vencimento: dia(20), diasAteVencimento: undefined }),
+            ]);
+            expect(mapa.get('2:100:1')?.principal).toBe(MOTIVO_PAGAMENTO.VENCIDO);
+            expect(mapa.get('2:100:2')?.estado).toBe(ESTADO_PAGAMENTO.PRONTO);
+        });
+    });
+
+    describe('avaliarVivo (inclusão manual no lote)', () => {
+        const chave = { filCod: 2, docCod: '100', titCod: '1' };
+
+        it('título fora da carteira persistida devolve null (os guardas ao vivo seguem valendo)', async () => {
+            const { service } = make();
+            expect(
+                await service.avaliarVivo(chave, { liberado: true, pago: false, vencimento: 0 }),
+            ).toBeNull();
+        });
+
+        it('mistura o persistido (tipo, forma) com o ao vivo (aprovação, vencimento)', async () => {
+            const persistido = titulo({
+                liberado: false, // desatualizado: no Conexos já foi aprovado
+                vencimento: Date.UTC(2026, 9, 10), // desatualizado: renegociado para o futuro
+                tpdDesNome: 'NOTA FISCAL (PERMUTA)',
+                diasAteVencimento: undefined,
+            });
+            const { service } = make({ buscarPorChave: jest.fn().mockResolvedValue(persistido) });
+            const s = await service.avaliarVivo(chave, {
+                liberado: true,
+                pago: false,
+                vencimento: Date.UTC(2026, 9, 30),
+            });
+            // aprovação e vencimento vêm do ao vivo; o tipo, do persistido
+            expect(s?.motivos).toEqual([MOTIVO_PAGAMENTO.TIPO_PERMUTA]);
+        });
+
+        it('vencimento ao vivo no passado bloqueia mesmo que o persistido estivesse em dia', async () => {
+            const persistido = titulo({ vencimento: Date.UTC(2026, 9, 30) });
+            const { service } = make({ buscarPorChave: jest.fn().mockResolvedValue(persistido) });
+            const s = await service.avaliarVivo(chave, {
+                liberado: true,
+                pago: false,
+                vencimento: Date.UTC(2026, 9, 15),
+            });
+            expect(s?.principal).toBe(MOTIVO_PAGAMENTO.VENCIDO);
         });
     });
 

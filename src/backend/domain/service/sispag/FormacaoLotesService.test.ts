@@ -7,6 +7,7 @@ import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoR
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
+import type SituacaoPagamentoService from './SituacaoPagamentoService.js';
 import FormacaoLotesService from './FormacaoLotesService.js';
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
@@ -20,7 +21,11 @@ const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     ...over,
 });
 
-const buildLog = () => ({ info: jest.fn().mockResolvedValue(undefined) }) as unknown as LogService;
+const buildLog = () =>
+    ({
+        info: jest.fn().mockResolvedValue(undefined),
+        warn: jest.fn().mockResolvedValue(undefined),
+    }) as unknown as LogService & { info: jest.Mock; warn: jest.Mock };
 
 const make = (
     over: {
@@ -29,6 +34,7 @@ const make = (
         acquire?: boolean;
         conta?: { banco: string; conta: string } | undefined;
         calendar?: BankingCalendar;
+        avaliarVarios?: jest.Mock;
     } = {},
 ) => {
     const resolverPadrao = jest
@@ -51,16 +57,119 @@ const make = (
         ),
         withTransaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) => fn({})),
     } as unknown as PostgreeDatabaseClient;
+    // ADR-0075: por padrão toda situação é PRONTO; um teste específico bloqueia títulos.
+    const avaliarVarios =
+        over.avaliarVarios ??
+        jest.fn(async (titulos: TituloAPagar[]) => {
+            const mapa = new Map<string, { estado: string; motivos: string[] }>();
+            for (const t of titulos) {
+                mapa.set(`${t.filCod}:${t.docCod}:${t.titCod}`, { estado: 'PRONTO', motivos: [] });
+            }
+            return mapa;
+        });
+    const log = buildLog();
     const service = new FormacaoLotesService(
         tituloRepo as unknown as TituloAPagarRepository,
         loteRepo as unknown as LotePagamentoRepository,
         db,
-        buildLog(),
+        log,
         { resolverPadrao } as unknown as ContaPagadoraResolver,
         over.calendar ?? new BankingCalendar(),
+        { avaliarVarios } as unknown as SituacaoPagamentoService,
     );
-    return { service, tituloRepo, loteRepo, resolverPadrao };
+    return { service, tituloRepo, loteRepo, resolverPadrao, avaliarVarios, log };
 };
+
+describe('FormacaoLotesService — só títulos PRONTO (ADR-0075, D9)', () => {
+    const DIA = Date.UTC(2026, 9, 8);
+    const situacoes = (bloqueados: Record<string, string>) =>
+        jest.fn(async (titulos: TituloAPagar[]) => {
+            const mapa = new Map<
+                string,
+                { estado: string; motivos: string[]; principal?: string }
+            >();
+            for (const t of titulos) {
+                const motivo = bloqueados[t.docCod];
+                mapa.set(
+                    `${t.filCod}:${t.docCod}:${t.titCod}`,
+                    motivo
+                        ? { estado: 'BLOQUEADO', motivos: [motivo], principal: motivo }
+                        : { estado: 'PRONTO', motivos: [] },
+                );
+            }
+            return mapa;
+        });
+
+    it('título bloqueado fica fora do lote automático; os prontos entram', async () => {
+        const elegiveis = [
+            titulo({ docCod: '1', vencimento: DIA }),
+            titulo({ docCod: '2', vencimento: DIA }),
+            titulo({ docCod: '3', vencimento: DIA }),
+        ];
+        const { service, loteRepo } = make({
+            elegiveis,
+            avaliarVarios: situacoes({ '2': 'TIPO_PERMUTA' }),
+        });
+        const r = await service.formar({ triggeredBy: 'cron' });
+        expect(r.titulosLotados).toBe(2);
+        const itens = loteRepo.adicionarItens.mock.calls.flatMap(
+            (c: unknown[]) => c[1] as Array<{ docCod: string }>,
+        );
+        expect(itens.map((i) => i.docCod).sort()).toEqual(['1', '3']);
+    });
+
+    it('grupo inteiro bloqueado não cria lote nenhum', async () => {
+        const { service, loteRepo } = make({
+            elegiveis: [titulo({ docCod: '1', vencimento: DIA })],
+            avaliarVarios: situacoes({ '1': 'BOLETO_SEM_DDA' }),
+        });
+        const r = await service.formar({ triggeredBy: 'cron' });
+        expect(r.lotesFormados).toBe(0);
+        expect(loteRepo.criarLote).not.toHaveBeenCalled();
+    });
+
+    it('registra quantos ficaram de fora e por qual motivo (a analista precisa saber por quê)', async () => {
+        const { service, log } = make({
+            elegiveis: [
+                titulo({ docCod: '1', vencimento: DIA }),
+                titulo({ docCod: '2', vencimento: DIA }),
+                titulo({ docCod: '3', vencimento: DIA }),
+            ],
+            avaliarVarios: situacoes({ '2': 'TIPO_PERMUTA', '3': 'TIPO_PERMUTA' }),
+        });
+        await service.formar({ triggeredBy: 'cron' });
+        expect(log.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    elegiveis: 3,
+                    pagaveis: 1,
+                    porMotivo: { TIPO_PERMUTA: 2 },
+                }),
+            }),
+        );
+    });
+
+    it('situação indisponível: a formação segue como antes, com WARN (os guardas do finalizar valem)', async () => {
+        const { service, log, loteRepo } = make({
+            elegiveis: [titulo({ docCod: '1', vencimento: DIA })],
+            avaliarVarios: jest.fn().mockRejectedValue(new Error('contexto fora')),
+        });
+        const r = await service.formar({ triggeredBy: 'cron' });
+        expect(r.titulosLotados).toBe(1);
+        expect(loteRepo.criarLote).toHaveBeenCalled();
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringContaining('situação de pagamento indisponível'),
+            }),
+        );
+    });
+
+    it('sem elegíveis não consulta a situação', async () => {
+        const { service, avaliarVarios } = make({ elegiveis: [] });
+        await service.formar({ triggeredBy: 'cron' });
+        expect(avaliarVarios).not.toHaveBeenCalled();
+    });
+});
 
 describe('FormacaoLotesService', () => {
     describe('ADR-0064 — filial × vencimento, boletos juntos no fatiamento', () => {

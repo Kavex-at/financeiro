@@ -25,6 +25,7 @@ import type BloqueioDuplicidadeRepository from '../../repository/sispag/Bloqueio
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import type VerificacaoTedPixService from './VerificacaoTedPixService.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import type SituacaoPagamentoService from './SituacaoPagamentoService.js';
 import type LogService from '../LogService.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
@@ -130,6 +131,8 @@ const buildDestinoDeps = () => ({
         descartarDoItem: jest.fn().mockResolvedValue(0),
     },
     bloqueioRepo: { findAtivo: jest.fn().mockResolvedValue(null) },
+    /** ADR-0075: por padrão a situação não sabe (título fora da carteira) e não bloqueia. */
+    situacaoPagamento: { avaliarVivo: jest.fn().mockResolvedValue(null) },
     envVars: {
         sispagFavorecidoAutorizadoEnabled: true,
         sispagTedEnabled: true,
@@ -158,6 +161,7 @@ const novoService = (
         deps.alertaRepo as unknown as AlertaItemLoteRepository,
         deps.bloqueioRepo as unknown as BloqueioDuplicidadeRepository,
         { getEnvironmentVars: async () => deps.envVars } as unknown as EnvironmentProvider,
+        deps.situacaoPagamento as unknown as SituacaoPagamentoService,
     );
 
 /** Carteira persistida: é DAQUI que sai o "tem boleto?" — nunca do `fin064`. */
@@ -241,6 +245,89 @@ describe('LotePagamentoService — invariantes', () => {
             await expect(service.incluirTitulo(input)).rejects.toBeInstanceOf(
                 LoteEstadoInvalidoError,
             );
+        });
+
+        describe('ADR-0075 — situação de pagamento', () => {
+            const bloqueado = (principal: 'TIPO_PERMUTA' | 'FORMA_NAO_SISPAG' | 'BOLETO_SEM_DDA') =>
+                ({
+                    estado: 'BLOQUEADO',
+                    motivos: [principal],
+                    principal,
+                    rotulo: 'Título de permuta',
+                    dono: 'PERMUTAS',
+                    acao: { codigo: 'ABRIR_EM_PERMUTAS', rotulo: 'Abrir em Permutas' },
+                    detalhe: 'pode já ter permuta parcial',
+                }) as const;
+
+            it('rejeita título BLOQUEADO pela situação, com motivo, dono e ação nos detalhes', async () => {
+                const repo = buildRepo();
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue(bloqueado('TIPO_PERMUTA'));
+                const { service } = make(repo, titulo(), buildTituloRepo(), deps);
+                const erro = await service.incluirTitulo(input).catch((e: unknown) => e);
+                expect(erro).toBeInstanceOf(TituloNaoElegivelError);
+                const e = erro as TituloNaoElegivelError;
+                expect(e.statusCode).toBe(422);
+                expect(e.userMessage).toContain('Título de permuta');
+                expect(e.userMessage).toContain('pode já ter permuta parcial');
+                expect(e.details).toMatchObject({
+                    motivo: 'situacao-pagamento',
+                    motivoPagamento: 'TIPO_PERMUTA',
+                    dono: 'PERMUTAS',
+                    acao: { codigo: 'ABRIR_EM_PERMUTAS' },
+                });
+                expect(repo.adicionarItem).not.toHaveBeenCalled();
+            });
+
+            it('avalia com a chave do título e o que o fin064 leu AO VIVO', async () => {
+                const repo = buildRepo();
+                const deps = buildDestinoDeps();
+                const vivo = titulo({ vencimento: 1_800_000_000_000 });
+                const { service } = make(repo, vivo, buildTituloRepo(), deps);
+                await service.incluirTitulo(input);
+                expect(deps.situacaoPagamento.avaliarVivo).toHaveBeenCalledWith(
+                    { filCod: 2, docCod: '100', titCod: '1' },
+                    expect.objectContaining({
+                        liberado: true,
+                        pago: false,
+                        vencimento: 1_800_000_000_000,
+                    }),
+                );
+            });
+
+            it('título PRONTO entra normalmente', async () => {
+                const repo = buildRepo();
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue({
+                    estado: 'PRONTO',
+                    motivos: [],
+                });
+                const { service } = make(repo, titulo(), buildTituloRepo(), deps);
+                await service.incluirTitulo(input);
+                expect(repo.adicionarItem).toHaveBeenCalled();
+            });
+
+            it('situação desconhecida (null) não bloqueia: os guardas ao vivo continuam valendo', async () => {
+                const repo = buildRepo();
+                const { service } = make(repo);
+                await service.incluirTitulo(input);
+                expect(repo.adicionarItem).toHaveBeenCalled();
+            });
+
+            it('a alçada ao vivo vem ANTES: não liberado nem consulta a situação', async () => {
+                const repo = buildRepo();
+                const deps = buildDestinoDeps();
+                const { service } = make(
+                    repo,
+                    titulo({ liberado: false }),
+                    buildTituloRepo(),
+                    deps,
+                );
+                await expect(service.incluirTitulo(input)).rejects.toBeInstanceOf(
+                    TituloNaoElegivelError,
+                );
+                expect(deps.situacaoPagamento.avaliarVivo).not.toHaveBeenCalled();
+            });
         });
 
         it('happy — inclui com snapshot e toca o lote', async () => {
