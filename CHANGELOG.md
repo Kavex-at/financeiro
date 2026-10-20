@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.70.0 (2026-10-20) — SISPAG: boletos da MULTILOG casados pelo número da DPS
+
+- **O boleto certo para tarifas de valor igual.** Fornecedores de NFS-e como a MULTILOG numeram o
+  boleto DDA com o **número da DPS** seguido de `000` (não com o número da nota). Títulos com o mesmo
+  valor e vencimento, que antes ficavam "ver candidato (sem confirmação)", passam a mostrar o boleto
+  certo, pronto para você confirmar, com o motivo "número do boleto igual ao DPS da NFS-e" ou "casado
+  pela ordem do DPS da NFS-e deste emissor".
+- **Leitura automática da nota no GED.** Três vezes ao dia, depois da carga da carteira, o sistema abre
+  no GED do Conexos só o PDF da NFS-e dos títulos que ainda não têm desempate e lê o número da DPS. Nada é
+  escrito no Conexos, e ninguém precisa abrir o GED para conferir.
+- **Na dúvida, nada muda.** A ordem só vale onde um DPS lido já provou o padrão daquela conta emissora;
+  quando o PDF não traz DPS (ex.: CT-e) ou o número da nota no PDF não bate com o do título, nada é
+  sugerido. A confirmação continua sendo sua.
+
 ## v0.69.0 (2026-10-15) — SISPAG: todo título de boleto sem DDA mostra o que fazer, e o aviso de vencimento antes do título
 
 - **Nenhum título "sem DDA" fica sem resposta.** Antes, só ~1 em cada 4 mostrava sugestão (os candidatos
