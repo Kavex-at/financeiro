@@ -31,20 +31,25 @@ resolve e qual o próximo passo**.
 | D6 | Vencido é bloqueio **e** filtro (preset "Vencidos" na coluna Vencimento). |
 | D7 | Permuta/adiantamento aparece como **bloqueado**. |
 | D8 | Barra de seleção: um lote **por filial**, criado automaticamente. |
-| D9 | Lotes automáticos usam **só títulos "Pronto"**. Premissa a confirmar: "Pronto, confira" também fica de fora. |
+| D9 | Lotes automáticos usam **só títulos "Pronto"**. ("Pronto, confira" não existe nesta fatia, P1-1.) |
 | D10 | TED/PIX contam como Pronto até existir verificação no carregamento da carteira. Voltar ao ponto depois. |
 | D11 | Regras ficam atrás de um botão "?" na tela, não numa tela própria. |
 | D12 | Nome: **situação de pagamento** (não "pagabilidade"). |
+| D13 | Permuta/adiantamento é **bloqueio**, mesmo podendo já ter sido permutado em parte. O tipo é **indicação**, não prova: a linha avisa "pode já ter permuta parcial, confira o saldo em Permutas". (Resposta de 20/10.) |
+| D14 | Forma no Conexos que não é pagável pelo SISPAG (cheque, cartão, caixa…) é **bloqueio**. Lista de códigos a confirmar (P1-2). |
+| D15 | Um lote por filial: **endpoint novo** `POST /sispag/lotes/por-filial`, resultado por lote. |
+| D16 | Boleto sem DDA e sem candidato fica **bloqueado, dono Você**: a analista verifica. Sai o dono "Aguardar DDA". |
+| D17 | Backlog de filtros fechado: são as colunas que a tela já mostra (valor, vencimento, filial, credor, documento, forma, situação, ação). Nada além disso. |
 
 ## 3. Modelo
 
 `situacaoPagamento` por título, calculada no backend e só desenhada pela tela:
 
 ```
-estado:    PRONTO | CONFIRA | BLOQUEADO
+estado:    PRONTO | BLOQUEADO      // CONFIRA fica de fora até existir caso real (ver §6, P1-1)
 motivos:   Motivo[]            // todos os que se aplicam, em ordem de prioridade
 principal: Motivo | undefined  // o mais urgente, mostrado na linha
-dono:      VOCE | APROVADOR | CADASTRO | PERMUTAS | CONTAS_A_PAGAR | AGUARDAR_DDA
+dono:      VOCE | APROVADOR | CADASTRO | PERMUTAS | CONTAS_A_PAGAR
 acao:      { codigo, rotulo }  // botão da linha ("Pedir autorização", "Abrir no Conexos"…)
 detalhe?:  string              // ex.: "venceu há 4 dias", "parecido com doc 5498"
 ```
@@ -53,13 +58,15 @@ Constantes tipadas, nunca string crua (princípio P3).
 
 | Motivo | Estado | Fonte (existe hoje?) | Dono | Disponível ao carregar? |
 |---|---|---|---|---|
-| `TIPO_NAO_PAGAMENTO` (permuta/adiantamento) | BLOQUEADO | `tpd_cod` persistido; **nome do tipo só vem do `com298/list`** | Permutas | **Parcial. Ver P0-1.** |
+| `TIPO_PERMUTA` (permuta/adiantamento, indicação) | BLOQUEADO | **`tpd_cod` está vazio em 100% da carteira** (medido 20/10). O tipo só vem do `com298/list`. | Permutas | **Não, até resolver P0-1.** |
 | `VENCIDO` (dia civil, ADR-0070) | BLOQUEADO | `vencimento` | Contas a pagar | Sim |
 | `ALCADA` (não liberado) | BLOQUEADO | `liberado` | Aprovador | Sim |
 | `DUPLICIDADE` | BLOQUEADO | `BloqueioDuplicidadeRepository.listAtivos` (hoje barra `incluirTitulo`) | Você | Sim |
 | `RETIDO_CODBAR` | BLOQUEADO | `listarRetidosPorCodigoDeBarras` (I16g) | Você | Sim |
-| `BOLETO_SEM_DDA` | BLOQUEADO | forma Conexos + `temBoleto` + desfecho do `BoletoSuggestionService` | Você (há candidato) / Aguardar DDA (sem candidato) | Sim, via desfecho em cache |
-| `BOLETO_CONFERIR` (vence antes do título/do débito) | CONFIRA | aviso do desfecho (ADR-0072) | Você | Sim |
+| `FORMA_NAO_SISPAG` (cheque, cartão, caixa…) | BLOQUEADO | `formaPagamentoConexos` (`titVldPagopor`) | Você | Sim. Forma ausente **não** bloqueia (título fora do grid). Códigos: P1-2. |
+| `BOLETO_SEM_DDA` | BLOQUEADO | forma Conexos + `temBoleto` + desfecho do `BoletoSuggestionService` | Você (com ou sem candidato) | Sim, via desfecho em cache |
+| `CONFIRMACAO_A_REVISAR` | BLOQUEADO | desfecho `ORFA` (ERP sinalizou o título depois da confirmação) | Você | Sim |
+| `AJUSTE_CENTAVOS_PENDENTE` | BLOQUEADO | ledger do ajuste (ADR-0074): `indeterminado`, `aguardando_aprovacao_manual`, "tentar de novo" | Você | Sim |
 | `SEM_DESTINO`, `FAVORECIDO_NAO_AUTORIZADO` | **fora desta fatia** | só no lote (cmn025 ao vivo, I13/I14) | Cadastro / Você | **Não** (D10) |
 
 Ortogonal ao estado, sem virar motivo: `loteRascunho` e `loteComprometido` (já existem).
@@ -92,9 +99,11 @@ Três PRs, nessa ordem. O backend sozinho já corrige a falha tardia.
 **PR A: backend (contrato + regra aplicada)**
 1. Ontologia: regra `situacao-pagamento-titulo`; ampliar `elegibilidade-titulo-lote` (I2); glossário;
    ADR-0075 (checar o próximo número livre no merge); `_index.json`/`_coverage.json`.
-2. `SituacaoPagamentoResolver` + testes tabela (um caso por motivo, prioridade, motivos múltiplos,
+2. Ingestão grava o tipo do título (P0-1 a). `SituacaoPagamentoResolver` + testes tabela (um caso por motivo, prioridade, motivos múltiplos,
    fronteira de vencimento por dia civil, fonte indisponível).
 3. Painel: `situacaoPagamento` por título + `resumo`; testes do serviço e do contrato HTTP.
+4b. `POST /sispag/lotes/por-filial`: recebe os títulos, agrupa por filial, cria um lote por filial e
+   devolve o resultado por lote (criado, parcial, recusado, com o motivo). Lote que falha não desfaz o outro.
 4. `incluirTitulo` e `FormacaoLotesService` usando o resolver; testes de regressão (bloqueado não
    entra; auto-lote só com PRONTO; L6 desfazer-vencidos continua valendo).
 5. Medição read-only em PRD: distribuição por estado/motivo da carteira real, antes de ligar a tela.
@@ -102,8 +111,8 @@ Três PRs, nessa ordem. O backend sozinho já corrige a falha tardia.
 **PR B: frontend (títulos)**
 6. Cards + faixa de hoje + filtro externo + chips de motivo/dono + botão "?".
 7. Tabela com filtro e ordenação em todas as colunas, coluna de data, chips de filtros ativos.
-8. Barra de seleção com "um lote por filial" (cliente orquestra; ver P1-3) e botão de lotes automáticos
-   com pré-visualização.
+8. Barra de seleção chamando `POST /sispag/lotes/por-filial` e botão de lotes automáticos com
+   pré-visualização. (O endpoint e o contrato nascem no PR A, tarefa 4b.)
 9. Backlog das analistas: coletar a lista antes de codar (P1-5). DesignSystemReviewer obrigatório.
 
 **PR C: frontend (lotes)**
@@ -117,24 +126,32 @@ nos dois `package.json` (sem pwsh nesta máquina) e CHANGELOG.
 
 ## 6. Perguntas abertas
 
-**P0 (bloqueiam código)**
-- **P0-1. O que "(PERMUTA)" significa na prática, e o dado existe?** O `fin064` não traz `tpdCod`
-  nem `docVldTipoAdto`; o nome vem do `com298/list`, e ~1.570 títulos de NF comum não existem lá. Se
-  `tpd_cod` não estiver populado na carteira persistida, `TIPO_NAO_PAGAMENTO` só pega parte. Além
-  disso, não foi confirmado com a Flavia se um título "(PERMUTA)" já está quitado pela permuta ou
-  aguarda a permuta (memória `sispag-carteira-traz-tipos-permuta-e-adiantamento`). Medir a cobertura
-  de `tpd_cod` na carteira e perguntar à Flavia antes de bloquear 218 títulos.
+**P0 (bloqueia o motivo `TIPO_PERMUTA`; o resto do PR A segue)**
+- **P0-1. De onde vem o tipo do título?** Medido em PRD (20/10, leitura somente leitura):
+  1.277 títulos ativos e não pagos, **0 com `tpd_cod`**. O `fin064` não devolve tipo; o mapper só
+  guarda a face. O tipo só existe no `com298/list` (junção por `filCod+docCod`), e ~1.570 títulos de
+  NF comum nem estão lá. Sem fonte, o bloqueio de permuta não dispara. Opções:
+  (a) a ingestão passa a juntar o `com298/list` e gravar `tpd_cod`/`tpd_des_nome`/`doc_vld_tipo_adto`
+      (recomendado: custo uma leitura por filial na ingestão, dado persistido, resolver continua puro);
+  (b) o painel faz a junção ao vivo (mais lento, mais sessões do robô, que têm teto);
+  (c) adiar o motivo e entregar o PR A sem ele.
+  Recomendo (a) como Task própria do PR A. O que o tipo **não** dispensa: `com298/{docCod}` tem
+  `mnyTitPermuta` (quanto já foi permutado), mas só no detalhe; a linha continua dizendo "confira o saldo".
 
 **P1 (decidir durante a fatia)**
-- P1-1. "Pronto, confira" fica fora do auto-lote? (D9, premissa.)
-- P1-2. Forma Conexos cheque/cartão/caixa/carteira: bloquear ou só avisar?
-- P1-3. Um lote por filial: endpoint novo (`POST /sispag/lotes/por-filial`, resultado por lote) ou
-  orquestração no cliente como hoje (`useCriarLoteManual`, título a título)? Recomendo o endpoint:
-  atomicidade por lote e um único erro legível.
+- **P1-1. "Pronto, confira".** Os casos que o código tem hoje são todos bloqueios (confirmação
+  órfã, ajuste de centavos pendente, boleto sem DDA). O aviso "boleto vence antes do título" só existe
+  para candidato ainda não confirmado, e confirmar já exige reconhecê-lo. Não achei título **Pronto**
+  que ainda peça conferência. Recomendo **tirar o estado CONFIRA desta fatia** (menos um conceito na
+  tela) e reabrir quando aparecer um caso real. A decisão D9 (fora do auto-lote) vira vazia.
+- **P1-2. Códigos de forma que bloqueiam.** Tabela atual: 1 cheque, 2 TEF, 3 carteira, 4 extra-caixa,
+  5 cartão de crédito, 6 boleto, 7 caixa, 8 transação, 9 documento, 10 transação automática. O código
+  de TED **não está confirmado**; não deduzir. Proposta inicial a validar com a analista:
+  bloquear 1, 4, 5 e 7; não bloquear 2, 3, 8, 9, 10 até confirmar.
+- P1-3. (decidido, D15.)
 - P1-4. Pagamento parcial real com `vldPago=0` aparece com a face cheia (risco de pagar em dobro).
-  Risco separado; não entra nesta fatia, mas o resolver deve ter lugar para um motivo futuro.
-- P1-5. Lista de filtros que as analistas pediram (backlog). Falta receber.
-- P1-6. Dono de `BOLETO_SEM_DDA` sem candidato: "Aguardar DDA" (ninguém age) ou escalar a quem?
+  Risco separado; fora desta fatia, mas o resolver deve ter lugar para um motivo futuro.
+- P1-5. (fechado, D17.) P1-6. (fechado, D16.)
 
 ## 7. Fora de escopo
 
