@@ -31,6 +31,7 @@ import {
     type CandidatoTitulo,
     DDA_DEFASADO_HORAS,
     type DesfechoTitulo,
+    type DpsConhecido,
     type DesfechoTituloView,
     ESTADO_SUGESTAO,
     type FiltroSugestoes,
@@ -859,6 +860,23 @@ export default class BoletoSuggestionService {
     public desfechosAgora = async (): Promise<DesfechoTitulo[]> =>
         (await this.sugerirAgora()).desfechos;
 
+    /**
+     * DPS lidos (I15p) — sinal auxiliar: falha na leitura não pode derrubar a lista de sugestões nem
+     * a confirmação. Sem eles o motor volta ao comportamento de antes do ADR-0073 (sem âncora DPS).
+     */
+    private dpsLidosOuNenhum = async (): Promise<DpsConhecido[]> => {
+        try {
+            return await this.dpsRepo.listarLidos();
+        } catch (err: unknown) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'falha ao ler os DPS — sugestão calculada sem a âncora DPS',
+                data: { erro: err instanceof Error ? err.message : String(err) },
+            });
+            return [];
+        }
+    };
+
     /** Lê o pool e a carteira persistidos e roda o motor com o estado de decisões de agora. */
     private sugerirAgora = async (): Promise<{
         sugestoes: SugestaoBoletoTitulo[];
@@ -875,7 +893,7 @@ export default class BoletoSuggestionService {
             this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.REJEITADA),
             this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
             this.loteRepo.listTitulosEmLotesAbertos(),
-            this.dpsRepo.listarLidos(),
+            this.dpsLidosOuNenhum(),
         ]);
         const datasDebito = this.mapaDatasDebito(emLotes);
         const { sugestoes, desfechos } = this.motor.analisar({
