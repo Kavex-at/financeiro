@@ -178,7 +178,10 @@ describe('gatilhos só no processo do servidor (I18g)', () => {
             .filter((f) => f.endsWith('.ts') && !/\.test\.ts$/.test(f))
             .filter((f) => readFileSync(f, 'utf8').includes('AjusteCentavosTituloService'))
             .map((f) => path.relative(raiz, f))
-            .filter((f) => !f.startsWith('routes/') && !f.startsWith('domain/service/'));
+            .filter((f) => !f.startsWith('routes/') && !f.startsWith('domain/service/'))
+            // Exceção única: a prova HML da Task 15 (G2/G3) roda o serviço de produção à mão,
+            // recusa base que não seja `-hml` e não é job agendado nem cron.
+            .filter((f) => f !== 'jobs/probe-hml-ajuste-centavos-g2-g3.ts');
         expect(fora).toEqual([]);
     });
 });

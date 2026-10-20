@@ -3,12 +3,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import ConexosError from '../errors/ConexosError.js';
 import ConexosWriteDisabledError from '../errors/ConexosWriteDisabledError.js';
-import NotImplementedError from '../errors/NotImplementedError.js';
 import type { SessaoConexos } from '../interface/sispag/RenegociacaoInterface.js';
 import type EnvironmentProvider from '../libs/environment/EnvironmentProvider.js';
-import ConexosRenegociacaoClient, {
-    CANCELAMENTO_FIN070_PROVADO,
-} from './ConexosRenegociacaoClient.js';
+import ConexosRenegociacaoClient from './ConexosRenegociacaoClient.js';
 
 const sessao = () => {
     const s = {
@@ -21,6 +18,7 @@ const sessao = () => {
         authenticatedPutOnce: jest.fn(async (_p: string, _b: unknown, _o?: unknown) => ({})),
         authenticatedGet: jest.fn(async (_p: string, _o?: unknown): Promise<unknown> => ({})),
         authenticatedDelete: jest.fn(async () => ({})),
+        authenticatedDeleteOnce: jest.fn(async (_p: string, _o?: unknown): Promise<unknown> => ''),
     };
     return { s, sessao: s as unknown as SessaoConexos };
 };
@@ -167,13 +165,107 @@ describe('ConexosRenegociacaoClient (ADR-0073, I18c–e)', () => {
             );
         });
 
-        it('cancelarRenegociacao: NotImplementedError até o portão G3 provar a rota', async () => {
-            const { s, sessao: sx } = sessao();
-            expect(CANCELAMENTO_FIN070_PROVADO).toBe(false);
-            await expect(
-                make().cancelarRenegociacao(sx, { filCod: 2, frnCod: 3 }),
-            ).rejects.toBeInstanceOf(NotImplementedError);
-            expect(s.authenticatedPutOnce).not.toHaveBeenCalled();
+        describe('cancelarRenegociacao (G3, HML 2026-10-19: frnCod 5 e 6)', () => {
+            const listas = (
+                s: ReturnType<typeof sessao>['s'],
+                titulos: unknown[],
+                comps: unknown[],
+            ) =>
+                s.authenticatedPost.mockImplementation(async (p: string) =>
+                    p.startsWith('/fin070/titulos/composicao/list/')
+                        ? { count: comps.length, rows: comps }
+                        : p.startsWith('/fin070/titulos/list/')
+                          ? { count: titulos.length, rows: titulos }
+                          : { count: 0, rows: [] },
+                );
+
+            it('não finalizada: DELETE composição → DELETE título → DELETE cabeçalho, nessa ordem, tentativa única', async () => {
+                const { s, sessao: sx } = sessao();
+                s.authenticatedGet.mockResolvedValueOnce({ frnCod: 5, frnVldFin: 0 });
+                listas(s, [{ docTip: 2, docCod: 537, titCod: 1 }], [{ frgCodSeq: 1 }]);
+                await make().cancelarRenegociacao(sx, { filCod: 2, frnCod: 5 });
+                expect(s.authenticatedDeleteOnce.mock.calls).toEqual([
+                    ['/fin070/titulos/composicao/5/2/537/1/1', { filCod: 2 }],
+                    ['/fin070/titulos/5/2/537/1', { filCod: 2 }],
+                    ['/fin070/5', { filCod: 2 }],
+                ]);
+                expect(s.authenticatedDelete).not.toHaveBeenCalled();
+                // `PUT fin070/cancelar` só vale para renegociação FINALIZADA (REGISTRO_DEVE_ESTAR_FINALIZADO).
+                expect(s.authenticatedPutOnce).not.toHaveBeenCalled();
+            });
+
+            it('só o cabeçalho (POST cujo título não entrou) ⇒ DELETE fin070/{frnCod}', async () => {
+                const { s, sessao: sx } = sessao();
+                s.authenticatedGet.mockResolvedValueOnce({ frnCod: 6, frnVldFin: 0 });
+                listas(s, [], []);
+                await make().cancelarRenegociacao(sx, { filCod: 2, frnCod: 6 });
+                expect(s.authenticatedDeleteOnce.mock.calls).toEqual([
+                    ['/fin070/6', { filCod: 2 }],
+                ]);
+            });
+
+            it('renegociação FINALIZADA ⇒ recusa sem nenhum DELETE (depois do finalizar é só para a frente)', async () => {
+                const { s, sessao: sx } = sessao();
+                s.authenticatedGet.mockResolvedValueOnce({ frnCod: 3, frnVldFin: 1 });
+                listas(s, [{ docTip: 2, docCod: 536, titCod: 1 }], [{ frgCodSeq: 1 }]);
+                const erro = await make()
+                    .cancelarRenegociacao(sx, { filCod: 2, frnCod: 3 })
+                    .catch((e: unknown) => e);
+                expect(erro).toBeInstanceOf(ConexosError);
+                expect(s.authenticatedDeleteOnce).not.toHaveBeenCalled();
+            });
+
+            it('DELETE recusado ⇒ ConexosError determinística com a KEY, e para (cabeçalho não é apagado)', async () => {
+                const { s, sessao: sx } = sessao();
+                s.authenticatedGet.mockResolvedValueOnce({ frnCod: 5, frnVldFin: 0 });
+                listas(s, [{ docTip: 2, docCod: 537, titCod: 1 }], []);
+                s.authenticatedDeleteOnce.mockRejectedValueOnce(
+                    recusa('FIN_070.EXISTEM_COMPOSICOES_DESSA_RENEGOCIACAO_PARA_ESTE_TITULO'),
+                );
+                const erro = await make()
+                    .cancelarRenegociacao(sx, { filCod: 2, frnCod: 5 })
+                    .catch((e: unknown) => e);
+                expect(ConexosRenegociacaoClient.codigoErp(erro)).toBe(
+                    'FIN_070.EXISTEM_COMPOSICOES_DESSA_RENEGOCIACAO_PARA_ESTE_TITULO',
+                );
+                expect(ConexosRenegociacaoClient.ehDeterministica(erro)).toBe(true);
+                expect(s.authenticatedDeleteOnce).toHaveBeenCalledTimes(1);
+            });
+
+            it('escrita desligada ⇒ ConexosWriteDisabledError antes de qualquer chamada', async () => {
+                const { s, sessao: sx } = sessao();
+                await expect(
+                    make({ conexosWriteEnabled: false }).cancelarRenegociacao(sx, {
+                        filCod: 2,
+                        frnCod: 5,
+                    }),
+                ).rejects.toBeInstanceOf(ConexosWriteDisabledError);
+                expect(s.authenticatedGet).not.toHaveBeenCalled();
+                expect(s.authenticatedDeleteOnce).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('renegociacaoDesfeita (releitura do cancelamento)', () => {
+            it('ausente do fin070/list ⇒ true; presente e não cancelada ⇒ false; frnVldCan 1 ⇒ true', async () => {
+                const { s, sessao: sx } = sessao();
+                s.authenticatedPost
+                    .mockResolvedValueOnce({ count: 1, rows: [{ frnCod: 3, frnVldFin: 1 }] })
+                    .mockResolvedValueOnce({ count: 1, rows: [{ frnCod: 5, frnVldFin: 0 }] })
+                    .mockResolvedValueOnce({ count: 1, rows: [{ frnCod: 5, frnVldCan: 1 }] });
+                const c = make();
+                expect(await c.renegociacaoDesfeita(sx, { filCod: 2, frnCod: 5 })).toBe(true);
+                expect(await c.renegociacaoDesfeita(sx, { filCod: 2, frnCod: 5 })).toBe(false);
+                expect(await c.renegociacaoDesfeita(sx, { filCod: 2, frnCod: 5 })).toBe(true);
+                expect(s.authenticatedPost.mock.calls[0]?.[0]).toBe('/fin070/list');
+            });
+
+            it('leitura que falha ⇒ lança (nunca presume desfeita)', async () => {
+                const { s, sessao: sx } = sessao();
+                s.authenticatedPost.mockRejectedValue(recusa('X'));
+                await expect(
+                    make().renegociacaoDesfeita(sx, { filCod: 2, frnCod: 5 }),
+                ).rejects.toBeInstanceOf(ConexosError);
+            });
         });
 
         it('fin103: validaSelecionado e aplicarComando com { items: [linha lida + fbaCod] }', async () => {

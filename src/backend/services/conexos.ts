@@ -535,6 +535,23 @@ export class ConexosService {
         }
     }
 
+    /**
+     * Single-attempt authenticated DELETE — NO 401 re-login/retry, mirroring
+     * `authenticatedPostOnce`. Used to undo a NOT finalized `fin070` renegotiation
+     * (ADR-0073, G3): each DELETE is a write whose success is decided by the re-read.
+     */
+    async authenticatedDeleteOnce<T = unknown>(
+        path: string,
+        opts: { filCod?: number } = {},
+    ): Promise<T> {
+        await this.ensureSid();
+        const url = path.startsWith('/') ? path : `/${path}`;
+        const resp = await this.client.delete<T>(url, {
+            headers: this.defaultHeaders(opts.filCod),
+        });
+        return resp.data;
+    }
+
     private getAuthHeaders() {
         return this.sid ? { Cookie: `sid=${this.sid}` } : {};
     }
