@@ -21,6 +21,10 @@ import LogService from '../LogService.js';
 import BoletoDdaService from './BoletoDdaService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Tipo do documento lido do `com298/list` (ADR-0075). */
+type TipoDoDocumento = { tpdCod?: string; tpdDesNome?: string };
+
 /**
  * Orçamento da sincronização DDA dentro da ingestão. A ingestão leva ~10 s medidos no cron; a
  * leitura do fin124 (arquivos novos + releitura) não pode multiplicar isso. O que não couber fica
@@ -221,6 +225,48 @@ export default class IngestaoPagamentosService {
         }
     };
 
+    /**
+     * Tipo do documento (`tpdCod`/`tpdDesNome`, `com298/list`) dos títulos da filial que entram na
+     * carteira — insumo do motivo TIPO_PERMUTA (ADR-0075). O `fin064` não traz o tipo.
+     *
+     * Best-effort, como os sinais do grid: falha de leitura devolve `undefined` ("não sei") com
+     * WARN, os títulos entram sem tipo e o UPSERT PRESERVA o que já estava gravado. A cobertura
+     * (documentos com tipo / documentos lidos) vai ao log TODA rodada: é o sinal barato de que o
+     * `com298` deixou de devolver o tipo, em vez de a permuta voltar a passar sem bloqueio.
+     */
+    private tiposDosDocumentos = async (
+        filCod: number,
+        titulos: TituloAPagar[],
+        exterior: Set<string>,
+    ): Promise<Map<string, TipoDoDocumento> | undefined> => {
+        const docCods = [
+            ...new Set(
+                titulos.filter((t) => !t.pago && !exterior.has(t.docCod)).map((t) => t.docCod),
+            ),
+        ];
+        try {
+            const tipos = await this.sispag.listTiposDosDocumentos(filCod, docCods);
+            await this.logService.info({
+                type: LOG_TYPE.BUSINESS_INFO,
+                message: 'ingestão pagamentos: cobertura do tipo do documento por filial',
+                data: { filCod, documentos: docCods.length, comTipo: tipos.size },
+            });
+            if (docCods.length > 0 && tipos.size === 0) {
+                await this.avisar('com298/list não devolveu o tipo de nenhum documento', {
+                    filCod,
+                    documentos: docCods.length,
+                });
+            }
+            return tipos;
+        } catch (error) {
+            await this.avisar('leitura do tipo do documento falhou — tipo anterior preservado', {
+                filCod,
+                reason: error instanceof Error ? error.message : String(error),
+            });
+            return undefined;
+        }
+    };
+
     /** WARN da ingestão, com o prefixo padrão da frente. */
     private avisar = async (mensagem: string, data: Record<string, unknown>): Promise<void> => {
         await this.logService.warn({
@@ -239,6 +285,8 @@ export default class IngestaoPagamentosService {
         exterior: Set<string>;
         /** `undefined` = a leitura do grid falhou: `temBoleto` fica indefinido (não vira `false`). */
         sinais: Map<string, SinalPendente> | undefined;
+        /** `undefined` = a leitura do tipo falhou: o tipo fica indefinido e o UPSERT preserva. */
+        tipos: Map<string, TipoDoDocumento> | undefined;
     }): TituloAPagar[] =>
         lido.titulos
             // Pago sai; internacional (exterior/câmbio) também — é câmbio manual da tesouraria,
@@ -249,8 +297,11 @@ export default class IngestaoPagamentosService {
             // pagamento no Conexos vem da mesma linha; fora do grid fica indefinida (preserva).
             .map((t) => {
                 const sinal = lido.sinais?.get(`${t.filCod}:${t.docCod}:${t.titCod}`);
+                const tipo = lido.tipos?.get(t.docCod);
                 return {
                     ...t,
+                    ...(tipo?.tpdCod !== undefined ? { tpdCod: tipo.tpdCod } : {}),
+                    ...(tipo?.tpdDesNome !== undefined ? { tpdDesNome: tipo.tpdDesNome } : {}),
                     temBoleto: lido.sinais ? sinal?.temBoletoDda === true : undefined,
                     ...(sinal?.pagoPor !== undefined
                         ? { formaPagamentoConexos: sinal.pagoPor }
@@ -317,7 +368,10 @@ export default class IngestaoPagamentosService {
                         this.sispag.listExteriorDocCods(filCod),
                         this.sinaisDosPendentes(filCod),
                     ]);
-                    return { titulos, exterior, sinais };
+                    // Depois da leitura dos títulos: precisa dos docCods. Mesma sessão do robô,
+                    // sequencial dentro da filial (teto de sessões, ADR-0066 §3).
+                    const tipos = await this.tiposDosDocumentos(filCod, titulos, exterior);
+                    return { titulos, exterior, sinais, tipos };
                 },
                 FANOUT_LIMIT,
             );

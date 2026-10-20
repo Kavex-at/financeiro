@@ -23,6 +23,8 @@ interface TituloRow {
     banco: string | null;
     num_remessa: string | null;
     tpd_cod: string | null;
+    /** `tpdDesNome` do com298/list (migration 0089). NULL = tipo nunca lido. */
+    tpd_des_nome: string | null;
     /** NULL = o read da carteira não soube dizer (ver migration 0063). */
     pronto_para_remessa: boolean | null;
     tem_boleto: boolean;
@@ -58,6 +60,7 @@ export default class TituloAPagarRepository {
         banco: r.banco ?? undefined,
         numRemessa: r.num_remessa ?? undefined,
         tpdCod: r.tpd_cod ?? undefined,
+        tpdDesNome: r.tpd_des_nome ?? undefined,
         prontoParaRemessa: r.pronto_para_remessa ?? undefined,
         temBoleto: r.tem_boleto,
         formaPagamentoConexos: r.forma_pagamento_conexos ?? undefined,
@@ -93,7 +96,7 @@ export default class TituloAPagarRepository {
         chunk.forEach((t, i) => {
             tuples.push(
                 `($f${i}, $d${i}, $t${i}, $cr${i}, $pe${i}, $v${i}, $mo${i}, $ve${i}, ` +
-                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $tb${i}, $fp${i}, $dn${i}, TRUE, $runId, now())`,
+                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $tn${i}, $pr${i}, $tb${i}, $fp${i}, $dn${i}, TRUE, $runId, now())`,
             );
             params[`f${i}`] = t.filCod;
             params[`d${i}`] = t.docCod;
@@ -108,6 +111,7 @@ export default class TituloAPagarRepository {
             params[`ba${i}`] = t.banco ?? null;
             params[`nr${i}`] = t.numRemessa ?? null;
             params[`tp${i}`] = t.tpdCod ?? null;
+            params[`tn${i}`] = t.tpdDesNome ?? null;
             // `?? null` e não `?? false`: o `fin064` quase nunca SABE, e NULL é esse
             // "não sei". Um FALSE aqui acenderia "falta cadastro?" na carteira inteira.
             params[`pr${i}`] = t.prontoParaRemessa ?? null;
@@ -118,14 +122,19 @@ export default class TituloAPagarRepository {
         await tx.insert(
             `INSERT INTO titulo_a_pagar (
                 fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
+                aprovado, pago, banco, num_remessa, tpd_cod, tpd_des_nome, pronto_para_remessa, tem_boleto,
                 forma_pagamento_conexos, doc_esp_numero, ativo, ingestao_run_id, atualizado_em
              ) VALUES ${tuples.join(', ')}
              ON CONFLICT (fil_cod, doc_cod, tit_cod) DO UPDATE SET
                 credor = EXCLUDED.credor, pes_cod = EXCLUDED.pes_cod, valor = EXCLUDED.valor,
                 moeda = EXCLUDED.moeda, vencimento = EXCLUDED.vencimento, aprovado = EXCLUDED.aprovado,
                 pago = EXCLUDED.pago, banco = EXCLUDED.banco, num_remessa = EXCLUDED.num_remessa,
-                tpd_cod = EXCLUDED.tpd_cod, pronto_para_remessa = EXCLUDED.pronto_para_remessa,
+                pronto_para_remessa = EXCLUDED.pronto_para_remessa,
+                -- Tipo (com298/list): NULL = a rodada não o leu (documento fora do com298 ou
+                -- leitura falhou). Preserva o último conhecido: o fin064 nunca o traz, então
+                -- sobrescrever com NULL apagaria o dado a cada ingestão.
+                tpd_cod = COALESCE(EXCLUDED.tpd_cod, titulo_a_pagar.tpd_cod),
+                tpd_des_nome = COALESCE(EXCLUDED.tpd_des_nome, titulo_a_pagar.tpd_des_nome),
                 ${gravarFlagBoleto ? 'tem_boleto = EXCLUDED.tem_boleto,' : ''}
                 -- NULL = esta rodada não viu o título no grid de pendentes (ou a leitura
                 -- falhou): preserva a última forma conhecida em vez de apagá-la.
@@ -177,11 +186,11 @@ export default class TituloAPagarRepository {
         (tx ?? this.databaseClient).insert(
             `INSERT INTO titulo_a_pagar (
                 fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
+                aprovado, pago, banco, num_remessa, tpd_cod, tpd_des_nome, pronto_para_remessa, tem_boleto,
                 forma_pagamento_conexos, doc_esp_numero, ativo, ingestao_run_id, atualizado_em
              )
              SELECT fil_cod, doc_cod, $titCodNovo, credor, pes_cod, $valor, moeda, $vencimento,
-                    $aprovado, FALSE, banco, NULL, tpd_cod, pronto_para_remessa, tem_boleto,
+                    $aprovado, FALSE, banco, NULL, tpd_cod, tpd_des_nome, pronto_para_remessa, tem_boleto,
                     forma_pagamento_conexos, doc_esp_numero, TRUE, ingestao_run_id, now()
                FROM titulo_a_pagar
               WHERE fil_cod = $filCod AND doc_cod = $docCod AND tit_cod = $titCodAntigo
@@ -214,8 +223,8 @@ export default class TituloAPagarRepository {
     public listAtivos = async (): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(
             `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
-                    forma_pagamento_conexos, doc_esp_numero
+                    aprovado, pago, banco, num_remessa, tpd_cod, tpd_des_nome, pronto_para_remessa,
+                    tem_boleto, forma_pagamento_conexos, doc_esp_numero
              FROM titulo_a_pagar
              WHERE ativo = TRUE
              ORDER BY vencimento ASC NULLS LAST`,
@@ -234,8 +243,8 @@ export default class TituloAPagarRepository {
     }): Promise<TituloAPagar | null> => {
         const row = await this.databaseClient.selectFirst<TituloRow & { ativo: boolean }>(
             `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
-                    forma_pagamento_conexos, doc_esp_numero, ativo
+                    aprovado, pago, banco, num_remessa, tpd_cod, tpd_des_nome, pronto_para_remessa,
+                    tem_boleto, forma_pagamento_conexos, doc_esp_numero, ativo
              FROM titulo_a_pagar
              WHERE fil_cod = $filCod AND doc_cod = $docCod AND tit_cod = $titCod`,
             chave,
@@ -309,7 +318,7 @@ export default class TituloAPagarRepository {
         const ate = new Date(hoje.getTime() + (maxDias + 1) * DAY_MS);
         const rows = (await this.databaseClient.selectMany(
             `SELECT t.fil_cod, t.doc_cod, t.tit_cod, t.credor, t.pes_cod, t.valor, t.moeda,
-                    t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod,
+                    t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod, t.tpd_des_nome,
                     t.pronto_para_remessa, t.tem_boleto, t.forma_pagamento_conexos
              FROM titulo_a_pagar t
              WHERE t.ativo = TRUE AND t.aprovado = TRUE AND t.pago = FALSE

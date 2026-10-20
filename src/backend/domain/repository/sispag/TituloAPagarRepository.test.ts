@@ -82,6 +82,33 @@ describe('TituloAPagarRepository', () => {
         );
     });
 
+    it('upsertMany grava o tipo do documento e PRESERVA o último quando a rodada não o leu', async () => {
+        const { client, tx } = buildDb();
+        await new TituloAPagarRepository(client).upsertMany(
+            [
+                titulo({
+                    titCod: '1',
+                    tpdCod: '157',
+                    tpdDesNome: 'RECIBO/BOLETO/FATURA - (PERMUTA)',
+                }),
+                titulo({ titCod: '2' }),
+            ],
+            'RUN1',
+        );
+        const [sql, params] = tx.insert.mock.calls[0];
+        expect(params).toMatchObject({
+            tp0: '157',
+            tn0: 'RECIBO/BOLETO/FATURA - (PERMUTA)',
+            tp1: null,
+            tn1: null,
+        });
+        // O `fin064` nunca traz o tipo: sobrescrever com NULL apagaria o dado a cada ingestão.
+        expect(sql).toMatch(/tpd_cod = COALESCE\(EXCLUDED\.tpd_cod, titulo_a_pagar\.tpd_cod\)/);
+        expect(sql).toMatch(
+            /tpd_des_nome = COALESCE\(EXCLUDED\.tpd_des_nome, titulo_a_pagar\.tpd_des_nome\)/,
+        );
+    });
+
     it('upsertMany com lista vazia não abre transação', async () => {
         const { client } = buildDb();
         await new TituloAPagarRepository(client).upsertMany([], 'RUN1');
