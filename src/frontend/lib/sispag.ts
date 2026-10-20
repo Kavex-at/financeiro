@@ -550,6 +550,31 @@ export const criarLote = (input: { filCod: number; banco?: string; conta?: strin
   loteRequest('/sispag/lotes', { method: 'POST', body: JSON.stringify(input) })
 
 /**
+ * Cria UM lote por filial com os títulos dados (ADR-0075, `POST /sispag/lotes/por-filial`).
+ * O servidor aplica a situação de pagamento a cada título: bloqueado é recusado com o motivo.
+ * Um lote que falha não desfaz os outros; o resultado diz o que aconteceu em cada filial.
+ */
+export async function criarLotesPorFilial(
+  input: CriarLotesPorFilialInput,
+): Promise<CriarLotesPorFilialResult> {
+  const res = await apiFetch(`${API}/sispag/lotes/por-filial`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    let msg = `API ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+  const j = (await res.json()) as Partial<CriarLotesPorFilialResult>
+  return { lotes: j.lotes ?? [] }
+}
+
+/**
  * Inclui o título no lote. `mover: true` (ADR-0064) o tira do lote RASCUNHO em que estiver, na
  * mesma transação; sem a flag, título em outro lote é recusado (409).
  */
