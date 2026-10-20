@@ -301,6 +301,26 @@ describe('BoletoSuggestionService — DPS lidos entram no motor (I15p, ADR-0073)
             espiao.mockRestore();
         }
     });
+
+    it('falha ao ler `titulo_dps` não derruba a sugestão: segue sem DPS e avisa no log', async () => {
+        const espiao = jest.spyOn(motor, 'analisar');
+        try {
+            const { service, dpsRepo, logService } = montar();
+            dpsRepo.listarLidos.mockRejectedValueOnce(
+                new Error('relation "titulo_dps" does not exist'),
+            );
+            const r = await service.listarSugestoes({});
+            expect(r.total).toBe(1);
+            expect(espiao.mock.calls[0]?.[0].dps).toEqual([]);
+            expect(logService.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: 'falha ao ler os DPS — sugestão calculada sem a âncora DPS',
+                }),
+            );
+        } finally {
+            espiao.mockRestore();
+        }
+    });
 });
 
 describe('BoletoSuggestionService.listarSugestoes (I15c, I15k)', () => {

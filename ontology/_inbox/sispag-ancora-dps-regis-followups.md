@@ -6,7 +6,7 @@ Gate passou sem P0. Itens abaixo NÃO foram implementados no ciclo (Inviolable R
 | # | P | Origem | Item | Onde |
 |---|---|--------|------|------|
 | 1 | P2 (duplo) | Security F-2, Fault Tolerance F-2 | Não gravar `LIDO` sem cruzar a NFS-e: exigir nº da NFS-e no PDF igual ao do título (ou no nome do arquivo) e, sem conferência, gravar `SEM_DPS_NO_PDF` com motivo; dar um jeito de invalidar um `LIDO` errado | `LeitorDpsService.ts` (`ler`, `escolherPdf`) |
-| 2 | P1 | Fault Tolerance F-1 | `dpsRepo.listarLidos()` com `.catch` → `[]` + log de aviso no `sugerirAgora`: DPS é sinal auxiliar, não pode derrubar a lista de sugestões | `BoletoSuggestionService.ts` |
+| 2 | ~~P1~~ **feito no PR #127** | Fault Tolerance F-1 | `dpsRepo.listarLidos()` com `.catch` → `[]` + log de aviso no `sugerirAgora`: DPS é sinal auxiliar, não pode derrubar a lista de sugestões | `BoletoSuggestionService.ts` |
 | 3 | P1 | Integrability F-1/F-3 | Contrato quebrado não pode virar `SEM_PDF` em silêncio: logar o `catch` do `psq014`, contar descartes de Zod/envelope, e sinalizar no job (exit/alerta) quando a taxa de `ERRO`/descarte passar de um limiar | `ConexosGedClient.ts`, `ler-dps-nfse.ts` |
 | 4 | P1 | Testability F-1 | Teste de CI do `ExtratorTextoPdf` (PDF sintético; jest com `--experimental-vm-modules` ou extrator em subprocesso) | `domain/libs/pdf/` |
 | 5 | P2 | Fault Tolerance F-3, Integrability F-5 | Transiente (401/5xx/sessão) não consome tentativa; `RetryExecutor` nas chamadas do GED | `LeitorDpsService.ts`, `ConexosGedClient.ts` |
