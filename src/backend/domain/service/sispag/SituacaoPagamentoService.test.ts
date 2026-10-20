@@ -172,6 +172,27 @@ describe('SituacaoPagamentoService', () => {
             );
         });
 
+        it('título em lote FINALIZADO/REMESSA_GERADA fica FORA do resumo (já comprometido)', async () => {
+            const { service } = make();
+            const titulos = [
+                titulo(),
+                titulo({ titCod: '2', loteComprometido: { id: 'L1', status: 'FINALIZADO' } }),
+                titulo({ titCod: '3', loteComprometido: { id: 'L2', status: 'REMESSA_GERADA' } }),
+            ];
+            const resumo = await service.avaliarCarteira(titulos);
+            expect(resumo.porEstado.PRONTO.qtd).toBe(1);
+            // a situação de cada título continua calculada; só o resumo não os conta
+            expect(titulos[1]?.situacaoPagamento?.estado).toBe(ESTADO_PAGAMENTO.PRONTO);
+        });
+
+        it('título em lote RASCUNHO continua nas contagens (ainda pode ser movido)', async () => {
+            const { service } = make();
+            const resumo = await service.avaliarCarteira([
+                titulo({ loteRascunho: { id: 'L1', automatico: true } }),
+            ]);
+            expect(resumo.porEstado.PRONTO.qtd).toBe(1);
+        });
+
         it('carteira vazia não quebra e zera o resumo', async () => {
             const { service } = make();
             const resumo = await service.avaliarCarteira([]);

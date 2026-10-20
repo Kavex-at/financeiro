@@ -255,6 +255,39 @@ router.post(
     }),
 );
 
+const lotesPorFilialSchema = z.object({
+    titulos: z
+        .array(
+            z.object({
+                filCod: z.coerce.number().int().positive(),
+                docCod: z.string().trim().min(1),
+                titCod: z.string().trim().min(1),
+            }),
+        )
+        .min(1)
+        .max(500),
+    mover: z.boolean().optional(),
+});
+
+// POST /sispag/lotes/por-filial — cria UM lote por filial com os títulos recebidos (ADR-0075, D15).
+// Cada título passa pela mesma regra da inclusão manual (situação de pagamento, I2, I3). 200 sempre
+// que o pedido é válido: o resultado por lote (CRIADO/PARCIAL/RECUSADO) e os títulos recusados com
+// motivo vão no corpo; um lote que falha não desfaz os outros. admin.
+router.post(
+    '/lotes/por-filial',
+    exigirPermissao(PERMISSION.SISPAG_EXECUTAR),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = lotesPorFilialSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const service = container.resolve(LotePagamentoService);
+        res.json(await service.criarLotesPorFilial({ ...parsed.data, ator: ator(req) }));
+    }),
+);
+
 // POST /sispag/lotes/:id/itens — inclui um título no lote (`mover: true` o tira do lote RASCUNHO
 // em que está, na mesma transação — ADR-0064). admin. 409 título em outro lote / comprometido.
 router.post(
