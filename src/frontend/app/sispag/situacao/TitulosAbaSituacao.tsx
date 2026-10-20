@@ -11,6 +11,7 @@ import {
   type TituloRetidoPorCodigoBarras,
 } from '@/lib/sispag'
 import { ExportarTitulosAPagarBotao } from '../components/ExportarTitulosAPagarBotao'
+import { MoverParaLoteDialog } from '../components/MoverParaLoteDialog'
 import type { ResumoDesfecho } from '../components/sugestaoBoleto'
 import { BarraSelecaoLotes } from './BarraSelecaoLotes'
 import { CardsSituacao } from './CardsSituacao'
@@ -95,6 +96,7 @@ export function TitulosAbaSituacao({
   )
   const criarLotes = useCriarLotesPorFilial({
     selecionados: selecionadosTitulos,
+    lotes,
     aoConcluir: async () => {
       setSelecionados(new Set())
       await onLotesCriados()
@@ -235,6 +237,14 @@ export function TitulosAbaSituacao({
           />
         ) : null}
       </div>
+
+      <MoverParaLoteDialog
+        plano={criarLotes.confirmacao}
+        totalSelecionados={selecionadosTitulos.length}
+        onClose={criarLotes.cancelarMover}
+        salvando={criarLotes.criando}
+        onConfirmar={() => void criarLotes.confirmarMover()}
+      />
 
       <ResultadoLotesDialog
         resultado={criarLotes.resultado}

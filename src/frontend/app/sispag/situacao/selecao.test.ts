@@ -18,15 +18,21 @@ describe('seleção por situação', () => {
     expect(b && motivoNaoSelecionavel(b)).toMatch(/Bloqueado: .+Resolva antes/)
   })
 
-  it('pronto já em lote (finalizado, remessa ou rascunho) não é selecionável, com motivo', () => {
+  it('pronto em lote FINALIZADO ou com remessa não é selecionável, com motivo', () => {
     const p = TITULOS_FIXTURE[0]
     const final = { ...p, loteComprometido: { id: 'l', status: 'FINALIZADO' as const } }
-    const rasc = { ...p, loteRascunho: { id: 'l', automatico: false } }
+    const remessa = { ...p, loteComprometido: { id: 'l', status: 'REMESSA_GERADA' as const } }
     expect(selecionavel(final)).toBe(false)
-    expect(selecionavel(rasc)).toBe(false)
+    expect(selecionavel(remessa)).toBe(false)
     expect(motivoNaoSelecionavel(final)).toMatch(/lote finalizado/)
-    expect(motivoNaoSelecionavel(rasc)).toMatch(/Retirar do lote/)
+    expect(motivoNaoSelecionavel(remessa)).toMatch(/remessa gerada/)
     expect(motivoNaoSelecionavel(p)).toBeUndefined()
+  })
+
+  it('pronto em lote RASCUNHO é selecionável: ao criar, ele sai de lá (ADR-0064)', () => {
+    const rasc = { ...TITULOS_FIXTURE[0], loteRascunho: { id: 'l', automatico: false } }
+    expect(selecionavel(rasc)).toBe(true)
+    expect(motivoNaoSelecionavel(rasc)).toBeUndefined()
   })
 
   it('selecionar todos atravessa filiais e ignora bloqueados', () => {

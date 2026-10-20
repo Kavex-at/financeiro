@@ -294,6 +294,57 @@ describe('TitulosAbaSituacao: seleção e lotes por filial', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  describe('título que já está em lote RASCUNHO (ADR-0064)', () => {
+    const comRascunho = () =>
+      TITULOS_FIXTURE.map((t) =>
+        t.docCod === '116' && t.titCod === '1'
+          ? { ...t, loteRascunho: { id: 'l-RASCUNHO', automatico: false } }
+          : t,
+      )
+    const selecionarEClicar = async () => {
+      await userEvent.click(screen.getByRole('button', { name: /^Prontos/ }))
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Selecionar o título 116/1' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Criar 1 lote' }))
+    }
+
+    it('pede a confirmação de onde ele sai ANTES de chamar o servidor', async () => {
+      montar({ titulos: comRascunho() })
+      await selecionarEClicar()
+      const dialogo = await screen.findByRole('dialog')
+      expect(dialogo).toHaveTextContent(/já estão em lotes em rascunho/)
+      expect(mockCriar).not.toHaveBeenCalled()
+    })
+
+    it('confirmado, envia mover: true; cancelado, não envia nada', async () => {
+      mockCriar.mockResolvedValue({
+        lotes: [{ filCod: 1, resultado: 'CRIADO', loteId: 'L1', incluidos: [], recusados: [] }],
+      })
+      montar({ titulos: comRascunho() })
+      await selecionarEClicar()
+      let dialogo = await screen.findByRole('dialog')
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      expect(mockCriar).not.toHaveBeenCalled()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Criar 1 lote' }))
+      dialogo = await screen.findByRole('dialog')
+      await userEvent.click(within(dialogo).getByRole('button', { name: /Mover e criar lote/ }))
+      await waitFor(() => expect(mockCriar).toHaveBeenCalledTimes(1))
+      expect(mockCriar.mock.calls[0][0]).toMatchObject({ mover: true })
+    })
+
+    it('sem título em rascunho na seleção, vai direto e SEM mover', async () => {
+      mockCriar.mockResolvedValue({
+        lotes: [{ filCod: 1, resultado: 'CRIADO', loteId: 'L1', incluidos: [], recusados: [] }],
+      })
+      montar()
+      await userEvent.click(screen.getByRole('button', { name: /^Prontos/ }))
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Selecionar o título 116/1' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Criar 1 lote' }))
+      await waitFor(() => expect(mockCriar).toHaveBeenCalledTimes(1))
+      expect(mockCriar.mock.calls[0][0]).not.toHaveProperty('mover')
+    })
+  })
+
   it('"Formar lotes automáticos" mostra a prévia só com prontos e só chama o servidor ao confirmar', async () => {
     const props = montar()
     await userEvent.click(screen.getByRole('button', { name: /Formar lotes automáticos/ }))
