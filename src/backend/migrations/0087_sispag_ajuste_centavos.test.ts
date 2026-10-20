@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { ALERTA_TIPO } from '../domain/interface/operacao/Alerta.js';
 import { VERIFICATION_EVENT } from '../domain/interface/sispag/SispagInterface.js';
 import { ETAPA_AJUSTE } from '../domain/libs/boleto/EtapaAjusteCentavos.js';
 import MigrationFiles from './MigrationFiles.js';
@@ -94,6 +95,20 @@ describe('migration 0087 — ajuste de centavos do título (ADR-0073)', () => {
     it('a trilha do lote ganha ITEM_TITULO_RENEGOCIADO e mantém os 15 eventos da 0078', () => {
         const valores = valoresDe(/verificacao_evento_evento_check CHECK \(evento IN \(([^)]*)\)/);
         expect(valores).toEqual(Object.values(VERIFICATION_EVENT).sort());
+    });
+
+    it('alerta_tipo_check ganha sispag-ajuste-centavos-parado (paridade com ALERTA_TIPO), idempotente', () => {
+        const valores = valoresDe(
+            /ADD CONSTRAINT alerta_tipo_check\s+CHECK \(tipo IN \(([^)]*)\)\)/i,
+        );
+        expect(valores).toEqual(Object.values(ALERTA_TIPO).sort());
+        expect(valores).toContain('sispag-ajuste-centavos-parado');
+        expect(CODIGO).toMatch(/ALTER TABLE alerta DROP CONSTRAINT IF EXISTS alerta_tipo_check;/);
+        const rollback = readFileSync(
+            path.join(__dirname, 'rollbacks', '0087_sispag_ajuste_centavos.rollback.sql'),
+            'utf8',
+        );
+        expect(rollback).toMatch(/DELETE FROM alerta WHERE tipo = 'sispag-ajuste-centavos-parado'/);
     });
 
     it('o .sql é copiado para dist/ pela mesma definição de migração do runner (incidente 2026-09-23)', () => {

@@ -31,6 +31,7 @@ import type LotePagamentoRepository from '../domain/repository/sispag/LotePagame
 import type SugestaoBoletoRepository from '../domain/repository/sispag/SugestaoBoletoRepository.js';
 import type TituloAPagarRepository from '../domain/repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../domain/service/LogService.js';
+import type NotificacaoService from '../domain/service/operacao/NotificacaoService.js';
 import AjusteCentavosTituloService from '../domain/service/sispag/AjusteCentavosTituloService.js';
 
 /**
@@ -781,6 +782,13 @@ async function main(): Promise<void> {
             env as unknown as EnvironmentProvider,
             logService as unknown as LogService,
             db as unknown as PostgreeDatabaseClient,
+            // Probe HML: o alerta do painel vira linha no relatório, nunca escrita no banco.
+            {
+                emitir: async (a: Row) => {
+                    logs.push({ nivel: 'alerta', ...a });
+                    return null;
+                },
+            } as unknown as NotificacaoService,
         );
         const r = await tenta(() =>
             servico.ajustar({

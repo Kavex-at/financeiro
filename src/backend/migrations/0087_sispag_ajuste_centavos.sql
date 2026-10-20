@@ -1,5 +1,5 @@
 -- 0087_sispag_ajuste_centavos.sql
--- ADR-0073 (I18) — ajuste de centavos do título por renegociação no `fin070`. Quatro blocos,
+-- ADR-0073 (I18) — ajuste de centavos do título por renegociação no `fin070`. Cinco blocos,
 -- todos ADITIVOS e idempotentes:
 --
 --   1. ledger `sispag_ajuste_centavos_execucao` (padrão I-2: escrita irreversível no ERP com
@@ -13,7 +13,9 @@
 --      usam `IS NOT DISTINCT FROM`: com `=`, um `tipo_anulacao` nulo daria NULL e o CHECK passaria;
 --   3. a trilha `sispag_sugestao_boleto_evento` aceita os 6 tipos novos (só-inclusão intacta) e
 --      ganha a idempotência do `AJUSTE_SIMULADO` (a varredura `shadow` roda a cada tela aberta);
---   4. a trilha do lote `sispag_verificacao_evento` (0078) aceita `ITEM_TITULO_RENEGOCIADO`.
+--   4. a trilha do lote `sispag_verificacao_evento` (0078) aceita `ITEM_TITULO_RENEGOCIADO`;
+--   5. `alerta.tipo` aceita `sispag-ajuste-centavos-parado` (ajuste parado em `indeterminado` ou
+--      `aguardando_aprovacao_manual` vira Alerta no Painel de Operação; decisão 2026-10-20).
 --
 -- ── PRIVACIDADE (I17j/I15k) ───────────────────────────────────────────────────────────────────
 -- Só o código MASCARADO persiste (5+4, "…"); o CHECK faz o esquema recusar código longo.
@@ -210,6 +212,18 @@ BEGIN
     END IF;
 END
 $$;
+
+-- ── 5. Alerta operacional: ajuste de centavos parado ─────────────────────────────────────────
+-- Lista completa (a da 0080 + o tipo novo). DROP IF EXISTS + ADD: reaplicar é no-op.
+
+ALTER TABLE alerta DROP CONSTRAINT IF EXISTS alerta_tipo_check;
+ALTER TABLE alerta
+    ADD CONSTRAINT alerta_tipo_check
+    CHECK (tipo IN (
+        'job-falhou', 'job-parcial', 'job-parado', 'config-ausente',
+        'sispag-lote-retornado', 'sispag-baixa-divergente', 'sispag-destino-alterado',
+        'sispag-ajuste-centavos-parado'
+    ));
 
 COMMENT ON TABLE sispag_ajuste_centavos_execucao IS
     'ADR-0073 I18 — ledger write-ahead do ajuste de centavos do titulo (fin070/fin103). Um nao terminal por titulo de origem. Codigo so mascarado 5+4.';

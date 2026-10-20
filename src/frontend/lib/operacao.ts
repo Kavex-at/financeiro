@@ -28,6 +28,10 @@ export type AlertaTipo =
   // ADR-0055: rejeição lida no retorno e contradição na baixa de um item do lote SISPAG.
   | 'sispag-lote-retornado'
   | 'sispag-baixa-divergente'
+  // ADR-0065: destino do favorecido autorizado mudou no cadastro (reaprovação aberta).
+  | 'sispag-destino-alterado'
+  // ADR-0073: ajuste de centavos parado (indeterminado no fin070 ou aprovação manual no fin103).
+  | 'sispag-ajuste-centavos-parado'
 export type AlertaSeveridade = 'aviso' | 'erro'
 
 export type EstadoConfig = 'configurado' | 'ausente' | 'usando-default'

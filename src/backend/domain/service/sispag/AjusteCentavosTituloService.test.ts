@@ -25,6 +25,7 @@ import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoR
 import type SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
+import type NotificacaoService from '../operacao/NotificacaoService.js';
 import AjusteCentavosTituloService from './AjusteCentavosTituloService.js';
 
 const VENC = '2026-10-30';
@@ -366,6 +367,13 @@ const build = (c: Cenario = {}) => {
             },
         ),
     };
+    const alertas: Array<Record<string, unknown>> = [];
+    const notificacao = {
+        emitir: jest.fn(async (a: Record<string, unknown>) => {
+            alertas.push(a);
+            return null;
+        }),
+    };
     const service = new AjusteCentavosTituloService(
         client as unknown as ConexosRenegociacaoClient,
         registry as unknown as ConexosSessionRegistry,
@@ -380,8 +388,22 @@ const build = (c: Cenario = {}) => {
         env as unknown as EnvironmentProvider,
         log as unknown as LogService,
         db as unknown as PostgreeDatabaseClient,
+        notificacao as unknown as NotificacaoService,
     );
-    return { service, client, ledger, sugestoes, eventos, logs, registry, ordem, estado, db };
+    return {
+        service,
+        client,
+        ledger,
+        sugestoes,
+        eventos,
+        logs,
+        registry,
+        ordem,
+        estado,
+        db,
+        notificacao,
+        alertas,
+    };
 };
 
 const PEDIDO = {
@@ -786,6 +808,116 @@ describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0073)', (
             await expect(
                 h.service.tentarDeNovo({ filCod: 2, docCod: '536', titCod: '1' }),
             ).rejects.toBeInstanceOf(CentsAdjustmentIncompleteError);
+        });
+    });
+
+    describe('alerta no painel quando o ajuste PARA (decisão do mantenedor, 2026-10-20)', () => {
+        // Relógio do build: 2026-10-19T15:00Z ⇒ dia civil BRT 19/10 começa às 03:00Z.
+        const JANELA_BRT = new Date('2026-10-19T03:00:00.000Z');
+
+        const indeterminar = () => {
+            const h = build();
+            h.client.gravarComposicao.mockRejectedValueOnce(recusa('FIN_070.X'));
+            return h;
+        };
+
+        const aguardarAprovacao = () => {
+            const h = build();
+            h.client.aplicarComando.mockImplementation(async () => {
+                h.ordem.push('aplicar');
+            });
+            return h;
+        };
+
+        it('indeterminado ⇒ alerta severidade erro, alvo filial:doc/título, janela do dia BRT', async () => {
+            const h = indeterminar();
+            const r = await h.service.ajustar(PEDIDO);
+            expect(r.etapa).toBe('indeterminado');
+            expect(h.notificacao.emitir).toHaveBeenCalledTimes(1);
+            const alerta = h.alertas[0] as Record<string, unknown>;
+            expect(alerta).toMatchObject({
+                tipo: 'sispag-ajuste-centavos-parado',
+                alvo: '2:536/1',
+                severidade: 'erro',
+            });
+            expect((alerta.janelaInicio as Date).toISOString()).toBe(JANELA_BRT.toISOString());
+            const detalhe = alerta.detalhe as Record<string, unknown>;
+            expect(detalhe).toMatchObject({
+                filCod: 2,
+                titulo: '536/1',
+                frnCod: 3,
+                etapa: 'indeterminado',
+            });
+            expect(String(detalhe.acao)).toMatch(/Renegociação de Pagamentos \(fin070\) frnCod 3/);
+            // log mantido
+            expect(h.logs.some((l) => /indeterminado/.test(String(l.message)))).toBe(true);
+        });
+
+        it('aguardando_aprovacao_manual ⇒ alerta severidade aviso apontando o título novo no fin103', async () => {
+            const h = aguardarAprovacao();
+            const r = await h.service.ajustar(PEDIDO);
+            expect(r.etapa).toBe('aguardando_aprovacao_manual');
+            expect(h.notificacao.emitir).toHaveBeenCalledTimes(1);
+            const alerta = h.alertas[0] as Record<string, unknown>;
+            expect(alerta).toMatchObject({
+                tipo: 'sispag-ajuste-centavos-parado',
+                alvo: '2:536/1',
+                severidade: 'aviso',
+            });
+            expect((alerta.janelaInicio as Date).toISOString()).toBe(JANELA_BRT.toISOString());
+            const detalhe = alerta.detalhe as Record<string, unknown>;
+            expect(detalhe).toMatchObject({
+                filCod: 2,
+                titulo: '536/1',
+                titCodNovo: '2',
+                frnCod: 3,
+                etapa: 'aguardando_aprovacao_manual',
+            });
+            expect(String(detalhe.acao)).toMatch(
+                /Liberação de Títulos \(fin103\) o título novo 536\/2/,
+            );
+        });
+
+        it('detalhe sem código de barras completo (só a máscara 5+4)', async () => {
+            const h = indeterminar();
+            await h.service.ajustar(PEDIDO);
+            const texto = JSON.stringify(h.alertas);
+            expect(texto).not.toMatch(/\d{20,}/);
+            expect(texto).not.toMatch(/\d{10,}/);
+        });
+
+        it('falha ao emitir o alerta não muda o desfecho do ajuste (só log)', async () => {
+            const h = indeterminar();
+            h.notificacao.emitir.mockRejectedValueOnce(new Error('db fora'));
+            const r = await h.service.ajustar(PEDIDO);
+            expect(r.etapa).toBe('indeterminado');
+            expect(h.logs.some((l) => /alerta .*não foi emitido/.test(String(l.message)))).toBe(
+                true,
+            );
+
+            const a = aguardarAprovacao();
+            a.notificacao.emitir.mockRejectedValueOnce(new Error('db fora'));
+            const r2 = await a.service.ajustar(PEDIDO);
+            expect(r2.etapa).toBe('aguardando_aprovacao_manual');
+        });
+
+        it('caminhos de sucesso e recusa não emitem alerta', async () => {
+            const ok = build();
+            expect((await ok.service.ajustar(PEDIDO)).etapa).toBe('concluido');
+            expect(ok.notificacao.emitir).not.toHaveBeenCalled();
+
+            const recusado = build({ valorBoleto: 462.55 });
+            await recusado.service.ajustar(PEDIDO);
+            expect(recusado.notificacao.emitir).not.toHaveBeenCalled();
+
+            const cancelado = build();
+            cancelado.client.gravarComposicao.mockRejectedValueOnce(recusa('FIN_070.X'));
+            cancelado.client.cancelarRenegociacao.mockImplementationOnce(async () => {
+                cancelado.estado.cancelada = true;
+            });
+            cancelado.client.lerRenegociacao.mockRejectedValue(new Error('Not Found: FinReneg'));
+            expect((await cancelado.service.ajustar(PEDIDO)).etapa).toBe('cancelado');
+            expect(cancelado.notificacao.emitir).not.toHaveBeenCalled();
         });
     });
 });

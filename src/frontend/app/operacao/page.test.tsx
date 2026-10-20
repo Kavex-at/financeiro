@@ -196,4 +196,29 @@ describe('OperacaoPage — fonte que falhou não vira zero', () => {
     expect(screen.queryByText(/não significam zero/)).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Alertas \(1\)/ })).toBeInTheDocument()
   })
+
+  it('alerta de ajuste de centavos parado mostra a ação a tomar no Conexos (detalhe.acao)', async () => {
+    ;(fetchOperacao as jest.Mock).mockResolvedValue({
+      ...painelFake,
+      alertas: [
+        {
+          id: 2,
+          tipo: 'sispag-ajuste-centavos-parado',
+          alvo: '2:536/1',
+          severidade: 'aviso',
+          detalhe: {
+            acao: 'aprovar na Liberação de Títulos (fin103) o título novo 536/2',
+            filCod: 2,
+          },
+          criadoEm: '2026-10-20T11:45:00.000Z',
+        },
+      ],
+    } satisfies OperacaoPainel)
+    await renderPainel()
+    await userEvent.click(screen.getByRole('tab', { name: /Alertas/ }))
+    expect(await screen.findByText('sispag-ajuste-centavos-parado')).toBeInTheDocument()
+    expect(
+      screen.getByText('aprovar na Liberação de Títulos (fin103) o título novo 536/2'),
+    ).toBeInTheDocument()
+  })
 })
