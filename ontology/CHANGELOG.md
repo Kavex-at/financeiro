@@ -3,6 +3,29 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.46.0 — SISPAG: situação de pagamento do título (2026-10-20, ADR-0075)
+
+Feature: `sispag-situacao-pagamento` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do
+código** (tudo `planned`).
+
+- **Regra nova `situacao-pagamento-titulo` (I19a–p):** cada título tem uma situação de pagamento derivada no
+  backend, `PRONTO` ou `BLOQUEADO`, com todos os motivos (ordem fixa: `ALCADA`, `TIPO_PERMUTA`, `VENCIDO`,
+  `FORMA_NAO_SISPAG`, `DUPLICIDADE`, `RETIDO_CODBAR`, `AJUSTE_CENTAVOS_PENDENTE`, `CONFIRMACAO_A_REVISAR`,
+  `BOLETO_SEM_DDA`), o principal, quem resolve e o próximo passo. Nunca persistida.
+- **Aplicada, não só exibida:** a mesma função alimenta o painel (`situacaoPagamento` + `resumoSituacao`),
+  `incluirTitulo` (recusa `BLOQUEADO` com o motivo) e a formação automática (só `PRONTO`). Novo endpoint
+  `POST /sispag/lotes/por-filial` (um lote por filial, resultado por lote).
+- **Permuta é bloqueio por indicação** (nome do tipo contém "PERMUTA"; pode já ter permuta parcial). A
+  ingestão passa a gravar o tipo do `com298/list` (migration 0089): `tpd_cod` estava nulo em 100% dos 1.277
+  títulos ativos e não pagos em PRD (2026-10-20, leitura somente leitura).
+- **Sem estado "pronto, confira"** nesta fatia; TED/PIX contam como pronto até haver verificação no
+  carregamento (D10).
+- Emendas: I2 de `elegibilidade-titulo-lote` (+ situação `PRONTO`); L1/L2 do `lote-pagamento` (sem estado novo);
+  `TituloAPagar` (+`tpdDesNome`, +`situacaoPagamento` derivada). Glossário: situação de pagamento, motivo, dono,
+  pronto, bloqueado, tipo "(PERMUTA)" (≠ NDe/NC-ND).
+- Decisões do maintainer D1–D17 em `ontology/_inbox/sispag-situacao-pagamento-plan.md`.
+- Contagens: regras 30 → 31 (planned 11 → 12); invariantes: nova família I19 (16 itens); entidades inalteradas.
+
 ## v0.44.0 — SISPAG: âncora DPS na sugestão de boleto DDA (2026-10-19, ADR-0073)
 
 Feature: `sispag-dda-ordem-dps` (`/feature-tweak sugestao-boleto-dda`). `entity_changed = true`.

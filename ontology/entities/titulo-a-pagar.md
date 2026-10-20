@@ -1,7 +1,7 @@
 ---
 name: TituloAPagar
 type: entity
-ontology_version: "0.45.0"
+ontology_version: "0.46.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -18,6 +18,10 @@ related_files:
   - src/backend/routes/sispag.ts
   - src/backend/jobs/ingest-pagamentos.ts
   - src/frontend/app/sispag/page.tsx
+  - src/backend/migrations/0089_titulo_tipo_documento.sql
+  - src/backend/domain/interface/sispag/SituacaoPagamento.ts
+  - src/backend/domain/service/sispag/SituacaoPagamentoResolver.ts
+  - src/backend/domain/service/sispag/SituacaoPagamentoService.ts
 properties:
   - docCod
   - titCod
@@ -32,6 +36,7 @@ properties:
   - banco
   - numRemessa
   - tpdCod
+  - tpdDesNome
   - prontoParaRemessa
   - temBoleto
   - ativo
@@ -44,8 +49,9 @@ relationships:
   - "TituloAPagar 1—0..N BloqueioDuplicidade (no máximo 1 ATIVO; retirado de lote por duplicidade, cancelamento pendente no Conexos; ADR-0063)"
   - "TituloAPagar 1—1 (contexto) Borderô a-pagar / Lote SISPAG nativos (fin010/fin015 — leitura de contexto no painel, não vínculo próprio)"
   - "TituloAPagar 0..N—N DecisaoSugestaoBoleto (decisão humana sobre qual boleto livre do fin124 é o deste título; não altera o título nem `temBoleto`, I15a; ADR-0068, planned)"
+  - "TituloAPagar 1—1 (derivado) SituacaoPagamento (PRONTO | BLOQUEADO + motivos, dono e ação; calculada no painel, nunca persistida; I19, ADR-0075, planned)"
   - "TituloAPagar 1—0..1 TituloAPagar (renegociação I18: o título novo nasce no mesmo docCod e consome o antigo; linhagem no ledger sispag_ajuste_centavos_execucao, não em coluna; ADR-0074, planned)"
-last_review: 2026-10-19
+last_review: 2026-10-20
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
   - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
@@ -108,7 +114,8 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `pago` | boolean | derivado: `fin064.vldPago = 1` e `aberto = 0` | Título já pago **não** entra no lote (I2). **Duas leituras distintas:** na carteira, é o snapshot da ingestão (que filtra `vldPago = 0`, então título pago some); **depois da remessa**, a sincronização lê o título ao vivo no `fin064` **por `docCod`, sem filtro de `vldPago`** (`getTituloAPagar`): o snapshot da carteira nunca prova pagamento de item de lote (I11b). Campo ilegível ≠ `false` (I11c). |
 | `banco` | string? | `fin064` → banco/conta do título (`bncCod`/`ccoCod`) → `banco` | Banco/conta destino. **Metadado** nesta fatia (o agrupamento é por filial; ver ADR-0015). |
 | `numRemessa` | string? | `fin064` → `titNumRemessa` → `num_remessa` | Nº da remessa quando o título já saiu (contexto). |
-| `tpdCod` | string? | `com298` → `tpd_cod` | Tipo de documento. |
+| `tpdCod` | string? | `com298/list` → `tpd_cod` | Tipo de documento. **O `fin064` não o devolve:** medido em PRD (leitura somente leitura, 2026-10-20), **nulo em 100%** dos 1.277 títulos ativos e não pagos. A partir da ADR-0075 (`planned`) a **ingestão** lê o tipo no `com298/list` (por `docCod`) e o grava; falha de leitura **preserva** o valor anterior (COALESCE), tipo desconhecido fica nulo. |
+| `tpdDesNome` | string? | `com298/list` → `tpd_des_nome` (migration 0089, `planned`) | Nome do tipo do documento. Indica permuta quando contém `PERMUTA` (sem acento/caixa): motivo `TIPO_PERMUTA` da situação de pagamento (`situacao-pagamento-titulo`, I19d). Indicação, não prova. |
 | `prontoParaRemessa` | boolean | **heurística** da ingestão (ver abaixo) → `pronto_para_remessa` | **INFORMATIVO** — tem modalidade + destino (banco/conta, barras ou PIX)? Palpite de completude. A **validação autoritativa** acontece **no envio, ao vivo** (Fatia 3). **Não** é gate de elegibilidade. |
 | `temBoleto` | boolean | **flag de DDA** do grid de pendentes (`fin015` → `titVldReflexoDdaAssoc`) → `tem_boleto` | O Conexos tem um **boleto DDA** (`fin124`) casado com este título. É o único vínculo pagamento↔boleto que existe — o código de barras **não está no título**. Alimenta a coluna "Boleto" do painel e habilita a modalidade BOLETO. Ver ADR-0040. |
 | `ativo` | boolean | anti-fantasma: título fora da run mais recente → `ativo=false` | Título que **some** da run de ingestão mais recente é marcado **inativo** (some do painel). Ver "Anti-fantasma". |
@@ -185,6 +192,16 @@ Título que a analista retirou de um lote por duplicidade ganha um `BloqueioDupl
 (`entities/bloqueio-duplicidade.md`): fica fora da formação automática e da inclusão manual até
 sumir do `fin064` (o anti-fantasma abaixo o encerra) ou a analista desfazer. Não é coluna de
 `titulo_a_pagar` porque o UPSERT da ingestão a apagaria.
+
+## Situação de pagamento (ADR-0075, `planned`)
+
+Cada título da carteira tem uma **situação de pagamento** **derivada** no painel (regra
+[`situacao-pagamento-titulo`](../business-rules/situacao-pagamento-titulo.md), I19): `PRONTO` ou
+`BLOQUEADO`, com todos os motivos, o principal, quem resolve e o próximo passo. **Não é coluna**: só o
+nome do tipo (`tpd_des_nome`) é persistido. Os insumos já existentes são `aprovado`, `pago`, `vencimento`,
+`forma_pagamento_conexos`, `tem_boleto`, o bloqueio por duplicidade (ADR-0063), o ledger do ajuste de
+centavos (ADR-0074) e o desfecho de boleto (ADR-0072). `prontoParaRemessa` segue **informativo** e não
+alimenta a situação.
 
 ## Anti-fantasma (`ativo`)
 
