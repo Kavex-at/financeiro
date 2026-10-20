@@ -1,4 +1,5 @@
 import type { PayeeItemWarning } from './AuthorizedPayeeInterface.js';
+import type { SituacaoPagamento } from './SituacaoPagamento.js';
 /**
  * SISPAG (Escopo II) — interfaces do painel READ-ONLY (spike / semente da Fatia 1).
  *
@@ -56,6 +57,10 @@ export interface TituloAPagar {
     prontoParaRemessa?: boolean;
     /** false quando o título sumiu da ingestão mais recente (anti-fantasma). */
     ativo?: boolean;
+    /** Nome do tipo do documento (`com298/list`, `tpdDesNome`); indica permuta. Migration 0089. */
+    tpdDesNome?: string;
+    /** Situação de pagamento (ADR-0075): calculada no painel, nunca persistida. */
+    situacaoPagamento?: SituacaoPagamento;
 }
 
 /** Referência ao lote RASCUNHO que contém um título (projeção de `ItemLote` no painel). */
