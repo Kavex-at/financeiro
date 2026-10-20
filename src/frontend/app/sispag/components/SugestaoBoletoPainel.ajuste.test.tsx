@@ -1,5 +1,5 @@
 /**
- * Ajuste de centavos no painel da sugestão (ADR-0073): estado do ajuste, "tentar de novo" só para
+ * Ajuste de centavos no painel da sugestão (ADR-0074): estado do ajuste, "tentar de novo" só para
  * `sispag:executar` e estados retomáveis, 409 com a mensagem do servidor e a decisão transferida
  * com o autor humano original.
  */
@@ -72,7 +72,7 @@ const renderPainel = (p: {
 
 afterEach(() => jest.clearAllMocks())
 
-describe('SugestaoBoletoPainel — ajuste de centavos (ADR-0073)', () => {
+describe('SugestaoBoletoPainel — ajuste de centavos (ADR-0074)', () => {
   it('modo shadow ⇒ selo de simulação, sem botão', () => {
     renderPainel({ modo: 'shadow' })
     expect(screen.getByTestId('selo-ajuste-simulacao')).toHaveTextContent(

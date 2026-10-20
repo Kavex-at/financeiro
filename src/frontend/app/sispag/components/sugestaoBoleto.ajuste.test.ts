@@ -37,7 +37,7 @@ const ajuste = (over: Partial<AjusteCentavos> = {}): AjusteCentavos => ({
   ...over,
 })
 
-describe('seloDoAjusteCentavos (ADR-0073, I18l/I18m)', () => {
+describe('seloDoAjusteCentavos (ADR-0074, I18l/I18m)', () => {
   it('modo shadow + par dentro do limite ⇒ selo de simulação, sem retomada', () => {
     const s = seloDoAjusteCentavos({ sugestao: confirmada(0.01), modo: 'shadow' })
     expect(s).toMatchObject({ tipo: 'simulacao', retomavel: false })

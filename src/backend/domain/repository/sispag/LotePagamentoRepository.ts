@@ -751,7 +751,7 @@ export default class LotePagamentoRepository {
         );
 
     /**
-     * I18j(5)/M6 (ADR-0073): todo item em lote local `RASCUNHO` que aponta para o título
+     * I18j(5)/M6 (ADR-0074): todo item em lote local `RASCUNHO` que aponta para o título
      * renegociado passa ao título NOVO (`tit_cod`, `valor` = líquido novo), com `versao + 1` e
      * `ITEM_TITULO_RENEGOCIADO` na trilha do lote — na transação do rechaveamento. Lote em qualquer
      * outro status NUNCA é tocado. Devolve os lotes tocados.
@@ -809,7 +809,7 @@ export default class LotePagamentoRepository {
     };
 
     /**
-     * I18k/M5 (ADR-0073): algum item do lote tem ajuste de centavos em curso ou indeterminado (no título de
+     * I18k/M5 (ADR-0074): algum item do lote tem ajuste de centavos em curso ou indeterminado (no título de
      * origem)? O `finalizarLote` recusa enquanto o ajuste corre (`TitleAdjustmentInProgressError`).
      */
     public titulosComAjusteNaoTerminalNoLote = async (

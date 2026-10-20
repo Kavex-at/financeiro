@@ -55,7 +55,7 @@ import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 export const FONTE_VALOR_ABERTO = {
     /** `shadow`/endpoint: carteira persistida (zero chamada ao ERP). */
     CARTEIRA_LOCAL: 'CARTEIRA_LOCAL',
-    /** `on`: régua líquida do `fin064` lida ao vivo (I17b emendada, ADR-0073). */
+    /** `on`: régua líquida do `fin064` lida ao vivo (I17b emendada, ADR-0074). */
     ERP_AO_VIVO: 'ERP_AO_VIVO',
 } as const;
 export type FonteValorAberto = (typeof FONTE_VALOR_ABERTO)[keyof typeof FONTE_VALOR_ABERTO];
@@ -453,7 +453,7 @@ export default class VinculoCodigoBarrasService {
             return this.reconhecerItemComCodigo({ lote, flpCod, ctx, alvo, nativo, decisao });
         }
 
-        // 3. O LÍQUIDO aberto AO VIVO (I17b, ADR-0073). Sem ele não há comparação: fail-closed.
+        // 3. O LÍQUIDO aberto AO VIVO (I17b, ADR-0074). Sem ele não há comparação: fail-closed.
         const aberto = await this.lerAberto(item);
         const liquidoCentavos = ValorAbertoLiquido.calcularCentavos(aberto);
         if (aberto === undefined || liquidoCentavos === undefined) {

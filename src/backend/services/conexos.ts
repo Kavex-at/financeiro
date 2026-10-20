@@ -538,7 +538,7 @@ export class ConexosService {
     /**
      * Single-attempt authenticated DELETE — NO 401 re-login/retry, mirroring
      * `authenticatedPostOnce`. Used to undo a NOT finalized `fin070` renegotiation
-     * (ADR-0073, G3): each DELETE is a write whose success is decided by the re-read.
+     * (ADR-0074, G3): each DELETE is a write whose success is decided by the re-read.
      */
     async authenticatedDeleteOnce<T = unknown>(
         path: string,

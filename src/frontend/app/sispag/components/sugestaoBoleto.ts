@@ -282,7 +282,7 @@ export const desfechosDeSugestoesLegadas = (lista: SugestaoBoleto[]): DesfechoTi
 }
 
 
-// ── Ajuste de centavos do título (ADR-0073, I18) ─────────────────────────────────────────────
+// ── Ajuste de centavos do título (ADR-0074, I18) ─────────────────────────────────────────────
 
 /** Limite da I15c/I18a (R$ 0,05): só pares confirmados dentro dele têm ajuste. */
 export const LIMITE_AJUSTE_CENTAVOS = 0.05

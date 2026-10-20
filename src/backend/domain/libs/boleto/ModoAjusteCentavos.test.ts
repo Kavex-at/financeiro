@@ -12,7 +12,7 @@ const cfg = (over: Partial<ConfiguracaoModoAjuste> = {}): ConfiguracaoModoAjuste
     ...over,
 });
 
-describe('ModoAjusteCentavos.resolverModoEfetivo (I18f/I18l, ADR-0073 emenda 2026-10-20)', () => {
+describe('ModoAjusteCentavos.resolverModoEfetivo (I18f/I18l, ADR-0074 emenda 2026-10-20)', () => {
     it('constantes tipadas shadow/on (sem off: não há flag dedicada)', () => {
         expect(MODO_AJUSTE).toEqual({ SHADOW: 'shadow', ON: 'on' });
     });

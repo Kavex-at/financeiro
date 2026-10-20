@@ -34,7 +34,7 @@ const numero = (v: string): number => Number(v);
 /**
  * ConexosRenegociacaoClient — Renegociação de Pagamentos (`fin070`), Liberação de Títulos
  * (`fin103`), comandos da regra de bloqueio (`fin106`) e leitura do título (`fin064`), para o
- * ajuste de centavos do título (ADR-0073, I18c–e).
+ * ajuste de centavos do título (ADR-0074, I18c–e).
  *
  * **Sessão explícita (I18f):** todo método recebe a `SessaoConexos` do chamador (a do servidor,
  * `ConexosSessionRegistry.robot()`); nada aqui consulta o resolver por-request.

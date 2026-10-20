@@ -1,6 +1,6 @@
 import ValorItemImport from './ValorItemImport.js';
 
-describe('ValorItemImport (I17n, ADR-0073): o item é importado pelo LÍQUIDO do grid', () => {
+describe('ValorItemImport (I17n, ADR-0074): o item é importado pelo LÍQUIDO do grid', () => {
     it('titMnyLiquido presente ⇒ é o valor do item (NELSON 462,49 + juros 0,01)', () => {
         expect(
             ValorItemImport.valorDoItem({

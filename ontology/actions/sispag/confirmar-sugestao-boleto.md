@@ -2,7 +2,7 @@
 name: confirmarSugestaoBoleto
 type: action
 entity: DecisaoSugestaoBoleto
-ontology_version: "0.44.0"
+ontology_version: "0.45.0"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -23,7 +23,7 @@ postconditions:
   - "temBoleto, lote, título e ERP intactos (I15a, I15b)."
 side_effects:
   - "Escrita local apenas, dentro da transação do confirmar."
-  - "Depois do commit, fora da transação: dispara ajustarCentavosTitulo (assíncrono) quando o par tem 0 < |Δ| <= R$ 0,05 no mesmo dia e o modo da filial não é off (I18g, ADR-0073, planned). A resposta não espera o ERP; o derivado ajuste começa AGUARDANDO."
+  - "Depois do commit, fora da transação: dispara ajustarCentavosTitulo (assíncrono) quando o par tem 0 < |Δ| <= R$ 0,05 no mesmo dia e o modo da filial não é off (I18g, ADR-0074, planned). A resposta não espera o ERP; o derivado ajuste começa AGUARDANDO."
 ---
 
 # confirmarSugestaoBoleto

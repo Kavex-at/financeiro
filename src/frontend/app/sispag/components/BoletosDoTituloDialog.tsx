@@ -137,7 +137,7 @@ export function BoletosDoTituloDialog({
 
   const [tentativa, setTentativa] = React.useState(0)
 
-  // Ajuste de centavos (ADR-0073): modo da filial e o estado do ajuste deste título. Falha de
+  // Ajuste de centavos (ADR-0074): modo da filial e o estado do ajuste deste título. Falha de
   // leitura não esconde nada da sugestão — só deixa o selo do ajuste de fora.
   const [ajuste, setAjuste] = React.useState<{
     chave: string

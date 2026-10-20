@@ -1462,7 +1462,7 @@ describe('RemessaService — gate de integridade do .REM', () => {
         expect(JSON.stringify([motivo, err.userMessage])).not.toContain(BARRAS_OK);
     });
 
-    describe('I17m — barra == pagamento do J (ADR-0073)', () => {
+    describe('I17m — barra == pagamento do J (ADR-0074)', () => {
         it('pagamento ≠ barra ⇒ RemessaBarcodeAmountMismatchError; lote não vai a REMESSA_GERADA', async () => {
             const write = comConteudo(linhaJ(BARRAS_OK, '', 572067));
             const loteRepo = buildLoteRepo(lote());
@@ -3956,7 +3956,7 @@ describe('RemessaService.baixarArquivo', () => {
     });
 });
 
-describe('I17n — o item é importado pelo LÍQUIDO do grid (ADR-0073)', () => {
+describe('I17n — o item é importado pelo LÍQUIDO do grid (ADR-0074)', () => {
     const itensImportados = (write: ReturnType<typeof buildWrite>) =>
         write.importarTitulos.mock.calls.flatMap(([p]) => p.itens as Record<string, unknown>[]);
 

@@ -2,7 +2,7 @@
 name: conexos
 type: integration
 direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG READ-only)
-ontology_version: "0.44.0"
+ontology_version: "0.45.0"
 implementation_status: partial
 status: draft
 owners: [yuri]
@@ -338,7 +338,7 @@ Envelope com **2+ perguntas** também não é auto-respondível, mesmo contendo 
 passam por esses gates. `fin015.flpVldRet` **não** é sinal de retorno: medido `false` em todos os
 lotes nativos. O transporte (pasta de rede → VAN Nexxera) segue externo e manual.
 
-### ESCRITA SISPAG — renegociação de centavos no título (ADR-0073, `planned`)
+### ESCRITA SISPAG — renegociação de centavos no título (ADR-0074, `planned`)
 
 Provado em HML (2026-10-19, frnCod 3 e 4; G2/G3 e ponta a ponta pelo serviço de produção em 2026-10-20, frnCod 5–8). Composição com vencimento **passado** e **de hoje** aceita. Só pela ação `ajustarCentavosTitulo` (I18), sessão do servidor.
 

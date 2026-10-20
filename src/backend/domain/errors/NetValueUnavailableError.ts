@@ -3,7 +3,7 @@ import type { HandlerError } from '../libs/handler/HandlerError.js';
 /**
  * O título não traz o valor LÍQUIDO no grid de pendentes do `fin015` e tem juros/desconto: o
  * item não pode ser importado pelo valor base, senão o `.REM` pagaria o valor errado (I17n,
- * ADR-0073). HTTP 409. Nada foi importado.
+ * ADR-0074). HTTP 409. Nada foi importado.
  */
 export default class NetValueUnavailableError extends Error implements HandlerError {
     public readonly code = 'VALOR_LIQUIDO_INDISPONIVEL';

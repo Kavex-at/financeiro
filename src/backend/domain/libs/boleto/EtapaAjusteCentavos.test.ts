@@ -2,7 +2,7 @@ import EtapaAjusteCentavos, { ETAPA_AJUSTE, type EtapaAjuste } from './EtapaAjus
 
 const E = ETAPA_AJUSTE;
 
-describe('EtapaAjusteCentavos — máquina do ledger (I18h, ADR-0073)', () => {
+describe('EtapaAjusteCentavos — máquina do ledger (I18h, ADR-0074)', () => {
     it('caminho feliz completo é uma sequência de transições válidas', () => {
         const caminho: EtapaAjuste[] = [
             E.PENDENTE,
@@ -101,7 +101,7 @@ describe('EtapaAjusteCentavos — máquina do ledger (I18h, ADR-0073)', () => {
         expect(() => EtapaAjusteCentavos.transicionar(E.CONCLUIDO, E.RECHAVEADA)).toThrow();
     });
 
-    it('etapas são os valores do CHECK da migration 0087 (snake_case)', () => {
+    it('etapas são os valores do CHECK da migration 0088 (snake_case)', () => {
         for (const e of Object.values(E)) expect(e).toMatch(/^[a-z_]+$/);
     });
 });

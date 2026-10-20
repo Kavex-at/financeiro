@@ -16,7 +16,7 @@ import { ConexosService } from '../services/conexos.js';
 import { ConexosSessionStore } from '../services/conexosSessionStore.js';
 
 /**
- * VALIDAÇÃO GROUND-TRUTH EM PRODUÇÃO — SOMENTE LEITURA — ajuste de centavos (ADR-0073),
+ * VALIDAÇÃO GROUND-TRUTH EM PRODUÇÃO — SOMENTE LEITURA — ajuste de centavos (ADR-0074),
  * Tasks 13 (GT1–GT4, G4/M8) e 14 (G1) num ÚNICO login no Conexos de PRD.
  *
  * ── O QUE MEDE ───────────────────────────────────────────────────────────────────────────

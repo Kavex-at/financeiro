@@ -161,9 +161,9 @@ export interface DecisaoConfirmadaChaveada extends DecisaoChaveada {
     deltaDias?: number;
     sinais?: SinalSugestao[];
     tier?: TierSugestao;
-    /** Autor humano da confirmação (herdado na transferência, ADR-0073 M1). */
+    /** Autor humano da confirmação (herdado na transferência, ADR-0074 M1). */
     decididoPor?: string;
-    /** `sistema` quando a decisão foi transferida ao título renegociado (ADR-0073 M1). */
+    /** `sistema` quando a decisão foi transferida ao título renegociado (ADR-0074 M1). */
     transferidaPor?: string;
 }
 
@@ -228,9 +228,9 @@ export interface SugestaoBoletoTitulo {
     orfa?: boolean;
     /** Por que a confirmação ficou órfã (pt-BR). */
     motivoOrfa?: string;
-    /** CONFIRMADA: autor humano (herdado na transferência, ADR-0073 M1). */
+    /** CONFIRMADA: autor humano (herdado na transferência, ADR-0074 M1). */
     decididoPor?: string;
-    /** CONFIRMADA transferida ao título renegociado: `sistema` (ADR-0073 M1). */
+    /** CONFIRMADA transferida ao título renegociado: `sistema` (ADR-0074 M1). */
     transferidaPor?: string;
 }
 
@@ -320,9 +320,9 @@ export interface CandidatoTitulo {
     reservadoParaTitulo?: ChaveTitulo;
     /** Por que não é confirmável (pt-BR); ausente quando confirmável. */
     motivo?: string;
-    /** CONFIRMADA: autor humano (herdado na transferência, ADR-0073 M1). */
+    /** CONFIRMADA: autor humano (herdado na transferência, ADR-0074 M1). */
     decididoPor?: string;
-    /** CONFIRMADA transferida ao título renegociado: `sistema` (ADR-0073 M1). */
+    /** CONFIRMADA transferida ao título renegociado: `sistema` (ADR-0074 M1). */
     transferidaPor?: string;
 }
 

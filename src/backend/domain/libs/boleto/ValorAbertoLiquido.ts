@@ -1,6 +1,6 @@
 /**
  * Valores do título lidos AO VIVO no `fin064` (reais) que formam o líquido aberto (I17b emendada,
- * ADR-0073). Todos opcionais na leitura: qualquer ausência é decidida aqui, fail-closed.
+ * ADR-0074). Todos opcionais na leitura: qualquer ausência é decidida aqui, fail-closed.
  */
 export interface ValoresAbertoTitulo {
     totalLiquido?: number;
@@ -13,7 +13,7 @@ export interface ValoresAbertoTitulo {
 const emCentavos = (v: number): number => Math.round(v * 100);
 
 /**
- * Régua líquida da I17b (ADR-0073): `abertoLiquido = totalLiquido`, CONFERIDO contra
+ * Régua líquida da I17b (ADR-0074): `abertoLiquido = totalLiquido`, CONFERIDO contra
  * `totalAberto + titMnyJuros − titMnyDesconto`, em centavos inteiros. O `totalLiquido` do `fin064`
  * JÁ desconta o pago (PRD 2026-10-20: 15 de 15 títulos com pagamento parcial); subtrair `totalPago`
  * de novo reprovaria todo título parcialmente pago. As duas fórmulas divergirem ou qualquer campo

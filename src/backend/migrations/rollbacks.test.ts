@@ -71,8 +71,8 @@ describe('migrations — segurança do diretório', () => {
                 // porque os eventos VINCULO_* ficam (a trilha recusa DELETE).
                 '0086_sispag_vinculo_codigo_barras.sql',
                 // Ledger do ajuste de centavos, colunas de transferência da decisão e tipos novos
-                // nas duas trilhas (ADR-0073); CHECKs antigos voltam NOT VALID (trilhas só-inclusão).
-                '0087_sispag_ajuste_centavos.sql',
+                // nas duas trilhas (ADR-0074); CHECKs antigos voltam NOT VALID (trilhas só-inclusão).
+                '0088_sispag_ajuste_centavos.sql',
             ].sort(),
         );
         for (const alvo of reverses) {

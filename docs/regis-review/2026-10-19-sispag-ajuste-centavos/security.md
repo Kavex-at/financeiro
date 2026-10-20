@@ -10,7 +10,7 @@ findings_count: 4
 cards_count: 4
 ---
 
-# Security — Regis-Review (delta: ajuste de centavos, ADR-0073)
+# Security — Regis-Review (delta: ajuste de centavos, ADR-0074)
 
 ## 1. Cenário Geral
 
@@ -27,7 +27,7 @@ cards_count: 4
 | Rotas mutantes com rate limit | 2/2 (30/min por `sub`, balde `ajuste`) | 100% | ✅ | `http/rateLimit.ts` |
 | Defaults do modo | `off`; `on` só com 5 condições; senão `shadow` | fail-closed | ✅ | `ModoAjusteCentavos.ts` |
 | Sessão usada nas escritas | `registry.robot()` explícita | 100% | ✅ | `AjusteCentavosTituloService.ts:326` |
-| Código de barras completo persistido | 0 (CHECK `codigo_mascarado` na 0087; `inserirEventoAjuste` recusa `\d{10,}`) | 0 | ✅ | migration 0087, `SugestaoBoletoRepository.ts` |
+| Código de barras completo persistido | 0 (CHECK `codigo_mascarado` na 0088; `inserirEventoAjuste` recusa `\d{10,}`) | 0 | ✅ | migration 0088, `SugestaoBoletoRepository.ts` |
 | SQL não parametrizado no delta | 0 | 0 | ✅ | `SugestaoBoletoRepository.transferirDecisao` |
 | Segredos hardcoded / `.env` no delta | 0 | 0 | ✅ | inspeção do diff |
 | Rate limit no `GET /ajustes-centavos` | ausente (leitura; só global 100/min por IP) | opcional | ⚠️ | `routes/sispag.ts` |
@@ -47,7 +47,7 @@ cards_count: 4
 | Authenticate Actors | Middleware de sessão existente cobre `/sispag` | ✅ presente | `routePermissions.test.ts` |
 | Authorize Actors | `exigirPermissao` antes do limiter; EXECUTAR para escrever | ✅ presente | `routes/sispag.ts` |
 | Limit Access | Credencial robô única; modo por filial; `ServerProcessMarker` ligado só no `index.ts` | ✅ presente | `ServerProcessMarker.ts`, `index.ts` |
-| Limit Exposure | Máscara 5+4 em ledger, eventos, obs fin070, UI | ✅ presente | migration 0087 |
+| Limit Exposure | Máscara 5+4 em ledger, eventos, obs fin070, UI | ✅ presente | migration 0088 |
 | Encrypt Data | Sem mudança (fora do delta) | N/A | — |
 | Separate Entities | Shadow (leitura) separado de on (escrita); jobs separados do servidor | ✅ presente | `ModoAjusteCentavos.ts` |
 | Change Default Settings | Default `off`; `CONEXOS_DRY_RUN` ligado rebaixa a shadow | ✅ presente | `EnvironmentProvider.ts` |
@@ -56,7 +56,7 @@ cards_count: 4
 | Lock Computer | N/A: sem lockout; compensação e ledger não terminal fazem papel parcial | N/A | — |
 | Inform Actors | Selo na UI e `avisos` no GET | ✅ presente | `AjusteCentavosSelo.tsx` |
 | Restore | Compensação (`cancelarRenegociacao`) e retomada pelo marcador | ✅ presente | `compensar`, `reconhecerPeloMarcador` |
-| Audit Trail | Eventos `TITULO_RENEGOCIADO`/`DECISAO_TRANSFERIDA`, ledger com tentativas, `decidido_por` herdado | ✅ presente | `SugestaoBoletoRepository.ts`, 0087 |
+| Audit Trail | Eventos `TITULO_RENEGOCIADO`/`DECISAO_TRANSFERIDA`, ledger com tentativas, `decidido_por` herdado | ✅ presente | `SugestaoBoletoRepository.ts`, 0088 |
 
 ## 4. Findings
 

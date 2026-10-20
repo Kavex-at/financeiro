@@ -1,4 +1,4 @@
-# Kanban — Regis-Review reduzido 2026-10-19 (`sispag-ajuste-centavos`, ADR-0073)
+# Kanban — Regis-Review reduzido 2026-10-19 (`sispag-ajuste-centavos`, ADR-0074)
 
 Ordem: severidade, depois risco operacional. Detalhe de cada card na seção do QA.
 

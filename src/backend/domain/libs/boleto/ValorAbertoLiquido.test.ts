@@ -9,7 +9,7 @@ const titulo = (over: Partial<ValoresAbertoTitulo> = {}): ValoresAbertoTitulo =>
     ...over,
 });
 
-describe('ValorAbertoLiquido (I17b emendada, ADR-0073)', () => {
+describe('ValorAbertoLiquido (I17b emendada, ADR-0074)', () => {
     it('título sem juros/desconto/pagamento: líquido aberto = totalAberto (regressão)', () => {
         expect(ValorAbertoLiquido.calcularCentavos(titulo())).toBe(102880);
     });

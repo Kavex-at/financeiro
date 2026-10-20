@@ -83,7 +83,7 @@ const diaCivil = (v: string): string =>
     /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : new Date(Date.parse(v)).toISOString().slice(0, 10);
 
 /**
- * Elegibilidade PURA do ajuste de centavos do título (I18a/I18b/I18m, ADR-0073). Sem I/O, sem log,
+ * Elegibilidade PURA do ajuste de centavos do título (I18a/I18b/I18m, ADR-0074). Sem I/O, sem log,
  * sem relógio: tudo que decide entra como argumento, lido AO VIVO por quem chama. É a mesma
  * função do `shadow`, do executor (no início e antes do `finalizar`) e do "tentar de novo".
  *

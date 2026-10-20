@@ -903,7 +903,7 @@ export default class RemessaService {
                         })),
                     });
                 }
-                // I17m (ADR-0073) — o J paga exatamente o valor da barra. Mesmo tratamento tardio.
+                // I17m (ADR-0074) — o J paga exatamente o valor da barra. Mesmo tratamento tardio.
                 if (validacao.divergenciasValor.length > 0) {
                     await this.guardaValorDoJ({
                         loteId: lote.id,
@@ -1265,7 +1265,7 @@ export default class RemessaService {
      * enriquecida com a modalidade escolhida e o destino do favorecido (`cmn025`).
      */
     /**
-     * I17m (ADR-0073): J com barra (> 0) ≠ pagamento. `BLOQUEIA` (default, M8) lança
+     * I17m (ADR-0074): J com barra (> 0) ≠ pagamento. `BLOQUEIA` (default, M8) lança
      * `RemessaBarcodeAmountMismatchError`; `AVISA` só registra. O título é identificado,
      * best-effort, pelos códigos do lote nativo (só leitura); a falha da leitura não afrouxa a
      * guarda. Nada sai sem máscara 5+4.
@@ -1452,7 +1452,7 @@ export default class RemessaService {
                     ? this.semReferenciaDeConta(pendente.raw)
                     : pendente.raw;
 
-            // I17n (ADR-0073): o item vai pelo LÍQUIDO do grid, nunca pelo base nem pelo
+            // I17n (ADR-0074): o item vai pelo LÍQUIDO do grid, nunca pelo base nem pelo
             // snapshot do item. Indisponível ⇒ nada é importado (o throw vem antes do importar).
             const liquido = ValorItemImport.valorDoItem(pendente.raw);
             if (!liquido.disponivel) {

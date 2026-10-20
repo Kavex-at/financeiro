@@ -10,7 +10,7 @@ findings_count: 7
 cards_count: 6
 ---
 
-# Fault Tolerance — Regis-Review (delta: ajuste de centavos SISPAG, ADR-0073)
+# Fault Tolerance — Regis-Review (delta: ajuste de centavos SISPAG, ADR-0074)
 
 Escopo: `git diff origin/main...HEAD`, sem `jobs/probe-*.ts`. Modo do ajuste = `off` por default. Não há `infra/` (filas SQS/DLQ: N/A; a recuperação aqui é ledger + varredura no processo do servidor).
 
@@ -18,13 +18,13 @@ Escopo: `git diff origin/main...HEAD`, sem `jobs/probe-*.ts`. Modo do ajuste = `
 
 | Source | Stimulus | Artifact | Environment | Response | Response Measure |
 |---|---|---|---|---|---|
-| Analista confirma boleto (ou "tentar de novo"/abrir tela) | Queda do processo, timeout ou resposta perdida do Conexos no meio da sequência `fin070` (criar → incluir → compor → aplicar → finalizar → liberar `fin103`) | `AjusteCentavosTituloService`, `AjusteCentavosExecucaoRepository`, ledger `sispag_ajuste_centavos_execucao` (0087), `finalizarLote`, `.REM` | Servidor Express/Render, modo `on` (futuro), ERP sem rota de cancelamento provada (G3) | Antes do `finalizar`: compensar (cancelar `frnCod`); depois: só para a frente; retomada reconhece o estado pelo marcador na obs; rechaveamento local atômico | 0 renegociações duplicadas por título; 0 ledger preso sem alerta; 0 divergência decisão/carteira/item vs ERP; todo caso não resolvido vira estado terminal visível ao analista |
+| Analista confirma boleto (ou "tentar de novo"/abrir tela) | Queda do processo, timeout ou resposta perdida do Conexos no meio da sequência `fin070` (criar → incluir → compor → aplicar → finalizar → liberar `fin103`) | `AjusteCentavosTituloService`, `AjusteCentavosExecucaoRepository`, ledger `sispag_ajuste_centavos_execucao` (0088), `finalizarLote`, `.REM` | Servidor Express/Render, modo `on` (futuro), ERP sem rota de cancelamento provada (G3) | Antes do `finalizar`: compensar (cancelar `frnCod`); depois: só para a frente; retomada reconhece o estado pelo marcador na obs; rechaveamento local atômico | 0 renegociações duplicadas por título; 0 ledger preso sem alerta; 0 divergência decisão/carteira/item vs ERP; todo caso não resolvido vira estado terminal visível ao analista |
 
 ## 2. Métricas observadas
 
 | Métrica | Valor atual | Alvo | Status | Fonte |
 |---|---|---|---|---|
-| Idempotência da escrita no ERP (chave `(fil,doc,titOrigem,decisao)` + índice único parcial de 1 não terminal por título + lock otimista por etapa) | presente | presente | ✅ | `0087_sispag_ajuste_centavos.sql` (UNIQUE + `ux_..._nao_terminal`); `registrarResultado` (`WHERE etapa = $de`) |
+| Idempotência da escrita no ERP (chave `(fil,doc,titOrigem,decisao)` + índice único parcial de 1 não terminal por título + lock otimista por etapa) | presente | presente | ✅ | `0088_sispag_ajuste_centavos.sql` (UNIQUE + `ux_..._nao_terminal`); `registrarResultado` (`WHERE etapa = $de`) |
 | Serialização por título (advisory lock) | presente (`pg_try_advisory_lock`, onBusy => `em_andamento`) | presente | ✅ | `AjusteCentavosTituloService.ts` `ajustar`; `PostgreeDatabaseClient.withAdvisoryLock` |
 | Write-ahead da intenção antes de cada chamada de escrita ao ERP | todas as escritas passam por `passo()` | 100% | ✅ | `AjusteCentavosTituloService.ts` `passo` |
 | Multi-escrita local do rechaveamento em 1 transação (decisão, carteira, itens RASCUNHO, ledger) | 1/1 | 100% | ✅ | `AjusteCentavosExecucaoRepository.rechavear` (`withTransaction`) |
@@ -45,7 +45,7 @@ Escopo: `git diff origin/main...HEAD`, sem `jobs/probe-*.ts`. Modo do ajuste = `
 |---|---|---|---|
 | Sanity Checking | Conferência `mnyValorTotal == valorBoleto` antes do `finalizar`; pós-condição do título novo (exatamente 1 candidato, original ausente); bloqueio só liberado com valor e comando "APROVAR" únicos | ✅ presente | `conferirAntesDeFinalizar`, `identificarTituloNovo`, `comandoParaLiberar` |
 | Comparison | Elegibilidade recalculada ao vivo no início e antes do `finalizar`; releitura do `fin070`/`fin064` decide após falha ambígua | ✅ presente | `avaliarAoVivo`, `finalizar` |
-| Timestamp | `intencao_em`, `atualizado_em`, `concluido_em`, `tentativas` no ledger; nada os consome para detectar preso | ⚠️ parcial | 0087 |
+| Timestamp | `intencao_em`, `atualizado_em`, `concluido_em`, `tentativas` no ledger; nada os consome para detectar preso | ⚠️ parcial | 0088 |
 | Timeout | Delegado ao client (cross-ref Availability) | ✅ presente | `ConexosRenegociacaoClient` |
 | Condition Monitoring | `logService.error` em `indeterminado`/`aguardando`; sem métrica nem painel de não terminais por idade | ⚠️ parcial | `alertar` |
 | Self-Test (guarda do `.REM`) | `I17m`: J com pagamento ≠ barra bloqueia `REMESSA_GERADA`; default sem medição | ⚠️ parcial | `RemessaCnabValidator.divergenciaDeValor` |
@@ -157,7 +157,7 @@ Escopo: `git diff origin/main...HEAD`, sem `jobs/probe-*.ts`. Modo do ajuste = `
 
 - **Severidade**: P3
 - **Tactic violada**: Recovery (documentação operacional)
-- **Localização**: ontologia I18h / ADR-0073; `ontology/_inbox/sispag-ajuste-centavos-rollout-g5.md`
+- **Localização**: ontologia I18h / ADR-0074; `ontology/_inbox/sispag-ajuste-centavos-rollout-g5.md`
 - **Evidência (objetiva)**: ADR descreve `indeterminado`/`aguardando_aprovacao_manual`; nenhum passo a passo ("o que o analista faz no fin070/fin103 para cada motivo").
 - **Impacto técnico**: nenhum no código.
 - **Impacto de negócio**: tempo de resolução depende de quem lê o log.
@@ -259,7 +259,7 @@ Escopo: `git diff origin/main...HEAD`, sem `jobs/probe-*.ts`. Modo do ajuste = `
 - **Problema**
   > A recuperação é forward-only por desenho, mas não há passo a passo para o time.
 - **Melhoria Proposta**
-  > Adicionar ao `DEPLOY.md`/runbook uma tabela motivo → ação no `fin070`/`fin103` (cancelar `frnCod`, aprovar título, reavaliar). Registrar como escolha explícita no ADR-0073.
+  > Adicionar ao `DEPLOY.md`/runbook uma tabela motivo → ação no `fin070`/`fin103` (cancelar `frnCod`, aprovar título, reavaliar). Registrar como escolha explícita no ADR-0074.
 - **Resultado Esperado**
   > Todos os motivos cobertos; resolução sem depender do desenvolvedor.
 - **Tactic alvo**: Recovery (forward)

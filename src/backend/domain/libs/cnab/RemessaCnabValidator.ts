@@ -21,7 +21,7 @@ export interface SegmentoJInvalido {
 }
 
 /**
- * Modo da guarda I17m (ADR-0073): segmento J cuja barra tem valor > 0 e cujo pagamento difere
+ * Modo da guarda I17m (ADR-0074): segmento J cuja barra tem valor > 0 e cujo pagamento difere
  * dela. `BLOQUEIA` = `RemessaBarcodeAmountMismatchError` (fail-closed, M8); `AVISA` = só `warn`.
  */
 export const GUARDA_VALOR_J = { BLOQUEIA: 'BLOQUEIA', AVISA: 'AVISA' } as const;
@@ -99,7 +99,7 @@ export interface ResultadoValidacaoRemessa {
      */
     repetidos: Array<{ barrasMascarada: string; linhas: number[] }>;
     /**
-     * I17m (ADR-0073): J com barra de valor > 0 e pagamento (pos 153–167) diferente dela.
+     * I17m (ADR-0074): J com barra de valor > 0 e pagamento (pos 153–167) diferente dela.
      * Sempre presente. Só máscara 5+4, valores e linha.
      */
     divergenciasValor: DivergenciaValorJ[];

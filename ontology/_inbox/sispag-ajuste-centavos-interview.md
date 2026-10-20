@@ -167,7 +167,7 @@ zerado é legítima (boleto aberto, linha 219) e deve ficar fora da guarda nova.
 
 ### entity_changed: true
 ### Ontology diff needed: yes
-Emenda da I17b; novas I17m, I17n e I18 (business rule nova `ajuste-centavos-titulo-sispag` + ADR-0073);
+Emenda da I17b; novas I17m, I17n e I18 (business rule nova `ajuste-centavos-titulo-sispag` + ADR-0074);
 `TituloAPagar` ganha a noção de líquido/juros/desconto e a origem da renegociação (`frnCod`,
 `titCodOrigem`); `DecisaoSugestaoBoleto` ganha `origem_decisao_id` e a anulação sistêmica; novos eventos
 na trilha; action `ajustar-centavos-titulo`; o watchlist "boleto acima/abaixo" sai para o escopo

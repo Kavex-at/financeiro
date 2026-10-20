@@ -954,7 +954,7 @@ export default class MotorSugestaoBoleto {
     };
 
     /** CONFIRMADA viva ou ORFA: o desfecho carrega só o boleto da decisão. */
-    /** ADR-0073 M1: quem decidiu (herdado na transferência) e a marca do sistema. */
+    /** ADR-0074 M1: quem decidiu (herdado na transferência) e a marca do sistema. */
     private autoria = (
         d: DecisaoConfirmadaChaveada,
     ): { decididoPor?: string; transferidaPor?: string } => ({

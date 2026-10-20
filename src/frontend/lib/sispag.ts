@@ -2100,9 +2100,9 @@ export const sugestaoBoletoSchema = z.object({
   confirmavel: z.boolean(),
   /** Par (credor, emissor) vigente do boleto, quando existe — para revogar pela tela. */
   confirmacaoEmissorId: z.string().optional(),
-  /** CONFIRMADA: autor humano (herdado quando a decisão foi transferida, ADR-0073 M1). */
+  /** CONFIRMADA: autor humano (herdado quando a decisão foi transferida, ADR-0074 M1). */
   decididoPor: z.string().optional(),
-  /** `sistema` quando a decisão foi transferida ao título renegociado (ADR-0073 M1). */
+  /** `sistema` quando a decisão foi transferida ao título renegociado (ADR-0074 M1). */
   transferidaPor: z.string().optional(),
 })
 export type SugestaoBoleto = z.infer<typeof sugestaoBoletoSchema>
@@ -2432,7 +2432,7 @@ export async function revogarConfirmacaoEmissor(
 }
 
 
-// ===================================================== Ajuste de centavos do título (ADR-0073, I18)
+// ===================================================== Ajuste de centavos do título (ADR-0074, I18)
 
 export const MODOS_AJUSTE_CENTAVOS = ['shadow', 'on'] as const
 export type ModoAjusteCentavos = (typeof MODOS_AJUSTE_CENTAVOS)[number]

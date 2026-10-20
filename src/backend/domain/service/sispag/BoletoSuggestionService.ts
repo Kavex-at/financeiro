@@ -403,7 +403,7 @@ export default class BoletoSuggestionService {
 
         this.cache.invalidar();
         if (resultado.criada) {
-            // I18g(1) (ADR-0073): o ajuste de centavos é agendado SÓ depois do commit, fora da
+            // I18g(1) (ADR-0074): o ajuste de centavos é agendado SÓ depois do commit, fora da
             // transação e sem esperar o ERP — a resposta do `confirmar` não muda por causa dele.
             this.ajusteCentavos.agendarAposConfirmar({
                 filCod: resultado.decisao.filCod,

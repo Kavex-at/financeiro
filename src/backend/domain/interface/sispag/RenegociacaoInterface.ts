@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ConexosService } from '../../../services/conexos.js';
 
 /**
- * Sessão Conexos EXPLÍCITA (I18f, ADR-0073): quem chama passa a sessão do servidor
+ * Sessão Conexos EXPLÍCITA (I18f, ADR-0074): quem chama passa a sessão do servidor
  * (`ConexosSessionRegistry.robot()`, credencial do ambiente). O client de renegociação nunca a
  * resolve pelo `ConexosSessionResolver` (que, dentro de uma request, devolveria a da analista).
  */

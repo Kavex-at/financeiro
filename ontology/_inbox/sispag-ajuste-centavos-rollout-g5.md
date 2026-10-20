@@ -1,6 +1,6 @@
 # sispag-ajuste-centavos — roteiro de rollout (G5) e checklist de pré-`on`
 
-> **Origem:** ADR-0073, Task 17. **Emenda 2026-10-20 (maintainer):** o ajuste **não tem flag dedicada** e fica
+> **Origem:** ADR-0074, Task 17. **Emenda 2026-10-20 (maintainer):** o ajuste **não tem flag dedicada** e fica
 > **ativo logo após o merge**, no processo do servidor. O modo efetivo sai dos kill-switches existentes: `on`
 > com `SISPAG_LIVE_WRITE_ENABLED` ligado, escrita Conexos ligada, sem `CONEXOS_DRY_RUN` e com credencial do
 > servidor; senão `shadow` (leitura ao vivo, zero escrita, `warn`). **Freio:** `SISPAG_LIVE_WRITE_ENABLED=false`.

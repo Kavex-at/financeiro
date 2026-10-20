@@ -2,7 +2,7 @@
 name: ajustarCentavosTitulo
 type: action
 entity: TituloAPagar
-ontology_version: "0.44.0"
+ontology_version: "0.45.0"
 implementation_status: partial
 status: draft
 owners: [yuri]
@@ -21,7 +21,7 @@ related_files:
   - src/backend/domain/service/sispag/LotePagamentoService.ts
   - src/backend/domain/libs/runtime/ServerProcessMarker.ts
   - src/backend/routes/sispag.ts
-  - src/backend/migrations/0087_sispag_ajuste_centavos.sql
+  - src/backend/migrations/0088_sispag_ajuste_centavos.sql
 last_review: 2026-10-19
 has_canonical_test: true
 canonical_test: src/backend/domain/service/sispag/AjusteCentavosTituloService.test.ts
@@ -47,14 +47,14 @@ side_effects:
 > **Status de implementação (2026-10-19, `partial`).** **Entregue** (código das Tasks 1-12 e 16, modo `off` por
 > default): elegibilidade (I18a), régua líquida, executor com compensação e retomada (I18c-j), gatilho pós-commit
 > do confirmar, rotas de "tentar de novo" e varredura, bloqueio do `finalizarLote` enquanto roda (I18g, I18k),
-> migration `0087`, tela com estado do ajuste e nova tentativa. **Pendente:** os portões **G1** (sonda de leitura
+> migration `0088`, tela com estado do ajuste e nova tentativa. **Pendente:** os portões **G1** (sonda de leitura
 > do login do servidor), **G2/G3** (HML: vencimento passado/hoje e cancelar a renegociação não finalizada),
 > **G4** (medição do líquido/pagamento parcial, Task 13) e **G5** (rollout, ver
 > `_inbox/sispag-ajuste-centavos-rollout-g5.md`); a rota `cancelarRenegociacao` do `fin070` segue
 > `NotImplementedError` atrás de `CANCELAMENTO_FIN070_PROVADO = false`; o default da guarda I17m
 > (`MODO_GUARDA_VALOR_J = BLOQUEIA`) aguarda a medição da Task 13. *(Emenda 2026-10-20: o modo `off` e a flag por filial deixaram de existir; o ajuste fica ativo no servidor após o merge, ver I18l.)*
 
-ADR-0073. Renegocia no `fin070` o título a pagar cujo boleto confirmado difere em centavos (I18), libera só o
+ADR-0074. Renegocia no `fin070` o título a pagar cujo boleto confirmado difere em centavos (I18), libera só o
 bloqueio que a renegociação criou e faz decisão, carteira e item seguirem o título novo. **Três gatilhos, uma
 ação:** após o commit do `confirmarSugestaoBoleto` (assíncrono), "tentar de novo" (`sispag:executar`) e a
 varredura de retomada no processo do servidor (I18g). Nunca pela remessa, nunca por cron. Idempotente por

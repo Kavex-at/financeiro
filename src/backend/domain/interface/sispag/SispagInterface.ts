@@ -788,7 +788,7 @@ export const VERIFICATION_EVENT = {
     LOTE_CONFERIDO: 'LOTE_CONFERIDO',
     LOTE_DEVOLVIDO: 'LOTE_DEVOLVIDO',
     CONFERENCIA_LIMPA: 'CONFERENCIA_LIMPA',
-    /** ADR-0073 (I18j(5)): item de lote RASCUNHO passou ao título renegociado. */
+    /** ADR-0074 (I18j(5)): item de lote RASCUNHO passou ao título renegociado. */
     ITEM_TITULO_RENEGOCIADO: 'ITEM_TITULO_RENEGOCIADO',
 } as const;
 

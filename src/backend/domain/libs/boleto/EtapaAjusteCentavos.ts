@@ -1,6 +1,6 @@
 /**
- * Etapas do ledger `sispag_ajuste_centavos_execucao` (I18h, ADR-0073). Os valores são os do CHECK
- * da migration 0087.
+ * Etapas do ledger `sispag_ajuste_centavos_execucao` (I18h, ADR-0074). Os valores são os do CHECK
+ * da migration 0088.
  */
 export const ETAPA_AJUSTE = {
     PENDENTE: 'pendente',

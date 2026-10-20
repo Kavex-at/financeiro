@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ETAPA_AJUSTE, type EtapaAjuste } from '../../libs/boleto/EtapaAjusteCentavos.js';
 
-/** Uma linha do ledger `sispag_ajuste_centavos_execucao` (ADR-0073, I18h). Só máscara 5+4. */
+/** Uma linha do ledger `sispag_ajuste_centavos_execucao` (ADR-0074, I18h). Só máscara 5+4. */
 export interface AjusteCentavosExecucao {
     id: string;
     filCod: number;

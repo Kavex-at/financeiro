@@ -165,7 +165,7 @@ const totalAbertoRowSchema = z
     .passthrough();
 
 /**
- * Linha do fin064 para a régua LÍQUIDA da I17b (ADR-0073): os cinco campos, nunca `titMnyValor`.
+ * Linha do fin064 para a régua LÍQUIDA da I17b (ADR-0074): os cinco campos, nunca `titMnyValor`.
  * `titMnyJuros`/`titMnyDesconto` NULOS são o "sem juros/desconto" do ERP (fixtures reais de
  * 2026-08-24/25 vêm `null` em título comum) e viram 0 — seguro porque a régua CONFERE contra
  * `totalLiquido`: juros real não lido faz as duas fórmulas divergirem (fail-closed). Chave
@@ -591,7 +591,7 @@ export default class ConexosSispagClient {
     };
 
     /**
-     * Os cinco campos da régua LÍQUIDA (I17b emendada, ADR-0073) de UM título, AO VIVO no `fin064`.
+     * Os cinco campos da régua LÍQUIDA (I17b emendada, ADR-0074) de UM título, AO VIVO no `fin064`.
      * Não decide nada: devolve o que leu; `ValorAbertoLiquido` confere as duas fórmulas e falha
      * fechado. Nunca lança: título que não veio ou falha HTTP ⇒ `{ legivel: false }`.
      */

@@ -1,6 +1,6 @@
 # Columbia Financeiro — Changelog
 
-## v0.70.0 (2026-10-20) — SISPAG: boleto com diferença de centavos passa a ser pagável
+## v0.71.0 (2026-10-20) — SISPAG: boleto com diferença de centavos passa a ser pagável
 
 - **Boleto até R$ 0,05 acima ou abaixo do título.** Quando você confirma um par com diferença de
   centavos (mesmo número de documento, emissor confirmado, mesmo vencimento), a plataforma ajusta o

@@ -1,7 +1,7 @@
 ---
 name: LotePagamento
 type: entity
-ontology_version: "0.44.0"
+ontology_version: "0.45.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -147,7 +147,7 @@ fora de um lote.
 | `loteId` | string | `lote_pagamento_item.lote_id` | FK para o lote (raiz do agregado). |
 | `filCod` | number | `lote_pagamento_item.fil_cod` | Igual ao `filCod` do lote (I4). Parte da chave de não-duplicação (I3). |
 | `docCod` | string | `lote_pagamento_item.doc_cod` | Documento do título. Parte de `filCod:docCod:titCod` (I3). |
-| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). **Muda só por I18j(5)** (ADR-0073, `planned`): em lote `RASCUNHO`, o item passa para o título renegociado, com `valor` = líquido novo (M6), `versao + 1` e evento `ITEM_TITULO_RENEGOCIADO` na trilha. Em lote não `RASCUNHO` nunca muda (o ajuste é recusado, I18k). |
+| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). **Muda só por I18j(5)** (ADR-0074, `planned`): em lote `RASCUNHO`, o item passa para o título renegociado, com `valor` = líquido novo (M6), `versao + 1` e evento `ITEM_TITULO_RENEGOCIADO` na trilha. Em lote não `RASCUNHO` nunca muda (o ajuste é recusado, I18k). |
 | `credor` | string | `lote_pagamento_item.credor` | **Snapshot** no momento da inclusão (exibição estável). |
 | `valor` | number | `lote_pagamento_item.valor` | **Snapshot** do valor do título na inclusão. |
 | `vencimento` | Date | `lote_pagamento_item.vencimento` | **Snapshot** do vencimento na inclusão. |
@@ -198,7 +198,7 @@ fora de um lote.
   lock), espelhando a doutrina de Permutas.
 - **I1 (sem escrita no ERP até `FINALIZADO`):** a montagem (L1–L6) é 100% local. L8 escreve no
   `fin015`; L9/L10 no `fin052`. **L11 é read-only no ERP** e nunca baixa, processa ou carrega nada
-  (I11a). A renegociação de centavos (I18, ADR-0073, `planned`) escreve no **título**, não no lote, e nunca
+  (I11a). A renegociação de centavos (I18, ADR-0074, `planned`) escreve no **título**, não no lote, e nunca
   toca lote não `RASCUNHO`; enquanto ela corre, `finalizarLote` é recusado (`TitleAdjustmentInProgressError`).
 - **I8 (janela da data de débito — ADR-0049, 2026-09-22):**
   - **I8a (janela):** `dataDebito ∈ [hoje_BRT, min(vencimento dos itens)] ∩ diasUteisBancarios`.

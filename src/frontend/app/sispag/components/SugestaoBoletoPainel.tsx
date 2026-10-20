@@ -126,7 +126,7 @@ export function SugestaoBoletoPainel({
   ajusteCentavos,
   modoAjusteCentavos,
 }: {
-  /** Estado do ajuste de centavos deste título (ledger, ADR-0073), quando houver. */
+  /** Estado do ajuste de centavos deste título (ledger, ADR-0074), quando houver. */
   ajusteCentavos?: AjusteCentavos | undefined
   /** Modo efetivo do ajuste na filial (`off` por default). */
   modoAjusteCentavos?: ModoAjusteCentavos | undefined

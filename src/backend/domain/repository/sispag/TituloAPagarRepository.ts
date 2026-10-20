@@ -157,7 +157,7 @@ export default class TituloAPagarRepository {
     };
 
     /**
-     * I18j(4) (ADR-0073): o título NOVO da renegociação entra na carteira já, sem esperar o cron.
+     * I18j(4) (ADR-0074): o título NOVO da renegociação entra na carteira já, sem esperar o cron.
      * Copia do título antigo o que o `fin064` não mudou (credor, favorecido, banco, forma, número)
      * e grava o que foi lido AO VIVO (valor base, vencimento, aprovação). `0` = o título antigo não
      * estava na carteira (nada a copiar; o cron o trará).
