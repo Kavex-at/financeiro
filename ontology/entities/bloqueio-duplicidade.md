@@ -14,7 +14,7 @@ properties: [id, filCod, docCod, titCod, pesCod, origem, alertaId, tituloMantido
 relationships:
   - "BloqueioDuplicidade N—1 TituloAPagar (via filCod:docCod:titCod; no máximo 1 ATIVO por título)"
   - "BloqueioDuplicidade 0..1—1 AlertaItemLote (a alerta de duplicidade resolvida como RETIRADA que o criou)"
-last_review: 2026-10-14
+last_review: 2026-10-20
 universality_evidence:
   - "probe-duplicidade-titulos.ts: fil 4, docs 6173 × 6702 (duplicata real em PRD); a correção é cancelar um dos documentos no ERP, ato humano fora da solução"
   - "Conceito universal: título identificado como duplicado fica retido do pagamento até o documento ser cancelado no ERP (bloqueio de pagamento por suspeita, comum em contas a pagar)"
@@ -43,7 +43,7 @@ documento: voltar a um lote é o risco que a marca existe para impedir.
 | `id` | string | |
 | `filCod` · `docCod` · `titCod` | — | O título bloqueado. **No máximo 1 `ATIVO` por título.** |
 | `pesCod` | string | Favorecido (exibição/filtro). |
-| `origem` | enum | **ADR-0069 Emenda 1 (`planned`).** `DUPLICIDADE_TITULO` (default das linhas existentes) \| `CODIGO_BARRAS_REPETIDO` \| `CODIGO_BARRAS_ILEGIVEL`. |
+| `origem` | enum | **ADR-0069 Emenda 1 (`planned`).** `DUPLICIDADE_TITULO` (default das linhas existentes) \| `CODIGO_BARRAS_REPETIDO` \| `CODIGO_BARRAS_ILEGIVEL`; **ADR-0077 (`planned`):** `+ GRUPO_BOLETO`. |
 | `alertaId` | string? | A `AlertaItemLote` resolvida como `RETIRADA`. Só em `DUPLICIDADE_TITULO` (opcional desde a Emenda 1). |
 | `tituloMantido` | `(filCod, docCod, titCod)?` | **Novo.** O item que ficou com o boleto. Só nas origens de código de barras. |
 | `codigoMascarado` | string? | **Novo.** 5 primeiros + 4 últimos dígitos; nunca o código completo (I16e). Só nas origens de código de barras. |
@@ -76,6 +76,7 @@ Muda só a condição de `ATIVO → ENCERRADO` (ator `sistema`):
 | `DUPLICIDADE_TITULO` | `resolverAlertaDuplicidade(RETIRAR)` (I13g) | inalterado: sumiu do `fin064` ou cancelado |
 | `CODIGO_BARRAS_REPETIDO` | retirada automática por código repetido (I16d, ator `sistema`) | o título **mantido** foi pago, cancelado ou saiu do `fin064`/`ativo = false`; **ou** o vínculo DDA que gerou a disputa se desfez (boleto do título retido mudou); **ou** o lote de origem foi cancelado sem remessa gerada |
 | `CODIGO_BARRAS_ILEGIVEL` | retirada automática por código lido e descartado (I16d.2) | a ingestão vê a situação do boleto do título mudar (DDA sincronizado/boleto novo) |
+| `GRUPO_BOLETO` (ADR-0077, `planned`) | retirada automática do grupo inteiro na remessa (I21p(3)/I16d, motivo `GRUPO_BOLETO_FALHOU` ou `BORDERO_ANTERIOR_NAO_RESOLVIDO`, ator `sistema`): uma marca por título do grupo, na mesma transação | o grupo é **anulado** (I21t) ou fica `PAGO`; ou o título sai do `fin064`/`ativo = false`. Desfazer é por título, com motivo; o grupo só volta a lote quando nenhum título dele tem marca `ATIVO` (I21c) |
 
 Ambas as origens de código de barras também encerram por `DESFEITO`. O sinal "boleto mudou" depende de
 `titVldReflexoDdaAssoc`/`fin124` (P1-6): custo a confirmar na implementação; sem ele, vale o desfazer

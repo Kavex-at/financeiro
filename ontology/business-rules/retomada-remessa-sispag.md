@@ -15,7 +15,7 @@ related_files:
   - src/backend/domain/errors/RemessaEmDuvidaError.ts
   - src/backend/domain/errors/ConciliacaoEmDuvidaError.ts
   - src/backend/domain/service/sispag/SincronizacaoLoteService.ts
-last_review: 2026-10-14
+last_review: 2026-10-20
 has_canonical_test: true
 ---
 
@@ -72,6 +72,27 @@ No `fin052`, `processadoEm` (`garTimProcessamento`) responde "o `processar` já 
 > A sincronização com o ERP a devolve quando: rascunho completo ∧ modo `on` ∧ existe item BOLETO sem código
 > com decisão elegível (I17a). Lote nativo **finalizado** nunca a executa (I17i). Falha transitória aborta
 > e a retomada refaz o item (I17f/g). Ver `vinculo-codbar-item-sispag.md`.
+>
+> **Emenda ADR-0077 (`planned`) — etapa `preparar_bordero` (boleto agrupado).** Entre `criarLote` e `importar`,
+> **persistida** no write-ahead (escreve no ERP; diferente de `vincular_codbar`): marcador de correlação antes
+> do `POST fin010`, `borCod` logo depois. Reconhecimento ao vivo, por grupo:
+>
+> | Estado observado | Ação |
+> |---|---|
+> | marcador gravado, `borCod` ausente, nenhum borderô com o marcador | cria |
+> | exatamente um borderô com o marcador | adota |
+> | dois ou mais borderôs com o marcador | `indeterminado` |
+> | borderô com parte das baixas | completa só as faltantes |
+> | baixa de título que não é do grupo | `indeterminado` (terceiro) |
+> | borderô completo, não importado | `importar` |
+> | item com o `borCod` no rascunho | pula |
+> | borderô finalizado antes da remessa | `indeterminado` + `Alerta` (alguém baixou por fora) |
+> | grupo com J rejeitado antes; borderô antigo **ausente ou cancelado** no `fin010` (a analista o resolveu) | cria um novo |
+> | grupo com J rejeitado antes; borderô antigo aparece em `borderosPendentes` do lote novo (V7) | **reaproveita**: adota o `borCod` antigo no write-ahead novo, confere as N baixas (títulos e valores pela I21b ao vivo) e `vlrTotalLiquido == valorBoleto`, importa; nunca cria um segundo borderô |
+> | grupo com J rejeitado antes; borderô antigo em cadastro mas **fora** de `borderosPendentes`, ou com baixas divergentes | grupo **retirado** (I21p(3), motivo `BORDERO_ANTERIOR_NAO_RESOLVIDO`), **sem** limpar o borderô antigo (I21q); `Alerta` `sispag-bordero-grupo-pendente`; a remessa segue com os demais |
+>
+> A tabela "Aberto, com PARTE das chaves" passa a contar `borCod`s como chaves. Lote nativo **finalizado**
+> nunca limpa borderô (I21q). Ver `boleto-agrupado-sispag.md` (I21l, I21q, I21r, I21s).
 
 ### Write-ahead obrigatório (a ordem é a regra)
 

@@ -255,3 +255,24 @@
 - **Entidade genérica de renegociação de contas a pagar** — só se aparecer um segundo uso da `fin070`.
 - **Universalidade da I18** — 1 cliente; revisar com o Francinei.
 - **HML: renegociações 3 e 4** ficam como estão (536/2 e 540/2 em lotes finalizados).
+
+## 2026-10-20 — sispag-boleto-agrupado (ADR-0077)
+
+- **Primeiro `.RET` real do Itaú com item de borderô (V6)** — acompanhar, não é portão (P0-5).
+- **Permissões do CLONEX em PRD** (`fin010` borderô/baixa, `borderosPendentes/list|importar`, leitura de itens
+  `fin015`; V1) — conferência do maintainer, não portão.
+- **V2:** título com baixa em borderô em cadastro segue "em aberto" no `fin015`/carteira? Risco de baixa manual
+  paralela ou import avulso por terceiro.
+- **V3:** ordem `DELETE` item → `excluirBaixa` → `excluirBordero` depois de importado (medir no HML durante o TDD).
+- **V4:** grupo que cruza filial (INTERNACIONAL SERV. ADUANEIROS) — REJECT-PREMATURE até a sonda.
+- **V5:** código de "título próprio" (modalidade 6) para barra do banco da conta (341).
+- **V7 (medição, decisão PI-9 já tomada):** borderô com `vldHasRemessaPgto 1` reaparece em `borderosPendentes`
+  depois de rejeição/cancelamento? A regra já diz: se reaparecer, reaproveita; se não, o grupo é retirado até a
+  analista resolver. A medição diz qual dos dois caminhos é o comum.
+- **Nome do campo de observação do `fin010`** para o marcador de correlação (medir no HML).
+- **Quase-grupos ±R$ 0,05 (P1-2)** — medição pontual, se desejada; absorver centavos numa baixa ou aplicar I18 a
+  título de grupo é REJECT-PREMATURE.
+- **Caso 2 (VIBE LOG, N boletos → 1 título)** — baixa parcial em dois borderôs? Fora do escopo (D2).
+- **Boleto digitado fora do DDA (P1-3 b)** — REJECT-PREMATURE.
+- **Subconjunto livre (subset-sum) na sugestão** — 922/2369 falsos (M1); só com outra evidência.
+- **Universalidade do `GrupoBoleto`/I21** — 1 cliente; revisar com o Francinei (não bloqueante).

@@ -72,6 +72,14 @@ painel (I19m).
   saiu". A definição estrita de `pago` (aberto = 0) e o resíduo de centavos são o mesmo dilema —
   ver open-gap `residual-pago-centavos`.
 
+## Emenda ADR-0077 (`planned`) — título de boleto agrupado
+
+A regra vale **por título** do grupo (`GrupoBoleto`), nos dois pontos (inclusão e finalização). Um título
+do grupo inelegível barra a inclusão do grupo inteiro e, no `finalizarLote`, barra a finalização listando o
+grupo; nunca se paga parte de um grupo. Na remessa, a revalidação ao vivo é a I21p(1). Título do conjunto
+fechado ainda em alçada pendente aparece na sugestão de grupo com o motivo ("aguardando alçada"), não
+confirmável, e nunca é descartado para sugerir os demais (I21e). Ver `business-rules/boleto-agrupado-sispag.md`.
+
 ## Teste canônico (a escrever no TDD)
 
 - `has_canonical_test: false` — caso canônico: título com `titVld1/2/3libera=1` + não pago →

@@ -1,7 +1,7 @@
 ---
 name: LotePagamento
 type: entity
-ontology_version: "0.45.0"
+ontology_version: "0.48.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -51,6 +51,7 @@ properties:
   - itens[].baixaFonte
   - itens[].divergencia
   - itens[].sincronizadoEm
+  - itens[].grupoBoletoId
 relationships:
   - "LotePagamento 1—N ItemLote (agregado — os títulos incluídos, snapshot de valor/venc na inclusão)"
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
@@ -58,7 +59,8 @@ relationships:
   - "ItemLote N—0..1 FavorecidoAutorizado (a autorização que liberou o item, gravada no congelamento I10f; ADR-0065)"
   - "ItemLote 1—N AlertaItemLote (duplicidade e canal habitual da verificação TED/PIX; ADR-0063)"
   - "ItemLote N—0..1 DecisaoSugestaoBoleto (a decisão que originou o código vinculado ao item; I17, ADR-0071, implemented)"
-last_review: 2026-10-19
+  - "ItemLote N—0..1 GrupoBoleto (os N títulos de um boleto agrupado; um grupo = um item nativo no fin015; ADR-0077, planned)"
+last_review: 2026-10-20
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
   - "ADR-0018 — formação AUTOMÁTICA de lotes candidatos (cron pós-ingestão + manual): pré-montar os lotes das obrigações a-vencer é a automação natural sobre a montagem manual; universal em contas-a-pagar de trading com comex"
@@ -168,6 +170,7 @@ fora de um lote.
 | `pagoObservadoEm` | Date? | `pago_observado_em` *(a criar)* | Primeira sincronização que viu o título pago no `fin064`. Não nulo ⇔ a situação `PAGO` foi observada. |
 | `divergencia` | boolean + detalhe | `divergencia`, `divergencia_detalhe` *(a criar)* | Contradição observada que a máquina **não** resolve sozinha: título antes pago voltou a aberto (estorno), ou item `REJEITADO` com título pago. Gera `Alerta` `sispag-baixa-divergente` (I11f). |
 | `sincronizadoEm` | Date? | `sincronizado_em` *(a criar)* | Última leitura **bem-sucedida** do título. Atualizá-la **não** incrementa `versao` (I11h). |
+| `grupoBoletoId` | string? | `lote_pagamento_item.grupo_boleto_id` *(migration 0089)* | Grupo a que o item pertence (ADR-0077, `planned`). Os N itens do grupo entram, saem e se movem juntos (I21j); na remessa viram **um** item nativo de borderô (I21k). `vinculoCodigoBarras` fica nulo nesses itens: o vínculo é do grupo (I21o). `borCod`/`bxaCodSeq` do item, quando enriquecidos pela sincronização, apontam para o borderô do grupo. |
 
 > **`DestinoManual` retirado (ADR-0061) e `ExcecaoDestino` apagada (ADR-0065).** Não existe destino fora do cadastro: o item paga no destino do `cmn025`, desde que o favorecido esteja autorizado para a modalidade (`entities/favorecido-autorizado.md`, I14).
 
@@ -230,6 +233,8 @@ fora de um lote.
   leitura não decide (I11c); precedência de evento por item (I11d); `BAIXADO` terminal, com
   divergência (I11f); escritas locais sem gate de ERP (I11g); sem mudança, sem `versao` (I11h). Ver
   `business-rules/sincronizacao-status-lote-sispag.md`.
+
+- **I21 (boleto agrupado, ADR-0077, planned):** ver `business-rules/boleto-agrupado-sispag.md`.
 
 - **I13 (verificação TED/PIX — ADR-0063, 2026-10-05):** itens TED/PIX são verificados depois que a
   analista define a modalidade e de novo no `finalizarLote` (nunca na ingestão; boleto nunca)

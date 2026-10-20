@@ -1,7 +1,7 @@
 ---
 name: conexos
 type: integration
-direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG READ-only)
+direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG escreve fin015/fin052 e, ADR-0077 planned, borderô fin010 do boleto agrupado)
 ontology_version: "0.45.0"
 implementation_status: partial
 status: draft
@@ -16,7 +16,7 @@ related_files:
   - src/backend/migrations/0017_invoice_importador.sql
   - src/backend/migrations/0018_permuta_bordero_cache.sql
   - src/backend/migrations/0019_permuta_perf_indexes.sql
-last_review: 2026-10-19
+last_review: 2026-10-20
 endpoints_read:
   - com298 (PROFORMA tpdCod=99 + docVldTipoAdto=1 / INVOICE tpdCod=128 / detail mnyTitPermutar + pago=mnyTitAberto===0)
   - imp019 (D.I — data CI = cdiDtaCi)
@@ -26,7 +26,9 @@ endpoints_read:
   - "fin015 (SISPAG — lotes nativos, contexto; ConexosSispagClient READ-only)"
   - "fin010 (SISPAG — borderôs a-pagar, contexto; ConexosSispagClient READ-only)"
 endpoints_write:
-  - fin010 (Permutas: write-back Fase 3, gated / SISPAG: FORA DE ESCOPO)
+  - "fin010 (Permutas: write-back Fase 3, gated / SISPAG: só o borderô do boleto agrupado, ver abaixo)"
+  - "fin010 (SISPAG — borderô do boleto agrupado, WRITE, ADR-0077 planned)"
+  - "fin015 borderosPendentes list/importar (WRITE, ADR-0077 planned)"
   - "fin015 gerar remessa + fin052 retorno (SISPAG WRITE — FUTURO/gated, próxima fatia)"
 resolved-by:
   - "P0-3 — caminho = listFinanceiroAPagar(PROFORMA) + filtro docVldTipoAdto=1 (FinDocCab); chave wire confirmada por probe de rede (dev tenant Columbia, 2026-06-18, filCod=2, 410 adiantamentos reais)"
@@ -355,6 +357,30 @@ Provado em HML (2026-10-19, frnCod 3 e 4; G2/G3 e ponta a ponta pelo serviço de
 O título novo pode nascer **bloqueado** na `fin103` (HML: regra 19, `vldLib 0`) e só aparece nos pendentes
 do `fin015` depois de liberado. Em PRD o CLONEX não tem `fin070`/`fin026`/`fin103` no menu; a permissão do
 login do servidor é o portão G1.
+
+### ESCRITA SISPAG — borderô do boleto agrupado (ADR-0077, `planned`)
+
+Provado em HML em 2026-10-19 (`_inbox/sispag-boleto-agrupado-hml-achados.md`). Só pelas ações
+`prepararBorderoDoGrupo` / `limparBorderoDoGrupo` (I21l, I21q), dentro do L8. Reaproveita `ConexosBaixaClient`
+(`criarBordero`, `listBaixas`, `excluirBaixa`, `excluirBordero`) e `ConexosSispagClient.listContasCorrentes`.
+
+| # | Chamada | Corpo / regra |
+|---|---|---|
+| 1 | `fin005/list` | `gerNum` da conta pagadora do lote (H2, H10). Ausente ⇒ falha antes de escrever. |
+| 2 | `POST fin010` | `{ filCod, borVldTipo 2, borVldFinalizado 0, frontModelName 'bordero', borDtaMvto = dataDebito do lote, gerNum }` ⇒ `borCod`. Marcador de correlação num campo de observação **(nome a medir no HML)**. |
+| 3 | `POST fin010/baixas/validacao/tituloBaixa` | `{ filCod, borCod, borVldTipo 2, docTip 2, docCod, titCod, bxaVldSistema 0, bxaVldCcorrente 0, bxaVldCorrenteDc 1, bxaVldAdto 0, frontModelName 'baixa' }` ⇒ `bxaMnyValor`. |
+| 4 | `POST fin010/baixas` | `responseData` + chave + `gerNum`, juros/multa/desconto 0, `bxaMnyLiquido = bxaMnyValor`. Títulos continuam em aberto. |
+| 5 | `GET fin015/finItemSispag/borderosPendentes/list/{fil}/{bnc}/{flp}` | Linha `{ borCod, pesCod, dpeNomPessoa, vlrTotal, borVldTipo, filCod, pesCodCont, itemy 0 }`. Só aparece se `gerNum` = conta do lote; o filtro **não** é a filial. |
+| 6 | `POST …/borderosPendentes/importar` | `{ items: [{ …linha, filCodLote, bncCod, flpCod, itemy: 1 }], op: 1, bncCodFin015 }`. **`itemy 0` ⇒ `SUCESSO` sem importar** (H4): sucesso só pela releitura. |
+| 7 | vínculo da barra | sequência I17e no item (`borCod`, sem `docCod/titCod`, nasce modalidade 4); `7` banco ≠, `6` banco = (H5). |
+| 8 | `finalizarLote` / `gerarRemessa` | inalterados; o J paga o total do borderô (H6); `vldHasRemessaPgto` do borderô vira 1 (H9). |
+| 9 | retorno (`fin052` `processar`) | parser `ger015.gtbLngSql`: `BOR_COD` não nulo → `FIN_BORDERO` → `FIN_TITULO_RETBANCO` com `BOR_COD` → `PRC_BAIXA_RETORNO_PAGFOR('BAIXAR')`: finaliza o borderô e baixa os N (H7). Chave do J nas posições 183–202 (`fil(2) bnc(4) flp(7) its(7)`), ocorrência em 231. `.RET` sintético com J-52 falha (limite do sintético, H8). |
+| 10 | limpeza | `DELETE finItemSispag` → `excluirBaixa` × N → `excluirBordero`; só em cadastro e com `vldHasRemessaPgto 0`. Nunca `finalizarBordero`/`cancelarBordero`/`fin146`. |
+
+Depois de um J rejeitado, o borderô antigo fica em cadastro com `vldHasRemessaPgto = 1` e **nunca** é
+limpo por nós. Se ele reaparecer em `borderosPendentes` (passo 5) do lote novo, é **reaproveitado** (I21s);
+se não reaparecer nem tiver sido resolvido pela analista, o grupo é retirado da remessa (V7 em medição).
+Não confundir com o borderô de **permuta** (Frente I, seção `fin010` acima): mesmo endpoint, outro uso.
 
 ## FRENTE IV (Recebimentos) — superfícies NOVAS (SKELETON, ADR-0022)
 

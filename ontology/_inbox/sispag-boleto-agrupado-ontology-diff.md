@@ -1,3 +1,14 @@
+> **APROVADO em 2026-10-20 pelo maintainer, como proposto** (todos os ACCEPT, arquivos #1–#24, inclusive o
+> Gotcha do `CLAUDE.md` e o R-21 do ANEXO). **Renumerado para ADR-0077 / ontologia 0.48.0** (0.46.0/ADR-0075
+> reservados pela branch não mergeada `docs/sispag-situacao-pagamento-ontology`; reconferir antes do ship);
+> migration segue 0089; app 0.72.0 só prevista. Pontos inferidos 1–6 aceitos como escritos; respostas aos
+> abertos: **7** grupo fechado com título não aprovado é exibido com o motivo e não é confirmável (nunca se
+> descarta o título para sugerir subconjunto); **8** "vencido" do grupo = vencimento do boleto (dia civil em
+> Brasília, ADR-0070); **9** depois de J rejeitado, o grupo volta à remessa só depois de a analista resolver o
+> borderô antigo no ERP, e se ele reaparecer em `borderosPendentes` do lote novo (V7) o sistema o reaproveita;
+> V7 fica no watchlist como medição. Escrito em `ontology/decisions/0077-sispag-boleto-agrupado-bordero.md`
+> e arquivos relacionados. **O texto abaixo é o registro histórico da proposta** (ainda com a numeração 0075/0.46.0).
+
 ## Ontology Diff Proposal — sispag-boleto-agrupado (PROPOSTA, nada escrito na ontologia)
 
 > `/feature-tweak`, passo 3 (OntologyCurator). Base `origin/main` 5983531. **Numeração conferida em
