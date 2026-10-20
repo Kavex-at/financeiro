@@ -19,9 +19,10 @@ Revisão reduzida (Fault Tolerance, Integrability, Security, Testability). Relat
   *Parcial:* "tentar de novo" agora recusa (`AJUSTE_ENCERRADO_*`) e a tela não oferece o botão. Falta ação
   humana auditada de reabertura.
 - **fault-tolerance-3** — `indeterminado` sem fila durável. *Parcial:* agora segura o `finalizarLote`.
-- **fault-tolerance-4** — retomada só ao abrir a tela/após confirmar; sem alerta por idade nem reconciliação.
-  Query sugerida (ObservabilityAdvisor): não terminal com `atualizado_em < now() - 15 min`;
-  `intencao_em < now() - 5 min`; `indeterminado` nas últimas 24 h; `aguardando_aprovacao_manual` > 1 dia útil.
+- ~~**fault-tolerance-4** — alerta de ledger parado.~~ **Fechado em 2026-10-20** (decisão do mantenedor):
+  `indeterminado` e `aguardando_aprovacao_manual` emitem `Alerta` `sispag-ajuste-centavos-parado` no Painel
+  de Operação (dedup por título e dia civil BRT), além do log. Fora do escopo fechado, sem item aberto: a
+  retomada continua só ao abrir a tela/após confirmar (não há varredura por idade do ledger não terminal).
 
 ## P2
 

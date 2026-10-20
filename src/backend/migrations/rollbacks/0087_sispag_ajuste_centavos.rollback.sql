@@ -4,8 +4,8 @@
 -- ar, remover estas colunas/tabela quebra a sugestao de boleto e a remessa.
 --
 -- O QUE SE PERDE: o ledger `sispag_ajuste_centavos_execucao` (frnCod, titulo novo, etapa,
--- identidade Conexos) e as colunas `tipo_anulacao`/`origem_decisao_id`/`transferida_por` da
--- decisao. Os eventos AJUSTE_*/TITULO_RENEGOCIADO/DECISAO_TRANSFERIDA e ITEM_TITULO_RENEGOCIADO
+-- identidade Conexos), os alertas `sispag-ajuste-centavos-parado` e as colunas
+-- `tipo_anulacao`/`origem_decisao_id`/`transferida_por` da decisao. Os eventos AJUSTE_*/TITULO_RENEGOCIADO/DECISAO_TRANSFERIDA e ITEM_TITULO_RENEGOCIADO
 -- (trilhas so-inclusao) PERMANECEM: por isso os CHECKs antigos voltam como NOT VALID. Decisoes
 -- anuladas pelo sistema (TITULO_RENEGOCIADO) tambem permanecem: o anulador_check antigo volta
 -- NOT VALID. Exporte antes:
@@ -19,6 +19,16 @@
 --   DELETE FROM schema_migrations WHERE name = '0087_sispag_ajuste_centavos.sql';
 
 DROP INDEX IF EXISTS ux_sispag_sugestao_boleto_evento_ajuste_simulado;
+
+-- Alertas do tipo novo saem (o alerta nao e trilha so-inclusao); o CHECK volta ao da 0080.
+DELETE FROM alerta WHERE tipo = 'sispag-ajuste-centavos-parado';
+ALTER TABLE alerta DROP CONSTRAINT IF EXISTS alerta_tipo_check;
+ALTER TABLE alerta
+    ADD CONSTRAINT alerta_tipo_check
+    CHECK (tipo IN (
+        'job-falhou', 'job-parcial', 'job-parado', 'config-ausente',
+        'sispag-lote-retornado', 'sispag-baixa-divergente', 'sispag-destino-alterado'
+    ));
 
 ALTER TABLE sispag_verificacao_evento
     DROP CONSTRAINT IF EXISTS sispag_verificacao_evento_evento_check;

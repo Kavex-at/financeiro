@@ -316,9 +316,11 @@ export default function OperacaoPage() {
                           <TableCell className="max-w-[28rem] text-xs text-muted-foreground">
                             {typeof a.detalhe.consequencia === 'string'
                               ? a.detalhe.consequencia
-                              : typeof a.detalhe.erro === 'string'
-                                ? a.detalhe.erro
-                                : '—'}
+                              : typeof a.detalhe.acao === 'string'
+                                ? a.detalhe.acao
+                                : typeof a.detalhe.erro === 'string'
+                                  ? a.detalhe.erro
+                                  : '—'}
                           </TableCell>
                           <TableCell className="text-right">
                             <Button

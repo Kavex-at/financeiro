@@ -16,7 +16,8 @@ elegível = desligar `SISPAG_LIVE_WRITE_ENABLED` e investigar.
 barra).
 
 **(c) Acompanhar o ledger** (`indeterminado` e `aguardando_aprovacao_manual` são os estados que exigem olho
-humano).
+humano). Os dois já aparecem como `Alerta` `sispag-ajuste-centavos-parado` no Painel de Operação
+(`erro` / `aviso`, no máximo um por ajuste por dia), com a ação a tomar no Conexos.
 
 ## Checklist
 

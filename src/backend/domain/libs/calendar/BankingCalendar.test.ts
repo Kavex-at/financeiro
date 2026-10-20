@@ -97,6 +97,18 @@ describe('BankingCalendar', () => {
         });
     });
 
+    describe('startOfTodayBrt', () => {
+        it('instante da meia-noite de Brasília do dia civil corrente (03:00Z)', () => {
+            const c = BankingCalendar.withClock(() => new Date('2026-09-22T02:30:00Z'));
+            expect(c.startOfTodayBrt().toISOString()).toBe('2026-09-21T03:00:00.000Z');
+        });
+        it('mesmo valor ao longo do dia inteiro (janela de dedup estável)', () => {
+            const cedo = BankingCalendar.withClock(() => new Date('2026-09-22T03:00:00Z'));
+            const tarde = BankingCalendar.withClock(() => new Date('2026-09-23T02:59:59Z'));
+            expect(cedo.startOfTodayBrt().getTime()).toBe(tarde.startOfTodayBrt().getTime());
+        });
+    });
+
     describe('codificação do ERP', () => {
         it('toErpEpoch usa meia-noite UTC do dia civil (mesmo encoding do antigo hojeUtc)', () => {
             expect(cal.toErpEpoch('2026-09-22')).toBe(Date.UTC(2026, 8, 22));

@@ -5,6 +5,7 @@ import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient
 import CentsAdjustmentIncompleteError from '../../errors/CentsAdjustmentIncompleteError.js';
 import CentsAdjustmentNotEligibleError from '../../errors/CentsAdjustmentNotEligibleError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import { ALERTA_SEVERIDADE, ALERTA_TIPO } from '../../interface/operacao/Alerta.js';
 import {
     type AjusteCentavosExecucao,
     GATILHO_AJUSTE,
@@ -45,6 +46,7 @@ import LotePagamentoRepository from '../../repository/sispag/LotePagamentoReposi
 import SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
+import NotificacaoService from '../operacao/NotificacaoService.js';
 
 export const RESULTADO_AJUSTE = {
     SIMULADO: 'simulado',
@@ -73,6 +75,12 @@ export interface PedidoAjuste {
 
 /** Prefixo do motivo quando a liberação ficou para outra pessoa (I18e) — o terminal é `aguardando`. */
 const MOTIVO_APROVACAO_MANUAL = 'APROVACAO_MANUAL';
+
+/**
+ * Máscara aceitável no detalhe do alerta: no máximo 5 dígitos + `…` + 4 dígitos. Qualquer outra
+ * forma fica de fora — o painel nunca mostra código de barras completo.
+ */
+const MASCARA_5_4 = /^\d{0,5}…\d{0,4}$/;
 
 /** Guarda do laço da máquina: o caminho mais longo tem 9 transições. */
 const MAX_PASSOS = 16;
@@ -139,6 +147,7 @@ export default class AjusteCentavosTituloService {
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
         @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
+        @inject(NotificacaoService) private readonly notificacao: NotificacaoService,
     ) {}
 
     // ── API ─────────────────────────────────────────────────────────────────
@@ -887,8 +896,12 @@ export default class AjusteCentavosTituloService {
                 })
             ).some((d) => d.origemDecisaoId === exec.decisaoId);
         if (exec.motivo?.startsWith(MOTIVO_APROVACAO_MANUAL)) {
-            await this.alertar(exec, 'aguardando aprovação manual no Conexos (fin103)');
-            return this.transicionar(exec, ETAPA_AJUSTE.AGUARDANDO_APROVACAO_MANUAL);
+            const passo = await this.transicionar(exec, ETAPA_AJUSTE.AGUARDANDO_APROVACAO_MANUAL);
+            await this.alertar(
+                { ...exec, etapa: ETAPA_AJUSTE.AGUARDANDO_APROVACAO_MANUAL },
+                'aguardando aprovação manual no Conexos (fin103)',
+            );
+            return passo;
         }
         if (!transferida) {
             await this.logService.warn({
@@ -943,16 +956,68 @@ export default class AjusteCentavosTituloService {
     private indeterminar = async (exec: AjusteCentavosExecucao, motivo: string): Promise<Passo> => {
         const passo = await this.transicionar(exec, ETAPA_AJUSTE.INDETERMINADO, { motivo });
         await this.eventoDoLedger(exec, EVENTO_SUGESTAO_BOLETO.AJUSTE_FALHOU, motivo);
-        await this.alertar({ ...exec, motivo }, 'indeterminado — ação humana no Conexos');
+        await this.alertar(
+            { ...exec, motivo, etapa: ETAPA_AJUSTE.INDETERMINADO },
+            'indeterminado — ação humana no Conexos',
+        );
         return passo;
     };
 
+    /**
+     * Estado parado que exige gente no Conexos: log (BUSINESS_WARN) + Alerta no Painel de Operação
+     * (decisão do mantenedor, 2026-10-20). O alerta é best-effort: a transição já foi gravada, e
+     * falhar ao emiti-lo só fica no log — nunca muda o desfecho do ajuste.
+     */
     private alertar = async (exec: AjusteCentavosExecucao, situacao: string): Promise<void> => {
         await this.logService.error({
             type: LOG_TYPE.BUSINESS_WARN,
             message: `ajuste de centavos ${situacao}`,
             data: this.dadosDoLog(exec),
         });
+        try {
+            const indeterminado = exec.etapa === ETAPA_AJUSTE.INDETERMINADO;
+            await this.notificacao.emitir({
+                tipo: ALERTA_TIPO.SISPAG_AJUSTE_CENTAVOS_PARADO,
+                alvo: `${exec.filCod}:${exec.docCod}/${exec.titCodOrigem}`,
+                severidade: indeterminado ? ALERTA_SEVERIDADE.ERRO : ALERTA_SEVERIDADE.AVISO,
+                // Mesmo ajuste parado alerta no máximo uma vez por dia civil de Brasília.
+                janelaInicio: this.calendar.startOfTodayBrt(),
+                detalhe: this.detalheDoAlerta(exec, indeterminado),
+            });
+        } catch (error) {
+            await this.logService
+                .error({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'ajuste de centavos: alerta do painel não foi emitido',
+                    data: { execucaoId: exec.id, erro: this.descrever(error) },
+                })
+                .catch(() => undefined);
+        }
+    };
+
+    /** O que fazer, em português, para quem lê o painel. Nunca o código de barras completo. */
+    private detalheDoAlerta = (
+        exec: AjusteCentavosExecucao,
+        indeterminado: boolean,
+    ): Record<string, unknown> => {
+        const frn = exec.frnCod !== undefined ? ` frnCod ${exec.frnCod}` : '';
+        const tituloNovo = exec.titCodNovo ? `${exec.docCod}/${exec.titCodNovo}` : undefined;
+        const acao = indeterminado
+            ? `resolver no Conexos: Renegociação de Pagamentos (fin070)${frn}; enquanto isso o ` +
+              'lote do título não pode ser finalizado'
+            : `aprovar na Liberação de Títulos (fin103) o título novo ${tituloNovo ?? '(não identificado)'}`;
+        return {
+            acao,
+            filCod: exec.filCod,
+            titulo: `${exec.docCod}/${exec.titCodOrigem}`,
+            ...(tituloNovo ? { tituloNovo, titCodNovo: exec.titCodNovo } : {}),
+            ...(exec.frnCod !== undefined ? { frnCod: exec.frnCod } : {}),
+            etapa: exec.etapa,
+            ...(exec.motivo ? { motivo: exec.motivo.replace(/\d{20,}/g, '…') } : {}),
+            ...(exec.codigoMascarado && MASCARA_5_4.test(exec.codigoMascarado)
+                ? { codigoMascarado: exec.codigoMascarado }
+                : {}),
+        };
     };
 
     /** I18i: renegociação achada pelo marcador da obs (resposta do `POST` perdida). */

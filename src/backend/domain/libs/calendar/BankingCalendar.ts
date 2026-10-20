@@ -117,6 +117,13 @@ export default class BankingCalendar {
         this.clock().toLocaleDateString('en-CA', { timeZone: BRT_TIME_ZONE });
 
     /**
+     * Instante da meia-noite de Brasília do dia civil corrente — início de janela "por dia" (ex.:
+     * dedup de alerta). O Brasil não tem horário de verão desde 2019 (Decreto 9.772/2019), então
+     * o offset é fixo em −03:00.
+     */
+    public startOfTodayBrt = (): Date => new Date(`${this.todayBrt()}T00:00:00-03:00`);
+
+    /**
      * Codificação de data do Conexos para `flpDtaCredito`: meia-noite UTC do dia civil —
      * exatamente o que `hojeUtc()` mandava, para a marca d'água seguir casando.
      */

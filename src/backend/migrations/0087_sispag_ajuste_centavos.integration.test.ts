@@ -290,4 +290,17 @@ describeComBanco('0087 — ajuste de centavos do título', () => {
             ),
         ).toBeUndefined();
     });
+
+    it('alerta aceita sispag-ajuste-centavos-parado e continua recusando tipo inventado', async () => {
+        const inserir = (tipo: string, chave: string) =>
+            db.query(
+                `INSERT INTO alerta (tipo, alvo, severidade, janela_inicio, dedup_key, detalhe)
+                 VALUES ($1, '2:536/1', 'erro', now(), $2, '{}'::jsonb)`,
+                [tipo, chave],
+            );
+        expect(
+            await codigoDoErro(inserir('sispag-ajuste-centavos-parado', 'ajc-parado-1')),
+        ).toBeUndefined();
+        expect(await codigoDoErro(inserir('sispag-inventado', 'ajc-inventado-1'))).toBe('23514');
+    });
 });
