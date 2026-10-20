@@ -910,9 +910,9 @@ export default class AjusteCentavosTituloService {
     // ── Compensação e falhas ────────────────────────────────────────────────
 
     /**
-     * Antes do `finalizar` (I18h): cancela a renegociação e relê. Sem renegociação criada ⇒
-     * `cancelado` direto. Cancelamento que falha (inclusive a rota ainda não provada, G3) ⇒
-     * `indeterminado` + alerta — nunca uma segunda renegociação por cima.
+     * Antes do `finalizar` (I18h): desfaz a renegociação (rota provada em HML, G3) e relê. Sem
+     * renegociação criada ⇒ `cancelado` direto. Cancelamento que falha ou não observado na
+     * releitura ⇒ `indeterminado` + alerta — nunca uma segunda renegociação por cima.
      */
     private compensar = async (
         sessao: SessaoConexos,
@@ -929,10 +929,11 @@ export default class AjusteCentavosTituloService {
             this.renegociacao.cancelarRenegociacao(sessao, { filCod: exec.filCod, frnCod }),
         );
         if (r.ok) {
-            const lida = await this.ler(() =>
-                this.renegociacao.lerRenegociacao(sessao, { filCod: exec.filCod, frnCod }),
+            // G3 (HML): a renegociação desfeita some do ERP — a releitura é a ausência.
+            const desfeita = await this.ler(() =>
+                this.renegociacao.renegociacaoDesfeita(sessao, { filCod: exec.filCod, frnCod }),
             );
-            if (lida?.cancelada === true) {
+            if (desfeita === true) {
                 const passo = await this.transicionar(exec, ETAPA_AJUSTE.CANCELADO, { motivo });
                 await this.eventoDoLedger(exec, EVENTO_SUGESTAO_BOLETO.AJUSTE_CANCELADO, motivo);
                 return passo;

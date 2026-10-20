@@ -7,7 +7,6 @@ import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseC
 import ConexosError from '../../errors/ConexosError.js';
 import CentsAdjustmentIncompleteError from '../../errors/CentsAdjustmentIncompleteError.js';
 import CentsAdjustmentNotEligibleError from '../../errors/CentsAdjustmentNotEligibleError.js';
-import NotImplementedError from '../../errors/NotImplementedError.js';
 import type {
     AjusteCentavosExecucao,
     RechaveamentoInput,
@@ -223,8 +222,12 @@ const build = (c: Cenario = {}) => {
         }),
         cancelarRenegociacao: jest.fn(async (): Promise<void> => {
             ordem.push('cancelar');
-            throw new NotImplementedError('G3');
+            throw new ConexosError({
+                endpoint: 'fin070',
+                cause: Object.assign(new Error('502'), { response: { status: 502 } }),
+            });
         }),
+        renegociacaoDesfeita: jest.fn(async () => estado.cancelada),
         validarSelecionado: jest.fn(async () => {
             ordem.push('validar');
         }),
@@ -497,7 +500,7 @@ describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0073)', (
     });
 
     describe('caso 6: falha antes do finalizar ⇒ compensação', () => {
-        it('cancelamento ainda não provado (G3) ⇒ indeterminado + alerta, nunca segunda renegociação', async () => {
+        it('cancelamento que falha ⇒ indeterminado + alerta, nunca segunda renegociação', async () => {
             const h = build();
             h.client.gravarComposicao.mockRejectedValueOnce(
                 recusa('FIN_070.O_TOTAL_DOS_TITULOS_A_SEREM_GERADOS'),
@@ -521,11 +524,27 @@ describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0073)', (
                 h.ordem.push('cancelar');
                 h.estado.cancelada = true;
             });
+            // G3 (HML): a renegociação desfeita SOME — `GET fin070/{frnCod}` volta RECORDNOTFOUND.
+            h.client.lerRenegociacao.mockRejectedValue(new Error('Not Found: FinReneg'));
             const r = await h.service.ajustar(PEDIDO);
             expect(r.etapa).toBe('cancelado');
-            expect(h.client.lerRenegociacao).toHaveBeenCalled();
+            expect(h.client.renegociacaoDesfeita).toHaveBeenCalledWith(ROBO, {
+                filCod: 2,
+                frnCod: 3,
+            });
             expect(h.client.finalizarRenegociacao).not.toHaveBeenCalled();
             expect(h.eventos.map((e) => e.tipo)).toContain('AJUSTE_CANCELADO');
+        });
+
+        it('cancelamento aceito mas a releitura ainda vê a renegociação ⇒ indeterminado', async () => {
+            const h = build();
+            h.client.gravarComposicao.mockRejectedValueOnce(recusa('FIN_070.X'));
+            h.client.cancelarRenegociacao.mockImplementationOnce(async () => {
+                h.ordem.push('cancelar');
+            });
+            const r = await h.service.ajustar(PEDIDO);
+            expect(r.etapa).toBe('indeterminado');
+            expect(r.motivo).toMatch(/CANCELAMENTO_FALHOU/);
         });
     });
 

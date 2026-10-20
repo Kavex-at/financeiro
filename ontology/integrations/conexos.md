@@ -340,7 +340,7 @@ lotes nativos. O transporte (pasta de rede → VAN Nexxera) segue externo e manu
 
 ### ESCRITA SISPAG — renegociação de centavos no título (ADR-0073, `planned`)
 
-Provado em HML (2026-10-19, frnCod 3 e 4). Só pela ação `ajustarCentavosTitulo` (I18), sessão do servidor.
+Provado em HML (2026-10-19, frnCod 3 e 4; G2/G3 e ponta a ponta pelo serviço de produção em 2026-10-20, frnCod 5–8). Composição com vencimento **passado** e **de hoje** aceita. Só pela ação `ajustarCentavosTitulo` (I18), sessão do servidor.
 
 | Passo | Endpoint | Notas |
 |---|---|---|
@@ -349,7 +349,7 @@ Provado em HML (2026-10-19, frnCod 3 e 4). Só pela ação `ajustarCentavosTitul
 | composição | `POST fin070/titulos/composicao` | mesmo valor aberto, vencimento original, `frgEspNumero`, `pgtCod`, `dupEspOrdem`; valor > aberto ⇒ `FIN_070.O_TOTAL_DOS_TITULOS_A_SEREM_GERADOS…` |
 | ajuste | `PUT fin070` | `frnMnyValor = \|Δ\|`; `frnVldTpop` 1 acréscimo / 2 desconto; `0` com valor ⇒ `FIN_070.TIPO_OP_NAO_PERMITE_VALOR` |
 | finalizar | `PUT fin070/finalizar/{frnCod}` | consome o original; nasce título novo no mesmo `docCod` (`totalLiquido` = boleto; `totalAberto` = base) |
-| cancelar | `PUT fin070/cancelar/{frnCod}` ou `DELETE` | **não provado** (portão G3) |
+| cancelar (não finalizada) | `DELETE fin070/titulos/composicao/{frnCod}/{docTip}/{docCod}/{titCod}/{frgCodSeq}` → `DELETE fin070/titulos/{frnCod}/{docTip}/{docCod}/{titCod}` → `DELETE fin070/{frnCod}` | **provado em HML (G3, 2026-10-19/20, frnCod 5 e 6)**, de baixo para cima, tentativa única. `PUT fin070/cancelar/{frnCod}` em não finalizada ⇒ `FIN_070.REGISTRO_DEVE_ESTAR_FINALIZADO` (é o estorno da FINALIZADA, não usado); `DELETE fin070` com título ⇒ `FIN_076.EXISTEM_TITULOS_RENEGOCIACAO`; `DELETE` do título com composição ⇒ `FIN_070.EXISTEM_COMPOSICOES_DESSA_RENEGOCIACAO_PARA_ESTE_TITULO`. Releitura: some do `fin070/list` e o `GET fin070/{frnCod}` volta `RECORDNOTFOUND` (HTTP 500); título original intacto. **O `frnCod` apagado é REUSADO** pela próxima renegociação |
 | liberar | `POST fin103/validaSelecionado` → `POST fin103/aplicarComando {items:[linha fin103/list + fbaCod]}` | comando ativo "APROVAR" lido em `fin106/finBloqCmd/list/{fblCod}` |
 
 O título novo pode nascer **bloqueado** na `fin103` (HML: regra 19, `vldLib 0`) e só aparece nos pendentes

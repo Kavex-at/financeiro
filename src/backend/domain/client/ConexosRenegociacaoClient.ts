@@ -2,7 +2,6 @@ import { inject, injectable, singleton } from 'tsyringe';
 import ConexosError from '../errors/ConexosError.js';
 import ConexosWriteDisabledError from '../errors/ConexosWriteDisabledError.js';
 import ErpResponseReader from '../errors/ErpResponseReader.js';
-import NotImplementedError from '../errors/NotImplementedError.js';
 import {
     type AjusteRenegociacaoInput,
     BLOQUEIO_SCHEMA,
@@ -22,14 +21,6 @@ import {
 import EnvironmentProvider from '../libs/environment/EnvironmentProvider.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 import { buildLegacyConexosAdapter } from './legacyConexosAdapter.js';
-
-/**
- * O cancelamento de renegociação NÃO finalizada (`PUT fin070/cancelar/{frnCod}` existe na spec)
- * ainda não foi provado em HML: é o portão G3 (M9). Até lá, o método lança `NotImplementedError`
- * e a compensação do serviço termina `indeterminado` (alerta, ação humana). Virar `true` exige a
- * prova G3 registrada em `_inbox/sispag-centavos-hml-achados.md`.
- */
-export const CANCELAMENTO_FIN070_PROVADO = false;
 
 /** Tamanho de página das leituras paginadas (o `listGenericPaginated` devolve UMA página). */
 const PAGINA = 200;
@@ -143,18 +134,88 @@ export default class ConexosRenegociacaoClient {
         await this.escrever(sessao, 'put', `fin070/finalizar/${p.frnCod}`, p.filCod, {});
     };
 
-    /** Compensação antes do `finalizar` (I18h). Rota a provar em HML (G3). */
+    /**
+     * Compensação antes do `finalizar` (I18h): desfaz a renegociação NÃO finalizada. Rota provada
+     * em HML (G3, 2026-10-19, frnCod 5 e 6): o `PUT fin070/cancelar/{frnCod}` só vale para
+     * renegociação FINALIZADA (`FIN_070.REGISTRO_DEVE_ESTAR_FINALIZADO`) e o `DELETE fin070/{frnCod}`
+     * recusa enquanto houver título (`FIN_076.EXISTEM_TITULOS_RENEGOCIACAO`), que por sua vez recusa
+     * enquanto houver composição (`FIN_070.EXISTEM_COMPOSICOES_DESSA_RENEGOCIACAO_PARA_ESTE_TITULO`).
+     * Logo: `DELETE` de baixo para cima — composição(ões) → título(s) → cabeçalho —, cada um em
+     * tentativa única; a primeira recusa para a sequência. Finalizada ⇒ recusa sem apagar nada
+     * (depois do `finalizar` é só para a frente). O sucesso é decidido pela releitura
+     * (`renegociacaoDesfeita`), nunca pelo `200`.
+     */
     public cancelarRenegociacao = async (
         sessao: SessaoConexos,
         p: { filCod: number; frnCod: number },
     ): Promise<void> => {
         await this.exigirEscrita();
-        if (!CANCELAMENTO_FIN070_PROVADO) {
-            throw new NotImplementedError(
-                `cancelamento da renegociação fin070 ${p.frnCod} não provado em HML (portão G3)`,
-            );
+        const cabecalho = RENEGOCIACAO_SCHEMA.safeParse(
+            await this.ler<Row>(sessao, `fin070/${p.frnCod}`, p.filCod),
+        );
+        if (!cabecalho.success || cabecalho.data.frnVldFin === 1) {
+            throw new ConexosError({
+                endpoint: `fin070/${p.frnCod}`,
+                message: cabecalho.success
+                    ? `fin070/${p.frnCod}: renegociação finalizada não se desfaz`
+                    : `fin070/${p.frnCod}: cabeçalho ilegível — não desfaz`,
+            });
         }
-        await this.escrever(sessao, 'put', `fin070/cancelar/${p.frnCod}`, p.filCod, {});
+        const titulos = await this.listarTudo(
+            sessao,
+            `fin070/titulos/list/${p.frnCod}`,
+            p.filCod,
+            {},
+        );
+        for (const raw of titulos) {
+            const t = RENEGOCIACAO_TITULO_SCHEMA.safeParse(raw);
+            if (!t.success || t.data.docTip === undefined) {
+                throw new ConexosError({
+                    endpoint: `fin070/titulos/list/${p.frnCod}`,
+                    message: `fin070/${p.frnCod}: título da renegociação ilegível — não desfaz`,
+                });
+            }
+            const chaveTitulo = `${p.frnCod}/${t.data.docTip}/${t.data.docCod}/${t.data.titCod}`;
+            const composicoes = await this.listarTudo(
+                sessao,
+                `fin070/titulos/composicao/list/${chaveTitulo}`,
+                p.filCod,
+                {},
+            );
+            for (const c of composicoes) {
+                const seq = Number(c.frgCodSeq);
+                if (!Number.isInteger(seq)) {
+                    throw new ConexosError({
+                        endpoint: `fin070/titulos/composicao/list/${chaveTitulo}`,
+                        message: `fin070/${p.frnCod}: composição sem frgCodSeq — não desfaz`,
+                    });
+                }
+                await this.apagar(
+                    sessao,
+                    `fin070/titulos/composicao/${chaveTitulo}/${seq}`,
+                    p.filCod,
+                );
+            }
+            await this.apagar(sessao, `fin070/titulos/${chaveTitulo}`, p.filCod);
+        }
+        await this.apagar(sessao, `fin070/${p.frnCod}`, p.filCod);
+    };
+
+    /**
+     * Releitura do cancelamento: a renegociação desfeita SOME do `fin070/list` (e o `GET` volta
+     * `RECORDNOTFOUND`, HML G3). Ausente ou `frnVldCan = 1` ⇒ desfeita. Leitura que falha lança —
+     * nunca presume.
+     */
+    public renegociacaoDesfeita = async (
+        sessao: SessaoConexos,
+        p: { filCod: number; frnCod: number },
+    ): Promise<boolean> => {
+        const linhas = await this.listarTudo(sessao, 'fin070/list', p.filCod, {});
+        const achada = linhas
+            .map((r) => RENEGOCIACAO_SCHEMA.safeParse(r))
+            .find((r) => r.success && r.data.frnCod === p.frnCod);
+        if (!achada?.success) return true;
+        return achada.data.frnVldCan === 1;
     };
 
     // ── Escritas (fin103) ───────────────────────────────────────────────────
@@ -349,6 +410,19 @@ export default class ConexosRenegociacaoClient {
             return metodo === 'post'
                 ? await base.postGenericOnce<T>(endpoint, corpo, { filCod })
                 : await base.putGenericOnce<T>(endpoint, corpo, { filCod });
+        } catch (cause) {
+            throw this.falha(endpoint, cause);
+        }
+    };
+
+    /** `DELETE` em tentativa única (sem re-login em 401) direto na sessão explícita. */
+    private apagar = async (
+        sessao: SessaoConexos,
+        endpoint: string,
+        filCod: number,
+    ): Promise<void> => {
+        try {
+            await sessao.authenticatedDeleteOnce(`/${endpoint}`, { filCod });
         } catch (cause) {
             throw this.falha(endpoint, cause);
         }

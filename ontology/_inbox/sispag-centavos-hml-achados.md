@@ -181,3 +181,72 @@ subtrai). Finalizar ⇒ **540/2**: `titMnyValor 178,78`, **`titMnyDesconto 0,01`
 ## Estado deixado em HML
 Lotes de teste **flp 42** (rascunho, finalizar recusado), **43, 44, 45** (finalizados, `PG191071–73.REM`).
 Títulos 753/1, 748/1, 607/1, 15/5. Nenhum cadastro de título alterado.
+
+## G2/G3 HML (Task 15, 2026-10-19/20, autorizado pelo maintainer)
+
+Job `src/backend/jobs/probe-hml-ajuste-centavos-g2-g3.ts` (fases `descobrir`, `g3`, `desfazer`, `preparar`,
+`e2e`, `remessa`), filial 2, banco 4, usuário MPS_FRANCINEI. Saídas em `/tmp/hml-centavos-g2g3/*.json`.
+Títulos frescos dos pendentes do SISPAG: 537/1, 528/1, 539/1 (nenhum usado antes). Renegociações 3 e 4 não
+tocadas.
+
+### G2 — vencimento da composição
+
+| Caso | Título | Composição | Resultado |
+|---|---|---|---|
+| **passado** | 537/1 (R$ 263,13) | vencimento original **02/12/2025** | `POST fin070/titulos/composicao` **aceito** (frnCod 5, `mnyValorTotal` 263,13). Não finalizado (virou o teste G3) |
+| **hoje** | 528/1 (R$ 606,68) | **20/10/2026** (`BankingCalendar.todayBrt`) | aceito; `finalizar` ok ⇒ **528/2** venc. 20/10/2026, bloqueado na regra 19, liberado com APROVAR |
+| **hoje** | 539/1 (R$ 950,00) | 20/10/2026 | aceito; `finalizar` ok ⇒ **539/2** venc. 20/10/2026, liberado |
+| **hoje, pelo serviço** | 528/2 e 539/2 | vencimento original = hoje | aceito e finalizado (ponta a ponta abaixo) |
+
+Nenhuma recusa: a I18a **não** ganha follow-up por vencimento. **Não provado:** `finalizar` com composição de
+vencimento passado (o 537/1 foi desfeito antes do `finalizar`).
+
+### G3 — desfazer renegociação NÃO finalizada
+
+| Tentativa (frnCod 5, com título + composição) | Resposta do ERP |
+|---|---|
+| `PUT fin070/cancelar/5` | 400 `FIN_070.REGISTRO_DEVE_ESTAR_FINALIZADO` — o `cancelar` é o estorno de renegociação **finalizada** |
+| `DELETE fin070/5` | 400 `FIN_076.EXISTEM_TITULOS_RENEGOCIACAO` |
+| `DELETE fin070/titulos/5/2/537/1` | 400 `FIN_070.EXISTEM_COMPOSICOES_DESSA_RENEGOCIACAO_PARA_ESTE_TITULO` |
+| **`DELETE fin070/titulos/composicao/5/2/537/1/1` → `DELETE fin070/titulos/5/2/537/1` → `DELETE fin070/5`** | **200, 200, 200** |
+
+Releitura: `GET fin070/5` ⇒ HTTP 500 `RECORDNOTFOUND` ("Not Found: FinReneg"), ausente do `fin070/list`;
+**537/1 intacto** (`totalAberto` 263,13, `vldLib 1`, venc. 02/12/2025, nenhum título novo). frnCod 6 (só
+cabeçalho): `DELETE fin070/6` direto ⇒ 200, some do list.
+
+**Rota adotada** (`ConexosRenegociacaoClient.cancelarRenegociacao`, substitui o `NotImplementedError`): relê o
+cabeçalho (finalizada ⇒ recusa sem apagar) → para cada título, `DELETE` das composições e do título → `DELETE`
+do cabeçalho; cada `DELETE` em tentativa única (`authenticatedDeleteOnce`, sem re-login em 401). Sucesso =
+`renegociacaoDesfeita` (ausente do `fin070/list` ou `frnVldCan 1`), nunca o `200`.
+
+**Achado: o `frnCod` apagado é REUSADO.** Depois de apagar 5 e 6, as duas renegociações seguintes nasceram
+5 e 6 de novo. O `frnCod` de um ledger `cancelado` deixa de identificar algo no ERP; o reconhecimento (I18i)
+é pelo **marcador**, nunca pelo número.
+
+**Marcador (I18i):** `POST fin070` com obs `… G3MRKMVFRV8YQ …` e resposta descartada de propósito ⇒
+`buscarRenegociacaoPorMarcador` achou **exatamente** `[6]`; desfeito pela rota acima.
+
+### Ponta a ponta com o `AjusteCentavosTituloService` de produção
+
+**Real:** `ConexosRenegociacaoClient`, `ConexosSessionRegistry.robot()` (sessão do servidor, 1 login),
+`ElegibilidadeAjusteCentavos`, `BankingCalendar`, `ConexosSispagWriteClient`, `RemessaCnabValidator` (guarda
+I17m). **Em memória (fakes):** ledger (mesma máquina de etapas), decisão `CONFIRMADA` + par `VIGENTE`, boleto DDA
+(barra **sintética**, vencimento = o do título, número = `docEspNumero`), carteira, `tituloEmLoteFechado` =
+false, `EnvironmentProvider` do serviço (`2:on`, login sondado = login), advisory lock, `LogService`;
+`ServerProcessMarker` ligado no probe. O vínculo e o `.REM` usam os passos do `probe-hml-vinculo-centavos`
+(import com `titMnyLiquido`, validação → confirma → `PUT`), não o `VinculoCodigoBarrasService`.
+
+| Caso | Título | Boleto | Serviço | J do `.REM` | I17m |
+|---|---|---|---|---|---|
+| juros | 528/2 R$ 606,68 | 606,69 | frnCod 7, `frnVldTpop 1`: `pendente → … → finalizada (528/3) → liberada (fbl 19) → concluido` | `PG201080.REM` (flp 49): barra 606,69 · título 606,68 · mora 0,01 · **pagamento 606,69** | passa |
+| desconto | 539/2 R$ 950,00 | 949,99 | frnCod 8, `frnVldTpop 2`: idem ⇒ 539/3 | `PG201090.REM` (flp 50): barra 949,99 · título 950,00 · desconto 0,01 · **pagamento 949,99** | passa |
+
+O import respondeu YES à pergunta `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA…` (como nos probes anteriores).
+`gerarRemessa` com número 81 ⇒ `FIN_015.NUMERO_DE_REMESSA_JA_USADO`; refeito com 90 (fase `remessa`).
+
+### Estado deixado em HML (G2/G3)
+- Renegociações **5 e 6** originais (537/1 e marcador) **apagadas**; os números 5 e 6 foram reusados por
+  528/1→528/2 e 539/1→539/2 (`frnVldTpop 0`, finalizadas, liberadas). Renegociações **7** (528/2→528/3, juros
+  0,01) e **8** (539/2→539/3, desconto 0,01), finalizadas e liberadas.
+- Títulos: **537/1** intacto; **528/3** e **539/3** em lotes finalizados **flp 49** (`PG201080.REM`) e
+  **flp 50** (`PG201090.REM`). 528/1, 528/2, 539/1, 539/2 consumidos pelas renegociações.
