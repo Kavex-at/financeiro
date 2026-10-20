@@ -9,8 +9,8 @@ const TOLERANCIA_COLUNA = 15;
 const TOLERANCIA_LINHA = 2;
 const MAX_DISTANCIA_DIREITA = 250;
 
-const ROTULO_DPS = /^numero da dps\b/;
-const ROTULO_NFSE = /^numero da nfs-?e\b/;
+const ROTULO_DPS = /^numero (da )?dps\b/;
+const ROTULO_NFSE = /^numero (da )?nfs-?e\b/;
 const NUMERO = /^\d{1,15}$/;
 /** Número logo depois do rótulo no mesmo trecho (`Número da DPS: 25459`); data não casa. */
 const NUMERO_APOS_ROTULO = /^\s*[:-]?\s*(\d{1,15})(?![\d/])/;

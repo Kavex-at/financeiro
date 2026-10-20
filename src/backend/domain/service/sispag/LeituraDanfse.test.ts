@@ -83,6 +83,31 @@ describe('LeituraDanfse — DPS e NFS-e do DANFSe (ADR-0073)', () => {
         expect(r).toEqual({ dps: '776132', nfse: '86666' });
     });
 
+    it('DANFSE do portal municipal (41087, "Número DPS" sem "da", posições reais)', () => {
+        const r = leitura.ler([
+            item('Número da NFS-e', 393.88, 790.12),
+            item('86065', 463.85, 776.07),
+            item('Chave de Acesso da NFS-e', 33.48, 660.09),
+            item('Número DPS', 317.02, 660.09),
+            item('Série DPS', 416.26, 660.09),
+            item('Data e hora de Emissão da DPS', 472.97, 660.09),
+            item('775530', 317.02, 653.0),
+            item('Número da NFS-e:', 287.96, 72.36),
+            item('86065', 354.08, 72.28),
+        ]);
+        expect(r).toEqual({ dps: '775530', nfse: '86065' });
+    });
+
+    it('CT-e (DACTE da Qive, 37186): não tem DPS e nada é inventado', () => {
+        const r = leitura.ler([
+            item('Nº. DOCUMENTO 186038', 508.78, 803.67),
+            item('SÉRIE 10', 530.21, 791.67),
+            item('NÚMERO', 260.49, 728.93),
+            item('186038', 267.33, 718.59),
+        ]);
+        expect(r).toEqual({});
+    });
+
     it('PDF sem o rótulo (outro documento) → nada lido', () => {
         expect(leitura.ler([item('BOLETO', 50, 700), item('776132000', 50, 690)])).toEqual({});
     });
