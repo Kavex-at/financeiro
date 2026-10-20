@@ -108,16 +108,16 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/interface/sispag/GrupoBoletoInterface.ts` (novo: constantes tipadas `GRUPO_BOLETO_ESTADO = { CONFIRMADO, ANULADO, PAGO }`, `GRUPO_BOLETO_ORIGEM = { SUGERIDO, MANUAL }`, `MOTIVO_GRUPO_INELEGIVEL`, `AVISO_GRUPO = { TITULO_VENCE_ANTES_DO_BOLETO }`, tipos `GrupoBoleto`, `GrupoBoletoTitulo`)
 
 **Acceptance criteria:**
-- [ ] Testes escritos primeiro e falhando (RED comprovado no log da tarefa)
-- [ ] I19a: N = 1 ⇒ `MENOS_DE_DOIS_TITULOS` (caminho 1:1, PI-1); `pesCod` diferentes ⇒ `CREDORES_DIFERENTES`; boleto com `docCod/titCod` do ERP ⇒ `BOLETO_VINCULADO_ERP`; par não `VIGENTE` e não confirmável no ato ⇒ `PAR_NAO_VIGENTE`
-- [ ] I19b: soma em **centavos inteiros** com `ValorAbertoLiquido.calcularCentavos` (importada, não copiada); ±1 centavo ⇒ `SOMA_DIFERENTE` com Δ; qualquer título com líquido indisponível ⇒ `VALOR_ABERTO_INDISPONIVEL` (fail-closed); `valorBoleto` vem da decodificação **nossa** (`CodigoBarrasBoleto`), não do campo do DDA
-- [ ] I19c: cada causa com motivo próprio: `NAO_LIBERADO` (exibido como "aguardando alçada"), `PAGO`, `INATIVO`, `FORMA_NAO_BOLETO`, `TEM_BOLETO_ERP`, `DECISAO_1_1_CONFIRMADA`, `MARCA_RETENCAO_ATIVA` (inclusive origem `GRUPO_BOLETO`), `EM_LOTE_COMPROMETIDO`, `EM_OUTRO_GRUPO`
-- [ ] I19d: filiais diferentes ⇒ `CRUZA_FILIAL`
-- [ ] I19g: janela por título `0..10` dias civis; −1 ou 11 ⇒ `FORA_DA_JANELA`; Δ > 0 em algum título ⇒ aviso `TITULO_VENCE_ANTES_DO_BOLETO` exigido; fixture com offset São Paulo não desloca o dia (UTC meia-noite, ADR-0070)
-- [ ] I19h: `vencimentoBoleto < dataDebito` ⇒ `BOLETO_VENCIDO`; sem lote, referência = o próprio `vencimentoBoleto`
-- [ ] I19u: `orfao(grupo, vivo)` devolve `{ orfao, motivo }` para boleto fora do pool, boleto com vínculo do ERP, título pago/inativo/com DDA do ERP, líquido ≠ snapshot
-- [ ] Puro (sem I/O, log ou relógio: `hoje` entra como parâmetro); classes exportadas, métodos arrow, modificadores explícitos; saída sem linha completa (`JSON.stringify` sem 44/47 dígitos)
-- [ ] `typecheck` e `lint` ok
+- [x] Testes escritos primeiro e falhando (RED comprovado no log da tarefa)
+- [x] I19a: N = 1 ⇒ `MENOS_DE_DOIS_TITULOS` (caminho 1:1, PI-1); `pesCod` diferentes ⇒ `CREDORES_DIFERENTES`; boleto com `docCod/titCod` do ERP ⇒ `BOLETO_VINCULADO_ERP`; par não `VIGENTE` e não confirmável no ato ⇒ `PAR_NAO_VIGENTE`
+- [x] I19b: soma em **centavos inteiros** com `ValorAbertoLiquido.calcularCentavos` (importada, não copiada); ±1 centavo ⇒ `SOMA_DIFERENTE` com Δ; qualquer título com líquido indisponível ⇒ `VALOR_ABERTO_INDISPONIVEL` (fail-closed); `valorBoleto` vem da decodificação **nossa** (`CodigoBarrasBoleto`), não do campo do DDA
+- [x] I19c: cada causa com motivo próprio: `NAO_LIBERADO` (exibido como "aguardando alçada"), `PAGO`, `INATIVO`, `FORMA_NAO_BOLETO`, `TEM_BOLETO_ERP`, `DECISAO_1_1_CONFIRMADA`, `MARCA_RETENCAO_ATIVA` (inclusive origem `GRUPO_BOLETO`), `EM_LOTE_COMPROMETIDO`, `EM_OUTRO_GRUPO`
+- [x] I19d: filiais diferentes ⇒ `CRUZA_FILIAL`
+- [x] I19g: janela por título `0..10` dias civis; −1 ou 11 ⇒ `FORA_DA_JANELA`; Δ > 0 em algum título ⇒ aviso `TITULO_VENCE_ANTES_DO_BOLETO` exigido; fixture com offset São Paulo não desloca o dia (UTC meia-noite, ADR-0070)
+- [x] I19h: `vencimentoBoleto < dataDebito` ⇒ `BOLETO_VENCIDO`; sem lote, referência = o próprio `vencimentoBoleto`
+- [x] I19u: `orfao(grupo, vivo)` devolve `{ orfao, motivo }` para boleto fora do pool, boleto com vínculo do ERP, título pago/inativo/com DDA do ERP, líquido ≠ snapshot
+- [x] Puro (sem I/O, log ou relógio: `hoje` entra como parâmetro); classes exportadas, métodos arrow, modificadores explícitos; saída sem linha completa (`JSON.stringify` sem 44/47 dígitos)
+- [x] `typecheck` e `lint` ok
 
 **Dependencies:** none
 
