@@ -8,7 +8,8 @@ invariant: I2
 related_files:
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/domain/client/ConexosSispagClient.ts
-last_review: 2026-09-14
+  - src/backend/domain/service/sispag/SituacaoPagamentoResolver.ts
+last_review: 2026-10-20
 has_canonical_test: false
 open-gap:
   - "níveis-de-alçada (Flávia) — quantos níveis titVld1/2/3libera a Columbia usa DE FATO? Nesta fatia liberado = AND das flags presentes; recalibrável por tenant sem mudar a estrutura."
@@ -39,7 +40,22 @@ elegivelParaLote(titulo) ⇔
 Falha em qualquer conjunto → inclusão **BLOQUEADA** (reportada na UI com o motivo). O painel mostra
 esses títulos como visibilidade (aprovado-mas-pago / pendente-de-alçada), não como erro.
 
-## Onde a regra atua (dois pontos)
+## Emenda 2026-10-20 (ADR-0075, `planned`): I2 passa a incluir a situação de pagamento
+
+```
+elegivelParaLote(titulo) ⇔ liberado(titulo) ∧ ¬pago(titulo) ∧ situacaoPagamento(titulo).estado = PRONTO
+```
+
+`liberado` e `¬pago` seguem como acima (e seguem checados **ao vivo** no `fin064` na inclusão, que é a
+autoridade). O terceiro termo é a **situação de pagamento** de
+[`situacao-pagamento-titulo`](situacao-pagamento-titulo.md) (I19): um título `BLOQUEADO` por qualquer dos
+motivos dali (permuta, vencido, forma fora do SISPAG, duplicidade, retido por código de barras, ajuste de
+centavos pendente, confirmação a revisar, boleto sem DDA) **não entra em lote**, e o bloqueio devolve o
+motivo (`TituloNaoElegivelError`, 422). `ALCADA` é o próprio `liberado = false` visto pela tela. A
+formação automática (L1) só inclui `PRONTO`. A regra deixa de ser só uma porta: o mesmo cálculo alimenta o
+painel (I19m).
+
+## Onde a regra atua (dois pontos; a tela também a mostra, I19)
 
 1. **Na inclusão** (`incluirTituloNoLote`, L2) — barra o título inelegível na porta.
 2. **Na finalização** (`finalizarLote`, L3) — **revalida** todos os itens: um título que virou

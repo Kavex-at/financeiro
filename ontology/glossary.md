@@ -31,6 +31,12 @@ Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem e
 | **SISPAG** | Sistema/fluxo de pagamentos em lote enviado ao banco. |
 | **Título** | Documento financeiro a pagar (parcela/obrigação) no ERP. |
 | **Aprovado para baixa** | Status do título habilitado a entrar no lote de pagamento (representação a confirmar na `com298`). |
+| **Situação de pagamento** | Valor **derivado** por título (backend, nunca persistido): `PRONTO` (pode entrar em lote) ou `BLOQUEADO`, com os motivos, o principal, quem resolve e o próximo passo. Regra [`situacao-pagamento-titulo`](business-rules/situacao-pagamento-titulo.md), ADR-0075, `planned`. |
+| **Motivo (de bloqueio)** | Razão pela qual um título não pode ser pago agora (`ALCADA`, `TIPO_PERMUTA`, `VENCIDO`, `FORMA_NAO_SISPAG`, `DUPLICIDADE`, `RETIDO_CODBAR`, `AJUSTE_CENTAVOS_PENDENTE`, `CONFIRMACAO_A_REVISAR`, `BOLETO_SEM_DDA`), em ordem de prioridade; o primeiro é o `principal`. |
+| **Dono (do bloqueio)** | Quem resolve o motivo principal: `VOCE` (a analista), `APROVADOR`, `PERMUTAS`, `CONTAS_A_PAGAR`. Aparece como "quem resolve" na linha e nos chips da tela. |
+| **Pronto** | Título cuja situação de pagamento é `PRONTO`: aprovado, não pago e sem nenhum motivo de bloqueio conhecido. É o único que a formação automática inclui. TED/PIX contam como pronto até existir verificação no carregamento da carteira. |
+| **Bloqueado** | Título com ao menos um motivo de bloqueio: não entra em lote e mostra o que fazer. Não é erro: é visibilidade. |
+| **Tipo "(PERMUTA)"** | Marca no **nome do tipo** do documento (`tpdDesNome`, do `com298/list`) de títulos a pagar ligados a uma permuta (ex.: "RECIBO/BOLETO/FATURA - (PERMUTA)"). É **indicação**: o título pode já estar permutado em parte. **Não confundir** com a NDe (Frente IV) nem com NC/ND (Frente III): aqui é só um tipo de título da carteira SISPAG, bloqueado até a analista conferir o saldo em Permutas. |
 | **Lote (candidato / finalizado)** | Conjunto de títulos a pagar no dia; montado pela solução, ajustado e **finalizado** pela analista. |
 | **Gate de finalização** | Ação da analista que dispara o processamento do lote (palavra final sobre o que será pago). |
 | **Remessa** | Arquivo de pagamento gerado e enviado ao banco. |
