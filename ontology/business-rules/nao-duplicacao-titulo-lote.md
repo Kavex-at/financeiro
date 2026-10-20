@@ -8,7 +8,7 @@ invariant: I3
 related_files:
   - src/backend/migrations/0023_lote_pagamento.sql
   - src/backend/domain/service/sispag/SispagPainelService.ts
-last_review: 2026-07-07
+last_review: 2026-10-20
 has_canonical_test: false
 ---
 
@@ -44,6 +44,14 @@ UNIQUE (fil_cod, doc_cod, tit_cod)  WHERE status = 'RASCUNHO'
   destino na MESMA transação (a origem só perde o item se ainda for RASCUNHO; vira manual; é cancelada
   se ficar vazia). I3 nunca é violada: em nenhum instante o título está em dois RASCUNHO. Sem
   `mover`, a recusa (`TituloEmOutroLoteError`) segue igual.
+
+## Emenda ADR-0076 (`planned`) — grupos
+
+- Título em `GrupoBoleto CONFIRMADO` não entra avulso em lote nem em outro grupo (UNIQUE parcial em
+  `sispag_grupo_boleto_titulo` `WHERE estado = 'CONFIRMADO'`); o boleto também (um grupo por boleto,
+  e nunca grupo + `DecisaoSugestaoBoleto CONFIRMADA`).
+- A UNIQUE de `ItemLote` segue por título: os N itens do grupo a ocupam normalmente. Mover/retirar
+  aplicam-se ao grupo inteiro na mesma transação (I19j). Ver `business-rules/boleto-agrupado-sispag.md`.
 
 ## Por que UNIQUE parcial no banco (e não só em app)
 

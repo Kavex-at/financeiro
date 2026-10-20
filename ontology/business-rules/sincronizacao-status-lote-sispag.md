@@ -21,7 +21,7 @@ related_files:
   - src/frontend/app/sispag/components/LoteCard.tsx
   - src/frontend/app/sispag/useCarteiraAoAbrir.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-10-13
+last_review: 2026-10-20
 has_canonical_test: true
 canonical_test: src/backend/domain/service/sispag/DecisaoStatusLote.test.ts
 ---
@@ -75,6 +75,13 @@ canonical_test: src/backend/domain/service/sispag/DecisaoStatusLote.test.ts
 - **I11h — idempotência.** Uma passada que não muda status nem situação de nenhum item **não**
   incrementa `versao` e não emite evento nem alerta. Atualiza apenas `sincronizadoEm`. A transição
   usa o optimistic lock (I6); conflito de versão = pular o lote nesta passada.
+- **I11i — consistência do grupo (ADR-0076, `planned`).** Os N itens de um `GrupoBoleto` são lidos como
+  hoje, por título. O evento do `fin052` do item nativo de borderô (chave fil/bnc/flp/its) vale para os N.
+  Os N `PAGO` ⇒ grupo `PAGO`; parte paga ⇒ `divergencia` nos N + `Alerta` `sispag-baixa-divergente`
+  (I11f), nunca "parcialmente pago"; rejeição ⇒ os N `REJEITADO` (I11d) + `Alerta`
+  `sispag-bordero-grupo-pendente` (o borderô antigo segue em cadastro no ERP; o grupo só volta a uma
+  remessa depois de a analista resolvê-lo, I19r). `borVldFinalizado` do borderô é corroboração (nível 4),
+  não prova. Ver `business-rules/boleto-agrupado-sispag.md`.
 
 ## Gatilho
 

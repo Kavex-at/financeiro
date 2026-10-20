@@ -8,7 +8,7 @@ invariant: I2
 related_files:
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/domain/client/ConexosSispagClient.ts
-last_review: 2026-09-14
+last_review: 2026-10-20
 has_canonical_test: false
 open-gap:
   - "níveis-de-alçada (Flávia) — quantos níveis titVld1/2/3libera a Columbia usa DE FATO? Nesta fatia liberado = AND das flags presentes; recalibrável por tenant sem mudar a estrutura."
@@ -55,6 +55,14 @@ esses títulos como visibilidade (aprovado-mas-pago / pendente-de-alçada), não
 - Espelha o **Gate 3 de Permutas** (`elegibilidade-permuta.md`): "não pagar/permutar o que já
   saiu". A definição estrita de `pago` (aberto = 0) e o resíduo de centavos são o mesmo dilema —
   ver open-gap `residual-pago-centavos`.
+
+## Emenda ADR-0076 (`planned`) — título de boleto agrupado
+
+A regra vale **por título** do grupo (`GrupoBoleto`), nos dois pontos (inclusão e finalização). Um título
+do grupo inelegível barra a inclusão do grupo inteiro e, no `finalizarLote`, barra a finalização listando o
+grupo; nunca se paga parte de um grupo. Na remessa, a revalidação ao vivo é a I19p(1). Título do conjunto
+fechado ainda em alçada pendente aparece na sugestão de grupo com o motivo ("aguardando alçada"), não
+confirmável, e nunca é descartado para sugerir os demais (I19e). Ver `business-rules/boleto-agrupado-sispag.md`.
 
 ## Teste canônico (a escrever no TDD)
 

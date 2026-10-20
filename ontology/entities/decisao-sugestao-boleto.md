@@ -18,7 +18,7 @@ relationships:
   - "DecisaoSugestaoBoleto N—1 BoletoDda (chave ddcCod/ditCod; snapshot — o pool pode mudar)"
   - "DecisaoSugestaoBoleto N—0..1 ConfirmacaoEmissorBoleto (a confirmação que esta decisão criou ou reutilizou; só quando decisao = CONFIRMADA)"
   - "DecisaoSugestaoBoleto 0..1—0..1 DecisaoSugestaoBoleto (origemDecisaoId: a decisão do título antigo que esta herdou na renegociação I18j; ADR-0074, implemented, migration 0088)"
-last_review: 2026-10-19
+last_review: 2026-10-20
 universality_evidence:
   - "Mesmas fontes de ConfirmacaoEmissorBoleto (entrevista 2026-10-14; sondagens PRD 2026-10-13/14)"
   - "Conceito universal: toda conciliação assistida guarda QUEM aprovou QUAL par com QUE evidência (trilha de auditoria)"
@@ -105,3 +105,8 @@ estado `APLICADO_NO_ERP` (a aplicação é por remessa × tentativa; a decisão 
 RECUSADO(motivo)`, lido do ledger `sispag_ajuste_centavos_execucao` e da trilha. Enquanto o ajuste está entre
 `finalizada` e `rechaveada`, a decisão do título antigo **não** é mostrada como órfã com "Anular": a tela diz
 "título renegociado, ajuste em andamento". **Não existe** estado `AJUSTADA` em `decisao`.
+
+**Boleto agrupado (ADR-0076, `planned`).** Título em `GrupoBoleto CONFIRMADO` **não tem** decisão 1:1: o
+desfecho dele na sugestão é `EM_GRUPO` (I15q) e o vínculo da barra é do grupo (I17o). Título com decisão
+`CONFIRMADA` não entra em grupo, e o boleto de um grupo nunca é candidato 1:1. Para levar a grupo um título
+já decidido, anular a decisão antes (I15l). Ver `entities/grupo-boleto.md`.

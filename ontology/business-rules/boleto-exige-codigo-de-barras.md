@@ -13,7 +13,7 @@ related_files:
   - src/backend/domain/client/ConexosSispagWriteClient.ts
   - src/backend/domain/libs/boleto/AnaliseCodigoBarrasRepetido.ts
   - src/backend/domain/libs/boleto/CodigoBarrasBoleto.ts
-last_review: 2026-10-19
+last_review: 2026-10-20
 ---
 
 # Boleto exige código de barras (fail-closed no envio)
@@ -119,6 +119,21 @@ conta para boleto rejeitava justamente o fornecedor que só aceita boleto (o cas
 | **I16g** | **Retenção do título retirado.** Todo item retirado por I16d ganha uma `BloqueioDuplicidade` `ATIVO` com `origem` correspondente (ciclo na entidade). A marca é criada **na mesma transação** da remoção local (I16d.3); no máximo uma `ATIVO` por título; o título retido não entra em formação nem inclusão (`DuplicateHoldError`). A analista pode **desfazer** com motivo (auditado): o título volta ao pool e, se o boleto ainda estiver compartilhado, a próxima guarda o retira de novo, com novo evento. Desfazer **não** troca o item que ficou; para pagar o retido, resolver o boleto no `fin124` ou mudar a forma de pagamento. |
 | **I16h** | **Retomada (resume) com resíduos.** Em `RemessaService`, `intrusos = jaNoErp \ nossas`; `residuos` = intrusos com marca `ATIVO` de origem `CODIGO_BARRAS_REPETIDO`/`CODIGO_BARRAS_ILEGIVEL` **e** evento do sistema neste lote; `estranhos = intrusos \ residuos`. **(a)** item retirado **nunca é reimportado** (`nossas` é o lote local; a importação parcial também). **(b)** fail-closed: `estranhos` não vazio ⇒ etapa `indeterminado`, mesmo havendo resíduos; nunca se limpa parcialmente num rascunho tocado por terceiro. **(c)** reconhecimento exige o **par** marca + evento; retirada por `DUPLICIDADE_TITULO` ou por I13j **não** é resíduo (segue intruso; divergência herdada no watchlist, P1-4(a)). **(d)** a guarda roda em **todo** caminho que chega a `finalizarLote`, inclusive a etapa `finalizar` direta. **(e)** `estranhos = ∅ ∧ residuos ≠ ∅` ⇒ nova etapa `limpar_retirados`: `DELETE` dos resíduos, reler, reavaliar. O comportamento do ERP para `DELETE` de `itsCodSeq` foi **medido em HML (2026-10-14, P1-5 fechado)**: existente ⇒ `200` e a `soma` do lote cai o valor do item (`titulosCount` fica em 1); **já ausente ou nunca existente ⇒ `500 RECORDNOTFOUND`**; `filCod` do item ou do lote trocado ⇒ `500 RECORDNOTFOUND` sem efeito; em lote nativo **finalizado** ⇒ `400 FIN_015.IMPOSSIVEL_ALTERAR_REGISTRO_NAO_EM_CADASTRO` (a limpeza só existe antes do `finalizar`). Por isso a decisão continua sendo pela releitura da lista, nunca pelo status do `DELETE` (registro: `ontology/_inbox/sispag-remocao-codbar-repetido-hml-achados.md`). |
 
+> **Emenda ADR-0076 (`planned`) — item de borderô (boleto agrupado).**
+> - **I16a** vale sobre o item nativo de borderô (o grupo é **um** item; a barra aparece uma vez).
+> - **I16d** retirar o item de borderô retira o **grupo inteiro** (N `ItemLote`, N marcas `BloqueioDuplicidade`
+>   origem `GRUPO_BOLETO`) e dispara `limparBorderoDoGrupo` (I19q) sobre o borderô que criamos nesta remessa.
+>   Motivos novos em `SystemRemovalReason`: `GRUPO_BOLETO_FALHOU` e `BORDERO_ANTERIOR_NAO_RESOLVIDO` (J
+>   rejeitado antes, borderô antigo não resolvido, I19s; esse nunca é limpo).
+> - **I16d.1** o item de borderô de grupo confirmado conta como "com decisão humana vigente" no desempate.
+> - **I16e** a mensagem cita `borCod`, os títulos do grupo e o código mascarado.
+> - **I16h** `nossas` = títulos avulsos do lote ∪ `borCod`s dos grupos do write-ahead; item nativo com
+>   `borCod` que não é nosso é **intruso**. Resíduo de grupo retirado = item com `borCod` cujo grupo tem as
+>   marcas `GRUPO_BOLETO` **e** o evento do sistema neste lote (mesmo par marca + evento da I16h(c)).
+> - **Ausência (ADR-0040):** item de borderô sem barra observada antes do `finalizar` aborta como hoje.
+>
+> Ver `business-rules/boleto-agrupado-sispag.md` (I19).
+
 **O ERP não valida o código (achado HML, 2026-10-14).** Experimentos em HML mostraram que o Conexos
 **não valida o dígito verificador** de um código de barras digitado **nem o compara com o título**;
 `importar` **descarta** o código enviado no payload; o código só chega ao item via
@@ -154,3 +169,4 @@ ou confirmação). A confirmação de emissor continua sendo evidência, não au
 - `entities/bloqueio-duplicidade.md` — marca de retenção (`origem`), I16g
 - ADR-0071 / `business-rules/vinculo-codbar-item-sispag.md` — I17, vínculo do código confirmado ao item (passo 2); etapa `vincular_codbar` antes da guarda
 - ADR-0074 / `business-rules/ajuste-centavos-titulo-sispag.md` — I18 (ajuste de centavos no título) e I17m (barra == pagamento do J na rede do `.REM`)
+- ADR-0076 / `business-rules/boleto-agrupado-sispag.md` — I19, boleto agrupado: um item nativo de borderô por grupo

@@ -60,6 +60,7 @@ de novo.
 | `sispag-lote-retornado` | id do lote | transição para `RETORNADO` (L10/L11, ADR-0055) |
 | `sispag-destino-alterado` | `favorecido:{pesCod}:{modalidade}` | destino do favorecido autorizado mudou no cadastro — reaprovação aberta (ADR-0065, F4) |
 | `sispag-ajuste-centavos-parado` | `{filCod}:{docCod}/{titCodOrigem}` | ajuste de centavos (ADR-0074, I18h) parou em `indeterminado` (severidade `erro`: resolver a renegociação no `fin070`; o lote do título não finaliza) ou `aguardando_aprovacao_manual` (severidade `aviso`: aprovar o título novo no `fin103`). Janela = início do dia civil BRT (`BankingCalendar.startOfTodayBrt`): no máximo um alerta por ajuste parado por dia. `detalhe.acao` diz o que fazer; nunca código de barras completo (só máscara 5+4). Migração 0088. |
+| `sispag-bordero-grupo-pendente` | id do `GrupoBoleto` | borderô `fin010` de um boleto agrupado (ADR-0076, `planned`) que o sistema não pode limpar sozinho: J rejeitado com o borderô ainda em cadastro (I19r), limpeza pedida depois de `vldHasRemessaPgto = 1` ou do lote nativo finalizado (I19q), ou borderô antigo não resolvido numa nova remessa (I19s). `detalhe` cita `borCod`, filial, os títulos e o que fazer (excluir/cancelar no ERP, ou deixá-lo pendente para reaproveitamento); nunca código completo. |
 
 ## Teto conhecido deste desenho
 

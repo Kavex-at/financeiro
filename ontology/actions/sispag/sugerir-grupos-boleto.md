@@ -1,0 +1,33 @@
+---
+name: sugerirGruposBoleto
+type: action
+entity: GrupoBoleto
+ontology_version: "0.47.0"
+implementation_status: planned
+status: draft
+owners: [yuri]
+related_files: []
+last_review: 2026-10-20
+preconditions:
+  - "Usuário com `sispag:ver` (ver a sugestão não é confirmar; confirmar exige `sispag:executar`)."
+  - "Boleto livre no pool DDA local (sem docCod/titCod, I15e(1)), fora de outro GrupoBoleto CONFIRMADO e sem DecisaoSugestaoBoleto CONFIRMADA."
+  - "Par (pesCod, emissorChave) VIGENTE ou candidato a par (confirmável no mesmo ato, I19a)."
+  - "Pool DDA e carteira persistida legíveis; leitura que falha não vira 'sem grupo' (fail-closed, sem afirmação absoluta)."
+postconditions:
+  - "Lista calculada de grupos fechados no mesmo vencimento (I19e) e de partições intercambiáveis (I19f), cada um com `confirmavel` e motivo."
+  - "Grupo fechado com título que falha I19c (ex.: aguardando alçada) é exibido com o motivo e `confirmavel = false`; o título nunca é descartado para sugerir subconjunto (decisão PI-7)."
+  - "Conjunto que cruza filial aparece com `CRUZA_FILIAL`, não confirmável (I19d)."
+  - "Nada persistido (I-DDA1)."
+side_effects:
+  - "Nenhum: só leitura local (pool, carteira, grupos e decisões). Zero chamada ao Conexos."
+---
+
+# sugerirGruposBoleto
+
+ADR-0076 (P0-1, P0-2). Para cada boleto livre, o conjunto candidato é **todos** os títulos em aberto do
+mesmo `pesCod` na mesma filial com vencimento **igual** ao do boleto (dia civil); só é sugerido se a soma
+dos líquidos bate ao centavo com o boleto (I19b). Nunca subconjunto livre (medição M1: 922 de 2369 falsos).
+K boletos iguais × títulos de mesmo valor ⇒ partição determinística marcada `intercambiavel` (I19f), cada
+grupo confirmado à parte. Composição fora disso é manual (`confirmarGrupoBoleto` com `origem = MANUAL`).
+Pura e idempotente; separada da sugestão 1:1 (I15), que passa a mostrar `EM_GRUPO` para título de grupo
+(I15q). **Planned.**

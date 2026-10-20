@@ -3,6 +3,37 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.47.0 — SISPAG: boleto agrupado (1 boleto → N títulos) pelo borderô do fin010 (2026-10-20, ADR-0076)
+
+Feature: `sispag-boleto-agrupado` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do código**
+(tudo `planned`; migration prevista 0089; app 0.72.0 prevista, decidida no ship).
+
+> **Numeração:** 0.46.0/ADR-0075 reservados pela branch não mergeada `docs/sispag-situacao-pagamento-ontology`;
+> reconferir antes do ship.
+
+- **Entidade nova `GrupoBoleto`**: um boleto DDA ↔ N ≥ 2 títulos do mesmo credor e filial, soma exata ao
+  centavo, confirmado por pessoa. No lote, N `ItemLote` ligados (`ItemLote.grupoBoletoId`); na remessa, **um**
+  item nativo de borderô.
+- **Regra nova `boleto-agrupado-sispag` (I19a–u)**: sugestão só de grupo fechado no mesmo vencimento; composição
+  manual até 10 dias; borderô `fin010` na geração da remessa (etapa `preparar_bordero`, write-ahead); nunca
+  finalizamos o borderô; limpeza só do que criamos e só antes do lote nativo finalizado; `PAGO` com os N;
+  J rejeitado devolve o grupo, que só volta depois de a analista resolver o borderô antigo (reaproveitado se
+  reaparecer pendente).
+- **Ações novas** (`planned`): `sugerirGruposBoleto`, `confirmarGrupoBoleto`, `anularGrupoBoleto`,
+  `prepararBorderoDoGrupo`, `limparBorderoDoGrupo`.
+- **Emendas:** I2, I3, I4, I11i, I15q (+ exclusão (4) da I15e, desfecho `EM_GRUPO`), I16 (item de borderô;
+  origem `GRUPO_BOLETO` em `BloqueioDuplicidade`; motivos `GRUPO_BOLETO_FALHOU`/`BORDERO_ANTERIOR_NAO_RESOLVIDO`),
+  I17o, retomada (`preparar_bordero`), máquina do lote (L2, L3, L5, L6, L8, L11), ações `formarLotesAutomaticos`,
+  `gerenciarLoteCandidato`, `finalizarLote`, `vincularCodigoBarrasAoItem`; `Alerta` `sispag-bordero-grupo-pendente`;
+  integração `fin010` borderô + `fin015 borderosPendentes`; glossário; `docs/sispag/ANEXO-requisitos.md` (R-21);
+  Gotcha no `CLAUDE.md`.
+- **Decisões do maintainer:** P0-1..P0-5, P1-1..P1-5 (entrevista) e os pontos inferidos PI-1..PI-9 (revisão do
+  diff): PI-7 grupo com título não aprovado é exibido com o motivo e não é confirmável; PI-8 "vencido" do grupo
+  = vencimento do boleto; PI-9 reaproveitar o borderô antigo depois de J rejeitado. V7 segue como medição.
+- Contagens: entidades 28 → 29 (planned 5 → 6; `entities_coverage_pct` 74 → 69, recalculado por
+  `round(implemented/total)`: o 74 vinha sem recálculo havia algumas versões; 20/28 dava 71); ações 45 → 50 (planned 7 → 12;
+  `actions_coverage_pct` 80 → 72); regras 30 → 31 (planned 11 → 12).
+
 ## v0.44.0 — SISPAG: âncora DPS na sugestão de boleto DDA (2026-10-19, ADR-0073)
 
 Feature: `sispag-dda-ordem-dps` (`/feature-tweak sugestao-boleto-dda`). `entity_changed = true`.

@@ -8,7 +8,7 @@ invariant: I4
 related_files:
   - src/backend/migrations/0023_lote_pagamento.sql
   - src/backend/domain/service/sispag/SispagPainelService.ts
-last_review: 2026-07-07
+last_review: 2026-10-20
 has_canonical_test: false
 open-gap:
   - "agrupamento-banco-conta (Flávia) — nesta fatia o lote é por FILIAL só; agrupar também por banco+conta (como o fin015 nativo faz por filial/banco) fica para a fatia de transporte, quando banco/conta vira chave do arquivo de remessa."
@@ -45,6 +45,12 @@ Nesta fatia o **agrupamento é por filial**; `banco`/`conta` são **metadados op
 filial/banco) é a pergunta em aberto `agrupamento-banco-conta` (Flávia) — adiada para a fatia de
 transporte, quando banco/conta passa a ser a chave do arquivo de remessa. Registrar agora como
 metadado deixa a promoção futura barata, sem reseed. Ver ADR-0015.
+
+## Emenda ADR-0076 (`planned`) — boleto agrupado
+
+Os títulos do grupo (`GrupoBoleto`) e o borderô `fin010` que o paga são da filial do lote (I19d). Grupo que
+cruza filial não é confirmável nesta entrega ("não suportado, pagar à mão"; sonda V4 no watchlist). Ver
+`business-rules/boleto-agrupado-sispag.md`.
 
 ## Teste canônico (a escrever no TDD)
 

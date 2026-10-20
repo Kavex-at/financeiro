@@ -10,7 +10,7 @@ related_files:
   - src/backend/domain/service/sispag/VinculoCodigoBarrasService.ts
   - src/backend/domain/service/sispag/RemessaService.ts
   - src/backend/domain/client/ConexosSispagWriteClient.ts
-last_review: 2026-10-14
+last_review: 2026-10-20
 preconditions:
   - "Modo da filial = on (I17k); kill-switch sispagLiveWriteEnabled ligado."
   - "Item BOLETO no rascunho nativo aberto, sem DDA associado pelo ERP (I17a, I17i)."
@@ -34,3 +34,8 @@ ADR-0071 (passo 2 do ADR-0068, valor igual). Chamada **apenas** de `RemessaServi
 `importar` e a guarda I16; nunca pela UI do passo 1. Sem permissão nova: herda `sispag:executar` de quem
 gera a remessa; a decisão já tem autor próprio (I15g). Idempotente por I17f. Falha transitória aborta e
 retoma; determinística retira o item e segue (I17g). **Planned.**
+
+**Item de borderô (ADR-0076, `planned`, I17o).** A mesma ação vincula a barra do boleto agrupado ao item
+nativo com `borCod` (sem `docCod/titCod`): elegibilidade pelo `GrupoBoleto CONFIRMADO` não órfão e par
+`VIGENTE` (no lugar da decisão por título), valor pela I19b **e** igual a `itsMnyValor` do item (a I17n não
+se aplica), modalidade 7/6 pela I19o; independe do modo I17k. Ver `business-rules/boleto-agrupado-sispag.md`.

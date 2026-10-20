@@ -33,7 +33,7 @@ related_files:
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
   - src/frontend/app/sispag/components/LoteCard.tsx
-last_review: 2026-10-14
+last_review: 2026-10-20
 states: [RASCUNHO, FINALIZADO, REMESSA_GERADA, RETORNADO, BAIXADO, CANCELADO]
 out_of_scope_states: [ENVIADO, PROCESSANDO]
 ---
@@ -285,3 +285,20 @@ título serve. Em 2026-09-24 a baixa do 38682/1 (borderô 22320) não passou por
 (`importar → vincular_codbar → guarda I16 / limpar_retirados → finalizar → gerar_remessa`). Sem estado novo
 de `LotePagamento` e sem transição nova: o vínculo só atua no rascunho nativo aberto, enquanto o lote local
 ainda está a caminho de `REMESSA_GERADA`. Ver `business-rules/vinculo-codbar-item-sispag.md` (I17).
+
+## Emenda ADR-0076 (`planned`) — boleto agrupado
+
+Sem estado novo de lote. O `GrupoBoleto` (I19) entra no lote como N `ItemLote` ligados ao grupo.
+
+- **L2:** `incluirGrupo`/`moverGrupo`/`removerGrupo` (N itens na mesma transação, I19j); remover ou mover um
+  título de grupo ⇒ `GroupedBoletoIndivisibleError` (409).
+- **L3:** I2 revalidada por título; grupo com título inelegível barra a finalização, listando o grupo.
+- **L5:** cancelar com rascunho nativo aberto dispara `limparBorderoDoGrupo` (I19q).
+- **L6:** o "vencido" do grupo é o **vencimento do boleto** (dia civil em Brasília, ADR-0070), nunca o do
+  título: um grupo manual com título vencendo antes do boleto não é desfeito no dia do título.
+- **L8:** `criarLote → preparar_bordero → importar (títulos avulsos + borderôs) → vincular_codbar → guarda I16
+  → finalizar → gerar_remessa`. `preparar_bordero` é persistida no write-ahead (I19l, retomada I19s).
+- **L11:** I11i (consistência do grupo); J rejeitado devolve o grupo, que só volta a uma remessa depois de a
+  analista resolver o borderô antigo (I19r).
+
+Ver `business-rules/boleto-agrupado-sispag.md` e ADR-0076.

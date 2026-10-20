@@ -14,7 +14,7 @@ related_files:
   - src/backend/jobs/formar-lotes.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-10-05
+last_review: 2026-10-20
 preconditions:
   - "Carteira de títulos a pagar já ingerida/persistida (titulo_a_pagar) — roda logo APÓS o cron de ingestão."
   - "Mutações via cron ('cron', job:formar-lotes) ou trigger manual autenticado (POST /sispag/lotes/formar) — requireRole('admin') no manual."
@@ -92,6 +92,19 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
   título de hoje parecia vencido e o lote dele era desfeito (ADR-0070). O horizonte de 7 dias é o valor do tenant (config) sobre a estrutura universal
   "montar o lote das obrigações que vencem em breve".
 - **Anti-join (I3):** título já em qualquer lote RASCUNHO (manual ou auto) não é re-agrupado.
+
+## Emenda ADR-0076 (`planned`) — boleto agrupado (I19j, P1-4)
+
+- Um `GrupoBoleto CONFIRMADO` é **uma unidade**: entra inteiro (N `ItemLote` com `grupoBoletoId`, na mesma
+  transação) no lote do **vencimento do boleto**, ou não entra; nunca é dividido, e título de grupo nunca
+  entra avulso.
+- A janela "a-vencer ≤ 7 dias" e o "vencido" do passo 2 (L6) do grupo são medidos pelo **vencimento do
+  boleto**, por dia civil em Brasília (ADR-0070), nunca pelo do título.
+- Grupo órfão (I19u), com marca `BloqueioDuplicidade` `ATIVO` em algum título, ou com J rejeitado cujo
+  borderô antigo ainda não foi resolvido pela analista (I19r) **não** é lotado pelo cron; a inclusão,
+  nesses casos, é só manual.
+
+Ver `business-rules/boleto-agrupado-sispag.md`.
 
 ## Caveat — `banco` nulo na carteira a-pagar (degenera para filial)
 

@@ -12,7 +12,7 @@ related_files:
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-10-05
+last_review: 2026-10-20
 preconditions:
   - "Requer papel admin (requireRole('admin')) nas mutações."
   - "criar: filCod válido; incluir: título aprovado (liberado) + não pago + mesma filial do lote + não em outro RASCUNHO."
@@ -80,6 +80,15 @@ abrir o lote: o serviço acha o lote RASCUNHO em que o título está e aplica a 
 
 O título fica solto: a analista pode incluí-lo em outro lote logo em seguida. A formação automática
 pode lotá-lo de novo numa rodada futura, e isso é aceito (ADR-0050).
+
+## Grupo de boleto (ADR-0076, `planned`)
+
+`incluirGrupo` / `moverGrupo` / `removerGrupo`: o `GrupoBoleto CONFIRMADO` entra, se move e sai como **N
+`ItemLote`** (um por título, `grupoBoletoId`) **na mesma transação** (I19j). I2/I3/I4 valem por título; um
+título inelegível barra o grupo inteiro. Retirar ou mover **um** título de grupo (pela lixeira, pela aba de
+títulos ou por `mover: true`) ⇒ `GroupedBoletoIndivisibleError` (409). Grupo com J rejeitado volta ao lote só
+por inclusão manual, depois de a analista resolver o borderô antigo no ERP (I19r). Ver
+`business-rules/boleto-agrupado-sispag.md`.
 
 ## Segurança / consistência
 

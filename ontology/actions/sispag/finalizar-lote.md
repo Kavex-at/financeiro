@@ -12,7 +12,7 @@ related_files:
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-10-19
+last_review: 2026-10-20
 preconditions:
   - "Requer papel admin (requireRole('admin'))."
   - "Lote em RASCUNHO com ≥1 item; todos os itens ainda elegíveis (liberado + não pago)."
@@ -20,6 +20,7 @@ preconditions:
   - "Item TED/PIX sem dado no cadastro cmn025, de favorecido não autorizado ou com destino alterado desde a aprovação é retirado pela verificação (I13j, I14; ADR-0065) e a finalização segue com os restantes; se o lote esvaziar, fica RASCUNHO (BatchEmptiedByCheckError)."
   - "verificarItensTedPix roda antes da transição (I13a): nenhum item TED/PIX com verificacaoEstado PENDENTE (PaymentCheckPendingError, I13b) e nenhuma AlertaItemLote de duplicidade ABERTA (PendingDuplicateAlertError, I13f)."
   - "Nenhum item cujo título tenha ajuste de centavos não terminal (TitleAdjustmentInProgressError, 409; I18k, ADR-0074, planned)."
+  - "Grupo de boleto (GrupoBoleto) com algum título inelegível barra a finalização, listando o grupo; nunca se finaliza parte de um grupo (I2 por título, I19j; ADR-0076, planned)."
 postconditions:
   - "Lote RASCUNHO → FINALIZADO (L3): registra finalizadoPor + finalizadoEm; incrementa versao."
   - "Resposta lista os itens retirados pela verificação, com motivo (ADR-0065)."
@@ -67,6 +68,12 @@ esvaziado fica `RASCUNHO` (`BatchEmptiedByCheckError`). Barram: verificação pe
 falha (`PaymentCheckPendingError`) e alerta de duplicidade não resolvida
 (`PendingDuplicateAlertError`). Sem conferência por lote (L12/L13 removidas). Ver
 `business-rules/verificacao-ted-pix-sispag.md` e `business-rules/favorecido-autorizado-sispag.md`.
+
+## Boleto agrupado (ADR-0076, `planned`)
+
+A I2 é revalidada **por título** também nos itens de grupo. Um título do grupo que perdeu a liberação ou
+foi pago barra a finalização com o grupo listado; o grupo nunca é finalizado em parte nem retirado em
+silêncio. Ver `business-rules/boleto-agrupado-sispag.md` (I19c, I19j).
 
 ## Reversibilidade (L4) e cancelamento (L5)
 
