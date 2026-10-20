@@ -2434,7 +2434,7 @@ export async function revogarConfirmacaoEmissor(
 
 // ===================================================== Ajuste de centavos do título (ADR-0073, I18)
 
-export const MODOS_AJUSTE_CENTAVOS = ['off', 'shadow', 'on'] as const
+export const MODOS_AJUSTE_CENTAVOS = ['shadow', 'on'] as const
 export type ModoAjusteCentavos = (typeof MODOS_AJUSTE_CENTAVOS)[number]
 
 export const ETAPAS_AJUSTE_CENTAVOS = [

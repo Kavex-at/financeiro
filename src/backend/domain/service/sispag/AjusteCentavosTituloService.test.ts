@@ -40,9 +40,8 @@ interface Cenario {
     numeroBoleto?: string;
     totalPago?: number;
     loteFechado?: boolean;
-    modo?: string;
     servidor?: boolean;
-    loginSondado?: string;
+    liveWrite?: boolean;
     ledgerInicial?: Partial<AjusteCentavosExecucao>;
 }
 
@@ -340,10 +339,8 @@ const build = (c: Cenario = {}) => {
     if (c.servidor !== false) marcador.ligar();
     const env = {
         getEnvironmentVars: jest.fn(async () => ({
-            sispagAjusteCentavosFiliais: c.modo ?? '2:on',
-            sispagAjusteCentavosLoginSondado: c.loginSondado ?? 'MPS_FRANCINEI',
             conexosLogin: 'MPS_FRANCINEI',
-            sispagLiveWriteEnabled: true,
+            sispagLiveWriteEnabled: c.liveWrite ?? true,
             conexosWriteEnabled: true,
             conexosDryRun: false,
         })),
@@ -711,18 +708,24 @@ describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0073)', (
         semEscrita(h.client);
     });
 
-    it('modo off ⇒ nada acontece (nem leitura)', async () => {
-        const h = build({ modo: '' });
-        const r = await h.service.ajustar(PEDIDO);
-        expect(r.resultado).toBe('desligado');
-        expect(h.client.listarTitulosDoDocumento).not.toHaveBeenCalled();
+    it('sem flag dedicada: servidor + kill-switches ligados ⇒ on por padrão (emenda 2026-10-20)', async () => {
+        const h = build();
+        expect(await h.service.resolverModo()).toEqual({ modo: 'on', avisos: [] });
     });
 
-    it('login sondado diferente ⇒ shadow (M3)', async () => {
-        const h = build({ loginSondado: 'CLONEX' });
+    it('SISPAG_LIVE_WRITE_ENABLED desligado ⇒ shadow, zero escrita, aviso no log', async () => {
+        const h = build({ liveWrite: false });
         const r = await h.service.ajustar(PEDIDO);
-        expect(r.modo).toBe('shadow');
+        expect(r).toMatchObject({ resultado: 'simulado', modo: 'shadow' });
         semEscrita(h.client);
+        expect(h.logs).toContainEqual(
+            expect.objectContaining({
+                message: 'ajuste de centavos rebaixado a shadow',
+                data: expect.objectContaining({
+                    avisos: [expect.stringMatching(/SISPAG_LIVE_WRITE_ENABLED/)],
+                }),
+            }),
+        );
     });
 
     it('sessão = ConexosSessionRegistry.robot() explícita, mesmo dentro de request de analista', async () => {

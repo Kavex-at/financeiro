@@ -8,8 +8,7 @@ const MODOS_VALIDOS: ReadonlySet<string> = new Set(Object.values(MODO_POR_FILIAL
 export const CHAVE_GLOBAL = 0;
 
 /**
- * Parser ÚNICO das flags de rollout por filial (`SISPAG_BIND_CODBAR_FILIAIS`, ADR-0071, e
- * `SISPAG_AJUSTE_CENTAVOS_FILIAIS`, ADR-0073). Duas formas:
+ * Parser ÚNICO das flags de rollout por filial (`SISPAG_BIND_CODBAR_FILIAIS`, ADR-0071). Duas formas:
  *   - modo único `on` | `shadow` | `off`: vale para TODAS as filiais;
  *   - lista por filial `"1:shadow,7:off"`: filial ausente = `off`.
  * As duas formas não se misturam (`"on,1:off"` é inválido).

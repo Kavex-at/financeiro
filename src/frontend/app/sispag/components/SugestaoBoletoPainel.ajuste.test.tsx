@@ -56,7 +56,7 @@ const ajuste = (over: Partial<AjusteCentavos> = {}): AjusteCentavos => ({
 const renderPainel = (p: {
   sugestao?: SugestaoBoleto
   ajuste?: AjusteCentavos
-  modo?: 'off' | 'shadow' | 'on'
+  modo?: 'shadow' | 'on'
   executar?: boolean
 }) =>
   render(
@@ -73,10 +73,10 @@ const renderPainel = (p: {
 afterEach(() => jest.clearAllMocks())
 
 describe('SugestaoBoletoPainel — ajuste de centavos (ADR-0073)', () => {
-  it('modo off ⇒ selo "ajuste desligado", sem botão', () => {
-    renderPainel({ modo: 'off' })
-    expect(screen.getByTestId('selo-ajuste-desligado')).toHaveTextContent(
-      'diferença de centavos — ajuste desligado',
+  it('modo shadow ⇒ selo de simulação, sem botão', () => {
+    renderPainel({ modo: 'shadow' })
+    expect(screen.getByTestId('selo-ajuste-simulacao')).toHaveTextContent(
+      'diferença de centavos — ajuste em simulação',
     )
     expect(screen.queryByRole('button', { name: /Tentar de novo o ajuste/ })).toBeNull()
   })

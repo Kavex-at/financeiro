@@ -182,21 +182,6 @@ export default class EnvironmentVars {
     public sispagBindCodbarFiliais: string;
 
     /**
-     * Ajuste de centavos do título por renegociação no `fin070` (ADR-0073, I18l):
-     * `SISPAG_AJUSTE_CENTAVOS_FILIAIS` com o mesmo formato/parse fail-closed do
-     * `sispagBindCodbarFiliais`. Valor BRUTO; o modo efetivo mora em `ModoAjusteCentavos`.
-     * Default `''` = `off` em todas as filiais.
-     */
-    public sispagAjusteCentavosFiliais: string;
-
-    /**
-     * `SISPAG_AJUSTE_CENTAVOS_LOGIN_SONDADO` (ADR-0073, M3): o login Conexos aprovado na sonda G1
-     * (permissão de `fin070`/`fin103`). `on` exige igualdade com `conexosLogin`; diferente ou
-     * vazio ⇒ `shadow`. Default `''`.
-     */
-    public sispagAjusteCentavosLoginSondado: string;
-
-    /**
      * SISPAG TED/PIX (ADR-0054, Adendo). Três flags de go-live, **default false**, lidas só do
      * `EnvironmentProvider`. Nada disto foi provado sem HML; com as três desligadas o envio e a
      * tela são idênticos ao `main`. Só o valor exato `'true'` liga.
@@ -355,8 +340,6 @@ export default class EnvironmentVars {
         sispagLiveWriteEnabled,
         sispagDdaAssocEnabled,
         sispagBindCodbarFiliais,
-        sispagAjusteCentavosFiliais,
-        sispagAjusteCentavosLoginSondado,
         sispagTedEnabled,
         sispagPixEnabled,
         sispagFavorecidoAutorizadoEnabled,
@@ -408,8 +391,6 @@ export default class EnvironmentVars {
         sispagLiveWriteEnabled: boolean;
         sispagDdaAssocEnabled: boolean;
         sispagBindCodbarFiliais?: string;
-        sispagAjusteCentavosFiliais?: string;
-        sispagAjusteCentavosLoginSondado?: string;
         sispagTedEnabled?: boolean;
         sispagPixEnabled?: boolean;
         sispagFavorecidoAutorizadoEnabled?: boolean;
@@ -461,8 +442,6 @@ export default class EnvironmentVars {
         this.sispagLiveWriteEnabled = sispagLiveWriteEnabled;
         this.sispagDdaAssocEnabled = sispagDdaAssocEnabled;
         this.sispagBindCodbarFiliais = sispagBindCodbarFiliais ?? '';
-        this.sispagAjusteCentavosFiliais = sispagAjusteCentavosFiliais ?? '';
-        this.sispagAjusteCentavosLoginSondado = sispagAjusteCentavosLoginSondado ?? '';
         this.sispagTedEnabled = sispagTedEnabled ?? false;
         this.sispagPixEnabled = sispagPixEnabled ?? false;
         this.sispagFavorecidoAutorizadoEnabled = sispagFavorecidoAutorizadoEnabled ?? false;

@@ -151,7 +151,6 @@ describe('ElegibilidadeAjusteCentavos (I18a/I18b/I18m, ADR-0073)', () => {
             ['lote finalizado', { emLoteFinalizado: true }, 'TITULO_EM_LOTE_FINALIZADO'],
             ['rascunho nativo', { emRascunhoNativo: true }, 'TITULO_EM_RASCUNHO_NATIVO'],
             ['modo shadow', { modo: MODO_AJUSTE.SHADOW }, 'MODO_NAO_ON'],
-            ['modo off', { modo: MODO_AJUSTE.OFF }, 'MODO_NAO_ON'],
             ['aberto ilegível', { aberto: undefined }, 'VALOR_ABERTO_INDISPONIVEL'],
             ['código ausente', { codigo: undefined }, 'BOLETO_INDISPONIVEL'],
         ])('%s ⇒ %s', (_nome, sobrescreve, motivo) => {
