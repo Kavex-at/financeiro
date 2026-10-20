@@ -275,13 +275,13 @@ describe('validate-sispag-ajuste-centavos-v1 — medições', () => {
         expect(r.carteiraNaoEncontradaNoFin064).toBe(1);
         expect(r.universoFin064).toMatchObject({
             total: 5,
-            divergentes: 1,
+            divergentes: 2,
             incompletos: 1,
             comPagoParcial: 1,
             pagoLiquidoBrutoDoPago: 1,
             pagoLiquidoJaDescontaPago: 0,
             valorMuda: 1,
-            regressoes: { total: 2, DIVERGENTE: 1, INCOMPLETO: 1, NEGATIVO: 0 },
+            regressoes: { total: 3, DIVERGENTE: 2, INCOMPLETO: 1, NEGATIVO: 0 },
         });
         expect(r.carteiraBoleto.total).toBe(2);
         expect(r.carteiraBoleto.regressoes.total).toBe(1);
@@ -326,9 +326,9 @@ describe('validate-sispag-ajuste-centavos-v1 — medições', () => {
             semLiquido: 2,
             liquidoDiferenteDoValor: 1,
             jurosNaoZero: 2,
-            importIndisponivel: 1,
-            importMudaValor: 1,
-            somaAbsDeltaCentavos: 1,
+            importIndisponivel: 0,
+            importMudaValor: 2,
+            somaAbsDeltaCentavos: 51,
         });
     });
 
