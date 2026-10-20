@@ -1,4 +1,4 @@
-# Regis-Review reduzido — sispag-ajuste-centavos (ADR-0073)
+# Regis-Review reduzido — sispag-ajuste-centavos (ADR-0074)
 
 **Data:** 2026-10-19 · **Escopo:** delta da branch `feat/sispag-ajuste-centavos` · **QAs (escolhidos pelo
 risco):** fault-tolerance, integrability, security, testability · **Cartões:** `KANBAN.md` nesta pasta.

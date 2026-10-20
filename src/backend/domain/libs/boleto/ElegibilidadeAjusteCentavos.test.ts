@@ -39,7 +39,7 @@ const base = (
     ...sobrescreve,
 });
 
-describe('ElegibilidadeAjusteCentavos (I18a/I18b/I18m, ADR-0073)', () => {
+describe('ElegibilidadeAjusteCentavos (I18a/I18b/I18m, ADR-0074)', () => {
     it('caso canônico 1: Δ +0,01 ⇒ elegível, frnVldTpop 1 (acréscimo), 0,01', () => {
         const r = regra.avaliar(base());
         expect(r.elegivel).toBe(true);

@@ -1,5 +1,5 @@
--- 0087_sispag_ajuste_centavos.sql
--- ADR-0073 (I18) — ajuste de centavos do título por renegociação no `fin070`. Cinco blocos,
+-- 0088_sispag_ajuste_centavos.sql
+-- ADR-0074 (I18) — ajuste de centavos do título por renegociação no `fin070`. Cinco blocos,
 -- todos ADITIVOS e idempotentes:
 --
 --   1. ledger `sispag_ajuste_centavos_execucao` (padrão I-2: escrita irreversível no ERP com
@@ -21,7 +21,7 @@
 -- Só o código MASCARADO persiste (5+4, "…"); o CHECK faz o esquema recusar código longo.
 --
 -- Sem backfill: decisão legada fica com `tipo_anulacao` nulo (derivado do motivo na leitura).
--- Reverse (só estrutura) em `rollbacks/0087_sispag_ajuste_centavos.rollback.sql`.
+-- Reverse (só estrutura) em `rollbacks/0088_sispag_ajuste_centavos.rollback.sql`.
 
 -- ── 1. Ledger do ajuste ───────────────────────────────────────────────────────────────────────
 
@@ -226,6 +226,6 @@ ALTER TABLE alerta
     ));
 
 COMMENT ON TABLE sispag_ajuste_centavos_execucao IS
-    'ADR-0073 I18 — ledger write-ahead do ajuste de centavos do titulo (fin070/fin103). Um nao terminal por titulo de origem. Codigo so mascarado 5+4.';
+    'ADR-0074 I18 — ledger write-ahead do ajuste de centavos do titulo (fin070/fin103). Um nao terminal por titulo de origem. Codigo so mascarado 5+4.';
 COMMENT ON COLUMN sispag_decisao_sugestao_boleto.transferida_por IS
-    'ADR-0073 M1 — sistema quando a decisao foi transferida ao titulo renegociado (decidido_por/decidido_em herdados da decisao humana original).';
+    'ADR-0074 M1 — sistema quando a decisao foi transferida ao titulo renegociado (decidido_por/decidido_em herdados da decisao humana original).';

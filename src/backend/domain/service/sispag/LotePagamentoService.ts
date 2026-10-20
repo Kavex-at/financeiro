@@ -485,7 +485,7 @@ export default class LotePagamentoService {
                 motivo: `Defina a conta pagadora do lote antes de finalizar (a filial ${lote.filCod} não tem uma conta Itaú inequívoca).`,
             });
         }
-        // I18k/M5 (ADR-0073): título com ajuste de centavos em curso não entra em lote finalizado —
+        // I18k/M5 (ADR-0074): título com ajuste de centavos em curso não entra em lote finalizado —
         // o lote nativo fixaria o título antigo, que a renegociação está consumindo.
         const emAjuste = await this.repo.titulosComAjusteNaoTerminalNoLote(input.loteId);
         if (emAjuste.length > 0) {

@@ -85,7 +85,7 @@ describe('ElegibilidadeVinculoCodigoBarras (I17a–d, só locais)', () => {
         });
     });
 
-    describe('I17b emendada (ADR-0073) — régua LÍQUIDA', () => {
+    describe('I17b emendada (ADR-0074) — régua LÍQUIDA', () => {
         // HML 536/2: base 53,53 + juros 0,01 (renegociação fin070, frnVldTpop 1) ⇒ líquido 53,54.
         const hml5362 = {
             totalLiquido: 53.54,

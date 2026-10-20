@@ -10,7 +10,7 @@ findings_count: 5
 cards_count: 4
 ---
 
-# Integrability — Regis-Review (delta: ajuste de centavos, ADR-0073)
+# Integrability — Regis-Review (delta: ajuste de centavos, ADR-0074)
 
 ## 1. Cenário Geral
 

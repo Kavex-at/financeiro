@@ -1,4 +1,4 @@
--- Reverse da 0087 (ajuste de centavos do titulo por renegociacao no fin070, ADR-0073 / I18).
+-- Reverse da 0088 (ajuste de centavos do titulo por renegociacao no fin070, ADR-0074 / I18).
 --
 -- QUANDO: depois de voltar o backend para uma versao anterior ao ajuste. Com o backend novo no
 -- ar, remover estas colunas/tabela quebra a sugestao de boleto e a remessa.
@@ -16,7 +16,7 @@
 --          TO 'decisoes_transferidas.csv' CSV HEADER
 --
 -- Depois de reverter, remova a linha de `schema_migrations` se for reaplicar:
---   DELETE FROM schema_migrations WHERE name = '0087_sispag_ajuste_centavos.sql';
+--   DELETE FROM schema_migrations WHERE name = '0088_sispag_ajuste_centavos.sql';
 
 DROP INDEX IF EXISTS ux_sispag_sugestao_boleto_evento_ajuste_simulado;
 

@@ -1,5 +1,5 @@
 /**
- * Modos do ajuste de centavos do título (I18l, ADR-0073). Sem flag dedicada (emenda 2026-10-20):
+ * Modos do ajuste de centavos do título (I18l, ADR-0074). Sem flag dedicada (emenda 2026-10-20):
  * o ajuste é ativo por padrão e o modo efetivo sai dos kill-switches de escrita e do processo.
  */
 export const MODO_AJUSTE = {

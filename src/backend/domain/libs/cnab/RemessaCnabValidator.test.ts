@@ -361,7 +361,7 @@ const barrasComValor = (centavos: number): string => {
     return `${b.slice(0, 4)}${dv === 0 || dv === 10 || dv === 11 ? 1 : dv}${b.slice(5)}`;
 };
 
-describe('I17m — barra == pagamento do J (ADR-0073)', () => {
+describe('I17m — barra == pagamento do J (ADR-0074)', () => {
     const B46250 = barrasComValor(46250);
 
     it('a guarda nasce BLOQUEIA (fail-closed, M8)', () => {

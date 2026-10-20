@@ -14,7 +14,7 @@ import TituloAPagarRepository from './TituloAPagarRepository.js';
 import VerificacaoEventoRepository from './VerificacaoEventoRepository.js';
 
 /**
- * Ledger do ajuste de centavos e rechaveamento (ADR-0073, I18h/I18j) contra um Postgres DE
+ * Ledger do ajuste de centavos e rechaveamento (ADR-0074, I18h/I18j) contra um Postgres DE
  * VERDADE. Roda no `npm run test:sql` com DSN LOCAL (apaga e recria `sispag_ajuste_repo_it`).
  */
 

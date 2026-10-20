@@ -59,7 +59,7 @@ describe('bootstrapAppContainer — migration wiring (P0-1)', () => {
         expect(migrationRun).toHaveBeenCalledTimes(1);
     });
 
-    it('does NOT mark the process as the server (ADR-0073: jobs share this bootstrap)', async () => {
+    it('does NOT mark the process as the server (ADR-0074: jobs share this bootstrap)', async () => {
         const { bootstrapAppContainer } = await import('./appContainer.js');
         await bootstrapAppContainer();
         const { container } = await import('tsyringe');

@@ -526,7 +526,7 @@ export default class SugestaoBoletoRepository {
     };
 
     /**
-     * Evento do ajuste de centavos (ADR-0073) com `decisao_id`. `ON CONFLICT DO NOTHING`: o
+     * Evento do ajuste de centavos (ADR-0074) com `decisao_id`. `ON CONFLICT DO NOTHING`: o
      * `AJUSTE_SIMULADO` é único por (título, decisão, motivo) — a varredura `shadow` não inunda a
      * trilha. Recusa dígitos longos no detalhe (I15k).
      */

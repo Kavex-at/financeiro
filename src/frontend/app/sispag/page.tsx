@@ -410,7 +410,7 @@ function SispagPanel() {
     habilitado: carteiraConcluida,
     aoAtualizar: recarregarLotes,
   })
-  // ADR-0073: retoma ajustes de centavos pendentes (só `sispag:executar`; o servidor agenda).
+  // ADR-0074: retoma ajustes de centavos pendentes (só `sispag:executar`; o servidor agenda).
   useAjustesCentavosAoAbrir({ habilitado: carteiraConcluida, podeExecutar })
 
   // "Sincronizar lotes": passada completa forçada (~25 s). Basta `sispag:ver`.

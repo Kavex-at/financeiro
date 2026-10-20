@@ -113,7 +113,7 @@ const chaveDeLock = (k: Chave): number => {
 };
 
 /**
- * AjusteCentavosTituloService — ajuste de centavos do título por renegociação no `fin070` (ADR-0073,
+ * AjusteCentavosTituloService — ajuste de centavos do título por renegociação no `fin070` (ADR-0074,
  * I18). Três gatilhos, UMA ação (I18g): logo após o commit do `confirmar` (assíncrono, fora da
  * transação), "tentar de novo" e a varredura de retomada — sempre no processo do servidor.
  *

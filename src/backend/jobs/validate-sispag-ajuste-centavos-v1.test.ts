@@ -16,7 +16,7 @@ import {
 } from './validate-sispag-ajuste-centavos-v1.js';
 
 /**
- * Prova de SOMENTE LEITURA do job de ground truth do ajuste de centavos (ADR-0073, Tasks 13/14):
+ * Prova de SOMENTE LEITURA do job de ground truth do ajuste de centavos (ADR-0074, Tasks 13/14):
  * roda o job INTEIRO contra um Conexos falso e falha se qualquer método de escrita for chamado —
  * no adapter legado, no `ConexosBaseClient` ou no `ConexosSispagWriteClient` — ou se algum `POST`
  * sair para caminho que não seja `list`.

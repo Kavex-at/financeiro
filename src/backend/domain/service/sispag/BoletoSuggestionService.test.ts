@@ -540,7 +540,7 @@ describe('cache do cenário (PERF-1)', () => {
     });
 });
 
-describe('BoletoSuggestionService.confirmar — ajuste de centavos pós-commit (I18g, ADR-0073)', () => {
+describe('BoletoSuggestionService.confirmar — ajuste de centavos pós-commit (I18g, ADR-0074)', () => {
     it('agenda o ajuste DEPOIS do commit, fora da transação, sem esperar', async () => {
         const { service, db, ajuste } = montar();
         let dentroDaTransacao = false;

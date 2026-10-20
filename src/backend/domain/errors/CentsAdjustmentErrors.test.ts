@@ -7,7 +7,7 @@ import TitleAdjustmentInProgressError from './TitleAdjustmentInProgressError.js'
 const BARRAS = '34191000000462501234567890123456789012345678';
 const LINHA = '34191234567890123456789012345678901234567890123';
 
-describe('RemessaBarcodeAmountMismatchError (I17m, ADR-0073)', () => {
+describe('RemessaBarcodeAmountMismatchError (I17m, ADR-0074)', () => {
     const erro = new RemessaBarcodeAmountMismatchError({
         nomeArquivo: 'PG191074.REM',
         flpCod: 46,
@@ -54,7 +54,7 @@ describe('RemessaBarcodeAmountMismatchError (I17m, ADR-0073)', () => {
     });
 });
 
-describe('NetValueUnavailableError (I17n, ADR-0073)', () => {
+describe('NetValueUnavailableError (I17n, ADR-0074)', () => {
     const erro = new NetValueUnavailableError({ filCod: 2, docCod: '536', titCod: '2' });
 
     it('é 409, não retentável, com motivo VALOR_LIQUIDO_INDISPONIVEL', () => {
@@ -77,7 +77,7 @@ describe('NetValueUnavailableError (I17n, ADR-0073)', () => {
     });
 });
 
-describe('erros do ajuste de centavos (I18, ADR-0073): 409, message inglês, userMessage pt-BR', () => {
+describe('erros do ajuste de centavos (I18, ADR-0074): 409, message inglês, userMessage pt-BR', () => {
     const chave = { filCod: 2, docCod: '536', titCod: '1' };
 
     it('CentsAdjustmentIncompleteError é retomável', () => {

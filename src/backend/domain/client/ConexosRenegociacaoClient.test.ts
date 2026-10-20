@@ -38,7 +38,7 @@ const recusa = (key: string) =>
 const HOJE = Date.UTC(2026, 9, 19);
 const VENC = Date.UTC(2026, 9, 30);
 
-describe('ConexosRenegociacaoClient (ADR-0073, I18c–e)', () => {
+describe('ConexosRenegociacaoClient (ADR-0074, I18c–e)', () => {
     describe('escritas: tentativa única, corpos do HML (probe-hml-renegociacao-fin070)', () => {
         it('criarRenegociacao: POST fin070 com pesCod, frnVldTipo 2, frnVldTpop 0, data e obs MAIÚSCULA', async () => {
             const { s, sessao: sx } = sessao();

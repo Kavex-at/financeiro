@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { AjusteCentavosSelo } from './AjusteCentavosSelo'
 
-describe('AjusteCentavosSelo (ADR-0073)', () => {
+describe('AjusteCentavosSelo (ADR-0074)', () => {
   it('sem selo, nada é renderizado', () => {
     const { container } = render(<AjusteCentavosSelo selo={null} />)
     expect(container).toBeEmptyDOMElement()

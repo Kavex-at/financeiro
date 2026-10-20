@@ -56,7 +56,7 @@ export interface ResultadoEtapa {
 
 /**
  * AjusteCentavosExecucaoRepository — ledger write-ahead `sispag_ajuste_centavos_execucao`
- * (ADR-0073, I18h; migration 0087). SQL 100% parametrizado. Um ledger por tentativa, idempotente
+ * (ADR-0074, I18h; migration 0088). SQL 100% parametrizado. Um ledger por tentativa, idempotente
  * por (filial, documento, título de origem, decisão); no máximo um NÃO terminal por título (índice
  * único parcial). Toda transição passa pela máquina pura (`EtapaAjusteCentavos`) e é condicionada à
  * etapa lida (lock otimista): duas execuções concorrentes nunca avançam o mesmo ledger.

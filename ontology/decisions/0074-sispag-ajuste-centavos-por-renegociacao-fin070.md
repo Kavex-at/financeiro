@@ -1,5 +1,5 @@
 ---
-adr_number: 0073
+adr_number: 0074
 title: SISPAG — ajuste de centavos do título por renegociação no fin070 (o valor do boleto é a verdade)
 date: 2026-10-19
 status: accepted
@@ -14,10 +14,10 @@ evidence:
   - "PRD 2026-10-19 (só leitura): 109 títulos <= R$ 0,05 com número igual (todos NELSON +0,01); 0 entre R$ 0,06 e R$ 10; 25 > R$ 10"
 ---
 
-# ADR 0073: ajuste de centavos do título por renegociação (fin070)
+# ADR 0074: ajuste de centavos do título por renegociação (fin070)
 
-**Branch:** `feat/sispag-ajuste-centavos`. `/feature-tweak`. `entity_changed = true`. Ontologia **0.44.0**
-(regra e ação `planned`, à frente do código). Migration prevista: **0087**.
+**Branch:** `feat/sispag-ajuste-centavos`. `/feature-tweak`. `entity_changed = true`. Ontologia **0.45.0**
+(regra e ação `planned`, à frente do código). Migration prevista: **0088**.
 
 > Reconferir antes do ship: `origin/main` em 2026-10-19 = app v0.69.0, ontologia 0.43.0, último ADR 0072,
 > última migration 0086.
@@ -116,7 +116,7 @@ Da revisão do diff (`_inbox/sispag-ajuste-centavos-ontology-diff.md`, aprovado 
   estreito (I18). Toda a escrita no título fica nesta regra.
 - **I15g é emendada:** "o sistema nunca confirma" continua; a **transferência** de uma confirmação humana para o
   título renegociado é ação do sistema, auditada, que herda o autor. CHECK da 0084 relaxado só para
-  `tipoAnulacao = TITULO_RENEGOCIADO` (migration 0087).
+  `tipoAnulacao = TITULO_RENEGOCIADO` (migration 0088).
 - Ledgers de escrita irreversível no ERP passam de seis para **sete** (I-2).
 - O CNAB ganha uma guarda nova (I17m) que vale para todo J — medir antes (M8).
 - O título renegociado volta a ter `titMnyValor` base na carteira e na sugestão (Δ continua +0,01, dentro da

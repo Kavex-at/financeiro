@@ -18,7 +18,7 @@ import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
 import sispagRouter from './sispag.js';
 
-/** Rotas do ajuste de centavos (ADR-0073, I18g). */
+/** Rotas do ajuste de centavos (ADR-0074, I18g). */
 
 const buildApp = (permissoes: Permission[]): express.Express => {
     const app = express();

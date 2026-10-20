@@ -69,7 +69,7 @@ describe('ConexosSispagClient.lerTotalAberto (ADR-0071, I17b)', () => {
     });
 });
 
-describe('ConexosSispagClient.lerValoresAberto (ADR-0073, I17b régua líquida)', () => {
+describe('ConexosSispagClient.lerValoresAberto (ADR-0074, I17b régua líquida)', () => {
     it('devolve os cinco campos da régua líquida do título pedido', async () => {
         const base = buildBase();
         base.listGenericPaginated.mockResolvedValue({

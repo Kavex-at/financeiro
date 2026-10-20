@@ -35,7 +35,7 @@ import type NotificacaoService from '../domain/service/operacao/NotificacaoServi
 import AjusteCentavosTituloService from '../domain/service/sispag/AjusteCentavosTituloService.js';
 
 /**
- * HML (ESCREVE) — portões G2 e G3 do ajuste de centavos (ADR-0073, Task 15). Autorizado pelo
+ * HML (ESCREVE) — portões G2 e G3 do ajuste de centavos (ADR-0074, Task 15). Autorizado pelo
  * maintainer em 2026-10-19. Fases (`FASE`), uma sessão por execução, sequenciais:
  *
  *   descobrir  (padrão, só leitura) títulos frescos nos pendentes do SISPAG (filial/banco) + fin064

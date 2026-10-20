@@ -7,11 +7,11 @@ import { ETAPA_AJUSTE } from '../domain/libs/boleto/EtapaAjusteCentavos.js';
 import MigrationFiles from './MigrationFiles.js';
 
 /**
- * 0087 — ajuste de centavos do título (ADR-0073, I18). Asserções sobre o FONTE (padrão 0084–0086:
+ * 0088 — ajuste de centavos do título (ADR-0074, I18). Asserções sobre o FONTE (padrão 0084–0086:
  * o `MigrationRunner` usa `import.meta` e não roda sob Jest). O comportamento contra um Postgres
- * de verdade está em `0087_sispag_ajuste_centavos.integration.test.ts`.
+ * de verdade está em `0088_sispag_ajuste_centavos.integration.test.ts`.
  */
-const NOME = '0087_sispag_ajuste_centavos.sql';
+const NOME = '0088_sispag_ajuste_centavos.sql';
 const SQL = readFileSync(path.join(__dirname, NOME), 'utf8');
 const CODIGO = SQL.split('\n')
     .map((linha) => linha.replace(/--.*$/, ''))
@@ -23,7 +23,7 @@ const valoresDe = (re: RegExp): string[] => {
     return [...(m?.[1] ?? '').matchAll(/'([^']+)'/g)].map((x) => x[1] as string).sort();
 };
 
-describe('migration 0087 — ajuste de centavos do título (ADR-0073)', () => {
+describe('migration 0088 — ajuste de centavos do título (ADR-0074)', () => {
     it('o CHECK de etapa do ledger é exatamente a máquina da I18h (EtapaAjusteCentavos)', () => {
         expect(valoresDe(/execucao_etapa_check CHECK \(etapa IN \(([^)]*)\)/)).toEqual(
             Object.values(ETAPA_AJUSTE).sort(),
@@ -105,7 +105,7 @@ describe('migration 0087 — ajuste de centavos do título (ADR-0073)', () => {
         expect(valores).toContain('sispag-ajuste-centavos-parado');
         expect(CODIGO).toMatch(/ALTER TABLE alerta DROP CONSTRAINT IF EXISTS alerta_tipo_check;/);
         const rollback = readFileSync(
-            path.join(__dirname, 'rollbacks', '0087_sispag_ajuste_centavos.rollback.sql'),
+            path.join(__dirname, 'rollbacks', '0088_sispag_ajuste_centavos.rollback.sql'),
             'utf8',
         );
         expect(rollback).toMatch(/DELETE FROM alerta WHERE tipo = 'sispag-ajuste-centavos-parado'/);
@@ -114,12 +114,12 @@ describe('migration 0087 — ajuste de centavos do título (ADR-0073)', () => {
     it('o .sql é copiado para dist/ pela mesma definição de migração do runner (incidente 2026-09-23)', () => {
         const listadas = new MigrationFiles().listOrFail(__dirname);
         expect(listadas).toContain(NOME);
-        expect(listadas.filter((f) => f.startsWith('0087_'))).toEqual([NOME]);
+        expect(listadas.filter((f) => f.startsWith('0088_'))).toEqual([NOME]);
     });
 
     it('tem reverse fora do alcance do runner', () => {
         const reverses = readdirSync(path.join(__dirname, 'rollbacks'));
-        expect(reverses).toContain('0087_sispag_ajuste_centavos.rollback.sql');
+        expect(reverses).toContain('0088_sispag_ajuste_centavos.rollback.sql');
         expect(readdirSync(__dirname).filter((f) => f.endsWith('.rollback.sql'))).toEqual([]);
     });
 });

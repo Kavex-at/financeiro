@@ -14,7 +14,7 @@ O resolver cai no robô em quatro situações, todas esperadas:
 3. senha do vínculo não decifra (chave ausente/trocada);
 4. o login Conexos do usuário falha (credencial inválida, conta bloqueada, limite de sessões).
 
-> **Exceção (ADR-0073, I18f, `planned`):** o ajuste de centavos do título **não** passa pelo resolver por-request. Ele
+> **Exceção (ADR-0074, I18f, `planned`):** o ajuste de centavos do título **não** passa pelo resolver por-request. Ele
 > usa explicitamente a sessão da credencial do ambiente do servidor e nunca roda em job/cron; sem essa
 > sessão (ou fora do processo do servidor) degrada para `shadow`, em vez de cair noutra identidade.
 
@@ -47,7 +47,7 @@ a identidade **do ERP** efetivamente usada:
 
 Ledgers cobertos (**sete**): `permuta_alocacao_execucao`, `solicitacao_numerario_execucao`,
 `recebimento_execucao`, `remessa_execucao`, `conciliacao_execucao`, `solicitacao_numerario` e
-(ADR-0073, `planned`) `sispag_ajuste_centavos_execucao`.
+(ADR-0074, `planned`) `sispag_ajuste_centavos_execucao`.
 
 > **A sexta não tem `_execucao` no nome.** `solicitacao_numerario` (migration 0032,
 > `NumerarioExecucaoRepository`, alcançável por `routes/permutas.ts`) é write-ahead como as outras e

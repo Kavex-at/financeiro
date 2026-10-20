@@ -6,8 +6,8 @@
 > **Insumos:** `_inbox/sispag-ajuste-centavos-interview.md` (incl. "Respostas do maintainer (2026-10-19)",
 > autoritativas) e `_inbox/sispag-centavos-hml-achados.md`.
 >
-> **Numeração (conferida contra `origin/main` em 2026-10-19):** ADR **0073** · ontologia 0.43.0 → **0.44.0** ·
-> app v0.69.0 (não muda aqui) · última migration `0086_sispag_vinculo_codigo_barras.sql` ⇒ **próxima livre: 0087**.
+> **Numeração (conferida contra `origin/main` em 2026-10-19):** ADR **0074** · ontologia 0.43.0 → **0.45.0** ·
+> app v0.69.0 (não muda aqui) · última migration `0086_sispag_vinculo_codigo_barras.sql` ⇒ **próxima livre: 0088**.
 > IDs novos: **I17m**, **I17n** (emendas à regra I17) e **I18a–I18n** (regra nova). Nenhum `I18*`, `I17m` ou
 > `I17n` existe hoje na ontologia (grep limpo). Reconferir tudo antes do ship (memória
 > "versão colide entre sessões paralelas").
@@ -50,7 +50,7 @@
 | 10 | Novo estado persistido `AJUSTADA` / `AGUARDANDO_AJUSTE` na decisão | E: confunde execução com decisão (precedente `APLICADO_NO_ERP`, rejeitado na ADR-0071) | **REJECT-WORKAROUND** |
 | 11 | Constante nova para o limite R$ 0,05 | D: `LIMITE_VALOR_MESMO_DIA` (I15c) | **REJECT-DUPLICATE** (reaproveitar) |
 | 12 | Janela "≤ 5 dias" para o ajuste (citada nos achados) | A: não; os 118/118 NELSON são mesmo dia; I15c já limita ≤ R$ 0,05 ao mesmo dia | **REJECT** (P1-2 aceito: mesmo vencimento) |
-| 13 | Corrigir o documento no `com298` (estornar/editar/finalizar) | A:? · pendente com a Columbia (D7) · não testado | **REJECT-PREMATURE** (ADR-0073, watchlist) |
+| 13 | Corrigir o documento no `com298` (estornar/editar/finalizar) | A:? · pendente com a Columbia (D7) · não testado | **REJECT-PREMATURE** (ADR-0074, watchlist) |
 | 14 | Desconto nativo `fin062`/`fin063` | recusado em HML (`docCod NOT_VALID`), não cobre acréscimo (125 de 126 casos) | **REJECT-WORKAROUND** |
 | 15 | Declarar juros/desconto/valor no item (`itsMnyRecbrac`, `titMnyJuros`, `titMnyDesconto`, `itsMnyValor`, `titMnyLiquido`) | HML A2/B0/B1/B2 + #7/#9/#10: o J paga o título | **REJECT-WORKAROUND** |
 | 16 | `PUT fin026` para valor | aceito e ignorado (HML #9) | **REJECT-WORKAROUND** |
@@ -72,7 +72,7 @@ watchlist como os demais itens de 1 cliente do SISPAG.
 **Novos**
 1. `ontology/business-rules/ajuste-centavos-titulo-sispag.md` (I18a–n)
 2. `ontology/actions/sispag/ajustar-centavos-titulo.md` (`ajustarCentavosTitulo`)
-3. `ontology/decisions/0073-sispag-ajuste-centavos-por-renegociacao-fin070.md`
+3. `ontology/decisions/0074-sispag-ajuste-centavos-por-renegociacao-fin070.md`
 
 **Emendas**
 4. `ontology/business-rules/vinculo-codbar-item-sispag.md` — I17b (régua líquida), nota em I17d(6), **+I17m**, **+I17n**, erros, "Fora do escopo"
@@ -104,7 +104,7 @@ name: ajuste-centavos-titulo-sispag
 type: business-rule
 entity: TituloAPagar
 invariant: I18
-ontology_version: "0.44.0"
+ontology_version: "0.45.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -117,7 +117,7 @@ related_files:
   - src/backend/domain/repository/sispag/SugestaoBoletoRepository.ts
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
-  - src/backend/migrations/0087_sispag_ajuste_centavos.sql
+  - src/backend/migrations/0088_sispag_ajuste_centavos.sql
 last_review: 2026-10-19
 has_canonical_test: false
 universality_evidence:
@@ -128,7 +128,7 @@ universality_evidence:
 
 # Business Rule: ajuste de centavos do título por renegociação (I18)
 
-> **Origem:** ADR-0073 (2026-10-19). **O valor do boleto é a verdade** (D1). Quando uma pessoa já confirmou
+> **Origem:** ADR-0074 (2026-10-19). **O valor do boleto é a verdade** (D1). Quando uma pessoa já confirmou
 > que o boleto é deste título (I15, `CONFIRMADA`) e a diferença é de centavos (|Δ| ≤ `LIMITE_VALOR_MESMO_DIA`,
 > R$ 0,05), a plataforma **renegocia o título no `fin070`** para que o seu líquido fique igual ao valor do
 > boleto (juros quando o boleto está acima, desconto quando está abaixo), **libera no `fin103` só o bloqueio
@@ -179,7 +179,7 @@ Eventos novos na trilha `sispag_sugestao_boleto_evento` (só-inclusão): `AJUSTE
 | `CentsAdjustmentIncompleteError` | falha transitória/ambígua; retomável (I18h) | 409 |
 | `CentsAdjustmentNotEligibleError` | "tentar de novo" sobre título que deixou de ser elegível (I18a), com o motivo | 409 |
 
-## Premissas pendentes com a Columbia (não bloqueiam; ADR-0073)
+## Premissas pendentes com a Columbia (não bloqueiam; ADR-0074)
 
 Renegociação em vez de correção do documento; conta contábil de juros/desconto (premissa: o default do
 `fin070`); usuário de aprovação no `fin103` (premissa: a sessão do servidor); acesso do login do servidor a
@@ -204,7 +204,7 @@ Renegociação em vez de correção do documento; conta contábil de juros/desco
 
 ## Ver também
 
-`decisions/0073-*.md` · `actions/sispag/ajustar-centavos-titulo.md` · `business-rules/vinculo-codbar-item-sispag.md`
+`decisions/0074-*.md` · `actions/sispag/ajustar-centavos-titulo.md` · `business-rules/vinculo-codbar-item-sispag.md`
 (I17b, I17m, I17n) · `business-rules/sugestao-boleto-dda-sispag.md` (I15c, I15g) ·
 `entities/decisao-sugestao-boleto.md` · `entities/titulo-a-pagar.md` · `business-rules/identidade-execucao-conexos.md`
 · `_inbox/sispag-centavos-hml-achados.md`
@@ -217,7 +217,7 @@ Renegociação em vez de correção do documento; conta contábil de juros/desco
 name: ajustarCentavosTitulo
 type: action
 entity: TituloAPagar
-ontology_version: "0.44.0"
+ontology_version: "0.45.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -228,7 +228,7 @@ related_files:
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
   - src/backend/routes/sispag.ts
-  - src/backend/migrations/0087_sispag_ajuste_centavos.sql
+  - src/backend/migrations/0088_sispag_ajuste_centavos.sql
 last_review: 2026-10-19
 preconditions:
   - "Processo do servidor (nunca job/cron); sessão Conexos = credencial do ambiente, explícita, com sonda G1 aprovada (I18f)."
@@ -249,18 +249,18 @@ side_effects:
 
 # ajustarCentavosTitulo
 
-ADR-0073. Renegocia no `fin070` o título a pagar cujo boleto confirmado difere em centavos (I18), libera só o
+ADR-0074. Renegocia no `fin070` o título a pagar cujo boleto confirmado difere em centavos (I18), libera só o
 bloqueio que a renegociação criou e faz decisão, carteira e item seguirem o título novo. **Três gatilhos, uma
 ação:** após o commit do `confirmarSugestaoBoleto` (assíncrono), "tentar de novo" (`sispag:executar`) e a
 varredura de retomada no processo do servidor (I18g). Nunca pela remessa, nunca por cron. Idempotente por
 I18h/I18i. **Planned** (modo `off` por default).
 ````
 
-### 3.3 `ontology/decisions/0073-sispag-ajuste-centavos-por-renegociacao-fin070.md`
+### 3.3 `ontology/decisions/0074-sispag-ajuste-centavos-por-renegociacao-fin070.md`
 
 ````markdown
 ---
-adr_number: 0073
+adr_number: 0074
 title: SISPAG — ajuste de centavos do título por renegociação no fin070 (o valor do boleto é a verdade)
 date: 2026-10-19
 status: accepted
@@ -275,10 +275,10 @@ evidence:
   - "PRD 2026-10-19 (só leitura): 109 títulos <= R$ 0,05 com número igual (todos NELSON +0,01); 0 entre R$ 0,06 e R$ 10; 25 > R$ 10"
 ---
 
-# ADR 0073: ajuste de centavos do título por renegociação (fin070)
+# ADR 0074: ajuste de centavos do título por renegociação (fin070)
 
-**Branch:** `feat/sispag-ajuste-centavos`. `/feature-tweak`. `entity_changed = true`. Ontologia **0.44.0**
-(regra e ação `planned`, à frente do código). Migration prevista: **0087**.
+**Branch:** `feat/sispag-ajuste-centavos`. `/feature-tweak`. `entity_changed = true`. Ontologia **0.45.0**
+(regra e ação `planned`, à frente do código). Migration prevista: **0088**.
 
 > Reconferir antes do ship: `origin/main` em 2026-10-19 = app v0.69.0, ontologia 0.43.0, último ADR 0072,
 > última migration 0086.
@@ -349,7 +349,7 @@ manda `titMnyValor` (base) como valor do item, não o líquido.
   estreito (I18). Toda a escrita no título fica nesta regra.
 - **I15g é emendada:** "o sistema nunca confirma" continua; a **transferência** de uma confirmação humana para o
   título renegociado é ação do sistema, auditada, que herda o autor. CHECK da 0084 relaxado só para
-  `tipoAnulacao = TITULO_RENEGOCIADO` (migration 0087).
+  `tipoAnulacao = TITULO_RENEGOCIADO` (migration 0088).
 - Ledgers de escrita irreversível no ERP passam de seis para **sete** (I-2).
 - O CNAB ganha uma guarda nova (I17m) que vale para todo J — medir antes (M8).
 - O título renegociado volta a ter `titMnyValor` base na carteira e na sugestão (Δ continua +0,01, dentro da
@@ -372,7 +372,7 @@ Universalidade: 1 cliente, revisão com o Francinei não bloqueante.
 **Frontmatter**
 ```diff
 -ontology_version: "0.43.0"
-+ontology_version: "0.44.0"
++ontology_version: "0.45.0"
 ...
 -last_review: 2026-10-14
 +last_review: 2026-10-19
@@ -387,17 +387,17 @@ e acrescentar em `related_files`: `src/backend/domain/libs/boleto/ElegibilidadeV
 ```
 + AFTER:
 ```
-| **I17b** | **Valor igual em centavos, contra o LÍQUIDO aberto (emendada ADR-0073).** `round(valorBoleto × 100) == round(abertoLiquido × 100)`, com `abertoLiquido = fin064.totalLiquido − totalPago`, **conferido** contra `totalAberto + titMnyJuros − titMnyDesconto` (todos lidos ao vivo no `fin064`). As duas fórmulas divergirem, ou qualquer campo faltar ⇒ `VALOR_ABERTO_INDISPONIVEL`, item **inelegível** (fail-closed, I17g(1)). `valorBoleto` é **decodificado por nós** do código de barras (campo de 10 dígitos / 100) e conferido com o devolvido pelo ERP (`validacao/codigoBarras`). Nunca se compara com `ItemLote.valor` (snapshot) nem com a carteira (`titMnyValor`, base). A mesma régua vale nos três pontos: elegibilidade, conferência pré-`PUT` do executor e conferência pós-releitura. Para título sem juros/desconto e sem pagamento, `abertoLiquido = totalAberto`: **nenhuma mudança de comportamento**. Diferença de 1 centavo continua **inelegível**; ela se resolve **antes**, no título, pela I18 (`ajuste-centavos-titulo-sispag`, ADR-0073), nunca aqui. |
+| **I17b** | **Valor igual em centavos, contra o LÍQUIDO aberto (emendada ADR-0074).** `round(valorBoleto × 100) == round(abertoLiquido × 100)`, com `abertoLiquido = fin064.totalLiquido − totalPago`, **conferido** contra `totalAberto + titMnyJuros − titMnyDesconto` (todos lidos ao vivo no `fin064`). As duas fórmulas divergirem, ou qualquer campo faltar ⇒ `VALOR_ABERTO_INDISPONIVEL`, item **inelegível** (fail-closed, I17g(1)). `valorBoleto` é **decodificado por nós** do código de barras (campo de 10 dígitos / 100) e conferido com o devolvido pelo ERP (`validacao/codigoBarras`). Nunca se compara com `ItemLote.valor` (snapshot) nem com a carteira (`titMnyValor`, base). A mesma régua vale nos três pontos: elegibilidade, conferência pré-`PUT` do executor e conferência pós-releitura. Para título sem juros/desconto e sem pagamento, `abertoLiquido = totalAberto`: **nenhuma mudança de comportamento**. Diferença de 1 centavo continua **inelegível**; ela se resolve **antes**, no título, pela I18 (`ajuste-centavos-titulo-sispag`, ADR-0074), nunca aqui. |
 ```
 
 **I17d** — acrescentar ao fim da célula (sem mudar a regra):
 - BEFORE (fim da célula): `... Nenhuma checagem é delegada ao ERP. |`
-+ AFTER: `... Nenhuma checagem é delegada ao ERP. **Nota (ADR-0073):** em (6), "juros e desconto = 0" refere-se ao que **nós declaramos** no `confirmaCodigoBarras`/item; juros/desconto **do título** (nascidos da renegociação I18) são esperados e o critério continua `itsMnyVlrPgtoResult == valorBoleto` (HML 536/2: confirm 53,54). |`
++ AFTER: `... Nenhuma checagem é delegada ao ERP. **Nota (ADR-0074):** em (6), "juros e desconto = 0" refere-se ao que **nós declaramos** no `confirmaCodigoBarras`/item; juros/desconto **do título** (nascidos da renegociação I18) são esperados e o critério continua `itsMnyVlrPgtoResult == valorBoleto` (HML 536/2: confirm 53,54). |`
 
 **Novas linhas, depois de I17l:**
 ```
-| **I17m** | **Guarda do `.REM`: barra == pagamento do J (ADR-0073).** Em todo segmento J cujo código de barras tem valor > 0, o valor da barra (campo de 10 dígitos / 100) **deve ser igual** ao valor do pagamento do próprio J. Divergência ⇒ `RemessaBarcodeAmountMismatchError` (409), código **mascarado** (5+4), tratamento do gate pós-geração da I16b(2) (lote nativo finalizado e arquivo no ERP para cancelamento manual). Barra com valor zerado (boleto de valor aberto) fica **fora** da guarda. Vale para **todo** J (DDA do ERP, vínculo I17 e ajuste I18) e é **pré-requisito** do modo `on` da I18. Antes de virar bloqueio, medir só-leitura os `.REM` de PRD dos últimos 30 dias (M8). |
-| **I17n** | **O item é importado pelo líquido (ADR-0073; corrige bug de implementação).** O `importar` do `fin015` leva `itsMnyValor = itsMnyVlrPgto = titMnyLiquido` **do grid de pendentes** do título, nunca `titMnyValor` (base). `titMnyLiquido` ausente ⇒ usa `titMnyValor` **só** se `titMnyJuros` e `titMnyDesconto` forem 0/ausentes; caso contrário o item não é importado (erro nomeado, motivo `VALOR_LIQUIDO_INDISPONIVEL`). Vale para todo título, não só para os ajustados pela I18. |
+| **I17m** | **Guarda do `.REM`: barra == pagamento do J (ADR-0074).** Em todo segmento J cujo código de barras tem valor > 0, o valor da barra (campo de 10 dígitos / 100) **deve ser igual** ao valor do pagamento do próprio J. Divergência ⇒ `RemessaBarcodeAmountMismatchError` (409), código **mascarado** (5+4), tratamento do gate pós-geração da I16b(2) (lote nativo finalizado e arquivo no ERP para cancelamento manual). Barra com valor zerado (boleto de valor aberto) fica **fora** da guarda. Vale para **todo** J (DDA do ERP, vínculo I17 e ajuste I18) e é **pré-requisito** do modo `on` da I18. Antes de virar bloqueio, medir só-leitura os `.REM` de PRD dos últimos 30 dias (M8). |
+| **I17n** | **O item é importado pelo líquido (ADR-0074; corrige bug de implementação).** O `importar` do `fin015` leva `itsMnyValor = itsMnyVlrPgto = titMnyLiquido` **do grid de pendentes** do título, nunca `titMnyValor` (base). `titMnyLiquido` ausente ⇒ usa `titMnyValor` **só** se `titMnyJuros` e `titMnyDesconto` forem 0/ausentes; caso contrário o item não é importado (erro nomeado, motivo `VALOR_LIQUIDO_INDISPONIVEL`). Vale para todo título, não só para os ajustados pela I18. |
 ```
 
 **Erros nomeados — nova linha:**
@@ -415,28 +415,28 @@ Boleto **acima** do título (inviável via SISPAG: o `finalizar` recusa pagament
 + AFTER:
 ```
 Boleto acima/abaixo do título **até R$ 0,05**, mesmo vencimento, número igual e emissor confirmado: resolvido
-**antes do vínculo**, no título, pela I18 (ADR-0073); o vínculo continua exigindo valor igual ao líquido.
+**antes do vínculo**, no título, pela I18 (ADR-0074); o vínculo continua exigindo valor igual ao líquido.
 **Acima de R$ 0,05** segue fora (watchlist: 25 títulos > R$ 10 em PRD, outro problema). Vínculo de tier
 `ATENCAO`; vínculo automático sem decisão humana (passo 3); guarda entre lotes vivos / contra boleto pago.
 ```
 
-**Ver também** — acrescentar: `` `decisions/0073-*.md` · `business-rules/ajuste-centavos-titulo-sispag.md` (I18) ``.
+**Ver também** — acrescentar: `` `decisions/0074-*.md` · `business-rules/ajuste-centavos-titulo-sispag.md` (I18) ``.
 
 ### 4.2 `ontology/business-rules/sugestao-boleto-dda-sispag.md`
 
-**Frontmatter:** `ontology_version: "0.43.0"` → `"0.44.0"`; `last_review: 2026-10-15` → `2026-10-19`.
+**Frontmatter:** `ontology_version: "0.43.0"` → `"0.45.0"`; `last_review: 2026-10-15` → `2026-10-19`.
 
 **I15b**
 - BEFORE (trecho final): `... **Vale para o passo 1:** o passo 2 (ADR-0071, I17) é a única exceção e vive em outra regra; a UI do passo 1 nunca dispara I17. |`
-+ AFTER: `... **Vale para o passo 1:** há **duas** exceções, cada uma na sua regra: o passo 2 (ADR-0071, I17) e o ajuste de centavos do título (ADR-0073, I18), disparado **depois** do commit do `confirmar`, fora da transação dele. A UI do passo 1 nunca dispara I17; o `confirmar` em si continua só com escrita local. |`
++ AFTER: `... **Vale para o passo 1:** há **duas** exceções, cada uma na sua regra: o passo 2 (ADR-0071, I17) e o ajuste de centavos do título (ADR-0074, I18), disparado **depois** do commit do `confirmar`, fora da transação dele. A UI do passo 1 nunca dispara I17; o `confirmar` em si continua só com escrita local. |`
 
 **I15c** — acrescentar ao fim da célula:
 - BEFORE (fim): `... São constantes de código globais (não por tenant), ajustáveis por ADR curta, sem mudança estrutural. |`
-+ AFTER: `... São constantes de código globais (não por tenant), ajustáveis por ADR curta, sem mudança estrutural. **Nota (ADR-0073):** par confirmado com 0 < \|Δ\| ≤ R$ 0,05 no mesmo dia, número igual e par `VIGENTE` é exibido com o derivado `ajuste` da decisão (`AGUARDANDO`, `SIMULADO`, `EM_ANDAMENTO`, `AJUSTADO`, `AGUARDANDO_APROVACAO_MANUAL`, `RECUSADO(motivo)`, `DESLIGADO`), nunca como "pronto para pagar" antes de `AJUSTADO`. O limite **não muda** e o ajuste não alarga tolerância (I15d). O título ajustado continua com Δ = +0,01 contra a base da carteira (`titMnyValor`); a UI mostra também o líquido. |`
++ AFTER: `... São constantes de código globais (não por tenant), ajustáveis por ADR curta, sem mudança estrutural. **Nota (ADR-0074):** par confirmado com 0 < \|Δ\| ≤ R$ 0,05 no mesmo dia, número igual e par `VIGENTE` é exibido com o derivado `ajuste` da decisão (`AGUARDANDO`, `SIMULADO`, `EM_ANDAMENTO`, `AJUSTADO`, `AGUARDANDO_APROVACAO_MANUAL`, `RECUSADO(motivo)`, `DESLIGADO`), nunca como "pronto para pagar" antes de `AJUSTADO`. O limite **não muda** e o ajuste não alarga tolerância (I15d). O título ajustado continua com Δ = +0,01 contra a base da carteira (`titMnyValor`); a UI mostra também o líquido. |`
 
 **I15g**
 - BEFORE (trecho): `**Quem confirma é sempre uma pessoa** com `sispag:executar`; o sistema nunca confirma.`
-+ AFTER: `**Quem confirma é sempre uma pessoa** com `sispag:executar`; o sistema nunca confirma. **Transferir não é confirmar (ADR-0073, I18j):** quando o título é renegociado pela I18, o sistema anula a decisão do título antigo e grava a mesma decisão no título novo, **herdando** `decididoPor`/`decididoEm` da pessoa e registrando `origemDecisaoId` e `transferidaPor = 'sistema'`; mesmo boleto, mesmo par.`
++ AFTER: `**Quem confirma é sempre uma pessoa** com `sispag:executar`; o sistema nunca confirma. **Transferir não é confirmar (ADR-0074, I18j):** quando o título é renegociado pela I18, o sistema anula a decisão do título antigo e grava a mesma decisão no título novo, **herdando** `decididoPor`/`decididoEm` da pessoa e registrando `origemDecisaoId` e `transferidaPor = 'sistema'`; mesmo boleto, mesmo par.`
 
 **Trilha só-inclusão**
 - BEFORE:
@@ -448,21 +448,21 @@ Eventos: `PAR_CONFIRMADO`, `DECISAO_CONFIRMADA`, `DECISAO_REJEITADA`, `DECISAO_A
 ```
 Eventos: `PAR_CONFIRMADO`, `DECISAO_CONFIRMADA`, `DECISAO_REJEITADA`, `DECISAO_ANULADA`,
 `PAR_REVOGADO`, `LINHA_COPIADA`; (ADR-0071) `VINCULO_SIMULADO`, `VINCULO_APLICADO`, `VINCULO_FALHOU`;
-(ADR-0073, `planned`) `AJUSTE_SIMULADO`, `TITULO_RENEGOCIADO`, `DECISAO_TRANSFERIDA`, `AJUSTE_RECUSADO`,
+(ADR-0074, `planned`) `AJUSTE_SIMULADO`, `TITULO_RENEGOCIADO`, `DECISAO_TRANSFERIDA`, `AJUSTE_RECUSADO`,
 `AJUSTE_CANCELADO`, `AJUSTE_FALHOU`. Cada um com quem, quando, chaves envolvidas e (rejeição/revogação) o motivo.
 ```
 
-**Ver também** — acrescentar: `` `decisions/0073-*.md` · `business-rules/ajuste-centavos-titulo-sispag.md` (I18) ``.
+**Ver também** — acrescentar: `` `decisions/0074-*.md` · `business-rules/ajuste-centavos-titulo-sispag.md` (I18) ``.
 
 ### 4.3 `ontology/business-rules/boleto-exige-codigo-de-barras.md`
 
-**Frontmatter:** `ontology_version: "0.42.0"` → `"0.44.0"`; `last_review: 2026-10-14` → `2026-10-19`.
+**Frontmatter:** `ontology_version: "0.42.0"` → `"0.45.0"`; `last_review: 2026-10-14` → `2026-10-19`.
 
 **I16b** — acrescentar ao fim da célula:
 - BEFORE (fim): `... O mesmo caminho serve lote manual e automático. |`
-+ AFTER: `... O mesmo caminho serve lote manual e automático. **Emenda ADR-0073:** a rede (2) passa a conferir também **barra (> 0) == pagamento do J** (I17m, `RemessaBarcodeAmountMismatchError`), com o mesmo tratamento tardio. |`
++ AFTER: `... O mesmo caminho serve lote manual e automático. **Emenda ADR-0074:** a rede (2) passa a conferir também **barra (> 0) == pagamento do J** (I17m, `RemessaBarcodeAmountMismatchError`), com o mesmo tratamento tardio. |`
 
-**Ver também** — acrescentar: `- ADR-0073 / business-rules/ajuste-centavos-titulo-sispag.md — I18 (ajuste de centavos no título) e I17m (barra == pagamento do J na rede do .REM)`.
+**Ver também** — acrescentar: `- ADR-0074 / business-rules/ajuste-centavos-titulo-sispag.md — I18 (ajuste de centavos no título) e I17m (barra == pagamento do J na rede do .REM)`.
 
 ### 4.4 `ontology/business-rules/identidade-execucao-conexos.md`
 
@@ -475,11 +475,11 @@ Ledgers cobertos (**seis**): `permuta_alocacao_execucao`, `solicitacao_numerario
 ```
 Ledgers cobertos (**sete**): `permuta_alocacao_execucao`, `solicitacao_numerario_execucao`,
 `recebimento_execucao`, `remessa_execucao`, `conciliacao_execucao`, `solicitacao_numerario` e
-(ADR-0073, `planned`) `sispag_ajuste_centavos_execucao`.
+(ADR-0074, `planned`) `sispag_ajuste_centavos_execucao`.
 ```
 e, em "O fallback para o robô é legítimo", acrescentar depois da lista de quatro situações:
 ```
-> **Exceção (ADR-0073, I18f):** o ajuste de centavos do título **não** passa pelo resolver por-request. Ele
+> **Exceção (ADR-0074, I18f):** o ajuste de centavos do título **não** passa pelo resolver por-request. Ele
 > usa explicitamente a sessão da credencial do ambiente do servidor e nunca roda em job/cron; sem essa
 > sessão (ou fora do processo do servidor) degrada para `shadow`, em vez de cair noutra identidade.
 ```
@@ -490,7 +490,7 @@ e, em "O fallback para o robô é legítimo", acrescentar depois da lista de qua
 **Frontmatter**
 ```diff
 -ontology_version: "0.43.0"
-+ontology_version: "0.44.0"
++ontology_version: "0.45.0"
 -implementation_status: implemented
 +implementation_status: partial
 ...
@@ -501,7 +501,7 @@ e, em "O fallback para o robô é legítimo", acrescentar depois da lista de qua
 +last_review: 2026-10-19
 ```
 relationships — acrescentar:
-`- "DecisaoSugestaoBoleto 0..1—0..1 DecisaoSugestaoBoleto (origemDecisaoId: a decisão do título antigo que esta herdou na renegociação I18j; ADR-0073, planned)"`
+`- "DecisaoSugestaoBoleto 0..1—0..1 DecisaoSugestaoBoleto (origemDecisaoId: a decisão do título antigo que esta herdou na renegociação I18j; ADR-0074, planned)"`
 
 **Tabela de propriedades — linhas novas/alteradas**
 - BEFORE:
@@ -518,9 +518,9 @@ relationships — acrescentar:
 ```
 + AFTER:
 ```
-| `anuladaPor` · `anuladaEm` · `motivoAnulacao` | string? · Date? · string? | Todos preenchidos em `ANULADA` e só nela (CHECK). `anuladaPor` nunca `unknown`; nunca `sistema`, **exceto** com `tipoAnulacao = TITULO_RENEGOCIADO` (ADR-0073). Motivo de 10 a 500 caracteres; na cascata é `par revogado: <motivo da revogação>`; na renegociação, `título renegociado X/Y → X/Z, frnCod N`. |
-| `tipoAnulacao` | enum? | `MANUAL \| PAR_REVOGADO \| TITULO_RENEGOCIADO` (ADR-0073, `planned`; legado sem backfill ⇒ derivado do motivo). Preenchido só em `ANULADA`. |
-| `origemDecisaoId` · `transferidaPor` | string? · string? | Só na decisão nascida da transferência (I18j): a decisão do título antigo e o ator `sistema`. Nulos em decisão tomada por pessoa. (ADR-0073, `planned`) |
+| `anuladaPor` · `anuladaEm` · `motivoAnulacao` | string? · Date? · string? | Todos preenchidos em `ANULADA` e só nela (CHECK). `anuladaPor` nunca `unknown`; nunca `sistema`, **exceto** com `tipoAnulacao = TITULO_RENEGOCIADO` (ADR-0074). Motivo de 10 a 500 caracteres; na cascata é `par revogado: <motivo da revogação>`; na renegociação, `título renegociado X/Y → X/Z, frnCod N`. |
+| `tipoAnulacao` | enum? | `MANUAL \| PAR_REVOGADO \| TITULO_RENEGOCIADO` (ADR-0074, `planned`; legado sem backfill ⇒ derivado do motivo). Preenchido só em `ANULADA`. |
+| `origemDecisaoId` · `transferidaPor` | string? · string? | Só na decisão nascida da transferência (I18j): a decisão do título antigo e o ator `sistema`. Nulos em decisão tomada por pessoa. (ADR-0074, `planned`) |
 ```
 
 **Estados (I15l)**
@@ -540,7 +540,7 @@ REJEITADA                                                  (terminal, intocada)
 
 **Derivados** — acrescentar ao fim da seção "Aplicação no ERP":
 ```
-**Ajuste de centavos (ADR-0073, `planned`) — derivado, não persistido:** `ajuste` =
+**Ajuste de centavos (ADR-0074, `planned`) — derivado, não persistido:** `ajuste` =
 `NAO_APLICAVEL | DESLIGADO | AGUARDANDO | SIMULADO | EM_ANDAMENTO | AJUSTADO | AGUARDANDO_APROVACAO_MANUAL |
 RECUSADO(motivo)`, lido do ledger `sispag_ajuste_centavos_execucao` e da trilha. Enquanto o ajuste está entre
 `finalizada` e `rechaveada`, a decisão do título antigo **não** é mostrada como órfã com "Anular": a tela diz
@@ -549,8 +549,8 @@ RECUSADO(motivo)`, lido do ledger `sispag_ajuste_centavos_execucao` e da trilha.
 
 ### 4.6 `ontology/entities/titulo-a-pagar.md`
 
-**Frontmatter:** `ontology_version: "0.31.0"` → `"0.44.0"`; `last_review` → `2026-10-19`; relationships — acrescentar:
-`- "TituloAPagar 1—0..1 TituloAPagar (renegociação I18: o título novo nasce no mesmo docCod e consome o antigo; linhagem no ledger sispag_ajuste_centavos_execucao, não em coluna; ADR-0073, planned)"`
+**Frontmatter:** `ontology_version: "0.31.0"` → `"0.45.0"`; `last_review` → `2026-10-19`; relationships — acrescentar:
+`- "TituloAPagar 1—0..1 TituloAPagar (renegociação I18: o título novo nasce no mesmo docCod e consome o antigo; linhagem no ledger sispag_ajuste_centavos_execucao, não em coluna; ADR-0074, planned)"`
 
 **Definição de domínio**
 - BEFORE:
@@ -561,7 +561,7 @@ read-only no Conexos). A única escrita é no **banco próprio** (Postgres).
 + AFTER:
 ```
 Esta entidade **lê e persiste** os dados básicos da carteira; a ingestão **não modifica** o título no ERP
-(I1 — read-only no Conexos). **Exceção única (ADR-0073, `planned`):** a ação `ajustarCentavosTitulo` renegocia
+(I1 — read-only no Conexos). **Exceção única (ADR-0074, `planned`):** a ação `ajustarCentavosTitulo` renegocia
 no `fin070` o título cujo boleto confirmado difere em centavos e libera no `fin103` o bloqueio que essa
 renegociação criou (regra `ajuste-centavos-titulo-sispag`, I18). Nenhuma outra escrita no título é permitida.
 O título renegociado é um **título novo** (mesmo `docCod`, `titCod` novo); a linhagem antigo → novo vive no
@@ -570,43 +570,43 @@ ledger do ajuste, não em coluna desta tabela (o UPSERT da ingestão a apagaria)
 
 **Fora de escopo**
 - BEFORE: `- Nenhuma escrita no ERP a partir desta entidade. A baixa do título é **observada** (L11, ADR-0055),`
-+ AFTER: `- Nenhuma escrita no ERP a partir desta entidade, salvo a renegociação de centavos da I18 (ADR-0073). A baixa do título é **observada** (L11, ADR-0055),`
++ AFTER: `- Nenhuma escrita no ERP a partir desta entidade, salvo a renegociação de centavos da I18 (ADR-0074). A baixa do título é **observada** (L11, ADR-0055),`
 
-**`valor`** — acrescentar à célula de Notas: `**Base** (`titMnyValor`), não o líquido; para o líquido, ver I17b/I18 (ADR-0073).`
+**`valor`** — acrescentar à célula de Notas: `**Base** (`titMnyValor`), não o líquido; para o líquido, ver I17b/I18 (ADR-0074).`
 
 ### 4.7 `ontology/entities/lote-pagamento.md`
 
-**Frontmatter:** `ontology_version: "0.42.0"` → `"0.44.0"`; `last_review` → `2026-10-19`.
+**Frontmatter:** `ontology_version: "0.42.0"` → `"0.45.0"`; `last_review` → `2026-10-19`.
 
 **ItemLote › `titCod`**
 - BEFORE: `| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). |`
-+ AFTER: `| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). **Muda só por I18j(5)** (ADR-0073): em lote `RASCUNHO`, o item passa para o título renegociado, com `valor` = líquido novo, `versao + 1` e evento `ITEM_TITULO_RENEGOCIADO` na trilha. Em lote não `RASCUNHO` nunca muda (o ajuste é recusado, I18k). |`
++ AFTER: `| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). **Muda só por I18j(5)** (ADR-0074): em lote `RASCUNHO`, o item passa para o título renegociado, com `valor` = líquido novo, `versao + 1` e evento `ITEM_TITULO_RENEGOCIADO` na trilha. Em lote não `RASCUNHO` nunca muda (o ajuste é recusado, I18k). |`
 
 **I1 (sem escrita no ERP até `FINALIZADO`)** — acrescentar:
 - BEFORE (fim do bullet): `... **L11 é read-only no ERP** e nunca baixa, processa ou carrega nada (I11a).`
-+ AFTER: `... **L11 é read-only no ERP** e nunca baixa, processa ou carrega nada (I11a). A renegociação de centavos (I18, ADR-0073) escreve no **título**, não no lote, e nunca toca lote não `RASCUNHO`; enquanto ela corre, `finalizarLote` é recusado (`TitleAdjustmentInProgressError`).`
++ AFTER: `... **L11 é read-only no ERP** e nunca baixa, processa ou carrega nada (I11a). A renegociação de centavos (I18, ADR-0074) escreve no **título**, não no lote, e nunca toca lote não `RASCUNHO`; enquanto ela corre, `finalizarLote` é recusado (`TitleAdjustmentInProgressError`).`
 
 ### 4.8 `ontology/actions/sispag/finalizar-lote.md`
 
-**Frontmatter:** `ontology_version` → `"0.44.0"`; `last_review` → `2026-10-19`; `preconditions` — acrescentar:
-`- "Nenhum item cujo título tenha ajuste de centavos não terminal (TitleAdjustmentInProgressError, 409; I18k, ADR-0073, planned)."`
+**Frontmatter:** `ontology_version` → `"0.45.0"`; `last_review` → `2026-10-19`; `preconditions` — acrescentar:
+`- "Nenhum item cujo título tenha ajuste de centavos não terminal (TitleAdjustmentInProgressError, 409; I18k, ADR-0074, planned)."`
 
 ### 4.9 `ontology/actions/sispag/confirmar-sugestao-boleto.md`
 
-**Frontmatter:** `ontology_version: "0.40.0"` → `"0.44.0"`; `last_review` → `2026-10-19`.
+**Frontmatter:** `ontology_version: "0.40.0"` → `"0.45.0"`; `last_review` → `2026-10-19`.
 - BEFORE (side_effects): `- "Escrita local apenas."`
 + AFTER:
 ```
   - "Escrita local apenas, dentro da transação do confirmar."
-  - "Depois do commit, fora da transação: dispara ajustarCentavosTitulo (assíncrono) quando o par tem 0 < |Δ| <= R$ 0,05 no mesmo dia e o modo da filial não é off (I18g, ADR-0073, planned). A resposta não espera o ERP; o derivado ajuste começa AGUARDANDO."
+  - "Depois do commit, fora da transação: dispara ajustarCentavosTitulo (assíncrono) quando o par tem 0 < |Δ| <= R$ 0,05 no mesmo dia e o modo da filial não é off (I18g, ADR-0074, planned). A resposta não espera o ERP; o derivado ajuste começa AGUARDANDO."
 ```
 
 ### 4.10 `ontology/integrations/conexos.md`
 
-**Frontmatter:** `ontology_version` → `"0.44.0"`; `last_review` → `2026-10-19`.
+**Frontmatter:** `ontology_version` → `"0.45.0"`; `last_review` → `2026-10-19`.
 **Nova subseção, depois de "### ESCRITA SISPAG (vigente desde 2026-08-25)":**
 ```
-### ESCRITA SISPAG — renegociação de centavos no título (ADR-0073, `planned`)
+### ESCRITA SISPAG — renegociação de centavos no título (ADR-0074, `planned`)
 
 Provado em HML (2026-10-19, frnCod 3 e 4). Só pela ação `ajustarCentavosTitulo` (I18), sessão do servidor.
 
@@ -633,12 +633,12 @@ login do servidor é o portão G1.
 ```
 + AFTER:
 ```
-- ~~**Vincular boleto acima/abaixo do título**~~ — **até R$ 0,05 resolvido pela ADR-0073** (I18, ajuste no
-  título antes do vínculo). **Acima de R$ 0,05** continua aqui (ver seção ADR-0073).
+- ~~**Vincular boleto acima/abaixo do título**~~ — **até R$ 0,05 resolvido pela ADR-0074** (I18, ajuste no
+  título antes do vínculo). **Acima de R$ 0,05** continua aqui (ver seção ADR-0074).
 ```
 **Nova seção ao fim:**
 ```
-## 2026-10-19 — sispag-ajuste-centavos (ADR-0073)
+## 2026-10-19 — sispag-ajuste-centavos (ADR-0074)
 
 - **Boleto > R$ 0,05 do título (25 em PRD, todos > R$ 10, ~7 %)** — NELSON fil 4 (título fixo 930,48 × boleto
   993–1.348, valor previsto?), SAVINO DEL BENE fil 2 (+R$ 386–391 fixo), UPS (+13,7–15,1 %), RHENUS
@@ -660,7 +660,7 @@ login do servidor é o portão G1.
 
 ## 5. Migration prevista (para o TaskScoper, não ontologia)
 
-**0087_sispag_ajuste_centavos.sql** (uma): (1) tabela `sispag_ajuste_centavos_execucao` (ledger write-ahead:
+**0088_sispag_ajuste_centavos.sql** (uma): (1) tabela `sispag_ajuste_centavos_execucao` (ledger write-ahead:
 chave de idempotência, etapa, `frn_cod`, `tit_cod_origem`, `tit_cod_novo`, `delta_centavos`, `tpop`, marcador,
 `decisao_id`, `disparado_por`, `conexos_username`, `conexos_usn_cod`, `encerrado_em` (padrão ADR-0052),
 índice único parcial "não terminal por título de origem"); (2) `sispag_decisao_sugestao_boleto` ganha
@@ -672,7 +672,7 @@ Lembrar o gotcha do `npm run build` (copiar `.sql` para `dist/`; já tratado por
 
 ## 6. ADR para os accepts?
 
-**Sim:** ADR-0073 (§3.3). Rejeições são registradas dentro dela (seção "Rejeitado") e no watchlist; não
+**Sim:** ADR-0074 (§3.3). Rejeições são registradas dentro dela (seção "Rejeitado") e no watchlist; não
 proponho ADRs de rejeição separadas.
 
 ---
@@ -681,28 +681,28 @@ proponho ADRs de rejeição separadas.
 
 **`_index.json`**
 ```jsonc
-"_meta": { "generated": "2026-10-19", "version": "0.44.0",
-  "note": "v0.44.0 (2026-10-19, ADR-0073, feature sispag-ajuste-centavos): NEW business rule ajuste-centavos-titulo-sispag (I18a-n, planned) e NEW action ajustarCentavosTitulo (planned): renegociacao fin070 (tpop 1/2, |Δ| <= LIMITE_VALOR_MESMO_DIA, mesmo vencimento, numero igual + par VIGENTE), liberacao fin103 so do bloqueio criado, sessao do servidor, rechaveamento da decisao (transferencia, autor herdado). Emendas: I17b regua liquida (fail-closed), +I17m guarda .REM barra==pagamento J, +I17n import pelo liquido; I15b/I15c/I15g; I16b(2); identidade-execucao-conexos 7 ledgers; DecisaoSugestaoBoleto +tipoAnulacao/origemDecisaoId/transferidaPor (partial) + derivado ajuste; TituloAPagar I1 com excecao unica; finalizarLote +TitleAdjustmentInProgressError. Migration prevista 0087. | <nota anterior v0.43.0 preservada>" }
+"_meta": { "generated": "2026-10-19", "version": "0.45.0",
+  "note": "v0.45.0 (2026-10-19, ADR-0074, feature sispag-ajuste-centavos): NEW business rule ajuste-centavos-titulo-sispag (I18a-n, planned) e NEW action ajustarCentavosTitulo (planned): renegociacao fin070 (tpop 1/2, |Δ| <= LIMITE_VALOR_MESMO_DIA, mesmo vencimento, numero igual + par VIGENTE), liberacao fin103 so do bloqueio criado, sessao do servidor, rechaveamento da decisao (transferencia, autor herdado). Emendas: I17b regua liquida (fail-closed), +I17m guarda .REM barra==pagamento J, +I17n import pelo liquido; I15b/I15c/I15g; I16b(2); identidade-execucao-conexos 7 ledgers; DecisaoSugestaoBoleto +tipoAnulacao/origemDecisaoId/transferidaPor (partial) + derivado ajuste; TituloAPagar I1 com excecao unica; finalizarLote +TitleAdjustmentInProgressError. Migration prevista 0088. | <nota anterior v0.43.0 preservada>" }
 
 "business_rules": { ...,
   "ajuste-centavos-titulo-sispag": {
     "file": "business-rules/ajuste-centavos-titulo-sispag.md", "entity": "TituloAPagar", "status": "planned",
-    "has_canonical_test": false, "impl_files": [], "resolved_by": ["ADR-0073"],
-    "note": "ADR-0073 (planned, modo off por default): I18a-n. on em PRD so apos G1 (sonda leitura fin070/fin103 do login do servidor), G2 (vencimento passado/hoje em HML), G3 (cancelar renegociacao nao finalizada em HML), G4 (medicao liquido/pagamento parcial), G5 (shadow + 1 titulo controlado)."
+    "has_canonical_test": false, "impl_files": [], "resolved_by": ["ADR-0074"],
+    "note": "ADR-0074 (planned, modo off por default): I18a-n. on em PRD so apos G1 (sonda leitura fin070/fin103 do login do servidor), G2 (vencimento passado/hoje em HML), G3 (cancelar renegociacao nao finalizada em HML), G4 (medicao liquido/pagamento parcial), G5 (shadow + 1 titulo controlado)."
   },
-  "vinculo-codbar-item-sispag": { ..., "resolved_by": ["ADR-0071", "ADR-0073"],
-    "note": "<nota atual> | ADR-0073 (planned): I17b passa ao liquido aberto (fail-closed na divergencia); +I17m guarda .REM barra==pagamento do J; +I17n import pelo liquido (bug: RemessaService manda titMnyValor)." } }
+  "vinculo-codbar-item-sispag": { ..., "resolved_by": ["ADR-0071", "ADR-0074"],
+    "note": "<nota atual> | ADR-0074 (planned): I17b passa ao liquido aberto (fail-closed na divergencia); +I17m guarda .REM barra==pagamento do J; +I17n import pelo liquido (bug: RemessaService manda titMnyValor)." } }
 
 "actions": { ...,
   "ajustarCentavosTitulo": {
     "file": "actions/sispag/ajustar-centavos-titulo.md", "entity": "TituloAPagar", "status": "planned",
-    "impl_files": [], "resolved_by": ["ADR-0073"],
-    "note": "ADR-0073: fin070 -> fin103 -> rechaveamento; gatilhos pos-commit do confirmar, tentar de novo, varredura no processo do servidor; nunca cron." } }
+    "impl_files": [], "resolved_by": ["ADR-0074"],
+    "note": "ADR-0074: fin070 -> fin103 -> rechaveamento; gatilhos pos-commit do confirmar, tentar de novo, varredura no processo do servidor; nunca cron." } }
 
 "entities": {
   "DecisaoSugestaoBoleto": { ..., "status": "partial",
-    "note": "<nota atual> | ADR-0073 (planned): tipoAnulacao, origemDecisaoId, transferidaPor; transicao de transferencia; derivado ajuste." },
-  "TituloAPagar": { ..., "note": "<nota atual> | ADR-0073: excecao unica a I1 (renegociacao de centavos, I18); linhagem no ledger." } }
+    "note": "<nota atual> | ADR-0074 (planned): tipoAnulacao, origemDecisaoId, transferidaPor; transicao de transferencia; derivado ajuste." },
+  "TituloAPagar": { ..., "note": "<nota atual> | ADR-0074: excecao unica a I1 (renegociacao de centavos, I18); linhagem no ledger." } }
 ```
 
 **`_coverage.json`**
@@ -718,16 +718,16 @@ proponho ADRs de rejeição separadas.
  }
  "by_business_rule": {
 +  "ajuste-centavos-titulo-sispag": { "invariant": "I18", "status": "planned", "has_test": false,
-+    "note": "ADR-0073 (v0.44.0): I18a-n planned; portoes G1-G5 antes de on em PRD." },
++    "note": "ADR-0074 (v0.45.0): I18a-n planned; portoes G1-G5 antes de on em PRD." },
    "vinculo-codbar-item-sispag": {
 -    "status": "planned",
 +    "status": "implemented",          // correcao de inconsistencia pre-existente (ADR-0071 shipou)
-+    "note": "<nota atual> | ADR-0073: I17b emendada (liquido), I17m e I17n planned."
++    "note": "<nota atual> | ADR-0074: I17b emendada (liquido), I17m e I17n planned."
    } }
  "by_entity": {
    "DecisaoSugestaoBoleto": { "status": "partial", "actions": [..., "ajustarCentavosTitulo"] },
    "TituloAPagar": { "actions": [..., "ajustarCentavosTitulo"] } }
- "_meta": { "version": "0.44.0", "generated": "2026-10-19", "note": "v0.44.0 ... (mesmo resumo do _index) | <anterior>" }
+ "_meta": { "version": "0.45.0", "generated": "2026-10-19", "note": "v0.45.0 ... (mesmo resumo do _index) | <anterior>" }
 ```
 > Confirmar se `entities_coverage_pct` conta `partial` (o histórico v0.41.0 sugere que sim); se não, 18/27 = 67.
 
@@ -737,7 +737,7 @@ proponho ADRs de rejeição separadas.
 
 `CLAUDE.md` › "Gotchas conhecidos", nova linha:
 ```
-- **Renegociar no `fin070` troca o `titCod`.** O ajuste de centavos (ADR-0073) consome o título e cria outro no
+- **Renegociar no `fin070` troca o `titCod`.** O ajuste de centavos (ADR-0074) consome o título e cria outro no
   mesmo `docCod`; decisão, carteira e item seguem o novo pelo rechaveamento. Nunca rodar o ajuste em cron (CLONEX
   não tem `fin070`/`fin103`) nem na sessão da analista.
 ```
@@ -745,7 +745,7 @@ proponho ADRs de rejeição separadas.
 ---
 
 Please review and respond:
-- **approve** — escrever como proposto (arquivos novos, emendas, watchlist, `_index`/`_coverage`, ADR-0073)
+- **approve** — escrever como proposto (arquivos novos, emendas, watchlist, `_index`/`_coverage`, ADR-0074)
 - **edit [arquivo] [instrução]** — ajustar antes de escrever (em especial M1–M9)
 - **reject [motivo]** — bloquear o diff (crio ADR de "decisão de não mudar")
 - **partial [aceitar itens …] [rejeitar itens …]** — numeração da §2

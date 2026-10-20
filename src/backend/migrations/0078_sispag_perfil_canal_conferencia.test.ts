@@ -28,8 +28,8 @@ describe('migration 0078 — perfil de canal, conferência e trilha (ADR-0063)',
         expect(valoresDoCheck('perfil_canal_fornecedor_confianca_check')).toEqual(
             Object.values(CHANNEL_CONFIDENCE).sort(),
         );
-        // A 0087 (ADR-0073) redefine o CHECK da trilha com `ITEM_TITULO_RENEGOCIADO`; a paridade
-        // com a constante completa é conferida no teste da 0087.
+        // A 0088 (ADR-0074) redefine o CHECK da trilha com `ITEM_TITULO_RENEGOCIADO`; a paridade
+        // com a constante completa é conferida no teste da 0088.
         expect(valoresDoCheck('sispag_verificacao_evento_evento_check')).toEqual(
             Object.values(VERIFICATION_EVENT)
                 .filter((e) => e !== VERIFICATION_EVENT.ITEM_TITULO_RENEGOCIADO)

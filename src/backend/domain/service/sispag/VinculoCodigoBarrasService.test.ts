@@ -85,7 +85,7 @@ interface Cenario {
     /** Resultados do `PUT` (por chamada) — default: aplica a edição na row e responde ok. */
     put?: (corpo: Record<string, unknown>) => Promise<void>;
     aberto?: number | 'falha';
-    /** Régua líquida completa (I17b, ADR-0073); default = sem acréscimos sobre `aberto`. */
+    /** Régua líquida completa (I17b, ADR-0074); default = sem acréscimos sobre `aberto`. */
     valores?: ValoresAbertoTitulo;
     decisoes?: Array<Record<string, unknown>>;
     pares?: Array<Record<string, unknown>>;
@@ -738,7 +738,7 @@ describe('VinculoCodigoBarrasService.executar (I17e–I17h)', () => {
             expect(h.write.editarItemDoRascunho).not.toHaveBeenCalled();
         });
 
-        it('régua líquida com as duas fórmulas divergentes ⇒ FAIL-CLOSED, nenhuma escrita (ADR-0073)', async () => {
+        it('régua líquida com as duas fórmulas divergentes ⇒ FAIL-CLOSED, nenhuma escrita (ADR-0074)', async () => {
             const h = umItem({
                 valores: {
                     totalLiquido: 1028.8,

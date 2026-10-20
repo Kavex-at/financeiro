@@ -4,7 +4,7 @@ import { Client } from 'pg';
 import 'reflect-metadata';
 
 /**
- * 0087 contra um Postgres DE VERDADE (ADR-0073): ledger do ajuste (etapas, idempotência, um não
+ * 0088 contra um Postgres DE VERDADE (ADR-0074): ledger do ajuste (etapas, idempotência, um não
  * terminal por título, máscara 5+4), transferência auditada da decisão (anulação pelo sistema só
  * com TITULO_RENEGOCIADO), tipos novos das trilhas. Reaplicar é no-op.
  *
@@ -24,7 +24,7 @@ if (process.env.CI === 'true' && !ADMIN_DSN) {
         'METRICAS_CICLO_TEST_DSN ausente no CI — o job backend-sql não pode passar sem banco',
     );
 }
-const NOME = '0087_sispag_ajuste_centavos.sql';
+const NOME = '0088_sispag_ajuste_centavos.sql';
 const BANCO = 'sispag_ajuste_centavos_it';
 
 const dsnPara = (dsn: string, banco: string): string => {
@@ -47,7 +47,7 @@ const codigoDoErro = async (promessa: Promise<unknown>): Promise<string | undefi
 
 const describeComBanco = ADMIN_DSN ? describe : describe.skip;
 
-describeComBanco('0087 — ajuste de centavos do título', () => {
+describeComBanco('0088 — ajuste de centavos do título', () => {
     let db: Client;
     const PAR = id(900);
 
@@ -128,7 +128,7 @@ describeComBanco('0087 — ajuste de centavos do título', () => {
              VALUES ($1, '7001', '341:1:1', 'GENERICO', '341', '341 / 1 / ***1', 'ana')`,
             [PAR],
         );
-        // Decisão LEGADA, gravada antes da 0087 (sem as colunas novas).
+        // Decisão LEGADA, gravada antes da 0088 (sem as colunas novas).
         await db.query(
             `INSERT INTO sispag_decisao_sugestao_boleto
                 (id, fil_cod, doc_cod, tit_cod, pes_cod, ddc_cod, dit_cod, codbar_mascarado,

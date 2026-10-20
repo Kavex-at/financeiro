@@ -21,7 +21,7 @@ const mascarar = (v: string): string => {
 
 /**
  * O `.REM` gerado tem segmento J cuja barra (valor > 0) difere do valor do pagamento do próprio J
- * (I17m, ADR-0073): o banco pagaria um valor diferente do boleto. Mesmo tratamento tardio do
+ * (I17m, ADR-0074): o banco pagaria um valor diferente do boleto. Mesmo tratamento tardio do
  * `RemessaCorrompidaError` (I16b(2)): o lote não vai a `REMESSA_GERADA`, o `baixarArquivo` não
  * serve o arquivo, e arquivo e lote nativo ficam no ERP para cancelamento manual. HTTP 409.
  */

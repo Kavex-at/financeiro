@@ -57,7 +57,7 @@ export interface EntradaElegibilidadeVinculo {
     tier?: ResultadoSugestao;
     /**
      * Valores do `fin064` lidos ao vivo (reais) que formam o LÍQUIDO aberto (I17b emendada,
-     * ADR-0073). Ausente, incompleto ou com as duas fórmulas divergentes = fail-closed.
+     * ADR-0074). Ausente, incompleto ou com as duas fórmulas divergentes = fail-closed.
      */
     aberto?: ValoresAbertoTitulo;
     /** Snapshot de inclusão. Ignorado de propósito (I17b). */
@@ -134,7 +134,7 @@ export default class ElegibilidadeVinculoCodigoBarras {
         if ('motivo' in lido) return nega(lido.motivo, lido.extra);
         const { decodificado, comCodigo } = lido;
 
-        // ── I17b: valor igual, em centavos, contra o LÍQUIDO aberto AO VIVO (ADR-0073) ──
+        // ── I17b: valor igual, em centavos, contra o LÍQUIDO aberto AO VIVO (ADR-0074) ──
         const liquidoCentavos = ValorAbertoLiquido.calcularCentavos(entrada.aberto);
         if (liquidoCentavos === undefined) {
             return nega(MOTIVO_INELEGIVEL_VINCULO.VALOR_ABERTO_INDISPONIVEL, comCodigo);

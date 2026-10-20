@@ -1036,7 +1036,7 @@ router.post(
     }),
 );
 
-// ===================================================== Ajuste de centavos do título (ADR-0073, I18)
+// ===================================================== Ajuste de centavos do título (ADR-0074, I18)
 // Disparo principal: pós-commit do `confirmar` (no serviço da sugestão). Aqui: "tentar de novo",
 // a varredura ao abrir a tela e a leitura do estado/candidatos (M7). Só no processo do servidor.
 

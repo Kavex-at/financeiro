@@ -19,7 +19,7 @@ export const ALERTA_TIPO = {
      */
     SISPAG_DESTINO_ALTERADO: 'sispag-destino-alterado',
     /**
-     * Ajuste de centavos do título (ADR-0073) parou num estado que exige gente no Conexos:
+     * Ajuste de centavos do título (ADR-0074) parou num estado que exige gente no Conexos:
      * `indeterminado` (erro — resolver a renegociação no fin070; o lote do título não finaliza) ou
      * `aguardando_aprovacao_manual` (aviso — aprovar o título novo no fin103). Dedup por título
      * e dia civil BRT. Sem código de barras completo (só a máscara 5+4).

@@ -10,13 +10,13 @@ findings_count: 4
 cards_count: 4
 ---
 
-# Testability — Regis-Review (delta ADR-0073, ajuste de centavos)
+# Testability — Regis-Review (delta ADR-0074, ajuste de centavos)
 
 ## 1. Cenário Geral
 
 | Source | Stimulus | Artifact | Environment | Response | Response Measure |
 |---|---|---|---|---|---|
-| Desenvolvedor / AutoLoopRunner | Mudança na sequência fin070 (renegociação) ou na máquina de estados do ledger | `AjusteCentavosTituloService`, `AjusteCentavosExecucaoRepository`, `ConexosRenegociacaoClient`, migração 0087 | Dev local, sem HML/PRD | Os testes expõem a regressão sem tocar o ERP | 13/13 casos canônicos da I18 com teste nomeado; 0 chamada remota; suíte do delta < 1 min |
+| Desenvolvedor / AutoLoopRunner | Mudança na sequência fin070 (renegociação) ou na máquina de estados do ledger | `AjusteCentavosTituloService`, `AjusteCentavosExecucaoRepository`, `ConexosRenegociacaoClient`, migração 0088 | Dev local, sem HML/PRD | Os testes expõem a regressão sem tocar o ERP | 13/13 casos canônicos da I18 com teste nomeado; 0 chamada remota; suíte do delta < 1 min |
 
 ## 2. Métricas observadas
 

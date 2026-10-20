@@ -442,7 +442,7 @@ const transitoria = () =>
         cause: Object.assign(new Error('502'), { response: { status: 502 } }),
     });
 
-describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0073)', () => {
+describe('AjusteCentavosTituloService — casos canônicos da I18 (ADR-0074)', () => {
     it('caso 1: NELSON 462,49 × 462,50 ⇒ sequência exata, juros 0,01, liberação e rechaveamento', async () => {
         const h = build();
         const r = await h.service.ajustar(PEDIDO);

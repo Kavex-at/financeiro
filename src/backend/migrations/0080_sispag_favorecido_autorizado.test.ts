@@ -183,8 +183,8 @@ describe('migration 0080 — favorecido autorizado SISPAG (ADR-0065)', () => {
     it('alerta: sai sispag-excecao-divergencia, entra sispag-destino-alterado (catálogo do dia da 0080)', () => {
         const m = CODIGO.match(/ADD CONSTRAINT alerta_tipo_check\s+CHECK \(tipo IN \(([^)]*)\)\)/i);
         expect(m).not.toBeNull();
-        // Congelado: a 0087 acrescentou `sispag-ajuste-centavos-parado`; a paridade com o
-        // catálogo ATUAL é checada no teste da 0087.
+        // Congelado: a 0088 acrescentou `sispag-ajuste-centavos-parado`; a paridade com o
+        // catálogo ATUAL é checada no teste da 0088.
         expect(valores(m?.[1])).toEqual(
             Object.values(ALERTA_TIPO)
                 .filter((t) => t !== ALERTA_TIPO.SISPAG_AJUSTE_CENTAVOS_PARADO)

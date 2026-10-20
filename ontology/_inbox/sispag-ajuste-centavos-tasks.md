@@ -1,7 +1,7 @@
 # Tasks: sispag-ajuste-centavos
 
-**Spec source:** `ontology/_inbox/sispag-ajuste-centavos-interview.md` (respostas do maintainer D1–D7, P0-1..3, P1) + `ontology/_inbox/sispag-ajuste-centavos-ontology-diff.md` (M1–M9 aprovados) + ontologia v0.44.0 (commit dcf6a5e, `planned`)
-**Ontology diff:** yes (já aplicado, `implementation_status: planned`) — `ontology/decisions/0073-sispag-ajuste-centavos-por-renegociacao-fin070.md`, `ontology/business-rules/ajuste-centavos-titulo-sispag.md` (I18a–n), `ontology/actions/sispag/ajustar-centavos-titulo.md`, emendas em `business-rules/vinculo-codbar-item-sispag.md` (I17b régua líquida, I17d nota, I17m guarda do `.REM`, I17n import pelo líquido), `business-rules/sugestao-boleto-dda-sispag.md` (I15g transferência), `entities/decisao-sugestao-boleto.md` (`tipoAnulacao`, `origemDecisaoId`, `transferidaPor`), `actions/sispag/finalizar-lote.md` (`TitleAdjustmentInProgressError`), `actions/sispag/confirmar-sugestao-boleto.md`, `integrations/conexos.md` (seção de escrita `fin070`/`fin103`)
+**Spec source:** `ontology/_inbox/sispag-ajuste-centavos-interview.md` (respostas do maintainer D1–D7, P0-1..3, P1) + `ontology/_inbox/sispag-ajuste-centavos-ontology-diff.md` (M1–M9 aprovados) + ontologia v0.45.0 (commit dcf6a5e, `planned`)
+**Ontology diff:** yes (já aplicado, `implementation_status: planned`) — `ontology/decisions/0074-sispag-ajuste-centavos-por-renegociacao-fin070.md`, `ontology/business-rules/ajuste-centavos-titulo-sispag.md` (I18a–n), `ontology/actions/sispag/ajustar-centavos-titulo.md`, emendas em `business-rules/vinculo-codbar-item-sispag.md` (I17b régua líquida, I17d nota, I17m guarda do `.REM`, I17n import pelo líquido), `business-rules/sugestao-boleto-dda-sispag.md` (I15g transferência), `entities/decisao-sugestao-boleto.md` (`tipoAnulacao`, `origemDecisaoId`, `transferidaPor`), `actions/sispag/finalizar-lote.md` (`TitleAdjustmentInProgressError`), `actions/sispag/confirmar-sugestao-boleto.md`, `integrations/conexos.md` (seção de escrita `fin070`/`fin103`)
 **entity_changed:** true (`DecisaoSugestaoBoleto` ganha `tipoAnulacao`/`origemDecisaoId`/`transferidaPor`; ledger novo de execução, padrão I-2; sem entidade nova)
 **Estimated scope:** XL (backend ~16 arquivos novos/alterados + 1 migration + 3 rotas + frontend ~4 arquivos + 3 jobs de verificação: sonda PRD só leitura de permissão, medição PRD só leitura, prova HML de escrita)
 **Mode:** `/feature-tweak`. Estende `ConexosSispagWriteClient`, `BoletoSuggestionService`, `LotePagamentoService`, `RemessaService`, `RemessaCnabValidator`, `ElegibilidadeVinculoCodigoBarras`; serviço novo `AjusteCentavosTituloService`.
@@ -25,7 +25,7 @@
 
 ## Fatos do código que moldam as tasks (verificados em 2026-10-19 neste worktree)
 
-- Última migration = **0086** (`0086_sispag_vinculo_codigo_barras.sql`); próxima = **0087**. Reconferir `origin/main` e branches abertas antes do ship.
+- Última migration = **0086** (`0086_sispag_vinculo_codigo_barras.sql`); próxima = **0088**. Reconferir `origin/main` e branches abertas antes do ship.
 - `RemessaService.ts:1379` monta o item com `Number(pendente.raw.titMnyValor ?? item.valor ?? 0)` — o bug da I17n (valor base, não líquido).
 - `ElegibilidadeVinculoCodigoBarras.ts:57,134-137` compara com `totalAberto` (base); `VinculoCodigoBarrasService.ts:727-771` lê `totalAberto` ao vivo — ponto da emenda I17b (régua líquida, fail-closed na divergência das duas fórmulas).
 - `RemessaService.ts:851-895` tem o gate de integridade pós-geração (`RemessaCnabValidator.validar` → `RemessaCorrompidaError` / `BoletoCodigoBarrasRepetidoError`); a I17m entra ali, com o mesmo tratamento tardio (I16b(2)).
@@ -174,14 +174,14 @@
 
 ---
 
-### Task 7: Migration 0087 (ledger, colunas da decisão, CHECKs, eventos) e paridade de build
+### Task 7: Migration 0088 (ledger, colunas da decisão, CHECKs, eventos) e paridade de build
 **Files to change:**
-- `src/backend/migrations/0087_sispag_ajuste_centavos.sql`
-- `src/backend/migrations/0087_sispag_ajuste_centavos.test.ts`
-- `src/backend/migrations/0087_sispag_ajuste_centavos.integration.test.ts`
+- `src/backend/migrations/0088_sispag_ajuste_centavos.sql`
+- `src/backend/migrations/0088_sispag_ajuste_centavos.test.ts`
+- `src/backend/migrations/0088_sispag_ajuste_centavos.integration.test.ts`
 
 **Acceptance criteria:**
-- [ ] Reconferir o número livre em `origin/main` imediatamente antes de commitar (hoje 0087); se ocupado, renomear todos os artefatos e as referências da ontologia
+- [ ] Reconferir o número livre em `origin/main` imediatamente antes de commitar (hoje 0088); se ocupado, renomear todos os artefatos e as referências da ontologia
 - [ ] Tabela `sispag_ajuste_centavos_execucao`: `id`, `fil_cod`, `doc_cod`, `tit_cod_origem`, `decisao_id` (tipo da PK de `sispag_decisao_sugestao_boleto`), `tit_cod_novo`, `frn_cod`, `marcador` (único), `etapa` (CHECK com os valores da Task 4), `motivo`, `delta_centavos`, `frn_vld_tpop`, `valor_boleto_centavos`, `codigo_mascarado` (CHECK no formato 5+4 da 0085), `fbl_cod`, `conexos_username`, `conexos_usn_cod`, `tentativas`, timestamps
 - [ ] Chave de idempotência única `(fil_cod, doc_cod, tit_cod_origem, decisao_id)`; **índice único parcial** "no máximo um não terminal por `(fil_cod, doc_cod, tit_cod_origem)`"
 - [ ] `sispag_decisao_sugestao_boleto`: `tipo_anulacao TEXT NULL` (CHECK `MANUAL|PAR_REVOGADO|TITULO_RENEGOCIADO`, só em `ANULADA`), `origem_decisao_id NULL` (FK para a própria tabela), `transferida_por TEXT NULL` (CHECK `= 'sistema'` quando presente; os dois juntos ou nenhum)
@@ -386,11 +386,11 @@ All tasks complete AND:
 - [ ] `npm run lint` ✅ (backend e frontend)
 - [ ] `npm test` ✅ (backend e frontend, incluindo integração das migrations)
 - [ ] PatternGuardian gate ✅
-- [ ] ontology diff em `ontology/` presente (v0.44.0, ADR-0073) e `implementation_status` atualizado ✅
+- [ ] ontology diff em `ontology/` presente (v0.45.0, ADR-0074) e `implementation_status` atualizado ✅
 - [ ] DesignSystemReviewer gate ✅ (Task 16)
 - [ ] ObservabilityAdvisor review ✅ (fluxo assíncrono pós-commit e varredura; sem handler Lambda novo)
 - [ ] Ground-truth: GT1–GT4 executados em PRD só leitura antes do merge (G4, M8); default da I17m fixado ✅
 - [ ] Modo `off` como default comprovado em teste; nada liga `on` em PRD nesta PR ✅
 - [ ] Regis-Review gate (reduzido por risco: fault-tolerance, integrability, security, testability) ✅
-- [ ] Rebase de `main`; migration 0087, ADR 0073 e ontologia 0.44.0 reconferidos contra `origin/main` ✅
+- [ ] Rebase de `main`; migration 0088, ADR 0074 e ontologia 0.45.0 reconferidos contra `origin/main` ✅
 - [ ] app version bumped (FE+BE lockstep, minor: `feat`) à mão nos dois `package.json` (sem pwsh nesta máquina) + `CHANGELOG.md` ✅

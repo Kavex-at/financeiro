@@ -18,7 +18,7 @@ const VALORES_PENDENTE_SCHEMA = z
 export type ValorDoItem = { disponivel: true; valor: number } | { disponivel: false };
 
 /**
- * Valor com que o item vai ao `importar` do `fin015` (I17n, ADR-0073): o LÍQUIDO do título no grid
+ * Valor com que o item vai ao `importar` do `fin015` (I17n, ADR-0074): o LÍQUIDO do título no grid
  * de pendentes (`titMnyLiquido`), nunca o base (`titMnyValor`) quando há juros/desconto. HML
  * 536/2: o `.REM` paga o valor do título; importar pelo base pagaria 1 centavo a menos.
  *

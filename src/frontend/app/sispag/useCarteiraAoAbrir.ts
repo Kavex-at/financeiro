@@ -120,7 +120,7 @@ export function useLotesAoAbrir(opts: {
 }
 
 /**
- * Varredura de retomada do ajuste de centavos ao abrir a tela (ADR-0073, I18g(3)). Só para quem tem
+ * Varredura de retomada do ajuste de centavos ao abrir a tela (ADR-0074, I18g(3)). Só para quem tem
  * `sispag:executar` (quem só vê não dispara nada; o servidor recusaria com 403). Uma vez por
  * abertura, sem esperar o ERP: o servidor agenda e responde 202. Falha não incomoda a tela.
  */

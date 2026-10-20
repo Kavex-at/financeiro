@@ -11,7 +11,7 @@ const semComentarios = (fonte: string): string =>
         .map((l) => l.replace(/(^|\s)\/\/.*$/, ''))
         .join('\n');
 
-describe('ServerProcessMarker (I18f/I18g, ADR-0073)', () => {
+describe('ServerProcessMarker (I18f/I18g, ADR-0074)', () => {
     it('nasce desligado (job, cron, script) e só liga explicitamente', () => {
         const m = new ServerProcessMarker();
         expect(m.ehServidor()).toBe(false);

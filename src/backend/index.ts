@@ -67,7 +67,7 @@ setSessionStorePoolEventSink((evento) => {
 });
 
 /**
- * Este processo é O SERVIDOR (ADR-0073, I18f/I18g). Ligado aqui, e nunca no
+ * Este processo é O SERVIDOR (ADR-0074, I18f/I18g). Ligado aqui, e nunca no
  * `bootstrapAppContainer` (compartilhado com os ~58 jobs): fora do servidor o ajuste de centavos
  * do título cai a `shadow` — crons rodam com outra credencial e não escrevem no título.
  */

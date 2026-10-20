@@ -17,7 +17,7 @@ const ICONE = {
   aviso: AlertTriangle,
 } as const
 
-/** Selo do ajuste de centavos do título (ADR-0073). Só texto já mascarado. */
+/** Selo do ajuste de centavos do título (ADR-0074). Só texto já mascarado. */
 export function AjusteCentavosSelo({ selo }: { selo: SeloAjusteCentavos | null }) {
   if (!selo) return null
   const Icone = ICONE[selo.tipo]

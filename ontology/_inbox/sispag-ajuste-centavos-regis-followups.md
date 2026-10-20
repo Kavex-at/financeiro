@@ -1,4 +1,4 @@
-# Follow-ups do Regis-Review — `sispag-ajuste-centavos` (ADR-0073), 2026-10-19
+# Follow-ups do Regis-Review — `sispag-ajuste-centavos` (ADR-0074), 2026-10-19
 
 Revisão reduzida (Fault Tolerance, Integrability, Security, Testability). Relatório:
 `docs/regis-review/2026-10-19-sispag-ajuste-centavos/REPORT.md`. **Não implementados**, salvo onde dito.

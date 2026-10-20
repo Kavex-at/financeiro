@@ -11,7 +11,7 @@ const retomar = retomarAjustesCentavos as jest.Mock
 
 afterEach(() => jest.clearAllMocks())
 
-describe('useAjustesCentavosAoAbrir (ADR-0073, I18g)', () => {
+describe('useAjustesCentavosAoAbrir (ADR-0074, I18g)', () => {
   it('sispag:executar ⇒ dispara a varredura UMA vez por abertura', () => {
     const { rerender } = renderHook((p) => useAjustesCentavosAoAbrir(p), {
       initialProps: { habilitado: false, podeExecutar: true },

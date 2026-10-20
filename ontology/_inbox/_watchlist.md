@@ -236,10 +236,10 @@
 - **Alargar a janela do passo 2** (valor igual, +6..+10 d; os 4 MULTILOG +8 d) — 1 credor; exige evidência
   de barra +8 d e retorno bancário.
 - **Retirada/trava automática do lote do título com boleto vencido** — decisão de produto, passo 3.
-- ~~**Vincular boleto acima/abaixo do título**~~ — **até R$ 0,05 resolvido pela ADR-0073** (I18, ajuste no
-  título antes do vínculo). **Acima de R$ 0,05** continua aqui (ver seção ADR-0073).
+- ~~**Vincular boleto acima/abaixo do título**~~ — **até R$ 0,05 resolvido pela ADR-0074** (I18, ajuste no
+  título antes do vínculo). **Acima de R$ 0,05** continua aqui (ver seção ADR-0074).
 
-## 2026-10-19 — sispag-ajuste-centavos (ADR-0073)
+## 2026-10-19 — sispag-ajuste-centavos (ADR-0074)
 
 - **Boleto > R$ 0,05 do título (25 em PRD, todos > R$ 10, ~7 %)** — NELSON fil 4 (título fixo 930,48 × boleto
   993–1.348, valor previsto?), SAVINO DEL BENE fil 2 (+R$ 386–391 fixo), UPS (+13,7–15,1 %), RHENUS
