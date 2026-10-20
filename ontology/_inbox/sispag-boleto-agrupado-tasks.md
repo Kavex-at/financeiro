@@ -149,12 +149,12 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/libs/boleto/SituacaoGrupoBoleto.ts` + `.test.ts` (novo)
 
 **Acceptance criteria:**
-- [ ] Etapas tipadas: `marcador_gravado → bordero_criado → baixas_gravadas → bordero_conferido → importado → codbar_vinculado → concluido`; desvios `reaproveitado` (adoção do `borCod` antigo, I21s), `retirado` (I21p(3)), `limpo` (I21q), `limpeza_pendente` (Alerta, I21q pós-remessa), `indeterminado`, `failed` (transitória, I21p(2)), `simulado` (dry-run)
-- [ ] `podeLimpar(etapa, { vldHasRemessaPgto, loteNativoFinalizado, reaproveitado })` verdadeiro só antes do lote nativo finalizado, com `vldHasRemessaPgto = 0` e borderô **criado nesta execução** (nunca reaproveitado)
-- [ ] Transição inválida lança; terminais documentados
-- [ ] Situação derivada (não persistida): `DISPONIVEL`, `EM_LOTE`, `EM_REMESSA`, `REJEITADO`, `RETIDO`, `DIVERGENTE`, `ORFAO` (+ `ANULADO`/`PAGO` do estado) com precedência explícita testada (ex.: órfão e retido ao mesmo tempo ⇒ a ordem fixada no teste); `REJEITADO` = última execução com J rejeitado e nenhuma execução posterior concluída
-- [ ] `podeSerLotadoPeloCron(situacao)` falso para `ORFAO`, `RETIDO`, `REJEITADO` (I21j/I21r)
-- [ ] Puro; constantes tipadas (nunca string crua); `typecheck`/`lint` ok
+- [x] Etapas tipadas: `marcador_gravado → bordero_criado → baixas_gravadas → bordero_conferido → importado → codbar_vinculado → concluido`; desvios `reaproveitado` (adoção do `borCod` antigo, I21s), `retirado` (I21p(3)), `limpo` (I21q), `limpeza_pendente` (Alerta, I21q pós-remessa), `indeterminado`, `failed` (transitória, I21p(2)), `simulado` (dry-run)
+- [x] `podeLimpar(etapa, { vldHasRemessaPgto, loteNativoFinalizado, reaproveitado })` verdadeiro só antes do lote nativo finalizado, com `vldHasRemessaPgto = 0` e borderô **criado nesta execução** (nunca reaproveitado)
+- [x] Transição inválida lança; terminais documentados
+- [x] Situação derivada (não persistida): `DISPONIVEL`, `EM_LOTE`, `EM_REMESSA`, `REJEITADO`, `RETIDO`, `DIVERGENTE`, `ORFAO` (+ `ANULADO`/`PAGO` do estado) com precedência explícita testada (ex.: órfão e retido ao mesmo tempo ⇒ a ordem fixada no teste); `REJEITADO` = última execução com J rejeitado e nenhuma execução posterior concluída
+- [x] `podeSerLotadoPeloCron(situacao)` falso para `ORFAO`, `RETIDO`, `REJEITADO` (I21j/I21r)
+- [x] Puro; constantes tipadas (nunca string crua); `typecheck`/`lint` ok
 
 **Dependencies:** none
 
