@@ -11,8 +11,8 @@
     "entities_imported": 0,
     "entities_custom": 27,
     "entities_core": 0,
-    "entities_implemented": 19,
-    "entities_partial": 4,
+    "entities_implemented": 20,
+    "entities_partial": 3,
     "entities_planned": 5,
     "entities_planned_migration": 0,
     "entities_coverage_pct": 74,
@@ -355,9 +355,9 @@
       "note": "Entrada nova em by_entity (drift pre-existente: BoletoDda nao era contada; summary NAO a conta, mantido). impl_pct 80 de proposito: pool/sincronizacao implementados, regra de candidato nova nao."
     },
     "TituloDps": {
-      "status": "partial",
-      "impl_pct": 60,
-      "note": "ADR-0073: tabela + motor; leitor do GED pendente"
+      "status": "implemented",
+      "impl_pct": 100,
+      "note": "ADR-0073: tabela + motor + leitor do GED (job ler-dps-nfse)"
     }
   },
   "by_business_rule": {

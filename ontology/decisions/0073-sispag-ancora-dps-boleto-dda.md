@@ -60,10 +60,17 @@ mesmo depois que o título sai da carteira.
 ## Consequências
 
 - Sem DPS lido, nada muda (a regra de ordem fica dormente até a primeira prova).
-- **Entregue nesta etapa:** I15p no motor (`AncoraOrdemDps`, `RegraSugestaoBoleto`, `MotorSugestaoBoleto`),
-  `titulo_dps` + `TituloDpsRepository`, sinais no front.
-- **Pendente:** o leitor do GED (job que baixa o PDF e grava `titulo_dps`), a dependência de PDF no
-  backend e a permissão do robô CLONEX no GED. Até lá `TituloDps` fica `partial`.
+- **Entregue (app v0.70.0):** I15p no motor (`AncoraOrdemDps`, `RegraSugestaoBoleto`,
+  `MotorSugestaoBoleto`), `titulo_dps` + `TituloDpsRepository`, sinais no front, e o leitor do GED
+  (`ConexosGedClient`, `ExtratorTextoPdf` com `pdfjs-dist`, `LeituraDanfse`, `SelecaoLeituraDps`,
+  `LeitorDpsService`, job `ler-dps-nfse` no cron do SISPAG).
+- **Medido ao vivo (somente leitura):** o processo do título vem do `psq014` (o `com298/{docCod}` não
+  acha documento só financeiro); o `download` do `arq020` devolve o PDF em base64 dentro de uma string
+  JSON; dois layouts de DANFSe lidos ("NÚMERO DA DPS" e "Número DPS"); 4 de 4 DPS iguais ao previsto.
+- **Limite conhecido:** emissor de CT-e (MULTILOG conta 0092740, DACTE da Qive) não imprime DPS — o
+  escopo não se prova por PDF e a ordem fica dormente ali (os tiers de antes seguem valendo).
+- **Permissão do robô:** o GED abriu na tela como CLONEX; a primeira execução do cron confirma pela API
+  (falha geral → exit 1 → passo de alerta do workflow).
 
 ## Alternativas rejeitadas
 
