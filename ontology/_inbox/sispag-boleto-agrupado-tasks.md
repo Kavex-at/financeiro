@@ -130,14 +130,14 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/service/sispag/__fixtures__/grupoBoleto.ts` (novo: PEDRONI, AR SOLUÇÕES, 333111, negativos)
 
 **Acceptance criteria:**
-- [ ] RED primeiro. Conjunto candidato = **todos** os títulos em aberto do `pesCod` na filial com vencimento civil **igual** ao do boleto; Σ == boleto ⇒ sugerido; Σ ≠ ⇒ nada (nunca subconjunto — teste com 4 títulos em que 3 somariam o boleto: zero sugestão)
-- [ ] PI-7: conjunto fechado com Σ == boleto e um título em alçada ⇒ sugestão **presente** com `confirmavel = false` e motivo `NAO_LIBERADO`; o título nunca é removido para sugerir os demais (teste dedicado)
-- [ ] Conjunto que cruza filial nunca é formado pela sugestão (a chave é `pesCod` × filial); a composição manual que cruza filial é recusada pela Task 2 com `CRUZA_FILIAL`
-- [ ] I21f PEDRONI: K = 3 boletos de R$ 1.575,00 (mesmo `pesCod`, `emissorChave`, vencimento, valor) × 9 títulos de R$ 525,00 ⇒ 3 grupos `intercambiavel`, boletos ordenados por (`ddcCod`, `ditCod`), títulos por (vencimento, `docCod`, `titCod`), k-ésimo boleto com o k-ésimo bloco de 3; títulos de valores diferentes com K ≥ 2 ⇒ nenhuma sugestão
-- [ ] Canônico 333111 (títulos 25/10, boleto 26/10) ⇒ **não** sugerido
-- [ ] Boleto de grupo `CONFIRMADO` ou com `DecisaoSugestaoBoleto CONFIRMADA` não é candidato; título em grupo `CONFIRMADO` não entra em conjunto de outro boleto
-- [ ] Determinístico (mesma entrada ⇒ mesma saída, ordem estável); complexidade O(T + B) por (filial, `pesCod`, vencimento) documentada
-- [ ] `typecheck`/`lint` ok
+- [x] RED primeiro. Conjunto candidato = **todos** os títulos em aberto do `pesCod` na filial com vencimento civil **igual** ao do boleto; Σ == boleto ⇒ sugerido; Σ ≠ ⇒ nada (nunca subconjunto — teste com 4 títulos em que 3 somariam o boleto: zero sugestão)
+- [x] PI-7: conjunto fechado com Σ == boleto e um título em alçada ⇒ sugestão **presente** com `confirmavel = false` e motivo `NAO_LIBERADO`; o título nunca é removido para sugerir os demais (teste dedicado)
+- [x] Conjunto que cruza filial nunca é formado pela sugestão (a chave é `pesCod` × filial); a composição manual que cruza filial é recusada pela Task 2 com `CRUZA_FILIAL`
+- [x] I21f PEDRONI: K = 3 boletos de R$ 1.575,00 (mesmo `pesCod`, `emissorChave`, vencimento, valor) × 9 títulos de R$ 525,00 ⇒ 3 grupos `intercambiavel`, boletos ordenados por (`ddcCod`, `ditCod`), títulos por (vencimento, `docCod`, `titCod`), k-ésimo boleto com o k-ésimo bloco de 3; títulos de valores diferentes com K ≥ 2 ⇒ nenhuma sugestão
+- [x] Canônico 333111 (títulos 25/10, boleto 26/10) ⇒ **não** sugerido
+- [x] Boleto de grupo `CONFIRMADO` ou com `DecisaoSugestaoBoleto CONFIRMADA` não é candidato; título em grupo `CONFIRMADO` não entra em conjunto de outro boleto
+- [x] Determinístico (mesma entrada ⇒ mesma saída, ordem estável); complexidade O(T + B) por (filial, `pesCod`, vencimento) documentada
+- [x] `typecheck`/`lint` ok
 
 **Dependencies:** none (usa a Task 2 quando existir; até lá, contrato de tipos)
 
@@ -589,5 +589,6 @@ All tasks complete AND:
 | **G3** | **P1** | **Disparo L5 da limpeza (lote local cancelado com rascunho nativo aberto).** A I21q lista esse disparo, mas `LotePagamentoService.cancelarLote` é só local hoje (I1); a limpeza escreve no ERP fora do L8 e a ontologia não diz o que acontece com o cancelamento se a limpeza falhar. | Task 11 | Cancela o lote local sempre; a limpeza roda **depois do commit**, sob o kill-switch, com a sessão de quem cancelou; falha ⇒ `Alerta` `sispag-bordero-grupo-pendente` e o borderô fica para a analista. Alternativa: recusar o cancelamento até a limpeza passar. Decisão do maintainer. |
 | **G4** | ~~P1~~ **fechado (2026-10-20)** | **Formato da linha de retorno do item de borderô.** Lido na gar 7 (achados T7): o `fin052/arquivosRetornoDetalhe/list` devolve **uma linha** (o J) no evento `00`, com `filCod, bncCod, flpCod, itsCodSeq, borCod, borVldTipo, borVldFinalizado, ardEspObs "BORDERO: 252 - …"`; **sem** `docCod/titCod/bxaCodSeq/pesCod/itsMnyVlrPgto`. | Task 18 | A Task 18 casa pela chave nativa `fil/bnc/flp/its` (e/ou `borCod`) e espalha nos N itens do grupo; pagamento de cada título conferido no `fin064` (I21r). |
 | **G5** | **P1** | **Numeração.** ADR-0075/0.46.0 estão reservados pela branch não mergeada `docs/sispag-situacao-pagamento-ontology`; a 0089 e a versão do app (0.72.0 prevista) podem colidir com outra branch até o ship. | Tasks 6, 25 | Reconferir em `origin/main` e nas branches abertas antes do commit da 0089 e de novo no rebase final. |
+| **G6** | **P2** | **Ambiguidade na sugestão de grupos.** A I21e/I21f não dizem o que fazer quando um boleto fecha a soma de **dois** conjuntos (dois credores, mesmo dia, mesma soma) ou quando dois boletos iguais, sem a forma da I21f, servem a um só conjunto. | Task 3 (aplicado), Tasks 9, 22 | **Aplicado no `MotorGrupoBoleto` (lado seguro, reversível):** nenhuma sugestão para os envolvidos; a analista compõe à mão (I21g). Alternativa: desempatar pelo par `VIGENTE` do emissor. A GT1 (Task 22) conta os casos. Confirmar com o maintainer. |
 
 Nenhum gap bloqueia o início: Fase A inteira e as Tasks 6, 8, 10, 12 podem andar já. G1 bloqueia o fechamento da Task 9; G2 o da Task 7/14; G3 o de um critério da Task 11; G4 o da Task 18.
