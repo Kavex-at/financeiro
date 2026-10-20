@@ -32,9 +32,14 @@ describe('ValorAbertoLiquido (I17b emendada, ADR-0073)', () => {
         expect(ValorAbertoLiquido.calcularCentavos(v)).toBe(17877);
     });
 
-    it('pagamento parcial: líquido − pago, conferido contra o aberto', () => {
-        const v = titulo({ totalLiquido: 100, totalPago: 40, totalAberto: 60 });
+    it('pagamento parcial: o totalLiquido do fin064 JÁ desconta o pago (PRD 2026-10-20, 15/15)', () => {
+        const v = titulo({ totalLiquido: 60, totalPago: 40, totalAberto: 60 });
         expect(ValorAbertoLiquido.calcularCentavos(v)).toBe(6000);
+    });
+
+    it('pagamento parcial com líquido bruto do pago ⇒ diverge do aberto ⇒ indisponível', () => {
+        const v = titulo({ totalLiquido: 100, totalPago: 40, totalAberto: 60 });
+        expect(ValorAbertoLiquido.calcularCentavos(v)).toBeUndefined();
     });
 
     it('fórmulas divergentes ⇒ indisponível (fail-closed)', () => {
@@ -44,7 +49,6 @@ describe('ValorAbertoLiquido (I17b emendada, ADR-0073)', () => {
 
     it.each([
         'totalLiquido',
-        'totalPago',
         'totalAberto',
         'titMnyJuros',
         'titMnyDesconto',
