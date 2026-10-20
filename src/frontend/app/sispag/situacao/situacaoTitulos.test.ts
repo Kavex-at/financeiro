@@ -15,6 +15,8 @@ import {
   SITUACAO_PRONTO,
   situacaoChave,
   somar,
+  totaisPorEstado,
+  bloqueadosPorMotivo,
   vencemEmAteDoisDias,
 } from './situacaoTitulos'
 
@@ -194,14 +196,30 @@ describe('recortes dos cards', () => {
       valor: 462.49 + 12840 + 8210.35 + 15300 + 6120.8 + 9840 + 21700 + 780 + 34500,
     })
   })
-  it('prévia dos automáticos: só PRONTO, um lote por filial, sem título já em lote', () => {
+  it('prévia dos automáticos: só PRONTO a vencer em até 7 dias, por filial, sem título já em lote', () => {
+    expect(prontosPorFilial(TITULOS_FIXTURE).map((x) => [x.filCod, x.qtd])).toEqual([
+      [1, 4],
+      [7, 3],
+    ])
     const comLote = TITULOS_FIXTURE.map((t) =>
       t.docCod === '5570' ? { ...t, loteRascunho: { id: 'x', automatico: true } } : t,
     )
     const r = prontosPorFilial(comLote)
-    expect(r.map((x) => x.filCod)).toEqual([1, 3, 7])
     expect(r.find((x) => x.filCod === 7)?.qtd).toBe(2)
-    expect(r.reduce((acc, x) => acc + x.qtd, 0)).toBe(8)
+    expect(r.reduce((acc, x) => acc + x.qtd, 0)).toBe(6)
+  })
+  it('totais por estado e motivos presentes, na ordem do contrato', () => {
+    const t = totaisPorEstado(TITULOS_FIXTURE)
+    expect([t.todos.qtd, t.prontos.qtd, t.bloqueados.qtd]).toEqual([18, 9, 9])
+    expect(bloqueadosPorMotivo(TITULOS_FIXTURE).map((m) => [m.motivo, m.qtd])).toEqual([
+      ['ALCADA', 1],
+      ['TIPO_PERMUTA', 1],
+      ['VENCIDO', 2],
+      ['FORMA_NAO_SISPAG', 1],
+      ['DUPLICIDADE', 1],
+      ['AJUSTE_CENTAVOS_PENDENTE', 1],
+      ['BOLETO_SEM_DDA', 2],
+    ])
   })
 })
 

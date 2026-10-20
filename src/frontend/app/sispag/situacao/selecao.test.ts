@@ -18,10 +18,15 @@ describe('seleção por situação', () => {
     expect(b && motivoNaoSelecionavel(b)).toMatch(/Bloqueado: .+Resolva antes/)
   })
 
-  it('pronto em lote finalizado/remessa não é selecionável; em rascunho é (move)', () => {
+  it('pronto já em lote (finalizado, remessa ou rascunho) não é selecionável, com motivo', () => {
     const p = TITULOS_FIXTURE[0]
-    expect(selecionavel({ ...p, loteComprometido: { id: 'l', status: 'FINALIZADO' } })).toBe(false)
-    expect(selecionavel({ ...p, loteRascunho: { id: 'l', automatico: false } })).toBe(true)
+    const final = { ...p, loteComprometido: { id: 'l', status: 'FINALIZADO' as const } }
+    const rasc = { ...p, loteRascunho: { id: 'l', automatico: false } }
+    expect(selecionavel(final)).toBe(false)
+    expect(selecionavel(rasc)).toBe(false)
+    expect(motivoNaoSelecionavel(final)).toMatch(/lote finalizado/)
+    expect(motivoNaoSelecionavel(rasc)).toMatch(/Retirar do lote/)
+    expect(motivoNaoSelecionavel(p)).toBeUndefined()
   })
 
   it('selecionar todos atravessa filiais e ignora bloqueados', () => {

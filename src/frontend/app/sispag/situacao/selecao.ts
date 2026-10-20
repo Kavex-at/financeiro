@@ -1,6 +1,6 @@
 import type { TituloAPagar } from '@/lib/sispag'
 import { chaveTitulo } from '../components/selecionarTodos'
-import { podeSelecionar } from '../components/moverParaLote'
+import { motivoSelecaoBloqueada } from '../components/moverParaLote'
 import { ehPronto } from './situacaoTitulos'
 
 /**
@@ -9,15 +9,25 @@ import { ehPronto } from './situacaoTitulos'
  * "Criar lotes" cria um lote por filial.
  */
 
-export const selecionavel = (t: TituloAPagar): boolean => ehPronto(t) && podeSelecionar(t)
+/**
+ * Pronto e livre de lote. Título já em lote RASCUNHO não se seleciona aqui: o contrato de
+ * `POST /sispag/lotes/por-filial` não tem o `mover` do ADR-0064 (ver CONTRACT-NOTES.md), então o
+ * servidor o recusaria. Ele sai do rascunho pelo "Retirar do lote" da linha.
+ */
+export const selecionavel = (t: TituloAPagar): boolean =>
+  ehPronto(t) && !t.loteComprometido && !t.loteRascunho
 
 /** Motivo de uma linha não ser selecionável (tooltip/aria-label), ou `undefined` se é. */
 export const motivoNaoSelecionavel = (t: TituloAPagar): string | undefined => {
-  if (ehPronto(t)) return undefined
-  const s = t.situacaoPagamento
-  return s?.rotulo
-    ? `Bloqueado: ${s.rotulo}. Resolva antes de incluir em um lote.`
-    : 'Bloqueado. Resolva antes de incluir em um lote.'
+  if (!ehPronto(t)) {
+    const s = t.situacaoPagamento
+    return s?.rotulo
+      ? `Bloqueado: ${s.rotulo}. Resolva antes de incluir em um lote.`
+      : 'Bloqueado. Resolva antes de incluir em um lote.'
+  }
+  if (t.loteComprometido) return motivoSelecaoBloqueada(t)
+  if (t.loteRascunho) return 'Já está em um lote em rascunho. Use "Retirar do lote" para usá-lo em outro.'
+  return undefined
 }
 
 export interface EstadoSelecionarTodosSituacao {
