@@ -576,6 +576,12 @@ All tasks complete AND:
 
 ## Questions / gaps
 
+> **Respostas do maintainer (2026-10-20):**
+> - **G1 — fechado com o default:** a sugestão usa o `valor` local (zero chamada ao Conexos); a **confirmação** lê o `fin064` ao vivo dos N títulos (só leitura, fora da transação) e grava o snapshot líquido; a remessa relê de novo (I19b). A GT2 mede a divergência.
+> - **G3 — fechado com o default:** `cancelarLote` sempre cancela local; a limpeza do borderô roda **depois do commit**, sob o kill-switch; falha ⇒ `Alerta` `sispag-bordero-grupo-pendente` e o borderô fica para a analista.
+> - **Escritas em HML (Tasks 1 e 21):** autorizadas sem pedir a cada rodada. **PRD continua só leitura**; qualquer escrita em PRD para e pergunta.
+
+
 | # | Prioridade | Gap | Onde bate | Default proposto (não aplicado sem resposta) |
 |---|---|---|---|---|
 | **G1** | **P1** | **De onde vem o "líquido" na sugestão e na confirmação.** A I19b exige a régua líquida da I17b (`fin064.totalLiquido` conferido), mas a carteira local guarda só `valor = titMnyValor` (base, `ConexosSispagClient.ts:403`). A ação `sugerirGruposBoleto` diz "zero chamada ao Conexos", e a `confirmarGrupoBoleto` diz "reavaliadas ao vivo-local". Com juros/desconto no título, a sugestão local pode mostrar um grupo que a régua líquida recusa (ou esconder um que ela aceitaria). | Tasks 3, 9, 22 | Sugestão usa o `valor` local (sem Conexos, como a ação diz) e marca o grupo como "a conferir"; a **confirmação** lê o `fin064` ao vivo dos N títulos (só leitura, fora da transação), aplica a régua e grava o snapshot líquido; a remessa relê de novo (I19b). A GT2 da Task 22 mede o tamanho do problema. Confirmar com o maintainer que "ao vivo-local" admite essa leitura no `confirmar`. |
