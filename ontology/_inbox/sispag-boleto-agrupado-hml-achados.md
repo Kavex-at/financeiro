@@ -76,3 +76,155 @@ cada, total **R$ 2.346,94**. Data de débito 20/10/2026.
 - **Filial do borderô × filial do lote:** o item herdou `filCod 2` do borderô; testar grupo de títulos da
   filial 1 com lote da filial 2 (o caso INTERNACIONAL cruza filiais; invariante do retorno §4 de
   `sispag-fin052-retorno-provado-hml.md`).
+
+---
+
+# Medições do TDD (Task 1), 2026-10-20
+
+> Job: `src/backend/jobs/probe-hml-boleto-agrupado-tdd.ts` (fases `marcadorLer`, `marcador`, `baixas`,
+> `v2`, `lote`, `importar`, `v5`, `v3`, `retornoLinha`, `estado`). Só HML (`columbiatrading-hml`,
+> `HML_ENV_FILE`, usuário MPS_FRANCINEI), `databaseConnectionString=""`, barras sintéticas
+> (`CodigoBarrasSintetico`), código mascarado 5+4 e `splitCodBar` redigido na trilha. Escritas em HML
+> sob a autorização do maintainer de 2026-10-20 (tasks, "Respostas do maintainer").
+>
+> Grupo de teste: DHL GLOBAL FORWARDING (`pesCod 1147`), filial 2, títulos **566/1** e **577/1**
+> (R$ 341,00 cada, total **R$ 682,00**), conta Itaú `gerNum 38`, lote nativo **flp 51** (débito 22/10/2026).
+
+## T1 — Marcador de correlação (G2): `borEspNrbanco` serve
+
+- O cabeçalho do `fin010` (40 chaves no `GET fin010/{fil}/{bor}` e na linha do `fin010/list`) **não tem
+  campo de observação** (`borEspObs`/`borDesObs` não existem). O único texto livre do cabeçalho é
+  **`borEspNrbanco`** ("nº banco"); nas baixas existe `bxaEspComplemento` (por baixa, não serve para achar
+  o borderô antes das baixas).
+- `POST fin010 {filCod 2, borVldTipo 2, borVldFinalizado 0, frontModelName 'bordero', borDtaMvto 22/10, gerNum 38, borEspNrbanco}`:
+  - `"gb-tdd-1020-a"` ⇒ `400 VALIDATION borEspNrbanco constraint not_in_uppercase` (nada criado). **Só maiúsculas.**
+  - `"GB-TDD-1020-A"` ⇒ 200, `borCod 253`, eco `borEspNrbanco "GB-TDD-1020-A"`.
+  - Tamanho: 16, 18, 20, 25, 30, 40, 50 e 100 caracteres ⇒ `400 higher_than_max_size` (nada criado);
+    **15 ⇒ 200** (`borCod 254`, `"GB-LEN15-XXXXXX"`). **Máximo = 15 caracteres.**
+- Releitura `GET fin010/2/253` ⇒ `borEspNrbanco "GB-TDD-1020-A"` (igual, sem trim/alteração).
+- **Filtrável:** `fin010/list` com `{"borEspNrbanco#EQ": "GB-TDD-1020-A"}` ⇒ `count 1` (só o 253); com
+  `#LIKE "%GB-TDD-1020-A%"` ⇒ `count 1`; `fieldList [borCod, borEspNrbanco, gerNum, borVldFinalizado]` aceito.
+- O campo **não** vem na linha de `borderosPendentes/list` (eco: `filCod, borVldTipo, borDtaMvto, borCod,
+  gerNum, pesCodCont, pesCod, dpeNomPessoa, vlrPrincipal, vlrTotal, juros, desconto, itemy`).
+- **Consequência para a I19s/Task 7:** o marcador cabe em 15 caracteres maiúsculos (ex.: `SPG` + id da
+  execução em base 36). Risco a registrar: `borEspNrbanco` tem semântica nativa de "nº do banco"; nada
+  em HML o usa no `.REM`/retorno, mas não foi gerada remessa com ele preenchido.
+
+## T2 — `borCod` é REUTILIZADO depois do `excluirBordero` (novo, crítico para I19s)
+
+O borderô 254 foi excluído; o `POST fin010` seguinte devolveu **253**. Depois de excluir o 253, os dois
+`POST` seguintes devolveram **253 de novo** (marcadores `GB-TDD-1020-C` e `GB-TDD-1020-D`). O ERP numera
+por `max(borCod)+1` da filial: um `borCod` guardado no write-ahead pode, depois de uma limpeza (nossa ou
+da analista), apontar para **outro** borderô. Reconhecer "o nosso borderô" só pelo `borCod` é inseguro;
+a identidade tem de ser `borCod` **e** marcador (`borEspNrbanco`) conferido na releitura.
+
+## T3 — `GET` de borderô inexistente responde 500, não 404
+
+`GET fin010/2/253` (e 254) depois da exclusão ⇒ **`500 {type: RECORDNOTFOUND, "Not Found: FinBordero (borCod: 253, borVldTipo: 2, filCod: 2)"}`**.
+`ConexosBaixaClient.getBordero` só trata 404 como ausência (lança `ConexosError` nos outros): a releitura
+de ausência da I19q/I19s precisa reconhecer `RECORDNOTFOUND` (ou usar `fin010/list borCod#EQ` ⇒ 0 linhas,
+que também foi observado).
+
+## T4 — V2: título com baixa em borderô em cadastro
+
+| Leitura | Antes da baixa | Com baixa no borderô 253 (em cadastro) | Depois da limpeza |
+|---|---|---|---|
+| `fin064` 566/1 e 577/1 | `totalAberto 341`, `vldPago 0`, `vldPendente 0` | **igual** (`totalAberto 341`, `vldPago 0`, `vldPendente 0`) | igual |
+| `fin015 titulosPendentes/list/2/4/51` (`docCod#EQ`) | presente | **AUSENTE** (controle 571/1 e 553/1 presentes) | **presente de novo** |
+
+- A carteira (`fin064`, de onde vem `TituloAPagar`) continua mostrando os títulos **em aberto**; o grid do
+  `fin015` os **esconde**. O caminho normal 1:1 (`RemessaService` relê o grid) cairia em "não está mais
+  elegível" se um título de grupo fosse para `importarTitulos`.
+- **`importarTitulos` avulso com a linha "velha"** (capturada antes da baixa, + `filCodLote/bncCod/flpCod`,
+  `itsVldModalidade 7`, `op 1`): o ERP perguntou `FIN_041.PESSOA_FAVORECIDA_SEM_CONTA_ATIVA_NO_BANCO_MODALIDADE_ALTERADA_TITULO_PROPRIO`
+  (respondida YES no HML) e **ACEITOU**: `SUCESSO`, item seq 1 `566/1` modalidade 6 valor 341 no lote 51,
+  com a baixa do mesmo título ainda no borderô 253. Item removido em seguida (`DELETE` 200, ausente na
+  releitura). **O `importar` não revalida a baixa em borderô:** a proteção contra pagar duas vezes é só o
+  grid. Sem a pergunta respondida, a mesma linha falha antes (`SELECTION_ERROR` sem `bncCod/filCodLote/flpCod`;
+  com eles, a pergunta FIN_041 que o client de produção não auto-responde).
+- Nota para a analista: título com baixa num borderô em cadastro some do grid de pendentes do SISPAG mas
+  segue "em aberto" no contas a pagar.
+
+## T5 — V5: modalidade do item de borderô
+
+Item do borderô 253 no lote 51 (nasce modalidade 4, valor 682):
+
+| Barra sintética | Modalidade | `validarCodigoBarras` | `confirmarCodigoBarras` | `PUT finItemSispag` | Item relido |
+|---|---|---|---|---|---|
+| banco **341** (= conta) `34191…8200` | **6** | OK (`barraVlrPgto 682`) | OK (`itsBncNumCodbancoResult 341`, ITAÚ) | **OK** | modalidade **6**, banco 341, pgto 682 |
+| banco 341 | 7 | OK | **`400 FIN_015.TITULO_DEVE_SER_MODALIDADE_TITULO_PROPRIO`** | — | inalterado (6) |
+| banco 422 `42293…` | 6 | OK | **`400 FIN_015.TITULO_NAO_PERTENCE_AO_BANCO_EM_USO`** | — | inalterado (6) |
+| banco 422 (provado em 2026-10-19) | 7 | OK | OK | OK | modalidade 7 |
+
+**"Título próprio" = 6** confirmado (PI-4/I19o). A recusa da combinação errada vem no `confirmarCodigoBarras`,
+antes de qualquer escrita no item. Não foi finalizado lote com a modalidade 6 (a finalização impediria a V3).
+
+## T6 — V3: ordem da limpeza e o `vldHasRemessaPgto`
+
+Ciclo 1 (borderô 253 `GB-TDD-1020-A`, 2 baixas, importado como item seq 1 do lote 51, com barra 341/6):
+
+1. `DELETE fin010/baixas/253/2/566/1/1` **com o item presente** ⇒ **`400 FIN_014.FIN_HAS_REMESSA_PGTO`** (nada mudou).
+2. `DELETE fin010/253` **com o item presente** ⇒ **`400 FIN_014.FIN_HAS_REMESSA_PGTO`**.
+3. `DELETE fin015/finItemSispag/4/51/1/2/2` ⇒ 200; releitura: item **ausente**; o borderô **volta** aos
+   `borderosPendentes` do lote 51.
+4. `excluirBaixa` 566/1 e 577/1 ⇒ 200; `excluirBordero 253` ⇒ 200; releitura: `GET` 500 `RECORDNOTFOUND`,
+   `fin010/list borCod#EQ 253` ⇒ 0. Títulos de volta ao grid de pendentes.
+
+Ciclo 2 (borderô 253 `GB-TDD-1020-C`, mesmo grupo), lendo a flag a cada passo:
+
+| Momento | `vldHasRemessaPgto` |
+|---|---|
+| borderô com 2 baixas, fora de lote | **0** |
+| logo depois do `borderosPendentes/importar` (lote 51 em rascunho, sem remessa) | **1** |
+| depois do `DELETE` do item | **0** |
+
+**A ordem I19q está confirmada** (`DELETE` do item → ausência → `excluirBaixa` × N → `excluirBordero` →
+ausência), e o ERP **impõe** essa ordem (`FIN_HAS_REMESSA_PGTO`). O `DELETE` do item voltou 200 com o item
+de fato ausente nas duas vezes.
+
+**Mas o H9 estava errado:** `vldHasRemessaPgto` vira 1 no **import** para um lote (não na geração do `.REM`)
+e volta a 0 quando o item sai do lote. Ele significa "está num lote do SISPAG", não "já foi para o banco".
+
+## T7 — G4: linha de detalhe do `fin052` para item de borderô (gar 7, só leitura)
+
+Arquivo `PG191081B.RET` (fil 2, bnc 4, gtb 1, gar 7, processado, 0 erros). Varridos os 52 eventos do banco
+4 (`fbeEspCod#EQ` um a um): **uma única linha**, no evento `00`:
+
+```json
+{"filCod":2,"bncCod":4,"flpCod":48,"itsCodSeq":1,"gtbCodSeq":1,"garCodSeq":7,
+ "fbeEspCod":"00","fbeEspDescricao":"PAGAMENTO EFETUADO","fbeVldTipo":2,
+ "ardDtaEvento":1792431647000,"ardCodSeq":1,
+ "borVldTipo":2,"borCod":252,"borDtaMvto":1792454400000,"borVldFinalizado":1,
+ "ardEspObs":"BORDERO: 252 - DATA DE CREDITO: 20/10/2026"}
+```
+
+- **Uma linha (o J)**, não uma por baixa. Sem `docTip/docCod/titCod`, sem `bxaCodSeq`, sem `pesCod`/
+  `dpeNomPessoa`, sem `itsMnyVlrPgto`, sem `gerNum`.
+- Chave para a Task 18: `filCod + bncCod + flpCod + itsCodSeq` (o item nativo) e/ou `borCod` (+ `borVldTipo 2`);
+  os N títulos vêm do grupo (local) e a confirmação de pagamento de cada um, do `fin064` (I19r). O valor
+  pago não vem na linha: conferir pelo item/borderô.
+
+## Estado deixado em HML (2026-10-20)
+
+- Borderôs de teste **253** (três encarnações: `GB-TDD-1020-A`, `-C`, `-D`) e **254** (`GB-LEN15-XXXXXX`):
+  **todos excluídos** (ausência observada no `GET` e no `fin010/list`). O próximo `POST fin010` da filial 2
+  deve voltar a devolver 253.
+- Títulos **566/1** e **577/1** (DHL, fil 2): em aberto, sem baixa, de volta ao grid de pendentes.
+- Lote nativo **flp 51** (fil 2, bnc 4, débito 22/10/2026): **rascunho vazio** (a API não apaga rascunho; o
+  mesmo vale para o flp 37). Nenhum lote finalizado, nenhuma remessa nem retorno gerados nesta rodada.
+- Inalterados da rodada anterior: borderô 252 finalizado, flp 48, gar 6/7, `fin146` bagCod 1 cancelado.
+
+## O que contradiz a ontologia v0.47.0 (voltar ao maintainer / OntologyCurator)
+
+1. **I19q (guarda `vldHasRemessaPgto = 0`) e H9/linha 8 do `conexos.md`.** A flag é 1 desde o `importar`
+   (T6). Lida antes do `DELETE` do item, a guarda bloquearia toda limpeza de borderô importado; lida depois,
+   é sempre 0 enquanto o lote não foi finalizado. O sinal de "já foi para o banco" tem de ser o **lote
+   nativo** (finalizado / `.REM` gerado), não a flag. O parágrafo "depois de um J rejeitado o borderô fica
+   com `vldHasRemessaPgto = 1`" vale só enquanto o item continua no lote rejeitado.
+2. **I19s (reconhecer pelo `borCod` do write-ahead).** O `borCod` é reutilizado (T2): `borCod` sozinho pode
+   adotar o borderô de outra pessoa. A releitura precisa conferir o marcador `borEspNrbanco` também quando
+   o `borCod` é conhecido.
+3. **I19l/I19n (sem contradição, só confirmação):** o marcador cabe no `POST fin010`, desde que ≤ 15 e
+   maiúsculo; a I19n segue igual (o marcador não aparece em `borderosPendentes`, a correlação ali é pelo `borCod`).
+4. **Não contradiz, mas reforça I19k:** o `importarTitulos` aceita título com baixa em borderô em cadastro
+   quando recebe a linha (T4). A garantia de não pagar duas vezes é nossa (I19k + grid relido), não do ERP.
