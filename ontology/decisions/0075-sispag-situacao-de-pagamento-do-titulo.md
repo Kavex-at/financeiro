@@ -70,6 +70,13 @@ passo**.
    um lote que falha não desfaz os outros (I19p).
 10. **Falha de fonte nunca é silêncio (I19l):** a fonte indisponível sai em `fontesIndisponiveis`, a tela
     avisa e as guardas existentes continuam.
+11. **Inclusão fail-closed (I19s, adendo de 2026-10-21 após o Regis-Review):** na escrita, título que a
+    regra não avaliou por inteiro não entra no lote: fora da carteira persistida, leitura falhou ou fonte
+    de contexto caída. A versão anterior deixava passar com só os guardas ao vivo (`nao-liberado`,
+    `ja-pago`), o que reabria, para esses títulos, exatamente a porta que esta ADR fecha (permuta, forma
+    fora do SISPAG). Custo aceito: título recém-criado no Conexos só entra depois da próxima ingestão, e
+    uma fonte instável recusa a inclusão até voltar (a analista tenta de novo). A tela segue fail-open
+    com aviso; a formação automática também, sem mudança.
 
 ### Decisões de tela (para o PR de frontend)
 

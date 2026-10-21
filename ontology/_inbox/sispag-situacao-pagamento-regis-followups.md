@@ -13,7 +13,16 @@ Por Inviolable Rule #11, como **não há P0**, nenhum card re-entrou no loop des
 
 _Nenhum card P0 nesta rodada. Rule #11 não dispara re-loop._
 
-## P1 (4) — não implementados
+## P1 (4) — implementados no próprio PR #128 (decisão do maintainer, 2026-10-21)
+
+Fora do rito da Rule #11 (que só re-entra P0): o maintainer pediu os quatro P1 neste PR.
+
+- `fault-tolerance-1` → **opção A (fail-closed)**: `avaliarVivo` devolve `FORA_DA_CARTEIRA` / `LEITURA_FALHOU` em vez de `null`, e `incluirTitulo` recusa (`fora-da-carteira`, `situacao-indisponivel`). Invariante **I19s**, ADR-0075 decisão 11.
+- `fault-tolerance-2` → todas as fontes tratadas como críticas **na inclusão**: fonte caída recusa o título (`situacao-indisponivel`) com `fontesIndisponiveis` nos detalhes e a consulta que faltou na mensagem, que chega a `recusados[].mensagem` do `por-filial`. Bloqueio já conhecido tem precedência. Sem campo novo no contrato: como nenhum título entra com contexto incompleto, não há lote "verde degradado" para sinalizar. Formação automática fora do escopo (segue fail-open, D9).
+- `testability-1` → `bootstrapAppContainer({ migrate: false })` (conecta sem aplicar migrations) e o script usa essa opção; teste em `appContainer.test.ts`. Em vez de guarda por host, o script deixou de poder migrar.
+- `testability-2` → contrato do `com298/list` contra a captura real de 2026-08-28 (`permutas/__fixtures__/2026-08-28-com298-invoice.json`, chaves e tipos reais, valores redigidos): entrada em `contrato.test.ts` (`docCod`, `tpdCod`, `tpdDesNome`) + teste do `listTiposDosDocumentos` com a linha gravada. **Limite:** a captura é redigida, então o NOME "(PERMUTA)" ainda não foi visto em bytes reais; pina chaves e tipos, não valores. Uma captura com `fieldList` restrito e um documento de permuta continua desejável quando a ingestão com tipo rodar.
+
+Texto original dos cards:
 
 | Card | QA | Esforço | Uma linha |
 |---|---|---|---|
@@ -26,7 +35,7 @@ _Nenhum card P0 nesta rodada. Rule #11 não dispara re-loop._
 
 | Card | QA | Esforço | Uma linha |
 |---|---|---|---|
-| `testability-3` | Testability + FT | S | 1 WARN + 1 asserção quando `avaliarVivo` cai em `null`; caminho morto deixa de ser invisível |
+| `testability-3` | Testability + FT | S | ~~1 WARN + 1 asserção quando `avaliarVivo` cai em `null`~~ **Superado por I19s:** `avaliarVivo` não devolve mais `null`; os dois desfechos não avaliados têm teste e recusa explícita |
 | `testability-4` | Testability | S | `AjusteCentavosExecucaoRepository.test.ts` com 3 casos (último ledger, sem ledger, vazio); SQL do método I19h ainda sem teste próprio |
 | `testability-5` | Testability | M | `TabelaTitulos.test.tsx` focado (5–8 casos): hoje o componente só é exercitado via `TitulosAbaSituacao.test.tsx` (29 casos integrados) |
 | `modifiability-1` | Modif + Integr | S | Teste de paridade dos rótulos BE (`PERFIL[m].rotulo`) × FE (`ROTULO_MOTIVO[m]`); 3/9 pares divergentes hoje |
