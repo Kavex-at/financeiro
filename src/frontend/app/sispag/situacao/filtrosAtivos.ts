@@ -5,7 +5,7 @@ import {
   type TituloAPagar,
 } from '@/lib/sispag'
 import { formatarDia } from '../components/filtrosAbas'
-import { ROTULO_DONO, ROTULO_MOTIVO } from './rotulos'
+import { ROTULO_DONO, ROTULO_MOTIVO, ROTULO_SUGESTAO_BOLETO } from './rotulos'
 import {
   donoDe,
   type FiltrosTitulos,
@@ -62,7 +62,14 @@ export const descreverFiltros = (f: FiltrosTitulos): FiltroAtivo[] => {
     out.push({
       id: 'situacoes',
       texto: `Situação: ${f.situacoes.map((s) => rotuloSituacaoChave(s).toLowerCase()).join(', ')}`,
-      remover: { situacoes: [] },
+      remover: { situacoes: [], sugestoesBoleto: [] },
+    })
+  }
+  if (f.sugestoesBoleto.length > 0 && f.situacoes.includes(MOTIVO_PAGAMENTO.BOLETO_SEM_DDA)) {
+    out.push({
+      id: 'sugestoesBoleto',
+      texto: `Boleto sem DDA: ${f.sugestoesBoleto.map((s) => ROTULO_SUGESTAO_BOLETO[s].toLowerCase()).join(', ')}`,
+      remover: { sugestoesBoleto: [] },
     })
   }
   if (f.donos.length > 0) {

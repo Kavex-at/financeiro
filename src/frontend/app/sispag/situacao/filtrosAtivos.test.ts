@@ -26,6 +26,21 @@ describe('descreverFiltros', () => {
     expect(e.find((x) => x.id === 'situacoes')?.texto).toBe('Situação: pronto, vencido')
     expect(e.find((x) => x.id === 'valor')?.remover).toEqual({ valorMin: '', valorMax: '' })
   })
+
+  it('sub-chips de boleto sem DDA viram etiqueta própria; tirar a situação os zera juntos', () => {
+    const f = {
+      ...FILTROS_VAZIOS,
+      estado: 'bloqueados' as const,
+      situacoes: ['BOLETO_SEM_DDA' as const],
+      sugestoesBoleto: ['PARA_CONFIRMAR' as const, 'A_ESCOLHER' as const],
+    }
+    const e = descreverFiltros(f)
+    expect(e.find((x) => x.id === 'sugestoesBoleto')?.texto).toBe(
+      'Boleto sem DDA: sugestão para confirmar, boleto a escolher',
+    )
+    expect(e.find((x) => x.id === 'situacoes')?.remover).toEqual({ situacoes: [], sugestoesBoleto: [] })
+    expect(descreverFiltros({ ...f, situacoes: [] }).map((x) => x.id)).toEqual([])
+  })
 })
 
 describe('opcoesDosFiltros', () => {

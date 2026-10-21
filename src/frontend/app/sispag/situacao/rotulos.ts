@@ -7,6 +7,8 @@ import {
   type FonteSituacao,
   MOTIVO_PAGAMENTO,
   type MotivoPagamento,
+  SUGESTAO_BOLETO_SEM_DDA,
+  type SugestaoBoletoSemDda,
 } from '@/lib/sispag'
 
 /**
@@ -26,6 +28,15 @@ export const ROTULO_MOTIVO: Readonly<Record<MotivoPagamento, string>> = {
   [MOTIVO_PAGAMENTO.AJUSTE_CENTAVOS_PENDENTE]: 'Ajuste de centavos pendente',
   [MOTIVO_PAGAMENTO.CONFIRMACAO_A_REVISAR]: 'Confirmação de boleto a revisar',
   [MOTIVO_PAGAMENTO.BOLETO_SEM_DDA]: 'Boleto sem DDA',
+}
+
+/** Sub-chips de "Boleto sem DDA" (I19r): em que pé está a sugestão de boleto. */
+export const ROTULO_SUGESTAO_BOLETO: Readonly<Record<SugestaoBoletoSemDda, string>> = {
+  [SUGESTAO_BOLETO_SEM_DDA.PARA_CONFIRMAR]: 'Sugestão para confirmar',
+  [SUGESTAO_BOLETO_SEM_DDA.A_ESCOLHER]: 'Boleto a escolher',
+  [SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO]: 'Só candidato fraco',
+  [SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO]: 'Sem boleto no DDA',
+  [SUGESTAO_BOLETO_SEM_DDA.AGUARDANDO_VINCULO]: 'Confirmado, aguardando vínculo',
 }
 
 export const ROTULO_DONO: Readonly<Record<DonoPagamento, string>> = {
@@ -86,7 +97,8 @@ export const EFEITO_MOTIVO: Readonly<Record<MotivoPagamento, string>> = {
     'A renegociação de centavos no Conexos não terminou.',
   [MOTIVO_PAGAMENTO.CONFIRMACAO_A_REVISAR]:
     'O Conexos sinalizou o título depois da confirmação do boleto.',
-  [MOTIVO_PAGAMENTO.BOLETO_SEM_DDA]: 'Sem o código de barras a remessa não sai.',
+  [MOTIVO_PAGAMENTO.BOLETO_SEM_DDA]:
+    'Sem o código de barras a remessa não sai. O chip se divide pela sugestão: para confirmar, a escolher, só candidato fraco, sem boleto no DDA e confirmado aguardando o vínculo.',
 }
 
 /**

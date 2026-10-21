@@ -1,4 +1,10 @@
-import { ACAO_PAGAMENTO, DONO_PAGAMENTO, FONTE_SITUACAO, MOTIVO_PAGAMENTO } from '@/lib/sispag'
+import {
+  ACAO_PAGAMENTO,
+  DONO_PAGAMENTO,
+  FONTE_SITUACAO,
+  MOTIVO_PAGAMENTO,
+  SUGESTAO_BOLETO_SEM_DDA,
+} from '@/lib/sispag'
 import {
   ACAO_DO_MOTIVO,
   DONO_DO_MOTIVO,
@@ -8,6 +14,7 @@ import {
   ROTULO_DONO,
   ROTULO_FONTE,
   ROTULO_MOTIVO,
+  ROTULO_SUGESTAO_BOLETO,
 } from './rotulos'
 
 describe('tabelas de rótulos da situação de pagamento', () => {
@@ -24,6 +31,10 @@ describe('tabelas de rótulos da situação de pagamento', () => {
 
   it.each(Object.values(ACAO_PAGAMENTO))('a ação %s tem rótulo', (a) => {
     expect(ROTULO_ACAO[a]).toBeTruthy()
+  })
+
+  it.each(Object.values(SUGESTAO_BOLETO_SEM_DDA))('a sugestão de boleto %s tem rótulo', (s) => {
+    expect(ROTULO_SUGESTAO_BOLETO[s]).toBeTruthy()
   })
 
   it.each(Object.values(FONTE_SITUACAO))('a fonte %s tem rótulo', (f) => {

@@ -10,6 +10,7 @@ import {
     ESTADO_PAGAMENTO,
     MOTIVO_PAGAMENTO,
     MOTIVOS_PAGAMENTO_ORDEM,
+    SUGESTAO_BOLETO_SEM_DDA,
 } from '../../interface/sispag/SituacaoPagamento.js';
 import { SITUACAO_SUGESTAO_TITULO } from '../../interface/sispag/SugestaoBoleto.js';
 import { ETAPA_AJUSTE } from '../../libs/boleto/EtapaAjusteCentavos.js';
@@ -330,6 +331,59 @@ describe('SituacaoPagamentoResolver', () => {
                 ctx({ desfechos: new Map([[CHAVE, SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO]]) }),
             );
             expect(s.estado).toBe(ESTADO_PAGAMENTO.PRONTO);
+        });
+    });
+
+    describe('boleto sem DDA subdividido pela sugestão (I19r)', () => {
+        const boleto = { formaPagamentoConexos: PAGO_POR_CONEXOS.BOLETO, temBoleto: false };
+        const S = SITUACAO_SUGESTAO_TITULO;
+        const G = SUGESTAO_BOLETO_SEM_DDA;
+
+        it.each([
+            [S.UNICA_SEGURA, G.PARA_CONFIRMAR, 'Confirmar boleto sugerido'],
+            [S.SO_ATENCAO, G.PARA_CONFIRMAR, 'Confirmar boleto sugerido'],
+            [S.AMBIGUA, G.A_ESCOLHER, 'Escolher o boleto'],
+            [S.DISPUTADA, G.A_ESCOLHER, 'Escolher o boleto'],
+            [S.SO_FRACA, G.CANDIDATO_FRACO, 'Ver candidatos'],
+            [S.SO_VENCIDA, G.CANDIDATO_FRACO, 'Ver candidatos'],
+            [S.SEM_CANDIDATO, G.SEM_CANDIDATO, 'Ver boleto'],
+        ])('desfecho %s → %s, botão "%s"', (desfecho, grupo, botao) => {
+            const s = resolver.avaliar(
+                titulo(boleto),
+                ctx({ desfechos: new Map([[CHAVE, desfecho]]) }),
+            );
+            expect(s.principal).toBe(MOTIVO_PAGAMENTO.BOLETO_SEM_DDA);
+            expect(s.sugestaoBoleto).toBe(grupo);
+            expect(s.acao).toEqual({ codigo: ACAO_PAGAMENTO.VER_BOLETO, rotulo: botao });
+        });
+
+        it('título sem desfecho conhecido conta como sem candidato', () => {
+            const s = resolver.avaliar(titulo(boleto), ctx());
+            expect(s.sugestaoBoleto).toBe(G.SEM_CANDIDATO);
+        });
+
+        it('confirmado com o vínculo desligado fica em "aguardando vínculo"', () => {
+            const s = resolver.avaliar(
+                titulo(boleto),
+                ctx({ desfechos: new Map([[CHAVE, S.CONFIRMADA]]) }),
+            );
+            expect(s.sugestaoBoleto).toBe(G.AGUARDANDO_VINCULO);
+        });
+
+        it('só aparece quando boleto sem DDA é o motivo principal', () => {
+            const s = resolver.avaliar(
+                titulo({ ...boleto, diasAteVencimento: -2 }),
+                ctx({ desfechos: new Map([[CHAVE, S.UNICA_SEGURA]]) }),
+            );
+            expect(s.principal).toBe(MOTIVO_PAGAMENTO.VENCIDO);
+            expect(s.motivos).toContain(MOTIVO_PAGAMENTO.BOLETO_SEM_DDA);
+            expect(s.sugestaoBoleto).toBeUndefined();
+            expect(s.acao?.rotulo).toBe('Renegociar no Conexos');
+        });
+
+        it('outros motivos não carregam sugestão', () => {
+            const s = resolver.avaliar(titulo({ liberado: false }), ctx());
+            expect(s).not.toHaveProperty('sugestaoBoleto');
         });
     });
 

@@ -4,8 +4,8 @@ import { CircleHelp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { formatBRL } from '@/lib/utils'
-import { MOTIVO_PAGAMENTO, type MotivoPagamento } from '@/lib/sispag'
-import { DONO_DO_MOTIVO, ROTULO_DONO, ROTULO_MOTIVO } from './rotulos'
+import { MOTIVO_PAGAMENTO, type MotivoPagamento, type SugestaoBoletoSemDda } from '@/lib/sispag'
+import { DONO_DO_MOTIVO, ROTULO_DONO, ROTULO_MOTIVO, ROTULO_SUGESTAO_BOLETO } from './rotulos'
 import type { EstadoFiltro, Total } from './situacaoTitulos'
 
 const OPCOES: ReadonlyArray<{ valor: EstadoFiltro; rotulo: string }> = [
@@ -13,6 +13,11 @@ const OPCOES: ReadonlyArray<{ valor: EstadoFiltro; rotulo: string }> = [
   { valor: 'prontos', rotulo: 'Prontos' },
   { valor: 'bloqueados', rotulo: 'Bloqueados' },
 ]
+
+const CHIP =
+  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]'
+const chipMarcado = (marcado: boolean): string =>
+  marcado ? 'border-foreground bg-foreground text-background' : 'bg-card hover:bg-accent'
 
 const PONTO: Record<EstadoFiltro, string> = {
   todos: '',
@@ -23,7 +28,8 @@ const PONTO: Record<EstadoFiltro, string> = {
 /**
  * Filtro externo `Todos | Prontos | Bloqueados` (decisão D3), com contagem e valor, e — com
  * Bloqueados escolhido — os chips de motivo com o dono. Os chips e a coluna Situação editam a
- * MESMA seleção (`situacoes`). O "?" abre as regras (decisão D11).
+ * MESMA seleção (`situacoes`). Com "Boleto sem DDA" marcado, uma segunda linha o divide pela
+ * sugestão de boleto (I19r). O "?" abre as regras (decisão D11).
  */
 export function FiltroSituacaoBarra({
   estado,
@@ -32,6 +38,9 @@ export function FiltroSituacaoBarra({
   motivosSelecionados,
   onEstado,
   onAlternarMotivo,
+  sugestoesBoleto = [],
+  sugestoesSelecionadas = [],
+  onAlternarSugestao,
   regrasAbertas,
   regrasId,
   onAlternarRegras,
@@ -43,6 +52,10 @@ export function FiltroSituacaoBarra({
   motivosSelecionados: readonly string[]
   onEstado: (e: EstadoFiltro) => void
   onAlternarMotivo: (m: MotivoPagamento) => void
+  /** "Boleto sem DDA" por sugestão, com contagem (vazio em backend antigo). */
+  sugestoesBoleto?: Array<{ sugestao: SugestaoBoletoSemDda } & Total>
+  sugestoesSelecionadas?: readonly SugestaoBoletoSemDda[]
+  onAlternarSugestao?: (s: SugestaoBoletoSemDda) => void
   regrasAbertas: boolean
   regrasId: string
   onAlternarRegras: () => void
@@ -110,10 +123,7 @@ export function FiltroSituacaoBarra({
                   type="button"
                   aria-pressed={marcado}
                   onClick={() => onAlternarMotivo(motivo)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-                    marcado ? 'border-foreground bg-foreground text-background' : 'bg-card hover:bg-accent',
-                  )}
+                  className={cn(CHIP, chipMarcado(marcado))}
                 >
                   {ROTULO_MOTIVO[motivo]}
                   <b className="tabular-nums">{qtd}</b>
@@ -123,6 +133,32 @@ export function FiltroSituacaoBarra({
                 </button>
               )
             })}
+        </div>
+      ) : null}
+      {estado === 'bloqueados' &&
+      motivosSelecionados.includes(MOTIVO_PAGAMENTO.BOLETO_SEM_DDA) &&
+      sugestoesBoleto.length > 0 ? (
+        <div
+          role="group"
+          aria-label="Boleto sem DDA por sugestão"
+          className="flex flex-wrap items-center gap-1.5 border-l-2 pl-3"
+        >
+          <span className="text-xs text-muted-foreground">Boleto sem DDA, por sugestão:</span>
+          {sugestoesBoleto.map(({ sugestao, qtd }) => {
+            const marcado = sugestoesSelecionadas.includes(sugestao)
+            return (
+              <button
+                key={sugestao}
+                type="button"
+                aria-pressed={marcado}
+                onClick={() => onAlternarSugestao?.(sugestao)}
+                className={cn(CHIP, chipMarcado(marcado))}
+              >
+                {ROTULO_SUGESTAO_BOLETO[sugestao]}
+                <b className="tabular-nums">{qtd}</b>
+              </button>
+            )
+          })}
         </div>
       ) : null}
     </div>

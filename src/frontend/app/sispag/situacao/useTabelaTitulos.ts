@@ -1,7 +1,12 @@
 'use client'
 
 import * as React from 'react'
-import type { MotivoPagamento, TituloAPagar } from '@/lib/sispag'
+import {
+  MOTIVO_PAGAMENTO,
+  type MotivoPagamento,
+  type SugestaoBoletoSemDda,
+  type TituloAPagar,
+} from '@/lib/sispag'
 import {
   aplicarFiltros,
   type ColunaTitulo,
@@ -58,6 +63,7 @@ export function useTabelaTitulos(titulos: TituloAPagar[]) {
         estado,
         situacoes:
           estado === 'bloqueados' ? f.situacoes : f.situacoes.filter((s) => s === SITUACAO_PRONTO),
+        sugestoesBoleto: estado === 'bloqueados' ? f.sugestoesBoleto : [],
       }))
       setPaginaBruta(1)
     },
@@ -65,11 +71,25 @@ export function useTabelaTitulos(titulos: TituloAPagar[]) {
   )
 
   const alternarMotivo = React.useCallback((motivo: MotivoPagamento) => {
+    setFiltros((f) => {
+      const sai = f.situacoes.includes(motivo)
+      return {
+        ...f,
+        situacoes: sai ? f.situacoes.filter((s) => s !== motivo) : [...f.situacoes, motivo],
+        // Os sub-chips só existem com "Boleto sem DDA" marcado.
+        sugestoesBoleto:
+          sai && motivo === MOTIVO_PAGAMENTO.BOLETO_SEM_DDA ? [] : f.sugestoesBoleto,
+      }
+    })
+    setPaginaBruta(1)
+  }, [])
+
+  const alternarSugestaoBoleto = React.useCallback((sugestao: SugestaoBoletoSemDda) => {
     setFiltros((f) => ({
       ...f,
-      situacoes: f.situacoes.includes(motivo)
-        ? f.situacoes.filter((s) => s !== motivo)
-        : [...f.situacoes, motivo],
+      sugestoesBoleto: f.sugestoesBoleto.includes(sugestao)
+        ? f.sugestoesBoleto.filter((s) => s !== sugestao)
+        : [...f.sugestoesBoleto, sugestao],
     }))
     setPaginaBruta(1)
   }, [])
@@ -105,6 +125,7 @@ export function useTabelaTitulos(titulos: TituloAPagar[]) {
     atualizar,
     definirEstado,
     alternarMotivo,
+    alternarSugestaoBoleto,
     ordenar,
     limpar,
     urgentesAtivo,

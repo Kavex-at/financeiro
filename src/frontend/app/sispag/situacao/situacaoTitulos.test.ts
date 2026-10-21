@@ -1,6 +1,7 @@
-import { DONO_PAGAMENTO, MOTIVO_PAGAMENTO } from '@/lib/sispag'
+import { DONO_PAGAMENTO, MOTIVO_PAGAMENTO, SUGESTAO_BOLETO_SEM_DDA } from '@/lib/sispag'
 import { RESUMO_FIXTURE, TITULOS_FIXTURE } from '../__fixtures__/situacaoPagamento'
 import {
+  boletoSemDdaPorSugestao,
   aplicarFiltros,
   bloqueadosQueVencemHoje,
   contarFiltrosDeColuna,
@@ -232,5 +233,33 @@ describe('rotuloSituacao', () => {
   })
   it('sem situação (backend antigo) não quebra', () => {
     expect(rotuloSituacao({ ...TITULOS_FIXTURE[0], situacaoPagamento: undefined })).toBe('Pronto')
+  })
+})
+
+describe('boleto sem DDA por sugestão (I19r)', () => {
+  const G = SUGESTAO_BOLETO_SEM_DDA
+  const SEM_DDA = MOTIVO_PAGAMENTO.BOLETO_SEM_DDA
+
+  it('sub-chips na ordem do contrato, só com quem tem título', () => {
+    expect(boletoSemDdaPorSugestao(TITULOS_FIXTURE).map((x) => [x.sugestao, x.qtd])).toEqual([
+      [G.PARA_CONFIRMAR, 1],
+      [G.SEM_CANDIDATO, 1],
+    ])
+  })
+
+  it('backend antigo (sem sugestaoBoleto) não gera sub-chip', () => {
+    const antigos = TITULOS_FIXTURE.map((t) =>
+      t.situacaoPagamento ? { ...t, situacaoPagamento: { ...t.situacaoPagamento, sugestaoBoleto: undefined } } : t,
+    )
+    expect(boletoSemDdaPorSugestao(antigos)).toEqual([])
+  })
+
+  it('o sub-chip restringe só os boletos sem DDA, e só com o motivo marcado', () => {
+    const f = com({ estado: 'bloqueados', sugestoesBoleto: [G.PARA_CONFIRMAR] })
+    expect(docs(aplicarFiltros(TITULOS_FIXTURE, { ...f, situacoes: [SEM_DDA] }))).toEqual(['5549'])
+    const comVencido = aplicarFiltros(TITULOS_FIXTURE, { ...f, situacoes: [SEM_DDA, MOTIVO_PAGAMENTO.VENCIDO] })
+    expect(docs(comVencido).sort()).toEqual(['5298', '5311', '5549'])
+    // Sem o motivo marcado, o sub-chip que sobrou não esconde nada.
+    expect(aplicarFiltros(TITULOS_FIXTURE, f)).toHaveLength(9)
   })
 })

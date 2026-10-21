@@ -8,6 +8,7 @@ import {
   MOTIVO_PAGAMENTO,
   type ResumoSituacao,
   type SituacaoPagamento,
+  SUGESTAO_BOLETO_SEM_DDA,
   type TituloAPagar,
 } from '@/lib/sispag'
 
@@ -80,14 +81,17 @@ export const TITULOS_FIXTURE: TituloAPagar[] = [
     1920,
     0,
     1,
-    bloqueado(
-      MOTIVO_PAGAMENTO.BOLETO_SEM_DDA,
-      'Boleto sem DDA',
-      DONO_PAGAMENTO.VOCE,
-      ACAO_PAGAMENTO.VER_BOLETO,
-      'Ver boleto',
-      'nenhum boleto no pool',
-    ),
+    {
+      ...bloqueado(
+        MOTIVO_PAGAMENTO.BOLETO_SEM_DDA,
+        'Boleto sem DDA',
+        DONO_PAGAMENTO.VOCE,
+        ACAO_PAGAMENTO.VER_BOLETO,
+        'Ver boleto',
+        'nenhum boleto no pool',
+      ),
+      sugestaoBoleto: SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO,
+    },
     { temBoleto: false },
   ),
   titulo(
@@ -111,14 +115,17 @@ export const TITULOS_FIXTURE: TituloAPagar[] = [
     3470.12,
     1,
     1,
-    bloqueado(
-      MOTIVO_PAGAMENTO.BOLETO_SEM_DDA,
-      'Boleto sem DDA',
-      DONO_PAGAMENTO.VOCE,
-      ACAO_PAGAMENTO.VER_BOLETO,
-      'Ver boleto',
-      '1 sugestão disponível',
-    ),
+    {
+      ...bloqueado(
+        MOTIVO_PAGAMENTO.BOLETO_SEM_DDA,
+        'Boleto sem DDA',
+        DONO_PAGAMENTO.VOCE,
+        ACAO_PAGAMENTO.VER_BOLETO,
+        'Confirmar boleto sugerido',
+        'há um boleto sugerido para confirmar',
+      ),
+      sugestaoBoleto: SUGESTAO_BOLETO_SEM_DDA.PARA_CONFIRMAR,
+    },
     { temBoleto: false },
   ),
   titulo(

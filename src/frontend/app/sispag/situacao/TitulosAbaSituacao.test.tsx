@@ -124,6 +124,28 @@ describe('TitulosAbaSituacao: filtro externo e chips', () => {
     expect(linhasDaTabela()).toHaveLength(9)
   })
 
+  it('"Boleto sem DDA" marcado abre os sub-chips por sugestão, que filtram', async () => {
+    montar()
+    await userEvent.click(screen.getByRole('button', { name: /^Bloqueados/ }))
+    const grupo = () => screen.queryByRole('group', { name: 'Boleto sem DDA por sugestão' })
+    expect(grupo()).not.toBeInTheDocument()
+    const chips = screen.getByRole('group', { name: 'Motivo do bloqueio' })
+    await userEvent.click(within(chips).getByRole('button', { name: /Boleto sem DDA/ }))
+    expect(linhasDaTabela()).toHaveLength(2)
+    const sub = grupo()
+    expect(sub).toBeInTheDocument()
+    expect(within(sub as HTMLElement).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Sugestão para confirmar1',
+      'Sem boleto no DDA1',
+    ])
+    await userEvent.click(within(sub as HTMLElement).getByRole('button', { name: /Sugestão para confirmar/ }))
+    expect(credoresVisiveis()).toEqual(['CEVA LOGISTICS'])
+    // Desmarcar o motivo fecha a linha e descarta o sub-filtro.
+    await userEvent.click(within(chips).getByRole('button', { name: /Boleto sem DDA/ }))
+    expect(grupo()).not.toBeInTheDocument()
+    expect(linhasDaTabela()).toHaveLength(9)
+  })
+
   it('o botão "?" abre e fecha as regras', async () => {
     montar()
     const ajuda = screen.getByRole('button', { name: 'Como a situação é calculada' })

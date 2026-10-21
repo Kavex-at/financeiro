@@ -31,6 +31,17 @@ export const MOTIVO_PAGAMENTO = {
 } as const
 export type MotivoPagamento = (typeof MOTIVO_PAGAMENTO)[keyof typeof MOTIVO_PAGAMENTO]
 
+/** Subdivisão de `BOLETO_SEM_DDA` pelo desfecho da sugestão de boleto (I19r). */
+export const SUGESTAO_BOLETO_SEM_DDA = {
+  PARA_CONFIRMAR: 'PARA_CONFIRMAR',
+  A_ESCOLHER: 'A_ESCOLHER',
+  CANDIDATO_FRACO: 'CANDIDATO_FRACO',
+  SEM_CANDIDATO: 'SEM_CANDIDATO',
+  AGUARDANDO_VINCULO: 'AGUARDANDO_VINCULO',
+} as const
+export type SugestaoBoletoSemDda =
+  (typeof SUGESTAO_BOLETO_SEM_DDA)[keyof typeof SUGESTAO_BOLETO_SEM_DDA]
+
 export const DONO_PAGAMENTO = {
   VOCE: 'VOCE',
   APROVADOR: 'APROVADOR',
@@ -68,6 +79,8 @@ export interface SituacaoPagamento {
   dono?: DonoPagamento
   acao?: { codigo: AcaoPagamento; rotulo: string }
   detalhe?: string
+  /** Só quando `principal = BOLETO_SEM_DDA`. Ausente em backend antigo: sem os sub-chips. */
+  sugestaoBoleto?: SugestaoBoletoSemDda
 }
 
 export interface TotalSituacao {
