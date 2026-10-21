@@ -1,5 +1,6 @@
 import type { PayeeItemWarning } from './AuthorizedPayeeInterface.js';
 import type { ProntidaoLote, ResumoSituacao, SituacaoPagamento } from './SituacaoPagamento.js';
+import type { GrupoNoLote } from './GrupoNoLoteInterface.js';
 /**
  * SISPAG (Escopo II) — interfaces do painel READ-ONLY (spike / semente da Fatia 1).
  *
@@ -550,6 +551,11 @@ export interface LotePagamento {
     itens: ItemLote[];
     /** Só em RASCUNHO, na listagem: o que falta para finalizar (ADR-0076, I20a). */
     prontidao?: ProntidaoLote;
+    /**
+     * Grupos de boleto do lote, um bloco por grupo (ADR-0077, I21j). Preenchido pelo serviço na
+     * leitura; ausente quando o lote não tem item de grupo.
+     */
+    grupos?: GrupoNoLote[];
 }
 
 /** O título cujo vencimento define o limite superior da janela de débito (I8a). */
