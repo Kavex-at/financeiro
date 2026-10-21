@@ -261,15 +261,21 @@
 - **Primeiro `.RET` real do Itaú com item de borderô (V6)** — acompanhar, não é portão (P0-5).
 - **Permissões do CLONEX em PRD** (`fin010` borderô/baixa, `borderosPendentes/list|importar`, leitura de itens
   `fin015`; V1) — conferência do maintainer, não portão.
-- **V2:** título com baixa em borderô em cadastro segue "em aberto" no `fin015`/carteira? Risco de baixa manual
-  paralela ou import avulso por terceiro.
-- **V3:** ordem `DELETE` item → `excluirBaixa` → `excluirBordero` depois de importado (medir no HML durante o TDD).
+- ~~**V2:** título com baixa em borderô em cadastro segue "em aberto" no `fin015`/carteira?~~ **Medido em
+  2026-10-20:** em aberto no `fin064`, fora do grid do `fin015`; `importarTitulos` com a linha velha é aceito
+  (I19k reforçada). Risco residual: baixa manual paralela por terceiro.
+- ~~**V3:** ordem `DELETE` item → `excluirBaixa` → `excluirBordero` depois de importado.~~ **Medido em
+  2026-10-20:** confirmada e imposta pelo ERP (`FIN_014.FIN_HAS_REMESSA_PGTO`).
 - **V4:** grupo que cruza filial (INTERNACIONAL SERV. ADUANEIROS) — REJECT-PREMATURE até a sonda.
-- **V5:** código de "título próprio" (modalidade 6) para barra do banco da conta (341).
-- **V7 (medição, decisão PI-9 já tomada):** borderô com `vldHasRemessaPgto 1` reaparece em `borderosPendentes`
-  depois de rejeição/cancelamento? A regra já diz: se reaparecer, reaproveita; se não, o grupo é retirado até a
-  analista resolver. A medição diz qual dos dois caminhos é o comum.
-- **Nome do campo de observação do `fin010`** para o marcador de correlação (medir no HML).
+- ~~**V5:** código de "título próprio" (modalidade 6) para barra do banco da conta (341).~~ **Medido em
+  2026-10-20:** `6` confirmado.
+- **V7 (medição, decisão PI-9 já tomada):** depois de um J rejeitado, o borderô antigo reaparece em
+  `borderosPendentes` do lote novo? A regra já diz: se reaparecer, reaproveita; se não, o grupo é retirado até a
+  analista resolver. A medição diz qual dos dois caminhos é o comum, **e também** se o borderô segue ligado ao
+  lote rejeitado e qual o valor de `vldHasRemessaPgto` nesse estado (emenda 2026-10-21: a flag reflete o import,
+  não "foi ao banco"; não é premissa).
+- **G6 / GT1 (Task 22):** frequência de sugestão ambígua (boleto que bate com dois conjuntos fechados; boletos
+  idênticos não intercambiáveis). Hoje: nenhuma sugestão, composição manual (I19e/I19f).
 - **Quase-grupos ±R$ 0,05 (P1-2)** — medição pontual, se desejada; absorver centavos numa baixa ou aplicar I18 a
   título de grupo é REJECT-PREMATURE.
 - **Caso 2 (VIBE LOG, N boletos → 1 título)** — baixa parcial em dois borderôs? Fora do escopo (D2).

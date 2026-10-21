@@ -16,7 +16,7 @@ related_files:
   - src/backend/migrations/0017_invoice_importador.sql
   - src/backend/migrations/0018_permuta_bordero_cache.sql
   - src/backend/migrations/0019_permuta_perf_indexes.sql
-last_review: 2026-10-20
+last_review: 2026-10-21
 endpoints_read:
   - com298 (PROFORMA tpdCod=99 + docVldTipoAdto=1 / INVOICE tpdCod=128 / detail mnyTitPermutar + pago=mnyTitAberto===0)
   - imp019 (D.I — data CI = cdiDtaCi)
@@ -360,25 +360,27 @@ login do servidor é o portão G1.
 
 ### ESCRITA SISPAG — borderô do boleto agrupado (ADR-0076, `planned`)
 
-Provado em HML em 2026-10-19 (`_inbox/sispag-boleto-agrupado-hml-achados.md`). Só pelas ações
+Provado em HML em 2026-10-19 e medido de novo em 2026-10-20 (Task 1; `_inbox/sispag-boleto-agrupado-hml-achados.md`).
+Emenda 2026-10-21 da ADR-0076: identidade do borderô = `filCod` + `borCod` + `borTimCad`; guarda da limpeza = lote
+nativo. Só pelas ações
 `prepararBorderoDoGrupo` / `limparBorderoDoGrupo` (I19l, I19q), dentro do L8. Reaproveita `ConexosBaixaClient`
 (`criarBordero`, `listBaixas`, `excluirBaixa`, `excluirBordero`) e `ConexosSispagClient.listContasCorrentes`.
 
 | # | Chamada | Corpo / regra |
 |---|---|---|
 | 1 | `fin005/list` | `gerNum` da conta pagadora do lote (H2, H10). Ausente ⇒ falha antes de escrever. |
-| 2 | `POST fin010` | `{ filCod, borVldTipo 2, borVldFinalizado 0, frontModelName 'bordero', borDtaMvto = dataDebito do lote, gerNum }` ⇒ `borCod`. Marcador de correlação em **`borEspNrbanco`** (medido em HML 2026-10-20: máx. 15 caracteres, só maiúsculas, volta no `GET` e filtra no `fin010/list` `#EQ`/`#LIKE`). O `borCod` é **reutilizado** depois de `excluirBordero`: identidade = `borCod` + marcador. `GET` de borderô ausente ⇒ `500 RECORDNOTFOUND`. |
+| 2 | `POST fin010` | `{ filCod, borVldTipo 2, borVldFinalizado 0, frontModelName 'bordero', borDtaMvto = dataDebito do lote, gerNum }` ⇒ `borCod` e `borTimCad` (carimbo de criação gravado pelo ERP, ao segundo; inalterado por baixas, import e finalização, medido no borderô 252). O `borCod` é **reutilizado** depois de `excluirBordero` (max+1 da filial): **identidade = `filCod` + `borCod` + `borTimCad`**. Write-ahead: `t0` antes do `POST`, `t1` depois. **Nada é escrito em `borEspNrbanco`** (sem marcador): o cabeçalho do `fin010` não tem campo de observação; `borEspNrbanco` ("nº banco") é o único texto livre (medido: máx. 15 caracteres, só maiúsculas, filtra por `#EQ`/`#LIKE`), tem semântica nativa e não é usado. `GET fin010/{fil}/{bor}` de borderô ausente ⇒ **`500 RECORDNOTFOUND`**, não 404; ausência observada = `fin010/list` `borCod#EQ` sem linhas (ou só com outro `borTimCad`). Resposta perdida: `fin010/list` por `filCod`, `usnCodCad` (usuário do robô), `gerNum`, `borDtaMvto`, `borVldTipo 2`, `borVldFinalizado 0`, `borTimCad#GE`/`#LE` em **epoch ms** (medido: ISO ⇒ 500; `#GTE`/`#BETWEEN` não aceitos); margem de relógio = constante de código (I19s). |
 | 3 | `POST fin010/baixas/validacao/tituloBaixa` | `{ filCod, borCod, borVldTipo 2, docTip 2, docCod, titCod, bxaVldSistema 0, bxaVldCcorrente 0, bxaVldCorrenteDc 1, bxaVldAdto 0, frontModelName 'baixa' }` ⇒ `bxaMnyValor`. |
-| 4 | `POST fin010/baixas` | `responseData` + chave + `gerNum`, juros/multa/desconto 0, `bxaMnyLiquido = bxaMnyValor`. Títulos continuam em aberto. |
-| 5 | `GET fin015/finItemSispag/borderosPendentes/list/{fil}/{bnc}/{flp}` | Linha `{ borCod, pesCod, dpeNomPessoa, vlrTotal, borVldTipo, filCod, pesCodCont, itemy 0 }`. Só aparece se `gerNum` = conta do lote; o filtro **não** é a filial. |
+| 4 | `POST fin010/baixas` | `responseData` + chave + `gerNum`, juros/multa/desconto 0, `bxaMnyLiquido = bxaMnyValor`. Títulos continuam em aberto no `fin064`, mas **somem** do grid `titulosPendentes` do `fin015` enquanto a baixa está no borderô em cadastro (V2). O `importarTitulos` com a linha lida antes da baixa é **aceito** depois da pergunta `FIN_041` (V2): o ERP não impede pagar duas vezes (I19k). |
+| 5 | `GET fin015/finItemSispag/borderosPendentes/list/{fil}/{bnc}/{flp}` | Linha `{ borCod, pesCod, dpeNomPessoa, vlrTotal, borVldTipo, filCod, pesCodCont, itemy 0 }`. Só aparece se `gerNum` = conta do lote; o filtro **não** é a filial. A linha não traz `borTimCad` nem `borEspNrbanco`: a identidade é conferida antes, no `fin010`. |
 | 6 | `POST …/borderosPendentes/importar` | `{ items: [{ …linha, filCodLote, bncCod, flpCod, itemy: 1 }], op: 1, bncCodFin015 }`. **`itemy 0` ⇒ `SUCESSO` sem importar** (H4): sucesso só pela releitura. |
-| 7 | vínculo da barra | sequência I17e no item (`borCod`, sem `docCod/titCod`, nasce modalidade 4); `7` banco ≠, `6` banco = (H5). |
-| 8 | `finalizarLote` / `gerarRemessa` | inalterados; o J paga o total do borderô (H6); `vldHasRemessaPgto` do borderô vira 1 (H9). |
-| 9 | retorno (`fin052` `processar`) | parser `ger015.gtbLngSql`: `BOR_COD` não nulo → `FIN_BORDERO` → `FIN_TITULO_RETBANCO` com `BOR_COD` → `PRC_BAIXA_RETORNO_PAGFOR('BAIXAR')`: finaliza o borderô e baixa os N (H7). Chave do J nas posições 183–202 (`fil(2) bnc(4) flp(7) its(7)`), ocorrência em 231. `.RET` sintético com J-52 falha (limite do sintético, H8). |
-| 10 | limpeza | `DELETE finItemSispag` → `excluirBaixa` × N → `excluirBordero`; só em cadastro e com `vldHasRemessaPgto 0`. Nunca `finalizarBordero`/`cancelarBordero`/`fin146`. Ordem confirmada em HML (2026-10-20) e imposta pelo ERP: com o item no lote, `excluirBaixa`/`excluirBordero` ⇒ `400 FIN_014.FIN_HAS_REMESSA_PGTO`. Medido: `vldHasRemessaPgto` vira 1 no `importar` e volta a 0 no `DELETE` do item (não na geração do `.REM`); guarda a revisar (achados T6). |
+| 7 | vínculo da barra | sequência I17e no item (`borCod`, sem `docCod/titCod`, nasce modalidade 4); `7` banco ≠, `6` banco = (H5). Medido (V5, 2026-10-20): barra do banco da conta com `7` ⇒ `400 FIN_015.TITULO_DEVE_SER_MODALIDADE_TITULO_PROPRIO`; barra de outro banco com `6` ⇒ `400 FIN_015.TITULO_NAO_PERTENCE_AO_BANCO_EM_USO`; a recusa vem no `confirmarCodigoBarras`, antes do `PUT`. |
+| 8 | `finalizarLote` / `gerarRemessa` | inalterados; o J paga o total do borderô (H6). `vldHasRemessaPgto` do borderô **já** é 1 desde o `importar` (passo 6), não por causa da remessa (H9 corrigido em 2026-10-21). |
+| 9 | retorno (`fin052` `processar`) | parser `ger015.gtbLngSql`: `BOR_COD` não nulo → `FIN_BORDERO` → `FIN_TITULO_RETBANCO` com `BOR_COD` → `PRC_BAIXA_RETORNO_PAGFOR('BAIXAR')`: finaliza o borderô e baixa os N (H7). Chave do J nas posições 183–202 (`fil(2) bnc(4) flp(7) its(7)`), ocorrência em 231. `.RET` sintético com J-52 falha (limite do sintético, H8). Linha de detalhe do `fin052` para o item de borderô (G4, `PG191081B.RET`, gar 7): **uma** linha (o J), com `filCod/bncCod/flpCod/itsCodSeq`, `borVldTipo/borCod/borDtaMvto/borVldFinalizado` e `ardEspObs "BORDERO: n - DATA DE CREDITO: …"`; **sem** `docCod/titCod`, `bxaCodSeq`, `pesCod`, valor pago ou `gerNum`. Casamento pela chave do item nativo e/ou `borCod` (I19r, I11i). |
+| 10 | limpeza | `DELETE finItemSispag` → `excluirBaixa` × N → `excluirBordero`; só enquanto o **lote nativo** não está finalizado e não tem `.REM` gerado (lido ao vivo), e só o borderô com o nosso `borCod` + `borTimCad`. Nunca `finalizarBordero`/`cancelarBordero`/`fin146`. Ordem confirmada em HML (2026-10-20) e imposta pelo ERP: com o item no lote, `excluirBaixa`/`excluirBordero` ⇒ `400 FIN_014.FIN_HAS_REMESSA_PGTO`. Medido: `vldHasRemessaPgto` vira 1 no `importar` e volta a 0 no `DELETE` do item (não na geração do `.REM`); reflete o import e **não é guarda** (emenda 2026-10-21). |
 
-Depois de um J rejeitado, o borderô antigo fica em cadastro com `vldHasRemessaPgto = 1` e **nunca** é
-limpo por nós. Se ele reaparecer em `borderosPendentes` (passo 5) do lote novo, é **reaproveitado** (I19s);
+Depois de um J rejeitado, o borderô antigo fica em cadastro e **nunca** é limpo por nós (se ele segue ligado
+ao lote rejeitado, e com que valor de `vldHasRemessaPgto`, é medição da V7, não premissa). Se ele reaparecer em `borderosPendentes` (passo 5) do lote novo, é **reaproveitado** (I19s);
 se não reaparecer nem tiver sido resolvido pela analista, o grupo é retirado da remessa (V7 em medição).
 Não confundir com o borderô de **permuta** (Frente I, seção `fin010` acima): mesmo endpoint, outro uso.
 

@@ -13,6 +13,7 @@ evidence:
   - ontology/_inbox/sispag-boleto-agrupado-ontology-diff.md
   - "HML 2026-10-19: borderô 252 (gerNum 38) → lote flp 48 → PG191081.REM (um J de 2.346,94) → retorno gar 7: 552/1 e 558/1 pagos, borderô finalizado"
   - "PRD 2026-10-19 (só leitura): ~220 casos 1→N, 40+ credores; subset-sum livre = 922/2369 falsos"
+  - "HML 2026-10-20 (Task 1): borCod reusado após excluirBordero; vldHasRemessaPgto reflete o import; GET ausente = 500 RECORDNOTFOUND; V2, V3, V5, G4 (emenda 2026-10-21)"
 ---
 
 # ADR 0076: boleto agrupado pago pelo borderô do fin010
@@ -44,11 +45,13 @@ do banco finaliza o borderô e baixa os N títulos.
    aceita títulos até 10 dias antes do vencimento do boleto, com aviso reconhecido.
 3. No lote, **N itens (um por título) ligados ao grupo**, que entram, saem e se movem juntos; na remessa,
    **um** item nativo de borderô. Na formação automática e em L6, o "vencido" do grupo é o do **boleto**.
-4. O borderô nasce **na geração da remessa** (etapa `preparar_bordero`, write-ahead com marcador), na conta
+4. O borderô nasce **na geração da remessa** (etapa `preparar_bordero`, write-ahead com `t0`/`t1` e a
+   identidade `filCod` + `borCod` + `borTimCad`; emenda 2026-10-21), na conta
    financeira (`gerNum`) da conta pagadora do lote, lida ao vivo do `fin005`. **Nós nunca finalizamos o
    borderô**: quem finaliza é o retorno do banco.
-5. Antes do lote nativo finalizado, o sistema desfaz **só o borderô que criou**. Depois da remessa
-   (`vldHasRemessaPgto = 1`) nunca apaga nem cancela: `Alerta` e decisão da analista.
+5. Enquanto o lote nativo não está finalizado e não tem `.REM` gerado (lido ao vivo), o sistema desfaz **só o
+   borderô que criou**. Depois disso nunca apaga nem cancela: `Alerta` e decisão da analista (emenda
+   2026-10-21; `vldHasRemessaPgto` não é o sinal).
 6. O grupo é `PAGO` só com os N títulos pagos; parte paga é divergência; J rejeitado devolve o grupo inteiro
    para "confirmado, sem lote", e ele só volta a uma remessa depois de a analista resolver o borderô antigo no
    ERP. Se o borderô antigo reaparecer pendente no lote novo, é **reaproveitado**, nunca duplicado.
@@ -77,11 +80,60 @@ Os nove "Pontos inferidos" passam a decididos (PI-n = ponto n da proposta):
 
 | # | Decisão |
 |---|---|
-| PI-1 a PI-6 | Aceitos como escritos: N ≥ 2; reconhecimento do aviso manual no servidor; `borDtaMvto` = débito e marcador em campo de observação (nome a medir); modalidade 6/7 (V5 no HML); grupo inelegível na remessa **barra** antes de escrever; anular em `RASCUNHO` retira os N itens. |
+| PI-1 a PI-6 | Aceitos como escritos: N ≥ 2; reconhecimento do aviso manual no servidor; `borDtaMvto` = débito (o marcador em campo de observação foi **abandonado** na emenda de 2026-10-21); modalidade 6/7 (V5 confirmado no HML em 2026-10-20); grupo inelegível na remessa **barra** antes de escrever; anular em `RASCUNHO` retira os N itens. |
 | PI-7 | Grupo fechado do mesmo vencimento com título não aprovado (ou que falha a I19c de outro modo) é **exibido com o motivo** ("aguardando alçada" etc.) e **não é confirmável**; o título nunca é descartado para sugerir um subconjunto (I19e). |
 | PI-8 | O "vencido" do grupo, na formação automática e em L6, é o **vencimento do boleto** (dia civil em Brasília, ADR-0070) (I19j). |
 | PI-9 | Depois de J rejeitado, o grupo volta a uma remessa só depois de a analista resolver o borderô antigo no ERP; se ele reaparecer em `borderosPendentes` do lote novo (V7), o sistema o **reaproveita** em vez de criar outro (I19r, I19s, tabela da retomada). V7 segue no watchlist como medição. |
 | Numeração | ADR-0075/0.46.0 → **ADR-0076/0.47.0** (reservados pela branch `docs/sispag-situacao-pagamento-ontology`). Migration segue 0089. |
+
+## Emenda 2026-10-21 — medições HML da Task 1
+
+As medições de 2026-10-20 (`_inbox/sispag-boleto-agrupado-hml-achados.md`, seção "O que contradiz a ontologia
+v0.47.0") contradisseram duas premissas aprovadas. Decisões do maintainer em 2026-10-21, emendadas no lugar
+(0.47.0 ainda não mergeada, sem bump de versão):
+
+1. **Guarda da limpeza = lote nativo, não `vldHasRemessaPgto`** (I19q, I19r, H9, `conexos.md` passos 8 e 10).
+   Medido: a flag vira 1 quando o borderô é **importado** num lote e volta a 0 quando o item sai; não é o sinal
+   de "foi ao banco". Lida antes do `DELETE` do item, a guarda antiga bloquearia toda limpeza; lida depois,
+   seria sempre 0. **Decisão:** a limpeza só é permitida enquanto o lote nativo não está finalizado e não tem
+   `.REM` gerado, estado lido ao vivo. Depois: nunca exclui nem cancela; `Alerta`
+   `sispag-bordero-grupo-pendente` e a analista decide. Fato registrado: com o item no lote, o ERP recusa
+   `excluirBaixa`/`excluirBordero` (`FIN_014.FIN_HAS_REMESSA_PGTO`); por isso a ordem é item → baixas →
+   borderô. Depois de um J rejeitado, se o borderô segue ligado ao lote e qual o valor da flag é medição da V7,
+   não premissa.
+2. **Identidade do borderô = `filCod` + `borCod` + `borTimCad`** (I19l, I19s, I19q, tabela da retomada,
+   `GrupoBoleto.execucao`, `conexos.md`). Medido: o ERP **reusa** `borCod` depois de `excluirBordero`
+   (max+1 da filial); `borTimCad` é o carimbo de criação do ERP, ao segundo, inalterado depois de baixas,
+   import e finalização (borderô 252). **O marcador de correlação em `borEspNrbanco` foi abandonado:** nada é
+   escrito nesse campo. Write-ahead: `t0` antes do `POST fin010`, `t1` depois; `borCod` + `borTimCad` da
+   resposta (ou da releitura). **Resposta perdida:** `fin010/list` por filial, `usnCodCad` = usuário do robô,
+   `gerNum`, `borDtaMvto`, `borVldFinalizado = 0` e `borTimCad#GE` (`t0` − margem) / `#LE` (`t1` + margem) em
+   epoch ms (medido: `#GE`/`#LE` com epoch ms funciona; ISO responde 500; `#GTE`/`#BETWEEN` não são aceitos).
+   Exatamente um ⇒ adota; zero ⇒ cria; dois ou mais ⇒ `indeterminado` + `Alerta`. Em qualquer releitura, um
+   borderô com o nosso `borCod` e outro `borTimCad` é **de outra pessoa** ⇒ `indeterminado`, nunca tocado. A
+   margem (desvio de relógio) é constante de código, não domínio. Risco conhecido: Permutas também cria
+   borderôs `fin010` com o mesmo usuário do robô; o filtro por `gerNum`, data e tipo existe por isso, e a
+   colisão residual vira `indeterminado` (seguro).
+3. **Ausência** (I19q, I19s): `GET fin010/{fil}/{bor}` de borderô ausente responde `500 RECORDNOTFOUND`, não
+   404. Ausência observada = `fin010/list borCod#EQ` sem linhas (ou só com linhas de outro `borTimCad`).
+4. **Fatos medidos, sem mudança de regra:** V2 (título com baixa em borderô em cadastro segue em aberto no
+   `fin064` e sai do grid do `fin015`; `importarTitulos` com a linha velha é aceito depois da `FIN_041` ⇒ só a
+   I19k e a releitura do grid impedem pagar duas vezes); V3 (ordem imposta pelo ERP); V5 (modalidade 6
+   confirmada para barra do banco da conta); G4 (o retorno `fin052` traz **uma** linha J para o item de
+   borderô, com `fil/bnc/flp/its` + `borCod`, sem `docCod/titCod` nem valor ⇒ I19r/I11i casam pela chave
+   nativa e/ou `borCod`).
+5. **G6 (P2):** boleto que bate com a soma de dois conjuntos fechados (dois credores, mesmo dia, mesma soma),
+   ou dois boletos idênticos não intercambiáveis pela I19f que casam o mesmo conjunto ⇒ **nenhuma sugestão**;
+   a analista compõe à mão. A GT1 (Task 22) mede a frequência (I19e, I19f).
+
+Rejeitados nesta emenda:
+
+- **Marcador de correlação em `borEspNrbanco`** — REJECT-WORKAROUND: o campo tem semântica nativa ("nº
+  banco"), cabe só 15 maiúsculas e nunca foi provado num `.REM`; o `borTimCad` gravado pelo próprio ERP
+  identifica o borderô sem escrever nada.
+- **`vldHasRemessaPgto` como guarda da limpeza** — REJECT-DUPLICATE do estado do lote nativo, e semanticamente
+  errado (reflete o import).
+- **`borCod` sozinho como identidade** — rejeitado: o ERP reusa o número.
 
 ## Rejeitado
 
@@ -100,7 +152,7 @@ Os nove "Pontos inferidos" passam a decididos (PI-n = ponto n da proposta):
   reabre o ruído do subconjunto.
 - **`ItemLote.tipo = BORDERO` com títulos numa tabela filha** — REJECT-DUPLICATE (P1-1): esconderia os títulos
   de I2/I3/I4/I11.
-- **Entidade `BorderoGrupo`** — REJECT-DUPLICATE: o borderô é do ERP; `borCod` e marcador são execução do grupo.
+- **Entidade `BorderoGrupo`** — REJECT-DUPLICATE: o borderô é do ERP; `borCod` + `borTimCad` são execução do grupo.
 - **Persistir a sugestão de grupo** — REJECT-DUPLICATE (I-DDA1): só a confirmação persiste.
 - **Criar o borderô na confirmação** — REJECT-WORKAROUND: viola I1 e deixa borderô parado por dias.
 - **Finalizar o borderô nós mesmos / livro paralelo de baixa** — REJECT-WORKAROUND / REJECT-DUPLICATE: o
@@ -130,7 +182,8 @@ Os nove "Pontos inferidos" passam a decididos (PI-n = ponto n da proposta):
 ## Premissas e verificações (não bloqueiam; P0-5)
 
 Permissões do CLONEX em PRD (V1, conferência do maintainer); primeiro `.RET` real com item de borderô (V6);
-V2, V3, V5, V7 medidas no HML durante o TDD; V4 é follow-up.
+V2, V3 e V5 medidas no HML em 2026-10-20 (Task 1; ver a emenda); V7 segue em medição (agora também o valor de
+`vldHasRemessaPgto` depois da rejeição); V4 é follow-up.
 
 ## CHANGELOG (app, para a analista)
 
