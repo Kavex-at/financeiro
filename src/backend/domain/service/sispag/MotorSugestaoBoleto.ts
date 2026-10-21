@@ -40,6 +40,19 @@ export interface EntradaMotorSugestao {
     datasDebito?: ReadonlyMap<string, string>;
     /** DPS lidos dos PDFs (`titulo_dps`, I15p), inclusive de títulos que já saíram da carteira. */
     dps?: DpsConhecido[];
+    /**
+     * Grupos de boleto `CONFIRMADO` (I15q, ADR-0076): o título vira `EM_GRUPO` e o boleto sai do
+     * jogo (exclusão (4) da I15e). Ausente ≡ lista vazia.
+     */
+    gruposConfirmados?: GrupoConfirmadoChaveado[];
+}
+
+/** Grupo `CONFIRMADO` no formato que o motor consome: o boleto e as chaves dos títulos. */
+export interface GrupoConfirmadoChaveado {
+    id: string;
+    ddcCod: number;
+    ditCod: number;
+    titulos: Array<{ filCod: number; docCod: string; titCod: string }>;
 }
 
 /** Boleto livre do pool, pré-computado uma vez por execução. */
@@ -90,6 +103,8 @@ interface PendenteCompleto {
 interface Preparo {
     livres: BoletoLivre[];
     porChave: Map<string, BoletoLivre>;
+    /** Título → id do `GrupoBoleto CONFIRMADO` que o contém (I15q). */
+    grupoDoTitulo: Map<string, string>;
     pares: Set<string>;
     rejeitadas: Set<string>;
     elegiveis: TituloElegivel[];
@@ -163,6 +178,8 @@ const MOTIVO_POR_SITUACAO: Readonly<Record<SituacaoSugestaoTitulo, string>> = {
     [SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO]: MOTIVO_SEM_CANDIDATO,
     [SITUACAO_SUGESTAO_TITULO.CONFIRMADA]: 'Confirmada pelo analista.',
     [SITUACAO_SUGESTAO_TITULO.ORFA]: 'Confirmação órfã: anule para liberar o título.',
+    [SITUACAO_SUGESTAO_TITULO.EM_GRUPO]:
+        'Título em grupo de boleto confirmado: um boleto paga este e outros títulos do credor. Anule o grupo para sugerir um boleto só para ele.',
 };
 
 /**
@@ -233,6 +250,11 @@ export default class MotorSugestaoBoleto {
 
         const pendentes: PendenteCompleto[] = [];
         for (const alvo of p.elegiveis) {
+            const grupoId = p.grupoDoTitulo.get(alvo.chave);
+            if (grupoId !== undefined) {
+                desfechos.push(this.desfechoEmGrupo(alvo, grupoId));
+                continue;
+            }
             const confirmada = p.confirmadaDoTitulo.get(alvo.chave);
             if (confirmada) {
                 const boleto = p.porChave.get(chaveBoleto(confirmada));
@@ -278,7 +300,12 @@ export default class MotorSugestaoBoleto {
 
     /** Estruturas compartilhadas pelo contrato legado e pelo desfecho. */
     private preparar = (entrada: EntradaMotorSugestao): Preparo => {
-        const livres = this.livres(entrada);
+        const grupos = entrada.gruposConfirmados ?? [];
+        const boletosDeGrupo = new Set(grupos.map((g) => chaveBoleto(g)));
+        const grupoDoTitulo = new Map(
+            grupos.flatMap((g) => g.titulos.map((t) => [chaveTitulo(t), g.id] as const)),
+        );
+        const livres = this.livres(entrada).filter((b) => !boletosDeGrupo.has(b.chave));
         const porChave = new Map(livres.map((b) => [b.chave, b]));
         const pares = new Set(entrada.paresVigentes.map((p) => `${p.pesCod}|${p.emissorChave}`));
         const rejeitadas = new Set(
@@ -326,6 +353,7 @@ export default class MotorSugestaoBoleto {
         return {
             livres,
             porChave,
+            grupoDoTitulo,
             pares,
             rejeitadas,
             elegiveis,
@@ -960,6 +988,23 @@ export default class MotorSugestaoBoleto {
     ): { decididoPor?: string; transferidaPor?: string } => ({
         ...(d.decididoPor ? { decididoPor: d.decididoPor } : {}),
         ...(d.transferidaPor ? { transferidaPor: d.transferidaPor } : {}),
+    });
+
+    /** I15q: título em grupo confirmado — sem candidatos, nunca confirmável no 1:1. */
+    private desfechoEmGrupo = (alvo: TituloElegivel, grupoId: string): DesfechoTitulo => ({
+        filCod: alvo.titulo.filCod,
+        docCod: alvo.titulo.docCod,
+        titCod: alvo.titulo.titCod,
+        ...(alvo.titulo.pesCod ? { pesCod: alvo.titulo.pesCod } : {}),
+        ...(alvo.titulo.credor ? { credor: alvo.titulo.credor } : {}),
+        valorTitulo: alvo.titulo.valor,
+        vencimentoTitulo: alvo.vencimento,
+        dataDebito: alvo.dataDebito,
+        situacao: SITUACAO_SUGESTAO_TITULO.EM_GRUPO,
+        candidatos: [],
+        totalCandidatos: 0,
+        motivo: MOTIVO_POR_SITUACAO[SITUACAO_SUGESTAO_TITULO.EM_GRUPO],
+        grupoBoletoId: grupoId,
     });
 
     private desfechoDeDecisao = (

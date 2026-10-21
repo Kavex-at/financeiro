@@ -876,3 +876,61 @@ describe('MotorSugestaoBoleto — desfecho por título (I15m, I15n, ADR-0072)', 
         expect(new Set(reservados).size).toBe(reservados.length);
     });
 });
+
+describe('MotorSugestaoBoleto — boleto agrupado (I15e(4), I15m EM_GRUPO, I15q; ADR-0076)', () => {
+    it('título em grupo CONFIRMADO ⇒ desfecho EM_GRUPO, não confirmável, com o id do grupo e sem sugestão 1:1', () => {
+        const t = titulo({ docCod: 'G1' });
+        const livre = boleto({ ditCod: 9001 });
+        const r = motor.analisar(
+            entrada({
+                titulos: [t],
+                boletos: [livre],
+                gruposConfirmados: [
+                    {
+                        id: 'grupo-1',
+                        ddcCod: 700,
+                        ditCod: 1,
+                        titulos: [{ filCod: t.filCod, docCod: t.docCod, titCod: t.titCod }],
+                    },
+                ],
+            }),
+        );
+        expect(doTitulo(r.sugestoes, t)).toBeUndefined();
+        const d = r.desfechos.find((x) => x.docCod === 'G1');
+        expect(d).toMatchObject({
+            situacao: 'EM_GRUPO',
+            grupoBoletoId: 'grupo-1',
+            candidatos: [],
+            totalCandidatos: 0,
+        });
+        expect(d?.motivo).toMatch(/grupo/);
+        expect(d?.candidatos.some((c) => c.confirmavel)).toBe(false);
+    });
+
+    it('boleto de grupo CONFIRMADO não é candidato de nenhum título (exclusão (4))', () => {
+        const t = titulo({ docCod: 'X1' });
+        const b = boleto({ ditCod: 9002 });
+        const r = motor.analisar(
+            entrada({
+                titulos: [t],
+                boletos: [b],
+                gruposConfirmados: [{ id: 'g', ddcCod: b.ddcCod, ditCod: b.ditCod, titulos: [] }],
+            }),
+        );
+        expect(r.sugestoes).toEqual([]);
+        expect(r.desfechos.find((x) => x.docCod === 'X1')).toMatchObject({
+            situacao: 'SEM_CANDIDATO',
+            candidatos: [],
+        });
+    });
+
+    it('sem grupos: comportamento idêntico ao de antes (lista vazia ≡ campo ausente)', () => {
+        const t = titulo({ docCod: 'S1' });
+        const b = boleto({ ditCod: 9003 });
+        const sem = motor.analisar(entrada({ titulos: [t], boletos: [b] }));
+        const vazio = motor.analisar(
+            entrada({ titulos: [t], boletos: [b], gruposConfirmados: [] }),
+        );
+        expect(vazio).toEqual(sem);
+    });
+});

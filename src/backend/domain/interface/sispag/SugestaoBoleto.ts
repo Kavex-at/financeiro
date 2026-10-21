@@ -264,7 +264,9 @@ export type SugestaoBoletoView = Omit<SugestaoBoletoTitulo, 'emissor'> & {
  * - `SO_VENCIDA`    só boleto vencido na data de débito: informativo (I15h);
  * - `DISPUTADA`     o melhor candidato está reservado a outro título (I15n);
  * - `SEM_CANDIDATO` nenhum boleto livre dentro do envelope (I15f);
- * - `CONFIRMADA`    decisão ativa do analista; `ORFA` confirmação que perdeu o boleto/título (I15l).
+ * - `CONFIRMADA`    decisão ativa do analista; `ORFA` confirmação que perdeu o boleto/título (I15l);
+ * - `EM_GRUPO`      o título está num `GrupoBoleto CONFIRMADO` (I15q, ADR-0076): um boleto paga
+ *                   este e outros títulos do credor; nunca confirmável no 1:1.
  */
 export const SITUACAO_SUGESTAO_TITULO = {
     UNICA_SEGURA: 'UNICA_SEGURA',
@@ -276,6 +278,7 @@ export const SITUACAO_SUGESTAO_TITULO = {
     SEM_CANDIDATO: 'SEM_CANDIDATO',
     CONFIRMADA: 'CONFIRMADA',
     ORFA: 'ORFA',
+    EM_GRUPO: 'EM_GRUPO',
 } as const;
 export type SituacaoSugestaoTitulo =
     (typeof SITUACAO_SUGESTAO_TITULO)[keyof typeof SITUACAO_SUGESTAO_TITULO];
@@ -340,6 +343,8 @@ export interface DesfechoTitulo extends ChaveTitulo {
     motivo: string;
     /** Confirmação órfã (I15l): motivo da perda do boleto/título. */
     motivoOrfa?: string;
+    /** `EM_GRUPO` (I15q): o `GrupoBoleto CONFIRMADO` que contém o título. */
+    grupoBoletoId?: string;
 }
 
 /** Candidato como a API o expõe: emissor MASCARADO, sem barras nem linha digitável (I15k). */
