@@ -9,7 +9,9 @@ import GroupedBoletoCrossBranchError from './GroupedBoletoCrossBranchError.js';
 import GroupedBoletoDueWindowError from './GroupedBoletoDueWindowError.js';
 import GroupedBoletoIndivisibleError from './GroupedBoletoIndivisibleError.js';
 import GroupedBoletoNotEligibleAtRemittanceError from './GroupedBoletoNotEligibleAtRemittanceError.js';
+import GroupedBoletoNotConfirmableError from './GroupedBoletoNotConfirmableError.js';
 import GroupedBoletoNotFoundError from './GroupedBoletoNotFoundError.js';
+import GroupedBoletoStateConflictError from './GroupedBoletoStateConflictError.js';
 import GroupedBoletoSumMismatchError from './GroupedBoletoSumMismatchError.js';
 import GroupedBoletoTitleIneligibleError from './GroupedBoletoTitleIneligibleError.js';
 import WarningAcknowledgementRequiredError from './WarningAcknowledgementRequiredError.js';
@@ -73,6 +75,13 @@ const erros = () => ({
         etapa: 'baixas_gravadas',
     }),
     ausente: new GroupedBoletoNotFoundError({ grupoId: 'g-404' }),
+    naoConfirmavel: new GroupedBoletoNotConfirmableError({
+        ddcCod: 900,
+        ditCod: 332841,
+        codigoMascarado: BARRAS,
+        motivos: [M.BOLETO_EM_DECISAO_1_1, M.CREDORES_DIFERENTES],
+    }),
+    estado: new GroupedBoletoStateConflictError({ grupoId: 'g-1', estado: 'PAGO', acao: 'anular' }),
 });
 
 describe('erros nomeados do boleto agrupado (I19, ADR-0076)', () => {
@@ -97,6 +106,20 @@ describe('erros nomeados do boleto agrupado (I19, ADR-0076)', () => {
         ],
         ['bordero', 'GroupBorderoIncompleteError', 409, 'GRUPO_BORDERO_INCOMPLETO', true],
         ['ausente', 'GroupedBoletoNotFoundError', 404, 'GRUPO_BOLETO_NAO_ENCONTRADO', false],
+        [
+            'naoConfirmavel',
+            'GroupedBoletoNotConfirmableError',
+            409,
+            'GRUPO_BOLETO_NAO_CONFIRMAVEL',
+            false,
+        ],
+        [
+            'estado',
+            'GroupedBoletoStateConflictError',
+            409,
+            'GRUPO_BOLETO_ESTADO_INCOMPATIVEL',
+            false,
+        ],
     ] as const)('%s: %s é HandlerError %i (%s)', (k, nome, status, code, retryable) => {
         const erro = erros()[k];
         expect(isHandlerError(erro)).toBe(true);
@@ -198,6 +221,31 @@ describe('erros nomeados do boleto agrupado (I19, ADR-0076)', () => {
             dataDebito: '2026-10-26',
         });
         expect(e).toMatchObject({ statusCode: 422, code: 'RECONHECIMENTO_DE_AVISO_OBRIGATORIO' });
+        // O aviso do grupo é o inverso do 1:1: o TÍTULO vence antes do boleto.
+        expect(e.userMessage).toMatch(
+            /título 501\/1 vence em 25\/10\/2026, antes do boleto \(26\/10\/2026\)/,
+        );
+    });
+
+    it('não confirmável: motivos do grupo em pt-BR, só a máscara; sugestão mudou pede atualizar', () => {
+        const e = erros().naoConfirmavel;
+        expect(e.userMessage).toContain(MASCARA);
+        expect(e.userMessage).toMatch(/já está confirmado para um título/);
+        expect(e.userMessage).toMatch(/credores diferentes/);
+        expect(e.details).toMatchObject({ codigoMascarado: MASCARA, sugestaoMudou: false });
+        const mudou = new GroupedBoletoNotConfirmableError({
+            ddcCod: 900,
+            ditCod: 332841,
+            sugestaoMudou: true,
+        });
+        expect(mudou.userMessage).toMatch(/Atualize a lista/);
+        expect(mudou.details.sugestaoMudou).toBe(true);
+    });
+
+    it('estado incompatível: grupo PAGO não se anula', () => {
+        expect(erros().estado.userMessage).toBe(
+            'O grupo de boleto já foi pago: não pode ser anulado.',
+        );
     });
 });
 

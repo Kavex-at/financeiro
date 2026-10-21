@@ -58,6 +58,8 @@ export const MOTIVO_GRUPO_INELEGIVEL = {
     CREDORES_DIFERENTES: 'CREDORES_DIFERENTES',
     // ── o boleto (I19a, I19b, I19h) ──
     BOLETO_VINCULADO_ERP: 'BOLETO_VINCULADO_ERP',
+    /** O boleto já tem `DecisaoSugestaoBoleto CONFIRMADA` para um título (I15q, exclusividade). */
+    BOLETO_EM_DECISAO_1_1: 'BOLETO_EM_DECISAO_1_1',
     BOLETO_INDISPONIVEL: 'BOLETO_INDISPONIVEL',
     CODIGO_INVALIDO: 'CODIGO_INVALIDO',
     BOLETO_INCONSISTENTE: 'BOLETO_INCONSISTENTE',
@@ -88,6 +90,7 @@ export const MOTIVO_GRUPO_INELEGIVEL_TEXTO: Readonly<Record<MotivoGrupoInelegive
     CRUZA_FILIAL: 'os títulos são de filiais diferentes: não suportado, pague à mão',
     CREDORES_DIFERENTES: 'os títulos são de credores diferentes',
     BOLETO_VINCULADO_ERP: 'o Conexos já vinculou o boleto a um título',
+    BOLETO_EM_DECISAO_1_1: 'o boleto já está confirmado para um título (um boleto por título)',
     BOLETO_INDISPONIVEL: 'o código de barras do boleto não está disponível',
     CODIGO_INVALIDO: 'o código de barras do boleto é inválido',
     BOLETO_INCONSISTENTE: 'o valor ou o vencimento do código não batem com o DDA',
@@ -359,4 +362,49 @@ export interface SugestaoGrupoBoleto {
     confirmavel: boolean;
     motivo?: MotivoGrupoInelegivel;
     motivos: MotivoGrupoInelegivel[];
+}
+
+// ── Entrada e saída do serviço (GrupoBoletoService) ──────────────────────────────────────────
+
+/** `confirmarGrupoBoleto` (I19i): o ator vem do JWT, nunca do corpo; nunca `sistema`. */
+export interface EntradaConfirmarGrupo {
+    origem: GrupoBoletoOrigem;
+    ddcCod: number;
+    ditCod: number;
+    titulos: ChaveTituloGrupo[];
+    /** Avisos que a pessoa reconheceu na tela (conferidos contra a avaliação recalculada). */
+    reconheceAvisos?: string[];
+    ator: string;
+}
+
+export interface ResultadoConfirmacaoGrupo {
+    /** `false` = o mesmo (boleto, títulos) já estava confirmado (idempotência): nada gravado. */
+    criado: boolean;
+    grupo: GrupoBoleto;
+}
+
+/** Grupo num lote comprometido (`FINALIZADO`/`REMESSA_GERADA`) no momento da anulação (I19t). */
+export interface AvisoLoteComprometidoGrupo {
+    loteId: string;
+    status: string;
+    /** Texto ao operador (pt-BR): a próxima geração de remessa retira o grupo. */
+    mensagem: string;
+}
+
+export interface ResultadoAnulacaoGrupo {
+    /** `false` = o grupo já estava `ANULADO` (idempotência): nada gravado. */
+    anulado: boolean;
+    grupo: GrupoBoleto;
+    /** Lote `RASCUNHO` de onde os N itens saíram na mesma transação (PI-6). */
+    retiradoDoLoteId?: string;
+    avisoLoteComprometido?: AvisoLoteComprometidoGrupo;
+}
+
+/** Grupo como a listagem o devolve: estado persistido + situação derivada + órfão (I19u). */
+export interface GrupoBoletoListado extends GrupoBoleto {
+    /** `SituacaoGrupo` (`libs/boleto/SituacaoGrupoBoleto.ts`), recalculada a cada leitura. */
+    situacao: string;
+    orfao: ResultadoOrfao;
+    loteId?: string;
+    loteStatus?: string;
 }

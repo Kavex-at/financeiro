@@ -129,13 +129,17 @@ export default class BoletoDdaRepository {
 
     /**
      * Um boleto pela chave (`ddcCod`, `ditCod`), de arquivo NÃO cancelado — releitura pontual do
-     * passo de confirmação do boleto sugerido (ADR-0068, anti-TOCTOU).
+     * passo de confirmação do boleto sugerido (ADR-0068, anti-TOCTOU). Com `tx`, lê na transação
+     * do chamador (confirmação do grupo de boleto sob lock, ADR-0076).
      */
-    public buscarPorChave = async (chave: {
-        ddcCod: number;
-        ditCod: number;
-    }): Promise<BoletoDda | null> => {
-        const row = await this.databaseClient.selectFirst<BoletoRow>(
+    public buscarPorChave = async (
+        chave: {
+            ddcCod: number;
+            ditCod: number;
+        },
+        tx?: TransactionClient,
+    ): Promise<BoletoDda | null> => {
+        const row = await (tx ?? this.databaseClient).selectFirst<BoletoRow>(
             `SELECT b.ddc_cod, b.dit_cod, b.numero, b.valor,
                     to_char(b.vencimento, 'YYYY-MM-DD') AS vencimento, b.codbar,
                     b.fil_cod, b.doc_cod, b.tit_cod, b.flp_cod, b.bnc_cod,

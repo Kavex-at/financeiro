@@ -112,6 +112,16 @@ describe('GrupoBoletoRepository (unidade)', () => {
         expect(ordem.indexOf('insert')).toBeGreaterThan(ordem.lastIndexOf('lock'));
     });
 
+    it('listarConfirmadosDoPar trava (FOR UPDATE) só os CONFIRMADO do par, na transação dada', async () => {
+        const t = tx();
+        const repo = new GrupoBoletoRepository(db(t) as unknown as PostgreeDatabaseClient);
+        await repo.listarConfirmadosDoPar('par-1', t as unknown as TransactionClient);
+        const [sql, params] = t.selectMany.mock.calls[0] ?? [];
+        expect(sql).toMatch(/confirmacao_emissor_id = \$parId::uuid AND estado = \$confirmado/);
+        expect(sql).toMatch(/FOR UPDATE/);
+        expect(params).toEqual({ parId: 'par-1', confirmado: 'CONFIRMADO' });
+    });
+
     it('anular recusa motivo fora de 10–500 antes de tocar o banco', async () => {
         const d = db();
         const repo = new GrupoBoletoRepository(d as unknown as PostgreeDatabaseClient);
