@@ -22,7 +22,7 @@ universality_evidence:
 > pelo **borderô** do `fin010`: em cadastro, uma baixa por título, importado como **um** item do lote
 > SISPAG; o retorno do banco finaliza o borderô e baixa os N. **Sem flag e sem modos** (P0-5): ativo
 > após o merge, sob o kill-switch existente `sispagLiveWriteEnabled` e o dry-run do Conexos.
-> **Status: planned** (ontologia à frente do código; migration prevista 0089).
+> **Status: planned** (ontologia à frente do código; migration prevista 0090).
 > **Emenda 2026-10-21** (medições HML da Task 1): guarda da limpeza = lote nativo, identidade do borderô =
 > `filCod` + `borCod` + `borTimCad`, sem marcador de correlação. Ver a seção da emenda abaixo e a ADR-0076.
 

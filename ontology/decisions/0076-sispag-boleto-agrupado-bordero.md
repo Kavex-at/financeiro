@@ -19,7 +19,7 @@ evidence:
 # ADR 0076: boleto agrupado pago pelo borderô do fin010
 
 **Branch:** `feat/sispag-boleto-agrupado`. `/feature-tweak`. `entity_changed = true`. Ontologia **0.47.0**
-(entidade, regra e ações `planned`, à frente do código). Migration prevista: **0089**. App: 0.72.0 (prevista;
+(entidade, regra e ações `planned`, à frente do código). Migration prevista: **0090**. App: 0.72.0 (prevista;
 decidida no ship).
 
 > **Numeração.** 0.46.0 e ADR-0075 estão reservados pela branch não mergeada
@@ -84,7 +84,7 @@ Os nove "Pontos inferidos" passam a decididos (PI-n = ponto n da proposta):
 | PI-7 | Grupo fechado do mesmo vencimento com título não aprovado (ou que falha a I19c de outro modo) é **exibido com o motivo** ("aguardando alçada" etc.) e **não é confirmável**; o título nunca é descartado para sugerir um subconjunto (I19e). |
 | PI-8 | O "vencido" do grupo, na formação automática e em L6, é o **vencimento do boleto** (dia civil em Brasília, ADR-0070) (I19j). |
 | PI-9 | Depois de J rejeitado, o grupo volta a uma remessa só depois de a analista resolver o borderô antigo no ERP; se ele reaparecer em `borderosPendentes` do lote novo (V7), o sistema o **reaproveita** em vez de criar outro (I19r, I19s, tabela da retomada). V7 segue no watchlist como medição. |
-| Numeração | ADR-0075/0.46.0 → **ADR-0076/0.47.0** (reservados pela branch `docs/sispag-situacao-pagamento-ontology`). Migration segue 0089. |
+| Numeração | ADR-0075/0.46.0 → **ADR-0076/0.47.0** (reservados pela branch `docs/sispag-situacao-pagamento-ontology`). Migration segue 0090. |
 
 ## Emenda 2026-10-21 — medições HML da Task 1
 

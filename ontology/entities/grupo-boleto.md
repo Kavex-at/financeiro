@@ -5,7 +5,7 @@ ontology_version: "0.47.0"
 implementation_status: planned
 status: draft
 owners: [yuri]
-related_files: []   # a preencher pelo TaskScoper (migration 0089)
+related_files: []   # a preencher pelo TaskScoper (migration 0090)
 properties: [id, filCod, pesCod, credor, emissorChave, ddcCod, ditCod, numeroBoleto, codbarMascarado, valorBoleto, vencimentoBoleto, titulos, somaTitulos, origem, intercambiavel, avisosReconhecidos, confirmacaoEmissorId, estado, confirmadoPor, confirmadoEm, anuladoPor, anuladoEm, motivoAnulacao, pagoObservadoEm, versao, execucao]
 relationships:
   - "GrupoBoleto 1—N(≥2) TituloAPagar (via GrupoBoletoTitulo: filCod/docCod/titCod + snapshot de valor líquido e vencimento)"
@@ -27,7 +27,7 @@ universality_evidence:
 > paga **N ≥ 2** títulos do mesmo credor, com soma exata ao centavo. É a unidade que entra no lote
 > (N `ItemLote` ligados ao grupo) e que vira **um** item nativo no `fin015`, via borderô `fin010`.
 > Code-facing: `GroupedBoleto`. Tabelas propostas: `sispag_grupo_boleto` + `sispag_grupo_boleto_titulo`
-> (migration 0089). **Status: planned.** Regras: `business-rules/boleto-agrupado-sispag.md` (I19).
+> (migration 0090). **Status: planned.** Regras: `business-rules/boleto-agrupado-sispag.md` (I19).
 
 ## Propriedades
 
