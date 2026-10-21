@@ -4,7 +4,10 @@ import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import type { TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import type GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import type { GrupoParaFormacao } from '../../repository/sispag/TituloAPagarRepository.js';
+import type LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
 import type LogService from '../LogService.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import FormacaoLotesService from './FormacaoLotesService.js';
@@ -29,6 +32,9 @@ const make = (
         acquire?: boolean;
         conta?: { banco: string; conta: string } | undefined;
         calendar?: BankingCalendar;
+        grupos?: GrupoParaFormacao[];
+        situacaoDe?: (grupoId: string) => string;
+        orfaos?: string[];
     } = {},
 ) => {
     const resolverPadrao = jest
@@ -36,11 +42,26 @@ const make = (
         .mockResolvedValue('conta' in over ? over.conta : { banco: 'ITAÚ', conta: '55795-4' });
     const tituloRepo = {
         listElegiveisParaFormacao: jest.fn().mockResolvedValue(over.elegiveis ?? []),
+        listGruposParaFormacao: jest.fn().mockResolvedValue(over.grupos ?? []),
+    };
+    const grupoRepo = {
+        buscarPorId: jest.fn(async (id: string) => ({ id, estado: 'CONFIRMADO' })),
+    };
+    const leituraGrupo = {
+        orfao: jest.fn(async (g: { id: string }) =>
+            over.orfaos?.includes(g.id)
+                ? { orfao: true, motivo: 'BOLETO_FORA_DO_POOL' }
+                : { orfao: false },
+        ),
+        situacao: jest.fn(async (g: { id: string }, ctx: { orfao?: boolean }) =>
+            ctx.orfao ? 'ORFAO' : (over.situacaoDe?.(g.id) ?? 'DISPONIVEL'),
+        ),
     };
     const loteRepo = {
         desfazerAutomaticosVencidos: jest.fn().mockResolvedValue(over.desfeitos ?? 0),
         criarLote: jest.fn().mockResolvedValue({ id: 'L1' }),
         adicionarItens: jest.fn().mockResolvedValue(undefined),
+        adicionarGrupo: jest.fn().mockResolvedValue('APLICADO'),
         tocarLote: jest.fn().mockResolvedValue(undefined),
     };
     const acquire = over.acquire ?? true;
@@ -51,15 +72,18 @@ const make = (
         ),
         withTransaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) => fn({})),
     } as unknown as PostgreeDatabaseClient;
+    const log = buildLog();
     const service = new FormacaoLotesService(
         tituloRepo as unknown as TituloAPagarRepository,
         loteRepo as unknown as LotePagamentoRepository,
         db,
-        buildLog(),
+        log,
         { resolverPadrao } as unknown as ContaPagadoraResolver,
         over.calendar ?? new BankingCalendar(),
+        grupoRepo as unknown as GrupoBoletoRepository,
+        leituraGrupo as unknown as LeituraGrupoBoleto,
     );
-    return { service, tituloRepo, loteRepo, resolverPadrao };
+    return { service, tituloRepo, loteRepo, resolverPadrao, grupoRepo, leituraGrupo, db, log };
 };
 
 describe('FormacaoLotesService', () => {
@@ -235,6 +259,174 @@ describe('FormacaoLotesService', () => {
         const { service } = make({ acquire: false });
         await expect(service.formar({ triggeredBy: 'cron' })).rejects.toBeInstanceOf(
             IngestLockBusyError,
+        );
+    });
+});
+
+describe('FormacaoLotesService — grupo de boleto como unidade (ADR-0076, P1-4, PI-8)', () => {
+    const DIA_TITULO = Date.UTC(2026, 9, 20);
+    const DIA_BOLETO = Date.UTC(2026, 9, 22);
+    const grupoAuto = (
+        grupoId: string,
+        over: Partial<GrupoParaFormacao> = {},
+    ): GrupoParaFormacao => ({
+        grupoId,
+        filCod: 2,
+        pesCod: '9001',
+        credor: 'PEDRONI',
+        vencimentoBoleto: DIA_BOLETO,
+        valorBoletoCentavos: 105_000,
+        // Grupo manual: os títulos vencem ANTES do boleto (I19g).
+        titulos: ['38883', '38884'].map((docCod) =>
+            titulo({
+                docCod,
+                credor: 'PEDRONI',
+                valor: 525,
+                vencimento: DIA_TITULO,
+                temBoleto: false,
+            }),
+        ),
+        ...over,
+    });
+    const lotesCriados = (m: ReturnType<typeof make>) =>
+        m.loteRepo.criarLote.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+
+    it('grupo DISPONIVEL entra inteiro no lote de BOLETOS do dia do vencimento do BOLETO, junto dos boletos avulsos desse dia, numa transação', async () => {
+        const m = make({
+            elegiveis: [
+                titulo({ docCod: '1', vencimento: DIA_BOLETO, temBoleto: true }),
+                titulo({ docCod: '2', vencimento: DIA_BOLETO, temBoleto: false }),
+            ],
+            grupos: [grupoAuto('G1')],
+        });
+        m.loteRepo.criarLote
+            .mockResolvedValueOnce({ id: 'LB' })
+            .mockResolvedValueOnce({ id: 'LR' });
+        const r = await m.service.formar({ triggeredBy: 'cron' });
+
+        expect(r).toMatchObject({ lotesFormados: 2, titulosLotados: 4, gruposLotados: 1 });
+        expect(m.loteRepo.adicionarGrupo).toHaveBeenCalledTimes(1);
+        const [pedido, tx] = m.loteRepo.adicionarGrupo.mock.calls[0] as [
+            Record<string, unknown>,
+            unknown,
+        ];
+        expect(pedido).toEqual({
+            loteId: 'LB',
+            grupoId: 'G1',
+            itens: [
+                expect.objectContaining({ docCod: '38883', vencimento: DIA_TITULO, valor: 525 }),
+                expect.objectContaining({ docCod: '38884', vencimento: DIA_TITULO, valor: 525 }),
+            ],
+            incluidoPor: 'cron',
+        });
+        expect(tx).toEqual({});
+        // O avulso boleto do mesmo dia divide o lote com o grupo; o não-boleto fica no outro.
+        const itensDoLote = m.loteRepo.adicionarItens.mock.calls.map((c: unknown[]) => [
+            c[0],
+            (c[1] as Array<{ docCod: string }>).map((i) => i.docCod),
+        ]);
+        expect(itensDoLote).toEqual([
+            ['LB', ['1']],
+            ['LR', ['2']],
+        ]);
+        // Uma transação por lote: o grupo entra na MESMA do lote LB.
+        expect(m.db.withTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('sem boleto avulso no dia do boleto, o grupo forma um lote só dele (nunca vai para o dia do título)', async () => {
+        const m = make({
+            elegiveis: [titulo({ docCod: '9', vencimento: DIA_TITULO, temBoleto: true })],
+            grupos: [grupoAuto('G1')],
+        });
+        m.loteRepo.criarLote
+            .mockResolvedValueOnce({ id: 'LA' })
+            .mockResolvedValueOnce({ id: 'LG' });
+        await m.service.formar({ triggeredBy: 'cron' });
+        expect(m.loteRepo.criarLote).toHaveBeenCalledTimes(2);
+        const doGrupo = m.loteRepo.adicionarGrupo.mock.calls[0]?.[0] as { loteId: string };
+        const doAvulso = m.loteRepo.adicionarItens.mock.calls.find(
+            (c: unknown[]) => (c[1] as unknown[]).length > 0,
+        )?.[0];
+        expect(doGrupo.loteId).not.toBe(doAvulso);
+        expect(lotesCriados(m).every((l) => l.automatico === true && l.filCod === 2)).toBe(true);
+    });
+
+    it('título de grupo nunca entra avulso: a carteira elegível não o traz, e o grupo vai inteiro mesmo com avulsos do mesmo credor no mesmo dia', async () => {
+        const m = make({
+            elegiveis: [
+                titulo({
+                    docCod: '77',
+                    credor: 'PEDRONI',
+                    vencimento: DIA_BOLETO,
+                    temBoleto: true,
+                }),
+            ],
+            grupos: [grupoAuto('G1')],
+        });
+        await m.service.formar({ triggeredBy: 'cron' });
+        const avulsos = m.loteRepo.adicionarItens.mock.calls.flatMap((c: unknown[]) =>
+            (c[1] as Array<{ docCod: string }>).map((i) => i.docCod),
+        );
+        expect(avulsos).toEqual(['77']);
+        expect(m.loteRepo.adicionarGrupo.mock.calls[0]?.[0]).toMatchObject({ grupoId: 'G1' });
+    });
+
+    it.each([
+        ['ORFAO', { orfaos: ['G1'] }],
+        ['RETIDO', { situacaoDe: () => 'RETIDO' }],
+        ['REJEITADO', { situacaoDe: () => 'REJEITADO' }],
+    ])('grupo %s não é lotado pelo cron (I19j/I19r) e é contado no log da rodada', async (situacao, over) => {
+        const m = make({ grupos: [grupoAuto('G1')], ...over });
+        const r = await m.service.formar({ triggeredBy: 'cron' });
+        expect(m.loteRepo.adicionarGrupo).not.toHaveBeenCalled();
+        expect(m.loteRepo.criarLote).not.toHaveBeenCalled();
+        expect(r.gruposLotados).toBe(0);
+        expect(m.log.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'formação automática de lotes concluída',
+                data: expect.objectContaining({ gruposNaoLotados: { [situacao]: 1 } }),
+            }),
+        );
+    });
+
+    it('grupo que deixou de estar CONFIRMADO entre a consulta e a leitura é ignorado', async () => {
+        const m = make({ grupos: [grupoAuto('G1')] });
+        m.grupoRepo.buscarPorId.mockResolvedValue({ id: 'G1', estado: 'ANULADO' });
+        await m.service.formar({ triggeredBy: 'cron' });
+        expect(m.loteRepo.adicionarGrupo).not.toHaveBeenCalled();
+    });
+
+    it('a janela e o desfazer usam o dia civil de Brasília (o "vencido" do grupo é o do boleto, no SQL)', async () => {
+        const m = make({
+            calendar: BankingCalendar.withClock(() => new Date('2026-10-23T01:30:00Z')),
+        });
+        await m.service.formar({ triggeredBy: 'cron' });
+        const hoje = new Date('2026-10-22T00:00:00Z');
+        expect(m.loteRepo.desfazerAutomaticosVencidos).toHaveBeenCalledWith(hoje);
+        expect(m.tituloRepo.listGruposParaFormacao).toHaveBeenCalledWith(7, hoje);
+    });
+
+    it('grupo que não entra (conflito no INSERT) desfaz o lote inteiro: nunca parte do lote', async () => {
+        const m = make({
+            elegiveis: [titulo({ docCod: '1', vencimento: DIA_BOLETO, temBoleto: true })],
+            grupos: [grupoAuto('G1')],
+        });
+        m.loteRepo.adicionarGrupo.mockResolvedValue('CONFLITO');
+        await expect(m.service.formar({ triggeredBy: 'cron' })).rejects.toThrow(/G1/);
+    });
+
+    it('log da rodada em português, com a contagem de grupos lotados', async () => {
+        const m = make({ grupos: [grupoAuto('G1'), grupoAuto('G2', { filCod: 4 })] });
+        await m.service.formar({ triggeredBy: 'cron' });
+        expect(m.log.info).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'formação automática de lotes concluída',
+                data: expect.objectContaining({
+                    gruposLotados: 2,
+                    lotesFormados: 2,
+                    titulosLotados: 4,
+                }),
+            }),
         );
     });
 });
