@@ -1,11 +1,14 @@
 import { injectable } from 'tsyringe';
+import type { GrupoNoLote } from '../../interface/sispag/GrupoNoLoteInterface.js';
 import type { ItemLote, LotePagamento } from '../../interface/sispag/SispagInterface.js';
 
 /** Item do lote como sai na API. */
 export type ItemLoteApi = ItemLote;
 
-export type LotePagamentoApi = Omit<LotePagamento, 'itens'> & {
+export type LotePagamentoApi = Omit<LotePagamento, 'itens' | 'grupos'> & {
     itens: ItemLoteApi[];
+    /** Grupos de boleto do lote, um bloco por grupo (ADR-0076, I19j). */
+    grupos?: GrupoNoLote[];
 };
 
 /**
@@ -19,12 +22,30 @@ export type LotePagamentoApi = Omit<LotePagamento, 'itens'> & {
  */
 @injectable()
 export default class LotePagamentoApiView {
-    public lote = (lote: LotePagamento): LotePagamentoApi => ({
-        ...lote,
-        itens: lote.itens.map(this.item),
-    });
+    public lote = (lote: LotePagamento): LotePagamentoApi => {
+        const { grupos, ...resto } = lote;
+        return {
+            ...resto,
+            itens: lote.itens.map(this.item),
+            ...(grupos && grupos.length > 0 ? { grupos: grupos.map(this.grupo) } : {}),
+        };
+    };
 
     public lotes = (lotes: LotePagamento[]): LotePagamentoApi[] => lotes.map(this.lote);
+
+    /**
+     * O grupo de boleto sai PROJETADO campo a campo (ADR-0076, I17j): só a máscara 5+4 do código,
+     * nunca outro campo que o grupo venha a ganhar.
+     */
+    private grupo = (g: GrupoNoLote): GrupoNoLote => ({
+        grupoId: g.grupoId,
+        codbarMascarado: g.codbarMascarado,
+        valorBoleto: g.valorBoleto,
+        vencimentoBoleto: g.vencimentoBoleto,
+        ...(g.credor !== undefined ? { credor: g.credor } : {}),
+        situacao: g.situacao,
+        titulos: g.titulos.map((t) => ({ filCod: t.filCod, docCod: t.docCod, titCod: t.titCod })),
+    });
 
     /**
      * O vínculo do código (ADR-0071) sai PROJETADO campo a campo: só máscara 5+4, origem, decisão,

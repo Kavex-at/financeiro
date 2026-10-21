@@ -15,6 +15,11 @@ import BatchEmptiedByCheckError from '../../errors/BatchEmptiedByCheckError.js';
 import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavailableError.js';
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
+import GroupedBoletoIndivisibleError from '../../errors/GroupedBoletoIndivisibleError.js';
+import GroupedBoletoNotFoundError from '../../errors/GroupedBoletoNotFoundError.js';
+import GroupedBoletoStateConflictError from '../../errors/GroupedBoletoStateConflictError.js';
+import GroupedBoletoTitleIneligibleError from '../../errors/GroupedBoletoTitleIneligibleError.js';
+import type { GrupoBoleto } from '../../interface/sispag/GrupoBoletoInterface.js';
 import type {
     AlertaItemLote,
     LotePagamento,
@@ -28,6 +33,9 @@ import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoR
 import type LogService from '../LogService.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type ContaPagadoraResolver from './ContaPagadoraResolver.js';
+import type GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
+import type DisparoLimpezaBorderoGrupo from './DisparoLimpezaBorderoGrupo.js';
+import type LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
 import LotePagamentoService from './LotePagamentoService.js';
 
 const lote = (over: Partial<LotePagamento> = {}): LotePagamento => ({
@@ -83,6 +91,10 @@ interface RepoMock {
     loteComprometidoComTitulo: jest.Mock;
     removerItemDeRascunho: jest.Mock;
     cancelarSeVazio: jest.Mock;
+    adicionarGrupo: jest.Mock;
+    removerGrupo: jest.Mock;
+    moverGrupo: jest.Mock;
+    travarTitulosNaTransacao: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -103,6 +115,10 @@ const buildRepo = (): RepoMock => ({
     loteComprometidoComTitulo: jest.fn().mockResolvedValue(null),
     removerItemDeRascunho: jest.fn().mockResolvedValue(1),
     cancelarSeVazio: jest.fn().mockResolvedValue(false),
+    adicionarGrupo: jest.fn().mockResolvedValue('APLICADO'),
+    removerGrupo: jest.fn().mockResolvedValue('APLICADO'),
+    moverGrupo: jest.fn().mockResolvedValue('APLICADO'),
+    travarTitulosNaTransacao: jest.fn().mockResolvedValue(undefined),
 });
 
 const SEM_ACHADO = { verificados: [], pendentes: [], retirados: [], avisos: [] };
@@ -130,6 +146,23 @@ const buildDestinoDeps = () => ({
         descartarDoItem: jest.fn().mockResolvedValue(0),
     },
     bloqueioRepo: { findAtivo: jest.fn().mockResolvedValue(null) },
+    // ADR-0076: por padrão nenhum título está em grupo de boleto.
+    grupoRepo: {
+        buscarConfirmadoPorTitulo: jest.fn().mockResolvedValue(null),
+        buscarPorId: jest.fn().mockResolvedValue(null),
+        travar: jest.fn().mockResolvedValue(undefined),
+    },
+    leituraGrupo: {
+        titulosRetidos: jest.fn().mockResolvedValue([]),
+        orfao: jest.fn().mockResolvedValue({ orfao: false }),
+        rejeicaoNaoResolvida: jest.fn().mockResolvedValue(false),
+        situacao: jest.fn().mockResolvedValue('EM_LOTE'),
+    },
+    disparoLimpeza: {
+        aposCancelarLote: jest
+            .fn()
+            .mockResolvedValue({ execucoes: 0, limpas: 0, pendentes: 0, falhas: 0 }),
+    },
     envVars: {
         sispagFavorecidoAutorizadoEnabled: true,
         sispagTedEnabled: true,
@@ -158,6 +191,9 @@ const novoService = (
         deps.alertaRepo as unknown as AlertaItemLoteRepository,
         deps.bloqueioRepo as unknown as BloqueioDuplicidadeRepository,
         { getEnvironmentVars: async () => deps.envVars } as unknown as EnvironmentProvider,
+        deps.grupoRepo as unknown as GrupoBoletoRepository,
+        deps.leituraGrupo as unknown as LeituraGrupoBoleto,
+        deps.disparoLimpeza as unknown as DisparoLimpezaBorderoGrupo,
     );
 
 /** Carteira persistida: é DAQUI que sai o "tem boleto?" — nunca do `fin064`. */
@@ -1082,5 +1118,481 @@ describe('LotePagamentoService — verificação TED/PIX (ADR-0063)', () => {
             expect.objectContaining({ para: 'RASCUNHO', de: ['FINALIZADO'] }),
             expect.anything(),
         );
+    });
+});
+
+describe('LotePagamentoService — grupo de boleto no lote (ADR-0076, I19j, L2/L3/L5)', () => {
+    const DOCS = ['38883', '38884', '38885'];
+    const grupo = (over: Partial<GrupoBoleto> = {}): GrupoBoleto => ({
+        id: 'G1',
+        filCod: 2,
+        pesCod: '9001',
+        credor: 'PEDRONI',
+        emissorChave: '341:1234',
+        ddcCod: 900,
+        ditCod: 1,
+        codbarMascarado: '34191…7500',
+        valorBoletoCentavos: 157_500,
+        vencimentoBoleto: '2026-10-21',
+        titulos: DOCS.map((docCod) => ({
+            filCod: 2,
+            docCod,
+            titCod: '1',
+            valorLiquidoCentavos: 52_500,
+            vencimento: '2026-10-21',
+        })),
+        somaTitulosCentavos: 157_500,
+        origem: 'SUGERIDO',
+        intercambiavel: false,
+        avisosReconhecidos: [],
+        confirmacaoEmissorId: 'PAR1',
+        estado: 'CONFIRMADO',
+        confirmadoPor: 'ana',
+        confirmadoEm: new Date('2026-10-20T12:00:00Z'),
+        versao: 1,
+        ...over,
+    });
+    const itemDoGrupo = (docCod: string, loteId = 'L1') => ({
+        loteId,
+        filCod: 2,
+        docCod,
+        titCod: '1',
+        valor: 525,
+        modalidade: 'BOLETO' as const,
+        incluidoPor: 'ana',
+        grupoBoletoId: 'G1',
+        divergencia: false,
+    });
+    const comGrupoNoLote = (over: Partial<LotePagamento> = {}) =>
+        lote({ itens: DOCS.map((d) => itemDoGrupo(d)), ...over });
+
+    const montar = (o: { lote?: LotePagamento; grupo?: GrupoBoleto | null } = {}) => {
+        const repo = buildRepo();
+        repo.getLoteComItens.mockResolvedValue(o.lote ?? lote());
+        const deps = buildDestinoDeps();
+        const g = o.grupo === undefined ? grupo() : o.grupo;
+        deps.grupoRepo.buscarPorId.mockResolvedValue(g);
+        const m = make(repo, titulo(), buildTituloRepo(), deps);
+        m.deps.conexos.getTituloAPagar.mockImplementation(
+            async (filCod: number, docCod: string, titCod: string) =>
+                titulo({ filCod, docCod, titCod, credor: 'PEDRONI', valor: 525 }),
+        );
+        return { ...m, repo };
+    };
+    const incluir = { loteId: 'L1', grupoId: 'G1', ator: 'ana', versaoEsperada: 1 };
+
+    describe('incluirGrupo', () => {
+        it('N itens BOLETO com grupoBoletoId numa transação, sob os locks I3 e do grupo, com a versão do lote', async () => {
+            const { service, repo, deps } = montar();
+            const r = await service.incluirGrupo(incluir);
+            expect(repo.travarTitulosNaTransacao).toHaveBeenCalledTimes(1);
+            expect(repo.travarTitulosNaTransacao.mock.calls[0]?.[0]).toHaveLength(3);
+            expect(deps.grupoRepo.travar).toHaveBeenCalledWith({}, [
+                'sispag:titulo:2:38883:1',
+                'sispag:titulo:2:38884:1',
+                'sispag:titulo:2:38885:1',
+            ]);
+            expect(repo.adicionarGrupo).toHaveBeenCalledWith(
+                {
+                    loteId: 'L1',
+                    grupoId: 'G1',
+                    itens: DOCS.map((docCod) =>
+                        expect.objectContaining({ filCod: 2, docCod, titCod: '1', valor: 525 }),
+                    ),
+                    incluidoPor: 'ana',
+                    versaoEsperada: 1,
+                },
+                {},
+            );
+            expect(repo.adicionarItem).not.toHaveBeenCalled();
+            expect(r.avisos).toEqual([]);
+            // I2 na re-leitura Conexos, título a título, antes da transação.
+            expect(deps.conexos.getTituloAPagar).toHaveBeenCalledTimes(3);
+            expect(deps.log.info).toHaveBeenCalledWith(
+                expect.objectContaining({ message: 'SISPAG lote: incluirGrupo' }),
+            );
+        });
+
+        it('lote automático vira manual ao receber o grupo', async () => {
+            const { service, repo } = montar({ lote: lote({ automatico: true }) });
+            await service.incluirGrupo(incluir);
+            expect(repo.marcarManual).toHaveBeenCalledWith('L1', {});
+        });
+
+        it('grupo já inteiro neste lote ⇒ idempotente (nada gravado)', async () => {
+            const { service, repo } = montar({ lote: comGrupoNoLote() });
+            await service.incluirGrupo(incluir);
+            expect(repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('grupo inexistente ⇒ GroupedBoletoNotFoundError; anulado ⇒ GroupedBoletoStateConflictError', async () => {
+            await expect(
+                montar({ grupo: null }).service.incluirGrupo(incluir),
+            ).rejects.toBeInstanceOf(GroupedBoletoNotFoundError);
+            const anulado = montar({ grupo: grupo({ estado: 'ANULADO' }) });
+            await expect(anulado.service.incluirGrupo(incluir)).rejects.toBeInstanceOf(
+                GroupedBoletoStateConflictError,
+            );
+            expect(anulado.repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('I4 — grupo de outra filial ⇒ LoteFilialError', async () => {
+            const { service, repo } = montar({ grupo: grupo({ filCod: 4 }) });
+            await expect(service.incluirGrupo(incluir)).rejects.toBeInstanceOf(LoteFilialError);
+            expect(repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('lote fora de RASCUNHO ⇒ LoteEstadoInvalidoError; versão divergente ⇒ LoteVersaoConflitoError', async () => {
+            const fin = montar({ lote: lote({ status: 'FINALIZADO' }) });
+            await expect(fin.service.incluirGrupo(incluir)).rejects.toBeInstanceOf(
+                LoteEstadoInvalidoError,
+            );
+            const velho = montar({ lote: lote({ versao: 2 }) });
+            await expect(velho.service.incluirGrupo(incluir)).rejects.toBeInstanceOf(
+                LoteVersaoConflitoError,
+            );
+        });
+
+        it('I19c — título com marca de retenção ativa ⇒ GroupedBoletoTitleIneligibleError, sem ler o Conexos', async () => {
+            const { service, repo, deps } = montar();
+            deps.leituraGrupo.titulosRetidos.mockResolvedValue([
+                { filCod: 2, docCod: '38884', titCod: '1' },
+            ]);
+            const err = await service.incluirGrupo(incluir).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(GroupedBoletoTitleIneligibleError);
+            expect((err as GroupedBoletoTitleIneligibleError).details.titulos).toEqual([
+                { filCod: 2, docCod: '38884', titCod: '1', motivo: 'MARCA_RETENCAO_ATIVA' },
+            ]);
+            expect(deps.conexos.getTituloAPagar).not.toHaveBeenCalled();
+            expect(repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('I19u — grupo órfão (boleto fora do pool) ⇒ GroupedBoletoTitleIneligibleError com o motivo', async () => {
+            const { service, repo, deps } = montar();
+            deps.leituraGrupo.orfao.mockResolvedValue({
+                orfao: true,
+                motivo: 'BOLETO_FORA_DO_POOL',
+            });
+            const err = await service.incluirGrupo(incluir).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(GroupedBoletoTitleIneligibleError);
+            expect(
+                (err as GroupedBoletoTitleIneligibleError).details.titulos.map((t) => t.motivo),
+            ).toEqual(['BOLETO_INDISPONIVEL', 'BOLETO_INDISPONIVEL', 'BOLETO_INDISPONIVEL']);
+            expect(repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('I2 por título — um título pago ou em alçada ⇒ nada entra (nunca parte do grupo)', async () => {
+            const { service, repo, deps } = montar();
+            deps.conexos.getTituloAPagar.mockImplementation(async (f: number, docCod: string) =>
+                titulo({
+                    filCod: f,
+                    docCod,
+                    pago: docCod === '38884',
+                    liberado: docCod !== '38885',
+                }),
+            );
+            const err = await service.incluirGrupo(incluir).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(GroupedBoletoTitleIneligibleError);
+            expect((err as GroupedBoletoTitleIneligibleError).details).toEqual({
+                grupoId: 'G1',
+                titulos: [
+                    { filCod: 2, docCod: '38884', titCod: '1', motivo: 'PAGO' },
+                    { filCod: 2, docCod: '38885', titCod: '1', motivo: 'NAO_LIBERADO' },
+                ],
+            });
+            expect(repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('I19h — boleto que vence antes da data de débito do lote ⇒ LoteEstadoInvalidoError', async () => {
+            const { service, repo } = montar({ lote: lote({ dataDebito: '2026-10-22' }) });
+            await expect(service.incluirGrupo(incluir)).rejects.toBeInstanceOf(
+                LoteEstadoInvalidoError,
+            );
+            expect(repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('ADR-0064 — título num lote comprometido ⇒ TitleInCommittedBatchError', async () => {
+            const { service, repo } = montar();
+            repo.loteComprometidoComTitulo.mockImplementation(async (c: { docCod: string }) =>
+                c.docCod === '38885' ? { loteId: 'L9', status: 'FINALIZADO' } : null,
+            );
+            await expect(service.incluirGrupo(incluir)).rejects.toBeInstanceOf(
+                TitleInCommittedBatchError,
+            );
+            expect(repo.adicionarGrupo).not.toHaveBeenCalled();
+        });
+
+        it('I3 — título noutro RASCUNHO sem mover ⇒ TituloEmOutroLoteError; com mover sai de lá na mesma transação', async () => {
+            const sem = montar();
+            sem.repo.loteRascunhoComTitulo.mockResolvedValue('L7');
+            await expect(sem.service.incluirGrupo(incluir)).rejects.toBeInstanceOf(
+                TituloEmOutroLoteError,
+            );
+            expect(sem.repo.removerItemDeRascunho).not.toHaveBeenCalled();
+
+            const com = montar();
+            com.repo.loteRascunhoComTitulo.mockResolvedValue('L7');
+            com.repo.cancelarSeVazio
+                .mockResolvedValueOnce(false)
+                .mockResolvedValueOnce(false)
+                .mockResolvedValueOnce(true);
+            await com.service.incluirGrupo({ ...incluir, mover: true });
+            expect(com.repo.removerItemDeRascunho).toHaveBeenCalledTimes(3);
+            expect(com.repo.adicionarGrupo).toHaveBeenCalledTimes(1);
+            expect(com.deps.log.info).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: 'SISPAG lote: moverGrupo',
+                    data: expect.objectContaining({ lotesOrigem: ['L7'] }),
+                }),
+            );
+        });
+
+        it('título avulso neste mesmo lote vira item do grupo (sai e entra na mesma transação)', async () => {
+            const { service, repo } = montar({
+                lote: lote({
+                    itens: [itemDoGrupo('38883')].map((i) => ({ ...i, grupoBoletoId: undefined })),
+                }),
+            });
+            repo.loteRascunhoComTitulo.mockImplementation(async (c: { docCod: string }) =>
+                c.docCod === '38883' ? 'L1' : null,
+            );
+            await service.incluirGrupo(incluir);
+            expect(repo.removerItem).toHaveBeenCalledWith(
+                { loteId: 'L1', filCod: 2, docCod: '38883', titCod: '1' },
+                {},
+            );
+            expect(repo.adicionarGrupo).toHaveBeenCalledTimes(1);
+        });
+
+        it('conflito no INSERT do grupo (versão mudou) ⇒ LoteVersaoConflitoError', async () => {
+            const { service, repo } = montar();
+            repo.adicionarGrupo.mockResolvedValue('CONFLITO');
+            await expect(service.incluirGrupo(incluir)).rejects.toBeInstanceOf(
+                LoteVersaoConflitoError,
+            );
+        });
+
+        it('I19r — grupo com J rejeitado entra à mão, com o aviso do borderô antigo', async () => {
+            const { service, repo, deps } = montar();
+            deps.leituraGrupo.rejeicaoNaoResolvida.mockResolvedValue(true);
+            const r = await service.incluirGrupo(incluir);
+            expect(repo.adicionarGrupo).toHaveBeenCalledTimes(1);
+            expect(r.avisos).toEqual(['BORDERO_ANTERIOR_A_RESOLVER']);
+        });
+    });
+
+    describe('título de grupo nunca anda sozinho (GroupedBoletoIndivisibleError)', () => {
+        it('removerTitulo de um item de grupo ⇒ 409 com o grupo e os N títulos', async () => {
+            const { service, repo } = montar({ lote: comGrupoNoLote() });
+            const err = await service
+                .removerTitulo({
+                    loteId: 'L1',
+                    filCod: 2,
+                    docCod: '38884',
+                    titCod: '1',
+                    ator: 'ana',
+                })
+                .catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(GroupedBoletoIndivisibleError);
+            expect((err as GroupedBoletoIndivisibleError).statusCode).toBe(409);
+            expect((err as GroupedBoletoIndivisibleError).details.titulos).toHaveLength(3);
+            expect(repo.removerItem).not.toHaveBeenCalled();
+        });
+
+        it('retirarDoLote (aba de títulos) de um título de grupo ⇒ 409', async () => {
+            const { service, repo } = montar({ lote: comGrupoNoLote() });
+            repo.loteRascunhoComTitulo.mockResolvedValue('L1');
+            await expect(
+                service.retirarDoLote({ filCod: 2, docCod: '38883', titCod: '1', ator: 'ana' }),
+            ).rejects.toBeInstanceOf(GroupedBoletoIndivisibleError);
+            expect(repo.removerItem).not.toHaveBeenCalled();
+        });
+
+        it('incluirTitulo avulso de título em grupo CONFIRMADO ⇒ GroupedBoletoTitleIneligibleError; com mover ⇒ indivisível', async () => {
+            const avulso = montar();
+            avulso.deps.grupoRepo.buscarConfirmadoPorTitulo.mockResolvedValue(grupo());
+            const input = { loteId: 'L1', filCod: 2, docCod: '38883', titCod: '1', ator: 'ana' };
+            const err = await avulso.service.incluirTitulo(input).catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(GroupedBoletoTitleIneligibleError);
+            expect((err as GroupedBoletoTitleIneligibleError).details.titulos[0]?.motivo).toBe(
+                'EM_OUTRO_GRUPO',
+            );
+            expect(avulso.deps.conexos.getTituloAPagar).not.toHaveBeenCalled();
+
+            const mover = montar();
+            mover.deps.grupoRepo.buscarConfirmadoPorTitulo.mockResolvedValue(grupo());
+            await expect(
+                mover.service.incluirTitulo({ ...input, mover: true }),
+            ).rejects.toBeInstanceOf(GroupedBoletoIndivisibleError);
+            expect(mover.repo.adicionarItem).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('removerGrupo / moverGrupo', () => {
+        it('removerGrupo retira os N itens numa transação, descarta as alertas e adota o lote automático', async () => {
+            const { service, repo, deps } = montar({ lote: comGrupoNoLote({ automatico: true }) });
+            await service.removerGrupo({
+                loteId: 'L1',
+                grupoId: 'G1',
+                ator: 'ana',
+                versaoEsperada: 1,
+            });
+            expect(repo.removerGrupo).toHaveBeenCalledWith(
+                { loteId: 'L1', grupoId: 'G1', versaoEsperada: 1 },
+                {},
+            );
+            expect(deps.alertaRepo.descartarDoItem).toHaveBeenCalledTimes(3);
+            expect(repo.marcarManual).toHaveBeenCalledWith('L1', {});
+        });
+
+        it('removerGrupo de grupo que não está no lote é no-op; conflito de versão ⇒ LoteVersaoConflitoError', async () => {
+            const vazio = montar();
+            await vazio.service.removerGrupo({ loteId: 'L1', grupoId: 'G1', ator: 'ana' });
+            expect(vazio.repo.removerGrupo).not.toHaveBeenCalled();
+
+            const conflito = montar({ lote: comGrupoNoLote() });
+            conflito.repo.removerGrupo.mockResolvedValue('CONFLITO');
+            await expect(
+                conflito.service.removerGrupo({
+                    loteId: 'L1',
+                    grupoId: 'G1',
+                    ator: 'ana',
+                    versaoEsperada: 1,
+                }),
+            ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
+        });
+
+        it('moverGrupo: os N itens vão ao destino numa transação, versão dos dois, origem vazia é cancelada', async () => {
+            const { service, repo } = montar();
+            repo.getLoteComItens.mockImplementation(async (id: string) =>
+                id === 'L1' ? comGrupoNoLote() : lote({ id: 'L2', itens: [] }),
+            );
+            repo.cancelarSeVazio.mockResolvedValue(true);
+            await service.moverGrupo({
+                origemId: 'L1',
+                destinoId: 'L2',
+                grupoId: 'G1',
+                ator: 'ana',
+                versaoOrigem: 1,
+                versaoDestino: 1,
+            });
+            expect(repo.moverGrupo).toHaveBeenCalledWith(
+                {
+                    origemId: 'L1',
+                    destinoId: 'L2',
+                    grupoId: 'G1',
+                    versaoOrigem: 1,
+                    versaoDestino: 1,
+                },
+                {},
+            );
+            expect(repo.cancelarSeVazio).toHaveBeenCalledWith('L1', {});
+        });
+
+        it('moverGrupo para lote de outra filial ⇒ LoteFilialError; destino não RASCUNHO ⇒ LoteEstadoInvalidoError', async () => {
+            const outra = montar();
+            outra.repo.getLoteComItens.mockImplementation(async (id: string) =>
+                id === 'L1' ? comGrupoNoLote() : lote({ id: 'L2', filCod: 4 }),
+            );
+            await expect(
+                outra.service.moverGrupo({
+                    origemId: 'L1',
+                    destinoId: 'L2',
+                    grupoId: 'G1',
+                    ator: 'ana',
+                }),
+            ).rejects.toBeInstanceOf(LoteFilialError);
+            expect(outra.repo.moverGrupo).not.toHaveBeenCalled();
+
+            const fin = montar();
+            fin.repo.getLoteComItens.mockImplementation(async (id: string) =>
+                id === 'L1' ? comGrupoNoLote() : lote({ id: 'L2', status: 'FINALIZADO' }),
+            );
+            await expect(
+                fin.service.moverGrupo({
+                    origemId: 'L1',
+                    destinoId: 'L2',
+                    grupoId: 'G1',
+                    ator: 'ana',
+                }),
+            ).rejects.toBeInstanceOf(LoteEstadoInvalidoError);
+        });
+    });
+
+    describe('L3 — finalizar com grupo', () => {
+        it('título do grupo inelegível (I2) barra a finalização listando o GRUPO, sem retirar nada', async () => {
+            const { service, repo, deps } = montar({ lote: comGrupoNoLote() });
+            deps.conexos.getTituloAPagar.mockImplementation(async (f: number, docCod: string) =>
+                titulo({ filCod: f, docCod, pago: docCod === '38885' }),
+            );
+            const err = await service
+                .finalizarLote({ loteId: 'L1', versao: 1, ator: 'ana' })
+                .catch((e: unknown) => e);
+            expect(err).toBeInstanceOf(GroupedBoletoTitleIneligibleError);
+            expect((err as GroupedBoletoTitleIneligibleError).details).toEqual({
+                grupoId: 'G1',
+                titulos: [{ filCod: 2, docCod: '38885', titCod: '1', motivo: 'PAGO' }],
+            });
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+            expect(deps.verificacao.verificarItens).not.toHaveBeenCalled();
+        });
+
+        it('grupo elegível finaliza normalmente', async () => {
+            const { service, repo } = montar({ lote: comGrupoNoLote() });
+            await service.finalizarLote({ loteId: 'L1', versao: 1, ator: 'ana' });
+            expect(repo.transicionarStatus).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('L5 — cancelar (G3)', () => {
+        it('a limpeza do borderô é disparada DEPOIS do commit do cancelamento, com o lote e o ator', async () => {
+            const { service, repo, deps } = montar({ lote: comGrupoNoLote() });
+            await service.cancelarLote({ loteId: 'L1', versao: 1, ator: 'ana' });
+            expect(deps.disparoLimpeza.aposCancelarLote).toHaveBeenCalledWith({
+                loteId: 'L1',
+                ator: 'ana',
+            });
+            const commit = repo.transicionarStatus.mock.invocationCallOrder[0] ?? 0;
+            const disparo = deps.disparoLimpeza.aposCancelarLote.mock.invocationCallOrder[0] ?? 0;
+            expect(disparo).toBeGreaterThan(commit);
+        });
+
+        it('cancelamento recusado (conflito) não dispara limpeza nenhuma', async () => {
+            const { service, repo, deps } = montar({ lote: comGrupoNoLote({ versao: 2 }) });
+            repo.transicionarStatus.mockResolvedValue(0);
+            await expect(
+                service.cancelarLote({ loteId: 'L1', versao: 1, ator: 'ana' }),
+            ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
+            expect(deps.disparoLimpeza.aposCancelarLote).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('grupo como bloco no lote (API)', () => {
+        it('getLote anexa um bloco por grupo com a situação derivada no contexto do lote', async () => {
+            const { service, deps } = montar({ lote: comGrupoNoLote() });
+            const l = await service.getLote('L1');
+            expect(l?.grupos).toEqual([
+                {
+                    grupoId: 'G1',
+                    codbarMascarado: '34191…7500',
+                    valorBoleto: 1575,
+                    vencimentoBoleto: '2026-10-21',
+                    credor: 'PEDRONI',
+                    situacao: 'EM_LOTE',
+                    titulos: DOCS.map((docCod) => ({ filCod: 2, docCod, titCod: '1' })),
+                },
+            ]);
+            expect(deps.leituraGrupo.situacao).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'G1' }),
+                { loteStatus: 'RASCUNHO', divergente: false },
+            );
+        });
+
+        it('lote sem item de grupo não lê grupo nenhum', async () => {
+            const { service, deps } = montar();
+            const l = await service.getLote('L1');
+            expect(l).not.toHaveProperty('grupos');
+            expect(deps.grupoRepo.buscarPorId).not.toHaveBeenCalled();
+        });
     });
 });

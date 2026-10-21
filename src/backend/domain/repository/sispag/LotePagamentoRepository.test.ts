@@ -58,6 +58,16 @@ const make = (db: DbMock) => {
 };
 
 describe('LotePagamentoRepository', () => {
+    it('travarTitulosNaTransacao: xact lock por chave I3, sem repetição, em ordem crescente (ADR-0076)', async () => {
+        const db = buildDb();
+        await make(db).travarTitulosNaTransacao([30, -5, 30, 7], db as never);
+        expect(db.selectFirst.mock.calls).toEqual([
+            ['SELECT pg_advisory_xact_lock($chave::bigint)', { chave: -5 }],
+            ['SELECT pg_advisory_xact_lock($chave::bigint)', { chave: 7 }],
+            ['SELECT pg_advisory_xact_lock($chave::bigint)', { chave: 30 }],
+        ]);
+    });
+
     it('desfazerAutomaticosVencidos compara com o dia civil recebido, não com now()', async () => {
         // Título que vence hoje (00:00Z) não é vencido; `< now()` desfazia o lote dele.
         const db = buildDb();
