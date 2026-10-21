@@ -22,6 +22,10 @@
 - **Título de permuta.** O tipo do documento passa a ser lido do Conexos na ingestão (antes não vinha em
   nenhum título). Permuta aparece como bloqueada, avisando que pode já ter permuta parcial. Os tipos só
   começam a aparecer depois da primeira ingestão com esta versão.
+- **Boleto sem DDA dividido pelo que falta fazer.** Ao marcar o chip "Boleto sem DDA", uma segunda
+  linha separa os títulos em: sugestão para confirmar, boleto a escolher, só candidato fraco, sem boleto
+  no DDA e confirmado aguardando vínculo. O botão da linha diz a ação ("Confirmar boleto sugerido",
+  "Escolher o boleto", "Ver candidatos").
 - **O que fica para depois.** TED/PIX sem conta no cadastro ou com favorecido não autorizado continuam
   sendo detectados só dentro do lote.
 
