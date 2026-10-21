@@ -110,8 +110,8 @@ const ordemBoleto = (x: BoletoCandidato, y: BoletoCandidato): number =>
  *  4. Unicidade nos dois sentidos: só vira sugestão a associação que é a ÚNICA do conjunto e a
  *     única de cada boleto dela. Qualquer ambiguidade (dois boletos iguais para um conjunto, dois
  *     credores com a mesma soma para um boleto, K ≥ 2 sem a forma da I21f) ⇒ nenhuma sugestão
- *     (a analista compõe à mão, I21g). Decisão do implementador, lado seguro — ver G6 no
- *     `_inbox/sispag-boleto-agrupado-tasks.md`.
+ *     (a analista compõe à mão, I21g). G6 decidido pelo maintainer em 2026-10-21: empate ⇒
+ *     nenhuma sugestão (`_inbox/sispag-boleto-agrupado-tasks.md`).
  *  5. Partição da I21f: boletos por (`ddcCod`, `ditCod`), títulos por (vencimento, `docCod`,
  *     `titCod`); o k-ésimo boleto leva o k-ésimo bloco de m títulos. Cada grupo é avaliado pela
  *     `RegraGrupoBoleto` (origem `SUGERIDO`) e confirmado um a um pela analista.

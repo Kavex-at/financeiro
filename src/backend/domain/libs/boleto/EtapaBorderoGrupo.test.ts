@@ -14,7 +14,7 @@ describe('EtapaBorderoGrupo — ledger do borderô do grupo (I21l–q, I21s, ADR
     it('valores tipados são exatamente a lista da Task 4 (o CHECK da 0089 usa esta lista)', () => {
         expect(Object.values(E).sort()).toEqual(
             [
-                'marcador_gravado',
+                'intencao_gravada',
                 'bordero_criado',
                 'baixas_gravadas',
                 'bordero_conferido',
@@ -33,9 +33,9 @@ describe('EtapaBorderoGrupo — ledger do borderô do grupo (I21l–q, I21s, ADR
         expect(EtapaBorderoGrupo.todas()).toEqual(Object.values(E));
     });
 
-    it('caminho feliz: marcador → borderô → baixas → conferido → importado → codbar → concluído', () => {
+    it('caminho feliz: intenção (t0) → borderô → baixas → conferido → importado → codbar → concluído', () => {
         caminho(
-            E.MARCADOR_GRAVADO,
+            E.INTENCAO_GRAVADA,
             E.BORDERO_CRIADO,
             E.BAIXAS_GRAVADAS,
             E.BORDERO_CONFERIDO,
@@ -47,7 +47,7 @@ describe('EtapaBorderoGrupo — ledger do borderô do grupo (I21l–q, I21s, ADR
 
     it('reaproveitamento (I21s, PI-9): adota o borCod antigo, confere e importa sem criar outro', () => {
         caminho(
-            E.MARCADOR_GRAVADO,
+            E.INTENCAO_GRAVADA,
             E.REAPROVEITADO,
             E.BORDERO_CONFERIDO,
             E.IMPORTADO,
@@ -58,14 +58,14 @@ describe('EtapaBorderoGrupo — ledger do borderô do grupo (I21l–q, I21s, ADR
         expect(EtapaBorderoGrupo.podeTransicionar(E.REAPROVEITADO, E.BAIXAS_GRAVADAS)).toBe(false);
     });
 
-    it('dry-run: o marcador vai a simulado e para', () => {
-        caminho(E.MARCADOR_GRAVADO, E.SIMULADO);
+    it('dry-run: a intenção vai a simulado e para', () => {
+        caminho(E.INTENCAO_GRAVADA, E.SIMULADO);
         expect(EtapaBorderoGrupo.ehTerminal(E.SIMULADO)).toBe(true);
     });
 
     it('I21p(2): falha transitória vira failed (não terminal) e a retomada segue de onde parou', () => {
         for (const de of [
-            E.MARCADOR_GRAVADO,
+            E.INTENCAO_GRAVADA,
             E.BORDERO_CRIADO,
             E.BAIXAS_GRAVADAS,
             E.BORDERO_CONFERIDO,
@@ -89,15 +89,15 @@ describe('EtapaBorderoGrupo — ledger do borderô do grupo (I21l–q, I21s, ADR
         ]) {
             expect(EtapaBorderoGrupo.podeTransicionar(E.FAILED, para)).toBe(true);
         }
-        // A retomada nunca volta a gravar o marcador (o write-ahead é um só).
-        expect(EtapaBorderoGrupo.podeTransicionar(E.FAILED, E.MARCADOR_GRAVADO)).toBe(false);
+        // A retomada nunca volta a gravar a intenção (o write-ahead é um só).
+        expect(EtapaBorderoGrupo.podeTransicionar(E.FAILED, E.INTENCAO_GRAVADA)).toBe(false);
     });
 
     it('I21p(3) + I21q: falha determinística ⇒ retirado ⇒ limpo ou limpeza_pendente', () => {
-        caminho(E.MARCADOR_GRAVADO, E.BORDERO_CRIADO, E.BAIXAS_GRAVADAS, E.RETIRADO, E.LIMPO);
+        caminho(E.INTENCAO_GRAVADA, E.BORDERO_CRIADO, E.BAIXAS_GRAVADAS, E.RETIRADO, E.LIMPO);
         caminho(E.IMPORTADO, E.RETIRADO, E.LIMPEZA_PENDENTE);
         // Borderô antigo não resolvido (I21s): retirada antes de criar qualquer coisa.
-        caminho(E.MARCADOR_GRAVADO, E.RETIRADO);
+        caminho(E.INTENCAO_GRAVADA, E.RETIRADO);
     });
 
     it('G3: lote local cancelado depois da preparação concluída ⇒ limpeza depois do commit', () => {
@@ -105,14 +105,14 @@ describe('EtapaBorderoGrupo — ledger do borderô do grupo (I21l–q, I21s, ADR
         caminho(E.CONCLUIDO, E.LIMPEZA_PENDENTE);
     });
 
-    it('marcador ambíguo (dois borderôs) ou borderô finalizado por fora ⇒ indeterminado', () => {
-        caminho(E.MARCADOR_GRAVADO, E.INDETERMINADO);
+    it('janela de identidade ambígua (dois borderôs) ou borderô finalizado por fora ⇒ indeterminado', () => {
+        caminho(E.INTENCAO_GRAVADA, E.INDETERMINADO);
         caminho(E.BAIXAS_GRAVADAS, E.INDETERMINADO);
     });
 
     it('transição inválida lança (nunca é estado a gravar)', () => {
-        expect(() => EtapaBorderoGrupo.transicionar(E.MARCADOR_GRAVADO, E.IMPORTADO)).toThrow(
-            /transição inválida do borderô do grupo: marcador_gravado → importado/,
+        expect(() => EtapaBorderoGrupo.transicionar(E.INTENCAO_GRAVADA, E.IMPORTADO)).toThrow(
+            /transição inválida do borderô do grupo: intencao_gravada → importado/,
         );
         expect(() => EtapaBorderoGrupo.transicionar(E.BORDERO_CRIADO, E.CONCLUIDO)).toThrow();
         expect(() => EtapaBorderoGrupo.transicionar(E.CONCLUIDO, E.IMPORTADO)).toThrow();
@@ -146,11 +146,11 @@ describe('EtapaBorderoGrupo — ledger do borderô do grupo (I21l–q, I21s, ADR
     });
 });
 
-describe('EtapaBorderoGrupo.podeLimpar — I21q', () => {
-    const pode = { vldHasRemessaPgto: 0, loteNativoFinalizado: false, reaproveitado: false };
+describe('EtapaBorderoGrupo.podeLimpar — I21q (decisão do maintainer 2026-10-21)', () => {
+    const pode = { loteNativoFinalizado: false, remessaGerada: false, reaproveitado: false };
 
     it.each([
-        E.MARCADOR_GRAVADO,
+        E.INTENCAO_GRAVADA,
         E.BORDERO_CRIADO,
         E.BAIXAS_GRAVADAS,
         E.BORDERO_CONFERIDO,
@@ -159,28 +159,39 @@ describe('EtapaBorderoGrupo.podeLimpar — I21q', () => {
         E.CONCLUIDO,
         E.FAILED,
         E.RETIRADO,
-    ])('%s com vldHasRemessaPgto = 0, lote nativo aberto, borderô nosso ⇒ pode', (etapa) => {
+    ])('%s com lote nativo aberto, sem .REM, borderô nosso ⇒ pode', (etapa) => {
         expect(EtapaBorderoGrupo.podeLimpar(etapa, pode)).toBe(true);
     });
 
-    it('vldHasRemessaPgto = 1 ⇒ nunca (Alerta)', () => {
-        expect(EtapaBorderoGrupo.podeLimpar(E.IMPORTADO, { ...pode, vldHasRemessaPgto: 1 })).toBe(
-            false,
-        );
-    });
-
-    it('vldHasRemessaPgto não lido ⇒ nunca (fail-closed)', () => {
-        const { vldHasRemessaPgto: _omitido, ...semFlag } = pode;
-        expect(EtapaBorderoGrupo.podeLimpar(E.IMPORTADO, semFlag)).toBe(false);
-    });
-
-    it('lote nativo finalizado ⇒ nunca', () => {
+    it('lote nativo finalizado ⇒ nunca (Alerta)', () => {
         expect(
             EtapaBorderoGrupo.podeLimpar(E.CODBAR_VINCULADO, {
                 ...pode,
                 loteNativoFinalizado: true,
             }),
         ).toBe(false);
+    });
+
+    it('.REM gerado ⇒ nunca (Alerta)', () => {
+        expect(EtapaBorderoGrupo.podeLimpar(E.CONCLUIDO, { ...pode, remessaGerada: true })).toBe(
+            false,
+        );
+    });
+
+    it('estado do lote nativo não lido ⇒ nunca (fail-closed)', () => {
+        const { loteNativoFinalizado: _f, ...semFinalizado } = pode;
+        const { remessaGerada: _r, ...semRemessa } = pode;
+        expect(EtapaBorderoGrupo.podeLimpar(E.IMPORTADO, semFinalizado)).toBe(false);
+        expect(EtapaBorderoGrupo.podeLimpar(E.IMPORTADO, semRemessa)).toBe(false);
+        expect(EtapaBorderoGrupo.podeLimpar(E.IMPORTADO, { reaproveitado: false })).toBe(false);
+    });
+
+    it('vldHasRemessaPgto não é guarda: é 1 enquanto o item está no lote e a limpeza o tira antes', () => {
+        // A flag nem entra no contexto: a assinatura aceita só o estado do lote nativo.
+        const ctx = { ...pode, vldHasRemessaPgto: 1 } as Parameters<
+            typeof EtapaBorderoGrupo.podeLimpar
+        >[1];
+        expect(EtapaBorderoGrupo.podeLimpar(E.IMPORTADO, ctx)).toBe(true);
     });
 
     it('borderô reaproveitado (de um J rejeitado) ⇒ nunca: só o item nativo sai', () => {
