@@ -228,3 +228,9 @@ Arquivo `PG191081B.RET` (fil 2, bnc 4, gtb 1, gar 7, processado, 0 erros). Varri
    maiúsculo; a I21n segue igual (o marcador não aparece em `borderosPendentes`, a correlação ali é pelo `borCod`).
 4. **Não contradiz, mas reforça I21k:** o `importarTitulos` aceita título com baixa em borderô em cadastro
    quando recebe a linha (T4). A garantia de não pagar duas vezes é nossa (I21k + grid relido), não do ERP.
+
+> **Decidido pelo maintainer em 2026-10-21** (emenda da ADR-0077, ontologia 0.48.0 emendada no lugar): guarda
+> da limpeza = lote nativo (não finalizado e sem `.REM`, lido ao vivo), `vldHasRemessaPgto` deixa de ser guarda;
+> identidade = `filCod` + `borCod` + `borTimCad`, **sem** marcador (o item 2 acima, "conferir o marcador", foi
+> substituído pelo `borTimCad`; nada é escrito em `borEspNrbanco`); ausência = `fin010/list borCod#EQ` vazio;
+> G6 = sem sugestão.

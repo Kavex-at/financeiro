@@ -1228,7 +1228,7 @@
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned): DELETE item -> excluirBaixa -> excluirBordero; so antes do lote nativo finalizado, vldHasRemessaPgto 0, so o bordero do nosso marcador (I21q)."
+      "note": "ADR-0077 (planned, emenda 2026-10-21): DELETE item -> excluirBaixa -> excluirBordero (ordem imposta pelo ERP); so com o lote nativo nao finalizado e sem .REM (lido ao vivo), so o bordero com nosso filCod+borCod+borTimCad (I21q). vldHasRemessaPgto nao e guarda."
     }
   },
   "business_rules": {
