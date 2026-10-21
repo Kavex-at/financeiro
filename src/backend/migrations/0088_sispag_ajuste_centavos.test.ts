@@ -101,7 +101,13 @@ describe('migration 0088 — ajuste de centavos do título (ADR-0074)', () => {
         const valores = valoresDe(
             /ADD CONSTRAINT alerta_tipo_check\s+CHECK \(tipo IN \(([^)]*)\)\)/i,
         );
-        expect(valores).toEqual(Object.values(ALERTA_TIPO).sort());
+        // Congelado no catálogo do dia da 0088: a 0090 acrescentou `sispag-bordero-grupo-pendente`
+        // (a paridade com o catálogo ATUAL é checada no teste da 0090).
+        expect(valores).toEqual(
+            Object.values(ALERTA_TIPO)
+                .filter((t) => t !== ALERTA_TIPO.SISPAG_BORDERO_GRUPO_PENDENTE)
+                .sort(),
+        );
         expect(valores).toContain('sispag-ajuste-centavos-parado');
         expect(CODIGO).toMatch(/ALTER TABLE alerta DROP CONSTRAINT IF EXISTS alerta_tipo_check;/);
         const rollback = readFileSync(

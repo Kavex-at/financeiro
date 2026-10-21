@@ -715,6 +715,8 @@ export const DUPLICATE_HOLD_ORIGIN = {
     CODIGO_BARRAS_ILEGIVEL: 'CODIGO_BARRAS_ILEGIVEL',
     /** ADR-0071 (I17g(3)): o vínculo do código falhou de forma determinística pós-import. */
     VINCULO_CODIGO_BARRAS_FALHOU: 'VINCULO_CODIGO_BARRAS_FALHOU',
+    /** ADR-0077 (I21p(3)): grupo de boleto retirado pela remessa; uma marca por título. */
+    GRUPO_BOLETO: 'GRUPO_BOLETO',
 } as const;
 
 export type DuplicateHoldOrigin =
