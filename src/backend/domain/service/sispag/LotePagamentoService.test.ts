@@ -1187,7 +1187,12 @@ describe('LotePagamentoService — grupo de boleto no lote (ADR-0076, I19j, L2/L
             const r = await service.incluirGrupo(incluir);
             expect(repo.travarTitulosNaTransacao).toHaveBeenCalledTimes(1);
             expect(repo.travarTitulosNaTransacao.mock.calls[0]?.[0]).toHaveLength(3);
+            // Ordem fixa: boleto → títulos (locks do grupo) antes das chaves I3.
+            expect(deps.grupoRepo.travar.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+                repo.travarTitulosNaTransacao.mock.invocationCallOrder[0] ?? 0,
+            );
             expect(deps.grupoRepo.travar).toHaveBeenCalledWith({}, [
+                'sispag:boleto:900:1',
                 'sispag:titulo:2:38883:1',
                 'sispag:titulo:2:38884:1',
                 'sispag:titulo:2:38885:1',

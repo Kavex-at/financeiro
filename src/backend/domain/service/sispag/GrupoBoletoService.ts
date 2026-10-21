@@ -24,11 +24,9 @@ import {
     type BoletoGrupoEntrada,
     type ChaveTituloGrupo,
     type EntradaConfirmarGrupo,
-    type EstadoVivoGrupo,
     GRUPO_BOLETO_ESTADO,
     GRUPO_BOLETO_ORIGEM,
     GRUPO_BOLETO_TIPO_ANULACAO,
-    type GrupoBoleto,
     type GrupoBoletoListado,
     type GrupoBoletoTipoAnulacao,
     MOTIVO_GRUPO_INELEGIVEL,
@@ -47,6 +45,7 @@ import {
     type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
+import EstadoVivoGrupoBoleto from '../../libs/boleto/EstadoVivoGrupoBoleto.js';
 import SituacaoGrupoBoleto from '../../libs/boleto/SituacaoGrupoBoleto.js';
 import type { ValoresAbertoTitulo } from '../../libs/boleto/ValorAbertoLiquido.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
@@ -319,7 +318,12 @@ export default class GrupoBoletoService {
 
         const listados: GrupoBoletoListado[] = [];
         for (const grupo of grupos) {
-            const orfao = this.regra.orfao(grupo, this.estadoVivo(grupo, porBoleto, porTitulo));
+            const orfao = this.regra.orfao(
+                grupo,
+                EstadoVivoGrupoBoleto.montar(grupo, porBoleto.get(chaveBoleto(grupo)), (c) =>
+                    porTitulo.get(chaveTitulo(c)),
+                ),
+            );
             const lote = grupo.titulos
                 .map((t) => loteDoTitulo.get(chaveTitulo(t)))
                 .find((l) => l !== undefined);
@@ -331,11 +335,7 @@ export default class GrupoBoletoService {
                 marcaRetencaoAtiva: grupo.titulos.some((t) => marcados.has(chaveTitulo(t))),
                 divergente: itensDoLote.some((i) => i.grupoBoletoId === grupo.id && i.divergencia),
                 ...(lote ? { loteStatus: lote.status as LotePagamentoStatus } : {}),
-                execucoes: execucoes.map((x) => ({
-                    iniciadaEm: (x.escritaIniciadaEm ?? x.criadoEm).getTime(),
-                    etapa: x.etapa,
-                    ...(x.jRejeitadoEm ? { jRejeitadoEm: x.jRejeitadoEm.getTime() } : {}),
-                })),
+                execucoes: EstadoVivoGrupoBoleto.execucoes(execucoes),
             });
             listados.push({
                 ...grupo,
@@ -348,38 +348,6 @@ export default class GrupoBoletoService {
     };
 
     // ── Internos ───────────────────────────────────────────────────────────────────────────────
-
-    /** O que se lê agora do pool e da carteira para a I19u (título ausente = saiu da carteira). */
-    private estadoVivo = (
-        grupo: GrupoBoleto,
-        porBoleto: ReadonlyMap<string, BoletoDda>,
-        porTitulo: ReadonlyMap<string, TituloAPagar>,
-    ): EstadoVivoGrupo => {
-        const boleto = porBoleto.get(chaveBoleto(grupo));
-        const titulos = grupo.titulos.flatMap((t) => {
-            const c = porTitulo.get(chaveTitulo(t));
-            if (!c) return [];
-            return [
-                {
-                    filCod: t.filCod,
-                    docCod: t.docCod,
-                    titCod: t.titCod,
-                    pago: c.pago,
-                    ativo: c.ativo !== false,
-                    ...(c.temBoleto !== undefined ? { temBoleto: c.temBoleto } : {}),
-                },
-            ];
-        });
-        if (!boleto) return { titulos };
-        return {
-            boleto: {
-                ...(boleto.filCod != null ? { filCod: boleto.filCod } : {}),
-                ...(boleto.docCod ? { docCod: boleto.docCod } : {}),
-                ...(boleto.titCod ? { titCod: boleto.titCod } : {}),
-            },
-            titulos,
-        };
-    };
 
     private exigirAtor = (ator: string): void => {
         if (ATORES_RECUSADOS.has(ator.trim().toLowerCase())) {

@@ -1,22 +1,20 @@
 import { inject, injectable } from 'tsyringe';
 import type {
     ChaveTituloGrupo,
-    EstadoVivoGrupo,
     GrupoBoleto,
     ResultadoOrfao,
 } from '../../interface/sispag/GrupoBoletoInterface.js';
+import EstadoVivoGrupoBoleto from '../../libs/boleto/EstadoVivoGrupoBoleto.js';
 import type { LotePagamentoStatus } from '../../interface/sispag/SispagInterface.js';
-import SituacaoGrupoBoleto, {
-    type ExecucaoParaSituacao,
-    type SituacaoGrupo,
-} from '../../libs/boleto/SituacaoGrupoBoleto.js';
+import SituacaoGrupoBoleto, { type SituacaoGrupo } from '../../libs/boleto/SituacaoGrupoBoleto.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
 import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
-import GrupoBoletoExecucaoRepository, {
-    type GrupoBoletoExecucao,
-} from '../../repository/sispag/GrupoBoletoExecucaoRepository.js';
+import GrupoBoletoExecucaoRepository from '../../repository/sispag/GrupoBoletoExecucaoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import RegraGrupoBoleto from './RegraGrupoBoleto.js';
+
+const chave = (c: { filCod: number; docCod: string; titCod: string }): string =>
+    `${c.filCod}:${c.docCod}:${c.titCod}`;
 
 /** O que o chamador já sabe do grupo no contexto dele (lote, retenção, órfão). */
 export interface ContextoSituacaoGrupo {
@@ -56,31 +54,8 @@ export default class LeituraGrupoBoleto {
                 }),
             ),
         ]);
-        const vivo: EstadoVivoGrupo = {
-            ...(boleto
-                ? {
-                      boleto: {
-                          ...(boleto.filCod != null ? { filCod: boleto.filCod } : {}),
-                          ...(boleto.docCod ? { docCod: boleto.docCod } : {}),
-                          ...(boleto.titCod ? { titCod: boleto.titCod } : {}),
-                      },
-                  }
-                : {}),
-            titulos: titulos.flatMap((t) =>
-                t
-                    ? [
-                          {
-                              filCod: t.filCod,
-                              docCod: t.docCod,
-                              titCod: t.titCod,
-                              pago: t.pago,
-                              ativo: t.ativo !== false,
-                              ...(t.temBoleto !== undefined ? { temBoleto: t.temBoleto } : {}),
-                          },
-                      ]
-                    : [],
-            ),
-        };
+        const porChave = new Map(titulos.flatMap((t) => (t ? [[chave(t), t] as const] : [])));
+        const vivo = EstadoVivoGrupoBoleto.montar(grupo, boleto, (c) => porChave.get(chave(c)));
         return this.regra.orfao(grupo, vivo);
     };
 
@@ -98,7 +73,7 @@ export default class LeituraGrupoBoleto {
     /** I19r/PI-9: a última execução teve o J rejeitado e nenhuma posterior concluiu. */
     public rejeicaoNaoResolvida = async (grupoId: string): Promise<boolean> =>
         SituacaoGrupoBoleto.rejeitado(
-            this.paraSituacao(await this.execucoes.listarPorGrupo(grupoId)),
+            EstadoVivoGrupoBoleto.execucoes(await this.execucoes.listarPorGrupo(grupoId)),
         );
 
     /** Situação derivada com o contexto do chamador + as execuções do ledger. */
@@ -112,13 +87,8 @@ export default class LeituraGrupoBoleto {
             marcaRetencaoAtiva: ctx.marcaRetencaoAtiva === true,
             divergente: ctx.divergente === true,
             ...(ctx.loteStatus !== undefined ? { loteStatus: ctx.loteStatus } : {}),
-            execucoes: this.paraSituacao(await this.execucoes.listarPorGrupo(grupo.id)),
+            execucoes: EstadoVivoGrupoBoleto.execucoes(
+                await this.execucoes.listarPorGrupo(grupo.id),
+            ),
         });
-
-    private paraSituacao = (execucoes: GrupoBoletoExecucao[]): ExecucaoParaSituacao[] =>
-        execucoes.map((e) => ({
-            iniciadaEm: new Date(e.criadoEm).getTime(),
-            etapa: e.etapa,
-            ...(e.jRejeitadoEm ? { jRejeitadoEm: new Date(e.jRejeitadoEm).getTime() } : {}),
-        }));
 }

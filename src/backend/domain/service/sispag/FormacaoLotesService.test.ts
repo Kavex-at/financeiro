@@ -45,7 +45,13 @@ const make = (
         listGruposParaFormacao: jest.fn().mockResolvedValue(over.grupos ?? []),
     };
     const grupoRepo = {
-        buscarPorId: jest.fn(async (id: string) => ({ id, estado: 'CONFIRMADO' })),
+        buscarPorId: jest.fn(async (id: string) => ({
+            id,
+            estado: 'CONFIRMADO',
+            ddcCod: 900,
+            ditCod: 1,
+        })),
+        travar: jest.fn().mockResolvedValue(undefined),
     };
     const leituraGrupo = {
         orfao: jest.fn(async (g: { id: string }) =>
@@ -331,6 +337,13 @@ describe('FormacaoLotesService — grupo de boleto como unidade (ADR-0076, P1-4,
         ]);
         // Uma transação por lote: o grupo entra na MESMA do lote LB.
         expect(m.db.withTransaction).toHaveBeenCalledTimes(2);
+        // Sob os locks boleto → títulos (ordem fixa da T8), relido na transação.
+        expect(m.grupoRepo.travar).toHaveBeenCalledWith({}, [
+            'sispag:boleto:900:1',
+            'sispag:titulo:2:38883:1',
+            'sispag:titulo:2:38884:1',
+        ]);
+        expect(m.grupoRepo.buscarPorId).toHaveBeenLastCalledWith('G1', {});
     });
 
     it('sem boleto avulso no dia do boleto, o grupo forma um lote só dele (nunca vai para o dia do título)', async () => {
@@ -391,7 +404,12 @@ describe('FormacaoLotesService — grupo de boleto como unidade (ADR-0076, P1-4,
 
     it('grupo que deixou de estar CONFIRMADO entre a consulta e a leitura é ignorado', async () => {
         const m = make({ grupos: [grupoAuto('G1')] });
-        m.grupoRepo.buscarPorId.mockResolvedValue({ id: 'G1', estado: 'ANULADO' });
+        m.grupoRepo.buscarPorId.mockResolvedValue({
+            id: 'G1',
+            estado: 'ANULADO',
+            ddcCod: 900,
+            ditCod: 1,
+        });
         await m.service.formar({ triggeredBy: 'cron' });
         expect(m.loteRepo.adicionarGrupo).not.toHaveBeenCalled();
     });
@@ -428,5 +446,30 @@ describe('FormacaoLotesService — grupo de boleto como unidade (ADR-0076, P1-4,
                 }),
             }),
         );
+    });
+});
+
+describe('FormacaoLotesService — grupo anulado durante a rodada', () => {
+    it('relido sob o lock e já ANULADO ⇒ não entra (o lote segue com os avulsos)', async () => {
+        const dia = Date.UTC(2026, 9, 22);
+        const m = make({
+            elegiveis: [titulo({ docCod: '1', vencimento: dia, temBoleto: true })],
+            grupos: [
+                {
+                    grupoId: 'G1',
+                    filCod: 2,
+                    pesCod: '9001',
+                    vencimentoBoleto: dia,
+                    valorBoletoCentavos: 105_000,
+                    titulos: ['3', '4'].map((docCod) => titulo({ docCod })),
+                },
+            ],
+        });
+        m.grupoRepo.buscarPorId
+            .mockResolvedValueOnce({ id: 'G1', estado: 'CONFIRMADO', ddcCod: 900, ditCod: 1 })
+            .mockResolvedValueOnce({ id: 'G1', estado: 'ANULADO', ddcCod: 900, ditCod: 1 });
+        await m.service.formar({ triggeredBy: 'cron' });
+        expect(m.loteRepo.adicionarGrupo).not.toHaveBeenCalled();
+        expect(m.loteRepo.adicionarItens).toHaveBeenCalledTimes(1);
     });
 });

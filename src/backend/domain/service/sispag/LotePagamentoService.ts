@@ -565,11 +565,16 @@ export default class LotePagamentoService {
         }
         let origens: string[] = [];
         await this.db.withTransaction(async (tx) => {
+            // Ordem fixa de locks (T8): boleto → títulos (a mesma da confirmação e da anulação),
+            // depois as chaves I3 da inclusão avulsa, que só este caminho toma em transação.
+            await this.grupoRepo.travar(tx, [
+                GrupoBoletoRepository.chaveLockBoleto(grupo.ddcCod, grupo.ditCod),
+                ...chaves.map(GrupoBoletoRepository.chaveLockTitulo),
+            ]);
             await this.repo.travarTitulosNaTransacao(
                 chaves.map((c) => this.lockKey(c.filCod, c.docCod, c.titCod)),
                 tx,
             );
-            await this.grupoRepo.travar(tx, chaves.map(GrupoBoletoRepository.chaveLockTitulo));
             const atual = await this.grupoRepo.buscarPorId(grupo.id, tx);
             if (!atual || atual.estado !== GRUPO_BOLETO_ESTADO.CONFIRMADO) {
                 throw this.erroGrupoNaoConfirmado(atual ?? grupo);
