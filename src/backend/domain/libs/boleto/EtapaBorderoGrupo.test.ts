@@ -11,7 +11,7 @@ const caminho = (...etapas: EtapaBordero[]): void => {
 };
 
 describe('EtapaBorderoGrupo — ledger do borderô do grupo (I19l–q, I19s, ADR-0076)', () => {
-    it('valores tipados são exatamente a lista da Task 4 (o CHECK da 0089 usa esta lista)', () => {
+    it('valores tipados são exatamente a lista da Task 4 (o CHECK da 0090 usa esta lista)', () => {
         expect(Object.values(E).sort()).toEqual(
             [
                 'intencao_gravada',

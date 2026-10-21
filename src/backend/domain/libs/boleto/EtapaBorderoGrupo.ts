@@ -1,6 +1,6 @@
 /**
  * Etapas do ledger `sispag_grupo_boleto_execucao` — write-ahead do borderô de um grupo numa
- * remessa (I19l–q, I19s; ADR-0076). Os valores são os do CHECK da migration 0089.
+ * remessa (I19l–q, I19s; ADR-0076). Os valores são os do CHECK da migration 0090.
  */
 export const ETAPA_BORDERO_GRUPO = {
     /**
@@ -110,7 +110,7 @@ const SEM_LIMPEZA: ReadonlySet<EtapaBordero> = new Set<EtapaBordero>([
 
 /** Máquina de estados PURA do borderô do grupo (I19l–q, I19s). */
 export default class EtapaBorderoGrupo {
-    /** Todas as etapas, na ordem declarada (fonte única do CHECK da 0089). */
+    /** Todas as etapas, na ordem declarada (fonte única do CHECK da 0090). */
     public static todas = (): EtapaBordero[] => Object.values(E);
 
     public static podeTransicionar = (de: EtapaBordero, para: EtapaBordero): boolean =>

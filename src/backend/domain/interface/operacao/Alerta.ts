@@ -25,6 +25,11 @@ export const ALERTA_TIPO = {
      * e dia civil BRT. Sem código de barras completo (só a máscara 5+4).
      */
     SISPAG_AJUSTE_CENTAVOS_PARADO: 'sispag-ajuste-centavos-parado',
+    /**
+     * ADR-0076 (I19q/I19r): borderô de um grupo de boleto que o sistema não pode (ou não conseguiu)
+     * limpar, ou J rejeitado com o borderô antigo em cadastro: a analista decide no Conexos.
+     */
+    SISPAG_BORDERO_GRUPO_PENDENTE: 'sispag-bordero-grupo-pendente',
 } as const;
 
 export type AlertaTipo = (typeof ALERTA_TIPO)[keyof typeof ALERTA_TIPO];

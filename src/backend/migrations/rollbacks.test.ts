@@ -73,6 +73,10 @@ describe('migrations — segurança do diretório', () => {
                 // Ledger do ajuste de centavos, colunas de transferência da decisão e tipos novos
                 // nas duas trilhas (ADR-0074); CHECKs antigos voltam NOT VALID (trilhas só-inclusão).
                 '0088_sispag_ajuste_centavos.sql',
+                // Grupo de boleto, títulos, execução do borderô e trilha (ADR-0076); coluna nova no
+                // item e etapa nova na remessa; CHECKs antigos voltam NOT VALID (marcas e etapas
+                // gravadas ficam).
+                '0090_sispag_grupo_boleto.sql',
             ].sort(),
         );
         for (const alvo of reverses) {
