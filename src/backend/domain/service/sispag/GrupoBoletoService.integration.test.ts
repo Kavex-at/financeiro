@@ -16,14 +16,20 @@ import SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepo
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import VerificacaoEventoRepository from '../../repository/sispag/VerificacaoEventoRepository.js';
 import F from './__fixtures__/grupoBoleto.js';
+import AncoraOrdemDps from './AncoraOrdemDps.js';
+import BoletoSuggestionService from './BoletoSuggestionService.js';
 import GrupoBoletoService from './GrupoBoletoService.js';
 import MotorGrupoBoleto from './MotorGrupoBoleto.js';
+import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraGrupoBoleto from './RegraGrupoBoleto.js';
+import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
+import SugestaoBoletoCache from './SugestaoBoletoCache.js';
 
 /**
- * GrupoBoletoService (ADR-0077, Task 9) contra um Postgres DE VERDADE: corrida de confirmações
- * (advisory lock + índices parciais), anulação que retira os N itens do lote `RASCUNHO` na mesma
- * transação. O `fin064` é um dublê (régua líquida = valor da carteira). Roda no `npm run test:sql`
+ * GrupoBoletoService (ADR-0077, Tasks 9 e 10) contra um Postgres DE VERDADE: corrida de
+ * confirmações (advisory lock + índices parciais), anulação que retira os N itens do lote
+ * `RASCUNHO` na mesma transação, corrida grupo × decisão 1:1 sob o MESMO lock (I15q) e a cascata
+ * da revogação do par (rollback desfaz a anulação). O `fin064` é um dublê (régua líquida = valor da carteira). Roda no `npm run test:sql`
  * com DSN LOCAL (apaga e recria `sispag_grupo_boleto_service_it`).
  */
 
@@ -52,6 +58,8 @@ describeComBanco('GrupoBoletoService (integração)', () => {
     let db: Client;
     let pool: PostgreeDatabaseClient;
     let service: GrupoBoletoService;
+    let sugestao1a1: BoletoSuggestionService;
+    let sugestoesRepo: SugestaoBoletoRepository;
     let carteira: TituloAPagarRepository;
 
     const boleto = (ditCod: number, valor: number) =>
@@ -121,28 +129,57 @@ describeComBanco('GrupoBoletoService (integração)', () => {
                 return valores ? { legivel: true, valores } : { legivel: false, motivo: 'x' };
             },
         };
+        const grupoRepo = new GrupoBoletoRepository(pool);
+        const boletoRepo = new BoletoDdaRepository(pool);
+        const loteRepo = new LotePagamentoRepository(pool, eventos, bloqueios);
+        const silencioso = { info: async () => undefined, warn: async () => undefined } as never;
+        sugestoesRepo = new SugestaoBoletoRepository(pool);
         service = new GrupoBoletoService(
-            new GrupoBoletoRepository(pool),
+            grupoRepo,
             new GrupoBoletoExecucaoRepository(pool),
             carteira,
-            new BoletoDdaRepository(pool),
-            new SugestaoBoletoRepository(pool),
+            boletoRepo,
+            sugestoesRepo,
             bloqueios,
-            new LotePagamentoRepository(pool, eventos, bloqueios),
+            loteRepo,
             sispag as never,
             new MotorGrupoBoleto(codigoBarras, calendar, regra),
             regra,
             codigoBarras,
             calendar,
             pool,
-            { info: async () => undefined, warn: async () => undefined } as never,
+            silencioso,
             { invalidar: () => undefined } as never,
+        );
+        const regra1a1 = new RegraSugestaoBoleto();
+        sugestao1a1 = new BoletoSuggestionService(
+            sugestoesRepo,
+            carteira,
+            boletoRepo,
+            loteRepo,
+            new MotorSugestaoBoleto(codigoBarras, calendar, regra1a1, new AncoraOrdemDps()),
+            regra1a1,
+            codigoBarras,
+            calendar,
+            pool,
+            silencioso,
+            SugestaoBoletoCache.withClock(() => HOJE.getTime()),
+            { listarLidos: async () => [] } as never,
+            { agendarAposConfirmar: () => undefined } as never,
+            grupoRepo,
+            service,
         );
         for (const doc of ['38883', '38884', '38885']) await inserirTitulo(doc);
         // Outro credor: fora do conjunto fechado do PEDRONI (I21e).
         for (const doc of ['40001', '40002']) await inserirTitulo(doc, '9002');
+        // Task 10: corrida grupo × 1:1 (credor 9003) e cascata do par (credor 9004).
+        for (const doc of ['50001', '50002']) await inserirTitulo(doc, '9003', 100);
+        for (const doc of ['60001', '60002']) await inserirTitulo(doc, '9004', 300);
         await inserirBoleto(332841, 1575);
         await inserirBoleto(332900, 1050);
+        await inserirBoleto(333001, 100);
+        await inserirBoleto(333002, 200);
+        await inserirBoleto(334001, 600);
     });
 
     afterAll(async () => {
@@ -229,5 +266,83 @@ describeComBanco('GrupoBoletoService (integração)', () => {
         });
         expect(de_novo.criado).toBe(true);
         expect(de_novo.grupo.id).not.toBe(g.grupo.id);
+    });
+
+    it('corrida grupo × decisão 1:1 sobre o MESMO título ⇒ só uma vence (advisory lock, I15q)', async () => {
+        const [umPraUm, grupo] = await Promise.allSettled([
+            sugestao1a1.confirmar({
+                filCod: 2,
+                docCod: '50001',
+                titCod: '1',
+                ddcCod: 900,
+                ditCod: 333001,
+                ator: 'ana',
+            }),
+            service.confirmar({
+                origem: 'MANUAL',
+                ddcCod: 900,
+                ditCod: 333002,
+                titulos: chaves(['50001', '50002']),
+                ator: 'bia',
+            }),
+        ]);
+        expect([umPraUm.status, grupo.status].sort()).toEqual(['fulfilled', 'rejected']);
+        const decisoes = await contar(
+            `SELECT count(*) AS n FROM sispag_decisao_sugestao_boleto
+              WHERE doc_cod = '50001' AND decisao = 'CONFIRMADA'`,
+        );
+        const emGrupo = await contar(
+            `SELECT count(*) AS n FROM sispag_grupo_boleto_titulo
+              WHERE doc_cod = '50001' AND estado = 'CONFIRMADO'`,
+        );
+        expect(decisoes + emGrupo).toBe(1);
+        const perdedor = [umPraUm, grupo].find((r) => r.status === 'rejected');
+        expect((perdedor as PromiseRejectedResult).reason).toMatchObject({ statusCode: 409 });
+    });
+
+    it('revogar o par anula os grupos dele na mesma transação; rollback da revogação desfaz a anulação', async () => {
+        const g = await service.confirmar({
+            origem: 'MANUAL',
+            ddcCod: 900,
+            ditCod: 334001,
+            titulos: chaves(['60001', '60002']),
+            ator: 'ana',
+        });
+        const parId = g.grupo.confirmacaoEmissorId ?? '';
+        const estado = async () =>
+            (
+                await db.query(
+                    `SELECT estado, anulado_por, tipo_anulacao FROM sispag_grupo_boleto WHERE id = $1`,
+                    [g.grupo.id],
+                )
+            ).rows[0];
+
+        // A trilha do PAR_REVOGADO falha DEPOIS da cascata ⇒ a transação inteira volta.
+        const original = sugestoesRepo.inserirEvento;
+        const espiao = jest
+            .spyOn(sugestoesRepo, 'inserirEvento')
+            .mockImplementation(async (e, tx) => {
+                if (e.tipo === 'PAR_REVOGADO') throw new Error('trilha indisponível');
+                return original(e, tx);
+            });
+        await expect(
+            sugestao1a1.revogarPar({ id: parId, motivo: 'emissor errado', ator: 'ana' }),
+        ).rejects.toThrow('trilha indisponível');
+        espiao.mockRestore();
+        expect(await estado()).toMatchObject({ estado: 'CONFIRMADO', anulado_por: null });
+
+        await sugestao1a1.revogarPar({ id: parId, motivo: 'emissor errado', ator: 'ana' });
+        expect(await estado()).toMatchObject({
+            estado: 'ANULADO',
+            anulado_por: 'sistema',
+            tipo_anulacao: 'PAR_REVOGADO',
+        });
+        expect(
+            await contar(
+                `SELECT count(*) AS n FROM sispag_grupo_boleto_titulo
+                  WHERE grupo_id = $1 AND estado = 'ANULADO'`,
+                [g.grupo.id],
+            ),
+        ).toBe(2);
     });
 });

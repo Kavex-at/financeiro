@@ -308,11 +308,17 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/interface/sispag/SispagInterface.ts` (ou o arquivo de tipos da sugestão: `SituacaoSugestaoTitulo` + `EM_GRUPO`)
 
 **Acceptance criteria:**
-- [ ] RED primeiro. Título em grupo `CONFIRMADO` ⇒ desfecho `EM_GRUPO`, `confirmavel = false`, com o id do grupo; boleto de grupo `CONFIRMADO` não é candidato de nenhum título (exclusão (4))
-- [ ] `confirmar` 1:1 recusa título ou boleto em grupo `CONFIRMADO` (`BoletoSuggestionNotAvailableError` com motivo), sob o **mesmo** advisory lock da Task 8 (teste de corrida grupo × decisão)
-- [ ] `revogarPar` anula na mesma transação os grupos `CONFIRMADO` do par (via `GrupoBoletoService.anularPorRevogacaoDoPar`); rollback da revogação desfaz a anulação (integração)
-- [ ] Os testes existentes do motor e do serviço continuam verdes sem mudança de expectativa (sem grupo, comportamento idêntico)
-- [ ] `typecheck`/`lint` ok
+- [x] RED primeiro. Título em grupo `CONFIRMADO` ⇒ desfecho `EM_GRUPO`, `confirmavel = false`, com o id do grupo; boleto de grupo `CONFIRMADO` não é candidato de nenhum título (exclusão (4))
+- [x] `confirmar` 1:1 recusa título ou boleto em grupo `CONFIRMADO` (`BoletoSuggestionNotAvailableError` com motivo), sob o **mesmo** advisory lock da Task 8 (teste de corrida grupo × decisão)
+- [x] `revogarPar` anula na mesma transação os grupos `CONFIRMADO` do par (via `GrupoBoletoService.anularPorRevogacaoDoPar`); rollback da revogação desfaz a anulação (integração)
+- [x] Os testes existentes do motor e do serviço continuam verdes sem mudança de expectativa (sem grupo, comportamento idêntico)
+- [x] `typecheck`/`lint` ok
+
+**Notas da implementação (2026-10-21):**
+- RED visto (as duas suítes não compilavam: `gruposConfirmados` e a aridade do construtor), depois verde.
+- `SITUACAO_SUGESTAO_TITULO.EM_GRUPO` + `DesfechoTitulo.grupoBoletoId`; o motor recebe `gruposConfirmados?` (ausente ≡ vazio, teste de equivalência): título do grupo ⇒ desfecho `EM_GRUPO` sem candidatos (`confirmavel` nunca), boleto do grupo sai dos livres. O `situacao` do filtro da rota é `z.nativeEnum`, já aceita o valor novo (T20 precisa do rótulo na tela).
+- `BoletoSuggestionService`: `GrupoBoletoRepository` e `GrupoBoletoService` injetados (sem ciclo: o serviço de grupo não depende do 1:1). `confirmar` toma, no início da transação, o advisory lock `sispag:boleto:{ddc}:{dit}` + `sispag:titulo:{fil}:{doc}:{tit}` e relê os grupos sob ele (título ⇒ "já está num grupo", boleto ⇒ "já paga um grupo", ambos `BoletoSuggestionNotAvailableError` 409). `revogarPar` chama `anularPorRevogacaoDoPar(par.id, tx)` depois da cascata das decisões; o evento `PAR_REVOGADO` ganha `gruposAnulados`.
+- Integração (mesmo arquivo da T9): corrida grupo × decisão 1:1 sobre o mesmo título ⇒ exatamente uma vence, a outra 409; revogação cuja trilha falha depois da cascata ⇒ grupo segue `CONFIRMADO`; revogação boa ⇒ grupo `ANULADO` por `sistema`/`PAR_REVOGADO`. `npm run test:sql` 228/228.
 
 **Dependencies:** Task 8 (e Task 9 para a cascata; pode começar pelo motor)
 

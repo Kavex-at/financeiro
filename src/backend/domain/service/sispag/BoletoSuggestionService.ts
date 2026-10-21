@@ -54,12 +54,14 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import CodigoBarrasBoleto from '../../libs/boleto/CodigoBarrasBoleto.js';
 import BankingCalendar from '../../libs/calendar/BankingCalendar.js';
 import BoletoDdaRepository from '../../repository/sispag/BoletoDdaRepository.js';
+import GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import SugestaoBoletoRepository from '../../repository/sispag/SugestaoBoletoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import TituloDpsRepository from '../../repository/sispag/TituloDpsRepository.js';
 import LogService from '../LogService.js';
 import AjusteCentavosTituloService from './AjusteCentavosTituloService.js';
+import GrupoBoletoService from './GrupoBoletoService.js';
 import MotorSugestaoBoleto from './MotorSugestaoBoleto.js';
 import RegraSugestaoBoleto from './RegraSugestaoBoleto.js';
 import SugestaoBoletoCache from './SugestaoBoletoCache.js';
@@ -128,6 +130,10 @@ const TIERS: ReadonlySet<string> = new Set(Object.values(TIER_SUGESTAO));
  *   curto). `confirmar`, `rejeitar` e `anularDecisao` releem o banco ao vivo e NUNCA confiam nele;
  *   toda decisão e revogação invalida o cache do processo.
  * - **Logs**: português, sem barras nem linha digitável (só a forma mascarada).
+ * - **Boleto agrupado** (I15q, ADR-0077): título de `GrupoBoleto CONFIRMADO` é `EM_GRUPO`, o boleto
+ *   do grupo não é candidato; `confirmar` toma o MESMO advisory lock por boleto e por título do
+ *   `GrupoBoletoService.confirmar` e relê os grupos sob ele (exclusividade grupo × decisão);
+ *   `revogarPar` anula os grupos do par na mesma transação (cascata I15l(2)).
  */
 @injectable()
 export default class BoletoSuggestionService {
@@ -146,6 +152,8 @@ export default class BoletoSuggestionService {
         @inject(TituloDpsRepository) private readonly dpsRepo: TituloDpsRepository,
         @inject(AjusteCentavosTituloService)
         private readonly ajusteCentavos: AjusteCentavosTituloService,
+        @inject(GrupoBoletoRepository) private readonly grupoRepo: GrupoBoletoRepository,
+        @inject(GrupoBoletoService) private readonly grupoService: GrupoBoletoService,
     ) {}
 
     // ── Leitura ────────────────────────────────────────────────────────────────────────────────
@@ -296,6 +304,7 @@ export default class BoletoSuggestionService {
             : {};
 
         const resultado = await this.db.withTransaction(async (tx) => {
+            await this.exigirForaDeGrupo(chave, tx);
             const existente = await this.repo.buscarParVigente(pesCod, emissor.chave, tx, true);
             let par: ConfirmacaoEmissor;
             let parCriado = false;
@@ -581,6 +590,8 @@ export default class BoletoSuggestionService {
                     tx,
                 );
             }
+            // I21t: os grupos CONFIRMADO do par caem junto, na mesma transação.
+            const grupos = await this.grupoService.anularPorRevogacaoDoPar(par.id, tx);
             await this.repo.inserirEvento(
                 {
                     tipo: EVENTO_SUGESTAO_BOLETO.PAR_REVOGADO,
@@ -592,6 +603,7 @@ export default class BoletoSuggestionService {
                         layoutEmissor: par.layoutEmissor,
                         emissorMascarado: par.emissorMascarado,
                         decisoesAnuladas: decisoes.length,
+                        gruposAnulados: grupos.length,
                     },
                 },
                 tx,
@@ -777,6 +789,31 @@ export default class BoletoSuggestionService {
         return typeof code === 'string' ? { codigoErro: code } : {};
     };
 
+    /**
+     * Exclusividade com o boleto agrupado (I15q/I21c), dentro da transação do `confirmar`: o MESMO
+     * advisory lock por boleto e por título do `GrupoBoletoService.confirmar` (chaves da T8) e a
+     * releitura dos grupos `CONFIRMADO` sob ele. Nenhum índice cruza as duas tabelas.
+     */
+    private exigirForaDeGrupo = async (chave: ChaveSugestao, tx: TransactionClient) => {
+        const titulo = { filCod: chave.filCod, docCod: chave.docCod, titCod: chave.titCod };
+        await this.grupoRepo.travar(tx, [
+            GrupoBoletoRepository.chaveLockBoleto(chave.ddcCod, chave.ditCod),
+            GrupoBoletoRepository.chaveLockTitulo(titulo),
+        ]);
+        if (await this.grupoRepo.buscarConfirmadoPorTitulo(titulo, tx)) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'Este título já está num grupo de boleto confirmado: anule o grupo antes.',
+            });
+        }
+        if (await this.grupoRepo.buscarConfirmadoPorBoleto(chave.ddcCod, chave.ditCod, tx)) {
+            throw new BoletoSuggestionNotAvailableError({
+                ...chave,
+                motivo: 'Este boleto já paga um grupo de títulos confirmado: anule o grupo antes.',
+            });
+        }
+    };
+
     private exigirAtor = (ator: string): void => {
         if (ATORES_RECUSADOS.has(ator.trim().toLowerCase())) {
             throw new InvalidDecisionActorError();
@@ -907,15 +944,17 @@ export default class BoletoSuggestionService {
         titulos: number;
         boletos: number;
     }> => {
-        const [titulos, boletos, pares, rejeitadas, confirmadas, emLotes, dps] = await Promise.all([
-            this.tituloRepo.listAtivos(),
-            this.boletoRepo.listBoletos({}),
-            this.repo.listarParesVigentes(),
-            this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.REJEITADA),
-            this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
-            this.loteRepo.listTitulosEmLotesAbertos(),
-            this.dpsLidosOuNenhum(),
-        ]);
+        const [titulos, boletos, pares, rejeitadas, confirmadas, emLotes, dps, grupos] =
+            await Promise.all([
+                this.tituloRepo.listAtivos(),
+                this.boletoRepo.listBoletos({}),
+                this.repo.listarParesVigentes(),
+                this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.REJEITADA),
+                this.repo.listarChaveadas(DECISAO_SUGESTAO_BOLETO.CONFIRMADA),
+                this.loteRepo.listTitulosEmLotesAbertos(),
+                this.dpsLidosOuNenhum(),
+                this.grupoRepo.listarConfirmados(),
+            ]);
         const datasDebito = this.mapaDatasDebito(emLotes);
         const { sugestoes, desfechos } = this.motor.analisar({
             titulos,
@@ -925,6 +964,12 @@ export default class BoletoSuggestionService {
             confirmadas,
             datasDebito,
             dps,
+            gruposConfirmados: grupos.map((g) => ({
+                id: g.id,
+                ddcCod: g.ddcCod,
+                ditCod: g.ditCod,
+                titulos: g.titulos,
+            })),
         });
         return {
             sugestoes,
