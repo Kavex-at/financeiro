@@ -253,6 +253,30 @@ const montar = (over: Partial<Cenario> = {}) => {
     };
     const cache = SugestaoBoletoCache.withClock(() => relogio.agora);
     const ajuste = { agendarAposConfirmar: jest.fn() };
+    // ADR-0077 (Task 10): sem grupo nenhum, o comportamento é o de antes.
+    const ordem: string[] = [];
+    const grupoRepo = {
+        listarConfirmados: jest.fn(async () => [] as unknown[]),
+        travar: jest.fn(async (_t: unknown, ks: readonly string[]) => {
+            ordem.push(`travar:${[...ks].sort().join(',')}`);
+        }),
+        buscarConfirmadoPorBoleto: jest.fn(async (): Promise<unknown> => null),
+        buscarConfirmadoPorTitulo: jest.fn(async (): Promise<unknown> => null),
+    };
+    const grupoService = {
+        anularPorRevogacaoDoPar: jest.fn(async (): Promise<unknown[]> => []),
+    };
+    repo.inserirDecisao.mockImplementation(async (n: Record<string, unknown>) => {
+        ordem.push('inserirDecisao');
+        const decisao = {
+            ...DECISAO,
+            ...n,
+            id: 'dec-novo',
+            decididoEm: '2026-10-14T11:00:00.000Z',
+        } as unknown as DecisaoSugestao;
+        cen.decisoes.push(decisao);
+        return { criada: true, decisao };
+    });
     const service = new BoletoSuggestionService(
         repo as never,
         tituloRepo as never,
@@ -267,8 +291,14 @@ const montar = (over: Partial<Cenario> = {}) => {
         cache,
         dpsRepo as never,
         ajuste as never,
+        grupoRepo as never,
+        grupoService as never,
     );
     return {
+        grupoRepo,
+        grupoService,
+        ordem,
+        tx,
         service,
         repo,
         tituloRepo,
@@ -1550,3 +1580,101 @@ describe('BoletoSuggestionService — desfecho por título e aviso (I15m–I15o,
 });
 
 const TIT_CHAVE = { filCod: 1, docCod: '9001', titCod: '1' };
+
+describe('BoletoSuggestionService × boleto agrupado (I15q, I15e(4), cascata I15l(2); ADR-0077)', () => {
+    const GRUPO = {
+        id: 'grupo-1',
+        ddcCod: 700,
+        ditCod: 9,
+        estado: 'CONFIRMADO',
+        titulos: [{ filCod: 1, docCod: '9001', titCod: '1' }],
+    };
+
+    it('listagem: título em grupo CONFIRMADO aparece como EM_GRUPO (o motor recebe os grupos)', async () => {
+        const h = montar();
+        h.grupoRepo.listarConfirmados.mockResolvedValue([GRUPO]);
+        const r = await h.service.listarSugestoes({});
+        expect(r.titulos).toEqual([
+            expect.objectContaining({
+                docCod: '9001',
+                situacao: 'EM_GRUPO',
+                grupoBoletoId: 'grupo-1',
+            }),
+        ]);
+        expect(r.sugestoes).toEqual([]);
+        expect(r.contagemSituacao.EM_GRUPO).toBe(1);
+    });
+
+    it('confirmar: título EM_GRUPO no cenário ⇒ 409 com o motivo do grupo, nada gravado', async () => {
+        const h = montar();
+        h.grupoRepo.listarConfirmados.mockResolvedValue([GRUPO]);
+        const erro = await h.service.confirmar({ ...CHAVE, ator: 'ana' }).catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(BoletoSuggestionNotAvailableError);
+        expect((erro as BoletoSuggestionNotAvailableError).userMessage).toMatch(/grupo/);
+        expect(h.repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('confirmar: trava o MESMO advisory lock do grupo (boleto + título) antes de gravar', async () => {
+        const h = montar({ pares: [PAR] });
+        await h.service.confirmar({ ...CHAVE, ator: 'ana' });
+        expect(h.grupoRepo.travar).toHaveBeenCalledWith(h.tx, [
+            'sispag:boleto:500:1',
+            'sispag:titulo:1:9001:1',
+        ]);
+        expect(h.ordem).toEqual([
+            'travar:sispag:boleto:500:1,sispag:titulo:1:9001:1',
+            'inserirDecisao',
+        ]);
+        expect(h.grupoRepo.buscarConfirmadoPorTitulo).toHaveBeenCalledWith(
+            { filCod: 1, docCod: '9001', titCod: '1' },
+            h.tx,
+        );
+        expect(h.grupoRepo.buscarConfirmadoPorBoleto).toHaveBeenCalledWith(500, 1, h.tx);
+    });
+
+    it('corrida: o título entrou num grupo depois do cenário ⇒ recusado sob o lock, nada gravado', async () => {
+        const h = montar({ pares: [PAR] });
+        h.grupoRepo.buscarConfirmadoPorTitulo.mockResolvedValue(GRUPO);
+        const erro = await h.service.confirmar({ ...CHAVE, ator: 'ana' }).catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(BoletoSuggestionNotAvailableError);
+        expect((erro as BoletoSuggestionNotAvailableError).userMessage).toMatch(
+            /grupo de boleto confirmado/,
+        );
+        expect(h.repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('corrida: o boleto entrou num grupo depois do cenário ⇒ recusado sob o lock, nada gravado', async () => {
+        const h = montar({ pares: [PAR] });
+        h.grupoRepo.buscarConfirmadoPorBoleto.mockResolvedValue({
+            ...GRUPO,
+            ddcCod: 500,
+            ditCod: 1,
+        });
+        const erro = await h.service.confirmar({ ...CHAVE, ator: 'ana' }).catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(BoletoSuggestionNotAvailableError);
+        expect((erro as BoletoSuggestionNotAvailableError).userMessage).toMatch(/paga um grupo/);
+        expect(h.repo.inserirDecisao).not.toHaveBeenCalled();
+    });
+
+    it('revogarPar anula os grupos CONFIRMADO do par na MESMA transação e conta no evento', async () => {
+        const h = montar({ pares: [{ ...PAR }] });
+        h.grupoService.anularPorRevogacaoDoPar.mockResolvedValue([
+            { anulado: true },
+            { anulado: true },
+        ]);
+        await h.service.revogarPar({ id: 'par-1', motivo: 'emissor errado', ator: 'ana' });
+        expect(h.grupoService.anularPorRevogacaoDoPar).toHaveBeenCalledWith('par-1', h.tx);
+        expect(h.eventos.find((e) => e.tipo === 'PAR_REVOGADO')?.detalhe).toMatchObject({
+            gruposAnulados: 2,
+        });
+    });
+
+    it('revogarPar: falha na cascata do grupo derruba a revogação (mesma transação)', async () => {
+        const h = montar({ pares: [{ ...PAR }] });
+        h.grupoService.anularPorRevogacaoDoPar.mockRejectedValue(new Error('falhou'));
+        await expect(
+            h.service.revogarPar({ id: 'par-1', motivo: 'emissor errado', ator: 'ana' }),
+        ).rejects.toThrow('falhou');
+        expect(h.eventos.some((e) => e.tipo === 'PAR_REVOGADO')).toBe(false);
+    });
+});
