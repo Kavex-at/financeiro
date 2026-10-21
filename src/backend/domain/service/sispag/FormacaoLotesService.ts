@@ -32,8 +32,11 @@ export const FORMACAO_LOCK_KEY = 615243789;
 interface FatiaDeLote {
     filCod: number;
     titulos: TituloAPagar[];
-    grupos: GrupoParaFormacao[];
+    grupos: GrupoLotavel[];
 }
+
+/** Candidato da carteira + o boleto do grupo (chave do lock na ordem fixa boleto → títulos). */
+type GrupoLotavel = GrupoParaFormacao & { ddcCod: number; ditCod: number };
 
 /**
  * FormacaoLotesService — cron pós-ingestão que MONTA lotes candidatos automaticamente.
@@ -167,11 +170,11 @@ export default class FormacaoLotesService {
     private gruposLotaveis = async (
         hoje: Date,
     ): Promise<{
-        lotaveis: GrupoParaFormacao[];
+        lotaveis: GrupoLotavel[];
         naoLotados: Partial<Record<SituacaoGrupo, number>>;
     }> => {
         const candidatos = await this.tituloRepo.listGruposParaFormacao(HORIZONTE_DIAS, hoje);
-        const lotaveis: GrupoParaFormacao[] = [];
+        const lotaveis: GrupoLotavel[] = [];
         const naoLotados: Partial<Record<SituacaoGrupo, number>> = {};
         for (const candidato of candidatos) {
             const grupo = await this.grupoRepo.buscarPorId(candidato.grupoId);
@@ -179,7 +182,7 @@ export default class FormacaoLotesService {
             const orfao = await this.leituraGrupo.orfao(grupo);
             const situacao = await this.leituraGrupo.situacao(grupo, { orfao: orfao.orfao });
             if (SituacaoGrupoBoleto.podeSerLotadoPeloCron(situacao)) {
-                lotaveis.push(candidato);
+                lotaveis.push({ ...candidato, ddcCod: grupo.ddcCod, ditCod: grupo.ditCod });
             } else {
                 naoLotados[situacao] = (naoLotados[situacao] ?? 0) + 1;
             }
@@ -221,6 +224,14 @@ export default class FormacaoLotesService {
                 tx,
             );
             for (const g of fatia.grupos) {
+                // Mesma ordem de locks da confirmação, da anulação e da inclusão manual (T8):
+                // boleto → títulos. Anulado enquanto a rodada corria ⇒ fica fora deste lote.
+                await this.grupoRepo.travar(tx, [
+                    GrupoBoletoRepository.chaveLockBoleto(g.ddcCod, g.ditCod),
+                    ...g.titulos.map(GrupoBoletoRepository.chaveLockTitulo),
+                ]);
+                const atual = await this.grupoRepo.buscarPorId(g.grupoId, tx);
+                if (atual?.estado !== GRUPO_BOLETO_ESTADO.CONFIRMADO) continue;
                 const r = await this.loteRepo.adicionarGrupo(
                     {
                         loteId: lote.id,
@@ -278,9 +289,9 @@ export default class FormacaoLotesService {
      */
     private fatiar = (
         avulsos: Map<string, TituloAPagar[]>,
-        grupos: GrupoParaFormacao[],
+        grupos: GrupoLotavel[],
     ): FatiaDeLote[] => {
-        const gruposPorChave = new Map<string, GrupoParaFormacao[]>();
+        const gruposPorChave = new Map<string, GrupoLotavel[]>();
         for (const g of grupos) {
             const key = this.chave(g.filCod, g.vencimentoBoleto);
             gruposPorChave.set(key, [...(gruposPorChave.get(key) ?? []), g]);
