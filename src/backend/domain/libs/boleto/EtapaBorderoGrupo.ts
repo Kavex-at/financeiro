@@ -3,9 +3,12 @@
  * remessa (I19l–q, I19s; ADR-0076). Os valores são os do CHECK da migration 0089.
  */
 export const ETAPA_BORDERO_GRUPO = {
-    /** Write-ahead: marcador de correlação gravado ANTES do `POST fin010` (I19l(1)). */
-    MARCADOR_GRAVADO: 'marcador_gravado',
-    /** `POST fin010` observado; `borCod` persistido (I19l(2)). */
+    /**
+     * Write-ahead: intenção gravada com `t0` ANTES do `POST fin010` (I19l(1)). Não há marcador no
+     * ERP (decisão de 2026-10-21): a identidade do borderô é `filCod + borCod + borTimCad`.
+     */
+    INTENCAO_GRAVADA: 'intencao_gravada',
+    /** `POST fin010` observado; `t1`, `borCod` e `borTimCad` persistidos (I19l(2)). */
     BORDERO_CRIADO: 'bordero_criado',
     /** Uma baixa por título gravada (I19l(3)). */
     BAIXAS_GRAVADAS: 'baixas_gravadas',
@@ -24,7 +27,10 @@ export const ETAPA_BORDERO_GRUPO = {
     LIMPO: 'limpo',
     /** Não se pode (ou não se conseguiu) limpar: `Alerta` e decisão da analista (I19q). */
     LIMPEZA_PENDENTE: 'limpeza_pendente',
-    /** Estado do ERP que o sistema não sabe reconhecer (marcador ambíguo, baixa alheia…). */
+    /**
+     * Estado do ERP que o sistema não sabe reconhecer (dois borderôs na janela de identidade,
+     * nosso `borCod` com outro `borTimCad`, baixa alheia…).
+     */
     INDETERMINADO: 'indeterminado',
     /** Transitória (timeout/5xx/releitura inconclusiva, I19p(2)): a retomada continua. */
     FAILED: 'failed',
@@ -43,16 +49,16 @@ const DESVIOS: readonly EtapaBordero[] = [E.FAILED, E.RETIRADO, E.INDETERMINADO,
 /**
  * Grafo de transições.
  *
- *  - Caminho feliz: marcador → criado → baixas → conferido → importado → codbar → concluído.
- *  - Reaproveitamento (I19s): marcador → reaproveitado → conferido (nunca cria outro borderô).
+ *  - Caminho feliz: intenção → criado → baixas → conferido → importado → codbar → concluído.
+ *  - Reaproveitamento (I19s): intenção → reaproveitado → conferido (nunca cria outro borderô).
  *  - `failed` (I19p(2)) não é terminal: a retomada reconhece o ERP ao vivo e retoma em qualquer
- *    etapa à frente do marcador (o write-ahead é um só: nunca volta a `marcador_gravado`).
+ *    etapa à frente da intenção (o write-ahead é um só: nunca volta a `intencao_gravada`).
  *  - Limpeza (I19q): de qualquer etapa com possível borderô nosso, inclusive depois de
  *    `concluido` (G3: lote local cancelado com rascunho nativo aberto) e de `retirado`.
  *    `podeLimpar` é a guarda; a transição só registra o desfecho.
  */
 const TRANSICOES: Readonly<Record<EtapaBordero, ReadonlySet<EtapaBordero>>> = {
-    [E.MARCADOR_GRAVADO]: new Set([E.BORDERO_CRIADO, E.REAPROVEITADO, E.SIMULADO, ...DESVIOS]),
+    [E.INTENCAO_GRAVADA]: new Set([E.BORDERO_CRIADO, E.REAPROVEITADO, E.SIMULADO, ...DESVIOS]),
     [E.BORDERO_CRIADO]: new Set([E.BAIXAS_GRAVADAS, ...DESVIOS]),
     [E.BAIXAS_GRAVADAS]: new Set([E.BORDERO_CONFERIDO, ...DESVIOS]),
     [E.REAPROVEITADO]: new Set([E.BORDERO_CONFERIDO, ...DESVIOS]),
@@ -121,17 +127,19 @@ export default class EtapaBorderoGrupo {
     public static ehTerminal = (etapa: EtapaBordero): boolean => TERMINAIS.has(etapa);
 
     /**
-     * I19q — a limpeza só apaga o borderô que NÓS criamos nesta execução, só antes do lote nativo
-     * finalizado e só com `vldHasRemessaPgto = 0` lido agora (ausente ⇒ não, fail-closed). Borderô
-     * reaproveitado de um J rejeitado nunca é apagado (só o item nativo sai). Falso ⇒ `Alerta`
+     * I19q — a limpeza só apaga o borderô que NÓS criamos nesta execução e só enquanto o lote
+     * nativo não foi finalizado e não tem `.REM`, os dois lidos AGORA (ausente ⇒ não, fail-closed).
+     * `vldHasRemessaPgto` NÃO é guarda (decisão de 2026-10-21): vale 1 desde o `importar` e 0
+     * depois do `DELETE` do item, logo não diz se o borderô foi ao banco. Borderô reaproveitado de
+     * um J rejeitado nunca é apagado (só o item nativo sai). Falso ⇒ `Alerta`
      * `sispag-bordero-grupo-pendente` e a analista decide.
      */
     public static podeLimpar = (
         etapa: EtapaBordero,
-        ctx: { vldHasRemessaPgto?: number; loteNativoFinalizado: boolean; reaproveitado: boolean },
+        ctx: { loteNativoFinalizado?: boolean; remessaGerada?: boolean; reaproveitado: boolean },
     ): boolean =>
         !SEM_LIMPEZA.has(etapa) &&
         !ctx.reaproveitado &&
-        !ctx.loteNativoFinalizado &&
-        ctx.vldHasRemessaPgto === 0;
+        ctx.loteNativoFinalizado === false &&
+        ctx.remessaGerada === false;
 }
