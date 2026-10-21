@@ -74,6 +74,14 @@ const CONTRATOS: Array<{
         ausentesConhecidos: ['pago'],
     },
     {
+        // ADR-0075 I19d: o tipo do documento ("(PERMUTA)") que bloqueia o pagamento no SISPAG sai
+        // deste mesmo grid. Se o ERP renomear um destes campos, `TIPO_PERMUTA` para de disparar
+        // sem erro nenhum — é aqui que ficamos sabendo.
+        fixture: 'com298-invoice',
+        consumidor: 'ConexosSispagClient.listTiposDosDocumentos → TIPO_PERMUTA',
+        campos: ['docCod', 'tpdCod', 'tpdDesNome'],
+    },
+    {
         fixture: 'com298-proforma',
         consumidor: 'ConexosFinanceiroClient.listAdiantamentosProforma (lado-débito)',
         campos: ['docCod', 'priCod', 'filCod', 'vldStatus', 'docDtaEmissao', 'docMnyValor'],

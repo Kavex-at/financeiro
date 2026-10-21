@@ -19,7 +19,7 @@ import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRep
 import type LogService from '../LogService.js';
 import type BoletoSuggestionService from './BoletoSuggestionService.js';
 import SituacaoPagamentoResolver from './SituacaoPagamentoResolver.js';
-import SituacaoPagamentoService from './SituacaoPagamentoService.js';
+import SituacaoPagamentoService, { AVALIACAO_INCLUSAO } from './SituacaoPagamentoService.js';
 
 const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     docCod: '100',
@@ -281,14 +281,43 @@ describe('SituacaoPagamentoService', () => {
         });
     });
 
-    describe('avaliarVivo (inclusão manual no lote)', () => {
+    describe('avaliarVivo (inclusão no lote, I19s fail-closed)', () => {
         const chave = { filCod: 2, docCod: '100', titCod: '1' };
+        const vivo = { liberado: true, pago: false, vencimento: Date.UTC(2026, 9, 30) };
+        const situacaoDe = (a: Awaited<ReturnType<SituacaoPagamentoService['avaliarVivo']>>) =>
+            a.resultado === AVALIACAO_INCLUSAO.AVALIADA ? a.situacao : undefined;
 
-        it('título fora da carteira persistida devolve null (os guardas ao vivo seguem valendo)', async () => {
+        it('título fora da carteira persistida: FORA_DA_CARTEIRA, sem situação inventada', async () => {
             const { service } = make();
-            expect(
-                await service.avaliarVivo(chave, { liberado: true, pago: false, vencimento: 0 }),
-            ).toBeNull();
+            expect(await service.avaliarVivo(chave, vivo)).toEqual({
+                resultado: AVALIACAO_INCLUSAO.FORA_DA_CARTEIRA,
+            });
+        });
+
+        it('leitura do título falhou: LEITURA_FALHOU + WARN, nunca "pronto"', async () => {
+            const { service, log } = make({
+                buscarPorChave: jest.fn().mockRejectedValue(new Error('pool esgotado')),
+            });
+            expect(await service.avaliarVivo(chave, vivo)).toEqual({
+                resultado: AVALIACAO_INCLUSAO.LEITURA_FALHOU,
+            });
+            expect(log.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    message: expect.stringContaining('inclusão recusada'),
+                }),
+            );
+        });
+
+        it('fonte de contexto que caiu vem em `fontesIndisponiveis`', async () => {
+            const { service } = make({
+                buscarPorChave: jest.fn().mockResolvedValue(titulo()),
+                bloqueios: jest.fn().mockRejectedValue(new Error('timeout')),
+            });
+            expect(await service.avaliarVivo(chave, vivo)).toMatchObject({
+                resultado: AVALIACAO_INCLUSAO.AVALIADA,
+                situacao: { estado: ESTADO_PAGAMENTO.PRONTO },
+                fontesIndisponiveis: [FONTE_SITUACAO.DUPLICIDADE],
+            });
         });
 
         it('mistura o persistido (tipo, forma) com o ao vivo (aprovação, vencimento)', async () => {
@@ -299,36 +328,32 @@ describe('SituacaoPagamentoService', () => {
                 diasAteVencimento: undefined,
             });
             const { service } = make({ buscarPorChave: jest.fn().mockResolvedValue(persistido) });
-            const s = await service.avaliarVivo(chave, {
-                liberado: true,
-                pago: false,
-                vencimento: Date.UTC(2026, 9, 30),
-            });
+            const a = await service.avaliarVivo(chave, vivo);
             // aprovação e vencimento vêm do ao vivo; o tipo, do persistido
-            expect(s?.motivos).toEqual([MOTIVO_PAGAMENTO.TIPO_PERMUTA]);
+            expect(situacaoDe(a)?.motivos).toEqual([MOTIVO_PAGAMENTO.TIPO_PERMUTA]);
+            expect(a).toMatchObject({ fontesIndisponiveis: [] });
         });
 
         it('vencimento ao vivo no passado bloqueia mesmo que o persistido estivesse em dia', async () => {
             const persistido = titulo({ vencimento: Date.UTC(2026, 9, 30) });
             const { service } = make({ buscarPorChave: jest.fn().mockResolvedValue(persistido) });
-            const s = await service.avaliarVivo(chave, {
-                liberado: true,
-                pago: false,
+            const a = await service.avaliarVivo(chave, {
+                ...vivo,
                 vencimento: Date.UTC(2026, 9, 15),
             });
-            expect(s?.principal).toBe(MOTIVO_PAGAMENTO.VENCIDO);
+            expect(situacaoDe(a)?.principal).toBe(MOTIVO_PAGAMENTO.VENCIDO);
+        });
+
+        it('não altera o título persistido', async () => {
+            const persistido = titulo({ liberado: false });
+            const { service } = make({ buscarPorChave: jest.fn().mockResolvedValue(persistido) });
+            await service.avaliarVivo(chave, vivo);
+            expect(persistido.situacaoPagamento).toBeUndefined();
+            expect(persistido.liberado).toBe(false);
         });
     });
 
-    describe('avaliarUm e avaliarVarios', () => {
-        it('avaliarUm devolve a situação sem alterar o título', async () => {
-            const { service } = make();
-            const t = titulo({ liberado: false });
-            const s = await service.avaliarUm(t);
-            expect(s.principal).toBe(MOTIVO_PAGAMENTO.ALCADA);
-            expect(t.situacaoPagamento).toBeUndefined();
-        });
-
+    describe('avaliarVarios', () => {
         it('avaliarVarios lê o contexto UMA vez e devolve por chave', async () => {
             const bloqueios = jest.fn().mockResolvedValue([]);
             const { service } = make({ bloqueios });

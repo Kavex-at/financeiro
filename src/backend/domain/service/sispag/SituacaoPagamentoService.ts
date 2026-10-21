@@ -36,6 +36,25 @@ interface ContextoCarregado {
     fontesIndisponiveis: FonteSituacao[];
 }
 
+/** Desfecho da avaliação na inclusão (I19s): só `AVALIADA` traz uma situação. */
+export const AVALIACAO_INCLUSAO = {
+    AVALIADA: 'AVALIADA',
+    FORA_DA_CARTEIRA: 'FORA_DA_CARTEIRA',
+    LEITURA_FALHOU: 'LEITURA_FALHOU',
+} as const;
+
+export type AvaliacaoInclusao =
+    | {
+          resultado: typeof AVALIACAO_INCLUSAO.AVALIADA;
+          situacao: SituacaoPagamento;
+          fontesIndisponiveis: FonteSituacao[];
+      }
+    | {
+          resultado:
+              | typeof AVALIACAO_INCLUSAO.FORA_DA_CARTEIRA
+              | typeof AVALIACAO_INCLUSAO.LEITURA_FALHOU;
+      };
+
 /**
  * SituacaoPagamentoService (ADR-0075): lê o contexto (bloqueios, ajuste de centavos, desfecho de
  * boleto, modo do vínculo) e aplica o `SituacaoPagamentoResolver`. É o único ponto que o painel, a
@@ -131,15 +150,6 @@ export default class SituacaoPagamentoService {
         return { ...this.resolver.resumir(disponiveis), fontesIndisponiveis };
     };
 
-    /**
-     * Situação de UM título (inclusão manual no lote). O contexto é o mesmo da carteira: bloqueios e
-     * ajustes são consultas pequenas e o desfecho vem do cache da listagem.
-     */
-    public avaliarUm = async (t: TituloAPagar): Promise<SituacaoPagamento> => {
-        const { contexto } = await this.carregarContexto();
-        return this.resolver.avaliar(this.comAging(t), contexto);
-    };
-
     /** Avalia vários de uma vez (formação automática, criação por filial), com UM contexto. */
     public avaliarVarios = async (
         titulos: TituloAPagar[],
@@ -150,36 +160,32 @@ export default class SituacaoPagamentoService {
         );
     };
 
-    /** Leitura pontual; falha vira `null` + WARN: a inclusão cai nos guardas ao vivo, nunca quebra. */
-    private lerPersistido = async (chave: {
-        filCod: number;
-        docCod: string;
-        titCod: string;
-    }): Promise<TituloAPagar | null> => {
-        try {
-            return await this.tituloRepo.buscarPorChave(chave);
-        } catch (error) {
-            await this.logService.warn({
-                type: LOG_TYPE.BUSINESS_WARN,
-                message: 'situação de pagamento: leitura do título falhou, inclusão sem ela',
-                data: { chave, erro: error instanceof Error ? error.message : String(error) },
-            });
-            return null;
-        }
-    };
-
     /**
-     * Situação de um título na INCLUSÃO manual no lote: a carteira persistida dá tipo, forma e
-     * boleto; a leitura ao vivo do `fin064` (`vivo`) dá o que muda a cada minuto — aprovação,
-     * pagamento e vencimento. Título fora da carteira persistida devolve `null`: sem tipo nem
-     * forma não há o que avaliar, e os guardas ao vivo da inclusão continuam valendo.
+     * Situação de um título na INCLUSÃO no lote (manual ou por filial): a carteira persistida dá
+     * tipo, forma e boleto; a leitura ao vivo do `fin064` (`vivo`) dá o que muda a cada minuto —
+     * aprovação, pagamento e vencimento.
+     *
+     * I19s: a inclusão é fail-closed. Sem a linha persistida (título criado ou alterado no Conexos
+     * depois da última ingestão) ou com a leitura dela falhando, não há tipo nem forma para avaliar,
+     * e o resultado diz isso em vez de deixar o título passar sem a regra. As fontes de contexto que
+     * falharem vêm em `fontesIndisponiveis`; quem inclui decide recusar.
      */
     public avaliarVivo = async (
         chave: { filCod: number; docCod: string; titCod: string },
         vivo: Pick<TituloAPagar, 'liberado' | 'pago' | 'vencimento'>,
-    ): Promise<SituacaoPagamento | null> => {
-        const persistido = await this.lerPersistido(chave);
-        if (!persistido) return null;
+    ): Promise<AvaliacaoInclusao> => {
+        let persistido: TituloAPagar | null;
+        try {
+            persistido = await this.tituloRepo.buscarPorChave(chave);
+        } catch (error) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'situação de pagamento: leitura do título falhou, inclusão recusada',
+                data: { chave, erro: error instanceof Error ? error.message : String(error) },
+            });
+            return { resultado: AVALIACAO_INCLUSAO.LEITURA_FALHOU };
+        }
+        if (!persistido) return { resultado: AVALIACAO_INCLUSAO.FORA_DA_CARTEIRA };
         // O vencimento ao vivo vence o persistido, e o aging é SEMPRE recalculado dele.
         const vencimento = vivo.vencimento ?? persistido.vencimento;
         const titulo: TituloAPagar = {
@@ -190,6 +196,11 @@ export default class SituacaoPagamentoService {
                 ? { vencimento, diasAteVencimento: this.calendar.diasAteVencimento(vencimento) }
                 : {}),
         };
-        return this.avaliarUm(titulo);
+        const { contexto, fontesIndisponiveis } = await this.carregarContexto();
+        return {
+            resultado: AVALIACAO_INCLUSAO.AVALIADA,
+            situacao: this.resolver.avaliar(titulo, contexto),
+            fontesIndisponiveis,
+        };
     };
 }
