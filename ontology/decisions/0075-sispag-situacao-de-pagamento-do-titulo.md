@@ -152,4 +152,7 @@ ser tratado como bloqueio acionável.
 4. **Códigos de forma:** confirmar o código de TED em `titVldPagopor` e se `2, 3, 8, 9, 10` seguem sem
    bloqueio.
 5. **Backlog de filtros:** fechado em D17; reabrir só se a analista pedir coluna nova.
-6. **Volume de `BOLETO_SEM_DDA`** (984 títulos, 76% da carteira): subdividir por desfecho e tratar vencimento distante (ver a medição acima).
+6. **Volume de `BOLETO_SEM_DDA`** (984 títulos, 76% da carteira). **Subdividir por desfecho: decidido
+   (2026-10-21), sim**, ver I19r da regra: cinco grupos (para confirmar, a escolher, só candidato fraco, sem
+   boleto no DDA, confirmado aguardando vínculo) como sub-chips e rótulo do botão. **Vencimento distante (mais de
+   15 dias) como bloqueio acionável: em aberto**, o maintainer vai levantar os casos antes de decidir.

@@ -72,7 +72,7 @@ Dono, ação e rótulo por motivo (`DONO_PAGAMENTO`, `ACAO_PAGAMENTO`; os rótul
 | `RETIDO_CODBAR` | Retido por código de barras | `VOCE` | `DESFAZER_RETENCAO` → "Desfazer retenção" |
 | `AJUSTE_CENTAVOS_PENDENTE` | Ajuste de centavos pendente | `VOCE` | `TENTAR_AJUSTE` → "Tentar de novo o ajuste" |
 | `CONFIRMACAO_A_REVISAR` | Confirmação a revisar | `VOCE` | `VER_BOLETO` → "Ver boleto" |
-| `BOLETO_SEM_DDA` | Boleto sem DDA | `VOCE` | `VER_BOLETO` → "Ver boleto sugerido" |
+| `BOLETO_SEM_DDA` | Boleto sem DDA | `VOCE` | `VER_BOLETO` → rótulo pela sugestão (I19r) |
 
 Regra de cada motivo (I19c–j):
 
@@ -98,6 +98,7 @@ Escopo, falha e aplicação (I19k–p):
 | **I19o** | **Resumo sobre a carteira inteira.** `ResumoSituacao` (`porEstado`, `porMotivo`, `porDono`: `{qtd, valor}`) é calculado sobre **todos** os títulos ativos, não sobre o corte `TITULOS_CAP`. Alimenta os cards, o filtro `Todos \| Prontos \| Bloqueados` e os chips de motivo. |
 | **I19p** | **Um lote por filial (`POST /sispag/lotes/por-filial`).** Recebe chaves de títulos, agrupa por `filCod`, cria **um lote por filial** (L1) incluindo cada título pela mesma regra de L2 (I19m), e devolve **um resultado por lote** (`CRIADO`, `PARCIAL` ou `RECUSADO`, com `incluidos` e `recusados` por título, cada recusa com `codigo`, `motivo` e `mensagem`). **Um lote que falha não desfaz os outros.** O corpo aceita `mover` opcional (ADR-0064): título em outro lote RASCUNHO sai de lá e entra no novo; sem a flag a inclusão é recusada e o título volta em `recusados`. Lote sem nenhum título incluído não é deixado vazio (descartado, como em `useCriarLoteManual`). |
 | **I19q** | **O resumo não conta título em lote comprometido.** `resumoSituacao` (por estado, motivo principal e dono) cobre a carteira inteira **menos** os títulos em lote `FINALIZADO` ou `REMESSA_GERADA` (ADR-0064): eles já não são "prontos para pagar" nem "precisam de ação", e a tela os esconde por padrão. Título em lote `RASCUNHO` continua contado (ainda pode ser movido). A situação de cada título é calculada mesmo assim. |
+| **I19r** | **`BOLETO_SEM_DDA` se divide pela sugestão de boleto** (decisão do maintainer, 2026-10-21). Quando o principal é `BOLETO_SEM_DDA`, a situação carrega `sugestaoBoleto` (`SUGESTAO_BOLETO_SEM_DDA`), derivado do desfecho do título (I15m, ADR-0072): `PARA_CONFIRMAR` ← `UNICA_SEGURA`, `SO_ATENCAO` (botão "Confirmar boleto sugerido"); `A_ESCOLHER` ← `AMBIGUA`, `DISPUTADA` ("Escolher o boleto"); `CANDIDATO_FRACO` ← `SO_FRACA`, `SO_VENCIDA` ("Ver candidatos"); `SEM_CANDIDATO` ← `SEM_CANDIDATO` ou desfecho ausente ("Ver boleto"); `AGUARDANDO_VINCULO` ← `CONFIRMADA` com vínculo fora de `on` (I19j, "Ver boleto"). O motivo, o dono (`VOCE`) e o código da ação não mudam; só o rótulo do botão e um sub-filtro. Na tela, com o chip "Boleto sem DDA" marcado em Bloqueados, uma segunda linha de chips filtra por `sugestaoBoleto`; o sub-filtro só restringe títulos cujo principal é `BOLETO_SEM_DDA` e é descartado ao desmarcar o motivo. Ausente em outro principal e em backend antigo (sem sub-chips). **Em aberto:** se boleto com vencimento distante (mais de 15 dias) deve ser bloqueio acionável ou um estado mais brando; o maintainer está levantando os casos antes de decidir. |
 
 ## Evidência
 
@@ -122,6 +123,7 @@ Escopo, falha e aplicação (I19k–p):
 10. `incluirTitulo` com título `BLOQUEADO` → 422 com o motivo; `formarLotesAutomaticos` não inclui `BLOQUEADO`.
 11. `por-filial` com 3 filiais, uma recusada → 2 `CRIADO` + 1 `RECUSADO`, os dois lotes existem.
 12. `resumoSituacao`: soma de `porMotivo` = `porEstado.BLOQUEADO`, sobre a carteira inteira mesmo com `truncado`.
+13. Boleto sem DDA com desfecho `UNICA_SEGURA` → `sugestaoBoleto = PARA_CONFIRMAR`; `DISPUTADA` → `A_ESCOLHER`; sem desfecho → `SEM_CANDIDATO`; `VENCIDO` como principal → sem `sugestaoBoleto` (I19r).
 
 ## Universalidade
 
