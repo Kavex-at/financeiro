@@ -25,6 +25,7 @@ import { resumirSelecao, selecionavel } from './selecao'
 import {
   bloqueadosPorMotivo,
   bloqueadosQueVencemHoje,
+  boletoSemDdaPorSugestao,
   chaveDoTitulo,
   totaisPorEstado,
 } from './situacaoTitulos'
@@ -105,6 +106,7 @@ export function TitulosAbaSituacao({
 
   const totais = React.useMemo(() => totaisPorEstado(titulos), [titulos])
   const motivos = React.useMemo(() => bloqueadosPorMotivo(titulos), [titulos])
+  const sugestoesBoleto = React.useMemo(() => boletoSemDdaPorSugestao(titulos), [titulos])
   const opcoes = React.useMemo(() => opcoesDosFiltros(titulos), [titulos])
   const hoje = React.useMemo(() => bloqueadosQueVencemHoje(titulos), [titulos])
   // O dia de hoje é o vencimento de qualquer título da faixa (todos vencem hoje, por construção).
@@ -179,6 +181,9 @@ export function TitulosAbaSituacao({
         motivosSelecionados={tabela.filtros.situacoes}
         onEstado={tabela.definirEstado}
         onAlternarMotivo={tabela.alternarMotivo}
+        sugestoesBoleto={sugestoesBoleto}
+        sugestoesSelecionadas={tabela.filtros.sugestoesBoleto}
+        onAlternarSugestao={tabela.alternarSugestaoBoleto}
         regrasAbertas={regrasAbertas}
         regrasId={regrasId}
         onAlternarRegras={() => setRegrasAbertas((v) => !v)}

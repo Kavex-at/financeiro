@@ -33,6 +33,13 @@ import {
   rejeitarAutorizacao,
   revelarDestino,
   revogarAutorizacao,
+  ACAO_PAGAMENTO,
+  DONO_PAGAMENTO,
+  ESTADO_PAGAMENTO,
+  FONTE_SITUACAO,
+  MOTIVO_PAGAMENTO,
+  RESULTADO_LOTE_FILIAL,
+  SUGESTAO_BOLETO_SEM_DDA,
 } from '@/lib/sispag'
 
 // `apiFetch` é o boundary HTTP — mockado para controlar os bytes que "chegam do backend".
@@ -734,5 +741,32 @@ describe('formaDePagamento', () => {
       chave: 'forma-11',
       comDda: true,
     })
+  })
+})
+
+describe('situação de pagamento — paridade com o backend (ADR-0075)', () => {
+  // O frontend não importa o backend; lê o fonte e compara chaves, valores e ORDEM (a de
+  // MOTIVO_PAGAMENTO é a prioridade). Valor novo de um lado só = vermelho.
+  const fonte = readFileSync(
+    path.join(__dirname, '../../backend/domain/interface/sispag/SituacaoPagamento.ts'),
+    'utf8',
+  )
+  const doBackend = (nome: string): Array<[string, string]> => {
+    const corpo = new RegExp(`export const ${nome} = \\{([^}]*)\\}`).exec(fonte)?.[1] ?? ''
+    return [...corpo.matchAll(/(\w+):\s*'([^']+)'/g)].map((m) => [m[1], m[2]])
+  }
+
+  it.each([
+    ['ESTADO_PAGAMENTO', ESTADO_PAGAMENTO],
+    ['MOTIVO_PAGAMENTO', MOTIVO_PAGAMENTO],
+    ['SUGESTAO_BOLETO_SEM_DDA', SUGESTAO_BOLETO_SEM_DDA],
+    ['DONO_PAGAMENTO', DONO_PAGAMENTO],
+    ['ACAO_PAGAMENTO', ACAO_PAGAMENTO],
+    ['FONTE_SITUACAO', FONTE_SITUACAO],
+    ['RESULTADO_LOTE_FILIAL', RESULTADO_LOTE_FILIAL],
+  ] as const)('%s é igual nos dois lados', (nome, frontend) => {
+    const backend = doBackend(nome)
+    expect(backend.length).toBeGreaterThan(0)
+    expect(Object.entries(frontend)).toEqual(backend)
   })
 })

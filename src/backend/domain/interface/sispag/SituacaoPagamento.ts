@@ -34,6 +34,27 @@ export type MotivoPagamento = (typeof MOTIVO_PAGAMENTO)[keyof typeof MOTIVO_PAGA
 
 export const MOTIVOS_PAGAMENTO_ORDEM: readonly MotivoPagamento[] = Object.values(MOTIVO_PAGAMENTO);
 
+/**
+ * Subdivisão de `BOLETO_SEM_DDA` pelo desfecho da sugestão de boleto (ADR-0072, I19r): diz onde
+ * está o trabalho da analista. Ordem = do mais rápido de resolver ao que não depende dela.
+ *
+ * - `PARA_CONFIRMAR`     `UNICA_SEGURA` ou `SO_ATENCAO`: há um boleto confirmável;
+ * - `A_ESCOLHER`         `AMBIGUA` ou `DISPUTADA`: mais de um boleto possível, ou o candidato está
+ *                        reservado a outro título;
+ * - `CANDIDATO_FRACO`    `SO_FRACA` ou `SO_VENCIDA`: só candidato sem âncora ou já vencido;
+ * - `SEM_CANDIDATO`      `SEM_CANDIDATO` ou desfecho ausente: nenhum boleto no pool de DDA;
+ * - `AGUARDANDO_VINCULO` `CONFIRMADA` com o vínculo do código de barras desligado na filial.
+ */
+export const SUGESTAO_BOLETO_SEM_DDA = {
+    PARA_CONFIRMAR: 'PARA_CONFIRMAR',
+    A_ESCOLHER: 'A_ESCOLHER',
+    CANDIDATO_FRACO: 'CANDIDATO_FRACO',
+    SEM_CANDIDATO: 'SEM_CANDIDATO',
+    AGUARDANDO_VINCULO: 'AGUARDANDO_VINCULO',
+} as const;
+export type SugestaoBoletoSemDda =
+    (typeof SUGESTAO_BOLETO_SEM_DDA)[keyof typeof SUGESTAO_BOLETO_SEM_DDA];
+
 /** Quem resolve o bloqueio. */
 export const DONO_PAGAMENTO = {
     VOCE: 'VOCE',
@@ -76,6 +97,8 @@ export interface SituacaoPagamento {
     acao?: { codigo: AcaoPagamento; rotulo: string };
     /** Complemento do motivo principal ("venceu há 4 dias", "pode já ter permuta parcial…"). */
     detalhe?: string;
+    /** Só quando `principal = BOLETO_SEM_DDA`: em que pé está a sugestão de boleto (I19r). */
+    sugestaoBoleto?: SugestaoBoletoSemDda;
 }
 
 export interface TotalSituacao {

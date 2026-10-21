@@ -5,6 +5,8 @@ import {
   formaDePagamento,
   MOTIVO_PAGAMENTO,
   type MotivoPagamento,
+  SUGESTAO_BOLETO_SEM_DDA,
+  type SugestaoBoletoSemDda,
   type TituloAPagar,
 } from '@/lib/sispag'
 import { diaDoErp } from '../components/filtroDatas'
@@ -41,6 +43,11 @@ export interface FiltrosTitulos {
   vencAte: string
   formas: string[]
   situacoes: SituacaoChave[]
+  /**
+   * Sub-chips de "Boleto sem DDA" (I19r). Só restringem os títulos cujo principal é
+   * `BOLETO_SEM_DDA`, e só enquanto esse motivo está em `situacoes`.
+   */
+  sugestoesBoleto: SugestaoBoletoSemDda[]
   donos: DonoPagamento[]
   filiais: number[]
 }
@@ -56,6 +63,7 @@ export const FILTROS_VAZIOS: FiltrosTitulos = {
   vencAte: '',
   formas: [],
   situacoes: [],
+  sugestoesBoleto: [],
   donos: [],
   filiais: [],
 }
@@ -138,6 +146,14 @@ export const haFiltroAtivo = (f: FiltrosTitulos): boolean =>
 export const passaEstado = (t: TituloAPagar, estado: EstadoFiltro): boolean =>
   estado === 'todos' || (estado === 'prontos' ? ehPronto(t) : ehBloqueado(t))
 
+const passaSugestaoBoleto = (t: TituloAPagar, f: FiltrosTitulos): boolean => {
+  if (f.sugestoesBoleto.length === 0) return true
+  if (!f.situacoes.includes(MOTIVO_PAGAMENTO.BOLETO_SEM_DDA)) return true
+  if (situacaoChave(t) !== MOTIVO_PAGAMENTO.BOLETO_SEM_DDA) return true
+  const s = t.situacaoPagamento?.sugestaoBoleto
+  return s !== undefined && f.sugestoesBoleto.includes(s)
+}
+
 export const passaColunas = (t: TituloAPagar, f: FiltrosTitulos): boolean => {
   if (f.credor && !norm(t.credor ?? '').includes(norm(f.credor))) return false
   if (f.documento && !norm(`${t.docCod}/${t.titCod}`).includes(norm(f.documento))) return false
@@ -157,6 +173,7 @@ export const passaColunas = (t: TituloAPagar, f: FiltrosTitulos): boolean => {
   }
   if (f.formas.length > 0 && !f.formas.includes(formaDePagamento(t).chave)) return false
   if (f.situacoes.length > 0 && !f.situacoes.includes(situacaoChave(t))) return false
+  if (!passaSugestaoBoleto(t, f)) return false
   if (f.donos.length > 0 && !f.donos.includes(donoDe(t))) return false
   if (f.filiais.length > 0 && !f.filiais.includes(t.filCod)) return false
   return true
@@ -268,5 +285,24 @@ export const bloqueadosPorMotivo = (
   return Object.values(MOTIVO_PAGAMENTO).flatMap((motivo) => {
     const ts = porMotivo.get(motivo)
     return ts ? [{ motivo, ...somar(ts) }] : []
+  })
+}
+
+/**
+ * Sub-chips de "Boleto sem DDA" (I19r), na ordem do contrato. Vazio quando o backend não manda
+ * `sugestaoBoleto` (versão antiga): a tela fica só com o chip do motivo.
+ */
+export const boletoSemDdaPorSugestao = (
+  titulos: TituloAPagar[],
+): Array<{ sugestao: SugestaoBoletoSemDda } & Total> => {
+  const porSugestao = new Map<SugestaoBoletoSemDda, TituloAPagar[]>()
+  for (const t of titulos) {
+    const s = t.situacaoPagamento?.sugestaoBoleto
+    if (!s || !ehBloqueado(t) || situacaoChave(t) !== MOTIVO_PAGAMENTO.BOLETO_SEM_DDA) continue
+    porSugestao.set(s, [...(porSugestao.get(s) ?? []), t])
+  }
+  return Object.values(SUGESTAO_BOLETO_SEM_DDA).flatMap((sugestao) => {
+    const ts = porSugestao.get(sugestao)
+    return ts ? [{ sugestao, ...somar(ts) }] : []
   })
 }

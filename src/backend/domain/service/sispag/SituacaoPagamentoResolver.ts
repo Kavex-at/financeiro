@@ -15,7 +15,9 @@ import {
     MOTIVOS_PAGAMENTO_ORDEM,
     type MotivoPagamento,
     type ResumoSituacao,
+    SUGESTAO_BOLETO_SEM_DDA,
     type SituacaoPagamento,
+    type SugestaoBoletoSemDda,
     type TotalSituacao,
 } from '../../interface/sispag/SituacaoPagamento.js';
 import {
@@ -119,7 +121,7 @@ const PERFIL: Readonly<Record<MotivoPagamento, PerfilMotivo>> = {
     [MOTIVO_PAGAMENTO.BOLETO_SEM_DDA]: {
         rotulo: 'Boleto sem DDA',
         dono: DONO_PAGAMENTO.VOCE,
-        acao: { codigo: ACAO_PAGAMENTO.VER_BOLETO, rotulo: 'Ver boleto sugerido' },
+        acao: { codigo: ACAO_PAGAMENTO.VER_BOLETO, rotulo: 'Ver boleto' },
     },
 };
 
@@ -131,6 +133,28 @@ const DETALHE_DESFECHO: Readonly<Partial<Record<SituacaoSugestaoTitulo, string>>
     [SITUACAO_SUGESTAO_TITULO.SO_VENCIDA]: 'o único boleto candidato está vencido',
     [SITUACAO_SUGESTAO_TITULO.DISPUTADA]: 'o boleto candidato está reservado a outro título',
     [SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO]: 'nenhum boleto no pool de DDA',
+};
+
+/** Em que pé está a sugestão de boleto (I19r). `CONFIRMADA` e `ORFA` são tratadas à parte. */
+const SUGESTAO_DO_DESFECHO: Readonly<
+    Partial<Record<SituacaoSugestaoTitulo, SugestaoBoletoSemDda>>
+> = {
+    [SITUACAO_SUGESTAO_TITULO.UNICA_SEGURA]: SUGESTAO_BOLETO_SEM_DDA.PARA_CONFIRMAR,
+    [SITUACAO_SUGESTAO_TITULO.SO_ATENCAO]: SUGESTAO_BOLETO_SEM_DDA.PARA_CONFIRMAR,
+    [SITUACAO_SUGESTAO_TITULO.AMBIGUA]: SUGESTAO_BOLETO_SEM_DDA.A_ESCOLHER,
+    [SITUACAO_SUGESTAO_TITULO.DISPUTADA]: SUGESTAO_BOLETO_SEM_DDA.A_ESCOLHER,
+    [SITUACAO_SUGESTAO_TITULO.SO_FRACA]: SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO,
+    [SITUACAO_SUGESTAO_TITULO.SO_VENCIDA]: SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO,
+    [SITUACAO_SUGESTAO_TITULO.SEM_CANDIDATO]: SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO,
+};
+
+/** O botão de `BOLETO_SEM_DDA` diz o que a analista vai fazer no painel do boleto. */
+const ROTULO_ACAO_SUGESTAO: Readonly<Record<SugestaoBoletoSemDda, string>> = {
+    [SUGESTAO_BOLETO_SEM_DDA.PARA_CONFIRMAR]: 'Confirmar boleto sugerido',
+    [SUGESTAO_BOLETO_SEM_DDA.A_ESCOLHER]: 'Escolher o boleto',
+    [SUGESTAO_BOLETO_SEM_DDA.CANDIDATO_FRACO]: 'Ver candidatos',
+    [SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO]: 'Ver boleto',
+    [SUGESTAO_BOLETO_SEM_DDA.AGUARDANDO_VINCULO]: 'Ver boleto',
 };
 
 const semAcento = (s: string): string =>
@@ -145,7 +169,7 @@ const chaveDe = (t: { filCod: number; docCod: string; titCod: string }): string 
 const zero = (): TotalSituacao => ({ qtd: 0, valor: 0 });
 
 /** Resultado de uma regra: `undefined` = não se aplica; objeto = se aplica, com detalhe opcional. */
-type Achado = { detalhe?: string };
+type Achado = { detalhe?: string; sugestaoBoleto?: SugestaoBoletoSemDda };
 type Regra = (t: TituloAPagar, ctx: ContextoSituacaoPagamento) => Achado | undefined;
 
 const somar = (total: TotalSituacao, valor: number): void => {
@@ -241,12 +265,18 @@ export default class SituacaoPagamentoResolver {
             // (ADR-0071): é pronto. Com o vínculo desligado, a confirmação não basta.
             return ctx.modoVinculo(t.filCod) === MODO_VINCULO.ON
                 ? undefined
-                : { detalhe: 'boleto confirmado, aguardando o vínculo no Conexos' };
+                : {
+                      detalhe: 'boleto confirmado, aguardando o vínculo no Conexos',
+                      sugestaoBoleto: SUGESTAO_BOLETO_SEM_DDA.AGUARDANDO_VINCULO,
+                  };
         }
         return {
             detalhe:
                 (desfecho !== undefined ? DETALHE_DESFECHO[desfecho] : undefined) ??
                 'sem boleto DDA associado',
+            sugestaoBoleto:
+                (desfecho !== undefined ? SUGESTAO_DO_DESFECHO[desfecho] : undefined) ??
+                SUGESTAO_BOLETO_SEM_DDA.SEM_CANDIDATO,
         };
     };
 
@@ -267,7 +297,7 @@ export default class SituacaoPagamentoResolver {
     private motivosDe = (
         t: TituloAPagar,
         ctx: ContextoSituacaoPagamento,
-    ): Array<{ motivo: MotivoPagamento; detalhe?: string }> =>
+    ): Array<{ motivo: MotivoPagamento } & Achado> =>
         MOTIVOS_PAGAMENTO_ORDEM.flatMap((motivo) => {
             const achado = this.regras[motivo](t, ctx);
             return achado ? [{ motivo, ...achado }] : [];
@@ -278,14 +308,19 @@ export default class SituacaoPagamentoResolver {
         const primeiro = motivos[0];
         if (!primeiro) return { estado: ESTADO_PAGAMENTO.PRONTO, motivos: [] };
         const perfil = PERFIL[primeiro.motivo];
+        const { sugestaoBoleto } = primeiro;
         return {
             estado: ESTADO_PAGAMENTO.BLOQUEADO,
             motivos: motivos.map((m) => m.motivo),
             principal: primeiro.motivo,
             rotulo: perfil.rotulo,
             dono: perfil.dono,
-            acao: perfil.acao,
+            acao:
+                sugestaoBoleto !== undefined
+                    ? { ...perfil.acao, rotulo: ROTULO_ACAO_SUGESTAO[sugestaoBoleto] }
+                    : perfil.acao,
             ...(primeiro.detalhe !== undefined ? { detalhe: primeiro.detalhe } : {}),
+            ...(sugestaoBoleto !== undefined ? { sugestaoBoleto } : {}),
         };
     };
 
