@@ -330,8 +330,12 @@ Every feature or rule change goes through the pipeline. No exceptions.
 - **Boleto agrupado (ADR-0077, `planned`): o borderô do grupo só aparece pendente no lote se o `gerNum`
   dele for a conta financeira da conta pagadora do lote; `importar` exige `itemy: 1` (com `0` responde
   `SUCESSO` e não importa); nós nunca finalizamos o borderô.** Quem finaliza e baixa os N títulos é o
-  retorno do banco. O sucesso do `importar` é o item observado na releitura, nunca a resposta. Borderô
-  com `vldHasRemessaPgto = 1` nunca é apagado nem cancelado por nós (medido em HML, 2026-10-19).
+  retorno do banco. O sucesso do `importar` é o item observado na releitura, nunca a resposta. Limpeza
+  do borderô só enquanto o **lote nativo** não foi finalizado nem gerou `.REM` (lido ao vivo); depois, nunca
+  apagamos nem cancelamos. `vldHasRemessaPgto` **não** é sinal de "foi ao banco": vira 1 no `importar` e
+  volta a 0 quando o item sai. **O ERP reusa `borCod` após excluir; identidade = `borCod` + `borTimCad`**
+  (com `filCod`; nada vai em `borEspNrbanco`). `GET` de borderô ausente responde 500 `RECORDNOTFOUND`, não
+  404 (medido em HML, 2026-10-20; emenda 2026-10-21 da ADR-0077).
 - **Vínculo de código de barras (ADR-0071): só no rascunho; `PUT` nunca em lote finalizado; `shadow` não
   faz chamada ao ERP.** O código confirmado é gravado no item DEPOIS do `importar`
   (`validacao → confirma → PUT → releitura`; o sucesso é o que a releitura OBSERVA) e só com

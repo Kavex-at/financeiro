@@ -12,8 +12,8 @@ relationships:
   - "GrupoBoleto N—1 BoletoDda (ddcCod/ditCod; snapshot, relido ao vivo na remessa)"
   - "GrupoBoleto N—0..1 ConfirmacaoEmissorBoleto (par (pesCod, emissorChave) VIGENTE ou confirmado no mesmo ato)"
   - "GrupoBoleto 1—0..N ItemLote (os N itens locais do lote, um por título, via ItemLote.grupoBoletoId)"
-  - "GrupoBoleto 1—0..N borderô fin010 (externo; um por remessa em que o grupo entrou, ou o mesmo reaproveitado depois de J rejeitado; borCod no write-ahead)"
-last_review: 2026-10-20
+  - "GrupoBoleto 1—0..N borderô fin010 (externo; um por remessa em que o grupo entrou, ou o mesmo reaproveitado depois de J rejeitado; identidade filCod + borCod + borTimCad no write-ahead)"
+last_review: 2026-10-21
 universality_evidence:
   - "Medição PRD 2026-10-19: ~220 casos de 1 boleto → N títulos, 40+ credores (memória boleto-agrupado-n1-e-1n-medicao)"
   - "HML 2026-10-19: o Conexos paga 1 boleto por N títulos nativamente (borderô fin010 em cadastro → 1 item SISPAG com borCod → retorno baixa os N) — _inbox/sispag-boleto-agrupado-hml-achados.md"
@@ -50,7 +50,7 @@ universality_evidence:
 | `anuladoPor` · `anuladoEm` · `motivoAnulacao` | | Preenchidos só em `ANULADO` (CHECK); motivo 10–500. |
 | `pagoObservadoEm` | Date? | Sincronização que viu os N títulos pagos (I21r). |
 | `versao` | number | Lock otimista. |
-| `execucao` | derivado do write-ahead | `{ flpCod, borCod, gerNum, marcador, baixas[{titulo, bxaCodSeq}], etapa }` por remessa. Depois de J rejeitado, o `borCod` antigo fica registrado e é o que a próxima remessa reconhece para reaproveitar (I21s). Forma da tabela: TaskScoper. |
+| `execucao` | derivado do write-ahead | `{ flpCod, t0, t1, borCod, borTimCad, gerNum, baixas[{titulo, bxaCodSeq}], etapa }` por remessa. Identidade do borderô = `filCod` + `borCod` + `borTimCad` (emenda 2026-10-21: o ERP reusa `borCod` depois de `excluirBordero`; sem marcador de correlação). `t0`/`t1` delimitam a busca por janela quando a resposta do `POST fin010` se perde (I21s). Depois de J rejeitado, o `borCod` + `borTimCad` antigos ficam registrados e são o que a próxima remessa reconhece para reaproveitar (I21s). Forma da tabela: TaskScoper. |
 
 ## Estados
 

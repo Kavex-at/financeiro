@@ -82,7 +82,7 @@ Os 5 passos decididos [maintainer, 19/10], mapeados para a ontologia:
 | H6 | O valor de pagamento do J sai do **borderô** (barra = pagamento). | HML |
 | H7 | O parser do retorno trata `BOR_COD` (`PRC_BAIXA_RETORNO_PAGFOR`). | HML |
 | H8 | J-52 no `.RET` sintético quebra o `processar`; limite do sintético, não do fluxo. | HML |
-| H9 | `vldHasRemessaPgto` do borderô vira 1 quando a remessa é gerada (sinal de "foi ao banco"). | HML |
+| H9 | ~~`vldHasRemessaPgto` do borderô vira 1 quando a remessa é gerada (sinal de "foi ao banco").~~ **Corrigido (HML 2026-10-20, T6; emenda 2026-10-21 da ADR-0077):** vira 1 quando o borderô é **importado** num lote e volta a 0 quando o item sai; reflete o import, não "foi ao banco", e não é guarda. Com o item no lote o ERP recusa `excluirBaixa`/`excluirBordero` (`FIN_014.FIN_HAS_REMESSA_PGTO`). | HML |
 | H10 | `gerNum` de cada conta pagadora já é lido do `fin005` (`listContasCorrentes`); não precisa ser configuração fixa. | repo |
 | M1 | Regra de grupo com ~0 ruído: **grupo FECHADO** = todos os títulos em aberto do fornecedor no mesmo vencimento (ou janela curta terminando no vencimento do boleto) somando exato. Subset-sum livre é ruído (922/2369 falsos). | medição PRD 19/10 |
 

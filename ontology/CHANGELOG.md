@@ -33,6 +33,14 @@ Feature: `sispag-boleto-agrupado` (`/feature-tweak`). `entity_changed = true`. *
 - Contagens: entidades 28 → 29 (planned 5 → 6; `entities_coverage_pct` 74 → 69, recalculado por
   `round(implemented/total)`: o 74 vinha sem recálculo havia algumas versões; 20/28 dava 71); ações 45 → 50 (planned 7 → 12;
   `actions_coverage_pct` 80 → 72); regras 30 → 31 (planned 11 → 12).
+- **Emenda 2026-10-21 (medições HML da Task 1, sem bump):** guarda da limpeza do borderô passa a ser o **lote
+  nativo** (não finalizado e sem `.REM`, lido ao vivo); `vldHasRemessaPgto` deixa de ser guarda (reflete o
+  import; H9 corrigido). Identidade do borderô = `filCod` + `borCod` + `borTimCad` (o ERP reusa `borCod`
+  depois de `excluirBordero`); marcador em `borEspNrbanco` abandonado; resposta perdida ⇒ busca por janela
+  de `borTimCad` (`t0`/`t1`, epoch ms). Ausência = `fin010/list borCod#EQ` vazio (`GET` ausente = `500
+  RECORDNOTFOUND`). Fatos V2/V3/V5/G4 registrados; G6: sugestão ambígua ⇒ nenhuma sugestão. Tocados: I21
+  (I21e/f/k/l/n/o/q/r/s), I11i, retomada, `GrupoBoleto.execucao`, `prepararBorderoDoGrupo`,
+  `limparBorderoDoGrupo`, `sugerirGruposBoleto`, `Alerta`, `conexos.md`, ADR-0077, `CLAUDE.md`, ANEXO R-21.
 
 ## v0.47.0 — SISPAG: prontidão do lote em rascunho (2026-10-22, ADR-0076)
 

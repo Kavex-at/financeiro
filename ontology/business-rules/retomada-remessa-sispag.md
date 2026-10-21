@@ -15,7 +15,7 @@ related_files:
   - src/backend/domain/errors/RemessaEmDuvidaError.ts
   - src/backend/domain/errors/ConciliacaoEmDuvidaError.ts
   - src/backend/domain/service/sispag/SincronizacaoLoteService.ts
-last_review: 2026-10-20
+last_review: 2026-10-21
 has_canonical_test: true
 ---
 
@@ -74,25 +74,33 @@ No `fin052`, `processadoEm` (`garTimProcessamento`) responde "o `processar` já 
 > e a retomada refaz o item (I17f/g). Ver `vinculo-codbar-item-sispag.md`.
 >
 > **Emenda ADR-0077 (`planned`) — etapa `preparar_bordero` (boleto agrupado).** Entre `criarLote` e `importar`,
-> **persistida** no write-ahead (escreve no ERP; diferente de `vincular_codbar`): marcador de correlação antes
-> do `POST fin010`, `borCod` logo depois. Reconhecimento ao vivo, por grupo:
+> **persistida** no write-ahead (escreve no ERP; diferente de `vincular_codbar`): `t0` antes do `POST fin010`,
+> `t1` depois, `borCod` + `borTimCad` da resposta (ou da releitura) logo em seguida. **Identidade do borderô =
+> `filCod` + `borCod` + `borTimCad`** (emenda 2026-10-21: o ERP reusa `borCod` depois de `excluirBordero`;
+> sem marcador de correlação). A "busca por janela" é o `fin010/list` filtrado por `filCod`, `usnCodCad` =
+> usuário do robô, `gerNum`, `borDtaMvto`, `borVldTipo 2`, `borVldFinalizado 0` e `borTimCad#GE` (`t0` −
+> margem) / `borTimCad#LE` (`t1` + margem) em epoch ms (medido: ISO responde 500; `#GTE`/`#BETWEEN` não são
+> aceitos); a margem de relógio é constante de código. Reconhecimento ao vivo, por grupo:
 >
 > | Estado observado | Ação |
 > |---|---|
-> | marcador gravado, `borCod` ausente, nenhum borderô com o marcador | cria |
-> | exatamente um borderô com o marcador | adota |
-> | dois ou mais borderôs com o marcador | `indeterminado` |
+> | `t0` gravado, `borCod` ausente, busca por janela sem resultado | cria |
+> | busca por janela com exatamente um borderô | adota (persiste `borCod` + `borTimCad`) |
+> | busca por janela com dois ou mais borderôs | `indeterminado` + `Alerta` (Permutas cria borderôs `fin010` com o mesmo usuário; a colisão residual cai aqui) |
+> | `borCod` gravado e `fin010/list borCod#EQ` traz outro `borTimCad` (o ERP reusou o número) | `indeterminado`; o borderô alheio nunca é tocado |
 > | borderô com parte das baixas | completa só as faltantes |
 > | baixa de título que não é do grupo | `indeterminado` (terceiro) |
 > | borderô completo, não importado | `importar` |
 > | item com o `borCod` no rascunho | pula |
 > | borderô finalizado antes da remessa | `indeterminado` + `Alerta` (alguém baixou por fora) |
-> | grupo com J rejeitado antes; borderô antigo **ausente ou cancelado** no `fin010` (a analista o resolveu) | cria um novo |
-> | grupo com J rejeitado antes; borderô antigo aparece em `borderosPendentes` do lote novo (V7) | **reaproveita**: adota o `borCod` antigo no write-ahead novo, confere as N baixas (títulos e valores pela I21b ao vivo) e `vlrTotalLiquido == valorBoleto`, importa; nunca cria um segundo borderô |
+> | grupo com J rejeitado antes; borderô antigo **ausente** (sem linha, ou o número reusado com outro `borTimCad`) **ou cancelado** no `fin010` (a analista o resolveu) | cria um novo |
+> | grupo com J rejeitado antes; borderô antigo aparece em `borderosPendentes` do lote novo (V7) | **reaproveita**: adota o `borCod` + `borTimCad` antigos no write-ahead novo, confere as N baixas (títulos e valores pela I21b ao vivo) e `vlrTotalLiquido == valorBoleto`, importa; nunca cria um segundo borderô |
 > | grupo com J rejeitado antes; borderô antigo em cadastro mas **fora** de `borderosPendentes`, ou com baixas divergentes | grupo **retirado** (I21p(3), motivo `BORDERO_ANTERIOR_NAO_RESOLVIDO`), **sem** limpar o borderô antigo (I21q); `Alerta` `sispag-bordero-grupo-pendente`; a remessa segue com os demais |
 >
-> A tabela "Aberto, com PARTE das chaves" passa a contar `borCod`s como chaves. Lote nativo **finalizado**
-> nunca limpa borderô (I21q). Ver `boleto-agrupado-sispag.md` (I21l, I21q, I21r, I21s).
+> A tabela "Aberto, com PARTE das chaves" passa a contar `borCod`s como chaves. Ausência observada = `fin010/list`
+> `borCod#EQ` sem linhas ou só com outro `borTimCad` (`GET` de borderô ausente responde `500 RECORDNOTFOUND`, não
+> 404). Lote nativo **finalizado ou com `.REM` gerado** nunca limpa borderô (I21q); `vldHasRemessaPgto` não é
+> guarda (reflete o import). Ver `boleto-agrupado-sispag.md` (I21l, I21q, I21r, I21s).
 
 ### Write-ahead obrigatório (a ordem é a regra)
 
