@@ -26,6 +26,10 @@
   linha separa os títulos em: sugestão para confirmar, boleto a escolher, só candidato fraco, sem boleto
   no DDA e confirmado aguardando vínculo. O botão da linha diz a ação ("Confirmar boleto sugerido",
   "Escolher o boleto", "Ver candidatos").
+- **Na dúvida, o título não entra no lote.** Se a situação de pagamento não pôde ser conferida por
+  inteiro (título que ainda não chegou à carteira do SISPAG, ou uma consulta fora do ar no momento), a
+  inclusão recusa o título dizendo o que faltou, em vez de deixá-lo entrar só com a checagem de aprovação.
+  Recarregar o painel ou tentar de novo em instantes resolve.
 - **O que fica para depois.** TED/PIX sem conta no cadastro ou com favorecido não autorizado continuam
   sendo detectados só dentro do lote.
 
