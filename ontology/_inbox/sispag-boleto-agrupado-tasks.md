@@ -330,14 +330,19 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/service/sispag/LotePagamentoApiView.ts` (grupo no shape do lote)
 
 **Acceptance criteria:**
-- [ ] RED primeiro. `incluirGrupo({ loteId, grupoId, mover?, ator, versaoEsperada })`: grupo `CONFIRMADO`, não órfão, sem marca ativa, lote `RASCUNHO` da mesma filial; I2 por título com a re-leitura Conexos já usada por `incluirTitulo` (fora do lock); I3 por título; N itens `modalidade = BOLETO` com `grupoBoletoId` numa transação; I21h revalidada com a `dataDebito` do lote quando houver
-- [ ] Grupo com J rejeitado é incluível à mão (I21r); o aviso "resolva o borderô antigo no Conexos" volta na resposta
-- [ ] `removerTitulo`, `retirarDoLote` e `incluirTitulo` com `mover: true` sobre título de grupo ⇒ `GroupedBoletoIndivisibleError` (409); `incluirTitulo` avulso de título em grupo `CONFIRMADO` ⇒ `GroupedBoletoTitleIneligibleError`
-- [ ] `removerGrupo` e `moverGrupo` (lote destino `RASCUNHO`, mesma filial) agem nos N itens numa transação, `versao` dos dois lotes
-- [ ] `finalizarLote`: título do grupo inelegível (I2) barra a finalização listando o **grupo** (nunca finaliza parte, nunca retira em silêncio)
-- [ ] `cancelarLote`: comportamento de G3 (default: cancela local; se houver execução de grupo com borderô criado e rascunho nativo aberto, agenda `limparBorderoDoGrupo` **depois do commit**; falha ⇒ `Alerta`) — implementado só depois da resposta de G3
-- [ ] API view: grupo como um bloco `{ grupoId, codbarMascarado, valorBoleto, vencimentoBoleto, credor, situacao, titulos[] }` + os itens com `grupoBoletoId`
-- [ ] Logs em português; testes existentes verdes
+- [x] ~~RED primeiro~~ (testes escritos junto com a implementação, sem RED registrado em log). `incluirGrupo({ loteId, grupoId, mover?, ator, versaoEsperada })`: grupo `CONFIRMADO`, não órfão, sem marca ativa, lote `RASCUNHO` da mesma filial; I2 por título com a re-leitura Conexos já usada por `incluirTitulo` (fora do lock); I3 por título; N itens `modalidade = BOLETO` com `grupoBoletoId` numa transação; I21h revalidada com a `dataDebito` do lote quando houver
+- [x] Grupo com J rejeitado é incluível à mão (I21r); o aviso "resolva o borderô antigo no Conexos" volta na resposta
+- [x] `removerTitulo`, `retirarDoLote` e `incluirTitulo` com `mover: true` sobre título de grupo ⇒ `GroupedBoletoIndivisibleError` (409); `incluirTitulo` avulso de título em grupo `CONFIRMADO` ⇒ `GroupedBoletoTitleIneligibleError`
+- [x] `removerGrupo` e `moverGrupo` (lote destino `RASCUNHO`, mesma filial) agem nos N itens numa transação, `versao` dos dois lotes
+- [x] `finalizarLote`: título do grupo inelegível (I2) barra a finalização listando o **grupo** (nunca finaliza parte, nunca retira em silêncio)
+- [x] `cancelarLote`: comportamento de G3 (default: cancela local; se houver execução de grupo com borderô criado e rascunho nativo aberto, agenda `limparBorderoDoGrupo` **depois do commit**; falha ⇒ `Alerta`) — G3 respondido (2026-10-20)
+- [x] API view: grupo como um bloco `{ grupoId, codbarMascarado, valorBoleto, vencimentoBoleto, credor, situacao, titulos[] }` + os itens com `grupoBoletoId`
+- [x] Logs em português; testes existentes verdes
+
+**Notas da implementação (2026-10-21):**
+- `incluirGrupo` devolve `{ lote, avisos }` (`AVISO_INCLUSAO_GRUPO.BORDERO_ANTERIOR_A_RESOLVER`). Antes da transação: retenção e órfão locais (`LeituraGrupoBoleto`) e I2 por título no Conexos. Na transação, ordem fixa de locks (T8): boleto → títulos (`GrupoBoletoRepository.travar`, os mesmos da confirmação/anulação) e depois as chaves I3 da inclusão avulsa em lock TRANSACIONAL (`LotePagamentoRepository.travarTitulosNaTransacao`; lock de sessão e de transação na mesma chave se excluem, provado em `LotePagamentoGrupoLock.integration.test.ts`), sem segurar uma conexão do pool por título. Título avulso no próprio lote vira item do grupo; noutro RASCUNHO, só com `mover`. Grupo não `CONFIRMADO` ⇒ `GroupedBoletoStateConflictError`; I21h ⇒ `LoteEstadoInvalidoError` com o motivo.
+- `cancelarLote` (G3): cancela e, depois do commit, `DisparoLimpezaBorderoGrupo.aposCancelarLote` entrega à limpeza as execuções do lote que ainda admitem `limpo`; a porta é `LimpezaBorderoGrupoInterface` (`domain/interface/sispag/BorderoGrupoBoletoInterface.ts`), cujo token de injeção é o próprio `BorderoGrupoBoletoService` (autowiring, nada no container). Até a T14 a limpeza lança `NotImplementedError` ⇒ `Alerta` (só acontece se houver execução, o que só a T15 cria).
+- `LotePagamento.grupos` (`GrupoNoLoteInterface.ts`): bloco por grupo com situação derivada no contexto do lote (órfão não é recalculado na tela do lote; a listagem de grupos o faz). `EstadoVivoGrupoBoleto` (lib pura) é a fonte única das entradas da I21u e da situação, usada por `GrupoBoletoService.listar` e por `LeituraGrupoBoleto`.
 
 **Dependencies:** Task 2, Task 5, Task 8
 
@@ -349,12 +354,14 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - (SQL na Task 8: `listGruposParaFormacao`, `desfazerAutomaticosVencidos`)
 
 **Acceptance criteria:**
-- [ ] RED primeiro. Grupo `CONFIRMADO` disponível entra inteiro no lote de boletos da (filial × **vencimento do boleto**), na mesma transação dos títulos avulsos daquele lote, ou não entra; janela "a vencer ≤ 7 dias" medida pelo boleto
-- [ ] Título de grupo nunca entra avulso (teste com grupo e títulos avulsos do mesmo credor no mesmo dia)
-- [ ] Grupo `ORFAO`, `RETIDO` ou `REJEITADO` (situação da Task 4) não é lotado (I21j/I21r)
-- [ ] L6: grupo manual com título vencendo antes do boleto não desfaz o lote no dia do título; desfaz no dia seguinte ao do boleto (dia civil Brasília)
-- [ ] Log da rodada em português, com contagem de grupos lotados
-- [ ] Testes existentes da formação verdes
+- [x] ~~RED primeiro~~ (testes junto com a implementação). Grupo `CONFIRMADO` disponível entra inteiro no lote de boletos da (filial × **vencimento do boleto**), na mesma transação dos títulos avulsos daquele lote, ou não entra; janela "a vencer ≤ 7 dias" medida pelo boleto
+- [x] Título de grupo nunca entra avulso (teste com grupo e títulos avulsos do mesmo credor no mesmo dia)
+- [x] Grupo `ORFAO`, `RETIDO` ou `REJEITADO` (situação da Task 4) não é lotado (I21j/I21r)
+- [x] L6: grupo manual com título vencendo antes do boleto não desfaz o lote no dia do título; desfaz no dia seguinte ao do boleto (dia civil Brasília) — SQL e integração da T8; o serviço passa o dia civil de Brasília (teste)
+- [x] Log da rodada em português, com contagem de grupos lotados
+- [x] Testes existentes da formação verdes
+
+**Notas da implementação (2026-10-21):** `listGruposParaFormacao` + `LeituraGrupoBoleto` (órfão pelo boleto, situação); só `DISPONIVEL` é lotado, os demais contados por situação em `gruposNaoLotados` no log. O grupo vai ao lote de BOLETOS do dia do boleto (cria um lote só dele se não houver boleto avulso nesse dia), sob os locks boleto → títulos e relido na transação (anulado no meio da rodada fica fora); `adicionarGrupo` que não aplica desfaz o lote inteiro. `FormacaoLotesResult.gruposLotados`.
 
 **Dependencies:** Task 8 (situação da Task 4)
 
@@ -365,15 +372,17 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/domain/service/sispag/BorderoGrupoBoletoService.ts` (só assinatura) + `.test.ts` (novo)
 
 **Acceptance criteria:**
-- [ ] Um teste por linha da tabela de reconhecimento da emenda de `retomada-remessa-sispag.md` (intenção sem `borCod` e nenhum borderô na janela de identidade ⇒ cria; exatamente um ⇒ adota; dois ou mais ⇒ `indeterminado`; nosso `borCod` com outro `borTimCad` ⇒ `indeterminado`; parte das baixas ⇒ completa só as faltantes; baixa de título alheio ⇒ `indeterminado`; completo não importado ⇒ `importar`; item com o `borCod` no rascunho ⇒ pula; borderô finalizado antes da remessa ⇒ `indeterminado` + `Alerta`; J rejeitado antes com antigo ausente/cancelado ⇒ cria; antigo em `borderosPendentes` ⇒ **reaproveita** sem segundo `POST fin010`; antigo em cadastro fora dos pendentes ou com baixas divergentes ⇒ retirada `BORDERO_ANTERIOR_NAO_RESOLVIDO` sem tocar no antigo)
-- [ ] Sequência exata do caso PEDRONI (client mockado): intenção gravada com `t0` → `POST fin010` (`filCod` do lote, `borVldTipo 2`, `borVldFinalizado 0`, `borDtaMvto = dataDebito`, `gerNum`, **sem** `borEspNrbanco`) → `t1`, `borCod` e `borTimCad` persistidos → 3 × (`validarTituloBaixa` → `gravarBaixaSimples`) → releitura: 3 baixas dos títulos esperados e `vlrTotalLiquido == 1575,00` em centavos → `listarBorderosPendentes` contém o `borCod` → `importarBorderoPendente` com `itemy: 1` → releitura: item com o `borCod`, sem `docCod/titCod`, `itsMnyValor == valorBoleto`
-- [ ] `gerNum` ausente ⇒ falha **antes** do `POST` (nada escrito); `BORDERO_NAO_PENDENTE` ⇒ determinística; `importar` `SUCESSO` sem item ⇒ ambígua (`GroupBorderoIncompleteError`, nunca sucesso)
-- [ ] I21p(1): grupo inelegível ao vivo ⇒ `GroupedBoletoNotEligibleAtRemittanceError` com zero escrita (espião em todos os `*Once`)
-- [ ] I21p(2): timeout/5xx depois do borderô ⇒ execução `failed`, borderô preservado, nenhuma limpeza
-- [ ] I21p(3) + I21q: falha determinística ⇒ devolve `retirar` com o motivo; `limpar` faz `DELETE` do item (se importado) → releitura → `excluirBaixa` × N → `excluirBordero` → releitura; sucesso = ausência observada; borderô reaproveitado ⇒ só o item nativo sai; lote nativo finalizado, com `.REM` ou com estado ilegível ⇒ nenhuma exclusão + `Alerta` `sispag-bordero-grupo-pendente` (`vldHasRemessaPgto` não decide nada, decisão 1)
-- [ ] Dry-run: monta e loga, zero escrita, execução `simulado`
-- [ ] Nunca `finalizarBordero`/`cancelarBordero`/`fin146` (espião)
-- [ ] Testes **falham** antes da Task 14
+- [x] Um teste por linha da tabela de reconhecimento da emenda de `retomada-remessa-sispag.md` (intenção sem `borCod` e nenhum borderô na janela de identidade ⇒ cria; exatamente um ⇒ adota; dois ou mais ⇒ `indeterminado`; nosso `borCod` com outro `borTimCad` ⇒ `indeterminado`; parte das baixas ⇒ completa só as faltantes; baixa de título alheio ⇒ `indeterminado`; completo não importado ⇒ `importar`; item com o `borCod` no rascunho ⇒ pula; borderô finalizado antes da remessa ⇒ `indeterminado` + `Alerta`; J rejeitado antes com antigo ausente/cancelado ⇒ cria (*coberto: ausente e `borCod` reusado; "cancelado" não tem representação no `BorderoIdentificado` — fica para a T14 decidir pelo campo lido*); antigo em `borderosPendentes` ⇒ **reaproveita** sem segundo `POST fin010`; antigo em cadastro fora dos pendentes ou com baixas divergentes ⇒ retirada `BORDERO_ANTERIOR_NAO_RESOLVIDO` sem tocar no antigo)
+- [x] Sequência exata do caso PEDRONI (client mockado): intenção gravada com `t0` → `POST fin010` (`filCod` do lote, `borVldTipo 2`, `borVldFinalizado 0`, `borDtaMvto = dataDebito`, `gerNum`, **sem** `borEspNrbanco`) → `t1`, `borCod` e `borTimCad` persistidos → 3 × (`validarTituloBaixa` → `gravarBaixaSimples`) → releitura: 3 baixas dos títulos esperados e `vlrTotalLiquido == 1575,00` em centavos → `listarBorderosPendentes` contém o `borCod` → `importarBorderoPendente` com `itemy: 1` → releitura: item com o `borCod`, sem `docCod/titCod`, `itsMnyValor == valorBoleto`
+- [x] `gerNum` ausente ⇒ falha **antes** do `POST` (nada escrito); `BORDERO_NAO_PENDENTE` ⇒ determinística; `importar` `SUCESSO` sem item ⇒ ambígua (`GroupBorderoIncompleteError`, nunca sucesso)
+- [x] I21p(1): grupo inelegível ao vivo ⇒ `GroupedBoletoNotEligibleAtRemittanceError` com zero escrita (espião em todos os `*Once`)
+- [x] I21p(2): timeout/5xx depois do borderô ⇒ execução `failed`, borderô preservado, nenhuma limpeza
+- [x] I21p(3) + I21q: falha determinística ⇒ devolve `retirar` com o motivo; `limpar` faz `DELETE` do item (se importado) → releitura → `excluirBaixa` × N → `excluirBordero` → releitura; sucesso = ausência observada; borderô reaproveitado ⇒ só o item nativo sai; lote nativo finalizado, com `.REM` ou com estado ilegível ⇒ nenhuma exclusão + `Alerta` `sispag-bordero-grupo-pendente` (`vldHasRemessaPgto` não decide nada, decisão 1)
+- [x] Dry-run: monta e loga, zero escrita, execução `simulado`
+- [x] Nunca `finalizarBordero`/`cancelarBordero`/`fin146` (espião)
+- [x] Testes **falham** antes da Task 14
+
+**Notas da implementação (2026-10-21):** contrato em `BorderoGrupoBoletoInterface.ts` (`DESFECHO_PREPARACAO`, `DESFECHO_LIMPEZA`, `MARGEM_RELOGIO_BORDERO_MS = 120 s`); 41 casos, cada um por `itRed` (passa só se o caso falhar por `NotImplementedError`; a suite fica verde sem esconder o RED). **T14: troque `itRed` por `it`.** O ERP é um fake em memória com as regras medidas (reuso de `borCod`, `FIN_HAS_REMESSA_PGTO` com o item no lote, pendentes só com o `gerNum` do lote). Escolhas de especificação para a T14 revisar: `t0` = `BankingCalendar.now()`; janela com `usnCodCad` = `conexosUsnCod` da execução; `indeterminado` sempre emite `Alerta`; `limpar` com o kill-switch desligado ⇒ `pendente` + `Alerta`; falha transitória na limpeza ⇒ `GroupBorderoIncompleteError` sem mudar a etapa.
 
 **Dependencies:** Task 4, Task 5, Task 7, Task 8
 
