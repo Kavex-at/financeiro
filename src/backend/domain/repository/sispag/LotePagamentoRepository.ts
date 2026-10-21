@@ -17,6 +17,7 @@ import {
     LOTE_STATUS,
     LOTE_STATUS_COMPROMETIDO,
     type ListarLotesFiltro,
+    MODALIDADE,
     type Modalidade,
     type OrigemBaixa,
     type PaymentCheckState,
@@ -111,7 +112,31 @@ interface ItemRow {
     vinculo_codigo_mascarado?: string | null;
     vinculo_aplicado_em?: Date | null;
     vinculo_flp_cod?: number | null;
+    // ── 0090: grupo de boleto (ADR-0077, I21j) ──
+    grupo_boleto_id?: string | null;
 }
+
+/** Um título do grupo no momento da inclusão (snapshot para o item local). */
+export interface ItemDoGrupo {
+    filCod: number;
+    docCod: string;
+    titCod: string;
+    credor?: string;
+    valor?: number;
+    /** Epoch ms (meia-noite UTC). */
+    vencimento?: number;
+}
+
+/** Desfecho de incluir/retirar/mover um grupo no lote (o serviço decide o erro). */
+export const RESULTADO_OPERACAO_GRUPO = {
+    APLICADO: 'APLICADO',
+    /** O lote não existe, não é RASCUNHO ou a `versao` mudou (I6): nada gravado. */
+    CONFLITO: 'CONFLITO',
+    /** O grupo não está no lote de origem. */
+    AUSENTE: 'AUSENTE',
+} as const;
+export type ResultadoOperacaoGrupo =
+    (typeof RESULTADO_OPERACAO_GRUPO)[keyof typeof RESULTADO_OPERACAO_GRUPO];
 
 export const RESULTADO_APLICAR_SINCRONIZACAO = {
     APLICADO: 'APLICADO',
@@ -177,6 +202,7 @@ export default class LotePagamentoRepository {
         incluidoPor: r.incluido_por,
         incluidoEm: r.incluido_em ? r.incluido_em.toISOString() : undefined,
         ...(r.native_its_cod_seq != null ? { nativeItsCodSeq: Number(r.native_its_cod_seq) } : {}),
+        ...(r.grupo_boleto_id != null ? { grupoBoletoId: r.grupo_boleto_id } : {}),
         ...(r.retorno_evento != null ? { retornoEvento: String(r.retorno_evento) } : {}),
         ...(r.retorno_descricao != null ? { retornoDescricao: String(r.retorno_descricao) } : {}),
         ...(r.rejeitado != null ? { rejeitado: Boolean(r.rejeitado) } : {}),
@@ -414,6 +440,10 @@ export default class LotePagamentoRepository {
      * `hoje` = dia civil de Brasília codificado como o ERP (00:00Z). Vencido é vencimento
      * ANTES de hoje: o título que vence hoje ainda pode ser pago (R2). Nunca `now()` — o ERP
      * grava 00:00Z, e a partir das 09:00 BRT o título de hoje já pareceria vencido.
+     *
+     * Item de grupo de boleto (ADR-0077, I21j/PI-8): o "vencido" é o do BOLETO
+     * (`sispag_grupo_boleto.vencimento_boleto`), não o do título — um grupo manual com título
+     * vencendo antes do boleto não desfaz o lote no dia do título.
      */
     public desfazerAutomaticosVencidos = async (
         hoje: Date,
@@ -424,7 +454,10 @@ export default class LotePagamentoRepository {
              WHERE l.automatico = TRUE AND l.status = 'RASCUNHO'
                AND EXISTS (
                  SELECT 1 FROM lote_pagamento_item i
-                 WHERE i.lote_id = l.id AND i.vencimento IS NOT NULL AND i.vencimento < $hoje)`,
+                 LEFT JOIN sispag_grupo_boleto g ON g.id = i.grupo_boleto_id
+                 WHERE i.lote_id = l.id
+                   AND COALESCE(g.vencimento_boleto::timestamp AT TIME ZONE 'UTC', i.vencimento) IS NOT NULL
+                   AND COALESCE(g.vencimento_boleto::timestamp AT TIME ZONE 'UTC', i.vencimento) < $hoje)`,
             { hoje },
         );
 
@@ -447,12 +480,144 @@ export default class LotePagamentoRepository {
                     i.baixa_fonte, i.divergencia, i.divergencia_detalhe, i.sincronizado_em,
                     i.verificacao_estado, i.verificado_em, i.destino_mascarado, i.autorizacao_aviso,
                     i.vinculo_origem, i.vinculo_decisao_id, i.vinculo_codigo_mascarado,
-                    i.vinculo_aplicado_em, i.vinculo_flp_cod
+                    i.vinculo_aplicado_em, i.vinculo_flp_cod, i.grupo_boleto_id
              FROM lote_pagamento_item i
              WHERE i.lote_id = $id ORDER BY i.incluido_em ASC, i.id ASC`,
             { id },
         );
         return this.mapLote(header, (itens as ItemRow[]).map(this.mapItem));
+    };
+
+    private naTransacao = <T>(
+        tx: TransactionClient | undefined,
+        fn: (t: TransactionClient) => Promise<T>,
+    ): Promise<T> => (tx ? fn(tx) : this.databaseClient.withTransaction(fn));
+
+    /**
+     * Trava o lote (`FOR UPDATE`) e confere RASCUNHO e, quando pedida, a `versao` (I6). `false` =
+     * conflito (inexistente, fora de RASCUNHO ou versão mudou).
+     */
+    private travarRascunho = async (
+        loteId: string,
+        versaoEsperada: number | undefined,
+        tx: TransactionClient,
+    ): Promise<boolean> => {
+        const row = await tx.selectFirst<{ status: string; versao: number }>(
+            `SELECT status, versao FROM lote_pagamento WHERE id = $loteId FOR UPDATE`,
+            { loteId },
+        );
+        if (!row || row.status !== LOTE_STATUS.RASCUNHO) return false;
+        return versaoEsperada === undefined || Number(row.versao) === versaoEsperada;
+    };
+
+    /**
+     * Inclui os N títulos de um grupo de boleto no lote RASCUNHO (ADR-0077, I21j): N itens
+     * `modalidade = BOLETO` com `grupo_boleto_id`, e `versao + 1`, numa transação — ou nada. Sem
+     * `ON CONFLICT`: um título que já está no lote faz o INSERT falhar e desfaz os anteriores
+     * (nunca entra parte do grupo).
+     */
+    public adicionarGrupo = async (
+        input: {
+            loteId: string;
+            grupoId: string;
+            itens: readonly ItemDoGrupo[];
+            incluidoPor: string;
+            versaoEsperada?: number;
+        },
+        tx?: TransactionClient,
+    ): Promise<ResultadoOperacaoGrupo> => {
+        if (input.itens.length < 2) {
+            throw new Error('grupo de boleto entra no lote com N >= 2 itens');
+        }
+        return this.naTransacao(tx, async (t) => {
+            if (!(await this.travarRascunho(input.loteId, input.versaoEsperada, t))) {
+                return RESULTADO_OPERACAO_GRUPO.CONFLITO;
+            }
+            const params: Record<string, unknown> = {
+                loteId: input.loteId,
+                grupoId: input.grupoId,
+                modalidade: MODALIDADE.BOLETO,
+                incluidoPor: input.incluidoPor,
+            };
+            const tuplas = input.itens.map((it, i) => {
+                params[`f${i}`] = it.filCod;
+                params[`d${i}`] = it.docCod;
+                params[`t${i}`] = it.titCod;
+                params[`cr${i}`] = it.credor ?? null;
+                params[`v${i}`] = it.valor ?? null;
+                params[`ve${i}`] = it.vencimento != null ? new Date(it.vencimento) : null;
+                return `($loteId, $f${i}, $d${i}, $t${i}, $cr${i}, $v${i}, $ve${i}, $modalidade,
+                         $incluidoPor, $grupoId::uuid)`;
+            });
+            await t.insert(
+                `INSERT INTO lote_pagamento_item
+                    (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, modalidade,
+                     incluido_por, grupo_boleto_id)
+                 VALUES ${tuplas.join(', ')}`,
+                params,
+            );
+            await this.tocarLote(input.loteId, t);
+            return RESULTADO_OPERACAO_GRUPO.APLICADO;
+        });
+    };
+
+    /** Retira os N itens do grupo do lote RASCUNHO, com `versao + 1`, numa transação (I21j). */
+    public removerGrupo = async (
+        input: { loteId: string; grupoId: string; versaoEsperada?: number },
+        tx?: TransactionClient,
+    ): Promise<ResultadoOperacaoGrupo> =>
+        this.naTransacao(tx, async (t) => {
+            if (!(await this.travarRascunho(input.loteId, input.versaoEsperada, t))) {
+                return RESULTADO_OPERACAO_GRUPO.CONFLITO;
+            }
+            const n = await t.update(
+                `DELETE FROM lote_pagamento_item
+                  WHERE lote_id = $loteId AND grupo_boleto_id = $grupoId::uuid`,
+                { loteId: input.loteId, grupoId: input.grupoId },
+            );
+            if (n === 0) return RESULTADO_OPERACAO_GRUPO.AUSENTE;
+            await this.tocarLote(input.loteId, t);
+            return RESULTADO_OPERACAO_GRUPO.APLICADO;
+        });
+
+    /**
+     * Move os N itens do grupo de um lote RASCUNHO para outro (I21j): os dois travados em ordem
+     * de id (sem deadlock entre movimentos opostos), `versao + 1` nos dois, numa transação. Título
+     * que já está no destino faz o UPDATE falhar e nada se move.
+     */
+    public moverGrupo = async (
+        input: {
+            origemId: string;
+            destinoId: string;
+            grupoId: string;
+            versaoOrigem?: number;
+            versaoDestino?: number;
+        },
+        tx?: TransactionClient,
+    ): Promise<ResultadoOperacaoGrupo> => {
+        if (input.origemId === input.destinoId) {
+            throw new Error('mover grupo exige lotes de origem e destino diferentes');
+        }
+        return this.naTransacao(tx, async (t) => {
+            const ordem = [
+                { id: input.origemId, versao: input.versaoOrigem },
+                { id: input.destinoId, versao: input.versaoDestino },
+            ].sort((a, b) => a.id.localeCompare(b.id));
+            for (const l of ordem) {
+                if (!(await this.travarRascunho(l.id, l.versao, t))) {
+                    return RESULTADO_OPERACAO_GRUPO.CONFLITO;
+                }
+            }
+            const n = await t.update(
+                `UPDATE lote_pagamento_item SET lote_id = $destinoId
+                  WHERE lote_id = $origemId AND grupo_boleto_id = $grupoId::uuid`,
+                { origemId: input.origemId, destinoId: input.destinoId, grupoId: input.grupoId },
+            );
+            if (n === 0) return RESULTADO_OPERACAO_GRUPO.AUSENTE;
+            await this.tocarLote(input.origemId, t);
+            await this.tocarLote(input.destinoId, t);
+            return RESULTADO_OPERACAO_GRUPO.APLICADO;
+        });
     };
 
     public listLotes = async (filtro: ListarLotesFiltro): Promise<LotePagamento[]> => {

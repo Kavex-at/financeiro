@@ -64,7 +64,10 @@ describe('LotePagamentoRepository', () => {
         const hoje = new Date('2026-10-14T00:00:00Z');
         await make(db).desfazerAutomaticosVencidos(hoje);
         const [sql, params] = db.update.mock.calls[0];
-        expect(sql).toContain('i.vencimento < $hoje');
+        // ADR-0077 (PI-8): item de grupo mede o vencido pelo boleto; avulso, pelo próprio item.
+        expect(sql).toContain(
+            "COALESCE(g.vencimento_boleto::timestamp AT TIME ZONE 'UTC', i.vencimento) < $hoje",
+        );
         expect(sql).not.toContain('now()');
         expect(params).toEqual({ hoje });
     });

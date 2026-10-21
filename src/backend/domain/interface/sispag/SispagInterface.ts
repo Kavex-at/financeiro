@@ -438,6 +438,11 @@ export interface ItemLote {
     /** Sequencial do item no lote NATIVO — 4ª parte da chave que viaja no `.REM`/`.RET`. */
     nativeItsCodSeq?: number;
     /**
+     * Grupo de boleto a que o item pertence (ADR-0077, I21j): os N itens do grupo entram, saem e
+     * se movem juntos; na remessa viram UM item nativo de borderô (I21k).
+     */
+    grupoBoletoId?: string;
+    /**
      * Autorização do favorecido vigente quando o destino do item congelou no import do `fin015`
      * (ADR-0065 I10f): só rastreio, nunca o valor.
      */
@@ -731,12 +736,16 @@ export const MOTIVOS_RETIRADA_CODIGO_BARRAS: readonly SystemRemovalReason[] = [
     'CODIGO_BARRAS_REPETIDO',
     'CODIGO_BARRAS_ILEGIVEL',
     'VINCULO_CODIGO_BARRAS_FALHOU',
+    // ADR-0077 (I21p(3), I16h): retirada do grupo de boleto inteiro.
+    'GRUPO_BOLETO_FALHOU',
+    'BORDERO_ANTERIOR_NAO_RESOLVIDO',
 ];
 
 export const ORIGENS_RETENCAO_CODIGO_BARRAS: readonly DuplicateHoldOrigin[] = [
     'CODIGO_BARRAS_REPETIDO',
     'CODIGO_BARRAS_ILEGIVEL',
     'VINCULO_CODIGO_BARRAS_FALHOU',
+    'GRUPO_BOLETO',
 ];
 
 /** Máscara I16e: 5 primeiros + 4 últimos dígitos das barras, separados por `…`. */
@@ -762,6 +771,13 @@ export const SYSTEM_REMOVAL_REASON = {
      * import (divergência de valor/data/banco/juros, ou código já presente em outro item).
      */
     VINCULO_CODIGO_BARRAS_FALHOU: 'VINCULO_CODIGO_BARRAS_FALHOU',
+    /**
+     * ADR-0077 (I21p(3)): falha DETERMINÍSTICA do borderô do grupo depois de criado (baixa
+     * recusada, borderô não pendente, divergência de valor, barra recusada, código repetido).
+     */
+    GRUPO_BOLETO_FALHOU: 'GRUPO_BOLETO_FALHOU',
+    /** ADR-0077 (I21s): o borderô de um J rejeitado segue em cadastro fora dos pendentes. */
+    BORDERO_ANTERIOR_NAO_RESOLVIDO: 'BORDERO_ANTERIOR_NAO_RESOLVIDO',
 } as const;
 
 export type SystemRemovalReason =

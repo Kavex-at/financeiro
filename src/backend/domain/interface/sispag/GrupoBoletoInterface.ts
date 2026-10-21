@@ -165,9 +165,59 @@ export interface GrupoBoleto {
     anuladoPor?: string;
     anuladoEm?: Date;
     motivoAnulacao?: string;
+    tipoAnulacao?: GrupoBoletoTipoAnulacao;
     pagoObservadoEm?: Date;
     versao: number;
 }
+
+/** Entrada de `GrupoBoletoRepository.inserirConfirmado` (o serviço já validou I21a–d/h). */
+export interface NovoGrupoBoleto {
+    filCod: number;
+    pesCod: string;
+    credor?: string;
+    emissorChave: string;
+    ddcCod: number;
+    ditCod: number;
+    numeroBoleto?: string;
+    codbarMascarado: string;
+    valorBoletoCentavos: number;
+    vencimentoBoleto: string;
+    titulos: GrupoBoletoTitulo[];
+    origem: GrupoBoletoOrigem;
+    intercambiavel: boolean;
+    avisosReconhecidos: AvisoGrupo[];
+    confirmacaoEmissorId: string;
+    confirmadoPor: string;
+}
+
+/** Linha da trilha só-inclusão do grupo (I21i). */
+export interface GrupoBoletoEventoRegistro {
+    id: string;
+    grupoId: string;
+    tipo: GrupoBoletoEvento;
+    ator: string;
+    ocorridoEm: Date;
+    filCod?: number;
+    loteId?: string;
+    execucaoId?: string;
+    borCod?: number;
+    ddcCod?: number;
+    ditCod?: number;
+    codigoMascarado?: string;
+    dados?: Record<string, unknown>;
+}
+
+/** Desfecho de uma transição de estado do grupo no repositório (o serviço decide o erro). */
+export const RESULTADO_TRANSICAO_GRUPO = {
+    APLICADO: 'APLICADO',
+    /** Já estava no estado pedido (idempotência). */
+    JA_APLICADO: 'JA_APLICADO',
+    /** O estado atual não admite a transição (ex.: anular um grupo `PAGO`). */
+    RECUSADO: 'RECUSADO',
+    NAO_ENCONTRADO: 'NAO_ENCONTRADO',
+} as const;
+export type ResultadoTransicaoGrupo =
+    (typeof RESULTADO_TRANSICAO_GRUPO)[keyof typeof RESULTADO_TRANSICAO_GRUPO];
 
 // ── Entrada e saída da regra pura (RegraGrupoBoleto) ─────────────────────────────────────────
 
