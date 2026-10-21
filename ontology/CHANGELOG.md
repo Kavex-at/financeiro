@@ -6,7 +6,7 @@
 ## v0.48.0 — SISPAG: boleto agrupado (1 boleto → N títulos) pelo borderô do fin010 (2026-10-20, ADR-0077)
 
 Feature: `sispag-boleto-agrupado` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do código**
-(tudo `planned`; migration prevista 0089; app 0.72.0 prevista, decidida no ship).
+(tudo `planned`; migration prevista 0090; app 0.72.0 prevista, decidida no ship).
 
 > **Numeração:** 0.46.0/ADR-0075 reservados pela branch não mergeada `docs/sispag-situacao-pagamento-ontology`;
 > reconferir antes do ship.

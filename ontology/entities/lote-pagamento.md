@@ -170,7 +170,7 @@ fora de um lote.
 | `pagoObservadoEm` | Date? | `pago_observado_em` *(a criar)* | Primeira sincronização que viu o título pago no `fin064`. Não nulo ⇔ a situação `PAGO` foi observada. |
 | `divergencia` | boolean + detalhe | `divergencia`, `divergencia_detalhe` *(a criar)* | Contradição observada que a máquina **não** resolve sozinha: título antes pago voltou a aberto (estorno), ou item `REJEITADO` com título pago. Gera `Alerta` `sispag-baixa-divergente` (I11f). |
 | `sincronizadoEm` | Date? | `sincronizado_em` *(a criar)* | Última leitura **bem-sucedida** do título. Atualizá-la **não** incrementa `versao` (I11h). |
-| `grupoBoletoId` | string? | `lote_pagamento_item.grupo_boleto_id` *(migration 0089)* | Grupo a que o item pertence (ADR-0077, `planned`). Os N itens do grupo entram, saem e se movem juntos (I21j); na remessa viram **um** item nativo de borderô (I21k). `vinculoCodigoBarras` fica nulo nesses itens: o vínculo é do grupo (I21o). `borCod`/`bxaCodSeq` do item, quando enriquecidos pela sincronização, apontam para o borderô do grupo. |
+| `grupoBoletoId` | string? | `lote_pagamento_item.grupo_boleto_id` *(migration 0090)* | Grupo a que o item pertence (ADR-0077, `planned`). Os N itens do grupo entram, saem e se movem juntos (I21j); na remessa viram **um** item nativo de borderô (I21k). `vinculoCodigoBarras` fica nulo nesses itens: o vínculo é do grupo (I21o). `borCod`/`bxaCodSeq` do item, quando enriquecidos pela sincronização, apontam para o borderô do grupo. |
 
 > **`DestinoManual` retirado (ADR-0061) e `ExcecaoDestino` apagada (ADR-0065).** Não existe destino fora do cadastro: o item paga no destino do `cmn025`, desde que o favorecido esteja autorizado para a modalidade (`entities/favorecido-autorizado.md`, I14).
 
