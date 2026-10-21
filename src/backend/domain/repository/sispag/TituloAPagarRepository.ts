@@ -32,6 +32,19 @@ interface TituloRow {
     doc_esp_numero: string | null;
 }
 
+/** Grupo de boleto candidato à formação automática (ADR-0076, I19j/PI-8). */
+export interface GrupoParaFormacao {
+    grupoId: string;
+    filCod: number;
+    pesCod: string;
+    credor?: string;
+    /** Vencimento do BOLETO (epoch ms, meia-noite UTC): define o lote e a janela. */
+    vencimentoBoleto: number;
+    valorBoletoCentavos: number;
+    /** Os N títulos, da carteira (snapshot do item local). */
+    titulos: TituloAPagar[];
+}
+
 /**
  * TituloAPagarRepository — carteira PERSISTIDA de títulos a pagar (ingestão).
  * UPSERT por chave natural (fil_cod, doc_cod, tit_cod); anti-fantasma via `ativo`.
@@ -325,9 +338,97 @@ export default class TituloAPagarRepository {
                  SELECT 1 FROM titulo_bloqueio_duplicidade b
                  WHERE b.estado = 'ATIVO'
                    AND b.fil_cod = t.fil_cod AND b.doc_cod = t.doc_cod AND b.tit_cod = t.tit_cod)
+               AND NOT EXISTS (
+                 SELECT 1 FROM sispag_grupo_boleto_titulo gt
+                 WHERE gt.estado = 'CONFIRMADO'
+                   AND gt.fil_cod = t.fil_cod AND gt.doc_cod = t.doc_cod AND gt.tit_cod = t.tit_cod)
              ORDER BY t.fil_cod, t.banco, t.vencimento ASC`,
             { hoje, ate },
         )) as TituloRow[];
         return rows.map(this.map);
+    };
+
+    /**
+     * Grupos de boleto `CONFIRMADO` candidatos à formação automática (ADR-0076, I19j/PI-8): o
+     * grupo é UMA unidade, medida pelo vencimento do BOLETO na mesma janela por dia civil dos
+     * títulos avulsos. Fica de fora o grupo com algum título em lote vivo, com marca de retenção
+     * ATIVA (inclusive `GRUPO_BOLETO`) ou fora da carteira ativa/aprovada/não paga (órfão, I19u).
+     * Rejeição não resolvida (I19r) é situação derivada: quem decide é o serviço (Task 12).
+     */
+    public listGruposParaFormacao = async (
+        maxDias: number,
+        hoje: Date,
+    ): Promise<GrupoParaFormacao[]> => {
+        const ate = new Date(hoje.getTime() + (maxDias + 1) * DAY_MS);
+        const grupos = (await this.databaseClient.selectMany(
+            `SELECT g.id, g.fil_cod, g.pes_cod, g.credor, g.valor_boleto_centavos,
+                    (g.vencimento_boleto::timestamp AT TIME ZONE 'UTC') AS vencimento_boleto
+             FROM sispag_grupo_boleto g
+             WHERE g.estado = 'CONFIRMADO'
+               AND (g.vencimento_boleto::timestamp AT TIME ZONE 'UTC') >= $hoje
+               AND (g.vencimento_boleto::timestamp AT TIME ZONE 'UTC') < $ate
+               AND NOT EXISTS (
+                 SELECT 1 FROM sispag_grupo_boleto_titulo gt
+                 JOIN lote_pagamento_item i
+                   ON i.fil_cod = gt.fil_cod AND i.doc_cod = gt.doc_cod AND i.tit_cod = gt.tit_cod
+                 JOIN lote_pagamento l ON l.id = i.lote_id
+                 WHERE gt.grupo_id = g.id
+                   AND l.status IN ('RASCUNHO', 'FINALIZADO', 'REMESSA_GERADA', 'RETORNADO'))
+               AND NOT EXISTS (
+                 SELECT 1 FROM sispag_grupo_boleto_titulo gt
+                 JOIN titulo_bloqueio_duplicidade b
+                   ON b.fil_cod = gt.fil_cod AND b.doc_cod = gt.doc_cod AND b.tit_cod = gt.tit_cod
+                 WHERE gt.grupo_id = g.id AND b.estado = 'ATIVO')
+               AND NOT EXISTS (
+                 SELECT 1 FROM sispag_grupo_boleto_titulo gt
+                 WHERE gt.grupo_id = g.id
+                   AND NOT EXISTS (
+                     SELECT 1 FROM titulo_a_pagar t
+                     WHERE t.fil_cod = gt.fil_cod AND t.doc_cod = gt.doc_cod
+                       AND t.tit_cod = gt.tit_cod
+                       AND t.ativo = TRUE AND t.aprovado = TRUE AND t.pago = FALSE))
+             ORDER BY g.fil_cod, g.vencimento_boleto, g.id`,
+            { hoje, ate },
+        )) as Array<{
+            id: string;
+            fil_cod: number;
+            pes_cod: string;
+            credor: string | null;
+            valor_boleto_centavos: string | number;
+            vencimento_boleto: Date;
+        }>;
+        if (grupos.length === 0) return [];
+        const params: Record<string, unknown> = {};
+        const ids = grupos.map((g, i) => {
+            params[`g${i}`] = g.id;
+            return `$g${i}::uuid`;
+        });
+        const titulos = (await this.databaseClient.selectMany(
+            `SELECT gt.grupo_id, t.fil_cod, t.doc_cod, t.tit_cod, t.credor, t.pes_cod, t.valor,
+                    t.moeda, t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod,
+                    t.pronto_para_remessa, t.tem_boleto, t.forma_pagamento_conexos,
+                    t.doc_esp_numero
+             FROM sispag_grupo_boleto_titulo gt
+             JOIN titulo_a_pagar t
+               ON t.fil_cod = gt.fil_cod AND t.doc_cod = gt.doc_cod AND t.tit_cod = gt.tit_cod
+             WHERE gt.grupo_id IN (${ids.join(', ')})
+             ORDER BY t.vencimento, t.doc_cod, t.tit_cod`,
+            params,
+        )) as Array<TituloRow & { grupo_id: string }>;
+        const porGrupo = new Map<string, TituloAPagar[]>();
+        for (const t of titulos) {
+            const lista = porGrupo.get(t.grupo_id) ?? [];
+            lista.push(this.map(t));
+            porGrupo.set(t.grupo_id, lista);
+        }
+        return grupos.map((g) => ({
+            grupoId: g.id,
+            filCod: Number(g.fil_cod),
+            pesCod: g.pes_cod,
+            ...(g.credor != null ? { credor: g.credor } : {}),
+            vencimentoBoleto: new Date(g.vencimento_boleto).getTime(),
+            valorBoletoCentavos: Number(g.valor_boleto_centavos),
+            titulos: porGrupo.get(g.id) ?? [],
+        }));
     };
 }

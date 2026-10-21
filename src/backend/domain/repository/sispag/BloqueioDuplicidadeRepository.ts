@@ -199,7 +199,12 @@ export default class BloqueioDuplicidadeRepository {
                 {
                     encerrado: DUPLICATE_HOLD_STATE.ENCERRADO,
                     ativo: DUPLICATE_HOLD_STATE.ATIVO,
-                    origens: [...ORIGENS_RETENCAO_CODIGO_BARRAS],
+                    // A marca do GRUPO de boleto (ADR-0076) não se encerra por estes sinais: só
+                    // pela anulação/pagamento do grupo (`encerrarDoGrupo`) ou pelo desfazer da
+                    // analista. Um lote cancelado não diz que o borderô do grupo saiu do ERP.
+                    origens: ORIGENS_RETENCAO_CODIGO_BARRAS.filter(
+                        (o) => o !== DUPLICATE_HOLD_ORIGIN.GRUPO_BOLETO,
+                    ),
                 },
             )) as Array<{
                 id: string;
@@ -315,6 +320,88 @@ export default class BloqueioDuplicidadeRepository {
             ...(input.tituloMantido ? { tituloMantido: input.tituloMantido } : {}),
         };
     };
+
+    /**
+     * ADR-0076 (I19p(3)): a remessa retirou o grupo de boleto ⇒ UMA marca `GRUPO_BOLETO` por
+     * título, todas na transação do chamador (a da retirada). Título já com marca ATIVA mantém a
+     * existente (I13g: no máximo uma). Devolve os ids das marcas (novas ou existentes).
+     */
+    public criarDoGrupo = async (
+        input: {
+            grupoId: string;
+            titulos: readonly ChaveTitulo[];
+            pesCod?: string;
+            loteIdOrigem: string;
+            motivo: string;
+            ator: string;
+            codigoMascarado?: string;
+        },
+        tx: TransactionClient,
+    ): Promise<string[]> => {
+        if (input.titulos.length === 0) throw new Error('grupo sem títulos para reter');
+        const ids: string[] = [];
+        for (const chave of input.titulos) {
+            ids.push(
+                await this.criar(
+                    {
+                        chave,
+                        ...(input.pesCod !== undefined ? { pesCod: input.pesCod } : {}),
+                        loteIdOrigem: input.loteIdOrigem,
+                        motivo: `${input.motivo} (grupo ${input.grupoId})`,
+                        ator: input.ator,
+                        origem: DUPLICATE_HOLD_ORIGIN.GRUPO_BOLETO,
+                        ...(input.codigoMascarado !== undefined
+                            ? { codigoMascarado: input.codigoMascarado }
+                            : {}),
+                    },
+                    tx,
+                ),
+            );
+        }
+        return ids;
+    };
+
+    /**
+     * ADR-0076 (I19t/I19r): encerra as marcas ATIVAS de origem `GRUPO_BOLETO` dos títulos do
+     * grupo (ao anular ou pagar), um evento `BLOQUEIO_ENCERRADO` por marca, na transação dada (ou
+     * numa própria). Marcas de OUTRA origem não são tocadas. Devolve quantas encerrou.
+     */
+    public encerrarDoGrupo = async (
+        input: { grupoId: string; motivo: string; ator: string },
+        tx?: TransactionClient,
+    ): Promise<number> =>
+        this.naTransacao(tx, async (t) => {
+            const encerrados = (await t.selectMany(
+                `UPDATE titulo_bloqueio_duplicidade b
+                 SET estado = $encerrado, encerrado_em = now()
+                 FROM sispag_grupo_boleto_titulo gt
+                 WHERE gt.grupo_id = $grupoId::uuid
+                   AND b.estado = $ativo AND b.origem = $origem
+                   AND b.fil_cod = gt.fil_cod AND b.doc_cod = gt.doc_cod AND b.tit_cod = gt.tit_cod
+                 RETURNING b.id, b.fil_cod, b.doc_cod, b.tit_cod`,
+                {
+                    grupoId: input.grupoId,
+                    encerrado: DUPLICATE_HOLD_STATE.ENCERRADO,
+                    ativo: DUPLICATE_HOLD_STATE.ATIVO,
+                    origem: DUPLICATE_HOLD_ORIGIN.GRUPO_BOLETO,
+                },
+            )) as Array<{ id: string; fil_cod: number; doc_cod: string; tit_cod: string }>;
+            for (const b of encerrados) {
+                await this.eventos.registrar(
+                    {
+                        evento: VERIFICATION_EVENT.BLOQUEIO_ENCERRADO,
+                        ator: input.ator,
+                        filCod: b.fil_cod,
+                        docCod: b.doc_cod,
+                        titCod: b.tit_cod,
+                        bloqueioId: b.id,
+                        dados: { motivo: input.motivo, grupoId: input.grupoId },
+                    },
+                    t,
+                );
+            }
+            return encerrados.length;
+        });
 
     /**
      * I13g — encerra os bloqueios ATIVOS cujo título a ingestão marcou inativo (sumiu do fin064:

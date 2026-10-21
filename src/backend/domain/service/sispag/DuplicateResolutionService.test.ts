@@ -310,6 +310,8 @@ describe('DuplicateResolutionService — retenção por código de barras (ADR-0
             'CODIGO_BARRAS_ILEGIVEL',
             // ADR-0071: o título que saiu do lote porque o vínculo falhou também fica retido.
             'VINCULO_CODIGO_BARRAS_FALHOU',
+            // ADR-0076: o grupo de boleto retirado pela remessa também fica retido (I19p(3)).
+            'GRUPO_BOLETO',
         ]);
     });
 
