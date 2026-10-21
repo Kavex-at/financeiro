@@ -18,6 +18,26 @@ import BatchEmptiedByCheckError from '../../errors/BatchEmptiedByCheckError.js';
 import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavailableError.js';
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
+import GroupedBoletoIndivisibleError from '../../errors/GroupedBoletoIndivisibleError.js';
+import GroupedBoletoNotFoundError from '../../errors/GroupedBoletoNotFoundError.js';
+import GroupedBoletoStateConflictError from '../../errors/GroupedBoletoStateConflictError.js';
+import GroupedBoletoTitleIneligibleError, {
+    type TituloInelegivelGrupo,
+} from '../../errors/GroupedBoletoTitleIneligibleError.js';
+import {
+    type ChaveTituloGrupo,
+    GRUPO_BOLETO_ESTADO,
+    type GrupoBoleto,
+    MOTIVO_GRUPO_INELEGIVEL,
+    MOTIVO_GRUPO_ORFAO,
+    type MotivoGrupoInelegivel,
+    type MotivoGrupoOrfao,
+} from '../../interface/sispag/GrupoBoletoInterface.js';
+import {
+    AVISO_INCLUSAO_GRUPO,
+    type AvisoInclusaoGrupo,
+    type GrupoNoLote,
+} from '../../interface/sispag/GrupoNoLoteInterface.js';
 import ContaPagadoraResolver from './ContaPagadoraResolver.js';
 import SituacaoPagamentoService, {
     AVALIACAO_INCLUSAO,
@@ -55,10 +75,15 @@ import {
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import AlertaItemLoteRepository from '../../repository/sispag/AlertaItemLoteRepository.js';
 import BloqueioDuplicidadeRepository from '../../repository/sispag/BloqueioDuplicidadeRepository.js';
-import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import GrupoBoletoRepository from '../../repository/sispag/GrupoBoletoRepository.js';
+import LotePagamentoRepository, {
+    RESULTADO_OPERACAO_GRUPO,
+} from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type { TransactionClient } from '../../client/database/PostgreeDatabaseClient.js';
 import LogService from '../LogService.js';
+import DisparoLimpezaBorderoGrupo from './DisparoLimpezaBorderoGrupo.js';
+import LeituraGrupoBoleto from './LeituraGrupoBoleto.js';
 import VerificacaoTedPixService, {
     type ItemRetirado,
     VERIFICATION_MODE,
@@ -75,6 +100,28 @@ export interface LoteFinalizado {
     lote: LotePagamento;
     retirados: ItemRetirado[];
 }
+
+/** Resultado de incluir um grupo de boleto no lote: o lote e os avisos (não barram). */
+export interface GrupoIncluidoNoLote {
+    lote: LotePagamento;
+    avisos: AvisoInclusaoGrupo[];
+}
+
+/** Motivo do órfão (I21u) na língua da inelegibilidade de título (I21c). */
+const MOTIVO_DO_ORFAO: Readonly<Record<MotivoGrupoOrfao, MotivoGrupoInelegivel>> = {
+    [MOTIVO_GRUPO_ORFAO.BOLETO_FORA_DO_POOL]: MOTIVO_GRUPO_INELEGIVEL.BOLETO_INDISPONIVEL,
+    [MOTIVO_GRUPO_ORFAO.BOLETO_VINCULADO_ERP]: MOTIVO_GRUPO_INELEGIVEL.BOLETO_VINCULADO_ERP,
+    [MOTIVO_GRUPO_ORFAO.TITULO_PAGO]: MOTIVO_GRUPO_INELEGIVEL.PAGO,
+    [MOTIVO_GRUPO_ORFAO.TITULO_INATIVO]: MOTIVO_GRUPO_INELEGIVEL.INATIVO,
+    [MOTIVO_GRUPO_ORFAO.TITULO_COM_DDA_ERP]: MOTIVO_GRUPO_INELEGIVEL.TEM_BOLETO_ERP,
+    [MOTIVO_GRUPO_ORFAO.VALOR_LIQUIDO_DIVERGENTE]: MOTIVO_GRUPO_INELEGIVEL.SOMA_DIFERENTE,
+};
+
+const chaveDoTitulo = (c: ChaveTituloGrupo): ChaveTituloGrupo => ({
+    filCod: c.filCod,
+    docCod: c.docCod,
+    titCod: c.titCod,
+});
 
 /** Chave `filCod:docCod:titCod` de um item/alerta. */
 const chaveItem = (c: { filCod: number; docCod: string; titCod: string }): string =>
@@ -103,6 +150,10 @@ export default class LotePagamentoService {
         @inject(EnvironmentProvider) private readonly environmentProvider: EnvironmentProvider,
         @inject(SituacaoPagamentoService)
         private readonly situacaoPagamento: SituacaoPagamentoService,
+        @inject(GrupoBoletoRepository) private readonly grupoRepo: GrupoBoletoRepository,
+        @inject(LeituraGrupoBoleto) private readonly leituraGrupo: LeituraGrupoBoleto,
+        @inject(DisparoLimpezaBorderoGrupo)
+        private readonly disparoLimpeza: DisparoLimpezaBorderoGrupo,
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
@@ -227,12 +278,12 @@ export default class LotePagamentoService {
 
     /** Lotes com as alertas vivas de cada item (ADR-0063): a tela mostra os badges na listagem. */
     public listarLotes = async (filtro: ListarLotesFiltro): Promise<LotePagamento[]> =>
-        this.comAlertas(await this.repo.listLotes(filtro));
+        this.comGrupos(await this.comAlertas(await this.repo.listLotes(filtro)));
 
     public getLote = async (id: string): Promise<LotePagamento | null> => {
         const lote = await this.repo.getLoteComItens(id);
         if (!lote) return null;
-        const [completo] = await this.comAlertas([lote]);
+        const [completo] = await this.comGrupos(await this.comAlertas([lote]));
         return completo ?? lote;
     };
 
@@ -422,6 +473,8 @@ export default class LotePagamentoService {
                     : {}),
             });
         }
+        // ADR-0077 I21j — título de grupo de boleto confirmado só entra, sai e se move com o grupo.
+        await this.exigirForaDeGrupo(input);
         // I2 — elegibilidade AUTORITATIVA (re-leitura Conexos, FORA do lock/transação).
         const titulo = await this.conexos.getTituloAPagar(input.filCod, input.docCod, input.titCod);
         if (!titulo) {
@@ -561,6 +614,11 @@ export default class LotePagamentoService {
                 acao: 'remover título',
             });
         }
+        // ADR-0077 I21j — um título de grupo nunca sai sozinho.
+        const doGrupo = lote.itens.find(
+            (i) => i.docCod === input.docCod && i.titCod === input.titCod && i.grupoBoletoId,
+        )?.grupoBoletoId;
+        if (doGrupo) throw await this.erroIndivisivelPorId(doGrupo);
         await this.db.withTransaction(async (tx) => {
             await this.repo.removerItem(
                 {
@@ -601,6 +659,234 @@ export default class LotePagamentoService {
         const loteId = await this.repo.loteRascunhoComTitulo(chave);
         if (!loteId) throw new TituloForaDeLoteError(chave);
         return this.removerTitulo({ loteId, ...chave, ator: input.ator });
+    };
+
+    // ─────────────────────────────────────────── grupo de boleto (ADR-0077, I21j, L2)
+
+    /**
+     * Inclui um grupo de boleto `CONFIRMADO` inteiro no lote RASCUNHO da mesma filial (I21j, L2):
+     * N itens `BOLETO` com `grupoBoletoId`, numa transação, ou nada. Antes do lock, sem segurar
+     * conexão: retenção e órfão locais (I21c, I21u) e I2 por título na re-leitura Conexos, como o
+     * `incluirTitulo`. Dentro da transação, sob os locks I3 dos títulos: lote comprometido recusa
+     * (ADR-0064); título em outro RASCUNHO exige `mover` (sai de lá na mesma transação); título
+     * avulso neste lote vira item do grupo. I21h com a `dataDebito` do lote quando houver.
+     * Grupo com J rejeitado entra à mão (I21r) e a resposta traz o aviso do borderô antigo.
+     */
+    public incluirGrupo = async (input: {
+        loteId: string;
+        grupoId: string;
+        mover?: boolean;
+        ator: string;
+        versaoEsperada?: number;
+    }): Promise<GrupoIncluidoNoLote> => {
+        const lote = await this.exigirLote(input.loteId);
+        if (lote.status !== LOTE_STATUS.RASCUNHO) {
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao: 'incluir grupo de boleto',
+            });
+        }
+        if (input.versaoEsperada !== undefined && lote.versao !== input.versaoEsperada) {
+            throw new LoteVersaoConflitoError({
+                loteId: lote.id,
+                versaoEsperada: input.versaoEsperada,
+            });
+        }
+        const grupo = await this.exigirGrupoConfirmado(input.grupoId);
+        if (grupo.filCod !== lote.filCod) {
+            throw new LoteFilialError({ loteFilCod: lote.filCod, tituloFilCod: grupo.filCod });
+        }
+        const chaves = grupo.titulos.map(chaveDoTitulo);
+        const jaNoLote = chaves.every((c) =>
+            lote.itens.some(
+                (i) =>
+                    i.grupoBoletoId === grupo.id &&
+                    i.filCod === c.filCod &&
+                    i.docCod === c.docCod &&
+                    i.titCod === c.titCod,
+            ),
+        );
+        if (jaNoLote) {
+            return { lote: await this.loteCompleto(lote.id), avisos: await this.avisos(grupo) };
+        }
+        await this.exigirGrupoLivre(grupo);
+        const lidos = await this.lerTitulosDoGrupo(grupo);
+        if (lote.dataDebito !== undefined && grupo.vencimentoBoleto < lote.dataDebito) {
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao: 'incluir grupo de boleto',
+                motivo:
+                    `O boleto agrupado vence em ${grupo.vencimentoBoleto}, antes da data de débito ` +
+                    `do lote (${lote.dataDebito}). Troque a data de débito ou use outro lote.`,
+            });
+        }
+        let origens: string[] = [];
+        await this.db.withTransaction(async (tx) => {
+            await this.repo.travarTitulosNaTransacao(
+                chaves.map((c) => this.lockKey(c.filCod, c.docCod, c.titCod)),
+                tx,
+            );
+            await this.grupoRepo.travar(tx, chaves.map(GrupoBoletoRepository.chaveLockTitulo));
+            const atual = await this.grupoRepo.buscarPorId(grupo.id, tx);
+            if (!atual || atual.estado !== GRUPO_BOLETO_ESTADO.CONFIRMADO) {
+                throw this.erroGrupoNaoConfirmado(atual ?? grupo);
+            }
+            origens = await this.liberarTitulosParaOGrupo(lote.id, chaves, input, tx);
+            const r = await this.repo.adicionarGrupo(
+                {
+                    loteId: lote.id,
+                    grupoId: grupo.id,
+                    itens: chaves.map((c, i) => ({
+                        ...c,
+                        credor: lidos[i]?.credor ?? grupo.credor,
+                        valor: lidos[i]?.valor,
+                        vencimento: lidos[i]?.vencimento,
+                    })),
+                    incluidoPor: input.ator,
+                    ...(input.versaoEsperada !== undefined
+                        ? { versaoEsperada: input.versaoEsperada }
+                        : {}),
+                },
+                tx,
+            );
+            if (r !== RESULTADO_OPERACAO_GRUPO.APLICADO) {
+                throw new LoteVersaoConflitoError({
+                    loteId: lote.id,
+                    versaoEsperada: input.versaoEsperada ?? -1,
+                });
+            }
+            if (lote.automatico) await this.repo.marcarManual(lote.id, tx);
+        });
+        await this.audit(origens.length > 0 ? 'moverGrupo' : 'incluirGrupo', lote.id, input.ator, {
+            grupoId: grupo.id,
+            codbarMascarado: grupo.codbarMascarado,
+            titulos: chaves.length,
+            ...(origens.length > 0 ? { lotesOrigem: origens } : {}),
+        });
+        return { lote: await this.loteCompleto(lote.id), avisos: await this.avisos(grupo) };
+    };
+
+    /** Retira os N itens do grupo do lote RASCUNHO numa transação (I21j, L2). Idempotente. */
+    public removerGrupo = async (input: {
+        loteId: string;
+        grupoId: string;
+        ator: string;
+        versaoEsperada?: number;
+    }): Promise<LotePagamento> => {
+        const lote = await this.exigirLote(input.loteId);
+        if (lote.status !== LOTE_STATUS.RASCUNHO) {
+            throw new LoteEstadoInvalidoError({
+                loteId: lote.id,
+                statusAtual: lote.status,
+                acao: 'retirar grupo de boleto',
+            });
+        }
+        const itens = lote.itens.filter((i) => i.grupoBoletoId === input.grupoId);
+        if (itens.length === 0) return this.loteCompleto(lote.id);
+        await this.db.withTransaction(async (tx) => {
+            const r = await this.repo.removerGrupo(
+                {
+                    loteId: lote.id,
+                    grupoId: input.grupoId,
+                    ...(input.versaoEsperada !== undefined
+                        ? { versaoEsperada: input.versaoEsperada }
+                        : {}),
+                },
+                tx,
+            );
+            if (r === RESULTADO_OPERACAO_GRUPO.CONFLITO) {
+                throw new LoteVersaoConflitoError({
+                    loteId: lote.id,
+                    versaoEsperada: input.versaoEsperada ?? -1,
+                });
+            }
+            for (const i of itens) {
+                await this.alertaRepo.descartarDoItem(lote.id, chaveDoTitulo(i), input.ator, tx);
+            }
+            if (lote.automatico) await this.repo.marcarManual(lote.id, tx);
+        });
+        await this.audit('removerGrupo', lote.id, input.ator, {
+            grupoId: input.grupoId,
+            titulos: itens.length,
+        });
+        return this.loteCompleto(lote.id);
+    };
+
+    /**
+     * Move os N itens do grupo de um RASCUNHO para outro da mesma filial numa transação (I21j,
+     * L2): `versao + 1` nos dois; a origem que esvazia vai a `CANCELADO` (ADR-0064).
+     */
+    public moverGrupo = async (input: {
+        origemId: string;
+        destinoId: string;
+        grupoId: string;
+        ator: string;
+        versaoOrigem?: number;
+        versaoDestino?: number;
+    }): Promise<LotePagamento> => {
+        const [origem, destino] = await Promise.all([
+            this.exigirLote(input.origemId),
+            this.exigirLote(input.destinoId),
+        ]);
+        for (const l of [origem, destino]) {
+            if (l.status !== LOTE_STATUS.RASCUNHO) {
+                throw new LoteEstadoInvalidoError({
+                    loteId: l.id,
+                    statusAtual: l.status,
+                    acao: 'mover grupo de boleto',
+                });
+            }
+        }
+        const grupo = await this.exigirGrupoConfirmado(input.grupoId);
+        if (destino.filCod !== grupo.filCod) {
+            throw new LoteFilialError({ loteFilCod: destino.filCod, tituloFilCod: grupo.filCod });
+        }
+        const itens = origem.itens.filter((i) => i.grupoBoletoId === grupo.id);
+        let origemCancelada = false;
+        await this.db.withTransaction(async (tx) => {
+            const r = await this.repo.moverGrupo(
+                {
+                    origemId: origem.id,
+                    destinoId: destino.id,
+                    grupoId: grupo.id,
+                    ...(input.versaoOrigem !== undefined
+                        ? { versaoOrigem: input.versaoOrigem }
+                        : {}),
+                    ...(input.versaoDestino !== undefined
+                        ? { versaoDestino: input.versaoDestino }
+                        : {}),
+                },
+                tx,
+            );
+            if (r === RESULTADO_OPERACAO_GRUPO.CONFLITO) {
+                throw new LoteVersaoConflitoError({
+                    loteId: destino.id,
+                    versaoEsperada: input.versaoDestino ?? -1,
+                });
+            }
+            if (r === RESULTADO_OPERACAO_GRUPO.AUSENTE) {
+                throw new LoteEstadoInvalidoError({
+                    loteId: origem.id,
+                    statusAtual: origem.status,
+                    acao: 'mover grupo de boleto',
+                    motivo: 'O grupo de boleto não está neste lote. Atualize a tela.',
+                });
+            }
+            for (const i of itens) {
+                await this.alertaRepo.descartarDoItem(origem.id, chaveDoTitulo(i), input.ator, tx);
+            }
+            await this.repo.marcarManual(origem.id, tx);
+            if (destino.automatico) await this.repo.marcarManual(destino.id, tx);
+            origemCancelada = await this.repo.cancelarSeVazio(origem.id, tx);
+        });
+        await this.audit('moverGrupo', destino.id, input.ator, {
+            grupoId: grupo.id,
+            loteOrigem: origem.id,
+            origemCancelada,
+        });
+        return this.loteCompleto(destino.id);
     };
 
     /**
@@ -659,6 +945,9 @@ export default class LotePagamentoService {
         }
         // ADR-0076 I20d: ANTES da verificação TED/PIX, para nada ser retirado de um lote recusado.
         await this.exigirSituacoesPagaveis(lote);
+        // ADR-0077 L3 — título de grupo inelegível (I2) barra listando o GRUPO: nunca finaliza
+        // parte do grupo nem o retira em silêncio.
+        await this.exigirGruposElegiveis(lote);
         const verificacao = await this.verificacao.verificarItens(input.loteId, {
             modo: VERIFICATION_MODE.RETIRAR,
         });
@@ -694,12 +983,20 @@ export default class LotePagamentoService {
             acao: 'reabrir',
         });
 
-    public cancelarLote = (input: TransicaoInput): Promise<LotePagamento> =>
-        this.transicionar(input, {
+    /**
+     * L5 — cancela o lote local (I1: sempre local). ADR-0077/G3: DEPOIS do commit, o borderô de
+     * grupo que esta remessa criou é entregue à limpeza (I21q), que confere ao vivo o lote nativo;
+     * falha vira `Alerta` `sispag-bordero-grupo-pendente`, nunca desfaz o cancelamento.
+     */
+    public cancelarLote = async (input: TransicaoInput): Promise<LotePagamento> => {
+        const cancelado = await this.transicionar(input, {
             de: [LOTE_STATUS.RASCUNHO, LOTE_STATUS.FINALIZADO],
             para: LOTE_STATUS.CANCELADO,
             acao: 'cancelar',
         });
+        await this.disparoLimpeza.aposCancelarLote({ loteId: input.loteId, ator: input.ator });
+        return cancelado;
+    };
 
     // -------------------------------------------------------------- internals
 
@@ -850,6 +1147,221 @@ export default class LotePagamentoService {
         if (itens.length > 0) throw new PendingDuplicateAlertError({ loteId: lote.id, itens });
     };
 
+    /**
+     * Dentro da transação do `incluirGrupo`: confere ADR-0064 por título e tira os títulos de
+     * onde estão (avulsos neste lote; outro RASCUNHO só com `mover`). Devolve os lotes de origem.
+     */
+    private liberarTitulosParaOGrupo = async (
+        loteId: string,
+        chaves: ChaveTituloGrupo[],
+        input: { mover?: boolean; ator: string },
+        tx: TransactionClient,
+    ): Promise<string[]> => {
+        const origens = new Set<string>();
+        for (const c of chaves) {
+            const comprometido = await this.repo.loteComprometidoComTitulo(c, tx);
+            if (comprometido) {
+                throw new TitleInCommittedBatchError({
+                    docCod: c.docCod,
+                    titCod: c.titCod,
+                    loteId: comprometido.loteId,
+                    status: comprometido.status,
+                });
+            }
+            const onde = await this.repo.loteRascunhoComTitulo(c, tx);
+            if (!onde) continue;
+            if (onde === loteId) {
+                // Avulso neste mesmo lote: vira item do grupo (sai e entra na mesma transação).
+                await this.repo.removerItem({ loteId, ...c }, tx);
+                await this.alertaRepo.descartarDoItem(loteId, c, input.ator, tx);
+                continue;
+            }
+            if (!input.mover) {
+                throw new TituloEmOutroLoteError({
+                    docCod: c.docCod,
+                    titCod: c.titCod,
+                    loteId: onde,
+                });
+            }
+            await this.retirarDaOrigem(onde, c, input.ator, tx);
+            origens.add(onde);
+        }
+        return [...origens];
+    };
+
+    /**
+     * I21j: título de grupo `CONFIRMADO` não entra avulso (`GroupedBoletoTitleIneligibleError`)
+     * nem se move sozinho (`GroupedBoletoIndivisibleError`).
+     */
+    private exigirForaDeGrupo = async (input: IncluirTituloInput): Promise<void> => {
+        const chave = { filCod: input.filCod, docCod: input.docCod, titCod: input.titCod };
+        const grupo = await this.grupoRepo.buscarConfirmadoPorTitulo(chave);
+        if (!grupo) return;
+        if (input.mover) throw this.erroIndivisivel(grupo);
+        throw new GroupedBoletoTitleIneligibleError({
+            grupoId: grupo.id,
+            titulos: [{ ...chave, motivo: MOTIVO_GRUPO_INELEGIVEL.EM_OUTRO_GRUPO }],
+        });
+    };
+
+    /** I21c/I21u locais: nenhum título retido e o grupo não é órfão. */
+    private exigirGrupoLivre = async (grupo: GrupoBoleto): Promise<void> => {
+        const retidos = await this.leituraGrupo.titulosRetidos(grupo);
+        if (retidos.length > 0) {
+            throw new GroupedBoletoTitleIneligibleError({
+                grupoId: grupo.id,
+                titulos: retidos.map((c) => ({
+                    ...c,
+                    motivo: MOTIVO_GRUPO_INELEGIVEL.MARCA_RETENCAO_ATIVA,
+                })),
+            });
+        }
+        const orfao = await this.leituraGrupo.orfao(grupo);
+        if (orfao.orfao) {
+            const motivo = MOTIVO_DO_ORFAO[orfao.motivo ?? MOTIVO_GRUPO_ORFAO.BOLETO_FORA_DO_POOL];
+            const titulos = orfao.titulo ? [orfao.titulo] : grupo.titulos.map(chaveDoTitulo);
+            throw new GroupedBoletoTitleIneligibleError({
+                grupoId: grupo.id,
+                titulos: titulos.map((c) => ({ ...chaveDoTitulo(c), motivo })),
+            });
+        }
+    };
+
+    /** I2 por título, na re-leitura Conexos (fora de lock/transação). */
+    private lerTitulosDoGrupo = async (grupo: GrupoBoleto) => {
+        const lidos = await Promise.all(
+            grupo.titulos.map((t) => this.conexos.getTituloAPagar(t.filCod, t.docCod, t.titCod)),
+        );
+        const inelegiveis = this.inelegiveisI2(grupo.titulos.map(chaveDoTitulo), lidos);
+        if (inelegiveis.length > 0) {
+            throw new GroupedBoletoTitleIneligibleError({
+                grupoId: grupo.id,
+                titulos: inelegiveis,
+            });
+        }
+        return lidos;
+    };
+
+    /** I2 de cada título relido: ausente ⇒ saiu da carteira; pago; não liberado (alçada). */
+    private inelegiveisI2 = (
+        chaves: ChaveTituloGrupo[],
+        lidos: ReadonlyArray<{ pago: boolean; liberado: boolean } | null | undefined>,
+    ): TituloInelegivelGrupo[] =>
+        chaves.flatMap((c, k): TituloInelegivelGrupo[] => {
+            const lido = lidos[k];
+            let motivo: MotivoGrupoInelegivel | undefined;
+            if (!lido) motivo = MOTIVO_GRUPO_INELEGIVEL.INATIVO;
+            else if (lido.pago) motivo = MOTIVO_GRUPO_INELEGIVEL.PAGO;
+            else if (!lido.liberado) motivo = MOTIVO_GRUPO_INELEGIVEL.NAO_LIBERADO;
+            return motivo ? [{ ...c, motivo }] : [];
+        });
+
+    /** L3: os títulos de cada grupo do lote relidos no Conexos (I2); inelegível barra o lote. */
+    private exigirGruposElegiveis = async (lote: LotePagamento): Promise<void> => {
+        const porGrupo = new Map<string, ChaveTituloGrupo[]>();
+        for (const i of lote.itens) {
+            if (!i.grupoBoletoId) continue;
+            porGrupo.set(i.grupoBoletoId, [
+                ...(porGrupo.get(i.grupoBoletoId) ?? []),
+                chaveDoTitulo(i),
+            ]);
+        }
+        for (const [grupoId, chaves] of porGrupo) {
+            const lidos = await Promise.all(
+                chaves.map((c) => this.conexos.getTituloAPagar(c.filCod, c.docCod, c.titCod)),
+            );
+            const titulos = this.inelegiveisI2(chaves, lidos);
+            if (titulos.length > 0)
+                throw new GroupedBoletoTitleIneligibleError({ grupoId, titulos });
+        }
+    };
+
+    private exigirGrupoConfirmado = async (grupoId: string): Promise<GrupoBoleto> => {
+        const grupo = await this.grupoRepo.buscarPorId(grupoId);
+        if (!grupo) throw new GroupedBoletoNotFoundError({ grupoId });
+        if (grupo.estado !== GRUPO_BOLETO_ESTADO.CONFIRMADO) {
+            throw this.erroGrupoNaoConfirmado(grupo);
+        }
+        return grupo;
+    };
+
+    private erroGrupoNaoConfirmado = (grupo: GrupoBoleto): GroupedBoletoStateConflictError =>
+        new GroupedBoletoStateConflictError({
+            grupoId: grupo.id,
+            estado: grupo.estado,
+            acao: 'entrar em lote',
+        });
+
+    private erroIndivisivel = (grupo: GrupoBoleto): GroupedBoletoIndivisibleError =>
+        new GroupedBoletoIndivisibleError({
+            grupoId: grupo.id,
+            codigoMascarado: grupo.codbarMascarado,
+            titulos: grupo.titulos.map(chaveDoTitulo),
+        });
+
+    private erroIndivisivelPorId = async (
+        grupoId: string,
+    ): Promise<GroupedBoletoIndivisibleError> => {
+        const grupo = await this.grupoRepo.buscarPorId(grupoId);
+        return grupo
+            ? this.erroIndivisivel(grupo)
+            : new GroupedBoletoIndivisibleError({ grupoId, titulos: [] });
+    };
+
+    /** I21r/PI-9: grupo com J rejeitado volta à mão, com o aviso do borderô antigo. */
+    private avisos = async (grupo: GrupoBoleto): Promise<AvisoInclusaoGrupo[]> =>
+        (await this.leituraGrupo.rejeicaoNaoResolvida(grupo.id))
+            ? [AVISO_INCLUSAO_GRUPO.BORDERO_ANTERIOR_A_RESOLVER]
+            : [];
+
+    /**
+     * Anexa a cada lote os grupos de boleto dele, um bloco por grupo (I21j), com a situação
+     * derivada no contexto do lote. Lote sem item de grupo passa sem nenhuma leitura.
+     */
+    private comGrupos = async (lotes: LotePagamento[]): Promise<LotePagamento[]> => {
+        const ids = [
+            ...new Set(lotes.flatMap((l) => l.itens.flatMap((i) => i.grupoBoletoId ?? []))),
+        ];
+        if (ids.length === 0) return lotes;
+        const grupos = new Map<string, GrupoBoleto>();
+        for (const g of await Promise.all(ids.map((id) => this.grupoRepo.buscarPorId(id)))) {
+            if (g) grupos.set(g.id, g);
+        }
+        return Promise.all(
+            lotes.map(async (lote) => {
+                const doLote = [...new Set(lote.itens.flatMap((i) => i.grupoBoletoId ?? []))];
+                if (doLote.length === 0) return lote;
+                const blocos = await Promise.all(
+                    doLote.flatMap((id) => {
+                        const g = grupos.get(id);
+                        return g ? [this.blocoDoGrupo(lote, g)] : [];
+                    }),
+                );
+                return { ...lote, grupos: blocos };
+            }),
+        );
+    };
+
+    private blocoDoGrupo = async (
+        lote: LotePagamento,
+        grupo: GrupoBoleto,
+    ): Promise<GrupoNoLote> => {
+        const itens = lote.itens.filter((i) => i.grupoBoletoId === grupo.id);
+        const situacao = await this.leituraGrupo.situacao(grupo, {
+            loteStatus: lote.status,
+            divergente: itens.some((i) => i.divergencia === true),
+        });
+        return {
+            grupoId: grupo.id,
+            codbarMascarado: grupo.codbarMascarado,
+            valorBoleto: grupo.valorBoletoCentavos / 100,
+            vencimentoBoleto: grupo.vencimentoBoleto,
+            ...(grupo.credor !== undefined ? { credor: grupo.credor } : {}),
+            situacao,
+            titulos: itens.map(chaveDoTitulo),
+        };
+    };
+
     /** Anexa a cada item as alertas VIVAS dele (ABERTA | RESOLVIDA) — uma consulta por chamada. */
     private comAlertas = async (lotes: LotePagamento[]): Promise<LotePagamento[]> => {
         if (lotes.length === 0) return lotes;
@@ -873,7 +1385,7 @@ export default class LotePagamentoService {
 
     /** O lote como sai para a API depois de uma mutação: itens + alertas. */
     private loteCompleto = async (id: string): Promise<LotePagamento> => {
-        const [completo] = await this.comAlertas([await this.exigirLote(id)]);
+        const [completo] = await this.comGrupos(await this.comAlertas([await this.exigirLote(id)]));
         if (!completo) return this.exigirLote(id);
         return completo;
     };

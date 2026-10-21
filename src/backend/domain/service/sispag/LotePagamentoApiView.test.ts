@@ -46,3 +46,33 @@ describe('LotePagamentoApiView — vínculo do código de barras (ADR-0071)', ()
         expect(api.itens[0]).not.toHaveProperty('vinculoCodigoBarras');
     });
 });
+
+describe('LotePagamentoApiView — grupo de boleto como bloco (ADR-0077, I21j)', () => {
+    const bloco = {
+        grupoId: 'G1',
+        codbarMascarado: '34191…7500',
+        valorBoleto: 1575,
+        vencimentoBoleto: '2026-10-21',
+        credor: 'PEDRONI',
+        situacao: 'EM_LOTE',
+        titulos: [
+            { filCod: 2, docCod: '38883', titCod: '1' },
+            { filCod: 2, docCod: '38884', titCod: '1' },
+        ],
+    };
+
+    it('projeta o bloco campo a campo (só a máscara) e mantém os itens com grupoBoletoId', () => {
+        const comGrupo = {
+            ...lote([item({ docCod: '38883', grupoBoletoId: 'G1' })]),
+            grupos: [{ ...bloco, ...({ codigo: '3'.repeat(44) } as object) }],
+        } as LotePagamento;
+        const api = view.lote(comGrupo);
+        expect(api.grupos).toEqual([bloco]);
+        expect(api.itens[0]?.grupoBoletoId).toBe('G1');
+        expect(JSON.stringify(api)).not.toMatch(/\d{10,}/);
+    });
+
+    it('lote sem grupo não ganha a chave grupos', () => {
+        expect(view.lote(lote([item()]))).not.toHaveProperty('grupos');
+    });
+});

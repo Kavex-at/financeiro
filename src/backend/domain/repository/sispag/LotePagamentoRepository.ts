@@ -1058,6 +1058,21 @@ export default class LotePagamentoRepository {
         return row != null;
     };
 
+    /**
+     * Advisory locks TRANSACIONAIS nas chaves I3 dos títulos (as mesmas do `withAdvisoryLock` de
+     * sessão do `incluirTitulo`: lock de sessão e de transação na mesma chave se excluem). Incluir
+     * um grupo inteiro (I21j) serializa com a inclusão avulsa de cada título sem segurar uma
+     * conexão do pool por título. Em ordem crescente: dois grupos com título comum não se travam.
+     */
+    public travarTitulosNaTransacao = async (
+        chaves: readonly number[],
+        tx: TransactionClient,
+    ): Promise<void> => {
+        for (const chave of [...new Set(chaves)].sort((a, b) => a - b)) {
+            await tx.selectFirst(`SELECT pg_advisory_xact_lock($chave::bigint)`, { chave });
+        }
+    };
+
     /** Marca o lote como "tocado" (bump de versão) — usado em incluir/remover item. */
     public tocarLote = async (loteId: string, tx?: TransactionClient): Promise<void> => {
         await this.db(tx).update(
