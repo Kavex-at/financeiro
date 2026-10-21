@@ -252,6 +252,31 @@ export interface ItemDoRascunho {
     titCod: string;
     /** Ausente = identidade incompleta (nunca chute). */
     itsCodSeq?: number;
+    /**
+     * Item de BORDERÔ (boleto agrupado, ADR-0076): a linha não tem `docCod/titCod`, tem `borCod`.
+     * Presente só nesse caso; `docCod` fica `''`.
+     */
+    borCod?: number;
+    row: Record<string, unknown>;
+}
+
+/** Linha de `borderosPendentes/list` (I19n): identidade validada + a row crua para o `importar`. */
+export interface LinhaBorderoPendente {
+    filCod: number;
+    borCod: number;
+    /** Total do borderô segundo o grid (conferência; a prova é a releitura do item). */
+    vlrTotal?: number;
+    /** Row verbatim do ERP (vai inteira no `importar`). Não traz `borTimCad`. */
+    row: Record<string, unknown>;
+}
+
+/** Item de borderô no rascunho nativo (I19n/I19o): sem `docCod/titCod`. */
+export interface ItemDeBordero {
+    filCod: number;
+    borCod: number;
+    itsCodSeq: number;
+    itsMnyValor: number;
+    itsVldModalidade?: number;
     row: Record<string, unknown>;
 }
 

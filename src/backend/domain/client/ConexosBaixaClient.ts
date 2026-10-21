@@ -1,15 +1,22 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import ConexosError from '../errors/ConexosError.js';
+import ConexosWriteDisabledError from '../errors/ConexosWriteDisabledError.js';
+import ErpResponseReader from '../errors/ErpResponseReader.js';
 import type {
     BaixaGravada,
     BorderoCriado,
     BorderoDetalhe,
+    BorderoIdentificado,
     BorderoListaItem,
+    BuscaIdentidadeBordero,
+    FalhaClassificada,
     Fin010ValidacaoResponse,
+    JanelaBorderoParams,
     TituloBaixaValidacao,
     TituloPermutaValidacao,
 } from '../interface/permutas/Fin010Baixa.js';
+import EnvironmentProvider from '../libs/environment/EnvironmentProvider.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
 /**
@@ -34,6 +41,58 @@ const BAIXA_GRAVADA_SCHEMA = z.object({
     bxaMnyLiquido: z.coerce.number().optional().default(0),
 });
 
+/** Epoch ms do ERP: inteiro positivo, sem coerção de `null`/`''` (que viraria 0). */
+const EPOCH_MS = z.number().int().positive();
+
+/**
+ * Borderô do grupo (ADR-0076, I19l): a identidade que persistimos é `borCod` + `borTimCad`.
+ * Sem um dos dois a resposta não prova QUAL borderô foi criado — falha (transitória: a
+ * retomada reconhece pela janela de `borTimCad`, I19s).
+ */
+const BORDERO_IDENTIFICADO_SCHEMA = z
+    .object({
+        filCod: z.coerce.number().int().positive(),
+        borCod: z.coerce.number().int().positive(),
+        borTimCad: EPOCH_MS,
+        usnCodCad: z.number().int().positive().nullish(),
+        gerNum: z.number().int().nullish(),
+        borDtaMvto: z.number().nullish(),
+        borVldFinalizado: z.number().int().nullish(),
+        vlrTotalLiquido: z.number().nullish(),
+        vldHasRemessaPgto: z.number().int().nullish(),
+    })
+    .passthrough()
+    .transform(
+        (r): BorderoIdentificado => ({
+            filCod: r.filCod,
+            borCod: r.borCod,
+            borTimCad: r.borTimCad,
+            ...(r.usnCodCad != null ? { usnCodCad: r.usnCodCad } : {}),
+            ...(r.gerNum != null ? { gerNum: r.gerNum } : {}),
+            ...(r.borDtaMvto != null ? { borDtaMvto: r.borDtaMvto } : {}),
+            ...(r.borVldFinalizado != null ? { borVldFinalizado: r.borVldFinalizado } : {}),
+            ...(r.vlrTotalLiquido != null ? { vlrTotalLiquido: r.vlrTotalLiquido } : {}),
+            ...(r.vldHasRemessaPgto != null ? { vldHasRemessaPgto: r.vldHasRemessaPgto } : {}),
+        }),
+    );
+
+/** Situação da busca pela identidade (`buscarBorderoPorIdentidade`). */
+export const IDENTIDADE_BORDERO = {
+    PRESENTE: 'PRESENTE',
+    AUSENTE: 'AUSENTE',
+    ALHEIO: 'ALHEIO',
+} as const;
+
+/** Página da busca por janela/identidade: muito acima do esperado (0, 1 ou poucos). */
+const PAGINA_IDENTIDADE = 50;
+
+/** Campos opcionais do cabeçalho que o grupo lê (Permutas ignora). */
+const camposDoGrupo = (d: Record<string, unknown>) => ({
+    ...(d.vldHasRemessaPgto != null ? { vldHasRemessaPgto: Number(d.vldHasRemessaPgto) } : {}),
+    ...(d.borTimCad != null ? { borTimCad: Number(d.borTimCad) } : {}),
+    ...(d.usnCodCad != null ? { usnCodCad: Number(d.usnCodCad) } : {}),
+});
+
 /**
  * Conexos ERP `fin010` write family (baixa/permuta — Fase 3, risco
  * arquitetural #1). Handshake de 5 chamadas; ver
@@ -51,10 +110,46 @@ const BAIXA_GRAVADA_SCHEMA = z.object({
 @injectable()
 export default class ConexosBaixaClient {
     private base: ConexosBaseClient;
+    private environmentProvider?: EnvironmentProvider;
 
-    constructor(@inject(ConexosBaseClient) base: ConexosBaseClient) {
+    /**
+     * `environmentProvider` é opcional só para os harnesses que montam o client à mão: as
+     * escritas do GRUPO exigem `conexosWriteEnabled` e, sem ele, recusam (fail-closed). As de
+     * Permutas seguem sem gate interno, como sempre.
+     */
+    constructor(
+        @inject(ConexosBaseClient) base: ConexosBaseClient,
+        @inject(EnvironmentProvider) environmentProvider?: EnvironmentProvider,
+    ) {
         this.base = base;
+        this.environmentProvider = environmentProvider;
     }
+
+    /**
+     * Classifica a falha para o serviço do borderô do grupo (I19p): `DETERMINISTICA` = o ERP
+     * respondeu 4xx de negócio (repetir dá o mesmo); `TRANSITORIA` = timeout, 5xx, contrato
+     * inesperado ou erro sem resposta — inclusive o `500 RECORDNOTFOUND` do `GET fin010`, que por
+     * isso NUNCA é usado como prova de ausência.
+     */
+    public static classificarFalha = (err: unknown): FalhaClassificada => {
+        const deterministica =
+            err instanceof ConexosError
+                ? err.code === 'CONEXOS_UPSTREAM_REJECTED'
+                : ErpResponseReader.isDeterministicRefusal(err);
+        const data = ErpResponseReader.responseOf(err)?.data as
+            | { messages?: Array<{ message?: string }> }
+            | undefined;
+        const codigoErp = ErpResponseReader.pickMessage(data?.messages)?.message;
+        return {
+            tipo: deterministica ? 'DETERMINISTICA' : 'TRANSITORIA',
+            ...(codigoErp ? { codigoErp } : {}),
+        };
+    };
+
+    private exigirEscrita = async (): Promise<void> => {
+        const env = await this.environmentProvider?.getEnvironmentVars();
+        if (env?.conexosWriteEnabled !== true) throw new ConexosWriteDisabledError();
+    };
 
     /**
      * Passo 1 — cria o borderô (tipo permuta) e retorna o `borCod`.
@@ -68,19 +163,15 @@ export default class ConexosBaixaClient {
         filCod: number;
         /** Data de movimento em epoch-ms (meia-noite UTC do dia). */
         dataMovto: number;
+        /** Conta financeira (opcional). Ausente ⇒ corpo IDÊNTICO ao de Permutas. */
+        gerNum?: number;
     }): Promise<BorderoCriado> => {
-        const { filCod, dataMovto } = params;
+        const { filCod, dataMovto, gerNum } = params;
         try {
             await this.base.ensureSid();
             const raw = await this.base.postGeneric<unknown>(
                 'fin010',
-                {
-                    filCod,
-                    borVldTipo: 2,
-                    borVldFinalizado: 0,
-                    frontModelName: 'bordero',
-                    borDtaMvto: dataMovto,
-                },
+                this.corpoBordero({ filCod, dataMovto, gerNum }),
                 { filCod },
             );
             // Zod no boundary (Regis P0 integrability): a resposta vira confirmação persistida —
@@ -88,6 +179,196 @@ export default class ConexosBaixaClient {
             return BORDERO_CRIADO_SCHEMA.parse(raw);
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010', cause });
+        }
+    };
+
+    /** Corpo do `POST fin010`. Nada em `borEspNrbanco` (ADR-0076, emenda 2026-10-21). */
+    private corpoBordero = (p: {
+        filCod: number;
+        dataMovto: number;
+        gerNum?: number;
+    }): Record<string, unknown> => ({
+        filCod: p.filCod,
+        borVldTipo: 2,
+        borVldFinalizado: 0,
+        frontModelName: 'bordero',
+        borDtaMvto: p.dataMovto,
+        ...(p.gerNum !== undefined ? { gerNum: p.gerNum } : {}),
+    });
+
+    /**
+     * Borderô do GRUPO de boleto (ADR-0076, I19l(2)) — `POST fin010` em cadastro, com a conta
+     * pagadora do lote (`gerNum`), SEM marcador. Tentativa ÚNICA (`postGenericOnce`: sem retry e
+     * sem re-POST após 401) — um segundo `POST` criaria outro borderô. Exige `conexosWriteEnabled`.
+     *
+     * Devolve a identidade `filCod + borCod + borTimCad` (+ `usnCodCad`, o usuário do robô que a
+     * retomada usa no filtro da janela). Resposta sem `borCod`/`borTimCad` ⇒ `ConexosError`
+     * transitório: o borderô pode existir, e quem decide é a busca por janela (I19s).
+     */
+    public criarBorderoDoGrupo = async (params: {
+        filCod: number;
+        /** Data de débito do lote, epoch-ms meia-noite UTC. */
+        dataMovto: number;
+        gerNum: number;
+    }): Promise<BorderoIdentificado> => {
+        const { filCod, dataMovto, gerNum } = params;
+        if (!Number.isInteger(gerNum) || gerNum <= 0) {
+            throw new Error(`gerNum inválido para o borderô do grupo: ${gerNum}`);
+        }
+        await this.exigirEscrita();
+        try {
+            await this.base.ensureSid();
+            const raw = await this.base.postGenericOnce<unknown>(
+                'fin010',
+                this.corpoBordero({ filCod, dataMovto, gerNum }),
+                { filCod },
+            );
+            const b = BORDERO_IDENTIFICADO_SCHEMA.parse(raw);
+            return {
+                filCod: b.filCod,
+                borCod: b.borCod,
+                borTimCad: b.borTimCad,
+                ...(b.usnCodCad !== undefined ? { usnCodCad: b.usnCodCad } : {}),
+                ...(b.borDtaMvto !== undefined ? { borDtaMvto: b.borDtaMvto } : {}),
+            };
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010', cause });
+        }
+    };
+
+    /**
+     * Baixa simples de UM título no borderô do grupo (I19l(3)) — `POST fin010/baixas` com o
+     * `responseData` da `validacao/tituloBaixa` + a chave + `gerNum`; juros/multa/desconto 0 e
+     * líquido = valor validado. Corpo igual ao da fase `baixaBor` da sonda HML. Tentativa ÚNICA:
+     * repetir gravaria baixa duplicada. Exige `conexosWriteEnabled`; `bxaCodSeq` validado por Zod.
+     */
+    public gravarBaixaSimples = async (params: {
+        filCod: number;
+        borCod: number;
+        gerNum: number;
+        docCod: number;
+        titCod: number;
+        /** `responseData` cru da `validacao/tituloBaixa` (o ERP manda `null`s). */
+        validacao: Record<string, unknown>;
+    }): Promise<BaixaGravada> => {
+        const { filCod, borCod, gerNum, docCod, titCod, validacao } = params;
+        const valor = Number(validacao.bxaMnyValor);
+        if (!Number.isFinite(valor) || valor <= 0) {
+            throw new Error(`validação sem bxaMnyValor para ${docCod}/${titCod}`);
+        }
+        await this.exigirEscrita();
+        try {
+            await this.base.ensureSid();
+            const raw = await this.base.postGenericOnce<unknown>(
+                'fin010/baixas',
+                {
+                    ...validacao,
+                    filCod,
+                    borCod,
+                    borVldTipo: 2,
+                    docTip: 2,
+                    docCod,
+                    titCod,
+                    gerNum,
+                    bxaMnyValor: valor,
+                    bxaMnyJuros: 0,
+                    bxaMnyMulta: 0,
+                    bxaMnyDesconto: 0,
+                    bxaMnyLiquido: valor,
+                    bxaVldSistema: 0,
+                    bxaVldCcorrente: 0,
+                    bxaVldCorrenteDc: 1,
+                    bxaVldAdto: 0,
+                    frontModelName: 'baixa',
+                },
+                { filCod },
+            );
+            return BAIXA_GRAVADA_SCHEMA.parse(raw);
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010/baixas', cause });
+        }
+    };
+
+    /**
+     * Resposta perdida do `POST fin010` (I19s): borderôs de grupo (tipo 2, em cadastro) do
+     * usuário do robô, na conta e data do lote, com `borTimCad` em `[t0 − margem, (t1 ?? agora) +
+     * margem]`. O filtro é em **epoch ms** (ISO dá 500 no ERP; `#GTE`/`#BETWEEN` não existem).
+     * Devolve TODOS: um ⇒ adota, zero ⇒ cria, dois ou mais ⇒ `indeterminado` (decisão do
+     * chamador). Linha sem identidade ou lista truncada ⇒ erro: nunca vira "zero ⇒ cria".
+     */
+    public buscarBorderosNaJanela = async (
+        params: JanelaBorderoParams,
+    ): Promise<BorderoIdentificado[]> => {
+        const { filCod, usnCodCad, gerNum, borDtaMvto, t0, t1, agora, margemMs } = params;
+        const de = t0 - margemMs;
+        const ate = (t1 ?? agora) + margemMs;
+        if (!(de <= ate)) {
+            throw new Error(`janela de borTimCad inválida: ${de} > ${ate}`);
+        }
+        return this.listarIdentificados(filCod, {
+            'borVldTipo#EQ': 2,
+            'borVldFinalizado#EQ': 0,
+            'usnCodCad#EQ': usnCodCad,
+            'gerNum#EQ': gerNum,
+            'borDtaMvto#EQ': borDtaMvto,
+            'borTimCad#GE': de,
+            'borTimCad#LE': ate,
+        });
+    };
+
+    /**
+     * Releitura pela identidade (I19q/I19s): `fin010/list borCod#EQ` (o `GET` de borderô ausente
+     * responde `500 RECORDNOTFOUND`, não 404 — não serve de prova). Sem linha ⇒ `AUSENTE`; mesmo
+     * `borTimCad` ⇒ `PRESENTE`; o `borCod` com outro `borTimCad` ⇒ `ALHEIO` (o ERP reusou o
+     * número). O que fazer com `ALHEIO` depende da etapa e é decisão do serviço.
+     */
+    public buscarBorderoPorIdentidade = async (params: {
+        filCod: number;
+        borCod: number;
+        borTimCad: number;
+    }): Promise<BuscaIdentidadeBordero> => {
+        const { filCod, borCod, borTimCad } = params;
+        const linhas = await this.listarIdentificados(filCod, {
+            'borVldTipo#EQ': 2,
+            'borCod#EQ': borCod,
+        });
+        const nosso = linhas.find((b) => b.borCod === borCod && b.borTimCad === borTimCad);
+        if (nosso) return { situacao: IDENTIDADE_BORDERO.PRESENTE, bordero: nosso };
+        const outro = linhas.find((b) => b.borCod === borCod);
+        if (outro) return { situacao: IDENTIDADE_BORDERO.ALHEIO, bordero: outro };
+        return { situacao: IDENTIDADE_BORDERO.AUSENTE };
+    };
+
+    /** `fin010/list` com leitura completa e identidade validada (leitura → `runWithRetry`). */
+    private listarIdentificados = async (
+        filCod: number,
+        filterList: Record<string, unknown>,
+    ): Promise<BorderoIdentificado[]> => {
+        try {
+            return await this.base.runWithRetry(async () => {
+                await this.base.ensureSid();
+                const page = await this.base.listGenericPaginated<Record<string, unknown>>(
+                    'fin010/list',
+                    {
+                        fieldList: [],
+                        filterList,
+                        pageNumber: 1,
+                        pageSize: PAGINA_IDENTIDADE,
+                        orderList: { orderList: [{ propertyName: 'borCod', order: 'asc' }] },
+                    },
+                    { filCod },
+                );
+                const rows = page.rows ?? [];
+                const count = Number(page.count);
+                if (Number.isFinite(count) && count > rows.length) {
+                    throw new Error(
+                        `fin010/list truncado: ${rows.length} de ${count} linhas (identidade)`,
+                    );
+                }
+                return rows.map((r) => BORDERO_IDENTIFICADO_SCHEMA.parse(r));
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010/list', cause });
         }
     };
 
@@ -124,6 +405,10 @@ export default class ConexosBaixaClient {
                 usnDesNomeCad: (d.usnDesNomeCad as string | null) ?? null,
                 usnDesNomeFin: (d.usnDesNomeFin as string | null) ?? null,
                 ...(d.vldHasBaixa != null ? { vldHasBaixa: Number(d.vldHasBaixa) } : {}),
+                ...(d.vlrTotalLiquido != null
+                    ? { vlrTotalLiquido: Number(d.vlrTotalLiquido) }
+                    : {}),
+                ...camposDoGrupo(d),
             };
         } catch (cause) {
             const status = (cause as { response?: { status?: number } })?.response?.status;
@@ -332,6 +617,9 @@ export default class ConexosBaixaClient {
                             'borCodEstornado',
                             'vlrTotalLiquido',
                             'usnDesNomeCad',
+                            'vldHasRemessaPgto',
+                            'borTimCad',
+                            'usnCodCad',
                         ],
                         filterList: {
                             'borVldTipo#EQ': 2,
@@ -360,6 +648,7 @@ export default class ConexosBaixaClient {
                                 ? { vlrTotalLiquido: Number(r.vlrTotalLiquido) }
                                 : {}),
                             usnDesNomeCad: (r.usnDesNomeCad as string | null) ?? null,
+                            ...camposDoGrupo(r),
                         }))
                         // Guard de identidade (Regis P1): descarta rows sem `borCod` numérico — um NaN
                         // viraria chave inválida no cache `permuta_bordero` / no status permuta→borderô.

@@ -25,6 +25,16 @@ export interface BorderoDetalhe {
     usnDesNomeCad?: string | null;
     usnDesNomeFin?: string | null;
     vldHasBaixa?: number;
+    /**
+     * 1 enquanto o borderô está importado num lote SISPAG; volta a 0 quando o item sai (HML
+     * 2026-10-20). **Só informativo**: não diz se foi ao banco (ADR-0076, emenda 2026-10-21).
+     */
+    vldHasRemessaPgto?: number;
+    vlrTotalLiquido?: number;
+    /** Carimbo de criação gravado pelo ERP (epoch ms, ao segundo). Identidade com `borCod`. */
+    borTimCad?: number;
+    /** Usuário que criou o borderô (código do ERP). */
+    usnCodCad?: number;
 }
 
 /** Item da listagem de borderôs do ERP (`POST /fin010/list`). */
@@ -36,6 +46,60 @@ export interface BorderoListaItem {
     borCodEstornado?: number | null;
     vlrTotalLiquido?: number;
     usnDesNomeCad?: string | null;
+    /** Ver `BorderoDetalhe.vldHasRemessaPgto` — só informativo. */
+    vldHasRemessaPgto?: number;
+    borTimCad?: number;
+    usnCodCad?: number;
+}
+
+/**
+ * Borderô reconhecido pela identidade `filCod + borCod + borTimCad` (ADR-0076, emenda
+ * 2026-10-21): o ERP reusa `borCod` depois de excluir; o `borTimCad` distingue as encarnações.
+ */
+export interface BorderoIdentificado {
+    filCod: number;
+    borCod: number;
+    /** Epoch ms gravado pelo ERP na criação. */
+    borTimCad: number;
+    usnCodCad?: number;
+    gerNum?: number;
+    borDtaMvto?: number;
+    borVldFinalizado?: number;
+    vlrTotalLiquido?: number;
+    /** Só informativo (não é guarda de limpeza). */
+    vldHasRemessaPgto?: number;
+}
+
+/** Janela de busca da resposta perdida do `POST fin010` (I19s). Tudo em epoch ms. */
+export interface JanelaBorderoParams {
+    filCod: number;
+    /** Usuário do robô (da sessão/login ou da releitura de um borderô nosso). */
+    usnCodCad: number;
+    gerNum: number;
+    /** Data de movimento (meia-noite UTC) = data de débito do lote. */
+    borDtaMvto: number;
+    /** Gravado ANTES do `POST`. */
+    t0: number;
+    /** Gravado depois do `POST`; ausente quando o processo morreu antes de persisti-lo. */
+    t1?: number;
+    /** Momento da retomada: limite superior quando não há `t1`. */
+    agora: number;
+    /** Desvio de relógio servidor × ERP (constante de código). */
+    margemMs: number;
+}
+
+/** Resultado da busca pela identidade (`fin010/list borCod#EQ`). */
+export interface BuscaIdentidadeBordero {
+    /** `PRESENTE` = o nosso; `AUSENTE` = sem linha; `ALHEIO` = `borCod` reusado (outro `borTimCad`). */
+    situacao: 'PRESENTE' | 'AUSENTE' | 'ALHEIO';
+    bordero?: BorderoIdentificado;
+}
+
+/** Falha do ERP classificada para o serviço do borderô do grupo. */
+export interface FalhaClassificada {
+    tipo: 'DETERMINISTICA' | 'TRANSITORIA';
+    /** Key crua do ERP (ex.: `FIN_014.FIN_HAS_REMESSA_PGTO`), quando houver. */
+    codigoErp?: string;
 }
 
 /** `responseData` do passo 2 (validação do título da invoice). */
