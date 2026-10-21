@@ -2,7 +2,7 @@
 name: conexos
 type: integration
 direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG escreve fin015/fin052 e, ADR-0076 planned, borderô fin010 do boleto agrupado)
-ontology_version: "0.45.0"
+ontology_version: "0.47.0"
 implementation_status: partial
 status: draft
 owners: [yuri]

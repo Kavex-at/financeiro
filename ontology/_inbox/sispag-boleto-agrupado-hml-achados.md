@@ -234,3 +234,26 @@ Arquivo `PG191081B.RET` (fil 2, bnc 4, gtb 1, gar 7, processado, 0 erros). Varri
 > identidade = `filCod` + `borCod` + `borTimCad`, **sem** marcador (o item 2 acima, "conferir o marcador", foi
 > substituído pelo `borTimCad`; nada é escrito em `borEspNrbanco`); ausência = `fin010/list borCod#EQ` vazio;
 > G6 = sem sugestão.
+
+## T8 — Identidade do borderô sem marcador: `borTimCad` + `usnCodCad` (2026-10-21, só leitura)
+
+> HML (`columbiatrading-hml`, `HML_ENV_FILE`), **só leitura**. `FASE=marcadorLer BOR=252` do
+> `probe-hml-boleto-agrupado-tdd.ts` + consultas avulsas a `fin010/list` (script descartável, não versionado).
+
+- Cabeçalho do `fin010` (40 chaves) tem dois campos de auditoria gravados pelo ERP: `usnCodCad` (usuário que
+  criou; 97 = MPS_FRANCINEI em HML) e `borTimCad` (instante de criação, epoch ms com precisão de segundo).
+- Borderô 252: `borTimCad 1792431474000` (19/10 17:37:54Z) e `borDtaFinalizado 1792431647000` (17:40:47Z): o
+  `borTimCad` manteve o valor da criação depois das baixas, do `importar` e da finalização pelo retorno.
+- Filtros de `fin010/list` (filial 2):
+
+| Filtro | Resultado |
+|---|---|
+| `usnCodCad#EQ 97` | 200, count 11 |
+| `borTimCad#EQ 1792431474000` | 200, count 1 (só o 252) |
+| `borTimCad#GE t−60000` + `#LE t+60000` (epoch ms) | 200, count 1 (só o 252) |
+| `borTimCad#GE/#LE` em ISO-8601 | 500 `Value … of ENUM ECnxDataType can't be converted to java.util.Date` |
+| `borTimCad#GTE/#LTE` · `#BETWEEN [a,b]` | 500 |
+| `usnCodCad#EQ 97` + `borTimCad#GE (t − 1 dia)` | 200, count 2 (251 e 252) |
+
+**Conclusão:** identidade = `filCod` + `borCod` + `borTimCad` (o `borCod` reusado ganha outro `borTimCad`);
+busca da resposta perdida por janela `#GE/#LE` em epoch ms com `usnCodCad`. Base da emenda de 2026-10-21.
