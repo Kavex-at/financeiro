@@ -591,6 +591,26 @@ export default class GrupoBoletoRepository {
         return this.comTitulos(rows, tx);
     };
 
+    /**
+     * Os grupos `CONFIRMADO` confirmados sob um par (`confirmacao_emissor_id`), TRAVADOS
+     * (`FOR UPDATE`) na transação da revogação do par: a cascata (I15l(2), I21t) anula exatamente
+     * o que travou. Um grupo confirmado enquanto a revogação espera vê o par `REVOGADA` (o
+     * `confirmar` trava o par `FOR SHARE`) e nasce sob um par novo, nunca sob o revogado.
+     */
+    public listarConfirmadosDoPar = async (
+        confirmacaoEmissorId: string,
+        tx: TransactionClient,
+    ): Promise<GrupoBoleto[]> => {
+        const rows = (await tx.selectMany(
+            `SELECT ${COLUNAS_GRUPO} FROM sispag_grupo_boleto
+              WHERE confirmacao_emissor_id = $parId::uuid AND estado = $confirmado
+              ORDER BY confirmado_em, id
+              FOR UPDATE`,
+            { parId: confirmacaoEmissorId, confirmado: GRUPO_BOLETO_ESTADO.CONFIRMADO },
+        )) as GrupoRow[];
+        return this.comTitulos(rows, tx);
+    };
+
     /** O grupo `CONFIRMADO` do boleto, se houver (no máximo um, índice parcial I21i). */
     public buscarConfirmadoPorBoleto = async (
         ddcCod: number,
