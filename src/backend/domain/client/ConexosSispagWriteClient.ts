@@ -1,6 +1,7 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
 import ConexosError from '../errors/ConexosError.js';
+import ConexosWriteDisabledError from '../errors/ConexosWriteDisabledError.js';
 import ErpPerguntaError from '../errors/ErpPerguntaError.js';
 import RascunhoLeituraIncompletaError from '../errors/RascunhoLeituraIncompletaError.js';
 import type {
@@ -10,8 +11,10 @@ import type {
     CriarLoteParams,
     GerarRemessaParams,
     ImportarTitulosParams,
+    ItemDeBordero,
     ItemDoRascunho,
     ItemLinhaDigitavel,
+    LinhaBorderoPendente,
     LinhasDigitaveisDoLote,
     LoteNativoCriado,
     LoteNativoEstado,
@@ -21,6 +24,7 @@ import type {
     ValidacaoCodigoBarras,
 } from '../interface/sispag/Fin015Write.js';
 import { LOG_TYPE } from '../interface/log/LogInterface.js';
+import EnvironmentProvider from '../libs/environment/EnvironmentProvider.js';
 import LogService from '../service/LogService.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
@@ -193,6 +197,33 @@ const CONFIRMA_CODBAR_SCHEMA = z.preprocess(
 /** `itsCodSeq` do item nativo: inteiro positivo. Ausente/inválido = identidade incompleta. */
 const ITS_COD_SEQ_SCHEMA = z.coerce.number().int().positive();
 
+/** `borCod` de um borderô (pendente ou item no rascunho): inteiro positivo. */
+const BOR_COD_SCHEMA = z.coerce.number().int().positive();
+
+/**
+ * Linha de `borderosPendentes/list` (ADR-0077, I21n): o `borCod` é exigido (sem ele a linha não
+ * diz QUAL borderô está pendente); o resto segue `passthrough`, verbatim para o `importar`.
+ */
+const PENDENTE_BORDERO_SCHEMA = z
+    .object({
+        filCod: z.coerce.number().int().positive(),
+        borCod: z.number().int().positive(),
+        vlrTotal: z.number().nullish(),
+    })
+    .passthrough();
+
+/**
+ * Item de borderô no rascunho (I21n): identidade (`itsCodSeq`) e valor exigidos — o vínculo da
+ * barra (I21o) compara `itsMnyValor` com o boleto e edita o item pelo `itsCodSeq`.
+ */
+const ITEM_BORDERO_SCHEMA = z
+    .object({
+        itsCodSeq: z.number().int().positive(),
+        itsMnyValor: z.number().finite(),
+        itsVldModalidade: z.number().int().nullish(),
+    })
+    .passthrough();
+
 const PENDENTE_DDA_SCHEMA = z
     .object({ titVldReflexoDdaAssoc: z.union([z.literal(0), z.literal(1)]) })
     .passthrough();
@@ -251,10 +282,28 @@ const QUESTION_SCHEMA = z.object({
 @singleton()
 @injectable()
 export default class ConexosSispagWriteClient {
+    /**
+     * `environmentProvider` é opcional só para os harnesses que montam o client à mão. As
+     * escritas do BORDERÔ DE GRUPO (ADR-0077) exigem `conexosWriteEnabled` e, sem o provider,
+     * recusam (fail-closed); as demais seguem sem gate interno, como documentado acima.
+     */
     public constructor(
         @inject(ConexosBaseClient) private readonly base: ConexosBaseClient,
         @inject(LogService) private readonly logService: LogService,
+        @inject(EnvironmentProvider) private readonly environmentProvider?: EnvironmentProvider,
     ) {}
+
+    private exigirEscrita = async (): Promise<void> => {
+        const env = await this.environmentProvider?.getEnvironmentVars();
+        if (env?.conexosWriteEnabled !== true) throw new ConexosWriteDisabledError();
+    };
+
+    /** `borCod` de uma row do rascunho SEM `docCod` (item de borderô); senão `undefined`. */
+    private borCodDoItem = (row: Record<string, unknown>): number | undefined => {
+        if (this.identidade(row.docCod, '') !== '') return undefined;
+        const bor = BOR_COD_SCHEMA.safeParse(row.borCod);
+        return bor.success ? bor.data : undefined;
+    };
 
     /**
      * Extrai a mensagem de validação do corpo de erro do Conexos (2 formatos, ambos 400):
@@ -614,10 +663,14 @@ export default class ConexosSispagWriteClient {
                 );
             });
             return new Set(
-                (page.rows ?? []).map(
-                    (r) =>
-                        `${Number(r.filCod ?? filCod)}:${String(r.docCod ?? '')}:${String(r.titCod ?? '1')}`,
-                ),
+                (page.rows ?? []).map((r) => {
+                    const fil = Number(r.filCod ?? filCod);
+                    // Item de borderô (ADR-0077): sem docCod, com borCod. Antes virava "fil::1",
+                    // uma chave falsa que travava a retomada em `indeterminado`.
+                    const borCod = this.borCodDoItem(r);
+                    if (borCod !== undefined) return `${fil}:bor:${borCod}`;
+                    return `${fil}:${String(r.docCod ?? '')}:${String(r.titCod ?? '1')}`;
+                }),
             );
         } catch {
             return undefined;
@@ -790,11 +843,13 @@ export default class ConexosSispagWriteClient {
             const itens = linhas.map((row): ItemDoRascunho => {
                 const seq = ITS_COD_SEQ_SCHEMA.safeParse(row.itsCodSeq);
                 const fil = Number(row.filCod);
+                const borCod = this.borCodDoItem(row);
                 return {
                     filCod: Number.isInteger(fil) && fil > 0 ? fil : filCod,
                     docCod: this.identidade(row.docCod, ''),
                     titCod: this.identidade(row.titCod, '1'),
                     ...(seq.success ? { itsCodSeq: seq.data } : {}),
+                    ...(borCod !== undefined ? { borCod } : {}),
                     row,
                 };
             });
@@ -821,6 +876,145 @@ export default class ConexosSispagWriteClient {
         if (achado) return achado.row;
         if (!completa) throw new RascunhoLeituraIncompletaError({ ...ctx, lidas: itens.length });
         return undefined;
+    };
+
+    /**
+     * O item de BORDERÔ `borCod` no rascunho (ADR-0077, I21n): sem `docCod/titCod`, com
+     * `itsCodSeq`, `itsMnyValor` e modalidade. Ausente numa leitura COMPLETA ⇒ `undefined`.
+     * Leitura incompleta sem achar o item, ou item achado sem identidade/valor válidos ⇒
+     * `RascunhoLeituraIncompletaError` (nunca "ausente": o chamador não pode concluir nada).
+     */
+    public lerItemDeBordero = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        borCod: number;
+        maxPaginas?: number;
+    }): Promise<ItemDeBordero | undefined> => {
+        const { borCod, ...ctx } = params;
+        const { itens, completa } = await this.lerItensDoRascunho(ctx);
+        const achado = itens.find((i) => i.borCod === borCod);
+        const incompleta = new RascunhoLeituraIncompletaError({
+            filCod: ctx.filCod,
+            bncCod: ctx.bncCod,
+            flpCod: ctx.flpCod,
+            lidas: itens.length,
+        });
+        if (!achado) {
+            if (!completa) throw incompleta;
+            return undefined;
+        }
+        const item = ITEM_BORDERO_SCHEMA.safeParse(achado.row);
+        if (!item.success) throw incompleta;
+        return {
+            filCod: achado.filCod,
+            borCod,
+            itsCodSeq: item.data.itsCodSeq,
+            itsMnyValor: item.data.itsMnyValor,
+            ...(item.data.itsVldModalidade != null
+                ? { itsVldModalidade: item.data.itsVldModalidade }
+                : {}),
+            row: achado.row,
+        };
+    };
+
+    /**
+     * Borderôs em cadastro com conta pendentes de importação no lote (ADR-0077, I21n) —
+     * `fin015/finItemSispag/borderosPendentes/list/{fil}/{bnc}/{flp}`. Leitura → `runWithRetry`.
+     * A linha NÃO traz `borTimCad` (a identidade é conferida antes, no `fin010`). Linha sem
+     * `borCod` ou grid maior que a varredura ⇒ `ConexosError`: "não está pendente" só se conclui
+     * de uma leitura completa e válida.
+     */
+    public listarBorderosPendentes = async (params: {
+        filCod: number;
+        bncCod: number;
+        flpCod: number;
+        maxPaginas?: number;
+    }): Promise<LinhaBorderoPendente[]> => {
+        const { filCod, bncCod, flpCod, maxPaginas = 10 } = params;
+        const path = `fin015/finItemSispag/borderosPendentes/list/${filCod}/${bncCod}/${flpCod}`;
+        const pageSize = 200;
+        try {
+            const linhas: LinhaBorderoPendente[] = [];
+            for (let pagina = 1; pagina <= maxPaginas; pagina += 1) {
+                const pageNumber = pagina;
+                const resposta = await this.base.runWithRetry(async () => {
+                    await this.base.ensureSid();
+                    return this.base.listGenericPaginated<Record<string, unknown>>(
+                        path,
+                        {
+                            fieldList: [],
+                            filterList: {},
+                            serviceName: 'fin015',
+                            pageNumber,
+                            pageSize,
+                        },
+                        { filCod },
+                    );
+                });
+                const rows = resposta.rows ?? [];
+                for (const row of rows) {
+                    const p = PENDENTE_BORDERO_SCHEMA.parse(row);
+                    linhas.push({
+                        filCod: p.filCod,
+                        borCod: p.borCod,
+                        ...(p.vlrTotal != null ? { vlrTotal: p.vlrTotal } : {}),
+                        row,
+                    });
+                }
+                const count = Number(resposta.count);
+                if (rows.length < pageSize || (Number.isFinite(count) && linhas.length >= count)) {
+                    return linhas;
+                }
+            }
+            throw new Error(`borderosPendentes truncado em ${maxPaginas} páginas (flp ${flpCod})`);
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
+    };
+
+    /**
+     * Importa UM borderô pendente como item do lote (ADR-0077, I21n) —
+     * `borderosPendentes/importar` com a linha LIDA + `filCodLote/bncCod/flpCod` e **`itemy: 1`,
+     * `op: 1`** forçados (a linha lida vem com `itemy: 0`, que não importa nada). Tentativa ÚNICA
+     * (`postGenericOnce`); exige `conexosWriteEnabled`. A resposta (mesmo `SUCESSO`) NÃO é prova:
+     * o sucesso é o item com o `borCod` na releitura (`lerItemDeBordero`, H4). Pergunta do ERP
+     * ⇒ `ErpPerguntaError` (nenhuma é auto-respondida aqui).
+     */
+    public importarBorderoPendente = async (params: {
+        linha: LinhaBorderoPendente;
+        filCodLote: number;
+        bncCod: number;
+        flpCod: number;
+        bncCodFin015: number;
+    }): Promise<void> => {
+        const { linha, filCodLote, bncCod, flpCod, bncCodFin015 } = params;
+        const path = 'fin015/finItemSispag/borderosPendentes/importar';
+        await this.exigirEscrita();
+        try {
+            await this.base.ensureSid();
+            await this.base.postGenericOnce<unknown>(
+                path,
+                {
+                    items: [
+                        {
+                            ...linha.row,
+                            filCodLote,
+                            bncCod,
+                            flpCod,
+                            itemy: 1,
+                            op: 1,
+                            bncCodFin015,
+                        },
+                    ],
+                    op: 1,
+                    bncCodFin015,
+                },
+                { filCod: filCodLote },
+            );
+        } catch (cause) {
+            throw this.toConexosError(path, cause);
+        }
     };
 
     /**
