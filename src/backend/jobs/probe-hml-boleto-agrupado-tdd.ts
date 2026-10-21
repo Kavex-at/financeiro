@@ -16,6 +16,9 @@ import CodigoBarrasSintetico from '../domain/libs/boleto/CodigoBarrasSintetico.j
  *
  * Complementa `probe-hml-boleto-agrupado.ts` (ciclo ponta a ponta de 2026-10-19). Mede o que a
  * implementação precisa antes de fechar as Tasks 7, 13–18:
+ *   situacaoBorderos (só leitura) varre o `fin010/list` da filial (tipo 2) e conta os estados
+ *                (`borVldFinalizado` × `borCodEstornado` × `borCodNovo` × `borDtaStatus`): o que
+ *                marca um borderô cancelado (T9, 2026-10-21)
  *   marcadorLer  (só leitura) todas as chaves do `GET fin010/{fil}/{bor}` e da linha do
  *                `fin010/list` do borderô `BOR`: candidatos a campo de observação (G2)
  *   marcador     POST fin010 com `CAMPO=MARCA` (+ `gerNum`), relê no GET e filtra o
@@ -243,6 +246,62 @@ async function main(): Promise<void> {
         ...(CAMPO ? { [CAMPO]: b[CAMPO] } : {}),
     });
 
+    if (FASE === 'situacaoBorderos') {
+        const campos = [
+            'borCod',
+            'borVldFinalizado',
+            'borCodEstornado',
+            'borCodNovo',
+            'borDtaStatus',
+            'usnCodSta',
+            'borDtaFinalizado',
+            'botLotCodEstorno',
+            'vldHasBaixa',
+            'vldHasRemessaPgto',
+            'usnCodCad',
+        ];
+        const linhas: Row[] = [];
+        for (let pageNumber = 1; pageNumber <= 20; pageNumber += 1) {
+            const res = await base.listGenericPaginated<Row>(
+                'fin010/list',
+                {
+                    fieldList: campos,
+                    filterList: { 'borVldTipo#EQ': 2 },
+                    pageNumber,
+                    pageSize: 200,
+                    serviceName: 'fin010',
+                },
+                { filCod: FIL },
+            );
+            const rows = res.rows ?? [];
+            linhas.push(...rows);
+            if (rows.length < 200) break;
+        }
+        const presente = (v: unknown): string => (v === null || v === undefined ? '-' : 'sim');
+        const contagem = new Map<string, number[]>();
+        for (const r of linhas) {
+            const chave = [
+                `fin=${String(r.borVldFinalizado)}`,
+                `estornado=${presente(r.borCodEstornado)}`,
+                `novo=${presente(r.borCodNovo)}`,
+                `dtaStatus=${presente(r.borDtaStatus)}`,
+                `lotEstorno=${presente(r.botLotCodEstorno)}`,
+                `dtaFinalizado=${presente(r.borDtaFinalizado)}`,
+            ].join(' ');
+            contagem.set(chave, [...(contagem.get(chave) ?? []), Number(r.borCod)]);
+        }
+        log(`fin010/list fil ${FIL} tipo 2: ${linhas.length} borderô(s)`);
+        for (const [chave, cods] of [...contagem.entries()].sort()) {
+            log(`   ${chave}: ${cods.length} — ex.: ${cods.slice(0, 8).join(',')}`);
+        }
+        trilha('situacaoBorderos', {
+            total: linhas.length,
+            estados: Object.fromEntries(
+                [...contagem.entries()].map(([k, v]) => [k, { n: v.length, ex: v.slice(0, 8) }]),
+            ),
+        });
+        return;
+    }
     if (FASE === 'marcadorLer') {
         if (!BOR) return log('informe BOR.');
         const cab = await lerBordero(BOR);

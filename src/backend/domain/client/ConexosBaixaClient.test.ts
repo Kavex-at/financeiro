@@ -424,6 +424,26 @@ describe('ConexosBaixaClient — borderô do grupo (ADR-0076)', () => {
             expect(base.getGeneric).not.toHaveBeenCalled();
         });
 
+        it('devolve a situação lida (achados T9): em cadastro, cancelado (2), estornado (3 + borCodNovo), indeterminado', async () => {
+            const { base, client } = make();
+            const casos: Array<[Record<string, unknown>, string]> = [
+                [{}, 'em_cadastro'],
+                [{ borVldFinalizado: 2, borCodEstornado: 41 }, 'cancelado'],
+                [{ borVldFinalizado: 3, borCodNovo: 254 }, 'estornado'],
+                [{ borVldFinalizado: 9 }, 'indeterminado'],
+                [{ borVldFinalizado: null }, 'indeterminado'],
+            ];
+            for (const [extra, situacao] of casos) {
+                base.listGenericPaginated.mockResolvedValueOnce({
+                    count: 1,
+                    rows: [{ ...BORDERO_253, ...extra }],
+                });
+                const r = await client.buscarBorderoPorIdentidade(id);
+                expect(r.situacao).toBe(IDENTIDADE_BORDERO.PRESENTE);
+                expect(r.bordero?.situacao).toBe(situacao);
+            }
+        });
+
         it('zero linhas ⇒ AUSENTE', async () => {
             const { client } = make();
             expect((await client.buscarBorderoPorIdentidade(id)).situacao).toBe(

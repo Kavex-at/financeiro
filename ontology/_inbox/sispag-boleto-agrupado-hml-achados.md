@@ -257,3 +257,55 @@ Arquivo `PG191081B.RET` (fil 2, bnc 4, gtb 1, gar 7, processado, 0 erros). Varri
 
 **Conclusão:** identidade = `filCod` + `borCod` + `borTimCad` (o `borCod` reusado ganha outro `borTimCad`);
 busca da resposta perdida por janela `#GE/#LE` em epoch ms com `usnCodCad`. Base da emenda de 2026-10-21.
+
+## T9 — Como o `fin010` representa um borderô cancelado (2026-10-21, só leitura)
+
+> HML (`columbiatrading-hml`, `HML_ENV_FILE`), **só leitura**. `FASE=marcadorLer BOR=15|244|252|250|43|85|223|48`
+> e a fase nova `FASE=situacaoBorderos FIL=1|2` do `probe-hml-boleto-agrupado-tdd.ts` (varre o `fin010/list`
+> tipo 2 da filial e conta as combinações). Pergunta da T13: `BorderoIdentificado` não tinha campo para
+> "borderô antigo cancelado" (I19s: antigo ausente **ou cancelado** ⇒ cria um novo).
+
+Contagem de 269 borderôs tipo 2 (fil 2: 230; fil 1: 39) por `borVldFinalizado` × presença dos campos:
+
+| `borVldFinalizado` | `borCodEstornado` | `borCodNovo` | `borDtaStatus`/`usnCodSta` | lote contábil de estorno (`botLotCodEstorno`) | `borDtaFinalizado` | fil 2 | fil 1 |
+|---|---|---|---|---|---|---|---|
+| 0 | — | — | — | — | — | 6 | 8 |
+| 0 | sim | — | — | — | — | 1 (250 ← 248) | 0 |
+| 1 | — | — | — / sim | — | sim | 161 | 22 |
+| 1 | sim | — | — | — | sim | 2 (223 ← 222, 44 ← 43) | 1 |
+| **2** | — / sim | — | **sim** | **sim** | sim | **50** (ex.: 15, 16, 244, 245, 48) | 6 |
+| **3** | — / sim | **sim** | sim | sim | sim | **10** (ex.: 43 → 44, 85 → 86) | 2 |
+
+Leitura dos campos (exemplos):
+
+- **`borVldFinalizado = 2` = CANCELADO.** Borderô 244: `borDtaFinalizado` = `borTimCad`, `borDtaStatus 1767857714000`
+  com `usnCodSta 97` (quem/quando mudou o status), `botLotCodEstorno 2` + `borLotDtaDataEstorno` (lote contábil que
+  estornou a contabilização), `borCodNovo` nulo, `vldHasBaixa 1` (as baixas continuam listadas, sem efeito).
+  Bate com o que Permutas já usa desde a Fase 3.1 (`BorderoGestaoService.situacaoDoItem`,
+  `ReconciliacaoPermutaService.borderoAindaValido`: "2 = CANCELADO ⇒ a baixa é nula, libera relançamento").
+- **`borVldFinalizado = 3` = ESTORNADO, sempre com `borCodNovo`.** Borderô 43: `borCodNovo 44`; o 44 está com
+  `borVldFinalizado 1` e `borCodEstornado 43`. O estorno **cria um borderô novo** que herda as baixas; o antigo
+  fica 3. Logo `borCodEstornado` não marca "este foi estornado": marca "este nasceu do estorno daquele" (o 250 está
+  em cadastro com `borCodEstornado 248`). Nota lateral (fora do escopo, para o maintainer): Permutas trata `borCodEstornado != null` como
+  ESTORNADO (`BorderoGestaoService.situacaoDoItem`) e como "baixa nula, libera relançamento"
+  (`ReconciliacaoPermutaService.borderoAindaValido`), mas o campo marca o borderô **novo**, que herdou as baixas e
+  está vivo (44: finalizado). Se essa leitura liberar o relançamento de uma permuta cujo borderô foi estornado e
+  refeito, há risco de baixa em dobro. Não verificado além da leitura do código; vale um `/investigate`.
+- Nenhum borderô com `borCodNovo` fora do 3, nem com `borVldFinalizado` fora de 0–3, nas duas filiais.
+
+**Decisão aplicada na T14 (sem regra nova, só a representação):**
+
+- `BorderoIdentificado.situacao` (`SITUACAO_BORDERO`: `em_cadastro`, `finalizado`, `cancelado`, `estornado`,
+  `indeterminado`), derivada no client (`ConexosBaixaClient`, pela lib pura `SituacaoBorderoFin010`) de
+  `borVldFinalizado` × `borCodNovo`: 0/1/2 só com `borCodNovo` nulo; 3 só com `borCodNovo`; qualquer outra
+  combinação (ausente, desconhecida) ⇒ `indeterminado` (fail-closed). Campos `borCodEstornado`/`borCodNovo` expostos.
+- Depois de J rejeitado (I19s): antigo `cancelado` ⇒ conta como resolvido, cria um novo sem tocar no antigo;
+  `estornado` ⇒ **não** é resolvido (as baixas do grupo seguem vivas no `borCodNovo`; criar outro pagaria duas
+  vezes) ⇒ retirada `BORDERO_ANTERIOR_NAO_RESOLVIDO` + `Alerta`, como o `finalizado`; `indeterminado` ⇒ execução
+  `indeterminado` + `Alerta`, nada escrito.
+- Nosso borderô (retomada/limpeza) fora de `em_cadastro` ⇒ `indeterminado` na preparação e `pendente` na limpeza.
+
+A medição do "cancelado" é conclusiva (os quatro valores têm leitura consistente nos 269 borderôs e com o código
+de Permutas; o que não se reconhece cai em `indeterminado`). O que **não** está na regra é o **estornado**: a I19s
+fala só de "ausente ou cancelado". Tratá-lo como "não resolvido" é o lado seguro, aplicado e aberto como **G8**
+nos "Questions / gaps" do tasks para o maintainer confirmar.

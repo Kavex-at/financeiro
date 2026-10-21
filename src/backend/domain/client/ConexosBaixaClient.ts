@@ -17,6 +17,7 @@ import type {
     TituloPermutaValidacao,
 } from '../interface/permutas/Fin010Baixa.js';
 import EnvironmentProvider from '../libs/environment/EnvironmentProvider.js';
+import SituacaoBorderoFin010 from '../libs/sispag/SituacaoBorderoFin010.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
 /**
@@ -58,6 +59,8 @@ const BORDERO_IDENTIFICADO_SCHEMA = z
         gerNum: z.number().int().nullish(),
         borDtaMvto: z.number().nullish(),
         borVldFinalizado: z.number().int().nullish(),
+        borCodEstornado: z.number().int().nullish(),
+        borCodNovo: z.number().int().nullish(),
         vlrTotalLiquido: z.number().nullish(),
         vldHasRemessaPgto: z.number().int().nullish(),
     })
@@ -71,8 +74,11 @@ const BORDERO_IDENTIFICADO_SCHEMA = z
             ...(r.gerNum != null ? { gerNum: r.gerNum } : {}),
             ...(r.borDtaMvto != null ? { borDtaMvto: r.borDtaMvto } : {}),
             ...(r.borVldFinalizado != null ? { borVldFinalizado: r.borVldFinalizado } : {}),
+            ...(r.borCodEstornado != null ? { borCodEstornado: r.borCodEstornado } : {}),
+            ...(r.borCodNovo != null ? { borCodNovo: r.borCodNovo } : {}),
             ...(r.vlrTotalLiquido != null ? { vlrTotalLiquido: r.vlrTotalLiquido } : {}),
             ...(r.vldHasRemessaPgto != null ? { vldHasRemessaPgto: r.vldHasRemessaPgto } : {}),
+            situacao: SituacaoBorderoFin010.classificar(r),
         }),
     );
 

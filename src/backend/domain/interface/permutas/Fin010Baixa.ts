@@ -65,10 +65,34 @@ export interface BorderoIdentificado {
     gerNum?: number;
     borDtaMvto?: number;
     borVldFinalizado?: number;
+    /** Borderô que ESTE substituiu num estorno (este nasceu do estorno daquele). */
+    borCodEstornado?: number;
+    /** Borderô que substituiu ESTE num estorno (`borVldFinalizado = 3`). */
+    borCodNovo?: number;
     vlrTotalLiquido?: number;
     /** Só informativo (não é guarda de limpeza). */
     vldHasRemessaPgto?: number;
+    /**
+     * Situação derivada do cabeçalho lido no `fin010/list` (`SituacaoBorderoFin010`). Ausente na
+     * resposta do `POST fin010`; quem decide trata ausência como `indeterminado` (fail-closed).
+     */
+    situacao?: SituacaoBordero;
 }
+
+/**
+ * Situação de um borderô no `fin010`, medida no HML em 2026-10-21 (achados T9: 269 borderôs das
+ * filiais 1 e 2). `borVldFinalizado`: 0 em cadastro, 1 finalizado, 2 cancelado, 3 estornado
+ * (sempre com `borCodNovo`, o borderô que nasceu do estorno e herdou as baixas). Qualquer outra
+ * combinação é `INDETERMINADO`.
+ */
+export const SITUACAO_BORDERO = {
+    EM_CADASTRO: 'em_cadastro',
+    FINALIZADO: 'finalizado',
+    CANCELADO: 'cancelado',
+    ESTORNADO: 'estornado',
+    INDETERMINADO: 'indeterminado',
+} as const;
+export type SituacaoBordero = (typeof SITUACAO_BORDERO)[keyof typeof SITUACAO_BORDERO];
 
 /** Janela de busca da resposta perdida do `POST fin010` (I19s). Tudo em epoch ms. */
 export interface JanelaBorderoParams {
