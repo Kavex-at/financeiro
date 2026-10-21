@@ -218,8 +218,18 @@ export default class GrupoBoletoService {
                 acao: 'anular o grupo de boleto (entre 10 e 500 caracteres)',
             });
         }
-        const r = await this.db.withTransaction((tx) =>
-            this.anularNaTransacao(
+        const r = await this.db.withTransaction(async (tx) => {
+            // O MESMO advisory lock por título da inclusão no lote (I19j): sem ele, uma inclusão
+            // que leu o grupo CONFIRMADO antes deste commit gravaria os N itens de um grupo
+            // anulado. Os títulos de um grupo não mudam; ler sem lock só para achar as chaves.
+            const grupo = await this.grupos.buscarPorId(input.grupoId, tx);
+            if (grupo) {
+                await this.grupos.travar(
+                    tx,
+                    grupo.titulos.map((t) => GrupoBoletoRepository.chaveLockTitulo(t)),
+                );
+            }
+            return this.anularNaTransacao(
                 {
                     grupoId: input.grupoId,
                     motivo,
@@ -227,8 +237,8 @@ export default class GrupoBoletoService {
                     ator: input.ator,
                 },
                 tx,
-            ),
-        );
+            );
+        });
         this.cache.invalidar();
         if (r.anulado) {
             await this.logService.info({
