@@ -886,6 +886,16 @@ describe('GrupoBoletoService.anular (I21t, PI-6)', () => {
         );
     });
 
+    it('trava os títulos do grupo (lock da inclusão no lote) ANTES de anular', async () => {
+        const h = montar({ grupos: [grupoConfirmado()] });
+        await h.service.anular({ grupoId: 'g1', motivo: MOTIVO, ator: 'ana' });
+        const iTravar = h.ordem.indexOf(
+            'travar:sispag:titulo:2:38883:1,sispag:titulo:2:38884:1,sispag:titulo:2:38885:1',
+        );
+        expect(iTravar).toBeGreaterThan(h.ordem.indexOf('tx'));
+        expect(h.ordem.indexOf('anular:g1')).toBeGreaterThan(iTravar);
+    });
+
     it('em lote comprometido: anula, NÃO mexe no lote e devolve o aviso', async () => {
         const g = grupoConfirmado();
         const h = montar({
