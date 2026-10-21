@@ -599,8 +599,11 @@ export interface JanelaDataDebito {
 /** Resultado de um run de formação automática de lotes. */
 export interface FormacaoLotesResult {
     lotesFormados: number;
+    /** Avulsos + os N títulos de cada grupo de boleto lotado. */
     titulosLotados: number;
     lotesDesfeitos: number;
+    /** Grupos de boleto lotados inteiros nesta rodada (ADR-0077, P1-4). */
+    gruposLotados?: number;
 }
 
 /** Entrada — criar lote. */
