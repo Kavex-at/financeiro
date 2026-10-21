@@ -131,8 +131,14 @@ const buildDestinoDeps = () => ({
         descartarDoItem: jest.fn().mockResolvedValue(0),
     },
     bloqueioRepo: { findAtivo: jest.fn().mockResolvedValue(null) },
-    /** ADR-0075: por padrão a situação não sabe (título fora da carteira) e não bloqueia. */
-    situacaoPagamento: { avaliarVivo: jest.fn().mockResolvedValue(null) },
+    /** ADR-0075: por padrão o título está na carteira, avaliado por inteiro e PRONTO. */
+    situacaoPagamento: {
+        avaliarVivo: jest.fn().mockResolvedValue({
+            resultado: 'AVALIADA',
+            situacao: { estado: 'PRONTO', motivos: [] },
+            fontesIndisponiveis: [],
+        }),
+    },
     envVars: {
         sispagFavorecidoAutorizadoEnabled: true,
         sispagTedEnabled: true,
@@ -278,6 +284,36 @@ describe('LotePagamentoService.criarLotesPorFilial (ADR-0075)', () => {
         });
     });
 
+    it('I19s: título com fonte caída volta em `recusados` dizendo qual consulta faltou', async () => {
+        const { service } = montar({
+            incluir: async (i) => {
+                if (i.docCod === '2') {
+                    throw new TituloNaoElegivelError({
+                        docCod: '2',
+                        titCod: '1',
+                        motivo: 'situacao-indisponivel',
+                        fontesIndisponiveis: ['BOLETO'],
+                    });
+                }
+                return lote();
+            },
+        });
+        const r = await service.criarLotesPorFilial({
+            titulos: [chave(2, '1'), chave(2, '2')],
+            ator: 'u1',
+        });
+        expect(r.lotes[0]).toMatchObject({
+            resultado: 'PARCIAL',
+            recusados: [
+                {
+                    chave: { docCod: '2' },
+                    codigo: 'TITULO_NAO_ELEGIVEL',
+                    mensagem: expect.stringContaining('sem a consulta de sugestão de boleto'),
+                },
+            ],
+        });
+    });
+
     it('nenhum título entrou: o lote vazio é descartado e o resultado é RECUSADO, sem loteId', async () => {
         const { service, repo } = montar({
             incluir: async () => {
@@ -399,11 +435,28 @@ describe('LotePagamentoService — invariantes', () => {
                     acao: { codigo: 'ABRIR_EM_PERMUTAS', rotulo: 'Abrir em Permutas' },
                     detalhe: 'pode já ter permuta parcial',
                 }) as const;
+            const avaliada = (situacao: object, fontesIndisponiveis: string[] = []) => ({
+                resultado: 'AVALIADA',
+                situacao,
+                fontesIndisponiveis,
+            });
+            const recusa = async (deps: ReturnType<typeof buildDestinoDeps>) => {
+                const repo = buildRepo();
+                const { service } = make(repo, titulo(), buildTituloRepo(), deps);
+                const erro = (await service.incluirTitulo(input).catch((e: unknown) => e)) as
+                    | TituloNaoElegivelError
+                    | undefined;
+                expect(erro).toBeInstanceOf(TituloNaoElegivelError);
+                expect(repo.adicionarItem).not.toHaveBeenCalled();
+                return erro as TituloNaoElegivelError;
+            };
 
             it('rejeita título BLOQUEADO pela situação, com motivo, dono e ação nos detalhes', async () => {
                 const repo = buildRepo();
                 const deps = buildDestinoDeps();
-                deps.situacaoPagamento.avaliarVivo.mockResolvedValue(bloqueado('TIPO_PERMUTA'));
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue(
+                    avaliada(bloqueado('TIPO_PERMUTA')),
+                );
                 const { service } = make(repo, titulo(), buildTituloRepo(), deps);
                 const erro = await service.incluirTitulo(input).catch((e: unknown) => e);
                 expect(erro).toBeInstanceOf(TituloNaoElegivelError);
@@ -439,20 +492,57 @@ describe('LotePagamentoService — invariantes', () => {
             it('título PRONTO entra normalmente', async () => {
                 const repo = buildRepo();
                 const deps = buildDestinoDeps();
-                deps.situacaoPagamento.avaliarVivo.mockResolvedValue({
-                    estado: 'PRONTO',
-                    motivos: [],
-                });
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue(
+                    avaliada({ estado: 'PRONTO', motivos: [] }),
+                );
                 const { service } = make(repo, titulo(), buildTituloRepo(), deps);
                 await service.incluirTitulo(input);
                 expect(repo.adicionarItem).toHaveBeenCalled();
             });
 
-            it('situação desconhecida (null) não bloqueia: os guardas ao vivo continuam valendo', async () => {
-                const repo = buildRepo();
-                const { service } = make(repo);
-                await service.incluirTitulo(input);
-                expect(repo.adicionarItem).toHaveBeenCalled();
+            it('I19s: título fora da carteira persistida NÃO entra (fail-closed)', async () => {
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue({
+                    resultado: 'FORA_DA_CARTEIRA',
+                });
+                const e = await recusa(deps);
+                expect(e.details).toMatchObject({ motivo: 'fora-da-carteira' });
+                expect(e.userMessage).toContain('ainda não está na carteira');
+            });
+
+            it('I19s: leitura do título falhou → recusa pedindo nova tentativa', async () => {
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue({
+                    resultado: 'LEITURA_FALHOU',
+                });
+                const e = await recusa(deps);
+                expect(e.details).toMatchObject({ motivo: 'situacao-indisponivel' });
+                expect(e.userMessage).toContain('Tente de novo');
+            });
+
+            it('I19s: PRONTO com fonte de contexto caída não entra, e a fonte vai na resposta', async () => {
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue(
+                    avaliada({ estado: 'PRONTO', motivos: [] }, ['DUPLICIDADE']),
+                );
+                const e = await recusa(deps);
+                expect(e.details).toMatchObject({
+                    motivo: 'situacao-indisponivel',
+                    fontesIndisponiveis: ['DUPLICIDADE'],
+                });
+                expect(e.userMessage).toContain('sem a consulta de duplicidade');
+            });
+
+            it('I19s: já BLOQUEADO pelo que se leu mostra o motivo real, não "tente de novo"', async () => {
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivo.mockResolvedValue(
+                    avaliada(bloqueado('TIPO_PERMUTA'), ['BOLETO']),
+                );
+                const e = await recusa(deps);
+                expect(e.details).toMatchObject({
+                    motivo: 'situacao-pagamento',
+                    motivoPagamento: 'TIPO_PERMUTA',
+                });
             });
 
             it('a alçada ao vivo vem ANTES: não liberado nem consulta a situação', async () => {

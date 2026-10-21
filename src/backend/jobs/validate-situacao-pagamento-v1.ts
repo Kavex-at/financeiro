@@ -10,10 +10,10 @@ import SituacaoPagamentoService from '../domain/service/sispag/SituacaoPagamento
  * distribuição por estado, motivo principal e dono, cobertura do tipo do documento e exemplos.
  *
  * Lê o Postgres (carteira, bloqueios, ledger de ajuste, pool DDA) e NÃO chama o Conexos, então não
- * abre sessão do robô. ATENÇÃO: `bootstrapAppContainer` APLICA as migrations pendentes no banco do
- * ambiente (BootMigrator). Contra o banco de produção isso roda a 0089 antes do deploy (foi o que
- * aconteceu em 20/10/2026; aditiva e idempotente, sem efeito no código antigo). Para validar sem
- * migrar, aponte `databaseConnectionString` para um banco local ou de HML.
+ * abre sessão do robô. Sobe o container com `migrate: false`: NÃO aplica migrations pendentes no
+ * banco apontado. Antes rodava o bootstrap completo, e contra o banco de produção isso aplicou a
+ * 0089 antes do deploy (20/10/2026). Se o banco estiver atrás do código, a leitura falha alto
+ * (coluna inexistente) em vez de migrar.
  *
  * Critérios de aceite (ground truth, ver `ontology/_inbox/sispag-situacao-pagamento-plan.md`):
  *  1. a soma dos bloqueados por motivo principal é igual a `porEstado.BLOQUEADO`;
@@ -24,7 +24,7 @@ import SituacaoPagamentoService from '../domain/service/sispag/SituacaoPagamento
 const EXEMPLOS_POR_MOTIVO = 3;
 
 const main = async (): Promise<void> => {
-    await bootstrapAppContainer();
+    await bootstrapAppContainer({ migrate: false });
     const calendar = container.resolve(BankingCalendar);
     const titulos = (await container.resolve(TituloAPagarRepository).listAtivos())
         .filter((t) => !t.pago)

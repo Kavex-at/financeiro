@@ -16,7 +16,7 @@ import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavail
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
 import ContaPagadoraResolver from './ContaPagadoraResolver.js';
-import SituacaoPagamentoService from './SituacaoPagamentoService.js';
+import SituacaoPagamentoService, { AVALIACAO_INCLUSAO } from './SituacaoPagamentoService.js';
 import {
     type CriarLotesPorFilialInput,
     type CriarLotesPorFilialResult,
@@ -328,21 +328,38 @@ export default class LotePagamentoService {
      * ADR-0075: a MESMA regra da tela. Aprovação, pagamento e vencimento são os lidos AO VIVO; tipo
      * (permuta), forma no Conexos, ajuste de centavos e boleto vêm do contexto. Título bloqueado não
      * entra, com o motivo, o dono e a ação na resposta (422).
+     *
+     * I19s, fail-closed: título que a regra não conseguiu avaliar por inteiro também não entra —
+     * fora da carteira persistida, leitura falhou ou alguma fonte de contexto caiu. Bloqueado vem
+     * primeiro: se o que se leu já bloqueia, a analista vê o motivo real, não "tente de novo".
      */
     private exigirSituacaoPagavel = async (
         chave: { filCod: number; docCod: string; titCod: string },
         vivo: TituloAPagar,
     ): Promise<void> => {
-        const situacao = await this.situacaoPagamento.avaliarVivo(
+        const avaliacao = await this.situacaoPagamento.avaliarVivo(
             { filCod: chave.filCod, docCod: chave.docCod, titCod: chave.titCod },
             vivo,
         );
-        if (situacao?.estado === ESTADO_PAGAMENTO.BLOQUEADO) {
+        const titulo = { docCod: chave.docCod, titCod: chave.titCod };
+        if (avaliacao.resultado !== AVALIACAO_INCLUSAO.AVALIADA) {
             throw new TituloNaoElegivelError({
-                docCod: chave.docCod,
-                titCod: chave.titCod,
-                motivo: 'situacao-pagamento',
-                situacao,
+                ...titulo,
+                motivo:
+                    avaliacao.resultado === AVALIACAO_INCLUSAO.FORA_DA_CARTEIRA
+                        ? 'fora-da-carteira'
+                        : 'situacao-indisponivel',
+            });
+        }
+        const { situacao, fontesIndisponiveis } = avaliacao;
+        if (situacao.estado === ESTADO_PAGAMENTO.BLOQUEADO) {
+            throw new TituloNaoElegivelError({ ...titulo, motivo: 'situacao-pagamento', situacao });
+        }
+        if (fontesIndisponiveis.length > 0) {
+            throw new TituloNaoElegivelError({
+                ...titulo,
+                motivo: 'situacao-indisponivel',
+                fontesIndisponiveis,
             });
         }
     };

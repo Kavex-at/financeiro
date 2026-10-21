@@ -59,6 +59,14 @@ describe('bootstrapAppContainer — migration wiring (P0-1)', () => {
         expect(migrationRun).toHaveBeenCalledTimes(1);
     });
 
+    it('migrate: false connects to Postgres but applies NO migration (read-only scripts)', async () => {
+        jest.clearAllMocks();
+        const { bootstrapAppContainer } = await import('./appContainer.js');
+        await bootstrapAppContainer({ migrate: false });
+        expect(dbInit).toHaveBeenCalledTimes(1);
+        expect(migrationRun).not.toHaveBeenCalled();
+    });
+
     it('does NOT mark the process as the server (ADR-0074: jobs share this bootstrap)', async () => {
         const { bootstrapAppContainer } = await import('./appContainer.js');
         await bootstrapAppContainer();

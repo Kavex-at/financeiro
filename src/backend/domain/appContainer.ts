@@ -38,7 +38,7 @@ const describeError = (error: unknown): string =>
  * (dev/test) apenas warn, para o esqueleto rodar com rotas Conexos puras. NUNCA
  * roda dentro de um handler de rota.
  */
-const initDatabaseAndMigrate = async (isProduction: boolean): Promise<void> => {
+const initDatabaseAndMigrate = async (isProduction: boolean, migrate: boolean): Promise<void> => {
     try {
         await container.resolve(PostgreeDatabaseClient).init();
     } catch (error) {
@@ -46,6 +46,7 @@ const initDatabaseAndMigrate = async (isProduction: boolean): Promise<void> => {
         console.warn('[appContainer] PostgreeDatabaseClient.init() skipped:', describeError(error));
         return; // sem DB → sem migrations (apenas no skeleton dev/test).
     }
+    if (!migrate) return;
 
     try {
         const applied = await container.resolve(MigrationRunner).run();
@@ -103,7 +104,7 @@ export const diagnosticarConfiguracao = async (): Promise<void> => {
  * warm-up ou efeito colateral que dependa de configuração completa vai no
  * `index.ts`, no boot do servidor — não aqui. Ver `diagnosticarConfiguracao`.
  */
-const runBootstrap = async (): Promise<void> => {
+const runBootstrap = async (migrate: boolean): Promise<void> => {
     const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
 
     // O adapter resolve a sessão Conexos POR REQUEST (Fatia B): usuário logado
@@ -121,8 +122,17 @@ const runBootstrap = async (): Promise<void> => {
     // Painel de Operação — sinks de alerta (ADR-0042). Idempotente.
     registerOperacaoSinks();
 
-    await initDatabaseAndMigrate(env.environment === 'production');
+    await initDatabaseAndMigrate(env.environment === 'production', migrate);
 };
+
+export interface BootstrapOptions {
+    /**
+     * `false`: conecta ao Postgres SEM aplicar migrations pendentes. Para scripts de leitura que
+     * podem apontar para qualquer banco, inclusive o de produção antes do deploy (foi assim que a
+     * 0089 chegou à produção em 20/10/2026). Vale o da PRIMEIRA chamada do processo. Default `true`.
+     */
+    migrate?: boolean;
+}
 
 /**
  * Lazy bootstrap that wires the legacy Conexos adapter into the tsyringe
@@ -133,9 +143,9 @@ const runBootstrap = async (): Promise<void> => {
  * e esperam a execução em voo, em vez de dispararem um segundo bootstrap.
  * Chamadas posteriores viram no-op (a promessa já resolvida).
  */
-export const bootstrapAppContainer = async (): Promise<void> => {
+export const bootstrapAppContainer = async (options: BootstrapOptions = {}): Promise<void> => {
     if (!bootstrapPromise) {
-        bootstrapPromise = runBootstrap().catch((error: unknown) => {
+        bootstrapPromise = runBootstrap(options.migrate ?? true).catch((error: unknown) => {
             // Falha não fica cacheada — a próxima chamada tenta de novo, como
             // acontecia quando o flag só era marcado no fim do bootstrap.
             bootstrapPromise = undefined;

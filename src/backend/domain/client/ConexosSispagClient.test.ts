@@ -358,6 +358,40 @@ describe('ConexosSispagClient (read-only)', () => {
             expect(base.listGenericPaginated).toHaveBeenCalledTimes(3);
         });
 
+        it('lê a linha REAL do com298/list (fixture gravado, valores redigidos por tipo)', async () => {
+            // Chaves e tipos são os que o ERP devolveu (captura de 2026-08-28, compartilhada com
+            // o contrato de Permutas): docCod e tpdCod NÚMERO, tpdDesNome texto. A redação troca
+            // só os valores; aqui eles voltam com o MESMO tipo, então o teste quebra se o ERP
+            // renomear o campo ou mudar o tipo a ponto de o schema descartar a linha.
+            const arquivo = join(
+                __dirname,
+                '../interface/permutas/__fixtures__/2026-08-28-com298-invoice.json',
+            );
+            const { linha } = JSON.parse(readFileSync(arquivo, 'utf-8')) as {
+                linha: Record<string, unknown>;
+            };
+            expect(typeof linha.docCod).toBe('number');
+            expect(typeof linha.tpdCod).toBe('number');
+            expect(typeof linha.tpdDesNome).toBe('string');
+            const base = buildBase();
+            base.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [
+                    {
+                        ...linha,
+                        docCod: 4321,
+                        tpdCod: 157,
+                        tpdDesNome: 'RECIBO/BOLETO/FATURA - (PERMUTA)',
+                    },
+                ],
+            });
+            const tipos = await make(base).listTiposDosDocumentos(2, ['4321']);
+            expect(tipos.get('4321')).toEqual({
+                tpdCod: '157',
+                tpdDesNome: 'RECIBO/BOLETO/FATURA - (PERMUTA)',
+            });
+        });
+
         it('lista vazia não lê nada', async () => {
             const base = buildBase();
             await make(base).listTiposDosDocumentos(2, []);
