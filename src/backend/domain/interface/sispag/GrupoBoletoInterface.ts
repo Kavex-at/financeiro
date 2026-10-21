@@ -24,6 +24,30 @@ export const GRUPO_BOLETO_ORIGEM = {
 export type GrupoBoletoOrigem = (typeof GRUPO_BOLETO_ORIGEM)[keyof typeof GRUPO_BOLETO_ORIGEM];
 
 /**
+ * Como o grupo foi anulado (I21t): pela analista, ou pelo sistema na cascata da revogação do par
+ * (I15l(2)). `sistema` só anula com `PAR_REVOGADO` (CHECK da 0090).
+ */
+export const GRUPO_BOLETO_TIPO_ANULACAO = {
+    MANUAL: 'MANUAL',
+    PAR_REVOGADO: 'PAR_REVOGADO',
+} as const;
+export type GrupoBoletoTipoAnulacao =
+    (typeof GRUPO_BOLETO_TIPO_ANULACAO)[keyof typeof GRUPO_BOLETO_TIPO_ANULACAO];
+
+/** Tipos da trilha só-inclusão `sispag_grupo_boleto_evento` (I21i; CHECK da 0090). */
+export const GRUPO_BOLETO_EVENTO = {
+    GRUPO_CONFIRMADO: 'GRUPO_CONFIRMADO',
+    GRUPO_ANULADO: 'GRUPO_ANULADO',
+    GRUPO_RETIRADO: 'GRUPO_RETIRADO',
+    BORDERO_PREPARADO: 'BORDERO_PREPARADO',
+    BORDERO_REAPROVEITADO: 'BORDERO_REAPROVEITADO',
+    BORDERO_LIMPO: 'BORDERO_LIMPO',
+    GRUPO_PAGO: 'GRUPO_PAGO',
+    GRUPO_DIVERGENTE: 'GRUPO_DIVERGENTE',
+} as const;
+export type GrupoBoletoEvento = (typeof GRUPO_BOLETO_EVENTO)[keyof typeof GRUPO_BOLETO_EVENTO];
+
+/**
  * Por que um grupo (ou um título dele) não é confirmável. Os do grupo vêm da I21a/b/d/h; os do
  * título, da I21c e da janela da I21g. Ordem da lista = precedência de exibição.
  */
