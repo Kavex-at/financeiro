@@ -15,6 +15,7 @@ import BatchEmptiedByCheckError from '../../errors/BatchEmptiedByCheckError.js';
 import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavailableError.js';
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
+import BatchHasBlockedItemsError from '../../errors/BatchHasBlockedItemsError.js';
 import type {
     AlertaItemLote,
     LotePagamento,
@@ -138,6 +139,15 @@ const buildDestinoDeps = () => ({
             situacao: { estado: 'PRONTO', motivos: [] },
             fontesIndisponiveis: [],
         }),
+        /** ADR-0076 I20d: na finalização, todo item PRONTO por padrão. */
+        avaliarVivos: jest.fn(
+            async (entradas: unknown[]): Promise<unknown[]> =>
+                entradas.map(() => ({
+                    resultado: 'AVALIADA',
+                    situacao: { estado: 'PRONTO', motivos: [] },
+                    fontesIndisponiveis: [],
+                })),
+        ),
     },
     envVars: {
         sispagFavorecidoAutorizadoEnabled: true,
@@ -651,6 +661,109 @@ describe('LotePagamentoService — invariantes', () => {
                 }),
                 expect.anything(),
             );
+        });
+
+        describe('ADR-0076 I20d — a situação de pagamento barra a finalização', () => {
+            const comItens = (...titCods: string[]) =>
+                lote({
+                    itens: titCods.map((titCod) => ({
+                        loteId: 'L1',
+                        filCod: 2,
+                        docCod: '100',
+                        titCod,
+                        credor: 'ACME',
+                        modalidade: 'BOLETO' as const,
+                        incluidoPor: 'u1',
+                        divergencia: false,
+                    })),
+                });
+            const bloqueada = {
+                resultado: 'AVALIADA',
+                situacao: {
+                    estado: 'BLOQUEADO',
+                    motivos: ['ALCADA'],
+                    principal: 'ALCADA',
+                    rotulo: 'Aguardando aprovação',
+                },
+                fontesIndisponiveis: [],
+            };
+            const pronta = {
+                resultado: 'AVALIADA',
+                situacao: { estado: 'PRONTO', motivos: [] },
+                fontesIndisponiveis: [],
+            };
+            const recusa = async (
+                deps: ReturnType<typeof buildDestinoDeps>,
+                conexosTitulo: TituloAPagar | null = titulo(),
+                conexosFalha = false,
+            ) => {
+                const repo = buildRepo();
+                repo.getLoteComItens.mockResolvedValue(comItens('1', '2'));
+                const { service } = make(repo, conexosTitulo, buildTituloRepo(), deps);
+                // `make` fixa a resposta do fin064; a falha vem depois dele.
+                if (conexosFalha) deps.conexos.getTituloAPagar.mockRejectedValue(new Error('503'));
+                const erro = (await service.finalizarLote(input).catch((e: unknown) => e)) as
+                    | BatchHasBlockedItemsError
+                    | undefined;
+                expect(erro).toBeInstanceOf(BatchHasBlockedItemsError);
+                expect(repo.transicionarStatus).not.toHaveBeenCalled();
+                // ANTES da verificação TED/PIX: nada foi retirado de um lote recusado
+                expect(deps.verificacao.verificarItens).not.toHaveBeenCalled();
+                return erro as BatchHasBlockedItemsError;
+            };
+
+            it('item BLOQUEADO recusa com TODOS os itens bloqueados, o motivo e o credor', async () => {
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivos.mockResolvedValue([bloqueada, pronta]);
+                const e = await recusa(deps);
+                expect(e.statusCode).toBe(422);
+                expect(e.details).toMatchObject({
+                    itens: [{ titCod: '1', motivo: 'ALCADA', rotulo: 'Aguardando aprovação' }],
+                });
+                expect(e.userMessage).toContain('100/1 (ACME): Aguardando aprovação');
+            });
+
+            it('lê o fin064 AO VIVO para cada item e avalia todos numa chamada', async () => {
+                const repo = buildRepo();
+                repo.getLoteComItens.mockResolvedValue(comItens('1', '2'));
+                const deps = buildDestinoDeps();
+                const { service } = make(repo, titulo({ vencimento: 42 }), buildTituloRepo(), deps);
+                await service.finalizarLote(input);
+                expect(deps.conexos.getTituloAPagar).toHaveBeenCalledWith(2, '100', '1');
+                expect(deps.conexos.getTituloAPagar).toHaveBeenCalledWith(2, '100', '2');
+                expect(deps.situacaoPagamento.avaliarVivos).toHaveBeenCalledTimes(1);
+                expect(deps.situacaoPagamento.avaliarVivos.mock.calls[0]?.[0]).toEqual([
+                    expect.objectContaining({ vivo: expect.objectContaining({ vencimento: 42 }) }),
+                    expect.objectContaining({ chave: { filCod: 2, docCod: '100', titCod: '2' } }),
+                ]);
+                expect(repo.transicionarStatus).toHaveBeenCalled();
+            });
+
+            it('fail-closed: Conexos sem resposta, título sumido ou já pago também barram', async () => {
+                const r1 = await recusa(buildDestinoDeps(), titulo(), true);
+                expect(r1.userMessage).toContain('o Conexos não respondeu');
+
+                const sumido = await recusa(buildDestinoDeps(), null);
+                expect(sumido.userMessage).toContain('não encontrado no Conexos');
+
+                const pago = await recusa(buildDestinoDeps(), titulo({ pago: true }));
+                expect(pago.userMessage).toContain('já pago');
+            });
+
+            it('fail-closed: fora da carteira e fonte caída barram como "não conferida"', async () => {
+                const deps = buildDestinoDeps();
+                deps.situacaoPagamento.avaliarVivos.mockResolvedValue([
+                    { resultado: 'FORA_DA_CARTEIRA' },
+                    { ...pronta, fontesIndisponiveis: ['BOLETO'] },
+                ]);
+                const e = await recusa(deps);
+                expect(e.details).toMatchObject({
+                    itens: [
+                        { titCod: '1', rotulo: 'situação não conferida' },
+                        { titCod: '2', rotulo: 'situação não conferida' },
+                    ],
+                });
+            });
         });
 
         it('I6 — conflito de versão vira LoteVersaoConflitoError', async () => {

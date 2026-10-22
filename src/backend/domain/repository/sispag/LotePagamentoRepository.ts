@@ -123,6 +123,20 @@ export type ResultadoAplicarSincronizacao =
     (typeof RESULTADO_APLICAR_SINCRONIZACAO)[keyof typeof RESULTADO_APLICAR_SINCRONIZACAO];
 
 /** Texto da marca de retenção por motivo da retirada automática (I16d, I17g(3)). */
+/**
+ * Etapas do ledger de ajuste de centavos que JÁ NÃO seguram o título no lote (I18k/M5, ADR-0074).
+ * `indeterminado` fica de fora de propósito: a renegociação pode ter consumido o título no ERP, e só
+ * depois de a pessoa conferir no Conexos ele sai do lote. Vai como parâmetro (`$terminais`).
+ */
+const ETAPAS_AJUSTE_TERMINAIS: readonly string[] = [
+    'concluido',
+    'concluido_sem_decisao',
+    'aguardando_aprovacao_manual',
+    'cancelado',
+    'recusado',
+    'simulado',
+];
+
 const MOTIVO_DA_MARCA = {
     [SYSTEM_REMOVAL_REASON.CODIGO_BARRAS_REPETIDO]:
         'Boleto repetido no lote — retirada automática (I16d)',
@@ -822,15 +836,39 @@ export default class LotePagamentoRepository {
                JOIN sispag_ajuste_centavos_execucao a
                  ON a.fil_cod = i.fil_cod AND a.doc_cod = i.doc_cod AND a.tit_cod_origem = i.tit_cod
               WHERE i.lote_id = $loteId
-                -- indeterminado também segura o lote: a renegociação pode ter consumido o título
-                -- no ERP; só depois de a pessoa conferir no Conexos o título sai do lote.
-                AND a.etapa NOT IN ('concluido', 'concluido_sem_decisao',
-                                    'aguardando_aprovacao_manual', 'cancelado', 'recusado',
-                                    'simulado')
+                AND NOT (a.etapa = ANY($terminais))
               ORDER BY i.doc_cod, i.tit_cod`,
-            { loteId },
+            { loteId, terminais: [...ETAPAS_AJUSTE_TERMINAIS] },
         );
         return (rows as Array<{ doc_cod: string; tit_cod: string }>).map((r) => ({
+            docCod: r.doc_cod,
+            titCod: r.tit_cod,
+        }));
+    };
+
+    /**
+     * Mesma regra de `titulosComAjusteNaoTerminalNoLote`, para vários lotes numa consulta (a
+     * prontidão da listagem, ADR-0076). As etapas terminais são as MESMAS: as duas consultas não
+     * podem divergir, senão a lista diria "pronto" para um lote que a finalização recusa.
+     */
+    public titulosComAjusteNaoTerminalNosLotes = async (
+        loteIds: readonly string[],
+    ): Promise<Array<{ loteId: string; filCod: number; docCod: string; titCod: string }>> => {
+        if (loteIds.length === 0) return [];
+        const rows = await this.db().selectMany(
+            `SELECT DISTINCT i.lote_id, i.fil_cod, i.doc_cod, i.tit_cod
+               FROM lote_pagamento_item i
+               JOIN sispag_ajuste_centavos_execucao a
+                 ON a.fil_cod = i.fil_cod AND a.doc_cod = i.doc_cod AND a.tit_cod_origem = i.tit_cod
+              WHERE i.lote_id = ANY($loteIds)
+                AND NOT (a.etapa = ANY($terminais))`,
+            { loteIds: [...loteIds], terminais: [...ETAPAS_AJUSTE_TERMINAIS] },
+        );
+        return (
+            rows as Array<{ lote_id: string; fil_cod: number; doc_cod: string; tit_cod: string }>
+        ).map((r) => ({
+            loteId: r.lote_id,
+            filCod: Number(r.fil_cod),
             docCod: r.doc_cod,
             titCod: r.tit_cod,
         }));

@@ -404,4 +404,23 @@ describeComBanco('ledger do ajuste de centavos e rechaveamento (integração)', 
         const emCurso = await lotes.titulosComAjusteNaoTerminalNoLote(LOTE_RASCUNHO);
         expect(emCurso).toEqual(expect.arrayContaining([{ docCod: '560', titCod: '1' }]));
     });
+
+    it('prontidão (ADR-0076): a consulta por VÁRIOS lotes devolve o mesmo que a do finalizar', async () => {
+        const d = await decisao(9, '570', '1', 570);
+        await item(LOTE_RASCUNHO, '570', '1');
+        await repo.abrir({ filCod: 2, docCod: '570', titCodOrigem: '1', decisaoId: d });
+        const doFinalizar = await lotes.titulosComAjusteNaoTerminalNoLote(LOTE_RASCUNHO);
+        const daListagem = await lotes.titulosComAjusteNaoTerminalNosLotes([
+            LOTE_RASCUNHO,
+            LOTE_FINALIZADO,
+        ]);
+        expect(
+            daListagem
+                .filter((r) => r.loteId === LOTE_RASCUNHO)
+                .map(({ docCod, titCod }) => ({ docCod, titCod }))
+                .sort((a, b) => a.docCod.localeCompare(b.docCod)),
+        ).toEqual(doFinalizar);
+        expect(daListagem.every((r) => r.filCod === 2)).toBe(true);
+        expect(await lotes.titulosComAjusteNaoTerminalNosLotes([])).toEqual([]);
+    });
 });

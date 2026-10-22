@@ -22,6 +22,7 @@ import PendingDuplicateAlertError from '../domain/errors/PendingDuplicateAlertEr
 import { PERMISSION, type Permission } from '../domain/interface/auth/Permission.js';
 import DuplicateResolutionService from '../domain/service/sispag/DuplicateResolutionService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
+import ProntidaoLoteService from '../domain/service/sispag/ProntidaoLoteService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import { AcessoFixture } from '../http/__fixtures__/acesso.fixture.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
@@ -92,6 +93,13 @@ const post = (url: string, body: unknown) =>
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
     });
+
+/** ADR-0076: a prontidão é testada no próprio serviço; aqui ela só repassa os lotes. */
+beforeEach(() => {
+    container.registerInstance(ProntidaoLoteService, {
+        comProntidao: async (lotes: unknown[]) => lotes,
+    } as never);
+});
 
 afterEach(() => {
     container.clearInstances();

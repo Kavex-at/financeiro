@@ -10,13 +10,19 @@ import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TitleInCommittedBatchError from '../../errors/TitleInCommittedBatchError.js';
 import TituloForaDeLoteError from '../../errors/TituloForaDeLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
+import BatchHasBlockedItemsError, {
+    type ItemBloqueadoNoLote,
+} from '../../errors/BatchHasBlockedItemsError.js';
 import DuplicateHoldError from '../../errors/DuplicateHoldError.js';
 import BatchEmptiedByCheckError from '../../errors/BatchEmptiedByCheckError.js';
 import PaymentModalityUnavailableError from '../../errors/PaymentModalityUnavailableError.js';
 import PaymentCheckPendingError from '../../errors/PaymentCheckPendingError.js';
 import PendingDuplicateAlertError from '../../errors/PendingDuplicateAlertError.js';
 import ContaPagadoraResolver from './ContaPagadoraResolver.js';
-import SituacaoPagamentoService, { AVALIACAO_INCLUSAO } from './SituacaoPagamentoService.js';
+import SituacaoPagamentoService, {
+    AVALIACAO_INCLUSAO,
+    type AvaliacaoInclusao,
+} from './SituacaoPagamentoService.js';
 import {
     type CriarLotesPorFilialInput,
     type CriarLotesPorFilialResult,
@@ -32,6 +38,7 @@ import {
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     type AlertaItemLote,
+    type ItemLote,
     type ChaveTitulo,
     type CriarLoteInput,
     DUPLICATE_ALERT_TYPES,
@@ -601,6 +608,8 @@ export default class LotePagamentoService {
      * verificação TED/PIX RETIRA os itens cujo favorecido não está autorizado e o lote finaliza na
      * MESMA chamada com os restantes (a resposta lista os retirados). Ordem dos bloqueios (as
      * retiradas já gravadas ficam):
+     *   0. (antes da verificação, ADR-0076 I20d) item com situação de pagamento BLOQUEADA ou não
+     *      conferida → `BatchHasBlockedItemsError`, sem retirar nada;
      *   1. item PENDENTE (Conexos não respondeu) → `PaymentCheckPendingError` (falha fechada);
      *   2. todos retirados → `BatchEmptiedByCheckError` (lote segue RASCUNHO);
      *   3. alerta de duplicidade ABERTA → `PendingDuplicateAlertError`.
@@ -648,6 +657,8 @@ export default class LotePagamentoService {
         if (semModalidade > 0) {
             throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
+        // ADR-0076 I20d: ANTES da verificação TED/PIX, para nada ser retirado de um lote recusado.
+        await this.exigirSituacoesPagaveis(lote);
         const verificacao = await this.verificacao.verificarItens(input.loteId, {
             modo: VERIFICATION_MODE.RETIRAR,
         });
@@ -705,6 +716,102 @@ export default class LotePagamentoService {
         const flag = modalidade === MODALIDADE.TED ? env.sispagTedEnabled : env.sispagPixEnabled;
         if (env.sispagFavorecidoAutorizadoEnabled === true && flag === true) return;
         throw new PaymentModalityUnavailableError({ loteId, modalidade });
+    };
+
+    /**
+     * ADR-0076 I20d — a situação de pagamento de cada item, relida como na inclusão (aprovação,
+     * pagamento e vencimento AO VIVO no `fin064`; tipo, forma e contexto da carteira gravada).
+     * Fail-closed (I19s): título sem resposta do Conexos, fora da carteira ou com fonte de contexto
+     * caída também barra. Junta TODOS os itens bloqueados numa recusa só.
+     */
+    private exigirSituacoesPagaveis = async (lote: LotePagamento): Promise<void> => {
+        const { bloqueados, lidos } = await this.lerItensAoVivo(lote.itens);
+        const avaliacoes = await this.situacaoPagamento.avaliarVivos(
+            lidos.map(({ item, vivo }) => ({
+                chave: { filCod: item.filCod, docCod: item.docCod, titCod: item.titCod },
+                vivo,
+            })),
+        );
+        lidos.forEach(({ item }, i) => {
+            const bloqueio = this.bloqueioDaAvaliacao(avaliacoes[i]);
+            if (bloqueio) bloqueados.push({ ...this.identificacao(item), ...bloqueio });
+        });
+        if (bloqueados.length > 0) {
+            throw new BatchHasBlockedItemsError({ loteId: lote.id, itens: bloqueados });
+        }
+    };
+
+    private identificacao = (
+        item: ItemLote,
+    ): Pick<ItemBloqueadoNoLote, 'docCod' | 'titCod' | 'credor'> => ({
+        docCod: item.docCod,
+        titCod: item.titCod,
+        ...(item.credor ? { credor: item.credor } : {}),
+    });
+
+    /** `fin064` ao vivo, item a item; sem resposta, sumido ou já pago já barra aqui. */
+    private lerItensAoVivo = async (
+        itens: ItemLote[],
+    ): Promise<{
+        bloqueados: ItemBloqueadoNoLote[];
+        lidos: Array<{ item: ItemLote; vivo: TituloAPagar }>;
+    }> => {
+        const bloqueados: ItemBloqueadoNoLote[] = [];
+        const lidos: Array<{ item: ItemLote; vivo: TituloAPagar }> = [];
+        for (const item of itens) {
+            const vivo = await this.conexos
+                .getTituloAPagar(item.filCod, item.docCod, item.titCod)
+                .catch(() => undefined);
+            if (vivo === undefined) {
+                bloqueados.push({
+                    ...this.identificacao(item),
+                    rotulo: 'situação não conferida',
+                    detalhe: 'o Conexos não respondeu; tente de novo em instantes',
+                });
+            } else if (vivo === null) {
+                bloqueados.push({
+                    ...this.identificacao(item),
+                    rotulo: 'título não encontrado no Conexos',
+                });
+            } else if (vivo.pago) {
+                bloqueados.push({
+                    ...this.identificacao(item),
+                    rotulo: 'título já pago no Conexos',
+                });
+            } else {
+                lidos.push({ item, vivo });
+            }
+        }
+        return { bloqueados, lidos };
+    };
+
+    /** O que barra numa avaliação (I19s fail-closed); `undefined` = o item pode seguir. */
+    private bloqueioDaAvaliacao = (
+        a: AvaliacaoInclusao | undefined,
+    ): Pick<ItemBloqueadoNoLote, 'rotulo' | 'detalhe' | 'motivo'> | undefined => {
+        if (!a || a.resultado !== AVALIACAO_INCLUSAO.AVALIADA) {
+            return {
+                rotulo: 'situação não conferida',
+                ...(a?.resultado === AVALIACAO_INCLUSAO.FORA_DA_CARTEIRA
+                    ? { detalhe: 'o título não está na carteira do SISPAG' }
+                    : {}),
+            };
+        }
+        const { situacao } = a;
+        if (situacao.estado === ESTADO_PAGAMENTO.BLOQUEADO) {
+            return {
+                rotulo: situacao.rotulo ?? 'bloqueado para pagamento',
+                ...(situacao.detalhe ? { detalhe: situacao.detalhe } : {}),
+                ...(situacao.principal ? { motivo: situacao.principal } : {}),
+            };
+        }
+        if (a.fontesIndisponiveis.length > 0) {
+            return {
+                rotulo: 'situação não conferida',
+                detalhe: 'uma consulta da situação de pagamento falhou; tente de novo',
+            };
+        }
+        return undefined;
     };
 
     /**

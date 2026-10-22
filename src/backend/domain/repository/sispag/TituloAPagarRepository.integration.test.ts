@@ -195,6 +195,24 @@ describeComBanco('TituloAPagarRepository.buscarPorChave — integração (ADR-00
         }
     });
 
+    it('buscarPorChaves (ADR-0076): vários numa consulta, só as chaves EXATAS, inativo com ativo = false', async () => {
+        await inserir({ fil: 2, doc: '6001', tit: '1' });
+        await inserir({ fil: 2, doc: '6001', tit: '2' }, { ativo: false });
+        await inserir({ fil: 7, doc: '6001', tit: '1' }, { credor: 'OUTRA FILIAL' });
+        const lidos = await repo.buscarPorChaves([
+            { filCod: 2, docCod: '6001', titCod: '1' },
+            { filCod: 2, docCod: '6001', titCod: '2' },
+            { filCod: 2, docCod: 'nada', titCod: '1' },
+        ]);
+        const porChave = new Map(lidos.map((t) => [`${t.filCod}:${t.docCod}:${t.titCod}`, t]));
+        expect([...porChave.keys()].sort()).toEqual(['2:6001:1', '2:6001:2']);
+        expect(porChave.get('2:6001:1')).toMatchObject({ ativo: true, credor: 'ADP BRASIL LTDA' });
+        expect(porChave.get('2:6001:2')).toMatchObject({ ativo: false });
+        // mesma doc/tit na filial 7 não vaza para a chave da filial 2
+        expect(lidos.some((t) => t.credor === 'OUTRA FILIAL')).toBe(false);
+        expect(await repo.buscarPorChaves([])).toEqual([]);
+    });
+
     it('chave inexistente → null; a chave é (filial, documento, título)', async () => {
         expect(await repo.buscarPorChave({ filCod: 2, docCod: 'nada', titCod: '1' })).toBeNull();
         // mesma doc/tit em outra filial não vaza
