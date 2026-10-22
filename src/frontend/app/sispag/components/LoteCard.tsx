@@ -12,6 +12,8 @@ import {
   Trash2,
 } from 'lucide-react'
 import Link from 'next/link'
+import { PendenciasDoLote } from '../lotes/PendenciasDoLote'
+import { SeloProntidao } from '../lotes/SeloProntidao'
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -53,6 +55,7 @@ import {
   type ItemLote,
   type ItemSituacao,
   type LotePagamento,
+  type TituloAPagar,
   type Modalidade,
   MODALIDADES,
   MODALIDADES_OFERECIDAS,
@@ -401,6 +404,8 @@ export function LoteCard({
   selecionado = false,
   onSelecionar,
   pesCodDoItem,
+  onVerBoleto,
+  onRecarregar,
 }: {
   lote: LotePagamento
   busy: boolean
@@ -420,6 +425,10 @@ export function LoteCard({
    * ele, o atalho "Pedir autorização" leva à tela de autorizações já preenchida.
    */
   pesCodDoItem?: (item: ItemLote) => string | undefined
+  /** Pendência "Ver boleto" (ADR-0076): abre os boletos DDA/sugestão do título. */
+  onVerBoleto?: (t: TituloAPagar) => void
+  /** Depois de uma ação de pendência que muda o servidor: a página recarrega lotes e painel. */
+  onRecarregar?: () => void | Promise<void>
 }) {
   const [aberto, setAberto] = React.useState(false)
   // ADR-0053: toda ação do lote exige `sispag:executar`. Sem ela (ou enquanto carrega), as ações
@@ -662,6 +671,7 @@ export function LoteCard({
             {l.conta ? ` · paga por ${l.banco ?? ''} ${l.conta}`.trimEnd() : ''}
             {l.dataDebito ? ` · débito em ${formatCivilDate(l.dataDebito)}` : ''}
           </CardTitle>
+          {isRascunho ? <SeloProntidao itens={l.itens.length} {...(l.prontidao ? { prontidao: l.prontidao } : {})} /> : null}
           {sincronizavel && sincronizadoEm ? (
             <span className="text-xs text-muted-foreground">
               sincronizado em {new Date(sincronizadoEm).toLocaleString('pt-BR')}
@@ -800,6 +810,26 @@ export function LoteCard({
       ) : null}
       {aberto ? (
         <CardContent>
+          {isRascunho && l.prontidao ? (
+            <div className="mb-3">
+              <PendenciasDoLote
+                lote={l}
+                acoes={{
+                  podeExecutar,
+                  onTratarAlerta: (item) => {
+                    const alerta = item.alertas?.find(
+                      (a) => a.estado === 'ABERTA' && a.tipo.startsWith('DUPLICIDADE'),
+                    )
+                    if (alerta) setTratando({ item, alerta })
+                  },
+                  ...(onVerBoleto ? { onVerBoleto } : {}),
+                  onResolvido: async () => {
+                    await onRecarregar?.()
+                  },
+                }}
+              />
+            </div>
+          ) : null}
           {isRascunho && podeExecutar ? (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">Conta pagadora:</span>
