@@ -2,7 +2,7 @@
 adr_number: 0076
 title: SISPAG — prontidão do lote em rascunho (o que barra, o que sai, e finalizar respeita a situação de pagamento)
 date: 2026-10-22
-status: proposed
+status: accepted
 type: change
 related_entities: [LotePagamento, ItemLote, TituloAPagar, AlertaItemLote]
 related_business_rules: [prontidao-lote, situacao-pagamento-titulo, elegibilidade-titulo-lote, verificacao-ted-pix-sispag, favorecido-autorizado-sispag]
