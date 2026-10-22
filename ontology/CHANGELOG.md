@@ -3,6 +3,20 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.47.0 — SISPAG: prontidão do lote em rascunho (2026-10-22, ADR-0076)
+
+Feature: `sispag-situacao-lotes` (PR C do plano `sispag-situacao-pagamento`). Decisões D18–D21 do maintainer.
+
+- **Regra nova `prontidao-lote` (I20a–h), implementada com teste canônico:** o lote RASCUNHO devolve
+  `prontidao` (estado, itens que vão, que barram, que saem e as pendências) calculada no backend sobre
+  dados gravados, sem Conexos. Cada pendência tem um efeito, `BARRA` ou `SAI`; não existe "confira".
+- **Finalizar respeita a situação de pagamento (I20d):** item `BLOQUEADO` ou não conferido barra a
+  finalização (`BatchHasBlockedItemsError`), com aprovação, pagamento e vencimento relidos no `fin064`
+  e antes da verificação TED/PIX.
+- **`DONO_PAGAMENTO` ganha `CADASTRO`** (sem conta nem chave PIX no cadastro do Conexos).
+- Finalizar em massa só dos lotes `PRONTO`, pelo endpoint existente, com resultado por lote (I20g).
+- Coverage: business_rules 31→32 (implemented 18→19, with_tests 15→16).
+
 ## v0.46.0 — SISPAG: situação de pagamento do título (2026-10-20, ADR-0075)
 
 Feature: `sispag-situacao-pagamento` (`/feature-tweak`). `entity_changed = true`. **Ontologia à frente do
