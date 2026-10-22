@@ -4,18 +4,26 @@ type: business-rule
 entity: LotePagamento
 invariant: I20
 ontology_version: "0.47.0"
-implementation_status: planned
-status: draft
+implementation_status: implemented
+status: active
 owners: [yuri]
 related_files:
-  - src/backend/domain/service/sispag/LotePagamentoService.ts
-  - src/backend/domain/service/sispag/SituacaoPagamentoService.ts
+  - src/backend/domain/interface/sispag/SituacaoPagamento.ts
   - src/backend/domain/interface/sispag/SispagInterface.ts
+  - src/backend/domain/service/sispag/ProntidaoLoteResolver.ts
+  - src/backend/domain/service/sispag/ProntidaoLoteService.ts
+  - src/backend/domain/service/sispag/SituacaoPagamentoService.ts
+  - src/backend/domain/service/sispag/LotePagamentoService.ts
+  - src/backend/domain/errors/BatchHasBlockedItemsError.ts
+  - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
+  - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
+  - src/backend/routes/sispag.ts
   - src/frontend/lib/sispag.ts
+  - src/frontend/app/sispag/lotes/
   - src/frontend/app/sispag/components/LoteCard.tsx
   - src/frontend/app/sispag/page.tsx
 last_review: 2026-10-22
-has_canonical_test: false
+has_canonical_test: true
 ---
 
 # Prontidão do lote em rascunho (ADR-0076)
