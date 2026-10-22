@@ -129,42 +129,71 @@ export function AcaoDoTitulo({
 
     default: {
       const orientacao = ORIENTACAO_NO_CONEXOS[acao.codigo]
-      const referencia = `filial ${titulo.filCod} · documento ${nome}`
       return (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button size={tamanho} variant="outline">
-              {rotulo}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-80 space-y-2 p-3 text-sm">
-            <p className="font-medium">{orientacao?.titulo ?? rotulo}</p>
-            <p className="text-muted-foreground">
-              {orientacao?.passos ?? 'Resolva no Conexos e aguarde a próxima ingestão da carteira.'}
-            </p>
-            <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-2 py-1.5">
-              <span className="text-xs tabular-nums">{referencia}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                aria-label={`Copiar o documento ${nome}`}
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(nome)
-                    toast.success('Documento copiado', { description: nome })
-                  } catch {
-                    toast.error('Não foi possível copiar')
-                  }
-                }}
-              >
-                <Copy className="size-3" aria-hidden /> Copiar
-              </Button>
-            </div>
-          </PopoverContent>
-        </Popover>
+        <OrientacaoNoConexos
+          rotulo={rotulo}
+          titulo={orientacao?.titulo ?? rotulo}
+          passos={orientacao?.passos ?? 'Resolva no Conexos e aguarde a próxima ingestão da carteira.'}
+          filCod={titulo.filCod}
+          documento={nome}
+          tamanho={tamanho}
+        />
       )
     }
   }
+}
+
+/**
+ * O que fazer no Conexos, com o documento para copiar: o Conexos web não tem link direto por
+ * título que possamos montar. Usado pela linha do título e pelas pendências do lote (ADR-0076).
+ */
+export function OrientacaoNoConexos({
+  rotulo,
+  titulo,
+  passos,
+  filCod,
+  documento,
+  tamanho = 'sm',
+}: {
+  rotulo: string
+  titulo: string
+  passos: string
+  filCod: number
+  /** `docCod/titCod`. */
+  documento: string
+  tamanho?: 'sm' | 'default'
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button size={tamanho} variant="outline">
+          {rotulo}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 space-y-2 p-3 text-sm">
+        <p className="font-medium">{titulo}</p>
+        <p className="text-muted-foreground">{passos}</p>
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-2 py-1.5">
+          <span className="text-xs tabular-nums">{`filial ${filCod} · documento ${documento}`}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs"
+            aria-label={`Copiar o documento ${documento}`}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(documento)
+                toast.success('Documento copiado', { description: documento })
+              } catch {
+                toast.error('Não foi possível copiar')
+              }
+            }}
+          >
+            <Copy className="size-3" aria-hidden /> Copiar
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
 }

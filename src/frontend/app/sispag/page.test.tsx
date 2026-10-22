@@ -87,6 +87,78 @@ jest.mock('@/lib/sispag', () => {
   }
 })
 
+/** ADR-0076: o topo da aba de lotes em rascunho — filtro por prontidão e finalizar os prontos. */
+describe('SispagPage — prontidão dos lotes em rascunho (ADR-0076)', () => {
+  const pronto = {
+    ...loteRascunho,
+    id: 'lote-pronto',
+    prontidao: {
+      estado: 'PRONTO',
+      itensQueVao: 0,
+      barram: 0,
+      saem: 0,
+      pendencias: [],
+      fontesIndisponiveis: [],
+    },
+  } as unknown as LotePagamento
+  const comPendencia = {
+    ...loteRascunho,
+    id: 'lote-pendente',
+    filCod: 7,
+    conta: undefined,
+    prontidao: {
+      estado: 'COM_PENDENCIA',
+      itensQueVao: 0,
+      barram: 0,
+      saem: 0,
+      pendencias: [
+        { efeito: 'BARRA', codigo: 'SEM_CONTA', rotulo: 'Sem conta pagadora', dono: 'VOCE' },
+      ],
+      fontesIndisponiveis: [],
+    },
+  } as unknown as LotePagamento
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SISPAG_ENABLED = 'true'
+    const lib = jest.requireMock('@/lib/sispag')
+    lib.fetchSispagPainel.mockResolvedValue(painel)
+    lib.fetchLotes.mockReset()
+    // a lista chega com o pronto PRIMEIRO; "pendências primeiro" o põe por último
+    lib.fetchLotes.mockResolvedValue([pronto, comPendencia])
+  })
+
+  const abrirCandidatos = async () => {
+    const user = userEvent.setup()
+    await act(async () => {
+      render(<SispagPage />)
+    })
+    await user.click(screen.getByRole('tab', { name: 'Lotes candidatos (2)' }))
+    return user
+  }
+
+  it('pendências primeiro, filtro por prontidão e a faixa de finalizar os prontos', async () => {
+    const user = await abrirCandidatos()
+    const grupo = screen.getByRole('group', { name: 'Situação do lote' })
+    expect(within(grupo).getByRole('button', { name: /Prontos para finalizar 1/ })).toBeInTheDocument()
+    expect(within(grupo).getByRole('button', { name: /Com pendência 1/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Finalizar o lote pronto' })).toBeInTheDocument()
+
+    const selos = screen.getAllByText(/^(Não finaliza|Pronto para finalizar)$/).map((e) => e.textContent)
+    expect(selos).toEqual(['Não finaliza', 'Pronto para finalizar'])
+
+    await user.click(within(grupo).getByRole('button', { name: /Prontos para finalizar 1/ }))
+    expect(screen.queryByText('Não finaliza')).not.toBeInTheDocument()
+    expect(screen.getByText('Pronto para finalizar')).toBeInTheDocument()
+  })
+
+  it('sem sispag:executar: sem finalizar em massa, o filtro continua', async () => {
+    permissoes = ['sispag:ver']
+    await abrirCandidatos()
+    expect(screen.queryByRole('button', { name: /Finalizar o lote pronto/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Situação do lote' })).toBeInTheDocument()
+  })
+})
+
 /**
  * Incidente 2026-09-23: `GET /sispag/lotes` quebrou (coluna da migração 0061 ainda ausente em
  * produção) e a tela mostrou "Lotes candidatos (0)" / "Nenhum lote candidato" — o erro era

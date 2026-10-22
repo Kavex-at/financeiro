@@ -39,6 +39,10 @@ import {
   FONTE_SITUACAO,
   MOTIVO_PAGAMENTO,
   RESULTADO_LOTE_FILIAL,
+  ESTADO_PRONTIDAO,
+  EFEITO_PENDENCIA,
+  PENDENCIA_LOTE,
+  ACAO_PENDENCIA_LOTE,
   SUGESTAO_BOLETO_SEM_DDA,
 } from '@/lib/sispag'
 
@@ -764,6 +768,10 @@ describe('situação de pagamento — paridade com o backend (ADR-0075)', () => 
     ['ACAO_PAGAMENTO', ACAO_PAGAMENTO],
     ['FONTE_SITUACAO', FONTE_SITUACAO],
     ['RESULTADO_LOTE_FILIAL', RESULTADO_LOTE_FILIAL],
+    ['ESTADO_PRONTIDAO', ESTADO_PRONTIDAO],
+    ['EFEITO_PENDENCIA', EFEITO_PENDENCIA],
+    ['PENDENCIA_LOTE', PENDENCIA_LOTE],
+    ['ACAO_PENDENCIA_LOTE', ACAO_PENDENCIA_LOTE],
   ] as const)('%s é igual nos dois lados', (nome, frontend) => {
     const backend = doBackend(nome)
     expect(backend.length).toBeGreaterThan(0)

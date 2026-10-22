@@ -117,6 +117,16 @@ import {
 } from './components/sugestaoBoleto'
 import { paginaDoLote, rotuloLote, textoBuscaLote } from './components/loteDoTitulo'
 import { TitulosAbaSituacao } from './situacao/TitulosAbaSituacao'
+import { FiltroProntidaoLotes } from './lotes/FiltroProntidaoLotes'
+import { FinalizarProntos } from './lotes/FinalizarProntos'
+import {
+  contarProntidao,
+  ehPronto,
+  type FiltroProntidao,
+  filtrarPorProntidao,
+  type OrdemLotes,
+  ordenarLotes,
+} from './lotes/prontidaoLotes'
 import { ExigePermissao } from '@/components/auth/ExigePermissao'
 import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { PERMISSAO } from '@/lib/permissoes'
@@ -518,8 +528,19 @@ function SispagPanel() {
     () => filtroCandidatos(chavesComBoleto(painel?.titulos ?? [])),
     [painel?.titulos],
   )
+  // ADR-0076: "Todos / Prontos para finalizar / Com pendência" e a ordenação (pendências primeiro).
+  const [filtroProntidao, setFiltroProntidao] = React.useState<FiltroProntidao>('todos')
+  const [ordemLotes, setOrdemLotes] = React.useState<OrdemLotes>('pendencias')
+  const lotesRascunhoOrdenados = React.useMemo(
+    () => ordenarLotes(lotes.filter((l) => l.status === 'RASCUNHO'), ordemLotes),
+    [lotes, ordemLotes],
+  )
+  const candidatosVisiveis = React.useMemo(
+    () => filtrarPorProntidao(lotesRascunhoOrdenados, filtroProntidao),
+    [lotesRascunhoOrdenados, filtroProntidao],
+  )
   const abaCandidatos = useTabelaFiltro(
-    lotesRascunho,
+    candidatosVisiveis,
     (l) => l.filCod,
     buscaLote,
     LOTES_POR_PAGINA,
@@ -528,8 +549,9 @@ function SispagPanel() {
 
   /** Link do lote na linha do título: abre a aba de candidatos na página do lote e o destaca. */
   const irParaLote = (loteId: string) => {
+    // A lista de candidatos está ORDENADA; o lote é procurado nela, com o filtro em "Todos".
     const pagina = paginaDoLote(
-      lotesRascunho.map((l) => l.id),
+      lotesRascunhoOrdenados.map((l) => l.id),
       loteId,
       LOTES_POR_PAGINA,
     )
@@ -542,6 +564,7 @@ function SispagPanel() {
     abaCandidatos.setFilial('todas')
     abaCandidatos.setBusca('')
     abaCandidatos.limparFiltros() // data e boleto também — senão o lote pode estar escondido
+    setFiltroProntidao('todos')
     abaCandidatos.setPagina(pagina)
     setAba('lotes-candidatos')
     setLoteEmFoco(loteId)
@@ -1472,6 +1495,30 @@ function SispagPanel() {
               <p className="text-xs text-muted-foreground">
                 Lotes a finalizar (rascunho) — manual ou automático. Revise antes de aprovar.
               </p>
+              {!lotesErro && lotesRascunho.length > 0 ? (
+                <FiltroProntidaoLotes
+                  filtro={filtroProntidao}
+                  contagens={contarProntidao(lotesRascunho)}
+                  onFiltro={(f) => {
+                    setFiltroProntidao(f)
+                    abaCandidatos.setPagina(1)
+                  }}
+                  ordem={ordemLotes}
+                  onOrdem={(o) => {
+                    setOrdemLotes(o)
+                    abaCandidatos.setPagina(1)
+                  }}
+                />
+              ) : null}
+              {podeExecutar && !lotesErro ? (
+                <FinalizarProntos
+                  prontos={lotesRascunhoOrdenados.filter(ehPronto)}
+                  finalizar={(l) => finalizarLote(l.id, l.versao)}
+                  onConcluido={async () => {
+                    await Promise.all([recarregarLotes(), recarregarPainel(), recarregarRetidos()])
+                  }}
+                />
+              ) : null}
               <FiltroBarra
                 aba={abaCandidatos}
                 buscaPlaceholder="Buscar por documento, credor, filial ou quem criou…"
@@ -1481,6 +1528,12 @@ function SispagPanel() {
               />
               {lotesErro ? (
                 <LotesIndisponiveis erro={lotesErro} onRecarregar={recarregarLotes} />
+              ) : abaCandidatos.total === 0 && lotesRascunho.length > 0 ? (
+                <EmptyState
+                  icon={<Layers className="size-6" />}
+                  title="Nenhum lote neste filtro"
+                  description="Mude a situação do lote para Todos ou limpe a busca e os filtros."
+                />
               ) : abaCandidatos.total === 0 ? (
                 <EmptyState
                   icon={<Layers className="size-6" />}
@@ -1498,6 +1551,10 @@ function SispagPanel() {
                       pesCodDoItem={pesCodDoItem}
                       {...(podeExecutar ? { onAdicionar: setAdicionarLote } : {})}
                       destacado={loteEmFoco === l.id}
+                      onVerBoleto={abrirSugestaoDoTitulo}
+                      onRecarregar={async () => {
+                        await Promise.all([recarregarLotes(), recarregarPainel()])
+                      }}
                     />
                   ))}
                 </div>

@@ -80,9 +80,9 @@ const PERFIL: Readonly<Record<Exclude<PendenciaLoteCodigo, 'SITUACAO_BLOQUEADA'>
         efeito: EFEITO_PENDENCIA.BARRA,
         codigo: PENDENCIA_LOTE.AJUSTE_EM_ANDAMENTO,
         rotulo: 'Ajuste de centavos em andamento',
+        // Sem botão: "Abrir no Conexos" na tela leva à orientação de ALÇADA, que não é o caso.
         detalhe: 'espere o ajuste terminar ou confira o título no Conexos',
         dono: DONO_PAGAMENTO.VOCE,
-        acao: { codigo: ACAO_PAGAMENTO.ABRIR_NO_CONEXOS, rotulo: 'Abrir no Conexos' },
     },
     [PENDENCIA_LOTE.SEM_FORMA]: {
         efeito: EFEITO_PENDENCIA.BARRA,

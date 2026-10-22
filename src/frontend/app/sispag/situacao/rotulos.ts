@@ -44,6 +44,7 @@ export const ROTULO_DONO: Readonly<Record<DonoPagamento, string>> = {
   [DONO_PAGAMENTO.APROVADOR]: 'Aprovador',
   [DONO_PAGAMENTO.PERMUTAS]: 'Permutas',
   [DONO_PAGAMENTO.CONTAS_A_PAGAR]: 'Contas a pagar',
+  [DONO_PAGAMENTO.CADASTRO]: 'Cadastro',
 }
 
 /** Quem resolve cada motivo (espelha a tabela do plano, §3). */

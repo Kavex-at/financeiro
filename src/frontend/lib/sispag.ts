@@ -47,6 +47,8 @@ export const DONO_PAGAMENTO = {
   APROVADOR: 'APROVADOR',
   PERMUTAS: 'PERMUTAS',
   CONTAS_A_PAGAR: 'CONTAS_A_PAGAR',
+  /** Cadastro da pessoa no Conexos (conta ou chave PIX). Só em pendência de lote (ADR-0076). */
+  CADASTRO: 'CADASTRO',
 } as const
 export type DonoPagamento = (typeof DONO_PAGAMENTO)[keyof typeof DONO_PAGAMENTO]
 
@@ -94,6 +96,64 @@ export interface ResumoSituacao {
   porMotivo: Partial<Record<MotivoPagamento, TotalSituacao>>
   porDono: Partial<Record<DonoPagamento, TotalSituacao>>
   /** Não vazio = a tela avisa "situação incompleta". */
+  fontesIndisponiveis: FonteSituacao[]
+}
+
+// ── prontidão do lote em rascunho (ADR-0076, I20) — espelho do backend, com teste de paridade ──
+
+export const ESTADO_PRONTIDAO = {
+  PRONTO: 'PRONTO',
+  COM_PENDENCIA: 'COM_PENDENCIA',
+} as const
+export type EstadoProntidao = (typeof ESTADO_PRONTIDAO)[keyof typeof ESTADO_PRONTIDAO]
+
+/** `BARRA`: a finalização recusa enquanto existir. `SAI`: a finalização retira o item. */
+export const EFEITO_PENDENCIA = {
+  BARRA: 'BARRA',
+  SAI: 'SAI',
+} as const
+export type EfeitoPendencia = (typeof EFEITO_PENDENCIA)[keyof typeof EFEITO_PENDENCIA]
+
+export const PENDENCIA_LOTE = {
+  LOTE_VAZIO: 'LOTE_VAZIO',
+  SEM_CONTA: 'SEM_CONTA',
+  SITUACAO_BLOQUEADA: 'SITUACAO_BLOQUEADA',
+  SITUACAO_NAO_CONFERIDA: 'SITUACAO_NAO_CONFERIDA',
+  DUPLICIDADE_ABERTA: 'DUPLICIDADE_ABERTA',
+  AJUSTE_EM_ANDAMENTO: 'AJUSTE_EM_ANDAMENTO',
+  SEM_FORMA: 'SEM_FORMA',
+  VERIFICACAO_PENDENTE: 'VERIFICACAO_PENDENTE',
+  SEM_DADO_PAGAMENTO: 'SEM_DADO_PAGAMENTO',
+  FAVORECIDO_NAO_AUTORIZADO: 'FAVORECIDO_NAO_AUTORIZADO',
+  DESTINO_ALTERADO: 'DESTINO_ALTERADO',
+} as const
+export type PendenciaLoteCodigo = (typeof PENDENCIA_LOTE)[keyof typeof PENDENCIA_LOTE]
+
+export const ACAO_PENDENCIA_LOTE = {
+  PEDIR_AUTORIZACAO: 'PEDIR_AUTORIZACAO',
+  ABRIR_CADASTRO_NO_CONEXOS: 'ABRIR_CADASTRO_NO_CONEXOS',
+} as const
+export type AcaoPendenciaLote = (typeof ACAO_PENDENCIA_LOTE)[keyof typeof ACAO_PENDENCIA_LOTE]
+
+export interface PendenciaLote {
+  efeito: EfeitoPendencia
+  codigo: PendenciaLoteCodigo
+  rotulo: string
+  detalhe?: string
+  dono: DonoPagamento
+  /** Ausente quando o passo é na própria tela do lote ou a finalização tenta de novo sozinha. */
+  acao?: { codigo: AcaoPagamento | AcaoPendenciaLote; rotulo: string }
+  /** Ausente = pendência do lote (vazio, sem conta). */
+  chave?: { filCod: number; docCod: string; titCod: string }
+  motivo?: MotivoPagamento
+}
+
+export interface ProntidaoLote {
+  estado: EstadoProntidao
+  itensQueVao: number
+  barram: number
+  saem: number
+  pendencias: PendenciaLote[]
   fontesIndisponiveis: FonteSituacao[]
 }
 
@@ -518,6 +578,8 @@ export interface LotePagamento {
    */
   dataDebito?: string
   itens: ItemLote[]
+  /** Só em RASCUNHO. Ausente = backend antigo ou prontidão indisponível: não conta como pronto. */
+  prontidao?: ProntidaoLote
 }
 
 export interface FormacaoLotesResult {
