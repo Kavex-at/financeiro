@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.73.0 (2026-10-22) — SISPAG: cada lote em rascunho diz se finaliza e o que falta
+
+- **O que falta, sem abrir o lote.** O card do lote em rascunho mostra "Pronto para finalizar" ou "Não
+  finaliza", quantos itens saem do lote ao finalizar e uma barra com a proporção de itens prontos.
+- **Pendências com dono e próximo passo.** Ao abrir o card, cada pendência diz se **barra a finalização**
+  ou se o item **sai do lote**, de qual título é, quem resolve (você, aprovador ou cadastro) e traz o
+  botão: tratar o alerta de duplicidade, pedir autorização do favorecido, abrir o cadastro no Conexos,
+  ver o boleto. O que sai do lote vem do último aviso do favorecido TED/PIX; a finalização confere de novo.
+- **Filtrar e ordenar os lotes.** "Todos / Prontos para finalizar / Com pendência" com contagem, e
+  "Ordenar por" pendências primeiro, vencimento, valor ou filial.
+- **Finalizar os lotes prontos de uma vez.** Uma faixa mostra quantos lotes estão sem nenhuma pendência e
+  o total; o botão confirma com a lista e finaliza um lote por vez, mostrando o resultado de cada um. Um
+  lote que falhar não desfaz os outros.
+- **Título bloqueado não é mais finalizado.** Se a situação de pagamento de um item ficou bloqueada
+  depois de ele entrar no lote (aprovação revogada, vencido, permuta), ou não pôde ser conferida, o lote
+  não finaliza e a mensagem diz quais itens e por quê. Nada é retirado do lote nesse caso.
+
 ## v0.72.0 (2026-10-20) — SISPAG: cada título mostra se pode ser pago, por quê, e o que fazer
 
 - **Pronto ou bloqueado, na própria linha.** A tela de títulos a pagar passa a dizer, para cada título,
