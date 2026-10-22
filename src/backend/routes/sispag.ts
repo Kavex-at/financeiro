@@ -19,6 +19,7 @@ import {
     SITUACOES_FILTRAVEIS,
 } from '../domain/service/sispag/PaginacaoBoletoDda.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
+import ProntidaoLoteService from '../domain/service/sispag/ProntidaoLoteService.js';
 import CarteiraAtualizacaoService from '../domain/service/sispag/CarteiraAtualizacaoService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import AuthorizationCandidatesService from '../domain/service/sispag/AuthorizationCandidatesService.js';
@@ -206,7 +207,8 @@ const modalidadeSchema = z.object({
     modalidade: z.enum(['BOLETO', 'TED', 'PIX', 'CREDITO_CONTA']),
 });
 
-// GET /sispag/lotes — lista lotes candidatos (?status=&filCod=). Leitura.
+// GET /sispag/lotes — lista lotes candidatos (?status=&filCod=). Leitura. Lote RASCUNHO leva a
+// `prontidao` (ADR-0076): o que barra a finalização e o que sai do lote.
 router.get(
     '/lotes',
     exigirPermissao(PERMISSION.SISPAG_VER),
@@ -218,7 +220,10 @@ router.get(
             return;
         }
         const service = container.resolve(LotePagamentoService);
-        res.json({ lotes: apiView().lotes(await service.listarLotes(parsed.data)) });
+        const lotes = await container
+            .resolve(ProntidaoLoteService)
+            .comProntidao(await service.listarLotes(parsed.data));
+        res.json({ lotes: apiView().lotes(lotes) });
     }),
 );
 
@@ -234,7 +239,8 @@ router.get(
             res.status(404).json({ error: 'lote not found' });
             return;
         }
-        res.json({ lote: apiView().lote(lote) });
+        const [comProntidao] = await container.resolve(ProntidaoLoteService).comProntidao([lote]);
+        res.json({ lote: apiView().lote(comProntidao ?? lote) });
     }),
 );
 

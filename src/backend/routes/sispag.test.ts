@@ -30,6 +30,7 @@ import DebitDateService from '../domain/service/sispag/DebitDateService.js';
 import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
+import ProntidaoLoteService from '../domain/service/sispag/ProntidaoLoteService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
 import VinculoCodigoBarrasService from '../domain/service/sispag/VinculoCodigoBarrasService.js';
 import VinculoCodigoBarrasIncompletoError from '../domain/errors/VinculoCodigoBarrasIncompletoError.js';
@@ -110,6 +111,13 @@ const LOTE = {
     versao: 1,
     itens: [],
 };
+
+/** ADR-0076: a prontidão é testada no próprio serviço; aqui ela só repassa os lotes. */
+beforeEach(() => {
+    container.registerInstance(ProntidaoLoteService, {
+        comProntidao: async (lotes: unknown[]) => lotes,
+    } as never);
+});
 
 afterEach(() => {
     container.clearInstances();

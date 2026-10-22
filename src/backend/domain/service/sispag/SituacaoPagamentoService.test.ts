@@ -38,6 +38,7 @@ interface Over {
     desfechos?: jest.Mock;
     env?: jest.Mock;
     buscarPorChave?: jest.Mock;
+    buscarPorChaves?: jest.Mock;
 }
 
 const make = (over: Over = {}) => {
@@ -61,8 +62,15 @@ const make = (over: Over = {}) => {
         warn: jest.fn().mockResolvedValue(undefined),
         info: jest.fn().mockResolvedValue(undefined),
     } as unknown as LogService;
+    // `buscarPorChave` do teste responde pela chave pedida; o serviço lê em lote (`buscarPorChaves`).
+    const umPorChave = over.buscarPorChave ?? jest.fn().mockResolvedValue(null);
     const tituloRepo = {
-        buscarPorChave: over.buscarPorChave ?? jest.fn().mockResolvedValue(null),
+        buscarPorChaves:
+            over.buscarPorChaves ??
+            jest.fn(async (chaves: Array<{ filCod: number; docCod: string; titCod: string }>) => {
+                const lidos = await Promise.all(chaves.map((c) => umPorChave(c)));
+                return lidos.filter((t): t is TituloAPagar => t !== null && t !== undefined);
+            }),
     } as unknown as TituloAPagarRepository;
     // 20/10/2026 12:00 BRT: o dia civil de hoje é 2026-10-20.
     const calendar = BankingCalendar.withClock(() => new Date('2026-10-20T15:00:00Z'));
@@ -350,6 +358,67 @@ describe('SituacaoPagamentoService', () => {
             await service.avaliarVivo(chave, vivo);
             expect(persistido.situacaoPagamento).toBeUndefined();
             expect(persistido.liberado).toBe(false);
+        });
+    });
+
+    describe('avaliarVivos e avaliarGravados (ADR-0076)', () => {
+        const vivo = { liberado: true, pago: false, vencimento: Date.UTC(2026, 9, 30) };
+
+        it('avaliarVivos: UMA leitura da carteira e UM contexto, resultado na ordem da entrada', async () => {
+            const bloqueios = jest.fn().mockResolvedValue([]);
+            const buscarPorChaves = jest
+                .fn()
+                .mockResolvedValue([
+                    titulo({ titCod: '2' }),
+                    titulo({ titCod: '1', liberado: false }),
+                ]);
+            const { service } = make({ bloqueios, buscarPorChaves });
+            const r = await service.avaliarVivos([
+                { chave: { filCod: 2, docCod: '100', titCod: '1' }, vivo },
+                { chave: { filCod: 2, docCod: '100', titCod: '9' }, vivo },
+                {
+                    chave: { filCod: 2, docCod: '100', titCod: '2' },
+                    vivo: { ...vivo, liberado: false },
+                },
+            ]);
+            expect(buscarPorChaves).toHaveBeenCalledTimes(1);
+            expect(bloqueios).toHaveBeenCalledTimes(1);
+            expect(r.map((a) => a.resultado)).toEqual(['AVALIADA', 'FORA_DA_CARTEIRA', 'AVALIADA']);
+            // a aprovação é a AO VIVO, não a gravada
+            expect(r[0]).toMatchObject({ situacao: { estado: ESTADO_PAGAMENTO.PRONTO } });
+            expect(r[2]).toMatchObject({ situacao: { principal: MOTIVO_PAGAMENTO.ALCADA } });
+        });
+
+        it('avaliarVivos: leitura da carteira falhou → todos LEITURA_FALHOU', async () => {
+            const { service } = make({
+                buscarPorChaves: jest.fn().mockRejectedValue(new Error('timeout')),
+            });
+            const r = await service.avaliarVivos([
+                { chave: { filCod: 2, docCod: '100', titCod: '1' }, vivo },
+                { chave: { filCod: 2, docCod: '100', titCod: '2' }, vivo },
+            ]);
+            expect(r).toEqual([
+                { resultado: AVALIACAO_INCLUSAO.LEITURA_FALHOU },
+                { resultado: AVALIACAO_INCLUSAO.LEITURA_FALHOU },
+            ]);
+        });
+
+        it('avaliarGravados: situação pela carteira gravada, com as fontes que falharam', async () => {
+            const { service } = make({
+                buscarPorChaves: jest
+                    .fn()
+                    .mockResolvedValue([
+                        titulo({ titCod: '1', liberado: false, diasAteVencimento: undefined }),
+                    ]),
+                ajustes: jest.fn().mockRejectedValue(new Error('x')),
+            });
+            const r = await service.avaliarGravados([
+                { filCod: 2, docCod: '100', titCod: '1' },
+                { filCod: 2, docCod: '100', titCod: '2' },
+            ]);
+            expect(r.situacoes.get('2:100:1')?.principal).toBe(MOTIVO_PAGAMENTO.ALCADA);
+            expect(r.situacoes.has('2:100:2')).toBe(false);
+            expect(r.fontesIndisponiveis).toEqual([FONTE_SITUACAO.AJUSTE_CENTAVOS]);
         });
     });
 

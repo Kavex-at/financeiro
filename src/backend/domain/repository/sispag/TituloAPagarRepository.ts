@@ -253,6 +253,32 @@ export default class TituloAPagarRepository {
     };
 
     /**
+     * Vários títulos pela chave natural (ativos ou não), numa consulta: a prontidão dos lotes
+     * (ADR-0076) avalia a situação de todos os itens de uma vez. Chave ausente = fora da carteira.
+     */
+    public buscarPorChaves = async (
+        chaves: ReadonlyArray<{ filCod: number; docCod: string; titCod: string }>,
+    ): Promise<TituloAPagar[]> => {
+        if (chaves.length === 0) return [];
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT t.fil_cod, t.doc_cod, t.tit_cod, t.credor, t.pes_cod, t.valor, t.moeda,
+                    t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod,
+                    t.tpd_des_nome, t.pronto_para_remessa, t.tem_boleto,
+                    t.forma_pagamento_conexos, t.doc_esp_numero, t.ativo
+               FROM titulo_a_pagar t
+               JOIN unnest($filCods::int[], $docCods::text[], $titCods::text[])
+                    AS k(fil_cod, doc_cod, tit_cod)
+                 ON k.fil_cod = t.fil_cod AND k.doc_cod = t.doc_cod AND k.tit_cod = t.tit_cod`,
+            {
+                filCods: chaves.map((c) => c.filCod),
+                docCods: chaves.map((c) => c.docCod),
+                titCods: chaves.map((c) => c.titCod),
+            },
+        )) as Array<TituloRow & { ativo: boolean }>;
+        return rows.map((r) => ({ ...this.map(r), ativo: r.ativo }));
+    };
+
+    /**
      * Chaves `filCod:docCod:titCod` dos títulos ATIVOS que têm boleto DDA associado.
      *
      * Serve o painel sem ir ao ERP: a ingestão já resolveu isso na última rodada (≤ 24 h) e

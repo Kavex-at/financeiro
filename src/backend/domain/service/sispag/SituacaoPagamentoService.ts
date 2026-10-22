@@ -174,32 +174,77 @@ export default class SituacaoPagamentoService {
         chave: { filCod: number; docCod: string; titCod: string },
         vivo: Pick<TituloAPagar, 'liberado' | 'pago' | 'vencimento'>,
     ): Promise<AvaliacaoInclusao> => {
-        let persistido: TituloAPagar | null;
+        const [avaliacao] = await this.avaliarVivos([{ chave, vivo }]);
+        return avaliacao ?? { resultado: AVALIACAO_INCLUSAO.LEITURA_FALHOU };
+    };
+
+    /**
+     * `avaliarVivo` para vários títulos com UMA leitura da carteira e UM contexto (a guarda da
+     * finalização, ADR-0076 I20d). Devolve na ordem da entrada.
+     */
+    public avaliarVivos = async (
+        entradas: ReadonlyArray<{
+            chave: { filCod: number; docCod: string; titCod: string };
+            vivo: Pick<TituloAPagar, 'liberado' | 'pago' | 'vencimento'>;
+        }>,
+    ): Promise<AvaliacaoInclusao[]> => {
+        if (entradas.length === 0) return [];
+        let persistidos: Map<string, TituloAPagar>;
         try {
-            persistido = await this.tituloRepo.buscarPorChave(chave);
+            const lidos = await this.tituloRepo.buscarPorChaves(entradas.map((e) => e.chave));
+            persistidos = new Map(lidos.map((t) => [chaveDe(t), t] as const));
         } catch (error) {
             await this.logService.warn({
                 type: LOG_TYPE.BUSINESS_WARN,
                 message: 'situação de pagamento: leitura do título falhou, inclusão recusada',
-                data: { chave, erro: error instanceof Error ? error.message : String(error) },
+                data: {
+                    chaves: entradas.map((e) => chaveDe(e.chave)),
+                    erro: error instanceof Error ? error.message : String(error),
+                },
             });
-            return { resultado: AVALIACAO_INCLUSAO.LEITURA_FALHOU };
+            return entradas.map(() => ({ resultado: AVALIACAO_INCLUSAO.LEITURA_FALHOU }));
         }
-        if (!persistido) return { resultado: AVALIACAO_INCLUSAO.FORA_DA_CARTEIRA };
-        // O vencimento ao vivo vence o persistido, e o aging é SEMPRE recalculado dele.
-        const vencimento = vivo.vencimento ?? persistido.vencimento;
-        const titulo: TituloAPagar = {
-            ...persistido,
-            liberado: vivo.liberado,
-            pago: vivo.pago,
-            ...(vencimento !== undefined
-                ? { vencimento, diasAteVencimento: this.calendar.diasAteVencimento(vencimento) }
-                : {}),
-        };
+        const { contexto, fontesIndisponiveis } = await this.carregarContexto();
+        return entradas.map(({ chave, vivo }): AvaliacaoInclusao => {
+            const persistido = persistidos.get(chaveDe(chave));
+            if (!persistido) return { resultado: AVALIACAO_INCLUSAO.FORA_DA_CARTEIRA };
+            // O vencimento ao vivo vence o persistido, e o aging é SEMPRE recalculado dele.
+            const vencimento = vivo.vencimento ?? persistido.vencimento;
+            const titulo: TituloAPagar = {
+                ...persistido,
+                liberado: vivo.liberado,
+                pago: vivo.pago,
+                ...(vencimento !== undefined
+                    ? {
+                          vencimento,
+                          diasAteVencimento: this.calendar.diasAteVencimento(vencimento),
+                      }
+                    : {}),
+            };
+            return {
+                resultado: AVALIACAO_INCLUSAO.AVALIADA,
+                situacao: this.resolver.avaliar(titulo, contexto),
+                fontesIndisponiveis,
+            };
+        });
+    };
+
+    /**
+     * Prontidão dos lotes (ADR-0076 I20a): a situação pela carteira GRAVADA, sem Conexos, para os
+     * itens de vários lotes de uma vez. Chave fora do mapa = título fora da carteira.
+     */
+    public avaliarGravados = async (
+        chaves: ReadonlyArray<{ filCod: number; docCod: string; titCod: string }>,
+    ): Promise<{
+        situacoes: Map<string, SituacaoPagamento>;
+        fontesIndisponiveis: FonteSituacao[];
+    }> => {
+        const titulos = await this.tituloRepo.buscarPorChaves(chaves);
         const { contexto, fontesIndisponiveis } = await this.carregarContexto();
         return {
-            resultado: AVALIACAO_INCLUSAO.AVALIADA,
-            situacao: this.resolver.avaliar(titulo, contexto),
+            situacoes: new Map(
+                titulos.map((t) => [chaveDe(t), this.resolver.avaliar(this.comAging(t), contexto)]),
+            ),
             fontesIndisponiveis,
         };
     };

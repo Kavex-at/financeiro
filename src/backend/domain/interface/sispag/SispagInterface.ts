@@ -1,5 +1,5 @@
 import type { PayeeItemWarning } from './AuthorizedPayeeInterface.js';
-import type { ResumoSituacao, SituacaoPagamento } from './SituacaoPagamento.js';
+import type { ProntidaoLote, ResumoSituacao, SituacaoPagamento } from './SituacaoPagamento.js';
 /**
  * SISPAG (Escopo II) — interfaces do painel READ-ONLY (spike / semente da Fatia 1).
  *
@@ -543,6 +543,8 @@ export interface LotePagamento {
      */
     dataDebito?: string;
     itens: ItemLote[];
+    /** Só em RASCUNHO, na listagem: o que falta para finalizar (ADR-0076, I20a). */
+    prontidao?: ProntidaoLote;
 }
 
 /** O título cujo vencimento define o limite superior da janela de débito (I8a). */
