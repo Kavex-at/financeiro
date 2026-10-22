@@ -3,9 +3,9 @@ feature: sispag-situacao-pagamento
 type: feature-tweak (plano, antes da entrevista formal e do diff de ontologia)
 entity: TituloAPagar
 entity_changed: true   # ganha um valor derivado (situacaoPagamento); regra I2 (elegibilidade) é ampliada
-status: planejamento — nenhum código escrito
+status: PR A + PR B entregues no PR #128 (mergeado 2026-10-22); PR C em andamento (worktree-sispag-situacao-lotes)
 created: 2026-10-20
-mockup: https://claude.ai/artifact/9qrgoPvXrLAhF2nVt8FUy7 (v4, modo claro)
+mockup: cópia local do maintainer `~/Downloads/SISPAG Rascunhos de Tela.html` ('Segunda rodada'; o link do artifact original não abre desta conta). O estado 'Confira' do mockup foi descartado depois dele.
 ---
 
 # Situação de pagamento do título (SISPAG)
@@ -119,6 +119,18 @@ Três PRs, nessa ordem. O backend sozinho já corrige a falha tardia.
 10. Resumo de prontidão no card do lote, lista de pendências com dono e botão, filtro/ordem da lista,
     "Finalizar os N lotes prontos". Depende de a verificação TED/PIX/autorização ser exposta por lote
     (já existe `fetchModalidadesDisponiveis`).
+
+**Decisões do PR C (2026-10-22, ADR-0076, regra `prontidao-lote`):**
+
+| # | Decisão |
+|---|---------|
+| D18 | Prontidão calculada no **backend sobre dados gravados** (`GET /lotes` → `prontidao` por lote RASCUNHO), sem Conexos. TED/PIX pelo último aviso gravado, rotulado "na última verificação"; a finalização relê ao vivo. |
+| D19 | Item com situação de pagamento `BLOQUEADO` (ou não avaliada) **barra a finalização**, com motivo, dono e ação. Fail-closed, como a I19s. |
+| D20 | "Finalizar os N lotes prontos": confirmação com a lista e o total, finaliza um por vez pelo endpoint existente, resultado por lote. Sem endpoint novo. |
+| D21 | "O boleto vence antes do título" não vira pendência de lote (confirmar já exige reconhecer). |
+
+Dois efeitos por pendência, **Barra a finalização** e **Sai do lote**; sem "Confira". Ordenação da lista:
+pendências primeiro (barram, depois saem), vencimento, valor, filial.
 
 Gates: typecheck, lint, testes, PatternGuardian, DesignSystemReviewer (PR B/C), Regis-Review reduzido
 (delta + risco: testability, modifiability e fault-tolerance), rebase, bump de versão (feat) à mão
