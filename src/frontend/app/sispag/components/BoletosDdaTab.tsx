@@ -40,9 +40,11 @@ import {
   fmtCivil,
   resumoCandidatos,
 } from './CandidatosBoletoDialog'
+import { CardsBoletosDda, type FiltroSituacaoDda } from './CardsBoletosDda'
 import { horasDdaDefasado } from './ddaDefasado'
+import { hojeBrt, somarDias } from './vencimentoDda'
 
-type FiltroSituacao = 'todas' | BoletoDdaSituacao
+type FiltroSituacao = FiltroSituacaoDda
 
 const SITUACOES: { value: FiltroSituacao; label: string }[] = [
   { value: 'todas', label: 'Todas' },
@@ -185,6 +187,28 @@ export function BoletosDdaTab() {
     setPagina(1)
   }
   const recarregar = () => setRecarga((n) => n + 1)
+  const selecionarSituacao = (s: FiltroSituacao) => {
+    setSituacao(s)
+    setPagina(1)
+  }
+  // "Vencem em até 2 dias": atalho para o filtro de vencimento (hoje .. hoje + 2, dia civil BRT).
+  const urgentesDe = hojeBrt()
+  const urgentesAte = somarDias(urgentesDe, 2)
+  const urgentesAtivo = vencimentoDe === urgentesDe && vencimentoAte === urgentesAte
+  const alternarUrgentes = () => {
+    setVencimentoDe(urgentesAtivo ? '' : urgentesDe)
+    setVencimentoAte(urgentesAtivo ? '' : urgentesAte)
+    setPagina(1)
+  }
+  const limparFiltros = () => {
+    setSituacao('todas')
+    setFilial('todas')
+    setBusca('')
+    setBuscaAplicada('')
+    setVencimentoDe('')
+    setVencimentoAte('')
+    setPagina(1)
+  }
 
   // Mesmo formato que a `FiltroBarra` e a `Paginacao` das outras abas esperam — só que os dados
   // já chegam filtrados e paginados pelo servidor.
@@ -295,7 +319,9 @@ export function BoletosDdaTab() {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap gap-1" role="group" aria-label="Situação">
+      <CardsBoletosDda contagem={contagem} situacaoAtiva={situacao} onSelecionar={selecionarSituacao} />
+
+      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Situação">
         {SITUACOES.map((s) => (
           <Button
             key={s.value}
@@ -310,6 +336,20 @@ export function BoletosDdaTab() {
             {s.label} ({contagem ? contagem[s.value] : '—'})
           </Button>
         ))}
+        <Button
+          size="sm"
+          variant={urgentesAtivo ? 'default' : 'outline'}
+          onClick={alternarUrgentes}
+          aria-pressed={urgentesAtivo}
+          title="Boletos com vencimento de hoje até daqui a 2 dias"
+        >
+          Vencem em até 2 dias
+        </Button>
+        {filtrando ? (
+          <Button size="sm" variant="ghost" onClick={limparFiltros}>
+            Limpar filtros
+          </Button>
+        ) : null}
       </div>
 
       <FiltroBarra
@@ -327,6 +367,11 @@ export function BoletosDdaTab() {
           icon={<AlertTriangle className="size-6" />}
           title="Não foi possível carregar os boletos"
           description={erro}
+          action={
+            <Button size="sm" variant="outline" onClick={recarregar}>
+              <RefreshCcw className="size-4" /> Tentar de novo
+            </Button>
+          }
         />
       ) : total === 0 ? (
         <EmptyState
@@ -338,6 +383,13 @@ export function BoletosDdaTab() {
               : filtrando
                 ? 'Ajuste a situação, a filial, o vencimento ou a busca acima.'
                 : 'Nenhum boleto neste período. Veja "Todos" para incluir os vencidos.'
+          }
+          action={
+            filtrando ? (
+              <Button size="sm" variant="outline" onClick={limparFiltros}>
+                Limpar filtros
+              </Button>
+            ) : undefined
           }
         />
       ) : (

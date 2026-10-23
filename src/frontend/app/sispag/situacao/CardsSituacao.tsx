@@ -11,6 +11,11 @@ import { ehBloqueado, ehPronto, vencemEmAteDoisDias } from './situacaoTitulos'
 /** Ordem em que os donos aparecem no card "Precisam de ação" (quem é você vem primeiro). */
 const ORDEM_DONOS: readonly DonoPagamento[] = ['VOCE', 'APROVADOR', 'PERMUTAS', 'CONTAS_A_PAGAR']
 
+/** Botões cheios na cor do card: o `outline` cinza parecia desabilitado ao lado do botão azul. */
+const BOTAO_PERIGO = 'bg-danger text-white hover:bg-danger/90'
+const BOTAO_ALERTA = 'bg-warning text-warning-foreground hover:bg-warning/90'
+const BOTAO_INFO = 'bg-info text-white hover:bg-info/90'
+
 export interface LotesEsperando {
   paraFinalizar: number
   paraGerarRemessa: number
@@ -87,7 +92,7 @@ export function CardsSituacao({
               {donos.length > 0 ? ` · ${donos.join(' · ')}` : ''}
             </p>
             {bloqueados.qtd > 0 ? (
-              <Button size="sm" variant="outline" onClick={onVerBloqueados}>
+              <Button size="sm" className={BOTAO_PERIGO} onClick={onVerBloqueados}>
                 Resolver bloqueados
               </Button>
             ) : null}
@@ -105,7 +110,12 @@ export function CardsSituacao({
               {urgentesProntos} prontos · {urgentesBloqueados} bloqueados
             </p>
             {urgentes.length > 0 || urgentesAtivo ? (
-              <Button size="sm" variant="outline" aria-pressed={urgentesAtivo} onClick={onAlternarUrgentes}>
+              <Button
+                size="sm"
+                className={BOTAO_ALERTA}
+                aria-pressed={urgentesAtivo}
+                onClick={onAlternarUrgentes}
+              >
                 {urgentesAtivo ? 'Tirar o filtro' : 'Ver só os urgentes'}
               </Button>
             ) : null}
@@ -124,7 +134,7 @@ export function CardsSituacao({
                 : 'não foi possível carregar os lotes'}
             </p>
             {lotesTotal > 0 ? (
-              <Button size="sm" variant="outline" onClick={onIrParaLotes}>
+              <Button size="sm" className={BOTAO_INFO} onClick={onIrParaLotes}>
                 Ir para os lotes
               </Button>
             ) : null}

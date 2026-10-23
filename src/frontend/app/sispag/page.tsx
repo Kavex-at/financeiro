@@ -955,20 +955,9 @@ function SispagPanel() {
         </div>
       ) : null}
 
-      <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
-        <Lock className="mt-0.5 size-4 shrink-0 text-warning" />
-        <div>
-          <span className="font-medium">Gerar remessa e conciliar ESCREVEM no Conexos.</span> A
-          carteira vem do <strong>nosso banco</strong> (última ingestão); lotes nativos e borderôs
-          são lidos <strong>ao vivo</strong>. Montar o lote é estado local, mas{' '}
-          <strong>Gerar remessa</strong> cria o lote no ERP e <strong>Processar</strong> grava as
-          baixas no fin010. O arquivo <strong>não é entregue ao banco</strong>: o Conexos não
-          transmite remessa de pagamento — o transporte é externo e manual.
+      <div className="text-xs text-muted-foreground">
           {painel?.ingestao.ultimaRunEm ? (
-            <span className="text-muted-foreground">
-              {' '}
-              · carteira de {new Date(painel.ingestao.ultimaRunEm).toLocaleString('pt-BR')}
-            </span>
+            <span>carteira de {new Date(painel.ingestao.ultimaRunEm).toLocaleString('pt-BR')}</span>
           ) : null}
           <span role="status" aria-live="polite">
             {refresh === 'atualizando' ? (
@@ -997,7 +986,6 @@ function SispagPanel() {
               </span>
             ) : null}
           </span>
-        </div>
       </div>
 
       {loading ? (

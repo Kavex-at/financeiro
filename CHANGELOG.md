@@ -1,5 +1,17 @@
 # Columbia Financeiro — Changelog
 
+## v0.74.0 (2026-10-23) — SISPAG: aba Boletos DDA com resumo e atalhos, botões dos cards visíveis
+
+- **Boletos DDA com resumo clicável.** A aba ganha quatro cards (casados com título, para conferir,
+  sem título e total no período). Os botões ligam e desligam o filtro de situação, e os números vêm do
+  servidor, então não dependem da página aberta. Enquanto carrega, o card mostra "—" e nunca zero.
+- **Atalho "Vencem em até 2 dias" e "Limpar filtros"** na aba Boletos DDA; o estado de erro ganhou
+  "Tentar de novo".
+- **Botões dos cards de Títulos a pagar parecem clicáveis.** "Resolver bloqueados", "Ver só os
+  urgentes" e "Ir para os lotes" agora são preenchidos na cor do card, em vez de cinza.
+- **Sem o aviso amarelo no topo.** A linha de status mostra só a data da carteira e os avisos de
+  atualização ou sincronização que falharam.
+
 ## v0.73.0 (2026-10-22) — SISPAG: cada lote em rascunho diz se finaliza e o que falta
 
 - **O que falta, sem abrir o lote.** O card do lote em rascunho mostra "Pronto para finalizar" ou "Não
