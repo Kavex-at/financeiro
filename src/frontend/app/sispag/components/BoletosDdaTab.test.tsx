@@ -278,4 +278,62 @@ describe('BoletosDdaTab — permissões', () => {
     expect(mockFetch).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /atualizar dda|sincronizar/i })).not.toBeInTheDocument()
   })
+
+  describe('cards-resumo e atalhos', () => {
+    it('mostra a contagem nos cards e o card "Ver candidatos" filtra por situação', async () => {
+      mockFetch.mockResolvedValue(pagina([ADP]))
+      render(<BoletosDdaTab />)
+      await screen.findByText('001532761')
+
+      const cards = screen.getByLabelText('Resumo dos boletos DDA')
+      expect(cards).toHaveTextContent('Para conferir')
+      expect(cards).toHaveTextContent('1 com um candidato · 0 ambíguos')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Ver candidatos' }))
+      await waitFor(() =>
+        expect(mockFetch).toHaveBeenLastCalledWith({
+          escopo: 'a-vencer',
+          pagina: 1,
+          tamanho: 20,
+          situacao: 'CANDIDATO',
+        }),
+      )
+    })
+
+    it('"Vencem em até 2 dias" manda o intervalo hoje..hoje+2 e "Limpar filtros" desfaz', async () => {
+      jest.useFakeTimers({ doNotFake: ['setTimeout', 'clearTimeout', 'nextTick'] })
+      jest.setSystemTime(new Date('2026-09-24T15:00:00Z'))
+      try {
+        mockFetch.mockResolvedValue(pagina([ADP]))
+        render(<BoletosDdaTab />)
+        await screen.findByText('001532761')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Vencem em até 2 dias' }))
+        await waitFor(() =>
+          expect(mockFetch).toHaveBeenLastCalledWith({
+            escopo: 'a-vencer',
+            pagina: 1,
+            tamanho: 20,
+            vencimentoDe: '2026-09-24',
+            vencimentoAte: '2026-09-26',
+          }),
+        )
+
+        fireEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
+        await waitFor(() =>
+          expect(mockFetch).toHaveBeenLastCalledWith({ escopo: 'a-vencer', pagina: 1, tamanho: 20 }),
+        )
+      } finally {
+        jest.useRealTimers()
+      }
+    })
+
+    it('erro de carga oferece "Tentar de novo"', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('API 500'))
+      mockFetch.mockResolvedValue(pagina([ADP]))
+      render(<BoletosDdaTab />)
+      fireEvent.click(await screen.findByRole('button', { name: /Tentar de novo/ }))
+      expect(await screen.findByText('001532761')).toBeInTheDocument()
+    })
+  })
 })
