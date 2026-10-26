@@ -541,11 +541,18 @@ Paralelismo: **Fase A inteira** em paralelo; na Fase D, T9/T10/T11/T12/T13 em pa
 - `src/backend/http/routePermissions.test.ts`
 
 **Acceptance criteria:**
-- [ ] `GET /sispag/grupos-boleto/sugestoes?filCod=` (`sispag:ver`), `GET /sispag/grupos-boleto?filCod=` (`sispag:ver`, com situação e órfão), `POST /sispag/grupos-boleto/confirmar` (`sispag:executar`, limiter), `POST /sispag/grupos-boleto/:id/anular` (`sispag:executar`, motivo 10–500), `POST /sispag/lotes/:id/grupos` (incluir, `mover` opcional), `DELETE /sispag/lotes/:id/grupos/:grupoId` (`sispag:executar`)
-- [ ] Zod em body, params e query; `filCod` passa pelo `filialAuthz` existente; ator vem do JWT, nunca do body
-- [ ] Erros nomeados chegam com status e `userMessage` (teste por erro); resposta sem código completo
-- [ ] Matriz de `routePermissions.test.ts` atualizada; usuário só `sispag:ver` recebe 403 nas escritas
-- [ ] PatternGuardian sem P0 no delta
+- [x] `GET /sispag/grupos-boleto/sugestoes?filCod=` (`sispag:ver`), `GET /sispag/grupos-boleto?filCod=` (`sispag:ver`, com situação e órfão), `POST /sispag/grupos-boleto/confirmar` (`sispag:executar`, limiter), `POST /sispag/grupos-boleto/:id/anular` (`sispag:executar`, motivo 10–500), `POST /sispag/lotes/:id/grupos` (incluir, `mover` opcional), `DELETE /sispag/lotes/:id/grupos/:grupoId` (`sispag:executar`)
+- [x] Zod em body, params e query; `filCod` passa pelo `filialAuthz` existente; ator vem do JWT, nunca do body
+- [x] Erros nomeados chegam com status e `userMessage` (teste por erro); resposta sem código completo
+- [x] Matriz de `routePermissions.test.ts` atualizada; usuário só `sispag:ver` recebe 403 nas escritas
+- [x] PatternGuardian sem P0 no delta
+
+**Desvios e notas da entrega (2026-10-26):**
+- Schemas Zod em `domain/interface/sispag/GrupoBoletoSchemas.ts` (consts, como o `SugestaoBoletoSchemas.ts` vizinho): bodies `strict` (ator no body é 400), `titulos` de 2 a 50, `motivo` da anulação de 10 a 500, ids UUID, `versaoEsperada` inteira ≥ 1.
+- As respostas tiram `emissorChave` do grupo e da sugestão (carrega a conta completa do emissor); o código sai só mascarado.
+- `filCod` (query das duas leituras e `titulos[].filCod` do confirmar) passa pela allow-list de filiais (`assertUserCanActOnFilial`; 403 `FILIAL_NAO_AUTORIZADA`). **As rotas por id (anular, incluir no lote, retirar do lote) só têm a permissão:** a filial do grupo só se conhece depois de carregá-lo, como nas rotas de lote de hoje; fechar isso exige o serviço receber as filiais permitidas — fica como decisão do maintainer.
+- Limiter `'grupo'` (30/min por usuário, balde próprio) em confirmar e anular; incluir/retirar do lote seguem sem limiter, como as rotas de lote existentes.
+- `routePermissions.test.ts`: +6 linhas e contagem de `sispag` 62 → 68.
 
 **Dependencies:** Task 9, Task 10, Task 11, Task 17
 
