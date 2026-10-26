@@ -171,6 +171,14 @@ const MOTIVO_DA_MARCA = {
         'Vínculo do código de barras falhou — retirada automática (I17g)',
 } as const;
 
+/** Texto da marca de retenção do boleto agrupado retirado (ADR-0077, I21p(3)). */
+const MOTIVO_DO_GRUPO = {
+    [SYSTEM_REMOVAL_REASON.GRUPO_BOLETO_FALHOU]:
+        'Boleto agrupado retirado do lote — o borderô falhou (I21p(3))',
+    [SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO]:
+        'Boleto agrupado retirado do lote — borderô anterior não resolvido (I21s)',
+} as const;
+
 /**
  * LotePagamentoRepository — persistência do lote candidato SISPAG (Fatia 2).
  * SQL 100% parametrizado (`$name`, Rule #5). Cada método aceita um `tx` opcional
@@ -1330,6 +1338,98 @@ export default class LotePagamentoRepository {
             ...(vencimento !== undefined ? { vencimento } : {}),
             ...(linha.credor ? { credor: linha.credor } : {}),
         };
+    };
+
+    /**
+     * ADR-0077 (I21p(3)) — retirada AUTOMÁTICA do boleto agrupado INTEIRO, numa transação do
+     * chamador: remove os N itens do lote local, bumpa a `versao` UMA vez, cria as N marcas de
+     * retenção `GRUPO_BOLETO` (uma por título) e grava N eventos `ITEM_REMOVIDO_SISTEMA` com o
+     * motivo do grupo. Mesma exceção estreita da `retirarItemPorCodigoDeBarras`: só em lote
+     * `FINALIZADO`, sem mudar o `status`.
+     *
+     * Idempotente: item que já saiu não gera marca nem evento; nenhum item removido ⇒
+     * `removidos: 0`, nada gravado. O evento `GRUPO_RETIRADO` é do chamador (trilha do grupo).
+     * Só a máscara 5+4 entra em coluna ou `dados` (I16e) — recusada ANTES de tocar o banco.
+     */
+    public retirarGrupoPeloSistema = async (
+        params: {
+            loteId: string;
+            grupoId: string;
+            motivo:
+                | typeof SYSTEM_REMOVAL_REASON.GRUPO_BOLETO_FALHOU
+                | typeof SYSTEM_REMOVAL_REASON.BORDERO_ANTERIOR_NAO_RESOLVIDO;
+            titulos: readonly ChaveTitulo[];
+            codigoMascarado?: string;
+        },
+        tx: TransactionClient,
+    ): Promise<{ removidos: number }> => {
+        if (params.codigoMascarado !== undefined && !isCodigoMascarado(params.codigoMascarado)) {
+            throw new Error('codigoMascarado precisa estar mascarado (5 primeiros + 4 últimos)');
+        }
+        const removidos: Array<{
+            chave: ChaveTitulo;
+            valor?: number;
+            vencimento?: string;
+        }> = [];
+        for (const t of params.titulos) {
+            const chave = { filCod: t.filCod, docCod: t.docCod, titCod: t.titCod };
+            const linha = await tx.selectFirst<{
+                valor: string | null;
+                vencimento: Date | null;
+            }>(
+                `DELETE FROM lote_pagamento_item i
+                 USING lote_pagamento l
+                 WHERE i.lote_id = l.id AND l.id = $loteId AND l.status = 'FINALIZADO'
+                   AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod
+                 RETURNING i.valor, i.vencimento`,
+                { loteId: params.loteId, ...chave },
+            );
+            if (!linha) continue;
+            removidos.push({
+                chave,
+                ...(linha.valor != null ? { valor: Number(linha.valor) } : {}),
+                ...(linha.vencimento != null
+                    ? { vencimento: new Date(linha.vencimento).toISOString().slice(0, 10) }
+                    : {}),
+            });
+        }
+        if (removidos.length === 0) return { removidos: 0 };
+
+        await this.tocarLote(params.loteId, tx);
+        await this.bloqueios.criarDoGrupo(
+            {
+                grupoId: params.grupoId,
+                titulos: removidos.map((r) => r.chave),
+                loteIdOrigem: params.loteId,
+                motivo: MOTIVO_DO_GRUPO[params.motivo],
+                ator: SISPAG_SYSTEM_ACTOR,
+                ...(params.codigoMascarado !== undefined
+                    ? { codigoMascarado: params.codigoMascarado }
+                    : {}),
+            },
+            tx,
+        );
+        for (const r of removidos) {
+            await this.eventos.registrar(
+                {
+                    evento: VERIFICATION_EVENT.ITEM_REMOVIDO_SISTEMA,
+                    ator: SISPAG_SYSTEM_ACTOR,
+                    loteId: params.loteId,
+                    ...r.chave,
+                    dados: {
+                        motivo: params.motivo,
+                        grupoId: params.grupoId,
+                        ...(params.codigoMascarado !== undefined
+                            ? { codigoMascarado: params.codigoMascarado }
+                            : {}),
+                        ...(r.valor !== undefined ? { valor: r.valor } : {}),
+                        ...(r.vencimento !== undefined ? { vencimento: r.vencimento } : {}),
+                    },
+                },
+                tx,
+            );
+        }
+        return { removidos: removidos.length };
     };
 
     /**

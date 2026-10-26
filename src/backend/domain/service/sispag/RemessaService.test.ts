@@ -302,6 +302,7 @@ const buildBorderoGrupo = (o: Record<string, unknown> = {}) => ({
     }),
     /** grupoId → chave nativa `fil:bor:borCod`, só dos borderôs cujo `borTimCad` foi conferido ao vivo. */
     chavesNativasConfirmadas: jest.fn().mockResolvedValue(new Map<string, string>()),
+    limpar: jest.fn().mockResolvedValue({ desfecho: 'limpo', execucaoId: 'E1' }),
     ...o,
 });
 
@@ -322,6 +323,8 @@ const make = (o: {
     agora?: string;
     grupoRepo?: ReturnType<typeof buildGrupoRepo>;
     borderoGrupo?: ReturnType<typeof buildBorderoGrupo>;
+    /** Guarda de código de barras: por padrão a real; um teste injeta um espião. */
+    retirada?: Pick<RetiradaCodigoBarrasService, 'garantir' | 'classificarIntrusos'>;
 }) => {
     const loteRepo = o.loteRepo ?? buildLoteRepo(o.lote);
     const calendar = BankingCalendar.withClock(() => new Date(o.agora ?? AGORA));
@@ -337,6 +340,9 @@ const make = (o: {
         log,
         (o.bloqueios ?? buildBloqueios()) as unknown as BloqueioDuplicidadeRepository,
         (o.eventos ?? buildEventos()) as unknown as VerificacaoEventoRepository,
+        (o.grupoRepo ?? buildGrupoRepo()) as unknown as GrupoBoletoRepository,
+        { ultimaPorGrupo: jest.fn(), listarPorLote: jest.fn().mockResolvedValue([]) } as never,
+        (o.borderoGrupo ?? buildBorderoGrupo()) as unknown as BorderoGrupoBoletoService,
     );
     return new RemessaService(
         loteRepo as unknown as LotePagamentoRepository,
@@ -351,7 +357,7 @@ const make = (o: {
         calendar,
         new DestinoPagamentoResolver(sispag as unknown as ConexosSispagClient, new MaskDestino()),
         (o.payees ?? buildPayees()) as unknown as AuthorizedPayeeService,
-        retirada,
+        (o.retirada ?? retirada) as unknown as RetiradaCodigoBarrasService,
         (o.vinculo ?? buildVinculo()) as unknown as VinculoCodigoBarrasService,
         new CodigoBarrasBoleto(),
         (o.grupoRepo ?? buildGrupoRepo()) as unknown as GrupoBoletoRepository,
@@ -4136,6 +4142,31 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
     const writeDoGrupo = () => {
         const write = buildWrite();
         write.listarTitulosPendentes.mockResolvedValue([pendente(), pendente802()]);
+        // O rascunho nativo: o avulso 801 e o item de BORDERÔ do grupo (um item, com a barra dele).
+        write.listarLinhasDigitaveisDoLote.mockResolvedValue({
+            itens: [
+                {
+                    docCod: '801',
+                    titCod: '1',
+                    linhaDigitavel: LINHA_DISTINTA,
+                    filCod: 2,
+                    itsCodSeq: 1,
+                },
+            ],
+            total: 1,
+            dropped: 0,
+            completa: true,
+            itensDeBordero: [
+                {
+                    filCod: 2,
+                    borCod: 77,
+                    itsCodSeq: 5,
+                    linhaDigitavel: new CodigoBarrasBoleto().paraLinhaDigitavel(
+                        BARRAS_GRUPO,
+                    ) as string,
+                },
+            ],
+        });
         write.listarArquivosRemessa.mockResolvedValue([
             {
                 gabCod: 52,
@@ -4371,17 +4402,105 @@ describe('RemessaService — boleto agrupado: etapa preparar_bordero (ADR-0077, 
             expect(vinculo.vincularItemDeBordero).not.toHaveBeenCalled();
         });
 
-        it('falha determinística (retirar) interrompe a remessa antes do finalizar, com a mensagem ao operador (a retirada pela guarda é da Task 17)', async () => {
+        /** Guarda espiã: devolve o lote como veio e registra o que a remessa lhe pediu. */
+        const guardaEspia = () => ({
+            garantir: jest.fn(async ({ lote: l }: { lote: LotePagamento }) => ({
+                lote: l,
+                retirados: [],
+                avisos: [],
+            })),
+            classificarIntrusos: jest.fn().mockResolvedValue({
+                residuos: new Map(),
+                estranhos: [],
+            }),
+        });
+        const pedidoDaGuarda = (g: ReturnType<typeof guardaEspia>) =>
+            g.garantir.mock.calls[0]?.[0] as unknown as {
+                lote: LotePagamento;
+                grupos: Array<Record<string, unknown>>;
+            };
+        const TITULOS_G1 = ['901', '902', '903'].map((docCod) => ({
+            filCod: 2,
+            docCod,
+            titCod: '1',
+        }));
+
+        it('grupo sadio chega à guarda como UM item nativo (borCod + os 3 títulos), com o lote inteiro e sem pedido de retirada', async () => {
+            const retirada = guardaEspia();
+            const { service } = setup({ retirada });
+            await gerar(service);
+            const pedido = pedidoDaGuarda(retirada);
+            expect(pedido.lote.itens).toHaveLength(5);
+            expect(pedido.grupos).toEqual([
+                expect.objectContaining({
+                    grupoId: 'G1',
+                    borCod: 77,
+                    titulos: TITULOS_G1,
+                    codigoMascarado: MASCARA_GRUPO,
+                }),
+            ]);
+            expect(pedido.grupos[0]).not.toHaveProperty('retirar');
+        });
+
+        it('falha determinística da barra (retirar): o grupo vai à guarda para sair inteiro e a remessa SEGUE com os demais até o finalizar', async () => {
             const vinculo = buildVinculo({
                 vincularItemDeBordero: jest.fn().mockResolvedValue({
                     tipo: 'retirar',
+                    grupoId: 'G1',
                     campo: 'ELEGIBILIDADE',
                     motivo: 'ERP_RECUSOU_VALIDACAO',
-                    codigoMascarado: '34191…7500',
-                    aviso: 'O Conexos recusou o código do boleto agrupado 34191…7500.',
+                    codigoMascarado: MASCARA_GRUPO,
+                    aviso: 'O Conexos recusou o código do boleto agrupado.',
                 }),
             });
-            const { service, write } = setup({ vinculo });
+            const retirada = guardaEspia();
+            const { service, write } = setup({ vinculo, retirada });
+            const r = await gerar(service);
+            expect(pedidoDaGuarda(retirada).grupos).toEqual([
+                expect.objectContaining({
+                    grupoId: 'G1',
+                    borCod: 77,
+                    titulos: TITULOS_G1,
+                    retirar: { motivo: 'GRUPO_BOLETO_FALHOU' },
+                }),
+            ]);
+            expect(write.finalizarLote).toHaveBeenCalled();
+            expect(r.status).toBe('gerada');
+        });
+
+        it('borderô anterior não resolvido (preparar → retirar): vai à guarda sem borCod e a barra nem é tentada', async () => {
+            const borderoGrupo = buildBorderoGrupo({
+                preparar: jest.fn().mockResolvedValue({
+                    desfecho: 'retirar',
+                    motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO',
+                    detalhe: 'O borderô 252 de uma remessa anterior segue no Conexos.',
+                    reaproveitado: false,
+                }),
+            });
+            const vinculo = buildVinculo();
+            const retirada = guardaEspia();
+            const { service, write } = setup({ borderoGrupo, vinculo, retirada });
+            await gerar(service);
+            const [g] = pedidoDaGuarda(retirada).grupos;
+            expect(g).toMatchObject({
+                grupoId: 'G1',
+                retirar: { motivo: 'BORDERO_ANTERIOR_NAO_RESOLVIDO' },
+            });
+            expect(g).not.toHaveProperty('borCod');
+            expect(vinculo.vincularItemDeBordero).not.toHaveBeenCalled();
+            expect(write.importarTitulos).toHaveBeenCalled();
+            expect(write.finalizarLote).toHaveBeenCalled();
+        });
+
+        it('borderô indeterminado (preparar) continua interrompendo a remessa: nada finalizado', async () => {
+            const borderoGrupo = buildBorderoGrupo({
+                preparar: jest.fn().mockResolvedValue({
+                    desfecho: 'indeterminado',
+                    detalhe: 'Dois borderôs na janela: confira no Conexos.',
+                    reaproveitado: false,
+                }),
+            });
+            const { service, write } = setup({ borderoGrupo });
             await expect(gerar(service)).rejects.toBeInstanceOf(LoteEstadoInvalidoError);
             expect(write.finalizarLote).not.toHaveBeenCalled();
         });
