@@ -93,7 +93,7 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
   "montar o lote das obrigações que vencem em breve".
 - **Anti-join (I3):** título já em qualquer lote RASCUNHO (manual ou auto) não é re-agrupado.
 
-## Emenda ADR-0077 (`planned`) — boleto agrupado (I21j, P1-4)
+## Emenda ADR-0077 (`implemented`) — boleto agrupado (I21j, P1-4)
 
 - Um `GrupoBoleto CONFIRMADO` é **uma unidade**: entra inteiro (N `ItemLote` com `grupoBoletoId`, na mesma
   transação) no lote do **vencimento do boleto**, ou não entra; nunca é dividido, e título de grupo nunca

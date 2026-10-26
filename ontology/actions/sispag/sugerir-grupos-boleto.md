@@ -3,10 +3,14 @@ name: sugerirGruposBoleto
 type: action
 entity: GrupoBoleto
 ontology_version: "0.48.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/sispag/MotorGrupoBoleto.ts
+  - src/backend/domain/service/sispag/RegraGrupoBoleto.ts
+  - src/backend/domain/service/sispag/GrupoBoletoService.ts
+  - src/backend/routes/sispag.ts
 last_review: 2026-10-21
 preconditions:
   - "Usuário com `sispag:ver` (ver a sugestão não é confirmar; confirmar exige `sispag:executar`)."
@@ -33,4 +37,4 @@ grupo confirmado à parte. Sugestão ambígua (G6: dois conjuntos fechados para 
 idênticos não intercambiáveis para o mesmo conjunto) não é sugestão: nada é exibido para esses boletos, e a
 GT1 (Task 22) conta a frequência. Composição fora disso é manual (`confirmarGrupoBoleto` com `origem = MANUAL`).
 Pura e idempotente; separada da sugestão 1:1 (I15), que passa a mostrar `EM_GRUPO` para título de grupo
-(I15q). **Planned.**
+(I15q). **Implemented.**

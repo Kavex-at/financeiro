@@ -512,12 +512,18 @@
     },
     "GrupoBoleto": {
       "file": "entities/grupo-boleto.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/interface/sispag/GrupoBoletoInterface.ts",
+        "src/backend/domain/repository/sispag/GrupoBoletoRepository.ts",
+        "src/backend/domain/service/sispag/GrupoBoletoService.ts",
+        "src/backend/migrations/0090_sispag_grupo_boleto.sql",
+        "src/frontend/app/sispag/components/GrupoBoletoPainel.tsx"
+      ],
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned): 1 boleto DDA <-> N>=2 titulos do mesmo credor/filial, soma exata, confirmado por pessoa; N ItemLote ligados (grupoBoletoId); um item nativo de bordero fin010 na remessa. Code: GroupedBoleto. Tabelas sispag_grupo_boleto + sispag_grupo_boleto_titulo (migration 0090)."
+      "note": "ADR-0077 (implemented): 1 boleto DDA <-> N>=2 titulos do mesmo credor/filial, soma exata, confirmado por pessoa; N ItemLote ligados (grupoBoletoId); um item nativo de bordero fin010 na remessa. Code: GroupedBoleto. Tabelas sispag_grupo_boleto + sispag_grupo_boleto_titulo (migration 0090)."
     }
   },
   "actions": {
@@ -1183,52 +1189,76 @@
     "sugerirGruposBoleto": {
       "file": "actions/sispag/sugerir-grupos-boleto.md",
       "entity": "GrupoBoleto",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/MotorGrupoBoleto.ts",
+        "src/backend/domain/service/sispag/RegraGrupoBoleto.ts",
+        "src/backend/domain/service/sispag/GrupoBoletoService.ts",
+        "src/backend/routes/sispag.ts"
+      ],
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned): calcula grupos fechados (I21e) e intercambiaveis (I21f); nada persistido."
+      "note": "ADR-0077 (implemented): calcula grupos fechados (I21e) e intercambiaveis (I21f); nada persistido."
     },
     "confirmarGrupoBoleto": {
       "file": "actions/sispag/confirmar-grupo-boleto.md",
       "entity": "GrupoBoleto",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/GrupoBoletoService.ts",
+        "src/backend/domain/repository/sispag/GrupoBoletoRepository.ts",
+        "src/backend/routes/sispag.ts",
+        "src/frontend/app/sispag/components/ComporGrupoBoletoDialog.tsx"
+      ],
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned): sispag:executar; I21a-d/g/h ao vivo; escrita so local."
+      "note": "ADR-0077 (implemented): sispag:executar; I21a-d/g/h ao vivo; escrita so local."
     },
     "anularGrupoBoleto": {
       "file": "actions/sispag/anular-grupo-boleto.md",
       "entity": "GrupoBoleto",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/GrupoBoletoService.ts",
+        "src/backend/domain/repository/sispag/GrupoBoletoRepository.ts",
+        "src/backend/routes/sispag.ts"
+      ],
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned): motivo 10-500; libera titulos e boleto; em RASCUNHO retira os N itens (I21t)."
+      "note": "ADR-0077 (implemented): motivo 10-500; libera titulos e boleto; em RASCUNHO retira os N itens (I21t)."
     },
     "prepararBorderoDoGrupo": {
       "file": "actions/sispag/preparar-bordero-do-grupo.md",
       "entity": "LotePagamento",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/BorderoGrupoBoletoService.ts",
+        "src/backend/domain/service/sispag/RemessaService.ts",
+        "src/backend/domain/client/ConexosBaixaClient.ts",
+        "src/backend/domain/client/ConexosSispagWriteClient.ts",
+        "src/backend/domain/repository/sispag/GrupoBoletoExecucaoRepository.ts"
+      ],
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned): etapa preparar_bordero do L8 (fin010 + baixas + borderosPendentes/importar + barra I17e); write-ahead; reaproveita o bordero antigo apos J rejeitado (I21s)."
+      "note": "ADR-0077 (implemented): etapa preparar_bordero do L8 (fin010 + baixas + borderosPendentes/importar + barra I17e); write-ahead; reaproveita o bordero antigo apos J rejeitado (I21s)."
     },
     "limparBorderoDoGrupo": {
       "file": "actions/sispag/limpar-bordero-do-grupo.md",
       "entity": "LotePagamento",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/sispag/BorderoGrupoBoletoService.ts",
+        "src/backend/domain/service/sispag/DisparoLimpezaBorderoGrupo.ts",
+        "src/backend/domain/client/ConexosBaixaClient.ts"
+      ],
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned, emenda 2026-10-21): DELETE item -> excluirBaixa -> excluirBordero (ordem imposta pelo ERP); so com o lote nativo nao finalizado e sem .REM (lido ao vivo), so o bordero com nosso filCod+borCod+borTimCad (I21q). vldHasRemessaPgto nao e guarda."
+      "note": "ADR-0077 (implemented, emenda 2026-10-21): DELETE item -> excluirBaixa -> excluirBordero (ordem imposta pelo ERP); so com o lote nativo nao finalizado e sem .REM (lido ao vivo), so o bordero com nosso filCod+borCod+borTimCad (I21q). vldHasRemessaPgto nao e guarda."
     }
   },
   "business_rules": {
@@ -1867,13 +1897,32 @@
       "file": "business-rules/boleto-agrupado-sispag.md",
       "entity": "GrupoBoleto",
       "invariant": "I21",
-      "status": "planned",
-      "has_canonical_test": false,
-      "impl_files": [],
+      "status": "implemented",
+      "has_canonical_test": true,
+      "impl_files": [
+        "src/backend/domain/service/sispag/RegraGrupoBoleto.ts",
+        "src/backend/domain/service/sispag/MotorGrupoBoleto.ts",
+        "src/backend/domain/service/sispag/GrupoBoletoService.ts",
+        "src/backend/domain/service/sispag/BorderoGrupoBoletoService.ts",
+        "src/backend/domain/service/sispag/FechamentoGrupoBoleto.ts",
+        "src/backend/domain/service/sispag/CasamentoRetornoGrupo.ts",
+        "src/backend/domain/service/sispag/LeituraGrupoBoleto.ts",
+        "src/backend/domain/service/sispag/RemessaService.ts",
+        "src/backend/domain/service/sispag/RetiradaCodigoBarrasService.ts",
+        "src/backend/domain/repository/sispag/GrupoBoletoRepository.ts",
+        "src/backend/domain/repository/sispag/GrupoBoletoExecucaoRepository.ts",
+        "src/backend/domain/libs/boleto/SituacaoGrupoBoleto.ts",
+        "src/backend/domain/libs/boleto/EtapaBorderoGrupo.ts",
+        "src/backend/domain/libs/boleto/EstadoVivoGrupoBoleto.ts",
+        "src/backend/migrations/0090_sispag_grupo_boleto.sql",
+        "src/backend/routes/sispag.ts",
+        "src/backend/jobs/probe-hml-boleto-agrupado-e2e.ts",
+        "src/backend/jobs/validate-sispag-boleto-agrupado-v1.ts"
+      ],
       "resolved_by": [
         "ADR-0077"
       ],
-      "note": "ADR-0077 (planned): I21a-u. Sugestao so de grupo fechado no mesmo vencimento (titulo inelegivel => exibido com motivo, nao confirmavel); composicao manual ate 10 d; bordero na remessa (preparar_bordero, write-ahead); nunca finalizamos o bordero; limpeza so do que criamos; J rejeitado => volta so apos a analista resolver o bordero antigo, reaproveitado se reaparecer pendente."
+      "note": "ADR-0077 (implemented): I21a-u. Sugestao so de grupo fechado no mesmo vencimento (titulo inelegivel => exibido com motivo, nao confirmavel); composicao manual ate 10 d; bordero na remessa (preparar_bordero, write-ahead); nunca finalizamos o bordero; limpeza so do que criamos; J rejeitado => volta so apos a analista resolver o bordero antigo, reaproveitado se reaparecer pendente."
     }
   },
   "state_machines": {

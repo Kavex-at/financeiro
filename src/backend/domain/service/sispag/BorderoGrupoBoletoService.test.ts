@@ -982,6 +982,19 @@ describe('BorderoGrupoBoletoService — preparar (I21l, I21n): canônico PEDRONI
         expect(m.erp.write.importarBorderoPendente).not.toHaveBeenCalled();
     });
 
+    it('observabilidade: um log estruturado por etapa que avança (criado, baixas, conferido)', async () => {
+        const m = novo();
+        await m.service.preparar(m.pedido());
+        const mensagens = m.log.info.mock.calls.map((c) => (c[0] as { message: string }).message);
+        expect(mensagens).toEqual(
+            expect.arrayContaining([
+                'borderô do grupo criado no Conexos',
+                'baixas do grupo gravadas no borderô',
+                'borderô do grupo conferido (baixas e total)',
+            ]),
+        );
+    });
+
     it('dry-run (sispagLiveWriteEnabled=false ou conexosDryRun=true): monta e loga, zero escrita, execução simulado', async () => {
         for (const env of [
             { sispagLiveWriteEnabled: false },

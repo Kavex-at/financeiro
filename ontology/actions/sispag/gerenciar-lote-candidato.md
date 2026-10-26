@@ -81,7 +81,7 @@ abrir o lote: o serviço acha o lote RASCUNHO em que o título está e aplica a 
 O título fica solto: a analista pode incluí-lo em outro lote logo em seguida. A formação automática
 pode lotá-lo de novo numa rodada futura, e isso é aceito (ADR-0050).
 
-## Grupo de boleto (ADR-0077, `planned`)
+## Grupo de boleto (ADR-0077, `implemented`)
 
 `incluirGrupo` / `moverGrupo` / `removerGrupo`: o `GrupoBoleto CONFIRMADO` entra, se move e sai como **N
 `ItemLote`** (um por título, `grupoBoletoId`) **na mesma transação** (I21j). I2/I3/I4 valem por título; um

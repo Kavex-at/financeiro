@@ -73,7 +73,7 @@ No `fin052`, `processadoEm` (`garTimProcessamento`) responde "o `processar` já 
 > com decisão elegível (I17a). Lote nativo **finalizado** nunca a executa (I17i). Falha transitória aborta
 > e a retomada refaz o item (I17f/g). Ver `vinculo-codbar-item-sispag.md`.
 >
-> **Emenda ADR-0077 (`planned`) — etapa `preparar_bordero` (boleto agrupado).** Entre `criarLote` e `importar`,
+> **Emenda ADR-0077 (`implemented`) — etapa `preparar_bordero` (boleto agrupado).** Entre `criarLote` e `importar`,
 > **persistida** no write-ahead (escreve no ERP; diferente de `vincular_codbar`): `t0` antes do `POST fin010`,
 > `t1` depois, `borCod` + `borTimCad` da resposta (ou da releitura) logo em seguida. **Identidade do borderô =
 > `filCod` + `borCod` + `borTimCad`** (emenda 2026-10-21: o ERP reusa `borCod` depois de `excluirBordero`;

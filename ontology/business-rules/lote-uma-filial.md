@@ -46,7 +46,7 @@ filial/banco) é a pergunta em aberto `agrupamento-banco-conta` (Flávia) — ad
 transporte, quando banco/conta passa a ser a chave do arquivo de remessa. Registrar agora como
 metadado deixa a promoção futura barata, sem reseed. Ver ADR-0015.
 
-## Emenda ADR-0077 (`planned`) — boleto agrupado
+## Emenda ADR-0077 (`implemented`) — boleto agrupado
 
 Os títulos do grupo (`GrupoBoleto`) e o borderô `fin010` que o paga são da filial do lote (I21d). Grupo que
 cruza filial não é confirmável nesta entrega ("não suportado, pagar à mão"; sonda V4 no watchlist). Ver

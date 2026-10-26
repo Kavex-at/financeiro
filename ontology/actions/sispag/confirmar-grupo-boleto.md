@@ -3,10 +3,14 @@ name: confirmarGrupoBoleto
 type: action
 entity: GrupoBoleto
 ontology_version: "0.48.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/sispag/GrupoBoletoService.ts
+  - src/backend/domain/repository/sispag/GrupoBoletoRepository.ts
+  - src/backend/routes/sispag.ts
+  - src/frontend/app/sispag/components/ComporGrupoBoletoDialog.tsx
 last_review: 2026-10-20
 preconditions:
   - "Usuário com `sispag:executar`; identidade do JWT (nunca `sistema`, I21i)."
@@ -31,4 +35,4 @@ Recusa com erro nomeado: soma (`GroupedBoletoSumMismatchError`), título ineleg�
 (`GroupedBoletoTitleIneligibleError`), filiais diferentes (`GroupedBoletoCrossBranchError`), janela manual
 (`GroupedBoletoDueWindowError`). Título com `DecisaoSugestaoBoleto CONFIRMADA` não entra: anular a decisão
 antes (I15l). O grupo confirmado fica disponível para inclusão manual e para a formação automática como uma
-unidade (I21j). Idempotente. **Planned.**
+unidade (I21j). Idempotente. **Implemented.**

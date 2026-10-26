@@ -3,10 +3,15 @@ name: prepararBorderoDoGrupo
 type: action
 entity: LotePagamento
 ontology_version: "0.48.0"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/sispag/BorderoGrupoBoletoService.ts
+  - src/backend/domain/service/sispag/RemessaService.ts
+  - src/backend/domain/client/ConexosBaixaClient.ts
+  - src/backend/domain/client/ConexosSispagWriteClient.ts
+  - src/backend/domain/repository/sispag/GrupoBoletoExecucaoRepository.ts
 last_review: 2026-10-21
 preconditions:
   - "L8 (gerarRemessa) em curso, depois de criarLote e antes de importar; lote nativo aberto (rascunho)."
@@ -35,4 +40,4 @@ finalizar → gerar_remessa`. Sem permissão nova: herda `sispag:executar` de qu
 tem autor próprio (I21i). Retomável pelo reconhecimento ao vivo da I21s (identidade `filCod` + `borCod` +
 `borTimCad`; busca por janela de `borTimCad` entre `t0` e `t1` quando a resposta se perdeu; baixas
 faltantes; item já importado). O ERP reusa `borCod` depois de `excluirBordero`: `borCod` sozinho nunca
-identifica o borderô (emenda 2026-10-21 da ADR-0077). O vínculo da barra **não** depende do modo I17k (P0-5). **Planned.**
+identifica o borderô (emenda 2026-10-21 da ADR-0077). O vínculo da barra **não** depende do modo I17k (P0-5). **Implemented.**
