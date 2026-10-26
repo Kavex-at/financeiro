@@ -260,6 +260,10 @@ export default class SituacaoPagamentoResolver {
             return undefined;
         }
         const desfecho = ctx.desfechos.get(chaveDe(t));
+        // Título de grupo confirmado (ADR-0077): o boleto do GRUPO paga os N títulos e a barra vai
+        // ao item do borderô, sem depender do vínculo por título (P0-5). A remessa confere o
+        // grupo (borderô, barra == pagamento == Σ); aqui não é "boleto sem DDA".
+        if (desfecho === SITUACAO_SUGESTAO_TITULO.EM_GRUPO) return undefined;
         if (desfecho === SITUACAO_SUGESTAO_TITULO.CONFIRMADA) {
             // Confirmado com o vínculo LIGADO na filial sai com o código ligado na remessa
             // (ADR-0071): é pronto. Com o vínculo desligado, a confirmação não basta.
