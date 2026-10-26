@@ -25,6 +25,7 @@ import ConciliacaoRetornoService from '../domain/service/sispag/ConciliacaoRetor
 import GrupoBoletoService from '../domain/service/sispag/GrupoBoletoService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import RemessaService from '../domain/service/sispag/RemessaService.js';
+import { conexosRequestContext } from '../domain/libs/requestContext/ConexosRequestContext.js';
 import GuardaHmlE2e, { FASES_E2E } from './hmlE2eGuarda.js';
 
 /**
@@ -44,7 +45,10 @@ import GuardaHmlE2e, { FASES_E2E } from './hmlE2eGuarda.js';
  *              grupo retirado, borderô limpo e AUSENTE na releitura, pelo código de produção
  *   retomada   processo "morre" depois do `POST fin010` (resposta descartada): a retomada acha o
  *              borderô pela janela `borTimCad` e NÃO cria outro
- *   v7         retorno sintético de REJEIÇÃO ⇒ grupo `REJEITADO` + Alerta; inclusão manual num lote
+ *   retomada-varredura  como `retomada`, mas a janela estreita "erra" (relógio do ERP além da
+ *              margem, simulado no client): a varredura ±24 h (F-ft-1) roda contra o `fin010/list`
+ *              real, acha o borderô e o grupo fica `indeterminado` — NUNCA um segundo borderô
+ *   v7        retorno sintético de REJEIÇÃO ⇒ grupo `REJEITADO` + Alerta; inclusão manual num lote
  *              novo ⇒ borderô antigo reaproveitado (se aparecer em `borderosPendentes`) ou grupo
  *              retirado com `BORDERO_ANTERIOR_NAO_RESOLVIDO`; nunca dois borderôs vivos
  *   estado     só leitura: grupos locais e títulos em HML
@@ -61,6 +65,8 @@ import GuardaHmlE2e, { FASES_E2E } from './hmlE2eGuarda.js';
  *             (NÃO reversível pelo job: use títulos de teste dedicados)
  *   falha     lote nativo FINALIZADO NÃO — o rascunho fica; borderô excluído, títulos em aberto
  *   retomada  lote nativo em rascunho com o item de borderô, ou limpo se a rodada terminar em retirada
+ *   retomada-varredura  lote nativo em rascunho + borderô em cadastro (o grupo fica indeterminado
+ *             para conferência humana; o job não limpa)
  *   v7        dois lotes nativos; borderô do grupo em cadastro ou limpo conforme o caminho (V7)
  *
  *   cd src/backend
@@ -383,10 +389,20 @@ const titulosPagos = async (titulos: TituloHml[]): Promise<boolean[]> => {
 
 // ───────────────────────────────────────────────────────────────────────────── as fases
 
+/**
+ * O servidor roda cada `gerarRemessa` dentro de uma request (`http/conexosIdentity.ts`): é lá que a
+ * identidade do robô é publicada e o `usnCod` capturado, sem o qual a retomada não acha o borderô
+ * pela janela. Cada chamada do job ganha a sua "request", como uma analista clicando de novo.
+ */
+const gerarRemessaComoRequest = (loteId: string) =>
+    conexosRequestContext.run({}, () =>
+        container.resolve(RemessaService).gerarRemessa({ loteId, ator: ATOR }),
+    );
+
 const faseCanonico = async (titulos: TituloHml[]): Promise<void> => {
     const c = await semear(titulos, BANCO_BARRA);
     const { grupoId, lote } = await montarLote(c);
-    const r = await container.resolve(RemessaService).gerarRemessa({ loteId: lote.id, ator: ATOR });
+    const r = await gerarRemessaComoRequest(lote.id);
     checar('remessa gerada', r.status === 'gerada', `status ${r.status}`);
     const js = lerJs(r.conteudo ?? '');
     checar('o .REM tem UM J', js.length === 1, `${js.length} J`);
@@ -428,17 +444,14 @@ const faseFalha = async (titulos: TituloHml[]): Promise<void> => {
     // V3: o ERP recusa a barra (banco não cadastrado) DEPOIS do import ⇒ o serviço retira o grupo.
     const c = await semear(titulos, BANCO_RECUSADO);
     const { grupoId, lote } = await montarLote(c);
-    const desfecho = await container
-        .resolve(RemessaService)
-        .gerarRemessa({ loteId: lote.id, ator: ATOR })
-        .then(
-            (r) => ({ ok: true as const, avisos: r.avisos ?? [] }),
-            (e: unknown) => ({
-                ok: false as const,
-                nome: e instanceof Error ? e.name : '',
-                msg: erro(e),
-            }),
-        );
+    const desfecho = await gerarRemessaComoRequest(lote.id).then(
+        (r) => ({ ok: true as const, avisos: r.avisos ?? [] }),
+        (e: unknown) => ({
+            ok: false as const,
+            nome: e instanceof Error ? e.name : '',
+            msg: erro(e),
+        }),
+    );
     log(`gerarRemessa: ${txt(desfecho)}`);
     // Lote só com o grupo: ao sair o grupo, o lote esvazia e a guarda o declara (esperado).
     checar(
@@ -484,14 +497,13 @@ const faseRetomada = async (titulos: TituloHml[]): Promise<void> => {
         }
         return r;
     }) as typeof base.postGenericOnce;
-    const remessa = container.resolve(RemessaService);
-    const primeira = await remessa.gerarRemessa({ loteId: lote.id, ator: ATOR }).then(
+    const primeira = await gerarRemessaComoRequest(lote.id).then(
         () => 'ok',
         (e: unknown) => (e instanceof Error ? e.name : 'erro'),
     );
     log(`1ª tentativa: ${primeira} (esperado: incompleta/retomável)`);
     checar('a 1ª tentativa parou de forma retomável', primeira !== 'ok', primeira);
-    const r = await remessa.gerarRemessa({ loteId: lote.id, ator: ATOR });
+    const r = await gerarRemessaComoRequest(lote.id);
     base.postGenericOnce = original as typeof base.postGenericOnce;
     checar('a retomada concluiu', r.status === 'gerada', `status ${r.status}`);
     checar('houve UM POST fin010 (a retomada não criou outro)', posts === 1, `${posts} POST(s)`);
@@ -503,10 +515,93 @@ const faseRetomada = async (titulos: TituloHml[]): Promise<void> => {
     );
 };
 
+/**
+ * F-ft-1 em HML: o `POST fin010` vale e a resposta se perde (como em `retomada`), e na retomada a
+ * janela estreita (margem > 0) devolve vazio, como se o relógio do ERP estivesse além da margem.
+ * A varredura larga (margem 0, ±24 h) vai ao `fin010/list` real: tem de achar o borderô e
+ * indeterminar o grupo, sem um segundo `POST fin010`.
+ */
+const faseRetomadaVarredura = async (titulos: TituloHml[]): Promise<void> => {
+    const c = await semear(titulos, BANCO_BARRA);
+    const { grupoId, lote } = await montarLote(c);
+    const base = container.resolve(ConexosBaseClient);
+    const postOriginal = base.postGenericOnce.bind(base);
+    let posts = 0;
+    base.postGenericOnce = (async (path: string, ...resto: unknown[]) => {
+        const r = await (postOriginal as (...a: unknown[]) => Promise<unknown>)(path, ...resto);
+        if (path === 'fin010') {
+            posts += 1;
+            if (posts === 1) {
+                throw new ConexosError({ endpoint: path, code: 'CONEXOS_UPSTREAM_TIMEOUT' });
+            }
+        }
+        return r;
+    }) as typeof base.postGenericOnce;
+    const baixa = container.resolve(ConexosBaixaClient);
+    const buscaOriginal = baixa.buscarBorderosNaJanela;
+    let estreitasErradas = 0;
+    const varreduras: number[][] = [];
+    baixa.buscarBorderosNaJanela = (async (params) => {
+        if (params.margemMs > 0) {
+            estreitasErradas += 1;
+            return [];
+        }
+        const achados = await buscaOriginal(params);
+        varreduras.push(achados.map((b) => b.borCod));
+        return achados;
+    }) as typeof baixa.buscarBorderosNaJanela;
+    const resumir = (p: Promise<{ status: string }>): Promise<string> =>
+        p.then(
+            (x) => x.status,
+            (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : 'erro'),
+        );
+    try {
+        const primeira = await resumir(gerarRemessaComoRequest(lote.id));
+        log(`1ª tentativa: ${primeira} (esperado: incompleta/retomável)`);
+        checar('a 1ª tentativa parou de forma retomável', primeira !== 'gerada', primeira);
+        const segunda = await resumir(gerarRemessaComoRequest(lote.id));
+        log(`retomada: ${segunda}`);
+    } finally {
+        base.postGenericOnce = postOriginal as typeof base.postGenericOnce;
+        baixa.buscarBorderosNaJanela = buscaOriginal;
+    }
+    checar('a janela estreita foi forçada a errar', estreitasErradas > 0, `${estreitasErradas}x`);
+    checar(
+        'a varredura ±24 h rodou no fin010/list real e achou o borderô',
+        varreduras.some((v) => v.length > 0),
+        JSON.stringify(varreduras),
+    );
+    checar('houve UM POST fin010 (nenhum segundo borderô)', posts === 1, `${posts} POST(s)`);
+    const vivos = await borderosVivos(grupoId);
+    checar(
+        'exatamente UM borderô vivo para o grupo',
+        vivos.length === 1,
+        `vivos ${vivos.join(',')}`,
+    );
+    const db = container.resolve(PostgreeDatabaseClient);
+    const etapas = await db.selectMany(
+        `SELECT etapa FROM sispag_grupo_boleto_execucao WHERE grupo_id = $grupoId`,
+        { grupoId },
+    );
+    checar(
+        'execução do grupo ficou indeterminada',
+        etapas.some((e) => e.etapa === 'indeterminado'),
+        JSON.stringify(etapas),
+    );
+    const alertas = await db.selectMany(
+        `SELECT 1 FROM alerta WHERE tipo = $tipo AND alvo = $alvo`,
+        {
+            tipo: 'sispag-bordero-grupo-pendente',
+            alvo: grupoId,
+        },
+    );
+    checar('Alerta sispag-bordero-grupo-pendente emitido', alertas.length > 0);
+};
+
 const faseV7 = async (titulos: TituloHml[]): Promise<void> => {
     const c = await semear(titulos, BANCO_BARRA);
     const { grupoId, lote } = await montarLote(c);
-    const r = await container.resolve(RemessaService).gerarRemessa({ loteId: lote.id, ator: ATOR });
+    const r = await gerarRemessaComoRequest(lote.id);
     checar('remessa gerada', r.status === 'gerada', `status ${r.status}`);
     const gar = await devolverRetorno(
         r.conteudo ?? '',
@@ -533,13 +628,10 @@ const faseV7 = async (titulos: TituloHml[]): Promise<void> => {
 
     // Inclusão manual num lote NOVO: o serviço reconhece o borderô antigo ao vivo (I21s, PI-9).
     const novo = await montarLote(c);
-    const r2 = await container
-        .resolve(RemessaService)
-        .gerarRemessa({ loteId: novo.lote.id, ator: ATOR })
-        .then(
-            (x) => ({ status: x.status, avisos: x.avisos ?? [] }),
-            (e: unknown) => ({ status: 'erro', avisos: [erro(e)] }),
-        );
+    const r2 = await gerarRemessaComoRequest(novo.lote.id).then(
+        (x) => ({ status: x.status, avisos: x.avisos ?? [] }),
+        (e: unknown) => ({ status: 'erro', avisos: [erro(e)] }),
+    );
     log(`V7 — 2ª remessa do grupo: ${txt(r2)}`);
     const execs = await container.resolve(GrupoBoletoExecucaoRepository).listarPorGrupo(grupoId);
     const reaproveitou = execs.some((e) => e.borCodReaproveitadoDe !== undefined);
@@ -602,6 +694,7 @@ const main = async (): Promise<number> => {
     if (FASE === 'canonico') await faseCanonico(titulos);
     else if (FASE === 'falha') await faseFalha(titulos);
     else if (FASE === 'retomada') await faseRetomada(titulos);
+    else if (FASE === 'retomada-varredura') await faseRetomadaVarredura(titulos);
     else if (FASE === 'v7') await faseV7(titulos);
     const falhas = checagens.filter((c) => !c.ok);
     log(`${checagens.length - falhas.length}/${checagens.length} checagens OK`);

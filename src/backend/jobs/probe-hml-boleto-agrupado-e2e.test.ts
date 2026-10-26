@@ -86,8 +86,22 @@ describe('GuardaHmlE2e — recusas', () => {
 
 describe('GuardaHmlE2e — autorização de escrita', () => {
     it('as fases são as da prova, na ordem, e só plano e estado não escrevem', () => {
-        expect(FASES_E2E).toEqual(['plano', 'canonico', 'falha', 'retomada', 'v7', 'estado']);
-        expect(FASES_QUE_ESCREVEM).toEqual(['canonico', 'falha', 'retomada', 'v7']);
+        expect(FASES_E2E).toEqual([
+            'plano',
+            'canonico',
+            'falha',
+            'retomada',
+            'retomada-varredura',
+            'v7',
+            'estado',
+        ]);
+        expect(FASES_QUE_ESCREVEM).toEqual([
+            'canonico',
+            'falha',
+            'retomada',
+            'retomada-varredura',
+            'v7',
+        ]);
     });
 
     it.each(FASES_QUE_ESCREVEM)('fase %s sem autorização é recusada', (fase) => {
