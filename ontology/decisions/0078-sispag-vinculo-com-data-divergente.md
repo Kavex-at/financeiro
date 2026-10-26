@@ -75,3 +75,34 @@ ADR 0078, ontologia 0.49.0 e migration ≥ 0091 por colisão com `feat/sispag-bo
     rolado. Vale o mais restritivo (fail-closed) até a medição V11.
 (−) Universalidade: 1 cliente (Columbia); o fator de vencimento é norma FEBRABAN. Revisão com o Francinei,
     não bloqueante (precedente Q-I do ADR-0068).
+
+## Emenda 2026-10-26: medições HML V10–V12 e pré-condição de habilitação em PRD
+
+Evidência: `_inbox/sispag-vinculo-data-divergente-medicao.md` (HML, barras sintéticas, filial 2, banco 4).
+
+**Premissas confirmadas**
+- **V10:** o ERP não compara a data da barra com a do título; aceita Δ de −5 a +10 e devolve a data da **barra**
+  em `itsDtaPgtoResult` (o item acompanha a barra). Modalidade 6 aceita; modalidade 7 é recusada quando o banco
+  da barra é o do lote (regra já conhecida, sem relação com a data).
+- **V11 (R2):** `finalizar` aceita `dataDebito ≤ min(itsDtaPgto)` e recusa acima ("EXISTEM TÍTULOS QUE IRÃO
+  VENCER ANTES DA DATA DE PAGAMENTO DESTE LOTE"). A janela do lote é a data da barra.
+- **V12:** no segmento J, o *vencimento* leva a data do **título** e a *data de pagamento* a da **barra**; a guarda
+  I17p (data do J = `itsDtaPgto`) é satisfeita. O número da remessa deve vir de `sugerirRemessa`.
+
+**Inconclusivo:** rolagem de sábado. O caso medido caiu em feriado (Finados) e não distingue "o ERP não rola" de
+"rola só até a segunda". Vale o fail-closed: débito em ou antes da data da barra, sem rolar.
+
+**Risco aberto (banco).** O J mistura datas: o vencimento do título e o código de barras com o fator da barra. HML não
+tem banco, então **não se sabe se o banco recusa um J cujo vencimento difere do fator do código**. Isso decide a
+Δ ≠ 0 e a "fase 2" (ajustar a data do título) continua rejeitada por prematura, mas passa a ser o plano B se o
+banco recusar.
+
+**Pré-condição para habilitar em PRD.** `SISPAG_BIND_CODBAR_DATA_DIVERGENTE_FILIAIS` permanece **`off`** até um teste
+controlado em PRD com **um boleto real pequeno** de data divergente, remetido e liquidado sem recusa do banco
+(maintainer decide o título e o valor). Antes disso, no máximo `shadow`. Recusa do banco ⇒ caminho fica `off` e a fase 2
+vira pré-requisito.
+
+Resíduo em HML (não há cancelar lote no client): lotes 53 (finalizado, remessa PG261002.REM), 54 e 55;
+documentos 284, 232, 640 e 642 consumidos.
+
+*Versão da ontologia: sem bump (mesma convenção da emenda 2026-10-20 da ADR-0074).*
