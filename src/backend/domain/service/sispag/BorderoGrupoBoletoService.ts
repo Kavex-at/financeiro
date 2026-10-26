@@ -22,6 +22,7 @@ import {
     DESFECHO_LIMPEZA,
     DESFECHO_PREPARACAO,
     type LimpezaBorderoGrupoInterface,
+    FOLGA_VARREDURA_BORDERO_MS,
     MARGEM_RELOGIO_BORDERO_MS,
     type PedidoConferenciaGrupos,
     type PedidoLimpezaBordero,
@@ -513,7 +514,7 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
             );
         }
         const [unico] = achados;
-        if (!unico) return undefined;
+        if (!unico) return this.varrerForaDaJanela(prep, usnCodCad, exec.escritaIniciadaEm);
         const adotado = await this.adotar(prep, unico);
         if (adotado) return adotado;
         await this.logService.info({
@@ -522,6 +523,49 @@ export default class BorderoGrupoBoletoService implements LimpezaBorderoGrupoInt
             data: this.dadosDoLog(prep.exec, prep.pedido.grupo),
         });
         return undefined;
+    };
+
+    /**
+     * F-ft-1: a janela estreita não achou nada, mas o relógio do ERP pode estar além da margem e
+     * o `POST` perdido ter criado o borderô. Varredura larga (mesma conta e data): qualquer
+     * borderô do robô que não seja de outra execução nossa ⇒ `indeterminado` + `Alerta`
+     * (falha fechada), em vez de criar um segundo. Nada achado ⇒ segue para criar.
+     */
+    private varrerForaDaJanela = async (
+        prep: Preparacao,
+        usnCodCad: number,
+        t0: Date,
+    ): Promise<Passo> => {
+        const { exec } = prep;
+        const agora = this.calendar.now().getTime();
+        let achados: BorderoIdentificado[];
+        try {
+            achados = await this.baixa.buscarBorderosNaJanela({
+                filCod: exec.filCod,
+                usnCodCad,
+                gerNum: exec.gerNum ?? prep.gerNum,
+                borDtaMvto: this.calendar.toErpEpoch(exec.borDtaMvto ?? prep.pedido.dataDebito),
+                t0: t0.getTime() - FOLGA_VARREDURA_BORDERO_MS,
+                t1: agora + FOLGA_VARREDURA_BORDERO_MS,
+                agora,
+                margemMs: 0,
+            });
+        } catch (err) {
+            return this.falhar(prep, err, 'varredura do borderô fora da janela de criação');
+        }
+        const nossos = new Set<string>();
+        for (const e of [
+            ...(await this.ledger.listarPorLote(exec.loteId)),
+            ...(await this.ledger.listarPorGrupo(exec.grupoId)),
+        ]) {
+            if (e.borCod !== undefined) nossos.add(`${e.borCod}:${e.borTimCad}`);
+        }
+        const suspeitos = achados.filter((b) => !nossos.has(`${b.borCod}:${b.borTimCad}`));
+        if (suspeitos.length === 0) return undefined;
+        return this.indeterminar(
+            prep,
+            `borderô do robô fora da janela de criação (${suspeitos.map((b) => b.borCod).join(', ')}): possível relógio desencontrado com o Conexos; conferir se é deste grupo antes de criar outro`,
+        );
     };
 
     private usuarioDoRobo = (exec: GrupoBoletoExecucao): number | undefined => {
