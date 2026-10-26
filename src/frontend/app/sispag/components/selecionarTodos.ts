@@ -22,8 +22,10 @@ export const MOTIVO_VARIAS_FILIAIS = 'Filtre por uma filial para selecionar todo
 export const estadoSelecionarTodos = (
   filtrados: TituloAPagar[],
   selecionados: ReadonlySet<string>,
+  /** Chaves dos títulos de boletos agrupados confirmados (ADR-0077): não se selecionam avulsos. */
+  emGrupo?: ReadonlySet<string>,
 ): EstadoSelecionarTodos => {
-  const selecionaveis = filtrados.filter(podeSelecionar)
+  const selecionaveis = filtrados.filter((t) => podeSelecionar(t, emGrupo))
   const chaves = selecionaveis.map(chaveTitulo)
   if (chaves.length === 0) return { marcado: false, bloqueio: 'Nenhum título selecionável', chaves }
   // Um lote é de uma filial só: marcar todos de várias filiais só levaria ao erro do "Criar lote".

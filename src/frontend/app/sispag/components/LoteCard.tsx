@@ -54,6 +54,7 @@ import {
   getRecursos,
   type ItemLote,
   type ItemSituacao,
+  type GrupoNoLote,
   type LotePagamento,
   type TituloAPagar,
   type Modalidade,
@@ -69,6 +70,7 @@ import {
   type RetiradaDoLote,
   type VinculosPrevistos,
   removerItem,
+  retirarGrupoDoLote,
   rotuloConta,
   STATUS_SINCRONIZAVEIS,
   temRemessa,
@@ -81,6 +83,8 @@ import { usePermissoes } from '@/lib/auth/PermissoesProvider'
 import { baixarBlob } from '@/lib/download'
 import { PERMISSAO } from '@/lib/permissoes'
 import { formatBRL } from '@/lib/utils'
+import { GrupoBoletoLinha } from './GrupoBoletoLinha'
+import { RetirarDoLoteDialog } from './RetirarDoLoteDialog'
 import { type AcaoLote, ConfirmarAcaoDialog, ConfirmarAcaoLoteDialog } from './ConfirmarAcaoDialog'
 import { type Acao, GerarRemessaDialog } from './GerarRemessaDialog'
 import { ResolverDuplicidadeDialog } from './ResolverDuplicidadeDialog'
@@ -431,6 +435,8 @@ export function LoteCard({
   onRecarregar?: () => void | Promise<void>
 }) {
   const [aberto, setAberto] = React.useState(false)
+  // ADR-0077: o boleto agrupado a retirar inteiro (confirmação que nomeia os títulos).
+  const [retirandoGrupo, setRetirandoGrupo] = React.useState<GrupoNoLote | null>(null)
   // ADR-0053: toda ação do lote exige `sispag:executar`. Sem ela (ou enquanto carrega), as ações
   // SOMEM — nunca ficam desabilitadas (R11) — e as leituras reservadas a quem executa (contas
   // pagadoras, modalidades do favorecido, arquivo .REM) nem são pedidas. As linhas digitáveis
@@ -890,7 +896,22 @@ export function LoteCard({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {l.itens.map((i) => {
+                  {/* ADR-0077: cada boleto agrupado é UMA linha; os N títulos só aparecem ao expandir. */}
+                  {(l.grupos ?? []).map((g) => (
+                    <GrupoBoletoLinha
+                      key={g.grupoId}
+                      grupo={g}
+                      itens={l.itens}
+                      ocupado={busy}
+                      colunasExtras={
+                        (sincronizavel ? 1 : 0) +
+                        (temConciliacao ? 1 : 0) +
+                        (isRascunho && podeExecutar ? 1 : 0)
+                      }
+                      {...(isRascunho && podeExecutar ? { onRetirar: setRetirandoGrupo } : {})}
+                    />
+                  ))}
+                  {l.itens.filter((i) => i.grupoBoletoId === undefined).map((i) => {
                     // A2 opção B: formas disponíveis no cadastro do favorecido (ao vivo).
                     const avail = disponiveis?.get(`${i.docCod}:${i.titCod}`)
                     const carregou = avail !== undefined
@@ -1146,6 +1167,26 @@ export function LoteCard({
           ) : null}
         </CardContent>
       ) : null}
+      <RetirarDoLoteDialog
+        titulo={null}
+        grupo={
+          retirandoGrupo
+            ? {
+                grupoId: retirandoGrupo.grupoId,
+                codbarMascarado: retirandoGrupo.codbarMascarado,
+                ...(retirandoGrupo.credor ? { credor: retirandoGrupo.credor } : {}),
+                titulos: retirandoGrupo.titulos,
+              }
+            : null
+        }
+        salvando={busy}
+        onClose={() => setRetirandoGrupo(null)}
+        onConfirmar={() => {
+          const g = retirandoGrupo
+          setRetirandoGrupo(null)
+          if (g) acao(() => retirarGrupoDoLote(l.id, g.grupoId, l.versao), 'Boleto agrupado retirado do lote')
+        }}
+      />
     </Card>
   )
 }

@@ -93,6 +93,7 @@ export const resumoDoTitulo = (
 
 /** Rótulo do link da coluna "Forma de pagamento". Fraco NUNCA diz "sugestão disponível". */
 export const ROTULO_SITUACAO: Record<SituacaoSugestaoTitulo, string> = {
+  EM_GRUPO: 'em boleto agrupado',
   UNICA_SEGURA: 'sugestão disponível',
   SO_ATENCAO: 'ver boleto sugerido',
   AMBIGUA: 'mais de um boleto possível',
@@ -108,6 +109,7 @@ export const ROTULO_SITUACAO: Record<SituacaoSugestaoTitulo, string> = {
 export type TomSituacao = 'acao' | 'aviso' | 'mudo'
 
 export const TOM_SITUACAO: Record<SituacaoSugestaoTitulo, TomSituacao> = {
+  EM_GRUPO: 'mudo',
   UNICA_SEGURA: 'acao',
   SO_ATENCAO: 'aviso',
   AMBIGUA: 'aviso',
@@ -122,6 +124,8 @@ export const TOM_SITUACAO: Record<SituacaoSugestaoTitulo, TomSituacao> = {
 /** Só `SEM_CANDIDATO` não tem o que mostrar além do texto: não vira botão. */
 export const SITUACAO_SEM_PAINEL: ReadonlySet<SituacaoSugestaoTitulo> = new Set([
   'SEM_CANDIDATO',
+  // Título dentro de um boleto agrupado confirmado: o boleto é do grupo, não há candidato a ver.
+  'EM_GRUPO',
 ])
 
 export interface ResumoDesfecho {

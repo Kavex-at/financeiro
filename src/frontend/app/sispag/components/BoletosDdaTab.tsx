@@ -104,7 +104,12 @@ function TituloLinha({ t, flpCod }: { t: BoletoDdaTitulo; flpCod?: number }) {
   )
 }
 
-export function BoletosDdaTab() {
+export function BoletosDdaTab({
+  onCompor,
+}: {
+  /** Compor um boleto agrupado a partir de um boleto livre (ADR-0077): só com `sispag:executar`. */
+  onCompor?: (boleto: BoletoDda) => void
+} = {}) {
   // ADR-0053: consultar os boletos (`GET /sispag/boletos-dda`) basta `sispag:ver`; sincronizar
   // com o fin124 ("Atualizar DDA") exige `sispag:executar` e some sem ela (R11). Sem `ver`, por
   // defesa, o componente não lê nada.
@@ -471,6 +476,16 @@ export function BoletosDdaTab() {
                       )}
                     </TableCell>
                     <TableCell>
+                      {onCompor && b.situacao !== 'VINCULADO' && !b.vencido && b.codbar ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onCompor(b)}
+                          aria-label={`Compor boleto agrupado do boleto ${b.numero ?? b.ditCod}`}
+                        >
+                          Compor grupo
+                        </Button>
+                      ) : null}
                       {b.linhaDigitavel ? (
                         <Button
                           size="icon"

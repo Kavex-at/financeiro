@@ -65,7 +65,10 @@ import {
   type ListagemSugestoesBoleto,
   type SituacaoSugestaoTitulo,
   SITUACOES_SUGESTAO_TITULO,
+  type BoletoDda,
+  fetchGruposBoleto,
   fetchTodasSugestoesBoleto,
+  type GrupoBoletoListado,
   fetchRetidosPorCodigoBarras,
   BoletoCodigoBarrasRetiradaIncompletaError,
   removerItem,
@@ -107,6 +110,13 @@ import { alternarTodos, estadoSelecionarTodos } from './components/selecionarTod
 import { FormaPagamentoBadge } from './components/FormaPagamentoBadge'
 import { TitulosRetidosBadge } from './components/TitulosRetidosBadge'
 import { ConfirmacoesEmissorPainel } from './components/ConfirmacoesEmissorPainel'
+import {
+  type BoletoParaComposicao,
+  ComporGrupoBoletoDialog,
+  type TituloParaComposicao,
+} from './components/ComporGrupoBoletoDialog'
+import { GrupoBoletoPainel } from './components/GrupoBoletoPainel'
+import { chavesDeTitulosEmGrupo } from './components/grupoBoleto'
 import {
   agruparPorTitulo,
   chaveTitulo,
@@ -288,6 +298,28 @@ function SispagPanel() {
       setRetidos(new Map())
     }
   }, [])
+  // Boletos agrupados confirmados (ADR-0077): os títulos deles não se selecionam avulsos. Evidência
+  // opcional como as sugestões: se a leitura falhar, a aba de títulos funciona igual.
+  const [gruposConfirmados, setGruposConfirmados] = React.useState<GrupoBoletoListado[]>([])
+  const recarregarGrupos = React.useCallback(async () => {
+    try {
+      setGruposConfirmados(await fetchGruposBoleto())
+    } catch {
+      setGruposConfirmados([])
+    }
+  }, [])
+  React.useEffect(() => {
+    void recarregarGrupos()
+  }, [recarregarGrupos])
+  const emGrupo = React.useMemo(
+    () => chavesDeTitulosEmGrupo(gruposConfirmados),
+    [gruposConfirmados],
+  )
+  // Composição manual do grupo (ADR-0077, I21g): o boleto escolhido na aba Boletos DDA.
+  const [composicao, setComposicao] = React.useState<{
+    boleto: BoletoParaComposicao
+    candidatos: TituloParaComposicao[]
+  } | null>(null)
   const [loteEmFoco, setLoteEmFoco] = React.useState<string | null>(null)
   const [retirando, setRetirando] = React.useState<TituloAPagar | null>(null)
   const [salvandoRetirada, setSalvandoRetirada] = React.useState(false)
@@ -460,6 +492,46 @@ function SispagPanel() {
   const sincronizandoLotes = sincronizando || syncAbertura === 'atualizando'
 
   const titulos = React.useMemo(() => painel?.titulos ?? [], [painel?.titulos])
+
+  // "Compor grupo" a partir de um boleto livre do pool (ADR-0077, I21g): os candidatos são os
+  // títulos do MESMO credor e filial, liberados, não pagos, fora de lote comprometido e de grupo.
+  const abrirComposicao = (b: BoletoDda) => {
+    const ref = b.candidatos[0] ?? b.informativos?.[0]
+    if (!ref || !b.vencimento || !b.codbar) {
+      toast.error('Este boleto não tem título do mesmo credor para compor um grupo.')
+      return
+    }
+    const candidatos = titulos
+      .filter(
+        (t) =>
+          t.filCod === ref.filCod &&
+          t.credor === ref.credor &&
+          t.liberado &&
+          !t.pago &&
+          !t.loteComprometido &&
+          t.vencimento !== undefined &&
+          podeSelecionar(t, emGrupo),
+      )
+      .map((t) => ({
+        filCod: t.filCod,
+        docCod: t.docCod,
+        titCod: t.titCod,
+        valorCentavos: Math.round(t.valor * 100),
+        // Vencimento do ERP é dia civil em UTC (ADR-0070).
+        vencimento: new Date(t.vencimento as number).toISOString().slice(0, 10),
+      }))
+    setComposicao({
+      boleto: {
+        ddcCod: b.ddcCod,
+        ditCod: b.ditCod,
+        ...(ref.credor ? { credor: ref.credor } : {}),
+        codbarMascarado: `${b.codbar.slice(0, 5)}…${b.codbar.slice(-4)}`,
+        valorBoletoCentavos: Math.round(b.valor * 100),
+        vencimentoBoleto: b.vencimento,
+      },
+      candidatos,
+    })
+  }
   // ADR-0065: o item do lote não carrega o favorecido; a carteira do painel sim. É o que permite o
   // atalho "Pedir autorização" direto no item.
   const pesCodPorTitulo = React.useMemo(
@@ -651,7 +723,7 @@ function SispagPanel() {
   const toggle = (t: TituloAPagar) => {
     // ADR-0064: título em lote RASCUNHO pode ser selecionado (ele se move para o lote novo);
     // em lote finalizado ou com remessa gerada, não.
-    if (!podeSelecionar(t)) return
+    if (!podeSelecionar(t, emGrupo)) return
     setSelecionados((prev) => {
       const next = new Set(prev)
       const k = keyOf(t)
@@ -662,10 +734,7 @@ function SispagPanel() {
   }
 
   // ADR-0064: "selecionar todos" vale para TODAS as linhas do filtro (todas as páginas).
-  const todosDoFiltro = estadoSelecionarTodos(
-    abaTitulos.filtrados,
-    selecionados,
-  )
+  const todosDoFiltro = estadoSelecionarTodos(abaTitulos.filtrados, selecionados, emGrupo)
 
   const loteManual = useCriarLoteManual({
     selecionados: selTitulos,
@@ -689,7 +758,12 @@ function SispagPanel() {
       const resultado = await fn()
       // O painel também muda: a linha do título mostra o lote em que está (ADR-0050), e os
       // títulos retidos por código de barras (ADR-0069 emenda 1) aparecem com o selo.
-      await Promise.all([recarregarLotes(), recarregarPainel(), recarregarRetidos()])
+      await Promise.all([
+        recarregarLotes(),
+        recarregarPainel(),
+        recarregarRetidos(),
+        recarregarGrupos(),
+      ])
       if (typeof okMsg === 'string') {
         toast.success(okMsg)
       } else {
@@ -1049,11 +1123,25 @@ function SispagPanel() {
               <TabsTrigger value="lotes">Lançamento Lote (REM) - Conexos</TabsTrigger>
               <TabsTrigger value="retornos">Retorno Lote (RET) - Conexos</TabsTrigger>
               <TabsTrigger value="boletos-dda">Boletos DDA (fin124)</TabsTrigger>
+              <TabsTrigger value="boletos-agrupados">Boletos agrupados</TabsTrigger>
             </TabsList>
 
             {/* ---- Boletos DDA (fin124) — carrega ao abrir a aba; basta `sispag:ver` ---- */}
             <TabsContent value="boletos-dda">
-              <BoletosDdaTab />
+              <BoletosDdaTab
+                {...(podeExecutar ? { onCompor: (b: BoletoDda) => abrirComposicao(b) } : {})}
+              />
+            </TabsContent>
+
+            {/* ---- Boletos agrupados (ADR-0077) — ver lê; executar confirma, anula e compõe ---- */}
+            <TabsContent value="boletos-agrupados">
+              <GrupoBoletoPainel
+                podeExecutar={podeExecutar}
+                onAlterado={async () => {
+                  await Promise.all([recarregarLotes(), recarregarPainel(), recarregarGrupos()])
+                }}
+                onCompor={() => setAba('boletos-dda')}
+              />
             </TabsContent>
 
             {/* ---- Títulos a pagar ---- */}
@@ -1305,10 +1393,10 @@ function SispagPanel() {
                               <Checkbox
                                 checked={selecionados.has(keyOf(t))}
                                 onCheckedChange={() => toggle(t)}
-                                disabled={!podeSelecionar(t)}
-                                aria-label={motivoSelecaoBloqueada(t) ?? 'selecionar título'}
+                                disabled={!podeSelecionar(t, emGrupo)}
+                                aria-label={motivoSelecaoBloqueada(t, emGrupo) ?? 'selecionar título'}
                                 title={
-                                  motivoSelecaoBloqueada(t) ??
+                                  motivoSelecaoBloqueada(t, emGrupo) ??
                                   (t.loteRascunho
                                     ? 'Está num lote em rascunho: ao criar o lote, ele sai de lá e entra no novo.'
                                     : undefined)
@@ -1886,6 +1974,18 @@ function SispagPanel() {
               )
             }
           />
+          {composicao ? (
+            <ComporGrupoBoletoDialog
+              boleto={composicao.boleto}
+              candidatos={composicao.candidatos}
+              onFechar={() => setComposicao(null)}
+              onConfirmado={async () => {
+                setComposicao(null)
+                await Promise.all([recarregarLotes(), recarregarPainel(), recarregarGrupos()])
+                toast.success('Boleto agrupado confirmado')
+              }}
+            />
+          ) : null}
         </>
       ) : null}
     </div>
